@@ -1,0 +1,14 @@
+{
+  "name": "http_echo",
+  "version": "1.0.0",
+  "description": "自定义 API 回显 + 记忆检索注入演示（http_router + memory_search）",
+  "author": "AICompanion",
+  "category": "plugin",
+  "hooks": [
+    "http_router",
+    "memory_search"
+  ],
+  "permissions": [],
+  "config": {},
+  "usage": "开启后提供 GET /api/v1/plugins/http_echo/echo?text=xxx（返回回显 JSON）；对话检索含「插件」关键词时，向召回记忆注入一条插件演示记忆。"
+}

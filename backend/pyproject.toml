@@ -1,0 +1,13 @@
+[tool.ruff]
+line-length = 120
+target-version = "py314"  # 项目 venv 为 Python 3.14（f-string 内反斜杠等 PEP 701 语法）
+exclude = [".venv", "data", "scripts"]
+
+[tool.ruff.lint]
+# 只启用 F 类（未使用 import/变量、未定义名、f-string 问题，对应原 pyflakes）
+# 项目既有宽松 except Exception 风格等 E/BLE 规则不启用，避免海量噪音
+select = ["F"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

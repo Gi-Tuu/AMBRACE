@@ -1,0 +1,654 @@
+"""家庭群聊 API（Phase 2）：群 CRUD + 群消息 + 用户发言多角色回应（方案A：单次调用 JSON 多回应）
+
+- 群聊不推送；记忆按群归属（Phase 2 v1 先落库群消息，记忆写入后续）
+- 用户发言 → 存 user 消息 → LLM 生成 1-3 个角色的回应（JSON）→ 逐条落库
+"""
+import json
+import random
+import re
+import time
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Header
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth.deps import get_current_user_id
+from app.i18n import tr_lang
+from app.db.database import async_session_factory, get_db
+from app.models.chat_group import ChatGroup, ChatGroupMember, ChatGroupMessage
+from app.models.character import AICharacter
+from app.utils.logger import get_logger
+
+router = APIRouter(prefix="/api/v1/chat-groups", tags=["Chat Groups"])
+_logger = get_logger("api.chat_groups")
+
+MIN_MEMBERS = 2
+MAX_MEMBERS = 8
+
+
+async def _owned_group(db: AsyncSession, group_id: int, user_id: int, lang: str = "zh") -> ChatGroup:
+    g = (
+        await db.execute(
+            select(ChatGroup).where(ChatGroup.id == group_id, ChatGroup.user_id == user_id)
+        )
+    ).scalar_one_or_none()
+    if g is None:
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "group_not_found"))
+    return g
+
+
+async def _member_names(db: AsyncSession, group_id: int) -> dict[int, str]:
+    rows = (
+        await db.execute(
+            select(ChatGroupMember.character_id)
+            .where(ChatGroupMember.group_id == group_id)
+        )
+    ).scalars().all()
+    if not rows:
+        return {}
+    cr = await db.execute(select(AICharacter.id, AICharacter.name).where(AICharacter.id.in_(rows)))
+    return {cid: cname for cid, cname in cr.all()}
+
+
+@router.post("")
+async def create_group(
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """创建家庭群聊（name + character_ids，至少 2 个本人角色）"""
+    name = str(data.get("name") or "").strip() or "家庭群聊"
+    char_ids = [int(x) for x in (data.get("character_ids") or []) if int(x) > 0]
+    char_ids = list(dict.fromkeys(char_ids))
+    if len(char_ids) < MIN_MEMBERS:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "group_min_two"))
+    if len(char_ids) > MAX_MEMBERS:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "group_max_members", max=MAX_MEMBERS))
+    # 校验角色归属
+    cr = await db.execute(
+        select(AICharacter.id).where(AICharacter.id.in_(char_ids), AICharacter.user_id == user_id)
+    )
+    owned = {row[0] for row in cr.all()}
+    if owned != set(char_ids):
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "chat_group_foreign_char"))
+
+    group = ChatGroup(user_id=user_id, name=name)
+    db.add(group)
+    await db.flush()
+    for cid in char_ids:
+        db.add(ChatGroupMember(group_id=group.id, character_id=cid))
+    await db.commit()
+    await db.refresh(group)
+    return {"id": group.id, "name": group.name}
+
+
+@router.get("")
+async def list_groups(
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """群列表（含成员角色名）"""
+    groups = (
+        await db.execute(
+            select(ChatGroup).where(ChatGroup.user_id == user_id).order_by(ChatGroup.id.desc())
+        )
+    ).scalars().all()
+    items = []
+    for g in groups:
+        names = await _member_names(db, g.id)
+        items.append({
+            "id": g.id,
+            "name": g.name,
+            "members": [{"id": cid, "name": n} for cid, n in names.items()],
+            "created_at": g.created_at.isoformat(),
+        })
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/{group_id}/members")
+async def add_members(
+    group_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """拉群：把角色加进群（仅本人角色，去重，最多 MAX_MEMBERS 人）"""
+    await _owned_group(db, group_id, user_id, lang)
+    char_ids = [int(x) for x in (data.get("character_ids") or []) if int(x) > 0]
+    char_ids = list(dict.fromkeys(char_ids))
+    if not char_ids:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "group_min_two"))
+    cr = await db.execute(
+        select(AICharacter.id).where(AICharacter.id.in_(char_ids), AICharacter.user_id == user_id)
+    )
+    owned = {row[0] for row in cr.all()}
+    if owned != set(char_ids):
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "chat_group_foreign_char"))
+    existing = (await db.execute(
+        select(ChatGroupMember.character_id).where(ChatGroupMember.group_id == group_id)
+    )).scalars().all()
+    existing_set = set(existing)
+    new_ids = [cid for cid in char_ids if cid not in existing_set]
+    if not new_ids:
+        return {"added": [], "members": len(existing)}
+    if len(existing_set) + len(new_ids) > MAX_MEMBERS:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "group_max_members", max=MAX_MEMBERS))
+    for cid in new_ids:
+        db.add(ChatGroupMember(group_id=group_id, character_id=cid))
+    await db.commit()
+    return {"added": new_ids, "members": len(existing_set) + len(new_ids)}
+
+
+@router.delete("/{group_id}/members/{character_id}")
+async def remove_member(
+    group_id: int,
+    character_id: int,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """移除角色（群至少保留 2 个成员）"""
+    await _owned_group(db, group_id, user_id, lang)
+    existing = (await db.execute(
+        select(ChatGroupMember.character_id).where(ChatGroupMember.group_id == group_id)
+    )).scalars().all()
+    if character_id not in existing:
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "group_member_not_found"))
+    if len(existing) <= MIN_MEMBERS:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "group_min_two"))
+    await db.execute(
+        delete(ChatGroupMember).where(
+            ChatGroupMember.group_id == group_id,
+            ChatGroupMember.character_id == character_id,
+        )
+    )
+    await db.commit()
+    return {"status": "ok", "members": len(existing) - 1}
+
+
+@router.delete("/{group_id}")
+async def delete_group(
+    group_id: int,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """删除群（级联成员与消息）"""
+    await _owned_group(db, group_id, user_id, lang)
+    await db.execute(delete(ChatGroupMember).where(ChatGroupMember.group_id == group_id))
+    await db.execute(delete(ChatGroupMessage).where(ChatGroupMessage.group_id == group_id))
+    await db.execute(delete(ChatGroup).where(ChatGroup.id == group_id))
+    await db.commit()
+    return {"status": "ok"}
+
+
+@router.get("/mentions")
+async def list_mentions(
+    after_id: int = 0,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """@我的才弹：返回用户 @ 角色后该角色的回应（notify_user=1 且 id>after_id，时间正序）"""
+    gids = select(ChatGroup.id).where(ChatGroup.user_id == user_id)
+    rows = (
+        await db.execute(
+            select(ChatGroupMessage)
+            .where(
+                ChatGroupMessage.group_id.in_(gids),
+                ChatGroupMessage.notify_user == 1,
+                ChatGroupMessage.id > after_id,
+            )
+            .order_by(ChatGroupMessage.id.asc())
+        )
+    ).scalars().all()
+    if not rows:
+        return {"items": [], "total": 0}
+    gmap = {}
+    _grows = (await db.execute(
+        select(ChatGroup.id, ChatGroup.name).where(ChatGroup.id.in_({r.group_id for r in rows}))
+    )).all()
+    gmap = {row[0]: (row[1] or "家庭群聊") for row in _grows}
+    cmap = {}
+    _cids = {r.character_id for r in rows if r.character_id}
+    if _cids:
+        _crows = (await db.execute(
+            select(AICharacter.id, AICharacter.name, AICharacter.avatar_url).where(AICharacter.id.in_(_cids))
+        )).all()
+        cmap = {row[0]: {"name": row[1], "avatar": (row[2] or "")} for row in _crows}
+    items = [
+        {
+            "id": r.id,
+            "group_id": r.group_id,
+            "group_name": gmap.get(r.group_id, "家庭群聊"),
+            "character_id": r.character_id,
+            "sender_name": cmap.get(r.character_id, {}).get("name", "") if r.character_id else "",
+            "sender_avatar": cmap.get(r.character_id, {}).get("avatar") or None if r.character_id else None,
+            "content": r.content,
+            "created_at": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/{group_id}/messages")
+async def list_messages(
+    group_id: int,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """群消息（时间正序）"""
+    await _owned_group(db, group_id, user_id, lang)
+    limit = max(1, min(limit, 300))
+    rows = (
+        await db.execute(
+            select(ChatGroupMessage)
+            .where(ChatGroupMessage.group_id == group_id)
+            .order_by(ChatGroupMessage.id.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    rows = list(reversed(rows))
+    names = await _member_names(db, group_id)
+    # 头像（2026-08-14）：群消息带 sender_avatar 供前端显示角色头像
+    avatars: dict[int, str] = {}
+    try:
+        cids = {r.character_id for r in rows if r.character_id}
+        if cids:
+            _cr = await db.execute(
+                select(AICharacter.id, AICharacter.avatar_url).where(AICharacter.id.in_(cids))
+            )
+            avatars = {row[0]: (row[1] or "") for row in _cr.all()}
+    except Exception:
+        pass
+    items = [
+        {
+            "id": r.id,
+            "sender_type": r.sender_type,
+            "character_id": r.character_id,
+            "sender_name": names.get(r.character_id, "") if r.character_id else "你",
+            "sender_avatar": avatars.get(r.character_id) if r.character_id else None,
+            "content": r.content,
+            "created_at": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
+    return {"items": items, "total": len(items)}
+
+
+# 用户消息中的 @ 目标（Phase 3：@ 指定角色优先回应）
+_AT_RE = re.compile(r"@([^\s@，。！？!?、]+)")
+
+
+def _parse_at_names(content: str) -> list[str]:
+    """提取 @ 目标；排除邮箱/网址类英文片段（a@b.com、@example.com）避免误报"""
+    names = []
+    for m in _AT_RE.finditer(content):
+        n = m.group(1).strip()
+        if not n:
+            continue
+        if "." in n:  # 邮箱/域名特征
+            continue
+        names.append(n)
+    return names
+
+
+async def _state_line(char) -> str:
+    """角色当前八维状态的人话描述（Phase 3：状态联动——心情低时群聊也蔫蔫的）"""
+    try:
+        from app.services.character_state_service import get_character_states
+        st = await get_character_states(char.id)
+        parts = []
+        mood = st.get("mood", 50) or 50
+        if mood <= 40:
+            parts.append("心情低落")
+        elif mood >= 70:
+            parts.append("心情很好")
+        if (st.get("fatigue", 50) or 50) >= 65:
+            parts.append("很疲惫")
+        if (st.get("anger", 50) or 50) >= 60:
+            parts.append("在生气")
+        if (st.get("comfort", 50) or 50) <= 40:
+            parts.append("不太舒服")
+        if not parts:
+            return ""
+        return f"{char.name}当前状态：{'、'.join(parts)}（回应要符合 TA 现在的状态）"
+    except Exception:
+        return ""
+
+
+async def _save_group_memory(group_id: int, user_id: int, user_content: str, replies: list[dict]) -> None:
+    """群聊记忆（Phase 3）：用户发言+角色回应 → event 记忆（source=group，每群 30 分钟节流，失败静默）"""
+    try:
+        from app.models.memory import Memory
+        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        async with async_session_factory() as db:
+            members = (
+                await db.execute(
+                    select(ChatGroupMember.character_id).where(ChatGroupMember.group_id == group_id)
+                )
+            ).scalars().all()
+            if not members:
+                return
+            recent = (
+                await db.execute(
+                    select(Memory.id).where(
+                        Memory.user_id == user_id,
+                        Memory.character_id.in_(members),
+                        Memory.source == "group",
+                        Memory.created_at >= now_naive - timedelta(minutes=30),
+                    ).limit(1)
+                )
+            ).scalar_one_or_none()
+            if recent:
+                return
+            name_map = {}
+            if replies:
+                cids = [r.get("character_id") for r in replies if r.get("character_id")]
+                if cids:
+                    _cr = await db.execute(select(AICharacter.id, AICharacter.name).where(AICharacter.id.in_(cids)))
+                    name_map = {row[0]: row[1] for row in _cr.all()}
+        parts = [f"用户在群里说：{user_content[:100]}"]
+        for r in replies:
+            who = name_map.get(r.get("character_id"), "角色")
+            parts.append(f"{who}回应：{r.get('content', '')[:80]}")
+        content = "；".join(parts)[:300]
+        char_id = None
+        if replies and replies[0].get("character_id"):
+            char_id = replies[0]["character_id"]
+        if char_id is None:
+            char_id = members[0]
+        from app.memory.service import save_memory
+        await save_memory(
+            user_id=user_id, character_id=char_id,
+            memory_type="event", content=content,
+            title="家庭群聊", importance=40.0,
+            sub_type="group", source="group",
+            speaker_type="character", speaker_id=char_id,
+            epistemic_status="FACT",
+        )
+        _logger.info("Group memory saved: group=%d char=%d", group_id, char_id)
+    except Exception as e:
+        _logger.warning("Group memory save failed: %s", e)
+
+
+
+
+def _trace_group_reply(group_id: int, user_id: int, replies: list, ok: bool, latency_ms: int) -> None:
+    """群聊角色回应 → AgentTask trace（Phase I：可观测群聊 AI 行为；只写不读，失败静默）。
+
+    Feature Flag agent_trace_group 关闭 = 完全无记录（各平台可独立回退）。
+    """
+    try:
+        from app.agent import loop as _loop
+        if not _loop.AGENT_FLAGS.get("agent_trace_group", True):
+            return
+        from app.agent import trace as _trace
+        _trace.enqueue_task_log(
+            task_id=_trace.new_task_id(),
+            character_id=None,
+            user_id=user_id,
+            session_id=None,
+            trigger="group_chat",
+            route="group_chat",
+            steps_json=json.dumps([
+                {"action": "group_reply", "group_id": group_id,
+                 "replies": [r.get("character_id") for r in replies if r.get("character_id")],
+                 "ok": ok},
+            ], ensure_ascii=False),
+            llm_calls=1 if ok else 0,
+            tool_calls=0,
+            latency_ms=latency_ms,
+            status="ok" if ok else "error",
+            error=None if ok else "群聊回应生成失败",
+        )
+    except Exception:
+        pass
+
+
+async def _generate_replies(db: AsyncSession, group_id: int, user_content: str, user_name: str,
+                            user_id: int | None = None) -> list[dict]:
+    """单次 LLM 调用生成 1-3 个角色的群聊回应（JSON 数组）；失败重试 1 次后返回 []
+
+    Phase 3（2026-08-14）：@名字 → 被 @ 角色必须回应；角色八维状态注入（状态联动）
+    """
+    members = (
+        await db.execute(
+            select(ChatGroupMember.character_id).where(ChatGroupMember.group_id == group_id)
+        )
+    ).scalars().all()
+    if not members:
+        return []
+    cr = await db.execute(select(AICharacter).where(AICharacter.id.in_(members)))
+    chars = cr.scalars().all()
+    if not chars:
+        return []
+    char_map = {c.id: c for c in chars}
+
+    # Phase 3：用户 @ 的目标必须回应
+    at_chars = []
+    for n in _parse_at_names(user_content):
+        hit = next(
+            (c for c in chars if c.name == n or (len(n) >= 2 and (c.name.startswith(n) or n in c.name))),
+            None,
+        )
+        if hit is not None and hit not in at_chars:
+            at_chars.append(hit)
+
+    # 回应者：被 @ 的置前；不足 3 个再从群里随机补（自然感：不是全员刷屏）
+    candidates = list(chars)
+    random.shuffle(candidates)
+    speakers = list(at_chars)
+    for c in candidates:
+        if c not in speakers and len(speakers) < 3:
+            speakers.append(c)
+    if not speakers:
+        return []
+    speaker_ids = {c.id for c in speakers}
+
+    char_lines = []
+    for c in chars:
+        desc = "；".join(x for x in [c.name, c.personality, c.chat_style] if x)
+        char_lines.append(f"- {c.id}：{desc}")
+    # 成员描述列全体（LLM 才知道谁在群里），回应约束在 speakers
+    members_text = "\n".join(char_lines)
+    # 最近群消息上下文（最近 6 条，角色显示名字）
+    recent = (
+        await db.execute(
+            select(ChatGroupMessage)
+            .where(ChatGroupMessage.group_id == group_id)
+            .order_by(ChatGroupMessage.id.desc())
+            .limit(6)
+        )
+    ).scalars().all()
+    recent_lines = []
+    for m in reversed(recent):
+        if m.sender_type == "user":
+            who = user_name
+        elif m.character_id in char_map:
+            who = char_map[m.character_id].name
+        else:
+            who = f"角色{m.character_id}"
+        recent_lines.append(f"[{who}] {m.content[:80]}")
+    context = "\n".join(recent_lines) or "（群聊刚开始）"
+
+    # Phase 3：状态联动（只注入本轮回应者）
+    state_lines = []
+    for c in speakers:
+        _sl = await _state_line(c)
+        if _sl:
+            state_lines.append(_sl)
+    state_text = "\n".join(state_lines) or "（状态正常）"
+    at_hint = ""
+    if at_chars:
+        at_hint = f"用户 @ 了：{'、'.join(c.name for c in at_chars)}——这些角色必须回应。\n"
+
+    prompt = (
+        f"这是一个家庭群聊，成员包括：\n{members_text}\n\n"
+        f"用户{user_name}在群里说：{user_content}\n\n"
+        f"最近群聊记录：\n{context}\n\n"
+        f"{at_hint}"
+        f"角色当前状态：\n{state_text}\n\n"
+        "请从以上成员中选择 1-3 个最可能回应的角色（被 @ 的角色必须回应），各用一句话自然回应（符合各自性格，"
+        "20-40 字，不要提及'AI/群聊'，不要互相@）。回应要符合各角色当前状态（心情低落就别太兴奋）。\n"
+        "重要——多人回应时按真实对话顺序排列（数组顺序即发言顺序）：\n"
+        "1. 第一个回应的人针对用户的话说；\n"
+        "2. 之后每个回应的人要自然承接上一位说的话（可以同意、追问、打趣、岔开，但要接得上，不能自说自话）；\n"
+        "3. 回应之间不能互相矛盾（例如不要两个人同时说'我来做饭'；也不要 A 邀约 B 答应后 C 又说 B 不答应）。\n"
+        "知识边界（必须遵守）：\n"
+        "每个角色只能知道上面'最近群聊记录'里公开出现的信息；\n"
+        "用户私下只跟某个角色说过的事、或某角色私下的记忆，其他角色并不知道——\n"
+        "不要替任何角色说出它不可能知道的私事，除非该信息已经在群里被公开提起过。\n"
+        "认知状态规则：提到推测/猜测要用“可能、我觉得、也许”等不确定语气；提到计划（如“打算去、准备做”）不能说成已经做完。\n"
+        "指代规则：每个角色只能用“我”自称，提到其他角色必须直接用名字（如“小丽”），禁止用“他/她”等模糊指代。\n"
+        '只输出 JSON：{"replies": [{"character_id": 1, "content": "..."}]}'
+    )
+    from app.agent.llm_client import chat_completion
+    for _attempt in range(2):
+        try:
+            text = await chat_completion(
+                messages=[
+                    {"role": "system", "content": "你是一个输出 JSON 的助手，直接输出 JSON，不要多余文字。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.85,
+                max_tokens=400,
+                task="message",
+                user_id=user_id,
+            )
+            raw = (text or "").strip()
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            data = json.loads(raw)
+            replies = data.get("replies") or []
+            valid = []
+            for r in replies:
+                cid = int(r.get("character_id") or 0)
+                content = str(r.get("content") or "").strip()
+                if cid in speaker_ids and content and len(content) <= 200:
+                    valid.append({"character_id": cid, "content": content[:200]})
+            if valid:
+                return valid
+            _logger.warning(
+                "Group replies: LLM returned but no valid reply (attempt %d, raw=%.120s)",
+                _attempt + 1, raw,
+            )
+        except Exception as e:
+            _logger.warning("Group replies generation failed (attempt %d): %s", _attempt + 1, e)
+    _logger.warning("Group replies: no reply generated for group=%d", group_id)
+    return []
+
+
+@router.post("/{group_id}/messages")
+async def send_message(
+    group_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """用户发言 → 落库 → 生成多角色回应（单次 LLM）"""
+    await _owned_group(db, group_id, user_id, lang)
+    content = str(data.get("content") or "").strip()
+    if not content or len(content) > 500:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "group_msg_empty"))
+
+    msg = ChatGroupMessage(group_id=group_id, sender_type="user", content=content)
+    db.add(msg)
+    await db.commit()
+    await db.refresh(msg)
+
+    user_name = ""
+    try:
+        from app.models.user import User
+        u = await db.get(User, user_id)
+        user_name = (u.nickname if u and u.nickname else (u.username if u else "")) or "用户"
+    except Exception:
+        user_name = "用户"
+
+    _t0 = time.monotonic()
+    replies = await _generate_replies(db, group_id, content, user_name, user_id=user_id)
+    # Phase I：群聊角色回应 → AgentTask trace（只写不读；失败静默）
+    try:
+        _trace_group_reply(group_id, user_id, replies, bool(replies), int((time.monotonic() - _t0) * 1000))
+    except Exception:
+        pass
+    # 群成员名字 + 头像（2026-08-15：返回给前端直接显示，避免 sender_name 兜底成"角色"）
+    _names = await _member_names(db, group_id)
+    _avatars: dict[int, str] = {}
+    try:
+        _cids = {r["character_id"] for r in replies if r.get("character_id")}
+        if _cids:
+            _cr = await db.execute(
+                select(AICharacter.id, AICharacter.avatar_url).where(AICharacter.id.in_(_cids))
+            )
+            _avatars = {row[0]: (row[1] or "") for row in _cr.all()}
+    except Exception:
+        pass
+    # @我的才弹：用户 @ 了某角色 → 该角色的回应 notify_user=1（前端轮询 /mentions 弹通知）
+    at_cids: set[int] = set()
+    if _parse_at_names(content):
+        try:
+            _all_members = (await db.execute(
+                select(ChatGroupMember.character_id).where(ChatGroupMember.group_id == group_id)
+            )).scalars().all()
+            if _all_members:
+                _mrows = (await db.execute(
+                    select(AICharacter.id, AICharacter.name).where(AICharacter.id.in_(_all_members))
+                )).all()
+                _mnames = {row[1]: row[0] for row in _mrows}
+                for _n in _parse_at_names(content):
+                    _hit = next(
+                        (cid for cname, cid in _mnames.items()
+                         if cname == _n or (len(_n) >= 2 and (cname.startswith(_n) or _n in cname))),
+                        None,
+                    )
+                    if _hit is not None:
+                        at_cids.add(_hit)
+        except Exception:
+            pass
+
+    ai_msgs = []
+    for r in replies:
+        am = ChatGroupMessage(
+            group_id=group_id, sender_type="ai", character_id=r["character_id"], content=r["content"],
+        )
+        if am.character_id in at_cids:
+            am.notify_user = 1
+        db.add(am)
+        await db.flush()
+        await db.refresh(am)
+        ai_msgs.append({
+            "id": am.id,
+            "sender_type": "ai",
+            "character_id": am.character_id,
+            "sender_name": _names.get(am.character_id, "") if am.character_id else "角色",
+            "sender_avatar": _avatars.get(am.character_id) if am.character_id else None,
+            "content": am.content,
+            "created_at": am.created_at.isoformat(),
+            "notify_user": am.notify_user,
+        })
+    await db.commit()
+
+    # 群记忆（Phase 3，2026-08-14）：异步把本轮群聊提炼为记忆（每群 30 分钟节流，失败静默）
+    try:
+        import asyncio as _aio
+        _aio.ensure_future(_save_group_memory(group_id, user_id, content, ai_msgs))
+    except Exception:
+        pass
+
+    return {
+        "user_message": {
+            "id": msg.id, "sender_type": "user", "character_id": None,
+            "sender_name": user_name,
+            "content": msg.content, "created_at": msg.created_at.isoformat(),
+        },
+        "replies": ai_msgs,
+    }

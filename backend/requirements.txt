@@ -1,0 +1,39 @@
+# Core
+fastapi>=0.140
+uvicorn[standard]>=0.51
+sqlalchemy>=2.0
+aiosqlite>=0.22
+pydantic-settings>=2.14
+
+# AI Agent
+langgraph>=1.2
+langchain-openai>=1.4
+openai>=2.48
+chromadb>=1.5,<2  # 锁上界防 2.x 破坏性变更（嵌入式模式 HTTP 不暴露）
+
+# Auth
+python-jose>=3.5
+bcrypt>=5.0
+ecdsa>=0.19  # python-jose 间接依赖；CVE-2024-23342 下界约束
+
+# Utils
+python-dotenv>=1.2
+httpx>=0.28
+APScheduler>=3.11
+websockets>=15.0
+
+# 图片理解（本地 OCR + VLM 依赖）
+rapidocr-onnxruntime>=1.2
+onnxruntime>=1.28
+Pillow>=10.0
+python-multipart>=0.0.9
+
+# 向量嵌入（本地 bge-small-zh ONNX）
+numpy>=1.26
+tokenizers>=0.19
+
+# 农历（节日/日记）
+lunardate>=0.2
+
+# 服务器控制台（跨平台进程管理，缺失时自动降级）
+psutil>=6.0

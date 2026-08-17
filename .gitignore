@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 运行数据（不提交）
+backend/data/sqlite/
+backend/data/vector_store/
+backend/data/douyin_profile/
+backend/data/browser_profile/
+backend/data/plugins/
+
+# 环境变量
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Flutter 构建产物
+flutter_app/build/
+flutter_app/.dart_tool/
+flutter_app/.packages
+flutter_app/pubspec.lock
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+flutter_app/.metadata
+
+# 运行时数据（logs/uploads/锁/状态，不提交）
+backend/data/logs/
+backend/data/uploads/*
+!backend/data/uploads/pets/
+backend/data/locks/
+backend/data/paused.flag
+backend/data/server_config.json
+
+# 备份目录（独立于版本库）
+backups/
+
+# 临时补丁脚本
+_patch_*.py
+
+# 本地向量模型（外部下载的大文件，独立于代码）
+backend/models/
+
+# Flutter 运行日志
+flutter_app/*.log
+
+# 误创建的顶层空数据库文件
+backend/data/*.db
+
+# 安全（2026-08-06）：JWT 自动生成密钥不入库
+backend/data/auth_secret.key
+
+# 发布包隐私词名单（仅本机扫描用）
+scripts/.privacy_names
+
+# 根目录微信赞赏码（个人资产，不随 git 分发；仅根目录此文件，flutter_app/assets/ 内的赞赏码正常入库）
+/reward-qrcode.png
+
+# Flutter 插件依赖清单（构建产物，重新 pub get 生成）
+flutter_app/.flutter-plugins-dependencies
+
+# APK 构建产物（编译到 output，用户自行复制分发）
+output/
+
+# 远程市场缓存（运行产物）
+backend/data/marketplace_cache/
+
