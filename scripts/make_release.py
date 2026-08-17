@@ -302,8 +302,6 @@ backend/.venv/Scripts/python.exe scripts/server_manager.py restart   # Windows
 
 ![微信赞赏码](flutter_app/assets/reward_qrcode.png)
 
-> 赞赏码图片：发布前将你的微信赞赏码另存为项目根目录 `reward-qrcode.png`（仓库已预留打包逻辑，重建发布包即自动带上）。
-
 ## 隐私说明
 - 图片默认仅本地 OCR 识文；开启识图后，图片二进制只发给本地 VLM 或你自填的视觉 API 端点，**不会**进入聊天 LLM
 - 数据默认全部存在你自己的服务器（SQLite + 本地向量库）
