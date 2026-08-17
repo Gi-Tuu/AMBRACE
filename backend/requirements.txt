@@ -20,7 +20,7 @@ ecdsa>=0.19  # python-jose 间接依赖；CVE-2024-23342 下界约束
 python-dotenv>=1.2
 httpx>=0.28
 APScheduler>=3.11
-websockets>=15.0
+websockets>=17.0.1
 
 # 图片理解（本地 OCR + VLM 依赖）
 rapidocr-onnxruntime>=1.2
