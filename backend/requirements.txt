@@ -18,7 +18,7 @@ ecdsa>=0.19  # python-jose 间接依赖；CVE-2024-23342 下界约束
 
 # Utils
 python-dotenv>=1.2
-httpx>=0.28
+httpx>=0.28.1
 APScheduler>=3.11
 websockets>=15.0
 
