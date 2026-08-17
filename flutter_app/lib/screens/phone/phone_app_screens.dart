@@ -163,7 +163,7 @@ class _AlbumScreenState extends State<AlbumScreen> {
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
                         child: Image.network(
-                          url,
+                          ApiClient().resolveUrl(url),
                           fit: BoxFit.cover,
                           frameBuilder: (_, child, frame, wasSyncLoaded) =>
                               frame == null
@@ -263,7 +263,7 @@ class _PhotoPreviewPageState extends State<_PhotoPreviewPage> {
               maxScale: 4,
               child: Center(
                 child: Image.network(
-                  widget.photos[i],
+                  ApiClient().resolveUrl(widget.photos[i]),
                   fit: BoxFit.contain,
                   errorBuilder: (_, __, ___) =>
                       const Icon(Icons.broken_image, color: Colors.white54, size: 56),
