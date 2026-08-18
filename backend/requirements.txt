@@ -7,7 +7,7 @@ pydantic-settings>=2.14
 
 # AI Agent
 langgraph>=1.2
-langchain-openai>=1.4
+langchain-openai>=1.5.0
 openai>=2.48
 chromadb>=1.5,<2  # 锁上界防 2.x 破坏性变更（嵌入式模式 HTTP 不暴露）
 
