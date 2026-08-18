@@ -33,7 +33,7 @@ numpy>=1.26
 tokenizers>=0.19
 
 # 农历（节日/日记）
-lunardate>=0.2
+lunardate>=0.3.0
 
 # 服务器控制台（跨平台进程管理，缺失时自动降级）
 psutil>=6.0
