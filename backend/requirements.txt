@@ -29,7 +29,7 @@ Pillow>=10.0
 python-multipart>=0.0.9
 
 # 向量嵌入（本地 bge-small-zh ONNX）
-numpy>=1.26
+numpy>=2.5.2
 tokenizers>=0.19
 
 # 农历（节日/日记）
