@@ -1,0 +1,6 @@
+# 开发/测试工具链（P2-5，2026-08-23）：运行时依赖见 requirements.txt，本文件仅开发/CI 用。
+# 说明：项目测试统一用 asyncio.run() 同步执行（未用 pytest-asyncio 插件），仍显式列入以便后续演进；
+#       若需安装则：pip install -r requirements-dev.txt
+pytest>=9.1.1
+pytest-asyncio>=0.24,<2
+ruff>=0.16

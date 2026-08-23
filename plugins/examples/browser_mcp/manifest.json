@@ -1,0 +1,21 @@
+{
+  "name": "browser_mcp",
+  "version": "0.1.0",
+  "description": "让 AI 能浏览网页：查看页面标题与摘要、理解图片内容。默认关闭，开启后只记域名和标题，30 分钟自动清除",
+  "author": "AICompanion",
+  "category": "mcp",
+  "hooks": [
+    "http_router",
+    "schedule_tick",
+    "context_inject"
+  ],
+  "permissions": [],
+  "config": {
+    "enabled": false,
+    "inject_minutes": 480,
+    "max_inject": 3,
+    "search_inject": true,
+    "warm_idle_minutes": 10
+  },
+  "usage": "1. 打开本插件开关即可启用；\n2. AI 需要查资料/看网页时会自动通过本插件浏览；\n3. 浏览内容只保留 30 分钟，不会写入 AI 的长期记忆，可随时关闭。"
+}
