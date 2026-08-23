@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f7f6f4">
+<meta name="description" content="拥爱 AMBRACE：自托管、隐私优先的 AI 伙伴陪伴应用。多角色聊天、记忆、朋友圈、日记、宠物、小家、插件市场与手机感知，全部跑在你自己的服务器上。">
+<title>拥爱 AMBRACE · 自托管、隐私优先的 AI 伙伴</title>
+<style>
+  :root{
+    --bg:#f7f6f4;
+    --bg-2:#fbfaf9;
+    --surface:#ffffff;
+    --ink:#17181c;
+    --ink-soft:#4c4f56;
+    --ink-faint:#66686f;
+    --line:rgba(23,24,28,.09);
+    --line-strong:rgba(23,24,28,.16);
+
+    --accent:#e0705d;
+    --accent-deep:#c74f3e;
+    --accent-soft:#fbe9e4;
+    --accent-glow:rgba(235,126,102,.30);
+    --accent-btn:#ba4636;
+    --accent-btn-deep:#a63d2f;
+    --accent-strong:#9f3828;
+
+    --dawn-1:#f7bd94;
+    --dawn-2:#ef8d72;
+    --dawn-3:#e0705d;
+
+    --dark:#17181c;
+    --dark-2:#1e2025;
+    --dark-line:rgba(255,255,255,.10);
+    --dark-ink:#f6f6f5;
+    --dark-soft:#b9bcc4;
+    --dark-faint:#888b93;
+
+    --r-card:22px;
+    --r-sm:14px;
+    --r-pill:999px;
+
+    --shadow-soft:0 1px 2px rgba(23,24,28,.04), 0 12px 40px rgba(23,24,28,.06);
+    --shadow-card:0 1px 2px rgba(23,24,28,.04), 0 18px 50px rgba(23,24,28,.09);
+
+    --maxw:1120px;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",Helvetica,Arial,sans-serif;
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+  @media (prefers-reduced-motion: reduce){
+    html{scroll-behavior:auto}
+    *{animation:none !important;transition:none !important}
+  }
+  body{
+    font-family:var(--font);
+    background:var(--bg);
+    color:var(--ink);
+    line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+    overflow-x:hidden;
+  }
+  a{color:inherit;text-decoration:none}
+  img,svg{display:block;max-width:100%}
+  ::selection{background:rgba(235,126,102,.28);color:var(--ink)}
+
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:.55rem;
+    font-size:.8rem;font-weight:650;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--accent-strong);
+    padding:.42rem .9rem;border-radius:var(--r-pill);
+    background:var(--accent-soft);border:1px solid rgba(199,79,62,.16);
+  }
+  .eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);display:inline-block}
+
+  .section{padding:96px 0}
+  .sec-head{max-width:720px;margin:0 auto 56px;text-align:center}
+  .sec-head h2{
+    font-size:clamp(1.9rem,4.4vw,2.9rem);font-weight:750;letter-spacing:-.02em;
+    line-height:1.14;margin:1.1rem 0 .9rem;
+  }
+  .sec-head p{font-size:1.08rem;color:var(--ink-soft);max-width:58ch;margin:0 auto}
+
+  /* ---- reveal ---- */
+  .reveal{opacity:0;transform:translateY(26px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
+  .reveal.in{opacity:1;transform:none}
+  .reveal.d1{transition-delay:.08s}
+  .reveal.d2{transition-delay:.16s}
+  .reveal.d3{transition-delay:.24s}
+
+  /* ===== NAV ===== */
+  .nav{
+    position:sticky;top:0;z-index:100;
+    backdrop-filter:saturate(180%) blur(16px);
+    -webkit-backdrop-filter:saturate(180%) blur(16px);
+    background:rgba(247,246,244,.72);
+    border-bottom:1px solid transparent;
+    transition:border-color .3s, background .3s;
+  }
+  .nav.scrolled{border-bottom-color:var(--line);background:rgba(247,246,244,.86)}
+  .nav-inner{display:flex;align-items:center;justify-content:space-between;height:68px}
+  .brand{display:inline-flex;align-items:center;gap:.6rem;font-weight:760;font-size:1.06rem;letter-spacing:-.01em}
+  .brand .mark{width:38px;height:38px;filter:drop-shadow(0 2px 6px rgba(224,112,93,.32))}
+  .brand .tw{color:var(--ink-faint);font-weight:600;font-size:.9rem;letter-spacing:.02em}
+  .nav-links{display:flex;align-items:center;gap:1.55rem}
+  .nav-links a.navlink{color:var(--ink-soft);font-size:.96rem;font-weight:560;transition:color .2s}
+  .nav-links a.navlink:hover{color:var(--ink)}
+  .nav-links a.navlink.curr{color:var(--ink);font-weight:700}
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:.5rem;
+    font-weight:660;font-size:.96rem;line-height:1;white-space:nowrap;
+    border-radius:var(--r-pill);padding:.82rem 1.35rem;cursor:pointer;
+    transition:transform .12s ease, box-shadow .25s ease, background .25s ease, color .25s, border-color .25s;
+    border:1px solid transparent;
+  }
+  .btn:active{transform:translateY(1px) scale(.99)}
+  .btn svg{width:18px;height:18px;flex:none}
+  .btn-dark{background:var(--ink);color:#fff}
+  .btn-dark:hover{background:#000;box-shadow:0 10px 30px rgba(23,24,28,.18)}
+  .btn-accent{background:var(--accent-btn);color:#fff}
+  .btn-accent:hover{background:var(--accent-btn-deep);box-shadow:0 10px 28px var(--accent-glow)}
+  .btn-ghost{background:var(--surface);color:var(--ink);border-color:var(--line-strong)}
+  .btn-ghost:hover{border-color:var(--ink);background:#fff}
+  .btn-sm{padding:.6rem 1rem;font-size:.88rem}
+  .nav .btn svg{color:#fff}
+
+  /* mobile menu */
+  .burger{display:none;width:42px;height:42px;border:1px solid var(--line-strong);background:var(--surface);border-radius:12px;cursor:pointer;align-items:center;justify-content:center}
+  .burger span{display:block;width:18px;height:2px;background:var(--ink);border-radius:2px;position:relative}
+  .burger span::before,.burger span::after{content:"";position:absolute;left:0;width:18px;height:2px;background:var(--ink);border-radius:2px}
+  .burger span::before{top:-6px}.burger span::after{top:6px}
+  .mobile-menu{display:none;flex-direction:column;gap:.2rem;padding:1rem 0 1.4rem;border-top:1px solid var(--line)}
+  .mobile-menu a{padding:.85rem .25rem;font-size:1.05rem;font-weight:600;color:var(--ink-soft);border-bottom:1px solid var(--line)}
+  .mobile-menu a:last-child{border-bottom:none}
+  .mobile-menu .btn{margin-top:.9rem;justify-content:center}
+
+  /* ===== HERO ===== */
+  .hero{position:relative;padding:76px 0 40px;text-align:center;overflow:hidden}
+  .hero .bg{
+    position:absolute;inset:-20% -10% auto;height:640px;z-index:-1;pointer-events:none;
+    background:
+      radial-gradient(58% 58% at 50% 22%, rgba(247,189,148,.55), transparent 62%),
+      radial-gradient(46% 46% at 50% 30%, rgba(239,141,114,.30), transparent 66%);
+    filter:blur(6px);
+  }
+  .hero .bg::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg, transparent 55%, var(--bg) 100%)}
+  .hero-inner{position:relative}
+  .hero h1{
+    font-size:clamp(2.5rem,7vw,4.6rem);font-weight:810;letter-spacing:-.035em;line-height:1.03;
+    margin:1.5rem auto 1.35rem;max-width:13ch;
+  }
+  .hero h1 .grad{
+    background:linear-gradient(100deg,var(--dawn-1),var(--dawn-2) 45%,var(--accent));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .hero .lead{font-size:clamp(1.05rem,2vw,1.28rem);color:var(--ink-soft);max-width:46ch;margin:0 auto 2rem;line-height:1.6}
+  .hero .cta-row{display:flex;gap:.85rem;justify-content:center;flex-wrap:wrap;margin-bottom:1.2rem}
+
+  /* hero illustration */
+  .hero-art{position:relative;max-width:780px;margin:48px auto 0}
+  .hero-art svg{width:100%;height:auto}
+
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+  @keyframes drift{0%,100%{transform:translate(0,0)}50%{transform:translate(6px,-5px)}}
+  @keyframes pop{0%{transform:scale(.7);opacity:0}60%{transform:scale(1.06)}100%{transform:scale(1);opacity:1}}
+  .hero-art .bob{animation:bob 5.4s ease-in-out infinite}
+  .hero-art .drift{animation:drift 6.6s ease-in-out infinite}
+  .hero-art .pop{animation:pop .7s ease both}
+  .hero-art .pop.d1{animation-delay:.2s}
+  .hero-art .pop.d2{animation-delay:.35s}
+
+  /* ===== BENTO FEATURES ===== */
+  .features{padding:64px 0 96px}
+  .bento{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:1fr;gap:18px}
+  .cell{
+    position:relative;background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--r-card);padding:26px;overflow:hidden;
+    box-shadow:var(--shadow-soft);transition:transform .3s cubic-bezier(.2,.7,.2,1),box-shadow .3s,border-color .3s;
+    display:flex;flex-direction:column;min-height:210px;
+  }
+  .cell:hover{transform:translateY(-4px);box-shadow:var(--shadow-card);border-color:var(--line-strong)}
+  .cell .ic{width:46px;height:46px;border-radius:14px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;margin-bottom:18px;transition:background .3s,transform .3s}
+  .cell:hover .ic{background:#fff;transform:scale(1.06)}
+  .cell .ic svg{width:25px;height:25px;color:var(--accent-deep)}
+  .cell h3{font-size:1.12rem;font-weight:720;letter-spacing:-.01em;margin-bottom:.5rem}
+  .cell p{font-size:.94rem;color:var(--ink-soft);line-height:1.58}
+  .cell.span2{grid-column:span 2}
+  .cell.span-row2{grid-row:span 2}
+  /* visual cells */
+  .cell.is-warm{background:linear-gradient(150deg,#fff, var(--accent-soft));border-color:rgba(199,79,62,.18)}
+  .cell .visual{margin-top:auto;padding-top:18px}
+  .cell.is-art .art-wrap{position:relative;height:150px;display:flex;align-items:center;justify-content:center}
+  .cell.is-art .pet{width:120px;height:120px;}
+  .cell .tag{position:absolute;top:24px;right:24px;font-size:.72rem;font-weight:700;letter-spacing:.1em;color:var(--accent-strong);background:#fff;border:1px solid rgba(199,79,62,.2);padding:.22rem .6rem;border-radius:var(--r-pill)}
+  .cell .mini-stats{display:flex;gap:10px;margin-top:auto;padding-top:16px}
+  .cell .mini-stats span{font-size:.78rem;color:var(--ink-faint);display:inline-flex;align-items:center;gap:.35rem}
+
+  /* ===== PRIVACY ===== */
+  .privacy{background:var(--bg-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .privacy-inner{display:grid;grid-template-columns:1.05fr 1fr;gap:60px;align-items:center}
+  .privacy .copy h2{font-size:clamp(1.9rem,4vw,2.7rem);font-weight:760;letter-spacing:-.02em;line-height:1.14;margin:1.1rem 0 1rem}
+  .privacy .copy p{font-size:1.06rem;color:var(--ink-soft);max-width:48ch}
+  .privacy-badge{display:inline-flex;align-items:center;gap:.6rem;margin-bottom:1rem;color:var(--accent-strong);font-weight:700}
+  .pillars{display:flex;flex-direction:column;gap:16px}
+  .pillar{display:flex;gap:18px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);padding:22px 22px;box-shadow:var(--shadow-soft)}
+  .pillar .ic{width:44px;height:44px;flex:none;border-radius:12px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center}
+  .pillar .ic svg{width:22px;height:22px;color:var(--accent-deep)}
+  .pillar h4{font-size:1.04rem;font-weight:700;margin-bottom:.35rem}
+  .pillar p{font-size:.92rem;color:var(--ink-soft);line-height:1.55}
+  .shield{position:relative;display:flex;align-items:center;justify-content:center}
+  .shield svg{width:100%;max-width:360px;height:auto}
+
+  /* ===== STORY ===== */
+  .story{background:var(--bg);text-align:center}
+  .story .quote{max-width:800px;margin:0 auto}
+  .story .quote p{font-size:clamp(1.35rem,3vw,2rem);font-weight:600;letter-spacing:-.01em;line-height:1.42}
+  .story .quote p .hl{color:var(--accent-strong);font-weight:740}
+  .story .quote .who{display:block;margin-top:1.6rem;font-size:.95rem;font-weight:600;color:var(--ink-faint)}
+  .story .marks{display:flex;justify-content:center;gap:34px;margin-top:52px;flex-wrap:wrap}
+  .story .marks .m{display:flex;flex-direction:column;align-items:center;gap:.5rem;max-width:150px}
+  .story .marks .m svg{width:30px;height:30px;color:var(--accent)}
+  .story .marks .m span{font-size:.88rem;color:var(--ink-soft)}
+
+  /* ===== TIMELINE ===== */
+  .timeline{background:var(--bg-2);border-top:1px solid var(--line)}
+  .tl{max-width:820px;margin:0 auto;position:relative;padding-left:34px}
+  .tl::before{content:"";position:absolute;left:10px;top:6px;bottom:6px;width:2px;background:linear-gradient(180deg,var(--dawn-2),var(--accent),transparent)}
+  .tl-item{position:relative;padding-bottom:40px}
+  .tl-item:last-child{padding-bottom:0}
+  .tl-item .dot{position:absolute;left:-34px;top:6px;width:18px;height:18px;border-radius:50%;background:#fff;border:2px solid var(--accent-deep);box-shadow:0 0 0 4px rgba(224,112,93,.16)}
+  .tl-item .ver{display:inline-block;font-size:.78rem;font-weight:750;letter-spacing:.08em;color:var(--accent-strong);background:var(--accent-soft);padding:.22rem .66rem;border-radius:var(--r-pill);margin-bottom:.7rem}
+  .tl-item h4{font-size:1.16rem;font-weight:720;margin-bottom:.35rem;display:flex;align-items:center;gap:.6rem}
+  .tl-item p{font-size:.96rem;color:var(--ink-soft);max-width:56ch}
+
+  /* ===== CTA END (dark) ===== */
+  .cta-end{background:var(--dark);color:var(--dark-ink);position:relative;overflow:hidden}
+  .cta-end::before{content:"";position:absolute;inset:0;background:
+    radial-gradient(50% 60% at 30% 20%, rgba(224,112,93,.16), transparent 60%),
+    radial-gradient(46% 54% at 75% 80%, rgba(247,189,148,.10), transparent 60%);pointer-events:none}
+  .cta-end .wrap{position:relative;text-align:center}
+  .cta-end h2{font-size:clamp(2.1rem,5vw,3.3rem);font-weight:800;letter-spacing:-.02em;line-height:1.1}
+  .cta-end .sub{max-width:52ch;margin:1.1rem auto 2rem;color:var(--dark-soft);font-size:1.1rem}
+  .cta-end .cta-row{display:flex;gap:.9rem;justify-content:center;flex-wrap:wrap;margin-bottom:56px}
+  .btn-light{background:var(--dark-ink);color:#141519}
+  .btn-light:hover{background:#fff;box-shadow:0 12px 34px rgba(0,0,0,.4)}
+  .btn-ghost-dark{background:transparent;color:var(--dark-ink);border-color:var(--dark-line)}
+  .btn-ghost-dark:hover{border-color:var(--dark-ink);background:rgba(255,255,255,.05)}
+  .btn-ghost-dark svg{color:var(--dark-ink)}
+
+  /* quickstart */
+  .quick{max-width:800px;margin:0 auto;text-align:left;background:var(--dark-2);border:1px solid var(--dark-line);border-radius:var(--r-card);padding:30px 30px;box-shadow:0 30px 80px rgba(0,0,0,.4)}
+  .quick h3{font-size:1.15rem;font-weight:720;margin-bottom:1rem;display:flex;align-items:center;gap:.55rem}
+  .quick h3 svg{width:20px;height:20px;color:var(--accent)}
+  .quick ol{list-style:none;counter-reset:s;display:flex;flex-direction:column;gap:14px}
+  .quick li{counter-increment:s;display:flex;gap:14px;align-items:flex-start}
+  .quick li::before{content:counter(s);flex:none;width:26px;height:26px;border-radius:50%;background:rgba(224,112,93,.18);color:#ff9b86;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.86rem;margin-top:5px}
+  .quick li .t{font-weight:650;margin-right:.35rem}
+  .quick li .d{color:var(--dark-soft);font-size:.94rem}
+  .quick code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86rem;background:rgba(255,255,255,.07);color:#ffd9cf;padding:.12rem .48rem;border-radius:7px;border:1px solid var(--dark-line)}
+
+  /* footer */
+  .footer{background:var(--dark);color:var(--dark-faint);border-top:1px solid var(--dark-line);padding:42px 0}
+  .footer .wrap{display:flex;align-items:center;justify-content:space-between;gap:22px;flex-wrap:wrap}
+  .footer .fbrand{display:flex;align-items:center;gap:.6rem;color:var(--dark-ink);font-weight:720}
+  .footer .fbrand .mark{width:30px;height:30px}
+  .footer nav{display:flex;gap:1.4rem;flex-wrap:wrap}
+  .footer nav a{color:var(--dark-faint);font-size:.9rem;transition:color .2s}
+  .footer nav a:hover{color:var(--dark-ink)}
+  .footer .copy{font-size:.84rem}
+
+  /* ===== responsive ===== */
+  @media (max-width:1024px){
+    .bento{grid-template-columns:repeat(2,1fr)}
+    .privacy-inner{grid-template-columns:1fr;gap:40px}
+  }
+  @media (max-width:860px){
+    .nav-links{display:none}
+    .burger{display:flex}
+    .mobile-menu.open{display:flex}
+    .section{padding:72px 0}
+    .hero{padding:58px 0 26px}
+  }
+  @media (max-width:640px){
+    .bento{grid-template-columns:1fr}
+    .cell.span2{grid-column:span 1}
+    .cell.span-row2{grid-row:auto}
+    .cell{min-height:0}
+    .hero .cta-row{flex-direction:column;align-items:stretch}
+    .hero .cta-row .btn{justify-content:center}
+    .story .marks{gap:22px}
+    .footer .wrap{flex-direction:column;align-items:flex-start}
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ NAV ============ -->
+<header class="nav" id="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top" aria-label="拥爱 AMBRACE 首页">
+      <svg class="mark" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="bmk" x1="4" y1="4" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#f7bd94"/><stop offset="1" stop-color="#e0705d"/>
+          </linearGradient>
+        </defs>
+        <rect x="3" y="3" width="34" height="34" rx="11" fill="url(#bmk)"/>
+        <path d="M20 27c0 0-8-4.6-8-9.2C12 14.8 14.3 13 16.7 13c1.4 0 2.6.6 3.3 1.7.7-1.1 1.9-1.7 3.3-1.7 2.4 0 4.7 1.8 4.7 4.8C28 22.4 20 27 20 27Z" fill="#fff"/>
+      </svg>
+      <span>拥爱 <span class="tw">AMBRACE</span></span>
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a class="navlink" href="#features">产品</a>
+      <a class="navlink" href="#privacy">隐私</a>
+      <a class="navlink" href="#story">故事</a>
+      <a class="navlink" href="#timeline">时间线</a>
+      <a class="btn btn-dark btn-sm" href="https://github.com/Gi-Tuu/AMBRACE" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-1.96c-3.2.7-3.87-1.54-3.87-1.54-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.23-1.27-5.23-5.66 0-1.25.45-2.27 1.19-3.07-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.17a11 11 0 0 1 5.8 0c2.2-1.48 3.17-1.17 3.17-1.17.63 1.59.23 2.76.11 3.05.74.8 1.19 1.82 1.19 3.07 0 4.4-2.69 5.37-5.25 5.65.41.35.78 1.05.78 2.12v3.14c0 .31.21.67.8.56A11.52 11.52 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></svg>
+        GitHub Star
+      </a>
+    </nav>
+    <button class="burger" id="burger" aria-label="打开菜单" aria-expanded="false" aria-controls="mobileMenu">
+      <span></span>
+    </button>
+  </div>
+  <div class="wrap mobile-menu" id="mobileMenu">
+    <a href="#features">产品</a>
+    <a href="#privacy">隐私</a>
+    <a href="#story">故事</a>
+    <a href="#timeline">时间线</a>
+    <a class="btn btn-dark" href="https://github.com/Gi-Tuu/AMBRACE" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="18" height="18"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-1.96c-3.2.7-3.87-1.54-3.87-1.54-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.23-1.27-5.23-5.66 0-1.25.45-2.27 1.19-3.07-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.17a11 11 0 0 1 5.8 0c2.2-1.48 3.17-1.17 3.17-1.17.63 1.59.23 2.76.11 3.05.74.8 1.19 1.82 1.19 3.07 0 4.4-2.69 5.37-5.25 5.65.41.35.78 1.05.78 2.12v3.14c0 .31.21.67.8.56A11.52 11.52 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></svg>
+      GitHub Star
+    </a>
+  </div>
+</header>
+
+<!-- ============ HERO ============ -->
+<section class="hero" id="top">
+  <div class="bg" aria-hidden="true"></div>
+  <div class="wrap hero-inner">
+    <span class="eyebrow reveal in"><span class="dot"></span> 自托管 · 开源 · 隐私优先</span>
+    <h1 class="reveal in d1">拥爱 <span class="grad">AMBRACE</span><br>让 AI 伙伴有个家</h1>
+    <p class="lead reveal in d2">自托管、隐私优先的 AI 伙伴陪伴应用。角色、记忆与陪伴，都活在你自己的服务器里，而不是别人家的云端。</p>
+    <div class="cta-row reveal in d3">
+      <a class="btn btn-accent" href="https://github.com/Gi-Tuu/AMBRACE" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v13m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        免费自托管
+      </a>
+      <a class="btn btn-ghost" href="#quickstart">快速开始</a>
+    </div>
+
+    <!-- hero illustration -->
+    <div class="hero-art" aria-hidden="true">
+      <svg viewBox="0 0 760 300" fill="none">
+        <defs>
+          <linearGradient id="orb" x1="0" y1="0" x2="1" y2="1">
+            <stop stop-color="#fbd0b0"/><stop offset=".5" stop-color="#f39a76"/><stop offset="1" stop-color="#e0705d"/>
+          </linearGradient>
+          <linearGradient id="bub" x1="0" y1="0" x2="1" y2="1">
+            <stop stop-color="#fff" stop-opacity=".96"/><stop offset="1" stop-color="#fff" stop-opacity=".82"/>
+          </linearGradient>
+          <radialGradient id="glow" cx=".5" cy=".5" r=".5">
+            <stop stop-color="#f8c39a" stop-opacity=".5"/><stop offset="1" stop-color="#f8c39a" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+
+        <ellipse cx="380" cy="160" rx="300" ry="150" fill="url(#glow)"/>
+
+        <!-- orbit ring -->
+        <circle class="bob" cx="380" cy="168" r="104" stroke="#e0705d" stroke-opacity=".28" stroke-width="1.6" stroke-dasharray="3 5"/>
+
+        <!-- central companion orb -->
+        <g class="bob">
+          <circle cx="380" cy="150" r="66" fill="url(#orb)"/>
+          <circle cx="380" cy="150" r="66" fill="#fff" fill-opacity=".06"/>
+          <path d="M354 150c0-16 12-28 26-28s26 12 26 28" stroke="#fff" stroke-opacity=".5" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <circle cx="363" cy="142" r="4" fill="#fff" fill-opacity=".85"/>
+          <circle cx="397" cy="142" r="4" fill="#fff" fill-opacity=".85"/>
+          <path d="M372 167c5 5 11 5 16 0" stroke="#fff" stroke-width="3" stroke-linecap="round" fill="none"/>
+        </g>
+
+        <!-- chat bubbles -->
+        <g class="drift">
+          <rect x="120" y="96" width="150" height="62" rx="22" fill="url(#bub)" stroke="#e0705d" stroke-opacity=".22"/>
+          <path d="M136 158l-12 20 26-12" fill="url(#bub)" stroke="#e0705d" stroke-opacity=".22"/>
+          <circle cx="158" cy="127" r="6" fill="#f7bd94"/>
+          <rect x="174" y="121" width="66" height="11" rx="5.5" fill="#ece7e2"/>
+          <rect x="174" y="140" width="46" height="11" rx="5.5" fill="#ece7e2"/>
+        </g>
+        <g class="drift" style="animation-delay:.6s">
+          <rect x="500" y="120" width="150" height="60" rx="22" fill="url(#bub)" stroke="#e0705d" stroke-opacity=".22"/>
+          <path d="M624 180l14 18-28-10" fill="url(#bub)" stroke="#e0705d" stroke-opacity=".22"/>
+          <rect x="520" y="146" width="60" height="11" rx="5.5" fill="#ece7e2"/>
+          <rect x="520" y="165" width="80" height="11" rx="5.5" fill="#ece7e2"/>
+          <circle cx="612" cy="152" r="6" fill="#e0705d"/>
+        </g>
+
+        <!-- floating hearts -->
+        <g class="pop">
+          <path d="M242 78c0 0-9-5-9-11 0-3 2-5 5-5 2 0 3 1 4 2 1-1 2-2 4-2 3 0 5 2 5 5 0 6-9 11-9 11Z" fill="#e0705d" fill-opacity=".5"/>
+          <path d="M510 64c0 0-8-4.5-8-9.5 0-2.6 1.8-4.3 4.2-4.3 1.6 0 2.8.8 3.8 1.9 1-1.1 2.2-1.9 3.8-1.9 2.4 0 4.2 1.7 4.2 4.3 0 5-8 9.5-8 9.5Z" fill="#f7bd94"/>
+        </g>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FEATURES (bento) ============ -->
+<section class="features" id="features">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow"><span class="dot"></span> 产品能力</span>
+      <h2>一个拥抱，从几件小事开始</h2>
+      <p>它不是一个冰冷的工具，而是一群住在你设备上的伙伴。聊天、记忆、生活，都为你而活。</p>
+    </div>
+    <div class="bento">
+      <div class="cell span2 reveal">
+        <span class="tag">核心</span>
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8.5 8.5 0 0 1-8.5 8.5c-1.3 0-2.5-.28-3.6-.79L3 21l1.45-4.4A8.5 8.5 0 1 1 21 12Z"/><circle cx="9" cy="12" r="1.3" fill="currentColor"/><circle cx="14.5" cy="12" r="1.3" fill="currentColor"/></svg></div>
+        <h3>多角色聊天</h3>
+        <p>与一群有性格、有口吻的 AI 伙伴随时对话。每个角色都有自己的故事线，切换即来，陪伴不断。</p>
+      </div>
+      <div class="cell reveal d1">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3.5A2.5 2.5 0 0 1 11.5 6v12A2.5 2.5 0 0 1 9 20.5 6.5 6.5 0 0 1 2.5 14V10A6.5 6.5 0 0 1 9 3.5Z"/><path d="M15 3.5A2.5 2.5 0 0 0 12.5 6v12A2.5 2.5 0 0 0 15 20.5 6.5 6.5 0 0 0 21.5 14V10A6.5 6.5 0 0 0 15 3.5Z"/></svg></div>
+        <h3>记忆</h3>
+        <p>记忆链条与 BM25 检索，让伙伴记得你们的每一次对话与细节。</p>
+      </div>
+      <div class="cell reveal d2">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M7 12h10M12 7v10"/></svg></div>
+        <h3>朋友圈</h3>
+        <p>伙伴们的动态在时间线上流动，像真实生活一样鲜活。</p>
+      </div>
+      <div class="cell is-art span2 span-row2 reveal d1">
+        <span class="tag">2.5D</span>
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21c-3-2.4-5-4.6-5-7.6 0-2.2 1.6-3.9 3.6-3.9 1.2 0 2.2.6 2.9 1.6.7-1 1.7-1.6 2.9-1.6 2 0 3.6 1.7 3.6 3.9 0 3-2 5.2-5 7.6Z"/><path d="M12 21a4.5 4.5 0 0 1-4.5-4.5c0-2 1.2-3.4 2.6-3.4"/><circle cx="12" cy="5" r="2.4"/><path d="M12 2.6V.8"/></svg></div>
+        <h3>宠物</h3>
+        <p>一只陪你长大的像素伙伴。喂食、玩耍、成长，它会记得你。</p>
+        <div class="art-wrap">
+          <svg class="pet" viewBox="0 0 140 140" fill="none">
+            <defs><linearGradient id="petBg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fbe9e4"/><stop offset="1" stop-color="#f6c9b8"/></linearGradient></defs>
+            <rect x="6" y="6" width="128" height="128" rx="34" fill="url(#petBg)"/>
+            <g transform="translate(38,30)">
+              <ellipse cx="24" cy="12" rx="8" ry="12" fill="#e0705d" transform="rotate(-16 24 12)"/>
+              <ellipse cx="40" cy="12" rx="8" ry="12" fill="#e0705d" transform="rotate(16 40 12)"/>
+              <rect x="12" y="22" width="40" height="34" rx="16" fill="#e0705d"/>
+              <ellipse cx="32" cy="60" rx="22" ry="18" fill="#e0705d"/>
+              <circle cx="24" cy="45" r="3.2" fill="#7a2118"/>
+              <circle cx="40" cy="45" r="3.2" fill="#7a2118"/>
+              <path d="M28 56c3 2.4 5.2 2.4 8 0" stroke="#7a2118" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+              <path d="M22 76c3 4 8 6 12 4" stroke="#e0705d" stroke-width="3" stroke-linecap="round" fill="none"/>
+            </g>
+          </svg>
+        </div>
+      </div>
+      <div class="cell span2 reveal d2">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11 12 4l9 7"/><path d="M5 10v8a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-8"/><path d="M9 21v-5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v5"/></svg></div>
+        <h3>小家</h3>
+        <p>一个属于你和伙伴们共同生活的空间，布置、声音、日常都在一起。</p>
+        <div class="mini-stats">
+          <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v4M12 21v-4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="3"/></svg>共享空间</span>
+          <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 18 0"/><path d="M3 12a9 9 0 0 0 18 0"/></svg>日常联动</span>
+        </div>
+      </div>
+      <div class="cell reveal d3">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3.6M6.7 6.7 9.3 9.3M17.3 6.7 14.7 9.3"/><rect x="7" y="10" width="4" height="4" rx="1.4" fill="currentColor" stroke="none"/><rect x="13" y="10" width="4" height="4" rx="1.4" fill="currentColor" stroke="none"/><path d="M7 14v7M17 14v7"/></svg></div>
+        <h3>插件市场</h3>
+        <p>能力像积木一样自由装配，按你的方式扩展。</p>
+      </div>
+      <div class="cell is-warm reveal d3">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2.6" width="10" height="18.8" rx="3"/><path d="M11 18.5h2"/><path d="M12 8.2a5 5 0 1 1-5 5"/></svg></div>
+        <h3>手机感知</h3>
+        <p>感知设备状态，及时回应你此刻想要与需要。</p>
+        <div class="mini-stats">
+          <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7a5 5 0 1 0 5 5"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></svg>感知</span>
+          <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21a9 9 0 0 0 9-9"/><path d="M12 4a8 8 0 0 1 8 8"/></svg>后台保活</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PRIVACY ============ -->
+<section class="privacy section" id="privacy">
+  <div class="wrap privacy-inner">
+    <div class="copy reveal">
+      <span class="privacy-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6Z"/><path d="m8.6 12 2.3 2.3 4.5-4.5"/></svg>
+        隐私与自托管
+      </span>
+      <h2>你的数据，只活在你的服务器。</h2>
+      <p>没有必须上云的秘密，没有偷看的第三方。拥爱把一切留在你手里，同时一样好用到不像自托管。</p>
+    </div>
+    <div class="shield reveal d1" aria-hidden="true">
+      <svg viewBox="0 0 360 360" fill="none">
+        <defs>
+          <linearGradient id="shd" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f7bd94"/><stop offset=".55" stop-color="#ef8d72"/><stop offset="1" stop-color="#e0705d"/></linearGradient>
+        </defs>
+        <circle cx="180" cy="180" r="150" fill="#fff" stroke="#f1e6e1"/>
+        <circle cx="180" cy="180" r="116" fill="#fdf6f2" stroke="#f1e6e1"/>
+        <path d="M180 96 118 120v46c0 46 30 74 62 84 32-10 62-38 62-84v-46Z" fill="url(#shd)"/>
+        <path d="m154 166 18 18 34-36" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <rect x="270" y="92" width="46" height="46" rx="12" fill="#fff" stroke="#f1e6e1"/>
+        <path d="M293 110c0 0-9-5-9-10 0-2.6 1.8-4.2 4.2-4.2 1.5 0 2.7.7 4.8 2 .6-.4 1.8-2 3.4-2 .9 0 2.6 0 2.6 2.2 0 5-6 12-6 12Z" fill="#e0705d"/><circle cx="293" cy="112" r="2" fill="#fff"/>
+      </svg>
+    </div>
+  </div>
+  <div class="wrap" style="margin-top:56px">
+    <div class="pillars">
+      <div class="pillar reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2.5"/><path d="M8 21h8M12 17v4"/></svg></div>
+        <div><h4>数据在自己服务器</h4><p>聊天记录、记忆、日记、角色，全都存在你自己的自托管实例里，不离开你掌控的范围。</p></div>
+      </div>
+      <div class="pillar reveal d1">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a4.5 4.5 0 0 1 4.5 4.5c1.5 0 2.7 1.2 2.7 2.7 0 1-.6 1.9-1.4 2.3V15a4.5 4.5 0 0 1-4.5 4.5h-.1A4.5 4.5 0 0 1 8.7 15v-1.6A2.7 2.7 0 0 1 7.3 10.8"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg></div>
+        <div><h4>零云依赖，LLM 自带（BYOK）</h4><p>模型可以用你自己的 API Key 或不依赖外部云端。可选、可控、可换。</p></div>
+      </div>
+      <div class="pillar reveal d2">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 12 2.2 2.2L16 9"/><circle cx="12" cy="12" r="9"/><path d="M8.5 7.5c-.9.7-1.5 1.8-1.5 3M15.5 16.5c.9-.7 1.5-1.8 1.5-3"/></svg></div>
+        <div><h4>开源可审计</h4><p>代码完全公开，随时可以查阅、审计、自建，没有任何黑箱。</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ STORY ============ -->
+<section class="story section" id="story">
+  <div class="wrap quote reveal">
+    <p style="margin-top:1.4rem">我们想要的，不是一件用完即走的<strong>工具</strong>，而是一位<span class="hl">生活里的伙伴</span>。她记得你喜欢什么，会在你需要时出现，也会在你不说话时安静地陪着。<br>所以，我们决定给 AI 一个<span class="hl">家</span>。</p>
+    <span class="who">来自拥爱团队 · 写给每一个想被陪伴的人</span>
+  </div>
+  <div class="wrap marks">
+    <div class="m reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21c-3-2.4-5-4.6-5-7.6 0-2.2 1.6-3.9 3.6-3.9 1.2 0 2.2.6 2.9 1.6.7-1 1.7-1.6 2.9-1.6 2 0 3.6 1.7 3.6 3.9 0 3-2 5.2-5 7.6Z"/></svg><span>温暖</span></div>
+    <div class="m reveal d1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h12M6 9h12M6 14h7M4 20h16"/></svg><span>真实</span></div>
+    <div class="m reveal d2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7c3-2 5-2 8 0s5 2 8 0M4 13c3-2 5-2 8 0s5 2 8 0M4 19c3-2 5-2 8 0s5 2 8 0"/></svg><span>陪伴</span></div>
+  </div>
+</section>
+
+<!-- ============ TIMELINE ============ -->
+<section class="timeline section" id="timeline">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <h2>从「给 AI 一个家」开始</h2>
+      <p>从一个朴素的想法，到拥有了小家与记忆。每一步，都让陪伴更真实。</p>
+    </div>
+    <div class="tl">
+      <div class="tl-item reveal">
+        <span class="dot"></span>
+        <span class="ver">起点</span>
+        <h4>想给 AI 伙伴一个家</h4>
+        <p>不再满足于一个问答框，我们想让它有一个可以安定下来的地方。</p>
+      </div>
+      <div class="tl-item reveal">
+        <span class="dot"></span>
+        <span class="ver">v3.0</span>
+        <h4>小家与记忆系统</h4>
+        <p>伙伴有了共同生活的空间，也开始真正记住你们的故事。</p>
+      </div>
+      <div class="tl-item reveal">
+        <span class="dot"></span>
+        <span class="ver">v3.1</span>
+        <h4>插件市场</h4>
+        <p>能力像积木一样自由生长，每个人都能搭建自己的伙伴。</p>
+      </div>
+      <div class="tl-item reveal">
+        <span class="dot"></span>
+        <span class="ver">v3.2</span>
+        <h4>记忆链条与 BM25</h4>
+        <p>更深的记忆链条与全文检索，让它记得更久、也记得更准。</p>
+      </div>
+      <div class="tl-item reveal">
+        <span class="dot"></span>
+        <span class="ver">v3.3</span>
+        <h4>后台保活与表情市场</h4>
+        <p>时刻在线，也表达更鲜活。陪伴，不再需要你主动开启。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CTA END ============ -->
+<section class="cta-end section" id="quickstart">
+  <div class="wrap">
+    <h2 class="reveal">给 AI 伙伴一个家</h2>
+    <p class="sub reveal d1">自托管、开源、隐私优先。现在就把它带到你自己的服务器上，开始一段属于你的陪伴。</p>
+    <div class="cta-row reveal d2">
+      <a class="btn btn-light" href="https://github.com/Gi-Tuu/AMBRACE" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-1.96c-3.2.7-3.87-1.54-3.87-1.54-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.23-1.27-5.23-5.66 0-1.25.45-2.27 1.19-3.07-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.17a11 11 0 0 1 5.8 0c2.2-1.48 3.17-1.17 3.17-1.17.63 1.59.23 2.76.11 3.05.74.8 1.19 1.82 1.19 3.07 0 4.4-2.69 5.37-5.25 5.65.41.35.78 1.05.78 2.12v3.14c0 .31.21.67.8.56A11.52 11.52 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></svg>
+        Star on GitHub
+      </a>
+      <a class="btn btn-ghost-dark" href="#quickstart" id="quickstartBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14m0 0 5-5m-5 5-5-5"/></svg>
+        快速开始
+      </a>
+    </div>
+
+    <div class="quick reveal d3" id="deploySteps">
+      <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 6v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6M4 6l2-3h12l2 3"/></svg>快速开始 · 自托管</h3>
+      <ol>
+        <li><div><span class="t">克隆仓库</span><span class="d">把 <code>https://github.com/Gi-Tuu/AMBRACE</code> 拉到你自己的服务器。</span></div></li>
+        <li><div><span class="t">配置你自己的 Key</span><span class="d">设置 <code>.env</code>，指向你自备的 LLM（BYOK），不依赖外部云端。</span></div></li>
+        <li><div><span class="t">跑起来</span><span class="d">提供一键 <code>docker compose up</code> 或本地启动说明，几分钟即可拥有。</span></div></li>
+        <li><div><span class="t">数据归你</span><span class="d">所有数据都在你的实例里，随时可备份、可迁移、可审计。</span></div></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer class="footer">
+  <div class="wrap">
+    <div class="fbrand">
+      <svg class="mark" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <rect x="3" y="3" width="34" height="34" rx="11" fill="#e0705d"/>
+        <path d="M20 27c0 0-8-4.6-8-9.2C12 14.8 14.3 13 16.7 13c1.4 0 2.6.6 3.3 1.7.7-1.1 1.9-1.7 3.3-1.7 2.4 0 4.7 1.8 4.7 4.8C28 22.4 20 27 20 27Z" fill="#fff"/>
+      </svg>
+      <span>拥爱 AMBRACE</span>
+    </div>
+    <nav aria-label="页脚导航">
+      <a href="#features">产品</a>
+      <a href="#privacy">隐私</a>
+      <a href="#story">故事</a>
+      <a href="#timeline">时间线</a>
+      <a href="https://github.com/Gi-Tuu/AMBRACE" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+    <span class="copy">© 2026 拥爱 AMBRACE · 自托管 · 开源 · 隐私优先</span>
+  </div>
+</footer>
+
+<script>
+  // nav scroll state
+  var nav = document.getElementById('nav');
+  function onScroll(){ nav.classList.toggle('scrolled', window.scrollY > 8); }
+  onScroll();
+  window.addEventListener('scroll', onScroll, {passive:true});
+
+  // mobile menu
+  var burger = document.getElementById('burger');
+  var mm = document.getElementById('mobileMenu');
+  burger.addEventListener('click', function(){
+    var open = mm.classList.toggle('open');
+    burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    burger.setAttribute('aria-label', open ? '关闭菜单' : '打开菜单');
+  });
+  mm.querySelectorAll('a').forEach(function(a){
+    a.addEventListener('click', function(){ mm.classList.remove('open'); burger.setAttribute('aria-expanded','false'); });
+  });
+
+  // scroll reveal
+  var revealEls = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window){
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, {threshold:.12, rootMargin:'0px 0px -8% 0px'});
+    revealEls.forEach(function(el){ io.observe(el); });
+  } else {
+    revealEls.forEach(function(el){ el.classList.add('in'); });
+  }
+
+  // scrollspy: highlight current nav link
+  var links = Array.prototype.slice.call(document.querySelectorAll('.nav-links a.navlink'));
+  var ids = links.map(function(a){ return a.getAttribute('href'); }).filter(Boolean);
+  var secs = ids.map(function(id){ return document.querySelector(id); }).filter(Boolean);
+  if ('IntersectionObserver' in window && secs.length){
+    var spy = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          links.forEach(function(a){
+            a.classList.toggle('curr', a.getAttribute('href') === '#' + e.target.id);
+          });
+        }
+      });
+    }, {rootMargin:'-45% 0px -50% 0px'});
+    secs.forEach(function(s){ spy.observe(s); });
+  }
+
+  // keep the in-page "快速开始" from jumping to itself when scrolled / make the end quick-start smooth
+  var quickBtn = document.getElementById('quickstartBtn');
+  if(quickBtn){ quickBtn.addEventListener('click', function(ev){ ev.preventDefault(); document.getElementById('deploySteps').scrollIntoView({behavior:'smooth', block:'center'}); }); }
+</script>
+</body>
+</html>
