@@ -1,0 +1,15 @@
+{
+  "name": "weather_brief",
+  "version": "1.0.0",
+  "description": "让 AI 知道你所在城市的天气：每天感知天气与出行建议，聊天时自然提起",
+  "author": "AICompanion",
+  "category": "plugin",
+  "hooks": [
+    "context_inject"
+  ],
+  "permissions": [],
+  "config": {
+    "prefix": "【插件-天气简报】"
+  },
+  "usage": "打开本插件开关即可；AI 会自动感知你所在城市的天气（依赖手机感知的位置/天气数据）。"
+}
