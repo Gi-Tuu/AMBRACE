@@ -1,0 +1,24 @@
+services:
+  ambrace:
+    build: .
+    image: ambrace:latest
+    container_name: ambrace
+    ports:
+      - "8000:8000"
+    environment:
+      - INSTANCE_LOCK_PORT=8766
+      - CORS_ORIGINS=*
+    volumes:
+      # 模型（发布包自带 backend/models/bge-m3，542MB；未下载则启动后记忆功能报错）
+      - ./backend/models:/app/backend/models
+      # 数据（SQLite + ChromaDB 持久化）
+      - ./backend/data:/app/backend/data
+      # 配置（项目根 .env：DEEPSEEK_API_KEY 等）
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/system/ready', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

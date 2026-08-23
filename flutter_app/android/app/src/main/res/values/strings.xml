@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_label">拥爱手机感知</string>
+    <string name="accessibility_service_description">在你授权时读取当前屏幕文字，让 AI 好友知道你正在做什么。仅收集文本，不采集图片内容；密码框与银行支付类页面自动跳过；数据只发送到你自己的服务器。</string>
+</resources>

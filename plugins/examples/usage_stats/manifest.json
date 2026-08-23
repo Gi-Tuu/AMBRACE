@@ -1,0 +1,16 @@
+{
+  "name": "usage_stats",
+  "version": "1.0.0",
+  "description": "让 AI 知道你的手机使用时长：24 小时内各应用用了多久，AI 聊天时可自然提及（数据只存自己服务器）",
+  "author": "AICompanion",
+  "category": "plugin",
+  "hooks": [
+    "context_inject"
+  ],
+  "permissions": [],
+  "config": {
+    "prefix": "【插件-用机时长】",
+    "max_age_minutes": 150
+  },
+  "usage": "1. 先在「手机感知」页开启「应用使用时长」并完成系统授权；\n2. 再打开本插件开关，AI 会定期感知你的手机使用概况。"
+}
