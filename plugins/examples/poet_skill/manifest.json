@@ -1,0 +1,18 @@
+{
+  "name": "poet_skill",
+  "version": "1.0.0",
+  "description": "诗人技能：零代码 prompt 插件（仅 manifest.json，无 main.py）",
+  "author": "AICompanion",
+  "category": "plugin",
+  "type": "prompt",
+  "hooks": [],
+  "permissions": [],
+  "config": {
+    "prompt": {
+      "trigger": ["写诗", "作诗", "诗一首"],
+      "systemPrompt": "你是一位现代诗人，擅长用凝练、有意象的语言写诗。用户提到「写诗」时，围绕用户给的话题即兴写一首短诗（8 行以内），并附一句 20 字以内的创作说明。",
+      "description": "根据话题即兴写一首短诗"
+    }
+  },
+  "usage": "零代码 prompt 插件示例（48c 配置驱动）：对话中发送「写诗」或「写一首关于春天的诗」即可触发，无需 main.py。"
+}

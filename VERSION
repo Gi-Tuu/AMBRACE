@@ -1,0 +1,49 @@
+PROJECT: 拥爱（AMBRACE）
+VERSION: 3.2.2
+DATE: 2026-08-23
+STATUS: 开源发布版（备份导出 / 后台保活 / GHCR+CI / bge-m3 预热）
+
+CHANGELOG:
+
+3.2.2 - Release (2026-08-23)
+  - App: one-tap backup export (SQLite + config zip) with restore guide (#54)
+  - App: background keep-alive service + user-level WebSocket realtime notifications (#55)
+  - Infra: GHCR multi-arch Docker image (auto model download), GitHub Actions CI, bge-m3 startup warmup
+  - Tests: backend 608 green, flutter analyze 0 / test 89 green
+
+
+3.2.1 - Hotfix release (2026-08-23)
+  - Fix P0-1: chromadb.Client|None import crash on Python<3.14 (deferred annotations)
+  - Doubao audit fixes: version unification, API-key hint, cross-platform scripts, configurable lock/CORS/readiness, dev deps, pubspec.lock, models check
+  - Docker support + verified end-to-end (chat + memory)
+
+3.2.0 - Open-source release (2026-08-23)
+  - BM25 hybrid retrieval (jieba+rank-bm25) with RRF fusion and persisted index
+  - Weave canvas 2.5D enhancement (depth/backside fade/sphere clustering)
+  - Server controller UI redesign + polish (impeccable-lite audit)
+  - Frontend experience: input-focus fix, pull-to-refresh, shimmer skeletons, i18n 137 keys
+  - Memory chain binding, self-statement 200-char limit, task/tool metrics fixes
+  - Dependency: openai 3.x + langchain-openai 1.6 (586 tests green)
+
+3.1.0 - Open-source release (2026-08-17)
+  - Time-aware role context: recorded-date annotations on injected memories, no relative time words in generation
+  - Agent Runtime: unified action parsing / tool registry / permission gates / task traces
+  - Remote plugin marketplace (GitHub index + sha256 + rollback); weekly reflection
+  - Privacy review pass: no keys, no local paths, no user data in release
+1.1.0 - Open-source release prep (2026-08-06)
+  - Local VLM default OFF; cloud vision API key (VLM_API_KEY) takes priority; fallback local OCR
+  - One-click deploy scripts (setup.bat / setup.sh), get_server_info.py, setup_local_vlm.py
+  - make_release.py bundles vector models, privacy scan, excludes internal docs
+0.2.0 - User continuous send mode (batch messages)
+  - Added send mode toggle (normal / continuous)
+  - Continuous mode collects messages, sends all at once
+  - Batch messages trigger single AI response with full context
+  - Mode toggle icon in chat input bar
+  - Badge shows pending message count
+0.1.9 - Bio system & continuous reply
+  - Added bio (self-description) to AICharacter model
+  - Bio auto-generated on creation, evolves during chat
+  - Bio displayed in character detail screen
+  - "继续" button on last AI message for continuous reply
+  - Continue button only on latest AI message
+0.1.8 - Chunked AI response & social-network chat
