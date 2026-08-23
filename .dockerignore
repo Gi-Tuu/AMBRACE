@@ -1,0 +1,11 @@
+# 构建上下文排除（模型/数据/环境不入镜像，运行时挂载）
+.git
+.venv
+**/__pycache__
+backend/data
+backend/models
+backend/.env
+backend/requirements.lock
+flutter_app/build
+flutter_app/.dart_tool
+*.log
