@@ -1,0 +1,29 @@
+{
+  "name": "douyin_mcp",
+  "version": "0.1.0",
+  "description": "让 AI 拥有自己的抖音账号：发布图文、回复粉丝评论、感知账号动态，还能看懂自己发过的图文（发布/回复默认需你确认）",
+  "author": "AICompanion",
+  "category": "mcp",
+  "hook_timeout": 45,
+  "hooks": [
+    "schedule_tick",
+    "context_inject",
+    "http_router",
+    "proactive_candidate"
+  ],
+  "permissions": [
+    "douyin_publish"
+  ],
+  "config": {
+    "comment_poll_minutes": 30,
+    "inject_minutes": 120,
+    "max_comment_inject": 3,
+    "max_post_inject": 2,
+    "allowed_character_ids": "",
+    "max_comment_posts": 5,
+    "require_approval": true,
+    "default_character_id": "",
+    "custom_prompt": ""
+  },
+  "usage": "1. 打开本插件开关；\n2. 点下方「绑定」，在弹出的窗口里扫码登录抖音；\n3. AI 的图文/回复草稿会出现在「AI 好友」页右上角小信封里，你确认后才会执行；\n4. 想调整 AI 创作风格，可在本页「自定义设定」里写要求。"
+}

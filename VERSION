@@ -1,0 +1,98 @@
+PROJECT: 拥爱（AMBRACE）
+VERSION: 3.2.7
+DATE: 2026-08-24
+STATUS: 开源发布版（真 SSE 流式回复 / Onboarding 引导 / Alembic 迁移 / 新机部署修复）
+
+CHANGELOG:
+
+3.2.7 - Release (2026-08-24)
+  - Chat: true SSE streaming replies (per-token, delta/block/done events) with incremental semantic chunking; fallback to chunked for deep thinking / plugin rewrite / stream errors
+  - Onboarding: first-run 4-step guide (server → account → character → API key) with auto first message
+  - Infra: Alembic DB migrations (baseline + stamp/upgrade alignment), healthcheck /health, .env dir guard, hf-mirror model download
+  - Memory: decay curve visualization (strength S / next review / lock) in memory detail
+  - Fixes: deploy P1x6+P2x5 (API key hint, setup quoting, init_db sys.path, voice deps), life-home 404 empty state, console dashboard layout, first-account admin bootstrap, i18n leftovers
+  - Tests: backend 688 green, flutter analyze 0 / test 197 green
+
+PROJECT: 拥爱（AMBRACE）
+VERSION: 3.2.6
+DATE: 2026-08-24
+STATUS: 开源发布版（权限管理三 tab / 织网 3D 手动档位 / SDK 升级）
+
+CHANGELOG:
+
+3.2.6 - Release (2026-08-24)
+  - Weave 3D: P0-P3 real 3D (flutter_scene) + card texture + raycast picking + pop-in/select animations
+  - Weave 3D: manual render tier switch (auto / full 3D / light 3D / 2.5D), persisted via shared_preferences, manual override wins
+  - Weave 3D: low-end device tiered degrade (full->light->2D), 2.5D free rotation, NPOT->power-of-two textures, LineSegmentsGeometry batched edges
+  - Permissions: unified permission management (AI abilities / main account / server feature switches), user agreement subtitle fix
+  - SDK upgrade: Flutter 3.27.4 -> 3.47.1, notifications 20 / file_picker 12 / geolocator 14 etc.
+  - Tests: backend 669 green, flutter analyze 0 / test 164 green
+
+PROJECT: 拥爱（AMBRACE）
+VERSION: 3.2.5
+DATE: 2026-08-23
+STATUS: 开源发布版（主账号管理 / 多语种收尾 / 控制台增强）
+
+CHANGELOG:
+
+3.2.5 - Release (2026-08-24)
+  - Admin: multi-admin management (select accounts as main accounts, users.is_admin + UI toggle)
+  - i18n: settings drawer + plugin extensions page fully localized (zh/en)
+  - Console: log export / clear-display buttons; cognitive-loop per-character switch
+  - Fix: ADMIN_USER_IDS accepts JSON array or comma list
+  - Tests: backend 669 green, flutter analyze 0 / test 89 green
+
+3.2.4 - Release (2026-08-24)
+  - Proactive messages: motivation/state-trigger now get recent chat context; mandatory topic continuation + expanded context (10x120); sort bonus for contextual candidates; ctx-length observation signal
+  - Emoji marketplace: remote index + secure download/install/uninstall + App market tab (framework, assets pending)
+  - Infra: docker-compose.ghcr.yml (pull prebuilt image), datetime.utcnow cleanup (12 spots), README sync
+  - Tests: backend 650 green, flutter analyze 0 / test 89 green
+
+3.2.3 - Release (2026-08-23)
+  - Settings: background keep-alive moved to DND page, connection check button, about version fix, drawer regroup
+  - Server console: instant status catch-up after start/stop/restart, live button states, manual refresh, 3s log follow + autoscroll, 7-day token usage trend chart
+  - Fix: lan_ip excludes VPN/virtual NICs (returns real LAN IP)
+  - Tests: backend 611 green, flutter analyze 0 / test 89 green
+
+3.2.2 - Release (2026-08-23)
+  - App: one-tap backup export (SQLite + config zip) with restore guide (#54)
+  - App: background keep-alive service + user-level WebSocket realtime notifications (#55)
+  - Infra: GHCR multi-arch Docker image (auto model download), GitHub Actions CI, bge-m3 startup warmup
+  - Tests: backend 608 green, flutter analyze 0 / test 89 green
+
+
+3.2.1 - Hotfix release (2026-08-23)
+  - Fix P0-1: chromadb.Client|None import crash on Python<3.14 (deferred annotations)
+  - Doubao audit fixes: version unification, API-key hint, cross-platform scripts, configurable lock/CORS/readiness, dev deps, pubspec.lock, models check
+  - Docker support + verified end-to-end (chat + memory)
+
+3.2.0 - Open-source release (2026-08-23)
+  - BM25 hybrid retrieval (jieba+rank-bm25) with RRF fusion and persisted index
+  - Weave canvas 2.5D enhancement (depth/backside fade/sphere clustering)
+  - Server controller UI redesign + polish (impeccable-lite audit)
+  - Frontend experience: input-focus fix, pull-to-refresh, shimmer skeletons, i18n 137 keys
+  - Memory chain binding, self-statement 200-char limit, task/tool metrics fixes
+  - Dependency: openai 3.x + langchain-openai 1.6 (586 tests green)
+
+3.1.0 - Open-source release (2026-08-17)
+  - Time-aware role context: recorded-date annotations on injected memories, no relative time words in generation
+  - Agent Runtime: unified action parsing / tool registry / permission gates / task traces
+  - Remote plugin marketplace (GitHub index + sha256 + rollback); weekly reflection
+  - Privacy review pass: no keys, no local paths, no user data in release
+1.1.0 - Open-source release prep (2026-08-06)
+  - Local VLM default OFF; cloud vision API key (VLM_API_KEY) takes priority; fallback local OCR
+  - One-click deploy scripts (setup.bat / setup.sh), get_server_info.py, setup_local_vlm.py
+  - make_release.py bundles vector models, privacy scan, excludes internal docs
+0.2.0 - User continuous send mode (batch messages)
+  - Added send mode toggle (normal / continuous)
+  - Continuous mode collects messages, sends all at once
+  - Batch messages trigger single AI response with full context
+  - Mode toggle icon in chat input bar
+  - Badge shows pending message count
+0.1.9 - Bio system & continuous reply
+  - Added bio (self-description) to AICharacter model
+  - Bio auto-generated on creation, evolves during chat
+  - Bio displayed in character detail screen
+  - "继续" button on last AI message for continuous reply
+  - Continue button only on latest AI message
+0.1.8 - Chunked AI response & social-network chat

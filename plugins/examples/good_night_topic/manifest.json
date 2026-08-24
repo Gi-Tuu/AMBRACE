@@ -1,0 +1,18 @@
+{
+  "name": "good_night_topic",
+  "version": "1.0.0",
+  "description": "晚间晚安话题：每晚 22:00-23:00 角色主动向用户道晚安（示例：proactive_candidate + action + send_message）",
+  "author": "AICompanion",
+  "category": "plugin",
+  "hooks": [
+    "proactive_candidate"
+  ],
+  "permissions": [
+    "send_message"
+  ],
+  "config": {
+    "enabled_hours": "22-23",
+    "daily_limit": 1
+  },
+  "usage": "开启后每晚 22-23 点，角色会主动给用户发送一条晚安消息（每角色每日 1 条）。可改 enabled_hours 调整时段，如 21-23。"
+}
