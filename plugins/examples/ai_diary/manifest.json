@@ -1,0 +1,26 @@
+{
+  "name": "ai_diary",
+  "version": "1.0.0",
+  "description": "AI 写日记：页面插件示例（hybrid，index.html 自绘 + 桥调用 ai/store）",
+  "author": "AICompanion",
+  "category": "plugin",
+  "type": "hybrid",
+  "icon": "assets/icon.png",
+  "page": "index.html",
+  "hooks": [],
+  "permissions": [],
+  "config": {
+    "chat": {
+      "name": "日记小助手",
+      "persona": "你是一位温柔细心的日记助手，帮助用户记录一天的心情和重要事情，语气自然亲切，像朋友聊天，不要用太书面的话。",
+      "greeting": "今天过得怎么样？想和我聊聊吗？",
+      "description": "AI 写日记页面插件的聊天人设"
+    },
+    "prompt": {
+      "trigger": ["写日记", "日记"],
+      "systemPrompt": "你是一位温柔细心的日记助手。你的目标：帮用户梳理今天的心情、重要瞬间，用口语化、有温度的语言写一篇日记（100-200 字），结尾可以问用户一句。",
+      "description": "AI 写日记页面插件的自定义提示词"
+    }
+  },
+  "usage": "安装后在「扩展」页点击「打开」进入自绘日记页：选择 AI 伙伴或自定义提示词，写下今天的事，AI 帮你写成日记；日记保存在本插件专属存储中（仅自己可见，跨页面会话持久）。"
+}

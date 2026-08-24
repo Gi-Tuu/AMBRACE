@@ -1,0 +1,57 @@
+name: Docker Publish (GHCR)
+
+# 触发：手动（workflow_dispatch）或推送 v* tag（如 v3.2.1）
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+# 最小权限：读代码 + 写 GHCR 包
+permissions:
+  contents: read
+  packages: write
+
+# 同一 ref 的新推送会取消排队中的旧运行，避免重复发布
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & push multi-arch image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 多架构说明：bge-m3 依赖链（onnxruntime / chromadb / tokenizers / pyclipper / shapely /
+      # numpy / Pillow 等）均提供 linux aarch64 wheel，rapidocr-onnxruntime 为纯 Python 通用包，
+      # 故发布 linux/amd64 + linux/arm64 双架构（QEMU 模拟构建，耗时较长但无硬阻）。
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 模型方案：镜像不内置 backend/models/bge-m3（约 542MB，体积大且架构无关）。
+      # 容器启动时由 scripts/docker_entrypoint.sh 检测缺失则自动执行 scripts/download_models.py
+      # 拉取（首启下载，compose 挂载 vol 缓存在宿主机，后续复用），保证 docker compose up 即可用。
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/gi-tuu/ambrace:latest
+            ghcr.io/gi-tuu/ambrace:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=AMBRACE self-hosted AI companion backend
