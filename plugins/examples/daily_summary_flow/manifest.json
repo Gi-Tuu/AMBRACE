@@ -1,0 +1,33 @@
+{
+  "name": "daily_summary_flow",
+  "version": "1.0.0",
+  "description": "每日总结工作流模板（零代码 workflow 插件，仅 manifest.json）",
+  "author": "AICompanion",
+  "category": "plugin",
+  "type": "workflow",
+  "hooks": [],
+  "permissions": [],
+  "config": {
+    "workflow": {
+      "templates": [
+        {
+          "id": "daily_summary",
+          "name": "每日总结",
+          "description": "每晚 22 点生成当天重要事件与心情总结",
+          "template": {
+            "nodes": [
+              {"id": "start", "type": "trigger", "config": {"cron": "0 22 * * *"}},
+              {"id": "collect", "type": "action", "action": "collect_today", "config": {}},
+              {"id": "summarize", "type": "llm", "action": "summarize", "config": {"prompt": "总结今天的重要事件与心情，语气温柔"}}
+            ],
+            "edges": [
+              {"from": "start", "to": "collect"},
+              {"from": "collect", "to": "summarize"}
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "usage": "零代码 workflow 插件示例（48c 配置驱动）：在「工作流」页导入模板 daily_summary 即可，无需 main.py。"
+}
