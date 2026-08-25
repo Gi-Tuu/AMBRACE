@@ -1,9 +1,13 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.3.3
+VERSION: 3.3.4
 DATE: 2026-08-25
-STATUS: 开源发布版（群聊调度升级 + Lorebook 触发注入 + 织网3D视觉终局 + 记忆修复）
+STATUS: 开源发布版（v3.3.3 全量审查修复：主动备忘/Lorebook/群聊健壮性）
 
 CHANGELOG:
+
+3.3.4 - Release (2026-08-25)
+  - Fixes: 主动消息 [MEMO] 内容泄漏 / Lorebook probability=0 反转 / 群聊非法角色编号 400 / conftest 迁移补跑 / 正则缓存 / 触发状态清理 / muted 严谨 / sticky/cooldown 上限
+  - Tests: backend 827 green
 
 3.2.9 - Release (2026-08-28)
   - MCP: standard Model Context Protocol integration (Phase 1-4) - stdio/SSE/streamable-http transports, tool discovery & Agent invocation ([mcp.*] markers), permission tiers, resources/prompts, call logs, extension-page management

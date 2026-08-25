@@ -658,10 +658,10 @@ async def create_lorebook(
         exclude_keywords=_json.dumps([str(k).strip() for k in data.exclude_keywords if str(k).strip()], ensure_ascii=False),
         active=data.active,
         is_regex=bool(data.is_regex),
-        probability=max(0, min(100, int(data.probability or 100))),
+        probability=max(0, min(100, int(data.probability if data.probability is not None else 100))),
         inclusion_group=(data.inclusion_group or "").strip()[:50],
-        sticky_rounds=max(0, int(data.sticky_rounds or 0)),
-        cooldown_rounds=max(0, int(data.cooldown_rounds or 0)),
+        sticky_rounds=max(0, min(100, int(data.sticky_rounds or 0))),
+        cooldown_rounds=max(0, min(100, int(data.cooldown_rounds or 0))),
     )
     async with async_session_factory() as db2:
         db2.add(entry)
@@ -691,10 +691,10 @@ async def update_lorebook(
         entry.exclude_keywords = _json.dumps([str(k).strip() for k in data.exclude_keywords if str(k).strip()], ensure_ascii=False)
         entry.active = data.active
         entry.is_regex = bool(data.is_regex)
-        entry.probability = max(0, min(100, int(data.probability or 100)))
+        entry.probability = max(0, min(100, int(data.probability if data.probability is not None else 100)))
         entry.inclusion_group = (data.inclusion_group or "").strip()[:50]
-        entry.sticky_rounds = max(0, int(data.sticky_rounds or 0))
-        entry.cooldown_rounds = max(0, int(data.cooldown_rounds or 0))
+        entry.sticky_rounds = max(0, min(100, int(data.sticky_rounds or 0)))
+        entry.cooldown_rounds = max(0, min(100, int(data.cooldown_rounds or 0)))
         await db2.commit()
     return {"ok": True, "id": entry_id}
 
@@ -715,6 +715,8 @@ async def delete_lorebook(
             raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
         await db2.delete(entry)
         await db2.commit()
+    from app.memory.lorebook import clear_trigger_state
+    clear_trigger_state(character_id, entry_id)
     return {"ok": True}
 
 

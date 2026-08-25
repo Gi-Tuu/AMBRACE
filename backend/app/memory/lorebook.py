@@ -15,6 +15,7 @@
 向后兼容：is_regex=False / probability=100 / inclusion_group='' / sticky_rounds=0 /
 cooldown_rounds=0 时，匹配结果与 P1-2 完全一致（默认条目不会被写入时序状态）。
 """
+import functools
 import json
 import random
 import re
@@ -32,6 +33,12 @@ MAX_LOREBOOK_HITS = 3  # 单轮最多命中条数（防注入膨胀）
 
 # 进程内时序状态：槽位记录 (character_id, entry_id) -> 最近触发轮次（重启清零，行为可控）
 _lorebook_trigger_rounds: dict[tuple[int, int], int] = {}
+
+
+def clear_trigger_state(character_id: int, entry_id: int) -> None:
+    """删除条目/角色时清理对应触发时序状态（防进程内存滞留）。"""
+    _lorebook_trigger_rounds.pop((character_id, entry_id), None)
+
 
 # 正则 flag 字母映射（/pattern/i 等）
 _REGEX_FLAGS = {
@@ -67,6 +74,7 @@ def _split_keywords(raw: str, is_regex: bool = False) -> list[str]:
     return out
 
 
+@functools.lru_cache(maxsize=256)
 def _compile_regex(keyword: str):
     """把正则关键词编译为 re.Pattern；支持 /pattern/flags 与裸 pattern；非法返回 None。"""
     pattern_src = keyword

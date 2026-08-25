@@ -141,8 +141,12 @@ async def create_group(
 ):
     """创建家庭群聊（name + character_ids，至少 2 个本人角色）"""
     name = str(data.get("name") or "").strip() or "家庭群聊"
-    char_ids = [int(x) for x in (data.get("character_ids") or []) if int(x) > 0]
-    char_ids = list(dict.fromkeys(char_ids))
+    try:
+        _raw_ids = data.get("character_ids") or []
+        char_ids = [int(x) for x in _raw_ids]
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "invalid_character_id"))
+    char_ids = list(dict.fromkeys(cid for cid in char_ids if cid > 0))
     if len(char_ids) < MIN_MEMBERS:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "group_min_two"))
     if len(char_ids) > MAX_MEMBERS:
@@ -203,8 +207,12 @@ async def add_members(
 ):
     """拉群：把角色加进群（仅本人角色，去重，最多 MAX_MEMBERS 人）"""
     await _owned_group(db, group_id, user_id, lang)
-    char_ids = [int(x) for x in (data.get("character_ids") or []) if int(x) > 0]
-    char_ids = list(dict.fromkeys(char_ids))
+    try:
+        _raw_ids = data.get("character_ids") or []
+        char_ids = [int(x) for x in _raw_ids]
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "invalid_character_id"))
+    char_ids = list(dict.fromkeys(cid for cid in char_ids if cid > 0))
     if not char_ids:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "group_min_two"))
     cr = await db.execute(
@@ -277,7 +285,7 @@ async def update_member_mute(
     )).scalar_one_or_none()
     if member is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "group_member_not_found"))
-    member.muted = bool(data.get("muted", False))
+    member.muted = data.get("muted") is True
     await db.commit()
     return {"status": "ok", "character_id": character_id, "muted": member.muted}
 

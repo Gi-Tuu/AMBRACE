@@ -26,8 +26,10 @@ from app.events.bus import event_bus
 def _init_test_schema():
     """会话开始时给全局库建表（幂等，兼容干净环境/CI 缺失生产库）。"""
     from app.db.database import init_db
+    from app.db.migrate import ensure_alembic_revision
 
     asyncio.run(init_db())
+    asyncio.run(ensure_alembic_revision())
     yield
 
 

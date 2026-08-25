@@ -58,6 +58,7 @@ _MESSAGES: dict[str, tuple[str, str]] = {
     "chat_group_foreign_char": ("只能拉取自己的角色进群", "Only your own characters can join the group"),
     "group_msg_empty": ("消息内容不能为空", "Message cannot be empty"),
     "group_member_not_found": ("该角色不在群里", "Character is not in the group"),
+    "invalid_character_id": ("角色编号无效", "Invalid character ID"),
     # 插件 / 插件市场
     "main_account_install_only": ("仅主账号可安装", "Only the main account can install"),
     "main_account_manage_only": ("仅主账号可管理", "Only the main account can manage"),

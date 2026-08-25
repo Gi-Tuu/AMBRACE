@@ -499,8 +499,8 @@ async def generate_proactive_event(
                 "author": character_name or "",
             }, character_id)
             _logger.info("Proactive memo saved char=%d text=%.30s", character_id, _memo_text)
-            import re as _re
-            _seg_stripped = [_re.sub(r"[\[【]\s*/?MEMO\s*[\]】]", "", s).strip() for s in segments]
+            from app.agent.actions import strip_actions as _strip_actions
+            _seg_stripped = [_strip_actions(s).strip() for s in segments]
             _seg_stripped = [s for s in _seg_stripped if s]
             if _seg_stripped:
                 segments = _seg_stripped
