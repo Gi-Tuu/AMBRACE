@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  backend:
+    name: Backend (ruff + pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # 项目声明的目标版本：backend/pyproject.toml target-version=py314（venv 3.14），
+          # 测试套件在 3.14 验证为全绿；setup.sh/README 另声明 3.12+ 兼容（部署最低）。
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest
+          pip install -r backend/requirements.txt
+
+      - name: Lint (ruff)
+        run: ruff check backend/app
+
+      - name: Test (pytest)
+        run: pytest backend/tests -q
