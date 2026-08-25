@@ -1,0 +1,19 @@
+# 拥爱（AMBRACE）systemd 单元模板（Linux，2026-08-24 新机部署报告 P2-5）
+# 用法：sudo cp scripts/ambrace.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now ambrace
+# 注意：将 /path/to/AMBRACE 替换为实际项目绝对路径（安装后 /usr/bin/env python3 用 venv 内 python）
+[Unit]
+Description=AMBRACE - self-hosted AI companion server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/AMBRACE/backend
+# 用项目 venv 内的 python（替换 /path/to/AMBRACE）：
+ExecStart=/path/to/AMBRACE/backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+# 模型/数据路径在项目内，无需额外 User 配置；如需低权限运行可加 User=ambrace
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+{
+  "name": "mcp_demo",
+  "version": "1.0.0",
+  "description": "MCP 分类示例插件：演示扩展页「MCP」分类下的展示效果与上下文注入（仅供开发参考）",
+  "author": "AICompanion",
+  "category": "mcp",
+  "hooks": [
+    "context_inject"
+  ],
+  "permissions": [],
+  "config": {
+    "channel": "demo"
+  },
+  "usage": "示例插件，仅供开发参考，可开启体验分类展示效果，无需配置。"
+}
