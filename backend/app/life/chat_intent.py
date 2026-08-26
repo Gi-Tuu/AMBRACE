@@ -5,6 +5,7 @@
 修正 2026-08-26：priority>=3（this_turn）写库后立即触发该角色一个 Life Loop 回合，不等 30min tick。
 """
 from __future__ import annotations
+import asyncio
 import re
 from datetime import datetime, timezone
 from sqlalchemy import select
@@ -51,6 +52,12 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _schedule_immediate_tick(character_id: int, user_id: int) -> None:
+    """即时指令写库后触发该角色一个 Life Loop 回合（后台任务，不阻塞回复）。"""
+    from app.life.life_loop import run_character_tick
+    asyncio.ensure_future(run_character_tick(character_id, user_id))
+
+
 def detect_life_intent(text: str) -> dict | None:
     """零 IO 纯函数：从用户消息检测生活意图（v3.3.6 CI 加固，便于稳定单测）。
 
@@ -78,6 +85,7 @@ def detect_life_intent(text: str) -> dict | None:
 
 async def extract_life_intent(
     character_id: int, user_id: int, user_msg: str,
+    *, session_factory=None, tick_scheduler=None,
 ) -> None:
     """从用户消息提取生活意图，写入缓冲表。失败静默。"""
     import time as _time
@@ -98,9 +106,11 @@ async def extract_life_intent(
     priority = detected_info["priority"]
 
     _throttle[character_id] = now_ts
+    factory = session_factory or async_session_factory
+    scheduler = tick_scheduler or _schedule_immediate_tick
 
     async def _persist() -> None:
-        async with async_session_factory() as db:
+        async with factory() as db:
             # 去重：同角色同动作类型 24h 内已有 pending 则不重复写
             from datetime import timedelta
             existing = (await db.execute(
@@ -124,9 +134,7 @@ async def extract_life_intent(
                          character_id, detected, horizon)
             # 即时指令（修正 2026-08-26）：priority>=3（this_turn）不等 30min tick，立即触发该角色一个 Life Loop 回合
             if priority >= 3:
-                import asyncio
-                from app.life.life_loop import run_character_tick
-                asyncio.ensure_future(run_character_tick(character_id, user_id))
+                scheduler(character_id, user_id)
 
     # v3.3.6 CI 加固：aiosqlite 线程残留偶发导致写库失败（异常被吞成 0 条），失败重试 1 次并带 traceback 记录
     for _attempt in range(2):
@@ -135,7 +143,6 @@ async def extract_life_intent(
             return
         except Exception as e:
             if _attempt == 0:
-                import asyncio
                 await asyncio.sleep(0.3)
                 continue
             _logger.warning("extract_life_intent failed: %s", e, exc_info=True)

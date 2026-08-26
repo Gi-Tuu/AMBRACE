@@ -92,47 +92,40 @@ def test_detect_即时指令_出去转转():
 
 def test_节流_5分钟内不重复(monkeypatch):
     monkeypatch.setattr(chat_intent, "_throttle", {1: time.monotonic()})
-    monkeypatch.setattr(chat_intent, "async_session_factory", lambda: _BoomDB())
-    asyncio.run(chat_intent.extract_life_intent(1, 100, "我想去公园逛逛"))
+    asyncio.run(chat_intent.extract_life_intent(1, 100, "我想去公园逛逛", session_factory=lambda: _BoomDB()))
     # 若 throttle 未生效会触发 _BoomDB.__aenter__ 断言
 
 
 def test_正常路径_写库commit(monkeypatch):
     calls = []
     monkeypatch.setattr(chat_intent, "_throttle", {})
-    monkeypatch.setattr(chat_intent, "async_session_factory", lambda: _StubDB(calls))
-    asyncio.run(chat_intent.extract_life_intent(1, 100, "我想去公园逛逛"))
+    asyncio.run(chat_intent.extract_life_intent(1, 100, "我想去公园逛逛", session_factory=lambda: _StubDB(calls)))
     assert calls == ["commit"]
 
 
 def test_即时指令_触发run_character_tick(monkeypatch):
     calls = []
     monkeypatch.setattr(chat_intent, "_throttle", {})
-    monkeypatch.setattr(chat_intent, "async_session_factory", lambda: _StubDB())
 
-    async def _fake_run(character_id, user_id):
+    def _fake_schedule(character_id, user_id):
         calls.append((character_id, user_id))
 
-    monkeypatch.setattr("app.life.life_loop.run_character_tick", _fake_run)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(chat_intent.extract_life_intent(1, 100, "你现在去睡觉"))
-        loop.run_until_complete(asyncio.sleep(0.1))
-    finally:
-        loop.close()
-        asyncio.set_event_loop(None)
+    asyncio.run(chat_intent.extract_life_intent(
+        1, 100, "你现在去睡觉",
+        session_factory=lambda: _StubDB(), tick_scheduler=_fake_schedule,
+    ))
     assert (1, 100) in calls
 
 
 def test_非即时_不触发run_character_tick(monkeypatch):
     calls = []
     monkeypatch.setattr(chat_intent, "_throttle", {})
-    monkeypatch.setattr(chat_intent, "async_session_factory", lambda: _StubDB())
 
-    async def _fake_run(character_id, user_id):
+    def _fake_schedule(character_id, user_id):
         calls.append((character_id, user_id))
 
-    monkeypatch.setattr("app.life.life_loop.run_character_tick", _fake_run)
-    asyncio.run(chat_intent.extract_life_intent(1, 100, "我想去公园逛逛"))
+    asyncio.run(chat_intent.extract_life_intent(
+        1, 100, "我想去公园逛逛",
+        session_factory=lambda: _StubDB(), tick_scheduler=_fake_schedule,
+    ))
     assert calls == []

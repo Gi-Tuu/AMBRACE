@@ -16,11 +16,13 @@ connect/call/disconnect 必须在同一个循环里完成（asyncio.run 一次�
 import asyncio
 import json
 import sys
+import time
 import warnings
 
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import delete, select
+from sqlalchemy.exc import OperationalError
 from starlette.testclient import TestClient
 
 from app.agent.tools import _REGISTRY, get_tool
@@ -92,8 +94,8 @@ main()
 
 
 def _run(coro):
-    """在独立事件循环中运行协程（Windows Proactor 事件循环支持子进程）。"""
-    return asyncio.run(coro)
+    """在当前用例持有的事件循环中运行协程（避免 aiosqlite 跨 loop 线程残留）。"""
+    return asyncio.get_event_loop().run_until_complete(coro)
 
 
 # ------------------------------------------------------------------ 基础帮助
@@ -118,7 +120,15 @@ def _make_server(user_id=ADMIN, name=None, transport="stdio", command=None, args
             await db.commit()
             await db.refresh(row)
             return row.id
-    return _run(_do())
+    # 本地开发服务器可能短暂持有 SQLite 写锁，重试 2 次避免偶发 database is locked
+    for _attempt in range(3):
+        try:
+            return _run(_do())
+        except OperationalError:
+            if _attempt == 2:
+                raise
+            time.sleep(1.0)
+    raise RuntimeError("unreachable")
 
 
 async def _cleanup_mcp():
@@ -148,8 +158,20 @@ async def _cleanup_mcp():
 
 @pytest.fixture(autouse=True)
 def _mcp_isolation():
-    yield
-    _run(_cleanup_mcp())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        yield
+        loop.run_until_complete(_cleanup_mcp())
+        pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+        for t in pending:
+            t.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.run_until_complete(loop.shutdown_asyncgens())
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
 
 
 def _make_client(user_id=ADMIN):
