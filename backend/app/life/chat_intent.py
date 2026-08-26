@@ -86,22 +86,22 @@ def detect_life_intent(text: str) -> dict | None:
 async def extract_life_intent(
     character_id: int, user_id: int, user_msg: str,
     *, session_factory=None, tick_scheduler=None, throttle_state=None,
-) -> None:
-    """从用户消息提取生活意图，写入缓冲表。失败静默。"""
+) -> str:
+    """从用户消息提取生活意图，写入缓冲表。失败静默，返回处理原因码。"""
     import time as _time
     throttle = throttle_state if throttle_state is not None else _throttle
     now_ts = _time.monotonic()
     last = throttle.get(character_id, 0)
     if now_ts - last < THROTTLE_SECONDS:
-        return
+        return "throttled"
 
     text = (user_msg or "").strip()
     if len(text) < 2 or len(text) > 100:
-        return
+        return "too_short"
 
     detected_info = detect_life_intent(text)
     if detected_info is None:
-        return
+        return "no_intent"
     detected = detected_info["action_type"]
     horizon = detected_info["horizon"]
     priority = detected_info["priority"]
@@ -141,10 +141,10 @@ async def extract_life_intent(
     for _attempt in range(2):
         try:
             await _persist()
-            return
+            return "persisted"
         except Exception as e:
             if _attempt == 0:
                 await asyncio.sleep(0.3)
                 continue
             _logger.warning("extract_life_intent failed: %s", e, exc_info=True)
-            return
+            return "failed"

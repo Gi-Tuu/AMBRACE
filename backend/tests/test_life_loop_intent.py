@@ -92,19 +92,21 @@ def test_detect_即时指令_出去转转():
 # ─────────── 节流与写库路径（mock factory，无真实 DB） ───────────
 
 def test_节流_5分钟内不重复():
-    asyncio.run(chat_intent.extract_life_intent(
+    result = asyncio.run(chat_intent.extract_life_intent(
         1, 100, "我想去公园逛逛",
         session_factory=lambda: _BoomDB(), throttle_state={1: time.monotonic()},
     ))
+    assert result == "throttled"
     # 若 throttle 未生效会触发 _BoomDB.__aenter__ 断言
 
 
 def test_正常路径_写库commit():
     calls = []
-    asyncio.run(chat_intent.extract_life_intent(
+    result = asyncio.run(chat_intent.extract_life_intent(
         1, 100, "我想去公园逛逛",
         session_factory=lambda: _StubDB(calls), throttle_state={},
     ))
+    assert result == "persisted", f"reason={result}"
     assert calls == ["enter", "commit"]
 
 
@@ -114,11 +116,12 @@ def test_即时指令_触发run_character_tick():
     def _fake_schedule(character_id, user_id):
         calls.append((character_id, user_id))
 
-    asyncio.run(chat_intent.extract_life_intent(
+    result = asyncio.run(chat_intent.extract_life_intent(
         1, 100, "你现在去睡觉",
         session_factory=lambda: _StubDB(calls), tick_scheduler=_fake_schedule,
         throttle_state={},
     ))
+    assert result == "persisted", f"reason={result}"
     assert calls == ["enter", "commit", (1, 100)]
 
 
@@ -128,9 +131,10 @@ def test_非即时_不触发run_character_tick():
     def _fake_schedule(character_id, user_id):
         calls.append((character_id, user_id))
 
-    asyncio.run(chat_intent.extract_life_intent(
+    result = asyncio.run(chat_intent.extract_life_intent(
         1, 100, "我想去公园逛逛",
         session_factory=lambda: _StubDB(calls), tick_scheduler=_fake_schedule,
         throttle_state={},
     ))
+    assert result == "persisted", f"reason={result}"
     assert calls == ["enter", "commit"]
