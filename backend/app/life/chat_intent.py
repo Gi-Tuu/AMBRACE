@@ -92,9 +92,8 @@ async def extract_life_intent(
     throttle = throttle_state if throttle_state is not None else _throttle
     now_ts = _time.monotonic()
     last = throttle.get(character_id, 0)
-    if now_ts - last < THROTTLE_SECONDS:
-        print(f"DEBUG_THROTTLE file={__file__} char={character_id} throttle={throttle!r} "
-              f"last={last!r} now={now_ts!r} present={throttle_state is not None}", flush=True)
+    # last=0 表示该角色从未记录过，不能把 0 当成最近时间（fresh boot 时 monotonic < 300s 会误节流）
+    if last and now_ts - last < THROTTLE_SECONDS:
         return "throttled"
 
     text = (user_msg or "").strip()
