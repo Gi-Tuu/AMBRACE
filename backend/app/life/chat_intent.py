@@ -94,7 +94,8 @@ async def extract_life_intent(
         return
 
     _throttle[character_id] = now_ts
-    try:
+
+    async def _persist() -> None:
         async with async_session_factory() as db:
             # 去重：同角色同动作类型 24h 内已有 pending 则不重复写
             from datetime import timedelta
@@ -122,5 +123,16 @@ async def extract_life_intent(
                 import asyncio
                 from app.life.life_loop import run_character_tick
                 asyncio.ensure_future(run_character_tick(character_id, user_id))
-    except Exception as e:
-        _logger.warning("extract_life_intent failed: %s", e)
+
+    # v3.3.6 CI 加固：aiosqlite 线程残留偶发导致写库失败（异常被吞成 0 条），失败重试 1 次并带 traceback 记录
+    for _attempt in range(2):
+        try:
+            await _persist()
+            return
+        except Exception as e:
+            if _attempt == 0:
+                import asyncio
+                await asyncio.sleep(0.3)
+                continue
+            _logger.warning("extract_life_intent failed: %s", e, exc_info=True)
+            return

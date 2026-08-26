@@ -207,30 +207,3 @@ def test_非即时_不触发run_character_tick(intent_db, monkeypatch):
 
     loop.run_until_complete(_case())
     assert calls == []
-
-
-# ─────────── v3.3.6 CI 排障诊断（定位后删除） ───────────
-
-def test_diag_ci_extract(intent_db):
-    """诊断：CI Linux 全量下提取 0 条——打印正则匹配结果与 logger 告警内容。"""
-    factory, loop = intent_db
-    assert chat_intent._IMMEDIATE.search("你现在去睡觉"), "IMMEDIATE no match"
-    assert chat_intent._PATTERNS[0][2].search("我想去公园逛逛"), "go_out pattern no match"
-    warns = []
-    orig_warn = chat_intent._logger.warning
-
-    def _warn(msg, *args, **kwargs):
-        warns.append((str(msg), args))
-        return orig_warn(msg, *args, **kwargs)
-
-    chat_intent._logger.warning = _warn
-    try:
-        async def _case():
-            await chat_intent.extract_life_intent(1, OWNER, "我想去公园逛逛")
-            async with factory() as db:
-                rows = (await db.execute(select(LifeChatIntent))).scalars().all()
-            return len(rows)
-        n = loop.run_until_complete(_case())
-    finally:
-        chat_intent._logger.warning = orig_warn
-    assert n == 1, f"rows={n} warns={warns}"
