@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # AMBRACE step7: models domain subpackage (Grouping Strategy A)
 
-from app.models.life.life import LifeState, LifeActivityLog, LifeArtifact, LifeInterest, LifeGoal, LifeSchedule
+from app.models.life.life import LifeState, LifeActivityLog, LifeArtifact, LifeInterest, LifeGoal, LifeSchedule, LifeFollowup, LifeChatIntent
 from app.models.life.diary import AIDiary
 from app.models.life.user_diary import UserDiary
 from app.models.life.user_memo import UserMemo
@@ -21,6 +21,8 @@ __all__ = [
     "LifeInterest",
     "LifeGoal",
     "LifeSchedule",
+    "LifeFollowup",
+    "LifeChatIntent",
     "AIDiary",
     "UserDiary",
     "UserMemo",

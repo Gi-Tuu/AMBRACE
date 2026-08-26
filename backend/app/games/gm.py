@@ -38,9 +38,34 @@ def gm_announce(game_type: str, phase: str, **kw) -> str:
             "win_thinker": "🏆 猜方没猜中，想词方获胜！",
         },
         "werewolf": {
-            "night": "🌙 天黑请闭眼…",
-            "day": f"☀️ 天亮了。昨晚{kw.get('victim', '无人')}倒下了。",
-            "vote": "请投票。",
+            "start": f"🐺 狼人杀开始（{kw.get('players', '?')}人局），请查看各自身份。",
+            "night": "🌙 天黑请闭眼…狼人商量刀人，预言家查验。",
+            "day": ("☀️ 天亮了。昨晚" + ("无人倒下" if kw.get("victim") == "无人"
+                                            else f"{kw.get('victim', '')}倒下了") + "。"),
+            "day_speak": "☀️ 请存活玩家依次发言。",
+            "vote": "🗳️ 请投票选出你要淘汰的人。",
+            "eliminated": f"⚰️ {kw.get('name', '')}被投票淘汰，TA是{kw.get('role', '')}。",
+            "win_villagers": "🎉 狼人全部出局，村民获胜！",
+            "win_werewolves": "🐺 狼人存活到了最后，狼人获胜！",
+            "draw": "🤝 10 夜过去仍分不出胜负，平局。",
+        },
+        "liars_bar": {
+            "start": f"🃏 骗子酒馆开始（{kw.get('players', '?')}人局）！每人发 3 张手牌。",
+            "round": f"🎯 第{kw.get('round', 1)}轮，由{kw.get('dealer', '')}当庄家。",
+            "challenged": f"🔍 {kw.get('challenger', '')}质疑{kw.get('target', '')}：翻开的牌是「{kw.get('card', '')}」，声明是「{kw.get('decl', '')}」。",
+            "score_minus": f"{kw.get('name', '')}扣 1 分。",
+            "win": f"🏆 {kw.get('name', '')}赢得了本局！",
+            "draw": "🤝 平局，没有人获胜。",
+        },
+        "turtle_soup": {
+            "start": f"🍲 海龟汤开始！{kw.get('thinker', '')}当主持人，{kw.get('guesser', '')}来猜。",
+            "ask": f"第{kw.get('n', 1)}问：{kw.get('question', '')}",
+            "answer": f"{kw.get('name', '')}回答：{kw.get('answer', '')}",
+            "guess": f"{kw.get('name', '')}猜真相是「{kw.get('word', '')}」。",
+            "guess_right": "🎉 猜对了！",
+            "guess_wrong": "❌ 猜错了，继续。",
+            "win_guesser": "🎉 猜中真相，猜题者获胜！",
+            "win_thinker": "🏆 20 问用完仍未猜中，主持人获胜！",
         },
     }
     return templates.get(game_type, {}).get(phase, "")

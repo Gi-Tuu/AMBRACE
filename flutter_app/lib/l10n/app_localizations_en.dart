@@ -2229,6 +2229,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get homeLayoutSaved => 'Layout saved';
 
   @override
+  String get homeWorldMap => 'Home Map';
+
+  @override
+  String get homeExit => 'Exit';
+
+  @override
+  String get homeGoOut => 'Go Out';
+
+  @override
   String get furnitureEdit => 'Edit Furniture';
 
   @override
@@ -5801,4 +5810,65 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get archiveWinnerSide => 'Winning side';
+
+  @override
+  String get gameKill => 'Kill';
+
+  @override
+  String get gameCheck => 'Check';
+
+  @override
+  String get gameSpeak => 'Speak';
+
+  @override
+  String get gameSpeakHint => 'Share your thoughts (werewolf daytime)';
+
+  @override
+  String get gameDeclare => 'Declare';
+
+  @override
+  String get gameDeclareHint => 'Declare a number (1-10)';
+
+  @override
+  String get gameFollow => 'Follow';
+
+  @override
+  String get gameChallenge => 'Challenge';
+
+  @override
+  String get gameChallengeHint => 'Challenge the previous claim';
+
+  @override
+  String get gameSoupAskHint =>
+      'Ask a yes/no question (host: yes/no/maybe/unrelated/don\'t know)';
+
+  @override
+  String get gameSoupGuess => 'Guess truth';
+
+  @override
+  String get gameSoupGuessHint => 'Say the truth you guess';
+
+  @override
+  String get gameHistoryEmpty => 'No game records yet';
+
+  @override
+  String get gameFilterAll => 'All';
+
+  @override
+  String get gameFilterWerewolf => 'Werewolf';
+
+  @override
+  String get gameFilterLiarsBar => 'Liars Bar';
+
+  @override
+  String get gameFilterTurtleSoup => 'Turtle Soup';
+
+  @override
+  String get gameFilterUndercover => 'Undercover';
+
+  @override
+  String get gameFilterTruthOrDare => 'Truth or Dare';
+
+  @override
+  String get gameFilterTwentyQ => '20 Questions';
 }

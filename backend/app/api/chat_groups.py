@@ -822,6 +822,127 @@ async def _generate_replies_runtime(
     return replies
 
 
+# ── 群聊游戏 Phase 2：/play 命令 ──────
+_GAME_ALIASES = {
+    "undercover": "undercover", "谁是卧底": "undercover",
+    "werewolf": "werewolf", "狼人杀": "werewolf",
+    "liars_bar": "liars_bar", "骗子酒馆": "liars_bar",
+    "turtle_soup": "turtle_soup", "海龟汤": "turtle_soup",
+    "truth_or_dare": "truth_or_dare", "真心话大冒险": "truth_or_dare",
+    "twenty_q": "twenty_q", "猜词20问": "twenty_q", "猜词": "twenty_q",
+}
+
+
+async def _group_active_chars(db: AsyncSession, group_id: int) -> list:
+    """返回群里活跃的 AI 角色列表。"""
+    rows = (await db.execute(
+        select(ChatGroupMember.character_id).where(ChatGroupMember.group_id == group_id)
+    )).scalars().all()
+    if not rows:
+        return []
+    from app.models.character import AICharacter as _AC
+    chars = (await db.execute(
+        select(_AC).where(_AC.id.in_(rows), _AC.is_active.is_(True))
+    )).scalars().all()
+    return list(chars)
+
+
+async def _handle_play_command(db: AsyncSession, group_id: int, content: str,
+                               user_name: str, user_id: int, msg) -> dict:
+    """处理 /play 命令：解析游戏 → 校验人数 → 创建群游戏会话 → 镜像 GM 播报进群。
+
+    用户 /play 后不再走普通群聊回复。非法游戏名/人数不足返回群聊提示（不报 500）。
+    """
+    from app.api.games import list_games, engine_for, _create_session_in_db, \
+        _mirror_to_group as _mirror, _resume_ai_turns
+    import asyncio
+
+    arg = (content[len("/play"):] or "").strip()
+    group_chars = await _group_active_chars(db, group_id)
+    group_count = len(group_chars)
+    gm = {g["game_type"]: g for g in list_games()}
+
+    # 解析游戏类型
+    game_type = None
+    if arg:
+        game_type = _GAME_ALIASES.get(arg.lower()) or _GAME_ALIASES.get(arg)
+        if game_type is None:
+            return await _play_reply(db, msg, user_name,
+                               "没听懂要玩哪个游戏，试试 /play 狼人杀、/play werewolf 或 /play 骗子酒馆。")
+    else:
+        # /play 默认：随机一个能容纳当前群成员人数的多人游戏
+        candidates = [g["game_type"] for g in list_games()
+                      if g["player_mode"] == "multi" and g["needs_gm"]
+                      and g["min_players"] <= group_count <= g["max_players"]]
+        game_type = random.choice(candidates) if candidates else None
+    if game_type is None:
+        return await _play_reply(db, msg, user_name, "当前群成员不足以开局，试试 /play 狼人杀 或先多拉几个角色。")
+
+    meta = gm.get(game_type) or engine_for(game_type)(None).meta()
+    if not (meta["min_players"] <= group_count <= meta["max_players"]):
+        return await _play_reply(
+            db, msg, user_name,
+            f"「{meta['name']}」需要 {meta['min_players']}-{meta['max_players']} 名玩家，当前群成员 {group_count} 人。",
+        )
+
+    # 创建群游戏会话（玩家=群内活跃 AI 角色，用户观战）
+    char_ids = [c.id for c in group_chars]
+    try:
+        session, engine = await _create_session_in_db(
+            db, user_id=user_id, game_type=game_type,
+            player_ids=char_ids, spectator_ids=[], user_as_player=False,
+            group_id=group_id, trigger="user_initiated",
+        )
+    except ValueError as e:
+        return await _play_reply(db, msg, user_name, str(e))
+
+    # 镜像 GM 初始播报进群（msg_type=game_event）
+    for ev in engine.all_events_ordered():
+        if ev.get("visibility", "public") == "public":
+            await _mirror(db, engine, session, ev)
+    await db.commit()
+
+    # 首个行动者是 AI 时触发自动续跑
+    ts = engine.current_turn_seat()
+    if ts is not None and engine.is_ai(ts):
+        asyncio.ensure_future(_resume_ai_turns(session.id))
+
+    _logger.info("group /play started group=%d game=%s session=%d players=%d",
+                 group_id, game_type, session.id, len(char_ids))
+    return {
+        "user_message": {
+            "id": msg.id, "sender_type": "user", "character_id": None,
+            "sender_name": user_name, "content": msg.content,
+            "created_at": msg.created_at.isoformat(),
+        },
+        "replies": [],
+        "game": {"session_id": session.id, "game_type": game_type,
+                 "name": meta["name"], "player_mode": meta["player_mode"],
+                 "player_count": len(char_ids)},
+        "notice": f"🎮 已开启「{meta['name']}」，角色们开始啦！",
+    }
+
+
+async def _play_reply(db: AsyncSession, msg, user_name: str, notice: str) -> dict:
+    """人数不足/非法游戏名：写入群提示消息并返回（不报 500）。"""
+    try:
+        db.add(ChatGroupMessage(
+            group_id=msg.group_id, sender_type="ai", character_id=None,
+            content=notice[:200], msg_type="game_event",
+        ))
+        await db.commit()
+    except Exception:
+        await db.rollback()
+    return {
+        "user_message": {
+            "id": msg.id, "sender_type": "user", "character_id": None,
+            "sender_name": user_name, "content": msg.content,
+            "created_at": msg.created_at.isoformat(),
+        },
+        "replies": [], "game": None, "notice": notice,
+    }
+
+
 @router.post("/{group_id}/messages")
 async def send_message(
     group_id: int,
@@ -848,6 +969,10 @@ async def send_message(
         user_name = (u.nickname if u and u.nickname else (u.username if u else "")) or "用户"
     except Exception:
         user_name = "用户"
+
+    # 群聊游戏 Phase 2：/play 命令入口（不走普通群聊回复）
+    if content.startswith("/play"):
+        return await _handle_play_command(db, group_id, content, user_name, user_id, msg)
 
     _t0 = time.monotonic()
     replies = await _generate_replies(db, group_id, content, user_name, user_id=user_id)

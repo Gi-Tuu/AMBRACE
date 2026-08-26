@@ -667,6 +667,29 @@ async def _run_post_processing(
     except Exception:
         pass
 
+    # Life Loop v1.1（2026-08-26）：聊天→生活意图提取（本地规则，失败静默；不阻塞回复）
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        if AGENT_FLAGS.get("life_chat_driven_enabled", False):
+            from app.life.chat_intent import extract_life_intent
+            asyncio.ensure_future(extract_life_intent(character_id, user_id, content))
+    except Exception:
+        pass
+
+    # Life Loop v1.1（2026-08-26）：刷新用户在场时间（life_state.last_user_interaction_at）
+    try:
+        from app.life.life_state import get_life_state
+
+        async def _bump_user_presence(character_id: int = character_id):
+            async with async_session_factory() as db:
+                st = await get_life_state(db, character_id)
+                st.last_user_interaction_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                await db.commit()
+
+        asyncio.ensure_future(_bump_user_presence())
+    except Exception:
+        pass
+
     # 记忆架构 v2.1 Phase 4b：情境驱动复习——感知 deep/emotion 或命中进行中目标 → 入队候选（异步，失败静默）
     try:
         from app.scheduler.memory_review import queue_contextual_review_for

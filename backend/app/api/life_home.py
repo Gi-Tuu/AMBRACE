@@ -101,6 +101,26 @@ ROOMS_LAYOUT = {
     },
 }
 
+# ── 小家大地图 v1.1（2026-08-26）：房间世界坐标 + 邻接 + 出口 ──
+# 世界坐标系：每房间 ROOM_W×ROOM_H 格，origin 为房间左上角在世界空间的位置
+WORLD_LAYOUT = {
+    "room_origins": {
+        "living":   {"wx": 0,   "wy": 0},
+        "bedroom":  {"wx": 16,  "wy": 0},    # 卧室在客厅东侧
+        "kitchen":  {"wx": 0,   "wy": 12},   # 厨房在客厅南侧
+        "bathroom": {"wx": 16,  "wy": 12},   # 浴室在东南
+    },
+    "adjacency": [
+        {"from": "living", "to": "bedroom",  "door_type": "wall_gap", "side": "east"},
+        {"from": "living", "to": "kitchen",  "door_type": "wall_gap", "side": "south"},
+        {"from": "living", "to": "bathroom", "door_type": "wall_gap", "side": "southeast"},
+    ],
+    "exit": {"room": "living", "side": "west", "x": 0, "y": 6},
+}
+
+# 房间尺寸（格）
+ROOM_W, ROOM_H = 16, 12
+
 # ── 小家 v3.2 家具自由摆放：角色自定义布局（home_layout_json）────
 # 自定义布局只影响家具位置/尺寸；房间 id/name/doors 一律保持默认（doors 不持久化）。
 _LAYOUT_MAX_BYTES = 50 * 1024      # 布局 JSON 体积上限 50KB
@@ -278,6 +298,32 @@ async def home_state(character_id: int = 0, user_id: int = Depends(get_current_u
             await db.execute(select(Pet).where(Pet.user_id == user_id))
         ).scalars().all()
         user = await db.get(User, user_id)
+
+        # 小家大地图 v1.1（2026-08-26）：world 载荷（flag 开启时返回，否则 null 保持向后兼容）
+        flag_world = False
+        try:
+            from app.agent.loop import AGENT_FLAGS
+            flag_world = AGENT_FLAGS.get("life_home_worldmap_enabled", False)
+        except Exception:
+            pass
+
+        world_payload = None
+        if flag_world:
+            room = st.current_room or "living"
+            origin = WORLD_LAYOUT["room_origins"].get(room, WORLD_LAYOUT["room_origins"]["living"])
+            world_payload = {
+                "room_origins": WORLD_LAYOUT["room_origins"],
+                "adjacency": WORLD_LAYOUT["adjacency"],
+                "exit": WORLD_LAYOUT["exit"],
+                "room_size": {"w": ROOM_W, "h": ROOM_H},
+                "character": {
+                    "room": room,
+                    "location": st.location or "home",
+                    "wx": origin["wx"] + ROOM_W / 2,
+                    "wy": origin["wy"] + ROOM_H / 2,
+                },
+            }
+
         return {
             "character_id": cid,
             "character_name": char.name,
@@ -292,8 +338,10 @@ async def home_state(character_id: int = 0, user_id: int = Depends(get_current_u
                 "name": char.name,
                 "current_status": char.current_status or "正在家里",
             },
-            "current_room": "living",
+            "current_room": st.current_room or "living",
+            "location": st.location or "home",
             "rooms": _build_rooms(_parse_home_layout(st.home_layout_json)),
+            "world": world_payload,  # null=前端回退旧独立房间视图
             "pets": [
                 {"id": p.id, "name": p.name, "species": p.species,
                  "hunger": p.hunger, "mood": p.mood, "energy": p.energy}

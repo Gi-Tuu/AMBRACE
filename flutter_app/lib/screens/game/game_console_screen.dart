@@ -3,6 +3,7 @@ import 'package:ai_companion/l10n/app_localizations.dart';
 import 'package:ai_companion/providers/game_provider.dart';
 import 'package:ai_companion/widgets/app_page_route.dart';
 import 'game_room_screen.dart';
+import 'game_history_screen.dart';
 
 /// 游戏机面板：按单人/双人/多人分区展示 3 款游戏；
 /// 选参与者 AI 角色列表；用户身份玩家/观战选择（默认观战）；开始按钮。
@@ -86,7 +87,17 @@ class _GameConsoleScreenState extends State<GameConsoleScreen> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return Scaffold(
-      appBar: AppBar(title: Text(l10n.gameTitle)),
+      appBar: AppBar(
+        title: Text(l10n.gameTitle),
+        actions: [
+          IconButton(
+            tooltip: l10n.gameHistoryTitle,
+            icon: const Icon(Icons.history),
+            onPressed: () => Navigator.of(context)
+                .push(AppPageRoute(builder: (_) => const GameHistoryScreen())),
+          ),
+        ],
+      ),
       body: _provider.loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(

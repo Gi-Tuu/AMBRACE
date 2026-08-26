@@ -17,6 +17,10 @@ def _player_won(player, session, engine: GameEngine) -> bool:
     if ws in ("civilians", "undercover"):
         role = player.role
         return (ws == "civilians" and role == "civilian") or (ws == "undercover" and role == "undercover")
+    if ws == "villagers":
+        return player.role in ("villager", "seer")
+    if ws == "werewolves":
+        return player.role == "wolf"
     if ws in ("guesser", "thinker"):
         return player.role == ws
     return ws == f"seat_{player.seat}"

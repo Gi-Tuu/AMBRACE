@@ -23,6 +23,12 @@ class LifeState(Base):
     phase: Mapped[str] = mapped_column(String(20), default="morning")  # sleep/morning/afternoon/evening/night
     last_tick_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_user_interaction_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # ── Life Loop v1.1（2026-08-26）──
+    location: Mapped[str] = mapped_column(String(20), default="home")
+    # home / exit / world / friend / outside
+    location_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    current_room: Mapped[str] = mapped_column(String(20), default="living")
+    # living / bedroom / kitchen / bathroom / exit
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -134,3 +140,40 @@ class LifeSchedule(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class LifeFollowup(Base):
+    """生活动作回聊缓冲：动作完成后写入，在时机窗口（下次上线/早安/夜间复盘）自然提起。"""
+    __tablename__ = "life_followups"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    summary: Mapped[str] = mapped_column(String(300), nullable=False)       # 一句话回聊素材
+    action: Mapped[str] = mapped_column(String(30), default="")            # 来源动作
+    memory_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 关联记忆
+    trigger_window: Mapped[str] = mapped_column(String(20), default="next_online")
+    # next_online / morning / night_review
+    not_before: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(12), default="pending")
+    # pending / used / expired
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class LifeChatIntent(Base):
+    """聊天驱动的生活意图缓冲（§10）。Life Loop 消费后 status=consumed。"""
+    __tablename__ = "life_chat_intents"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    action_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    horizon: Mapped[str] = mapped_column(String(12), default="today")
+    # this_turn / today / this_week
+    raw_text: Mapped[str] = mapped_column(String(200), default="")
+    priority: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(12), default="pending")
+    # pending / consumed / expired
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

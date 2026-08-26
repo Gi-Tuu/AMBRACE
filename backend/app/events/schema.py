@@ -35,6 +35,7 @@ PROVENANCE_META: dict[str, tuple[str, float]] = {
     "tool_result": (EPISTEMIC_FACT, 0.95),
     "life_event": (EPISTEMIC_FACT, 0.9),
     "social_event": (EPISTEMIC_FACT, 0.85),
+    "life_loop": (EPISTEMIC_FACT, 0.9),
     "ai_message": (EPISTEMIC_INFERRED, 0.6),
     "inference": (EPISTEMIC_INFERRED, 0.4),
     "goal_schedule": (EPISTEMIC_PLANNED, 0.9),

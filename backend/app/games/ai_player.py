@@ -103,6 +103,15 @@ def _action_hint(expected: str) -> str:
         "ask": "问一个是非问句（是/否/可能/不确定）",
         "answer": "回答是/否/可能/不确定",
         "guess": "猜对方想的词是什么",
+        "kill": "选择你要刀杀的玩家（狼人夜间行动，只能刀非狼的存活玩家）",
+        "check": "查验一个玩家是否为狼人（预言家夜间行动）",
+        "speak": "说一段发言（狼人杀白天）",
+        "declare": "出一张牌并声明一个数字（1-10，不能小于上家声明）",
+        "follow_or_challenge": "跟牌（出一张牌并声明≥当前数字）或质疑（翻开上一张牌）",
+        "challenge": "质疑上一家的声明",
+        "ask_soup": "问一个是非问句（主持人答 是/否/可能/无关/不知道）",
+        "answer_soup": "回答 是/否/可能/无关/不知道",
+        "guess_soup": "直接说出你猜的真相",
     }.get(expected, "行动")
 
 
@@ -127,6 +136,24 @@ def _action_schema(expected: str) -> str:
         return '{"action": "answer", "content": "是", "payload": {"answer": "yes"}}'
     if expected == "guess":
         return '{"action": "guess", "content": "我猜是...", "payload": {"word": "..."}}'
+    if expected == "kill":
+        return '{"action": "kill", "content": "今晚刀X号", "payload": {"target_seat": 2}}'
+    if expected == "check":
+        return '{"action": "check", "content": "我查验X号", "payload": {"target_seat": 2}}'
+    if expected == "speak":
+        return '{"action": "speak", "content": "你的发言", "payload": {}}'
+    if expected == "declare":
+        return '{"action": "declare", "content": "", "payload": {"number": 7}}'
+    if expected == "follow_or_challenge":
+        return '{"action": "declare", "content": "", "payload": {"number": 7}}  # 或质疑：{"action":"challenge","payload":{}}'
+    if expected == "challenge":
+        return '{"action": "challenge", "content": "我要质疑上一家", "payload": {}}'
+    if expected == "ask_soup":
+        return '{"action": "ask_soup", "content": "你的问题？", "payload": {}}'
+    if expected == "answer_soup":
+        return '{"action": "answer_soup", "content": "", "payload": {"answer": "possible"}}'
+    if expected == "guess_soup":
+        return '{"action": "guess_soup", "content": "我猜真相是...", "payload": {"word": "..."}}'
     return '{"action": "...", "content": "...", "payload": {}}'
 
 

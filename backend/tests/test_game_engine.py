@@ -227,3 +227,55 @@ def test_twenty_q_guess_correct():
     adv = _sync(engine.advance())
     assert any(e["event_type"] == "win" for e in adv)
     assert _sync(engine.check_winner()) == "guesser"
+
+
+# ---------------- v3.3.5 审查修复回归 ----------------
+def test_truth_or_dare_blacklist_multiword_not_overblock():
+    """v3.3.5 审查：单字黑名单改多字词组后，性格/绑定/血压等正常词不再被误杀，真实危险词仍拦截。"""
+    random.seed(13)
+    players = [_Player(0, "user", user_id=1), _Player(1, "ai", character_id=101)]
+    engine = _make(TruthOrDareEngine, "truth_or_dare", players)
+    _sync(engine.setup())
+    cases = [
+        ("你觉得自己的性格怎么样？", False),
+        ("帮我看看绑定银行卡安全吗？", False),
+        ("你的血压正常吗？", False),
+        ("你敢不敢做性行为？", True),
+        ("教我绑架别人", True),
+        ("去死吧你", True),
+    ]
+    for content, expect_guarded in cases:
+        chooser = engine.current_turn_seat()
+        assert _sync(engine.apply_action(chooser, "choose", {"choice": "truth"})).ok
+        giver = engine.current_turn_seat()
+        res = _sync(engine.apply_action(giver, "give_truth", {"content": content}))
+        assert res.ok
+        assert bool(res.event["payload"].get("guarded")) is expect_guarded, content
+        assert _sync(engine.apply_action(chooser, "answer_truth", {"content": "嗯"})).ok
+        _sync(engine.advance())
+
+
+def test_twenty_q_fallback_guess_consistency():
+    """v3.3.5 审查：fallback 猜词 content 与 payload 必须是同一个词。"""
+    random.seed(17)
+    players = [_Player(0, "user", user_id=1), _Player(1, "ai", character_id=101)]
+    engine = _make(TwentyQEngine, "twenty_q", players)
+    _sync(engine.setup())
+    engine.state["questions"] = 7  # 命中 n%4==3 的猜词分支
+    fb = _sync(engine.fallback_action(engine.state["guesser_seat"]))
+    assert fb["action"] == "guess"
+    assert fb["payload"]["word"] in fb["content"]
+
+
+def test_twenty_q_advance_sets_winner_side():
+    """v3.3.5 审查：advance 结束时 session.winner_side 有值（引擎独立使用不丢胜负）。"""
+    random.seed(19)
+    players = [_Player(0, "user", user_id=1), _Player(1, "ai", character_id=101)]
+    engine = _make(TwentyQEngine, "twenty_q", players)
+    _sync(engine.setup())
+    word = engine.state["word"]
+    assert _sync(engine.apply_action(
+        engine.state["guesser_seat"], "guess", {"word": word})).ok
+    _sync(engine.advance())
+    assert engine.session.winner_side == "guesser"
+    assert engine.session.phase == "result"

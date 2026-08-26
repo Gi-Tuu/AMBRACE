@@ -82,7 +82,10 @@ def test_catalog(game_api_db):
     r = client.get("/api/v1/games/catalog")
     assert r.status_code == 200
     games = r.json()["games"]
-    assert {g["game_type"] for g in games} == {"undercover", "truth_or_dare", "twenty_q"}
+    assert {g["game_type"] for g in games} == {
+        "undercover", "truth_or_dare", "twenty_q",
+        "werewolf", "liars_bar", "turtle_soup",
+    }
     assert any(g["needs_gm"] for g in games)
 
 
@@ -194,3 +197,53 @@ def test_multi_user_isolation(game_api_db):
     assert intruder.get(f"/api/v1/games/sessions/{sid}/archive").status_code == 404
     # 未结束不可取手札（owner 视角）
     assert owner.get(f"/api/v1/games/sessions/{sid}/archive").status_code == 400
+
+
+# ---------------- Phase 2：新游戏创建（狼人杀 4 人）----------------
+def test_create_new_games(game_api_db):
+    client = _make_client(1)
+    # 狼人杀：用户玩家 + 3 AI = 4 人
+    r = client.post("/api/v1/games/sessions", json={
+        "game_type": "werewolf", "player_ids": [101, 102, 103],
+        "user_as_player": True,
+    })
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["ok"] is True and data["session_id"] > 0
+    assert data["state"]["phase"] in ("night", "day_speak", "day_vote")
+    # 人数不足 → 400
+    bad = client.post("/api/v1/games/sessions", json={
+        "game_type": "werewolf", "player_ids": [101], "user_as_player": True,
+    })
+    assert bad.status_code == 400
+    # 海龟汤：用户玩家 + 1 AI = 2 人
+    r2 = client.post("/api/v1/games/sessions", json={
+        "game_type": "turtle_soup", "player_ids": [101], "user_as_player": True,
+    })
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["state"]["phase"] == "ask"
+    # 骗子酒馆：3 AI + 用户玩家 = 4 人（3-5 人局）
+    r3 = client.post("/api/v1/games/sessions", json={
+        "game_type": "liars_bar", "player_ids": [101, 102, 103],
+        "user_as_player": True,
+    })
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["state"]["phase"] == "declare"
+
+
+# ---------------- v3.3.5 审查修复回归 ----------------
+def test_abort_cleans_turn_lock(game_api_db):
+    """v3.3.5 审查：解散游戏后进程内 AI 回合锁被清理，防长期运行内存增长。"""
+    from app.api import games as games_api
+    client = _make_client(1)
+    sid, _ = _create_undercover(client)
+    games_api._lazy_lock(sid)
+    assert sid in games_api._ai_turn_locks
+    assert client.post(f"/api/v1/games/sessions/{sid}/abort").status_code == 200
+    assert sid not in games_api._ai_turn_locks
+
+
+def test_resume_stuck_games_no_crash(game_api_db):
+    """v3.3.5 审查：stuck 对局恢复扫描可安全执行（空库不报错）。"""
+    from app.api.games import resume_stuck_games
+    asyncio.run(resume_stuck_games())

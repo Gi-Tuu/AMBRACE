@@ -147,6 +147,9 @@ class _GameRoomScreenState extends State<GameRoomScreen> {
     final private = (my['private'] as Map<String, dynamic>?) ?? {};
     final role = (my['role'] as String?) ?? '';
     final word = (private['word'] as String?) ?? '';
+    final wolfTeam = ((private['wolf_team'] as List?) ?? const []).map((e) => '$e').join('、');
+    final cards = ((private['cards'] as List?) ?? const []).map((e) => '$e').join(' ');
+    final checks = (private['checks'] as Map<String, dynamic>?) ?? {};
     final isSpectator = my['is_spectator'] == true;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -160,6 +163,21 @@ class _GameRoomScreenState extends State<GameRoomScreen> {
             if (word.isNotEmpty) ...[
               const SizedBox(height: 4),
               Text('${l10n.gameYourWord}: $word',
+                  style: const TextStyle(fontSize: 13)),
+            ],
+            if (wolfTeam.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text('🐺 狼队友：$wolfTeam 号',
+                  style: const TextStyle(fontSize: 13)),
+            ],
+            if (cards.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text('🃏 手牌：$cards',
+                  style: const TextStyle(fontSize: 13)),
+            ],
+            if (checks.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text('🔮 查验：${checks.entries.map((e) => '${e.key}号${e.value == true ? "狼" : "好人"}').join('；')}',
                   style: const TextStyle(fontSize: 13)),
             ],
             if (isSpectator)
@@ -298,9 +316,130 @@ class _GameRoomScreenState extends State<GameRoomScreen> {
         );
       case 'guess':
         return _textAction(l10n, l10n.gameGuessWord, l10n.gameGuess, 'guess');
+      case 'kill':
+        return _targetAction(l10n, l10n.gameVoteFor, l10n.gameKill, 'kill', 'target_seat');
+      case 'check':
+        return _targetAction(l10n, l10n.gameVoteFor, l10n.gameCheck, 'check', 'target_seat');
+      case 'speak':
+        return _textAction(l10n, l10n.gameSpeakHint, l10n.gameSpeak, 'speak');
+      case 'declare':
+        return _numberAction(l10n, l10n.gameDeclareHint, l10n.gameDeclare);
+      case 'follow_or_challenge':
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _numberAction(l10n, l10n.gameDeclareHint, l10n.gameFollow),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.help_outline),
+              label: Text(l10n.gameChallenge),
+              onPressed: () => _send('challenge', {}),
+            ),
+          ],
+        );
+      case 'challenge':
+        return FilledButton.tonal(
+          onPressed: () => _send('challenge', {}),
+          child: Text(l10n.gameChallenge),
+        );
+      case 'ask_soup':
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _textAction(l10n, l10n.gameSoupAskHint, l10n.gameAsk, 'ask_soup'),
+            const SizedBox(height: 4),
+            TextButton(
+              onPressed: () => _guessSoup(l10n),
+              child: Text(l10n.gameSoupGuess),
+            ),
+          ],
+        );
+      case 'guess_soup':
+        return _textAction(l10n, l10n.gameSoupGuessHint, l10n.gameSoupGuess, 'guess_soup');
+      case 'answer_soup':
+        return Wrap(
+          spacing: 8,
+          children: [
+            for (final (ans, label) in [
+              ('yes', l10n.gameAnswerYes),
+              ('no', l10n.gameAnswerNo),
+              ('possible', l10n.gameAnswerPossible),
+              ('unrelated', l10n.gameAnswerUncertain),
+              ('unknown', l10n.gameAnswerUncertain),
+            ])
+              ActionChip(
+                label: Text(label),
+                onPressed: () => _send('answer_soup', {'answer': ans}),
+              ),
+          ],
+        );
       default:
         return Text(l10n.gameWaiting, style: const TextStyle(fontSize: 13));
     }
+  }
+
+  Widget _targetAction(
+      AppLocalizations l10n, String title, String confirmLabel, String action, String payloadKey) {
+    final aliveOthers = p.players
+        .where((pl) => pl['is_spectator'] != true && pl['seat'] != p.userSeat && pl['alive'] == true)
+        .toList();
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(title, style: const TextStyle(fontSize: 13)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          children: [
+            for (final pl in aliveOthers)
+              ChoiceChip(
+                label: Text('${pl['name'] ?? ''}'),
+                selected: _selectedVoteSeat == '${pl['seat']}',
+                onSelected: (_) => setState(() => _selectedVoteSeat = '${pl['seat']}'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        FilledButton(
+          onPressed: _selectedVoteSeat.isEmpty
+              ? null
+              : () => _send(action, {payloadKey: int.parse(_selectedVoteSeat)}),
+          child: Text(confirmLabel),
+        ),
+      ],
+    );
+  }
+
+  Widget _numberAction(AppLocalizations l10n, String hint, String label) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextField(
+          controller: _textCtrl,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            hintText: hint,
+            border: const OutlineInputBorder(),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 8),
+        FilledButton(
+          onPressed: () {
+            final n = int.tryParse(_textCtrl.text.trim());
+            if (n == null || n < 1 || n > 10) return;
+            _send('declare', {'number': n});
+          },
+          child: Text(label),
+        ),
+      ],
+    );
+  }
+
+  void _guessSoup(AppLocalizations l10n) {
+    final text = _textCtrl.text.trim();
+    if (text.isEmpty) return;
+    _send('guess_soup', {'word': text});
   }
 
   Widget _textAction(AppLocalizations l10n, String hint, String? label, String action) {
@@ -320,8 +459,11 @@ class _GameRoomScreenState extends State<GameRoomScreen> {
           onPressed: () {
             final text = _textCtrl.text.trim();
             if (text.isEmpty) return;
-            if (action == 'ask' || action == 'guess') {
-              _send(action, {'content': text, if (action == 'guess') 'word': text});
+            if (action == 'ask' || action == 'guess' || action == 'guess_soup') {
+              _send(action, {
+                'content': text,
+                if (action == 'guess' || action == 'guess_soup') 'word': text,
+              });
             } else {
               _send(action, {'content': text});
             }

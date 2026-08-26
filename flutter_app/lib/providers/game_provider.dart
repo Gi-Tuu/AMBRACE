@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/character.dart';
 import '../services/api_client.dart';
 
@@ -16,6 +18,11 @@ class GameProvider extends ChangeNotifier {
   bool _sending = false;
   String? _error;
   Timer? _pollTimer;
+  WebSocketChannel? _ws;
+  StreamSubscription? _wsSub;
+  Timer? _wsReconnectTimer;
+  bool _wsConnected = false;
+  bool _disposed = false;
 
   List<Map<String, dynamic>> get catalog => _catalog;
   List<AICharacter> get characters => _characters;
@@ -129,10 +136,12 @@ class GameProvider extends ChangeNotifier {
     }
   }
 
-  /// 3 秒轮询（游戏房间用）。
+  /// 3 秒轮询（游戏房间用；WebSocket 连接时暂停，断开回退轮询）。
   void startPolling() {
     stopPolling();
+    _connectWs();
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (_wsConnected) return; // WS 在线时不必轮询
       if (isPlaying) {
         await refreshState(seat: _userSeat >= 0 ? _userSeat : -1);
       }
@@ -142,6 +151,60 @@ class GameProvider extends ChangeNotifier {
   void stopPolling() {
     _pollTimer?.cancel();
     _pollTimer = null;
+    _wsReconnectTimer?.cancel();
+    _wsReconnectTimer = null;
+    _disconnectWs();
+  }
+
+  /// 打开游戏 WebSocket（实时推送，收到 game_event 就刷新状态）。
+  void _connectWs() {
+    final sid = _sessionId;
+    if (sid == null || _disposed) return;
+    try {
+      _disconnectWs();
+    } catch (_) {}
+    final base = _api.baseUrl;
+    final wsBase = base.replaceFirst('http://', 'ws://').replaceFirst('https://', 'wss://');
+    final uri = Uri.parse('$wsBase/api/v1/games/ws/$sid').replace(queryParameters: {
+      if (_api.token.isNotEmpty) 'token': _api.token,
+    });
+    _ws = WebSocketChannel.connect(uri);
+    _wsSub = _ws!.stream.listen(
+      (data) {
+        if (data is String) {
+          try {
+            final json = jsonDecode(data) as Map<String, dynamic>;
+            if (json['type'] == 'game_event') {
+              refreshState();
+            }
+          } catch (_) {}
+        }
+      },
+      onError: (_) => _onWsDisconnect(),
+      onDone: _onWsDisconnect,
+    );
+  }
+
+  void _onWsDisconnect() {
+    _wsConnected = false;
+    try {
+      _ws?.sink.close();
+    } catch (_) {}
+    _wsSub?.cancel();
+    _ws = null;
+    if (_disposed || _sessionId == null) return;
+    _wsReconnectTimer?.cancel();
+    _wsReconnectTimer = Timer(const Duration(seconds: 3), _connectWs);
+  }
+
+  void _disconnectWs() {
+    _wsConnected = false;
+    try {
+      _ws?.sink.close();
+    } catch (_) {}
+    _wsSub?.cancel();
+    _wsSub = null;
+    _ws = null;
   }
 
   /// 解散游戏（仅创建者）。
@@ -182,6 +245,7 @@ class GameProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     stopPolling();
     super.dispose();
   }

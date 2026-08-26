@@ -162,6 +162,8 @@ async def scheduler_loop():
     moment_counter = 0
     file_cleanup_counter = 0
     life_counter = 0
+    life_loop_counter = 0
+    game_stuck_counter = 0
     reflection_counter = 0
     memory_counter = 0
     _diary_generated_today = False
@@ -188,6 +190,8 @@ async def scheduler_loop():
             moment_counter += TICK
             file_cleanup_counter += TICK
             life_counter += TICK
+            life_loop_counter += TICK
+            game_stuck_counter += TICK
             reflection_counter += TICK
             memory_counter += TICK
 
@@ -284,6 +288,28 @@ async def scheduler_loop():
                     await LifeTickTask().execute()
                 except Exception as e:
                     _logger.warning("Life tick error: %s", e)
+
+            # AI Life Loop v1.1（2026-08-26）：30 分钟行为决策（独立于 life_tick 的每小时结算）
+            if life_loop_counter >= 1800:
+                life_loop_counter = 0
+                try:
+                    from app.agent.loop import AGENT_FLAGS
+                    if AGENT_FLAGS.get("life_loop_enabled", False):
+                        from app.life.life_loop import LifeLoopTask
+                        await LifeLoopTask().run()
+                except Exception as e:
+                    _logger.warning("Life loop error: %s", e)
+
+            # 群聊游戏恢复（v3.3.5 审查修复，每 5 分钟）：playing 且 10 分钟以上无新事件的对局自动续跑 AI 回合（服务器重启/断线兜底）
+            if game_stuck_counter >= 300:
+                game_stuck_counter = 0
+                try:
+                    from app.agent.loop import AGENT_FLAGS
+                    if AGENT_FLAGS.get("group_chat_games", False):
+                        from app.api.games import resume_stuck_games
+                        asyncio.ensure_future(resume_stuck_games())
+                except Exception as e:
+                    _logger.warning("Game stuck resume error: %s", e)
 
             # 日记（23:00 后触发一次，总结当天）
             if diary_counter >= 600:

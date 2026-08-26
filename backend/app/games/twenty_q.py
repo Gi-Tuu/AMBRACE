@@ -130,6 +130,7 @@ class TwentyQEngine(GameEngine):
         if self.state.get("phase_result"):
             ws = self.state["phase_result"]
             self.session.phase = "result"
+            self.session.winner_side = ws  # v3.3.5 审查修复：引擎独立使用时 winner_side 不丢失
             self.state["stage"] = "done"
             content = gm_announce("twenty_q", "win_guesser") if ws == "guesser" else gm_announce("twenty_q", "win_thinker")
             events.append({"event_type": "win", "phase": "result", "content": content,
@@ -228,7 +229,7 @@ class TwentyQEngine(GameEngine):
         if stage == "ask" and seat == self.state.get("guesser_seat"):
             n = int(self.state.get("questions", 0))
             if n >= 4 and n % 4 == 3:
-                return {"action": "guess", "content": f"我猜是{random.choice(_WORD_POOL)}",
-                        "payload": {"word": random.choice(_WORD_POOL)}}
+                gw = random.choice(_WORD_POOL)
+                return {"action": "guess", "content": f"我猜是{gw}", "payload": {"word": gw}}
             return {"action": "ask", "content": "是生活里常见的东西吗？", "payload": {}}
         return {"action": "skip", "content": "", "payload": {}}

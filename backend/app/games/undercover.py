@@ -99,7 +99,7 @@ class UndercoverEngine(GameEngine):
             self.state["votes"][seat] = target
             return ActionResult(ok=True, event={
                 "event_type": "vote", "actor_seat": seat, "target_seat": target, "phase": "vote",
-                "content": f"{self.name_of(seat)}投票给{self.name_of(target)}号", "visibility": "public",
+                "content": f"{self.name_of(seat)}投票给{self.name_of(target)}", "visibility": "public",
                 "payload": {"target": target},
             })
         return ActionResult(ok=False, error="非法动作")

@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +22,7 @@ from app.db.database import async_session_factory
 from app.games import engine_for, list_games
 from app.agent.loop import AGENT_FLAGS
 from app.games.base import GameEngine
-from app.models.game import GameSession, GamePlayer
+from app.models.game import GameSession, GamePlayer, GameEvent
 from app.utils.logger import get_logger
 
 _logger = get_logger("api.games")
@@ -32,9 +32,24 @@ router = APIRouter(prefix="/api/v1/games", tags=["Games"])
 # 进程内防重入锁（跨进程场景需 DB 行锁，MVP 单进程足够）
 _ai_turn_locks: dict[int, asyncio.Lock] = {}
 
+# WebSocket 游戏实时推送：session_id -> set[WebSocket]（与 chat 的 connected_clients 隔离，避免 id 撞表）
+_game_ws_clients: dict[int, set[WebSocket]] = {}
+
 
 def _lazy_lock(session_id: int) -> asyncio.Lock:
     return _ai_turn_locks.setdefault(session_id, asyncio.Lock())
+
+
+async def _broadcast_game_event(session_id: int, event: dict, phase: str) -> None:
+    """向该对局在线 WS 广播游戏事件（实时刷新状态用）。"""
+    for ws in list(_game_ws_clients.get(session_id, set())):
+        try:
+            await ws.send_json({
+                "type": "game_event", "event": event, "phase": phase,
+                "round": event.get("round", 0),
+            })
+        except Exception:
+            _game_ws_clients.get(session_id, set()).discard(ws)
 
 
 # ── 游戏目录 ──
@@ -66,99 +81,25 @@ async def create_session(data: dict, user_id: int = Depends(get_current_user_id)
     if group_id is not None:
         group_id = int(group_id)
 
-    non_spectator = len(player_ids) + (1 if user_as_player else 0)
-    if not (engine_cls.min_players <= non_spectator <= engine_cls.max_players):
-        raise HTTPException(
-            400,
-            f"{meta['name']}需 {engine_cls.min_players}-{engine_cls.max_players} 名玩家，"
-            f"当前 {non_spectator} 名",
-        )
-    if game_type in ("truth_or_dare", "twenty_q") and non_spectator != 2:
-        raise HTTPException(400, f"{meta['name']}需要恰好 2 名玩家")
-
     # 拉取 AI 角色信息（人名/人设/关系）
     all_char_ids = list(dict.fromkeys(player_ids + spectator_ids))
-    from app.models.character import AICharacter
-    char_map = {}
-    if all_char_ids:
-        async with async_session_factory() as db:
-            rows = (await db.execute(
-                select(AICharacter).where(AICharacter.id.in_(all_char_ids))
-            )).scalars().all()
-        char_map = {c.id: c for c in rows}
-    # 校验角色归属（必须是该用户的角色）
-    for cid in all_char_ids:
-        c = char_map.get(cid)
-        if c is None or c.user_id != user_id:
-            raise HTTPException(400, f"角色 {cid} 不存在或不属于你")
+    char_map = await _load_char_map(all_char_ids, user_id)
 
     async with async_session_factory() as db:
-        session = GameSession(
-            user_id=user_id, group_id=group_id, game_type=game_type,
-            player_mode=meta["player_mode"], status="created",
-            round=0, phase="", trigger=data.get("trigger", "user_initiated"),
-        )
-        db.add(session)
-        await db.flush()
-
-        # 座次分配：先玩家（user 或 AI 依次），再观战者
-        seats = []
-        next_seat = 0
-        user_seat = -1
-
-        def _add_player(p_type, char_id=None, uid=None, spectator=False):
-            nonlocal next_seat, user_seat
-            s = next_seat
-            next_seat += 1
-            p = GamePlayer(
-                session_id=session.id, player_type=p_type,
-                user_id=uid, character_id=char_id, seat=s, is_spectator=spectator,
-                alive=True, score=0, private_json="{}",
+        try:
+            session, engine = await _create_session_in_db(
+                db, user_id=user_id, game_type=game_type,
+                player_ids=player_ids, spectator_ids=spectator_ids,
+                user_as_player=user_as_player, group_id=group_id,
+                trigger=data.get("trigger", "user_initiated"),
+                _char_map=char_map,
             )
-            db.add(p)
-            if p_type == "user" and not spectator:
-                user_seat = s
-            elif p_type == "user" and spectator:
-                user_seat = s
-            seats.append(p)
-            return p
-
-        if user_as_player:
-            _add_player("user", uid=user_id)
-        for cid in player_ids:
-            _add_player("ai", char_id=cid)
-        if not user_as_player:
-            _add_player("user", uid=user_id, spectator=True)
-        for cid in spectator_ids:
-            _add_player("ai", char_id=cid, spectator=True)
-
-        # 注入玩家元信息（人名/人设/关系），持久化到 state_json 供 load 恢复
-        engine = engine_cls(session)
-        name_by_seat = {}
-        for p in seats:
-            c = char_map.get(p.character_id)
-            name_by_seat[p.seat] = {
-                "name": (c.name if c else "系统"),
-                "character_id": p.character_id,
-                "personality": (c.personality if c else ""),
-                "chat_style": (c.chat_style if c else ""),
-                "relation_type": (c.relation_type if c else ""),
-            }
-            if p.player_type == "user" and p.character_id is None:
-                name_by_seat[p.seat]["name"] = "你"
-        engine.build_player_meta(name_by_seat)
-        engine.players = seats
-
-        init_events = await engine.setup()
-        session.status = "playing"
-        session.started_at = datetime.now(timezone.utc)
-        for ev in init_events:
-            await engine.persist_event(db, ev)
-        await engine.persist_state(db)
-        await db.commit()
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
         # 若第一个行动者是 AI，启动续跑
-        if engine.current_turn_seat() is not None and engine.is_ai(engine.current_turn_seat()):
+        ts = engine.current_turn_seat()
+        if ts is not None and engine.is_ai(ts):
             asyncio.ensure_future(_resume_ai_turns(session.id))
 
         return {
@@ -169,6 +110,118 @@ async def create_session(data: dict, user_id: int = Depends(get_current_user_id)
             "game": meta,
             "state": _build_state(engine, user_seat=input_seat(engine, user_id)),
         }
+
+
+async def _load_char_map(char_ids: list[int], user_id: int) -> dict:
+    """校验角色归属（必须是该用户角色）并返回 {id: AICharacter}。"""
+    from app.models.character import AICharacter
+    char_map = {}
+    if char_ids:
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(AICharacter).where(AICharacter.id.in_(char_ids))
+            )).scalars().all()
+            char_map = {c.id: c for c in rows}
+    for cid in char_ids:
+        c = char_map.get(cid)
+        if c is None or c.user_id != user_id:
+            raise HTTPException(400, f"角色 {cid} 不存在或不属于你")
+    return char_map
+
+
+async def _create_session_in_db(
+    db: AsyncSession, *, user_id: int, game_type: str, player_ids: list[int],
+    spectator_ids: list[int], user_as_player: bool, group_id: int | None,
+    trigger: str, _char_map: dict | None = None,
+) -> tuple[GameSession, GameEngine]:
+    """共享创建逻辑：HTTP /play / 自主开局都复用。
+
+    校验人数、分配座次（玩家 + 用户观战 + 额外观战）、注入玩家元信息、setup、
+    落初始事件与状态并 commit。返回 (session, engine)。人数不足抛 ValueError（非 500）。
+    """
+    try:
+        engine_cls = engine_for(game_type)
+    except ValueError:
+        raise ValueError(f"未知游戏: {game_type}")
+    meta = engine_cls(None).meta()
+    non_spectator = len(player_ids) + (1 if user_as_player else 0)
+    if not (engine_cls.min_players <= non_spectator <= engine_cls.max_players):
+        raise ValueError(
+            f"{meta['name']}需 {engine_cls.min_players}-{engine_cls.max_players} 名玩家，当前 {non_spectator} 名"
+        )
+    if game_type in ("truth_or_dare", "twenty_q", "turtle_soup") and non_spectator != 2:
+        raise ValueError(f"{meta['name']}需要恰好 2 名玩家")
+
+    from app.models.character import AICharacter
+    char_map = _char_map
+    if char_map is None and (player_ids or spectator_ids):
+        char_map = {}
+        rows = (await db.execute(
+            select(AICharacter).where(AICharacter.id.in_(list(dict.fromkeys(player_ids + spectator_ids))))
+        )).scalars().all()
+        char_map = {c.id: c for c in rows}
+    if char_map is None:
+        char_map = {}
+
+    session = GameSession(
+        user_id=user_id, group_id=group_id, game_type=game_type,
+        player_mode=meta["player_mode"], status="created",
+        round=0, phase="", trigger=trigger,
+    )
+    db.add(session)
+    await db.flush()
+
+    # 座次分配：先玩家（user 或 AI 依次），再观战者
+    seats = []
+    next_seat = 0
+
+    def _add_player(p_type, char_id=None, uid=None, spectator=False):
+        nonlocal next_seat
+        s = next_seat
+        next_seat += 1
+        p = GamePlayer(
+            session_id=session.id, player_type=p_type,
+            user_id=uid, character_id=char_id, seat=s, is_spectator=spectator,
+            alive=True, score=0, private_json="{}",
+        )
+        db.add(p)
+        seats.append(p)
+        return p
+
+    if user_as_player:
+        _add_player("user", uid=user_id)
+    for cid in player_ids:
+        _add_player("ai", char_id=cid)
+    if not user_as_player:
+        _add_player("user", uid=user_id, spectator=True)
+    for cid in spectator_ids:
+        _add_player("ai", char_id=cid, spectator=True)
+    await db.flush()  # 先分配球员 id，persist_state 才能按 id 回写（private_json dict → 字符串）
+
+    engine = engine_cls(session)
+    name_by_seat = {}
+    for p in seats:
+        c = char_map.get(p.character_id)
+        name_by_seat[p.seat] = {
+            "name": (c.name if c else "系统"),
+            "character_id": p.character_id,
+            "personality": (c.personality if c else ""),
+            "chat_style": (c.chat_style if c else ""),
+            "relation_type": (c.relation_type if c else ""),
+        }
+        if p.player_type == "user" and p.character_id is None:
+            name_by_seat[p.seat]["name"] = "你"
+    engine.build_player_meta(name_by_seat)
+    engine.players = seats
+
+    init_events = await engine.setup()
+    session.status = "playing"
+    session.started_at = datetime.now(timezone.utc)
+    for ev in init_events:
+        await engine.persist_event(db, ev)
+    await engine.persist_state(db)
+    await db.commit()
+    return session, engine
 
 
 def input_seat(engine: GameEngine, user_id: int) -> int:
@@ -259,22 +312,29 @@ async def player_action(sid: int, data: dict, user_id: int = Depends(get_current
         if not result.ok:
             raise HTTPException(400, result.error or "非法动作")
 
+        broadcast = []
         if result.event:
             await engine.persist_event(db, result.event)
             await _mirror_to_group(db, engine, session, result.event)
+            broadcast.append(result.event)
         adv_events = await engine.advance()
         for ev in adv_events:
             await engine.persist_event(db, ev)
             await _mirror_to_group(db, engine, session, ev)
+            broadcast.append(ev)
 
         winner = await engine.check_winner()
         if winner:
             await _settle_game(db, session, engine, winner)
             await db.commit()
+            for ev in broadcast:
+                await _broadcast_game_event(sid, ev, session.phase)
             return {"ok": True, "finished": True, "winner_side": winner}
 
         await engine.persist_state(db)
         await db.commit()
+        for ev in broadcast:
+            await _broadcast_game_event(sid, ev, session.phase)
         # 触发 AI 续跑（幂等；先响应，再异步推 AI 回合）
         asyncio.ensure_future(_resume_ai_turns(sid))
         return {"ok": True, "finished": False}
@@ -301,6 +361,46 @@ async def get_state(
         if session.status == "playing":
             asyncio.ensure_future(_resume_ai_turns(sid))
         return _build_state(engine, user_seat=view_seat)
+
+
+# ── WebSocket 实时推送 ──
+@router.websocket("/ws/{session_id}")
+async def games_ws(websocket: WebSocket, session_id: int):
+    """游戏实时事件推送（?token= 鉴权 + session.user_id 校验）。
+
+    客户端连上后，_resume_ai_turns / 玩家动作 / 结算等事件以
+    {"type":"game_event","event":...,"phase":...} 推送给在线连接。
+    """
+    from jose import jwt, JWTError
+    from app.auth.config import auth_settings as _as
+
+    token = websocket.query_params.get("token", "")
+    try:
+        payload = jwt.decode(token, _as.secret_key, algorithms=[_as.algorithm])
+        ws_user_id = payload.get("user_id")
+    except JWTError:
+        ws_user_id = None
+    if ws_user_id is None:
+        await websocket.close(code=4401)
+        return
+    async with async_session_factory() as db:
+        session = await db.get(GameSession, session_id)
+    if session is None or session.user_id != ws_user_id:
+        await websocket.close(code=4403)
+        return
+
+    await websocket.accept()
+    _game_ws_clients.setdefault(session_id, set()).add(websocket)
+    try:
+        # 保活：客户端可发心跳；忽略内容，只保证连接存活以检测断开
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        _game_ws_clients.get(session_id, set()).discard(websocket)
 
 
 # ── 中途加入观战 ──
@@ -348,6 +448,7 @@ async def abort_session(sid: int, user_id: int = Depends(get_current_user_id)):
         session.status = "aborted"
         session.finished_at = datetime.now(timezone.utc)
         await db.commit()
+        _ai_turn_locks.pop(sid, None)  # v3.3.5 审查修复：解散后清理进程内锁
         return {"ok": True, "status": "aborted"}
 
 
@@ -406,6 +507,7 @@ async def _settle_game(db: AsyncSession, session, engine: GameEngine, winner: st
     db.add(session)
     # 主记忆摘要指针 + game_memories（每 AI 角色）
     await finalize_game(db, session, engine)
+    _ai_turn_locks.pop(session.id, None)  # v3.3.5 审查修复：结算后清理进程内锁，防长期运行内存增长
 
 
 # ── AI 回合调度（幂等可续跑）──
@@ -432,24 +534,51 @@ async def _resume_ai_turns(session_id: int) -> None:
                     if decision.get("content"):
                         payload.setdefault("content", decision["content"])
                     result = await engine.apply_action(seat, decision.get("action", ""), payload)
+                    broadcast = []
                     if result.ok and result.event:
                         await engine.persist_event(db, result.event)
                         await _mirror_to_group(db, engine, session, result.event)
+                        broadcast.append(result.event)
                     adv_events = await engine.advance()
                     for ev in adv_events:
                         await engine.persist_event(db, ev)
                         await _mirror_to_group(db, engine, session, ev)
+                        broadcast.append(ev)
                     winner = await engine.check_winner()
                     if winner:
                         await _settle_game(db, session, engine, winner)
                         await db.commit()
+                        for ev in broadcast:
+                            await _broadcast_game_event(session_id, ev, session.phase)
                         _logger.info("game finished session=%d winner=%s", session_id, winner)
                         return
                     await engine.persist_state(db)
                     await db.commit()
+                    for ev in broadcast:
+                        await _broadcast_game_event(session_id, ev, session.phase)
                     await asyncio.sleep(1.2)  # 只在提交后 sleep，避免长事务
         except Exception as e:
             _logger.warning("_resume_ai_turns failed session=%d: %s", session_id, e)
+
+
+async def resume_stuck_games() -> None:
+    """v3.3.5 审查修复：低频恢复 playing 但 10 分钟以上无新事件的对局（服务器重启/断线兜底）。"""
+    try:
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(GameSession.id).where(GameSession.status == "playing")
+            )).scalars().all()
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=10)
+        for sid in rows:
+            async with async_session_factory() as db2:
+                last_ev = (await db2.execute(
+                    select(GameEvent.created_at).where(GameEvent.session_id == sid)
+                    .order_by(GameEvent.id.desc()).limit(1)
+                )).scalar_one_or_none()
+            if last_ev is None or last_ev < cutoff:
+                asyncio.ensure_future(_resume_ai_turns(sid))
+    except Exception as e:
+        _logger.warning("resume_stuck_games failed: %s", e)
 
 
 async def _mirror_to_group(db: AsyncSession, engine: GameEngine, session, event: dict) -> None:

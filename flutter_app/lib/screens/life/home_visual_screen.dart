@@ -9,6 +9,7 @@ import 'package:dio/dio.dart' show DioException;
 import 'package:flutter/services.dart' show rootBundle;
 import '../../services/api_client.dart';
 import '../../widgets/life_home_controls.dart';
+import '../../widgets/life_home_world_map.dart';
 import '../../widgets/shimmer.dart';
 import '../character/pet_screen.dart';
 import '../game/game_console_screen.dart';
@@ -798,9 +799,23 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
               : Column(
                   children: [
                     _statusBar(),
-                    _roomTabs(),
-                    Expanded(child: _roomView()),
-                    _controlBar(),
+                    // 小家大地图 v1.1（2026-08-26）：后端 world 载荷非空 → 世界画布视图；
+                    // world==null（flag 关）保持旧独立房间视图（完全向后兼容）。
+                    if (_state?['world'] == null) ...[
+                      _roomTabs(),
+                      Expanded(child: _roomView()),
+                      _controlBar(),
+                    ] else ...[
+                      Expanded(
+                        child: LifeHomeWorldMap(
+                          world: _state!['world'] as Map<String, dynamic>,
+                          l10n: l10n,
+                          roomNames: {
+                            for (final r in _rooms) r.id: r.name,
+                          },
+                        ),
+                      ),
+                    ],
                   ],
                 ),
     );

@@ -5,12 +5,17 @@ from app.games.base import GameEngine
 from app.games.undercover import UndercoverEngine
 from app.games.truth_or_dare import TruthOrDareEngine
 from app.games.twenty_q import TwentyQEngine
+from app.games.werewolf import WerewolfEngine
+from app.games.liars_bar import LiarsBarEngine
+from app.games.turtle_soup import TurtleSoupEngine
 
 _REGISTRY: dict[str, type[GameEngine]] = {
     "undercover": UndercoverEngine,
     "truth_or_dare": TruthOrDareEngine,
     "twenty_q": TwentyQEngine,
-    # Phase 2: "werewolf", "liars_bar", "turtle_soup"
+    "werewolf": WerewolfEngine,
+    "liars_bar": LiarsBarEngine,
+    "turtle_soup": TurtleSoupEngine,
 }
 
 _GAME_META = {
@@ -28,6 +33,21 @@ _GAME_META = {
         "name": "猜词20问", "player_mode": "single",
         "min_players": 2, "max_players": 2, "needs_gm": False,
         "description": "用20个是非问句猜出对方想的词",
+    },
+    "werewolf": {
+        "name": "狼人杀", "player_mode": "multi",
+        "min_players": 4, "max_players": 8, "needs_gm": True,
+        "description": "夜晚刀人、白天发言投票，找出狼人",
+    },
+    "liars_bar": {
+        "name": "骗子酒馆", "player_mode": "multi",
+        "min_players": 3, "max_players": 5, "needs_gm": True,
+        "description": "出牌虚报、跟牌或质疑，看谁最能唬人",
+    },
+    "turtle_soup": {
+        "name": "海龟汤", "player_mode": "dual",
+        "min_players": 2, "max_players": 2, "needs_gm": False,
+        "description": "用是非问句揭开古怪汤面的真相",
     },
 }
 

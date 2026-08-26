@@ -1,9 +1,16 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.3.5
+VERSION: 3.3.6
 DATE: 2026-08-26
-STATUS: 开源发布版（群聊游戏 Phase 1：谁是卧底/真心话大冒险/猜词20问 + v3.3.3 审查 P3 收尾）
+STATUS: 开源发布版（群聊游戏完整版：6 款游戏 + 群聊 /play + 实时推送 + 角色自主开局 + AI 生活 Life Loop）
 
 CHANGELOG:
+
+3.3.6 - Release (2026-08-26)
+  - Games: 群聊游戏 Phase 2 收尾——狼人杀简化版（4-8人，夜晚私密刀人/验人）/ 骗子酒馆（3-5人，声明+质疑）/ 海龟汤（双人，原创温和题库）
+  - Games: 群聊 /play 命令直接开局；WebSocket 实时推送（断线自动回退轮询）；角色自主开局（Life Loop play_game，每日每角色 ≤1 局，用户观战）
+  - Games: 游乐手札列表页 + 筛选；v3.3.5 全量审查 P1/P2 六项修复（黑名单单字/fallback 一致/回合锁/stuck 恢复等）
+  - Life: AI 生活 Life Loop v1.1（30min 决策循环 + 聊天驱动意图 + 回聊缓冲 + 小家大地图，Feature Flag 默认关灰度）
+  - Tests: backend 916 green, flutter analyze 0 / test 214 green
 
 3.3.5 - Release (2026-08-26)
   - Games: 群聊游戏 Phase 1（小家游戏机入口，规则引擎确定性判定 + AI 玩家 LLM 决策）

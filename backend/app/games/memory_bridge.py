@@ -106,6 +106,14 @@ def _build_summary_pointer(session, player, engine) -> str:
         return f"和{names}玩了真心话大冒险，{result_text}。"
     if session.game_type == "twenty_q":
         return f"和{names}玩了猜词20问，{result_text}。"
+    if session.game_type == "werewolf":
+        role_text = {"wolf": "狼人", "seer": "预言家", "villager": "村民"}.get(player.role, player.role)
+        return f"和{names}玩了狼人杀（{len(engine.players)}人局），我抽到「{role_text}」，{result_text}。"
+    if session.game_type == "liars_bar":
+        return f"和{names}玩了骗子酒馆，{result_text}。"
+    if session.game_type == "turtle_soup":
+        role_text = "当主持人" if player.role == "thinker" else "猜题"
+        return f"和{names}玩了海龟汤，我{role_text}，{result_text}。"
     return f"玩了{meta['name']}，{result_text}。"
 
 

@@ -7,7 +7,7 @@ from app.models.user import User, UserState, UserDndSettings, PrivacyRequest, Br
 from app.models.character import AICharacter, CharacterState, CharacterStateHistory, RelationshipEvent, StateTriggerLog, StorylineEvent, ProactiveStorylineItem, ProactiveSettings, HolidayPreference, ProactiveMessageLog, ProactiveTriggerLog
 from app.models.chat import ChatSession, ChatMessage, ChatGroup, ChatGroupMember, ChatGroupMessage, AIChat
 from app.models.memory import Memory, DailySummary, ConversationTopic, StageMemory, ReflectionLog, ProcessedExtraction, SharedEvent, WeaveCard, WeaveCardMemory, WeaveCardCharacter, LorebookEntry, WorldFact
-from app.models.life import LifeState, LifeActivityLog, LifeArtifact, LifeInterest, LifeGoal, LifeSchedule, AIDiary, UserDiary, UserMemo, AIMoment, MomentLike, MomentAILike, MomentComment, MomentReadMark, ScheduledEvent, TimelineEvent, ImageGenTask, ImageGenConfig, UserRhythm, UserWorkflow, UserEmojiPack, UserCustomEmoji
+from app.models.life import LifeState, LifeActivityLog, LifeArtifact, LifeInterest, LifeGoal, LifeSchedule, LifeFollowup, LifeChatIntent, AIDiary, UserDiary, UserMemo, AIMoment, MomentLike, MomentAILike, MomentComment, MomentReadMark, ScheduledEvent, TimelineEvent, ImageGenTask, ImageGenConfig, UserRhythm, UserWorkflow, UserEmojiPack, UserCustomEmoji
 from app.models.pet import Pet, PetActivity
 from app.models.agent import AgentTask, AgentTaskLog, LlmUsage, LlmUsageLimit, TaskLlmConfig, EmotionCareTask, ToolPermission, PendingPermissionAction
 from app.models.mcp import MCPServer, McpCallLog
@@ -53,6 +53,8 @@ __all__ = [
     "LifeGoal",
     "LifeInterest",
     "LifeSchedule",
+    "LifeFollowup",
+    "LifeChatIntent",
     "LifeState",
     "LlmUsage",
     "LlmUsageLimit",

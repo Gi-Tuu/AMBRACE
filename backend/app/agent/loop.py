@@ -56,8 +56,17 @@ AGENT_FLAGS = {
     "game_undercover": True,         # 谁是卧底
     "game_truth_or_dare": True,      # 真心话大冒险
     "game_twenty_q": True,           # 猜词20问
+    "game_werewolf": True,           # 狼人杀（Phase 2）
+    "game_liars_bar": True,          # 骗子酒馆（Phase 2）
+    "game_turtle_soup": True,        # 海龟汤（Phase 2）
     "game_memory_bridge": True,      # 主记忆摘要指针（关=游戏详情只存游戏库）
     "game_ai_autoplay": True,        # AI 自动回合（关=需手动触发 AI 行动，调试用）
+    # ── Life Loop v1.1（2026-08-26）── 默认全关，灰度打开 ──
+    "life_loop_enabled": False,           # 主开关：30min 行为决策循环
+    "life_loop_visible": False,           # 允许自主行为产生面向用户输出
+    "life_loop_llm": False,               # 允许 LLM 生成生活文案（每角色每日≤2次）
+    "life_chat_driven_enabled": False,    # 聊天→生活意图链路
+    "life_home_worldmap_enabled": False,  # 小家大地图（§11）
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

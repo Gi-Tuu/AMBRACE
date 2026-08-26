@@ -4029,6 +4029,24 @@ abstract class AppLocalizations {
   /// **'布局已保存'**
   String get homeLayoutSaved;
 
+  /// No description provided for @homeWorldMap.
+  ///
+  /// In zh, this message translates to:
+  /// **'小家地图'**
+  String get homeWorldMap;
+
+  /// No description provided for @homeExit.
+  ///
+  /// In zh, this message translates to:
+  /// **'出口'**
+  String get homeExit;
+
+  /// No description provided for @homeGoOut.
+  ///
+  /// In zh, this message translates to:
+  /// **'出门'**
+  String get homeGoOut;
+
   /// No description provided for @furnitureEdit.
   ///
   /// In zh, this message translates to:
@@ -10448,6 +10466,126 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'胜方'**
   String get archiveWinnerSide;
+
+  /// No description provided for @gameKill.
+  ///
+  /// In zh, this message translates to:
+  /// **'刀人'**
+  String get gameKill;
+
+  /// No description provided for @gameCheck.
+  ///
+  /// In zh, this message translates to:
+  /// **'验人'**
+  String get gameCheck;
+
+  /// No description provided for @gameSpeak.
+  ///
+  /// In zh, this message translates to:
+  /// **'发言'**
+  String get gameSpeak;
+
+  /// No description provided for @gameSpeakHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'说说你的判断（狼人杀白天）'**
+  String get gameSpeakHint;
+
+  /// No description provided for @gameDeclare.
+  ///
+  /// In zh, this message translates to:
+  /// **'声明'**
+  String get gameDeclare;
+
+  /// No description provided for @gameDeclareHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'声明数字（1-10）'**
+  String get gameDeclareHint;
+
+  /// No description provided for @gameFollow.
+  ///
+  /// In zh, this message translates to:
+  /// **'跟牌'**
+  String get gameFollow;
+
+  /// No description provided for @gameChallenge.
+  ///
+  /// In zh, this message translates to:
+  /// **'质疑'**
+  String get gameChallenge;
+
+  /// No description provided for @gameChallengeHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'质疑上一家的声明'**
+  String get gameChallengeHint;
+
+  /// No description provided for @gameSoupAskHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'问一个是非问句（主持人是/否/可能/无关/不知道）'**
+  String get gameSoupAskHint;
+
+  /// No description provided for @gameSoupGuess.
+  ///
+  /// In zh, this message translates to:
+  /// **'猜真相'**
+  String get gameSoupGuess;
+
+  /// No description provided for @gameSoupGuessHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'说出你猜的真相'**
+  String get gameSoupGuessHint;
+
+  /// No description provided for @gameHistoryEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'还没有对局记录'**
+  String get gameHistoryEmpty;
+
+  /// No description provided for @gameFilterAll.
+  ///
+  /// In zh, this message translates to:
+  /// **'全部'**
+  String get gameFilterAll;
+
+  /// No description provided for @gameFilterWerewolf.
+  ///
+  /// In zh, this message translates to:
+  /// **'狼人杀'**
+  String get gameFilterWerewolf;
+
+  /// No description provided for @gameFilterLiarsBar.
+  ///
+  /// In zh, this message translates to:
+  /// **'骗子酒馆'**
+  String get gameFilterLiarsBar;
+
+  /// No description provided for @gameFilterTurtleSoup.
+  ///
+  /// In zh, this message translates to:
+  /// **'海龟汤'**
+  String get gameFilterTurtleSoup;
+
+  /// No description provided for @gameFilterUndercover.
+  ///
+  /// In zh, this message translates to:
+  /// **'谁是卧底'**
+  String get gameFilterUndercover;
+
+  /// No description provided for @gameFilterTruthOrDare.
+  ///
+  /// In zh, this message translates to:
+  /// **'真心话大冒险'**
+  String get gameFilterTruthOrDare;
+
+  /// No description provided for @gameFilterTwentyQ.
+  ///
+  /// In zh, this message translates to:
+  /// **'猜词20问'**
+  String get gameFilterTwentyQ;
 }
 
 class _AppLocalizationsDelegate

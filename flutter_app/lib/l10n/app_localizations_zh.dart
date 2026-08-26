@@ -2135,6 +2135,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get homeLayoutSaved => '布局已保存';
 
   @override
+  String get homeWorldMap => '小家地图';
+
+  @override
+  String get homeExit => '出口';
+
+  @override
+  String get homeGoOut => '出门';
+
+  @override
   String get furnitureEdit => '家具编辑';
 
   @override
@@ -5606,4 +5615,64 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get archiveWinnerSide => '胜方';
+
+  @override
+  String get gameKill => '刀人';
+
+  @override
+  String get gameCheck => '验人';
+
+  @override
+  String get gameSpeak => '发言';
+
+  @override
+  String get gameSpeakHint => '说说你的判断（狼人杀白天）';
+
+  @override
+  String get gameDeclare => '声明';
+
+  @override
+  String get gameDeclareHint => '声明数字（1-10）';
+
+  @override
+  String get gameFollow => '跟牌';
+
+  @override
+  String get gameChallenge => '质疑';
+
+  @override
+  String get gameChallengeHint => '质疑上一家的声明';
+
+  @override
+  String get gameSoupAskHint => '问一个是非问句（主持人是/否/可能/无关/不知道）';
+
+  @override
+  String get gameSoupGuess => '猜真相';
+
+  @override
+  String get gameSoupGuessHint => '说出你猜的真相';
+
+  @override
+  String get gameHistoryEmpty => '还没有对局记录';
+
+  @override
+  String get gameFilterAll => '全部';
+
+  @override
+  String get gameFilterWerewolf => '狼人杀';
+
+  @override
+  String get gameFilterLiarsBar => '骗子酒馆';
+
+  @override
+  String get gameFilterTurtleSoup => '海龟汤';
+
+  @override
+  String get gameFilterUndercover => '谁是卧底';
+
+  @override
+  String get gameFilterTruthOrDare => '真心话大冒险';
+
+  @override
+  String get gameFilterTwentyQ => '猜词20问';
 }
