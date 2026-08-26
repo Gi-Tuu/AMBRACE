@@ -85,12 +85,13 @@ def detect_life_intent(text: str) -> dict | None:
 
 async def extract_life_intent(
     character_id: int, user_id: int, user_msg: str,
-    *, session_factory=None, tick_scheduler=None,
+    *, session_factory=None, tick_scheduler=None, throttle_state=None,
 ) -> None:
     """从用户消息提取生活意图，写入缓冲表。失败静默。"""
     import time as _time
+    throttle = throttle_state if throttle_state is not None else _throttle
     now_ts = _time.monotonic()
-    last = _throttle.get(character_id, 0)
+    last = throttle.get(character_id, 0)
     if now_ts - last < THROTTLE_SECONDS:
         return
 
@@ -105,7 +106,7 @@ async def extract_life_intent(
     horizon = detected_info["horizon"]
     priority = detected_info["priority"]
 
-    _throttle[character_id] = now_ts
+    throttle[character_id] = now_ts
     factory = session_factory or async_session_factory
     scheduler = tick_scheduler or _schedule_immediate_tick
 

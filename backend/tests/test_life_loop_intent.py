@@ -30,6 +30,7 @@ class _StubDB:
         self.calls = calls if calls is not None else []
 
     async def __aenter__(self):
+        self.calls.append("enter")
         return self
 
     async def __aexit__(self, *exc):
@@ -90,42 +91,46 @@ def test_detect_即时指令_出去转转():
 
 # ─────────── 节流与写库路径（mock factory，无真实 DB） ───────────
 
-def test_节流_5分钟内不重复(monkeypatch):
-    monkeypatch.setattr(chat_intent, "_throttle", {1: time.monotonic()})
-    asyncio.run(chat_intent.extract_life_intent(1, 100, "我想去公园逛逛", session_factory=lambda: _BoomDB()))
+def test_节流_5分钟内不重复():
+    asyncio.run(chat_intent.extract_life_intent(
+        1, 100, "我想去公园逛逛",
+        session_factory=lambda: _BoomDB(), throttle_state={1: time.monotonic()},
+    ))
     # 若 throttle 未生效会触发 _BoomDB.__aenter__ 断言
 
 
-def test_正常路径_写库commit(monkeypatch):
+def test_正常路径_写库commit():
     calls = []
-    monkeypatch.setattr(chat_intent, "_throttle", {})
-    asyncio.run(chat_intent.extract_life_intent(1, 100, "我想去公园逛逛", session_factory=lambda: _StubDB(calls)))
-    assert calls == ["commit"]
+    asyncio.run(chat_intent.extract_life_intent(
+        1, 100, "我想去公园逛逛",
+        session_factory=lambda: _StubDB(calls), throttle_state={},
+    ))
+    assert calls == ["enter", "commit"]
 
 
-def test_即时指令_触发run_character_tick(monkeypatch):
+def test_即时指令_触发run_character_tick():
     calls = []
-    monkeypatch.setattr(chat_intent, "_throttle", {})
 
     def _fake_schedule(character_id, user_id):
         calls.append((character_id, user_id))
 
     asyncio.run(chat_intent.extract_life_intent(
         1, 100, "你现在去睡觉",
-        session_factory=lambda: _StubDB(), tick_scheduler=_fake_schedule,
+        session_factory=lambda: _StubDB(calls), tick_scheduler=_fake_schedule,
+        throttle_state={},
     ))
-    assert (1, 100) in calls
+    assert calls == ["enter", "commit", (1, 100)]
 
 
-def test_非即时_不触发run_character_tick(monkeypatch):
+def test_非即时_不触发run_character_tick():
     calls = []
-    monkeypatch.setattr(chat_intent, "_throttle", {})
 
     def _fake_schedule(character_id, user_id):
         calls.append((character_id, user_id))
 
     asyncio.run(chat_intent.extract_life_intent(
         1, 100, "我想去公园逛逛",
-        session_factory=lambda: _StubDB(), tick_scheduler=_fake_schedule,
+        session_factory=lambda: _StubDB(calls), tick_scheduler=_fake_schedule,
+        throttle_state={},
     ))
-    assert calls == []
+    assert calls == ["enter", "commit"]
