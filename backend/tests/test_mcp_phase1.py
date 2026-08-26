@@ -131,9 +131,17 @@ async def _cleanup_mcp():
     for name in list(_REGISTRY.keys()):
         if name.startswith("mcp."):
             _REGISTRY.pop(name, None)
-    async with async_session_factory() as db:
-        await db.execute(delete(MCPServer).where(MCPServer.name.like(TEST_PREFIX + "%")))
-        await db.commit()
+    # v3.3.6 CI 修复：SQLite 写锁偶发（aiosqlite 残留线程未完全释放文件锁），重试 3 次避免 teardown 报错拖垮 CI
+    for _attempt in range(4):
+        try:
+            async with async_session_factory() as db:
+                await db.execute(delete(MCPServer).where(MCPServer.name.like(TEST_PREFIX + "%")))
+                await db.commit()
+            return
+        except Exception:
+            if _attempt == 3:
+                raise
+            await asyncio.sleep(0.8)
 
 
 @pytest.fixture(autouse=True)
