@@ -142,6 +142,23 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
       ),
       body: Column(
         children: [
+          // P3-10：仅安装可信插件警示（插件与后端进程同权限，无沙箱）
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.warning_amber_rounded, size: 16, color: Colors.orange),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    l10n.marketTrustTip,
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF8A5A00)),
+                  ),
+                ),
+              ],
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: TextField(

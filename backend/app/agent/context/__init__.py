@@ -28,6 +28,7 @@ from app.agent.context import section_pet as _section_pet  # noqa: F401
 from app.agent.context import section_phone as _section_phone  # noqa: F401
 from app.agent.context import section_world as _section_world  # noqa: F401
 from app.agent.context import section_overlay as _section_overlay  # noqa: F401
+from app.agent.context.section_memories import _bump_memory_round  # P3-5：注册表路径先 bump 再跑 sections
 
 _logger = logging.getLogger("agent.context")
 
@@ -106,6 +107,11 @@ async def build_context(state: dict, *, stream: bool | None = None) -> dict:
         "trim": trim,
         "est_chars_per_token": est_chars_per_token,
     }
+    # P3-5（2026-08-25）：检索区轮次 +1 移到 sections 之前——注册表路径与纯 legacy 路径都先 bump
+    # 再算记忆/检索区/Lorebook（sticky/cooldown），保证两条路径轮次一致（消除 off-by-one）。
+    # legacy（build_context_legacy）在 _section_values 非空（注册表路径）时不再重复 bump。
+    _bump_memory_round(state["character_id"])
+
     values = await _run_sections(state, ctx)
 
     # 委托旧实现完成最终组装：所有分区值来自注册表 section，其余（角色存在检查/温度/字符基础信息等）

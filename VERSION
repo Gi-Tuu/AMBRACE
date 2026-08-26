@@ -1,9 +1,16 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.3.4
-DATE: 2026-08-25
-STATUS: 开源发布版（v3.3.3 全量审查修复：主动备忘/Lorebook/群聊健壮性）
+VERSION: 3.3.5
+DATE: 2026-08-26
+STATUS: 开源发布版（群聊游戏 Phase 1：谁是卧底/真心话大冒险/猜词20问 + v3.3.3 审查 P3 收尾）
 
 CHANGELOG:
+
+3.3.5 - Release (2026-08-26)
+  - Games: 群聊游戏 Phase 1（小家游戏机入口，规则引擎确定性判定 + AI 玩家 LLM 决策）
+  - Games: 谁是卧底（多人 4-8）/ 真心话大冒险（双人，出题护栏）/ 猜词20问（单人 1v1）
+  - Games: game_* 游戏记忆库逻辑隔离 + 主记忆 game_summary 摘要指针（每角色 ≤5 条）+ 游乐手札折叠卡片
+  - Fixes: 群聊记忆按群节流 / Runtime 不重复落记忆 / 注册表-Legacy 轮次对齐 / MCP SSRF 连接期 IP 绑定 / 插件可信警示（v3.3.3 审查 P3 收尾）
+  - Tests: backend 847 green, flutter analyze 0 / test 212 green
 
 3.3.4 - Release (2026-08-25)
   - Fixes: 主动消息 [MEMO] 内容泄漏 / Lorebook probability=0 反转 / 群聊非法角色编号 400 / conftest 迁移补跑 / 正则缓存 / 触发状态清理 / muted 严谨 / sticky/cooldown 上限

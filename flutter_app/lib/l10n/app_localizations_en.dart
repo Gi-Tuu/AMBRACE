@@ -2456,6 +2456,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Third-party plugins run with server privileges. Only install from trusted sources.';
 
   @override
+  String get marketTrustTip =>
+      '⚠️ Install only trusted plugins: plugins run with server privileges (no sandbox). Install only from trusted sources.';
+
+  @override
   String get marketSearchHint => 'Search by name or description';
 
   @override
@@ -5587,4 +5591,214 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get mcpCallFailed => 'Failed';
+
+  @override
+  String get gameTitle => 'Games';
+
+  @override
+  String get gameSelectGameType => 'Select a Game';
+
+  @override
+  String get gameUndercover => 'Undercover';
+
+  @override
+  String get gameTruthOrDare => 'Truth or Dare';
+
+  @override
+  String get gameTwentyQ => '20 Questions';
+
+  @override
+  String get gameSingle => 'Solo';
+
+  @override
+  String get gameDual => 'Duo';
+
+  @override
+  String get gameMulti => 'Party';
+
+  @override
+  String get gameDescriptionUndercover =>
+      'Describe your word and vote out the undercover';
+
+  @override
+  String get gameDescriptionTruthOrDare => 'Take turns picking truth or dare';
+
+  @override
+  String get gameDescriptionTwentyQ =>
+      'Guess the word with up to 20 yes/no questions';
+
+  @override
+  String get gameStart => 'Start';
+
+  @override
+  String get gameSpectator => 'Spectate';
+
+  @override
+  String get gamePlayer => 'Player';
+
+  @override
+  String get gameMyTurn => 'Your turn';
+
+  @override
+  String get gameDescribe => 'Describe';
+
+  @override
+  String get gameVote => 'Vote';
+
+  @override
+  String get gameTruth => 'Truth';
+
+  @override
+  String get gameDare => 'Dare';
+
+  @override
+  String get gameAsk => 'Ask';
+
+  @override
+  String get gameGuess => 'Guess';
+
+  @override
+  String get gameArchive => 'Archive';
+
+  @override
+  String get gameSelectPlayers => 'Pick AI characters';
+
+  @override
+  String get gameUserRole => 'Your role';
+
+  @override
+  String get gameUserAsPlayer => 'Join as a player';
+
+  @override
+  String get gameUserAsSpectator => 'Join as a spectator (default)';
+
+  @override
+  String gameStartFailed(Object err) {
+    return 'Failed to start: $err';
+  }
+
+  @override
+  String get gameAbort => 'Abort';
+
+  @override
+  String get gameAbortConfirm => 'Abort this game? Nothing will be recorded.';
+
+  @override
+  String get gameLoading => 'Loading…';
+
+  @override
+  String get gameNoPlayers => 'Pick at least one character';
+
+  @override
+  String get gameWaiting => 'Waiting…';
+
+  @override
+  String get gameFinished => 'Game over';
+
+  @override
+  String get gameWinLabel => 'Winner';
+
+  @override
+  String get gameDrawLabel => 'Draw';
+
+  @override
+  String get gameYourWord => 'Your word';
+
+  @override
+  String get gameYourRole => 'Your role';
+
+  @override
+  String get gamePhase => 'Phase';
+
+  @override
+  String get gameRound => 'Round';
+
+  @override
+  String get gameCurrentTurn => 'Current action';
+
+  @override
+  String get gameChooseTruthOrDare => 'Choose truth or dare';
+
+  @override
+  String get gameSendMessage => 'Type…';
+
+  @override
+  String get gameSend => 'Send';
+
+  @override
+  String get gameCancel => 'Cancel';
+
+  @override
+  String get gameGuessWord => 'Guess the word';
+
+  @override
+  String get gameAnswerYes => 'Yes';
+
+  @override
+  String get gameAnswerNo => 'No';
+
+  @override
+  String get gameAnswerPossible => 'Maybe';
+
+  @override
+  String get gameAnswerUncertain => 'Not sure';
+
+  @override
+  String get gameVoteFor => 'Vote for';
+
+  @override
+  String get gameDescribeHint =>
+      'Describe your word in one line (do not say the word)';
+
+  @override
+  String get gameAskHint => 'Ask a yes/no question';
+
+  @override
+  String gameErrorMessage(Object err) {
+    return 'Operation failed: $err';
+  }
+
+  @override
+  String get gameRoomTitle => 'Game Room';
+
+  @override
+  String get gameSpectatorView => 'Spectator view';
+
+  @override
+  String get gameNoArchive => 'No games yet';
+
+  @override
+  String get gameHistoryTitle => 'Archive';
+
+  @override
+  String archivePlayerCount(Object count) {
+    return '$count players';
+  }
+
+  @override
+  String archiveRounds(Object rounds) {
+    return '$rounds rounds';
+  }
+
+  @override
+  String archiveWinner(Object names) {
+    return 'Winner: $names';
+  }
+
+  @override
+  String get archiveDraw => 'Draw';
+
+  @override
+  String get archivePlayers => 'Players';
+
+  @override
+  String get archiveTimeline => 'Timeline';
+
+  @override
+  String archiveRoundLabel(Object round) {
+    return 'Round $round';
+  }
+
+  @override
+  String get archiveWinnerSide => 'Winning side';
 }

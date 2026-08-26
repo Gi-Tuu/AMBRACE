@@ -44,3 +44,6 @@ class ChatGroupMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     # 1=用户 @ 该角色后的回应，需弹通知（@我的才弹，2026-08-15）
     notify_user: Mapped[int] = mapped_column(Integer, default=0)
+    # 游戏消息标记（群聊游戏 Phase 1，2026-08-26）：normal=普通群聊；game_event/game_say=游戏消息（不进群记忆/上下文）
+    msg_type: Mapped[str] = mapped_column(String(12), default="normal")
+    game_session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

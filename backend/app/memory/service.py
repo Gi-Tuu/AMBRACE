@@ -113,6 +113,7 @@ async def save_memory(
     source: str | None = None,
     related_memory_id: int | None = None,
     source_id: int | None = None,
+    group_id: int | None = None,  # 群聊归属（P3-3 按群节流；None=非群聊/旧数据）
     scope: str = "private",
     skip_dedup: bool = False,
     speaker_id: int | None = None,
@@ -270,6 +271,7 @@ async def save_memory(
             source=source,
             related_memory_id=related_memory_id,
             source_id=source_id,
+            group_id=group_id,
             chain_id=chain_id,
             parent_id=parent_id,
             node_type=node_type,

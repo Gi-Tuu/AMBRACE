@@ -249,5 +249,9 @@ def test_alembic_migration_creates_new_tables(monkeypatch):
     assert "browser_snapshots" in names
     assert "mcp_servers" in names  # AMBRACE MCP 接入（Phase 1）新增表
     assert "mcp_call_logs" in names  # AMBRACE MCP 接入（Phase 4）新增表
+    assert "game_sessions" in names  # 群聊游戏 Phase 1
+    assert "game_players" in names
+    assert "game_events" in names
+    assert "game_memories" in names
     assert "alembic_version" in names
-    assert len(names) == 92  # 91 张应用表 + alembic_version
+    assert len(names) == 96  # 91 张应用表 + 4 张游戏表 + alembic_version

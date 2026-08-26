@@ -8,34 +8,34 @@ import '../../widgets/ios_card_group.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
 import "package:ai_companion/theme/tokens.dart";
 
-// 所在时区预设（label 展示 / offset 为 UTC 偏移小时；null=默认北京时间）
-const List<({String key, String label})> kTimezoneOptions = [
-  (key: 'default', label: '默认（北京时间 UTC+8）'),
-  (key: '8', label: '北京 UTC+8'),
-  (key: '9', label: '东京 UTC+9'),
-  (key: '4', label: '迪拜 UTC+4'),
-  (key: '3', label: '莫斯科 UTC+3'),
-  (key: '1', label: '巴黎 UTC+1'),
-  (key: '0', label: '伦敦 UTC+0'),
-  (key: '-5', label: '纽约 UTC-5'),
-  (key: '-8', label: '洛杉矶 UTC-8'),
-  (key: '10', label: '悉尼 UTC+10'),
+// 所在时区预设（key 供存储；显示文案统一走 _tzLabel(l10n, key) 的 i18n，避免硬编码中文 label）
+const List<({String key})> kTimezoneOptions = [
+  (key: 'default'),
+  (key: '8'),
+  (key: '9'),
+  (key: '4'),
+  (key: '3'),
+  (key: '1'),
+  (key: '0'),
+  (key: '-5'),
+  (key: '-8'),
+  (key: '10'),
 ];
 
-// 音色预设（与后端 tts_service.VOICE_PRESETS 保持一致）
-const List<({String key, String label})> kVoicePresets = [
-  (key: 'xiaoxiao', label: '晓晓 · 自然女声'),
-  (key: 'xiaoyi', label: '晓伊 · 年轻女声'),
-  (key: 'xiaobei', label: '晓北 · 东北女声'),
-  (key: 'xiaoni', label: '晓妮 · 陕西女声'),
-  (key: 'hiugaai', label: '曉佳 · 粤语女声'),
-  (key: 'hiumaan', label: '曉曼 · 粤语女声'),
-  (key: 'hsiaochen', label: '曉臻 · 台湾女声'),
-  (key: 'yunxi', label: '云希 · 青年男声'),
-  (key: 'yunjian', label: '云健 · 磁性男声'),
-  (key: 'yunyang', label: '云扬 · 新闻男声'),
-  (key: 'yunfeng', label: '云枫 · 成熟男声'),
-  (key: 'wanlung', label: '雲龍 · 粤语男声'),
+// 音色预设（与后端 tts_service.VOICE_PRESETS 保持一致；显示文案统一走 _voiceLabel(l10n, key) 的 i18n）
+const List<({String key})> kVoicePresets = [
+  (key: 'xiaoxiao'),
+  (key: 'xiaoyi'),
+  (key: 'xiaobei'),
+  (key: 'xiaoni'),
+  (key: 'hiugaai'),
+  (key: 'hiumaan'),
+  (key: 'hsiaochen'),
+  (key: 'yunxi'),
+  (key: 'yunjian'),
+  (key: 'yunyang'),
+  (key: 'yunfeng'),
+  (key: 'wanlung'),
 ];
 
 class CharacterEditScreen extends StatefulWidget {

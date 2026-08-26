@@ -11,6 +11,7 @@ import '../../services/api_client.dart';
 import '../../widgets/life_home_controls.dart';
 import '../../widgets/shimmer.dart';
 import '../character/pet_screen.dart';
+import '../game/game_console_screen.dart';
 import "package:ai_companion/theme/tokens.dart";
 import "package:ai_companion/widgets/app_page_route.dart";
 
@@ -628,7 +629,15 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (f.key == 'petbed')
+            if (f.key == 'game')
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _openGameConsole();
+                },
+                child: Text(l10n.gameTitle),
+              )
+            else if (f.key == 'petbed')
               FilledButton.tonal(
                 onPressed: () {
                   Navigator.pop(ctx);
@@ -668,6 +677,13 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
       AppPageRoute(builder: (_) => const PetScreen()),
     );
     _load();
+  }
+
+  /// 群聊游戏 Phase 1：点击游戏机打开游戏面板（不再是简单体力加成）。
+  Future<void> _openGameConsole() async {
+    await Navigator.of(context).push(
+      AppPageRoute(builder: (_) => const GameConsoleScreen()),
+    );
   }
 
   Future<void> _runEvent(String action, {int? petId}) async {

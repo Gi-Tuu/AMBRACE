@@ -18,6 +18,7 @@ class Memory(Base):
     sub_type: Mapped[str | None] = mapped_column(String(30), nullable=True)  # 子分类: name/age/location/job/food/hobby/...
     source: Mapped[str | None] = mapped_column(String(20), nullable=True)  # 来源: chat/moment/diary/bio
     source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 来源消息ID
+    group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 群聊归属（P3-3 按群节流：NULL=旧数据/非群聊，按旧行为不区分群）
     speaker_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 说话人归属（user_id 或 character_id，P0 2026-08-15）
     speaker_type: Mapped[str | None] = mapped_column(String(10), nullable=True)  # user/character/system
     epistemic_status: Mapped[str | None] = mapped_column(String(12), nullable=True)  # FACT/INFERRED/PLANNED/FICTIONAL/UNVERIFIED

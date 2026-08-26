@@ -130,3 +130,38 @@ def test_save_group_memory_节流命中不重复写(monkeypatch):
     monkeypatch.setattr(memsvc, "save_memory", fake_save)
     asyncio.run(cg._save_group_memory(group_id=1, user_id=4, user_content="hi", replies=[]))
     assert saved == []
+
+
+def test_save_group_memory_节流按群过滤且写group_id(monkeypatch):
+    """P3-3：节流查询按 group_id 过滤（含旧数据 IS NULL 兼容），落库时写 group_id。"""
+    from app.api import chat_groups as cg
+    captured = {}
+
+    class _SqlDB(_FakeDB):
+        async def execute(self, stmt, *a):
+            self.calls.append(stmt)
+            text = str(stmt)
+            if "chat_group_members" in text:
+                return _FakeResult([11])
+            if "memories" in text:
+                captured["sql"] = text
+                return _FakeResult([])  # 无近期同群记忆 → 不节流
+            if "ai_characters" in text:
+                return _FakeResult([])
+            return _FakeResult([])
+
+    saved = []
+
+    async def fake_save(**kw):
+        saved.append(kw)
+
+    monkeypatch.setattr(cg, "async_session_factory", lambda: _SqlDB([11], [], None))
+    import app.memory.service as memsvc
+    monkeypatch.setattr(memsvc, "save_memory", fake_save)
+    asyncio.run(cg._save_group_memory(group_id=7, user_id=4, user_content="hi", replies=[]))
+    sql = captured.get("sql", "")
+    # 节流查询同时含「同一群」等值与「旧数据 NULL 兼容」条件
+    assert "memories.group_id" in sql
+    assert "IS NULL" in sql
+    # 落库记忆带 group_id
+    assert saved and all(s.get("group_id") == 7 for s in saved)

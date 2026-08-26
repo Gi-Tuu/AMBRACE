@@ -272,7 +272,7 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 4),
               TextButton(
                 onPressed: () => _forgotPassword(context),
-                child: const Text('忘记密码？修改', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                child: Text(l10n.loginForgotPassword, style: const TextStyle(fontSize: 13, color: Colors.grey)),
               ),
             ],
           ),

@@ -15,6 +15,7 @@ from app.models.plugin import Plugin, PluginStore
 from app.models.config import ApiConfig, VlmConfig, SpeechConfig, MultimodalConfig, MarketplaceConfig, RuntimeFlag
 from app.models.social import PlatformProfile, SocialMemory, DouyinAccount, DouyinPost, DouyinComment, DouyinPending, DouyinViewedNote
 from app.models.device import PhoneDesktop, PhoneLayout, CalendarNote, BrowserHistory, MemoNote, PhoneSnapshot, CheckInRequest, PhoneAutoState
+from app.models.game import GameSession, GamePlayer, GameEvent, GameMemory
 
 __all__ = [
     "Base",
@@ -109,4 +110,8 @@ __all__ = [
     "WeaveCardCharacter",
     "WeaveCardMemory",
     "WorldFact",
+    "GameSession",
+    "GamePlayer",
+    "GameEvent",
+    "GameMemory",
 ]

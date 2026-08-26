@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Header
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user_id
@@ -484,6 +484,15 @@ async def _save_group_memory(group_id: int, user_id: int, user_content: str, rep
         from app.models.memory import Memory
         now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         async with async_session_factory() as db:
+            # 群聊游戏 Phase 1：游戏消息不进群聊记忆——群内有进行中的对局时跳过本轮沉淀。
+            from app.models.game import GameSession as _GS
+            _active_game = (await db.execute(
+                select(_GS.id).where(
+                    _GS.group_id == group_id, _GS.status.in_(("created", "playing"))
+                ).limit(1)
+            )).scalar_one_or_none()
+            if _active_game is not None:
+                return
             members = (
                 await db.execute(
                     select(ChatGroupMember.character_id).where(ChatGroupMember.group_id == group_id)
@@ -498,6 +507,9 @@ async def _save_group_memory(group_id: int, user_id: int, user_content: str, rep
                         Memory.character_id.in_(members),
                         Memory.source == "group",
                         Memory.created_at >= now_naive - timedelta(minutes=30),
+                        # P3-3（2026-08-25）：按群节流——只被同一群的 30 分钟内群记忆抑制；
+                        # 旧数据 group_id IS NULL 时按旧行为（不区分群，任意群记忆都抑制）。
+                        or_(Memory.group_id == group_id, Memory.group_id.is_(None)),
                     ).limit(1)
                 )
             ).scalar_one_or_none()
@@ -519,7 +531,7 @@ async def _save_group_memory(group_id: int, user_id: int, user_content: str, rep
                     user_id=user_id, character_id=member_id,
                     memory_type="event", content=e["content"][:300],
                     title="家庭群聊", importance=40.0,
-                    sub_type="group", source="group",
+                    sub_type="group", source="group", group_id=group_id,
                     speaker_type=e["speaker_type"], speaker_id=sp_id,
                     epistemic_status="FACT",
                     skip_dedup=True,
@@ -795,7 +807,10 @@ async def _generate_replies_runtime(
             extra_system=[{"role": "system", "content": public}],
             lang="zh",
             max_text=200,
-            save_memory=True,  # 用户群发言是公开信息：按角色各自落记忆（与 _save_group_memory 同语义）
+            save_memory=False,  # P3-4（2026-08-25）：群聊记忆统一由 _save_group_memory 按群落库；这里不再重复落记忆。
+            # 原 save_memory=True 会让 Runtime 的 generate_response 走 extractor 落一条（extractor 不感知群聊，
+            # 且与 _save_group_memory 双写重复记忆、speaker/归属不一致）。改 False 后行为变化仅在
+            # agent_loop_group_chat 开启时发生（该路径才调用 _generate_replies_runtime），默认仍关=零变化。
             light_context=light_context,  # F1（2026-08-18）：Flag 控制群聊轻量上下文
         )
         text = (res.get("text") or "").strip()

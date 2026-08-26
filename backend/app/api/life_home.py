@@ -19,6 +19,7 @@ from app.models.character_state import CharacterState
 from app.models.life import LifeState, LifeActivityLog
 from app.models.pet import Pet
 from app.models.user import User
+from app.games.registry import list_games
 
 router = APIRouter(prefix="/api/v1/life-home", tags=["Life Home"])
 
@@ -215,7 +216,7 @@ ACTIONS = {
     "shower":   {"stamina": 10,  "mood": 8,  "hunger": -2, "activity": "rest",             "label": "洗澡"},
     "exercise": {"stamina": -12, "mood": 6,  "hunger": -6, "activity": "reflect",          "label": "运动"},
     "music":    {"stamina": -2,  "mood": 9,  "hunger": -1, "activity": "rest",             "label": "听音乐"},
-    "game":     {"stamina": -4,  "mood": 12, "hunger": -3, "activity": "rest",             "label": "玩游戏"},
+    "game":     {"stamina": -4,  "mood": 12, "hunger": -3, "activity": "rest",             "label": "玩游戏"},  # 群聊游戏 Phase 1：点击改开游戏面板，不再直接体力加成（保留此条目以防回退）
 }
 
 # 宠物互动动作映射到 pet_service
@@ -389,6 +390,15 @@ async def home_event(payload: dict, user_id: int = Depends(get_current_user_id),
                 "hunger": pet.hunger, "mood": pet.mood, "energy": pet.energy,
                 "cleanliness": pet.cleanliness,
             }}
+
+    # 游戏机：打开游戏面板（不再是简单体力加成）
+    if action == "game":
+        return {
+            "ok": True,
+            "action": "game",
+            "open_panel": "game_console",  # 前端据此打开游戏面板
+            "catalog": list_games(),       # 游戏目录
+        }
 
     if action not in ACTIONS:
         raise HTTPException(400, tr_lang(lang, "unsupported_action"))

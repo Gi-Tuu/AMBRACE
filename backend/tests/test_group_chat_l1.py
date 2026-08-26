@@ -219,6 +219,45 @@ def test_generate_replies_把muted_ids传给漏斗(monkeypatch):
     assert [c.id for c in seen["at_chars"]] == [11]  # @ 目标解析正确
 
 
+def test_generate_replies_runtime_不重复落记忆save_memory_false(monkeypatch):
+    """P3-4：群聊 Runtime 路径传 save_memory=False，统一靠 _save_group_memory 落记忆。"""
+    from app.api import chat_groups as cg
+    from app.agent import loop
+
+    chars = [_char(11, "小阳"), _char(12, "小冰")]
+    db = _GroupDB(
+        members=[SimpleNamespace(character_id=11, muted=False)],
+        chars=chars,
+        recent=[],
+    )
+    captured = {}
+
+    async def fake_run_social_reply(*, character_id, user_id, session_id, user_message,
+                                    extra_system, lang, max_text, save_memory, light_context, **kw):
+        captured["save_memory"] = save_memory
+        captured["character_id"] = character_id
+        return {"status": "ok", "text": "好的呀", "steps": []}
+
+    async def fake_state_line(char):
+        return ""
+
+    monkeypatch.setattr("app.agent.runtime.run_social_reply", fake_run_social_reply)
+    monkeypatch.setattr(cg, "_state_line", fake_state_line)
+    _orig_lc = loop.AGENT_FLAGS.get("agent_social_light_context")
+    loop.AGENT_FLAGS["agent_social_light_context"] = False
+    try:
+        out = asyncio.run(cg._generate_replies_runtime(
+            db, 1, "一起去吃饭", "用户", user_id=4,
+            chars=chars, char_map={c.id: c for c in chars},
+            speakers=[chars[0]], at_chars=[],
+        ))
+    finally:
+        loop.AGENT_FLAGS["agent_social_light_context"] = _orig_lc
+    # 不重复落记忆：传给 run_social_reply 的 save_memory 必须为 False
+    assert captured.get("save_memory") is False
+    assert out == [{"character_id": 11, "content": "好的呀"}]
+
+
 # ---------------- 问候语生成 ----------------
 
 def test_generate_greeting_text_返回LLM输出(monkeypatch):

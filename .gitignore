@@ -49,6 +49,9 @@ backups/
 # 临时补丁脚本
 _patch_*.py
 
+# pytest 本地临时目录（Windows junction 清理报错规避，2026-08-25）
+backend/.pytest_basetmp/
+
 # 本地向量模型（外部下载的大文件，独立于代码）
 backend/models/
 

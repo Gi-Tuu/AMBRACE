@@ -51,6 +51,13 @@ AGENT_FLAGS = {
     "weave_3d": True,  # 织网 3D（P2 转默认开；仅客户端画布读它选 2D/3D 视图；低端机客户端自动降级 2.5D）  # F1/F2（2026-08-18 用户拍板全量开启）：群聊/抖音社交短回复走轻量上下文（单次 prompt ≈-64%；回退改 False 重启即恢复全量 build_context）。与 agent_loop_group_chat/agent_loop_douyin 正交：前者管走不走 Runtime，后者管 Runtime 内是否用轻量上下文
     "proactive_naturalness_score": True,  # #28 ①（2026-08-24）：低优先主动消息自然度评分——生成后按规则评分，低于阈值重试 1 次/仍低则降级跳过；关=纯现状
     "proactive_user_rhythm": True,  # #28 ②（2026-08-24）：用户作息学习——从聊天/主动日志推断活跃时段，低优先主动消息在时段外降优先级/推迟；关=纯现状
+    # 群聊游戏 Phase 1（2026-08-26）：只加不改既有 flag。总开关=群聊游戏；各游戏开关；主记忆摘要指针；AI 自动回合。
+    "group_chat_games": True,        # 游戏总开关（关=游戏入口/API 不展示，可回退）
+    "game_undercover": True,         # 谁是卧底
+    "game_truth_or_dare": True,      # 真心话大冒险
+    "game_twenty_q": True,           # 猜词20问
+    "game_memory_bridge": True,      # 主记忆摘要指针（关=游戏详情只存游戏库）
+    "game_ai_autoplay": True,        # AI 自动回合（关=需手动触发 AI 行动，调试用）
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

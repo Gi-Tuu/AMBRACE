@@ -30,6 +30,7 @@ from app.api import (
     permissions_router,
     phone_workflows_router,
     mcp_router,
+    games_router,
 )
 from app.api.ai_api import router as ai_api_router
 from app.auth.router import router as auth_router
@@ -266,6 +267,7 @@ app.include_router(permissions_router)
 app.include_router(phone_workflows_router)
 app.include_router(ai_api_router)
 app.include_router(mcp_router)
+app.include_router(games_router)
 
 
 @app.middleware("http")

@@ -38,6 +38,15 @@ async def collect_group_events() -> list[dict]:
             )).scalars().all()
             events = []
             for g in groups:
+                # 群聊游戏 Phase 1：该群有进行中的对局时跳过主动冒泡（避免游戏期间打扰）。
+                from app.models.game import GameSession as _GS
+                _gactive = (await db.execute(
+                    select(_GS.id).where(
+                        _GS.group_id == g.id, _GS.status.in_(("created", "playing"))
+                    ).limit(1)
+                )).scalar_one_or_none()
+                if _gactive is not None:
+                    continue
                 # 该群最近一条 AI 消息时间
                 last_ai = (
                     await db.execute(

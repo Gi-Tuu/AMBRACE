@@ -2356,6 +2356,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get marketRiskTip => '第三方插件与服务器同权限，请确认来源可信后再安装';
 
   @override
+  String get marketTrustTip => '⚠️ 仅安装可信插件：插件与后端进程同权限（无沙箱）。请只安装来源可信的插件。';
+
+  @override
   String get marketSearchHint => '搜索插件名称或描述';
 
   @override
@@ -5396,4 +5399,211 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get mcpCallFailed => '失败';
+
+  @override
+  String get gameTitle => '游戏';
+
+  @override
+  String get gameSelectGameType => '选择游戏';
+
+  @override
+  String get gameUndercover => '谁是卧底';
+
+  @override
+  String get gameTruthOrDare => '真心话大冒险';
+
+  @override
+  String get gameTwentyQ => '猜词20问';
+
+  @override
+  String get gameSingle => '单人';
+
+  @override
+  String get gameDual => '双人';
+
+  @override
+  String get gameMulti => '多人';
+
+  @override
+  String get gameDescriptionUndercover => '描述词语、投票找出卧底';
+
+  @override
+  String get gameDescriptionTruthOrDare => '轮流选择真心话或大冒险';
+
+  @override
+  String get gameDescriptionTwentyQ => '用20个是非问句猜出对方想的词';
+
+  @override
+  String get gameStart => '开始';
+
+  @override
+  String get gameSpectator => '观战';
+
+  @override
+  String get gamePlayer => '玩家';
+
+  @override
+  String get gameMyTurn => '轮到你';
+
+  @override
+  String get gameDescribe => '描述';
+
+  @override
+  String get gameVote => '投票';
+
+  @override
+  String get gameTruth => '真心话';
+
+  @override
+  String get gameDare => '大冒险';
+
+  @override
+  String get gameAsk => '提问';
+
+  @override
+  String get gameGuess => '猜词';
+
+  @override
+  String get gameArchive => '游乐手札';
+
+  @override
+  String get gameSelectPlayers => '选择 AI 角色';
+
+  @override
+  String get gameUserRole => '你的身份';
+
+  @override
+  String get gameUserAsPlayer => '以玩家身份加入';
+
+  @override
+  String get gameUserAsSpectator => '作为观战者（默认）';
+
+  @override
+  String gameStartFailed(Object err) {
+    return '开始失败：$err';
+  }
+
+  @override
+  String get gameAbort => '解散';
+
+  @override
+  String get gameAbortConfirm => '确定解散本局？战绩不会被记录。';
+
+  @override
+  String get gameLoading => '加载中…';
+
+  @override
+  String get gameNoPlayers => '请选择参与角色';
+
+  @override
+  String get gameWaiting => '等待其他玩家…';
+
+  @override
+  String get gameFinished => '对局结束';
+
+  @override
+  String get gameWinLabel => '赢家';
+
+  @override
+  String get gameDrawLabel => '平局';
+
+  @override
+  String get gameYourWord => '你的词';
+
+  @override
+  String get gameYourRole => '你的身份';
+
+  @override
+  String get gamePhase => '阶段';
+
+  @override
+  String get gameRound => '回合';
+
+  @override
+  String get gameCurrentTurn => '当前行动';
+
+  @override
+  String get gameChooseTruthOrDare => '选择真心话还是大冒险';
+
+  @override
+  String get gameSendMessage => '输入…';
+
+  @override
+  String get gameSend => '发送';
+
+  @override
+  String get gameCancel => '取消';
+
+  @override
+  String get gameGuessWord => '猜对方想的词';
+
+  @override
+  String get gameAnswerYes => '是';
+
+  @override
+  String get gameAnswerNo => '否';
+
+  @override
+  String get gameAnswerPossible => '可能';
+
+  @override
+  String get gameAnswerUncertain => '不确定';
+
+  @override
+  String get gameVoteFor => '投票给';
+
+  @override
+  String get gameDescribeHint => '用一句话描述你的词（不能说出词）';
+
+  @override
+  String get gameAskHint => '问一个是非问句';
+
+  @override
+  String gameErrorMessage(Object err) {
+    return '操作失败：$err';
+  }
+
+  @override
+  String get gameRoomTitle => '游戏房间';
+
+  @override
+  String get gameSpectatorView => '观战视角';
+
+  @override
+  String get gameNoArchive => '暂无对局记录';
+
+  @override
+  String get gameHistoryTitle => '游乐手札';
+
+  @override
+  String archivePlayerCount(Object count) {
+    return '$count 人';
+  }
+
+  @override
+  String archiveRounds(Object rounds) {
+    return '$rounds 回合';
+  }
+
+  @override
+  String archiveWinner(Object names) {
+    return '赢家：$names';
+  }
+
+  @override
+  String get archiveDraw => '平局';
+
+  @override
+  String get archivePlayers => '玩家';
+
+  @override
+  String get archiveTimeline => '时间线';
+
+  @override
+  String archiveRoundLabel(Object round) {
+    return '第$round回合';
+  }
+
+  @override
+  String get archiveWinnerSide => '胜方';
 }

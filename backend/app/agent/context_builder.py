@@ -493,8 +493,11 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         _trim = _trim_limits(hot)
 
     # X-4（2026-08-18）：检索区轮次 +1（每轮上下文构建计一轮；进程内状态，重启清零）
-    # 注：注册表路径与回退路径都在角色存在检查后此处 bump（位置一致，保证 N 轮去重语义不变）。
-    _bump_memory_round(state["character_id"])
+    # P3-5（2026-08-25）：注册表路径已在其入口（context.build_context）先 bump，此处不再重复；
+    # 纯 legacy 路径（_section_values is None）仍照常在此 bump —— 保证两条路径用同一轮次做记忆
+    # N 轮去重 / Lorebook sticky-cooldown 判定（消除 off-by-one）。
+    if _section_values is None:
+        _bump_memory_round(state["character_id"])
 
     # 用户信息
     from app.models.user import User
@@ -1293,7 +1296,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
                     for _gid in _gids:
                         _msgs = (await db.execute(
                             select(_CGMsg)
-                            .where(_CGMsg.group_id == _gid)
+                            .where(_CGMsg.group_id == _gid, _CGMsg.msg_type == "normal")
                             .order_by(_CGMsg.id.desc())
                             .limit(4)
                         )).scalars().all()

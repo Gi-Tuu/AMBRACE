@@ -4443,6 +4443,12 @@ abstract class AppLocalizations {
   /// **'第三方插件与服务器同权限，请确认来源可信后再安装'**
   String get marketRiskTip;
 
+  /// No description provided for @marketTrustTip.
+  ///
+  /// In zh, this message translates to:
+  /// **'⚠️ 仅安装可信插件：插件与后端进程同权限（无沙箱）。请只安装来源可信的插件。'**
+  String get marketTrustTip;
+
   /// No description provided for @marketSearchHint.
   ///
   /// In zh, this message translates to:
@@ -10052,6 +10058,396 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'失败'**
   String get mcpCallFailed;
+
+  /// No description provided for @gameTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'游戏'**
+  String get gameTitle;
+
+  /// No description provided for @gameSelectGameType.
+  ///
+  /// In zh, this message translates to:
+  /// **'选择游戏'**
+  String get gameSelectGameType;
+
+  /// No description provided for @gameUndercover.
+  ///
+  /// In zh, this message translates to:
+  /// **'谁是卧底'**
+  String get gameUndercover;
+
+  /// No description provided for @gameTruthOrDare.
+  ///
+  /// In zh, this message translates to:
+  /// **'真心话大冒险'**
+  String get gameTruthOrDare;
+
+  /// No description provided for @gameTwentyQ.
+  ///
+  /// In zh, this message translates to:
+  /// **'猜词20问'**
+  String get gameTwentyQ;
+
+  /// No description provided for @gameSingle.
+  ///
+  /// In zh, this message translates to:
+  /// **'单人'**
+  String get gameSingle;
+
+  /// No description provided for @gameDual.
+  ///
+  /// In zh, this message translates to:
+  /// **'双人'**
+  String get gameDual;
+
+  /// No description provided for @gameMulti.
+  ///
+  /// In zh, this message translates to:
+  /// **'多人'**
+  String get gameMulti;
+
+  /// No description provided for @gameDescriptionUndercover.
+  ///
+  /// In zh, this message translates to:
+  /// **'描述词语、投票找出卧底'**
+  String get gameDescriptionUndercover;
+
+  /// No description provided for @gameDescriptionTruthOrDare.
+  ///
+  /// In zh, this message translates to:
+  /// **'轮流选择真心话或大冒险'**
+  String get gameDescriptionTruthOrDare;
+
+  /// No description provided for @gameDescriptionTwentyQ.
+  ///
+  /// In zh, this message translates to:
+  /// **'用20个是非问句猜出对方想的词'**
+  String get gameDescriptionTwentyQ;
+
+  /// No description provided for @gameStart.
+  ///
+  /// In zh, this message translates to:
+  /// **'开始'**
+  String get gameStart;
+
+  /// No description provided for @gameSpectator.
+  ///
+  /// In zh, this message translates to:
+  /// **'观战'**
+  String get gameSpectator;
+
+  /// No description provided for @gamePlayer.
+  ///
+  /// In zh, this message translates to:
+  /// **'玩家'**
+  String get gamePlayer;
+
+  /// No description provided for @gameMyTurn.
+  ///
+  /// In zh, this message translates to:
+  /// **'轮到你'**
+  String get gameMyTurn;
+
+  /// No description provided for @gameDescribe.
+  ///
+  /// In zh, this message translates to:
+  /// **'描述'**
+  String get gameDescribe;
+
+  /// No description provided for @gameVote.
+  ///
+  /// In zh, this message translates to:
+  /// **'投票'**
+  String get gameVote;
+
+  /// No description provided for @gameTruth.
+  ///
+  /// In zh, this message translates to:
+  /// **'真心话'**
+  String get gameTruth;
+
+  /// No description provided for @gameDare.
+  ///
+  /// In zh, this message translates to:
+  /// **'大冒险'**
+  String get gameDare;
+
+  /// No description provided for @gameAsk.
+  ///
+  /// In zh, this message translates to:
+  /// **'提问'**
+  String get gameAsk;
+
+  /// No description provided for @gameGuess.
+  ///
+  /// In zh, this message translates to:
+  /// **'猜词'**
+  String get gameGuess;
+
+  /// No description provided for @gameArchive.
+  ///
+  /// In zh, this message translates to:
+  /// **'游乐手札'**
+  String get gameArchive;
+
+  /// No description provided for @gameSelectPlayers.
+  ///
+  /// In zh, this message translates to:
+  /// **'选择 AI 角色'**
+  String get gameSelectPlayers;
+
+  /// No description provided for @gameUserRole.
+  ///
+  /// In zh, this message translates to:
+  /// **'你的身份'**
+  String get gameUserRole;
+
+  /// No description provided for @gameUserAsPlayer.
+  ///
+  /// In zh, this message translates to:
+  /// **'以玩家身份加入'**
+  String get gameUserAsPlayer;
+
+  /// No description provided for @gameUserAsSpectator.
+  ///
+  /// In zh, this message translates to:
+  /// **'作为观战者（默认）'**
+  String get gameUserAsSpectator;
+
+  /// No description provided for @gameStartFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'开始失败：{err}'**
+  String gameStartFailed(Object err);
+
+  /// No description provided for @gameAbort.
+  ///
+  /// In zh, this message translates to:
+  /// **'解散'**
+  String get gameAbort;
+
+  /// No description provided for @gameAbortConfirm.
+  ///
+  /// In zh, this message translates to:
+  /// **'确定解散本局？战绩不会被记录。'**
+  String get gameAbortConfirm;
+
+  /// No description provided for @gameLoading.
+  ///
+  /// In zh, this message translates to:
+  /// **'加载中…'**
+  String get gameLoading;
+
+  /// No description provided for @gameNoPlayers.
+  ///
+  /// In zh, this message translates to:
+  /// **'请选择参与角色'**
+  String get gameNoPlayers;
+
+  /// No description provided for @gameWaiting.
+  ///
+  /// In zh, this message translates to:
+  /// **'等待其他玩家…'**
+  String get gameWaiting;
+
+  /// No description provided for @gameFinished.
+  ///
+  /// In zh, this message translates to:
+  /// **'对局结束'**
+  String get gameFinished;
+
+  /// No description provided for @gameWinLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'赢家'**
+  String get gameWinLabel;
+
+  /// No description provided for @gameDrawLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'平局'**
+  String get gameDrawLabel;
+
+  /// No description provided for @gameYourWord.
+  ///
+  /// In zh, this message translates to:
+  /// **'你的词'**
+  String get gameYourWord;
+
+  /// No description provided for @gameYourRole.
+  ///
+  /// In zh, this message translates to:
+  /// **'你的身份'**
+  String get gameYourRole;
+
+  /// No description provided for @gamePhase.
+  ///
+  /// In zh, this message translates to:
+  /// **'阶段'**
+  String get gamePhase;
+
+  /// No description provided for @gameRound.
+  ///
+  /// In zh, this message translates to:
+  /// **'回合'**
+  String get gameRound;
+
+  /// No description provided for @gameCurrentTurn.
+  ///
+  /// In zh, this message translates to:
+  /// **'当前行动'**
+  String get gameCurrentTurn;
+
+  /// No description provided for @gameChooseTruthOrDare.
+  ///
+  /// In zh, this message translates to:
+  /// **'选择真心话还是大冒险'**
+  String get gameChooseTruthOrDare;
+
+  /// No description provided for @gameSendMessage.
+  ///
+  /// In zh, this message translates to:
+  /// **'输入…'**
+  String get gameSendMessage;
+
+  /// No description provided for @gameSend.
+  ///
+  /// In zh, this message translates to:
+  /// **'发送'**
+  String get gameSend;
+
+  /// No description provided for @gameCancel.
+  ///
+  /// In zh, this message translates to:
+  /// **'取消'**
+  String get gameCancel;
+
+  /// No description provided for @gameGuessWord.
+  ///
+  /// In zh, this message translates to:
+  /// **'猜对方想的词'**
+  String get gameGuessWord;
+
+  /// No description provided for @gameAnswerYes.
+  ///
+  /// In zh, this message translates to:
+  /// **'是'**
+  String get gameAnswerYes;
+
+  /// No description provided for @gameAnswerNo.
+  ///
+  /// In zh, this message translates to:
+  /// **'否'**
+  String get gameAnswerNo;
+
+  /// No description provided for @gameAnswerPossible.
+  ///
+  /// In zh, this message translates to:
+  /// **'可能'**
+  String get gameAnswerPossible;
+
+  /// No description provided for @gameAnswerUncertain.
+  ///
+  /// In zh, this message translates to:
+  /// **'不确定'**
+  String get gameAnswerUncertain;
+
+  /// No description provided for @gameVoteFor.
+  ///
+  /// In zh, this message translates to:
+  /// **'投票给'**
+  String get gameVoteFor;
+
+  /// No description provided for @gameDescribeHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'用一句话描述你的词（不能说出词）'**
+  String get gameDescribeHint;
+
+  /// No description provided for @gameAskHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'问一个是非问句'**
+  String get gameAskHint;
+
+  /// No description provided for @gameErrorMessage.
+  ///
+  /// In zh, this message translates to:
+  /// **'操作失败：{err}'**
+  String gameErrorMessage(Object err);
+
+  /// No description provided for @gameRoomTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'游戏房间'**
+  String get gameRoomTitle;
+
+  /// No description provided for @gameSpectatorView.
+  ///
+  /// In zh, this message translates to:
+  /// **'观战视角'**
+  String get gameSpectatorView;
+
+  /// No description provided for @gameNoArchive.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无对局记录'**
+  String get gameNoArchive;
+
+  /// No description provided for @gameHistoryTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'游乐手札'**
+  String get gameHistoryTitle;
+
+  /// No description provided for @archivePlayerCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'{count} 人'**
+  String archivePlayerCount(Object count);
+
+  /// No description provided for @archiveRounds.
+  ///
+  /// In zh, this message translates to:
+  /// **'{rounds} 回合'**
+  String archiveRounds(Object rounds);
+
+  /// No description provided for @archiveWinner.
+  ///
+  /// In zh, this message translates to:
+  /// **'赢家：{names}'**
+  String archiveWinner(Object names);
+
+  /// No description provided for @archiveDraw.
+  ///
+  /// In zh, this message translates to:
+  /// **'平局'**
+  String get archiveDraw;
+
+  /// No description provided for @archivePlayers.
+  ///
+  /// In zh, this message translates to:
+  /// **'玩家'**
+  String get archivePlayers;
+
+  /// No description provided for @archiveTimeline.
+  ///
+  /// In zh, this message translates to:
+  /// **'时间线'**
+  String get archiveTimeline;
+
+  /// No description provided for @archiveRoundLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'第{round}回合'**
+  String archiveRoundLabel(Object round);
+
+  /// No description provided for @archiveWinnerSide.
+  ///
+  /// In zh, this message translates to:
+  /// **'胜方'**
+  String get archiveWinnerSide;
 }
 
 class _AppLocalizationsDelegate
