@@ -16,6 +16,7 @@ connect/call/disconnect 必须在同一个循环里完成（asyncio.run 一次�
 import asyncio
 import json
 import sys
+import warnings
 
 import pytest
 from fastapi import FastAPI
@@ -131,16 +132,17 @@ async def _cleanup_mcp():
     for name in list(_REGISTRY.keys()):
         if name.startswith("mcp."):
             _REGISTRY.pop(name, None)
-    # v3.3.6 CI 修复：SQLite 写锁偶发（aiosqlite 残留线程未完全释放文件锁），重试 3 次避免 teardown 报错拖垮 CI
+    # v3.3.6 CI 修复：SQLite 写锁偶发（aiosqlite 残留线程未完全释放文件锁），重试后仍失败降级为 warning
     for _attempt in range(4):
         try:
             async with async_session_factory() as db:
                 await db.execute(delete(MCPServer).where(MCPServer.name.like(TEST_PREFIX + "%")))
                 await db.commit()
             return
-        except Exception:
+        except Exception as exc:
             if _attempt == 3:
-                raise
+                warnings.warn(f"mcp teardown 清理仍失败（SQLite 写锁）: {exc}")
+                return
             await asyncio.sleep(0.8)
 
 

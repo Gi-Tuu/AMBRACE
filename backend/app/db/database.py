@@ -18,7 +18,7 @@ engine = create_async_engine(
     settings.database_url,
     echo=False,
     poolclass=NullPool,          # SQLite 不需要连接池
-    connect_args={"check_same_thread": False},
+    connect_args={"check_same_thread": False, "timeout": 10},
 )
 
 # 异步会话工厂

@@ -51,6 +51,31 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def detect_life_intent(text: str) -> dict | None:
+    """零 IO 纯函数：从用户消息检测生活意图（v3.3.6 CI 加固，便于稳定单测）。
+
+    返回 {"action_type", "horizon", "priority"} 或 None。
+    """
+    text = (text or "").strip()
+    if len(text) < 2 or len(text) > 100:
+        return None
+    # 显式指令优先
+    if _IMMEDIATE.search(text):
+        if "睡" in text:
+            return {"action_type": "sleep", "horizon": "this_turn", "priority": 3}
+        if "吃" in text:
+            return {"action_type": "eat", "horizon": "this_turn", "priority": 3}
+        if "学习" in text or "工作" in text:
+            return {"action_type": "study", "horizon": "this_turn", "priority": 3}
+        if "洗澡" in text or "休息" in text:
+            return {"action_type": "rest", "horizon": "this_turn", "priority": 3}
+        return {"action_type": "walk", "horizon": "this_turn", "priority": 3}
+    for action_type, h, pat in _PATTERNS:
+        if pat.search(text):
+            return {"action_type": action_type, "horizon": h, "priority": 2}
+    return None
+
+
 async def extract_life_intent(
     character_id: int, user_id: int, user_msg: str,
 ) -> None:
@@ -65,33 +90,12 @@ async def extract_life_intent(
     if len(text) < 2 or len(text) > 100:
         return
 
-    detected = None
-    horizon = "today"
-    priority = 1
-
-    # 显式指令优先
-    if _IMMEDIATE.search(text):
-        if "睡" in text:
-            detected, horizon, priority = "sleep", "this_turn", 3
-        elif "吃" in text:
-            detected, horizon, priority = "eat", "this_turn", 3
-        elif "学习" in text or "工作" in text:
-            detected, horizon, priority = "study", "this_turn", 3
-        elif "洗澡" in text or "休息" in text:
-            detected, horizon, priority = "rest", "this_turn", 3
-        else:
-            detected, horizon, priority = "walk", "this_turn", 3
-    else:
-        for action_type, h, pat in _PATTERNS:
-            m = pat.search(text)
-            if m:
-                detected = action_type
-                horizon = h
-                priority = 2
-                break
-
-    if detected is None:
+    detected_info = detect_life_intent(text)
+    if detected_info is None:
         return
+    detected = detected_info["action_type"]
+    horizon = detected_info["horizon"]
+    priority = detected_info["priority"]
 
     _throttle[character_id] = now_ts
 
