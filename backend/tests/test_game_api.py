@@ -247,3 +247,19 @@ def test_resume_stuck_games_no_crash(game_api_db):
     """v3.3.5 审查：stuck 对局恢复扫描可安全执行（空库不报错）。"""
     from app.api.games import resume_stuck_games
     asyncio.run(resume_stuck_games())
+
+
+def test_resume_stuck_games_skips_user_turn(game_api_db, monkeypatch):
+    """v3.3.6 审查：等待用户操作的对局不再每 5 分钟空转调度。"""
+    calls = []
+
+    async def _record(sid):
+        calls.append(sid)
+
+    monkeypatch.setattr("app.api.games._resume_ai_turns", _record)
+    client = _make_client(1)
+    sid, state = _create_undercover(client)
+    assert state["my"]["seat"] == 0
+    from app.api.games import resume_stuck_games
+    asyncio.run(resume_stuck_games())
+    assert sid not in calls

@@ -145,3 +145,24 @@ def test_turtle_soup_info_isolation():
     ttext = json.dumps({**tctx.__dict__, "my_view": dataclasses.asdict(tctx.my_view)}, ensure_ascii=False)
     assert truth in ttext
     assert tctx.my_view.private.get("word") == truth
+
+
+# ---------------- v3.3.6 审查修复：fallback 先提问，周期性猜 ----------------
+def test_turtle_soup_fallback_first_asks():
+    random.seed(11)
+    engine, _ = _make(_players2())
+    _sync(engine.setup())
+    engine.state["questions"] = 0
+    fb = _sync(engine.fallback_action(engine.state["guesser_seat"]))
+    assert fb["action"] == "ask_soup"
+    assert "吗" in fb.get("content", "")
+
+
+def test_turtle_soup_fallback_guesses_on_schedule():
+    random.seed(12)
+    engine, _ = _make(_players2())
+    _sync(engine.setup())
+    engine.state["questions"] = 7
+    fb = _sync(engine.fallback_action(engine.state["guesser_seat"]))
+    assert fb["action"] == "guess_soup"
+    assert fb["payload"]["word"] in (engine.state["keywords"] + [engine.state["truth"]])

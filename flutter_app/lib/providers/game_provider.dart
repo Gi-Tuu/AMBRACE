@@ -169,6 +169,12 @@ class GameProvider extends ChangeNotifier {
       if (_api.token.isNotEmpty) 'token': _api.token,
     });
     _ws = WebSocketChannel.connect(uri);
+    _ws?.ready.then((_) {
+      if (!_disposed) {
+        _wsConnected = true;
+        notifyListeners();
+      }
+    }).catchError((_) {});
     _wsSub = _ws!.stream.listen(
       (data) {
         if (data is String) {

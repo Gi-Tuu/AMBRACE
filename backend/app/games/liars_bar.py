@@ -101,6 +101,8 @@ class LiarsBarEngine(GameEngine):
         turn = self.state.get("turn_seat")
         if seat != turn:
             return ActionResult(ok=False, error="还没轮到你")
+        if not self.player_at(seat).alive:
+            return ActionResult(ok=False, error="你已经出局")
         if action == "declare":
             cards = self._cards(seat)
             if not cards:

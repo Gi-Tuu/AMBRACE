@@ -301,6 +301,17 @@ class LifeLoopTask:
         try:
             from app.api.games import _create_session_in_db, _resume_ai_turns
             from app.games.registry import engine_for
+            from app.models.game import GameSession
+            # v3.3.6 审查修复：同用户已有进行中自主对局则不再重复开
+            active = (await db.execute(
+                select(GameSession.id).where(
+                    GameSession.user_id == char.user_id,
+                    GameSession.status == "playing",
+                    GameSession.trigger == "character_suggested",
+                ).limit(1)
+            )).scalar_one_or_none()
+            if active is not None:
+                return None
             pool = (await db.execute(
                 select(AICharacter).where(
                     AICharacter.user_id == char.user_id, AICharacter.is_active.is_(True)

@@ -508,6 +508,7 @@ async def _settle_game(db: AsyncSession, session, engine: GameEngine, winner: st
     # 主记忆摘要指针 + game_memories（每 AI 角色）
     await finalize_game(db, session, engine)
     _ai_turn_locks.pop(session.id, None)  # v3.3.5 审查修复：结算后清理进程内锁，防长期运行内存增长
+    _game_ws_clients.pop(session.id, None)  # v3.3.6 审查修复：结算后清理 WS 空集合，防缓慢增长
 
 
 # ── AI 回合调度（幂等可续跑）──
@@ -571,12 +572,20 @@ async def resume_stuck_games() -> None:
         cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=10)
         for sid in rows:
             async with async_session_factory() as db2:
+                session = await db2.get(GameSession, sid)
+                if session is None or session.status != "playing":
+                    continue
                 last_ev = (await db2.execute(
                     select(GameEvent.created_at).where(GameEvent.session_id == sid)
                     .order_by(GameEvent.id.desc()).limit(1)
                 )).scalar_one_or_none()
-            if last_ev is None or last_ev < cutoff:
-                asyncio.ensure_future(_resume_ai_turns(sid))
+                if last_ev is not None and last_ev >= cutoff:
+                    continue
+                engine = engine_for(session.game_type)(session)
+                await engine.load(db2)
+                seat = engine.current_turn_seat()
+                if seat is not None and engine.is_ai(seat):
+                    asyncio.ensure_future(_resume_ai_turns(sid))
     except Exception as e:
         _logger.warning("resume_stuck_games failed: %s", e)
 

@@ -179,3 +179,14 @@ def test_liars_bar_full_run():
             break
     assert winner is not None, f"no winner, round={engine.session.round}"
     assert any(e["event_type"] == "win" for e in all_events)
+
+
+# ---------------- v3.3.6 审查修复：死亡玩家不能行动 ----------------
+def test_liars_bar_dead_player_cannot_act():
+    random.seed(14)
+    engine, _ = _make(_players3())
+    _sync(engine.setup())
+    engine.player_at(0).alive = False
+    res = _sync(engine.apply_action(0, "declare", {"number": 5}))
+    assert not res.ok
+    assert "出局" in res.error

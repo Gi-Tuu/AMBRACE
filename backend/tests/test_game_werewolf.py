@@ -204,3 +204,19 @@ def test_werewolf_spectator_no_private():
     _sync(engine.setup())
     sp = engine.view_for(4)
     assert sp.private == {}
+
+
+# ---------------- v3.3.6 审查修复：死亡玩家不能投票 ----------------
+def test_werewolf_dead_player_cannot_vote():
+    random.seed(13)
+    players = [_Player(0, "user", user_id=1)] + [
+        _Player(i, "ai", character_id=100 + i) for i in range(1, 4)
+    ]
+    engine, _ = _make(players)
+    _sync(engine.setup())
+    engine.session.phase = "day_vote"
+    engine.state["votes"] = {}
+    engine.player_at(0).alive = False
+    res = _sync(engine.apply_action(0, "vote", {"target_seat": 1}))
+    assert not res.ok
+    assert "出局" in res.error

@@ -135,3 +135,17 @@ def test_play_game_played_today_limits(life_db):
             return before, after
     before, after = asyncio.run(_do())
     assert before == 0 and after == 1
+
+
+# ---------------- v3.3.6 审查修复：同用户已有自主对局时不重复开 ----------------
+def test_start_group_game_skips_when_active_game_exists(life_db):
+    async def _do():
+        async with life_db() as db:
+            task = LifeLoopTask()
+            char = SimpleNamespace(id=101, user_id=1, name="角色101")
+            first = await task._start_group_game(db, char, Decision("play_game"), _snap(play_game_available=True))
+            second = await task._start_group_game(db, char, Decision("play_game"), _snap(play_game_available=True))
+            return first, second
+    first, second = asyncio.run(_do())
+    assert first is not None
+    assert second is None

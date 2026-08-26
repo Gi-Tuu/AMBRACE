@@ -144,6 +144,8 @@ class WerewolfEngine(GameEngine):
             return ActionResult(ok=False, error="白天请发言")
         if phase == "day_vote":
             if action == "vote":
+                if not self.player_at(seat).alive:
+                    return ActionResult(ok=False, error="你已经出局")
                 try:
                     target = int(payload.get("target_seat", -1))
                 except (TypeError, ValueError):
