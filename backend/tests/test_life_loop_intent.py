@@ -106,7 +106,7 @@ def test_正常路径_写库commit():
         1, 100, "我想去公园逛逛",
         session_factory=lambda: _StubDB(calls), throttle_state={},
     ))
-    assert result == "persisted", f"reason={result}"
+    assert result == "persisted", f"reason={result} file={chat_intent.__file__} fnline={chat_intent.extract_life_intent.__code__.co_firstlineno}"
     assert calls == ["enter", "commit"]
 
 
@@ -121,7 +121,7 @@ def test_即时指令_触发run_character_tick():
         session_factory=lambda: _StubDB(calls), tick_scheduler=_fake_schedule,
         throttle_state={},
     ))
-    assert result == "persisted", f"reason={result}"
+    assert result == "persisted", f"reason={result} file={chat_intent.__file__} fnline={chat_intent.extract_life_intent.__code__.co_firstlineno}"
     assert calls == ["enter", "commit", (1, 100)]
 
 
@@ -136,5 +136,5 @@ def test_非即时_不触发run_character_tick():
         session_factory=lambda: _StubDB(calls), tick_scheduler=_fake_schedule,
         throttle_state={},
     ))
-    assert result == "persisted", f"reason={result}"
+    assert result == "persisted", f"reason={result} file={chat_intent.__file__} fnline={chat_intent.extract_life_intent.__code__.co_firstlineno}"
     assert calls == ["enter", "commit"]

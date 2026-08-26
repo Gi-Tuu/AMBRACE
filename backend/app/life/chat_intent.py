@@ -93,10 +93,8 @@ async def extract_life_intent(
     now_ts = _time.monotonic()
     last = throttle.get(character_id, 0)
     if now_ts - last < THROTTLE_SECONDS:
-        _logger.warning(
-            "life intent throttled: char=%d throttle=%r last=%r now=%r throttle_state=%s",
-            character_id, throttle, last, now_ts, throttle_state is not None,
-        )
+        print(f"DEBUG_THROTTLE file={__file__} char={character_id} throttle={throttle!r} "
+              f"last={last!r} now={now_ts!r} present={throttle_state is not None}", flush=True)
         return "throttled"
 
     text = (user_msg or "").strip()
