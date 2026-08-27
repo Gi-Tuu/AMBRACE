@@ -451,6 +451,49 @@ def test_run_mcp_tool_stage_noop_without_mcp():
     assert steps == []
 
 
+def test_run_stream_mcp_tool_stage_from_raw_response():
+    """A1（#59）流式路径 MCP 工具循环：从 raw_response（未剥离标记）解析并执行 mcp.* 标记，
+    返回 (executed, results) 结果详情供流尾 tool_result 事件推送。"""
+    from app.agent.mcp_tools import run_stream_mcp_tool_stage
+
+    async def _exec(payload):
+        return {"ok": True, "text": "echo: " + str(payload.get("text", ""))}
+
+    sid = _make_server(user_id=PERM_UID, name=TEST_PREFIX + "stm")
+    spec = ToolSpec(
+        name="mcp.srv.echo2", description="echo", risk_level=RISK_LOW,
+        scope="mcp_srv", execute=_exec, server_id=sid,
+    )
+    register_tool(spec)
+    state = {
+        # 流式路径：ai_response 已剥离标记，raw_response 仍含全部原始标记
+        "ai_response": "查一下",
+        "raw_response": "查一下 [mcp.srv.echo2]{\"text\":\"hi\"}[/mcp.srv.echo2]",
+        "context_messages": [],
+    }
+    steps = []
+    executed, results = _run(run_stream_mcp_tool_stage(state, steps, user_id=PERM_UID, character_id=1, session_id=1))
+    assert executed is True
+    assert len(results) == 1
+    assert results[0]["tool"] == "mcp.srv.echo2"
+    assert results[0]["ok"] is True
+    assert results[0]["summary"] == "echo: hi"
+    assert steps and steps[0]["ok"] is True
+    assert "【工具结果】MCP 工具 mcp.srv.echo2" in state["context_messages"][-1]["content"]
+
+
+def test_run_stream_mcp_tool_stage_ignores_stripped_ai_response():
+    """流式路径已剥离标记的 ai_response 不应误触发工具（标记只在 raw_response）。"""
+    from app.agent.mcp_tools import run_stream_mcp_tool_stage
+
+    state = {"ai_response": "查一下 [mcp.srv.x]{\"a\":1}[/mcp.srv.x]", "raw_response": "", "context_messages": []}
+    steps = []
+    executed, results = _run(run_stream_mcp_tool_stage(state, steps, user_id=PERM_UID, character_id=1, session_id=1))
+    assert executed is False
+    assert results == []
+    assert steps == []
+
+
 # ------------------------------------------------------------------ 状态 Event Bus
 
 def test_status_event_published():

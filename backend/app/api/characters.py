@@ -295,6 +295,12 @@ async def update_character(
 
     await db.flush()
     await db.refresh(character)
+    # P2-1：角色性格/说话风格编辑成功后，使人格基线缓存失效，下次读取立即用新人格重算
+    try:
+        from app.services.character_state_service import _persona_baseline as _persona_baseline_cache
+        _persona_baseline_cache.pop(character_id, None)
+    except Exception:
+        pass
     _logger.info("Created character: id=%d name=%s", character.id, character.name)
     return character
 

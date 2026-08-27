@@ -5410,6 +5410,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get mcpCallFailed => '失败';
 
   @override
+  String get toolResult => '工具结果';
+
+  @override
+  String get mcpResources => '资源';
+
+  @override
+  String get mcpPrompts => '提示词';
+
+  @override
   String get gameTitle => '游戏';
 
   @override

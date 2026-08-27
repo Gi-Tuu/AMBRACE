@@ -42,6 +42,50 @@ async def get_db() -> AsyncSession:
             await session.close()
 
 
+# P1-1 一次性迁移哨兵（2026-08-27 用户拍板全量开启）：
+# 存量 0→1 只执行一次，之后用户手动关闭的角色开关不会被重启重置。
+_MIGRATION_LIFE_V2_FLAGS = "migration_life_v2_flags_20260827"
+
+
+async def _migrate_ai_character_loop_flags(conn) -> None:
+    """P1-1：老角色「认知循环 / 记忆 v2.1」开关一次性迁移为默认开(1)。
+
+    模型默认已改为 True（2026-08-27 用户拍板全量开启），但存量库列可能：
+    - 缺失（新库/旧库首次加列）→ ALTER ADD COLUMN ... DEFAULT 1（存量行回填 1）；
+    - 已存在且值为 0（早期 DEFAULT 0 迁移期留下）→ 首次启动 UPDATE 置 1。
+
+    用 runtime_flags 哨兵保证只迁移一次：之后用户显式关闭的开关保留，
+    不会被每次启动的 UPDATE 重置。
+    """
+    from sqlalchemy import text as _text
+    _cols = (await conn.execute(_text("PRAGMA table_info(ai_characters)"))).fetchall()
+    _names = [c[1] for c in _cols] if _cols else []
+    if not _names:
+        return
+    _sent = None
+    try:
+        _sent = (await conn.execute(
+            _text("SELECT 1 FROM runtime_flags WHERE key=:k"), {"k": _MIGRATION_LIFE_V2_FLAGS}
+        )).fetchone()
+    except Exception:
+        _sent = None  # runtime_flags 表不存在（极端旧库）→ 按未迁移处理
+    for _col in ("cognitive_loop_enabled", "memory_v2_enabled"):
+        if _col not in _names:
+            await conn.execute(_text(f"ALTER TABLE ai_characters ADD COLUMN {_col} BOOLEAN DEFAULT 1"))
+            print(f"[migrate] ai_characters.{_col} added (default 1)")
+        elif _sent is None:
+            # 列已存在且未做过全量开启迁移：存量 0 → 1（一次性）
+            await conn.execute(_text(f"UPDATE ai_characters SET {_col} = 1 WHERE {_col} = 0"))
+    if _sent is None:
+        try:
+            await conn.execute(_text(
+                "INSERT OR IGNORE INTO runtime_flags(key, enabled, updated_at) "
+                "VALUES(:k, 1, datetime('now'))"
+            ), {"k": _MIGRATION_LIFE_V2_FLAGS})
+        except Exception:
+            pass
+
+
 async def init_db():
     """创建所有表（测试/初始化用）"""
     import app.models  # noqa: F401  # 确保所有模型注册到 Base.metadata
@@ -464,13 +508,11 @@ async def init_db():
             await conn.execute(sa_text("UPDATE memories SET decay_base_at = created_at WHERE decay_base_at IS NULL"))
             print(f"[migrate] memories.importance scaled to pct (rows={one})")
 
-        # ai_characters 补列：认知循环开关（v2.1，默认关，灰度用）
-        accols = (await conn.execute(sa_text("PRAGMA table_info(ai_characters)"))).fetchall()
-        if accols and "cognitive_loop_enabled" not in [c1[1] for c1 in accols]:
-            await conn.execute(sa_text("ALTER TABLE ai_characters ADD COLUMN cognitive_loop_enabled BOOLEAN DEFAULT 0"))
-            print("[migrate] ai_characters.cognitive_loop_enabled added")
+        # P1-1（2026-08-27 用户拍板全量开启）：老角色认知循环/记忆 v2.1 开关从默认关迁移为默认开。
+        # 存量库：列已存在（早期 DEFAULT 0 迁移期留下值为 0）→ UPDATE 置 1；新库新列 → ALTER DEFAULT 1。
+        await _migrate_ai_character_loop_flags(conn)
 
-        # 记忆架构 v2.1（2026-08-08）：memories.why_it_matters / conversation_topics.goal+progress / ai_characters.memory_v2_enabled / relationship_events 表
+        # 记忆架构 v2.1（2026-08-08）：memories.why_it_matters / conversation_topics.goal+progress / relationship_events 表
         m2cols = (await conn.execute(sa_text("PRAGMA table_info(memories)"))).fetchall()
         if m2cols and "why_it_matters" not in [c1[1] for c1 in m2cols]:
             await conn.execute(sa_text("ALTER TABLE memories ADD COLUMN why_it_matters TEXT"))
@@ -480,11 +522,6 @@ async def init_db():
             await conn.execute(sa_text("ALTER TABLE conversation_topics ADD COLUMN goal BOOLEAN DEFAULT 0"))
             await conn.execute(sa_text("ALTER TABLE conversation_topics ADD COLUMN progress VARCHAR(50)"))
             print("[migrate] conversation_topics.goal/progress added")
-        a2cols = (await conn.execute(sa_text("PRAGMA table_info(ai_characters)"))).fetchall()
-        if a2cols and "memory_v2_enabled" not in [c1[1] for c1 in a2cols]:
-            await conn.execute(sa_text("ALTER TABLE ai_characters ADD COLUMN memory_v2_enabled BOOLEAN DEFAULT 0"))
-            print("[migrate] ai_characters.memory_v2_enabled added")
-            print("[migrate] ai_characters.cognitive_loop_enabled added")
 
         # users 补列：位置信息 + 本地时区（2026-08-08 时间感知/位置设置）
         ucols = (await conn.execute(sa_text("PRAGMA table_info(users)"))).fetchall()

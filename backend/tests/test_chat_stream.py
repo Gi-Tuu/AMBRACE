@@ -225,6 +225,83 @@ def test_send_and_receive_stream_success(monkeypatch):
     assert done_evt["message"]["content"] == "你好。今天天气真好。"
 
 
+def test_send_and_receive_stream_emits_tool_result(monkeypatch):
+    """A1（#59）流式路径 MCP 工具循环：raw_response 含 mcp.* 标记时执行工具并推送
+    tool_result 流尾事件；done 仍在最后（不改动原有 delta/block/done 契约）。"""
+    async def _persist_user(*a, **k):
+        return (1, {"id": 1, "content": "hi"})
+    async def _run_core(*a, **k):
+        return _fake_core(**{
+            "final_state": {"reasoning": None, "tools_used": [], "status_update": None,
+                            "should_update_memory": False, "emotional_state": "",
+                            "raw_response": "查一下 [mcp.srv.echo]{\"text\":\"hi\"}[/mcp.srv.echo]"},
+            "final_text": "查一下",
+            "streamed": True,
+            "stream_blocks": ["查一下"],
+        })
+    saved = [{"id": 10, "session_id": 1, "sender_type": "ai", "content": "查一下",
+              "created_at": "2026-08-24T00:00:00Z", "extra_meta": None}]
+    async def _persist_chunks(*a, **k):
+        return saved
+    async def _noop(*a, **k):
+        return None
+    async def _mcp_stage(state, steps, **k):
+        steps.append({"action": "mcp.srv.echo", "ok": True})
+        return True, [{"tool": "mcp.srv.echo", "ok": True, "summary": "echo: hi", "error": None}]
+
+    from app.agent import mcp_tools as _mt
+    from app.services import chat_service as cs
+    monkeypatch.setattr(cs, "_persist_user_message", _persist_user)
+    monkeypatch.setattr(cs, "_run_agent_core", _run_core)
+    monkeypatch.setattr(streaming, "_persist_ai_chunks", _persist_chunks)
+    monkeypatch.setattr(cs, "_run_post_processing", _noop)
+    monkeypatch.setattr(streaming, "_push_user_notify", _noop)
+    monkeypatch.setattr(_mt, "run_stream_mcp_tool_stage", _mcp_stage)
+
+    events: list[tuple] = []
+    async def _sink(event, payload):
+        events.append((event, payload))
+
+    asyncio.run(cs.send_and_receive_stream(1, 1, 2, "hi", lang="zh", sink=_sink))
+    types = [e for e, _ in events]
+    assert "tool_result" in types
+    tr = [p for e, p in events if e == "tool_result"][0]
+    assert tr["tool"] == "mcp.srv.echo"
+    assert tr["ok"] is True
+    assert tr["summary"] == "echo: hi"
+    assert types[-1] == "done"
+
+
+def test_send_and_receive_stream_no_tool_result_without_mcp(monkeypatch):
+    """A1（#59）流式路径无 mcp.* 标记时零事件变化（不推 tool_result）。"""
+    async def _persist_user(*a, **k):
+        return (1, {"id": 1, "content": "hi"})
+    async def _run_core(*a, **k):
+        return _fake_core()
+    saved = [{"id": 10, "session_id": 1, "sender_type": "ai", "content": "你好。今天天气真好。",
+              "created_at": "2026-08-24T00:00:00Z", "extra_meta": None}]
+    async def _persist_chunks(*a, **k):
+        return saved
+    async def _noop(*a, **k):
+        return None
+
+    from app.services import chat_service as cs
+    monkeypatch.setattr(cs, "_persist_user_message", _persist_user)
+    monkeypatch.setattr(cs, "_run_agent_core", _run_core)
+    monkeypatch.setattr(streaming, "_persist_ai_chunks", _persist_chunks)
+    monkeypatch.setattr(cs, "_run_post_processing", _noop)
+    monkeypatch.setattr(streaming, "_push_user_notify", _noop)
+
+    events: list[tuple] = []
+    async def _sink(event, payload):
+        events.append((event, payload))
+
+    asyncio.run(cs.send_and_receive_stream(1, 1, 2, "hi", lang="zh", sink=_sink))
+    types = [e for e, _ in events]
+    assert "tool_result" not in types
+    assert types[-1] == "done"
+
+
 def test_send_and_receive_stream_falls_back_to_chunked_on_error(monkeypatch):
     """LLM 流式异常：推 error 后回退非流式 chunked 并继续推 block/done。"""
     async def _persist_user(*a, **k):
@@ -277,3 +354,74 @@ def test_send_and_receive_stream_cold_war(monkeypatch):
 
     asyncio.run(cs.send_and_receive_stream(1, 1, 2, "hi", lang="zh", sink=_sink))
     assert any(e == "cold_war" for e, _ in events)
+
+
+# ── P2-3：流式异常回退不二次 sleep ───────────────────────────────
+
+def test_stream_fallback_chunked_skips_reply_delay(monkeypatch):
+    """P2-3：流式异常回退非流式 chunked 时传 reply_delay=False，避免已 sleep 过又 sleep 一次。"""
+    async def _persist_user(*a, **k):
+        return (1, {"id": 1, "content": "hi"})
+    async def _run_core(*a, **k):
+        raise RuntimeError("流式中断")
+    captured = {}
+
+    async def _chunked(*a, **k):
+        captured.update(k)
+        return {"chunks": [{"id": 20, "session_id": 1, "sender_type": "ai",
+                            "content": "回退回复。", "created_at": "2026-08-24T00:00:00Z",
+                            "extra_meta": None}],
+                "memories_updated": False, "cold_war": False}
+    async def _noop(*a, **k):
+        return None
+
+    from app.services import chat_service as cs
+    monkeypatch.setattr(cs, "_persist_user_message", _persist_user)
+    monkeypatch.setattr(cs, "_run_agent_core", _run_core)
+    monkeypatch.setattr(cs, "send_and_receive_chunked", _chunked)
+    monkeypatch.setattr(streaming, "_push_user_notify", _noop)
+
+    events: list[tuple] = []
+    async def _sink(event, payload):
+        events.append((event, payload))
+
+    asyncio.run(cs.send_and_receive_stream(1, 1, 2, "hi", lang="zh", sink=_sink))
+    assert captured.get("reply_delay") is False
+
+
+# ── P3-5：/send 支持跳过自然延迟 ────────────────────────────────
+
+class _FakeSendSession:
+    user_id = 1
+    character_id = 2
+
+
+def test_send_endpoint_honors_natural_delay(monkeypatch):
+    """P3-5：/send 默认带自然延迟；natural_delay=false 或 X-API-Client 头时跳过。"""
+    async def _fake_session(*a, **k):
+        return _FakeSendSession()
+    captured = {}
+
+    async def _fake_send(*a, **k):
+        captured.update(k)
+        return {"ai_message": {"id": 1, "content": "hi"}, "memories_updated": False}
+
+    monkeypatch.setattr(chat_api, "get_owned_session", _fake_session)
+    monkeypatch.setattr(chat_api, "send_and_receive", _fake_send)
+    client = _make_client()
+
+    # 默认：自然延迟开启（App 主链路保持延迟）
+    r = client.post("/api/v1/chat/send", json={"session_id": 1, "content": "hi"})
+    assert r.status_code == 200
+    assert captured.pop("reply_delay") is True
+
+    # natural_delay=false：跳过
+    r = client.post("/api/v1/chat/send?natural_delay=false", json={"session_id": 1, "content": "hi"})
+    assert r.status_code == 200
+    assert captured.pop("reply_delay") is False
+
+    # X-API-Client 头：跳过
+    r = client.post("/api/v1/chat/send", json={"session_id": 1, "content": "hi"},
+                    headers={"X-API-Client": "external-script"})
+    assert r.status_code == 200
+    assert captured.pop("reply_delay") is False

@@ -46,6 +46,10 @@ class StreamHandler {
   /// 当前正在流式追加的 AI 气泡（isLocal，content 随 delta 增长）。
   ChatMessage? _streamingMessage;
 
+  /// A1（#59）：本轮流式收集的 MCP 工具结果（tool_result 事件），随 block 确认附到正式块
+  /// 的 extra_meta.tool_results 上，供气泡观察区可折叠展示。
+  final List<Map<String, dynamic>> _streamToolResults = [];
+
   bool _isStreaming = false;
   bool get isStreaming => _isStreaming;
 
@@ -65,6 +69,7 @@ class StreamHandler {
   /// 开始新一轮：清空 `_streamingBlockIds`，建立流式占位气泡。调用方随后 setTyping + notify。
   void startStream() {
     _streamingBlockIds.clear();
+    _streamToolResults.clear();
     _isStreaming = true;
     _streamingMessage = _buildLocalAiBubble('');
     _messages.add(_streamingMessage!);
@@ -75,6 +80,7 @@ class StreamHandler {
   /// `_isStreaming` 可能已是 false，但当前轮的跟踪集合都应在本轮结束后清空。
   void finishStreaming() {
     _streamingBlockIds.clear();
+    _streamToolResults.clear();
     if (!_isStreaming) return;
     _isStreaming = false;
     // 移除空的流式占位气泡（若无 delta 即被打断，如 cold_war/异常）；有内容则保留为本地消息。
@@ -88,6 +94,7 @@ class StreamHandler {
   void abortStreaming() {
     _isStreaming = false;
     _streamingMessage = null;
+    _streamToolResults.clear();
     MessageAppender.removeEmptyLocalBubbles(_messages);
   }
 
@@ -127,10 +134,17 @@ class StreamHandler {
         final msg = ChatMessage.fromJson(event);
         _confirmBlock(msg);
         _enqueueTtsPlayback(msg);
+      case 'tool_result':
+        // A1（#59）流式路径 MCP 工具循环：独立流尾事件，工具结果文本随块确认附到正式块，
+        // 前端在气泡观察区可折叠展示（成功/失败各一块）。
+        _streamToolResults.add(event);
+        _attachToolResults();
       case 'done':
         finishStreaming();
       case 'error':
         _setError(event['detail'] as String?);
+        // P2-2：错误也要清除"输入中..."（与 ws_handler.dart 的 error case 一致）
+        _setTyping(false);
         // 服务端已内部回退非流式 chunked（仍会继续推 block/done），这里只提示，不重复发送
         _onChanged();
       case 'cold_war':
@@ -166,7 +180,33 @@ class StreamHandler {
     _onChanged();
   }
 
+  /// A1（#59）：把流式收集的 MCP 工具结果写到当前流式气泡的 extra_meta.tool_results 上。
+  void _attachToolResults() {
+    final sm = _streamingMessage;
+    if (sm != null) {
+      // 流式气泡默认 extra_meta 为 const {}（不可变），通过 copyWith 换成含 tool_results 的可变 Map。
+      final updated = sm.copyWith(extraMeta: {
+        ...sm.extraMeta,
+        'tool_results': List<Map<String, dynamic>>.from(_streamToolResults),
+      });
+      final idx = _messages.lastIndexWhere((m) => identical(m, sm));
+      if (idx >= 0) {
+        _messages[idx] = updated;
+      } else {
+        _messages.add(updated);
+      }
+      _streamingMessage = updated;
+    }
+    _onChanged();
+  }
+
   void _confirmBlock(ChatMessage msg) {
+    // A1（#59）：把本轮流式收集的 MCP 工具结果附到正式块（extra_meta.tool_results），
+    // 随气泡观察区可折叠展示。只附一次（首个确认的块），避免多块重复。
+    if (_streamToolResults.isNotEmpty) {
+      msg.extraMeta['tool_results'] = List<Map<String, dynamic>>.from(_streamToolResults);
+      _streamToolResults.clear();
+    }
     // P3-5（2026-08-29）：TTS 流式 consumer 中途死亡时，服务端走批量回退路径会全量重推 block
     // （P2-B 数据完整性兜底），此前已确认的块会被重复推送。按块 id 去重：messages 已含同一 id
     // 的正式块（非本地临时气泡）时不重复添加，避免出现重复气泡。

@@ -119,3 +119,20 @@ def test_put_without_field_keeps_other_fields_and_default(char_db):
     body = r.json()
     assert body['name'] == '测试改名'
     assert body['cognitive_loop_enabled'] is False
+
+
+def test_update_character_invalidates_persona_baseline_cache(char_db):
+    """P2-1：角色性格/说话风格编辑成功后，进程内人格基线缓存被清除（下次读取按新人格重算）。"""
+    from app.services import character_state_service as cs
+    factory, char_id = char_db
+    # 模拟已预热的人格基线缓存（对应 edit 前的旧人格）
+    cs._persona_baseline[char_id] = cs._derive_persona_baseline("高冷内敛", "简洁寡言")
+    try:
+        r = _make_client(factory).put(
+            f'/api/v1/characters/{char_id}',
+            json={'personality': '热情开朗', 'chat_style': '活泼俏皮'},
+        )
+        assert r.status_code == 200
+        assert char_id not in cs._persona_baseline  # 编辑成功后缓存已失效
+    finally:
+        cs._persona_baseline.pop(char_id, None)

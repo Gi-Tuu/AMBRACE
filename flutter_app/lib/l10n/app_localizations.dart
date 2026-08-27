@@ -10077,6 +10077,24 @@ abstract class AppLocalizations {
   /// **'失败'**
   String get mcpCallFailed;
 
+  /// No description provided for @toolResult.
+  ///
+  /// In zh, this message translates to:
+  /// **'工具结果'**
+  String get toolResult;
+
+  /// No description provided for @mcpResources.
+  ///
+  /// In zh, this message translates to:
+  /// **'资源'**
+  String get mcpResources;
+
+  /// No description provided for @mcpPrompts.
+  ///
+  /// In zh, this message translates to:
+  /// **'提示词'**
+  String get mcpPrompts;
+
   /// No description provided for @gameTitle.
   ///
   /// In zh, this message translates to:

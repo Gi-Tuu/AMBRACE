@@ -258,12 +258,21 @@ async def send_message(
     db: AsyncSession = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
     lang: str = Header(default="zh"),
+    natural_delay: bool = True,
+    x_api_client: str | None = Header(default=None),
 ):
-    """发送消息（HTTP 模式，返回 AI 回复）"""
+    """发送消息（HTTP 模式，返回 AI 回复）
+
+    P3-5：外部 API/脚本调用会多等最多 8s 自然延迟。`?natural_delay=false` 或携带
+    `X-API-Client` 头时跳过；App 主链路（WS/SSE）仍保持延迟。
+    """
     # 获取 session 信息（归属校验）
     session = await get_owned_session(db, data.session_id, user_id)
     if not session:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "session_not_found"))
+
+    # P3-5：支持跳过自然延迟（外部 API/脚本）；App 主链路保持默认延迟
+    reply_delay = natural_delay and (x_api_client is None)
 
     try:
         result_data = await send_and_receive(
@@ -273,6 +282,7 @@ async def send_message(
             content=data.content,
             lang=lang,
             quote=data.quote,
+            reply_delay=reply_delay,
         )
         return result_data
     except Exception as e:

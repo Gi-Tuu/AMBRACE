@@ -117,6 +117,16 @@ class ChatMessage {
     return null;
   }
 
+  /// MCP 工具结果列表（A1，#59 流式路径 MCP 工具循环；extra_meta.tool_results）。
+  /// 每项形如 {tool, ok, summary, error}，前端在气泡观察区可折叠展示。
+  List<Map<String, dynamic>>? get toolResults {
+    final v = extraMeta['tool_results'];
+    if (v is List) {
+      return v.map((e) => _asStringMap(e) ?? const <String, dynamic>{}).toList();
+    }
+    return null;
+  }
+
   /// 防御性转换：容忍 Map(键类型非 String) 等变体，避免类型转换崩溃
   static Map<String, dynamic>? _asStringMap(dynamic v) {
     if (v is Map<String, dynamic>) return v;

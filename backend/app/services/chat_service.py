@@ -368,8 +368,8 @@ async def _run_agent_core(
 
     # #63 机制5：用户安慰词 → 最高权重心事减重（flag 开才生效，失败静默）
     try:
-        from app.life.preoccupations import COMFORT_WORDS
-        if any(k in content for k in COMFORT_WORDS):
+        from app.life.preoccupations import has_comfort_word
+        if has_comfort_word(content):
             from app.agent.loop import AGENT_FLAGS
             if AGENT_FLAGS.get("preoccupation_enabled", False):
                 from app.life.preoccupations import soften_by_comfort_words
@@ -526,7 +526,10 @@ async def _run_agent_core(
     #    stream_blocks/raw_response 被第二条回复覆盖，需额外拼接两段块/原始文本；
     # (c) tts 路径（block_sink 实时落库 + 逐句 TTS）在首条回复时已消费完毕，第二条回复需
     #    重开 TTS 流水线并再次落库，改动显著；且会改变 test_chat_stream 严格断言的事件序列。
-    # 结论：维持现状（仅剥离 mcp.* 标记、不触发循环），待引入独立的流尾推送通道后再接入。
+    # A1（#59 流式路径 MCP 工具循环）：接入见 streaming.py send_and_receive_stream —— 流式路径
+    #   从 raw_response 解析 mcp.* 标记并用 run_stream_mcp_tool_stage 执行，工具结果经独立流尾
+    #   事件 tool_result 推给前端；为避免再决策的流式冲突（delta 二次推送/stream_blocks 覆盖/
+    #   TTS 流水线已消费），流式路径不做二次 LLM 再决策（非流式保留原再决策行为）。
     if not _is_stream:
         try:
             from app.agent.mcp_tools import run_mcp_tool_stage
@@ -760,7 +763,7 @@ async def _run_post_processing(
 
 async def send_and_receive(
     session_id: int, user_id: int, character_id: int, content: str,
-    lang: str = "zh", quote: dict | None = None,
+    lang: str = "zh", quote: dict | None = None, reply_delay: bool = True,
 ) -> dict:
     """发送用户消息 → Agent 处理 → 返回 AI 回复"""
     # 用户消息落库（HTTP 路径：无开关，始终落库；无 user_msg_info/Shared Memory）
@@ -772,7 +775,7 @@ async def send_and_receive(
     # 公共 Agent 主流程（HTTP 专属：用户定时承诺 / 自主搜索 Loop / 多工具任务化）
     core = await _run_agent_core(
         session_id, user_id, character_id, content, lang, user_msg_id,
-        user_timer=True, search_loop=True, run_chat_task=True, reply_delay=True,
+        user_timer=True, search_loop=True, run_chat_task=True, reply_delay=reply_delay,
     )
     if core is None:
         return {"ai_message": None, "memories_updated": False, "cold_war": True}
@@ -835,6 +838,7 @@ async def send_and_receive_chunked(
     save_user_message: bool = True, lang: str = "zh", tts: bool = False,
     quote: dict | None = None,
     extra_capabilities: list[str] | None = None,
+    reply_delay: bool = True,
 ) -> dict:
     """发送用户消息 -> Agent处理 -> 拆分回复 -> 保存每条块
 
@@ -849,7 +853,7 @@ async def send_and_receive_chunked(
     # 公共 Agent 主流程（流式路径：不触发搜索，仅剥离标记兜底）
     core = await _run_agent_core(
         session_id, user_id, character_id, content, lang, user_msg_id,
-        reply_delay=True,
+        reply_delay=reply_delay,
     )
     if core is None:
         return {"chunks": [], "memories_updated": False, "cold_war": True}

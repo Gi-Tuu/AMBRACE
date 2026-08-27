@@ -31,6 +31,37 @@ from fastapi import File, Form, UploadFile
 
 from app.plugins import sdk
 
+# #67 拆分：允许同目录兄弟模块互相导入（插件 dir 非 package，loader 以 ai_plugin_* 单文件加载）。
+# browser.py / publish.py / comments.py / content.py / music.py 提供 @author 拆分后的能力；
+# 纯函数（MUSIC_MOODS/_de_ai/内容类型轮换/人味指令）模块化以复用并便于单测。
+import os as _os
+import sys as _sys
+
+_PLUGIN_DIR = _os.path.dirname(_os.path.abspath(__file__))
+if _PLUGIN_DIR not in _sys.path:
+    _sys.path.insert(0, _PLUGIN_DIR)
+
+from music import (  # noqa: E402
+    MUSIC_MOODS,
+    normalize_music_mood,
+    parse_music_mood,
+    pick_music_mood,
+    _select_music as _select_music,
+)
+from content import (  # noqa: E402
+    _de_ai,
+    content_type_hint,
+    humanize_image_prompt,
+    humanize_reply_prompt,
+    pick_content_type,
+)
+from publish import _sync_publish_video  # noqa: E402
+from comments import (  # noqa: E402
+    _sync_reply_comment_v2,
+    _sync_reply_comment_dom,
+    _get_cached_comment_ids,
+)
+
 _PROFILE_DIR = Path(__file__).resolve().parents[3] / "backend" / "data" / "douyin_profile"
 _SCREENSHOT_DIR = _PROFILE_DIR / "screenshots"
 _PROFILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -202,6 +233,23 @@ def _parse_publish_time(s: str):
 
 
 # ================= Playwright 同步封装（外部一律 asyncio.to_thread 调用） =================
+# #67 P0 反检测：本地 Edge（channel=msedge）+ add_init_script 内嵌 stealth 补丁（零依赖，
+# 不强制 playwright-stealth）+ 反自动化启动参数；人类行为模拟（随机打字/点击延迟、鼠标移动）
+# 见下方 _human_typing/_human_wait/_human_tap。
+_JS_STEALTH_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', { get: () => false });
+Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+window.chrome = { runtime: {} };
+const originalQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = (parameters) =>
+    parameters.name === 'notifications'
+        ? Promise.resolve({ state: Notification.permission })
+        : originalQuery(parameters);
+try { delete window.__playwright__; } catch (e) {}
+try { delete window.__pw_manual; } catch (e) {}
+"""
+
+
 def _launch(headless: bool):
     from playwright.sync_api import sync_playwright
     p = sync_playwright().start()
@@ -209,10 +257,59 @@ def _launch(headless: bool):
         user_data_dir=str(_PROFILE_DIR / "profile"),
         channel="msedge",
         headless=headless,
-        args=["--disable-blink-features=AutomationControlled"],
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--no-sandbox",
+            "--disable-web-security",
+            "--disable-dev-shm-usage",
+        ],
         viewport={"width": 1280, "height": 800},
+        locale="zh-CN",
+        timezone_id="Asia/Shanghai",
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+        ),
     )
+    try:
+        ctx.add_init_script(_JS_STEALTH_SCRIPT)
+    except Exception:
+        pass
     return p, ctx
+
+
+def _human_typing(page, text, delay_ms=(30, 120)) -> None:
+    """模拟真人打字：随机 30-120ms 按键延迟。"""
+    try:
+        page.keyboard.type((text or ""), delay=random.randint(*delay_ms))
+    except Exception:
+        pass
+
+
+def _human_wait(page, lo=200, hi=800) -> None:
+    """操作前随机人反应延迟（200-800ms）。"""
+    try:
+        page.wait_for_timeout(random.randint(lo, hi))
+    except Exception:
+        pass
+
+
+def _human_tap(page, locator, timeout=5000) -> None:
+    """点击前随机延迟 + 鼠标移动到目标附近再点击。"""
+    try:
+        page.wait_for_timeout(random.randint(200, 800))
+        box = locator.bounding_box(timeout=timeout)
+        if box:
+            page.mouse.move(
+                box["x"] + box["width"] / 2 + random.randint(-8, 8),
+                box["y"] + box["height"] / 2 + random.randint(-8, 8),
+            )
+            page.wait_for_timeout(random.randint(80, 200))
+    except Exception:
+        pass
+    locator.click(timeout=timeout)
 
 
 def _has_login_cookie(ctx) -> bool:
@@ -562,8 +659,8 @@ def _fill_image_form(page, images: list[str], title: str, desc: str) -> None:
                 pass
 
 
-def _sync_publish_image(images: list[str], title: str, desc: str) -> dict:
-    """发布图文（Phase 2）：上传图片 → 填标题/描述 → 点发布；返回 {ok, message}"""
+def _sync_publish_image(images: list[str], title: str, desc: str, music_keyword: str = "") -> dict:
+    """发布图文（Phase 2 + #67 音乐）：上传图片 → 填标题/描述 → 选音乐(可选) → 点发布；返回 {ok, message}"""
     p, ctx = _launch(headless=True)
     try:
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
@@ -584,6 +681,9 @@ def _sync_publish_image(images: list[str], title: str, desc: str) -> dict:
         _clear_publish_form_cache(page)
         _close_draft_modal(page)
         _fill_image_form(page, images, title, desc)
+        # #67：图文也可选音乐（AI 情绪关键词）
+        if music_keyword:
+            _select_music(page, music_keyword)
         _close_draft_modal(page)
         try:
             _up_info = page.evaluate(
@@ -933,6 +1033,20 @@ async def _ensure_douyin_schema() -> None:
                 await db.execute(text("ALTER TABLE douyin_comments ADD COLUMN author_role VARCHAR(10) DEFAULT ''"))
             if "mentioned_at" not in cnames:
                 await db.execute(text("ALTER TABLE douyin_comments ADD COLUMN mentioned_at DATETIME"))
+            # #67（2026-08-27）：评论真实 aweme_id / comment_id（评论 API 拦截方案需真实 ID）
+            if "aweme_id" not in cnames:
+                await db.execute(text("ALTER TABLE douyin_comments ADD COLUMN aweme_id VARCHAR(64) DEFAULT ''"))
+            if "comment_id" not in cnames:
+                await db.execute(text("ALTER TABLE douyin_comments ADD COLUMN comment_id VARCHAR(64) DEFAULT ''"))
+            pcols = (await db.execute(text("PRAGMA table_info(douyin_pending)"))).fetchall()
+            pnames = [c[1] for c in pcols]
+            # #67（2026-08-27）：pending 队列支持音乐情绪 / 视频路径 / 发布类型
+            if "music_mood" not in pnames:
+                await db.execute(text("ALTER TABLE douyin_pending ADD COLUMN music_mood VARCHAR(20) DEFAULT ''"))
+            if "video_path" not in pnames:
+                await db.execute(text("ALTER TABLE douyin_pending ADD COLUMN video_path VARCHAR(500) DEFAULT ''"))
+            if "post_type" not in pnames:
+                await db.execute(text("ALTER TABLE douyin_pending ADD COLUMN post_type VARCHAR(10) DEFAULT 'image'"))
             await db.commit()
         _ensure_source_col_done = True
     except Exception:
@@ -1331,7 +1445,8 @@ async def _check_frequency(kind: str, *, is_fan: bool = False, exclude_task_id: 
     cn_now = now.astimezone(timezone(timedelta(hours=8)))
     cn_day_start = cn_now.replace(hour=0, minute=0, second=0, microsecond=0)
     day_start = cn_day_start.astimezone(timezone.utc).replace(tzinfo=None)
-    if kind == "image_post":
+    if kind in ("image_post", "video_post"):
+        # #67：视频与图文共用「每日 2 条」发布上限（读 DouyinPost.source=auto + pending video_post）
         from sqlalchemy import func, select
         from app.db.database import async_session_factory
         from app.models.douyin import DouyinPost
@@ -1341,9 +1456,10 @@ async def _check_frequency(kind: str, *, is_fan: bool = False, exclude_task_id: 
                 .where(DouyinPost.published_at >= day_start, DouyinPost.source == "auto")
             )
             posts_today = r.scalar_one() or 0
-        total = posts_today + await _pending_count("image_post", day_start, exclude_task_id=exclude_task_id)
+        total = posts_today + await _pending_count(kind, day_start, exclude_task_id=exclude_task_id)
+        _label = "图文/视频发布"
         if total >= 2:
-            return {"ok": False, "message": f"图文发布已达每日上限（2 条/天，今日已占用 {total} 条）"}
+            return {"ok": False, "message": f"{_label}已达每日上限（2 条/天，今日已占用 {total} 条）"}
     elif kind == "reply_comment":
         hour_start = now - timedelta(hours=1)
         h = await _count_replied(hour_start) + await _pending_count("reply_comment", hour_start, exclude_task_id=exclude_task_id)
@@ -1419,22 +1535,34 @@ async def _run_pending_task(task_id: int) -> dict:
                             await db2.commit()
                     images = gen
             if images:
-                res = await _run_sync(_sync_publish_image, images, title, content)
+                # #67：图文发布可选 BGM（AI 情绪关键词，行 music_mood）
+                res = await _run_sync(_sync_publish_image, images, title, content, getattr(row, "music_mood", "") or "")
             else:
                 res = {"ok": False, "message": "无配图且自动生成配图失败，请在小信封/扩展里为这条图文补充图片后重新确认"}
+        elif kind == "video_post":
+            # #67 P2：视频发布（上传→等转码→填表→选音乐→选封面→发布）
+            vpath = getattr(row, "video_path", "") or ""
+            if not vpath:
+                res = {"ok": False, "message": "未上传视频文件，请先在扩展页上传视频后重新确认"}
+            else:
+                res = await _run_sync(_sync_publish_video, vpath, title, content,
+                                      getattr(row, "music_mood", "") or "", "")
         else:
-            res = await _run_sync(_sync_reply_comment, title, commenter, content)
+            # #67 P0：评论回复双轨制（内部 API 优先 + DOM 兜底；先异步查缓存的 comment_id/item_id）
+            _pk = getattr(row, "post_key", "") or _post_key(title or "")
+            _cid, _iid = await _get_cached_comment_ids(_pk, commenter)
+            res = await _run_sync(_sync_reply_comment_v2, _pk, commenter, content, _cid, _iid)
     except Exception as e:
         res = {"ok": False, "message": f"执行异常: {e}"}
     async with async_session_factory() as db:
         row2 = await db.get(DouyinPending, task_id)
         if res.get("ok"):
             row2.status = "executed"
-            if kind == "image_post":
+            if kind in ("image_post", "video_post"):
                 db.add(DouyinPost(
                     user_id=1, douyin_post_id=res.get("post_id") or _post_key(title or ""), title=(title or "")[:500],
-                    post_type="image", stats_json="{}", published_at=datetime.now(timezone.utc),
-                    source="auto",
+                    post_type=("video" if kind == "video_post" else "image"), stats_json="{}",
+                    published_at=datetime.now(timezone.utc), source="auto",
                 ))
             else:
                 # 草稿里的作品标题可能是短标题，评论表 douyin_post_id 是完整标题哈希；
@@ -1847,6 +1975,36 @@ async def draft_image_post(payload: dict):
     return {"ok": True, "id": pid, "message": "图文草稿已生成，请在 App 确认后发布"}
 
 
+@router.post("/draft/video_post")
+async def draft_video_post(payload: dict):
+    """视频发布草稿（#67 P2）：title + desc + music_keyword(可选) + video_path(可后补)。
+    与 image_post 共用 pending 队列流程，kind=video_post。"""
+    title = str(payload.get("title") or "").strip()
+    desc = str(payload.get("desc") or "").strip()
+    video_path = str(payload.get("video_path") or "").strip()
+    music_mood = normalize_music_mood(str(payload.get("music_keyword") or "").strip())
+    if not (title or desc):
+        return {"ok": False, "message": "标题或描述至少填一个"}
+    bw = _check_banned(f"{title} {desc}")
+    if bw:
+        return {"ok": False, "message": f"内容包含违禁词「{bw}」，已拦截"}
+    freq = await _check_frequency("video_post")
+    if not freq["ok"]:
+        return freq
+    from app.db.database import async_session_factory
+    from app.models.douyin import DouyinPending
+    async with async_session_factory() as db:
+        row = DouyinPending(
+            user_id=1, kind="video_post", title=title[:300], content=desc[:2000],
+            video_path=video_path[:500], music_mood=music_mood, post_type="video",
+        )
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+        pid = row.id
+    return {"ok": True, "id": pid, "message": "视频草稿已生成，请在 App 确认后发布（未传视频可先上传）"}
+
+
 @router.post("/draft/reply_comment")
 async def draft_reply_comment(payload: dict):
     """评论回复草稿：post_title/commenter 定位目标评论，reply_text 为回复内容"""
@@ -1915,6 +2073,8 @@ async def ai_draft(payload: dict):
     else:
         comment = None
     comment_content = (comment or {}).get("content", "") or ""
+    # #67 P1：AI 自主图文随机选一种内容类型（避免风格重复）
+    _content_type = pick_content_type()
     from app.agent.llm_client import chat_completion
     if kind == "image_post":
         sys_prompt = ("你是抖音图文创作者。根据灵感生成图文草稿：第一行标题（≤20字，简洁有吸引力），"
@@ -1934,6 +2094,8 @@ async def ai_draft(payload: dict):
                           "第二行起为作品正文（1-3 句完整内容，必须写实际文字，不能只有话题标签），最后可附 1-3 个话题标签。只输出内容，不要解释。")
         if custom:
             sys_prompt += f"\n（用户自定义设定：{custom[:300]}）"
+        # #67 P1 人味优化：注入人味写作指令 + 随机内容类型（避免风格重复）
+        sys_prompt += "\n\n" + humanize_image_prompt(char_name or "这个角色", "日常口语化", _content_type)
     else:
         sys_prompt = ("你是抖音创作者。根据粉丝评论生成一条自然、友好、真诚的回复（≤100字），"
                       "不要加引号和话题标签。只输出回复内容。")
@@ -1947,6 +2109,8 @@ async def ai_draft(payload: dict):
                           "回复 ≤100字，不要加引号和话题标签。只输出回复内容。")
         if custom:
             sys_prompt += f"\n（用户自定义设定：{custom[:300]}）"
+        # #67 P1 人味优化：注入评论回复人味指令
+        sys_prompt += "\n\n" + humanize_reply_prompt(char_name or "这个角色")
     try:
         if kind == "reply_comment" and comment_content:
             user_msg = f"粉丝「{commenter}」评论：{comment_content[:200]}"
@@ -1992,12 +2156,17 @@ async def ai_draft(payload: dict):
     from app.db.database import async_session_factory
     from app.models.douyin import DouyinPending
     if kind == "image_post":
+        # #67 P1：解析「音乐:情绪」行 → 存 music_mood；剥离该行后按行拆标题/正文
+        music_mood = parse_music_mood(content)
+        content = re.sub(r"[\[【]?\s*音乐\s*[:：]\s*[^\s\]】\n]+[\]】]?", "", content).strip()
         lines = [l.strip() for l in content.splitlines() if l.strip()]
         title = (lines[0] if lines else "")[:20]
         body = [l for l in lines[1:] if not l.startswith("#")]
         if not body:
             return {"ok": False, "message": "AI 生成内容不完整（缺少正文），请重试"}
-        desc = ("\n".join(lines[1:]))[:1000] if len(lines) > 1 else ""
+        desc = _de_ai("\n".join(lines[1:]))[:1000] if len(lines) > 1 else ""
+        if not desc:
+            desc = ("\n".join(lines[1:]))[:1000]  # 反 AI 腔清理后为空则回退原始正文
         bw = _check_banned(f"{title} {desc}")
         if bw:
             return {"ok": False, "message": f"生成内容含违禁词「{bw}」"}
@@ -2005,7 +2174,8 @@ async def ai_draft(payload: dict):
         if not freq["ok"]:
             return freq
         async with async_session_factory() as db:
-            row = DouyinPending(user_id=1, kind="image_post", title=title, content=desc, image_paths_json="[]")
+            row = DouyinPending(user_id=1, kind="image_post", title=title, content=desc,
+                                image_paths_json="[]", music_mood=music_mood, post_type="image")
             if not _require_approval():
                 row.status = "confirmed"
                 row.execute_at = _random_execute_at()
@@ -2014,9 +2184,12 @@ async def ai_draft(payload: dict):
             await db.refresh(row)
             pid = row.id
         msg = "AI 已生成图文草稿并进入随机发布队列（全自动模式）" if not _require_approval() else "AI 已生成图文草稿（尚未选图，确认前请先补充图片）"
-        return {"ok": True, "id": pid, "kind": kind, "title": title, "desc": desc, "message": msg}
+        return {"ok": True, "id": pid, "kind": kind, "title": title, "desc": desc,
+                "music_mood": music_mood, "message": msg}
     else:
-        reply = content[:500]
+        reply = _de_ai(content)[:500]
+        if not reply:
+            reply = content[:500]  # 反 AI 腔清理后为空则回退原始内容，避免生成空回复
         bw = _check_banned(reply)
         if bw:
             return {"ok": False, "message": f"生成内容含违禁词「{bw}」"}
@@ -2066,6 +2239,9 @@ async def pending_list():
                 "id": r.id, "kind": r.kind, "title": r.title, "content": r.content,
                 "commenter": r.commenter, "is_fan": bool(r.is_fan), "images": images,
                 "created_at": r.created_at.isoformat() if r.created_at else "", "status": r.status,
+                # #67：发布类型 / 音乐情绪 / 视频路径（前端展示与确认）
+                "post_type": r.post_type or "image", "music_mood": r.music_mood or "",
+                "video_path": r.video_path or "",
             })
     return {"items": items}
 
@@ -2121,6 +2297,24 @@ async def upload_image(task_id: int = Form(...), file: UploadFile = File(...)):
         row.image_paths_json = json.dumps(imgs, ensure_ascii=False)
         await db.commit()
     return {"ok": True, "images": imgs, "message": f"图片已上传（共 {len(imgs)} 张）"}
+
+
+@router.post("/upload_video")
+async def upload_video(task_id: int = Form(...), file: UploadFile = File(...)):
+    """为视频草稿上传视频文件（#67 P2）：保存到 uploads/douyin/{task_id}/ 并写 row.video_path"""
+    from app.db.database import async_session_factory
+    from app.models.douyin import DouyinPending
+    from app.services.upload_service import save_image
+    async with async_session_factory() as db:
+        row = await db.get(DouyinPending, task_id)
+        if row is None:
+            return {"ok": False, "message": "任务不存在"}
+        if row.kind != "video_post":
+            return {"ok": False, "message": "仅视频任务可上传视频"}
+        url = await save_image(file, f"douyin/{task_id}")
+        row.video_path = url[:500]
+        await db.commit()
+    return {"ok": True, "video_path": url, "message": "视频已上传，确认后可发布"}
 
 
 @router.post("/confirm/{task_id}")

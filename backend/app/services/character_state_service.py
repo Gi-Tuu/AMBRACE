@@ -205,7 +205,7 @@ def _apply_drift_sync(st, now: datetime) -> dict:
             # #63 机制1：弹簧-阻尼分支（4 维启用；子步长 0.25h 防大 Δt 数值不稳定）
             p = _SPRING_PARAMS[key]
             base = _spring_baseline(key, st)
-            vel = _spring_velocity.setdefault(st.id, {}).get(key, 0.0)
+            vel = _spring_velocity.setdefault(st.character_id, {}).get(key, 0.0)
             steps = max(1, int(delta_hours / 0.25))
             dt = delta_hours / steps
             for _ in range(steps):
@@ -213,7 +213,14 @@ def _apply_drift_sync(st, now: datetime) -> dict:
                 force = p["k"] * (base - cur) - p["c"] * vel + noise
                 vel += force * dt
                 cur += vel * dt
-            _spring_velocity.setdefault(st.id, {})[key] = vel
+                # P3-4：弹簧撞墙——clamp 到 [0,100] 并把撞墙方向速度置零，避免持续推墙
+                if cur < 0:
+                    cur = 0.0
+                    vel = max(0.0, vel)
+                elif cur > 100:
+                    cur = 100.0
+                    vel = min(0.0, vel)
+            _spring_velocity.setdefault(st.character_id, {})[key] = vel
         else:
             rule, lo, hi = _DRIFT_RULES.get(key, ("to50", 0.2, 0.5))
             rate = random.uniform(lo, hi)

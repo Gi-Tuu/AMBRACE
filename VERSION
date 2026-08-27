@@ -1,7 +1,7 @@
 PROJECT: 拥爱（AMBRACE）
 VERSION: 3.3.7
 DATE: 2026-08-27
-STATUS: 开源发布版（生命感增强四机制灰度 + 小家大地图交互升级 + 游戏/插件修复）
+STATUS: 开源发布版 v3.3.7 覆盖版（生命感四机制 + 全量审查修复 + MCP 流式 + 抖音升级 + SSE 打字机修复）
 
 CHANGELOG:
 
@@ -10,7 +10,11 @@ CHANGELOG:
   - Home: 小家大地图交互升级（人物/家具编辑/家具交互/按钮缩放/镜头跟随/顶部工具栏/防遮挡）；游戏机面板加载修复（监听变化 + 超时兜底）
   - Games: 发布小尾巴收尾（abort 清理 WS、resume AI 回合续跑测试、海龟汤 fallback is_ai 守卫）
   - Plugins: 插件页面/图标请求带登录凭证，修复页面型插件 401
-  - Tests: backend 956 passed（3 个既有环境/基线失败另计）, flutter analyze 0 / test 229 green
+  - Tests: backend 984 passed（1 个既有 MCP 锁 flaky 另计）, flutter analyze 0 / test 231 green
+  - Review: v3.3.7 全量审查 10 项修复（老角色认知/记忆开关一次性迁移+哨兵、人格基线缓存失效、错误清 typing、流式回退不双重延迟、安慰词边界、弹簧撞墙、/send 可跳过延迟等）
+  - MCP: 流式聊天支持 MCP 工具执行（tool_result 折叠展示）+ 扩展页资源/提示词展示
+  - Douyin: 插件模块化拆分；反检测加固、评论回复内部 API 双轨、图文自动配乐、文案人味化（视频发布代码就绪未实测）
+  - Stream: SSE 真流式 P0 修复（AgentState 字段补全，打字机真正生效）
 
 3.3.6 - Release (2026-08-26)
   - Games: 群聊游戏 Phase 2 收尾——狼人杀简化版（4-8人，夜晚私密刀人/验人）/ 骗子酒馆（3-5人，声明+质疑）/ 海龟汤（双人，原创温和题库）

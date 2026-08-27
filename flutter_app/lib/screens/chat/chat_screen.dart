@@ -1116,6 +1116,7 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                                 ttsMeta: msg.ttsMeta,
                                 reasoning: msg.reasoning,
                                 tools: msg.tools,
+                                toolResults: msg.toolResults,
                                 statusUpdate: msg.statusUpdate,
                                 showReasoning: _reasoningLevel > 0,
                                 showTools: _showTools,

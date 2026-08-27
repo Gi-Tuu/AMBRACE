@@ -49,6 +49,8 @@ class DouyinComment(Base):
     is_author: Mapped[bool] = mapped_column(Boolean, default=False)  # 作者评论（账号自己发的：AI 或账号主人）
     author_role: Mapped[str] = mapped_column(String(10), default="")  # ai=AI 发的 / user=账号主人发的
     mentioned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 主动提及时间（防重复提及，2026-08-15）
+    aweme_id: Mapped[str] = mapped_column(String(64), default="")  # 评论所属作品真实 aweme_id（API 拦截获取，2026-08-27）
+    comment_id: Mapped[str] = mapped_column(String(64), default="")  # 评论真实 comment_id（API 拦截获取，2026-08-27）
     replied: Mapped[bool] = mapped_column(Boolean, default=False)
     reply_content: Mapped[str] = mapped_column(String(1000), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -67,6 +69,10 @@ class DouyinPending(Base):
     post_key: Mapped[str] = mapped_column(String(50), default="")
     commenter: Mapped[str] = mapped_column(String(100), default="")
     is_fan: Mapped[bool] = mapped_column(Boolean, default=False)  # 目标评论是否为粉丝（额度拆分：粉丝 60% / 非粉丝 40%）
+    # #67（2026-08-27）：音乐情绪 / 视频路径 / 发布类型（image|video），AI 选情绪关键词配 BGM + 视频发布
+    music_mood: Mapped[str] = mapped_column(String(20), default="")
+    video_path: Mapped[str] = mapped_column(String(500), default="")
+    post_type: Mapped[str] = mapped_column(String(10), default="image")
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/confirmed/running/rejected/executed/failed
     execute_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 随机执行队列：到达时间（naive UTC）
     error: Mapped[str] = mapped_column(String(500), default="")

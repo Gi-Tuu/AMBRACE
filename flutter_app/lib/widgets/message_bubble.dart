@@ -25,6 +25,8 @@ class MessageBubble extends StatelessWidget {
   final VoidCallback? onOpenFile;
   final String? reasoning;
   final List<String>? tools;
+  /// MCP 工具结果列表（A1，#59 流式路径 MCP 工具循环；观察区可折叠展示）
+  final List<Map<String, dynamic>>? toolResults;
   /// 状态更新小字（2026-08-14：显示在气泡内容文本下方）
   final String? statusUpdate;
   final bool showReasoning;
@@ -52,6 +54,7 @@ class MessageBubble extends StatelessWidget {
     this.onOpenFile,
     this.reasoning,
     this.tools,
+    this.toolResults,
     this.statusUpdate,
     this.showReasoning = false,
     this.showTools = false,
@@ -229,6 +232,10 @@ class MessageBubble extends StatelessWidget {
               label: l10n.calledAbility,
               detail: tools!.join('、'),
             ),
+          // MCP 工具结果（A1，#59 流式路径 MCP 工具循环；观察区可折叠，成功/失败各一块）
+          if (!isUser && (toolResults ?? const []).isNotEmpty)
+            for (final tr in toolResults!)
+              _ToolResultMeta(result: tr, label: l10n.toolResult),
           if (quoteMeta != null) _buildQuoteBlock(context),
           if (imageUrl != null && imageUrl!.isNotEmpty) ...[
             ClipRRect(
@@ -521,13 +528,51 @@ class _CollapsibleMetaState extends State<_CollapsibleMeta> {
   }
 }
 
+/// MCP 工具结果折叠块（A1，#59）：单个工具结果，成功绿/失败红图标，默认折叠展开看摘要。
+class _ToolResultMeta extends StatelessWidget {
+  final Map<String, dynamic> result;
+  final String label;
+
+  const _ToolResultMeta({required this.result, required this.label});
+
+  String _toolName() {
+    final t = result['tool'];
+    return t is String && t.isNotEmpty ? t : label;
+  }
+
+  bool _ok() => result['ok'] == true;
+
+  String _detail() {
+    final summary = result['summary'];
+    final sum = summary is String ? summary : '';
+    final err = result['error'];
+    final errTxt = err is String && err.isNotEmpty ? err : '';
+    final tool = _toolName();
+    final parts = <String>[tool];
+    if (sum.isNotEmpty) parts.add(sum);
+    if (errTxt.isNotEmpty) parts.add(errTxt);
+    return parts.join('\n');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ok = _ok();
+    final name = result['tool'];
+    final short = name is String ? name : label;
+    return _CollapsibleMeta(
+      icon: ok ? Icons.check_circle_outline : Icons.error_outline,
+      label: '$label · $short',
+      detail: _detail(),
+    );
+  }
+}
+
 class _AudioPlayable extends StatefulWidget {
   final String url;
   final String serverUrl;
   final String label;
   final int duration;
   final bool isUser;
-
   const _AudioPlayable({
     required this.url,
     required this.serverUrl,

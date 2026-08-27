@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import random
+import re
 from datetime import datetime
 
 from sqlalchemy import select
@@ -27,7 +28,12 @@ _DECAY_RANGE = (15.0, 25.0)
 _MIN_WEIGHT = 10.0
 _MAX_WEIGHT = 100.0
 # 安慰词：命中则把最高权重心事减重
-COMFORT_WORDS = ("别难过", "哄哄", "我错", "抱抱", "陪陪", "别哭", "不哭了", "心疼你", "有我在", "乖")
+# P3-1：单字「乖」误匹配——「好乖/乖巧/这猫好乖」不应触发安慰。多字词（含「乖啦/乖哈/乖宝」）走子串匹配；
+# 单字「乖」由 has_comfort_word 做边界判定（独立安慰词才命中）。
+COMFORT_WORDS = ("别难过", "哄哄", "我错", "抱抱", "陪陪", "别哭", "不哭了", "心疼你", "有我在", "乖啦", "乖哈", "乖宝")
+# 单字「乖」边界：前字非常见修饰/主体词、后字非「巧/乖」组词，才视为独立安慰词
+_GUA_PREFIX_BLOCK = "好这真很超更太特猫狗小乖"
+_GUA_FOLLOW_BLOCK = ("巧", "乖")
 # 冷战心事内容关键词（破冰时归档）
 _COLD_WAR_HINTS = ("冷战", "生闷气", "吵架", "闹别扭", "不理你", "不理我")
 
@@ -120,9 +126,30 @@ async def create_preoccupation_for_rule(db, *, user_id: int, character_id: int, 
                                       content=content, weight=weight)
 
 
+def has_comfort_word(content: str) -> bool:
+    """用户消息是否含安慰词。
+
+    - 多字词（别难过/抱抱/乖啦…）子串匹配；
+    - 单字「乖」带边界：前字非常见修饰/主体词、后字非「巧/乖」组词才命中，
+      避免「好乖/乖巧/这猫好乖」误触发（P3-1）。
+    """
+    text = content or ""
+    if any(k in text for k in COMFORT_WORDS):
+        return True
+    for m in re.finditer("乖", text):
+        i = m.start()
+        if i > 0 and text[i - 1] in _GUA_PREFIX_BLOCK:
+            continue
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        if nxt in _GUA_FOLLOW_BLOCK:
+            continue
+        return True
+    return False
+
+
 async def soften_by_comfort_words(db, *, user_id: int, character_id: int, content: str) -> bool:
     """用户消息含安慰词：最高权重心事减 20~30；归零归档。返回是否命中安慰词并处理。"""
-    if not any(k in (content or "") for k in COMFORT_WORDS):
+    if not has_comfort_word(content):
         return False
     try:
         active = await list_active_preoccupations(db, character_id)

@@ -138,6 +138,7 @@ async def _generate_share(character_id: int, user_id: int, activity_type: str, s
         messages=[{"role": "system", "content": "直接输出一句随口的分享。"},
                   {"role": "user", "content": hint}],
         temperature=0.9, max_tokens=128, task="life_share", user_id=user_id,
+        character_id=character_id,  # P3-6：补传角色 id（未来角色级模型配置生效；当前无副作用）
     )
     return (raw or "").strip().strip('"').strip("'")
 
@@ -216,10 +217,3 @@ async def on_activity_completed(payload: dict) -> None:
         _logger.info("life_share sent char=%d act=%s prob=%.2f", character_id, activity_type, prob)
     except Exception as e:
         _logger.warning("life_share on_activity_completed failed: %s", e)
-
-
-def register_with(handlers) -> None:
-    """在 events/handlers.register_builtin_handlers 里注册本订阅者。"""
-    from app.events.bus import event_bus
-    if on_activity_completed not in event_bus._subscribers.get("life.activity_completed", []):
-        event_bus.subscribe("life.activity_completed", on_activity_completed)

@@ -123,7 +123,7 @@ async def _stream_generate(state: AgentState, user_cfg: dict | None, stream_sink
     try:
         async for piece in chat_completion_stream(
             messages=state["context_messages"],
-            temperature=float(state.get("temperature", 0.8)),
+            temperature=float(state.get("temperature") or 0.8),
             max_tokens=900,  # 与正文挡位一致（深度思考挡已提前回退非流式）
             task="chat",
             api_key=user_cfg["api_key"] if user_cfg else None,
@@ -171,7 +171,7 @@ async def _stream_generate_tts(state, user_cfg, stream_sink, chunker, block_sink
     try:
         async for piece in chat_completion_stream(
             messages=state["context_messages"],
-            temperature=float(state.get("temperature", 0.8)),
+            temperature=float(state.get("temperature") or 0.8),
             max_tokens=900,
             task="chat",
             api_key=user_cfg["api_key"] if user_cfg else None,
@@ -250,7 +250,7 @@ async def generate_response(state: AgentState) -> AgentState:
     elif reasoning_level == 2:
         response, reasoning = await chat_completion(
             messages=state["context_messages"],
-            temperature=float(state.get("temperature", 0.8)),
+            temperature=float(state.get("temperature") or 0.8),
             max_tokens=1300,  # 推理+正文双份（2026-08-15：推理 token 曾吃光 650 预算导致空回复）
             include_reasoning=True,
             task="chat",
@@ -264,7 +264,7 @@ async def generate_response(state: AgentState) -> AgentState:
     else:
         response = await chat_completion(
             messages=state["context_messages"],
-            temperature=float(state.get("temperature", 0.8)),
+            temperature=float(state.get("temperature") or 0.8),
             max_tokens=900,  # 2026-08-16：650 曾截断详细回答（瘦身后回复变长），提到 900
             task="chat",
             api_key=user_cfg["api_key"] if user_cfg else None,

@@ -126,3 +126,29 @@ def test_create_preoccupation_for_rule_mapping(preo_db):
             assert await preo.create_preoccupation_for_rule(db, user_id=1, character_id=101, rule_key="anger_mood_low") is True
             assert await preo.create_preoccupation_for_rule(db, user_id=1, character_id=101, rule_key="not_emotion") is False
     asyncio.run(_run())
+
+
+def test_has_comfort_word_gua_boundary():
+    """P3-1：单字「乖」加边界——多字词与独立「乖」命中，好乖/乖巧/这猫好乖不误触发。"""
+    assert preo.has_comfort_word("别难过，抱抱你") is True
+    assert preo.has_comfort_word("乖啦，不哭") is True
+    assert preo.has_comfort_word("乖，别哭了") is True
+    assert preo.has_comfort_word("乖") is True
+    assert preo.has_comfort_word("今天吃什么") is False
+    # 误匹配修复
+    assert preo.has_comfort_word("这猫好乖") is False
+    assert preo.has_comfort_word("好乖") is False
+    assert preo.has_comfort_word("你家的猫真乖巧") is False
+
+
+def test_soften_not_triggered_by_gua_describing(preo_db):
+    """P3-1：好乖/这猫好乖 描述用法不应触安慰减重。"""
+    async def _run():
+        async with preo_db() as db:
+            await _add_memory(db, content="心情低落", importance=60.0)
+            assert await preo.soften_by_comfort_words(db, user_id=1, character_id=101, content="这猫好乖") is False
+            await db.commit()
+            active = await preo.list_active_preoccupations(db, 101)
+            assert len(active) == 1
+            assert active[0].importance == 60.0  # 未被减重
+    asyncio.run(_run())

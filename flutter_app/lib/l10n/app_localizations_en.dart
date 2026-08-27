@@ -5602,6 +5602,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get mcpCallFailed => 'Failed';
 
   @override
+  String get toolResult => 'Tool Result';
+
+  @override
+  String get mcpResources => 'Resources';
+
+  @override
+  String get mcpPrompts => 'Prompts';
+
+  @override
   String get gameTitle => 'Games';
 
   @override

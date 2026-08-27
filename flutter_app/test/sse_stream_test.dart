@@ -82,6 +82,35 @@ void main() {
       expect(chat.isStreaming, isFalse);
     });
 
+    test('tool_result 附到流式气泡，随 block 确认保留到正式块 toolResults', () {
+      final chat = ChatProvider();
+      chat.handleStreamEvent({'type': 'delta', 'text': '查一下。'});
+      chat.handleStreamEvent({
+        'type': 'tool_result',
+        'tool': 'mcp.srv.echo',
+        'ok': true,
+        'summary': 'echo: hi',
+      });
+      // 工具结果附到当前流式气泡（观察区可折叠读 extra_meta.tool_results）
+      expect(chat.messages.last.toolResults, isNotNull);
+      expect(chat.messages.last.toolResults!.single['tool'], 'mcp.srv.echo');
+      expect(chat.messages.last.toolResults!.single['ok'], true);
+
+      // block 确认后，工具结果随正式块保留（不因块替换丢失）
+      chat.handleStreamEvent({
+        'type': 'block',
+        'id': 10,
+        'session_id': 1,
+        'sender_type': 'ai',
+        'content': '查一下。',
+        'created_at': '2026-08-24T00:00:00Z',
+        'extra_meta': null,
+      });
+      expect(chat.messages.last.id, 10);
+      expect(chat.messages.last.toolResults, isNotNull);
+      expect(chat.messages.last.toolResults!.single['tool'], 'mcp.srv.echo');
+    });
+
     test('回退批量路径重推已确认块：按块 id 去重，不重复添加', () {
       final chat = ChatProvider();
       // 首次确认块 id=10（_streamingMessage 为 null 时走 else 分支添加）
@@ -207,6 +236,15 @@ void main() {
       final chat = ChatProvider();
       chat.handleStreamEvent({'type': 'error', 'detail': '网络中断'});
       expect(chat.error, '网络中断');
+    });
+
+    test('error 事件清除输入中状态（P2-2）', () {
+      final chat = ChatProvider();
+      chat.handleStreamEvent({'type': 'typing', 'is_typing': true});
+      expect(chat.isTyping, isTrue);
+      chat.handleStreamEvent({'type': 'error', 'detail': '网络中断'});
+      expect(chat.error, '网络中断');
+      expect(chat.isTyping, isFalse);
     });
 
     test('cold_war 事件插入 system 消息', () {

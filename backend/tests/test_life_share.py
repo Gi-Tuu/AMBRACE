@@ -163,3 +163,27 @@ def test_on_activity_completed_user_active_blocks(share_db, monkeypatch):
     }}
     asyncio.run(life_share.on_activity_completed(payload))
     assert sent == []
+
+
+def test_generate_share_passes_character_id(share_db, monkeypatch):
+    """P3-6：_generate_share 调 chat_completion 时补传 character_id（未来角色级模型配置）。"""
+    captured = {}
+
+    async def _fake_chat(**kw):
+        captured.update(kw)
+        return "我刚画完一张图！"
+
+    async def _fake_sid(user_id, character_id):
+        return 1
+
+    async def _fake_last(*a, **k):
+        return ""
+
+    monkeypatch.setattr(life_share, "async_session_factory", share_db)
+    monkeypatch.setattr("app.agent.llm_client.chat_completion", _fake_chat)
+    monkeypatch.setattr("app.services.chat_service.get_latest_session_id", _fake_sid)
+    monkeypatch.setattr("app.scheduler.triggers.get_last_messages", _fake_last)
+
+    text = asyncio.run(life_share._generate_share(101, 1, "create", "画了一张水彩风景"))
+    assert text == "我刚画完一张图！"
+    assert captured.get("character_id") == 101

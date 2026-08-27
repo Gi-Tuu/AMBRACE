@@ -292,6 +292,9 @@ async def send_and_receive_stream(
                 session_id, user_id, character_id, content,
                 save_user_message=False, lang=lang, quote=quote,
                 extra_capabilities=extra_capabilities, tts=tts,
+                # P2-3：流式异常回退时已在 _run_agent_core(reply_delay=True) 或流式路径 sleep 过，
+                # 这里跳过自然延迟，避免已 sleep 一次又 sleep 一次（极端最多 2×8s）。
+                reply_delay=False,
             )
         except Exception as e:
             # chunked 也失败：error 事件已在上面的 except 发过，这里只记日志不再向上抛，
@@ -321,6 +324,31 @@ async def send_and_receive_stream(
     img_text = core["img_text"]
     _cal_note_text = core["cal_note_text"]
     _memo_text = core["memo_text"]
+
+    # A1（#59）流式路径 MCP 工具循环：SSE 真流式下执行 LLM 输出的 mcp.* 标记，工具结果经
+    # 独立流尾事件 tool_result 推给前端（前端观察区可折叠展示）。不做二次 LLM 再决策——
+    # 流式再决策会再次走流式导致 delta 二次推送/stream_blocks 被覆盖，且 tts 的 block_sink
+    # 流水线在首条回复时已消费完毕（评估见 chat_service._run_agent_core 注释）。工具的
+    # observation 已注入 final_state.context_messages，供下一轮引用。
+    if core.get("streamed") and sink is not None:
+        try:
+            from app.agent import actions as _mcp_actions
+            from app.agent.mcp_tools import run_stream_mcp_tool_stage
+            _mcp_src = final_state.get("raw_response") or full_text
+            _has_mcp = any(
+                getattr(_a, "action_type", "").startswith("mcp.")
+                for _a in _mcp_actions.parse_actions(_mcp_src)
+            )
+            if _has_mcp:
+                _mcp_steps: list[dict] = []
+                _, _mcp_results = await run_stream_mcp_tool_stage(
+                    final_state, _mcp_steps,
+                    user_id=user_id, character_id=character_id, session_id=session_id,
+                )
+                for _r in _mcp_results:
+                    await sink("tool_result", _r)
+        except Exception as e:
+            _logger.warning("Stream MCP tool stage failed: %s", e)
 
     # P3-5（2026-08-29）：回退批量路径会重推已推送的块，用 done.fallback=true 标给前端，
     # 前端按块 id 去重（_confirmStreamBlock），避免重复气泡。

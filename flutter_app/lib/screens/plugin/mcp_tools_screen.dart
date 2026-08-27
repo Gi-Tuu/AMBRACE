@@ -33,6 +33,10 @@ class _MCPToolsScreenState extends State<MCPToolsScreen> {
   List<Map<String, dynamic>> _recentCalls = [];
   // server_id -> tools（拉取后缓存，用于回显权限）
   final Map<int, List<Map<String, dynamic>>> _toolsCache = {};
+  // server_id -> resources（Phase 4 只读展示，连接后可见）
+  final Map<int, List<Map<String, dynamic>>> _resourcesCache = {};
+  // server_id -> prompts（Phase 4 只读展示，连接后可见）
+  final Map<int, List<Map<String, dynamic>>> _promptsCache = {};
   // 展开哪个 server 的工具列表
   int? _expandedServerId;
   // 状态灯轮询兜底计时器（见类注释：前端无 mcp.server_status 事件通道）
@@ -165,6 +169,8 @@ class _MCPToolsScreenState extends State<MCPToolsScreen> {
     final keys = _toolsCache.keys.toList();
     for (final k in keys) {
       _toolsCache.remove(k);
+      _resourcesCache.remove(k);
+      _promptsCache.remove(k);
     }
   }
 
@@ -228,6 +234,32 @@ class _MCPToolsScreenState extends State<MCPToolsScreen> {
       setState(() => _toolsCache[id] = tools);
     } catch (_) {
       // 工具拉取失败不阻断主列表；保持原缓存
+    }
+    // A2（#59）资源/提示词：
+    // 资源/提示词拉取失败不阻断主列表；保持原缓存（后端未连接时返回空列表）。
+    await _loadResources(id);
+    await _loadPrompts(id);
+  }
+
+  /// A2（#59）：拉取该 Server 的资源列表（只读展示，连接后可见）。
+  Future<void> _loadResources(int id) async {
+    try {
+      final resources = await ApiClient().getMcpServerResources(id);
+      if (!mounted) return;
+      setState(() => _resourcesCache[id] = resources);
+    } catch (_) {
+      // 失败不阻断；保持原缓存
+    }
+  }
+
+  /// A2（#59）：拉取该 Server 的提示词列表（只读展示，连接后可见）。
+  Future<void> _loadPrompts(int id) async {
+    try {
+      final prompts = await ApiClient().getMcpServerPrompts(id);
+      if (!mounted) return;
+      setState(() => _promptsCache[id] = prompts);
+    } catch (_) {
+      // 失败不阻断；保持原缓存
     }
   }
 
@@ -326,6 +358,8 @@ class _MCPToolsScreenState extends State<MCPToolsScreen> {
           isAdmin: _isAdmin,
           expanded: _expandedServerId == id,
           tools: _toolsCache[id] ?? const [],
+          resources: _resourcesCache[id] ?? const [],
+          prompts: _promptsCache[id] ?? const [],
           loadingTools: _expandedServerId == id && _toolsCache[id] == null,
           onToggle: () => _toggleTools(server),
           onConnect: () => _connect(server),
@@ -364,6 +398,8 @@ class _ServerCard extends StatelessWidget {
     required this.isAdmin,
     required this.expanded,
     required this.tools,
+    required this.resources,
+    required this.prompts,
     required this.loadingTools,
     required this.onToggle,
     required this.onConnect,
@@ -381,6 +417,8 @@ class _ServerCard extends StatelessWidget {
   final bool isAdmin;
   final bool expanded;
   final List<Map<String, dynamic>> tools;
+  final List<Map<String, dynamic>> resources;
+  final List<Map<String, dynamic>> prompts;
   final bool loadingTools;
   final VoidCallback onToggle;
   final VoidCallback onConnect;
@@ -555,6 +593,17 @@ class _ServerCard extends StatelessWidget {
                 )
               else
                 ...tools.map((t) => _ToolTile(tool: t, isAdmin: isAdmin, onPermission: (m) => onPermission(t, m))),
+              // A2（#59）资源 / 提示词「只读」列表（Phase 4）：连接后可见；uri/name/描述、name/描述/参数。
+              if (resources.isNotEmpty) ...[
+                const Divider(height: 18),
+                _ResourceSectionLabel(label: l10n.mcpResources),
+                ...resources.map((r) => _ResourceTile(resource: r)),
+              ],
+              if (prompts.isNotEmpty) ...[
+                const Divider(height: 18),
+                _ResourceSectionLabel(label: l10n.mcpPrompts),
+                ...prompts.map((p) => _PromptTile(prompt: p)),
+              ],
             ],
           ],
         ),
@@ -835,6 +884,141 @@ class _ToolTile extends StatelessWidget {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ------------------------------------------------------------------ 资源 / 提示词（Phase 4，只读展示）
+
+/// 资源/提示词分区的节标题（小程序标题，复用扩展页风格）。
+class _ResourceSectionLabel extends StatelessWidget {
+  final String label;
+  const _ResourceSectionLabel({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 24, top: 2, bottom: 6),
+      child: Row(
+        children: [
+          Icon(Icons.folder_open_outlined, size: 14, color: Theme.of(context).colorScheme.secondary),
+          const SizedBox(width: 6),
+          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+}
+
+/// 资源条目：uri / name / 描述 / mimeType（只读，连接后可见）。
+class _ResourceTile extends StatelessWidget {
+  final Map<String, dynamic> resource;
+  const _ResourceTile({required this.resource});
+
+  @override
+  Widget build(BuildContext context) {
+    final uri = resource['uri'] as String? ?? '';
+    final name = resource['name'] as String? ?? '';
+    final desc = resource['description'] as String? ?? '';
+    final mime = resource['mime_type'] as String? ?? '';
+    final displayName = name.isNotEmpty ? name : uri;
+    return Padding(
+      padding: const EdgeInsets.only(left: 24, right: 4, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.description_outlined, size: 14, color: AppColors.textSecondary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  displayName,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (mime.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: AppColors.textSecondary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(mime,
+                      style: const TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+                ),
+            ],
+          ),
+          if (uri.isNotEmpty && name.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 1, left: 20),
+              child: Text(uri,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 10, color: AppColors.textMuted)),
+            ),
+          if (desc.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2, left: 20),
+              child: Text(desc,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 提示词条目：name / 描述 / 参数名列表（只读，连接后可见）。
+class _PromptTile extends StatelessWidget {
+  final Map<String, dynamic> prompt;
+  const _PromptTile({required this.prompt});
+
+  @override
+  Widget build(BuildContext context) {
+    final name = prompt['name'] as String? ?? '';
+    final desc = prompt['description'] as String? ?? '';
+    final args = prompt['arguments'];
+    final argNames = (args is List)
+        ? args.map((a) => (a is Map ? (a['name']?.toString() ?? '') : a?.toString() ?? '')).where((e) => e.isNotEmpty).toList()
+        : <String>[];
+    return Padding(
+      padding: const EdgeInsets.only(left: 24, right: 4, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.forum_outlined, size: 14, color: AppColors.textSecondary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  name,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          if (desc.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2, left: 20),
+              child: Text(desc,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+            ),
+          if (argNames.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2, left: 20),
+              child: Text(argNames.join('、'),
+                  style: const TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+            ),
         ],
       ),
     );
