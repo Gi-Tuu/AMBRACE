@@ -1050,7 +1050,7 @@ abstract class AppLocalizations {
   /// No description provided for @appearanceTitle.
   ///
   /// In zh, this message translates to:
-  /// **'应用容貌'**
+  /// **'外观'**
   String get appearanceTitle;
 
   /// No description provided for @archiveBox.
@@ -9510,7 +9510,7 @@ abstract class AppLocalizations {
   /// No description provided for @experienceSettingsSubtitle.
   ///
   /// In zh, this message translates to:
-  /// **'手机感知 / 免打扰 / 扩展 / 应用容貌'**
+  /// **'手机感知 / 免打扰 / 扩展 / 外观'**
   String get experienceSettingsSubtitle;
 
   /// No description provided for @weaveLibrarySubtitle.
@@ -10754,6 +10754,144 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'猜词20问'**
   String get gameFilterTwentyQ;
+
+  /// No description provided for @accountLinking.
+  ///
+  /// In zh, this message translates to:
+  /// **'账号关联'**
+  String get accountLinking;
+
+  /// No description provided for @accountLinkingHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'独立主账号 / 子账号关联'**
+  String get accountLinkingHint;
+
+  /// No description provided for @mainAccount.
+  ///
+  /// In zh, this message translates to:
+  /// **'主账号'**
+  String get mainAccount;
+
+  /// No description provided for @subAccount.
+  ///
+  /// In zh, this message translates to:
+  /// **'子账号'**
+  String get subAccount;
+
+  /// No description provided for @familyMemberCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'成员数 {count}'**
+  String familyMemberCount(Object count);
+
+  /// No description provided for @generateInvite.
+  ///
+  /// In zh, this message translates to:
+  /// **'生成受邀码'**
+  String get generateInvite;
+
+  /// No description provided for @inviteCode.
+  ///
+  /// In zh, this message translates to:
+  /// **'受邀码'**
+  String get inviteCode;
+
+  /// No description provided for @inviteCodeValidity.
+  ///
+  /// In zh, this message translates to:
+  /// **'5 分钟内有效，一次性使用'**
+  String get inviteCodeValidity;
+
+  /// No description provided for @copyInvite.
+  ///
+  /// In zh, this message translates to:
+  /// **'复制码'**
+  String get copyInvite;
+
+  /// No description provided for @kickSub.
+  ///
+  /// In zh, this message translates to:
+  /// **'踢出'**
+  String get kickSub;
+
+  /// No description provided for @kickSubConfirm.
+  ///
+  /// In zh, this message translates to:
+  /// **'确定踢出该子账号吗？'**
+  String get kickSubConfirm;
+
+  /// No description provided for @noSubAccounts.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无子账号'**
+  String get noSubAccounts;
+
+  /// No description provided for @enterInviteCode.
+  ///
+  /// In zh, this message translates to:
+  /// **'输入受邀码'**
+  String get enterInviteCode;
+
+  /// No description provided for @redeem.
+  ///
+  /// In zh, this message translates to:
+  /// **'兑换'**
+  String get redeem;
+
+  /// No description provided for @redeemSuccess.
+  ///
+  /// In zh, this message translates to:
+  /// **'关联成功'**
+  String get redeemSuccess;
+
+  /// No description provided for @redeemFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'关联失败：{err}'**
+  String redeemFailed(Object err);
+
+  /// No description provided for @unlink.
+  ///
+  /// In zh, this message translates to:
+  /// **'解除关联'**
+  String get unlink;
+
+  /// No description provided for @unlinkSuccess.
+  ///
+  /// In zh, this message translates to:
+  /// **'已解除关联'**
+  String get unlinkSuccess;
+
+  /// No description provided for @unlinkFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'解除失败：{err}'**
+  String unlinkFailed(Object err);
+
+  /// No description provided for @mainAccountNickname.
+  ///
+  /// In zh, this message translates to:
+  /// **'主账号昵称'**
+  String get mainAccountNickname;
+
+  /// No description provided for @accountMainHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'你是独立主账号，可生成受邀码邀请子账号'**
+  String get accountMainHint;
+
+  /// No description provided for @accountSubHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'你是子账号，可兑换受邀码或解除关联'**
+  String get accountSubHint;
+
+  /// No description provided for @family.
+  ///
+  /// In zh, this message translates to:
+  /// **'家庭'**
+  String get family;
 }
 
 class _AppLocalizationsDelegate

@@ -23,7 +23,7 @@ async def list_accounts(
     user_id: int = Depends(get_current_user_id),
     lang: str = Header(default="zh"),
 ):
-    """列出全部账号 {id, username, nickname, avatar_url, is_admin}，不含 password_hash（仅主账号）"""
+    """列出全部账号 {id, username, nickname, avatar_url, is_admin, parent_id}，不含 password_hash（仅主账号）"""
     if not await is_admin_user(user_id):
         raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_manage_only"))
     async with async_session_factory() as db:
@@ -35,6 +35,7 @@ async def list_accounts(
                     User.nickname,
                     User.avatar_url,
                     User.is_admin,
+                    User.parent_id,
                 ).order_by(User.id)
             )
         ).all()
@@ -46,6 +47,7 @@ async def list_accounts(
                 "nickname": r.nickname,
                 "avatar_url": r.avatar_url,
                 "is_admin": bool(r.is_admin),
+                "parent_id": r.parent_id,
             }
             for r in rows
         ]

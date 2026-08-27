@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:dio/dio.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
+import '../../services/fcm_push_service.dart';
 import '../../global_keys.dart';
 import 'register_screen.dart';
 import 'onboarding_screen.dart';
@@ -69,6 +70,7 @@ class _LoginScreenState extends State<LoginScreen> {
         data['nickname'] as String,
       );
       ApiClient().configure(baseUrl: settings.serverUrl, token: token);
+      await FcmPushService.instance.init();
       await settings.syncProfileFromServer();
       appNavigatorKey.currentState?.pushReplacementNamed('/home');
     } on DioException catch (e) {
@@ -145,6 +147,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _serverUrlCtrl.text = settings.serverUrl;
       if (settings.isLoggedIn) {
         ApiClient().configure(baseUrl: settings.serverUrl, token: settings.token);
+        await FcmPushService.instance.init();
         appNavigatorKey.currentState?.pushReplacementNamed('/home');
         return;
       }

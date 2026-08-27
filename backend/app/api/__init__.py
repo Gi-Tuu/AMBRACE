@@ -34,10 +34,14 @@ from app.api.admin import router as admin_router
 from app.api.mcp import router as mcp_router  # AMBRACE MCP 接入（Phase 1）
 from app.api.games import router as games_router  # 群聊游戏 Phase 1
 from app.api.llm_configs import router as llm_configs_router  # #68 多 LLM 配置（P0）
+from app.api.account import router as account_router  # #68 账号关联（P3）
+from app.api.device import router as device_router  # FCM 设备推送 token
 
 __all__ = [
     "character_router", "chat_router", "memory_router",
     "system_router", "admin_router", "scheduler_router", "proactive_router",
     "diary_router", "moments_router", "uploads_router", "relationships_router", "pets_router", "phone_router", "timeline_router", "images_router", "user_states_router", "user_content_router", "ai_chats_router", "emojis_router", "privacy_router", "user_location_router", "plugins_router", "plugin_bridge_router", "marketplace_router", "phone_desktop_router", "voice_router", "weave_router", "permissions_router", "platform_profiles_router", "chat_groups_router", "life_router", "life_home_router", "phone_workflows_router", "mcp_router", "games_router",
     "llm_configs_router",
+    "account_router",
+    "device_router",
 ]

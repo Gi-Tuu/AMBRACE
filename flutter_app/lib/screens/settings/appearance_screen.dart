@@ -7,7 +7,7 @@ import '../../theme/skins/skin.dart';
 import '../../theme/skins/skin_registry.dart';
 import '../../widgets/ios_card_group.dart';
 
-/// 应用容貌页：皮肤 + 主题模式（跟随系统/浅色/深色）+ 主题色（6 款）+ 语言。
+/// 外观页：皮肤 + 主题模式（跟随系统/浅色/深色）+ 主题色（6 款）+ 语言。
 class AppearanceScreen extends StatelessWidget {
   const AppearanceScreen({super.key});
 

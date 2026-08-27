@@ -98,6 +98,14 @@ class Settings(BaseSettings):
     mcp_reconnect_max: int = 3  # 连接失败最大重试次数（指数退避 1s/2s/4s）
     mcp_http_allow_private: bool = False  # True 显式放行 MCP 内网/本地地址（SSRF 例外）
 
+    # ---- FCM 离线推送（2026-08-28）----
+    push_fcm_enabled: bool = False  # .env: PUSH_FCM_ENABLED=true 启用 FCM 离线推送
+    push_fcm_credentials_path: str = ""  # Firebase 服务账号 JSON 路径（.env: PUSH_FCM_CREDENTIALS_PATH）
+    push_fcm_project_id: str = ""  # 仅日志/校验用；实际项目 ID 以服务账号 JSON 为准（.env: PUSH_FCM_PROJECT_ID）
+    # 客户端 Firebase 配置（JSON 字符串，来自 Firebase 控制台项目设置→"您的应用"→SDK 设置）
+    # 包含 apiKey/appId/messagingSenderId/projectId/storageBucket；.env: PUSH_FCM_CLIENT_CONFIG
+    push_fcm_client_config: str = ""
+
     # ---- 表情市场（2026-08-23）：远程表情市场索引 URL（GitHub raw 索引模式）----
     emoji_market_url: str = "https://raw.githubusercontent.com/Gi-Tuu/AMBRACE-emoji/main/index.json"
 

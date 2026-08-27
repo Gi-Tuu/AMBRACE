@@ -13,6 +13,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.PowerManager
 import android.util.Log
 import android.provider.MediaStore
 import android.provider.Settings
@@ -113,10 +114,6 @@ class MainActivity : FlutterActivity() {
                     val type = call.argument<String>("type") ?: "video"
                     val limit = call.argument<Int>("limit") ?: 8
                     result.success(queryRecentMediaFiles(type, limit))
-                }
-                "openAccessibilitySettings" -> {
-                    runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                    result.success(true)
                 }
                 "openAppSettings" -> {
                     runCatching {
@@ -246,6 +243,21 @@ class MainActivity : FlutterActivity() {
                     } catch (e: Exception) {
                         result.success(mapOf("width" to 0, "height" to 0, "error" to (e.message ?: "")))
                     }
+                }
+                // R5：统一健康检测
+                "getServiceHealth" -> {
+                    result.success(getServiceHealth())
+                }
+                // R4：电池优化白名单
+                "isIgnoringBatteryOptimizations" -> {
+                    result.success(isIgnoringBatteryOptimizations())
+                }
+                "requestIgnoreBatteryOptimizations" -> {
+                    result.success(requestIgnoreBatteryOptimizations())
+                }
+                // R11：导出感知日志
+                "exportPerceptionLog" -> {
+                    result.success(exportPerceptionLog())
                 }
                 else -> result.notImplemented()
             }
@@ -518,5 +530,73 @@ class MainActivity : FlutterActivity() {
             }
         }
         return list
+    }
+
+    // ================= R5：统一健康检测 =================
+
+    private fun getServiceHealth(): Map<String, Any> {
+        val accSystemEnabled = isAccessibilityEnabled()
+        val accInstanceAlive = PhonePerceptionAccessibilityService.instance != null
+        val notifEnabled = isNotificationAccessEnabled()
+        val notifConnected = PhonePerceptionNotificationService.instance != null
+        val shizukuRunning = ShizukuBridge.isServerRunning()
+        val shizukuGranted = ShizukuBridge.isPermissionGranted()
+        val usageEnabled = isUsageAccessEnabled()
+        val batteryOk = isIgnoringBatteryOptimizations()
+
+        return mapOf(
+            "accessible" to (accSystemEnabled && accInstanceAlive),
+            "accessibleSystemEnabled" to accSystemEnabled,
+            "accessibleInstanceAlive" to accInstanceAlive,
+            "notification" to notifEnabled,
+            "notificationConnected" to (notifEnabled && notifConnected),
+            "shizuku" to (shizukuRunning && shizukuGranted),
+            "shizukuRunning" to shizukuRunning,
+            "shizukuGranted" to shizukuGranted,
+            "usageStats" to usageEnabled,
+            "batteryOptimized" to !batteryOk,
+        )
+    }
+
+    // ================= R4：电池优化白名单 =================
+
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        return try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            pm.isIgnoringBatteryOptimizations(packageName)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun requestIgnoreBatteryOptimizations(): Boolean {
+        return try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+            intent.data = Uri.parse("package:$packageName")
+            startActivity(intent)
+            true
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
+    // ================= R11：导出感知日志 =================
+
+    private fun exportPerceptionLog(): Map<String, Any> {
+        return try {
+            val logFile = java.io.File(getExternalFilesDir(null) ?: filesDir, "logs/phone_perception.log")
+            if (logFile.exists()) {
+                mapOf("ok" to true, "path" to logFile.absolutePath, "content" to logFile.readText().take(50_000))
+            } else {
+                mapOf("ok" to true, "path" to "", "content" to "")
+            }
+        } catch (e: Exception) {
+            mapOf("ok" to false, "error" to (e.message ?: ""))
+        }
     }
 }

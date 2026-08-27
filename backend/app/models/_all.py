@@ -3,7 +3,7 @@
 
 # Alembic / metadata registration: import EVERY model so Base.metadata is complete.
 from app.models.base import Base
-from app.models.user import User, UserState, UserDndSettings, PrivacyRequest, BrowserSnapshot
+from app.models.user import User, UserState, UserDndSettings, PrivacyRequest, BrowserSnapshot, AccountInvite
 from app.models.character import AICharacter, CharacterState, CharacterStateHistory, RelationshipEvent, StateTriggerLog, StorylineEvent, ProactiveStorylineItem, ProactiveSettings, HolidayPreference, ProactiveMessageLog, ProactiveTriggerLog
 from app.models.chat import ChatSession, ChatMessage, ChatGroup, ChatGroupMember, ChatGroupMessage, AIChat
 from app.models.memory import Memory, DailySummary, ConversationTopic, StageMemory, ReflectionLog, ProcessedExtraction, SharedEvent, WeaveCard, WeaveCardMemory, WeaveCardCharacter, LorebookEntry, WorldFact
@@ -14,7 +14,7 @@ from app.models.mcp import MCPServer, McpCallLog
 from app.models.plugin import Plugin, PluginStore
 from app.models.config import ApiConfig, VlmConfig, SpeechConfig, MultimodalConfig, MarketplaceConfig, RuntimeFlag, UserLlmConfig
 from app.models.social import PlatformProfile, SocialMemory, DouyinAccount, DouyinPost, DouyinComment, DouyinPending, DouyinViewedNote
-from app.models.device import PhoneDesktop, PhoneLayout, CalendarNote, BrowserHistory, MemoNote, PhoneSnapshot, CheckInRequest, PhoneAutoState
+from app.models.device import PhoneDesktop, PhoneLayout, CalendarNote, BrowserHistory, MemoNote, PhoneSnapshot, CheckInRequest, PhoneAutoState, UserDeviceToken
 from app.models.game import GameSession, GamePlayer, GameEvent, GameMemory
 
 __all__ = [
@@ -23,6 +23,7 @@ __all__ = [
     "AIChat",
     "AIDiary",
     "AIMoment",
+    "AccountInvite",
     "AgentTask",
     "AgentTaskLog",
     "ApiConfig",
@@ -73,6 +74,7 @@ __all__ = [
     "Pet",
     "PetActivity",
     "PhoneAutoState",
+    "UserDeviceToken",
     "PhoneDesktop",
     "PhoneLayout",
     "PhoneSnapshot",

@@ -5,8 +5,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <!-- FCM 推送（2026-08-28） -->
+    <uses-permission android:name="com.google.android.c2dm.permission.RECEIVE"/>
     <!-- 无障碍服务前台保活（2026-08-14）：服务启动前台通知，进程不被后台冻结 -->
     <!-- 已安装应用列表（应用名/包名，工作流选应用用，2026-08-14） -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
@@ -53,9 +57,17 @@
         <meta-data
             android:name="io.flutter.embedding.android.EnableFlutterGPU"
             android:value="true" />
+        <!-- FCM 默认通知渠道（2026-08-28） -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="ai_companion_chat" />
         <service
             android:name="id.flutter.flutter_background_service.BackgroundService"
-            android:foregroundServiceType="dataSync"/>
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="companion_background_polling" />
+        </service>
         <receiver
             android:name="id.flutter.flutter_background_service.BootReceiver"
             android:exported="true">
@@ -77,8 +89,7 @@
             android:exported="false"
             android:label="@string/accessibility_service_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:stopWithTask="false"
-            android:foregroundServiceType="dataSync">
+            android:stopWithTask="false">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService"/>
             </intent-filter>

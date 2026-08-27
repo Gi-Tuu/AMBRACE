@@ -5955,4 +5955,81 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get gameFilterTwentyQ => '20 Questions';
+
+  @override
+  String get accountLinking => 'Account Linking';
+
+  @override
+  String get accountLinkingHint => 'Main / sub account linking';
+
+  @override
+  String get mainAccount => 'Main account';
+
+  @override
+  String get subAccount => 'Sub account';
+
+  @override
+  String familyMemberCount(Object count) {
+    return 'Members $count';
+  }
+
+  @override
+  String get generateInvite => 'Generate invite code';
+
+  @override
+  String get inviteCode => 'Invite code';
+
+  @override
+  String get inviteCodeValidity => 'Valid for 5 minutes, one-time use';
+
+  @override
+  String get copyInvite => 'Copy code';
+
+  @override
+  String get kickSub => 'Kick';
+
+  @override
+  String get kickSubConfirm => 'Kick this sub account?';
+
+  @override
+  String get noSubAccounts => 'No sub accounts';
+
+  @override
+  String get enterInviteCode => 'Enter invite code';
+
+  @override
+  String get redeem => 'Redeem';
+
+  @override
+  String get redeemSuccess => 'Linked successfully';
+
+  @override
+  String redeemFailed(Object err) {
+    return 'Failed to link: $err';
+  }
+
+  @override
+  String get unlink => 'Unlink';
+
+  @override
+  String get unlinkSuccess => 'Unlinked';
+
+  @override
+  String unlinkFailed(Object err) {
+    return 'Failed to unlink: $err';
+  }
+
+  @override
+  String get mainAccountNickname => 'Main account nickname';
+
+  @override
+  String get accountMainHint =>
+      'You are the main account and can invite sub accounts';
+
+  @override
+  String get accountSubHint =>
+      'You are a sub account; redeem an invite code or unlink';
+
+  @override
+  String get family => 'Family';
 }

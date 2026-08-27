@@ -3,7 +3,6 @@
 import random
 from datetime import datetime, timedelta
 
-import pytest
 
 from app.agent.loop import AGENT_FLAGS
 from app.services import character_state_service as cs

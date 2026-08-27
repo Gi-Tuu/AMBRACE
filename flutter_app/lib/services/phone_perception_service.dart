@@ -309,6 +309,48 @@ class PhonePerceptionService {
     }
   }
 
+  /// R5：统一健康检测 → 各服务运行状态
+  static Future<Map<String, dynamic>> getServiceHealth() async {
+    if (!Platform.isAndroid) return {};
+    try {
+      final r = await _channel.invokeMethod('getServiceHealth') as Map? ?? {};
+      return Map<String, dynamic>.from(r);
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// R4：是否已加入电池优化白名单
+  static Future<bool> isIgnoringBatteryOptimizations() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      return await _channel.invokeMethod('isIgnoringBatteryOptimizations') as bool? ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// R4：请求加入电池优化白名单
+  static Future<bool> requestIgnoreBatteryOptimizations() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      return await _channel.invokeMethod('requestIgnoreBatteryOptimizations') as bool? ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// R11：导出感知日志
+  static Future<Map<String, dynamic>> exportPerceptionLog() async {
+    if (!Platform.isAndroid) return {'ok': false, 'error': 'not android'};
+    try {
+      final r = await _channel.invokeMethod('exportPerceptionLog') as Map? ?? {};
+      return Map<String, dynamic>.from(r);
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
+
   static Future<void> openAccessibilitySettings() async {
     if (!Platform.isAndroid) return;
     try {

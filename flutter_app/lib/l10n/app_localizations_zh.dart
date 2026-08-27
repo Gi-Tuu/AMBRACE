@@ -503,7 +503,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get appearanceHint => '例如：长发飘飘，戴着眼镜，看起来很温柔';
 
   @override
-  String get appearanceTitle => '应用容貌';
+  String get appearanceTitle => '外观';
 
   @override
   String get archiveBox => '聊天记录箱';
@@ -5095,7 +5095,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get experienceSettingsTitle => '体验设置';
 
   @override
-  String get experienceSettingsSubtitle => '手机感知 / 免打扰 / 扩展 / 应用容貌';
+  String get experienceSettingsSubtitle => '手机感知 / 免打扰 / 扩展 / 外观';
 
   @override
   String get weaveLibrarySubtitle => '全景记忆 · 编织成球';
@@ -5759,4 +5759,79 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get gameFilterTwentyQ => '猜词20问';
+
+  @override
+  String get accountLinking => '账号关联';
+
+  @override
+  String get accountLinkingHint => '独立主账号 / 子账号关联';
+
+  @override
+  String get mainAccount => '主账号';
+
+  @override
+  String get subAccount => '子账号';
+
+  @override
+  String familyMemberCount(Object count) {
+    return '成员数 $count';
+  }
+
+  @override
+  String get generateInvite => '生成受邀码';
+
+  @override
+  String get inviteCode => '受邀码';
+
+  @override
+  String get inviteCodeValidity => '5 分钟内有效，一次性使用';
+
+  @override
+  String get copyInvite => '复制码';
+
+  @override
+  String get kickSub => '踢出';
+
+  @override
+  String get kickSubConfirm => '确定踢出该子账号吗？';
+
+  @override
+  String get noSubAccounts => '暂无子账号';
+
+  @override
+  String get enterInviteCode => '输入受邀码';
+
+  @override
+  String get redeem => '兑换';
+
+  @override
+  String get redeemSuccess => '关联成功';
+
+  @override
+  String redeemFailed(Object err) {
+    return '关联失败：$err';
+  }
+
+  @override
+  String get unlink => '解除关联';
+
+  @override
+  String get unlinkSuccess => '已解除关联';
+
+  @override
+  String unlinkFailed(Object err) {
+    return '解除失败：$err';
+  }
+
+  @override
+  String get mainAccountNickname => '主账号昵称';
+
+  @override
+  String get accountMainHint => '你是独立主账号，可生成受邀码邀请子账号';
+
+  @override
+  String get accountSubHint => '你是子账号，可兑换受邀码或解除关联';
+
+  @override
+  String get family => '家庭';
 }

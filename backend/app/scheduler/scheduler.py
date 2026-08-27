@@ -105,12 +105,24 @@ async def send_to_session(
     else:
         _logger.info("User offline, saved proactive msg to DB session=%d", session_id)
 
-    # #55 App 后台保活：同步推送到用户级通知连接池（front 后台 isolate 实时收/弹通知）
+    # #55 App 后台保活 + FCM 离线推送：WS 在线实时推送，不在线走 FCM
     try:
-        from app.ws.notify_manager import push_to_user
-        await push_to_user(user_id, payload)
+        from app.services.push_service import notify_user
+        preview = content[:50] + ("…" if len(content) > 50 else "")
+        await notify_user(
+            user_id,
+            title="新消息",
+            body=preview,
+            data={
+                "route": "chat",
+                "session_id": str(session_id),
+                "character_id": str(character_id),
+            },
+            channel="chat",
+            ws_payload=payload,
+        )
     except Exception as e:
-        _logger.warning("Push proactive msg to user notify pool failed user=%d: %s", user_id, e)
+        _logger.warning("Push proactive msg to user failed user=%d: %s", user_id, e)
 
 
 async def _check_anniversaries_today() -> None:

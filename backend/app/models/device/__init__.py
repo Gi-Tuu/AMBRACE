@@ -4,6 +4,7 @@
 from app.models.device.phone_desktop import PhoneDesktop, PhoneLayout, CalendarNote, BrowserHistory, MemoNote
 from app.models.device.phone_snapshot import PhoneSnapshot, CheckInRequest
 from app.models.device.phone_auto_state import PhoneAutoState
+from app.models.device.device_token import UserDeviceToken
 
 __all__ = [
     "PhoneDesktop",
@@ -14,4 +15,5 @@ __all__ = [
     "PhoneSnapshot",
     "CheckInRequest",
     "PhoneAutoState",
+    "UserDeviceToken",
 ]

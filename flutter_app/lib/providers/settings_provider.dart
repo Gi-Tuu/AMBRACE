@@ -14,6 +14,8 @@ class SettingsProvider extends ChangeNotifier {
   bool _isConnected = false;
   bool _isLoggedIn = false;
   bool _isAdmin = false;
+  int? _parentId; // #68 P3 账号关联：父账号 id（NULL=独立主账号）
+  bool _isSub = false; // #68 P3 账号关联：是否为子账号
   int _themeModeIndex = 0; // 0=跟随系统 1=浅色 2=深色
   int _seedColorIndex = 0; // 强调色索引
   String _skinId = SkinRegistry.defaultSkinId; // ⭐ 新增：当前皮肤 ID
@@ -30,6 +32,8 @@ class SettingsProvider extends ChangeNotifier {
   bool get isConnected => _isConnected;
   bool get isLoggedIn => _isLoggedIn;
   bool get isAdmin => _isAdmin;
+  int? get parentId => _parentId;
+  bool get isSub => _isSub;
   int get themeModeIndex => _themeModeIndex;
   int get seedColorIndex => _seedColorIndex;
   String get skinId => _skinId; // ⭐ 新增
@@ -169,6 +173,15 @@ class SettingsProvider extends ChangeNotifier {
       if (admin is bool) {
         await _setAdmin(admin);
       }
+      final pid = data['parent_id'];
+      if (pid == null || pid is int) {
+        _parentId = pid as int?;
+      }
+      final isSub = data['is_sub'];
+      if (isSub is bool) {
+        _isSub = isSub;
+      }
+      notifyListeners();
     } catch (_) {}
   }
 
@@ -176,6 +189,8 @@ class SettingsProvider extends ChangeNotifier {
     _token = '';
     _userId = 0;
     _isLoggedIn = false;
+    _parentId = null;
+    _isSub = false;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
     await prefs.remove('user_id');

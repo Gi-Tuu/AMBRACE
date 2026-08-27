@@ -255,5 +255,6 @@ def test_alembic_migration_creates_new_tables(monkeypatch):
     assert "game_memories" in names
     assert "life_followups" in names  # Life Loop v1.1（2026-08-26）
     assert "life_chat_intents" in names  # Life Loop v1.1（2026-08-26）
+    assert "user_device_tokens" in names  # FCM 设备推送 token（2026-08-28）
     assert "alembic_version" in names
-    assert len(names) == 99  # 93 张应用表 + 4 张游戏表 + user_llm_configs + alembic_version
+    assert len(names) == 101  # 94 张应用表 + 4 张游戏表 + user_llm_configs + user_device_tokens + alembic_version

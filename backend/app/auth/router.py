@@ -105,6 +105,9 @@ async def get_profile(request: Request, user_id: int = Depends(get_current_user_
         "avatar_url": user.avatar_url,
         "ai_social_enabled": bool(user.ai_social_enabled),
         "is_admin": bool(user.is_admin),
+        # #68 P3 账号关联：parent_id（NULL=独立主账号）/ is_sub
+        "parent_id": user.parent_id,
+        "is_sub": bool(user.parent_id),
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
 
@@ -140,6 +143,9 @@ async def update_profile(
             "bio": user.bio,
             "avatar_url": user.avatar_url,
             "ai_social_enabled": bool(user.ai_social_enabled),
+            # #68 P3 账号关联
+            "parent_id": user.parent_id,
+            "is_sub": bool(user.parent_id),
         }
 
 @router.put("/dnd")

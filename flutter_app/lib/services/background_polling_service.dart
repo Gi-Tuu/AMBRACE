@@ -49,7 +49,7 @@ class BackgroundPollingService {
         autoStart: false,
         autoStartOnBoot: true,
         isForegroundMode: true,
-        foregroundServiceTypes: [AndroidForegroundType.dataSync],
+        foregroundServiceTypes: [AndroidForegroundType.specialUse],
         initialNotificationTitle: "拥爱运行中",
         initialNotificationContent: "正在后台监听 AI 好友的新消息",
         notificationChannelId: _serviceChannelId,

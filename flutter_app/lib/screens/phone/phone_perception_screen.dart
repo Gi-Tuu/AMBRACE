@@ -57,6 +57,8 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
   bool _expandActions = false; // 模拟操作子项（查看节点）
   bool _expandNotif = false; // 通知读取子项（主动提及/白名单）
   bool _expandLocation = false; // 位置信息子项
+  Map<String, dynamic> _health = {}; // R5：统一健康检测
+  bool _batteryOk = false; // R4：电池白名单
 
   @override
   void initState() {
@@ -83,6 +85,10 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
     // 从系统「使用情况访问」授权页返回时自动重查并开启，无需用户再点一次开关
     if (state == AppLifecycleState.resumed && _pendingUsageGrant) {
       _autoEnableUsageStatsAfterReturn();
+    }
+    // R4：从电池优化设置返回时刷新状态
+    if (state == AppLifecycleState.resumed) {
+      _loadHealth();
     }
   }
 
@@ -118,6 +124,19 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
       _serviceEnabled = (status["serviceEnabled"] as bool? ?? false);
       _notifServiceEnabled = notifOk;
     });
+    // R5/R4：健康检测 + 电池白名单
+    _loadHealth();
+  }
+
+  Future<void> _loadHealth() async {
+    final health = await PhonePerceptionService.getServiceHealth();
+    final batteryOk = await PhonePerceptionService.isIgnoringBatteryOptimizations();
+    if (mounted) {
+      setState(() {
+        _health = health;
+        _batteryOk = batteryOk;
+      });
+    }
   }
 
   bool get _shizukuReady => _shizukuServer && _shizukuGranted;
@@ -694,6 +713,24 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
           color: Theme.of(context).dividerColor,
         );
 
+    /// R5：健康状态灯 tile
+    Widget healthTile(IconData icon, String title, bool ok,
+        {String? sub, VoidCallback? onTap}) {
+      return ListTile(
+        leading: Icon(icon, size: 22, color: ok ? Colors.green : Colors.orange),
+        title: Text(title, style: TextStyle(fontSize: 15, color: scheme.onSurface)),
+        subtitle: sub != null
+            ? Text(sub, style: const TextStyle(fontSize: 11, color: subColor))
+            : null,
+        trailing: onTap != null
+            ? const Icon(Icons.chevron_right, size: 18, color: AppColors.separator)
+            : Icon(ok ? Icons.check_circle : Icons.warning_amber,
+                size: 18, color: ok ? Colors.green : Colors.orange),
+        onTap: onTap,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(title: Text(l10n.phonePerception)),
       body: ListView(
@@ -709,6 +746,34 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
               onChanged: _toggleEnabled,
             ),
           ]),
+          // R5：服务健康状态灯
+          if (_health.isNotEmpty)
+            group('运行状态', [
+              healthTile(Icons.accessibility_new, '无障碍服务',
+                  _health['accessible'] == true,
+                  sub: _health['accessibleInstanceAlive'] == true ? '已连接' : '系统已开但服务未连接'),
+              div(),
+              healthTile(Icons.notifications_outlined, '通知读取',
+                  _health['notification'] == true,
+                  sub: _health['notificationConnected'] == true ? '已连接' : '系统已开但未连接'),
+              div(),
+              healthTile(Icons.shield_outlined, 'Shizuku',
+                  _health['shizuku'] == true,
+                  sub: _health['shizukuRunning'] == true
+                      ? (_health['shizukuGranted'] == true ? '已授权' : '未授权')
+                      : '未运行'),
+              div(),
+              healthTile(Icons.bar_chart, '使用情况访问',
+                  _health['usageStats'] == true),
+              div(),
+              healthTile(Icons.battery_saver, '电池优化白名单',
+                  _batteryOk,
+                  sub: _batteryOk ? '已加入' : '未加入（可能导致后台断开）',
+                  onTap: _batteryOk ? null : () async {
+                    await PhonePerceptionService.requestIgnoreBatteryOptimizations();
+                    Future.delayed(const Duration(seconds: 2), _loadHealth);
+                  }),
+            ]),
           // 采集项
           group(l10n.ppGroupSources, [
             foldParent(

@@ -47,3 +47,6 @@ psutil>=6.0
 
 # MCP 接入（标准 MCP stdio 客户端，Phase 1；Python 3.14 兼容）
 mcp>=2.0.0
+
+# FCM push (optional, 2026-08-28)
+firebase-admin>=6.5

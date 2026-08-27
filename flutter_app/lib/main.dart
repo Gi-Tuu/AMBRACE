@@ -7,6 +7,7 @@ import 'providers/chat_provider.dart';
 import 'services/notification_service.dart';
 import 'services/api_client.dart';
 import 'services/background_polling_service.dart';
+import 'services/fcm_push_service.dart';
 import 'global_keys.dart';
 import 'providers/settings_provider.dart';
 import 'theme/app_theme.dart';
@@ -33,6 +34,12 @@ void main() async {
     await BackgroundPollingService.ensureConfigured();
   } catch (e) {
     debugPrint('Background service configure failed: $e');
+  }
+  // FCM 离线推送（ENABLE_FCM=true 时才初始化，否则直接 return）—— init 内部自给自足读取 server_url/token
+  try {
+    await FcmPushService.instance.init();
+  } catch (e) {
+    debugPrint('FCM init failed: $e');
   }
   _setupLifecycleObserver();
   runApp(const AICompanionApp());

@@ -7,6 +7,7 @@ import '../../models/character.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
+import '../../services/fcm_push_service.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/app_page_route.dart';
 import '../chat/chat_screen.dart';
@@ -146,6 +147,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       final nickname = data['nickname'] as String;
       await settings.setAuth(token, userId, nickname);
       ApiClient().configure(baseUrl: settings.serverUrl, token: token);
+      await FcmPushService.instance.init();
       await settings.syncProfileFromServer();
       if (!mounted) return;
       setState(() => _accountDone = true);

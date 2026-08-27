@@ -9,6 +9,7 @@ import "../../services/api_client.dart";
 import "../../services/home_tab_controller.dart";
 import "../../services/notification_service.dart";
 import "../../services/background_polling_service.dart";
+import "../../services/fcm_push_service.dart";
 import "character_list_screen.dart";
 import "../social/moments_screen.dart";
 import "profile_screen.dart";
@@ -18,6 +19,7 @@ import "../settings/permission_admin_screen.dart";
 import "../phone/phone_perception_screen.dart";
 import "../phone/ai_interaction_screen.dart";
 import "../settings/appearance_screen.dart";
+import "../settings/account_linking_screen.dart";
 import "../plugin/extensions_screen.dart";
 import "../settings/support_screen.dart";
 import "../settings/backup_screen.dart";
@@ -474,6 +476,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 Navigator.push(c, AppPageRoute(builder: (_) => const AppearanceScreen()));
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.family_restroom, size: 20, color: AppColors.accent),
+              title: Text(l10n.accountLinking, style: const TextStyle(fontSize: 14)),
+              subtitle: Text(l10n.accountLinkingHint, style: const TextStyle(fontSize: 11, color: subColor)),
+              trailing: const Icon(Icons.chevron_right, size: 18, color: chevColor),
+              onTap: () {
+                _closeDrawer();
+                Navigator.push(c, AppPageRoute(builder: (_) => const AccountLinkingScreen()));
+              },
+            ),
           ],
         ),
         divider(),
@@ -584,6 +596,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             onTap: () async {
               _closeDrawer();
               await BackgroundPollingService.stop();
+              // FCM 离线推送注销（失败不影响登出）
+              try {
+                await FcmPushService.instance.unregister();
+              } catch (_) {}
               await s.logout();
               if (c.mounted) Navigator.pushReplacementNamed(c, '/');
             },

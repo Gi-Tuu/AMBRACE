@@ -13,6 +13,7 @@ import '../../widgets/life_home_world_map.dart';
 import '../../widgets/shimmer.dart';
 import '../character/pet_screen.dart';
 import '../game/game_console_screen.dart';
+import '../home/home_screen.dart';
 import "package:ai_companion/theme/tokens.dart";
 import "package:ai_companion/widgets/app_page_route.dart";
 
@@ -749,12 +750,13 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
                 child: Text(l10n.gameTitle),
               )
             else if (f.key == 'petbed')
-              FilledButton.tonal(
+              FilledButton.tonalIcon(
                 onPressed: () {
                   Navigator.pop(ctx);
                   _openPets();
                 },
-                child: Text(l10n.petEntry),
+                icon: const Icon(Icons.pets),
+                label: Text(l10n.petEntry),
               )
             else if (f.action != null)
               FilledButton(
@@ -860,29 +862,17 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
     return _state?['character_name'] as String? ?? l10n.homeTitle;
   }
 
-  /// v3.3 ④ 返回按钮：编辑态中先退出编辑态（临时位置保留），否则回退上一级
-  void _handleBack() {
-    if (_editMode) {
-      setState(() {
-        _editMode = false;
-        _editingKey = null;
-        _editingRoomId = null;
-      });
-      return;
-    }
-    Navigator.of(context).pop();
-  }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       appBar: AppBar(
-        // v3.3 ④：移除抽屉菜单入口，改为返回上一级（编辑态中先退出编辑态）
+        // #68 ④：AppBar 左侧改为侧抽屉按钮（与好友/朋友圈一致），编辑态退出走「完成/回退」
         leading: IconButton(
-          tooltip: l10n.back,
-          icon: const Icon(Icons.arrow_back),
-          onPressed: _handleBack,
+          tooltip: l10n.menu,
+          icon: const Icon(Icons.menu),
+          onPressed: AppDrawerController.toggle,
         ),
         title: Text(_appBarTitle(l10n)),
         actions: [

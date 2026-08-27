@@ -211,12 +211,23 @@ class _GameConsoleScreenState extends State<GameConsoleScreen> {
           ],
         ),
         const SizedBox(height: 16),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(l10n.gameUserRole),
-          subtitle: Text(l10n.gameUserAsSpectator),
-          value: _userAsPlayer,
-          onChanged: (v) => setState(() => _userAsPlayer = v),
+        Text(l10n.gameUserRole,
+            style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.grey)),
+        const SizedBox(height: 8),
+        SegmentedButton<bool>(
+          segments: [
+            ButtonSegment(
+                value: true,
+                label: Text(l10n.gamePlayer),
+                icon: const Icon(Icons.sports_esports)),
+            ButtonSegment(
+                value: false,
+                label: Text(l10n.gameSpectator),
+                icon: const Icon(Icons.visibility_outlined)),
+          ],
+          selected: {_userAsPlayer},
+          onSelectionChanged: (sel) =>
+              setState(() => _userAsPlayer = sel.first),
         ),
       ],
     );

@@ -196,7 +196,7 @@ void main() {
     });
   });
 
-  testWidgets('HomeVisualScreen 页面可构建（无后端 → 错误态 + 重试 + 返回按钮）', (tester) async {
+  testWidgets('HomeVisualScreen 页面可构建（无后端 → 错误态 + 重试 + 侧抽屉按钮）', (tester) async {
     await tester.pumpWidget(_wrap());
     // 网络请求在测试环境失败 → 进入错误态，AppBar/重试按钮始终渲染
     await tester.pump();
@@ -204,7 +204,7 @@ void main() {
 
     expect(find.byType(HomeVisualScreen), findsOneWidget);
     expect(find.text('小家'), findsOneWidget); // AppBar 标题（homeTitle）
-    expect(find.byIcon(Icons.arrow_back), findsOneWidget); // v3.3 ④ 返回按钮
+    expect(find.byIcon(Icons.menu), findsOneWidget); // #68 ④ 侧抽屉按钮（与好友/朋友圈一致）
     expect(find.textContaining('加载小家失败'), findsOneWidget); // loadHomeFailed
     expect(find.text('重试'), findsOneWidget); // retry 按钮
 

@@ -1,6 +1,7 @@
 package com.aicompanion.ai_companion
 
 import android.app.Notification
+import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -21,6 +22,10 @@ class PhonePerceptionNotificationService : NotificationListenerService() {
     companion object {
         @Volatile
         var lastNotifications: List<Map<String, String>> = emptyList()
+            private set
+
+        @Volatile
+        var instance: PhonePerceptionNotificationService? = null
             private set
 
         private const val MAX_KEEP = 20
@@ -95,6 +100,7 @@ class PhonePerceptionNotificationService : NotificationListenerService() {
     }
 
     override fun onListenerConnected() {
+        instance = this
         Log.i("PhonePerception", "notification listener connected")
         // 进程重启后缓存为空：把系统当前活跃通知同步进来，避免错过停机期间的通知
         try {
@@ -128,6 +134,22 @@ class PhonePerceptionNotificationService : NotificationListenerService() {
         } catch (e: Exception) {
             Log.w("PhonePerception", "sync active notifications failed: " + e.message)
         }
+    }
+
+    /** R2：监听断开时主动请求重绑；部分 ROM 会拦截，失败由健康检测引导用户重开 */
+    override fun onListenerDisconnected() {
+        instance = null
+        Log.w("PhonePerception", "notification listener disconnected")
+        try {
+            requestRebind(ComponentName(this, PhonePerceptionNotificationService::class.java))
+        } catch (e: Exception) {
+            Log.w("PhonePerception", "requestRebind failed: ${e.message}")
+        }
+    }
+
+    override fun onDestroy() {
+        instance = null
+        super.onDestroy()
     }
 
     private fun resolveAppName(pkg: String): String {

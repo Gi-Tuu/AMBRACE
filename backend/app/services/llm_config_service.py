@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.config.user_llm_config import UserLlmConfig
 from app.models.character import AICharacter
-from app.models.user import User
+from app.services.family_service import get_family_root_id, is_sub_account
 
 
 def mask_api_key(api_key: str | None) -> str:
@@ -67,23 +67,7 @@ def _norm(v, maxlen: int) -> str | None:
 
 
 # ── 家庭（主/子账号）关系辅助（P0-P2 仅用于共享配置判定；P3 受邀码关联完整启用）──
-
-async def _family_root_id(db: AsyncSession, user_id: int | None) -> int | None:
-    """返回 user_id 的家庭根账号（主账号）。独立主账号返回自己；子账号返回其 parent_id。"""
-    if not user_id:
-        return None
-    uid = (await db.execute(select(User.parent_id).where(User.id == user_id))).scalar_one_or_none()
-    if uid:
-        return int(uid)
-    return int(user_id)
-
-
-async def _is_sub_account(db: AsyncSession, user_id: int | None) -> bool:
-    if not user_id:
-        return False
-    parent = (await db.execute(select(User.parent_id).where(User.id == user_id))).scalar_one_or_none()
-    return bool(parent)
-
+# _family_root_id / _is_sub_account 已迁至 app.services.family_service，此处统一 import。
 
 async def _can_access(db: AsyncSession, acting_user_id: int | None, cfg: UserLlmConfig) -> bool:
     """判断 acting_user_id 是否有权使用 cfg：本人 或（主账号共享 → 其子账号只读）。"""
@@ -93,7 +77,7 @@ async def _can_access(db: AsyncSession, acting_user_id: int | None, cfg: UserLlm
         return True
     # 子账号访问主账号共享配置：acting_user 的根 == cfg.user_id 且 cfg.shared_with_subs
     if cfg.shared_with_subs:
-        root = await _family_root_id(db, acting_user_id)
+        root = await get_family_root_id(db, acting_user_id)
         if root == cfg.user_id:
             return True
     return False
@@ -142,7 +126,7 @@ async def resolve_character_llm_config(character_id: int | None, user_id: int | 
         if cfg is None or not cfg.enabled or not (cfg.base_url or cfg.api_key):
             return None
         # 归属校验：角色归属用户 == 配置 owner；子账号也可用主账号共享配置
-        owner = await _family_root_id(session, char.user_id)
+        owner = await get_family_root_id(session, char.user_id)
         if cfg.user_id != char.user_id and not (cfg.shared_with_subs and owner == cfg.user_id):
             return None
         return {
@@ -178,7 +162,7 @@ async def resolve_family_default_config(user_id: int | None, db: AsyncSession | 
     if not user_id:
         return None
     async for session in _with_db(db):
-        root = await _family_root_id(session, user_id)
+        root = await get_family_root_id(session, user_id)
         if root is None or root == int(user_id):  # 独立主账号：用户默认即家庭默认，已由上层处理
             return None
         cfg = (await session.execute(
@@ -207,8 +191,8 @@ async def list_configs(db: AsyncSession, user_id: int) -> dict:
         .order_by(UserLlmConfig.id.desc())
     )).scalars().all()
     items = [_serialize_config(c, is_shared=False) for c in mine]
-    if await _is_sub_account(db, user_id):
-        root = await _family_root_id(db, user_id)
+    if await is_sub_account(db, user_id):
+        root = await get_family_root_id(db, user_id)
         if root and root != user_id:
             shared = (await db.execute(
                 select(UserLlmConfig).where(

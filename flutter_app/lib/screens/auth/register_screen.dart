@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:dio/dio.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
+import '../../services/fcm_push_service.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -46,6 +47,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         data['nickname'] as String,
       );
       ApiClient().configure(baseUrl: settings.serverUrl, token: token);
+      await FcmPushService.instance.init();
       await settings.syncProfileFromServer();
       if (mounted) Navigator.pushReplacementNamed(context, '/home');
     } on DioException catch (e) {

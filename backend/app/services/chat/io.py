@@ -57,18 +57,31 @@ async def _push_ws_ai_message(session_id: int, msg: ChatMessage) -> None:
 
 
 async def _push_user_notify(user_id: int, session_id: int, character_id: int, content: str) -> None:
-    """#55 App 后台保活：把新 AI 消息实时推送到用户级通知连接池（后台 isolate 弹系统通知）。"""
+    """#55 App 后台保活 + FCM 离线推送：WS 在线实时推送，不在线走 FCM。"""
     try:
-        from app.ws.notify_manager import push_to_user
-        await push_to_user(user_id, {
-            "type": "ai_response",
-            "data": {
-                "session_id": session_id,
-                "character_id": character_id,
-                "sender_type": "ai",
-                "content": content,
+        from app.services.push_service import notify_user
+        # 通知正文只放预览，不含完整聊天内容（FCM 经 Google 服务器，隐私保护）
+        preview = content[:50] + ("…" if len(content) > 50 else "")
+        await notify_user(
+            user_id,
+            title="新消息",
+            body=preview,
+            data={
+                "route": "chat",
+                "session_id": str(session_id),
+                "character_id": str(character_id),
             },
-            "is_proactive": False,
-        })
+            channel="chat",
+            ws_payload={
+                "type": "ai_response",
+                "data": {
+                    "session_id": session_id,
+                    "character_id": character_id,
+                    "sender_type": "ai",
+                    "content": content,
+                },
+                "is_proactive": False,
+            },
+        )
     except Exception as e:
         _logger.warning("Push user notify failed user=%d: %s", user_id, e)

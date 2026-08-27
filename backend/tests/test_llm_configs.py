@@ -13,7 +13,6 @@ import tempfile
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient

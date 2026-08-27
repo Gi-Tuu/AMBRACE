@@ -2,9 +2,6 @@ package com.aicompanion.ai_companion
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -16,6 +13,12 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.PrintWriter
+import java.io.StringWriter
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * 手机感知·无障碍读屏服务（AI 走出沙箱 Phase 1~3）
@@ -69,6 +72,9 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
         )
         private const val MAX_TEXT = 2000
         private const val MAX_NODES = 40
+        private const val MAX_DEPTH = 15  // R7：节点树遍历深度上限
+        private const val TRAVERSE_TIME_BUDGET_MS = 200L  // R7：单次遍历总耗时上限
+        private const val CONTENT_CHANGE_THROTTLE_MS = 1000L  // R6：content changed 事件 1s 节流
 
         fun isSensitivePackage(pkg: String): Boolean {
             val p = pkg.lowercase()
@@ -95,41 +101,27 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
         }
     }
 
+    // R6：content changed 事件节流时间戳
+    private var lastContentChangeAt = 0L
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        // 前台保活（2026-08-14）：无障碍服务启动前台通知，进程获前台保护，
-        // 退出 App/划掉任务后 vivo 不再冻结杀进程，服务保持连接
-        try {
-            if (Build.VERSION.SDK_INT >= 26) {
-                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                val channel = NotificationChannel(
-                    "ai_companion_service", "拥爱后台服务",
-                    NotificationManager.IMPORTANCE_LOW,
-                )
-                nm.createNotificationChannel(channel)
-            }
-            val builder = if (Build.VERSION.SDK_INT >= 26) {
-                Notification.Builder(this, "ai_companion_service")
-            } else {
-                @Suppress("DEPRECATION")
-                Notification.Builder(this)
-            }
-            val notif = builder
-                .setContentTitle("拥爱运行中")
-                .setContentText("正在感知手机屏幕")
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setOngoing(true)
-                .build()
-            startForeground(8888, notif)
-        } catch (ex: Exception) {
-            Log.w("PhonePerceptionAcc", "startForeground failed: " + (ex.message ?: ""))
-        }
+        // R3：无障碍服务是系统绑定型服务，不需要前台服务即可常驻。
+        // 之前 startForeground(8888) 与后台轮询 FGS 的 8888 冲突，已移除。
+        logToFile("service connected")
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
         instance = null
-        return super.onUnbind(intent)
+        logToFile("service unbound")
+        return true  // 允许 onRebind
+    }
+
+    override fun onRebind(intent: Intent?) {
+        super.onRebind(intent)
+        instance = this
+        logToFile("service rebound")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -138,6 +130,7 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
         } catch (ex: Exception) {
             // 节点树操作偶发 IllegalStateException（节点已回收等），绝不能崩服务（崩溃会被系统禁用）
             Log.w("PhonePerceptionAcc", "onAccessibilityEvent error: " + (ex.message ?: ""))
+            logToFile("event error: " + (ex.message ?: ""))
         }
     }
 
@@ -145,6 +138,18 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
         if (event == null) return
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
+
+        // R6：TYPE_WINDOW_CONTENT_CHANGED 1s 节流，且只处理含 TEXT/STRUCTURE 的内容变化
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            val now = System.currentTimeMillis()
+            if (now - lastContentChangeAt < CONTENT_CHANGE_THROTTLE_MS) return
+            val changeTypes = event.contentChangeTypes
+            val hasText = (changeTypes and AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT) != 0
+            val hasStructure = (changeTypes and AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE) != 0 ||
+                (changeTypes and AccessibilityEvent.CONTENT_CHANGE_TYPE_CONTENT_DESCRIPTION) != 0
+            if (!hasText && !hasStructure) return
+            lastContentChangeAt = now
+        }
 
         val pkg = event.packageName?.toString() ?: return
         // 本 app 页面：不缓存文本（避免“在聊天页问读到的是聊天页自己”），
@@ -181,6 +186,35 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
+    override fun onDestroy() {
+        super.onDestroy()
+        logToFile("service destroyed")
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        logToFile("task removed")
+    }
+
+    /** R11：写本地日志文件（轮转 1MB×2），便于排查"偶尔断开"问题 */
+    private fun logToFile(msg: String) {
+        try {
+            val logDir = File(getExternalFilesDir(null) ?: filesDir, "logs")
+            if (!logDir.exists()) logDir.mkdirs()
+            val logFile = File(logDir, "phone_perception.log")
+            val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+            val line = "$ts  $msg
+"
+            // 轮转：超过 1MB 则备份为 .1
+            if (logFile.exists() && logFile.length() > 1_000_000) {
+                val bak = File(logDir, "phone_perception.log.1")
+                if (bak.exists()) bak.delete()
+                logFile.renameTo(bak)
+            }
+            logFile.appendText(line)
+        } catch (_: Exception) {}
+    }
+
     // ================= 读屏文本（Phase 1，保持不变） =================
 
     private fun extractText(node: AccessibilityNodeInfo): String {
@@ -190,15 +224,21 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
     }
 
     private fun collectText(node: AccessibilityNodeInfo, sb: StringBuilder) {
+        collectText(node, sb, 0, System.currentTimeMillis() + TRAVERSE_TIME_BUDGET_MS)
+    }
+
+    private fun collectText(node: AccessibilityNodeInfo, sb: StringBuilder, depth: Int, deadline: Long) {
+        if (depth > MAX_DEPTH || System.currentTimeMillis() > deadline) return
         if (node.isPassword) return
         val t = nodeLabel(node) ?: ""
         if (t.isNotBlank() && t.length > 1 && !isGarbageText(t)) {
             sb.append(t).append("；")
         }
         for (i in 0 until node.childCount) {
+            if (System.currentTimeMillis() > deadline) break
             val child = node.getChild(i) ?: continue
             try {
-                collectText(child, sb)
+                collectText(child, sb, depth + 1, deadline)
             } finally {
                 try { child.recycle() } catch (_: Exception) {}
             }
@@ -248,7 +288,11 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
     }
 
     private fun collectClickable(node: AccessibilityNodeInfo, arr: JSONArray) {
-        if (arr.length() >= MAX_NODES) return
+        collectClickable(node, arr, 0, System.currentTimeMillis() + TRAVERSE_TIME_BUDGET_MS)
+    }
+
+    private fun collectClickable(node: AccessibilityNodeInfo, arr: JSONArray, depth: Int, deadline: Long) {
+        if (arr.length() >= MAX_NODES || depth > MAX_DEPTH || System.currentTimeMillis() > deadline) return
         if (node.isPassword) return
         val t = nodeLabel(node)
         val cls = node.className?.toString()?.lowercase() ?: ""
@@ -277,9 +321,10 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
             }
         }
         for (i in 0 until node.childCount) {
+            if (System.currentTimeMillis() > deadline) break
             val child = node.getChild(i) ?: continue
             try {
-                collectClickable(child, arr)
+                collectClickable(child, arr, depth + 1, deadline)
             } finally {
                 try { child.recycle() } catch (_: Exception) {}
             }
