@@ -290,7 +290,8 @@ class TurtleSoupEngine(GameEngine):
             return {"action": "answer_soup", "content": "可能", "payload": {"answer": "possible"}}
         if stage == "ask" and seat == self.state.get("guesser_seat"):
             n = int(self.state.get("questions", 0))
-            if n >= 4 and n % 4 == 3:
+            # #65：与 expected_action 的 is_ai 守卫对齐（防御性，实际调用链仅对 AI 触发 fallback）
+            if self.is_ai(seat) and n >= 4 and n % 4 == 3:
                 kw = self.state.get("keywords") or []
                 word = random.choice(kw) if kw else (self.state.get("truth") or "")
                 return {"action": "guess_soup", "content": f"我猜真相是：{word}", "payload": {"word": word}}

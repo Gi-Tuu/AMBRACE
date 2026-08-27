@@ -227,6 +227,22 @@ async def _post_trigger_notes(character_id: int, user_id: int, rule: Rule, outpu
         _logger.warning("State trigger memory save failed char=%d: %s", character_id, e)
 
 
+async def _after_trigger_create_preoccupation(character_id: int, user_id: int, rule: Rule) -> None:
+    """#63 机制5：高权重情绪规则执行成功后创建心事（flag 开才生效，失败静默）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        if not AGENT_FLAGS.get("preoccupation_enabled", False):
+            return
+        if rule.key not in ("anger_high", "anger_mood_low", "possessiveness_desire", "mood_low", "fatigue_mood_low"):
+            return
+        from app.life.preoccupations import create_preoccupation_for_rule
+        async with async_session_factory() as db:
+            await create_preoccupation_for_rule(db, user_id=user_id, character_id=character_id, rule_key=rule.key)
+            await db.commit()
+    except Exception as e:
+        _logger.warning("Preoccupation create after trigger failed char=%d: %s", character_id, e)
+
+
 async def _cold_war_max_minutes(db, lg) -> int:
     """动态冷战时长（2026-08-15 冷战细化）：基础 120 + (怒气-50)×2 分钟；
     近 30 天冷战次数每场 +30（最多 +60）；封顶 300。"""
@@ -377,6 +393,13 @@ async def resolve_cold_war_by_message(character_id: int, user_id: int, user_msg:
                 lg.recovered = True
                 lg.soothe_level = max(int(getattr(lg, "soothe_level", 0) or 0), 1)
                 lg.soothe_count = soothe_count + 1
+                try:
+                    from app.agent.loop import AGENT_FLAGS as _AF
+                    if _AF.get("preoccupation_enabled", False):
+                        from app.life.preoccupations import resolve_cold_war_preoccupations
+                        await resolve_cold_war_preoccupations(db, user_id=user_id, character_id=character_id)
+                except Exception:
+                    pass
                 await db.commit()
                 from app.scheduler.storyline_engine import mark_cold_war_breakthrough
                 await mark_cold_war_breakthrough(character_id, user_id, "user_break_ice")
@@ -387,6 +410,13 @@ async def resolve_cold_war_by_message(character_id: int, user_id: int, user_msg:
                 lg.recovered = True
                 lg.soothe_level = 2
                 lg.soothe_count = soothe_count + 1
+                try:
+                    from app.agent.loop import AGENT_FLAGS as _AF
+                    if _AF.get("preoccupation_enabled", False):
+                        from app.life.preoccupations import resolve_cold_war_preoccupations
+                        await resolve_cold_war_preoccupations(db, user_id=user_id, character_id=character_id)
+                except Exception:
+                    pass
                 await db.commit()
                 from app.scheduler.storyline_engine import mark_cold_war_breakthrough
                 await mark_cold_war_breakthrough(character_id, user_id, "user_soothe")
@@ -464,6 +494,7 @@ async def _execute_rule_behavior(
                 if m:
                     output_text = f"发了一条朋友圈：{m.content[:80]}"
             asyncio.ensure_future(_post_trigger_notes(character_id, user_id, rule, output_text))
+            await _after_trigger_create_preoccupation(character_id, user_id, rule)
             _logger.info("State trigger fired char=%d rule=%s (moment)", character_id, rule.key)
             return True
 
@@ -546,6 +577,7 @@ async def _execute_rule_behavior(
     from app.scheduler.scheduler import send_to_session
     await send_to_session(session_id, character_id, user_id, content, message_type="state_trigger")
     asyncio.ensure_future(_post_trigger_notes(character_id, user_id, rule, content))
+    await _after_trigger_create_preoccupation(character_id, user_id, rule)
     _logger.info("State trigger fired char=%d rule=%s: %s", character_id, rule.key, content[:50])
     return True
 

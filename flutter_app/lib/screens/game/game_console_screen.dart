@@ -98,34 +98,59 @@ class _GameConsoleScreenState extends State<GameConsoleScreen> {
           ),
         ],
       ),
-      body: _provider.loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Text(l10n.gameSelectGameType,
-                    style: const TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                for (final mode in ['single', 'dual', 'multi']) ...[
-                  Text(_modeLabel(l10n, mode),
-                      style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.grey)),
-                  const SizedBox(height: 6),
-                  for (final g in _provider.catalog
-                      .where((g) => g['player_mode'] == mode))
-                    _gameCard(g, l10n),
-                  const SizedBox(height: 8),
-                ],
-                if (_selected != null) ...[
-                  const Divider(height: 24),
-                  _participantSection(l10n),
-                  const SizedBox(height: 16),
-                  FilledButton(
-                    onPressed: _validSelection ? () => _start(l10n) : null,
-                    child: Text(l10n.gameStart),
+      // 用 ListenableBuilder 监听 provider：加载/错误/目录变化时刷新界面，
+      // 避免 loading 结束（成功/失败）后界面不重建而「无限转圈无报错」。
+      body: ListenableBuilder(
+        listenable: _provider,
+        builder: (context, _) {
+          if (_provider.loading) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (_provider.error != null) {
+            // 加载失败：显示可读错误 + 重试按钮（不再停留在转圈/空白）
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(l10n.loadFailedErr(_provider.error!),
+                      style: const TextStyle(color: Colors.grey), textAlign: TextAlign.center),
+                  const SizedBox(height: 12),
+                  FilledButton.tonal(
+                    onPressed: () => _provider.loadCatalogAndCharacters(),
+                    child: Text(l10n.retry),
                   ),
                 ],
+              ),
+            );
+          }
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Text(l10n.gameSelectGameType,
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              for (final mode in ['single', 'dual', 'multi']) ...[
+                Text(_modeLabel(l10n, mode),
+                    style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.grey)),
+                const SizedBox(height: 6),
+                for (final g in _provider.catalog
+                    .where((g) => g['player_mode'] == mode))
+                  _gameCard(g, l10n),
+                const SizedBox(height: 8),
               ],
-            ),
+              if (_selected != null) ...[
+                const Divider(height: 24),
+                _participantSection(l10n),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: _validSelection ? () => _start(l10n) : null,
+                  child: Text(l10n.gameStart),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
     );
   }
 

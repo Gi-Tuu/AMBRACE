@@ -270,7 +270,7 @@ async def send_and_receive_stream(
     try:
         core = await _run_agent_core(
             session_id, user_id, character_id, content, lang, user_msg_id,
-            stream_sink=sink, tts=tts, stream_tts_ctx=tts_ctx,
+            stream_sink=sink, tts=tts, stream_tts_ctx=tts_ctx, reply_delay=True,
         )
     except Exception as e:
         _logger.warning("Stream generation failed, fallback chunked: %s", e)

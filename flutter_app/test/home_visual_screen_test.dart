@@ -134,6 +134,40 @@ void main() {
     });
   });
 
+  group('LifeHomeWorldToolbar 世界模式顶部工具栏（v1.2 重构）', () {
+    testWidgets('家具编辑 + 缩放按钮（+/−/复位）回调', (tester) async {
+      var editTaps = 0, zi = 0, zo = 0, rz = 0;
+      await tester.pumpWidget(_wrapChild(LifeHomeWorldToolbar(
+        editing: false,
+        onEditTap: () => editTaps++,
+        onZoomIn: () => zi++,
+        onZoomOut: () => zo++,
+        onResetView: () => rz++,
+      )));
+      expect(find.text('家具编辑'), findsOneWidget);
+      expect(find.byTooltip('放大'), findsOneWidget);
+      expect(find.byTooltip('缩小'), findsOneWidget);
+      expect(find.byTooltip('复位'), findsOneWidget);
+      await tester.tap(find.text('家具编辑'));
+      await tester.tap(find.byTooltip('放大'));
+      await tester.tap(find.byTooltip('缩小'));
+      await tester.tap(find.byTooltip('复位'));
+      expect(editTaps, 1);
+      expect(zi, 1);
+      expect(zo, 1);
+      expect(rz, 1);
+    });
+
+    testWidgets('编辑态编辑按钮高亮（edit_off 图标）', (tester) async {
+      await tester.pumpWidget(_wrapChild(LifeHomeWorldToolbar(
+        editing: true,
+        onEditTap: () {},
+      )));
+      expect(find.byIcon(Icons.edit_off), findsOneWidget);
+      expect(find.byIcon(Icons.edit_outlined), findsNothing);
+    });
+  });
+
   group('LifeHomeEditHintBar / LifeHomeEditActionBar（v3.3 ②③）', () {
     testWidgets('编辑提示条：提示文案 + 完成回调', (tester) async {
       var done = 0;

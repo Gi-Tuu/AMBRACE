@@ -43,6 +43,19 @@ _FATIGUE_FLOOR = 10
 _DRIFT_LOCK: set[int] = set()   # 漂移防并发
 _drifted_at: dict[int, datetime] = {}  # 上次漂移结算时间（内存态；重启后以 updated_at 补算）
 
+# #63 机制1 弹簧-阻尼情绪（spring_emotion_enabled）：
+# - _persona_baseline: character_id -> {mood, anger} 人格基线（零 LLM 零 DB 纯函数派生，预热时写入）
+# - _spring_velocity: character_id -> {dim: 速度}（惯性；进程重启后丢失，从当前值起步，可接受）
+# - _SPRING_PARAMS: 仅 4 维启用弹簧，其余（fatigue/desire/possessiveness/sensitivity）保持线性。
+_persona_baseline: dict[int, dict] = {}
+_spring_velocity: dict[int, dict[str, float]] = {}
+_SPRING_PARAMS = {
+    "mood": {"k": 0.8, "c": 1.6, "baseline_range": (45.0, 65.0)},
+    "anger": {"k": 1.0, "c": 1.2, "baseline_range": (0.0, 20.0)},
+    "comfort": {"k": 0.9, "c": 1.8, "baseline": 50.0},
+    "body_temp": {"k": 1.2, "c": 2.0, "baseline": 50.0},
+}
+
 
 from app.utils.timeutil import now_naive_utc as _now_naive
 
@@ -98,9 +111,70 @@ def _write_history_snapshot(db, st, source: str = "drift") -> None:
         _logger.warning("State history drift snapshot failed char=%d: %s", st.character_id, e)
 
 
+def _derive_persona_baseline(personality, chat_style, mood_penalty: float = 0.0) -> dict:
+    """从人格/说话风格派生情绪基线（零 LLM、零 DB 纯函数）。
+
+    - mood 基线在 [45,65]，冷漠/高冷下压、热情/开朗上抬；心事惩罚（负数）叠加；
+    - anger 基线在 [0,20]：火爆/易怒上抬、温和/理性下压；
+    - 其它弹簧维（comfort/body_temp）用固定 50，不入基线。
+    """
+    text = f"{personality or ''} {chat_style or ''}".lower()
+    mood = 55.0
+    if any(k in text for k in ("冷", "冷漠", "高冷", "冷淡", "冰山", "疏离", "平静")):
+        mood -= 8.0
+    if any(k in text for k in ("热", "热情", "开朗", "活泼", "阳光", "乐观", "元气")):
+        mood += 8.0
+    mood += mood_penalty
+    mood = max(45.0, min(65.0, mood))
+
+    anger = 10.0
+    if any(k in text for k in ("脾气", "暴躁", "易怒", "火爆", "炸毛")):
+        anger += 6.0
+    if any(k in text for k in ("温和", "温柔", "平静", "理性", "沉稳")):
+        anger -= 4.0
+    anger = max(0.0, min(20.0, anger))
+    return {"mood": mood, "anger": anger}
+
+
+def _spring_baseline(dim: str, st) -> float:
+    """弹簧维的目标基线：固定值维直接取；mood/anger 从人格基线取并夹到 range。"""
+    p = _SPRING_PARAMS[dim]
+    if "baseline" in p:
+        return p["baseline"]
+    base = _persona_baseline.get(st.character_id)
+    if base is None:
+        base = _derive_persona_baseline("", "")
+    br = p["baseline_range"]
+    return max(br[0], min(br[1], float(base.get(dim, 50.0))))
+
+
+async def _preheat_baseline(db, st) -> None:
+    """预热人格基线并写入缓存（失败回落默认基线，不抛错、不阻塞）。已缓存则跳过。"""
+    try:
+        if st.character_id in _persona_baseline:
+            return
+        char = await db.get(AICharacter, st.character_id)
+        personality = char.personality if char else ""
+        chat_style = char.chat_style if char else ""
+        mood_penalty = 0.0
+        from app.agent.loop import AGENT_FLAGS
+        if AGENT_FLAGS.get("spring_emotion_enabled", False) and AGENT_FLAGS.get("preoccupation_enabled", False):
+            from app.life.preoccupations import list_active_preoccupations, mood_baseline_penalty
+            active = await list_active_preoccupations(db, st.character_id)
+            mood_penalty = mood_baseline_penalty(active)
+        _persona_baseline[st.character_id] = _derive_persona_baseline(
+            personality, chat_style, mood_penalty=mood_penalty,
+        )
+    except Exception as e:
+        _logger.warning("persona baseline preheat failed char=%d: %s", st.character_id, e)
+        _persona_baseline.setdefault(st.character_id, _derive_persona_baseline("", ""))
+
+
 def _apply_drift_sync(st, now: datetime) -> dict:
     """按上次结算时间 → now 的 Δt 惰性结算八维漂移（只改内存对象，返回有变化的维；不触碰评估时间戳）"""
     import random
+    from app.agent.loop import AGENT_FLAGS
+    spring_on = bool(AGENT_FLAGS.get("spring_emotion_enabled", False))
     last = _drifted_at.get(st.id, st.updated_at)
     if last is None:
         _drifted_at[st.id] = now
@@ -127,6 +201,19 @@ def _apply_drift_sync(st, now: datetime) -> dict:
                 cur = max(cur, _FATIGUE_FLOOR)
             else:
                 cur += random.uniform(*_FATIGUE_RISE_RANGE) * delta_hours
+        elif spring_on and key in _SPRING_PARAMS:
+            # #63 机制1：弹簧-阻尼分支（4 维启用；子步长 0.25h 防大 Δt 数值不稳定）
+            p = _SPRING_PARAMS[key]
+            base = _spring_baseline(key, st)
+            vel = _spring_velocity.setdefault(st.id, {}).get(key, 0.0)
+            steps = max(1, int(delta_hours / 0.25))
+            dt = delta_hours / steps
+            for _ in range(steps):
+                noise = random.uniform(-0.3, 0.3) * dt  # v1 小噪声；测试固定 seed
+                force = p["k"] * (base - cur) - p["c"] * vel + noise
+                vel += force * dt
+                cur += vel * dt
+            _spring_velocity.setdefault(st.id, {})[key] = vel
         else:
             rule, lo, hi = _DRIFT_RULES.get(key, ("to50", 0.2, 0.5))
             rate = random.uniform(lo, hi)
@@ -159,6 +246,7 @@ async def drift_all_character_states() -> None:
                 if st.id in _DRIFT_LOCK:
                     continue
                 try:
+                    await _preheat_baseline(db, st)
                     changed = _apply_drift_sync(st, now)
                     # 状态趋势数据源：调度期固定写快照（即使无整值变化也落点），保证下午无聊天时趋势仍更新
                     _write_history_snapshot(db, st)
@@ -188,6 +276,7 @@ async def get_character_states(character_id: int) -> dict:
                 await db.commit()
                 await db.refresh(st)
             # 读时惰性结算漂移（疲惫上升/心情回落/怒气平息等）
+            await _preheat_baseline(db, st)
             changed = _apply_drift_sync(st, _now_naive())
             if changed:
                 await db.commit()

@@ -127,12 +127,22 @@ async def _on_moment_published(payload: dict) -> None:
         pass
 
 
+async def _on_life_share(payload: dict) -> None:
+    """生活活动完成 → 自然分享（#63 机制4，Flag life_share_enabled；失败静默不阻塞活动主链路）。"""
+    try:
+        from app.scheduler.life_share import on_activity_completed
+        await on_activity_completed(payload)
+    except Exception as e:
+        _logger.warning("events on_life_share failed: %s", e)
+
+
 def register_builtin_handlers() -> None:
     """注册内置订阅者（幂等：重复注册会去重）"""
     from app.events.bus import event_bus
     for et, h in (
         ("memory.written", _on_memory_written),
         ("life.activity_completed", _on_activity_completed),
+        ("life.activity_completed", _on_life_share),
         ("tool.executed", _on_tool_executed),
         ("interest.updated", _on_interest_updated),
         ("life.moment_published", _on_moment_published),

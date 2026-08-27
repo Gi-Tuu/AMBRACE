@@ -99,9 +99,17 @@ class StreamHandler {
         // 用户消息正式落库回传：替换本地临时 id
         MessageAppender.replaceTempUserMessage(_messages, event['data'] as Map<String, dynamic>?);
         _onChanged();
+      case 'typing':
+        // #63 机制2：回复延迟信号——服务端在生成前推送 typing（可带 delay 秒），
+        // 前端保持"输入中..."直到首块内容（delta/block/done）到达再清除，不按固定时长。
+        _setTyping(event['is_typing'] as bool? ?? false);
       case 'delta':
         final text = event['text'] as String? ?? '';
-        if (text.isNotEmpty) _appendDelta(text);
+        if (text.isNotEmpty) {
+          _appendDelta(text);
+          // #63 机制2：首块内容到达即清除"输入中..."（保持"输入中..."直到首块内容）
+          _setTyping(false);
+        }
       case 'reset_blocks':
         // P2-NEW（2026-08-29）：TTS consumer 中途死亡回退批量路径会先删旧块再全量新建，新块 ID 与
         // 旧块不同，前端按块 id 去重（_confirmStreamBlock）永远不命中 → 先清除本轮已确认的 AI 正式块

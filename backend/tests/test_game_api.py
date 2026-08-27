@@ -9,16 +9,23 @@ import asyncio
 import json
 import os
 import tempfile
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
 
+from app.api import games as games_api
 from app.api.games import router as games_router
 from app.auth.deps import get_current_user_id
 from app.models.game import GameSession
+
+# 模块加载时捕获真实的 resume 实现（fixture 会 noop `_resume_ai_turns`）：
+# 供 #65 用例直接驱动真正续跑、断言 AI 动作/事件落库、turn 推进。
+_REAL_RESUME = games_api._resume_ai_turns
 
 
 def _make_client(user_id: int) -> TestClient:
@@ -263,3 +270,88 @@ def test_resume_stuck_games_skips_user_turn(game_api_db, monkeypatch):
     from app.api.games import resume_stuck_games
     asyncio.run(resume_stuck_games())
     assert sid not in calls
+
+
+# ---------------- #65：轮到 AI 时 resume 真正续跑 ----------------
+async def _backdate_last_event(factory, sid):
+    """把对局所有事件时间回拨到 10 分钟前，让 resume_stuck_games 的 cutoff 检查放行。"""
+    from app.models.game import GameEvent
+    old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=11)
+    async with factory() as db:
+        rows = (await db.execute(
+            select(GameEvent).where(GameEvent.session_id == sid)
+        )).scalars().all()
+        for e in rows:
+            e.created_at = old
+        await db.commit()
+
+
+def test_resume_ai_turn_actually_advances(game_api_db, monkeypatch):
+    """#65：对局推进到 AI 回合后调用 resume（_resume_ai_turns 对应接口），
+    断言 AI 回合被真正续跑：AI 的 answer 事件落库 + turn 推进回用户。"""
+    from app.models.game import GameEvent
+
+    # 固定 AI 决策（不依赖 LLM）：主持人(thinker/seat1) 回答"是"
+    async def _fake_ai_decide(engine, seat):
+        return {"action": "answer_soup", "content": "", "payload": {"answer": "yes"}}
+
+    monkeypatch.setattr("app.games.ai_player.ai_decide", _fake_ai_decide)
+
+    client = _make_client(1)
+    r = client.post("/api/v1/games/sessions", json={
+        "game_type": "turtle_soup", "player_ids": [101], "user_as_player": True,
+    })
+    assert r.status_code == 200, r.text
+    sid = r.json()["session_id"]
+    # 用户(seat0/guesser)提问 → 轮到 AI(thinker/seat1) 回答
+    r = client.post(f"/api/v1/games/sessions/{sid}/action",
+                    json={"seat": 0, "action": "ask_soup", "payload": {"content": "它与真相里的人有关吗？"}})
+    assert r.json()["ok"] is True
+
+    # 此刻 current_turn 是 AI。用之前捕获的真实接口真正续跑
+    asyncio.run(_REAL_RESUME(sid))
+
+    async def _query_events():
+        async with game_api_db() as db:
+            return (await db.execute(
+                select(GameEvent).where(GameEvent.session_id == sid)
+            )).scalars().all()
+
+    events = asyncio.run(_query_events())
+    answer_evs = [e for e in events if e.event_type == "answer" and e.actor_seat == 1]
+    assert answer_evs, "AI 回合未被续跑：缺少 AI 的 answer 事件"
+
+    # turn 推进：回到用户(guesser/seat0)
+    st = client.get(f"/api/v1/games/sessions/{sid}/state", params={"seat": 0}).json()
+    assert st["current_turn_seat"] == 0
+
+
+def test_resume_stuck_games_continues_stale_ai_turn(game_api_db, monkeypatch):
+    """#65：非新建对局（事件已超 10 分钟）且轮到 AI 时，resume_stuck_games 会真正调度续跑。
+    修复前：对局刚创建、时间检查跳过，该分支从未被真正测到。"""
+    calls = []
+
+    async def _record(sid):
+        calls.append(sid)
+
+    monkeypatch.setattr("app.api.games._resume_ai_turns", _record)
+    client = _make_client(1)
+    r = client.post("/api/v1/games/sessions", json={
+        "game_type": "turtle_soup", "player_ids": [101], "user_as_player": True,
+    })
+    sid = r.json()["session_id"]
+    assert client.post(f"/api/v1/games/sessions/{sid}/action",
+                       json={"seat": 0, "action": "ask_soup", "payload": {"content": "它与天气有关吗？"}}).json()["ok"] is True
+    # 回拨事件时间 → cutoff 放行，真正进入 AI 续跑分支
+    asyncio.run(_backdate_last_event(game_api_db, sid))
+
+    from app.api.games import resume_stuck_games
+
+    async def _run():
+        await resume_stuck_games()
+        # 让 ensure_future 调度的 _record 有机会执行
+        for _ in range(3):
+            await asyncio.sleep(0)
+
+    asyncio.run(_run())
+    assert sid in calls

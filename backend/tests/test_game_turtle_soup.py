@@ -62,6 +62,11 @@ def _players2():
     return [_Player(0, "user", user_id=1), _Player(1, "ai", character_id=101)]
 
 
+def _players2_both_ai():
+    # 两个 AI：setup 中 elif ai_players 分支 → thinker=seat0, guesser=seat1(AI)
+    return [_Player(0, "ai", character_id=101), _Player(1, "ai", character_id=102)]
+
+
 # ---------------- 初始状态：AI 主持人 / 用户猜题 ----------------
 def test_turtle_soup_setup():
     random.seed(1)
@@ -160,9 +165,21 @@ def test_turtle_soup_fallback_first_asks():
 
 def test_turtle_soup_fallback_guesses_on_schedule():
     random.seed(12)
+    # 猜题者必须是 AI（与 expected_action 的 is_ai 守卫一致；用户猜题者不自动猜）
+    engine, _ = _make(_players2_both_ai())
+    _sync(engine.setup())
+    engine.state["questions"] = 7
+    assert engine.is_ai(engine.state["guesser_seat"])
+    fb = _sync(engine.fallback_action(engine.state["guesser_seat"]))
+    assert fb["action"] == "guess_soup"
+    assert fb["payload"]["word"] in (engine.state["keywords"] + [engine.state["truth"]])
+
+
+def test_turtle_soup_fallback_not_ai_guesser_no_auto_guess():
+    """#65：非 AI（用户）猜题者不触发自动猜词（is_ai 守卫防御性对齐 expected_action）。"""
+    random.seed(13)
     engine, _ = _make(_players2())
     _sync(engine.setup())
     engine.state["questions"] = 7
     fb = _sync(engine.fallback_action(engine.state["guesser_seat"]))
-    assert fb["action"] == "guess_soup"
-    assert fb["payload"]["word"] in (engine.state["keywords"] + [engine.state["truth"]])
+    assert fb["action"] == "ask_soup"

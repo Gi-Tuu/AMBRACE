@@ -76,7 +76,8 @@ class _PluginWebviewScreenState extends State<PluginWebviewScreen> {
       ))
       ..addJavaScriptChannel('AmbraceBridge',
           onMessageReceived: _onBridgeMessage)
-      ..loadRequest(uri);
+      // #65：插件页面走后端 plugin_page（HTTPBearer），裸加载会 401，必须带 Authorization 头
+      ..loadRequest(uri, headers: pluginAuthHeaders(ApiClient().token));
   }
 
   /// 跨源导航拦截：同源（插件页）放行；跨源一律交给系统浏览器，不在 WebView 内停留。

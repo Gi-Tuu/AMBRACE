@@ -354,6 +354,7 @@ async def _run_agent_core(
     stream_sink=None,
     tts: bool = False,
     stream_tts_ctx: dict | None = None,
+    reply_delay: bool = False,
 ) -> dict | None:
     """公共 Agent 主流程（双路径收敛 #45，以 chunked 版逻辑为基准）。
 
@@ -364,6 +365,21 @@ async def _run_agent_core(
     # 冷战拦截（v3）：不生成回复
     if await _cold_war_block(character_id, user_id, content):
         return None
+
+    # #63 机制5：用户安慰词 → 最高权重心事减重（flag 开才生效，失败静默）
+    try:
+        from app.life.preoccupations import COMFORT_WORDS
+        if any(k in content for k in COMFORT_WORDS):
+            from app.agent.loop import AGENT_FLAGS
+            if AGENT_FLAGS.get("preoccupation_enabled", False):
+                from app.life.preoccupations import soften_by_comfort_words
+                async with async_session_factory() as _pdb:
+                    await soften_by_comfort_words(
+                        _pdb, user_id=user_id, character_id=character_id, content=content,
+                    )
+                    await _pdb.commit()
+    except Exception:
+        pass
 
     # 主动到期复习成功判定（P1）：用户回复与 24h 内复习消息弱相关 → 强化（异步不阻塞）
     try:
@@ -415,6 +431,27 @@ async def _run_agent_core(
     }
 
     _t0 = time.monotonic()
+    # #63 机制2：用户主动消息的动态回复延迟（flag 开才生效；voice/tts 跳过；冷战已在上层拦截）
+    if reply_delay and not tts:
+        try:
+            from app.agent.loop import AGENT_FLAGS
+            if AGENT_FLAGS.get("reply_delay_enabled", False):
+                from app.services.character_state_service import get_character_states
+                from app.utils.reply_delay import calc_typing_delay, estimate_response_chars
+                _st = await get_character_states(character_id)
+                _delay = calc_typing_delay(
+                    estimate_response_chars(len(content)),
+                    mood=_st.get("mood") or 50,
+                    fatigue=_st.get("fatigue") or 50,
+                    anger=_st.get("anger") or 50,
+                    is_short_reply=len(content) <= 6,
+                )
+                if stream_sink is not None:
+                    await stream_sink("typing", {"is_typing": True, "delay": _delay})
+                await asyncio.sleep(_delay)
+        except Exception:
+            pass  # 失败静默，不阻塞回复
+
     final_state = await agent.ainvoke(initial_state)
 
     # 真流式标记 / 标记元数据源文本（流式时原始响应含全部标记，用于 trace/生图/日历/备忘提取）
@@ -735,7 +772,7 @@ async def send_and_receive(
     # 公共 Agent 主流程（HTTP 专属：用户定时承诺 / 自主搜索 Loop / 多工具任务化）
     core = await _run_agent_core(
         session_id, user_id, character_id, content, lang, user_msg_id,
-        user_timer=True, search_loop=True, run_chat_task=True,
+        user_timer=True, search_loop=True, run_chat_task=True, reply_delay=True,
     )
     if core is None:
         return {"ai_message": None, "memories_updated": False, "cold_war": True}
@@ -812,6 +849,7 @@ async def send_and_receive_chunked(
     # 公共 Agent 主流程（流式路径：不触发搜索，仅剥离标记兜底）
     core = await _run_agent_core(
         session_id, user_id, character_id, content, lang, user_msg_id,
+        reply_delay=True,
     )
     if core is None:
         return {"chunks": [], "memories_updated": False, "cold_war": True}

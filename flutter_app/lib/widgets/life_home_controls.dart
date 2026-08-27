@@ -99,6 +99,98 @@ class LifeHomeRoomTabBar extends StatelessWidget {
   }
 }
 
+/// 世界模式顶部工具栏（issue #2/#3，#4 的普通 Row）：
+/// 左侧「家具编辑」按钮（复用编辑按钮样式，编辑态高亮），右侧 +/−/复位 缩放按钮。
+/// 缩放按钮只上抛回调，由宿主通过 `GlobalKey<LifeHomeWorldMapState>` 调地图公开方法。
+class LifeHomeWorldToolbar extends StatelessWidget {
+  final bool editing;
+  final VoidCallback onEditTap;
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+  final VoidCallback onResetView;
+
+  const LifeHomeWorldToolbar({
+    super.key,
+    required this.editing,
+    required this.onEditTap,
+    this.onZoomIn = _noop,
+    this.onZoomOut = _noop,
+    this.onResetView = _noop,
+  });
+
+  static void _noop() {}
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      color: scheme.surfaceContainerHighest,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Row(
+        children: [
+          // 家具编辑按钮（编辑态高亮，点击退出编辑态）
+          InkWell(
+            onTap: onEditTap,
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: editing ? scheme.primaryContainer : Colors.transparent,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    editing ? Icons.edit_off : Icons.edit_outlined,
+                    size: 19,
+                    color: editing ? scheme.primary : Colors.grey.shade600,
+                  ),
+                  Text(
+                    l10n.furnitureEdit,
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: editing ? scheme.primary : Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const Spacer(),
+          // 缩放按钮（用简短中文 tooltip；无 l10n key 可用）
+          _zoomBtn(context, Icons.add, '放大', onZoomIn, scheme),
+          const SizedBox(width: 4),
+          _zoomBtn(context, Icons.remove, '缩小', onZoomOut, scheme),
+          const SizedBox(width: 4),
+          _zoomBtn(context, Icons.center_focus_strong, '复位', onResetView, scheme),
+        ],
+      ),
+    );
+  }
+
+  Widget _zoomBtn(
+      BuildContext context, IconData icon, String tip, VoidCallback onTap, ColorScheme scheme) {
+    return IconButton(
+      tooltip: tip,
+      onPressed: onTap,
+      icon: Icon(icon, size: 20, color: scheme.primary),
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+      padding: EdgeInsets.zero,
+      style: IconButton.styleFrom(
+        backgroundColor: scheme.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(color: scheme.outlineVariant),
+        ),
+      ),
+    );
+  }
+}
+
 /// 编辑态顶部提示条：「拖动或点选家具进行编辑」+「完成」按钮（统一保存一次）
 class LifeHomeEditHintBar extends StatelessWidget {
   final VoidCallback onDone;

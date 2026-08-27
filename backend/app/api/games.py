@@ -449,6 +449,7 @@ async def abort_session(sid: int, user_id: int = Depends(get_current_user_id)):
         session.finished_at = datetime.now(timezone.utc)
         await db.commit()
         _ai_turn_locks.pop(sid, None)  # v3.3.5 审查修复：解散后清理进程内锁
+        _game_ws_clients.pop(sid, None)  # #65 审查修复：解散后清理 WS 集合，防内存缓慢增长
         return {"ok": True, "status": "aborted"}
 
 

@@ -95,6 +95,8 @@ class WsHandler {
         _setTyping(false);
         _onChanged();
       case 'typing':
+        // #63 机制2：typing 可带 delay（秒）——前端保持"输入中..."直到首块内容（ai_response）
+        // 到达再清除（下方 ai_response 分支已 _setTyping(false)），不按固定时长提前清除。
         _setTyping(data['is_typing'] as bool? ?? false);
         _onChanged();
       case 'error':

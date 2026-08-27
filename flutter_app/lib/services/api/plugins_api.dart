@@ -173,3 +173,15 @@ extension PluginsApi on ApiClient {
     return Map<String, dynamic>.from(r.data as Map);
   }
 }
+
+/// #65：构造插件页面/图标鉴权请求头（纯函数，可单测）。
+///
+/// 后端 `plugin_page` 用 `get_current_user_id`（HTTPBearer），只认
+/// `Authorization: Bearer <token>`；WebView `loadRequest` 与 `Image.network`
+/// 裸加载会 401，必须带上该头。空 token 返回空 map（不额外污染请求头）。
+/// [token] 从 ApiClient 现有登录态取（`ApiClient().token`）。
+Map<String, String> pluginAuthHeaders(String token) {
+  final t = token.trim();
+  if (t.isEmpty) return const <String, String>{};
+  return {'Authorization': 'Bearer $t'};
+}

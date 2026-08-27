@@ -151,7 +151,13 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
   // ── v3.3 家具编辑态（临时状态只在内存，点「完成」统一保存一次）──
   bool _editMode = false;
   String? _editingKey;                 // 编辑态中被编辑家具 key
+  String? _editingRoomId;              // 被编辑家具所在房间（v1.2 世界地图跨房间定位）
   List<_Room> _editSessionStart = const [];  // 本次编辑会话开始快照（回退基准）
+
+  // ── v1.2 世界地图：地图控制器 + 方向键每拍移动步长（世界 px）──
+  final GlobalKey<LifeHomeWorldMapState> _worldKey =
+      GlobalKey<LifeHomeWorldMapState>();
+  static const double _worldDpadStep = 8.0;
 
   // ── v3.3 自由缩放 + 视角跟随（视图层变换，家具逻辑坐标 gx/gy 不变）──
   static const double _minViewScale = 0.6;
@@ -450,11 +456,13 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
       setState(() {
         _editMode = false;
         _editingKey = null;
+        _editingRoomId = null;
       });
     } else {
       setState(() {
         _editMode = true;
         _editingKey = null;
+        _editingRoomId = null;
         _editSessionStart = _deepCopyRooms(_rooms);  // 回退基准：本次编辑会话开始
       });
     }
@@ -474,19 +482,21 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
   void _revertEditing() {
     final key = _editingKey;
     if (key == null) return;
+    final roomId = _editingRoomId ?? _currentRoom;  // v1.2 世界地图：按被编辑家具所在房间回退
     _Furniture? base;
     for (final r in _editSessionStart) {
-      if (r.id != _currentRoom) continue;
+      if (r.id != roomId) continue;
       for (final f in r.furniture) {
         if (f.key == key) base = f;
       }
     }
     setState(() {
       if (base != null) {
-        _updateFurniture(_currentRoom, key,
+        _updateFurniture(roomId, key,
             gx: base.gx, gy: base.gy, rotation: base.rotation);
       }
       _editingKey = null;
+      _editingRoomId = null;
     });
   }
 
@@ -494,20 +504,21 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
   void _rotateEditing() {
     final key = _editingKey;
     if (key == null) return;
-    for (final f in _room.furniture) {
-      if (f.key == key) {
-        setState(() {
-          _updateFurniture(_currentRoom, key,
-              rotation: HomeLayoutMath.nextRotation(f.rotation));
-        });
-        return;
-      }
-    }
+    final roomId = _editingRoomId ?? _currentRoom;  // v1.2 世界地图：按被编辑家具所在房间旋转
+    final f = _findFurniture(roomId, key);
+    if (f == null) return;
+    setState(() {
+      _updateFurniture(roomId, key,
+          rotation: HomeLayoutMath.nextRotation(f.rotation));
+    });
   }
 
   /// 确定：保持当前临时位置/朝向，退出被编辑
   void _confirmEditing() {
-    setState(() => _editingKey = null);
+    setState(() {
+      _editingKey = null;
+      _editingRoomId = null;
+    });
   }
 
   // ── v3.3 自由缩放 + 视角跟随 ──
@@ -566,6 +577,26 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
     _dpadTimer?.cancel();
     _dpadTimer = Timer.periodic(const Duration(milliseconds: 40), (_) {
       if (!mounted || _dpadDir == null) return;
+      if (_state?['world'] != null) {
+        // v1.2 世界地图：移动角色（世界 px），镜头由 LifeHomeWorldMap 保持跟随
+        final st = _worldKey.currentState;
+        if (st == null) return;
+        switch (_dpadDir) {
+          case 'up':
+            st.moveBy(0, -_worldDpadStep);
+            break;
+          case 'down':
+            st.moveBy(0, _worldDpadStep);
+            break;
+          case 'left':
+            st.moveBy(-_worldDpadStep, 0);
+            break;
+          case 'right':
+            st.moveBy(_worldDpadStep, 0);
+            break;
+        }
+        return;
+      }
       setState(() {
         switch (_dpadDir) {
           case 'up':
@@ -594,6 +625,18 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
   // ── 交互按钮：找角色附近最近的可交互家具 ──
   void _interactNearby() {
     final l10n = AppLocalizations.of(context)!;
+    if (_state?['world'] != null) {
+      // v1.2 世界地图：由地图在角色周围找最近可交互家具并上抛
+      final found = _worldKey.currentState?.interactNearby() ?? false;
+      if (!found) {
+        setState(() => _actionBubble = l10n.noNearbyFurniture);
+        _bubbleTimer?.cancel();
+        _bubbleTimer = Timer(const Duration(milliseconds: 1500), () {
+          if (mounted) setState(() => _actionBubble = null);
+        });
+      }
+      return;
+    }
     _Furniture? nearest;
     var best = double.infinity;
     for (final f in _room.furniture) {
@@ -618,6 +661,73 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
       });
     }
   }
+
+  // ── v1.2 世界地图：家具点选 / 长按拖动（坐标已由地图换算为 房间id + 房间格坐标）──
+  void _onWorldFurnitureTap(String roomId, String key) {
+    if (_editMode) {
+      // 编辑态：点家具 → 进入「被编辑」（显示 回退/旋转/确定）
+      setState(() {
+        _editingKey = key;
+        _editingRoomId = roomId;
+        _selected = null;
+      });
+      return;
+    }
+    final f = _findFurniture(roomId, key);
+    if (f == null) return;
+    setState(() => _selected = key);
+    _showFurnitureDialog(f);
+  }
+
+  void _onWorldDragStart(String roomId, String key) {
+    setState(() {
+      _draggingKey = key;
+      _selected = null;
+    });
+  }
+
+  void _onWorldDragUpdate(String roomId, String key, double gx, double gy) {
+    setState(() => _updateFurniture(roomId, key, gx: gx, gy: gy));
+  }
+
+  void _onWorldDragEnd(String roomId, String key, double gx, double gy) {
+    setState(() => _draggingKey = null);
+    if (_editMode) return;  // 编辑态：不实时保存，点「完成」统一保存一次
+    _scheduleLayoutSave();
+  }
+
+  /// 全房间找家具（跨房间，供世界地图点选/旋转/回退定位）。
+  _Furniture? _findFurniture(String roomId, String key) {
+    for (final r in _rooms) {
+      if (r.id != roomId) continue;
+      for (final f in r.furniture) {
+        if (f.key == key) return f;
+      }
+    }
+    return null;
+  }
+
+  /// 把当前 _rooms 转为地图所需的 List<Map>（含实时家具坐标）。
+  List<Map<String, dynamic>> _roomsToMaps() => [
+        for (final r in _rooms)
+          {
+            'id': r.id,
+            'name': r.name,
+            'furniture': [
+              for (final f in r.furniture)
+                {
+                  'key': f.key,
+                  'name': f.name,
+                  'gx': f.gx,
+                  'gy': f.gy,
+                  'gw': f.gw,
+                  'gh': f.gh,
+                  'rotation': f.rotation,
+                  'action': f.action,
+                },
+            ],
+          },
+      ];
 
   // ── 居中弹窗 ──
   Future<void> _showFurnitureDialog(_Furniture f) async {
@@ -756,6 +866,7 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
       setState(() {
         _editMode = false;
         _editingKey = null;
+        _editingRoomId = null;
       });
       return;
     }
@@ -806,15 +917,55 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
                       Expanded(child: _roomView()),
                       _controlBar(),
                     ] else ...[
+                      // issue #2/#3/#4：world 模式不再显示四房间 tab；
+                      // 顶部换成一行工具栏（家具编辑 + 缩放），地图只占 Expanded 区域。
+                      _worldToolbar(),
                       Expanded(
-                        child: LifeHomeWorldMap(
-                          world: _state!['world'] as Map<String, dynamic>,
-                          l10n: l10n,
-                          roomNames: {
-                            for (final r in _rooms) r.id: r.name,
-                          },
+                        child: ClipRect(
+                          clipBehavior: Clip.hardEdge,
+                          child: Stack(
+                            children: [
+                              LifeHomeWorldMap(
+                                key: _worldKey,
+                                world: _state!['world'] as Map<String, dynamic>,
+                                l10n: l10n,
+                                roomNames: {
+                                  for (final r in _rooms) r.id: r.name,
+                                },
+                                rooms: _roomsToMaps(),
+                                images: _images,
+                                editingRoom: _editingRoomId,
+                                editingKey: _editingKey,
+                                selected: _selected,
+                                onFurnitureTap: _onWorldFurnitureTap,
+                                onFurnitureDragStart: _onWorldDragStart,
+                                onFurnitureDragUpdate: _onWorldDragUpdate,
+                                onFurnitureDragEnd: _onWorldDragEnd,
+                              ),
+                              // v1.2 编辑态顶部提示条 + 被编辑家具操作栏（与旧 _roomView 一致）
+                              if (_editMode)
+                                Positioned(
+                                  top: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: LifeHomeEditHintBar(onDone: _finishEdit),
+                                ),
+                              if (_editMode && _editingKey != null)
+                                Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  bottom: 0,
+                                  child: LifeHomeEditActionBar(
+                                    onRevert: _revertEditing,
+                                    onRotate: _rotateEditing,
+                                    onConfirm: _confirmEditing,
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
                       ),
+                      _controlBar(),
                     ],
                   ],
                 ),
@@ -889,12 +1040,25 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
     );
   }
 
+  /// issue #2/#3/#4：世界模式顶部工具栏（家具编辑 + 缩放），普通 Row，不遮上下栏。
+  Widget _worldToolbar() {
+    return LifeHomeWorldToolbar(
+      editing: _editMode,
+      onEditTap: _toggleEditMode,
+      // 缩放：宿主经 GlobalKey 调地图公开方法（地图内悬浮按钮已移除）
+      onZoomIn: () => _worldKey.currentState?.zoomIn(),
+      onZoomOut: () => _worldKey.currentState?.zoomOut(),
+      onResetView: () => _worldKey.currentState?.resetView(),
+    );
+  }
+
   void _switchRoom(String id) {
     setState(() {
       _currentRoom = id;
       _selected = null;
       _draggingKey = null;  // 拖动态中切房间：放弃当前拖动（不落位不保存）
       _editingKey = null;   // 编辑态切房间：退出被编辑（临时位置保留）
+      _editingRoomId = null;
     });
   }
 

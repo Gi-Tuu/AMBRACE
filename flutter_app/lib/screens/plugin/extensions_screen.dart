@@ -351,6 +351,10 @@ class _PluginCardState extends State<_PluginCard> {
         width: 36,
         height: 36,
         fit: BoxFit.cover,
+        // #65：插件图标走后端 plugin_page（HTTPBearer），裸加载会 401，必须带 Authorization 头。
+        // 缓存说明：Flutter 图片缓存 key 仅含 URL（不含 headers），而单机同一时刻只有一条登录态，
+        // 故带头加载成功后按 URL 缓存的是当前会话的授权图，不会串用户；若切换账号需 evict 该 URL。
+        headers: pluginAuthHeaders(ApiClient().token),
         errorBuilder: (_, __, ___) => fallback,
       ),
     );

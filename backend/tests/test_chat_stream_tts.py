@@ -292,7 +292,7 @@ def test_send_and_receive_stream_tts_llm_error_sends_reset_blocks(monkeypatch):
     monkeypatch.setattr(streaming, "async_session_factory", lambda: _FakeCtx())
 
     async def _run_core(session_id, user_id, character_id, content, lang, user_msg_id,
-                        stream_sink=None, tts=False, stream_tts_ctx=None):
+                        stream_sink=None, tts=False, stream_tts_ctx=None, reply_delay=False):
         # 实时已落库 2 个块（填充 tts_saved），随后 LLM 流式异常
         block_sink = stream_tts_ctx["block_sink"]
         await block_sink(0, "第一句。", "/uploads/tts/a.mp3")

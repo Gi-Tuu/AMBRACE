@@ -154,7 +154,7 @@ async def run_daily_memory_maintenance() -> dict:
             return {"enabled": False}
     except Exception:
         pass
-    out = {"summaries": 0, "dedup_removed": 0, "pinned_refreshed": 0}
+    out = {"summaries": 0, "dedup_removed": 0, "pinned_refreshed": 0, "preoccupations_decayed": 0}
     try:
         out["summaries"] = await generate_today_summaries()
     except Exception as e:
@@ -167,5 +167,15 @@ async def run_daily_memory_maintenance() -> dict:
         out["pinned_refreshed"] = await refresh_pinned_summaries()
     except Exception as e:
         _logger.warning("Pinned summary refresh failed: %s", e)
+    # #63 机制5：心事日衰减（flag 开才生效，失败静默）
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        if AGENT_FLAGS.get("preoccupation_enabled", False):
+            from app.life.preoccupations import decay_preoccupations
+            async with async_session_factory() as db:
+                out["preoccupations_decayed"] = await decay_preoccupations(db)
+                await db.commit()
+    except Exception as e:
+        _logger.warning("Preoccupation daily decay failed: %s", e)
     _logger.info("Daily memory maintenance done: %s", out)
     return out

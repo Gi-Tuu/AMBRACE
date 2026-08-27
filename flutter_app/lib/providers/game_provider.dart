@@ -9,6 +9,29 @@ import '../services/api_client.dart';
 class GameProvider extends ChangeNotifier {
   final ApiClient _api = ApiClient();
 
+  /// 目录 + 角色加载的「整体超时」兜底：后端异常/挂起时保证 loading 在有限时间内
+  /// 结束并给出可读错误，绝不让游戏机面板无限转圈无报错。
+  ///
+  /// 测试可通过 [loadCatalogAndCharacters] 的 [timeout] 参数传一个短超时来验证兜底逻辑。
+  static const Duration loadTimeout = Duration(seconds: 12);
+
+  /// 超时兜底的可读中文文案（provider 非 Widget，无法取 l10n；UI 会再包一层 l10n）。
+  static const String timeoutMessage = '加载超时，请检查网络后再试';
+
+  /// 可注入的「目录加载」函数（默认走真实 API；测试可传假实现模拟挂起/失败）。
+  late final Future<List<Map<String, dynamic>>> Function() _loadCatalog;
+
+  /// 可注入的「角色加载」函数（默认走真实 API；测试可传假实现模拟挂起/失败）。
+  late final Future<List<AICharacter>> Function() _loadCharacters;
+
+  GameProvider({
+    Future<List<Map<String, dynamic>>> Function()? loadCatalog,
+    Future<List<AICharacter>> Function()? loadCharacters,
+  }) {
+    _loadCatalog = loadCatalog ?? _api.getGameCatalog;
+    _loadCharacters = loadCharacters ?? _api.getCharacters;
+  }
+
   List<Map<String, dynamic>> _catalog = [];
   List<AICharacter> _characters = [];
   Map<String, dynamic>? _game; // 当前会话的 `state` 对象
@@ -46,17 +69,25 @@ class GameProvider extends ChangeNotifier {
   Map<String, dynamic>? get archive => _game?['archive'] as Map<String, dynamic>?;
 
   /// 加载游戏目录 + 候选 AI 角色。
-  Future<void> loadCatalogAndCharacters() async {
+  ///
+  /// - 目录与角色并发拉取（比原串行更快返回）；
+  /// - 整体加 [timeout]（默认 [loadTimeout]=12s）兜底：任一请求挂起/超时都必定抛错，
+  ///   从而保证 [loading] 一定会在有限时间内结束，避免无限转圈无报错；
+  /// - 失败时写可读的 [_error]，UI 据此展示错误与重试。
+  Future<void> loadCatalogAndCharacters({Duration? timeout}) async {
     _loading = true;
     _error = null;
     notifyListeners();
     try {
-      final catalog = await _api.getGameCatalog();
-      final chars = await _api.getCharacters();
-      _catalog = catalog;
-      _characters = chars;
+      final limit = timeout ?? loadTimeout;
+      final results = await Future.wait<Object?>([
+        _loadCatalog(),
+        _loadCharacters(),
+      ], eagerError: true).timeout(limit);
+      _catalog = (results[0] as List).cast<Map<String, dynamic>>();
+      _characters = (results[1] as List).cast<AICharacter>();
     } catch (e) {
-      _error = e.toString();
+      _error = e is TimeoutException ? timeoutMessage : e.toString();
     }
     _loading = false;
     notifyListeners();
