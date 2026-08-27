@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """小家大地图 v1.1 后端测试（life_home.py world 载荷，2026-08-26）。
 
-- flag life_home_worldmap_enabled=False（默认）：world=null（向后兼容旧独立房间视图）
-- flag 开：world 载荷含 room_origins/adjacency/exit/room_size/character，character.wx/wy 为
+- flag 默认开（2026-08-27 Life Loop 转全量基线）：world 载荷含 room_origins/adjacency/exit/room_size/character，character.wx/wy 为
   origin + 房间中心；current_room 读 st.current_room；新增 location
+- 向后兼容测试显式置 False：world=null（旧独立房间视图）
 - 角色房间变更（如卧室）→ wx/wy 随 origin 变化；location="world" 时 character.location 透传
 """
 import asyncio
@@ -67,7 +67,8 @@ def _seed_state(factory, **fields):
 
 # ---------------- world=null（默认，向后兼容） ----------------
 
-def test_world_default_null(home_db):
+def test_world_default_null(home_db, monkeypatch):
+    monkeypatch.setitem(AGENT_FLAGS, "life_home_worldmap_enabled", False)
     client = _make_client(OWNER)
     data = client.get("/api/v1/life-home/state").json()
     assert data["world"] is None
@@ -75,8 +76,9 @@ def test_world_default_null(home_db):
     assert data["location"] == "home"
 
 
-def test_world_off_flag_null_even_with_room(home_db):
+def test_world_off_flag_null_even_with_room(home_db, monkeypatch):
     """flag 关时即使角色在卧室，world 仍为 null（旧视图）；current_room 透传真实值。"""
+    monkeypatch.setitem(AGENT_FLAGS, "life_home_worldmap_enabled", False)
     _seed_state(home_db, current_room="bedroom", location="home")
     client = _make_client(OWNER)
     data = client.get("/api/v1/life-home/state").json()
