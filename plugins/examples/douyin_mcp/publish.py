@@ -301,6 +301,12 @@ def _sync_publish_video(video_path: str, title: str, desc: str,
         _close_draft_modal(page)
 
         # 1. 上传视频
+        # 路径规范化（#67 P2 修复）：video_path 可能是 /uploads/... 相对 URL，需解析为文件系统绝对路径
+        if not os.path.isfile(video_path):
+            _resolved = _resolve_upload_path(video_path)
+            if _resolved is None:
+                return {"ok": False, "message": f"视频文件不存在: {video_path}"}
+            video_path = str(_resolved)
         if not os.path.isfile(video_path):
             return {"ok": False, "message": f"视频文件不存在: {video_path}"}
         try:
@@ -391,14 +397,8 @@ def _ffmpeg_available() -> bool:
 # TODO（P3）：本机无 ffmpeg 时不可用；图片+音乐合成竖版视频能力待硬件到位后启用。
 # 参考实现（Ken Burns 缩放/平移 + 9:16 裁剪 + BGM）：
 #   ffmpeg -loop 1 -i img.png -f lavfi -i color=c=black:s=1080x1920:r=30 ... -filter_complex zoompan ...
-_FFMPEG_VIDEO_TEMPLATE = (
-    'ffmpeg -y -loop 1 -i "{img}" -i "{music}" '
-    '-filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,'
-    'crop=1080:1920,zoompan=z=1.1:d={dur}:x=0:y=0,format=yuv420p[v]" '
-    '-map "[v]" -map 1:a -t {dur} -r 30 "{out}"'
-)
-
-
+# P1 修复：原实现用 f-string + shell=True 拼接命令（文件名含 shell 元字符可注入），
+# 改为参数列表 + shell=False。
 def _images_to_video(images: list[str], music_path: str, output_path: str,
                      duration_per_image: float = 3.0) -> bool:
     """用 FFmpeg 把多张图+BGM 合成 9:16 竖版视频（Ken Burns 缩放）。
@@ -411,11 +411,15 @@ def _images_to_video(images: list[str], music_path: str, output_path: str,
         return False
     # 简化实现：首图 + 音乐合成一段（多图轮播/zoompan 高级效果为 TODO 增强，保持可用优先）
     total_dur = max(1.0, duration_per_image * max(1, len(images)))
+    filter_complex = (
+        "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+        "crop=1080:1920,zoompan=z=1.1:d={dur}:x=0:y=0,format=yuv420p[v]"
+    ).format(dur=int(total_dur))
+    cmd = ["ffmpeg", "-y", "-loop", "1", "-i", images[0], "-i", music_path,
+           "-filter_complex", filter_complex,
+           "-map", "[v]", "-map", "1:a", "-t", str(int(total_dur)), "-r", "30", output_path]
     try:
-        cmd = _FFMPEG_VIDEO_TEMPLATE.format(
-            img=images[0], music=music_path, dur=int(total_dur), out=output_path,
-        )
-        r = subprocess.run(cmd, shell=True, capture_output=True, timeout=180)
+        r = subprocess.run(cmd, shell=False, capture_output=True, timeout=180)
         return r.returncode == 0 and os.path.isfile(output_path)
     except Exception:
         return False

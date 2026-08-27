@@ -7,9 +7,10 @@ P0/P3 核心：评论回复从「纯 DOM 操作」升级为「双轨制 —— �
 > ⚠️ 抓包确认（方案第六节）：评论内部 API 的 URL/参数需登录态 + 人工 DevTools 抓包确认。
 > dsh 无法实测，故把 URL/参数做成可配置常量 + 清晰 TODO 注释；「page.evaluate fetch 优先，
 > 失败回退 DOM」的双轨代码先落地，抓包后只需核对/调整常量。实施后【未实测】。
+> 当前实际生效：仅 DOM 模式（内部 API 未实测）。
 
 对外暴露：``_sync_reply_comment_v2``（主入口）/ ``_sync_reply_comment_dom``（兜底）/
-``_JS_REPLY_COMMENT`` / ``_JS_FETCH_COMMENTS`` / ``_find_comment_items``。
+``_JS_REPLY_COMMENT`` / ``_JS_FETCH_COMMENTS``。
 """
 from __future__ import annotations
 
@@ -104,32 +105,6 @@ async def _get_cached_comment_ids(post_key: str, commenter: str) -> tuple[str, s
     except Exception:
         pass
     return "", ""
-
-
-def _find_comment_items(page) -> list:
-    """DOM 兜底：优先用文本+结构定位评论项，class 前缀只作兜底（CSS hash 易变）。
-
-    多策略：
-    1. 找包含「回复」按钮的容器（作者评论除外）；
-    2. 退化为 class 前缀 `[class^="cmt-li-"]`。
-    """
-    try:
-        items = page.evaluate(
-            """() => {
-                const all = Array.from(document.querySelectorAll('[class^="cmt-li-"], [class*="comment"], [class*="comment-item"]'));
-                const out = [];
-                for (const li of all) {
-                    const txt = (li.innerText || '').trim();
-                    if (!txt) continue;
-                    if (/作者/.test(txt) && !/回复/.test(txt)) continue;
-                    out.push(li);
-                }
-                return out.length;
-            }"""
-        )
-        return items or []
-    except Exception:
-        return []
 
 
 def _sync_reply_comment_dom(page, post_title: str, commenter: str, reply_text: str) -> dict:

@@ -43,13 +43,9 @@ const Map<String, Map<String, String>> kImagePresets = {
   '硅基流动 Kolors': {'provider': 'openai', 'base_url': 'https://api.siliconflow.cn/v1', 'model': 'Kwai-Kolors/Kolors'},
 };
 
-const Map<String, Map<String, String>> kMultimodalPresets = {
-  '阿里百炼 Qwen-VL-Max': {'provider': 'dashscope', 'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'model': 'qwen-vl-max'},
-  'OpenAI GPT-4o': {'provider': 'openai', 'base_url': 'https://api.openai.com/v1', 'model': 'gpt-4o'},
-  '智谱 GLM-4V': {'provider': 'zhipu', 'base_url': 'https://open.bigmodel.cn/api/paas/v4', 'model': 'glm-4v-flash'},
-};
-
-/// API 配置页：用户级 BYOK（我的 LLM）+ 服务器级 LLM / 语音 / 识图 / 生图 / 全模态（仅主账号）
+/// API 配置页：#68 P1 改 Tab（LLM / 语音 / 识图 / 生图 / 任务）。
+/// LLM Tab = 服务器级 LLM（仅主账号）+ 我的 LLM 列表（新建/编辑/删除/测试/设默认/共享开关）+ 主账号共享（子账号只读）+ 用量入口。
+/// 全模态 Tab 已移除（后端 multimodal 接口保留不删）。
 class ApiConfigScreen extends StatefulWidget {
   const ApiConfigScreen({super.key});
 
@@ -61,13 +57,8 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
   bool _loading = true;
   bool _isAdmin = false;
 
-  // 我的 LLM（BYOK）
-  bool _myEnabled = false;
-  bool _myHasKey = false;
-  final _myBaseUrl = TextEditingController();
-  final _myApiKey = TextEditingController();
-  final _myModel = TextEditingController();
-  final _myProvider = TextEditingController();
+  // ── 我的 LLM（多配置列表）──
+  List<Map<String, dynamic>> _llmConfigs = [];
 
   // 服务器级 LLM
   bool _srvEnabled = false;
@@ -101,14 +92,6 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
   final _imgModel = TextEditingController();
   final _imgDailyLimit = TextEditingController();
 
-  // 服务器级全模态大模型
-  bool _mmEnabled = false;
-  bool _mmHasKey = false;
-  final _mmProvider = TextEditingController();
-  final _mmBaseUrl = TextEditingController();
-  final _mmApiKey = TextEditingController();
-  final _mmModel = TextEditingController();
-
   // 任务专用模型（按用途指定；服务器级，仅主账号）
   List<Map<String, dynamic>> _taskList = [];
   String _task = 'memory';
@@ -128,13 +111,11 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
 
   @override
   void dispose() {
-    _myBaseUrl.dispose(); _myApiKey.dispose(); _myModel.dispose(); _myProvider.dispose();
     _srvBaseUrl.dispose(); _srvApiKey.dispose(); _srvModel.dispose(); _srvProvider.dispose();
     _spProvider.dispose(); _spBaseUrl.dispose(); _spApiKey.dispose(); _spModel.dispose();
     _vlmBaseUrl.dispose(); _vlmApiKey.dispose(); _vlmModel.dispose();
     _imgProvider.dispose(); _imgBaseUrl.dispose(); _imgApiKey.dispose();
     _imgModel.dispose(); _imgDailyLimit.dispose();
-    _mmProvider.dispose(); _mmBaseUrl.dispose(); _mmApiKey.dispose(); _mmModel.dispose();
     _taskProvider.dispose(); _taskBaseUrl.dispose(); _taskApiKey.dispose(); _taskModel.dispose();
     super.dispose();
   }
@@ -144,15 +125,8 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
     setState(() => _loading = true);
     try {
       final api = ApiClient();
-      final my = await api.getApiConfig();
-      if (!mounted) return;
-      setState(() {
-        _myEnabled = my['enabled'] as bool? ?? false;
-        _myHasKey = my['has_api_key'] as bool? ?? false;
-        _myBaseUrl.text = my['base_url'] as String? ?? '';
-        _myModel.text = my['model'] as String? ?? '';
-        _myProvider.text = my['provider'] as String? ?? '';
-      });
+      // 我的 LLM 列表
+      await _loadLlmConfigs(api);
       if (_isAdmin) {
         final srv = await api.getServerApiConfig();
       if (!mounted) return;
@@ -190,15 +164,6 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
           _imgModel.text = img['model'] as String? ?? '';
           _imgDailyLimit.text = (img['daily_limit'] as num? ?? 10).toString();
         });
-        final mm = await api.getMultimodalServerConfig();
-      if (!mounted) return;
-        setState(() {
-          _mmEnabled = mm['enabled'] as bool? ?? false;
-          _mmHasKey = mm['has_api_key'] as bool? ?? false;
-          _mmProvider.text = mm['provider'] as String? ?? '';
-          _mmBaseUrl.text = mm['base_url'] as String? ?? '';
-          _mmModel.text = mm['model'] as String? ?? '';
-        });
         final taskList = await api.getTaskLlmCatalog();
       if (!mounted) return;
         setState(() {
@@ -218,13 +183,14 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
     }
   }
 
-  Map<String, dynamic> _myBody() => {
-        'enabled': _myEnabled,
-        'base_url': _myBaseUrl.text.trim(),
-        'model': _myModel.text.trim(),
-        'provider': _myProvider.text.trim(),
-        if (_myApiKey.text.trim().isNotEmpty) 'api_key': _myApiKey.text.trim(),
-      };
+  Future<void> _loadLlmConfigs([ApiClient? api]) async {
+    try {
+      final list = await (api ?? ApiClient()).listLlmConfigs();
+      if (mounted) setState(() => _llmConfigs = list);
+    } catch (_) {
+      if (mounted) setState(() => _llmConfigs = []);
+    }
+  }
 
   Map<String, dynamic> _srvBody() => {
         'enabled': _srvEnabled,
@@ -256,14 +222,6 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
         'model': _imgModel.text.trim(),
         'daily_limit': int.tryParse(_imgDailyLimit.text.trim()) ?? 10,
         if (_imgApiKey.text.trim().isNotEmpty) 'api_key': _imgApiKey.text.trim(),
-      };
-
-  Map<String, dynamic> _mmBody() => {
-        'enabled': _mmEnabled,
-        'provider': _mmProvider.text.trim(),
-        'base_url': _mmBaseUrl.text.trim(),
-        'model': _mmModel.text.trim(),
-        if (_mmApiKey.text.trim().isNotEmpty) 'api_key': _mmApiKey.text.trim(),
       };
 
   Future<void> _loadTaskConfig() async {
@@ -311,7 +269,6 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
   }
 
   Widget _outlineButton(String text, VoidCallback onPressed) {
-
     return Padding(
       padding: const EdgeInsets.only(top: 10),
       child: SizedBox(
@@ -376,7 +333,6 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
   }
 
   Widget _section(String title, String subtitle, List<Widget> children) {
-
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Padding(
@@ -453,7 +409,6 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
   }
 
   Widget _saveButton(String text, Future<Map<String, dynamic>> Function() action) {
-
     return Padding(
       padding: const EdgeInsets.only(top: 10),
       child: SizedBox(
@@ -474,211 +429,745 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
+  // ── 我的 LLM 列表（P0/P1）──
+
+  Future<void> _openLlmConfigForm([Map<String, dynamic>? existing]) async {
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      isScrollControlled: true,
+      builder: (_) => _LlmConfigFormSheet(
+        existing: existing,
+        onTest: _testConnection,
+        onSaved: (created) async {
+          await _loadLlmConfigs();
+        },
+      ),
+    );
+    if (saved == true) await _loadLlmConfigs();
+  }
+
+  Future<void> _deleteLlmConfig(Map<String, dynamic> c) async {
     final l10n = AppLocalizations.of(context)!;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(l10n.apiConfig),
+    final id = c['id'] as int;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.delete),
+        content: Text(l10n.deleteFriendConfirm(c['name']?.toString() ?? '')),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.insights_outlined),
-            tooltip: l10n.usageStats,
-            onPressed: _openUsage,
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l10n.cancel)),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: Text(l10n.delete),
           ),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
+    );
+    if (confirm != true || !mounted) return;
+    try {
+      await ApiClient().deleteLlmConfig(id);
+      await _loadLlmConfigs();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.saveSuccessEnabled(true))));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.saveFailedErr(e))));
+      }
+    }
+  }
+
+  Future<void> _setDefaultLlmConfig(Map<String, dynamic> c) async {
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      await ApiClient().setLlmConfigDefault(c['id'] as int);
+      await _loadLlmConfigs();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.saveSuccessEnabled(true))));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.saveFailedErr(e))));
+      }
+    }
+  }
+
+  Future<void> _toggleLlmShare(Map<String, dynamic> c, bool val) async {
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      await ApiClient().setLlmConfigShare(c['id'] as int, val);
+      await _loadLlmConfigs();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.saveFailedErr(e))));
+      }
+    }
+  }
+
+  Future<void> _testLlmConfig(Map<String, dynamic> c) async {
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      final r = await ApiClient().testLlmConfig(c['id'] as int);
+      if (!mounted) return;
+      final ok = r['ok'] == true;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(ok
+            ? l10n.connSuccess(r['latency_ms'], r['model'], r['api_key_tail'])
+            : l10n.connFailed(r['error'] ?? l10n.unknown)),
+        backgroundColor: ok ? null : Theme.of(context).colorScheme.error,
+      ));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.testRequestFailed(e))));
+      }
+    }
+  }
+
+  // ── LLM Tab 构建 ──
+  Widget _buildLlmTab() {
+    final l10n = AppLocalizations.of(context)!;
+    final own = _llmConfigs.where((c) => c['is_shared'] != true).toList();
+    final shared = _llmConfigs.where((c) => c['is_shared'] == true).toList();
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: [
+        if (_isAdmin) ...[
+          _section(
+            l10n.srvLlm,
+            l10n.srvLlmHint,
+            [
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(l10n.enable),
+                subtitle: Text(_srvHasKey ? l10n.apiKeyConfigured : l10n.apiKeyNotConfiguredShort),
+                value: _srvEnabled,
+                onChanged: (v) => setState(() => _srvEnabled = v),
+              ),
+              _presetDropdown(l10n.llmPresets, kLlmPresets, (p) {
+                setState(() {
+                  _srvBaseUrl.text = p['base_url'] ?? '';
+                  _srvModel.text = p['model'] ?? '';
+                  _srvProvider.text = p['provider'] ?? '';
+                });
+              }),
+              _field(_srvBaseUrl, 'Base URL', enabled: _srvEnabled),
+              _field(_srvModel, l10n.model, enabled: _srvEnabled),
+              _field(_srvProvider, l10n.provider, hint: 'deepseek / dashscope / openai / zhipu / kimi / siliconflow', enabled: _srvEnabled),
+              _field(_srvApiKey, l10n.apiKeyKeep, obscure: true, enabled: _srvEnabled,
+                  hint: l10n.apiKeyRotateHint),
+              Row(children: [
+                Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_srvBody()))),
+                const SizedBox(width: 8),
+                Expanded(child: _saveButton(l10n.saveSrvLlm, () => ApiClient().updateServerApiConfig(_srvBody()))),
+              ]),
+            ],
+          ),
+        ] else
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              l10n.srvAdminOnly,
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          ),
+        // 我的 LLM
+        _section(
+          l10n.myLlm,
+          l10n.myLlmHint,
+          [
+            if (own.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Text(l10n.emptyLlmConfigs,
+                    style: TextStyle(color: IosCardColors.subtitle)),
+              )
+            else
+              ...own.map((c) => _llmConfigCard(c)),
+            _saveButton(l10n.newLlmConfig, () async {
+              await _openLlmConfigForm();
+              return {'enabled': false};
+            }),
+          ],
+        ),
+        // 主账号共享（子账号只读）
+        if (shared.isNotEmpty)
+          _section(l10n.sharedConfigList, l10n.llmSharedReadonly,
+              shared.map((c) => _sharedConfigCard(c)).toList()),
+        const SizedBox(height: 8),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: TextButton.icon(
+            onPressed: _openUsage,
+            icon: const Icon(Icons.insights_outlined),
+            label: Text(l10n.usageStats),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _llmConfigCard(Map<String, dynamic> c) {
+    final l10n = AppLocalizations.of(context)!;
+    final badges = <Widget>[
+      if (c['is_default'] == true)
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(l10n.defaultBadge,
+              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.primary)),
+        ),
+      if (c['shared_with_subs'] == true)
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: const Color(0xFFE8F0FE),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(l10n.sharedBadge, style: const TextStyle(fontSize: 11, color: Color(0xFF1967D2))),
+        ),
+    ];
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                _section(
-                  l10n.myLlm,
-                  l10n.myLlmHint,
-                  [
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(l10n.enable),
-                      subtitle: Text(_myHasKey ? l10n.apiKeyConfigured : l10n.apiKeyNotConfigured),
-                      value: _myEnabled,
-                      onChanged: (v) => setState(() => _myEnabled = v),
-                    ),
-                    _field(_myBaseUrl, 'Base URL', hint: 'https://api.deepseek.com/v1'),
-                    _field(_myModel, l10n.model, hint: 'deepseek-chat'),
-                    _field(_myProvider, l10n.provider, hint: 'deepseek / dashscope / openai / zhipu / kimi / siliconflow'),
-                    _field(_myApiKey, l10n.apiKeyKeep, obscure: true,
-                        hint: _myHasKey ? l10n.apiKeyHintReplace : 'sk-...'),
-                    Row(children: [
-                      Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_myBody()))),
-                      const SizedBox(width: 8),
-                      Expanded(child: _saveButton(l10n.saveMyConfig, () => ApiClient().updateApiConfig(_myBody()))),
-                    ]),
-                  ],
+                Expanded(
+                  child: Text(c['name']?.toString() ?? '',
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 ),
-                if (_isAdmin) ...[
-                  _section(
-                    l10n.srvLlm,
-                    l10n.srvLlmHint,
-                    [
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(l10n.enable),
-                        subtitle: Text(_srvHasKey ? l10n.apiKeyConfigured : l10n.apiKeyNotConfiguredShort),
-                        value: _srvEnabled,
-                        onChanged: (v) => setState(() => _srvEnabled = v),
-                      ),
-                      _presetDropdown(l10n.llmPresets, kLlmPresets, (p) {
-                        setState(() {
-                          _srvBaseUrl.text = p['base_url'] ?? '';
-                          _srvModel.text = p['model'] ?? '';
-                          _srvProvider.text = p['provider'] ?? '';
-                        });
-                      }),
-                      _field(_srvBaseUrl, 'Base URL', enabled: _srvEnabled),
-                      _field(_srvModel, l10n.model, enabled: _srvEnabled),
-                      _field(_srvProvider, l10n.provider, hint: 'deepseek / dashscope / openai / zhipu / kimi / siliconflow', enabled: _srvEnabled),
-                      _field(_srvApiKey, l10n.apiKeyKeep, obscure: true, enabled: _srvEnabled,
-                          hint: l10n.apiKeyRotateHint),
-                      Row(children: [
-                        Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_srvBody()))),
-                        const SizedBox(width: 8),
-                        Expanded(child: _saveButton(l10n.saveSrvLlm, () => ApiClient().updateServerApiConfig(_srvBody()))),
-                      ]),
-                    ],
-                  ),
-                  _section(
-                    l10n.srvSpeech,
-                    l10n.srvSpeechHint,
-                    [
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(l10n.enable),
-                        subtitle: Text(_spHasKey ? l10n.apiKeyConfigured : l10n.apiKeyNotConfiguredShort),
-                        value: _spEnabled,
-                        onChanged: (v) => setState(() => _spEnabled = v),
-                      ),
-                      _presetDropdown(l10n.speechPresets, kSpeechPresets, (p) {
-                        setState(() {
-                          _spProvider.text = p['provider'] ?? '';
-                          _spBaseUrl.text = p['base_url'] ?? '';
-                          _spModel.text = p['model'] ?? '';
-                        });
-                      }),
-                      _field(_spProvider, 'Provider', hint: l10n.providerLocalHint, enabled: _spEnabled),
-                      _field(_spBaseUrl, 'Base URL', hint: 'https://api.openai.com/v1', enabled: _spEnabled),
-                      _field(_spModel, l10n.model, hint: 'whisper-1 / paraformer-realtime-v2', enabled: _spEnabled),
-                      _field(_spApiKey, l10n.apiKeyKeep, obscure: true, enabled: _spEnabled),
-                      _saveButton(l10n.saveSrvSpeech, () => ApiClient().updateSpeechServerConfig(_spBody())),
-                    ],
-                  ),
-                  _section(
-                    l10n.srvVlm,
-                    l10n.srvVlmHint,
-                    [
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(l10n.enable),
-                        subtitle: Text(_vlmHasKey ? l10n.apiKeyConfigured : l10n.apiKeyNotConfiguredShort),
-                        value: _vlmEnabled,
-                        onChanged: (v) => setState(() => _vlmEnabled = v),
-                      ),
-                      _presetDropdown(l10n.vlmPresets, kVlmPresets, (p) {
-                        setState(() {
-                          _vlmBaseUrl.text = p['base_url'] ?? '';
-                          _vlmModel.text = p['model'] ?? '';
-                        });
-                      }),
-                      _field(_vlmBaseUrl, 'Base URL', hint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', enabled: _vlmEnabled),
-                      _field(_vlmModel, l10n.model, hint: 'qwen-vl-plus / qwen2.5-vl-72b-instruct', enabled: _vlmEnabled),
-                      _field(_vlmApiKey, l10n.apiKeyKeep, obscure: true, enabled: _vlmEnabled),
-                      _saveButton(l10n.saveSrvVlm, () => ApiClient().updateVlmServerConfig(_vlmBody())),
-                    ],
-                  ),
-                  _section(
-                    l10n.srvImageGen,
-                    l10n.srvImageGenHint,
-                    [
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(l10n.enable),
-                        subtitle: Text(_imgHasKey ? l10n.apiKeyConfigured : l10n.apiKeyNotConfiguredShort),
-                        value: _imgEnabled,
-                        onChanged: (v) => setState(() => _imgEnabled = v),
-                      ),
-                      _presetDropdown(l10n.imagePresets, kImagePresets, (p) {
-                        setState(() {
-                          _imgProvider.text = p['provider'] ?? '';
-                          _imgBaseUrl.text = p['base_url'] ?? '';
-                          _imgModel.text = p['model'] ?? '';
-                        });
-                      }),
-                      _field(_imgProvider, 'Provider', hint: 'dashscope / openai', enabled: _imgEnabled),
-                      _field(_imgBaseUrl, 'Base URL', enabled: _imgEnabled),
-                      _field(_imgModel, l10n.model, hint: 'qwen-image-3.0', enabled: _imgEnabled),
-                      _field(_imgApiKey, l10n.apiKeyKeep, obscure: true, enabled: _imgEnabled),
-                      _field(_imgDailyLimit, l10n.dailyLimit, enabled: _imgEnabled),
-                      _saveButton(l10n.saveSrvImageGen, () => ApiClient().updateImageGenServerConfig(_imgBody())),
-                    ],
-                  ),
-                  _section(
-                    l10n.srvMultimodal,
-                    l10n.srvMultimodalHint,
-                    [
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(l10n.enable),
-                        subtitle: Text(_mmHasKey ? l10n.apiKeyConfigured : l10n.apiKeyNotConfiguredShort),
-                        value: _mmEnabled,
-                        onChanged: (v) => setState(() => _mmEnabled = v),
-                      ),
-                      _presetDropdown(l10n.multimodalPresets, kMultimodalPresets, (p) {
-                        setState(() {
-                          _mmProvider.text = p['provider'] ?? '';
-                          _mmBaseUrl.text = p['base_url'] ?? '';
-                          _mmModel.text = p['model'] ?? '';
-                        });
-                      }),
-                      _field(_mmProvider, 'Provider', hint: 'dashscope / openai / zhipu', enabled: _mmEnabled),
-                      _field(_mmBaseUrl, 'Base URL', enabled: _mmEnabled),
-                      _field(_mmModel, l10n.model, hint: 'qwen-vl-max / gpt-4o / glm-4v-flash', enabled: _mmEnabled),
-                      _field(_mmApiKey, l10n.apiKeyKeep, obscure: true, enabled: _mmEnabled),
-                      _saveButton(l10n.saveSrvMultimodal, () => ApiClient().updateMultimodalServerConfig(_mmBody())),
-                    ],
-                  ),
-                  _section(
-                    l10n.srvTask,
-                    l10n.srvTaskHint,
-                    [
-                      _taskDropdown(),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(l10n.enable),
-                        subtitle: Text(_taskHasKey ? l10n.apiKeyConfigured : l10n.apiKeyNotConfiguredShort),
-                        value: _taskEnabled,
-                        onChanged: (v) => setState(() => _taskEnabled = v),
-                      ),
-                      _field(_taskProvider, l10n.provider, hint: 'deepseek / dashscope / openai / zhipu / kimi / siliconflow', enabled: _taskEnabled),
-                      _field(_taskBaseUrl, 'Base URL', enabled: _taskEnabled),
-                      _field(_taskModel, l10n.model, enabled: _taskEnabled),
-                      _field(_taskApiKey, l10n.apiKeyKeep, obscure: true, enabled: _taskEnabled),
-                      Row(children: [
-                        Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_taskBody()))),
-                        const SizedBox(width: 8),
-                        Expanded(child: _saveButton(l10n.saveTaskConfig, () => ApiClient().updateServerTaskApiConfig(_task, _taskBody()))),
-                      ]),
-                    ],
-                  ),
-                ] else
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(
-                      l10n.srvAdminOnly,
-                      style: TextStyle(color: Colors.grey[600]),
-                    ),
-                  ),
-                const SizedBox(height: 20),
+                ...badges.map((b) => Padding(padding: const EdgeInsets.only(left: 6), child: b)),
               ],
             ),
+            const SizedBox(height: 4),
+            Text(
+              [c['provider'], c['model']].whereType<String>().where((s) => s.isNotEmpty).join(' · '),
+              style: TextStyle(fontSize: 12, color: IosCardColors.subtitle),
+            ),
+            const Divider(height: 16),
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: () => _testLlmConfig(c),
+                  icon: const Icon(Icons.wifi_tethering, size: 16),
+                  label: Text(l10n.testConnection),
+                ),
+                TextButton.icon(
+                  onPressed: () => _openLlmConfigForm(c),
+                  icon: const Icon(Icons.edit_outlined, size: 16),
+                  label: Text(l10n.editLlmConfig),
+                ),
+                TextButton.icon(
+                  onPressed: () => _setDefaultLlmConfig(c),
+                  icon: const Icon(Icons.star_outline, size: 16),
+                  label: Text(l10n.setDefault),
+                ),
+                const Spacer(),
+                IconButton(
+                  tooltip: l10n.delete,
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  onPressed: () => _deleteLlmConfig(c),
+                ),
+              ],
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: Text(l10n.sharedWithSubs, style: const TextStyle(fontSize: 12)),
+              value: c['shared_with_subs'] == true,
+              onChanged: (v) => _toggleLlmShare(c, v),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sharedConfigCard(Map<String, dynamic> c) {
+    final l10n = AppLocalizations.of(context)!;
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(c['name']?.toString() ?? '',
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE8F0FE),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(l10n.sharedBadge, style: const TextStyle(fontSize: 11, color: Color(0xFF1967D2))),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              [c['provider'], c['model']].whereType<String>().where((s) => s.isNotEmpty).join(' · '),
+              style: TextStyle(fontSize: 12, color: IosCardColors.subtitle),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(Icons.lock_outline, size: 12, color: IosCardColors.subtitle),
+                const SizedBox(width: 4),
+                Text(c['has_api_key'] == true ? l10n.apiKeyConfigured : l10n.apiKeyNotConfiguredShort,
+                    style: TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return DefaultTabController(
+      length: 5,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(l10n.apiConfig),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.insights_outlined),
+              tooltip: l10n.usageStats,
+              onPressed: _openUsage,
+            ),
+          ],
+          bottom: _loading
+              ? null
+              : TabBar(
+                  isScrollable: true,
+                  tabs: [
+                    Tab(text: l10n.apiTabLlm),
+                    Tab(text: l10n.apiTabSpeech),
+                    Tab(text: l10n.apiTabVision),
+                    Tab(text: l10n.apiTabImage),
+                    Tab(text: l10n.apiTabTask),
+                  ],
+                ),
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : TabBarView(
+                children: [
+                  _buildLlmTab(),
+                  _buildSpeechTab(),
+                  _buildVlmTab(),
+                  _buildImageTab(),
+                  _buildTaskTab(),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _buildSpeechTab() {
+    final l10n = AppLocalizations.of(context)!;
+    if (!_isAdmin) {
+      return ListView(children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(l10n.srvAdminOnly, style: TextStyle(color: Colors.grey[600])),
+        ),
+      ]);
+    }
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: [
+        _section(
+          l10n.srvSpeech,
+          l10n.srvSpeechHint,
+          [
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(l10n.enable),
+              subtitle: Text(_spHasKey ? l10n.apiKeyConfigured : l10n.apiKeyNotConfiguredShort),
+              value: _spEnabled,
+              onChanged: (v) => setState(() => _spEnabled = v),
+            ),
+            _presetDropdown(l10n.speechPresets, kSpeechPresets, (p) {
+              setState(() {
+                _spProvider.text = p['provider'] ?? '';
+                _spBaseUrl.text = p['base_url'] ?? '';
+                _spModel.text = p['model'] ?? '';
+              });
+            }),
+            _field(_spProvider, 'Provider', enabled: _spEnabled),
+            _field(_spBaseUrl, 'Base URL', enabled: _spEnabled),
+            _field(_spModel, l10n.model, enabled: _spEnabled),
+            _field(_spApiKey, l10n.apiKeyKeep, obscure: true, enabled: _spEnabled),
+            Row(children: [
+              Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_spBody()))),
+              const SizedBox(width: 8),
+              Expanded(child: _saveButton(l10n.save, () => ApiClient().updateSpeechServerConfig(_spBody()))),
+            ]),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVlmTab() {
+    final l10n = AppLocalizations.of(context)!;
+    if (!_isAdmin) {
+      return ListView(children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(l10n.srvAdminOnly, style: TextStyle(color: Colors.grey[600])),
+        ),
+      ]);
+    }
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: [
+        _section(
+          l10n.srvVlm,
+          l10n.srvVlmHint,
+          [
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(l10n.enable),
+              subtitle: Text(_vlmHasKey ? l10n.apiKeyConfigured : l10n.apiKeyNotConfiguredShort),
+              value: _vlmEnabled,
+              onChanged: (v) => setState(() => _vlmEnabled = v),
+            ),
+            _presetDropdown(l10n.vlmPresets, kVlmPresets, (p) {
+              setState(() {
+                _vlmBaseUrl.text = p['base_url'] ?? '';
+                _vlmModel.text = p['model'] ?? '';
+              });
+            }),
+            _field(_vlmBaseUrl, 'Base URL', enabled: _vlmEnabled),
+            _field(_vlmModel, l10n.model, enabled: _vlmEnabled),
+            _field(_vlmApiKey, l10n.apiKeyKeep, obscure: true, enabled: _vlmEnabled),
+            Row(children: [
+              Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_vlmBody()))),
+              const SizedBox(width: 8),
+              Expanded(child: _saveButton(l10n.save, () => ApiClient().updateVlmServerConfig(_vlmBody()))),
+            ]),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildImageTab() {
+    final l10n = AppLocalizations.of(context)!;
+    if (!_isAdmin) {
+      return ListView(children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(l10n.srvAdminOnly, style: TextStyle(color: Colors.grey[600])),
+        ),
+      ]);
+    }
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: [
+        _section(
+          l10n.srvImageGen,
+          l10n.srvImageGenHint,
+          [
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(l10n.enable),
+              subtitle: Text(_imgHasKey ? l10n.apiKeyConfigured : l10n.apiKeyNotConfiguredShort),
+              value: _imgEnabled,
+              onChanged: (v) => setState(() => _imgEnabled = v),
+            ),
+            _presetDropdown(l10n.imagePresets, kImagePresets, (p) {
+              setState(() {
+                _imgProvider.text = p['provider'] ?? '';
+                _imgBaseUrl.text = p['base_url'] ?? '';
+                _imgModel.text = p['model'] ?? '';
+              });
+            }),
+            _field(_imgProvider, 'Provider', enabled: _imgEnabled),
+            _field(_imgBaseUrl, 'Base URL', enabled: _imgEnabled),
+            _field(_imgModel, l10n.model, enabled: _imgEnabled),
+            _field(_imgApiKey, l10n.apiKeyKeep, obscure: true, enabled: _imgEnabled),
+            _field(_imgDailyLimit, l10n.dailyLimit, enabled: _imgEnabled),
+            Row(children: [
+              Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_imgBody()))),
+              const SizedBox(width: 8),
+              Expanded(child: _saveButton(l10n.save, () => ApiClient().updateImageGenServerConfig(_imgBody()))),
+            ]),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTaskTab() {
+    final l10n = AppLocalizations.of(context)!;
+    if (!_isAdmin) {
+      return ListView(children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(l10n.srvAdminOnly, style: TextStyle(color: Colors.grey[600])),
+        ),
+      ]);
+    }
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: [
+        _section(
+          l10n.srvTask,
+          l10n.srvTaskHint,
+          [
+            _taskDropdown(),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(l10n.enable),
+              subtitle: Text(_taskHasKey ? l10n.apiKeyConfigured : l10n.apiKeyNotConfiguredShort),
+              value: _taskEnabled,
+              onChanged: (v) => setState(() => _taskEnabled = v),
+            ),
+            _field(_taskProvider, l10n.provider, enabled: _taskEnabled),
+            _field(_taskBaseUrl, 'Base URL', enabled: _taskEnabled),
+            _field(_taskModel, l10n.model, enabled: _taskEnabled),
+            _field(_taskApiKey, l10n.apiKeyKeep, obscure: true, enabled: _taskEnabled),
+            Row(children: [
+              Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_taskBody()))),
+              const SizedBox(width: 8),
+              Expanded(child: _saveButton(l10n.save, () => ApiClient().updateServerTaskApiConfig(_task, _taskBody()))),
+            ]),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+
+/// 我的 LLM 配置新建/编辑表单（#68 P1）
+class _LlmConfigFormSheet extends StatefulWidget {
+  final Map<String, dynamic>? existing;
+  final Future<void> Function(Map<String, dynamic> body) onTest;
+  final Future<void> Function(Map<String, dynamic>) onSaved;
+  const _LlmConfigFormSheet({this.existing, required this.onTest, required this.onSaved});
+
+  @override
+  State<_LlmConfigFormSheet> createState() => _LlmConfigFormSheetState();
+}
+
+class _LlmConfigFormSheetState extends State<_LlmConfigFormSheet> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _baseUrlCtrl;
+  late final TextEditingController _modelCtrl;
+  late final TextEditingController _providerCtrl;
+  late final TextEditingController _apiKeyCtrl;
+  bool _enabled = true;
+  bool _isDefault = false;
+  bool _sharedWithSubs = false;
+  bool _saving = false;
+
+  bool get _isEdit => widget.existing != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final c = widget.existing;
+    _nameCtrl = TextEditingController(text: c?['name']?.toString() ?? '');
+    _baseUrlCtrl = TextEditingController(text: c?['base_url']?.toString() ?? '');
+    _modelCtrl = TextEditingController(text: c?['model']?.toString() ?? '');
+    _providerCtrl = TextEditingController(text: c?['provider']?.toString() ?? '');
+    _apiKeyCtrl = TextEditingController(text: '');
+    _enabled = c?['enabled'] as bool? ?? true;
+    _isDefault = c?['is_default'] as bool? ?? false;
+    _sharedWithSubs = c?['shared_with_subs'] as bool? ?? false;
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose(); _baseUrlCtrl.dispose(); _modelCtrl.dispose();
+    _providerCtrl.dispose(); _apiKeyCtrl.dispose();
+    super.dispose();
+  }
+
+  void _applyPreset(Map<String, String> p) {
+    setState(() {
+      _providerCtrl.text = p['provider'] ?? '';
+      _baseUrlCtrl.text = p['base_url'] ?? '';
+      _modelCtrl.text = p['model'] ?? '';
+    });
+  }
+
+  Map<String, dynamic> _body() => {
+        'name': _nameCtrl.text.trim(),
+        'base_url': _baseUrlCtrl.text.trim(),
+        'model': _modelCtrl.text.trim(),
+        'provider': _providerCtrl.text.trim(),
+        'enabled': _enabled,
+        'is_default': _isDefault,
+        'shared_with_subs': _sharedWithSubs,
+        if (_apiKeyCtrl.text.trim().isNotEmpty) 'api_key': _apiKeyCtrl.text.trim(),
+      };
+
+  Future<void> _test() async {
+    if (_baseUrlCtrl.text.trim().isEmpty || _apiKeyCtrl.text.trim().isEmpty) {
+      return;
+    }
+    await widget.onTest({
+      'base_url': _baseUrlCtrl.text.trim(),
+      'api_key': _apiKeyCtrl.text.trim(),
+      'model': _modelCtrl.text.trim(),
+      'provider': _providerCtrl.text.trim(),
+    });
+  }
+
+  Future<void> _save() async {
+    final l10n = AppLocalizations.of(context)!;
+    if (_nameCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.llmConfigNameRequired)));
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final api = ApiClient();
+      if (_isEdit) {
+        await api.updateLlmConfig(widget.existing!['id'] as int, _body());
+      } else {
+        await api.createLlmConfig(_body());
+      }
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.saveFailedErr(e))));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+    Widget field(TextEditingController ctrl, String label, {bool obscure = false, String? hint}) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: TextField(
+          controller: ctrl,
+          obscureText: obscure,
+          decoration: InputDecoration(
+            labelText: label,
+            hintText: hint,
+            isDense: true,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide.none,
+            ),
+            filled: true,
+            fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+          ),
+        ),
+      );
+    }
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 12, right: 12,
+          top: 12,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Text(_isEdit ? l10n.editLlmConfig : l10n.newLlmConfig,
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                ],
+              ),
+              field(_nameCtrl, l10n.llmConfigName),
+              DropdownButtonFormField<String>(
+                initialValue: null,
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: l10n.llmPresets,
+                  hintText: l10n.presetSelectHint,
+                  isDense: true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                  filled: true,
+                  fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                ),
+                items: [
+                  for (final e in kLlmPresets.entries)
+                    DropdownMenuItem(value: e.key, child: Text(e.key)),
+                ],
+                onChanged: (v) {
+                  if (v != null) _applyPreset(kLlmPresets[v]!);
+                },
+              ),
+              field(_baseUrlCtrl, 'Base URL', hint: 'https://api.deepseek.com/v1'),
+              field(_modelCtrl, l10n.model, hint: 'deepseek-chat'),
+              field(_providerCtrl, l10n.provider,
+                  hint: 'deepseek / dashscope / openai / zhipu / kimi / siliconflow'),
+              field(_apiKeyCtrl, l10n.apiKeyKeep, obscure: true,
+                  hint: widget.existing?['has_api_key'] == true ? l10n.apiKeyHintReplace : 'sk-...'),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(l10n.enable, style: const TextStyle(fontSize: 13)),
+                value: _enabled,
+                onChanged: (v) => setState(() => _enabled = v),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(l10n.setDefault, style: const TextStyle(fontSize: 13)),
+                value: _isDefault,
+                onChanged: (v) => setState(() => _isDefault = v),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(l10n.sharedWithSubs, style: const TextStyle(fontSize: 13)),
+                value: _sharedWithSubs,
+                onChanged: (v) => setState(() => _sharedWithSubs = v),
+              ),
+              Row(children: [
+                Expanded(child: OutlinedButton(onPressed: _test, child: Text(l10n.testConnection))),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        : Text(l10n.save),
+                  ),
+                ),
+              ]),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -856,7 +1345,6 @@ class _LlmUsageSheetState extends State<_LlmUsageSheet> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 总额 / 已用 / 剩余进度
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(

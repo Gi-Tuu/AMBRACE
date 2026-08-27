@@ -21,6 +21,7 @@ class CharacterCreate(BaseModel):
     voice_pitch: float | None = None
     timezone_offset: int | None = Field(None, ge=-12, le=14)
     bio: str | None = None
+    user_llm_config_id: int | None = None  # 角色绑定 LLM 配置（#68 P0-P2）
 
 class CharacterUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
@@ -43,6 +44,7 @@ class CharacterUpdate(BaseModel):
     voice_pitch: float | None = None
     timezone_offset: int | None = Field(None, ge=-12, le=14)
     cognitive_loop_enabled: bool | None = None
+    user_llm_config_id: int | None = None  # 角色绑定 LLM 配置（#68 P0-P2）
 
 class CharacterResponse(BaseModel):
     id: int
@@ -69,6 +71,7 @@ class CharacterResponse(BaseModel):
     voice_pitch: float | None = None
     timezone_offset: int | None = None
     cognitive_loop_enabled: bool
+    user_llm_config_id: int | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime

@@ -98,6 +98,120 @@ abstract class AppLocalizations {
     Locale('zh')
   ];
 
+  /// No description provided for @apiTabLlm.
+  ///
+  /// In zh, this message translates to:
+  /// **'LLM'**
+  String get apiTabLlm;
+
+  /// No description provided for @apiTabSpeech.
+  ///
+  /// In zh, this message translates to:
+  /// **'语音'**
+  String get apiTabSpeech;
+
+  /// No description provided for @apiTabVision.
+  ///
+  /// In zh, this message translates to:
+  /// **'识图'**
+  String get apiTabVision;
+
+  /// No description provided for @apiTabImage.
+  ///
+  /// In zh, this message translates to:
+  /// **'生图'**
+  String get apiTabImage;
+
+  /// No description provided for @apiTabTask.
+  ///
+  /// In zh, this message translates to:
+  /// **'任务'**
+  String get apiTabTask;
+
+  /// No description provided for @newLlmConfig.
+  ///
+  /// In zh, this message translates to:
+  /// **'新建 LLM'**
+  String get newLlmConfig;
+
+  /// No description provided for @editLlmConfig.
+  ///
+  /// In zh, this message translates to:
+  /// **'编辑 LLM'**
+  String get editLlmConfig;
+
+  /// No description provided for @llmConfigName.
+  ///
+  /// In zh, this message translates to:
+  /// **'配置名'**
+  String get llmConfigName;
+
+  /// No description provided for @llmConfigNameRequired.
+  ///
+  /// In zh, this message translates to:
+  /// **'请填写配置名'**
+  String get llmConfigNameRequired;
+
+  /// No description provided for @setDefault.
+  ///
+  /// In zh, this message translates to:
+  /// **'设为默认'**
+  String get setDefault;
+
+  /// No description provided for @sharedWithSubs.
+  ///
+  /// In zh, this message translates to:
+  /// **'可共享给子账号'**
+  String get sharedWithSubs;
+
+  /// No description provided for @sharedConfigList.
+  ///
+  /// In zh, this message translates to:
+  /// **'主账号共享'**
+  String get sharedConfigList;
+
+  /// No description provided for @defaultBadge.
+  ///
+  /// In zh, this message translates to:
+  /// **'默认'**
+  String get defaultBadge;
+
+  /// No description provided for @sharedBadge.
+  ///
+  /// In zh, this message translates to:
+  /// **'共享'**
+  String get sharedBadge;
+
+  /// No description provided for @modelDefaultBind.
+  ///
+  /// In zh, this message translates to:
+  /// **'默认（不绑定）'**
+  String get modelDefaultBind;
+
+  /// No description provided for @emptyLlmConfigs.
+  ///
+  /// In zh, this message translates to:
+  /// **'还没有 LLM 配置'**
+  String get emptyLlmConfigs;
+
+  /// No description provided for @addLlmConfig.
+  ///
+  /// In zh, this message translates to:
+  /// **'新增配置'**
+  String get addLlmConfig;
+
+  /// No description provided for @llmSharedReadonly.
+  ///
+  /// In zh, this message translates to:
+  /// **'共享配置仅可查看'**
+  String get llmSharedReadonly;
+
+  /// No description provided for @llmConfigHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'为角色选择要使用的模型配置'**
+  String get llmConfigHint;
+
   /// No description provided for @appName.
   ///
   /// In zh, this message translates to:
@@ -6698,6 +6812,42 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'主题色'**
   String get themeColor;
+
+  /// No description provided for @skinTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'皮肤'**
+  String get skinTitle;
+
+  /// No description provided for @skinNameIos.
+  ///
+  /// In zh, this message translates to:
+  /// **'原生 iOS'**
+  String get skinNameIos;
+
+  /// No description provided for @skinNameWarm.
+  ///
+  /// In zh, this message translates to:
+  /// **'温柔陪伴'**
+  String get skinNameWarm;
+
+  /// No description provided for @skinNameMaterial.
+  ///
+  /// In zh, this message translates to:
+  /// **'Material You'**
+  String get skinNameMaterial;
+
+  /// No description provided for @skinNamePaper.
+  ///
+  /// In zh, this message translates to:
+  /// **'纸艺手账'**
+  String get skinNamePaper;
+
+  /// No description provided for @skinNameNeon.
+  ///
+  /// In zh, this message translates to:
+  /// **'暗夜霓虹'**
+  String get skinNameNeon;
 
   /// No description provided for @themeMode.
   ///

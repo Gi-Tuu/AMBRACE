@@ -9,6 +9,63 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get apiTabLlm => 'LLM';
+
+  @override
+  String get apiTabSpeech => 'Voice';
+
+  @override
+  String get apiTabVision => 'Vision';
+
+  @override
+  String get apiTabImage => 'Image';
+
+  @override
+  String get apiTabTask => 'Tasks';
+
+  @override
+  String get newLlmConfig => 'New LLM';
+
+  @override
+  String get editLlmConfig => 'Edit LLM';
+
+  @override
+  String get llmConfigName => 'Config name';
+
+  @override
+  String get llmConfigNameRequired => 'Config name required';
+
+  @override
+  String get setDefault => 'Set as default';
+
+  @override
+  String get sharedWithSubs => 'Share with sub-accounts';
+
+  @override
+  String get sharedConfigList => 'Shared by main account';
+
+  @override
+  String get defaultBadge => 'Default';
+
+  @override
+  String get sharedBadge => 'Shared';
+
+  @override
+  String get modelDefaultBind => 'Default (no binding)';
+
+  @override
+  String get emptyLlmConfigs => 'No LLM configs yet';
+
+  @override
+  String get addLlmConfig => 'Add config';
+
+  @override
+  String get llmSharedReadonly => 'Shared configs are read-only';
+
+  @override
+  String get llmConfigHint => 'Pick the model config for this character';
+
+  @override
   String get appName => 'AMBRACE';
 
   @override
@@ -3665,6 +3722,24 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get themeColor => 'Theme Color';
+
+  @override
+  String get skinTitle => 'Skin';
+
+  @override
+  String get skinNameIos => 'iOS Native';
+
+  @override
+  String get skinNameWarm => 'Warm Companion';
+
+  @override
+  String get skinNameMaterial => 'Material You';
+
+  @override
+  String get skinNamePaper => 'Paper Journal';
+
+  @override
+  String get skinNameNeon => 'Neon Night';
 
   @override
   String get themeMode => 'Theme Mode';

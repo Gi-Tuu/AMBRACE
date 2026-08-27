@@ -4,6 +4,7 @@ import "package:audioplayers/audioplayers.dart";
 import "../utils/stage_text.dart";
 import "../utils/beijing_time.dart";
 import "../theme/tokens.dart";
+import "../theme/skins/skin_colors.dart";
 import "package:ai_companion/l10n/app_localizations.dart";
 
 class MessageBubble extends StatelessWidget {
@@ -191,6 +192,14 @@ class MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final stage = StageText.parse(message);
+    // 皮肤色：有 SkinColors 扩展时用皮肤气泡色，否则回退到 Material3 默认
+    final skinColors = Theme.of(context).extension<SkinColors>();
+    final bubbleColor = isUser
+        ? (skinColors?.bubbleUser ?? Theme.of(context).colorScheme.primaryContainer)
+        : (skinColors?.bubbleAi ?? Theme.of(context).colorScheme.surfaceContainerHighest);
+    final bubbleTextColor = isUser
+        ? (skinColors?.bubbleUserText ?? Theme.of(context).colorScheme.onPrimaryContainer)
+        : (skinColors?.bubbleAiText ?? Theme.of(context).colorScheme.onSurfaceVariant);
     // 状态更新/日历备注/备忘小字行（2026-08-14：标记保留在正文，前端剥离为气泡下方小字；兼容旧消息无 meta）
     final markerLines = <String>[...stage.markers];
     if (statusUpdate != null &&
@@ -205,9 +214,7 @@ class MessageBubble extends StatelessWidget {
       constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.7),
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
       decoration: BoxDecoration(
-        color: isUser
-            ? Theme.of(context).colorScheme.primaryContainer
-            : Theme.of(context).colorScheme.surfaceContainerHighest,
+        color: bubbleColor,
         boxShadow: AppShadow.light,
         borderRadius: BorderRadius.only(
           topLeft: const Radius.circular(16),
@@ -236,7 +243,7 @@ class MessageBubble extends StatelessWidget {
           if (!isUser && (toolResults ?? const []).isNotEmpty)
             for (final tr in toolResults!)
               _ToolResultMeta(result: tr, label: l10n.toolResult),
-          if (quoteMeta != null) _buildQuoteBlock(context),
+          if (quoteMeta != null) _buildQuoteBlock(context, bubbleTextColor, skinColors),
           if (imageUrl != null && imageUrl!.isNotEmpty) ...[
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
@@ -275,7 +282,7 @@ class MessageBubble extends StatelessWidget {
           if (stage.text.isNotEmpty)
             Text(
               stage.text,
-              style: const TextStyle(fontSize: 15),
+              style: TextStyle(fontSize: 15, color: bubbleTextColor),
             ),
           // SSE 真流式：AI 正文末尾闪烁光标（打字机）
           if (isStreaming && !isUser)
@@ -292,7 +299,7 @@ class MessageBubble extends StatelessWidget {
                     fontSize: AppTypography.captionSize,
                     height: AppTypography.captionHeight,
                     fontStyle: FontStyle.italic,
-                    color: AppColors.textMuted,
+                    color: bubbleTextColor.withValues(alpha: 0.55),
                   ),
                 ),
               ),
@@ -309,7 +316,7 @@ class MessageBubble extends StatelessWidget {
               padding: const EdgeInsets.only(top: 4),
               child: Text(
                 formatTimeOnly(time),
-                style: TextStyle(fontSize: AppTypography.captionSize, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                style: TextStyle(fontSize: AppTypography.captionSize, color: bubbleTextColor.withValues(alpha: 0.6)),
               ),
             ),
         ],
@@ -405,7 +412,7 @@ class MessageBubble extends StatelessWidget {
   }
 
   /// 引用块（气泡内顶部）：左侧竖线 + 摘录；被引用消息已删则显示"原消息已删除"
-  Widget _buildQuoteBlock(BuildContext context) {
+  Widget _buildQuoteBlock(BuildContext context, Color bubbleTextColor, SkinColors? skinColors) {
     final l10n = AppLocalizations.of(context)!;
     final q = quoteMeta ?? const <String, dynamic>{};
     final content = q['content'] as String? ?? '';
@@ -414,14 +421,14 @@ class MessageBubble extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06),
+        color: bubbleTextColor.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(6),
         border: Border(
           left: BorderSide(
             width: 3,
             color: isUser
                 ? Theme.of(context).colorScheme.primary
-                : Theme.of(context).colorScheme.outlineVariant,
+                : bubbleTextColor.withValues(alpha: 0.3),
           ),
         ),
       ),
@@ -431,7 +438,7 @@ class MessageBubble extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
           fontSize: AppTypography.captionSize,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
+          color: bubbleTextColor.withValues(alpha: 0.75),
         ),
       ),
     );

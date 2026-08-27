@@ -24,6 +24,7 @@ export 'api/life_api.dart';
 export 'api/life_home_api.dart';
 export 'api/admin_api.dart';
 export 'api/game_api.dart';
+export 'api/llm_configs_api.dart';
 
 class ApiClient {
   static final ApiClient _instance = ApiClient._internal();

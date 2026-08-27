@@ -122,3 +122,33 @@ def test_douyin_comment_new_fields():
     from app.models.douyin import DouyinComment
     assert hasattr(DouyinComment, "aweme_id")
     assert hasattr(DouyinComment, "comment_id")
+
+
+# ------------------------------------------------------------------ #67 P2 / 审查 P0：save_video（视频发布上传）
+def test_save_video_uses_video_exts_and_limits(monkeypatch):
+    """#67 P2（审查 P0）：save_video 复用 _save_upload，使用视频扩展名白名单与 200MB 上限。"""
+    import asyncio
+    from app.services import upload_service as us
+
+    captured = {}
+
+    async def _fake_save_upload(file, subdir, allowed_exts, max_bytes, lang="zh"):
+        captured["file"] = file
+        captured["subdir"] = subdir
+        captured["allowed_exts"] = allowed_exts
+        captured["max_bytes"] = max_bytes
+        captured["lang"] = lang
+        return f"/uploads/{subdir}/fake.mp4"
+
+    monkeypatch.setattr("app.services.upload_service._save_upload", _fake_save_upload)
+
+    class _F:
+        filename = "demo.mp4"
+
+    url = asyncio.run(us.save_video(_F(), "douyin/99"))
+    # 返回 /uploads/... 相对 URL（与 save_image 一致的契约）
+    assert url == "/uploads/douyin/99/fake.mp4"
+    assert captured["subdir"] == "douyin/99"
+    # 允许扩展名 / 大小上限均为视频专用值
+    assert captured["allowed_exts"] == us.ALLOWED_VIDEO_EXTS
+    assert captured["max_bytes"] == us.MAX_VIDEO_BYTES

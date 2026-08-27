@@ -77,7 +77,6 @@ def _launch(headless: bool):
             "--disable-blink-features=AutomationControlled",
             "--disable-features=IsolateOrigins,site-per-process",
             "--no-sandbox",
-            "--disable-web-security",
             "--disable-dev-shm-usage",
         ],
         viewport={"width": 1280, "height": 800},

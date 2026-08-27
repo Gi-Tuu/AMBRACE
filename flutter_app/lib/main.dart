@@ -10,6 +10,7 @@ import 'services/background_polling_service.dart';
 import 'global_keys.dart';
 import 'providers/settings_provider.dart';
 import 'theme/app_theme.dart';
+import 'theme/skins/skin_registry.dart';
 import 'providers/moments_provider.dart';
 import 'providers/characters_provider.dart';
 import 'providers/diary_provider.dart';
@@ -19,6 +20,8 @@ import 'screens/auth/login_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 显式初始化皮肤注册表（注册内置皮肤；未来插件可在此后注册自定义皮肤）
+  SkinRegistry.initialize();
   // 初始化失败不允许阻塞启动（闪退防御：任何初始化异常都降级，不影响打开 app）
   try {
     await NotificationService().init();
@@ -108,8 +111,8 @@ class _AICompanionAppState extends State<AICompanionApp> with WidgetsBindingObse
             debugShowCheckedModeBanner: false,
             navigatorKey: appNavigatorKey,
             navigatorObservers: [appRouteObserver],
-            theme: AppTheme.light(settings.seedColorIndex),
-            darkTheme: AppTheme.dark(settings.seedColorIndex),
+            theme: AppTheme.light(settings.seedColorIndex, skinId: settings.skinId),
+            darkTheme: AppTheme.dark(settings.seedColorIndex, skinId: settings.skinId),
             themeMode: AppTheme.modeFromIndex(settings.themeModeIndex),
             locale: _resolveLocale(settings.localeCode),
             localizationsDelegates: const [

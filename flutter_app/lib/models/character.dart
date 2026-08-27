@@ -21,6 +21,7 @@ class AICharacter {
   final double? voicePitch;
   final int? timezoneOffset;
   final bool cognitiveLoopEnabled;
+  final int? userLlmConfigId;
   final int? talkativeness;
   final bool talkativenessLocked;
 
@@ -47,6 +48,7 @@ class AICharacter {
     this.voicePitch,
     this.timezoneOffset,
     this.cognitiveLoopEnabled = false,
+    this.userLlmConfigId,
     this.talkativeness,
     this.talkativenessLocked = false,
   });
@@ -75,6 +77,7 @@ class AICharacter {
       voicePitch: (json['voice_pitch'] as num?)?.toDouble(),
       timezoneOffset: json['timezone_offset'] as int?,
       cognitiveLoopEnabled: json['cognitive_loop_enabled'] as bool? ?? false,
+      userLlmConfigId: json['user_llm_config_id'] as int?,
       talkativeness: json['talkativeness'] as int?,
       talkativenessLocked: json['talkativeness_locked'] as bool? ?? false,
     );
@@ -92,6 +95,7 @@ class AICharacter {
     'voice_pitch': voicePitch,
     'timezone_offset': timezoneOffset,
     'cognitive_loop_enabled': cognitiveLoopEnabled,
+    'user_llm_config_id': userLlmConfigId,
     'talkativeness': talkativeness,
     'talkativeness_locked': talkativenessLocked,
   };

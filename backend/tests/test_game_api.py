@@ -320,6 +320,7 @@ def test_resume_ai_turn_actually_advances(game_api_db, monkeypatch):
     events = asyncio.run(_query_events())
     answer_evs = [e for e in events if e.event_type == "answer" and e.actor_seat == 1]
     assert answer_evs, "AI 回合未被续跑：缺少 AI 的 answer 事件"
+    assert len(answer_evs) == 1, f"AI answer 事件应恰好 1 条，实际 {len(answer_evs)}"
 
     # turn 推进：回到用户(guesser/seat0)
     st = client.get(f"/api/v1/games/sessions/{sid}/state", params={"seat": 0}).json()
@@ -355,3 +356,81 @@ def test_resume_stuck_games_continues_stale_ai_turn(game_api_db, monkeypatch):
 
     asyncio.run(_run())
     assert sid in calls
+
+
+# ---------------- v3.3.7 审查修复：P0 游戏 AI 双重 apply ----------------
+def test_resume_ai_turn_fallback_on_invalid_decision(game_api_db, monkeypatch):
+    """#审查 P0：ai_decide 返回非法 answer 时，_resume_ai_turns 走 fallback 再 apply，
+    仍落库 1 条 AI answer 事件且 current_turn_seat 回到用户。"""
+    from app.models.game import GameEvent
+
+    async def _fake_ai_decide(engine, seat):
+        return {"action": "answer_soup", "content": "", "payload": {"answer": "invalid"}}
+
+    monkeypatch.setattr("app.games.ai_player.ai_decide", _fake_ai_decide)
+
+    client = _make_client(1)
+    r = client.post("/api/v1/games/sessions", json={
+        "game_type": "turtle_soup", "player_ids": [101], "user_as_player": True,
+    })
+    assert r.status_code == 200, r.text
+    sid = r.json()["session_id"]
+    # 用户(seat0/guesser)提问 -> 轮到 AI(thinker/seat1) 回答；mock 返回非法 answer
+    r = client.post(f"/api/v1/games/sessions/{sid}/action",
+                    json={"seat": 0, "action": "ask_soup", "payload": {"content": "它与真相里的人有关吗？"}})
+    assert r.json()["ok"] is True
+
+    asyncio.run(_REAL_RESUME(sid))
+
+    async def _query_events():
+        async with game_api_db() as db:
+            return (await db.execute(
+                select(GameEvent).where(GameEvent.session_id == sid)
+            )).scalars().all()
+
+    events = asyncio.run(_query_events())
+    answer_evs = [e for e in events if e.event_type == "answer" and e.actor_seat == 1]
+    assert len(answer_evs) == 1, f"AI fallback 后应恰好 1 条 answer 事件，实际 {len(answer_evs)}"
+
+    # turn 推进：回到用户(guesser/seat0)
+    st = client.get(f"/api/v1/games/sessions/{sid}/state", params={"seat": 0}).json()
+    assert st["current_turn_seat"] == 0
+
+
+def test_resume_ai_turn_liars_bar_no_double_effect(game_api_db, monkeypatch):
+    """#审查 P0：骗子酒馆 AI 回合不再双重出牌（同一轮次同一座位至多 1 条 declare）。"""
+    from app.models.game import GameEvent
+
+    async def _fake_ai_decide(engine, seat):
+        return {"action": "declare", "content": "", "payload": {"number": 6}}
+
+    monkeypatch.setattr("app.games.ai_player.ai_decide", _fake_ai_decide)
+
+    client = _make_client(1)
+    r = client.post("/api/v1/games/sessions", json={
+        "game_type": "liars_bar", "player_ids": [101, 102], "user_as_player": True,
+    })
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["state"]["phase"] == "declare"
+    sid = data["session_id"]
+    # 用户(seat0/庄家)先声明 5 -> 轮到 AI
+    r = client.post(f"/api/v1/games/sessions/{sid}/action",
+                    json={"seat": 0, "action": "declare", "payload": {"number": 5}})
+    assert r.json()["ok"] is True
+
+    asyncio.run(_REAL_RESUME(sid))
+
+    async def _query_events():
+        async with game_api_db() as db:
+            return (await db.execute(
+                select(GameEvent).where(GameEvent.session_id == sid)
+            )).scalars().all()
+
+    events = asyncio.run(_query_events())
+    declare_evs = [e for e in events if e.event_type == "declare" and e.actor_seat in (1, 2)]
+    # 修复后两个 AI 座位都确实出过牌（AI 声明不再丢失）
+    assert {e.actor_seat for e in declare_evs} == {1, 2}
+    # 杜绝双重出牌：同一轮次(round)同一座位至多 1 条 declare
+    keys = [(e.round, e.actor_seat) for e in declare_evs]
+    assert len(keys) == len(set(keys)), f"存在同轮次双重声明: {keys}"

@@ -7,6 +7,7 @@ from app.models.config.speech_config import SpeechConfig
 from app.models.config.multimodal_config import MultimodalConfig
 from app.models.config.marketplace_config import MarketplaceConfig
 from app.models.config.runtime_flag import RuntimeFlag
+from app.models.config.user_llm_config import UserLlmConfig
 
 __all__ = [
     "ApiConfig",
@@ -15,4 +16,5 @@ __all__ = [
     "MultimodalConfig",
     "MarketplaceConfig",
     "RuntimeFlag",
+    "UserLlmConfig",
 ]

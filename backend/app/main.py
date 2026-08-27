@@ -31,6 +31,7 @@ from app.api import (
     phone_workflows_router,
     mcp_router,
     games_router,
+    llm_configs_router,
 )
 from app.api.ai_api import router as ai_api_router
 from app.auth.router import router as auth_router
@@ -268,6 +269,7 @@ app.include_router(phone_workflows_router)
 app.include_router(ai_api_router)
 app.include_router(mcp_router)
 app.include_router(games_router)
+app.include_router(llm_configs_router)
 
 
 @app.middleware("http")

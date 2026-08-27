@@ -130,6 +130,8 @@ async def _stream_generate(state: AgentState, user_cfg: dict | None, stream_sink
             base_url=user_cfg["base_url"] if user_cfg else None,
             model=user_cfg.get("model") if user_cfg else None,
             provider=user_cfg.get("provider") if user_cfg else None,
+            user_id=state.get("user_id"),
+            character_id=state.get("character_id"),
         ):
             raw.append(piece)
             blocks.extend(chunker.feed(piece))
@@ -178,6 +180,8 @@ async def _stream_generate_tts(state, user_cfg, stream_sink, chunker, block_sink
             base_url=user_cfg["base_url"] if user_cfg else None,
             model=user_cfg.get("model") if user_cfg else None,
             provider=user_cfg.get("provider") if user_cfg else None,
+            user_id=state.get("user_id"),
+            character_id=state.get("character_id"),
         ):
             raw.append(piece)
             new_blocks = chunker.feed(piece)
@@ -258,6 +262,8 @@ async def generate_response(state: AgentState) -> AgentState:
             base_url=user_cfg["base_url"] if user_cfg else None,
             model=user_cfg.get("model") if user_cfg else None,
             provider=user_cfg.get("provider") if user_cfg else None,
+            user_id=state.get("user_id"),
+            character_id=state.get("character_id"),
         )
         state["reasoning"] = (reasoning or "").strip() or None
         state["streamed"] = False
@@ -271,6 +277,8 @@ async def generate_response(state: AgentState) -> AgentState:
             base_url=user_cfg["base_url"] if user_cfg else None,
             model=user_cfg.get("model") if user_cfg else None,
             provider=user_cfg.get("provider") if user_cfg else None,
+            user_id=state.get("user_id"),
+            character_id=state.get("character_id"),
         )
         state["reasoning"] = None  # 挡位 1 时由 parse_response 解析【推理】标记填充
         state["streamed"] = False

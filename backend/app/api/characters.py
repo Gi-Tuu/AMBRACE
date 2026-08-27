@@ -118,6 +118,8 @@ def _build_system_prompt(name: str, personality: str | None, chat_style: str | N
 @router.post("", response_model=CharacterResponse, status_code=status.HTTP_201_CREATED)
 async def create_character(data: CharacterCreate, db: AsyncSession = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     """创建新 AI 角色"""
+    from app.services.llm_config_service import ensure_bindable
+    await ensure_bindable(db, user_id, data.user_llm_config_id)
     character = AICharacter(
         user_id=user_id,
         name=data.name,
@@ -143,6 +145,7 @@ async def create_character(data: CharacterCreate, db: AsyncSession = Depends(get
             appearance=data.appearance,
             gender=data.gender,
         ),
+        user_llm_config_id=data.user_llm_config_id,
     )
     db.add(character)
     await db.flush()
@@ -280,6 +283,9 @@ async def update_character(
         raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
 
     update_data = data.model_dump(exclude_unset=True)
+    if "user_llm_config_id" in update_data:
+        from app.services.llm_config_service import ensure_bindable
+        await ensure_bindable(db, user_id, update_data["user_llm_config_id"])
     for field, value in update_data.items():
         setattr(character, field, value)
 

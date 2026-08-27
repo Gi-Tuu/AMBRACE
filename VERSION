@@ -1,9 +1,15 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.3.7
+VERSION: 3.3.8
 DATE: 2026-08-27
-STATUS: 开源发布版 v3.3.7 覆盖版（生命感四机制 + 全量审查修复 + MCP 流式 + 抖音升级 + SSE 打字机修复）
+STATUS: 开源发布版 v3.3.8（二次审查修复 + #68 多 LLM 配置 + 换肤 Skins）
 
 CHANGELOG:
+
+3.3.8 - Release (2026-08-27)
+  - Review: v3.3.7 发布后二次审查 7 项修复（游戏 AI 双重 apply / 抖音视频上传与路径 / proactive_candidate / ffmpeg 注入 / comments 死代码 / browser 参数）
+  - Config: #68 P0-P2 多 LLM 配置（我的 LLM + 角色选模型 + 主账号共享只读 + API 配置页 Tab 重构）
+  - Skins: 可换肤 5 款皮肤（选择器 + 气泡/输入栏取色 + 深色回退 + 测试）
+  - Tests: flutter analyze 0 / skins_test 12 green
 
 3.3.7 - Release (2026-08-27)
   - Life feel: 动态回复延迟（心情/疲惫影响回复节奏）+ 弹簧-阻尼情绪（惯性回弹 + 人格基线）+ 活动完成自然分享（arbiter 门控）+ 心事微澜（心事影响心情、安慰破冰化解）

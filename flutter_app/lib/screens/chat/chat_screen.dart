@@ -22,6 +22,7 @@ import '../../widgets/ai_avatar.dart';
 import '../../models/character_state.dart';
 import '../character/character_detail_screen.dart';
 import "package:ai_companion/theme/tokens.dart";
+import "package:ai_companion/theme/skins/skin_colors.dart";
 import '../../widgets/entrance_fade.dart';
 import "package:ai_companion/widgets/app_page_route.dart";
 
@@ -1136,7 +1137,7 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                 // 输入栏
                 Container(
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surface,
+                    color: Theme.of(context).extension<SkinColors>()?.inputBarBg ?? Theme.of(context).colorScheme.surface,
                     boxShadow: AppShadow.top,
                   ),
                   padding: const EdgeInsets.fromLTRB(4, 8, 8, 8),

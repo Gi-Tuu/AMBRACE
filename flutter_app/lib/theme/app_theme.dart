@@ -1,11 +1,21 @@
 import "package:flutter/material.dart";
+import "skins/skin.dart";
+import "skins/skin_registry.dart";
+import "skins/skin_colors.dart";
 import "tokens.dart";
 
-/// 主题系统 v2（UI 2.0 iOS 风格视觉基础）：
-/// - 浅色：灰底 #F2F2F7 + 白色圆角卡片 + 无阴影 AppBar/NavigationBar
-/// - 深色：深底 + 深色卡片，保持可读性
-/// 色板值全局唯一来源，SettingsProvider 只存索引；色值原子引自 tokens.dart（AppColors 等）。
+/// 主题系统 v3（可换肤架构）：
+///
+/// 兼容现有调用方式（`AppTheme.light(seedIndex)` / `AppTheme.dark(seedIndex)`），
+/// 但内部已接入 [SkinRegistry] 皮肤包体系。
+///
+/// 新代码推荐直接用：
+/// ```dart
+/// final skin = SkinRegistry.get(settings.skinId);
+/// final theme = skin.buildThemeData(brightness: brightness, seedColor: seedColor);
+/// ```
 class AppTheme {
+  /// 6 款强调色（所有皮肤共享的 seed color 池）
   static const List<Color> seedColors = [
     Colors.blue,
     Colors.deepPurple,
@@ -15,97 +25,52 @@ class AppTheme {
     Colors.orange,
   ];
 
+  /// 取第 index 个 seed color（安全 clamp）
+  static Color seedColorAt(int index) =>
+      seedColors[index.clamp(0, seedColors.length - 1)];
+
+  // ─── 兼容旧 API（内部转发到 SkinRegistry） ───
+
+  static ThemeData light(int seedIndex, {String skinId = SkinRegistry.defaultSkinId}) {
+    return _build(Brightness.light, seedIndex, skinId);
+  }
+
+  static ThemeData dark(int seedIndex, {String skinId = SkinRegistry.defaultSkinId}) {
+    return _build(Brightness.dark, seedIndex, skinId);
+  }
+
+  static ThemeData _build(Brightness brightness, int seedIndex, String skinId) {
+    // 深色模式回退：皮肤声明不支持深色时，深色主题使用默认 ios 皮肤
+    // （用户在浅色下看到 paper，深色下自动回退 ios，避免纸色配深色文字的对比灾难）
+    Skin skin = SkinRegistry.get(skinId);
+    if (brightness == Brightness.dark && !skin.supportsDarkMode && skinId != SkinRegistry.defaultSkinId) {
+      skin = SkinRegistry.get(SkinRegistry.defaultSkinId);
+    }
+    final seed = seedColorAt(seedIndex);
+    final theme = skin.buildThemeData(brightness: brightness, seedColor: seed);
+    final SkinColors skinColors = skin.buildSkinColors(brightness: brightness, seedColor: seed);
+    return theme.copyWith(
+      extensions: [skinColors],
+    );
+  }
+
+  /// 新 API：直接按 skinId + seedIndex + brightness 构建完整 ThemeData
+  static ThemeData build({
+    required Brightness brightness,
+    required int seedIndex,
+    String skinId = SkinRegistry.defaultSkinId,
+  }) {
+    return _build(brightness, seedIndex, skinId);
+  }
+
+  // ─── 旧版色值常量（兼容现有页面直接引用） ───
+
   static const Color lightBg = AppColors.bgLight;
   static const Color lightCard = AppColors.cardLight;
   static const Color lightDivider = AppColors.dividerLight;
   static const Color darkBg = AppColors.bgDark;
   static const Color darkCard = AppColors.cardDark;
   static const Color darkDivider = AppColors.dividerDark;
-
-  static ThemeData light(int seedIndex) {
-    final base = ThemeData(
-      colorSchemeSeed: seedColors[seedIndex.clamp(0, seedColors.length - 1)],
-      useMaterial3: true,
-      brightness: Brightness.light,
-    );
-    return base.copyWith(
-      scaffoldBackgroundColor: lightBg,
-      canvasColor: lightBg,
-      dividerColor: lightDivider,
-      cardTheme: CardThemeData(
-        elevation: 0,
-        color: lightCard,
-        margin: EdgeInsets.zero,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      ),
-      appBarTheme: const AppBarTheme(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: lightBg,
-        foregroundColor: AppColors.textPrimary,
-        titleTextStyle: TextStyle(fontSize: AppTypography.titleSize, fontWeight: AppTypography.titleWeight, color: AppColors.textPrimary),
-      ),
-      navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: lightCard,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-        height: 64,
-      ),
-      switchTheme: SwitchThemeData(
-        trackOutlineWidth: const WidgetStatePropertyAll(0),
-        trackColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.selected) ? null : AppColors.surfaceAlt,
-        ),
-      ),
-      pageTransitionsTheme: const PageTransitionsTheme(
-        builders: {
-          TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),
-          TargetPlatform.iOS: FadeForwardsPageTransitionsBuilder(),
-        },
-      ),
-    );
-  }
-
-  static ThemeData dark(int seedIndex) {
-    final base = ThemeData(
-      colorSchemeSeed: seedColors[seedIndex.clamp(0, seedColors.length - 1)],
-      useMaterial3: true,
-      brightness: Brightness.dark,
-    );
-    return base.copyWith(
-      scaffoldBackgroundColor: darkBg,
-      canvasColor: darkBg,
-      dividerColor: darkDivider,
-      cardTheme: CardThemeData(
-        elevation: 0,
-        color: darkCard,
-        margin: EdgeInsets.zero,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      ),
-      appBarTheme: AppBarTheme(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: darkBg,
-        foregroundColor: Colors.white,
-        titleTextStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.white),
-      ),
-      navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: darkCard,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-        height: 64,
-      ),
-      switchTheme: SwitchThemeData(
-        trackOutlineWidth: const WidgetStatePropertyAll(0),
-      ),
-      pageTransitionsTheme: const PageTransitionsTheme(
-        builders: {
-          TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),
-          TargetPlatform.iOS: FadeForwardsPageTransitionsBuilder(),
-        },
-      ),
-    );
-  }
 
   /// 0=跟随系统 1=浅色 2=深色
   static ThemeMode modeFromIndex(int index) {
@@ -118,5 +83,4 @@ class AppTheme {
         return ThemeMode.system;
     }
   }
-
 }

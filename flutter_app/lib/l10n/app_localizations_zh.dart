@@ -9,6 +9,63 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get apiTabLlm => 'LLM';
+
+  @override
+  String get apiTabSpeech => '语音';
+
+  @override
+  String get apiTabVision => '识图';
+
+  @override
+  String get apiTabImage => '生图';
+
+  @override
+  String get apiTabTask => '任务';
+
+  @override
+  String get newLlmConfig => '新建 LLM';
+
+  @override
+  String get editLlmConfig => '编辑 LLM';
+
+  @override
+  String get llmConfigName => '配置名';
+
+  @override
+  String get llmConfigNameRequired => '请填写配置名';
+
+  @override
+  String get setDefault => '设为默认';
+
+  @override
+  String get sharedWithSubs => '可共享给子账号';
+
+  @override
+  String get sharedConfigList => '主账号共享';
+
+  @override
+  String get defaultBadge => '默认';
+
+  @override
+  String get sharedBadge => '共享';
+
+  @override
+  String get modelDefaultBind => '默认（不绑定）';
+
+  @override
+  String get emptyLlmConfigs => '还没有 LLM 配置';
+
+  @override
+  String get addLlmConfig => '新增配置';
+
+  @override
+  String get llmSharedReadonly => '共享配置仅可查看';
+
+  @override
+  String get llmConfigHint => '为角色选择要使用的模型配置';
+
+  @override
   String get appName => '拥爱';
 
   @override
@@ -3538,6 +3595,24 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get themeColor => '主题色';
+
+  @override
+  String get skinTitle => '皮肤';
+
+  @override
+  String get skinNameIos => '原生 iOS';
+
+  @override
+  String get skinNameWarm => '温柔陪伴';
+
+  @override
+  String get skinNameMaterial => 'Material You';
+
+  @override
+  String get skinNamePaper => '纸艺手账';
+
+  @override
+  String get skinNameNeon => '暗夜霓虹';
 
   @override
   String get themeMode => '主题模式';

@@ -22,6 +22,7 @@ class User(Base):
     lang: Mapped[str] = mapped_column(String(10), nullable=False, server_default="'zh'", default="zh")  # 界面语言 zh/en（i18n）
     ai_social_enabled: Mapped[bool] = mapped_column(Boolean, server_default="1", default=True)  # AI 间私聊开关（arbiter ai_social 采样时校验）
     is_admin: Mapped[bool] = mapped_column(Boolean, server_default="0", default=False)  # 主账号（#46：可勾选的账号集合，优先于 settings.admin_user_ids）
+    parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None, index=True)  # 主账号关联（#68：NULL=独立主账号，非NULL=子账号；P3 受邀码关联用，P0-P2 只用于共享配置判定）
     # 位置信息（2026-08-08）：location_enabled 总开关；location_gps_enabled=获取地理位置（开启后用户位置不可自定义）；
     # location_follow=位置跟随（开启后 AI 位置与用户相同、不可自定义）；timezone_offset_minutes=用户本地时区（分钟，如 480=UTC+8）
     location_enabled: Mapped[bool] = mapped_column(Boolean, server_default="0", default=False)

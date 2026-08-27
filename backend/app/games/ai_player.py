@@ -1,8 +1,9 @@
-"""AI 玩家决策：组装可见上下文 → LLM 输出动作+发言 → 引擎校验合法性。
+"""AI 玩家决策：组装可见上下文 → LLM 输出动作+发言。
 
 关键：prompt 中绝不出现其他玩家 hidden 信息。
 LLM 调用走 app.agent.llm_client.chat_completion（task=game，temperature 0.85，
-max_tokens 300）。非法/失败用引擎的随机合法动作兜底，不阻塞游戏。
+max_tokens 300）。本函数只负责 LLM 决策 + JSON 解析；动作校验与 apply 统一由
+调度方 _resume_ai_turns 负责。LLM 失败/解析失败用引擎的随机合法动作兜底，不阻塞游戏。
 """
 from __future__ import annotations
 
@@ -15,7 +16,11 @@ _logger = get_logger("games.ai_player")
 
 
 async def ai_decide(engine, seat: int) -> dict:
-    """让 AI 玩家决策。返回 {"action": "...", "content": "...", "payload": {...}}。"""
+    """让 AI 玩家决策。返回 {"action": "...", "content": "...", "payload": {...}}。
+
+    只负责 LLM 决策 + JSON 解析，不校验/不 apply——动作校验与 apply 统一由
+    调度方 _resume_ai_turns 负责，避免对同一引擎实例二次 apply 造成双重效果。
+    """
     ctx: GameContext = engine.build_ai_prompt(seat)
     expected = engine.expected_action(seat)
 
@@ -38,14 +43,9 @@ async def ai_decide(engine, seat: int) -> dict:
         _logger.warning("ai_decide LLM failed seat=%d: %s", seat, e)
         decision = None
 
-    # 合法性校验：非法则用引擎的随机合法动作兜底（不阻塞游戏）
+    # LLM 解析成功直接返回 decision；失败/解析失败用引擎的随机合法动作兜底（不阻塞游戏）
     if decision:
-        try:
-            result = await engine.apply_action(seat, decision.get("action", ""), decision.get("payload", {}))
-            if result.ok:
-                return decision
-        except Exception as e:
-            _logger.warning("ai_decide apply_action rejected seat=%d: %s", seat, e)
+        return decision
     # 兜底：引擎提供默认合法动作
     return await engine.fallback_action(seat)
 

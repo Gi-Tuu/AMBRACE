@@ -227,6 +227,9 @@ async def _resolve_llm_config(api_key: str | None = None, base_url: str | None =
     if base_url and not api_key:
         base_url = None
     explicit = bool(api_key or base_url)
+
+    # 1. 任务专用（非 chat）：用户级→服务器级（保持「无显式 BYOK 时生效」的既有语义）
+    task_found = False
     if not explicit and task and task != TASK_CHAT:
         tcfg = await get_task_llm_config(user_id, task, character_id=character_id)
         if tcfg:
@@ -235,6 +238,28 @@ async def _resolve_llm_config(api_key: str | None = None, base_url: str | None =
             model = tcfg.get("model") or model
             provider = tcfg.get("provider") or provider
             explicit = bool(api_key or base_url)
+            task_found = True
+
+    # 2-4. 新 user_llm_configs 链（#68 P0）：角色绑定 > 用户默认 > 主账号共享默认（仅子账号）。
+    #      优先级高于显式 api_configs BYOK；未命中任何新配置时回退原链路（兼容既有 BYOK 行为）。
+    if user_id and not task_found:
+        from app.services.llm_config_service import (
+            resolve_character_llm_config,
+            resolve_user_default_config,
+            resolve_family_default_config,
+        )
+        cfg_dict = await resolve_character_llm_config(character_id, user_id)
+        if cfg_dict is None:
+            cfg_dict = await resolve_user_default_config(user_id)
+        if cfg_dict is None:
+            cfg_dict = await resolve_family_default_config(user_id)
+        if cfg_dict:
+            api_key = cfg_dict.get("api_key") or api_key
+            base_url = cfg_dict.get("base_url") or base_url
+            model = cfg_dict.get("model") or model
+            provider = cfg_dict.get("provider") or provider
+            explicit = bool(api_key or base_url)
+
     if not explicit:
         srv = await get_server_llm_config()
         if srv:
@@ -490,6 +515,7 @@ async def chat_completion_stream(
     provider: str | None = None,
     task: str | None = None,
     user_id: int | None = None,
+    character_id: int | None = None,
 ):
     """流式调用 LLM（OpenAI 兼容，stream=True），逐 delta 产出文本增量。
 
@@ -498,7 +524,7 @@ async def chat_completion_stream(
     """
     cfg = await _resolve_llm_config(
         api_key=api_key, base_url=base_url, model=model, provider=provider,
-        user_id=user_id, task=task,
+        user_id=user_id, task=task, character_id=character_id,
     )
     picked_key = _pick_api_key(cfg["api_key"])
     if not picked_key:

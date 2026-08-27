@@ -68,6 +68,9 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
   double _talkativeness = 50;
   bool _talkativenessLocked = false;
   bool _talkativenessSet = false;
+  // 角色绑定 LLM 配置（#68 P2：默认（不绑定）/ 我的 LLM 配置 / 主账号共享配置）
+  int? _llmConfigId;
+  List<Map<String, dynamic>> _llmConfigs = [];
   final AudioPlayer _previewPlayer = AudioPlayer();
   bool _previewing = false;
   bool get isEditing => widget.character != null;
@@ -93,6 +96,8 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
     _talkativeness = (c?.talkativeness ?? 50).toDouble();
     _talkativenessLocked = c?.talkativenessLocked ?? false;
     _talkativenessSet = c?.talkativeness != null;
+    _llmConfigId = c?.userLlmConfigId;
+    _loadLlmConfigs();
   }
 
   @override
@@ -110,6 +115,15 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
   }
 
   /// 试听当前音色：固定文案合成并播放（音色/语速/语调即时生效）
+  Future<void> _loadLlmConfigs() async {
+    try {
+      final list = await ApiClient().listLlmConfigs();
+      if (mounted) setState(() => _llmConfigs = list);
+    } catch (_) {
+      if (mounted) setState(() => _llmConfigs = []);
+    }
+  }
+
   Future<void> _previewVoice() async {
     final l10n = AppLocalizations.of(context)!;
     if (_previewing) return;
@@ -309,6 +323,7 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
       'timezone_offset': _timezoneOffset,
       'talkativeness': _talkativenessSet ? _talkativeness.round() : null,
       'talkativeness_locked': _talkativenessLocked,
+      'user_llm_config_id': _llmConfigId,
     };
 
     try {
@@ -593,6 +608,28 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
                     label: l10n.chatStyle, hint: l10n.chatStyleHint, maxLines: 3),
                 const IosCardDivider(),
                 _buildTalkativeness(),
+              ],
+            ),
+            IosCardGroup(
+              title: l10n.model,
+              children: [
+                _buildDropdown(
+                  label: l10n.llmConfigName,
+                  value: _llmConfigId == null
+                      ? 'default'
+                      : (_llmConfigs.any((c) => c['id'] == _llmConfigId) ? '$_llmConfigId' : 'default'),
+                  helper: l10n.llmConfigHint,
+                  items: [
+                    DropdownMenuItem(value: 'default', child: Text(l10n.modelDefaultBind)),
+                    ..._llmConfigs.map((c) => DropdownMenuItem(
+                          value: '${c['id']}',
+                          child: Text('${c['name']}${c['is_shared'] == true ? '（${l10n.sharedBadge}）' : ''}'),
+                        )),
+                  ],
+                  onChanged: (v) => setState(() {
+                    _llmConfigId = v == null || v == 'default' ? null : int.tryParse(v);
+                  }),
+                ),
               ],
             ),
             IosCardGroup(

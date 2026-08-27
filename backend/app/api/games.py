@@ -535,9 +535,28 @@ async def _resume_ai_turns(session_id: int) -> None:
                     payload = dict(decision.get("payload") or {})
                     if decision.get("content"):
                         payload.setdefault("content", decision["content"])
-                    result = await engine.apply_action(seat, decision.get("action", ""), payload)
+                    # P0 双重 apply 修复：校验与 apply 统一由调度方负责。先 apply 一次；
+                    # result 不 ok 或抛异常时用 fallback_action 生成兜底 decision 再 apply 一次。
+                    try:
+                        result = await engine.apply_action(seat, decision.get("action", ""), payload)
+                    except Exception:
+                        result = None
+                    if result is None or not result.ok:
+                        _logger.info("ai apply rejected seat=%d, fallback_action", seat)
+                        fb = await engine.fallback_action(seat)
+                        if fb:
+                            payload = dict(fb.get("payload") or {})
+                            if fb.get("content"):
+                                payload.setdefault("content", fb["content"])
+                            try:
+                                result = await engine.apply_action(seat, fb.get("action", ""), payload)
+                            except Exception:
+                                result = None
+                    if result is None or not result.ok:
+                        _logger.warning("ai apply still failed seat=%d, aborting resume", seat)
+                        return
                     broadcast = []
-                    if result.ok and result.event:
+                    if result.event:
                         await engine.persist_event(db, result.event)
                         await _mirror_to_group(db, engine, session, result.event)
                         broadcast.append(result.event)

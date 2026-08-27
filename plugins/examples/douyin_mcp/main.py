@@ -261,7 +261,6 @@ def _launch(headless: bool):
             "--disable-blink-features=AutomationControlled",
             "--disable-features=IsolateOrigins,site-per-process",
             "--no-sandbox",
-            "--disable-web-security",
             "--disable-dev-shm-usage",
         ],
         viewport={"width": 1280, "height": 800},
@@ -2304,14 +2303,14 @@ async def upload_video(task_id: int = Form(...), file: UploadFile = File(...)):
     """为视频草稿上传视频文件（#67 P2）：保存到 uploads/douyin/{task_id}/ 并写 row.video_path"""
     from app.db.database import async_session_factory
     from app.models.douyin import DouyinPending
-    from app.services.upload_service import save_image
+    from app.services.upload_service import save_video
     async with async_session_factory() as db:
         row = await db.get(DouyinPending, task_id)
         if row is None:
             return {"ok": False, "message": "任务不存在"}
         if row.kind != "video_post":
             return {"ok": False, "message": "仅视频任务可上传视频"}
-        url = await save_image(file, f"douyin/{task_id}")
+        url = await save_video(file, f"douyin/{task_id}")
         row.video_path = url[:500]
         await db.commit()
     return {"ok": True, "video_path": url, "message": "视频已上传，确认后可发布"}
@@ -2484,6 +2483,7 @@ async def proactive_candidate(ctx):
         mention_comments = await _recent_unreplied_comments(1, exclude_mentioned=True)
         from app.services.chat_service import get_latest_session_id
         char_ids = [int(x) for x in raw.split(",") if x.strip().isdigit()]
+        all_candidates = []
         for cid in char_ids:
             # 角色可能属于其他账号，动态取角色所属用户
             from app.models.character import AICharacter
@@ -2532,8 +2532,8 @@ async def proactive_candidate(ctx):
                         "content": mc["content"][:80],
                     },
                 })
-            return candidates or None
-        return None
+            all_candidates.extend(candidates)
+        return all_candidates or None
     except Exception as e:
         sdk.log("proactive_candidate 异常: %s", e)
         return None

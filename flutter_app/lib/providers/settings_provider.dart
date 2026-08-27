@@ -1,9 +1,9 @@
-
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../screens/weave/weave_view_mode.dart';
+import '../theme/skins/skin_registry.dart';
 
 class SettingsProvider extends ChangeNotifier {
   String _serverUrl = '';
@@ -13,13 +13,14 @@ class SettingsProvider extends ChangeNotifier {
   int _userId = 0;
   bool _isConnected = false;
   bool _isLoggedIn = false;
-  bool _isAdmin = false; // #46 主账号（选择型）：登录后从 profile 同步
+  bool _isAdmin = false;
   int _themeModeIndex = 0; // 0=跟随系统 1=浅色 2=深色
-  int _seedColorIndex = 0; // 主题色索引
-  String _localeCode = 'system'; // system=跟随系统 zh=简体中文 en=English
-  bool _backgroundKeepalive = true; // 后台保活（#55，默认开）
-  WeaveViewMode _weaveViewMode = WeaveViewMode.auto; // 织网渲染档位模式（全自动/3D 全量/3D 轻量/2.5D，默认自动）
-  bool _onboardingDone = false; // 首次使用引导已完成（onboarding_done）
+  int _seedColorIndex = 0; // 强调色索引
+  String _skinId = SkinRegistry.defaultSkinId; // ⭐ 新增：当前皮肤 ID
+  String _localeCode = 'system';
+  bool _backgroundKeepalive = true;
+  WeaveViewMode _weaveViewMode = WeaveViewMode.auto;
+  bool _onboardingDone = false;
 
   String get serverUrl => _serverUrl;
   String get nickname => _nickname;
@@ -31,15 +32,12 @@ class SettingsProvider extends ChangeNotifier {
   bool get isAdmin => _isAdmin;
   int get themeModeIndex => _themeModeIndex;
   int get seedColorIndex => _seedColorIndex;
+  String get skinId => _skinId; // ⭐ 新增
   String get localeCode => _localeCode;
   bool get backgroundKeepalive => _backgroundKeepalive;
   WeaveViewMode get weaveViewMode => _weaveViewMode;
   bool get onboardingDone => _onboardingDone;
 
-  /// 是否仍需显示首次使用引导（Onboarding）：
-  /// - 已完成引导（onboarding_done=true）→ 不再显示（重启直接进主页/登录）；
-  /// - 尚未完成引导且没有已保存服务器地址 → 视为全新设备，显示引导。
-  /// 已配置过服务器（无论是否完成引导）一律不打扰，直接走正常登录/主页。
   bool get needsOnboarding => !_onboardingDone && _serverUrl.isEmpty;
 
   Future<void> load() async {
@@ -53,6 +51,7 @@ class SettingsProvider extends ChangeNotifier {
     _isAdmin = prefs.getBool('is_admin') ?? false;
     _themeModeIndex = prefs.getInt('theme_mode_index') ?? 0;
     _seedColorIndex = prefs.getInt('seed_color_index') ?? 0;
+    _skinId = prefs.getString('skin_id') ?? SkinRegistry.defaultSkinId; // ⭐ 读取
     _localeCode = prefs.getString('locale_code') ?? 'system';
     _backgroundKeepalive = prefs.getBool('background_keepalive') ?? true;
     _weaveViewMode = WeaveViewMode.fromStorageValue(
@@ -68,17 +67,26 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setLocale(String code) async {
-    _localeCode = code;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('locale_code', code);
-    notifyListeners();
-  }
-
   Future<void> setSeedColorIndex(int index) async {
     _seedColorIndex = index;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('seed_color_index', index);
+    notifyListeners();
+  }
+
+  /// ⭐ 新增：切换皮肤
+  Future<void> setSkinId(String id) async {
+    if (_skinId == id) return;
+    _skinId = id;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('skin_id', id);
+    notifyListeners();
+  }
+
+  Future<void> setLocale(String code) async {
+    _localeCode = code;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('locale_code', code);
     notifyListeners();
   }
 
@@ -89,7 +97,6 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 设置织网渲染档位模式并持久化（App 重启保持；首次默认 auto=全自动）。
   Future<void> setWeaveViewMode(WeaveViewMode mode) async {
     if (_weaveViewMode == mode) return;
     _weaveViewMode = mode;
@@ -105,7 +112,6 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 标记首次使用引导已完成（持久化到 shared_preferences，重启不再显示）。
   Future<void> setOnboardingDone(bool value) async {
     if (_onboardingDone == value) return;
     _onboardingDone = value;
@@ -140,8 +146,6 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 登录态下从服务器同步用户资料（头像/昵称）。
-  /// 退出登录会清空本地 avatar_url，登录/启动/进个人主页时调用可回填。
   Future<void> syncProfileFromServer() async {
     if (_token.isEmpty || _serverUrl.isEmpty) return;
     try {
@@ -165,9 +169,7 @@ class SettingsProvider extends ChangeNotifier {
       if (admin is bool) {
         await _setAdmin(admin);
       }
-    } catch (_) {
-      // 网络失败静默跳过，下次登录/进主页再同步
-    }
+    } catch (_) {}
   }
 
   Future<void> logout() async {
