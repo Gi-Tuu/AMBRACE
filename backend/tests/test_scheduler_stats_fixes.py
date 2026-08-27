@@ -228,7 +228,7 @@ def test_trigger_test_ok_still_works(monkeypatch):
 # ---------------- ③ P2-2：Alembic 新迁移建出两张表 ----------------
 
 def test_alembic_migration_creates_new_tables(monkeypatch):
-    """全新库 alembic upgrade head 后 user_rhythm / browser_snapshots / mcp_servers / mcp_call_logs + life_loop 新表存在（表数 93 + alembic_version = 94）。"""
+    """全新库 alembic upgrade head 后 user_rhythm / browser_snapshots / mcp_servers / mcp_call_logs + life_loop + user_llm_configs 新表存在。"""
     from alembic import command
     from app.config import settings as _settings
     from app.db.migrate import _alembic_config
@@ -256,4 +256,4 @@ def test_alembic_migration_creates_new_tables(monkeypatch):
     assert "life_followups" in names  # Life Loop v1.1（2026-08-26）
     assert "life_chat_intents" in names  # Life Loop v1.1（2026-08-26）
     assert "alembic_version" in names
-    assert len(names) == 98  # 93 张应用表 + 4 张游戏表 + alembic_version
+    assert len(names) == 99  # 93 张应用表 + 4 张游戏表 + user_llm_configs + alembic_version
