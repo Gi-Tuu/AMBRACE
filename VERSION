@@ -1,9 +1,16 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.3.8
-DATE: 2026-08-27
-STATUS: 开源发布版 v3.3.8（二次审查修复 + #68 多 LLM 配置 + 换肤 Skins）
+VERSION: 3.3.9
+DATE: 2026-08-28
+STATUS: 开源发布版 v3.3.9（#61 手机感知稳定性 + FCM 离线推送 + #68 P3 账号关联）
 
 CHANGELOG:
+
+3.3.9 - Release (2026-08-28)
+  - FCM: 系统级离线推送（统一出口 push_service：频控→WS→FCM fallback→无效 token 清理；device token 表+迁移；App 动态 FirebaseOptions，ENABLE_FCM 编译开关）
+  - Perception: 手机感知稳定性修复（撤 FGS 冲突/自动重绑/事件节流/遍历上限/健康灯/电池白名单/日志轮转/specialUse）
+  - Account: #68 P3 账号关联（受邀码/主从账号，主账号 ≤6 子账号）
+  - Review: #61 全量审查 P1/P2 修复（channel 透传/同设备串号/初始化时机/深链上限/健康状态真实化）
+  - Tests: ruff 0 / pytest 全绿 / flutter analyze 0 / flutter test 243 green
 
 3.3.8 - Release (2026-08-27)
   - Review: v3.3.7 发布后二次审查 7 项修复（游戏 AI 双重 apply / 抖音视频上传与路径 / proactive_candidate / ffmpeg 注入 / comments 死代码 / browser 参数）
