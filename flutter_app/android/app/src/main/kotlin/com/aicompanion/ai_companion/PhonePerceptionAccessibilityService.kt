@@ -203,8 +203,7 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
             if (!logDir.exists()) logDir.mkdirs()
             val logFile = File(logDir, "phone_perception.log")
             val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-            val line = "$ts  $msg
-"
+            val line = "$ts  $msg\n"
             // 轮转：超过 1MB 则备份为 .1
             if (logFile.exists() && logFile.length() > 1_000_000) {
                 val bak = File(logDir, "phone_perception.log.1")
