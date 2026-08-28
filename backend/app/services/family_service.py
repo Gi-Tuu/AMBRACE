@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
 from app.models.user.account_invite import AccountInvite
+from app.services.permission_service import _invalidate_admin_cache
 
 # 受邀码有效期（分钟）
 INVITE_TTL_MINUTES = 5
@@ -170,7 +171,9 @@ async def redeem_invite_code(db: AsyncSession, user_id: int, code: str | None) -
         raise HTTPException(status_code=409, detail="invite already used")
 
     redeemer.parent_id = invite.creator_id
+    redeemer.is_admin = False  # 子账号不保留管理员权限（#68 修订）
     await db.flush()
+    _invalidate_admin_cache()
     return {
         "ok": True,
         "root_id": invite.creator_id,
@@ -193,14 +196,18 @@ async def unlink(db: AsyncSession, acting_user_id: int, target_user_id: int) -> 
         if target.parent_id is None:
             raise HTTPException(status_code=400, detail="not linked")
         target.parent_id = None
+        target.is_admin = True  # 回到独立主账号，恢复管理员权限（#68 修订）
         await db.flush()
+        _invalidate_admin_cache()
         return {"ok": True, "user_id": target_user_id, "parent_id": None}
 
     # 主账号踢人：acting 必须是 target 的父账号
     if target.parent_id != acting_user_id:
         raise HTTPException(status_code=403, detail="forbidden")
     target.parent_id = None
+    target.is_admin = True  # 回到独立主账号，恢复管理员权限（#68 修订）
     await db.flush()
+    _invalidate_admin_cache()
     return {"ok": True, "user_id": target_user_id, "parent_id": None}
 
 

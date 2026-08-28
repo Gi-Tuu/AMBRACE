@@ -5122,6 +5122,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get accountMainLabel => '主账号';
 
   @override
+  String get accountSubLabel => '子账号';
+
+  @override
   String get accountAdminLoadFailed => '加载失败，请重试';
 
   @override

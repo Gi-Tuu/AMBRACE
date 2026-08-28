@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-# #46 主账号管理（选择型）测试（2026-08-24）：
-# - database 一次性种子：仅当无 is_admin=1 时从 env 写入 admin_user_ids，幂等不覆盖 UI 管理结果
+# #46 主账号管理（选择型）测试（2026-08-24，#68 修订 2026-08-28 按家庭范围隔离）：
+# - database 一次性种子：仅当无 is_admin=1 时从 env 写入 admin_user_ids（幂等）。
+#   #68 修订后，一致性修正把所有 parent_id IS NULL 的独立主账号统一置为 is_admin=1。
 # - permission_service.is_admin_user：DB 权威 + env 兜底（用户不存在/读取失败）
-# - admin API：列账号 / 设/取消主账号 / 最后主账号保护（400）/ 非主账号 403
+# - admin API：按家庭范围隔离（列表只看自己家庭；目标必须在家庭内；禁操作自己；
+#   最后一个主账号受「不能操作自己」规则保护）
 import asyncio
 import os
 import tempfile
@@ -54,13 +56,13 @@ def _clear_admin_cache():
 
 
 def _seed(db_factory):
-    """写入三个用户：id=1(admin)、2(普通)、3(admin)"""
+    """写入家庭结构：1=主账号(admin)、2=其子账号(非 admin)、3=另一独立主账号(admin)。"""
     async def _s():
         import app.models.user as um
         async with db_factory() as db:
             db.add_all([
                 um.User(id=1, username='admin', nickname='管理员', is_admin=True),
-                um.User(id=2, username='normal', nickname='普通用户', is_admin=False),
+                um.User(id=2, username='sub', nickname='子号', is_admin=False, parent_id=1),
                 um.User(id=3, username='admin3', nickname='第三号', is_admin=True),
             ])
             await db.commit()
@@ -125,17 +127,15 @@ def _run_seed(admin_ids, pre_admins: list[int], monkeypatch):
 
 
 def test_seed_writes_env_admins_when_none_exist(monkeypatch):
-    # 表中无任何 is_admin=1 → 从 env 写入 [1,3]
+    # #68 修订：表中用户均为独立主账号（parent_id IS NULL）→ 一致性修正统一置为 admin
     result = _run_seed([1, 3], [], monkeypatch)
-    assert result == {1: True, 3: True, 5: False}
+    assert result == {1: True, 3: True, 5: True}
 
 
 def test_seed_skips_when_ui_admin_exists(monkeypatch):
-    # 已有 UI 设置的主账号（id=5）→ 不再用 env 覆盖（不把 1/3 设为主账号）
+    # #68 修订：一致性修正把所有独立主账号置为 admin（不受 UI/env 是否已设影响）
     result = _run_seed([1, 3], [5], monkeypatch)
-    assert result[5] is True
-    assert result[1] is False
-    assert result[3] is False
+    assert result == {1: True, 3: True, 5: True}
 
 
 # ---------------- is_admin_user 判定 ----------------
@@ -173,8 +173,10 @@ def test_list_accounts_admin(db_factory):
     r = _make_client(ADMIN).get('/api/v1/admin/accounts')
     assert r.status_code == 200
     accs = {a['id']: a for a in r.json()['accounts']}
-    assert set(accs) == {1, 2, 3}
+    # 只看自己家庭（自己 + 直属子账号），看不到另一独立主账号 3
+    assert set(accs) == {1, 2}
     assert accs[1]['is_admin'] is True
+    assert accs[1]['is_self'] is True
     assert accs[2]['is_admin'] is False
     # 不含敏感字段
     assert 'password_hash' not in accs[1]
@@ -189,6 +191,7 @@ def test_list_accounts_forbidden_non_admin(db_factory):
 
 def test_set_admin_enable(db_factory):
     _seed(db_factory)
+    # 主账号可给子账号授予 admin
     r = _make_client(ADMIN).put('/api/v1/admin/accounts/2/admin', json={'enabled': True})
     assert r.status_code == 200
     assert r.json()['is_admin'] is True
@@ -196,20 +199,27 @@ def test_set_admin_enable(db_factory):
 
 
 def test_set_admin_disable_when_other_admin_remains(db_factory):
-    _seed(db_factory)  # admins: 1,3
-    r = _make_client(ADMIN).put('/api/v1/admin/accounts/1/admin', json={'enabled': False})
+    _seed(db_factory)  # 主账号 1 admin；先给子账号 2 授予 admin
+    assert _make_client(ADMIN).put('/api/v1/admin/accounts/2/admin', json={'enabled': True}).status_code == 200
+    # 取消子账号 admin：家庭内仍保留主账号 1 → 200
+    r = _make_client(ADMIN).put('/api/v1/admin/accounts/2/admin', json={'enabled': False})
     assert r.status_code == 200
-    assert _read_admin(db_factory, 1) is False
+    assert _read_admin(db_factory, 2) is False
 
 
 def test_last_admin_protected(db_factory):
-    _seed(db_factory)  # admins: 1,3
-    # 先取消 3（仍有 1 个主账号）
-    assert _make_client(ADMIN).put('/api/v1/admin/accounts/3/admin', json={'enabled': False}).status_code == 200
-    # 再取消最后一个 1 → 400
+    # 主账号是家庭内唯一 admin → 通过「不能操作自己」规则保护（拒绝取消自己）
+    _seed(db_factory)
     r = _make_client(ADMIN).put('/api/v1/admin/accounts/1/admin', json={'enabled': False})
     assert r.status_code == 400
-    assert r.json()['detail'] == '至少保留一个主账号'
+    assert _read_admin(db_factory, 1) is True
+
+
+def test_set_admin_cannot_toggle_other_family(db_factory):
+    # 3 是另一独立家庭的主账号 → 跨家庭 403
+    _seed(db_factory)
+    r = _make_client(ADMIN).put('/api/v1/admin/accounts/3/admin', json={'enabled': True})
+    assert r.status_code == 403
 
 
 def test_self_disable_only_admin_protected(db_factory, monkeypatch):
@@ -224,7 +234,7 @@ def test_self_disable_only_admin_protected(db_factory, monkeypatch):
             ])
             await db.commit()
     asyncio.run(_s())
-    # 操作者取消自己且是唯一主账号 → 400
+    # 操作者取消自己且是唯一主账号 → 400（不能操作自己）
     r = _make_client(1).put('/api/v1/admin/accounts/1/admin', json={'enabled': False})
     assert r.status_code == 400
 
@@ -237,8 +247,9 @@ def test_set_admin_requires_enabled(db_factory):
 
 def test_set_admin_user_not_found(db_factory):
     _seed(db_factory)
+    # 999 不在本家庭 → 先被家庭范围隔离拦截为 403
     r = _make_client(ADMIN).put('/api/v1/admin/accounts/999/admin', json={'enabled': True})
-    assert r.status_code == 404
+    assert r.status_code == 403
 
 
 def test_set_admin_forbidden_non_admin(db_factory):

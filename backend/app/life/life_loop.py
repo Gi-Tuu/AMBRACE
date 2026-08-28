@@ -13,7 +13,6 @@
 - 宠物报警只派给同用户最近互动角色，避免多角色重复响应同一宠物；
 - 提供模块级 run_character_tick(character_id, user_id) 单角色立即执行（即时聊天指令用）。
 """
-import asyncio
 import json
 import random
 from datetime import datetime, timedelta, timezone
@@ -299,7 +298,7 @@ class LifeLoopTask:
         每日每角色限额由决策器 play_game_available 保证。
         """
         try:
-            from app.api.games import _create_session_in_db, _resume_ai_turns
+            from app.api.games import _create_session_in_db, _resume_ai_turns, _spawn_background
             from app.games.registry import engine_for
             from app.models.game import GameSession
             # v3.3.6 审查修复：同用户已有进行中自主对局则不再重复开
@@ -344,7 +343,7 @@ class LifeLoopTask:
             )
             ts = engine.current_turn_seat()
             if ts is not None and engine.is_ai(ts):
-                asyncio.ensure_future(_resume_ai_turns(session.id))
+                _spawn_background(_resume_ai_turns(session.id))
             _logger.info("life loop play_game started char=%d game=%s session=%d players=%d",
                          char.id, game_type, session.id, len(char_ids))
             return {"session_id": session.id, "game_type": game_type, "name": meta["name"]}

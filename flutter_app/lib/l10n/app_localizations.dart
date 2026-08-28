@@ -9561,6 +9561,12 @@ abstract class AppLocalizations {
   /// **'主账号'**
   String get accountMainLabel;
 
+  /// No description provided for @accountSubLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'子账号'**
+  String get accountSubLabel;
+
   /// No description provided for @accountAdminLoadFailed.
   ///
   /// In zh, this message translates to:

@@ -79,7 +79,15 @@ class _AccountAdminScreenState extends State<AccountAdminScreen> {
       if (e is DioException) {
         final status = e.response?.statusCode;
         if (status == 400) {
-          msg = l10n.accountAdminKeepOne;
+          final detail = e.response?.data?['detail'];
+          // 区分两种 400：仅主账号/至少保留一个 → 复用保留一个文案；其余展示服务端 detail
+          if (detail == 'main_account_manage_only' || detail == 'admin_keep_one') {
+            msg = l10n.accountAdminKeepOne;
+          } else {
+            msg = detail?.toString() ?? l10n.accountAdminFailed;
+          }
+        } else if (status == 403) {
+          msg = l10n.accountAdminOnly; // "仅主账号可管理"
         } else {
           final detail = e.response?.data?['detail'];
           if (detail is String && detail.isNotEmpty) {
@@ -182,6 +190,20 @@ class _AccountAdminScreenState extends State<AccountAdminScreen> {
     final avatarUrl = acc['avatar_url'] as String?;
     final displayName = nickname.isNotEmpty ? nickname : username;
     final isAdmin = (acc['is_admin'] as bool?) ?? false;
+    final isSelf = (acc['is_self'] as bool?) ?? false;
+    final parentId = acc['parent_id'] as int?;
+    final isSubAccount = parentId != null;
+
+    // 副标题：自己 / 子账号 / 独立主账号
+    String subtitle;
+    if (isSelf) {
+      subtitle = l10n.accountMainLabel; // "主账号（你）"
+    } else if (isSubAccount) {
+      subtitle = '${l10n.accountSubLabel} · $username · #$id';
+    } else {
+      subtitle = '$username · #$id';
+    }
+
     return SwitchListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       secondary: _avatar(avatarUrl, displayName),
@@ -190,12 +212,13 @@ class _AccountAdminScreenState extends State<AccountAdminScreen> {
         style: const TextStyle(fontSize: 15, color: AppColors.textPrimary),
       ),
       subtitle: Text(
-        isAdmin ? l10n.accountMainLabel : '$username · #$id',
+        subtitle,
         style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
       ),
       value: isAdmin,
       activeThumbColor: AppColors.accent,
-      onChanged: (value) => _toggle(acc, value),
+      // 自己的开关禁用（不能取消自己）；子账号可由主账号切换
+      onChanged: isSelf ? null : (value) => _toggle(acc, value),
     );
   }
 

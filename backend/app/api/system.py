@@ -590,7 +590,6 @@ async def update_multimodal_server_config(data: dict, db: AsyncSession = Depends
 @router.get("/updates")
 async def get_updates():
     """更新公告：解析 docs/changelog.md，按天折叠（最新在前），供 app 内「更新公告」页展示"""
-    import re as _re
     from pathlib import Path
 
     changelog_path = Path(__file__).resolve().parents[3] / "docs" / "changelog.md"
@@ -599,14 +598,53 @@ async def get_updates():
     except Exception as e:
         _logger.warning("Changelog read failed: %s", e)
         return {"days": []}
+    return {"days": _parse_changelog(text)}
+
+
+def _changelog_title(rest: str, date: str) -> str:
+    """从 `## ` 后的文本提取标题。
+
+    优先级：括号内非日期文本 → 括号外前缀（如 v3.3.9 / 待发布）→ 日期本身。
+    """
+    import re as _re
+    if not rest:
+        return date
+    paren = _re.search(r"（(.+?)）", rest)
+    if paren:
+        inner = paren.group(1).strip()
+        non_date = _re.sub(r"\d{4}-\d{2}-\d{2}", "", inner).strip("，,、 ")
+        if non_date:
+            return non_date
+        prefix = rest[:paren.start()].strip()
+        if prefix:
+            return prefix
+        return date
+    return rest if rest else date
+
+
+def _parse_changelog(text: str) -> list[dict]:
+    """解析 changelog.md 文本，按天折叠（最新在前）。
+
+    兼容标题格式：
+    - 旧版：`## 2026-08-28（标题，待发布）`
+    - 新版：`## v3.3.9（2026-08-28）` / `## 待发布（2026-08-28）`
+    对每行 `## ` 开头用正则提取日期；`cur` 在循环前初始化为 None，首行即表格/无匹配时不 NameError。
+    """
+    import re as _re
 
     days_map: dict[str, dict] = {}
     order: list[str] = []
+    cur: dict | None = None
     for raw_line in text.splitlines():
         line = raw_line.strip()
-        m = _re.match(r"^##\s*(\d{4}-\d{2}-\d{2})\s*（(.+)）$", line)
-        if m:
-            date, title = m.group(1), m.group(2)
+        if line.startswith("##"):
+            dm = _re.search(r"(\d{4}-\d{2}-\d{2})", line)
+            if dm is None:
+                # 无日期标题（防御）：不挂到条目，避免后续表格行飘到错误日
+                cur = None
+                continue
+            date = dm.group(1)
+            title = _changelog_title(line[2:].strip(), date)
             if date not in days_map:
                 days_map[date] = {"date": date, "title": title, "items": [], "_sections": 1}
                 order.append(date)
@@ -632,7 +670,7 @@ async def get_updates():
         if sections > 1:
             entry["title"] = f"{entry['title']}（{sections} 节）"
         out.append(entry)
-    return {"days": out[:30]}
+    return out[:30]
 
 
 

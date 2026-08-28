@@ -5307,6 +5307,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get accountMainLabel => 'Main account';
 
   @override
+  String get accountSubLabel => 'Sub-account';
+
+  @override
   String get accountAdminLoadFailed => 'Load failed, please retry';
 
   @override

@@ -424,6 +424,20 @@ async def init_db():
                 await conn.execute(sa_text(f"UPDATE users SET is_admin = 1 WHERE id IN ({','.join(_seed_ids)})"))
                 print(f"[migrate] users.is_admin seeded from env ADMIN_USER_IDS={settings.admin_user_ids}")
 
+        # #68 修订（2026-08-28）：is_admin 与 parent_id 一致性（幂等自愈）
+        # 独立主账号（parent_id IS NULL）→ is_admin=1；子账号（parent_id IS NOT NULL）→ is_admin=0。
+        # 仅当 users.parent_id 列存在时执行（旧库未跑到 #68 迁移前防御），每次启动修正不一致数据。
+        _us_cols2 = (await conn.execute(sa_text("PRAGMA table_info(users)"))).fetchall()
+        _us_names2 = [c[1] for c in _us_cols2] if _us_cols2 else []
+        if "parent_id" in _us_names2:
+            await conn.execute(sa_text(
+                "UPDATE users SET is_admin = 1 WHERE parent_id IS NULL AND is_admin = 0"
+            ))
+            await conn.execute(sa_text(
+                "UPDATE users SET is_admin = 0 WHERE parent_id IS NOT NULL AND is_admin = 1"
+            ))
+            print("[migrate] users.is_admin/parent_id consistency ensured")
+
         # pets 补列：AI 提醒照顾时间（宠物关怀 Phase 2）
         petcols = (await conn.execute(sa_text("PRAGMA table_info(pets)"))).fetchall()
         if petcols and "last_remind_at" not in [c1[1] for c1 in petcols]:

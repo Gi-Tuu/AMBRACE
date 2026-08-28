@@ -1904,6 +1904,7 @@
   "accountAdminOnly": "仅主账号可管理",
   "accountAdminListTitle": "账号列表",
   "accountMainLabel": "主账号",
+  "accountSubLabel": "子账号",
   "accountAdminLoadFailed": "加载失败，请重试",
   "accountAdminSaved": "已保存",
   "accountAdminFailed": "操作失败，请重试",

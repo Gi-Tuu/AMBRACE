@@ -35,6 +35,16 @@ _ai_turn_locks: dict[int, asyncio.Lock] = {}
 # WebSocket 游戏实时推送：session_id -> set[WebSocket]（与 chat 的 connected_clients 隔离，避免 id 撞表）
 _game_ws_clients: dict[int, set[WebSocket]] = {}
 
+# 强引用后台任务，防止 asyncio.ensure_future 创建的 Task 被 GC 提前回收（Python 官方警告）
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_background(coro) -> None:
+    """安全调度后台协程：保留强引用直到完成，防止 Task 被 GC 静默取消。"""
+    task = asyncio.ensure_future(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
 
 def _lazy_lock(session_id: int) -> asyncio.Lock:
     return _ai_turn_locks.setdefault(session_id, asyncio.Lock())
@@ -100,7 +110,7 @@ async def create_session(data: dict, user_id: int = Depends(get_current_user_id)
         # 若第一个行动者是 AI，启动续跑
         ts = engine.current_turn_seat()
         if ts is not None and engine.is_ai(ts):
-            asyncio.ensure_future(_resume_ai_turns(session.id))
+            _spawn_background(_resume_ai_turns(session.id))
 
         return {
             "ok": True,
@@ -336,7 +346,7 @@ async def player_action(sid: int, data: dict, user_id: int = Depends(get_current
         for ev in broadcast:
             await _broadcast_game_event(sid, ev, session.phase)
         # 触发 AI 续跑（幂等；先响应，再异步推 AI 回合）
-        asyncio.ensure_future(_resume_ai_turns(sid))
+        _spawn_background(_resume_ai_turns(sid))
         return {"ok": True, "finished": False}
 
 
@@ -359,7 +369,7 @@ async def get_state(
         else:
             view_seat = -1  # 观战视角（只公开事件）
         if session.status == "playing":
-            asyncio.ensure_future(_resume_ai_turns(sid))
+            _spawn_background(_resume_ai_turns(sid))
         return _build_state(engine, user_seat=view_seat)
 
 
@@ -605,7 +615,7 @@ async def resume_stuck_games() -> None:
                 await engine.load(db2)
                 seat = engine.current_turn_seat()
                 if seat is not None and engine.is_ai(seat):
-                    asyncio.ensure_future(_resume_ai_turns(sid))
+                    _spawn_background(_resume_ai_turns(sid))
     except Exception as e:
         _logger.warning("resume_stuck_games failed: %s", e)
 

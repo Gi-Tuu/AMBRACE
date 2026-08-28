@@ -1904,6 +1904,7 @@
   "accountAdminOnly": "Only the main account can manage",
   "accountAdminListTitle": "Accounts",
   "accountMainLabel": "Main account",
+  "accountSubLabel": "Sub-account",
   "accountAdminLoadFailed": "Load failed, please retry",
   "accountAdminSaved": "Saved",
   "accountAdminFailed": "Operation failed, please retry",

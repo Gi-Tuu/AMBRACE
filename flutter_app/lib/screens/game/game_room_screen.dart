@@ -36,25 +36,30 @@ class _GameRoomScreenState extends State<GameRoomScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final game = p.game;
-    final isFinished = p.isFinished;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(l10n.gameRoomTitle),
-        actions: [
-          if (p.hasSession && !isFinished)
-            IconButton(
-              tooltip: l10n.gameAbort,
-              icon: const Icon(Icons.close),
-              onPressed: _abort,
-            ),
-        ],
-      ),
-      body: game == null
-          ? Center(child: Text(l10n.gameLoading))
-          : isFinished
-              ? _finishedView(l10n)
-              : _playingView(l10n),
+    return ListenableBuilder(
+      listenable: p,
+      builder: (context, _) {
+        final game = p.game;
+        final isFinished = p.isFinished;
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(l10n.gameRoomTitle),
+            actions: [
+              if (p.hasSession && !isFinished)
+                IconButton(
+                  tooltip: l10n.gameAbort,
+                  icon: const Icon(Icons.close),
+                  onPressed: p.sending ? null : _abort,
+                ),
+            ],
+          ),
+          body: game == null
+              ? Center(child: Text(l10n.gameLoading))
+              : isFinished
+                  ? _finishedView(l10n)
+                  : _playingView(l10n),
+        );
+      },
     );
   }
 
@@ -224,7 +229,15 @@ class _GameRoomScreenState extends State<GameRoomScreen> {
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      child: _buildActions(expected, l10n),
+      child: p.sending
+          ? const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(child: SizedBox(
+                width: 22, height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              )),
+            )
+          : _buildActions(expected, l10n),
     );
   }
 
@@ -481,10 +494,15 @@ class _GameRoomScreenState extends State<GameRoomScreen> {
   }
 
   Future<void> _send(String action, Map<String, dynamic> payload) async {
-    await p.sendAction(action: action, payload: payload);
-    if (mounted) {
-      _textCtrl.clear();
-      setState(() => _selectedVoteSeat = '');
+    if (p.sending) return; // 防止重复点击
+    final ok = await p.sendAction(action: action, payload: payload);
+    if (!mounted) return;
+    _textCtrl.clear();
+    setState(() => _selectedVoteSeat = '');
+    if (!ok && p.error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(p.error!), duration: const Duration(seconds: 2)),
+      );
     }
   }
 

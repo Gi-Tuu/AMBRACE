@@ -300,5 +300,8 @@ class TruthOrDareEngine(GameEngine):
             return {"action": "give_truth" if want == "truth" else "give_dare",
                     "content": self._safe(want), "payload": {}}
         if stage == "answer":
+            want = self.state.get("last_choice")
+            if want == "dare":
+                return {"action": "complete_dare", "content": "完成任务！", "payload": {}}
             return {"action": "answer_truth", "content": "我想想……", "payload": {}}
         return {"action": "skip", "content": "", "payload": {}}

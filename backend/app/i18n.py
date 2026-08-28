@@ -141,6 +141,9 @@ _MESSAGES: dict[str, tuple[str, str]] = {
     # #46 主账号管理（选择型，2026-08-24）
     "admin_enabled_invalid": ("enabled 参数无效", "Invalid enabled parameter"),
     "admin_keep_one": ("至少保留一个主账号", "At least one main account must remain"),
+    # #68 修订：主账号管理按家庭范围隔离（2026-08-28）
+    "admin_cannot_toggle_self": ("不能修改自己的主账号状态", "You cannot change your own admin status"),
+    "admin_target_not_in_family": ("只能管理自己家庭内的账号", "You can only manage accounts in your own family"),
     # #28 ③ 手动触发测试接口（2026-08-24）
     "trigger_test_forbidden": ("仅主账号可执行手动触发测试", "Only main account can run trigger test"),
     "trigger_test_character_required": ("请指定要测试的角色", "Character id is required"),

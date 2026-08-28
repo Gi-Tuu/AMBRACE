@@ -136,6 +136,8 @@ class GameProvider extends ChangeNotifier {
     try {
       final r = await _api.postGameAction(
         sessionId: sid, seat: _userSeat, action: action, payload: payload);
+      // 行动后立即刷新状态：让用户看到自己的动作结果，同时拿到最新阶段
+      await refreshState();
       if (r['finished'] == true) {
         await refreshState();
       }

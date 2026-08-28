@@ -853,9 +853,8 @@ async def _handle_play_command(db: AsyncSession, group_id: int, content: str,
 
     用户 /play 后不再走普通群聊回复。非法游戏名/人数不足返回群聊提示（不报 500）。
     """
-    from app.api.games import list_games, engine_for, _create_session_in_db, \
+    from app.api.games import list_games, engine_for, _create_session_in_db, _spawn_background, \
         _mirror_to_group as _mirror, _resume_ai_turns
-    import asyncio
 
     arg = (content[len("/play"):] or "").strip()
     group_chars = await _group_active_chars(db, group_id)
@@ -905,7 +904,7 @@ async def _handle_play_command(db: AsyncSession, group_id: int, content: str,
     # 首个行动者是 AI 时触发自动续跑
     ts = engine.current_turn_seat()
     if ts is not None and engine.is_ai(ts):
-        asyncio.ensure_future(_resume_ai_turns(session.id))
+        _spawn_background(_resume_ai_turns(session.id))
 
     _logger.info("group /play started group=%d game=%s session=%d players=%d",
                  group_id, game_type, session.id, len(char_ids))
@@ -1040,8 +1039,8 @@ async def send_message(
 
     # 群记忆（Phase 3，2026-08-14）：异步把本轮群聊提炼为记忆（每群 30 分钟节流，失败静默）
     try:
-        import asyncio as _aio
-        _aio.ensure_future(_save_group_memory(group_id, user_id, content, ai_msgs))
+        from app.api.games import _spawn_background
+        _spawn_background(_save_group_memory(group_id, user_id, content, ai_msgs))
     except Exception:
         pass
 
