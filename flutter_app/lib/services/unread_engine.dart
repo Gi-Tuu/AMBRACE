@@ -1,4 +1,6 @@
 import "dart:convert";
+import "../utils/service_l10n.dart";
+import "../utils/app_lang.dart";
 
 /// 通知引擎：前后台共用的纯逻辑（无 UI / 无网络依赖）。
 /// 收敛目标：轮询解析、增量比对、防抖、DND 判断只实现一份，
@@ -72,12 +74,12 @@ class UnreadEvent {
         "content": content,
       };
 
-  static UnreadEvent? fromJson(Object? raw) {
+  static UnreadEvent? fromJson(Object? raw, ServiceL10n l10n) {
     if (raw is! Map) return null;
     final cid = raw["characterId"] as int?;
     final sid = raw["sessionId"] as int?;
     final cnt = raw["count"] as int?;
-    final title = raw["title"] as String? ?? "AI 好友";
+    final title = raw["title"] as String? ?? l10n.aiFriend;
     final content = raw["content"] as String? ?? "";
     if (cid == null || sid == null || cnt == null) return null;
     return UnreadEvent(
@@ -136,11 +138,12 @@ class NotifyPrefs {
   static String encodeEvent(List<UnreadEvent> events) =>
       jsonEncode(events.map((e) => e.toJson()).toList());
 
-  static List<UnreadEvent> decodeEvent(String? raw) {
+  static Future<List<UnreadEvent>> decodeEvent(String? raw) async {
     if (raw == null || raw.isEmpty) return [];
     try {
+      final l10n = ServiceL10n(await appLang());
       final list = jsonDecode(raw) as List<dynamic>;
-      return list.map(UnreadEvent.fromJson).whereType<UnreadEvent>().toList();
+      return list.map((j) => UnreadEvent.fromJson(j, l10n)).whereType<UnreadEvent>().toList();
     } catch (_) {
       return [];
     }

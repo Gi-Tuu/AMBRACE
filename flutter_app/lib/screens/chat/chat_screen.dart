@@ -359,7 +359,7 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
     // 结果回传服务器（source=action_result），供聊天上下文引用与动作日志落库
     await PhonePerceptionService.uploadActionResult(
       action,
-      actionLabel.isEmpty ? "目标" : actionLabel,
+      actionLabel.isEmpty ? l10n.actionTarget : actionLabel,
       ok,
       msg,
     );

@@ -748,27 +748,27 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
           ]),
           // R5：服务健康状态灯
           if (_health.isNotEmpty)
-            group('运行状态', [
-              healthTile(Icons.accessibility_new, '无障碍服务',
+            group(l10n.healthRunningStatus, [
+              healthTile(Icons.accessibility_new, l10n.healthAccessibility,
                   _health['accessible'] == true,
-                  sub: _health['accessibleInstanceAlive'] == true ? '已连接' : '系统已开但服务未连接'),
+                  sub: _health['accessibleInstanceAlive'] == true ? l10n.connected : l10n.healthAccessibilityNotConnected),
               div(),
-              healthTile(Icons.notifications_outlined, '通知读取',
+              healthTile(Icons.notifications_outlined, l10n.healthNotificationAccess,
                   _health['notification'] == true,
-                  sub: _health['notificationConnected'] == true ? '已连接' : '系统已开但未连接'),
+                  sub: _health['notificationConnected'] == true ? l10n.connected : l10n.healthNotificationNotConnected),
               div(),
               healthTile(Icons.shield_outlined, 'Shizuku',
                   _health['shizuku'] == true,
                   sub: _health['shizukuRunning'] == true
-                      ? (_health['shizukuGranted'] == true ? '已授权' : '未授权')
-                      : '未运行'),
+                      ? (_health['shizukuGranted'] == true ? l10n.healthShizukuAuthorized : l10n.healthShizukuUnauthorized)
+                      : l10n.healthShizukuNotRunning),
               div(),
-              healthTile(Icons.bar_chart, '使用情况访问',
+              healthTile(Icons.bar_chart, l10n.healthUsageAccess,
                   _health['usageStats'] == true),
               div(),
-              healthTile(Icons.battery_saver, '电池优化白名单',
+              healthTile(Icons.battery_saver, l10n.healthBatteryWhitelist,
                   _batteryOk,
-                  sub: _batteryOk ? '已加入' : '未加入（可能导致后台断开）',
+                  sub: _batteryOk ? l10n.healthBatteryAdded : l10n.healthBatteryNotAdded,
                   onTap: _batteryOk ? null : () async {
                     await PhonePerceptionService.requestIgnoreBatteryOptimizations();
                     Future.delayed(const Duration(seconds: 2), _loadHealth);

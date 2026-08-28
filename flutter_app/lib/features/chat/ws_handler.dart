@@ -1,6 +1,9 @@
 
+import 'dart:ui' as ui;
+
 import '../../models/message.dart';
 import 'message_appender.dart';
+import '../../utils/service_l10n.dart';
 
 /// 待确认的 AI 能力调用（权限=每次询问 时由 WS permission_request 事件下发，2026-08-12）。
 /// 由 ChatProvider 持有（`pendingPermission`）；此处定义并由 ChatProvider 转发导出。
@@ -84,12 +87,13 @@ class WsHandler {
         _onChanged();
       case 'cold_war':
         // 冷战拦截（v3）：角色生气冷战期不回复，本地显示系统提示
+        final cwL10n = ServiceL10n(ui.PlatformDispatcher.instance.locale.languageCode.toLowerCase().startsWith('en') ? 'en' : 'zh');
         _messages.add(ChatMessage(
           id: DateTime.now().millisecondsSinceEpoch,
           sessionId: _sessionId() ?? 0,
           senderType: 'system',
           isLocal: true,
-          content: data['message'] as String? ?? 'TA 暂时没有回应你',
+          content: data['message'] as String? ?? cwL10n.noResponseFallback,
           createdAt: _serverNow().toIso8601String(),
         ));
         _setTyping(false);
@@ -106,10 +110,11 @@ class WsHandler {
       case 'permission_request':
         final pd = data['data'] as Map<String, dynamic>?;
         if (pd != null) {
+          final prL10n = ServiceL10n(ui.PlatformDispatcher.instance.locale.languageCode.toLowerCase().startsWith('en') ? 'en' : 'zh');
           _setPendingPermission(PendingPermissionRequest(
             actionId: pd['action_id'] as int? ?? 0,
             scope: pd['scope'] as String? ?? '',
-            scopeLabel: pd['scope_label'] as String? ?? '能力',
+            scopeLabel: pd['scope_label'] as String? ?? prL10n.scopeAbility,
             prompt: pd['prompt'] as String? ?? '',
             characterId: pd['character_id'] as int? ?? 0,
           ));

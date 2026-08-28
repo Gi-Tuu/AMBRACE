@@ -1223,6 +1223,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get byModelUsage => '按模型用量';
 
   @override
+  String get byUserUsage => '按账号用量';
+
+  @override
+  String get expandByAccount => '按账号展开';
+
+  @override
+  String get collapseByAccount => '收起';
+
+  @override
   String get unknown => '未知';
 
   @override
@@ -5203,6 +5212,21 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get douyinBindRole => '绑定角色';
+
+  @override
+  String get douyinBindRoleHint => '选择绑定抖音的角色（空=未绑定）';
+
+  @override
+  String get douyinBindNone => '未绑定';
+
+  @override
+  String get douyinBindSave => '保存绑定';
+
+  @override
+  String get douyinBindSaved => '绑定角色已保存';
+
+  @override
   String agentMindRetrievalCount(Object count) {
     return '$count 条';
   }
@@ -5837,4 +5861,130 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get family => '家庭';
+
+  @override
+  String get healthRunningStatus => '运行状态';
+
+  @override
+  String get healthAccessibility => '无障碍服务';
+
+  @override
+  String get healthAccessibilityNotConnected => '系统已开但服务未连接';
+
+  @override
+  String get healthNotificationAccess => '通知读取';
+
+  @override
+  String get healthNotificationNotConnected => '系统已开但未连接';
+
+  @override
+  String get healthShizukuAuthorized => '已授权';
+
+  @override
+  String get healthShizukuUnauthorized => '未授权';
+
+  @override
+  String get healthShizukuNotRunning => '未运行';
+
+  @override
+  String get healthUsageAccess => '使用情况访问';
+
+  @override
+  String get healthBatteryWhitelist => '电池优化白名单';
+
+  @override
+  String get healthBatteryAdded => '已加入';
+
+  @override
+  String get healthBatteryNotAdded => '未加入（可能导致后台断开）';
+
+  @override
+  String get relationTypeOther => '其他';
+
+  @override
+  String gameWolfTeammates(String team) {
+    return '🐺 狼队友：$team 号';
+  }
+
+  @override
+  String gameHandCards(String cards) {
+    return '🃏 手牌：$cards';
+  }
+
+  @override
+  String gameSeerChecks(String checks) {
+    return '🔮 查验：$checks';
+  }
+
+  @override
+  String get gameWolf => '狼';
+
+  @override
+  String get gameGoodPerson => '好人';
+
+  @override
+  String get zoomIn => '放大';
+
+  @override
+  String get zoomOut => '缩小';
+
+  @override
+  String get resetView => '复位';
+
+  @override
+  String streamSendFailed(String err) {
+    return '流式发送失败：$err';
+  }
+
+  @override
+  String imageSendFailed(String err) {
+    return '图片发送失败：$err';
+  }
+
+  @override
+  String emojiSendFailed(String err) {
+    return '表情发送失败：$err';
+  }
+
+  @override
+  String get noResponseFallback => 'TA 暂时没有回应你';
+
+  @override
+  String get scopeAbility => '能力';
+
+  @override
+  String get actionTarget => '目标';
+
+  @override
+  String get gameTimeoutMsg => '加载超时，请检查网络后再试';
+
+  @override
+  String get notifChannelBackground => '拥爱后台服务';
+
+  @override
+  String get notifChannelBackgroundDesc => '后台轮询 AI 好友新消息的常驻通知';
+
+  @override
+  String get notifRunningTitle => '拥爱运行中';
+
+  @override
+  String get notifRunningDesc => '正在后台监听 AI 好友的新消息';
+
+  @override
+  String get notifChannelAlert => '重要提醒';
+
+  @override
+  String get notifChannelAlertDesc => '查岗等重要通知';
+
+  @override
+  String get emotionWave => '情绪波动';
+
+  @override
+  String get defaultNickname => '用户';
+
+  @override
+  String get cooldown => '冷却';
+
+  @override
+  String get unknownDetail => '不详';
 }

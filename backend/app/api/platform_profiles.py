@@ -40,8 +40,9 @@ async def update_douyin_profile(
     user_id: int = Depends(get_current_user_id),
     lang: str = Header(default="zh"),
 ):
-    """更新抖音平台档案（仅主账号）"""
-    if user_id != 1:
+    """更新抖音平台档案（仅独立主账号；子账号 403）"""
+    from app.services.family_service import is_sub_account
+    if await is_sub_account(db, user_id):
         raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_only"))
     value = str(data.get("memory_restrict", "off"))
     if value not in _ALLOWED:

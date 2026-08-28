@@ -172,17 +172,17 @@ class _GameRoomScreenState extends State<GameRoomScreen> {
             ],
             if (wolfTeam.isNotEmpty) ...[
               const SizedBox(height: 4),
-              Text('🐺 狼队友：$wolfTeam 号',
+              Text(l10n.gameWolfTeammates(wolfTeam),
                   style: const TextStyle(fontSize: 13)),
             ],
             if (cards.isNotEmpty) ...[
               const SizedBox(height: 4),
-              Text('🃏 手牌：$cards',
+              Text(l10n.gameHandCards(cards),
                   style: const TextStyle(fontSize: 13)),
             ],
             if (checks.isNotEmpty) ...[
               const SizedBox(height: 4),
-              Text('🔮 查验：${checks.entries.map((e) => '${e.key}号${e.value == true ? "狼" : "好人"}').join('；')}',
+              Text(l10n.gameSeerChecks(checks.entries.map((e) => '${e.key}号${e.value == true ? l10n.gameWolf : l10n.gameGoodPerson}').join('；')),
                   style: const TextStyle(fontSize: 13)),
             ],
             if (isSpectator)

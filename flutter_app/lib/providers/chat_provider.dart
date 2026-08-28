@@ -10,6 +10,8 @@ import '../services/voice_playback_queue.dart';
 import '../features/chat/stream_handler.dart';
 import '../features/chat/ws_handler.dart';
 import '../features/chat/message_appender.dart';
+import '../utils/service_l10n.dart';
+import '../utils/app_lang.dart';
 
 export '../features/chat/ws_handler.dart' show PendingPermissionRequest;
 
@@ -155,7 +157,8 @@ class ChatProvider extends ChangeNotifier {
         sendMessage(greeting);
       }
     } catch (e) {
-      _error = '连接失败: ';
+      final l10n = ServiceL10n(await appLang());
+      _error = l10n.connectFailedPrefix();
       _isLoading = false;
       notifyListeners();
     }
@@ -239,7 +242,8 @@ class ChatProvider extends ChangeNotifier {
       // 流正常收尾；若 done 事件未触发兜底结束
       if (_streamHandler.isStreaming) _streamHandler.finishStreaming();
     } catch (e) {
-      _error = '流式发送失败: $e';
+      final l10n = ServiceL10n(await appLang());
+      _error = l10n.streamSendFailedErr(e);
       _fallbackToWebSocket(content, quote);
     }
   }
@@ -277,7 +281,8 @@ class ChatProvider extends ChangeNotifier {
       final result = await _api.uploadChatImage(_sessionId!, file, userId: _userId, caption: caption, lang: _localeCode);
       MessageAppender.appendMessageResult(_messages, result, 'image_message');
     } catch (e) {
-      _error = '图片发送失败: $e';
+      final l10n = ServiceL10n(await appLang());
+      _error = l10n.imageSendFailedErr(e);
     }
     _isSending = false;
     _isTyping = false;
@@ -294,7 +299,8 @@ class ChatProvider extends ChangeNotifier {
       final result = await _api.uploadChatFile(_sessionId!, file, lang: lang);
       MessageAppender.appendMessageResult(_messages, result, 'file_message');
     } catch (e) {
-      _error = '文件发送失败: $e';
+      final l10n = ServiceL10n(await appLang());
+      _error = l10n.fileSendFailedErr(e);
     }
     _isSending = false;
     _isTyping = false;
@@ -323,7 +329,8 @@ class ChatProvider extends ChangeNotifier {
         ok = true;
       }
     } catch (e) {
-      _error = '语音发送失败: $e';
+      final l10n = ServiceL10n(await appLang());
+      _error = l10n.voiceSendFailedErr(e);
     }
     _isSending = false;
     _isTyping = false;
@@ -341,7 +348,8 @@ class ChatProvider extends ChangeNotifier {
       final result = await _api.sendEmojiMessage(_sessionId!, emojiUrl, name, lang: _localeCode, meaning: meaning);
       MessageAppender.appendMessageResult(_messages, result, 'emoji_message');
     } catch (e) {
-      _error = '表情发送失败: $e';
+      final l10n = ServiceL10n(await appLang());
+      _error = l10n.emojiSendFailedErr(e);
     }
     _isSending = false;
     _isTyping = false;
@@ -354,7 +362,8 @@ class ChatProvider extends ChangeNotifier {
       _messages.removeWhere((m) => m.id == messageId);
       notifyListeners();
     } catch (e) {
-      _error = '删除失败: $e';
+      final l10n = ServiceL10n(await appLang());
+      _error = l10n.deleteFailedErr(e);
       notifyListeners();
     }
   }

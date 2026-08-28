@@ -1185,6 +1185,7 @@ class _LlmUsageSheetState extends State<_LlmUsageSheet> {
   Map<String, dynamic>? _data;
   bool _loading = true;
   bool _failed = false;
+  bool _showByUser = false; // #68 P6 主账号「按账号」展开
 
   @override
   void initState() {
@@ -1314,6 +1315,8 @@ class _LlmUsageSheetState extends State<_LlmUsageSheet> {
     final month = (_data?['month'] as num? ?? 0).toInt();
     final byModel =
         (_data?['by_model'] as List? ?? []).cast<Map<String, dynamic>>();
+    final byUser =
+        (_data?['by_user'] as List? ?? []).cast<Map<String, dynamic>>();
     final canEdit = _data?['can_edit_limit'] == true;
     final cardColor = scheme.surfaceContainerHighest.withValues(alpha: 0.5);
 
@@ -1455,6 +1458,64 @@ class _LlmUsageSheetState extends State<_LlmUsageSheet> {
                         style: const TextStyle(
                             fontSize: 11, color: IosCardColors.subtitle)),
                   ),
+              ],
+            ),
+          ),
+        ],
+        // #68 P6：主账号显示组聚合 + 「按账号」展开明细（子账号不返回 by_user → 不渲染）
+        if (byUser.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                InkWell(
+                  onTap: () => setState(() => _showByUser = !_showByUser),
+                  child: Row(
+                    children: [
+                      Text(l10n.byUserUsage,
+                          style: TextStyle(fontSize: 12, color: IosCardColors.subtitle)),
+                      const Spacer(),
+                      Text(
+                        _showByUser ? l10n.collapseByAccount : l10n.expandByAccount,
+                        style: TextStyle(fontSize: 12, color: scheme.primary),
+                      ),
+                      Icon(
+                        _showByUser ? Icons.expand_less : Icons.expand_more,
+                        size: 16,
+                        color: scheme.primary,
+                      ),
+                    ],
+                  ),
+                ),
+                if (_showByUser) ...[
+                  const SizedBox(height: 6),
+                  for (final u in byUser)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              u['nickname'] as String? ?? l10n.unknown,
+                              style: TextStyle(fontSize: 13, color: scheme.onSurface),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Text(
+                            _fmt((u['total'] as num? ?? 0).toInt(), l10n),
+                            style: const TextStyle(
+                                fontSize: 12, color: IosCardColors.subtitle),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
               ],
             ),
           ),

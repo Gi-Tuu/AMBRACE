@@ -11,6 +11,8 @@ class LlmUsage(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # None=服务器级/未知
+    config_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 命中的 user_llm_configs.id（#68 P6）
+    group_owner_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 家庭根账号（#68 P6 组聚合）
     task: Mapped[str | None] = mapped_column(String(30), nullable=True)  # 用途归因（审计 P1-07，2026-08-15）
     provider: Mapped[str | None] = mapped_column(String(30), nullable=True)
     model: Mapped[str | None] = mapped_column(String(50), nullable=True)

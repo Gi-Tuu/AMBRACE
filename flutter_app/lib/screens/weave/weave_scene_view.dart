@@ -57,6 +57,7 @@ import 'package:ai_companion/screens/weave/weave_card_texture.dart';
 import 'package:ai_companion/screens/weave/weave_edge_render.dart';
 import 'package:ai_companion/screens/weave/weave_perf_monitor.dart';
 import 'package:ai_companion/screens/weave/weave_view_mode.dart';
+import 'package:ai_companion/l10n/app_localizations.dart';
 
 // ─────────────────────────── A' 法线标签 + 深空背景（屏幕层） ───────────────────────────
 //
@@ -126,9 +127,9 @@ double _labelVisibility(double facing) {
 }
 
 /// 标题截断（过长省略号）。
-String _truncateLabel(String title, int maxChars) {
+String _truncateLabel(String title, int maxChars, String unnamed) {
   final t = title.trim();
-  if (t.isEmpty) return '未命名';
+  if (t.isEmpty) return unnamed;
   return t.length > maxChars ? '${t.substring(0, maxChars)}…' : t;
 }
 
@@ -154,6 +155,7 @@ List<WeaveLabelData> buildWeaveLabels({
   required Size size,
   required double sphereRadius,
   required double nodeRadius,
+  required String unnamed,
   int max = kWeaveLabelMax,
 }) {
   final out = <_WeaveLabelCandidate>[];
@@ -211,7 +213,7 @@ List<WeaveLabelData> buildWeaveLabels({
     placed.add(c.rect);
     result.add(WeaveLabelData(
       nodeId: c.nodeId,
-      title: _truncateLabel(c.title, kWeaveLabelTitleMaxChars),
+      title: _truncateLabel(c.title, kWeaveLabelTitleMaxChars, unnamed),
       x: c.center.dx,
       y: c.center.dy,
       scale: c.scale,
@@ -1285,6 +1287,7 @@ class _WeaveScene3DHostState extends State<_WeaveScene3DHost>
             size: size,
             sphereRadius: _sphereRadius,
             nodeRadius: _nodeRadius,
+            unnamed: AppLocalizations.of(context)!.unnamed,
           );
 
           // 深空背景（固定深空色，不随深浅主题）→ Scene（默认透明清屏，星空透出）→ 标签覆盖层。

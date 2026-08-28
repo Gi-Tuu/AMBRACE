@@ -1261,6 +1261,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get byModelUsage => 'Usage by model';
 
   @override
+  String get byUserUsage => 'Usage by account';
+
+  @override
+  String get expandByAccount => 'Expand by account';
+
+  @override
+  String get collapseByAccount => 'Collapse';
+
+  @override
   String get unknown => 'Unknown';
 
   @override
@@ -5391,6 +5400,22 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get douyinBindRole => 'Bind character';
+
+  @override
+  String get douyinBindRoleHint =>
+      'Select the character bound to Douyin (empty = unbound)';
+
+  @override
+  String get douyinBindNone => 'Unbound';
+
+  @override
+  String get douyinBindSave => 'Save binding';
+
+  @override
+  String get douyinBindSaved => 'Bound character saved';
+
+  @override
   String agentMindRetrievalCount(Object count) {
     return '$count records';
   }
@@ -6035,4 +6060,134 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get family => 'Family';
+
+  @override
+  String get healthRunningStatus => 'Running Status';
+
+  @override
+  String get healthAccessibility => 'Accessibility Service';
+
+  @override
+  String get healthAccessibilityNotConnected =>
+      'Enabled but service not connected';
+
+  @override
+  String get healthNotificationAccess => 'Notification Access';
+
+  @override
+  String get healthNotificationNotConnected => 'Enabled but not connected';
+
+  @override
+  String get healthShizukuAuthorized => 'Authorized';
+
+  @override
+  String get healthShizukuUnauthorized => 'Not authorized';
+
+  @override
+  String get healthShizukuNotRunning => 'Not running';
+
+  @override
+  String get healthUsageAccess => 'Usage Access';
+
+  @override
+  String get healthBatteryWhitelist => 'Battery Optimization Whitelist';
+
+  @override
+  String get healthBatteryAdded => 'Added';
+
+  @override
+  String get healthBatteryNotAdded =>
+      'Not added (may cause background disconnects)';
+
+  @override
+  String get relationTypeOther => 'Other';
+
+  @override
+  String gameWolfTeammates(String team) {
+    return '🐺 Wolf teammates: #$team';
+  }
+
+  @override
+  String gameHandCards(String cards) {
+    return '🃏 Cards: $cards';
+  }
+
+  @override
+  String gameSeerChecks(String checks) {
+    return '🔮 Checks: $checks';
+  }
+
+  @override
+  String get gameWolf => 'Wolf';
+
+  @override
+  String get gameGoodPerson => 'Good';
+
+  @override
+  String get zoomIn => 'Zoom In';
+
+  @override
+  String get zoomOut => 'Zoom Out';
+
+  @override
+  String get resetView => 'Reset';
+
+  @override
+  String streamSendFailed(String err) {
+    return 'Stream send failed: $err';
+  }
+
+  @override
+  String imageSendFailed(String err) {
+    return 'Image send failed: $err';
+  }
+
+  @override
+  String emojiSendFailed(String err) {
+    return 'Emoji send failed: $err';
+  }
+
+  @override
+  String get noResponseFallback => 'They did not respond for now';
+
+  @override
+  String get scopeAbility => 'Ability';
+
+  @override
+  String get actionTarget => 'Target';
+
+  @override
+  String get gameTimeoutMsg =>
+      'Loading timed out, check your network and try again';
+
+  @override
+  String get notifChannelBackground => 'AMBRACE Background Service';
+
+  @override
+  String get notifChannelBackgroundDesc =>
+      'Persistent notification for background message polling';
+
+  @override
+  String get notifRunningTitle => 'AMBRACE Running';
+
+  @override
+  String get notifRunningDesc => 'Listening for new messages in the background';
+
+  @override
+  String get notifChannelAlert => 'Important Alerts';
+
+  @override
+  String get notifChannelAlertDesc => 'Important notifications like check-ins';
+
+  @override
+  String get emotionWave => 'Emotional Wave';
+
+  @override
+  String get defaultNickname => 'User';
+
+  @override
+  String get cooldown => 'Cooldown';
+
+  @override
+  String get unknownDetail => 'Unknown';
 }

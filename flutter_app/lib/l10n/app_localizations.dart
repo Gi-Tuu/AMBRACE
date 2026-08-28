@@ -2349,6 +2349,24 @@ abstract class AppLocalizations {
   /// **'按模型用量'**
   String get byModelUsage;
 
+  /// No description provided for @byUserUsage.
+  ///
+  /// In zh, this message translates to:
+  /// **'按账号用量'**
+  String get byUserUsage;
+
+  /// No description provided for @expandByAccount.
+  ///
+  /// In zh, this message translates to:
+  /// **'按账号展开'**
+  String get expandByAccount;
+
+  /// No description provided for @collapseByAccount.
+  ///
+  /// In zh, this message translates to:
+  /// **'收起'**
+  String get collapseByAccount;
+
   /// No description provided for @unknown.
   ///
   /// In zh, this message translates to:
@@ -9711,6 +9729,36 @@ abstract class AppLocalizations {
   /// **'保存失败：{err}'**
   String extSaveFailed(Object err);
 
+  /// No description provided for @douyinBindRole.
+  ///
+  /// In zh, this message translates to:
+  /// **'绑定角色'**
+  String get douyinBindRole;
+
+  /// No description provided for @douyinBindRoleHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'选择绑定抖音的角色（空=未绑定）'**
+  String get douyinBindRoleHint;
+
+  /// No description provided for @douyinBindNone.
+  ///
+  /// In zh, this message translates to:
+  /// **'未绑定'**
+  String get douyinBindNone;
+
+  /// No description provided for @douyinBindSave.
+  ///
+  /// In zh, this message translates to:
+  /// **'保存绑定'**
+  String get douyinBindSave;
+
+  /// No description provided for @douyinBindSaved.
+  ///
+  /// In zh, this message translates to:
+  /// **'绑定角色已保存'**
+  String get douyinBindSaved;
+
   /// No description provided for @agentMindRetrievalCount.
   ///
   /// In zh, this message translates to:
@@ -10898,6 +10946,234 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'家庭'**
   String get family;
+
+  /// No description provided for @healthRunningStatus.
+  ///
+  /// In zh, this message translates to:
+  /// **'运行状态'**
+  String get healthRunningStatus;
+
+  /// No description provided for @healthAccessibility.
+  ///
+  /// In zh, this message translates to:
+  /// **'无障碍服务'**
+  String get healthAccessibility;
+
+  /// No description provided for @healthAccessibilityNotConnected.
+  ///
+  /// In zh, this message translates to:
+  /// **'系统已开但服务未连接'**
+  String get healthAccessibilityNotConnected;
+
+  /// No description provided for @healthNotificationAccess.
+  ///
+  /// In zh, this message translates to:
+  /// **'通知读取'**
+  String get healthNotificationAccess;
+
+  /// No description provided for @healthNotificationNotConnected.
+  ///
+  /// In zh, this message translates to:
+  /// **'系统已开但未连接'**
+  String get healthNotificationNotConnected;
+
+  /// No description provided for @healthShizukuAuthorized.
+  ///
+  /// In zh, this message translates to:
+  /// **'已授权'**
+  String get healthShizukuAuthorized;
+
+  /// No description provided for @healthShizukuUnauthorized.
+  ///
+  /// In zh, this message translates to:
+  /// **'未授权'**
+  String get healthShizukuUnauthorized;
+
+  /// No description provided for @healthShizukuNotRunning.
+  ///
+  /// In zh, this message translates to:
+  /// **'未运行'**
+  String get healthShizukuNotRunning;
+
+  /// No description provided for @healthUsageAccess.
+  ///
+  /// In zh, this message translates to:
+  /// **'使用情况访问'**
+  String get healthUsageAccess;
+
+  /// No description provided for @healthBatteryWhitelist.
+  ///
+  /// In zh, this message translates to:
+  /// **'电池优化白名单'**
+  String get healthBatteryWhitelist;
+
+  /// No description provided for @healthBatteryAdded.
+  ///
+  /// In zh, this message translates to:
+  /// **'已加入'**
+  String get healthBatteryAdded;
+
+  /// No description provided for @healthBatteryNotAdded.
+  ///
+  /// In zh, this message translates to:
+  /// **'未加入（可能导致后台断开）'**
+  String get healthBatteryNotAdded;
+
+  /// No description provided for @relationTypeOther.
+  ///
+  /// In zh, this message translates to:
+  /// **'其他'**
+  String get relationTypeOther;
+
+  /// No description provided for @gameWolfTeammates.
+  ///
+  /// In zh, this message translates to:
+  /// **'🐺 狼队友：{team} 号'**
+  String gameWolfTeammates(String team);
+
+  /// No description provided for @gameHandCards.
+  ///
+  /// In zh, this message translates to:
+  /// **'🃏 手牌：{cards}'**
+  String gameHandCards(String cards);
+
+  /// No description provided for @gameSeerChecks.
+  ///
+  /// In zh, this message translates to:
+  /// **'🔮 查验：{checks}'**
+  String gameSeerChecks(String checks);
+
+  /// No description provided for @gameWolf.
+  ///
+  /// In zh, this message translates to:
+  /// **'狼'**
+  String get gameWolf;
+
+  /// No description provided for @gameGoodPerson.
+  ///
+  /// In zh, this message translates to:
+  /// **'好人'**
+  String get gameGoodPerson;
+
+  /// No description provided for @zoomIn.
+  ///
+  /// In zh, this message translates to:
+  /// **'放大'**
+  String get zoomIn;
+
+  /// No description provided for @zoomOut.
+  ///
+  /// In zh, this message translates to:
+  /// **'缩小'**
+  String get zoomOut;
+
+  /// No description provided for @resetView.
+  ///
+  /// In zh, this message translates to:
+  /// **'复位'**
+  String get resetView;
+
+  /// No description provided for @streamSendFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'流式发送失败：{err}'**
+  String streamSendFailed(String err);
+
+  /// No description provided for @imageSendFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'图片发送失败：{err}'**
+  String imageSendFailed(String err);
+
+  /// No description provided for @emojiSendFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'表情发送失败：{err}'**
+  String emojiSendFailed(String err);
+
+  /// No description provided for @noResponseFallback.
+  ///
+  /// In zh, this message translates to:
+  /// **'TA 暂时没有回应你'**
+  String get noResponseFallback;
+
+  /// No description provided for @scopeAbility.
+  ///
+  /// In zh, this message translates to:
+  /// **'能力'**
+  String get scopeAbility;
+
+  /// No description provided for @actionTarget.
+  ///
+  /// In zh, this message translates to:
+  /// **'目标'**
+  String get actionTarget;
+
+  /// No description provided for @gameTimeoutMsg.
+  ///
+  /// In zh, this message translates to:
+  /// **'加载超时，请检查网络后再试'**
+  String get gameTimeoutMsg;
+
+  /// No description provided for @notifChannelBackground.
+  ///
+  /// In zh, this message translates to:
+  /// **'拥爱后台服务'**
+  String get notifChannelBackground;
+
+  /// No description provided for @notifChannelBackgroundDesc.
+  ///
+  /// In zh, this message translates to:
+  /// **'后台轮询 AI 好友新消息的常驻通知'**
+  String get notifChannelBackgroundDesc;
+
+  /// No description provided for @notifRunningTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'拥爱运行中'**
+  String get notifRunningTitle;
+
+  /// No description provided for @notifRunningDesc.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在后台监听 AI 好友的新消息'**
+  String get notifRunningDesc;
+
+  /// No description provided for @notifChannelAlert.
+  ///
+  /// In zh, this message translates to:
+  /// **'重要提醒'**
+  String get notifChannelAlert;
+
+  /// No description provided for @notifChannelAlertDesc.
+  ///
+  /// In zh, this message translates to:
+  /// **'查岗等重要通知'**
+  String get notifChannelAlertDesc;
+
+  /// No description provided for @emotionWave.
+  ///
+  /// In zh, this message translates to:
+  /// **'情绪波动'**
+  String get emotionWave;
+
+  /// No description provided for @defaultNickname.
+  ///
+  /// In zh, this message translates to:
+  /// **'用户'**
+  String get defaultNickname;
+
+  /// No description provided for @cooldown.
+  ///
+  /// In zh, this message translates to:
+  /// **'冷却'**
+  String get cooldown;
+
+  /// No description provided for @unknownDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'不详'**
+  String get unknownDetail;
 }
 
 class _AppLocalizationsDelegate

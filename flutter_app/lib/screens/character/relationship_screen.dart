@@ -23,7 +23,7 @@ String _relationTypeLabel(String value, AppLocalizations l10n) {
     case "其他":
       return l10n.genderOther;
     default:
-      return value;
+      return l10n.relationTypeOther;
   }
 }
 

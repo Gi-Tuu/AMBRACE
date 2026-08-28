@@ -227,6 +227,7 @@ async def _resolve_llm_config(api_key: str | None = None, base_url: str | None =
     if base_url and not api_key:
         base_url = None
     explicit = bool(api_key or base_url)
+    config_id: int | None = None
 
     # 1. 任务专用（非 chat）：用户级→服务器级（保持「无显式 BYOK 时生效」的既有语义）
     task_found = False
@@ -258,6 +259,7 @@ async def _resolve_llm_config(api_key: str | None = None, base_url: str | None =
             base_url = cfg_dict.get("base_url") or base_url
             model = cfg_dict.get("model") or model
             provider = cfg_dict.get("provider") or provider
+            config_id = cfg_dict.get("config_id") or config_id
             explicit = bool(api_key or base_url)
 
     if not explicit:
@@ -267,7 +269,7 @@ async def _resolve_llm_config(api_key: str | None = None, base_url: str | None =
             provider = srv.get("provider")
     api_key = api_key or (settings.llm_api_key or settings.deepseek_api_key)
     base_url = base_url or (settings.llm_base_url or settings.deepseek_base_url)
-    return {"api_key": api_key, "base_url": base_url, "model": model, "provider": provider}
+    return {"api_key": api_key, "base_url": base_url, "model": model, "provider": provider, "config_id": config_id}
 
 
 async def load_character_reasoning_level(character_id: int | None) -> int:
@@ -448,7 +450,10 @@ async def chat_completion(
             )
             _record_usage_async(cfg.get("provider"), model_name,
                                 u.prompt_tokens or 0, u.completion_tokens or 0, reasoning or 0,
-                                task=task)
+                                task=task,
+                                user_id=user_id,
+                                config_id=cfg.get("config_id"),
+                                group_owner_id=await _resolve_group_owner_id(user_id))
     except Exception as e:
         _logger.warning("LLM usage log failed: %s", e)
 
@@ -465,9 +470,26 @@ async def chat_completion(
     return content, reasoning
 
 
+async def _resolve_group_owner_id(user_id: int | None) -> int | None:
+    """解析用量归组的家庭根账号：子账号=根账号，独立主账号=自己；失败/无 user_id 回退 user_id。"""
+    if not user_id:
+        return None
+    try:
+        from app.db.database import async_session_factory
+        from app.services.family_service import get_family_root_id
+        async with async_session_factory() as db:
+            root = await get_family_root_id(db, user_id)
+        return int(root) if root else int(user_id)
+    except Exception:
+        return int(user_id)
+
+
 def _record_usage_async(provider: str | None, model: str | None,
                         prompt_tokens: int, completion_tokens: int,
-                        reasoning_tokens: int, task: str | None = None) -> None:
+                        reasoning_tokens: int, task: str | None = None,
+                        user_id: int | None = None,
+                        config_id: int | None = None,
+                        group_owner_id: int | None = None) -> None:
     """异步落库单次 LLM 用量（后台任务，失败仅告警不影响主流程）"""
     async def _do() -> None:
         try:
@@ -482,6 +504,9 @@ def _record_usage_async(provider: str | None, model: str | None,
                     total_tokens=prompt_tokens + completion_tokens,
                     reasoning_tokens=reasoning_tokens,
                     task=(task or "")[:30] or None,
+                    user_id=user_id,
+                    config_id=config_id,
+                    group_owner_id=group_owner_id,
                 ))
                 await db.commit()
         except Exception as e:  # 用量统计失败不影响回复
@@ -576,13 +601,19 @@ async def chat_completion_stream(
             )
             _record_usage_async(cfg.get("provider"), model_name,
                                 _last_usage.prompt_tokens or 0, _last_usage.completion_tokens or 0,
-                                _reasoning or 0, task=task)
+                                _reasoning or 0, task=task,
+                                user_id=user_id,
+                                config_id=cfg.get("config_id"),
+                                group_owner_id=await _resolve_group_owner_id(user_id))
         else:
             _est_tokens = _estimate_completion_tokens("".join(_est_parts))
             _logger.warning(
                 "LLM stream usage: NO usage in stream, estimated completion_tokens=%d (approx)",
                 _est_tokens,
             )
-            _record_usage_async(cfg.get("provider"), model_name, 0, _est_tokens, 0, task=task)
+            _record_usage_async(cfg.get("provider"), model_name, 0, _est_tokens, 0, task=task,
+                                user_id=user_id,
+                                config_id=cfg.get("config_id"),
+                                group_owner_id=await _resolve_group_owner_id(user_id))
     except Exception as e:
         _logger.warning("LLM stream usage log failed: %s", e)

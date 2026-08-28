@@ -161,11 +161,11 @@ class LifeHomeWorldToolbar extends StatelessWidget {
           ),
           const Spacer(),
           // 缩放按钮（用简短中文 tooltip；无 l10n key 可用）
-          _zoomBtn(context, Icons.add, '放大', onZoomIn, scheme),
+          _zoomBtn(context, Icons.add, l10n.zoomIn, onZoomIn, scheme),
           const SizedBox(width: 4),
-          _zoomBtn(context, Icons.remove, '缩小', onZoomOut, scheme),
+          _zoomBtn(context, Icons.remove, l10n.zoomOut, onZoomOut, scheme),
           const SizedBox(width: 4),
-          _zoomBtn(context, Icons.center_focus_strong, '复位', onResetView, scheme),
+          _zoomBtn(context, Icons.center_focus_strong, l10n.resetView, onResetView, scheme),
         ],
       ),
     );

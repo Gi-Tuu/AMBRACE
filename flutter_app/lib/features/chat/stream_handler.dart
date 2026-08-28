@@ -1,8 +1,11 @@
 
+import 'dart:ui' as ui;
+
 import 'package:flutter/foundation.dart';
 
 import '../../models/message.dart';
 import 'message_appender.dart';
+import '../../utils/service_l10n.dart';
 
 /// 持有 SSE 流式状态（`_streamingBlockIds` / `_streamingMessage` / `isStreaming`）并向
 /// ChatProvider 委托：delta 打字机、block 确认替换、done 收尾、reset_blocks 清块、
@@ -148,12 +151,13 @@ class StreamHandler {
         // 服务端已内部回退非流式 chunked（仍会继续推 block/done），这里只提示，不重复发送
         _onChanged();
       case 'cold_war':
+        final cwL10n = ServiceL10n(ui.PlatformDispatcher.instance.locale.languageCode.toLowerCase().startsWith('en') ? 'en' : 'zh');
         _messages.add(ChatMessage(
           id: DateTime.now().millisecondsSinceEpoch,
           sessionId: _sessionId() ?? 0,
           senderType: 'system',
           isLocal: true,
-          content: event['message'] as String? ?? 'TA 暂时没有回应你',
+          content: event['message'] as String? ?? cwL10n.noResponseFallback,
           createdAt: _serverNow().toIso8601String(),
         ));
         finishStreaming();

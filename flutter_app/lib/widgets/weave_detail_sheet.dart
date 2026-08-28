@@ -15,7 +15,7 @@ class WeaveDetailSheet extends StatelessWidget {
   const WeaveDetailSheet(
       {super.key, required this.card, required this.onDelete});
 
-  Widget _kv(IconData icon, String label, String value) {
+  Widget _kv(IconData icon, String label, String value, AppLocalizations l10n) {
     final empty = value == '不详';
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -32,7 +32,7 @@ class WeaveDetailSheet extends StatelessWidget {
         ),
         Expanded(
           child: Text(
-            value,
+            empty ? l10n.unknownDetail : value,
             style: TextStyle(
               fontSize: 12.5,
               color: empty ? AppColors.textTertiary : const Color(0xFF555555),
@@ -157,13 +157,13 @@ class WeaveDetailSheet extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 if (d != null) ...[
-                  _kv(Icons.schedule, l10n.sheetTime, d.time),
+                  _kv(Icons.schedule, l10n.sheetTime, d.time, l10n),
                   const SizedBox(height: 7),
-                  _kv(Icons.wb_sunny_outlined, l10n.sheetWeather, d.weather),
+                  _kv(Icons.wb_sunny_outlined, l10n.sheetWeather, d.weather, l10n),
                   const SizedBox(height: 7),
-                  _kv(Icons.place_outlined, l10n.sheetLocation, d.location),
+                  _kv(Icons.place_outlined, l10n.sheetLocation, d.location, l10n),
                   const SizedBox(height: 7),
-                  _kv(Icons.sentiment_satisfied_outlined, l10n.mood, d.mood),
+                  _kv(Icons.sentiment_satisfied_outlined, l10n.mood, d.mood, l10n),
                   _listBlock(l10n.memoryEvent, d.events),
                   _listBlock(l10n.sheetDetails, d.details),
                 ],

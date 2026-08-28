@@ -56,8 +56,9 @@ def _install_fakes(monkeypatch, chunks, calls):
     monkeypatch.setattr(llm_client, "_pick_api_key", lambda raw: "k")
     monkeypatch.setattr(
         llm_client, "_record_usage_async",
-        lambda provider, model, prompt, completion, reasoning, task=None: calls.append(
-            (provider, model, prompt, completion, reasoning, task)),
+        lambda provider, model, prompt, completion, reasoning, task=None,
+               user_id=None, config_id=None, group_owner_id=None: calls.append(
+            (provider, model, prompt, completion, reasoning, task, user_id, config_id, group_owner_id)),
     )
     fake_client = types.SimpleNamespace(
         chat=types.SimpleNamespace(completions=_FakeCompletions(chunks)),
@@ -86,7 +87,7 @@ def test_chat_completion_stream_records_usage_from_last_chunk(monkeypatch):
     asyncio.run(_run())
 
     assert "".join(out) == "你好世界"
-    assert calls == [("p", "m", 10, 20, 5, "chat")]
+    assert calls == [("p", "m", 10, 20, 5, "chat", None, None, None)]
 
 
 def test_chat_completion_stream_estimates_when_no_usage(monkeypatch):
@@ -111,4 +112,4 @@ def test_chat_completion_stream_estimates_when_no_usage(monkeypatch):
 
     # 累计文本 "你好世界。" = 5 字符 → 5 // 2 = 2 token（估算）
     assert "".join(out) == "你好世界。"
-    assert calls == [("p", "m", 0, 2, 0, "chat")]
+    assert calls == [("p", "m", 0, 2, 0, "chat", None, None, None)]

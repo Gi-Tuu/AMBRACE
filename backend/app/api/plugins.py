@@ -101,6 +101,61 @@ async def _is_owner(user_id: int) -> bool:
     return await is_admin_user(user_id)
 
 
+async def _validate_douyin_binding(user_id: int, config: dict, lang: str) -> None:
+    """#68 P5：douyin_mcp 组级唯一绑定校验（配置变更时）。
+
+    - 调用者须为独立主账号（parent_id IS NULL），子账号 → 403；
+    - allowed_character_ids 收窄为单选：>1 → 400；空数组 = 未绑定（允许）；
+    - 所选角色 user_id 必须属于调用者家庭（跨家庭 → 403）；
+    - 全组唯一：同一家庭内已有其他角色绑定 douyin → 400（先解绑/转移）。
+    校验通过后把 allowed_character_ids 归一化为逗号分隔字符串（douyin 插件按逗号读取）。
+    """
+    if "allowed_character_ids" not in config:
+        return
+    import json
+    from sqlalchemy import select
+    from app.db.database import async_session_factory
+    from app.models.character import AICharacter
+    from app.models.plugin import Plugin
+    from app.services.family_service import get_family_member_ids, is_sub_account
+
+    raw = config.get("allowed_character_ids")
+    if isinstance(raw, list):
+        ids = [int(x) for x in raw if str(x).strip().isdigit()]
+    else:
+        ids = [int(x) for x in str(raw or "").split(",") if x.strip().isdigit()]
+    if len(ids) > 1:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "douyin_bind_multi"))
+
+    async with async_session_factory() as db:
+        if await is_sub_account(db, user_id):
+            raise HTTPException(status_code=403, detail=tr_lang(lang, "douyin_bind_main_only"))
+        if ids:
+            char = await db.get(AICharacter, ids[0])
+            family_ids = await get_family_member_ids(db, user_id)
+            if char is None or char.user_id not in family_ids:
+                raise HTTPException(status_code=403, detail=tr_lang(lang, "douyin_bind_cross_family"))
+            # 全组唯一：同一家庭内已有其他角色绑定 douyin（本身份除外）
+            row = (await db.execute(select(Plugin).where(Plugin.name == "douyin_mcp"))).scalar_one_or_none()
+            existing = {}
+            if row is not None:
+                try:
+                    existing = json.loads(row.config_json or "{}")
+                except Exception:
+                    existing = {}
+            existing_ids = [int(x) for x in str(existing.get("allowed_character_ids", "") or "").split(",") if x.strip().isdigit()]
+            existing_owner: dict[int, int] = {}
+            if existing_ids:
+                existing_chars = (await db.execute(
+                    select(AICharacter).where(AICharacter.id.in_(existing_ids))
+                )).scalars().all()
+                existing_owner = {c.id: c.user_id for c in existing_chars}
+            if any(existing_owner.get(eid) in family_ids and eid != ids[0] for eid in existing_ids):
+                raise HTTPException(status_code=400, detail=tr_lang(lang, "douyin_bind_occupied"))
+    # 归一化存储为逗号分隔字符串（保持 douyin 插件读取语义不变）
+    config["allowed_character_ids"] = ",".join(str(x) for x in ids) if ids else ""
+
+
 @router.get("")
 async def list_plugins(user_id: int = Depends(get_current_user_id)):
     """插件列表（含启用状态与配置）"""
@@ -115,18 +170,21 @@ async def update_plugin(
     user_id: int = Depends(get_current_user_id),
     lang: str = Header(default="zh"),
 ):
-    """启用/禁用/更新配置（仅主账号可写）"""
-    if not await _is_owner(user_id):
-        raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_manage_only"))
+    """启用/禁用/更新配置（仅主账号可写；douyin_mcp 走组级唯一绑定校验）"""
     plugin = registry.get_plugin(name)
     if plugin is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_not_found"))
     enabled = body.get("enabled")
     config = body.get("config")
-    if enabled is not None and not isinstance(enabled, bool):
-        raise HTTPException(status_code=400, detail=tr_lang(lang, "enabled_invalid"))
     if config is not None and not isinstance(config, dict):
         raise HTTPException(status_code=400, detail=tr_lang(lang, "config_invalid"))
+    if name == "douyin_mcp" and config is not None:
+        # #68 P5：配置变更时校验组级唯一绑定（子账号 403 / 多角色 400 / 跨家庭 403 / 占用 400）
+        await _validate_douyin_binding(user_id, config, lang)
+    if not await _is_owner(user_id):
+        raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_manage_only"))
+    if enabled is not None and not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "enabled_invalid"))
     updated = await registry.set_plugin_state(name, enabled=enabled, config=config)
     return updated
 

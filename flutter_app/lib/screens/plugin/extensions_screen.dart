@@ -4,6 +4,7 @@ import 'package:ai_companion/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
+import '../../models/character.dart';
 import 'marketplace_screen.dart';
 import 'mcp_tools_screen.dart';
 import 'plugin_chat_screen.dart';
@@ -324,6 +325,11 @@ class _PluginCardState extends State<_PluginCard> {
   // douyin_mcp 自定义设定（注入 AI 抖音创作；待批准请求统一在「AI 好友」小信封查看）
   final TextEditingController _dyPromptCtrl = TextEditingController();
   bool _dySaving = false;
+  // douyin_mcp 绑定角色（#68 P5 组级唯一；-1=未绑定）
+  int _dyBoundCharId = -1;
+  bool _bindSaving = false;
+  List<AICharacter> _dyChars = [];
+  bool _dyCharsLoading = false;
 
   /// 48a：插件图标展示（manifest.icon 相对路径 → 页面托管 URL；加载失败回退 type 图标）
   Widget _iconWidget(String name, String type, String category, String icon) {
@@ -367,6 +373,8 @@ class _PluginCardState extends State<_PluginCard> {
     if (widget.plugin['name'] == 'douyin_mcp') {
       final cfg = widget.plugin['config'] as Map<String, dynamic>? ?? {};
       _dyPromptCtrl.text = (cfg['custom_prompt'] as String? ?? '');
+      _dyBoundCharId = _parseBoundChar(cfg['allowed_character_ids']);
+      _loadDyChars();
     }
   }
 
@@ -675,6 +683,53 @@ class _PluginCardState extends State<_PluginCard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // #68 P5：绑定角色（组级唯一单选；-1=未绑定）
+        if (widget.isAdmin) ...[
+          Text(l10n.douyinBindRole, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text(l10n.douyinBindRoleHint, style: TextStyle(fontSize: 10, color: Colors.grey)),
+          const SizedBox(height: 6),
+          if (_dyCharsLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 6),
+              child: Text('加载中…', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            )
+          else
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: DropdownButton<int>(
+                value: _dyBoundCharId,
+                isExpanded: true,
+                underline: const SizedBox.shrink(),
+                isDense: true,
+                items: [
+                  DropdownMenuItem<int>(
+                      value: -1, child: Text(l10n.douyinBindNone, style: const TextStyle(fontSize: 13))),
+                  for (final c in _dyChars)
+                    DropdownMenuItem<int>(value: c.id, child: Text(c.name, style: const TextStyle(fontSize: 13))),
+                ],
+                onChanged: _bindSaving ? null : (v) => setState(() => _dyBoundCharId = v ?? -1),
+              ),
+            ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.tonal(
+              onPressed: _bindSaving ? null : _saveDyBindRole,
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+              ),
+              child: Text(l10n.douyinBindSave, style: const TextStyle(fontSize: 12)),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
         Text(l10n.extCustomConfig, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
         const SizedBox(height: 2),
         Text(l10n.extDoyinInjectHint,
@@ -731,6 +786,59 @@ class _PluginCardState extends State<_PluginCard> {
       widget.onToast(l10n.extSaveFailed('$e'));
     } finally {
       if (mounted) setState(() => _dySaving = false);
+    }
+  }
+
+  /// #68 P5：解析当前 douyin 绑定角色 id（兼容历史逗号分隔字符串/数组；-1=未绑定）
+  int _parseBoundChar(dynamic raw) {
+    if (raw == null) return -1;
+    if (raw is List) {
+      for (final x in raw) {
+        final i = int.tryParse('$x');
+        if (i != null) return i;
+      }
+      return -1;
+    }
+    final s = '$raw'.trim();
+    if (s.isEmpty) return -1;
+    for (final p in s.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty)) {
+      final i = int.tryParse(p);
+      if (i != null) return i;
+    }
+    return -1;
+  }
+
+  Future<void> _loadDyChars() async {
+    if (!mounted) return;
+    setState(() => _dyCharsLoading = true);
+    try {
+      final chars = await ApiClient().getCharacters();
+      if (!mounted) return;
+      setState(() {
+        _dyChars = chars.where((c) => c.isActive).toList();
+        _dyCharsLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _dyCharsLoading = false);
+    }
+  }
+
+  Future<void> _saveDyBindRole() async {
+    final l10n = AppLocalizations.of(context)!;
+    if (_bindSaving) return;
+    setState(() => _bindSaving = true);
+    try {
+      final cfg = Map<String, dynamic>.from(
+          widget.plugin['config'] as Map<String, dynamic>? ?? {});
+      cfg['allowed_character_ids'] = _dyBoundCharId >= 0 ? <int>[_dyBoundCharId] : <int>[];
+      await ApiClient().updatePlugin('douyin_mcp', config: cfg);
+      widget.onToast(l10n.douyinBindSaved);
+      widget.onChanged();
+    } catch (e) {
+      widget.onToast(l10n.extSaveFailed('$e'));
+    } finally {
+      if (mounted) setState(() => _bindSaving = false);
     }
   }
 

@@ -1,6 +1,7 @@
 import "package:flutter_local_notifications/flutter_local_notifications.dart";
 import "dnd_settings.dart";
 import "../utils/app_lang.dart";
+import "../utils/service_l10n.dart";
 
 /// 系统通知展示器：初始化本地通知插件并弹出系统通知。
 /// 弹窗决策（是否弹、防抖、页面抑制）由 NotificationService 负责，
@@ -15,9 +16,9 @@ class NotificationDisplayer {
 
   /// 初始化通知插件并申请权限（Android 13+ 横幅/系统通知需要）
   Future<void> init() async {
-    final isEn = await appLang() == 'en';
-    final channelName = isEn ? 'Chat Messages' : '聊天消息';
-    final channelDesc = isEn ? 'New message notifications from AI friends' : 'AI好友的新消息通知';
+    final l10n = ServiceL10n(await appLang());
+    final channelName = l10n.notifChannelMessages;
+    final channelDesc = l10n.notifChannelMessagesDesc;
     _notifications = FlutterLocalNotificationsPlugin();
     const androidSettings = AndroidInitializationSettings("@mipmap/ic_launcher");
     const iosSettings = DarwinInitializationSettings(
@@ -54,9 +55,9 @@ class NotificationDisplayer {
     required String body,
   }) async {
     if (_notifications == null) return;
-    final isEn = await appLang() == 'en';
-    final channelName = isEn ? 'Chat Messages' : '聊天消息';
-    final channelDesc = isEn ? 'New message notifications from AI friends' : 'AI好友的新消息通知';
+    final l10n = ServiceL10n(await appLang());
+    final channelName = l10n.notifChannelMessages;
+    final channelDesc = l10n.notifChannelMessagesDesc;
     final settings = await DndSettings.get();
     if (!(settings["notificationsEnabled"] as bool? ?? true)) return;
     if (DndSettings.isInDndPeriod(settings)) return;

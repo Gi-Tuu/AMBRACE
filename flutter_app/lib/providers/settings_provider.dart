@@ -1,13 +1,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:ui' as ui;
 
 import '../screens/weave/weave_view_mode.dart';
 import '../theme/skins/skin_registry.dart';
 
 class SettingsProvider extends ChangeNotifier {
   String _serverUrl = '';
-  String _nickname = '用户';
+  String _nickname =
+      ui.PlatformDispatcher.instance.locale.languageCode.startsWith('en') ? 'User' : '用户';
   String _token = '';
   String _avatarUrl = '';
   int _userId = 0;
@@ -47,7 +49,8 @@ class SettingsProvider extends ChangeNotifier {
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     _serverUrl = prefs.getString('server_url') ?? '';
-    _nickname = prefs.getString('nickname') ?? '用户';
+    _nickname = prefs.getString('nickname') ??
+        (ui.PlatformDispatcher.instance.locale.languageCode.startsWith('en') ? 'User' : '用户');
     _avatarUrl = prefs.getString('avatar_url') ?? '';
     _token = prefs.getString('auth_token') ?? '';
     _userId = prefs.getInt('user_id') ?? 0;

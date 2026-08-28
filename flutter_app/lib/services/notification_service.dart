@@ -102,7 +102,7 @@ class NotificationService extends ChangeNotifier {
       // 2) 新增未读事件 → 弹横幅/系统通知（仅处理比上次新的）
       final eventAt = prefs.getInt(NotifyPrefs.newEventAtKey) ?? 0;
       if (eventAt > _lastEventAt) {
-        final events = NotifyPrefs.decodeEvent(prefs.getString(NotifyPrefs.newEventKey));
+        final events = await NotifyPrefs.decodeEvent(prefs.getString(NotifyPrefs.newEventKey));
         _lastEventAt = eventAt;
         await prefs.setInt("unread_last_event_at", eventAt);
         for (final event in events) {

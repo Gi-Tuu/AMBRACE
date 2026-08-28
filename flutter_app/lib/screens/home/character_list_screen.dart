@@ -31,6 +31,7 @@ class _CharacterListScreenState extends State<CharacterListScreen>
   bool get wantKeepAlive => true;
   List<AICharacter> _characters = [];
   bool _loading = true;
+  bool _loadError = false; // 加载失败标记（区别于真空列表）
   String _query = '';
 
   List<AICharacter> get _filtered => _query.isEmpty
@@ -78,15 +79,18 @@ class _CharacterListScreenState extends State<CharacterListScreen>
       setState(() {
         _characters = chars;
         _loading = false;
+        _loadError = false; // 加载成功，清除错误标记
       });
     } catch (e) {
-      if (mounted) setState(() => _loading = false);
-      if (mounted) {
-        final l10n = AppLocalizations.of(context)!;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.charListLoadFailed)),
-        );
-      }
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadError = true; // 标记加载失败
+      });
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.charListLoadFailed)),
+      );
     }
   }
 
@@ -216,78 +220,127 @@ class _CharacterListScreenState extends State<CharacterListScreen>
           Expanded(
             child: _loading
                 ? const CharacterListSkeleton()
-                : _query.isNotEmpty && _filtered.isEmpty
-                    ? Center(child: Text(l10n.noMatchingFriend))
-                    : _characters.isEmpty
-                        ? Center(child: Text(l10n.noAiFriend))
-                        : RefreshIndicator(
-                            onRefresh: _loadCharacters,
-                            child: ListView.builder(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            padding: const EdgeInsets.fromLTRB(AppSpacing.sm, AppSpacing.xxs, AppSpacing.sm, AppSpacing.sm),
-                            itemCount: _filtered.length,
-                            itemBuilder: (context, index) {
-                              final char = _filtered[index];
-                              return Card(
-                                margin: const EdgeInsets.only(bottom: AppSpacing.xs),
-                                child: ListTile(
-                                  contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xxs),
-                                  leading: AIAvatar(name: char.name, size: 44, imageUrl: char.avatarUrl),
-                                  title: Text(char.name, style: const TextStyle(fontSize: AppTypography.titleSize, fontWeight: AppTypography.titleWeight)),
-                                  subtitle: Text(char.personality ?? '',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontSize: AppTypography.helperSize)),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      if (NotificationService().unreadCounts.containsKey(char.id))
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: AppColors.error,
-                                            borderRadius: BorderRadius.circular(10),
-                                          ),
-                                          child: Text(
-                                            "${NotificationService().unreadCounts[char.id]}",
-                                            style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                                          ),
-                                        ),
-                                      const SizedBox(width: 4),
-                                      const Icon(Icons.chevron_right),
-                                    ],
-                                  ),
-                                  onTap: () async {
-                                    context.read<ChatProvider>().setCharacter(char);
-                                    await Future.delayed(const Duration(milliseconds: 200));
-                                    if (context.mounted) {
-                                      Navigator.push(
-                                        context,
-                                        AppPageRoute(
-                                          builder: (_) => const ChatScreen(),
-                                        ),
-                                      );
-                                    }
-                                  },
-                                  onLongPress: () async {
-                                    final result = await Navigator.push(
-                                      context,
-                                      AppPageRoute(
-                                        builder: (_) => CharacterEditScreen(character: char),
-                                      ),
-                                    );
-                                    if (result == true) _loadCharacters();
-                                  },
-                                ),
-                              );
-                            },
-                          ),
-                          ),
-          ),
+                : RefreshIndicator(
+                    onRefresh: _loadCharacters,
+                    child: _characters.isEmpty
+                        ? _buildEmptyState(l10n)
+                        : _buildCharacterList(l10n),
+                  ),
+          )
         ],
       ),
     );
   }
+
+  /// 空状态/错误状态（包在 ListView 里保证可下拉刷新）
+  Widget _buildEmptyState(AppLocalizations l10n) {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        SizedBox(height: MediaQuery.of(context).size.height * 0.25),
+        Icon(
+          _loadError ? Icons.cloud_off_rounded : Icons.people_outline_rounded,
+          size: 56,
+          color: AppColors.textTertiary,
+        ),
+        const SizedBox(height: AppSpacing.md),
+        Text(
+          _loadError ? l10n.loadFailedCheckServer : l10n.noAiFriend,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
+        ),
+        if (_loadError) ...[
+          const SizedBox(height: AppSpacing.md),
+          TextButton.icon(
+            onPressed: _loadCharacters,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: Text(l10n.retry),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// 角色列表（搜索无结果也允许下拉刷新）
+  Widget _buildCharacterList(AppLocalizations l10n) {
+    if (_query.isNotEmpty && _filtered.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          SizedBox(height: MediaQuery.of(context).size.height * 0.25),
+          const Icon(Icons.search_off_rounded, size: 48, color: AppColors.textTertiary),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            l10n.noMatchingFriend,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
+          ),
+        ],
+      );
+    }
+
+    return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(AppSpacing.sm, AppSpacing.xxs, AppSpacing.sm, AppSpacing.sm),
+      itemCount: _filtered.length,
+      itemBuilder: (context, index) {
+        final char = _filtered[index];
+        return Card(
+          margin: const EdgeInsets.only(bottom: AppSpacing.xs),
+          child: ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xxs),
+            leading: AIAvatar(name: char.name, size: 44, imageUrl: char.avatarUrl),
+            title: Text(char.name, style: const TextStyle(fontSize: AppTypography.titleSize, fontWeight: AppTypography.titleWeight)),
+            subtitle: Text(char.personality ?? '',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: AppTypography.helperSize)),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (NotificationService().unreadCounts.containsKey(char.id))
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppColors.error,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      "${NotificationService().unreadCounts[char.id]}",
+                      style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                const SizedBox(width: 4),
+                const Icon(Icons.chevron_right),
+              ],
+            ),
+            onTap: () async {
+              context.read<ChatProvider>().setCharacter(char);
+              await Future.delayed(const Duration(milliseconds: 200));
+              if (context.mounted) {
+                Navigator.push(
+                  context,
+                  AppPageRoute(
+                    builder: (_) => const ChatScreen(),
+                  ),
+                );
+              }
+            },
+            onLongPress: () async {
+              final result = await Navigator.push(
+                context,
+                AppPageRoute(
+                  builder: (_) => CharacterEditScreen(character: char),
+                ),
+              );
+              if (result == true) _loadCharacters();
+            },
+          ),
+        );
+      },
+    );
+  }
+
 
   @override
   void dispose() {

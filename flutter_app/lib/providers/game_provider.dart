@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/character.dart';
@@ -16,7 +17,12 @@ class GameProvider extends ChangeNotifier {
   static const Duration loadTimeout = Duration(seconds: 12);
 
   /// 超时兜底的可读中文文案（provider 非 Widget，无法取 l10n；UI 会再包一层 l10n）。
-  static const String timeoutMessage = '加载超时，请检查网络后再试';
+  static String get timeoutMessage {
+    final code = ui.PlatformDispatcher.instance.locale.languageCode.toLowerCase();
+    return code.startsWith('en')
+        ? 'Loading timed out, check your network and try again'
+        : '加载超时，请检查网络后再试';
+  }
 
   /// 可注入的「目录加载」函数（默认走真实 API；测试可传假实现模拟挂起/失败）。
   late final Future<List<Map<String, dynamic>>> Function() _loadCatalog;

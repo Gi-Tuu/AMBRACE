@@ -14,6 +14,8 @@ import '../providers/chat_provider.dart';
 import '../screens/chat/chat_screen.dart';
 import '../widgets/app_page_route.dart';
 import 'api_client.dart';
+import '../utils/service_l10n.dart';
+import '../utils/app_lang.dart';
 
 /// FCM 离线推送服务（2026-08-28）。
 ///
@@ -140,7 +142,7 @@ class FcmPushService {
 
     await _registerToken(fm);
     fm.onTokenRefresh.listen(_registerTokenWithBackend);
-    _setupForegroundHandler();
+    await _setupForegroundHandler();
     _setupTapHandlers(fm);
     _startHeartbeat();
 
@@ -173,7 +175,8 @@ class FcmPushService {
     }
   }
 
-  void _setupForegroundHandler() {
+  Future<void> _setupForegroundHandler() async {
+    final l10n = ServiceL10n(await appLang());
     _fln = FlutterLocalNotificationsPlugin();
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
     const initSettings = InitializationSettings(android: androidInit);
@@ -182,16 +185,16 @@ class FcmPushService {
     try {
       final androidImpl = _fln!
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-      androidImpl?.createNotificationChannel(const AndroidNotificationChannel(
+      androidImpl?.createNotificationChannel(AndroidNotificationChannel(
         _chatChannelId,
-        'AI 消息',
-        description: 'AI 好友的新消息',
+        l10n.notifChannelMessages,
+        description: l10n.notifChannelMessagesDesc,
         importance: Importance.high,
       ));
-      androidImpl?.createNotificationChannel(const AndroidNotificationChannel(
+      androidImpl?.createNotificationChannel(AndroidNotificationChannel(
         _alertChannelId,
-        '重要提醒',
-        description: '查岗等重要通知',
+        l10n.notifChannelAlert,
+        description: l10n.notifChannelAlertDesc,
         importance: Importance.high,
       ));
     } catch (e) {
@@ -224,11 +227,12 @@ class FcmPushService {
     String body,
     Map<String, dynamic> data,
   ) async {
+    final l10n = ServiceL10n(await appLang());
     final isAlert = data['channel'] == 'alert';
     final androidDetails = AndroidNotificationDetails(
       isAlert ? _alertChannelId : _chatChannelId,
-      isAlert ? '重要提醒' : 'AI 消息',
-      channelDescription: isAlert ? '查岗等重要通知' : 'AI 好友的新消息',
+      isAlert ? l10n.notifChannelAlert : l10n.notifChannelMessages,
+      channelDescription: isAlert ? l10n.notifChannelAlertDesc : l10n.notifChannelMessagesDesc,
       importance: Importance.high,
       priority: Priority.high,
     );

@@ -165,6 +165,11 @@ _MESSAGES: dict[str, tuple[str, str]] = {
     "mcp_tool_not_found": ("MCP 工具不存在", "MCP tool not found"),
     "mcp_mode_invalid": ("权限等级无效（仅 allow/ask/forbid）", "Invalid permission mode (allow/ask/forbid only)"),
     "mcp_permission_saved": ("权限已保存", "Permission saved"),
+    # #68 P5：抖音组级唯一绑定（2026-08-28）
+    "douyin_bind_main_only": ("仅主账号可配置抖音绑定", "Only the main account can configure Douyin binding"),
+    "douyin_bind_cross_family": ("只能绑定自己家庭内的角色", "You can only bind characters in your own family"),
+    "douyin_bind_multi": ("抖音绑定只能选择一个角色", "Only one character can be bound to Douyin"),
+    "douyin_bind_occupied": ("家庭内已有角色绑定抖音，请先解绑或转移", "A character in your family is already bound to Douyin; please unbind or transfer it first"),
 }
 
 

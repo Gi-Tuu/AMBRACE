@@ -677,9 +677,16 @@ def _parse_changelog(text: str) -> list[dict]:
 # ── LLM token 用量与免费额度（2026-08-11：用量落库展示；总量仅主账号可设）──
 @router.get("/llm-usage")
 async def get_llm_usage(user_id: int = Depends(get_current_user_id)):
-    """token 用量统计：今日/近7天/本月/累计 + 按模型汇总 + 剩余额度"""
+    """token 用量统计：今日/近7天/本月/累计 + 按模型汇总 + 剩余额度（#68 P6 组聚合）
+
+    主账号：统计范围 = 自己 + 直属子账号（user_id IN family_member_ids）+ user_id IS NULL 服务器级行；
+    子账号：仅统计自己，不返回 by_user。
+    """
+    from sqlalchemy import or_
     from app.db.database import async_session_factory
     from app.models.llm_usage import LlmUsage, LlmUsageLimit
+    from app.models.user import User
+    from app.services.family_service import is_sub_account, get_family_member_ids
 
     now = datetime.now()
     today0 = datetime(now.year, now.month, now.day)
@@ -687,13 +694,28 @@ async def get_llm_usage(user_id: int = Depends(get_current_user_id)):
     month0 = datetime(now.year, now.month, 1)
 
     async with async_session_factory() as db:
-        rows = (await db.execute(select(LlmUsage))).scalars().all()
+        is_sub = await is_sub_account(db, user_id)
+        if is_sub:
+            scope_ids = [user_id]
+            include_server = False
+        else:
+            scope_ids = await get_family_member_ids(db, user_id)
+            include_server = True
+        cond = LlmUsage.user_id.in_(scope_ids)
+        if include_server:
+            cond = or_(cond, LlmUsage.user_id.is_(None))
+        rows = (await db.execute(select(LlmUsage).where(cond))).scalars().all()
         limit_row = (await db.execute(
             select(LlmUsageLimit).where(LlmUsageLimit.id == 1)
         )).scalar_one_or_none()
+        nickname_map: dict[int, str] = {}
+        if not is_sub and scope_ids:
+            users = (await db.execute(select(User).where(User.id.in_(scope_ids)))).scalars().all()
+            nickname_map = {u.id: (u.nickname or u.username or str(u.id)) for u in users}
 
     total = today = week = month = 0
     by_model: dict[str, int] = {}
+    by_user_map: dict[int, int] = {}
     for r in rows:
         t = r.total_tokens or 0
         total += t
@@ -707,6 +729,16 @@ async def get_llm_usage(user_id: int = Depends(get_current_user_id)):
                 month += t
         if r.model:
             by_model[r.model] = by_model.get(r.model, 0) + t
+        if r.user_id is not None:
+            by_user_map[r.user_id] = by_user_map.get(r.user_id, 0) + t
+
+    by_user = []
+    if not is_sub:
+        by_user = [
+            {"user_id": uid, "nickname": nickname_map.get(uid, str(uid)), "total": by_user_map.get(uid, 0)}
+            for uid in scope_ids
+            if by_user_map.get(uid, 0) > 0
+        ]
 
     limit = limit_row.total_limit if limit_row else 0
     remaining = (limit - total) if (limit and limit > 0) else None
@@ -719,6 +751,7 @@ async def get_llm_usage(user_id: int = Depends(get_current_user_id)):
         "month": month,
         "by_model": [{"model": k, "total": v}
                      for k, v in sorted(by_model.items(), key=lambda kv: -kv[1])],
+        "by_user": by_user,
         "can_edit_limit": await is_admin_user(user_id),
     }
 

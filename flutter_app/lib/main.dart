@@ -114,7 +114,7 @@ class _AICompanionAppState extends State<AICompanionApp> with WidgetsBindingObse
       child: Consumer<SettingsProvider>(
         builder: (context, settings, _) {
           return MaterialApp(
-            title: '拥爱',
+            title: 'AMBRACE',
             debugShowCheckedModeBanner: false,
             navigatorKey: appNavigatorKey,
             navigatorObservers: [appRouteObserver],

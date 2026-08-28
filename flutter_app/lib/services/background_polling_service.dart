@@ -8,6 +8,8 @@ import "package:shared_preferences/shared_preferences.dart";
 import "phone_perception_service.dart";
 import "unread_engine.dart";
 import "background_ws_client.dart";
+import "../utils/service_l10n.dart";
+import "../utils/app_lang.dart";
 
 /// 前台服务（Android Foreground Service）：app 退后台/息屏后继续轮询未读并弹系统通知。
 /// 【通知双轨收敛 2026-08-05】本服务是唯一的网络轮询源：
@@ -20,6 +22,7 @@ class BackgroundPollingService {
 
   /// 必须在主 isolate 调用一次（main 中）
   static Future<void> ensureConfigured() async {
+    final l10n = ServiceL10n(await appLang());
     // 必须先创建前台服务用的 NotificationChannel：
     // flutter_background_service 插件在配置了自定义 notificationChannelId 时不会自动创建 channel（插件 bug），
     // channel 不存在会令 startForeground 抛 CannotPostForegroundServiceNotificationException（Android 14+ 直接闪退）
@@ -34,10 +37,10 @@ class BackgroundPollingService {
       await plugin
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
           ?.createNotificationChannel(
-            const AndroidNotificationChannel(
+            AndroidNotificationChannel(
               _serviceChannelId,
-              "拥爱后台服务",
-              description: "后台轮询 AI 好友新消息的常驻通知",
+              l10n.notifChannelBackground,
+              description: l10n.notifChannelBackgroundDesc,
               importance: Importance.low,
               playSound: false,
             ),
@@ -50,8 +53,8 @@ class BackgroundPollingService {
         autoStartOnBoot: true,
         isForegroundMode: true,
         foregroundServiceTypes: [AndroidForegroundType.specialUse],
-        initialNotificationTitle: "拥爱运行中",
-        initialNotificationContent: "正在后台监听 AI 好友的新消息",
+        initialNotificationTitle: l10n.notifRunningTitle,
+        initialNotificationContent: l10n.notifRunningDesc,
         notificationChannelId: _serviceChannelId,
         foregroundServiceNotificationId: _serviceNotificationId,
       ),
@@ -154,6 +157,7 @@ Future<void> _autoReportNotifications() async {
 
 Future<void> _pollOnce(FlutterLocalNotificationsPlugin plugin) async {
   try {
+    final l10n = ServiceL10n(await appLang());
     final prefs = await SharedPreferences.getInstance();
     final baseUrl = prefs.getString("server_url") ?? "";
     final token = prefs.getString("auth_token") ?? "";
@@ -281,10 +285,10 @@ Future<void> _pollOnce(FlutterLocalNotificationsPlugin plugin) async {
                   '[${m["group_name"]}] ${m["sender_name"] ?? ""}';
               final content = (m["content"] as String? ?? "").toString();
               if (content.isEmpty) continue;
-              const androidDetails = AndroidNotificationDetails(
+              final androidDetails = AndroidNotificationDetails(
                 "ai_companion_chat",
-                "聊天消息",
-                channelDescription: "AI好友的新消息通知",
+                l10n.notifChannelMessages,
+                channelDescription: l10n.notifChannelMessagesDesc,
                 importance: Importance.high,
                 priority: Priority.high,
               );
@@ -292,7 +296,7 @@ Future<void> _pollOnce(FlutterLocalNotificationsPlugin plugin) async {
                 id: 90000 + ((m["id"] as num?)?.toInt() ?? 0),
                 title: title,
                 body: content,
-                notificationDetails: const NotificationDetails(
+                notificationDetails: NotificationDetails(
                   android: androidDetails,
                   iOS: DarwinNotificationDetails(),
                 ),
@@ -338,10 +342,11 @@ Future<String?> _fetchLastAiContent(Dio dio, int sessionId) async {
 Future<void> _showSystemNotification(
     FlutterLocalNotificationsPlugin plugin, UnreadEvent event) async {
   try {
-    const androidDetails = AndroidNotificationDetails(
+    final l10n = ServiceL10n(await appLang());
+    final androidDetails = AndroidNotificationDetails(
       "ai_companion_chat",
-      "聊天消息",
-      channelDescription: "AI好友的新消息通知",
+      l10n.notifChannelMessages,
+      channelDescription: l10n.notifChannelMessagesDesc,
       importance: Importance.high,
       priority: Priority.high,
     );
@@ -349,7 +354,7 @@ Future<void> _showSystemNotification(
       id: event.characterId,
       title: event.title,
       body: event.content,
-      notificationDetails: const NotificationDetails(
+      notificationDetails: NotificationDetails(
         android: androidDetails,
         iOS: DarwinNotificationDetails(),
       ),
@@ -360,6 +365,7 @@ Future<void> _showSystemNotification(
 Future<String> _characterName(Dio dio, int charId) async {
   final cached = _charNames[charId];
   if (cached != null) return cached;
+  final l10n = ServiceL10n(await appLang());
   try {
     final resp = await dio.get("/api/v1/characters");
     final list = resp.data["characters"] as List? ?? [];
@@ -370,9 +376,9 @@ Future<String> _characterName(Dio dio, int charId) async {
         if (id != null && name != null) _charNames[id] = name;
       }
     }
-    return _charNames[charId] ?? "AI 好友";
+    return _charNames[charId] ?? l10n.aiFriend;
   } catch (_) {
-    return "AI 好友";
+    return l10n.aiFriend;
   }
 }
 
