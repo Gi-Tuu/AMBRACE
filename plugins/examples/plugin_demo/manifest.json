@@ -1,0 +1,16 @@
+{
+  "name": "plugin_demo",
+  "version": "1.0.0",
+  "description": "插件链路示例：演示插件如何在 AI 回复前后注入提示并记录日志（不改写回复，仅供开发参考）",
+  "author": "AICompanion",
+  "category": "plugin",
+  "hooks": [
+    "before_generate",
+    "after_generate"
+  ],
+  "permissions": [],
+  "config": {
+    "hint": "插件小助手在线"
+  },
+  "usage": "示例插件，仅供开发参考，开启后 AI 每次回复都会记录一条插件日志，不影响回复内容。"
+}

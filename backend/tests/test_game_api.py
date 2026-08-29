@@ -1,0 +1,436 @@
+# -*- coding: utf-8 -*-
+"""游戏 API 冒烟测试（群聊游戏 Phase 1，2026-08-26）。
+
+- catalog / create / action / state / abort / archive / history 基本冒烟；
+- 多用户隔离（他人访问 404/403）。
+用临时库 + 关闭 AI 自动回合，保证确定性。
+"""
+import asyncio
+import json
+import os
+import tempfile
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from fastapi import FastAPI
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+from starlette.testclient import TestClient
+
+from app.api import games as games_api
+from app.api.games import router as games_router
+from app.auth.deps import get_current_user_id
+from app.models.game import GameSession
+
+# 模块加载时捕获真实的 resume 实现（fixture 会 noop `_resume_ai_turns`）：
+# 供 #65 用例直接驱动真正续跑、断言 AI 动作/事件落库、turn 推进。
+_REAL_RESUME = games_api._resume_ai_turns
+
+
+def _make_client(user_id: int) -> TestClient:
+    app = FastAPI()
+    app.include_router(games_router)
+    app.dependency_overrides[get_current_user_id] = lambda: user_id
+    return TestClient(app)
+
+
+async def _noop_ai(sid: int) -> None:
+    """测试中关闭 AI 自动回合。"""
+    return
+
+
+@pytest.fixture
+def game_api_db(monkeypatch):
+    tmp = tempfile.mkdtemp(prefix="game_api_test_")
+    db_path = os.path.join(tmp, "t.db")
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _init():
+        import app.models  # noqa: F401
+        from app.models.base import Base
+        from app.models.character import AICharacter
+        from app.models.user import User
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        async with factory() as db:
+            db.add(User(id=1, username="u1", nickname="用户一"))
+            db.add(User(id=2, username="u2", nickname="用户二"))
+            for i in range(101, 107):
+                db.add(AICharacter(id=i, user_id=1, name=f"角色{i}", personality="外向",
+                                   chat_style="口语化", relation_type="朋友", is_active=True))
+            await db.commit()
+
+    asyncio.run(_init())
+    monkeypatch.setattr("app.api.games.async_session_factory", factory)
+    monkeypatch.setattr("app.memory.service.async_session_factory", factory)
+    monkeypatch.setattr("app.api.games._resume_ai_turns", _noop_ai)
+    yield factory
+    asyncio.run(engine.dispose())
+
+
+def _create_undercover(client):
+    r = client.post("/api/v1/games/sessions", json={
+        "game_type": "undercover", "player_ids": [101, 102, 103],
+        "user_as_player": True,
+    })
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["ok"] is True
+    assert data["session_id"] > 0
+    assert data["state"]["my"]["seat"] == 0
+    return data["session_id"], data["state"]
+
+
+# ---------------- catalog ----------------
+def test_catalog(game_api_db):
+    client = _make_client(1)
+    r = client.get("/api/v1/games/catalog")
+    assert r.status_code == 200
+    games = r.json()["games"]
+    assert {g["game_type"] for g in games} == {
+        "undercover", "truth_or_dare", "twenty_q",
+        "werewolf", "liars_bar", "turtle_soup",
+    }
+    assert any(g["needs_gm"] for g in games)
+
+
+# ---------------- create + state ----------------
+def test_create_and_state(game_api_db):
+    client = _make_client(1)
+    sid, state = _create_undercover(client)
+    assert state["status"] == "playing"
+    assert state["phase"] == "describe"
+    assert len(state["players"]) == 4
+
+    r = client.get(f"/api/v1/games/sessions/{sid}/state", params={"seat": 0})
+    assert r.status_code == 200
+    st = r.json()
+    assert st["my"]["seat"] == 0
+    assert st["my"]["private"] != {}  # 玩家拿到自己的词
+    # 观战视角不带 private
+    r2 = client.get(f"/api/v1/games/sessions/{sid}/state", params={"seat": -1})
+    assert r2.status_code == 200
+    assert r2.json()["my"] is None
+
+
+# ---------------- action ----------------
+def test_action(game_api_db):
+    client = _make_client(1)
+    sid, state = _create_undercover(client)
+    seat = state["my"]["seat"]
+    r = client.post(f"/api/v1/games/sessions/{sid}/action",
+                    json={"seat": seat, "action": "describe", "payload": {"content": "它和吃喝有点关系。"}})
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    # 非法动作（重复描述 / 越权）→ 400/403
+    bad = client.post(f"/api/v1/games/sessions/{sid}/action",
+                      json={"seat": seat, "action": "describe", "payload": {"content": "再来一次"}})
+    assert bad.status_code in (400, 403)
+    # 观战者/他人不可行动
+    other = _make_client(2)
+    r2 = other.post(f"/api/v1/games/sessions/{sid}/action",
+                    json={"seat": seat, "action": "describe", "payload": {"content": "别人"}})
+    assert r2.status_code in (403, 404)
+
+
+# ---------------- abort ----------------
+def test_abort(game_api_db):
+    client = _make_client(1)
+    sid, _ = _create_undercover(client)
+    r = client.post(f"/api/v1/games/sessions/{sid}/abort")
+    assert r.status_code == 200
+    assert r.json()["status"] == "aborted"
+    st = client.get(f"/api/v1/games/sessions/{sid}/state", params={"seat": 0}).json()
+    assert st["status"] == "aborted"
+
+
+# ---------------- archive ----------------
+def test_archive(game_api_db):
+    client = _make_client(1)
+    sid, _ = _create_undercover(client)
+    async def _finish():
+        async with game_api_db() as db:
+            s = await db.get(GameSession, sid)
+            s.status = "finished"
+            s.winner_side = "civilians"
+            s.round = 3
+            s.archive_json = json.dumps({
+                "game_type": "undercover", "game_name": "谁是卧底", "player_count": 4,
+                "rounds": 3, "winner_side": "civilians", "players": [], "timeline": [],
+            }, ensure_ascii=False)
+            await db.commit()
+    asyncio.run(_finish())
+    r = client.get(f"/api/v1/games/sessions/{sid}/archive")
+    assert r.status_code == 200
+    ar = r.json()["archive"]
+    assert ar["game_type"] == "undercover"
+    assert ar["winner_side"] == "civilians"
+    # 未结束的会话不可取手札
+    sid2, _ = _create_undercover(client)
+    assert client.get(f"/api/v1/games/sessions/{sid2}/archive").status_code == 400
+
+
+# ---------------- history ----------------
+def test_history(game_api_db):
+    client = _make_client(1)
+    sid, _ = _create_undercover(client)
+    async def _finish():
+        async with game_api_db() as db:
+            s = await db.get(GameSession, sid)
+            s.status = "finished"
+            s.winner_side = "civilians"
+            s.round = 3
+            s.archive_json = json.dumps({"game_type": "undercover", "player_count": 4, "rounds": 3},
+                                        ensure_ascii=False)
+            await db.commit()
+    asyncio.run(_finish())
+    r = client.get("/api/v1/games/history")
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert any(it["session_id"] == sid and it["status"] == "finished" for it in items)
+    # game_type 过滤
+    assert client.get("/api/v1/games/history", params={"game_type": "twenty_q"}).json()["items"] == []
+
+
+# ---------------- 多用户隔离 ----------------
+def test_multi_user_isolation(game_api_db):
+    owner = _make_client(1)
+    sid, _ = _create_undercover(owner)
+    intruder = _make_client(2)
+    assert intruder.get(f"/api/v1/games/sessions/{sid}/state", params={"seat": 0}).status_code == 404
+    assert intruder.post(f"/api/v1/games/sessions/{sid}/abort").status_code == 403
+    assert intruder.get(f"/api/v1/games/sessions/{sid}/archive").status_code == 404
+    # 未结束不可取手札（owner 视角）
+    assert owner.get(f"/api/v1/games/sessions/{sid}/archive").status_code == 400
+
+
+# ---------------- Phase 2：新游戏创建（狼人杀 4 人）----------------
+def test_create_new_games(game_api_db):
+    client = _make_client(1)
+    # 狼人杀：用户玩家 + 3 AI = 4 人
+    r = client.post("/api/v1/games/sessions", json={
+        "game_type": "werewolf", "player_ids": [101, 102, 103],
+        "user_as_player": True,
+    })
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["ok"] is True and data["session_id"] > 0
+    assert data["state"]["phase"] in ("night", "day_speak", "day_vote")
+    # 人数不足 → 400
+    bad = client.post("/api/v1/games/sessions", json={
+        "game_type": "werewolf", "player_ids": [101], "user_as_player": True,
+    })
+    assert bad.status_code == 400
+    # 海龟汤：用户玩家 + 1 AI = 2 人
+    r2 = client.post("/api/v1/games/sessions", json={
+        "game_type": "turtle_soup", "player_ids": [101], "user_as_player": True,
+    })
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["state"]["phase"] == "ask"
+    # 骗子酒馆：3 AI + 用户玩家 = 4 人（3-5 人局）
+    r3 = client.post("/api/v1/games/sessions", json={
+        "game_type": "liars_bar", "player_ids": [101, 102, 103],
+        "user_as_player": True,
+    })
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["state"]["phase"] == "declare"
+
+
+# ---------------- v3.3.5 审查修复回归 ----------------
+def test_abort_cleans_turn_lock(game_api_db):
+    """v3.3.5 审查：解散游戏后进程内 AI 回合锁被清理，防长期运行内存增长。"""
+    from app.api import games as games_api
+    client = _make_client(1)
+    sid, _ = _create_undercover(client)
+    games_api._lazy_lock(sid)
+    assert sid in games_api._ai_turn_locks
+    assert client.post(f"/api/v1/games/sessions/{sid}/abort").status_code == 200
+    assert sid not in games_api._ai_turn_locks
+
+
+def test_resume_stuck_games_no_crash(game_api_db):
+    """v3.3.5 审查：stuck 对局恢复扫描可安全执行（空库不报错）。"""
+    from app.api.games import resume_stuck_games
+    asyncio.run(resume_stuck_games())
+
+
+def test_resume_stuck_games_skips_user_turn(game_api_db, monkeypatch):
+    """v3.3.6 审查：等待用户操作的对局不再每 5 分钟空转调度。"""
+    calls = []
+
+    async def _record(sid):
+        calls.append(sid)
+
+    monkeypatch.setattr("app.api.games._resume_ai_turns", _record)
+    client = _make_client(1)
+    sid, state = _create_undercover(client)
+    assert state["my"]["seat"] == 0
+    from app.api.games import resume_stuck_games
+    asyncio.run(resume_stuck_games())
+    assert sid not in calls
+
+
+# ---------------- #65：轮到 AI 时 resume 真正续跑 ----------------
+async def _backdate_last_event(factory, sid):
+    """把对局所有事件时间回拨到 10 分钟前，让 resume_stuck_games 的 cutoff 检查放行。"""
+    from app.models.game import GameEvent
+    old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=11)
+    async with factory() as db:
+        rows = (await db.execute(
+            select(GameEvent).where(GameEvent.session_id == sid)
+        )).scalars().all()
+        for e in rows:
+            e.created_at = old
+        await db.commit()
+
+
+def test_resume_ai_turn_actually_advances(game_api_db, monkeypatch):
+    """#65：对局推进到 AI 回合后调用 resume（_resume_ai_turns 对应接口），
+    断言 AI 回合被真正续跑：AI 的 answer 事件落库 + turn 推进回用户。"""
+    from app.models.game import GameEvent
+
+    # 固定 AI 决策（不依赖 LLM）：主持人(thinker/seat1) 回答"是"
+    async def _fake_ai_decide(engine, seat):
+        return {"action": "answer_soup", "content": "", "payload": {"answer": "yes"}}
+
+    monkeypatch.setattr("app.games.ai_player.ai_decide", _fake_ai_decide)
+
+    client = _make_client(1)
+    r = client.post("/api/v1/games/sessions", json={
+        "game_type": "turtle_soup", "player_ids": [101], "user_as_player": True,
+    })
+    assert r.status_code == 200, r.text
+    sid = r.json()["session_id"]
+    # 用户(seat0/guesser)提问 → 轮到 AI(thinker/seat1) 回答
+    r = client.post(f"/api/v1/games/sessions/{sid}/action",
+                    json={"seat": 0, "action": "ask_soup", "payload": {"content": "它与真相里的人有关吗？"}})
+    assert r.json()["ok"] is True
+
+    # 此刻 current_turn 是 AI。用之前捕获的真实接口真正续跑
+    asyncio.run(_REAL_RESUME(sid))
+
+    async def _query_events():
+        async with game_api_db() as db:
+            return (await db.execute(
+                select(GameEvent).where(GameEvent.session_id == sid)
+            )).scalars().all()
+
+    events = asyncio.run(_query_events())
+    answer_evs = [e for e in events if e.event_type == "answer" and e.actor_seat == 1]
+    assert answer_evs, "AI 回合未被续跑：缺少 AI 的 answer 事件"
+    assert len(answer_evs) == 1, f"AI answer 事件应恰好 1 条，实际 {len(answer_evs)}"
+
+    # turn 推进：回到用户(guesser/seat0)
+    st = client.get(f"/api/v1/games/sessions/{sid}/state", params={"seat": 0}).json()
+    assert st["current_turn_seat"] == 0
+
+
+def test_resume_stuck_games_continues_stale_ai_turn(game_api_db, monkeypatch):
+    """#65：非新建对局（事件已超 10 分钟）且轮到 AI 时，resume_stuck_games 会真正调度续跑。
+    修复前：对局刚创建、时间检查跳过，该分支从未被真正测到。"""
+    calls = []
+
+    async def _record(sid):
+        calls.append(sid)
+
+    monkeypatch.setattr("app.api.games._resume_ai_turns", _record)
+    client = _make_client(1)
+    r = client.post("/api/v1/games/sessions", json={
+        "game_type": "turtle_soup", "player_ids": [101], "user_as_player": True,
+    })
+    sid = r.json()["session_id"]
+    assert client.post(f"/api/v1/games/sessions/{sid}/action",
+                       json={"seat": 0, "action": "ask_soup", "payload": {"content": "它与天气有关吗？"}}).json()["ok"] is True
+    # 回拨事件时间 → cutoff 放行，真正进入 AI 续跑分支
+    asyncio.run(_backdate_last_event(game_api_db, sid))
+
+    from app.api.games import resume_stuck_games
+
+    async def _run():
+        await resume_stuck_games()
+        # 让 ensure_future 调度的 _record 有机会执行
+        for _ in range(3):
+            await asyncio.sleep(0)
+
+    asyncio.run(_run())
+    assert sid in calls
+
+
+# ---------------- v3.3.7 审查修复：P0 游戏 AI 双重 apply ----------------
+def test_resume_ai_turn_fallback_on_invalid_decision(game_api_db, monkeypatch):
+    """#审查 P0：ai_decide 返回非法 answer 时，_resume_ai_turns 走 fallback 再 apply，
+    仍落库 1 条 AI answer 事件且 current_turn_seat 回到用户。"""
+    from app.models.game import GameEvent
+
+    async def _fake_ai_decide(engine, seat):
+        return {"action": "answer_soup", "content": "", "payload": {"answer": "invalid"}}
+
+    monkeypatch.setattr("app.games.ai_player.ai_decide", _fake_ai_decide)
+
+    client = _make_client(1)
+    r = client.post("/api/v1/games/sessions", json={
+        "game_type": "turtle_soup", "player_ids": [101], "user_as_player": True,
+    })
+    assert r.status_code == 200, r.text
+    sid = r.json()["session_id"]
+    # 用户(seat0/guesser)提问 -> 轮到 AI(thinker/seat1) 回答；mock 返回非法 answer
+    r = client.post(f"/api/v1/games/sessions/{sid}/action",
+                    json={"seat": 0, "action": "ask_soup", "payload": {"content": "它与真相里的人有关吗？"}})
+    assert r.json()["ok"] is True
+
+    asyncio.run(_REAL_RESUME(sid))
+
+    async def _query_events():
+        async with game_api_db() as db:
+            return (await db.execute(
+                select(GameEvent).where(GameEvent.session_id == sid)
+            )).scalars().all()
+
+    events = asyncio.run(_query_events())
+    answer_evs = [e for e in events if e.event_type == "answer" and e.actor_seat == 1]
+    assert len(answer_evs) == 1, f"AI fallback 后应恰好 1 条 answer 事件，实际 {len(answer_evs)}"
+
+    # turn 推进：回到用户(guesser/seat0)
+    st = client.get(f"/api/v1/games/sessions/{sid}/state", params={"seat": 0}).json()
+    assert st["current_turn_seat"] == 0
+
+
+def test_resume_ai_turn_liars_bar_no_double_effect(game_api_db, monkeypatch):
+    """#审查 P0：骗子酒馆 AI 回合不再双重出牌（同一轮次同一座位至多 1 条 declare）。"""
+    from app.models.game import GameEvent
+
+    async def _fake_ai_decide(engine, seat):
+        return {"action": "declare", "content": "", "payload": {"number": 6}}
+
+    monkeypatch.setattr("app.games.ai_player.ai_decide", _fake_ai_decide)
+
+    client = _make_client(1)
+    r = client.post("/api/v1/games/sessions", json={
+        "game_type": "liars_bar", "player_ids": [101, 102], "user_as_player": True,
+    })
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["state"]["phase"] == "declare"
+    sid = data["session_id"]
+    # 用户(seat0/庄家)先声明 5 -> 轮到 AI
+    r = client.post(f"/api/v1/games/sessions/{sid}/action",
+                    json={"seat": 0, "action": "declare", "payload": {"number": 5}})
+    assert r.json()["ok"] is True
+
+    asyncio.run(_REAL_RESUME(sid))
+
+    async def _query_events():
+        async with game_api_db() as db:
+            return (await db.execute(
+                select(GameEvent).where(GameEvent.session_id == sid)
+            )).scalars().all()
+
+    events = asyncio.run(_query_events())
+    declare_evs = [e for e in events if e.event_type == "declare" and e.actor_seat in (1, 2)]
+    # 修复后两个 AI 座位都确实出过牌（AI 声明不再丢失）
+    assert {e.actor_seat for e in declare_evs} == {1, 2}
+    # 杜绝双重出牌：同一轮次(round)同一座位至多 1 条 declare
+    keys = [(e.round, e.actor_seat) for e in declare_evs]
+    assert len(keys) == len(set(keys)), f"存在同轮次双重声明: {keys}"

@@ -1,0 +1,163 @@
+PROJECT: 拥爱（AMBRACE）
+VERSION: 3.4.0
+DATE: 2026-08-29
+STATUS: 开源发布版 v3.4.0（Aurora 全套 UI 大更新）
+
+CHANGELOG:
+
+3.4.0 - Release (2026-08-29)
+  - UI: Aurora 全套界面大更新（毛玻璃皮肤/玻璃门控、朋友圈、手机页/AI互动+畅聊+内置App、小家/宠物、角色编辑/设置、AI内心世界、日记、记忆本/织库/时光、个人主页、首页工具箱）
+  - UI: 头像入口翻转轮播 + 聊天页真毛玻璃 + 输入栏 dock/性能隔离/输入态管理 + 发布动态独立页
+  - UI: 评论等宽排版、日历/记忆库/状态面交互升级、抽屉动态版本号
+  - Fix: 深度审查 P1/P2（控制器释放/异步守卫/Future 缓存）、创作作品 resolveUrl、日记 day key
+  - Experience: 全游戏投降机制 + AI好友主页群聊同构化 + 服务器高级开关分组折叠
+  - Fix: 深度审查五轮（AI 回合失效/识图阻塞/聊天 WS 韧性/后台任务强引用/分页约束）
+  - Fix: B 层审查（剧情跨剧集重置/日程月末/违禁词终检/日历备注归属/路径包含判断）
+  - Tests: flutter analyze 0 / flutter test 162 green（前端）；ruff 0 / pytest 全绿（后端）
+
+3.3.9 - Release (2026-08-28)
+  - FCM: 系统级离线推送（统一出口 push_service：频控→WS→FCM fallback→无效 token 清理；device token 表+迁移；App 动态 FirebaseOptions，ENABLE_FCM 编译开关）
+  - Perception: 手机感知稳定性修复（撤 FGS 冲突/自动重绑/事件节流/遍历上限/健康灯/电池白名单/日志轮转/specialUse）
+  - Account: #68 P3 账号关联（受邀码/主从账号，主账号 ≤6 子账号）
+  - Review: #61 全量审查 P1/P2 修复（channel 透传/同设备串号/初始化时机/深链上限/健康状态真实化）
+  - Tests: ruff 0 / pytest 全绿 / flutter analyze 0 / flutter test 243 green
+
+3.3.8 - Release (2026-08-27)
+  - Review: v3.3.7 发布后二次审查 7 项修复（游戏 AI 双重 apply / 抖音视频上传与路径 / proactive_candidate / ffmpeg 注入 / comments 死代码 / browser 参数）
+  - Config: #68 P0-P2 多 LLM 配置（我的 LLM + 角色选模型 + 主账号共享只读 + API 配置页 Tab 重构）
+  - Skins: 可换肤 5 款皮肤（选择器 + 气泡/输入栏取色 + 深色回退 + 测试）
+  - Tests: flutter analyze 0 / skins_test 12 green
+
+3.3.7 - Release (2026-08-27)
+  - Life feel: 动态回复延迟（心情/疲惫影响回复节奏）+ 弹簧-阻尼情绪（惯性回弹 + 人格基线）+ 活动完成自然分享（arbiter 门控）+ 心事微澜（心事影响心情、安慰破冰化解）
+  - Home: 小家大地图交互升级（人物/家具编辑/家具交互/按钮缩放/镜头跟随/顶部工具栏/防遮挡）；游戏机面板加载修复（监听变化 + 超时兜底）
+  - Games: 发布小尾巴收尾（abort 清理 WS、resume AI 回合续跑测试、海龟汤 fallback is_ai 守卫）
+  - Plugins: 插件页面/图标请求带登录凭证，修复页面型插件 401
+  - Tests: backend 984 passed（1 个既有 MCP 锁 flaky 另计）, flutter analyze 0 / test 231 green
+  - Review: v3.3.7 全量审查 10 项修复（老角色认知/记忆开关一次性迁移+哨兵、人格基线缓存失效、错误清 typing、流式回退不双重延迟、安慰词边界、弹簧撞墙、/send 可跳过延迟等）
+  - MCP: 流式聊天支持 MCP 工具执行（tool_result 折叠展示）+ 扩展页资源/提示词展示
+  - Douyin: 插件模块化拆分；反检测加固、评论回复内部 API 双轨、图文自动配乐、文案人味化（视频发布代码就绪未实测）
+  - Stream: SSE 真流式 P0 修复（AgentState 字段补全，打字机真正生效）
+
+3.3.6 - Release (2026-08-26)
+  - Games: 群聊游戏 Phase 2 收尾——狼人杀简化版（4-8人，夜晚私密刀人/验人）/ 骗子酒馆（3-5人，声明+质疑）/ 海龟汤（双人，原创温和题库）
+  - Games: 群聊 /play 命令直接开局；WebSocket 实时推送（断线自动回退轮询）；角色自主开局（Life Loop play_game，每日每角色 ≤1 局，用户观战）
+  - Games: 游乐手札列表页 + 筛选；v3.3.5 全量审查 P1/P2 六项修复（黑名单单字/fallback 一致/回合锁/stuck 恢复等）
+  - Life: AI 生活 Life Loop v1.1（30min 决策循环 + 聊天驱动意图 + 回聊缓冲 + 小家大地图，Feature Flag 默认关灰度）
+  - Tests: backend 916 green, flutter analyze 0 / test 214 green
+
+3.3.5 - Release (2026-08-26)
+  - Games: 群聊游戏 Phase 1（小家游戏机入口，规则引擎确定性判定 + AI 玩家 LLM 决策）
+  - Games: 谁是卧底（多人 4-8）/ 真心话大冒险（双人，出题护栏）/ 猜词20问（单人 1v1）
+  - Games: game_* 游戏记忆库逻辑隔离 + 主记忆 game_summary 摘要指针（每角色 ≤5 条）+ 游乐手札折叠卡片
+  - Fixes: 群聊记忆按群节流 / Runtime 不重复落记忆 / 注册表-Legacy 轮次对齐 / MCP SSRF 连接期 IP 绑定 / 插件可信警示（v3.3.3 审查 P3 收尾）
+  - Tests: backend 847 green, flutter analyze 0 / test 212 green
+
+3.3.4 - Release (2026-08-25)
+  - Fixes: 主动消息 [MEMO] 内容泄漏 / Lorebook probability=0 反转 / 群聊非法角色编号 400 / conftest 迁移补跑 / 正则缓存 / 触发状态清理 / muted 严谨 / sticky/cooldown 上限
+  - Tests: backend 827 green
+
+3.2.9 - Release (2026-08-28)
+  - MCP: standard Model Context Protocol integration (Phase 1-4) - stdio/SSE/streamable-http transports, tool discovery & Agent invocation ([mcp.*] markers), permission tiers, resources/prompts, call logs, extension-page management
+  - MCP: Agent tool results now visible in observation (text fallback)
+  - Fixes: scheduler/stats 500, trigger/test error handling, Alembic baseline + 4 tables, TTS consumer leak/partial-block fallback, SSE streaming usage accounting
+  - Docs: plugin development guide corrected & archived (docs/plugin-development.md)
+  - Tests: backend 780 green, flutter analyze 0 / test 207 green
+
+  - Voice: sentence-by-sentence TTS on SSE streaming (producer/consumer, real-time block with tts_url, sequential playback queue with interrupt)
+  - Proactive messages: rule-based naturalness scoring (retry/skip), user rhythm learning (active-hour inference), manual trigger/test endpoint (#28)
+  - Usage: SSE streaming LLM calls now record llm_usage (last-chunk usage or estimated) (#57-A)
+  - Fixes: SSE friendly errors (shared friendly_llm_error), duplicate error event on double-fallback, proxy buffering headers (X-Accel-Buffering), api-config auto-enable on new key
+  - Docs: open-source README updated with recent capabilities
+  - Tests: backend 717 green, flutter analyze 0 / test 204 green
+
+  - Chat: true SSE streaming replies (per-token, delta/block/done events) with incremental semantic chunking; fallback to chunked for deep thinking / plugin rewrite / stream errors
+  - Onboarding: first-run 4-step guide (server → account → character → API key) with auto first message
+  - Infra: Alembic DB migrations (baseline + stamp/upgrade alignment), healthcheck /health, .env dir guard, hf-mirror model download
+  - Memory: decay curve visualization (strength S / next review / lock) in memory detail
+  - Fixes: deploy P1x6+P2x5 (API key hint, setup quoting, init_db sys.path, voice deps), life-home 404 empty state, console dashboard layout, first-account admin bootstrap, i18n leftovers
+  - Tests: backend 688 green, flutter analyze 0 / test 197 green
+
+PROJECT: 拥爱（AMBRACE）
+VERSION: 3.2.6
+DATE: 2026-08-24
+STATUS: 开源发布版（权限管理三 tab / 织网 3D 手动档位 / SDK 升级）
+
+CHANGELOG:
+
+3.2.6 - Release (2026-08-24)
+  - Weave 3D: P0-P3 real 3D (flutter_scene) + card texture + raycast picking + pop-in/select animations
+  - Weave 3D: manual render tier switch (auto / full 3D / light 3D / 2.5D), persisted via shared_preferences, manual override wins
+  - Weave 3D: low-end device tiered degrade (full->light->2D), 2.5D free rotation, NPOT->power-of-two textures, LineSegmentsGeometry batched edges
+  - Permissions: unified permission management (AI abilities / main account / server feature switches), user agreement subtitle fix
+  - SDK upgrade: Flutter 3.27.4 -> 3.47.1, notifications 20 / file_picker 12 / geolocator 14 etc.
+  - Tests: backend 669 green, flutter analyze 0 / test 164 green
+
+PROJECT: 拥爱（AMBRACE）
+VERSION: 3.2.5
+DATE: 2026-08-23
+STATUS: 开源发布版（主账号管理 / 多语种收尾 / 控制台增强）
+
+CHANGELOG:
+
+3.2.5 - Release (2026-08-24)
+  - Admin: multi-admin management (select accounts as main accounts, users.is_admin + UI toggle)
+  - i18n: settings drawer + plugin extensions page fully localized (zh/en)
+  - Console: log export / clear-display buttons; cognitive-loop per-character switch
+  - Fix: ADMIN_USER_IDS accepts JSON array or comma list
+  - Tests: backend 669 green, flutter analyze 0 / test 89 green
+
+3.2.4 - Release (2026-08-24)
+  - Proactive messages: motivation/state-trigger now get recent chat context; mandatory topic continuation + expanded context (10x120); sort bonus for contextual candidates; ctx-length observation signal
+  - Emoji marketplace: remote index + secure download/install/uninstall + App market tab (framework, assets pending)
+  - Infra: docker-compose.ghcr.yml (pull prebuilt image), datetime.utcnow cleanup (12 spots), README sync
+  - Tests: backend 650 green, flutter analyze 0 / test 89 green
+
+3.2.3 - Release (2026-08-23)
+  - Settings: background keep-alive moved to DND page, connection check button, about version fix, drawer regroup
+  - Server console: instant status catch-up after start/stop/restart, live button states, manual refresh, 3s log follow + autoscroll, 7-day token usage trend chart
+  - Fix: lan_ip excludes VPN/virtual NICs (returns real LAN IP)
+  - Tests: backend 611 green, flutter analyze 0 / test 89 green
+
+3.2.2 - Release (2026-08-23)
+  - App: one-tap backup export (SQLite + config zip) with restore guide (#54)
+  - App: background keep-alive service + user-level WebSocket realtime notifications (#55)
+  - Infra: GHCR multi-arch Docker image (auto model download), GitHub Actions CI, bge-m3 startup warmup
+  - Tests: backend 608 green, flutter analyze 0 / test 89 green
+
+
+3.2.1 - Hotfix release (2026-08-23)
+  - Fix P0-1: chromadb.Client|None import crash on Python<3.14 (deferred annotations)
+  - Doubao audit fixes: version unification, API-key hint, cross-platform scripts, configurable lock/CORS/readiness, dev deps, pubspec.lock, models check
+  - Docker support + verified end-to-end (chat + memory)
+
+3.2.0 - Open-source release (2026-08-23)
+  - BM25 hybrid retrieval (jieba+rank-bm25) with RRF fusion and persisted index
+  - Weave canvas 2.5D enhancement (depth/backside fade/sphere clustering)
+  - Server controller UI redesign + polish (impeccable-lite audit)
+  - Frontend experience: input-focus fix, pull-to-refresh, shimmer skeletons, i18n 137 keys
+  - Memory chain binding, self-statement 200-char limit, task/tool metrics fixes
+  - Dependency: openai 3.x + langchain-openai 1.6 (586 tests green)
+
+3.1.0 - Open-source release (2026-08-17)
+  - Time-aware role context: recorded-date annotations on injected memories, no relative time words in generation
+  - Agent Runtime: unified action parsing / tool registry / permission gates / task traces
+  - Remote plugin marketplace (GitHub index + sha256 + rollback); weekly reflection
+  - Privacy review pass: no keys, no local paths, no user data in release
+1.1.0 - Open-source release prep (2026-08-06)
+  - Local VLM default OFF; cloud vision API key (VLM_API_KEY) takes priority; fallback local OCR
+  - One-click deploy scripts (setup.bat / setup.sh), get_server_info.py, setup_local_vlm.py
+  - make_release.py bundles vector models, privacy scan, excludes internal docs
+0.2.0 - User continuous send mode (batch messages)
+  - Added send mode toggle (normal / continuous)
+  - Continuous mode collects messages, sends all at once
+  - Batch messages trigger single AI response with full context
+  - Mode toggle icon in chat input bar
+  - Badge shows pending message count
+0.1.9 - Bio system & continuous reply
+  - Added bio (self-description) to AICharacter model
+  - Bio auto-generated on creation, evolves during chat
+  - Bio displayed in character detail screen
+  - "继续" button on last AI message for continuous reply
+  - Continue button only on latest AI message
+0.1.8 - Chunked AI response & social-network chat
