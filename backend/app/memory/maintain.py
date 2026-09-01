@@ -40,6 +40,9 @@ async def list_memories(
     now = _now_naive()
     async with async_session_factory() as db:
         query = select(Memory).where(Memory.is_archived == False, _active_status_clause())
+        # M3-a（2026-09-01）：工作记忆行不进常规记忆列表（注入走 M1-c 预留分区，M3-b 另行灰度）
+        if memory_type != "working_state":
+            query = query.where(Memory.memory_type != "working_state")
         if user_id is not None:
             # 严格按用户隔离（置顶摘要写入时 user_id 已为角色拥有者）
             query = query.where(Memory.user_id == user_id)

@@ -269,7 +269,17 @@ void main() {
       final l10n = AppLocalizations.of(tester.element(find.byType(CalendarScreen)))!;
 
       expect(find.text(l10n.weekday1), findsOneWidget);
+      // 2026-09-01 修复：GridView.builder 懒加载，月末日期（如 31 日）在测试视口外的
+      // 最后一行不会被构建——滚动到今日格可见再断言（此前 8/31 必挂、9/1 碰巧过）。
       final today = DateTime.now();
+      await tester.scrollUntilVisible(
+        find.text('${today.day}'),
+        100,
+        scrollable: find.descendant(
+          of: find.byType(GridView),
+          matching: find.byType(Scrollable),
+        ).first,
+      );
       expect(find.text('${today.day}'), findsOneWidget);
       // 底部提示文字渲染
       expect(find.text(l10n.calendarHint), findsOneWidget);

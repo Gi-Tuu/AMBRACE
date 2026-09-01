@@ -812,6 +812,18 @@ async def _run_post_processing(
     if gen_prompt:
         asyncio.ensure_future(_gen_image_flow(user_id, character_id, session_id, gen_prompt, img_text))
 
+    # M3-a（2026-09-01）：工作记忆评估——turn 结束异步触发（flag 关/fail-open/30min 节流，
+    # docs/设计_M3工作记忆_20260901.md §3；P1-2：实现前核验 _run_agent_core 收尾存在 ✓）
+    try:
+        from app.utils.async_tasks import spawn_background
+        from app.services.working_state_service import maybe_evaluate_working_state
+        spawn_background(maybe_evaluate_working_state(
+            user_id=user_id, character_id=character_id, session_id=session_id,
+            user_text=content, ai_text=final_text,
+        ))
+    except Exception:
+        pass
+
 
 async def send_and_receive(
     session_id: int, user_id: int, character_id: int, content: str,

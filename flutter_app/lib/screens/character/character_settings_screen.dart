@@ -3,14 +3,12 @@ import 'package:ai_companion/l10n/app_localizations.dart';
 
 import '../../services/api_client.dart';
 import '../../theme/aurora_tokens.dart';
-import '../../widgets/aurora_card.dart';
-import '../../widgets/ios_card_group.dart';
-import 'lorebook_screen.dart';
-import 'memory_trace_screen.dart';
-import 'world_settings_screen.dart';
-import "package:ai_companion/theme/tokens.dart";
+import '../../features/character/settings_sections_daily.dart';
+import '../../features/character/settings_sections_social.dart';
 
 /// 角色设置（UI 2.0：iOS 分组卡片）：日常 / 创作 / 社交 / 隐私 / 状态
+/// 深拆（F7-c-7，2026-09-01）：区段 widget 迁 features/character/settings_sections*.dart，
+/// 本屏保留字段、加载/写回与中央变更分发（级联语义集中于此，与拆分前逐字节等价）。
 class CharacterSettingsScreen extends StatefulWidget {
   final int characterId;
   final String characterName;
@@ -140,10 +138,103 @@ class _CharacterSettingsScreenState extends State<CharacterSettingsScreen> {
     }
   }
 
+  /// 中央变更分发（深拆后 section 统一回调）：本地状态 + 级联 + 写回，与拆分前各内联闭包逐字节等价
+  void _onFieldChanged(String field, dynamic value) {
+    setState(() {
+      switch (field) {
+        case 'diary_enabled':
+          _diary = value as bool;
+        case 'life_enabled':
+          _lifeEnabled = value as bool;
+        case 'life_share_enabled':
+          _lifeShare = value as bool;
+        case 'life_intensity':
+          _lifeIntensity = value as String;
+        case 'check_in_enabled':
+          _checkIn = value as bool;
+        case 'image_gen_enabled':
+          _imageGen = value as bool;
+          if (!value) _activeImageGen = false;
+        case 'active_image_gen_enabled':
+          _activeImageGen = value as bool;
+        case 'weave_full_inject_enabled':
+          _weaveFullInject = value as bool;
+        case 'enable_proactive':
+          _proactive = value as bool;
+        case 'memory_review_enabled':
+          _memoryReview = value as bool;
+        case 'frequency':
+          _frequency = value as String;
+        case 'dnd_enabled':
+          _dndEnabled = value as bool;
+        case 'dnd_start':
+          _dndStart = value as String;
+        case 'dnd_end':
+          _dndEnd = value as String;
+        case 'moments_enabled':
+          _moments = value as bool;
+          if (!value) _momentsComment = false;
+        case 'moments_comment_enabled':
+          _momentsComment = value as bool;
+        case 'privacy_enabled':
+          _privacyEnabled = value as bool;
+          if (!value) {
+            _privacyLock = false;
+            _reasoningLevel = 0;
+            _showTools = false;
+          }
+        case 'privacy_lock_enabled':
+          _privacyLock = value as bool;
+        case 'reasoning_level':
+          _reasoningLevel = value as int;
+        case 'show_tools_enabled':
+          _showTools = value as bool;
+        case 'cold_war_enabled':
+          _coldWar = value as bool;
+        case 'mood_badge_enabled':
+          _moodBadge = value as bool;
+      }
+    });
+    _update(field, value);
+    // 级联写回（与拆分前内联实现一致：父开关关闭时连带关闭子开关）
+    if (field == 'image_gen_enabled' && !value) _update('active_image_gen_enabled', false);
+    if (field == 'moments_enabled' && !value) _update('moments_comment_enabled', false);
+    if (field == 'privacy_enabled' && !value) {
+      _update('privacy_lock_enabled', false);
+      _update('reasoning_level', 0);
+      _update('show_tools_enabled', false);
+    }
+  }
+
+  void _onExpansionToggle(String title, bool expanded) {
+    setState(() => _expanded[title] = expanded);
+  }
+
+  /// 时间选择（HH:mm）
+  Future<void> _pickTime(String current, String field) async {
+    final parts = current.split(':');
+    final t = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(
+        hour: int.tryParse(parts[0]) ?? 0,
+        minute: int.tryParse(parts[1]) ?? 0,
+      ),
+    );
+    if (t == null || !mounted) return;
+    final v = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    setState(() {
+      if (field == 'dnd_start') {
+        _dndStart = v;
+      } else {
+        _dndEnd = v;
+      }
+    });
+    _update(field, v);
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       appBar: AppBar(
@@ -169,597 +260,65 @@ class _CharacterSettingsScreenState extends State<CharacterSettingsScreen> {
           : ListView(
               padding: const EdgeInsets.only(top: 8, bottom: 24),
               children: [
-                _auroraGroup(title: l10n.dailyGroup, children: [
-                  _groupSwitchTile(
-                    icon: Icons.book_outlined,
-                    title: l10n.aiDiary,
-                    subtitle: l10n.aiDiaryHint,
-                    value: _diary,
-                    onChanged: (v) {
-                      setState(() => _diary = v);
-                      _update('diary_enabled', v);
-                    },
-                  ),
-                  Divider(height: 1, indent: 52, color: scheme.outlineVariant),
-                  _expansionSwitch(
-                    icon: Icons.self_improvement_outlined,
-                    title: l10n.aiOfflineLife,
-                    subtitle: l10n.aiOfflineLifeHint,
-                    value: _lifeEnabled,
-                    onChanged: (v) {
-                      setState(() => _lifeEnabled = v);
-                      _update('life_enabled', v);
-                    },
-                    children: [
-                      _childSwitch(
-                        title: l10n.lifeShare,
-                        subtitle: l10n.lifeShareHint,
-                        value: _lifeShare && _lifeEnabled,
-                        onChanged: _lifeEnabled
-                            ? (v) {
-                                setState(() => _lifeShare = v);
-                                _update('life_share_enabled', v);
-                              }
-                            : null,
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(left: 8, top: 6, bottom: 8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(l10n.lifeIntensity,
-                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
-                            const SizedBox(height: 2),
-                            Text(l10n.lifeIntensityHint,
-                                style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
-                            const SizedBox(height: 8),
-                            SegmentedButton<String>(
-                              segments: [
-                                ButtonSegment(value: 'low', label: Text(l10n.low)),
-                                ButtonSegment(value: 'medium', label: Text(l10n.medium)),
-                                ButtonSegment(value: 'high', label: Text(l10n.high)),
-                              ],
-                              selected: {_lifeIntensity},
-                              onSelectionChanged: _lifeEnabled
-                                  ? (sel) {
-                                      setState(() => _lifeIntensity = sel.first);
-                                      _update('life_intensity', sel.first);
-                                    }
-                                  : null,
-                              showSelectedIcon: false,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  Divider(height: 1, indent: 52, color: scheme.outlineVariant),
-                  _expansionSwitch(
-                    icon: Icons.visibility_outlined,
-                    title: l10n.checkIn,
-                    subtitle: l10n.checkInHint,
-                    value: _checkIn,
-                    onChanged: (v) {
-                      setState(() => _checkIn = v);
-                      _update('check_in_enabled', v);
-                    },
-                    children: [
-                      _childSwitch(
-                        title: l10n.control,
-                        subtitle: l10n.controlHint,
-                        value: false,
-                        onChanged: (v) {
-                          ScaffoldMessenger.of(context)
-                            ..hideCurrentSnackBar()
-                            ..showSnackBar(SnackBar(
-                              content: Text(l10n.controlComingSoon),
-                              duration: const Duration(seconds: 2),
-                            ));
-                        },
-                      ),
-                    ],
-                  ),
-                ]),
-                _auroraGroup(title: l10n.creationGroup, children: [
-                  _expansionSwitch(
-                    icon: Icons.auto_awesome,
-                    title: l10n.imageGen,
-                    subtitle: l10n.imageGenHint,
-                    value: _imageGen,
-                    onChanged: (v) {
-                      setState(() {
-                        _imageGen = v;
-                        if (!v) _activeImageGen = false;
-                      });
-                      _update('image_gen_enabled', v);
-                      if (!v) _update('active_image_gen_enabled', false);
-                    },
-                    children: [
-                      _childSwitch(
-                        title: l10n.activeImageGen,
-                        subtitle: l10n.activeImageGenHint,
-                        value: _activeImageGen && _imageGen,
-                        onChanged: _imageGen
-                            ? (v) {
-                                setState(() => _activeImageGen = v);
-                                _update('active_image_gen_enabled', v);
-                              }
-                            : null,
-                      ),
-                    ],
-                  ),
-                ]),
-                _auroraGroup(title: l10n.worldGroup, children: [
-                  ListTile(
-                    leading: _settingsRowIcon(context, Icons.menu_book_outlined, active: true),
-                    title: Text(l10n.lorebookTitle, style: const TextStyle(fontSize: 15)),
-                    subtitle: Text(l10n.lorebookHint,
-                        style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
-                    trailing: const Icon(Icons.chevron_right, size: 18, color: AppColors.separator),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => LorebookScreen(characterId: widget.characterId)),
-                    ),
-                  ),
-                  Divider(height: 1, indent: 52, color: scheme.outlineVariant),
-                  ListTile(
-                    leading: _settingsRowIcon(context, Icons.public_outlined, active: true),
-                    title: Text(l10n.worldFactsTitle, style: const TextStyle(fontSize: 15)),
-                    subtitle: Text(l10n.worldFactsHint,
-                        style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
-                    trailing: const Icon(Icons.chevron_right, size: 18, color: AppColors.separator),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => WorldSettingsScreen(characterId: widget.characterId)),
-                    ),
-                  ),
-                ]),
-                _auroraGroup(title: l10n.socialGroup, children: [
-                  _groupSwitchTile(
-                    icon: Icons.psychology_outlined,
-                    title: l10n.cognitiveLoop,
-                    subtitle: l10n.cognitiveLoopHint,
-                    value: _cognitiveLoop,
-                    onChanged: _onCognitiveLoopChanged,
-                  ),
-                  Divider(height: 1, indent: 52, color: scheme.outlineVariant),
-                  _groupSwitchTile(
-                    icon: Icons.all_inclusive,
-                    title: l10n.weaveFullInject,
-                    subtitle: l10n.weaveFullInjectHint,
-                    value: _weaveFullInject,
-                    onChanged: (v) {
-                      setState(() => _weaveFullInject = v);
-                      _update('weave_full_inject_enabled', v);
-                    },
-                  ),
-                  Divider(height: 1, indent: 52, color: scheme.outlineVariant),
-                  _expansionSwitch(
-                    icon: Icons.notifications_active_outlined,
-                    title: l10n.proactiveChat,
-                    subtitle: l10n.proactiveChatHint,
-                    value: _proactive,
-                    onChanged: (v) {
-                      setState(() => _proactive = v);
-                      _update('enable_proactive', v);
-                    },
-                    children: [
-                      _childSwitch(
-                        title: l10n.memoryReview,
-                        subtitle: l10n.memoryReviewHint,
-                        value: _memoryReview && _proactive,
-                        onChanged: _proactive
-                            ? (v) {
-                                setState(() => _memoryReview = v);
-                                _update('memory_review_enabled', v);
-                              }
-                            : null,
-                      ),
-                      if (_proactive) ...[
-                        Padding(
-                          padding: const EdgeInsets.only(left: 8, top: 6, bottom: 8),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(l10n.proactiveFrequency,
-                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
-                              const SizedBox(height: 2),
-                              Text(l10n.proactiveFrequencyHint,
-                                  style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
-                              const SizedBox(height: 8),
-                              SegmentedButton<String>(
-                                segments: [
-                                  ButtonSegment(value: 'low', label: Text(l10n.lowFreq)),
-                                  ButtonSegment(value: 'medium', label: Text(l10n.standard)),
-                                  ButtonSegment(value: 'high', label: Text(l10n.highFreq)),
-                                ],
-                                selected: {_frequency},
-                                onSelectionChanged: (s) {
-                                  setState(() => _frequency = s.first);
-                                  _update('frequency', s.first);
-                                },
-                                showSelectedIcon: false,
-                              ),
-                            ],
-                          ),
-                        ),
-                        _childSwitch(
-                          title: l10n.dndPeriod,
-                          subtitle: _dndEnabled
-                              ? l10n.dndOn(_dndStart, _dndEnd)
-                              : l10n.dndOff,
-                          value: _dndEnabled,
-                          onChanged: _proactive
-                              ? (v) {
-                                  setState(() => _dndEnabled = v);
-                                  _update('dnd_enabled', v);
-                                }
-                              : null,
-                        ),
-                        if (_dndEnabled) ...[
-                          _timeRow(l10n.start, _dndStart, 'dnd_start'),
-                          _timeRow(l10n.end, _dndEnd, 'dnd_end'),
-                        ],
-                      ],
-                    ],
-                  ),
-                  Divider(height: 1, indent: 52, color: scheme.outlineVariant),
-                  _expansionSwitch(
-                    icon: Icons.people_outline,
-                    title: l10n.moments,
-                    subtitle: l10n.momentsHint,
-                    value: _moments,
-                    onChanged: (v) {
-                      setState(() {
-                        _moments = v;
-                        if (!v) _momentsComment = false;
-                      });
-                      _update('moments_enabled', v);
-                      if (!v) _update('moments_comment_enabled', false);
-                    },
-                    children: [
-                      _childSwitch(
-                        title: l10n.momentsComment,
-                        subtitle: l10n.momentsCommentHint,
-                        value: _momentsComment && _moments,
-                        onChanged: _moments
-                            ? (v) {
-                                setState(() => _momentsComment = v);
-                                _update('moments_comment_enabled', v);
-                              }
-                            : null,
-                      ),
-                    ],
-                  ),
-                ]),
-                // 隐私（组）：总开关 = 隐私；子开关 = 隐私上锁 + 思考过程（三挡）+ 调用能力
-                _auroraGroup(title: l10n.privacyGroup, children: [
-                  _expansionSwitch(
-                    icon: Icons.lock_outline,
-                    title: l10n.privacy,
-                    subtitle: l10n.privacyHint,
-                    value: _privacyEnabled,
-                    onChanged: (v) {
-                      setState(() {
-                        _privacyEnabled = v;
-                        if (!v) {
-                          _privacyLock = false;
-                          _reasoningLevel = 0;
-                          _showTools = false;
-                        }
-                      });
-                      _update('privacy_enabled', v);
-                      if (!v) {
-                        _update('privacy_lock_enabled', false);
-                        _update('reasoning_level', 0);
-                        _update('show_tools_enabled', false);
-                      }
-                    },
-                    children: [
-                      _childSwitch(
-                        title: l10n.privacyLock,
-                        subtitle: l10n.privacyLockHint,
-                        value: _privacyLock,
-                        onChanged: _privacyEnabled
-                            ? (v) {
-                                setState(() => _privacyLock = v);
-                                _update('privacy_lock_enabled', v);
-                              }
-                            : null,
-                      ),
-                      _childSwitch(
-                        title: l10n.showTools,
-                        subtitle: l10n.showToolsHint,
-                        value: _showTools,
-                        onChanged: _privacyEnabled
-                            ? (v) {
-                                setState(() => _showTools = v);
-                                _update('show_tools_enabled', v);
-                              }
-                            : null,
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(left: 8, top: 6, bottom: 8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(l10n.reasoningLevel,
-                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
-                            const SizedBox(height: 2),
-                            Text(l10n.reasoningLevelHint,
-                                style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
-                            const SizedBox(height: 8),
-                            SegmentedButton<int>(
-                              segments: [
-                                ButtonSegment(value: 0, label: Text(l10n.off), icon: const Icon(Icons.visibility_off_outlined, size: 16)),
-                                ButtonSegment(value: 1, label: Text(l10n.simpleThinking), icon: const Icon(Icons.lightbulb_outline, size: 16)),
-                                ButtonSegment(value: 2, label: Text(l10n.deepThinking), icon: const Icon(Icons.psychology_outlined, size: 16)),
-                              ],
-                              selected: {_reasoningLevel},
-                              onSelectionChanged: _privacyEnabled
-                                  ? (s) {
-                                      final v = s.first;
-                                      setState(() => _reasoningLevel = v);
-                                      _update('reasoning_level', v);
-                                    }
-                                  : null,
-                              showSelectedIcon: false,
-                              style: const ButtonStyle(visualDensity: VisualDensity.compact),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ]),
-                // 状态（总开关 + 展开）：状态触发 → 冷战断联 / 心情标识
-                _auroraGroup(title: l10n.statusGroup, children: [
-                  _expansionSwitch(
-                    icon: Icons.mood_bad_outlined,
-                    title: l10n.status,
-                    subtitle: l10n.statusHint,
-                    value: _stateTrigger,
-                    onChanged: _onStateChanged,
-                    children: [
-                      _childSwitch(
-                        title: l10n.stateTrigger,
-                        subtitle: l10n.stateTriggerHint,
-                        value: _stateTrigger,
-                        onChanged: _stateTrigger ? _onStateChanged : null,
-                      ),
-                      _childSwitch(
-                        title: l10n.coldWar,
-                        subtitle: l10n.coldWarHint,
-                        value: _coldWar && _stateTrigger,
-                        onChanged: (_stateTrigger)
-                            ? (v) {
-                                setState(() => _coldWar = v);
-                                _update('cold_war_enabled', v);
-                              }
-                            : null,
-                      ),
-                      _childSwitch(
-                        title: l10n.moodBadge,
-                        subtitle: l10n.moodBadgeHint,
-                        value: _moodBadge,
-                        onChanged: (v) {
-                          setState(() => _moodBadge = v);
-                          _update('mood_badge_enabled', v);
-                        },
-                      ),
-                    ],
-                  ),
-                ]),
-                // 调试（#70-B）：记忆检索轨迹只读面板（纯 GET，进入单独页面拉一次）
-                _auroraGroup(title: l10n.memoryTraceGroup, children: [
-                  ListTile(
-                    leading: _settingsRowIcon(context, Icons.memory, active: true),
-                    title: Text(l10n.memoryTraceTitle, style: const TextStyle(fontSize: 15)),
-                    subtitle: Text(l10n.memoryTraceEmpty,
-                        style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
-                    trailing: const Icon(Icons.chevron_right, size: 18, color: AppColors.separator),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => MemoryTraceScreen(
-                          characterId: widget.characterId,
-                          characterName: widget.characterName,
-                        ),
-                      ),
-                    ),
-                  ),
-                ]),
+                DailySection(
+                  diary: _diary,
+                  lifeEnabled: _lifeEnabled,
+                  lifeShare: _lifeShare,
+                  lifeIntensity: _lifeIntensity,
+                  checkIn: _checkIn,
+                  onFieldChanged: _onFieldChanged,
+                  expanded: _expanded,
+                  onExpansionToggle: _onExpansionToggle,
+                ),
+                CreationSection(
+                  imageGen: _imageGen,
+                  activeImageGen: _activeImageGen,
+                  onFieldChanged: _onFieldChanged,
+                  expanded: _expanded,
+                  onExpansionToggle: _onExpansionToggle,
+                ),
+                WorldSection(characterId: widget.characterId),
+                SocialSection(
+                  cognitiveLoop: _cognitiveLoop,
+                  onCognitiveLoopChanged: _onCognitiveLoopChanged,
+                  weaveFullInject: _weaveFullInject,
+                  proactive: _proactive,
+                  moments: _moments,
+                  momentsComment: _momentsComment,
+                  memoryReview: _memoryReview,
+                  frequency: _frequency,
+                  dndEnabled: _dndEnabled,
+                  dndStart: _dndStart,
+                  dndEnd: _dndEnd,
+                  onFieldChanged: _onFieldChanged,
+                  expanded: _expanded,
+                  onExpansionToggle: _onExpansionToggle,
+                  onPickTime: _pickTime,
+                ),
+                PrivacySection(
+                  privacyEnabled: _privacyEnabled,
+                  privacyLock: _privacyLock,
+                  showTools: _showTools,
+                  reasoningLevel: _reasoningLevel,
+                  onFieldChanged: _onFieldChanged,
+                  expanded: _expanded,
+                  onExpansionToggle: _onExpansionToggle,
+                ),
+                StatusSection(
+                  stateTrigger: _stateTrigger,
+                  onStateChanged: _onStateChanged,
+                  coldWar: _coldWar,
+                  moodBadge: _moodBadge,
+                  onFieldChanged: _onFieldChanged,
+                  expanded: _expanded,
+                  onExpansionToggle: _onExpansionToggle,
+                ),
+                TraceSection(
+                  characterId: widget.characterId,
+                  characterName: widget.characterName,
+                ),
               ],
             ),
     );
   }
-
-  /// 普通开关行
-  Widget _groupSwitchTile({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required bool value,
-    required ValueChanged<bool> onChanged,
-  }) {
-    return InkWell(
-      onTap: () => onChanged(!value),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        child: Row(
-          children: [
-            _settingsRowIcon(context, icon, active: value),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w500, color: Theme.of(context).colorScheme.onSurface)),
-                  const SizedBox(height: 1),
-                  Text(subtitle,
-                      style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
-                ],
-              ),
-            ),
-            Switch(value: value, onChanged: onChanged),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 可展开的父开关（点击开关切换、点击行展开子项；开关左侧带无柄箭头，仿手机感知）
-  Widget _expansionSwitch({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required bool value,
-    required ValueChanged<bool>? onChanged,
-    required List<Widget> children,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    final isOpen = _expanded[title] ?? false;
-    return Theme(
-      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-      child: ExpansionTile(
-        leading: _settingsRowIcon(context, icon, active: value),
-        title: Text(title,
-            style: TextStyle(
-                fontSize: 15, fontWeight: FontWeight.w500, color: scheme.onSurface)),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
-        childrenPadding: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
-        tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
-        shape: const Border(),
-        collapsedShape: const Border(),
-        onExpansionChanged: (v) => setState(() => _expanded[title] = v),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(isOpen ? Icons.expand_less : Icons.expand_more,
-                size: 20, color: AppColors.separator),
-            Switch(value: value, onChanged: onChanged),
-          ],
-        ),
-        children: children,
-      ),
-    );
-  }
-
-  /// 免打扰时段行：点击弹出时间选择
-  Widget _timeRow(String label, String value, String field) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(left: 8, top: 4, bottom: 4),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: () => _pickTime(value, field),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          child: Row(
-            children: [
-              Text(label,
-                  style: const TextStyle(fontSize: 14, color: IosCardColors.subtitle)),
-              const Spacer(),
-              Text(value,
-                  style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: scheme.onSurface)),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right, size: 18, color: scheme.onSurface.withValues(alpha: 0.4)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 时间选择（HH:mm）
-  Future<void> _pickTime(String current, String field) async {
-    final parts = current.split(':');
-    final t = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay(
-        hour: int.tryParse(parts[0]) ?? 0,
-        minute: int.tryParse(parts[1]) ?? 0,
-      ),
-    );
-    if (t == null || !mounted) return;
-    final v = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-    setState(() {
-      if (field == 'dnd_start') {
-        _dndStart = v;
-      } else {
-        _dndEnd = v;
-      }
-    });
-    _update(field, v);
-  }
-
-  /// 子开关行（父开关关闭时 onChanged 为 null：标题自动灰化）
-  Widget _childSwitch({
-    required String title,
-    required String subtitle,
-    required bool value,
-    required ValueChanged<bool>? onChanged,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    final enabled = onChanged != null;
-    return Padding(
-      padding: const EdgeInsets.only(top: 2, bottom: 2),
-      child: SwitchListTile(
-        contentPadding: const EdgeInsets.only(left: 8),
-        title: Text(title,
-            style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: enabled ? scheme.onSurface : scheme.onSurface.withValues(alpha: 0.38))),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
-        value: value,
-        onChanged: onChanged,
-        activeThumbColor: Theme.of(context).colorScheme.primary,
-      ),
-    );
-  }
-}
-
-
-/// Aurora P5 分组：AuroraCard 版 IosCardGroup（标题视觉保留；透明 Material 防组内开关断言）
-Widget _auroraGroup({required String title, required List<Widget> children}) {
-  return Padding(
-    padding: const EdgeInsets.only(left: 12, right: 12, bottom: 14),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 16, bottom: 6),
-          child: Text(title,
-              style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: IosCardColors.subtitle)),
-        ),
-        AuroraCard(
-          padding: EdgeInsets.zero,
-          child: Material(
-            type: MaterialType.transparency,
-            child: Column(children: children),
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-/// Aurora P5 行图标：40×40 圆角 12 容器（主题色 0.10~0.14 底，激活时图标主题色）
-Widget _settingsRowIcon(BuildContext context, IconData icon, {required bool active}) {
-  final scheme = Theme.of(context).colorScheme;
-  return Container(
-    width: 40,
-    height: 40,
-    decoration: BoxDecoration(
-      color: scheme.primary.withValues(alpha: active ? 0.14 : 0.10),
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Icon(icon, size: 22, color: active ? scheme.primary : IosCardColors.subtitle),
-  );
 }

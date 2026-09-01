@@ -76,6 +76,10 @@ AGENT_FLAGS = {
     # provider_registry 开=LLM/TTS 经 app/providers 注册口解析实现（内置 openai_compatible/dashscope 为默认实现，
     # 插件可经 sdk.register_provider 注册并以配置 provider 字段选中）；关=直连内置实现（与旧链路逐字节一致）。
     "provider_registry": True,
+    # ── M3-a 工作记忆（2026-09-01，docs/设计_M3工作记忆_20260901.md）──
+    # working_state_enabled 开=turn 结束后异步评估/滚动覆盖 working_state 行（写入链路，fail-open）；
+    # 关=完全跳过（无行产生；注入为 M3-b 另行灰度）。默认关（快照脚本可回滚）。
+    "working_state_enabled": True,  # 2026-09-01 用户拍板：开启数据积累（注入仍为 M3-b 未灰度）
     "life_home_worldmap_enabled": True,   # 小家大地图（§11）
     # ── 生命感增强 v1（#63，2026-08-27；全部默认关，可独立回退）──
     "reply_delay_enabled": True,         # 机制2：动态回复延迟（用户主动消息才生效）

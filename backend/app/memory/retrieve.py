@@ -322,6 +322,7 @@ async def search_memories(
                 .where(
                     Memory.character_id == character_id,
                     Memory.is_archived == False,
+                    Memory.memory_type != "working_state",  # M3-a：工作记忆不进召回（注入走专用分区）
                     Memory.content.like(f"%{query}%"),
                     _retrievable_status_clause(),   # #70-C：双通道过滤（flag 关=永真）
                 )
