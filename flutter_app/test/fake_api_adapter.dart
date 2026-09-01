@@ -27,12 +27,16 @@ class FakeApiAdapter implements HttpClientAdapter {
   }
 
   /// 未匹配一律 404（业务层按异常静默处理）。
+  /// 已收到的请求记录（B8 等测试用于断言「请求只发生一次」）
+  final requests = <({String method, String path})>[];
+
   @override
   Future<ResponseBody> fetch(
     RequestOptions options,
     Stream<Uint8List>? requestStream,
     Future<void>? cancelFuture,
   ) async {
+    requests.add((method: options.method, path: options.uri.path));
     final handler = _handlers[_key(options.method, options.uri.path)];
     if (handler != null) return handler(options);
     return body({'detail': 'not found'}, 404);

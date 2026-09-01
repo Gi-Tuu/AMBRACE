@@ -18,6 +18,7 @@ _logger = get_logger("scheduler.daily_memory_maintenance")
 
 DAILY_SUMMARY_MIN_MSGS = 20  # 今天消息数达到该值才补生成日摘要
 MAX_SESSIONS_PER_RUN = 15  # 单次最多补生成的会话数（token 限额）
+ARCHIVE_COLD_DAYS = 60  # #70-C2：冷归档阈值（superseded 且 valid_to 超过该天数 → 迁入 memory_archive）
 SUMMARY_PROMPT = (
     "请用中文概括以下聊天的核心内容，包括用户提到的个人信息、重要事件、偏好。回复在80字以内。\n"
     "时间规则：涉及日期写具体日期（如 2026-08-10 类格式），不要使用'今天/昨天/最近'等相对时间词。\n"
@@ -154,7 +155,7 @@ async def run_daily_memory_maintenance() -> dict:
             return {"enabled": False}
     except Exception:
         pass
-    out = {"summaries": 0, "dedup_removed": 0, "pinned_refreshed": 0, "preoccupations_decayed": 0}
+    out = {"summaries": 0, "dedup_removed": 0, "pinned_refreshed": 0, "preoccupations_decayed": 0, "cold_archived": 0}
     try:
         out["summaries"] = await generate_today_summaries()
     except Exception as e:
@@ -177,5 +178,11 @@ async def run_daily_memory_maintenance() -> dict:
                 await db.commit()
     except Exception as e:
         _logger.warning("Preoccupation daily decay failed: %s", e)
+    # #70-C2 冷归档：superseded 且 valid_to 超过阈值 → 迁入 memory_archive（异步、失败静默、不阻塞）
+    try:
+        from app.memory.supersede import archive_cold_superseded
+        out["cold_archived"] = await archive_cold_superseded(days=ARCHIVE_COLD_DAYS)
+    except Exception as e:
+        _logger.warning("Cold archive maintenance failed: %s", e)
     _logger.info("Daily memory maintenance done: %s", out)
     return out

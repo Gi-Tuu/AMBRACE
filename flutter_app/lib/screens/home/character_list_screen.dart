@@ -18,7 +18,7 @@ import '../../widgets/group_list_card.dart';
 import '../character/character_edit_screen.dart';
 import '../chat/chat_group_chat_screen.dart';
 import '../chat/create_group_dialog.dart';
-import '../chat/chat_screen.dart';
+import '../../features/chat/chat_screen.dart';
 import '../settings/douyin_approvals_screen.dart';
 import '../weave/weave_library_screen.dart';
 import 'home_screen.dart';

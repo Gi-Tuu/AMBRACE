@@ -228,6 +228,8 @@ def test_init_db_记忆索引迁移幂等(monkeypatch):
 
     import app.db.database as dbmod
     monkeypatch.setattr(dbmod, "engine", engine)
+    import app.db.init_db as _initdb_mod  # F1 拆分：init_db 用实现模块的 engine 绑定
+    monkeypatch.setattr(_initdb_mod, "engine", engine)
 
     async def _indexes():
         async with engine.begin() as conn:

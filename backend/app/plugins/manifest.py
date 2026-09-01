@@ -3,13 +3,21 @@ import json
 
 REQUIRED = ("name", "version", "description")
 VALID_CATEGORIES = ("plugin", "mcp")
-VALID_TYPES = ("http", "prompt", "chat", "workflow", "hybrid")  # 48c：插件类型（缺省 http）
+VALID_TYPES = ("http", "prompt", "chat", "workflow", "hybrid", "content")  # 48c：插件类型（缺省 http）；X2（2026-08-31）+content 内容包（零代码声明型）
+# X0（2026-08-31）：纳入 tool_runner 已在派发的 6 个工具生命周期钩子（此前"内核在喊、插件听不到"）；
+# 语义均为 notify（只观察，不可改写工具调用与结果），契约见 docs/extension-contract.md
 VALID_HOOKS = (
     "context_inject", "before_generate", "after_generate",
     "memory_written", "memory_search", "proactive_candidate",
     "schedule_tick", "http_router",
+    "tool_call_requested", "tool_permission_checked", "tool_execution_started",
+    "tool_result", "tool_finished", "tool_error",
 )
-VALID_PERMISSIONS = ("write_memory", "send_message", "douyin_publish")
+VALID_PERMISSIONS = (
+    "write_memory", "send_message", "douyin_publish",
+    # X4（2026-08-31）：只读权限组——SDK 只读端口（get_persona/search_memory/get_relationship/get_life_state）
+    "persona:read", "memory:read", "life:read", "relationship:read",
+)
 
 # 48a：插件页面资源扩展名白名单（页面托管端点 GET /{name}/page/{filepath} 只放行这些扩展名）
 PAGE_EXT_WHITELIST = (
@@ -259,6 +267,14 @@ def validate_manifest(data: dict) -> str | None:
     type_err = validate_type_config(plugin_type, config)
     if type_err:
         return type_err
+    # X2（2026-08-31）：content 内容包——content 块必填且过 schema 校验；非 content 类型带 content 块拒绝
+    if plugin_type == "content":
+        from app.plugins.content_schema import validate_content_payload
+        cerr = validate_content_payload(data.get("content"))
+        if cerr:
+            return cerr
+    elif data.get("content") is not None:
+        return "content 块仅 type=content 内容包可用"
     # 48a：page / icon 字段校验（页面插件）
     page_err = validate_page_field(data.get("page"))
     if page_err:

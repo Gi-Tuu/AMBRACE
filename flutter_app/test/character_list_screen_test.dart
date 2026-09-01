@@ -13,7 +13,7 @@ import 'package:ai_companion/models/character.dart';
 import 'package:ai_companion/providers/chat_provider.dart';
 import 'package:ai_companion/providers/settings_provider.dart';
 import 'package:ai_companion/screens/character/character_edit_screen.dart';
-import 'package:ai_companion/screens/chat/chat_screen.dart';
+import 'package:ai_companion/features/chat/chat_screen.dart';
 import 'package:ai_companion/screens/home/character_list_screen.dart';
 import 'package:ai_companion/services/api_client.dart';
 import 'package:ai_companion/widgets/character_list_card.dart';

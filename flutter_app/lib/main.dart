@@ -114,6 +114,12 @@ class _AICompanionAppState extends State<AICompanionApp> with WidgetsBindingObse
       ],
       child: Consumer<SettingsProvider>(
         builder: (context, settings, _) {
+          // F7-c：401 统一处理——清登录态并回登录页（触发条件与 3s 去重在 ApiClient 拦截器）
+          ApiClient().onUnauthorized = () {
+            if (settings.token.isEmpty) return;
+            settings.logout();
+            appNavigatorKey.currentState?.pushNamedAndRemoveUntil('/login', (r) => false);
+          };
           return MaterialApp(
             title: 'AMBRACE',
             debugShowCheckedModeBanner: false,
@@ -139,6 +145,7 @@ class _AICompanionAppState extends State<AICompanionApp> with WidgetsBindingObse
             home: const LoginScreen(),
             routes: {
               '/home': (context) => const HomeScreen(),
+              '/login': (context) => const LoginScreen(),
             },
           );
         },

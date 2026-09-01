@@ -67,6 +67,11 @@ _VAGUE_PATTERNS = [
     (r"(?:睡醒|睡一觉|眯一会|眯会儿|补个觉|休息一会|歇会儿)\s*(?:.*?)?\s*(?:我)?(?:叫你|来叫你|喊你|叫我|来叫我|喊我|来找你)", 30, "ready"),
     # "看完这集叫你 / 弄完手上的事找你 / 忙完来找你" → 30 分钟
     (r"(?:看完|弄完|做完|忙完|搞定|处理好|收个尾)\s*(?:这集|这部|这个|这些|手上|手头|手里|那点|剩下)?\s*(?:事|活|东西)?\s*(?:我)?(?:叫你|来叫你|叫你起来|喊你|叫我|来叫我|喊我|找你|来找你|来找我)", 30, "ready"),
+    # 陪伴主动线（2026-08-30）：无数字日常句式兜底（去开会/去吃饭/等下试/去洗澡），到点 AI 主动关心
+    (r"开会去了|去开会|去忙了|去忙会儿", 60, "ready"),
+    (r"吃饭去了|去吃饭了|先去吃饭|去吃饭", 40, "ready"),
+    (r"(?:等下|等会|等会儿|一会|一会儿|待会|待会儿)\s*试(?:试)?", 10, "ready"),
+    (r"洗澡去了|去洗个澡|洗个澡|去洗澡", 30, "ready"),
 ]
 
 # 最长承诺：24 小时
@@ -142,6 +147,39 @@ def extract_timer(
         "sender": sender if sender in ("ai", "user") else "ai",
         "promise_text": promise_text,
     }
+
+
+# ready 承诺的结果关键词组（陪伴主动线 2026-08-30）：按 content_hint 归类选择，命中即视为用户已回报结果
+_READY_RESULT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "meeting": ("开完", "开好", "散会", "忙完", "忙好", "结束", "好了"),
+    "meal": ("吃完", "吃好", "吃过", "吃饱"),
+    "shower": ("洗完", "洗好", "洗过", "洗好了"),
+    "try": ("试完", "试好", "试过", "行了", "好了", "搞定"),
+}
+_READY_RESULT_FALLBACK = ("好了", "搞定", "结束", "完成", "回来了")
+
+
+def ready_result_seen(recent_user_texts: list[str], hint: str = "") -> bool:
+    """判断用户最近消息是否已包含 ready 承诺的结果关键词（用于跳过到点重复询问）。
+
+    依据 hint（ScheduledEvent.content_hint，事件创建时的匹配原文）选择关键词组：
+    开会/忙→meeting、吃饭→meal、洗澡→shower、试→try，其余走兜底。
+    纯函数零 IO；命中任一关键词即 True，空列表恒 False。
+    """
+    if not recent_user_texts:
+        return False
+    h = hint or ""
+    if "开会" in h or "忙" in h:
+        kws = _READY_RESULT_KEYWORDS["meeting"]
+    elif "吃饭" in h:
+        kws = _READY_RESULT_KEYWORDS["meal"]
+    elif "澡" in h:
+        kws = _READY_RESULT_KEYWORDS["shower"]
+    elif "试" in h:
+        kws = _READY_RESULT_KEYWORDS["try"]
+    else:
+        kws = _READY_RESULT_FALLBACK
+    return any(any(kw in (t or "") for kw in kws) for t in recent_user_texts)
 
 
 def strip_timer_tag(text: str) -> str:

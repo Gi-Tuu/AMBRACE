@@ -1,0 +1,12 @@
+{
+  "name": "coin_flip",
+  "version": "1.0.0",
+  "description": "抛硬币猜正反——游戏扩展包（game_pack）最小示例：经 sdk.register_game 注册，内核负责房间/回合/记忆隔离",
+  "author": "AMBRACE",
+  "category": "plugin",
+  "type": "http",
+  "permissions": [],
+  "hooks": [],
+  "config": {},
+  "usage": "在群聊游戏列表选择「抛硬币」开局：座次 0 的玩家先喊正/反，系统抛币，喊中者胜。"
+}

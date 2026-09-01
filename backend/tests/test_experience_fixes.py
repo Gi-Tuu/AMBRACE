@@ -16,8 +16,8 @@ def test_bug1_合并用段落分隔():
 
 def test_bug2_memory_search_trace语义():
     import inspect
-    from app.memory import service as memsvc
-    src = inspect.getsource(memsvc.search_memories)
+    from app.memory import retrieve as retrieve_mod  # F4：search_memories 实现已迁至 retrieve.py
+    src = inspect.getsource(retrieve_mod.search_memories)
     assert '"hit_count": candidate_count' in src   # 召回候选命中数（合并去重后的候选池）
     assert '"returned": len(results)' in src       # 实际返回条数
 

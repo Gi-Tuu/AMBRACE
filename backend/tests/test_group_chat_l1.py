@@ -13,8 +13,8 @@ import asyncio
 import random
 from types import SimpleNamespace
 
-from app.api import chat_groups as cg
-from app.api import characters as char_api
+from app.application import chat_groups as cg  # F5-a：实现迁至 application/chat_groups，patch 须指向定义模块
+from app.application import characters as char_api  # F5-b：实现迁至 application/characters，patch 须指向定义模块
 from app.agent import loop
 
 
@@ -221,7 +221,7 @@ def test_generate_replies_把muted_ids传给漏斗(monkeypatch):
 
 def test_generate_replies_runtime_不重复落记忆save_memory_false(monkeypatch):
     """P3-4：群聊 Runtime 路径传 save_memory=False，统一靠 _save_group_memory 落记忆。"""
-    from app.api import chat_groups as cg
+    from app.application import chat_groups as cg  # F5-a：实现迁至 application/chat_groups，patch 须指向定义模块
     from app.agent import loop
 
     chars = [_char(11, "小阳"), _char(12, "小冰")]

@@ -6,6 +6,7 @@ import '../../theme/aurora_tokens.dart';
 import '../../widgets/aurora_card.dart';
 import '../../widgets/ios_card_group.dart';
 import 'lorebook_screen.dart';
+import 'memory_trace_screen.dart';
 import 'world_settings_screen.dart';
 import "package:ai_companion/theme/tokens.dart";
 
@@ -545,6 +546,24 @@ class _CharacterSettingsScreenState extends State<CharacterSettingsScreen> {
                         },
                       ),
                     ],
+                  ),
+                ]),
+                // 调试（#70-B）：记忆检索轨迹只读面板（纯 GET，进入单独页面拉一次）
+                _auroraGroup(title: l10n.memoryTraceGroup, children: [
+                  ListTile(
+                    leading: _settingsRowIcon(context, Icons.memory, active: true),
+                    title: Text(l10n.memoryTraceTitle, style: const TextStyle(fontSize: 15)),
+                    subtitle: Text(l10n.memoryTraceEmpty,
+                        style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
+                    trailing: const Icon(Icons.chevron_right, size: 18, color: AppColors.separator),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => MemoryTraceScreen(
+                          characterId: widget.characterId,
+                          characterName: widget.characterName,
+                        ),
+                      ),
+                    ),
                   ),
                 ]),
               ],

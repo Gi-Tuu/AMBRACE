@@ -541,6 +541,10 @@ async def history(
 
 # ── 结算：finish + archive + memory_bridge ──
 async def _settle_game(db: AsyncSession, session, engine: GameEngine, winner: str) -> None:
+    # B5（2026-09-01）：先 persist_state 把引擎内存态（含 liars_bar 的 private_json dict）
+    # 序列化写回 ORM 脏字段——后续 finalize_game 的 SELECT 会触发 autoflush，
+    # 不先序列化则 dict 绑 Text 列直接打爆事务（结算失败、对局卡 playing）。
+    await engine.persist_state(db)
     await engine.finish(db, winner)
     from app.games.archive import build_archive
     from app.games.memory_bridge import finalize_game
@@ -697,6 +701,10 @@ async def resume_stuck_games() -> None:
                 seat = engine.current_turn_seat()
                 if seat is not None and engine.is_ai(seat):
                     _spawn_background(_resume_ai_turns(sid))
+                elif seat is None:
+                    # B-RCV（2026-09-01 审查）：回合指针为空但 status=playing 的异常态——
+                    # 恢复逻辑只能覆盖 AI 轮，此处告警便于日志/真机发现后手动处理。
+                    _logger.warning("stuck game sid=%s type=%s has no current turn seat", sid, session.game_type)
     except Exception as e:
         _logger.warning("resume_stuck_games failed: %s", e)
 

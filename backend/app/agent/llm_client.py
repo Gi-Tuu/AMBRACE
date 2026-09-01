@@ -103,6 +103,34 @@ def get_llm_client(api_key: str | None = None, base_url: str | None = None) -> A
     return _clients[ck]
 
 
+def _client_via_registry(cfg: dict, picked_key: str) -> AsyncOpenAI:
+    """X3（2026-08-31）：经 provider 注册表取 LLM 客户端（flag provider_registry，默认开）。
+
+    - 开：resolve_provider("llm") → 工厂收运行时 {api_key, base_url}（密钥不进注册表）；
+      cfg["provider"] 与注册名精确匹配可选中插件 provider，未匹配走内置 openai_compatible；
+    - 注册表无命中/工厂异常/工厂返回 None → 回退内置直连 get_llm_client（fail-open，
+      与旧链路逐字节一致；工厂体晚绑定本模块，monkeypatch 接缝不变）。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS as _af
+        flag_on = bool(_af.get("provider_registry", True))
+    except Exception:
+        flag_on = True
+    if not flag_on:
+        return get_llm_client(api_key=picked_key, base_url=cfg.get("base_url"))
+    try:
+        from app.providers.registry import resolve_provider
+        hit = resolve_provider("llm", {"provider": cfg.get("provider")})
+        if hit is not None:
+            _name, factory = hit
+            client = factory({"api_key": picked_key, "base_url": cfg.get("base_url")})
+            if client is not None:
+                return client
+    except Exception as e:
+        _logger.warning("provider registry llm resolve failed, fallback to builtin: %s", e)
+    return get_llm_client(api_key=picked_key, base_url=cfg.get("base_url"))
+
+
 async def get_user_llm_config(user_id: int | None) -> dict | None:
     """读取用户级 BYOK 配置（api_configs 表，enabled=True 时生效）；无则 None"""
     if not user_id:
@@ -329,7 +357,7 @@ async def chat_completion(
             "未配置 LLM API Key：请在管理端配置服务器级 API（PUT /api/v1/system/api-config/server）"
             "或在 .env 设置 LLM_API_KEY/DEEPSEEK_API_KEY"
         )
-    client = get_llm_client(api_key=picked_key, base_url=cfg["base_url"])
+    client = _client_via_registry(cfg, picked_key)
     model_name = cfg["model"] or (settings.llm_model_name or settings.llm_model)
     _logger.info("LLM call: model=%s provider=%s temp=%s max_tokens=%d thinking=%s content_preview=%.80s",
                  model_name, cfg.get("provider"), temperature, max_tokens, thinking,
@@ -432,7 +460,7 @@ async def chat_completion(
                 else:
                     # 重试 2：重建客户端（清空连接池）再试，规避僵尸 keepalive 连接复用导致的无限挂起
                     _clients.pop(_client_key(cfg["base_url"], picked_key), None)
-                    client = get_llm_client(api_key=picked_key, base_url=cfg["base_url"])
+                    client = _client_via_registry(cfg, picked_key)
                     response = await _create(**kwargs)
     message = response.choices[0].message
     content = message.content or ""
@@ -557,7 +585,7 @@ async def chat_completion_stream(
             "未配置 LLM API Key：请在管理端配置服务器级 API（PUT /api/v1/system/api-config/server）"
             "或在 .env 设置 LLM_API_KEY/DEEPSEEK_API_KEY"
         )
-    client = get_llm_client(api_key=picked_key, base_url=cfg["base_url"])
+    client = _client_via_registry(cfg, picked_key)
     model_name = cfg["model"] or (settings.llm_model_name or settings.llm_model)
     _logger.info("LLM stream call: model=%s provider=%s temp=%s max_tokens=%d content_preview=%.80s",
                  model_name, cfg.get("provider"), temperature, max_tokens,

@@ -90,12 +90,14 @@ async def generate_milestones(user_id: int, character_id: int) -> dict:
                 "events": [_ev_to_item(e) for e in existing],
             }
         # 候选：高 importance 的事件/关系记忆
+        from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
         result = await db.execute(
             select(Memory)
             .where(
                 Memory.character_id == character_id,
                 Memory.is_archived == False,
                 Memory.importance >= 60,
+                _active_status_clause(),
             )
             .order_by(Memory.importance.desc(), Memory.created_at.desc())
             .limit(_MILESTONE_LIMIT)
@@ -223,12 +225,14 @@ async def build_timeline(user_id: int, character_id: int) -> dict:
         pets = result.scalars().all()
 
         # 重要记忆精选
+        from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
         result = await db.execute(
             select(Memory)
             .where(
                 Memory.character_id == character_id,
                 Memory.is_archived == False,
                 Memory.importance >= _IMPORTANT_MIN_IMPORTANCE,
+                _active_status_clause(),
             )
             .order_by(Memory.importance.desc(), Memory.created_at.desc())
         )

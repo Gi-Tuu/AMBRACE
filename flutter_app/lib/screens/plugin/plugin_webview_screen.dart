@@ -9,7 +9,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../../providers/chat_provider.dart';
 import '../../services/api_client.dart';
 import '../../services/plugin_bridge.dart';
-import '../chat/chat_screen.dart';
+import '../../features/chat/chat_screen.dart';
 import '../home/profile_screen.dart';
 import 'extensions_screen.dart';
 import 'marketplace_screen.dart';

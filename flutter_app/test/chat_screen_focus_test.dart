@@ -8,7 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:ai_companion/models/character.dart';
 import 'package:ai_companion/providers/chat_provider.dart';
 import 'package:ai_companion/providers/settings_provider.dart';
-import 'package:ai_companion/screens/chat/chat_screen.dart';
+import 'package:ai_companion/features/chat/chat_screen.dart';
 
 void main() {
   Future<void> pumpChat(WidgetTester tester, ChatProvider chat) async {

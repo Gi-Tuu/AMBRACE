@@ -241,9 +241,10 @@ def test_extract_prompt_描述视角_主语要求():
 
 def test_context_builder_主链路注入启用include_speaker():
     from app.agent import context_builder as cb_mod
+    from app.agent.context import legacy as legacy_mod  # F3：legacy 实现已迁至独立模块
     # 步骤 4（注册表试水）：主组装逻辑保留在 build_context_legacy（公开入口 build_context 经
     # Feature Flag 路由到注册表或本回退函数），此处检查旧实现仍启用说话人标注。
-    src = inspect.getsource(cb_mod.build_context_legacy)
+    src = inspect.getsource(legacy_mod)
     # X-4（2026-08-18）：检索区行构建抽至 _build_retrieved_memory_lines，仍启用说话人标注
     helper_src = inspect.getsource(cb_mod._build_retrieved_memory_lines)
     assert "format_memory_line(m, include_speaker=True)" in helper_src

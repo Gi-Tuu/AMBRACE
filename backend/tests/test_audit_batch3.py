@@ -4,8 +4,8 @@
 1. 漏网调用点清单断言（AST 级）：backend/app 下所有 chat_completion / chat_completion_stream /
    llm_call 调用必须带 task 关键字（回归：extractor/voice 等已补 task，后续新增调用点漏传即失败）；
 2. TASK_PLUGIN_AI 常量（plan 48 记账语义）存在且为 "plugin_ai"；
-3. user_id 回填纯函数（scripts/backfill_world_user_id.py）：按 character.user_id 解析与落库，不可解析保持；
-4. 观察脚本可运行（临时库 smoke）：scripts/observe_cognitive_health.py 对最小 schema 库输出正常、只读。
+3. user_id 回填纯函数（scripts/oneoff/backfill_world_user_id.py）：按 character.user_id 解析与落库，不可解析保持；
+4. 观察脚本可运行（临时库 smoke）：scripts/diagnostics/observe_cognitive_health.py 对最小 schema 库输出正常、只读。
 """
 import ast
 import importlib.util
@@ -19,8 +19,12 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 LLM_CALL_NAMES = ("chat_completion", "chat_completion_stream", "llm_call")
 
 
+# F0 scripts 归类（2026-08-31）：backfill_* 在 oneoff/，观察脚本在 diagnostics/
+_SCRIPT_SUBDIR = {"backfill_world_user_id": "oneoff", "observe_cognitive_health": "diagnostics"}
+
+
 def _load_script(module_name: str, filename: str):
-    spec = importlib.util.spec_from_file_location(module_name, SCRIPTS_DIR / filename)
+    spec = importlib.util.spec_from_file_location(module_name, SCRIPTS_DIR / _SCRIPT_SUBDIR.get(module_name, "") / filename)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = mod
     spec.loader.exec_module(mod)
@@ -65,7 +69,7 @@ def test_extractor_and_voice_call_sites_pass_task():
     assert "task=TASK_CHAT" in gateway_src
 
 
-# ── user_id 回填纯函数（scripts/backfill_world_user_id.py）──
+# ── user_id 回填纯函数（scripts/oneoff/backfill_world_user_id.py）──
 
 
 def _make_user_db(con: sqlite3.Connection) -> None:
@@ -134,7 +138,7 @@ def test_backfill_dry_run_main_does_not_write(tmp_path):
     con.close()
 
 
-# ── 观察脚本（scripts/observe_cognitive_health.py）临时库 smoke ──
+# ── 观察脚本（scripts/diagnostics/observe_cognitive_health.py）临时库 smoke ──
 
 
 def _make_observe_db(path: Path) -> None:

@@ -37,6 +37,11 @@ async def _apply_decay(db, mem, now=None) -> bool:
     now = now or _now_naive()
     if mem.delete_at is not None:
         if now >= mem.delete_at:
+            # M1-S11：decay_deleted_count（kind=deleted，回答"事件 3 天是否删得过快"）
+            from app.memory.observability import obs_event
+            obs_event(getattr(mem, "character_id", None), "decay_deleted_count",
+                      {"memory_type": mem.memory_type, "importance": float(mem.importance or 0)},
+                      kind="deleted")
             await delete_memory(mem.id)
             return True
         return False
@@ -51,11 +56,33 @@ async def _apply_decay(db, mem, now=None) -> bool:
     if dt_hours <= 0:
         return False
     dt_days = dt_hours / 24.0
-    pct = retention_pct(dt_days, mem.strength_days)
+    # M2-S2（2026-08-31）：分层衰减——有效 S 按置信度派生（低置信加速/高价值抬下限/高可靠抬上限）；
+    # flag 关=沿用原 strength_days（逐字节现状）
+    from app.memory.tiering import tiered_decay_on, effective_strength_days, should_cold_archive
+    _tier = tiered_decay_on()
+    s_eff = effective_strength_days(mem) if _tier else float(mem.strength_days or S_DEFAULT)
+    pct = retention_pct(dt_days, s_eff)
     mem.importance = pct
     mem.last_reinforce_at = now
     if pct < DECAY_THRESHOLD_PCT and mem.delete_at is None:
+        if _tier and should_cold_archive(mem):
+            # M2-S2：高置信记忆不进删除倒计时——直接冷归档（可逆：is_archived=False 恢复）
+            mem.is_archived = True
+            await db.commit()
+            from app.memory.observability import obs_event
+            obs_event(getattr(mem, "character_id", None), "decay_deleted_count",
+                      {"memory_type": mem.memory_type, "retention_pct": round(pct, 1)},
+                      kind="cold_archived")
+            return True
         mem.delete_at = now + timedelta(days=DECAY_COUNTDOWN_DAYS)
+        # M1-S11：decay_deleted_count（kind=countdown_set，进入 3 天删除倒计时）
+        try:
+            from app.memory.observability import obs_event
+            obs_event(getattr(mem, "character_id", None), "decay_deleted_count",
+                      {"memory_type": mem.memory_type, "retention_pct": round(pct, 1)},
+                      kind="countdown_set")
+        except Exception:
+            pass
     elif pct >= DECAY_THRESHOLD_PCT and mem.delete_at is not None:
         mem.delete_at = None
     await db.commit()
@@ -65,9 +92,10 @@ async def run_memory_decay():
     """记忆衰减与到期删除（惰性结算 + 倒计时到期移除）"""
     deleted = 0
     # P1 性能（2026-08-16）：单 session 批量处理，消除 N+1（原逐条开 session + db.get）
+    from app.memory.service import _active_status_clause  # #70-C：失效记忆不再衰减（flag 关=永真）
     async with async_session_factory() as db:
         result = await db.execute(
-            select(Memory).where(Memory.is_archived == False, Memory.is_pinned == False)
+            select(Memory).where(Memory.is_archived == False, Memory.is_pinned == False, _active_status_clause())
         )
         memories = result.scalars().all()
         for m in memories:

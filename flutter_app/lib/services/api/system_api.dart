@@ -80,16 +80,6 @@ extension SystemApi on ApiClient {
     }
   }
 
-  // ── 服务器级全模态大模型（仅主账号）──
-  Future<Map<String, dynamic>> getMultimodalServerConfig() async {
-    final r = await dio.get('/api/v1/system/multimodal-config/server');
-    return r.data as Map<String, dynamic>;
-  }
-
-  Future<Map<String, dynamic>> updateMultimodalServerConfig(Map<String, dynamic> body) async {
-    final r = await dio.put('/api/v1/system/multimodal-config/server', data: body);
-    return r.data as Map<String, dynamic>;
-  }
   // ── 任务专用模型（按用途指定；P1②，2026-08-12）──
   Future<List<Map<String, dynamic>>> getTaskLlmCatalog() async {
     final r = await dio.get('/api/v1/system/api-config/tasks');

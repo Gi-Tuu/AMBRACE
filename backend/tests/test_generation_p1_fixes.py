@@ -160,8 +160,8 @@ def test_日摘要_无更早消息返回空():
 
 # ---------------- G-P1-2：总量硬顶 / user_info 拼接 / pending_timer 配额键 ----------------
 
-def test_总量硬顶_超限从尾部裁剪结构完整(monkeypatch):
-    """构造超限上下文：总 token 不超上限、消息结构完整、user 消息不被裁剪、尾部 system 块先被裁剪"""
+def test_总量硬顶_超限按优先级裁剪结构完整(monkeypatch):
+    """M1-S4：构造超限上下文——低价值块（织库4）先牺牲、同级后块先于前块、结构完整、user 不动"""
     monkeypatch.setattr(cb_mod, "TOTAL_SYSTEM_QUOTA_TOKENS", 10)  # 10 token = 20 字符
     msgs = [
         {"role": "system", "content": "甲" * 15},
@@ -173,20 +173,43 @@ def test_总量硬顶_超限从尾部裁剪结构完整(monkeypatch):
     assert total <= 20                                            # 总 token 不超上限
     assert [m["role"] for m in msgs] == ["system", "system", "user"]  # 消息结构完整
     assert msgs[2]["content"] == "用户消息" * 50                   # user 消息不被裁剪
-    assert len(msgs[0]["content"]) == 15                          # 尾部优先：最后一个 system 块先被裁剪
-    assert len(msgs[1]["content"]) == 5
+    assert len(msgs[0]["content"]) == 15                          # 同级稳定序：前面的块保留
+    assert msgs[1]["content"] == ""                               # 同级后面的块整块牺牲
 
 
-def test_总量硬顶_尾块小于超额时逐块向前裁剪(monkeypatch):
+def test_总量硬顶_低价值块先牺牲(monkeypatch):
+    """M1-S4：织库/Lorebook（4）先于主模板（3）被裁；【本轮提醒】（1）最后才动"""
     monkeypatch.setattr(cb_mod, "TOTAL_SYSTEM_QUOTA_TOKENS", 10)  # 20 字符预算
     msgs = [
-        {"role": "system", "content": "甲" * 30},
-        {"role": "system", "content": "乙" * 5},
+        {"role": "system", "content": "## 人设\n核心记忆内容"},           # 3（主模板，多行，12 字）
+        {"role": "system", "content": "【设定·Lorebook】" + "设" * 12},   # 4（21 字）
+        {"role": "system", "content": "【本轮提醒】回复要短"},            # 1（10 字）
+        {"role": "user", "content": "x"},
     ]
     cb_mod._apply_system_total_quota(msgs)
-    assert msgs[1]["content"] == ""
-    assert msgs[0]["content"] == "甲" * 20
-    assert sum(len(m["content"]) for m in msgs) <= 20
+    assert msgs[1]["content"] == ""                               # 低价值块先整块牺牲
+    assert msgs[2]["content"].startswith("【本轮提醒】")            # 关键块不动
+    assert msgs[0]["content"].startswith("## 人设")                # 主模板保头部（整行边界）
+
+
+def test_总量硬顶_整行边界不切半句(monkeypatch):
+    """M1-S4：块内裁剪落在换行边界——保留部分的后一字符是换行（或整块清空），绝无半行残片"""
+    monkeypatch.setattr(cb_mod, "TOTAL_SYSTEM_QUOTA_TOKENS", 10)  # 20 字符预算
+    lines = "第一行内容比较长需要截断\n第二行也很长同样要处理\n第三行"
+    msgs = [{"role": "system", "content": lines}, {"role": "user", "content": "x"}]
+    cb_mod._apply_system_total_quota(msgs)
+    kept = msgs[0]["content"]
+    assert kept == "" or lines.startswith(kept + "\n")           # 无半行残片（行边界对齐）
+    assert sum(len(m["content"]) for m in msgs if m["role"] == "system") <= 20
+
+
+def test_总量硬顶_无行边界整块丢弃(monkeypatch):
+    """M1-S4：单行块裁剪时无行边界 → 整块放弃（保整句优先于保字数，规格明确语义）"""
+    monkeypatch.setattr(cb_mod, "TOTAL_SYSTEM_QUOTA_TOKENS", 10)
+    msgs = [{"role": "system", "content": "甲" * 30}, {"role": "user", "content": "x"}]
+    cb_mod._apply_system_total_quota(msgs)
+    assert msgs[0]["content"] == ""
+    assert sum(len(m["content"]) for m in msgs if m["role"] == "system") <= 20
 
 
 def test_总量硬顶_配额内零行为变化(monkeypatch):

@@ -60,10 +60,16 @@ async def retrieve_memories(state: AgentState) -> AgentState:
     _cont = state.get("continue_payload") or {}
     _last_ai = (_cont.get("last_ai_content") or "").strip()
     _query = _last_ai if _last_ai else state["user_message"]
+    # M1-S1（2026-08-31）：召回出口 flag 化——recall_top5 开=5 条（默认），关=回退旧 3 条
+    try:
+        from app.agent.loop import AGENT_FLAGS as _af
+        _recall_limit = 5 if _af.get("recall_top5", True) else 3
+    except Exception:
+        _recall_limit = 5
     memories = await search_memories(
         character_id=state["character_id"],
         query=_query,
-        limit=3,
+        limit=_recall_limit,
         queries=queries,
         trace_meta={
             "user_id": state.get("user_id"),
@@ -90,11 +96,13 @@ async def _synth_stream_block(text: str, state: AgentState) -> str | None:
     try:
         from app.services.tts_service import synthesize
         params = state.get("voice_params") or {}
+        # Phase 0 P0：取 AgentState 情绪标记（emotional_state，如 angry/sad/upset；无则 None，零行为变化）
         return await synthesize(
             text, subdir=state.get("tts_subdir") or "stream",
             gender=params.get("gender"), voice=params.get("voice"),
             voice_rate=params.get("voice_rate"), voice_pitch=params.get("voice_pitch"),
             user_id=state.get("user_id"),
+            emotion=state.get("emotional_state") or None,
         )
     except Exception as e:
         _logger.warning("Stream TTS block failed: %s", e)

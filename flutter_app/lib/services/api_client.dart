@@ -1,4 +1,8 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
+
+import 'api_exception.dart';
 
 export 'api/profile_api.dart';
 export 'api/characters_api.dart';
@@ -35,11 +39,43 @@ class ApiClient {
   String _baseUrl = "";
   String _token = "";
 
+  /// 401 统一处理钩子（F7-c）：main.dart 启动时注入（清登录态 + 跳登录页）。
+  /// 触发条件：401 + 已配置 token + 非认证端点 + 3 秒去重（并发 401 只处理一次）。
+  void Function()? onUnauthorized;
+  DateTime? _lastUnauthorizedAt;
+
   ApiClient._internal() {
     _dio = Dio(BaseOptions(
       connectTimeout: const Duration(seconds: 5),
       receiveTimeout: const Duration(seconds: 10),
     ));
+    // 统一错误归一（F7-c）：所有 DioException.error 挂 ApiException（分类+文案），
+    // 异常抛出类型不变，存量 catch 兼容；401 按钩子处理（见 onUnauthorized）。
+    _dio.interceptors.add(InterceptorsWrapper(
+      onError: (e, handler) {
+        final api = ApiException.fromDio(e);
+        if (api.kind == 'unauthorized' &&
+            _token.isNotEmpty &&
+            onUnauthorized != null &&
+            !_isAuthEndpoint(e.requestOptions.path)) {
+          final now = DateTime.now();
+          if (_lastUnauthorizedAt == null ||
+              now.difference(_lastUnauthorizedAt!) > const Duration(seconds: 3)) {
+            _lastUnauthorizedAt = now;
+            scheduleMicrotask(() => onUnauthorized!());
+          }
+        }
+        handler.next(e.copyWith(error: api));
+      },
+    ));
+  }
+
+  /// 认证端点（登录/注册失败自带 401，不触发会话失效钩子）
+  bool _isAuthEndpoint(String path) {
+    // B4：按路径段精确匹配，避免 contains('/auth') 误豁免 authoritative 等路径
+    final segments = Uri.tryParse(path.toLowerCase())?.pathSegments ?? const <String>[];
+    bool seg(String s) => segments.contains(s);
+    return seg('login') || seg('register') || seg('auth');
   }
 
   /// 领域 extension 方法访问用
@@ -50,9 +86,20 @@ class ApiClient {
   void configure({required String baseUrl, String token = ""}) {
     _baseUrl = baseUrl;
     _dio.options.baseUrl = baseUrl;
+    // B4 修复（2026-09-01 审查）：以传入 token 为唯一准绳——非空就设置，空就彻底清头，
+    // 避免登出/换号后 dio 单例残留上一个账号的 Authorization。
     if (token.isNotEmpty) {
       _setToken(token);
+    } else {
+      clearAuth();
     }
+  }
+
+  /// 清除认证头与内存 token（登出/换号时调用）
+  void clearAuth() {
+    _token = '';
+    _dio.options.headers.remove('Authorization');
+    _lastUnauthorizedAt = null;
   }
 
   String get baseUrl => _baseUrl;
@@ -94,6 +141,8 @@ class ApiClient {
   void _setToken(String token) {
     _token = token;
     _dio.options.headers["Authorization"] = "Bearer $token";
+    // 会话切换（重新登录/登出）即重置 401 去重窗口
+    _lastUnauthorizedAt = null;
   }
 
   /// AI 内心世界（Phase J/P1，2026-08-16）：最近复盘 + 任务记录 + 工具轨迹

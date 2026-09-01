@@ -291,11 +291,13 @@ async def get_character_states(character_id: int) -> dict:
             # 属性访问会触发同步懒加载（async 引擎下抛 MissingGreenlet）；先显式 async 刷新
             await db.refresh(st)
             data = {k: getattr(st, k) for k in _DIM_KEYS}
+            # M1-S10（2026-08-31）：带出关系标量 trust（同一行免再查），供 life_share 注入等复用快照
+            data["trust"] = int(getattr(st, "trust", 50) or 50)
             updated_at = st.updated_at
         return {"character_id": character_id, **data, "updated_at": updated_at}
     except Exception as e:
         _logger.warning("Get states failed char=%d: %s", character_id, e)
-        return {"character_id": character_id, **{k: 50 for k in _DIM_KEYS}, "updated_at": None}
+        return {"character_id": character_id, **{k: 50 for k in _DIM_KEYS}, "trust": 50, "updated_at": None}
 
 
 async def update_character_states(

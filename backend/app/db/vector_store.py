@@ -48,21 +48,56 @@ async def add_memory(
     content: str,
     embedding: list[float],
     importance: int = 1,
+    document: str | None = None,
+    status: str = "active",
 ):
-    """存入一条向量记忆"""
+    """存入一条向量记忆（#70 方案A.4.1：支持自定义文档文本 document 与状态 status，向后兼容）。
+
+    - ``document``：入库向量文本（默认用 content 原文；L0 参与向量时传 'why content' 拼接）。
+    - ``status``：metadata 状态（#70-C 双通道过滤用）；**始终写入**（含默认 active）。
+      #70-C BUG-2 修复：若不写 status 键，开 flag 后 Chroma `$in[active,stale]` 会把
+      「缺键」的新 active 向量整批漏掉，稠密召回与写前查重静默失效。flag 关时按
+      character_id 过滤不看 status，多写一个键零副作用。
+    """
     collection = await get_or_create_collection()
+    _meta = {
+        "memory_id": memory_id,
+        "character_id": character_id,
+        "memory_type": memory_type,
+        "importance": importance,
+        # #70-C BUG-2 修复：始终写 status（含 active）。否则开 flag 后 $in[active,stale]
+        # 会把「缺键」的新 active 向量整批漏掉，稠密召回与写前查重静默失效。
+        "status": status,
+    }
     await asyncio.to_thread(
         collection.add,
         ids=[str(memory_id)],
         embeddings=[embedding],
-        documents=[content],
-        metadatas=[{
-            "memory_id": memory_id,
-            "character_id": character_id,
-            "memory_type": memory_type,
-            "importance": importance,
-        }],
+        documents=[document or content],
+        metadatas=[_meta],
     )
+
+
+def _supersede_flag_on() -> bool:
+    """#70-C：读 memory_supersede flag。延迟 import（避免 vector_store 顶层依赖 loop 造成环）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("memory_supersede", False))
+    except Exception:
+        return False
+
+
+def _char_where(character_id: int, supersede_on: bool) -> dict:
+    """#70-C：按角色检索的 where 子句——flag 开=只取 active/stale（双通道过滤），关=旧行为。
+
+    由 vector_store 的读取函数与 supersede 相关测试共用（可独立单测）。
+    """
+    if not supersede_on:
+        return {"character_id": character_id}          # 旧行为（逐字节一致）
+    return {"$and": [
+        {"character_id": character_id},
+        {"status": {"$in": ["active", "stale"]}},
+    ]}
 
 
 async def search_memories(
@@ -70,14 +105,14 @@ async def search_memories(
     query_embedding: list[float],
     limit: int = 5,
 ) -> list[dict]:
-    """向量搜索相关记忆"""
+    """向量搜索相关记忆（#70-C：flag 开时用 _char_where 过滤 active/stale）"""
     collection = await get_or_create_collection()
     try:
         results = await asyncio.to_thread(
             collection.query,
             query_embeddings=[query_embedding],
             n_results=limit,
-            where={"character_id": character_id},
+            where=_char_where(character_id, _supersede_flag_on()),
         )
     except Exception:
         return []
@@ -112,7 +147,7 @@ async def find_similar_memory(
             collection.query,
             query_embeddings=[query_embedding],
             n_results=limit,
-            where={"character_id": character_id},
+            where=_char_where(character_id, _supersede_flag_on()),
         )
     except Exception:
         return None
@@ -158,20 +193,31 @@ async def upsert_memory_vector(
     content: str,
     embedding: list[float],
     importance: int = 1,
+    document: str | None = None,
+    status: str = "active",
 ):
-    """更新（或插入）一条向量记忆：记忆内容被改写（如半重复融合）后重算嵌入同步到 ChromaDB"""
+    """更新（或插入）一条向量记忆：记忆内容被改写（如半重复融合）后重算嵌入同步到 ChromaDB。
+
+    #70 方案A.4.1：支持自定义文档文本 document 与状态 status（向后兼容，默认值下旧调用零改动）。
+    ``status`` **始终写入**（含默认 active）——#70-C BUG-2 修复：缺键会令开 flag 后的
+    Chroma `$in[active,stale]` 把新 active 向量整批漏掉，稠密召回与写前查重静默失效。
+    """
     collection = await get_or_create_collection()
+    _meta = {
+        "memory_id": memory_id,
+        "character_id": character_id,
+        "memory_type": memory_type,
+        "importance": importance,
+        # #70-C BUG-2 修复：始终写 status（含 active）。否则开 flag 后 $in[active,stale]
+        # 会把「缺键」的新 active 向量整批漏掉，稠密召回与写前查重静默失效。
+        "status": status,
+    }
     await asyncio.to_thread(
         collection.upsert,
         ids=[str(memory_id)],
         embeddings=[embedding],
-        documents=[content],
-        metadatas=[{
-            "memory_id": memory_id,
-            "character_id": character_id,
-            "memory_type": memory_type,
-            "importance": importance,
-        }],
+        documents=[document or content],
+        metadatas=[_meta],
     )
 
 
@@ -191,3 +237,28 @@ async def delete_memory_vectors_by_character(character_id: int):
         await asyncio.to_thread(collection.delete, where={"character_id": character_id})
     except Exception:
         pass
+
+
+async def mark_memory_vector_status(memory_id: int, status: str) -> None:
+    """#70-C：只改向量 metadata.status（合并旧 metadata，不动向量本身）。
+
+    供 supersede/restore 级联标记；异常静默（失败不阻塞主链路/取代结果已在 SQLite 落库）。
+    """
+    collection = await get_or_create_collection()
+    try:
+        ids = [str(memory_id)]
+        got = await asyncio.to_thread(
+            collection.get, ids=ids, include=["metadatas"],
+        )
+        metas = got.get("metadatas") or []
+        if not metas:
+            return
+        meta = dict(metas[0] or {})
+        meta["status"] = status
+        await asyncio.to_thread(
+            collection.update, ids=ids, metadatas=[meta],
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger("db.vector_store").warning(
+            "mark_memory_vector_status failed mem=%s: %s", memory_id, e)

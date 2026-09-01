@@ -74,9 +74,10 @@ def load_plugin_dir(path: Path) -> dict | None:
             finally:
                 _sdk_ctx.pop("current", None)
         else:
-            # 48c：config-only 加载——无 main.py 但 type ∈ prompt/chat/workflow/hybrid 时仍加载 info
-            #      （hybrid 页面插件（48a）亦无需 main.py，page 资源由页面托管端点直读磁盘）
-            if plugin_type not in ("prompt", "chat", "workflow", "hybrid"):
+            # 48c：config-only 加载——无 main.py 但 type ∈ prompt/chat/workflow/hybrid/content 时仍加载 info
+            #      （hybrid 页面插件（48a）亦无需 main.py，page 资源由页面托管端点直读磁盘；
+            #       X2：content 内容包零代码，数据来自 manifest.content，经 validate_manifest 校验）
+            if plugin_type not in ("prompt", "chat", "workflow", "hybrid", "content"):
                 _logger.warning("插件 %s 缺 main.py 且非配置型(type=%s)，跳过", name, plugin_type)
                 return None
             _loaded[name] = {"info": {}, "module": None, "hooks": {}, "actions": {}, "router": None}
@@ -96,6 +97,7 @@ def load_plugin_dir(path: Path) -> dict | None:
             "config": dict(manifest.get("config", {})),
             "usage": str(manifest.get("usage", "") or ""),  # 使用教程（前端扩展页展示；可选）
             "hook_timeout": manifest.get("hook_timeout"),  # per-plugin hook 超时（秒，可选；2026-08-16 审计修复）
+            "content": dict(manifest.get("content") or {}) if plugin_type == "content" else {},  # X2：内容包数据（已过 schema 校验）
             "path": str(path),
         }
         _loaded[name] = {"info": info, "module": module, "hooks": _loaded[name].get("hooks", {}), "actions": _loaded[name].get("actions", {}), "router": _loaded[name].get("router")}
@@ -108,6 +110,19 @@ def load_plugin_dir(path: Path) -> dict | None:
 async def sync_plugins_db() -> None:
     """扫描插件目录并同步到 plugins 表（幂等 upsert）；刷新启用/配置缓存"""
     _loaded.clear()
+    # X1（2026-08-31）：重扫前清空全部插件来源的游戏注册（main.py 重载时会重新注册；
+    # 目录已被删除的插件其注册在此一并清理，防残留幽灵游戏）
+    try:
+        from app.games.registry import unregister_games_not_in
+        unregister_games_not_in(set())
+    except Exception:
+        pass
+    # X3（2026-08-31）：provider 注册同规则清理（重扫前清空插件来源注册，重载时重新注册）
+    try:
+        from app.providers.registry import unregister_providers_not_in
+        unregister_providers_not_in(set())
+    except Exception:
+        pass
     seen: list[str] = []
     for d in _scan_dir(EXAMPLE_DIR) + _scan_dir(USER_DIR):
         info = load_plugin_dir(d)

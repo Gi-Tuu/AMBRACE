@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
@@ -56,6 +57,7 @@ extension ChatApi on ApiClient {
     bool tts = false,
     bool saveUserMessage = true,
     required void Function(Map<String, dynamic> event) onEvent,
+    Duration idleWatchdogLimit = const Duration(seconds: 90),
   }) async {
     final r = await dio.post(
       '/api/v1/chat/sessions/$sessionId/messages/stream',
@@ -79,9 +81,48 @@ extension ChatApi on ApiClient {
         .cast<List<int>>()
         .transform(utf8.decoder)
         .transform(const LineSplitter());
-    await for (final line in lines) {
-      final event = parseSseDataLine(line);
-      if (event != null) onEvent(event);
+
+    // B2 修复（2026-09-01 审查）：空闲看门狗。receiveTimeout=Duration.zero 是为容忍
+    // 长上下文构建（首 delta 前数十秒无字节），但移动网络半开（切基站/热点抖动）时
+    // 连接不会关、await for 永久挂起 → 打字机与"输入中"无限转圈且不走 WS 兜底。
+    // 改为：每收到任意一行就重置 90s 计时；连续 90s 无字节即判死链，抛 receiveTimeout
+    // 走上层既有 WS 兜底。
+    final idleLimit = idleWatchdogLimit;
+    final completer = Completer<void>();
+    Timer? watchdog;
+    void kickWatchdog() {
+      watchdog?.cancel();
+      watchdog = Timer(idleLimit, () {
+        if (!completer.isCompleted) {
+          completer.completeError(DioException(
+            type: DioExceptionType.receiveTimeout,
+            requestOptions: r.requestOptions,
+            message: 'SSE idle timeout (90s no event)',
+          ));
+        }
+      });
+    }
+
+    final sub = lines.listen(null);
+    kickWatchdog();
+    try {
+      sub.onData((line) {
+        kickWatchdog();
+        final event = parseSseDataLine(line);
+        if (event != null) onEvent(event);
+      });
+      sub.onError((Object e, StackTrace st) {
+        watchdog?.cancel();
+        if (!completer.isCompleted) completer.completeError(e, st);
+      });
+      sub.onDone(() {
+        watchdog?.cancel();
+        if (!completer.isCompleted) completer.complete();
+      });
+      await completer.future;
+    } finally {
+      watchdog?.cancel();
+      await sub.cancel();
     }
   }
 

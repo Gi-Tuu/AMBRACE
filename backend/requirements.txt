@@ -50,3 +50,5 @@ mcp>=2.0.0
 
 # FCM push (optional, 2026-08-28)
 firebase-admin>=6.5
+# TTS 语音（edge-tts 免费兜底，2026-08-31 补录 CI 缺失）
+edge-tts>=7.2.0

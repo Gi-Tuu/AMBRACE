@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../global_keys.dart';
 import '../providers/chat_provider.dart';
-import '../screens/chat/chat_screen.dart';
+import '../features/chat/chat_screen.dart';
 import '../widgets/app_page_route.dart';
 import 'api_client.dart';
 import '../utils/service_l10n.dart';

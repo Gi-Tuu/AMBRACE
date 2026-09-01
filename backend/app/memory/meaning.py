@@ -78,12 +78,14 @@ async def run_meaning_extraction(character_id: int, user_id: int) -> int:
         # 若只按当前库内 importance>=60 过滤，写入时达标（>=60）的里程碑记忆会因衰减被永久挤出候选。
         # 放宽为「importance>=60 OR created_at 距今 <=24h」，仍保留 is_archived/why_it_matters IS NULL 等条件。
         fresh_cutoff = _now_naive() - timedelta(hours=MEANING_FRESH_WINDOW_HOURS)
+        from app.memory.service import _active_status_clause  # #70-C：不给失效记忆提炼意义（flag 关=永真）
         rows = (await db.execute(
             select(Memory)
             .where(
                 Memory.character_id == character_id,
                 Memory.is_archived == False,
                 Memory.why_it_matters.is_(None),
+                _active_status_clause(),
                 or_(
                     Memory.importance >= MEANING_MIN_IMPORTANCE_PCT,
                     Memory.created_at >= fresh_cutoff,
@@ -174,6 +176,35 @@ async def run_meaning_extraction(character_id: int, user_id: int) -> int:
                             change_type=ctype, trust_delta=delta, memory_id=fresh.id,
                         ))
             await db.commit()
+        # #70 方案A.4.2：写完 why_it_matters 后重算该记忆向量（异步低频、复用既有异步通道；
+        # 本地 bge-m3 embedding，不走 LLM 额度；逐条/整批隔离，失败静默，不阻塞主链路）。
+        # 只对「本次确实拿到 why」的记忆重算；去重口径不变（find_similar_memory 仍用 content 原文 embedding）。
+        # 由 memory_tiered_inject 门控（flag 注释语义："L0 参与向量"；关=保持旧链路，不改变检索/去重向量）。
+        from app.agent.loop import AGENT_FLAGS
+        if updated and AGENT_FLAGS.get("memory_tiered_inject", False):
+            try:
+                from app.memory.embedding import text_embedding
+                from app.db.vector_store import upsert_memory_vector
+                from app.memory.service import star_from_pct
+                for m in items:
+                    row = by_id.get(m.id)
+                    if not row or not str(row.get("why") or "").strip():
+                        continue  # 只重算真正拿到 why 的
+                    try:
+                        why = str(row.get("why") or "").strip()
+                        if why and len(why) > MEANING_MAX_LEN:
+                            why = why[:MEANING_MAX_LEN]  # 与落库截断一致
+                        vec_text = f"{why} {(m.content or '').strip()}".strip()
+                        emb = await text_embedding(vec_text)
+                        await upsert_memory_vector(
+                            m.id, character_id, m.memory_type, m.content, emb,
+                            importance=star_from_pct(float(m.importance or 0)),
+                            document=vec_text, status="active",
+                        )
+                    except Exception as _e:
+                        _logger.warning("meaning reembed failed mem=%s: %s", m.id, _e)
+            except Exception as _e:
+                _logger.warning("meaning reembed batch failed char=%d: %s", character_id, _e)
         if updated:
             _logger.info("Meaning extraction char=%d updated=%d", character_id, updated)
         return updated

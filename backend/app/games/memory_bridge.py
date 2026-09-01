@@ -85,6 +85,7 @@ async def _trim_summary_pointers(db, character_id: int) -> None:
             Memory.is_archived == False,  # noqa: E712
         )
         .order_by(Memory.id.desc())
+        .execution_options(autoflush=False)  # B5：SELECT 不触发 autoflush（脏对象含未序列化引擎内存态时防误 flush）
     )).scalars().all()
     if len(rows) <= _SUMMARY_KEEP:
         return

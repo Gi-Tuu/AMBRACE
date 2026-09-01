@@ -68,6 +68,30 @@ def _dynamic_holidays(today: date) -> list[dict]:
     return result
 
 
+def _content_holidays(today: date) -> list[dict]:
+    """X2（2026-08-31）：content 内容包（type=content, kind=holiday_fixed）补充的固定日期节日。
+
+    来源：已启用的内容扩展包 manifest.content.items（加载期已过 content_schema 校验）；
+    失败静默返回空（内容包绝不影响内置节日）。
+    """
+    result: list[dict] = []
+    try:
+        from app.plugins.registry import _enabled, _loaded
+        key = today.strftime("%m-%d")
+        for name, entry in _loaded.items():
+            if not _enabled.get(name, False):
+                continue
+            content = (entry.get("info") or {}).get("content") or {}
+            if content.get("kind") != "holiday_fixed":
+                continue
+            for it in content.get("items") or []:
+                if isinstance(it, dict) and it.get("date") == key:
+                    result.append({"name": str(it.get("name") or ""), "lang": it.get("lang", "zh")})
+    except Exception:
+        return []
+    return result
+
+
 def get_holidays(today: date | None = None) -> list[dict]:
     """获取指定日期的所有节日（为空则取当天）"""
     if today is None:
@@ -92,6 +116,12 @@ def get_holidays(today: date | None = None) -> list[dict]:
 
     # 动态节日（母亲节/父亲节/感恩节）
     result.extend(_dynamic_holidays(today))
+
+    # X2：内容包补充节日（去重：同名同 lang 不重复追加）
+    _seen = {(h.get("name"), h.get("lang")) for h in result}
+    for h in _content_holidays(today):
+        if h.get("name") and (h["name"], h.get("lang")) not in _seen:
+            result.append(h)
 
     return result
 

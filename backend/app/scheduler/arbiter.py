@@ -29,40 +29,37 @@ from app.utils.async_tasks import spawn_background
 
 _logger = get_logger("scheduler.arbiter")
 
+# F2-b（2026-08-31）：决策纯函数/常量迁至 domain/proactivity，此处重导出保持兼容
+# （monkeypatch arbiter.<name> 仍有效：函数体经本模块命名空间解析）
+from app.domain.proactivity.decision import (  # noqa: E402,F401
+    CONTEXT_SORT_BONUS,
+    MAX_PER_HOUR,
+    MIN_PROACTIVE_INTERVAL_MINUTES,
+    MOTIVATION_MAX_PER_6H,
+    MOTIVATION_MAX_PER_DAY,
+    MOTIVATION_SPEAK_THRESHOLD,
+    REFLECTION_BONUS,
+    REFLECTION_LOOKBACK_DAYS,
+    UNREPLIED_COOLDOWN_HOURS,
+    UNREPLIED_COOLDOWN_LIMIT,
+    USER_ACTIVE_MINUTES,
+    _apply_reflection_bonus,
+    _context_sort_bonus,
+    _in_dnd_window,
+    _motivation_score,
+    scheduler_gray_character,
+)
+from app.domain.proactivity.sleep import SLEEP_KEYWORDS, SLEEP_HOUR  # noqa: E402,F401
+
 # 审计 P1-06：rejected 触发日志节流（同角色同类型最小间隔秒，approved 必记）
 REJECTED_LOG_THROTTLE_SECONDS = 300
 _rejected_log_cache: dict[tuple[int, str], float] = {}
 
-# 防刷屏：每角色每小时最多 N 条主动消息（随机+定时+节日共同计入）
-MAX_PER_HOUR = 2
-# 主动搭话最小间隔（分钟）：同角色两次主动消息至少间隔这么久，避免短时间内连发/重复
-MIN_PROACTIVE_INTERVAL_MINUTES = 90
-# 用户活跃判定：最近 N 分钟内用户发过消息则暂停主动行为
-USER_ACTIVE_MINUTES = 10
-# 连续不回复冷却：最近 N 条主动消息用户均未回复 → 暂停主动搭话（防骚扰，2026-08-12）
-UNREPLIED_COOLDOWN_LIMIT = 2
-UNREPLIED_COOLDOWN_HOURS = 24
-# 情感渴望驱动的主动唤醒（2026-08-15）：渴望度 >= 阈值才生成主动搭话候选（按本项目 0-1 数值校准）
-MOTIVATION_SPEAK_THRESHOLD = 0.60
-# 「渴望+反思」双驱动（plans #41 ②，2026-08-16）：最近一周有复盘的角色，渴望分加成（心里有事想聊）
-# 加成固定 0.08（不随复盘内容变化，只把"有复盘"作为可聊信号），仍受限额/冷却/免打扰约束
-REFLECTION_BONUS = 0.08
-REFLECTION_LOOKBACK_DAYS = 7
-# 独立想念通道（#33，2026-08-17）：渴望驱动主动消息独立配额——每 6h 最多 1 条 + 每日 ≤2 条，
-# 不占普通每小时 2 条额度（观察期 motivation approved=0，全被普通限额拦截）；仍受连续不回复 24h 冷却约束
-MOTIVATION_MAX_PER_6H = 1
-MOTIVATION_MAX_PER_DAY = 2
-# P0-2（2026-08-24）：排序加权——候选带最近聊天语境（last_context 非空）时动机分轻微加权，
-# 让「刚有聊天」的承接类消息更容易优先，避免高渴望总出无语境消息；改动小、可回退
-CONTEXT_SORT_BONUS = 0.05
+
 
 
 # ── 统计辅助 ──
 
-# 北京时间 21 点后，用户说过"睡觉"则当天主动交流提前关闭
-SLEEP_HOUR = 21
-# 仅明确"要去睡/已睡"意图才触发当晚静默（去掉"困了/休息了/困死"等易误伤的非入睡表达）
-SLEEP_KEYWORDS = ("睡觉", "睡了", "晚安", "要睡了", "先睡了", "去睡了", "睡啦", "睡觉了", "睡了哦", "睡吧", "去睡觉", "我先睡", "睡觉去", "睡了哈")
 
 
 async def has_user_said_sleep(character_id: int, user_id: int) -> bool:
@@ -219,15 +216,6 @@ async def get_dnd_window(character_id: int) -> tuple[int, int] | None:
         window = None
     _dnd_cache[character_id] = (now_ts, window)
     return window
-
-
-def _in_dnd_window(cn_minute: int, window: tuple[int, int]) -> bool:
-    start, end = window
-    if start == end:
-        return False
-    if start < end:
-        return start <= cn_minute < end
-    return cn_minute >= start or cn_minute < end  # 跨天时段（如 23:00-08:00）
 
 
 async def is_dnd_now(character_id: int, cn_now: datetime) -> bool:
@@ -460,49 +448,6 @@ async def collect_state_trigger_events() -> list[dict]:
         {"type": "state_trigger", "priority": 2, "candidate": {"character_id": cid, "user_id": uid}}
         for cid, uid in rows if uid
     ]
-
-
-def _motivation_score(
-    attachment: float, curiosity: float, desire: float,
-    mood: float, anger: float, fatigue: float, hours_since_activity: float,
-) -> float:
-    """渴望度（0-1）纯计算：依恋/好奇/亲密欲望/情绪低落累积 + 久未互动加成，疲惫抑制。
-    对「思念/好奇/亲密渴望/情绪低落」加权，久未互动累积、疲惫抑制；复用 character_states 已有维度（数值 0-100）。
-    时间因子：2 小时后线性累积，24 小时满。"""
-    attachment = max(0.0, min(1.0, attachment / 100.0))
-    curiosity = max(0.0, min(1.0, curiosity / 100.0))
-    desire = max(0.0, min(1.0, desire / 100.0))
-    anger_n = max(0.0, min(1.0, anger / 100.0))
-    sadness = max(0.0, (50.0 - mood) / 50.0) * (1.0 - 0.5 * anger_n)
-    fatigue = max(0.0, min(1.0, fatigue / 100.0))
-    time_factor = min(1.0, max(0.0, (hours_since_activity - 2.0) / 22.0))
-    base = (
-        0.35 * attachment + 0.22 * curiosity
-        + 0.13 * desire + 0.15 * sadness
-    )
-    return max(0.0, min(1.0, (base + 0.25 * time_factor) * (1.0 - 0.35 * fatigue)))
-
-
-def _apply_reflection_bonus(score: float, has_reflection: bool) -> float:
-    """「渴望+反思」双驱动加分（plans #41 ②，2026-08-16）：最近一周有复盘的角色渴望分加成。
-
-    纯函数便于测试：score 0-1，有复盘 +REFLECTION_BONUS 且封顶 1.0；无复盘/score=0 不变。
-    """
-    if score <= 0.0 or not has_reflection:
-        return max(0.0, min(1.0, score))
-    return max(0.0, min(1.0, score + REFLECTION_BONUS))
-
-
-def _context_sort_bonus(candidate: dict | None) -> float:
-    """P0-2（2026-08-24）：排序加权纯函数——候选带最近聊天语境（last_context 非空）时动机分 +CONTEXT_SORT_BONUS。
-
-    让「刚有聊天」的承接类消息（节律/motivation 且已注入最近语境）在同优先级下更容易优先，
-    避免高渴望但无语境的消息抢占；纯函数便于测试，无候选/无语境返回 0。"""
-    if not candidate:
-        return 0.0
-    if candidate.get("last_context"):
-        return CONTEXT_SORT_BONUS
-    return 0.0
 
 
 async def _compute_motivation(character_id: int) -> float:
@@ -753,11 +698,6 @@ async def log_trigger_candidate(item: dict, executed: bool) -> None:
         await db.commit()
 
 
-def scheduler_gray_character(character_id: int) -> bool:
-    """Phase D 10% 角色灰度：按角色 id 取模，稳定分桶（同一角色始终同组，便于对比）"""
-    return (int(character_id) % 10) == 0
-
-
 async def _trace_scheduler_task(item: dict, ok: bool, latency_ms: int) -> None:
     """Phase D：arbiter 主动任务写 AgentTask trace（agent_task_logs，先只写不读）。
 
@@ -838,6 +778,30 @@ async def _execute(item: dict) -> bool:
         owner = getattr(event, "owner", "ai") or "ai"
         hint_text = (event.content_hint or "").strip()
         event_kind = getattr(event, "event_type", "back") or "back"
+        # 陪伴主动线（2026-08-30）：ready 承诺到点且 owner=user 时，若用户在承诺之后
+        # 已主动说了结果（如"开完了/吃完了"），不再重复询问，直接标记兑现。
+        # fail-open：本段任何异常只打日志并继续走原生成消息流程，绝不让承诺丢失。
+        if event_kind == "ready" and owner == "user" and event.session_id and event.source_message_id:
+            try:
+                from app.scheduler.promise_parser import ready_result_seen
+                async with async_session_factory() as _db:
+                    _rows = (await _db.execute(
+                        select(ChatMessage.content)
+                        .where(
+                            ChatMessage.session_id == event.session_id,
+                            ChatMessage.sender_type == "user",
+                            ChatMessage.id > event.source_message_id,
+                        )
+                        .order_by(ChatMessage.id.desc()).limit(5)
+                    )).all()
+                _texts = [r[0] for r in reversed(_rows) if r[0]]
+                if _texts and ready_result_seen(_texts, hint_text):
+                    from app.scheduler.promise_service import mark_fired
+                    await mark_fired(event.id)
+                    _logger.info("Timer ready event %d skipped: user already reported result", event.id)
+                    return True
+            except Exception as e:
+                _logger.warning("Ready result skip check failed (fail-open): %s", e)
         if event_kind == "ready":
             # 完成类承诺：到点问用户做完了吗 / 告诉用户弄好了（如"粥好了"）
             if owner == "user":

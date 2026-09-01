@@ -1,9 +1,18 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.4.0
-DATE: 2026-08-29
-STATUS: 开源发布版 v3.4.0（Aurora 全套 UI 大更新）
+VERSION: 3.4.1
+DATE: 2026-08-30
+STATUS: 开源发布版 v3.4.1（实时语音通话 + AI 主动关心）
 
 CHANGELOG:
+
+3.4.1 - Release (2026-08-30)
+  - Voice: #71 实时语音通话（P1/P2）：按住说话 / 自动聆听、服务端 VAD 静音过滤、turn_id 打断防抖、八维情绪→TTS 情感标签
+  - Voice: 语音回复不再念出「名字（神态）：」前缀；百炼 qwen-tts 音色 + edge 兜底
+  - Life: 陪伴主动线——去开会/吃饭/洗澡/等下试等无数字句式自动登记回访，到点 AI 自然关心；用户已给结果则不再追问
+  - Chat: 连续发送键位调整（发送键常驻收集、第 3 位批量提交）；多条连续消息换行喂 AI
+  - Memory: #70 记忆分层检索 + 检索轨迹 + supersede 取代链灰度（A/B 开、C 暂关）
+  - Fix: 深度核查 V-1/V-2/V-3/V-5（VAD startMs、ready-skip 时间下界、clean_voice_text 保守化、transport 幂等）
+  - Tests: backend pytest 1184 green；flutter analyze 0 / voice_vad + chat_screen tests green
 
 3.4.0 - Release (2026-08-29)
   - UI: Aurora 全套界面大更新（毛玻璃皮肤/玻璃门控、朋友圈、手机页/AI互动+畅聊+内置App、小家/宠物、角色编辑/设置、AI内心世界、日记、记忆本/织库/时光、个人主页、首页工具箱）

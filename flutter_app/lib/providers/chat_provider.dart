@@ -194,6 +194,9 @@ class ChatProvider extends ChangeNotifier {
 
   Future<void> sendMessage(String content, {Map<String, dynamic>? quote}) async {
     if (content.trim().isEmpty || _sessionId == null) return;
+    // B8 修复（2026-09-01 审查）：连续发送（批量收集）模式允许累积；普通模式上一轮
+    // 未结束时拒绝重入——避免两条 SSE 并发互相清空块跟踪、双份回复与双份计费。
+    if (!_batchMode && _streamHandler.isStreaming) return;
     await _api.ensureServerOffset();
 
     // 添加用户消息（引用：extraMeta 存 quote，气泡顶部渲染引用块）

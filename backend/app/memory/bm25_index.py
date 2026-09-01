@@ -274,13 +274,14 @@ async def _build_index(character_id: int) -> "_IndexEntry | None":
     使测试里对 memsvc.async_session_factory 的 monkeypatch 自动生效（隔离临时库）。
     """
     try:
-        from app.memory.service import async_session_factory as _factory
+        from app.memory.service import async_session_factory as _factory, _retrievable_status_clause
         async with _factory() as db:
             rows = (await db.execute(
                 select(Memory).where(
                     Memory.character_id == character_id,
                     Memory.is_archived == False,      # noqa: E712
                     Memory.delete_at.is_(None),
+                    _retrievable_status_clause(),      # #70-C：仅 active/stale 建稀疏索引（flag 关=永真）
                 ).order_by(Memory.id.asc())
             )).scalars().all()
         memory_ids: list = []

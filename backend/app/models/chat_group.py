@@ -2,7 +2,7 @@
 # AMBRACE step7: models domain subpackage (Grouping Strategy A)
 
 # Compatibility shim: old module path `app.models.chat_group` -> `app.models.chat.group.py`
-from app.models.chat.group import ChatGroup, ChatGroupMember, ChatGroupMessage
+from app.models.chat import ChatGroup, ChatGroupMember, ChatGroupMessage
 
 __all__ = [
     "ChatGroup",

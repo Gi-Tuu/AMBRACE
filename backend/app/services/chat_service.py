@@ -343,6 +343,24 @@ async def _persist_user_message(
     return user_msg_id, user_msg_info
 
 
+async def _resolve_emotional_state(character_id: int, snapshot: dict | None = None) -> str:
+    """P2-1：取角色八维状态 → 推出 TTS 情感标签（供 final_state 使用）。
+
+    M1-S10：可传入本轮快照（character_states_snapshot）免重复查库；无快照回退自行查询。
+    失败/无状态/异常一律返回空串（零行为变化，不抛断主链路）。
+    """
+    try:
+        _cs = snapshot
+        if _cs is None:
+            from app.services.character_state_service import get_character_states
+            _cs = await get_character_states(character_id)
+        from app.utils.ai_emotion import emotion_from_character_states
+        return emotion_from_character_states(_cs) or ""
+    except Exception as e:
+        _logger.warning("Emotion state resolve failed char=%d: %s", character_id, e)
+        return ""
+
+
 async def _run_agent_core(
     session_id: int, user_id: int, character_id: int, content: str,
     lang: str, user_msg_id: int | None,
@@ -412,6 +430,14 @@ async def _run_agent_core(
         except Exception as e:
             _logger.warning("User timer parse failed: %s", e)
 
+    # M1-S10（2026-08-31）：一轮只查一次八维状态——回复延迟/情感标签/上下文 life_share 复用同一快照
+    # （原路径每轮最多 3 次查询：延迟 1 + 情感 1 + life_share trust 1；失败 None 走各处兜底）
+    try:
+        from app.services.character_state_service import get_character_states as _get_states_once
+        _cs_snapshot = await _get_states_once(character_id)
+    except Exception:
+        _cs_snapshot = None
+
     initial_state = {
         "user_message": content, "character_id": character_id,
         "user_id": user_id, "session_id": session_id, "intent": "",
@@ -428,6 +454,7 @@ async def _run_agent_core(
         "voice_params": (stream_tts_ctx or {}).get("voice_params", {}) if stream_tts_ctx else {},
         "tts_subdir": (stream_tts_ctx or {}).get("tts_subdir") if stream_tts_ctx else None,
         "block_sink": (stream_tts_ctx or {}).get("block_sink") if stream_tts_ctx else None,
+        "character_states_snapshot": _cs_snapshot,
     }
 
     _t0 = time.monotonic()
@@ -435,10 +462,9 @@ async def _run_agent_core(
     if reply_delay and not tts:
         try:
             from app.agent.loop import AGENT_FLAGS
-            if AGENT_FLAGS.get("reply_delay_enabled", False):
-                from app.services.character_state_service import get_character_states
+            if AGENT_FLAGS.get("reply_delay_enabled", False) and _cs_snapshot is not None:
                 from app.utils.reply_delay import calc_typing_delay, estimate_response_chars
-                _st = await get_character_states(character_id)
+                _st = _cs_snapshot  # M1-S10：复用本轮快照，不再单独查库
                 _delay = calc_typing_delay(
                     estimate_response_chars(len(content)),
                     mood=_st.get("mood") or 50,
@@ -451,6 +477,11 @@ async def _run_agent_core(
                 await asyncio.sleep(_delay)
         except Exception:
             pass  # 失败静默，不阻塞回复
+
+    # P2-1 情感语音闭环（#71）：回复前用角色八维状态推出 TTS 情感标签写入 emotional_state，
+    # 供流式逐句合成 / split_response / TTS emotion 共用；失败/异常保持空串（零行为变化）。
+    # M1-S10：复用本轮快照（无独立查库）；快照缺失时回退原自行查询。
+    initial_state["emotional_state"] = await _resolve_emotional_state(character_id, snapshot=_cs_snapshot)
 
     final_state = await agent.ainvoke(initial_state)
 
@@ -697,6 +728,27 @@ async def _run_post_processing(
         source_id=user_msg_id,
     ))
 
+    # M2-S5（2026-08-31）：标记截断保底——A 通道标记被 max_tokens 截断（尾部未闭合标记）时，
+    # 本条源消息立即补走一次通道 B 提取（不等凑批；save_memory 写侧查重防重复），并从批量队列
+    # 移除该源防重复提取。flag marker_recovery 关=仅批量补提（现状）。
+    if final_state.get("marker_truncated") and user_msg_id:
+        try:
+            from app.agent.loop import AGENT_FLAGS as _af
+            if _af.get("marker_recovery", True):
+                async def _priority_extract():
+                    try:
+                        from app.memory.extractor import extract_single, _pending_remove_uid
+                        await extract_single(
+                            session_id, character_id, user_id, content, final_text,
+                            source_id=user_msg_id,
+                        )
+                        _pending_remove_uid(session_id, user_msg_id)
+                    except Exception as _pe:
+                        _logger.warning("Priority extraction failed src=%s: %s", user_msg_id, _pe)
+                asyncio.ensure_future(_priority_extract())
+        except Exception:
+            pass
+
     # 认知循环 v2.1：对话话题追踪（本地提取+节流；失败静默）
     try:
         from app.agent.topic_tracker import maybe_extract_topics
@@ -884,10 +936,11 @@ async def send_and_receive_chunked(
                 if row:
                     gender, voice, voice_rate, voice_pitch = row
             from app.services.tts_service import synthesize
+            # Phase 0 P0：从 final_state 情绪标记（emotional_state）取 emotion（无则 None）
             tts_url = await synthesize(
                 full_text, str(session_id),
                 gender=gender, voice=voice, voice_rate=voice_rate, voice_pitch=voice_pitch,
-                user_id=user_id,
+                user_id=user_id, emotion=final_state.get("emotional_state") or None,
             )
         except Exception as e:
             _logger.warning("TTS synthesis failed: %s", e)

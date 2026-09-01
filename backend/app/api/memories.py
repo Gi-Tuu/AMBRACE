@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from app.utils.logger import get_logger
 from app.schemas.memory import MemoryResponse, MemoryListResponse
-from app.memory import list_memories, delete_memory as service_delete
+from app.memory import list_memories
 from app.memory.sources import memory_source_meta
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
@@ -258,12 +258,13 @@ async def remove_memory_tree(
             ],
         }
     deleted = 0
+    from app.memory.supersede import purge_memory
     for mid in [memory_id] + [c.id for c in rows]:
         try:
-            if await service_delete(mid):
+            if await purge_memory(mid):
                 deleted += 1
         except Exception as e:
-            _logger.warning("Memory tree soft-delete failed id=%d: %s", mid, e)
+            _logger.warning("Memory tree purge failed id=%d: %s", mid, e)
     return {"status": "ok", "cascade": True, "deleted": deleted}
 
 
@@ -273,10 +274,58 @@ async def remove_memory(
     user_id: int = Depends(get_current_user_id),
     lang: str = Header(default="zh"),
 ):
-    """删除记忆"""
+    """删除记忆（#70-C2：purge 后门——连冷归档 memory_archive 一起物理删，不光软删）。
+
+    边界（R-7 记录）：若记忆已被日终 archive_cold_superseded 冷归档（热行已迁走、仅 memory_archive
+    保留），此处归属校验查热表会 404，无法经单删 API 清归档；冷归档属长期留存历史，清归档走管理工具。"""
     if await _get_owned_memory(memory_id, user_id) is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
-    deleted = await service_delete(memory_id)
+    from app.memory.supersede import purge_memory
+    deleted = await purge_memory(memory_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
     return {"status": "ok", "deleted": True}
+
+
+@router.post("/{memory_id}/supersede")
+async def supersede_memory_api(
+    memory_id: int,
+    data: dict,
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """#70-C（M1）：把记忆标记为被新记忆取代（管理/调试入口，归属校验，只允许明确指定）。
+
+    body: {"new_id": int|None, "reason": str}；默认 new_id=None（仅失效无替代）。
+    不做自动臆测取代；本接口仅在调试/明确改口时手动触发。
+    """
+    from app.memory.supersede import supersede_memory
+    if await _get_owned_memory(memory_id, user_id) is None:
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
+    new_id = data.get("new_id")
+    if new_id is not None:
+        try:
+            new_id = int(new_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=tr_lang(lang, "invalid_memory_id"))
+    reason = str(data.get("reason") or "")
+    ok = await supersede_memory(memory_id, new_id=new_id, reason=reason)
+    if not ok:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "supersede_failed"))
+    return {"status": "ok", "superseded": True, "memory_id": memory_id, "new_id": new_id}
+
+
+@router.post("/{memory_id}/restore")
+async def restore_memory_api(
+    memory_id: int,
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """#70-C（M1）：回滚一条 supersede/stale（调试/误判纠正用），status 回 active、清 valid_to。"""
+    from app.memory.supersede import restore_memory
+    if await _get_owned_memory(memory_id, user_id) is None:
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
+    ok = await restore_memory(memory_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "restore_failed"))
+    return {"status": "ok", "restored": True, "memory_id": memory_id}

@@ -25,7 +25,7 @@ _memory_char_rounds: dict[int, int] = {}  # character_id -> 轮次计数（每�
 _CORE_MEMORIES_QUOTA_TOKENS = 1200
 _ANCHORS_QUOTA_TOKENS = 500
 _OPEN_LOOPS_QUOTA_TOKENS = 500
-_MEMORIES_QUOTA_TOKENS = 400  # A4（2026-08-18 降本）：600->400
+_MEMORIES_QUOTA_TOKENS = 400  # A4（2026-08-18 降本）：600->400；#70 方案A：真正裁剪在 context_builder._SECTION_QUOTA_TOKENS（flag 开 500/关 400），此处仅注册表元数据
 
 
 def _memory_id_of(m) -> int | None:
@@ -82,19 +82,35 @@ def _build_retrieved_memory_lines(character_id: int, retrieved: list) -> list[st
     同一记忆最近 MEMORY_DEDUP_WINDOW_ROUNDS 轮内注入过则本轮跳过（仅影响检索区行，
     不改变检索结果）；核心记忆/锚点/置顶摘要等长期画像分区不经过本函数。
     返回格式化行列表；实际注入的行同步记录轮次（供后续轮次去重）。
+
+    #70 方案A：**flag memory_tiered_inject 关时走完全旧行为**（统一 150 字的
+    format_memory_line + N 轮去重，逐字节一致）；开时 Top1→L2(240)、其余→L0 分层注入
+    （复用 format_memory_line 的时间/认知/说话人/纠正标注，格式不漂移）。
     """
-    lines = []
-    injected = []
-    for m in _filter_recently_injected(character_id, retrieved):
-        # X-2（2026-08-18）：说话人标注（[你说的]/[TA说的]，speaker_type 无值不加），
-        # 让 LLM 区分「用户亲口说的（FACT）」与「AI 自己推测的（INFERRED）」；认知前缀（epistemic）之后、内容之前
-        _line = format_memory_line(m, include_speaker=True)
-        if _line:
-            lines.append(_line)
-            injected.append(m)
-    if injected:
-        _mark_memories_injected(character_id, injected)
-    return lines
+    from app.agent.loop import AGENT_FLAGS
+
+    # 关 flag：完全旧行为（统一 150 字 + N 轮去重 + 说话人标注）——回归保护
+    if not AGENT_FLAGS.get("memory_tiered_inject", False):
+        lines = []
+        injected = []
+        for m in _filter_recently_injected(character_id, retrieved):
+            # X-2（2026-08-18）：说话人标注（[你说的]/[TA说的]，speaker_type 无值不加），
+            # 让 LLM 区分「用户亲口说的（FACT）」与「AI 自己推测的（INFERRED）」；认知前缀（epistemic）之后、内容之前
+            _line = format_memory_line(m, include_speaker=True)
+            if _line:
+                lines.append(_line)
+                injected.append(m)
+        if injected:
+            _mark_memories_injected(character_id, injected)
+        return lines
+
+    # 开 flag：Top1 L2 / 其余 L0（L1 桥接由 memories_section 异步补挂）；N 轮去重语义与关 flag 一致
+    from app.memory.tiers import tiered_memory_lines
+    candidate = list(_filter_recently_injected(character_id, retrieved))
+    lines = tiered_memory_lines(candidate, include_speaker=True)
+    if candidate:
+        _mark_memories_injected(character_id, candidate)
+    return [ln for ln in lines if ln]
 
 
 async def _inject_core_anchors_loops(cid: int | None, uid: int, trim: dict) -> tuple[str, str, str]:
@@ -139,7 +155,30 @@ async def _get_core_anchors_loops(state: dict, ctx: dict) -> tuple[str, str, str
 
 async def memories_section(state: dict, ctx: dict) -> str:
     """memories 分区：检索区记忆行（template 槽；无检索结果缺省「暂无」）。"""
-    lines = _build_retrieved_memory_lines(state["character_id"], state.get("retrieved_memories", []))
+    character_id = state["character_id"]
+    retrieved = state.get("retrieved_memories", [])
+    # 先取「本轮实际注入」候选：_build_retrieved_memory_lines 内部会再次过滤并标记注入轮次，
+    # 若在其后再过滤会把刚标记的记忆排除掉，故在构建行之前先取 candidate（语义一致）。
+    candidate = _filter_recently_injected(character_id, retrieved)
+    lines = _build_retrieved_memory_lines(character_id, retrieved)
+    # #70 方案A：flag 开时给 Top1 挂 L1 桥接（当日日摘要；「非今天」才挂，今天由 chat_history 分区覆盖；
+    # 锚定「本轮实际注入」的 Top1 = N 轮去重后的 candidate[0]（而非原始检索首位），
+    # candidate 为空则不挂 L1；失败 warning，不阻塞主链路）。
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        if AGENT_FLAGS.get("memory_tiered_inject", False) and lines:
+            from app.memory.tiers import load_l1_summary
+            from app.utils.timeutil import now_naive_utc
+            _top = candidate[0] if candidate else None
+            if _top is not None:
+                date_str = str(_top.get("created_at") or "")[:10]  # YYYY-MM-DD
+                today_str = now_naive_utc().strftime("%Y-%m-%d")
+                if date_str and date_str != today_str:
+                    summary = await load_l1_summary(character_id, date_str)
+                    if summary:
+                        lines.append(f"└ [那天 {date_str}] {summary}")
+    except Exception as _e:
+        _logger.warning("memories L1 bridge failed char=%s: %s", character_id, _e)
     return "\n".join(lines) or "\u6682\u65e0"
 
 

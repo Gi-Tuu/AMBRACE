@@ -50,6 +50,7 @@ class AgentState(TypedDict):
     voice_params: dict                # TTS 语音参数（voice_id/情绪等）
     tts_subdir: str | None            # TTS 音频存放子目录
     block_sink: Callable | None       # 异步回调：发送 block 事件（流式 TTS 分块）
+    character_states_snapshot: dict | None  # M1-S10：本轮八维+trust 快照（延迟/情感/life_share 复用，免重复查库）
 
     # ---- 真流式输出（由 _stream_generate / generate_response 回填）----
     streamed: bool                    # 本次是否走了真流式路径

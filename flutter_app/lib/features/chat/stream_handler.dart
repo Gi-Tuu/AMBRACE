@@ -98,6 +98,13 @@ class StreamHandler {
     _isStreaming = false;
     _streamingMessage = null;
     _streamToolResults.clear();
+    // B3 修复（2026-09-01 审查）：传输层失败要整体回退到 WS 重新生成，必须把本轮
+    // 已经确认上屏的正式块一并移除，否则半截正式回复 + WS 整份新回复 = 同一轮两条 AI 回答。
+    // （reset_blocks 分支不在此处理：那是服务端主动换批量路径，块 id 清理已有独立逻辑。）
+    if (_streamingBlockIds.isNotEmpty) {
+      _messages.removeWhere((m) => _streamingBlockIds.contains(m.id));
+      _streamingBlockIds.clear();
+    }
     MessageAppender.removeEmptyLocalBubbles(_messages);
   }
 
@@ -106,8 +113,22 @@ class StreamHandler {
     final type = event['type'] as String?;
     switch (type) {
       case 'user_message':
-        // 用户消息正式落库回传：替换本地临时 id
-        MessageAppender.replaceTempUserMessage(_messages, event['data'] as Map<String, dynamic>?);
+        // 用户消息正式落库回传：替换本地临时 id。
+        // B1 修复（2026-09-01 审查）：WS 负载是 {"data":{...}} 嵌套，SSE 端点把负载展平为
+        // 同级字段，两种形状都要兼容——否则 SSE 主链路下用户气泡永远挂负的本地临时 id
+        // （按 id 的撤回/删除/引用在当前会话内全部失效，重进页面才恢复）。
+        Map<String, dynamic>? info;
+        final nested = event['data'];
+        if (nested is Map<String, dynamic>) {
+          info = nested;
+        } else {
+          info = Map<String, dynamic>.fromEntries(
+            event.entries.where((e) => e.key != 'type'),
+          );
+        }
+        if (info.isNotEmpty) {
+          MessageAppender.replaceTempUserMessage(_messages, info);
+        }
         _onChanged();
       case 'typing':
         // #63 机制2：回复延迟信号——服务端在生成前推送 typing（可带 delay 秒），

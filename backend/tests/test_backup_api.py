@@ -11,7 +11,8 @@ import zipfile
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from app.api import system as system_api
+from app.api import system as system_api  # F5-c：router 壳
+from app.application import system as system_svc  # F5-c：实现迁至 application，patch 须指向定义模块
 from app.auth.deps import get_current_user_id
 
 ADMIN = 1
@@ -37,7 +38,7 @@ def _isolated_backup_module(tmp_path: str, monkeypatch) -> object:
     mod.LOG_DIR = os.path.join(str(tmp_path), "logs")
     mod.rotate_logs = lambda: ""
     mod.prune_trigger_logs = lambda: ""
-    monkeypatch.setattr(system_api, "_load_backup_module", lambda: mod)
+    monkeypatch.setattr(system_svc, "_load_backup_module", lambda: mod)
     return mod
 
 

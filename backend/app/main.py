@@ -46,7 +46,7 @@ from app.utils.version import get_project_version
 # 单实例保护：防止多个 uvicorn 同时运行（Windows SO_REUSEADDR 下可共存，导致调度器双跑/重复消息）
 import socket as _socket
 import os as _os
-import asyncio  # 供 MCP 后台重连任务取消使用（main.py 生命周期）
+import asyncio  # lifespan 内后台预热/重连任务与关闭时取消使用
 
 # P2-2：单实例锁端口可配置（环境变量 INSTANCE_LOCK_PORT，默认 8766；端口冲突时可通过环境变量改端口）
 INSTANCE_LOCK_PORT = int(_os.environ.get("INSTANCE_LOCK_PORT", "8766"))
@@ -139,29 +139,25 @@ async def lifespan(app: FastAPI):
 
     # 远程市场启动预拉（plans #42 Phase C）：已配置 url 且无缓存时后台拉取一次（失败静默）
     try:
-        import asyncio as _aio2
         from app.api.marketplace import prefetch_remote_marketplace
-        _aio2.create_task(prefetch_remote_marketplace())
+        asyncio.create_task(prefetch_remote_marketplace())
         logger.info("Remote marketplace prefetch scheduled")
     except Exception as e:
         logger.warning("Marketplace prefetch schedule failed: %s", e)
 
     # Edge 预热（plans #39）：browser_mcp 提供 warmup 时，启动后后台预热常驻浏览器上下文（失败静默）
     try:
-        import asyncio as _aio
-        import sys as _sys
         _browser_mod = _sys.modules.get("ai_plugin_browser_mcp")
         if _browser_mod is not None and callable(getattr(_browser_mod, "warmup", None)):
-            _aio.create_task(_browser_mod.warmup())
+            asyncio.create_task(_browser_mod.warmup())
             logger.info("browser_mcp Edge warmup scheduled")
     except Exception as e:
         logger.warning("Edge warmup schedule failed: %s", e)
 
     # bge-m3 向量模型预热（记忆检索/写入首条延迟）：后台线程加载，模型缺失/失败静默
     try:
-        import asyncio as _aio3
         from app.memory.embedding import warmup_embedding
-        _aio3.create_task(warmup_embedding())
+        asyncio.create_task(warmup_embedding())
         logger.info("bge-m3 embedding warmup scheduled")
     except Exception as e:
         logger.warning("Embedding warmup schedule failed: %s", e)
@@ -173,7 +169,6 @@ async def lifespan(app: FastAPI):
     # MCP 接入（Phase 1）：启动后台重连 auto_connect=True 的 MCP Server（失败不阻塞启动）；关闭时清理
     _mcp_task = None
     try:
-        import asyncio as _aio_mcp
         from app.mcp.manager import mcp_manager, preset_defaults
         # 部署级预置（可选）：读取 backend/data/mcp_servers.json，按 user_id=1 预置配置（存在同名跳过）
         try:
@@ -182,7 +177,7 @@ async def lifespan(app: FastAPI):
                 logger.info("MCP preset seeded: %d servers", _preset)
         except Exception as _pe:
             logger.warning("MCP preset failed: %s", _pe)
-        _mcp_task = _aio_mcp.create_task(mcp_manager.reconnect_all())
+        _mcp_task = asyncio.create_task(mcp_manager.reconnect_all())
         logger.info("MCP reconnect_all scheduled")
     except Exception as e:
         logger.warning("MCP reconnect schedule failed: %s", e)
@@ -226,54 +221,26 @@ app.add_middleware(
 )
 
 # 图片上传静态目录（必须先创建目录，StaticFiles 要求存在）
-import os as _os
 from fastapi.staticfiles import StaticFiles
 from app.config import settings as _settings
 _uploads_dir = str(_settings.PROJECT_ROOT / "data" / "uploads")
 _os.makedirs(_uploads_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=_uploads_dir), name="uploads")
 
-# 注册路由
-app.include_router(character_router)
-app.include_router(chat_router)
-app.include_router(memory_router)
-app.include_router(system_router)
-app.include_router(admin_router)
-app.include_router(scheduler_router)
-app.include_router(proactive_router)
-app.include_router(diary_router)
-app.include_router(moments_router)
-app.include_router(uploads_router)
-app.include_router(auth_router)
-app.include_router(relationships_router)
-app.include_router(pets_router)
-app.include_router(phone_router)
-app.include_router(timeline_router)
-app.include_router(images_router)
-app.include_router(user_states_router)
-app.include_router(user_content_router)
-app.include_router(ai_chats_router)
-app.include_router(emojis_router)
-app.include_router(privacy_router)
-app.include_router(user_location_router)
-app.include_router(phone_desktop_router)
-app.include_router(plugins_router)
-app.include_router(plugin_bridge_router)
-app.include_router(marketplace_router)
-app.include_router(platform_profiles_router)
-app.include_router(chat_groups_router)
-app.include_router(life_router)
-app.include_router(life_home_router)
-app.include_router(voice_router)
-app.include_router(weave_router)
-app.include_router(permissions_router)
-app.include_router(phone_workflows_router)
-app.include_router(ai_api_router)
-app.include_router(mcp_router)
-app.include_router(games_router)
-app.include_router(llm_configs_router)
-app.include_router(account_router)
-app.include_router(device_router)
+# 注册路由（单一清单循环注册；顺序即路由匹配优先级，调整前须确认无前缀遮蔽）
+ROUTERS = [
+    character_router, chat_router, memory_router, system_router, admin_router,
+    scheduler_router, proactive_router, diary_router, moments_router, uploads_router,
+    auth_router, relationships_router, pets_router, phone_router, timeline_router,
+    images_router, user_states_router, user_content_router, ai_chats_router, emojis_router,
+    privacy_router, user_location_router, phone_desktop_router, plugins_router,
+    plugin_bridge_router, marketplace_router, platform_profiles_router, chat_groups_router,
+    life_router, life_home_router, voice_router, weave_router, permissions_router,
+    phone_workflows_router, ai_api_router, mcp_router, games_router, llm_configs_router,
+    account_router, device_router,
+]
+for _r in ROUTERS:
+    app.include_router(_r)
 
 
 @app.middleware("http")

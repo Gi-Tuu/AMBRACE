@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 
 import '../screens/weave/weave_view_mode.dart';
 import '../theme/skins/skin_registry.dart';
+import '../services/api_client.dart';
 
 class SettingsProvider extends ChangeNotifier {
   String _serverUrl = '';
@@ -221,6 +222,10 @@ class SettingsProvider extends ChangeNotifier {
     await prefs.remove('auth_token');
     await prefs.remove('user_id');
     await prefs.remove('avatar_url');
+    // B4（2026-09-01 审查）：登出时同步清掉 ApiClient 单例残留的认证头
+    try {
+      ApiClient().clearAuth();
+    } catch (_) {}
     notifyListeners();
   }
 

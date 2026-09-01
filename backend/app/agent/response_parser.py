@@ -283,6 +283,12 @@ def split_response(text: str, emotional_state: str = "") -> list[str]:
 
 def parse_response(response: str, state: dict) -> dict:
     """解析 LLM 回复，提取记忆/自述/状态更新，返回更新后的 state"""
+    # M1-S11（2026-08-31）/M2-S5：marker_truncated——尾部存在未闭合【/[ 标记疑似被 max_tokens 截断，
+    # 登记埋点并置 state["marker_truncated"]（chat_service 据此触发通道 B 优先补提）；
+    # 须在剥离任何标记前检查原始回复
+    from app.memory.observability import note_marker_truncation
+    state["marker_truncated"] = note_marker_truncation(response, state.get("character_id"))
+
     # 0. 认知循环 v2.1：剥离规划策略行（【策略：…；长度：…】），正文解析逻辑不变
     _strategy_match = re.search(r"[\[【]\s*策略\s*[：:]\s*([^\]】]+)[\]】]", response)
     if _strategy_match:
@@ -351,6 +357,15 @@ def parse_response(response: str, state: dict) -> dict:
     state["ai_response"] = re.sub(
         r"[「\[【]\s*(?:自述(?:更新|删除)|状态更新)\s*[：:].*?[」\]】]\s*", "", text
     ).strip()
+
+    # M2-S5（2026-08-31）：标记泄漏兜底——正文末尾残留未闭合的已知标记片段（截断产物）强剥，
+    # 只剥已知标记前缀（记忆/自述/状态/策略/推理/timer/SEARCH/CAL_NOTE/MEMO），普通文本方括号不受影响
+    _tail_m = re.search(
+        r"[\[【]\s*(?:记忆|自述更新|自述删除|自述|状态更新|策略|推理|timer|SEARCH|CAL_NOTE|MEMO)[^\]】]*$",
+        state["ai_response"], re.IGNORECASE,
+    )
+    if _tail_m:
+        state["ai_response"] = state["ai_response"][:_tail_m.start()].rstrip()
 
     state["intent"] = "chat"
     return state

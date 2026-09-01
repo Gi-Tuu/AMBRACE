@@ -42,11 +42,11 @@ async def deduplicate_memories(character_id: int, threshold: float = VECTOR_DEDU
     相似度 >= threshold（默认 0.9）视为重复，保留置顶/重要性高的一条；
     无向量的记忆之间回退字符级 SequenceMatcher（0.72）。
     """
-    from app.memory.service import delete_memory
+    from app.memory.service import delete_memory, _retrievable_status_clause
     async with async_session_factory() as db:
         result = await db.execute(
             select(Memory)
-            .where(Memory.character_id == character_id, Memory.is_archived == False)
+            .where(Memory.character_id == character_id, Memory.is_archived == False, _retrievable_status_clause())
             .order_by(Memory.importance.desc(), Memory.created_at.desc())
         )
         memories = result.scalars().all()

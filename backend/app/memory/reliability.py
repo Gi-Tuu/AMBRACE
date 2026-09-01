@@ -101,8 +101,17 @@ async def _top_related_memory(character_id: int, user_id: int, query: str) -> Me
         return None
 
 
-async def apply_correction(memory_id: int) -> None:
-    """用户纠正：矛盾+1、reliability 重算、FACT 降级 UNVERIFIED。失败静默。"""
+async def apply_correction(memory_id: int, *, source: str = "user") -> None:
+    """记忆纠正：矛盾+1、reliability 重算、FACT 降级 UNVERIFIED。失败静默。
+
+    ``source``：
+    - ``"user"``（默认）：用户明确改口/否认 → 在 flag memory_supersede 开时追加
+      supersede_memory，把被纠正记忆标记为 superseded 并级联 stale（治「用户改口后
+      AI 仍抱旧偏好」）；
+    - ``"fact_check"``：AI 异步自判矛盾 → **只降级，不取代**（防止 LLM 自判去永久隐藏
+      一条记忆——AI 幻觉式回复与记忆冲突时错的更可能是回复而非记忆），provenance 也不
+      会误标成 user_correction。
+    """
     try:
         async with async_session_factory() as db:
             m = await db.get(Memory, memory_id)
@@ -115,6 +124,15 @@ async def apply_correction(memory_id: int) -> None:
             await db.commit()
             _logger.info("memory corrected mem=%d contrad=%d reliability=%.3f",
                          memory_id, m.contradiction_count, m.reliability_score)
+        # #70-C：仅「用户明确改口」才取代（AI 自判只降级）；失败静默，不阻塞降级主链路。
+        if source == "user":
+            try:
+                from app.agent.loop import AGENT_FLAGS
+                if AGENT_FLAGS.get("memory_supersede", False):
+                    from app.memory.supersede import supersede_memory
+                    await supersede_memory(memory_id, new_id=None, reason="user_correction")
+            except Exception as e:
+                _logger.warning("supersede on correction failed mem=%s: %s", memory_id, e)
     except Exception as e:
         _logger.warning("apply_correction failed mem=%s: %s", memory_id, e)
 

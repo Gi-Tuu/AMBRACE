@@ -10,8 +10,9 @@ import '../../services/api_client.dart';
 import '../../services/fcm_push_service.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/app_page_route.dart';
-import '../chat/chat_screen.dart';
+import '../../features/chat/chat_screen.dart';
 import '../settings/api_config_screen.dart';
+import '../../features/settings/api_config_form_sheet.dart' show kLlmPresets;
 import 'package:ai_companion/l10n/app_localizations.dart';
 
 /// AMBRACE 首次使用引导（Onboarding，2026-08-24）。

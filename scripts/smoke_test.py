@@ -1,8 +1,9 @@
-r"""接口冒烟：登录 + 角色 + 朋友圈 + 归档（test/test1234 账号，密码≥8 位满足强度下限）。
+r"""接口冒烟：登录 + 角色 + 朋友圈 + 归档（随机账号，密码满足强度且不含用户名）。
 
 用法：backend\.venv\Scripts\python.exe scripts\smoke_test.py
 """
 import json
+import time
 import urllib.error
 import urllib.request
 
@@ -27,17 +28,15 @@ def main() -> None:
     assert st == 200, f"根路径 {st}: {root}"
     print(f"[OK] GET / -> {st}")
 
-    # 确保测试账号存在（密码≥8位满足强度；已存在则忽略冲突码）
-    try:
-        st_reg, body_reg = req("POST", "/api/v1/auth/register", {"username": "test", "password": "test1234"})
-        if st_reg in (200, 201, 409):
-            print(f"[OK] 测试账号就绪 (register {st_reg})")
-        else:
-            print(f"[WARN] 注册测试账号 {st_reg}: {str(body_reg)[:200]}")
-    except Exception as e:
-        print(f"[WARN] 注册测试账号异常: {e}")
+    # 每次冒烟用随机账号（2026-08-31：固定 test/test1234 撞「密码不能包含用户名」校验；
+    # 密码含大小写+数字+符号满足强度，且不含用户名子串）
+    user = f"smoke{int(time.time())}"
+    pwd = "Aa#20260831"
+    st_reg, body_reg = req("POST", "/api/v1/auth/register", {"username": user, "password": pwd})
+    assert st_reg in (200, 201), f"注册 {st_reg}: {str(body_reg)[:200]}"
+    print(f"[OK] 注册 -> {user}")
 
-    st, login = req("POST", "/api/v1/auth/login", {"username": "test", "password": "test1234"})
+    st, login = req("POST", "/api/v1/auth/login", {"username": user, "password": pwd})
     assert st == 200 and login.get("access_token"), f"登录 {st}"
     token = login["access_token"]
     print(f"[OK] 登录 -> token len {len(token)}")

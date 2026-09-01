@@ -2,7 +2,7 @@
 """群聊记忆 speaker 归属测试（2026-08-18 修复）：按发言者拆分、speaker 正确、存给所有成员"""
 import asyncio
 
-from app.api.chat_groups import build_group_memory_entries
+from app.application.chat_groups import build_group_memory_entries  # F5-a：实现迁至 application
 
 
 # ---------------- 纯函数：build_group_memory_entries ----------------
@@ -89,7 +89,7 @@ class _FakeDB:
 
 
 def test_save_group_memory_每个成员每发言者一条且speaker正确(monkeypatch):
-    from app.api import chat_groups as cg
+    from app.application import chat_groups as cg  # F5-a：patch 须指向定义模块
     saved = []
     async def fake_save(**kw):
         saved.append(kw)
@@ -119,7 +119,7 @@ def test_save_group_memory_每个成员每发言者一条且speaker正确(monkey
 
 
 def test_save_group_memory_节流命中不重复写(monkeypatch):
-    from app.api import chat_groups as cg
+    from app.application import chat_groups as cg  # F5-a：patch 须指向定义模块
     saved = []
     async def fake_save(**kw):
         saved.append(kw)
@@ -134,7 +134,7 @@ def test_save_group_memory_节流命中不重复写(monkeypatch):
 
 def test_save_group_memory_节流按群过滤且写group_id(monkeypatch):
     """P3-3：节流查询按 group_id 过滤（含旧数据 IS NULL 兼容），落库时写 group_id。"""
-    from app.api import chat_groups as cg
+    from app.application import chat_groups as cg  # F5-a：patch 须指向定义模块
     captured = {}
 
     class _SqlDB(_FakeDB):

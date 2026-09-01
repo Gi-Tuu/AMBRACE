@@ -1,0 +1,20 @@
+{
+  "name": "festival_extra",
+  "version": "1.0.0",
+  "description": "节日内容包示例（content_pack）：补充固定日期节日，经 get_holidays 合并生效",
+  "author": "AMBRACE",
+  "category": "plugin",
+  "type": "content",
+  "permissions": [],
+  "hooks": [],
+  "config": {},
+  "content": {
+    "kind": "holiday_fixed",
+    "items": [
+      {"date": "03-14", "name": "白色情人节", "lang": "zh"},
+      {"date": "05-20", "name": "520", "lang": "zh"},
+      {"date": "11-01", "name": "万圣夜次日", "lang": "zh"}
+    ]
+  },
+  "usage": "启用后在对应日期的节日祝福/主动消息中生效。"
+}

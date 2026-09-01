@@ -22,6 +22,12 @@ from app.auth.deps import get_current_user_id
 from app.utils.errors import friendly_llm_error
 from app.ws.connection_manager import connected_clients
 
+
+def _unregister_ws(session_id: int, websocket: WebSocket) -> None:
+    """B-WS：身份守卫注销——只有字典里仍是自己时才移除，绝不允许旧连接误删新连接。"""
+    if connected_clients.get(session_id) is websocket:
+        connected_clients.pop(session_id, None)
+
 router = APIRouter(prefix="/api/v1/chat", tags=["Chat"])
 
 # ── 图片上传（统一走 services/upload_service，见 app/services/upload_service.py）──
@@ -56,6 +62,15 @@ async def websocket_chat(websocket: WebSocket, session_id: int):
         return
 
     await websocket.accept()
+    # B-WS 修复（2026-09-01 审查）：同会话重连时主动关掉被替换的旧半开连接；
+    # 配合 _unregister_ws 的身份守卫，避免晚死的旧连接把新活连接 pop 掉，
+    # 导致服务端推送静默失效（弱网下"推送时有时无"的典型来源）。
+    old_ws = connected_clients.get(session_id)
+    if old_ws is not None and old_ws is not websocket:
+        try:
+            await old_ws.close(code=4000)
+        except Exception:
+            pass
     connected_clients[session_id] = websocket
     # P0-5 修复（2026-08-16）：客户端传的 character_id 必须与会话角色一致，防跨用户越权
     _sid_char = session.character_id
@@ -178,7 +193,7 @@ async def websocket_chat(websocket: WebSocket, session_id: int):
                     for _bi in batch_infos:
                         await websocket.send_json({"type": "user_message", "data": _bi})
 
-                    combined = " ".join(messages_list)
+                    combined = "\n".join(messages_list)
                     result = await send_and_receive_chunked(
                         session_id=session_id, user_id=ws_user_id,
                         character_id=character_id, content=combined,
@@ -204,7 +219,7 @@ async def websocket_chat(websocket: WebSocket, session_id: int):
                             await asyncio.sleep(random.uniform(0.5, 1.5))
 
             except WebSocketDisconnect:
-                connected_clients.pop(session_id, None)
+                _unregister_ws(session_id, websocket)
                 break
             except Exception as e:
                 _logger.warning("chat ws turn failed session=%s: %s", session_id, e, exc_info=True)
@@ -213,13 +228,13 @@ async def websocket_chat(websocket: WebSocket, session_id: int):
                     await websocket.send_json({"type": "typing", "is_typing": False})
                     await websocket.send_json({"type": "error", "detail": str(e)})
                 except Exception:
-                    connected_clients.pop(session_id, None)
+                    _unregister_ws(session_id, websocket)
                     break
                 continue
     except WebSocketDisconnect:
-        connected_clients.pop(session_id, None)
+        _unregister_ws(session_id, websocket)
     except Exception as e:
-        connected_clients.pop(session_id, None)
+        _unregister_ws(session_id, websocket)
         try:
             await websocket.send_json({"type": "error", "detail": str(e)})
         except Exception:
@@ -358,9 +373,16 @@ async def stream_message(
     task = asyncio.create_task(_run())
 
     async def _sse_gen():
+        # B7 修复（2026-09-01 审查）：15s 心跳。长上下文构建期（首 delta 前数十秒无字节）
+        # 移动 NAT/反向代理可能掐连接；只发 SSE 注释行 ": ping"（客户端 parseSseDataLine
+        # 对非 "data: " 行返回 null，已核实），同时天然给客户端 B2 空闲看门狗喂狗。
         try:
             while True:
-                event, payload = await queue.get()
+                try:
+                    event, payload = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+                    continue
                 if event == "__eof__":
                     break
                 line = _json.dumps({"type": event, **payload}, ensure_ascii=False)

@@ -32,6 +32,7 @@ _TYPE_LABEL = {"user_info": "关于你的事", "preference": "你的喜好", "ev
 async def collect_review_events() -> list[dict]:
     """扫描到期记忆 → 每角色 1 条候选（arbiter 事件源，priority=1）。"""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+    from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
     async with async_session_factory() as db:
         rows = (await db.execute(
             select(Memory.character_id, Memory.user_id, Memory.id)
@@ -42,6 +43,7 @@ async def collect_review_events() -> list[dict]:
                 Memory.importance >= REVIEW_MIN_IMPORTANCE,
                 Memory.next_review_at.is_not(None),
                 Memory.next_review_at <= now,
+                _active_status_clause(),
             )
             .order_by(Memory.next_review_at.asc())
         )).all()
@@ -86,6 +88,34 @@ async def _daily_count(db, character_id: int) -> int:
     )).scalar() or 0
 
 
+def _review_daily_cap() -> int:
+    """M1-S7（2026-08-31）：复习日额度 flag 化——review_daily_plus 开=4（默认），关=回退 3。
+
+    纯函数便于单测；90 分钟最小间隔不变（防轰炸靠间隔而非额度）。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return REVIEW_MAX_PER_DAY + 1 if AGENT_FLAGS.get("review_daily_plus", True) else REVIEW_MAX_PER_DAY
+    except Exception:
+        return REVIEW_MAX_PER_DAY
+
+
+# M1-S7：敷衍回复词表——极短纯语气词/纯标点不算"接住"（其余实质回复 24h 内均算复习成功）
+_NON_SUBSTANTIVE_REPLIES = {
+    "哦", "嗯", "啊", "呃", "额", "噢", "哦哦", "嗯嗯", "噢噢", "呃呃",
+    "呵呵", "哈哈", "哦了", "嗯了", "行吧", "哦呀",
+}
+
+
+def _is_substantive_reply(text: str) -> bool:
+    """M1-S7（纯函数）：实质回复判定——去标点/空白后 ≥2 字且非敷衍词表即算（治 P-E1 误判失败）。"""
+    import re as _re
+    t = _re.sub(r"[\s。，！？…~、；：,.!?;:()（）\"'“”‘’【】\[\]…]+", "", text or "")
+    if not t or len(t) < 2:
+        return False
+    return t not in _NON_SUBSTANTIVE_REPLIES
+
+
 async def _last_review_at(db, character_id: int):
     """该角色最近一条复习消息发送时间（最小间隔保护用）。"""
     return (await db.execute(
@@ -111,7 +141,7 @@ async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
 
     now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
     async with async_session_factory() as db:
-        if await _daily_count(db, char_id) >= REVIEW_MAX_PER_DAY:
+        if await _daily_count(db, char_id) >= _review_daily_cap():
             _logger.info("Memory review char=%d skipped: daily limit", char_id)
             return False
         last = await _last_review_at(db, char_id)
@@ -200,10 +230,11 @@ async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
 
 
 async def maybe_review_success(user_id: int, character_id: int, user_content: str) -> int:
-    """用户回复时调用：24h 内有 review 记录且回复与记忆内容弱相关 → 强化 S×2（成功复习）。
+    """用户回复时调用：24h 内有 review 记录且回复"接住"了复习 → 强化 S×4/3（成功复习）。
 
-    返回强化条数。弱相关判定：SequenceMatcher 字符相似 > 0.15（回复看到了该记忆即算复习成功，
-    无需语义理解；『嗯』这类短回复与长记忆相似度低，不会误判）。
+    返回强化条数。M1-S7 判定（2026-08-31）：字符相似 >0.15 照旧命中；
+    相似未命中但属实质回复（_is_substantive_reply，排除哦/嗯等敷衍）也算成功——
+    避免"用户明明回应了却被判失败、3 天后才重试"。
     """
     from difflib import SequenceMatcher
     if not user_content or not user_content.strip():
@@ -238,7 +269,9 @@ async def maybe_review_success(user_id: int, character_id: int, user_content: st
         b = (mem.content or "").strip()[:100]
         if len(a) < 2 or len(b) < 2:
             return 0
-        if SequenceMatcher(None, a, b).ratio() < 0.15:
+        # M1-S7（2026-08-31）：成功判定放宽——相似命中照旧；非相似但属实质回复（非敷衍）也算"接住"
+        #（治"用户明明回应了却被判失败、3 天后才重试"的 P-E1；敷衍词表极短无内容）
+        if SequenceMatcher(None, a, b).ratio() < 0.15 and not _is_substantive_reply(a):
             return 0
         mem_id_for_reinforce = mem.id
     from app.memory.service import reinforce_memories
@@ -277,6 +310,7 @@ async def _pick_contextual_memory(character_id: int, user_id: int, user_msg: str
     try:
         from app.models.conversation_topic import ConversationTopic
         from app.models.memory import Memory
+        from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
         async with async_session_factory() as db:
             rows = (await db.execute(
                 select(Memory)
@@ -286,6 +320,7 @@ async def _pick_contextual_memory(character_id: int, user_id: int, user_msg: str
                     Memory.is_pinned == False,
                     Memory.is_locked == False,
                     Memory.importance >= REVIEW_MIN_IMPORTANCE,
+                    _active_status_clause(),
                 )
                 .order_by(Memory.importance.desc(), Memory.id.desc())
                 .limit(20)

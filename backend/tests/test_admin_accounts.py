@@ -95,6 +95,8 @@ def _run_seed(admin_ids, pre_admins: list[int], monkeypatch):
     db_path = os.path.join(tmp, 't.db')
     engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
     monkeypatch.setattr(db_mod, 'engine', engine)
+    import app.db.init_db as _initdb_mod  # F1 拆分：init_db 用实现模块的 engine 绑定
+    monkeypatch.setattr(_initdb_mod, 'engine', engine)
     monkeypatch.setattr(settings, 'admin_user_ids', admin_ids)
 
     async def _run():

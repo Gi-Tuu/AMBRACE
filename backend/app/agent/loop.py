@@ -61,17 +61,38 @@ AGENT_FLAGS = {
     "game_turtle_soup": True,        # 海龟汤（Phase 2）
     "game_memory_bridge": True,      # 主记忆摘要指针（关=游戏详情只存游戏库）
     "game_ai_autoplay": True,        # AI 自动回合（关=需手动触发 AI 行动，调试用）
+    # ── M1 记忆 P0（2026-08-31，docs/执行方案_记忆与生成_20260831.md S1）──
+    "recall_top5": True,       # S1：主路召回出口 5 条（关=回退旧 3 条；rerank 后截断前做类型多样性重排）
+    "recall_diversify": True,  # S1：按类型多样性重排（每类先取 2 条一轮再按原序补齐；关=纯 _ranked[:limit]）
     # ── Life Loop v1.1（2026-08-26；2026-08-27 用户拍板全量开启）──
     "life_loop_enabled": True,            # 主开关：30min 行为决策循环
     "life_loop_visible": True,            # 允许自主行为产生面向用户输出
     "life_loop_llm": True,                # 允许 LLM 生成生活文案（每角色每日≤2次）
     "life_chat_driven_enabled": True,     # 聊天→生活意图链路
+    "review_daily_plus": True,            # M1-S7（2026-08-31）：主动复习日额度 3→4（关=回退 3；90min 间隔不变）
+    "memory_tiered_decay": False,         # M2-S2（2026-08-31）：分层衰减——高置信持久/低置信加速/跌破阈值冷归档。默认关（灰度开关，开启前先跑 scripts/diagnostics/memory_tiering_snapshot.py 快照）；关=逐字节现状
+    "marker_recovery": True,              # M2-S5（2026-08-31）：标记截断保底——A 通道标记被截断时本条源消息立即走通道 B 提取（写侧查重防重复）；关=仅批量补提
+    # ── X3 Provider 端口（2026-08-31，docs/执行方案_扩展化_20260831.md 批次 X3）──
+    # provider_registry 开=LLM/TTS 经 app/providers 注册口解析实现（内置 openai_compatible/dashscope 为默认实现，
+    # 插件可经 sdk.register_provider 注册并以配置 provider 字段选中）；关=直连内置实现（与旧链路逐字节一致）。
+    "provider_registry": True,
     "life_home_worldmap_enabled": True,   # 小家大地图（§11）
     # ── 生命感增强 v1（#63，2026-08-27；全部默认关，可独立回退）──
     "reply_delay_enabled": True,         # 机制2：动态回复延迟（用户主动消息才生效）
     "spring_emotion_enabled": True,      # 机制1：弹簧-阻尼情绪（4 维 + 人格基线）
     "life_share_enabled": True,          # 机制4：活动完成自然分享（arpiter 门控 + 配额）
     "preoccupation_enabled": True,       # 机制5：心事微澜（复用 Memory.sub_type）
+    # ── #70 方案A：记忆分层检索与注入（2026-08-30；独立可回滚）──
+    # memory_tiered_inject 开=Top1 L2(240)/其余 L0 分层注入 + L1 桥接 + L0 参与向量；关=统一 150 字旧链路（逐字节一致）。
+    "memory_tiered_inject": False,
+    # ── #70 方案B：检索轨迹可观察（2026-08-30；独立可回滚）──
+    # memory_trace_debug 开=memory_search trace 补 query/派生/各路命中/RRF/rerank 分数/最终注入（只多写 trace，低风险默认开）；
+    # 关=检索/排序/trace 与现状逐字节一致（回归保护）。
+    "memory_trace_debug": True,
+    # ── #70 方案C：记忆取代链 + 级联失效（M1/M2）+ 冷归档/purge（2026-08-30；独立可回滚）──
+    # memory_supersede 开=superseded/stale 状态激活，双通道（SQLite+Chroma）过滤，读取点按状态分流；
+    # 关=所有读取/注入/统计与现状逐字节一致（回归保护）。禁止默认 True（误取代比不取代更伤）。
+    "memory_supersede": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

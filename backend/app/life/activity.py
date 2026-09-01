@@ -207,7 +207,10 @@ async def run_activity(db, user_id: int, character, phase: str, needs: dict[str,
             "artifact_id": artifact_id, "trace": trace,
         }, ensure_ascii=False)
         log.memory_id = mem.id if mem is not None else None
-        log.completed_at = datetime.now()
+        # B-TZ 修复（2026-09-01 审查）：统一 UTC naive（与 base.py finish() 写法一致），
+        # 避免本地 naive 与全库 UTC 混排产生 8 小时偏移
+        from datetime import timezone as _tz
+        log.completed_at = datetime.now(_tz.utc).replace(tzinfo=None)
         await db.commit()
         _logger.info("life activity done: char=%d act=%s mem=%s artifact=%s",
                      character.id, name, log.memory_id, artifact_id)

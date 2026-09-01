@@ -17,10 +17,10 @@ from types import SimpleNamespace
 
 from app.agent import loop
 from app.agent import runtime as runtime_mod
-from app.api import chat_groups as cg
+from app.application import chat_groups as cg  # F5-a：实现迁至 application/chat_groups，patch 须指向定义模块
 from app.scheduler import arbiter as arbiter_mod
 from app.scheduler import ai_social as ai_social_mod
-from app.scheduler import emotion_care as emotion_mod
+from app.domain.emotion import care as emotion_mod  # F2-a：实现迁至 domain/emotion/care，patch 须指向定义模块
 from app.scheduler import memory_review as review_mod
 from app.scheduler import pet_care as pet_mod
 

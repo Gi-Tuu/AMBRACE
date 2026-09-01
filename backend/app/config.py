@@ -106,6 +106,15 @@ class Settings(BaseSettings):
     # 包含 apiKey/appId/messagingSenderId/projectId/storageBucket；.env: PUSH_FCM_CLIENT_CONFIG
     push_fcm_client_config: str = ""
 
+    # ---- 语音流式 ASR（Phase 1，可选）：未配置/未启用/协议未确认时回退本地 whisper ----
+    # 百炼实时语音识别（Paraformer 流式）WS 协议与配置字段【待实测确认】；
+    # 在协议实测前即使启用也不激活（见 app/voice/asr_provider.py）。
+    asr_stream_provider: str = ""  # "" 或 "dashscope_stream"
+    asr_stream_enabled: bool = False  # 启用流式 ASR provider
+    asr_stream_base_url: str = ""  # 百炼实时识别 WS 端点（协议待实测，勿盲填）
+    asr_stream_api_key: str = ""  # 鉴权 key（协议待实测，勿盲填）
+    asr_stream_model: str = ""  # paraformer 流式模型名（协议待实测，勿盲填）
+
     # ---- 表情市场（2026-08-23）：远程表情市场索引 URL（GitHub raw 索引模式）----
     emoji_market_url: str = "https://raw.githubusercontent.com/Gi-Tuu/AMBRACE-emoji/main/index.json"
 

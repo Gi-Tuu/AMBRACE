@@ -82,3 +82,7 @@ backend/data/bm25_cache/
 # 远程市场缓存（运行产物）
 backend/data/marketplace_cache/
 
+
+# 本地备份文件（server_controller 等目录的手工 .bak-* 备份，只留本地不进 git）
+*.bak-*
+*.bak

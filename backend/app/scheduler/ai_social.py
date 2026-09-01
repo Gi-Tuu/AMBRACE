@@ -132,11 +132,13 @@ async def _user_recent_news(user_id: int, limit: int = 3) -> str:
         from app.models.character import AICharacter as _AC
         _chars = (await db.execute(select(_AC).where(_AC.user_id == user_id))).scalars().all()
         names = [c.name for c in _chars if c.name]
+        from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
         result = await db.execute(
             select(Memory).where(
                 Memory.user_id == user_id,
                 Memory.memory_type.in_(["user_info", "event"]),
                 Memory.is_archived == False,  # noqa: E712
+                _active_status_clause(),
             ).order_by(Memory.created_at.desc()).limit(limit * 4)
         )
         rows = result.scalars().all()

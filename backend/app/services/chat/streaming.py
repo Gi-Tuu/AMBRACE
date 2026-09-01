@@ -82,10 +82,12 @@ async def _delete_chunks(message_ids: list[int]) -> None:
 
 async def _synthesize_chunks_tts(
     chunk_texts: list[str], session_id: int, character_id: int, user_id: int,
+    emotion: str | None = None,
 ) -> list[str | None]:
     """逐句合成语音（复用 tts_service.synthesize，百炼优先/edge 兜底），返回与块一一对应的 URL 或 None。
 
     用于流式异常/深度思考回退非流式时，仍按每块逐句合成（与实时逐句路径行为一致）。
+    emotion（Phase 0 P0）：来自服务层 final_state 的 emotional_state；无则 None（零行为变化）。
     """
     try:
         from app.voice.voice_mode import load_character_voice_params
@@ -101,7 +103,7 @@ async def _synthesize_chunks_tts(
                 text, subdir=str(session_id),
                 gender=params.get("gender"), voice=params.get("voice"),
                 voice_rate=params.get("voice_rate"), voice_pitch=params.get("voice_pitch"),
-                user_id=user_id,
+                user_id=user_id, emotion=emotion,
             )
         except Exception as e:
             _logger.warning("Chunk TTS failed: %s", e)
@@ -402,7 +404,11 @@ async def send_and_receive_stream(
 
     tts_urls = None
     if tts:
-        tts_urls = await _synthesize_chunks_tts(chunk_texts, session_id, character_id, user_id)
+        # Phase 0 P0：从 final_state 情绪标记（emotional_state）取 emotion 逐句合成（无则 None）
+        tts_urls = await _synthesize_chunks_tts(
+            chunk_texts, session_id, character_id, user_id,
+            emotion=final_state.get("emotional_state") or None,
+        )
 
     # P2-NEW（2026-08-29）：回退批量路径（_fallback=True）会先删旧块再全量新建，新块 ID 与旧块
     # 不同，前端按块 id 去重（_confirmStreamBlock）永远不命中 → 先发 reset_blocks 让前端清除本轮

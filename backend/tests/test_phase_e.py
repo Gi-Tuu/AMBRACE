@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 from app.agent import loop
 from app.agent import runtime as runtime_mod
-from app.api import chat_groups as cg
+from app.application import chat_groups as cg  # F5-a：实现迁至 application/chat_groups，patch 须指向定义模块
 from app.scheduler import arbiter
 
 

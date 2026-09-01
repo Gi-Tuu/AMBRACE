@@ -119,6 +119,13 @@ void main() {
 
       expect(find.text('2026'), findsOneWidget);
       expect(find.text(l10n.month8), findsOneWidget);
+      // 归档页默认只展开「当前年月」；种子固定 2026-08-28，跨月运行时需手动展开 8 月
+      // （2026-08-31 午夜跨月暴露：8/31 当天 8 月=当前月自动展开，9/1 起默认收起）
+      final now = DateTime.now();
+      if (!(now.year == 2026 && now.month == 8)) {
+        await tester.tap(find.text(l10n.month8));
+        await tester.pumpAndSettle();
+      }
       expect(find.text(l10n.dayLabel(8, 28)), findsOneWidget);
 
       // 点击年份 → 收起（月份行消失）
