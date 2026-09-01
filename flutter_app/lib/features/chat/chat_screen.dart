@@ -22,6 +22,7 @@ import '../../widgets/chat_time_separator.dart';
 import '../../screens/character/character_detail_screen.dart';
 import 'chat_message_media_actions.dart';
 import 'chat_phone_actions.dart';
+import 'chat_input_sections.dart';
 import 'chat_screen_widgets.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -233,95 +234,6 @@ class _ChatScreenState extends State<ChatScreen>
       };
     });
   }
-
-  /// AI 能力权限询问卡片（权限=每次询问 时显示，允许/拒绝后消失）
-  Widget _buildPermissionCard() {
-    final l10n = AppLocalizations.of(context)!;
-    final chat = context.read<ChatProvider>();
-    final p = chat.pendingPermission!;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF8E6),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFFFD57A)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.help_outline, size: 16, color: Color(0xFFB7791F)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${l10n.aiWantsToCall}【${p.scopeLabel}】',
-                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF7A5B12)),
-                ),
-                if (p.prompt.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      p.prompt,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11.5, color: Color(0xFF8A6D1F)),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          TextButton(
-            onPressed: () => chat.denyPendingPermission(),
-            child: Text(l10n.deny, style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
-          ),
-          TextButton(
-            onPressed: () => chat.approvePendingPermission(),
-            child: Text(l10n.allow, style: const TextStyle(fontSize: 12.5, color: AppColors.accent, fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 输入框上方引用条（可关闭）
-  Widget _buildQuoteBar() {
-    final l10n = AppLocalizations.of(context)!;
-    final q = _quote ?? const <String, dynamic>{};
-    final content = q['content'] as String? ?? '';
-    final sender = q['sender'] == 'user' ? l10n.me : l10n.ta;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.format_quote, size: 14, color: Colors.grey.shade600),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              '${l10n.quotePrefix} $sender：$content',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-            ),
-          ),
-          InkWell(
-            onTap: () => setState(() => _quote = null),
-            child: const Padding(
-              padding: EdgeInsets.all(2),
-              child: Icon(Icons.close, size: 16, color: Colors.grey),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   /// 退出输入态：收键盘 + 关更多面板（不清空已输入文字）
   void _exitInputState() {
     FocusManager.instance.primaryFocus?.unfocus();
@@ -334,82 +246,6 @@ class _ChatScreenState extends State<ChatScreen>
     final willOpen = !_morePanelOpen;
     setState(() => _morePanelOpen = willOpen);
     FocusManager.instance.primaryFocus?.unfocus();
-  }
-
-  /// 更多功能面板：图片 / 文件（表情已剥离到「切换」小框）
-  Widget _buildMorePanel() {
-    final l10n = AppLocalizations.of(context)!;
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        children: [
-          _panelAction(
-            icon: Icons.image_outlined,
-            color: scheme.primary,
-            label: l10n.image,
-            sub: l10n.sendImage,
-            onTap: () {
-              setState(() => _morePanelOpen = false);
-              pickAndUploadImage();
-            },
-          ),
-          const SizedBox(width: 16),
-          _panelAction(
-            icon: Icons.insert_drive_file_outlined,
-            color: scheme.primary,
-            label: l10n.file,
-            sub: l10n.sendDoc,
-            onTap: () {
-              setState(() => _morePanelOpen = false);
-              pickAndSendFile();
-            },
-          ),
-          const SizedBox(width: 16),
-          // 语音通话（Phase 1 恢复；基于既有 WS /api/v1/voice/stream）
-          _panelAction(
-            icon: Icons.phone_outlined,
-            color: scheme.primary,
-            label: l10n.voiceCallEntry,
-            sub: l10n.voiceCallEntrySub,
-            onTap: () {
-              setState(() => _morePanelOpen = false);
-              startVoiceCall();
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _panelAction({
-    required IconData icon,
-    required Color color,
-    required String label,
-    required String sub,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 30, color: color),
-            const SizedBox(height: 4),
-            Text(label, style: const TextStyle(fontSize: 12)),
-            Text(sub, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-          ],
-        ),
-      ),
-    );
   }
 
   /// 切换小框（气泡式，类似长按气泡菜单）：连续发送 / 语音发送 / 表情
@@ -887,9 +723,34 @@ class _ChatScreenState extends State<ChatScreen>
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (chat.pendingPermission != null) _buildPermissionCard(),
-                          if (_quote != null) _buildQuoteBar(),
-                          if (_morePanelOpen) _buildMorePanel(),
+                          if (chat.pendingPermission != null)
+                  PermissionCard(
+                    scopeLabel: chat.pendingPermission!.scopeLabel,
+                    prompt: chat.pendingPermission!.prompt,
+                    onDeny: () => chat.denyPendingPermission(),
+                    onAllow: () => chat.approvePendingPermission(),
+                  ),
+                          if (_quote != null)
+                  QuoteBar(
+                    content: _quote!['content'] as String? ?? '',
+                    senderIsUser: _quote!['sender'] == 'user',
+                    onClose: () => setState(() => _quote = null),
+                  ),
+                          if (_morePanelOpen)
+                  MorePanel(
+                    onPickImage: () {
+                      setState(() => _morePanelOpen = false);
+                      pickAndUploadImage();
+                    },
+                    onPickFile: () {
+                      setState(() => _morePanelOpen = false);
+                      pickAndSendFile();
+                    },
+                    onVoiceCall: () {
+                      setState(() => _morePanelOpen = false);
+                      startVoiceCall();
+                    },
+                  ),
                           dock,
                         ],
                       ),

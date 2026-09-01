@@ -6,6 +6,7 @@ import "../../utils/beijing_time.dart";
 import "../../services/phone_perception_service.dart";
 import "../../services/api_client.dart";
 import "../../widgets/privacy_lock_view.dart";
+import "../../features/phone/perception_tiles.dart";
 import "../settings/notification_whitelist_screen.dart";
 import "shizuku_screen.dart";
 import "workflow_screen.dart";
@@ -601,135 +602,7 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final scheme = Theme.of(context).colorScheme;
     const subColor = AppColors.textSecondary;
-    const iconColor = AppColors.accent;
-
-    Widget sw({
-      required IconData icon,
-      required String title,
-      required String subtitle,
-      required bool value,
-      required ValueChanged<bool>? onChanged,
-      Color? color,
-    }) {
-      final enabled = onChanged != null;
-      return SwitchListTile(
-        secondary: Icon(icon,
-            size: 22,
-            color: enabled ? (color ?? iconColor) : scheme.onSurface.withValues(alpha: 0.38)),
-        title: Text(title,
-            style: TextStyle(
-                fontSize: 15,
-                color: enabled ? scheme.onSurface : scheme.onSurface.withValues(alpha: 0.38))),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 11, color: subColor)),
-        value: value,
-        onChanged: onChanged,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14),
-      );
-    }
-
-    Widget nav({
-      required IconData icon,
-      required String title,
-      required String subtitle,
-      VoidCallback? onTap,
-      bool enabled = true,
-      Color? color,
-      Widget? trailing,
-    }) {
-      return ListTile(
-        leading: Icon(icon, size: 22, color: color ?? iconColor),
-        title: Text(title, style: TextStyle(fontSize: 15, color: scheme.onSurface)),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 11, color: subColor)),
-        enabled: enabled,
-        trailing: trailing ?? const Icon(Icons.chevron_right, size: 18, color: AppColors.separator),
-        onTap: onTap,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14),
-      );
-    }
-
-    /// 可折叠父项：点击行展开/收起子项，右侧开关独立控制
-    Widget foldParent({
-      required IconData icon,
-      required String title,
-      required String subtitle,
-      required bool value,
-      required ValueChanged<bool>? onChanged,
-      required bool expanded,
-      required VoidCallback onToggle,
-      Color? color,
-    }) {
-      final enabled = onChanged != null;
-      return ListTile(
-        leading: Icon(icon,
-            size: 22,
-            color: enabled ? (color ?? iconColor) : scheme.onSurface.withValues(alpha: 0.38)),
-        title: Text(title,
-            style: TextStyle(
-                fontSize: 15,
-                color: enabled ? scheme.onSurface : scheme.onSurface.withValues(alpha: 0.38))),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 11, color: subColor)),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(expanded ? Icons.expand_less : Icons.expand_more,
-                size: 20, color: AppColors.separator),
-            Switch(value: value, onChanged: onChanged),
-          ],
-        ),
-        onTap: onToggle,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14),
-      );
-    }
-
-    Widget group(String? title, List<Widget> children) {
-      return Padding(
-        padding: const EdgeInsets.only(left: 12, right: 12, bottom: 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (title != null)
-              Padding(
-                padding: const EdgeInsets.only(left: 16, bottom: 6),
-                child: Text(title,
-                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: subColor)),
-              ),
-            Container(
-              decoration: BoxDecoration(
-                color: scheme.surface,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(children: children),
-            ),
-          ],
-        ),
-      );
-    }
-
-    Widget div() => Container(
-          height: 0.5,
-          margin: const EdgeInsets.only(left: 46),
-          color: Theme.of(context).dividerColor,
-        );
-
-    /// R5：健康状态灯 tile
-    Widget healthTile(IconData icon, String title, bool ok,
-        {String? sub, VoidCallback? onTap}) {
-      return ListTile(
-        leading: Icon(icon, size: 22, color: ok ? Colors.green : Colors.orange),
-        title: Text(title, style: TextStyle(fontSize: 15, color: scheme.onSurface)),
-        subtitle: sub != null
-            ? Text(sub, style: const TextStyle(fontSize: 11, color: subColor))
-            : null,
-        trailing: onTap != null
-            ? const Icon(Icons.chevron_right, size: 18, color: AppColors.separator)
-            : Icon(ok ? Icons.check_circle : Icons.warning_amber,
-                size: 18, color: ok ? Colors.green : Colors.orange),
-        onTap: onTap,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14),
-      );
-    }
 
     return Scaffold(
       appBar: AppBar(title: Text(l10n.phonePerception)),
@@ -737,8 +610,8 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
         padding: const EdgeInsets.only(top: 8, bottom: 24),
         children: [
           // 总开关
-          group(null, [
-            sw(
+          PpGroup(title: null, children: [
+            PpSwitch(
               icon: Icons.visibility_outlined,
               title: l10n.phonePerception,
               subtitle: _enabled ? l10n.ppSubtitleOn : l10n.ppSubtitleOff,
@@ -748,26 +621,26 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
           ]),
           // R5：服务健康状态灯
           if (_health.isNotEmpty)
-            group(l10n.healthRunningStatus, [
-              healthTile(Icons.accessibility_new, l10n.healthAccessibility,
-                  _health['accessible'] == true,
+            PpGroup(title: l10n.healthRunningStatus, children: [
+              PpHealthTile(icon: Icons.accessibility_new, title: l10n.healthAccessibility,
+                      ok: _health['accessible'] == true,
                   sub: _health['accessibleInstanceAlive'] == true ? l10n.connected : l10n.healthAccessibilityNotConnected),
-              div(),
-              healthTile(Icons.notifications_outlined, l10n.healthNotificationAccess,
-                  _health['notification'] == true,
+              const PpDivider(),
+              PpHealthTile(icon: Icons.notifications_outlined, title: l10n.healthNotificationAccess,
+                      ok: _health['notification'] == true,
                   sub: _health['notificationConnected'] == true ? l10n.connected : l10n.healthNotificationNotConnected),
-              div(),
-              healthTile(Icons.shield_outlined, 'Shizuku',
-                  _health['shizuku'] == true,
+              const PpDivider(),
+              PpHealthTile(icon: Icons.shield_outlined, title: 'Shizuku',
+                      ok: _health['shizuku'] == true,
                   sub: _health['shizukuRunning'] == true
                       ? (_health['shizukuGranted'] == true ? l10n.healthShizukuAuthorized : l10n.healthShizukuUnauthorized)
                       : l10n.healthShizukuNotRunning),
-              div(),
-              healthTile(Icons.bar_chart, l10n.healthUsageAccess,
-                  _health['usageStats'] == true),
-              div(),
-              healthTile(Icons.battery_saver, l10n.healthBatteryWhitelist,
-                  _batteryOk,
+              const PpDivider(),
+              PpHealthTile(icon: Icons.bar_chart, title: l10n.healthUsageAccess,
+                      ok: _health['usageStats'] == true),
+              const PpDivider(),
+              PpHealthTile(icon: Icons.battery_saver, title: l10n.healthBatteryWhitelist,
+                      ok: _batteryOk,
                   sub: _batteryOk ? l10n.healthBatteryAdded : l10n.healthBatteryNotAdded,
                   onTap: _batteryOk ? null : () async {
                     await PhonePerceptionService.requestIgnoreBatteryOptimizations();
@@ -775,8 +648,8 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                   }),
             ]),
           // 采集项
-          group(l10n.ppGroupSources, [
-            foldParent(
+          PpGroup(title: l10n.ppGroupSources, children: [
+            PpFoldParent(
               icon: Icons.screen_share_outlined,
               title: l10n.ppScreenTitle,
               subtitle: _serviceEnabled ? l10n.ppScreenRunning : l10n.ppScreenOff,
@@ -786,10 +659,10 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
               onToggle: () => setState(() => _expandScreen = !_expandScreen),
             ),
             if (_expandScreen) ...[
-              div(),
+              const PpDivider(),
               Padding(
                 padding: const EdgeInsets.only(left: 24),
-                child: sw(
+                child: PpSwitch(
                   icon: Icons.content_paste,
                   title: l10n.ppClipboard,
                   subtitle: l10n.ppClipboardSub,
@@ -802,10 +675,10 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                       : null,
                 ),
               ),
-              div(),
+              const PpDivider(),
               Padding(
                 padding: const EdgeInsets.only(left: 24),
-                child: sw(
+                child: PpSwitch(
                   icon: Icons.photo_library_outlined,
                   title: l10n.ppMediaTitle,
                   subtitle: l10n.ppMediaSub,
@@ -813,10 +686,10 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                   onChanged: _enabled ? _toggleMedia : null,
                 ),
               ),
-              div(),
+              const PpDivider(),
               Padding(
                 padding: const EdgeInsets.only(left: 24),
-                child: sw(
+                child: PpSwitch(
                   icon: Icons.video_library_outlined,
                   title: l10n.ppMediaFilesTitle,
                   subtitle: l10n.ppMediaFilesSub,
@@ -825,8 +698,8 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                 ),
               ),
             ],
-            div(),
-            sw(
+            const PpDivider(),
+            PpSwitch(
               icon: Icons.bar_chart_outlined,
               title: l10n.ppUsageStatsTitle,
               subtitle: _usageStatsGranted
@@ -835,8 +708,8 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
               value: _usageStatsOn,
               onChanged: _enabled ? _toggleUsageStats : null,
             ),
-            div(),
-            foldParent(
+            const PpDivider(),
+            PpFoldParent(
               icon: Icons.touch_app_outlined,
               title: l10n.ppActionsTitle,
               subtitle: _actionsOn
@@ -853,10 +726,10 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
               onToggle: () => setState(() => _expandActions = !_expandActions),
             ),
             if (_expandActions) ...[
-              div(),
+              const PpDivider(),
               Padding(
                 padding: const EdgeInsets.only(left: 24),
-                child: nav(
+                child: PpNav(
                   icon: Icons.account_tree_outlined,
                   title: l10n.ppWorkflowTitle,
                   subtitle: l10n.ppWorkflowSub,
@@ -869,8 +742,8 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                 ),
               ),
             ],
-            div(),
-            foldParent(
+            const PpDivider(),
+            PpFoldParent(
               icon: Icons.notifications_outlined,
               title: l10n.ppNotificationTitle,
               subtitle: _notifServiceEnabled
@@ -882,10 +755,10 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
               onToggle: () => setState(() => _expandNotif = !_expandNotif),
             ),
             if (_expandNotif) ...[
-              div(),
+              const PpDivider(),
               Padding(
                 padding: const EdgeInsets.only(left: 24),
-                child: sw(
+                child: PpSwitch(
                   icon: Icons.auto_awesome_outlined,
                   title: l10n.ppAutoNotifyTitle,
                   subtitle: l10n.ppAutoNotifySub,
@@ -898,10 +771,10 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                       : null,
                 ),
               ),
-              div(),
+              const PpDivider(),
               Padding(
                 padding: const EdgeInsets.only(left: 24),
-                child: nav(
+                child: PpNav(
                   icon: Icons.notifications_none_outlined,
                   title: l10n.ppWhitelistTitle,
                   subtitle: l10n.ppWhitelistSub,
@@ -914,8 +787,8 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                 ),
               ),
             ],
-            div(),
-            nav(
+            const PpDivider(),
+            PpNav(
               icon: Icons.security_outlined,
               title: l10n.ppShizukuTitle,
               subtitle: l10n.ppShizukuSub,
@@ -924,7 +797,7 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                 MaterialPageRoute(builder: (_) => const ShizukuScreen()),
               ),
             ),
-            div(),
+            const PpDivider(),
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
               child: Column(
@@ -970,8 +843,8 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
             ),
           ]),
           // 位置
-          group(l10n.ppGroupLocation, [
-            foldParent(
+          PpGroup(title: l10n.ppGroupLocation, children: [
+            PpFoldParent(
               icon: Icons.location_on_outlined,
               title: l10n.ppLocationTitle,
               subtitle: _locationEnabled
@@ -985,10 +858,10 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
               onToggle: () => setState(() => _expandLocation = !_expandLocation),
             ),
             if (_expandLocation) ...[
-              div(),
+              const PpDivider(),
               Padding(
                 padding: const EdgeInsets.only(left: 24),
-                child: sw(
+                child: PpSwitch(
                   icon: Icons.gps_fixed,
                   title: l10n.ppLocGpsTitle,
                   subtitle: _locationGpsEnabled ? l10n.ppLocGpsOnSub : l10n.ppLocGpsOffSub,
@@ -996,10 +869,10 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                   onChanged: _locationEnabled ? _toggleLocationGps : null,
                 ),
               ),
-              div(),
+              const PpDivider(),
               Padding(
                 padding: const EdgeInsets.only(left: 24),
-                child: nav(
+                child: PpNav(
                   icon: Icons.person_pin_circle_outlined,
                   title: l10n.ppLocUserTitle,
                   subtitle: _userLocationDisplay,
@@ -1008,10 +881,10 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                   onTap: () => _editLocation(isUser: true),
                 ),
               ),
-              div(),
+              const PpDivider(),
               Padding(
                 padding: const EdgeInsets.only(left: 24),
-                child: nav(
+                child: PpNav(
                   icon: Icons.smart_toy_outlined,
                   title: l10n.ppLocAiTitle,
                   subtitle: _aiLocationDisplay,
@@ -1020,10 +893,10 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                   onTap: () => _editLocation(isUser: false),
                 ),
               ),
-              div(),
+              const PpDivider(),
               Padding(
                 padding: const EdgeInsets.only(left: 24),
-                child: sw(
+                child: PpSwitch(
                   icon: Icons.sync_alt,
                   title: l10n.ppLocFollowTitle,
                   subtitle: _locationFollow ? l10n.ppLocFollowOnSub : l10n.ppLocFollowOffSub,
@@ -1034,7 +907,7 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
             ],
           ]),
           // 隐私说明
-          group(l10n.ppGroupPrivacy, [
+          PpGroup(title: l10n.ppGroupPrivacy, children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
               child: Text(
@@ -1044,16 +917,16 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
             ),
           ]),
           // 操作与记录
-          group(l10n.ppGroupActions, [
-            nav(
+          PpGroup(title: l10n.ppGroupActions, children: [
+            PpNav(
               icon: Icons.my_location,
               title: l10n.ppCollectNowTitle,
               subtitle: l10n.ppCollectNowSub,
               color: AppColors.success,
               onTap: _collectNow,
             ),
-            div(),
-            nav(
+            const PpDivider(),
+            PpNav(
               icon: Icons.history,
               title: l10n.ppHistoryTitle,
               subtitle: _history.isEmpty ? l10n.ppNoSnapshots : l10n.ppRecentCount('${_history.length}'),
@@ -1096,7 +969,7 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                   ),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 14),
                 ),
-            if (_history.isNotEmpty || _showHistory) div(),
+            if (_history.isNotEmpty || _showHistory) const PpDivider(),
             ListTile(
               leading: const Icon(Icons.delete_outline, color: AppColors.error),
               title: Text(l10n.ppClearAll, style: const TextStyle(fontSize: 15, color: AppColors.error)),
