@@ -110,3 +110,66 @@ def test_max_clamp():
     m = _minutes(info)
     assert 23 * 60 <= m <= 24 * 60
 
+
+# ── 陪伴主动线（2026-08-30）：无数字日常句式兜底 ──
+
+
+def test_vague_meeting():
+    for s in ("我去开会了", "开会去了", "去忙了", "去忙会儿"):
+        info = _info(s, sender="user")
+        assert info is not None, s
+        assert info["event_type"] == "ready", s
+        m = _minutes(info)
+        assert 59 <= m <= 61, s
+
+
+def test_vague_meal():
+    for s in ("去吃饭", "吃饭去了", "去吃饭了", "先去吃饭"):
+        info = _info(s, sender="user")
+        assert info is not None, s
+        assert info["event_type"] == "ready", s
+        m = _minutes(info)
+        assert 39 <= m <= 41, s
+
+
+def test_vague_try():
+    for s in ("等下试", "等会试", "等会儿试", "一会试", "一会儿试", "待会试", "等会试试"):
+        info = _info(s, sender="user")
+        assert info is not None, s
+        assert info["event_type"] == "ready", s
+        m = _minutes(info)
+        assert 9 <= m <= 11, s
+
+
+def test_vague_shower():
+    for s in ("去洗澡", "洗个澡", "洗澡去了", "去洗个澡"):
+        info = _info(s, sender="user")
+        assert info is not None, s
+        assert info["event_type"] == "ready", s
+        m = _minutes(info)
+        assert 29 <= m <= 31, s
+
+
+def test_vague_not_shadow_numbered():
+    """带数字的旧句式仍走 _PATTERNS，行为与顺序不变"""
+    info = _info("我去洗20分钟澡")
+    assert info is not None and info["event_type"] == "shower"
+    m = _minutes(info)
+    assert 19 <= m <= 21
+
+    info = _info("我半小时后回来")
+    assert info is not None and info["event_type"] == "back"
+    m = _minutes(info)
+    assert 29 <= m <= 31
+
+    info = _info("等我10分钟，我马上到")
+    assert info is not None and info["event_type"] == "back"
+    m = _minutes(info)
+    assert 9 <= m <= 11
+
+
+def test_vague_negative_no_promise():
+    """无承诺语义句子不得误触发"""
+    for s in ("等下再说", "回头聊", "那等会吧", "我先睡了"):
+        assert _info(s) is None, s
+

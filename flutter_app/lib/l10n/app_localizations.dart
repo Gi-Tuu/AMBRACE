@@ -2181,30 +2181,6 @@ abstract class AppLocalizations {
   /// **'保存服务器级生图'**
   String get saveSrvImageGen;
 
-  /// No description provided for @srvMultimodal.
-  ///
-  /// In zh, this message translates to:
-  /// **'服务器级全模态大模型'**
-  String get srvMultimodal;
-
-  /// No description provided for @srvMultimodalHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'多模态理解（图片/音频/视频进 LLM）；配置先落库，调用链路后续接入'**
-  String get srvMultimodalHint;
-
-  /// No description provided for @multimodalPresets.
-  ///
-  /// In zh, this message translates to:
-  /// **'全模态供应商预设'**
-  String get multimodalPresets;
-
-  /// No description provided for @saveSrvMultimodal.
-  ///
-  /// In zh, this message translates to:
-  /// **'保存服务器级全模态'**
-  String get saveSrvMultimodal;
-
   /// No description provided for @srvTask.
   ///
   /// In zh, this message translates to:
@@ -7239,6 +7215,108 @@ abstract class AppLocalizations {
   /// **'可视化'**
   String get visualize;
 
+  /// No description provided for @voiceBargeInHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'已打断对方'**
+  String get voiceBargeInHint;
+
+  /// No description provided for @voiceCallEntry.
+  ///
+  /// In zh, this message translates to:
+  /// **'语音通话'**
+  String get voiceCallEntry;
+
+  /// No description provided for @voiceCallEntrySub.
+  ///
+  /// In zh, this message translates to:
+  /// **'实时语音对谈'**
+  String get voiceCallEntrySub;
+
+  /// No description provided for @voiceCallFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'通话失败'**
+  String get voiceCallFailed;
+
+  /// No description provided for @voiceCallReady.
+  ///
+  /// In zh, this message translates to:
+  /// **'通话中，请说话'**
+  String get voiceCallReady;
+
+  /// No description provided for @voiceCallTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'语音通话'**
+  String get voiceCallTitle;
+
+  /// No description provided for @voiceCalling.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在接通…'**
+  String get voiceCalling;
+
+  /// No description provided for @voiceDisconnected.
+  ///
+  /// In zh, this message translates to:
+  /// **'连接已断开'**
+  String get voiceDisconnected;
+
+  /// No description provided for @voiceEndCall.
+  ///
+  /// In zh, this message translates to:
+  /// **'挂断'**
+  String get voiceEndCall;
+
+  /// No description provided for @voiceHoldToTalk.
+  ///
+  /// In zh, this message translates to:
+  /// **'按住说话'**
+  String get voiceHoldToTalk;
+
+  /// No description provided for @voiceInterrupt.
+  ///
+  /// In zh, this message translates to:
+  /// **'打断'**
+  String get voiceInterrupt;
+
+  /// No description provided for @voiceMicPermission.
+  ///
+  /// In zh, this message translates to:
+  /// **'需要麦克风权限'**
+  String get voiceMicPermission;
+
+  /// No description provided for @voiceNotHeard.
+  ///
+  /// In zh, this message translates to:
+  /// **'没听清，再说一遍'**
+  String get voiceNotHeard;
+
+  /// No description provided for @voiceRecording.
+  ///
+  /// In zh, this message translates to:
+  /// **'说话中'**
+  String get voiceRecording;
+
+  /// No description provided for @voiceSpeaking.
+  ///
+  /// In zh, this message translates to:
+  /// **'对方正在说话…'**
+  String get voiceSpeaking;
+
+  /// No description provided for @voiceVadOff.
+  ///
+  /// In zh, this message translates to:
+  /// **'自动聆听'**
+  String get voiceVadOff;
+
+  /// No description provided for @voiceVadOn.
+  ///
+  /// In zh, this message translates to:
+  /// **'自动聆听已开启'**
+  String get voiceVadOn;
+
   /// No description provided for @voiceRetryMsg.
   ///
   /// In zh, this message translates to:
@@ -11378,6 +11456,96 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'毛玻璃模糊减半，中低端机更流畅'**
   String get reduceBlurHint;
+
+  /// No description provided for @memoryTraceTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'记忆检索轨迹'**
+  String get memoryTraceTitle;
+
+  /// No description provided for @memoryTraceGroup.
+  ///
+  /// In zh, this message translates to:
+  /// **'调试'**
+  String get memoryTraceGroup;
+
+  /// No description provided for @memoryTraceEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无检索轨迹'**
+  String get memoryTraceEmpty;
+
+  /// No description provided for @memoryTraceQuery.
+  ///
+  /// In zh, this message translates to:
+  /// **'查询'**
+  String get memoryTraceQuery;
+
+  /// No description provided for @memoryTraceRoute.
+  ///
+  /// In zh, this message translates to:
+  /// **'路线'**
+  String get memoryTraceRoute;
+
+  /// No description provided for @memoryTraceCandidates.
+  ///
+  /// In zh, this message translates to:
+  /// **'候选'**
+  String get memoryTraceCandidates;
+
+  /// No description provided for @memoryTraceLatency.
+  ///
+  /// In zh, this message translates to:
+  /// **'延迟'**
+  String get memoryTraceLatency;
+
+  /// No description provided for @memoryTraceStatus.
+  ///
+  /// In zh, this message translates to:
+  /// **'状态'**
+  String get memoryTraceStatus;
+
+  /// No description provided for @memoryTraceDense.
+  ///
+  /// In zh, this message translates to:
+  /// **'稠密命中'**
+  String get memoryTraceDense;
+
+  /// No description provided for @memoryTraceSparse.
+  ///
+  /// In zh, this message translates to:
+  /// **'稀疏命中'**
+  String get memoryTraceSparse;
+
+  /// No description provided for @memoryTraceRrf.
+  ///
+  /// In zh, this message translates to:
+  /// **'RRF 融合'**
+  String get memoryTraceRrf;
+
+  /// No description provided for @memoryTraceRerank.
+  ///
+  /// In zh, this message translates to:
+  /// **'重排 Top'**
+  String get memoryTraceRerank;
+
+  /// No description provided for @memoryTraceReturned.
+  ///
+  /// In zh, this message translates to:
+  /// **'注入结果'**
+  String get memoryTraceReturned;
+
+  /// No description provided for @memoryTraceSteps.
+  ///
+  /// In zh, this message translates to:
+  /// **'检索步骤'**
+  String get memoryTraceSteps;
+
+  /// No description provided for @memoryTraceNoData.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无数据'**
+  String get memoryTraceNoData;
 }
 
 class _AppLocalizationsDelegate

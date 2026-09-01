@@ -15,7 +15,8 @@ VOICE_MODE_INSTRUCTION = """【语音通话模式】你现在正与用户语音�
 1. 用口语化短句回复，单次不超过 2-3 个短句（15 秒内），一次只说一个重点；
 2. 不要使用列表、编号、markdown、emoji、括号动作或心理描写；
 3. 自然使用语气词（嗯、哦、诶、哎呀），像真人开口说话；
-4. 先简短回应对方的话，再补一句自己的话，不说教、不啰嗦。"""
+4. 先简短回应对方的话，再补一句自己的话，不说教、不啰嗦；
+5. 直接输出要说的内容，绝不要带说话人名字、冒号或（神态）等括号前缀。"""
 
 MAX_RECENT_MESSAGES = 12
 
@@ -41,11 +42,14 @@ async def load_character_voice_params(character_id: int) -> dict:
 async def build_voice_messages(
     user_id: int, character_id: int, session_id: int, user_text: str,
     interrupted_text: str | None = None,
+    user_emotion_hint: str | None = None,
 ) -> list[dict]:
     """组装 OpenAI 消息：角色人设 + 最近消息 + voice_mode 指令 + 用户本轮语音文本
 
     interrupted_text: 上一轮被打断的半截回复（非 None 时注入「你没说完」提示，
     让角色自然衔接而不是重复被打断的内容）。
+    user_emotion_hint（P2-1）：用户情绪提示（如 detect_user_emotion 的
+    "低落需要安慰"）；非空时以系统提示注入，让 AI 回应更贴用户情绪，不改协议。
     """
     from app.models.character import AICharacter
     from app.models.chat_message import ChatMessage
@@ -95,6 +99,9 @@ async def build_voice_messages(
     except Exception as _e:
         _logger.warning("Voice emotion inject failed: %s", _e)
     system_parts.append(VOICE_MODE_INSTRUCTION)
+    # P2-1：用户情绪提示（非空才注入，不改变协议）
+    if user_emotion_hint:
+        system_parts.append(f"用户此刻的情绪：{user_emotion_hint}。回应时顺应、接住 ta 的情绪。")
     system = "\n".join(system_parts)
 
     messages: list[dict] = [{"role": "system", "content": system}]
@@ -105,9 +112,9 @@ async def build_voice_messages(
         if not content:
             continue
         if role == "assistant":
-            content = f"{char.name}（语音说）：{content}"
+            content = f"{char.name} 语音说：{content}"
         else:
-            content = f"{user_name}（语音说）：{content}"
+            content = f"{user_name} 语音说：{content}"
         messages.append({"role": role, "content": content})
     if interrupted_text:
         messages.append({

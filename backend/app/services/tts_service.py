@@ -8,6 +8,7 @@
 """
 import asyncio
 import json
+import re
 import time as _time
 import uuid
 from pathlib import Path
@@ -19,6 +20,7 @@ _logger = get_logger("services.tts")
 
 TTS_DIR = settings.PROJECT_ROOT / "data" / "uploads" / "tts"
 # 音色：按角色性别选择（百炼 qwen-tts 音色 / edge-tts 音色）
+# Phase 0 P0：百炼性别兜底用实测可用音色（女 Cherry / 男 Ethan）；预设见 VOICE_PRESETS。
 _DASHSCOPE_VOICES = {
     "male": "Ethan",
     "female": "Cherry",
@@ -30,13 +32,16 @@ _EDGE_VOICES = {
     None: "zh-CN-XiaoxiaoNeural",
 }
 # 音色预设库（2026-08-11 自定义声色）：key → label / 性别 / edge-tts 音色 / dashscope 近似音色
+# Phase 0 P0（2026-08-30 实测）：本部署 qwen-tts 可用音色仅 Cherry / Serena / Chelsie（女声）+
+# Ethan（男声）；Serenai/Orion/Aria/Indigo/Clare/Morgan 等均 400。故女声预设映射这三档轮换，
+# 男声预设统一 Ethan；方言（东北/陕西/粤语/台湾）百炼无法保留 → 走 edge-tts 兜底音色完整生效。
 VOICE_PRESETS = {
     "xiaoxiao": {"label": "晓晓 · 自然女声", "gender": "female", "edge": "zh-CN-XiaoxiaoNeural", "dashscope": "Cherry"},
-    "xiaoyi": {"label": "晓伊 · 年轻女声", "gender": "female", "edge": "zh-CN-XiaoyiNeural", "dashscope": "Cherry"},
-    "xiaobei": {"label": "晓北 · 东北女声", "gender": "female", "edge": "zh-CN-liaoning-XiaobeiNeural", "dashscope": "Cherry"},
+    "xiaoyi": {"label": "晓伊 · 年轻女声", "gender": "female", "edge": "zh-CN-XiaoyiNeural", "dashscope": "Serena"},
+    "xiaobei": {"label": "晓北 · 东北女声", "gender": "female", "edge": "zh-CN-liaoning-XiaobeiNeural", "dashscope": "Chelsie"},
     "xiaoni": {"label": "晓妮 · 陕西女声", "gender": "female", "edge": "zh-CN-shaanxi-XiaoniNeural", "dashscope": "Cherry"},
-    "hiugaai": {"label": "曉佳 · 粤语女声", "gender": "female", "edge": "zh-HK-HiuGaaiNeural", "dashscope": "Cherry"},
-    "hiumaan": {"label": "曉曼 · 粤语女声", "gender": "female", "edge": "zh-HK-HiuMaanNeural", "dashscope": "Cherry"},
+    "hiugaai": {"label": "曉佳 · 粤语女声", "gender": "female", "edge": "zh-HK-HiuGaaiNeural", "dashscope": "Serena"},
+    "hiumaan": {"label": "曉曼 · 粤语女声", "gender": "female", "edge": "zh-HK-HiuMaanNeural", "dashscope": "Chelsie"},
     "hsiaochen": {"label": "曉臻 · 台湾女声", "gender": "female", "edge": "zh-TW-HsiaoChenNeural", "dashscope": "Cherry"},
     "yunxi": {"label": "云希 · 青年男声", "gender": "male", "edge": "zh-CN-YunxiNeural", "dashscope": "Ethan"},
     "yunjian": {"label": "云健 · 磁性男声", "gender": "male", "edge": "zh-CN-YunjianNeural", "dashscope": "Ethan"},
@@ -72,6 +77,57 @@ def _voice_for(gender: str | None, voices: dict) -> str:
     if g in ("female", "女", "f"):
         return voices["female"]
     return voices[None]
+
+
+# ── 情绪→TTS 参数映射（Phase 0 P0，edge 先行）──────────────────────────
+# 返回 (rate 倍率增量, pitch Hz 增量)。倍率增量叠加到 voice_rate（1.0=正常；
+# -0.15=语速慢 15%），Hz 增量叠加到 voice_pitch（edge-tts 的音调单位为 Hz）。
+# 仅 edge-tts 兜底链路生效；百炼 qwen-tts 参数目前仅支持 format/sample_rate（情感参数待实测）。
+_EMOTION_EDGE_ADJUST: dict[str, tuple[float, float]] = {
+    "sad": (-0.15, -10.0),      # 低落 → 语速 -15%、音调 -10Hz
+    "happy": (0.10, 15.0),      # 开心 → +10%、+15Hz
+    "excited": (0.10, 15.0),    # 激动 → +10%、+15Hz
+    "calm": (-0.05, 0.0),       # 平静 → 语速 -5%、音调不变
+    "tired": (-0.05, 0.0),      # 疲惫 → 语速 -5%、音调不变
+    "angry": (0.05, 5.0),       # 生气 → +5%、+5Hz
+}
+# 中文/别名归一（首个小写单词或别名命中即映射）
+_EMOTION_ALIASES: dict[str, str] = {
+    "sad": "sad", "难过": "sad", "伤心": "sad", "低落": "sad", "委屈": "sad", "upset": "sad",
+    "happy": "happy", "开心": "happy", "高兴": "happy", "喜悦": "happy",
+    "excited": "excited", "兴奋": "excited", "激动": "excited",
+    "calm": "calm", "平静": "calm", "冷静": "calm", "平淡": "calm",
+    "tired": "tired", "疲惫": "tired", "累": "tired", "疲倦": "tired", "困": "tired", "劳累": "tired",
+    "angry": "angry", "生气": "angry", "愤怒": "angry", "恼怒": "angry", "恼火": "angry",
+}
+
+
+def emotion_edge_adjust(emotion: str | None) -> tuple[float, float]:
+    """按情绪映射 edge-tts 的（rate 倍率增量, pitch Hz 增量）；未知/None 返回 (0,0)（零行为变化）。
+
+    sad → 语速 -15%、音调 -10Hz；excited/happy → +10%/+15Hz；
+    calm/tired → 语速 -5%、音调不变；angry → +5%/+5Hz；其余/None → 不变。
+    支持中英文标签、复合/带前缀（very_sad / sad,tired / 开心,疲惫）与大小写。
+    """
+    raw = (emotion or "").strip().lower()
+    if not raw:
+        return (0.0, 0.0)
+    # 优先整体别名命中
+    key = _EMOTION_ALIASES.get(raw, raw)
+    if key in _EMOTION_EDGE_ADJUST:
+        return _EMOTION_EDGE_ADJUST[key]
+    # 复合/带分隔符：按常见分隔符切 token 逐个匹配
+    for tok in re.split(r"[,;+/ _-]+", raw):
+        if not tok:
+            continue
+        canonical = _EMOTION_ALIASES.get(tok, tok)
+        if canonical in _EMOTION_EDGE_ADJUST:
+            return _EMOTION_EDGE_ADJUST[canonical]
+        # 子串兜底（如 sadness→sad、furious→angry）
+        for name, delta in _EMOTION_EDGE_ADJUST.items():
+            if name in tok:
+                return delta
+    return (0.0, 0.0)
 
 
 async def _server_speech_config() -> dict:
@@ -180,9 +236,19 @@ async def synthesize(
     voice_rate: float | None = None,
     voice_pitch: float | None = None,
     user_id: int | None = None,
+    emotion: str | None = None,
 ) -> str | None:
     """合成语音到 uploads/tts/{subdir}/，返回 /uploads/tts/... URL；失败返回 None（不阻塞主流程）。
-    优先百炼（speech_configs 启用时）→ edge-tts 兜底。user_id 非空时受「语音回复」权限约束。"""
+    优先百炼（speech_configs 启用时）→ edge-tts 兜底。user_id 非空时受「语音回复」权限约束。
+
+    emotion（Phase 0 P0，可空）：AI 的当前情绪标记（如 AgentState.emotional_state 的
+    angry/sad/upset，或情感/感知派生的 sad/happy/excited/calm/tired 等；含中文别名）。
+    - edge-tts 兜底链路：经 emotion_edge_adjust 映射为 (rate 倍率增量, pitch Hz 增量)，
+      叠加到 voice_rate/voice_pitch 上（现有 rate/pitch 仍生效）；
+    - 百炼链路：目前 parameters 仅 format/sample_rate，**未接入**情感参数（qwen-tts /
+      qwen3-tts-vd 是否支持 instruction/emotion 等字段待实测，禁止盲猜字段名；见报告）。
+    - emotion=None / 空 / 未知：边缘参数与旧行为完全一致（零行为变化）。
+    """
     if user_id is not None:
         try:
             from app.services import permission_service
@@ -203,8 +269,10 @@ async def synthesize(
     dash_voice = preset["dashscope"] if preset else _voice_for(gender, _DASHSCOPE_VOICES)
     edge_voice = preset["edge"] if preset else _voice_for(gender, _EDGE_VOICES)
     # 语速/语调仅 edge-tts 兜底链路生效（百炼 qwen-tts 参数仅支持 format/sample_rate）
-    edge_rate = f"{max(0.5, min(2.0, voice_rate or 1.0)) - 1.0:+.0%}"
-    edge_pitch = f"{max(-50.0, min(50.0, voice_pitch or 0.0)):+.0f}Hz"
+    # Phase 0 P0：按情绪映射叠加（emotion=None/未知时增量为 0，参数与旧行为一致）
+    _rate_delta, _pitch_delta = emotion_edge_adjust(emotion)
+    edge_rate = f"{max(0.5, min(2.0, (voice_rate or 1.0) + _rate_delta)) - 1.0:+.0%}"
+    edge_pitch = f"{max(-50.0, min(50.0, (voice_pitch or 0.0) + _pitch_delta)):+.0f}Hz"
 
     # 1) 百炼 TTS
     cfg = await _server_speech_config()

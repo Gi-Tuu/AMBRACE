@@ -541,52 +541,6 @@ async def speech_preview(data: dict, user_id: int = Depends(get_current_user_id)
     return {"url": url}
 
 
-# ── 全模态大模型服务器级全局配置（开源部署：填一次，key 不进 .env；仅主账号 user_id=1 可读写）──
-
-
-@router.get("/multimodal-config/server")
-async def get_multimodal_server_config(db: AsyncSession = Depends(get_db), user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
-    """读取服务器级全模态大模型配置（api_key 不回传明文）"""
-    await _require_admin(user_id, lang)
-    from app.models.multimodal_config import MultimodalConfig
-    from app.agent.llm_client import SERVER_CONFIG_UID
-    result = await db.execute(select(MultimodalConfig).where(MultimodalConfig.user_id == SERVER_CONFIG_UID))
-    cfg = result.scalar_one_or_none()
-    if not cfg:
-        return {"enabled": False, "provider": None, "base_url": None, "model": None,
-                "has_api_key": False, "configured": False}
-    return {
-        "enabled": bool(cfg.enabled),
-        "provider": cfg.provider,
-        "base_url": cfg.base_url,
-        "model": cfg.model,
-        "has_api_key": bool(cfg.api_key),
-        "configured": True,
-    }
-
-
-@router.put("/multimodal-config/server")
-async def update_multimodal_server_config(data: dict, db: AsyncSession = Depends(get_db), user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
-    """写入服务器级全模态大模型配置（仅主账号）"""
-    await _require_admin(user_id, lang)
-    from app.models.multimodal_config import MultimodalConfig
-    from app.agent.llm_client import SERVER_CONFIG_UID
-    result = await db.execute(select(MultimodalConfig).where(MultimodalConfig.user_id == SERVER_CONFIG_UID))
-    cfg = result.scalar_one_or_none()
-    if cfg is None:
-        cfg = MultimodalConfig(user_id=SERVER_CONFIG_UID)
-        db.add(cfg)
-        await db.flush()
-    for field in ("provider", "base_url", "api_key", "model"):
-        if field in data:
-            setattr(cfg, field, (data.get(field) or "").strip() or None)
-    if "enabled" in data:
-        cfg.enabled = bool(data.get("enabled"))
-    await db.commit()
-    _logger.info("server multimodal-config updated user=%d enabled=%s provider=%s", user_id, bool(cfg.enabled), cfg.provider)
-    return {"status": "ok", "enabled": bool(cfg.enabled), "configured": True}
-
-
 @router.get("/updates")
 async def get_updates():
     """更新公告：解析 docs/changelog.md，按天折叠（最新在前），供 app 内「更新公告」页展示"""

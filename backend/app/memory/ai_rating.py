@@ -40,6 +40,7 @@ async def _daily_rated(db, character_id: int) -> int:
 
 
 async def _pick_candidates(db, character_id: int, limit: int) -> list:
+    from app.memory.service import _active_status_clause  # #70-C：失效记忆不再评星（flag 关=永真）
     result = await db.execute(
         select(Memory)
         .where(
@@ -48,6 +49,7 @@ async def _pick_candidates(db, character_id: int, limit: int) -> list:
             Memory.is_pinned == False,
             Memory.is_locked == False,
             Memory.ai_rated == False,
+            _active_status_clause(),
         )
         .order_by(Memory.id.asc())
         .limit(limit)

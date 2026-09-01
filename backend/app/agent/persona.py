@@ -124,6 +124,7 @@ async def assemble_persona_context(character_id: int, user_id: int, platform: st
     recent_emotion = "无"
     try:
         from app.models.memory import Memory
+        from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
         async with async_session_factory() as db:
             emo_mem = (await db.execute(
                 select(Memory)
@@ -132,6 +133,7 @@ async def assemble_persona_context(character_id: int, user_id: int, platform: st
                     Memory.sub_type == "emotion",
                     Memory.is_archived == False,
                     Memory.created_at >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7),
+                    _active_status_clause(),
                 )
                 .order_by(Memory.created_at.desc())
                 .limit(1)
@@ -170,6 +172,7 @@ async def assemble_persona_context(character_id: int, user_id: int, platform: st
     if memory_v2 and not memory_limited:
         try:
             from app.models.memory import Memory
+            from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
             async with async_session_factory() as db:
                 ident = (await db.execute(
                     select(Memory)
@@ -178,6 +181,7 @@ async def assemble_persona_context(character_id: int, user_id: int, platform: st
                         Memory.sub_type == "identity",
                         Memory.is_pinned == True,
                         Memory.is_archived == False,
+                        _active_status_clause(),
                     )
                     .order_by(Memory.updated_at.desc())
                     .limit(1)

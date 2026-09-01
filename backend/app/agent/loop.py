@@ -72,6 +72,17 @@ AGENT_FLAGS = {
     "spring_emotion_enabled": True,      # 机制1：弹簧-阻尼情绪（4 维 + 人格基线）
     "life_share_enabled": True,          # 机制4：活动完成自然分享（arpiter 门控 + 配额）
     "preoccupation_enabled": True,       # 机制5：心事微澜（复用 Memory.sub_type）
+    # ── #70 方案A：记忆分层检索与注入（2026-08-30；独立可回滚）──
+    # memory_tiered_inject 开=Top1 L2(240)/其余 L0 分层注入 + L1 桥接 + L0 参与向量；关=统一 150 字旧链路（逐字节一致）。
+    "memory_tiered_inject": False,
+    # ── #70 方案B：检索轨迹可观察（2026-08-30；独立可回滚）──
+    # memory_trace_debug 开=memory_search trace 补 query/派生/各路命中/RRF/rerank 分数/最终注入（只多写 trace，低风险默认开）；
+    # 关=检索/排序/trace 与现状逐字节一致（回归保护）。
+    "memory_trace_debug": True,
+    # ── #70 方案C：记忆取代链 + 级联失效（M1/M2）+ 冷归档/purge（2026-08-30；独立可回滚）──
+    # memory_supersede 开=superseded/stale 状态激活，双通道（SQLite+Chroma）过滤，读取点按状态分流；
+    # 关=所有读取/注入/统计与现状逐字节一致（回归保护）。禁止默认 True（误取代比不取代更伤）。
+    "memory_supersede": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

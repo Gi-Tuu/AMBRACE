@@ -14,7 +14,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog
@@ -92,6 +92,37 @@ class Theme:
 
 
 THEMES = {
+    "aurora": Theme("aurora", "极光", True, {
+        "bg":             "#05070F",
+        "sidebar":        "#070B16",
+        "card":           "#0D1322",
+        "card_hover":     "#121A2E",
+        "divider":        "#101726",
+        "hairline":       "#1B2438",
+        "surface_alt":    "#0F1626",
+        "text":           "#EAF0F9",
+        "text_sec":       "#9AA7BD",
+        "text_muted":     "#67728A",
+        "accent":         "#5EEAD4",
+        "accent_dim":     "#0E2B29",
+        "accent_glow":    "#7CF0DD",
+        "success":        "#34D399",
+        "warning":        "#FBBF24",
+        "error":          "#F87171",
+        "log_bg":         "#070B12",
+        "log_fg":         "#C9D1D9",
+        "card_topline":   "#14213A",
+        "btn_neutral_bg": "#131C33",
+        "btn_neutral_fg": "#D5DCEA",
+        "btn_neutral_hv": "#1A2542",
+        "btn_danger_bg":  "#3B1818",
+        "btn_danger_fg":  "#FCA5A5",
+        "btn_danger_hv":  "#4C1F1F",
+        "entry_bg":       "#0B1120",
+        "pulse_hi":       "#5EEAD4",
+        "pulse_lo":       "#0E3B36",
+        "radius":         16,
+    }),
     "dark": Theme("dark", "暗色", True, {
         "bg":             "#0F1117",
         "sidebar":        "#12141B",
@@ -119,6 +150,8 @@ THEMES = {
         "btn_danger_fg":  "#FCA5A5",
         "btn_danger_hv":  "#4C1F1F",
         "entry_bg":       "#1A1D28",
+        "pulse_hi":       "#34D399",
+        "pulse_lo":       "#0F3D2E",
         "radius":         14,
     }),
     "light": Theme("light", "亮色", False, {
@@ -148,6 +181,8 @@ THEMES = {
         "btn_danger_fg":  "#D72638",
         "btn_danger_hv":  "#FFE8E8",
         "entry_bg":       "#FFFFFF",
+        "pulse_hi":       "#2EA043",
+        "pulse_lo":       "#DCEFE2",
         "radius":         14,
     }),
 }
@@ -296,6 +331,54 @@ class RoundedButton(tk.Canvas):
         elif "!disabled" in states or "normal" in states:
             self._enabled = True
         self._draw()
+
+
+class Segmented(tk.Canvas):
+    """分段选择器（每日/每周/累计）：胶囊底 + 高亮滑块，配色随当前 Theme。"""
+    def __init__(self, parent, theme: "Theme", options, callback, width=156, height=26):
+        self.theme = theme
+        self.opts = options
+        self.callback = callback
+        self.idx = 0
+        self._w0, self._h = width, height
+        super().__init__(parent, bg=parent["bg"], highlightthickness=0, bd=0,
+                         width=width, height=height)
+        self.bind("<Configure>", lambda e: self._draw())
+        self.bind("<Button-1>", self._click)
+
+    def set_index(self, i: int, fire: bool = True):
+        i = max(0, min(len(self.opts) - 1, i))
+        if i == self.idx:
+            return
+        self.idx = i
+        self._draw()
+        if fire and self.callback:
+            self.callback(self.opts[i][0])
+
+    def _click(self, e):
+        seg = self.winfo_width() / len(self.opts)
+        self.set_index(int(e.x // seg))
+
+    def _draw(self):
+        self.delete("all")
+        t = self.theme
+        w, h = self.winfo_width(), self._h
+        if w < 10:
+            w = self._w0
+        n = len(self.opts)
+        seg = w / n
+        self.create_polygon(_rr_points(1, 1, w - 1, h - 1, h / 2), smooth=True,
+                            splinesteps=20, fill=t.btn_neutral_bg, outline="")
+        for i, (_, label) in enumerate(self.opts):
+            x0, x1 = i * seg, (i + 1) * seg
+            if i == self.idx:
+                self.create_polygon(_rr_points(x0 + 2, 2, x1 - 2, h - 2, (h - 4) / 2),
+                                    smooth=True, splinesteps=20, fill=t.accent, outline="")
+                fg = "#FFFFFF"
+            else:
+                fg = t.text_sec
+            self.create_text((x0 + x1) / 2, h / 2, text=label, fill=fg,
+                             font=(FONT, 9, "bold" if i == self.idx else "normal"))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -766,6 +849,132 @@ def _read_token_trend(days=7, db=None, today=None) -> list:
             pass
     return _aggregate_token_trend(rows, days=days, today=today)
 
+# ═══════════════════════════════════════════════════════════════
+# Token 热力图 / 任务占比（近 17 周）
+# ═══════════════════════════════════════════════════════════════
+HEATMAP_WEEKS = 26
+WEEK_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+TASK_LABELS = {
+    "message": "主对话", "chat": "智能体思考", "memory": "记忆处理",
+    "status": "状态评估", "card": "织库卡片", "review": "主动复习",
+    "diary": "日记生成", "game": "游戏对局", "emotion": "情绪关怀",
+    "reflection": "每日反思", "life_tick": "AI 生活", "life_loop": "AI 生活",
+    "life_regression": "AI 生活", "life_share": "AI 生活",
+    "timeline": "时间线", "plugin_ai": "其他", "eval_100": "其他",
+    "": "历史未分类",
+}
+
+
+def _hex_mix(c1: str, c2: str, f: float) -> str:
+    def _hx(c):
+        c = c.lstrip("#")
+        return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+    a, b = _hx(c1), _hx(c2)
+    return "#%02x%02x%02x" % tuple(int(a[i] + (b[i] - a[i]) * f) for i in range(3))
+
+
+def _read_token_heatmap(weeks=HEATMAP_WEEKS, db=None, today=None):
+    """近 N 周按天用量：周一列对齐、定长 weeks*7，末尾为本周未来占位日（future=True）。"""
+    if db is None:
+        db = os.path.join(SERVER_DIR, "data", "sqlite", "ai_companion.db")
+    try:
+        tz = ZoneInfo("Asia/Shanghai")
+    except Exception:
+        tz = timezone(timedelta(hours=8))
+    ref = today or datetime.now(tz)
+    today_date = ref.astimezone(tz).date() if getattr(ref, "tzinfo", None) else ref.date()
+    this_mon = today_date - timedelta(days=today_date.weekday())
+    start = this_mon - timedelta(weeks=weeks - 1)
+    n = weeks * 7
+    day_list = [start + timedelta(days=i) for i in range(n)]
+    buckets = {d.isoformat(): 0 for d in day_list}
+    tasks_by_day = {}
+    if os.path.isfile(db):
+        try:
+            con = sqlite3.connect("file:" + db + "?mode=ro", uri=True, timeout=2)
+            rows = con.execute(
+                "SELECT created_at, COALESCE(task,''), COALESCE(total_tokens,0) FROM llm_usage "
+                "WHERE created_at IS NOT NULL").fetchall()
+            con.close()
+        except Exception:
+            rows = []
+        for created_at, task, tokens in rows:
+            try:
+                s = str(created_at).strip().replace("Z", "+00:00")
+                if "T" not in s and " " in s:
+                    s = s.replace(" ", "T", 1)
+                dt = datetime.fromisoformat(s)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                k = dt.astimezone(tz).date().isoformat()
+                if k in buckets:
+                    buckets[k] += int(tokens or 0)
+                    # 每日任务构成（展示名聚合），供热力图悬浮窗使用
+                    label = TASK_LABELS.get((task or "").strip(), "其他")
+                    day_t = tasks_by_day.setdefault(k, {})
+                    day_t[label] = day_t.get(label, 0) + int(tokens or 0)
+            except Exception:
+                continue
+    return [{"date": d.isoformat(), "tokens": buckets[d.isoformat()],
+             "tasks": tasks_by_day.get(d.isoformat(), {}),
+             "future": d > today_date} for d in day_list]
+
+
+def _fold_topn(items, n=6):
+    """最多 n 行：前 n-1 大 + 唯一「其他」（合并既有其他与剩余项），其他置末位。"""
+    other = sum(x["tokens"] for x in items if x["label"] == "其他")
+    rest = [x for x in items if x["label"] != "其他"]
+    head = rest[:max(1, n - 1)]
+    other += sum(x["tokens"] for x in rest[max(1, n - 1):])
+    out = list(head)
+    if other > 0:
+        out.append({"label": "其他", "tokens": other, "calls": 0})
+    return out
+
+
+def _heat_series(days, mode="day"):
+    """按模式返回每格数值：day 当天 / week 当周合计 / cum 截至当日累计。"""
+    n = len(days)
+    vals = [0] * n
+    if mode == "week":
+        for col in range(n // 7):
+            s = sum(days[col * 7 + r]["tokens"] for r in range(7))
+            for r in range(7):
+                vals[col * 7 + r] = s
+    elif mode == "cum":
+        run = 0
+        for i, d in enumerate(days):
+            run += d["tokens"]
+            vals[i] = run
+    else:
+        vals = [d["tokens"] for d in days]
+    return vals
+
+
+def _heat_levels(vals):
+    """非零值按 50/75/90 分位映射 0..4 档色阶（避免被个别超大日压扁层次）。"""
+    nz = sorted(v for v in vals if v > 0)
+    levels = [0] * len(vals)
+    if not nz:
+        return levels
+
+    def _q(p):
+        return nz[min(len(nz) - 1, int(p * len(nz)))]
+    t1, t2, t3 = _q(.5), _q(.75), _q(.9)
+    for i, v in enumerate(vals):
+        if v <= 0:
+            levels[i] = 0
+        elif v < t1:
+            levels[i] = 1
+        elif v < t2:
+            levels[i] = 2
+        elif v < t3:
+            levels[i] = 3
+        else:
+            levels[i] = 4
+    return levels
+
+
 
 def _read_db_stats() -> dict:
     stats = {"characters": None, "memories": None, "tokens": None}
@@ -815,9 +1024,9 @@ class ControllerApp:
 
         # 加载主题
         cfg0 = _load_config()
-        theme_name = cfg0.get("controller_theme", "dark")
+        theme_name = cfg0.get("controller_theme", "aurora")
         if theme_name not in THEMES:
-            theme_name = "dark"
+            theme_name = "aurora"
         self.theme = THEMES[theme_name]
 
         root.title("拥爱服务器控制台")
@@ -826,10 +1035,10 @@ class ControllerApp:
             scale = dpi / 96.0
         except Exception:
             scale = 1.0
-        w = int(1040 * scale)
-        h = int(680 * scale)
+        w = int(1360 * scale)
+        h = int(880 * scale)
         root.geometry(f"{w}x{h}")
-        root.minsize(int(900 * scale), int(580 * scale))
+        root.minsize(int(1150 * scale), int(700 * scale))
         root.configure(bg=self.theme.bg)
         self._scale = scale
         self._apply_window_icon()
@@ -929,6 +1138,15 @@ class ControllerApp:
     def _build_ui(self):
         self._style_ttk()
         t = self.theme
+        if t.name == "aurora":
+            # Aurora 极光条：窗口最顶缘 2px 三色渐变带（teal / sky / violet）
+            strip = tk.Frame(self.root, height=2)
+            strip.pack(side="top", fill="x")
+            strip.pack_propagate(False)
+            for color in (t.accent, "#7DD3FC", "#A78BFA"):
+                seg = tk.Frame(strip, bg=color, height=2)
+                seg.pack(side="left", fill="both", expand=True)
+                seg.pack_propagate(False)
         self._build_statusbar()
         self._build_header()
         self._build_body()
@@ -1058,9 +1276,9 @@ class ControllerApp:
 
     # ── 卡片工厂 ──
 
-    def _make_card(self, parent, row, col, title, caption=""):
+    def _make_card(self, parent, row, col, title, caption="", height=72):
         t = self.theme
-        card = RoundedCard(parent, t, pad=3)
+        card = RoundedCard(parent, t, pad=3, height=height)
         card.grid(row=row, column=col, sticky="nsew", padx=SP_XS, pady=SP_XS)
         inner = card.inner
         inner.config(padx=SP_LG, pady=SP_MD)
@@ -1073,10 +1291,10 @@ class ControllerApp:
         tk.Frame(inner, bg=t.card).pack(fill="both", expand=True)
         return card, value, cap
 
-    def _wrap_card(self, parent, **pack_kw):
-        """返回一个圆角卡片及其 inner Frame，供自由布局使用。"""
+    def _wrap_card(self, parent, height=None, **pack_kw):
+        """返回一个圆角卡片及其 inner Frame，供自由布局使用。height 显式固定高度。"""
         t = self.theme
-        card = RoundedCard(parent, t, pad=3)
+        card = RoundedCard(parent, t, pad=3, height=height) if height else RoundedCard(parent, t, pad=3)
         card.pack(**pack_kw)
         inner = card.inner
         inner.config(padx=SP_LG, pady=SP_LG)
@@ -1087,20 +1305,41 @@ class ControllerApp:
     def _build_dashboard_page(self) -> tk.Frame:
         t = self.theme
         page = tk.Frame(self._content, bg=t.bg)
-        pad = tk.Frame(page, bg=t.bg)
-        pad.pack(fill="both", expand=True, padx=SP_LG, pady=SP_LG)
+        # 纵向滚动容器：保证任何窗口高度下卡片都按自然高度排布，热力图不再被压没
+        _scroll = tk.Canvas(page, bg=t.bg, highlightthickness=0, bd=0)
+        _sb = ttk.Scrollbar(page, orient="vertical", command=_scroll.yview)
+        _scroll.configure(yscrollcommand=_sb.set)
+        _sb.pack(side="right", fill="y")
+        _scroll.pack(side="left", fill="both", expand=True)
+        pad = tk.Frame(_scroll, bg=t.bg)
+        _pad_win = _scroll.create_window((SP_LG, SP_SM), window=pad, anchor="nw")
+        pad.bind("<Configure>",
+                 lambda e: _scroll.configure(scrollregion=_scroll.bbox("all")))
+
+        def _fit_width(e, c=_scroll, w=_pad_win):
+            c.itemconfig(w, width=max(1, e.width - 2 * SP_LG))
+        _scroll.bind("<Configure>", _fit_width)
+
+        def _on_enter(e, c=_scroll):
+            c.bind_all("<MouseWheel>",
+                       lambda ev: c.yview_scroll(int(-ev.delta / 120), "units"))
+
+        def _on_leave(e):
+            _scroll.unbind_all("<MouseWheel>")
+        _scroll.bind("<Enter>", _on_enter)
+        _scroll.bind("<Leave>", _on_leave)
         tk.Label(pad, text="服务器概览", fg=t.text, bg=t.bg, font=(FONT, 16, "bold")).pack(anchor="w")
         tk.Label(pad, text="运行状态、健康与数据规模一目了然", fg=t.text_muted, bg=t.bg,
                  font=(FONT, 11)).pack(anchor="w", pady=(2, SP_MD))
 
+        # 6 张 KPI 卡 2×3（自然高度）；热力图与占比卡按舒适高度排布，整页可滚动
         grid = tk.Frame(pad, bg=t.bg)
-        grid.pack(fill="both", expand=True)
+        grid.pack(fill="x")
         for c in range(3):
-            grid.columnconfigure(c, weight=1, uniform="card")
-        grid.rowconfigure(0, weight=1)
-        grid.rowconfigure(1, weight=1)
-        grid.rowconfigure(2, weight=0)   # 服务器地址卡按内容高度
-        grid.rowconfigure(3, weight=2)
+            grid.columnconfigure(c, weight=1, uniform="kpi")
+        grid.rowconfigure(0, minsize=72)
+        grid.rowconfigure(1, minsize=72)
+        grid.rowconfigure(2, minsize=330)
 
         _, self.v_server, self.c_server = self._make_card(grid, 0, 0, "服务器状态")
         _, self.v_health, self.c_health = self._make_card(grid, 0, 1, "服务健康", "HTTP 探活")
@@ -1109,49 +1348,36 @@ class ControllerApp:
         _, self.v_mems, self.c_mems = self._make_card(grid, 1, 1, "记忆数", "条记忆")
         _, self.v_tokens, self.c_tokens = self._make_card(grid, 1, 2, "累计 Token", "Token 累计")
 
-        # 服务器地址卡（本机 / 局域网 / Tailscale），可一键复制
-        addr_card = RoundedCard(grid, t, pad=3)
-        addr_card.grid(row=2, column=0, columnspan=3, sticky="ew", padx=SP_XS, pady=SP_XS)
-        addr_inner = addr_card.inner
-        addr_inner.config(padx=SP_LG, pady=SP_SM)
-        addr_head = tk.Frame(addr_inner, bg=t.card)
-        addr_head.pack(fill="x")
-        tk.Label(addr_head, text="服务器地址（手机端「设置 → 服务器地址」填写）",
-                 fg=t.text_sec, bg=t.card, font=(FONT, 11)).pack(side="left")
-        RoundedButton(addr_head, t, "重新探测", command=self._probe_addresses,
-                      variant="neutral", height=28, font_size=10).pack(side="right")
-        self._addr_value = {}
-        for _key, _label in (("local", "本机访问"),
-                             ("lan", "局域网（同 Wi-Fi）"),
-                             ("ts", "Tailscale 跨网")):
-            _row = tk.Frame(addr_inner, bg=t.card)
-            _row.pack(fill="x", pady=1)
-            tk.Label(_row, text=_label, width=18, anchor="w", fg=t.text_muted,
-                     bg=t.card, font=(FONT, 10)).pack(side="left")
-            _v = tk.Label(_row, text="探测中…", anchor="w", fg=t.text,
-                          bg=t.card, font=(FONT, 11, "bold"))
-            _v.pack(side="left", fill="x", expand=True)
-            RoundedButton(_row, t, "复制", command=lambda k=_key: self._copy_address(k),
-                          variant="neutral", height=26, font_size=9).pack(side="right")
-            self._addr_value[_key] = _v
-        # _addresses 只存纯净 URL（供复制），展示文本可带提示
-        self._addresses = {"local": "", "lan": "", "ts": ""}
+        # Token 活动卡：近 17 周热力图（每日/每周/累计），hover 查看当天用量与占比
+        heat_card = RoundedCard(grid, t, pad=3, height=330)
+        heat_card.grid(row=2, column=0, columnspan=3, sticky="nsew", padx=3, pady=3)
+        heat_inner = heat_card.inner
+        heat_inner.config(padx=SP_LG, pady=SP_XS)
+        heat_head = tk.Frame(heat_inner, bg=t.card)
+        heat_head.pack(fill="x")
+        tk.Label(heat_head, text="Token 活动（近 26 周 · 悬停看当日任务构成）",
+                 fg=t.text_sec, bg=t.card,
+                 font=(FONT, 11)).pack(side="left")
+        self._heat_mode = "day"
+        self._heat_days = []
+        self._heat_series_vals = []
+        self._heat_levels = []
+        self._heat_cells = {}
+        self._heat_tip = None
+        self.heat_seg = Segmented(
+            heat_head, t, [("day", "每日"), ("week", "每周"), ("cum", "累计")],
+            self._set_heat_mode, width=156, height=26)
+        self.heat_seg.pack(side="right")
+        self.heat_canvas = tk.Canvas(heat_inner, bg=t.card, highlightthickness=0, bd=0,
+                                     height=168)
+        self.heat_canvas.pack(fill="both", expand=True, pady=(2, 0))
+        self.heat_canvas.bind("<Configure>", lambda e: self._draw_heatmap())
+        self.heat_canvas.bind("<Motion>", self._on_heat_motion)
+        self.heat_canvas.bind("<Leave>", lambda e: self._hide_heat_tip())
 
-        # 趋势卡
-        trend_card = RoundedCard(grid, t, pad=3)
-        trend_card.grid(row=3, column=0, columnspan=3, sticky="nsew", padx=SP_XS, pady=SP_XS)
-        trend_inner = trend_card.inner
-        trend_inner.config(padx=SP_LG, pady=SP_SM)
-        tk.Label(trend_inner, text="近 7 天 Token 用量", fg=t.text_sec, bg=t.card,
-                 font=(FONT, 11)).pack(anchor="w")
-        self.trend_canvas = tk.Canvas(trend_inner, bg=t.card, highlightthickness=0, bd=0)
-        self.trend_canvas.pack(fill="both", expand=True, pady=(SP_XS, 0))
-        self._trend = []
-        self.trend_canvas.bind("<Configure>", lambda e: self._draw_token_trend(self._trend))
-
-        # 快捷操作
+        # 快捷操作（自然排在末尾）
         actions = tk.Frame(pad, bg=t.bg)
-        actions.pack(fill="x", pady=(SP_LG, 0))
+        actions.pack(fill="x", pady=(SP_SM, 0))
         self._dash_btn_start = RoundedButton(actions, t, "启动服务器", command=self.start_server, variant="primary")
         self._dash_btn_start.pack(side="left", padx=(0, SP_XS))
         self._dash_btn_stop = RoundedButton(actions, t, "停止服务器", command=self.stop_server, variant="danger")
@@ -1160,8 +1386,7 @@ class ControllerApp:
         self._dash_btn_restart.pack(side="left", padx=(0, SP_XS))
         self._dash_btn_log = RoundedButton(actions, t, "打开日志文件", command=self.open_log, variant="neutral")
         self._dash_btn_log.pack(side="left", padx=(0, SP_XS))
-        # 进入仪表盘后探测一次服务器地址（后台线程，不卡 UI）
-        self.root.after(300, self._probe_addresses)
+
         return page
 
     # ── 服务器地址 ──
@@ -1224,14 +1449,36 @@ class ControllerApp:
     def _build_server_page(self) -> tk.Frame:
         t = self.theme
         page = tk.Frame(self._content, bg=t.bg)
-        pad = tk.Frame(page, bg=t.bg)
-        pad.pack(fill="both", expand=True, padx=SP_LG, pady=SP_LG)
+        # 纵向滚动容器：保证任何窗口高度下卡片都按自然高度排布，热力图不再被压没
+        _scroll = tk.Canvas(page, bg=t.bg, highlightthickness=0, bd=0)
+        _sb = ttk.Scrollbar(page, orient="vertical", command=_scroll.yview)
+        _scroll.configure(yscrollcommand=_sb.set)
+        _sb.pack(side="right", fill="y")
+        _scroll.pack(side="left", fill="both", expand=True)
+        pad = tk.Frame(_scroll, bg=t.bg)
+        _pad_win = _scroll.create_window((SP_LG, SP_SM), window=pad, anchor="nw")
+        pad.bind("<Configure>",
+                 lambda e: _scroll.configure(scrollregion=_scroll.bbox("all")))
+
+        def _fit_width(e, c=_scroll, w=_pad_win):
+            c.itemconfig(w, width=max(1, e.width - 2 * SP_LG))
+        _scroll.bind("<Configure>", _fit_width)
+
+        def _on_enter(e, c=_scroll):
+            c.bind_all("<MouseWheel>",
+                       lambda ev: c.yview_scroll(int(-ev.delta / 120), "units"))
+
+        def _on_leave(e):
+            _scroll.unbind_all("<MouseWheel>")
+        _scroll.bind("<Enter>", _on_enter)
+        _scroll.bind("<Leave>", _on_leave)
 
         tk.Label(pad, text="服务器控制", fg=t.text, bg=t.bg, font=(FONT, 16, "bold")).pack(anchor="w")
         tk.Label(pad, text="启动 / 停止 / 重启核心服务", fg=t.text_muted, bg=t.bg,
                  font=(FONT, 11)).pack(anchor="w", pady=(2, SP_MD))
 
-        _, inner = self._wrap_card(pad, fill="x", pady=(0, SP_MD))
+        _, inner = self._wrap_card(pad, height=52, fill="x", pady=(0, SP_MD))
+        inner.config(pady=SP_XS)
         btn_row = tk.Frame(inner, bg=t.card)
         btn_row.pack(fill="x")
         self.btn_start = RoundedButton(btn_row, t, "启动服务器", command=self.start_server, variant="primary")
@@ -1243,30 +1490,59 @@ class ControllerApp:
         self.server_pid_label = tk.Label(btn_row, text="", fg=t.text_sec, bg=t.card, font=(FONT, 12))
         self.server_pid_label.pack(side="left", padx=SP_MD)
 
-        # Ollama
-        _, oin = self._wrap_card(pad, fill="x")
-        oin.config(pady=SP_MD)
-        top_row = tk.Frame(oin, bg=t.card)
-        top_row.pack(fill="x")
-        self.ollama_dot = _make_icon(top_row, 14, "dot", t.text_muted, t.card)
+        # 图像理解服务（Ollama）：压缩为单行，与上方开关同一密度，不再独占整块
+        _, ol = self._wrap_card(pad, height=46, fill="x", pady=(0, SP_SM))
+        ol.config(pady=SP_XS)
+        ol_row = tk.Frame(ol, bg=t.card)
+        ol_row.pack(fill="x")
+        self.ollama_dot = _make_icon(ol_row, 14, "dot", t.text_muted, t.card)
         self.ollama_dot.pack(side="left")
-        tk.Label(top_row, text=OLLAMA_LABEL, fg=t.text, bg=t.card,
-                 font=(FONT, 13, "bold")).pack(side="left", padx=(SP_XS, 0))
-        self.ollama_pid_label = tk.Label(top_row, text="", fg=t.text_sec, bg=t.card, font=(FONT, 12))
-        self.ollama_pid_label.pack(side="left", padx=(SP_XS, 0))
-        self.btn_ollama_stop = RoundedButton(top_row, t, "停止 Ollama", command=self.stop_ollama, variant="danger", height=32, font_size=10)
-        self.btn_ollama_stop.pack(side="right", padx=(SP_XS, 0))
-        self.btn_ollama_start = RoundedButton(top_row, t, "启动 Ollama", command=self.start_ollama, variant="primary", height=32, font_size=10)
-        self.btn_ollama_start.pack(side="right")
-
-        vram_row = tk.Frame(oin, bg=t.card)
-        vram_row.pack(fill="x", pady=(SP_SM, 0))
+        tk.Label(ol_row, text=OLLAMA_LABEL, fg=t.text, bg=t.card,
+                 font=(FONT, 12, "bold")).pack(side="left", padx=(SP_XS, 0))
+        self.ollama_pid_label = tk.Label(ol_row, text="", fg=t.text_sec, bg=t.card,
+                                         font=(FONT, 11))
+        self.ollama_pid_label.pack(side="left", padx=(SP_SM, 0))
         self._ollama_low_vram = _load_low_vram()
         self.low_vram_var = tk.BooleanVar(value=self._ollama_low_vram)
         self.chk_low_vram = ttk.Checkbutton(
-            vram_row, text="省显存模式（语言层走 CPU，显存 4.4→2.4GB，玩大型游戏时开启）",
-            variable=self.low_vram_var, command=self.toggle_low_vram)
-        self.chk_low_vram.pack(side="left")
+            ol_row, text="省显存模式", variable=self.low_vram_var,
+            command=self.toggle_low_vram)
+        self.chk_low_vram.pack(side="right", padx=(SP_SM, SP_LG))
+        self.btn_ollama_stop = RoundedButton(ol_row, t, "停止", command=self.stop_ollama,
+                                             variant="danger", height=30, font_size=10)
+        self.btn_ollama_stop.pack(side="right", padx=(SP_XS, 0))
+        self.btn_ollama_start = RoundedButton(ol_row, t, "启动", command=self.start_ollama,
+                                              variant="primary", height=30, font_size=10)
+        self.btn_ollama_start.pack(side="right")
+
+        # 服务器地址（从仪表盘迁到这里：本机 / 局域网 / Tailscale，可一键复制）
+        _, addr_inner = self._wrap_card(pad, height=164, fill="x")
+        addr_inner.config(pady=SP_SM)
+        addr_head = tk.Frame(addr_inner, bg=t.card)
+        addr_head.pack(fill="x")
+        tk.Label(addr_head, text="服务器地址（手机端「设置 → 服务器地址」填写）",
+                 fg=t.text_sec, bg=t.card, font=(FONT, 11)).pack(side="left")
+        RoundedButton(addr_head, t, "重新探测", command=self._probe_addresses,
+                      variant="neutral", height=28, font_size=10).pack(side="right")
+        self._addr_value = {}
+        for _key, _label in (("local", "本机访问"),
+                             ("lan", "局域网（同 Wi-Fi）"),
+                             ("ts", "Tailscale 跨网")):
+            _row = tk.Frame(addr_inner, bg=t.card)
+            _row.pack(fill="x", pady=1)
+            # 先 pack 右侧按钮预留位置，避免长地址把「复制」挤出可视区
+            RoundedButton(_row, t, "复制", command=lambda k=_key: self._copy_address(k),
+                          variant="neutral", height=26, font_size=9).pack(side="right")
+            tk.Label(_row, text=_label, width=16, anchor="w", fg=t.text_muted,
+                     bg=t.card, font=(FONT, 10)).pack(side="left")
+            _v = tk.Label(_row, text="探测中…", anchor="w", fg=t.text,
+                          bg=t.card, font=(FONT, 11, "bold"))
+            _v.pack(side="left", fill="x", expand=True)
+            self._addr_value[_key] = _v
+        # _addresses 只存纯净 URL（供复制），展示文本可带提示
+        self._addresses = {"local": "", "lan": "", "ts": ""}
+        # 进入控制台即探测一次服务器地址（后台线程，不卡 UI）
+        self.root.after(300, self._probe_addresses)
         return page
 
     # ── 日志页 ──
@@ -1615,7 +1891,7 @@ class ControllerApp:
                 ollama_pid = _safe(lambda: _get_ollama_pid() if ollama_alive else 0, 0)
                 health = _safe(_fetch_health, "—")
                 stats = _safe(_read_db_stats, {"characters": None, "memories": None, "tokens": None})
-                stats["trend"] = _safe(_read_token_trend, [])
+                stats["heat"] = _safe(lambda: _read_token_heatmap(HEATMAP_WEEKS), [])
                 self._q.put(("state", alive, pid, paused, log_text, ollama_alive, ollama_pid, health, stats))
             except Exception as e:
                 _safe_traceback()
@@ -1725,58 +2001,153 @@ class ControllerApp:
 
     # ── 趋势图 ──
 
-    def _draw_token_trend(self, trend) -> None:
-        if not hasattr(self, "trend_canvas"):
+    def _set_heat_mode(self, mode: str) -> None:
+        self._heat_mode = mode
+        self._hide_heat_tip()
+        self._draw_heatmap()
+
+    def _heat_cell_colors(self):
+        t = self.theme
+        return [t.surface_alt,
+                _hex_mix(t.card, t.accent, .30),
+                _hex_mix(t.card, t.accent, .55),
+                _hex_mix(t.card, t.accent, .78),
+                t.accent]
+
+    def _draw_heatmap(self) -> None:
+        if not hasattr(self, "heat_canvas"):
             return
         t = self.theme
-        c = self.trend_canvas
+        c = self.heat_canvas
         c.delete("all")
-        w = c.winfo_width()
-        h = c.winfo_height()
-        if w < 80:
-            w = 720
-        if h < 60:
-            h = 190
-        data = trend or []
-        total = sum((x.get("tokens") or 0) for x in data)
-        if not data or total <= 0:
+        self._heat_cells = {}
+        days = self._heat_days or []
+        # 必须使用物理尺寸：画布尚未映射（≈1px）时不硬画，否则格子会画到可视区外而“消失”
+        w, h = c.winfo_width(), c.winfo_height()
+        if w < 60 or h < 40:
+            if days and getattr(self, "_heat_retry", 0) < 30:
+                self._heat_retry = getattr(self, "_heat_retry", 0) + 1
+                self.root.after(120, self._draw_heatmap)
+            return
+        if not days:
             c.create_text(w / 2, h / 2, text="暂无数据", fill=t.text_muted, font=(FONT, 11))
             return
-        maxv = max((x.get("tokens") or 0) for x in data) or 1
-        pad = 26
-        top = 14
-        bottom = h - 20
-        plot_h = bottom - top
-        n = len(data)
-        slot = (w - 2 * pad) / n
-        bar_w = max(10, slot * 0.5)
-        for i, item in enumerate(data):
-            v = item.get("tokens") or 0
-            cx = pad + i * slot + slot / 2
-            c.create_text(cx, bottom + 8, text=_fmt_short_date(item.get("date", "")),
-                          fill=t.text_muted, font=(FONT, 9))
-            if v <= 0:
-                continue
-            bar_h = max(4, (v / maxv) * (plot_h - 8))
-            y0 = bottom - bar_h
-            # 渐变柱
-            steps = max(6, int(bar_h / 3))
-            for s in range(steps):
-                ratio = s / steps
-                y = y0 + bar_h * ratio
-                r1, g1, b1 = 0x60, 0xA5, 0xFA
-                r2, g2, b2 = 0x1E, 0x3A, 0x5F
-                rr = int(r1 + (r2 - r1) * ratio)
-                gg = int(g1 + (g2 - g1) * ratio)
-                bb = int(b1 + (b2 - b1) * ratio)
-                col = f"#{rr:02x}{gg:02x}{bb:02x}"
-                c.create_rectangle(cx - bar_w / 2, y, cx + bar_w / 2, y + bar_h / steps + 1,
-                                   fill=col, outline="")
-            # 柱顶半圆帽（仅高柱）
-            if bar_h > bar_w:
-                r = bar_w / 2
-                c.create_oval(cx - r, y0 - r, cx + r, y0 + r, fill="#60A5FA", outline="")
-            c.create_text(cx, y0 - 8, text=_fmt_compact(v), fill=t.text_sec, font=(FONT, 9))
+        self._heat_retry = 0
+        vals = _heat_series(days, self._heat_mode)
+        levels = _heat_levels(vals)
+        self._heat_series_vals, self._heat_levels = vals, levels
+        left, top, bottom = 30, 8, 22
+        ncols = math.ceil(len(days) / 7)
+        avail_w = w - left - 6
+        # 格子同时受列宽/行高约束，设下限保证可见、设上限避免过大；17 列天然偏窄，左对齐
+        cell = max(9, min(avail_w / ncols, (h - top - bottom) / 7, 36))
+        gap = max(2, cell * .12)
+        size = cell - gap
+        x0 = left
+        colors = self._heat_cell_colors()
+        show_week = cell >= 11
+        if show_week:
+            for r, name in ((0, "周一"), (2, "周三"), (4, "周五")):
+                c.create_text(x0 - 6, top + r * cell + cell / 2, anchor="e",
+                              text=name, fill=t.text_muted, font=(FONT, 8))
+        prev_month = None
+        for i, d in enumerate(days):
+            col, row = i // 7, i % 7
+            x = x0 + col * cell + gap / 2
+            y = top + row * cell + gap / 2
+            mon = int(d["date"][5:7])
+            if row == 0 and mon != prev_month:
+                c.create_text(x, h - 8, anchor="w", text=f"{mon}月",
+                              fill=t.text_muted, font=(FONT, 8))
+                prev_month = mon
+            pts = _rr_points(x, y, x + size, y + size, 3)
+            if d["future"]:
+                c.create_polygon(pts, smooth=True, splinesteps=8, fill="",
+                                 outline=t.hairline, tags=("cell", str(i)))
+            else:
+                c.create_polygon(pts, smooth=True, splinesteps=8,
+                                 fill=colors[levels[i]], outline="",
+                                 tags=("cell", str(i)))
+            self._heat_cells[i] = (x, y, size)
+
+    def _on_heat_motion(self, e) -> None:
+        c = self.heat_canvas
+        cur = c.find_withtag("current")
+        idx = None
+        if cur:
+            for tg in c.gettags(cur[0]):
+                if tg.isdigit():
+                    idx = int(tg)
+                    break
+        if idx is None or not self._heat_days:
+            self._hide_heat_tip()
+            return
+        self._show_heat_tip(idx, e.x_root, e.y_root)
+
+    def _heat_tip_text(self, idx: int) -> str:
+        d = self._heat_days[idx]
+        vals = self._heat_series_vals or _heat_series(self._heat_days, self._heat_mode)
+        v = vals[idx] if idx < len(vals) else 0
+        period_total = sum(x["tokens"] for x in self._heat_days) or 1
+        peak = max((x["tokens"] for x in self._heat_days), default=0) or 1
+        y, m, dd = int(d["date"][:4]), int(d["date"][5:7]), int(d["date"][8:10])
+        wd = WEEK_CN[date(y, m, dd).weekday()]
+        if self._heat_mode == "week":
+            head = f"{m}月第 {idx // 7 + 1} 周 · 本周合计"
+        elif self._heat_mode == "cum":
+            head = f"{m}/{dd} {wd} · 截至当日累计"
+        else:
+            head = f"{m}/{dd} {wd}"
+        if d["future"]:
+            return f"{head}\n（未到）"
+        lines = [head, f"{v:,} Token"]
+        if self._heat_mode != "cum" and v > 0:
+            lines.append(f"占区间 {v / period_total * 100:.1f}% · 峰值的 {v / peak * 100:.0f}%")
+        # Aurora：当日/当周任务类型构成（top5），由悬浮窗承载原占比卡
+        pool = {}
+        if self._heat_mode == "week":
+            for r in range(7):
+                j = (idx // 7) * 7 + r
+                if j < len(self._heat_days):
+                    for lb, tv in (self._heat_days[j].get("tasks") or {}).items():
+                        pool[lb] = pool.get(lb, 0) + tv
+        elif self._heat_mode == "day":
+            pool = dict(d.get("tasks") or {})
+        if pool:
+            bk = _fold_topn(sorted(
+                [{"label": k, "tokens": v} for k, v in pool.items()],
+                key=lambda x: x["tokens"], reverse=True), 5)
+            pt = sum(x["tokens"] for x in bk) or 1
+            seg = "  ".join(f"{x['label']} {x['tokens'] / pt * 100:.0f}%"
+                            for x in bk if x["tokens"] > 0)
+            if seg:
+                lines.append(seg)
+        return "\n".join(lines)
+
+    def _show_heat_tip(self, idx, x_root, y_root) -> None:
+        text = self._heat_tip_text(idx)
+        if self._heat_tip is None:
+            tip = tk.Toplevel(self.root)
+            tip.overrideredirect(True)
+            try:
+                tip.attributes("-topmost", True)
+            except Exception:
+                pass
+            lab = tk.Label(tip, text=text, justify="left", bg="#20242F", fg="#E8EAF0",
+                           font=(FONT, 9), padx=8, pady=5, bd=0)
+            lab.pack()
+            self._heat_tip = (tip, lab)
+        tip, lab = self._heat_tip
+        lab.config(text=text)
+        tip.geometry(f"+{x_root + 14}+{y_root + 14}")
+        tip.deiconify()
+
+    def _hide_heat_tip(self) -> None:
+        if self._heat_tip is not None:
+            try:
+                self._heat_tip[0].withdraw()
+            except Exception:
+                pass
 
     # ── 应用刷新 ──
 
@@ -1795,8 +2166,8 @@ class ControllerApp:
         self._ollama_alive = ollama_alive
         self._sync_button_states()
         self._update_last_refresh()
-        self._trend = stats.get("trend") or []
-        self._draw_token_trend(self._trend)
+        self._heat_days = stats.get("heat") or []
+        self._draw_heatmap()
         if ollama_alive:
             self.ollama_dot._paint_icon(t.success)
             self.ollama_pid_label.config(text="运行中  (PID %d)" % ollama_pid)
@@ -1839,9 +2210,11 @@ class ControllerApp:
         if self._alive:
             t = self.theme
             ratio = (math.sin(self._pulse_phase / 60.0 * 2 * math.pi) + 1) / 2
-            # 在 success 与暗色之间脉冲
-            hr, hg, hb = 0x34, 0xD3, 0x99
-            lr, lg, lb = 0x0F, 0x3D, 0x2E
+            # 呼吸脉冲取主题 token（Aurora=teal 呼吸；dark/light=绿色系）
+            hi = getattr(self.theme, "pulse_hi", "#34D399")
+            lo = getattr(self.theme, "pulse_lo", "#0F3D2E")
+            hr, hg, hb = int(hi[1:3], 16), int(hi[3:5], 16), int(hi[5:7], 16)
+            lr, lg, lb = int(lo[1:3], 16), int(lo[3:5], 16), int(lo[5:7], 16)
             r = int(lr + (hr - lr) * ratio)
             g = int(lg + (hg - lg) * ratio)
             b = int(lb + (hb - lb) * ratio)

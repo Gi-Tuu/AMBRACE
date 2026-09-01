@@ -68,6 +68,17 @@ def _log_to_goal(steps_json: str | None, fallback: str) -> str:
     return fallback
 
 
+def _steps_returned_count(steps: dict) -> int:
+    """memory_search steps 的 returned 取值：int 原样；list（{id,preview}，#70-B）取长度；
+    缺失回退 hit_count / candidate_count（旧日志无 returned 字段）。"""
+    v = steps.get("returned")
+    if isinstance(v, (int, float)):
+        return int(v)
+    if isinstance(v, list):
+        return len(v)
+    return int(steps.get("hit_count") or steps.get("candidate_count") or 0)
+
+
 async def _summarize_task_logs(character_id: int, db: AsyncSession) -> list[dict]:
     """无正式任务时，从最近 AgentTaskLog（排除 blocked 噪音）生成任务化摘要列表"""
     from app.models.agent_task_log import AgentTaskLog
@@ -357,6 +368,8 @@ async def delete_character(
                     AICharacter.name == char_name,
                 )
             )).scalars().all())
+            # #70-C OBS-4：跨角色重名查询属维护性查询，**故意包含历史**（含 superseded/stale，
+            # 便于重名先后离开也能分别记录/去重），故不加 _active_status_clause()。
             stmt = select(Memory).where(
                 Memory.user_id == user_id,
                 Memory.character_id != character_id,
@@ -380,6 +393,12 @@ async def delete_character(
     from app.db.vector_store import delete_memory_vectors_by_character
     await delete_memory_vectors_by_character(character_id)
     await db.execute(sa_delete(Memory).where(Memory.character_id == character_id))
+    # #70-C2：连冷归档 memory_archive 一起物理删（删除角色=完全清除）
+    try:
+        from app.models.memory.memory_archive import MemoryArchive
+        await db.execute(sa_delete(MemoryArchive).where(MemoryArchive.character_id == character_id))
+    except Exception:
+        pass
     await db.execute(sa_delete(AIDiary).where(AIDiary.character_id == character_id))
     await db.execute(sa_delete(ProactiveSettings).where(ProactiveSettings.character_id == character_id))
     await db.execute(sa_delete(ScheduledEvent).where(ScheduledEvent.character_id == character_id))
@@ -537,9 +556,11 @@ async def get_agent_mind(
             _ms_list.append({
                 "route": _r.route,
                 "query": str(_steps.get("query") or "")[:60],
-                # P2-4 语义修正：hit_count=召回候选命中数，returned=实际返回条数（旧日志无 returned 回退 hit_count）
-                "hit_count": int(_steps.get("hit_count") or 0),
-                "returned": int(_steps.get("returned") or _steps.get("hit_count") or 0),
+                # P2-4 语义修正：hit_count=召回候选命中数，returned=实际返回条数（旧日志无 returned 回退 hit_count）。
+                # #70-B：debug 模式 steps 含 candidate_count（=hit_count）且 returned 为 {id,preview} 列表——
+                # 兼容 int 与 list 两种形态，避免新 schema 把既有读端打挂。
+                "hit_count": int(_steps.get("hit_count") or _steps.get("candidate_count") or 0),
+                "returned": _steps_returned_count(_steps),
                 "latency_ms": _r.latency_ms,
                 "created_at": _r.created_at.isoformat() if _r.created_at else None,
             })
@@ -557,6 +578,7 @@ async def get_agent_mind(
     notes = {"identity": None, "pinned": []}
     try:
         from sqlalchemy import or_ as _or_
+        from app.memory.service import _active_status_clause  # #70-C OBS-4：展示聚合仅取 active
         _id_row = (await db.execute(
             select(Memory)
             .where(
@@ -565,6 +587,7 @@ async def get_agent_mind(
                 Memory.sub_type == "identity",
                 Memory.is_pinned == True,
                 Memory.is_archived == False,
+                _active_status_clause(),
             )
             .order_by(Memory.id.desc())
             .limit(1)
@@ -584,6 +607,7 @@ async def get_agent_mind(
                 Memory.is_archived == False,
                 Memory.memory_type != "ai_reflection",
                 _or_(Memory.sub_type.is_(None), Memory.sub_type != "identity"),
+                _active_status_clause(),   # #70-C OBS-4：被 supersede 的置顶记忆不进入展示聚合
             )
             .order_by(Memory.updated_at.desc(), Memory.id.desc())
             .limit(25)
@@ -848,3 +872,49 @@ async def get_state_history(
             for r in rows
         ],
     }
+
+
+@router.get("/{character_id}/memory-trace")
+async def get_memory_trace(
+    character_id: int,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """#70-B：最近的记忆检索轨迹（只读），供调试面板查看「AI 这一轮想起了什么、为什么」。
+
+    与 state-history 同风格：_get_owned_character 归属校验、limit 钳制 1-50、
+    按 AgentTaskLog(character_id, trigger=memory_search) id desc 取最近 N 条；
+    steps 解析失败降级 {}（异常隔离，不阻塞主链路）。
+    """
+    import json as _json
+    from sqlalchemy import select as _select
+    from app.models.agent_task_log import AgentTaskLog
+    await _get_owned_character(db, character_id, user_id, lang)
+    limit = max(1, min(int(limit or 20), 50))
+    async with async_session_factory() as s:
+        rows = (await s.execute(
+            _select(AgentTaskLog)
+            .where(
+                AgentTaskLog.character_id == character_id,
+                AgentTaskLog.trigger == "memory_search",
+            )
+            .order_by(AgentTaskLog.id.desc())
+            .limit(limit)
+        )).scalars().all()
+    traces = []
+    for r in rows:
+        try:
+            steps = _json.loads(r.steps_json) if r.steps_json else {}
+        except Exception:
+            steps = {}
+        traces.append({
+            "id": r.id,
+            "route": r.route,
+            "latency_ms": r.latency_ms,
+            "status": r.status,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "steps": steps,
+        })
+    return {"character_id": character_id, "traces": traces}

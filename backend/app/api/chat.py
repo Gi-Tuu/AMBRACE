@@ -178,7 +178,7 @@ async def websocket_chat(websocket: WebSocket, session_id: int):
                     for _bi in batch_infos:
                         await websocket.send_json({"type": "user_message", "data": _bi})
 
-                    combined = " ".join(messages_list)
+                    combined = "\n".join(messages_list)
                     result = await send_and_receive_chunked(
                         session_id=session_id, user_id=ws_user_id,
                         character_id=character_id, content=combined,

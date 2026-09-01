@@ -113,12 +113,14 @@ async def get_emotion_timeline(character_id: int, days: int = 7, dimension: str 
     # 来源 1：情绪事件记忆（sub_type=emotion）
     try:
         async with async_session_factory() as db:
+            from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
             mems = (await db.execute(
                 select(Memory).where(
                     Memory.character_id == character_id,
                     Memory.sub_type == "emotion",
                     Memory.is_archived == False,
                     Memory.created_at >= start,
+                    _active_status_clause(),
                 ).order_by(Memory.created_at.desc())
             )).scalars().all()
         for m in mems:

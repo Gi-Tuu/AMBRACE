@@ -343,6 +343,21 @@ async def _persist_user_message(
     return user_msg_id, user_msg_info
 
 
+async def _resolve_emotional_state(character_id: int) -> str:
+    """P2-1：取角色八维状态 → 推出 TTS 情感标签（供 final_state 使用）。
+
+    失败/无状态/异常一律返回空串（零行为变化，不抛断主链路）。
+    """
+    try:
+        from app.services.character_state_service import get_character_states
+        from app.utils.ai_emotion import emotion_from_character_states
+        _cs = await get_character_states(character_id)
+        return emotion_from_character_states(_cs) or ""
+    except Exception as e:
+        _logger.warning("Emotion state resolve failed char=%d: %s", character_id, e)
+        return ""
+
+
 async def _run_agent_core(
     session_id: int, user_id: int, character_id: int, content: str,
     lang: str, user_msg_id: int | None,
@@ -451,6 +466,10 @@ async def _run_agent_core(
                 await asyncio.sleep(_delay)
         except Exception:
             pass  # 失败静默，不阻塞回复
+
+    # P2-1 情感语音闭环（#71）：回复前用角色八维状态推出 TTS 情感标签写入 emotional_state，
+    # 供流式逐句合成 / split_response / TTS emotion 共用；失败/异常保持空串（零行为变化）。
+    initial_state["emotional_state"] = await _resolve_emotional_state(character_id)
 
     final_state = await agent.ainvoke(initial_state)
 
@@ -884,10 +903,11 @@ async def send_and_receive_chunked(
                 if row:
                     gender, voice, voice_rate, voice_pitch = row
             from app.services.tts_service import synthesize
+            # Phase 0 P0：从 final_state 情绪标记（emotional_state）取 emotion（无则 None）
             tts_url = await synthesize(
                 full_text, str(session_id),
                 gender=gender, voice=voice, voice_rate=voice_rate, voice_pitch=voice_pitch,
-                user_id=user_id,
+                user_id=user_id, emotion=final_state.get("emotional_state") or None,
             )
         except Exception as e:
             _logger.warning("TTS synthesis failed: %s", e)

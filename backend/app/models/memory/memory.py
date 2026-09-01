@@ -51,6 +51,12 @@ class Memory(Base):
     parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 父节点记忆 ID（parent_id==id 即直接子链）
     node_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # 节点类型：root/branch/leaf/...
     version: Mapped[int] = mapped_column(Integer, default=0)  # 内容版本（改内容时 +1）
+    # ── #70-C 取代链（M1/M2）──
+    status: Mapped[str] = mapped_column(String(12), default="active", server_default="active", index=False)
+    superseded_by: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 被哪条新记忆取代（NULL=未取代）
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 生效时间（有效区间起点）
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 失效时间（取代/回滚时置空）
+    derived_from_ids: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")  # 派生自哪些记忆（JSON 数组，M2 级联）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
@@ -63,6 +69,7 @@ class Memory(Base):
         Index("idx_memories_importance", "importance"),
         Index("idx_memories_next_review", "next_review_at"),
         Index("idx_memories_char_archived", "character_id", "is_archived"),
+        Index("idx_memories_char_status", "character_id", "status"),  # #70-C：按角色取 active/stale 检索热路径
     )
 
     # 关系

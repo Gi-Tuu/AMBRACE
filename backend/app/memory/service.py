@@ -2,7 +2,7 @@
 import json
 import time
 
-from sqlalchemy import select
+from sqlalchemy import select, true as _sql_true
 
 from app.db.database import async_session_factory
 from app.db.vector_store import (
@@ -31,6 +31,34 @@ _logger = get_logger("memory.service")
 PINNED_BONUS = 500.0     # 置顶加分（原 10000 → 500）
 PINNED_QUOTA = 2         # 排序后结果中最多保留的置顶条数，其余置顶不挤占非置顶槽位
 
+# #70-C 状态词表（与 epistemic_status 正交）：active=现行 / superseded=被取代 / stale=派生失效
+_ACTIVE = "active"
+_SUPERSEDED = "superseded"
+_STALE = "stale"
+
+
+def _supersede_flag_on() -> bool:
+    """#70-C 门控：读 memory_supersede flag（延迟 import，避免顶层循环依赖 loop）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("memory_supersede", False))
+    except Exception:
+        return False
+
+
+def _retrievable_status_clause():
+    """检索可见集合 = {active, stale}（stale 在 rerank 降权）。flag 关返回永真，与现状逐字节一致。"""
+    if not _supersede_flag_on():
+        return _sql_true()
+    return Memory.status.in_([_ACTIVE, _STALE])
+
+
+def _active_status_clause():
+    """无条件注入/展示/结算 = 仅 active。flag 关返回永真，与现状逐字节一致。"""
+    if not _supersede_flag_on():
+        return _sql_true()
+    return Memory.status == _ACTIVE
+
 
 def star_from_pct(pct: float) -> int:
     """百分比重要度转 1-5 星：pct/20 取整钳制到 1-5"""
@@ -45,6 +73,18 @@ def _normalize_importance(imp) -> float:
     return v * 20.0 if v <= 5 else v
 
 from app.utils.timeutil import now_naive_utc as _now_naive
+
+
+def _merge_derived(raw, extra_ids: list[int]) -> str:
+    """#70-C M2：把 extra_ids 并入既有 derived_from_ids（JSON 数组字符串），去重、幂等。"""
+    try:
+        cur = [int(x) for x in json.loads(raw or "[]")]
+    except Exception:
+        cur = []
+    for i in extra_ids:
+        if i is not None and int(i) not in cur:
+            cur.append(int(i))
+    return json.dumps(cur, ensure_ascii=False)
 
 
 def _apply_reinforce(m, factor: float, now) -> None:
@@ -122,6 +162,7 @@ async def save_memory(
     chain_id: str | None = None,
     parent_id: int | None = None,
     node_type: str | None = None,
+    derived_from_ids: list[int] | None = None,  # #70-C M2：本记忆派生自哪些记忆 id（默认 None -> '[]'）
 ):
     """保存一条新记忆（结构化 + 向量）；写入前做轻量查重，高度相似则更新原记忆而非新增。
     skip_dedup=True 时跳过写入查重（离散事件类记忆如宠物遗弃，每次独立落库）。
@@ -187,6 +228,9 @@ async def save_memory(
                     if new_pct > float(m.importance or 40.0):
                         m.importance = min(DECAY_MAX_PCT, new_pct)
                     _apply_reinforce(m, REINFORCE_FACTOR_WRITE, _now_naive())
+                    # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，
+                    # 不含自身 id（去掉「∪ 自身 id」自环噪声）。
+                    m.derived_from_ids = _merge_derived(m.derived_from_ids, derived_from_ids or [])
                     await db.commit()
                     _logger.info("Memory dedup on write: char=%d vector-hit id=%d sim=%.3f S=%.1f",
                                  character_id, mem_id, sim, m.strength_days or 0)
@@ -196,7 +240,7 @@ async def save_memory(
             from difflib import SequenceMatcher
             recent_result = await db.execute(
                 select(Memory)
-                .where(Memory.character_id == character_id, Memory.is_archived == False)
+                .where(Memory.character_id == character_id, Memory.is_archived == False, _retrievable_status_clause())
                 .order_by(Memory.created_at.desc())
                 .limit(30)
             )
@@ -214,6 +258,8 @@ async def save_memory(
                     if new_pct > float(m.importance or 40.0):
                         m.importance = min(DECAY_MAX_PCT, new_pct)
                     _apply_reinforce(m, REINFORCE_FACTOR_WRITE, _now_naive())
+                    # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，不含自身 id。
+                    m.derived_from_ids = _merge_derived(m.derived_from_ids, derived_from_ids or [])
                     await db.commit()
                     _logger.info("Memory dedup on write: char=%d text-hit id=%d S=%.1f",
                                  character_id, m.id, m.strength_days or 0)
@@ -228,6 +274,7 @@ async def save_memory(
                     Memory.is_archived == False,
                     Memory.memory_type == memory_type,
                     Memory.created_at >= _now_naive() - timedelta(hours=24),
+                    _retrievable_status_clause(),   # #70-C
                 )
                 .order_by(Memory.created_at.desc())
                 .limit(50)
@@ -243,6 +290,8 @@ async def save_memory(
                     if new_pct > float(_m.importance or 40.0):
                         _m.importance = min(DECAY_MAX_PCT, new_pct)
                     _apply_reinforce(_m, REINFORCE_FACTOR_WRITE, _now_naive())
+                    # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，不含自身 id。
+                    _m.derived_from_ids = _merge_derived(_m.derived_from_ids, derived_from_ids or [])
                     await db.commit()
                     _logger.info("Memory merge on write: char=%d topic-hit id=%d sim=%.2f",
                                  character_id, _m.id, SequenceMatcher(None, _a, b).ratio())
@@ -282,6 +331,7 @@ async def save_memory(
             strength_days=_initial_strength(memory_type),
             last_reinforce_at=_now_naive(),
             next_review_at=_now_naive() + timedelta(days=_initial_strength(memory_type)),
+            derived_from_ids=json.dumps(list(derived_from_ids or []), ensure_ascii=False, default=str),
         )
         db.add(memory)
         await db.flush()
@@ -375,27 +425,33 @@ async def save_memory(
         return memory
 
 
-async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, int] | None = None, relevance_bonus: dict[int, float] | None = None) -> list[dict]:
+async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, int] | None = None, relevance_bonus: dict[int, float] | None = None, return_debug: bool = False):
     """B2 检索加权（向量路径与 keyword 兜底共用，M-P2-3）：以 DB 为准补全元数据
     （向量 meta 的 importance 可能过期），加分项：置顶恒在前、关系/情绪类近 7 天 +15、
     状态/剧情来源近 3 天 +10；60 天以上旧记忆 x0.8 抑制，避免旧记忆重要性虚高盖过
     近期关系温度。v2.1 加成：被多路查询召回（多路命中）说明与当前话题/情绪更相关，
     每多一路 +5。回填查询过滤 is_archived（向量残留的已软删记忆直接剔除，不参与注入）。
+
+    #70 方案B（memory-trace 可观察）：return_debug=False 返回 list（清理临时 _score，零行为变化）；
+    return_debug=True 返回 (ordered, debug)，debug 含 db_pool + rerank_top（Top10 的
+    id/score/importance/has_why/status，体积按方案硬上限）。
     """
     if not results:
-        return []
+        return ([], {"db_pool": 0, "rerank_top": []}) if return_debug else []
     now = _now_naive()
     async with async_session_factory() as db:
         rows = (await db.execute(
             select(Memory).where(
                 Memory.id.in_([r["id"] for r in results]),
-                Memory.is_archived == False,
+                Memory.is_archived == False,   # noqa: E712
+                _retrievable_status_clause(),   # #70-C：双通道过滤（flag 关=永真，逐字节一致）
             )
         )).scalars().all()
     meta = {m.id: m for m in rows}
     results = [r for r in results if r["id"] in meta]
     if not results:
-        return []
+        return ([], {"db_pool": 0, "rerank_top": []}) if return_debug else []
+    _db_pool = len(results)  # #70-B：候选池大小（DB 回填后，能打分的条数）
     # 记忆架构 v2.1 Phase 4a：进行中目标话题 / 未完成（follow_up）话题 → 内容重叠加分
     goal_topics: list[str] = []
     unfin_topics: list[str] = []
@@ -452,6 +508,9 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
             r["speaker_type"] = m.speaker_type
             r["contradiction_count"] = m.contradiction_count
             r["is_pinned"] = bool(m.is_pinned)
+            # #70 方案A：L0 需要 why_it_matters（无则缺省，_final 带出）；status 兼容旧记忆（无该列 => active）
+            r["why_it_matters"] = m.why_it_matters
+            r["status"] = getattr(m, "status", "active")
             try:
                 from app.memory.reliability import reliability_score
                 r["reliability_score"] = reliability_score(m)
@@ -459,6 +518,9 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
                 r["reliability_score"] = None
         score += (_hit.get(r["id"], 1) - 1) * 5
         score += _bonus.get(r["id"], 0.0)   # RRF：按稠密/稀疏两路 rank 融合的相关性加权
+        # #70-C：stale（派生失效结论）降权 0.5，排序落到同分 active 之后；flag 关不参与（逐字节一致）
+        if _supersede_flag_on() and r.get("status") == _STALE:
+            score *= 0.5
         r["_score"] = score
     results.sort(key=lambda x: x.get("_score") or 0, reverse=True)
     # M-P1-4：置顶配额——排序后最多保留 PINNED_QUOTA 条置顶，其余置顶不挤占非置顶槽位；
@@ -467,6 +529,29 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
         _pinned_top = [r for r in results if r.get("is_pinned")][:PINNED_QUOTA]
         _normal_top = [r for r in results if not r.get("is_pinned")]
         results = _pinned_top + _normal_top
+
+    # #70-B：return_debug=True 时返回 (ordered, debug)，debug 含 rerank 前后 Top10 观测；
+    # False 路径与现状一致——清理临时 _score 后返回 list（零行为变化）。
+    if return_debug:
+        debug = {
+            "db_pool": _db_pool,
+            "rerank_top": [
+                {
+                    "id": r["id"],
+                    "score": round(float(r.get("_score") or 0.0), 3),
+                    "importance": round(float(r.get("importance") or 0.0), 1),
+                    "has_why": bool(r.get("why_it_matters")),
+                    "status": r.get("status", "active"),
+                }
+                for r in results[:10]
+            ],
+        }
+        for r in results:
+            r.pop("_score", None)
+        return results, debug
+
+    for r in results:
+        r.pop("_score", None)
     return results
 
 
@@ -484,6 +569,15 @@ async def search_memories(
     """
 
     _t0 = time.monotonic()
+    # #70 方案B（memory-trace 可观察）：读 feature flag，默认开；flag 关时检索/排序/trace 与现状一致。
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        _trace_debug = bool(AGENT_FLAGS.get("memory_trace_debug", True))
+    except Exception:
+        _trace_debug = False
+    # 检索轨迹 debug（只多写 trace，不影响返回结果）：体积硬上限（每路 id≤5、rrf/rerank_top≤10、
+    # preview≤60 字、steps_json≤8000 字符）在组装处逐一钳制。
+    debug: dict = {"query": (query or "")[:60], "derived_queries": list(queries or [])[:3]}
     query_list = [query] + (list(queries or [])[:3])
     results: list[dict] = []
     hit_count: dict[int, int] = {}
@@ -523,9 +617,14 @@ async def search_memories(
         _asyncio.gather(*[_sparse_one(i) for i in range(len(query_list))]),
     )
 
+    # #70-B：稠密/稀疏两路命中 id（每路 ≤5，体积上限）
+    debug["dense_hits"] = [d["id"] for _hits in dense_hits for d in (_hits or [])][:5]
+    debug["sparse_hits"] = [mid for _hits in sparse_hits for mid, _sc in (_hits or [])][:5]
+
     # RRF 融合（2026-08-23 深化）：dense/sparse 各按相关性 rank 归一化，融合分作 relevance_bonus
     # 注入 _rerank；RRF 计算异常时静默退化为纯合并（relevance_bonus 空），不影响主链路。
     relevance_bonus: dict[int, float] = {}
+    debug["rrf_top"] = []
     try:
         _ranked: list[list] = []
         for _hits in dense_hits:
@@ -534,6 +633,8 @@ async def search_memories(
             _ranked.append([_mid for _mid, _sc in _hits])
         _rrf_scores = _rrf.reciprocal_rank_fusion(_ranked, k=_rrf._BRRF_DEFAULT_K)
         relevance_bonus = _rrf.normalized_bonus(_rrf_scores, weight=_rrf._RRF_WEIGHT)
+        # #70-B：RRF 融合后按分数降序的 Top10 id（体积上限）
+        debug["rrf_top"] = sorted(_rrf_scores, key=lambda x: _rrf_scores[x], reverse=True)[:10]
     except Exception as _e:
         _logger.warning("RRF fusion failed, degrade to pure merge: %s", _e)
         relevance_bonus = {}
@@ -564,6 +665,7 @@ async def search_memories(
                     select(Memory).where(
                         Memory.id.in_(_new_sparse_ids),
                         Memory.is_archived == False,   # noqa: E712
+                        _retrievable_status_clause(),   # #70-C：双通道过滤（flag 关=永真）
                     )
                 )).scalars().all()
             for _m in _rows:
@@ -593,6 +695,7 @@ async def search_memories(
                     Memory.character_id == character_id,
                     Memory.is_archived == False,
                     Memory.content.like(f"%{query}%"),
+                    _retrievable_status_clause(),   # #70-C：双通道过滤（flag 关=永真）
                 )
                 .order_by(Memory.importance.desc(), Memory.created_at.desc())
                 .limit(limit * 2)
@@ -615,8 +718,13 @@ async def search_memories(
         candidate_count = len(results)
 
     if results:
-        results = await _rerank(results, character_id, hit_count, relevance_bonus=relevance_bonus)
-        results = results[:limit]
+        # #70-B：flag 开走 _rerank(return_debug=True) 取 debug 并入 trace；关走原非 debug 路径（零行为变化）。
+        if _trace_debug:
+            _ranked, _rk_debug = await _rerank(results, character_id, hit_count, relevance_bonus=relevance_bonus, return_debug=True)
+            debug.update(_rk_debug)
+        else:
+            _ranked = await _rerank(results, character_id, hit_count, relevance_bonus=relevance_bonus)
+        results = _ranked[:limit]
 
     # 插件 Hook：memory_search（调整/追加召回记忆；插件返回的 dict 列表追加到结果，原结果让位给插件追加；异常隔离）
     try:
@@ -663,9 +771,21 @@ async def search_memories(
             "speaker_type": r.get("speaker_type"),
             "reliability_score": r.get("reliability_score"),
             "contradiction_count": r.get("contradiction_count"),
+            "why_it_matters": r.get("why_it_matters"),
+            "status": r.get("status", "active"),
         }
         for r in results
     ]
+
+    # #70-B：汇总 debug 的候选数 / 最终注入（preview≤60）/ 延迟；并保留 hit_count 供旧读端（agent-mind/既有测试）。
+    _latency_ms = int((time.monotonic() - _t0) * 1000)
+    if _trace_debug:
+        debug.update({
+            "candidate_count": candidate_count,
+            "hit_count": candidate_count,  # 兼容旧读端（agent-mind / 既有 trace 测试）
+            "returned": [{"id": m["id"], "preview": (m.get("content") or "")[:60]} for m in _final],
+            "latency_ms": _latency_ms,
+        })
 
     # P0-2 记忆检索 Trace（2026-08-16）：只写不读，失败静默，为 Memory Benchmark 提供数据
     try:
@@ -680,14 +800,13 @@ async def search_memories(
             route = "sparse"
         else:
             route = "dense"
-        enqueue_task_log(
-            character_id=character_id,
-            user_id=(trace_meta or {}).get("user_id"),
-            session_id=(trace_meta or {}).get("session_id"),
-            task_id=(trace_meta or {}).get("task_id"),
-            trigger="memory_search",
-            route=route,
-            steps_json=json.dumps({
+        if _trace_debug:
+            # #70-B：把汇总 debug 写透（只多写 trace，防膨胀：steps_json 硬上限 8000 字符）
+            debug["route"] = route
+            steps_json = json.dumps(debug, ensure_ascii=False)[:8000]
+        else:
+            # 关 flag：trace 与现状逐字节一致（不写扩充 debug）
+            steps_json = json.dumps({
                 "query": query,
                 "queries": len(query_list),
                 "hit_ids": [str(i) for i in (r["id"] for r in results)][:5],
@@ -695,8 +814,16 @@ async def search_memories(
                 # returned=实际返回条数；旧日志无 returned 字段，展示端回退用 hit_count。
                 "hit_count": candidate_count,
                 "returned": len(results),
-            }, ensure_ascii=False),
-            latency_ms=int((time.monotonic() - _t0) * 1000),
+            }, ensure_ascii=False)
+        enqueue_task_log(
+            character_id=character_id,
+            user_id=(trace_meta or {}).get("user_id"),
+            session_id=(trace_meta or {}).get("session_id"),
+            task_id=(trace_meta or {}).get("task_id"),
+            trigger="memory_search",
+            route=route,
+            steps_json=steps_json,
+            latency_ms=_latency_ms,
             status="ok",
         )
     except Exception as _e:
@@ -723,7 +850,7 @@ async def list_memories(
 
     now = _now_naive()
     async with async_session_factory() as db:
-        query = select(Memory).where(Memory.is_archived == False)
+        query = select(Memory).where(Memory.is_archived == False, _active_status_clause())
         if user_id is not None:
             # 严格按用户隔离（置顶摘要写入时 user_id 已为角色拥有者）
             query = query.where(Memory.user_id == user_id)

@@ -77,7 +77,8 @@ async def async_fact_check(character_id: int, user_id: int, user_msg: str,
         for item in (data.get("contradictions") or [])[:3]:
             mid = int(item.get("memory_id") or 0)
             if mid and any(h.get("id") == mid for h in hits):
-                await apply_correction(mid)
+                # #70-C BUG-4 修复：AI 异步自判矛盾 → 只降级，不取代记忆（source='fact_check'）。
+                await apply_correction(mid, source="fact_check")
                 _logger.info("fact check contradiction: char=%d mem=%d reason=%.40s",
                              character_id, mid, str(item.get("reason") or ""))
     except Exception as e:

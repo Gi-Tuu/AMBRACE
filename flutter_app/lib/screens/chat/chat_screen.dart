@@ -26,6 +26,7 @@ import '../../services/home_tab_controller.dart';
 import '../../widgets/ai_avatar.dart';
 import '../../models/character_state.dart';
 import '../character/character_detail_screen.dart';
+import 'voice_call_screen.dart';
 import "package:ai_companion/theme/tokens.dart";
 import "package:ai_companion/widgets/app_page_route.dart";
 
@@ -809,7 +810,46 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
               _pickAndSendFile();
             },
           ),
+          const SizedBox(width: 16),
+          // 语音通话（Phase 1 恢复；基于既有 WS /api/v1/voice/stream）
+          _panelAction(
+            icon: Icons.phone_outlined,
+            color: scheme.primary,
+            label: l10n.voiceCallEntry,
+            sub: l10n.voiceCallEntrySub,
+            onTap: () {
+              setState(() => _morePanelOpen = false);
+              _startVoiceCall();
+            },
+          ),
         ],
+      ),
+    );
+  }
+
+  /// 语音通话入口：进入电话式界面（基于既有 WS /api/v1/voice/stream）。
+  /// 需先有会话与角色；否则提示先选择角色。
+  Future<void> _startVoiceCall() async {
+    final chat = context.read<ChatProvider>();
+    final char = chat.currentCharacter;
+    if (chat.sessionId == null || char == null) {
+      if (mounted) {
+        final l10n = AppLocalizations.of(context)!;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.chooseFriendFirst)));
+      }
+      return;
+    }
+    // 语音通话期间避免与文本输入态冲突
+    FocusManager.instance.primaryFocus?.unfocus();
+    await Navigator.push(
+      context,
+      AppPageRoute(
+        builder: (_) => VoiceCallScreen(
+          baseUrl: ApiClient().baseUrl,
+          token: ApiClient().token,
+          sessionId: chat.sessionId!,
+          character: char,
+        ),
       ),
     );
   }
@@ -1350,23 +1390,31 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                           ),
                         ),
                         const SizedBox(width: 4),
-                        // 切换按钮：气泡式小框切换 连续发送 / 语音发送 / 表情
-                        IconButton(
-                          key: _switchKey,
-                          tooltip: l10n.switchMode,
-                          onPressed: _showSwitchMenu,
-                          icon: Badge(
-                            isLabelVisible: chat.batchMode && chat.pendingBatchCount > 0,
-                            label: Text('${chat.pendingBatchCount}'),
-                            child: Icon(
-                              Icons.swap_horiz,
-                              color: chat.batchMode ? Theme.of(context).colorScheme.tertiary : null,
+                        // 第 3 位：连续发送开启时=「提交收集」模式键（顶替「切换」）；
+                        //         未开启时=原「切换」气泡菜单（连续/语音/表情）。
+                        if (chat.batchMode)
+                          // 连续模式：点按发送已收集消息并退出；pending=0 时仅退出连续模式
+                          IconButton(
+                            tooltip: l10n.chatContinuous,
+                            onPressed: chat.toggleBatchMode,
+                            icon: Badge(
+                              isLabelVisible: chat.pendingBatchCount > 0,
+                              label: Text("${chat.pendingBatchCount}"),
+                              child: Icon(
+                                Icons.playlist_add_check,
+                                color: scheme.tertiary,
+                              ),
                             ),
+                          )
+                        else
+                          IconButton(
+                            key: _switchKey,
+                            tooltip: l10n.switchMode,
+                            onPressed: _showSwitchMenu,
+                            icon: const Icon(Icons.swap_horiz),
                           ),
-                        ),
-                        // 发送按钮：空输入灰色禁用；有内容主题色 + 按压微弹；
-                        // 连续模式点按=发送全部收集的消息（模式切换已移至「切换」）
-                        // 仅随输入文本局部重建，不再整页 setState
+                        // 第 4 位：发送键常驻。连续模式下点按=把当前草稿收集为一条（内部换行原样保留），
+                        // 不再被替换成模式键；空输入灰色禁用，逻辑与非连续模式完全一致。
                         ValueListenableBuilder<TextEditingValue>(
                           valueListenable: _controller,
                           builder: (context, val, _) {
@@ -1376,22 +1424,18 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                                   _maybeReduceMotion(context),
                               child: IconButton(
                                 icon: Icon(
-                                  chat.batchMode ? Icons.playlist_add_check : Icons.send,
-                                  color: chat.batchMode
-                                      ? scheme.tertiary
-                                      : (hasText ? scheme.onPrimary : scheme.onSurfaceVariant),
+                                  Icons.send,
+                                  color: hasText
+                                      ? scheme.onPrimary
+                                      : scheme.onSurfaceVariant,
                                 ),
-                                style: chat.batchMode
-                                    ? null
-                                    : IconButton.styleFrom(
-                                        backgroundColor: hasText
-                                            ? scheme.primary
-                                            : scheme.surfaceContainerHighest
-                                                .withValues(alpha: 0.6),
-                                      ),
-                                onPressed: chat.batchMode
-                                    ? () => chat.toggleBatchMode()
-                                    : (hasText ? _sendMessage : null),
+                                style: IconButton.styleFrom(
+                                  backgroundColor: hasText
+                                      ? scheme.primary
+                                      : scheme.surfaceContainerHighest
+                                          .withValues(alpha: 0.6),
+                                ),
+                                onPressed: hasText ? _sendMessage : null,
                               ),
                             );
                           },

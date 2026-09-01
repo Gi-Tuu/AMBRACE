@@ -838,6 +838,30 @@ async def _execute(item: dict) -> bool:
         owner = getattr(event, "owner", "ai") or "ai"
         hint_text = (event.content_hint or "").strip()
         event_kind = getattr(event, "event_type", "back") or "back"
+        # 陪伴主动线（2026-08-30）：ready 承诺到点且 owner=user 时，若用户在承诺之后
+        # 已主动说了结果（如"开完了/吃完了"），不再重复询问，直接标记兑现。
+        # fail-open：本段任何异常只打日志并继续走原生成消息流程，绝不让承诺丢失。
+        if event_kind == "ready" and owner == "user" and event.session_id and event.source_message_id:
+            try:
+                from app.scheduler.promise_parser import ready_result_seen
+                async with async_session_factory() as _db:
+                    _rows = (await _db.execute(
+                        select(ChatMessage.content)
+                        .where(
+                            ChatMessage.session_id == event.session_id,
+                            ChatMessage.sender_type == "user",
+                            ChatMessage.id > event.source_message_id,
+                        )
+                        .order_by(ChatMessage.id.desc()).limit(5)
+                    )).all()
+                _texts = [r[0] for r in reversed(_rows) if r[0]]
+                if _texts and ready_result_seen(_texts, hint_text):
+                    from app.scheduler.promise_service import mark_fired
+                    await mark_fired(event.id)
+                    _logger.info("Timer ready event %d skipped: user already reported result", event.id)
+                    return True
+            except Exception as e:
+                _logger.warning("Ready result skip check failed (fail-open): %s", e)
         if event_kind == "ready":
             # 完成类承诺：到点问用户做完了吗 / 告诉用户弄好了（如"粥好了"）
             if owner == "user":

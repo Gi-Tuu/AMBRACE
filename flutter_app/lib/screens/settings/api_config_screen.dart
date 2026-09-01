@@ -45,7 +45,7 @@ const Map<String, Map<String, String>> kImagePresets = {
 
 /// API 配置页：#68 P1 改 Tab（LLM / 语音 / 识图 / 生图 / 任务）。
 /// LLM Tab = 服务器级 LLM（仅主账号）+ 我的 LLM 列表（新建/编辑/删除/测试/设默认/共享开关）+ 主账号共享（子账号只读）+ 用量入口。
-/// 全模态 Tab 已移除（后端 multimodal 接口保留不删）。
+/// 全模态 Tab 与后端 multimodal-config 接口均已清理（#68 P7）。
 class ApiConfigScreen extends StatefulWidget {
   const ApiConfigScreen({super.key});
 

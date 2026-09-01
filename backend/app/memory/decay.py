@@ -65,9 +65,10 @@ async def run_memory_decay():
     """记忆衰减与到期删除（惰性结算 + 倒计时到期移除）"""
     deleted = 0
     # P1 性能（2026-08-16）：单 session 批量处理，消除 N+1（原逐条开 session + db.get）
+    from app.memory.service import _active_status_clause  # #70-C：失效记忆不再衰减（flag 关=永真）
     async with async_session_factory() as db:
         result = await db.execute(
-            select(Memory).where(Memory.is_archived == False, Memory.is_pinned == False)
+            select(Memory).where(Memory.is_archived == False, Memory.is_pinned == False, _active_status_clause())
         )
         memories = result.scalars().all()
         for m in memories:

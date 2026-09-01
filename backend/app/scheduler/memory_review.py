@@ -32,6 +32,7 @@ _TYPE_LABEL = {"user_info": "关于你的事", "preference": "你的喜好", "ev
 async def collect_review_events() -> list[dict]:
     """扫描到期记忆 → 每角色 1 条候选（arbiter 事件源，priority=1）。"""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+    from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
     async with async_session_factory() as db:
         rows = (await db.execute(
             select(Memory.character_id, Memory.user_id, Memory.id)
@@ -42,6 +43,7 @@ async def collect_review_events() -> list[dict]:
                 Memory.importance >= REVIEW_MIN_IMPORTANCE,
                 Memory.next_review_at.is_not(None),
                 Memory.next_review_at <= now,
+                _active_status_clause(),
             )
             .order_by(Memory.next_review_at.asc())
         )).all()
@@ -277,6 +279,7 @@ async def _pick_contextual_memory(character_id: int, user_id: int, user_msg: str
     try:
         from app.models.conversation_topic import ConversationTopic
         from app.models.memory import Memory
+        from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
         async with async_session_factory() as db:
             rows = (await db.execute(
                 select(Memory)
@@ -286,6 +289,7 @@ async def _pick_contextual_memory(character_id: int, user_id: int, user_msg: str
                     Memory.is_pinned == False,
                     Memory.is_locked == False,
                     Memory.importance >= REVIEW_MIN_IMPORTANCE,
+                    _active_status_clause(),
                 )
                 .order_by(Memory.importance.desc(), Memory.id.desc())
                 .limit(20)

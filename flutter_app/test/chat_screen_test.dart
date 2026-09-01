@@ -267,4 +267,27 @@ void main() {
       expect(find.text('秒出现'), findsOneWidget);
     });
   });
+
+  group('More panel', () {
+    testWidgets('voice call entry renders; tap without session shows hint', (tester) async {
+      // 强制会话创建失败（startSession 报错 → sessionId 保持 null），走到「无会话」守卫。
+      api.handle('POST', '/api/v1/chat/sessions',
+          (_) => FakeApiAdapter.body({'detail': 'fail'}, 500));
+
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+      final l10n = l10nOf(tester);
+
+      await tester.tap(find.byTooltip(l10n.moreFunctions));
+      await tester.pumpAndSettle();
+      // 语音通话入口出现在「更多功能」面板（微信式 + 按钮区）
+      expect(find.text(l10n.voiceCallEntry), findsOneWidget);
+      expect(find.text(l10n.voiceCallEntrySub), findsOneWidget);
+
+      // 无会话点击 → 提示先选择角色（不进入通话页）
+      await tester.tap(find.text(l10n.voiceCallEntry));
+      await tester.pumpAndSettle();
+      expect(find.text(l10n.chooseFriendFirst), findsOneWidget);
+    });
+  });
 }

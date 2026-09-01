@@ -41,6 +41,7 @@ async def summarize_memories(character_id: int, memory_type: str, force: bool = 
     from app.models.character import AICharacter
 
     label = _TYPE_CN.get(memory_type, memory_type)
+    from app.memory.service import _active_status_clause  # #70-C：失效记忆不进摘要（flag 关=永真）
     async with async_session_factory() as db:
         # 已有置顶摘要 → 节流判断
         existing_result = await db.execute(
@@ -49,6 +50,7 @@ async def summarize_memories(character_id: int, memory_type: str, force: bool = 
                 Memory.memory_type == memory_type,
                 Memory.is_pinned == True,
                 Memory.is_archived == False,
+                _active_status_clause(),
             )
         )
         existing = existing_result.scalars().all()
@@ -69,6 +71,7 @@ async def summarize_memories(character_id: int, memory_type: str, force: bool = 
                 Memory.memory_type == memory_type,
                 Memory.is_pinned == False,
                 Memory.is_archived == False,
+                _active_status_clause(),
             )
             .order_by(Memory.importance.desc(), Memory.created_at.desc())
             .limit(20)
@@ -141,6 +144,7 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
         return {"generated": False, "memory_id": None, "reason": "disabled"}
 
     async with async_session_factory() as db:
+        from app.memory.service import _active_status_clause  # #70-C：失效记忆不进摘要（flag 关=永真）
         existing_result = await db.execute(
             select(Memory).where(
                 Memory.character_id == character_id,
@@ -148,6 +152,7 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
                 Memory.sub_type == IDENTITY_SUB_TYPE,
                 Memory.is_pinned == True,
                 Memory.is_archived == False,
+                _active_status_clause(),
             )
         )
         existing = existing_result.scalars().all()
@@ -167,6 +172,7 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
                 Memory.is_archived == False,
                 Memory.is_pinned == False,
                 Memory.memory_type == "user_info",
+                _active_status_clause(),
             )
             .order_by(Memory.importance.desc(), Memory.created_at.desc())
             .limit(20)
@@ -177,6 +183,7 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
                 Memory.character_id == character_id,
                 Memory.is_archived == False,
                 Memory.why_it_matters.is_not(None),
+                _active_status_clause(),
             )
             .order_by(Memory.importance.desc(), Memory.created_at.desc())
             .limit(20)

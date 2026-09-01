@@ -2,7 +2,7 @@
 """记忆链条绑定（chain）后端增量测试（2026-08-20）：
 - save_memory 传 chain 字段（chain_id/parent_id/node_type）落库且 version 默认 0；
 - PATCH /api/v1/memories/{id}/content 改内容 → version+1 且向量重算覆盖（created_at 保留）；
-- DELETE /api/v1/memories/{id}/tree?cascade=false 返回直接子列表不删；cascade=true 软删根+子（is_archived=True）。
+- DELETE /api/v1/memories/{id}/tree?cascade=false 返回直接子列表不删；cascade=true 经 purge_memory **物理删**热行（#70-C BUG-3：非 is_archived 软删）。
 （项目未装 pytest-asyncio，统一 asyncio.run 同步执行；临时 SQLite 文件库，不触碰 backend/data）
 """
 import asyncio
@@ -41,7 +41,15 @@ def mem_db(monkeypatch):
     asyncio.run(_init())
     monkeypatch.setattr(memsvc, "async_session_factory", factory)
     monkeypatch.setattr(memdedup, "async_session_factory", factory)
+    # #70-C BUG-3：purge_memory 物理删热行；须让 supersede 也用临时库（否则跨用例残留
+    # 的 supersede.async_session_factory 会指向前一个用例已 dispose 的 engine，导致 deleted 计数错乱）
+    import app.memory.supersede as sup
+    monkeypatch.setattr(sup, "async_session_factory", factory)
     monkeypatch.setattr(memsvc, "delete_memory_vector", _noop)  # 避免真实 ChromaDB 调用
+    # #70-C R-3：purge_memory 函数内从 vector_store 导入 delete_memory_vector（拿模块属性，
+    # 非 memsvc 引用），须直接 patch vector_store，否则 cascade 用例会误触真实 Chroma
+    import app.db.vector_store as _vs
+    monkeypatch.setattr(_vs, "delete_memory_vector", _noop)
     monkeypatch.setattr(memdedup, "_schedule_dedup", _noop)     # save_memory 尾部异步去重不触发
     monkeypatch.setattr(db_mod, "async_session_factory", factory)  # API/_get_owned_memory 走临时库
     yield factory
@@ -222,9 +230,10 @@ def test_tree_cascade_true_软删根与子(mem_db, monkeypatch):
 
     resp, root, c1, c2 = asyncio.run(_main())
     assert resp == {"status": "ok", "cascade": True, "deleted": 3}
-    assert root.is_archived is True
-    assert c1.is_archived is True
-    assert c2.is_archived is True
+    # #70-C BUG-3：remove_memory_tree 走 purge_memory → 物理删热行（非 is_archived 软删）
+    assert root is None
+    assert c1 is None
+    assert c2 is None
 
 
 def test_tree_cascade_true_无子节点_只删根(mem_db, monkeypatch):
@@ -236,4 +245,5 @@ def test_tree_cascade_true_无子节点_只删根(mem_db, monkeypatch):
 
     resp, root = asyncio.run(_main())
     assert resp == {"status": "ok", "cascade": True, "deleted": 1}
-    assert root.is_archived is True
+    # #70-C BUG-3：remove_memory_tree 走 purge_memory → 物理删热行（非 is_archived 软删）
+    assert root is None

@@ -13,7 +13,7 @@ import sys
 import zipfile
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_ROOT = r"release_output"
+OUT_ROOT = r"D:\Codex-Projects\output"
 OUT_DIR = os.path.join(OUT_ROOT, "ai_companion_public")
 
 # git 跟踪清单 = 复制白名单（排除一切未入库的本机生成物）
@@ -31,10 +31,10 @@ EXCLUDE_PREFIX = (".agents/", "flutter.bat",  # 内部工具/技能目录与本�
 
 # 副本内脱敏替换（相对路径 → [(old, new), ...]）
 DESENS = {
-    "flutter_app/lib/screens/home_screen.dart": [("192.168.x.x", "192.168.x.x")],
+    "flutter_app/lib/screens/home_screen.dart": [("192.168.1.100", "192.168.x.x")],
     "scripts/make_release.py": [
-        (r"release_output", "release_output"),
-        ("192.168.x.x", "192.168.x.x"),
+        (r"D:\Codex-Projects\output", "release_output"),
+        ("192.168.1.100", "192.168.x.x"),
     ],
     # 脱敏本机内部路径（开发/评估脚本，发布包不暴露作者磁盘路径）
     "scripts/evaluate_bm25_hybrid.py": [

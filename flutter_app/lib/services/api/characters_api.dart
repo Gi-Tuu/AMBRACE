@@ -68,6 +68,16 @@ extension CharactersApi on ApiClient {
     return r.data as Map<String, dynamic>;
   }
 
+  /// #70-B：最近的记忆检索轨迹（只读），供调试面板查看「AI 这一轮想起了什么、为什么」。
+  Future<List<Map<String, dynamic>>> getMemoryTrace(int characterId, {int limit = 20}) async {
+    final r = await dio.get(
+      '/api/v1/characters/$characterId/memory-trace',
+      queryParameters: {'limit': limit},
+    );
+    return ((r.data as Map<String, dynamic>)['traces'] as List? ?? const [])
+        .cast<Map<String, dynamic>>();
+  }
+
   /// 事件时钟：列出未到期的定时承诺（私聊右上角可视化展示，2026-08-15）
   Future<List<Map<String, dynamic>>> listTimers(int characterId) async {
     final r = await dio.get('/api/v1/scheduler/timers/$characterId');

@@ -90,11 +90,13 @@ async def _synth_stream_block(text: str, state: AgentState) -> str | None:
     try:
         from app.services.tts_service import synthesize
         params = state.get("voice_params") or {}
+        # Phase 0 P0：取 AgentState 情绪标记（emotional_state，如 angry/sad/upset；无则 None，零行为变化）
         return await synthesize(
             text, subdir=state.get("tts_subdir") or "stream",
             gender=params.get("gender"), voice=params.get("voice"),
             voice_rate=params.get("voice_rate"), voice_pitch=params.get("voice_pitch"),
             user_id=state.get("user_id"),
+            emotion=state.get("emotional_state") or None,
         )
     except Exception as e:
         _logger.warning("Stream TTS block failed: %s", e)

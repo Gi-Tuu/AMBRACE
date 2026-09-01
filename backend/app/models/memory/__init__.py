@@ -11,6 +11,7 @@ from app.models.memory.shared_event import SharedEvent
 from app.models.memory.weave_card import WeaveCard, WeaveCardMemory, WeaveCardCharacter
 from app.models.memory.lorebook import LorebookEntry
 from app.models.memory.world_fact import WorldFact
+from app.models.memory.memory_archive import MemoryArchive  # #70-C2：冷归档记忆
 
 __all__ = [
     "Memory",
@@ -25,4 +26,5 @@ __all__ = [
     "WeaveCardCharacter",
     "LorebookEntry",
     "WorldFact",
+    "MemoryArchive",
 ]

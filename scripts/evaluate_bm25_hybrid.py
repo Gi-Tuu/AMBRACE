@@ -5,7 +5,7 @@
 2026-08-23 重建，原测试集清理临时环境时丢失），构建一个**临时 SQLite 记忆库**与一把
 **隔离的 BM25 持久化目录**，用真实 bge-m3 嵌入（= 项目向量路）与真实 BM25（= 项目 sparse 路）
 跑三种检索路径，逐查询统计 top5 命中率，输出对比表到
-release_output\\bm25_hybrid_eval.md。
+D:\\Codex-Projects\\output\\bm25_hybrid_eval.md。
 
 - 「仅向量」dense：关闭 sparse 路与 RRF，等价于只走向量主链路（importance 排序）；
 - 「向量+BM25(现)」hybrid：dense + sparse 候选池合并去重（无 RRF，当前线上行为）；
@@ -39,7 +39,7 @@ from app.memory.embedding import text_embedding
 from app.models.memory import Memory
 
 _FIXTURE = _BACKEND / "tests" / "fixtures" / "bm25_p1_queries.json"
-_OUT = Path("release_output/bm25_hybrid_eval.md")
+_OUT = Path("D:/Codex-Projects/output/bm25_hybrid_eval.md")
 _CHAR = 89001
 
 

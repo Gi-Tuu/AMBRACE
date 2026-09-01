@@ -1118,18 +1118,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get saveSrvImageGen => '保存服务器级生图';
 
   @override
-  String get srvMultimodal => '服务器级全模态大模型';
-
-  @override
-  String get srvMultimodalHint => '多模态理解（图片/音频/视频进 LLM）；配置先落库，调用链路后续接入';
-
-  @override
-  String get multimodalPresets => '全模态供应商预设';
-
-  @override
-  String get saveSrvMultimodal => '保存服务器级全模态';
-
-  @override
   String get srvTask => '服务器级任务模型（按用途指定）';
 
   @override
@@ -3823,6 +3811,57 @@ class AppLocalizationsZh extends AppLocalizations {
   String get visualize => '可视化';
 
   @override
+  String get voiceBargeInHint => '已打断对方';
+
+  @override
+  String get voiceCallEntry => '语音通话';
+
+  @override
+  String get voiceCallEntrySub => '实时语音对谈';
+
+  @override
+  String get voiceCallFailed => '通话失败';
+
+  @override
+  String get voiceCallReady => '通话中，请说话';
+
+  @override
+  String get voiceCallTitle => '语音通话';
+
+  @override
+  String get voiceCalling => '正在接通…';
+
+  @override
+  String get voiceDisconnected => '连接已断开';
+
+  @override
+  String get voiceEndCall => '挂断';
+
+  @override
+  String get voiceHoldToTalk => '按住说话';
+
+  @override
+  String get voiceInterrupt => '打断';
+
+  @override
+  String get voiceMicPermission => '需要麦克风权限';
+
+  @override
+  String get voiceNotHeard => '没听清，再说一遍';
+
+  @override
+  String get voiceRecording => '说话中';
+
+  @override
+  String get voiceSpeaking => '对方正在说话…';
+
+  @override
+  String get voiceVadOff => '自动聆听';
+
+  @override
+  String get voiceVadOn => '自动聆听已开启';
+
+  @override
   String get voiceRetryMsg => '网络好像不太稳定，要重试发送吗？（录音已保留）';
 
   @override
@@ -6089,4 +6128,49 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get reduceBlurHint => '毛玻璃模糊减半，中低端机更流畅';
+
+  @override
+  String get memoryTraceTitle => '记忆检索轨迹';
+
+  @override
+  String get memoryTraceGroup => '调试';
+
+  @override
+  String get memoryTraceEmpty => '暂无检索轨迹';
+
+  @override
+  String get memoryTraceQuery => '查询';
+
+  @override
+  String get memoryTraceRoute => '路线';
+
+  @override
+  String get memoryTraceCandidates => '候选';
+
+  @override
+  String get memoryTraceLatency => '延迟';
+
+  @override
+  String get memoryTraceStatus => '状态';
+
+  @override
+  String get memoryTraceDense => '稠密命中';
+
+  @override
+  String get memoryTraceSparse => '稀疏命中';
+
+  @override
+  String get memoryTraceRrf => 'RRF 融合';
+
+  @override
+  String get memoryTraceRerank => '重排 Top';
+
+  @override
+  String get memoryTraceReturned => '注入结果';
+
+  @override
+  String get memoryTraceSteps => '检索步骤';
+
+  @override
+  String get memoryTraceNoData => '暂无数据';
 }

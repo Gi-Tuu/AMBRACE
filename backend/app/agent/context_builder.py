@@ -1003,7 +1003,15 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     core_text = _clip_text_to_quota(core_text, _qt["core_memories"])
     anchors_text = _clip_text_to_quota(anchors_text, _qt["anchors"])
     loops_text = _clip_text_to_quota(loops_text, _qt["open_loops"])
-    memories_text = _clip_text_to_quota(memories_text, _qt["memories"])
+    # #70 方案A：memories 配额按 flag 动态——关=400（旧链路一致），开=500（分层注入受益）
+    _memories_quota = _qt["memories"]
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        if AGENT_FLAGS.get("memory_tiered_inject", False):
+            _memories_quota = 500
+    except Exception:
+        pass
+    memories_text = _clip_text_to_quota(memories_text, _memories_quota)
     moments_text = _clip_text_to_quota(moments_text, _qt["moments"])
     pets_text = _clip_text_to_quota(pets_text, _qt["pets"])
     phone_perception = _clip_text_to_quota(phone_perception, _qt["phone_perception"])

@@ -1153,19 +1153,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get saveSrvImageGen => 'Save server image gen';
 
   @override
-  String get srvMultimodal => 'Server multimodal model';
-
-  @override
-  String get srvMultimodalHint =>
-      'Multimodal understanding (image/audio/video to LLM); config stored for later';
-
-  @override
-  String get multimodalPresets => 'Multimodal provider presets';
-
-  @override
-  String get saveSrvMultimodal => 'Save server multimodal';
-
-  @override
   String get srvTask => 'Server task model (per-purpose)';
 
   @override
@@ -3950,6 +3937,57 @@ class AppLocalizationsEn extends AppLocalizations {
   String get visualize => 'Visualize';
 
   @override
+  String get voiceBargeInHint => 'They were interrupted';
+
+  @override
+  String get voiceCallEntry => 'Voice call';
+
+  @override
+  String get voiceCallEntrySub => 'Talk live';
+
+  @override
+  String get voiceCallFailed => 'Call failed';
+
+  @override
+  String get voiceCallReady => 'In call · speak up';
+
+  @override
+  String get voiceCallTitle => 'Voice call';
+
+  @override
+  String get voiceCalling => 'Connecting…';
+
+  @override
+  String get voiceDisconnected => 'Connection lost';
+
+  @override
+  String get voiceEndCall => 'End call';
+
+  @override
+  String get voiceHoldToTalk => 'Hold to talk';
+
+  @override
+  String get voiceInterrupt => 'Interrupt';
+
+  @override
+  String get voiceMicPermission => 'Microphone permission required';
+
+  @override
+  String get voiceNotHeard => 'I didn\'t catch that, say again';
+
+  @override
+  String get voiceRecording => 'Speaking';
+
+  @override
+  String get voiceSpeaking => 'They\'re speaking…';
+
+  @override
+  String get voiceVadOff => 'Auto-listen';
+
+  @override
+  String get voiceVadOn => 'Auto-listen on';
+
+  @override
   String get voiceRetryMsg =>
       'Network seems unstable. Retry sending? (recording kept)';
 
@@ -6295,4 +6333,49 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get reduceBlurHint =>
       'Halve frosted-glass blur for smoother performance';
+
+  @override
+  String get memoryTraceTitle => 'Memory Retrieval Trace';
+
+  @override
+  String get memoryTraceGroup => 'Debug';
+
+  @override
+  String get memoryTraceEmpty => 'No retrieval traces yet';
+
+  @override
+  String get memoryTraceQuery => 'Query';
+
+  @override
+  String get memoryTraceRoute => 'Route';
+
+  @override
+  String get memoryTraceCandidates => 'Candidates';
+
+  @override
+  String get memoryTraceLatency => 'Latency';
+
+  @override
+  String get memoryTraceStatus => 'Status';
+
+  @override
+  String get memoryTraceDense => 'Dense hits';
+
+  @override
+  String get memoryTraceSparse => 'Sparse hits';
+
+  @override
+  String get memoryTraceRrf => 'RRF fused';
+
+  @override
+  String get memoryTraceRerank => 'Rerank top';
+
+  @override
+  String get memoryTraceReturned => 'Injected';
+
+  @override
+  String get memoryTraceSteps => 'Retrieval steps';
+
+  @override
+  String get memoryTraceNoData => 'No data';
 }
