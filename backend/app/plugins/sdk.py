@@ -31,7 +31,7 @@ def hook(hook_name: str):
 def action(action_name: str):
     """装饰器：注册插件自定义行为（arbiter 通过 registry.run_plugin_action 调用）。
 
-    用于需要插件内部执行逻辑的候选（如抖音评论回复生成入队），
+    用于需要插件内部执行逻辑的候选（如渠道评论回复生成入队），
     区别于 hook 的广播分发；actions 由 arbiter 定向调用。
     """
     def deco(func):
@@ -142,6 +142,23 @@ def register_provider(kind: str, name: str, factory, meta: dict | None = None) -
         raise RuntimeError("sdk.register_provider 只能在插件 main.py 加载时调用")
     from app.providers.registry import register_provider as _reg
     _reg(kind, name, factory, meta or {}, source=source)
+
+
+def register_channel(name: str, port, meta: dict | None = None) -> None:
+    """X5（2026-09-01）：注册渠道扩展（仅插件 main.py 加载期可调）。
+
+    - 与内核共用注册口 app.providers.channel.register_channel（kind=channel，source=本插件名）；
+    - port 实现内核 ChannelPort 协议（publish/pull_comments/reply_comment/upload_media/binding_status）；
+    - meta 契约见 app/providers/channel.py 模块 docstring（label/plugin/scope/risk_level/
+      permissions/binding——渠道只上报能力，绑定唯一性等裁决在内核）；
+    - 同源重载（sync_plugins_db 重扫）= 替换；插件停用后 resolve 不可见；
+      插件目录被移除后 sync_plugins_db 清理残留注册。
+    """
+    source = registry.current_plugin_name()
+    if source is None:
+        raise RuntimeError("sdk.register_channel 只能在插件 main.py 加载时调用")
+    from app.providers.channel import register_channel as _reg
+    _reg(name, port, meta=meta, source=source)
 
 
 # ── X4（2026-08-31）：只读端口——受控只读访问内核数据，替代"import 内部模块"（重构即碎）──

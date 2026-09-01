@@ -113,8 +113,8 @@ def l1_db(monkeypatch):
 
 
 def test_l1_join(l1_db):
-    from app.models.chat.session import ChatSession
-    from app.models.memory.daily_summary import DailySummary
+    from app.models.chat import ChatSession
+    from app.models.memory import DailySummary
 
     async def _main():
         async with l1_db() as db:
@@ -139,8 +139,8 @@ def test_l1_join(l1_db):
 
 
 def test_l1_join_超长摘要截到L1配额(l1_db):
-    from app.models.chat.session import ChatSession
-    from app.models.memory.daily_summary import DailySummary
+    from app.models.chat import ChatSession
+    from app.models.memory import DailySummary
 
     long_text = "天" * 300
 

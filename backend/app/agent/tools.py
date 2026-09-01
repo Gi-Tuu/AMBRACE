@@ -86,10 +86,22 @@ def list_tools() -> list[ToolSpec]:
     return list(_REGISTRY.values())
 
 
+def _plugin_risk_level(plugin_name: str) -> str:
+    """插件 action 风险档（X5）：注册渠道上报 risk_level（meta），未注册渠道默认 MEDIUM"""
+    try:
+        from app.providers.channel import channel_for_plugin
+        hit = channel_for_plugin(plugin_name)
+        if hit is not None and str((hit[1] or {}).get("risk_level") or "").lower() == "high":
+            return RISK_HIGH
+    except Exception:
+        pass
+    return RISK_MEDIUM
+
+
 def sync_plugin_tools() -> int:
     """把已加载插件的 action 自动登记为 ToolSpec（Phase C，2026-08-16）。
 
-    工具名 = f"{plugin}.{action}"；scope 按插件映射（browser/douyin/extension，与 permission_service._plugin_scope 一致）；
+    工具名 = f"{plugin}.{action}"；scope 按插件映射（browser/渠道注册/extension，与 permission_service._plugin_scope 一致）；
     执行入口由 ToolRunner 按 plugin+plugin_action 调 registry.run_plugin_action（与现有行为一致）。
     返回登记数。
     """
@@ -112,7 +124,7 @@ def sync_plugin_tools() -> int:
             _REGISTRY[tool_name] = ToolSpec(
                 name=tool_name,
                 description=f"插件 {name} 的 action：{action_name}",
-                risk_level=RISK_HIGH if "douyin" in name else RISK_MEDIUM,
+                risk_level=_plugin_risk_level(name),
                 idempotent=False,
                 scope=scope,
                 plugin=name,

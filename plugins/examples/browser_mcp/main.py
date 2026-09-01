@@ -203,7 +203,7 @@ async def _ensure_schema() -> None:
 
 async def _save_snapshot(url: str, domain: str, title: str, text: str, images: list) -> None:
     from app.db.database import async_session_factory
-    from app.models.browser import BrowserSnapshot
+    from app.models.user import BrowserSnapshot
     from sqlalchemy import select
     try:
         async with async_session_factory() as db:
@@ -223,7 +223,7 @@ async def _save_snapshot(url: str, domain: str, title: str, text: str, images: l
 
 async def _recent_snapshots(limit: int = 5) -> list[dict]:
     from app.db.database import async_session_factory
-    from app.models.browser import BrowserSnapshot
+    from app.models.user import BrowserSnapshot
     from sqlalchemy import select
     try:
         async with async_session_factory() as db:
@@ -516,7 +516,7 @@ async def on_tick(ctx):
     try:
         await _ensure_schema()
         from app.db.database import async_session_factory
-        from app.models.browser import BrowserSnapshot
+        from app.models.user import BrowserSnapshot
         from sqlalchemy import delete
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
         async with async_session_factory() as db:

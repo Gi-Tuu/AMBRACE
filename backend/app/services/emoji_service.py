@@ -2,7 +2,7 @@
 from sqlalchemy import select, delete
 
 from app.db.database import async_session_factory
-from app.models.emoji_pack import UserEmojiPack, UserCustomEmoji
+from app.models.life import UserEmojiPack, UserCustomEmoji
 from app.utils.logger import get_logger
 
 _logger = get_logger("services.emoji")

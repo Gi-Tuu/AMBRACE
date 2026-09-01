@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Phase I 测试：群聊/社交统一 Runtime 可观测（group_chat trace + flag 回退）"""
 from app.agent import loop
-from app.api.chat_groups import _trace_group_reply
+from app.application.chat_groups import _trace_group_reply  # F8：api 门面已删，改指定义模块
 
 
 def test_group_reply_trace_写入(monkeypatch):

@@ -22,8 +22,8 @@ from app.models.character import AICharacter
 from app.models.life import (
     LifeState, LifeActivityLog, LifeGoal, LifeSchedule, LifeChatIntent,
 )
-from app.models.proactive_settings import ProactiveSettings
-from app.models.character_state import CharacterState
+from app.models.character import ProactiveSettings
+from app.models.character import CharacterState
 from app.models.pet import Pet
 from app.life.life_state import (
     apply_tick, get_life_state, phase_of, beijing_hour, default_needs, clamp,
@@ -275,7 +275,7 @@ class LifeLoopTask:
     async def _in_dnd(self, db, user_id: int) -> bool:
         """用户免打扰时段判断（dnd_enabled 且当前北京时间在时段内）。"""
         try:
-            from app.models.user.user_dnd import UserDndSettings
+            from app.models.user import UserDndSettings
             row = (await db.execute(
                 select(UserDndSettings).where(UserDndSettings.user_id == user_id)
             )).scalar_one_or_none()

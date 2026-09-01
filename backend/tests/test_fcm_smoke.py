@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session
 
 from app.models.base import Base
-from app.models.device.device_token import UserDeviceToken
+from app.models.device import UserDeviceToken
 
 
 def test_schema():

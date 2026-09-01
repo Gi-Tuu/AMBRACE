@@ -6,7 +6,7 @@ get_updates（GET /api/v1/system/updates）依赖 docs/changelog.md；新格式
 `## 2026-08-28（标题，待发布）` 均需兼容；循环 cur 需初始化为 None，
 避免首行即表格/无日期时 NameError（旧实现导致接口 500）。
 """
-from app.api.system import _changelog_title, _parse_changelog
+from app.application.system import _changelog_title, _parse_changelog  # F8：api 门面已删，改指定义模块
 
 CHANGELOG_NEW = """\
 ## 待发布（2026-08-28）

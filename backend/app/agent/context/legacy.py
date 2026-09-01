@@ -344,7 +344,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         try:
             emo = _perception.get("emotion") or ""
             if not emo:
-                from app.utils.emotion import detect_user_emotion
+                from app.domain.emotion.model import detect_user_emotion
                 emo = detect_user_emotion(state.get("user_message", ""))
             if emo:
                 user_emotion = emo
@@ -359,7 +359,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     user_manual_state = ""
     if "user_manual_state" not in _registry_done:
         try:
-            from app.models.user_state import UserState
+            from app.models.user import UserState
             async with async_session_factory() as db:
                 _ur = await db.execute(select(UserState).where(UserState.user_id == state.get("user_id", 1)))
                 _u = _ur.scalar_one_or_none()
@@ -703,8 +703,8 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         # 织库全注入（角色设置-社交开关，2026-08-12）：开启后把该角色织库卡片注入上下文
         # （卡片为 LLM 整理后的全景记忆，为未来「全注入对话」提供结构化数据）
         try:
-            from app.models.proactive_settings import ProactiveSettings as _PS
-            from app.models.weave_card import WeaveCard, WeaveCardCharacter
+            from app.models.character import ProactiveSettings as _PS
+            from app.models.memory import WeaveCard, WeaveCardCharacter
             from sqlalchemy import or_ as _or_
 
             async with async_session_factory() as db:
@@ -773,8 +773,8 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         # 私·织库「AI 生活」注入（角色设置-社交「AI 生活分享」开关，2026-08-12）：
         # 信任机制与隐私上锁同源——trust≥60 有概率提及、≥70 高概率、<60 不提及（角色有权交流自己的私生活）
         try:
-            from app.models.character_state import CharacterState as _CS
-            from app.models.proactive_settings import ProactiveSettings as _PS
+            from app.models.character import CharacterState as _CS
+            from app.models.character import ProactiveSettings as _PS
             import random as _rnd
 
             # M1-S10（2026-08-31）：trust 复用本轮 character_states_snapshot（chat_service 一次带出，
@@ -892,7 +892,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         # 家庭群聊动态（Phase 3，2026-08-15）：角色可回忆所在群最近发生的事
         # 数据源 = chat_group_messages 共享表（天然符合知识边界：只知道群里公开说过的），零额外 LLM
         try:
-            from app.models.chat_group import ChatGroup as _CG, ChatGroupMember as _CGM, ChatGroupMessage as _CGMsg
+            from app.models.chat import ChatGroup as _CG, ChatGroupMember as _CGM, ChatGroupMessage as _CGMsg
             async with async_session_factory() as db:
                 _gids = (
                     await db.execute(
@@ -995,7 +995,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
                     # 主动生图概率兜底（2026-08-14）：开关开启 + 用户未明确要求 + 距上次生图任务 >= 4h + 随机 30% → 注入本轮提醒
                     elif _active_img:
                         try:
-                            from app.models.image_gen_task import ImageGenTask as _ImgTask
+                            from app.models.life import ImageGenTask as _ImgTask
                             async with async_session_factory() as _dbg:
                                 _last_task = (
                                     await _dbg.execute(

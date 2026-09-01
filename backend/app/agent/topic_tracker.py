@@ -10,7 +10,7 @@ import time
 from sqlalchemy import select
 
 from app.db.database import async_session_factory
-from app.models.conversation_topic import ConversationTopic
+from app.models.memory import ConversationTopic
 from app.utils.logger import get_logger
 
 _logger = get_logger("agent.topic_tracker")

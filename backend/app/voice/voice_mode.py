@@ -52,7 +52,7 @@ async def build_voice_messages(
     "低落需要安慰"）；非空时以系统提示注入，让 AI 回应更贴用户情绪，不改协议。
     """
     from app.models.character import AICharacter
-    from app.models.chat_message import ChatMessage
+    from app.models.chat import ChatMessage
     from app.models.user import User
 
     async with async_session_factory() as db:
@@ -85,7 +85,7 @@ async def build_voice_messages(
         system_parts.append(f"聊天风格：{char.chat_style}")
     # P0-3 语音情绪注入（2026-08-16）：读角色当前八维状态中影响语气的维度，口语化注入，不改链路行为
     try:
-        from app.models.character_state import CharacterState
+        from app.models.character import CharacterState
         async with async_session_factory() as _sdb:
             _st = (await _sdb.execute(
                 select(CharacterState).where(CharacterState.character_id == character_id)

@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy import delete, select
 
 from app.db.database import async_session_factory
-from app.models.device.device_token import UserDeviceToken
+from app.models.device import UserDeviceToken
 from app.utils.logger import get_logger
 
 _logger = get_logger("push_service")

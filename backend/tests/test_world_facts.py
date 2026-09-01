@@ -12,7 +12,7 @@ from app.events.facts import (
     _status_fresh, _latest_facts_by_predicate, fold_status_update,
 )
 from app.events.schema import EPISTEMIC_FACT, EPISTEMIC_PLANNED
-from app.models.world_fact import WorldFact
+from app.models.memory import WorldFact
 
 
 def test_audience_list_formats_types():

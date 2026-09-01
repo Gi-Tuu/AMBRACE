@@ -21,8 +21,8 @@ from starlette.testclient import TestClient
 
 from app.auth.deps import get_current_user_id
 from app.db.database import async_session_factory
-from app.models.mcp_server import MCPServer
-from app.models.tool_permission import ToolPermission
+from app.models.mcp import MCPServer
+from app.models.agent import ToolPermission
 
 ADMIN = 1
 PERM_UID = 9101  # 独立测试用户（非主账号、无既有权限行）

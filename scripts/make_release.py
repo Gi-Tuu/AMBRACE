@@ -37,10 +37,6 @@ DESENS = {
         ("192.168.1.100", "192.168.x.x"),
     ],
     # 脱敏本机内部路径（开发/评估脚本，发布包不暴露作者磁盘路径）
-    "scripts/evaluate_bm25_hybrid.py": [
-        ("D:/Codex-Projects/output", "release_output"),
-        (r"D:\\Codex-Projects\\output", "release_output"),
-    ],
     "scripts/scan_hardcoded_colors.py": [
         (r"D:\\AICompanionServer", "AMBRACE_ROOT"),
     ],

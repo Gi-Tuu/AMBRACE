@@ -347,7 +347,7 @@ def test_archive_cold_purge(c_db, monkeypatch):
     factory, _ = c_db
     _set_flag(monkeypatch, True)
     import app.memory.supersede as sup
-    from app.models.memory.memory_archive import MemoryArchive
+    from app.models.memory import MemoryArchive
     from datetime import timedelta
     from app.utils.timeutil import now_naive_utc
 
@@ -381,7 +381,7 @@ def test_purge_hot_memory(c_db, monkeypatch):
     factory, _ = c_db
     _set_flag(monkeypatch, True)
     import app.memory.supersede as sup
-    from app.models.memory.memory_archive import MemoryArchive
+    from app.models.memory import MemoryArchive
     import app.db.vector_store as vs
 
     deleted = []

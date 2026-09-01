@@ -10,8 +10,8 @@ import json as _json
 import os
 import random
 from app.db.database import get_db, async_session_factory
-from app.models.chat_session import ChatSession
-from app.models.chat_message import ChatMessage
+from app.models.chat import ChatSession
+from app.models.chat import ChatMessage
 from app.schemas.chat import SendMessageRequest, ChatMessageResponse, ChatHistoryResponse, StreamMessageRequest
 from app.services.chat_service import (
     create_session, send_and_receive, send_and_receive_chunked, send_and_receive_stream, continue_chat,
@@ -177,7 +177,7 @@ async def websocket_chat(websocket: WebSocket, session_id: int):
 
                     await websocket.send_json({"type": "typing", "is_typing": True})
 
-                    from app.models.chat_message import ChatMessage as ChatMsg
+                    from app.models.chat import ChatMessage as ChatMsg
                     async with async_session_factory() as db:
                         batch_infos = []
                         for msg_text in messages_list:
@@ -582,7 +582,7 @@ async def delete_message(
     lang: str = Header(default="zh"),
 ):
     """删除指定聊天消息（同步删除关联记忆）"""
-    from app.models.chat_message import ChatMessage
+    from app.models.chat import ChatMessage
     from app.models.memory import Memory
     from sqlalchemy import select
 

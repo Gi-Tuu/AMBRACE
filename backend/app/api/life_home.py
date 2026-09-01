@@ -15,7 +15,7 @@ from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
 from app.utils.clamp import clamp_int as _clamp
 from app.models.character import AICharacter
-from app.models.character_state import CharacterState
+from app.models.character import CharacterState
 from app.models.life import LifeState, LifeActivityLog
 from app.models.pet import Pet
 from app.models.user import User

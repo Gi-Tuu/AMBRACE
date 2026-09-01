@@ -6,8 +6,8 @@ from sqlalchemy import select
 
 from app.db.database import async_session_factory
 from app.models.memory import Memory
-from app.models.state_trigger_log import StateTriggerLog
-from app.models.storyline_event import StorylineEvent
+from app.models.character import StateTriggerLog
+from app.models.character import StorylineEvent
 from app.utils.logger import get_logger
 
 _logger = get_logger("services.emotion_timeline")

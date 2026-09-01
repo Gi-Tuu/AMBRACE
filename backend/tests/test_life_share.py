@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.scheduler import life_share
-from app.models.character_state import CharacterState
-from app.models.proactive_settings import ProactiveTriggerLog
+from app.models.character import CharacterState
+from app.models.character import ProactiveTriggerLog
 
 
 @pytest.fixture

@@ -443,10 +443,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Group replies use character memories; characters do not know each others private matters';
 
   @override
-  String get flagDouyinRuntime => 'Unified platform reply runtime';
+  String get flagSocialRuntime => 'Unified platform reply runtime';
 
   @override
-  String get flagDouyinRuntimeHint => 'Platform replies use character memories';
+  String get flagSocialRuntimeHint => 'Platform replies use character memories';
 
   @override
   String get flagAdvanced => 'Advanced switches';

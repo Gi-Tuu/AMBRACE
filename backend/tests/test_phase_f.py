@@ -122,7 +122,7 @@ def test_note_calendar_execute_tool_落库去重():
     async def _count():
         from sqlalchemy import select as _sel
         from app.db.database import async_session_factory as _asf
-        from app.models.phone_desktop import CalendarNote
+        from app.models.device import CalendarNote
         async with _asf() as db:
             rows = (await db.execute(_sel(CalendarNote).where(
                 CalendarNote.character_id == char_id,
@@ -143,7 +143,7 @@ def test_note_calendar_execute_tool_落库去重():
     async def _cleanup():
         from sqlalchemy import delete as _del
         from app.db.database import async_session_factory as _asf2
-        from app.models.phone_desktop import CalendarNote
+        from app.models.device import CalendarNote
         async with _asf2() as db:
             await db.execute(_del(CalendarNote).where(
                 CalendarNote.character_id == char_id,

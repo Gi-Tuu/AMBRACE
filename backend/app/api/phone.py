@@ -11,7 +11,7 @@ from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
 from app.schemas.phone import AutoReportRequest
 from app.db.database import async_session_factory
-from app.models.phone_snapshot import CheckInRequest, PhoneSnapshot
+from app.models.device import CheckInRequest, PhoneSnapshot
 from app.services.upload_service import UPLOAD_DIR, save_image
 from app.utils.logger import get_logger
 

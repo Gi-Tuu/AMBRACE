@@ -59,7 +59,7 @@ async def _get_server_row(server_id: int):
     from sqlalchemy import select
 
     from app.db.database import async_session_factory
-    from app.models.mcp_server import MCPServer
+    from app.models.mcp import MCPServer
 
     async with async_session_factory() as db:
         return (await db.execute(select(MCPServer).where(MCPServer.id == server_id))).scalar_one_or_none()
@@ -200,7 +200,7 @@ class MCPClientManager:
         from sqlalchemy import select
 
         from app.db.database import async_session_factory
-        from app.models.mcp_server import MCPServer
+        from app.models.mcp import MCPServer
 
         try:
             async with async_session_factory() as db:
@@ -379,7 +379,7 @@ class MCPClientManager:
         """落一条 MCP 调用日志（mcp_call_logs；写失败静默，不影响调用主链路）。"""
         try:
             from app.db.database import async_session_factory
-            from app.models.mcp_call_log import McpCallLog
+            from app.models.mcp import McpCallLog
 
             conn = self._conns.get(server_id)
             server_name = conn.server_name if conn is not None else ""
@@ -833,7 +833,7 @@ class MCPClientManager:
     async def _update_db_status(self, server_id: int, status: str, last_error: str | None) -> None:
         """回写 mcp_servers.status / last_error（失败静默）并广播状态事件。"""
         from app.db.database import async_session_factory
-        from app.models.mcp_server import MCPServer
+        from app.models.mcp import MCPServer
 
         try:
             async with async_session_factory() as db:
@@ -868,7 +868,7 @@ class MCPClientManager:
     async def _cache_tools_db(self, server_id: int, tools: list[dict]) -> None:
         """把工具列表缓存写回 tools_cache_json（失败静默）。"""
         from app.db.database import async_session_factory
-        from app.models.mcp_server import MCPServer
+        from app.models.mcp import MCPServer
 
         try:
             async with async_session_factory() as db:

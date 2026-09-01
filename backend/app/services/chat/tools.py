@@ -116,9 +116,9 @@ def _extract_memo(text: str) -> str | None:
 async def _save_calendar_note(character_id: int, note_date: str, note_text: str, note_author: str = "") -> bool:
     """日历备注落库（去重防重复；署名角色名；失败静默）。Phase F 拆出的纯落库函数。"""
     try:
-        from app.models.phone_desktop import CalendarNote
+        from app.models.device import CalendarNote
         from sqlalchemy import select as _sa_select
-        from app.models.phone_desktop import CalendarNote as _CalNote
+        from app.models.device import CalendarNote as _CalNote
         async with async_session_factory() as db:
             dup = (await db.execute(_sa_select(_CalNote).where(
                 _CalNote.character_id == character_id,
@@ -140,7 +140,7 @@ async def _save_memo_note(character_id: int, memo_text: str, note_author: str = 
     """备忘录落库（去重防重复；署名角色名；失败静默）。Phase F 拆出的纯落库函数。"""
     try:
         from sqlalchemy import select as _sa_select2
-        from app.models.phone_desktop import MemoNote as _MemoNote2
+        from app.models.device import MemoNote as _MemoNote2
         async with async_session_factory() as db:
             dup = (await db.execute(_sa_select2(_MemoNote2).where(
                 _MemoNote2.character_id == character_id,

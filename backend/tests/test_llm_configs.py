@@ -70,7 +70,7 @@ async def _add_config(factory, user_id: int, name: str, api_key: str, *,
                       provider: str = "test", enabled: bool = True,
                       is_default: bool = False, shared_with_subs: bool = False) -> int:
     async with factory() as db:
-        from app.models.config.user_llm_config import UserLlmConfig
+        from app.models.config import UserLlmConfig
         cfg = UserLlmConfig(
             user_id=user_id, name=name, base_url=base_url, api_key=api_key,
             model=model, provider=provider, enabled=enabled,
@@ -93,7 +93,7 @@ async def _add_character(factory, char_id: int, user_id: int, name: str = "Char"
 
 async def _add_server_config(factory, api_key: str) -> None:
     async with factory() as db:
-        from app.models.config.api_config import ApiConfig
+        from app.models.config import ApiConfig
         db.add(ApiConfig(user_id=0, base_url="https://srv.example.com/v1",
                          api_key=api_key, model="srv", enabled=True))
         await db.commit()

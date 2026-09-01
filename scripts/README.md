@@ -17,7 +17,7 @@
 - `setup_local_vlm.py` / `generate_pet_sprites.py` / `import_pet_assets.py` 资产与环境准备
 
 ## diagnostics/（诊断与评测，可反复运行）
-认知健康/生活事件一致性检查、行为/检索基准评测（evaluate_*）。
+认知健康观察（observe_cognitive_health）、评测集（evaluate_cognitive_loop / evaluate_memory_benchmark）、记忆分层快照与回滚（memory_tiering_snapshot）、工作记忆快照（working_state_snapshot）、M1-a 必要性报告（m1a_necessity_report）。
 
 ## oneoff/（一次性脚本，跑完归档，不再维护）
 历史数据回填（backfill_*）、一次性修复（fix_group_memory_speaker）、一次性重建（rebuild_embeddings_m3）。

@@ -75,6 +75,13 @@ async def _run_sections(state: dict, ctx: dict) -> dict:
             text = await sec.builder(state, ctx)
         except Exception as e:
             _logger.warning("context section %s failed: %s", sec.key, e)
+            # F8 回退观测：section 异常→legacy 内联重算兜底（观测一版本零命中后可内联分支随 legacy 收编，F8-2 前置 B）
+            try:
+                from app.memory.observability import obs_event
+                obs_event(state.get("character_id"), "context_section_failed",
+                          {"key": sec.key, "error": str(e)[:100]})
+            except Exception:
+                pass
             continue
         if sec.target == TARGET_TEMPLATE and sec.slot:
             values[sec.key] = text

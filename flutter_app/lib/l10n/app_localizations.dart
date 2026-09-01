@@ -891,17 +891,17 @@ abstract class AppLocalizations {
   /// **'群聊回复接入角色记忆，各角色互不知晓彼此私事'**
   String get flagGroupRuntimeHint;
 
-  /// No description provided for @flagDouyinRuntime.
+  /// No description provided for @flagSocialRuntime.
   ///
   /// In zh, this message translates to:
   /// **'平台动态统一回复'**
-  String get flagDouyinRuntime;
+  String get flagSocialRuntime;
 
-  /// No description provided for @flagDouyinRuntimeHint.
+  /// No description provided for @flagSocialRuntimeHint.
   ///
   /// In zh, this message translates to:
   /// **'外部平台动态回复接入角色记忆'**
-  String get flagDouyinRuntimeHint;
+  String get flagSocialRuntimeHint;
 
   /// No description provided for @flagAdvanced.
   ///

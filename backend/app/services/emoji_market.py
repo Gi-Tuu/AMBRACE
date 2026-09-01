@@ -24,7 +24,7 @@ from sqlalchemy import select, delete
 from app.config import settings
 from app.db.database import async_session_factory
 from app.i18n import tr_lang
-from app.models.emoji_pack import UserEmojiPack
+from app.models.life import UserEmojiPack
 from app.plugins.zip_safety import ZipSafetyError
 from app.services.upload_service import UPLOAD_DIR
 from app.utils.logger import get_logger

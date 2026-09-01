@@ -19,7 +19,7 @@ from app.agent.llm_client import chat_completion
 from app.db.database import async_session_factory
 from app.memory.embedding import text_embedding
 from app.models.memory import Memory
-from app.models.weave_card import WeaveCard, WeaveCardCharacter, WeaveCardMemory
+from app.models.memory import WeaveCard, WeaveCardCharacter, WeaveCardMemory
 
 _logger = get_logger("weave.card_generator")
 

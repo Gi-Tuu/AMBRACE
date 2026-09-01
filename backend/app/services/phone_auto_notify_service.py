@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
 
 from app.db.database import async_session_factory
-from app.models.phone_auto_state import PhoneAutoState
+from app.models.device import PhoneAutoState
 from app.models.character import AICharacter
 from app.utils.logger import get_logger
 
@@ -61,7 +61,7 @@ async def _save_state(state: PhoneAutoState, fingerprints: list[str], triggered:
 
 async def _select_character(user_id: int) -> tuple | None:
     """选该用户最近有会话的活跃角色。返回 (char, session, session_id) 或 None。"""
-    from app.models.chat_session import ChatSession
+    from app.models.chat import ChatSession
     async with async_session_factory() as db:
         result = await db.execute(
             select(AICharacter).where(
@@ -176,7 +176,7 @@ async def handle_auto_report(user_id: int, notifications: list[dict]) -> dict:
 
 async def _persist_notification_snapshots(user_id: int, items: list[dict]):
     """触发时把通知写入 phone_snapshots（source=notification），供聊天上下文注入引用"""
-    from app.models.phone_snapshot import PhoneSnapshot
+    from app.models.device import PhoneSnapshot
     from sqlalchemy import delete as sa_delete
     async with async_session_factory() as db:
         for it in items:

@@ -252,7 +252,7 @@ async def log_activity(
     """记录宠物活动；同宠物同动作同执行者 30 分钟内重复仅视为一件事（更新时间不新增行）"""
     try:
         from datetime import timedelta
-        from app.models.pet_activity import PetActivity
+        from app.models.pet import PetActivity
         now = _now_naive()
         async with async_session_factory() as db:
             existing = (
@@ -286,7 +286,7 @@ async def get_activities(
     pet_id: int, limit: int = 10, actor: str | None = None,
 ) -> list[dict]:
     """宠物最近活动（倒序）；actor 非空时按执行者过滤（ai=角色自己照顾）"""
-    from app.models.pet_activity import PetActivity
+    from app.models.pet import PetActivity
     async with async_session_factory() as db:
         q = select(PetActivity).where(PetActivity.pet_id == pet_id)
         if actor:

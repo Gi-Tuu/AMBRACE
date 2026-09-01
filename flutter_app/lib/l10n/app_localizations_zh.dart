@@ -425,10 +425,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get flagGroupRuntimeHint => '群聊回复接入角色记忆，各角色互不知晓彼此私事';
 
   @override
-  String get flagDouyinRuntime => '平台动态统一回复';
+  String get flagSocialRuntime => '平台动态统一回复';
 
   @override
-  String get flagDouyinRuntimeHint => '外部平台动态回复接入角色记忆';
+  String get flagSocialRuntimeHint => '外部平台动态回复接入角色记忆';
 
   @override
   String get flagAdvanced => '高级开关';

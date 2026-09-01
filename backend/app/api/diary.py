@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
-from app.models.diary import AIDiary
+from app.models.life import AIDiary
 from app.models.character import AICharacter
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang

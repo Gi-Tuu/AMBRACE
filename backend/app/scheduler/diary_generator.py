@@ -2,11 +2,11 @@
 from datetime import date, datetime, timezone, timedelta
 from sqlalchemy import select
 from app.db.database import async_session_factory
-from app.models.diary import AIDiary
+from app.models.life import AIDiary
 from app.models.character import AICharacter
-from app.models.chat_session import ChatSession
-from app.models.chat_message import ChatMessage
-from app.models.proactive_settings import ProactiveSettings
+from app.models.chat import ChatSession
+from app.models.chat import ChatMessage
+from app.models.character import ProactiveSettings
 from app.agent.llm_client import chat_completion
 from app.utils.logger import get_logger
 

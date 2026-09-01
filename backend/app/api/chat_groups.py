@@ -1,33 +1,12 @@
 """家庭群聊 API（Phase 2）——F5 瘦身后只留 FastAPI 壳：收参 → 调 application 服务 → 返回。
 
 业务体在 app/application/chat_groups.py（F5-a，2026-08-31 迁入）；本文件保留路由与
-参数依赖注入，并对历史顶层名字做门面重导出保旧 import 路径兼容（F8 删旧时移除）。
+参数依赖注入（门面重导出已随 F8 删旧移除，历史 import 路径请改指 app.application.chat_groups）。
 """
 from fastapi import APIRouter, Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application import chat_groups as _svc
-from app.application.chat_groups import (  # F5 门面重导出（历史名字保兼容，F8 删旧时移除）
-    MAX_GROUP_SPEAKERS,  # noqa: F401
-    MAX_MEMBERS,  # noqa: F401
-    MIN_MEMBERS,  # noqa: F401
-    _GAME_ALIASES,  # noqa: F401
-    _generate_replies,  # noqa: F401
-    _generate_replies_runtime,  # noqa: F401
-    _group_active_chars,  # noqa: F401
-    _handle_play_command,  # noqa: F401
-    _heuristic_talkativeness,  # noqa: F401
-    _member_names,  # noqa: F401
-    _owned_group,  # noqa: F401
-    _parse_at_names,  # noqa: F401
-    _play_reply,  # noqa: F401
-    _save_group_memory,  # noqa: F401
-    _select_speakers,  # noqa: F401
-    _state_line,  # noqa: F401
-    _talkativeness_score,  # noqa: F401
-    _trace_group_reply,  # noqa: F401
-    build_group_memory_entries,  # noqa: F401
-)
 from app.auth.deps import get_current_user_id
 from app.db.database import get_db
 

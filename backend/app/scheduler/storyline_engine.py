@@ -19,10 +19,10 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.models.character import AICharacter
-from app.models.chat_message import ChatMessage
-from app.models.chat_session import ChatSession
-from app.models.character_state import CharacterState
-from app.models.storyline_event import StorylineEvent
+from app.models.chat import ChatMessage
+from app.models.chat import ChatSession
+from app.models.character import CharacterState
+from app.models.character import StorylineEvent
 from app.services.character_state_service import DIMENSIONS
 from app.utils.logger import get_logger
 
@@ -231,7 +231,7 @@ async def _post_notes(character_id: int, user_id: int, key: str, node_name: str,
     await _append_diary_note(character_id, f"剧情线（{node_name}）：{output_text[:80]}")
     # 剧情线内容 → 舞台记忆（stage_memories，FICTIONAL 隔离）：不进常规记忆库，防止剧情被当事实复述
     try:
-        from app.models.stage_memory import StageMemory
+        from app.models.memory import StageMemory
         from app.db.database import async_session_factory
         async with async_session_factory() as db:
             db.add(StageMemory(
@@ -379,7 +379,7 @@ async def run_dismissive_cold_reply(character_id: int, user_id: int) -> bool:
     """
     try:
         from app.db.database import async_session_factory
-        from app.models.character_state import CharacterState
+        from app.models.character import CharacterState
         async with async_session_factory() as db:
             if await _node_done(db, character_id, "cold_war", NODE_DISMISSIVE):
                 return False
@@ -415,7 +415,7 @@ async def run_deteriorate_arc(character_id: int, user_id: int) -> bool:
     """
     try:
         from app.db.database import async_session_factory
-        from app.models.character_state import CharacterState
+        from app.models.character import CharacterState
         async with async_session_factory() as db:
             if await _node_done(db, character_id, "cold_war", NODE_DETERIORATE):
                 return False
@@ -817,7 +817,7 @@ async def advance_active_storylines(character_id: int, user_id: int) -> None:
     """tick/常规路径调用：推进所有处于激活态的非冷战剧情线（吃醋/疲惫）。"""
     try:
         from app.db.database import async_session_factory
-        from app.models.state_trigger_log import StateTriggerLog
+        from app.models.character import StateTriggerLog
         async with async_session_factory() as db:
             logs = (
                 await db.execute(select(StateTriggerLog).where(StateTriggerLog.character_id == character_id))

@@ -28,7 +28,7 @@ def _make_client(user_id: int) -> TestClient:
 
 def _isolated_backup_module(tmp_path: str, monkeypatch) -> object:
     """加载真实 scripts/backup 模块，然后把它的全局指向临时目录（不碰生产 data/日志）。"""
-    mod = system_api._load_backup_module()
+    mod = system_svc._load_backup_module()  # F8：api 门面已删，经定义模块取
     mod.BACKUP_ROOT = str(tmp_path)
     mod.KEEP_DAYS = 5
     mod.SRC_DIRS = []

@@ -41,6 +41,7 @@ _PLUGIN_DIR = _os.path.dirname(_os.path.abspath(__file__))
 if _PLUGIN_DIR not in _sys.path:
     _sys.path.insert(0, _PLUGIN_DIR)
 
+import douyin_models  # noqa: F401,E402  # X5：渠道自有 ORM 模型（加载期注册进 Base.metadata；须在 init_db 前——main.py lifespan 已做渠道预加载）
 from music import (  # noqa: E402
     MUSIC_MOODS,
     normalize_music_mood,
@@ -820,7 +821,7 @@ async def _save_viewed_note(aweme_id: str, author: str, desc: str, image_urls: l
     """图文理解结果入库（幂等 upsert）"""
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinViewedNote
+    from douyin_models import DouyinViewedNote
     try:
         async with async_session_factory() as db:
             row = (await db.execute(select(DouyinViewedNote).where(DouyinViewedNote.aweme_id == aweme_id))).scalars().first()
@@ -843,7 +844,7 @@ async def _recent_viewed_notes(limit: int = 2) -> list[dict]:
     """最近看过的抖音图文（供上下文注入/回复增强）"""
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinViewedNote
+    from douyin_models import DouyinViewedNote
     try:
         async with async_session_factory() as db:
             rows = (await db.execute(select(DouyinViewedNote).order_by(DouyinViewedNote.id.desc()).limit(limit))).scalars().all()
@@ -970,7 +971,7 @@ async def _get_account() -> dict:
     from app.db.database import async_session_factory
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinAccount
+    from douyin_models import DouyinAccount
     async with async_session_factory() as db:
         row = (await db.execute(select(DouyinAccount).order_by(DouyinAccount.id.asc()).limit(1))).scalar_one_or_none()
         if row is None:
@@ -982,7 +983,7 @@ async def _upsert_account(state: dict) -> None:
     from app.db.database import async_session_factory
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinAccount
+    from douyin_models import DouyinAccount
     async with async_session_factory() as db:
         row = (await db.execute(select(DouyinAccount).order_by(DouyinAccount.id.asc()).limit(1))).scalar_one_or_none()
         if row is None:
@@ -1057,7 +1058,7 @@ async def _upsert_posts(posts: list[dict]) -> int:
     from app.db.database import async_session_factory
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinPost
+    from douyin_models import DouyinPost
     if not posts:
         return 0
     added = 0
@@ -1094,7 +1095,7 @@ async def _upsert_comments_one(post_title: str, comments: list[dict]) -> int:
     新增的非作者评论同步写社交记忆（social_memories，2026-08-10 社交交互层 v2）。"""
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinComment
+    from douyin_models import DouyinComment
     if not comments:
         return 0
     key = _post_key(post_title or "")
@@ -1167,7 +1168,7 @@ async def _recent_posts(limit: int = 2) -> list[dict]:
     from app.db.database import async_session_factory
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinPost
+    from douyin_models import DouyinPost
     async with async_session_factory() as db:
         rows = (await db.execute(
             select(DouyinPost).order_by(DouyinPost.published_at.desc().nullslast()).limit(limit)
@@ -1187,7 +1188,7 @@ async def _recent_unreplied_comments(limit: int = 5, exclude_mentioned: bool = F
     from app.db.database import async_session_factory
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinComment
+    from douyin_models import DouyinComment
     async with async_session_factory() as db:
         _q = select(DouyinComment).where(
             DouyinComment.replied == False, DouyinComment.is_author.isnot(True),
@@ -1203,7 +1204,7 @@ async def _recent_unreplied_comments(limit: int = 5, exclude_mentioned: bool = F
             try:
                 from app.db.database import async_session_factory as _asf2
                 from sqlalchemy import select as _sel2
-                from app.models.douyin import DouyinPost as _DP2
+                from douyin_models import DouyinPost as _DP2
                 async with _asf2() as db:
                     post = (await db.execute(_sel2(_DP2).where(_DP2.douyin_post_id == r.douyin_post_id).limit(1))).scalars().first()
                     if post:
@@ -1218,7 +1219,7 @@ async def _recent_author_comments(limit: int = 6) -> list[dict]:
     """最近作者评论（账号自己发的：AI 或账号主人），按 id 升序成对话链；返回 {author_role, commenter, content, post_title}"""
     from app.db.database import async_session_factory
     from sqlalchemy import select
-    from app.models.douyin import DouyinComment, DouyinPost
+    from douyin_models import DouyinComment, DouyinPost
     try:
         async with async_session_factory() as db:
             rows = (await db.execute(
@@ -1251,7 +1252,7 @@ async def _comment_is_fan(post_title: str, commenter: str) -> bool:
     try:
         from app.db.database import async_session_factory
         from sqlalchemy import select
-        from app.models.douyin import DouyinComment
+        from douyin_models import DouyinComment
         async with async_session_factory() as db:
             row = (await db.execute(
                 select(DouyinComment)
@@ -1270,7 +1271,7 @@ async def _latest_comment(post_title: str, commenter: str) -> dict | None:
     try:
         from app.db.database import async_session_factory
         from sqlalchemy import select
-        from app.models.douyin import DouyinComment
+        from douyin_models import DouyinComment
         async with async_session_factory() as db:
             row = (await db.execute(
                 select(DouyinComment)
@@ -1402,7 +1403,7 @@ async def _count_replied(since, is_fan: bool | None = None) -> int:
     """统计 since 之后已回复的评论数（is_fan=None 不分粉丝/非粉丝）"""
     from sqlalchemy import func, select
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinComment
+    from douyin_models import DouyinComment
     async with async_session_factory() as db:
         cond = [DouyinComment.replied == True, DouyinComment.created_at >= since]
         if is_fan is not None:
@@ -1415,7 +1416,7 @@ async def _pending_count(kind: str, since, is_fan: bool | None = None, exclude_t
     """统计 since 之后处于 pending/confirmed 的待确认任务数（占位频率；is_fan=None 不分；exclude_task_id 排除自身防执行死锁）"""
     from sqlalchemy import func, select
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinPending
+    from douyin_models import DouyinPending
     async with async_session_factory() as db:
         cond = [
             DouyinPending.kind == kind,
@@ -1448,7 +1449,7 @@ async def _check_frequency(kind: str, *, is_fan: bool = False, exclude_task_id: 
         # #67：视频与图文共用「每日 2 条」发布上限（读 DouyinPost.source=auto + pending video_post）
         from sqlalchemy import func, select
         from app.db.database import async_session_factory
-        from app.models.douyin import DouyinPost
+        from douyin_models import DouyinPost
         async with async_session_factory() as db:
             r = await db.execute(
                 select(func.count()).select_from(DouyinPost)
@@ -1503,7 +1504,7 @@ async def _run_pending_task(task_id: int) -> dict:
     """执行单个已确认任务（由 schedule_tick 随机队列触发；含结果回写）"""
     from app.db.database import async_session_factory
     from sqlalchemy import select
-    from app.models.douyin import DouyinPending, DouyinPost, DouyinComment
+    from douyin_models import DouyinPending, DouyinPost, DouyinComment
     async with async_session_factory() as db:
         row = await db.get(DouyinPending, task_id)
         if row is None:
@@ -1614,7 +1615,7 @@ async def _flush_pending_queue() -> None:
             return
         from app.db.database import async_session_factory
         from sqlalchemy import select
-        from app.models.douyin import DouyinPending
+        from douyin_models import DouyinPending
         now = datetime.now(timezone.utc)
         async with async_session_factory() as db:
             rows = (await db.execute(
@@ -1636,7 +1637,7 @@ async def _has_pending_reply(post_key: str, commenter: str) -> bool:
     """该评论是否已有 pending/confirmed 的回复任务（防重复生成草稿，2026-08-10）"""
     from sqlalchemy import func, select
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinPending
+    from douyin_models import DouyinPending
     try:
         async with async_session_factory() as db:
             r = await db.execute(
@@ -1695,7 +1696,7 @@ async def _generate_reply_for_comment(commenter: str, content: str, post_key: st
             return False
         reply = _append_sign(reply, await _active_char_name())  # 末尾署名「-角色名」
         from app.db.database import async_session_factory
-        from app.models.douyin import DouyinPending
+        from douyin_models import DouyinPending
         async with async_session_factory() as db:
             db.add(DouyinPending(
                 user_id=1, kind="reply_comment", title=(post_title or "")[:300], content=reply[:1000],
@@ -1715,7 +1716,7 @@ async def _mark_comment_mentioned(commenter: str, content: str) -> None:
     try:
         from app.db.database import async_session_factory
         from sqlalchemy import update
-        from app.models.douyin import DouyinComment
+        from douyin_models import DouyinComment
         async with async_session_factory() as db:
             await db.execute(
                 update(DouyinComment)
@@ -1961,7 +1962,7 @@ async def draft_image_post(payload: dict):
     if not freq["ok"]:
         return freq
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinPending
+    from douyin_models import DouyinPending
     async with async_session_factory() as db:
         row = DouyinPending(
             user_id=1, kind="image_post", title=title[:300], content=desc[:2000],
@@ -1991,7 +1992,7 @@ async def draft_video_post(payload: dict):
     if not freq["ok"]:
         return freq
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinPending
+    from douyin_models import DouyinPending
     async with async_session_factory() as db:
         row = DouyinPending(
             user_id=1, kind="video_post", title=title[:300], content=desc[:2000],
@@ -2021,7 +2022,7 @@ async def draft_reply_comment(payload: dict):
     if not freq["ok"]:
         return freq
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinPending
+    from douyin_models import DouyinPending
     async with async_session_factory() as db:
         row = DouyinPending(
             user_id=1, kind="reply_comment", title=post_title[:300], content=reply_text[:1000],
@@ -2153,7 +2154,7 @@ async def ai_draft(payload: dict):
     except Exception as e:
         return {"ok": False, "message": f"AI 生成失败: {e}"}
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinPending
+    from douyin_models import DouyinPending
     if kind == "image_post":
         # #67 P1：解析「音乐:情绪」行 → 存 music_mood；剥离该行后按行拆标题/正文
         music_mood = parse_music_mood(content)
@@ -2219,7 +2220,7 @@ async def pending_list():
     from app.db.database import async_session_factory
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinPending
+    from douyin_models import DouyinPending
     async with async_session_factory() as db:
         rows = (await db.execute(
             select(DouyinPending)
@@ -2250,7 +2251,7 @@ async def upcoming_list():
     """已确认待发布任务列表（发布倒计时：小信封展示 confirmed/running 任务与剩余秒数）"""
     from app.db.database import async_session_factory
     from sqlalchemy import select
-    from app.models.douyin import DouyinPending
+    from douyin_models import DouyinPending
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     async with async_session_factory() as db:
         rows = (await db.execute(
@@ -2277,7 +2278,7 @@ async def upcoming_list():
 async def upload_image(task_id: int = Form(...), file: UploadFile = File(...)):
     """为图文草稿上传配图：保存到 uploads/douyin/{task_id}/，追加进 image_paths_json"""
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinPending
+    from douyin_models import DouyinPending
     from app.services.upload_service import save_image
     async with async_session_factory() as db:
         row = await db.get(DouyinPending, task_id)
@@ -2302,7 +2303,7 @@ async def upload_image(task_id: int = Form(...), file: UploadFile = File(...)):
 async def upload_video(task_id: int = Form(...), file: UploadFile = File(...)):
     """为视频草稿上传视频文件（#67 P2）：保存到 uploads/douyin/{task_id}/ 并写 row.video_path"""
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinPending
+    from douyin_models import DouyinPending
     from app.services.upload_service import save_video
     async with async_session_factory() as db:
         row = await db.get(DouyinPending, task_id)
@@ -2320,7 +2321,7 @@ async def upload_video(task_id: int = Form(...), file: UploadFile = File(...)):
 async def confirm_task(task_id: int):
     """确认草稿：进入随机执行队列（避开深夜静默），不立即发布"""
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinPending
+    from douyin_models import DouyinPending
     async with async_session_factory() as db:
         row = await db.get(DouyinPending, task_id)
         if row is None:
@@ -2341,7 +2342,7 @@ async def confirm_task(task_id: int):
 async def reject_task(task_id: int):
     """拒绝草稿：任务标记 rejected，不执行"""
     from app.db.database import async_session_factory
-    from app.models.douyin import DouyinPending
+    from douyin_models import DouyinPending
     async with async_session_factory() as db:
         row = await db.get(DouyinPending, task_id)
         if row is None:
@@ -2537,3 +2538,16 @@ async def proactive_candidate(ctx):
     except Exception as e:
         sdk.log("proactive_candidate 异常: %s", e)
         return None
+
+
+# ── X5（2026-09-01）：渠道端口注册（内核 ChannelPort 契约；复用上方路由处理器为能力实现）──
+from channel_port import DouyinChannelPort, build_meta  # noqa: E402
+
+sdk.register_channel("douyin", DouyinChannelPort(
+    status_handler=status,
+    draft_image=draft_image_post,
+    draft_video=draft_video_post,
+    draft_reply=draft_reply_comment,
+    upload_image_handler=upload_image,
+    upload_video_handler=upload_video,
+), meta=build_meta())

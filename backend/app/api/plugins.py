@@ -101,14 +101,23 @@ async def _is_owner(user_id: int) -> bool:
     return await is_admin_user(user_id)
 
 
-async def _validate_douyin_binding(user_id: int, config: dict, lang: str) -> None:
-    """#68 P5：douyin_mcp 组级唯一绑定校验（配置变更时）。
+def _is_channel_plugin(plugin_name: str) -> bool:
+    """X5：插件是否注册为渠道（经渠道注册表关联，内核不持有具体渠道名）"""
+    try:
+        from app.providers.channel import channel_for_plugin
+        return channel_for_plugin(plugin_name) is not None
+    except Exception:
+        return False
+
+
+async def _validate_channel_binding(user_id: int, plugin_name: str, config: dict, lang: str) -> None:
+    """#68 P5 / X5：渠道插件组级唯一绑定校验（配置变更时；渠道经注册表关联，内核不持有具体渠道名）。
 
     - 调用者须为独立主账号（parent_id IS NULL），子账号 → 403；
     - allowed_character_ids 收窄为单选：>1 → 400；空数组 = 未绑定（允许）；
     - 所选角色 user_id 必须属于调用者家庭（跨家庭 → 403）；
-    - 全组唯一：同一家庭内已有其他角色绑定 douyin → 400（先解绑/转移）。
-    校验通过后把 allowed_character_ids 归一化为逗号分隔字符串（douyin 插件按逗号读取）。
+    - 全组唯一：同一家庭内已有其他角色绑定该渠道 → 400（先解绑/转移）。
+    校验通过后把 allowed_character_ids 归一化为逗号分隔字符串（渠道插件按逗号读取）。
     """
     if "allowed_character_ids" not in config:
         return
@@ -125,18 +134,18 @@ async def _validate_douyin_binding(user_id: int, config: dict, lang: str) -> Non
     else:
         ids = [int(x) for x in str(raw or "").split(",") if x.strip().isdigit()]
     if len(ids) > 1:
-        raise HTTPException(status_code=400, detail=tr_lang(lang, "douyin_bind_multi"))
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "channel_bind_multi"))
 
     async with async_session_factory() as db:
         if await is_sub_account(db, user_id):
-            raise HTTPException(status_code=403, detail=tr_lang(lang, "douyin_bind_main_only"))
+            raise HTTPException(status_code=403, detail=tr_lang(lang, "channel_bind_main_only"))
         if ids:
             char = await db.get(AICharacter, ids[0])
             family_ids = await get_family_member_ids(db, user_id)
             if char is None or char.user_id not in family_ids:
-                raise HTTPException(status_code=403, detail=tr_lang(lang, "douyin_bind_cross_family"))
-            # 全组唯一：同一家庭内已有其他角色绑定 douyin（本身份除外）
-            row = (await db.execute(select(Plugin).where(Plugin.name == "douyin_mcp"))).scalar_one_or_none()
+                raise HTTPException(status_code=403, detail=tr_lang(lang, "channel_bind_cross_family"))
+            # 全组唯一：同一家庭内已有其他角色绑定该渠道（本身份除外）
+            row = (await db.execute(select(Plugin).where(Plugin.name == plugin_name))).scalar_one_or_none()
             existing = {}
             if row is not None:
                 try:
@@ -151,8 +160,8 @@ async def _validate_douyin_binding(user_id: int, config: dict, lang: str) -> Non
                 )).scalars().all()
                 existing_owner = {c.id: c.user_id for c in existing_chars}
             if any(existing_owner.get(eid) in family_ids and eid != ids[0] for eid in existing_ids):
-                raise HTTPException(status_code=400, detail=tr_lang(lang, "douyin_bind_occupied"))
-    # 归一化存储为逗号分隔字符串（保持 douyin 插件读取语义不变）
+                raise HTTPException(status_code=400, detail=tr_lang(lang, "channel_bind_occupied"))
+    # 归一化存储为逗号分隔字符串（保持渠道插件读取语义不变）
     config["allowed_character_ids"] = ",".join(str(x) for x in ids) if ids else ""
 
 
@@ -170,7 +179,7 @@ async def update_plugin(
     user_id: int = Depends(get_current_user_id),
     lang: str = Header(default="zh"),
 ):
-    """启用/禁用/更新配置（仅主账号可写；douyin_mcp 走组级唯一绑定校验）"""
+    """启用/禁用/更新配置（仅主账号可写；注册渠道走组级唯一绑定校验）"""
     plugin = registry.get_plugin(name)
     if plugin is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_not_found"))
@@ -178,9 +187,9 @@ async def update_plugin(
     config = body.get("config")
     if config is not None and not isinstance(config, dict):
         raise HTTPException(status_code=400, detail=tr_lang(lang, "config_invalid"))
-    if name == "douyin_mcp" and config is not None:
-        # #68 P5：配置变更时校验组级唯一绑定（子账号 403 / 多角色 400 / 跨家庭 403 / 占用 400）
-        await _validate_douyin_binding(user_id, config, lang)
+    if config is not None and _is_channel_plugin(name):
+        # #68 P5/X5：注册渠道配置变更时校验组级唯一绑定（子账号 403 / 多角色 400 / 跨家庭 403 / 占用 400）
+        await _validate_channel_binding(user_id, name, config, lang)
     if not await _is_owner(user_id):
         raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_manage_only"))
     if enabled is not None and not isinstance(enabled, bool):
@@ -359,7 +368,7 @@ async def uninstall_plugin(
         from sqlalchemy import delete as sa_delete, select as sa_select
         from app.db.database import async_session_factory
         from app.models.plugin import Plugin
-        from app.models.plugin_store import PluginStore
+        from app.models.plugin import PluginStore
         async with async_session_factory() as db:
             await db.execute(sa_delete(PluginStore).where(PluginStore.plugin_name == name))
             row = (await db.execute(sa_select(Plugin).where(Plugin.name == name))).scalar_one_or_none()

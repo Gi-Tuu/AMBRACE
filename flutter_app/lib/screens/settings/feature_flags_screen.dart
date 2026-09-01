@@ -27,7 +27,7 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
   static const List<String> _visibleKeys = [
     'agent_social_light_context',
     'agent_loop_group_chat',
-    'agent_loop_douyin',
+    'agent_loop_social',
     'weave_3d',
   ];
 
@@ -74,7 +74,7 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
     switch (key) {
       case 'agent_social_light_context': return l10n.flagLightReply;
       case 'agent_loop_group_chat': return l10n.flagGroupRuntime;
-      case 'agent_loop_douyin': return l10n.flagDouyinRuntime;
+      case 'agent_loop_social': return l10n.flagSocialRuntime;
       case 'weave_3d': return l10n.flagWeave3D;
       default: return key;
     }
@@ -84,7 +84,7 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
     switch (key) {
       case 'agent_social_light_context': return l10n.flagLightReplyHint;
       case 'agent_loop_group_chat': return l10n.flagGroupRuntimeHint;
-      case 'agent_loop_douyin': return l10n.flagDouyinRuntimeHint;
+      case 'agent_loop_social': return l10n.flagSocialRuntimeHint;
       case 'weave_3d': return l10n.flagWeave3DHint;
       default: return l10n.flagAdvancedHint;
     }

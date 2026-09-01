@@ -4,7 +4,7 @@ assemble_persona_context 组装与聊天历史无关的人格块：
 关系/当前状态/关系温度/八维感受/剧情回忆/剧情进行中/最近情绪事件/进行中话题。
 context_builder 与 scheduler.message_generator 均调用本模块，保证主动/被动同人格。
 
-社交交互层 v2（2026-08-10）：新增 platform 参数（默认 app）；公开平台（douyin）按
+社交交互层 v2（2026-08-10）：新增 platform 参数（默认 app）；公开平台（外部渠道）按
 platform_profiles 档案做公开裁剪（不注入身份画像/关系温度/私人记忆），App 主链路行为不变。
 """
 from datetime import datetime, timezone, timedelta
@@ -62,7 +62,7 @@ def _build_platform_profile_text(platform: str, profile: dict | None, public: bo
 
 async def assemble_persona_context(character_id: int, user_id: int, platform: str = "app") -> dict:
     """人格上下文块（聊天历史无关部分）；任何单块失败静默降级为默认值"""
-    # 平台档案（Module A）：platform_profiles 决定公开裁剪（app=private 全量；douyin=public 受限）
+    # 平台档案（Module A）：platform_profiles 决定公开裁剪（app=private 全量；外部渠道=public 受限）
     platform_profile = await _load_platform_profile(platform)
     public = platform != "app" and bool(
         platform_profile and platform_profile.get("enabled") and platform_profile.get("visibility") == "public"
@@ -108,7 +108,7 @@ async def assemble_persona_context(character_id: int, user_id: int, platform: st
     # 八维感受（P1-1）：查 character_state 压缩成一行注入
     character_feelings = "无"
     try:
-        from app.models.character_state import CharacterState
+        from app.models.character import CharacterState
         from app.services.character_state_service import DIMENSIONS as _DIMS
         async with async_session_factory() as db:
             st = (await db.execute(
@@ -151,7 +151,7 @@ async def assemble_persona_context(character_id: int, user_id: int, platform: st
     relationship_state = ""
     if cognitive and not public:
         try:
-            from app.models.character_state import CharacterState
+            from app.models.character import CharacterState
             async with async_session_factory() as db:
                 st = (await db.execute(
                     select(CharacterState).where(CharacterState.character_id == character_id)

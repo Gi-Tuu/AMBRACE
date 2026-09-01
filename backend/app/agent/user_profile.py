@@ -47,8 +47,8 @@ async def build_user_profile_text(user_id: int = 1) -> str:
 
 async def build_user_notes_text(user_id: int = 1) -> str:
     """用户备忘录 + 最近日记文本（供聊天 context 注入，控制 token 上限）"""
-    from app.models.user_memo import UserMemo
-    from app.models.user_diary import UserDiary
+    from app.models.life import UserMemo
+    from app.models.life import UserDiary
     async with async_session_factory() as db:
         memos = (await db.execute(
             select(UserMemo).where(UserMemo.user_id == user_id)

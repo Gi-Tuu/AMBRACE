@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db.database import get_db
-from app.models.moment import AIMoment, MomentLike, MomentAILike, MomentComment
+from app.models.life import AIMoment, MomentLike, MomentAILike, MomentComment
 from app.models.character import AICharacter
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
@@ -420,7 +420,7 @@ def _build_comment_trees(comments) -> dict[int, list]:
 @router.get("/unread-comments")
 async def unread_comments(db: AsyncSession = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     """P2-4 回复提醒：last_read_at 之后，AI 回复过我的评论的条数（朋友圈 tab 红点用）"""
-    from app.models.moment import MomentReadMark
+    from app.models.life import MomentReadMark
     from datetime import timedelta
     mark = await db.get(MomentReadMark, user_id)
     since = mark.last_read_at if mark and mark.last_read_at else (
@@ -442,7 +442,7 @@ async def unread_comments(db: AsyncSession = Depends(get_db), user_id: int = Dep
 @router.post("/read")
 async def mark_moments_read(db: AsyncSession = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     """进入朋友圈页时上报已读（重置回复提醒红点）"""
-    from app.models.moment import MomentReadMark
+    from app.models.life import MomentReadMark
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     mark = await db.get(MomentReadMark, user_id)
     if mark:

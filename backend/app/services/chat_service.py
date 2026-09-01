@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 from app.agent import actions as _agent_actions
 
 _logger = get_logger("services.chat")
-from app.models.chat_session import ChatSession
-from app.models.chat_message import ChatMessage
+from app.models.chat import ChatSession
+from app.models.chat import ChatMessage
 from app.models.character import AICharacter
 from app.agent.graph import agent
 from app.memory import add_chat_memory_extraction
@@ -222,7 +222,7 @@ async def _bump_relationship(character_id: int, user_id: int) -> None:
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.character_state import CharacterState
+        from app.models.character import CharacterState
         async with async_session_factory() as db:
             st = (await db.execute(
                 select(CharacterState).where(CharacterState.character_id == character_id)
@@ -247,7 +247,7 @@ async def _bump_relationship(character_id: int, user_id: int) -> None:
 async def _load_reasoning_level(character_id: int) -> int:
     """读取角色「思考过程」挡位：0=关闭 / 1=简单思考 / 2=深度思考"""
     try:
-        from app.models.proactive_settings import ProactiveSettings
+        from app.models.character import ProactiveSettings
         async with async_session_factory() as db:
             row = (await db.execute(
                 select(ProactiveSettings.reasoning_level)
@@ -354,7 +354,7 @@ async def _resolve_emotional_state(character_id: int, snapshot: dict | None = No
         if _cs is None:
             from app.services.character_state_service import get_character_states
             _cs = await get_character_states(character_id)
-        from app.utils.ai_emotion import emotion_from_character_states
+        from app.domain.emotion.model import emotion_from_character_states
         return emotion_from_character_states(_cs) or ""
     except Exception as e:
         _logger.warning("Emotion state resolve failed char=%d: %s", character_id, e)
@@ -409,9 +409,9 @@ async def _run_agent_core(
 
     # AI 情绪关怀：检测用户低落情绪 → 登记延迟主动关心任务（异步不阻塞）
     try:
-        from app.utils.emotion import detect_user_emotion
+        from app.domain.emotion.model import detect_user_emotion
         if "低落" in detect_user_emotion(content):
-            from app.scheduler.emotion_care import register_care_task
+            from app.domain.emotion.care import register_care_task
             asyncio.ensure_future(register_care_task(user_id, character_id, content))
     except Exception:
         pass
@@ -504,7 +504,7 @@ async def _run_agent_core(
 
             async def _save_browser_history(_char_id: int, _query: str) -> None:
                 """搜索成功落小手机浏览记录（角色记得自己搜过；同词刷新时间）"""
-                from app.models.phone_desktop import BrowserHistory
+                from app.models.device import BrowserHistory
                 async with async_session_factory() as _db:
                     _ex = (await _db.execute(
                         select(BrowserHistory).where(

@@ -16,13 +16,15 @@ factory 契约：factory(config: dict) -> provider 对象（每次请求调用�
 - kind=llm：config={api_key, base_url}，返回 OpenAI 兼容客户端（具备 .chat.completions.create）；
 - kind=tts：config=speech_configs 全量 dict（enabled/base_url/api_key/model/provider），
   返回 async (text, voice, out_dir, fname) -> str|None（本地文件路径；None=失败由调用方兜底）；
+- kind=channel（X5）：factory 槽位即 ChannelPort 对象（不做 factory 调用），注册/解析走
+  app/providers/channel.py 的薄封装（register_channel/resolve_channel/channel_for_plugin）；
 - 工厂体一律晚绑定原实现模块（from ... import 放函数内），monkeypatch 接缝语义不变。
 """
 from __future__ import annotations
 
 import re
 
-PROVIDER_KINDS = ("llm", "tts", "asr", "vision", "image", "push")
+PROVIDER_KINDS = ("llm", "tts", "asr", "vision", "image", "push", "channel")  # X5：channel=渠道端口（app/providers/channel.py）
 
 _NAME_RE = re.compile(r"^[a-z0-9_]{2,32}$")
 

@@ -3,10 +3,10 @@ import time
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
 from app.db.database import async_session_factory
-from app.models.chat_message import ChatMessage
-from app.models.chat_session import ChatSession
+from app.models.chat import ChatMessage
+from app.models.chat import ChatSession
 from app.models.character import AICharacter
-from app.models.processed_extraction import ProcessedExtraction
+from app.models.memory import ProcessedExtraction
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from app.agent.llm_client import chat_completion as llm_call, TASK_MEMORY
 from app.events.schema import EPISTEMIC_FACT, EPISTEMIC_INFERRED
@@ -179,7 +179,7 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
     if stage_val and stage_val != "无" and len(stage_val) >= 2 and not looks_like_raw_dialogue(stage_val):
         stage_imp = _get_imp(response, "STAGE")
         try:
-            from app.models.stage_memory import StageMemory
+            from app.models.memory import StageMemory
             async with async_session_factory() as db:
                 db.add(StageMemory(
                     user_id=user_id, character_id=character_id, session_id=session_id,
@@ -199,7 +199,7 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
             # 游戏轮兜底：LLM 未归 STAGE 但明确是小游戏相关内容时强制转舞台
             if _game_convo and _is_game_content(val):
                 try:
-                    from app.models.stage_memory import StageMemory
+                    from app.models.memory import StageMemory
                     async with async_session_factory() as db:
                         db.add(StageMemory(
                             user_id=user_id, character_id=character_id, session_id=session_id,

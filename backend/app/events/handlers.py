@@ -64,7 +64,7 @@ async def _on_activity_completed(payload: dict) -> None:
         summary = _d.get("summary") or ""
         if not character_id or not user_id:
             return
-        from app.models.proactive_settings import ProactiveSettings
+        from app.models.character import ProactiveSettings
         from app.services.moment_service import publish_moment
         async with async_session_factory() as _db:
             _ps = (

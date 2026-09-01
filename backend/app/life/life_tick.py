@@ -8,7 +8,7 @@ from app.utils.logger import get_logger
 from sqlalchemy import select
 
 from app.models.character import AICharacter
-from app.models.proactive_settings import ProactiveSettings
+from app.models.character import ProactiveSettings
 from app.scheduler.registry import BaseTask
 
 _logger = get_logger("life.tick")

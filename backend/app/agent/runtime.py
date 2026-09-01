@@ -1,6 +1,6 @@
 """统一 Runtime 薄封装（Phase E，2026-08-18）
 
-群聊回应 / 抖音插件主动候选等非主聊天链路统一经本层生成（方案 Phase E）：
+群聊回应 / 渠道插件主动候选等非主聊天链路统一经本层生成（方案 Phase E）：
 - 复用 context_builder.build_context：世界认知（世界状态/核心记忆/关系锚点/开放循环/
   检索记忆/朋友圈/宠物/群聊动态/时间/位置/天气等）按角色注入——每个角色只看到自己的
   记忆与平台公开上下文，不同角色/会话知识不串线；
@@ -69,7 +69,7 @@ def _build_initial_state(
         "tools_used": [],
     }
     if not save_memory:
-        # 机器生成内容（如抖音 hint）不落记忆：parse_response 仍解析，但 generate_response 跳过落库
+        # 机器生成内容（如渠道 hint）不落记忆：parse_response 仍解析，但 generate_response 跳过落库
         state["skip_memory_save"] = True
     return state
 
@@ -149,7 +149,7 @@ async def _run_tool_stage(state: dict, steps: list[dict], *, character_id: int, 
 
 
 async def build_light_social_context(state: dict) -> dict:
-    """轻量社交上下文构建（F1/F2，2026-08-18）：群聊/抖音短回复不注入完整世界认知。
+    """轻量社交上下文构建（F1/F2，2026-08-18）：群聊/渠道短回复不注入完整世界认知。
 
     保留：角色基础人设（name/personality/chat_style/relationship/current_status）、
     identity_profile（≤200 字）+ relationship_state 一行、core 记忆 top3 + 关系锚点 top2、
@@ -242,7 +242,7 @@ async def build_light_social_context(state: dict) -> dict:
         _wd = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][_now.weekday()]
         _time_line = f"【当前时间】{_now.year}年{_now.month}月{_now.day}日 {_wd} {_now.hour}:{_now.minute:02d}（北京时间）"
         try:
-            from app.models.chat_session import ChatSession
+            from app.models.chat import ChatSession
             async with async_session_factory() as db:
                 _sr = await db.execute(
                     _select(ChatSession)
@@ -320,15 +320,15 @@ async def run_social_reply(
     max_text: int = 200,
     save_memory: bool = True,
     allow_tools: bool = False,
-    light_context: bool = False,  # F1/F2（2026-08-18）：True=轻量上下文（群聊/抖音短回复，prompt ≈-64%）；默认 False=全量 build_context 零变化
+    light_context: bool = False,  # F1/F2（2026-08-18）：True=轻量上下文（群聊/渠道短回复，prompt ≈-64%）；默认 False=全量 build_context 零变化
 ) -> dict:
-    """统一 Runtime 薄封装：群聊/抖音等社交短回复的生成入口。
+    """统一 Runtime 薄封装：群聊/渠道等社交短回复的生成入口。
 
     返回 {"status": "ok"|"error", "text": str, "steps": list[dict]}：
     - ok: 生成成功（text 已剥离动作标记并截断）；
     - error: 生成失败/上下文构建失败（调用方静默跳过，绝不抛断主链路）。
 
-    light_context=True（F1/F2，2026-08-18）：群聊/抖音社交短回复走轻量上下文（build_light_social_context），
+    light_context=True（F1/F2，2026-08-18）：群聊/渠道社交短回复走轻量上下文（build_light_social_context），
     不注入完整世界认知（单次 prompt ≈-64%）；False=现有全量 build_context，零行为变化。
     之后的 generate_response / 动作标记剥离 / 截断逻辑在两种模式下完全一致（task 仍为 chat）。
     """
@@ -356,7 +356,7 @@ async def run_social_reply(
 
         # 3. 上下文注入（知识边界按角色隔离：只注入该角色自己的记忆 + 平台公开上下文由调用方传入）
         if light_context:
-            # F1/F2（2026-08-18）：轻量上下文——群聊/抖音社交短回复不注入完整世界认知
+            # F1/F2（2026-08-18）：轻量上下文——群聊/渠道社交短回复不注入完整世界认知
             # （单次 prompt ≈5,000→≈1,800，-64%）：保留人设/身份画像/关系温度/core 记忆 top3/
             # 关系锚点 top2/时间/语言/短回复约束；跳过完整 SYSTEM_PROMPT_TEMPLATE/chat_history/日摘要/
             # 世界状态/织库/朋友圈/宠物/手机感知/位置天气/生图搜索指令/认知规划块

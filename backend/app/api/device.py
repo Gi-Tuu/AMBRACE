@@ -12,7 +12,7 @@ from sqlalchemy import delete, select
 from app.auth.deps import get_current_user_id
 from app.config import settings
 from app.db.database import async_session_factory
-from app.models.device.device_token import UserDeviceToken
+from app.models.device import UserDeviceToken
 
 router = APIRouter(prefix="/api/v1/device", tags=["Device Push"])
 

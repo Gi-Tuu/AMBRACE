@@ -15,7 +15,7 @@ from sqlalchemy import select
 from app.auth.deps import get_current_user_id
 from app.db.database import async_session_factory
 from app.i18n import tr_lang
-from app.models.mcp_server import MCPServer
+from app.models.mcp import MCPServer
 from app.utils.logger import get_logger
 
 _logger = get_logger("api.mcp")
@@ -171,7 +171,7 @@ async def list_mcp_call_logs(
 
     限当前用户；默认取最近 20 条，可按 server_id 过滤。
     """
-    from app.models.mcp_call_log import McpCallLog
+    from app.models.mcp import McpCallLog
 
     async with async_session_factory() as db:
         q = select(McpCallLog).where(McpCallLog.user_id == user_id).order_by(McpCallLog.id.desc())
@@ -283,7 +283,7 @@ async def set_tool_permission(
     - 工具必须已存在（已连接→live，未连接→DB 缓存）；
     - 返回该工具当前生效配置（含 scope / mode），供前端回显。
     """
-    from app.models.tool_permission import ToolPermission
+    from app.models.agent import ToolPermission
     from app.services.permission_service import LEVELS
 
     await _check_admin(user_id, lang)

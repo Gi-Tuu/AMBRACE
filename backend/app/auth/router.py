@@ -9,7 +9,7 @@ from app.auth.config import create_token
 from app.auth.deps import get_current_user_id
 from app.auth.schemas import (RegisterRequest, LoginRequest, UpdateProfileRequest, ChangePasswordRequest, ForgotPasswordRequest, AuthResponse, UpdateDndRequest)
 from app.i18n import tr
-from app.models.user_dnd import UserDndSettings
+from app.models.user import UserDndSettings
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Auth"])
 _WEAK_PASSWORDS = {

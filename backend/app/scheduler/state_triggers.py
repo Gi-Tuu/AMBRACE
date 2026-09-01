@@ -20,11 +20,11 @@ from sqlalchemy import select
 
 from app.db.database import async_session_factory
 from app.models.character import AICharacter
-from app.models.character_state import CharacterState
-from app.models.diary import AIDiary
-from app.models.moment import AIMoment
-from app.models.proactive_settings import ProactiveSettings
-from app.models.state_trigger_log import StateTriggerLog
+from app.models.character import CharacterState
+from app.models.life import AIDiary
+from app.models.life import AIMoment
+from app.models.character import ProactiveSettings
+from app.models.character import StateTriggerLog
 from app.services.character_state_service import DIMENSIONS
 from app.utils.logger import get_logger
 from app.utils.async_tasks import spawn_background

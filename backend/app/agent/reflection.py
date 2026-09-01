@@ -9,8 +9,8 @@ import random
 from sqlalchemy import select
 
 from app.db.database import async_session_factory
-from app.models.chat_message import ChatMessage
-from app.models.reflection_log import ReflectionLog
+from app.models.chat import ChatMessage
+from app.models.memory import ReflectionLog
 from app.utils.logger import get_logger
 
 _logger = get_logger("agent.reflection")

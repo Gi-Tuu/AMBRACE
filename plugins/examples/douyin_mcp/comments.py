@@ -92,7 +92,7 @@ async def _get_cached_comment_ids(post_key: str, commenter: str) -> tuple[str, s
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.douyin import DouyinComment
+        from douyin_models import DouyinComment
         async with async_session_factory() as db:
             row = (await db.execute(
                 select(DouyinComment).where(

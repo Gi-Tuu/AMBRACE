@@ -57,7 +57,7 @@ async def _compute_current_time_str(state: dict, ctx: dict) -> str:
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.chat_session import ChatSession
+        from app.models.chat import ChatSession
         async with async_session_factory() as db:
             _sr = await db.execute(
                 select(ChatSession)

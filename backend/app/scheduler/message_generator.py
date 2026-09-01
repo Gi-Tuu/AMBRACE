@@ -282,7 +282,7 @@ async def generate_proactive_event(
         if not character_id:
             return ""
         try:
-            from app.models.proactive_settings import ProactiveSettings
+            from app.models.character import ProactiveSettings
             from sqlalchemy import select as _sa_select
             from app.db.database import async_session_factory as _asf
             async with _asf() as _db:

@@ -58,7 +58,7 @@ def _trim() -> dict:
 
 def _summaries(factory) -> list:
     from sqlalchemy import select
-    from app.models.daily_summary import DailySummary
+    from app.models.memory import DailySummary
 
     async def _main():
         async with factory() as db:
@@ -112,7 +112,7 @@ def test_日摘要缺失_已有摘要天跳过只补最早缺失(mem_db, monkeyp
     monkeypatch.setattr(cb_mod, "chat_completion", _fake_llm)
 
     async def _main():
-        from app.models.daily_summary import DailySummary
+        from app.models.memory import DailySummary
         async with mem_db() as db:
             db.add(DailySummary(session_id=7, summary_date="2026-08-01", summary_text="已有摘要"))
             await db.commit()
@@ -299,7 +299,7 @@ def test_message_generator_最近记忆格式():
 def test_shared_recall_text_格式与公共函数一致(mem_db):
     """Shared Memory recall_text 行与 format_memory_line(max_len=120) 输出完全一致"""
     async def _main():
-        from app.models.shared_event import SharedEvent
+        from app.models.memory import SharedEvent
         from app.memory.shared_events import recall_text
         async with mem_db() as db:
             db.add(SharedEvent(user_id=1, character_id=1, event_type="user_marked",

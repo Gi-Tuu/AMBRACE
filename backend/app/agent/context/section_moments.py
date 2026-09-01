@@ -18,7 +18,7 @@ async def moments_section(state: dict, ctx: dict) -> str:
     """moments 分区：朋友圈动态（template 槽；无则缺省「暂无」）。"""
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.moment import AIMoment
+    from app.models.life import AIMoment
 
     moments_text = "\u6682\u65e0"
     try:

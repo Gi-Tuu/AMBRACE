@@ -14,7 +14,7 @@ VALID_HOOKS = (
     "tool_result", "tool_finished", "tool_error",
 )
 VALID_PERMISSIONS = (
-    "write_memory", "send_message", "douyin_publish",
+    "write_memory", "send_message",
     # X4（2026-08-31）：只读权限组——SDK 只读端口（get_persona/search_memory/get_relationship/get_life_state）
     "persona:read", "memory:read", "life:read", "relationship:read",
 )
@@ -257,9 +257,14 @@ def validate_manifest(data: dict) -> str | None:
     perms = data.get("permissions", [])
     if not isinstance(perms, list):
         return "permissions 必须是数组"
+    # X5：声明 channel 的插件可自带 <渠道名>_ 前缀的自有权限（内核不枚举具体渠道权限名）
+    channel = str(data.get("channel") or "").strip()
     for p in perms:
-        if p not in VALID_PERMISSIONS:
-            return f"未知权限: {p}"
+        if p in VALID_PERMISSIONS:
+            continue
+        if channel and p.startswith(f"{channel}_"):
+            continue
+        return f"未知权限: {p}"
     config = data.get("config", {})
     if not isinstance(config, dict):
         return "config 必须是对象"

@@ -149,7 +149,7 @@ async def delete_memory(memory_id: int) -> bool:
             memory.is_archived = True
             # 织库（2026-08-12）：参与记忆被删 → 关联卡片置脏，generate 时懒重建
             try:
-                from app.models.weave_card import WeaveCard, WeaveCardMemory
+                from app.models.memory import WeaveCard, WeaveCardMemory
                 from sqlalchemy import update
                 await db.execute(
                     update(WeaveCard)

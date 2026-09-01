@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.db.database import async_session_factory
-from app.models.character_state import CharacterState
+from app.models.character import CharacterState
 from app.utils.logger import get_logger
 
 _logger = get_logger("scheduler.relationship_decay")

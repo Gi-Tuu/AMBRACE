@@ -81,8 +81,8 @@ async def load_l1_summary(character_id: int, date_str: str | None, max_len: int 
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.memory.daily_summary import DailySummary
-        from app.models.chat.session import ChatSession
+        from app.models.memory import DailySummary
+        from app.models.chat import ChatSession
 
         async with async_session_factory() as db:
             row = (await db.execute(

@@ -18,11 +18,11 @@ from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
 from app.agent.llm_client import chat_completion
 from app.db.database import get_db
-from app.models.chat_session import ChatSession
+from app.models.chat import ChatSession
 from app.models.character import AICharacter
-from app.models.character_state import CharacterState
-from app.models.privacy_request import PrivacyRequest
-from app.models.proactive_settings import ProactiveSettings
+from app.models.character import CharacterState
+from app.models.user import PrivacyRequest
+from app.models.character import ProactiveSettings
 from app.models.user import User
 from app.utils.logger import get_logger
 from app.utils.timeutil import now_naive_utc as _now_naive

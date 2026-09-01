@@ -2,11 +2,11 @@
 from datetime import date, timedelta
 from sqlalchemy import select, func
 from app.db.database import async_session_factory
-from app.models.chat_session import ChatSession
-from app.models.chat_message import ChatMessage
+from app.models.chat import ChatSession
+from app.models.chat import ChatMessage
 from app.models.user import User
 from app.models.character import AICharacter
-from app.models.proactive_settings import (
+from app.models.character import (
     ProactiveSettings, HolidayPreference, ProactiveMessageLog,
 )
 from app.scheduler.holiday_calendar import get_holidays

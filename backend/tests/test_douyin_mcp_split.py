@@ -25,6 +25,13 @@ content = _load("content")
 music = _load("music")
 
 
+def _ensure_plugin_loaded():
+    """X5：经内核插件加载器装配 douyin_mcp（模型注册进 Base.metadata + 渠道注册表）。"""
+    from app.plugins import registry as _reg
+    if not _reg.load_plugin_dir(_PLUGIN_DIR):
+        raise RuntimeError("douyin_mcp plugin failed to load")
+
+
 # ------------------------------------------------------------------ content._de_ai / 内容类型
 
 def test_de_ai_removes_ai_phrases():
@@ -110,7 +117,9 @@ def test_pick_music_mood():
 
 # ------------------------------------------------------------------ DB 新字段（#67）
 def test_douyin_pending_new_fields():
-    from app.models.douyin import DouyinPending
+    _ensure_plugin_loaded()
+    import douyin_models
+    DouyinPending = douyin_models.DouyinPending
     assert hasattr(DouyinPending, "music_mood")
     assert hasattr(DouyinPending, "video_path")
     assert hasattr(DouyinPending, "post_type")
@@ -119,7 +128,9 @@ def test_douyin_pending_new_fields():
 
 
 def test_douyin_comment_new_fields():
-    from app.models.douyin import DouyinComment
+    _ensure_plugin_loaded()
+    import douyin_models
+    DouyinComment = douyin_models.DouyinComment
     assert hasattr(DouyinComment, "aweme_id")
     assert hasattr(DouyinComment, "comment_id")
 

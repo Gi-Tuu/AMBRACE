@@ -136,8 +136,8 @@ def _seed_chat(factory):
     """塞用户+角色+会话+跨小时用户消息（北京时间 8/9/10 与 20/21/22），user_id=1。"""
     from app.models.user import User
     from app.models.character import AICharacter
-    from app.models.chat_session import ChatSession
-    from app.models.chat_message import ChatMessage
+    from app.models.chat import ChatSession
+    from app.models.chat import ChatMessage
 
     now_naive = datetime.now(timezone.utc).replace(tzinfo=None, minute=30, second=0, microsecond=0)
 
@@ -169,7 +169,7 @@ def test_learn_user_rhythm_persists(rhythm_db):
     assert active == [[8, 11], [20, 23]]
 
     from sqlalchemy import select
-    from app.models.user_rhythm import UserRhythm
+    from app.models.life import UserRhythm
     async def _read():
         async with rhythm_db() as db:
             row = (await db.execute(select(UserRhythm).where(UserRhythm.user_id == 1))).scalar_one_or_none()

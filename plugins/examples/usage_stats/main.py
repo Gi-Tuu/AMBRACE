@@ -9,7 +9,7 @@ async def inject_usage(ctx):
         from datetime import datetime, timedelta
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.phone_snapshot import PhoneSnapshot
+        from app.models.device import PhoneSnapshot
 
         uid = ctx.get("user_id") or 1
         cfg = sdk.get_config()

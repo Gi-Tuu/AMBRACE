@@ -11,7 +11,7 @@ AMBRACE 重构步骤 3：从 chat_service 拆出流式/TTS/chunk 相关函数到
 from sqlalchemy import delete, select
 
 from app.db.database import async_session_factory
-from app.models.chat_message import ChatMessage
+from app.models.chat import ChatMessage
 from app.services.chat.io import _push_user_notify
 from app.utils.errors import friendly_llm_error
 from app.utils.logger import get_logger
@@ -276,6 +276,11 @@ async def send_and_receive_stream(
         )
     except Exception as e:
         _logger.warning("Stream generation failed, fallback chunked: %s", e)
+        try:
+            from app.memory.observability import obs_event
+            obs_event(character_id, "fb_stream_llm_error", {"error": str(e)[:100]})
+        except Exception:
+            pass
         await sink("error", {"detail": friendly_llm_error(e)})
         # 清理已实时落库的半截块，避免与回退 chunked 全量落库重复。
         if tts_saved:
@@ -302,6 +307,11 @@ async def send_and_receive_stream(
             # chunked 也失败：error 事件已在上面的 except 发过，这里只记日志不再向上抛，
             # 避免 SSE 端点（chat.py _run）重复发送 error 事件。
             _logger.warning("Chunked fallback also failed, ending stream: %s", e)
+            try:
+                from app.memory.observability import obs_event
+                obs_event(character_id, "fb_stream_chunked_error", {"error": str(e)[:100]})
+            except Exception:
+                pass
             await sink("done", {
                 "message": {"content": ""},
                 "blocks": [],
@@ -372,6 +382,12 @@ async def send_and_receive_stream(
                 await _delete_chunks([c["id"] for c in saved])
             # P3-5：回退批量路径会重推已推送的块 → 标记 done.fallback=true（前端按块 id 去重）
             _fallback = True
+            try:
+                from app.memory.observability import obs_event
+                obs_event(character_id, "fb_stream_tts_partial",
+                          {"saved": len(saved or []), "total": len(all_blocks)})
+            except Exception:
+                pass
             # 落到下方非 TTS 批量落库路径（split_response/_persist_ai_chunks 全量落库，
             # 此时 tts_urls 已由 _synthesize_chunks_tts 逐句合成补上，每个块仍带 tts_url）。
         else:

@@ -16,7 +16,7 @@ from sqlalchemy import select, func, or_
 
 from app.db.database import async_session_factory
 from app.models.character import AICharacter
-from app.models.ai_chat import AIChat
+from app.models.chat import AIChat
 from app.models.memory import Memory
 from app.utils.logger import get_logger
 

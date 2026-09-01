@@ -9,7 +9,7 @@ import math
 from sqlalchemy import delete, select
 
 from app.db.database import async_session_factory
-from app.models.weave_card import WeaveCard, WeaveCardCharacter, WeaveCardMemory
+from app.models.memory import WeaveCard, WeaveCardCharacter, WeaveCardMemory
 
 SIM_COS_WEIGHT = 0.7  # embedding 余弦权重
 SIM_TEXT_WEIGHT = 0.3  # 标题/概要文本相似权重

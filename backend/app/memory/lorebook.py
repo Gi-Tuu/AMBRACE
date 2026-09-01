@@ -24,7 +24,7 @@ from datetime import datetime
 from sqlalchemy import select
 
 from app.db.database import async_session_factory
-from app.models.lorebook_entry import LorebookEntry
+from app.models.memory import LorebookEntry
 from app.utils.logger import get_logger
 
 _logger = get_logger("memory.lorebook")

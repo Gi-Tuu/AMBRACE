@@ -11,7 +11,7 @@ from sqlalchemy import delete, select
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
 from app.db.database import async_session_factory
-from app.models.phone_desktop import PhoneDesktop, PhoneLayout, CalendarNote, BrowserHistory, MemoNote
+from app.models.device import PhoneDesktop, PhoneLayout, CalendarNote, BrowserHistory, MemoNote
 from app.services.upload_service import UPLOAD_DIR, save_image
 from app.utils.logger import get_logger
 

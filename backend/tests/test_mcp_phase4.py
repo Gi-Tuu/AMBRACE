@@ -21,8 +21,8 @@ from starlette.testclient import TestClient
 from app.auth.deps import get_current_user_id
 from app.db.database import async_session_factory
 from app.mcp.manager import STATUS_CONNECTED, _Connection, mcp_manager
-from app.models.mcp_call_log import McpCallLog
-from app.models.mcp_server import MCPServer
+from app.models.mcp import McpCallLog
+from app.models.mcp import MCPServer
 
 ADMIN = 1
 UID = 9200  # 独立测试用户

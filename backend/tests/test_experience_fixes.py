@@ -30,7 +30,7 @@ def test_bug3_建任务阈值降到1个动作():
 
 
 def test_bug3_log_to_goal纯函数():
-    from app.api.characters import _log_to_goal
+    from app.application.characters import _log_to_goal  # F8：api 门面已删
     assert _log_to_goal('[{"action": "SEARCH", "query": "天气"}]', "x") == "SEARCH"
     assert _log_to_goal('{"query": "用户喜欢什么"}', "x") == "记忆召回：用户喜欢什么"
     assert _log_to_goal(None, "备用") == "备用"

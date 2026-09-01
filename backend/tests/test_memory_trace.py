@@ -32,7 +32,7 @@ from app.api import characters as characters_api  # F5-b：router 壳
 from app.application import characters as characters_svc  # F5-b：实现迁至 application，patch 须指向定义模块
 from app.auth.deps import get_current_user_id
 from app.db.database import get_db
-from app.models.agent_task_log import AgentTaskLog
+from app.models.agent import AgentTaskLog
 from app.models.character import AICharacter
 from app.models.memory import Memory
 

@@ -37,7 +37,7 @@ def push_db(monkeypatch):
 
 async def _add_token(factory, user_id, device_id, token):
     async with factory() as db:
-        from app.models.device.device_token import UserDeviceToken
+        from app.models.device import UserDeviceToken
         db.add(UserDeviceToken(
             user_id=user_id, device_id=device_id, platform='android',
             push_provider='fcm', push_token=token,
@@ -48,7 +48,7 @@ async def _add_token(factory, user_id, device_id, token):
 async def _count_tokens(factory):
     async with factory() as db:
         from sqlalchemy import select
-        from app.models.device.device_token import UserDeviceToken
+        from app.models.device import UserDeviceToken
         rows = (await db.execute(select(UserDeviceToken))).scalars().all()
         return len(rows)
 

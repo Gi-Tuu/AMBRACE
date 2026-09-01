@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.db.database import async_session_factory
-from app.models.phone_snapshot import PhoneSnapshot
+from app.models.device import PhoneSnapshot
 from app.utils.logger import get_logger
 
 _logger = get_logger("services.phone")
@@ -62,7 +62,7 @@ async def request_check_in(user_id: int, character_id: int) -> bool:
     """查岗登记（2026-08-15）：角色想感知用户手机时登记 pending，前端轮询采集后完成。
     防刷：用户近 5 分钟已有 pending/已完成请求则不重复登记。"""
     try:
-        from app.models.phone_snapshot import CheckInRequest
+        from app.models.device import CheckInRequest
         async with async_session_factory() as db:
             since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=5)
             recent = (await db.execute(

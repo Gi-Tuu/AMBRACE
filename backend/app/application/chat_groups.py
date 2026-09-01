@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.i18n import tr_lang
 from app.db.database import async_session_factory
-from app.models.chat_group import ChatGroup, ChatGroupMember, ChatGroupMessage
+from app.models.chat import ChatGroup, ChatGroupMember, ChatGroupMessage
 from app.models.character import AICharacter
 from app.utils.logger import get_logger
 

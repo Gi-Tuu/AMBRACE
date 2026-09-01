@@ -13,7 +13,7 @@ import asyncio
 
 from app.services import chat_service as cs
 from app.services import tts_service
-from app.utils import ai_emotion
+from app.domain.emotion import model as ai_emotion  # F8：原 app.utils.ai_emotion 薄壳已删
 from app.voice import gateway
 
 

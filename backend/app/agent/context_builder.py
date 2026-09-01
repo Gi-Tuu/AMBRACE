@@ -2,9 +2,9 @@
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import func, select
 from app.db.database import async_session_factory
-from app.models.chat_message import ChatMessage
-from app.models.daily_summary import DailySummary
-from app.models.chat_session import ChatSession
+from app.models.chat import ChatMessage
+from app.models.memory import DailySummary
+from app.models.chat import ChatSession
 from app.agent.llm_client import chat_completion
 
 # F3 接缝导入（2026-08-31 修复）：legacy.py 经 _sync_seams 在调用时读取本模块命名空间，
@@ -13,8 +13,8 @@ from app.agent.llm_client import chat_completion
 from app.agent.user_profile import gender_cn  # noqa: F401
 from app.models.character import AICharacter  # noqa: F401
 from app.models.memory import Memory  # noqa: F401
-from app.models.moment import AIMoment  # noqa: F401
-from app.models.proactive_settings import ProactiveSettings  # noqa: F401
+from app.models.life import AIMoment  # noqa: F401
+from app.models.character import ProactiveSettings  # noqa: F401
 from app.memory.format import format_memory_line, epistemic_prefix  # noqa: F401  # format_memory_line 为对外再导出（旧实现/测试引用）
 from app.utils.logger import get_logger
 
@@ -525,4 +525,10 @@ async def build_context(state: dict, *, stream: bool | None = None) -> dict:
         from app.agent import context as _ctx
         return await _ctx.build_context(state, stream=stream)
 
+    # F8 回退观测：flag 关=旧实现直入（观测一版本零命中后可移除 flag-off 分支，F8-2 前置 A）
+    try:
+        from app.memory.observability import obs_event
+        obs_event(state.get("character_id"), "context_legacy_flag_off", {})
+    except Exception:
+        pass
     return await build_context_legacy(state, stream=stream)

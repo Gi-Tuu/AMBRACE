@@ -62,14 +62,14 @@ async def _add_user(factory, uid: int):
 
 async def _count_tokens(factory) -> int:
     async with factory() as db:
-        from app.models.device.device_token import UserDeviceToken
+        from app.models.device import UserDeviceToken
         rows = (await db.execute(select(UserDeviceToken))).scalars().all()
         return len(rows)
 
 
 async def _get_token(factory, user_id, device_id, provider="fcm"):
     async with factory() as db:
-        from app.models.device.device_token import UserDeviceToken
+        from app.models.device import UserDeviceToken
         stmt = select(UserDeviceToken).where(
             UserDeviceToken.user_id == user_id,
             UserDeviceToken.device_id == device_id,

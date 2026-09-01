@@ -45,7 +45,7 @@ async def chat_history_section(state: dict, ctx: dict) -> str:
     """chat_history 分区：最近 1 天完整消息 + 更早日概要（template 槽；无消息返回空串）。"""
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.chat_message import ChatMessage
+    from app.models.chat import ChatMessage
     from app.agent import context_builder as _cb
 
     char, user = await _load_char_and_user(state)

@@ -7,16 +7,16 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func
 
 from app.db.database import async_session_factory
-from app.models.chat_message import ChatMessage
-from app.models.proactive_settings import ProactiveMessageLog, ProactiveSettings
-from app.models.proactive_storyline import ProactiveStorylineItem
-from app.models.proactive_settings import ProactiveTriggerLog
+from app.models.chat import ChatMessage
+from app.models.character import ProactiveMessageLog, ProactiveSettings
+from app.models.character import ProactiveStorylineItem
+from app.models.character import ProactiveTriggerLog
 from app.models.character import AICharacter
 from app.scheduler.life_rhythm import (
     get_time_window, sample_should_trigger, pick_behavior,
 )
 from app.scheduler.memory_review import collect_review_events, collect_contextual_events
-from app.scheduler.emotion_care import collect_care_events
+from app.domain.emotion.care import collect_care_events
 from app.scheduler.pet_care import (
     collect_pet_events, collect_ai_care_events, collect_ai_adopt_events, collect_pet_visit_events,
 )
@@ -247,7 +247,7 @@ async def is_user_active(character_id: int, user_id: int) -> bool:
 
 async def has_pending_timer(character_id: int) -> bool:
     """该角色是否有未到期的定时承诺（有则跳过随机节律，避免穿帮）"""
-    from app.models.scheduled_event import ScheduledEvent
+    from app.models.life import ScheduledEvent
     async with async_session_factory() as db:
         result = await db.execute(
             select(func.count()).where(
@@ -453,7 +453,7 @@ async def collect_state_trigger_events() -> list[dict]:
 async def _compute_motivation(character_id: int) -> float:
     """读取角色八维状态计算动机分；无状态/异常返回 0（失败静默，不影响调度）"""
     try:
-        from app.models.character_state import CharacterState
+        from app.models.character import CharacterState
         async with async_session_factory() as db:
             st = (
                 await db.execute(
@@ -549,7 +549,7 @@ async def collect_plugin_events() -> list[dict]:
     items: list[dict] = []
     for r in results:
         cand = r.get("result")
-        # 支持插件一次返回多个候选（list[dict]，如抖音评论回复 + 主动提及；2026-08-10 社交交互层 v2）
+        # 支持插件一次返回多个候选（list[dict]，如渠道评论回复 + 主动提及；2026-08-10 社交交互层 v2）
         if isinstance(cand, list):
             for c in cand:
                 if not isinstance(c, dict):
@@ -576,7 +576,7 @@ async def run_tick() -> list[str]:
 
     # 认知循环 v2.1：关系标量每日衰减（长期不互动 trust/attachment 下降；失败静默）
     try:
-        from app.scheduler.relationship_decay import run_relationship_decay
+        from app.domain.relationship.decay import run_relationship_decay
         await run_relationship_decay()
     except Exception:
         pass
@@ -948,9 +948,9 @@ async def _execute(item: dict) -> bool:
             char_id, candidate["user_id"], candidate["pet_id"],
         )
 
-    # 插件主动候选（Phase 3：如抖音新动态提及）：hint 由插件提供，LLM 生成自然消息后发送；限额在插件内部
+    # 插件主动候选（Phase 3：如渠道新动态提及）：hint 由插件提供，LLM 生成自然消息后发送；限额在插件内部
     if etype == "plugin":
-        # 插件自定义 action（社交交互层 v2：抖音评论回复走插件内部执行，保留额度/违禁词/确认流）
+        # 插件自定义 action（社交交互层 v2：渠道评论回复走插件内部执行，保留额度/违禁词/确认流）
         _action = candidate.get("action")
         if _action:
             from app.plugins.registry import run_plugin_action
@@ -966,11 +966,11 @@ async def _execute(item: dict) -> bool:
         session_id = candidate.get("session_id")
         if not session_id or not hint:
             return False
-        # Phase E（2026-08-18）：抖音/插件主动候选走统一 Runtime（Feature Flag agent_loop_douyin，默认关=旧链路零变化）。
+        # Phase E（2026-08-18）：渠道/插件主动候选走统一 Runtime（Feature Flag agent_loop_social，X5 按渠道语义改名）。
         # 开=经 app/agent/runtime.py 薄封装：build_context 注入世界认知（知识不串线），hint 不落记忆；
         # 生成失败返回 False（与旧链路失败语义一致），各平台可独立回退。
         from app.agent import loop as _loop
-        if _loop.AGENT_FLAGS.get("agent_loop_douyin", False):
+        if _loop.AGENT_FLAGS.get("agent_loop_social", False):
             return await _plugin_proactive_runtime(char_id, candidate, session_id, hint)
         async with async_session_factory() as db:
             char = await db.get(AICharacter, char_id)
@@ -1194,15 +1194,15 @@ async def _execute(item: dict) -> bool:
 
 
 async def _plugin_proactive_runtime(char_id: int, candidate: dict, session_id: int, hint: str) -> bool:
-    """插件主动候选 → 统一 Runtime（Phase E，Feature Flag agent_loop_douyin 默认关）。
+    """插件主动候选 → 统一 Runtime（Phase E，Feature Flag agent_loop_social，X5 按渠道语义改名）。
 
     - 经 app/agent/runtime.py 薄封装：build_context 注入世界认知（角色自己的记忆/状态，知识不串线）；
-    - hint（抖音新动态等）作为平台公开上下文注入；save_memory=False 防机器生成文本污染记忆；
+    - hint（渠道新动态等）作为平台公开上下文注入；save_memory=False 防机器生成文本污染记忆；
     - 生成自然消息 → 剥离动作标记 → send_to_session（与旧链路同一发送接口，message_type=plugin）。
     """
     from app.agent import runtime as _runtime
     from app.scheduler import scheduler as engine2
-    # F2（2026-08-18）：抖音/插件 hint 短回复同样复用轻量上下文 Flag（默认关=全量 build_context 零变化）
+    # F2（2026-08-18）：渠道/插件 hint 短回复同样复用轻量上下文 Flag（默认关=全量 build_context 零变化）
     from app.agent import loop as _loop
     light_context = bool(_loop.AGENT_FLAGS.get("agent_social_light_context", False))
     res = await _runtime.run_social_reply(
@@ -1221,7 +1221,7 @@ async def _plugin_proactive_runtime(char_id: int, candidate: dict, session_id: i
         lang="zh",
         max_text=256,
         save_memory=False,
-        light_context=light_context,  # F2（2026-08-18）：Flag 控制抖音/插件轻量上下文
+        light_context=light_context,  # F2（2026-08-18）：Flag 控制渠道/插件轻量上下文
     )
     content = (res.get("text") or "").strip()
     if res.get("status") != "ok" or len(content) < 2:

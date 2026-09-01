@@ -6,7 +6,7 @@
 from app.memory.lorebook import (
     _dedup_by_group, _keyword_matches, _roll_probability, match_lorebook_entries,
 )
-from app.models.memory.lorebook import LorebookEntry
+from app.models.memory import LorebookEntry
 
 
 def _mk(**kw):

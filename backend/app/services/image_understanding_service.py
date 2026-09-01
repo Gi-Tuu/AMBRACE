@@ -123,7 +123,7 @@ async def get_vlm_config() -> dict:
         from sqlalchemy import select
         from app.db.database import async_session_factory
         from app.agent.llm_client import SERVER_CONFIG_UID
-        from app.models.vlm_config import VlmConfig
+        from app.models.config import VlmConfig
         async with async_session_factory() as db:
             row = (
                 await db.execute(select(VlmConfig).where(VlmConfig.user_id == SERVER_CONFIG_UID))

@@ -75,7 +75,7 @@ async def _add_user(factory, uid: int, username: str, parent_id: int | None = No
 
 async def _seed_invite(factory, code: str, creator_id: int, expires_at: datetime, used_by: int | None = None):
     async with factory() as db:
-        from app.models.user.account_invite import AccountInvite
+        from app.models.user import AccountInvite
         db.add(AccountInvite(code=code, creator_id=creator_id, expires_at=expires_at, used_by=used_by))
         await db.commit()
 
@@ -127,7 +127,7 @@ def test_redeem_success(family_db):
 
 async def _generate_code(factory, creator_id: int) -> str:
     async with factory() as db:
-        from app.models.user.account_invite import AccountInvite
+        from app.models.user import AccountInvite
         db.add(AccountInvite(code='AAAA0001', creator_id=creator_id,
                              expires_at=datetime.utcnow() + timedelta(minutes=5)))
         await db.commit()

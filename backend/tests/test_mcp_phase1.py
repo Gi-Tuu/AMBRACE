@@ -30,7 +30,7 @@ from app.auth.deps import get_current_user_id
 from app.db.database import async_session_factory
 from app.mcp.manager import mcp_manager
 from app.mcp.tool_adapter import infer_risk
-from app.models.mcp_server import MCPServer
+from app.models.mcp import MCPServer
 
 ADMIN = 1
 OTHER = 2

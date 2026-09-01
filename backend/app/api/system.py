@@ -1,24 +1,14 @@
 """系统状态 API + API 自主配置——F5 瘦身后只留 FastAPI 壳：收参 → 调 application 服务 → 返回。
 
 业务体在 app/application/system.py（F5-c，2026-08-31 迁入）；本文件保留路由与参数依赖
-注入 + health/WebSocket 两个纯传输端点，并对历史顶层名字做门面重导出（F8 删旧时移除）。
+注入 + health/WebSocket 两个纯传输端点（门面重导出已随 F8 删旧移除，历史 import 路径
+请改指 app.application.system）。
 """
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, WebSocket
 
 from app.application import system as _svc
-from app.application.system import (  # F5 门面重导出（历史名字保兼容，F8 删旧时移除）
-    _backup_info,  # noqa: F401
-    _changelog_title,  # noqa: F401
-    _get_lan_ip,  # noqa: F401
-    _get_task_cfg,  # noqa: F401
-    _is_private_ipv4,  # noqa: F401
-    _load_backup_module,  # noqa: F401
-    _parse_changelog,  # noqa: F401
-    _require_admin,  # noqa: F401
-    _task_cfg_payload,  # noqa: F401
-)
 from app.auth.deps import get_current_user_id
 from app.db.database import get_db
 from app.utils.logger import get_logger

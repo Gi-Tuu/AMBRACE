@@ -319,7 +319,7 @@ async def generate_response(state: AgentState) -> AgentState:
     if state.get("streamed"):
         state["ai_response"] = state.get("stream_display") or state["ai_response"]
 
-    # 保存记忆（Phase E：skip_memory_save=True 时跳过——社交短回复（如抖音 hint）不落记忆，防机器生成内容污染）
+    # 保存记忆（Phase E：skip_memory_save=True 时跳过——社交短回复（如渠道 hint）不落记忆，防机器生成内容污染）
     if state["new_memories"] and not state.get("skip_memory_save"):
         from app.memory import save_memory
         _logger.info("Saving %d new memories", len(state["new_memories"]))

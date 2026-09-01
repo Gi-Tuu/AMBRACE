@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.config.user_llm_config import UserLlmConfig
+from app.models.config import UserLlmConfig
 from app.models.character import AICharacter
 from app.services.family_service import get_family_root_id, is_sub_account
 

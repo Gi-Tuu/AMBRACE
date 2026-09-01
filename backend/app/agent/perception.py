@@ -6,7 +6,7 @@
 """
 import re
 
-from app.utils.emotion import detect_user_emotion
+from app.domain.emotion.model import detect_user_emotion
 
 # ── 意图五类 ──
 INTENT_QUERY = "query"            # 信息查询

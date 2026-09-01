@@ -1,22 +1,13 @@
 """AI 角色管理 API——F5 瘦身后只留 FastAPI 壳：收参 → 调 application 服务 → 返回。
 
 业务体在 app/application/characters.py（F5-b，2026-08-31 迁入）；本文件保留路由与
-参数依赖注入，并对历史顶层名字做门面重导出保旧 import 路径兼容（F8 删旧时移除）。
+参数依赖注入（门面重导出已随 F8 删旧移除，历史 import 路径请改指 app.application.characters）。
 """
 from fastapi import APIRouter, Depends, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application import characters as _svc
-from app.application.characters import (  # F5 门面重导出（历史名字保兼容，F8 删旧时移除）
-    _LorebookUpsert,
-    _WorldFactCreate,
-    _build_system_prompt,  # noqa: F401
-    _generate_greeting_text,  # noqa: F401
-    _get_owned_character,  # noqa: F401
-    _log_to_goal,  # noqa: F401
-    _steps_returned_count,  # noqa: F401
-    _summarize_task_logs,  # noqa: F401
-)
+from app.application.characters import _LorebookUpsert, _WorldFactCreate  # 路由签名用请求模型
 from app.auth.deps import get_current_user_id
 from app.db.database import get_db
 from app.schemas.character import (

@@ -284,7 +284,7 @@ def ctx_db(monkeypatch):
 def test_get_last_messages_default_expanded_limit(ctx_db):
     """P0-2：默认扩容为 10 条（limit=10），每条内容截断到 120 字，最新消息在后"""
     async def _main():
-        from app.models.chat_message import ChatMessage
+        from app.models.chat import ChatMessage
         from app.scheduler.triggers import get_last_messages
         async with ctx_db() as db:
             for i in range(15):

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 
-from app.models.user_dnd import UserDndSettings
+from app.models.user import UserDndSettings
 
 
 async def user_in_dnd_period(db, user_id: int) -> bool:

@@ -29,7 +29,7 @@ async def create_agent_task(
     """创建任务（落库 agent_tasks），返回行 id；失败静默返回 0"""
     try:
         from app.db.database import async_session_factory
-        from app.models.agent_task import AgentTask
+        from app.models.agent import AgentTask
         # 审计第三批 P2-05：user_id 缺省时按 character 归属自动兜底（防 agent_tasks 写 NULL）
         if not user_id and character_id:
             from app.agent.trace import resolve_owner_user_id
@@ -62,7 +62,7 @@ async def update_task(
         return
     try:
         from app.db.database import async_session_factory
-        from app.models.agent_task import AgentTask
+        from app.models.agent import AgentTask
         async with async_session_factory() as db:
             row = await db.get(AgentTask, int(task_id))
             if row is None:

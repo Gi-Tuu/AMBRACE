@@ -67,19 +67,6 @@ async def init_db():
             if "image_desc" not in mnames:
                 await conn.execute(sa_text("ALTER TABLE ai_moments ADD COLUMN image_desc TEXT"))
                 print("[migrate] ai_moments.image_desc added")
-        # douyin_pending 补列：随机执行队列时间（2026-08-09）
-        dp_cols = (await conn.execute(sa_text("PRAGMA table_info(douyin_pending)"))).fetchall()
-        if dp_cols and "execute_at" not in [c[1] for c in dp_cols]:
-            await conn.execute(sa_text("ALTER TABLE douyin_pending ADD COLUMN execute_at DATETIME"))
-            print("[migrate] douyin_pending.execute_at added")
-        # douyin_pending/douyin_comments 补列：粉丝标记（回复额度 60/40 拆分，2026-08-09）
-        if dp_cols and "is_fan" not in [c[1] for c in dp_cols]:
-            await conn.execute(sa_text("ALTER TABLE douyin_pending ADD COLUMN is_fan BOOLEAN DEFAULT 0"))
-            print("[migrate] douyin_pending.is_fan added")
-        dc_cols = (await conn.execute(sa_text("PRAGMA table_info(douyin_comments)"))).fetchall()
-        if dc_cols and "is_fan" not in [c[1] for c in dc_cols]:
-            await conn.execute(sa_text("ALTER TABLE douyin_comments ADD COLUMN is_fan BOOLEAN DEFAULT 0"))
-            print("[migrate] douyin_comments.is_fan added")
         # ai_characters 补列：生日（YYYY-MM-DD）
         ccols = (await conn.execute(sa_text("PRAGMA table_info(ai_characters)"))).fetchall()
         if ccols and "birthday" not in [c[1] for c in ccols]:
@@ -524,16 +511,23 @@ async def init_db():
                     print(f"[migrate] character_states.{_col} added")
 
 
-        # 社交交互层 v2（2026-08-10 拍板实施）：platform_profiles 默认档案（幂等；app/douyin 两档）
+        # 社交交互层 v2（2026-08-10 拍板实施）：platform_profiles 默认档案（幂等；X5 起按已注册渠道动态生成）
         pfcols = (await conn.execute(sa_text("PRAGMA table_info(platform_profiles)"))).fetchall()
         if pfcols:
+            try:
+                from app.providers.channel import list_channels as _lc
+                _ch_names = [c["name"] for c in _lc()]
+            except Exception:
+                _ch_names = []
+            _seed_rows = ["('app', 'private', 'general', 'full', 'private', '', 1)"] + [
+                f"('{n}', 'public', 'general', 'limited', 'social', 'creative', 1)" for n in _ch_names
+            ]
             await conn.execute(sa_text(
                 "INSERT OR IGNORE INTO platform_profiles "
                 "(platform, visibility, relationship_level, memory_access, tone, content_style, enabled) VALUES "
-                "('app', 'private', 'general', 'full', 'private', '', 1), "
-                "('douyin', 'public', 'general', 'limited', 'social', 'creative', 1)"
+                + ", ".join(_seed_rows)
             ))
-            print("[migrate] platform_profiles seeded (app/douyin)")
+            print(f"[migrate] platform_profiles seeded (app + {len(_ch_names)} channels)")
             # platform_profiles 补列：公开记忆收紧开关（2026-08-12；off=现状 / relationship=额外排relationship）
             pp_cols = (await conn.execute(sa_text("PRAGMA table_info(platform_profiles)"))).fetchall()
             if pp_cols and "memory_restrict" not in [c[1] for c in pp_cols]:

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
-from app.models.proactive_settings import (
+from app.models.character import (
     ProactiveSettings, HolidayPreference,
 )
 from app.models.character import AICharacter
@@ -185,8 +185,8 @@ async def get_proactive_stats(
     """主动消息效果统计：触发/发送/拦截数量 + 用户回复率（按消息后该会话是否有用户回复估算）"""
     from datetime import datetime, timedelta, timezone
     from sqlalchemy import func as sa_func
-    from app.models.chat_message import ChatMessage
-    from app.models.proactive_settings import ProactiveMessageLog, ProactiveTriggerLog
+    from app.models.chat import ChatMessage
+    from app.models.character import ProactiveMessageLog, ProactiveTriggerLog
 
     days = max(1, min(days, 90))
     since = datetime.now(timezone.utc) - timedelta(days=days)
@@ -414,7 +414,7 @@ async def list_timers(
     """列出该角色当前未到期的定时承诺（供私聊右上角「事件时钟」展示）。"""
     await _check_char_owned(db, character_id, user_id, lang)
     from datetime import datetime, timezone, timedelta
-    from app.models.scheduled_event import ScheduledEvent as _SE
+    from app.models.life import ScheduledEvent as _SE
     result = await db.execute(
         select(_SE).where(
             _SE.character_id == character_id,
@@ -457,7 +457,7 @@ async def delete_timer(
 ):
     """删除一条定时承诺（用户主动取消不必要的计时）。"""
     await _check_char_owned(db, character_id, user_id, lang)
-    from app.models.scheduled_event import ScheduledEvent as _SE
+    from app.models.life import ScheduledEvent as _SE
     event = await db.get(_SE, event_id)
     if event is None or event.character_id != character_id or event.user_id != user_id:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "timer_not_found"))

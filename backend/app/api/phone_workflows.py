@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
 from app.db.database import get_db
-from app.models.user_workflow import UserWorkflow
+from app.models.life import UserWorkflow
 from app.utils.logger import get_logger
 
 router = APIRouter(prefix="/api/v1/phone/workflows", tags=["Phone Workflows"])

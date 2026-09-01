@@ -132,7 +132,7 @@ async def purge_memory(memory_id: int) -> bool:
                 _cid = mem.character_id
                 # 与 delete_memory 对齐：参与的织库卡片置脏，generate 时懒重建
                 try:
-                    from app.models.weave_card import WeaveCard, WeaveCardMemory
+                    from app.models.memory import WeaveCard, WeaveCardMemory
                     from sqlalchemy import update as _upd
                     await db.execute(
                         _upd(WeaveCard).where(
@@ -148,7 +148,7 @@ async def purge_memory(memory_id: int) -> bool:
                 # #70-C R-6：一并删除 weave_card_memory 关联行，避免孤儿指针（SQLite 未开 FK 不崩，
                 # 但「被遗忘权物理删」应干净；空卡片由既有懒重建/清理逻辑兜底）
                 try:
-                    from app.models.weave_card import WeaveCardMemory as _WCM
+                    from app.models.memory import WeaveCardMemory as _WCM
                     from sqlalchemy import delete as _sa_delete
                     await db.execute(_sa_delete(_WCM).where(_WCM.memory_id == memory_id))
                 except Exception:
@@ -197,7 +197,7 @@ async def archive_cold_superseded(days: int = 60, batch: int = 200) -> int:
                 ))
                 # N-2：与 purge（R-6）对齐——置脏参与织库卡片并删关联行，避免 60 天后批量孤儿关联
                 try:
-                    from app.models.weave_card import WeaveCard, WeaveCardMemory
+                    from app.models.memory import WeaveCard, WeaveCardMemory
                     from sqlalchemy import update as _upd, delete as _del
                     await db.execute(_upd(WeaveCard).where(
                         WeaveCard.id.in_(select(WeaveCardMemory.card_id).where(WeaveCardMemory.memory_id == m.id))
@@ -228,7 +228,7 @@ def _memory_cls():
 
 
 def _archive_cls():
-    from app.models.memory.memory_archive import MemoryArchive
+    from app.models.memory import MemoryArchive
     return MemoryArchive
 
 

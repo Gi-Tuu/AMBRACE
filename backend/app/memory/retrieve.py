@@ -52,7 +52,7 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
     goal_topics: list[str] = []
     unfin_topics: list[str] = []
     try:
-        from app.models.conversation_topic import ConversationTopic
+        from app.models.memory import ConversationTopic
         async with async_session_factory() as _tdb:
             _trows = (await _tdb.execute(
                 select(ConversationTopic).where(

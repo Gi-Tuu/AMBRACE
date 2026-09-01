@@ -40,7 +40,7 @@ async def write_task_log(**kwargs) -> None:
     """写一条任务 trace（异步，失败静默）"""
     try:
         from app.db.database import async_session_factory
-        from app.models.agent_task_log import AgentTaskLog
+        from app.models.agent import AgentTaskLog
 
         # 审计第三批 P2-05：user_id 缺省时按 character 归属自动兜底（防 agent_task_logs 写 NULL）
         if not kwargs.get("user_id") and kwargs.get("character_id"):

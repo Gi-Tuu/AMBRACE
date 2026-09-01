@@ -59,7 +59,7 @@ async def save_memory(
                 return None
             if source_id is not None and len(content) <= 60:
                 try:
-                    from app.models.chat_message import ChatMessage
+                    from app.models.chat import ChatMessage
                     msg = await db.get(ChatMessage, source_id)
                     if msg is not None:
                         cands = []

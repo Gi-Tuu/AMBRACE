@@ -5,7 +5,7 @@ import socket
 
 import psutil
 
-from app.api.system import _get_lan_ip, _is_private_ipv4
+from app.application.system import _get_lan_ip, _is_private_ipv4  # F8：api 门面已删，改指定义模块
 
 
 def test_is_private_common():

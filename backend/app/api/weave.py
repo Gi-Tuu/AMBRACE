@@ -10,7 +10,7 @@ from app.db.database import async_session_factory
 from app.memory.sources import memory_source_meta
 from app.models.character import AICharacter
 from app.models.memory import Memory
-from app.models.weave_card import WeaveCard, WeaveCardCharacter, WeaveCardMemory
+from app.models.memory import WeaveCard, WeaveCardCharacter, WeaveCardMemory
 from app.schemas.weave import (
     WeaveCardDetailResponse,
     WeaveCardListResponse,

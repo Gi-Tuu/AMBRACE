@@ -21,7 +21,7 @@ from app.agent.llm_client import TASK_PLUGIN_AI, chat_completion, get_user_llm_c
 from app.config import settings
 from app.db.database import async_session_factory
 from app.i18n import tr_lang
-from app.models.plugin_store import PluginStore
+from app.models.plugin import PluginStore
 from app.models.user import User
 from app.utils.logger import get_logger
 

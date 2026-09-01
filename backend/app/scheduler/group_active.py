@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func
 
 from app.db.database import async_session_factory
-from app.models.chat_group import ChatGroup, ChatGroupMember, ChatGroupMessage
+from app.models.chat import ChatGroup, ChatGroupMember, ChatGroupMessage
 from app.models.character import AICharacter
 from app.utils.logger import get_logger
 

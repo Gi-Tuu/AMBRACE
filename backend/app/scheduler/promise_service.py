@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.db.database import async_session_factory
-from app.models.scheduled_event import ScheduledEvent
+from app.models.life import ScheduledEvent
 from app.utils.logger import get_logger
 
 _logger = get_logger("scheduler.promise")

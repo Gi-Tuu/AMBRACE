@@ -11,7 +11,7 @@ async def get_phone_desktop_inject_text(character_id: int) -> str:
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.phone_desktop import CalendarNote, BrowserHistory, MemoNote
+        from app.models.device import CalendarNote, BrowserHistory, MemoNote
 
         beijing = timezone(timedelta(hours=8))
         today = datetime.now(beijing).date()

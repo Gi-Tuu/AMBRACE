@@ -74,7 +74,7 @@ def _dispatch(tool_name: str, payload: dict):
         return _run
     if tool_name == "emotion_care":
         async def _run(p: dict):
-            from app.scheduler.emotion_care import run_emotion_care
+            from app.domain.emotion.care import run_emotion_care
             ok = await run_emotion_care(
                 char_id=int(p.get("character_id") or 0),
                 user_id=int(p.get("user_id") or 0),

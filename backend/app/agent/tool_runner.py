@@ -14,7 +14,7 @@ from app.utils.logger import get_logger
 
 _logger = get_logger("agent.tool_runner")
 
-# 工具生命周期阶段（方案 5.3 ToolPkg 式；插件可在此挂载，如抖音敏感词检查/生图额度校验/失败日志）
+# 工具生命周期阶段（方案 5.3 ToolPkg 式；插件可在此挂载，如渠道敏感词检查/生图额度校验/失败日志）
 TOOL_HOOK_STAGES = (
     "tool_call_requested",
     "tool_permission_checked",
@@ -74,7 +74,7 @@ def _publish_tool_event(spec: ToolSpec, status: str, observation: dict, *, user_
 
 
 def _resolve_scope(spec: ToolSpec) -> str | None:
-    """工具权限 scope：显式指定优先；插件工具按插件名映射（browser/douyin/extension）"""
+    """工具权限 scope：显式指定优先；插件工具按插件名映射（browser/渠道注册/extension）"""
     if spec.scope:
         return spec.scope
     if spec.plugin:

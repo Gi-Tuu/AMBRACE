@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app.models.base import Base
-from app.models.emoji_pack import UserEmojiPack
+from app.models.life import UserEmojiPack
 from app.plugins.zip_safety import ZipSafetyError
 from app.services import emoji_market as m
 

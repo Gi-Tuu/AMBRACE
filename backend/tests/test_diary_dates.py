@@ -18,7 +18,7 @@ from app.api import diary as diary_api
 from app.auth.deps import get_current_user_id
 from app.db.database import get_db
 from app.models.character import AICharacter
-from app.models.diary import AIDiary
+from app.models.life import AIDiary
 
 USER = 1
 

@@ -13,7 +13,7 @@ from app.db.database import async_session_factory
 from app.models.character import AICharacter
 from app.models.life import LifeInterest
 from app.models.memory import Memory
-from app.models.weave_card import WeaveCard, WeaveCardCharacter, WeaveCardMemory
+from app.models.memory import WeaveCard, WeaveCardCharacter, WeaveCardMemory
 
 _logger = get_logger("weave.graph")
 

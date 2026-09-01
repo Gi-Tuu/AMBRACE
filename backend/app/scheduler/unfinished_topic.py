@@ -9,8 +9,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 
 from app.db.database import async_session_factory
-from app.models.chat_message import ChatMessage
-from app.models.proactive_settings import ProactiveMessageLog
+from app.models.chat import ChatMessage
+from app.models.character import ProactiveMessageLog
 from app.scheduler.triggers import get_active_characters, get_latest_session
 from app.utils.logger import get_logger
 

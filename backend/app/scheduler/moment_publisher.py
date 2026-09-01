@@ -2,7 +2,7 @@
 from sqlalchemy import select
 from app.db.database import async_session_factory
 from app.models.character import AICharacter
-from app.models.proactive_settings import ProactiveSettings
+from app.models.character import ProactiveSettings
 from app.services.moment_service import publish_moment, generate_comments_for_moment
 from app.utils.logger import get_logger
 

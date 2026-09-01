@@ -13,8 +13,8 @@ from sqlalchemy import select, func
 
 from app.db.database import async_session_factory
 from app.models.character import AICharacter
-from app.models.emotion_care_task import EmotionCareTask
-from app.models.proactive_settings import ProactiveMessageLog
+from app.models.agent import EmotionCareTask
+from app.models.character import ProactiveMessageLog
 from app.utils.logger import get_logger
 from app.utils.dnd import user_in_dnd_period as _user_in_dnd_period
 

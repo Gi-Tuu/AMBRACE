@@ -45,7 +45,7 @@ async def preset_defaults() -> int:
     from sqlalchemy import select
 
     from app.db.database import async_session_factory
-    from app.models.mcp_server import MCPServer
+    from app.models.mcp import MCPServer
 
     _name_re = _re.compile(r"^[A-Za-z0-9_-]{1,64}$")
     count = 0

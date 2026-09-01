@@ -33,8 +33,8 @@ from app.db.database import async_session_factory
 from app.events.bus import event_bus
 from app.events.types import EventType
 from app.mcp.manager import mcp_manager
-from app.models.mcp_server import MCPServer
-from app.models.tool_permission import ToolPermission
+from app.models.mcp import MCPServer
+from app.models.agent import ToolPermission
 
 ADMIN = 1
 TEST_PREFIX = "mcp_ph2_"

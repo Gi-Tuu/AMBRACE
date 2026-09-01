@@ -129,7 +129,7 @@ async def _refresh_emotional_state(state: dict) -> None:
     """
     try:
         from app.services.character_state_service import get_character_states
-        from app.utils.ai_emotion import emotion_from_character_states
+        from app.domain.emotion.model import emotion_from_character_states
         _cs = await get_character_states(state.get("character_id"))
         state["emotional_state"] = emotion_from_character_states(_cs) or ""
     except Exception as e:
@@ -170,7 +170,7 @@ async def _process_utterance(ws: WebSocket, state: dict, audio_bytes: bytes) -> 
         await _refresh_emotional_state(state)
         _user_emotion = None
         try:
-            from app.utils.emotion import detect_user_emotion
+            from app.domain.emotion.model import detect_user_emotion
             _user_emotion = detect_user_emotion(text) or None
         except Exception:
             _user_emotion = None

@@ -15,7 +15,7 @@ from app.db.database import async_session_factory
 from app.models.memory import Memory
 from app.models.character import AICharacter
 from app.memory.flags import memory_v2_enabled as _memory_v2_enabled
-from app.models.proactive_settings import ProactiveMessageLog
+from app.models.character import ProactiveMessageLog
 from app.memory.constants import (
     REVIEW_MIN_IMPORTANCE, REVIEW_MAX_PER_DAY, REVIEW_RETRY_DAYS, REVIEW_SUCCESS_WINDOW_HOURS,
     REVIEW_MIN_INTERVAL_MINUTES, REINFORCE_FACTOR_RETRIEVE,
@@ -55,7 +55,7 @@ async def collect_review_events() -> list[dict]:
     # 审计 P2-04：无活跃会话的角色不产生复习候选（避免每 tick 空转出候选 + 写 rejected 日志）
     if per_char:
         try:
-            from app.models.chat_session import ChatSession
+            from app.models.chat import ChatSession
             async with async_session_factory() as db:
                 _sess = (await db.execute(
                     select(ChatSession.character_id).where(
@@ -291,7 +291,7 @@ _CONTEXTUAL_DELAY_SECONDS = 120
 async def _msg_hits_goal(character_id: int, user_id: int, user_msg: str) -> bool:
     """用户消息与进行中目标/未完成话题重叠（话题命中）"""
     try:
-        from app.models.conversation_topic import ConversationTopic
+        from app.models.memory import ConversationTopic
         from app.agent.topic_tracker import _overlap
         async with async_session_factory() as db:
             rows = (await db.execute(
@@ -308,7 +308,7 @@ async def _msg_hits_goal(character_id: int, user_id: int, user_msg: str) -> bool
 async def _pick_contextual_memory(character_id: int, user_id: int, user_msg: str) -> int | None:
     """情境复习候选记忆：优先进行中目标/未完成话题关联记忆，其次意义/情绪/关系重要记忆。"""
     try:
-        from app.models.conversation_topic import ConversationTopic
+        from app.models.memory import ConversationTopic
         from app.models.memory import Memory
         from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
         async with async_session_factory() as db:

@@ -2,7 +2,7 @@
 import asyncio
 
 from app.memory.shared_events import detect_user_marked, anniversary_text, recall_text
-from app.models.shared_event import SharedEvent
+from app.models.memory import SharedEvent
 
 
 def test_detect_user_marked():

@@ -21,6 +21,7 @@ from app.api import plugins as plugins_api
 from app.api import platform_profiles as pp_api
 from app.auth.deps import get_current_user_id
 from app.plugins import registry
+from app.providers import registry as prov_reg
 from app.services import permission_service as perm
 
 
@@ -67,7 +68,19 @@ def _seed_registry():
     }
     registry._db_config['douyin_mcp'] = {'allowed_character_ids': ''}
     registry._enabled['douyin_mcp'] = True
+    # X5：端点经渠道注册表识别渠道插件——注入注册并在用例后清理
+    from app.providers import channel as _ch
+
+    class _P:
+        pass
+
+    _ch.register_channel('douyin', _P(), meta={
+        'label': '抖音', 'plugin': 'douyin_mcp', 'scope': 'douyin',
+        'scope_label': '抖音', 'scope_desc': '抖音扩展：发布图文、回复评论',
+        'risk_level': 'high', 'binding': {'unique_per_family': True},
+    }, source='douyin_mcp')
     yield
+    prov_reg.unregister_providers_for_source('douyin_mcp')
     registry._loaded.pop('douyin_mcp', None)
     registry._db_config.pop('douyin_mcp', None)
     registry._enabled.pop('douyin_mcp', None)

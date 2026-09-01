@@ -140,7 +140,7 @@ async def get_open_loops(character_id: int, user_id: int, limit: int = 10) -> li
     loops: list[str] = []
     try:
         from app.models.life import LifeGoal
-        from app.models.scheduled_event import ScheduledEvent
+        from app.models.life import ScheduledEvent
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         async with async_session_factory() as db:
             goals = (await db.execute(

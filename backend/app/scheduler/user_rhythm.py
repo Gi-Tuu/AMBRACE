@@ -77,8 +77,8 @@ async def _load_hourly_counts(user_id: int) -> dict[int, int]:
     """近 LEARN_LOOKBACK_DAYS 天内该用户消息（sender_type=user）按北京时间小时聚合计数。"""
     since_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=LEARN_LOOKBACK_DAYS)
     from app.db.database import async_session_factory
-    from app.models.chat_message import ChatMessage
-    from app.models.chat_session import ChatSession
+    from app.models.chat import ChatMessage
+    from app.models.chat import ChatSession
 
     counts: dict[int, int] = {}
     async with async_session_factory() as db:
@@ -108,7 +108,7 @@ async def learn_user_rhythm(user_id: int) -> list[list[int]]:
     try:
         counts = await _load_hourly_counts(user_id)
         active = infer_active_hours(counts)
-        from app.models.user_rhythm import UserRhythm
+        from app.models.life import UserRhythm
         from app.db.database import async_session_factory
         async with async_session_factory() as db:
             row = (await db.execute(select(UserRhythm).where(UserRhythm.user_id == user_id))).scalar_one_or_none()
@@ -148,7 +148,7 @@ async def get_rhythm_weight(user_id: int, cn_hour: int) -> float:
         return cached[1]
     weight = 1.0
     try:
-        from app.models.user_rhythm import UserRhythm
+        from app.models.life import UserRhythm
         from app.db.database import async_session_factory
         async with async_session_factory() as db:
             row = (await db.execute(select(UserRhythm).where(UserRhythm.user_id == user_id))).scalar_one_or_none()

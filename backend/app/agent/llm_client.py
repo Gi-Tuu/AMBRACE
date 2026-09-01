@@ -138,7 +138,7 @@ async def get_user_llm_config(user_id: int | None) -> dict | None:
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.api_config import ApiConfig
+        from app.models.config import ApiConfig
         async with async_session_factory() as db:
             result = await db.execute(
                 select(ApiConfig).where(ApiConfig.user_id == user_id)
@@ -161,7 +161,7 @@ async def get_server_llm_config() -> dict | None:
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.api_config import ApiConfig
+        from app.models.config import ApiConfig
         async with async_session_factory() as db:
             result = await db.execute(
                 select(ApiConfig).where(ApiConfig.user_id == SERVER_CONFIG_UID)
@@ -189,7 +189,7 @@ async def get_task_llm_config(user_id: int | None, task: str, character_id: int 
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.task_llm_config import TaskLlmConfig
+        from app.models.agent import TaskLlmConfig
         async with async_session_factory() as db:
             cfg = None
             if user_id:
@@ -223,7 +223,7 @@ async def get_fallback_llm_config() -> dict | None:
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.api_config import ApiConfig
+        from app.models.config import ApiConfig
         async with async_session_factory() as db:
             result = await db.execute(
                 select(ApiConfig).where(ApiConfig.user_id == SERVER_FALLBACK_UID)
@@ -310,7 +310,7 @@ async def load_character_reasoning_level(character_id: int | None) -> int:
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.proactive_settings import ProactiveSettings
+        from app.models.character import ProactiveSettings
         async with async_session_factory() as db:
             row = (await db.execute(
                 select(ProactiveSettings.reasoning_level)
@@ -419,6 +419,11 @@ async def chat_completion(
 
     async def _fallback_create():
         """内容审核拒绝/主端点确定性失败时：优先 DB 备用配置（user_id=-1），其次 .env deepseek 兜底"""
+        try:
+            from app.memory.observability import obs_event
+            obs_event(None, "fb_llm_fallback_create", {"model": str(model_name)[:40]})
+        except Exception:
+            pass
         fb_cfg = await get_fallback_llm_config()
         if fb_cfg and fb_cfg.get("api_key"):
             _fkey, _furl, _fmodel = fb_cfg["api_key"], fb_cfg["base_url"], fb_cfg["model"]
@@ -459,6 +464,11 @@ async def chat_completion(
                     response = await _fallback_create()
                 else:
                     # 重试 2：重建客户端（清空连接池）再试，规避僵尸 keepalive 连接复用导致的无限挂起
+                    try:
+                        from app.memory.observability import obs_event
+                        obs_event(None, "fb_llm_retry_rebuild", {"error": str(e2)[:80]})
+                    except Exception:
+                        pass
                     _clients.pop(_client_key(cfg["base_url"], picked_key), None)
                     client = _client_via_registry(cfg, picked_key)
                     response = await _create(**kwargs)
@@ -522,7 +532,7 @@ def _record_usage_async(provider: str | None, model: str | None,
     async def _do() -> None:
         try:
             from app.db.database import async_session_factory
-            from app.models.llm_usage import LlmUsage
+            from app.models.agent import LlmUsage
             async with async_session_factory() as db:
                 db.add(LlmUsage(
                     provider=(provider or "")[:30] or None,

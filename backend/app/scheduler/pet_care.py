@@ -15,7 +15,7 @@ from sqlalchemy import select, func, or_
 from app.db.database import async_session_factory
 from app.models.pet import Pet
 from app.models.character import AICharacter
-from app.models.proactive_settings import ProactiveMessageLog
+from app.models.character import ProactiveMessageLog
 from app.utils.logger import get_logger
 from app.agent.llm_client import chat_completion, load_character_reasoning_level
 from app.utils.dnd import user_in_dnd_period as _user_in_dnd_period
@@ -390,7 +390,7 @@ async def run_ai_adopt(char_id: int, user_id: int) -> bool:
 
 async def _recent_care(pet_id: int, since) -> bool:
     """该宠物最近是否有互动（照顾间隔判断）"""
-    from app.models.pet_activity import PetActivity
+    from app.models.pet import PetActivity
     async with async_session_factory() as db:
         cnt = (await db.execute(
             select(func.count(PetActivity.id)).where(
@@ -505,7 +505,7 @@ async def run_ai_care(char_id: int, user_id: int, pet_id: int) -> bool:
 
 async def _pet_visit_daily_count(user_id: int) -> int:
     """今日该用户已收到 AI 宠物来访次数（按 PetActivity action=visit 计数）"""
-    from app.models.pet_activity import PetActivity
+    from app.models.pet import PetActivity
     cn_tz = timezone(timedelta(hours=8))
     today_start = datetime.now(cn_tz).replace(hour=0, minute=0, second=0, microsecond=0)
     today_start = today_start.astimezone(timezone.utc).replace(tzinfo=None)

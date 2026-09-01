@@ -10,9 +10,9 @@ from sqlalchemy import func, select
 
 from app.db.database import async_session_factory
 from app.models.memory import Memory
-from app.models.proactive_settings import ProactiveMessageLog
+from app.models.character import ProactiveMessageLog
 from app.scheduler.triggers import get_active_characters
-from app.utils.emotion import detect_user_emotion
+from app.domain.emotion.model import detect_user_emotion
 from app.utils.logger import get_logger
 
 _logger = get_logger("scheduler.life_regression")
@@ -44,7 +44,7 @@ async def _used_today(character_id: int) -> bool:
 
 async def _user_recent_emotion(user_id: int, character_id: int) -> str:
     """用户最近消息情绪（取最近一条用户消息）"""
-    from app.models.chat_message import ChatMessage
+    from app.models.chat import ChatMessage
     from app.services.chat_service import get_latest_session_id
     async with async_session_factory() as db:
         session_id = await get_latest_session_id(user_id, character_id)

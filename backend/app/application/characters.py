@@ -84,7 +84,7 @@ def _steps_returned_count(steps: dict) -> int:
 
 async def _summarize_task_logs(character_id: int, db: AsyncSession) -> list[dict]:
     """无正式任务时，从最近 AgentTaskLog（排除 blocked 噪音）生成任务化摘要列表"""
-    from app.models.agent_task_log import AgentTaskLog
+    from app.models.agent import AgentTaskLog
     _wanted = ("chat", "scheduler", "group_chat", "image_gen", "reflection")
     logs = (await db.execute(
         select(AgentTaskLog)
@@ -356,11 +356,11 @@ async def delete_character(
     await _get_owned_character(db, character_id, user_id, lang)
     from sqlalchemy import delete as sa_delete
     from app.models.memory import Memory
-    from app.models.diary import AIDiary
-    from app.models.moment import AIMoment, MomentLike, MomentAILike, MomentComment
-    from app.models.proactive_settings import ProactiveSettings
-    from app.models.scheduled_event import ScheduledEvent
-    from app.models.proactive_storyline import ProactiveStorylineItem
+    from app.models.life import AIDiary
+    from app.models.life import AIMoment, MomentLike, MomentAILike, MomentComment
+    from app.models.character import ProactiveSettings
+    from app.models.life import ScheduledEvent
+    from app.models.character import ProactiveStorylineItem
 
     result = await db.execute(
         select(AICharacter).where(AICharacter.id == character_id)
@@ -418,7 +418,7 @@ async def delete_character(
     await db.execute(sa_delete(Memory).where(Memory.character_id == character_id))
     # #70-C2：连冷归档 memory_archive 一起物理删（删除角色=完全清除）
     try:
-        from app.models.memory.memory_archive import MemoryArchive
+        from app.models.memory import MemoryArchive
         await db.execute(sa_delete(MemoryArchive).where(MemoryArchive.character_id == character_id))
     except Exception:
         pass
@@ -428,11 +428,11 @@ async def delete_character(
     await db.execute(sa_delete(ProactiveStorylineItem).where(ProactiveStorylineItem.character_id == character_id))
 
     # 聊天记录/会话/日摘要/提取记录/主动消息日志（用户要求：删除角色=清除其全部内容）
-    from app.models.chat_session import ChatSession
-    from app.models.chat_message import ChatMessage
-    from app.models.daily_summary import DailySummary
-    from app.models.processed_extraction import ProcessedExtraction
-    from app.models.proactive_settings import ProactiveMessageLog
+    from app.models.chat import ChatSession
+    from app.models.chat import ChatMessage
+    from app.models.memory import DailySummary
+    from app.models.memory import ProcessedExtraction
+    from app.models.character import ProactiveMessageLog
 
     session_ids = list((await db.execute(
         select(ChatSession.id).where(ChatSession.character_id == character_id))).scalars().all())
@@ -447,12 +447,12 @@ async def delete_character(
     await db.execute(sa_delete(ProactiveMessageLog).where(ProactiveMessageLog.character_id == character_id))
 
     # 状态八维 / AI 间私聊 / 时光页大事记（补漏，随角色彻底清除）
-    from app.models.character_state import CharacterState
+    from app.models.character import CharacterState
     await db.execute(sa_delete(CharacterState).where(CharacterState.character_id == character_id))
-    from app.models.ai_chat import AIChat
+    from app.models.chat import AIChat
     await db.execute(sa_delete(AIChat).where(
         or_(AIChat.character_a_id == character_id, AIChat.character_b_id == character_id)))
-    from app.models.timeline_event import TimelineEvent
+    from app.models.life import TimelineEvent
     await db.execute(sa_delete(TimelineEvent).where(TimelineEvent.character_id == character_id))
 
     # 硬删除角色行本身（删除角色 = 完全清除，前端不再需要 is_active 过滤）
@@ -491,7 +491,7 @@ async def get_emotion_timeline(
 ):
     """状态情绪记忆时间线（只读，零 LLM）：情绪记忆 + 状态触发日志 + 剧情线事件三源合并，按时间倒序"""
     await _get_owned_character(db, character_id, user_id, lang)
-    from app.services.emotion_timeline_service import get_emotion_timeline as _get_timeline
+    from app.domain.emotion.timeline import get_emotion_timeline as _get_timeline
     return await _get_timeline(character_id, days=days, dimension=dimension)
 
 
@@ -519,7 +519,7 @@ async def get_agent_mind(
     except Exception:
         pass
     try:
-        from app.models.agent_task import AgentTask
+        from app.models.agent import AgentTask
         rows = (await db.execute(
             select(AgentTask)
             .where(AgentTask.character_id == character_id)
@@ -540,7 +540,7 @@ async def get_agent_mind(
     except Exception:
         pass
     try:
-        from app.models.agent_task_log import AgentTaskLog
+        from app.models.agent import AgentTaskLog
         logs = (await db.execute(
             select(AgentTaskLog)
             .where(AgentTaskLog.character_id == character_id)
@@ -560,7 +560,7 @@ async def get_agent_mind(
         pass
     # P2-4 记忆召回可观测（2026-08-16）：最近 memory_search trace 汇总 + 明细（数据源 P0-2，只读）
     try:
-        from app.models.agent_task_log import AgentTaskLog
+        from app.models.agent import AgentTaskLog
         import json as _ms_json
         _ms_rows = (await db.execute(
             select(AgentTaskLog)
@@ -658,7 +658,7 @@ async def list_lorebook(
 ):
     """Lorebook 条目列表（P1-2）：角色拥有的关键词触发设定"""
     await _get_owned_character(db, character_id, user_id, lang)
-    from app.models.lorebook_entry import LorebookEntry
+    from app.models.memory import LorebookEntry
     async with async_session_factory() as db2:
         rows = (await db2.execute(
             select(LorebookEntry).where(LorebookEntry.character_id == character_id)
@@ -684,7 +684,7 @@ async def create_lorebook(
 ):
     """新建 Lorebook 条目（P1-2；P2-5 Journal 化：每角色条目上限防失控）"""
     await _get_owned_character(db, character_id, user_id, lang)
-    from app.models.lorebook_entry import LorebookEntry
+    from app.models.memory import LorebookEntry
     from sqlalchemy import func as _func
     import json as _json
     async with async_session_factory() as _cnt_db:
@@ -722,7 +722,7 @@ async def update_lorebook(
 ):
     """更新 Lorebook 条目（P1-2）"""
     await _get_owned_character(db, character_id, user_id, lang)
-    from app.models.lorebook_entry import LorebookEntry
+    from app.models.memory import LorebookEntry
     import json as _json
     async with async_session_factory() as db2:
         entry = await db2.get(LorebookEntry, entry_id)
@@ -751,7 +751,7 @@ async def delete_lorebook(
 ):
     """删除 Lorebook 条目（P1-2）"""
     await _get_owned_character(db, character_id, user_id, lang)
-    from app.models.lorebook_entry import LorebookEntry
+    from app.models.memory import LorebookEntry
     async with async_session_factory() as db2:
         entry = await db2.get(LorebookEntry, entry_id)
         if entry is None or entry.character_id != character_id or entry.user_id != user_id:
@@ -771,7 +771,7 @@ async def list_world_facts(
 ):
     """世界事实列表（P1-3）：活跃事实，含作者与权威标记（用户定义的不可动摇设定优先展示）"""
     await _get_owned_character(db, character_id, user_id, lang)
-    from app.models.world_fact import WorldFact
+    from app.models.memory import WorldFact
     async with async_session_factory() as db2:
         rows = (await db2.execute(
             select(WorldFact)
@@ -826,7 +826,7 @@ async def delete_world_fact(
 ):
     """删除世界事实（P1-3）：仅用户自己创建的权威设定可删（系统/聊天折叠事实不可删，防误操作）"""
     await _get_owned_character(db, character_id, user_id, lang)
-    from app.models.world_fact import WorldFact
+    from app.models.memory import WorldFact
     async with async_session_factory() as db2:
         f = await db2.get(WorldFact, fact_id)
         if f is None or f.character_id != character_id or f.user_id != user_id:
@@ -848,7 +848,7 @@ async def get_state_history(
     """八维状态历史快照（Phase 2）：每次聊天评估后的状态，按时间倒序，供情绪曲线/蛛网对比"""
     await _get_owned_character(db, character_id, user_id, lang)
     from datetime import timedelta
-    from app.models.character_state_history import CharacterStateHistory
+    from app.models.character import CharacterStateHistory
     from sqlalchemy import select
     days = max(1, min(int(days or 30), 180))
     start = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
@@ -889,7 +889,7 @@ async def get_memory_trace(
     """
     import json as _json
     from sqlalchemy import select as _select
-    from app.models.agent_task_log import AgentTaskLog
+    from app.models.agent import AgentTaskLog
     await _get_owned_character(db, character_id, user_id, lang)
     limit = max(1, min(int(limit or 20), 50))
     async with async_session_factory() as s:

@@ -2,12 +2,12 @@
 import random
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import select, func
-from app.models.moment import AIMoment, MomentAILike, MomentComment
+from app.models.life import AIMoment, MomentAILike, MomentComment
 from app.db.database import async_session_factory
 from app.models.character import AICharacter
-from app.models.chat_session import ChatSession
-from app.models.chat_message import ChatMessage
-from app.models.proactive_settings import ProactiveSettings
+from app.models.chat import ChatSession
+from app.models.chat import ChatMessage
+from app.models.character import ProactiveSettings
 from app.agent.llm_client import chat_completion
 from app.agent.user_profile import build_user_profile_text
 from app.utils.logger import get_logger
@@ -500,7 +500,7 @@ def _is_valid_content(content: str) -> bool:
 def _emotion_hint_for(content: str) -> str:
     """动态/评论情感倾向提示（复用 utils/emotion.py，零 LLM）。返回空串表示无情绪。"""
     try:
-        from app.utils.emotion import detect_user_emotion
+        from app.domain.emotion.model import detect_user_emotion
         hint = detect_user_emotion(content or "")
     except Exception:
         hint = ""
@@ -989,7 +989,7 @@ async def generate_pending_comments():
     成本受控：6h 窗口 + 0 评论过滤，已有评论的动态不重复调用。
     """
     from datetime import timedelta
-    from app.models.moment import AIMoment, MomentComment
+    from app.models.life import AIMoment, MomentComment
     from sqlalchemy import select
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=6)
     async with async_session_factory() as db:

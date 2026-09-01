@@ -32,9 +32,9 @@ ADMIN = 1
 async def _seed_stats(factory):
     from app.models.user import User
     from app.models.character import AICharacter
-    from app.models.chat_session import ChatSession
-    from app.models.chat_message import ChatMessage
-    from app.models.proactive_settings import ProactiveMessageLog, ProactiveTriggerLog
+    from app.models.chat import ChatSession
+    from app.models.chat import ChatMessage
+    from app.models.character import ProactiveMessageLog, ProactiveTriggerLog
 
     now = datetime.now(timezone.utc)
 

@@ -38,9 +38,9 @@ async def generate_today_summaries() -> int:
     """为今天消息足够但尚无日摘要的会话补生成日摘要；返回生成条数"""
     from app.agent.llm_client import chat_completion
     from app.models.character import AICharacter
-    from app.models.chat_message import ChatMessage
-    from app.models.chat_session import ChatSession
-    from app.models.daily_summary import DailySummary
+    from app.models.chat import ChatMessage
+    from app.models.chat import ChatSession
+    from app.models.memory import DailySummary
 
     today = _beijing_today_str()
     start_utc = _beijing_day_start_utc()

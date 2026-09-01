@@ -19,7 +19,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
-from app.models.user.account_invite import AccountInvite
+from app.models.user import AccountInvite
 from app.services.permission_service import _invalidate_admin_cache
 
 # 受邀码有效期（分钟）

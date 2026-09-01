@@ -3,9 +3,9 @@ import asyncio
 from datetime import date, datetime, timezone
 from sqlalchemy import select
 from app.db.database import async_session_factory
-from app.models.chat_message import ChatMessage
-from app.models.chat_session import ChatSession
-from app.models.proactive_settings import ProactiveMessageLog
+from app.models.chat import ChatMessage
+from app.models.chat import ChatSession
+from app.models.character import ProactiveMessageLog
 from app.utils.logger import get_logger
 from app.utils.async_tasks import spawn_background
 from app.scheduler.diary_generator import generate_missing_diaries

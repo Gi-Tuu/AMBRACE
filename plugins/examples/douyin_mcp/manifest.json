@@ -1,5 +1,6 @@
 {
   "name": "douyin_mcp",
+  "channel": "douyin",
   "version": "0.1.0",
   "description": "让 AI 拥有自己的抖音账号：发布图文、回复粉丝评论、感知账号动态，还能看懂自己发过的图文（发布/回复默认需你确认）",
   "author": "AICompanion",

@@ -50,8 +50,8 @@ def ws_db(monkeypatch):
 def _seed_turn(factory, *, memories: list[str], memory_ids: list[int] | None = None):
     """预置历史消息 + 本轮新增记忆（真实行），返回 turn_started_at。"""
     from app.models.memory import Memory
-    from app.models.chat_session import ChatSession
-    from app.models.chat_message import ChatMessage
+    from app.models.chat import ChatSession
+    from app.models.chat import ChatMessage
 
     async def _run():
         async with factory() as db:

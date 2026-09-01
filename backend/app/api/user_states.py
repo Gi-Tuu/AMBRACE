@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from app.auth.deps import get_current_user_id
 from app.db.database import async_session_factory
-from app.models.user_state import UserState
+from app.models.user import UserState
 from app.schemas.user_state import UserStateResponse, UserStateUpdate
 from app.utils.clamp import clamp_int
 

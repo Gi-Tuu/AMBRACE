@@ -88,7 +88,7 @@ def test_arbiter_festival_failure_marks_log(msg_db, monkeypatch):
         raise RuntimeError('boom')
     monkeypatch.setattr(mg, 'generate_holiday_message', _boom)
     from app.scheduler import arbiter
-    from app.models.proactive_settings import ProactiveMessageLog
+    from app.models.character import ProactiveMessageLog
     cand = dict(character_id=11, user_id=1, session_id=1, character_name='小阳',
                 character_personality='活泼', nickname='用户',
                 holiday_name='七夕节')

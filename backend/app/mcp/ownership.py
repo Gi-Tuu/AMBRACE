@@ -35,7 +35,7 @@ async def owned_server_ids(user_id: int, *, use_cache: bool = False) -> set[int]
             return cached[1]
     ids: set[int] = set()
     try:
-        from app.models.mcp_server import MCPServer
+        from app.models.mcp import MCPServer
 
         async with async_session_factory() as db:
             rows = (await db.execute(

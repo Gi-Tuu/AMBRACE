@@ -60,7 +60,7 @@ async def _add_user(factory, uid: int, username: str, parent_id: int | None = No
 
 async def _seed_usage(factory, rows: list[dict]):
     """rows: {user_id, config_id, group_owner_id, total, model}"""
-    from app.models.llm_usage import LlmUsage
+    from app.models.agent import LlmUsage
     now = datetime.now()
     async with factory() as db:
         for i, r in enumerate(rows):

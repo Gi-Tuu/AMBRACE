@@ -22,7 +22,7 @@ from app.scheduler import arbiter
 
 def test_phase_e_flag已全量开启():
     assert loop.AGENT_FLAGS.get("agent_loop_group_chat") is True
-    assert loop.AGENT_FLAGS.get("agent_loop_douyin") is True
+    assert loop.AGENT_FLAGS.get("agent_loop_social") is True  # X5：原 agent_loop_douyin 改名
 
 
 # ---------------- 群聊 _generate_replies：flag 回退 ----------------

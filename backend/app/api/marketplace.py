@@ -23,7 +23,7 @@ from sqlalchemy import select
 from app.auth.deps import get_current_user_id
 from app.db.database import async_session_factory
 from app.i18n import tr_lang
-from app.models.marketplace_config import MarketplaceConfig
+from app.models.config import MarketplaceConfig
 from app.plugins import registry
 from app.plugins.manifest import load_manifest
 from app.plugins.zip_safety import validate_zip_bytes, extract_zip_bytes, ZipSafetyError

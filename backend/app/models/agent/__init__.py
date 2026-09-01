@@ -127,7 +127,7 @@ class ToolPermission(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    scope: Mapped[str] = mapped_column(String(40), nullable=False)  # image_gen / image_understand / tts / asr / browser / douyin / extension / __global__
+    scope: Mapped[str] = mapped_column(String(40), nullable=False)  # image_gen / image_understand / tts / asr / browser / 渠道 scope / extension / __global__
     level: Mapped[str] = mapped_column(String(10), nullable=False, default="allow")  # allow / ask / forbid
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

@@ -26,8 +26,8 @@ async def weave_full_section(state: dict, ctx: dict) -> list[str]:
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.proactive_settings import ProactiveSettings as _PS
-        from app.models.weave_card import WeaveCard, WeaveCardCharacter
+        from app.models.character import ProactiveSettings as _PS
+        from app.models.memory import WeaveCard, WeaveCardCharacter
         from sqlalchemy import or_ as _or_
         from app.agent.context_builder import _clip_text_to_quota, _SECTION_QUOTA_TOKENS
 
@@ -106,8 +106,8 @@ async def life_share_section(state: dict, ctx: dict) -> list[str]:
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.character_state import CharacterState as _CS
-        from app.models.proactive_settings import ProactiveSettings as _PS
+        from app.models.character import CharacterState as _CS
+        from app.models.character import ProactiveSettings as _PS
         import random as _rnd
 
         async with async_session_factory() as db:
@@ -212,7 +212,7 @@ async def group_dynamics_section(state: dict, ctx: dict) -> list[str]:
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.chat_group import ChatGroup as _CG, ChatGroupMember as _CGM, ChatGroupMessage as _CGMsg
+        from app.models.chat import ChatGroup as _CG, ChatGroupMember as _CGM, ChatGroupMessage as _CGMsg
         from app.models.character import AICharacter
 
         async with async_session_factory() as db:
@@ -273,7 +273,7 @@ async def image_gen_section(state: dict, ctx: dict) -> list[str]:
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.proactive_settings import ProactiveSettings
+        from app.models.character import ProactiveSettings
 
         async with async_session_factory() as db:
             _ps = await db.execute(
@@ -315,7 +315,7 @@ async def image_gen_section(state: dict, ctx: dict) -> list[str]:
                 # 主动生图概率兜底（2026-08-14）：开关开启 + 用户未明确要求 + 距上次生图任务 >= 4h + 随机 30% → 注入本轮提醒
                 elif _active_img:
                     try:
-                        from app.models.image_gen_task import ImageGenTask as _ImgTask
+                        from app.models.life import ImageGenTask as _ImgTask
                         from datetime import datetime, timezone
                         async with async_session_factory() as _dbg:
                             _last_task = (

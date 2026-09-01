@@ -135,7 +135,7 @@ async def _server_speech_config() -> dict:
     try:
         from sqlalchemy import select
         from app.db.database import async_session_factory
-        from app.models.speech_config import SpeechConfig
+        from app.models.config import SpeechConfig
         async with async_session_factory() as db:
             cfg = (await db.execute(select(SpeechConfig).where(SpeechConfig.user_id == 0))).scalars().first()
             if not cfg or not cfg.enabled or not cfg.api_key:
@@ -312,6 +312,12 @@ async def synthesize(
             path = await asyncio.to_thread(_synth_dashscope_sync, clean, voice, cfg, sub, fname)
         if path:
             return f"/uploads/tts/{subdir}/{Path(path).name}"
+        # F8 回退观测：云端已启用但未产出（含内部降级/失败）→ 落到下方 edge 兜底
+        try:
+            from app.memory.observability import obs_event
+            obs_event(None, "fb_tts_cloud_miss", {"voice": str(voice)[:30]})
+        except Exception:
+            pass
 
     # 2) edge-tts 兜底
     try:

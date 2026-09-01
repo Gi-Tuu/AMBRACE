@@ -33,8 +33,8 @@ SEARCH_RETRY = 1  # 只读工具失败自动重试次数（方案 5.2）
 # agent_reflection_inject 开=主动消息注入最近复盘（反思驱动）；
 # agent_context_trim 开=认知注入按角色热度裁剪（低频角色缩小日摘要/织库）；
 # agent_loop_group_chat 开=群聊回应走统一 Runtime（逐角色 build_context 注入世界认知，知识不串线）；关=旧单次 JSON 链路（Phase E，2026-08-18 全量开启）；
-# agent_loop_douyin 开=抖音/插件主动候选走统一 Runtime（世界认知注入 + 防 hint 污染记忆）；关=旧裸生成链路（Phase E，2026-08-18 全量开启）；
-# agent_social_light_context 开=群聊/抖音社交短回复走轻量上下文（跳过完整世界认知，单次 prompt ≈-64%；F1/F2，2026-08-18 全量开启）；关=全量 build_context（回退）
+# agent_loop_social 开=渠道/插件主动候选走统一 Runtime（世界认知注入 + 防 hint 污染记忆）；关=旧裸生成链路（Phase E，2026-08-18 全量开启；X5 渠道化时按渠道语义改名，行为不变）；
+# agent_social_light_context 开=群聊/渠道社交短回复走轻量上下文（跳过完整世界认知，单次 prompt ≈-64%；F1/F2，2026-08-18 全量开启）；关=全量 build_context（回退）
 AGENT_FLAGS = {
     "agent_loop_search": True,
     "agent_loop_scheduler": True,  # 2026-08-17 全量基线（开源包）：主动任务 trace + 10% 灰度 route 对比
@@ -46,9 +46,9 @@ AGENT_FLAGS = {
     "agent_context_trim": True,  # 认知注入按角色热度裁剪（2026-08-16）
     "agent_daily_memory_maintenance": True,  # 日终记忆维护（P0-5，2026-08-16：日摘要补生成+去重+置顶摘要补生成，默认开）
     "agent_loop_group_chat": True,  # Phase E（2026-08-18）：群聊回应走统一 Runtime（2026-08-18 用户拍板全量体验；回退改 False 重启即恢复旧链路）
-    "agent_loop_douyin": True,  # Phase E（2026-08-18）：抖音/插件主动候选走统一 Runtime（2026-08-18 用户拍板全量体验；回退改 False 重启即恢复旧链路）
+    "agent_loop_social": True,  # Phase E（2026-08-18）：渠道/插件主动候选走统一 Runtime（X5 渠道化改名；回退改 False 重启即恢复旧链路）
     "agent_social_light_context": True,
-    "weave_3d": True,  # 织网 3D（P2 转默认开；仅客户端画布读它选 2D/3D 视图；低端机客户端自动降级 2.5D）  # F1/F2（2026-08-18 用户拍板全量开启）：群聊/抖音社交短回复走轻量上下文（单次 prompt ≈-64%；回退改 False 重启即恢复全量 build_context）。与 agent_loop_group_chat/agent_loop_douyin 正交：前者管走不走 Runtime，后者管 Runtime 内是否用轻量上下文
+    "weave_3d": True,  # 织网 3D（P2 转默认开；仅客户端画布读它选 2D/3D 视图；低端机客户端自动降级 2.5D）  # F1/F2（2026-08-18 用户拍板全量开启）：群聊/渠道社交短回复走轻量上下文（单次 prompt ≈-64%；回退改 False 重启即恢复全量 build_context）。与 agent_loop_group_chat/agent_loop_social 正交：前者管走不走 Runtime，后者管 Runtime 内是否用轻量上下文
     "proactive_naturalness_score": True,  # #28 ①（2026-08-24）：低优先主动消息自然度评分——生成后按规则评分，低于阈值重试 1 次/仍低则降级跳过；关=纯现状
     "proactive_user_rhythm": True,  # #28 ②（2026-08-24）：用户作息学习——从聊天/主动日志推断活跃时段，低优先主动消息在时段外降优先级/推迟；关=纯现状
     # 群聊游戏 Phase 1（2026-08-26）：只加不改既有 flag。总开关=群聊游戏；各游戏开关；主记忆摘要指针；AI 自动回合。

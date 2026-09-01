@@ -6,12 +6,12 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.db.database import async_session_factory
-from app.models.chat_session import ChatSession
-from app.models.chat_message import ChatMessage
+from app.models.chat import ChatSession
+from app.models.chat import ChatMessage
 from app.models.pet import Pet
 from app.models.character import AICharacter
 from app.models.memory import Memory
-from app.models.timeline_event import TimelineEvent
+from app.models.life import TimelineEvent
 from app.utils.logger import get_logger
 
 _logger = get_logger("timeline")

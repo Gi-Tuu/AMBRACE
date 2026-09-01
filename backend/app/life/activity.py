@@ -14,7 +14,7 @@ from sqlalchemy import select
 from app.agent.llm_client import chat_completion
 from app.memory.service import save_memory
 from app.models.life import LifeActivityLog, LifeArtifact
-from app.models.tool_permission import ToolPermission
+from app.models.agent import ToolPermission
 
 _logger = get_logger("life.activity")
 

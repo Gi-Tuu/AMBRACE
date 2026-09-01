@@ -8,7 +8,7 @@ AMBRACE 重构步骤 3：从 chat_service 拆出消息持久化（_append_ai_*�
 import json
 
 from app.db.database import async_session_factory
-from app.models.chat_message import ChatMessage
+from app.models.chat import ChatMessage
 from app.utils.logger import get_logger
 
 _logger = get_logger("services.chat")

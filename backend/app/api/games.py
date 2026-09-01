@@ -725,7 +725,7 @@ async def _mirror_to_group(db: AsyncSession, engine: GameEngine, session, event:
             cid = p.character_id
             sender_type = "user" if p.player_type == "user" else "ai"
     msg_type = "game_event" if actor_seat is None else "game_say"
-    from app.models.chat_group import ChatGroupMessage
+    from app.models.chat import ChatGroupMessage
     db.add(ChatGroupMessage(
         group_id=session.group_id, sender_type=sender_type, character_id=cid,
         content=content[:200], msg_type=msg_type, game_session_id=session.id,

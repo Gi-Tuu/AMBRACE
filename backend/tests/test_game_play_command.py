@@ -44,7 +44,7 @@ def play_db(monkeypatch):
         from app.models.base import Base
         from app.models.character import AICharacter
         from app.models.user import User
-        from app.models.chat_group import ChatGroup, ChatGroupMember
+        from app.models.chat import ChatGroup, ChatGroupMember
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:

@@ -21,7 +21,7 @@ MAX_FILE_BYTES = 20 * 1024 * 1024  # 20MB
 # 语音消息音频格式
 ALLOWED_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".amr", ".opus"}
 MAX_AUDIO_BYTES = 15 * 1024 * 1024  # 15MB
-# 视频发布（抖音插件 #67）：允许的视频扩展名与大小上限
+# 视频发布（渠道扩展 #67）：允许的视频扩展名与大小上限
 ALLOWED_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv"}
 MAX_VIDEO_BYTES = 200 * 1024 * 1024  # 200MB
 
@@ -62,8 +62,8 @@ async def save_voice(file: UploadFile, subdir: str, lang: str = "zh") -> str:
 async def save_video(file: UploadFile, subdir: str, lang: str = "zh") -> str:
     """保存视频文件到 uploads/{subdir}/，返回 /uploads/... 相对路径。
 
-    供抖音插件视频发布（#67）使用：允许 .mp4/.mov/.avi/.mkv，上限 200MB。
-    subdir 示例：'douyin/12'（抖音草稿 task_id=12）。
+    供渠道扩展视频发布（#67）使用：允许 .mp4/.mov/.avi/.mkv，上限 200MB。
+    subdir 示例：'<channel>/<task_id>'（渠道草稿目录，按渠道名分目录）。
     """
     return await _save_upload(file, subdir, ALLOWED_VIDEO_EXTS, MAX_VIDEO_BYTES, lang)
 
@@ -90,7 +90,7 @@ async def _cleanup_expired_media(subdirs: tuple[str, ...], days: int, *, file_ke
     返回 (删除文件数, 更新消息数)。"""
     import json as _json
     from app.db.database import async_session_factory
-    from app.models.chat_message import ChatMessage
+    from app.models.chat import ChatMessage
     from sqlalchemy import select
 
     deleted_by_session: dict[str, set[str]] = {}

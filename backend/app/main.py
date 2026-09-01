@@ -81,6 +81,15 @@ async def lifespan(app: FastAPI):
     setup_logging()
     logger = get_logger("app")
     logger.info("AMBRACE Server starting...")
+    # X5：渠道插件预加载（必须在 init_db 之前）——渠道自有 ORM 模型在插件 main.py 加载期
+    # import 注册进 Base.metadata，保证 create_all 建表齐全（渠道清单以 manifest "channel" 声明）。
+    try:
+        from app.plugins.registry import preload_channels
+        _pre_channels = preload_channels()
+        if _pre_channels:
+            logger.info("Channel plugins preloaded: %d", _pre_channels)
+    except Exception as _che:
+        logger.warning("Channel plugins preload failed: %s", _che)
     await init_db()
     logger.info("Database initialized")
 
@@ -109,7 +118,7 @@ async def lifespan(app: FastAPI):
         await registry.sync_plugins_db()
         logger.info("Plugins loaded: %d", len(registry._loaded))
         registry.mount_plugin_routers(app)
-        # Phase C：插件 action 自动登记为 ToolSpec（抖音发布/评论回复等；幂等覆盖）
+        # Phase C：插件 action 自动登记为 ToolSpec（渠道发布/评论回复等；幂等覆盖）
         try:
             from app.agent.tools import sync_plugin_tools
             _tool_count = sync_plugin_tools()

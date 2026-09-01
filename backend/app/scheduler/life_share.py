@@ -18,8 +18,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 
 from app.db.database import async_session_factory
-from app.models.character_state import CharacterState
-from app.models.proactive_settings import ProactiveTriggerLog
+from app.models.character import CharacterState
+from app.models.character import ProactiveTriggerLog
 from app.utils.logger import get_logger
 
 _logger = get_logger("scheduler.life_share")

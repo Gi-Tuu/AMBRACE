@@ -66,7 +66,7 @@ async def run_meaning_extraction(character_id: int, user_id: int) -> int:
     from app.agent.llm_client import chat_completion
     from app.models.character import AICharacter
     from app.models.memory import Memory
-    from app.models.relationship_event import RelationshipEvent
+    from app.models.character import RelationshipEvent
 
     _meaning_last_run[character_id] = time.time()
     async with async_session_factory() as db:

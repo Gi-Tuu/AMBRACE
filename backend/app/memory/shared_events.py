@@ -8,7 +8,7 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
-from app.models.shared_event import SharedEvent
+from app.models.memory import SharedEvent
 from app.memory.format import format_memory_line  # X-1（2026-08-18）：记忆注入行公共格式化
 from app.utils.logger import get_logger
 from app.utils.timeutil import now_naive_utc as _now_naive

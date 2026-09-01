@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy import select
 
 from app.db.database import async_session_factory
-from app.models.user_memo import UserMemo
-from app.models.user_diary import UserDiary
+from app.models.life import UserMemo
+from app.models.life import UserDiary
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
 from app.utils.logger import get_logger

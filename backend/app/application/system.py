@@ -97,7 +97,7 @@ def _task_cfg_payload(cfg) -> dict:
 
 
 async def _get_task_cfg(db, user_id: int, task: str):
-    from app.models.task_llm_config import TaskLlmConfig
+    from app.models.agent import TaskLlmConfig
     result = await db.execute(
         select(TaskLlmConfig).where(TaskLlmConfig.user_id == user_id, TaskLlmConfig.task == task)
     )
@@ -253,7 +253,7 @@ async def get_api_config(
 ):
     """读取用户级 API 配置（api_key 不回传明文）"""
     from sqlalchemy import select
-    from app.models.api_config import ApiConfig
+    from app.models.config import ApiConfig
     result = await db.execute(select(ApiConfig).where(ApiConfig.user_id == user_id))
     cfg = result.scalar_one_or_none()
     if not cfg:
@@ -275,7 +275,7 @@ async def update_api_config(
 ):
     """写入用户级 API 配置（BYOK：聊天主链路启用后优先于服务器默认）"""
     from sqlalchemy import select
-    from app.models.api_config import ApiConfig
+    from app.models.config import ApiConfig
     result = await db.execute(select(ApiConfig).where(ApiConfig.user_id == user_id))
     cfg = result.scalar_one_or_none()
     is_new = cfg is None
@@ -308,7 +308,7 @@ async def get_server_api_config(
 ):
     """读取服务器级全局 API 配置（api_key 不回传明文）"""
     await _require_admin(user_id, lang)
-    from app.models.api_config import ApiConfig
+    from app.models.config import ApiConfig
     from app.agent.llm_client import SERVER_CONFIG_UID
     result = await db.execute(select(ApiConfig).where(ApiConfig.user_id == SERVER_CONFIG_UID))
     cfg = result.scalar_one_or_none()
@@ -332,7 +332,7 @@ async def update_server_api_config(
 ):
     """写入服务器级全局 API 配置（影响所有未配 BYOK 的调用；仅主账号）"""
     await _require_admin(user_id, lang)
-    from app.models.api_config import ApiConfig
+    from app.models.config import ApiConfig
     from app.agent.llm_client import SERVER_CONFIG_UID
     result = await db.execute(select(ApiConfig).where(ApiConfig.user_id == SERVER_CONFIG_UID))
     cfg = result.scalar_one_or_none()
@@ -384,7 +384,7 @@ async def update_task_api_config(
     user_id: int,
 ):
     """写入用户级任务 LLM 配置（upsert）"""
-    from app.models.task_llm_config import TaskLlmConfig
+    from app.models.agent import TaskLlmConfig
     cfg = await _get_task_cfg(db, user_id, task)
     if cfg is None:
         cfg = TaskLlmConfig(user_id=user_id, task=task)
@@ -427,7 +427,7 @@ async def update_server_task_api_config(
 ):
     """写入服务器级任务 LLM 配置（仅主账号；影响所有用户的该任务调用）"""
     await _require_admin(user_id, lang)
-    from app.models.task_llm_config import TaskLlmConfig
+    from app.models.agent import TaskLlmConfig
     from app.agent.llm_client import SERVER_CONFIG_UID
     cfg = await _get_task_cfg(db, SERVER_CONFIG_UID, task)
     if cfg is None:
@@ -506,7 +506,7 @@ async def get_image_gen_server_config(
 ):
     """读取服务器级生图配置（api_key 不回传明文）"""
     await _require_admin(user_id, lang)
-    from app.models.image_gen_config import ImageGenConfig
+    from app.models.life import ImageGenConfig
     from app.agent.llm_client import SERVER_CONFIG_UID
     result = await db.execute(select(ImageGenConfig).where(ImageGenConfig.user_id == SERVER_CONFIG_UID))
     cfg = result.scalar_one_or_none()
@@ -532,7 +532,7 @@ async def update_image_gen_server_config(
 ):
     """写入服务器级生图配置（影响聊天内 AI 发图与 /images 接口；仅主账号）"""
     await _require_admin(user_id, lang)
-    from app.models.image_gen_config import ImageGenConfig
+    from app.models.life import ImageGenConfig
     from app.agent.llm_client import SERVER_CONFIG_UID
     result = await db.execute(select(ImageGenConfig).where(ImageGenConfig.user_id == SERVER_CONFIG_UID))
     cfg = result.scalar_one_or_none()
@@ -562,7 +562,7 @@ async def get_vlm_server_config(
 ):
     """读取服务器级识图配置（api_key 不回传明文）"""
     await _require_admin(user_id, lang)
-    from app.models.vlm_config import VlmConfig
+    from app.models.config import VlmConfig
     from app.agent.llm_client import SERVER_CONFIG_UID
     result = await db.execute(select(VlmConfig).where(VlmConfig.user_id == SERVER_CONFIG_UID))
     cfg = result.scalar_one_or_none()
@@ -585,7 +585,7 @@ async def update_vlm_server_config(
 ):
     """写入服务器级识图配置（影响聊天/手机感知等图片理解；仅主账号）"""
     await _require_admin(user_id, lang)
-    from app.models.vlm_config import VlmConfig
+    from app.models.config import VlmConfig
     from app.agent.llm_client import SERVER_CONFIG_UID
     result = await db.execute(select(VlmConfig).where(VlmConfig.user_id == SERVER_CONFIG_UID))
     cfg = result.scalar_one_or_none()
@@ -610,7 +610,7 @@ async def get_speech_server_config(
 ):
     """读取服务器级语音大模型配置（api_key 不回传明文）"""
     await _require_admin(user_id, lang)
-    from app.models.speech_config import SpeechConfig
+    from app.models.config import SpeechConfig
     from app.agent.llm_client import SERVER_CONFIG_UID
     result = await db.execute(select(SpeechConfig).where(SpeechConfig.user_id == SERVER_CONFIG_UID))
     cfg = result.scalar_one_or_none()
@@ -635,7 +635,7 @@ async def update_speech_server_config(
 ):
     """写入服务器级语音大模型配置（仅主账号）"""
     await _require_admin(user_id, lang)
-    from app.models.speech_config import SpeechConfig
+    from app.models.config import SpeechConfig
     from app.agent.llm_client import SERVER_CONFIG_UID
     result = await db.execute(select(SpeechConfig).where(SpeechConfig.user_id == SERVER_CONFIG_UID))
     cfg = result.scalar_one_or_none()
@@ -699,7 +699,7 @@ async def get_llm_usage(
     """
     from sqlalchemy import or_
     from app.db.database import async_session_factory
-    from app.models.llm_usage import LlmUsage, LlmUsageLimit
+    from app.models.agent import LlmUsage, LlmUsageLimit
     from app.models.user import User
     from app.services.family_service import is_sub_account, get_family_member_ids
 
@@ -787,7 +787,7 @@ async def update_llm_usage_limit(
     """设置免费额度总量（tokens，仅主账号；0=清除总额设置）"""
     await _require_admin(user_id, lang)
     from app.db.database import async_session_factory
-    from app.models.llm_usage import LlmUsageLimit
+    from app.models.agent import LlmUsageLimit
     try:
         limit = max(0, int(body.get("total_limit") or 0))
     except Exception:

@@ -43,8 +43,8 @@ async def _collect_week_data(character_id: int) -> str:
     try:
         lines = []
         async with async_session_factory() as db:
-            from app.models.agent_task_log import AgentTaskLog
-            from app.models.agent_task import AgentTask
+            from app.models.agent import AgentTaskLog
+            from app.models.agent import AgentTask
             logs = (await db.execute(
                 select(AgentTaskLog)
                 .where(

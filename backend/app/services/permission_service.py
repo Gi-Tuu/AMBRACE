@@ -2,7 +2,7 @@
 
 模型：用户级全局默认档位 + 每能力例外；实际权限 = 能力例外优先，无例外跟随全局默认。
 能力清单：image_gen(生图)/image_understand(识图)/tts(语音回复)/asr(语音转写)/
-        browser(浏览器扩展)/douyin(抖音扩展)/extension(其他扩展)。
+        browser(浏览器扩展)/渠道 scope(渠道扩展经注册表上报，X5)/extension(其他扩展)。
 """
 import json
 from app.utils.logger import get_logger
@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.db.database import async_session_factory
-from app.models.tool_permission import PendingPermissionAction, ToolPermission
+from app.models.agent import PendingPermissionAction, ToolPermission
 
 _logger = get_logger("permission")
 
@@ -21,7 +21,6 @@ SCOPE_IMAGE_UNDERSTAND = "image_understand"
 SCOPE_TTS = "tts"
 SCOPE_ASR = "asr"
 SCOPE_BROWSER = "browser"
-SCOPE_DOUYIN = "douyin"
 SCOPE_EXTENSION = "extension"
 
 SCOPES = [
@@ -30,7 +29,6 @@ SCOPES = [
     SCOPE_TTS,
     SCOPE_ASR,
     SCOPE_BROWSER,
-    SCOPE_DOUYIN,
     SCOPE_EXTENSION,
 ]
 
@@ -40,7 +38,6 @@ SCOPE_LABELS = {
     SCOPE_TTS: "语音回复",
     SCOPE_ASR: "语音转写",
     SCOPE_BROWSER: "浏览器",
-    SCOPE_DOUYIN: "抖音",
     SCOPE_EXTENSION: "扩展",
 }
 
@@ -50,7 +47,6 @@ SCOPE_DESCRIPTIONS = {
     SCOPE_TTS: "AI 用语音回复你（TTS 合成）",
     SCOPE_ASR: "转写你的语音消息（ASR 识别）",
     SCOPE_BROWSER: "浏览器扩展：AI 搜索网页、读取页面",
-    SCOPE_DOUYIN: "抖音扩展：发布图文、回复评论",
     SCOPE_EXTENSION: "其他扩展/插件的能力调用",
 }
 
@@ -61,13 +57,35 @@ LEVEL_LABELS = {"allow": "允许", "ask": "每次询问", "forbid": "禁止"}
 DEFAULT_GLOBAL_LEVEL = "allow"  # 默认全局 = 允许（保持现有体验），用户可收紧
 
 
+def _channel_scopes() -> dict[str, tuple[str, str]]:
+    """渠道上报的 scope → (label, desc)（X5：内核不持有具体渠道名，scope 清单动态合并）"""
+    try:
+        from app.providers.channel import list_channels
+        out: dict[str, tuple[str, str]] = {}
+        for c in list_channels():
+            m = c.get("meta") or {}
+            s = str(m.get("scope") or "").strip()
+            if s:
+                out[s] = (str(m.get("scope_label") or m.get("label") or s), str(m.get("scope_desc") or ""))
+        return out
+    except Exception:
+        return {}
+
+
 def _plugin_scope(plugin: str) -> str:
-    """插件名 → 能力 scope 映射（browser/douyin 特判，其余归 extension）"""
+    """插件名 → 能力 scope：注册渠道取 meta.scope（渠道上报），browser 特判，其余归 extension"""
     name = (plugin or "").lower()
     if "browser" in name or "brows" in name:
         return SCOPE_BROWSER
-    if "douyin" in name or "tiktok" in name:
-        return SCOPE_DOUYIN
+    try:
+        from app.providers.channel import channel_for_plugin
+        hit = channel_for_plugin(plugin or "")
+        if hit is not None:
+            scope = str((hit[1] or {}).get("scope") or "").strip()
+            if scope:
+                return scope
+    except Exception:
+        pass
     return SCOPE_EXTENSION
 
 

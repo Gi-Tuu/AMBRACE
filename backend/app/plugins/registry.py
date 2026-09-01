@@ -327,8 +327,25 @@ def mount_plugin_routers(app) -> None:
             except Exception as e:
                 _logger.warning("插件 %s 路由挂载失败: %s", name, e)
 
+def preload_channels() -> int:
+    """X5（2026-09-01）：仅加载 manifest 声明 channel 的渠道插件（main.py lifespan 在 init_db
+    之前调用——渠道自有 ORM 模型随 main.py 加载注册进 Base.metadata，create_all 建表齐全）。
+    正式加载仍由 sync_plugins_db 统一重扫（渠道注册为同源替换语义）。返回预加载数。"""
+    count = 0
+    for d in _scan_dir(EXAMPLE_DIR) + _scan_dir(USER_DIR):
+        try:
+            mf = json.loads((d / "manifest.json").read_text(encoding="utf-8-sig"))
+        except Exception:
+            continue
+        if not mf.get("channel"):
+            continue
+        if load_plugin_dir(d):
+            count += 1
+    return count
+
+
 async def run_plugin_action(plugin: str, action: str, payload: dict, user_id: int | None = None) -> bool:
-    """调用插件注册的 action（arbiter 执行插件自定义行为，如抖音评论回复）。
+    """调用插件注册的 action（arbiter 执行插件自定义行为，如渠道评论回复）。
 
     异常隔离返回 False；未注册返回 False；payload 为候选 dict（含 social_event 等）。
     user_id 非空时按插件名映射能力 scope 做权限检查（ask/forbid 拒绝执行）。

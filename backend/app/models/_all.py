@@ -13,7 +13,7 @@ from app.models.agent import AgentTask, AgentTaskLog, LlmUsage, LlmUsageLimit, T
 from app.models.mcp import MCPServer, McpCallLog
 from app.models.plugin import Plugin, PluginStore
 from app.models.config import ApiConfig, VlmConfig, SpeechConfig, MultimodalConfig, MarketplaceConfig, RuntimeFlag, UserLlmConfig
-from app.models.social import PlatformProfile, SocialMemory, DouyinAccount, DouyinPost, DouyinComment, DouyinPending, DouyinViewedNote
+from app.models.social import PlatformProfile, SocialMemory  # X5：渠道自有模型迁至渠道扩展包，加载期注册进 metadata
 from app.models.device import PhoneDesktop, PhoneLayout, CalendarNote, BrowserHistory, MemoNote, PhoneSnapshot, CheckInRequest, PhoneAutoState, UserDeviceToken
 from app.models.game import GameSession, GamePlayer, GameEvent, GameMemory
 
@@ -40,11 +40,6 @@ __all__ = [
     "CheckInRequest",
     "ConversationTopic",
     "DailySummary",
-    "DouyinAccount",
-    "DouyinComment",
-    "DouyinPending",
-    "DouyinPost",
-    "DouyinViewedNote",
     "EmotionCareTask",
     "HolidayPreference",
     "ImageGenConfig",

@@ -43,7 +43,7 @@ async def user_emotion_section(state: dict, ctx: dict) -> str:
     try:
         emo = (state.get("perception") or {}).get("emotion") or ""
         if not emo:
-            from app.utils.emotion import detect_user_emotion
+            from app.domain.emotion.model import detect_user_emotion
             emo = detect_user_emotion(state.get("user_message", ""))
         if emo:
             user_emotion = emo
@@ -56,7 +56,7 @@ async def user_manual_state_section(state: dict, ctx: dict) -> str:
     """user_manual_state 分区：用户手动八维状态（template 槽；全默认或无则空串）。"""
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.user_state import UserState
+    from app.models.user import UserState
     from app.agent.context_builder import _build_user_manual_state_text
 
     user_manual_state = ""

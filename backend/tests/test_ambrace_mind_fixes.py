@@ -22,7 +22,7 @@ from starlette.testclient import TestClient
 from app.api import characters as characters_api
 from app.auth.deps import get_current_user_id
 from app.db.database import get_db
-from app.models.agent_task_log import AgentTaskLog
+from app.models.agent import AgentTaskLog
 from app.models.character import AICharacter
 
 USER = 1
@@ -155,7 +155,7 @@ def test_summarize_task_logs_纯函数(mind_db):
 
     async def _run():
         async with factory() as db:
-            from app.api.characters import _summarize_task_logs
+            from app.application.characters import _summarize_task_logs  # F8：api 门面已删
             return await _summarize_task_logs(char_id, db)
 
     out = asyncio.run(_run())

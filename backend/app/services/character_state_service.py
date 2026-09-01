@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from app.db.database import async_session_factory
-from app.models.character_state import CharacterState
+from app.models.character import CharacterState
 from app.models.character import AICharacter
 from app.agent.llm_client import chat_completion
 from app.utils.logger import get_logger
@@ -78,7 +78,7 @@ def _clamp_value(v) -> int | None:
 async def prune_state_history(character_id: int, keep: int = STATE_HISTORY_KEEP) -> None:
     """每角色只保留最新 keep 条状态快照（超出删除最旧的；失败静默）"""
     try:
-        from app.models.character_state_history import CharacterStateHistory
+        from app.models.character import CharacterStateHistory
         from sqlalchemy import delete
         async with async_session_factory() as db:
             keep_ids = (await db.execute(
@@ -102,7 +102,7 @@ async def prune_state_history(character_id: int, keep: int = STATE_HISTORY_KEEP)
 def _write_history_snapshot(db, st, source: str = "drift") -> None:
     """漂移结算后写 1 行状态历史快照（状态趋势数据源；失败不阻塞主流程）"""
     try:
-        from app.models.character_state_history import CharacterStateHistory
+        from app.models.character import CharacterStateHistory
         db.add(CharacterStateHistory(
             character_id=st.character_id, source=source,
             **{k: _clamp_value(getattr(st, k, 50)) for k in _HISTORY_DIM_KEYS},
@@ -347,7 +347,7 @@ async def update_character_states(
             await db.flush()
             # Phase 2：评估落库后存 1 行历史快照（情绪曲线/蛛网对比数据源）
             try:
-                from app.models.character_state_history import CharacterStateHistory
+                from app.models.character import CharacterStateHistory
                 db.add(CharacterStateHistory(
                     character_id=character_id, source="eval",
                     **{k: _clamp_value(new_values.get(k, getattr(st, k, 50))) for k in ("mood", "body_temp", "desire", "possessiveness", "fatigue", "sensitivity", "comfort", "anger")},

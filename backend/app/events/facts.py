@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.db.database import async_session_factory
 from app.events.schema import EPISTEMIC_FACT
-from app.models.world_fact import WorldFact
+from app.models.memory import WorldFact
 from app.utils.logger import get_logger
 from app.utils.timeutil import now_naive_utc as _now_naive
 

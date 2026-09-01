@@ -12,7 +12,7 @@ async def load_runtime_flags() -> int:
     '''启动时把 DB 覆盖值合并进 AGENT_FLAGS，返回覆盖数；失败静默返回 0（用硬编码默认）'''
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.runtime_flag import RuntimeFlag
+    from app.models.config import RuntimeFlag
     from app.agent.loop import AGENT_FLAGS
     try:
         async with async_session_factory() as db:
@@ -34,7 +34,7 @@ async def set_runtime_flag(key: str, enabled: bool) -> bool:
     '''设置开关：写 DB + 热更新 AGENT_FLAGS 内存；key 不在 AGENT_FLAGS 返回 False'''
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.runtime_flag import RuntimeFlag
+    from app.models.config import RuntimeFlag
     from app.agent.loop import AGENT_FLAGS
     if key not in AGENT_FLAGS:
         return False
@@ -59,7 +59,7 @@ async def get_all_flags() -> list:
     '''返回 AGENT_FLAGS 全量（source: db=被 DB 覆盖 / default=硬编码默认）'''
     from sqlalchemy import select
     from app.db.database import async_session_factory
-    from app.models.runtime_flag import RuntimeFlag
+    from app.models.config import RuntimeFlag
     from app.agent.loop import AGENT_FLAGS
     db_keys = set()
     try:

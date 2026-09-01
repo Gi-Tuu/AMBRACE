@@ -11,7 +11,7 @@ from sqlalchemy import select, func
 
 from app.config import settings
 from app.db.database import async_session_factory
-from app.models.image_gen_task import ImageGenTask
+from app.models.life import ImageGenTask
 from app.utils.logger import get_logger
 
 _logger = get_logger("services.image_gen")
@@ -136,7 +136,7 @@ async def get_image_gen_config() -> dict:
         from sqlalchemy import select
         from app.db.database import async_session_factory
         from app.agent.llm_client import SERVER_CONFIG_UID
-        from app.models.image_gen_config import ImageGenConfig
+        from app.models.life import ImageGenConfig
         async with async_session_factory() as db:
             row = (
                 await db.execute(
