@@ -1,5 +1,4 @@
 """生图服务：OpenAI 兼容 images API provider + 异步任务 + 每日限额 + 落盘"""
-import asyncio
 import base64
 import re
 import time as _time
@@ -192,7 +191,7 @@ async def check_daily_limit(user_id: int) -> bool:
 
 async def create_image_gen_task(user_id: int, prompt: str, character_id: int | None = None,
                                 session_id: int | None = None) -> ImageGenTask:
-    """创建生图任务并返回（异步执行由调用方 ensure_future）"""
+    """创建生图任务并返回（异步执行由调用方经 spawn_background 调度）"""
     async with async_session_factory() as db:
         task = ImageGenTask(
             user_id=user_id, prompt=prompt,
@@ -265,4 +264,5 @@ async def _fail_task(task_id: int, error: str) -> None:
 
 def schedule_image_gen(task_id: int) -> None:
     """异步执行生图任务（不阻塞请求线程）"""
-    asyncio.ensure_future(run_image_gen_task(task_id))
+    from app.utils.async_tasks import spawn_background
+    spawn_background(run_image_gen_task(task_id))

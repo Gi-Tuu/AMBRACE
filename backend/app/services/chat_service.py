@@ -319,6 +319,13 @@ async def _persist_user_message(
         db.add(um)
         await db.flush()
         user_msg_id = um.id
+        # P-fix（2026-08-31）：SSE 流式路径经本函数落用户消息时补刷新 chat_sessions.updated_at，
+        # 与 chunked/主动路径一致（agent 落库处同样写 updated_at=now naive UTC）。
+        _sess = (await db.execute(
+            select(ChatSession).where(ChatSession.id == session_id)
+        )).scalar_one_or_none()
+        if _sess:
+            _sess.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await db.commit()
         user_msg_info = {
             "id": um.id, "session_id": session_id, "sender_type": "user",
@@ -722,7 +729,7 @@ async def _run_post_processing(
     spawn_background(_generate_initial_bio(character_id, user_id))
 
     # 触发记忆提取
-    asyncio.ensure_future(add_chat_memory_extraction(
+    spawn_background(add_chat_memory_extraction(
         session_id, character_id, user_id, content, final_text,
         source_id=user_msg_id,
     ))
@@ -744,14 +751,14 @@ async def _run_post_processing(
                         _pending_remove_uid(session_id, user_msg_id)
                     except Exception as _pe:
                         _logger.warning("Priority extraction failed src=%s: %s", user_msg_id, _pe)
-                asyncio.ensure_future(_priority_extract())
+                spawn_background(_priority_extract())
         except Exception:
             pass
 
     # 认知循环 v2.1：对话话题追踪（本地提取+节流；失败静默）
     try:
         from app.agent.topic_tracker import maybe_extract_topics
-        asyncio.ensure_future(maybe_extract_topics(
+        spawn_background(maybe_extract_topics(
             character_id, user_id, content, final_text,
             perception=final_state.get("perception"),
         ))
@@ -763,7 +770,7 @@ async def _run_post_processing(
         from app.agent.loop import AGENT_FLAGS
         if AGENT_FLAGS.get("life_chat_driven_enabled", False):
             from app.life.chat_intent import extract_life_intent
-            asyncio.ensure_future(extract_life_intent(character_id, user_id, content))
+            spawn_background(extract_life_intent(character_id, user_id, content))
     except Exception:
         pass
 
@@ -777,26 +784,26 @@ async def _run_post_processing(
                 st.last_user_interaction_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 await db.commit()
 
-        asyncio.ensure_future(_bump_user_presence())
+        spawn_background(_bump_user_presence())
     except Exception:
         pass
 
     # 记忆架构 v2.1 Phase 4b：情境驱动复习——感知 deep/emotion 或命中进行中目标 → 入队候选（异步，失败静默）
     try:
         from app.scheduler.memory_review import queue_contextual_review_for
-        asyncio.ensure_future(queue_contextual_review_for(
+        spawn_background(queue_contextual_review_for(
             character_id, user_id, content, final_state.get("perception"),
         ))
     except Exception:
         pass
 
     # 认知循环 v2.1：用户发消息 → 关系标量互动加分（bump，失败静默）
-    asyncio.ensure_future(_bump_relationship(character_id, user_id))
+    spawn_background(_bump_relationship(character_id, user_id))
 
     # 认知循环 v2.1：话题完成/搁置自动切换（本地零 LLM，失败静默）
     try:
         from app.agent.topic_tracker import update_topic_resolution
-        asyncio.ensure_future(update_topic_resolution(character_id, user_id, content))
+        spawn_background(update_topic_resolution(character_id, user_id, content))
     except Exception:
         pass
 

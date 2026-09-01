@@ -389,9 +389,9 @@ async def update_character_states(
             _logger.warning("Emotion event memory save failed char=%d: %s", character_id, e)
         # 状态触发事件 v1：状态更新后异步检查并发送主动消息（失败不影响主流程）
         try:
-            import asyncio
+            from app.utils.async_tasks import spawn_background
             from app.scheduler.state_triggers import check_state_triggers
-            asyncio.ensure_future(check_state_triggers(character_id, user_id, probability_multiplier=0.5))
+            spawn_background(check_state_triggers(character_id, user_id, probability_multiplier=0.5))
         except Exception as e:
             _logger.warning("State trigger launch failed char=%d: %s", character_id, e)
         return True

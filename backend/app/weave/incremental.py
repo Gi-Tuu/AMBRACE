@@ -1,5 +1,5 @@
 """织库增量补卡：save_memory 后异步调度（每角色 30 分钟防抖，单次最多 1 张卡）"""
-import asyncio
+from app.utils.async_tasks import spawn_background
 from app.utils.logger import get_logger
 import time
 
@@ -20,7 +20,7 @@ def schedule_incremental_weave(user_id: int, character_id: int, domain: str = "s
         return
     _last_ts[key] = now
     try:
-        asyncio.ensure_future(_run(user_id, character_id, domain))
+        spawn_background(_run(user_id, character_id, domain))
     except Exception as e:
         _logger.warning("weave incremental schedule failed: %s", e)
 

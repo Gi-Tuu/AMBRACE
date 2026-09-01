@@ -87,10 +87,10 @@ async def async_fact_check(character_id: int, user_id: int, user_msg: str,
 
 def schedule_fact_check(character_id: int, user_id: int, user_msg: str, ai_response: str) -> None:
     """fire-and-forget 入口（不阻塞回复）。P0-1b：经内部统一工具入口（生命周期/事件/异常隔离）"""
-    import asyncio
     try:
+        from app.utils.async_tasks import spawn_background
         from app.agent.internal_runner import run_internal
-        asyncio.ensure_future(run_internal(
+        spawn_background(run_internal(
             "memory_fact_check",
             {"character_id": character_id, "user_id": user_id,
              "user_msg": user_msg, "ai_response": ai_response},

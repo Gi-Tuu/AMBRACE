@@ -153,6 +153,41 @@ def _validate_segments(segments: list[str]) -> tuple[bool, list[str]]:
     return ok, cleaned
 
 
+# A-C（2026-09-01）：字面重合守卫（防「复述上一条」兜底，真机 sam 案——LLM 逐句照抄最近 AI 对话回复）。
+_PARROT_OVERLAP_THRESHOLD = 0.7  # 去空白后字符级重合率阈值（>70% 判定复述）
+_PARROT_MIN_CHARS = 30           # 守卫适用最小有效字符数（主动消息 3~5 句，短于此不适用防误伤）
+def _context_overlap_ratio(text: str, context: str) -> float:
+    """segments 文本相对 last_context 的字面重合率（纯函数，便于测试）。
+
+    归一化=去除全部空白字符；分母只取生成文本长度（difflib.SequenceMatcher 匹配块合计），
+    衡量「生成文本有多大比例是照抄上下文」——context 更长不会稀释比例。
+    """
+    import re as _re
+    from difflib import SequenceMatcher as _SM
+    a = _re.sub(r"\s+", "", text or "")
+    b = _re.sub(r"\s+", "", context or "")
+    if not a or not b:
+        return 0.0
+    matched = sum(bl.size for bl in _SM(None, a, b).get_matching_blocks())
+    return matched / len(a)
+
+
+def _parrot_blocked(segments: list[str], last_context: str) -> tuple[bool, float]:
+    """字面重合守卫（纯函数）：重合率超阈值且有效字符数达标 → 判定复述上一条。
+
+    返回 (是否拦截, 重合率)；last_context 为空或生成文本有效字符不足 → (False, 0.0)。
+    """
+    joined = "\n".join(segments or [])
+    if not (last_context or "").strip():
+        return False, 0.0
+    ratio = _context_overlap_ratio(joined, last_context)
+    import re as _re
+    _chars = len(_re.sub(r"\s+", "", joined))
+    if _chars < _PARROT_MIN_CHARS:
+        return False, ratio
+    return ratio > _PARROT_OVERLAP_THRESHOLD, ratio
+
+
 def _describe_now() -> str:
     """生成当前时间的自然语言描述（北京时间，含日期）"""
     now = datetime.now(timezone.utc)
@@ -377,6 +412,8 @@ async def generate_proactive_event(
         f"先看最近聊了什么：\n{last_context[:1200] or '（暂无最近聊天）'}\n"
         "新消息必须承接最近正在聊的或与当前语境一致；只有确认没有相关语境时才开新话题，"
         "且开头要自然接一句（如'对了，你上次说的……'）。\n"
+        "注意：『最近聊了什么』里可能包含你刚回复过的话——承接话题时用自己的话重新说，"
+        "绝不逐字重复你上一条消息的任何句子。\n"
     )
     prompt += (
         "请把这一件事写成一条连贯的消息（总共 3~5 句话），描述这件事的经过和你的感受，"
@@ -393,8 +430,8 @@ async def generate_proactive_event(
     )
     if previous_messages:
         prompt += (
-            f"\n你之前主动发过的消息（仅用来避免重复相同的句子；这些旧消息里的细节可能已过期，"
-            f"除非用户最近回应过，否则不要继续沿用它们）：\n{previous_messages[:400]}\n"
+            f"\n以下是你最近主动发过/回复过的话（仅用来避免重复；除非用户回应了其中的新进展，"
+            f"否则不要沿用、更不要照抄；承接同一话题时必须用自己的话重新表达）：\n{previous_messages[:400]}\n"
         )
     prompt += (
         "\n事实与推断：你记得的记忆里带 [INFERRED]/[PLANNED] 标记的属于推测/计划，提到时必须用'可能/好像'等不确定语气，"
@@ -471,6 +508,24 @@ async def generate_proactive_event(
         segments = [s for s in _final if s] or ["……"]
     if not segments:
         segments = ["……"]
+    # A-C（2026-09-01）：字面重合守卫——判定复述上一条则丢弃本次生成（fail-open：不发送不重试），
+    # 记日志+obs_event；守卫自身异常不阻塞主动链路。
+    try:
+        _blocked, _ratio = _parrot_blocked(segments, last_context)
+        if _blocked:
+            _logger.info(
+                "Proactive event dropped: %.0f%% overlap with last context char=%d",
+                _ratio * 100, character_id or 0,
+            )
+            try:
+                from app.memory.observability import obs_event
+                obs_event(character_id, "proactive_parrot_blocked",
+                          {"ratio": round(_ratio, 2), "chars": len("\n".join(segments))})
+            except Exception:
+                pass
+            return [] if not return_reasoning else ([], last_reasoning)
+    except Exception as _ov_e:
+        _logger.warning("Proactive overlap guard failed (fail-open): %s", _ov_e)
     # #28 ①：自然度仍低于跳过阈值 → 降级（跳过本次发送；Flag 开时）
     if _naturalness_flag() and score_naturalness(segments) < NATURALNESS_SKIP_THRESHOLD:
         _logger.info("Proactive event degraded (low naturalness) char=%d", character_id)

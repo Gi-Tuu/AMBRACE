@@ -164,8 +164,8 @@ async def process_feedback_signal(character_id: int, user_id: int, user_msg: str
 def schedule_feedback_processing(character_id: int, user_id: int, user_msg: str,
                                  ai_response: str) -> None:
     """fire-and-forget 入口（不阻塞回复）。"""
-    import asyncio
     try:
-        asyncio.ensure_future(process_feedback_signal(character_id, user_id, user_msg, ai_response))
+        from app.utils.async_tasks import spawn_background
+        spawn_background(process_feedback_signal(character_id, user_id, user_msg, ai_response))
     except Exception as e:
         _logger.warning("schedule_feedback_processing failed: %s", e)

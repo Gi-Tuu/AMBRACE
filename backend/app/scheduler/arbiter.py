@@ -137,16 +137,54 @@ async def get_motivation_approved_count(character_id: int, since) -> int:
 
 
 async def get_recent_proactive_messages(character_id: int, limit: int = 2) -> str:
-    """该角色最近几条主动消息（用于生成时防重复）"""
+    """该角色最近主动消息 + 最近 AI 对话回复（用于生成时防重复）。
+
+    A（2026-09-01）：并入该角色最近 24h 的 3 条 AI 对话回复——此前 previous_messages 只取
+    ProactiveMessageLog（主动消息日志），普通对话里 AI 自己刚回复过的话不在防重复范围，
+    导致生成主动消息时 LLM 逐句照抄上一条对话回复（真机 sam 案）；对话回复失败仅记日志
+    （fail-open，不影响主动链路）。合并去重、按时间倒序、整体截断约 400 字。
+    """
+    from datetime import datetime as _dt
+    from app.utils.timeutil import now_naive_utc
+    items: list[tuple[object, str]] = []  # (created_at, content)
     async with async_session_factory() as db:
         result = await db.execute(
-            select(ProactiveMessageLog.content)
+            select(ProactiveMessageLog.created_at, ProactiveMessageLog.content)
             .where(ProactiveMessageLog.character_id == character_id)
             .order_by(ProactiveMessageLog.created_at.desc())
             .limit(limit)
         )
-        contents = [row[0] for row in result.all() if row[0]]
-    return "\n".join(contents)
+        for _ts, _text in result.all():
+            if _text:
+                items.append((_ts, _text))
+    try:
+        from datetime import timedelta as _timedelta
+        from app.models.chat import ChatMessage, ChatSession
+        _since = now_naive_utc() - _timedelta(hours=24)
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(ChatMessage.created_at, ChatMessage.content)
+                .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+                .where(
+                    ChatSession.character_id == character_id,
+                    ChatMessage.sender_type == "ai",
+                    ChatMessage.created_at >= _since,
+                )
+                .order_by(ChatMessage.id.desc())
+                .limit(3)
+            )).all()
+            for _ts, _text in rows:
+                if _text:
+                    items.append((_ts, _text))
+    except Exception as e:
+        _logger.warning("recent AI chat replies load failed char=%s: %s", character_id, e)
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for _ts, _text in sorted(items, key=lambda x: (x[0] is not None, x[0] or _dt.min), reverse=True):
+        if _text not in seen:
+            seen.add(_text)
+            uniq.append(_text)
+    return "\n".join(uniq)[:400]
 
 
 # 免打扰窗口缓存：{character_id: (expire_ts, (start_min, end_min) | None)}（60s 过期）
@@ -373,6 +411,23 @@ async def flush_storyline_items() -> int:
     return sent
 
 
+async def _session_last_message_at(session_id: int) -> datetime | None:
+    """会话最后一条消息的 created_at（naive UTC），供 idle 计算；无消息返回 None。
+    P-fix（2026-08-31）：SSE 流式路径落用户/AI 消息时未更新 chat_sessions.updated_at，
+    idle 基准改用消息表真实最新时间，避免停留在上次主动消息（send_to_session）导致 idle 虚高。"""
+    try:
+        async with async_session_factory() as _db:
+            _at = (
+                await _db.execute(
+                    select(func.max(ChatMessage.created_at))
+                    .where(ChatMessage.session_id == session_id)
+                )
+            ).scalar()
+            return _at
+    except Exception:
+        return None
+
+
 async def collect_rhythm_events() -> list[dict]:
     """随机节律采样：时间窗 + 概率 + 每日上限 + 计时器互斥"""
     window = get_time_window()
@@ -405,10 +460,14 @@ async def collect_rhythm_events() -> list[dict]:
             context = await get_last_messages(session["id"])
 
             # 闲置时长（分钟）— 用于告知 AI 上次聊天已过去多久
-            last_active = session["updated_at"]
-            if last_active.tzinfo is None:
-                last_active = last_active.replace(tzinfo=timezone.utc)
-            idle_minutes = max(0, int((datetime.now(timezone.utc) - last_active).total_seconds() / 60))
+            # P-fix（2026-08-31）：idle 基准改用会话最后一条消息 created_at（naive UTC），
+            # 不用 session.updated_at —— SSE 流式路径落用户/AI 消息时不更新该字段，会虚高闲置。
+            last_active = await _session_last_message_at(session["id"])
+            if last_active is None:
+                last_active = session["updated_at"]
+            if last_active.tzinfo is not None:
+                last_active = last_active.replace(tzinfo=None)
+            idle_minutes = max(0, int((datetime.now(timezone.utc).replace(tzinfo=None) - last_active).total_seconds() / 60))
 
             behavior = pick_behavior(window)
             items.append({
