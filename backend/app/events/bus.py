@@ -3,7 +3,7 @@
 - publish：异步广播（内部 ensure_future，不阻塞调用方；与现有异步 fire-and-forget 模式一致）
 - 单个订阅者异常不影响其他订阅者与发布方
 """
-import asyncio
+from app.utils.async_tasks import spawn_background
 import logging
 from typing import Awaitable, Callable
 
@@ -36,7 +36,7 @@ class EventBus:
                 _logger.warning("Event %s handler %s failed: %s", event_type, getattr(h, "__name__", h), e)
 
     def publish_async(self, event_type: str, payload: dict | None = None) -> None:
-        asyncio.ensure_future(self.publish(event_type, payload))
+        spawn_background(self.publish(event_type, payload))
 
 
 # 全局单例
@@ -46,7 +46,7 @@ event_bus = EventBus()
 def publish(event_type: str, payload: dict | None = None) -> None:
     """便捷发布：异步广播，不阻塞调用方；无事件循环时静默降级（防御）"""
     try:
-        asyncio.ensure_future(event_bus.publish(event_type, payload))
+        spawn_background(event_bus.publish(event_type, payload))
     except RuntimeError:
         _logger.warning("Event publish skipped (no event loop): %s", event_type)
 

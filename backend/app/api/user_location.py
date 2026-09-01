@@ -1,5 +1,5 @@
 """用户位置信息 API：位置总开关 / 获取地理位置(GPS) / 用户位置 / AI 位置 / 位置跟随 / 时区 / 天气"""
-import asyncio
+from app.utils.async_tasks import spawn_background
 import time
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -103,7 +103,7 @@ async def update_user_location(data: UserLocationUpdate, user_id: int = Depends(
             _now = time.time()
             if _now - _reverse_throttle.get(user_id, 0.0) >= 300:  # 5 分钟节流
                 _reverse_throttle[user_id] = _now
-                asyncio.create_task(_reverse_city(_lat0, _lng0))
+                spawn_background(_reverse_city(_lat0, _lng0))
         # 位置跟随：AI 位置强制与用户位置同步（AI 位置不可自定义）
         if user.location_follow:
             user.ai_location = user.user_location

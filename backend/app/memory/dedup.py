@@ -46,7 +46,7 @@ async def deduplicate_memories(character_id: int, threshold: float = VECTOR_DEDU
     async with async_session_factory() as db:
         result = await db.execute(
             select(Memory)
-            .where(Memory.character_id == character_id, Memory.is_archived == False, _retrievable_status_clause())
+            .where(Memory.character_id == character_id, Memory.is_archived == False, Memory.memory_type != "working_state", _retrievable_status_clause())  # M3-a：工作记忆不参与相似去重
             .order_by(Memory.importance.desc(), Memory.created_at.desc())
         )
         memories = result.scalars().all()

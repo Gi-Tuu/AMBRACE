@@ -11,6 +11,7 @@ docs/设计_M3工作记忆_20260901.md：
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -24,6 +25,12 @@ from app.utils.logger import get_logger
 _logger = get_logger("memory.working_state")
 
 _THROTTLE = 1800  # 30 分钟（秒）
+
+# W4（2026-09-01）：同角色评估串行化，消除「节流检查→LLM→写入」之间的并发双写窗口
+_eval_locks: dict[int, asyncio.Lock] = {}
+
+def _lock_for(character_id: int) -> asyncio.Lock:
+    return _eval_locks.setdefault(character_id, asyncio.Lock())
 _MEM_TYPES_EXCLUDED_IN_PROMPT = 8  # 展示截断
 
 
@@ -79,85 +86,86 @@ async def maybe_evaluate_working_state(
     except Exception:
         return
 
-    try:
-        from app.db.database import async_session_factory
-        from app.models.memory import Memory
-
-        async with async_session_factory() as db:
-            latest = await get_latest(db, user_id, character_id)
-            now = _now_naive()
-            if latest is not None and latest.created_at is not None:
-                if (now - latest.created_at).total_seconds() < _THROTTLE:
-                    return  # 节流
-            current = None
-            if latest is not None and latest.content:
-                try:
-                    current = json.loads(latest.content)
-                except Exception:
-                    current = None
-
-            # 本轮新增记忆（evidence 唯一来源；排除工作记忆自身）
-            ev_rows = (await db.execute(
-                select(Memory.id, Memory.title, Memory.content)
-                .where(
-                    Memory.character_id == character_id,
-                    Memory.created_at >= _now_naive() - timedelta(minutes=10),  # M3-a：本轮新增记忆窗口
-                    Memory.is_archived == False,  # noqa: E712
-                    Memory.memory_type != "working_state",
-                )
-                .order_by(Memory.id.desc())
-                .limit(20)
-            )).fetchall()
-            evidence = [(r[0], (r[1] or r[2] or "")[:80]) for r in ev_rows]
-            valid_ids = {r[0] for r in ev_rows}
-
-            prompt = _build_prompt(current, user_text, ai_text, evidence)
-        # LLM 调用放 session 外（不占连接）
-        text = await _llm.chat_completion(
-            messages=[
-                {"role": "system", "content": "你是一个输出 JSON 的助手，直接输出 JSON，不要多余文字。"},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0,
-            max_tokens=600,
-            task="memory",
-            user_id=user_id,
-        )
-        raw = (text or "").strip()
-        if raw.startswith("```"):
-            raw = raw.strip("`")
-            if raw.startswith("json"):
-                raw = raw[4:]
+    async with _lock_for(character_id):
         try:
-            desired = ws.validate_desired(json.loads(raw))
-        except Exception:
-            desired = None
-        if desired is None:
-            obs_event(character_id, "working_state_skipped", {"reason": "bad_json"})
-            return
-
-        new_content, stats = ws.apply_desired(current, desired, valid_ids, _now_naive().isoformat())
-        if new_content is None:
-            obs_event(character_id, "working_state_skipped", {"reason": "no_change", **stats})
-            return
-
-        async with async_session_factory() as db:
-            latest = await get_latest(db, user_id, character_id)
-            new_row = Memory(
-                user_id=user_id, character_id=character_id,
-                memory_type="working_state", content=json.dumps(new_content, ensure_ascii=False),
-                scope="private", source="system", epistemic_status="FACT",
-                importance=60.0, title=None,
+            from app.db.database import async_session_factory
+            from app.models.memory import Memory
+    
+            async with async_session_factory() as db:
+                latest = await get_latest(db, user_id, character_id)
+                now = _now_naive()
+                if latest is not None and latest.created_at is not None:
+                    if (now - latest.created_at).total_seconds() < _THROTTLE:
+                        return  # 节流
+                current = None
+                if latest is not None and latest.content:
+                    try:
+                        current = json.loads(latest.content)
+                    except Exception:
+                        current = None
+    
+                # 本轮新增记忆（evidence 唯一来源；排除工作记忆自身）
+                ev_rows = (await db.execute(
+                    select(Memory.id, Memory.title, Memory.content)
+                    .where(
+                        Memory.character_id == character_id,
+                        Memory.created_at >= _now_naive() - timedelta(minutes=10),  # M3-a：本轮新增记忆窗口
+                        Memory.is_archived == False,  # noqa: E712
+                        Memory.memory_type != "working_state",
+                    )
+                    .order_by(Memory.id.desc())
+                    .limit(20)
+                )).fetchall()
+                evidence = [(r[0], (r[1] or r[2] or "")[:80]) for r in ev_rows]
+                valid_ids = {r[0] for r in ev_rows}
+    
+                prompt = _build_prompt(current, user_text, ai_text, evidence)
+            # LLM 调用放 session 外（不占连接）
+            text = await _llm.chat_completion(
+                messages=[
+                    {"role": "system", "content": "你是一个输出 JSON 的助手，直接输出 JSON，不要多余文字。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0,
+                max_tokens=600,
+                task="memory",
+                user_id=user_id,
             )
-            db.add(new_row)
-            await db.flush()
-            # 写侧无条件标 superseded（P1-2：与 events/facts.py 对齐；读取侧不依赖它）
-            if latest is not None and latest.status == "active":
-                latest.status = "superseded"
-                latest.superseded_by = new_row.id
-                db.add(latest)
-            await db.commit()
-            obs_event(character_id, "working_state_updated", {**stats, "row_id": new_row.id})
-        _logger.info("working_state updated char=%d stats=%s", character_id, stats)
-    except Exception as e:
-        _logger.warning("working_state evaluate failed char=%s: %s", character_id, e)
+            raw = (text or "").strip()
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            try:
+                desired = ws.validate_desired(json.loads(raw))
+            except Exception:
+                desired = None
+            if desired is None:
+                obs_event(character_id, "working_state_skipped", {"reason": "bad_json"})
+                return
+    
+            new_content, stats = ws.apply_desired(current, desired, valid_ids, _now_naive().isoformat())
+            if new_content is None:
+                obs_event(character_id, "working_state_skipped", {"reason": "no_change", **stats})
+                return
+    
+            async with async_session_factory() as db:
+                latest = await get_latest(db, user_id, character_id)
+                new_row = Memory(
+                    user_id=user_id, character_id=character_id,
+                    memory_type="working_state", content=json.dumps(new_content, ensure_ascii=False),
+                    scope="private", source="system", epistemic_status="FACT",
+                    importance=60.0, title=None,
+                )
+                db.add(new_row)
+                await db.flush()
+                # 写侧无条件标 superseded（P1-2：与 events/facts.py 对齐；读取侧不依赖它）
+                if latest is not None and latest.status == "active":
+                    latest.status = "superseded"
+                    latest.superseded_by = new_row.id
+                    db.add(latest)
+                await db.commit()
+                obs_event(character_id, "working_state_updated", {**stats, "row_id": new_row.id})
+            _logger.info("working_state updated char=%d stats=%s", character_id, stats)
+        except Exception as e:
+            _logger.warning("working_state evaluate failed char=%s: %s", character_id, e)

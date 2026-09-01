@@ -3,6 +3,7 @@
 设计参考 Operit 工具权限模型：全局默认 + 每能力例外。
 """
 from fastapi import APIRouter, Depends, HTTPException, Header
+from app.utils.async_tasks import spawn_background
 from pydantic import BaseModel
 
 from app.auth.deps import get_current_user_id
@@ -69,14 +70,12 @@ async def _execute_approved(payload: dict) -> None:
     """按 scope 执行已批准动作（v1 支持生图；其余能力按需扩展）"""
     scope = payload.get("scope")
     if scope == permission_service.SCOPE_IMAGE_GEN:
-        import asyncio
-
         from app.services.chat_service import _gen_image_flow
 
         prompt = str(payload.get("prompt") or "").strip()
         if not prompt:
             return
-        asyncio.ensure_future(
+        spawn_background(
             _gen_image_flow(
                 int(payload["user_id"]) if "user_id" in payload else 0,
                 int(payload["character_id"] or 0),

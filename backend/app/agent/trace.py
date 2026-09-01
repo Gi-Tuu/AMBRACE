@@ -3,7 +3,7 @@
 - 所有写入失败静默，绝不阻塞主链路；
 - 成本归因（全面审计第三批）后续直接复用本表聚合。
 """
-import asyncio
+from app.utils.async_tasks import spawn_background
 import uuid
 
 from app.utils.logger import get_logger
@@ -63,7 +63,7 @@ def enqueue_task_log(**kwargs) -> None:
         _logger.warning("Task trace create failed: %s", e)
         return
     try:
-        asyncio.ensure_future(coro)
+        spawn_background(coro)
     except Exception as e:
         coro.close()  # 无运行中事件循环等场景：关闭协程避免 RuntimeWarning
         _logger.warning("Task trace enqueue failed: %s", e)

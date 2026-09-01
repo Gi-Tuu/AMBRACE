@@ -539,37 +539,41 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
   Future<void> _editLocation({required bool isUser}) async {
     final l10n = AppLocalizations.of(context)!;
     final controller = TextEditingController(text: isUser ? _userLocation : _aiLocation);
-    final value = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(isUser ? l10n.ppLocSetUser : l10n.ppLocSetAi),
-        content: TextField(
-          controller: controller,
-          maxLength: 50,
-          decoration: InputDecoration(hintText: l10n.ppLocHint, counterText: ""),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: Text(l10n.save),
+    try {
+      final value = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(isUser ? l10n.ppLocSetUser : l10n.ppLocSetAi),
+          content: TextField(
+            controller: controller,
+            maxLength: 50,
+            decoration: InputDecoration(hintText: l10n.ppLocHint, counterText: ""),
           ),
-        ],
-      ),
-    );
-    if (value == null || value.isEmpty) return;
-    if (isUser) {
-      setState(() {
-        _userLocation = value;
-        if (_locationFollow) _aiLocation = value;
-      });
-      await ApiClient().updateUserLocation(
-        userLocation: value,
-        aiLocation: _locationFollow ? value : null,
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.cancel)),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+              child: Text(l10n.save),
+            ),
+          ],
+        ),
       );
-    } else {
-      setState(() => _aiLocation = value);
-      await ApiClient().updateUserLocation(aiLocation: value);
+      if (value == null || value.isEmpty) return;
+      if (isUser) {
+        setState(() {
+          _userLocation = value;
+          if (_locationFollow) _aiLocation = value;
+        });
+        await ApiClient().updateUserLocation(
+          userLocation: value,
+          aiLocation: _locationFollow ? value : null,
+        );
+      } else {
+        setState(() => _aiLocation = value);
+        await ApiClient().updateUserLocation(aiLocation: value);
+      }
+    } finally {
+      controller.dispose();
     }
   }
 

@@ -1,5 +1,6 @@
 """通用 OpenAI 兼容 LLM 客户端封装（服务器级全局配置 + 用户级 BYOK + .env 兜底）"""
 import asyncio
+from app.utils.async_tasks import spawn_background
 import time as _time
 
 from openai import AsyncOpenAI
@@ -182,7 +183,7 @@ async def get_server_llm_config() -> dict | None:
 async def get_task_llm_config(user_id: int | None, task: str, character_id: int | None = None) -> dict | None:
     """任务专用 LLM 配置：用户级(task) → 服务器级(task) → None（调用方回退 chat 配置）。
 
-    character_id：预留角色级模型配置（当前无角色级配置表，忽略之；仅作签名占位便于未来生效）。
+    character_id：角色绑定的「我的 LLM」配置（#68），解析优先级见 resolve_character_llm_config。
     """
     if not task or task == TASK_CHAT:
         return None
@@ -249,7 +250,7 @@ async def _resolve_llm_config(api_key: str | None = None, base_url: str | None =
                               character_id: int | None = None) -> dict:
     """解析生效配置：任务专用(用户级→服务器级) > 显式传入(用户BYOK) > 服务器级DB配置 > .env 兜底
 
-    character_id：预留角色级模型配置，当前透传（无角色级配置表时不影响结果）。
+    character_id：角色绑定的「我的 LLM」配置（#68），解析优先级见 resolve_character_llm_config。
     """
     # BYOK 安全（2026-08-16 审计）：base_url 与 api_key 必须成对，单独 base_url 时丢弃（防服务器 key 发往任意端点）
     if base_url and not api_key:
@@ -345,7 +346,7 @@ async def chat_completion(
         include_reasoning: True 时开启深度思考，返回 (content, reasoning_content) 元组；
             False（默认）行为不变返回纯文本字符串
         api_key/base_url: 显式覆盖（如用户级 BYOK；None = 服务器级DB -> .env）
-        character_id: 角色 id（预留角色级模型配置，当前无副作用、不影响逻辑）
+        character_id: 角色 id（角色绑定的「我的 LLM」配置，#68，解析优先级见 resolve_character_llm_config）
     """
     cfg = await _resolve_llm_config(
         api_key=api_key, base_url=base_url, model=model, provider=provider,
@@ -551,7 +552,7 @@ def _record_usage_async(provider: str | None, model: str | None,
             _logger.warning("usage record failed: %s", e)
 
     try:
-        asyncio.create_task(_do())
+        spawn_background(_do())
     except Exception as e:
         _logger.warning("usage task spawn failed: %s", e)
 

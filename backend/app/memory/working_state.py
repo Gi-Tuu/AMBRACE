@@ -122,8 +122,13 @@ def apply_desired(
             else:
                 changed = kept != (old.get("evidence_ids") or []) or e.get("detail") != old.get("detail")
                 stats["updated" if changed else "carried"] += 1
-                entry = {**old, **{k: v for k, v in e.items() if k != "evidence_ids"},
-                         "evidence_ids": kept, "updated_at": now_iso}
+                if changed:
+                    # W3（2026-09-01）：仅证据或正文真的变化才刷新 updated_at；carried 原样保留
+                    # 旧条目，否则「无变化不写」恒失效、按 updated_at 的老化挤除也失灵。
+                    entry = {**old, **{k: v for k, v in e.items() if k != "evidence_ids"},
+                             "evidence_ids": kept, "updated_at": now_iso}
+                else:
+                    entry = old
             carried_ids.add(ident)
             out.append(entry)
         # 当前有而期望没有 → resolve（自然消失）

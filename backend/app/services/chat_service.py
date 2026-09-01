@@ -4,6 +4,7 @@ from sqlalchemy import select, func, and_, or_
 from app.db.database import async_session_factory
 import asyncio
 import json
+from app.utils.async_tasks import spawn_background
 import time
 from datetime import datetime, timezone
 
@@ -208,7 +209,7 @@ def _trigger_state_eval(character_id: int, user_id: int, user_msg: str, ai_respo
     """异步触发八维状态评估（fire-and-forget，失败不影响聊天）"""
     try:
         from app.services.character_state_service import update_character_states
-        asyncio.ensure_future(update_character_states(
+        spawn_background(update_character_states(
             character_id, user_id,
             user_msg or "", ai_response or "",
             status_update or "",
@@ -327,7 +328,6 @@ async def _persist_user_message(
     # Shared Memory（Phase C，2026-08-14）：用户消息含“记住/第一次/纪念日”等标记意图 → 异步创建共同经历
     if shared_memory:
         try:
-            import asyncio as _aio
 
             async def _mark_shared():
                 try:
@@ -337,7 +337,7 @@ async def _persist_user_message(
                 except Exception as _e:
                     _logger.warning("shared event mark failed: %s", _e)
 
-            _aio.ensure_future(_mark_shared())
+            spawn_background(_mark_shared())
         except Exception:
             pass
     return user_msg_id, user_msg_info
@@ -402,8 +402,7 @@ async def _run_agent_core(
     # 主动到期复习成功判定（P1）：用户回复与 24h 内复习消息弱相关 → 强化（异步不阻塞）
     try:
         from app.scheduler.memory_review import maybe_review_success
-        import asyncio as _aio
-        _aio.ensure_future(maybe_review_success(user_id, character_id, content))
+        spawn_background(maybe_review_success(user_id, character_id, content))
     except Exception:
         pass
 
@@ -412,7 +411,7 @@ async def _run_agent_core(
         from app.domain.emotion.model import detect_user_emotion
         if "低落" in detect_user_emotion(content):
             from app.domain.emotion.care import register_care_task
-            asyncio.ensure_future(register_care_task(user_id, character_id, content))
+            spawn_background(register_care_task(user_id, character_id, content))
     except Exception:
         pass
 
@@ -621,7 +620,7 @@ async def _run_agent_core(
             from app.agent.task_engine import run_chat_task as _run_chat_task
             _all_steps = _agent_actions.actions_to_steps(_trace_actions) + _loop_steps
             if len(_all_steps) >= 1:
-                asyncio.ensure_future(_run_chat_task(
+                spawn_background(_run_chat_task(
                     character_id, user_id, session_id, content,
                     _all_steps, full_text, True,
                 ))
@@ -644,7 +643,7 @@ async def _run_agent_core(
     except Exception:
         _memo_text = None
     try:
-        asyncio.ensure_future(_save_phone_desktop_notes(character_id, _marker_src2))
+        spawn_background(_save_phone_desktop_notes(character_id, _marker_src2))
     except Exception:
         pass
 
@@ -720,7 +719,7 @@ async def _run_post_processing(
 
     await _save_bio_update(character_id, final_state.get("bio_update"), user_id)
     await _save_status_update(character_id, final_state.get("status_update"), user_id)
-    asyncio.ensure_future(_generate_initial_bio(character_id, user_id))
+    spawn_background(_generate_initial_bio(character_id, user_id))
 
     # 触发记忆提取
     asyncio.ensure_future(add_chat_memory_extraction(
@@ -810,12 +809,11 @@ async def _run_post_processing(
 
     # 生图：用户要求画图时异步生成并追加图片消息（开关在 context 注入层控制标记输出）
     if gen_prompt:
-        asyncio.ensure_future(_gen_image_flow(user_id, character_id, session_id, gen_prompt, img_text))
+        spawn_background(_gen_image_flow(user_id, character_id, session_id, gen_prompt, img_text))
 
     # M3-a（2026-09-01）：工作记忆评估——turn 结束异步触发（flag 关/fail-open/30min 节流，
     # docs/设计_M3工作记忆_20260901.md §3；P1-2：实现前核验 _run_agent_core 收尾存在 ✓）
     try:
-        from app.utils.async_tasks import spawn_background
         from app.services.working_state_service import maybe_evaluate_working_state
         spawn_background(maybe_evaluate_working_state(
             user_id=user_id, character_id=character_id, session_id=session_id,

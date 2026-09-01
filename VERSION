@@ -1,9 +1,17 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.4.1
-DATE: 2026-08-30
-STATUS: 开源发布版 v3.4.1（实时语音通话 + AI 主动关心）
+VERSION: 3.4.2
+DATE: 2026-09-01
+STATUS: 开源发布版 v3.4.2（渠道插件化 + 全量架构清理）
 
 CHANGELOG:
+
+3.4.2 - Release (2026-09-01)
+  - Architecture: 全量重构收尾——历史兼容层/模型薄壳清理、前端页面 feature 化（十页拆分+深拆）、渠道类能力插件化（社交平台发布/评论走统一 ChannelPort）
+  - Chat: 流式可靠性加固（90s 空闲看门狗/发送防重/回退清理/WS 连接身份守卫/SSE 心跳/用户消息 id 修复）
+  - Games: liars_bar 结算事务修复
+  - Memory: 工作记忆（M3-a）数据积累开启 + 检索/治理通道隔离
+  - Fix: 登出清理/时间口径 UTC/后台任务强引用/控制器释放等审查修复
+  - Tests: backend 1274 green；flutter analyze 0 / test 406 green
 
 3.4.1 - Release (2026-08-30)
   - Voice: #71 实时语音通话（P1/P2）：按住说话 / 自动聆听、服务端 VAD 静音过滤、turn_id 打断防抖、八维情绪→TTS 情感标签

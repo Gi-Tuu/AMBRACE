@@ -293,6 +293,7 @@ async def search_memories(
                     select(Memory).where(
                         Memory.id.in_(_new_sparse_ids),
                         Memory.is_archived == False,   # noqa: E712
+                        Memory.memory_type != "working_state",  # M3-a：补取双保险，挡旧索引残留 id
                         _retrievable_status_clause(),   # #70-C：双通道过滤（flag 关=永真）
                     )
                 )).scalars().all()

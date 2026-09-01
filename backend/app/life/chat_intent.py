@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 import asyncio
+from app.utils.async_tasks import spawn_background
 import re
 from datetime import datetime, timezone
 from sqlalchemy import select
@@ -55,7 +56,7 @@ def _now() -> datetime:
 def _schedule_immediate_tick(character_id: int, user_id: int) -> None:
     """即时指令写库后触发该角色一个 Life Loop 回合（后台任务，不阻塞回复）。"""
     from app.life.life_loop import run_character_tick
-    asyncio.ensure_future(run_character_tick(character_id, user_id))
+    spawn_background(run_character_tick(character_id, user_id))
 
 
 def detect_life_intent(text: str) -> dict | None:

@@ -240,3 +240,21 @@ def test_evaluate_turn_bad_json_skipped(ws_db, monkeypatch):
 
     asyncio.run(_run())
     assert _rows(ws_db) == [], "JSON 非法 → fail-open 跳过"
+
+def test_carried_no_rewrite():
+    """W3（2026-09-01）：carried 条目不刷新 updated_at——完全相同的期望三桶应返回 (None, stats)，不写新行。"""
+    cur = {
+        "version": 1,
+        "ongoing": [{"topic": "t", "detail": "d", "evidence_ids": [1], "updated_at": "2026-09-01T08:00:00"}],
+        "relationship_notes": [],
+        "open_questions": [],
+    }
+    desired = {
+        "version": 1,
+        "ongoing": [{"topic": "t", "detail": "d", "evidence_ids": [1]}],
+        "relationship_notes": [],
+        "open_questions": [],
+    }
+    new, stats = ws.apply_desired(cur, desired, valid_evidence={1}, now_iso="2026-09-01T12:00:00")
+    assert new is None, "carried-only 评估应判定无变化、不写新行"
+    assert stats["carried"] == 1 and stats["added"] == 0 and stats["updated"] == 0

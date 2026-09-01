@@ -49,6 +49,7 @@ async def _pick_candidates(db, character_id: int, limit: int) -> list:
             Memory.is_pinned == False,
             Memory.is_locked == False,
             Memory.ai_rated == False,
+            Memory.memory_type != "working_state",  # M3-a：结构化状态不送 LLM 评星、不占每日名额
             _active_status_clause(),
         )
         .order_by(Memory.id.asc())

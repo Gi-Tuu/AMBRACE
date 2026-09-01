@@ -281,6 +281,7 @@ async def _build_index(character_id: int) -> "_IndexEntry | None":
                     Memory.character_id == character_id,
                     Memory.is_archived == False,      # noqa: E712
                     Memory.delete_at.is_(None),
+                    Memory.memory_type != "working_state",  # M3-a：工作记忆不走 BM25 语料
                     _retrievable_status_clause(),      # #70-C：仅 active/stale 建稀疏索引（flag 关=永真）
                 ).order_by(Memory.id.asc())
             )).scalars().all()

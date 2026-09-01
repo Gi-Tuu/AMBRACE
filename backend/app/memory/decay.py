@@ -95,7 +95,7 @@ async def run_memory_decay():
     from app.memory.service import _active_status_clause  # #70-C：失效记忆不再衰减（flag 关=永真）
     async with async_session_factory() as db:
         result = await db.execute(
-            select(Memory).where(Memory.is_archived == False, Memory.is_pinned == False, _active_status_clause())
+            select(Memory).where(Memory.is_archived == False, Memory.is_pinned == False, Memory.memory_type != "working_state", _active_status_clause())  # M3-a：工作记忆由滚动 supersede 管理，不参与遗忘
         )
         memories = result.scalars().all()
         for m in memories:

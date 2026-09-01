@@ -1,5 +1,5 @@
 """AI 朋友圈 API"""
-import asyncio
+from app.utils.async_tasks import spawn_background
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, Header
 from sqlalchemy import select, delete, or_, and_, func
@@ -163,8 +163,7 @@ async def manually_publish_moment(
             raise HTTPException(status_code=400, detail=tr_lang(lang, "moment_daily_limit_or_not_found"))
         # P0 发布即评论：手动发布后立即让其他 AI 角色评论（异步，不阻塞）
         try:
-            import asyncio
-            asyncio.ensure_future(generate_comments_for_moment(result["id"]))
+            spawn_background(generate_comments_for_moment(result["id"]))
         except Exception:
             pass
         return {"success": True, "moment": result}
@@ -209,9 +208,8 @@ async def create_user_moment(
     await db.refresh(moment)
     # P0 发布即评论：用户发布后立即让 AI 角色评论（异步，不阻塞；隔离由评论生成内部保证）
     try:
-        import asyncio
         from app.services.moment_service import generate_comments_for_moment
-        asyncio.ensure_future(generate_comments_for_moment(moment.id))
+        spawn_background(generate_comments_for_moment(moment.id))
     except Exception:
         pass
     from app.models.user import User as _User
@@ -315,7 +313,7 @@ async def create_comment(moment_id: int, data: CreateCommentRequest, db: AsyncSe
     # AI 回复用户评论（异步不阻塞）：动态作者 / 其他 AI 角色按幂等规则回复；重复触发安全
     try:
         from app.services.moment_service import generate_comments_for_moment
-        asyncio.ensure_future(generate_comments_for_moment(moment_id))
+        spawn_background(generate_comments_for_moment(moment_id))
     except Exception:
         pass
     return CommentResponse(
