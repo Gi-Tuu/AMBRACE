@@ -5,8 +5,8 @@ import 'package:image_picker/image_picker.dart';
 import '../../models/character.dart';
 import '../../services/api_client.dart';
 import '../../theme/aurora_tokens.dart';
-import '../../widgets/aurora_card.dart';
 import '../../widgets/ios_card_group.dart';
+import '../../features/character/edit_form_widgets.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
 import "package:ai_companion/theme/tokens.dart";
 
@@ -182,191 +182,6 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
   }
 
   /// Aurora P5 分组：AuroraCard 版 IosCardGroup（标题视觉保留）
-  Widget _auroraGroup({required String title, required List<Widget> children}) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 12, right: 12, bottom: 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 16, bottom: 6),
-            child: Text(title,
-                style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: IosCardColors.subtitle)),
-          ),
-          AuroraCard(
-            padding: EdgeInsets.zero,
-            child: Material(
-              type: MaterialType.transparency,
-              child: Column(children: children),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Aurora P5 滑杆统一主题（active 轨道 + 主题色滑块）
-  Widget _themedSlider(Widget slider) {
-    final scheme = Theme.of(context).colorScheme;
-    return SliderTheme(
-      data: SliderThemeData(
-        activeTrackColor: scheme.primary,
-        inactiveTrackColor: scheme.primary.withValues(alpha: 0.2),
-        thumbColor: scheme.primary,
-        overlayColor: scheme.primary.withValues(alpha: 0.12),
-        trackHeight: 3,
-      ),
-      child: slider,
-    );
-  }
-
-  Widget _buildVoiceRateSlider() {
-    final l10n = AppLocalizations.of(context)!;
-    return Padding(
-      padding: const EdgeInsets.only(left: 16, right: 16, top: 12, bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(l10n.voiceRate, style: const TextStyle(fontSize: 15)),
-              Text('${_voiceRate.toStringAsFixed(1)}x',
-                  style: const TextStyle(color: IosCardColors.subtitle, fontSize: 13)),
-            ],
-          ),
-_themedSlider(
-            Slider(
-              value: _voiceRate.clamp(0.5, 1.5).toDouble(),
-              min: 0.5,
-              max: 1.5,
-              divisions: 10,
-              label: '${_voiceRate.toStringAsFixed(1)}x',
-              onChanged: (v) => setState(() => _voiceRate = v),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildVoicePitchSlider() {
-    final l10n = AppLocalizations.of(context)!;
-    final hz = _voicePitch.toStringAsFixed(0);
-    return Padding(
-      padding: const EdgeInsets.only(left: 16, right: 16, top: 8, bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(l10n.voicePitch, style: const TextStyle(fontSize: 15)),
-              Text(_voicePitch == 0 ? l10n.pitchNormal : '${_voicePitch > 0 ? '+' : ''}$hz Hz',
-                  style: const TextStyle(color: IosCardColors.subtitle, fontSize: 13)),
-            ],
-          ),
-_themedSlider(
-            Slider(
-              value: _voicePitch.clamp(-20, 20).toDouble(),
-              min: -20,
-              max: 20,
-              divisions: 8,
-              label: '$hz Hz',
-              onChanged: (v) => setState(() => _voicePitch = v),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildField(
-    TextEditingController ctrl, {
-    required String label,
-    String? hint,
-    int maxLines = 1,
-    TextInputType? keyboard,
-    String? Function(String?)? validator,
-    bool compact = false,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: EdgeInsets.only(
-          left: compact ? 8 : 16, right: compact ? 8 : 16,
-          top: 10, bottom: 10),
-      child: TextFormField(
-        controller: ctrl,
-        validator: validator,
-        keyboardType: keyboard,
-        maxLines: maxLines,
-        decoration: InputDecoration(
-          labelText: label,
-          hintText: hint,
-          hintStyle: TextStyle(color: scheme.onSurfaceVariant),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide:
-                BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.4)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: scheme.primary, width: 1.5),
-          ),
-          filled: true,
-          fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDropdown({
-    required String label,
-    required String? value,
-    required List<DropdownMenuItem<String>> items,
-    required ValueChanged<String?> onChanged,
-    String? helper,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(left: 16, right: 16, top: 10, bottom: 10),
-      child: DropdownButtonFormField<String>(
-        initialValue: value,
-        decoration: InputDecoration(
-          labelText: label,
-          helperText: helper,
-          helperStyle: const TextStyle(fontSize: 11),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide:
-                BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.4)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: scheme.primary, width: 1.5),
-          ),
-          filled: true,
-          fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        ),
-        items: items,
-        onChanged: onChanged,
-      ),
-    );
-  }
-
   Future<void> _save() async {
     final l10n = AppLocalizations.of(context)!;
     if (!_formKey.currentState!.validate()) return;
@@ -452,50 +267,6 @@ _themedSlider(
         );
       }
     }
-  }
-
-  /// 话痨度（0-100 滑块）+ 锁定开关（talkativeness_locked，锁后 AI 不可自主调整）。
-  Widget _buildTalkativeness() {
-    final l10n = AppLocalizations.of(context)!;
-    return Padding(
-      padding: const EdgeInsets.only(left: 16, right: 16, top: 12, bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(l10n.talkativeness, style: const TextStyle(fontSize: 15)),
-              Text('${_talkativeness.round()}',
-                  style: const TextStyle(color: IosCardColors.subtitle, fontSize: 13)),
-            ],
-          ),
-_themedSlider(
-            Slider(
-              value: _talkativeness.clamp(0, 100).toDouble(),
-              min: 0,
-              max: 100,
-              divisions: 100,
-              label: '${_talkativeness.round()}',
-              onChanged: (v) => setState(() {
-                _talkativeness = v;
-                _talkativenessSet = true;
-              }),
-            ),
-          ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            title: Text(l10n.talkativenessLocked,
-                style: const TextStyle(fontSize: 13)),
-            subtitle: Text(l10n.talkativenessLockedHint,
-                style: TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
-            value: _talkativenessLocked,
-            onChanged: (v) => setState(() => _talkativenessLocked = v),
-          ),
-        ],
-      ),
-    );
   }
 
   String _tzLabel(AppLocalizations l10n, String key) {
@@ -622,34 +393,34 @@ _themedSlider(
                   style: const TextStyle(color: IosCardColors.subtitle, fontSize: 12)),
             ),
             const SizedBox(height: 12),
-            _auroraGroup(
+            editAuroraGroup(
               title: l10n.basicInfo,
               children: [
-                _buildField(_nameCtrl,
+                EditField(ctrl: _nameCtrl,
                     label: l10n.name,
                     validator: (v) => (v == null || v.isEmpty) ? l10n.nameRequired : null),
                 Divider(height: 1, indent: 46, color: scheme.outlineVariant),
-                _buildField(_appearanceCtrl,
+                EditField(ctrl: _appearanceCtrl,
                     label: l10n.appearance, hint: l10n.appearanceHint, maxLines: 2),
                 Divider(height: 1, indent: 46, color: scheme.outlineVariant),
                 Row(
                   children: [
                     Expanded(
-                      child: _buildField(_heightCtrl,
+                      child: EditField(ctrl: _heightCtrl,
                           label: l10n.heightCm, hint: '175', keyboard: TextInputType.number, compact: true),
                     ),
                     const SizedBox(width: 4),
                     Expanded(
-                      child: _buildField(_weightCtrl,
+                      child: EditField(ctrl: _weightCtrl,
                           label: l10n.weightKg, hint: '65', keyboard: TextInputType.number, compact: true),
                     ),
                   ],
                 ),
                 Divider(height: 1, indent: 46, color: scheme.outlineVariant),
-                _buildField(_birthdayCtrl,
+                EditField(ctrl: _birthdayCtrl,
                     label: l10n.birthday, hint: l10n.birthdayHint, keyboard: TextInputType.datetime),
                 Divider(height: 1, indent: 46, color: scheme.outlineVariant),
-                _buildDropdown(
+                EditDropdown(
                   label: l10n.gender,
                   value: _gender.isNotEmpty ? _gender : null,
                   items: ['男', '女', '其他']
@@ -658,11 +429,11 @@ _themedSlider(
                   onChanged: (v) => setState(() => _gender = v ?? ''),
                 ),
                 Divider(height: 1, indent: 46, color: scheme.outlineVariant),
-                _buildField(_bioCtrl,
+                EditField(ctrl: _bioCtrl,
                     label: l10n.backgroundInfo,
                     hint: l10n.backgroundInfoHint, maxLines: 4),
                 Divider(height: 1, indent: 46, color: scheme.outlineVariant),
-                _buildDropdown(
+                EditDropdown(
                   label: l10n.timezone,
                   value: _timezoneOffset == null ? 'default' : '$_timezoneOffset',
                   helper: l10n.timezoneHelper,
@@ -675,22 +446,22 @@ _themedSlider(
                 ),
               ],
             ),
-            _auroraGroup(
+            editAuroraGroup(
               title: l10n.personalityGroup,
               children: [
-                _buildField(_personalityCtrl,
+                EditField(ctrl: _personalityCtrl,
                     label: l10n.personality, hint: l10n.personalityHint, maxLines: 3),
                 Divider(height: 1, indent: 46, color: scheme.outlineVariant),
-                _buildField(_styleCtrl,
+                EditField(ctrl: _styleCtrl,
                     label: l10n.chatStyle, hint: l10n.chatStyleHint, maxLines: 3),
                 Divider(height: 1, indent: 46, color: scheme.outlineVariant),
-                _buildTalkativeness(),
+                TalkativenessSection(value: _talkativeness, onChanged: (v) => setState(() { _talkativeness = v; _talkativenessSet = true; }), locked: _talkativenessLocked, onLockedChanged: (v) => setState(() => _talkativenessLocked = v)),
               ],
             ),
-            _auroraGroup(
+            editAuroraGroup(
               title: l10n.model,
               children: [
-                _buildDropdown(
+                EditDropdown(
                   label: l10n.llmConfigName,
                   value: _llmConfigId == null
                       ? 'default'
@@ -709,10 +480,10 @@ _themedSlider(
                 ),
               ],
             ),
-            _auroraGroup(
+            editAuroraGroup(
               title: l10n.voiceGroup,
               children: [
-                _buildDropdown(
+                EditDropdown(
                   label: l10n.voiceLabel,
                   value: _voice,
                   helper: l10n.voiceHelper,
@@ -725,9 +496,9 @@ _themedSlider(
                   onChanged: (v) => setState(() => _voice = v ?? ''),
                 ),
                 Divider(height: 1, indent: 46, color: scheme.outlineVariant),
-                _buildVoiceRateSlider(),
+                VoiceRateSlider(value: _voiceRate, onChanged: (v) => setState(() => _voiceRate = v)),
                 Divider(height: 1, indent: 46, color: scheme.outlineVariant),
-                _buildVoicePitchSlider(),
+                VoicePitchSlider(value: _voicePitch, onChanged: (v) => setState(() => _voicePitch = v)),
                 Divider(height: 1, indent: 46, color: scheme.outlineVariant),
                 InkWell(
                   onTap: _previewing ? null : _previewVoice,
