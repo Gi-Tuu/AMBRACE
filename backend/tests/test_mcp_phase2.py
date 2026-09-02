@@ -206,7 +206,7 @@ def test_open_transport_streamable_http(monkeypatch):
 # ------------------------------------------------------------------ 权限三档
 
 def test_check_mcp_mode_risk_default():
-    from app.services.permission_service import check_mcp_mode
+    from app.application.permission_service import check_mcp_mode
 
     assert _run(check_mcp_mode(PERM_UID, "mcp_srv", "high")) == "ask"
     assert _run(check_mcp_mode(PERM_UID, "mcp_srv", "low")) == "allow"
@@ -214,7 +214,7 @@ def test_check_mcp_mode_risk_default():
 
 
 def test_check_mcp_mode_explicit_override():
-    from app.services.permission_service import check_mcp_mode
+    from app.application.permission_service import check_mcp_mode
 
     async def _do():
         async with async_session_factory() as db:
@@ -227,7 +227,7 @@ def test_check_mcp_mode_explicit_override():
 
 
 def test_check_mcp_mode_follows_global_forbid():
-    from app.services.permission_service import check_mcp_mode
+    from app.application.permission_service import check_mcp_mode
 
     async def _do():
         async with async_session_factory() as db:
@@ -272,7 +272,7 @@ def test_mcp_declarations_with_tool(monkeypatch):
     async def fake_mode(uid, scope, risk="medium"):
         return "allow"
 
-    monkeypatch.setattr("app.services.permission_service.check_mcp_mode", fake_mode)
+    monkeypatch.setattr("app.application.permission_service.check_mcp_mode", fake_mode)
     # P1：工具需归属当前用户（server 行属于 PERM_UID）
     sid = _make_server(user_id=PERM_UID, name=TEST_PREFIX + "srv")
     _reg_mcp_tool("mcp.srv.read_file", desc="读取文件", server_id=sid)
@@ -303,7 +303,7 @@ def test_mcp_declarations_excludes_forbid(monkeypatch):
     async def fake_mode(uid, scope, risk="medium"):
         return "forbid" if scope == "mcp_forbidden" else "allow"
 
-    monkeypatch.setattr("app.services.permission_service.check_mcp_mode", fake_mode)
+    monkeypatch.setattr("app.application.permission_service.check_mcp_mode", fake_mode)
     sid_keep = _make_server(user_id=PERM_UID, name=TEST_PREFIX + "keep")
     sid_forbid = _make_server(user_id=PERM_UID, name=TEST_PREFIX + "forbidden")
     _reg_mcp_tool("mcp.srv.keep", scope="mcp_keep", server_id=sid_keep)
@@ -535,7 +535,7 @@ def test_api_create_sse_requires_url(monkeypatch):
     async def _fake(uid):
         return True
 
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
     client = _make_client(ADMIN)
     r = client.post("/api/v1/mcp/servers", json={"name": TEST_PREFIX + "sse", "transport": "sse"})
     assert r.status_code == 400
@@ -555,7 +555,7 @@ def test_api_create_sse_with_url(monkeypatch):
     async def _fake(uid):
         return True
 
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
     monkeypatch.setattr(mgr, "validate_mcp_url", fake_validate)
     client = _make_client(ADMIN)
     r = client.post("/api/v1/mcp/servers", json={

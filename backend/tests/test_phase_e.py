@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from app.agent import loop
 from app.agent import runtime as runtime_mod
 from app.application import chat_groups as cg  # F5-a：实现迁至 application/chat_groups，patch 须指向定义模块
-from app.scheduler import arbiter
+from app.scheduling import arbiter
 
 
 # ---------------- Flag 默认值 ----------------
@@ -383,7 +383,7 @@ def test_arbiter_plugin_runtime_发送成功(monkeypatch):
         sent.update({"sid": session_id, "cid": char_id, "uid": user_id, "content": content, "mtype": message_type})
 
     monkeypatch.setattr(runtime_mod, "run_social_reply", _fake_runtime)
-    monkeypatch.setattr("app.scheduler.scheduler.send_to_session", _fake_send)
+    monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _fake_send)
     ok = asyncio.run(arbiter._plugin_proactive_runtime(
         11, {"user_id": 4, "plugin": "douyin_mcp"}, 7, "抖音上有人评论了你的视频",
     ))
@@ -402,7 +402,7 @@ def test_arbiter_plugin_runtime_失败不发送(monkeypatch):
         sent.append(a)
 
     monkeypatch.setattr(runtime_mod, "run_social_reply", _fake_runtime)
-    monkeypatch.setattr("app.scheduler.scheduler.send_to_session", _fake_send)
+    monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _fake_send)
     ok = asyncio.run(arbiter._plugin_proactive_runtime(
         11, {"user_id": 4, "plugin": "douyin_mcp"}, 7, "hint",
     ))
@@ -420,7 +420,7 @@ def test_arbiter_plugin_runtime_空内容不发送(monkeypatch):
         sent.append(a)
 
     monkeypatch.setattr(runtime_mod, "run_social_reply", _fake_runtime)
-    monkeypatch.setattr("app.scheduler.scheduler.send_to_session", _fake_send)
+    monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _fake_send)
     ok = asyncio.run(arbiter._plugin_proactive_runtime(
         11, {"user_id": 4, "plugin": "douyin_mcp"}, 7, "hint",
     ))

@@ -12,7 +12,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ai_companion/providers/settings_provider.dart';
-import 'package:ai_companion/screens/plugin/mcp_tools_screen.dart';
+import 'package:ai_companion/features/plugin/mcp_tools_screen.dart';
 import 'package:ai_companion/services/api_client.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
 

@@ -90,7 +90,7 @@ def test_execute_tool_ask挂起(monkeypatch):
     async def _create_pending(user_id, session_id, character_id, scope, action):
         return FakeRow()
 
-    import app.services.permission_service as ps
+    import app.application.permission_service as ps
     monkeypatch.setattr(ps, "create_pending_action", _create_pending)
 
     spec = tools.ToolSpec(name="fake_ask", description="测试", scope="image_gen")
@@ -207,7 +207,7 @@ def test_内置工具_execute_tool_搜索生图observation(monkeypatch):
     user_id=None 时权限放行（scope 三档由 check_tool_permission 负责）；底层服务函数 monkeypatch，
     验证内置工具的执行入口（execute）真实接通并产出 observation。
     """
-    from app.services.chat import tools as chat_tools
+    from app.application.chat import tools as chat_tools
 
     async def _fake_search(query, timeout=20.0):
         return "- 搜索结果A：这是摘要内容"

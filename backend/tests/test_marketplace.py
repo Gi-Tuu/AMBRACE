@@ -45,7 +45,7 @@ def test_market_安装复制到临时目录(tmp_path, monkeypatch):
 def test_market_权限(monkeypatch):
     async def _fake_is_admin(user_id: int) -> bool:
         return user_id == 1
-    monkeypatch.setattr('app.services.permission_service.is_admin_user', _fake_is_admin)
+    monkeypatch.setattr('app.application.permission_service.is_admin_user', _fake_is_admin)
     assert asyncio.run(_is_owner(1))
     assert not asyncio.run(_is_owner(4))
     assert not asyncio.run(_is_owner(0))

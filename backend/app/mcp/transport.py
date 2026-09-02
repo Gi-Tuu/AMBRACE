@@ -123,7 +123,7 @@ def _resolve_mcp_ip(url: str) -> str:
     host = parsed.hostname
     if not host:
         raise ValueError("url missing host")
-    from app.services.plugin_bridge_service import _is_blocked_ip
+    from app.application.plugin_bridge_service import _is_blocked_ip
 
     try:
         infos = socket.getaddrinfo(

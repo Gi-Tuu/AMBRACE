@@ -56,7 +56,7 @@ def test_crud():
 
 
 def test_push_rate_limit():
-    from app.services.push_service import _consume_rate_slot, _check_rate_limit, _rate_buckets
+    from app.application.push_service import _consume_rate_slot, _check_rate_limit, _rate_buckets
 
     _rate_buckets.clear()
     # 用 _consume_rate_slot 填充配额（模拟已发送的 FCM），替代原来 _check_rate_limit 计数
@@ -72,7 +72,7 @@ def test_push_rate_limit():
 
 def test_fcm_provider_lazy():
     """FCM provider 未配置时懒初始化安全返回 None，不崩溃。"""
-    from app.services.push.fcm_provider import _ensure_app
+    from app.application.push.fcm_provider import _ensure_app
 
     result = _ensure_app()
     assert result is None

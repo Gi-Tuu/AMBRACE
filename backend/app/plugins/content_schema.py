@@ -5,7 +5,7 @@
 
 首批 kind：
 - holiday_fixed：固定日期节日补充（items: {date: "MM-DD", name, lang?}）——
-  经 app.scheduler.holiday_calendar.get_holidays 合并生效（真实 loader）；
+  经 app.scheduling.holiday_calendar.get_holidays 合并生效（真实 loader）；
 - opening_lines：角色开场白/剧情模板片段（items: {text}）——schema 先行，
   消费端（人设装配）后续批次接入。
 

@@ -4,7 +4,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:ai_companion/screens/life/home_visual_screen.dart';
+import 'package:ai_companion/features/life/home_visual_screen.dart';
 import 'package:ai_companion/features/life/home_visual_models.dart';
 import 'package:ai_companion/services/api_client.dart';
 import 'package:ai_companion/widgets/life_home_controls.dart';

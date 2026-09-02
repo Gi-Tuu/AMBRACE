@@ -13,7 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
 import 'package:ai_companion/providers/chat_provider.dart';
 import 'package:ai_companion/providers/settings_provider.dart';
-import 'package:ai_companion/screens/auth/onboarding_screen.dart';
+import 'package:ai_companion/features/auth/onboarding_screen.dart';
 import 'package:ai_companion/services/api_client.dart';
 
 /// 按请求路径返回固定 JSON 的 Dio adapter（避免真实网络）。

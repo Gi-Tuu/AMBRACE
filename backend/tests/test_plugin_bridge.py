@@ -22,7 +22,7 @@ from app.api.plugin_bridge import router as plugin_bridge_router
 from app.auth.deps import get_current_user_id
 from app.config import settings
 from app.plugins import registry
-from app.services import plugin_bridge_service
+from app.application import plugin_bridge_service
 
 
 def _async_ret(v):
@@ -281,7 +281,7 @@ def test_http_不转发cookie_authorization():
 # ---------------- ai 分发 ----------------
 
 def test_ai_aiId走48b角色模式(monkeypatch):
-    from app.services import character_chat_api
+    from app.application import character_chat_api
     calls = {}
 
     async def _fake_chat(ai_id, user_id, input_text, history=None, max_tokens=800, temperature=0.8, lang="zh"):
@@ -294,7 +294,7 @@ def test_ai_aiId走48b角色模式(monkeypatch):
 
 
 def test_ai_aiId归属错误透传(monkeypatch):
-    from app.services import character_chat_api
+    from app.application import character_chat_api
 
     async def _boom(ai_id, user_id, input_text, history=None, max_tokens=800, temperature=0.8, lang="zh"):
         raise HTTPException(status_code=403, detail="无权访问该角色")

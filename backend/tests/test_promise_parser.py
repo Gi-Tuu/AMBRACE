@@ -2,7 +2,7 @@
 """定时承诺解析器测试（promise_parser / promise_service 纯逻辑部分）"""
 from datetime import datetime, timezone
 
-from app.scheduler.promise_parser import extract_timer, strip_timer_tag
+from app.scheduling.promise_parser import extract_timer, strip_timer_tag
 
 
 def _info(text, sender="ai"):

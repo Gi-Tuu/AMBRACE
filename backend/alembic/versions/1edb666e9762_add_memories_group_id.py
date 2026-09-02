@@ -25,11 +25,34 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _has_table(bind, table: str) -> bool:
+    inspector = sa.inspect(bind)
+    try:
+        return inspector.has_table(table)
+    except Exception:
+        return False
+
+
+def _has_column(bind, table: str, column: str) -> bool:
+    inspector = sa.inspect(bind)
+    try:
+        return column in {c["name"] for c in inspector.get_columns(table)}
+    except Exception:
+        return False
+
+
 def upgrade() -> None:
-    with op.batch_alter_table('memories', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('group_id', sa.Integer(), nullable=True))
+    bind = op.get_bind()
+    # has_column 守卫：存量库若已被 init_db()/create_all 补建该列则跳过，避免重放重名冲突。
+    if not _has_table(bind, "memories"):
+        return
+    if not _has_column(bind, "memories", "group_id"):
+        with op.batch_alter_table('memories', schema=None) as batch_op:
+            batch_op.add_column(sa.Column('group_id', sa.Integer(), nullable=True))
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('memories', schema=None) as batch_op:
-        batch_op.drop_column('group_id')
+    bind = op.get_bind()
+    if _has_table(bind, "memories") and _has_column(bind, "memories", "group_id"):
+        with op.batch_alter_table('memories', schema=None) as batch_op:
+            batch_op.drop_column('group_id')

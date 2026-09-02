@@ -156,7 +156,7 @@ async def manually_publish_moment(
     cresult = await db.execute(select(AICharacter).where(AICharacter.id == character_id, AICharacter.user_id == user_id))
     if cresult.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
-    from app.services.moment_service import publish_moment, generate_comments_for_moment
+    from app.application.moment_service import publish_moment, generate_comments_for_moment
     try:
         result = await publish_moment(character_id, skip_interval=True)
         if result is None:
@@ -190,8 +190,8 @@ async def create_user_moment(
     image_url = None
     image_desc = ""
     if image is not None:
-        from app.services.upload_service import save_image
-        from app.services.image_understanding_service import describe_image
+        from app.application.upload_service import save_image
+        from app.application.image_understanding_service import describe_image
         image_url = await save_image(image, f"moments/{user_id}", lang)
         try:
             abs_path = str(settings.PROJECT_ROOT / "data" / "uploads" / image_url.removeprefix("/uploads/"))
@@ -208,7 +208,7 @@ async def create_user_moment(
     await db.refresh(moment)
     # P0 发布即评论：用户发布后立即让 AI 角色评论（异步，不阻塞；隔离由评论生成内部保证）
     try:
-        from app.services.moment_service import generate_comments_for_moment
+        from app.application.moment_service import generate_comments_for_moment
         spawn_background(generate_comments_for_moment(moment.id))
     except Exception:
         pass
@@ -312,7 +312,7 @@ async def create_comment(moment_id: int, data: CreateCommentRequest, db: AsyncSe
     await db.refresh(comment)
     # AI 回复用户评论（异步不阻塞）：动态作者 / 其他 AI 角色按幂等规则回复；重复触发安全
     try:
-        from app.services.moment_service import generate_comments_for_moment
+        from app.application.moment_service import generate_comments_for_moment
         spawn_background(generate_comments_for_moment(moment_id))
     except Exception:
         pass
@@ -340,7 +340,7 @@ async def delete_moment(moment_id: int, db: AsyncSession = Depends(get_db), user
         cresult = await db.execute(select(AICharacter.id).where(AICharacter.id == moment.character_id, AICharacter.user_id == user_id))
         if cresult.scalar_one_or_none() is None:
             raise HTTPException(status_code=403, detail=tr_lang(lang, "delete_own_moment_only"))
-    from app.services.upload_service import delete_image_file
+    from app.application.upload_service import delete_image_file
     delete_image_file(moment.image_url)
     await db.execute(delete(MomentLike).where(MomentLike.moment_id == moment_id))
     await db.execute(delete(MomentAILike).where(MomentAILike.moment_id == moment_id))
@@ -380,7 +380,7 @@ async def clear_character_moments(
     stmt = select(AIMoment).where(AIMoment.character_id == character_id, AIMoment.created_at >= start)
     result = await db.execute(stmt)
     moments = result.scalars().all()
-    from app.services.upload_service import delete_image_file
+    from app.application.upload_service import delete_image_file
     for m in moments:
         delete_image_file(m.image_url)
         await db.delete(m)

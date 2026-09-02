@@ -2,7 +2,7 @@
 
 自 arbiter.py 原样搬移；arbiter 保留同名重导出（兼容面与 monkeypatch 接缝不变）。
 边界（写进 docstring 强约束）：本模块零 IO、不感知 DB/FastAPI；IO（查询/发送/限额执行）
-留在 scheduler/arbiter.py，后续整体迁入本包（scheduling 只管到点触发）。
+留在 scheduling/arbiter.py，后续整体迁入本包（scheduling 只管到点触发）。
 """
 # 防刷屏：每角色每小时最多 N 条主动消息（随机+定时+节日共同计入）
 MAX_PER_HOUR = 2

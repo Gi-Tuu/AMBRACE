@@ -22,7 +22,7 @@ from app.api import platform_profiles as pp_api
 from app.auth.deps import get_current_user_id
 from app.plugins import registry
 from app.providers import registry as prov_reg
-from app.services import permission_service as perm
+from app.application import permission_service as perm
 
 
 @pytest.fixture()

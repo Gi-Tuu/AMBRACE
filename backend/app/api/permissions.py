@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
-from app.services import permission_service
+from app.application import permission_service
 from app.utils.logger import get_logger
 
 router = APIRouter(prefix="/api/v1/permissions", tags=["Permissions"])
@@ -70,7 +70,7 @@ async def _execute_approved(payload: dict) -> None:
     """按 scope 执行已批准动作（v1 支持生图；其余能力按需扩展）"""
     scope = payload.get("scope")
     if scope == permission_service.SCOPE_IMAGE_GEN:
-        from app.services.chat_service import _gen_image_flow
+        from app.application.chat_service import _gen_image_flow
 
         prompt = str(payload.get("prompt") or "").strip()
         if not prompt:

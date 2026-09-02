@@ -6,8 +6,8 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ai_companion/providers/settings_provider.dart';
-import 'package:ai_companion/screens/phone/ai_interaction_screen.dart';
-import 'package:ai_companion/screens/phone/phone_app_screens.dart';
+import 'package:ai_companion/features/phone/ai_interaction_screen.dart';
+import 'package:ai_companion/features/phone/phone_app_screens.dart';
 import 'package:ai_companion/services/api_client.dart';
 import 'package:ai_companion/widgets/aurora_card.dart';
 import 'package:ai_companion/widgets/empty_state.dart';

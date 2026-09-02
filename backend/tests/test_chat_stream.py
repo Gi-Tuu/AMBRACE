@@ -14,7 +14,7 @@ from starlette.testclient import TestClient
 from app.agent import nodes
 from app.api import chat as chat_api
 from app.auth.deps import get_current_user_id
-from app.services.chat import streaming
+from app.application.chat import streaming
 
 
 async def _noop_sink(event, payload):
@@ -203,7 +203,7 @@ def test_send_and_receive_stream_success(monkeypatch):
     async def _noop(*a, **k):
         return None
 
-    from app.services import chat_service as cs
+    from app.application import chat_service as cs
     monkeypatch.setattr(cs, "_persist_user_message", _persist_user)
     monkeypatch.setattr(cs, "_run_agent_core", _run_core)
     monkeypatch.setattr(streaming, "_persist_ai_chunks", _persist_chunks)
@@ -250,7 +250,7 @@ def test_send_and_receive_stream_emits_tool_result(monkeypatch):
         return True, [{"tool": "mcp.srv.echo", "ok": True, "summary": "echo: hi", "error": None}]
 
     from app.agent import mcp_tools as _mt
-    from app.services import chat_service as cs
+    from app.application import chat_service as cs
     monkeypatch.setattr(cs, "_persist_user_message", _persist_user)
     monkeypatch.setattr(cs, "_run_agent_core", _run_core)
     monkeypatch.setattr(streaming, "_persist_ai_chunks", _persist_chunks)
@@ -285,7 +285,7 @@ def test_send_and_receive_stream_no_tool_result_without_mcp(monkeypatch):
     async def _noop(*a, **k):
         return None
 
-    from app.services import chat_service as cs
+    from app.application import chat_service as cs
     monkeypatch.setattr(cs, "_persist_user_message", _persist_user)
     monkeypatch.setattr(cs, "_run_agent_core", _run_core)
     monkeypatch.setattr(streaming, "_persist_ai_chunks", _persist_chunks)
@@ -316,7 +316,7 @@ def test_send_and_receive_stream_falls_back_to_chunked_on_error(monkeypatch):
     async def _noop(*a, **k):
         return None
 
-    from app.services import chat_service as cs
+    from app.application import chat_service as cs
     monkeypatch.setattr(cs, "_persist_user_message", _persist_user)
     monkeypatch.setattr(cs, "_run_agent_core", _run_core)
     monkeypatch.setattr(cs, "send_and_receive_chunked", _chunked)
@@ -343,7 +343,7 @@ def test_send_and_receive_stream_cold_war(monkeypatch):
     async def _chunked(*a, **k):
         return {"chunks": [], "memories_updated": False, "cold_war": True}
 
-    from app.services import chat_service as cs
+    from app.application import chat_service as cs
     monkeypatch.setattr(cs, "_persist_user_message", _persist_user)
     monkeypatch.setattr(cs, "_run_agent_core", _run_core)
     monkeypatch.setattr(cs, "send_and_receive_chunked", _chunked)
@@ -375,7 +375,7 @@ def test_stream_fallback_chunked_skips_reply_delay(monkeypatch):
     async def _noop(*a, **k):
         return None
 
-    from app.services import chat_service as cs
+    from app.application import chat_service as cs
     monkeypatch.setattr(cs, "_persist_user_message", _persist_user)
     monkeypatch.setattr(cs, "_run_agent_core", _run_core)
     monkeypatch.setattr(cs, "send_and_receive_chunked", _chunked)

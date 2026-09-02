@@ -30,7 +30,7 @@ TASK_TTL_HOURS = 24
 
 async def register_care_task(user_id: int, character_id: int, trigger_msg: str) -> bool:
     """用户发低落消息时登记一条延迟主动关怀任务（同角色已有 pending 任务则跳过）。"""
-    from app.scheduler.triggers import proactive_enabled
+    from app.scheduling.triggers import proactive_enabled
     if not await proactive_enabled(character_id):
         return False
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -126,8 +126,8 @@ async def _finish_task(task_id: int, status: str) -> None:
 
 async def run_emotion_care(char_id: int, user_id: int, task_id: int) -> bool:
     """执行一次关怀：限额/免打扰/会话检查 → LLM 生成 → 发送 → 任务置 done。"""
-    from app.scheduler.scheduler import send_to_session
-    from app.services.chat_service import get_latest_session_id
+    from app.scheduling.scheduler import send_to_session
+    from app.application.chat_service import get_latest_session_id
 
     now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
     async with async_session_factory() as db:
@@ -173,7 +173,7 @@ async def run_emotion_care(char_id: int, user_id: int, task_id: int) -> bool:
         # 天气注入（关怀时可自然结合当地天气）
         weather_line = ""
         try:
-            from app.services.weather_service import get_user_weather_line
+            from app.application.weather_service import get_user_weather_line
             weather_line = await get_user_weather_line(user_id)
         except Exception:
             weather_line = ""

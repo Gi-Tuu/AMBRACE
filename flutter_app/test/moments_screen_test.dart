@@ -6,8 +6,8 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ai_companion/providers/settings_provider.dart';
-import 'package:ai_companion/screens/social/moments_screen.dart';
-import 'package:ai_companion/screens/social/moment_compose_screen.dart';
+import 'package:ai_companion/features/social/moments_screen.dart';
+import 'package:ai_companion/features/social/moment_compose_screen.dart';
 import 'package:ai_companion/services/api_client.dart';
 import 'package:ai_companion/widgets/empty_state.dart';
 import 'package:ai_companion/widgets/moment_card.dart';

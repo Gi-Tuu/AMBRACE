@@ -2,7 +2,7 @@
 
 边界：cognition=在线同步（用户消息驱动）；proactivity=离线批量（定时器驱动，决定
 "AI 要不要主动做点什么"）；scheduling（规划中）只管到点触发，不含人格决策。
-decision.py = 纯决策（常量+打分，零 IO）；查询/生成/发送等 IO 仍暂居 scheduler/arbiter.py
+decision.py = 纯决策（常量+打分，零 IO）；查询/生成/发送等 IO 仍暂居 scheduling/arbiter.py
 （经门面重导出，逐步迁入本包）。
 """
 from app.domain.proactivity.decision import (  # noqa: F401

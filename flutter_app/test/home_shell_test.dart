@@ -7,8 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ai_companion/providers/pets_provider.dart';
 import 'package:ai_companion/providers/settings_provider.dart';
-import 'package:ai_companion/screens/home/home_screen.dart';
-import 'package:ai_companion/screens/social/moments_screen.dart';
+import 'package:ai_companion/features/home/home_screen.dart';
+import 'package:ai_companion/features/social/moments_screen.dart';
 import 'package:ai_companion/theme/app_theme.dart';
 import 'package:ai_companion/widgets/home_bottom_bar.dart';
 import 'package:ai_companion/widgets/home_drawer.dart';

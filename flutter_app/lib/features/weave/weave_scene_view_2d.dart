@@ -1,9 +1,9 @@
-// F7-c-5（2026-09-01）自 screens/weave/weave_scene_view.dart 拆分迁入；逻辑逐字节保持。
+// F7-c-5（2026-09-01）自 features/weave/weave_scene_view.dart 拆分迁入；逻辑逐字节保持。
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 
-import 'package:ai_companion/screens/weave/weave_scene_controller.dart';
+import 'package:ai_companion/features/weave/weave_scene_controller.dart';
 import 'weave_scene_painters.dart';
 import 'weave_canvas_painter.dart' show WeaveCanvasPainter;
 

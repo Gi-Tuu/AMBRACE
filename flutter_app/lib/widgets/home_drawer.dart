@@ -12,19 +12,19 @@ import '../services/fcm_push_service.dart';
 import '../theme/aurora_tokens.dart';
 import '../theme/tokens.dart';
 import 'app_page_route.dart';
-import '../screens/home/profile_screen.dart';
-import '../screens/settings/dnd_settings_screen.dart';
-import '../screens/settings/api_config_screen.dart';
-import '../screens/settings/permission_admin_screen.dart';
-import '../screens/phone/phone_perception_screen.dart';
-import '../screens/settings/appearance_screen.dart';
-import '../screens/settings/account_linking_screen.dart';
-import '../screens/plugin/extensions_screen.dart';
-import '../screens/settings/support_screen.dart';
-import '../screens/settings/backup_screen.dart';
-import '../screens/settings/update_announcement_screen.dart';
-import '../screens/auth/user_agreement_screen.dart';
-import '../screens/auth/onboarding_screen.dart';
+import '../features/home/profile_screen.dart';
+import '../features/settings/dnd_settings_screen.dart';
+import '../features/settings/api_config_screen.dart';
+import '../features/settings/permission_admin_screen.dart';
+import '../features/phone/phone_perception_screen.dart';
+import '../features/settings/appearance_screen.dart';
+import '../features/settings/account_linking_screen.dart';
+import '../features/plugin/extensions_screen.dart';
+import '../features/settings/support_screen.dart';
+import '../features/settings/backup_screen.dart';
+import '../features/settings/update_announcement_screen.dart';
+import '../features/auth/user_agreement_screen.dart';
+import '../features/auth/onboarding_screen.dart';
 
 /// 全局抽屉开关：HomeScreen 监听此值渲染抽屉覆盖层，
 /// 好友/朋友圈/宠物页通过 open/toggle 呼出，避免静态回调耦合。

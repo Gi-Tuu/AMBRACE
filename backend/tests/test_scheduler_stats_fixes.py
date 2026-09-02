@@ -22,7 +22,7 @@ from starlette.testclient import TestClient
 from app.api import scheduler as scheduler_api
 from app.auth.deps import get_current_user_id
 from app.db.database import get_db
-from app.scheduler.message_generator import score_naturalness
+from app.scheduling.message_generator import score_naturalness
 
 ADMIN = 1
 
@@ -187,10 +187,10 @@ def _patch_api_deps(monkeypatch, gen_delta):
     async def _last(sid, limit=10):
         return "用户: hi"
 
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _is_admin)
-    monkeypatch.setattr("app.scheduler.message_generator.generate_proactive_event", _gen)
-    monkeypatch.setattr("app.scheduler.triggers.get_latest_session", _sess)
-    monkeypatch.setattr("app.scheduler.triggers.get_last_messages", _last)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _is_admin)
+    monkeypatch.setattr("app.scheduling.message_generator.generate_proactive_event", _gen)
+    monkeypatch.setattr("app.scheduling.triggers.get_latest_session", _sess)
+    monkeypatch.setattr("app.scheduling.triggers.get_last_messages", _last)
 
 
 def test_trigger_test_no_llm_key_returns_400(monkeypatch):

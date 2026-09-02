@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, File, Form, UploadFile, Header
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
-from app.services import emoji_service, emoji_market
+from app.application import emoji_service, emoji_market
 
 router = APIRouter(prefix="/api/v1/emojis", tags=["Emojis"])
 
@@ -53,7 +53,7 @@ async def uninstall_market_emoji_pack(
     pack_id: str, user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")
 ):
     """卸载市场表情包；内置包返回 400。"""
-    from app.services.emoji_service import EMOJI_PACKS as _builtin
+    from app.application.emoji_service import EMOJI_PACKS as _builtin
     if any(p["id"] == pack_id for p in _builtin):
         raise HTTPException(status_code=400, detail=tr_lang(lang, "emoji_pack_builtin"))
     return await emoji_market.uninstall_market_pack(user_id, pack_id, lang)
@@ -75,7 +75,7 @@ async def upload_custom_emoji(
     lang: str = Header(default="zh"),
 ):
     """上传自定义表情图片（仅本用户可用）"""
-    from app.services.upload_service import save_image, ALLOWED_IMAGE_EXTS
+    from app.application.upload_service import save_image, ALLOWED_IMAGE_EXTS
     ext = "." + (file.filename or "").rsplit(".", 1)[-1].lower() if file.filename else ""
     if ext not in ALLOWED_IMAGE_EXTS:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "image_format_only"))

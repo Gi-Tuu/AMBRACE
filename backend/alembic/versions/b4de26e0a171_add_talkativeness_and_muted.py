@@ -25,20 +25,52 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-def upgrade() -> None:
-    # 只加列：talkativeness（可空，NULL=推断）；talkativeness_locked / muted（非空，默认 0）
-    with op.batch_alter_table('ai_characters', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('talkativeness', sa.Integer(), nullable=True))
-        batch_op.add_column(sa.Column('talkativeness_locked', sa.Boolean(), nullable=False, server_default=sa.text('0')))
+def _has_table(bind, table: str) -> bool:
+    inspector = sa.inspect(bind)
+    try:
+        return inspector.has_table(table)
+    except Exception:
+        return False
 
-    with op.batch_alter_table('chat_group_members', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('muted', sa.Boolean(), nullable=False, server_default=sa.text('0')))
+
+def _has_column(bind, table: str, column: str) -> bool:
+    inspector = sa.inspect(bind)
+    try:
+        return column in {c["name"] for c in inspector.get_columns(table)}
+    except Exception:
+        return False
+
+
+def upgrade() -> None:
+    bind = op.get_bind()
+    # has_column 守卫：存量库若已被 init_db()/create_all 补建该列则跳过，避免重放重名冲突。
+    if _has_table(bind, "ai_characters"):
+        _add_cols = []
+        if not _has_column(bind, "ai_characters", "talkativeness"):
+            _add_cols.append(sa.Column('talkativeness', sa.Integer(), nullable=True))
+        if not _has_column(bind, "ai_characters", "talkativeness_locked"):
+            _add_cols.append(sa.Column('talkativeness_locked', sa.Boolean(), nullable=False, server_default=sa.text('0')))
+        if _add_cols:
+            with op.batch_alter_table('ai_characters', schema=None) as batch_op:
+                for _c in _add_cols:
+                    batch_op.add_column(_c)
+
+    if _has_table(bind, "chat_group_members"):
+        if not _has_column(bind, "chat_group_members", "muted"):
+            with op.batch_alter_table('chat_group_members', schema=None) as batch_op:
+                batch_op.add_column(sa.Column('muted', sa.Boolean(), nullable=False, server_default=sa.text('0')))
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('ai_characters', schema=None) as batch_op:
-        batch_op.drop_column('talkativeness_locked')
-        batch_op.drop_column('talkativeness')
+    bind = op.get_bind()
+    if _has_table(bind, "ai_characters"):
+        with op.batch_alter_table('ai_characters', schema=None) as batch_op:
+            if _has_column(bind, "ai_characters", "talkativeness_locked"):
+                batch_op.drop_column('talkativeness_locked')
+            if _has_column(bind, "ai_characters", "talkativeness"):
+                batch_op.drop_column('talkativeness')
 
-    with op.batch_alter_table('chat_group_members', schema=None) as batch_op:
-        batch_op.drop_column('muted')
+    if _has_table(bind, "chat_group_members"):
+        if _has_column(bind, "chat_group_members", "muted"):
+            with op.batch_alter_table('chat_group_members', schema=None) as batch_op:
+                batch_op.drop_column('muted')

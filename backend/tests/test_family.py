@@ -22,7 +22,7 @@ from app.api import account as account_api
 from app.api import admin as admin_api
 from app.auth import router as auth_router
 from app.auth.deps import get_current_user_id
-from app.services import permission_service as perm
+from app.application import permission_service as perm
 
 
 @pytest.fixture()
@@ -190,7 +190,7 @@ def test_redeem_creator_is_sub_rejected(family_db):
 
 def test_redeem_concurrent_used_by_guard(family_db):
     from app.db.database import async_session_factory
-    from app.services.family_service import redeem_invite_code
+    from app.application.family_service import redeem_invite_code
 
     asyncio.run(_add_user(family_db, 1, 'main'))
     asyncio.run(_add_user(family_db, 2, 's1'))
@@ -216,7 +216,7 @@ def test_redeem_concurrent_used_by_guard(family_db):
 
 def test_redeem_sub_account_limit(family_db):
     from app.db.database import async_session_factory
-    from app.services.family_service import redeem_invite_code
+    from app.application.family_service import redeem_invite_code
 
     asyncio.run(_add_user(family_db, 1, 'main'))
     # 主账号已有 6 个子账号

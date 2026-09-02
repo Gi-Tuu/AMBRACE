@@ -1,4 +1,4 @@
-// F7-c-4a（2026-08-31）自 screens/phone/phone_app_screens.dart 拆分迁入；逻辑逐字节保持。
+// F7-c-4a（2026-08-31）自 features/phone/phone_app_screens.dart 拆分迁入；逻辑逐字节保持。
 import 'package:flutter/material.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -8,7 +8,7 @@ import '../../widgets/aurora_card.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/ios_card_group.dart';
 import '../../services/api/phone_desktop_api.dart';
-import '../../screens/life/life_browsing_screen.dart';
+import '../life/life_browsing_screen.dart';
 import 'app_settings.dart' show fmtTime;
 
 /// 小手机应用页集合：相册 / 应用市场 / 日历 / 浏览器 / 主题 / 设置（2026-08-11）

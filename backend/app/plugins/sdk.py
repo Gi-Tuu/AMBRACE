@@ -91,7 +91,7 @@ async def send_message(character_id: int, user_id: int, content: str, message_ty
     复用主链路 _send_message（自动取最新会话、走每小时限额、落库 chat 消息）。
     """
     require_permission("send_message")
-    from app.scheduler.storyline_engine import _send_message
+    from app.scheduling.storyline_engine import _send_message
     return await _send_message(character_id, user_id, content, message_type=message_type)
 
 
@@ -206,7 +206,7 @@ async def search_memory(character_id: int, query: str, *, limit: int = 5, types:
 async def get_relationship(character_id: int) -> dict:
     """只读关系快照（需 relationship:read）：信任/亲密度/好奇度（0-100 标量）。"""
     require_permission("relationship:read")
-    from app.services.character_state_service import get_character_states
+    from app.application.character_state_service import get_character_states
 
     st = await get_character_states(int(character_id))
     return {
@@ -219,7 +219,7 @@ async def get_relationship(character_id: int) -> dict:
 async def get_life_state(character_id: int) -> dict:
     """只读当前状态快照（需 life:read）：八维中的体感/情绪维度（脱敏数值）。"""
     require_permission("life:read")
-    from app.services.character_state_service import get_character_states
+    from app.application.character_state_service import get_character_states
 
     st = await get_character_states(int(character_id))
     keys = ("mood", "body_temp", "desire", "possessiveness", "fatigue", "sensitivity", "comfort", "anger")

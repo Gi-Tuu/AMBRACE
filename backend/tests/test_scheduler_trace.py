@@ -3,7 +3,7 @@
 import asyncio
 
 from app.agent import loop
-from app.scheduler import arbiter
+from app.scheduling import arbiter
 
 
 def test_灰度判定_10分桶():

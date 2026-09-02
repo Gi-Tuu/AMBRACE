@@ -1,4 +1,4 @@
-// F7-c-1（2026-08-31）自 screens/character/pet_screen.dart 拆分迁入；逻辑逐字节保持。
+// F7-c-1（2026-08-31）自 features/character/pet_screen.dart 拆分迁入；逻辑逐字节保持。
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';

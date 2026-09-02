@@ -5,7 +5,7 @@ from app.plugins import sdk
 @sdk.hook("context_inject")
 async def inject_weather(ctx):
     try:
-        from app.services.weather_service import get_user_weather_line
+        from app.application.weather_service import get_user_weather_line
         line = await get_user_weather_line(ctx.get("user_id") or 1)
         if not line:
             return

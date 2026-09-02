@@ -1,7 +1,7 @@
 """通用上传 API（头像等）"""
 from fastapi import APIRouter, Depends, UploadFile, File, Header
 from app.auth.deps import get_current_user_id
-from app.services.upload_service import save_image
+from app.application.upload_service import save_image
 
 router = APIRouter(prefix="/api/v1/uploads", tags=["Uploads"])
 

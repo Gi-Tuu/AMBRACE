@@ -114,7 +114,7 @@ def test_set_permission_non_admin_403(monkeypatch):
     async def _fake(uid):
         return False
 
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
     sid = _make_server(name=TEST_PREFIX + "na", tools_cache=MOCK_TOOLS)
     client = _make_client(PERM_UID)  # 非主账号
     r = client.put(f"/api/v1/mcp/servers/{sid}/tools/read_file", json={"mode": "allow"})
@@ -127,7 +127,7 @@ def test_set_permission_invalid_mode(monkeypatch):
     async def _fake(uid):
         return True
 
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
     sid = _make_server(name=TEST_PREFIX + "bad", tools_cache=MOCK_TOOLS)
     client = _make_client(ADMIN)
     for m in ("allow?", "never", "always", "forbid!", "ask?"):
@@ -141,7 +141,7 @@ def test_set_permission_tool_not_found(monkeypatch):
     async def _fake(uid):
         return True
 
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
     sid = _make_server(name=TEST_PREFIX + "nf", tools_cache=MOCK_TOOLS)
     client = _make_client(ADMIN)
     r = client.put(f"/api/v1/mcp/servers/{sid}/tools/nonexistent", json={"mode": "allow"})
@@ -152,7 +152,7 @@ def test_set_permission_server_not_found(monkeypatch):
     async def _fake(uid):
         return True
 
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
     client = _make_client(ADMIN)
     assert client.put("/api/v1/mcp/servers/999999/tools/read_file", json={"mode": "allow"}).status_code == 404
 
@@ -163,7 +163,7 @@ def test_set_permission_creates_row(monkeypatch):
     async def _fake(uid):
         return True
 
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
     sid = _make_server(name=TEST_PREFIX + "w", tools_cache=MOCK_TOOLS)
     scope = f"mcp_{TEST_PREFIX}w"
     client = _make_client(ADMIN)
@@ -182,7 +182,7 @@ def test_set_permission_updates_row(monkeypatch):
     async def _fake(uid):
         return True
 
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
     sid = _make_server(name=TEST_PREFIX + "u", tools_cache=MOCK_TOOLS)
     scope = f"mcp_{TEST_PREFIX}u"
     client = _make_client(ADMIN)
@@ -221,7 +221,7 @@ def test_get_tools_echoes_explicit_mode(monkeypatch):
     async def _fake(uid):
         return True
 
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
     sid = _make_server(name=TEST_PREFIX + "exp", tools_cache=MOCK_TOOLS)
     client = _make_client(ADMIN)
     r = client.put(f"/api/v1/mcp/servers/{sid}/tools/write_file", json={"mode": "allow"})

@@ -13,7 +13,7 @@ async def _execute_image(payload: dict, *, user_id=None, character_id=None, sess
     实际生成流程（_gen_image_flow）内部自处理 AI 能力权限（forbid/ask）与每日额度；
     此处先做工具级权限三档（scope="image_gen"），再把生成委托给 services 层。
     """
-    from app.services.chat.tools import _gen_image_flow
+    from app.application.chat.tools import _gen_image_flow
 
     prompt = str(payload.get("prompt") or "")
     if not prompt:

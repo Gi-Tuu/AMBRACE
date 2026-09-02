@@ -42,7 +42,7 @@ async def _compute_current_time_str(state: dict, ctx: dict) -> str:
         _logger.warning("Timezone inject failed: %s", e)
 
     try:
-        from app.scheduler.holiday_calendar import get_holidays
+        from app.scheduling.holiday_calendar import get_holidays
         _hols = get_holidays(now.date())
         if _hols:
             _hnames = "、".join(h["name"] for h in _hols if h.get("lang") == "zh") or "、".join(h["name"] for h in _hols)
@@ -139,7 +139,7 @@ async def pending_timer_section(state: dict, ctx: dict) -> str:
     """pending_timer 分区：进行中的时间承诺（template 槽；失败静默「无」）。"""
     pending_timer_text = "无"
     try:
-        from app.scheduler.promise_service import get_pending_timer_text
+        from app.scheduling.promise_service import get_pending_timer_text
         _pt = await get_pending_timer_text(state.get("character_id"), state.get("user_id", 1))
         if _pt:
             pending_timer_text = _pt
@@ -181,7 +181,7 @@ async def location_section(state: dict, ctx: dict) -> list[str]:
                     + "\u3002\u53ef\u5728\u804a\u5929\u4e2d\u81ea\u7136\u63d0\u53ca\uff0c\u4f46\u4e0d\u8981\u523b\u610f\u5ff5\u6570\u636e\u3002"
                 )
             try:
-                from app.services.weather_service import get_weather_text
+                from app.application.weather_service import get_weather_text
                 _wtext = await get_weather_text(
                     getattr(user, "location_lat", None),
                     getattr(user, "location_lng", None),

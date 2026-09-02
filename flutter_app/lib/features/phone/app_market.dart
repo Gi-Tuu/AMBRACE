@@ -1,4 +1,4 @@
-// F7-c-4a（2026-08-31）自 screens/phone/phone_app_screens.dart 拆分迁入；逻辑逐字节保持。
+// F7-c-4a（2026-08-31）自 features/phone/phone_app_screens.dart 拆分迁入；逻辑逐字节保持。
 import 'package:flutter/material.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
 import '../../theme/aurora_tokens.dart';

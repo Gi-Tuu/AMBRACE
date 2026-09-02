@@ -1,4 +1,4 @@
-// F7-c-2（2026-08-31）自 screens/phone/ai_interaction_screen.dart 拆分迁入；逻辑逐字节保持。
+// F7-c-2（2026-08-31）自 features/phone/ai_interaction_screen.dart 拆分迁入；逻辑逐字节保持。
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';

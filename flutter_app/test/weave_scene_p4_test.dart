@@ -11,12 +11,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:ai_companion/screens/weave/weave_scene_controller.dart';
-import 'package:ai_companion/screens/weave/weave_perf_monitor.dart'
+import 'package:ai_companion/features/weave/weave_scene_controller.dart';
+import 'package:ai_companion/features/weave/weave_perf_monitor.dart'
     show WeaveDegradeEvent, WeaveRenderDegrader, WeaveRenderTier;
-import 'package:ai_companion/screens/weave/weave_card_texture.dart'
+import 'package:ai_companion/features/weave/weave_card_texture.dart'
     show weaveShouldWarmTextures;
-import 'package:ai_companion/screens/weave/weave_scene_view.dart'
+import 'package:ai_companion/features/weave/weave_scene_view.dart'
     show WeaveSceneView2D;
 import 'package:ai_companion/utils/sphere_projection.dart' show nodeDepthOpacity;
 

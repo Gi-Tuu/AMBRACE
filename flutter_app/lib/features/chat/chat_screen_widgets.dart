@@ -1,4 +1,4 @@
-// F7-b（2026-08-31）自 screens/chat/chat_screen.dart 拆分迁入；逻辑逐字节保持。
+// F7-b（2026-08-31）自 features/chat/chat_screen.dart 拆分迁入；逻辑逐字节保持。
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/settings_provider.dart';

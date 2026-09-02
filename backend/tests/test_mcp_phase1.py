@@ -425,7 +425,7 @@ def test_api_unauthenticated_401():
 def test_api_non_admin_403(monkeypatch):
     async def _fake(uid):
         return False
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
 
     client = _make_client(OTHER)
     # 读取允许（登录可见）
@@ -444,7 +444,7 @@ def test_api_non_admin_403(monkeypatch):
 def test_api_crud_flow(monkeypatch):
     async def _fake(uid):
         return True
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
 
     client = _make_client(ADMIN)
     # 创建
@@ -490,7 +490,7 @@ def test_api_crud_flow(monkeypatch):
 def test_api_create_validation(monkeypatch):
     async def _fake(uid):
         return True
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
     client = _make_client(ADMIN)
 
     assert client.post("/api/v1/mcp/servers", json={"name": "bad name!", "command": "x"}).status_code == 400
@@ -513,7 +513,7 @@ def test_api_update_server_stdio_requires_command(monkeypatch):
     """
     async def _fake(uid):
         return True
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
 
     async def _make_sse_server(name):
         async with async_session_factory() as db:
@@ -547,7 +547,7 @@ def test_api_update_server_stdio_requires_command(monkeypatch):
 def test_api_connect_and_tools(monkeypatch):
     async def _fake(uid):
         return True
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
 
     sid = _make_server(name=TEST_PREFIX + "apiconn")
     client = _make_client(ADMIN)
@@ -571,7 +571,7 @@ def test_api_connect_and_tools(monkeypatch):
 def test_api_test_endpoint_no_save(monkeypatch):
     async def _fake(uid):
         return True
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _fake)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _fake)
 
     sid = _make_server(name=TEST_PREFIX + "apitest", status="disconnected")
     client = _make_client(ADMIN)

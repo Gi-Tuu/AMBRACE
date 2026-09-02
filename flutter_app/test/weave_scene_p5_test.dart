@@ -11,11 +11,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ai_companion/providers/settings_provider.dart';
-import 'package:ai_companion/screens/weave/weave_card_texture.dart'
+import 'package:ai_companion/features/weave/weave_card_texture.dart'
     show weaveShouldWarmTextures;
-import 'package:ai_companion/screens/weave/weave_perf_monitor.dart'
+import 'package:ai_companion/features/weave/weave_perf_monitor.dart'
     show WeaveRenderDegrader, WeaveRenderTier;
-import 'package:ai_companion/screens/weave/weave_view_mode.dart';
+import 'package:ai_companion/features/weave/weave_view_mode.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

@@ -309,7 +309,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     if "pets" not in _registry_done:
         try:
             from app.models.pet import Pet as PetModel
-            from app.services.pet_service import apply_decay as pet_apply_decay, species_label as pet_species_label, species_fact as pet_species_fact
+            from app.application.pet_service import apply_decay as pet_apply_decay, species_label as pet_species_label, species_fact as pet_species_fact
             from sqlalchemy import or_ as _or_
             _uid = state.get("user_id", 1)
             _cid = state.get("character_id")
@@ -384,7 +384,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     phone_perception = "无"
     if "phone_perception" not in _registry_done:
         try:
-            from app.services.phone_service import get_recent_perception_text
+            from app.application.phone_service import get_recent_perception_text
             phone_text = await get_recent_perception_text(state.get("user_id", 1))
             if phone_text:
                 phone_perception = phone_text
@@ -396,7 +396,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     phone_desktop = "无"
     if "phone_desktop" not in _registry_done:
         try:
-            from app.services.phone_desktop_service import get_phone_desktop_inject_text
+            from app.application.phone_desktop_service import get_phone_desktop_inject_text
             _cid = state.get("character_id")
             if _cid:
                 _pdt = await get_phone_desktop_inject_text(int(_cid))
@@ -410,7 +410,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     pending_timer_text = "无"
     if "pending_timer" not in _registry_done:
         try:
-            from app.scheduler.promise_service import get_pending_timer_text
+            from app.scheduling.promise_service import get_pending_timer_text
             _pt = await get_pending_timer_text(state.get("character_id"), state.get("user_id", 1))
             if _pt:
                 pending_timer_text = _pt
@@ -435,7 +435,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
             _logger.warning("Timezone inject failed: %s", e)
         # S-1 季节/节日注入（2026-08-16）：时间感知补季节与节日，角色言行随节气/节日变化（失败静默）
         try:
-            from app.scheduler.holiday_calendar import get_holidays
+            from app.scheduling.holiday_calendar import get_holidays
             _hols = get_holidays(now.date())
             if _hols:
                 _hnames = "、".join(h["name"] for h in _hols if h.get("lang") == "zh") or "、".join(h["name"] for h in _hols)
@@ -509,7 +509,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
                     )
                 # 天气注入：坐标优先，其次城市名；仅注入一句话天气（带缓存，失败静默）
                 try:
-                    from app.services.weather_service import get_weather_text
+                    from app.application.weather_service import get_weather_text
                     _wtext = await get_weather_text(
                         getattr(user, "location_lat", None),
                         getattr(user, "location_lng", None),

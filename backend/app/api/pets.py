@@ -9,7 +9,7 @@ from app.i18n import tr_lang
 from app.db.database import get_db
 from app.models.pet import Pet
 from app.schemas.pet import PetResponse, PetListResponse, CreatePetRequest, RenamePetRequest
-from app.services import pet_service
+from app.application import pet_service
 
 router = APIRouter(prefix="/api/v1/pets", tags=["Pets"])
 

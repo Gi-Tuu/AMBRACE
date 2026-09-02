@@ -1,9 +1,9 @@
-// F7-c-2（2026-08-31）自 screens/phone/ai_interaction_screen.dart 拆分迁入；逻辑逐字节保持。
+// F7-c-2（2026-08-31）自 features/phone/ai_interaction_screen.dart 拆分迁入；逻辑逐字节保持。
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
-import '../../screens/chat/chat_group_chat_screen.dart';
+import '../chat/chat_group_chat_screen.dart';
 import '../../models/ai_chat.dart';
 import '../../models/character.dart';
 import '../../services/api_client.dart';

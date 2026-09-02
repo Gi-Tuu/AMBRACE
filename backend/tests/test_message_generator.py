@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.scheduler.message_generator import (
+from app.scheduling.message_generator import (
     _PARROT_OVERLAP_THRESHOLD,
     _context_overlap_ratio,
     _parrot_blocked,
@@ -67,7 +67,7 @@ def test_parrot_阈值边界():
 
 def test_parrot_短文本豁免():
     """有效字符不足 _PARROT_MIN_CHARS 时守卫不适用（防短消息误伤）"""
-    from app.scheduler.message_generator import _PARROT_MIN_CHARS
+    from app.scheduling.message_generator import _PARROT_MIN_CHARS
     short = "好" * (_PARROT_MIN_CHARS - 1)
     blocked, ratio = _parrot_blocked([short], short + "后缀内容")
     assert blocked is False
@@ -101,7 +101,7 @@ def proac_db(monkeypatch):
     import app.db.database as db_mod
     monkeypatch.setattr(db_mod, "async_session_factory", factory)
     # arbiter 顶部 from-import 捕获了绑定——须同时 patch 其自身引用（否则依赖测试导入顺序）
-    from app.scheduler import arbiter as _arb
+    from app.scheduling import arbiter as _arb
     monkeypatch.setattr(_arb, "async_session_factory", factory)
     yield factory
     engine.sync_engine.dispose()
@@ -112,7 +112,7 @@ def test_recent_proactive_并入ai对话回复(proac_db):
     from datetime import datetime, timedelta
     from app.models.character import AICharacter, ProactiveMessageLog
     from app.models.chat import ChatMessage, ChatSession
-    from app.scheduler.arbiter import get_recent_proactive_messages
+    from app.scheduling.arbiter import get_recent_proactive_messages
 
     async def _seed():
         async with proac_db() as db:
@@ -147,7 +147,7 @@ def test_recent_proactive_对话回复查询失败不影响主动日志(proac_db
     """A 的 fail-open：对话回复段异常时仍返回主动消息日志内容（不影响主动链路）"""
     from datetime import datetime
     from app.models.character import AICharacter, ProactiveMessageLog
-    from app.scheduler.arbiter import get_recent_proactive_messages
+    from app.scheduling.arbiter import get_recent_proactive_messages
 
     async def _seed():
         async with proac_db() as db:

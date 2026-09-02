@@ -1,12 +1,12 @@
-// 深拆（F7-c-7，2026-09-01）自 screens/character/character_settings_screen.dart 迁入；
+// 深拆（F7-c-7，2026-09-01）自 features/character/character_settings_screen.dart 迁入；
 // 「日常 / 创作 / 世界」三组 section（值经参数传入、变更经 onFieldChanged 上抛，级联在屏幕侧）。
 import 'package:flutter/material.dart';
 
 import 'package:ai_companion/l10n/app_localizations.dart';
 import 'package:ai_companion/theme/tokens.dart';
 
-import '../../screens/character/lorebook_screen.dart';
-import '../../screens/character/world_settings_screen.dart';
+import 'lorebook_screen.dart';
+import 'world_settings_screen.dart';
 import '../../widgets/ios_card_group.dart';
 import 'settings_tiles.dart';
 

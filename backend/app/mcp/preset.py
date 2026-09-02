@@ -36,7 +36,7 @@ async def preset_defaults() -> int:
 
     user_id = 1
     try:
-        from app.services.permission_service import is_admin_user_sync
+        from app.application.permission_service import is_admin_user_sync
         if not is_admin_user_sync(1):
             user_id = int((settings.admin_user_ids or [1])[0])
     except Exception:

@@ -70,7 +70,7 @@ def _seed_turn(factory, *, memories: list[str], memory_ids: list[int] | None = N
 def _patch_extraction(monkeypatch, payload: dict):
     """在 service 边界 patch LLM 提取（外部服务边界，与项目既有测试一致）。"""
     import json as _json
-    from app.services import working_state_service as svc
+    from app.application import working_state_service as svc
 
     async def fake_completion(**kw):
         prompt = kw["messages"][-1]["content"]
@@ -96,7 +96,7 @@ def _rows(factory):
 import json  # noqa: E402  （供 _rows 解析 content）
 
 from app.memory import working_state as ws  # noqa: E402
-from app.services import working_state_service as svc  # noqa: E402
+from app.application import working_state_service as svc  # noqa: E402
 
 
 # ── 纯函数层 ──
@@ -228,7 +228,7 @@ def test_evaluate_turn_supersedes_old_active_row(ws_db, monkeypatch):
 
 def test_evaluate_turn_bad_json_skipped(ws_db, monkeypatch):
     turn_started = _seed_turn(ws_db, memories=["用户提到下周要考试"], memory_ids=[620])
-    from app.services import working_state_service as _svc
+    from app.application import working_state_service as _svc
 
     async def fake_bad(**kw):
         return "这不是 JSON"

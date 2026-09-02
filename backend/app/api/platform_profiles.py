@@ -51,7 +51,7 @@ async def update_platform_profile(
     lang: str = Header(default="zh"),
 ):
     """更新平台档案（仅独立主账号；子账号 403；仅注册渠道可改）"""
-    from app.services.family_service import is_sub_account
+    from app.application.family_service import is_sub_account
     if platform not in _channel_platforms():
         raise HTTPException(status_code=404, detail=tr_lang(lang, "platform_not_found"))
     if await is_sub_account(db, user_id):

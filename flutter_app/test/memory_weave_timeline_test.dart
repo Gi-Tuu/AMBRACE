@@ -4,10 +4,10 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:ai_companion/screens/life/life_timeline_screen.dart';
-import 'package:ai_companion/screens/memory/memory_book_screen.dart';
-import 'package:ai_companion/screens/memory/timeline_screen.dart';
-import 'package:ai_companion/screens/weave/weave_library_screen.dart';
+import 'package:ai_companion/features/life/life_timeline_screen.dart';
+import 'package:ai_companion/features/memory/memory_book_screen.dart';
+import 'package:ai_companion/features/memory/timeline_screen.dart';
+import 'package:ai_companion/features/weave/weave_library_screen.dart';
 import 'package:ai_companion/services/api_client.dart';
 import 'package:ai_companion/widgets/aurora_card.dart';
 import 'package:ai_companion/widgets/empty_state.dart';

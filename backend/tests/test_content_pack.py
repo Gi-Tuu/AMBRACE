@@ -7,7 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1].parent
 
 from app.plugins.content_schema import validate_content_payload
 from app.plugins.manifest import validate_manifest
-from app.scheduler import holiday_calendar as hc
+from app.scheduling import holiday_calendar as hc
 
 
 # ── schema 校验 ──

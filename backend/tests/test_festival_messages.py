@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.scheduler import message_generator as mg
+from app.scheduling import message_generator as mg
 
 
 @pytest.fixture()
@@ -33,7 +33,7 @@ def msg_db(monkeypatch):
     import app.db.database as db_mod
     monkeypatch.setattr(db_mod, 'async_session_factory', factory)
     # arbiter 模块级绑定（from app.db.database import async_session_factory）需单独 patch
-    import app.scheduler.arbiter as arbiter_mod
+    import app.scheduling.arbiter as arbiter_mod
     monkeypatch.setattr(arbiter_mod, 'async_session_factory', factory)
     yield factory
     engine.sync_engine.dispose()
@@ -83,11 +83,11 @@ def test_arbiter_festival_failure_marks_log(msg_db, monkeypatch):
     # 免打扰检查（北京 0:00-6:59）会提前短路节日分支，mock 掉避免时间敏感（凌晨跑测试必挂）
     async def _no_dnd(*_a, **_k):
         return False
-    monkeypatch.setattr('app.scheduler.arbiter.is_dnd_now', _no_dnd)
+    monkeypatch.setattr('app.scheduling.arbiter.is_dnd_now', _no_dnd)
     async def _boom(*a, **kw):
         raise RuntimeError('boom')
     monkeypatch.setattr(mg, 'generate_holiday_message', _boom)
-    from app.scheduler import arbiter
+    from app.scheduling import arbiter
     from app.models.character import ProactiveMessageLog
     cand = dict(character_id=11, user_id=1, session_id=1, character_name='小阳',
                 character_personality='活泼', nickname='用户',

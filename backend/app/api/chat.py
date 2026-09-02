@@ -13,7 +13,7 @@ from app.db.database import get_db, async_session_factory
 from app.models.chat import ChatSession
 from app.models.chat import ChatMessage
 from app.schemas.chat import SendMessageRequest, ChatMessageResponse, ChatHistoryResponse, StreamMessageRequest
-from app.services.chat_service import (
+from app.application.chat_service import (
     create_session, send_and_receive, send_and_receive_chunked, send_and_receive_stream, continue_chat,
     get_owned_session, get_unread_counts as service_unread_counts,
     mark_session_read as service_mark_read,
@@ -31,7 +31,7 @@ def _unregister_ws(session_id: int, websocket: WebSocket) -> None:
 router = APIRouter(prefix="/api/v1/chat", tags=["Chat"])
 
 # ── 图片上传（统一走 services/upload_service，见 app/services/upload_service.py）──
-from app.services.upload_service import save_image, save_file, save_voice, UPLOAD_DIR  # noqa: F401
+from app.application.upload_service import save_image, save_file, save_voice, UPLOAD_DIR  # noqa: F401
 
 
 async def save_upload_image(session_id: int, file: UploadFile, lang: str = "zh") -> str:
@@ -456,7 +456,7 @@ async def upload_chat_image(
     image_url = await save_upload_image(session_id, file, lang)
 
     # 本地图片理解（OCR）→ 文字描述
-    from app.services.image_understanding_service import describe_image
+    from app.application.image_understanding_service import describe_image
     abs_path = str(UPLOAD_DIR / image_url.removeprefix("/uploads/"))
     desc = ""
     try:
@@ -727,7 +727,7 @@ async def upload_chat_voice(
     voice_url = await save_voice(file, str(session_id), lang)
 
     # 本地 ASR 转写
-    from app.services.speech_service import transcribe
+    from app.application.speech_service import transcribe
     abs_path = str(UPLOAD_DIR / voice_url.removeprefix("/uploads/"))
     transcript = ""
     try:

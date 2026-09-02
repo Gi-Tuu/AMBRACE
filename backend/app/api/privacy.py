@@ -61,7 +61,7 @@ async def _weighted_approve_rate(db: AsyncSession, character_id: int) -> float:
         _logger.warning("Privacy weighted state failed char=%d: %s", character_id, e)
     # 事件罚分：剧情线激活冷战/吵架/生气
     try:
-        from app.scheduler.storyline_engine import build_active_storyline_status_text
+        from app.scheduling.storyline_engine import build_active_storyline_status_text
         txt = await build_active_storyline_status_text(character_id)
         if txt and any(k in txt for k in ("冷战", "吵架", "生气", "闹别扭")):
             rate -= 0.10
@@ -230,8 +230,8 @@ async def _send_chat_followup(
     target_cn: str, approved: bool,
 ) -> None:
     """P2：申请结果落库后，角色在最近会话里自然回应 1 条（口语化，不出现'申请''系统'字眼）"""
-    from app.services.chat_service import get_latest_session_id
-    from app.scheduler.scheduler import send_to_session
+    from app.application.chat_service import get_latest_session_id
+    from app.scheduling.scheduler import send_to_session
     try:
         session_id = await get_latest_session_id(user_id, character_id)
     except Exception as e:

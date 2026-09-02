@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
-from app.services.image_gen_service import (
+from app.application.image_gen_service import (
     get_image_provider, check_daily_limit, create_image_gen_task,
     get_image_gen_task, schedule_image_gen,
 )

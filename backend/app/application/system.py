@@ -1,6 +1,6 @@
 """系统状态与配置应用服务（F5-c，2026-08-31 自 api/system.py 迁入）。
 
-业务体：就绪检查/局域网探测/BYOK 与服务器级·任务级 LLM 配置/生图·识图·语音配置/
+业务体：局域网探测/BYOK 与服务器级·任务级 LLM 配置/生图·识图·语音配置/
 连接测试/token 用量与额度/Feature Flag 运行时开关/备份触发与下载/更新公告解析。
 api/system.py 只留 FastAPI 壳（收参→调本模块→返回）+ health/WebSocket 两个纯传输端点 +
 历史名字门面重导出（F8 删旧时移除）。
@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.i18n import tr_lang
-from app.services.permission_service import is_admin_user
+from app.application.permission_service import is_admin_user
 from app.utils.logger import get_logger
 from app.utils.version import get_project_version
 
@@ -199,33 +199,6 @@ def _backup_info(zip_path: str) -> dict:
         "size": size,
         "created_at": datetime.fromtimestamp(created).isoformat() if created else None,
     }
-
-
-async def ready_check(
-):
-    """就绪检查（P2-4）：数据库可连接 + 向量模型可用。任一失败返回 503 + 明细。"""
-    from app.db.database import async_session_factory
-    from app.memory.embedding import check_model_available
-
-    db_ok = False
-    try:
-        async with async_session_factory() as db:
-            await db.execute(select(1))
-        db_ok = True
-    except Exception as e:
-        _logger.error("ready db check failed: %s", e)
-
-    model_ok = False
-    try:
-        model_ok = bool(check_model_available())
-    except Exception as e:
-        _logger.error("ready model check failed: %s", e)
-
-    ok = db_ok and model_ok
-    payload = {"status": "ok" if ok else "error", "db": db_ok, "model": model_ok}
-    if not ok:
-        raise HTTPException(status_code=503, detail=payload)
-    return payload
 
 
 async def system_status(
@@ -659,7 +632,7 @@ async def speech_preview(
     lang: str,
 ):
     """音色试听：用固定基础文案合成当前音色/语速/语调，返回音频 URL（角色编辑页试听用）"""
-    from app.services.tts_service import synthesize
+    from app.application.tts_service import synthesize
     text = "你好呀，我是你的AI伙伴，很高兴认识你。"
     url = await synthesize(
         text,
@@ -701,7 +674,7 @@ async def get_llm_usage(
     from app.db.database import async_session_factory
     from app.models.agent import LlmUsage, LlmUsageLimit
     from app.models.user import User
-    from app.services.family_service import is_sub_account, get_family_member_ids
+    from app.application.family_service import is_sub_account, get_family_member_ids
 
     # B-TZ 修复（2026-09-01 审查）：库里 created_at 是 UTC naive（func.now()）。
     # 窗口按用户本地日历语义切，再统一转成 UTC naive 参与比较——否则本地
@@ -811,7 +784,7 @@ async def get_feature_flags(
 ):
     '''读取全部运行时 Feature Flag（主账号）；source: db=DB 覆盖 / default=硬编码默认'''
     await _require_admin(user_id, lang)
-    from app.services import flag_service
+    from app.application import flag_service
     return {'status': 'ok', 'flags': await flag_service.get_all_flags()}
 
 
@@ -825,7 +798,7 @@ async def update_feature_flag(
     await _require_admin(user_id, lang)
     if 'enabled' not in data:
         raise HTTPException(status_code=400, detail='enabled required')
-    from app.services import flag_service
+    from app.application import flag_service
     ok = await flag_service.set_runtime_flag(key, bool(data.get('enabled')))
     if not ok:
         raise HTTPException(status_code=404, detail='unknown feature flag: ' + key)

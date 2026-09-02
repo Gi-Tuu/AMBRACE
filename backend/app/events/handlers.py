@@ -65,7 +65,7 @@ async def _on_activity_completed(payload: dict) -> None:
         if not character_id or not user_id:
             return
         from app.models.character import ProactiveSettings
-        from app.services.moment_service import publish_moment
+        from app.application.moment_service import publish_moment
         async with async_session_factory() as _db:
             _ps = (
                 await _db.execute(_sel(ProactiveSettings).where(ProactiveSettings.character_id == character_id))
@@ -130,7 +130,7 @@ async def _on_moment_published(payload: dict) -> None:
 async def _on_life_share(payload: dict) -> None:
     """生活活动完成 → 自然分享（#63 机制4，Flag life_share_enabled；失败静默不阻塞活动主链路）。"""
     try:
-        from app.scheduler.life_share import on_activity_completed
+        from app.scheduling.life_share import on_activity_completed
         await on_activity_completed(payload)
     except Exception as e:
         _logger.warning("events on_life_share failed: %s", e)

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """M1-S7 复习校准测试：日额度 flag、实质回复判定（纯函数）"""
-from app.scheduler.memory_review import _is_substantive_reply, _review_daily_cap
+from app.scheduling.memory_review import _is_substantive_reply, _review_daily_cap
 
 
 def test_daily_cap_flag_on():

@@ -3,7 +3,7 @@
 内置实现与插件扩展包走同一注册入口（镜像 games/registry.py 的 X1 模式，消除硬编码双轨）：
 - 内核启动时 register_provider(...) 注册内置实现（source="builtin"）：
   kind=llm → openai_compatible（app.agent.llm_client.get_llm_client 晚绑定）；
-  kind=tts → dashscope（app.services.tts_service._synth_dashscope_sync 晚绑定）；
+  kind=tts → dashscope（app.application.tts_service._synth_dashscope_sync 晚绑定）；
   其余 kind（asr/vision/image/push）本批只留枚举槽位，内置实现按方案渐进迁入；
 - 插件 main.py 加载期经 sdk.register_provider(...) 注册（source=插件名）；
 - resolve_provider 解析规则：配置的 provider 字段与注册名精确匹配优先，否则内置兜底；
@@ -139,7 +139,7 @@ def _openai_compatible_llm_factory(config: dict):
 def _dashscope_tts_factory(config: dict):
     """内置 TTS（百炼 DashScope）工厂：返回 async 合成器；端点降级/模型冷却在 tts_service 原处。"""
     import asyncio as _asyncio
-    from app.services import tts_service as _tts
+    from app.application import tts_service as _tts
 
     async def _run(text: str, voice: str, out_dir, fname: str) -> str | None:
         return await _asyncio.to_thread(_tts._synth_dashscope_sync, text, voice, config, out_dir, fname)

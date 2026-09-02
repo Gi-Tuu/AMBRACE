@@ -31,7 +31,7 @@ def test_llm_factory_returns_openai_client():
 
 def test_tts_factory_runner_calls_builtin(monkeypatch, tmp_path):
     """样板 TTS：resolve→工厂→async runner；runner 晚绑定 _synth_dashscope_sync（patch 生效）。"""
-    from app.services import tts_service
+    from app.application import tts_service
 
     def _fake_sync(text, voice, cfg, target_dir, fname):
         p = target_dir / fname
@@ -154,7 +154,7 @@ def test_llm_client_via_registry(monkeypatch):
 
 def test_tts_runner_via_registry(monkeypatch, tmp_path):
     from app.agent.loop import AGENT_FLAGS
-    from app.services import tts_service
+    from app.application import tts_service
 
     def _fake_sync(text, voice, cfg, target_dir, fname):
         p = target_dir / fname
@@ -177,7 +177,7 @@ def test_tts_runner_via_registry(monkeypatch, tmp_path):
 
 def test_server_speech_config_carries_provider(monkeypatch):
     """_server_speech_config 返回 dict 带 provider 选择标签（X3 选中通道，additive）。"""
-    from app.services import tts_service
+    from app.application import tts_service
 
     class _Cfg:
         enabled = True

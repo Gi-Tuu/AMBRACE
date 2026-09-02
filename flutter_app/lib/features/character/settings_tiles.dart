@@ -1,4 +1,4 @@
-// 深拆（F7-c-7，2026-09-01）自 screens/character/character_settings_screen.dart 迁入；
+// 深拆（F7-c-7，2026-09-01）自 features/character/character_settings_screen.dart 迁入；
 // 通用行构件（纯展示，状态经回调上抛），逻辑逐字节保持。
 import 'package:flutter/material.dart';
 

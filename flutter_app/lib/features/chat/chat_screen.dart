@@ -1,4 +1,4 @@
-// F7-b（2026-08-31）自 screens/chat/chat_screen.dart 拆分迁入；逻辑逐字节保持。
+// F7-b（2026-08-31）自 features/chat/chat_screen.dart 拆分迁入；逻辑逐字节保持。
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
@@ -20,7 +20,7 @@ import '../../widgets/app_page_route.dart';
 import '../../widgets/glass_bar.dart';
 import '../../widgets/message_bubble.dart';
 import '../../widgets/chat_time_separator.dart';
-import '../../screens/character/character_detail_screen.dart';
+import '../character/character_detail_screen.dart';
 import 'chat_message_media_actions.dart';
 import 'chat_phone_actions.dart';
 import 'chat_input_sections.dart';

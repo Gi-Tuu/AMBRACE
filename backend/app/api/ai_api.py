@@ -1,10 +1,10 @@
-"""48b 角色开放成 API：AI 角色列表 / 详情 / 按人设对话（HTTP 层；核心流程在 app.services.character_chat_api）"""
+"""48b 角色开放成 API：AI 角色列表 / 详情 / 按人设对话（HTTP 层；核心流程在 app.application.character_chat_api）"""
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from app.auth.deps import get_current_user_id
 from app.i18n import lang_of
-from app.services import character_chat_api
+from app.application import character_chat_api
 
 router = APIRouter(prefix="/api/v1/ai", tags=["AI Character API"])
 

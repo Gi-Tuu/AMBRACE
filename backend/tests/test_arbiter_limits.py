@@ -4,7 +4,7 @@
 主动消息防骚扰限额。
 """
 
-from app.scheduler.arbiter import MAX_PER_HOUR, UNREPLIED_COOLDOWN_LIMIT, _in_dnd_window
+from app.scheduling.arbiter import MAX_PER_HOUR, UNREPLIED_COOLDOWN_LIMIT, _in_dnd_window
 
 
 def test_免打扰窗口_普通时段():

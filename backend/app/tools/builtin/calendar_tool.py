@@ -9,7 +9,7 @@ from app.agent.tools import RISK_LOW, ToolSpec, register_tool
 
 async def _execute_calendar(payload: dict, *, user_id=None, character_id=None, session_id=None) -> dict:
     """执行 note_calendar：按日期落库、去重、角色署名。返回 {ok, summary}。"""
-    from app.services.chat.tools import _save_calendar_note
+    from app.application.chat.tools import _save_calendar_note
 
     ok = await _save_calendar_note(
         int(payload.get("character_id") or character_id or 0),

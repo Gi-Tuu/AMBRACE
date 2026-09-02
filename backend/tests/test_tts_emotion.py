@@ -12,7 +12,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from app.services import tts_service
+from app.application import tts_service
 
 
 # ── 纯函数：emotion_edge_adjust ─────────────────────────────────────
@@ -197,7 +197,7 @@ def test_synth_stream_block_passes_emotion(monkeypatch):
     async def fake_synthesize(*a, **k):
         calls.append((a, k))
         return "/uploads/tts/x.mp3"
-    monkeypatch.setattr("app.services.tts_service.synthesize", fake_synthesize)
+    monkeypatch.setattr("app.application.tts_service.synthesize", fake_synthesize)
 
     state = {"voice_params": {"gender": "female", "voice": "xiaoyi"},
              "tts_subdir": "7", "user_id": 1, "emotional_state": "sad"}
@@ -214,7 +214,7 @@ def test_synth_stream_block_emotion_empty_is_none(monkeypatch):
     async def fake_synthesize(*a, **k):
         calls.append((a, k))
         return "/uploads/tts/x.mp3"
-    monkeypatch.setattr("app.services.tts_service.synthesize", fake_synthesize)
+    monkeypatch.setattr("app.application.tts_service.synthesize", fake_synthesize)
 
     for emotional in ("", None):
         state = {"voice_params": {}, "tts_subdir": "7", "user_id": 1, "emotional_state": emotional}
@@ -224,13 +224,13 @@ def test_synth_stream_block_emotion_empty_is_none(monkeypatch):
 
 def test_synthesize_chunks_tts_passes_emotion(monkeypatch):
     """streaming._synthesize_chunks_tts：把 emotion 透传给 synthesize（批量回退路径）。"""
-    from app.services.chat import streaming
+    from app.application.chat import streaming
     calls: list[tuple] = []
 
     async def fake_synthesize(*a, **k):
         calls.append((a, k))
         return "/uploads/tts/x.mp3"
-    monkeypatch.setattr("app.services.tts_service.synthesize", fake_synthesize)
+    monkeypatch.setattr("app.application.tts_service.synthesize", fake_synthesize)
 
     async def fake_load(cid):
         return {"gender": "male", "voice": "yunxi", "voice_rate": 1.0, "voice_pitch": 0.0}

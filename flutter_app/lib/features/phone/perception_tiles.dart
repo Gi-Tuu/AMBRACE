@@ -1,4 +1,4 @@
-// 深拆（F7-c 收官，2026-09-01）自 screens/phone/phone_perception_screen.dart build 内局部闭包
+// 深拆（F7-c 收官，2026-09-01）自 features/phone/phone_perception_screen.dart build 内局部闭包
 // 提升为公共构件（纯展示，值经参数传入），逻辑逐字节保持。
 import 'package:flutter/material.dart';
 

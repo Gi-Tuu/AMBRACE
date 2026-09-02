@@ -94,7 +94,7 @@ async def retrieve_memories(state: AgentState) -> AgentState:
 async def _synth_stream_block(text: str, state: AgentState) -> str | None:
     """流式路径逐句合成一条语音（复用 tts_service.synthesize，百炼优先/edge 兜底），失败返回 None。"""
     try:
-        from app.services.tts_service import synthesize
+        from app.application.tts_service import synthesize
         params = state.get("voice_params") or {}
         # Phase 0 P0：取 AgentState 情绪标记（emotional_state，如 angry/sad/upset；无则 None，零行为变化）
         return await synthesize(

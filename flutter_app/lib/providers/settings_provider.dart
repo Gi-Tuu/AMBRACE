@@ -3,7 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:ui' as ui;
 
-import '../screens/weave/weave_view_mode.dart';
+import '../features/weave/weave_view_mode.dart';
 import '../theme/skins/skin_registry.dart';
 import '../services/api_client.dart';
 

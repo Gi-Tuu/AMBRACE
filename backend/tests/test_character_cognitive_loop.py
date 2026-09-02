@@ -123,7 +123,7 @@ def test_put_without_field_keeps_other_fields_and_default(char_db):
 
 def test_update_character_invalidates_persona_baseline_cache(char_db):
     """P2-1：角色性格/说话风格编辑成功后，进程内人格基线缓存被清除（下次读取按新人格重算）。"""
-    from app.services import character_state_service as cs
+    from app.application import character_state_service as cs
     factory, char_id = char_db
     # 模拟已预热的人格基线缓存（对应 edit 前的旧人格）
     cs._persona_baseline[char_id] = cs._derive_persona_baseline("高冷内敛", "简洁寡言")

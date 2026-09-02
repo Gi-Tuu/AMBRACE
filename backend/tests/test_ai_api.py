@@ -10,8 +10,8 @@ import pytest
 from fastapi import HTTPException
 
 from app.config import settings
-from app.services import character_chat_api
-from app.services.character_chat_api import (
+from app.application import character_chat_api
+from app.application.character_chat_api import (
     _ai_rate_check,
     _reset_ai_rate,
     build_api_messages,

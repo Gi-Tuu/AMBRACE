@@ -2,10 +2,11 @@
 """豆包审查报告修复批次（2026-08-23）新增单测。
 
 覆盖：P1-2（版本号从 VERSION 文件读取一致）、P1-4（未配置 API Key 返回 400 而非 500）、
-      P2-4（GET /ready 就绪检查：DB + 模型可用，任一失败返回 503）。
+      P2-4（GET /ready 就绪分级：关键组件未就绪返回 503，全就绪返回 200）。
 说明：不 import app.main（其模块级单实例锁会占 8766 端口，测试进程仅能加载一次且可能与
       运行中实例冲突）；改为用独立 FastAPI 实例挂载对应 router 来测端点。
 """
+import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
@@ -110,59 +111,54 @@ def test_send_message_other_exception_returns_500(monkeypatch):
     assert r.json()["detail"] == "internal error"
 
 
-# ---------------- P2-4：/ready 就绪检查 ----------------
-
-class _FakeReadySession:
-    async def execute(self, *a, **k):
-        return None
-
-
-class _FakeReadyCtx:
-    async def __aenter__(self):
-        return _FakeReadySession()
-
-    async def __aexit__(self, *a):
-        return False
+# ---------------- P2-4：/ready 就绪分级（AMBRACE 3.5 readiness 登记） ----------------
+# 3.5 将 /ready 从「运行时 DB+模型探活」重构为「启动期组件就绪登记快照」：
+# 关键组件未就绪 → 503，全就绪 → 200，可选组件降级仅登记可见。
+# 测试用独立 app 手动播种（main.py lifespan 实际运行时播种）。
 
 
-def _patch_ready_deps(monkeypatch, db_ok=True, model_ok=True):
-    if db_ok:
-        monkeypatch.setattr("app.db.database.async_session_factory", lambda: _FakeReadyCtx())
-    else:
-        class _BadSession(_FakeReadySession):
-            async def execute(self, *a, **k):
-                raise RuntimeError("db down")
-        class _BadCtx(_FakeReadyCtx):
-            async def __aenter__(self):
-                return _BadSession()
-        monkeypatch.setattr("app.db.database.async_session_factory", lambda: _BadCtx())
-    monkeypatch.setattr("app.memory.embedding.check_model_available", lambda: model_ok)
+@pytest.fixture(autouse=True)
+def _reset_readiness():
+    """每用例前后清空进程级就绪登记表，避免跨用例污染。"""
+    from app.utils import readiness
+    readiness.reset()
+    yield
+    readiness.reset()
 
 
-def test_ready_ok(monkeypatch):
-    """DB 与模型均可用 → 200 {status: ok, db: True, model: True}。"""
-    _patch_ready_deps(monkeypatch, db_ok=True, model_ok=True)
+def test_ready_ok():
+    """全部（关键）组件就绪 → 200 {ready: True, blocking: []}。"""
+    from app.utils import readiness
+    readiness.mark("database", True, critical=True)
+    readiness.mark("scheduler", True, critical=True)
     r = _make_system_client().get("/api/v1/system/ready")
     assert r.status_code == 200
     body = r.json()
-    assert body == {"status": "ok", "db": True, "model": True}
+    assert body["ready"] is True
+    assert body["blocking"] == []
+    assert body["components"]["database"]["ok"] is True
 
 
-def test_ready_db_fail_returns_503(monkeypatch):
-    """DB 不可连接 → 503 + 明细（db: False）。"""
-    _patch_ready_deps(monkeypatch, db_ok=False, model_ok=True)
+def test_ready_db_fail_returns_503():
+    """关键组件 database 未就绪 → 503 + blocking 含 database。"""
+    from app.utils import readiness
+    readiness.mark("database", False, critical=True, msg="db init failed")
     r = _make_system_client().get("/api/v1/system/ready")
     assert r.status_code == 503
-    detail = r.json()["detail"]
-    assert detail["status"] == "error"
-    assert detail["db"] is False
+    body = r.json()
+    assert body["ready"] is False
+    assert "database" in body["blocking"]
+    assert body["components"]["database"]["ok"] is False
 
 
-def test_ready_model_fail_returns_503(monkeypatch):
-    """模型缺失 → 503 + 明细（model: False）。"""
-    _patch_ready_deps(monkeypatch, db_ok=True, model_ok=False)
+def test_ready_model_fail_returns_503():
+    """关键组件（scheduler）未就绪 → 503 + blocking 含该组件。"""
+    from app.utils import readiness
+    readiness.mark("database", True, critical=True)
+    readiness.mark("scheduler", False, critical=True, msg="scheduler failed")
     r = _make_system_client().get("/api/v1/system/ready")
     assert r.status_code == 503
-    detail = r.json()["detail"]
-    assert detail["status"] == "error"
-    assert detail["model"] is False
+    body = r.json()
+    assert body["ready"] is False
+    assert "scheduler" in body["blocking"]
+    assert body["components"]["scheduler"]["ok"] is False

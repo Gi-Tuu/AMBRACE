@@ -1,4 +1,4 @@
-// F7-c-5（2026-09-01）自 screens/weave/weave_scene_view.dart 拆分迁入；逻辑逐字节保持。
+// F7-c-5（2026-09-01）自 features/weave/weave_scene_view.dart 拆分迁入；逻辑逐字节保持。
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -20,11 +20,11 @@ import 'package:flutter_scene/scene.dart'
 
 import 'package:ai_companion/theme/tokens.dart';
 import 'package:ai_companion/utils/sphere_projection.dart';
-import 'package:ai_companion/screens/weave/weave_scene_controller.dart';
-import 'package:ai_companion/screens/weave/weave_card_texture.dart';
-import 'package:ai_companion/screens/weave/weave_edge_render.dart';
-import 'package:ai_companion/screens/weave/weave_perf_monitor.dart';
-import 'package:ai_companion/screens/weave/weave_view_mode.dart';
+import 'package:ai_companion/features/weave/weave_scene_controller.dart';
+import 'package:ai_companion/features/weave/weave_card_texture.dart';
+import 'package:ai_companion/features/weave/weave_edge_render.dart';
+import 'package:ai_companion/features/weave/weave_perf_monitor.dart';
+import 'package:ai_companion/features/weave/weave_view_mode.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
 import 'weave_scene_painters.dart';
 

@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ai_companion/providers/pets_provider.dart';
 import 'package:ai_companion/providers/settings_provider.dart';
-import 'package:ai_companion/screens/character/pet_screen.dart';
+import 'package:ai_companion/features/character/pet_screen.dart';
 import 'package:ai_companion/services/api_client.dart';
 
 import 'fake_api_adapter.dart';

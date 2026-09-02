@@ -22,7 +22,7 @@ from app.api import account as account_api
 from app.api import admin as admin_api
 from app.auth.deps import get_current_user_id
 from app.models.user import User
-from app.services import permission_service as perm
+from app.application import permission_service as perm
 
 
 @pytest.fixture()
@@ -127,7 +127,7 @@ def test_sub_account_cannot_access_admin_list(family_db):
 
 def test_linking_sets_sub_admin_false(family_db):
     """通过受邀码关联后，子账号 is_admin 被设为 False。"""
-    from app.services.family_service import generate_invite_code, redeem_invite_code
+    from app.application.family_service import generate_invite_code, redeem_invite_code
 
     async def _link():
         async with family_db() as db:
@@ -146,7 +146,7 @@ def test_linking_sets_sub_admin_false(family_db):
 
 def test_unlink_restores_admin(family_db):
     """解除关联后，子账号恢复 is_admin=True。"""
-    from app.services.family_service import unlink
+    from app.application.family_service import unlink
 
     async def _unlink():
         async with family_db() as db:

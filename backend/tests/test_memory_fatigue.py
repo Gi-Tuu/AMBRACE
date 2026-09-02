@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from app.agent import context_builder as cb
-from app.services import chat_service
+from app.application import chat_service
 
 
 async def _async_noop(*a, **k):

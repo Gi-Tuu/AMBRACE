@@ -5,7 +5,7 @@ from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
 from app.db.database import async_session_factory
 from app.models.character import AICharacter
-from app.services.timeline_service import build_timeline, generate_milestones
+from app.application.timeline_service import build_timeline, generate_milestones
 
 router = APIRouter(prefix="/api/v1/timeline", tags=["Timeline"])
 

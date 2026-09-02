@@ -42,7 +42,7 @@ async def goodnight_candidate(ctx):
         from sqlalchemy import select
         from app.db.database import async_session_factory
         from app.models.character import AICharacter
-        from app.services.chat_service import get_latest_session_id
+        from app.application.chat_service import get_latest_session_id
 
         async with async_session_factory() as db:
             rows = (await db.execute(

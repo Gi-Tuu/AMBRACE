@@ -96,7 +96,7 @@ async def _load_owned_server(user_id: int, server_id: int, lang: str) -> MCPServ
 
 
 async def _check_admin(user_id: int, lang: str) -> None:
-    from app.services.permission_service import is_admin_user
+    from app.application.permission_service import is_admin_user
 
     if not await is_admin_user(user_id):
         raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_manage_only"))
@@ -255,7 +255,7 @@ async def list_server_prompts(
 async def _tool_with_permission(row, tool: dict, user_id: int) -> dict:
     """给单个工具 dict 补充 risk_level + 当前生效 mode（读 ToolPermission / 风险默认）。"""
     from app.mcp.tool_adapter import infer_risk
-    from app.services.permission_service import check_mcp_mode
+    from app.application.permission_service import check_mcp_mode
 
     tool_name = str(tool.get("name") or "")
     risk = infer_risk(tool_name)
@@ -284,7 +284,7 @@ async def set_tool_permission(
     - 返回该工具当前生效配置（含 scope / mode），供前端回显。
     """
     from app.models.agent import ToolPermission
-    from app.services.permission_service import LEVELS
+    from app.application.permission_service import LEVELS
 
     await _check_admin(user_id, lang)
     row = await _load_owned_server(user_id, server_id, lang)

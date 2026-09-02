@@ -497,7 +497,7 @@ async def run_plugin_action(plugin: str, action: str, payload: dict, user_id: in
     """
     if user_id is not None:
         try:
-            from app.services import permission_service
+            from app.application import permission_service
             _scope = permission_service._plugin_scope(plugin)
             _mode = await permission_service.check_mode(user_id, _scope)
             if _mode != "allow":

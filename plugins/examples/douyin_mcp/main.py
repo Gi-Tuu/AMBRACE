@@ -865,7 +865,7 @@ async def fetch_note_content(aweme_id: str) -> dict:
     res = await _run_sync(_sync_fetch_note, aweme_id)
     if not res.get("ok"):
         return res
-    from app.services.image_understanding_service import describe_image
+    from app.application.image_understanding_service import describe_image
     descs = []
     for path in res.get("local_paths") or []:
         try:
@@ -1143,7 +1143,7 @@ async def _upsert_comments_one(post_title: str, comments: list[dict]) -> int:
         added = result.rowcount or 0
     # 社交记忆：只对新增的非作者评论 upsert（粉丝→follower / 非粉丝→stranger）
     try:
-        from app.services.social_memory_service import upsert_social_memory
+        from app.application.social_memory_service import upsert_social_memory
         for v in fresh:
             if v.get("is_author"):
                 continue
@@ -1386,7 +1386,7 @@ async def _persona_context(character_id: int | None = None) -> str:
             pass
         # 社交记忆档案（Module B）：粉丝/常互动用户关系（物理隔离，不参与上述记忆筛选）
         try:
-            from app.services.social_memory_service import build_social_context
+            from app.application.social_memory_service import build_social_context
             social_txt = await build_social_context("douyin", 5)
             if social_txt:
                 parts.append(social_txt)
@@ -1481,7 +1481,7 @@ async def _auto_gen_post_image(task_id: int, user_id: int, title: str, content: 
     返回 /uploads/... 相对路径列表；失败返回 []（由调用方提示人工补图）。
     """
     try:
-        from app.services.image_gen_service import create_image_gen_task, run_image_gen_task
+        from app.application.image_gen_service import create_image_gen_task, run_image_gen_task
         body = ((content or "")[:120]).replace("\n", " ").strip()
         prompt = (
             f"为一条抖音图文生成配图。主题：《{(title or '')[:40]}》"
@@ -1773,7 +1773,7 @@ async def handle_mention(payload: dict) -> bool:
         ) or "").strip().strip('"').strip("'")
         if len(content_out) < 2:
             return False
-        from app.scheduler.scheduler import send_to_session
+        from app.scheduling.scheduler import send_to_session
         await send_to_session(session_id, character_id, user_id, content_out, message_type="plugin")
         await _mark_comment_mentioned(commenter, content)  # 标记已提及，防重复
         sdk.log("主动提及已发送 char=%d commenter=%s", character_id, commenter)
@@ -2279,7 +2279,7 @@ async def upload_image(task_id: int = Form(...), file: UploadFile = File(...)):
     """为图文草稿上传配图：保存到 uploads/douyin/{task_id}/，追加进 image_paths_json"""
     from app.db.database import async_session_factory
     from douyin_models import DouyinPending
-    from app.services.upload_service import save_image
+    from app.application.upload_service import save_image
     async with async_session_factory() as db:
         row = await db.get(DouyinPending, task_id)
         if row is None:
@@ -2304,7 +2304,7 @@ async def upload_video(task_id: int = Form(...), file: UploadFile = File(...)):
     """为视频草稿上传视频文件（#67 P2）：保存到 uploads/douyin/{task_id}/ 并写 row.video_path"""
     from app.db.database import async_session_factory
     from douyin_models import DouyinPending
-    from app.services.upload_service import save_video
+    from app.application.upload_service import save_video
     async with async_session_factory() as db:
         row = await db.get(DouyinPending, task_id)
         if row is None:
@@ -2482,7 +2482,7 @@ async def proactive_candidate(ctx):
             return None
         comments = await _recent_unreplied_comments(1)
         mention_comments = await _recent_unreplied_comments(1, exclude_mentioned=True)
-        from app.services.chat_service import get_latest_session_id
+        from app.application.chat_service import get_latest_session_id
         char_ids = [int(x) for x in raw.split(",") if x.strip().isdigit()]
         all_candidates = []
         for cid in char_ids:

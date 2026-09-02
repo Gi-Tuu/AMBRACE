@@ -1,4 +1,4 @@
-// F7-c-6（2026-09-01）自 screens/settings/api_config_screen.dart 拆分迁入；逻辑逐字节保持。
+// F7-c-6（2026-09-01）自 features/settings/api_config_screen.dart 拆分迁入；逻辑逐字节保持。
 import 'package:flutter/material.dart';
 import '../../services/api_client.dart';
 import '../../widgets/ios_card_group.dart';

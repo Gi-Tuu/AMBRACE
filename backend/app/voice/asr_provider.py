@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from app.config import settings
-from app.services import speech_service
+from app.application import speech_service
 from app.utils.logger import get_logger
 
 _logger = get_logger("voice.asr")

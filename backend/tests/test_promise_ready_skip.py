@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """陪伴主动线（2026-08-30）：ready 承诺结果跳过 — ready_result_seen 纯函数测试"""
-from app.scheduler.promise_parser import ready_result_seen
+from app.scheduling.promise_parser import ready_result_seen
 
 
 # ── hint 分类命中 → True ──

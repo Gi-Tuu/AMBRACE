@@ -1,4 +1,4 @@
-// 深拆（F7-c-7，2026-09-01）自 screens/character/character_edit_screen.dart 迁入；
+// 深拆（F7-c-7，2026-09-01）自 features/character/character_edit_screen.dart 迁入；
 // 编辑表单通用构件（纯展示，控制器/值经参数传入，变更经回调上抛），逻辑逐字节保持。
 import 'package:flutter/material.dart';
 

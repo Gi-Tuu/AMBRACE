@@ -103,7 +103,7 @@ async def generate_diary(
 ):
     """手动触发生成日记（供调试用；鉴权 + 归属校验，防未登录烧 LLM/越权生成）"""
     await _check_character_owned(db, character_id, user_id, lang)
-    from app.scheduler.diary_generator import generate_diary_for_character
+    from app.scheduling.diary_generator import generate_diary_for_character
     result = await generate_diary_for_character(character_id, force=force)
     if result is None:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "diary_gen_failed"))

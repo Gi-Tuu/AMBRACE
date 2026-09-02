@@ -12,7 +12,7 @@ from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
 from app.db.database import async_session_factory
 from app.models.device import PhoneDesktop, PhoneLayout, CalendarNote, BrowserHistory, MemoNote
-from app.services.upload_service import UPLOAD_DIR, save_image
+from app.application.upload_service import UPLOAD_DIR, save_image
 from app.utils.logger import get_logger
 
 router = APIRouter(prefix="/api/v1/phone-desktop", tags=["Phone Desktop"])
@@ -372,6 +372,6 @@ async def search_web(q: str, user_id: int = Depends(get_current_user_id), lang: 
 @router.get("/weather")
 async def phone_weather(user_id: int = Depends(get_current_user_id)):
     """天气小组件：复用用户位置天气（未开启返回提示）"""
-    from app.services.weather_service import get_user_weather_line
+    from app.application.weather_service import get_user_weather_line
     line = await get_user_weather_line(user_id)
     return {"line": line or "未开启位置信息，无法获取天气"}

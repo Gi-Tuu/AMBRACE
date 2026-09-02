@@ -24,7 +24,7 @@ def test_bug2_memory_search_trace语义():
 
 def test_bug3_建任务阈值降到1个动作():
     import inspect
-    from app.services import chat_service
+    from app.application import chat_service
     src = inspect.getsource(chat_service)
     assert "len(_all_steps) >= 1" in src           # ≥1 个明确工具/备忘动作即建任务
 
@@ -60,7 +60,7 @@ def test_bug5_主链路提示词引导备忘():
 
 
 def test_bug5_api提示词不再禁止备忘():
-    from app.services.character_chat_api import API_SYSTEM_PROMPT_TEMPLATE
+    from app.application.character_chat_api import API_SYSTEM_PROMPT_TEMPLATE
     assert "[MEMO]" in API_SYSTEM_PROMPT_TEMPLATE
     assert "禁止输出除备忘以外" in API_SYSTEM_PROMPT_TEMPLATE
 
@@ -85,7 +85,7 @@ def test_self_statement_len_上限():
 
 def test_self_statement_写入点统一用上限():
     import inspect
-    from app.services import chat_service
+    from app.application import chat_service
     src = inspect.getsource(chat_service)
     assert "bio_text[:SELF_STATEMENT_MAX_LEN]" in src
     assert "text[:SELF_STATEMENT_MAX_LEN]" in src

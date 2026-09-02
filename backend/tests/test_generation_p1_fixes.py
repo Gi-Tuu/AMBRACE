@@ -246,7 +246,7 @@ def test_pending_timer_独立配额键():
 def test_format_函数在四个注入点同源():
     """context_builder / message_generator / persona / shared_events 均引用同一 format_memory_line"""
     from app.agent import persona as persona_mod
-    from app.scheduler import message_generator as mg_mod
+    from app.scheduling import message_generator as mg_mod
     from app.memory import shared_events as se_mod
     assert cb_mod.format_memory_line is fmt.format_memory_line
     assert persona_mod.format_memory_line is fmt.format_memory_line
@@ -286,7 +286,7 @@ def test_persona_最近情绪事件格式():
 
 
 def test_message_generator_最近记忆格式():
-    from app.scheduler.message_generator import format_memory_line as mml
+    from app.scheduling.message_generator import format_memory_line as mml
     line = mml({"content": "用户喜欢喝美式咖啡", "created_at": "2026-08-01", "epistemic_status": "FACT"},
                max_len=80)
     assert line == "- [记录于 2026-08-01] 用户喜欢喝美式咖啡"

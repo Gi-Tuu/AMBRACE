@@ -17,9 +17,9 @@ from starlette.testclient import TestClient
 from app.api import scheduler as scheduler_api
 from app.auth.deps import get_current_user_id
 from app.db.database import get_db
-from app.scheduler import message_generator as mg
-from app.scheduler import user_rhythm as urm
-from app.scheduler.message_generator import (
+from app.scheduling import message_generator as mg
+from app.scheduling import user_rhythm as urm
+from app.scheduling.message_generator import (
     NATURALNESS_RETRY_THRESHOLD,
     NATURALNESS_SKIP_THRESHOLD,
     score_naturalness,
@@ -224,10 +224,10 @@ def _patch_api_deps(monkeypatch):
     async def _last(sid, limit=10):
         return "用户: hi"
 
-    monkeypatch.setattr("app.services.permission_service.is_admin_user", _is_admin)
-    monkeypatch.setattr("app.scheduler.message_generator.generate_proactive_event", _gen)
-    monkeypatch.setattr("app.scheduler.triggers.get_latest_session", _sess)
-    monkeypatch.setattr("app.scheduler.triggers.get_last_messages", _last)
+    monkeypatch.setattr("app.application.permission_service.is_admin_user", _is_admin)
+    monkeypatch.setattr("app.scheduling.message_generator.generate_proactive_event", _gen)
+    monkeypatch.setattr("app.scheduling.triggers.get_latest_session", _sess)
+    monkeypatch.setattr("app.scheduling.triggers.get_last_messages", _last)
 
 
 def test_trigger_test_forbidden_non_admin(monkeypatch):

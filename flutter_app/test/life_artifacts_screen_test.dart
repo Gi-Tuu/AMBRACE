@@ -4,7 +4,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:ai_companion/screens/life/life_artifacts_screen.dart';
+import 'package:ai_companion/features/life/life_artifacts_screen.dart';
 import 'package:ai_companion/services/api_client.dart';
 
 import 'fake_api_adapter.dart';

@@ -221,7 +221,7 @@ def _lover_name(char) -> str | None:
 
 
 async def _is_admin(user_id: int) -> bool:
-    from app.services.permission_service import is_admin_user
+    from app.application.permission_service import is_admin_user
     return await is_admin_user(user_id)
 
 
@@ -429,7 +429,7 @@ async def home_event(payload: dict, user_id: int = Depends(get_current_user_id),
             )).scalar_one_or_none()
             if pet is None:
                 raise HTTPException(404, tr_lang(lang, "pet_not_found"))
-            from app.services import pet_service
+            from app.application import pet_service
             await pet_service.interact_by(
                 db, pet, spec["pet_action"], user_id, actor="user"
             )

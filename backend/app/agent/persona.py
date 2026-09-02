@@ -83,7 +83,7 @@ async def assemble_persona_context(character_id: int, user_id: int, platform: st
     # 剧情回忆（v5-C）：近 3 天剧情线摘要 + 关系温度（C-1），角色可自然提起"昨天那事"
     storyline_recall = "无"
     try:
-        from app.scheduler.storyline_engine import build_storyline_recall_text, build_relationship_temperature_text
+        from app.scheduling.storyline_engine import build_storyline_recall_text, build_relationship_temperature_text
         recall = await build_storyline_recall_text(character_id, user_id)
         temp = await build_relationship_temperature_text(character_id, user_id)
         if recall:
@@ -98,7 +98,7 @@ async def assemble_persona_context(character_id: int, user_id: int, platform: st
     # 剧情线进行中状态（P1-1）：冷战/吃醋/疲惫激活时注入
     storyline_status = "无"
     try:
-        from app.scheduler.storyline_engine import build_active_storyline_status_text
+        from app.scheduling.storyline_engine import build_active_storyline_status_text
         st_txt = await build_active_storyline_status_text(character_id)
         if st_txt:
             storyline_status = st_txt
@@ -109,7 +109,7 @@ async def assemble_persona_context(character_id: int, user_id: int, platform: st
     character_feelings = "无"
     try:
         from app.models.character import CharacterState
-        from app.services.character_state_service import DIMENSIONS as _DIMS
+        from app.application.character_state_service import DIMENSIONS as _DIMS
         async with async_session_factory() as db:
             st = (await db.execute(
                 select(CharacterState).where(CharacterState.character_id == character_id)

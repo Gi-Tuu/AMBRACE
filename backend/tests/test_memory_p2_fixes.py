@@ -20,7 +20,7 @@ from sqlalchemy.pool import NullPool
 import app.memory.bm25_index as bm25
 import app.memory.service as memsvc
 import app.memory.summary as summary_mod
-import app.scheduler.memory_review as review_mod
+import app.scheduling.memory_review as review_mod
 from app.memory.extractor import _pair_user_ai, _truncate_sample
 from app.memory.service import _normalize_importance
 from app.models.memory import Memory

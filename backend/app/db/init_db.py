@@ -1,4 +1,11 @@
-"""建库与轻量迁移（F1 拆分，2026-08-31）：init_db = create_all + 逐版补列/回填/种子。"""
+"""建库与轻量迁移（F1 拆分，2026-08-31）：init_db = create_all + 逐版补列/回填/种子。
+
+3.8 渐进版（2026-09-03）：本文件下列 87 处手工补列（86 条加列语句）**暂不删除**，
+作为冗余安全网保留——Alembic 版本链已通过 bootstrap 迁移（6d39454c2517，down_revision=d3e4f5a6b7c8）
+以带 ``has_column`` 守卫的 ``add_column`` 固化等价补列，可对已存在的远古库安全重放补齐。
+二者等价：bootstrap 负责「远古库升级 head 时补列」，本文件负责「现状幂等兼容层兜底」；
+未来收敛（删除这 87 处手工补列）前，链已具备等价能力。
+"""
 from app.config import settings
 from app.db.engine import engine
 # P1-1 一次性迁移哨兵（2026-08-27 用户拍板全量开启）：

@@ -18,7 +18,7 @@ _logger = logging.getLogger("agent.context.section_phone")
 
 async def phone_perception_section(state: dict, ctx: dict) -> str:
     """phone_perception 分区：手机感知（template 槽；无则缺省「无」）。"""
-    from app.services.phone_service import get_recent_perception_text
+    from app.application.phone_service import get_recent_perception_text
 
     phone_perception = "无"
     try:
@@ -32,7 +32,7 @@ async def phone_perception_section(state: dict, ctx: dict) -> str:
 
 async def phone_desktop_section(state: dict, ctx: dict) -> str:
     """phone_desktop 分区：小手机（角色日历备注 + 浏览器最近搜索）（template 槽；无则缺省「无」）。"""
-    from app.services.phone_desktop_service import get_phone_desktop_inject_text
+    from app.application.phone_desktop_service import get_phone_desktop_inject_text
 
     phone_desktop = "无"
     try:

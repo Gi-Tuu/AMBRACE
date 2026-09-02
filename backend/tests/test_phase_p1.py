@@ -3,7 +3,7 @@
 import asyncio
 
 from app.agent import loop
-from app.scheduler import message_generator as mg
+from app.scheduling import message_generator as mg
 
 
 def test_load_recent_reflection_flag关不查库(monkeypatch):

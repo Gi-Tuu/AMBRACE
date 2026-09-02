@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
 from app.plugins import registry
-from app.services.plugin_bridge_service import (
+from app.application.plugin_bridge_service import (
     VALID_APIS,
     bridge_ai_rate_check,
     dispatch,

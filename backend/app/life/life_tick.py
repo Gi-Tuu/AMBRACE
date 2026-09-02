@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.models.character import AICharacter
 from app.models.character import ProactiveSettings
-from app.scheduler.registry import BaseTask
+from app.scheduling.registry import BaseTask
 
 _logger = get_logger("life.tick")
 

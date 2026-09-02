@@ -1,4 +1,4 @@
-// F7-c-4c（2026-08-31）自 screens/plugin/extensions_screen.dart 拆分迁入；逻辑逐字节保持。
+// F7-c-4c（2026-08-31）自 features/plugin/extensions_screen.dart 拆分迁入；逻辑逐字节保持。
 import 'package:flutter/material.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
 import '../../services/api_client.dart';

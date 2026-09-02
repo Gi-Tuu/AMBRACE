@@ -18,7 +18,7 @@ import time as _time
 from fastapi import WebSocket
 
 from app.agent.llm_client import chat_completion_stream, TASK_CHAT
-from app.services import tts_service
+from app.application import tts_service
 from app.utils.logger import get_logger
 
 _logger = get_logger("voice.gateway")
@@ -100,7 +100,7 @@ async def _init_session(state: dict, session_id, character_id, user_id: int) -> 
     if not session_id or not character_id:
         return False
     from app.db.database import async_session_factory
-    from app.services.chat_service import get_owned_session
+    from app.application.chat_service import get_owned_session
 
     async with async_session_factory() as db:
         session = await get_owned_session(db, int(session_id), user_id)
@@ -128,7 +128,7 @@ async def _refresh_emotional_state(state: dict) -> None:
     会话开始/每轮调用；失败/无状态保持空串（零行为变化，不阻塞）。
     """
     try:
-        from app.services.character_state_service import get_character_states
+        from app.application.character_state_service import get_character_states
         from app.domain.emotion.model import emotion_from_character_states
         _cs = await get_character_states(state.get("character_id"))
         state["emotional_state"] = emotion_from_character_states(_cs) or ""

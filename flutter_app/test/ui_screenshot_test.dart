@@ -22,8 +22,8 @@ import 'package:ai_companion/providers/chat_provider.dart';
 import 'package:ai_companion/providers/pets_provider.dart';
 import 'package:ai_companion/providers/settings_provider.dart';
 import 'package:ai_companion/features/chat/chat_screen.dart';
-import 'package:ai_companion/screens/character/pet_screen.dart';
-import 'package:ai_companion/screens/home/character_list_screen.dart';
+import 'package:ai_companion/features/character/pet_screen.dart';
+import 'package:ai_companion/features/home/character_list_screen.dart';
 import 'package:ai_companion/services/api_client.dart';
 
 // ---------------------------------------------------------------------------

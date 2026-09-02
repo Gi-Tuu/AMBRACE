@@ -76,7 +76,7 @@ def test_resolve_disabled_source_returns_none(_clean_registry):
 
 def test_plugin_scope_via_channel_meta(_clean_registry):
     """权限 scope：注册渠道 meta.scope 优先，未注册插件回退 extension"""
-    from app.services import permission_service as perm
+    from app.application import permission_service as perm
     ch.register_channel("douyin", _FakePort(),
                         meta={"plugin": "douyin_mcp", "scope": "douyin"}, source="douyin_mcp")
     assert perm._plugin_scope("douyin_mcp") == "douyin"

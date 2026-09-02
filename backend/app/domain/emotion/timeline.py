@@ -18,7 +18,7 @@ _DIM_CN = {
 }
 _CN_TO_KEY = {cn: key for key, cn in _DIM_CN.items()}
 
-# 状态触发规则 key -> 情绪标签（与 scheduler/state_triggers.py RULES 对齐）
+# 状态触发规则 key -> 情绪标签（与 scheduling/state_triggers.py RULES 对齐）
 _TRIGGER_LABELS = {
     "anger_high": "生气", "mood_low": "低落", "fatigue_high": "疲惫",
     "desire_high": "亲密冲动", "anger_mood_low": "冷战/爆发",

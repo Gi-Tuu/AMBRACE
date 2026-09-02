@@ -43,9 +43,13 @@ CACHE_META_FILE = CACHE_DIR / "cache_meta.json"
 MAX_INDEX_BYTES = 1024 * 1024  # index.json 本体 ≤1MB
 INDEX_TIMEOUT = 10.0  # index 下载超时 10s
 ZIP_TIMEOUT = 60.0  # zip 下载超时 60s
+REMOTE_INDEX_TTL = 3600  # 远程插件市场索引内存缓存 1h（对齐 emoji_market 的 INDEX_TTL）
 
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc")
 _UA = "AICompanion-Marketplace/1.0"
+
+# 远程市场索引内存缓存（plugin_market_url 拉取，3.13）：TTL 命中直接返回，失败降级本地 index.json
+_remote_index_cache: dict = {"items": None, "fetched_at": 0.0}
 
 _DEFAULT_CONFIG = {
     "enabled": False,
@@ -57,7 +61,7 @@ _DEFAULT_CONFIG = {
 
 
 async def _is_owner(user_id: int) -> bool:
-    from app.services.permission_service import is_admin_user
+    from app.application.permission_service import is_admin_user
     return await is_admin_user(user_id)
 
 
@@ -105,6 +109,116 @@ async def _save_config(cfg: dict) -> None:
             row.allowed_hosts = json.dumps(cfg["allowed_hosts"], ensure_ascii=False)
             row.max_zip_mb = int(cfg["max_zip_mb"])
         await db.commit()
+
+
+# ---------------- 远程市场索引（plugin_market_url，3.13） ----------------
+
+def _plugin_market_url() -> str:
+    """返回远程插件市场索引 URL（settings.plugin_market_url），空串表示未启用。"""
+    return (settings.plugin_market_url or "").strip()
+
+
+def _local_index_items() -> list[dict]:
+    """把本地 plugins/marketplace/index.json 解析为远程索引的降级源（source=remote:local）。
+
+    作为 plugin_market_url 拉取失败时的离线兜底；对条目做最小清洗（不强制 download_url，
+    缺失则保留空串——安装仍受 3.9 远程开关与 download 校验约束），与 _validate_index 的严格
+    校验互为补充：本地兜底仅保证「列表可展示」，完整性校验交给安装链路。
+    """
+    try:
+        if not INDEX_FILE.is_file():
+            return []
+        data = json.loads(INDEX_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        _logger.warning("marketplace 本地 index 解析失败: %s", e)
+        return []
+    raw_items: list[dict] = []
+    if isinstance(data, list):
+        raw_items = [x for x in data if isinstance(x, dict)]
+    elif isinstance(data, dict):
+        raw_items = [v for k, v in data.items() if isinstance(v, dict)]
+    out: list[dict] = []
+    for it in raw_items:
+        name = str(it.get("name", "")).strip()
+        if not name:
+            continue
+        page = str(it.get("page", "") or "")
+        out.append({
+            "name": name,
+            "version": str(it.get("version", "0.0.1")),
+            "description": str(it.get("description", "") or ""),
+            "author": str(it.get("author", "") or ""),
+            "category": str(it.get("category", "plugin")),
+            "type": str(it.get("type", "http") or "http"),
+            "icon": str(it.get("icon", "") or ""),
+            "page": page,
+            "has_page": bool(page),
+            "hooks": list(it.get("hooks", []) or []),
+            "permissions": list(it.get("permissions", []) or []),
+            "config": dict(it.get("config", {}) or {}),
+            "usage": str(it.get("usage", "") or ""),
+            "download_url": str(it.get("download_url", "") or ""),
+            "size": int(it.get("size") or 0),
+            "sha256": str(it.get("sha256", "") or "").strip() or None,
+            "tags": list(it.get("tags", []) or []),
+            "updated_at": str(it.get("updated_at", "") or ""),
+            "min_api_version": str(it.get("min_api_version", "") or ""),
+            "source": "remote:local",
+        })
+    return out
+
+
+def _extract_remote_items(data: bytes, cfg: dict) -> list[dict]:
+    """把 plugin_market_url 返回的 index.json 解析为带 source=remote 的市场条目。
+
+    字段清洗复用 _validate_index（去掉不合法/非 https/超限条目），只补 source=remote。
+    条目含 3.9 已用字段：name/download_url/sha256/permissions。
+    """
+    obj = _validate_index(data, cfg)
+    items: list[dict] = []
+    for it in obj["items"]:
+        row = dict(it)
+        row["source"] = "remote"
+        items.append(row)
+    return items
+
+
+async def get_remote_index() -> list[dict]:
+    """拉取远程插件市场索引（plugin_market_url）并合并展示；内存 TTL 缓存 1h。
+
+    行为对齐 emoji_market.get_market_index()：
+    - TTL 内命中缓存直接返回（不重复拉取）；
+    - 拉取失败降级：优先用未过期的内存缓存，否则回退本地 plugins/marketplace/index.json；
+    - 未配置 plugin_market_url 时返回已有缓存或空列表，绝不阻塞列表/详情。
+    """
+    now = time.time()
+    cached = _remote_index_cache.get("items")
+    if cached is not None and now - _remote_index_cache.get("fetched_at", 0) < REMOTE_INDEX_TTL:
+        return cached
+    url = _plugin_market_url()
+    if not url:
+        return cached or []
+    try:
+        try:
+            cfg = await _load_config()
+        except Exception:
+            cfg = dict(_DEFAULT_CONFIG)
+        data = await asyncio.to_thread(_fetch_bytes, url, INDEX_TIMEOUT, MAX_INDEX_BYTES)
+        items = _extract_remote_items(data, cfg)
+        _remote_index_cache["items"] = items
+        _remote_index_cache["fetched_at"] = now
+        return items
+    except Exception as e:
+        _logger.warning("plugin market index fetch failed %s: %s", url, e)
+        if cached:
+            return cached
+        return _local_index_items()
+
+
+def clear_remote_index_cache() -> None:
+    """清空内存远程索引缓存（测试重置用）。"""
+    _remote_index_cache["items"] = None
+    _remote_index_cache["fetched_at"] = 0.0
 
 
 # ---------------- 远程缓存读写 ----------------
@@ -312,11 +426,18 @@ def _scan_market_items() -> list[dict]:
 
 
 def _all_items() -> list[dict]:
-    """内置 + 远程缓存合并；同 name 远程覆盖内置（升级语义）"""
+    """内置 + 远程索引合并；同 name 远程覆盖内置（升级语义）。
+
+    远程来源含两类：
+    - 手动 /refresh 落盘缓存（_load_remote_items，source=remote:<market>）；
+    - plugin_market_url 拉取的内存缓存（get_remote_index 写入，source=remote）。
+    """
     by_name: dict[str, dict] = {}
     for it in _scan_market_items():
         by_name[it["name"]] = it
     for it in _load_remote_items():
+        by_name[it["name"]] = it
+    for it in (_remote_index_cache.get("items") or []):
         by_name[it["name"]] = it
     return sorted(by_name.values(), key=lambda x: x["name"])
 
@@ -503,6 +624,7 @@ async def list_marketplace(
     user_id: int = Depends(get_current_user_id),
 ):
     """市场列表：内置 + 远程缓存合并（同 name 远程覆盖内置）"""
+    await get_remote_index()  # 3.13：列表读取接通 plugin_market_url（TTL 缓存，失败降级本地）
     out: list[dict] = []
     for it in _merge_installed(_all_items()):
         if q:
@@ -523,6 +645,7 @@ async def list_marketplace(
 @router.get("/{name}")
 async def get_marketplace_item(name: str, user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
     """市场条目详情（含 readme 正文）"""
+    await get_remote_index()  # 3.13：详情也接通远程索引（TTL 缓存，失败降级本地）
     item = _find_item(name)
     if item is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "market_no_plugin"))
@@ -551,6 +674,7 @@ async def install_market_item(name: str, body: dict | None = None, user_id: int 
     body 可选：{consent: true, permissions: [...]}（manifest.permissions 非空时必带，见 3.9）。"""
     if not await _is_owner(user_id):
         raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_install_only"))
+    await get_remote_index()  # 3.13：安装前也接通远程索引（确认条目来自远程源）
     item = _find_item(name)
     if item is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "market_no_plugin"))
@@ -589,8 +713,18 @@ async def install_market_item(name: str, body: dict | None = None, user_id: int 
 
 
 async def prefetch_remote_marketplace() -> None:
-    """启动异步预拉：已配置 url 且无缓存时拉取一次（失败静默）"""
+    """启动异步预拉：已配置 url 且无缓存时拉取一次（失败静默）。
+
+    两类来源都预热：
+    - 手动 /refresh 配置的 urls（落盘缓存）；
+    - plugin_market_url 远程索引（内存 TTL 缓存，失败降级本地）。
+    """
     try:
+        # 3.13：预热 plugin_market_url 远程索引（TTL 缓存；无配置/失败均静默）
+        try:
+            await get_remote_index()
+        except Exception as e:
+            _logger.warning("marketplace 远程索引预热失败: %s", e)
         cfg = await _load_config()
         if not cfg.get("enabled") or not cfg.get("urls"):
             return

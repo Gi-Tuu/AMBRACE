@@ -4,8 +4,8 @@ import asyncio
 
 from app.agent import loop
 from app.agent import tools
-from app.services import chat_service
-from app.services.chat import tools as chat_tools
+from app.application import chat_service
+from app.application.chat import tools as chat_tools
 
 
 def test_note_工具登记_本地能力无权限门禁():

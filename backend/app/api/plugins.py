@@ -99,7 +99,7 @@ def build_plugin_chat_messages(persona: str, user_input: str, history: object | 
 
 
 async def _is_owner(user_id: int) -> bool:
-    from app.services.permission_service import is_admin_user
+    from app.application.permission_service import is_admin_user
     return await is_admin_user(user_id)
 
 
@@ -128,7 +128,7 @@ async def _validate_channel_binding(user_id: int, plugin_name: str, config: dict
     from app.db.database import async_session_factory
     from app.models.character import AICharacter
     from app.models.plugin import Plugin
-    from app.services.family_service import get_family_member_ids, is_sub_account
+    from app.application.family_service import get_family_member_ids, is_sub_account
 
     raw = config.get("allowed_character_ids")
     if isinstance(raw, list):

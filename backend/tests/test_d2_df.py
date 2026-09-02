@@ -18,11 +18,11 @@ from types import SimpleNamespace
 from app.agent import loop
 from app.agent import runtime as runtime_mod
 from app.application import chat_groups as cg  # F5-a：实现迁至 application/chat_groups，patch 须指向定义模块
-from app.scheduler import arbiter as arbiter_mod
-from app.scheduler import ai_social as ai_social_mod
+from app.scheduling import arbiter as arbiter_mod
+from app.scheduling import ai_social as ai_social_mod
 from app.domain.emotion import care as emotion_mod  # F2-a：实现迁至 domain/emotion/care，patch 须指向定义模块
-from app.scheduler import memory_review as review_mod
-from app.scheduler import pet_care as pet_mod
+from app.scheduling import memory_review as review_mod
+from app.scheduling import pet_care as pet_mod
 
 
 # ---------------- 通用假 DB（按 pk 的 db.get + 空查询结果） ----------------
@@ -198,11 +198,11 @@ def test_emotion_care_level2_不走include_reasoning(monkeypatch):
     monkeypatch.setattr(emotion_mod, "_user_in_dnd_period", _noop_bool)
     monkeypatch.setattr(emotion_mod, "_daily_count", _noop_int0)
     monkeypatch.setattr(emotion_mod, "_last_care_at", _noop_none)
-    monkeypatch.setattr("app.services.chat_service.get_latest_session_id", _sid)
+    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _sid)
     monkeypatch.setattr("app.agent.user_profile.build_role_prompt_block", _fake_identity)
     monkeypatch.setattr("app.agent.persona.build_active_channel_persona", _noop_str)
-    monkeypatch.setattr("app.services.weather_service.get_user_weather_line", _noop_str)
-    monkeypatch.setattr("app.scheduler.scheduler.send_to_session", _fake_send)
+    monkeypatch.setattr("app.application.weather_service.get_user_weather_line", _noop_str)
+    monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _fake_send)
 
     ok = asyncio.run(emotion_mod.run_emotion_care(3, 4, 5))
     assert ok is True
@@ -241,12 +241,12 @@ def test_memory_review_level2_不走include_reasoning(monkeypatch):
     monkeypatch.setattr(review_mod, "_daily_count", _noop_int0)
     monkeypatch.setattr(review_mod, "_last_review_at", _noop_none)
     monkeypatch.setattr(review_mod, "_user_in_dnd_period", _noop_bool)
-    monkeypatch.setattr("app.scheduler.triggers.memory_review_enabled", _enabled)
-    monkeypatch.setattr("app.scheduler.triggers.get_last_messages", _noop_str)
-    monkeypatch.setattr("app.services.chat_service.get_latest_session_id", _sid)
+    monkeypatch.setattr("app.scheduling.triggers.memory_review_enabled", _enabled)
+    monkeypatch.setattr("app.scheduling.triggers.get_last_messages", _noop_str)
+    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _sid)
     monkeypatch.setattr("app.agent.user_profile.build_role_prompt_block", _fake_identity)
     monkeypatch.setattr("app.agent.persona.build_active_channel_persona", _noop_str)
-    monkeypatch.setattr("app.scheduler.scheduler.send_to_session", _fake_send)
+    monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _fake_send)
 
     ok = asyncio.run(review_mod.run_memory_review(3, 4, 9))
     assert ok is True
@@ -317,8 +317,8 @@ def test_timer_level2_不走include_reasoning(monkeypatch):
     monkeypatch.setattr("app.agent.llm_client.load_character_reasoning_level", _fake_rl2)
     monkeypatch.setattr(arbiter_mod, "async_session_factory", _FakeFactory({3: char}))
     monkeypatch.setattr(arbiter_mod, "get_hourly_active_count", _fake_hourly)
-    monkeypatch.setattr("app.scheduler.scheduler.send_to_session", _fake_send)
-    monkeypatch.setattr("app.scheduler.promise_service.mark_fired", _noop)
+    monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _fake_send)
+    monkeypatch.setattr("app.scheduling.promise_service.mark_fired", _noop)
 
     ok = asyncio.run(arbiter_mod._execute({"type": "timer", "event": event}))
     assert ok is True
@@ -622,7 +622,7 @@ def test_arbiter_plugin_runtime_light_context随Flag传参(monkeypatch):
         pass
 
     monkeypatch.setattr(runtime_mod, "run_social_reply", _fake_runtime)
-    monkeypatch.setattr("app.scheduler.scheduler.send_to_session", _fake_send)
+    monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _fake_send)
     _orig = loop.AGENT_FLAGS.get("agent_social_light_context")
     loop.AGENT_FLAGS["agent_social_light_context"] = True
     try:
@@ -647,7 +647,7 @@ def test_arbiter_plugin_runtime_light_context默认False(monkeypatch):
         pass
 
     monkeypatch.setattr(runtime_mod, "run_social_reply", _fake_runtime)
-    monkeypatch.setattr("app.scheduler.scheduler.send_to_session", _fake_send)
+    monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _fake_send)
     _orig = loop.AGENT_FLAGS.get("agent_social_light_context")
     loop.AGENT_FLAGS["agent_social_light_context"] = False
     try:

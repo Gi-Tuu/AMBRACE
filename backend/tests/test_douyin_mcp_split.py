@@ -139,7 +139,7 @@ def test_douyin_comment_new_fields():
 def test_save_video_uses_video_exts_and_limits(monkeypatch):
     """#67 P2（审查 P0）：save_video 复用 _save_upload，使用视频扩展名白名单与 200MB 上限。"""
     import asyncio
-    from app.services import upload_service as us
+    from app.application import upload_service as us
 
     captured = {}
 
@@ -151,7 +151,7 @@ def test_save_video_uses_video_exts_and_limits(monkeypatch):
         captured["lang"] = lang
         return f"/uploads/{subdir}/fake.mp4"
 
-    monkeypatch.setattr("app.services.upload_service._save_upload", _fake_save_upload)
+    monkeypatch.setattr("app.application.upload_service._save_upload", _fake_save_upload)
 
     class _F:
         filename = "demo.mp4"

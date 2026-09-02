@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 
 from app.agent.loop import AGENT_FLAGS
-from app.services import character_state_service as cs
+from app.application import character_state_service as cs
 
 _DIMS = ["mood", "body_temp", "desire", "possessiveness", "fatigue", "sensitivity", "comfort", "anger"]
 

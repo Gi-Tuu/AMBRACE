@@ -28,8 +28,8 @@ import app.memory as mem_mod
 import app.memory.bm25_index as bm25
 import app.memory.embedding_cache as emb_cache
 import app.memory.service as memsvc
-import app.scheduler.message_generator as mg_mod
-import app.services.weather_service as weather_mod
+import app.scheduling.message_generator as mg_mod
+import app.application.weather_service as weather_mod
 from app.memory.embedding_cache import get_cached_embedding
 
 

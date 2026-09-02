@@ -8,11 +8,11 @@ import 'dart:ui' show Size;
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:ai_companion/screens/weave/weave_scene_controller.dart';
-import 'package:ai_companion/screens/weave/weave_card_texture.dart'
+import 'package:ai_companion/features/weave/weave_scene_controller.dart';
+import 'package:ai_companion/features/weave/weave_card_texture.dart'
     show weaveShouldDegradeToDots;
-import 'package:ai_companion/screens/weave/weave_edge_render.dart';
-import 'package:ai_companion/screens/weave/weave_perf_monitor.dart';
+import 'package:ai_companion/features/weave/weave_edge_render.dart';
+import 'package:ai_companion/features/weave/weave_perf_monitor.dart';
 import 'package:ai_companion/services/feature_flag_service.dart';
 import 'package:ai_companion/utils/sphere_projection.dart';
 

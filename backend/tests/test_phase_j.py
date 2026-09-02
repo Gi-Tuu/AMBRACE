@@ -3,7 +3,7 @@
 import asyncio
 
 from app.agent import loop
-from app.scheduler import daily_reflection
+from app.scheduling import daily_reflection
 
 
 def test_build_prompt_纯函数():

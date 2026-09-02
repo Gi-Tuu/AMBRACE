@@ -9,7 +9,7 @@ from app.agent.tools import RISK_LOW, ToolSpec, register_tool
 
 async def _execute_memo(payload: dict, *, user_id=None, character_id=None, session_id=None) -> dict:
     """执行 note_memo：落库、去重、角色署名。返回 {ok, summary}。"""
-    from app.services.chat.tools import _save_memo_note
+    from app.application.chat.tools import _save_memo_note
 
     ok = await _save_memo_note(
         int(payload.get("character_id") or character_id or 0),

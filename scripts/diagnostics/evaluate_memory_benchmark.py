@@ -118,7 +118,7 @@ def run() -> dict:
             got = _write_op(q["existing"], q["new"], same_type_recent=True)
             ok = got == q["expect_op"]
         elif dim == "isolation":
-            from app.scheduler.ai_social import _filter_cross_char_news
+            from app.scheduling.ai_social import _filter_cross_char_news
             kept = _filter_cross_char_news(q["texts"], q["names"])
             keep_ids = [i for i, t in enumerate(q["texts"]) if t in kept]
             ok = keep_ids == q["expect_keep"]

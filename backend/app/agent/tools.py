@@ -115,7 +115,7 @@ def sync_plugin_tools() -> int:
         if not actions_map:
             continue
         try:
-            from app.services import permission_service
+            from app.application import permission_service
             scope = permission_service._plugin_scope(name)
         except Exception:
             scope = None

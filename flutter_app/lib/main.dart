@@ -17,8 +17,8 @@ import 'providers/moments_provider.dart';
 import 'providers/characters_provider.dart';
 import 'providers/diary_provider.dart';
 import 'providers/pets_provider.dart';
-import 'screens/home/home_screen.dart';
-import 'screens/auth/login_screen.dart';
+import 'features/home/home_screen.dart';
+import 'features/auth/login_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

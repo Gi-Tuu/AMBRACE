@@ -1,4 +1,4 @@
-// F7-c-3（2026-08-31）自 screens/life/home_visual_screen.dart 拆分迁入；逻辑逐字节保持。
+// F7-c-3（2026-08-31）自 features/life/home_visual_screen.dart 拆分迁入；逻辑逐字节保持。
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';

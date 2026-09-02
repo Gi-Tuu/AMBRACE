@@ -8,7 +8,7 @@ import 'package:record/record.dart';
 
 import 'package:ai_companion/l10n/app_localizations.dart';
 import 'package:ai_companion/models/character.dart';
-import 'package:ai_companion/screens/chat/voice_call_screen.dart';
+import 'package:ai_companion/features/chat/voice_call_screen.dart';
 import 'package:ai_companion/services/voice_call_recorder.dart';
 import 'package:ai_companion/services/voice_call_transport.dart';
 import 'package:ai_companion/services/voice_playback_queue.dart';

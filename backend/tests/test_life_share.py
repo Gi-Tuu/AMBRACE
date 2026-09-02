@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.scheduler import life_share
+from app.scheduling import life_share
 from app.models.character import CharacterState
 from app.models.character import ProactiveTriggerLog
 
@@ -111,13 +111,13 @@ def test_on_activity_completed_gate_and_send(share_db, monkeypatch):
     for f in ("is_dnd_now", "is_user_active", "unreplied_cooldown_active"):
         async def _pass(*a, **k):
             return False
-        monkeypatch.setattr(f"app.scheduler.arbiter.{f}", _pass)
+        monkeypatch.setattr(f"app.scheduling.arbiter.{f}", _pass)
 
     monkeypatch.setattr(life_share, "_generate_share", _fake_gen)
     monkeypatch.setattr(life_share, "_naturalness_flag", lambda: False)
     monkeypatch.setattr(life_share, "should_share", lambda *a, **k: (True, 0.3))
-    monkeypatch.setattr("app.scheduler.scheduler.send_to_session", _fake_send)
-    monkeypatch.setattr("app.services.chat_service.get_latest_session_id", _fake_sid)
+    monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _fake_send)
+    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _fake_sid)
 
     payload = {"data": {
         "user_id": 1, "character_id": 101, "activity_type": "create",
@@ -152,10 +152,10 @@ def test_on_activity_completed_user_active_blocks(share_db, monkeypatch):
     async def _pass(*a, **k):
         return False
     for f in ("is_dnd_now", "unreplied_cooldown_active"):
-        monkeypatch.setattr(f"app.scheduler.arbiter.{f}", _pass)
-    monkeypatch.setattr("app.scheduler.arbiter.is_user_active", _active)
+        monkeypatch.setattr(f"app.scheduling.arbiter.{f}", _pass)
+    monkeypatch.setattr("app.scheduling.arbiter.is_user_active", _active)
     monkeypatch.setattr(life_share, "should_share", lambda *a, **k: (True, 0.3))
-    monkeypatch.setattr("app.scheduler.scheduler.send_to_session", _fake_send)
+    monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _fake_send)
 
     payload = {"data": {
         "user_id": 1, "character_id": 101, "activity_type": "create",
@@ -181,8 +181,8 @@ def test_generate_share_passes_character_id(share_db, monkeypatch):
 
     monkeypatch.setattr(life_share, "async_session_factory", share_db)
     monkeypatch.setattr("app.agent.llm_client.chat_completion", _fake_chat)
-    monkeypatch.setattr("app.services.chat_service.get_latest_session_id", _fake_sid)
-    monkeypatch.setattr("app.scheduler.triggers.get_last_messages", _fake_last)
+    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _fake_sid)
+    monkeypatch.setattr("app.scheduling.triggers.get_last_messages", _fake_last)
 
     text = asyncio.run(life_share._generate_share(101, 1, "create", "画了一张水彩风景"))
     assert text == "我刚画完一张图！"

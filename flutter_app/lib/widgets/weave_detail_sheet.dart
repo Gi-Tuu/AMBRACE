@@ -3,7 +3,7 @@ import 'package:ai_companion/l10n/app_localizations.dart';
 
 import '../models/memory.dart';
 import '../models/weave_card.dart';
-import '../screens/memory/memory_detail_screen.dart';
+import '../features/memory/memory_detail_screen.dart';
 import '../utils/beijing_time.dart';
 import "package:ai_companion/theme/tokens.dart";
 

@@ -3,7 +3,7 @@
 背景：用户口误问鹦鹉吃猫粮，角色顺着说——因宠物上下文只有名字/种类/状态，
 无习性知识且无「说错可纠正」规则。修复 = SPECIES_META 增 diet/care + species_fact。
 """
-from app.services.pet_service import species_fact, species_label, SPECIES_META
+from app.application.pet_service import species_fact, species_label, SPECIES_META
 
 
 def test_species_fact_parrot_rejects_cat_food():

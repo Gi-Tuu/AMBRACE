@@ -7,9 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart' show Vector3;
 
-import 'package:ai_companion/screens/weave/weave_scene_controller.dart';
-import 'package:ai_companion/screens/weave/weave_card_texture.dart';
-import 'package:ai_companion/screens/weave/weave_scene_view.dart' show pickNearest3DScreen;
+import 'package:ai_companion/features/weave/weave_scene_controller.dart';
+import 'package:ai_companion/features/weave/weave_card_texture.dart';
+import 'package:ai_companion/features/weave/weave_scene_view.dart' show pickNearest3DScreen;
 import 'package:flutter_scene/scene.dart' show PerspectiveCamera;
 
 WeaveSceneNode _node(int id, {String title = '标题', String summary = '摘要'}) {

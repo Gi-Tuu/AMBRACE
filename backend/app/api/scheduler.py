@@ -7,8 +7,8 @@ from app.models.character import (
     ProactiveSettings, HolidayPreference,
 )
 from app.models.character import AICharacter
-from app.scheduler.holiday_calendar import get_holidays
-from app.scheduler import scheduler as scheduler_engine
+from app.scheduling.holiday_calendar import get_holidays
+from app.scheduling import scheduler as scheduler_engine
 from app.utils.logger import get_logger
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
@@ -255,7 +255,7 @@ async def trigger_test(
     - 参数：character_id（必填）+ trigger_type（默认 motivation；可选 greeting/proactive_chat/goodnight/status_update）。
     - 复用 arbiter 低优先级主动消息生成链路（generate_proactive_event），但不落库/不发送，便于调试。
     """
-    from app.services.permission_service import is_admin_user
+    from app.application.permission_service import is_admin_user
     if not await is_admin_user(user_id):
         raise HTTPException(status_code=403, detail=tr_lang(lang, "trigger_test_forbidden"))
     character_id = data.get("character_id")
@@ -270,8 +270,8 @@ async def trigger_test(
     if char is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
 
-    from app.scheduler.triggers import get_latest_session, get_last_messages
-    from app.scheduler.message_generator import generate_proactive_event, score_naturalness
+    from app.scheduling.triggers import get_latest_session, get_last_messages
+    from app.scheduling.message_generator import generate_proactive_event, score_naturalness
 
     session = await get_latest_session(char.id, char.user_id)
     context = (await get_last_messages(session["id"])) if session else ""

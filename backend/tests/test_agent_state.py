@@ -206,7 +206,7 @@ def test_agentstate_annotations_cover_chat_service_initial_state():
 
     用 ast 解析源码实际提取两处 initial_state 字面量的 key，而非硬编码，避免测试自身漂移。
     """
-    from app.services import chat_service
+    from app.application import chat_service
 
     tree = ast.parse(Path(chat_service.__file__).read_text(encoding="utf-8"))
     dict_sets: list[set[str]] = []

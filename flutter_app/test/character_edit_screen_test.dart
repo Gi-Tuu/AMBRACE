@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ai_companion/models/character.dart';
-import 'package:ai_companion/screens/character/character_edit_screen.dart';
+import 'package:ai_companion/features/character/character_edit_screen.dart';
 import 'package:ai_companion/services/api_client.dart';
 import 'package:ai_companion/widgets/aurora_card.dart';
 

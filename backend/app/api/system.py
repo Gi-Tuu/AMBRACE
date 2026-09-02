@@ -7,11 +7,13 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, WebSocket
+from fastapi.responses import JSONResponse
 
 from app.application import system as _svc
 from app.auth.deps import get_current_user_id
 from app.db.database import get_db
 from app.utils.logger import get_logger
+from app.utils import readiness
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/v1/system", tags=["System"])
@@ -26,8 +28,15 @@ async def health_check():
 
 @router.get("/ready")
 async def ready_check():
-    """就绪检查（P2-4）：数据库可连接 + 向量模型可用。任一失败返回 503 + 明细。"""
-    return await _svc.ready_check()
+    """就绪检查（AMBRACE 3.5）：启动期组件就绪登记快照，据此 200/503。
+
+    关键组件（database / alembic / scheduler）任一未就绪 → 503；可选组件降级仅登记可见。
+    只反映启动期组件可见性（readiness registry），不扩大到业务链路——运行期依赖掉线
+    请走 /health 或功能链路反馈（本端点由 main.py lifespan 播种；独立挂载/未播种时无
+    critical 组件即视为就绪，返回 200）。
+    """
+    snap = readiness.snapshot()
+    return JSONResponse(snap, status_code=200 if snap["ready"] else 503)
 
 
 @router.get("/status")

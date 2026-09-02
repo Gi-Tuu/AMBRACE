@@ -1,6 +1,6 @@
 """审计第一批修复测试（P1-01/03/05/06，2026-08-15）"""
 from app.memory.extractor import _is_empty_val
-from app.scheduler.arbiter import REJECTED_LOG_THROTTLE_SECONDS
+from app.scheduling.arbiter import REJECTED_LOG_THROTTLE_SECONDS
 
 
 def test_is_empty_val():

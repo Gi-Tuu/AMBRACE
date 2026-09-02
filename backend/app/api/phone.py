@@ -12,7 +12,7 @@ from app.i18n import tr_lang
 from app.schemas.phone import AutoReportRequest
 from app.db.database import async_session_factory
 from app.models.device import CheckInRequest, PhoneSnapshot
-from app.services.upload_service import UPLOAD_DIR, save_image
+from app.application.upload_service import UPLOAD_DIR, save_image
 from app.utils.logger import get_logger
 
 router = APIRouter(prefix="/api/v1/phone", tags=["Phone Perception"])
@@ -50,7 +50,7 @@ async def create_perception(
     if image is not None:
         try:
             image_url = await save_image(image, f"phone/{user_id}", lang)
-            from app.services.image_understanding_service import describe_image
+            from app.application.image_understanding_service import describe_image
             abs_path = str(UPLOAD_DIR / image_url.removeprefix("/uploads/"))
             desc = await describe_image(abs_path, user_id=user_id)
             image_desc = (desc or "").strip()[:1000]
@@ -130,7 +130,7 @@ async def auto_report_notifications(
     user_id: int = Depends(get_current_user_id),
 ):
     """AI 主动提通知：手机后台服务定时上报通知缓存，服务器对比新增并节流触发 AI 主动消息"""
-    from app.services.phone_auto_notify_service import handle_auto_report
+    from app.application.phone_auto_notify_service import handle_auto_report
     notifications = [
         {"app": n.app, "package": n.package, "title": n.title, "text": n.text, "time": n.time}
         for n in data.notifications

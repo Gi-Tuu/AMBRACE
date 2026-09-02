@@ -11,8 +11,8 @@
 """
 import asyncio
 
-from app.services import chat_service as cs
-from app.services import tts_service
+from app.application import chat_service as cs
+from app.application import tts_service
 from app.domain.emotion import model as ai_emotion  # F8：原 app.utils.ai_emotion 薄壳已删
 from app.voice import gateway
 
@@ -96,14 +96,14 @@ def test_emotion_labels_align_with_tts_emotion_edge_adjust():
 def test_resolve_emotional_state_writes_from_character_states(monkeypatch):
     async def _fake_get_states(cid):
         return {"mood": 30, "anger": 50, "fatigue": 50}
-    monkeypatch.setattr("app.services.character_state_service.get_character_states", _fake_get_states)
+    monkeypatch.setattr("app.application.character_state_service.get_character_states", _fake_get_states)
     assert asyncio.run(cs._resolve_emotional_state(7)) == "sad"
 
 
 def test_resolve_emotional_state_empty_on_exception(monkeypatch):
     async def _boom(cid):
         raise RuntimeError("db down")
-    monkeypatch.setattr("app.services.character_state_service.get_character_states", _boom)
+    monkeypatch.setattr("app.application.character_state_service.get_character_states", _boom)
     # 异常 → 空串（零行为变化）
     assert asyncio.run(cs._resolve_emotional_state(7)) == ""
 
@@ -153,7 +153,7 @@ def test_process_utterance_writes_emotion_and_passes_to_tts(monkeypatch):
     monkeypatch.setattr("app.voice.audio_gate.should_transcribe", lambda audio_bytes: True)
     monkeypatch.setattr(gateway, "_asr_text", _fake_asr)
     monkeypatch.setattr(gateway, "_refresh_emotional_state", gateway._refresh_emotional_state)
-    monkeypatch.setattr("app.services.character_state_service.get_character_states", _fake_get_states)
+    monkeypatch.setattr("app.application.character_state_service.get_character_states", _fake_get_states)
     monkeypatch.setattr(gateway, "_synthesize_sentence", _fake_synth)
     monkeypatch.setattr("app.voice.voice_mode.build_voice_messages", _fake_build)
     monkeypatch.setattr(gateway, "chat_completion_stream", _fake_stream)
@@ -195,7 +195,7 @@ def test_process_utterance_no_tts_after_interrupt(monkeypatch):
 
     monkeypatch.setattr("app.voice.audio_gate.should_transcribe", lambda audio_bytes: True)
     monkeypatch.setattr(gateway, "_asr_text", _fake_asr)
-    monkeypatch.setattr("app.services.character_state_service.get_character_states", _fake_get_states)
+    monkeypatch.setattr("app.application.character_state_service.get_character_states", _fake_get_states)
     monkeypatch.setattr(gateway, "_synthesize_sentence", _fake_synth)
     monkeypatch.setattr("app.voice.voice_mode.build_voice_messages", _fake_build)
     monkeypatch.setattr(gateway, "chat_completion_stream", _fake_stream)

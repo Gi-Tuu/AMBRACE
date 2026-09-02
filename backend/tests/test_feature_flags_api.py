@@ -42,7 +42,7 @@ def flag_db(monkeypatch):
 
 def test_set_and_load_roundtrip(flag_db):
     from app.agent.loop import AGENT_FLAGS
-    from app.services import flag_service
+    from app.application import flag_service
     saved = AGENT_FLAGS.get('agent_loop_search')
     try:
         assert asyncio.run(flag_service.set_runtime_flag('agent_loop_search', False)) is True
@@ -71,7 +71,7 @@ def _make_client(user_id: int) -> TestClient:
 def test_api_get_flags_admin(monkeypatch):
     async def _fake_flags():
         return [{'key': 'agent_loop_search', 'enabled': True, 'source': 'default'}]
-    monkeypatch.setattr('app.services.flag_service.get_all_flags', _fake_flags)
+    monkeypatch.setattr('app.application.flag_service.get_all_flags', _fake_flags)
     r = _make_client(ADMIN).get('/api/v1/system/feature-flags')
     assert r.status_code == 200
     assert r.json()['flags'][0]['key'] == 'agent_loop_search'
@@ -87,7 +87,7 @@ def test_api_put_flag_ok(monkeypatch):
     async def _fake_set(key, enabled):
         calls.append((key, enabled))
         return True
-    monkeypatch.setattr('app.services.flag_service.set_runtime_flag', _fake_set)
+    monkeypatch.setattr('app.application.flag_service.set_runtime_flag', _fake_set)
     r = _make_client(ADMIN).put('/api/v1/system/feature-flags/agent_loop_search', json={'enabled': False})
     assert r.status_code == 200
     assert calls == [('agent_loop_search', False)]
@@ -96,7 +96,7 @@ def test_api_put_flag_ok(monkeypatch):
 def test_api_put_flag_missing_enabled(monkeypatch):
     async def _fake_set(key, enabled):
         return True
-    monkeypatch.setattr('app.services.flag_service.set_runtime_flag', _fake_set)
+    monkeypatch.setattr('app.application.flag_service.set_runtime_flag', _fake_set)
     r = _make_client(ADMIN).put('/api/v1/system/feature-flags/agent_loop_search', json={})
     assert r.status_code == 400
 
@@ -104,7 +104,7 @@ def test_api_put_flag_missing_enabled(monkeypatch):
 def test_api_put_flag_unknown_key(monkeypatch):
     async def _fake_set(key, enabled):
         return False
-    monkeypatch.setattr('app.services.flag_service.set_runtime_flag', _fake_set)
+    monkeypatch.setattr('app.application.flag_service.set_runtime_flag', _fake_set)
     r = _make_client(ADMIN).put('/api/v1/system/feature-flags/nope', json={'enabled': True})
     assert r.status_code == 404
 

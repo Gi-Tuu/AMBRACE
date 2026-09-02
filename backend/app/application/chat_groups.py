@@ -159,7 +159,7 @@ def _parse_at_names(content: str) -> list[str]:
 async def _state_line(char) -> str:
     """角色当前八维状态的人话描述（Phase 3：状态联动——心情低时群聊也蔫蔫的）"""
     try:
-        from app.services.character_state_service import get_character_states
+        from app.application.character_state_service import get_character_states
         st = await get_character_states(char.id)
         parts = []
         mood = st.get("mood", 50) or 50

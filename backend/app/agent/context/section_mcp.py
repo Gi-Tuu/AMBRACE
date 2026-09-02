@@ -44,7 +44,7 @@ async def _build_mcp_tool_declarations(user_id: int, *, stream: bool = False) ->
         return []
 
     try:
-        from app.services import permission_service
+        from app.application import permission_service
     except Exception:
         permission_service = None
 

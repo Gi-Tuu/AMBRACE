@@ -2,7 +2,7 @@
 
 from app.providers import channel as channels
 from app.providers import registry as prov_reg
-from app.services import permission_service
+from app.application import permission_service
 
 
 class _FakePort:

@@ -4,7 +4,7 @@ import asyncio
 
 from app.agent import loop
 from app.agent import task_engine
-from app.scheduler import arbiter
+from app.scheduling import arbiter
 
 
 def test_run_chat_task_编排(monkeypatch):

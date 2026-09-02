@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from app.scheduler.arbiter import _motivation_score, _apply_reflection_bonus, REFLECTION_BONUS
+from app.scheduling.arbiter import _motivation_score, _apply_reflection_bonus, REFLECTION_BONUS
 
 
 def test_reflection_bonus_adds():

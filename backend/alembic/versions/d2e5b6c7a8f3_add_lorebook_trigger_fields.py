@@ -29,20 +29,50 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _has_table(bind, table: str) -> bool:
+    inspector = sa.inspect(bind)
+    try:
+        return inspector.has_table(table)
+    except Exception:
+        return False
+
+
+def _has_column(bind, table: str, column: str) -> bool:
+    inspector = sa.inspect(bind)
+    try:
+        return column in {c["name"] for c in inspector.get_columns(table)}
+    except Exception:
+        return False
+
+
 def upgrade() -> None:
+    bind = op.get_bind()
     # 只加列：新字段全部给非空 + server_default，存量行回填为默认值（向后兼容）。
-    with op.batch_alter_table('lorebook_entries', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('is_regex', sa.Boolean(), nullable=False, server_default=sa.text('0')))
-        batch_op.add_column(sa.Column('probability', sa.Integer(), nullable=False, server_default=sa.text('100')))
-        batch_op.add_column(sa.Column('inclusion_group', sa.String(length=50), nullable=False, server_default=sa.text("''")))
-        batch_op.add_column(sa.Column('sticky_rounds', sa.Integer(), nullable=False, server_default=sa.text('0')))
-        batch_op.add_column(sa.Column('cooldown_rounds', sa.Integer(), nullable=False, server_default=sa.text('0')))
+    # has_column 守卫：存量库若已被 init_db()/create_all 补建该列则跳过，避免重放重名冲突。
+    if not _has_table(bind, "lorebook_entries"):
+        return
+    _to_add = []
+    if not _has_column(bind, "lorebook_entries", "is_regex"):
+        _to_add.append(sa.Column('is_regex', sa.Boolean(), nullable=False, server_default=sa.text('0')))
+    if not _has_column(bind, "lorebook_entries", "probability"):
+        _to_add.append(sa.Column('probability', sa.Integer(), nullable=False, server_default=sa.text('100')))
+    if not _has_column(bind, "lorebook_entries", "inclusion_group"):
+        _to_add.append(sa.Column('inclusion_group', sa.String(length=50), nullable=False, server_default=sa.text("''")))
+    if not _has_column(bind, "lorebook_entries", "sticky_rounds"):
+        _to_add.append(sa.Column('sticky_rounds', sa.Integer(), nullable=False, server_default=sa.text('0')))
+    if not _has_column(bind, "lorebook_entries", "cooldown_rounds"):
+        _to_add.append(sa.Column('cooldown_rounds', sa.Integer(), nullable=False, server_default=sa.text('0')))
+    if _to_add:
+        with op.batch_alter_table('lorebook_entries', schema=None) as batch_op:
+            for _c in _to_add:
+                batch_op.add_column(_c)
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    if not _has_table(bind, "lorebook_entries"):
+        return
     with op.batch_alter_table('lorebook_entries', schema=None) as batch_op:
-        batch_op.drop_column('cooldown_rounds')
-        batch_op.drop_column('sticky_rounds')
-        batch_op.drop_column('inclusion_group')
-        batch_op.drop_column('probability')
-        batch_op.drop_column('is_regex')
+        for _col in ('cooldown_rounds', 'sticky_rounds', 'inclusion_group', 'probability', 'is_regex'):
+            if _has_column(bind, "lorebook_entries", _col):
+                batch_op.drop_column(_col)

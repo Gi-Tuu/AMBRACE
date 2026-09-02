@@ -79,7 +79,7 @@ def _resolve_scope(spec: ToolSpec) -> str | None:
         return spec.scope
     if spec.plugin:
         try:
-            from app.services import permission_service
+            from app.application import permission_service
             return permission_service._plugin_scope(spec.plugin)
         except Exception:
             return "extension"
@@ -99,7 +99,7 @@ async def check_tool_permission(spec: ToolSpec, user_id: int | None) -> str:
     if scope is None:
         return "allow"
     try:
-        from app.services import permission_service
+        from app.application import permission_service
         # MCP 工具（scope=mcp_{server}）：显式配置优先，否则高风险默认 ask、低风险默认 allow。
         if scope.startswith("mcp_"):
             # P1（防御纵深）：归属校验 —— 该 server 必须属于当前用户，否则一律 forbid。
@@ -172,7 +172,7 @@ async def execute_tool(
             await _run_hook("tool_finished", dict(hook_ctx))
             return {"status": "blocked", "tool": spec.name, "error": "ask without session context"}
         try:
-            from app.services import permission_service
+            from app.application import permission_service
             scope = _resolve_scope(spec) or "extension"
             row = await permission_service.create_pending_action(
                 user_id, session_id, character_id, scope,

@@ -1,4 +1,4 @@
-// F7-b（2026-08-31）自 screens/chat/chat_screen.dart 拆分迁入；逻辑逐字节保持。
+// F7-b（2026-08-31）自 features/chat/chat_screen.dart 拆分迁入；逻辑逐字节保持。
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,7 +12,7 @@ import '../../services/api_client.dart';
 import '../../utils/stage_text.dart';
 import '../../widgets/app_page_route.dart';
 import '../../widgets/floating_sheet.dart';
-import '../../screens/chat/voice_call_screen.dart';
+import 'voice_call_screen.dart';
 import 'chat_emoji_panel.dart';
 import 'chat_voice_record_sheet.dart';
 

@@ -23,7 +23,7 @@ async def pets_section(state: dict, ctx: dict) -> str:
     from app.db.database import async_session_factory
     from app.models.pet import Pet as PetModel
     # 惰性引入 service 数据函数（避免 agent → services 硬 import）
-    from app.services.pet_service import (
+    from app.application.pet_service import (
         apply_decay as pet_apply_decay,
         species_label as pet_species_label,
         species_fact as pet_species_fact,

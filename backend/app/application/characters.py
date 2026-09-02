@@ -187,7 +187,7 @@ async def create_character(
     user_id: int,
 ):
     """创建新 AI 角色"""
-    from app.services.llm_config_service import ensure_bindable
+    from app.application.llm_config_service import ensure_bindable
     await ensure_bindable(db, user_id, data.user_llm_config_id)
     character = AICharacter(
         user_id=user_id,
@@ -278,7 +278,7 @@ async def get_character_states(
 ):
     """获取角色八维可视化状态（心情/体温/性欲/占有欲/疲惫感/敏感度/舒适感/怒气值，0-100）"""
     await _get_owned_character(db, character_id, user_id, lang)
-    from app.services.character_state_service import get_character_states as _get_states
+    from app.application.character_state_service import get_character_states as _get_states
     return await _get_states(character_id)
 
 
@@ -319,7 +319,7 @@ async def update_character(
 
     update_data = data.model_dump(exclude_unset=True)
     if "user_llm_config_id" in update_data:
-        from app.services.llm_config_service import ensure_bindable
+        from app.application.llm_config_service import ensure_bindable
         await ensure_bindable(db, user_id, update_data["user_llm_config_id"])
     for field, value in update_data.items():
         setattr(character, field, value)
@@ -338,7 +338,7 @@ async def update_character(
     await db.refresh(character)
     # P2-1：角色性格/说话风格编辑成功后，使人格基线缓存失效，下次读取立即用新人格重算
     try:
-        from app.services.character_state_service import _persona_baseline as _persona_baseline_cache
+        from app.application.character_state_service import _persona_baseline as _persona_baseline_cache
         _persona_baseline_cache.pop(character_id, None)
     except Exception:
         pass

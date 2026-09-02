@@ -88,7 +88,7 @@ async def update_user_location(data: UserLocationUpdate, user_id: int = Depends(
 
             async def _reverse_city(lat: float, lng: float) -> None:
                 try:
-                    from app.services.weather_service import coords_to_city
+                    from app.application.weather_service import coords_to_city
                     city = await coords_to_city(lat, lng)
                     if not city:
                         return
@@ -134,7 +134,7 @@ async def get_user_weather(user_id: int = Depends(get_current_user_id)):
         user = result.scalar_one_or_none()
     if user is None or not user.location_enabled:
         return {"ok": False, "reason": "disabled"}
-    from app.services.weather_service import get_weather_text
+    from app.application.weather_service import get_weather_text
     text = await get_weather_text(
         user.location_lat, user.location_lng,
         user.location_city or user.user_location,

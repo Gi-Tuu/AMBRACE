@@ -77,7 +77,7 @@ def test_get_relationship_and_life_state(plugin_ctx, monkeypatch):
                 "body_temp": 50, "desire": 30, "possessiveness": 55,
                 "fatigue": 20, "sensitivity": 60, "comfort": 75, "anger": 10}
 
-    monkeypatch.setattr("app.services.character_state_service.get_character_states", _fake_states)
+    monkeypatch.setattr("app.application.character_state_service.get_character_states", _fake_states)
     rel = asyncio.run(sdk.get_relationship(7))
     assert rel == {"trust": 80, "attachment": 66, "curiosity": 40}
     life = asyncio.run(sdk.get_life_state(7))

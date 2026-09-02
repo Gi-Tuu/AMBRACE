@@ -10,8 +10,8 @@
 import asyncio
 
 from app.agent import nodes
-from app.services import chat_service as cs
-from app.services.chat import streaming
+from app.application import chat_service as cs
+from app.application.chat import streaming
 
 
 def test_assemble_chunk_meta_rules():

@@ -5,7 +5,7 @@ import 'dart:ui' show Offset, Size;
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:ai_companion/screens/weave/weave_scene_controller.dart';
+import 'package:ai_companion/features/weave/weave_scene_controller.dart';
 import 'package:ai_companion/utils/sphere_projection.dart';
 
 /// 构造 n 个节点：球面坐标用 fibonacciSphere 均匀分布（与画布一致）。

@@ -2,7 +2,7 @@
 
 - 主账号 = users.is_admin=1；账号关联通过 users.parent_id 建立家庭关系。
 - 主账号只能查看和管理自己家庭内（自己 + 直属子账号）的账号，不能看到其他家庭。
-- 判定统一走 app.services.permission_service.is_admin_user（DB 权威 + 30s 缓存，env 兜底）。
+- 判定统一走 app.application.permission_service.is_admin_user（DB 权威 + 30s 缓存，env 兜底）。
 """
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy import select
@@ -11,8 +11,8 @@ from app.auth.deps import get_current_user_id
 from app.db.database import async_session_factory
 from app.i18n import tr_lang
 from app.models.user import User
-from app.services.family_service import get_family_member_ids
-from app.services.permission_service import _invalidate_admin_cache, is_admin_user
+from app.application.family_service import get_family_member_ids
+from app.application.permission_service import _invalidate_admin_cache, is_admin_user
 from app.utils.logger import get_logger
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])

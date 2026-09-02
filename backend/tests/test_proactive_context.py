@@ -23,10 +23,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.scheduler import arbiter
-from app.scheduler import state_triggers
-from app.scheduler import message_generator as mg
-from app.scheduler.arbiter import _context_sort_bonus, CONTEXT_SORT_BONUS
+from app.scheduling import arbiter
+from app.scheduling import state_triggers
+from app.scheduling import message_generator as mg
+from app.scheduling.arbiter import _context_sort_bonus, CONTEXT_SORT_BONUS
 
 
 # ---------------- P0-2：arbiter 排序加权纯函数 ----------------
@@ -69,8 +69,8 @@ def test_motivation_candidate_has_last_context(monkeypatch):
 
     monkeypatch.setattr(arbiter, "get_active_characters", _fake_active)
     monkeypatch.setattr(arbiter, "_compute_motivation", _fake_motivation)
-    monkeypatch.setattr("app.services.chat_service.get_latest_session_id", _fake_sid)
-    monkeypatch.setattr("app.scheduler.triggers.get_last_messages", _fake_last)
+    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _fake_sid)
+    monkeypatch.setattr("app.scheduling.triggers.get_last_messages", _fake_last)
 
     items = asyncio.run(arbiter.collect_motivation_events())
     assert len(items) == 1
@@ -96,8 +96,8 @@ def test_motivation_candidate_last_context_failure_empty(monkeypatch):
 
     monkeypatch.setattr(arbiter, "get_active_characters", _fake_active)
     monkeypatch.setattr(arbiter, "_compute_motivation", _fake_motivation)
-    monkeypatch.setattr("app.services.chat_service.get_latest_session_id", _fake_sid)
-    monkeypatch.setattr("app.scheduler.triggers.get_last_messages", _boom_last)
+    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _fake_sid)
+    monkeypatch.setattr("app.scheduling.triggers.get_last_messages", _boom_last)
 
     items = asyncio.run(arbiter.collect_motivation_events())
     assert len(items) == 1
@@ -134,12 +134,12 @@ def test_state_trigger_prompt_injects_recent_context(monkeypatch):
 
     monkeypatch.setattr(state_triggers, "async_session_factory", _boom_factory)
     monkeypatch.setattr(state_triggers, "_post_trigger_notes", _no_post)
-    monkeypatch.setattr("app.services.chat_service.get_latest_session_id", _fake_sid)
-    monkeypatch.setattr("app.scheduler.triggers.get_last_messages", _fake_last)
+    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _fake_sid)
+    monkeypatch.setattr("app.scheduling.triggers.get_last_messages", _fake_last)
     monkeypatch.setattr("app.agent.persona.build_active_channel_persona", _fake_persona)
     monkeypatch.setattr("app.agent.llm_client.chat_completion", _fake_chat)
-    monkeypatch.setattr("app.scheduler.arbiter.get_hourly_active_count", _fake_count)
-    monkeypatch.setattr("app.scheduler.scheduler.send_to_session", _no_post)
+    monkeypatch.setattr("app.scheduling.arbiter.get_hourly_active_count", _fake_count)
+    monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _no_post)
 
     rule = state_triggers._RULE_BY_KEY["fatigue_high"]  # moment=False → 走私聊消息分支
     ok = asyncio.run(state_triggers._execute_rule_behavior(11, 1, rule, "疲惫=85；心情=40"))
@@ -203,7 +203,7 @@ def _patch_mg_preloads(monkeypatch, persona=None):
 
     monkeypatch.setattr("app.agent.user_profile.build_user_profile_text", _noop)
     monkeypatch.setattr("app.agent.persona.assemble_persona_context", _persona)
-    monkeypatch.setattr("app.services.weather_service.get_user_weather_line", _noop)
+    monkeypatch.setattr("app.application.weather_service.get_user_weather_line", _noop)
     monkeypatch.setattr("app.db.database.async_session_factory", _fake_session_factory)
     monkeypatch.setattr("app.memory.search_memories", _noop_list)
     monkeypatch.setattr(mg, "_load_recent_reflection", _noop)
@@ -275,7 +275,7 @@ def ctx_db(monkeypatch):
             await conn.run_sync(Base.metadata.create_all)
 
     asyncio.run(_init())
-    import app.scheduler.triggers as trig_mod
+    import app.scheduling.triggers as trig_mod
     monkeypatch.setattr(trig_mod, "async_session_factory", factory)
     yield factory
     asyncio.run(engine.dispose())
@@ -285,7 +285,7 @@ def test_get_last_messages_default_expanded_limit(ctx_db):
     """P0-2：默认扩容为 10 条（limit=10），每条内容截断到 120 字，最新消息在后"""
     async def _main():
         from app.models.chat import ChatMessage
-        from app.scheduler.triggers import get_last_messages
+        from app.scheduling.triggers import get_last_messages
         async with ctx_db() as db:
             for i in range(15):
                 db.add(ChatMessage(

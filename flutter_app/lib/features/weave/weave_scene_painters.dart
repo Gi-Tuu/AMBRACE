@@ -1,4 +1,4 @@
-// F7-c-5（2026-09-01）自 screens/weave/weave_scene_view.dart 拆分迁入；逻辑逐字节保持。
+// F7-c-5（2026-09-01）自 features/weave/weave_scene_view.dart 拆分迁入；逻辑逐字节保持。
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -8,7 +8,7 @@ import 'package:vector_math/vector_math.dart' show Vector3;
 import 'package:flutter_scene/scene.dart' show Camera;
 import 'package:ai_companion/theme/tokens.dart';
 import 'package:ai_companion/utils/sphere_projection.dart';
-import 'package:ai_companion/screens/weave/weave_scene_controller.dart';
+import 'package:ai_companion/features/weave/weave_scene_controller.dart';
 /// 同时显示的前 N 个标签数（避免满屏标签压盖）。
 const int kWeaveLabelMax = 10;
 /// 标签锚点超出节点外壳的距离（世界单位）。

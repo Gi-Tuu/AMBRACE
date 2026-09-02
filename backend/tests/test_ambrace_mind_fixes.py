@@ -170,7 +170,7 @@ def test_generate_proactive_event_备忘录落库并剥离(monkeypatch):
     """主动消息里 LLM 输出 [MEMO] → 落 memo 并剥离标记；无 [MEMO] 时零副作用。"""
     import app.memory as mem_mod
     import app.memory.bm25_index as bm25
-    import app.scheduler.message_generator as mg_mod
+    import app.scheduling.message_generator as mg_mod
     from app.agent import loop as _loop
     from unittest.mock import AsyncMock
 
@@ -188,7 +188,7 @@ def test_generate_proactive_event_备忘录落库并剥离(monkeypatch):
     monkeypatch.setattr(mem_mod, "search_memories", AsyncMock(return_value=[]))
     monkeypatch.setattr(mg_mod, "_load_recent_reflection", AsyncMock(return_value=""))
     # 主动备忘经统一工具入口落库，mock 掉执行入口捕获备忘录内容
-    monkeypatch.setattr("app.services.chat.tools._execute_note_tool", _fake_save)
+    monkeypatch.setattr("app.application.chat.tools._execute_note_tool", _fake_save)
     _loop.AGENT_FLAGS["proactive_naturalness_score"] = False
     try:
         segments = asyncio.run(mg_mod.generate_proactive_event(
@@ -209,7 +209,7 @@ def test_generate_proactive_event_备忘录落库并剥离(monkeypatch):
 def test_generate_proactive_event_无memo零副作用(monkeypatch):
     """主动消息未输出 [MEMO] 时不落 memo，行为保持不变。"""
     import app.memory as mem_mod
-    import app.scheduler.message_generator as mg_mod
+    import app.scheduling.message_generator as mg_mod
     from app.agent import loop as _loop
     from unittest.mock import AsyncMock
 
@@ -225,7 +225,7 @@ def test_generate_proactive_event_无memo零副作用(monkeypatch):
     monkeypatch.setattr(mg_mod, "load_character_reasoning_level", AsyncMock(return_value=0))
     monkeypatch.setattr(mem_mod, "search_memories", AsyncMock(return_value=[]))
     monkeypatch.setattr(mg_mod, "_load_recent_reflection", AsyncMock(return_value=""))
-    monkeypatch.setattr("app.services.chat.tools._execute_note_tool", _fake_save)
+    monkeypatch.setattr("app.application.chat.tools._execute_note_tool", _fake_save)
     _loop.AGENT_FLAGS["proactive_naturalness_score"] = False
     try:
         segments = asyncio.run(mg_mod.generate_proactive_event(

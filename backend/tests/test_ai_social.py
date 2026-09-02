@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """AI-AI 私聊串线防护测试（2026-08-16）"""
-from app.scheduler.ai_social import _filter_cross_char_news
+from app.scheduling.ai_social import _filter_cross_char_news
 
 
 def test_filter_涉及其他角色私事排除():

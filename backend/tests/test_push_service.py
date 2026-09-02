@@ -12,8 +12,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-import app.services.push_service as push_service
-from app.services.push.fcm_provider import FcmSendResult
+import app.application.push_service as push_service
+from app.application.push.fcm_provider import FcmSendResult
 
 
 @pytest.fixture()
@@ -102,7 +102,7 @@ def test_ws_delivered_skips_fcm(push_db, monkeypatch):
     async def _fail(*a, **k):
         raise AssertionError("不应走到 FCM")
 
-    monkeypatch.setattr('app.services.push.fcm_provider.send', _fail)
+    monkeypatch.setattr('app.application.push.fcm_provider.send', _fail)
     r = _run(push_service.notify_user(1, "t", "b"))
     assert r.delivered_ws is True
     assert r.delivered is True
@@ -127,7 +127,7 @@ def test_fcm_fallback_when_ws_offline(push_db, monkeypatch):
         seen['channel_id'] = channel_id
         return FcmSendResult(success=True, message_id="mid")
 
-    monkeypatch.setattr('app.services.push.fcm_provider.send', _send)
+    monkeypatch.setattr('app.application.push.fcm_provider.send', _send)
     r = _run(push_service.notify_user(1, "t", "b", {"route": "chat"}))
     assert r.delivered_fcm == 1
     assert r.delivered is True
@@ -165,7 +165,7 @@ def test_invalid_token_removed(push_db, monkeypatch):
     async def _send(token, title, body, data, *, channel_id="ai_companion_chat"):
         return FcmSendResult(success=False, invalid_token=True, error="404")
 
-    monkeypatch.setattr('app.services.push.fcm_provider.send', _send)
+    monkeypatch.setattr('app.application.push.fcm_provider.send', _send)
     r = _run(push_service.notify_user(1, "t", "b"))
     assert r.invalid_tokens == 1
     assert r.delivered is False
@@ -186,7 +186,7 @@ def test_fcm_not_configured(push_db, monkeypatch):
     async def _send(token, title, body, data, *, channel_id="ai_companion_chat"):
         return FcmSendResult(success=False, error="fcm_not_configured")
 
-    monkeypatch.setattr('app.services.push.fcm_provider.send', _send)
+    monkeypatch.setattr('app.application.push.fcm_provider.send', _send)
     r = _run(push_service.notify_user(1, "t", "b"))
     assert r.offline is True
     assert any("fcm_not_configured" in e for e in r.errors)
@@ -210,7 +210,7 @@ def test_fcm_alert_channel_and_high_priority(push_db, monkeypatch):
         seen['channel_id'] = channel_id
         return FcmSendResult(success=True, message_id="mid")
 
-    monkeypatch.setattr('app.services.push.fcm_provider.send', _send)
+    monkeypatch.setattr('app.application.push.fcm_provider.send', _send)
     r = _run(push_service.notify_user(
         1, "t", "b", {"route": "chat"}, priority="high", channel="alert"))
     assert r.delivered_fcm == 1
@@ -232,7 +232,7 @@ def test_ws_delivered_does_not_consume_rate_limit(push_db, monkeypatch):
     async def _fail(*a, **k):
         raise AssertionError("WS 送达不应走到 FCM")
 
-    monkeypatch.setattr('app.services.push.fcm_provider.send', _fail)
+    monkeypatch.setattr('app.application.push.fcm_provider.send', _fail)
     for _ in range(5):
         r = _run(push_service.notify_user(1, "t", "b"))
         assert r.delivered_ws is True
@@ -256,7 +256,7 @@ def test_high_priority_fcm_does_not_consume_rate_limit(push_db, monkeypatch):
     async def _send(token, title, body, data, *, channel_id="ai_companion_chat"):
         return FcmSendResult(success=True, message_id="mid")
 
-    monkeypatch.setattr('app.services.push.fcm_provider.send', _send)
+    monkeypatch.setattr('app.application.push.fcm_provider.send', _send)
     # 连续发送 5 条高优先级，均不消耗配额
     for _ in range(5):
         r = _run(push_service.notify_user(1, "t", "b", priority="high"))

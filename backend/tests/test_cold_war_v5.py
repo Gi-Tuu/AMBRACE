@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """冷战 v5 增强测试（2026-08-16）：敷衍更冷回应 / 关系恶化支线判定 / 节点防重。"""
 
-from app.scheduler.state_triggers import (
+from app.scheduling.state_triggers import (
     _deteriorate_hit,
     DETERIORATE_SOOTHE_MIN,
     DETERIORATE_MINUTES,
@@ -9,7 +9,7 @@ from app.scheduler.state_triggers import (
     SOOTHE_SINCERE,
     SOOTHE_DISMISSIVE,
 )
-from app.scheduler.storyline_engine import NODE_DISMISSIVE, NODE_DETERIORATE
+from app.scheduling.storyline_engine import NODE_DISMISSIVE, NODE_DETERIORATE
 
 
 def test_deteriorate_纯函数阈值():

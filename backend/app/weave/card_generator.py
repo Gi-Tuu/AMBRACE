@@ -169,7 +169,7 @@ async def _create_card(user_id: int, memories: list[Memory], domain: str = "shar
     # 元数据补全（2026-08-12）：注入用户位置/当天天气，让 LLM 填 location/weather 更准
     weather_line = ""
     try:
-        from app.services.weather_service import get_user_weather_line
+        from app.application.weather_service import get_user_weather_line
 
         weather_line = (await get_user_weather_line(user_id) or "").strip()
     except Exception:

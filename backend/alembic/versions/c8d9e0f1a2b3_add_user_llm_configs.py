@@ -25,6 +25,14 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _has_table(bind, table: str) -> bool:
+    inspector = sa.inspect(bind)
+    try:
+        return inspector.has_table(table)
+    except Exception:
+        return False
+
+
 def _has_column(bind, table: str, column: str) -> bool:
     inspector = sa.inspect(bind)
     try:
@@ -33,11 +41,18 @@ def _has_column(bind, table: str, column: str) -> bool:
         return False
 
 
+def _has_index(bind, table: str, name: str) -> bool:
+    inspector = sa.inspect(bind)
+    try:
+        return name in {i["name"] for i in inspector.get_indexes(table)}
+    except Exception:
+        return False
+
+
 def upgrade() -> None:
     bind = op.get_bind()
-    inspector = sa.inspect(bind)
 
-    if not inspector.has_table('user_llm_configs'):
+    if not _has_table(bind, 'user_llm_configs'):
         op.create_table(
             'user_llm_configs',
             sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
@@ -56,16 +71,22 @@ def upgrade() -> None:
             sa.ForeignKeyConstraint(['user_id'], ['users.id']),
             sa.UniqueConstraint('user_id', 'name', name='uq_user_llm_user_name'),
         )
-        op.create_index('ix_user_llm_configs_user_id', 'user_llm_configs', ['user_id'])
+        # 新建表时可能已有同名列（create_all 补建），索引守卫兜底
+        if not _has_index(bind, 'user_llm_configs', 'ix_user_llm_configs_user_id'):
+            op.create_index('ix_user_llm_configs_user_id', 'user_llm_configs', ['user_id'])
 
-    if not _has_column(bind, 'ai_characters', 'user_llm_config_id'):
+    if _has_table(bind, 'ai_characters') and not _has_column(bind, 'ai_characters', 'user_llm_config_id'):
         with op.batch_alter_table('ai_characters', schema=None) as batch_op:
             batch_op.add_column(sa.Column('user_llm_config_id', sa.Integer(), nullable=True))
 
-    if not _has_column(bind, 'users', 'parent_id'):
-        with op.batch_alter_table('users', schema=None) as batch_op:
-            batch_op.add_column(sa.Column('parent_id', sa.Integer(), nullable=True))
-            batch_op.create_index('ix_users_parent_id', ['parent_id'])
+    if _has_table(bind, 'users'):
+        # 列 + 索引分别守卫：存量库可能已有 parent_id 但缺索引（init_db #68 补列不建索引）
+        if not _has_column(bind, 'users', 'parent_id'):
+            with op.batch_alter_table('users', schema=None) as batch_op:
+                batch_op.add_column(sa.Column('parent_id', sa.Integer(), nullable=True))
+        if not _has_index(bind, 'users', 'ix_users_parent_id'):
+            with op.batch_alter_table('users', schema=None) as batch_op:
+                batch_op.create_index('ix_users_parent_id', ['parent_id'])
 
 
 def downgrade() -> None:

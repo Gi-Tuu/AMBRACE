@@ -9,7 +9,7 @@ from app.agent.tools import RISK_LOW, ToolSpec, register_tool
 
 async def _execute_search(payload: dict, *, user_id=None, character_id=None, session_id=None) -> dict:
     """执行 search：节流判断 + 联网搜索。返回 {ok, summary}。"""
-    from app.services.chat.tools import _run_web_search, _search_throttle
+    from app.application.chat.tools import _run_web_search, _search_throttle
 
     query = str(payload.get("query") or "").strip()
     if not query:

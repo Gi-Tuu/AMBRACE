@@ -32,14 +32,14 @@ def test_plain_text_unchanged():
 
 
 def test_memo_marker_extract():
-    from app.services.chat_service import _extract_memo
+    from app.application.chat_service import _extract_memo
     assert _extract_memo("正文[MEMO]记得买猫粮[/MEMO]") == "记得买猫粮"
     assert _extract_memo("没有标记") is None
     assert _extract_memo("[MEMO][/MEMO]") is None
 
 
 def test_cal_note_marker_extract():
-    from app.services.chat_service import _extract_cal_note
+    from app.application.chat_service import _extract_cal_note
     r = _extract_cal_note("正文[CAL_NOTE]2026-08-20 晚上一起做饭[/CAL_NOTE]")
     assert r is not None
     assert r[0] == "2026-08-20"

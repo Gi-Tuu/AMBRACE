@@ -3,7 +3,7 @@
 背景：用户 111（user_id=3）说"估计五分钟后就能吃上饭了！"未触发事件时钟——
 现有正则只覆盖"回来/到家/找你"等去向动词，完成类句式漏匹配。
 """
-from app.scheduler.promise_parser import extract_timer
+from app.scheduling.promise_parser import extract_timer
 
 
 def _extract(text):

@@ -18,7 +18,7 @@ from sqlalchemy.pool import NullPool
 from app.models.base import Base
 from app.models.life import UserEmojiPack
 from app.plugins.zip_safety import ZipSafetyError
-from app.services import emoji_market as m
+from app.application import emoji_market as m
 
 _INDEX_URL = "https://raw.githubusercontent.com/Gi-Tuu/AMBRACE-emoji/main/index.json"
 

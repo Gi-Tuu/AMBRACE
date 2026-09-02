@@ -254,7 +254,7 @@ async def _create_artifact(db, user_id: int, character, name: str,
         # 权限 + 生图服务可用 → 尝试生图；失败静默降级纯文字
         if await offline_scope_allowed(db, user_id, "image_gen"):
             try:
-                from app.services.image_gen_service import (
+                from app.application.image_gen_service import (
                     check_daily_limit, create_image_gen_task, run_image_gen_task,
                 )
                 if not await check_daily_limit(user_id):

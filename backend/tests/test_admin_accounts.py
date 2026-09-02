@@ -18,7 +18,7 @@ from starlette.testclient import TestClient
 
 from app.api import admin as admin_api
 from app.auth.deps import get_current_user_id
-from app.services import permission_service as perm
+from app.application import permission_service as perm
 
 ADMIN = 1
 OTHER = 99
