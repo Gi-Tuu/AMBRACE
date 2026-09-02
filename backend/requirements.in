@@ -1,0 +1,62 @@
+# 人类维护的"源"依赖（下界约束；chromadb<2 等上界约束保留）。本文件是 requirements.txt 锁文件的输入。
+# 修改方法：直接编辑本文件（保持 >= 语义），随后重新生成锁文件：
+#   python -m piptools compile --output-file=requirements.txt requirements.in
+# 升级单个包：python -m piptools compile --upgrade-package <name> --output-file=requirements.txt requirements.in
+# 说明：requirements.txt 由 pip-compile 自动生成的"钉版 == 锁文件"，勿手工编辑。
+# 注：本锁未加 --require-hashes。原因：onnxruntime / rapidocr / chromadb 为平台 wheel，且镜像经
+#     buildx/QEMU 构建 linux/amd64+arm64 多架构，单一平台（如本机 Windows）生成的哈希会使另平台
+#     pip install --require-hashes 失败。因此保留"版本钉版"的可复现安装，未引入假的哈希安全。
+# Core
+fastapi>=0.141.1
+uvicorn[standard]>=0.51
+sqlalchemy>=2.0
+aiosqlite>=0.22.1
+pydantic-settings>=2.14
+
+# 数据库迁移（Alembic：schema 版本链；版本注释见 docs/ 迁移文档）
+alembic>=1.13
+
+# AI Agent
+langgraph>=1.2
+langchain-openai>=1.6.0
+openai>=3.1.0
+chromadb>=1.5,<2  # 锁上界防 2.x 破坏性变更（嵌入式模式 HTTP 不暴露）
+
+# Auth
+python-jose>=3.5
+bcrypt>=5.0
+ecdsa>=0.19  # python-jose 间接依赖；CVE-2024-23342 下界约束
+
+# Utils
+python-dotenv>=1.2
+httpx>=0.28
+APScheduler>=3.11.3
+websockets>=15.0
+
+# 图片理解（本地 OCR + VLM 依赖）
+rapidocr-onnxruntime>=1.2
+onnxruntime>=1.28
+Pillow>=10.0
+python-multipart>=0.0.9
+
+# 向量嵌入（本地 bge-m3 ONNX，1024d）
+numpy>=2.5.2
+tokenizers>=0.19
+
+# BM25 稀疏检索（记忆 mixed 召回：jieba 分词 + rank-bm25，2026-08-23）
+jieba>=0.42.1
+rank-bm25>=0.2.2
+
+# 农历（节日/日记）
+lunardate>=0.3.0
+
+# 服务器控制台（跨平台进程管理，缺失时自动降级）
+psutil>=6.0
+
+# MCP 接入（标准 MCP stdio 客户端，Phase 1；Python 3.14 兼容）
+mcp>=2.0.0
+
+# FCM push (optional, 2026-08-28)
+firebase-admin>=6.5
+# TTS 语音（edge-tts 免费兜底，2026-08-31 补录 CI 缺失）
+edge-tts>=7.2.0

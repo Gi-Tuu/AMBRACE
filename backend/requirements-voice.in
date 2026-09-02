@@ -1,0 +1,6 @@
+# 人类维护的"源"依赖（下界约束）。本文件是 requirements-voice.txt 锁文件的输入。
+# 修改后重跑：python -m piptools compile --output-file=requirements-voice.txt requirements-voice.in
+# 锁文件由 pip-compile 生成（钉版 ==），勿手工编辑。哈希策略同 requirements.in（见其说明）。
+# 可选语音转写依赖（2026-08-24 新机部署报告 P1-6）
+# 需要本地语音转写时：pip install -r backend/requirements-voice.txt
+faster-whisper>=1.0

@@ -8,6 +8,8 @@ services:
     environment:
       - INSTANCE_LOCK_PORT=8766
       - CORS_ORIGINS=*
+      # CI 冒烟短路：设 SKIP_MODEL_DOWNLOAD=1 跳过 bge-m3 首启下载（避免 CI 卡死在 542MB）；默认 0 保持原行为
+      - SKIP_MODEL_DOWNLOAD=${SKIP_MODEL_DOWNLOAD:-0}
     volumes:
       # 模型（发布包自带 backend/models/bge-m3，542MB；未下载则启动后记忆功能报错）
       - ./backend/models:/app/backend/models

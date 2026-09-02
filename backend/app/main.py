@@ -40,6 +40,7 @@ from app.auth.router import router as auth_router
 from app.db.database import init_db
 from app.db.migrate import ensure_alembic_revision, is_migration_available
 from app.utils.logger import setup_logging, get_logger
+from app.utils.errors import register_exception_handlers
 from app.scheduler import scheduler as scheduler_engine
 from app.utils.version import get_project_version
 
@@ -218,6 +219,10 @@ app = FastAPI(
     version=get_project_version(),
     lifespan=lifespan,
 )
+
+# 全局异常处理（3.3）：统一错误体 {ok,error{code,message,detail}} + 堆栈只进日志，不向客户端泄漏；
+# detail 同时保留在顶层兼容位（旧前端/测试仍可读 detail 字段），不破坏 401/403/404/422 语义。
+register_exception_handlers(app)
 
 # CORS 配置（允许手机端跨域访问；P2-3：来源可用 CORS_ORIGINS 环境变量配置，逗号分隔，默认 * 全放行；allow_credentials 保持 False）
 _CORS_ORIGINS = [o.strip() for o in _os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()] or ["*"]

@@ -22,6 +22,9 @@ MODEL_ONNX="/app/backend/models/bge-m3/onnx/model_int8.onnx"
 
 if [ -f "$MODEL_TOKENIZER" ] && [ -f "$MODEL_ONNX" ]; then
   echo "[docker-entrypoint] 检测到 bge-m3 向量模型，跳过下载。"
+elif [ "${SKIP_MODEL_DOWNLOAD:-0}" = "1" ]; then
+  echo "[docker-entrypoint] SKIP_MODEL_DOWNLOAD=1：跳过 bge-m3 向量模型下载（CI 冒烟/短路径）。"
+  echo "[docker-entrypoint] 记忆/检索功能需在容器内重跑 scripts/download_models.py 或挂载已含模型的 volume。"
 else
   echo "[docker-entrypoint] bge-m3 向量模型缺失，首次启动自动下载（约 542MB）..."
   if python /app/scripts/download_models.py; then

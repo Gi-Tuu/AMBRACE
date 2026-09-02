@@ -9,16 +9,21 @@ on:
 
 jobs:
   backend:
-    name: Backend (ruff + pytest)
+    name: Backend py${{ matrix.py }} (ruff + pytest)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 项目声明的支持范围：setup.sh/README 声明 3.12+；本地 venv 为 3.14（pyproject target-version=py314）。
+        # 锁文件在本地 3.14/Windows 生成（仅本机运行时可用）；个别钉版平台 wheel 若在 3.12/3.13 缺失，
+        # 会由本 matrix 在 CI 捕获（NEEDS_RUNTIME_VERIFICATION）。
+        py: [ "3.12", "3.13", "3.14" ]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          # 项目声明的目标版本：backend/pyproject.toml target-version=py314（venv 3.14），
-          # 测试套件在 3.14 验证为全绿；setup.sh/README 另声明 3.12+ 兼容（部署最低）。
-          python-version: "3.14"
+          python-version: ${{ matrix.py }}
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
@@ -33,3 +38,58 @@ jobs:
 
       - name: Test (pytest)
         run: pytest backend/tests -q
+
+  frontend:
+    name: Flutter (analyze + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Pub get
+        working-directory: flutter_app
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: flutter_app
+        run: flutter analyze
+
+      - name: Test
+        working-directory: flutter_app
+        run: flutter test
+
+  smoke:
+    name: Docker build + health + API smoke
+    runs-on: ubuntu-latest
+    needs: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image (models skipped; smoke only hits process-health)
+        run: docker build -t ambrace:ci .
+
+      - name: Prep writable dirs for non-root container
+        run: |
+          mkdir -p backend/data backend/models
+          sudo chown -R 10001:10001 backend/data backend/models
+          cp .env.example .env
+
+      - name: Compose up (SKIP_MODEL_DOWNLOAD=1 short-circuits the ~542MB model fetch)
+        run: |
+          SKIP_MODEL_DOWNLOAD=1 INSTANCE_LOCK_PORT=8766 docker compose up -d
+
+      - name: Wait health then smoke
+        run: |
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8000/api/v1/system/health && break || sleep 2
+          done
+          python scripts/smoke_test.py
+
+      - if: always()
+        run: docker compose logs --tail=200
+
+      - if: always()
+        run: docker compose down -v
