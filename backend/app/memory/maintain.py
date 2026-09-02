@@ -1,24 +1,21 @@
 """memory.maintain（F4 拆分，2026-08-31 自 service.py 迁入）。
 
-接缝机制：本模块不静态 import service（防循环）；垫片调用 _sync_seams() 把
-app.memory.service 的命名空间同步进本模块 globals——搬入函数体内裸名字照常解析，
-且 monkeypatch(app.memory.service, "X") 在调用时生效（与拆分前语义一致）。
+接缝已摘除（2026-09-02）：改为顶部/函数顶显式 import（async_session_factory/
+delete_memory_vector/bm25_invalidate 等可被 monkeypatch(service, ...) 的名字于函数顶延迟
+import 自 app.memory.service，调用时解析；其余稳定名字模块级 import）。
+不再经 _sync_seams 把 service 命名空间同步进 globals。
 """
-import sys as _sys
+from sqlalchemy import select
 
-_OWN = frozenset()
-
-
-def _sync_seams(_src="app.memory.service") -> None:
-    m = _sys.modules.get(_src)
-    if m is None:
-        return
-    own = _OWN
-    g = globals()
-    for name, val in vars(m).items():
-        if name.startswith("__") or name in own:
-            continue
-        g[name] = val
+from app.models.memory import Memory
+from app.memory.decay import retention_pct
+from app.memory.service import (
+    S_DEFAULT,
+    _active_status_clause,
+    _logger,
+    _now_naive,
+    star_from_pct,
+)
 
 
 async def list_memories(
@@ -36,6 +33,7 @@ async def list_memories(
     snapshot 全部字段，衰减批量落库（一次 commit），session 外只操作快照。
     """
     from datetime import datetime
+    from app.memory.service import async_session_factory, delete_memory_vector
 
     now = _now_naive()
     async with async_session_factory() as db:
@@ -103,7 +101,6 @@ async def list_memories(
 
     # 过期删除的同步清理向量（避免孤儿向量）
     if removed_ids:
-        from app.db.vector_store import delete_memory_vector
         for mid in removed_ids:
             try:
                 await delete_memory_vector(mid)
@@ -142,6 +139,7 @@ async def list_memories(
 
 async def delete_memory(memory_id: int) -> bool:
     """删除记忆（软删除 + 删除向量）"""
+    from app.memory.service import async_session_factory, bm25_invalidate, delete_memory_vector
     async with async_session_factory() as db:
         result = await db.execute(select(Memory).where(Memory.id == memory_id))
         memory = result.scalar_one_or_none()
@@ -172,6 +170,3 @@ async def delete_memory(memory_id: int) -> bool:
             bm25_invalidate(memory.character_id)
             return True
         return False
-
-
-_OWN = frozenset(globals().keys())

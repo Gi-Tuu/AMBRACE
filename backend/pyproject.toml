@@ -8,14 +8,6 @@ exclude = [".venv", "data", "scripts"]
 # 项目既有宽松 except Exception 风格等 E/BLE 规则不启用，避免海量噪音
 select = ["F"]
 
-[tool.ruff.lint.per-file-ignores]
-# F4/F3 接缝模块：函数体裸名字由 _sync_seams 在调用时从 service/context_builder 动态同步，
-# 静态检查视为未定义（F821）属预期；调用时同步保证 monkeypatch 接缝与拆分前一致
-"app/memory/write.py" = ["F821"]
-"app/memory/retrieve.py" = ["F821"]
-"app/memory/maintain.py" = ["F821"]
-"app/agent/context/legacy.py" = ["F821"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

@@ -7,9 +7,9 @@ from app.models.memory import DailySummary
 from app.models.chat import ChatSession
 from app.agent.llm_client import chat_completion
 
-# F3 接缝导入（2026-08-31 修复）：legacy.py 经 _sync_seams 在调用时读取本模块命名空间，
-# 下方名字是 legacy body 的依赖——瘦壳时曾随实现一起被删，导致真实运行 NameError
-# （聊天流式+chunked 双路径全灭）。勿删；本壳自身不使用的标 noqa: F401。
+# F3 再导出（2026-09-02）：legacy.py 已摘除 _sync_seams，改为从本模块显式 import 下方名字
+# （legacy body 的依赖——瘦壳时曾随实现一起被删，导致真实运行 NameError）。勿删；本壳自身
+# 不使用的标 noqa: F401。
 from app.agent.user_profile import gender_cn  # noqa: F401
 from app.models.character import AICharacter  # noqa: F401
 from app.models.memory import Memory  # noqa: F401
@@ -497,7 +497,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     """旧实现（薄壳委托，F3 2026-08-31）：实现已迁至 app.agent.context.legacy.legacy_body。
 
     - 本壳保留原签名与文档语义；外部 import/monkeypatch 本模块名字的行为不变
-      （legacy 内部经 _sync_seams 在调用时读取本模块命名空间）。
+      （legacy 内部已改为显式 import 本模块名字，见 legacy.py）。
     - 稳定一版本、trace 无回退命中后，连本壳与 legacy.py 一起删除（净删约 1100 行）。
     """
     from app.agent.context.legacy import build_context_legacy as _impl

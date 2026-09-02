@@ -1,24 +1,26 @@
 """memory.retrieve（F4 拆分，2026-08-31 自 service.py 迁入）。
 
-接缝机制：本模块不静态 import service（防循环）；垫片调用 _sync_seams() 把
-app.memory.service 的命名空间同步进本模块 globals——搬入函数体内裸名字照常解析，
-且 monkeypatch(app.memory.service, "X") 在调用时生效（与拆分前语义一致）。
+接缝已摘除（2026-09-02）：改为顶部/函数顶显式 import（async_session_factory/text_embedding/
+vector_search/bm25_search/_rrf 等可被 monkeypatch(service, ...) 的名字于函数顶延迟 import 自
+app.memory.service，调用时解析；其余稳定名字模块级 import）。不再经 _sync_seams 把 service
+命名空间同步进 globals。
 """
-import sys as _sys
+import json
+import time
 
-_OWN = frozenset()
+from sqlalchemy import select
 
-
-def _sync_seams(_src="app.memory.service") -> None:
-    m = _sys.modules.get(_src)
-    if m is None:
-        return
-    own = _OWN
-    g = globals()
-    for name, val in vars(m).items():
-        if name.startswith("__") or name in own:
-            continue
-        g[name] = val
+from app.models.memory import Memory
+from app.memory.embedding_cache import get_cached_embedding
+from app.memory.service import (
+    PINNED_BONUS,
+    PINNED_QUOTA,
+    _STALE,
+    _logger,
+    _now_naive,
+    _retrievable_status_clause,
+    _supersede_flag_on,
+)
 
 
 async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, int] | None = None, relevance_bonus: dict[int, float] | None = None, return_debug: bool = False):
@@ -32,6 +34,7 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
     return_debug=True 返回 (ordered, debug)，debug 含 db_pool + rerank_top（Top10 的
     id/score/importance/has_why/status，体积按方案硬上限）。
     """
+    from app.memory.service import async_session_factory
     if not results:
         return ([], {"db_pool": 0, "rerank_top": []}) if return_debug else []
     now = _now_naive()
@@ -196,6 +199,13 @@ async def search_memories(
     加权排序（importance + 关系/情绪时效 + 置顶 + 多路命中加成）取 top limit。
     """
 
+    from app.memory.service import (
+        async_session_factory,
+        bm25_search,
+        _rrf,
+        text_embedding,
+        vector_search,
+    )
     _t0 = time.monotonic()
     # #70 方案B（memory-trace 可观察）：读 feature flag，默认开；flag 关时检索/排序/trace 与现状一致。
     try:
@@ -467,6 +477,3 @@ async def search_memories(
         _logger.warning("Memory search trace failed: %s", _e)
 
     return _final
-
-
-_OWN = frozenset(globals().keys())

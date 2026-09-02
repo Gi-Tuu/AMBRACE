@@ -36,6 +36,12 @@ jobs:
       - name: Lint (ruff)
         run: ruff check backend/app
 
+      - name: Forbid namespace-injection seam
+        run: |
+          if grep -RnE "globals\(\)\[|globals\(\)\.update|for name, val in vars\(" backend/app; then
+            echo "namespace injection seam is not allowed after removal"; exit 1
+          fi
+
       - name: Test (pytest)
         run: pytest backend/tests -q
 

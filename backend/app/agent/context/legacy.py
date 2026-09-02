@@ -2,32 +2,41 @@
 
 - flag `use_legacy_context` 关闭（默认）后此函数仍作为注册表路径的委托后端；
   稳定一版本、trace 无回退命中后整体删除（预计净删约 1100 行）。
-- 接缝机制：本模块不静态 import context_builder（防循环）；每次调用前 _sync_seams()
-  把 context_builder 的模块命名空间同步进本模块 globals——函数体内裸名字照常解析，
-  且测试 monkeypatch(app.agent.context_builder, "X") 在调用时生效（与拆分前一致）。
+- 接缝已摘除（2026-09-02）：本模块改为显式 import 依赖（见下方），不再经 _sync_seams
+  把 context_builder 命名空间同步进 globals；裸名字静态可解析，可被 ruff 检查。
 - 稳定后删除本文件时，同步删除 context_builder 的薄壳委托与 use_legacy_context 开关。
 """
-import sys as _sys
+from datetime import datetime, timezone, timedelta
+from sqlalchemy import select
 
 from app.utils.logger import get_logger
+from app.agent.context_builder import (
+    AICharacter,
+    AIMoment,
+    ChatMessage,
+    ChatSession,
+    MAX_RECENT_MESSAGES,
+    ProactiveSettings,
+    SYSTEM_PROMPT_TEMPLATE,
+    _EST_CHARS_PER_TOKEN,
+    _SECTION_QUOTA_TOKENS,
+    _apply_system_total_quota,
+    _build_mcp_resources_text,
+    _build_mcp_tools_text,
+    _build_older_summaries,
+    _build_retrieved_memory_lines,
+    _build_user_info,
+    _build_user_manual_state_text,
+    _bump_memory_round,
+    _clip_text_to_quota,
+    _inject_core_anchors_loops,
+    _is_hot_character,
+    _trim_limits,
+    async_session_factory,
+    gender_cn,
+)
 
 _logger = get_logger("context.legacy")
-
-# 本模块自有名字（_sync_seams 不覆盖）
-_OWN = frozenset()
-
-
-def _sync_seams() -> None:
-    """把 context_builder 的当前命名空间同步进本模块 globals（调用时解析，保 patch 接缝）。"""
-    cb = _sys.modules.get("app.agent.context_builder")
-    if cb is None:
-        return
-    own = _OWN
-    g = globals()
-    for name, val in vars(cb).items():
-        if name.startswith("__") or name in own:
-            continue
-        g[name] = val
 
 
 async def build_context_legacy(state: dict, *, stream: bool | None = None, _section_values: dict | None = None, _trim: dict | None = None) -> dict:
@@ -48,10 +57,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     本函数为聚合组装：占位符语义（moments 无内容仍「暂无」、pets 仍「无」、world_facts 仍「无」等）
     与内联一致，输出与现状逐字节一致。
     """
-    # 接缝同步（2026-08-31 修复）：裸名 async_session_factory/AICharacter/select 等依赖本模块
-    # globals 里的 context_builder 命名空间快照——必须在函数体入口自同步（不能依赖调用方），
-    # 否则真实运行（非打桩单测）时 NameError，流式与 chunked 双路径全灭。
-    _sync_seams()
+    # 接缝已摘除（2026-09-02）：依赖名字已显式 import，无需 _sync_seams 自同步。
     # P2-A：流式模式判定（LangGraph 只传 state，从 state["stream_sink"] 推断；可显式覆盖）
     _is_stream_ctx = bool(state.get("stream_sink")) if stream is None else bool(stream)
     # P3-1（2026-08-31）：注册表已执行的 section 键集合（含结果为空的键）。已执行键在下方跳过
@@ -1145,7 +1151,3 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     # 超限时从尾部裁剪各 system 块（追加块同样生效）；只截断文本、保留消息结构。
     _apply_system_total_quota(state["context_messages"], character_id=state.get("character_id"))
     return state
-
-
-# 模块定义完成后固化自有名字集合（首次调用前）
-_OWN = frozenset(globals().keys())

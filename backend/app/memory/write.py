@@ -1,24 +1,25 @@
 """memory.write（F4 拆分，2026-08-31 自 service.py 迁入）。
 
-接缝机制：本模块不静态 import service（防循环）；垫片调用 _sync_seams() 把
-app.memory.service 的命名空间同步进本模块 globals——搬入函数体内裸名字照常解析，
-且 monkeypatch(app.memory.service, "X") 在调用时生效（与拆分前语义一致）。
+接缝已摘除（2026-09-02）：改为顶部/函数顶显式 import（text_embedding/add_memory/
+find_similar_memory/bm25_invalidate/async_session_factory 等可被 monkeypatch(service, ...)
+的名字于函数顶延迟 import 自 app.memory.service，调用时解析；其余稳定名字模块级 import）。
+不再经 _sync_seams 把 service 命名空间同步进 globals。
 """
-import sys as _sys
+import json
 
-_OWN = frozenset()
+from sqlalchemy import select
 
-
-def _sync_seams(_src="app.memory.service") -> None:
-    m = _sys.modules.get(_src)
-    if m is None:
-        return
-    own = _OWN
-    g = globals()
-    for name, val in vars(m).items():
-        if name.startswith("__") or name in own:
-            continue
-        g[name] = val
+from app.models.memory import Memory
+from app.memory.constants import DECAY_MAX_PCT, REINFORCE_FACTOR_WRITE, VECTOR_DEDUP_THRESHOLD
+from app.memory.service import (
+    _apply_reinforce,
+    _initial_strength,
+    _logger,
+    _merge_derived,
+    _normalize_importance,
+    _now_naive,
+    _retrievable_status_clause,
+)
 
 
 async def save_memory(
@@ -48,6 +49,13 @@ async def save_memory(
     台词过滤丢弃返回 None。"""
 
     from datetime import timedelta
+    from app.memory.service import (
+        add_memory,
+        async_session_factory,
+        bm25_invalidate,
+        find_similar_memory,
+        text_embedding,
+    )
     async with async_session_factory() as db:
         # 聊天来源记忆拦截"台词原文"（提取器/【记忆】标记路径都可能在来源消息为 AI 台词时误抄）：
         # 命中对话特征，或与源消息（AI 回复）逐字一致 → 直接丢弃，不落库。
@@ -314,6 +322,3 @@ async def save_memory(
         # 检索增强（2026-08-23）：记忆已写入该角色 → 使 BM25 索引失效（下次检索懒重建）
         bm25_invalidate(character_id)
         return memory
-
-
-_OWN = frozenset(globals().keys())

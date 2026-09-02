@@ -1,28 +1,27 @@
 """记忆服务：结构化记忆（SQLite）与向量记忆（ChromaDB）的读写入口"""
 import json
-import time  # noqa: F401  # F4 接缝：以下导入经 _sync_seams 同步到 write/retrieve/maintain，勿按“未使用”删除
 
-from sqlalchemy import select, true as _sql_true  # noqa: F401  # F4 接缝
+from sqlalchemy import true as _sql_true  # noqa: F401  # F4 再导出
 
-from app.db.database import async_session_factory  # noqa: F401  # F4 接缝
-from app.db.vector_store import (  # noqa: F401  # F4 接缝
+from app.db.database import async_session_factory  # noqa: F401  # F4 再导出
+from app.db.vector_store import (  # noqa: F401  # F4 再导出
     add_memory,
     search_memories as vector_search,
     delete_memory_vector,
     find_similar_memory,
 )
-from app.models.memory import Memory  # noqa: F401  # F4 接缝
+from app.models.memory import Memory  # noqa: F401  # F4 再导出
 from app.utils.logger import get_logger
-from app.memory.embedding import text_embedding  # noqa: F401  # F4 接缝
-from app.memory.embedding_cache import get_cached_embedding  # noqa: F401  # F4 接缝（X-3 LRU 缓存）
-from app.memory.constants import (  # noqa: F401  # F4 接缝
+from app.memory.embedding import text_embedding  # noqa: F401  # F4 再导出
+from app.memory.embedding_cache import get_cached_embedding  # noqa: F401  # F4 再导出（X-3 LRU 缓存）
+from app.memory.constants import (  # noqa: F401  # F4 再导出
     DECAY_MAX_PCT,
     VECTOR_DEDUP_THRESHOLD, S_DEFAULT, S_MIN_DAYS, S_MAX_DAYS,
     REINFORCE_FACTOR_WRITE,
 )
-from app.memory.decay import retention_pct  # noqa: F401  # F4 接缝
-from app.memory.bm25_index import search as bm25_search, invalidate as bm25_invalidate  # noqa: F401  # F4 接缝（检索增强）
-from app.memory import rrf as _rrf  # noqa: F401  # F4 接缝（检索增强深化）
+from app.memory.decay import retention_pct  # noqa: F401  # F4 再导出
+from app.memory.bm25_index import search as bm25_search, invalidate as bm25_invalidate  # noqa: F401  # F4 再导出（检索增强）
+from app.memory import rrf as _rrf  # noqa: F401  # F4 再导出（检索增强深化）
 
 _logger = get_logger("memory.service")
 
@@ -143,44 +142,38 @@ def _initial_strength(memory_type: str) -> float:
     return S_BY_TYPE.get(memory_type, S_DEFAULT)
 
 async def save_memory(*args, **kwargs):
-    """垫片（F4）：实现迁至 app/memory/write.py；先同步 service 命名空间再委托（保 patch 接缝）。"""
+    """垫片（F4）：实现迁至 app/memory/write.py。"""
     from app.memory import write as _m
-    _m._sync_seams()
     return await _m.save_memory(*args, **kwargs)
 
 
 async def _rerank(*args, **kwargs):
     """垫片（F4）：实现迁至 app/memory/retrieve.py。"""
     from app.memory import retrieve as _m
-    _m._sync_seams()
     return await _m._rerank(*args, **kwargs)
 
 
 def _diversify_by_type(*args, **kwargs):
     """垫片（F4）：实现迁至 app/memory/retrieve.py（M1-S1 类型多样性重排）。"""
     from app.memory import retrieve as _m
-    _m._sync_seams()
     return _m._diversify_by_type(*args, **kwargs)
 
 
 async def search_memories(*args, **kwargs):
     """垫片（F4）：实现迁至 app/memory/retrieve.py。"""
     from app.memory import retrieve as _m
-    _m._sync_seams()
     return await _m.search_memories(*args, **kwargs)
 
 
 async def list_memories(*args, **kwargs):
     """垫片（F4）：实现迁至 app/memory/maintain.py。"""
     from app.memory import maintain as _m
-    _m._sync_seams()
     return await _m.list_memories(*args, **kwargs)
 
 
 async def delete_memory(*args, **kwargs):
     """垫片（F4）：实现迁至 app/memory/maintain.py。"""
     from app.memory import maintain as _m
-    _m._sync_seams()
     return await _m.delete_memory(*args, **kwargs)
 
 
