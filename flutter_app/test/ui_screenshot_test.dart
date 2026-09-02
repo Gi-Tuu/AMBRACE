@@ -206,6 +206,7 @@ Future<void> _capture(WidgetTester tester, Key key, String outPath) async {
     final image = await boundary.toImage(pixelRatio: 3.0);
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     final bytes = byteData!.buffer.asUint8List();
+    File(outPath).parent.createSync(recursive: true); // CI/Linux 无 output 目录，先建
     File(outPath).writeAsBytesSync(bytes);
   });
   final size = File(outPath).lengthSync();

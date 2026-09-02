@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ai_companion/models/character.dart';
 import 'package:ai_companion/providers/chat_provider.dart';
 import 'package:ai_companion/services/api_client.dart';
+import 'package:ai_companion/services/websocket_service.dart';
 
 import 'fake_api_adapter.dart';
 
@@ -17,6 +18,16 @@ import 'fake_api_adapter.dart';
 /// - B2：SSE 空闲看门狗——半开 TCP（流无数据且不关）在注入的短时限内抛 receiveTimeout，
 ///   且持续有事件时不误杀（每事件重置）；
 /// - B8：普通模式流式进行中 sendMessage 重入被拒（真实 ChatProvider + 挂起 SSE，仅一条流）。
+/// CI 兼容（2026-09-02）：ChatProvider.startSession 会连真实 WebSocket（baseUrl 转 ws://），
+/// 测试并发污染共享单例时可能连到随机端口炸掉——注入空实现避免真实连接。
+class _NoopWs extends WebSocketService {
+  @override
+  void connect(String baseUrl, int sessionId,
+      {String token = '', MessageCallback? onMessage}) {
+    // no-op：不建立真实连接
+  }
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -133,7 +144,7 @@ void main() {
               Headers.contentTypeHeader: ['text/event-stream'],
             }));
 
-    final chat = ChatProvider();
+    final chat = ChatProvider(wsService: _NoopWs());
     chat.setCharacter(AICharacter(id: 1, name: 'Alpha'));
     chat.setUserId(1);
     await chat.startSession();

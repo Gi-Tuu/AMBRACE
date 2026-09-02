@@ -17,7 +17,7 @@ export '../features/chat/ws_handler.dart' show PendingPermissionRequest;
 
 class ChatProvider extends ChangeNotifier {
   ApiClient get _api => ApiClient();
-  final WebSocketService _ws = WebSocketService();
+  final WebSocketService _ws;
   int _userId = 0;
   String _localeCode = 'zh'; // 界面语言（i18n），随消息带给后端
 
@@ -38,8 +38,9 @@ class ChatProvider extends ChangeNotifier {
   late final StreamHandler _streamHandler;
   late final WsHandler _wsHandler;
 
-  ChatProvider({VoicePlaybackQueue? voicePlayback})
-      : _voicePlayback = voicePlayback ?? VoicePlaybackQueue() {
+  ChatProvider({VoicePlaybackQueue? voicePlayback, WebSocketService? wsService})
+      : _ws = wsService ?? WebSocketService(),
+        _voicePlayback = voicePlayback ?? VoicePlaybackQueue() {
     _streamHandler = StreamHandler(
       onChanged: () => notifyListeners(),
       getMessages: () => _messages,
