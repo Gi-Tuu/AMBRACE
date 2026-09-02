@@ -45,6 +45,9 @@ jobs:
       - name: Prevent init_db manual-DDL resurgence (3.8 FREEZE)
         run: python .github/scripts/check_initdb_ddl_freeze.py
 
+      - name: Prevent frozen-dir file resurgence (3.7 FREEZE)
+        run: python .github/scripts/check_frozen_dirs.py
+
       - name: Test (pytest)
         run: pytest backend/tests -q
 
