@@ -216,8 +216,15 @@ Future<void> _capture(WidgetTester tester, Key key, String outPath) async {
 
 void main() {
   setUpAll(() async {
-    await _loadFont('AppCJK', _cjkFontPath);
-    await _loadFont('MaterialIcons', _iconsFontPath);
+    // 平台无关（2026-09-02）：Windows 本机有 CJK/Material 字体；Linux CI 无 msyh.ttc 时
+    // 跳过字体加载，截图以默认字体渲染（本文件是本地金标准工具，CI 只要求能跑过、文件可写）。
+    if (File(_cjkFontPath).existsSync() && File(_iconsFontPath).existsSync()) {
+      await _loadFont('AppCJK', _cjkFontPath);
+      await _loadFont('MaterialIcons', _iconsFontPath);
+    } else {
+      // ignore: avoid_print
+      print('ui_screenshot_test: 本机字体缺失，跳过自定义字体加载（CI 兼容）');
+    }
     // 让所有界面里的 incidental 网络调用走 mock adapter，避免 dio 空 baseUrl 的同步/异步不确定性。
     ApiClient().configure(baseUrl: 'http://test.local', token: 'test-token');
     ApiClient().dio.httpClientAdapter = _MockHttpAdapter(_mockCharacters);
