@@ -578,3 +578,8 @@ async def init_db():
         for _ix, _tb, _cols in _idx_list:
             await conn.execute(sa_text(f"CREATE INDEX IF NOT EXISTS {_ix} ON {_tb} ({_cols})"))
         print("[migrate] high-frequency table indexes ensured")
+
+        # 人工 DDL 冻结基线：本文件所有「加列 / 改表 / 建索引」语句都只能出现在下方 FREEZE 哨兵之前，
+        # 且加列语句数冻结为 86（CI 防回潮校验基准，仅允许减少）。新增 schema 变更只允许走 Alembic
+        # autogenerate 入链（见 docs/architecture.md「Schema 变更纪律（3.8）」）。
+        # === 3.8 FREEZE: 此注释之后禁止新增任何结构变更的手工 SQL，一律改走 Alembic ===

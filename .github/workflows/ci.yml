@@ -42,6 +42,9 @@ jobs:
             echo "namespace injection seam is not allowed after removal"; exit 1
           fi
 
+      - name: Prevent init_db manual-DDL resurgence (3.8 FREEZE)
+        run: python .github/scripts/check_initdb_ddl_freeze.py
+
       - name: Test (pytest)
         run: pytest backend/tests -q
 
