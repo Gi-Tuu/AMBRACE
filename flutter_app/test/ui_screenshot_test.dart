@@ -29,6 +29,8 @@ import 'package:ai_companion/services/api_client.dart';
 // ---------------------------------------------------------------------------
 // 字体：widget test 默认用 Ahem 字体（中文/图标成方框），需把真实 CJK 字体 + Material 图标字体注册进来。
 // ---------------------------------------------------------------------------
+bool _fontsAvailable = false; // setUpAll 探测：本机字体齐全才用 30KB 金标准门槛
+
 const String _cjkFontPath = r'C:\Windows\Fonts\msyh.ttc';
 const String _iconsFontPath =
     r'D:\flutter\bin\cache\artifacts\material_fonts\materialicons-regular.otf';
@@ -212,7 +214,9 @@ Future<void> _capture(WidgetTester tester, Key key, String outPath) async {
   final size = File(outPath).lengthSync();
   // ignore: avoid_print
   print('  saved $outPath  $size bytes');
-  expect(size > 30 * 1024, isTrue, reason: '$outPath should be > 30KB, got $size bytes');
+  // 本机有字体时维持 30KB 金标准；CI（Linux）无 CJK 字体、截图偏小，只要求文件真实写入。
+  final minBytes = _fontsAvailable ? 30 * 1024 : 1 * 1024;
+  expect(size > minBytes, isTrue, reason: '$outPath should be > ${minBytes ~/ 1024}KB, got $size bytes');
 }
 
 void main() {
@@ -220,6 +224,7 @@ void main() {
     // 平台无关（2026-09-02）：Windows 本机有 CJK/Material 字体；Linux CI 无 msyh.ttc 时
     // 跳过字体加载，截图以默认字体渲染（本文件是本地金标准工具，CI 只要求能跑过、文件可写）。
     if (File(_cjkFontPath).existsSync() && File(_iconsFontPath).existsSync()) {
+      _fontsAvailable = true;
       await _loadFont('AppCJK', _cjkFontPath);
       await _loadFont('MaterialIcons', _iconsFontPath);
     } else {
