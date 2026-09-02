@@ -128,12 +128,15 @@ def test_zip_缺manifest():
 
 def test_zip_sha256校验失败(tmp_path, monkeypatch):
     from app.api import marketplace as m
+    from types import SimpleNamespace
     import asyncio
     from fastapi import HTTPException
     async def _fake_cfg():
         return {"max_zip_mb": 10, "allowed_hosts": [], "_debug_allow_http": False, "enabled": True}
     monkeypatch.setattr(m, "_load_config", _fake_cfg)
     monkeypatch.setattr(m, "_fetch_bytes", lambda url, t, mb: b"tampered-bytes")
+    # 3.9：默认远程安装关闭会把校验提前到 403——测试 sha 校验需显式开启远程安装
+    monkeypatch.setattr(m, "settings", SimpleNamespace(plugin_allow_remote_install=True))
     item = {"name": "x", "download_url": "https://x/x.zip", "sha256": "deadbeef"}
     with pytest.raises(HTTPException) as ei:
         asyncio.run(m._install_remote(item, "zh"))

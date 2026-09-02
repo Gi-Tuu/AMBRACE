@@ -1,11 +1,13 @@
 """插件管理 API：列表 / 启停 / 配置 / zip 安装 + chat 型插件通用对话（48c）+ 页面托管/卸载（48a）"""
+import hashlib
+import json
 import os
 import shutil
 import time as _time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Header
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
 from fastapi.responses import Response
 
 from app.auth.deps import get_current_user_id
@@ -201,10 +203,16 @@ async def update_plugin(
 @router.post("/install")
 async def install_plugin(
     file: UploadFile = File(...),
+    consent: bool = Form(False),
+    permissions: str = Form("[]"),
     user_id: int = Depends(get_current_user_id),
     lang: str = Header(default="zh"),
 ):
-    """zip 安装插件：校验 manifest + 安全解压到 backend/data/plugins/"""
+    """zip 安装插件：校验 manifest + 权限同意（3.9）+ 安全解压到 backend/data/plugins/。
+
+    本地导入不受「远程市场安装默认关闭」开关限制；但 manifest.permissions 非空时同样需
+    用户显式同意（form 字段 consent=true + permissions=JSON 数组，须与 manifest 一致）。
+    """
     if not await _is_owner(user_id):
         raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_install_only"))
     data = await file.read()
@@ -213,6 +221,20 @@ async def install_plugin(
     except ZipSafetyError as e:
         raise HTTPException(status_code=400, detail=tr_lang(lang, e.key, **e.kwargs))
     name = manifest["name"]
+    # 3.9：签名校验预留接口（当前恒通过，不强制）
+    if not registry.verify_plugin_signature(manifest, data, signature=None):
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "plugin_signature_invalid"))
+    # 3.9：权限同意（manifest.permissions 非空时，解压/执行前强制）
+    try:
+        provided = json.loads(permissions or "[]")
+        if not isinstance(provided, list):
+            provided = []
+    except Exception:
+        provided = []
+    await registry.require_plugin_consent(
+        name, manifest.get("permissions", []) or [], lang,
+        consent=consent, provided_permissions=provided,
+    )
 
     # 解压到 backend/data/plugins/<name>/
     from app.plugins.zip_safety import extract_zip_bytes
@@ -229,12 +251,40 @@ async def install_plugin(
         raise HTTPException(status_code=500, detail=tr_lang(lang, "install_failed", err=str(e)[:200]))
     _logger.info("插件 %s 安装到 %s", name, target)
 
+    # 3.9：记录来源（local）+ sha256 实际值
+    await registry.record_install_provenance(name, source="local", sha256=hashlib.sha256(data).hexdigest())
+
     # 重新扫描加载
     await registry.sync_plugins_db()
     plugin = registry.get_plugin(name)
     if plugin is None:
         raise HTTPException(status_code=500, detail=tr_lang(lang, "plugin_load_failed"))
     return plugin
+
+
+@router.post("/probe")
+async def probe_plugin_zip(
+    file: UploadFile = File(...),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """探测本地 zip 包的 manifest（3.9）：只读取校验，不安装、不写库、不做同意。
+
+    供前端在本地 zip 导入前拉取权限清单以弹确认框；返回 {name, version, permissions, source}。
+    """
+    if not await _is_owner(user_id):
+        raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_install_only"))
+    data = await file.read()
+    try:
+        manifest, _names = validate_zip_bytes(data)
+    except ZipSafetyError as e:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, e.key, **e.kwargs))
+    return {
+        "name": manifest["name"],
+        "version": str(manifest.get("version", "0.0.1")),
+        "permissions": list(manifest.get("permissions", []) or []),
+        "source": "local",
+    }
 
 
 @router.post("/{name}/chat")

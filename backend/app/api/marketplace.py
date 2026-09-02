@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from sqlalchemy import select
 
 from app.auth.deps import get_current_user_id
+from app.config import settings
 from app.db.database import async_session_factory
 from app.i18n import tr_lang
 from app.models.config import MarketplaceConfig
@@ -344,8 +345,17 @@ def _merge_installed(items: list[dict]) -> list[dict]:
 
 # ---------------- 远程安装 ----------------
 
-async def _install_remote(item: dict, lang: str) -> dict:
-    """远程安装：下载 zip → sha256 校验 → zip 安全校验 → 解压（旧目录备份）→ 加载校验，失败回滚"""
+async def _install_remote(item: dict, lang: str, body: dict | None = None) -> dict:
+    """远程安装：默认开关校验 → 下载 zip → sha256 → zip 安全校验 → 权限同意 → 解压 → 加载校验，失败回滚。
+
+    3.9 插件安全闸：
+    - 远程市场安装默认关闭（settings.plugin_allow_remote_install），关闭时一律 403；
+    - manifest.permissions 非空时，解压/执行前强制用户显式同意（见 registry.require_plugin_consent）；
+    - 成功记录 source=remote + 来源 url + sha256 实际计算值。
+    """
+    body = body or {}
+    if not settings.plugin_allow_remote_install:
+        raise HTTPException(status_code=403, detail=tr_lang(lang, "market_remote_install_disabled"))
     cfg = await _load_config()
     url = item.get("download_url") or ""
     if not _is_url_allowed(url, cfg):
@@ -370,6 +380,14 @@ async def _install_remote(item: dict, lang: str) -> dict:
     target = registry.USER_DIR / name
     if not target.resolve().is_relative_to(registry.USER_DIR.resolve()):
         raise HTTPException(status_code=400, detail="invalid plugin name (path traversal blocked)")
+    # 3.9：签名校验预留接口（当前恒通过，不强制）
+    if not registry.verify_plugin_signature(manifest, data, signature=item.get("signature")):
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "plugin_signature_invalid"))
+    # 3.9：权限同意（manifest.permissions 非空时，解压/执行前强制）
+    await registry.require_plugin_consent(
+        name, manifest.get("permissions", []) or [], lang,
+        consent=bool(body.get("consent")), provided_permissions=body.get("permissions"),
+    )
     backup_dir = None
     if target.exists():
         backup_dir = registry.USER_DIR / ".backup" / f"{name}-{int(time.time())}"
@@ -394,6 +412,9 @@ async def _install_remote(item: dict, lang: str) -> dict:
             shutil.copytree(backup_dir, target)
             shutil.rmtree(backup_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=tr_lang(lang, "plugin_load_failed"))
+    # 3.9：记录来源 + sha256 实际值（索引未提供也记录）
+    await registry.record_install_provenance(name, source="remote", source_url=url,
+                                             sha256=hashlib.sha256(data).hexdigest())
     await registry.sync_plugins_db()
     plugin = registry.get_plugin(name)
     return {"installed": True, "upgraded": backup_dir is not None, "source": item.get("source", "remote"), "plugin": plugin}
@@ -403,10 +424,12 @@ async def _install_remote(item: dict, lang: str) -> dict:
 
 @router.get("/config")
 async def get_marketplace_config(user_id: int = Depends(get_current_user_id)):
-    """读取远程市场配置（仅主账号）"""
+    """读取远程市场配置（仅主账号）；含 3.9 远程安装总开关值。"""
     if not await _is_owner(user_id):
         raise HTTPException(status_code=403, detail=tr_lang("zh", "main_account_manage_only"))
-    return await _load_config()
+    cfg = await _load_config()
+    cfg["allow_remote_install"] = bool(settings.plugin_allow_remote_install)
+    return cfg
 
 
 @router.put("/config")
@@ -493,7 +516,8 @@ async def list_marketplace(
         if installed is False and it["installed"]:
             continue
         out.append(it)
-    return {"items": out, "total": len(out)}
+    return {"items": out, "total": len(out),
+            "allow_remote_install": bool(settings.plugin_allow_remote_install)}
 
 
 @router.get("/{name}")
@@ -522,18 +546,28 @@ async def get_marketplace_item(name: str, user_id: int = Depends(get_current_use
 
 
 @router.post("/{name}/install")
-async def install_market_item(name: str, user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
-    """从市场安装（仅主账号）：内置复制示例目录 / 远程下载 zip（sha256+安全校验+回滚）"""
+async def install_market_item(name: str, body: dict | None = None, user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
+    """从市场安装（仅主账号）：内置复制示例目录 / 远程下载 zip（sha256+安全校验+同意+回滚）。
+    body 可选：{consent: true, permissions: [...]}（manifest.permissions 非空时必带，见 3.9）。"""
     if not await _is_owner(user_id):
         raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_install_only"))
     item = _find_item(name)
     if item is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "market_no_plugin"))
     if item.get("source") != "builtin":
-        return await _install_remote(item, lang)
+        return await _install_remote(item, lang, body)
     src = registry.EXAMPLE_DIR / item["name"]
     if not src.is_dir():
         raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_dir_not_found"))
+    # 3.9：内置示例安装同样走权限同意（manifest.permissions 非空时），且不受远程开关限制
+    body = body or {}
+    manifest = load_manifest(str(src / "manifest.json")) or {}
+    if not registry.verify_plugin_signature(manifest, b"", signature=None):
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "plugin_signature_invalid"))
+    await registry.require_plugin_consent(
+        item["name"], manifest.get("permissions", []) or [], lang,
+        consent=bool(body.get("consent")), provided_permissions=body.get("permissions"),
+    )
     target = registry.USER_DIR / item["name"]
     if target.exists():
         shutil.rmtree(target)
@@ -548,6 +582,7 @@ async def install_market_item(name: str, user_id: int = Depends(get_current_user
     if loaded is None:
         shutil.rmtree(target, ignore_errors=True)
         raise HTTPException(status_code=500, detail=tr_lang(lang, "plugin_load_failed"))
+    await registry.record_install_provenance(item["name"], source="builtin")
     await registry.sync_plugins_db()
     plugin = registry.get_plugin(name)
     return {"installed": True, "plugin": plugin, "source": "builtin"}

@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     plugin_http_allow_private: bool = False  # True 显式放行私有/环回/链路本地/云元数据地址（SSRF 例外）
     plugin_http_allow_http: bool = False  # 调试开关：True 放行 http 协议（默认仅 https）
 
+    # ---- 3.9 插件安全闸（2026-09-02）：默认关闭远程市场安装 ----
+    # 默认仅允许本地/示例已审核插件；远程市场安装需显式开启（.env: PLUGIN_ALLOW_REMOTE_INSTALL=true）。
+    # 该开关只拦截「远程市场」安装/升级；本地 zip 导入与内置示例安装不受影响（后者仍走权限同意流程）。
+    plugin_allow_remote_install: bool = False
+
     # ---- MCP（Model Context Protocol，Phase 1-2，2026-08-26）----
     mcp_connect_timeout: float = 10.0  # MCP Server 连接/初始化/发现超时（秒）
     mcp_call_timeout: int = 30  # 单次 MCP 工具调用超时（秒）

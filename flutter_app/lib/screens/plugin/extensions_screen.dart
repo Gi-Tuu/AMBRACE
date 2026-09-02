@@ -119,7 +119,21 @@ class _ExtensionsScreenState extends State<ExtensionsScreen> {
       return;
     }
     try {
-      final plugin = await ApiClient().installPluginZip(path);
+      // 3.9：先探测 zip manifest 拿权限清单，非空则弹同意框
+      final info = await ApiClient().probePluginZip(path);
+      final perms = (info['permissions'] as List? ?? []).cast<String>();
+      var consent = false;
+      if (perms.isNotEmpty) {
+        if (!mounted) return;
+        final ok = await showConsentDialog(context, perms);
+        if (ok != true || !mounted) return;
+        consent = true;
+      }
+      final plugin = await ApiClient().installPluginZip(
+        path,
+        consent: consent,
+        permissions: perms.isNotEmpty ? perms : null,
+      );
       if (!mounted) return;
       _toast('${l10n.pluginInstallSuccess}（${plugin['name']}）');
       await _load();

@@ -2580,6 +2580,48 @@ class AppLocalizationsEn extends AppLocalizations {
       'This plugin is from a remote third-party marketplace and runs with server privileges. Install only from trusted sources?';
 
   @override
+  String get marketRemoteInstallDisabled =>
+      'Remote marketplace installation is disabled (enable on server config)';
+
+  @override
+  String get marketConsentTitle => 'Permission request';
+
+  @override
+  String get marketConsentTip =>
+      'This plugin requests the following permissions. Once installed it will run with server privileges:';
+
+  @override
+  String get marketConsentAgree => 'Agree & install';
+
+  @override
+  String get marketPermWriteMemory =>
+      'Can read/write AI memory (may pollute memory)';
+
+  @override
+  String get marketPermSendMessage =>
+      'Can send you proactive messages (may be intrusive)';
+
+  @override
+  String get marketPermDouyinPublish => 'Can publish Douyin content (public)';
+
+  @override
+  String get marketPermPersonaRead => 'Can read character persona';
+
+  @override
+  String get marketPermMemoryRead => 'Can read AI memory';
+
+  @override
+  String get marketPermLifeRead => 'Can read AI life state';
+
+  @override
+  String get marketPermRelationshipRead => 'Can read relationship network';
+
+  @override
+  String marketPermUnknown(Object perm) {
+    return 'Custom permission ($perm)';
+  }
+
+  @override
   String get marketRemoteConfig => 'Remote marketplace';
 
   @override
@@ -3197,6 +3239,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get pluginAuthor => 'Author';
+
+  @override
+  String get pluginSource => 'Source';
+
+  @override
+  String get pluginSourceRemote => 'Source: remote marketplace';
+
+  @override
+  String get pluginSourceLocal => 'Source: local import';
+
+  @override
+  String get pluginSourceBuiltin => 'Source: builtin example';
+
+  @override
+  String get pluginSha256 => 'SHA-256';
 
   @override
   String get pluginBridgeError => 'Bridge call failed';

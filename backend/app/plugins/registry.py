@@ -28,6 +28,8 @@ _loaded: dict[str, dict] = {}
 _enabled: dict[str, bool] = {}
 # name -> config dict（内存缓存）
 _db_config: dict[str, dict] = {}
+# name -> 安装来源/同意元数据缓存（source/source_url/sha256/consented_permissions/consented_at；3.9）
+_db_prov: dict[str, dict] = {}
 # 当前正在执行 hook 的插件名（供 sdk 定位）
 _sdk_ctx: dict = {}
 
@@ -123,11 +125,16 @@ async def sync_plugins_db() -> None:
         unregister_providers_not_in(set())
     except Exception:
         pass
-    seen: list[str] = []
-    for d in _scan_dir(EXAMPLE_DIR) + _scan_dir(USER_DIR):
-        info = load_plugin_dir(d)
-        if info:
-            seen.append(info["name"])
+    _enabled.clear()
+    _db_config.clear()
+    _db_prov.clear()
+    # (name, source) 对：示例目录=builtin，用户目录=local（新建行以此落 source；存量行保留已记录来源）
+    seen: list[tuple[str, str]] = []
+    for _base, _src in ((EXAMPLE_DIR, "builtin"), (USER_DIR, "local")):
+        for d in _scan_dir(_base):
+            info = load_plugin_dir(d)
+            if info:
+                seen.append((info["name"], _src))
     if not seen:
         return
     from sqlalchemy import select
@@ -136,7 +143,7 @@ async def sync_plugins_db() -> None:
     async with async_session_factory() as db:
         rows = (await db.execute(select(Plugin))).scalars().all()
         by_name = {r.name: r for r in rows}
-        for name in seen:
+        for name, _src in seen:
             info = _loaded[name]["info"]
             row = by_name.get(name)
             if row is None:
@@ -145,6 +152,7 @@ async def sync_plugins_db() -> None:
                     author=info["author"], category=info["category"],
                     type=info.get("type", "http"), enabled=False,
                     config_json=json.dumps(info["config"], ensure_ascii=False),
+                    source=_src,
                 ))
             else:
                 row.version = info["version"]
@@ -161,11 +169,142 @@ async def sync_plugins_db() -> None:
                 _db_config[r.name] = json.loads(r.config_json or "{}")
             except Exception:
                 _db_config[r.name] = {}
+            _db_prov[r.name] = _row_prov(r)
     _logger.info("插件扫描完成：%d 个插件", len(seen))
 
 
+def _row_prov(row) -> dict:
+    """从 Plugin ORM 行提取来源/同意元数据（3.9），供缓存与接口输出用。"""
+    try:
+        _con = json.loads(row.consented_permissions or "[]")
+        if not isinstance(_con, list):
+            _con = []
+    except Exception:
+        _con = []
+    return {
+        "source": str(getattr(row, "source", "builtin") or "builtin"),
+        "source_url": getattr(row, "source_url", None),
+        "sha256": getattr(row, "sha256", None),
+        "consented_permissions": _con,
+        "consented_at": row.consented_at.isoformat() if getattr(row, "consented_at", None) else None,
+    }
+
+
+async def get_plugin_provenance(name: str) -> dict:
+    """读取插件来源/同意元数据（DB 为准；无行返回内置默认）。"""
+    from sqlalchemy import select
+    from app.db.database import async_session_factory
+    from app.models.plugin import Plugin
+    async with async_session_factory() as db:
+        row = (await db.execute(select(Plugin).where(Plugin.name == name))).scalar_one_or_none()
+        if row is None:
+            return {"source": "builtin", "source_url": None, "sha256": None,
+                    "consented_permissions": [], "consented_at": None}
+        return _row_prov(row)
+
+
+async def get_plugin_consented_permissions(name: str) -> list[str]:
+    """读取已同意权限集（3.9）。"""
+    return list((await get_plugin_provenance(name)).get("consented_permissions", []))
+
+
+async def record_install_provenance(name: str, *, source: str, source_url: str | None = None, sha256: str | None = None) -> None:
+    """安装/升级成功后记录来源（remote/local/builtin）+ 来源 url + sha256 实际计算值（3.9）。"""
+    from sqlalchemy import select
+    from app.db.database import async_session_factory
+    from app.models.plugin import Plugin
+    async with async_session_factory() as db:
+        row = (await db.execute(select(Plugin).where(Plugin.name == name))).scalar_one_or_none()
+        if row is None:
+            row = Plugin(name=name, version="0.0.1", description="", source=source)
+            db.add(row)
+            await db.flush()
+        if source is not None:
+            row.source = source
+        if source_url is not None:
+            row.source_url = source_url
+        if sha256 is not None:
+            row.sha256 = sha256
+        await db.commit()
+    _db_prov[name] = await get_plugin_provenance(name)
+
+
+async def grant_plugin_consent(name: str, permissions: list[str]) -> None:
+    """持久化同意：权限并入已同意集（保序去重）+ 更新同意时间（3.9）。"""
+    from datetime import datetime, timezone
+    from sqlalchemy import select
+    from app.db.database import async_session_factory
+    from app.models.plugin import Plugin
+    async with async_session_factory() as db:
+        row = (await db.execute(select(Plugin).where(Plugin.name == name))).scalar_one_or_none()
+        if row is None:
+            row = Plugin(name=name, version="0.0.1", description="")
+            db.add(row)
+            await db.flush()
+        try:
+            _existing = json.loads(row.consented_permissions or "[]")
+            if not isinstance(_existing, list):
+                _existing = []
+        except Exception:
+            _existing = []
+        union = list(dict.fromkeys(_existing + list(permissions or [])))  # 保序去重
+        row.consented_permissions = json.dumps(union, ensure_ascii=False)
+        row.consented_at = datetime.now(timezone.utc).replace(tzinfo=None)  # 与库一致的 naive UTC
+        await db.commit()
+    _db_prov[name] = await get_plugin_provenance(name)
+
+
+def consent_state(manifest_permissions: list[str], stored_permissions: list[str]) -> tuple[str, list[str]]:
+    """纯函数：判定同意是否需要。返回 ('empty'|'auto'|'required', needed_list)。
+    - empty：manifest 未声明权限 → 无需同意；
+    - auto：声明权限 ⊆ 已同意集（升级未新增）→ 自动放行；
+    - required：声明了未同意过的权限 → 需用户显式同意（needed 为完整清单）。
+    """
+    need = sorted(set(manifest_permissions or []))
+    if not need:
+        return "empty", []
+    if set(need) <= set(stored_permissions or []):
+        return "auto", []
+    return "required", need
+
+
+def consent_matches(manifest_permissions: list[str], consent: bool, provided_permissions: list[str]) -> bool:
+    """同意请求的权限必须与 manifest 实际声明完全一致，否则视为未同意（3.9）。"""
+    need = sorted(set(manifest_permissions or []))
+    return bool(consent) and sorted(set(provided_permissions or [])) == need
+
+
+async def require_plugin_consent(name: str, manifest_permissions: list[str], lang: str,
+                                 *, consent: bool = False, provided_permissions: list[str] | None = None) -> None:
+    """安装/升级执行前的「权限同意」闸（3.9，只设在安装/升级入口，不破坏启动重扫）。
+
+    无权限声明/升级未新增权限 → 直接放行；否则需请求携带 consent=true 且 permissions 与
+    manifest 完全一致（不一致视为未同意）→ 记录并持久化同意；否则抛 HTTPException(400)
+    返回所需权限清单，供前端弹确认框。
+    """
+    from fastapi import HTTPException
+    from app.i18n import tr_lang
+    _state, _needed = consent_state(manifest_permissions, await get_plugin_consented_permissions(name))
+    if _state in ("empty", "auto"):
+        return
+    if consent_matches(manifest_permissions, consent, provided_permissions):
+        await grant_plugin_consent(name, _needed)
+        return
+    raise HTTPException(status_code=400, detail=tr_lang(lang, "plugin_consent_required", perms=", ".join(_needed)))
+
+
+def verify_plugin_signature(manifest: dict, payload: bytes, signature: str | None = None) -> bool:
+    """预留：插件签名校验接口（AMBRACE 3.9 插件安全闸）。
+
+    当前未接入签名/公钥体系，恒返回 True（不强制启用）。这是安装/加载校验层的扩展点：
+    未来接入插件签名（如对 zip 的 signature 字段做公钥验签）后在此实现，校验失败返回 False，
+    调用方据此拒绝安装/加载。文档见 docs/plugin-development.md「安全模型」。
+    """
+    return True
+
+
 def list_plugins() -> list[dict]:
-    """合并 manifest 信息与 DB 状态（enabled/config），按名称排序"""
+    """合并 manifest 信息 + DB 状态（enabled/config）+ 来源/同意元数据（3.9），按名称排序"""
     out = []
     for name, entry in _loaded.items():
         info = dict(entry["info"])
@@ -174,6 +313,12 @@ def list_plugins() -> list[dict]:
         merged = dict(info.get("config", {}))
         merged.update(saved)
         info["config"] = merged
+        prov = _db_prov.get(name, {})
+        info["source"] = prov.get("source", info.get("source", "builtin"))
+        info["source_url"] = prov.get("source_url")
+        info["sha256"] = prov.get("sha256")
+        info["consented_permissions"] = prov.get("consented_permissions", [])
+        info["consented_at"] = prov.get("consented_at")
         out.append(info)
     out.sort(key=lambda x: x["name"])
     return out

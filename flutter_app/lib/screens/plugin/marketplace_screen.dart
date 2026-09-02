@@ -16,9 +16,79 @@ class MarketplaceScreen extends StatefulWidget {
 
 enum _MarketFilter { all, plugin, mcp }
 
+/// 权限风险文案（3.9）：按 manifest.permissions 逐条说明其能力与风险
+String _permRisk(AppLocalizations l10n, String perm) {
+  switch (perm) {
+    case 'write_memory':
+      return l10n.marketPermWriteMemory;
+    case 'send_message':
+      return l10n.marketPermSendMessage;
+    case 'douyin_publish':
+      return l10n.marketPermDouyinPublish;
+    case 'persona:read':
+      return l10n.marketPermPersonaRead;
+    case 'memory:read':
+      return l10n.marketPermMemoryRead;
+    case 'life:read':
+      return l10n.marketPermLifeRead;
+    case 'relationship:read':
+      return l10n.marketPermRelationshipRead;
+    default:
+      return l10n.marketPermUnknown(perm);
+  }
+}
+
+/// 权限同意确认框（3.9）：逐条列出权限与风险，用户明确同意才返回 true
+Future<bool?> showConsentDialog(BuildContext context, List<String> perms) async {
+  final l10n = AppLocalizations.of(context)!;
+  return await showDialog<bool>(
+    context: context,
+    builder: (c) => AlertDialog(
+      title: Text(l10n.marketConsentTitle),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(l10n.marketConsentTip, style: const TextStyle(fontSize: 12.5)),
+            const SizedBox(height: 12),
+            for (final p in perms) ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.lock_outline, size: 16, color: Colors.orange),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '$p — ${_permRisk(l10n, p)}',
+                      style: const TextStyle(fontSize: 12.5, height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(c, false),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(c, true),
+          child: Text(l10n.marketConsentAgree),
+        ),
+      ],
+    ),
+  );
+}
+
 class _MarketplaceScreenState extends State<MarketplaceScreen> {
   bool _loading = true;
   bool _isAdmin = false;
+  bool _allowRemoteInstall = false;
   String? _error;
   _MarketFilter _filter = _MarketFilter.all;
   String _query = '';
@@ -44,10 +114,11 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
       _error = null;
     });
     try {
-      final items = await ApiClient().getMarketplace();
+      final data = await ApiClient().getMarketplaceOverview();
       if (!mounted) return;
       setState(() {
-        _items = items;
+        _items = (data['items'] as List? ?? []).cast<Map<String, dynamic>>();
+        _allowRemoteInstall = data['allow_remote_install'] == true;
         _loading = false;
       });
     } catch (e) {
@@ -62,7 +133,13 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
   Future<void> _install(Map<String, dynamic> item) async {
     final l10n = AppLocalizations.of(context)!;
     final isRemote = (item['source'] as String? ?? 'builtin') != 'builtin';
-    // 远程条目安装前二次确认（第三方代码与服务器同权限）
+    // 3.9：远程市场安装默认关闭 → 拦截
+    if (isRemote && !_allowRemoteInstall) {
+      _toast(l10n.marketRemoteInstallDisabled);
+      return;
+    }
+    final perms = (item['permissions'] as List? ?? []).cast<String>();
+    // 远程条目安装前来源二次确认（第三方代码与服务器同权限）
     if (isRemote) {
       final ok = await showDialog<bool>(
         context: context,
@@ -83,8 +160,17 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
       );
       if (ok != true || !mounted) return;
     }
+    // 3.9：权限清单确认（manifest.permissions 非空时）
+    if (perms.isNotEmpty) {
+      final ok = await showConsentDialog(context, perms);
+      if (ok != true || !mounted) return;
+    }
     try {
-      await ApiClient().installMarketplacePlugin(item['name'] as String);
+      await ApiClient().installMarketplacePlugin(
+        item['name'] as String,
+        consent: perms.isNotEmpty,
+        permissions: perms.isNotEmpty ? perms : null,
+      );
       if (!mounted) return;
       _toast(l10n.marketInstallSuccess);
       await _load();
@@ -159,6 +245,24 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
               ],
             ),
           ),
+          // 3.9：远程市场安装默认关闭 → 顶部提示
+          if (!_allowRemoteInstall)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.cloud_off_outlined, size: 16, color: Colors.grey),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      l10n.marketRemoteInstallDisabled,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: TextField(
@@ -273,7 +377,7 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
         borderRadius: BorderRadius.circular(14),
         onTap: () async {
           await Navigator.push(context, MaterialPageRoute(
-            builder: (_) => MarketplaceDetailScreen(item: item),
+            builder: (_) => MarketplaceDetailScreen(item: item, allowRemoteInstall: _allowRemoteInstall),
           ));
           if (mounted) await _load();
         },
@@ -341,7 +445,7 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
                     )
                   else if (_isAdmin)
                     FilledButton.tonal(
-                      onPressed: () => _install(item),
+                      onPressed: (isRemote && !_allowRemoteInstall) ? null : () => _install(item),
                       style: FilledButton.styleFrom(
                         visualDensity: VisualDensity.compact,
                         padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -356,7 +460,7 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
                   child: Align(
                     alignment: Alignment.centerRight,
                     child: FilledButton.tonalIcon(
-                      onPressed: () => _install(item),
+                      onPressed: (isRemote && !_allowRemoteInstall) ? null : () => _install(item),
                       style: FilledButton.styleFrom(
                         visualDensity: VisualDensity.compact,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -632,9 +736,10 @@ class _RemoteMarketConfigScreenState extends State<_RemoteMarketConfigScreen> {
 
 /// 市场条目详情页：usage/readme/hooks/permissions/风险提示 + 安装
 class MarketplaceDetailScreen extends StatefulWidget {
-  const MarketplaceDetailScreen({super.key, required this.item});
+  const MarketplaceDetailScreen({super.key, required this.item, this.allowRemoteInstall = false});
 
   final Map<String, dynamic> item;
+  final bool allowRemoteInstall;
 
   @override
   State<MarketplaceDetailScreen> createState() => _MarketplaceDetailScreenState();
@@ -646,6 +751,13 @@ class _MarketplaceDetailScreenState extends State<MarketplaceDetailScreen> {
   Future<void> _installDetail() async {
     final l10n = AppLocalizations.of(context)!;
     final isRemote = (widget.item['source'] as String? ?? 'builtin') != 'builtin';
+    // 3.9：远程市场安装默认关闭 → 拦截
+    if (isRemote && !widget.allowRemoteInstall) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.marketRemoteInstallDisabled)));
+      return;
+    }
+    final perms = (widget.item['permissions'] as List? ?? []).cast<String>();
     if (isRemote) {
       final ok = await showDialog<bool>(
         context: context,
@@ -666,9 +778,18 @@ class _MarketplaceDetailScreenState extends State<MarketplaceDetailScreen> {
       );
       if (ok != true || !mounted) return;
     }
+    // 3.9：权限清单确认
+    if (perms.isNotEmpty) {
+      final ok = await showConsentDialog(context, perms);
+      if (ok != true || !mounted) return;
+    }
     setState(() => _installing = true);
     try {
-      await ApiClient().installMarketplacePlugin(widget.item['name'] as String);
+      await ApiClient().installMarketplacePlugin(
+        widget.item['name'] as String,
+        consent: perms.isNotEmpty,
+        permissions: perms.isNotEmpty ? perms : null,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(l10n.marketInstallSuccess)));

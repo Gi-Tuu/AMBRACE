@@ -9,9 +9,25 @@ import "package:ai_companion/theme/tokens.dart";
 import '../../screens/plugin/extensions_screen.dart' show pluginTypeLabel, pluginTypeColor, pluginTypeIcon;
 import 'plugin_forms.dart' show PluginConfigForm, ZeroCodeConfigEditor;
 
+/// 来源徽标文案（3.9）：builtin/remote/local -> 本地化
+String _sourceLabel(AppLocalizations l10n, String source) {
+  switch (source) {
+    case 'remote':
+      return l10n.pluginSourceRemote;
+    case 'local':
+      return l10n.pluginSourceLocal;
+    case 'builtin':
+      return l10n.pluginSourceBuiltin;
+    default:
+      return l10n.pluginSource;
+  }
+}
+
+/// sha256 短值展示（前 10 位 + 省略号）
+String _shaShort(String sha) => sha.length > 10 ? '${sha.substring(0, 10)}…' : sha;
+
 /// 扩展（插件）页：分类列表 / 启用开关 / 参数配置 / zip 安装（仅主账号）
-class PluginCard extends StatefulWidget {
-  const PluginCard({super.key, 
+class PluginCard extends StatefulWidget {  const PluginCard({super.key, 
     required this.plugin,
     required this.isAdmin,
     required this.onChanged,
@@ -255,6 +271,13 @@ class PluginCardState extends State<PluginCard> {
                   ),
                   if (author.isNotEmpty)
                     Text('${l10n.pluginAuthor}：$author', style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                  // 3.9：来源 + 校验和短值（非内置才显示来源徽标；sha256 有则显示）
+                  if ((p['source'] as String? ?? 'builtin') != 'builtin')
+                    Text(_sourceLabel(l10n, p['source'] as String? ?? 'builtin'),
+                        style: const TextStyle(fontSize: 11, color: Colors.purple)),
+                  if ((p['sha256'] as String? ?? '').isNotEmpty)
+                    Text('${l10n.pluginSha256}: ${_shaShort(p['sha256'] as String)}',
+                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                 ],
               ),
             ),

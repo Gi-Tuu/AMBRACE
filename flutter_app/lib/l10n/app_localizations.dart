@@ -4689,6 +4689,78 @@ abstract class AppLocalizations {
   /// **'该插件来自远程第三方市场，与服务器同权限。请确认来源可信后再安装？'**
   String get marketRemoteInstallTip;
 
+  /// No description provided for @marketRemoteInstallDisabled.
+  ///
+  /// In zh, this message translates to:
+  /// **'远程市场安装已关闭（需在服务器配置开启）'**
+  String get marketRemoteInstallDisabled;
+
+  /// No description provided for @marketConsentTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'权限确认'**
+  String get marketConsentTitle;
+
+  /// No description provided for @marketConsentTip.
+  ///
+  /// In zh, this message translates to:
+  /// **'该插件需要以下权限。安装后插件将与服务器同权限运行：'**
+  String get marketConsentTip;
+
+  /// No description provided for @marketConsentAgree.
+  ///
+  /// In zh, this message translates to:
+  /// **'同意并安装'**
+  String get marketConsentAgree;
+
+  /// No description provided for @marketPermWriteMemory.
+  ///
+  /// In zh, this message translates to:
+  /// **'可读写 AI 记忆（可能污染记忆）'**
+  String get marketPermWriteMemory;
+
+  /// No description provided for @marketPermSendMessage.
+  ///
+  /// In zh, this message translates to:
+  /// **'可主动给你发消息（可能骚扰）'**
+  String get marketPermSendMessage;
+
+  /// No description provided for @marketPermDouyinPublish.
+  ///
+  /// In zh, this message translates to:
+  /// **'可发布抖音内容（公开内容）'**
+  String get marketPermDouyinPublish;
+
+  /// No description provided for @marketPermPersonaRead.
+  ///
+  /// In zh, this message translates to:
+  /// **'可读取角色人设'**
+  String get marketPermPersonaRead;
+
+  /// No description provided for @marketPermMemoryRead.
+  ///
+  /// In zh, this message translates to:
+  /// **'可读取 AI 记忆'**
+  String get marketPermMemoryRead;
+
+  /// No description provided for @marketPermLifeRead.
+  ///
+  /// In zh, this message translates to:
+  /// **'可读取 AI 生活状态'**
+  String get marketPermLifeRead;
+
+  /// No description provided for @marketPermRelationshipRead.
+  ///
+  /// In zh, this message translates to:
+  /// **'可读取关系网'**
+  String get marketPermRelationshipRead;
+
+  /// No description provided for @marketPermUnknown.
+  ///
+  /// In zh, this message translates to:
+  /// **'自定义权限（{perm}）'**
+  String marketPermUnknown(Object perm);
+
   /// No description provided for @marketRemoteConfig.
   ///
   /// In zh, this message translates to:
@@ -5816,6 +5888,36 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'作者'**
   String get pluginAuthor;
+
+  /// No description provided for @pluginSource.
+  ///
+  /// In zh, this message translates to:
+  /// **'来源'**
+  String get pluginSource;
+
+  /// No description provided for @pluginSourceRemote.
+  ///
+  /// In zh, this message translates to:
+  /// **'来源：远程市场'**
+  String get pluginSourceRemote;
+
+  /// No description provided for @pluginSourceLocal.
+  ///
+  /// In zh, this message translates to:
+  /// **'来源：本地导入'**
+  String get pluginSourceLocal;
+
+  /// No description provided for @pluginSourceBuiltin.
+  ///
+  /// In zh, this message translates to:
+  /// **'来源：内置示例'**
+  String get pluginSourceBuiltin;
+
+  /// No description provided for @pluginSha256.
+  ///
+  /// In zh, this message translates to:
+  /// **'校验和'**
+  String get pluginSha256;
 
   /// No description provided for @pluginBridgeError.
   ///

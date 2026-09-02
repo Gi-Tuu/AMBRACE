@@ -27,6 +27,12 @@ class Plugin(Base):
     type: Mapped[str] = mapped_column(String(20), default="http")  # 48c：插件类型 http/prompt/chat/workflow/hybrid
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     config_json: Mapped[str] = mapped_column(Text, default="{}")
+    # ---- 3.9 插件安全闸（2026-09-02）：来源校验与同意记录 ----
+    source: Mapped[str] = mapped_column(String(16), default="builtin")  # builtin / remote / local
+    source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)  # 远程来源 download_url（local/builtin 为 NULL）
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 实际计算值（索引未提供也记录）
+    consented_permissions: Mapped[str] = mapped_column(Text, default="[]")  # 已同意权限集 JSON 数组（∪ 历次同意）
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 最近一次同意时间
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

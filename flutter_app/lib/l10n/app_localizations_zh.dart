@@ -2479,6 +2479,44 @@ class AppLocalizationsZh extends AppLocalizations {
   String get marketRemoteInstallTip => '该插件来自远程第三方市场，与服务器同权限。请确认来源可信后再安装？';
 
   @override
+  String get marketRemoteInstallDisabled => '远程市场安装已关闭（需在服务器配置开启）';
+
+  @override
+  String get marketConsentTitle => '权限确认';
+
+  @override
+  String get marketConsentTip => '该插件需要以下权限。安装后插件将与服务器同权限运行：';
+
+  @override
+  String get marketConsentAgree => '同意并安装';
+
+  @override
+  String get marketPermWriteMemory => '可读写 AI 记忆（可能污染记忆）';
+
+  @override
+  String get marketPermSendMessage => '可主动给你发消息（可能骚扰）';
+
+  @override
+  String get marketPermDouyinPublish => '可发布抖音内容（公开内容）';
+
+  @override
+  String get marketPermPersonaRead => '可读取角色人设';
+
+  @override
+  String get marketPermMemoryRead => '可读取 AI 记忆';
+
+  @override
+  String get marketPermLifeRead => '可读取 AI 生活状态';
+
+  @override
+  String get marketPermRelationshipRead => '可读取关系网';
+
+  @override
+  String marketPermUnknown(Object perm) {
+    return '自定义权限（$perm）';
+  }
+
+  @override
   String get marketRemoteConfig => '远程市场';
 
   @override
@@ -3081,6 +3119,21 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get pluginAuthor => '作者';
+
+  @override
+  String get pluginSource => '来源';
+
+  @override
+  String get pluginSourceRemote => '来源：远程市场';
+
+  @override
+  String get pluginSourceLocal => '来源：本地导入';
+
+  @override
+  String get pluginSourceBuiltin => '来源：内置示例';
+
+  @override
+  String get pluginSha256 => '校验和';
 
   @override
   String get pluginBridgeError => '桥调用失败';

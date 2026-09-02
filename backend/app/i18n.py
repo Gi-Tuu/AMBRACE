@@ -109,6 +109,9 @@ _MESSAGES: dict[str, tuple[str, str]] = {
     "wf_template_bad_edge": ("第 {n} 条连线格式无效", "Edge #{n} has an invalid format"),
     # 远程市场
     "market_remote_disabled": ("远程市场未启用", "Remote marketplace is disabled"),
+    "market_remote_install_disabled": ("远程市场安装已关闭，请在服务器配置中开启（PLUGIN_ALLOW_REMOTE_INSTALL）", "Remote marketplace installation is disabled (enable PLUGIN_ALLOW_REMOTE_INSTALL)"),
+    "plugin_consent_required": ("该插件需要您同意以下权限后才能安装：{perms}", "This plugin requires your consent for these permissions before install: {perms}"),
+    "plugin_signature_invalid": ("插件签名校验失败", "Plugin signature verification failed"),
     "market_empty_urls": ("未配置远程市场地址", "No remote marketplace URLs configured"),
     "market_url_invalid": ("无效的市场地址: {url}", "Invalid marketplace URL: {url}"),
     "market_index_invalid": ("市场索引格式无效", "Invalid marketplace index"),

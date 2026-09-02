@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import '../api_client.dart';
 
@@ -36,15 +38,37 @@ extension PluginsApi on ApiClient {
     return parseListItems(r.data, 'items', (j) => j as Map<String, dynamic>);
   }
 
+  /// 市场总览（含顶层 allow_remote_install 开关，3.9）：{items, total, allow_remote_install}
+  Future<Map<String, dynamic>> getMarketplaceOverview({
+    String? q,
+    String? category,
+    bool? installed,
+  }) async {
+    final r = await dio.get('/api/v1/marketplace', queryParameters: {
+      if (q != null && q.isNotEmpty) 'q': q,
+      if (category != null) 'category': category,
+      if (installed != null) 'installed': installed,
+    });
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
   /// 市场条目详情（含 readme_text）
   Future<Map<String, dynamic>> getMarketplaceDetail(String name) async {
     final r = await dio.get('/api/v1/marketplace/$name');
     return r.data as Map<String, dynamic>;
   }
 
-  /// 从市场安装插件（仅主账号；内置=复制示例目录 / 远程=下载 zip）
-  Future<Map<String, dynamic>> installMarketplacePlugin(String name) async {
-    final r = await dio.post('/api/v1/marketplace/$name/install');
+  /// 从市场安装插件（仅主账号；内置=复制示例目录 / 远程=下载 zip）。
+  /// 3.9：manifest.permissions 非空时须携带 {consent: true, permissions: [...]}（一致才被接受）。
+  Future<Map<String, dynamic>> installMarketplacePlugin(
+    String name, {
+    bool consent = false,
+    List<String>? permissions,
+  }) async {
+    final r = await dio.post('/api/v1/marketplace/$name/install', data: {
+      'consent': consent,
+      if (permissions != null) 'permissions': permissions,
+    });
     return r.data as Map<String, dynamic>;
   }
 
@@ -71,10 +95,16 @@ extension PluginsApi on ApiClient {
     return r.data as Map<String, dynamic>;
   }
 
-  /// zip 安装插件（仅主账号）
-  Future<Map<String, dynamic>> installPluginZip(String filePath) async {
+  /// zip 安装插件（仅主账号）。3.9：manifest.permissions 非空时须携带 consent=true + permissions 一致。
+  Future<Map<String, dynamic>> installPluginZip(
+    String filePath, {
+    bool consent = false,
+    List<String>? permissions,
+  }) async {
     final form = FormData.fromMap({
       'file': await MultipartFile.fromFile(filePath, filename: filePath.split('/').last.split('\\').last),
+      'consent': consent,
+      'permissions': jsonEncode(permissions ?? []),
     });
     final r = await dio.post(
       '/api/v1/plugins/install',
@@ -86,6 +116,23 @@ extension PluginsApi on ApiClient {
       ),
     );
     return r.data as Map<String, dynamic>;
+  }
+
+  /// 探测本地 zip 包 manifest（只读取，不安装/不写库），返回 {name, version, permissions, source}
+  Future<Map<String, dynamic>> probePluginZip(String filePath) async {
+    final form = FormData.fromMap({
+      'file': await MultipartFile.fromFile(filePath, filename: filePath.split('/').last.split('\\').last),
+    });
+    final r = await dio.post(
+      '/api/v1/plugins/probe',
+      data: form,
+      options: Options(
+        contentType: 'multipart/form-data',
+        sendTimeout: const Duration(seconds: 60),
+        receiveTimeout: const Duration(seconds: 60),
+      ),
+    );
+    return Map<String, dynamic>.from(r.data as Map);
   }
 
   /// douyin_mcp：AI 生成草稿（kind=image_post|reply_comment，hint 为灵感/prompt）
