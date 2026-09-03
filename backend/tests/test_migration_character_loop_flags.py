@@ -55,8 +55,11 @@ def test_migrate_updates_existing_zero_rows(mig_db):
     asyncio.run(_run())
 
 
-def test_migrate_adds_missing_columns_default_1(mig_db):
-    """列缺失（旧库未加列）→ ALTER ADD COLUMN ... DEFAULT 1，存量行回填 1。"""
+def test_migrate_skips_when_columns_missing(mig_db):
+    """列缺失（远古库首次启动）→ 跳过且不写哨兵、不崩（加列已由 bootstrap 迁移承接，3.8 收敛）。
+
+    哨兵不写是关键：bootstrap 补列后的下次启动仍会执行存量 0→1 迁移。
+    """
     # 再造一个旧表：去掉两个开关列（模拟老 schema；不用 create_all 以免自动带新列）
     tmp = tempfile.mkdtemp(prefix="char_loop_old_")
     db_path = os.path.join(tmp, "old.db")
@@ -69,15 +72,17 @@ def test_migrate_adds_missing_columns_default_1(mig_db):
                 "id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, name VARCHAR(100) NOT NULL)"
             ))
             await conn.execute(sa_text("INSERT INTO ai_characters (user_id, name) VALUES (1, '旧角色')"))
-        # 打开连接调迁移
+            await conn.execute(sa_text("CREATE TABLE runtime_flags (key VARCHAR PRIMARY KEY, enabled BOOLEAN, updated_at DATETIME)"))
         async with old_engine.begin() as conn:
+            # 不抛异常即通过（列缺失 → 跳过）
             await database._migrate_ai_character_loop_flags(conn)
         async with old_engine.begin() as conn:
-            row = (await conn.execute(sa_text(
-                "SELECT cognitive_loop_enabled, memory_v2_enabled FROM ai_characters WHERE id = 1"
-            ))).one()
-            assert row[0] == 1
-            assert row[1] == 1
+            cols = {r[1] for r in (await conn.execute(sa_text("PRAGMA table_info(ai_characters)"))).fetchall()}
+            assert "cognitive_loop_enabled" not in cols and "memory_v2_enabled" not in cols
+            sent = (await conn.execute(sa_text(
+                "SELECT 1 FROM runtime_flags WHERE key='migration_life_v2_flags_20260827'"
+            ))).fetchone()
+            assert sent is None, "列未就绪时不得写哨兵（否则 bootstrap 补列后迁移被永久跳过）"
     asyncio.run(_run())
     asyncio.run(old_engine.dispose())
 

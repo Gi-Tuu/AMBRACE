@@ -13,6 +13,7 @@ from typing import Any
 
 # ── 动作类型（与方案 5.1 AgentAction.action_type 对齐）──
 SEARCH = "SEARCH"
+RECALL = "RECALL"
 GEN_IMAGE = "GEN_IMAGE"
 IMG_TEXT = "IMG_TEXT"
 CAL_NOTE = "CAL_NOTE"
@@ -20,7 +21,7 @@ MEMO = "MEMO"
 TIMER = "TIMER"
 STATUS_UPDATE = "STATUS_UPDATE"
 
-ACTION_TYPES = (SEARCH, GEN_IMAGE, IMG_TEXT, CAL_NOTE, MEMO, TIMER, STATUS_UPDATE)
+ACTION_TYPES = (SEARCH, RECALL, GEN_IMAGE, IMG_TEXT, CAL_NOTE, MEMO, TIMER, STATUS_UPDATE)
 
 
 @dataclass
@@ -45,6 +46,10 @@ class AgentAction:
 
 # ── 标记正则（与旧 chat_service 完全一致，兼容中英文括号；注释标注出处）──
 _SEARCH_RE = re.compile(r"[\[【]\s*SEARCH\s*[\]】]\s*(.*?)(?:[\[【]\s*/SEARCH\s*[\]】]|$)", re.M | re.S)
+# [RECALL]查询词[/RECALL]（Ariadne 模块 B，2026-09-04）：按需二跳联想检索标记；与 SEARCH 同构
+# （兼容中英文/全半角括号、闭合标签可省略）；标记内允许「时间=YYYY-MM；查询」轻量前缀语法，
+# 由 loop.run_recall_loop 解析，本层只做提取与剥离。
+_RECALL_RE = re.compile(r"[\[【]\s*RECALL\s*[\]】]\s*(.*?)(?:[\[【]\s*/RECALL\s*[\]】]|$)", re.M | re.S)
 _GEN_IMAGE_RE = re.compile(r"\[GEN_IMAGE\](.*?)\[/GEN_IMAGE\]", re.S)
 _IMG_TEXT_RE = re.compile(r"\[IMG_TEXT\](.*?)\[/IMG_TEXT\]", re.S)
 # 兼容英文/中文括号、闭合标签可省略（无闭合时取到行尾）；2026-08-14 修复 AI 输出【CAL_NOTE】无闭合导致不落库
@@ -77,6 +82,18 @@ def extract_search(text: str) -> tuple[str, str | None]:
         return text, None
     query = m.group(1).strip()
     clean = _SEARCH_RE.sub("", text).rstrip()
+    return clean, query or None
+
+
+def extract_recall(text: str) -> tuple[str, str | None]:
+    """提取记忆联想检索标记，返回 (清理后文本, 检索词或 None)；与 extract_search 同构（模块 B）"""
+    if not text:
+        return text, None
+    m = _RECALL_RE.search(text)
+    if not m:
+        return text, None
+    query = (m.group(1) or "").strip()
+    clean = _RECALL_RE.sub("", text).rstrip()
     return clean, query or None
 
 
@@ -202,6 +219,10 @@ def parse_actions(text: str) -> list[AgentAction]:
         q = m.group(1).strip()
         if q:
             actions.append(AgentAction(SEARCH, {"query": q}, m.group(0)))
+    for m in _RECALL_RE.finditer(text):
+        q = (m.group(1) or "").strip()
+        if q:
+            actions.append(AgentAction(RECALL, {"query": q[:80]}, m.group(0)))
     for m in _IMG_TEXT_RE.finditer(text):
         t = m.group(1).strip()
         if t:
@@ -229,7 +250,7 @@ def parse_actions(text: str) -> list[AgentAction]:
 
 
 # 剥离顺序：SEARCH 允许无闭合到行尾，需先剥离避免吞掉后续标记
-_STRIP_PATTERNS = [_SEARCH_RE, _IMG_TEXT_RE, _GEN_IMAGE_RE, _CAL_NOTE_RE, _MEMO_RE, _TIMER_RE, _MCP_TOOL_RE]
+_STRIP_PATTERNS = [_SEARCH_RE, _RECALL_RE, _IMG_TEXT_RE, _GEN_IMAGE_RE, _CAL_NOTE_RE, _MEMO_RE, _TIMER_RE, _MCP_TOOL_RE]
 
 
 def strip_actions(text: str) -> str:

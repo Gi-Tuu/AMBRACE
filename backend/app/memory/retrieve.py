@@ -23,7 +23,7 @@ from app.memory.service import (
 )
 
 
-async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, int] | None = None, relevance_bonus: dict[int, float] | None = None, return_debug: bool = False):
+async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, int] | None = None, relevance_bonus: dict[int, float] | None = None, return_debug: bool = False, _keep_score: bool = False):
     """B2 检索加权（向量路径与 keyword 兜底共用，M-P2-3）：以 DB 为准补全元数据
     （向量 meta 的 importance 可能过期），加分项：置顶恒在前、关系/情绪类近 7 天 +15、
     状态/剧情来源近 3 天 +10；60 天以上旧记忆 x0.8 抑制，避免旧记忆重要性虚高盖过
@@ -145,13 +145,51 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
                 for r in results[:10]
             ],
         }
-        for r in results:
-            r.pop("_score", None)
+        if not _keep_score:
+            for r in results:
+                r.pop("_score", None)
         return results, debug
 
     for r in results:
         r.pop("_score", None)
     return results
+
+
+# ── Ariadne 模块 D（2026-09-04）：自然收敛替代硬截断（PAR 寻峰本地平替，纯函数）──
+# 阈值来源（E v2 标定，scripts/diagnostics/memory_context_bench.py，104 例数据集）：
+# 观测 gold 命中项 _score 分布与弃权类（abstention）候选分布后取安全边界——
+# 弃权类候选全部低于 floor、gold 类不因 gap/floor 误杀。E v1 首轮实测（abstention 失败）
+# 证明 floor 必要；标定过程与数据见 docs/dev-changelog 2026-09-04 节。
+PEAK_MIN_KEEP = 3      # 至少保留条数（硬下界，防全灭）
+PEAK_MAX_KEEP = 8      # 至多保留条数（给后续 diversify/limit 截断留池）
+PEAK_SCORE_GAP = 12.0  # 相邻分数陡降阈值（>gap 视为断档，截断其后）
+PEAK_MIN_SCORE = 18.0  # 分数地板（rerank 分被 importance 主导，仅兜极低重要度；相关性主要靠稠密距离地板）
+PEAK_DENSE_MAX_DISTANCE = 0.50  # 稠密 cosine 距离地板（E v2 距离标定，104 例：弃权类候选 min=0.502 全切、gold 命中 P50=0.419/P90=0.526——尾部 gold 命中约 10-15% 以弃权正确率换之；探针 _dist_calib.py）
+
+
+def peak_cutoff(ranked: list[dict], *, min_keep: int = PEAK_MIN_KEEP, max_keep: int = PEAK_MAX_KEEP,
+                score_gap: float = PEAK_SCORE_GAP, min_score: float = PEAK_MIN_SCORE) -> list[dict]:
+    """按 rerank _score 自然收敛（纯函数，可单测）：至少 min_keep；之后遇「分数陡降(>score_gap)」
+    或「低于 min_score 地板」即止，至多 max_keep。输入须已按 _score 降序、元素含 _score。
+
+    替代硬 top-limit 截断：避免漏掉成簇相关项，也避免无脑塞满（弃权场景候选整体弱相关时
+    自然收敛到极少）。flag memory_peak_cutoff 默认关——关=现状路径逐字节不变。
+    """
+    if not ranked:
+        return []
+    # 地板先行：候选整体低于 floor（弃权/弱相关场景）→ 收敛为空（方案原稿的「无条件 min_keep」
+    # 会使弃权场景仍注入 min_keep 条、abstention 永远不过——此处为有意偏离并已在回报说明）。
+    above = [r for r in ranked if float(r.get("_score") or 0) >= min_score]
+    if not above:
+        return []
+    out = above[:min_keep]
+    for prev, cur in zip(above[min_keep - 1:], above[min_keep:]):
+        if len(out) >= max_keep:
+            break
+        if float(prev.get("_score") or 0) - float(cur.get("_score") or 0) > score_gap:
+            break
+        out.append(cur)
+    return out
 
 
 def _diversify_by_type(ranked: list[dict], topk: int, per_type_cap: int = 2) -> list[dict]:
@@ -192,6 +230,7 @@ async def search_memories(
     limit: int = 5,
     queries: list[str] | None = None,
     trace_meta: dict | None = None,
+    time_range: tuple | None = None,
 ) -> list[dict]:
     """检索记忆（认知循环 v2.1 多路召回）：向量优先，兜底关键词。
 
@@ -232,11 +271,20 @@ async def search_memories(
                 embedding = await get_cached_embedding(character_id, q)
             else:
                 embedding = await text_embedding(q)
-            return await vector_search(
+            hits = await vector_search(
                 character_id=character_id,
                 query_embedding=embedding,
                 limit=limit * 2,  # 多取一些，按重要性排序后截断
             )
+            # 模块 D：稠密相似度地板（flag memory_peak_cutoff 开）——弱相关候选在源头剔除，
+            # 「时间对/语义弱」与本地板正交（时间路由 SQL 时间窗独立召回）。
+            try:
+                from app.agent.loop import AGENT_FLAGS as _af
+                if _af.get("memory_peak_cutoff", False):
+                    hits = [h for h in hits if float(h.get("distance") or 0) <= PEAK_DENSE_MAX_DISTANCE]
+            except Exception:
+                pass
+            return hits
         except Exception:
             return []
 
@@ -357,10 +405,59 @@ async def search_memories(
         # 关键词兜底路径：双路无命中，候选池即当前关键词结果集合
         candidate_count = len(results)
 
+    # Ariadne 模块 A（2026-09-03）：时间维度确定性检索路（flag memory_temporal_recall 默认关=零行为变化）。
+    # 仅当调用方解析出时间区间（app/memory/time_query.parse_time_range）且 flag 开：
+    # 区间内按重要度补一条确定性 SQL 召回，合并去重后参与同一套 rerank/截断（不享有特权插队），
+    # 保证「时间对、语义弱」的记忆不被向量路漏掉。
+    if time_range is not None:
+        try:
+            from app.agent.loop import AGENT_FLAGS as _af
+            _temporal_on = bool(_af.get("memory_temporal_recall", False))
+        except Exception:
+            _temporal_on = False
+        if _temporal_on:
+            t_start, t_end = time_range
+            async with async_session_factory() as _tdb:
+                _trows = (await _tdb.execute(
+                    select(Memory)
+                    .where(
+                        Memory.character_id == character_id,
+                        Memory.is_archived == False,  # noqa: E712
+                        Memory.memory_type != "working_state",
+                        Memory.created_at >= t_start,
+                        Memory.created_at < t_end,
+                        _retrievable_status_clause(),
+                    )
+                    .order_by(Memory.importance.desc(), Memory.created_at.desc())
+                    .limit(limit)
+                )).scalars().all()
+            _have = {r["id"] for r in results}
+            _added = 0
+            for _m in _trows:
+                if _m.id in _have:
+                    continue
+                _have.add(_m.id)
+                _added += 1
+                results.append({
+                    "id": _m.id,
+                    "content": _m.content,
+                    "type": _m.memory_type,
+                    "importance": _m.importance,
+                    "created_at": _m.created_at,
+                })
+            if _trace_debug and _added:
+                debug["time_route"] = {"range": [str(t_start), str(t_end)], "added": _added}
+
     if results:
+        # 模块 D：peak_cutoff 需要 _score（flag memory_peak_cutoff 开时强制走 debug 路径并保留分数）
+        try:
+            from app.agent.loop import AGENT_FLAGS as _af
+            _peak_on = bool(_af.get("memory_peak_cutoff", False))
+        except Exception:
+            _peak_on = False
         # #70-B：flag 开走 _rerank(return_debug=True) 取 debug 并入 trace；关走原非 debug 路径（零行为变化）。
-        if _trace_debug:
-            _ranked, _rk_debug = await _rerank(results, character_id, hit_count, relevance_bonus=relevance_bonus, return_debug=True)
+        if _trace_debug or _peak_on:
+            _ranked, _rk_debug = await _rerank(results, character_id, hit_count, relevance_bonus=relevance_bonus, return_debug=True, _keep_score=_peak_on)
             debug.update(_rk_debug)
         else:
             _ranked = await _rerank(results, character_id, hit_count, relevance_bonus=relevance_bonus)
@@ -370,7 +467,14 @@ async def search_memories(
             _diversify = bool(_af.get("recall_diversify", True))
         except Exception:
             _diversify = True
-        results = _diversify_by_type(_ranked, limit) if _diversify else _ranked[:limit]
+        if _peak_on:
+            # 模块 D：先自然收敛（断档/地板截断）再类型均衡；条数可少于 limit（弃权/弱相关场景）
+            _kept = peak_cutoff(_ranked)
+            results = _diversify_by_type(_kept, limit) if _diversify else _kept[:limit]
+            for r in results:
+                r.pop("_score", None)  # 对外形状与旧路径一致
+        else:
+            results = _diversify_by_type(_ranked, limit) if _diversify else _ranked[:limit]
 
     # 插件 Hook：memory_search（调整/追加召回记忆；插件返回的 dict 列表追加到结果，原结果让位给插件追加；异常隔离）
     try:

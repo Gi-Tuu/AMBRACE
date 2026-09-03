@@ -20,6 +20,13 @@ _logger = get_logger("agent.loop")
 # 统一限制（方案 5.3：max_steps=3 含最终回复 → 最多 2 次真实搜索）
 MAX_LLM_STEPS = 3  # LLM 调用轮数上限（首轮 + 2 次再决策）
 MAX_SEARCH_ROUNDS = MAX_LLM_STEPS - 1
+MAX_RECALL_ROUNDS = 1  # Ariadne 模块 B：记忆二跳最多 1 次（防无限检索/拖慢回复；与 SEARCH 二跳同上限）
+
+# 记忆二跳结果注入模板（observe；与 _SEARCH_RESULT_TEMPLATE 同位）
+_RECALL_RESULT_TEMPLATE = (
+    "【补充记忆】（你主动调取了更早/更相关的记忆，现在直接结合它们与已有上下文回复；"
+    "不要说'我查了一下记忆'。若与上方记忆冲突，以时间更晚、认知状态为 FACT 的为准）：\n{result}"
+)
 TOOL_TIMEOUT_SEC = 30.0  # 单工具执行超时
 SEARCH_RETRY = 1  # 只读工具失败自动重试次数（方案 5.2）
 
@@ -63,6 +70,11 @@ AGENT_FLAGS = {
     "game_ai_autoplay": True,        # AI 自动回合（关=需手动触发 AI 行动，调试用）
     # ── M1 记忆 P0（2026-08-31，docs/执行方案_记忆与生成_20260831.md S1）──
     "recall_top5": True,       # S1：主路召回出口 5 条（关=回退旧 3 条；rerank 后截断前做类型多样性重排）
+    "memory_temporal_recall": False,  # Ariadne 模块 A（2026-09-03）：时间维度确定性检索路（默认关=零行为变化；开=用户原话解析出时间区间时补一条确定性时间路召回，与语义路合并重排）
+    "memory_recall_second_hop": False,  # Ariadne 模块 B（2026-09-04）：按需二跳联想检索（默认关=只剥离 [RECALL] 标记零行为变化；开=非流式路径镜像 run_search_loop：首轮输出 [RECALL]查询词[/RECALL] → 本地检索 → 注入【补充记忆】→ 再生成 1 次；流式只剥离不中途二跳）
+    "memory_recall_hop_limit": 6,  # Ariadne 模块 B：二跳召回条数（runtime_flag 表只支持 bool 覆盖，本项为硬编码默认值；调小可回退 4）
+    "memory_story_assemble": False,  # Ariadne 模块 C（2026-09-04）：沿链半故事化组装（默认关；链建链器另案——空 index 时即使开 flag 也走原路径逐字节等价；建链器落地后开=成链小块注入）
+    "memory_peak_cutoff": False,  # Ariadne 模块 D（2026-09-04）：自然收敛替代硬截断（默认关；开=按 rerank 分数断档/地板收敛，弃权/弱相关场景条数自然减少；阈值经模块 E v2 标定）
     "recall_diversify": True,  # S1：按类型多样性重排（每类先取 2 条一轮再按原序补齐；关=纯 _ranked[:limit]）
     # ── Life Loop v1.1（2026-08-26；2026-08-27 用户拍板全量开启）──
     "life_loop_enabled": True,            # 主开关：30min 行为决策循环
@@ -135,6 +147,94 @@ async def _execute_search_tool(user_id: int, query: str, run_search: Callable[[s
         execute=lambda payload: asyncio.wait_for(run_search(payload.get("query") or ""), timeout=TOOL_TIMEOUT_SEC),
     )
     return await execute_tool(_exec_spec, {"query": query}, user_id=user_id, character_id=None, session_id=None)
+
+
+async def run_recall_loop(
+    final_state: dict,
+    *,
+    user_id: int,
+    character_id: int,
+    gate: Callable[[], object] | None = None,
+) -> tuple[dict, list[dict]]:
+    """记忆二跳受控循环（Ariadne 模块 B，2026-09-04）：decide → [RECALL] → 本地记忆检索 → observe 注入 → 再决策 1 次。
+
+    - 镜像 run_search_loop（零新框架）；非流式专用——流式路径由调用方仅做标记剥离（与 SEARCH 同策略）；
+    - flag ``memory_recall_second_hop`` 默认关：不检索、不注入、只剥离标记（零行为变化）；
+    - 标记内轻量时间语法「时间=YYYY-MM；查询」→ parse_time_range 解析（失败回退纯语义）；
+    - 查询失败/无命中/gate 不通过 → 剥离标记静默降级（不编造「想起来了」）；二跳触发/命中写 trace 步骤；
+    - gate 支持 sync/async callable（角色 memory_v2_enabled 关闭时不开放二跳）。
+    """
+    import re as _re
+    steps: list[dict] = []
+    try:
+        for _ in range(MAX_RECALL_ROUNDS + 1):  # 最多解析→补查一轮，第二轮只清理
+            clean, q = _actions.extract_recall(final_state.get("ai_response") or "")
+            if not q:
+                final_state["ai_response"] = clean
+                break
+            if not bool(AGENT_FLAGS.get("memory_recall_second_hop", False)):
+                final_state["ai_response"] = clean
+                break
+            if gate is not None:
+                _ok = gate()
+                if asyncio.iscoroutine(_ok):
+                    _ok = await _ok
+                if not _ok:
+                    final_state["ai_response"] = clean
+                    break
+            # 拆「时间=YYYY-MM；查询」轻量语法（解析失败回退纯语义，绝不猜）
+            t_range = None
+            qq = q
+            tm = _re.match(r"\s*时间\s*[=:]\s*([0-9]{4}[-年/.][0-9]{1,2})[；;，,\s]+(.*)", q, _re.S)
+            if tm:
+                from app.memory.time_query import parse_time_range
+                t_range = parse_time_range(tm.group(1))
+                qq = tm.group(2).strip() or q
+            from app.memory import search_memories
+            _hop_limit = int(AGENT_FLAGS.get("memory_recall_hop_limit", 6) or 6)
+            hits = await search_memories(
+                character_id=character_id,
+                query=qq,
+                limit=_hop_limit,
+                time_range=t_range,
+                trace_meta={"user_id": user_id, "trigger": "recall_second_hop"},
+            )
+            steps.append({"action": "RECALL", "query": qq[:80], "n": len(hits)})
+            if not hits:
+                # 没查到：不再二跳，用首轮正文（不编造「想起来了」）
+                final_state["ai_response"] = clean
+                break
+            # 命中即复习（与第一跳一致，24h 防抖在 reinforce_memories 内）；失败不影响注入
+            try:
+                from app.memory.service import reinforce_memories
+                from app.memory.constants import REINFORCE_FACTOR_RETRIEVE, REINFORCE_DEBOUNCE_HOURS
+                await reinforce_memories(
+                    [h["id"] for h in hits],
+                    factor=REINFORCE_FACTOR_RETRIEVE,
+                    debounce_hours=REINFORCE_DEBOUNCE_HOURS,
+                )
+            except Exception:
+                pass
+            from app.memory.format import format_memory_line
+            block = "\n".join(format_memory_line(h, include_speaker=True) for h in hits)
+            final_state["context_messages"] = final_state.get("context_messages") or []
+            final_state["context_messages"] = final_state["context_messages"] + [{
+                "role": "system",
+                "content": _RECALL_RESULT_TEMPLATE.format(result=block),
+            }]
+            final_state["ai_response"] = ""
+            from app.agent.nodes import generate_response as _regen
+            final_state = await _regen(final_state)  # 主模型再生成 1 次（与 SEARCH 二跳同成本）
+            # 下一轮循环开头 extract_recall 负责识别再次调取标记（超上限时兜底剥离，幂等）
+        # 兜底：最后一次剥离（幂等）
+        final_state["ai_response"] = _actions.extract_recall(final_state.get("ai_response") or "")[0]
+    except Exception as e:
+        _logger.warning("Agent recall loop failed char=%s: %s", character_id, e)
+        try:
+            final_state["ai_response"] = _actions.extract_recall(final_state.get("ai_response") or "")[0]
+        except Exception:
+            pass
+    return final_state, steps
 
 
 async def run_search_loop(

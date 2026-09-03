@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from app.agent.context.sections import ContextSection, register_section, TARGET_TEMPLATE
+from app.agent.context.sections import ContextSection, register_section, TARGET_APPEND, TARGET_TEMPLATE
 from app.memory.format import format_memory_line
 
 _logger = logging.getLogger("agent.context.section_memories")
@@ -160,7 +160,25 @@ async def memories_section(state: dict, ctx: dict) -> str:
     # 先取「本轮实际注入」候选：_build_retrieved_memory_lines 内部会再次过滤并标记注入轮次，
     # 若在其后再过滤会把刚标记的记忆排除掉，故在构建行之前先取 candidate（语义一致）。
     candidate = _filter_recently_injected(character_id, retrieved)
-    lines = _build_retrieved_memory_lines(character_id, retrieved)
+    # Ariadne 模块 C（2026-09-04）：沿链半故事化组装（flag memory_story_assemble 默认关）。
+    # 链建链器另案（get_chain_index_for_hits 空实现恒返回 {}）——空 index 走原路径逐字节等价；
+    # 建链器落地后此处自动启用真实组装（行受检索区 token 配额硬裁剪，组装只重排不创作）。
+    chain_index: dict = {}
+    try:
+        from app.agent.loop import AGENT_FLAGS as _af
+        if _af.get("memory_story_assemble", False):
+            from app.memory.story_assemble import get_chain_index_for_hits
+            chain_index = await get_chain_index_for_hits([m.get("id") for m in candidate]) or {}
+    except Exception as _e:
+        _logger.warning("story chain index load failed: %s", _e)
+        chain_index = {}
+    if chain_index:
+        from app.memory.story_assemble import assemble_story_lines
+        lines = assemble_story_lines(candidate, chain_index)
+        if candidate:
+            _mark_memories_injected(character_id, candidate)  # 与原路径的注入轮次标记语义一致
+    else:
+        lines = _build_retrieved_memory_lines(character_id, retrieved)
     # #70 方案A：flag 开时给 Top1 挂 L1 桥接（当日日摘要；「非今天」才挂，今天由 chat_history 分区覆盖；
     # 锚定「本轮实际注入」的 Top1 = N 轮去重后的 candidate[0]（而非原始检索首位），
     # candidate 为空则不挂 L1；失败 warning，不阻塞主链路）。
@@ -208,6 +226,32 @@ register_section(ContextSection(
     quota_tokens=_MEMORIES_QUOTA_TOKENS,
     order=40,
 ))
+async def recall_capability_section(state: dict, ctx: dict) -> list[str]:
+    """recall_capability 分区（Ariadne 模块 B，2026-09-04）：[RECALL] 记忆调取规则声明。
+
+    flag ``memory_recall_second_hop`` 默认关 → 返回空（零行为变化）；开时告知主模型
+    何时允许输出 [RECALL]（给规则而非自由发挥，防凑话式调取）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS as _af
+        if not bool(_af.get("memory_recall_second_hop", False)):
+            return []
+    except Exception:
+        return []
+    return ["【记忆调取规则】系统已在上方提供与本轮最相关的记忆。仅当出现以下情况，才允许输出一行 "
+            "[RECALL]关键词（时间=YYYY-MM，可选）[/RECALL] 来调取更多记忆，且每轮至多一次："
+            "1) 用户提及更早的往事/具体时间段，而上方没有对应时间的记忆；"
+            "2) 需要把两件相关的事联系起来（多跳），上方只出现其中一件；"
+            "3) 上方记忆明显不足以回答，且你确知「以前聊过」。"
+            "不允许为了凑话而调取；调取后直接给最终回复，不要向用户解释检索过程。"]
+
+
+register_section(ContextSection(
+    key="recall_capability",
+    builder=recall_capability_section,
+    target=TARGET_APPEND,
+    order=39,
+))
+
 register_section(ContextSection(
     key="core_memories",
     builder=core_memories_section,

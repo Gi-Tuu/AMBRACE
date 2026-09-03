@@ -24,6 +24,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     bind = op.get_bind()
+    # 3.8 收尾：is_admin 由链尾 bootstrap（6d39454c2517）补列——真远古库此处列未就绪时跳过；
+    # 「独立主账号即管理员」不变量由 init_db 每次启动的一致性自愈（幂等）兜底。
+    insp = sa.inspect(bind)
+    if not insp.has_table("users"):
+        return
+    cols = {c["name"] for c in insp.get_columns("users")}
+    if not {"is_admin", "parent_id"} <= cols:
+        return
     # 独立主账号 → is_admin=1
     bind.execute(sa.text("UPDATE users SET is_admin = 1 WHERE parent_id IS NULL"))
     # 子账号 → is_admin=0

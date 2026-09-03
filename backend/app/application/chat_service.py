@@ -503,6 +503,39 @@ async def _run_agent_core(
     full_text = final_state.get("ai_response") or ""
     _loop_steps: list[dict] = []
 
+    # Ariadne 模块 B（2026-09-04）：记忆二跳（非流式；记忆是内生信息，优先于外网搜索）。
+    # flag memory_recall_second_hop 默认关=循环内只剥离 [RECALL] 标记（零行为变化）；流式路径只剥离不中途二跳
+    #（与 SEARCH/MCP 同策略：流式输出已定型，再决策需额外推送通道，沿用既有延期结论）。
+    if not _is_stream:
+        try:
+            from app.agent import loop as _agent_loop
+
+            async def _recall_gate() -> bool:
+                """角色关了记忆 v2 则不开放二跳（只在出现 [RECALL] 标记后才查询，常态零开销）"""
+                async with async_session_factory() as _gdb:
+                    _gchar = (await _gdb.execute(
+                        select(AICharacter.memory_v2_enabled).where(AICharacter.id == character_id)
+                    )).scalar_one_or_none()
+                return bool(_gchar)
+
+            final_state, _recall_steps = await _agent_loop.run_recall_loop(
+                final_state,
+                user_id=user_id,
+                character_id=character_id,
+                gate=_recall_gate,
+            )
+            if _recall_steps:
+                # 二跳固定至多 1 次再生成（有 RECALL 步骤即 +1 次 LLM 调用，与 SEARCH 计数口径一致）
+                _trace_llm_calls = (_trace_llm_calls or 1) + 1
+        except Exception as e:
+            _logger.warning("AI recall second-hop failed: %s", e)
+            try:
+                from app.agent.actions import extract_recall as _extract_recall_ns
+                final_state["ai_response"] = _extract_recall_ns(final_state.get("ai_response") or "")[0]
+            except Exception:
+                pass
+        full_text = final_state.get("ai_response") or ""
+
     if search_loop:
         # AI 自主搜索（Phase B，2026-08-16）：受控 Loop（decide→execute→observe→条件再决策；最多 2 次搜索/3 次 LLM）
         try:
@@ -548,6 +581,12 @@ async def _run_agent_core(
         # AI 自主搜索（流式路径暂不触发，仅剥离标记兜底，避免打断流式输出）
         try:
             full_text = _extract_search(full_text)[0]
+        except Exception:
+            pass
+        # Ariadne 模块 B：流式路径 [RECALL] 同策略——仅剥离标记兜底
+        try:
+            from app.agent.actions import extract_recall as _extract_recall_s
+            full_text = _extract_recall_s(full_text)[0]
         except Exception:
             pass
 

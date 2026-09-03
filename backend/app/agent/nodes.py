@@ -66,6 +66,14 @@ async def retrieve_memories(state: AgentState) -> AgentState:
         _recall_limit = 5 if _af.get("recall_top5", True) else 3
     except Exception:
         _recall_limit = 5
+    # Ariadne 模块 A（2026-09-03）：用户原话的时间表达 → 确定性时间路（纯函数解析，识别不了=None；
+    # flag memory_temporal_recall 关时检索层忽略该参数，行为与旧版一致）。注意用用户原话解析而非
+    # _query（继续指令场景 _query 是上一条 AI 消息，其时间词指过去语境，不代表本轮用户意图）。
+    try:
+        from app.memory.time_query import parse_time_range
+        _time_range = parse_time_range(state.get("user_message") or "")
+    except Exception:
+        _time_range = None
     memories = await search_memories(
         character_id=state["character_id"],
         query=_query,
@@ -76,6 +84,7 @@ async def retrieve_memories(state: AgentState) -> AgentState:
             "session_id": state.get("session_id"),
             "task_id": state.get("task_id"),
         },
+        time_range=_time_range,
     )
     state["retrieved_memories"] = memories
     if memories:

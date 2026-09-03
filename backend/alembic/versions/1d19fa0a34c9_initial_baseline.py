@@ -1148,7 +1148,10 @@ def upgrade() -> None:
             batch_op.create_index('idx_memories_char_user', ['character_id', 'user_id'], unique=False)
         if not _has_index(bind, 'memories', 'idx_memories_importance'):
             batch_op.create_index('idx_memories_importance', ['importance'], unique=False)
-        if not _has_index(bind, 'memories', 'idx_memories_next_review'):
+        # 3.8 收尾：next_review_at 由链尾 bootstrap（6d39454c2517）补列——真远古库此处列未就绪，
+        # 跳过索引（init_db 每次启动的索引 ensure 会在列在位后幂等补齐）。
+        if (_has_column(bind, 'memories', 'next_review_at')
+                and not _has_index(bind, 'memories', 'idx_memories_next_review')):
             batch_op.create_index('idx_memories_next_review', ['next_review_at'], unique=False)
 
     if not _has_table(bind, 'pet_activities'):
