@@ -1,9 +1,17 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.4.2
-DATE: 2026-09-01
-STATUS: 开源发布版 v3.4.2（渠道插件化 + 全量架构清理）
+VERSION: 3.4.3
+DATE: 2026-09-04
+STATUS: 开源发布版 v3.4.3（游戏 AI 对局保护 + 记忆新特性灰度）
 
 CHANGELOG:
+
+3.4.3 - Release (2026-09-04)
+  - Games: 游戏 AI 局失控保护——狼人杀夜间重复行动卡局修复 + 单局决策上限按平局自动安全收尾（正常局零行为变化）
+  - Memory: B1 主动接触重构四块（主动消息自然化 v2 / 记忆链建链器含存量回填 / 键盘收口 v2 / 跨角色用户事实层，灰度默认关）＋ B2 Ariadne 记忆按需检索 A–H（时间检索 / 二跳联想 / 自然收敛 / 评测基准 / 稳定知识 / 前瞻意图 / .mempak 记忆包）
+  - UI: 聊天键盘割裂收口 v2（逐帧跟手）；功能开关页中文说明补全 + 分组默认折叠
+  - Architecture: 3.5 readiness 启动分级 / 3.7 目录双轨收敛 / 3.8 DDL 纪律 / 3.9 插件安全闸 / 3.10 arbiter 事件源化 / 3.13 插件市场远程索引
+  - Fix: 同期审查与稳定性修复收口
+  - Tests: backend pytest 1453 green；flutter analyze 0 / test 406 green
 
 3.4.2 - Release (2026-09-01)
   - Architecture: 全量重构收尾——历史兼容层/模型薄壳清理、前端页面 feature 化（十页拆分+深拆）、渠道类能力插件化（社交平台发布/评论走统一 ChannelPort）

@@ -154,8 +154,8 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
         for (final g in groups)
           _CollapsibleFlagGroup(
             title: g.title,
-            // 组内任一项被手动改过(source=db)则默认展开，其余默认收起
-            initiallyOpen: g.keys.any((k) => _sources[k] == 'db'),
+            // 2026-09-04：全部默认折叠（不因组内被改过而自动展开），需要时手动点开
+            initiallyOpen: false,
             tiles: [
               for (final k in g.keys)
                 _FlagTileData(

@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
 async def run(character_id: int | None, batch: int) -> int:
     """回填主流程：仅处理 chain_id IS NULL 的可建链记忆；返回处理条数。"""
     # import 须在设置 DATABASE_URL 之后（config 读环境变量决定引擎指向）
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
     from app.agent.loop import AGENT_FLAGS
     from app.db.database import async_session_factory
@@ -52,7 +52,13 @@ async def run(character_id: int | None, batch: int) -> int:
         async with async_session_factory() as db:
             q = (
                 select(Memory)
-                .where(Memory.chain_id.is_(None), Memory.memory_type.in_(tuple(CHAINABLE_TYPES)))
+                .where(
+                    Memory.chain_id.is_(None),
+                    Memory.memory_type.in_(tuple(CHAINABLE_TYPES)),
+                    # 与 _chainable 对齐：已归档 / stale / superseded 不建链，避免空转死循环
+                    Memory.is_archived == False,  # noqa: E712
+                    or_(Memory.status.is_(None), Memory.status.notin_(("stale", "superseded"))),
+                )
                 .order_by(Memory.created_at.asc())
                 .limit(batch)
             )

@@ -96,6 +96,41 @@ class FeatureFlagCatalog {
       'life_share_enabled',
       'preoccupation_enabled',
     ]),
+    FlagGroup('主动消息自然化（B1）', [
+      'proactive_outreach_v2',
+    ]),
+    FlagGroup('记忆检索与注入（实验灰度）', [
+      'memory_temporal_recall',
+      'memory_recall_second_hop',
+      'memory_story_assemble',
+      'memory_peak_cutoff',
+      'memory_chain_builder',
+      'memory_chain_expand',
+      'recall_top5',
+      'recall_diversify',
+      'memory_tiered_decay',
+      'memory_tiered_inject',
+      'memory_trace_debug',
+      'memory_supersede',
+      'marker_recovery',
+      'review_daily_plus',
+    ]),
+    FlagGroup('编纂知识与前瞻意图', [
+      'curated_knowledge',
+      'prospective_intent_enabled',
+      'prospective_intent_trigger',
+    ]),
+    FlagGroup('跨角色用户事实（B1）', [
+      'global_user_facts',
+      'cross_char_fact_sync',
+      'cross_char_fact_projection',
+    ]),
+    FlagGroup('工作记忆（M3）', [
+      'working_state_enabled',
+    ]),
+    FlagGroup('插件与提供商', [
+      'provider_registry',
+    ]),
   ];
 
   // ── 每个键的中文名称 / 两行短说明 / 完整说明 ────────────────────
@@ -259,6 +294,133 @@ class FeatureFlagCatalog {
       title: '心事微澜',
       short_: '让角色偶尔带着一点没说出口的小心事，更有牵挂感。',
       detail: '复用记忆子类型实现；关闭则无此效果。',
+    ),
+
+    // 主动消息自然化（B1）
+    'proactive_outreach_v2': FlagMeta(
+      title: '主动消息自然化',
+      short_: '按闲置时长与素材挑选「接触意图」，告别硬续旧剧情与逐句复读。',
+      detail: '开=run_tick 汇总层按闲置分级/素材前提/避开最近意图选接触意图，消息生成走意图分支（含转场句库、必须抛回问题）；关=意图不参与、走旧链路逐字节等价。建议灰度观察后再全量。',
+    ),
+
+    // 记忆检索与注入（实验灰度）
+    'memory_temporal_recall': FlagMeta(
+      title: '时间维度记忆检索',
+      short_: '用户提到具体时间（昨天/上周/某月）时，补一条确定性时间窗检索。',
+      detail: 'Ariadne 模块A：默认关=零行为变化；开=第一跳解析用户原话时间区间并走时间路召回，与语义检索合并重排。',
+    ),
+    'memory_recall_second_hop': FlagMeta(
+      title: '按需二跳调取记忆（RECALL）',
+      short_: '允许 AI 首轮输出 [RECALL] 标记，补查记忆后再生成一次。',
+      detail: 'Ariadne 模块B：默认关=只剥离标记零行为；开=非流式路径镜像联网搜索循环做一次记忆二跳（流式只剥离）。',
+    ),
+    'memory_story_assemble': FlagMeta(
+      title: '沿链半故事化组装',
+      short_: '把同一记忆链的节点拼成一小段有前因后果的叙述再注入。',
+      detail: 'Ariadne 模块C：默认关；当前为框架合入（链数据就绪后开=成链小块注入，否则与原路径等价）。',
+    ),
+    'memory_peak_cutoff': FlagMeta(
+      title: '记忆自然收敛（去硬截断）',
+      short_: '弱相关记忆整体低于相关度地板时自然收敛，避免硬塞条数。',
+      detail: 'Ariadne 模块D：默认关；阈值经 104 例基准标定（稠密距离地板 0.50）。弃权/弱相关场景条数自然减少。',
+    ),
+    'memory_chain_builder': FlagMeta(
+      title: '记忆链条建链',
+      short_: '事件/洞察类新记忆自动挂到相近的既有记忆链上（零额外 LLM）。',
+      detail: 'B1②：默认关=不挂链（回归保护）；开=写入后异步挂链，相似度 0.82、14 天窗、链长上限 12。',
+    ),
+    'memory_chain_expand': FlagMeta(
+      title: '沿链上下文补全',
+      short_: '检索命中时沿链补最多 2 个相邻节点，前因后果更完整。',
+      detail: 'B1②：默认关；开=扩充节点降权 0.9、受 token 配额与 5 轮去重约束，不绕过预算。',
+    ),
+    'recall_top5': FlagMeta(
+      title: '主路召回 5 条',
+      short_: '记忆主路召回出口由 3 条扩到 5 条（M1-S1）。',
+      detail: '关=回退旧的 3 条出口。',
+    ),
+    'recall_diversify': FlagMeta(
+      title: '类型多样性重排',
+      short_: '召回结果按类型均衡后再截断，避免清一色同一类记忆。',
+      detail: 'S1：每类先取 2 条一轮再按原序补齐；关=纯按分数截断。',
+    ),
+    'memory_tiered_decay': FlagMeta(
+      title: '记忆分层衰减',
+      short_: '高置信持久、低置信加速衰减，跌破阈值转冷归档。',
+      detail: 'M2-S2 灰度开关：默认关=现状逐字节一致；开启前建议先跑分层快照脚本。',
+    ),
+    'memory_tiered_inject': FlagMeta(
+      title: '记忆分层注入',
+      short_: '核心记忆全量、其余记忆精简分层注入，节省 token。',
+      detail: '#70 方案A：开=Top1 完整 + 其余精简注入；关=统一旧链路逐字节一致。',
+    ),
+    'memory_trace_debug': FlagMeta(
+      title: '记忆检索轨迹调试',
+      short_: '把检索的 query/各路命中/排序分数写入 trace，便于排查。',
+      detail: '#70 方案B：只多写观测，不影响回复；关=检索/排序/trace 与现状一致。',
+    ),
+    'memory_supersede': FlagMeta(
+      title: '记忆取代链（supersede）',
+      short_: '新事实取代旧事实后，旧记忆按状态过滤不再注入。',
+      detail: '#70 方案C：默认关（误取代比不取代更伤）；开=SQLite+Chroma 双通道按状态分流。',
+    ),
+    'marker_recovery': FlagMeta(
+      title: '标记截断保底',
+      short_: '记忆标记被上下文截断时，源消息立即走备选通道补提取。',
+      detail: 'M2-S5：写侧查重防重复；关=仅依赖批量补提。',
+    ),
+    'review_daily_plus': FlagMeta(
+      title: '主动复习扩容',
+      short_: '主动复习每日额度由 3 条提高到 4 条（M1-S7）。',
+      detail: '关=回退每日 3 条，90 分钟最小间隔不变。',
+    ),
+
+    // 编纂知识与前瞻意图
+    'curated_knowledge': FlagMeta(
+      title: '编纂知识层（长期稳定事实）',
+      short_: '人格铁律/用户硬档案/关系基线等长期知识确定性注入，不随记忆衰减。',
+      detail: 'Ariadne 模块F：复用 world_facts 权威层加 kind 分治；默认关=零行为；开=constraint 无条件在场 + 其余按核心 TopN 与触发词命中注入。',
+    ),
+    'prospective_intent_enabled': FlagMeta(
+      title: '前瞻意图-写入',
+      short_: '对话中出现「未来约定/某线索时要做的事」时抽取落表（零新增 LLM）。',
+      detail: 'Ariadne 模块G 写入段：默认关；开=extractor 便车多输出 INTENT 行并落 prospective_intents（幂等）。先开此段攒数据。',
+    ),
+    'prospective_intent_trigger': FlagMeta(
+      title: '前瞻意图-触发',
+      short_: '到期承诺由 AI 自然提起；线索命中只在当轮提醒、不主动发消息。',
+      detail: 'Ariadne 模块G 触发段：默认关；开=时间型到期采集进 arbiter + 聊天线索确定性命中注入。建议在写入段观察 2-3 天后开启。',
+    ),
+
+    // 跨角色用户事实（B1）
+    'global_user_facts': FlagMeta(
+      title: '全局用户事实（USER NOW）',
+      short_: '用户级单值事实（位置等）跨角色共享，低活跃角色不再停留在旧信息。',
+      detail: 'B1④ 总开关：默认关；开=GPS/对话写入 user_facts 并注入 [USER NOW] 分区；关=不写不读。',
+    ),
+    'cross_char_fact_sync': FlagMeta(
+      title: '跨角色事实对齐',
+      short_: '构建上下文前/每日把各角色同槽旧值记忆标 stale（复用取代链）。',
+      detail: 'B1④：默认关；开=惰性对齐 + 每日 sweep，不删可追溯；关=不对齐。',
+    ),
+    'cross_char_fact_projection': FlagMeta(
+      title: '事实变化投影',
+      short_: '用户事实变化时在记忆本留一条「跨角色同步」投影（可选）。',
+      detail: 'B1④：默认关；开启后变化投影以 source=global_sync 写入并做查重守卫。',
+    ),
+
+    // 工作记忆（M3）
+    'working_state_enabled': FlagMeta(
+      title: '工作记忆数据积累',
+      short_: '每轮对话后评估当前认知状态并滚动覆盖写入工作记忆。',
+      detail: 'M3-a：已开启做数据积累；注入为 M3-b 另行灰度。关=完全跳过写入。',
+    ),
+
+    // 插件与提供商
+    'provider_registry': FlagMeta(
+      title: '提供商注册口',
+      short_: 'LLM/TTS 经 app/providers 注册口解析实现（插件可注册 Provider）。',
+      detail: 'X3：开=按配置 provider 字段选实现（内置 openai_compatible/dashscope 默认）；关=直连内置实现，与旧链路逐字节一致。',
     ),
   };
 }
