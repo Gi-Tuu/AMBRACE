@@ -38,6 +38,8 @@ BIO: 内容 | 重要程度(1-5)
 STATUS: 内容 | 重要程度(1-5)
 RELATIONSHIP: 内容 | 重要程度(1-5)
 STAGE: 内容 | 重要程度(1-5)
+CURATED: 长期稳定、几乎不会变的信息（用户硬档案/长期偏好/你们关系的稳定基线/你必须遵守的铁律）| 类别(fact/preference_profile/relationship_baseline/constraint) | 重要程度(1-5)
+INTENT: 面向未来的承诺/约定/到某个线索出现时要做的事（如"下周末带你去吃火锅""樱花开了提醒我拍照"）；纯当下事实不要写 | 类型(promise/cue) | 时间窗(YYYY-MM-DD~YYYY-MM-DD，不确定写无) | 线索词(逗号分隔，cue 必填，promise 可写无)
 
 重要程度：1=无关紧要 2=普通 3=重要 4=很重要 5=极其重要
 每条控制在75字以内。
@@ -50,7 +52,9 @@ STAGE（舞台）专用于记录“非真实/临时性”内容，仅两类：
 除此之外的日常对话（包括拥抱、照顾、一起洗澡、亲昵等角色互动）都是真实发生的，按常规类别正常记录，不要归入 STAGE。没有上述两类内容则写“无”。
 用户性别与关系以对话开头的用户画像为准：用户为男性或关系未明确时，禁止用“她”指代用户，一律用“他”或用户昵称。
 额外要求（2026-08-08 收紧）：同一信息在对话中出现多次时只提取一次；只提取用户明确说出或明确发生的事实，禁止推测、脑补或把AI猜测当事实（AI回复中提到的内容不代表用户喜欢/拥有它）；信息不明确时写"无"。
-主语规则（2026-08-18 强化）：USER_INFO/EVENTS/PREFERENCES 条目中，关于用户的信息必须以「用户」开头或明确写出主语（如「用户喜欢喝美式咖啡」「用户说下周出差」「用户上周去了海边」），禁止用裸「我」开头描述用户的事（如「我注意到用户…」「我发现你…」应改写为「用户…」）；角色自己的设定与偏好用「我」开头（如「我喜欢吃辣」）；「我们一起/我们」类共同事件（如「我们一起看了海」）按对话归属：对话中有用户发言 → 归用户（写「用户」主语），仅 AI 单方内容 → 归角色。禁止无主语。"""
+主语规则（2026-08-18 强化）：USER_INFO/EVENTS/PREFERENCES 条目中，关于用户的信息必须以「用户」开头或明确写出主语（如「用户喜欢喝美式咖啡」「用户说下周出差」「用户上周去了海边」），禁止用裸「我」开头描述用户的事（如「我注意到用户…」「我发现你…」应改写为「用户…」）；角色自己的设定与偏好用「我」开头（如「我喜欢吃辣」）；「我们一起/我们」类共同事件（如「我们一起看了海」）按对话归属：对话中有用户发言 → 归用户（写「用户」主语），仅 AI 单方内容 → 归角色。禁止无主语。
+CURATED 只收「长期稳定/可编纂」的信息，一次性情绪、临时状态、短期事件不要写 CURATED；没有写"无"。
+INTENT 只在用户明确表达了"未来要兑现的承诺/约定"或"某线索出现时提醒/做某事"时写一条；没有写"无"。拿不准时间就把时间窗写"无"、并给出≥2个线索词；既无时间又无线索、或只是随口一说的，不要写。"""
 
 from app.memory.dialogue_filter import looks_like_raw_dialogue
 
@@ -101,6 +105,62 @@ def _get_imp(response, key):
                     pass
             return 2
     return 2
+
+
+def _raw_val(response, key):
+    """取 KEY: 整行值（不剥最后一列；INTENT 线索词是末列，不能走 _get_val 的剥离）。无则空串。"""
+    for line in response.split("\n"):
+        if line.strip().startswith(key + ":"):
+            return line.strip()[len(key)+1:].strip()
+    return ""
+
+
+# ── Ariadne 模块F/G：extractor 便车解析（2026-09-04，行协议新增两行输出）──
+def _parse_curated_line(response: str):
+    """CURATED: 内容 | 类别 | N → (content, kind, imp)；无则 None。
+
+    类别白名单：fact/preference_profile/relationship_baseline/constraint（非法回落 fact）。
+    """
+    raw = _get_val(response, "CURATED")
+    if not raw or _is_empty_val(raw):
+        return None
+    parts = [p.strip() for p in raw.split("|")]
+    # _get_val 已剥掉重要度，这里形如 "内容 | 类别"
+    content = parts[0]
+    kind = parts[1] if len(parts) > 1 else "fact"
+    imp = _get_imp(response, "CURATED")
+    if kind not in ("fact", "preference_profile", "relationship_baseline", "constraint"):
+        kind = "fact"
+    return content, kind, imp
+
+
+def _parse_intent_line(response: str):
+    """INTENT: 内容 | 类型 | 时间窗 | 线索 → dict / None。时间窗解析失败返回 None 时间。
+
+    用 _raw_val 取整行（线索词是末列，_get_val 会误剥），四种字段独立解析。
+    """
+    raw = _raw_val(response, "INTENT")
+    if not raw or _is_empty_val(raw):
+        return None
+    parts = [p.strip() for p in raw.split("|")]
+    content = parts[0]
+    if not content or len(content) < 3:
+        return None
+    kind = parts[1] if len(parts) > 1 and parts[1] in ("promise", "cue") else "promise"
+    win = parts[2] if len(parts) > 2 else "无"
+    cues_raw = parts[3] if len(parts) > 3 else "无"
+    due_start = due_end = None
+    if win and win != "无" and "~" in win:
+        try:
+            a, b = [x.strip() for x in win.split("~", 1)]
+            due_start = datetime.strptime(a, "%Y-%m-%d")
+            due_end = datetime.strptime(b, "%Y-%m-%d").replace(hour=23, minute=59)
+        except Exception:
+            due_start = due_end = None
+    cues = []
+    if cues_raw and cues_raw != "无":
+        cues = [c.strip() for c in cues_raw.replace("，", ",").split(",") if c.strip()]
+    return {"content": content, "kind": kind, "due_start": due_start, "due_end": due_end, "cue_terms": cues}
 
 
 def _truncate_sample(text: str, head: int = 100, tail: int = 100) -> str:
@@ -169,6 +229,23 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
 
     saved = 0
 
+    # Ariadne 模块F/G（2026-09-04）：flag 预取（关=零行为变化）+ curated 提前解析（供 PREFERENCES 互斥）。
+    from app.agent.loop import AGENT_FLAGS as _flags
+    _curated_enabled = bool(_flags.get("curated_knowledge", False))
+    _intent_enabled = bool(_flags.get("prospective_intent_enabled", False))
+    _curated_added: set[str] = set()   # 已被 assert_curated 收录的 content（PREFERENCES 互斥用）
+    _curated_item = None               # (content, kind, imp)
+    if _curated_enabled:
+        try:
+            _cu = _parse_curated_line(response)
+            if _cu and not looks_like_raw_dialogue(_cu[0]):
+                _content, _kind, _imp = _cu
+                if _imp >= 4:
+                    _curated_item = (_content, _kind, _imp)
+                    _curated_added.add((_content or "").strip())
+        except Exception as e:
+            _logger.warning("Curated parse failed char=%d: %s", character_id, e)
+
     # 舞台/扮演记忆：分流到 stage_memories（不进入常规记忆库，防止游戏/假话内容污染真实记忆）
     import re as _re
     _game_text = f"{user_msg or ''} {ai_msg or ''}"
@@ -211,6 +288,12 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
                     _logger.info("Stage(game) saved char=%d: %.60s", character_id, val)
                 except Exception as e:
                     _logger.warning("Stage(game) save failed char=%d: %s", character_id, e)
+                continue
+            # Ariadne 模块F（2026-09-04）：被升级为 curated 的长期偏好不再重复进衰减记忆
+            # （一期只对 PREFERENCES 互斥，USER_INFO 保留双写观察后再收紧；flag 关时恒 False 零行为）
+            if key == "PREFERENCES" and _curated_enabled and any(
+                c and (c in val or val in c) for c in _curated_added
+            ):
                 continue
             from app.memory import save_memory
             _spk_type, _spk_id, _epi = _resolve_speaker(val, user_msg, ai_msg, user_id, character_id)
@@ -257,6 +340,38 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
                 c.relationship_summary = _merge_profile_text(c.relationship_summary, rel, 200)
                 await db.commit()
         saved += 1
+
+    # ── Ariadne 模块F：长期编纂知识便车（flag 关=零行为）──
+    if _curated_enabled and _curated_item is not None:
+        try:
+            content, kind, imp = _curated_item
+            from app.events.facts import assert_curated
+            async with async_session_factory() as db:
+                await assert_curated(
+                    db, character_id=character_id, user_id=user_id, kind=kind,
+                    object_value=content, predicate="curated",
+                    source="extractor", source_event_id=str(source_id) if source_id else None,
+                    sources=[{"src": "chat_extract", "message_id": source_id, "imp": imp}],
+                )
+                await db.commit()
+            saved += 1
+        except Exception as e:
+            _logger.warning("Curated extract failed char=%d: %s", character_id, e)
+
+    # ── Ariadne 模块G：前瞻意图便车（零新增 LLM；写入 flag 关=零行为）──
+    if _intent_enabled:
+        try:
+            pi = _parse_intent_line(response)
+            if pi and not looks_like_raw_dialogue(pi["content"]):
+                from app.scheduling.prospective_intent import upsert_intent
+                await upsert_intent(
+                    user_id=user_id, character_id=character_id, content=pi["content"],
+                    kind=pi["kind"], cue_terms=pi["cue_terms"],
+                    due_start=pi["due_start"], due_end=pi["due_end"],
+                    source_message_id=source_id, chat_session_id=session_id,
+                )
+        except Exception as e:
+            _logger.warning("Prospective intent extract failed char=%d: %s", character_id, e)
 
     if saved: _logger.info("Extracted %d for char=%d", saved, character_id)
     # 无论是否有值得记的信息，只要 LLM 返回了有效文本就标记已处理（避免 catchup 重复提取）

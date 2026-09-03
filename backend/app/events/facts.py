@@ -27,6 +27,46 @@ PUBLIC_AUDIENCE = "public"
 MAX_FACTS_PER_CHAR = 12  # 每 (用户, 角色) 活跃事实上限，超出按最旧淘汰
 STATUS_FRESH_HOURS = 12  # status 类瞬时状态注入新鲜度窗口（2026-08-16：防 stale 状态反复注入）
 
+# ── Ariadne 模块F：Curated Knowledge（2026-09-04）──
+KIND_STATUS = "status"                 # 瞬时状态事实（既有语义，默认）
+KIND_FACT = "fact"                     # 稳定事实（用户硬档案/世界设定）
+KIND_CONSTRAINT = "constraint"         # 人格铁律/硬约束（无条件注入）
+KIND_PREFERENCE = "preference_profile" # 长期偏好画像
+KIND_RELATION_BASE = "relationship_baseline"  # 关系基线
+CURATED_KINDS = {KIND_FACT, KIND_CONSTRAINT, KIND_PREFERENCE, KIND_RELATION_BASE}
+TRANSIENT_PREDICATES = {"status", "activity", "location", "mood"}  # 既有瞬时谓词
+
+VERIFY_UNVERIFIED = "unverified"
+VERIFY_MACHINE = "machine-confirmed"
+VERIFY_HUMAN = "human-reviewed"
+
+# 每类 curated 无条件注入的条数上限（确定性供给，不走向量）；constraint 单独放宽
+CURATED_TOPN_PER_KIND = 4
+CURATED_CONSTRAINT_TOPN = 8
+
+# TODO（Ariadne 模块F 一期裁剪，2026-09-04 拍板，不实现）：
+# - kind 作用域列（global/user/character 级）：二期，一期只上 verify_state；
+# - 插件 `knowledge:write` 权限：二期；
+# - lifecycle（draft/stable/deprecated）：二期，一期 verify_state 够用。
+
+
+def _safe_json(s, default=None):
+    """安全解析 JSON 数组（失败回落 default）。"""
+    if default is None:
+        default = []
+    try:
+        v = json.loads(s or "[]")
+        return v if isinstance(v, list) else default
+    except Exception:
+        return default
+
+
+def _naive_utc(dt):
+    """把（可能带 tz 的）datetime 归一化为 naive UTC，供与 _now_naive() 比较。"""
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=None) if dt.tzinfo else dt
+
 
 def _status_fresh(asserted_at: datetime | None, now: datetime) -> bool:
     """status 事实是否在新鲜窗口内（naive UTC 比较；asserted_at 缺失视为不新鲜，保守不注入）"""
@@ -98,8 +138,13 @@ async def assert_fact(
     ttl_minutes: int | None = None,
     author: str = "system",
     is_authoritative: bool = False,
+    kind: str = KIND_STATUS,
 ) -> int | None:
-    """断言世界事实：旧 active 同键事实 supersede → 插入新事实 → 活跃上限淘汰。失败静默返回 None。"""
+    """断言世界事实：旧 active 同键事实 supersede → 插入新事实 → 活跃上限淘汰。失败静默返回 None。
+
+    kind 默认 KIND_STATUS（瞬时状态语义，调用方无需改）；Ariadne 模块F 的 curated 走
+    assert_curated，不经过本函数（不受 12 条上限与 12h 新鲜窗影响）。
+    """
     try:
         now = _now_naive()
         async with async_session_factory() as db:
@@ -137,6 +182,7 @@ async def assert_fact(
                     WorldFact.user_id == user_id,
                     WorldFact.character_id == character_id,
                     WorldFact.status == "active",
+                    WorldFact.kind == KIND_STATUS,  # Ariadne 模块F：curated 不参与 12 条上限淘汰
                 ).order_by(WorldFact.asserted_at.asc())
             )).scalars().all()
             if len(active) > MAX_FACTS_PER_CHAR:
@@ -148,6 +194,127 @@ async def assert_fact(
     except Exception as e:
         _logger.warning("assert_fact failed %s/%s/%s: %s", subject_type, subject_id, predicate, e)
         return None
+
+
+async def assert_curated(
+    db, *, character_id: int, user_id: int, kind: str,
+    object_value: str, predicate: str = "curated",
+    subject_type: str = "character", subject_id: int | None = None,
+    audience: list[str] | None = None, source: str | None = None,
+    source_event_id: str | None = None, confidence: float = 1.0,
+    verify_state: str = VERIFY_MACHINE, sources: list[dict] | None = None,
+    links: list[str] | None = None, stale_after: datetime | None = None,
+    epistemic: str = EPISTEMIC_FACT,
+) -> WorldFact:
+    """写入/更新一条 curated 长期知识（独立于 12 条上限与 12h 新鲜窗）。
+
+    同 (character_id, kind, predicate, object_value) 已存在 active 行 → 更新（不新增重复）。
+    调用方负责 commit（与 assert_fact 一致，不内部提交）。
+    """
+    if kind not in CURATED_KINDS:
+        raise ValueError(f"assert_curated: bad kind {kind!r}")
+    obj = (object_value or "").strip()
+    if not obj:
+        raise ValueError("assert_curated: empty object_value")
+    sid = subject_id if subject_id is not None else character_id
+    aud = audience or ["public"]
+
+    # 同键 active 行 → 更新（保守合并：verify 只升不降，sources 取并集）
+    existing = (await db.execute(
+        select(WorldFact).where(
+            WorldFact.character_id == character_id,
+            WorldFact.status == "active",
+            WorldFact.kind == kind,
+            WorldFact.predicate == predicate,
+        ).order_by(WorldFact.id.desc())
+    )).scalars().all()
+    same = next((r for r in existing if (r.object_value or "").strip() == obj), None)
+    if same is not None:
+        old_src = _safe_json(same.sources_json)
+        merged = old_src + [s for s in (sources or []) if s not in old_src]
+        same.sources_json = json.dumps(merged, ensure_ascii=False)
+        same.links_json = json.dumps(sorted(set(_safe_json(same.links_json)) | set(links or [])), ensure_ascii=False)
+        # 人工确认 > 机器确认 > 未确认（只升不降）
+        rank = {VERIFY_UNVERIFIED: 0, VERIFY_MACHINE: 1, VERIFY_HUMAN: 2}
+        if rank.get(verify_state, 0) > rank.get(same.verify_state, 0):
+            same.verify_state = verify_state
+        if stale_after is not None:
+            same.stale_after = stale_after
+        same.confidence = max(float(same.confidence or 0), float(confidence))
+        db.add(same)
+        return same
+
+    row = WorldFact(
+        user_id=user_id, character_id=character_id,
+        subject_type=subject_type, subject_id=sid,
+        predicate=predicate, object_value=obj[:1000],
+        status="active", confidence=confidence, epistemic_status=epistemic,
+        audience=json.dumps(aud, ensure_ascii=False), author="system",
+        is_authoritative=True, source=source, source_event_id=source_event_id,
+        kind=kind, verify_state=verify_state,
+        sources_json=json.dumps(sources or [], ensure_ascii=False),
+        links_json=json.dumps(links or [], ensure_ascii=False),
+        stale_after=stale_after,
+    )
+    db.add(row)
+    return row
+
+
+async def get_curated_facts(
+    *, character_id: int, user_id: int,
+    viewer_type: str = "character", viewer_id: int | None = None,
+    user_text: str = "",
+) -> dict[str, list[WorldFact]]:
+    """按 kind 返回该角色可见的 curated 知识（确定性，不走向量、不衰减、不计 12 上限）。
+
+    - constraint：无条件取 CURATED_CONSTRAINT_TOPN 条（人格铁律必须在场）；
+    - 其余 kind：每类取 Top N「核心」（confidence/verify 高、asserted 新），
+      若 user_text 命中其 links/内容关键词则优先提到最前（触发键确定性命中）。
+    返回 {kind: [rows]}，供 context section 分块渲染。
+    """
+    async with async_session_factory() as db:
+        rows = (await db.execute(
+            select(WorldFact).where(
+                WorldFact.character_id == character_id,
+                WorldFact.status == "active",
+                WorldFact.kind.in_(tuple(CURATED_KINDS)),
+            ).order_by(WorldFact.kind.asc(), WorldFact.confidence.desc(), WorldFact.asserted_at.desc())
+        )).scalars().all()
+
+    out: dict[str, list] = {k: [] for k in (KIND_CONSTRAINT, KIND_FACT, KIND_PREFERENCE, KIND_RELATION_BASE)}
+    text = (user_text or "").lower()
+    v_id = viewer_id if viewer_id is not None else character_id
+    for r in rows:
+        if not audience_visible(r.audience, viewer_type, v_id):  # 复用既有可见性判定（与 get_active_facts 同口径）
+            continue
+        out.setdefault(r.kind, []).append(r)
+
+    def _trigger_hit(r: WorldFact) -> bool:
+        if not text:
+            return False
+        links = [str(x).lower() for x in _safe_json(r.links_json)]
+        return any(k and k in text for k in links) or (r.object_value or "").lower()[:12] in text
+
+    result: dict[str, list] = {}
+    for kind, items in out.items():
+        cap = CURATED_CONSTRAINT_TOPN if kind == KIND_CONSTRAINT else CURATED_TOPN_PER_KIND
+        hit = [r for r in items if _trigger_hit(r)]
+        rest = [r for r in items if r not in hit]
+        result[kind] = (hit + rest)[:cap]
+    return result
+
+
+def curated_line(r: WorldFact) -> str:
+    """curated 事实 → 注入文本行（constraint 用更强的祈使语气前缀；到期 stale_after 加 [待复核]）。"""
+    now = _now_naive()
+    stale = " [待复核]" if (r.stale_after is not None and _naive_utc(r.stale_after) <= now) else ""
+    prefix = {
+        KIND_CONSTRAINT: "[铁律]",
+        KIND_FACT: "[稳定事实]",
+        KIND_PREFERENCE: "[长期偏好]",
+        KIND_RELATION_BASE: "[关系基线]",
+    }.get(r.kind, "[编纂知识]")
+    return f"- {prefix}{stale} {r.object_value[:160]}"
 
 
 async def get_active_facts(

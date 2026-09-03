@@ -59,6 +59,22 @@ class WerewolfEngine(GameEngine):
              "content": gm_announce("werewolf", "night"), "visibility": "public"},
         ]
 
+    async def load(self, db) -> None:
+        await super().load(db)
+        # FIX（2026-09-04 局失控根因）：state_json 经 json 往返后，以座位号为键的 dict
+        # 键会从 int 变 str（JSON 对象键只能是字符串），而 current_turn_seat/apply/advance
+        # 全部用 int 座位号判断，会导致"永远没行动过"的死循环。load 后统一归一为 int。
+        for _key in ("night_wolf_votes", "votes", "seer_results"):
+            d = self.state.get(_key)
+            if isinstance(d, dict):
+                norm: dict = {}
+                for sk, sv in d.items():
+                    try:
+                        norm[int(sk)] = sv
+                    except (TypeError, ValueError):
+                        norm[sk] = sv
+                self.state[_key] = norm
+
     # ── 角色辅助 ──
     def _wolf_seats(self) -> list[int]:
         return list(self.state.get("wolves") or [])

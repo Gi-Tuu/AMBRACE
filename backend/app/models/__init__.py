@@ -96,6 +96,7 @@ from app.models._all import (
     WeaveCardCharacter,
     WeaveCardMemory,
     WorldFact,
+    ProspectiveIntent,
 )
 
 __all__ = [
@@ -189,4 +190,5 @@ __all__ = [
     "WeaveCardCharacter",
     "WeaveCardMemory",
     "WorldFact",
+    "ProspectiveIntent",
 ]

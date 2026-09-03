@@ -294,6 +294,17 @@ class WorldFact(Base):
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 过期时间（可空=不自动过期）
     asserted_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    # ── Ariadne 模块F：Curated Knowledge（方案A，同表分治 2026-09-04）──
+    # kind：瞬时状态事实='status'（存量语义，参与 12h 新鲜窗与 12 条上限淘汰）；
+    #       长期编纂知识 ∈ {fact,constraint,preference_profile,relationship_baseline}，
+    #       不衰减、不参与 12 条上限、不走 top-k 向量召回。
+    kind: Mapped[str] = mapped_column(String(20), default="status", server_default="status", index=True)
+    verify_state: Mapped[str] = mapped_column(String(12), default="unverified", server_default="unverified")
+    sources_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    stale_after: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    links_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -312,6 +323,39 @@ class MemoryArchive(Base):
     payload: Mapped[str] = mapped_column(Text)  # 原行 JSON 快照
     archived_reason: Mapped[str] = mapped_column(String(30), default="superseded_cold", server_default="superseded_cold")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+# ── prospective_intent.py ──
+# Ariadne 模块G：前瞻意图（未来某时间窗 / 某线索出现时才兑现）。2026-09-04。
+# 与 memories 正交：不进检索/衰减/查重/#70 supersede；状态机独立。
+#   kind：promise=有时间窗的承诺/约定；cue=纯线索（due_* 为空，靠 cue_terms 命中）。
+#   status：pending → matched（线索命中、本轮已提醒）/ discharged（已兑现，即焚）
+#                    / expired（due_end+7 天宽限仍未兑现，留痕）/ cancelled（用户说算了）。
+class ProspectiveIntent(Base):
+    __tablename__ = "prospective_intents"
+    # 与迁移 d4e5f6a7b8c9 完全一致的命名索引（create_all 与 upgrade 结构必须一致）；
+    # 不加逐列 index=True，避免 create_all 额外生成单列索引造成与 upgrade 漂移。
+    __table_args__ = (
+        Index("idx_pis_scan", "status", "due_end"),
+        Index("idx_pis_char", "character_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(String(500), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), default="promise", server_default="promise")
+    cue_terms_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")  # JSON list[str]
+    due_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    due_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(12), default="pending", server_default="pending")
+    source_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chat_session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    discharged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 __all__ = [
     "Memory",
     "DailySummary",
@@ -326,4 +370,5 @@ __all__ = [
     "LorebookEntry",
     "WorldFact",
     "MemoryArchive",
+    "ProspectiveIntent",
 ]

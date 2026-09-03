@@ -25,6 +25,7 @@ EXPECTED_SOURCE_ORDER = [
     "memory_review", "memory_review_contextual", "emotion_care",
     "pet_remind", "ai_care", "ai_adopt", "pet_visit",
     "ai_social", "group_active", "plugin", "unfinished_topic", "life_regression",
+    "prospective_intent",  # Ariadne 模块G（2026-09-04）：末尾追加
 ]
 
 

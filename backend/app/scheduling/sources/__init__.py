@@ -24,6 +24,7 @@ from . import (
     plugin,         # plugin
     unfinished_topic,  # unfinished_topic
     life_regression,   # life_regression
+    prospective_intent,  # prospective_intent（Ariadne 模块G，2026-09-04，末尾追加）
 )
 
 # 源模块以「注册副作用」引入，同时列入 __all__ 表明其为包内公开子模块（ruff F401 友好）
@@ -52,4 +53,5 @@ __all__ = [
     "plugin",
     "unfinished_topic",
     "life_regression",
+    "prospective_intent",
 ]

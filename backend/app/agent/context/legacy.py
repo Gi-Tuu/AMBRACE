@@ -1104,6 +1104,14 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
             state["context_messages"].append({"role": "system", "content": _loc_b})
     elif location_text:
         state["context_messages"].append({"role": "system", "content": location_text})
+    # Ariadne 模块F/G（2026-09-04）：curated 编纂知识层 + prospective cue 线索命中。
+    # flag 关 / 无内容时分区返回空列表 → 追加零条（与现状逐字节一致，零行为变化）。
+    if _sv and "curated_knowledge" in _sv:
+        for _ck_b in _sv["curated_knowledge"]:
+            state["context_messages"].append({"role": "system", "content": _ck_b})
+    if _sv and "prospective_cue" in _sv:
+        for _pc_b in _sv["prospective_cue"]:
+            state["context_messages"].append({"role": "system", "content": _pc_b})
     if _sv and "continue_payload" in _sv:
         for _b in _sv["continue_payload"]:
             state["context_messages"].append({"role": "system", "content": _b})

@@ -109,6 +109,12 @@ AGENT_FLAGS = {
     # memory_supersede 开=superseded/stale 状态激活，双通道（SQLite+Chroma）过滤，读取点按状态分流；
     # 关=所有读取/注入/统计与现状逐字节一致（回归保护）。禁止默认 True（误取代比不取代更伤）。
     "memory_supersede": False,
+    # Ariadne 模块F（2026-09-04）：Curated Knowledge 编纂知识层（world_facts 加 kind 分治 + 确定性注入）
+    "curated_knowledge": False,
+    # Ariadne 模块G（2026-09-04）：前瞻意图。enabled=写入（extractor 便车落表）；
+    # trigger=触发（时间型 Scheduler 提起 + 线索型 context 注入）。两段灰度：先开 enabled 攒数据，再开 trigger。
+    "prospective_intent_enabled": False,
+    "prospective_intent_trigger": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

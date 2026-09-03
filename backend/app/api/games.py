@@ -23,6 +23,11 @@ from app.games import engine_for, list_games
 from app.agent.loop import AGENT_FLAGS
 from app.games.base import GameEngine
 from app.games.ai_player import ai_decide
+from app.games.guardrails import (
+    get_guard, drop_guard, guard_before_llm, guard_after_signature,
+    canonical_signature, mark_forced_advance, GuardMove,
+    MAX_AI_DECISIONS_PER_SESSION,
+)
 from app.models.game import GameSession, GamePlayer, GameEvent
 from app.utils.logger import get_logger
 
@@ -490,6 +495,7 @@ async def abort_session(sid: int, user_id: int = Depends(get_current_user_id)):
         await db.commit()
         _ai_turn_locks.pop(sid, None)  # v3.3.5 审查修复：解散后清理进程内锁
         _game_ws_clients.pop(sid, None)  # #65 审查修复：解散后清理 WS 集合，防内存缓慢增长
+        drop_guard(sid)  # 🛡️ 2026-09-04：解散后清理护栏进程内状态
         return {"ok": True, "status": "aborted"}
 
 
@@ -554,6 +560,7 @@ async def _settle_game(db: AsyncSession, session, engine: GameEngine, winner: st
     await finalize_game(db, session, engine)
     _ai_turn_locks.pop(session.id, None)  # v3.3.5 审查修复：结算后清理进程内锁，防长期运行内存增长
     _game_ws_clients.pop(session.id, None)  # v3.3.6 审查修复：结算后清理 WS 空集合，防缓慢增长
+    drop_guard(session.id)  # 🛡️ 2026-09-04：结算后清理护栏进程内状态
 
 
 # ── 投降后处理：落事件 → 结束结算 或 跳过投降者回合继续（用户/AI 共用）──
@@ -595,7 +602,10 @@ async def _run_surrender(db: AsyncSession, session, engine: GameEngine,
 
 # ── AI 回合调度（幂等可续跑）──
 async def _resume_ai_turns(session_id: int) -> None:
-    """推进所有 AI 回合，直到轮到用户或游戏结束。可被任意入口安全重复调用。"""
+    """推进所有 AI 回合，直到轮到用户或游戏结束。可被任意入口安全重复调用。
+
+    🛡️ 失控保护（引擎无关，进程内）：单局决策总数上限 + 同动作重复三级收敛。
+    """
     lock = _lazy_lock(session_id)
     if lock.locked():
         return
@@ -605,16 +615,41 @@ async def _resume_ai_turns(session_id: int) -> None:
                 while True:
                     session = await db.get(GameSession, session_id)
                     if session is None or session.status != "playing":
+                        drop_guard(session_id)  # 🛡️ 非 playing 退出时清理
                         return
                     engine = engine_for(session.game_type)(session)
                     await engine.load(db)
                     seat = engine.current_turn_seat()
                     if seat is None or not engine.is_ai(seat):
-                        return  # 轮到用户 / 已结束
-                    decision = await ai_decide(engine, seat)
+                        return  # 轮到用户 / 已结束；guard 保留（用户下一步还要累计），终局时才清
+                    guard = get_guard(session_id)
+                    rp = (int(session.round or 0), session.phase or "")
+
+                    # 🛡️ 闸门①：每推进一个 AI 决策都计数（无论是否花 LLM 的钱），
+                    # 再据计数决定：正常调 LLM / 超软上限改走确定性 fallback（不花钱）/ 超硬上限止血。
+                    # 注意：计数必须每轮都 +1，否则软上限后停止计数会永远到不了硬上限。
+                    n_decided = guard.bump_decision()
+                    pre = guard_before_llm(guard)
+                    if pre == GuardMove.ABORT_DRAW:
+                        _logger.error(
+                            "game guard: session=%d AI decisions reached %d (cap %d), settle as draw to stop runaway",
+                            session_id, n_decided, MAX_AI_DECISIONS_PER_SESSION,
+                        )
+                        await _settle_game(db, session, engine, "draw")
+                        await db.commit()
+                        drop_guard(session_id)
+                        return
+                    if pre == GuardMove.FORCE_FALLBACK:
+                        _logger.warning("game guard: session=%d over soft limit(%d), fallback without LLM",
+                                        session_id, n_decided)
+                        decision = await engine.fallback_action(seat)
+                    else:
+                        decision = await ai_decide(engine, seat)  # 仅此分支产生 LLM 计费
+
                     payload = dict(decision.get("payload") or {})
                     if decision.get("content"):
                         payload.setdefault("content", decision["content"])
+
                     # 投降是与具体游戏解耦的通用动作：AI 也可发起，走与用户相同的结算管线
                     if decision.get("action") == "surrender":
                         sbc: list = []
@@ -627,9 +662,61 @@ async def _resume_ai_turns(session_id: int) -> None:
                             await _broadcast_game_event(session_id, ev, session.phase)
                         if out.get("ended"):
                             _logger.info("game ended by ai surrender session=%d", session_id)
+                            drop_guard(session_id)  # 🛡️ 终局清理
                             return
                         await asyncio.sleep(1.2)
                         continue
+
+                    # 🛡️ 闸门②：结构化重复检测（排除 content 自然语言）
+                    sig = canonical_signature(
+                        session.round, session.phase, seat,
+                        decision.get("action", ""), payload,
+                    )
+                    move = guard_after_signature(guard, sig, rp)
+
+                    if move == GuardMove.ABORT_DRAW:
+                        _logger.error(
+                            "game guard: session=%d stuck at rp=%s sig streak=%d, settle as draw",
+                            session_id, rp, guard.streak,
+                        )
+                        await _settle_game(db, session, engine, "draw")
+                        await db.commit()
+                        drop_guard(session_id)
+                        return
+
+                    if move == GuardMove.FORCE_ADVANCE:
+                        # 换目标也救不回来：确定性强推阶段（timeout 内部=fallback+advance），不调 LLM
+                        _logger.warning("game guard: force-advance session=%d rp=%s", session_id, rp)
+                        mark_forced_advance(guard, rp)
+                        adv = await engine.timeout()
+                        broadcast = []
+                        for ev in adv:
+                            await engine.persist_event(db, ev)
+                            await _mirror_to_group(db, engine, session, ev)
+                            broadcast.append(ev)
+                        winner = await engine.check_winner()
+                        if winner:
+                            await _settle_game(db, session, engine, winner)
+                            await db.commit()
+                            for ev in broadcast:
+                                await _broadcast_game_event(session_id, ev, session.phase)
+                            drop_guard(session_id)
+                            return
+                        await engine.persist_state(db)
+                        await db.commit()
+                        for ev in broadcast:
+                            await _broadcast_game_event(session_id, ev, session.phase)
+                        await asyncio.sleep(1.2)
+                        continue
+
+                    if move == GuardMove.FORCE_FALLBACK:
+                        # 丢弃重复的 LLM 决策，强制换一个合法动作（如狼人换刀）
+                        _logger.warning("game guard: force-fallback session=%d rp=%s seat=%d", session_id, rp, seat)
+                        decision = await engine.fallback_action(seat)
+                        payload = dict(decision.get("payload") or {})
+                        if decision.get("content"):
+                            payload.setdefault("content", decision["content"])
+
                     # P0 双重 apply 修复：校验与 apply 统一由调度方负责。先 apply 一次；
                     # result 不 ok 或抛异常时用 fallback_action 生成兜底 decision 再 apply 一次。
                     try:
@@ -667,6 +754,7 @@ async def _resume_ai_turns(session_id: int) -> None:
                         for ev in broadcast:
                             await _broadcast_game_event(session_id, ev, session.phase)
                         _logger.info("game finished session=%d winner=%s", session_id, winner)
+                        drop_guard(session_id)  # 🛡️ 终局清理
                         return
                     await engine.persist_state(db)
                     await db.commit()

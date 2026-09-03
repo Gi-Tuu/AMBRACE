@@ -14,6 +14,7 @@ from app.models.character import ProactiveTriggerLog
 from app.models.character import AICharacter
 from app.scheduling.unfinished_topic import run_unfinished_topic
 from app.scheduling.life_regression import run_life_regression
+from app.scheduling.prospective_intent import run_prospective_due  # Ariadne 模块G（2026-09-04）
 from app.utils.logger import get_logger
 from app.utils.async_tasks import spawn_background
 
@@ -771,7 +772,7 @@ async def _execute(item: dict) -> bool:
             return False
 
     # 夜晚（21 点后至次日 8 点）用户说过"睡觉" → 主动消息类提前关闭（定时承诺除外）
-    if etype in ("birthday", "holiday", "greeting", "proactive_chat", "goodnight", "status_update", "state_trigger", "memory_review", "emotion_care", "pet_remind", "ai_care", "ai_adopt", "plugin", "motivation"):
+    if etype in ("birthday", "holiday", "greeting", "proactive_chat", "goodnight", "status_update", "state_trigger", "memory_review", "emotion_care", "pet_remind", "ai_care", "ai_adopt", "plugin", "motivation", "prospective_intent"):
         _cand = item.get("candidate")
         if _cand:
             try:
@@ -923,6 +924,10 @@ async def _execute(item: dict) -> bool:
     # 对话未收尾跟进：用户抛了话头（下次/改天/有空）→ 自然捡起话题（每日 1 次/角色，collect 内去重）
     if etype == "unfinished_topic":
         return await run_unfinished_topic(candidate)
+
+    # Ariadne 模块G（2026-09-04）：到期承诺自然提起（一次性，兑现即焚；复用主动消息生成与免打扰/额度闸门）
+    if etype == "prospective_intent":
+        return await run_prospective_due(candidate)
 
     # 生日 / 节日 / 认识纪念日
     if etype in ("birthday", "holiday", "anniversary"):

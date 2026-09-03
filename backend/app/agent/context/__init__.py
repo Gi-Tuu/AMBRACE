@@ -28,6 +28,8 @@ from app.agent.context import section_pet as _section_pet  # noqa: F401
 from app.agent.context import section_phone as _section_phone  # noqa: F401
 from app.agent.context import section_world as _section_world  # noqa: F401
 from app.agent.context import section_overlay as _section_overlay  # noqa: F401
+from app.agent.context import section_curated as _section_curated  # noqa: F401  # Ariadne 模块F：触发 curated 分区注册
+from app.agent.context import section_prospective_cue as _section_prospective_cue  # noqa: F401  # Ariadne 模块G：触发 prospective cue 分区注册
 from app.agent.context.section_memories import _bump_memory_round  # P3-5：注册表路径先 bump 再跑 sections
 
 _logger = logging.getLogger("agent.context")
