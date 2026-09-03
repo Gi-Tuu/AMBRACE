@@ -274,25 +274,26 @@ async def pick_recall_chain(character_id: int) -> str | None:
                 .order_by(func.max(Memory.created_at).desc())
                 .limit(20)
             )).all()
-        if not rows:
-            return None
-        # 优先节点数更多的链（关系/情绪链通常节点多、更像"一件事的发展"）
-        rows = sorted(rows, key=lambda r: r.n, reverse=True)
-        for cid, _n, _last in rows:
-            nodes = (await db.execute(
-                select(Memory).where(Memory.chain_id == cid)
-                .order_by(Memory.created_at.asc()).limit(4)
-            )).scalars().all()
-            if any((x.sub_type or "") in RELATION_SUBS for x in nodes):
+            if not rows:
+                return None
+            # 优先节点数更多的链（关系/情绪链通常节点多、更像"一件事的发展"）
+            rows = sorted(rows, key=lambda r: r.n, reverse=True)
+
+            async def _timeline(cid) -> str:
+                nodes = (await db.execute(
+                    select(Memory).where(Memory.chain_id == cid)
+                    .order_by(Memory.created_at.asc()).limit(4)
+                )).scalars().all()
                 return "\n".join(f"[{str(x.created_at)[:10]}] {(x.content or '')[:60]}" for x in nodes)
-        if rows:  # 退而取任一链
-            cid = rows[0][0]
-            nodes = (await db.execute(
-                select(Memory).where(Memory.chain_id == cid)
-                .order_by(Memory.created_at.asc()).limit(4)
-            )).scalars().all()
-            return "\n".join(f"[{str(x.created_at)[:10]}] {(x.content or '')[:60]}" for x in nodes)
-        return None
+
+            for cid, _n, _last in rows:                      # 优先关系/情绪链
+                nodes = (await db.execute(
+                    select(Memory).where(Memory.chain_id == cid)
+                    .order_by(Memory.created_at.asc()).limit(4)
+                )).scalars().all()
+                if any((x.sub_type or "") in RELATION_SUBS for x in nodes):
+                    return await _timeline(cid)
+            return await _timeline(rows[0][0])               # 退而取任一链
     except Exception as _e:
         _logger.warning("pick_recall_chain failed char=%s: %s", character_id, _e)
         return None

@@ -347,8 +347,12 @@ class _ChatScreenState extends State<ChatScreen>
     final views = WidgetsBinding.instance.platformDispatcher.views;
     if (views.isEmpty) return;
     final view = views.first;
-    final inset = view.viewInsets.bottom / view.devicePixelRatio; // 物理像素→逻辑像素
-    _kbLive.value = inset;                                        // ★ 逐帧实时：驱动绘制层 Transform 平滑跟手
+    // F-5 dpr 防御：view 尚未完成初始化时 dpr 可能为 0，除零会得 NaN/Infinity 传入
+    // Transform.translate；此处对 dpr<=0 走 0、对非有限值直接丢弃本帧，避免脏位移。
+    final dpr = view.devicePixelRatio;
+    final inset = dpr > 0 ? view.viewInsets.bottom / dpr : 0.0; // 物理像素→逻辑像素
+    if (!inset.isFinite) return;                                // NaN/Infinity 防御
+    _kbLive.value = inset;                                      // ★ 逐帧实时：驱动绘制层 Transform 平滑跟手
     _kbSettleTimer?.cancel();
     _kbSettleTimer = Timer(const Duration(milliseconds: 120), () {
       if (!mounted) return;

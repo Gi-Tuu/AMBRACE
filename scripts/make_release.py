@@ -31,7 +31,9 @@ EXCLUDE_PREFIX = (".agents/", "flutter.bat",  # 内部工具/技能目录与本�
 
 # 副本内脱敏替换（相对路径 → [(old, new), ...]）
 DESENS = {
-    "flutter_app/lib/screens/home_screen.dart": [("192.168.1.100", "192.168.x.x")],
+    # F-7：lib/screens 目录已删除（重构为 lib/features），改为实际路径；onboarding 服务器地址
+    #       hint 已在源码改为不暴露内网段（http://服务器IP:8000），此键兜底旧的真实内网 IP。
+    "flutter_app/lib/features/auth/onboarding_screen.dart": [("192.168.1.100", "192.168.x.x")],
     "scripts/make_release.py": [
         (r"D:\Codex-Projects\output", "release_output"),
         ("192.168.1.100", "192.168.x.x"),

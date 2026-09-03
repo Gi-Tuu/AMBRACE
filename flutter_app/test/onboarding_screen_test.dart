@@ -107,7 +107,7 @@ void main() {
   testWidgets('输入地址并检测连接成功后进入账号步骤，且可返回', (tester) async {
     await pumpOnboarding(tester);
 
-    await tester.enterText(find.byType(TextField), 'http://192.168.1.100:8000');
+    await tester.enterText(find.byType(TextField), 'http://127.0.0.1:8000');
     await tester.tap(find.text('检测连接'));
     await tester.pumpAndSettle();
 
@@ -126,7 +126,7 @@ void main() {
   testWidgets('注册/登录切换切换账号表单字段', (tester) async {
     await pumpOnboarding(tester);
 
-    await tester.enterText(find.byType(TextField), 'http://192.168.1.100:8000');
+    await tester.enterText(find.byType(TextField), 'http://127.0.0.1:8000');
     await tester.tap(find.text('检测连接'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('下一步'));
@@ -144,7 +144,7 @@ void main() {
   testWidgets('账号登录成功后自动进入创建角色步骤', (tester) async {
     await pumpOnboarding(tester);
 
-    await tester.enterText(find.byType(TextField), 'http://192.168.1.100:8000');
+    await tester.enterText(find.byType(TextField), 'http://127.0.0.1:8000');
     await tester.tap(find.text('检测连接'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('下一步'));

@@ -86,3 +86,8 @@ backend/data/marketplace_cache/
 # 本地备份文件（server_controller 等目录的手工 .bak-* 备份，只留本地不进 git）
 *.bak-*
 *.bak
+
+# 内部 agent 技能库与协作收件箱（不进开源仓；发布包也已排除）
+.agents/
+.agent-inbox/
+scripts/dev_account_activity.py

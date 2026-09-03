@@ -71,7 +71,20 @@ async def retrieve_memories(state: AgentState) -> AgentState:
     # _query（继续指令场景 _query 是上一条 AI 消息，其时间词指过去语境，不代表本轮用户意图）。
     try:
         from app.memory.time_query import parse_time_range
-        _time_range = parse_time_range(state.get("user_message") or "")
+        _raw_msg = state.get("user_message") or ""
+        _time_range = parse_time_range(_raw_msg)
+        # F-3（2026-09-04）：相对时间按用户本地自然日切——仅当时间路 flag 开（检索层才消费
+        # time_range）且用户原话解析出时间区间（含「今天/昨天/本周/这月」等相对时间词）时，
+        # 取当前用户时区偏移重析（tz_offset_min）。用户未设偏移（None）或解析失败 → 回退 UTC，
+        # 与旧行为逐字节一致（安全灰度）；flag 关时零额外 DB 读。绝对年月（2026-07）与「去年」
+        # 按绝对自然月/年，重析结果不变（仅多一次纯函数计算）。
+        if _time_range is not None:
+            from app.agent.loop import AGENT_FLAGS as _tflag
+            if bool(_tflag.get("memory_temporal_recall", False)):
+                from app.utils.usertz import get_user_tz_offset_min
+                _uoff = await get_user_tz_offset_min(state.get("user_id"))
+                if _uoff is not None:
+                    _time_range = parse_time_range(_raw_msg, tz_offset_min=_uoff)
     except Exception:
         _time_range = None
     memories = await search_memories(

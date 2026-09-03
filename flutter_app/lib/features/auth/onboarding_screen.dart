@@ -582,7 +582,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Widget _stepServer(AppLocalizations l10n) {
     return _scroll(children: [
       _title(l10n, l10n.onboardingServerTitle, l10n.onboardingServerDesc),
-      _field(_serverUrlCtrl, label: l10n.serverAddress, hint: 'http://192.168.1.100:8000'),
+      _field(_serverUrlCtrl, label: l10n.serverAddress, hint: 'http://服务器IP:8000'),
       Align(
         alignment: Alignment.centerLeft,
         child: Text(

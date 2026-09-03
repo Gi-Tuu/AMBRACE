@@ -518,11 +518,18 @@ async def _run_agent_core(
                     )).scalar_one_or_none()
                 return bool(_gchar)
 
+            # F-3（2026-09-04）：透传用户时区分钟偏移给二跳解析（「时间=YYYY-MM」绝对自然月
+            # 不受影响）。仅当二跳 flag 开才取偏移（默认关=零额外查询，避免常态下多一次 DB 读）。
+            _recall_tz = None
+            if bool(_agent_loop.AGENT_FLAGS.get("memory_recall_second_hop", False)):
+                from app.utils.usertz import get_user_tz_offset_min
+                _recall_tz = await get_user_tz_offset_min(user_id)
             final_state, _recall_steps = await _agent_loop.run_recall_loop(
                 final_state,
                 user_id=user_id,
                 character_id=character_id,
                 gate=_recall_gate,
+                tz_offset_min=_recall_tz,
             )
             if _recall_steps:
                 # 二跳固定至多 1 次再生成（有 RECALL 步骤即 +1 次 LLM 调用，与 SEARCH 计数口径一致）

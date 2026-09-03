@@ -21,7 +21,7 @@ void main() {
   test('已配置服务器（即使未完成引导）→ 不打扰，needsOnboarding false', () async {
     final s = SettingsProvider();
     await s.load();
-    await s.setServerUrl('http://192.168.1.100:8000');
+    await s.setServerUrl('http://127.0.0.1:8000');
     expect(s.needsOnboarding, isFalse);
   });
 
@@ -31,7 +31,7 @@ void main() {
     await s.setOnboardingDone(true);
     expect(s.onboardingDone, isTrue);
     expect(s.needsOnboarding, isFalse);
-    await s.setServerUrl('http://192.168.1.100:8000');
+    await s.setServerUrl('http://127.0.0.1:8000');
     expect(s.needsOnboarding, isFalse);
   });
 

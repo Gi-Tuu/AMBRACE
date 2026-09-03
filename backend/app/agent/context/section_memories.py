@@ -76,6 +76,27 @@ def _bump_memory_round(character_id: int) -> int:
     return _memory_char_rounds[character_id]
 
 
+async def _user_tz_offset_min(state: dict, ctx: dict) -> int | None:
+    """F-3（2026-09-04）：取用户本地时区分钟偏移（如 480=UTC+8），失败/未设返回 None。
+
+    首选复用 ctx 缓存的 ``_user``（section_world 已加载则零额外查询）；否则回退
+    ``User.timezone_offset_minutes``（纯读、失败静默）。返回 None → 调用方回退 UTC 口径。
+    """
+    try:
+        _u = ctx.get("_user")
+        if _u is not None:
+            _off = getattr(_u, "timezone_offset_minutes", None)
+            if _off is not None:
+                return int(_off)
+        uid = state.get("user_id")
+        if uid:
+            from app.utils.usertz import get_user_tz_offset_min
+            return await get_user_tz_offset_min(uid)
+    except Exception as _e:
+        _logger.warning("user tz resolve failed char=%s: %s", state.get("character_id"), _e)
+    return None
+
+
 def _build_retrieved_memory_lines(character_id: int, retrieved: list) -> list[str]:
     """「和你相关的记忆」检索区行（X-4：N 轮去重 + X-2 说话人标注公共格式化）。
 
@@ -168,8 +189,9 @@ async def memories_section(state: dict, ctx: dict) -> str:
     # 若在其后再过滤会把刚标记的记忆排除掉，故在构建行之前先取 candidate（语义一致）。
     candidate = _filter_recently_injected(character_id, retrieved)
     # Ariadne 模块 C（2026-09-04）：沿链半故事化组装（flag memory_story_assemble 默认关）。
-    # 链建链器另案（get_chain_index_for_hits 空实现恒返回 {}）——空 index 走原路径逐字节等价；
-    # 建链器落地后此处自动启用真实组装（行受检索区 token 配额硬裁剪，组装只重排不创作）。
+    # get_chain_index_for_hits 依赖建链器 flag（memory_chain_builder，默认关，F-1 已实现）；
+    # 建链器 flag 关/无链数据 → 空 index 走原路径逐字节等价；index 非空 → 用 index 反查给候选
+    # 补 chain_id 后走 assemble_story_lines（行受检索区 token 配额硬裁剪，组装只重排不创作）。
     chain_index: dict = {}
     try:
         from app.agent.loop import AGENT_FLAGS as _af
@@ -180,6 +202,13 @@ async def memories_section(state: dict, ctx: dict) -> str:
         _logger.warning("story chain index load failed: %s", _e)
         chain_index = {}
     if chain_index:
+        # F-1（第二处隐性断点）：成块判据需要候选自带 chain_id（assemble_story_lines 以
+        # m["chain_id"] 决定成块），而检索主路 dict 不含该字段——用 index 反查补齐，
+        # 避免改动 retrieve / vector_store 检索主链路。
+        cid_by_id = {n["id"]: n.get("chain_id") for nodes in chain_index.values() for n in nodes}
+        for _m in candidate:
+            if _m.get("id") in cid_by_id:
+                _m["chain_id"] = cid_by_id[_m["id"]]
         from app.memory.story_assemble import assemble_story_lines
         lines = assemble_story_lines(candidate, chain_index)
         if candidate:
@@ -194,14 +223,22 @@ async def memories_section(state: dict, ctx: dict) -> str:
         if AGENT_FLAGS.get("memory_tiered_inject", False) and lines:
             from app.memory.tiers import load_l1_summary
             from app.utils.timeutil import now_naive_utc
+            from datetime import datetime as _dt, timedelta as _td
             _top = candidate[0] if candidate else None
             if _top is not None:
-                date_str = str(_top.get("created_at") or "")[:10]  # YYYY-MM-DD
-                today_str = now_naive_utc().strftime("%Y-%m-%d")
-                if date_str and date_str != today_str:
-                    summary = await load_l1_summary(character_id, date_str)
-                    if summary:
-                        lines.append(f"└ [那天 {date_str}] {summary}")
+                # F-3（2026-09-04）：today 判定按用户本地自然日切，与 time_query 的 tz_offset_min 同口径。
+                # 能拿到用户偏移则把「now」与记忆 created_at 都折回本地再比日期；拿不到保持 UTC（offset=0）。
+                _tz = await _user_tz_offset_min(state, ctx)
+                _off = _tz if _tz is not None else 0
+                _created = _top.get("created_at")
+                if _created is not None:
+                    date_str = (_created + _td(minutes=_off)).strftime("%Y-%m-%d") \
+                        if isinstance(_created, _dt) else str(_created)[:10]  # YYYY-MM-DD
+                    today_str = (now_naive_utc() + _td(minutes=_off)).strftime("%Y-%m-%d")
+                    if date_str and date_str != today_str:
+                        summary = await load_l1_summary(character_id, date_str)
+                        if summary:
+                            lines.append(f"└ [那天 {date_str}] {summary}")
     except Exception as _e:
         _logger.warning("memories L1 bridge failed char=%s: %s", character_id, _e)
     return "\n".join(lines) or "\u6682\u65e0"

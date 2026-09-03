@@ -8,9 +8,9 @@ format_memory_line 层负责——本模块输入为检索命中 dict，输出�
 红线（方案 §5.3）：沿链素材必须来自真实记忆（chain_index 由 get_chain_index_for_hits 提供）；
 组装行受检索区既有 token 配额硬裁剪（section 层），绝不因成链把整链灌爆上下文。
 
-波次边界：记忆链建链器在「主动消息自然接触+记忆链」另案落地——本波 get_chain_index_for_hits
-恒返回 {}（空实现），section 接线在空 index 时走原路径（逐字节等价退化），模块结构/flag/
-单测先行就位，建链器落地后无需改本文件即可启用真实组装。
+接线：get_chain_index_for_hits 已实现——读建链器（memory_chain_builder flag，默认关）写入的
+chain_id，把本轮命中 id 反查回同链节点索引（每链 ≤4、总 ≤8）。建链器 flag 关/元数据缺失时返回 {}，
+section 接线在空 index 时走原路径（逐字节等价退化），绝不因取链失败阻塞主回复。
 """
 from __future__ import annotations
 
@@ -50,10 +50,54 @@ def assemble_story_lines(retrieved: list[dict], chain_index: dict[int, list[dict
 
 
 async def get_chain_index_for_hits(hit_ids: list) -> dict[int, list[dict]]:
-    """命中 id → 同链相邻节点索引（含自身，时间升序）。
+    """命中 id → 同链节点索引（含自身，时间升序）。每链 ≤4、总 ≤8，受检索区 token 配额在外层硬裁剪。
 
-    空实现（波次边界）：记忆链建链器另案（主动消息自然接触+记忆链交接），落地后在此
-    按 chain_id/parent_id 一次性查回同链节点（每链 ≤4、总 ≤8，受检索区 token 配额约束）。
-    现恒返回 {} → section 接线走原路径（逐字节等价退化）。
+    依赖建链器 flag：``memory_chain_builder`` 关（无可靠链数据）时返回 {}，section 走原路径，
+    等价退化（F-1 第一处配套修复）。纯读、失败静默返回 {}，绝不阻塞主回复。
     """
-    return {}
+    ids = [int(x) for x in (hit_ids or []) if x is not None]
+    if not ids:
+        return {}
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        if not AGENT_FLAGS.get("memory_chain_builder", False):
+            return {}
+        from sqlalchemy import select
+        from app.db.database import async_session_factory
+        from app.models.memory import Memory
+
+        PER_CHAIN, TOTAL = 4, 8
+        async with async_session_factory() as db:
+            hit_rows = (await db.execute(
+                select(Memory).where(Memory.id.in_(ids), Memory.chain_id.is_not(None))
+            )).scalars().all()
+            chain_ids = list({m.chain_id for m in hit_rows if m.chain_id})
+            if not chain_ids:
+                return {}
+            nodes = (await db.execute(
+                select(Memory).where(
+                    Memory.chain_id.in_(chain_ids),
+                    Memory.is_archived == False,  # noqa: E712
+                ).order_by(Memory.chain_id.asc(), Memory.created_at.asc())
+            )).scalars().all()
+
+        by_chain: dict[str, list[dict]] = {}
+        for n in nodes:                      # 每链最多 PER_CHAIN 条（已按时间升序）
+            lst = by_chain.setdefault(n.chain_id, [])
+            if len(lst) < PER_CHAIN:
+                lst.append({
+                    "id": n.id, "content": n.content, "type": n.memory_type,
+                    "importance": float(n.importance or 0),
+                    "created_at": n.created_at, "chain_id": n.chain_id,
+                    "epistemic_status": getattr(n, "epistemic_status", None),
+                })
+        out: dict[int, list[dict]] = {}
+        budget = TOTAL
+        for m in hit_rows:                  # 只给"本轮命中"的记忆挂索引，总量 ≤TOTAL
+            chain = by_chain.get(m.chain_id)
+            if chain and budget > 0 and m.id not in out:
+                out[m.id] = chain
+                budget -= len(chain)
+        return out
+    except Exception:
+        return {}

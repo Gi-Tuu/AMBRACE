@@ -97,6 +97,28 @@ def test_classify_slot():
     assert classify_slot(None) is None
 
 
+def test_classify_slot_location_regex_tightened():
+    """F-4：location 归槽正则收紧（宁紧勿松）。
+
+    - 纯趋向词「回到/回来/回了」须带地点宾语；「回到正题/我回来了」不再误归；
+    - 否定/非地点宾语黑名单：正题/话题/问题/从前/以前/过去/状态/心情/梦里/记忆；
+    - 「从…(到|回)」要求右端是地点词，避免「从失败里走出来」误命中；
+    - 同时补不回归的旧正例（城市名/搬回/公司等已明确的地点宾语仍归槽）。
+    """
+    from app.memory.user_facts import classify_slot
+    # 反例（此前会误归槽）
+    assert classify_slot("回到正题") is None
+    assert classify_slot("我们回到话题") is None
+    assert classify_slot("我回来了") is None
+    assert classify_slot("回到过去") is None
+    assert classify_slot("从失败里走出来") is None
+    # 正例（地点宾语明确）
+    assert classify_slot("我回到东莞了") == "location"
+    assert classify_slot("我从长沙回湛江了") == "location"
+    assert classify_slot("用户这个月搬回了老家") == "location"
+    assert classify_slot("我回到了四川老家") == "location"
+
+
 # ── upsert_user_fact ──
 
 def test_upsert_user_fact_records_previous(uf_db):
@@ -129,6 +151,26 @@ def test_upsert_user_fact_unique_slot(uf_db):
     assert len(rows) == 1
     assert rows[0].value == "b"
     assert rows[0].previous_value == "a"
+
+
+def test_upsert_user_fact_refreshes_valid_from(uf_db):
+    """F-2：同槽二次 upsert 后 valid_from 前进（当前值生效起点，与"更新于"文案一致）。
+
+    更新分支此前未刷 valid_from，导致 build_user_now_text 的"更新于"停留在首次建档日。
+    断言用严格 `>`：若未刷新（bug 存在），二次值的时间仍等于首次建档 → 用例失败。
+    """
+    from app.memory.user_facts import upsert_user_fact, get_active_user_facts
+    _seed_user(uf_db, 1)
+    asyncio.run(upsert_user_fact(1, "location", "长沙", source="gps"))
+    first = asyncio.run(get_active_user_facts(1))[0]
+    vf_first = first.valid_from
+    assert vf_first is not None
+    # 第二次 upsert（改值）→ valid_from 必须前进（严格晚于首次建档）
+    asyncio.run(upsert_user_fact(1, "location", "湛江", source="chat"))
+    second = asyncio.run(get_active_user_facts(1))[0]
+    assert second.value == "湛江"
+    assert second.valid_from is not None
+    assert second.valid_from > vf_first
 
 
 def test_upsert_user_fact_empty_value_no_op(uf_db):

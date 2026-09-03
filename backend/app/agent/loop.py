@@ -181,8 +181,13 @@ async def run_recall_loop(
     user_id: int,
     character_id: int,
     gate: Callable[[], object] | None = None,
+    tz_offset_min: int | None = None,
 ) -> tuple[dict, list[dict]]:
     """记忆二跳受控循环（Ariadne 模块 B，2026-09-04）：decide → [RECALL] → 本地记忆检索 → observe 注入 → 再决策 1 次。
+
+    ``tz_offset_min``（F-3，2026-09-04）：用户本地时区分钟偏移，透传给
+    ``parse_time_range``。「时间=YYYY-MM」走绝对自然月不受时区影响（二跳绝对月路径不改），
+    透传仅与主检索相对时间口径保持一致；None 时回退 UTC（零行为变化）。
 
     - 镜像 run_search_loop（零新框架）；非流式专用——流式路径由调用方仅做标记剥离（与 SEARCH 同策略）；
     - flag ``memory_recall_second_hop`` 默认关：不检索、不注入、只剥离标记（零行为变化）；
@@ -214,7 +219,8 @@ async def run_recall_loop(
             tm = _re.match(r"\s*时间\s*[=:]\s*([0-9]{4}[-年/.][0-9]{1,2})[；;，,\s]+(.*)", q, _re.S)
             if tm:
                 from app.memory.time_query import parse_time_range
-                t_range = parse_time_range(tm.group(1))
+                # F-3：透传用户时区偏移（「时间=YYYY-MM」绝对自然月不受影响，与主检索口径一致）
+                t_range = parse_time_range(tm.group(1), tz_offset_min=tz_offset_min)
                 qq = tm.group(2).strip() or q
             from app.memory import search_memories
             _hop_limit = int(AGENT_FLAGS.get("memory_recall_hop_limit", 6) or 6)
