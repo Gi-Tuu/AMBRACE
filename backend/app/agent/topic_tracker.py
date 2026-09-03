@@ -20,6 +20,10 @@ THROTTLE_SECONDS = 300          # 同角色 5 分钟最多提取一次
 MAX_TOPICS_PER_CHAR = 20        # 每角色最多保留话题数（超出按重要度裁剪）
 MAX_INJECT_TOPICS = 3           # 注入上下文最多条数
 
+# B1-③（2026-09-04，方案 §5.2）：主动接触专用「时效」边界——过期话题不再当承接对象
+PROACTIVE_FRESH_TOPIC_HOURS = 72      # 普通话题 72h 后不再主动承接（修复远期话题被反复续）
+PROACTIVE_GOAL_MAX_DAYS = 14          # 目标类放宽到 14 天（目标本就长期），且显式标注为目标跟进
+
 # 候选话题提取模式：动作+目标（限定长度，避免整句误提取）
 _TOPIC_PATTERNS = [
     re.compile(r"(?:我|我们)(?:打算|准备|计划|想)[^，。！？!?,;；]{0,12}(?:参加|去|做|学|写|考|买|开始|尝试|报)([^，。！？!?,;；\s]{2,14})"),
@@ -262,4 +266,46 @@ async def load_active_topics_text(character_id: int, user_id: int) -> str:
         return "\n".join(lines)
     except Exception as e:
         _logger.warning("Active topics load failed: %s", e)
+        return ""
+
+
+async def load_fresh_active_topics_text(character_id: int, user_id: int) -> str:
+    """B1-③（2026-09-04，方案 §5.2）主动接触专用：仅返回时效内的进行中话题。
+
+    与主聊天 ``load_active_topics_text`` 不同，本函数给进行中话题加时效治理：
+    - 普通话题超过 ``PROACTIVE_FRESH_TOPIC_HOURS``（72h）不再主动承接；
+    - 目标类（goal）放宽到 ``PROACTIVE_GOAL_MAX_DAYS``（14 天），仍显式标注为「目标」。
+    过期的不当作承接对象（修复远期话题被反复续的根因）；主聊天原函数不动。
+    仅供主动接触链路调用；任何异常失败静默返回空串。
+    """
+    try:
+        from datetime import datetime, timezone
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(ConversationTopic)
+                .where(
+                    ConversationTopic.character_id == character_id,
+                    ConversationTopic.status == "进行中",
+                )
+                .order_by(ConversationTopic.importance.desc(),
+                          ConversationTopic.last_touched_at.desc())
+            )).scalars().all()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        lines = []
+        for r in rows:
+            last = r.last_touched_at
+            last = last.replace(tzinfo=None) if last and last.tzinfo else last
+            if last is None:
+                continue
+            age_h = (now - last).total_seconds() / 3600.0
+            max_h = PROACTIVE_GOAL_MAX_DAYS * 24 if r.goal else PROACTIVE_FRESH_TOPIC_HOURS
+            if age_h > max_h:
+                continue  # 过期：不主动续
+            when = ("（今天聊到的）" if age_h < 24 else
+                    "（前几天聊到的）" if age_h < 72 else "（你之前定下的目标）")
+            mark = "🎯" if r.goal else ""
+            lines.append(f"- {mark}{r.topic}{when}")
+        return "\n".join(lines[:MAX_INJECT_TOPICS])
+    except Exception as e:
+        _logger.warning("Fresh active topics load failed: %s", e)
         return ""

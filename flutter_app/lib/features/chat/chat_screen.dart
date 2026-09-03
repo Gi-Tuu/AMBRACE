@@ -62,6 +62,10 @@ class _ChatScreenState extends State<ChatScreen>
   final ValueNotifier<double> _kbSettled = ValueNotifier(0);
   Timer? _kbSettleTimer;
 
+  /// 键盘「实时」高度（逻辑像素）。每帧随 didChangeMetrics 更新，驱动绘制层 Transform 跟手；
+  /// _kbSettled 仍为停稳后提交的 padding 值（relayout 仅一次）。
+  final ValueNotifier<double> _kbLive = ValueNotifier(0);
+
   /// 待发送引用（长按气泡-引用设置；发送后清空）
   Map<String, dynamic>? _quote;
 
@@ -325,6 +329,7 @@ class _ChatScreenState extends State<ChatScreen>
     WidgetsBinding.instance.removeObserver(this);
     _kbSettleTimer?.cancel();
     _kbSettled.dispose();
+    _kbLive.dispose();
     appRouteObserver.unsubscribe(this);
     _controller.dispose();
     _inputFocusNode.dispose();
@@ -343,6 +348,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (views.isEmpty) return;
     final view = views.first;
     final inset = view.viewInsets.bottom / view.devicePixelRatio; // 物理像素→逻辑像素
+    _kbLive.value = inset;                                        // ★ 逐帧实时：驱动绘制层 Transform 平滑跟手
     _kbSettleTimer?.cancel();
     _kbSettleTimer = Timer(const Duration(milliseconds: 120), () {
       if (!mounted) return;
@@ -503,21 +509,35 @@ class _ChatScreenState extends State<ChatScreen>
                                 onTap: _exitInputState,
                                 child: Stack(
                                   children: [
-                                    // 顶部让出顶栏、底部让出输入栏（输入栏高度实测）
+                                    // 顶部让出顶栏、底部让出输入栏（输入栏高度实测）。
+                                    // 键盘动画期：内容层用 Transform.translate 吃 live-settled 差值（绘制层合成，不掉帧）；
+                                    // ListView 底部留白只用停稳值（settled），作为 child 仅构建一次——
+                                    // 只有 dock 高度 / 停稳键盘高度变化时才 relayout 一次，动画期间不重排。
                                     AnimatedBuilder(
-                                      animation: Listenable.merge([_dockHeight, _kbSettled]),
-                                      builder: (context, _) {
-                                        final dockH = _dockHeight.value;
-                                        final kb = _kbSettled.value;
+                                      animation: Listenable.merge([_dockHeight, _kbLive, _kbSettled]),
+                                      builder: (context, child) {
+                                        final delta = _kbLive.value - _kbSettled.value; // 动画中>0，停稳=0
                                         return RepaintBoundary(
-                                        child: ListView.builder(
-                                          controller: _scrollController,
-                                          padding: EdgeInsets.only(
-                                            left: AppSpacing.sm,
-                                            right: AppSpacing.sm,
-                                            top: topBarInset,
-                                            bottom: dockH + kb + AppSpacing.sm,
+                                          child: Transform.translate(
+                                            offset: Offset(0, -delta),
+                                            child: child,
                                           ),
+                                        );
+                                      },
+                                      child: AnimatedBuilder(
+                                        animation: Listenable.merge([_dockHeight, _kbSettled]),
+                                        builder: (context, _) {
+                                          final dockH = _dockHeight.value;
+                                          final kb = _kbSettled.value;
+                                          return RepaintBoundary(
+                                            child: ListView.builder(
+                                              controller: _scrollController,
+                                              padding: EdgeInsets.only(
+                                                left: AppSpacing.sm,
+                                                right: AppSpacing.sm,
+                                                top: topBarInset,
+                                                bottom: dockH + kb + AppSpacing.sm,
+                                              ),
                                           itemCount: chat.messages.length,
                                           itemBuilder: (context, index) {
                                             final msg = chat.messages[index];
@@ -586,13 +606,14 @@ class _ChatScreenState extends State<ChatScreen>
                                       );
                                       },
                                     ),
+                                    ),
                                     // B3 回底按钮：不在底部时右下角悬浮；底部抬到输入栏之上（真玻璃浮层）
                                     if (!_nearBottom)
                                       AnimatedBuilder(
-                                        animation: Listenable.merge([_dockHeight, _kbSettled]),
+                                        animation: Listenable.merge([_dockHeight, _kbLive]),
                                         builder: (context, _) => Positioned(
                                           right: 12,
-                                          bottom: _dockHeight.value + _kbSettled.value + 12,
+                                          bottom: _dockHeight.value + _kbLive.value + 12,
                                           child: BackToBottomButton(
                                             hasUnread: _hasUnreadBelow,
                                             onTap: _jumpToBottom,
@@ -612,12 +633,13 @@ class _ChatScreenState extends State<ChatScreen>
                   left: 0,
                   right: 0,
                   bottom: 0,
-                  child: Builder(builder: (context) {
-                    // 键盘升降只重建输入栏这一小片（viewInsetsOf 局部订阅），不波及消息列表
-                    final kbInset = MediaQuery.viewInsetsOf(context).bottom;
-                    return Padding(
-                      padding: EdgeInsets.only(bottom: kbInset),
-                      child: MeasureSize(
+                  child: AnimatedBuilder(
+                    animation: _kbLive,
+                    builder: (context, dockChild) => Padding(
+                      padding: EdgeInsets.only(bottom: _kbLive.value),
+                      child: dockChild,
+                    ),
+                    child: MeasureSize(
                     onChange: (size) {
                       final h = size.height;
                       if ((_dockHeight.value - h).abs() > 0.5) {
@@ -814,9 +836,7 @@ class _ChatScreenState extends State<ChatScreen>
                   );
                     }),
                   ),
-                );
-              },
-              ),
+                ),
                 ),
               ],
             ),

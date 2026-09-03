@@ -97,6 +97,14 @@ async def update_user_location(data: UserLocationUpdate, user_id: int = Depends(
                         if _u and _u.location_lat == lat and _u.location_lng == lng:
                             _u.location_city = city
                             await _db.commit()
+                            # §20（2026-09-04）：GPS 反查城市落定后 upsert 用户级事实源（零 LLM，flag 开才写）
+                            try:
+                                from app.agent.loop import AGENT_FLAGS as _af
+                                if bool(_af.get("global_user_facts", False)):
+                                    from app.memory.user_facts import upsert_user_fact
+                                    await upsert_user_fact(user_id, "location", city, source="gps")
+                            except Exception:
+                                pass
                 except Exception:
                     pass
 
@@ -123,7 +131,18 @@ async def update_user_location(data: UserLocationUpdate, user_id: int = Depends(
             user.location_city = None
         await db.commit()
         await db.refresh(user)
-    return _to_response(user)
+        _final_city = user.location_city or user.user_location
+        # §20（2026-09-04）：跨角色用户事实——GPS/自定义城市落定后 upsert 用户级事实源
+        # （flag global_user_facts 开才写；零 LLM；失败静默）。放 commit 之后，避免与 DB 事务耦合。
+        if _final_city:
+            try:
+                from app.agent.loop import AGENT_FLAGS as _af
+                if bool(_af.get("global_user_facts", False)):
+                    from app.memory.user_facts import upsert_user_fact
+                    await upsert_user_fact(user_id, "location", _final_city, source="gps")
+            except Exception:
+                pass
+        return _to_response(user)
 
 
 @router.get("/location/weather")

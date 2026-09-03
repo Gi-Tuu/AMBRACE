@@ -74,6 +74,16 @@ AGENT_FLAGS = {
     "memory_recall_second_hop": False,  # Ariadne 模块 B（2026-09-04）：按需二跳联想检索（默认关=只剥离 [RECALL] 标记零行为变化；开=非流式路径镜像 run_search_loop：首轮输出 [RECALL]查询词[/RECALL] → 本地检索 → 注入【补充记忆】→ 再生成 1 次；流式只剥离不中途二跳）
     "memory_recall_hop_limit": 6,  # Ariadne 模块 B：二跳召回条数（runtime_flag 表只支持 bool 覆盖，本项为硬编码默认值；调小可回退 4）
     "memory_story_assemble": False,  # Ariadne 模块 C（2026-09-04）：沿链半故事化组装（默认关；链建链器另案——空 index 时即使开 flag 也走原路径逐字节等价；建链器落地后开=成链小块注入）
+    # ── B1-② 记忆链条建链器（2026-09-04，方案 §10-§18，阶段 C0-C5）──
+    # memory_chain_builder 开=写入后异步挂链（chain_id/parent_id/node_type，零额外 LLM，
+    #   复用 save_memory 已算 embedding，只对 event/insight）；关=不挂链（回归保护）。
+    # memory_chain_expand 开=检索命中沿链补≤2 相邻节点（降权 0.9、受 token 配额与 5 轮去重约束）；关=原注入。
+    # proactive_outreach_v2（B1-③，2026-09-04，方案 §1-§9）=主动消息自然化总开关——
+    #   开=run_tick 汇总层按「闲置分级+素材前提+避开最近意图」选接触意图，message_generator 走意图分支；
+    #   关=意图不参与、走旧链路逐字节等价（默认关，可灰度/一键回退）。
+    "memory_chain_builder": False,
+    "memory_chain_expand": False,
+    "proactive_outreach_v2": False,
     "memory_peak_cutoff": False,  # Ariadne 模块 D（2026-09-04）：自然收敛替代硬截断（默认关；开=按 rerank 分数断档/地板收敛，弃权/弱相关场景条数自然减少；阈值经模块 E v2 标定）
     "recall_diversify": True,  # S1：按类型多样性重排（每类先取 2 条一轮再按原序补齐；关=纯 _ranked[:limit]）
     # ── Life Loop v1.1（2026-08-26；2026-08-27 用户拍板全量开启）──
@@ -115,6 +125,16 @@ AGENT_FLAGS = {
     # trigger=触发（时间型 Scheduler 提起 + 线索型 context 注入）。两段灰度：先开 enabled 攒数据，再开 trigger。
     "prospective_intent_enabled": False,
     "prospective_intent_trigger": False,
+    # ── §20 跨角色用户事实（2026-09-04，默认关=零行为变化；bool 可 runtime 热更）──
+    # global_user_facts：用户级可变事实层总开关——开=GPS/跨角色事实写入 + [USER NOW] 注入分区；
+    #   关=不写/不读 user_facts（抽取出原路径、注入空）。
+    "global_user_facts": False,
+    # cross_char_fact_sync：跨角色对齐——开=角色构建上下文前惰性对齐 + 每日 sweep，把同槽旧值
+    #   per-char 记忆标 stale（复用 #70，不删可追溯）；关=不对齐。
+    "cross_char_fact_sync": False,
+    # cross_char_fact_projection：变化投影——开=对齐时按模板投影一条 global_sync 记忆进记忆本
+    #   （零 LLM，skip_dedup）；关=只标 stale + 靠 [USER NOW] 注入（默认推荐关）。
+    "cross_char_fact_projection": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

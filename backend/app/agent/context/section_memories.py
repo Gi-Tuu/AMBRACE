@@ -157,6 +157,13 @@ async def memories_section(state: dict, ctx: dict) -> str:
     """memories 分区：检索区记忆行（template 槽；无检索结果缺省「暂无」）。"""
     character_id = state["character_id"]
     retrieved = state.get("retrieved_memories", [])
+    # B1-② §14 沿链反哺（flag memory_chain_expand 默认关 = 原样返回）：先扩充检索候选再进
+    # N 轮去重，使扩展节点也参与既有 5 轮去重与 token 配额；与本函数既有 N 轮去重正交。
+    try:
+        from app.memory.chain_builder import maybe_expand_chain
+        retrieved = await maybe_expand_chain(character_id, retrieved)
+    except Exception as _e:
+        _logger.warning("memory chain expand failed char=%s: %s", character_id, _e)
     # 先取「本轮实际注入」候选：_build_retrieved_memory_lines 内部会再次过滤并标记注入轮次，
     # 若在其后再过滤会把刚标记的记忆排除掉，故在构建行之前先取 candidate（语义一致）。
     candidate = _filter_recently_injected(character_id, retrieved)

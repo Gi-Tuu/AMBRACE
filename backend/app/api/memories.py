@@ -92,6 +92,39 @@ async def get_memory(
         )
 
 
+@router.get("/{memory_id}/chain")
+async def get_memory_chain(
+    memory_id: int,
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """记忆链条（B1-② §13.6，2026-09-04）：只读返回该记忆所在链的时间线（root→branch…，时间升序）。
+
+    当前节点标 ``is_current=true``；归属校验沿用 ``_get_owned_memory``（404 防越权）；
+    链为空（未建链/孤立点）返回仅自身。与 ``DELETE /{memory_id}/tree`` 的级联语义一致（都按 parent_id/chain_id）。
+    """
+    if await _get_owned_memory(memory_id, user_id) is None:
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
+    from app.memory.chain_builder import get_chain_nodes
+    nodes = await get_chain_nodes(memory_id)
+    return {"status": "ok", "chain": [
+        {
+            "id": x.id,
+            "content": x.content,
+            "memory_type": x.memory_type,
+            "sub_type": x.sub_type,
+            "node_type": x.node_type,
+            "parent_id": x.parent_id,
+            "chain_id": x.chain_id,
+            "created_at": str(x.created_at)[:19] if x.created_at else None,
+            "is_current": x.id == memory_id,
+            "is_archived": x.is_archived,
+        }
+        for x in nodes
+        if x.user_id == user_id
+    ]}
+
+
 @router.patch("/{memory_id}/content")
 async def update_memory_content(
     memory_id: int,

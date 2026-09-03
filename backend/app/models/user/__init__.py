@@ -8,7 +8,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -135,6 +135,34 @@ class AccountInvite(Base):
     used_by: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 兑换者 user_id；NULL=未使用
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+# ── user_fact.py ──
+# 用户级、跨角色共享的「可变近况」单值事实槽（§20，2026-09-04 落地）。
+# 与 per-character Memory / world_facts 的区别（避免平行事实源）：
+# - memories 是「某角色视角下」的历史记忆（含主观看法），按 (user_id, character_id) 隔离；
+# - world_facts（P1-3 权威层）按 (user_id, character_id) 隔离、描述「角色视角的世界状态」；
+# - user_facts 是「用户客观当前状态」的**用户级唯一事实源**（跨角色共享），只放可变单值槽
+#   （location/job/relationship/living/goal_state/health），新值取代旧值并记录 previous_value。
+#   角色对用户的主观看法/情感仍归 per-character Memory/insight（符合 Knowledge Scope，不跨角色）。
+class GlobalUserFact(Base):
+    __tablename__ = "user_facts"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    slot: Mapped[str] = mapped_column(String(30), nullable=False)  # location/job/relationship/living/goal_state/health/...
+    value: Mapped[str] = mapped_column(String(200), nullable=False)  # 当前值（归一化短文本）
+    previous_value: Mapped[str | None] = mapped_column(String(200), nullable=True)  # 上一值（供旧记忆失效匹配）
+    source: Mapped[str | None] = mapped_column(String(20), nullable=True)  # chat/gps/manual/global_sync
+    epistemic_status: Mapped[str] = mapped_column(String(12), default="FACT", server_default="FACT")
+    confidence: Mapped[float] = mapped_column(Float, default=1.0, server_default="1.0")
+    valid_from: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "slot", name="uq_user_slot"),
+    )
+
+
 __all__ = [
     "User",
     "UserState",
@@ -142,4 +170,5 @@ __all__ = [
     "PrivacyRequest",
     "BrowserSnapshot",
     "AccountInvite",
+    "GlobalUserFact",
 ]

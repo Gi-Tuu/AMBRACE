@@ -23,6 +23,31 @@ from app.domain.proactivity.decision import (  # noqa: F401
     _motivation_score,
     scheduler_gray_character,
 )
+# B1-③（2026-09-04）：主动接触意图层（闲置分级 + 意图选择，方案 §1-§9）纯模块
+from app.domain.proactivity.outreach import (  # noqa: F401
+    ALL_INTENTS,
+    CHECK_IN,
+    CONTINUE_MAX_HOURS,
+    COLD_ALLOWED,
+    FOLLOW_UP,
+    INTEREST_HOOK,
+    MEMORY_QUERY_BY_INTENT,
+    OutreachMaterials,
+    OutreachPlan,
+    RECALL_SHARED,
+    RECENT_AVOID,
+    RECENT_MAX_HOURS,
+    SHARE_SELF,
+    STALE_MAX_HOURS,
+    TIER_COLD,
+    TIER_CONTINUE,
+    TIER_RECENT,
+    TIER_STALE,
+    TIER_WEIGHTS,
+    _candidates,
+    select_outreach,
+    staleness_tier,
+)
 
 __all__ = [
     "MAX_PER_HOUR", "MIN_PROACTIVE_INTERVAL_MINUTES", "USER_ACTIVE_MINUTES",
@@ -31,4 +56,11 @@ __all__ = [
     "MOTIVATION_MAX_PER_DAY", "CONTEXT_SORT_BONUS",
     "_motivation_score", "_apply_reflection_bonus", "_context_sort_bonus",
     "_in_dnd_window", "scheduler_gray_character",
+    # B1-③ outreach
+    "TIER_CONTINUE", "TIER_RECENT", "TIER_STALE", "TIER_COLD",
+    "CONTINUE_MAX_HOURS", "RECENT_MAX_HOURS", "STALE_MAX_HOURS",
+    "CHECK_IN", "SHARE_SELF", "RECALL_SHARED", "FOLLOW_UP", "INTEREST_HOOK",
+    "ALL_INTENTS", "TIER_WEIGHTS", "COLD_ALLOWED", "RECENT_AVOID", "MEMORY_QUERY_BY_INTENT",
+    "OutreachMaterials", "OutreachPlan",
+    "staleness_tier", "select_outreach", "_candidates",
 ]

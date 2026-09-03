@@ -5,6 +5,17 @@ from datetime import datetime, timezone, timedelta
 from app.utils.logger import get_logger
 from app.agent.llm_client import chat_completion, load_character_reasoning_level
 from app.memory.format import format_memory_line  # X-1（2026-08-18）：记忆注入行公共格式化
+# B1-③（2026-09-04，方案 §5.3）：主动接触意图层常量——分级/意图/转场句库，纯常量不入库
+from app.domain.proactivity.outreach import (
+    TIER_RECENT,
+    TIER_STALE,
+    TIER_COLD,
+    CHECK_IN,
+    SHARE_SELF,
+    RECALL_SHARED,
+    FOLLOW_UP,
+    INTEREST_HOOK,
+)
 
 _logger = get_logger("scheduler.message_generator")
 
@@ -70,6 +81,47 @@ _TEMPLATE_PHRASES = (
     "今天天气", "跟你说个", "跟你说", "你知道吗", "我想你",
     "你在干嘛", "在忙吗", "最近怎么样", "分享一下", "记得吗", "猜猜",
 )
+
+# ── B1-③（方案 §5.3c）：分级 + 意图引导块 + 多样化转场句库（仅 outreach_intent 非空时启用）──
+_TIER_GUIDE = {
+    TIER_RECENT: "距上次聊天已过去几个小时：像朋友重新起头，可轻点一下上文，但别假设你们还停在原地。",
+    TIER_STALE:  "已经一两天没聊：不要接着旧场景往下演；如要提旧事，只能用回忆口吻并点明是以前的事，主体是开启新的交流。",
+    TIER_COLD:   "已经很久没聊：默认全新发起，不要主动续旧话题或旧剧情；除非是用户未兑现的承诺，否则不提旧场景。",
+}
+_TIER_GUIDE["continue"] = (
+    "你们刚聊过不久：可以顺着最后话题，但不要重演已经结束的场景。"
+)
+_INTENT_GUIDE = {
+    CHECK_IN:      "这次是自然关心：结合当前时段问一句他此刻的状态（吃饭/在忙/今天过得怎样），别客套、别查岗。",
+    SHARE_SELF:    "这次先讲一件你此刻正在经历的生活小事（1-2句，有细节有感受），然后自然把话头抛给他。",
+    RECALL_SHARED: "这次从你记得的、关于他的一件真事切入（必须带时间感，如'我记得你前几天说过…'），由这件事引出一个轻松问题。",
+    FOLLOW_UP:     "这次跟进他真正提过且还没了结的计划/约定，只问进展，一句话，不催。",
+    INTEREST_HOOK: "这次围绕他的兴趣/喜好开一个新话题，给一个容易接的话头（二选一式小提问也可以）。",
+}
+# 多样化转场/回忆开头（每次注入两三个并要求换着用，根治"对了，你上次说的"单一模板）
+_OPENER_BANK = {
+    RECALL_SHARED: ["我突然想起你之前说的…", "前阵子你提到…我刚又想起来了", "对了，记得你那时候…", "你之前不是说…嘛"],
+    CHECK_IN:      ["", "这会儿在忙啥呢", "突然想问问你", "话说"],
+    INTEREST_HOOK: ["刚看到个东西就想到你", "你不是一直喜欢…嘛", "好奇问下", ""],
+    FOLLOW_UP:     ["你之前说的那个…后来怎么样了", "对了，你打算…的事推进了吗", "想起你之前在弄的…"],
+    SHARE_SELF:    ["我刚…", "跟你说个小事", "我这边刚刚…", ""],
+}
+
+# 轻量"抛回问题"后检（方案 §5.3d）：中文问号/疑问助词判定是否留了话头
+_INVITATION_RE = re.compile(r"(吗|嘛|呢|怎么样|如何|要不要|是不是|有没有|哪个|还是)")
+
+
+def _has_invitation(text: str) -> bool:
+    """是否在消息里留了可接的话头/问题（纯函数，可单测）。
+
+    命中任意一个中文问号/英文问号，或含常见疑问助词（吗/嘛/呢/怎么样…）即判定有邀请；
+    纯陈述句返回 False。
+    """
+    if not text:
+        return False
+    if "？" in text or "?" in text:
+        return True
+    return bool(_INVITATION_RE.search(text))
 
 
 def _naturalness_flag() -> bool:
@@ -263,6 +315,8 @@ async def generate_proactive_event(
     idle_minutes: int | None = None,
     behavior: str = "status_update",
     return_reasoning: bool = False,
+    outreach_intent: str | None = None,   # B1-③：本次接触意图（None=旧链路，flag 关零行为）
+    outreach_plan: dict | None = None,    # B1-③：OutreachPlan 序列化（素材开关/检索 query/必须抛回）
 ) -> list[str] | tuple[list[str], str]:
     """生成"一次事件"的消息文本，并按自然语句切成多段（按顺序逐条发送）。
 
@@ -272,6 +326,9 @@ async def generate_proactive_event(
     """
     scenario = _EVENT_DESC.get(behavior, _EVENT_DESC["default"])
     idle_desc = _describe_idle(idle_minutes, 2)
+    # B1-③（方案 §5.3e）：主动接触补"双向"导向（仅 outreach 新链路启用，flag 关零变化）
+    if outreach_intent:
+        scenario += " 并自然地把话题引向好友/向好友抛一个小问题，不要只自顾自说。"
 
     # G-P2-2（2026-08-18）：前置查询并行化——画像/persona/天气/查岗/记忆检索/反思 互不依赖，
     # 一次 asyncio.gather 并发执行（原串行约 10 次 DB/外部调用；逐项 try/except 异常隔离，
@@ -288,17 +345,42 @@ async def generate_proactive_event(
     async def _load_persona_extra() -> str:
         if not character_id:
             return ""
+        if not outreach_intent:
+            # ── 旧链路：保持原样 ──
+            try:
+                from app.agent.persona import assemble_persona_context
+                _p = await assemble_persona_context(character_id, user_id or 1)
+                if not _p.get("cognitive"):
+                    return ""
+                _parts = []
+                if _p.get("relationship_state"):
+                    _parts.append(_p["relationship_state"])
+                if _p.get("active_topics"):
+                    _parts.append("你们进行中的话题（优先承接进行中的话题，别生硬）：\n" + _p["active_topics"])
+                if _p.get("storyline_status") and _p["storyline_status"] != "无":
+                    _parts.append(_p["storyline_status"])
+                return "\n".join(_parts) if _parts else ""
+            except Exception:
+                return ""
+        # ── B1-③ 新链路：按意图收敛素材（不再无差别注入剧情/进行中话题）──
         try:
             from app.agent.persona import assemble_persona_context
             _p = await assemble_persona_context(character_id, user_id or 1)
-            if not _p.get("cognitive"):
+            if not _p:
                 return ""
+            _allow_topics = bool((outreach_plan or {}).get("allow_active_topics"))
+            _allow_storyline = bool((outreach_plan or {}).get("allow_storyline"))
             _parts = []
             if _p.get("relationship_state"):
                 _parts.append(_p["relationship_state"])
-            if _p.get("active_topics"):
-                _parts.append("你们进行中的话题（优先承接进行中的话题，别生硬）：\n" + _p["active_topics"])
-            if _p.get("storyline_status") and _p["storyline_status"] != "无":
+            # 仅 FOLLOW_UP 且话题新鲜才注入"进行中话题"，措辞从"优先承接"改为"可自然问进展"
+            if _allow_topics:
+                from app.agent.topic_tracker import load_fresh_active_topics_text
+                _t = await load_fresh_active_topics_text(character_id, user_id or 1)
+                if _t:
+                    _parts.append("用户之前提过、且仍在时效内的事（可自然问一句进展，别生硬）：\n" + _t)
+            # 仅"分享自己 + 刚分开"才带 AI 剧情状态；其余主动接触不背剧情
+            if _allow_storyline and _p.get("storyline_status") and _p["storyline_status"] != "无":
                 _parts.append(_p["storyline_status"])
             return "\n".join(_parts) if _parts else ""
         except Exception:
@@ -347,14 +429,56 @@ async def generate_proactive_event(
     async def _load_recent_memories() -> str:
         if not character_id:
             return ""
+        if not outreach_intent:
+            # ── 旧链路：保持原样 ──
+            try:
+                # B1-② C5（方案 §15）：RECALL_SHARED 改"捞一条链"——依赖第一部分 proactive_outreach_v2
+                # + 建链器 memory_chain_builder 都已就绪时，优先用 pick_recall_chain 的链时间线作为回忆
+                # 素材（时间锚点天然清晰、有起承）；两 flag 默认关 → 走原语义检索，行为与现状逐字节一致。
+                from app.agent.loop import AGENT_FLAGS as _af
+                if _af.get("proactive_outreach_v2", False) and _af.get("memory_chain_builder", False):
+                    from app.memory.chain_builder import pick_recall_chain
+                    _chain = await pick_recall_chain(character_id)
+                    if _chain:
+                        return _chain
+                from app.memory import search_memories
+                mems = await search_memories(character_id, query=current_status or "最近发生的事情", limit=4)
+                _mem_lines = []
+                for _m in mems:
+                    # X-1（2026-08-18）：与主链路共用公共格式化函数（max_len=80）；
+                    # 仅传既有字段（content/created_at/epistemic_status），不传 reliability_score/
+                    # contradiction_count，避免引入主链路才有的 UNVERIFIED/纠正后缀（行为等价替换）
+                    _line = format_memory_line(
+                        {
+                            "content": _m.get("content") or "",
+                            "created_at": _m.get("created_at"),
+                            "epistemic_status": _m.get("epistemic_status"),
+                        },
+                        max_len=80,
+                    )
+                    if _line:
+                        _mem_lines.append(_line)
+                return "\n".join(_mem_lines) if _mem_lines else ""
+            except Exception:
+                return ""
+        # ── B1-③ 新链路：按意图检索 query（用户导向，而非 AI 状态）──
         try:
+            _mem_query = (outreach_plan or {}).get("memory_query") or ""
+            if not _mem_query:  # SHARE_SELF 等不需要检索用户记忆
+                return ""
+            # RECALL_SHARED 捞链衔接：链存在时用链（时间锚点清晰）、无链回退语义检索
+            if outreach_intent == RECALL_SHARED:
+                from app.agent.loop import AGENT_FLAGS as _af
+                if _af.get("memory_chain_builder", False):
+                    from app.memory.chain_builder import pick_recall_chain
+                    _chain = await pick_recall_chain(character_id)
+                    if _chain:
+                        return _chain
             from app.memory import search_memories
-            mems = await search_memories(character_id, query=current_status or "最近发生的事情", limit=4)
+            mems = await search_memories(character_id, query=_mem_query, limit=3)
             _mem_lines = []
             for _m in mems:
-                # X-1（2026-08-18）：与主链路共用公共格式化函数（max_len=80）；
-                # 仅传既有字段（content/created_at/epistemic_status），不传 reliability_score/
-                # contradiction_count，避免引入主链路才有的 UNVERIFIED/纠正后缀（行为等价替换）
+                # format_memory_line 已带 [记录于 YYYY-MM-DD]，确保远期记忆带真实日期，不再谎称"近期"
                 _line = format_memory_line(
                     {
                         "content": _m.get("content") or "",
@@ -408,13 +532,29 @@ async def generate_proactive_event(
         prompt += f"\n{reflection_line}\n"
     # P0-2（2026-08-24）：主动消息承接强制化——主指令前注入「最近聊了什么」承接块，要求承接现状、避免突兀换话题；
     # last_context 扩容（get_last_messages 现默认 10 条×120 字，此处上限 1200 字），仅有语境才开新话题。
-    prompt += (
-        f"先看最近聊了什么：\n{last_context[:1200] or '（暂无最近聊天）'}\n"
-        "新消息必须承接最近正在聊的或与当前语境一致；只有确认没有相关语境时才开新话题，"
-        "且开头要自然接一句（如'对了，你上次说的……'）。\n"
-        "注意：『最近聊了什么』里可能包含你刚回复过的话——承接话题时用自己的话重新说，"
-        "绝不逐字重复你上一条消息的任何句子。\n"
-    )
+    # B1-③（方案 §5.3c）：outreach 新链路用「分级+意图+多样化转场」块替换强制承接块；旧块（flag 关）原样保留。
+    if outreach_intent:
+        tier = (outreach_plan or {}).get("tier", TIER_RECENT)
+        _openers = [x for x in _OPENER_BANK.get(outreach_intent, []) if x]
+        import random as _r
+        _opener_hint = (
+            "可参考的自然开头（换着用，别每次一样，也可不用）：" + " / ".join(_r.sample(_openers, min(2, len(_openers))))
+            if _openers else ""
+        )
+        prompt += (
+            f"你们的最近聊天记录（只是背景，不是必须续写的剧本，且已过去一段时间）：\n{last_context[:800] or '（暂无）'}\n"
+            f"{_TIER_GUIDE[tier]}\n{_INTENT_GUIDE[outreach_intent]}\n{_opener_hint}\n"
+            "硬约束：①不要假装对话没中断、不要把旧场景当成此刻正在发生；②提到旧事必须用过去时间口吻；"
+            "③不要逐字重复你以前说过的话；④这条消息最后要留一个让他容易接的话头/一个轻松问题（只问一个，不连环问、不审问）。\n"
+        )
+    else:
+        prompt += (
+            f"先看最近聊了什么：\n{last_context[:1200] or '（暂无最近聊天）'}\n"
+            "新消息必须承接最近正在聊的或与当前语境一致；只有确认没有相关语境时才开新话题，"
+            "且开头要自然接一句（如'对了，你上次说的……'）。\n"
+            "注意：『最近聊了什么』里可能包含你刚回复过的话——承接话题时用自己的话重新说，"
+            "绝不逐字重复你上一条消息的任何句子。\n"
+        )
     prompt += (
         "请把这一件事写成一条连贯的消息（总共 3~5 句话），描述这件事的经过和你的感受，"
         "像真人发消息一样自然分成几小段，每段 1~2 句话。\n\n"
@@ -489,11 +629,19 @@ async def generate_proactive_event(
         ok, cleaned = _validate_segments(segments)
         # #28 ①：低优先级主动消息自然度评分——Flag 开时低于重试阈值 → 追加修正要求重试一次
         nat_low = _naturalness_flag() and score_naturalness(segments) < NATURALNESS_RETRY_THRESHOLD
-        if ok and not nat_low:
+        # B1-③（方案 §5.3d）：计划要求抛回问题但生成结果没有 → 与自然度低分相同的"追加修正重试一次"
+        need_question = bool((outreach_plan or {}).get("must_return_question"))
+        no_question = need_question and not _has_invitation("".join(segments))
+        if ok and not nat_low and not no_question:
             break
         segments = cleaned or segments
         if attempt == 0:
-            if nat_low:
+            if no_question:
+                _hint = (
+                    "结尾请自然地留一个让好友容易接的话头/一个轻松问题（只问一个），不要自顾自说完，"
+                    "直接输出最终内容。"
+                )
+            elif nat_low:
                 _hint = (
                     "上一条输出自然度偏低。请重新生成一条更自然、更像真人随口说的话："
                     "避免复读堆砌语气词、避免模板化客套开头、长度适中（30~150字），"

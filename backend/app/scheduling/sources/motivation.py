@@ -47,6 +47,23 @@ class MotivationSource:
                     except Exception:
                         context = ""
                     c["last_context"] = context
+                    # B1-③（2026-09-04，方案 §9 审核清单末条 / Codex 修订）：collect_motivation_events 原本漏算
+                    # idle_minutes —— 照节律源（sources/rhythm.py）用 _session_last_message_at 补算，
+                    # 否则 motivation 通道的闲置分级会落到 recent（误判久违/新鲜）；失败静默 None（→ recent）
+                    idle_minutes = None
+                    try:
+                        from datetime import datetime, timezone
+                        _last = await arbiter._session_last_message_at(sid)
+                        if _last is not None:
+                            if _last.tzinfo is not None:
+                                _last = _last.replace(tzinfo=None)
+                            idle_minutes = max(
+                                0,
+                                int((datetime.now(timezone.utc).replace(tzinfo=None) - _last).total_seconds() / 60),
+                            )
+                    except Exception:
+                        idle_minutes = None
+                    c["idle_minutes"] = idle_minutes
                     items.append(TriggerItem(
                         type="motivation",
                         priority=1,

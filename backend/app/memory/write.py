@@ -264,6 +264,15 @@ async def save_memory(
         from app.utils.async_tasks import spawn_background as _spawn_bg
         _spawn_bg(_schedule_dedup(character_id), name=f"dedup-{character_id}")
 
+        # B1-② 记忆链建链器（方案 §13.4，flag memory_chain_builder 默认关 = 零行为）：
+        # _schedule_dedup 之后追加链节点，复用 save_memory 已算好的 embedding（避免重复 ONNX 推理）。
+        try:
+            from app.memory.chain_builder import link_new_memory, memory_chain_builder_enabled
+            if memory_chain_builder_enabled():
+                _spawn_bg(link_new_memory(memory.id, embedding), name=f"chain-{memory.id}")
+        except Exception:
+            pass
+
         # 记忆架构 v2.1：里程碑记忆（event/relationship 且重要度达标）→ 异步低频意义提炼（开关控制，失败静默）
         try:
             from app.memory.meaning import maybe_extract_meaning

@@ -3,7 +3,7 @@
 
 # Alembic / metadata registration: import EVERY model so Base.metadata is complete.
 from app.models.base import Base
-from app.models.user import User, UserState, UserDndSettings, PrivacyRequest, BrowserSnapshot, AccountInvite
+from app.models.user import User, UserState, UserDndSettings, PrivacyRequest, BrowserSnapshot, AccountInvite, GlobalUserFact
 from app.models.character import AICharacter, CharacterState, CharacterStateHistory, RelationshipEvent, StateTriggerLog, StorylineEvent, ProactiveStorylineItem, ProactiveSettings, HolidayPreference, ProactiveMessageLog, ProactiveTriggerLog
 from app.models.chat import ChatSession, ChatMessage, ChatGroup, ChatGroupMember, ChatGroupMessage, AIChat
 from app.models.memory import Memory, DailySummary, ConversationTopic, StageMemory, ReflectionLog, ProcessedExtraction, SharedEvent, WeaveCard, WeaveCardMemory, WeaveCardCharacter, LorebookEntry, WorldFact, MemoryArchive, ProspectiveIntent
@@ -24,6 +24,7 @@ __all__ = [
     "AIDiary",
     "AIMoment",
     "AccountInvite",
+    "GlobalUserFact",
     "AgentTask",
     "AgentTaskLog",
     "ApiConfig",

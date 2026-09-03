@@ -44,10 +44,15 @@ from app.domain.proactivity.decision import (  # noqa: E402,F401
     scheduler_gray_character,
 )
 from app.domain.proactivity.sleep import SLEEP_KEYWORDS, SLEEP_HOUR  # noqa: E402,F401
+# B1-③（2026-09-04，方案 §5.4）：主动接触意图层纯函数（闲置分级 + 意图选择）
+from app.domain.proactivity import outreach as _oc  # noqa: E402
 
 # 审计 P1-06：rejected 触发日志节流（同角色同类型最小间隔秒，approved 必记）
 REJECTED_LOG_THROTTLE_SECONDS = 300
 _rejected_log_cache: dict[tuple[int, str], float] = {}
+
+# B1-③：可走接触意图选择的主动搭话事件类型（调用 generate_proactive_event 的几条）
+PROACTIVE_OUTREACH_TYPES = ("greeting", "proactive_chat", "goodnight", "status_update", "motivation")
 
 
 
@@ -483,6 +488,106 @@ async def collect_plugin_events() -> list[dict]:
     return [ti.to_dict() for ti in await get_source("plugin").collect(_DEFAULT_CTX)]
 
 
+# ── B1-③（方案 §5.4）：主动接触意图层接线辅助（纯函数决策 + IO 素材采集）──
+
+def _outreach_enabled() -> bool:
+    """Feature Flag：proactive_outreach_v2（默认关）。关=intent 不参与、走旧链路零行为。"""
+    try:
+        from app.agent import loop as _loop
+        return bool(_loop.AGENT_FLAGS.get("proactive_outreach_v2", False))
+    except Exception:
+        return False
+
+
+async def _collect_outreach_materials(candidate: dict) -> "_oc.OutreachMaterials":
+    """收集本次接触的真实素材（只判断有没有，不拼大段文本；任一失败降级为无）。
+
+    方案 §5.4：open_loop≈有新鲜进行中话题/目标；shared≈有共同经历记忆；
+    interest≈有用户兴趣记忆；life≈AI 此刻有生活小事（current_status）。全部 fail-open。
+    """
+    char_id = candidate.get("character_id")
+    user_id = candidate.get("user_id")
+    has_open_loop = has_shared = has_interest = has_life = False
+    if char_id and user_id:
+        try:
+            from app.agent.topic_tracker import load_fresh_active_topics_text
+            has_open_loop = bool(await load_fresh_active_topics_text(char_id, user_id))
+        except Exception:
+            pass
+        try:
+            from app.memory import search_memories
+            has_shared = bool(await search_memories(char_id, query="和用户一起经历的事 用户说过的重要的事 用户的近况", limit=2))
+            has_interest = bool(await search_memories(char_id, query="用户的兴趣爱好偏好和喜欢的东西", limit=2))
+        except Exception:
+            pass
+    try:
+        has_life = bool(candidate.get("current_status"))
+    except Exception:
+        pass
+    return _oc.OutreachMaterials(has_open_loop, has_shared, has_interest, has_life)
+
+
+async def _get_recent_outreach_intents(character_id: int, limit: int = 2) -> list[str]:
+    """从最近主动触发日志的 trigger_reason 反查历史意图（零 schema 变更）；失败返回空。
+
+    只统计 decision='approved' 的行（已实际通过并执行的主动消息），避免把被限额拒的
+    候选重复计入；格式为 trigger_reason 内 `outreach=<intent>`（见 log_trigger_candidate）。
+    """
+    out: list[str] = []
+    try:
+        import re as _re
+        async with async_session_factory() as _db:
+            rows = (await _db.execute(
+                select(ProactiveTriggerLog.trigger_reason)
+                .where(
+                    ProactiveTriggerLog.character_id == character_id,
+                    ProactiveTriggerLog.decision == "approved",
+                    ProactiveTriggerLog.trigger_reason.is_not(None),
+                    ProactiveTriggerLog.trigger_reason.like("%outreach=%"),
+                )
+                .order_by(ProactiveTriggerLog.created_at.desc())
+                .limit(8)
+            )).scalars().all()
+        for raw in rows:
+            _m = _re.search(r"outreach=([a-z_]+)", raw or "")
+            if _m and _m.group(1) in _oc.ALL_INTENTS:
+                out.append(_m.group(1))
+            if len(out) >= limit:
+                break
+    except Exception:
+        pass
+    return out
+
+
+async def _annotate_outreach_plan(item: dict, char_id: int, mats_cache: dict, recent_cache: dict) -> None:
+    """run_tick 汇总层统一"意图选择"：分级 + 素材前提 + 避开最近意图 → 写回 candidate。
+
+    flag 关时不调用本函数（candidate 不动 → 零变化）。任一步失败均静默回退（intent=None，走旧链路）。
+    """
+    cand = item.get("candidate") or {}
+    _uid = cand.get("user_id")
+    if not _uid:
+        return
+    try:
+        if char_id not in mats_cache:
+            mats_cache[char_id] = await _collect_outreach_materials(cand)
+        if char_id not in recent_cache:
+            recent_cache[char_id] = await _get_recent_outreach_intents(char_id, limit=2)
+        _tier = _oc.staleness_tier(cand.get("idle_minutes"))
+        _plan = _oc.select_outreach(_tier, mats_cache[char_id], recent_cache[char_id])
+        cand["outreach_intent"] = _plan.intent
+        cand["outreach_plan"] = {
+            "tier": _plan.tier,
+            "allow_active_topics": _plan.allow_active_topics,
+            "allow_storyline": _plan.allow_storyline,
+            "allow_recall": _plan.allow_recall,
+            "memory_query": _plan.memory_query,
+            "must_return_question": _plan.must_return_question,
+        }
+    except Exception as e:
+        _logger.warning("outreach annotate failed char=%d: %s", char_id, e)
+
+
 # ── 仲裁 ──
 
 async def run_tick() -> list[str]:
@@ -520,6 +625,9 @@ async def run_tick() -> list[str]:
     #    修复"状态触发每 tick 无条件占坑（priority=2）饿死节律/复习/关怀（priority=1）"
     #    → 状态触发未命中时，随机节律（主动搭话/发朋友圈等）得以执行。
     executed_chars: set[int] = set()
+    # B1-③（方案 §5.4）：run_tick 汇总层统一"意图选择"——素材/最近意图按角色缓存，避免重复采集
+    _mats_cache: dict[int, _oc.OutreachMaterials] = {}
+    _recent_cache: dict[int, list[str]] = {}
     for char_id, items in sorted(by_char.items()):
         # 渴望度（0-1）作为同优先级下的二级排序键：依恋/好奇/久未互动强的角色先开口
         motivation = await _compute_motivation(char_id)
@@ -535,6 +643,9 @@ async def run_tick() -> list[str]:
         for item in items:
             _t0 = _time.monotonic()
             try:
+                # B1-③：flag 开 + 主动搭话类型 → 选意图并写回 candidate（flag 关=不动，零变化）
+                if _outreach_enabled() and item.get("type") in PROACTIVE_OUTREACH_TYPES:
+                    await _annotate_outreach_plan(item, char_id, _mats_cache, _recent_cache)
                 ok = await _execute(item)
             except Exception as e:
                 _logger.error("execute %s failed char=%d: %s", item["type"], char_id, e)
@@ -581,6 +692,10 @@ async def log_trigger_candidate(item: dict, executed: bool) -> None:
     _ctx_len = len((cand.get("last_context") or ""))
     if _ctx_len:
         reason = f"{reason} [ctx={_ctx_len}]" if reason else f"[ctx={_ctx_len}]"
+    # B1-③（方案 §5.4）：观测信号——记录本次接触意图（candidate 带 outreach_intent 时才附加；flag 关不附加）
+    _outreach = cand.get("outreach_intent")
+    if _outreach:
+        reason = f"{reason} [outreach={_outreach}]" if reason else f"[outreach={_outreach}]"
     async with async_session_factory() as db:
         # 审计第三批 P2-05：candidate 缺 user_id 时按角色归属自动兜底（防 proactive_trigger_logs 写 NULL）
         uid = cand.get("user_id")
@@ -1029,6 +1144,9 @@ async def _execute(item: dict) -> bool:
             return False
         context = candidate.get("last_context", "")
         previous_messages = await get_recent_proactive_messages(char_id, 2)
+        # B1-③：读 run_tick 汇总层选好的接触意图（flag 关/未标注 → None，走旧链路零变化）
+        outreach_intent = candidate.get("outreach_intent")
+        outreach_plan = candidate.get("outreach_plan")
         segments, event_reasoning = await generate_proactive_event(
             character_name=candidate["character_name"],
             character_bio=candidate["character_bio"],
@@ -1043,6 +1161,8 @@ async def _execute(item: dict) -> bool:
             idle_minutes=candidate.get("idle_minutes"),
             behavior=etype,
             return_reasoning=True,
+            outreach_intent=outreach_intent,
+            outreach_plan=outreach_plan,
         )
         if not segments:
             return False

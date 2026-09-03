@@ -155,7 +155,7 @@ async def run_daily_memory_maintenance() -> dict:
             return {"enabled": False}
     except Exception:
         pass
-    out = {"summaries": 0, "dedup_removed": 0, "pinned_refreshed": 0, "preoccupations_decayed": 0, "cold_archived": 0}
+    out = {"summaries": 0, "dedup_removed": 0, "pinned_refreshed": 0, "preoccupations_decayed": 0, "cold_archived": 0, "char_aligned": 0}
     try:
         out["summaries"] = await generate_today_summaries()
     except Exception as e:
@@ -184,5 +184,17 @@ async def run_daily_memory_maintenance() -> dict:
         out["cold_archived"] = await archive_cold_superseded(days=ARCHIVE_COLD_DAYS)
     except Exception as e:
         _logger.warning("Cold archive maintenance failed: %s", e)
+    # §20（2026-09-04）：跨角色用户事实对齐 sweep（flag cross_char_fact_sync 开才跑，覆盖长期不活跃角色）
+    try:
+        from app.agent.loop import AGENT_FLAGS as _af
+        if bool(_af.get("cross_char_fact_sync", False)):
+            from app.memory.cross_char_sync import sweep_all_characters_alignment
+            from app.models.user import User
+            async with async_session_factory() as db:
+                user_ids = [r for (r,) in (await db.execute(select(User.id))).all()]
+            for uid in user_ids:
+                out["char_aligned"] += await sweep_all_characters_alignment(uid)
+    except Exception as e:
+        _logger.warning("Cross-char fact sweep failed: %s", e)
     _logger.info("Daily memory maintenance done: %s", out)
     return out

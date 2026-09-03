@@ -223,6 +223,16 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
     _bj = datetime.now(timezone(timedelta(hours=8)))
     _today_str = f"{_bj.year}年{_bj.month}月{_bj.day}日"
     prompt = EXTRACT_PROMPT.format(conversation=conv, today=_today_str)
+    # §20（2026-09-04）：开 global_user_facts 时，借用同一次提取让 LLM 多吐一个 SLOT 归槽字段
+    # （不新增 LLM 调用）；关=原 prompt 逐字节一致（零行为变化）。
+    try:
+        from app.agent.loop import AGENT_FLAGS as _flags_now
+        if bool(_flags_now.get("global_user_facts", False)):
+            prompt += ("\n额外要求：若上方 USER_INFO 属于用户可变近况（所在城市/工作学业/感情状态/"
+                       "居住情况/进行中计划/身体状态），另输出一行：SLOT: location|job|relationship|"
+                       "living|goal_state|health；否则输出：SLOT: 无。")
+    except Exception:
+        pass
     response = await llm_call(messages=[{"role":"user","content":prompt}], temperature=0.1, max_tokens=EXTRACT_MAX_TOKENS, task=TASK_MEMORY)
     _logger.info("Raw: %.120s", response)
     if not response: return 0
@@ -297,6 +307,22 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
                 continue
             from app.memory import save_memory
             _spk_type, _spk_id, _epi = _resolve_speaker(val, user_msg, ai_msg, user_id, character_id)
+            # §20（2026-09-04）：global_user_facts 开且为 USER_INFO → 归槽 upsert 用户级事实 + 旧值失效；
+            # 关=原 sub_type="extracted" 路径（逐字节一致，零行为变化）。
+            if mtype == "user_info" and bool(_flags.get("global_user_facts", False)):
+                from app.memory.user_facts import MUTABLE_SLOTS, classify_slot, upsert_user_fact
+                slot_raw = (_get_val(response, "SLOT") or "").strip()
+                slot = slot_raw if slot_raw in MUTABLE_SLOTS else classify_slot(val)
+                if slot:
+                    change = await upsert_user_fact(user_id, slot, val, source="chat")
+                    # 旧值失效放「新记忆写入前」：避免 sub_type/文本命中到刚写入的新值记忆误标 stale
+                    if change is not None:
+                        from app.memory.cross_char_sync import stale_character_slot_memory
+                        await stale_character_slot_memory(character_id, slot, change[0])
+                    await save_memory(user_id=user_id,character_id=character_id,memory_type=mtype,content=val[:100],importance=imp,source="chat",sub_type=slot,source_id=source_id,
+                                      speaker_type=_spk_type, speaker_id=_spk_id, epistemic_status=_epi)
+                    saved += 1
+                    continue
             await save_memory(user_id=user_id,character_id=character_id,memory_type=mtype,content=val[:100],importance=imp,source="chat",sub_type="extracted",source_id=source_id,
                               speaker_type=_spk_type, speaker_id=_spk_id, epistemic_status=_epi)
             saved += 1
