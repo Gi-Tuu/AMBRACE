@@ -107,6 +107,10 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
             r["speaker_type"] = m.speaker_type
             r["contradiction_count"] = m.contradiction_count
             r["is_pinned"] = bool(m.is_pinned)
+            # #72 场景过滤需要（只回填结果行，_final 不输出，故默认行为逐字节不变）
+            r["source"] = m.source
+            r["sub_type"] = m.sub_type
+            r["group_id"] = m.group_id
             # #70 方案A：L0 需要 why_it_matters（无则缺省，_final 带出）；status 兼容旧记忆（无该列 => active）
             r["why_it_matters"] = m.why_it_matters
             r["status"] = getattr(m, "status", "active")
@@ -224,6 +228,36 @@ def _diversify_by_type(ranked: list[dict], topk: int, per_type_cap: int = 2) -> 
     return picked
 
 
+def _scene_filter(rows: list[dict], scene: str | None,
+                  exclude_sources: set[str] | None, group_id: int | None) -> list[dict]:
+    """#72 场景可见性过滤（纯函数；scene=None 时原样返回，保证零行为变化）。
+
+    在最终返回前做纯内存过滤（结果行已带 source/sub_type/group_id，无需改向量库）：
+    - scene="dm"：私聊不召回群聊逐条流水（旧 source=group 且非摘要指针）；群摘要指针
+      (group_summary)/游戏摘要指针(game_summary)属"知道发生过"，允许保留。
+    - scene="group"：其它群的 group 记忆不进本群上下文（本群的由专门 group 通道注入，不靠这里）。
+    - exclude_sources：命中即剔除。
+    """
+    if not scene and not exclude_sources and group_id is None:
+        return rows
+    excl = exclude_sources or set()
+    out = []
+    for r in rows:
+        src = r.get("source") or ""
+        sub = r.get("sub_type") or ""
+        gid = r.get("group_id")
+        if src in excl:
+            continue
+        if scene == "dm":
+            if src == "group" and sub != "group_summary":
+                continue
+        if scene == "group":
+            if src == "group" and gid is not None and group_id is not None and gid != group_id:
+                continue
+        out.append(r)
+    return out
+
+
 async def search_memories(
     character_id: int,
     query: str,
@@ -231,6 +265,10 @@ async def search_memories(
     queries: list[str] | None = None,
     trace_meta: dict | None = None,
     time_range: tuple | None = None,
+    # ↓↓ #72 新增：全部默认 None/空 = 与现状完全一致 ↓↓
+    scene: str | None = None,              # "dm" | "group" | None(不过滤)
+    exclude_sources: set[str] | None = None,
+    group_id: int | None = None,
 ) -> list[dict]:
     """检索记忆（认知循环 v2.1 多路召回）：向量优先，兜底关键词。
 
@@ -508,6 +546,10 @@ async def search_memories(
                 results = results[:max(0, limit - len(_extra))] + _extra
     except Exception:
         pass
+
+    # #72：场景可见性过滤（scene/exclude_sources/group_id 默认 None/空 = 与现状逐字节一致）
+    if scene is not None or exclude_sources or group_id is not None:
+        results = _scene_filter(results, scene, exclude_sources, group_id)
 
     _final = [
         {

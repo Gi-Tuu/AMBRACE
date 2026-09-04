@@ -8,7 +8,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import sqlalchemy as sa
 
@@ -102,6 +102,28 @@ class ChatGroupMessage(Base):
     msg_type: Mapped[str] = mapped_column(String(12), default="normal")
     game_session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+# ── group_memory.py（#72，2026-09-04）：群共享长期记忆子库 ──
+# 与 games.game_memories 同范式：群"共同经历"的提炼只在此存一份（按 group_id），
+# 不按成员冗余复制、不进角色私有 memories 的向量检索；角色主记忆只留 group_summary 摘要指针。
+class GroupMemory(Base):
+    __tablename__ = "group_memories"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_groups.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    # 一轮聚合的归属（可空）：同一轮群聊的多条公开发言汇成 1 条群事件时共享 round_id
+    round_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    speaker_type: Mapped[str] = mapped_column(String(10), default="system")  # user / ai / system
+    speaker_id: Mapped[int | None] = mapped_column(Integer, nullable=True)   # user_id 或 character_id；系统摘要为 None
+    content: Mapped[str] = mapped_column(Text, nullable=False)              # 本地聚合或异步摘要后的群事件文本
+    epistemic_status: Mapped[str] = mapped_column(String(12), default="FACT")
+    importance: Mapped[float] = mapped_column(Float, default=40)  # 与 memories 量纲一致（0-120，同 memories.importance=Float）
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    __table_args__ = (
+        Index("idx_group_mem_group_created", "group_id", "created_at"),
+    )
+
 # ── ai_chat.py ──
 # AI 间私聊记录（Phase 1）：同用户两个 AI 角色私下对话，落库供只读展示
 class AIChat(Base):
@@ -121,5 +143,6 @@ __all__ = [
     "ChatGroup",
     "ChatGroupMember",
     "ChatGroupMessage",
+    "GroupMemory",
     "AIChat",
 ]

@@ -7,7 +7,8 @@
 - 远程索引拉取失败降级本地 plugins/marketplace/index.json（source=remote:local）；
 - 内存 TTL 缓存命中不重复拉取；
 - 未配置 URL 时返回空且不触发网络；
-- 远程索引条目安装仍受默认开关 403 拦截。
+- 远程索引条目安装仍受默认开关 403 拦截；
+- plugin_market_url 默认值内置官方仓库 raw 索引（2026-09-04 决策，锁定防误清空）。
 
 全部纯逻辑 + monkeypatch，不触碰真实库/网络/插件目录。
 """
@@ -53,8 +54,18 @@ def test_config_回显远程安装开关默认关闭(monkeypatch):
     assert cfg["allow_remote_install"] is False
 
 
-def test_plugin_market_url默认空(monkeypatch):
-    # 默认未启用远程索引（空串）；设置后 _plugin_market_url 返回去空格值
+def test_plugin_market_url_builtin_default():
+    # #72 决策：插件市场默认值内置官方仓库 raw 索引（对齐 emoji_market_url），
+    # 防止以后被误清空。覆盖/回退通道见下方空串用例与 .env 模板。
+    from app.config import settings
+    assert settings.plugin_market_url.startswith("https://raw.githubusercontent.com/")
+    assert settings.plugin_market_url.endswith("/index.json")
+    assert "Gi-Tuu/AMBRACE-plugin" in settings.plugin_market_url
+
+
+def test_plugin_market_url_空串覆盖回退(monkeypatch):
+    # 默认已内置官方索引（见上方内置用例）；显式置空以覆盖回「仅内置 + 手动刷新」旧行为，
+    # 此时 _plugin_market_url 返回空串；设置后返回去空格值
     monkeypatch.setattr(m.settings, "plugin_market_url", "")
     assert m._plugin_market_url() == ""
     monkeypatch.setattr(m.settings, "plugin_market_url", "  https://example.com/index.json  ")

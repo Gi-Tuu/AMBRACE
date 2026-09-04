@@ -123,13 +123,13 @@ class Settings(BaseSettings):
     # ---- 表情市场（2026-08-23）：远程表情市场索引 URL（GitHub raw 索引模式）----
     emoji_market_url: str = "https://raw.githubusercontent.com/Gi-Tuu/AMBRACE-emoji/main/index.json"
 
-    # ---- 插件市场（3.13，2026-09-02/03）：远程插件市场索引 URL（GitHub raw 索引模式）----
-    # 默认空 = 列表面板不拉取远程插件索引（仅内置示例 + 手动 /refresh 落盘缓存）。
-    # 设置后（.env: PLUGIN_MARKET_URL）列表端会拉取该 index.json，逐条清洗为带 source=remote
-    # 的市场条目（name/download_url/sha256/permissions 等）合并展示；安装仍受
-    # plugin_allow_remote_install=False 的 3.9 安全闸拦截（默认关，须显式开启），
-    # 与 emoji_market_url 的「远程索引拉取 + 失败降级」行为一致。
-    plugin_market_url: str = ""
+    # ---- 插件市场（3.13，2026-09-02/03；默认 URL 内置 2026-09-04）：远程插件市场索引 URL（GitHub raw 索引模式）----
+    # 默认内置官方仓库 raw 索引（对齐 emoji_market_url）：列表端默认即可展示官方上架插件；
+    # 拉取带 1h 内存缓存 + 10s 超时 + 失败降级本地内置（见 api/marketplace.py get_remote_index）。
+    # 如需自建市场，用 .env: PLUGIN_MARKET_URL=<你的 index.json raw 地址> 覆盖；
+    # 如需回到「仅内置 + 手动刷新」旧行为，设 PLUGIN_MARKET_URL=（空串）。
+    # 注意：内置 URL 只影响列表展示，远程安装仍受 plugin_allow_remote_install=False 的安全闸拦截（默认关，须显式开启）。
+    plugin_market_url: str = "https://raw.githubusercontent.com/Gi-Tuu/AMBRACE-plugin/main/index.json"
 
     # ---- 项目根目录 ----
     PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent

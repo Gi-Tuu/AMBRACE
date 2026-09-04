@@ -230,9 +230,11 @@ async def group_dynamics_section(state: dict, ctx: dict) -> list[str]:
                 for _gid in _gids:
                     _msgs = (await db.execute(
                         select(_CGMsg)
-                        .where(_CGMsg.group_id == _gid)
-                        .order_by(_CGMsg.id.desc())
-                        .limit(4)
+                        .where(
+                            _CGMsg.group_id == _gid,
+                            _CGMsg.msg_type == "normal",   # #72：游戏播报(game_event/game_say)不进私聊上下文
+                        )
+                        .order_by(_CGMsg.id.desc()).limit(4)
                     )).scalars().all()
                     if not _msgs:
                         continue
@@ -247,7 +249,10 @@ async def group_dynamics_section(state: dict, ctx: dict) -> list[str]:
                         _names = {r[0]: r[1] for r in _nrows}
                     _lines = []
                     for _m in reversed(_msgs):
-                        _who = _names.get(_m.character_id, "用户") if _m.character_id else "用户"
+                        if _m.character_id:
+                            _who = _names.get(_m.character_id, "角色")
+                        else:
+                            _who = "用户"   # 过滤 msg_type 后，character_id 为空的正常消息即用户本人
                         _mtag = ""
                         try:
                             if _m.created_at is not None:

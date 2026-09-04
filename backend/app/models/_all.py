@@ -5,7 +5,7 @@
 from app.models.base import Base
 from app.models.user import User, UserState, UserDndSettings, PrivacyRequest, BrowserSnapshot, AccountInvite, GlobalUserFact
 from app.models.character import AICharacter, CharacterState, CharacterStateHistory, RelationshipEvent, StateTriggerLog, StorylineEvent, ProactiveStorylineItem, ProactiveSettings, HolidayPreference, ProactiveMessageLog, ProactiveTriggerLog
-from app.models.chat import ChatSession, ChatMessage, ChatGroup, ChatGroupMember, ChatGroupMessage, AIChat
+from app.models.chat import ChatSession, ChatMessage, ChatGroup, ChatGroupMember, ChatGroupMessage, GroupMemory, AIChat
 from app.models.memory import Memory, DailySummary, ConversationTopic, StageMemory, ReflectionLog, ProcessedExtraction, SharedEvent, WeaveCard, WeaveCardMemory, WeaveCardCharacter, LorebookEntry, WorldFact, MemoryArchive, ProspectiveIntent
 from app.models.life import LifeState, LifeActivityLog, LifeArtifact, LifeInterest, LifeGoal, LifeSchedule, LifeFollowup, LifeChatIntent, AIDiary, UserDiary, UserMemo, AIMoment, MomentLike, MomentAILike, MomentComment, MomentReadMark, ScheduledEvent, TimelineEvent, ImageGenTask, ImageGenConfig, UserRhythm, UserWorkflow, UserEmojiPack, UserCustomEmoji
 from app.models.pet import Pet, PetActivity
@@ -36,6 +36,7 @@ __all__ = [
     "ChatGroup",
     "ChatGroupMember",
     "ChatGroupMessage",
+    "GroupMemory",
     "ChatMessage",
     "ChatSession",
     "CheckInRequest",
