@@ -27,8 +27,9 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from fastapi import File, Form, UploadFile
+from fastapi import Depends, File, Form, UploadFile
 
+from app.auth.deps import get_current_user_id  # 一机多主：登录态端点显式取 root 传租户
 from app.plugins import sdk
 
 # #67 拆分：允许同目录兄弟模块互相导入（插件 dir 非 package，loader 以 ai_plugin_* 单文件加载）。
@@ -78,7 +79,31 @@ _COMMENT_MANAGE_URL = "https://creator.douyin.com/creator-micro/data/following/c
 # 单 worker 同时天然串行化浏览器操作，避免并发抢同一 profile。
 _PLAYWRIGHT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="douyin-pw")
 
+# ── 一机多主：浏览器 profile 分目录（data/douyin_profile/tenant_{tid}/bot_{bid}/，2026-09-05）──
+# 单 worker 串行化浏览器操作，进程内全局生效安全；tenant 未知时回落旧全局 profile（保留存量登录态）。
+_PROFILE_SUBDIR: str | None = None
+
+
+def _profile_root() -> Path:
+    return _PROFILE_DIR / _PROFILE_SUBDIR if _PROFILE_SUBDIR else _PROFILE_DIR
+
+
+async def _refresh_profile_scope(bot_account_id: str = "default") -> None:
+    """按当前绑定租户刷新 profile 子目录（无绑定保持旧全局 profile，NEEDS_RUNTIME_VERIFICATION：
+    存量部署首次重启后如需分目录，把旧 profile 移入 tenant_{root}/bot_default/ 或重新扫码绑定）。"""
+    global _PROFILE_SUBDIR
+    tid = await _douyin_primary_tenant()
+    if tid:
+        _PROFILE_SUBDIR = f"tenant_{int(tid)}/bot_{bot_account_id or 'default'}"
+
+
 async def _run_sync(func, *args):
+    global _PROFILE_SUBDIR
+    if _PROFILE_SUBDIR is None:
+        # 浏览器工作统一经此 chokepoint；首调时按绑定租户定目录（幂等）
+        tid = await _douyin_primary_tenant()
+        if tid:
+            _PROFILE_SUBDIR = f"tenant_{int(tid)}/bot_default"
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(_PLAYWRIGHT_EXECUTOR, func, *args)
 
@@ -184,18 +209,91 @@ def _post_key(title: str) -> str:
     return hashlib.md5((title or "").encode("utf-8")).hexdigest()[:16]
 
 
-async def _active_char_name() -> str:
-    """取白名单第一个角色的名字（抖音回复签名用）；无配置/异常返回空"""
+# ================= 一机多主：租户解析助手（2026-09-05，Q4 拍板「正名 tenant_id + 去写死」） =================
+# 统一经 app.providers.channel_binding_reader 读取绑定（flag channel_binding_v2 开=channel_bindings
+# 新表按租户隔离；关=回落旧全局 config 串，单主部署语义等价）。禁止再写 user_id=1/default=1。
+
+async def _douyin_bound_pairs(db) -> list[tuple[int, int]]:
+    """[(tenant_id, character_id), ...]：当前绑定角色及其归属家庭 root（租户）。"""
+    from app.providers.channel_binding_reader import all_bound_characters
+
+    return await all_bound_characters(db, "douyin")
+
+
+async def _douyin_primary_tenant() -> int | None:
+    """主绑定租户（第一个绑定角色的家庭 root）；无绑定返回 None（调用方跳过归属不明的写入）。"""
+    from app.db.database import async_session_factory
+
     try:
-        cfg = sdk.get_config()
-        raw = str(cfg.get("allowed_character_ids", "") or "").strip()
-        char_ids = [int(x) for x in raw.split(",") if x.strip().isdigit()]
-        if not char_ids:
-            return ""
+        async with async_session_factory() as db:
+            pairs = await _douyin_bound_pairs(db)
+        return pairs[0][0] if pairs else None
+    except Exception:
+        return None
+
+
+async def _char_tenant(db, character_id: int) -> int | None:
+    """角色归属家庭 root（租户）；角色不存在/解析失败返回 None。"""
+    from app.application.family_service import get_family_root_id
+    from app.models.character import AICharacter
+
+    try:
+        char = await db.get(AICharacter, int(character_id))
+        if char is None:
+            return None
+        return int(await get_family_root_id(db, char.user_id) or char.user_id or 0) or None
+    except Exception:
+        return None
+
+
+async def _tenant_for_user(user_id: int | None) -> int | None:
+    """登录态 user_id → 家庭 root（租户）；用于登录态驱动的草稿端点显式传 root。"""
+    from app.db.database import async_session_factory
+    from app.application.family_service import get_family_root_id
+
+    try:
+        async with async_session_factory() as db:
+            return await get_family_root_id(db, int(user_id)) or None
+    except Exception:
+        return None
+
+
+async def _char_allowed_async(char_id) -> bool:
+    """角色是否在「其归属租户」的抖音绑定白名单内（统一走 reader；空绑定=全部角色，对齐旧语义）。
+
+    注：白名单按租户隔离后，判断基准是该角色自己家庭的绑定（多主互不可见）。
+    """
+    try:
+        from app.db.database import async_session_factory
+        from app.providers.channel_binding_reader import bound_characters_for_runtime
+
+        cid = int(char_id or 0)
+        if cid <= 0:
+            return True
+        async with async_session_factory() as db:
+            tenant = await _char_tenant(db, cid)
+            ids = await bound_characters_for_runtime(db, "douyin", tenant)
+        if not ids:
+            return True
+        return cid in [int(x) for x in ids]
+    except Exception:
+        return True
+
+
+async def _active_char_name() -> str:
+    """取绑定第一个角色的名字（抖音回复签名用）；无绑定/异常返回空。
+
+    一机多主：绑定角色统一经 reader（flag 关回落旧全局 config 串，行为不变）。
+    """
+    try:
         from app.db.database import async_session_factory
         from app.models.character import AICharacter
+
         async with async_session_factory() as db:
-            char = await db.get(AICharacter, char_ids[0])
+            pairs = await _douyin_bound_pairs(db)
+            if not pairs:
+                return ""
+            char = await db.get(AICharacter, pairs[0][1])
             return (char.name or "").strip() if char else ""
     except Exception:
         return ""
@@ -255,7 +353,7 @@ def _launch(headless: bool):
     from playwright.sync_api import sync_playwright
     p = sync_playwright().start()
     ctx = p.chromium.launch_persistent_context(
-        user_data_dir=str(_PROFILE_DIR / "profile"),
+        user_data_dir=str(_profile_root() / "profile"),
         channel="msedge",
         headless=headless,
         args=[
@@ -826,8 +924,11 @@ async def _save_viewed_note(aweme_id: str, author: str, desc: str, image_urls: l
         async with async_session_factory() as db:
             row = (await db.execute(select(DouyinViewedNote).where(DouyinViewedNote.aweme_id == aweme_id))).scalars().first()
             if row is None:
+                tenant = await _douyin_primary_tenant()
+                if tenant is None:
+                    return  # 一机多主：无绑定（归属不明）不落库，不再写死 user_id=1
                 db.add(DouyinViewedNote(
-                    user_id=1, aweme_id=aweme_id, author=author[:100], desc=desc[:1000],
+                    tenant_id=int(tenant), aweme_id=aweme_id, author=author[:100], desc=desc[:1000],
                     images_urls_json=json.dumps(image_urls, ensure_ascii=False),
                     image_descs_json=json.dumps(image_descs, ensure_ascii=False),
                 ))
@@ -987,8 +1088,12 @@ async def _upsert_account(state: dict) -> None:
     async with async_session_factory() as db:
         row = (await db.execute(select(DouyinAccount).order_by(DouyinAccount.id.asc()).limit(1))).scalar_one_or_none()
         if row is None:
+            tenant = await _douyin_primary_tenant()
+            if tenant is None:
+                sdk.log("douyin 账号状态落库跳过：无绑定角色（归属不明，不再写死 tenant=1）")
+                return
             db.add(DouyinAccount(
-                user_id=1, account_name=state.get("account_name", ""),
+                tenant_id=int(tenant), account_name=state.get("account_name", ""),
                 bound=state.get("bound", False), logged_in=state.get("logged_in", False),
                 last_check_at=datetime.now(timezone.utc),
             ))
@@ -1017,7 +1122,7 @@ async def _ensure_douyin_schema() -> None:
             if not ncols:
                 await db.execute(text(
                     "CREATE TABLE IF NOT EXISTS douyin_viewed_notes ("
-                    "id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER DEFAULT 1, "
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER, "
                     "aweme_id VARCHAR(64) NOT NULL UNIQUE, author VARCHAR(100) DEFAULT '', "
                     "desc VARCHAR(1000) DEFAULT '', images_urls_json TEXT DEFAULT '[]', "
                     "image_descs_json TEXT DEFAULT '[]', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
@@ -1061,6 +1166,10 @@ async def _upsert_posts(posts: list[dict]) -> int:
     from douyin_models import DouyinPost
     if not posts:
         return 0
+    tenant = await _douyin_primary_tenant()
+    if tenant is None:
+        sdk.log("douyin 发布列表落库跳过：无绑定角色（归属不明，不再写死 tenant=1）")
+        return 0
     added = 0
     async with async_session_factory() as db:
         existing = {r.douyin_post_id: r for r in (await db.execute(select(DouyinPost))).scalars().all()}
@@ -1077,7 +1186,7 @@ async def _upsert_posts(posts: list[dict]) -> int:
             row = existing.get(key)
             if row is None:
                 db.add(DouyinPost(
-                    user_id=1, douyin_post_id=key, title=(post.get("title", "") or "")[:500],
+                    tenant_id=int(tenant), douyin_post_id=key, title=(post.get("title", "") or "")[:500],
                     post_type="image", stats_json=stats_json, published_at=pub,
                 ))
                 added += 1
@@ -1091,12 +1200,16 @@ async def _upsert_posts(posts: list[dict]) -> int:
 
 
 async def _upsert_comments_one(post_title: str, comments: list[dict]) -> int:
-    """评论按 (user_id, douyin_post_id, content) 唯一约束去重写入；作者评论也入库（author_role 区分 AI/账号主人），返回新增数。
+    """评论按 (tenant_id, douyin_post_id, content) 唯一约束去重写入；作者评论也入库（author_role 区分 AI/账号主人），返回新增数。
     新增的非作者评论同步写社交记忆（social_memories，2026-08-10 社交交互层 v2）。"""
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
     from app.db.database import async_session_factory
     from douyin_models import DouyinComment
     if not comments:
+        return 0
+    tenant = await _douyin_primary_tenant()
+    if tenant is None:
+        sdk.log("douyin 评论落库跳过：无绑定角色（归属不明，不再写死 tenant=1）")
         return 0
     key = _post_key(post_title or "")
     char_name = await _active_char_name()
@@ -1112,7 +1225,7 @@ async def _upsert_comments_one(post_title: str, comments: list[dict]) -> int:
         if is_author:
             author_role = "ai" if _is_ai_comment(content, char_name) else "user"
         values.append({
-            "user_id": 1,
+            "tenant_id": int(tenant),
             "douyin_post_id": key,
             "commenter": commenter[:100],
             "content": content[:1000],
@@ -1136,7 +1249,7 @@ async def _upsert_comments_one(post_title: str, comments: list[dict]) -> int:
     added = 0
     async with async_session_factory() as db:
         stmt = sqlite_insert(DouyinComment).values(fresh).on_conflict_do_nothing(
-            index_elements=["user_id", "douyin_post_id", "content"]
+            index_elements=["tenant_id", "douyin_post_id", "content"]
         )
         result = await db.execute(stmt)
         await db.commit()
@@ -1289,10 +1402,15 @@ async def _latest_comment(post_title: str, commenter: str) -> dict | None:
 
 async def _persona_context(character_id: int | None = None) -> str:
     """组装「角色自我」语境（与私聊同源）：角色人设 + 主链路人格块（关系/状态/八维/情绪/话题/身份画像）+ 记忆 top3 + 账号内容。
-    适用于白名单任意角色（character_id 指定，默认第一个）；抖音数据仍隔离（不写记忆库）"""
-    cfg = sdk.get_config()
-    raw = str(cfg.get("allowed_character_ids", "") or "").strip()
-    char_ids = [int(x) for x in raw.split(",") if x.strip().isdigit()]
+    适用于白名单任意角色（character_id 指定，默认第一个）；抖音数据仍隔离（不写记忆库）。
+
+    一机多主：绑定角色统一经 reader（flag 关回落旧全局 config 串，行为不变）。
+    """
+    from app.db.database import async_session_factory
+
+    async with async_session_factory() as db:
+        pairs = await _douyin_bound_pairs(db)
+    char_ids = [cid for _t, cid in pairs]
     if character_id is not None and character_id in char_ids:
         cid = character_id
     elif char_ids:
@@ -1301,44 +1419,47 @@ async def _persona_context(character_id: int | None = None) -> str:
         cid = None
     parts = []
     if cid is not None:
-        user_id = 1
+        user_id: int | None = None
         try:
-            from app.db.database import async_session_factory
             from app.models.character import AICharacter
             from app.models.user import User
             async with async_session_factory() as db:
                 char = await db.get(AICharacter, cid)
-                _user = await db.get(User, char.user_id or 1) if char is not None else None
+                _user = await db.get(User, char.user_id) if char is not None and char.user_id else None
             if char is not None:
-                user_id = char.user_id or 1
+                user_id = char.user_id or None
                 desc = "；".join(x for x in [char.personality, char.bio, char.chat_style] if x)
                 parts.append(f"你是角色「{char.name}」" + (f"：{desc}" if desc else ""))
                 if _user is not None and _user.gender in ("male", "female"):
                     parts.append(f"账号主人（用户）性别：{'男' if _user.gender == 'male' else '女'}")
         except Exception:
             pass
+        if user_id is None:
+            # 角色缺失/归属不明：回落主绑定租户（不再写死 user_id=1）；仍无则跳过人格块
+            user_id = await _douyin_primary_tenant()
         # 主链路人格块（与私聊同源：关系/当前状态/八维感受/情绪/身份画像/进行中话题）
-        try:
-            from app.agent.persona import assemble_persona_context
-            pc = await assemble_persona_context(cid, user_id, platform="douyin")
-            # 公开平台（douyin）：注入公开裁剪约束文本，不注入「你与用户的关系」私密标签
-            pp_text = (pc.get("platform_profile_text") or "").strip()
-            if pp_text:
-                parts.append(pp_text)
-            else:
-                rel = (pc.get("relationship") or "普通朋友").strip()
-                parts.append(f"你与用户的关系：{rel}")
-            for _label, _key in (
-                ("你当前的状态", "current_status"),
-                ("你的八维感受", "character_feelings"),
-                ("最近的情绪事件", "recent_emotion"),
-                ("进行中的话题", "active_topics"),
-            ):
-                _v = (pc.get(_key) or "").strip()
-                if _v and _v not in ("无", "普通朋友", "你们正在聊天"):
-                    parts.append(f"{_label}：{_v[:120]}")
-        except Exception:
-            pass
+        if user_id is not None:
+            try:
+                from app.agent.persona import assemble_persona_context
+                pc = await assemble_persona_context(cid, user_id, platform="douyin")
+                # 公开平台（douyin）：注入公开裁剪约束文本，不注入「你与用户的关系」私密标签
+                pp_text = (pc.get("platform_profile_text") or "").strip()
+                if pp_text:
+                    parts.append(pp_text)
+                else:
+                    rel = (pc.get("relationship") or "普通朋友").strip()
+                    parts.append(f"你与用户的关系：{rel}")
+                for _label, _key in (
+                    ("你当前的状态", "current_status"),
+                    ("你的八维感受", "character_feelings"),
+                    ("最近的情绪事件", "recent_emotion"),
+                    ("进行中的话题", "active_topics"),
+                ):
+                    _v = (pc.get(_key) or "").strip()
+                    if _v and _v not in ("无", "普通朋友", "你们正在聊天"):
+                        parts.append(f"{_label}：{_v[:120]}")
+            except Exception:
+                pass
         # 公开平台（douyin，memory_access=limited）：注入「公开安全记忆」——
         # 排除身份画像（identity）与含用户姓名的私密内容，保留中性记忆（共同兴趣/角色感悟）；
         # 收紧开关 platform_profiles.memory_restrict：
@@ -1526,7 +1647,7 @@ async def _run_pending_task(task_id: int) -> dict:
         if kind == "image_post":
             # 无图图文自动配图：抖音发布图文必须带图（实测无图点发布会被拦截）
             if not images:
-                gen = await _auto_gen_post_image(task_id, row.user_id, title, content)
+                gen = await _auto_gen_post_image(task_id, row.tenant_id, title, content)
                 if gen:
                     async with async_session_factory() as db2:
                         _r = await db2.get(DouyinPending, task_id)
@@ -1560,17 +1681,17 @@ async def _run_pending_task(task_id: int) -> dict:
             row2.status = "executed"
             if kind in ("image_post", "video_post"):
                 db.add(DouyinPost(
-                    user_id=1, douyin_post_id=res.get("post_id") or _post_key(title or ""), title=(title or "")[:500],
+                    tenant_id=int(row2.tenant_id or 0), douyin_post_id=res.get("post_id") or _post_key(title or ""), title=(title or "")[:500],
                     post_type=("video" if kind == "video_post" else "image"), stats_json="{}",
                     published_at=datetime.now(timezone.utc), source="auto",
                 ))
             else:
                 # 草稿里的作品标题可能是短标题，评论表 douyin_post_id 是完整标题哈希；
-                # 按「评论者 + 未回复」定位最新一条目标评论
+                # 按「评论者 + 未回复」定位最新一条目标评论（租户隔离：跟随 pending 行的 tenant）
                 target = (await db.execute(
                     select(DouyinComment)
                     .where(
-                        DouyinComment.user_id == 1,
+                        DouyinComment.tenant_id == int(row2.tenant_id or 0),
                         DouyinComment.commenter == commenter,
                         DouyinComment.replied == False,
                     )
@@ -1584,7 +1705,7 @@ async def _run_pending_task(task_id: int) -> dict:
                 _dup = (await db.execute(
                     select(DouyinComment)
                     .where(
-                        DouyinComment.user_id == 1,
+                        DouyinComment.tenant_id == int(row2.tenant_id or 0),
                         DouyinComment.douyin_post_id == (row2.post_key or ""),
                         DouyinComment.content == (content or "")[:1000],
                     )
@@ -1593,7 +1714,7 @@ async def _run_pending_task(task_id: int) -> dict:
                 if _dup is None:
                     _acc = await _get_account()
                     db.add(DouyinComment(
-                        user_id=1, douyin_post_id=row2.post_key or "", commenter=(_acc.get("account_name") or "账号")[:100],
+                        tenant_id=int(row2.tenant_id or 0), douyin_post_id=row2.post_key or "", commenter=(_acc.get("account_name") or "账号")[:100],
                         content=(content or "")[:1000], commented_at=None, is_fan=False,
                         is_author=True, author_role="ai", replied=False,
                     ))
@@ -1697,9 +1818,13 @@ async def _generate_reply_for_comment(commenter: str, content: str, post_key: st
         reply = _append_sign(reply, await _active_char_name())  # 末尾署名「-角色名」
         from app.db.database import async_session_factory
         from douyin_models import DouyinPending
+        tenant = await _douyin_primary_tenant()
+        if tenant is None:
+            sdk.log("社交事件回复跳过：无绑定角色（归属不明，不再写死 tenant=1）")
+            return False
         async with async_session_factory() as db:
             db.add(DouyinPending(
-                user_id=1, kind="reply_comment", title=(post_title or "")[:300], content=reply[:1000],
+                tenant_id=int(tenant), kind="reply_comment", title=(post_title or "")[:300], content=reply[:1000],
                 commenter=(commenter or "")[:100], post_key=(post_key or "")[:50], is_fan=is_fan, status="confirmed",
                 execute_at=_random_execute_at(),
             ))
@@ -1814,9 +1939,11 @@ async def _auto_generate_image_post() -> None:
             return
         if time.time() - _last_auto_image_ts < 24 * 3600:
             return
-        cfg = sdk.get_config()
-        raw = str(cfg.get("allowed_character_ids", "") or "").strip()
-        char_ids = [int(x) for x in raw.split(",") if x.strip().isdigit()]
+        # 一机多主：绑定角色统一经 reader（flag 关回落旧全局 config 串，行为不变）
+        from app.db.database import async_session_factory as _asf2
+        async with _asf2() as _db2:
+            _pairs = await _douyin_bound_pairs(_db2)
+        char_ids = [cid for _t, cid in _pairs]
         if not char_ids:
             return
         freq = await _check_frequency("image_post")
@@ -1885,19 +2012,14 @@ async def _build_section() -> str:
     return "\n".join(parts)
 
 
-# ================= 角色白名单（allowed_character_ids 逗号分隔角色 ID，空=全部角色） =================
-def _char_allowed(char_id) -> bool:
-    try:
-        cfg = sdk.get_config()
-        raw = str(cfg.get("allowed_character_ids", "") or "").strip()
-        if not raw:
-            return True
-        ids = [x.strip() for x in raw.split(",") if x.strip()]
-        if not ids:
-            return True
-        return str(char_id) in ids
-    except Exception:
-        return True
+# ================= 角色白名单（按租户隔离的绑定白名单，空=全部角色；一机多主统一走 reader） =================
+async def _char_allowed(char_id) -> bool:
+    """角色是否允许感知/使用抖音（基准=该角色归属租户的绑定白名单）。
+
+    一机多主（2026-09-05）：由同步读全局 config 改为按角色租户判定（多主互不可见）；
+    flag 关时 reader 回落旧全局 config 串，单主部署行为不变。原同步实现改 async（调用点已 await）。
+    """
+    return await _char_allowed_async(char_id)
 
 
 # ================= Hook 实现 =================
@@ -1946,8 +2068,8 @@ async def latest_notes():
 
 
 @router.post("/draft/image_post")
-async def draft_image_post(payload: dict):
-    """图文发布草稿：检查违禁词/频率 → 写入 douyin_pending（待确认）"""
+async def draft_image_post(payload: dict, user_id: int = Depends(get_current_user_id)):
+    """图文发布草稿：检查违禁词/频率 → 写入 douyin_pending（待确认；租户=登录态主账号）"""
     title = str(payload.get("title") or "").strip()
     desc = str(payload.get("desc") or "").strip()
     images = list(payload.get("image_paths") or [])
@@ -1963,9 +2085,12 @@ async def draft_image_post(payload: dict):
         return freq
     from app.db.database import async_session_factory
     from douyin_models import DouyinPending
+    tenant = await _tenant_for_user(user_id)
+    if tenant is None:
+        return {"ok": False, "message": "无法确定归属主账号（登录态缺失）"}
     async with async_session_factory() as db:
         row = DouyinPending(
-            user_id=1, kind="image_post", title=title[:300], content=desc[:2000],
+            tenant_id=int(tenant), kind="image_post", title=title[:300], content=desc[:2000],
             image_paths_json=json.dumps(images, ensure_ascii=False),
         )
         db.add(row)
@@ -1976,9 +2101,9 @@ async def draft_image_post(payload: dict):
 
 
 @router.post("/draft/video_post")
-async def draft_video_post(payload: dict):
+async def draft_video_post(payload: dict, user_id: int = Depends(get_current_user_id)):
     """视频发布草稿（#67 P2）：title + desc + music_keyword(可选) + video_path(可后补)。
-    与 image_post 共用 pending 队列流程，kind=video_post。"""
+    与 image_post 共用 pending 队列流程，kind=video_post。租户=登录态主账号。"""
     title = str(payload.get("title") or "").strip()
     desc = str(payload.get("desc") or "").strip()
     video_path = str(payload.get("video_path") or "").strip()
@@ -1993,9 +2118,12 @@ async def draft_video_post(payload: dict):
         return freq
     from app.db.database import async_session_factory
     from douyin_models import DouyinPending
+    tenant = await _tenant_for_user(user_id)
+    if tenant is None:
+        return {"ok": False, "message": "无法确定归属主账号（登录态缺失）"}
     async with async_session_factory() as db:
         row = DouyinPending(
-            user_id=1, kind="video_post", title=title[:300], content=desc[:2000],
+            tenant_id=int(tenant), kind="video_post", title=title[:300], content=desc[:2000],
             video_path=video_path[:500], music_mood=music_mood, post_type="video",
         )
         db.add(row)
@@ -2006,8 +2134,8 @@ async def draft_video_post(payload: dict):
 
 
 @router.post("/draft/reply_comment")
-async def draft_reply_comment(payload: dict):
-    """评论回复草稿：post_title/commenter 定位目标评论，reply_text 为回复内容"""
+async def draft_reply_comment(payload: dict, user_id: int = Depends(get_current_user_id)):
+    """评论回复草稿：post_title/commenter 定位目标评论，reply_text 为回复内容。租户=登录态主账号。"""
     post_title = str(payload.get("post_title") or "").strip()
     commenter = str(payload.get("commenter") or "").strip()
     reply_text = str(payload.get("reply_text") or "").strip()
@@ -2023,9 +2151,12 @@ async def draft_reply_comment(payload: dict):
         return freq
     from app.db.database import async_session_factory
     from douyin_models import DouyinPending
+    tenant = await _tenant_for_user(user_id)
+    if tenant is None:
+        return {"ok": False, "message": "无法确定归属主账号（登录态缺失）"}
     async with async_session_factory() as db:
         row = DouyinPending(
-            user_id=1, kind="reply_comment", title=post_title[:300], content=reply_text[:1000],
+            tenant_id=int(tenant), kind="reply_comment", title=post_title[:300], content=reply_text[:1000],
             commenter=commenter[:100], post_key=_post_key(post_title), is_fan=target_is_fan,
         )
         db.add(row)
@@ -2050,6 +2181,12 @@ async def ai_draft(payload: dict):
     post_title = str(payload.get("post_title") or "").strip()
     commenter = str(payload.get("commenter") or "").strip()
     persona = await _persona_context(character_id)
+    # 一机多主：草稿归属租户 = 指定角色（或主绑定角色）的家庭 root；无绑定不再写死 tenant=1
+    from app.db.database import async_session_factory as _asf
+    async with _asf() as _db:
+        tenant = (await _char_tenant(_db, character_id) if character_id else None) or await _douyin_primary_tenant()
+    if tenant is None:
+        return {"ok": False, "message": "无绑定角色，无法确定草稿归属（请先在扩展页绑定角色）"}
     char_name = "这个角色"
     if persona:
         _m = re.search(r"你是角色「([^」]+)」", persona)
@@ -2174,7 +2311,7 @@ async def ai_draft(payload: dict):
         if not freq["ok"]:
             return freq
         async with async_session_factory() as db:
-            row = DouyinPending(user_id=1, kind="image_post", title=title, content=desc,
+            row = DouyinPending(tenant_id=int(tenant), kind="image_post", title=title, content=desc,
                                 image_paths_json="[]", music_mood=music_mood, post_type="image")
             if not _require_approval():
                 row.status = "confirmed"
@@ -2200,7 +2337,7 @@ async def ai_draft(payload: dict):
             return freq
         async with async_session_factory() as db:
             row = DouyinPending(
-                user_id=1, kind="reply_comment", title=post_title[:300], content=reply,
+                tenant_id=int(tenant), kind="reply_comment", title=post_title[:300], content=reply,
                 commenter=commenter[:100], post_key=_post_key(post_title), is_fan=target_is_fan,
             )
             if not _require_approval():
@@ -2414,7 +2551,7 @@ async def on_tick(ctx):
 async def inject(ctx):
     try:
         # 角色白名单：仅允许配置的角色感知抖音账号（空=全部角色）
-        if not _char_allowed(ctx.get("character_id")):
+        if not await _char_allowed(ctx.get("character_id")):
             return
         section = await _build_section()
         if section:
@@ -2476,14 +2613,16 @@ async def proactive_candidate(ctx):
     """
     try:
         global _last_proactive_ts
-        cfg = sdk.get_config()
-        raw = str(cfg.get("allowed_character_ids", "") or "").strip()
-        if not raw:
+        # 一机多主：绑定角色统一经 reader（flag 关回落旧全局 config 串，行为不变）
+        from app.db.database import async_session_factory as _asf3
+        async with _asf3() as _db3:
+            _pairs = await _douyin_bound_pairs(_db3)
+        if not _pairs:
             return None
         comments = await _recent_unreplied_comments(1)
         mention_comments = await _recent_unreplied_comments(1, exclude_mentioned=True)
         from app.application.chat_service import get_latest_session_id
-        char_ids = [int(x) for x in raw.split(",") if x.strip().isdigit()]
+        char_ids = [cid for _t, cid in _pairs]
         all_candidates = []
         for cid in char_ids:
             # 角色可能属于其他账号，动态取角色所属用户

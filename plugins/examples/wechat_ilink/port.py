@@ -72,5 +72,7 @@ def build_meta() -> dict:
         "scope_label": "微信",
         "scope_desc": "微信桥：经官方 ClawBot/iLink 与你绑定的角色私聊（仅本人↔自己的 Agent）",
         "risk_level": "medium",
-        "binding": {"unique_per_family": True},
+        # 一机多主（Q1 拍板 2026-09-05）：微信按 bot_single 建模——多微信号各自 ClawBot 并存、
+        # 各绑一角色；底层唯一约束 UQ(channel,tenant,bot)，bot 稳定键多 bot 阶段真机确认后启用（§8.4）。
+        "binding": {"unique_per_family": True, "mode": "bot_single"},
     }

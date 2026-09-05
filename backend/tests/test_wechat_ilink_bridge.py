@@ -276,9 +276,11 @@ def test_delivery_503_when_secret_not_configured(wc_db, monkeypatch):
 
 
 def test_delivery_400_bad_row_id(wc_db):
+    """一机多主回执稳定键（2026-09-05）：坏 out_row_id 不再 400，回落稳定键定位；
+    既无有效 out_row_id 也无 (bot_account_id, in_msg_id) → 200 not_found。"""
     r = _client().post(DELIVERY_URL, json={"out_row_id": "nope", "ok": False},
                        headers={"X-AMBRACE-Bridge-Secret": _SECRET})
-    assert r.status_code == 400
+    assert r.status_code == 200 and r.json().get("code") == "not_found"
 
 
 def test_delivery_not_found(wc_db):

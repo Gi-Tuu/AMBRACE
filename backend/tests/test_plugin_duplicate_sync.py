@@ -11,6 +11,8 @@
 import hashlib
 import pathlib
 
+import pytest
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _EXAMPLES = _REPO_ROOT / "plugins" / "examples" / "wechat_ilink"
 _RUNTIME = _REPO_ROOT / "backend" / "data" / "plugins" / "wechat_ilink"
@@ -25,7 +27,11 @@ def _sha256(path: pathlib.Path) -> str:
 def test_examples_and_runtime_plugin_copy_identical():
     """源码副本与运行副本的同名文件必须 sha256 一致；缺文件/不一致直接失败。"""
     assert _EXAMPLES.is_dir(), f"示例目录不存在: {_EXAMPLES}"
-    assert _RUNTIME.is_dir(), f"运行副本目录不存在: {_RUNTIME}"
+    if not _RUNTIME.is_dir():
+        pytest.skip(
+            "运行副本目录不存在（backend/data/plugins 为 gitignored 运行时副本，"
+            "CI 检出无此目录；本测试在本地/部署机守护双副本一致，CI 无副本自动跳过）"
+        )
 
     source_files = {
         f.name: f

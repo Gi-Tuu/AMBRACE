@@ -4,22 +4,31 @@
 归属原则（X5）：渠道的数据模型定义在渠道扩展包内，由 main.py 加载期 import 本模块注册进
 Base.metadata（main.py lifespan 在 init_db create_all 之前预加载渠道插件，保证全新安装建表）。
 与用户记忆库严格隔离：douyin_* 表只服务本渠道，source=plugin:douyin_mcp。
-表结构逐字节继承自原 app/models/social 聚合定义（列/约束/默认值零变化，存量数据无需迁移）。
+
+一机多主（2026-09-05，拍板 Q4「正名」）：各表 user_id 正名为 tenant_id（语义=家庭 root 的
+user_id），去掉 default=1 写死，所有读写显式传 root；DouyinAccount 增 bot_account_id/bot_label
+（多抖音号并存预留，单账号恒 "default"）。存量库由 Alembic a7b8c9d0e1f2 做 RENAME + 去默认值 +
+回填，全新库按本模型直建。
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
 
 
 class DouyinAccount(Base):
-    """抖音账号绑定/登录状态（全局主账号 user_id=1）"""
+    """抖音账号绑定/登录状态（per-tenant/per-bot：tenant_id=家庭 root，bot_account_id=抖音号稳定键）"""
     __tablename__ = "douyin_accounts"
+    __table_args__ = (
+        Index("uq_douyin_tenant_bot", "tenant_id", "bot_account_id", unique=True),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, default=1)
+    tenant_id: Mapped[int] = mapped_column(Integer, index=True)          # 家庭 root user_id（显式传，无默认）
+    bot_account_id: Mapped[str] = mapped_column(String(64), default="default")  # 抖音号稳定键（单账号恒 default）
+    bot_label: Mapped[str] = mapped_column(String(100), default="")      # 面板展示名
     account_name: Mapped[str] = mapped_column(String(100), default="")
     bound: Mapped[bool] = mapped_column(Boolean, default=False)
     logged_in: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -33,7 +42,7 @@ class DouyinPost(Base):
     __tablename__ = "douyin_posts"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, default=1)
+    tenant_id: Mapped[int] = mapped_column(Integer, index=True)          # 家庭 root user_id（显式传，无默认）
     douyin_post_id: Mapped[str] = mapped_column(String(100), default="")
     title: Mapped[str] = mapped_column(String(500), default="")
     post_type: Mapped[str] = mapped_column(String(20), default="image")  # image / video
@@ -46,10 +55,10 @@ class DouyinPost(Base):
 class DouyinComment(Base):
     """AI 账号收到的评论（增量去重；replied=是否已回复，Phase 2 回评用）"""
     __tablename__ = "douyin_comments"
-    __table_args__ = (UniqueConstraint("user_id", "douyin_post_id", "content", name="uq_douyin_comment"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "douyin_post_id", "content", name="uq_douyin_comment"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, default=1)
+    tenant_id: Mapped[int] = mapped_column(Integer)                      # 家庭 root user_id（显式传，无默认）
     douyin_post_id: Mapped[str] = mapped_column(String(100), default="")
     commenter: Mapped[str] = mapped_column(String(100), default="")
     content: Mapped[str] = mapped_column(String(1000), default="")
@@ -70,7 +79,7 @@ class DouyinPending(Base):
     __tablename__ = "douyin_pending"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, default=1)
+    tenant_id: Mapped[int] = mapped_column(Integer, index=True)          # 家庭 root user_id（显式传，无默认）
     kind: Mapped[str] = mapped_column(String(20), default="")  # image_post / reply_comment
     title: Mapped[str] = mapped_column(String(300), default="")  # 图文标题 或 作品标题
     content: Mapped[str] = mapped_column(String(2000), default="")  # 描述 或 回复文本
@@ -94,7 +103,7 @@ class DouyinViewedNote(Base):
     __tablename__ = "douyin_viewed_notes"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, default=1)
+    tenant_id: Mapped[int] = mapped_column(Integer, index=True)          # 家庭 root user_id（显式传，无默认）
     aweme_id: Mapped[str] = mapped_column(String(64), unique=True, default="")
     author: Mapped[str] = mapped_column(String(100), default="")
     desc: Mapped[str] = mapped_column(String(1000), default="")  # 作品文案（标题+正文+标签）

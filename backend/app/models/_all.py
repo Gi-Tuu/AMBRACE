@@ -16,6 +16,7 @@ from app.models.config import ApiConfig, VlmConfig, SpeechConfig, MultimodalConf
 from app.models.social import PlatformProfile, SocialMemory  # X5：渠道自有模型迁至渠道扩展包，加载期注册进 metadata
 from app.models.device import PhoneDesktop, PhoneLayout, CalendarNote, BrowserHistory, MemoNote, PhoneSnapshot, CheckInRequest, PhoneAutoState, UserDeviceToken
 from app.models.game import GameSession, GamePlayer, GameEvent, GameMemory
+from app.models.channel import ChannelBinding  # 一机多主：渠道绑定内核一等公民（2026-09-05）
 
 __all__ = [
     "Base",
@@ -31,6 +32,7 @@ __all__ = [
     "BrowserHistory",
     "BrowserSnapshot",
     "CalendarNote",
+    "ChannelBinding",
     "CharacterState",
     "CharacterStateHistory",
     "ChatGroup",

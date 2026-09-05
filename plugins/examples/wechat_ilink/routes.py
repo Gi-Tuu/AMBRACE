@@ -86,6 +86,40 @@ def _mask_uid(uid: str) -> str:
 
 # ------------------------------------------------------------------ 内核裁决（唯一仲裁点）
 
+def _binding_v2_enabled() -> bool:
+    """一机多主 flag（channel_binding_v2，默认关=回落旧全局 config 路径，零行为变化）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS  # noqa: PLC0415
+
+        return bool(AGENT_FLAGS.get("channel_binding_v2", False))
+    except Exception:
+        return False
+
+
+def _svc_http_exc(e: Exception, lang: str) -> HTTPException:
+    """ChannelBindingService 异常 → HTTP（沿用内核既有 i18n key 与状态码语义）。"""
+    from app.application import channel_binding_service as _svc  # noqa: PLC0415
+    from app.i18n import tr_lang  # noqa: PLC0415
+
+    if isinstance(e, _svc.SubAccountForbidden):
+        return HTTPException(status_code=403, detail=tr_lang(lang, "channel_bind_main_only"))
+    if isinstance(e, _svc.CrossFamilyCharacter):
+        return HTTPException(status_code=403, detail=tr_lang(lang, "channel_bind_cross_family"))
+    if isinstance(e, _svc.ChannelOccupied):
+        return HTTPException(status_code=400, detail=tr_lang(lang, "channel_bind_occupied"))
+    if isinstance(e, ValueError):
+        return HTTPException(status_code=400, detail=str(e))
+    return HTTPException(status_code=500, detail=str(e))
+
+
+def _resolve_bridge_secret(tenant_id: int | None) -> str:
+    """桥共享密钥解析（Q3 拍板：本期全局 WECHAT_ILINK_BRIDGE_SECRET；SaaS 阶段切 per-tenant
+    时只改本函数（按 tenant_id 反查该租户配置的 secret），调用点不动）。"""
+    import os  # noqa: PLC0415
+
+    return os.environ.get("WECHAT_ILINK_BRIDGE_SECRET", "") or ""
+
+
 async def _kernel_bind(user_id: int, character_id: int, lang: str) -> None:
     """走内核完整 PUT 路径做绑定裁决（子账号/跨家庭/多角色/家庭唯一/换绑）；失败抛 HTTPException。"""
     from app.api.plugins import update_plugin  # noqa: PLC0415 - 避免加载期重链
@@ -106,24 +140,30 @@ async def _kernel_unbind(user_id: int, lang: str) -> None:
 
 async def _save_binding(db, *, user_id: int, character_id: int,
                         ilink_user_id: str = "", ilink_bot_id: str = "",
-                        bot_token: str = "", baseurl: str = "") -> object:
+                        bot_token: str = "", baseurl: str = "",
+                        bot_account_id: str = "default") -> object:
     """落库绑定（bot_token 加密存储）。P1-3：同稳定 ilink_user_id 重新扫码 → 轮换凭据不新建行。
 
-    匹配优先级：稳定 ilink_user_id（类 openid，同微信复用）→ (user_id, character_id) → 新建。
-    character_id 唯一约束作 DB 级兜底（内核已保证家庭单选）。
+    一机多主（2026-09-05）：行带 tenant_id（家庭 root）/ bot_account_id（ClawBot 稳定键，单 bot 恒 default）。
+    匹配优先级（W4 防串绑语义保持）：
+      (bot_account_id, ilink_user_id, user_id) → (user_id, bot_account_id, character_id) → 新建；
+    跨主账号同 (bot,wxuser) 撞 uq_wechat_bot_wxuser 唯一索引 → IntegrityError 由调用方转 4xx。
     """
     import crypto_util  # noqa: PLC0415
     from sqlalchemy import select  # noqa: PLC0415
+    from app.application.family_service import get_family_root_id  # noqa: PLC0415
 
     import models  # noqa: PLC0415
 
     baseurl = _validate_baseurl(baseurl)
     token_enc = crypto_util.encrypt(bot_token)
+    tenant_id = await get_family_root_id(db, user_id) or user_id
 
     row = None
     if ilink_user_id:
         row = (await db.execute(
             select(models.WeChatILinkBinding).where(
+                models.WeChatILinkBinding.bot_account_id == bot_account_id,
                 models.WeChatILinkBinding.ilink_user_id == ilink_user_id,
                 models.WeChatILinkBinding.user_id == user_id,  # W4（v3.4.4 审查）：防多主账号理论串绑
             )
@@ -132,13 +172,17 @@ async def _save_binding(db, *, user_id: int, character_id: int,
         row = (await db.execute(
             select(models.WeChatILinkBinding).where(
                 models.WeChatILinkBinding.user_id == user_id,
+                models.WeChatILinkBinding.bot_account_id == bot_account_id,
                 models.WeChatILinkBinding.character_id == character_id)
         )).scalars().first()
     if row is None:
-        row = models.WeChatILinkBinding(user_id=user_id, character_id=character_id)
+        row = models.WeChatILinkBinding(user_id=user_id, character_id=character_id,
+                                        tenant_id=int(tenant_id), bot_account_id=bot_account_id)
         db.add(row)
     # 轮换/首次写入：token/绑定标识一律更新，保证不残留旧凭据
     row.user_id = user_id
+    row.tenant_id = int(tenant_id)
+    row.bot_account_id = bot_account_id
     row.character_id = character_id
     row.ilink_user_id = ilink_user_id
     row.ilink_bot_id = ilink_bot_id
@@ -167,16 +211,31 @@ async def _clear_binding(db, user_id: int, character_id: int) -> None:
 
 
 async def get_binding_view(user_id: int | None = None) -> dict:
-    """绑定状态视图（供 /status 路由与 ChannelPort.binding_status 复用，避免逻辑漂移）。"""
-    from app.plugins import registry  # noqa: PLC0415
+    """绑定状态视图（供 /status 路由与 ChannelPort.binding_status 复用，避免逻辑漂移）。
+
+    一机多主：flag 开时绑定角色读 channel_bindings 新表（按当前登录者租户）；flag 关回落旧
+    全局 config 串（响应形态两路一致）。
+    """
     from sqlalchemy import select  # noqa: PLC0415
     from app.db.database import async_session_factory  # noqa: PLC0415
 
     import models  # noqa: PLC0415
 
-    plugin = registry.get_plugin("wechat_ilink") or {}
-    config = plugin.get("config") or {}
-    char_id = _parse_character_ids(config.get("allowed_character_ids"))
+    char_id: int | None = None
+    if _binding_v2_enabled() and user_id is not None:
+        from app.application import channel_binding_service as _svc  # noqa: PLC0415
+        from app.application.tenant_scope import resolve_tenant  # noqa: PLC0415
+
+        async with async_session_factory() as db:
+            tenant = await resolve_tenant(db, user_id)
+            _rows = [r for r in await _svc.list_bindings(db, tenant, "wechat") if r.enabled]
+            char_id = int(_rows[0].character_id) if _rows else None
+    else:
+        from app.plugins import registry  # noqa: PLC0415
+
+        plugin = registry.get_plugin("wechat_ilink") or {}
+        config = plugin.get("config") or {}
+        char_id = _parse_character_ids(config.get("allowed_character_ids"))
 
     bound = enabled = has_cred = False
     uid_masked = ""
@@ -199,7 +258,7 @@ async def get_binding_view(user_id: int | None = None) -> dict:
         "enabled": enabled,
         "has_credentials": has_cred,
         "ilink_user_id_masked": uid_masked,
-        "binding": {"unique_per_family": True},
+        "binding": {"unique_per_family": True, "mode": "bot_single"},
     }
 
 
@@ -227,36 +286,78 @@ def mount(router):
 
     @router.post("/bind")
     async def bind(body: dict, user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
-        """绑定：先走内核完整 PUT 路径裁决（家庭唯一/单选/子账号/跨家庭/换绑），通过后才落库加密 token。"""
+        """绑定：先裁决（flag 开=ChannelBindingService 租户化裁决；关=内核完整 PUT 路径——家庭唯一/
+        单选/子账号/跨家庭/换绑语义一致），通过后才落库加密 token。
+
+        一机多主：body 可带 bot_account_id（ClawBot 稳定键；缺省 "default"，多 bot 阶段由扫码上下文带上）。
+        """
         character_id = _parse_character_id(body)
         confirmed = _confirmed_payload(body)
-        # P3-2 SSRF：先验 baseurl 白名单，失败即拒（不先改内核 config，避免半绑定态）
+        bot_account_id = str(body.get("bot_account_id") or "default").strip() or "default"
+        # P3-2 SSRF：先验 baseurl 白名单，失败即拒（不先改绑定，避免半绑定态）
         _validate_baseurl(confirmed["baseurl"])
-        await _kernel_bind(user_id, character_id, lang)
         from app.db.database import async_session_factory  # noqa: PLC0415
 
-        # W5（v3.4.4 审查）：落库失败补偿（对齐 /rebind 的 P2-1）——内核 config 已改、
-        # 落库失败时回滚内核（PUT 空数组），避免半绑定态；补偿失败记日志后原样抛出。
+        if _binding_v2_enabled():
+            from app.application import channel_binding_service as _svc  # noqa: PLC0415
+
+            try:
+                async with async_session_factory() as db:
+                    await _svc.upsert_binding(db, user_id, "wechat", character_id,
+                                              bot_account_id=bot_account_id)
+                    await db.commit()
+            except HTTPException:
+                raise
+            except Exception as e:  # noqa: BLE001 - 服务异常统一映射 i18n key
+                raise _svc_http_exc(e, lang)
+        else:
+            await _kernel_bind(user_id, character_id, lang)
+
+        # W5（v3.4.4 审查）：落库失败补偿（对齐 /rebind 的 P2-1）——裁决已生效、
+        # 落库失败时回滚裁决（flag 关=内核 PUT 空数组；flag 开=删 channel_bindings 行），
+        # 避免半绑定态；补偿失败记日志后原样抛出。
         try:
             async with async_session_factory() as db:
-                await _save_binding(db, user_id=user_id, character_id=character_id, **confirmed)
+                await _save_binding(db, user_id=user_id, character_id=character_id,
+                                    bot_account_id=bot_account_id, **confirmed)
                 await db.commit()
         except Exception:
             try:
-                await _kernel_unbind(user_id, lang)
+                if _binding_v2_enabled():
+                    from app.application import channel_binding_service as _svc  # noqa: PLC0415
+
+                    async with async_session_factory() as db:
+                        await _svc.remove_binding(db, user_id, "wechat", bot_account_id)
+                        await db.commit()
+                else:
+                    await _kernel_unbind(user_id, lang)
             except Exception:
                 from app.plugins import sdk  # noqa: PLC0415
-                sdk.log("wechat_ilink /bind 补偿回滚失败 user=%s char=%s，请人工核对内核 allowed_character_ids",
+                sdk.log("wechat_ilink /bind 补偿回滚失败 user=%s char=%s，请人工核对绑定裁决面",
                         user_id, character_id)
             raise
         return {"ok": True, "character_id": character_id}
 
     @router.post("/unbind")
     async def unbind(body: dict, user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
-        """解绑：空 allowed_character_ids 走内核 PUT 解绑裁决（同抖音空数组解绑语义），再清绑定停状态。"""
+        """解绑：flag 开=ChannelBindingService 删绑定行；关=内核 PUT 空数组解绑裁决。
+        两路都再清插件绑定停状态。"""
         character_id = _parse_character_id(body)
-        await _kernel_unbind(user_id, lang)
         from app.db.database import async_session_factory  # noqa: PLC0415
+
+        if _binding_v2_enabled():
+            from app.application import channel_binding_service as _svc  # noqa: PLC0415
+
+            try:
+                async with async_session_factory() as db:
+                    await _svc.remove_binding(db, user_id, "wechat")
+                    await db.commit()
+            except HTTPException:
+                raise
+            except Exception as e:  # noqa: BLE001
+                raise _svc_http_exc(e, lang)
+        else:
+            await _kernel_unbind(user_id, lang)
 
         async with async_session_factory() as db:
             await _clear_binding(db, user_id, character_id)
@@ -267,16 +368,44 @@ def mount(router):
     async def rebind(body: dict, user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
         """换绑（任务 B）：主账号在 App「扩展」页对 wechat_ilink 换绑角色，无需重扫微信。
 
-        语义（与 /bind /unbind 同处、走登录态；绑定裁决唯一在内核）：
-        1) 先调内核 PUT 空数组解绑裁决（allowed_character_ids="" 允许）；
-        2) 再调内核 PUT 单选绑定裁决（目标角色须属同一主账号家庭，非法/越权由内核 400/403 透出）；
-        3) 两步都成功后，在**同一事务**内把绑定行角色迁到目标角色：enabled 保持 True，
-           bot_token_enc/baseurl **保留不清**（区别于解绑）。
+        flag 开（channel_binding_v2）：ChannelBindingService.upsert_binding 单次裁决+改绑（原子，
+        无两步中间态，无需补偿）。
+        flag 关（旧路径，语义保持）：1) 内核 PUT 空数组解绑裁决；2) 内核 PUT 单选绑定裁决；
+        3) 两步成功后同一事务迁绑定行角色（保留 bot_token_enc/baseurl，区别于解绑）。
         P2-1（2026-09-05）：第 2) 步失败时补偿回滚第 1) 步（恢复内核绑定为旧角色），
         避免「内核已清空、插件仍指旧角色」的中间态；补偿失败记日志不静默。
         """
         character_id = _parse_character_id(body)
         from app.db.database import async_session_factory  # noqa: PLC0415
+
+        if _binding_v2_enabled():
+            from app.application import channel_binding_service as _svc  # noqa: PLC0415
+
+            try:
+                async with async_session_factory() as db:
+                    await _svc.upsert_binding(db, user_id, "wechat", character_id)
+                    await db.commit()
+            except HTTPException:
+                raise
+            except Exception as e:  # noqa: BLE001
+                raise _svc_http_exc(e, lang)
+            async with async_session_factory() as db:
+                from sqlalchemy import select  # noqa: PLC0415
+                import models  # noqa: PLC0415
+
+                rows = (await db.execute(
+                    select(models.WeChatILinkBinding).where(
+                        models.WeChatILinkBinding.user_id == user_id,
+                        models.WeChatILinkBinding.enabled.is_(True),
+                    )
+                )).scalars().all()
+                for row in rows:
+                    row.character_id = character_id
+                    row.enabled = True
+                    # bot_token_enc / baseurl / ilink_user_id / ilink_bot_id 保留不清（区别于解绑）
+                await db.commit()
+            return {"ok": True, "rebound": True, "character_id": character_id}
+
         from sqlalchemy import select  # noqa: PLC0415
         import models  # noqa: PLC0415
 
@@ -332,21 +461,25 @@ def mount(router):
 async def bridge_relay_impl(body: dict, secret_header: str):
     """服务到服务（openclaw → 拥爱桥）：网关收微信消息后把文本转发到拥爱生成回复。
 
-    鉴权：共享密钥（X-AMBRACE-Bridge-Secret 由内核端点传入，常量时间比较；密钥来自进程环境变量
-    WECHAT_ILINK_BRIDGE_SECRET，未配置即 503 fail-closed，不进日志/不进前端）。
-    语义：按 ilink_user_id 找绑定角色 → 幂等落库入站（ilink_msg_id）→ 重置配额窗口 →
-    走主认知链路生成整段回复 → QuotaGate 裁决"可否由网关下发"（发送在 openclaw 侧，
-    配额统一收口在拥爱侧）。空回复/额度不足 → sendable=false，网关不发送。
+    鉴权：共享密钥（X-AMBRACE-Bridge-Secret 由内核端点传入，常量时间比较；密钥经
+    _resolve_bridge_secret 解析——本期全局环境变量，SaaS 切 per-tenant 只改该函数）。
+    语义：按 (bot_account_id, ilink_user_id) 定位绑定（一机多主：多 ClawBot 并存时同一微信用户
+    对不同 bot 是不同会话，单条件 .first() 会串台；payload 缺 bot_account_id 回落 "default"
+    兼容现有 openclaw 插件）→ 幂等落库入站（ilink_msg_id）→ 重置配额窗口 →
+    走主认知链路生成整段回复 → QuotaGate 裁决"可否由网关下发"。空回复/额度不足 → sendable=false。
+    回执稳定键（消除 lastOutRowId 单值竞态）：响应带 out_row_id + bot_account_id + in_msg_id，
+    out 流水行 ilink_msg_id 落 "gw:{in_msg_id}"；/bridge/wechat-delivery 可按稳定键定位。
     """
-    import os
+    import os  # noqa: PLC0415
     import secrets as _secrets
 
-    expected = os.environ.get("WECHAT_ILINK_BRIDGE_SECRET", "") or ""
+    expected = _resolve_bridge_secret(None)
     if not expected:
         raise HTTPException(status_code=503, detail="bridge not configured")
     if not _secrets.compare_digest(secret_header, expected):
         raise HTTPException(status_code=401, detail="bad secret")
     payload = body if isinstance(body, dict) else {}
+    bot_account_id = str(payload.get("bot_account_id") or "default").strip() or "default"
     ilink_user_id = str(payload.get("ilink_user_id") or "").strip()
     text = str(payload.get("text") or "").strip()
     msg_id = str(payload.get("msg_id") or "").strip()
@@ -365,6 +498,7 @@ async def bridge_relay_impl(body: dict, secret_header: str):
     async with async_session_factory() as db:
         row = (await db.execute(
             select(models.WeChatILinkBinding).where(
+                models.WeChatILinkBinding.bot_account_id == bot_account_id,   # ★第一定位键（一机多主）
                 models.WeChatILinkBinding.ilink_user_id == ilink_user_id,
                 models.WeChatILinkBinding.enabled.is_(True),
             ).with_for_update()
@@ -380,7 +514,7 @@ async def bridge_relay_impl(body: dict, secret_header: str):
             )).scalar_one_or_none()
             if dup is not None:
                 return {"ok": True, "duplicate": True, "reply": "", "sendable": False, "quota": None}
-        QuotaGate(quota_n).on_inbound(row)  # 用户入站：重置 24h 窗口
+        QuotaGate(quota_n).on_inbound(row)  # 用户入站：重置 24h 窗口（只重置本行，不跨 bot/租户累加）
         db.add(models.WeChatILinkMessage(
             binding_id=row.id, character_id=int(row.character_id),
             ilink_msg_id=msg_id, context_token="", direction="in",
@@ -427,7 +561,10 @@ async def bridge_relay_impl(body: dict, secret_header: str):
                 # openclaw message_sent 回执通道（失败回标/回补）登记排期，本台账先保证可排查「网关回了什么」。
                 _out_row = models.WeChatILinkMessage(
                     binding_id=row2.id, character_id=int(row2.character_id),
-                    ilink_msg_id="", context_token="", direction="out", content=send_text,
+                    # 回执稳定键：出站行 ilink_msg_id 落 "gw:{入站 msg_id}"（partial 唯一索引只约束
+                    # 非空行，同 binding 一条入站至多一条网关回复，不冲突）；delivery 回执可按它定位。
+                    ilink_msg_id=(f"gw:{msg_id}" if msg_id else ""), context_token="", direction="out",
+                    content=send_text,
                     quota_charged=bool(dec.allowed),
                     status="sent_by_gateway" if dec.allowed else "deferred",
                 )
@@ -438,6 +575,8 @@ async def bridge_relay_impl(body: dict, secret_header: str):
                 sendable, remaining = dec.allowed, dec.remaining
     return {"ok": True, "reply": send_text, "sendable": sendable,
             "out_row_id": out_row_id,
+            "bot_account_id": bot_account_id,
+            "in_msg_id": msg_id,
             "quota": {"remaining": remaining, "charged": bool(send_text and sendable)},
             "sent_cleanup": sent_cleanup}
 
@@ -445,31 +584,53 @@ async def bridge_relay_impl(body: dict, secret_header: str):
 async def bridge_delivery_impl(body: dict, secret_header: str):
     """服务到服务（openclaw → 拥爱桥）发送回执：openclaw message_sent 失败回调。
 
-    鉴权：共享密钥（X-AMBRACE-Bridge-Secret，常量时间比较；WECHAT_ILINK_BRIDGE_SECRET，
+    鉴权：共享密钥（X-AMBRACE-Bridge-Secret，常量时间比较；经 _resolve_bridge_secret 解析，
     未配置即 503 fail-closed，不进日志/不进前端——与 bridge_relay_impl 同源同语义）。
-    语义：body {out_row_id, ok:false, error}；ok=false 时把该 out 流水行 status 改为 failed
-    （配额不回补，保持已计费）。ok=true 不回传/按现状（保持 sent_by_gateway）。幂等：重复回调无副作用。
+    语义：body {out_row_id | (bot_account_id + in_msg_id), ok, error}；ok=false 时把该 out 流水行
+    status 改为 failed（配额不回补，保持已计费）。ok=true 不回传/按现状（保持 sent_by_gateway）。
+    幂等：重复回调无副作用。
+    定位（一机多主回执稳定键）：优先 out_row_id；缺省/未命中时按稳定键回退——
+    out 流水行 ilink_msg_id == "gw:{in_msg_id}"（可再叠加 bot_account_id 过滤防串 bot）。
     """
-    import os
     import secrets as _secrets
 
+    from sqlalchemy import select  # noqa: PLC0415
     from app.db.database import async_session_factory  # noqa: PLC0415
     import models  # noqa: PLC0415
 
-    expected = os.environ.get("WECHAT_ILINK_BRIDGE_SECRET", "") or ""
+    expected = _resolve_bridge_secret(None)
     if not expected:
         raise HTTPException(status_code=503, detail="bridge not configured")
     if not _secrets.compare_digest(secret_header, expected):
         raise HTTPException(status_code=401, detail="bad secret")
     payload = body if isinstance(body, dict) else {}
     ok = bool(payload.get("ok", False))
+    bot_account_id = str(payload.get("bot_account_id") or "").strip()
+    in_msg_id = str(payload.get("in_msg_id") or "").strip()
+    rid: int | None
     try:
         rid = int(payload.get("out_row_id"))
     except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="out_row_id 必须为整数")
+        rid = None
 
     async with async_session_factory() as db:
-        row = await db.get(models.WeChatILinkMessage, rid)
+        row = None
+        if rid is not None:
+            row = await db.get(models.WeChatILinkMessage, rid)
+        if row is None and in_msg_id:
+            # 稳定键回退定位（out 行 ilink_msg_id = "gw:{in_msg_id}"）；bot 归属可校验则校验
+            q = (
+                select(models.WeChatILinkMessage)
+                .join(models.WeChatILinkBinding,
+                      models.WeChatILinkBinding.id == models.WeChatILinkMessage.binding_id)
+                .where(
+                    models.WeChatILinkMessage.direction == "out",
+                    models.WeChatILinkMessage.ilink_msg_id == f"gw:{in_msg_id}",
+                )
+            )
+            if bot_account_id:
+                q = q.where(models.WeChatILinkBinding.bot_account_id == bot_account_id)
+            row = (await db.execute(q.order_by(models.WeChatILinkMessage.id.desc()).limit(1))).scalars().first()
         if row is None:
             return {"ok": False, "code": "not_found"}
         if row.direction != "out":
@@ -478,4 +639,4 @@ async def bridge_delivery_impl(body: dict, secret_header: str):
         if ok is False and row.status == "sent_by_gateway":
             row.status = "failed"
             await db.commit()
-        return {"ok": True, "out_row_id": rid, "status": row.status}
+        return {"ok": True, "out_row_id": row.id, "status": row.status}

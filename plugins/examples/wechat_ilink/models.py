@@ -18,11 +18,20 @@ from app.models.base import Base
 
 
 class WeChatILinkBinding(Base):
-    """微信桥绑定 + 轻状态（每家庭/角色唯一；家庭唯一裁决在内核，本表 character_id 唯一兜底）。"""
+    """微信桥绑定 + 轻状态（一机多主：tenant_id=家庭 root、bot_account_id=ClawBot 稳定键）。
+
+    唯一键（一机多主 2026-09-05，替代旧全库 UQ(character_id)）：
+    - uq_wechat_bot_wxuser：同一 bot 下一个微信用户唯一（partial：ilink_user_id != ''，
+      与 messages 表 partial unique 先例一致——空串行不入约束，绑定可先落行后补扫码）；
+    - uq_wechat_tenant_bot_char：同租户同 bot 一角色（bot_single 多 bot 时各 bot 独立一角色）。
+    ilink_bot_id 每次扫码变，仅记录，不作 bot_account_id（稳定键取法见设计 §8.4，真机确认项）。
+    """
     __tablename__ = "wechat_ilink_bindings"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, index=True)          # 绑定归属主账号
+    tenant_id: Mapped[int] = mapped_column(BigInteger, index=True, default=0)   # 家庭 root user_id（=user_id）
+    bot_account_id: Mapped[str] = mapped_column(String(128), index=True, default="default")  # ClawBot 稳定键（单 bot 恒 default）
     character_id: Mapped[int] = mapped_column(BigInteger, index=True)     # 家庭内唯一（内核裁决 + 下约束双保险）
     ilink_user_id: Mapped[str] = mapped_column(String(128), default="")   # 同微信号稳定（类 openid）
     ilink_bot_id: Mapped[str] = mapped_column(String(128), default="")    # 每次扫码变，仅记录
@@ -35,7 +44,14 @@ class WeChatILinkBinding(Base):
     bound_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     last_inbound_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_outbound_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    __table_args__ = (UniqueConstraint("character_id", name="uq_wechat_ilink_char"),)
+    __table_args__ = (
+        Index(
+            "uq_wechat_bot_wxuser", "bot_account_id", "ilink_user_id", unique=True,
+            sqlite_where=text("ilink_user_id != ''"),
+            postgresql_where=text("ilink_user_id != ''"),
+        ),
+        UniqueConstraint("tenant_id", "bot_account_id", "character_id", name="uq_wechat_tenant_bot_char"),
+    )
 
 
 class WeChatILinkMessage(Base):

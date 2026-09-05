@@ -84,10 +84,13 @@ class DouyinChannelPort:
     # ── 渠道元数据便捷读取 ──
 
     async def allowed_character_ids(self) -> list[int]:
-        """当前绑定的角色 id（插件配置 allowed_character_ids，逗号分隔）"""
-        from app.plugins import sdk
-        cfg = sdk.get_config()
-        return _parse_ids(cfg.get("allowed_character_ids"))
+        """当前绑定的角色 id（一机多主：统一经 channel_binding_reader，flag 关回落旧全局 config 串）"""
+        from app.db.database import async_session_factory
+        from app.providers.channel_binding_reader import all_bound_characters
+
+        async with async_session_factory() as db:
+            pairs = await all_bound_characters(db, "douyin")
+        return [cid for _t, cid in pairs]
 
     @staticmethod
     async def pending_summary() -> dict:
