@@ -229,6 +229,37 @@ extension PluginsApi on ApiClient {
     });
     return Map<String, dynamic>.from(r.data as Map);
   }
+
+  // ── 一机多主（S3，2026-09-05）：渠道绑定统一 API（/api/v1/channels/{ch}/bindings）──
+  // 渠道卡绑定区块改走本组方法（不再 updatePlugin config / rebindWechatPlugin）；
+  // botAccountId 拼路径前 Uri.encodeComponent（C7，2026-09-05 审查：bot 键未来含 @ 等特殊字符）；
+  // 旧端点保留给其它客户端。仅主账号调写操作（前端按 isAdmin 控制）。
+
+  /// 列出当前主账号在某渠道的 bot 绑定（flag 关时后端回落旧全局 config 合成行）
+  Future<List<Map<String, dynamic>>> listChannelBindings(String channel) async {
+    final r = await dio.get('/api/v1/channels/$channel/bindings');
+    return parseListItems(r.data, 'items', (j) => j as Map<String, dynamic>);
+  }
+
+  /// 绑定/换绑指定 bot（仅主账号）
+  Future<Map<String, dynamic>> putChannelBinding(
+    String channel,
+    String botAccountId,
+    int characterId, {
+    String? botLabel,
+  }) async {
+    final r = await dio.put('/api/v1/channels/$channel/bindings/${Uri.encodeComponent(botAccountId)}', data: {
+      'character_id': characterId,
+      if (botLabel != null) 'bot_label': botLabel,
+    });
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
+  /// 解绑指定 bot（仅主账号）
+  Future<Map<String, dynamic>> deleteChannelBinding(String channel, String botAccountId) async {
+    final r = await dio.delete('/api/v1/channels/$channel/bindings/${Uri.encodeComponent(botAccountId)}');
+    return Map<String, dynamic>.from(r.data as Map);
+  }
 }
 
 /// #65：构造插件页面/图标鉴权请求头（纯函数，可单测）。

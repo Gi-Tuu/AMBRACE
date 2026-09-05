@@ -5614,6 +5614,48 @@ class AppLocalizationsEn extends AppLocalizations {
   String get wechatBindNeedPick => 'Please select the character to bind';
 
   @override
+  String get channelBindingRole => 'Bound role';
+
+  @override
+  String get channelBindingRoleHint =>
+      'Choose a family character to bind to this channel';
+
+  @override
+  String get channelBindingBotDefault => 'Default';
+
+  @override
+  String get channelBindingNone => 'Unbound';
+
+  @override
+  String get channelBindingLoading => 'Loading…';
+
+  @override
+  String get channelBindingEmpty => 'No bindings yet';
+
+  @override
+  String get channelBindingSave => 'Save';
+
+  @override
+  String get channelBindingSaved => 'Binding saved';
+
+  @override
+  String get channelBindingUnbound => 'Unbound';
+
+  @override
+  String get channelBindingUnbind => 'Unbind';
+
+  @override
+  String get channelBindingUnbindConfirm =>
+      'Unbind this bot? You will need to re-bind (re-scan) to restore it';
+
+  @override
+  String get channelBindingMainOnly =>
+      'Only the main account can configure channel bindings';
+
+  @override
+  String get channelBindingNeedPick => 'Please select the character to bind';
+
+  @override
   String agentMindRetrievalCount(Object count) {
     return '$count records';
   }

@@ -48,7 +48,12 @@ class DouyinChannelPort:
         return await self._draft_reply(payload)
 
     async def pull_comments(self, payload: dict) -> list[dict]:
-        """拉取评论（渠道侧状态：douyin_comments 最近记录；limit 默认 20）"""
+        """拉取评论（渠道侧状态：douyin_comments 最近记录；limit 默认 20）。
+
+        【C9 登记，2026-09-05 落地审查】全局查询（无 tenant 过滤）：路线 A（physical_singleton
+        单绑定租户）下「单浏览器=单绑定租户」，全局=该租户，语义安全；路线 B（抖音彻底多租户）
+        立项时此处须改按 payload 携带的「当前绑定租户」过滤（douyin_comments.tenant_id）。
+        """
         import douyin_models
         from sqlalchemy import select
         from app.db.database import async_session_factory
@@ -94,7 +99,11 @@ class DouyinChannelPort:
 
     @staticmethod
     async def pending_summary() -> dict:
-        """待确认/已确认任务计数（运维观察用，零副作用）"""
+        """待确认/已确认任务计数（运维观察用，零副作用）。
+
+        【C9 登记】同 pull_comments：全局计数在路线 A（单绑定租户）下语义安全；
+        路线 B 立项时改按 tenant 过滤（douyin_pending.tenant_id）。
+        """
         import douyin_models
         from sqlalchemy import select, func as sa_func
         from app.db.database import async_session_factory
@@ -116,5 +125,8 @@ def build_meta() -> dict:
         "scope_label": "抖音",
         "scope_desc": "抖音扩展：发布图文、回复评论",
         "risk_level": "high",
-        "binding": {"unique_per_family": True},
+        # C3 路线 A（2026-09-05 落地审查）：抖音=物理单实例渠道（单浏览器 profile/单登录态），
+        # 内核据此拒绝第二主账号绑定（channel_binding_service.PhysicalSingletonTaken → 409）。
+        # 彻底多租户（路线 B：profile 分目录+全查询 tenant+多开风控）单独立项后再移除本位。
+        "binding": {"unique_per_family": True, "physical_singleton": True},
     }

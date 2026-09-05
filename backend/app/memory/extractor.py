@@ -388,6 +388,16 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
     if _intent_enabled:
         try:
             pi = _parse_intent_line(response)
+            # 落地审查派工（2026-09-06）：INTENT 输出观测——Raw 日志仅前 120 字符看不到尾部
+            # INTENT 行，trigger 段拍板（G 前瞻触发段 3-7 天观察）需要「输出率/写出率」数据。
+            # 观测自带内层兜底：obs 异常绝不影响 upsert 主链路（fail-open）。
+            try:
+                from app.memory.observability import obs_event
+                obs_event(character_id, "prospective_intent_extract",
+                          {"written": bool(pi and pi.get("content")), "kind": (pi or {}).get("kind"),
+                           "content": ((pi or {}).get("content") or "")[:60]})
+            except Exception:
+                pass
             if pi and not looks_like_raw_dialogue(pi["content"]):
                 from app.scheduling.prospective_intent import upsert_intent
                 await upsert_intent(

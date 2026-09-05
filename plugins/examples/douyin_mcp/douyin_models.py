@@ -99,12 +99,19 @@ class DouyinPending(Base):
 
 
 class DouyinViewedNote(Base):
-    """AI 看过的抖音图文（VLM 理解结果；仅作短期感知，不进用户记忆库；2026-08-10 计划 15）"""
+    """AI 看过的抖音图文（VLM 理解结果；仅作短期感知，不进用户记忆库；2026-08-10 计划 15）。
+
+    C3（2026-09-05 落地审查）：aweme_id 由全局 unique 改为 (tenant_id, aweme_id) 复合唯一——
+    多租户下不同家庭可各看同一条作品；存量库由 alembic b8c9d0e1f2a3 重建换索引。
+    """
     __tablename__ = "douyin_viewed_notes"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "aweme_id", name="uq_douyin_viewed_tenant_aweme"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     tenant_id: Mapped[int] = mapped_column(Integer, index=True)          # 家庭 root user_id（显式传，无默认）
-    aweme_id: Mapped[str] = mapped_column(String(64), unique=True, default="")
+    aweme_id: Mapped[str] = mapped_column(String(64), default="")        # C3：全局 unique 已去（改复合唯一）
     author: Mapped[str] = mapped_column(String(100), default="")
     desc: Mapped[str] = mapped_column(String(1000), default="")  # 作品文案（标题+正文+标签）
     images_urls_json: Mapped[str] = mapped_column(Text, default="[]")

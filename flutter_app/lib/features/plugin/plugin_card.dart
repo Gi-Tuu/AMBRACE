@@ -52,16 +52,13 @@ class PluginCardState extends State<PluginCard> {
   // douyin_mcp 自定义设定（注入 AI 抖音创作；待批准请求统一在「AI 好友」小信封查看）
   final TextEditingController _dyPromptCtrl = TextEditingController();
   bool _dySaving = false;
-  // douyin_mcp 绑定角色（#68 P5 组级唯一；-1=未绑定）
-  int _dyBoundCharId = -1;
-  bool _bindSaving = false;
-  List<AICharacter> _dyChars = [];
-  bool _dyCharsLoading = false;
-  // wechat_ilink 微信绑定角色（任务 B，App 换绑管理；-1=未绑定；换绑走 /rebind 端点）
-  int _wxBoundCharId = -1;
-  bool _wxBindSaving = false;
-  List<AICharacter> _wxChars = [];
-  bool _wxCharsLoading = false;
+  // 一机多主（S3，2026-09-05）：渠道绑定统一区块（wechat/douyin 共用；走 /channels/{ch}/bindings，
+  // 不再 updatePlugin config / rebindWechatPlugin）。「添加另一个 bot」本期隐藏（多 bot 待真机稳定键验证）。
+  final Map<String, List<Map<String, dynamic>>> _chBindings = {};
+  final Map<String, int> _chSelected = {};
+  List<AICharacter> _chChars = [];
+  bool _chCharsLoading = false;
+  final Set<String> _chSaving = {};
 
   /// 48a：插件图标展示（manifest.icon 相对路径 → 页面托管 URL；加载失败回退 type 图标）
   Widget _iconWidget(String name, String type, String category, String icon) {
@@ -105,13 +102,10 @@ class PluginCardState extends State<PluginCard> {
     if (widget.plugin['name'] == 'douyin_mcp') {
       final cfg = widget.plugin['config'] as Map<String, dynamic>? ?? {};
       _dyPromptCtrl.text = (cfg['custom_prompt'] as String? ?? '');
-      _dyBoundCharId = _parseBoundChar(cfg['allowed_character_ids']);
-      _loadDyChars();
+      _loadChannelBindings('douyin');
     }
     if (widget.plugin['name'] == 'wechat_ilink') {
-      final cfg = widget.plugin['config'] as Map<String, dynamic>? ?? {};
-      _wxBoundCharId = _parseBoundChar(cfg['allowed_character_ids']);
-      _loadWxChars();
+      _loadChannelBindings('wechat');
     }
   }
 
@@ -411,16 +405,21 @@ class PluginCardState extends State<PluginCard> {
                     onSaved: widget.onChanged,
                   ),
                 ),
-            if (name == 'douyin_mcp' && _enabled)
+            if (name == 'douyin_mcp' && _enabled) ...[
               Padding(
                 padding: const EdgeInsets.only(left: 42, top: 8, right: 8),
+                child: _buildChannelBindingTile('douyin'),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(left: 42, right: 8),
                 child: _buildDyCreator(),
               ),
-            // 任务 B：wechat_ilink 微信绑定角色（仅主账号；换绑走 /rebind，非 douyin 的 PUT 保存路径）
-            if (name == 'wechat_ilink' && _enabled && widget.isAdmin)
+            ],
+            // 一机多主（S3）：微信绑定角色区块（主账号可写、子账号只读；走统一渠道绑定 API）
+            if (name == 'wechat_ilink' && _enabled)
               Padding(
                 padding: const EdgeInsets.only(left: 42, top: 8, right: 8),
-                child: _buildWxBind(),
+                child: _buildChannelBindingTile('wechat'),
               ),
           ],
         ),
@@ -433,53 +432,6 @@ class PluginCardState extends State<PluginCard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // #68 P5：绑定角色（组级唯一单选；-1=未绑定）
-        if (widget.isAdmin) ...[
-          Text(l10n.douyinBindRole, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 2),
-          Text(l10n.douyinBindRoleHint, style: TextStyle(fontSize: 10, color: Colors.grey)),
-          const SizedBox(height: 6),
-          if (_dyCharsLoading)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 6),
-              child: Text('加载中…', style: TextStyle(fontSize: 12, color: Colors.grey)),
-            )
-          else
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: DropdownButton<int>(
-                value: _dyBoundCharId,
-                isExpanded: true,
-                underline: const SizedBox.shrink(),
-                isDense: true,
-                items: [
-                  DropdownMenuItem<int>(
-                      value: -1, child: Text(l10n.douyinBindNone, style: const TextStyle(fontSize: 13))),
-                  for (final c in _dyChars)
-                    DropdownMenuItem<int>(value: c.id, child: Text(c.name, style: const TextStyle(fontSize: 13))),
-                ],
-                onChanged: _bindSaving ? null : (v) => setState(() => _dyBoundCharId = v ?? -1),
-              ),
-            ),
-          const SizedBox(height: 6),
-          Align(
-            alignment: Alignment.centerRight,
-            child: FilledButton.tonal(
-              onPressed: _bindSaving ? null : _saveDyBindRole,
-              style: FilledButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-              ),
-              child: Text(l10n.douyinBindSave, style: const TextStyle(fontSize: 12)),
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
         Text(l10n.extCustomConfig, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
         const SizedBox(height: 2),
         Text(l10n.extDoyinInjectHint,
@@ -539,150 +491,192 @@ class PluginCardState extends State<PluginCard> {
     }
   }
 
-  /// #68 P5：解析当前 douyin 绑定角色 id（兼容历史逗号分隔字符串/数组；-1=未绑定）
-  int _parseBoundChar(dynamic raw) {
-    if (raw == null) return -1;
-    if (raw is List) {
-      for (final x in raw) {
-        final i = int.tryParse('$x');
-        if (i != null) return i;
-      }
-      return -1;
-    }
-    final s = '$raw'.trim();
-    if (s.isEmpty) return -1;
-    for (final p in s.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty)) {
-      final i = int.tryParse(p);
-      if (i != null) return i;
-    }
-    return -1;
-  }
+  // ================================================================= 一机多主（S3）：渠道绑定统一区块
 
-  Future<void> _loadDyChars() async {
+  Future<void> _loadChannelBindings(String channel) async {
     if (!mounted) return;
-    setState(() => _dyCharsLoading = true);
+    setState(() => _chCharsLoading = true);
     try {
+      final items = await ApiClient().listChannelBindings(channel);
+      // C4（2026-09-05 审查）：主/子账号都加载家庭角色——子账号用于把绑定 cid 显示成角色名
       final chars = await ApiClient().getCharacters();
       if (!mounted) return;
       setState(() {
-        _dyChars = chars.where((c) => c.isActive).toList();
-        _dyCharsLoading = false;
+        _chBindings[channel] = items;
+        if (items.isNotEmpty) {
+          final cid = items.first['character_id'];
+          _chSelected[channel] = cid is int ? cid : int.tryParse('$cid') ?? -1;
+        } else {
+          _chSelected[channel] = -1;
+        }
+        _chChars = chars.where((c) => c.isActive).toList();
+        _chCharsLoading = false;
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _dyCharsLoading = false);
+      setState(() => _chCharsLoading = false);
     }
   }
 
-  Future<void> _saveDyBindRole() async {
+  /// 保存绑定（仅主账号）：选中角色 → PUT；选「未绑定」(-1) → DELETE（解绑）。
+  Future<void> _saveChannelBinding(String channel, String botAccountId) async {
     final l10n = AppLocalizations.of(context)!;
-    if (_bindSaving) return;
-    setState(() => _bindSaving = true);
+    if (_chSaving.contains(channel)) return;
+    final cid = _chSelected[channel] ?? -1;
+    if (cid < 0 && botAccountId != 'default') {
+      widget.onToast(l10n.channelBindingNeedPick);
+      return;
+    }
+    setState(() => _chSaving.add(channel));
     try {
-      final cfg = Map<String, dynamic>.from(
-          widget.plugin['config'] as Map<String, dynamic>? ?? {});
-      cfg['allowed_character_ids'] = _dyBoundCharId >= 0 ? <int>[_dyBoundCharId] : <int>[];
-      await ApiClient().updatePlugin('douyin_mcp', config: cfg);
-      widget.onToast(l10n.douyinBindSaved);
+      if (cid < 0) {
+        await ApiClient().deleteChannelBinding(channel, botAccountId);
+        widget.onToast(l10n.channelBindingUnbound);
+      } else {
+        await ApiClient().putChannelBinding(channel, botAccountId, cid);
+        widget.onToast(l10n.channelBindingSaved);
+      }
+      await _loadChannelBindings(channel);
       widget.onChanged();
     } catch (e) {
       widget.onToast(l10n.extSaveFailed('$e'));
     } finally {
-      if (mounted) setState(() => _bindSaving = false);
+      if (mounted) setState(() => _chSaving.remove(channel));
     }
   }
 
-  /// 任务 B：wechat_ilink 微信绑定角色区块（-1=未绑定；换绑走 /rebind 端点）。
-  Widget _buildWxBind() {
+  /// 解绑（仅主账号，二次确认）。
+  Future<void> _unbindChannelBinding(String channel, String botAccountId) async {
     final l10n = AppLocalizations.of(context)!;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(l10n.wechatBindRole,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 2),
-        Text(l10n.wechatBindRoleHint, style: TextStyle(fontSize: 10, color: Colors.grey)),
-        const SizedBox(height: 6),
-        if (_wxCharsLoading)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Text(l10n.wechatBindLoading,
-                style: const TextStyle(fontSize: 12, color: Colors.grey)),
-          )
-        else
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: DropdownButton<int>(
-              value: _wxBoundCharId,
-              isExpanded: true,
-              underline: const SizedBox.shrink(),
-              isDense: true,
-              items: [
-                DropdownMenuItem<int>(
-                    value: -1, child: Text(l10n.wechatBindNone, style: const TextStyle(fontSize: 13))),
-                for (final c in _wxChars)
-                  DropdownMenuItem<int>(value: c.id, child: Text(c.name, style: const TextStyle(fontSize: 13))),
-              ],
-              onChanged: _wxBindSaving ? null : (v) => setState(() => _wxBoundCharId = v ?? -1),
-            ),
-          ),
-        const SizedBox(height: 6),
-        Align(
-          alignment: Alignment.centerRight,
-          child: FilledButton.tonal(
-            onPressed: _wxBindSaving ? null : _saveWxBindRole,
-            style: FilledButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-            ),
-            child: Text(l10n.wechatBindSave, style: const TextStyle(fontSize: 12)),
-          ),
-        ),
-        const SizedBox(height: 10),
-      ],
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text(l10n.channelBindingUnbind),
+        content: Text(l10n.channelBindingUnbindConfirm),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: Text(l10n.cancel)),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: Text(l10n.channelBindingUnbind)),
+        ],
+      ),
     );
-  }
-
-  Future<void> _loadWxChars() async {
-    if (!mounted) return;
-    setState(() => _wxCharsLoading = true);
+    if (ok != true || !mounted) return;
+    setState(() => _chSaving.add(channel));
     try {
-      final chars = await ApiClient().getCharacters();
-      if (!mounted) return;
-      setState(() {
-        _wxChars = chars.where((c) => c.isActive).toList();
-        _wxCharsLoading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _wxCharsLoading = false);
-    }
-  }
-
-  /// 任务 B：微信换绑必须走 rebind 端点（否则会被 occupied 裁决挡 400），
-  /// 与 douyin 的 updatePlugin(PUT config) 保存路径不同。
-  Future<void> _saveWxBindRole() async {
-    final l10n = AppLocalizations.of(context)!;
-    if (_wxBindSaving) return;
-    if (_wxBoundCharId < 0) {
-      widget.onToast(l10n.wechatBindNeedPick);
-      return;
-    }
-    setState(() => _wxBindSaving = true);
-    try {
-      await ApiClient().rebindWechatPlugin(_wxBoundCharId);
-      widget.onToast(l10n.wechatBindSaved);
-      widget.onChanged(); // 刷新 config 显示当前绑定
+      await ApiClient().deleteChannelBinding(channel, botAccountId);
+      widget.onToast(l10n.channelBindingUnbound);
+      await _loadChannelBindings(channel);
+      widget.onChanged();
     } catch (e) {
       widget.onToast(l10n.extSaveFailed('$e'));
     } finally {
-      if (mounted) setState(() => _wxBindSaving = false);
+      if (mounted) setState(() => _chSaving.remove(channel));
     }
+  }
+
+  /// C4：子账号只读视图把绑定 character_id 解析成角色名（找不到/未绑定 → 「未绑定」文案）。
+  String _boundCharName(AppLocalizations l10n, dynamic cid) {
+    final id = cid is int ? cid : int.tryParse('$cid');
+    if (id == null || id < 0) return l10n.channelBindingNone;
+    for (final c in _chChars) {
+      if (c.id == id) return c.name;
+    }
+    return l10n.channelBindingNone;
+  }
+
+  /// 渠道绑定统一区块（S3）：按当前主账号列 bot 绑定；主账号可换绑/解绑，子账号只读。
+  /// 「添加另一个 bot」本期隐藏（多 bot 需真机稳定键验证后再开放）。
+  Widget _buildChannelBindingTile(String channel) {
+    final l10n = AppLocalizations.of(context)!;
+    final rows = _chBindings[channel] ?? const <Map<String, dynamic>>[];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(l10n.channelBindingRole, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 2),
+        if (widget.isAdmin)
+          Text(l10n.channelBindingRoleHint, style: TextStyle(fontSize: 10, color: Colors.grey))
+        else
+          Text(l10n.channelBindingMainOnly, style: TextStyle(fontSize: 10, color: Colors.grey)),
+        const SizedBox(height: 6),
+        if (_chCharsLoading)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Text(l10n.channelBindingLoading, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          )
+        else if (rows.isEmpty)
+          Text(l10n.channelBindingEmpty, style: const TextStyle(fontSize: 12, color: Colors.grey))
+        else
+          for (final row in rows) ...[
+            Text(
+              (row['bot_label'] as String? ?? '').isNotEmpty
+                  ? row['bot_label'] as String
+                  : l10n.channelBindingBotDefault,
+              style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 2),
+            // C4（2026-09-05 审查）：子账号纯文本只读显示绑定角色名，不渲染 Dropdown
+            // （子账号 selected cid 可能不在其可写角色集，Dropdown value 断言会崩）；
+            // 主账号保持 Dropdown 可写。
+            if (!widget.isAdmin)
+              Text(
+                _boundCharName(l10n, row['character_id']),
+                style: const TextStyle(fontSize: 13),
+              )
+            else
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: DropdownButton<int>(
+                  value: _chSelected[channel] ?? -1,
+                  isExpanded: true,
+                  underline: const SizedBox.shrink(),
+                  isDense: true,
+                  items: [
+                    DropdownMenuItem<int>(
+                        value: -1, child: Text(l10n.channelBindingNone, style: const TextStyle(fontSize: 13))),
+                    for (final c in _chChars)
+                      DropdownMenuItem<int>(value: c.id, child: Text(c.name, style: const TextStyle(fontSize: 13))),
+                  ],
+                  onChanged: _chSaving.contains(channel)
+                      ? null
+                      : (v) => setState(() => _chSelected[channel] = v ?? -1),
+                ),
+              ),
+            if (widget.isAdmin) ...[
+              const SizedBox(height: 6),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: _chSaving.contains(channel)
+                        ? null
+                        : () => _unbindChannelBinding(channel, row['bot_account_id'] as String? ?? 'default'),
+                    child: Text(l10n.channelBindingUnbind, style: const TextStyle(fontSize: 12)),
+                  ),
+                  const SizedBox(width: 4),
+                  FilledButton.tonal(
+                    // C8：选中「未绑定」时禁用保存（删除统一走「解绑」按钮，防误触直接 DELETE）
+                    onPressed: (_chSaving.contains(channel) || (_chSelected[channel] ?? -1) < 0)
+                        ? null
+                        : () => _saveChannelBinding(channel, row['bot_account_id'] as String? ?? 'default'),
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                    ),
+                    child: Text(l10n.channelBindingSave, style: const TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 6),
+          ],
+        const SizedBox(height: 4),
+      ],
+    );
   }
 
   Future<void> _saveConfig(Map<String, dynamic> values) async {

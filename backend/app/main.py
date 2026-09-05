@@ -23,6 +23,7 @@ from app.api import (
     marketplace_router,
     platform_profiles_router,
     chat_groups_router,
+    channel_bindings_router,
     life_router,
     life_home_router,
     voice_router,
@@ -306,7 +307,7 @@ ROUTERS = [
     plugin_bridge_router, marketplace_router, platform_profiles_router, chat_groups_router,
     life_router, life_home_router, voice_router, weave_router, permissions_router,
     phone_workflows_router, ai_api_router, mcp_router, games_router, llm_configs_router,
-    account_router, device_router,
+    account_router, device_router, channel_bindings_router,
 ]
 for _r in ROUTERS:
     app.include_router(_r)

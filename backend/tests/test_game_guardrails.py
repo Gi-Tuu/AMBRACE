@@ -330,3 +330,180 @@ def test_resume_ai_turns_hard_stop_runaway_at_draw(game_guard_db, monkeypatch):
     assert len(calls) >= 1, "恒同决策 stub 应被触发"
     assert len(calls) <= MAX_AI_DECISIONS_PER_SESSION, f"ai_decide 被调用 {len(calls)} 次，超出硬上限"
     assert sid not in guardrails._REGISTRY, "护栏进程内状态应在终局后清理"
+
+
+# ---------------- 口径1/口径2（2026-09-06 用户拍板实施）----------------
+
+def test_ai_only_tier_soft_then_hard():
+    """① AI_ONLY 档：软限后不花 LLM（FORCE_FALLBACK）、硬限 abort；阈值 60/50。"""
+    from app.games.guardrails import set_guard_mode, guard_tier, drop_guard, AI_ONLY_MAX_DECISIONS, AI_ONLY_SOFT_LIMIT
+
+    sid = 990001
+    g = set_guard_mode(sid, ai_only=True)
+    assert g.mode == "ai_only" and g.mode_locked
+    tier = guard_tier(g.mode)
+    assert tier.max_decisions == AI_ONLY_MAX_DECISIONS == 60
+    assert tier.soft == AI_ONLY_SOFT_LIMIT == 50
+    # 软限前 NORMAL（仍可调 LLM）
+    g.decisions = 48
+    g.bump_decision()   # 49 < 50
+    assert guard_before_llm(g) == GuardMove.NORMAL
+    # 软限起：不再花 LLM
+    while g.decisions < 50:
+        g.bump_decision()
+    assert guard_before_llm(g) == GuardMove.FORCE_FALLBACK
+    # 硬限：abort
+    g.decisions = 60
+    g.bump_decision()
+    assert guard_before_llm(g) == GuardMove.ABORT_DRAW
+    drop_guard(sid)
+
+
+def test_human_game_keeps_normal_tier():
+    """② 含真人（非观战）局不套 AI_ONLY：阈值仍 500/450；档位固化后不漂移。"""
+    from app.games.guardrails import set_guard_mode, guard_tier, get_guard, drop_guard
+
+    sid = 990002
+    set_guard_mode(sid, ai_only=False)
+    g = get_guard(sid)
+    assert g.mode == "normal" and guard_tier(g.mode).max_decisions == MAX_AI_DECISIONS_PER_SESSION == 500
+    # 固化后重复判定不漂移（再 set ai_only=True 也不变）
+    set_guard_mode(sid, ai_only=True)
+    assert get_guard(sid).mode == "normal"
+    # 异常/误判保守回落：fresh guard 误传 ai_only=True 的「固化一次」语义已由上面覆盖
+    drop_guard(sid)
+
+
+def test_ai_only_repeat_converges_faster():
+    """⑤ AI_ONLY 重复序列 3/5 更快收敛（NORMAL 为 5/10）。"""
+    from app.games.guardrails import set_guard_mode, get_guard, drop_guard
+
+    sid = 990003
+    set_guard_mode(sid, ai_only=True)
+    g = get_guard(sid)
+    sig, rp = _sig(), (1, "night")
+    assert guard_after_signature(g, sig, rp) == GuardMove.NORMAL            # 新签名 streak=1
+    assert guard_after_signature(g, sig, rp) == GuardMove.NORMAL            # streak=2（NORMAL 档 5 才收敛）
+    assert guard_after_signature(g, sig, rp) == GuardMove.FORCE_FALLBACK    # streak=3（AI_ONLY 3/5 更快）
+    mark_forced_advance(g, rp)
+    moves = [guard_after_signature(g, sig, rp) for _ in range(3)]
+    assert GuardMove.ABORT_DRAW in moves  # streak≤5 内到硬限（NORMAL 要 10）
+    drop_guard(sid)
+
+
+def test_mode_determination_from_game_players(game_guard_db):
+    """①②集成：档位判定读 GamePlayer——纯 AI 局（user 仅观战）→ ai_only；真人参局 → normal。"""
+    client = _make_client(1)
+    sid_ai = _create_all_ai_werewolf(client)  # 4 AI 席 + user 观战 → ai_only
+    r = client.post("/api/v1/games/sessions", json={
+        "game_type": "werewolf", "player_ids": [101, 102, 103],
+        "user_as_player": True,
+    })
+    assert r.status_code == 200, r.text
+    sid_human = r.json()["session_id"]
+
+    async def _probe():
+        from sqlalchemy import select
+        from app.models.game import GamePlayer
+        async with game_guard_db() as db:
+            out = {}
+            for sid in (sid_ai, sid_human):
+                rows = (await db.execute(
+                    select(GamePlayer.player_type, GamePlayer.is_spectator).where(
+                        GamePlayer.session_id == sid)
+                )).all()
+                out[sid] = rows
+            return out
+
+    rows = asyncio.run(_probe())
+    from app.games.guardrails import drop_guard as _dg
+    ai_only_ai = bool(rows[sid_ai]) and all(pt == "ai" for pt, sp in rows[sid_ai] if not sp)
+    ai_only_human = bool(rows[sid_human]) and all(pt == "ai" for pt, sp in rows[sid_human] if not sp)
+    assert ai_only_ai is True, rows[sid_ai]
+    assert ai_only_human is False, rows[sid_human]
+    _dg(sid_ai)
+    _dg(sid_human)
+
+
+def test_no_draw_engine_aborts_in_place(game_guard_db, monkeypatch):
+    """③ 无 draw 引擎触顶 → aborted + 无胜负/无终局记忆 + error/obs 告警；④ 有 draw 引擎触顶 → 平局不变。"""
+    from app.games.base import ActionResult
+    from app.games.werewolf import WerewolfEngine
+
+    # 与恒同决策 stub 同法：引擎原地打转；总数上限直接顶到（AI_ONLY 软限 50 前先走 fallback，
+    # 但 decisions 仍计数 → 最终到 60 硬限走闸门①分流）
+    monkeypatch.setattr(WerewolfEngine, "current_turn_seat", lambda self: 0)
+
+    async def _p_apply(self, seat, action, payload):
+        return ActionResult(ok=True, event={
+            "event_type": "wolf_kill", "actor_seat": seat,
+            "target_seat": payload.get("target_seat"), "phase": "night",
+            "visibility": "public", "content": "恒同刀",
+            "payload": {"target": payload.get("target_seat")},
+        })
+
+    async def _p_advance(self):
+        return []
+
+    async def _p_winner(self):
+        return None
+
+    monkeypatch.setattr(WerewolfEngine, "apply_action", _p_apply)
+    monkeypatch.setattr(WerewolfEngine, "advance", _p_advance)
+    monkeypatch.setattr(WerewolfEngine, "check_winner", _p_winner)
+
+    async def _fixed_fallback(self, seat):
+        return {"action": "kill", "content": "🔪 恒同刀3", "payload": {"target_seat": 3}}
+
+    async def _fixed_ai(engine, seat):
+        return {"action": "kill", "content": "🔪 恒同刀3", "payload": {"target_seat": 3}}
+
+    monkeypatch.setattr(WerewolfEngine, "fallback_action", _fixed_fallback)
+    monkeypatch.setattr("app.api.games.ai_decide", _fixed_ai)
+    async def _fast_sleep(*_a, **_k):
+        return None
+    monkeypatch.setattr("asyncio.sleep", _fast_sleep)
+
+    # ③ 无 draw 引擎：类属性置 False → aborted、winner_side 不变、无终局记忆
+    monkeypatch.setattr(WerewolfEngine, "has_draw_semantics", False, raising=False)
+    obs_events = []
+    monkeypatch.setattr(
+        "app.memory.observability.obs_event",
+        lambda cid, metric, detail, kind=None: obs_events.append((cid, metric, detail)),
+        raising=False,
+    )
+    client = _make_client(1)
+    sid = _create_all_ai_werewolf(client)
+    asyncio.run(_REAL_RESUME(sid))
+
+    async def _q():
+        async with game_guard_db() as db:
+            s = await db.get(GameSession, sid)
+            from app.models.memory import Memory
+            from sqlalchemy import select
+            mems = (await db.execute(select(Memory.id).where(
+                Memory.memory_type == "game_summary", Memory.is_archived == False))).scalars().all()  # noqa: E712
+            return s.status, s.winner_side, s.archive_json, len(mems)
+
+    from app.games.guardrails import drop_guard as _dg2
+    status, winner, archive, n_mem = asyncio.run(_q())
+    assert status == "aborted", status
+    assert winner in (None, "draw") and winner != "werewolves" and winner != "villagers"
+    assert n_mem == 0  # 无终局记忆
+    assert any(e[1] == "game_guard_no_draw_abort" for e in obs_events)  # obs 告警
+    _dg2(sid)
+
+    # ④ 有 draw 引擎（默认 True）：同 stub → finished + draw 平局不变
+    monkeypatch.setattr(WerewolfEngine, "has_draw_semantics", True, raising=False)
+    sid2 = _create_all_ai_werewolf(client)
+    asyncio.run(_REAL_RESUME(sid2))
+
+    async def _q2():
+        async with game_guard_db() as db:
+            s = await db.get(GameSession, sid2)
+            return s.status, s.winner_side
+
+    status2, winner2 = asyncio.run(_q2())
+    assert status2 == "finished"
+    assert winner2 == "draw"
+    _dg2(sid2)

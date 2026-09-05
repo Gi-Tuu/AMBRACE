@@ -242,6 +242,11 @@ class GameEngine(ABC):
         """调用方直接置 aborted（不写胜负/记忆）。"""
         self.session.status = "aborted"
 
+    # 口径2（2026-09-06 用户拍板）：引擎是否具备平局语义。默认 True=兼容现状四引擎与
+    # finish(draw)；未来无 draw 收敛的引擎显式置 False——护栏 ABORT_DRAW 分流点据此走
+    # 无胜负终止（abort_in_place + 告警），不伪造平局。类属性，实例可覆盖。
+    has_draw_semantics: bool = True
+
     # ── 通用工具（人设/命名）────
     def _meta(self, seat: int) -> dict:
         return self.state.get("player_meta", {}).get(str(seat), {})

@@ -177,6 +177,7 @@ _MESSAGES: dict[str, tuple[str, str]] = {
     "channel_bind_cross_family": ("只能绑定自己家庭内的角色", "You can only bind characters in your own family"),
     "channel_bind_multi": ("渠道绑定只能选择一个角色", "Only one character can be bound per channel"),
     "channel_bind_occupied": ("家庭内已有角色绑定该渠道，请先解绑或转移", "A character in your family is already bound to this channel; please unbind or transfer it first"),
+    "channel_bind_physical_taken": ("该渠道为单实例渠道，已被其它主账号绑定", "This channel is single-instance and already bound by another main account"),
     "platform_not_found": ("未知的平台", "Unknown platform"),
 }
 

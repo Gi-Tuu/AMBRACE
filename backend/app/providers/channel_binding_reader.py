@@ -55,8 +55,49 @@ async def _fallback_global_ids(db: AsyncSession, channel: str) -> list[int]:
     return [int(x) for x in str(raw or "").split(",") if x.strip().isdigit()]
 
 
+async def fallback_global_ids(db: AsyncSession, channel: str) -> list[int]:
+    """公开包装：读插件全局 config 的 allowed_character_ids（API 灰度合成行也用它）。"""
+    return await _fallback_global_ids(db, channel)
+
+
+async def channel_taken_over(db: AsyncSession, channel: str) -> bool:
+    """该渠道是否已被 v2 接管（channel_bindings 中任意租户存在该渠道行）。
+
+    C2（2026-09-05 落地审查）：接管后，无行租户一律回落空（杜绝跨租户回落与解绑幽灵）；
+    渠道表全空（尚无任何租户走过 v2 写路径）才回落旧全局串。
+    """
+    from app.models.channel import ChannelBinding
+
+    row = (await db.execute(select(ChannelBinding.id).where(
+        ChannelBinding.channel == channel).limit(1))).first()
+    return row is not None
+
+
+async def filter_ids_by_tenant(db: AsyncSession, ids: list[int], tenant_id: int) -> list[int]:
+    """按角色归属家庭 root 过滤（C2：回落全局串只保留属于该租户的角色）。"""
+    from app.application.family_service import get_family_root_id
+    from app.models.character import AICharacter
+
+    out: list[int] = []
+    for cid in ids:
+        ch = await db.get(AICharacter, cid)
+        if ch is None:
+            continue
+        root = await get_family_root_id(db, ch.user_id)
+        if root == int(tenant_id):
+            out.append(cid)
+    return out
+
+
 async def bound_characters_for_runtime(db: AsyncSession, channel: str, tenant_id: int | None) -> list[int]:
-    """运行时取某租户在某渠道启用的绑定角色（灰度期双读，见模块 docstring）。"""
+    """运行时取某租户在某渠道启用的绑定角色。
+
+    flag 开（C2 判据）：
+    1) 该租户新表有行 → 新表（租户隔离）；
+    2) 新表无行但渠道已被 v2 接管（任意租户有行）→ 返回 []（隔离/防解绑幽灵，绝不跨租户回落）；
+    3) 渠道表全空 → 回落旧全局串，但按角色归属家庭 root 过滤后返回（等价单主，不越权）。
+    flag 关 → 旧全局串原样（单主部署语义等价）。
+    """
     if tenant_id is not None and channel_binding_v2_enabled():
         from app.models.channel import ChannelBinding
 
@@ -66,6 +107,10 @@ async def bound_characters_for_runtime(db: AsyncSession, channel: str, tenant_id
         ))).scalars().all()
         if rows:
             return [int(x) for x in rows]
+        if await channel_taken_over(db, channel):
+            return []
+        ids = await _fallback_global_ids(db, channel)
+        return await filter_ids_by_tenant(db, ids, int(tenant_id))
     return await _fallback_global_ids(db, channel)
 
 

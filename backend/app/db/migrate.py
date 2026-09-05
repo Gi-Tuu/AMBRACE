@@ -66,6 +66,12 @@ _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     ("plugins", "sha256"),
     ("plugins", "consented_permissions"),
     ("plugins", "consented_at"),
+    # ── 一机多主 / 渠道绑定 per-账号化（2026-09-05，28→31）──
+    # 插件自有表：表不存在=渠道插件未装载（全新/未装渠道）→ 判落后走 upgrade，
+    # a7b8c9d0e1f2 迁移段以 _has_table 守卫自动跳过，安全。
+    ("channel_bindings", "tenant_id"),
+    ("wechat_ilink_bindings", "tenant_id"),
+    ("douyin_accounts", "tenant_id"),
 ]
 
 
@@ -110,7 +116,7 @@ def _has_any_table(sync_url: str) -> bool:
 
 
 def _schema_is_current(sync_url: str) -> bool:
-    """判别库是否已是当前 schema（链上新增的 28 列全部存在）。
+    """判别库是否已是当前 schema（链上新增的 31 列全部存在）。
 
     仅当「每一张相关表都存在且含对应列」才返回 True；任一表缺失/列缺失 → False（判为落后库）。
     保守取向：宁可判为「落后」去 upgrade head（正确且幂等），不误判为「当前」去 stamp。

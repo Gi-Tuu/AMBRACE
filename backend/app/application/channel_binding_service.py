@@ -36,6 +36,14 @@ class BotAccountRequired(ValueError):
     """bot_single 渠道缺 bot_account_id（→400）。"""
 
 
+class PhysicalSingletonTaken(ValueError):
+    """物理单实例渠道（如抖音：单浏览器 profile）已被其它租户绑定（→409，i18n channel_bind_physical_taken）。
+
+    C3 路线 A（最小止血，2026-09-05）：抖音在多开风控/路线 B（profile 分目录+全查询租户化）
+    立项前，第二主账号绑定明确拒绝，防浏览器 profile 串号。
+    """
+
+
 def _binding_mode(channel: str) -> str:
     """渠道绑定模式（渠道 meta["binding"] 上报；未注册渠道缺省 family_single）。"""
     from app.providers.channel import channel_meta
@@ -43,6 +51,15 @@ def _binding_mode(channel: str) -> str:
     meta = channel_meta(channel) or {}
     b = meta.get("binding") or {}
     return str(b.get("mode") or "family_single")
+
+
+def _is_physical_singleton(channel: str) -> bool:
+    """渠道是否上报物理单实例（meta["binding"]["physical_singleton"]=True）。"""
+    from app.providers.channel import channel_meta
+
+    meta = channel_meta(channel) or {}
+    b = meta.get("binding") or {}
+    return bool(b.get("physical_singleton"))
 
 
 async def list_bindings(db: AsyncSession, tenant_id: int, channel: str | None = None) -> list[ChannelBinding]:
@@ -61,6 +78,7 @@ async def upsert_binding(db: AsyncSession, actor_user_id: int, channel: str,
     2) family_single 强制 bot="default"；bot_single 必须给非空稳定 bot 键；
     3) 角色必须属于调用者家庭（跨家庭 → CrossFamilyCharacter）；
     4) family_single：该家庭此渠道已有别的角色 → ChannelOccupied（先解绑/换绑）；
+    4.5) physical_singleton 渠道（C3 路线 A）：已有**其它租户** enabled 行 → PhysicalSingletonTaken；
     5) upsert (channel,tenant,bot)（并发双绑由 DB 唯一约束兜底，撞约束抛 IntegrityError 由调用方处理）。
     """
     from app.application.tenant_scope import assert_standalone_owner
@@ -75,6 +93,15 @@ async def upsert_binding(db: AsyncSession, actor_user_id: int, channel: str,
         raise BotAccountRequired("bot_account_id required for bot_single channel")
     else:
         bot_account_id = raw_bot
+
+    if _is_physical_singleton(channel):
+        other = (await db.execute(select(ChannelBinding).where(
+            ChannelBinding.channel == channel,
+            ChannelBinding.tenant_id != int(tenant_id),
+            ChannelBinding.enabled.is_(True),
+        ))).scalars().first()
+        if other is not None:
+            raise PhysicalSingletonTaken("channel_bind_physical_taken")
 
     family_ids = await get_family_member_ids(db, actor_user_id)
     ch = await db.get(AICharacter, int(character_id))

@@ -10143,6 +10143,84 @@ abstract class AppLocalizations {
   /// **'请先选择要绑定的角色'**
   String get wechatBindNeedPick;
 
+  /// No description provided for @channelBindingRole.
+  ///
+  /// In zh, this message translates to:
+  /// **'绑定角色'**
+  String get channelBindingRole;
+
+  /// No description provided for @channelBindingRoleHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'选择本家庭角色作为该渠道的绑定角色'**
+  String get channelBindingRoleHint;
+
+  /// No description provided for @channelBindingBotDefault.
+  ///
+  /// In zh, this message translates to:
+  /// **'默认'**
+  String get channelBindingBotDefault;
+
+  /// No description provided for @channelBindingNone.
+  ///
+  /// In zh, this message translates to:
+  /// **'未绑定'**
+  String get channelBindingNone;
+
+  /// No description provided for @channelBindingLoading.
+  ///
+  /// In zh, this message translates to:
+  /// **'加载中…'**
+  String get channelBindingLoading;
+
+  /// No description provided for @channelBindingEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无绑定'**
+  String get channelBindingEmpty;
+
+  /// No description provided for @channelBindingSave.
+  ///
+  /// In zh, this message translates to:
+  /// **'保存'**
+  String get channelBindingSave;
+
+  /// No description provided for @channelBindingSaved.
+  ///
+  /// In zh, this message translates to:
+  /// **'绑定已保存'**
+  String get channelBindingSaved;
+
+  /// No description provided for @channelBindingUnbound.
+  ///
+  /// In zh, this message translates to:
+  /// **'已解绑'**
+  String get channelBindingUnbound;
+
+  /// No description provided for @channelBindingUnbind.
+  ///
+  /// In zh, this message translates to:
+  /// **'解绑'**
+  String get channelBindingUnbind;
+
+  /// No description provided for @channelBindingUnbindConfirm.
+  ///
+  /// In zh, this message translates to:
+  /// **'确定解绑该 bot 的渠道绑定？解绑后需重新扫码/绑定才能恢复'**
+  String get channelBindingUnbindConfirm;
+
+  /// No description provided for @channelBindingMainOnly.
+  ///
+  /// In zh, this message translates to:
+  /// **'仅主账号可配置渠道绑定'**
+  String get channelBindingMainOnly;
+
+  /// No description provided for @channelBindingNeedPick.
+  ///
+  /// In zh, this message translates to:
+  /// **'请先选择要绑定的角色'**
+  String get channelBindingNeedPick;
+
   /// No description provided for @agentMindRetrievalCount.
   ///
   /// In zh, this message translates to:

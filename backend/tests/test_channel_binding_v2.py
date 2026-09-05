@@ -512,3 +512,103 @@ def test_s2_flag_off_reader_falls_back_to_global_config(v2_db, monkeypatch):
             assert await bound_characters_for_runtime(db, "douyin", 1) == [101, 102]
 
     asyncio.run(_run())
+
+
+# ================================================================= 落地审查修复（2026-09-05 Batch2：C2/C3）
+
+
+def test_c2_reader_takeover_isolation(v2_db, monkeypatch):
+    """C2：flag 开时渠道已被 v2 接管 → 无行租户读 []（不跨租户回落）；解绑幽灵防回归。"""
+    f = v2_db
+    asyncio.run(_seed_family(f))
+    _flag_on(monkeypatch)
+
+    async def _run():
+        # 全局串残留（含 A/B 两租户角色）
+        from app.models.plugin import Plugin
+
+        async with f() as db:
+            db.add(Plugin(name="wechat_ilink", version="1.0.0", config_json='{"allowed_character_ids":"101,102"}'))
+            await db.commit()
+        # A 绑定（接管渠道）→ A 读 [101]；B 无行 → 读 []（全局串 102 是 B 的角色也不回落给 B）
+        async with f() as db:
+            await svc.upsert_binding(db, 1, "wechat", 101)
+            await db.commit()
+        async with f() as db:
+            assert await bound_characters_for_runtime(db, "wechat", 1) == [101]
+            assert await bound_characters_for_runtime(db, "wechat", 2) == []
+        # A 删行（渠道仍有行吗？删的是 A 的唯一行 → 渠道表全空 → 回落但按归属过滤）
+        async with f() as db:
+            await svc.remove_binding(db, 1, "wechat")
+            await db.commit()
+        async with f() as db:
+            assert await bound_characters_for_runtime(db, "wechat", 1) == [101]  # 全空回落，过滤后仅 A 的 101
+            assert await bound_characters_for_runtime(db, "wechat", 2) == [102]  # 过滤后仅 B 的 102
+        # 防幽灵：B 绑定后 A 解绑 → A 读 []（渠道仍被接管）
+        async with f() as db:
+            await svc.upsert_binding(db, 2, "wechat", 102)
+            await db.commit()
+        async with f() as db:
+            await svc.remove_binding(db, 1, "wechat")
+            await db.commit()
+        async with f() as db:
+            assert await bound_characters_for_runtime(db, "wechat", 1) == []
+
+    asyncio.run(_run())
+
+
+def test_c3_physical_singleton_second_tenant_rejected(v2_db, monkeypatch):
+    """C3 路线 A：物理单实例渠道第二主账号绑定 → PhysicalSingletonTaken（API 409）。"""
+    from app.providers import registry as prov_reg
+
+    class _Port:
+        pass
+
+    prov_reg.register_provider("channel", "singlech", lambda: _Port(), source="test")
+    prov_reg._ENTRIES[("channel", "singlech")]["meta"] = {
+        "binding": {"mode": "family_single", "physical_singleton": True}}
+    try:
+        f = v2_db
+        asyncio.run(_seed_family(f))
+        _flag_on(monkeypatch)
+
+        async def _run():
+            async with f() as db:
+                await svc.upsert_binding(db, 1, "singlech", 101)
+                await db.commit()
+            async with f() as db:
+                with pytest.raises(svc.PhysicalSingletonTaken):
+                    await svc.upsert_binding(db, 2, "singlech", 102)
+            # A 解绑后 B 可绑
+            async with f() as db:
+                await svc.remove_binding(db, 1, "singlech")
+                await db.commit()
+            async with f() as db:
+                await svc.upsert_binding(db, 2, "singlech", 102)
+                await db.commit()
+
+        asyncio.run(_run())
+    finally:
+        prov_reg._ENTRIES.pop(("channel", "singlech"), None)
+
+
+def test_c3_viewed_note_tenant_composite_unique(douyin_plugin, v2_db, monkeypatch):
+    """C3/C9：两租户各写同 aweme_id 的 ViewedNote 不撞键（复合唯一）。"""
+    import douyin_models
+
+    import app.db.database as db_mod
+
+    monkeypatch.setattr(db_mod, "async_session_factory", v2_db)
+
+    async def _run():
+        async with v2_db() as db:
+            db.add(douyin_models.DouyinViewedNote(tenant_id=1, aweme_id="same", author="a", desc="d"))
+            db.add(douyin_models.DouyinViewedNote(tenant_id=2, aweme_id="same", author="b", desc="d"))
+            await db.commit()
+        async with v2_db() as db:
+            with pytest.raises(IntegrityError):
+                db.add(douyin_models.DouyinViewedNote(tenant_id=1, aweme_id="same", author="c", desc="d"))
+                await db.commit()
+            await db.rollback()
+
+    asyncio.run(_run())

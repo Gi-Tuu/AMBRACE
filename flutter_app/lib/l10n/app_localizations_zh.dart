@@ -5421,6 +5421,45 @@ class AppLocalizationsZh extends AppLocalizations {
   String get wechatBindNeedPick => '请先选择要绑定的角色';
 
   @override
+  String get channelBindingRole => '绑定角色';
+
+  @override
+  String get channelBindingRoleHint => '选择本家庭角色作为该渠道的绑定角色';
+
+  @override
+  String get channelBindingBotDefault => '默认';
+
+  @override
+  String get channelBindingNone => '未绑定';
+
+  @override
+  String get channelBindingLoading => '加载中…';
+
+  @override
+  String get channelBindingEmpty => '暂无绑定';
+
+  @override
+  String get channelBindingSave => '保存';
+
+  @override
+  String get channelBindingSaved => '绑定已保存';
+
+  @override
+  String get channelBindingUnbound => '已解绑';
+
+  @override
+  String get channelBindingUnbind => '解绑';
+
+  @override
+  String get channelBindingUnbindConfirm => '确定解绑该 bot 的渠道绑定？解绑后需重新扫码/绑定才能恢复';
+
+  @override
+  String get channelBindingMainOnly => '仅主账号可配置渠道绑定';
+
+  @override
+  String get channelBindingNeedPick => '请先选择要绑定的角色';
+
+  @override
   String agentMindRetrievalCount(Object count) {
     return '$count 条';
   }

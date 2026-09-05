@@ -36,6 +36,7 @@ from app.api.games import router as games_router  # 群聊游戏 Phase 1
 from app.api.llm_configs import router as llm_configs_router  # #68 多 LLM 配置（P0）
 from app.api.account import router as account_router  # #68 账号关联（P3）
 from app.api.device import router as device_router  # FCM 设备推送 token
+from app.api.channel_bindings import router as channel_bindings_router  # S3 渠道绑定 per-账号化 API
 
 __all__ = [
     "character_router", "chat_router", "memory_router",
@@ -44,4 +45,5 @@ __all__ = [
     "llm_configs_router",
     "account_router",
     "device_router",
+    "channel_bindings_router",
 ]

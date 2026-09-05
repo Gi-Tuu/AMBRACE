@@ -24,9 +24,8 @@ from app.agent.loop import AGENT_FLAGS
 from app.games.base import GameEngine
 from app.games.ai_player import ai_decide
 from app.games.guardrails import (
-    get_guard, drop_guard, guard_before_llm, guard_after_signature,
-    canonical_signature, mark_forced_advance, GuardMove,
-    MAX_AI_DECISIONS_PER_SESSION,
+    get_guard, set_guard_mode, drop_guard, guard_before_llm, guard_after_signature,
+    canonical_signature, mark_forced_advance, guard_tier, GuardMove,
 )
 from app.models.game import GameSession, GamePlayer, GameEvent
 from app.utils.logger import get_logger
@@ -546,6 +545,40 @@ async def history(
 
 
 # ── 结算：finish + archive + memory_bridge ──
+async def _abort_game(db: AsyncSession, session, engine: GameEngine, reason: str) -> None:
+    """口径2（2026-09-06 拍板）：无 draw 语义引擎的护栏末级止血=无胜负终止。
+
+    对齐 abort_in_place 语义：session 置 aborted、不写胜负、不写终局记忆、不广播 winner；
+    清理进程内锁/WS/护栏状态（与 _settle_game 收尾对齐）；logger.error + obs_event 告警。
+    """
+    from app.memory.observability import obs_event
+
+    engine.abort_in_place()
+    db.add(session)
+    _ai_turn_locks.pop(session.id, None)
+    _game_ws_clients.pop(session.id, None)
+    drop_guard(session.id)
+    _logger.error(
+        "game guard: no-draw engine aborted in place session=%d game=%s reason=%s",
+        session.id, session.game_type, reason,
+    )
+    obs_event(None, "game_guard_no_draw_abort", {
+        "session_id": session.id, "game_type": session.game_type, "reason": reason,
+    })
+
+
+async def _guard_stop(db: AsyncSession, session, engine: GameEngine, reason: str) -> None:
+    """护栏末级止血分流（口径2，2026-09-06）：
+
+    - 引擎支持平局语义（现状四引擎 + 基类默认）→ 维持 _settle_game(draw) 不变；
+    - 引擎 has_draw_semantics=False → 无胜负终止（_abort_game：aborted、不写胜负/记忆/广播）。
+    """
+    if getattr(engine, "has_draw_semantics", True):
+        await _settle_game(db, session, engine, "draw")
+    else:
+        await _abort_game(db, session, engine, reason)
+
+
 async def _settle_game(db: AsyncSession, session, engine: GameEngine, winner: str) -> None:
     # B5（2026-09-01）：先 persist_state 把引擎内存态（含 liars_bar 的 private_json dict）
     # 序列化写回 ORM 脏字段——后续 finalize_game 的 SELECT 会触发 autoflush，
@@ -623,6 +656,21 @@ async def _resume_ai_turns(session_id: int) -> None:
                     if seat is None or not engine.is_ai(seat):
                         return  # 轮到用户 / 已结束；guard 保留（用户下一步还要累计），终局时才清
                     guard = get_guard(session_id)
+                    # 口径1（2026-09-06 拍板）：首次获取 guard 时按本局 GamePlayer 判定 ai_only
+                    # 并固化（registry 跨 load 保留，不逐轮重判漂移）；判定异常保守回落 NORMAL。
+                    if not guard.mode_locked:
+                        try:
+                            # 「全部玩家 ai」判定排除观战者：纯旁观自动对打局（user 仅 spectator）
+                            # 正是空转烧钱形态，必须套 AI_ONLY；真人实际参局（非 spectator user）→ NORMAL。
+                            _prow = (await db.execute(
+                                select(GamePlayer.player_type, GamePlayer.is_spectator).where(
+                                    GamePlayer.session_id == session_id)
+                            )).all()
+                            set_guard_mode(session_id, ai_only=bool(_prow) and all(
+                                pt == "ai" for pt, sp in _prow if not sp))
+                        except Exception:
+                            set_guard_mode(session_id, ai_only=False)
+                    _tier = guard_tier(guard.mode)
                     rp = (int(session.round or 0), session.phase or "")
 
                     # 🛡️ 闸门①：每推进一个 AI 决策都计数（无论是否花 LLM 的钱），
@@ -632,16 +680,16 @@ async def _resume_ai_turns(session_id: int) -> None:
                     pre = guard_before_llm(guard)
                     if pre == GuardMove.ABORT_DRAW:
                         _logger.error(
-                            "game guard: session=%d AI decisions reached %d (cap %d), settle as draw to stop runaway",
-                            session_id, n_decided, MAX_AI_DECISIONS_PER_SESSION,
+                            "game guard: session=%d mode=%s AI decisions reached %d (cap %d), stop runaway",
+                            session_id, guard.mode, n_decided, _tier.max_decisions,
                         )
-                        await _settle_game(db, session, engine, "draw")
+                        await _guard_stop(db, session, engine, reason=f"decisions_cap:{n_decided}")
                         await db.commit()
                         drop_guard(session_id)
                         return
                     if pre == GuardMove.FORCE_FALLBACK:
-                        _logger.warning("game guard: session=%d over soft limit(%d), fallback without LLM",
-                                        session_id, n_decided)
+                        _logger.warning("game guard: session=%d mode=%s over soft limit(%d), fallback without LLM",
+                                        session_id, guard.mode, n_decided)
                         decision = await engine.fallback_action(seat)
                     else:
                         decision = await ai_decide(engine, seat)  # 仅此分支产生 LLM 计费
@@ -676,10 +724,10 @@ async def _resume_ai_turns(session_id: int) -> None:
 
                     if move == GuardMove.ABORT_DRAW:
                         _logger.error(
-                            "game guard: session=%d stuck at rp=%s sig streak=%d, settle as draw",
-                            session_id, rp, guard.streak,
+                            "game guard: session=%d mode=%s stuck at rp=%s sig streak=%d",
+                            session_id, guard.mode, rp, guard.streak,
                         )
-                        await _settle_game(db, session, engine, "draw")
+                        await _guard_stop(db, session, engine, reason=f"streak:{guard.streak}@{rp}")
                         await db.commit()
                         drop_guard(session_id)
                         return
