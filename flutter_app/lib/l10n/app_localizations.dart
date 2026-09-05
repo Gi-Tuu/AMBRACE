@@ -10101,6 +10101,48 @@ abstract class AppLocalizations {
   /// **'绑定角色已保存'**
   String get douyinBindSaved;
 
+  /// No description provided for @wechatBindRole.
+  ///
+  /// In zh, this message translates to:
+  /// **'微信绑定角色'**
+  String get wechatBindRole;
+
+  /// No description provided for @wechatBindRoleHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'选择本家庭角色作为微信（ClawBot）绑定角色（空=未绑定）'**
+  String get wechatBindRoleHint;
+
+  /// No description provided for @wechatBindNone.
+  ///
+  /// In zh, this message translates to:
+  /// **'未绑定'**
+  String get wechatBindNone;
+
+  /// No description provided for @wechatBindSave.
+  ///
+  /// In zh, this message translates to:
+  /// **'保存绑定'**
+  String get wechatBindSave;
+
+  /// No description provided for @wechatBindSaved.
+  ///
+  /// In zh, this message translates to:
+  /// **'绑定角色已保存'**
+  String get wechatBindSaved;
+
+  /// No description provided for @wechatBindLoading.
+  ///
+  /// In zh, this message translates to:
+  /// **'加载中…'**
+  String get wechatBindLoading;
+
+  /// No description provided for @wechatBindNeedPick.
+  ///
+  /// In zh, this message translates to:
+  /// **'请先选择要绑定的角色'**
+  String get wechatBindNeedPick;
+
   /// No description provided for @agentMindRetrievalCount.
   ///
   /// In zh, this message translates to:

@@ -1,0 +1,32 @@
+{
+  "name": "wechat_ilink",
+  "version": "0.1.0",
+  "description": "微信桥（官方 ClawBot / iLink 合规通道）：在微信里与你绑定的角色私聊，仅用户本人↔自己的 Agent，不触碰好友/群/朋友圈。",
+  "author": "AMBRACE",
+  "category": "plugin",
+  "type": "http",
+  "channel": "wechat",
+  "hooks": [
+    "http_router",
+    "schedule_tick"
+  ],
+  "permissions": [
+    "send_message",
+    "persona:read",
+    "memory:read",
+    "relationship:read",
+    "wechat_bind",
+    "wechat_send",
+    "wechat_poll"
+  ],
+  "config": {
+    "allowed_character_ids": "",
+    "enabled": false,
+    "poll_interval_seconds": 30,
+    "long_poll_timeout_seconds": 25,
+    "proactive_sync": true,
+    "send_typing": false,
+    "quota_per_24h": 10
+  },
+  "usage": "1. 打开本插件开关；\n2. 点「绑定微信」，用本人微信扫描官方 ClawBot 二维码；\n3. 选择本家庭内的一个角色完成绑定（与绑抖音同一交互）；\n4. 之后你在微信里跟 ClawBot 说话 = 与该角色私聊（本批仅绑定，收发闭环待 PR3 真机联调）。"
+}

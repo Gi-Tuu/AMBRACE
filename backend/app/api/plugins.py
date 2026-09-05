@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import shutil
+import threading
 import time as _time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
@@ -81,6 +82,51 @@ def _reset_plugin_chat_rate() -> None:
     """清空限额状态（测试用）"""
     _chat_hits_min.clear()
     _chat_hits_day.clear()
+
+
+# ---- P3-4：桥 S2S 端点加固——请求体上限 + 进程内令牌桶频控（参考 app/auth/ratelimit.py 思路，纯进程内存）----
+_BRIDGE_MAX_BODY_BYTES = 32 * 1024
+_BRIDGE_RATE_PER_SEC = 10.0
+_BRIDGE_RATE_BURST = 20
+_bridge_lock = threading.Lock()
+_bridge_tokens = float(_BRIDGE_RATE_BURST)
+_bridge_last_refill = _time.monotonic()
+
+
+def _bridge_body_too_large(body: dict) -> bool:
+    """序列化后 body 是否超过 32KB（P3-4）；非 dict 视为空，不超限。"""
+    if not isinstance(body, dict):
+        return False
+    try:
+        return len(json.dumps(body, ensure_ascii=False).encode("utf-8")) > _BRIDGE_MAX_BODY_BYTES
+    except Exception:  # noqa: BLE001 - 序列化失败按不超限处理，交给后续校验
+        return False
+
+
+def _bridge_rate_check() -> tuple[bool, int]:
+    """进程内令牌桶（全局 10 req/s、突发 20）；返回 (是否放行, 429 重试秒数)。纯逻辑，可单测。"""
+    global _bridge_tokens, _bridge_last_refill
+    now = _time.monotonic()
+    with _bridge_lock:
+        elapsed = now - _bridge_last_refill
+        if elapsed > 0:
+            _bridge_tokens = min(_BRIDGE_RATE_BURST, _bridge_tokens + elapsed * _BRIDGE_RATE_PER_SEC)
+            _bridge_last_refill = now
+        if _bridge_tokens >= 1.0:
+            _bridge_tokens -= 1.0
+            return True, 0
+        retry = 1
+        if _BRIDGE_RATE_PER_SEC > 0:
+            retry = max(1, int((1.0 - _bridge_tokens) / _BRIDGE_RATE_PER_SEC) + 1)
+        return False, retry
+
+
+def _reset_bridge_rate() -> None:
+    """清空桥频控状态（测试用），恢复初始兜底令牌。"""
+    global _bridge_tokens, _bridge_last_refill
+    with _bridge_lock:
+        _bridge_tokens = float(_BRIDGE_RATE_BURST)
+        _bridge_last_refill = _time.monotonic()
 
 
 def build_plugin_chat_messages(persona: str, user_input: str, history: object | None) -> list[dict]:
@@ -198,6 +244,49 @@ async def update_plugin(
         raise HTTPException(status_code=400, detail=tr_lang(lang, "enabled_invalid"))
     updated = await registry.set_plugin_state(name, enabled=enabled, config=config)
     return updated
+
+
+@router.post("/bridge/wechat-relay")
+async def wechat_bridge_relay(body: dict, x_ambrace_bridge_secret: str = Header(default="")):
+    """服务到服务（openclaw→拥爱桥）免登录端点：仅共享密钥鉴权，转发给 wechat_ilink 插件实现。
+
+    用户拍板（2026-09-04）：插件 http_router 全局强制登录态（P0-11），服务到服务调用须走此出口；
+    作用域仅此路径 + 密钥 fail-closed，不削弱其它登录保护。密钥由插件侧常量时间比较。
+    P3-4（2026-09-05）：进入处理前先过两道闸——请求体序列化后 >32KB → 413；进程内令牌桶
+    （10 req/s、突发 20）超限 → 429。503/401/400 的失败语义由下游 handler 保持不动。
+    """
+    if _bridge_body_too_large(body):
+        raise HTTPException(status_code=413, detail="relay body too large (P3-4)")
+    ok_rate, retry_after = _bridge_rate_check()
+    if not ok_rate:
+        raise HTTPException(
+            status_code=429, detail="relay rate limited (P3-4)",
+            headers={"Retry-After": str(retry_after)},
+        )
+    entry = registry._loaded.get("wechat_ilink")
+    mod = (entry or {}).get("module")
+    routes_mod = getattr(mod, "routes", None) if mod is not None else None
+    handler = getattr(routes_mod, "bridge_relay_impl", None) if routes_mod is not None else None
+    if handler is None:
+        raise HTTPException(status_code=503, detail="wechat bridge not installed")
+    return await handler(body, x_ambrace_bridge_secret)
+
+
+@router.post("/bridge/wechat-delivery")
+async def wechat_delivery(body: dict, x_ambrace_bridge_secret: str = Header(default="")):
+    """服务到服务（openclaw→拥爱桥）免登录回执端点：openclaw 网关发送结果回调。
+
+    共享密钥与 wechat-relay 同源（WECHAT_ILINK_BRIDGE_SECRET，常量时间比较，fail-closed）。
+    语义：openclaw message_sent success=false 时回调，拥爱把对应 out 流水行 status 改为 failed
+    （配额不回补，保持已计费）。success=true 不强制回传（保持 sent_by_gateway）。幂等。
+    """
+    entry = registry._loaded.get("wechat_ilink")
+    mod = (entry or {}).get("module")
+    routes_mod = getattr(mod, "routes", None) if mod is not None else None
+    handler = getattr(routes_mod, "bridge_delivery_impl", None) if routes_mod is not None else None
+    if handler is None:
+        raise HTTPException(status_code=503, detail="wechat bridge not installed")
+    return await handler(body, x_ambrace_bridge_secret)
 
 
 @router.post("/install")

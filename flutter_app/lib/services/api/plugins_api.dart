@@ -219,6 +219,16 @@ extension PluginsApi on ApiClient {
     final r = await dio.delete('/api/v1/plugins/$name');
     return Map<String, dynamic>.from(r.data as Map);
   }
+
+  /// wechat_ilink：换绑角色（任务 B，仅主账号）。
+  /// 必须走插件 /rebind 端点（内核先解绑裁决再单选绑定裁决 + 同一事务迁移绑定行），
+  /// 而不是 douyin 的 updatePlugin(PUT config) 保存路径——否则会被 occupied 裁决挡 400。
+  Future<Map<String, dynamic>> rebindWechatPlugin(int characterId) async {
+    final r = await dio.post('/api/v1/plugins/wechat_ilink/rebind', data: {
+      'character_id': characterId,
+    });
+    return Map<String, dynamic>.from(r.data as Map);
+  }
 }
 
 /// #65：构造插件页面/图标鉴权请求头（纯函数，可单测）。

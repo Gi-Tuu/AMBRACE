@@ -10,6 +10,19 @@ from app.memory.speaker import resolve_speaker_from_content  # X-2（2026-08-18�
 
 _logger = get_logger("agent.nodes")
 
+# 微信渠道输出规范（L1 生成约束，2026-09-05 用户拍板：括号保留、核心是让角色理解微信是网络平台）。
+# 仅进 LLM 上下文（不落库/不进记忆/不改 content/user_message）；集中一处常量，供测试断言。
+WECHAT_CHANNEL_HINT = (
+    "（渠道提示）用户正通过微信与你聊天，你回复的是纯文字消息。"
+    "微信是一个网络平台：你看不见对方的动作和表情，对方也看不见你的动作，"
+    "所以表达动作/神态时要写成让对方能感受到的话（比如想表达摸了摸头，就写“摸摸你的头”；"
+    "想表达笑，就写“哈哈😄”），不要只写一句像 App 小字那样“给对方看个记录”的动作标注。"
+    "需要补充说明时，括号注释可以正常使用（就像你平时解释时那样加括号），"
+    "括号里的内容要让对方读得懂。不要使用 markdown、列表符号、加粗等排版；emoji 适度使用。"
+    "一次把一段话说完，不要拆成多个气泡；整段控制在 400 字以内，太长就压缩。"
+    "不要向对方提及“这条提示”“渠道”“App”或“微信”这些元信息。"
+)
+
 
 def _has_after_generate_hook() -> bool:
     """是否存在启用中的插件注册了 after_generate 改写钩子。
@@ -269,6 +282,28 @@ async def generate_response(state: AgentState) -> AgentState:
         })
     except Exception:
         pass
+
+    # 渠道提示 + L1 输出规范（任务 A / P3-2 / 2026-09-05）：微信桥消息插入一条 system 提示，仅进 LLM 上下文
+    # （不落库、不进记忆、不改 content/user_message；channel_hint 非 wechat_ilink 时零行为变化）。
+    # 文本 = WECHAT_CHANNEL_HINT（集中一处常量，供测试断言）。去重走 AgentState.channel_hint_injected
+    # （不依赖消息中文串判重，本地化/改写不失效；也不往发给模型的 messages 里塞自定义键，
+    # 避免 OpenAI 兼容接口拒绝未知字段）。插入位置 = 最后一条 system 之后（人格总指令在前）；
+    # 无 system 时插到列表头（user 消息前）。
+    if state.get("channel_hint") == "wechat_ilink" and not state.get("channel_hint_injected"):
+        try:
+            _ctx_msgs = state.get("context_messages")
+            if isinstance(_ctx_msgs, list):
+                _idx = 0
+                for _i, _m in enumerate(_ctx_msgs):
+                    if isinstance(_m, dict) and _m.get("role") == "system":
+                        _idx = _i + 1
+                _ctx_msgs.insert(_idx, {
+                    "role": "system",
+                    "content": WECHAT_CHANNEL_HINT,
+                })
+                state["channel_hint_injected"] = True
+        except Exception:
+            pass
 
     # 思考过程三挡：0=关闭（无推理）；1=简单思考（context_builder 注入【推理】指令，
     # parse_response 解析）；2=深度思考（开启 LLM thinking，reasoning_content 透传）

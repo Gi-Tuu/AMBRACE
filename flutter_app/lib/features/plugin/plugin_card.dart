@@ -57,6 +57,11 @@ class PluginCardState extends State<PluginCard> {
   bool _bindSaving = false;
   List<AICharacter> _dyChars = [];
   bool _dyCharsLoading = false;
+  // wechat_ilink 微信绑定角色（任务 B，App 换绑管理；-1=未绑定；换绑走 /rebind 端点）
+  int _wxBoundCharId = -1;
+  bool _wxBindSaving = false;
+  List<AICharacter> _wxChars = [];
+  bool _wxCharsLoading = false;
 
   /// 48a：插件图标展示（manifest.icon 相对路径 → 页面托管 URL；加载失败回退 type 图标）
   Widget _iconWidget(String name, String type, String category, String icon) {
@@ -102,6 +107,11 @@ class PluginCardState extends State<PluginCard> {
       _dyPromptCtrl.text = (cfg['custom_prompt'] as String? ?? '');
       _dyBoundCharId = _parseBoundChar(cfg['allowed_character_ids']);
       _loadDyChars();
+    }
+    if (widget.plugin['name'] == 'wechat_ilink') {
+      final cfg = widget.plugin['config'] as Map<String, dynamic>? ?? {};
+      _wxBoundCharId = _parseBoundChar(cfg['allowed_character_ids']);
+      _loadWxChars();
     }
   }
 
@@ -406,6 +416,12 @@ class PluginCardState extends State<PluginCard> {
                 padding: const EdgeInsets.only(left: 42, top: 8, right: 8),
                 child: _buildDyCreator(),
               ),
+            // 任务 B：wechat_ilink 微信绑定角色（仅主账号；换绑走 /rebind，非 douyin 的 PUT 保存路径）
+            if (name == 'wechat_ilink' && _enabled && widget.isAdmin)
+              Padding(
+                padding: const EdgeInsets.only(left: 42, top: 8, right: 8),
+                child: _buildWxBind(),
+              ),
           ],
         ),
       ),
@@ -573,6 +589,99 @@ class PluginCardState extends State<PluginCard> {
       widget.onToast(l10n.extSaveFailed('$e'));
     } finally {
       if (mounted) setState(() => _bindSaving = false);
+    }
+  }
+
+  /// 任务 B：wechat_ilink 微信绑定角色区块（-1=未绑定；换绑走 /rebind 端点）。
+  Widget _buildWxBind() {
+    final l10n = AppLocalizations.of(context)!;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(l10n.wechatBindRole,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 2),
+        Text(l10n.wechatBindRoleHint, style: TextStyle(fontSize: 10, color: Colors.grey)),
+        const SizedBox(height: 6),
+        if (_wxCharsLoading)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Text(l10n.wechatBindLoading,
+                style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          )
+        else
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: DropdownButton<int>(
+              value: _wxBoundCharId,
+              isExpanded: true,
+              underline: const SizedBox.shrink(),
+              isDense: true,
+              items: [
+                DropdownMenuItem<int>(
+                    value: -1, child: Text(l10n.wechatBindNone, style: const TextStyle(fontSize: 13))),
+                for (final c in _wxChars)
+                  DropdownMenuItem<int>(value: c.id, child: Text(c.name, style: const TextStyle(fontSize: 13))),
+              ],
+              onChanged: _wxBindSaving ? null : (v) => setState(() => _wxBoundCharId = v ?? -1),
+            ),
+          ),
+        const SizedBox(height: 6),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton.tonal(
+            onPressed: _wxBindSaving ? null : _saveWxBindRole,
+            style: FilledButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+            ),
+            child: Text(l10n.wechatBindSave, style: const TextStyle(fontSize: 12)),
+          ),
+        ),
+        const SizedBox(height: 10),
+      ],
+    );
+  }
+
+  Future<void> _loadWxChars() async {
+    if (!mounted) return;
+    setState(() => _wxCharsLoading = true);
+    try {
+      final chars = await ApiClient().getCharacters();
+      if (!mounted) return;
+      setState(() {
+        _wxChars = chars.where((c) => c.isActive).toList();
+        _wxCharsLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _wxCharsLoading = false);
+    }
+  }
+
+  /// 任务 B：微信换绑必须走 rebind 端点（否则会被 occupied 裁决挡 400），
+  /// 与 douyin 的 updatePlugin(PUT config) 保存路径不同。
+  Future<void> _saveWxBindRole() async {
+    final l10n = AppLocalizations.of(context)!;
+    if (_wxBindSaving) return;
+    if (_wxBoundCharId < 0) {
+      widget.onToast(l10n.wechatBindNeedPick);
+      return;
+    }
+    setState(() => _wxBindSaving = true);
+    try {
+      await ApiClient().rebindWechatPlugin(_wxBoundCharId);
+      widget.onToast(l10n.wechatBindSaved);
+      widget.onChanged(); // 刷新 config 显示当前绑定
+    } catch (e) {
+      widget.onToast(l10n.extSaveFailed('$e'));
+    } finally {
+      if (mounted) setState(() => _wxBindSaving = false);
     }
   }
 

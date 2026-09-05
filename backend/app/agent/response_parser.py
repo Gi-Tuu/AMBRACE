@@ -90,6 +90,28 @@ _DISPLAY_STRIP_PATTERNS = [
     re.compile(r"[\[【]\s*(?:策略|推理|记忆|自述更新|自述删除|状态更新)\s*[：:][^\]】]*[\]】]"),
 ]
 
+# 展示层需剥离的「尾部未闭合结构化标记」兜底正则（M2-S5）。收敛到一处常量，
+# 供 parse_response 与微信出口净文（wechat_text）共用，避免两处漂移。
+# 只匹配「紧跟 [ 或 【 的已知标记关键字」，未闭合到行尾即剥离；普通文本括号/方括号不受影响。
+UNCLOSED_MARKER_TAIL_RE = re.compile(
+    r"[\[【]\s*(?:记忆|自述更新|自述删除|自述|状态更新|策略|推理|timer|SEARCH|CAL_NOTE|MEMO)[^\]】]*$",
+    re.IGNORECASE,
+)
+
+
+def strip_unclosed_markers(text: str) -> str:
+    """剥离尾部未闭合的已知结构化标记（截断/漏网产物）；普通文本括号/方括号不受影响。
+
+    与 parse_response 的 M2-S5 兜底逻辑完全一致（同一正则、同一 ``[:m.start()].rstrip()`` 语义），
+    供微信出口净文（wechat_text）等对外渠道复用，防止标记泄漏。
+    """
+    if not text:
+        return text
+    m = UNCLOSED_MARKER_TAIL_RE.search(text)
+    if m:
+        return text[: m.start()].rstrip()
+    return text
+
 
 def _find_hold_index(raw: str) -> int:
     """返回最后一个未闭合开括号的位置（从该位置起需要 hold，保证展示文本单调）。
@@ -360,12 +382,7 @@ def parse_response(response: str, state: dict) -> dict:
 
     # M2-S5（2026-08-31）：标记泄漏兜底——正文末尾残留未闭合的已知标记片段（截断产物）强剥，
     # 只剥已知标记前缀（记忆/自述/状态/策略/推理/timer/SEARCH/CAL_NOTE/MEMO），普通文本方括号不受影响
-    _tail_m = re.search(
-        r"[\[【]\s*(?:记忆|自述更新|自述删除|自述|状态更新|策略|推理|timer|SEARCH|CAL_NOTE|MEMO)[^\]】]*$",
-        state["ai_response"], re.IGNORECASE,
-    )
-    if _tail_m:
-        state["ai_response"] = state["ai_response"][:_tail_m.start()].rstrip()
+    state["ai_response"] = strip_unclosed_markers(state["ai_response"])
 
     state["intent"] = "chat"
     return state

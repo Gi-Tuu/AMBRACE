@@ -5592,6 +5592,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get douyinBindSaved => 'Bound character saved';
 
   @override
+  String get wechatBindRole => 'WeChat bound character';
+
+  @override
+  String get wechatBindRoleHint =>
+      'Select this family\'s role as the WeChat (ClawBot) bound role (empty = unbound)';
+
+  @override
+  String get wechatBindNone => 'Unbound';
+
+  @override
+  String get wechatBindSave => 'Save binding';
+
+  @override
+  String get wechatBindSaved => 'Bound character saved';
+
+  @override
+  String get wechatBindLoading => 'Loading…';
+
+  @override
+  String get wechatBindNeedPick => 'Please select the character to bind';
+
+  @override
   String agentMindRetrievalCount(Object count) {
     return '$count records';
   }

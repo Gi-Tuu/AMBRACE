@@ -300,20 +300,27 @@ async def _cold_war_block(character_id: int, user_id: int, user_msg: str) -> boo
 async def _persist_user_message(
     session_id: int, user_id: int, character_id: int, content: str,
     quote: dict | None = None, save_user_message: bool = True,
-    shared_memory: bool = False,
+    shared_memory: bool = False, channel: str | None = None,
 ) -> tuple[int | None, dict | None]:
     """用户消息落库，返回 (user_msg_id, user_msg_info)。
 
     save_user_message=False 跳过落库；shared_memory=True 触发 Shared Memory 标记（chunked）。
+    channel 非空时把渠道来源标记合并进 extra_meta JSON（保留 quote 语义：两者可同时存在，
+    谁都不空才落 JSON；两者皆空则 extra_meta 保持 None，行为与现状零变化）。
     """
     user_msg_id = None
     user_msg_info = None
     if not save_user_message:
         return user_msg_id, user_msg_info
     async with async_session_factory() as db:
-        _q = None
+        _meta = None
         if quote and isinstance(quote, dict):
-            _q = json.dumps({"quote": quote}, ensure_ascii=False)
+            _meta = {"quote": quote}
+        if channel:
+            if _meta is None:
+                _meta = {}
+            _meta["channel"] = channel
+        _q = json.dumps(_meta, ensure_ascii=False) if _meta else None
         um = ChatMessage(session_id=session_id, sender_type="user", content=content,
                          extra_meta=_q)
         db.add(um)
@@ -380,6 +387,7 @@ async def _run_agent_core(
     tts: bool = False,
     stream_tts_ctx: dict | None = None,
     reply_delay: bool = False,
+    channel_hint: str | None = None,
 ) -> dict | None:
     """公共 Agent 主流程（双路径收敛 #45，以 chunked 版逻辑为基准）。
 
@@ -461,6 +469,7 @@ async def _run_agent_core(
         "tts_subdir": (stream_tts_ctx or {}).get("tts_subdir") if stream_tts_ctx else None,
         "block_sink": (stream_tts_ctx or {}).get("block_sink") if stream_tts_ctx else None,
         "character_states_snapshot": _cs_snapshot,
+        "channel_hint": channel_hint,
     }
 
     _t0 = time.monotonic()
@@ -879,18 +888,26 @@ async def _run_post_processing(
 async def send_and_receive(
     session_id: int, user_id: int, character_id: int, content: str,
     lang: str = "zh", quote: dict | None = None, reply_delay: bool = True,
+    channel: str | None = None,
 ) -> dict:
-    """发送用户消息 → Agent 处理 → 返回 AI 回复"""
+    """发送用户消息 → Agent 处理 → 返回 AI 回复。
+
+    channel 渠道来源标记（任务 A）：值域 ``wechat_ilink``（微信桥）或 App 不传（None）。
+    非空时：用户消息 extra_meta 挂 ``channel``；AI 消息 extra_meta 挂 ``channel``；并把
+    channel_hint 传进 Agent 注入提示（仅进 LLM 上下文，不落库/不进记忆）。
+    """
     # 用户消息落库（HTTP 路径：无开关，始终落库；无 user_msg_info/Shared Memory）
     user_msg_id, _ = await _persist_user_message(
         session_id, user_id, character_id, content,
         quote=quote, save_user_message=True, shared_memory=False,
+        channel=channel,
     )
 
     # 公共 Agent 主流程（HTTP 专属：用户定时承诺 / 自主搜索 Loop / 多工具任务化）
     core = await _run_agent_core(
         session_id, user_id, character_id, content, lang, user_msg_id,
         user_timer=True, search_loop=True, run_chat_task=True, reply_delay=reply_delay,
+        channel_hint=channel,
     )
     if core is None:
         return {"ai_message": None, "memories_updated": False, "cold_war": True}
@@ -900,8 +917,10 @@ async def send_and_receive(
     gen_prompt = core["gen_prompt"]
     img_text = core["img_text"]
 
-    # 组装 AI 消息 extra_meta：思考过程 + 调用能力（生图/扩展等）
+    # 组装 AI 消息 extra_meta：思考过程 + 调用能力（生图/扩展等）+ 渠道来源标记（任务 A）
     _meta = {}
+    if channel:
+        _meta["channel"] = channel
     _reasoning = (final_state.get("reasoning") or "").strip()
     if _reasoning:
         _meta["reasoning"] = _reasoning
@@ -958,6 +977,8 @@ async def send_and_receive_chunked(
     """发送用户消息 -> Agent处理 -> 拆分回复 -> 保存每条块
 
     extra_capabilities: 外部链路标记的能力（如识图/文档问答），合并进 AI 回复的调用能力列表
+    （任务 A，2026-09-04）本轮不动（微信桥走 send_and_receive，不走本函数）。将来如需渠道
+    来源标记，可对称扩展 channel 参数并透传给 _persist_user_message / AI 消息 _meta / channel_hint。
     """
     # 用户消息落库（chunked 路径：save_user_message 开关 + user_msg_info 回传 + Shared Memory）
     user_msg_id, user_msg_info = await _persist_user_message(

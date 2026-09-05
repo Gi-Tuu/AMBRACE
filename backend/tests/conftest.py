@@ -22,6 +22,11 @@ import app.memory.bm25_index as bm25
 from app.events.bus import event_bus
 
 
+def pytest_configure(config):
+    """注册自定义标记，避免「需要真实微信扫码联调」的 live 用例产生未注册标记告警。"""
+    config.addinivalue_line("markers", "live: 需要真实微信扫码/真机联调，默认不运行（PR3 阻塞项）")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _init_test_schema():
     """会话开始时给全局库建表（幂等，兼容干净环境/CI 缺失生产库）。"""

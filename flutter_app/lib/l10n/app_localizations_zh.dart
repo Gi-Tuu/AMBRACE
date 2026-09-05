@@ -5400,6 +5400,27 @@ class AppLocalizationsZh extends AppLocalizations {
   String get douyinBindSaved => '绑定角色已保存';
 
   @override
+  String get wechatBindRole => '微信绑定角色';
+
+  @override
+  String get wechatBindRoleHint => '选择本家庭角色作为微信（ClawBot）绑定角色（空=未绑定）';
+
+  @override
+  String get wechatBindNone => '未绑定';
+
+  @override
+  String get wechatBindSave => '保存绑定';
+
+  @override
+  String get wechatBindSaved => '绑定角色已保存';
+
+  @override
+  String get wechatBindLoading => '加载中…';
+
+  @override
+  String get wechatBindNeedPick => '请先选择要绑定的角色';
+
+  @override
   String agentMindRetrievalCount(Object count) {
     return '$count 条';
   }

@@ -199,6 +199,51 @@ def test_agent_ainvoke_temperature_none_falls_back_to_default(monkeypatch):
     assert final.get("streamed") is True
 
 
+# ── 任务 A：channel_hint=wechat_ilink → generate_response 头部插一条 system 渠道提示（仅进 LLM 上下文）──
+
+def test_agent_ainvoke_channel_hint_inserts_system_message(monkeypatch):
+    """任务 A：channel_hint=wechat_ilink 时，generate_response 向 context_messages 头部插一条 system 渠道提示。"""
+    captured = {}
+
+    async def _fake_completion(**kw):
+        captured["messages"] = kw.get("messages")
+        return "非流式回复。"
+
+    monkeypatch.setattr(nodes, "chat_completion", _fake_completion)
+    monkeypatch.setattr("app.agent.llm_client.get_user_llm_config", _get_cfg)
+    monkeypatch.setattr(nodes, "_has_after_generate_hook", lambda: False)
+
+    agent = _build_test_agent()
+    final = asyncio.run(agent.ainvoke(_base_initial_state(
+        channel_hint="wechat_ilink",
+    )))
+
+    msgs = captured["messages"]
+    assert msgs, "chat_completion 未收到 messages"
+    assert msgs[0]["role"] == "system"
+    assert "渠道提示" in msgs[0]["content"]
+    assert final.get("ai_response") == "非流式回复。"
+
+
+def test_agent_ainvoke_channel_hint_none_does_not_insert(monkeypatch):
+    """任务 A：channel_hint 为 None（App 默认）→ 不插入渠道提示（零行为变化）。"""
+    captured = {}
+
+    async def _fake_completion(**kw):
+        captured["messages"] = kw.get("messages")
+        return "非流式回复。"
+
+    monkeypatch.setattr(nodes, "chat_completion", _fake_completion)
+    monkeypatch.setattr("app.agent.llm_client.get_user_llm_config", _get_cfg)
+    monkeypatch.setattr(nodes, "_has_after_generate_hook", lambda: False)
+
+    agent = _build_test_agent()
+    asyncio.run(agent.ainvoke(_base_initial_state()))
+
+    msgs = captured["messages"]
+    assert msgs and msgs[0]["role"] == "user"  # 首条仍是用户消息，未插 system 提示
+
+
 # ── §九 4：AgentState 完整性检查（chat_service 两处 initial_state key ⊆ __annotations__）──
 
 def test_agentstate_annotations_cover_chat_service_initial_state():

@@ -13,6 +13,8 @@ class AgentState(TypedDict):
     session_id: int            # 聊天会话 ID
     lang: str                  # 界面语言（zh/en），由服务层注入，context_builder 读取
     task_id: int | None        # 任务 ID（仅 runtime.py 直调节点函数时传入，graph 路径恒为 None）
+    channel_hint: str | None   # 渠道来源提示（任务 A）：wechat_ilink=微信桥；App 不传=图等效。仅进 LLM 上下文提示，不落库
+    channel_hint_injected: bool                  # 渠道提示已注入标记（P3-2：防 loop 再决策重复累积，不依赖消息文本）
 
     # ---- 处理中 ----
     intent: str                # 用户意图: "chat" / "query" / "command"
