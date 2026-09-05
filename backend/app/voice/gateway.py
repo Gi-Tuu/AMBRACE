@@ -111,7 +111,8 @@ async def _init_session(state: dict, session_id, character_id, user_id: int) -> 
     from app.voice.voice_mode import load_character_voice_params
     state["voice_params"] = await load_character_voice_params(int(character_id))
     await _refresh_emotional_state(state)  # P2-1：会话开始定一次情绪
-    asyncio.create_task(_warmup_thinking_audio(state))
+    from app.utils.async_tasks import spawn_background  # C2（v3.4.4 审查）：强引用+异常回收
+    spawn_background(_warmup_thinking_audio(state), name="warmup-thinking-audio")
     return True
 
 

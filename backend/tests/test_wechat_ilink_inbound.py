@@ -614,3 +614,67 @@ def test_schedule_tick_isolates_poll_error(wc_db, monkeypatch):
 def test_live_inbound_roundtrip_real_wechat():
     """真机收发闭环（NEEDS_RUNTIME_VERIFICATION）：默认不跑，ILINK_RUN_LIVE=1 才运行。"""
     raise AssertionError("live 用例默认跳过，需真实微信扫码联调")
+
+
+# ================================================================== W1/W2（v3.4.4 审查）：多 binding 不饥饿 + client 必 aclose
+def test_poll_once_multi_binding_no_starvation(wc_db, monkeypatch):
+    """W1：多 binding 并发独立预算——首个 binding 长轮询阻塞期间，第二个 binding 仍被轮询。
+
+    旧实现 deadline 在循环外只算一次：首个 25s 长轮询吃光预算，第二个 binding 整轮被饿死
+    （多角色收不到消息）；新实现 per-binding 独立预算 + gather 并发。"""
+    inbound = _inbound()
+    monkeypatch.setattr(inbound, "_run_companion_reply", _fake_reply("hi"))
+    asyncio.run(_add_binding(wc_db, character_id=101, ilink_user_id="ua"))  # 第一个：慢客户端
+    bid_b = asyncio.run(_add_binding(wc_db, character_id=102, ilink_user_id="ub"))  # 第二个：须不被饿死
+
+    class _SlowClient(FakeClient):
+        async def get_updates(self, buf):
+            self.get_updates_calls.append(buf)
+            await asyncio.sleep(0.5)  # 阻塞模拟长轮询（期间旧实现会吃光共享预算）
+            return {"ok": True, "messages": [], "buf": buf}
+
+    created = []
+
+    def factory(*_a, **_k):
+        if len(created) == 0:
+            c = _SlowClient()  # 第一个 binding：阻塞 0.5s 后拉空
+        else:
+            c = FakeClient()
+            c.updates_responses = [{"ok": True, "messages": [{"msg_id": "b1", "content": "bb"}], "buf": "b-cur"}]
+        created.append(c)
+        return c
+
+    asyncio.run(inbound.poll_once(client_factory=factory, interval=30, long_poll=25,
+                                  quota=10, session_factory=wc_db))
+    assert len(created) >= 2, "第二个 binding 的 client 未创建（被饿死）"
+    assert len(created[1].get_updates_calls) >= 1
+    ins = asyncio.run(_messages(wc_db, bid_b, "in"))
+    assert len(ins) == 1
+
+
+def test_client_aclose_called_after_poll_and_reply(wc_db, monkeypatch):
+    """W2：poll 与出站回复用完的 client 都必须 aclose（httpx.AsyncClient 防长跑句柄缓增）。"""
+    inbound = _inbound()
+    monkeypatch.setattr(inbound, "_run_companion_reply", _fake_reply("reply-text"))
+    asyncio.run(_add_binding(wc_db))
+
+    class _RecordingClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    created = []
+
+    def factory(*_a, **_k):
+        c = _RecordingClient()
+        c.updates_responses = [{"ok": True, "messages": [{"msg_id": "m1", "content": "hi"}], "buf": "c1"}]
+        created.append(c)
+        return c
+
+    asyncio.run(inbound.poll_once(client_factory=factory, interval=30, long_poll=25,
+                                  quota=10, session_factory=wc_db))
+    assert created, "client 未创建"
+    assert all(c.closed for c in created), [c.closed for c in created]

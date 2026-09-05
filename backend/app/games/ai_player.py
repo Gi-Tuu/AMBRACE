@@ -160,11 +160,16 @@ def _action_schema(expected: str) -> str:
 
 
 def _parse_json(raw: str) -> dict | None:
+    """C1（v3.4.4 审查）：容忍 ``` json（标签前空格）/ ```JSON（大写）围栏 + 前后自然语言噪声；
+    取首个 { 到末个 } 之间的内容再解析，失败返回 None（调用方回退随机合法动作）。"""
     raw = (raw or "").strip()
     if raw.startswith("```"):
-        raw = raw.strip("`")
-        if raw.startswith("json"):
-            raw = raw[4:]
+        raw = raw.strip("`").strip()
+        if raw[:4].lower() == "json":
+            raw = raw[4:].lstrip()
+    i, j = raw.find("{"), raw.rfind("}")
+    if i != -1 and j > i:
+        raw = raw[i:j + 1]
     try:
         return json.loads(raw)
     except Exception:

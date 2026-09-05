@@ -181,7 +181,8 @@ async def lifespan(app: FastAPI):
     # plans #42 Phase C：已配置 url 且无缓存时后台拉取一次。
     try:
         from app.api.marketplace import prefetch_remote_marketplace
-        asyncio.create_task(prefetch_remote_marketplace())
+        from app.utils.async_tasks import spawn_background
+        spawn_background(prefetch_remote_marketplace(), name="warmup-marketplace-index")
         readiness.mark("marketplace_prefetch", True)
         logger.info("Remote marketplace prefetch scheduled")
     except Exception as e:
@@ -193,7 +194,8 @@ async def lifespan(app: FastAPI):
     try:
         _browser_mod = _sys.modules.get("ai_plugin_browser_mcp")
         if _browser_mod is not None and callable(getattr(_browser_mod, "warmup", None)):
-            asyncio.create_task(_browser_mod.warmup())
+            from app.utils.async_tasks import spawn_background
+            spawn_background(_browser_mod.warmup(), name="warmup-browser")
             readiness.mark("edge_warmup", True)
             logger.info("browser_mcp Edge warmup scheduled")
         else:
@@ -207,7 +209,8 @@ async def lifespan(app: FastAPI):
     # 记忆检索/写入首条延迟：后台线程加载，模型缺失/失败静默。
     try:
         from app.memory.embedding import warmup_embedding
-        asyncio.create_task(warmup_embedding())
+        from app.utils.async_tasks import spawn_background
+        spawn_background(warmup_embedding(), name="warmup-embedding")
         readiness.mark("embedding_warmup", True)
         logger.info("bge-m3 embedding warmup scheduled")
     except Exception as e:

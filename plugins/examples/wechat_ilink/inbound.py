@@ -256,20 +256,28 @@ async def _process_reply(binding_id: int, inb: dict, reply: str, gate, client_fa
             return
         decision = gate.can_acquire(binding)
         out_status, charged = "deferred", False
-        if decision.allowed and reply:
-            client = client_factory(binding.bot_token_enc, binding.baseurl)
-            try:
-                res = await client.send_text(reply, context_token=inb.get("context_token") or None)
-                ok = isinstance(res, dict) and res.get("ok")
-                if ok:
-                    gate.acquire(binding)  # 发送成功才计入配额（read+write 同一事务）
-                    out_status, charged = "ok", True
-                else:
+        client = None
+        try:
+            if decision.allowed and reply:
+                client = client_factory(binding.bot_token_enc, binding.baseurl)
+                try:
+                    res = await client.send_text(reply, context_token=inb.get("context_token") or None)
+                    ok = isinstance(res, dict) and res.get("ok")
+                    if ok:
+                        gate.acquire(binding)  # 发送成功才计入配额（read+write 同一事务）
+                        out_status, charged = "ok", True
+                    else:
+                        out_status, charged = "failed", False
+                except Exception:
+                    from app.plugins import sdk  # noqa: PLC0415
+                    sdk.log("wechat_ilink sendmessage 异常")
                     out_status, charged = "failed", False
-            except Exception:
-                from app.plugins import sdk  # noqa: PLC0415
-                sdk.log("wechat_ilink sendmessage 异常")
-                out_status, charged = "failed", False
+        finally:
+            if client is not None:  # W2（v3.4.4 审查）：httpx.AsyncClient 用完必关，防长跑句柄缓增
+                try:
+                    await client.aclose()
+                except Exception:
+                    pass
         db.add(WeChatILinkMessage(
             binding_id=binding.id, character_id=binding.character_id, ilink_msg_id="",
             context_token=inb.get("context_token") or "", direction="out", content=reply,
@@ -296,7 +304,7 @@ async def poll_once(*, client_factory, interval: int = 30, long_poll: int = 25,
 
     sf = session_factory or _asf
     gate = QuotaGate(quota) if not hasattr(quota, "n") else quota
-    deadline = time.monotonic() + max(0, min(interval - 3, long_poll))
+    budget = max(0, min(interval - 3, long_poll))
 
     # 只读一次取 enabled binding（字段先快照，离开会话后不再访问 ORM 属性）
     async with sf() as db:
@@ -305,15 +313,19 @@ async def poll_once(*, client_factory, interval: int = 30, long_poll: int = 25,
         )).scalars().all()
         bindings = [(b.id, b.character_id, b.poll_buf, b.bot_token_enc, b.baseurl) for b in rows]
 
-    for bid, _cid, db_buf, token_enc, baseurl in bindings:
+    async def _poll_one(bid, _cid, db_buf, token_enc, baseurl) -> None:
+        # W1（v3.4.4 审查）：每个 binding 独立时间预算——旧实现 deadline 在循环外只算一次，
+        # 首个 binding 的 25s 长轮询会吃光预算、其余 binding 整轮被饿死（多角色收不到消息）。
         lock = _locks.setdefault(bid, asyncio.Lock())
-        if lock.locked():
-            continue
+        if lock.locked():  # 重入锁语义保持：上一 tick 未跑完，本 tick 跳过该 binding
+            return
         async with lock:
+            local_deadline = time.monotonic() + budget
+            client = None
             try:
                 buf = _read_cursor(bid) or (db_buf or "")
                 client = client_factory(token_enc, baseurl, timeout=int(long_poll))
-                while time.monotonic() < deadline:
+                while time.monotonic() < local_deadline:
                     data = await client.get_updates(buf)  # 长轮询（timeout < tick）
                     if not isinstance(data, dict) or not data.get("ok"):
                         from app.plugins import sdk  # noqa: PLC0415
@@ -332,6 +344,19 @@ async def poll_once(*, client_factory, interval: int = 30, long_poll: int = 25,
             except Exception:
                 from app.plugins import sdk  # noqa: PLC0415
                 sdk.log("wechat_ilink poll_once binding %s 异常（隔离）", bid)
+            finally:
+                if client is not None:  # W2：client 用完必关（含异常路径），防长跑连接缓增
+                    try:
+                        await client.aclose()
+                    except Exception:
+                        pass
+
+    # binding 数量通常 1~3，并发开销可忽略；return_exceptions 保证单 binding 失败不影响其它
+    if bindings:
+        await asyncio.gather(
+            *(_poll_one(*b) for b in bindings),
+            return_exceptions=True,
+        )
 
 
 async def _persist_cursor(binding_id: int, buf: str, session_factory) -> None:

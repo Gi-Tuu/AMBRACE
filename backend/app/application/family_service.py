@@ -11,7 +11,12 @@
 兼容：_family_root_id/_is_sub_account 原在 llm_config_service，已迁到本模块（现同属 app.application），
 llm_config_service 统一 import 本模块，保持行为不变、避免双份实现。
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+
+def _utc_naive() -> datetime:
+    """W6（v3.4.4 审查）：替代已弃用的 datetime.utcnow()——UTC naive 口径（DB created_at/expires_at 均为 naive）。"""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 import secrets
 
 from fastapi import HTTPException
@@ -84,7 +89,7 @@ async def generate_invite_code(db: AsyncSession, user_id: int) -> dict:
         # 仅独立主账号可发码
         raise HTTPException(status_code=403, detail="sub account cannot generate invite")
 
-    now = datetime.utcnow()
+    now = _utc_naive()
     # 复用未过期且未使用的码
     existing = (await db.execute(
         select(AccountInvite).where(
@@ -146,7 +151,7 @@ async def redeem_invite_code(db: AsyncSession, user_id: int, code: str | None) -
     if redeemer.parent_id is not None:
         raise HTTPException(status_code=400, detail="already linked")
 
-    now = datetime.utcnow()
+    now = _utc_naive()
     # 一次性：已使用 → 拒绝
     if invite.used_by is not None:
         raise HTTPException(status_code=400, detail="invite already used")

@@ -123,7 +123,10 @@ async def _save_binding(db, *, user_id: int, character_id: int,
     row = None
     if ilink_user_id:
         row = (await db.execute(
-            select(models.WeChatILinkBinding).where(models.WeChatILinkBinding.ilink_user_id == ilink_user_id)
+            select(models.WeChatILinkBinding).where(
+                models.WeChatILinkBinding.ilink_user_id == ilink_user_id,
+                models.WeChatILinkBinding.user_id == user_id,  # W4（v3.4.4 审查）：防多主账号理论串绑
+            )
         )).scalars().first()
     if row is None:
         row = (await db.execute(
@@ -232,9 +235,20 @@ def mount(router):
         await _kernel_bind(user_id, character_id, lang)
         from app.db.database import async_session_factory  # noqa: PLC0415
 
-        async with async_session_factory() as db:
-            await _save_binding(db, user_id=user_id, character_id=character_id, **confirmed)
-            await db.commit()
+        # W5（v3.4.4 审查）：落库失败补偿（对齐 /rebind 的 P2-1）——内核 config 已改、
+        # 落库失败时回滚内核（PUT 空数组），避免半绑定态；补偿失败记日志后原样抛出。
+        try:
+            async with async_session_factory() as db:
+                await _save_binding(db, user_id=user_id, character_id=character_id, **confirmed)
+                await db.commit()
+        except Exception:
+            try:
+                await _kernel_unbind(user_id, lang)
+            except Exception:
+                from app.plugins import sdk  # noqa: PLC0415
+                sdk.log("wechat_ilink /bind 补偿回滚失败 user=%s char=%s，请人工核对内核 allowed_character_ids",
+                        user_id, character_id)
+            raise
         return {"ok": True, "character_id": character_id}
 
     @router.post("/unbind")
@@ -340,6 +354,7 @@ async def bridge_relay_impl(body: dict, secret_header: str):
         raise HTTPException(status_code=400, detail="ilink_user_id/text required")
 
     from sqlalchemy import select  # noqa: PLC0415
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415  # W3：双消费通道幂等
     from app.db.database import async_session_factory  # noqa: PLC0415
     import models  # noqa: PLC0415  (插件目录在 sys.path，main.py 已 import)
     from quota import QuotaGate  # noqa: PLC0415
@@ -371,7 +386,14 @@ async def bridge_relay_impl(body: dict, secret_header: str):
             ilink_msg_id=msg_id, context_token="", direction="in",
             content=text, quota_charged=False, status="ok",
         ))
-        await db.commit()
+        # W3（v3.4.4 审查）：自轮询与 openclaw 网关为两条并行入站通道（生产二选一）。
+        # 入场 commit 撞 uq_wechat_ilink_msg_in 唯一索引 = 消息已被另一条通道消费 →
+        # 幂等返回 duplicate（不冒泡 500、不二次生成回复）。
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            return {"ok": True, "duplicate": True, "reply": "", "sendable": False, "quota": None}
 
     reply = await inbound._run_companion_reply(int(row.user_id), int(row.character_id), text)
     # L2 微信出口净文（2026-09-05）：桥返回给 openclaw 的整段文本先做一次「可直接读」收敛，
