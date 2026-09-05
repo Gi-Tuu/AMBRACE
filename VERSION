@@ -1,9 +1,16 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.4.3
-DATE: 2026-09-04
-STATUS: 开源发布版 v3.4.3（游戏 AI 对局保护 + 记忆新特性灰度）
+VERSION: 3.4.4
+DATE: 2026-09-05
+STATUS: 开源发布版 v3.4.4（微信 ClawBot 渠道 + 消息格式治理）
 
 CHANGELOG:
+
+3.4.4 - Release (2026-09-05)
+  - Wechat: 微信 ClawBot 渠道接入（openclaw→拥爱转发桥）——绑定角色后微信私聊直达角色回复
+  - Wechat: 渠道来源标记（消息/记忆语境可区分微信与 App）；App 扩展页换绑角色（免重扫码）
+  - Wechat: 微信消息格式治理（动作写成可感文字、括号解释保留、出口净文 + 发送护栏）
+  - Wechat: P3 加固（S2S 体积上限/频控、回复语言按用户、双副本一致性校验、发送回执台账）
+  - Tests: backend pytest 微信/插件相关 209 green；ruff 0 / flutter analyze 0
 
 3.4.3 - Release (2026-09-04)
   - Games: 游戏 AI 局失控保护——狼人杀夜间重复行动卡局修复 + 单局决策上限按平局自动安全收尾（正常局零行为变化）
