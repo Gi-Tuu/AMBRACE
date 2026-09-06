@@ -76,6 +76,17 @@ def _validate_baseurl(baseurl: str) -> str:
     return b
 
 
+def _normalize_bot_id(raw: str) -> str:
+    """iLink bot id 归一化（对齐 openclaw normalizeAccountId）：`xxx@im.bot` → `xxx-im-bot`。
+
+    真机确认（2026-09-06）：该 id 跨首次绑定/网关重启/重扫稳定 → 作为 bot_account_id 稳定键。
+    """
+    s = str(raw or "").strip()
+    if s.endswith("@im.bot"):
+        return s[: -len("@im.bot")] + "-im-bot"
+    return s
+
+
 def _mask_uid(uid: str) -> str:
     """微信稳定 user_id 脱敏展示：只保留首尾，防泄露完整标识（前端/日志）。"""
     uid = str(uid or "")
@@ -112,6 +123,37 @@ def _svc_http_exc(e: Exception, lang: str) -> HTTPException:
     return HTTPException(status_code=500, detail=str(e))
 
 
+async def _available_bot_or_owned(db, user_id: int, tenant_id: int, bot_account_id: str) -> dict:
+    """App 添加 bot 的可用性裁决（幂等口径，2026-09-06）：
+
+    - 该 bot 已有绑定行且属当前租户 → 幂等（返回其 userId 映射，upsert 角色）；
+    - 在 available 列表（已登录未绑定）→ 返回映射供首次落行；
+    - 其它（属他租户 / 未登录 / 手输任意 id）→ 404。
+    """
+    import available_bots  # noqa: PLC0415
+    import models  # noqa: PLC0415
+    from sqlalchemy import select  # noqa: PLC0415
+
+    owned = (await db.execute(select(models.WeChatILinkBinding).where(
+        models.WeChatILinkBinding.bot_account_id == bot_account_id,
+        models.WeChatILinkBinding.tenant_id == int(tenant_id),
+        models.WeChatILinkBinding.enabled.is_(True),
+    ))).scalars().first()
+    if owned is not None:
+        return {"account_id": bot_account_id, "user_id": owned.ilink_user_id, "saved_at": ""}
+    bots = await available_bots.list_available_bots(db, tenant_id)
+    if bot_account_id in {b["account_id"] for b in bots}:
+        return next(b for b in bots if b["account_id"] == bot_account_id)
+    raise HTTPException(status_code=404, detail="该 bot 不可用（未登录或已被其它主账号绑定）")
+
+
+async def _svc_resolve_tenant(db, user_id: int) -> int:
+    """租户解析（App 添加 bot 链路用；与 channel_bindings API 同源 tenant_scope）。"""
+    from app.application.tenant_scope import resolve_tenant  # noqa: PLC0415
+
+    return await resolve_tenant(db, user_id)
+
+
 async def _resolve_bridge_secret(db, tenant_hint: int | None) -> str:
     """桥共享密钥解析（包 C，2026-09-06：S4 函数位正式实现）。
 
@@ -141,6 +183,27 @@ async def _kernel_unbind(user_id: int, lang: str) -> None:
 
 # ------------------------------------------------------------------ 插件自有绑定表
 
+async def _resolve_bot_for_user(db, user_id: int, bot_account_id: str) -> str:
+    """C5：unbind/rebind 的 bot 维度解析——显式指定用之；缺省时该用户仅一个 bot 则自动归属，
+    多 bot 要求显式传 bot_account_id（400），无行回落 "default"（兼容旧客户端）。"""
+    bot_account_id = str(bot_account_id or "").strip()
+    if bot_account_id:
+        return bot_account_id
+    import models  # noqa: PLC0415
+    from sqlalchemy import select  # noqa: PLC0415
+
+    bots = (await db.execute(select(models.WeChatILinkBinding.bot_account_id).where(
+        models.WeChatILinkBinding.user_id == user_id,
+        models.WeChatILinkBinding.enabled.is_(True),
+    ).distinct())).scalars().all()
+    if len(bots) == 1:
+        return str(bots[0])
+    if len(bots) > 1:
+        raise HTTPException(status_code=400,
+                            detail="多 bot 并存：请求需显式携带 bot_account_id")
+    return "default"
+
+
 async def _save_binding(db, *, user_id: int, character_id: int,
                         ilink_user_id: str = "", ilink_bot_id: str = "",
                         bot_token: str = "", baseurl: str = "",
@@ -161,6 +224,9 @@ async def _save_binding(db, *, user_id: int, character_id: int,
     baseurl = _validate_baseurl(baseurl)
     token_enc = crypto_util.encrypt(bot_token)
     tenant_id = await get_family_root_id(db, user_id) or user_id
+    # C5：bot_account_id 缺省/default 时，用 confirmed 的 ilink_bot_id 归一化兜底（真机确认稳定键）
+    if bot_account_id in ("", "default") and ilink_bot_id:
+        bot_account_id = _normalize_bot_id(ilink_bot_id) or bot_account_id
 
     row = None
     if ilink_user_id:
@@ -195,22 +261,84 @@ async def _save_binding(db, *, user_id: int, character_id: int,
     return row
 
 
-async def _clear_binding(db, user_id: int, character_id: int) -> None:
-    """解绑：清凭据 + 停状态（token 解绑即删，P0-4；保留行便于重绑复用/历史追溯）。"""
+async def _clear_binding(db, user_id: int, character_id: int, bot_account_id: str = "") -> None:
+    """解绑：清凭据 + 停状态（token 解绑即删，P0-4；保留行便于重绑复用/历史追溯）。
+
+    C5：bot_account_id 非空时按 bot 维度精确清理（多 bot 不误伤另一 bot 行）；
+    空=旧行为（多 bot 并存时由 _resolve_bot_for_user 先解析出 bot 再传入）。
+    """
     import models  # noqa: PLC0415
     from sqlalchemy import select  # noqa: PLC0415
 
-    row = (await db.execute(
-        select(models.WeChatILinkBinding).where(
-            models.WeChatILinkBinding.user_id == user_id,
-            models.WeChatILinkBinding.character_id == character_id)
-    )).scalars().first()
+    q = select(models.WeChatILinkBinding).where(
+        models.WeChatILinkBinding.user_id == user_id,
+        models.WeChatILinkBinding.character_id == character_id)
+    if bot_account_id:
+        q = q.where(models.WeChatILinkBinding.bot_account_id == bot_account_id)
+    row = (await db.execute(q)).scalars().first()
     if row is not None:
         row.enabled = False
         row.bot_token_enc = ""
         row.ilink_bot_id = ""
         row.baseurl = ""
         row.poll_buf = ""
+
+
+# ------------------------------------------------------------------ 渠道级「绑定联动」回调（插件自洽）
+
+async def _find_binding_row(db, tenant_id: int, bot_account_id: str):
+    """按 (租户, bot) 定位本渠道自有绑定行（不限 enabled——重绑/停用均复用，保留行历史）。"""
+    import models  # noqa: PLC0415
+    from sqlalchemy import select  # noqa: PLC0415
+
+    return (await db.execute(select(models.WeChatILinkBinding).where(
+        models.WeChatILinkBinding.tenant_id == int(tenant_id),
+        models.WeChatILinkBinding.bot_account_id == str(bot_account_id or "default"),
+    ))).scalars().first()
+
+
+async def channel_on_binding_saved(db, tenant_id: int, bot_account_id: str,
+                                   character_id: int, *, user_id: int | None = None) -> None:
+    """内核 channels API「绑定/换绑」决策成功后回写本渠道自有绑定行（插件自洽，2026-09-06）。
+
+    对齐 bind-available 幂等口径（App 渠道卡换绑/重绑 = bind-available 的 App 侧表达）：
+    - 该 bot 有本渠道行（**不限 enabled**：既有绑定行换绑/重绑，或停用行重绑）→ 复用该行，
+      置 enabled=True、更新角色，**保留凭据/微信身份**（区别于解绑；重绑无需重扫）；
+    - 无本渠道行 → 必须是 available 列表中的 bot（已登录未绑定）→ 新建行（无 token，
+      凭据在网关侧，relay 不依赖拥爱 token）；
+    - 其它（属他租户 / 未登录 / 手输任意 id）→ 404，调用方不 commit（整事务回滚）。
+    """
+    uid = int(user_id or tenant_id)
+    row = await _find_binding_row(db, int(tenant_id), bot_account_id)
+    if row is not None:
+        row.user_id = uid
+        row.tenant_id = int(tenant_id)
+        row.enabled = True
+        row.character_id = int(character_id)
+        # bot_token_enc / ilink_user_id / ilink_bot_id / baseurl 保留不清（区别于解绑）
+        return
+    acc = await _available_bot_or_owned(db, uid, int(tenant_id), bot_account_id)
+    await _save_binding(db, user_id=uid, character_id=int(character_id),
+                        ilink_user_id=acc.get("user_id") or "",
+                        bot_account_id=bot_account_id, bot_token="", baseurl="")
+
+
+async def channel_on_binding_removed(db, tenant_id: int, bot_account_id: str) -> bool:
+    """内核 channels API「解绑」删除 channel_bindings 行后，停用本渠道自有绑定行（插件自洽）。
+
+    对齐 _clear_binding 语义：enabled=0、token 清空、保留行历史（勿物理删）——解绑后
+    bot 不再被 relay 路由、available-bots 列表重新可见该 bot（重绑无需重扫）。
+    幂等：无命中行返回 False（不报错，兼容重复解绑 / 兜底补同步）。
+    """
+    row = await _find_binding_row(db, int(tenant_id), bot_account_id)
+    if row is None:
+        return False
+    row.enabled = False
+    row.bot_token_enc = ""
+    row.ilink_bot_id = ""
+    row.baseurl = ""
+    row.poll_buf = ""
+    return True
 
 
 async def get_binding_view(user_id: int | None = None) -> dict:
@@ -242,18 +370,30 @@ async def get_binding_view(user_id: int | None = None) -> dict:
 
     bound = enabled = has_cred = False
     uid_masked = ""
-    if char_id is not None:
-        async with async_session_factory() as db:
-            q = select(models.WeChatILinkBinding).where(models.WeChatILinkBinding.character_id == char_id)
-            if user_id is not None:
-                q = q.where(models.WeChatILinkBinding.user_id == user_id)
-            q = q.order_by(models.WeChatILinkBinding.id.desc())
-            row = (await db.execute(q)).scalars().first()
-        if row is not None:
-            enabled = bool(row.enabled)
-            bound = enabled
-            has_cred = bool(row.bot_token_enc)
-            uid_masked = _mask_uid(row.ilink_user_id)
+    bots: list[dict] = []
+    async with async_session_factory() as db:
+        q = select(models.WeChatILinkBinding)
+        if char_id is not None:
+            q = q.where(models.WeChatILinkBinding.character_id == char_id)
+        if user_id is not None:
+            q = q.where(models.WeChatILinkBinding.user_id == user_id)
+        rows = (await db.execute(q.order_by(models.WeChatILinkBinding.id))).scalars().all()
+    # C5（2026-09-06 多 ClawBot）：按 bot 维度出多行视图；顶层兼容字段=第一行（单 bot 场景零变化）
+    for row in rows:
+        bots.append({
+            "bot_account_id": row.bot_account_id,
+            "character_id": int(row.character_id),
+            "enabled": bool(row.enabled),
+            "bound": bool(row.enabled),
+            "has_credentials": bool(row.bot_token_enc),
+            "ilink_user_id_masked": _mask_uid(row.ilink_user_id),
+        })
+    if rows:
+        first = rows[0]
+        enabled = bool(first.enabled)
+        bound = enabled
+        has_cred = bool(first.bot_token_enc)
+        uid_masked = _mask_uid(first.ilink_user_id)
     return {
         "ok": True,
         "bound": bound,
@@ -261,6 +401,7 @@ async def get_binding_view(user_id: int | None = None) -> dict:
         "enabled": enabled,
         "has_credentials": has_cred,
         "ilink_user_id_masked": uid_masked,
+        "bots": bots,
         "binding": {"unique_per_family": True, "mode": "bot_single"},
     }
 
@@ -296,7 +437,11 @@ def mount(router):
         """
         character_id = _parse_character_id(body)
         confirmed = _confirmed_payload(body)
-        bot_account_id = str(body.get("bot_account_id") or "default").strip() or "default"
+        # C5（2026-09-06 多 ClawBot）：confirmed 载荷的 ilink_bot_id（真机确认跨重扫稳定）
+        # 归一化后作为 bot_account_id 稳定键；body 显式指定次之；缺省回落 "default"（兼容旧客户端）。
+        bot_account_id = (_normalize_bot_id(confirmed.get("ilink_bot_id"))
+                          or str(body.get("bot_account_id") or "").strip()
+                          or "default")
         # P3-2 SSRF：先验 baseurl 白名单，失败即拒（不先改绑定，避免半绑定态）
         _validate_baseurl(confirmed["baseurl"])
         from app.db.database import async_session_factory  # noqa: PLC0415
@@ -341,10 +486,11 @@ def mount(router):
             raise
         return {"ok": True, "character_id": character_id}
 
+
     @router.post("/unbind")
     async def unbind(body: dict, user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
         """解绑：flag 开=ChannelBindingService 删绑定行；关=内核 PUT 空数组解绑裁决。
-        两路都再清插件绑定停状态。"""
+        两路都再清插件绑定停状态。C5：body 可带 bot_account_id（缺省自动归属唯一 bot）。"""
         character_id = _parse_character_id(body)
         from app.db.database import async_session_factory  # noqa: PLC0415
 
@@ -363,7 +509,8 @@ def mount(router):
             await _kernel_unbind(user_id, lang)
 
         async with async_session_factory() as db:
-            await _clear_binding(db, user_id, character_id)
+            _bot = await _resolve_bot_for_user(db, user_id, str(body.get("bot_account_id") or ""))
+            await _clear_binding(db, user_id, character_id, bot_account_id=_bot)
             await db.commit()
         return {"ok": True, "unbound": True, "character_id": character_id}
 
@@ -384,9 +531,11 @@ def mount(router):
         if _binding_v2_enabled():
             from app.application import channel_binding_service as _svc  # noqa: PLC0415
 
+            async with async_session_factory() as db:
+                _bot = await _resolve_bot_for_user(db, user_id, str(body.get("bot_account_id") or ""))
             try:
                 async with async_session_factory() as db:
-                    await _svc.upsert_binding(db, user_id, "wechat", character_id)
+                    await _svc.upsert_binding(db, user_id, "wechat", character_id, bot_account_id=_bot)
                     await db.commit()
             except HTTPException:
                 raise
@@ -399,6 +548,7 @@ def mount(router):
                 rows = (await db.execute(
                     select(models.WeChatILinkBinding).where(
                         models.WeChatILinkBinding.user_id == user_id,
+                        models.WeChatILinkBinding.bot_account_id == _bot,  # C5：只迁目标 bot 的行
                         models.WeChatILinkBinding.enabled.is_(True),
                     )
                 )).scalars().all()
@@ -407,7 +557,7 @@ def mount(router):
                     row.enabled = True
                     # bot_token_enc / baseurl / ilink_user_id / ilink_bot_id 保留不清（区别于解绑）
                 await db.commit()
-            return {"ok": True, "rebound": True, "character_id": character_id}
+            return {"ok": True, "rebound": True, "character_id": character_id, "bot_account_id": _bot}
 
         from sqlalchemy import select  # noqa: PLC0415
         import models  # noqa: PLC0415
@@ -504,6 +654,85 @@ def mount(router):
             await db.commit()
         return {"ok": True, "masked": masked}
 
+    # ── App 添加未绑定 ClawBot（2026-09-06）：可用 bot 列表 + 绑定执行（仅独立主账号）──
+
+    @router.get("/available-bots")
+    async def get_available_bots(user_id: int = Depends(get_current_user_id),
+                                 lang: str = Header(default="zh")):
+        """网关已登录、拥爱未绑定的 bot 列表（A2 同机读取 openclaw accounts；Provider 位留 A1 上报）。
+
+        root-only；隔离口径=剔除已被任意租户绑定的 bot（谁先绑归谁）。"""
+        from app.db.database import async_session_factory  # noqa: PLC0415
+        from app.application.tenant_scope import assert_standalone_owner  # noqa: PLC0415
+        from app.i18n import tr_lang  # noqa: PLC0415
+        import available_bots  # noqa: PLC0415
+
+        async with async_session_factory() as db:
+            try:
+                await assert_standalone_owner(db, user_id)
+            except PermissionError:
+                raise HTTPException(status_code=403, detail=tr_lang(lang, "channel_bind_main_only"))
+            bots = await available_bots.list_available_bots(db, None)
+        return {"ok": True, "items": [{
+            "bot_account_id": b["account_id"],
+            "ilink_user_id_masked": _mask_uid(b.get("user_id")),
+            "saved_at": b.get("saved_at") or "",
+        } for b in bots]}
+
+    @router.post("/bind-available")
+    async def bind_available_bot(body: dict, user_id: int = Depends(get_current_user_id),
+                                 lang: str = Header(default="zh")):
+        """绑定一个「已登录未绑定」的网关 bot：落插件绑定行（无 token——凭据在网关侧，
+        relay 网关发送不依赖拥爱 token）+ channel_bindings 角色绑定（幂等 upsert）。
+
+        body {bot_account_id, character_id}；bot 必须在 available 列表（防手输任意 id/误绑他人 bot）。
+        """
+        from app.db.database import async_session_factory  # noqa: PLC0415
+        from app.application.tenant_scope import assert_standalone_owner  # noqa: PLC0415
+        from app.i18n import tr_lang  # noqa: PLC0415
+
+        character_id = _parse_character_id(body)
+        bot_account_id = str((body or {}).get("bot_account_id") or "").strip()
+        if not bot_account_id:
+            raise HTTPException(status_code=400, detail="bot_account_id 必填")
+
+        if _binding_v2_enabled():
+            from app.application import channel_binding_service as _svc  # noqa: PLC0415
+
+            try:
+                async with async_session_factory() as db:
+                    await assert_standalone_owner(db, user_id)
+                    tenant_id = await _svc_resolve_tenant(db, user_id)
+                    # 幂等口径：该 bot 已绑且属当前租户 → 直接 upsert 角色返回 ok（重复点击/换角色）；
+                    # 属其它租户或未登录 → 404（防误绑他人 bot/手输任意 id）。
+                    acc = await _available_bot_or_owned(db, user_id, tenant_id, bot_account_id)
+                    await _save_binding(db, user_id=user_id, character_id=character_id,
+                                        ilink_user_id=acc.get("user_id") or "",
+                                        bot_account_id=bot_account_id, bot_token="", baseurl="")
+                    await _svc.upsert_binding(db, user_id, "wechat", character_id,
+                                              bot_account_id=bot_account_id)
+                    await db.commit()
+            except HTTPException:
+                raise
+            except Exception as e:  # noqa: BLE001
+                raise _svc_http_exc(e, lang)
+            return {"ok": True, "bot_account_id": bot_account_id, "character_id": character_id}
+
+        # flag 关（旧路径）：内核单选裁决 + 插件行落库（无 token）
+        await _kernel_bind(user_id, character_id, lang)
+        async with async_session_factory() as db:
+            try:
+                await assert_standalone_owner(db, user_id)
+            except PermissionError:
+                raise HTTPException(status_code=403, detail=tr_lang(lang, "channel_bind_main_only"))
+            tenant_id = await _svc_resolve_tenant(db, user_id)
+            acc = await _available_bot_or_owned(db, user_id, tenant_id, bot_account_id)
+            await _save_binding(db, user_id=user_id, character_id=character_id,
+                                ilink_user_id=acc.get("user_id") or "",
+                                bot_account_id=bot_account_id, bot_token="", baseurl="")
+            await db.commit()
+        return {"ok": True, "bot_account_id": bot_account_id, "character_id": character_id}
+
     @router.delete("/bridge-secret")
     async def delete_bridge_secret(user_id: int = Depends(get_current_user_id),
                                    lang: str = Header(default="zh")):
@@ -578,6 +807,17 @@ async def bridge_relay_impl(body: dict, secret_header: str, tenant_hint: int | N
                 models.WeChatILinkBinding.enabled.is_(True),
             ).with_for_update()
         )).scalars().first()
+        if row is None and bot_account_id == "default":
+            # C5 兼容窗：旧网关 payload 不带 bot_account_id（回落 default），而存量行已修正为
+            # 真实 bot id → 按 ilink_user_id 单条件回落，但仅当该 wxuser 全局唯一（多行不回落防串台）。
+            _all = (await db.execute(
+                select(models.WeChatILinkBinding).where(
+                    models.WeChatILinkBinding.ilink_user_id == ilink_user_id,
+                    models.WeChatILinkBinding.enabled.is_(True),
+                )
+            )).scalars().all()
+            if len(_all) == 1:
+                row = _all[0]
         if row is None:
             return {"ok": False, "code": "no_binding", "reply": "", "sendable": False, "quota": None}
         if msg_id:

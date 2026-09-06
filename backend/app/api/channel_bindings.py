@@ -101,8 +101,13 @@ async def list_my_bindings(channel: str, user_id: int = Depends(get_current_user
 async def put_binding(channel: str, bot_account_id: str, body: dict,
                       user_id: int = Depends(get_current_user_id),
                       lang: str = Header(default="zh")):
-    """绑定/换绑指定 bot：flag 开=ChannelBindingService 租户化裁决；
-    flag 关=回落既有内核 update_plugin 单选裁决（灰度期与现 App 行为一致）。"""
+    """绑定/换绑指定 bot：flag 开=ChannelBindingService 租户化裁决 + 渠道「绑定联动」回调
+    （plugins/examples/wechat_ilink 等自洽回写本渠道自有绑定行，重绑/换绑不重扫）；
+    flag 关=回落既有内核 update_plugin 单选裁决（灰度期与现 App 行为一致）。
+
+    幂等口径（对齐 bind-available，2026-09-06）：目标 bot 属本租户（含已停用行）或 in
+    available 列表 → 放行；属他租户 / 未登录 / 任意 id → 渠道回调抛 404，本方法不 commit
+    （整事务回滚，不残留半绑定）。无联动回调的渠道（如 douyin）= 原行为不受影响。"""
     from app.db.database import async_session_factory
 
     try:
@@ -114,10 +119,18 @@ async def put_binding(channel: str, bot_account_id: str, body: dict,
     bot_label = str(body.get("bot_label") or "")
 
     if channel_binding_v2_enabled():
+        from app.providers import channel as channel_prov
+
         try:
             async with async_session_factory() as db:
+                tenant_id = await resolve_tenant(db, user_id)
                 row = await svc.upsert_binding(db, user_id, channel, character_id,
                                                bot_account_id=bot_account_id, bot_label=bot_label)
+                # 绑定/换绑联动（插件自洽）：回写渠道自有绑定行（wechat 重绑/换绑不重扫）。
+                # 目标不可绑（他租户/未登录/任意 id）→ 回调抛 404，本方法不 commit（整事务回滚）。
+                await channel_prov.invoke_channel_binding_hook(
+                    channel, "on_binding_saved", db, tenant_id, bot_account_id, character_id,
+                    user_id=user_id)
                 await db.commit()
         except HTTPException:
             raise
@@ -137,13 +150,23 @@ async def put_binding(channel: str, bot_account_id: str, body: dict,
 async def del_binding(channel: str, bot_account_id: str,
                       user_id: int = Depends(get_current_user_id),
                       lang: str = Header(default="zh")):
-    """解绑：flag 开=删该 bot 的 channel_bindings 行；flag 关=内核空串解绑（旧语义）。"""
+    """解绑：flag 开=删该 bot 的 channel_bindings 行 + 渠道「解绑联动」回调（插件自洽停用其
+    自有绑定行：enabled=0、token 清空、保留行历史——对齐 _clear_binding 语义，保证两表一致）；
+    flag 关=内核空串解绑（旧语义）。无联动回调的渠道（如 douyin）= 原行为不受影响。"""
     from app.db.database import async_session_factory
 
     if channel_binding_v2_enabled():
+        from app.providers import channel as channel_prov
+
         try:
             async with async_session_factory() as db:
+                tenant_id = await resolve_tenant(db, user_id)
                 await svc.remove_binding(db, user_id, channel, bot_account_id)
+                # 解绑联动（插件自洽）：删 channel_bindings 行后停用渠道自有绑定行（(tenant, bot)
+                # enabled=0、token 清空、保留行历史——对齐 _clear_binding 语义），保证两表一致，
+                # 使 relay 不再路由该 bot、available-bots 重新可见（重绑无需重扫）。
+                await channel_prov.invoke_channel_binding_hook(
+                    channel, "on_binding_removed", db, tenant_id, bot_account_id)
                 await db.commit()
         except HTTPException:
             raise

@@ -67,12 +67,17 @@ def register_channel(name: str, port, meta: dict | None = None, source: str = "b
     full_meta = dict(meta or {})
     if ent is not None:
         if ent.get("source") == source:
-            _reg._ENTRIES[key] = {"factory": _as_factory(port), "meta": full_meta, "source": source}
+            # 同源重载=整体替换（factory/meta 刷新），但在场 binding_hooks 保留——
+            # 渠道插件 main.py 重扫时 register_channel 先跑、set_channel_binding_hooks 后跑，
+            # 保留旧 hook 保证中间态（写 hook 前被后续查询误判为无联动面）不闪断。
+            _reg._ENTRIES[key] = {"factory": _as_factory(port), "meta": full_meta, "source": source,
+                                  "binding_hooks": ent.get("binding_hooks") or {}}
             return
         raise ValueError(f"channel already registered by another source: {name}")
     _reg.register_provider(_CHANNEL_KIND, name, _as_factory(port), meta=full_meta, source=source)
     # X3 注册口会把 meta 归一化为 {label, description}——渠道 meta 契约字段需全量保留
     _reg._ENTRIES[key]["meta"] = full_meta
+    _reg._ENTRIES[key]["binding_hooks"] = {}
 
 
 def _channel_entries() -> list[tuple[str, dict]]:
@@ -115,3 +120,50 @@ def channel_for_plugin(plugin_name: str) -> tuple[str, dict] | None:
         if meta.get("plugin") == plugin_name or ent.get("source") == plugin_name:
             return name, meta
     return None
+
+
+# ── 渠道级「绑定联动」回调（插件自洽：内核 channels API 不 import 各渠道内部实现）──
+#
+# 背景（2026-09-06 解绑同步修复）：App 渠道卡解绑（DELETE /api/v1/channels/{channel}/bindings/{bot}）
+# 删 channel_bindings 行后，须联动渠道自有绑定表（wechat_ilink 的 wechat_ilink_bindings），
+# 把 (tenant, bot) 行停用（enabled=0、token 清空、保留行历史——对齐插件 _clear_binding 语义）。
+# 反方向：PUT 绑定/换绑后也要回写渠道自有行（重绑不重扫）。回调按渠道名注册在渠道注册条目上
+# （随渠道注册/注销生命周期），channel_bindings API 经 invoke_channel_binding_hook 调用。
+#
+# 回调签名（async）：
+# - "on_binding_saved":   (db, tenant_id, bot_account_id, character_id, *, user_id=None)
+#                         绑定/换绑决策成功后再写渠道自有行；目标不可绑（他租户/未登录/任意 id）
+#                         抛 HTTPException(404) → 调用方不 commit，整事务回滚。
+# - "on_binding_removed": (db, tenant_id, bot_account_id) -> bool
+#                         解绑后停用渠道自有行；幂等，无命中行返回 False（不报错）。
+def set_channel_binding_hooks(name: str, hooks: dict) -> None:
+    """设置渠道级「绑定联动」回调（插件 main.py 加载期经 sdk 调用；内核不 import 插件实现）。
+
+    hooks: {"hook_name": async handler, ...}；覆盖式写入（同渠道同名 hook 后写胜）。
+    """
+    from app.providers import registry as _reg
+    key = (_CHANNEL_KIND, str(name))
+    ent = _reg._ENTRIES.get(key)
+    if ent is None:
+        raise ValueError(f"channel not registered: {name}")
+    ent["binding_hooks"] = dict(hooks or {})
+
+
+def _channel_binding_hooks(name: str) -> dict:
+    """取渠道的「绑定联动」回调表（无注册返回空 dict）。"""
+    from app.providers import registry as _reg
+    key = (_CHANNEL_KIND, str(name))
+    ent = _reg._ENTRIES.get(key)
+    return (ent or {}).get("binding_hooks") or {}
+
+
+async def invoke_channel_binding_hook(name: str, hook_name: str, *args, **kwargs):
+    """内核调用渠道的「绑定联动」回调。无注册回调返回 None（无联动面=原行为）。
+
+    回调内部可能抛 HTTPException（如可用性 404），由调用方按渠道语义透出；
+    回调返回其 handler 的返回值（供调用方判断是否实际联动）。
+    """
+    handler = _channel_binding_hooks(str(name)).get(hook_name)
+    if handler is None:
+        return None
+    return await handler(*args, **kwargs)

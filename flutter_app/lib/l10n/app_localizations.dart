@@ -9717,6 +9717,18 @@ abstract class AppLocalizations {
   /// **'本协议内容可能随版本更新调整，继续使用本软件即视为接受最新版本协议。'**
   String get agreeSection7Body;
 
+  /// No description provided for @agreeSection8Title.
+  ///
+  /// In zh, this message translates to:
+  /// **'八、使用授权'**
+  String get agreeSection8Title;
+
+  /// No description provided for @agreeSection8Body.
+  ///
+  /// In zh, this message translates to:
+  /// **'本项目开源仅供学习与研究使用；未经作者书面许可，严禁将本项目或其任何派生版本用于商业用途。'**
+  String get agreeSection8Body;
+
   /// No description provided for @backupTitle.
   ///
   /// In zh, this message translates to:
@@ -10220,6 +10232,42 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'请先选择要绑定的角色'**
   String get channelBindingNeedPick;
+
+  /// No description provided for @channelBindingAddBotHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'新增 bot：先在网关（openclaw）扫码登录新微信号，再点「刷新 bot 列表」绑定角色'**
+  String get channelBindingAddBotHint;
+
+  /// No description provided for @channelBindingRefresh.
+  ///
+  /// In zh, this message translates to:
+  /// **'刷新 bot 列表'**
+  String get channelBindingRefresh;
+
+  /// No description provided for @channelBindingViewAvailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'查看可添加的 bot'**
+  String get channelBindingViewAvailable;
+
+  /// No description provided for @channelBindingAvailableTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'可添加的 bot（网关已登录、未绑定角色）'**
+  String get channelBindingAvailableTitle;
+
+  /// No description provided for @channelBindingNoAvailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无可添加的 bot（新微信号请在网关扫码登录）'**
+  String get channelBindingNoAvailable;
+
+  /// No description provided for @channelBindingBind.
+  ///
+  /// In zh, this message translates to:
+  /// **'绑定'**
+  String get channelBindingBind;
 
   /// No description provided for @agentMindRetrievalCount.
   ///

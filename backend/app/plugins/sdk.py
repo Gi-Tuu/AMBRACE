@@ -161,6 +161,22 @@ def register_channel(name: str, port, meta: dict | None = None) -> None:
     _reg(name, port, meta=meta, source=source)
 
 
+def register_channel_binding_hooks(channel: str, hooks: dict) -> None:
+    """X5 扩展（2026-09-06 解绑联动修复）：注册渠道级「绑定联动」回调（仅插件 main.py 加载期可调）。
+
+    - 存到渠道注册条目（随渠道注册/注销生命周期），内核 channels API 经
+      app.providers.channel.invoke_channel_binding_hook 调用——**内核不 import 插件内部实现**，
+      联动逻辑由插件自洽（self-contained），示例见 wechat_ilink.main.py；
+    - hooks: {"on_binding_saved": handler, "on_binding_removed": handler, ...}；
+    - handler 为 async 函数，签名详见 app/providers/channel.py 的 set_channel_binding_hooks 注释。
+    """
+    source = registry.current_plugin_name()
+    if source is None:
+        raise RuntimeError("sdk.register_channel_binding_hooks 只能在插件 main.py 加载时调用")
+    from app.providers.channel import set_channel_binding_hooks as _set
+    _set(channel, hooks or {})
+
+
 # ── X4（2026-08-31）：只读端口——受控只读访问内核数据，替代"import 内部模块"（重构即碎）──
 # 每个端口都要求 manifest 显式声明对应只读权限；返回脱敏快照，不暴露 ORM 对象与内部字段。
 

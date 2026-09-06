@@ -225,8 +225,12 @@ async def lifespan(app: FastAPI):
     readiness.mark("scheduler", True, critical=True)
     logger.info("Proactive scheduler started")
 
-    # ── 启动步骤 12（可选路径）：MCP 接入（后台重连）─────────────────────────────
+    # ── 启动步骤 12（可选路径）：MCP 接入（常驻维护循环）────────────────────────
     # 启动后台重连 auto_connect=True 的 MCP Server（失败不阻塞启动，仅降级登记）；关闭时清理。
+    # P0-B（2026-09-06）：原「一次性 reconnect_all()」改「常驻维护循环」：
+    #   - 启动先连一次（force=True，不等巡检），之后每 60s 巡检 auto_connect+enabled 但未连的 server
+    #     幂等重连（reconnect_all 已跳过已连；连续失败方按 5min 降频，见 manager.py B7）；
+    #   - 这样推送型/常驻型 MCP worker 崩了也无需等「下次 call_tool」才惰性重连。
     _mcp_task = None
     try:
         from app.mcp.manager import mcp_manager, preset_defaults
@@ -237,12 +241,24 @@ async def lifespan(app: FastAPI):
                 logger.info("MCP preset seeded: %d servers", _preset)
         except Exception as _pe:
             logger.warning("MCP preset failed: %s", _pe)
-        _mcp_task = asyncio.create_task(mcp_manager.reconnect_all())
+
+        async def _mcp_maintenance_loop():
+            # 启动先连一次，之后每 60s 巡检（幂等跳过已连；连续失败方 5min 降频防刷日志）
+            await mcp_manager.reconnect_all(force=True)
+            interval = 60
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    await mcp_manager.reconnect_all()
+                except Exception as _me:
+                    logger.warning("MCP maintenance tick failed: %s", _me)
+
+        _mcp_task = asyncio.create_task(_mcp_maintenance_loop())
         readiness.mark("mcp", True)
-        logger.info("MCP reconnect_all scheduled")
+        logger.info("MCP maintenance loop scheduled (60s)")
     except Exception as e:
         readiness.mark("mcp", False, msg=str(e))
-        logger.warning("MCP reconnect schedule failed: %s", e)
+        logger.warning("MCP maintenance schedule failed: %s", e)
 
     # 至此 12 个启动步骤均已登记（关键路径失败已 fail-fast，走不到这里）；overall 为
     # 信息位，供探针确认「启动流程完整走完」。
@@ -250,8 +266,8 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # 关闭时：停止调度器、清理资源
-    scheduler_engine.stop()
+    # 关闭时：停止调度器（async lifespan 内直接 await stop_async，确保 supervisor 关停时序完整）
+    await scheduler_engine.stop_async()
     logger.info("Proactive scheduler stopped")
 
     # MCP 关闭：取消后台重连任务 + 断开所有连接（清理 stdio 子进程）

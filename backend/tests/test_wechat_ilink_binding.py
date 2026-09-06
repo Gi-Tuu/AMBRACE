@@ -186,16 +186,17 @@ def test_bind_route_rotates_credentials_no_new_row(wc_db):
     rows1 = _get_bindings(wc_db)
     assert len(rows1) == 1
 
-    # 同一微信（稳定 ilink_user_id）重新扫码：token/bot_id/baseurl 全部轮换，仍只有 1 行
+    # 同一微信（稳定 ilink_user_id）重新扫码：真机确认（2026-09-06 多 ClawBot 前置场景 B）
+    # ilink_bot_id 跨重扫不变 → bot_account_id 不变 → token/baseurl 轮换仍只有 1 行
     r2 = client.post("/api/v1/plugins/wechat_ilink/bind", json={
         "character_id": 101, "bot_token": "tok-2", "baseurl": "https://base2.weixin.qq.com",
-        "ilink_user_id": "wx_uid_stable_001", "ilink_bot_id": "bot-2"})
+        "ilink_user_id": "wx_uid_stable_001", "ilink_bot_id": "bot-1"})
     assert r2.status_code == 200, r2.text
     rows2 = _get_bindings(wc_db)
     assert len(rows2) == 1
     row = rows2[0]
     assert row.ilink_user_id == "wx_uid_stable_001"
-    assert row.ilink_bot_id == "bot-2"
+    assert row.ilink_bot_id == "bot-1"  # 重扫 bot id 不变（稳定键）
     assert row.baseurl == "https://base2.weixin.qq.com"
     # 密文 ≠ 明文；旧 token 已被覆盖
     assert row.bot_token_enc != "tok-2"

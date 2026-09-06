@@ -260,6 +260,29 @@ extension PluginsApi on ApiClient {
     final r = await dio.delete('/api/v1/channels/$channel/bindings/${Uri.encodeComponent(botAccountId)}');
     return Map<String, dynamic>.from(r.data as Map);
   }
+
+  // ── App 添加未绑定 ClawBot（2026-09-06）：可用 bot 列表 + 绑定执行 ──
+
+  /// 网关已登录、拥爱未绑定的 bot 列表（仅主账号；后端同机读取 openclaw accounts）。
+  /// [pluginName] 为绑定插件名（端点挂插件路由：`/api/v1/plugins/<plugin>/available-bots`，
+  /// 与渠道名不同——wechat → wechat_ilink）。
+  Future<List<Map<String, dynamic>>> listAvailableBots(String pluginName) async {
+    final r = await dio.get('/api/v1/plugins/$pluginName/available-bots');
+    return parseListItems(r.data, 'items', (j) => j as Map<String, dynamic>);
+  }
+
+  /// 绑定一个可用 bot（选角色后保存；幂等——已绑属本租户时直接改绑）
+  Future<Map<String, dynamic>> bindAvailableBot(
+    String pluginName,
+    String botAccountId,
+    int characterId,
+  ) async {
+    final r = await dio.post('/api/v1/plugins/$pluginName/bind-available', data: {
+      'bot_account_id': botAccountId,
+      'character_id': characterId,
+    });
+    return Map<String, dynamic>.from(r.data as Map);
+  }
 }
 
 /// #65：构造插件页面/图标鉴权请求头（纯函数，可单测）。

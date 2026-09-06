@@ -5199,6 +5199,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get agreeSection7Body => '本协议内容可能随版本更新调整，继续使用本软件即视为接受最新版本协议。';
 
   @override
+  String get agreeSection8Title => '八、使用授权';
+
+  @override
+  String get agreeSection8Body =>
+      '本项目开源仅供学习与研究使用；未经作者书面许可，严禁将本项目或其任何派生版本用于商业用途。';
+
+  @override
   String get backupTitle => '数据备份';
 
   @override
@@ -5458,6 +5465,25 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get channelBindingNeedPick => '请先选择要绑定的角色';
+
+  @override
+  String get channelBindingAddBotHint =>
+      '新增 bot：先在网关（openclaw）扫码登录新微信号，再点「刷新 bot 列表」绑定角色';
+
+  @override
+  String get channelBindingRefresh => '刷新 bot 列表';
+
+  @override
+  String get channelBindingViewAvailable => '查看可添加的 bot';
+
+  @override
+  String get channelBindingAvailableTitle => '可添加的 bot（网关已登录、未绑定角色）';
+
+  @override
+  String get channelBindingNoAvailable => '暂无可添加的 bot（新微信号请在网关扫码登录）';
+
+  @override
+  String get channelBindingBind => '绑定';
 
   @override
   String agentMindRetrievalCount(Object count) {

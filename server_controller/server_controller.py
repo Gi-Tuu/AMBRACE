@@ -855,6 +855,58 @@ def _fetch_health() -> str:
         return "异常"
 
 
+def _fmt_ago(sec) -> str:
+    """秒数 →「X 单位前」人读格式（不足 1 分钟用秒，其余用分/时）。"""
+    try:
+        s = max(0, int(sec))
+    except Exception:
+        return "—"
+    if s < 60:
+        return "%ds" % s
+    if s < 3600:
+        return "%dm" % (s // 60)
+    return "%dh%02dm" % (s // 3600, (s % 3600) // 60)
+
+
+def _fetch_liveness() -> dict:
+    """读取运行期活性（/api/v1/system/liveness），返回 {ok, stalled, summary, level}。
+
+    - ok=False：端点不可用/网络失败 → 下游回落现状（summary 空，不改健康卡语义）。
+    - level：0=正常(绿)、1=停滞预警(黄，如 scheduler 心跳超阈值)、2=停滞(红，端点 reported stalled)。
+    - summary 例：「调度 12s 前 · 微信桥 3s 前」；微信桥取启用绑定最近 in/out 的最小间隔。
+    """
+    if not _check_alive():
+        return {"ok": False, "stalled": False, "summary": "", "level": 0}
+    try:
+        import json
+        import urllib.request
+        with urllib.request.urlopen(_target_base() + "/api/v1/system/liveness", timeout=2.5) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return {"ok": False, "stalled": False, "summary": "", "level": 0}
+    stalled = bool(data.get("stalled"))
+    loops = data.get("loops") or {}
+    sched = loops.get("scheduler") or {}
+    sched_secs = sched.get("seconds_since_heartbeat")
+    sched_stalled = bool(sched.get("stalled"))
+    ch = data.get("channels") or {}
+    wx = ch.get("wechat_ilink") or {}
+    wx_secs = None
+    for b in (wx.get("bindings") or []):
+        if not b.get("enabled"):
+            continue
+        for v in (b.get("seconds_since_inbound"), b.get("seconds_since_outbound")):
+            if v is not None and (wx_secs is None or v < wx_secs):
+                wx_secs = v
+    parts = []
+    if sched_secs is not None:
+        parts.append("调度 %s 前" % _fmt_ago(sched_secs))
+    if wx_secs is not None:
+        parts.append("微信桥 %s 前" % _fmt_ago(wx_secs))
+    level = 2 if stalled else (1 if sched_stalled else 0)
+    return {"ok": True, "stalled": stalled, "summary": " · ".join(parts), "level": level}
+
+
 def _fmt_compact(v) -> str:
     try:
         v = int(v)
@@ -929,7 +981,7 @@ def _read_token_trend(days=7, db=None, today=None) -> list:
     return _aggregate_token_trend(rows, days=days, today=today)
 
 # ═══════════════════════════════════════════════════════════════
-# Token 热力图 / 任务占比（近 17 周）
+# Token 热力图 / 任务占比（近 26 周；HEATMAP_WEEKS=26，与标题一致）
 # ═══════════════════════════════════════════════════════════════
 HEATMAP_WEEKS = 26
 WEEK_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
@@ -1438,7 +1490,7 @@ class ControllerApp:
         _, self.v_mems, self.c_mems = self._make_card(grid, 1, 1, "记忆数", "条记忆")
         _, self.v_tokens, self.c_tokens = self._make_card(grid, 1, 2, "累计 Token", "Token 累计")
 
-        # Token 活动卡：近 17 周热力图（每日/每周/累计），hover 查看当天用量与占比
+        # Token 活动卡：近 26 周热力图（每日/每周/累计），hover 查看当天用量与占比
         heat_card = RoundedCard(grid, t, pad=3, height=330)
         heat_card.grid(row=2, column=0, columnspan=3, sticky="nsew", padx=3, pady=3)
         heat_inner = heat_card.inner
@@ -2078,6 +2130,9 @@ class ControllerApp:
                 health = _safe(_fetch_health, "—")
                 stats = _safe(_read_db_stats, {"characters": None, "memories": None, "tokens": None})
                 stats["heat"] = _safe(lambda: _read_token_heatmap(HEATMAP_WEEKS), [])
+                # C3（2026-09-06）：健康卡副标题接运行期活性（/liveness）；后台线程容错，
+                # 端点不可用返回默认 dict，_apply_refresh 回落现状（不改健康卡语义）。
+                stats["liveness"] = _safe(_fetch_liveness, {"ok": False, "stalled": False, "summary": "", "level": 0})
                 self._q.put(("state", alive, pid, paused, log_text, ollama_alive, ollama_pid, health, stats))
             except Exception as e:
                 _safe_traceback()
@@ -2389,6 +2444,18 @@ class ControllerApp:
         health_fg = t.success if health == "正常" else (t.warning if health == "—" else t.error)
         self.header_health_label.config(text="健康 %s" % health, fg=health_fg)
         self.v_health.config(text=health, fg=health_fg)
+        # C3（2026-09-06）：健康卡副标题接 /liveness——显示「调度 Xs 前 / 微信桥 Xs 前」，停滞变色。
+        liv = stats.get("liveness")
+        if isinstance(liv, dict) and liv.get("ok"):
+            lvl = liv.get("level", 0)
+            live_fg = t.success if lvl == 0 else (t.warning if lvl == 1 else t.error)
+            self.c_health.config(text=liv["summary"] if liv.get("summary") else "HTTP 探活")
+            if lvl in (1, 2):  # 停滞/预警 → 健康值与顶栏标题一并转告警色
+                self.v_health.config(fg=live_fg)
+                self.header_health_label.config(fg=live_fg)
+        else:
+            # 端点不可用 → 回落默认副标题（保持「正常运行」语义）
+            self.c_health.config(text="HTTP 探活")
         self.v_chars.config(text=_fmt_int(stats.get("characters")))
         self.v_mems.config(text=_fmt_int(stats.get("memories")))
         self.v_tokens.config(text=_fmt_int(stats.get("tokens")))

@@ -29,6 +29,15 @@ import inbound  # noqa: E402
 # 注册渠道：meta 上报 binding unique_per_family，使内核绑定裁决自动生效（与 douyin_mcp 同构）。
 sdk.register_channel("wechat", WeChatILinkPort(), meta=build_meta())
 
+# 渠道级「绑定联动」回调（2026-09-06 解绑同步修复，插件自洽）：
+# 内核 channels API（API/v1/channels/{channel}/bindings/{bot}）删/写 channel_bindings 行后，
+# 经渠道 registry 回调本插件停用/启用 wechat_ilink_bindings 的 (tenant, bot) 行，
+# 保持两表一致——内核不 import 本插件内部实现，联动逻辑在本插件。
+sdk.register_channel_binding_hooks("wechat", {
+    "on_binding_saved": routes.channel_on_binding_saved,
+    "on_binding_removed": routes.channel_on_binding_removed,
+})
+
 # 挂载 http_router（前缀 /api/v1/plugins/wechat_ilink，强制登录态）。
 routes.mount(sdk.router())
 

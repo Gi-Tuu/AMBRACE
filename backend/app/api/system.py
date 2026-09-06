@@ -39,6 +39,92 @@ async def ready_check():
     return JSONResponse(snap, status_code=200 if snap["ready"] else 503)
 
 
+@router.get("/liveness")
+async def liveness_check():
+    """运行期活性（与 /health、/ready 并列，不改其语义）：关键循环心跳 + MCP 概况 + 渠道活跃度。
+
+    - 全段 try 隔离：任一子系统异常只落到对应字段的 _error，绝不使端点 500。
+    - 总体 stalled=True 表示存在「进程活着但关键循环停摆/卡死」，供控制台告警与 watchdog 二级判断。
+    - channels 读 wechat_ilink_bindings 的 last_inbound_at/last_outbound_at（只读绑定表）；
+      插件 self-poll 已关、不再有内存轮询心跳，网关进程自身存活性由 watchdog 的 18789 TCP probe 覆盖。
+    """
+    info: dict = {"loops": {}, "mcp": {}, "channels": {}, "stalled": False}
+
+    # 1) supervisor 监督的常驻循环（scheduler / storyline）
+    try:
+        from app.utils.supervisor import supervisor
+        info["loops"] = supervisor.liveness()
+        if any(v.get("stalled") or not v.get("alive") for v in info["loops"].values()):
+            info["stalled"] = True
+    except Exception as e:
+        info["loops"] = {"_error": repr(e)}
+
+    # 2) MCP：应连（auto_connect+enabled）数 / 实连数 / 断连明细
+    try:
+        from sqlalchemy import select
+        from app.db.database import async_session_factory
+        from app.mcp.manager import mcp_manager
+        from app.models.mcp import MCPServer
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(MCPServer).where(MCPServer.auto_connect.is_(True),
+                                        MCPServer.enabled.is_(True))
+            )).scalars().all()
+            expected = [r.id for r in rows]
+        connected, down = [], []
+        for sid in expected:
+            (connected if mcp_manager.is_connected(sid) else down).append(sid)
+        info["mcp"] = {"expected": len(expected), "connected": len(connected),
+                       "down_ids": down}
+        if down:  # MCP 断连不直接判整体 stalled（维护循环会自愈），只暴露；避免抖动误报
+            info["mcp"]["note"] = "down servers are auto-recovered by maintenance loop"
+    except Exception as e:
+        info["mcp"] = {"_error": repr(e)}
+
+    # 3) 渠道活跃度：读 wechat_ilink_bindings 最近 in/out 时间（只读绑定表；插件未加载时为空）。
+    #    经 DB 反射读取，不依赖渠道模型是否注册进 Base.metadata，也便于测试用临时库驱动。
+    try:
+        from sqlalchemy import inspect, select, Table, MetaData
+        from app.db.database import async_session_factory
+
+        async with async_session_factory() as db:
+            conn = await db.connection()
+
+            def _reflect_table(sync_conn):
+                insp = inspect(sync_conn)
+                if "wechat_ilink_bindings" not in insp.get_table_names():
+                    return None
+                return Table("wechat_ilink_bindings", MetaData(), autoload_with=sync_conn)
+
+            table = await conn.run_sync(_reflect_table)
+            if table is None:
+                info["channels"]["wechat_ilink"] = {"note": "plugin not loaded"}
+            else:
+                rows = (await conn.execute(
+                    select(table.c.id, table.c.character_id, table.c.enabled,
+                           table.c.last_inbound_at, table.c.last_outbound_at)
+                )).all()
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                bindings = []
+                for r in rows:
+                    last_in = r.last_inbound_at
+                    last_out = r.last_outbound_at
+                    bindings.append({
+                        "id": r.id,
+                        "character_id": r.character_id,
+                        "enabled": bool(r.enabled),
+                        "last_inbound_at": last_in.isoformat() if last_in else None,
+                        "last_outbound_at": last_out.isoformat() if last_out else None,
+                        "seconds_since_inbound": int((now - last_in).total_seconds()) if last_in else None,
+                        "seconds_since_outbound": int((now - last_out).total_seconds()) if last_out else None,
+                    })
+                info["channels"]["wechat_ilink"] = {"binding_count": len(bindings), "bindings": bindings}
+    except Exception as e:
+        info["channels"]["_error"] = repr(e)
+
+    return JSONResponse(info, status_code=200)
+
+
 @router.get("/status")
 async def system_status():
     """服务器运行状态（含局域网 IP 与图片理解配置状态，便于部署者填手机端服务器地址）"""

@@ -51,6 +51,11 @@ from app.mcp.transport import (  # noqa: F401
     validate_mcp_url,
 )
 
+# 连续失败降频参数（B7，2026-09-06）：维护循环巡检时，对「连续失败」达阈值且距上次
+# 尝试不足降频窗口的 server 跳过，避免每 60s 反复尝试远端不可达 server 刷日志/耗连接。
+_DEF_AUTORECONNECT_COOLDOWN = 300.0  # 降频窗口（秒）＝ 5min
+_DEF_AUTORECONNECT_MIN_STREAK = 2    # 连续失败达该次数才降频（单次抖动不触发 5min 锁）
+
 _logger = get_logger("mcp.manager")
 
 
@@ -70,6 +75,9 @@ class MCPClientManager:
 
     def __init__(self) -> None:
         self._conns: dict[int, _Connection] = {}
+        # B7（2026-09-06）：维护循环降频追踪——server_id -> (last_attempt monotonic, fail_streak)
+        self._last_attempt: dict[int, float] = {}
+        self._fail_streak: dict[int, int] = {}
 
     # ------------------------------------------------------------------ 状态
 
@@ -191,11 +199,17 @@ class MCPClientManager:
         await self._update_db_status(server_id, STATUS_DISCONNECTED, None)
         return {"ok": True}
 
-    async def reconnect_all(self, auto_connect: bool | None = None) -> None:
-        """启动时重连所有 auto_connect=True 且 enabled 的 Server。
+    async def reconnect_all(self, auto_connect: bool | None = None, *,
+                            force: bool = False,
+                            cooldown_sec: float = _DEF_AUTORECONNECT_COOLDOWN,
+                            min_fail_streak: int = _DEF_AUTORECONNECT_MIN_STREAK) -> None:
+        """启动/巡检时重连所有 auto_connect=True 且 enabled 的 Server。
 
         - 单个 Server 失败不抛错（不影响其他 / 不阻塞启动）。
         - auto_connect 参数当前为兼容占位；行为只看 DB 的 auto_connect 列。
+        - B7（2026-09-06）：连续失败降频——对「连续失败 ≥ min_fail_streak 次且距上次尝试
+          不足 cooldown_sec」的 server 跳过本次巡检（force=True 强制不跳过，供启动首连用），
+          避免每 60s 反复尝试不可达的远端 server 刷日志/耗连接。单次失败不触发降频。
         """
         from sqlalchemy import select
 
@@ -210,16 +224,32 @@ class MCPClientManager:
         except Exception as e:
             _logger.warning("mcp reconnect_all load failed: %s", e)
             return
+        now = time.monotonic()
         for row in rows:
             if not row.enabled:
                 continue
             conn = self._conns.get(row.id)
             if conn is not None and conn.is_connected:
+                self._fail_streak.pop(row.id, None)
                 continue
+            last = self._last_attempt.get(row.id)
+            streak = self._fail_streak.get(row.id, 0)
+            # 降频：连续失败达阈值且处于冷却窗口内 → 跳过
+            if (not force and last is not None
+                    and streak >= min_fail_streak
+                    and (now - last) < cooldown_sec):
+                _logger.debug("mcp downscale skip server=%d streak=%d", row.id, streak)
+                continue
+            self._last_attempt[row.id] = now
             try:
-                await self.connect(row.id)
+                res = await self.connect(row.id)
             except Exception as e:
+                res = {"ok": False}
                 _logger.warning("mcp reconnect_all server=%d failed: %s", row.id, e)
+            if res.get("ok") and self.is_connected(row.id):
+                self._fail_streak.pop(row.id, None)
+            else:
+                self._fail_streak[row.id] = streak + 1
 
     async def shutdown(self) -> None:
         """应用关闭时断开所有连接并清理。"""
@@ -493,6 +523,9 @@ class MCPClientManager:
                         await cm.__aexit__(None, None, None)
                     except Exception as e:
                         _logger.warning("mcp worker close error: %s", e)
+            # B5（2026-09-06）：异常退出清理自身引用，带 current_task() 守卫——旧 worker 收尾
+            # 期间 G2 维护循环可能已建好「新 worker」，无条件清空会误杀新连接。
+            self._clear_worker_refs(conn)
 
     async def _handle_call(self, session, cmd: dict) -> None:
         try:
@@ -608,6 +641,17 @@ class MCPClientManager:
                 except Exception as e:
                     _logger.warning("mcp shutdown request failed server=%s: %s", conn.server_id, e)
         await self._settle_worker(conn)
+
+    def _clear_worker_refs(self, conn: _Connection) -> None:
+        """旧/新 worker 收尾时清理自身引用；带 current_task() 守卫避免误清「已重连的新 worker」。
+
+        只有『正在收尾的 worker 就是 conn._worker 指向的那个』才清理；否则说明 conn._worker
+        已被 G2 维护循环换成新 worker，无条件清空会误杀新连接（B5，2026-09-06）。
+        """
+        if conn._worker is asyncio.current_task():
+            conn._worker = None
+            conn._queue = None
+            conn._ready = None
 
     async def _settle_worker(self, conn: _Connection) -> None:
         """等待 worker 自然收尾（如 __aexit__ 杀子进程，约 2-4s）；超时才取消并收割。"""

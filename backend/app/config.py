@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     scheduler_active_hour_start: int = 8  # 活跃时段开始
     scheduler_active_hour_end: int = 23  # 活跃时段结束
 
+    # ---- 应用时区偏移（B1，2026-09-06）：默认 +8 = 北京时间 ----
+    # 只影响「用户可感知窗口」（主动消息时段/日记/反思触发等运行时判断）；
+    # 库内存储口径保持 UTC-naive 不变（零数据迁移），见 app/utils/timeutil.py 说明。
+    app_tz_offset_hours: int = 8  # .env: APP_TZ_OFFSET_HOURS（如海外 VPS 设该值时区）
+
     # ---- 插件 hook 超时门禁（2026-08-16 Phase A）：默认 10s，1-60s 可配置 ----
     plugin_hook_timeout: float = 10.0
 

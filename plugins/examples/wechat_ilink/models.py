@@ -24,7 +24,7 @@ class WeChatILinkBinding(Base):
     - uq_wechat_bot_wxuser：同一 bot 下一个微信用户唯一（partial：ilink_user_id != ''，
       与 messages 表 partial unique 先例一致——空串行不入约束，绑定可先落行后补扫码）；
     - uq_wechat_tenant_bot_char：同租户同 bot 一角色（bot_single 多 bot 时各 bot 独立一角色）。
-    ilink_bot_id 每次扫码变，仅记录，不作 bot_account_id（稳定键取法见设计 §8.4，真机确认项）。
+    ilink_bot_id 真机确认跨重扫稳定（2026-09-06，多 ClawBot 前置场景 B）——归一化后即 bot_account_id 稳定键。
     """
     __tablename__ = "wechat_ilink_bindings"
 
@@ -34,7 +34,7 @@ class WeChatILinkBinding(Base):
     bot_account_id: Mapped[str] = mapped_column(String(128), index=True, default="default")  # ClawBot 稳定键（单 bot 恒 default）
     character_id: Mapped[int] = mapped_column(BigInteger, index=True)     # 家庭内唯一（内核裁决 + 下约束双保险）
     ilink_user_id: Mapped[str] = mapped_column(String(128), default="")   # 同微信号稳定（类 openid）
-    ilink_bot_id: Mapped[str] = mapped_column(String(128), default="")    # 每次扫码变，仅记录
+    ilink_bot_id: Mapped[str] = mapped_column(String(128), default="")    # iLink bot id（跨重扫稳定，2026-09-06 真机确认）
     bot_token_enc: Mapped[str] = mapped_column(Text, default="")          # 加密存储，绝不裸存/不进日志
     baseurl: Mapped[str] = mapped_column(String(255), default="")         # confirmed 返回，缓存
     poll_buf: Mapped[str] = mapped_column(Text, default="")               # 长轮询游标（也镜像到 state.json 防丢）

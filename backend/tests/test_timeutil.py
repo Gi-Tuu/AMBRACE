@@ -1,7 +1,14 @@
-"""timeutil 纯函数测试：UTC naive 约定、北京时间日界、作者时区换算。"""
+"""timeutil 纯函数测试：UTC naive 约定、北京时间日界、作者时区换算、应用时区偏移。"""
 from datetime import datetime, timedelta, timezone
 
-from app.utils.timeutil import beijing_day_start_utc, now_naive_utc, shift_utc_naive
+from app.utils.timeutil import (
+    app_local_hour,
+    app_local_now,
+    app_tz_offset_hours,
+    beijing_day_start_utc,
+    now_naive_utc,
+    shift_utc_naive,
+)
 
 
 def test_now_naive_utc_无时区():
@@ -48,3 +55,30 @@ def test_shift_utc_naive_日期分组_key():
     dt = datetime(2026, 8, 12, 15, 30, 0)
     assert shift_utc_naive(dt, 9).strftime("%Y-%m-%d") == "2026-08-13"
     assert shift_utc_naive(dt, 8).strftime("%Y-%m-%d") == "2026-08-12"
+
+
+def test_app_tz_offset_hours_default_8():
+    """默认（settings.APP_TZ_OFFSET_HOURS 未配置）应返回 +8。"""
+    assert app_tz_offset_hours() == 8
+
+
+def test_app_tz_offset_hours_and_local_now(monkeypatch):
+    """读 settings.APP_TZ_OFFSET_HOURS；app_local_now/app_local_hour 随之偏移。"""
+    import app.config as cfg
+    monkeypatch.setattr(cfg.settings, "app_tz_offset_hours", 9)
+    assert app_tz_offset_hours() == 9
+    now = app_local_now()
+    assert now.tzinfo is not None
+    assert now.utcoffset() == timedelta(hours=9)
+    # local_now 的本地小时 == app_local_hour() 的返回值；且比 UTC 偏移 9 小时（跨日取模）
+    assert app_local_hour() == now.hour
+    utc_hour = now.astimezone(timezone.utc).hour
+    assert (now.hour - utc_hour) % 24 in (9, -15)
+
+
+def test_app_local_now_default_utc8():
+    """默认偏移 +8：本地小时与 UTC 小时相差 8（跨日取模）。"""
+    now = app_local_now()
+    assert now.utcoffset() == timedelta(hours=8)
+    utc_hour = now.astimezone(timezone.utc).hour
+    assert (now.hour - utc_hour) % 24 in (8, -16)

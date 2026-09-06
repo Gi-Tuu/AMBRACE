@@ -56,6 +56,10 @@ class PluginCardState extends State<PluginCard> {
   // 不再 updatePlugin config / rebindWechatPlugin）。「添加另一个 bot」本期隐藏（多 bot 待真机稳定键验证）。
   final Map<String, List<Map<String, dynamic>>> _chBindings = {};
   final Map<String, int> _chSelected = {};
+  // App 添加未绑定 bot（2026-09-06）：可用 bot 列表（网关已登录、拥爱未绑定）
+  final Map<String, List<Map<String, dynamic>>> _chAvailable = {};
+  final Map<String, bool> _chAvailableOpen = {};
+  final Map<String, int> _availSelected = {};
   List<AICharacter> _chChars = [];
   bool _chCharsLoading = false;
   final Set<String> _chSaving = {};
@@ -493,6 +497,47 @@ class PluginCardState extends State<PluginCard> {
 
   // ================================================================= 一机多主（S3）：渠道绑定统一区块
 
+  /// 查看可添加的 bot（网关已登录、未绑定）。
+  Future<void> _loadAvailableBots(String channel) async {
+    if (!mounted) return;
+    setState(() => _chSaving.add(channel));
+    try {
+      final items = await ApiClient().listAvailableBots(widget.plugin['name'] as String? ?? '');
+      if (!mounted) return;
+      setState(() {
+        _chAvailable[channel] = items;
+        _chAvailableOpen[channel] = true;
+        _chSaving.remove(channel);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _chSaving.remove(channel));
+    }
+  }
+
+  /// 绑定一个可用 bot（选角色后保存）→ 刷新绑定列表。
+  Future<void> _bindAvailableBot(String channel, String botAccountId) async {
+    final l10n = AppLocalizations.of(context)!;
+    if (_chSaving.contains(channel)) return;
+    final cid = _availSelected['$channel::$botAccountId'] ?? -1;
+    if (cid < 0) {
+      widget.onToast(l10n.channelBindingNeedPick);
+      return;
+    }
+    setState(() => _chSaving.add(channel));
+    try {
+      await ApiClient().bindAvailableBot(widget.plugin['name'] as String? ?? '', botAccountId, cid);
+      widget.onToast(l10n.channelBindingSaved);
+      setState(() => _chAvailableOpen[channel] = false); // 绑定成功收起可用列表
+      await _loadChannelBindings(channel);
+      widget.onChanged();
+    } catch (e) {
+      widget.onToast(l10n.extSaveFailed('$e'));
+    } finally {
+      if (mounted) setState(() => _chSaving.remove(channel));
+    }
+  }
+
   Future<void> _loadChannelBindings(String channel) async {
     if (!mounted) return;
     setState(() => _chCharsLoading = true);
@@ -503,11 +548,15 @@ class PluginCardState extends State<PluginCard> {
       if (!mounted) return;
       setState(() {
         _chBindings[channel] = items;
-        if (items.isNotEmpty) {
-          final cid = items.first['character_id'];
-          _chSelected[channel] = cid is int ? cid : int.tryParse('$cid') ?? -1;
-        } else {
-          _chSelected[channel] = -1;
+        // C8 修正（2026-09-06 复核）：选中态按 (channel, bot_account_id) 维度逐行初始化——
+        // 各 bot 行回显自己绑定的角色，不再共用 channel 单值。
+        for (final row in items) {
+          final botId = row['bot_account_id'] as String? ?? 'default';
+          final cid = row['character_id'];
+          _chSelected['$channel::$botId'] = cid is int ? cid : int.tryParse('$cid') ?? -1;
+        }
+        if (items.isEmpty) {
+          _chSelected['$channel::default'] = -1;
         }
         _chChars = chars.where((c) => c.isActive).toList();
         _chCharsLoading = false;
@@ -522,7 +571,7 @@ class PluginCardState extends State<PluginCard> {
   Future<void> _saveChannelBinding(String channel, String botAccountId) async {
     final l10n = AppLocalizations.of(context)!;
     if (_chSaving.contains(channel)) return;
-    final cid = _chSelected[channel] ?? -1;
+    final cid = _chSelected['$channel::$botAccountId'] ?? -1;
     if (cid < 0 && botAccountId != 'default') {
       widget.onToast(l10n.channelBindingNeedPick);
       return;
@@ -631,7 +680,7 @@ class PluginCardState extends State<PluginCard> {
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: DropdownButton<int>(
-                  value: _chSelected[channel] ?? -1,
+                  value: _chSelected['$channel::${row['bot_account_id'] ?? 'default'}'] ?? -1,
                   isExpanded: true,
                   underline: const SizedBox.shrink(),
                   isDense: true,
@@ -643,7 +692,8 @@ class PluginCardState extends State<PluginCard> {
                   ],
                   onChanged: _chSaving.contains(channel)
                       ? null
-                      : (v) => setState(() => _chSelected[channel] = v ?? -1),
+                      : (v) => setState(
+                          () => _chSelected['$channel::${row['bot_account_id'] ?? 'default'}'] = v ?? -1),
                 ),
               ),
             if (widget.isAdmin) ...[
@@ -660,7 +710,8 @@ class PluginCardState extends State<PluginCard> {
                   const SizedBox(width: 4),
                   FilledButton.tonal(
                     // C8：选中「未绑定」时禁用保存（删除统一走「解绑」按钮，防误触直接 DELETE）
-                    onPressed: (_chSaving.contains(channel) || (_chSelected[channel] ?? -1) < 0)
+                    onPressed: (_chSaving.contains(channel) ||
+                            (_chSelected['$channel::${row['bot_account_id'] ?? 'default'}'] ?? -1) < 0)
                         ? null
                         : () => _saveChannelBinding(channel, row['bot_account_id'] as String? ?? 'default'),
                     style: FilledButton.styleFrom(
@@ -673,6 +724,95 @@ class PluginCardState extends State<PluginCard> {
               ),
             ],
             const SizedBox(height: 6),
+          ],
+          // C8（2026-09-06 多 ClawBot）+ 添加未绑定 bot 链路：引导区 = 刷新已绑 + 查看可添加 bot。
+          // 扫码在网关（openclaw）侧完成；拥爱同机读取网关账号列出「已登录未绑定」的 bot，App 内选角色绑定。
+          if (channel == 'wechat' && widget.isAdmin) ...[
+            const SizedBox(height: 2),
+            Text(l10n.channelBindingAddBotHint, style: TextStyle(fontSize: 10, color: Colors.grey)),
+            const SizedBox(height: 2),
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: _chSaving.contains(channel)
+                      ? null
+                      : () => _loadAvailableBots(channel),
+                  icon: const Icon(Icons.add_circle_outline, size: 15),
+                  label: Text(l10n.channelBindingViewAvailable, style: const TextStyle(fontSize: 11)),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _chSaving.contains(channel)
+                      ? null
+                      : () => _loadChannelBindings(channel),
+                  icon: const Icon(Icons.refresh, size: 15),
+                  label: Text(l10n.channelBindingRefresh, style: const TextStyle(fontSize: 11)),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+              ],
+            ),
+            if (_chAvailableOpen[channel] == true) ...[
+              if (_chAvailable[channel] == null)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 4),
+                  child: LinearProgressIndicator(minHeight: 2),
+                )
+              else if ((_chAvailable[channel] ?? []).isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Text(l10n.channelBindingNoAvailable,
+                      style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                )
+              else
+                for (final bot in _chAvailable[channel]!) ...[
+                  Text((bot['bot_account_id'] as String? ?? ''),
+                      style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                  const SizedBox(height: 2),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: DropdownButton<int>(
+                      value: _availSelected['$channel::${bot['bot_account_id']}'] ?? -1,
+                      isExpanded: true,
+                      underline: const SizedBox.shrink(),
+                      isDense: true,
+                      items: [
+                        DropdownMenuItem<int>(
+                            value: -1,
+                            child: Text(l10n.channelBindingNone, style: const TextStyle(fontSize: 13))),
+                        for (final c in _chChars)
+                          DropdownMenuItem<int>(value: c.id, child: Text(c.name, style: const TextStyle(fontSize: 13))),
+                      ],
+                      onChanged: (v) => setState(
+                          () => _availSelected['$channel::${bot['bot_account_id']}'] = v ?? -1),
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton.tonal(
+                      onPressed: _chSaving.contains(channel)
+                          ? null
+                          : () => _bindAvailableBot(channel, bot['bot_account_id'] as String? ?? ''),
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                      ),
+                      child: Text(l10n.channelBindingBind, style: const TextStyle(fontSize: 12)),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                ],
+            ],
           ],
         const SizedBox(height: 4),
       ],

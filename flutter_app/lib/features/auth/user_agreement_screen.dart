@@ -41,6 +41,10 @@ class UserAgreementScreen extends StatelessWidget {
             title: l10n.agreeSection7Title,
             body: l10n.agreeSection7Body,
           ),
+          _Section(
+            title: l10n.agreeSection8Title,
+            body: l10n.agreeSection8Body,
+          ),
         ],
       ),
     );

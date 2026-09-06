@@ -1,9 +1,17 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.4.4
-DATE: 2026-09-05
-STATUS: 开源发布版 v3.4.4（微信 ClawBot 渠道 + 消息格式治理）
+VERSION: 3.4.5
+DATE: 2026-09-06
+STATUS: 开源发布版 v3.4.5（多 ClawBot + 网关守护自愈 + 稳定性加固）
 
 CHANGELOG:
+
+3.4.5 - Release (2026-09-06)
+  - Wechat: 多 ClawBot 开放——稳定键坐实（重扫不换号）、双 bot 并存各绑角色、App 内添加/解绑/重绑闭环（免重扫码）
+  - Ops: 网关守护与后台自愈——常驻任务 supervisor、/liveness 活性端点、watchdog 通用外部网关托管（OpenClaw 网关挂掉自动拉起）
+  - Fix: MCP 运行期自愈 + 降频、应用时区可配（默认 UTC+8）、隐性 bug 批次（裸异常补日志/跨平台 watchdog/控制台健康卡）
+  - Legal: 用户协议新增「开源仅供学习、未经许可严禁商用」条款
+  - Tests: backend pytest 1684 collected green（全量按批次报告）；ruff 0 / flutter analyze 0
+
 
 3.4.4 - Release (2026-09-05)
   - Wechat: 微信 ClawBot 渠道接入（openclaw→拥爱转发桥）——绑定角色后微信私聊直达角色回复

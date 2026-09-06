@@ -5380,6 +5380,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'The content of this agreement may be adjusted with version updates. Continued use of this software is deemed acceptance of the latest version of the agreement.';
 
   @override
+  String get agreeSection8Title => '8. License & Use';
+
+  @override
+  String get agreeSection8Body =>
+      'This open-source project is provided for learning and research only. Any commercial use of this project or its derivatives is strictly prohibited without the author\'s written permission.';
+
+  @override
   String get backupTitle => 'Data Backup';
 
   @override
@@ -5654,6 +5661,27 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get channelBindingNeedPick => 'Please select the character to bind';
+
+  @override
+  String get channelBindingAddBotHint =>
+      'New bot: scan-log the new WeChat account on the gateway (openclaw), then tap Refresh to bind a role';
+
+  @override
+  String get channelBindingRefresh => 'Refresh bot list';
+
+  @override
+  String get channelBindingViewAvailable => 'View addable bots';
+
+  @override
+  String get channelBindingAvailableTitle =>
+      'Addable bots (logged in on gateway, unbound)';
+
+  @override
+  String get channelBindingNoAvailable =>
+      'No addable bots (scan-login new WeChat accounts on the gateway)';
+
+  @override
+  String get channelBindingBind => 'Bind';
 
   @override
   String agentMindRetrievalCount(Object count) {

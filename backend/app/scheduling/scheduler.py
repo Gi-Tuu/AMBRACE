@@ -8,6 +8,7 @@ from app.models.chat import ChatSession
 from app.models.character import ProactiveMessageLog
 from app.utils.logger import get_logger
 from app.utils.async_tasks import spawn_background
+from app.utils.timeutil import app_local_hour
 from app.scheduling.diary_generator import generate_missing_diaries
 from app.scheduling.moment_publisher import publish_pending_moments  # keep publisher
 from app.application.moment_service import generate_pending_comments
@@ -195,6 +196,8 @@ async def scheduler_loop():
                 _reflection_done_today = False
 
             await asyncio.sleep(TICK)
+            from app.utils.supervisor import supervisor
+            supervisor.heartbeat("scheduler")
             comment_counter += TICK
             extract_counter += TICK
             diary_counter += TICK
@@ -216,7 +219,10 @@ async def scheduler_loop():
             except Exception as e:
                 _logger.error("Arbiter tick error: %s", e)
 
-            local_hour = (datetime.now(timezone.utc).hour + 8) % 24
+            # B1（2026-09-06）：用户可感知窗口已迁「应用时区」（APP_TZ_OFFSET_HOURS 默认 +8）。
+            # 其余 ~44 文件仍硬编码 UTC+8 的「用户可感知」换算，按批次渐进迁移（见源方案 §7 B1）；
+            # 库内存储口径保持 UTC-naive 不动（零数据迁移）。
+            local_hour = app_local_hour()
 
             # 插件 schedule_tick hook（每 30s tick，插件自行节流；异常隔离不影响主链路）
             try:
@@ -280,8 +286,9 @@ async def scheduler_loop():
                             ),
                             name=f"sched-identity-{_c.id}",
                         )
-                except Exception:
-                    pass
+                except Exception as _ipe:
+                    # B2（2026-09-06）：身份画像提炼失败不得完全静默——补日志以免「静默停摆」难定位。
+                    _logger.warning("Identity profile extraction failed: %s", _ipe)
             # 状态八维惰性回落 + 趋势快照（每 1h 兜底结算并写 character_state_history；读时已惰性结算）
             if state_decay_counter >= 3600:
                 state_decay_counter = 0
@@ -382,29 +389,66 @@ async def storyline_sender_loop():
             await flush_storyline_items()
         except Exception as e:
             _logger.warning("Storyline flush error: %s", e)
+        from app.utils.supervisor import supervisor
+        supervisor.heartbeat("storyline")
         await asyncio.sleep(STORYLINE_FLUSH_INTERVAL)
 
 
 def start():
-    """启动调度器（由 lifespan 调用）"""
+    """启动调度器（由 lifespan 调用）：登记到 supervisor 统一监督，支持崩溃/卡死后自愈重建。
+
+    对外语义不变（start()/is_running() 签名与含义保持）；两个常驻 loop 由 supervisor 重建，
+    并每轮上报心跳供 /liveness 判断「是否还在前进」。
+    """
     global _scheduler_task, _storyline_task
-    if _scheduler_task is None or _scheduler_task.done():
-        _scheduler_task = asyncio.create_task(scheduler_loop())
-        _logger.info("Scheduler task created")
-    if _storyline_task is None or _storyline_task.done():
-        _storyline_task = asyncio.create_task(storyline_sender_loop())
-        _logger.info("Storyline sender task created")
+    from app.utils.supervisor import supervisor
+
+    # 适配器工厂：把现有协程包成「每次重建都重新读全局 _running」的工厂；
+    # 同时在每次启动时刷新模块级 task 引用，使 is_running() 始终反映当前被监督的存活 task。
+    async def _sched_factory():
+        global _running, _scheduler_task
+        _running = True
+        _scheduler_task = asyncio.current_task()
+        await scheduler_loop()
+
+    async def _story_factory():
+        global _running, _storyline_task
+        _running = True
+        _storyline_task = asyncio.current_task()
+        await storyline_sender_loop()
+
+    supervisor.register("scheduler", _sched_factory, stall_sec=180)  # 30s TICK × 6
+    supervisor.register("storyline", _story_factory, stall_sec=60)   # 3s 间隔，60s 无心跳即卡
+    supervisor.start()
+    # 回填模块级 task 引用，兼容旧代码对模块全局 _scheduler_task/_storyline_task 的读取
+    _scheduler_task = supervisor._targets["scheduler"].task
+    _storyline_task = supervisor._targets["storyline"].task
+    _logger.info("Scheduler tasks registered under supervisor")
 
 
 def stop():
-    """停止调度器（由 lifespan 调用）"""
+    """停止调度器（同步壳，保留旧签名供非 async 调用；行为等价 await stop_async()）。
+
+    main.py lifespan 是 async，推荐改用 await stop_async()。
+    """
     global _running
     _running = False
-    if _scheduler_task and not _scheduler_task.done():
-        _scheduler_task.cancel()
-    if _storyline_task and not _storyline_task.done():
-        _storyline_task.cancel()
-    _logger.info("Scheduler stop requested")
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(stop_async())
+            return
+    except Exception as _se:
+        # B2：同步壳在无事件循环时降级（此时 stop_async 由调用方负责），仍留痕便于排查
+        _logger.debug("Scheduler sync stop skipped (no running loop): %s", _se)
+
+
+async def stop_async():
+    """异步停止调度器（推荐在 async lifespan 中 await，确保 supervisor 关停时序完整）。"""
+    global _running
+    _running = False
+    from app.utils.supervisor import supervisor
+    await supervisor.stop()
 
 
 def is_running() -> bool:
