@@ -247,7 +247,11 @@ async def update_plugin(
 
 
 @router.post("/bridge/wechat-relay")
-async def wechat_bridge_relay(body: dict, x_ambrace_bridge_secret: str = Header(default="")):
+async def wechat_bridge_relay(
+    body: dict,
+    x_ambrace_bridge_secret: str = Header(default=""),
+    x_ambrace_tenant_id: str | None = Header(default=None),
+):
     """服务到服务（openclaw→拥爱桥）免登录端点：仅共享密钥鉴权，转发给 wechat_ilink 插件实现。
 
     用户拍板（2026-09-04）：插件 http_router 全局强制登录态（P0-11），服务到服务调用须走此出口；
@@ -269,11 +273,26 @@ async def wechat_bridge_relay(body: dict, x_ambrace_bridge_secret: str = Header(
     handler = getattr(routes_mod, "bridge_relay_impl", None) if routes_mod is not None else None
     if handler is None:
         raise HTTPException(status_code=503, detail="wechat bridge not installed")
-    return await handler(body, x_ambrace_bridge_secret)
+    return await handler(body, x_ambrace_bridge_secret, tenant_hint=_bridge_tenant_hint(x_ambrace_tenant_id))
+
+
+def _bridge_tenant_hint(raw: str | None) -> int | None:
+    """包 C（2026-09-06）：可选 x-ambrace-tenant-id 头 → int；缺失/非法=None（回落全局校验）。"""
+    if not raw:
+        return None
+    try:
+        v = int(str(raw).strip())
+        return v if v > 0 else None
+    except (TypeError, ValueError):
+        return None
 
 
 @router.post("/bridge/wechat-delivery")
-async def wechat_delivery(body: dict, x_ambrace_bridge_secret: str = Header(default="")):
+async def wechat_delivery(
+    body: dict,
+    x_ambrace_bridge_secret: str = Header(default=""),
+    x_ambrace_tenant_id: str | None = Header(default=None),
+):
     """服务到服务（openclaw→拥爱桥）免登录回执端点：openclaw 网关发送结果回调。
 
     共享密钥与 wechat-relay 同源（WECHAT_ILINK_BRIDGE_SECRET，常量时间比较，fail-closed）。
@@ -286,7 +305,7 @@ async def wechat_delivery(body: dict, x_ambrace_bridge_secret: str = Header(defa
     handler = getattr(routes_mod, "bridge_delivery_impl", None) if routes_mod is not None else None
     if handler is None:
         raise HTTPException(status_code=503, detail="wechat bridge not installed")
-    return await handler(body, x_ambrace_bridge_secret)
+    return await handler(body, x_ambrace_bridge_secret, tenant_hint=_bridge_tenant_hint(x_ambrace_tenant_id))
 
 
 @router.post("/install")

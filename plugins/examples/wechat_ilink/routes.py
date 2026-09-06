@@ -112,12 +112,15 @@ def _svc_http_exc(e: Exception, lang: str) -> HTTPException:
     return HTTPException(status_code=500, detail=str(e))
 
 
-def _resolve_bridge_secret(tenant_id: int | None) -> str:
-    """桥共享密钥解析（Q3 拍板：本期全局 WECHAT_ILINK_BRIDGE_SECRET；SaaS 阶段切 per-tenant
-    时只改本函数（按 tenant_id 反查该租户配置的 secret），调用点不动）。"""
-    import os  # noqa: PLC0415
+async def _resolve_bridge_secret(db, tenant_hint: int | None) -> str:
+    """桥共享密钥解析（包 C，2026-09-06：S4 函数位正式实现）。
 
-    return os.environ.get("WECHAT_ILINK_BRIDGE_SECRET", "") or ""
+    tenant_hint 非空 → 先查 per-tenant 密钥（plugin_stores+Fernet，查无回落全局）；
+    空 → 全局 env（现网单通道零改动）。实现在 bridge_secret.py（插件自洽）。
+    """
+    import bridge_secret  # noqa: PLC0415
+
+    return await bridge_secret._resolve_bridge_secret(db, tenant_hint)
 
 
 async def _kernel_bind(user_id: int, character_id: int, lang: str) -> None:
@@ -455,14 +458,81 @@ def mount(router):
         """绑定状态 + 本窗口剩余配额（PR2 只报绑定面；配额闸门待 PR3/PR4）。"""
         return await get_binding_view(user_id)
 
+    # ── 包 C（2026-09-06）：per-tenant bridge secret 配置 API（仅独立主账号；密文落 plugin_stores）──
+
+    @router.get("/bridge-secret")
+    async def get_bridge_secret(user_id: int = Depends(get_current_user_id),
+                                lang: str = Header(default="zh")):
+        """查看本租户桥密钥配置状态（脱敏预览；子账号 403）。"""
+        from app.db.database import async_session_factory  # noqa: PLC0415
+        from app.application.tenant_scope import assert_standalone_owner  # noqa: PLC0415
+        from app.application.family_service import get_family_root_id  # noqa: PLC0415
+        from app.i18n import tr_lang  # noqa: PLC0415
+        import bridge_secret  # noqa: PLC0415
+
+        async with async_session_factory() as db:
+            try:
+                await assert_standalone_owner(db, user_id)  # 子账号 403
+            except PermissionError:
+                raise HTTPException(status_code=403, detail=tr_lang(lang, "channel_bind_main_only"))
+            tenant_id = await get_family_root_id(db, user_id)
+            row = await bridge_secret.get_bridge_secret_row(db, tenant_id)
+        secret = (row or {}).get("secret") or ""
+        return {"ok": True, "has_secret": bool(secret),
+                "masked": _mask_uid(secret) if secret else ""}
+
+    @router.put("/bridge-secret")
+    async def put_bridge_secret(body: dict, user_id: int = Depends(get_current_user_id),
+                                lang: str = Header(default="zh")):
+        """写入/轮换本租户桥密钥（仅独立主账号；Fernet 加密落 plugin_stores；写后立即可用）。"""
+        from app.db.database import async_session_factory  # noqa: PLC0415
+        from app.application.tenant_scope import assert_standalone_owner  # noqa: PLC0415
+        from app.application.family_service import get_family_root_id  # noqa: PLC0415
+        from app.i18n import tr_lang  # noqa: PLC0415
+        import bridge_secret  # noqa: PLC0415
+
+        secret = str((body or {}).get("secret") or "").strip()
+        if len(secret) < 16:
+            raise HTTPException(status_code=400, detail="secret 至少 16 字符")
+        async with async_session_factory() as db:
+            try:
+                await assert_standalone_owner(db, user_id)
+            except PermissionError:
+                raise HTTPException(status_code=403, detail=tr_lang(lang, "channel_bind_main_only"))
+            tenant_id = await get_family_root_id(db, user_id)
+            masked = await bridge_secret.set_bridge_secret(db, tenant_id, secret)
+            await db.commit()
+        return {"ok": True, "masked": masked}
+
+    @router.delete("/bridge-secret")
+    async def delete_bridge_secret(user_id: int = Depends(get_current_user_id),
+                                   lang: str = Header(default="zh")):
+        """删除本租户桥密钥（回落全局 env 语义；仅独立主账号）。"""
+        from app.db.database import async_session_factory  # noqa: PLC0415
+        from app.application.tenant_scope import assert_standalone_owner  # noqa: PLC0415
+        from app.application.family_service import get_family_root_id  # noqa: PLC0415
+        from app.i18n import tr_lang  # noqa: PLC0415
+        import bridge_secret  # noqa: PLC0415
+
+        async with async_session_factory() as db:
+            try:
+                await assert_standalone_owner(db, user_id)
+            except PermissionError:
+                raise HTTPException(status_code=403, detail=tr_lang(lang, "channel_bind_main_only"))
+            tenant_id = await get_family_root_id(db, user_id)
+            deleted = await bridge_secret.delete_bridge_secret(db, tenant_id)
+            await db.commit()
+        return {"ok": True, "deleted": bool(deleted)}
+
 
 # ===== 服务到服务桥（openclaw→拥爱）：由内核免登录端点调用，勿挂 @router =====
 
-async def bridge_relay_impl(body: dict, secret_header: str):
+async def bridge_relay_impl(body: dict, secret_header: str, tenant_hint: int | None = None):
     """服务到服务（openclaw → 拥爱桥）：网关收微信消息后把文本转发到拥爱生成回复。
 
-    鉴权：共享密钥（X-AMBRACE-Bridge-Secret 由内核端点传入，常量时间比较；密钥经
-    _resolve_bridge_secret 解析——本期全局环境变量，SaaS 切 per-tenant 只改该函数）。
+    鉴权（包 C，2026-09-06）：X-AMBRACE-Bridge-Secret 常量时间比较；密钥经
+    _resolve_bridge_secret 解析——带 x-ambrace-tenant-id（内核透传 tenant_hint）时优先
+    per-tenant 密钥（查无回落全局），不带=全局 env（现网零改动）。fail-closed。
     语义：按 (bot_account_id, ilink_user_id) 定位绑定（一机多主：多 ClawBot 并存时同一微信用户
     对不同 bot 是不同会话，单条件 .first() 会串台；payload 缺 bot_account_id 回落 "default"
     兼容现有 openclaw 插件）→ 幂等落库入站（ilink_msg_id）→ 重置配额窗口 →
@@ -473,11 +543,6 @@ async def bridge_relay_impl(body: dict, secret_header: str):
     import os  # noqa: PLC0415
     import secrets as _secrets
 
-    expected = _resolve_bridge_secret(None)
-    if not expected:
-        raise HTTPException(status_code=503, detail="bridge not configured")
-    if not _secrets.compare_digest(secret_header, expected):
-        raise HTTPException(status_code=401, detail="bad secret")
     payload = body if isinstance(body, dict) else {}
     bot_account_id = str(payload.get("bot_account_id") or "default").strip() or "default"
     ilink_user_id = str(payload.get("ilink_user_id") or "").strip()
@@ -492,10 +557,20 @@ async def bridge_relay_impl(body: dict, secret_header: str):
     import models  # noqa: PLC0415  (插件目录在 sys.path，main.py 已 import)
     from quota import QuotaGate  # noqa: PLC0415
     import inbound  # noqa: PLC0415
+    import schema_heal  # noqa: PLC0415
+
+    # 包 A（2026-09-06）：流水表结构幂等自愈（once + fail-open；网关通道不走 poll 也要兜住）
+    await schema_heal.ensure_messages_schema()
 
     quota_n = int(os.environ.get("WECHAT_ILINK_QUOTA_PER_24H", "10") or 10)
 
     async with async_session_factory() as db:
+        # 包 C：密钥解析（tenant_hint 优先 per-tenant，查无回落全局）→ 常量时间比较
+        expected = await _resolve_bridge_secret(db, tenant_hint)
+        if not expected:
+            raise HTTPException(status_code=503, detail="bridge not configured")
+        if not _secrets.compare_digest(secret_header, expected):
+            raise HTTPException(status_code=401, detail="bad secret")
         row = (await db.execute(
             select(models.WeChatILinkBinding).where(
                 models.WeChatILinkBinding.bot_account_id == bot_account_id,   # ★第一定位键（一机多主）
@@ -581,11 +656,12 @@ async def bridge_relay_impl(body: dict, secret_header: str):
             "sent_cleanup": sent_cleanup}
 
 
-async def bridge_delivery_impl(body: dict, secret_header: str):
+async def bridge_delivery_impl(body: dict, secret_header: str, tenant_hint: int | None = None):
     """服务到服务（openclaw → 拥爱桥）发送回执：openclaw message_sent 失败回调。
 
-    鉴权：共享密钥（X-AMBRACE-Bridge-Secret，常量时间比较；经 _resolve_bridge_secret 解析，
-    未配置即 503 fail-closed，不进日志/不进前端——与 bridge_relay_impl 同源同语义）。
+    鉴权：共享密钥（X-AMBRACE-Bridge-Secret，常量时间比较；经 _resolve_bridge_secret 解析——
+    带 tenant_hint 优先 per-tenant 密钥，查无回落全局；未配置即 503 fail-closed，不进日志/不进前端）。
+    定位（包 B 扩展）：out_row_id 优先；缺省按 (bot_account_id + in_msg_id) 稳定键回退。
     语义：body {out_row_id | (bot_account_id + in_msg_id), ok, error}；ok=false 时把该 out 流水行
     status 改为 failed（配额不回补，保持已计费）。ok=true 不回传/按现状（保持 sent_by_gateway）。
     幂等：重复回调无副作用。
@@ -598,11 +674,6 @@ async def bridge_delivery_impl(body: dict, secret_header: str):
     from app.db.database import async_session_factory  # noqa: PLC0415
     import models  # noqa: PLC0415
 
-    expected = _resolve_bridge_secret(None)
-    if not expected:
-        raise HTTPException(status_code=503, detail="bridge not configured")
-    if not _secrets.compare_digest(secret_header, expected):
-        raise HTTPException(status_code=401, detail="bad secret")
     payload = body if isinstance(body, dict) else {}
     ok = bool(payload.get("ok", False))
     bot_account_id = str(payload.get("bot_account_id") or "").strip()
@@ -614,6 +685,11 @@ async def bridge_delivery_impl(body: dict, secret_header: str):
         rid = None
 
     async with async_session_factory() as db:
+        expected = await _resolve_bridge_secret(db, tenant_hint)
+        if not expected:
+            raise HTTPException(status_code=503, detail="bridge not configured")
+        if not _secrets.compare_digest(secret_header, expected):
+            raise HTTPException(status_code=401, detail="bad secret")
         row = None
         if rid is not None:
             row = await db.get(models.WeChatILinkMessage, rid)

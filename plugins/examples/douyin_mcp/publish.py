@@ -394,30 +394,55 @@ def _ffmpeg_available() -> bool:
         return False
 
 
-# TODO（P3）：本机无 ffmpeg 时不可用；图片+音乐合成竖版视频能力待硬件到位后启用。
-# 参考实现（Ken Burns 缩放/平移 + 9:16 裁剪 + BGM）：
-#   ffmpeg -loop 1 -i img.png -f lavfi -i color=c=black:s=1080x1920:r=30 ... -filter_complex zoompan ...
-# P1 修复：原实现用 f-string + shell=True 拼接命令（文件名含 shell 元字符可注入），
-# 改为参数列表 + shell=False。
+# 包 D①（2026-09-06 待排期清理）：多图轮播 + Ken Burns + BGM。
+# 纯函数（_build_carousel_filter / _build_video_cmd）不依赖 ffmpeg 可执行，独立单测；
+# _images_to_video 保持「ffmpeg 不可用/无图/无音乐 → False」的可用优先退路（调用方留提示）。
+def _build_carousel_filter(n_images: int, duration_per_image: float = 3.0, fps: int = 30) -> str:
+    """构造多图轮播 filter_complex（纯函数）：每图一段 9:16 裁剪 + Ken Burns（奇偶交替放大/缩小），
+    concat 成一条视频轨。n_images>=1；单图退化为原 Ken Burns 行为。"""
+    n = max(1, int(n_images))
+    dur = max(1.0, float(duration_per_image))
+    frames = max(int(dur * fps), 1)
+    parts = []
+    for i in range(n):
+        if i % 2 == 0:
+            z = f"zoompan=z='min(1.0+0.10*on/{frames},1.15)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={fps}"
+        else:
+            z = f"zoompan=z='max(1.15-0.10*on/{frames},1.0)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={fps}"
+        parts.append(
+            f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+            f"crop=1080:1920,{z},format=yuv420p[s{i}]"
+        )
+    concat_in = "".join(f"[s{i}]" for i in range(n))
+    parts.append(f"{concat_in}concat=n={n}:v=1:a=0,format=yuv420p[v]")
+    return ";".join(parts)
+
+
+def _build_video_cmd(images: list[str], music_path: str, output_path: str,
+                     duration_per_image: float = 3.0) -> list[str]:
+    """构造 ffmpeg 参数列表（纯函数，shell=False 安全）：每图一个 -loop 输入段 + 音乐轨（-shortest）。"""
+    dur = max(1.0, float(duration_per_image))
+    cmd = ["ffmpeg", "-y"]
+    for img in images:
+        cmd += ["-loop", "1", "-t", f"{dur:g}", "-i", img]
+    cmd += ["-i", music_path]
+    cmd += ["-filter_complex", _build_carousel_filter(len(images), dur),
+            "-map", "[v]", "-map", f"{len(images)}:a",
+            "-shortest", "-r", "30", output_path]
+    return cmd
+
+
 def _images_to_video(images: list[str], music_path: str, output_path: str,
                      duration_per_image: float = 3.0) -> bool:
-    """用 FFmpeg 把多张图+BGM 合成 9:16 竖版视频（Ken Burns 缩放）。
+    """用 FFmpeg 把多张图+BGM 合成 9:16 竖版视频（多图轮播 + Ken Burns 缓动 + BGM）。
 
-    本机 ffmpeg 不可用或无图片/音乐时返回 False（调用方留 TODO 提示）。
+    本机 ffmpeg 不可用或无图片/音乐时返回 False（调用方留提示）。
     """
     if not _ffmpeg_available():
         return False
     if not images or not music_path:
         return False
-    # 简化实现：首图 + 音乐合成一段（多图轮播/zoompan 高级效果为 TODO 增强，保持可用优先）
-    total_dur = max(1.0, duration_per_image * max(1, len(images)))
-    filter_complex = (
-        "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
-        "crop=1080:1920,zoompan=z=1.1:d={dur}:x=0:y=0,format=yuv420p[v]"
-    ).format(dur=int(total_dur))
-    cmd = ["ffmpeg", "-y", "-loop", "1", "-i", images[0], "-i", music_path,
-           "-filter_complex", filter_complex,
-           "-map", "[v]", "-map", "1:a", "-t", str(int(total_dur)), "-r", "30", output_path]
+    cmd = _build_video_cmd(images, music_path, output_path, duration_per_image)
     try:
         r = subprocess.run(cmd, shell=False, capture_output=True, timeout=180)
         return r.returncode == 0 and os.path.isfile(output_path)

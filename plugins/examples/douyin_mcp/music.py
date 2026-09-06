@@ -35,11 +35,32 @@ _MUSIC_LINE_RE = re.compile(r"[\[【]?\s*音乐\s*[:：]\s*([^\s\]】\n]+)", re.
 _MUSIC_BTN_TEXTS = ("选择音乐", "添加音乐", "背景音乐")
 
 
-def pick_music_mood(fallback: str = "") -> str:
-    """随机挑一个情绪关键词（vlog/日常安全池）；fallback 非空且在白名单内则用 fallback。"""
+def match_music_mood(text: str) -> str:
+    """从内容文本匹配情绪关键词（包 D②，纯函数）：按别名表关键词命中计分，取最高分白名单情绪。
+
+    无命中返回空串（调用方自行兜底）。例："今天和朋友出去玩超开心" → "欢快"。
+    """
+    text = (text or "").strip()
+    if not text:
+        return ""
+    scores: dict[str, int] = {}
+    for key, canonical in _MUSIC_MOOD_ALIASES.items():
+        if key and key in text:
+            scores[canonical] = scores.get(canonical, 0) + 1
+    if not scores:
+        return ""
+    return max(scores.items(), key=lambda kv: kv[1])[0]
+
+
+def pick_music_mood(fallback: str = "", content: str = "") -> str:
+    """挑情绪关键词（包 D② 增强）：优先白名单 fallback → 内容文本匹配（match_music_mood）
+    → 随机安全池兜底（缺失兜底）。向后兼容：content 缺省时行为与旧版一致。"""
     mood = (fallback or "").strip()
     if mood in MUSIC_MOODS:
         return mood
+    matched = match_music_mood(content)
+    if matched:
+        return matched
     return random.choice(MUSIC_MOODS)
 
 

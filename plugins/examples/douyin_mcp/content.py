@@ -127,6 +127,44 @@ def humanize_reply_prompt(personality: str = "") -> str:
     return REPLY_HUMANIZE.replace("{personality}", (personality or "随和")[:60])
 
 
+# 包 D③（2026-09-06 待排期清理）：发布文案模板感短语（后处理逐个删除；与 _de_ai 的 AI 腔表互补）
+_TEMPLATE_PHRASES = (
+    "大家好，", "大家好,", "大家好!",
+    "今天给大家", "给大家分享", "给大家带来",
+    "希望你们喜欢", "希望大家喜欢", "希望你喜欢",
+    "记得关注我", "关注我哦", "别忘了关注", "点赞关注",
+    "我们下期见", "下期再见", "拜拜啦", "比心~",
+    "一起来康康", "快来看看吧", "一起来看看吧",
+    "总的来说", "综上所述", "值得一提的是",
+)
+
+
+def humanize_post_text(text: str) -> str:
+    """发布文案去模板感（包 D③，纯规则零 LLM，与微信净文互不干扰）：
+
+    - 删模板客套/CTA 句（_TEMPLATE_PHRASES）；
+    - 连续相同 emoji/符号压缩为 1 个（如 😊😊😊 → 😊）；
+    - 清理删句后的悬挂标点/多余空行。
+    """
+    if not text:
+        return ""
+    for phrase in _TEMPLATE_PHRASES:
+        text = text.replace(phrase, "")
+    import unicodedata as _ud
+    out_chars = []
+    prev = ""
+    for ch in text:
+        if _ud.category(ch).startswith("So") and ch == prev:
+            continue
+        out_chars.append(ch)
+        prev = ch
+    text = "".join(out_chars)
+    text = re.sub(r"^\s*[，、,,]\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"[，、,]{2,}", "，", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def _de_ai(text: str) -> str:
     """去除 AI 腔：删模板句、去行首序号、去 markdown 标记、压缩空行。
 

@@ -52,6 +52,7 @@ from music import (  # noqa: E402
 )
 from content import (  # noqa: E402
     _de_ai,
+    humanize_post_text,
     content_type_hint,
     humanize_image_prompt,
     humanize_reply_prompt,
@@ -2301,7 +2302,7 @@ async def ai_draft(payload: dict):
         body = [l for l in lines[1:] if not l.startswith("#")]
         if not body:
             return {"ok": False, "message": "AI 生成内容不完整（缺少正文），请重试"}
-        desc = _de_ai("\n".join(lines[1:]))[:1000] if len(lines) > 1 else ""
+        desc = humanize_post_text(_de_ai("\n".join(lines[1:])))[:1000] if len(lines) > 1 else ""  # 包 D③：去模板感
         if not desc:
             desc = ("\n".join(lines[1:]))[:1000]  # 反 AI 腔清理后为空则回退原始正文
         bw = _check_banned(f"{title} {desc}")
@@ -2324,7 +2325,7 @@ async def ai_draft(payload: dict):
         return {"ok": True, "id": pid, "kind": kind, "title": title, "desc": desc,
                 "music_mood": music_mood, "message": msg}
     else:
-        reply = _de_ai(content)[:500]
+        reply = humanize_post_text(_de_ai(content))[:500]  # 包 D③：去模板感
         if not reply:
             reply = content[:500]  # 反 AI 腔清理后为空则回退原始内容，避免生成空回复
         bw = _check_banned(reply)

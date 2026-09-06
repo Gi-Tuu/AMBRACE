@@ -301,8 +301,11 @@ async def poll_once(*, client_factory, interval: int = 30, long_poll: int = 25,
     from sqlalchemy import select  # noqa: PLC0415
     from models import WeChatILinkBinding  # noqa: PLC0415
     from quota import QuotaGate  # noqa: PLC0415
+    import schema_heal  # noqa: PLC0415
 
     sf = session_factory or _asf
+    # 包 A（2026-09-06）：流水表结构幂等自愈（旧全量 UNIQUE → partial unique；once + fail-open）
+    await schema_heal.ensure_messages_schema(sf)
     gate = QuotaGate(quota) if not hasattr(quota, "n") else quota
     budget = max(0, min(interval - 3, long_poll))
 
