@@ -61,6 +61,9 @@ def liveness_db(monkeypatch):
     async def _init():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # 全局 metadata 可能已被渠道插件模型注册（其他用例 load wechat_ilink 后 create_all
+            # 会一并建出模型版绑定表）；统一重建为测试 DDL 形态，列默认齐备且与插件模型解耦。
+            await conn.execute(text("DROP TABLE IF EXISTS wechat_ilink_bindings"))
             await conn.execute(text(_BINDING_DDL))
 
     asyncio.run(_init())
