@@ -154,8 +154,14 @@ img,svg{display:block;max-width:100%}
   radial-gradient(120% 90% at 50% -10%, #243150 0%, var(--night) 58%, #0d1320 100%);
   color:var(--moon);padding:172px 0 0;overflow:hidden}
 .hero .stars{position:absolute;inset:0;pointer-events:none}
-.hero .star{position:absolute;background:#f3ead0;border-radius:50%;animation:twinkle 6s ease-in-out infinite}
-@keyframes twinkle{0%,100%{opacity:.35}50%{opacity:.95}}
+.hero .star{position:absolute;background:#f3ead0;border-radius:50%;box-shadow:0 0 6px 1px rgba(243,234,208,.45);animation:twinkle 6s ease-in-out infinite;will-change:opacity,transform}
+@keyframes twinkle{0%,100%{opacity:.28;transform:scale(.78)}50%{opacity:.95;transform:scale(1.18)}}
+/* 少量亮星：带十字光芒，偶发一闪 */
+.hero .star.bright{box-shadow:0 0 9px 2px rgba(243,234,208,.9)}
+.hero .star.bright::before,.hero .star.bright::after{content:"";position:absolute;left:50%;top:50%;background:rgba(243,234,208,.75);transform:translate(-50%,-50%);animation:glint 7.5s ease-in-out infinite}
+.hero .star.bright::before{width:8px;height:1px}
+.hero .star.bright::after{width:1px;height:8px}
+@keyframes glint{0%,58%,100%{opacity:.12}72%,80%{opacity:.95}90%{opacity:.2}}
 .hero .constellation{position:absolute;inset:0;display:flex;justify-content:center;align-items:flex-start;pointer-events:none}
 .hero .constellation svg{margin-top:40px;width:min(680px,86vw);height:auto;opacity:.9}
 .hero-inner{position:relative;text-align:center;padding-bottom:128px}
@@ -216,7 +222,7 @@ img,svg{display:block;max-width:100%}
 .pledge .kicker .gr{color:var(--gold-pale)}
 .pledge .kicker .roman{color:var(--gold-pale)}
 .pledge .kicker .cn{color:#9a927c}
-.columns{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;align-items:end}
+.columns{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;align-items:start}
 .column{text-align:center;padding:0 14px}
 .column svg{width:120px;height:150px;margin:0 auto 18px}
 .column h3{font-family:var(--cn);font-weight:700;letter-spacing:.12em;font-size:1.12rem;color:#f3ead0;margin-bottom:.6rem}
@@ -322,9 +328,116 @@ img,svg{display:block;max-width:100%}
   .craft{gap:14px}
   .tl{padding-left:32px}
 }
+
+/* ============================================================
+   生命感 · 循环动效（全部 transform/opacity，GPU 合成；
+   已被上方 prefers-reduced-motion 全局规则统一关闭）
+   ============================================================ */
+/* —— 拥爱大字上方：星座光晕与主星缓慢呼吸（发光变大变小） —— */
+/* 都以元素自身包围盒中心（=圆心）为原点缩放，只变大小/亮度，绝不平移、不左右晃 */
+.halo-breath,.core-star{transform-box:fill-box;transform-origin:center}
+.halo-breath{animation:haloBreath 6.5s ease-in-out infinite}
+@keyframes haloBreath{0%,100%{opacity:.66;transform:scale(.94)}50%{opacity:1;transform:scale(1.1)}}
+.core-star{animation:coreBreath 5.2s ease-in-out infinite;filter:drop-shadow(0 0 5px rgba(243,234,208,.9))}
+@keyframes coreBreath{0%,100%{opacity:.82;transform:scale(.92)}50%{opacity:1;transform:scale(1.22)}}
+
+/* —— 夜空上浮金尘（极少量、缓慢，如远处萤火） —— */
+.hero .embers{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.hero .ember{position:absolute;bottom:-12px;border-radius:50%;background:rgba(201,174,114,.9);box-shadow:0 0 6px 1px rgba(201,174,114,.5);opacity:0;animation:emberRise var(--dur,11s) linear infinite;animation-delay:var(--delay,0s)}
+@keyframes emberRise{0%{transform:translate(0,0);opacity:0}12%{opacity:.7}82%{opacity:.45}100%{transform:translate(var(--drift,18px),-80vh);opacity:0}}
+
+/* —— 流星：偶发斜划夜空 —— */
+.hero .meteors{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.hero .meteor{position:absolute;top:var(--top,10%);left:0;width:var(--len,130px);height:1px;background:linear-gradient(90deg,rgba(243,234,208,.95),rgba(243,234,208,0));opacity:0;animation:meteorFall var(--dur,9s) linear infinite;animation-delay:var(--delay,0s);will-change:transform,opacity}
+/* 位移用屏幕坐标精确给两轴：dx=-120vw、dy=+34vw ⇒ 坠落方向恰为向左下 16°；
+   rotate(-16deg) 只转拖尾朝向，负角让右端(尾)抬向右上、左端(亮头)指向左下方，与移动方向严格平行 */
+@keyframes meteorFall{
+  0%{opacity:0;transform:translate(104vw,-6vw) rotate(-16deg)}
+  6%{opacity:1}
+  68%{opacity:.95}
+  80%,100%{opacity:0;transform:translate(-16vw,28vw) rotate(-16deg)}
+}
+
+/* —— 归鸟：横越夜空，翅膀扇动、略带上下起伏 —— */
+.hero .birds{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.hero .bird{position:absolute;left:0;top:var(--top,22%);opacity:0;animation:birdAcross var(--dur,26s) linear infinite;animation-delay:var(--delay,0s);will-change:transform,opacity}
+.hero .bird.rev{animation-name:birdAcrossR}
+@keyframes birdAcross{0%{transform:translateX(-8vw) translateY(0);opacity:0}6%{opacity:.92}46%{transform:translateX(44vw) translateY(-14px)}54%{transform:translateX(56vw) translateY(6px)}94%{opacity:.9}100%{transform:translateX(108vw) translateY(-6px);opacity:0}}
+@keyframes birdAcrossR{0%{transform:translateX(108vw) translateY(0);opacity:0}6%{opacity:.9}46%{transform:translateX(56vw) translateY(8px)}54%{transform:translateX(44vw) translateY(-12px)}94%{opacity:.9}100%{transform:translateX(-8vw) translateY(-4px);opacity:0}}
+.hero .bird svg{width:var(--size,26px);height:auto;overflow:visible}
+.hero .bird .wings{transform-origin:center;animation:wingBeat 1.15s ease-in-out infinite}
+@keyframes wingBeat{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.32)}}
+
+/* —— 页面两侧金叶丛（仅宽屏）：大半枝条藏在屏外、只从边缘探入内侧，绕外缘中点微微左右轻摇，滚动时再被风轻微带动 —— */
+.flank{position:fixed;top:0;bottom:0;width:130px;z-index:5;pointer-events:none;display:none}
+@media(min-width:1100px){.flank{display:block}}
+.flank-l{left:-66px}
+.flank-r{right:-66px}
+.flank .sway{position:absolute;top:50%;width:128px}
+.flank-l .sway{left:0;transform-origin:0% 50%;animation:swayIdle 9.5s ease-in-out infinite}
+.flank-r .mirror{position:absolute;inset:0;transform:scaleX(-1)}
+.flank-r .sway{right:0;transform-origin:100% 50%;animation:swayIdle 9.5s ease-in-out infinite;animation-delay:-4.7s}
+@keyframes swayIdle{0%,100%{transform:translateY(-50%) rotate(-1.2deg)}50%{transform:translateY(-50%) rotate(1.4deg)}}
+.flank svg.branch{width:128px;height:auto;color:var(--gold);opacity:.58;overflow:visible;transform:rotate(var(--wind,0deg));transition:transform .25s ease-out}
+
+/* —— 立约三柱：同相、极轻地一起上下（不设错相 delay，三根柱任意时刻都严格齐平） —— */
+.pledge .column svg{animation:colFloat 9s ease-in-out infinite}
+@keyframes colFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+
+/* —— 时间线「现在」节点：缓慢扩散的脉冲环 —— */
+.tl-item.now .node::after{content:"";position:absolute;inset:-5px;border:1.5px solid var(--terra);border-radius:50%;animation:nowPulse 3.2s ease-out infinite}
+@keyframes nowPulse{0%{transform:scale(.6);opacity:.8}100%{transform:scale(1.9);opacity:0}}
+
+/* —— 分隔叶饰：极轻转动 —— */
+.fleuron svg{animation:fleuronTurn 11s ease-in-out infinite;transform-origin:center}
+@keyframes fleuronTurn{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}}
 </style>
 </head>
 <body>
+
+<!-- 两侧金叶丛：仅宽屏显示，默认轻摇、滚动时被风带动（见脚本） -->
+<div class="flank flank-l" aria-hidden="true">
+  <div class="sway">
+    <svg class="branch" viewBox="0 0 120 470" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+      <path d="M60 458 C46 398 80 336 60 272 C43 214 78 152 62 90 C58 72 58 54 60 40"/>
+      <g>
+        <ellipse cx="45" cy="430" rx="4.6" ry="13" transform="rotate(38 45 430)"/><ellipse cx="75" cy="430" rx="4.6" ry="13" transform="rotate(-38 75 430)"/>
+        <ellipse cx="45" cy="392" rx="4.4" ry="12.4" transform="rotate(38 45 392)"/><ellipse cx="75" cy="392" rx="4.4" ry="12.4" transform="rotate(-38 75 392)"/>
+        <ellipse cx="45" cy="354" rx="4.2" ry="11.8" transform="rotate(38 45 354)"/><ellipse cx="75" cy="354" rx="4.2" ry="11.8" transform="rotate(-38 75 354)"/>
+        <ellipse cx="45" cy="316" rx="4" ry="11.2" transform="rotate(38 45 316)"/><ellipse cx="75" cy="316" rx="4" ry="11.2" transform="rotate(-38 75 316)"/>
+        <ellipse cx="45" cy="278" rx="3.8" ry="10.6" transform="rotate(38 45 278)"/><ellipse cx="75" cy="278" rx="3.8" ry="10.6" transform="rotate(-38 75 278)"/>
+        <ellipse cx="45" cy="240" rx="3.6" ry="10" transform="rotate(38 45 240)"/><ellipse cx="75" cy="240" rx="3.6" ry="10" transform="rotate(-38 75 240)"/>
+        <ellipse cx="46" cy="202" rx="3.4" ry="9.3" transform="rotate(38 46 202)"/><ellipse cx="74" cy="202" rx="3.4" ry="9.3" transform="rotate(-38 74 202)"/>
+        <ellipse cx="46" cy="164" rx="3.2" ry="8.6" transform="rotate(38 46 164)"/><ellipse cx="74" cy="164" rx="3.2" ry="8.6" transform="rotate(-38 74 164)"/>
+        <ellipse cx="47" cy="128" rx="3" ry="8" transform="rotate(38 47 128)"/><ellipse cx="73" cy="128" rx="3" ry="8" transform="rotate(-38 73 128)"/>
+        <ellipse cx="47" cy="96" rx="2.8" ry="7.2" transform="rotate(38 47 96)"/><ellipse cx="73" cy="96" rx="2.8" ry="7.2" transform="rotate(-38 73 96)"/>
+        <ellipse cx="60" cy="34" rx="3.4" ry="11"/>
+      </g>
+    </svg>
+  </div>
+</div>
+<div class="flank flank-r" aria-hidden="true">
+  <div class="mirror">
+    <div class="sway">
+      <svg class="branch" viewBox="0 0 120 470" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+        <path d="M60 458 C46 398 80 336 60 272 C43 214 78 152 62 90 C58 72 58 54 60 40"/>
+        <g>
+          <ellipse cx="45" cy="430" rx="4.6" ry="13" transform="rotate(38 45 430)"/><ellipse cx="75" cy="430" rx="4.6" ry="13" transform="rotate(-38 75 430)"/>
+          <ellipse cx="45" cy="392" rx="4.4" ry="12.4" transform="rotate(38 45 392)"/><ellipse cx="75" cy="392" rx="4.4" ry="12.4" transform="rotate(-38 75 392)"/>
+          <ellipse cx="45" cy="354" rx="4.2" ry="11.8" transform="rotate(38 45 354)"/><ellipse cx="75" cy="354" rx="4.2" ry="11.8" transform="rotate(-38 75 354)"/>
+          <ellipse cx="45" cy="316" rx="4" ry="11.2" transform="rotate(38 45 316)"/><ellipse cx="75" cy="316" rx="4" ry="11.2" transform="rotate(-38 75 316)"/>
+          <ellipse cx="45" cy="278" rx="3.8" ry="10.6" transform="rotate(38 45 278)"/><ellipse cx="75" cy="278" rx="3.8" ry="10.6" transform="rotate(-38 75 278)"/>
+          <ellipse cx="45" cy="240" rx="3.6" ry="10" transform="rotate(38 45 240)"/><ellipse cx="75" cy="240" rx="3.6" ry="10" transform="rotate(-38 75 240)"/>
+          <ellipse cx="46" cy="202" rx="3.4" ry="9.3" transform="rotate(38 46 202)"/><ellipse cx="74" cy="202" rx="3.4" ry="9.3" transform="rotate(-38 74 202)"/>
+          <ellipse cx="46" cy="164" rx="3.2" ry="8.6" transform="rotate(38 46 164)"/><ellipse cx="74" cy="164" rx="3.2" ry="8.6" transform="rotate(-38 74 164)"/>
+          <ellipse cx="47" cy="128" rx="3" ry="8" transform="rotate(38 47 128)"/><ellipse cx="73" cy="128" rx="3" ry="8" transform="rotate(-38 73 128)"/>
+          <ellipse cx="47" cy="96" rx="2.8" ry="7.2" transform="rotate(38 47 96)"/><ellipse cx="73" cy="96" rx="2.8" ry="7.2" transform="rotate(-38 73 96)"/>
+          <ellipse cx="60" cy="34" rx="3.4" ry="11"/>
+        </g>
+      </svg>
+    </div>
+  </div>
+</div>
 
 <!-- ======================= 导航 ======================= -->
 <header class="nav" id="nav">
@@ -380,18 +493,52 @@ img,svg{display:block;max-width:100%}
           <stop offset="100%" stop-color="#e7d6ab" stop-opacity="0"/>
         </radialGradient>
       </defs>
-      <circle cx="340" cy="150" r="120" fill="url(#halo)"/>
+      <circle class="halo-breath" cx="340" cy="150" r="120" fill="url(#halo)"/>
       <g stroke="#c9ae72" stroke-width=".8" stroke-opacity=".55">
         <path d="M250 120 L300 96 L340 120 L380 96 L430 120"/>
         <path d="M300 96 L312 60 M380 96 L368 60 M340 120 L340 180 L300 224 M340 180 L380 224"/>
       </g>
       <g fill="#f3ead0">
-        <circle cx="250" cy="120" r="3.2"/><circle cx="300" cy="96" r="2.4"/><circle cx="340" cy="120" r="4.4"/>
+        <circle cx="250" cy="120" r="3.2"/><circle cx="300" cy="96" r="2.4"/><circle class="core-star" cx="340" cy="120" r="4.4"/>
         <circle cx="380" cy="96" r="2.4"/><circle cx="430" cy="120" r="3.2"/><circle cx="312" cy="60" r="2"/>
         <circle cx="368" cy="60" r="2"/><circle cx="340" cy="180" r="3"/><circle cx="300" cy="224" r="2.2"/>
         <circle cx="380" cy="224" r="2.2"/>
       </g>
     </svg>
+  </div>
+  <div class="embers" aria-hidden="true">
+    <span class="ember" style="left:12%;width:2.4px;height:2.4px;--dur:10s;--delay:0s;--drift:14px"></span>
+    <span class="ember" style="left:24%;width:3px;height:3px;--dur:13s;--delay:3.5s;--drift:-18px"></span>
+    <span class="ember" style="left:38%;width:2px;height:2px;--dur:9s;--delay:6s;--drift:10px"></span>
+    <span class="ember" style="left:50%;width:2.8px;height:2.8px;--dur:12s;--delay:1.5s;--drift:-12px"></span>
+    <span class="ember" style="left:62%;width:2.2px;height:2.2px;--dur:11s;--delay:7s;--drift:16px"></span>
+    <span class="ember" style="left:74%;width:3.2px;height:3.2px;--dur:14s;--delay:4.5s;--drift:-20px"></span>
+    <span class="ember" style="left:85%;width:2px;height:2px;--dur:10s;--delay:8.5s;--drift:12px"></span>
+    <span class="ember" style="left:31%;width:2.5px;height:2.5px;--dur:12.5s;--delay:10s;--drift:-16px"></span>
+  </div>
+  <div class="meteors" aria-hidden="true">
+    <span class="meteor" style="--top:7%;--len:110px;--dur:8.5s;--delay:2.2s"></span>
+    <span class="meteor" style="--top:17%;--len:150px;--dur:11.5s;--delay:7.8s"></span>
+    <span class="meteor" style="--top:27%;--len:90px;--dur:13.5s;--delay:13.4s"></span>
+    <span class="meteor" style="--top:36%;--len:170px;--dur:9.5s;--delay:19.1s"></span>
+    <span class="meteor" style="--top:12%;--len:125px;--dur:15s;--delay:25.3s"></span>
+  </div>
+  <div class="birds" aria-hidden="true">
+    <span class="bird" style="--top:18%;--size:28px;--dur:27s;--delay:1s">
+      <svg viewBox="0 0 24 10" fill="none" stroke="#e7d6ab" stroke-width="1.6" stroke-linecap="round"><g class="wings"><path d="M1 8 Q7 1 12 7 Q17 1 23 8"/></g></svg>
+    </span>
+    <span class="bird" style="--top:31%;--size:18px;--dur:21s;--delay:10s">
+      <svg viewBox="0 0 24 10" fill="none" stroke="#c9c2b0" stroke-width="1.6" stroke-linecap="round"><g class="wings"><path d="M1 8 Q7 1 12 7 Q17 1 23 8"/></g></svg>
+    </span>
+    <span class="bird rev" style="--top:12%;--size:22px;--dur:24s;--delay:17s">
+      <svg viewBox="0 0 24 10" fill="none" stroke="#d8c89e" stroke-width="1.6" stroke-linecap="round"><g class="wings"><path d="M1 8 Q7 1 12 7 Q17 1 23 8"/></g></svg>
+    </span>
+    <span class="bird rev" style="--top:26%;--size:26px;--dur:29s;--delay:6.5s">
+      <svg viewBox="0 0 24 10" fill="none" stroke="#b8ad92" stroke-width="1.6" stroke-linecap="round"><g class="wings"><path d="M1 8 Q7 1 12 7 Q17 1 23 8"/></g></svg>
+    </span>
+    <span class="bird" style="--top:7%;--size:15px;--dur:20s;--delay:14.8s">
+      <svg viewBox="0 0 24 10" fill="none" stroke="#d8c89e" stroke-width="1.6" stroke-linecap="round"><g class="wings"><path d="M1 8 Q7 1 12 7 Q17 1 23 8"/></g></svg>
+    </span>
   </div>
   <div class="wrap hero-inner">
     <span class="est reveal in">Est. MMXXVI &nbsp;·&nbsp; Self-hosted &nbsp;·&nbsp; Open Source</span>
@@ -741,7 +888,7 @@ img,svg{display:block;max-width:100%}
     var n=46,frag=document.createDocumentFragment();
     for(var i=0;i<n;i++){
       var s=document.createElement('span');
-      s.className='star';
+      s.className=Math.random()<0.16?'star bright':'star';
       var sz=(Math.random()*1.6+0.7).toFixed(2);
       s.style.width=sz+'px';s.style.height=sz+'px';
       s.style.left=(Math.random()*100).toFixed(2)+'%';
@@ -784,6 +931,23 @@ img,svg{display:block;max-width:100%}
       });}
     });},{rootMargin:'-45% 0px -50% 0px'});
     secs.forEach(function(s){spy.observe(s);});
+  }
+  // 两侧金叶丛：滚动越快被带得越晃，停手后自然衰减回正（idle 轻摇在 CSS 层，互不冲突）
+  var branches=document.querySelectorAll('.flank svg.branch');
+  var reduceMotion=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(branches.length&&!reduceMotion){
+    var wind=0,lastY=window.scrollY,ticking=false;
+    function applyWind(){
+      wind*=0.9; // 衰减
+      if(Math.abs(wind)<0.05){wind=0;ticking=false;}
+      for(var i=0;i<branches.length;i++){branches[i].style.setProperty('--wind',wind.toFixed(2)+'deg');}
+      if(ticking){requestAnimationFrame(applyWind);}
+    }
+    window.addEventListener('scroll',function(){
+      var y=window.scrollY,dv=y-lastY;lastY=y;
+      wind=Math.max(-4,Math.min(4,wind+dv*0.1)); // 限速，只做微微带动
+      if(!ticking){ticking=true;requestAnimationFrame(applyWind);}
+    },{passive:true});
   }
 })();
 </script>
