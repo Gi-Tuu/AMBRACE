@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
 import '../theme/skins/skin_colors.dart';
+import '../theme/skins/aegean/aegean_ornaments.dart';
 
 /// 全局背景层：挂在 `MaterialApp.builder` 最底层，所有页面（含登录页）共享同一背景。
 ///
@@ -33,6 +34,15 @@ class AppBackground extends StatelessWidget {
           solid,
           RepaintBoundary(
             child: CustomPaint(painter: _PaperFiberPainter(isDark: isDark)),
+          ),
+        ]);
+      }
+      if (settings.skinId == 'aegean') {
+        final isDark = theme.brightness == Brightness.dark;
+        return Stack(fit: StackFit.expand, children: [
+          solid,
+          RepaintBoundary(
+            child: CustomPaint(painter: AegeanPaperPainter(dark: isDark)),
           ),
         ]);
       }

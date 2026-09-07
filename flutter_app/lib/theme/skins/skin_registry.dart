@@ -5,6 +5,7 @@ import 'skin_decoration.dart';
 import 'skin_typography.dart';
 import 'skin_animation.dart';
 import '../tokens.dart';
+import 'aegean/aegean_skin.dart';
 
 /// AMBRACE 皮肤注册表 —— 所有内置皮肤的唯一入口。
 ///
@@ -36,6 +37,7 @@ class SkinRegistry {
     _register(_PaperSkin());
     _register(_NeonSkin());
     _register(_GlassSkin());
+    _register(AegeanSkin()); // 7. 爱琴海典藏（极繁古典，白昼/夜阑双版）
   }
 
   static void _register(Skin skin) {

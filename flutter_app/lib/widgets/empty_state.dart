@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../providers/settings_provider.dart';
+import '../theme/skins/aegean/aegean_architects.dart';
+import '../theme/skins/aegean/aegean_palette.dart';
 
 /// Aurora 空态 / 错误态 —— 统一空态展示。
 ///
@@ -30,13 +35,24 @@ class EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // §6.6：aegean 空态用月桂枝替代默认图标、标题走衬线花体；其它皮肤零变化。
+    final isAegean = Provider.of<SettingsProvider?>(context, listen: false)?.skinId == 'aegean';
+    final b = Theme.of(context).brightness;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 64, color: scheme.primary.withValues(alpha: 0.3)),
+            isAegean
+                ? SizedBox(
+                    width: 44, height: 44,
+                    child: AegeanWreath(
+                      leafColor: AegeanPalette.goldDeep(b),
+                      berryColor: AegeanPalette.terra(b),
+                    ),
+                  )
+                : Icon(icon, size: 64, color: scheme.primary.withValues(alpha: 0.3)),
             const SizedBox(height: 16),
             Text(
               title,
@@ -45,6 +61,7 @@ class EmptyState extends StatelessWidget {
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
                 color: scheme.onSurface,
+                fontFamily: isAegean ? AegeanPalette.displayFont : null,
               ),
             ),
             if (subtitle != null) ...[

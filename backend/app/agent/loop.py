@@ -102,6 +102,10 @@ AGENT_FLAGS = {
     # working_state_enabled 开=turn 结束后异步评估/滚动覆盖 working_state 行（写入链路，fail-open）；
     # 关=完全跳过（无行产生；注入为 M3-b 另行灰度）。默认关（快照脚本可回滚）。
     "working_state_enabled": True,  # 2026-09-01 用户拍板：开启数据积累（注入仍为 M3-b 未灰度）
+    # M3-b（2026-09-07）：工作记忆注入**全量**开关。关=只按角色小流量灰度（见 section_working_state.py
+    # 的 WORKING_STATE_INJECT_GRAY_CHARS / WORKING_STATE_INJECT_RATIO，当前仅 char13 约 15% 会话）；
+    # 开=所有角色注入。用于后续扩量与热回滚（回退=置回 False）。
+    "working_state_inject": False,
     "life_home_worldmap_enabled": True,   # 小家大地图（§11）
     # ── 生命感增强 v1（#63，2026-08-27；全部默认关，可独立回退）──
     "reply_delay_enabled": True,         # 机制2：动态回复延迟（用户主动消息才生效）

@@ -9,6 +9,7 @@ import '../../providers/settings_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/skins/skin.dart';
 import '../../theme/skins/skin_registry.dart';
+import '../../theme/skins/aegean/aegean_ornaments.dart';
 import '../../widgets/ios_card_group.dart';
 
 /// 外观页：皮肤 + 主题模式（跟随系统/浅色/深色）+ 主题色（6 款）+ 语言。
@@ -20,8 +21,9 @@ class AppearanceScreen extends StatelessWidget {
     final settings = context.watch<SettingsProvider>();
     final l10n = AppLocalizations.of(context)!;
     final brightness = Theme.of(context).brightness;
+    final isAegean = settings.skinId == 'aegean';
     return Scaffold(
-      appBar: AppBar(title: Text(l10n.appearanceTitle)),
+      appBar: AppBar(title: isAegean ? AegeanTitleBar(title: l10n.appearanceTitle) : Text(l10n.appearanceTitle)),
       body: ListView(
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
@@ -181,6 +183,8 @@ class AppearanceScreen extends StatelessWidget {
         return l10n.skinNameNeon;
       case 'glass':
         return l10n.skinNameGlass;
+      case 'aegean':
+        return l10n.skinNameAegean;
       default:
         return skin.displayName;
     }

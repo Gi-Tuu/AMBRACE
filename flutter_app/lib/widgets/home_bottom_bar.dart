@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/settings_provider.dart';
 import '../theme/aurora_tokens.dart';
+import '../theme/skins/aegean/aegean_palette.dart';
 
 /// Aurora 首页底部悬浮胶囊导航栏（Phase 2 B1）。
 ///
@@ -46,6 +47,8 @@ class HomeBottomBar extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     // #12 只有毛玻璃皮肤做半透明+模糊；其余皮肤不透明、不 BackdropFilter
     final glass = AppGlass.isGlassSkin(context);
+    // §6.6：aegean 胶囊底=marble（scheme.surface）、金发丝边、选中 terra/goldDeep；其它皮肤零变化。
+    final isAegean = Provider.of<SettingsProvider?>(context, listen: false)?.skinId == 'aegean';
 
     final sigma = AppGlass.effectiveBlur(AppGlass.blurMedium, reduceBlur: reduceBlur);
     final background = glass
@@ -53,9 +56,11 @@ class HomeBottomBar extends StatelessWidget {
             ? Colors.black.withValues(alpha: 0.30)
             : Colors.white.withValues(alpha: 0.55))
         : scheme.surface;
-    final borderColor = isDark
-        ? Colors.white.withValues(alpha: AppGlass.borderAlpha)
-        : Colors.black.withValues(alpha: AppGlass.borderAlpha);
+    final borderColor = isAegean
+        ? AegeanPalette.frameHair
+        : (isDark
+            ? Colors.white.withValues(alpha: AppGlass.borderAlpha)
+            : Colors.black.withValues(alpha: AppGlass.borderAlpha));
 
     final bar = Container(
       height: 64,

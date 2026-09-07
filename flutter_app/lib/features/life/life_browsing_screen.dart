@@ -5,7 +5,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_client.dart';
 import '../../utils/beijing_time.dart';
 import '../../widgets/ios_card_group.dart';
-import "package:ai_companion/theme/tokens.dart";
 
 /// AI 真实浏览记录（Phase B，2026-08-14）：browse/learn 活动的真实网页记录（URL/标题/时长）
 class LifeBrowsingScreen extends StatefulWidget {
@@ -63,7 +62,7 @@ class _LifeBrowsingScreenState extends State<LifeBrowsingScreen> {
     final l10n = AppLocalizations.of(context)!;
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: AppColors.bgLight,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         title: Text(l10n.browsingTitle(widget.characterName)),
@@ -76,9 +75,9 @@ class _LifeBrowsingScreenState extends State<LifeBrowsingScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.travel_explore_outlined, size: 48, color: Colors.grey),
+                      Icon(Icons.travel_explore_outlined, size: 48, color: Theme.of(context).brightness == Brightness.dark ? Colors.white30 : Colors.grey),
                       const SizedBox(height: 8),
-                      Text(l10n.noBrowsingRecords, style: const TextStyle(color: Colors.grey)),
+                      Text(l10n.noBrowsingRecords, style: TextStyle(color: Theme.of(context).brightness == Brightness.dark ? Colors.white54 : Colors.grey)),
                       const SizedBox(height: 6),
                       Text(
                         l10n.browsingHint,

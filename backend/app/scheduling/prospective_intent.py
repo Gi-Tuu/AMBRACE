@@ -34,12 +34,25 @@ def _now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _loads(s, default):
+def _loads_cue_terms(s: str) -> list[str]:
+    """cue_terms_json → terms list。
+
+    兼容两种格式：
+    - 旧：`["火锅", "周末"]`（直接 list[str]）
+    - 新（2026-09-07 放宽口径）：`{"confidence": "low|medium|high", "terms": ["火锅", "周末"]}`
+    无法解析时回退空列表，匹配静默失败（fail-open）。
+    """
     try:
         v = json.loads(s or "")
-        return v if isinstance(v, type(default)) else default
     except Exception:
-        return default
+        return []
+    if isinstance(v, list):
+        return [str(x).strip() for x in v if str(x).strip()]
+    if isinstance(v, dict):
+        terms = v.get("terms")
+        if isinstance(terms, list):
+            return [str(x).strip() for x in terms if str(x).strip()]
+    return []
 
 
 # ───────────────────────── 写入（extractor 便车调用，幂等）─────────────────────────
@@ -48,10 +61,15 @@ async def upsert_intent(
     cue_terms: list[str] | None = None, due_start: datetime | None = None,
     due_end: datetime | None = None, source_message_id: int | None = None,
     chat_session_id: int | None = None,
+    confidence: str = "medium",
 ) -> int | None:
     """落一条前瞻意图。同一 source_message_id 已存在 → 幂等跳过，返回既有 id。
 
     保守原则（宁漏不误）：content 为空 / promise 缺时间且无线索 / cue 缺线索 → 不写。
+
+    置信（confidence，2026-09-07 放宽口径引入）：写入 cue_terms_json 的 dict 包装
+    （`{"confidence": "low|medium|high", "terms": [...]}`）。旧 list 格式仍可被
+    ``_loads_cue_terms`` 解析（match_cue_intents 向后兼容）。
     """
     content = (content or "").strip()
     if not content or kind not in ("promise", "cue"):
@@ -62,6 +80,8 @@ async def upsert_intent(
     if kind == "promise" and due_end is None and not cues:
         # 既无时间窗又无线索的「承诺」无法可靠兑现，宁可不写
         return None
+    if confidence not in ("low", "medium", "high"):
+        confidence = "medium"
 
     async with async_session_factory() as db:
         if source_message_id is not None:
@@ -74,9 +94,12 @@ async def upsert_intent(
             )).scalar_one_or_none()
             if existed is not None:
                 return existed.id
+        cue_payload = json.dumps(
+            {"confidence": confidence, "terms": cues}, ensure_ascii=False
+        )
         row = ProspectiveIntent(
             user_id=user_id, character_id=character_id, content=content[:500],
-            kind=kind, cue_terms_json=json.dumps(cues, ensure_ascii=False),
+            kind=kind, cue_terms_json=cue_payload,
             due_start=due_start, due_end=due_end, status="pending",
             source_message_id=source_message_id, chat_session_id=chat_session_id,
         )
@@ -189,7 +212,7 @@ async def match_cue_intents(character_id: int, user_text: str) -> list[Prospecti
                 ProspectiveIntent.kind == "cue",
             )
         )).scalars().all()
-        hit = [r for r in rows if _cue_hit(_loads(r.cue_terms_json, []), user_text)]
+        hit = [r for r in rows if _cue_hit(_loads_cue_terms(r.cue_terms_json), user_text)]
         changed = False
         for r in hit:
             if r.status == "pending":

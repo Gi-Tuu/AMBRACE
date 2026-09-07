@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/settings_provider.dart';
 import '../theme/aurora_tokens.dart';
+import '../theme/skins/aegean/aegean_palette.dart';
 
 /// 玻璃描边位置。
 enum GlassBarBorder { top, bottom, none }
@@ -75,12 +76,16 @@ class GlassBar extends StatelessWidget {
 
     // #12 非毛玻璃皮肤：不透明栏、不做 BackdropFilter（原生观感）
     if (!AppGlass.isGlassSkin(context)) {
+      // §6.6：aegean 栏面走不透明 marble（scheme.surface）+ 金发丝边；其它皮肤零变化。
+      final isAegean = Provider.of<SettingsProvider?>(context, listen: false)?.skinId == 'aegean';
       return Container(
         height: height,
         padding: padding,
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
-          border: _border(isDark),
+          border: isAegean
+              ? Border.all(color: AegeanPalette.frameHair, width: 0.9)
+              : _border(isDark),
         ),
         child: child,
       );

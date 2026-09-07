@@ -3710,6 +3710,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get skinNameGlass => '极光毛玻璃';
 
   @override
+  String get skinNameAegean => '爱琴海典藏';
+
+  @override
   String get glassAuroraEnd => '终色';
 
   @override

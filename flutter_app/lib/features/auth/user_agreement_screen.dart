@@ -66,7 +66,16 @@ class _Section extends StatelessWidget {
         children: [
           Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
           const SizedBox(height: 6),
-          Text(body, style: const TextStyle(fontSize: 14, height: 1.5, color: Colors.black87)),
+          Text(
+              body,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.5,
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.87),
+              )),
         ],
       ),
     );

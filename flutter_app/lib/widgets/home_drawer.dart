@@ -10,6 +10,7 @@ import '../services/api_client.dart';
 import '../services/background_polling_service.dart';
 import '../services/fcm_push_service.dart';
 import '../theme/aurora_tokens.dart';
+import '../theme/skins/aegean/aegean_palette.dart';
 import '../theme/tokens.dart';
 import 'app_page_route.dart';
 import '../features/home/profile_screen.dart';
@@ -60,10 +61,13 @@ class HomeDrawer extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = settings;
     final l10n = AppLocalizations.of(context)!;
-    const textColor = AppColors.textPrimary;
-    const subColor = AppColors.textSecondary;
-    const chevColor = AppColors.separator;
     final scheme = Theme.of(context).colorScheme;
+    // 深色可读：文字/次级/箭头改主题语义色（浅色观感与原固定色基本一致）
+    final textColor = scheme.onSurface;
+    final subColor = scheme.onSurfaceVariant;
+    final chevColor = scheme.outline;
+    // §6.6：aegean 组标题走衬线花体；其它皮肤零变化。
+    final isAegean = s.skinId == 'aegean';
 
     Widget group(String title, List<Widget> rows) {
       return Padding(
@@ -83,8 +87,11 @@ class HomeDrawer extends StatelessWidget {
                   ),
                   const SizedBox(width: 6),
                   Text(title,
-                      style: const TextStyle(
-                          fontSize: 12, fontWeight: FontWeight.w600, color: subColor)),
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: subColor,
+                          fontFamily: isAegean ? AegeanPalette.displayFont : null)),
                 ],
               ),
             ),
@@ -134,7 +141,7 @@ class HomeDrawer extends StatelessWidget {
                     Text(subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 11, color: subColor)),
+                        style: TextStyle(fontSize: 11, color: subColor)),
                   ],
                 ],
               ),
@@ -142,7 +149,7 @@ class HomeDrawer extends StatelessWidget {
             if (trailing != null)
               trailing
             else
-              const Icon(Icons.chevron_right, size: 18, color: chevColor),
+              Icon(Icons.chevron_right, size: 18, color: chevColor),
           ]),
         ),
       );
@@ -260,9 +267,9 @@ class HomeDrawer extends StatelessWidget {
         ExpansionTile(
           leading: const _RowIcon(icon: Icons.tune),
           title: Text(l10n.experienceSettingsTitle,
-              style: const TextStyle(fontSize: 15, color: textColor)),
+              style: TextStyle(fontSize: 15, color: textColor)),
           subtitle: Text(l10n.experienceSettingsSubtitle,
-              style: const TextStyle(fontSize: 11, color: subColor)),
+              style: TextStyle(fontSize: 11, color: subColor)),
           tilePadding: const EdgeInsets.symmetric(horizontal: 14),
           childrenPadding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
           shape: const Border(),
@@ -276,8 +283,8 @@ class HomeDrawer extends StatelessWidget {
               leading: const _RowIcon(icon: Icons.visibility_outlined),
               title: Text(l10n.phonePerception, style: const TextStyle(fontSize: 14)),
               subtitle:
-                  Text(l10n.phonePerceptionHint, style: const TextStyle(fontSize: 11, color: subColor)),
-              trailing: const Icon(Icons.chevron_right, size: 18, color: chevColor),
+                  Text(l10n.phonePerceptionHint, style: TextStyle(fontSize: 11, color: subColor)),
+              trailing: Icon(Icons.chevron_right, size: 18, color: chevColor),
               onTap: () {
                 onClose();
                 Navigator.push(
@@ -287,8 +294,8 @@ class HomeDrawer extends StatelessWidget {
             ListTile(
               leading: const _RowIcon(icon: Icons.do_not_disturb),
               title: Text(l10n.dnd, style: const TextStyle(fontSize: 14)),
-              subtitle: Text(l10n.dndHint, style: const TextStyle(fontSize: 11, color: subColor)),
-              trailing: const Icon(Icons.chevron_right, size: 18, color: chevColor),
+              subtitle: Text(l10n.dndHint, style: TextStyle(fontSize: 11, color: subColor)),
+              trailing: Icon(Icons.chevron_right, size: 18, color: chevColor),
               onTap: () {
                 onClose();
                 Navigator.push(
@@ -299,8 +306,8 @@ class HomeDrawer extends StatelessWidget {
               leading: const _RowIcon(icon: Icons.extension_outlined),
               title: Text(l10n.extensions, style: const TextStyle(fontSize: 14)),
               subtitle:
-                  Text(l10n.extensionsHint, style: const TextStyle(fontSize: 11, color: subColor)),
-              trailing: const Icon(Icons.chevron_right, size: 18, color: chevColor),
+                  Text(l10n.extensionsHint, style: TextStyle(fontSize: 11, color: subColor)),
+              trailing: Icon(Icons.chevron_right, size: 18, color: chevColor),
               onTap: () {
                 onClose();
                 Navigator.push(
@@ -311,8 +318,8 @@ class HomeDrawer extends StatelessWidget {
               leading: const _RowIcon(icon: Icons.palette_outlined),
               title: Text(l10n.appearanceTitle, style: const TextStyle(fontSize: 14)),
               subtitle:
-                  Text(l10n.appearanceSubtitle, style: const TextStyle(fontSize: 11, color: subColor)),
-              trailing: const Icon(Icons.chevron_right, size: 18, color: chevColor),
+                  Text(l10n.appearanceSubtitle, style: TextStyle(fontSize: 11, color: subColor)),
+              trailing: Icon(Icons.chevron_right, size: 18, color: chevColor),
               onTap: () {
                 onClose();
                 Navigator.push(
@@ -323,8 +330,8 @@ class HomeDrawer extends StatelessWidget {
               leading: const _RowIcon(icon: Icons.family_restroom),
               title: Text(l10n.accountLinking, style: const TextStyle(fontSize: 14)),
               subtitle:
-                  Text(l10n.accountLinkingHint, style: const TextStyle(fontSize: 11, color: subColor)),
-              trailing: const Icon(Icons.chevron_right, size: 18, color: chevColor),
+                  Text(l10n.accountLinkingHint, style: TextStyle(fontSize: 11, color: subColor)),
+              trailing: Icon(Icons.chevron_right, size: 18, color: chevColor),
               onTap: () {
                 onClose();
                 Navigator.push(

@@ -7035,6 +7035,12 @@ abstract class AppLocalizations {
   /// **'极光毛玻璃'**
   String get skinNameGlass;
 
+  /// No description provided for @skinNameAegean.
+  ///
+  /// In zh, this message translates to:
+  /// **'爱琴海典藏'**
+  String get skinNameAegean;
+
   /// No description provided for @glassAuroraEnd.
   ///
   /// In zh, this message translates to:

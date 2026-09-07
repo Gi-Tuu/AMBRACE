@@ -6,6 +6,10 @@ import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
 import '../../services/fcm_push_service.dart';
 import '../../global_keys.dart';
+import '../../theme/skins/aegean/aegean_motifs.dart';
+import '../../theme/skins/aegean/aegean_architects.dart';
+import '../../theme/skins/aegean/aegean_geometry.dart';
+import '../../theme/skins/aegean/aegean_palette.dart';
 import 'register_screen.dart';
 import 'onboarding_screen.dart';
 
@@ -185,16 +189,34 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Scaffold(
-      body: Center(
-        child: SingleChildScrollView(
+    // §6.6：aegean 登录页左右边缘放低透明石柱水印、标题用双翼夹花体名；其它皮肤零变化。
+    final isAegean = context.watch<SettingsProvider>().skinId == 'aegean';
+    final b = Theme.of(context).brightness;
+    final form = Center(
+      child: SingleChildScrollView(
           padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Image.asset('assets/ic_launcher.png', width: 80, height: 80),
               const SizedBox(height: 16),
-              Text(l10n.appName, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+              isAegean
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Transform.flip(flipX: true, child: AegeanWings(size: 26, both: false)),
+                        const SizedBox(width: 10),
+                        Text(l10n.appName,
+                            style: const TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'serif')),
+                        const SizedBox(width: 10),
+                        AegeanWings(size: 26, both: false),
+                      ],
+                    )
+                  : Text(l10n.appName,
+                      style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
               const SizedBox(height: 24),
               TextField(
                 controller: _serverUrlCtrl,
@@ -289,7 +311,42 @@ class _LoginScreenState extends State<LoginScreen> {
             ],
           ),
         ),
-      ),
+      );
+    return Scaffold(
+      body: isAegean
+          ? Stack(
+              fit: StackFit.expand,
+              children: [
+                Positioned(
+                  left: 6,
+                  child: Center(
+                    child: SizedBox(
+                      width: 44, height: 200,
+                      child: AegeanColumn(
+                        order: AegeanOrder.ionic,
+                        color: AegeanPalette.goldDeep(b),
+                        opacity: 0.4,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  right: 6,
+                  child: Center(
+                    child: SizedBox(
+                      width: 44, height: 200,
+                      child: AegeanColumn(
+                        order: AegeanOrder.ionic,
+                        color: AegeanPalette.goldDeep(b),
+                        opacity: 0.4,
+                      ),
+                    ),
+                  ),
+                ),
+                form,
+              ],
+            )
+          : form,
     );
   }
 }

@@ -39,7 +39,7 @@ STATUS: 内容 | 重要程度(1-5)
 RELATIONSHIP: 内容 | 重要程度(1-5)
 STAGE: 内容 | 重要程度(1-5)
 CURATED: 长期稳定、几乎不会变的信息（用户硬档案/长期偏好/你们关系的稳定基线/你必须遵守的铁律）| 类别(fact/preference_profile/relationship_baseline/constraint) | 重要程度(1-5)
-INTENT: 面向未来的承诺/约定/到某个线索出现时要做的事（如"下周末带你去吃火锅""樱花开了提醒我拍照"）；纯当下事实不要写 | 类型(promise/cue) | 时间窗(YYYY-MM-DD~YYYY-MM-DD，不确定写无) | 线索词(逗号分隔，cue 必填，promise 可写无)
+INTENT: 面向未来的承诺/约定/到某个线索出现时要做的事（放宽口径：低置信也写，附置信标记便于评估；纯当下事实不写）| 类型(promise/cue) | 时间窗(YYYY-MM-DD~YYYY-MM-DD，不确定写无) | 线索词(逗号分隔，cue 必填，promise 可写无) | 置信(low/medium/high，默认 medium)
 
 重要程度：1=无关紧要 2=普通 3=重要 4=很重要 5=极其重要
 每条控制在75字以内。
@@ -54,7 +54,7 @@ STAGE（舞台）专用于记录“非真实/临时性”内容，仅两类：
 额外要求（2026-08-08 收紧）：同一信息在对话中出现多次时只提取一次；只提取用户明确说出或明确发生的事实，禁止推测、脑补或把AI猜测当事实（AI回复中提到的内容不代表用户喜欢/拥有它）；信息不明确时写"无"。
 主语规则（2026-08-18 强化）：USER_INFO/EVENTS/PREFERENCES 条目中，关于用户的信息必须以「用户」开头或明确写出主语（如「用户喜欢喝美式咖啡」「用户说下周出差」「用户上周去了海边」），禁止用裸「我」开头描述用户的事（如「我注意到用户…」「我发现你…」应改写为「用户…」）；角色自己的设定与偏好用「我」开头（如「我喜欢吃辣」）；「我们一起/我们」类共同事件（如「我们一起看了海」）按对话归属：对话中有用户发言 → 归用户（写「用户」主语），仅 AI 单方内容 → 归角色。禁止无主语。
 CURATED 只收「长期稳定/可编纂」的信息，一次性情绪、临时状态、短期事件不要写 CURATED；没有写"无"。
-INTENT 只在用户明确表达了"未来要兑现的承诺/约定"或"某线索出现时提醒/做某事"时写一条；没有写"无"。拿不准时间就把时间窗写"无"、并给出≥2个线索词；既无时间又无线索、或只是随口一说的，不要写。"""
+INTENT 只在用户明确表达了"未来要兑现的承诺/约定"或"某线索出现时提醒/做某事"时写一条；没有写"无"。拿不准时间就把时间窗写"无"、并给出≥2个线索词；既无时间又无线索、或只是随口一说的，不要写。置信：明确承诺/约定=high，明显线索命中=medium，随口一提/模糊意愿=low（低置信也建议写出，便于评估 G 写入质量；不愿判断时省略=medium 向后兼容）。"""
 
 from app.memory.dialogue_filter import looks_like_raw_dialogue
 
@@ -135,9 +135,10 @@ def _parse_curated_line(response: str):
 
 
 def _parse_intent_line(response: str):
-    """INTENT: 内容 | 类型 | 时间窗 | 线索 → dict / None。时间窗解析失败返回 None 时间。
+    """INTENT: 内容 | 类型 | 时间窗 | 线索 | 置信(可选) → dict / None。时间窗解析失败返回 None 时间。
 
-    用 _raw_val 取整行（线索词是末列，_get_val 会误剥），四种字段独立解析。
+    用 _raw_val 取整行（线索词是末列，_get_val 会误剥），五种字段独立解析。
+    置信=旧 4 段格式（无第 5 段）默认 medium，向后兼容既有数据与提示词。
     """
     raw = _raw_val(response, "INTENT")
     if not raw or _is_empty_val(raw):
@@ -149,6 +150,10 @@ def _parse_intent_line(response: str):
     kind = parts[1] if len(parts) > 1 and parts[1] in ("promise", "cue") else "promise"
     win = parts[2] if len(parts) > 2 else "无"
     cues_raw = parts[3] if len(parts) > 3 else "无"
+    # 置信：第 5 段可选；旧 4 段格式默认 medium（向后兼容）
+    confidence = (
+        parts[4] if len(parts) > 4 and parts[4] in ("low", "medium", "high") else "medium"
+    )
     due_start = due_end = None
     if win and win != "无" and "~" in win:
         try:
@@ -160,7 +165,8 @@ def _parse_intent_line(response: str):
     cues = []
     if cues_raw and cues_raw != "无":
         cues = [c.strip() for c in cues_raw.replace("，", ",").split(",") if c.strip()]
-    return {"content": content, "kind": kind, "due_start": due_start, "due_end": due_end, "cue_terms": cues}
+    return {"content": content, "kind": kind, "due_start": due_start, "due_end": due_end,
+            "cue_terms": cues, "confidence": confidence}
 
 
 def _truncate_sample(text: str, head: int = 100, tail: int = 100) -> str:
@@ -394,7 +400,9 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
             try:
                 from app.memory.observability import obs_event
                 obs_event(character_id, "prospective_intent_extract",
-                          {"written": bool(pi and pi.get("content")), "kind": (pi or {}).get("kind"),
+                          {"written": bool(pi and pi.get("content")),
+                           "kind": (pi or {}).get("kind"),
+                           "confidence": (pi or {}).get("confidence"),
                            "content": ((pi or {}).get("content") or "")[:60]})
             except Exception:
                 pass
@@ -405,6 +413,7 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
                     kind=pi["kind"], cue_terms=pi["cue_terms"],
                     due_start=pi["due_start"], due_end=pi["due_end"],
                     source_message_id=source_id, chat_session_id=session_id,
+                    confidence=pi.get("confidence", "medium"),
                 )
         except Exception as e:
             _logger.warning("Prospective intent extract failed char=%d: %s", character_id, e)

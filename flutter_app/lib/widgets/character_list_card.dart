@@ -1,9 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../models/character.dart';
+import '../providers/settings_provider.dart';
 import '../theme/aurora_tokens.dart';
+import '../theme/skins/aegean/aegean_architects.dart';
+import '../theme/skins/aegean/aegean_palette.dart';
 import '../theme/tokens.dart';
 import 'ai_avatar.dart';
 import 'aurora_card.dart';
@@ -38,14 +42,28 @@ class CharacterListCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return GestureDetector(
+    // §6.6：aegean 好友卡用金角框包卡、头像一圈金环、名字古金；其它皮肤零变化。
+    final isAegean = Provider.of<SettingsProvider?>(context, listen: false)?.skinId == 'aegean';
+    final b = Theme.of(context).brightness;
+    final nameColor = isAegean ? scheme.primary : scheme.onSurface;
+
+    Widget card = GestureDetector(
       onLongPress: onLongPress,
       child: AuroraCard(
         onTap: onTap,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(
           children: [
-            AIAvatar(name: character.name, size: 56, imageUrl: character.avatarUrl),
+            isAegean
+                ? Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: AegeanPalette.goldPale, width: 1.2),
+                    ),
+                    child: AIAvatar(name: character.name, size: 56, imageUrl: character.avatarUrl),
+                  )
+                : AIAvatar(name: character.name, size: 56, imageUrl: character.avatarUrl),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
@@ -58,7 +76,7 @@ class CharacterListCard extends StatelessWidget {
                     style: TextStyle(
                       fontSize: AppTypography.titleSize,
                       fontWeight: AppTypography.titleWeight,
-                      color: scheme.onSurface,
+                      color: nameColor,
                     ),
                   ),
                   if (character.personality != null &&
@@ -98,6 +116,15 @@ class CharacterListCard extends StatelessWidget {
         ),
       ),
     );
+
+    return isAegean
+        ? AegeanCardFrame(
+            radius: 20,
+            hairColor: AegeanPalette.goldDeep(b),
+            arcColor: AegeanPalette.gold(b),
+            child: card,
+          )
+        : card;
   }
 }
 

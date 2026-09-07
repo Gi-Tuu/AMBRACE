@@ -89,6 +89,7 @@ class _PhonePetScreenState extends State<PhonePetScreen> {
     final l10n = AppLocalizations.of(context)!;
     final pet = _pet!;
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.all(16),
@@ -97,7 +98,7 @@ class _PhonePetScreenState extends State<PhonePetScreen> {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: isDark ? const Color(0xFF2A2A35) : Colors.white,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.3)),
           ),
@@ -111,7 +112,7 @@ class _PhonePetScreenState extends State<PhonePetScreen> {
                   height: 120,
                   fit: BoxFit.cover,
                   errorBuilder: (_, __, ___) =>
-                      Icon(Icons.pets, size: 80, color: Colors.grey.shade300),
+                      Icon(Icons.pets, size: 80, color: isDark ? Colors.white12 : Colors.grey.shade300),
                 ),
               ),
               const SizedBox(height: 12),
@@ -119,7 +120,7 @@ class _PhonePetScreenState extends State<PhonePetScreen> {
                   style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
               Text('${pet.speciesLabel} · Lv.${pet.level}',
-                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                  style: TextStyle(fontSize: 13, color: isDark ? Colors.white54 : Colors.grey.shade600)),
               if (pet.statusText.isNotEmpty) ...[
                 const SizedBox(height: 6),
                 Text(pet.statusText,
@@ -154,7 +155,7 @@ class _PhonePetScreenState extends State<PhonePetScreen> {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: isDark ? const Color(0xFF2A2A35) : Colors.white,
             borderRadius: BorderRadius.circular(16),
           ),
           child: Column(
@@ -171,7 +172,7 @@ class _PhonePetScreenState extends State<PhonePetScreen> {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: isDark ? const Color(0xFF2A2A35) : Colors.white,
             borderRadius: BorderRadius.circular(16),
           ),
           child: Column(
@@ -179,7 +180,7 @@ class _PhonePetScreenState extends State<PhonePetScreen> {
             children: [
               Row(
                 children: [
-                  Icon(Icons.history, size: 16, color: Colors.grey.shade500),
+                  Icon(Icons.history, size: 16, color: isDark ? Colors.white54 : Colors.grey.shade500),
                   const SizedBox(width: 6),
                   Text(l10n.taCareLog, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 ],
@@ -191,7 +192,7 @@ class _PhonePetScreenState extends State<PhonePetScreen> {
                   child: Center(
                     child: Text(
                       l10n.taCareEmpty,
-                      style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+                      style: TextStyle(fontSize: 13, color: isDark ? Colors.white54 : Colors.grey.shade500),
                     ),
                   ),
                 )
@@ -212,11 +213,12 @@ class _NoPetView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
         const SizedBox(height: 80),
-        const Center(child: Icon(Icons.pets, size: 72, color: Colors.grey)),
+        Center(child: Icon(Icons.pets, size: 72, color: isDark ? Colors.white30 : Colors.grey)),
         const SizedBox(height: 16),
         Center(
           child: Text(l10n.taNoPet(name),
@@ -229,7 +231,7 @@ class _NoPetView extends StatelessWidget {
             child: Text(
               l10n.taNoPetHint,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+              style: TextStyle(fontSize: 13, color: isDark ? Colors.white54 : Colors.grey.shade500),
             ),
           ),
         ),
@@ -246,13 +248,14 @@ class _ErrorView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(l10n.loadFailed, style: TextStyle(color: Colors.grey.shade600)),
+          Text(l10n.loadFailed, style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.shade600)),
           const SizedBox(height: 4),
-          Text(message, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          Text(message, style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.grey)),
           const SizedBox(height: 12),
           FilledButton.tonal(onPressed: onRetry, child: Text(l10n.retry)),
         ],
@@ -269,6 +272,7 @@ class _StatBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final color = value < 30
         ? Colors.red.shade400
         : value < 60
@@ -278,7 +282,7 @@ class _StatBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          Icon(icon, size: 20, color: Colors.grey.shade600),
+          Icon(icon, size: 20, color: isDark ? Colors.white54 : Colors.grey.shade600),
           const SizedBox(width: 8),
           SizedBox(width: 52, child: Text(label, style: const TextStyle(fontSize: 13))),
           Expanded(
@@ -287,7 +291,7 @@ class _StatBar extends StatelessWidget {
               child: LinearProgressIndicator(
                 value: value.clamp(0, 100) / 100.0,
                 minHeight: 10,
-                backgroundColor: Colors.grey.shade200,
+                backgroundColor: isDark ? Colors.white12 : Colors.grey.shade200,
                 color: color,
               ),
             ),

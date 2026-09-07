@@ -2,12 +2,15 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/character.dart';
 import '../../models/character_state.dart';
+import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
+import '../../theme/skins/aegean/aegean_motifs.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/avatar_crop_screen.dart';
 import '../../widgets/ios_card_group.dart';
@@ -718,12 +721,19 @@ class _CharacterDetailScreenState extends State<CharacterDetailScreen> {
 
   /// 头像圆（点击更换 / 长按气泡浮层）；水平滑动交给外层 [CharacterEntryCarousel]。
   Widget _buildAvatarCircle(ColorScheme scheme) {
+    // §6.6：aegean 头像背后衬一层 AegeanWingedOrb（双翼在头像两侧轻露）；其它皮肤零变化。
+    final isAegean = Provider.of<SettingsProvider?>(context, listen: false)?.skinId == 'aegean';
     return GestureDetector(
       onTap: _uploadingAvatar ? null : _changeAvatar,
       onLongPress: _openBubbleOverlay,
       child: Stack(
         alignment: Alignment.center,
         children: [
+          if (isAegean)
+            Transform.translate(
+              offset: const Offset(0, 4),
+              child: const AegeanWingedOrb(size: 150),
+            ),
           Container(
             width: 96,
             height: 96,

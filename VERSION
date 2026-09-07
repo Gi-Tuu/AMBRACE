@@ -1,9 +1,15 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.4.5
-DATE: 2026-09-06
-STATUS: 开源发布版 v3.4.5（多 ClawBot + 网关守护自愈 + 稳定性加固）
+VERSION: 3.4.6
+DATE: 2026-09-07
+STATUS: 开源发布版 v3.4.6（爱琴海典藏皮肤 + 记忆推进）
 
 CHANGELOG:
+
+3.4.6 - Release (2026-09-07)
+  - Skin: 新增第 7 款「爱琴海典藏 / Aegean Codex」皮肤——羊皮纸/星夜双版；公式几何重做（三柱/桂冠/卡框），含真机修复与深色适配
+  - Memory: 前瞻意图抽取放宽口径（低置信也写并带置信标记，写入观察段）；M3-b 工作记忆注入 char13 小流量灰度（15% 会话，其余角色零变化）
+  - Ops: channel_binding_v2 灰度转正（正式默认行为）
+  - Tests: backend pytest 1714 passed / 2 skipped；ruff 0；flutter analyze 0 / flutter test 426
 
 3.4.5 - Release (2026-09-06)
   - Wechat: 多 ClawBot 开放——稳定键坐实（重扫不换号）、双 bot 并存各绑角色、App 内添加/解绑/重绑闭环（免重扫码）

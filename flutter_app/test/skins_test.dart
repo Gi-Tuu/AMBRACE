@@ -14,14 +14,19 @@ void main() {
   });
 
   group('SkinRegistry', () {
-    test('initialize 注册 6 款内置皮肤', () {
-      expect(SkinRegistry.all.length, 6);
-      expect(SkinRegistry.ids, containsAll(['ios', 'warm', 'material', 'paper', 'neon', 'glass']));
+    test('initialize 注册 7 款内置皮肤', () {
+      expect(SkinRegistry.all.length, 7);
+      expect(SkinRegistry.ids, containsAll(['ios', 'warm', 'material', 'paper', 'neon', 'glass', 'aegean']));
     });
 
     test('glass 注册为第 6 个皮肤', () {
       expect(SkinRegistry.ids.indexOf('glass'), 5);
       expect(SkinRegistry.has('glass'), isTrue);
+    });
+
+    test('aegean 注册为第 7 个皮肤', () {
+      expect(SkinRegistry.ids.indexOf('aegean'), 6);
+      expect(SkinRegistry.has('aegean'), isTrue);
     });
 
     test('get 未知 id 回退到默认 ios', () {
@@ -60,6 +65,26 @@ void main() {
     test('neon 皮肤深色正常生效', () {
       final neonDark = AppTheme.dark(0, skinId: 'neon');
       expect(neonDark.scaffoldBackgroundColor, const Color(0xFF050508));
+    });
+
+    test('aegean 皮肤支持深浅色，深色不回退 ios；scaffold 透明交给 AppBackground 画纸面', () {
+      final darkTheme = AppTheme.dark(0, skinId: 'aegean');
+      final lightTheme = AppTheme.light(0, skinId: 'aegean');
+      // 真机反馈：不透明 scaffold 会盖住 L0 背景纹样 → 与 glass 同机制改透明
+      expect(darkTheme.scaffoldBackgroundColor, Colors.transparent);
+      expect(lightTheme.scaffoldBackgroundColor, Colors.transparent);
+      expect(darkTheme.brightness, Brightness.dark); // 仍走 aegean 夜阑色板，未回退 ios
+    });
+
+    test('aegean 皮肤不随 seed 变化（固定赤陶用户气泡）', () {
+      final theme0 = AppTheme.light(0, skinId: 'aegean');
+      final theme2 = AppTheme.light(2, skinId: 'aegean');
+      final colors0 = theme0.extension<SkinColors>()!;
+      final colors2 = theme2.extension<SkinColors>()!;
+      expect(colors0.bubbleUser, colors2.bubbleUser);
+      // 固定赤陶，不随 seed（蓝/紫等 seed 色）变化
+      expect(colors0.bubbleUser, isNot(AppTheme.seedColorAt(0)));
+      expect(colors0.bubbleUser, isNot(AppTheme.seedColorAt(2)));
     });
 
     test('不同 seedColorIndex 影响用户气泡色', () {

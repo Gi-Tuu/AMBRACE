@@ -3840,6 +3840,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get skinNameGlass => 'Aurora Glass';
 
   @override
+  String get skinNameAegean => 'Aegean Codex';
+
+  @override
   String get glassAuroraEnd => 'End color';
 
   @override

@@ -8,6 +8,10 @@ import '../../providers/chat_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
 import '../../services/fcm_push_service.dart';
+import '../../theme/skins/aegean/aegean_motifs.dart';
+import '../../theme/skins/aegean/aegean_architects.dart';
+import '../../theme/skins/aegean/aegean_geometry.dart';
+import '../../theme/skins/aegean/aegean_palette.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/app_page_route.dart';
 import '../../features/chat/chat_screen.dart';
@@ -372,8 +376,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Scaffold(
-      body: SafeArea(
+    // §6.6：aegean 引导页左右边缘放低透明石柱水印；其它皮肤零变化。
+    final isAegean = context.watch<SettingsProvider>().skinId == 'aegean';
+    final b = Theme.of(context).brightness;
+    final body = SafeArea(
         child: Column(
           children: [
             _header(l10n),
@@ -389,7 +395,42 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             _footer(l10n),
           ],
         ),
-      ),
+      );
+    return Scaffold(
+      body: isAegean
+          ? Stack(
+              fit: StackFit.expand,
+              children: [
+                Positioned(
+                  left: 6,
+                  child: Center(
+                    child: SizedBox(
+                      width: 44, height: 200,
+                      child: AegeanColumn(
+                        order: AegeanOrder.ionic,
+                        color: AegeanPalette.goldDeep(b),
+                        opacity: 0.4,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  right: 6,
+                  child: Center(
+                    child: SizedBox(
+                      width: 44, height: 200,
+                      child: AegeanColumn(
+                        order: AegeanOrder.ionic,
+                        color: AegeanPalette.goldDeep(b),
+                        opacity: 0.4,
+                      ),
+                    ),
+                  ),
+                ),
+                body,
+              ],
+            )
+          : body,
     );
   }
 
@@ -516,10 +557,24 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   Widget _title(AppLocalizations l10n, String title, String desc) {
     final scheme = Theme.of(context).colorScheme;
+    final isAegean = context.watch<SettingsProvider>().skinId == 'aegean';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        isAegean
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Transform.flip(flipX: true, child: AegeanWings(size: 22, both: false)),
+                  const SizedBox(width: 8),
+                  Text(title,
+                      style: const TextStyle(
+                          fontSize: 22, fontWeight: FontWeight.bold, fontFamily: 'serif')),
+                  const SizedBox(width: 8),
+                  AegeanWings(size: 22, both: false),
+                ],
+              )
+            : Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
         const SizedBox(height: 6),
         Text(desc, style: TextStyle(fontSize: AppTypography.bodySize, color: scheme.onSurfaceVariant)),
         const SizedBox(height: AppSpacing.lg),

@@ -1,10 +1,12 @@
 import "package:flutter/material.dart";
+import "package:provider/provider.dart";
 import "package:url_launcher/url_launcher.dart";
 import "package:audioplayers/audioplayers.dart";
 import "../utils/stage_text.dart";
 import "../utils/beijing_time.dart";
 import "../theme/tokens.dart";
 import "../theme/skins/skin_colors.dart";
+import "../providers/settings_provider.dart";
 import "package:ai_companion/l10n/app_localizations.dart";
 
 class MessageBubble extends StatelessWidget {
@@ -194,6 +196,9 @@ class MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    // §6.6：仅 aegean 皮肤给 AI 气泡加 0.8 金发丝边；用户气泡与你消息流不加。
+    // 未包裹 Provider 的测试环境按 false 兜底（非 aegean 路径零变化）。
+    final isAegean = Provider.of<SettingsProvider?>(context, listen: false)?.skinId == 'aegean';
     final stage = StageText.parse(message);
     // 皮肤色：有 SkinColors 扩展时用皮肤气泡色，否则回退到 Material3 默认。
     // B3：用户气泡在皮肤色之上叠加主题色渐变（primary → primary@0.85）+ 白色文字；
@@ -231,6 +236,12 @@ class MessageBubble extends StatelessWidget {
               )
             : null,
         boxShadow: AppShadow.light,
+        border: (isAegean && !isUser)
+            ? Border.all(
+                color: Theme.of(context).colorScheme.outlineVariant,
+                width: 0.8,
+              )
+            : null,
         borderRadius: BorderRadius.only(
           topLeft: const Radius.circular(18),
           topRight: const Radius.circular(18),

@@ -250,7 +250,7 @@ class _WeaveLibraryScreenState extends State<WeaveLibraryScreen> {
     final l10n = AppLocalizations.of(context)!;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor: AppColors.bgLight,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         // Aurora P8 玻璃顶栏：半透明背景 + 0.5px 描边（不加 BackdropFilter）
         backgroundColor: isDark
@@ -312,7 +312,7 @@ class _WeaveLibraryScreenState extends State<WeaveLibraryScreen> {
   Widget _buildDomainSwitch() {
     final l10n = AppLocalizations.of(context)!;
     return Container(
-      color: Colors.white,
+      color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1E1E2A) : Colors.white,
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
       child: SegmentedButton<String>(
         segments: [
@@ -336,7 +336,7 @@ class _WeaveLibraryScreenState extends State<WeaveLibraryScreen> {
   Widget _buildTools() {
     final l10n = AppLocalizations.of(context)!;
     return Container(
-      color: Colors.white,
+      color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1E1E2A) : Colors.white,
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
       child: Row(
         children: [
@@ -382,7 +382,7 @@ class _WeaveLibraryScreenState extends State<WeaveLibraryScreen> {
   Widget _buildRoleChips() {
     final l10n = AppLocalizations.of(context)!;
     return Container(
-      color: Colors.white,
+      color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1E1E2A) : Colors.white,
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: SizedBox(
         height: 34,
@@ -415,14 +415,14 @@ class _WeaveLibraryScreenState extends State<WeaveLibraryScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 14),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: selected ? AppColors.accent : AppColors.bgLight,
+            color: selected ? AppColors.accent : (Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1E1E2A) : AppColors.bgLight),
             borderRadius: BorderRadius.circular(17),
           ),
           child: Text(
             label,
             style: TextStyle(
               fontSize: 13,
-              color: selected ? Colors.white : AppColors.textStrong,
+              color: selected ? Colors.white : (Theme.of(context).brightness == Brightness.dark ? Colors.white70 : AppColors.textStrong),
               fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
             ),
           ),
@@ -500,8 +500,8 @@ class _DedupSheet extends StatelessWidget {
       constraints: BoxConstraints(
         maxHeight: MediaQuery.of(context).size.height * 0.72,
       ),
-      decoration: const BoxDecoration(
-        color: AppColors.bgLight,
+      decoration: BoxDecoration(
+        color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1E1E2A) : AppColors.bgLight,
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
@@ -539,7 +539,7 @@ class _DedupSheet extends StatelessWidget {
                     padding: const EdgeInsets.all(10),
                     margin: const EdgeInsets.only(bottom: 8),
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1E1E2A) : Colors.white,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Column(
