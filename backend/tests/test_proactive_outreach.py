@@ -386,3 +386,98 @@ def test_motivation_candidate_idle_failure_quiet(monkeypatch):
     items = asyncio.run(arbiter.collect_motivation_events())
     assert len(items) == 1
     assert items[0]["candidate"]["idle_minutes"] is None
+
+
+# ═══════════════════ Sam 主动消息错接昨晚剧情修复（2026-09-08）：F2/F3 ═══════════════════
+
+def test_topic_when_labels_beijing_natural_days(topic_db):
+    """F3：话题时间标签按北京自然日——昨晚 23:04 →「昨天聊到的」；今天凌晨后 →「今天聊到的」。"""
+    from app.agent.topic_tracker import load_active_topics_text, load_fresh_active_topics_text
+    from app.models.character import AICharacter
+    from app.models.memory import ConversationTopic
+
+    now = datetime(2026, 9, 8, 4, 5)  # UTC = 北京 09-08 12:05（事发时刻）
+
+    async def _seed():
+        async with topic_db() as db:
+            db.add(AICharacter(id=23, user_id=1, name="t"))
+            await db.commit()
+            db.add(ConversationTopic(character_id=23, user_id=1, topic="早点起来", status="进行中",
+                                     importance=0.8, goal=False,
+                                     last_touched_at=datetime(2026, 9, 7, 15, 4)))  # 北京 09-07 23:04（昨晚）
+            db.add(ConversationTopic(character_id=23, user_id=1, topic="今天午饭", status="进行中",
+                                     importance=0.7, goal=False,
+                                     last_touched_at=datetime(2026, 9, 8, 2, 30)))  # 北京 09-08 10:30（今天）
+            db.add(ConversationTopic(character_id=23, user_id=1, topic="前几天菜谱", status="进行中",
+                                     importance=0.6, goal=False,
+                                     last_touched_at=datetime(2026, 9, 5, 10, 0)))  # 北京 09-05 18:00（前几天）
+            await db.commit()
+
+    asyncio.run(_seed())
+    out = asyncio.run(load_active_topics_text(23, 1, now=now))
+    assert "早点起来（昨天聊到的）" in out           # 修复前：13h<24h 被标「今天聊到的」
+    assert "今天午饭（今天聊到的）" in out
+    assert "前几天菜谱（前几天聊到的）" in out
+    fresh = asyncio.run(load_fresh_active_topics_text(23, 1, now=now))
+    assert "早点起来（昨天聊到的）" in fresh
+    assert "今天午饭（今天聊到的）" in fresh
+    assert "前几天菜谱（前几天聊到的）" in fresh
+
+
+def test_fresh_goal_over_72h_keeps_goal_label(topic_db):
+    """F3：goal 超过 72h（14d 内）仍标「你之前定下的目标」，72h/14d 过滤边界数值不动。"""
+    from app.agent.topic_tracker import load_fresh_active_topics_text
+    from app.models.character import AICharacter
+    from app.models.memory import ConversationTopic
+
+    now = datetime(2026, 9, 8, 4, 5)
+
+    async def _seed():
+        async with topic_db() as db:
+            db.add(AICharacter(id=24, user_id=1, name="t"))
+            await db.commit()
+            db.add(ConversationTopic(character_id=24, user_id=1, topic="学吉他", status="进行中",
+                                     importance=0.9, goal=True, progress="进行中",
+                                     last_touched_at=datetime(2026, 9, 2, 0, 0)))  # >72h，14d 内
+            await db.commit()
+
+    asyncio.run(_seed())
+    fresh = asyncio.run(load_fresh_active_topics_text(24, 1, now=now))
+    assert "学吉他（你之前定下的目标）" in fresh
+    assert "🎯学吉他" in fresh
+
+
+def test_active_channel_persona_uses_fresh_topics(topic_db, monkeypatch):
+    """F2：build_active_channel_persona 进行中话题走时效版（fresh），不再用 assemble 的无时效 active_topics。"""
+    from app.agent import persona as persona_mod
+    from app.models.character import AICharacter
+    from app.models.memory import ConversationTopic
+
+    now = datetime.utcnow()
+
+    async def _seed():
+        async with topic_db() as db:
+            db.add(AICharacter(id=25, user_id=1, name="t"))
+            await db.commit()
+            db.add(ConversationTopic(character_id=25, user_id=1, topic="新鲜话题", status="进行中",
+                                     importance=0.8, goal=False, last_touched_at=now - timedelta(hours=1)))
+            db.add(ConversationTopic(character_id=25, user_id=1, topic="陈旧话题", status="进行中",
+                                     importance=0.9, goal=False, last_touched_at=now - timedelta(days=5)))
+            await db.commit()
+
+    asyncio.run(_seed())
+
+    async def _fake_assemble(cid, uid, platform="app"):
+        return {
+            "cognitive": True,
+            "relationship_state": "关系温度（自然体现，别念数据）：信任80",
+            "storyline_status": "无",
+            "active_topics": "- 陈旧话题（之前聊到的）",  # 无时效版会注入的陈旧话题
+        }
+
+    monkeypatch.setattr(persona_mod, "assemble_persona_context", _fake_assemble)
+    out = asyncio.run(persona_mod.build_active_channel_persona(25, 1))
+    assert "新鲜话题" in out                        # fresh 版注入
+    assert "陈旧话题" not in out                    # 陈旧话题（>72h）不再进入主动 persona
+    assert "关系温度" in out                        # relationship_state 保持不变
+    assert "优先承接进行中的话题" in out

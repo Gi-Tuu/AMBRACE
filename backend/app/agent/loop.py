@@ -144,6 +144,13 @@ AGENT_FLAGS = {
     #   关=渠道插件/读取层回落旧全局 config allowed_character_ids 串（单主部署语义等价，零行为变化）。
     #   新表/新列迁移幂等常驻（alembic a7b8c9d0e1f2），关 flag 即全链路回退、无数据删除。
     "channel_binding_v2": False,
+    # ── 3.10 chat/moment 事件流水（2026-09-08，方案路线 A：outbox-lite）──
+    # domain_event_log_enabled 开=业务 commit 成功后以独立 session 追加一条 append-only 领域事件
+    #   （domain_events 表；只写不读，主表仍是唯一权威读源，不是经典 Event Sourcing）；
+    #   关=append_domain_event 首行即 return，全链路零写入、零行为变化（一键回退，无需回滚代码/迁移）。
+    #   默认关（灰度）；开法：本 key 已登记进 AGENT_FLAGS，重启服务加载新代码后即可经
+    #   flag_service.set_runtime_flag（写 runtime_flags 行 + 热更新内存）API 热切，无需再重启。
+    "domain_event_log_enabled": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

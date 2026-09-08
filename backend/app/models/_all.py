@@ -17,6 +17,7 @@ from app.models.social import PlatformProfile, SocialMemory  # X5：渠道自有
 from app.models.device import PhoneDesktop, PhoneLayout, CalendarNote, BrowserHistory, MemoNote, PhoneSnapshot, CheckInRequest, PhoneAutoState, UserDeviceToken
 from app.models.game import GameSession, GamePlayer, GameEvent, GameMemory
 from app.models.channel import ChannelBinding  # 一机多主：渠道绑定内核一等公民（2026-09-05）
+from app.models.domain_event import DomainEvent  # 3.10 事件流水（append-only，2026-09-08）
 
 __all__ = [
     "Base",
@@ -44,6 +45,7 @@ __all__ = [
     "CheckInRequest",
     "ConversationTopic",
     "DailySummary",
+    "DomainEvent",
     "EmotionCareTask",
     "HolidayPreference",
     "ImageGenConfig",

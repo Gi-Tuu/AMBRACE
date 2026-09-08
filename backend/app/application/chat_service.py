@@ -38,6 +38,8 @@ from app.application.chat.io import (
     _push_ws_ai_message as _push_ws_ai_message,
     _push_user_notify as _push_user_notify,
 )
+from app.events.store import append_domain_event
+from app.events.types import EventType as _ET
 from app.application.chat.streaming import (
     _assemble_chunk_meta as _assemble_chunk_meta,
     _update_chunk_meta as _update_chunk_meta,
@@ -106,6 +108,14 @@ async def create_session(user_id: int, character_id: int) -> dict:
             await db.flush()
             await db.commit()
         await db.commit()
+        # 3.10 事件流水（P0）：仅新建分支发会话创建事件（复用分支上面已 return）
+        await append_domain_event(
+            _ET.CHAT_SESSION_CREATED.value, "chat_session", session.id,
+            entity_type="chat_session", entity_id=session.id,
+            actor_type="user", actor_id=user_id,
+            payload={"character_id": character_id, "with_greeting": bool(greeting)},
+            origin="user_message",
+        )
         _logger.info("New session created: id=%d char=%d greeting=%s", session.id, character_id, bool(greeting))
         return {"id": session.id, "character_id": character_id, "greeting": greeting}
 
@@ -339,6 +349,17 @@ async def _persist_user_message(
             "content": um.content, "created_at": um.created_at.isoformat(),
             "extra_meta": um.extra_meta,
         }
+    # 3.10 事件流水（P0）：用户消息（HTTP/WS-chunked/SSE 三路径统一口；save_user_message=False 时不发）
+    if user_msg_id:
+        await append_domain_event(
+            _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
+            entity_type="chat_message", entity_id=user_msg_id,
+            actor_type="user", actor_id=user_id,
+            payload={"sender_type": "user", "route": "persist",
+                     "content": content, "has_quote": bool(quote)},
+            idempotency_key=f"chat.message_sent:chat_message:{user_msg_id}",
+            origin="user_message",
+        )
     # Shared Memory（Phase C，2026-08-14）：用户消息含“记住/第一次/纪念日”等标记意图 → 异步创建共同经历
     if shared_memory:
         try:
@@ -946,6 +967,16 @@ async def send_and_receive(
         await db.commit()
         await db.refresh(ai_msg)
 
+    # 3.10 事件流水（P0）：AI 单条回复（HTTP 路径）
+    await append_domain_event(
+        _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
+        entity_type="chat_message", entity_id=ai_msg.id,
+        actor_type="ai", actor_id=character_id,
+        payload={"sender_type": "ai", "route": "http", "content": ai_msg.content},
+        idempotency_key=f"chat.message_sent:chat_message:{ai_msg.id}",
+        origin="ai_message",
+    )
+
     await _push_user_notify(user_id, session_id, character_id, ai_msg.content)
 
     # 公共收尾（HTTP 专属：可靠度信号 + 异步事实核查）
@@ -954,6 +985,16 @@ async def send_and_receive(
         final_state, final_text, ai_msg.id, user_msg_id,
         reliability=True,
         gen_prompt=gen_prompt, img_text=img_text,
+    )
+
+    # 3.10 事件流水（P0）：一轮 user→ai 清算（幂等键绑 user_msg_id，三路径只落一条）
+    await append_domain_event(
+        _ET.CHAT_TURN_COMPLETED.value, "chat_session", session_id,
+        actor_type="system",
+        payload={"user_message_id": user_msg_id, "ai_message_ids": [ai_msg.id],
+                 "route": "http", "block_count": 1},
+        idempotency_key=f"chat.turn_completed:{session_id}:{user_msg_id}",
+        origin="ai_message",
     )
 
     _logger.info("AI response saved: msg_id=%d len=%d", ai_msg.id, len(ai_msg.content))
@@ -1080,6 +1121,18 @@ async def send_and_receive_chunked(
             saved_chunks.append(chunk_item)
         await db.commit()
 
+    # 3.10 事件流水（P0）：AI 分块回复（WS 路径，commit 成功后逐块落事件）
+    _chunk_ai_ids = [(c["id"], c.get("content") or "") for c in saved_chunks]
+    for _mid, _txt in _chunk_ai_ids:
+        await append_domain_event(
+            _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
+            entity_type="chat_message", entity_id=_mid,
+            actor_type="ai", actor_id=character_id,
+            payload={"sender_type": "ai", "route": "ws_chunk", "content": _txt},
+            idempotency_key=f"chat.message_sent:chat_message:{_mid}",
+            origin="ai_message",
+        )
+
     await _push_user_notify(user_id, session_id, character_id, full_text)
 
     # 公共收尾（流式路径：G-P2-1，可靠度/事实核查与 HTTP 同一入口、同一参数；纯异步调度不阻塞推送）
@@ -1088,6 +1141,16 @@ async def send_and_receive_chunked(
         final_state, full_text, saved_chunks[0]["id"] if saved_chunks else None, user_msg_id,
         reliability=True,
         gen_prompt=gen_prompt, img_text=img_text,
+    )
+
+    # 3.10 事件流水（P0）：一轮清算（与 SSE 路径共用幂等键 → 回退也只落一条）
+    await append_domain_event(
+        _ET.CHAT_TURN_COMPLETED.value, "chat_session", session_id,
+        actor_type="system",
+        payload={"user_message_id": user_msg_id, "ai_message_ids": [i for i, _ in _chunk_ai_ids],
+                 "route": "ws_chunk", "block_count": len(_chunk_ai_ids)},
+        idempotency_key=f"chat.turn_completed:{session_id}:{user_msg_id}",
+        origin="ai_message",
     )
 
     _logger.info("Chunked: %d chunks from %d chars", len(saved_chunks), len(full_text))
@@ -1213,6 +1276,16 @@ async def continue_chat(
         await db.commit()
         await db.refresh(ai_msg)
 
+    # 3.10 事件流水（P0）：AI 连续回复（不发 turn_completed——无新用户消息，保持「一轮一清算」）
+    await append_domain_event(
+        _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
+        entity_type="chat_message", entity_id=ai_msg.id,
+        actor_type="ai", actor_id=character_id,
+        payload={"sender_type": "ai", "route": "continue", "content": full_text},
+        idempotency_key=f"chat.message_sent:chat_message:{ai_msg.id}",
+        origin="ai_message",
+    )
+
     _logger.info("Continue chat: session=%d msg_id=%d", session_id, ai_msg.id)
     return {
         "id": ai_msg.id, "session_id": session_id, "sender_type": "ai",
@@ -1281,4 +1354,12 @@ async def mark_session_read(db, session_id: int, user_id: int) -> bool:
         {"t": now, "u": session.user_id, "c": session.character_id},
     )
     await db.commit()
+    # 3.10 事件流水（P0）：已读流转（含同角色其他活跃会话联动；幂等键绑本次时间戳）
+    await append_domain_event(
+        _ET.CHAT_SESSION_READ.value, "chat_session", session_id,
+        actor_type="user", actor_id=user_id,
+        payload={"last_read_at": now.isoformat(), "character_id": session.character_id},
+        idempotency_key=f"chat.session_read:{session_id}:{now.isoformat()}",
+        origin="user_message",
+    )
     return True

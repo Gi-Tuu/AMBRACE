@@ -17,6 +17,38 @@ from app.utils.logger import get_logger
 
 _logger = get_logger("scheduler.life_regression")
 
+# F1（2026-09-08，Sam 主动消息错接昨晚剧情 P0）：主动生成时间锚点——
+# 生活回归不再把几天前的素材（如 9 月 3 日事件）说成"昨天/刚刚"。
+_CN_WEEKDAYS = "一二三四五六日"
+
+
+def _cn_noon_label(hour: int) -> str:
+    """小时 → 中文午别（凌晨/早上/上午/中午/下午/晚上/深夜）。"""
+    if hour < 5:
+        return "凌晨"
+    if hour < 9:
+        return "早上"
+    if hour < 11:
+        return "上午"
+    if hour < 14:
+        return "中午"
+    if hour < 18:
+        return "下午"
+    if hour < 23:
+        return "晚上"
+    return "深夜"
+
+
+def _cn_now_prefix(now: datetime | None = None) -> str:
+    """F1：当前时间锚点（应用本地=北京时间），如「现在是北京时间 2026年9月8日 星期二 中午 12:05。」"""
+    if now is None:
+        from app.utils.timeutil import app_local_now
+        now = app_local_now()
+    return (f"现在是北京时间 {now.year}年{now.month}月{now.day}日 "
+            f"星期{_CN_WEEKDAYS[now.weekday()]} {_cn_noon_label(now.hour)} "
+            f"{now.hour:02d}:{now.minute:02d}。")
+
+
 EVENT_TYPE = "life_regression"
 MAX_PER_DAY = 1            # 每角色每日最多 1 次
 LOOKBACK_HOURS = 24        # 检索近 24h 的生活记忆
@@ -167,6 +199,7 @@ async def run_life_regression(candidate: dict) -> bool:
                 identity = f"你是{char_name}，性格{char.personality or '友善'}。\n"
         lines = "\n".join(f"- {it['content']}" for it in items)
         hint = (
+            f"{_cn_now_prefix()}\n"
             f"{identity}"
             f"你是{char_name}，最近你的生活里发生了这些事：\n{lines}\n"
             "现在你和用户聊天，请像朋友一样自然地提起其中 1 件（1-2 句话，像随口分享自己的近况，"

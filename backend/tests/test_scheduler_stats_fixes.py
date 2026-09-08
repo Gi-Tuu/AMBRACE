@@ -260,4 +260,5 @@ def test_alembic_migration_creates_new_tables(monkeypatch):
     assert "user_facts" in names  # §20（2026-09-04）跨角色用户事实层新表
     assert "group_memories" in names  # #72（2026-09-04）群共享长期记忆子库新表
     assert "alembic_version" in names
-    assert len(names) == 106  # 94 张应用表 + 4 张游戏表 + user_llm_configs + user_device_tokens + memory_archive(#70 C) + prospective_intents(模块G) + user_facts(§20) + group_memories(#72) + channel_bindings(一机多主) + alembic_version
+    assert "domain_events" in names  # 3.10 事件流水（2026-09-08，append-only outbox-lite）
+    assert len(names) == 107  # 94 张应用表 + 4 张游戏表 + user_llm_configs + user_device_tokens + memory_archive(#70 C) + prospective_intents(模块G) + user_facts(§20) + group_memories(#72) + channel_bindings(一机多主) + domain_events(3.10) + alembic_version

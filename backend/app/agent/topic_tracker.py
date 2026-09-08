@@ -6,6 +6,7 @@
 """
 import re
 import time
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -72,6 +73,23 @@ def _overlap(a: str, b: str) -> bool:
         if a[i:i + 4] in b:
             return True
     return False
+
+
+# F3（2026-09-08，Sam 主动消息错接昨晚剧情 P0）：话题时间标签按北京自然日，
+# 不再用 24h 滑动窗口——昨晚 23:04 的话题在次日中午不再被标成"今天聊到的"。
+_BJ_TZ = timezone(timedelta(hours=8))
+
+
+def _cn_day_when_label(last_utc_naive: datetime, now_utc_naive: datetime) -> str:
+    """last/now（均为 UTC naive）按北京自然日比较 → 今天聊到的/昨天聊到的/前几天聊到的。"""
+    last_bj = last_utc_naive.replace(tzinfo=timezone.utc).astimezone(_BJ_TZ)
+    now_bj = now_utc_naive.replace(tzinfo=timezone.utc).astimezone(_BJ_TZ)
+    days = (now_bj.date() - last_bj.date()).days
+    if days <= 0:
+        return "今天聊到的"
+    if days == 1:
+        return "昨天聊到的"
+    return "前几天聊到的"
 
 
 async def maybe_extract_topics(
@@ -236,8 +254,8 @@ async def load_active_goal_queries(character_id: int, user_id: int, limit: int =
         return []
 
 
-async def load_active_topics_text(character_id: int, user_id: int) -> str:
-    """注入文本：进行中话题 top3（带最后提及时间相对描述）"""
+async def load_active_topics_text(character_id: int, user_id: int, now: datetime | None = None) -> str:
+    """注入文本：进行中话题 top3（带最后提及时间相对描述；now 仅供测试注入，UTC naive）"""
     try:
         from datetime import datetime, timezone
         async with async_session_factory() as db:
@@ -252,15 +270,19 @@ async def load_active_topics_text(character_id: int, user_id: int) -> str:
             )).scalars().all()
         if not rows:
             return ""
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = now or datetime.now(timezone.utc).replace(tzinfo=None)
         lines = []
         for r in rows:
             last = r.last_touched_at
             last = last.replace(tzinfo=None) if last and last.tzinfo else last
             when = ""
             if last is not None:
-                hours = (now - last).total_seconds() / 3600.0
-                when = "（今天聊到的）" if hours < 24 else ("（前几天聊到的）" if hours < 72 else "（之前聊到的）")
+                age_h = (now - last).total_seconds() / 3600.0
+                # F3：北京自然日标签（今天/昨天/前几天）；>72h 仍标"之前聊到的"
+                if age_h > 72:
+                    when = "（之前聊到的）"
+                else:
+                    when = f"（{_cn_day_when_label(last, now)}）"
             mark = "🎯" if r.goal else ""
             lines.append(f"- {mark}{r.topic}{when}")
         return "\n".join(lines)
@@ -269,7 +291,7 @@ async def load_active_topics_text(character_id: int, user_id: int) -> str:
         return ""
 
 
-async def load_fresh_active_topics_text(character_id: int, user_id: int) -> str:
+async def load_fresh_active_topics_text(character_id: int, user_id: int, now: datetime | None = None) -> str:
     """B1-③（2026-09-04，方案 §5.2）主动接触专用：仅返回时效内的进行中话题。
 
     与主聊天 ``load_active_topics_text`` 不同，本函数给进行中话题加时效治理：
@@ -290,7 +312,7 @@ async def load_fresh_active_topics_text(character_id: int, user_id: int) -> str:
                 .order_by(ConversationTopic.importance.desc(),
                           ConversationTopic.last_touched_at.desc())
             )).scalars().all()
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = now or datetime.now(timezone.utc).replace(tzinfo=None)
         lines = []
         for r in rows:
             last = r.last_touched_at
@@ -301,8 +323,11 @@ async def load_fresh_active_topics_text(character_id: int, user_id: int) -> str:
             max_h = PROACTIVE_GOAL_MAX_DAYS * 24 if r.goal else PROACTIVE_FRESH_TOPIC_HOURS
             if age_h > max_h:
                 continue  # 过期：不主动续
-            when = ("（今天聊到的）" if age_h < 24 else
-                    "（前几天聊到的）" if age_h < 72 else "（你之前定下的目标）")
+            # F3：北京自然日标签；goal 超过 72h（14d 内）仍按"你之前定下的目标"语义
+            if r.goal and age_h > PROACTIVE_FRESH_TOPIC_HOURS:
+                when = "（你之前定下的目标）"
+            else:
+                when = f"（{_cn_day_when_label(last, now)}）"
             mark = "🎯" if r.goal else ""
             lines.append(f"- {mark}{r.topic}{when}")
         return "\n".join(lines[:MAX_INJECT_TOPICS])

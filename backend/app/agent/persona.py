@@ -229,11 +229,20 @@ async def build_active_channel_persona(character_id: int, user_id: int) -> str:
         return ""
     if not p.get("cognitive"):
         return ""
+    # F2（2026-09-08，Sam 主动消息错接昨晚剧情 P0）：主动通道进行中话题改用时效版
+    # load_fresh_active_topics_text（B1-③ 72h/14d 治理），不再取 assemble 的无时效 active_topics——
+    # 昨晚的瞬态约定不再被当"今天聊到的"强制承接；主聊天链路（assemble_persona_context 直接调用方）不动。
+    fresh_topics = ""
+    try:
+        from app.agent.topic_tracker import load_fresh_active_topics_text
+        fresh_topics = await load_fresh_active_topics_text(character_id, user_id)
+    except Exception as e:
+        _logger.warning("Persona: fresh active topics failed: %s", e)
     parts = []
     if p.get("relationship_state"):
         parts.append(p["relationship_state"])
     if p.get("storyline_status") and p["storyline_status"] != "无":
         parts.append(p["storyline_status"])
-    if p.get("active_topics"):
-        parts.append("你们进行中的话题（优先承接进行中的话题，别生硬）：\n" + p["active_topics"])
+    if fresh_topics:
+        parts.append("你们进行中的话题（优先承接进行中的话题，别生硬）：\n" + fresh_topics)
     return "\n".join(parts)

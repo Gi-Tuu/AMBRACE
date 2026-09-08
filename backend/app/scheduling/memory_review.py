@@ -28,6 +28,95 @@ _logger = get_logger("scheduler.memory_review")
 REVIEW_TYPE = "memory_review"
 _TYPE_LABEL = {"user_info": "关于你的事", "preference": "你的喜好", "event": "发生过的事", "insight": "我的一些想法"}
 
+# F1/F4/F5（2026-09-08，Sam 主动消息错接昨晚剧情 P0）：
+# 主动复习生成注入"现在"时间锚点 + 最近聊天"场景已结束"标注 + 轻量防复读闸门。
+_CN_WEEKDAYS = "一二三四五六日"
+
+
+def _cn_noon_label(hour: int) -> str:
+    """小时 → 中文午别（凌晨/早上/上午/中午/下午/晚上/深夜）。"""
+    if hour < 5:
+        return "凌晨"
+    if hour < 9:
+        return "早上"
+    if hour < 11:
+        return "上午"
+    if hour < 14:
+        return "中午"
+    if hour < 18:
+        return "下午"
+    if hour < 23:
+        return "晚上"
+    return "深夜"
+
+
+def _cn_now_prefix(now: datetime | None = None) -> str:
+    """F1：当前时间锚点（应用本地=北京时间），如「现在是北京时间 2026年9月8日 星期二 中午 12:05。」"""
+    if now is None:
+        from app.utils.timeutil import app_local_now
+        now = app_local_now()
+    return (f"现在是北京时间 {now.year}年{now.month}月{now.day}日 "
+            f"星期{_CN_WEEKDAYS[now.weekday()]} {_cn_noon_label(now.hour)} "
+            f"{now.hour:02d}:{now.minute:02d}。")
+
+
+def _recent_context_line(recent_context: str, gap_hours: float | None,
+                         last_msg_at: datetime | None) -> str:
+    """F4：最近聊天注入——距今 >2h 标注「场景已结束」，防止把昨晚哄睡语境当可续写的当下场景。"""
+    if not recent_context:
+        return ""
+    if gap_hours is None or gap_hours <= 2:
+        return f"\n你们最近在聊：\n{recent_context}\n"
+    n = max(1, int(round(gap_hours)))
+    when = ""
+    if last_msg_at is not None:
+        bj = last_msg_at.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=8)))
+        when = f"（{bj.month}月{bj.day}日{_cn_noon_label(bj.hour)}）"
+    return (
+        f"\n你们最近一次聊天是在 {n} 小时前{when}，那段场景已经结束。"
+        f"不要接着上次的场景续演，现在自然地开一个新话头：\n{recent_context}\n"
+    )
+
+
+def _is_replay_of_recent(text: str, recent_context: str, memory_content: str) -> bool:
+    """F5-b：与最近聊天某句相似 >0.5 且与记忆内容无主题重合 → 判复读不发送。
+
+    主题重合口径与 maybe_review_success 一致（相似 >0.15 或存在 ≥4 字公共子串）；
+    recent_context / 生成文本为空时直接放行（防御，不误伤正常对话式复习）。
+    """
+    from difflib import SequenceMatcher
+    if not text or not recent_context:
+        return False
+    mem = (memory_content or "").strip()
+    if mem:
+        if SequenceMatcher(None, text[:100], mem[:100]).ratio() > 0.15:
+            return False
+        for i in range(max(0, len(mem) - 3)):
+            if mem[i:i + 4] in text:
+                return False
+    for line in recent_context.splitlines():
+        line = line.strip()
+        if ": " in line:
+            line = line.split(": ", 1)[1]
+        if not line or len(line) < 4:
+            continue
+        if SequenceMatcher(None, text[:100], line[:100]).ratio() > 0.5:
+            return True
+    return False
+
+
+async def _last_message_time(session_id: int) -> datetime | None:
+    """F4：会话最近一条消息时间（UTC naive；无消息/异常返回 None，只读查询）。"""
+    from app.models.chat import ChatMessage
+    async with async_session_factory() as db:
+        row = (await db.execute(
+            select(ChatMessage.created_at)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(1)
+        )).first()
+    return row[0] if row else None
+
 
 async def collect_review_events() -> list[dict]:
     """扫描到期记忆 → 每角色 1 条候选（arbiter 事件源，priority=1）。"""
@@ -170,6 +259,16 @@ async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
         recent_context = (await get_last_messages(session_id))[:500]
     except Exception:
         pass
+    # F4：最近一条消息距今时间差（>2h → 场景已结束标注，防续演昨晚剧情）
+    last_msg_at = None
+    gap_hours = None
+    try:
+        last_msg_at = await _last_message_time(session_id)
+    except Exception:
+        last_msg_at = None
+    if last_msg_at is not None:
+        last_msg_at = last_msg_at.replace(tzinfo=None) if last_msg_at.tzinfo else last_msg_at
+        gap_hours = (now_naive - last_msg_at).total_seconds() / 3600.0
     try:
         from app.agent.llm_client import chat_completion
         from app.agent.user_profile import build_role_prompt_block
@@ -187,13 +286,16 @@ async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
             active_persona = ""
         persona_block = f"{active_persona}\n" if active_persona else ""
         label = _TYPE_LABEL.get(mem_type, "一件事")
-        context_line = f"\n你们最近在聊：\n{recent_context}\n" if recent_context else ""
+        context_line = _recent_context_line(recent_context, gap_hours, last_msg_at)
         hint = (
+            f"{_cn_now_prefix()}\n"
             f"{identity}\n"
             f"{persona_block}"
             f"你想起了{label}：{content_src[:120]}{context_line}"
             "自然地跟用户提一句，像老朋友聊天一样（1-2 句话，口语化），"
-            "尽量顺着最近的聊天话题自然带出，不要生硬转折，不要提'记忆''复习''想起以前记录'这类字眼。"
+            "不要生硬转折，不要提'记忆''复习''想起以前记录'这类字眼。"
+            f"你要说的话必须围绕「你想起了{label}」的内容展开（可以是确认、更新、调侃），"
+            "最近聊天只决定你开口的语气和方式，不能只顺着最近聊天接话，更不能复述最近聊天里的句子。"
             "必须全程以第一人称'我'说话（你=角色本人），不要以旁观者视角提及你自己的名字或'某人'这类第三人称。"
         )
         from app.agent.llm_client import load_character_reasoning_level
@@ -211,6 +313,12 @@ async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
                                      task="review", user_id=user_id)
         text = (text or "").strip().strip('"').strip("'")
         if not text or len(text) < 2:
+            return False
+        # F5-b：与最近聊天高度复读且与记忆内容无主题重合 → 不发送
+        #（next_review_at 已在占位阶段顺延 3 天，不会烧钱重试）
+        if _is_replay_of_recent(text, recent_context, content_src):
+            _logger.info("Memory review char=%d mem=%d blocked: replay of recent chat",
+                         char_id, memory_id)
             return False
     except Exception as e:
         _logger.warning("Memory review LLM failed char=%d: %s", char_id, e)

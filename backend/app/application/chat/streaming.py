@@ -182,6 +182,22 @@ async def _persist_ai_chunks(
                 item["tts_url"] = _tts_url
             saved.append(item)
         await db.commit()
+    # 3.10 事件流水（P0）：SSE 批量块落库成功后逐块落事件（懒 import 防 streaming↔service 循环）
+    try:
+        from app.events.store import append_domain_event
+        from app.events.types import EventType as _ET
+        for _item in saved:
+            await append_domain_event(
+                _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
+                entity_type="chat_message", entity_id=_item["id"],
+                actor_type="ai", actor_id=None,
+                payload={"sender_type": "ai", "route": "sse_batch",
+                         "content": _item.get("content", "")},
+                idempotency_key=f"chat.message_sent:chat_message:{_item['id']}",
+                origin="ai_message",
+            )
+    except Exception:
+        pass
     return saved
 
 
@@ -260,6 +276,20 @@ async def send_and_receive_stream(
                 if tts_url:
                     item["tts_url"] = tts_url
                 await db.commit()
+            # 3.10 事件流水（P0）：TTS 实时逐块（幂等键绑真实块 id，回退批量落库不会重复）
+            try:
+                from app.events.store import append_domain_event
+                from app.events.types import EventType as _ET
+                await append_domain_event(
+                    _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
+                    entity_type="chat_message", entity_id=m.id,
+                    actor_type="ai", actor_id=character_id,
+                    payload={"sender_type": "ai", "route": "sse_live", "content": blk_text},
+                    idempotency_key=f"chat.message_sent:chat_message:{m.id}",
+                    origin="ai_message",
+                )
+            except Exception:
+                pass
             tts_saved.append(item)
             return item
 
@@ -401,6 +431,20 @@ async def send_and_receive_stream(
                 final_state, full_text, saved[0]["id"] if saved else None, user_msg_id,
                 reliability=True, gen_prompt=gen_prompt, img_text=img_text,
             )
+            # 3.10 事件流水（P0）：一轮清算（幂等键绑 user_msg_id；回退 chunked 同键 → 只落一条）
+            try:
+                from app.events.store import append_domain_event
+                from app.events.types import EventType as _ET
+                await append_domain_event(
+                    _ET.CHAT_TURN_COMPLETED.value, "chat_session", session_id,
+                    actor_type="system",
+                    payload={"user_message_id": user_msg_id, "route": "sse",
+                             "block_count": len(saved)},
+                    idempotency_key=f"chat.turn_completed:{session_id}:{user_msg_id}",
+                    origin="ai_message",
+                )
+            except Exception:
+                pass
             _logger.info("Stream(tts): %d blocks from %d chars", len(saved), len(full_text))
             await sink("done", {
                 "message": {"content": full_text},
@@ -446,6 +490,20 @@ async def send_and_receive_stream(
         gen_prompt=gen_prompt, img_text=img_text,
     )
 
+    # 3.10 事件流水（P0）：一轮清算（与 TTS 实时路径 / chunked 回退共用幂等键 → 一轮只一条）
+    try:
+        from app.events.store import append_domain_event
+        from app.events.types import EventType as _ET
+        await append_domain_event(
+            _ET.CHAT_TURN_COMPLETED.value, "chat_session", session_id,
+            actor_type="system",
+            payload={"user_message_id": user_msg_id, "route": "sse",
+                     "block_count": len(saved)},
+            idempotency_key=f"chat.turn_completed:{session_id}:{user_msg_id}",
+            origin="ai_message",
+        )
+    except Exception:
+        pass
     _logger.info("Stream: %d blocks from %d chars", len(saved), len(full_text))
     for i, c in enumerate(saved):
         await sink("block", {"index": i, **c})

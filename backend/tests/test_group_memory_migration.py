@@ -41,7 +41,7 @@ def test_migration_upgrade_downgrade(mig_db):
 
     # 升级到 head：group_memories 出现，脚本单头无分叉
     command.upgrade(cfg, "head")
-    assert _heads() == {"b8c9d0e1f2a3"}, f"期望单头 b8c9d0e1f2a3（douyin_viewed_notes 租户复合唯一，2026-09-05），实际 {_heads()}"
+    assert _heads() == {"c1e2f3a4b5c6"}, f"期望单头 c1e2f3a4b5c6（domain_events 事件流水，2026-09-08），实际 {_heads()}"
 
     eng = create_engine("sqlite:///" + db_path)
     insp = inspect(eng)

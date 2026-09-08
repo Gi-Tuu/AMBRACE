@@ -658,3 +658,84 @@ def test_arbiter_plugin_runtime_light_context默认False(monkeypatch):
         loop.AGENT_FLAGS["agent_social_light_context"] = _orig
     assert ok is True
     assert seen["light"] is False
+
+
+# ---------------- Sam 主动消息错接昨晚剧情修复（2026-09-08）：F1/F4/F5 ----------------
+
+def _sam_fix_setup(monkeypatch, reply_text, hours_ago,
+                   mem_content="夫妻关系：抖音运营被动收入，别乱发照片"):
+    """F4/F5 共用装配：昨晚哄睡聊天 + 距今 N 小时 + LLM 返回指定文本；返回 (hints, sent, mem)。"""
+    from datetime import datetime, timedelta
+    hints = []
+    sent = []
+    mem = SimpleNamespace(id=9, content=mem_content, memory_type="user_info",
+                          is_archived=False, is_pinned=False, is_locked=False,
+                          next_review_at=None, created_at=None)
+    char = _char(3, "小阳")
+
+    async def _fake_chat_completion(messages, **kw):
+        hints.append(messages[-1]["content"])
+        return reply_text
+
+    async def _last_messages(sid, limit=10):
+        return "用户: 宝宝晚安，抱抱我睡\n你: 嗯，抱紧了。明天要早起，别磨蹭。"
+
+    async def _last_msg_time(sid):
+        return datetime.utcnow() - timedelta(hours=hours_ago)
+
+    async def _fake_send(session_id, character_id, user_id, content, message_type="", **kw):
+        sent.append(content)
+
+    async def _enabled(cid):
+        return True
+
+    async def _fake_identity(char_, uid):
+        return "你是小阳，性格活泼。"
+
+    monkeypatch.setattr("app.agent.llm_client.chat_completion", _fake_chat_completion)
+    monkeypatch.setattr("app.agent.llm_client.load_character_reasoning_level", _fake_rl2)
+    monkeypatch.setattr(review_mod, "async_session_factory", _FakeFactory({9: mem, 3: char}))
+    monkeypatch.setattr(review_mod, "_daily_count", _noop_int0)
+    monkeypatch.setattr(review_mod, "_last_review_at", _noop_none)
+    monkeypatch.setattr(review_mod, "_user_in_dnd_period", _noop_bool)
+    monkeypatch.setattr(review_mod, "_last_message_time", _last_msg_time)
+    monkeypatch.setattr("app.scheduling.triggers.memory_review_enabled", _enabled)
+    monkeypatch.setattr("app.scheduling.triggers.get_last_messages", _last_messages)
+    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _sid)
+    monkeypatch.setattr("app.agent.user_profile.build_role_prompt_block", _fake_identity)
+    monkeypatch.setattr("app.agent.persona.build_active_channel_persona", _noop_str)
+    monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _fake_send)
+    return hints, sent, mem
+
+
+def test_memory_review_隔夜场景标注与时间锚点(monkeypatch):
+    """F1+F4+F5a：昨晚哄睡距今 12h → hint 含北京时间锚点 +「场景已结束」+ 聚焦记忆约束。"""
+    hints, sent, _ = _sam_fix_setup(
+        monkeypatch, reply_text="对了，你抖音那个号后来怎么弄的？", hours_ago=12)
+    ok = asyncio.run(review_mod.run_memory_review(3, 4, 9))
+    assert ok is True and sent
+    hint = hints[0]
+    assert hint.startswith("现在是北京时间 ")                    # F1 时间锚点
+    assert "12 小时前" in hint and "那段场景已经结束" in hint     # F4 场景结束标注
+    assert "你们最近在聊：" not in hint                          # 不再当作"正在聊"
+    assert "必须围绕" in hint and "不能复述最近聊天" in hint      # F5(a) 聚焦记忆约束
+
+
+def test_memory_review_两小时内维持最近在聊(monkeypatch):
+    """F4：距今 ≤2h 维持「你们最近在聊」（不误伤刚聊过场景的自然衔接）。"""
+    hints, sent, _ = _sam_fix_setup(
+        monkeypatch, reply_text="对了，你抖音那个号后来怎么弄的？", hours_ago=1)
+    ok = asyncio.run(review_mod.run_memory_review(3, 4, 9))
+    assert ok is True and sent
+    assert "你们最近在聊：" in hints[0]
+    assert "那段场景已经结束" not in hints[0]
+
+
+def test_memory_review_复读昨晚哄睡句不发送(monkeypatch):
+    """F5(b)：生成文本复读昨晚哄睡句且与记忆内容无关 → 不发送（占位已顺延不烧钱重试）。"""
+    hints, sent, mem = _sam_fix_setup(
+        monkeypatch, reply_text="嗯，抱紧了。明天要早起，别磨蹭。", hours_ago=12)
+    ok = asyncio.run(review_mod.run_memory_review(3, 4, 9))
+    assert ok is False
+    assert not sent                                   # 复读句被拦截
+    assert mem.next_review_at is not None             # 占位重排已生效（3 天后才再试）
