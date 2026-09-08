@@ -114,10 +114,14 @@ def test_agent_mind_memory_search_trace_语义(mind_db):
 # ---------------- C：工具轨迹 status 口径归一 ----------------
 
 def test_agent_mind_tool_logs_status归一(mind_db):
-    """tool_logs 的 status 经 classify 归一；blocked 不再被当成 failed，且保留 status_raw。"""
+    """tool_logs 的 status 经 classify 归一；blocked 不再被当成 failed，且保留 status_raw。
+
+    R2（2026-09-09）：blocked 样本改用 trigger=chat（trigger=scheduler 且无真实 LLM/工具调用的
+    「未触发」噪音已被 get_agent_mind 过滤，见 tests/test_tool_trace_governance.py）。
+    """
     factory, char_id = mind_db
     asyncio.run(_seed_log(factory, trigger="chat", status="ok", steps_json="[]", latency_ms=5))
-    asyncio.run(_seed_log(factory, trigger="scheduler", status="blocked", steps_json="[]", latency_ms=5))
+    asyncio.run(_seed_log(factory, trigger="chat", status="blocked", steps_json="[]", latency_ms=5))
     asyncio.run(_seed_log(factory, trigger="image_gen", status="error", steps_json="[]", latency_ms=5))
     r = _make_client(factory).get(f"/api/v1/characters/{char_id}/agent-mind")
     assert r.status_code == 200

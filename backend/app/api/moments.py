@@ -416,19 +416,37 @@ async def delete_comment(moment_id: int, comment_id: int, db: AsyncSession = Dep
         raise HTTPException(status_code=404, detail=tr_lang(lang, "comment_not_found"))
     if comment.sender_type != "user" or comment.sender_id != user_id:
         raise HTTPException(status_code=403, detail=tr_lang(lang, "delete_own_comment_only"))
-    _c_content = (comment.content or "")[:200]
-    _c_parent = comment.parent_id
-    await db.delete(comment)
-    await db.commit()
-    # 3.10 事件流水（P1）：评论硬删（payload 保留被删内容前 200 字）
-    await append_domain_event(
-        _ET.MOMENT_COMMENT_DELETED.value, "moment", moment_id,
-        entity_type="moment_comment", entity_id=comment_id,
-        actor_type="user", actor_id=user_id,
-        payload={"parent_id": _c_parent, "content": _c_content},
-        idempotency_key=f"moment.comment_deleted:moment_comment:{comment_id}",
-        origin="user_message",
+    # F-7（v3.4.6 审查）：硬删父评论须级联删除其整棵子回复树（该动态下 parent 链到它的
+    # 所有子孙），否则子回复 parent 悬空成孤儿；删前先取各被删行内容供事件 payload 保留。
+    all_result = await db.execute(
+        select(MomentComment).where(MomentComment.moment_id == moment_id)
     )
+    _children: dict[int | None, list] = {}
+    for _c in all_result.scalars().all():
+        _children.setdefault(_c.parent_id, []).append(_c)
+    _to_delete = [comment]
+    _stack = [comment]
+    while _stack:
+        _cur = _stack.pop()
+        for _ch in _children.get(_cur.id, []):
+            _to_delete.append(_ch)
+            _stack.append(_ch)
+    _deleted_meta = [(c.id, c.parent_id, (c.content or "")[:200]) for c in _to_delete]
+    for _c in _to_delete:
+        await db.delete(_c)
+    await db.commit()
+    # 3.10 事件流水（P1）：评论硬删（含级联删除的子回复，每条各落一事件；
+    # payload 保留被删内容前 200 字）
+    for _cid, _cparent, _ccontent in _deleted_meta:
+        await append_domain_event(
+            _ET.MOMENT_COMMENT_DELETED.value, "moment", moment_id,
+            entity_type="moment_comment", entity_id=_cid,
+            actor_type="user", actor_id=user_id,
+            payload={"parent_id": _cparent, "content": _ccontent,
+                     "cascade": _cid != comment_id},
+            idempotency_key=f"moment.comment_deleted:moment_comment:{_cid}",
+            origin="user_message",
+        )
     return {"status": "ok"}
 
 
@@ -446,17 +464,31 @@ async def clear_character_moments(
     stmt = select(AIMoment).where(AIMoment.character_id == character_id, AIMoment.created_at >= start)
     result = await db.execute(stmt)
     moments = result.scalars().all()
+    # F-4（v3.4.6 审查）：子表 FK 无 ondelete，硬删动态前显式级联清评论/点赞/AI 赞
+    # （不依赖 SQLite FK），否则孤儿行累积。
+    _ids = [m.id for m in moments]
+    _cnt_comments = _cnt_likes = _cnt_ai_likes = 0
+    if _ids:
+        _cnt_comments = (await db.execute(
+            delete(MomentComment).where(MomentComment.moment_id.in_(_ids)))).rowcount or 0
+        _cnt_likes = (await db.execute(
+            delete(MomentLike).where(MomentLike.moment_id.in_(_ids)))).rowcount or 0
+        _cnt_ai_likes = (await db.execute(
+            delete(MomentAILike).where(MomentAILike.moment_id.in_(_ids)))).rowcount or 0
     from app.application.upload_service import delete_image_file
     for m in moments:
         delete_image_file(m.image_url)
         await db.delete(m)
     await db.commit()
-    # 3.10 事件流水（P1）：清空角色当日动态（幂等键带日期，同日重复清理不产生第二条）
+    # 3.10 事件流水（P1）：清空角色当日动态（幂等键带日期，同日重复清理不产生第二条；
+    # payload 保留被删计数，F-4）
     await append_domain_event(
         _ET.MOMENT_CLEARED.value, "moment", character_id,
         actor_type="user", actor_id=user_id,
         payload={"scope": "character_daily", "character_id": character_id,
-                 "moment_count": len(moments), "date": str(start)[:10]},
+                 "moment_count": len(moments), "date": str(start)[:10],
+                 "comment_count": _cnt_comments, "like_count": _cnt_likes,
+                 "ai_like_count": _cnt_ai_likes},
         idempotency_key=f"moment.cleared:{character_id}:{str(start)[:10]}",
         origin="user_message",
     )

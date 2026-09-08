@@ -259,12 +259,10 @@ class MessageBubble extends StatelessWidget {
               label: l10n.thinkingProcess,
               detail: reasoning!,
             ),
+          // R6（2026-09-09）：能力列表 chip 化（后端已归一为中文短列表、去重、上限 6 项），
+          // 不再 join('、') 成一坨；超过 3 个折叠为「等 N 项」，点击展开换行排列。
           if (!isUser && showTools && (tools ?? const []).isNotEmpty)
-            _CollapsibleMeta(
-              icon: Icons.handyman_outlined,
-              label: l10n.calledAbility,
-              detail: tools!.join('、'),
-            ),
+            _AbilityChipsMeta(labels: tools!),
           // MCP 工具结果（A1，#59 流式路径 MCP 工具循环；观察区可折叠，成功/失败各一块）
           if (!isUser && (toolResults ?? const []).isNotEmpty)
             for (final tr in toolResults!)
@@ -557,6 +555,80 @@ class _CollapsibleMetaState extends State<_CollapsibleMeta> {
                 ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 调用能力 chip 块（R6，2026-09-09）：每项一个 chip，默认显示前 3 个，
+/// 其余折叠为「等 N 项」，点击展开全部（Wrap 自动换行）。思考过程仍用纯文本 _CollapsibleMeta。
+class _AbilityChipsMeta extends StatefulWidget {
+  final List<String> labels;
+
+  const _AbilityChipsMeta({required this.labels});
+
+  @override
+  State<_AbilityChipsMeta> createState() => _AbilityChipsMetaState();
+}
+
+class _AbilityChipsMetaState extends State<_AbilityChipsMeta> {
+  bool _expanded = false;
+  static const int _collapsedShown = 3;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final fg = scheme.onSurfaceVariant;
+    final l10n = AppLocalizations.of(context)!;
+    final all = widget.labels;
+    final shown = _expanded ? all : all.take(_collapsedShown).toList();
+    final rest = all.length - shown.length;
+
+    Widget chip(String t) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: fg.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(t,
+              style: TextStyle(fontSize: AppTypography.captionSize, color: fg)),
+        );
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      width: double.infinity,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.handyman_outlined, size: 13, color: fg),
+                const SizedBox(width: 4),
+                Text(l10n.calledAbility,
+                    style: TextStyle(
+                        fontSize: AppTypography.captionSize,
+                        color: fg,
+                        fontWeight: FontWeight.w500)),
+                if (all.length > _collapsedShown)
+                  Icon(
+                      _expanded
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
+                      size: 14,
+                      color: fg.withValues(alpha: 0.6)),
+              ]),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            for (final t in shown) chip(t),
+            if (!_expanded && rest > 0) chip(l10n.abilityMore(rest)),
+          ]),
         ],
       ),
     );

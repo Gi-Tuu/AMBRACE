@@ -361,11 +361,15 @@ async def generate_response(state: AgentState) -> AgentState:
         except Exception:
             pass
 
-    # 调用能力：启用中的插件视为「扩展」能力（参与生成前后钩子）
+    # 调用能力（R6，2026-09-09）：默认只列「本轮真实用到」的能力，由各执行成功点经
+    # ability_labels.record_ability_used 累计；此处不再用「全部启用插件」全集填充（多报 + 英文 id）。
+    # flag 关（回退）时保留旧行为兜底。
     try:
-        from app.plugins.registry import list_plugins
-        enabled_plugins = [p.get("name") for p in list_plugins() if p.get("enabled")]
-        state["tools_used"] = [f"扩展：{'、'.join(enabled_plugins)}"] if enabled_plugins else []
+        from app.agent import loop as _loop
+        if not _loop.AGENT_FLAGS.get("chat_tools_list_real_only", True):
+            from app.plugins.registry import list_plugins
+            enabled_plugins = [p.get("name") for p in list_plugins() if p.get("enabled")]
+            state["tools_used"] = [f"扩展：{'、'.join(enabled_plugins)}"] if enabled_plugins else []
     except Exception:
         state["tools_used"] = []
 

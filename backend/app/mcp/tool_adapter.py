@@ -4,7 +4,9 @@
 - scope：f"mcp_{server_name}"（权限粒度到 Server 级；Phase 2 走 ALLOW/ASK/FORBID）。
 - 风险等级按工具名关键词推断：write/create/update/delete/remove/execute/send/post → high；
   read/search/list/get/find → low；其余 → medium。
-- execute 闭包：调 MCPClientManager.call_tool，把 content 文本提取为 ok/text/raw。
+- execute 闭包：调 MCPClientManager.call_tool，把 content 文本提取为 ok/text/raw；
+  R4（2026-09-09，工具轨迹治理 §4.4）：远端 isError=True（未连接/超时/远端报错）时抛
+  ToolExecutionError，交由 ToolRunner 按「抛异常=失败」记为 error，消灭「假成功」。
 """
 from typing import Any
 
@@ -12,6 +14,21 @@ from app.agent.tools import RISK_HIGH, RISK_LOW, RISK_MEDIUM, ToolSpec
 
 _HIGH_KEYWORDS = ("write", "create", "update", "delete", "remove", "execute", "send", "post")
 _LOW_KEYWORDS = ("read", "search", "list", "get", "find")
+
+
+class ToolExecutionError(RuntimeError):
+    """MCP / 外部工具明确返回失败（isError=True）时抛出，交由 ToolRunner 统一记为 error。
+
+    R4（2026-09-09）：MCP 管理层的 _do_call_tool 对「未连接 / 超时 / 远端报错」一律返回
+    ``{"isError": True, "error": ...}`` 而不抛异常；若适配层把它包成 ``ok=False`` 的 dict 返回，
+    ToolRunner 只按「是否抛异常」判成败 → 真失败被记成 ok（假成功）。改在适配层上抛，
+    只影响 MCP 工具，不波及其它内置/插件工具的返回约定（回归面最小）。
+    """
+
+    def __init__(self, message: str, *, tool: str | None = None, raw: dict | None = None):
+        super().__init__(message)
+        self.tool = tool
+        self.raw = raw or {}
 
 
 def infer_risk(tool_name: str) -> str:
@@ -24,20 +41,33 @@ def infer_risk(tool_name: str) -> str:
     return RISK_MEDIUM
 
 
-def _make_mcp_execute(server_id: int, tool_name: str) -> Any:
-    """构造 MCP 工具 execute 闭包：调 manager.call_tool（延迟 import 避免循环依赖）。"""
+def _make_mcp_execute(server_id: int, tool_name: str, server_name: str = "") -> Any:
+    """构造 MCP 工具 execute 闭包：调 manager.call_tool（延迟 import 避免循环依赖）。
+
+    R4（2026-09-09）：远端返回 ``isError=True`` 时抛 ``ToolExecutionError``（错误文本透传），
+    不再返回 ``ok=False`` 的 dict——否则 ToolRunner 会把它记成成功（假成功）。
+    """
+    full = f"mcp.{server_name}.{tool_name}" if server_name else tool_name
 
     async def _execute(payload: dict) -> dict:
         from app.mcp.manager import mcp_manager
 
         result = await mcp_manager.call_tool(server_id, tool_name, payload)
+
+        # R4：远端明确失败（未连接 / 超时 / 远端 error）→ 上抛，让 ToolRunner 记 error
+        if result.get("isError"):
+            raise ToolExecutionError(
+                str(result.get("error") or "MCP tool returned isError"),
+                tool=full, raw=result,
+            )
+
         text_parts = [
             c.get("text", "")
             for c in result.get("content", [])
             if isinstance(c, dict) and c.get("type") == "text"
         ]
         return {
-            "ok": not result.get("isError", False),
+            "ok": True,
             "text": "\n".join(text_parts),
             "raw": result,
         }
@@ -62,7 +92,7 @@ def mcp_tool_to_spec(server_name: str, mcp_tool: dict, server_id: int) -> ToolSp
         risk_level=risk,
         idempotent=(risk == RISK_LOW),
         scope=f"mcp_{server_name}",
-        execute=_make_mcp_execute(server_id, tool_name),
+        execute=_make_mcp_execute(server_id, tool_name, server_name),
         epistemic_status="UNVERIFIED",  # 外部 MCP 工具结果默认未证实
         provenance=f"mcp:{server_name}",
         input_schema=input_schema,

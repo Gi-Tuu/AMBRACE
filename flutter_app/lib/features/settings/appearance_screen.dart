@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/font_variant.dart';
 import '../../theme/skins/skin.dart';
 import '../../theme/skins/skin_registry.dart';
 import '../../theme/skins/aegean/aegean_ornaments.dart';
@@ -68,6 +69,32 @@ class AppearanceScreen extends StatelessWidget {
                   ],
                   selected: {settings.themeModeIndex},
                   onSelectionChanged: (sel) => settings.setThemeModeIndex(sel.first),
+                ),
+              ),
+            ],
+          ),
+          // ── 正文字体（R8：三档，默认跟随系统=与现行为一致） ──
+          IosCardGroup(
+            title: l10n.appearanceFont,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: SegmentedButton<int>(
+                  segments: [
+                    ButtonSegment(value: 0, label: Text(l10n.fontSystem), icon: const Icon(Icons.smartphone)),
+                    ButtonSegment(value: 1, label: Text(l10n.fontSerif), icon: const Icon(Icons.font_download_outlined)),
+                    ButtonSegment(value: 2, label: Text(l10n.fontRounded), icon: const Icon(Icons.chat_bubble_outline)),
+                  ],
+                  selected: {settings.fontVariant.index},
+                  onSelectionChanged: (sel) =>
+                      settings.setFontVariant(FontVariant.values[sel.first]),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(left: 20, right: 16, bottom: 12),
+                child: Text(
+                  l10n.appearanceFontHint,
+                  style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle),
                 ),
               ),
             ],

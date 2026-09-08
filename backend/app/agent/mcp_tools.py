@@ -48,6 +48,29 @@ async def _execute_mcp_actions(
     for act in mcp_actions:
         spec = get_tool(act.action_type)
         if spec is None or not spec.enabled:
+            # R3（2026-09-09，工具轨迹治理 §4.3.2）：未注册 / 已禁用不再静默 continue——
+            # steps 与观测带明确 reason，并向上下文回注「该工具不可用」，防止 AI 在正文谎称已执行。
+            reason = "tool_disabled" if spec is not None else "tool_not_registered"
+            note = ("工具已被禁用" if spec is not None
+                    else "工具未注册（MCP 服务器未连接 / 未配置，或已断开）")
+            steps.append({"action": act.action_type, "ok": False, "reason": reason})
+            _unavailable = {
+                "tool": act.action_type, "ok": False,
+                "summary": "工具不可用", "error": note,
+            }
+            results.append(_unavailable)
+            try:
+                state["context_messages"] = state.get("context_messages") or []
+                state["context_messages"] = state["context_messages"] + [{
+                    "role": "system",
+                    "content": (
+                        f"【工具不可用】{act.action_type} {note}。本轮不要声称已调用/已执行该工具，"
+                        "请如实告诉用户：该 MCP 工具当前不可用，需要先在「MCP 管理」里连接对应服务器。"
+                    ),
+                }]
+            except Exception:
+                pass
+            # executed_any 维持 False（调用方不会据此做「成功后再决策」）
             continue
         _promise = {
             "tool": act.action_type, "ok": False,
@@ -69,6 +92,13 @@ async def _execute_mcp_actions(
             continue
         ok = bool(res.get("status") == "ok")
         steps.append({"action": act.action_type, "ok": ok})
+        if ok:
+            # R6（2026-09-09）：MCP 工具真实执行成功 → 记「MCP·服务器名」能力标签
+            try:
+                from app.agent.ability_labels import record_ability_used
+                record_ability_used(state, spec=spec)
+            except Exception:
+                pass
         obs = (res.get("observation") or {}).get("summary") or ""
         _promise.update({
             "ok": ok,

@@ -379,7 +379,8 @@ def test_send_and_receive_stream_tts_partial_falls_back_to_batch(monkeypatch):
     persisted: list[list[str]] = []
 
     async def _persist_chunks(session_id, final_state, chunks, gen_prompt, cal, memo,
-                              extra_capabilities=None, tts_urls=None, tts=False):
+                              extra_capabilities=None, tts_urls=None, tts=False,
+                              character_id=None):
         persisted.append(chunks)
         out = []
         for i, c in enumerate(chunks):
@@ -477,7 +478,8 @@ def test_send_and_receive_stream_tts_consumer_death_multi_round_history(monkeypa
     fetched_blocks: list[list[str]] = []
 
     async def _persist_chunks(session_id, final_state, chunks, gen_prompt, cal, memo,
-                              extra_capabilities=None, tts_urls=None, tts=False):
+                              extra_capabilities=None, tts_urls=None, tts=False,
+                              character_id=None):
         fetched_blocks.append(chunks)
         out = []
         for i, c in enumerate(chunks):

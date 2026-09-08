@@ -35,13 +35,22 @@ async def _build_mcp_tool_declarations(user_id: int, *, stream: bool = False) ->
     P2-A（流式不执行，2026-08-29）：`stream=True`（流式路径，见 chat_service._run_agent_core 仅在
     非流式触发 run_mcp_tool_stage）时不注入任何声明 —— 若注入，AI 会输出工具标记但实际不执行，
     产生「幻觉式工具调用」。短期方案：流式不注入；中期做流尾推送通道后再注入。
+
+    R3（2026-09-09，工具轨迹治理 §4.3.1）：#59 已打通流式执行 + 流尾 tool_result 通道
+    （application/chat/streaming.py），故新增 flag ``mcp_stream_declarations``（默认关）：
+    开=流式也注入声明；关=维持旧行为（流式不注入，零变化）。
     """
     from app.mcp.ownership import owned_server_ids
     from app.agent.tools import list_tools
 
-    # P2-A：流式模式不注入 MCP 工具声明（流式路径不执行 MCP 工具，见 chat_service L813）
+    # P2-A / R3：流式模式默认不注入；flag mcp_stream_declarations 开时才注入（灰度）
     if stream:
-        return []
+        try:
+            from app.agent import loop as _loop
+            if not _loop.AGENT_FLAGS.get("mcp_stream_declarations", False):
+                return []
+        except Exception:
+            return []
 
     try:
         from app.application import permission_service
@@ -60,6 +69,17 @@ async def _build_mcp_tool_declarations(user_id: int, *, stream: bool = False) ->
         # P1：非本用户 server 的工具（含无归属的兜底）一律不注入 —— 多用户隔离
         if sid not in owned_ids:
             continue
+        # R3（§4.3.3）连接态守卫：只跳过「连接记录存在但已断连」的瞬时窗口
+        # （worker 退出 / disconnect 已把 conn 置 DISCONNECTED，工具尚未从注册表注销）。
+        # 从未连接过（无 conn 记录）的 server 不在此判定——其工具若仍注册由其它路径负责注销。
+        if sid is not None:
+            try:
+                from app.mcp.manager import mcp_manager
+                _conn = mcp_manager.get_connection(sid)
+            except Exception:
+                _conn = None
+            if _conn is not None and not getattr(_conn, "is_connected", False):
+                continue
         mode = "allow"
         if permission_service is not None and spec.scope:
             try:
@@ -91,7 +111,10 @@ def _format_mcp_declarations(decls: list[dict]) -> str:
     return (
         "以下是可调用的 MCP 工具（JSON 声明，含工具名/说明/参数）。"
         "需要调用时在回复中输出标记 [mcp.<server>.<tool>]{JSON 参数}[/mcp.<server>.<tool>]，"
-        "系统会真实执行并把结果回填（否则不要假装调用过）。\n" + payload
+        "系统会真实执行并把结果回填（否则不要假装调用过）。"
+        # R3（§4.3.1）：补一条行为约束，降低「工具不可用却谎称已执行」的幻觉
+        "工具结果会在你回复之后异步返回；若系统提示某工具不可用/未连接，必须如实告知用户，"
+        "不要声称已执行。\n" + payload
     )
 
 

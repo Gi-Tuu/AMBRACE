@@ -125,8 +125,8 @@ class _AICompanionAppState extends State<AICompanionApp> with WidgetsBindingObse
             debugShowCheckedModeBanner: false,
             navigatorKey: appNavigatorKey,
             navigatorObservers: [appRouteObserver],
-            theme: AppTheme.light(settings.seedColorIndex, skinId: settings.skinId),
-            darkTheme: AppTheme.dark(settings.seedColorIndex, skinId: settings.skinId),
+            theme: AppTheme.light(settings.seedColorIndex, skinId: settings.skinId, fontVariant: settings.fontVariant),
+            darkTheme: AppTheme.dark(settings.seedColorIndex, skinId: settings.skinId, fontVariant: settings.fontVariant),
             themeMode: AppTheme.modeFromIndex(settings.themeModeIndex),
             builder: (context, child) => Stack(
               children: [

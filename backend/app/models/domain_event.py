@@ -60,4 +60,7 @@ class DomainEvent(Base):
         UniqueConstraint("idempotency_key", name="uq_domain_event_idem"),
         Index("ix_domain_event_agg", "aggregate_type", "aggregate_id", "created_at"),
         Index("ix_domain_event_type_time", "event_type", "created_at"),
+        # F-9（v3.4.6 审查）：purge_expired_domain_events 按 created_at 单列过滤，
+        # 原只有两列复合索引前导列不含 created_at → 全表扫；补单列索引。
+        Index("ix_domain_event_created", "created_at"),
     )

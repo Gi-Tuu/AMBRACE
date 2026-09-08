@@ -98,6 +98,8 @@ def load_plugin_dir(path: Path) -> dict | None:
             "permissions": list(manifest.get("permissions", [])),
             "config": dict(manifest.get("config", {})),
             "usage": str(manifest.get("usage", "") or ""),  # 使用教程（前端扩展页展示；可选）
+            # R6（2026-09-09）：中文展示名（可选；未填时由 ability_labels.plugin_label 美化 name 兜底）
+            "display_name": str(manifest.get("display_name", "") or ""),
             "hook_timeout": manifest.get("hook_timeout"),  # per-plugin hook 超时（秒，可选；2026-08-16 审计修复）
             "content": dict(manifest.get("content") or {}) if plugin_type == "content" else {},  # X2：内容包数据（已过 schema 校验）
             "path": str(path),

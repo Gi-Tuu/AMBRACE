@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:ui' as ui;
 
 import '../features/weave/weave_view_mode.dart';
+import '../theme/font_variant.dart';
 import '../theme/skins/skin_registry.dart';
 import '../services/api_client.dart';
 
@@ -21,6 +22,7 @@ class SettingsProvider extends ChangeNotifier {
   bool _isSub = false; // #68 P3 账号关联：是否为子账号
   int _themeModeIndex = 0; // 0=跟随系统 1=浅色 2=深色
   int _seedColorIndex = 0; // 强调色索引
+  FontVariant _fontVariant = FontVariant.system; // R8：全局正文字体（默认跟随系统=与现行为一致）
   String _skinId = SkinRegistry.defaultSkinId; // ⭐ 新增：当前皮肤 ID
   String _localeCode = 'system';
   bool _backgroundKeepalive = true;
@@ -48,6 +50,7 @@ class SettingsProvider extends ChangeNotifier {
   bool get isSub => _isSub;
   int get themeModeIndex => _themeModeIndex;
   int get seedColorIndex => _seedColorIndex;
+  FontVariant get fontVariant => _fontVariant;
   String get skinId => _skinId; // ⭐ 新增
   String get localeCode => _localeCode;
   bool get backgroundKeepalive => _backgroundKeepalive;
@@ -75,6 +78,11 @@ class SettingsProvider extends ChangeNotifier {
     _isAdmin = prefs.getBool('is_admin') ?? false;
     _themeModeIndex = prefs.getInt('theme_mode_index') ?? 0;
     _seedColorIndex = prefs.getInt('seed_color_index') ?? 0;
+    // R8：正文字体档位（越界/缺省回退 system，与治理前行为一致）
+    final fontIdx = prefs.getInt('font_variant') ?? 0;
+    _fontVariant = (fontIdx >= 0 && fontIdx < FontVariant.values.length)
+        ? FontVariant.values[fontIdx]
+        : FontVariant.system;
     _skinId = prefs.getString('skin_id') ?? SkinRegistry.defaultSkinId; // ⭐ 读取
     _localeCode = prefs.getString('locale_code') ?? 'system';
     _backgroundKeepalive = prefs.getBool('background_keepalive') ?? true;
@@ -102,6 +110,15 @@ class SettingsProvider extends ChangeNotifier {
     _seedColorIndex = index;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('seed_color_index', index);
+    notifyListeners();
+  }
+
+  /// R8：切换全局正文字体（system=跟随系统，即治理前默认行为）
+  Future<void> setFontVariant(FontVariant v) async {
+    if (_fontVariant == v) return;
+    _fontVariant = v;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('font_variant', v.index);
     notifyListeners();
   }
 

@@ -483,10 +483,19 @@ def test_run_stream_mcp_tool_stage_from_raw_response():
 
 
 def test_run_stream_mcp_tool_stage_ignores_stripped_ai_response():
-    """流式路径已剥离标记的 ai_response 不应误触发工具（标记只在 raw_response）。"""
+    """流式路径已剥离标记的 ai_response 不应误触发工具（标记只在 raw_response）。
+
+    R3（2026-09-09）：raw_response 给「已剥离标记」的非空文本（真实流式形态）——工具标记
+    只应来自 raw_response，ai_response 里的残留标记不参与解析。
+    （raw_response 为空串时会回退 ai_response，属既有容错分支，不在本用例覆盖范围。）
+    """
     from app.agent.mcp_tools import run_stream_mcp_tool_stage
 
-    state = {"ai_response": "查一下 [mcp.srv.x]{\"a\":1}[/mcp.srv.x]", "raw_response": "", "context_messages": []}
+    state = {
+        "ai_response": "查一下 [mcp.srv.x]{\"a\":1}[/mcp.srv.x]",
+        "raw_response": "查一下",
+        "context_messages": [],
+    }
     steps = []
     executed, results = _run(run_stream_mcp_tool_stage(state, steps, user_id=PERM_UID, character_id=1, session_id=1))
     assert executed is False

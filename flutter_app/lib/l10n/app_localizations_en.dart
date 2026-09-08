@@ -267,8 +267,28 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String agentMindToolSummary(
-      Object blocked, Object fail, Object ok, Object rate) {
-    return 'Success rate $rate% (done $ok / failed $fail · blocked $blocked)';
+      Object blocked, Object fail, Object ok, Object rate, Object skip) {
+    return 'Success rate $rate% (done $ok / failed $fail · blocked $blocked · skipped $skip)';
+  }
+
+  @override
+  String agentMindSkippedFold(Object count) {
+    return 'Proactive eval: $count skipped recently (rate-limit / conditions not met, not failures)';
+  }
+
+  @override
+  String get agentMindMcpCalls => 'MCP calls (this account)';
+
+  @override
+  String get agentMindMcpEmpty =>
+      'No MCP calls yet (normal when no MCP server is connected)';
+
+  @override
+  String get agentMindToolUnavailable => 'Tool not registered or not connected';
+
+  @override
+  String abilityMore(Object n) {
+    return '+$n more';
   }
 
   @override
@@ -541,6 +561,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get appearanceTitle => 'Appearance';
+
+  @override
+  String get appearanceFont => 'Body font';
+
+  @override
+  String get appearanceFontHint =>
+      'Follow system uses your phone\'s default font. Third-party fonts from some Android vendors\' theme stores may not apply here (system limitation).';
+
+  @override
+  String get fontSystem => 'Follow system';
+
+  @override
+  String get fontSerif => 'Serif';
+
+  @override
+  String get fontRounded => 'Rounded';
 
   @override
   String get archiveBox => 'Chat Archive';
@@ -4119,6 +4155,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String whyMatters(Object why) {
     return 'Why it matters: $why';
   }
+
+  @override
+  String get whyMattersTitle => 'Why it matters';
 
   @override
   String get writeTodayDiary => 'Write today\'s diary';

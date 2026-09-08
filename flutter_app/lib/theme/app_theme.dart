@@ -1,4 +1,5 @@
 import "package:flutter/material.dart";
+import "font_variant.dart";
 import "skins/skin.dart";
 import "skins/skin_registry.dart";
 import "skins/skin_colors.dart";
@@ -31,15 +32,15 @@ class AppTheme {
 
   // ─── 兼容旧 API（内部转发到 SkinRegistry） ───
 
-  static ThemeData light(int seedIndex, {String skinId = SkinRegistry.defaultSkinId}) {
-    return _build(Brightness.light, seedIndex, skinId);
+  static ThemeData light(int seedIndex, {String skinId = SkinRegistry.defaultSkinId, FontVariant fontVariant = FontVariant.system}) {
+    return _build(Brightness.light, seedIndex, skinId, fontVariant);
   }
 
-  static ThemeData dark(int seedIndex, {String skinId = SkinRegistry.defaultSkinId}) {
-    return _build(Brightness.dark, seedIndex, skinId);
+  static ThemeData dark(int seedIndex, {String skinId = SkinRegistry.defaultSkinId, FontVariant fontVariant = FontVariant.system}) {
+    return _build(Brightness.dark, seedIndex, skinId, fontVariant);
   }
 
-  static ThemeData _build(Brightness brightness, int seedIndex, String skinId) {
+  static ThemeData _build(Brightness brightness, int seedIndex, String skinId, FontVariant fontVariant) {
     // 深色模式回退：皮肤声明不支持深色时，深色主题使用默认 ios 皮肤
     // （用户在浅色下看到 paper，深色下自动回退 ios，避免纸色配深色文字的对比灾难）
     Skin skin = SkinRegistry.get(skinId);
@@ -48,8 +49,17 @@ class AppTheme {
     }
     final seed = seedColorAt(seedIndex);
     final theme = skin.buildThemeData(brightness: brightness, seedColor: seed);
+    // R8：全局正文字体档位。system=null（跟随系统默认，与治理前完全一致）；
+    // aegean 皮肤保持自己的花体 TextTheme，不被全局正文字体覆盖（装饰字体保留原则）。
+    final ff = skin.id == 'aegean' ? null : resolveFontFamily(fontVariant);
+    final themed = ff == null
+        ? theme
+        : theme.copyWith(
+            textTheme: theme.textTheme.apply(fontFamily: ff),
+            primaryTextTheme: theme.primaryTextTheme.apply(fontFamily: ff),
+          );
     final SkinColors skinColors = skin.buildSkinColors(brightness: brightness, seedColor: seed);
-    return theme.copyWith(
+    return themed.copyWith(
       extensions: [skinColors],
     );
   }
@@ -59,8 +69,9 @@ class AppTheme {
     required Brightness brightness,
     required int seedIndex,
     String skinId = SkinRegistry.defaultSkinId,
+    FontVariant fontVariant = FontVariant.system,
   }) {
-    return _build(brightness, seedIndex, skinId);
+    return _build(brightness, seedIndex, skinId, fontVariant);
   }
 
   // ─── 旧版色值常量（兼容现有页面直接引用） ───

@@ -540,11 +540,16 @@ class _AgentMindScreenState extends State<AgentMindScreen> {
 
   Widget _buildToolLogs(AppLocalizations l10n, ColorScheme scheme) {
     final logs = ((_data?["tool_logs"] as List?) ?? []).cast<Map>().take(25).toList();
-    // 统一 status 口径（2026-08-23）：blocked=拦截未执行不计入成功率；partial=部分失败不按整体失败计
+    // R2（2026-09-09）：账号级真实 MCP 调用（mcp_calls，user 级，非角色级）+ 调度「未触发」折叠计数
+    final mcp = ((_data?["mcp_calls"] as List?) ?? []).cast<Map>().take(25).toList();
+    final sched = _data?["scheduler_trace"] as Map?;
+    // 统一 status 口径（2026-08-23）：blocked=拦截未执行不计入成功率；partial=部分失败不按整体失败计；
+    // R2：skipped=本轮未触发（中性，既不计入成功率分母，也不显示为失败）
     final succeeded = logs.where((l) => _classifyStatus(l["status"] as String?) == "success").length;
     final partial = logs.where((l) => _classifyStatus(l["status"] as String?) == "partial").length;
     final failed = logs.where((l) => _classifyStatus(l["status"] as String?) == "failed").length;
     final blocked = logs.where((l) => _classifyStatus(l["status"] as String?) == "blocked").length;
+    final skipped = (sched?["skipped_recent"] as int?) ?? 0;
     final ok = succeeded + partial;
     final attempts = ok + failed;
     final rate = attempts == 0 ? 0 : (ok * 100 / attempts).round();
@@ -559,7 +564,7 @@ class _AgentMindScreenState extends State<AgentMindScreen> {
       if (logs.isNotEmpty)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          child: Text(l10n.agentMindToolSummary(rate, ok, failed, blocked),
+          child: Text(l10n.agentMindToolSummary(rate, ok, failed, blocked, skipped),
               style:
                   const TextStyle(fontSize: 13, color: IosCardColors.subtitle)),
         ),
@@ -569,8 +574,8 @@ class _AgentMindScreenState extends State<AgentMindScreen> {
           child: Text(l10n.agentMindEmpty,
               style:
                   const TextStyle(fontSize: 13, color: IosCardColors.subtitle)),
-        )
-      else
+        ),
+      if (logs.isNotEmpty)
         // Aurora P6：条目改竖向时间线
         for (int i = 0; i < logs.length; i++)
           _timelineItem(
@@ -611,6 +616,25 @@ class _AgentMindScreenState extends State<AgentMindScreen> {
               ],
             ),
           ),
+      // R2（2026-09-09）：调度「未触发」折叠为一条中性条目（灰），不再逐条刷屏制造失败观感
+      if (skipped > 0)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.skip_next_outlined, size: 16, color: Colors.blueGrey),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(l10n.agentMindSkippedFold(skipped),
+                    style: const TextStyle(
+                        fontSize: 11, color: IosCardColors.subtitle)),
+              ),
+            ],
+          ),
+        ),
+      const SizedBox(height: 6),
+      _buildMcpCalls(l10n, scheme, mcp),
             ],
           ),
         ),
@@ -618,8 +642,71 @@ class _AgentMindScreenState extends State<AgentMindScreen> {
     );
   }
 
+  /// R2（2026-09-09）：账号级真实 MCP 调用分区（数据源 mcp_call_logs，按 user 级；
+  /// 与角色级 agent_task_logs 口径不同，只读侧分区展示，不物理合并）。
+  Widget _buildMcpCalls(AppLocalizations l10n, ColorScheme scheme, List<Map> mcp) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          child: Text(l10n.agentMindMcpCalls,
+              style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: IosCardColors.subtitle)),
+        ),
+        if (mcp.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            child: Text(l10n.agentMindMcpEmpty,
+                style: const TextStyle(
+                    fontSize: 11, color: IosCardColors.subtitle)),
+          )
+        else
+          for (int i = 0; i < mcp.length; i++)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(_statusIcon(mcp[i]["status"] as String?),
+                      size: 15, color: _statusColor(mcp[i]["status"] as String?)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("${mcp[i]["server_name"] ?? ""} / ${mcp[i]["tool"] ?? ""}",
+                            style:
+                                TextStyle(fontSize: 12, color: scheme.onSurface)),
+                        if (((mcp[i]["error"] as String?) ?? "").isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text("${mcp[i]["error"]}",
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontSize: 11, color: Colors.red)),
+                          ),
+                        Text(
+                          "${_fmtTime(mcp[i]["created_at"] as String?)} · ${mcp[i]["latency_ms"] ?? 0}ms",
+                          style: const TextStyle(
+                              fontSize: 10, color: IosCardColors.subtitle),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+      ],
+    );
+  }
+
   /// 统一执行状态口径（2026-08-23）：ok/done/success→success；error/failed→failed；
-  /// partial→partial；blocked/skipped→blocked（拦截未执行）；其余 unknown。
+  /// partial→partial；R2（2026-09-09）：skipped/not_attempted→skipped（本轮未触发，中性，
+  /// 非失败也非拦截）；blocked/intercepted→blocked（真正被拦截）；其余 unknown。
   String _classifyStatus(String? status) {
     switch (status) {
       case "ok":
@@ -634,8 +721,10 @@ class _AgentMindScreenState extends State<AgentMindScreen> {
       case "partial":
       case "partial_success":
         return "partial";
-      case "blocked":
       case "skipped":
+      case "not_attempted":
+        return "skipped";
+      case "blocked":
       case "intercepted":
         return "blocked";
       default:
@@ -644,30 +733,30 @@ class _AgentMindScreenState extends State<AgentMindScreen> {
   }
 
   IconData _statusIcon(String? status) {
-    switch (status) {
-      case "done":
-      case "ok":
+    switch (_classifyStatus(status)) {
+      case "success":
         return Icons.check_circle_outline;
+      case "failed":
+        return Icons.error_outline;
       case "blocked":
         return Icons.block;
-      case "failed":
-      case "error":
-        return Icons.error_outline;
+      case "skipped":
+        return Icons.skip_next_outlined;
       default:
         return Icons.schedule;
     }
   }
 
   Color _statusColor(String? status) {
-    switch (status) {
-      case "done":
-      case "ok":
+    switch (_classifyStatus(status)) {
+      case "success":
         return Colors.green;
+      case "failed":
+        return Colors.red;
       case "blocked":
         return Colors.orange;
-      case "failed":
-      case "error":
-        return Colors.red;
+      case "skipped":
+        return Colors.blueGrey;
       default:
         return Colors.blueGrey;
     }

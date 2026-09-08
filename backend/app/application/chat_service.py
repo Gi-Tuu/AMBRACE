@@ -950,6 +950,12 @@ async def send_and_receive(
     _tools = list(final_state.get("tools_used") or [])
     if gen_prompt:
         _tools.append("生图")
+    # R6（2026-09-09）：统一去重 + 上限（标签已在 ability_labels 归一为中文）
+    try:
+        from app.agent.ability_labels import normalize_tool_list
+        _tools = normalize_tool_list(_tools)
+    except Exception:
+        pass
     if _tools:
         _meta["tools"] = _tools
     # 状态更新附到气泡（前端小字显示，2026-08-14）
@@ -1016,12 +1022,15 @@ async def send_and_receive_chunked(
     quote: dict | None = None,
     extra_capabilities: list[str] | None = None,
     reply_delay: bool = True,
+    route: str = "ws_chunk",
 ) -> dict:
     """发送用户消息 -> Agent处理 -> 拆分回复 -> 保存每条块
 
     extra_capabilities: 外部链路标记的能力（如识图/文档问答），合并进 AI 回复的调用能力列表
     （任务 A，2026-09-04）本轮不动（微信桥走 send_and_receive，不走本函数）。将来如需渠道
     来源标记，可对称扩展 channel 参数并透传给 _persist_user_message / AI 消息 _meta / channel_hint。
+    route（F-12，v3.4.6 审查）：本轮事件 route 口径（默认 ws_chunk；SSE 回退传 sse_fallback、
+    散点入口传 image/file/emoji/batch 等），只影响事件 payload 标注，幂等键不变。
     """
     # 用户消息落库（chunked 路径：save_user_message 开关 + user_msg_info 回传 + Shared Memory）
     user_msg_id, user_msg_info = await _persist_user_message(
@@ -1087,6 +1096,12 @@ async def send_and_receive_chunked(
     for _cap in (extra_capabilities or []):
         if _cap not in _tools:
             _tools.append(_cap)
+    # R6（2026-09-09）：统一去重 + 上限
+    try:
+        from app.agent.ability_labels import normalize_tool_list
+        _tools = normalize_tool_list(_tools)
+    except Exception:
+        pass
     if _tools:
         _meta["tools"] = _tools
     saved_chunks = []
@@ -1123,14 +1138,14 @@ async def send_and_receive_chunked(
             saved_chunks.append(chunk_item)
         await db.commit()
 
-    # 3.10 事件流水（P0）：AI 分块回复（WS 路径，commit 成功后逐块落事件）
+    # 3.10 事件流水（P0）：AI 分块回复（commit 成功后逐块落事件；route=调用入口口径，F-12）
     _chunk_ai_ids = [(c["id"], c.get("content") or "") for c in saved_chunks]
     for _mid, _txt in _chunk_ai_ids:
         await append_domain_event(
             _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
             entity_type="chat_message", entity_id=_mid,
             actor_type="ai", actor_id=character_id,
-            payload={"sender_type": "ai", "route": "ws_chunk", "content": _txt},
+            payload={"sender_type": "ai", "route": route, "content": _txt},
             idempotency_key=f"chat.message_sent:chat_message:{_mid}",
             origin="ai_message",
         )
@@ -1145,12 +1160,12 @@ async def send_and_receive_chunked(
         gen_prompt=gen_prompt, img_text=img_text,
     )
 
-    # 3.10 事件流水（P0）：一轮清算（与 SSE 路径共用幂等键 → 回退也只落一条）
+    # 3.10 事件流水（P0）：一轮清算（与 SSE 路径共用幂等键 → 回退也只落一条；route=调用入口口径，F-12）
     await append_domain_event(
         _ET.CHAT_TURN_COMPLETED.value, "chat_session", session_id,
         actor_type="system",
         payload={"user_message_id": user_msg_id, "ai_message_ids": [i for i, _ in _chunk_ai_ids],
-                 "route": "ws_chunk", "block_count": len(_chunk_ai_ids)},
+                 "route": route, "block_count": len(_chunk_ai_ids)},
         idempotency_key=f"chat.turn_completed:{session_id}:{user_msg_id}",
         origin="ai_message",
     )
@@ -1348,6 +1363,16 @@ async def mark_session_read(db, session_id: int, user_id: int) -> bool:
     if session is None:
         return False
     now = datetime.now(timezone.utc).replace(tzinfo=None)  # 库内统一 naive UTC
+    # F-14（v3.4.6 审查）：先取将被联动标记的全部活跃会话 id，事件按会话各落一条（聚合各自
+    # session）；此前只挂传入 session_id，被联动会话没有事件。
+    _rows = await db.execute(
+        text(
+            "SELECT id FROM chat_sessions "
+            "WHERE user_id = :u AND character_id = :c AND is_active = 1"
+        ),
+        {"u": session.user_id, "c": session.character_id},
+    )
+    _affected_ids = [r[0] for r in _rows.all()]
     await db.execute(
         text(
             "UPDATE chat_sessions SET last_read_at = :t "
@@ -1356,12 +1381,16 @@ async def mark_session_read(db, session_id: int, user_id: int) -> bool:
         {"t": now, "u": session.user_id, "c": session.character_id},
     )
     await db.commit()
-    # 3.10 事件流水（P0）：已读流转（含同角色其他活跃会话联动；幂等键绑本次时间戳）
-    await append_domain_event(
-        _ET.CHAT_SESSION_READ.value, "chat_session", session_id,
-        actor_type="user", actor_id=user_id,
-        payload={"last_read_at": now.isoformat(), "character_id": session.character_id},
-        idempotency_key=f"chat.session_read:{session_id}:{now.isoformat()}",
-        origin="user_message",
-    )
+    # 3.10 事件流水（P0）：已读流转（含同角色其他活跃会话联动）。F-14：幂等键改为
+    # 「session + UTC 自然日」——原完整时间戳完全不幂等，高频已读导致事件膨胀；同日
+    # 重复只保留一条。仍用原生 SQL 更新，不污染 updated_at（见上方历史坑注释）。
+    _day = now.strftime("%Y-%m-%d")
+    for _sid in _affected_ids:
+        await append_domain_event(
+            _ET.CHAT_SESSION_READ.value, "chat_session", _sid,
+            actor_type="user", actor_id=user_id,
+            payload={"last_read_at": now.isoformat(), "character_id": session.character_id},
+            idempotency_key=f"chat.session_read:{_sid}:{_day}",
+            origin="user_message",
+        )
     return True

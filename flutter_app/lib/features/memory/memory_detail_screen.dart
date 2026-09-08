@@ -447,6 +447,37 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
             ),
             const SizedBox(height: 24),
 
+            // 意义（why_it_matters，v2.1）：完整展示，不截断、可长按复制
+            if ((_memory.whyItMatters ?? '').trim().isNotEmpty) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  // 淡金暖底，与正文卡区分但不喧宾夺主（深浅色取不同透明度，避免硬编码色值）
+                  color: Colors.amber.withValues(alpha: Theme.of(context).brightness == Brightness.dark ? 0.10 : 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.amber.withValues(alpha: 0.30)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Icon(Icons.lightbulb_outline, size: 16, color: Colors.amber.shade700),
+                      const SizedBox(width: 6),
+                      Text(l10n.whyMattersTitle,
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    ]),
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      _memory.whyItMatters!,
+                      style: const TextStyle(fontSize: 14, height: 1.6, fontStyle: FontStyle.italic),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+
             // 记忆链条（树状图）
             _buildChainCard(l10n),
             const SizedBox(height: 24),

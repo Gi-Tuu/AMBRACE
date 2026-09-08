@@ -74,10 +74,13 @@ async def purge_expired_domain_events() -> int:
     if days <= 0:
         return 0
     try:
-        from datetime import datetime as _dt, timedelta as _td
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         from sqlalchemy import delete as _delete
 
-        cutoff = _dt.now() - _td(days=days)
+        # F-8（v3.4.6 审查）：DomainEvent.created_at 的 server_default 是 SQLite
+        # datetime('now')（UTC naive），cutoff 必须同口径用 UTC naive——原 _dt.now()
+        # 取本地时间（东八区）会提前 8h 误删未到期事件。
+        cutoff = _dt.now(_tz.utc).replace(tzinfo=None) - _td(days=days)
         async with async_session_factory() as db:
             res = await db.execute(
                 _delete(DomainEvent).where(DomainEvent.created_at < cutoff)

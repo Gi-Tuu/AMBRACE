@@ -454,7 +454,6 @@ async def _resolve_author_gender(moment) -> str:
                     return "female"
             return ""
     return ""
-    return "\u7528\u6237" if moment.sender_type == "user" else "\u672a\u77e5"
 async def _get_daily_comment_limit(user_id: int) -> int:
     """计算某用户每日评论上限：该用户活跃AI数*2 + 该用户今日朋友圈数（按用户隔离）"""
     start = _beijing_day_start_utc()

@@ -255,8 +255,27 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String agentMindToolSummary(
-      Object blocked, Object fail, Object ok, Object rate) {
-    return '成功率 $rate%（完成 $ok / 失败 $fail · 拦截 $blocked）';
+      Object blocked, Object fail, Object ok, Object rate, Object skip) {
+    return '成功率 $rate%（完成 $ok / 失败 $fail · 拦截 $blocked · 未触发 $skip）';
+  }
+
+  @override
+  String agentMindSkippedFold(Object count) {
+    return '主动任务评估：最近 $count 次未触发（限额/条件未满足，非失败）';
+  }
+
+  @override
+  String get agentMindMcpCalls => '本账号 MCP 调用';
+
+  @override
+  String get agentMindMcpEmpty => '暂无 MCP 调用（未连接 MCP 服务器时为正常现象）';
+
+  @override
+  String get agentMindToolUnavailable => '工具未注册或未连接';
+
+  @override
+  String abilityMore(Object n) {
+    return '等 $n 项';
   }
 
   @override
@@ -522,6 +541,22 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get appearanceTitle => '外观';
+
+  @override
+  String get appearanceFont => '正文字体';
+
+  @override
+  String get appearanceFontHint =>
+      '跟随系统使用手机默认字体；部分安卓厂商在主题商店更换的第三方字体可能无法在此生效（系统限制）。';
+
+  @override
+  String get fontSystem => '跟随系统';
+
+  @override
+  String get fontSerif => '衬线体';
+
+  @override
+  String get fontRounded => '圆润体';
 
   @override
   String get archiveBox => '聊天记录箱';
@@ -3987,6 +4022,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String whyMatters(Object why) {
     return '意义：$why';
   }
+
+  @override
+  String get whyMattersTitle => '这件事为什么重要';
 
   @override
   String get writeTodayDiary => '写今天的日记';

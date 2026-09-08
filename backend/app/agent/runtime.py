@@ -115,6 +115,12 @@ async def _run_tool_stage(state: dict, steps: list[dict], *, character_id: int, 
             if not ok:
                 continue
             executed_any = True
+            # R6（2026-09-09）：真实执行成功才记「调用能力」（中文标签、去重、上限、隐藏内部工具）
+            try:
+                from app.agent.ability_labels import record_ability_used
+                record_ability_used(state, spec=spec)
+            except Exception:
+                pass
             state["context_messages"] = state.get("context_messages") or []
             state["context_messages"] = state["context_messages"] + [{
                 "role": "system",
@@ -139,6 +145,12 @@ async def _run_tool_stage(state: dict, steps: list[dict], *, character_id: int, 
         steps.append({"action": action_type, "ok": ok})
         if ok:
             executed_any = True
+            # R6（2026-09-09）：真实执行成功才记「调用能力」（含 MCP → MCP·服务器名）
+            try:
+                from app.agent.ability_labels import record_ability_used
+                record_ability_used(state, spec=spec)
+            except Exception:
+                pass
             _obs = (res.get("observation") or {}).get("summary") or ""
             state["context_messages"] = state.get("context_messages") or []
             state["context_messages"] = state["context_messages"] + [{

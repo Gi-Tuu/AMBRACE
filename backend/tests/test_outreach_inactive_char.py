@@ -185,3 +185,34 @@ def test_查最近用户消息_不串角色(tmp_db):
         return await arbiter.get_hours_since_last_user_message(18)
 
     assert asyncio.run(_run()) is None
+
+
+# ── F-6（v3.4.6 审查）：查询失败上抛，不与「无消息」混淆 ──
+
+def test_查询层异常上抛_不伪装成无消息(_flag, monkeypatch):
+    """F-6：session 工厂异常必须原样上抛 RuntimeError（None 只属于真无消息）。"""
+    _flag["proactive_inactive_char_skip"] = True
+
+    def _boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(arbiter, "async_session_factory", _boom)
+    with pytest.raises(RuntimeError):
+        asyncio.run(arbiter.get_hours_since_last_user_message(13))
+    # 门控 fail-open 兜住上抛：查询失败不误伤活跃角色
+    assert asyncio.run(arbiter.inactive_char_skip(13)) is False
+
+
+def test_门控_临时库真无消息_停发联调(_flag, tmp_db):
+    """F-6 回归：真实查询路径 0 消息 → None → 停发（与查询失败区分）。"""
+    from app.models.chat import ChatSession
+
+    _flag["proactive_inactive_char_skip"] = True
+
+    async def _run():
+        async with tmp_db() as db:
+            db.add(ChatSession(id=1, user_id=1, character_id=18))
+            await db.commit()
+        return await arbiter.inactive_char_skip(18)
+
+    assert asyncio.run(_run()) is True

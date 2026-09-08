@@ -53,20 +53,23 @@ def test_trace_灰度角色写入(monkeypatch):
 
 
 def test_trace_非灰度角色(monkeypatch):
+    """R1（2026-09-09）：flag 关（回退）时保留旧行为——未触发仍写 blocked。"""
     calls = []
     monkeypatch.setattr("app.agent.trace.enqueue_task_log", lambda **kw: calls.append(kw))
     loop.AGENT_FLAGS["agent_loop_scheduler"] = True
+    loop.AGENT_FLAGS["agent_trace_scheduler_only_executed"] = False
     try:
         asyncio.run(arbiter._trace_scheduler_task(
             {"type": "state_trigger", "priority": 1,
              "candidate": {"character_id": 7, "user_id": 2, "session_id": 3}}, False, 10,
         ))
     finally:
+        loop.AGENT_FLAGS["agent_trace_scheduler_only_executed"] = True
         loop.AGENT_FLAGS["agent_loop_scheduler"] = False
     assert calls[0]["route"] == "scheduler"
-    assert calls[0]["status"] == "blocked"  # 被拦截（限额/条件）
+    assert calls[0]["status"] == "blocked"  # flag 关：被拦截（限额/条件）仍记 blocked
     assert calls[0]["llm_calls"] == 0
-    assert calls[0]["error"] == "限额/条件拦截或执行失败"
+    assert calls[0]["error"] == "限额/条件拦截（本轮未触发）"
 
 
 def test_trace_timer事件取event字段(monkeypatch):

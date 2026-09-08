@@ -160,6 +160,28 @@ AGENT_FLAGS = {
     #   >0 时由定时清理任务（每 6h）删除超期 domain_events 行。runtime_flags 只支持 bool 覆盖，
     #   本项为硬编码默认值；误配非法值按 0 处理（宁可多留不误删）。
     "domain_event_retention_days": 0,
+    # ── 工具轨迹治理 R1（2026-09-09，方案 §4.1）──
+    # agent_trace_scheduler_only_executed 开=主动任务「本轮未触发」（_execute 正常 return False、
+    #   未抛错）不再写 agent_task_logs（止血写放大），评估流水回归 proactive_trigger_logs
+    #   （已有 5min 节流）；关=回到旧「每候选一条 blocked」。
+    # agent_trace_scheduler_mark_exec_error 开=真正进入执行却失败（_execute 抛错）记 status=error
+    #   （而非 blocked），保留「真失败」可观测性；关=回 blocked。
+    "agent_trace_scheduler_only_executed": True,
+    "agent_trace_scheduler_mark_exec_error": True,
+    # ── 工具轨迹治理 R6（2026-09-09，方案 §4.6）──
+    # chat_tools_list_real_only 开=私聊气泡「调用能力」只列本轮真实用到的能力（中文、去重、
+    #   上限、隐藏内部工具），不再把「全部启用中插件」的英文 id 拼成一坨；关=回退旧行为。
+    "chat_tools_list_real_only": True,
+    # ── 工具轨迹治理 R3（2026-09-09，方案 §4.3.1）──
+    # mcp_stream_declarations 开=流式会话也注入 MCP 工具声明（前提：#59 流尾 tool_result 通道已上线，
+    # 见 application/chat/streaming.py run_stream_mcp_tool_stage + sink("tool_result", …)）；
+    # 关=流式不注入（旧行为，零变化）。默认关（灰度验证后再全量）。
+    "mcp_stream_declarations": False,
+    # ── 工具轨迹治理 R5（2026-09-09，方案 §4.5）──
+    # agent_tool_exec_trace 开=插件/内置工具每次执行（tool.executed 事件）落一条 agent_task_logs
+    # （trigger=tool），让「工具轨迹」能看到真实工具成败；关=不写（默认，零写放大）。
+    # MCP 工具不落（已有 mcp_call_logs，前端 MCP 分区读取，避免双记）。
+    "agent_tool_exec_trace": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

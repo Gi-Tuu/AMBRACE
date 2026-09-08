@@ -44,6 +44,12 @@ def _assemble_chunk_meta(
         for _cap in (extra_capabilities or []):
             if _cap not in _tools:
                 _tools.append(_cap)
+        # R6（2026-09-09）：统一去重 + 上限
+        try:
+            from app.agent.ability_labels import normalize_tool_list
+            _tools = normalize_tool_list(_tools)
+        except Exception:
+            pass
         if _tools:
             _meta["tools"] = _tools
     if tts_url:
@@ -150,11 +156,13 @@ async def _persist_ai_chunks(
     extra_capabilities: list[str] | None = None,
     tts_urls: list[str | None] | None = None,
     tts: bool = False,
+    character_id: int | None = None,
 ) -> list[dict]:
     """把语义块按 chunked 的 extra_meta 规则落库（首块：reasoning/tools；末块：status/cal/memo）。
 
     tts_urls/tts 用于语音逐句合成：每个块额外携带自身 tts.url（首块 tools 追加「语音回复」）。
     返回已落库的块列表（含 id/created_at/extra_meta），供流式端点逐块推送。
+    character_id（F-3，v3.4.6 审查）：批量事件 actor_id 透传角色 id（与 _block_sink/WS 路径对齐）。
     """
     import json as _json
     saved: list[dict] = []
@@ -183,6 +191,7 @@ async def _persist_ai_chunks(
             saved.append(item)
         await db.commit()
     # 3.10 事件流水（P0）：SSE 批量块落库成功后逐块落事件（懒 import 防 streaming↔service 循环）
+    # F-3（v3.4.6 审查）：actor_id 透传 character_id（原 None 与 _block_sink 的 actor_id=character_id 不一致）
     try:
         from app.events.store import append_domain_event
         from app.events.types import EventType as _ET
@@ -190,7 +199,7 @@ async def _persist_ai_chunks(
             await append_domain_event(
                 _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
                 entity_type="chat_message", entity_id=_item["id"],
-                actor_type="ai", actor_id=None,
+                actor_type="ai", actor_id=character_id,
                 payload={"sender_type": "ai", "route": "sse_batch",
                          "content": _item.get("content", "")},
                 idempotency_key=f"chat.message_sent:chat_message:{_item['id']}",
@@ -276,20 +285,9 @@ async def send_and_receive_stream(
                 if tts_url:
                     item["tts_url"] = tts_url
                 await db.commit()
-            # 3.10 事件流水（P0）：TTS 实时逐块（幂等键绑真实块 id，回退批量落库不会重复）
-            try:
-                from app.events.store import append_domain_event
-                from app.events.types import EventType as _ET
-                await append_domain_event(
-                    _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
-                    entity_type="chat_message", entity_id=m.id,
-                    actor_type="ai", actor_id=character_id,
-                    payload={"sender_type": "ai", "route": "sse_live", "content": blk_text},
-                    idempotency_key=f"chat.message_sent:chat_message:{m.id}",
-                    origin="ai_message",
-                )
-            except Exception:
-                pass
+            # F-2（v3.4.6 审查）：不再逐块即发事件——LLM 流异常 / TTS consumer 死亡回退时，
+            # 已落库块会被 _delete_chunks 物理删除，即发事件会成孤儿；事件延迟到全部块
+            # 完整性确认后按块批量补发（见下方 len(saved) >= len(all_blocks) 的完整路径）。
             tts_saved.append(item)
             return item
 
@@ -332,6 +330,9 @@ async def send_and_receive_stream(
                 # P2-3：流式异常回退时已在 _run_agent_core(reply_delay=True) 或流式路径 sleep 过，
                 # 这里跳过自然延迟，避免已 sleep 一次又 sleep 一次（极端最多 2×8s）。
                 reply_delay=False,
+                # F-12（v3.4.6 审查）：回退入口 route 口径——SSE 回退也标 ws_chunk 会失真，
+                # 这里如实标注 sse_fallback（幂等键不变）。
+                route="sse_fallback",
             )
         except Exception as e:
             # chunked 也失败：error 事件已在上面的 except 发过，这里只记日志不再向上抛，
@@ -425,6 +426,23 @@ async def send_and_receive_stream(
                 saved, final_state, gen_prompt,
                 extra_capabilities, _cal_note_text, _memo_text,
             )
+            # F-2（v3.4.6 审查）：TTS 实时路径全部块确认后才批量补发逐块事件（route=sse_live，
+            # 幂等键仍绑真实块 id）；回退路径删块后自然无事件，不再产生孤儿。
+            try:
+                from app.events.store import append_domain_event
+                from app.events.types import EventType as _ET
+                for _item in saved:
+                    await append_domain_event(
+                        _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
+                        entity_type="chat_message", entity_id=_item["id"],
+                        actor_type="ai", actor_id=character_id,
+                        payload={"sender_type": "ai", "route": "sse_live",
+                                 "content": _item.get("content", "")},
+                        idempotency_key=f"chat.message_sent:chat_message:{_item['id']}",
+                        origin="ai_message",
+                    )
+            except Exception:
+                pass
             await _push_user_notify(user_id, session_id, character_id, full_text)
             await _run_post_processing(
                 session_id, user_id, character_id, content,
@@ -479,7 +497,7 @@ async def send_and_receive_stream(
     saved = await _persist_ai_chunks(
         session_id, final_state, chunk_texts, gen_prompt,
         _cal_note_text, _memo_text, extra_capabilities,
-        tts_urls=tts_urls, tts=tts,
+        tts_urls=tts_urls, tts=tts, character_id=character_id,
     )
     await _push_user_notify(user_id, session_id, character_id, full_text)
 

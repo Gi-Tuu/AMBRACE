@@ -198,3 +198,76 @@ def test_chat_turn_events_persist_and_idempotent(monkeypatch, tmp_path):
         await engine.dispose()
 
     asyncio.run(_run())
+
+
+# ── F-8/F-9（v3.4.6 审查）──
+
+def test_purge_cutoff_uses_utc_naive(monkeypatch, tmp_path):
+    """F-8：清理 cutoff 按 UTC naive 计——25h 前删、23h50m 前留（保留 1 天）。
+
+    回归口径：原实现取本地时间（东八区比 UTC 快 8h，会提前 8h 误删未到期事件）。
+    """
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    from sqlalchemy import select
+    from app.models.domain_event import DomainEvent
+
+    engine, factory, setup = _temp_factory(tmp_path)
+    _enable_flag(monkeypatch)
+    monkeypatch.setattr(st, "async_session_factory", factory)
+    monkeypatch.setattr(st, "domain_event_retention_days", lambda: 1)
+
+    async def _run():
+        await setup()
+        _utcnow = _dt.now(_tz.utc).replace(tzinfo=None)
+        async with factory() as db:
+            db.add(DomainEvent(
+                event_type="x.expired", aggregate_type="moment", aggregate_id=1,
+                entity_id=11, idempotency_key="x.expired:1",
+                created_at=_utcnow - _td(hours=25)))
+            db.add(DomainEvent(
+                event_type="x.alive", aggregate_type="moment", aggregate_id=2,
+                entity_id=22, idempotency_key="x.alive:2",
+                created_at=_utcnow - _td(hours=23, minutes=50)))
+            await db.commit()
+        deleted = await st.purge_expired_domain_events()
+        assert deleted == 1, "只应删掉超期 25h 那条"
+        async with factory() as db:
+            left = (await db.execute(select(DomainEvent.event_type))).scalars().all()
+        assert left == ["x.alive"]
+        await engine.dispose()
+
+    asyncio.run(_run())
+
+
+def test_purge_no_retention_is_noop(monkeypatch, tmp_path):
+    """F-8 伴生：保留策略 0（永久保留）→ 不删任何行。"""
+    from sqlalchemy import func, select
+    from app.models.domain_event import DomainEvent
+
+    engine, factory, setup = _temp_factory(tmp_path)
+    _enable_flag(monkeypatch)
+    monkeypatch.setattr(st, "async_session_factory", factory)
+    monkeypatch.setattr(st, "domain_event_retention_days", lambda: 0)
+
+    async def _run():
+        await setup()
+        async with factory() as db:
+            db.add(DomainEvent(
+                event_type="x.y", aggregate_type="moment", aggregate_id=1,
+                entity_id=1, idempotency_key="x.y:1"))
+            await db.commit()
+        assert await st.purge_expired_domain_events() == 0
+        async with factory() as db:
+            n = (await db.execute(select(func.count())
+                                  .select_from(DomainEvent))).scalar_one()
+        assert n == 1
+        await engine.dispose()
+
+    asyncio.run(_run())
+
+
+def test_created_at_single_index_defined():
+    """F-9：模型层定义 created_at 单列索引（purge 按 created_at 范围删，避免全表扫）。"""
+    from app.models.domain_event import DomainEvent
+    names = {ix.name for ix in DomainEvent.__table__.indexes}
+    assert "ix_domain_event_created" in names

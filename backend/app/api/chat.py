@@ -212,6 +212,7 @@ async def websocket_chat(websocket: WebSocket, session_id: int):
                         session_id=session_id, user_id=ws_user_id,
                         character_id=character_id, content=combined,
                         save_user_message=False, lang=lang,
+                        route="batch",  # F-12（v3.4.6 审查）：批量入口 route 口径如实标注
                     )
 
                     await websocket.send_json({"type": "typing", "is_typing": False})
@@ -522,6 +523,7 @@ async def upload_chat_image(
         content=llm_content,
         save_user_message=False, lang=lang,
         extra_capabilities=["识图"],
+        route="image",  # F-12（v3.4.6 审查）：图片入口 route 口径如实标注
     )
 
     return {
@@ -751,6 +753,7 @@ async def upload_chat_file(
         session_id=session_id, user_id=user_id, character_id=character_id,
         content=llm_content, save_user_message=False, lang=lang,
         extra_capabilities=["文档问答"],
+        route="file",  # F-12（v3.4.6 审查）：文件入口 route 口径如实标注
     )
     return {
         "file_message": {
@@ -884,6 +887,7 @@ async def send_emoji_message(
     result = await send_and_receive_chunked(
         session_id=session_id, user_id=user_id, character_id=character_id,
         content=desc, save_user_message=False, lang=lang,
+        route="emoji",  # F-12（v3.4.6 审查）：表情入口 route 口径如实标注
     )
     return {
         "emoji_message": {

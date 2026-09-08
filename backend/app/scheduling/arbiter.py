@@ -286,7 +286,9 @@ async def get_hours_since_last_user_message(character_id: int) -> float | None:
     """该角色最近一条用户消息距今小时数；一条都没有 → None。
 
     跨该角色**全部会话**统计（不按 user 细分）：outreach 是角色维度行为，任一用户近期
-    说过话即视为该角色活跃；从未对话的角色 → None（按停发处理）。查询失败静默返回 None。
+    说过话即视为该角色活跃；从未对话的角色 → None（按停发处理）。
+    F-6（v3.4.6 审查）：查询失败直接上抛（由调用方 inactive_char_skip 的 fail-open 捕获），
+    不再与「无消息」的 None 混淆——否则查询失败轮活跃角色被误停发。
     """
     try:
         from app.models.chat import ChatSession
@@ -306,7 +308,7 @@ async def get_hours_since_last_user_message(character_id: int) -> float | None:
             ).scalar_one_or_none()
     except Exception as e:
         _logger.warning("last user message load failed char=%s: %s", character_id, e)
-        return None
+        raise
     if row is None:
         return None
     if row.tzinfo is None:
@@ -319,7 +321,7 @@ async def inactive_char_skip(character_id: int) -> bool:
 
     flag ``proactive_inactive_char_skip`` 关 → 恒 False（零行为变化）；判据为纯函数
     ``outreach.skip_inactive_char``（近 INACTIVE_CHAR_WINDOW_HOURS 无用户消息 → 停发）。
-    异常静默 False（fail-open：门控异常不误伤活跃角色）。
+    异常静默 False（fail-open：门控异常不误伤活跃角色；含 F-6 查询失败上抛，此处兜住）。
     """
     try:
         from app.agent.loop import AGENT_FLAGS as _af
@@ -692,6 +694,8 @@ async def run_tick() -> list[str]:
         )
         for item in items:
             _t0 = _time.monotonic()
+            # R1（2026-09-09）：只有 _execute 抛异常才算「真执行失败」；正常 return False = 本轮未触发
+            _exec_error = False
             try:
                 # B1-③：flag 开 + 主动搭话类型 → 选意图并写回 candidate（flag 关=不动，零变化）
                 if _outreach_enabled() and item.get("type") in PROACTIVE_OUTREACH_TYPES:
@@ -700,6 +704,7 @@ async def run_tick() -> list[str]:
             except Exception as e:
                 _logger.error("execute %s failed char=%d: %s", item["type"], char_id, e)
                 ok = False
+                _exec_error = True
             _latency_ms = int((_time.monotonic() - _t0) * 1000)
             # 触发日志（可观测：候选 → 决策 approved/rejected，失败静默）
             try:
@@ -708,7 +713,7 @@ async def run_tick() -> list[str]:
                 pass
             # Phase D：arbiter 主动任务 → AgentTask trace（feature flag + 10% 角色灰度；只写不读；失败静默）
             try:
-                await _trace_scheduler_task(item, ok, _latency_ms)
+                await _trace_scheduler_task(item, ok, _latency_ms, exec_error=_exec_error)
             except Exception:
                 pass
             if ok:
@@ -764,16 +769,25 @@ async def log_trigger_candidate(item: dict, executed: bool) -> None:
         await db.commit()
 
 
-async def _trace_scheduler_task(item: dict, ok: bool, latency_ms: int) -> None:
+async def _trace_scheduler_task(item: dict, ok: bool, latency_ms: int, *, exec_error: bool = False) -> None:
     """Phase D：arbiter 主动任务写 AgentTask trace（agent_task_logs，先只写不读）。
 
     - Feature Flag agent_loop_scheduler 关闭时不记录（默认关，一键回退）；
     - 灰度角色（10%）route=scheduler_gray，其余 scheduler，便于对比主动消息质量/成本；
+    - R1（2026-09-09，工具轨迹治理 §4.1）：exec_error=``_execute`` 抛错（真进入执行却失败）。
+      agent_trace_scheduler_only_executed 开=「本轮未触发」（ok=False 且未抛错）不再写
+      agent_task_logs（评估流水看 proactive_trigger_logs，已有 5min 节流）；
+      agent_trace_scheduler_mark_exec_error 开=真执行失败记 status=error（而非 blocked）；
     - 失败静默，绝不阻塞调度主链路。
     """
     try:
         from app.agent import loop as _loop
         if not _loop.AGENT_FLAGS.get("agent_loop_scheduler", False):
+            return
+        # R1 止血：未触发（ok=False 且未抛执行错误）不再写 agent_task_logs（写放大 ~89% 的来源）
+        if (not ok) and (not exec_error) and _loop.AGENT_FLAGS.get(
+            "agent_trace_scheduler_only_executed", True
+        ):
             return
         cand = item.get("candidate") or {}
         char_id = cand.get("character_id")
@@ -786,6 +800,13 @@ async def _trace_scheduler_task(item: dict, ok: bool, latency_ms: int) -> None:
         session_id = cand.get("session_id") or (getattr(ev, "session_id", None) if ev is not None else None)
         gray = scheduler_gray_character(char_id)
         from app.agent import trace as _trace
+        # 状态三态（R1）：成功 ok / 真执行失败 error / 其余（仅 flag 关的兼容路径）blocked
+        if ok:
+            status, err = "ok", None
+        elif exec_error and _loop.AGENT_FLAGS.get("agent_trace_scheduler_mark_exec_error", True):
+            status, err = "error", "主动任务执行失败（详见日志）"
+        else:
+            status, err = "blocked", "限额/条件拦截（本轮未触发）"
         _trace.enqueue_task_log(
             task_id=_trace.new_task_id(),
             character_id=int(char_id),
@@ -794,14 +815,15 @@ async def _trace_scheduler_task(item: dict, ok: bool, latency_ms: int) -> None:
             trigger="scheduler",
             route="scheduler_gray" if gray else "scheduler",
             steps_json=json.dumps(
-                [{"action": item["type"], "priority": item.get("priority"), "ok": ok}],
+                [{"action": item["type"], "priority": item.get("priority"), "ok": ok,
+                  **({"reason": "exec_error"} if exec_error else {})}],
                 ensure_ascii=False,
             ),
             llm_calls=1 if ok else 0,
             tool_calls=0,
             latency_ms=latency_ms,
-            status="ok" if ok else "blocked",
-            error=None if ok else "限额/条件拦截或执行失败",
+            status=status,
+            error=err,
         )
         # Phase H：灰度角色升级为真实任务记录（agent_tasks：goal/status/result；失败静默）
         if gray:
@@ -815,7 +837,7 @@ async def _trace_scheduler_task(item: dict, ok: bool, latency_ms: int) -> None:
                 status="done" if ok else "failed",
                 progress=[{"action": item["type"], "ok": ok}],
                 result={"latency_ms": latency_ms},
-                error=None if ok else "限额/条件拦截或执行失败",
+                error=err,
             )
     except Exception as e:
         _logger.warning("Scheduler task trace failed: %s", e)

@@ -575,9 +575,39 @@ abstract class AppLocalizations {
   /// No description provided for @agentMindToolSummary.
   ///
   /// In zh, this message translates to:
-  /// **'成功率 {rate}%（完成 {ok} / 失败 {fail} · 拦截 {blocked}）'**
+  /// **'成功率 {rate}%（完成 {ok} / 失败 {fail} · 拦截 {blocked} · 未触发 {skip}）'**
   String agentMindToolSummary(
-      Object blocked, Object fail, Object ok, Object rate);
+      Object blocked, Object fail, Object ok, Object rate, Object skip);
+
+  /// No description provided for @agentMindSkippedFold.
+  ///
+  /// In zh, this message translates to:
+  /// **'主动任务评估：最近 {count} 次未触发（限额/条件未满足，非失败）'**
+  String agentMindSkippedFold(Object count);
+
+  /// No description provided for @agentMindMcpCalls.
+  ///
+  /// In zh, this message translates to:
+  /// **'本账号 MCP 调用'**
+  String get agentMindMcpCalls;
+
+  /// No description provided for @agentMindMcpEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无 MCP 调用（未连接 MCP 服务器时为正常现象）'**
+  String get agentMindMcpEmpty;
+
+  /// No description provided for @agentMindToolUnavailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'工具未注册或未连接'**
+  String get agentMindToolUnavailable;
+
+  /// No description provided for @abilityMore.
+  ///
+  /// In zh, this message translates to:
+  /// **'等 {n} 项'**
+  String abilityMore(Object n);
 
   /// No description provided for @agentMindMemorySearch.
   ///
@@ -1088,6 +1118,36 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'外观'**
   String get appearanceTitle;
+
+  /// No description provided for @appearanceFont.
+  ///
+  /// In zh, this message translates to:
+  /// **'正文字体'**
+  String get appearanceFont;
+
+  /// No description provided for @appearanceFontHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'跟随系统使用手机默认字体；部分安卓厂商在主题商店更换的第三方字体可能无法在此生效（系统限制）。'**
+  String get appearanceFontHint;
+
+  /// No description provided for @fontSystem.
+  ///
+  /// In zh, this message translates to:
+  /// **'跟随系统'**
+  String get fontSystem;
+
+  /// No description provided for @fontSerif.
+  ///
+  /// In zh, this message translates to:
+  /// **'衬线体'**
+  String get fontSerif;
+
+  /// No description provided for @fontRounded.
+  ///
+  /// In zh, this message translates to:
+  /// **'圆润体'**
+  String get fontRounded;
 
   /// No description provided for @archiveBox.
   ///
@@ -7562,6 +7622,12 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'意义：{why}'**
   String whyMatters(Object why);
+
+  /// No description provided for @whyMattersTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'这件事为什么重要'**
+  String get whyMattersTitle;
 
   /// No description provided for @writeTodayDiary.
   ///

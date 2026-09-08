@@ -495,6 +495,11 @@ async def get_emotion_timeline(
     return await _get_timeline(character_id, days=days, dimension=dimension)
 
 
+# R2（2026-09-09，工具轨迹治理 §4.2.2）：「工具轨迹」取数窗口（取大后内存分区，
+# 前端仍只展示最近 25 条；调度「未触发」噪音单独计数）。
+_TOOL_LOG_WINDOW = 200
+
+
 async def get_agent_mind(
     db: AsyncSession,
     character_id: int,
@@ -502,7 +507,11 @@ async def get_agent_mind(
 ):
     """AI 内心世界（Phase J/P1，2026-08-16）：最近复盘 + 任务记录 + 工具使用轨迹"""
     await _get_owned_character(db, character_id, user_id, "zh")
-    out = {"reflection": None, "tasks": [], "tool_logs": []}
+    out = {
+        "reflection": None, "tasks": [], "tool_logs": [],
+        # R2（2026-09-09）：工具轨迹分区——账号级真实 MCP 调用 + 被折叠的调度「未触发」计数
+        "mcp_calls": [], "scheduler_trace": {"skipped_recent": 0, "window": _TOOL_LOG_WINDOW},
+    }
     try:
         from app.models.memory import Memory
         _mr = (await db.execute(
@@ -541,23 +550,58 @@ async def get_agent_mind(
         pass
     try:
         from app.models.agent import AgentTaskLog
+        # R2（工具轨迹治理 §4.2.2）：窗口取大（200）后内存分区——调度器「未触发」噪音
+        # （trigger=scheduler 且 blocked/skipped 且没有真实 LLM/工具调用）单独计数，不再刷屏时间线。
         logs = (await db.execute(
             select(AgentTaskLog)
             .where(AgentTaskLog.character_id == character_id)
             .order_by(AgentTaskLog.id.desc())
-            .limit(25)
+            .limit(_TOOL_LOG_WINDOW)
         )).scalars().all()
+
+        def _is_untriggered_scheduler(r) -> bool:
+            return (
+                r.trigger == "scheduler"
+                and (r.status in ("blocked", "skipped"))
+                and int(r.tool_calls or 0) == 0
+                and int(r.llm_calls or 0) == 0
+            )
+
+        _tool_rows = [r for r in logs if not _is_untriggered_scheduler(r)]
+        out["scheduler_trace"] = {
+            "skipped_recent": sum(1 for r in logs if _is_untriggered_scheduler(r)),
+            "window": _TOOL_LOG_WINDOW,
+        }
         out["tool_logs"] = [{
             "trigger": r.trigger, "route": r.route,
-            # 状态口径统一（2026-08-23）：展示侧归一为 success/failed/partial/blocked；
-            # status_raw 保留原始库值（ok/error/blocked/degraded...）供排查。blocked≠失败。
+            # 状态口径统一（2026-08-23）：展示侧归一为 success/failed/partial/skipped/blocked；
+            # status_raw 保留原始库值（ok/error/blocked/degraded...）供排查。blocked≠失败、skipped≠失败。
             "status": _classify_status(r.status),
             "status_raw": r.status,
             "steps": r.steps_json, "latency_ms": r.latency_ms,
             "created_at": r.created_at.isoformat() if r.created_at else None,
-        } for r in logs]
+        } for r in _tool_rows[:25]]
     except Exception:
         pass
+    # R2（§4.2.2）：账号级真实 MCP 调用（mcp_call_logs 是 user 级、无 character_id，
+    # 与角色级 agent_task_logs 口径不同，只在读侧分区，不物理合并）。
+    try:
+        from app.models.mcp import McpCallLog
+        _mcp_rows = (await db.execute(
+            select(McpCallLog)
+            .where(McpCallLog.user_id == user_id)
+            .order_by(McpCallLog.id.desc())
+            .limit(25)
+        )).scalars().all()
+        out["mcp_calls"] = [{
+            "server_name": r.server_name, "tool": r.tool,
+            "status": _classify_status(r.status),
+            "status_raw": r.status,
+            "error": r.error, "latency_ms": r.latency_ms,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        } for r in _mcp_rows]
+    except Exception:
+        out["mcp_calls"] = []
     # P2-4 记忆召回可观测（2026-08-16）：最近 memory_search trace 汇总 + 明细（数据源 P0-2，只读）
     try:
         from app.models.agent import AgentTaskLog
