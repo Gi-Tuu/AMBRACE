@@ -3,6 +3,8 @@
 在 chat_service._run_post_processing 中异步调用，不阻塞回复。
 提取结果写入 life_chat_intents 缓冲表，Life Loop 下拉消费。
 修正 2026-08-26：priority>=3（this_turn）写库后立即触发该角色一个 Life Loop 回合，不等 30min tick。
+修正 2026-09-08（F2 语用收敛）：仅"明确让角色去做什么"才触发；转述/元讨论/自述/疑问/否定零触发
+（曾致用户一提"吃饭"→ Sam 立即 eat、自述「我去洗澡了」被固化为 Sam 待办永挂）。
 """
 from __future__ import annotations
 import asyncio
@@ -20,32 +22,36 @@ THROTTLE_SECONDS = 300  # 同角色 5 分钟最多提取 1 次
 _throttle: dict[int, float] = {}
 
 # (action_type, horizon, pattern)
+# F2d（2026-09-08）语用收敛：想吃/要去/好饿/想学等欲望类属**用户自身**行为，不再固化为
+# 角色待办（曾致自述「我去洗澡了/我陪你吃烧烤」→ Sam 待执行意图长期 pending）。
+# 仅保留语义明确为"用户要求角色做"的模式（pet_care 帮我喂类）。
 _PATTERNS = [
-    ("go_out", "this_week", re.compile(
-        r"(?:想去|要去|打算去|准备去|去一趟)([^，。！？!?,;；\s]{2,10})"
-        r"(?:公园|海边|山|商场|超市|书店|咖啡厅|外面|外面走走)?"
-    )),
-    ("walk", "today", re.compile(r"(?:出去走走|散散步|出门转转|出去转转|下楼走走)")),
-    ("eat", "today", re.compile(
-        r"(?:想吃|要吃|去吃|吃什么|好饿|想吃点)([^，。！？!?,;；\s]{0,10})"
-    )),
-    ("visit_friend", "this_week", re.compile(
-        r"(?:去找|去看看|拜访|串门|约了)([^，。！？!?,;；\s]{2,8})"
-    )),
     ("pet_care", "today", re.compile(
         r"(?:帮我喂|喂一下猫|喂狗|照顾好它|给它喂食|铲屎)"
     )),
-    ("create", "this_week", re.compile(
-        r"(?:写一首|画一幅|做个视频|写篇|创作|拍个)([^，。！？!?,;；\s]{0,10})"
-    )),
-    ("study", "this_week", re.compile(
-        r"(?:想学|要学|开始学|准备学|学一下)([^，。！？!?,;；\s]{2,10})"
-    )),
 ]
 
-# 显式指令（当轮立即执行）
+# 显式指令（当轮立即执行）——F2c（2026-09-08）：仅显式针对角色的祈使（第二人称
+# "你去/你现在去/你先去"或带"吧"的纯祈使）才 this_turn；无主语裸动作（去吃饭/去洗澡）
+# 出现在用户消息中按用户自述处理，不再触发。
 _IMMEDIATE = re.compile(
-    r"(?:你去|你现在去|你先去|去睡吧|去洗澡|去吃饭|去休息|去学习|去工作|出去转转)"
+    r"(?:你去|你现在去|你先去|去睡吧|睡吧|去吃饭吧|去洗澡吧|去休息吧|去学习吧|去工作吧|出去转转吧)"
+)
+
+# 元讨论/转述守卫（F2a 2026-09-08）：命中即整句视为在讨论系统/事件/bug 本身 → 零触发
+_META_CONTEXT = re.compile(
+    r"你说|你又说|你说过|你说来|你刚才|生成了?|事件|bug|报错|出了?问题|有问题|问题|"
+    r"修一下|修好|修复|理解错|误会|搞错|弄错|错了|就是|其实"
+)
+
+# 第一人称自述守卫（F2b 2026-09-08）：用户自身行为（我去/我要/我陪/我们…）→ 不触发角色
+_FIRST_PERSON = re.compile(
+    r"我(?:去|要|会|想|先|马上|等下|等会|待会|一会|一会儿|下午|晚上|今天|明天|陪)|我们"
+)
+
+# 否定/疑问/假设守卫（F2e 2026-09-08）
+_NEGATIVE_OR_QUESTION = re.compile(
+    r"别|不(?:想|要|去|吃|睡|洗)|？|\?|吗|要不|要不要|好不好|行不行"
 )
 
 
@@ -67,7 +73,16 @@ def detect_life_intent(text: str) -> dict | None:
     text = (text or "").strip()
     if len(text) < 2 or len(text) > 100:
         return None
-    # 显式指令优先
+    # F2a 元讨论/转述守卫：讨论系统/事件/bug 本身（如 09-08 19:27「你说去吃饭……生成了吃饭事件」）
+    if _META_CONTEXT.search(text):
+        return None
+    # F2e 否定/疑问/假设守卫
+    if _NEGATIVE_OR_QUESTION.search(text):
+        return None
+    # F2b 第一人称自述守卫：用户自己的行为，不固化为角色待办
+    if _FIRST_PERSON.search(text):
+        return None
+    # 显式指令优先（F2c：仅显式针对角色的祈使）
     if _IMMEDIATE.search(text):
         if "睡" in text:
             return {"action_type": "sleep", "horizon": "this_turn", "priority": 3}

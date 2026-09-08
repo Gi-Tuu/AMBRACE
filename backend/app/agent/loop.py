@@ -84,6 +84,11 @@ AGENT_FLAGS = {
     "memory_chain_builder": False,
     "memory_chain_expand": False,
     "proactive_outreach_v2": False,
+    # B1-③ 配额让位（2026-09-08，用户拍板）：proactive_inactive_char_skip 开=近 24h 内无任何用户
+    #   消息的角色直接停发主动搭话（greeting/proactive_chat/goodnight/status_update/motivation）——
+    #   不生成候选、不占每日配额、不写 approved 日志，额度留给有互动的角色（当前=char13）；
+    #   关（或 INACTIVE_CHAR_WINDOW_HOURS<=0）=零行为，一键回退。
+    "proactive_inactive_char_skip": True,
     "memory_peak_cutoff": False,  # Ariadne 模块 D（2026-09-04）：自然收敛替代硬截断（默认关；开=按 rerank 分数断档/地板收敛，弃权/弱相关场景条数自然减少；阈值经模块 E v2 标定）
     "recall_diversify": True,  # S1：按类型多样性重排（每类先取 2 条一轮再按原序补齐；关=纯 _ranked[:limit]）
     # ── Life Loop v1.1（2026-08-26；2026-08-27 用户拍板全量开启）──
@@ -151,6 +156,10 @@ AGENT_FLAGS = {
     #   默认关（灰度）；开法：本 key 已登记进 AGENT_FLAGS，重启服务加载新代码后即可经
     #   flag_service.set_runtime_flag（写 runtime_flags 行 + 热更新内存）API 热切，无需再重启。
     "domain_event_log_enabled": False,
+    # domain_event_retention_days：事件流水保留天数（P1，方案 §8.5）。0=永久保留（本地优先默认）；
+    #   >0 时由定时清理任务（每 6h）删除超期 domain_events 行。runtime_flags 只支持 bool 覆盖，
+    #   本项为硬编码默认值；误配非法值按 0 处理（宁可多留不误删）。
+    "domain_event_retention_days": 0,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

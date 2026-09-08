@@ -53,6 +53,42 @@ def _default_key(event_type: str, entity_type: str | None, entity_id: int | None
     return f"{event_type}:{aggregate_type}:{aggregate_id}"
 
 
+def domain_event_retention_days() -> int:
+    """保留策略（P1，方案 §8.5）：>0 时删除超过 N 天的事件行；默认 0=永久保留（本地优先）。
+
+    与灰度 flag 同源读 AGENT_FLAGS；非法值/异常一律按 0（不清理）处理，宁可多留不误删。
+    """
+    try:
+        from app.agent import loop as _loop
+        return max(0, int(_loop.AGENT_FLAGS.get("domain_event_retention_days", 0) or 0))
+    except Exception:
+        return 0
+
+
+async def purge_expired_domain_events() -> int:
+    """按保留策略清理超期事件行，返回删除条数；flag=0 或未开启 → 0（不删）。
+
+    独立 session、失败静默（事件旁路不得影响主链路）；由定时清理任务顺带调用（每 6h 一次）。
+    """
+    days = domain_event_retention_days()
+    if days <= 0:
+        return 0
+    try:
+        from datetime import datetime as _dt, timedelta as _td
+        from sqlalchemy import delete as _delete
+
+        cutoff = _dt.now() - _td(days=days)
+        async with async_session_factory() as db:
+            res = await db.execute(
+                _delete(DomainEvent).where(DomainEvent.created_at < cutoff)
+            )
+            await db.commit()
+            return int(res.rowcount or 0)
+    except Exception as e:  # noqa: BLE001
+        _logger.warning("purge_expired_domain_events failed: %s", e)
+        return 0
+
+
 async def append_domain_event(
     event_type: str,
     aggregate_type: str,

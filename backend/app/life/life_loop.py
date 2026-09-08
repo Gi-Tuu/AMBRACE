@@ -13,6 +13,7 @@
 - 宠物报警只派给同用户最近互动角色，避免多角色重复响应同一宠物；
 - 提供模块级 run_character_tick(character_id, user_id) 单角色立即执行（即时聊天指令用）。
 """
+import asyncio
 import json
 import random
 from datetime import datetime, timedelta, timezone
@@ -28,7 +29,7 @@ from app.models.pet import Pet
 from app.life.life_state import (
     apply_tick, get_life_state, phase_of, beijing_hour, default_needs, clamp,
 )
-from app.life.decision import decide, StateSnapshot, Decision, ACTIONS
+from app.life.decision import decide, StateSnapshot, Decision, ACTIONS, INTENT_ACTION_MAP
 from app.life.followup import add_followup
 from app.utils.logger import get_logger
 
@@ -49,6 +50,29 @@ def _now() -> datetime:
 
 def _beijing_date_str() -> str:
     return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+
+
+# F5（2026-09-08）：写库遇 database is locked 的有限退避重试（0.3s/0.6s，共 2 次重试后放弃）
+_LOCK_RETRY_DELAYS = (0.3, 0.6)
+
+
+async def _retry_on_lock(fn, what: str):
+    """写库协程遇 OperationalError(database is locked) 退避重试；非锁错误或重试耗尽直接抛出。"""
+    from sqlalchemy.exc import OperationalError
+    delays = (0.0, *_LOCK_RETRY_DELAYS)
+    err = None
+    for attempt, delay in enumerate(delays):
+        try:
+            if delay:
+                await asyncio.sleep(delay)
+            return await fn()
+        except OperationalError as e:
+            if "locked" not in str(e).lower():
+                raise
+            err = e
+            _logger.warning("life loop %s database locked (attempt %d/%d)",
+                            what, attempt + 1, len(delays))
+    raise err
 
 
 async def run_character_tick(character_id: int, user_id: int) -> None:
@@ -112,6 +136,11 @@ class LifeLoopTask:
         decision = decide(snap)
         _logger.info("life loop decision: char=%d action=%s reason=%s",
                      char.id, decision.action, decision.reason)
+
+        # F3a（2026-09-08）：不可映射的 pending 意图直接置 consumed——mapping 外类型
+        # （历史错误固化的自述意图等）不再永挂阻塞后续真实意图
+        if snap.pending_intents and decision.reason != "chat_intent":
+            await self._consume_unmappable_intents(db, char.id)
 
         # 执行
         await self._execute(db, char, st, needs, decision, snap)
@@ -351,6 +380,27 @@ class LifeLoopTask:
             _logger.warning("life loop play_game start failed char=%d: %s", char.id, e)
             return None
 
+    async def _consume_unmappable_intents(self, db, character_id: int) -> None:
+        """F3a（2026-09-08）：把映射外（不可执行）的 pending 聊天意图置 consumed，防永挂。"""
+        try:
+            intents = (await db.execute(
+                select(LifeChatIntent).where(
+                    LifeChatIntent.character_id == character_id,
+                    LifeChatIntent.status == "pending",
+                )
+            )).scalars().all()
+            stale = [i for i in intents if i.action_type not in INTENT_ACTION_MAP]
+            for i in stale:
+                i.status = "consumed"
+                i.consumed_at = _now()
+            if stale:
+                await db.commit()
+                _logger.info("life loop consumed %d unmappable intents char=%d",
+                             len(stale), character_id)
+        except Exception as e:
+            _logger.warning("life loop consume unmappable intents failed char=%d: %s",
+                            character_id, e)
+
     async def _execute(self, db, char, st, needs, decision: Decision, snap: StateSnapshot):
         act = ACTIONS.get(decision.action)
         if act is None:
@@ -365,7 +415,7 @@ class LifeLoopTask:
             mood_delta=act.mood_delta,
         )
         db.add(log)
-        await db.commit()
+        await _retry_on_lock(lambda: db.commit(), f"log-start char={char.id}")
         await db.refresh(log)
 
         try:
@@ -424,14 +474,20 @@ class LifeLoopTask:
                 summary = await self._build_summary(db, char, decision, act)
                 if await self._memory_allowed_today(db, char.id):
                     from app.memory.service import save_memory
-                    mem = await save_memory(
-                        user_id=char.user_id, character_id=char.id,
-                        memory_type="event", content=summary,
-                        importance=act.memory_importance,
-                        sub_type="life_event", source="life",
-                        speaker_type="character", speaker_id=char.id,
-                        epistemic_status="FACT",
-                    )
+
+                    async def _save_mem():
+                        return await save_memory(
+                            user_id=char.user_id, character_id=char.id,
+                            memory_type="event", content=summary,
+                            importance=act.memory_importance,
+                            sub_type="life_event", source="life",
+                            speaker_type="character", speaker_id=char.id,
+                            epistemic_status="FACT",
+                        )
+
+                    # F5（2026-09-08）：写记忆遇 database is locked 退避重试
+                    # （09-08 study 4 次 failed 根因；save_memory 独立 session，重试安全）
+                    mem = await _retry_on_lock(_save_mem, f"save_memory char={char.id}")
                     memory_id = mem.id if mem else None
 
                     # 回聊缓冲
@@ -453,7 +509,7 @@ class LifeLoopTask:
             }, ensure_ascii=False)
             log.memory_id = memory_id
             log.completed_at = _now()
-            await db.commit()
+            await _retry_on_lock(lambda: db.commit(), f"complete char={char.id}")
 
             # 事件广播（复用现有事件总线）
             self._publish_event(char, decision, act, memory_id)

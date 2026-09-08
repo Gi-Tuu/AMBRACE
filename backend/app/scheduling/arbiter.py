@@ -282,6 +282,56 @@ async def is_user_active(character_id: int, user_id: int) -> bool:
         return (msg_result.scalar() or 0) > 0
 
 
+async def get_hours_since_last_user_message(character_id: int) -> float | None:
+    """该角色最近一条用户消息距今小时数；一条都没有 → None。
+
+    跨该角色**全部会话**统计（不按 user 细分）：outreach 是角色维度行为，任一用户近期
+    说过话即视为该角色活跃；从未对话的角色 → None（按停发处理）。查询失败静默返回 None。
+    """
+    try:
+        from app.models.chat import ChatSession
+
+        async with async_session_factory() as db:
+            row = (
+                await db.execute(
+                    select(ChatMessage.created_at)
+                    .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+                    .where(
+                        ChatSession.character_id == character_id,
+                        ChatMessage.sender_type == "user",
+                    )
+                    .order_by(ChatMessage.created_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+    except Exception as e:
+        _logger.warning("last user message load failed char=%s: %s", character_id, e)
+        return None
+    if row is None:
+        return None
+    if row.tzinfo is None:
+        row = row.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - row).total_seconds() / 3600.0
+
+
+async def inactive_char_skip(character_id: int) -> bool:
+    """非活跃角色停发门控（B1-③ 配额让位，2026-09-08）：应停发 → True。
+
+    flag ``proactive_inactive_char_skip`` 关 → 恒 False（零行为变化）；判据为纯函数
+    ``outreach.skip_inactive_char``（近 INACTIVE_CHAR_WINDOW_HOURS 无用户消息 → 停发）。
+    异常静默 False（fail-open：门控异常不误伤活跃角色）。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS as _af
+
+        if not _af.get("proactive_inactive_char_skip", False):
+            return False
+        return _oc.skip_inactive_char(await get_hours_since_last_user_message(character_id))
+    except Exception as e:
+        _logger.warning("inactive char skip check failed char=%s: %s", character_id, e)
+        return False
+
+
 async def has_pending_timer(character_id: int) -> bool:
     """该角色是否有未到期的定时承诺（有则跳过随机节律，避免穿帮）"""
     from app.models.life import ScheduledEvent
@@ -1105,6 +1155,14 @@ async def _execute(item: dict) -> bool:
     # 主动搭话类：greeting / proactive_chat / goodnight / status_update
     # 改为"剧情线"模式：一次生成完整剧情 → 切片 → 按时间逐条发送
     if etype in ("greeting", "proactive_chat", "goodnight", "status_update", "motivation"):
+        # B1-③ 配额让位（2026-09-08）：近 24h 无任何用户消息的角色直接停发——不生成候选、
+        # 不消耗每日配额（approved 计数不增）、不发起 LLM 生成；额度留给有互动的角色。
+        if await inactive_char_skip(char_id):
+            _logger.info(
+                "Proactive msg char=%d skipped: inactive char (no user msg within %sh)",
+                char_id, _oc.INACTIVE_CHAR_WINDOW_HOURS,
+            )
+            return False
         from app.scheduling.message_generator import generate_proactive_event
         # #28 ②：用户作息学习——低优先级主动消息在学到的活跃时段外降优先级/推迟（arbiter 时段权重）
         try:

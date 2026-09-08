@@ -12,6 +12,9 @@ import random
 from app.db.database import get_db, async_session_factory
 from app.models.chat import ChatSession
 from app.models.chat import ChatMessage
+# 3.10 事件流水（P1）：api 层散点用户消息埋点（image/file/voice/emoji/batch/delete）
+from app.events.store import append_domain_event
+from app.events.types import EventType as _ET
 from app.schemas.chat import SendMessageRequest, ChatMessageResponse, ChatHistoryResponse, StreamMessageRequest
 from app.application.chat_service import (
     create_session, send_and_receive, send_and_receive_chunked, send_and_receive_stream, continue_chat,
@@ -189,6 +192,17 @@ async def websocket_chat(websocket: WebSocket, session_id: int):
                                 "content": um.content, "created_at": um.created_at.isoformat(),
                             })
                         await db.commit()
+                    # 3.10 事件流水（P1）：批量用户消息逐条补 user 事件（route=batch；幂等键绑各自真实 id）
+                    for _bi in batch_infos:
+                        await append_domain_event(
+                            _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
+                            entity_type="chat_message", entity_id=_bi.get("id"),
+                            actor_type="user", actor_id=ws_user_id,
+                            payload={"sender_type": "user", "route": "batch",
+                                     "content": _bi.get("content")},
+                            idempotency_key=f"chat.message_sent:chat_message:{_bi.get('id')}",
+                            origin="user_message",
+                        )
                     # 批量用户消息正式 id 回传（前端替换本地临时 id，保证删除可用；2026-08-15）
                     for _bi in batch_infos:
                         await websocket.send_json({"type": "user_message", "data": _bi})
@@ -488,6 +502,17 @@ async def upload_chat_image(
         await db.flush()
         await db.commit()
         await db.refresh(img_msg)
+    # 3.10 事件流水（P1）：图片用户消息（route=image；散点绕过 _persist_user_message，须补发）
+    await append_domain_event(
+        _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
+        entity_type="chat_message", entity_id=img_msg.id,
+        actor_type="user", actor_id=user_id,
+        payload={"sender_type": "user", "route": "image",
+                 "image_url": getattr(img_msg, "image_url", None),
+                 "has_caption": bool(caption)},
+        idempotency_key=f"chat.message_sent:chat_message:{img_msg.id}",
+        origin="user_message",
+    )
 
     # 触发 agent 生成回复（user_message = 图片描述 + 配文文本，图片本体不进 LLM）
     result = await send_and_receive_chunked(
@@ -593,6 +618,12 @@ async def delete_message(
     if await get_owned_session(db, msg.session_id, user_id) is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "message_not_found"))
 
+    # 删除前先取事件用字段（删除后对象失效；3.10 P1 删除清算）
+    deleted_session_id = msg.session_id
+    deleted_sender = msg.sender_type
+    deleted_content = (msg.content or "")[:200]
+    _n_mem = 0
+
     # 删除关联记忆（来自该消息触发的记忆）
     try:
         mem_result = await db.execute(
@@ -605,12 +636,24 @@ async def delete_message(
             except Exception:
                 pass
             await db.delete(mem)
+            _n_mem += 1
         _logger.info("Deleted %d memories linked to message %d", mem_result.scalars().all().__len__(), message_id)
     except Exception as e:
         _logger.warning("Failed to delete memories for msg %d: %s", message_id, e)
 
     await db.delete(msg)
     await db.commit()
+    # 3.10 事件流水（P1）：消息删除清算（幂等键绑被删 id，重复删除不产生第二条；
+    # payload 保留被删实体关键字面量，实体从主表消失后流水仍可追溯「删了什么」）
+    await append_domain_event(
+        _ET.CHAT_MESSAGE_DELETED.value, "chat_session", deleted_session_id,
+        entity_type="chat_message", entity_id=message_id,
+        actor_type="user", actor_id=user_id,
+        payload={"cascade_memory_count": _n_mem, "sender_type": deleted_sender,
+                 "content": deleted_content},
+        idempotency_key=f"chat.message_deleted:chat_message:{message_id}",
+        origin="user_message",
+    )
     return {"status": "ok", "message": "消息及关联记忆已删除"}
 
 
@@ -692,6 +735,17 @@ async def upload_chat_file(
         db.add(file_msg)
         await db.commit()
         await db.refresh(file_msg)
+    # 3.10 事件流水（P1）：文件用户消息（route=file；散点补发，payload 只放文件名/大小不存摘要全文）
+    await append_domain_event(
+        _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
+        entity_type="chat_message", entity_id=file_msg.id,
+        actor_type="user", actor_id=user_id,
+        payload={"sender_type": "user", "route": "file",
+                 "file_name": fname, "size": size_str,
+                 "has_summary": bool(summary)},
+        idempotency_key=f"chat.message_sent:chat_message:{file_msg.id}",
+        origin="user_message",
+    )
 
     result = await send_and_receive_chunked(
         session_id=session_id, user_id=user_id, character_id=character_id,
@@ -753,6 +807,16 @@ async def upload_chat_voice(
         db.add(voice_msg)
         await db.commit()
         await db.refresh(voice_msg)
+    # 3.10 事件流水（P1）：语音用户消息（route=voice；散点补发，只存时长与转写有无，不存音频）
+    await append_domain_event(
+        _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
+        entity_type="chat_message", entity_id=voice_msg.id,
+        actor_type="user", actor_id=user_id,
+        payload={"sender_type": "user", "route": "voice",
+                 "duration": dur, "transcribed": bool(transcript)},
+        idempotency_key=f"chat.message_sent:chat_message:{voice_msg.id}",
+        origin="user_message",
+    )
 
     return {
         "voice_message": {
@@ -806,6 +870,16 @@ async def send_emoji_message(
         db.add(emoji_msg)
         await db.commit()
         await db.refresh(emoji_msg)
+    # 3.10 事件流水（P1）：表情用户消息（route=emoji；散点补发）
+    await append_domain_event(
+        _ET.CHAT_MESSAGE_SENT.value, "chat_session", session_id,
+        entity_type="chat_message", entity_id=emoji_msg.id,
+        actor_type="user", actor_id=user_id,
+        payload={"sender_type": "user", "route": "emoji",
+                 "name": name, "image_url": emoji_url},
+        idempotency_key=f"chat.message_sent:chat_message:{emoji_msg.id}",
+        origin="user_message",
+    )
 
     result = await send_and_receive_chunked(
         session_id=session_id, user_id=user_id, character_id=character_id,

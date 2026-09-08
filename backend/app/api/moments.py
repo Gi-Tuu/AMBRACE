@@ -17,6 +17,9 @@ from app.schemas.moment import (
 )
 from app.utils.logger import get_logger
 from app.utils.timeutil import beijing_day_start_utc, shift_utc_naive
+# 3.10 事件流水（P1）：朋友圈 api 侧变更点（用户发布/评论/点赞/删除/清算/已读）
+from app.events.store import append_domain_event
+from app.events.types import EventType as _ET
 
 router = APIRouter(prefix="/api/v1/moments", tags=["Moments"])
 _logger = get_logger("api.moments")
@@ -206,6 +209,16 @@ async def create_user_moment(
     db.add(moment)
     await db.commit()
     await db.refresh(moment)
+    # 3.10 事件流水（P1）：用户发布动态（actor=user；图片只存描述前 200 字，不存二进制）
+    await append_domain_event(
+        _ET.MOMENT_PUBLISHED.value, "moment", moment.id,
+        entity_type="ai_moment", entity_id=moment.id,
+        actor_type="user", actor_id=user_id,
+        payload={"sender_type": "user", "content": (moment.content or "")[:200],
+                 "has_image": bool(moment.image_url)},
+        idempotency_key=f"moment.published:ai_moment:{moment.id}",
+        origin="user_message",
+    )
     # P0 发布即评论：用户发布后立即让 AI 角色评论（异步，不阻塞；隔离由评论生成内部保证）
     try:
         from app.application.moment_service import generate_comments_for_moment
@@ -236,9 +249,18 @@ async def like_moment(moment_id: int, db: AsyncSession = Depends(get_db), user_i
     )
     existing = like_result.scalar_one_or_none()
     if existing:
+        _removed_like_id = existing.id
         await db.delete(existing)
         moment.likes_count = max(0, moment.likes_count - 1)
         await db.commit()
+        # 3.10 事件流水（P1）：取消赞（此时 like 行已删，用 (moment,user,被删 like_id) 组幂等键）
+        await append_domain_event(
+            _ET.MOMENT_UNLIKED.value, "moment", moment_id,
+            actor_type="user", actor_id=user_id,
+            payload={"action": "unliked", "removed_like_id": _removed_like_id},
+            idempotency_key=f"moment.unliked:{moment_id}:{user_id}:{_removed_like_id}",
+            origin="user_message",
+        )
         total_likes, _ = await _likers_for_moment(db, moment)
         return LikeResponse(moment_id=moment_id, likes_count=total_likes, liked=False)
     else:
@@ -246,6 +268,16 @@ async def like_moment(moment_id: int, db: AsyncSession = Depends(get_db), user_i
         db.add(like)
         moment.likes_count = moment.likes_count + 1
         await db.commit()
+        await db.refresh(like)
+        # 3.10 事件流水（P1）：点赞（toggle 之「赞」）
+        await append_domain_event(
+            _ET.MOMENT_LIKED.value, "moment", moment_id,
+            entity_type="moment_like", entity_id=like.id,
+            actor_type="user", actor_id=user_id,
+            payload={"action": "liked"},
+            idempotency_key=f"moment.liked:moment_like:{like.id}",
+            origin="user_message",
+        )
         total_likes, _ = await _likers_for_moment(db, moment)
         return LikeResponse(moment_id=moment_id, likes_count=total_likes, liked=True)
 
@@ -310,6 +342,16 @@ async def create_comment(moment_id: int, data: CreateCommentRequest, db: AsyncSe
     db.add(comment)
     await db.commit()
     await db.refresh(comment)
+    # 3.10 事件流水（P1）：用户评论（与 AI 四条评论点共用收敛口径，round=user）
+    await append_domain_event(
+        _ET.MOMENT_COMMENT_ADDED.value, "moment", moment_id,
+        entity_type="moment_comment", entity_id=comment.id,
+        actor_type="user", actor_id=user_id,
+        payload={"parent_id": comment.parent_id, "round": "user",
+                 "content": (comment.content or "")[:200]},
+        idempotency_key=f"moment.comment_added:moment_comment:{comment.id}",
+        origin="user_message",
+    )
     # AI 回复用户评论（异步不阻塞）：动态作者 / 其他 AI 角色按幂等规则回复；重复触发安全
     try:
         from app.application.moment_service import generate_comments_for_moment
@@ -341,12 +383,25 @@ async def delete_moment(moment_id: int, db: AsyncSession = Depends(get_db), user
         if cresult.scalar_one_or_none() is None:
             raise HTTPException(status_code=403, detail=tr_lang(lang, "delete_own_moment_only"))
     from app.application.upload_service import delete_image_file
+    _deleted_content = (moment.content or "")[:200]
+    _deleted_sender = moment.sender_type
+    _deleted_likes = moment.likes_count or 0
     delete_image_file(moment.image_url)
     await db.execute(delete(MomentLike).where(MomentLike.moment_id == moment_id))
     await db.execute(delete(MomentAILike).where(MomentAILike.moment_id == moment_id))
     await db.execute(delete(MomentComment).where(MomentComment.moment_id == moment_id))
     moment.is_active = False
     await db.commit()
+    # 3.10 事件流水（P1）：动态软删清算（payload 保留被删实体关键字面量，主表软删后流水仍可追溯）
+    await append_domain_event(
+        _ET.MOMENT_DELETED.value, "moment", moment_id,
+        entity_type="ai_moment", entity_id=moment_id,
+        actor_type="user", actor_id=user_id,
+        payload={"sender_type": _deleted_sender, "content": _deleted_content,
+                 "likes_count": _deleted_likes},
+        idempotency_key=f"moment.deleted:ai_moment:{moment_id}",
+        origin="user_message",
+    )
     _logger.info("Moment %d deleted by user %d", moment_id, user_id)
     return {"success": True, "deleted": moment_id}
 
@@ -361,8 +416,19 @@ async def delete_comment(moment_id: int, comment_id: int, db: AsyncSession = Dep
         raise HTTPException(status_code=404, detail=tr_lang(lang, "comment_not_found"))
     if comment.sender_type != "user" or comment.sender_id != user_id:
         raise HTTPException(status_code=403, detail=tr_lang(lang, "delete_own_comment_only"))
+    _c_content = (comment.content or "")[:200]
+    _c_parent = comment.parent_id
     await db.delete(comment)
     await db.commit()
+    # 3.10 事件流水（P1）：评论硬删（payload 保留被删内容前 200 字）
+    await append_domain_event(
+        _ET.MOMENT_COMMENT_DELETED.value, "moment", moment_id,
+        entity_type="moment_comment", entity_id=comment_id,
+        actor_type="user", actor_id=user_id,
+        payload={"parent_id": _c_parent, "content": _c_content},
+        idempotency_key=f"moment.comment_deleted:moment_comment:{comment_id}",
+        origin="user_message",
+    )
     return {"status": "ok"}
 
 
@@ -385,6 +451,15 @@ async def clear_character_moments(
         delete_image_file(m.image_url)
         await db.delete(m)
     await db.commit()
+    # 3.10 事件流水（P1）：清空角色当日动态（幂等键带日期，同日重复清理不产生第二条）
+    await append_domain_event(
+        _ET.MOMENT_CLEARED.value, "moment", character_id,
+        actor_type="user", actor_id=user_id,
+        payload={"scope": "character_daily", "character_id": character_id,
+                 "moment_count": len(moments), "date": str(start)[:10]},
+        idempotency_key=f"moment.cleared:{character_id}:{str(start)[:10]}",
+        origin="user_message",
+    )
     return {"deleted": len(moments), "character_id": character_id}
 
 
@@ -448,6 +523,14 @@ async def mark_moments_read(db: AsyncSession = Depends(get_db), user_id: int = D
     else:
         db.add(MomentReadMark(user_id=user_id, last_read_at=now))
     await db.commit()
+    # 3.10 事件流水（P1）：朋友圈已读（按自然日聚合，同日只保留一条口径；幂等键带日期）
+    await append_domain_event(
+        _ET.MOMENT_READ.value, "moment", user_id,
+        actor_type="user", actor_id=user_id,
+        payload={"last_read_at": str(now)},
+        idempotency_key=f"moment.read:{user_id}:{str(now)[:10]}",
+        origin="user_message",
+    )
     return {"status": "ok"}
 
 

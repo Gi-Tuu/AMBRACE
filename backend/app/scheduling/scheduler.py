@@ -302,6 +302,10 @@ async def scheduler_loop():
                 spawn_background(cleanup_expired_files(days=5), name="sched-cleanup-files")
                 # 语音/TTS 音频保留 14 天：超期删除文件并清空消息元数据（仅保留转写/回复文本）
                 spawn_background(cleanup_expired_voice(days=14), name="sched-cleanup-voice")
+                # 3.10 事件流水保留策略（P1，方案 §8.5）：flag domain_event_retention_days=0 时
+                # 内部直接返回 0（不删），本地优先默认永久保留。
+                from app.events.store import purge_expired_domain_events
+                spawn_background(purge_expired_domain_events(), name="sched-purge-domain-events")
 
             # AI 离线生活（每 1 小时）：状态结算 + 概率活动执行（强度档位控制频率；异常隔离不影响主链路）
             if life_counter >= 3600:

@@ -733,12 +733,14 @@ async def _run_agent_core(
     # 定时承诺解析（AI 侧）：检测 [timer:xx] 或"洗n分钟澡"等时间承诺 → 创建定时事件；
     # HTTP 路径额外剥离全部动作标记（记忆/自述/状态等），流式路径仅剥离定时标签
     try:
-        from app.scheduling.promise_parser import extract_timer, strip_timer_tag
+        from app.scheduling.promise_parser import extract_ai_timer, strip_timer_tag
         from app.scheduling.promise_service import create_event
-        timer_info = extract_timer(
+        # F1b（2026-09-08）：AI 侧承诺 source 只能绑 AI 消息（此处尚未落库 → None），
+        # 不再传 user_msg_id（曾致 #33 事件 source 归属成用户消息）；F1a 见 extract_ai_timer
+        timer_info = extract_ai_timer(
             (_source_text if _is_stream else full_text),
             user_id=user_id, character_id=character_id,
-            session_id=session_id, source_message_id=user_msg_id, sender="ai",
+            session_id=session_id,
         )
         if search_loop:
             from app.agent.actions import strip_actions as _strip_actions

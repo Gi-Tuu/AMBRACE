@@ -10,6 +10,7 @@
 
 v3.3.6 CI 修复：改为纯函数 + mock 测试，不依赖 aiosqlite 文件库（CI Linux 全量下
 aiosqlite 线程残留偶发导致写库测试不稳定）。
+2026-09-08（F2 语用收敛）：欲望类/自述/元讨论/疑问/否定零触发；仅显式祈使与 pet_care 保留。
 """
 import asyncio
 import time
@@ -55,17 +56,18 @@ class _BoomDB(_StubDB):
 
 # ─────────── 纯函数：正则意图 ───────────
 
-def test_detect_想去公园_go_out():
-    info = detect_life_intent("我想去公园逛逛")
-    assert info == {"action_type": "go_out", "horizon": "this_week", "priority": 2}
+def test_detect_欲望类与自述零触发():
+    """F2（2026-09-08）：想吃/想去/好饿等欲望类、第一人称自述均属用户自身行为 → 零触发"""
+    for s in ("好饿，想吃火锅", "我想去公园逛逛", "我想出去散散步",
+              "我想学日语", "我要去上课了", "我去洗澡了", "我陪你吃烧烤",
+              "我们一起去吃烧烤吧"):
+        assert detect_life_intent(s) is None, s
 
 
-def test_detect_散散步_walk():
-    assert detect_life_intent("我想出去散散步")["action_type"] == "walk"
-
-
-def test_detect_想吃火锅_eat():
-    assert detect_life_intent("好饿，想吃火锅")["action_type"] == "eat"
+def test_detect_pet_care保留():
+    """F2d：语义明确"用户要求角色做"的模式保留（帮我喂 → pet_care）"""
+    info = detect_life_intent("帮我喂一下猫")
+    assert info == {"action_type": "pet_care", "horizon": "today", "priority": 2}
 
 
 def test_detect_无意图_None():
@@ -84,8 +86,10 @@ def test_detect_即时指令_去睡觉():
     assert info == {"action_type": "sleep", "horizon": "this_turn", "priority": 3}
 
 
-def test_detect_即时指令_出去转转():
-    info = detect_life_intent("出去转转")
+def test_detect_即时指令_出去转转吧():
+    """F2c：无主语裸动作按用户自述处理；带"吧"的纯祈使才触发"""
+    assert detect_life_intent("出去转转") is None
+    info = detect_life_intent("出去转转吧")
     assert info["action_type"] == "walk" and info["priority"] == 3
 
 
@@ -103,7 +107,7 @@ def test_节流_5分钟内不重复():
 def test_正常路径_写库commit():
     calls = []
     result = asyncio.run(chat_intent.extract_life_intent(
-        1, 100, "我想去公园逛逛",
+        1, 100, "帮我喂一下猫",
         session_factory=lambda: _StubDB(calls), throttle_state={},
     ))
     assert result == "persisted", f"reason={result}"
@@ -132,9 +136,41 @@ def test_非即时_不触发run_character_tick():
         calls.append((character_id, user_id))
 
     result = asyncio.run(chat_intent.extract_life_intent(
-        1, 100, "我想去公园逛逛",
+        1, 100, "帮我喂一下猫",
         session_factory=lambda: _StubDB(calls), tick_scheduler=_fake_schedule,
         throttle_state={},
     ))
     assert result == "persisted", f"reason={result}"
     assert calls == ["enter", "commit"]
+
+
+# ─────────── F2（2026-09-08）：语用收敛回归 ───────────
+
+def test_f2_元讨论_用户0927原句零触发():
+    """关键回归：用户讨论 bug 原句（09-08 19:27）不得再触发 Sam 立即 eat"""
+    text = "哦，这是理解错误吧，你说去吃饭……生成了一个吃饭事件，但是按在我身上了"
+    assert detect_life_intent(text) is None
+
+
+def test_f2_元讨论_转述零触发():
+    for s in ("你说去洗澡，结果生成了一个洗澡事件", "刚才那个事件有问题",
+              "这是个bug吧，就是理解错了", "其实你说去吃饭了"):
+        assert detect_life_intent(s) is None, s
+
+
+def test_f2_显式祈使触发():
+    info = detect_life_intent("你去吃饭吧")
+    assert info == {"action_type": "eat", "horizon": "this_turn", "priority": 3}
+    assert detect_life_intent("你现在去睡觉")["action_type"] == "sleep"
+    assert detect_life_intent("你先去洗澡")["action_type"] == "rest"
+
+
+def test_f2_否定疑问假设零触发():
+    for s in ("我不想吃", "要不去吃？", "要不要去吃饭", "别去睡吧",
+              "你去吃饭吗", "去吃饭好不好"):
+        assert detect_life_intent(s) is None, s
+
+
+def test_f2_第一人称自述零触发():
+    for s in ("我去洗澡了", "我要去上课了", "我下午要去帮忙搬东西", "我马上要去开会"):
+        assert detect_life_intent(s) is None, s

@@ -9,6 +9,9 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
+# F4（2026-09-08）：energy_critical 再触发冷却（1 tick=30min；3 tick=90min，保守值可调）
+ENERGY_CRITICAL_COOLDOWN_TICKS = 3
+
 # ── 动作定义 ──────────────────────────────────────────────
 # 每个动作：触发条件、副作用参数、是否可见、是否落记忆、冷却（tick 数）
 @dataclass
@@ -29,7 +32,9 @@ class ActionDef:
 
 # 动作表（MVP 用保守集；Phase 2 再加外出/社交/宠物）
 ACTIONS: dict[str, ActionDef] = {
-    "sleep": ActionDef("sleep", "睡觉", energy_cost=-8, mood_delta=3,
+    # F4b（2026-09-08）：sleep 恢复量 -8 → -12（原 +8 低于 30min tick 自然消耗+活动扣减，
+    # 能量长期卡 12-30 反复触发 energy_critical 连环睡）
+    "sleep": ActionDef("sleep", "睡觉", energy_cost=-12, mood_delta=3,
                        location_to="home", room_to="bedroom", cooldown_ticks=4),
     "rest": ActionDef("rest", "休息", energy_cost=-5, mood_delta=5,
                       needs_satisfied={"relaxation": 15}, cooldown_ticks=2),
@@ -82,6 +87,15 @@ ACTIONS: dict[str, ActionDef] = {
     "return_home": ActionDef("return_home", "回家", energy_cost=-4, mood_delta=2,
                              location_to="home", room_to="living",
                              memory=False, cooldown_ticks=2),
+}
+
+# 聊天意图 → 动作映射（3c 用）。F3a（2026-09-08）：补 sleep/rest——chat_intent 可产出
+# sleep/rest 意图，此前不在映射内 → decision 永不消费、长期 pending 阻塞后续真实意图。
+INTENT_ACTION_MAP = {
+    "go_out": "go_out", "walk": "walk", "eat": "eat",
+    "visit_friend": "visit_friend", "pet_care": "pet_play",
+    "create": "create", "study": "study",
+    "sleep": "sleep", "rest": "rest",
 }
 
 # ── 状态快照 ──────────────────────────────────────────────
@@ -151,6 +165,13 @@ def decide(snap: StateSnapshot) -> Decision:
 
     # ② 健康硬需求
     if snap.energy < 20:
+        # F4a（2026-09-08）：energy_critical 再触发冷却——刚睡过不足 90min 不再连续 sleep，
+        # 优先低耗恢复项（rest/coffee/watch_show 冷却允许时），否则 idle 自然恢复
+        if snap.last_action == "sleep" and snap.last_action_tick < ENERGY_CRITICAL_COOLDOWN_TICKS:
+            for recovery in ("rest", "coffee", "watch_show"):
+                if _cooldown_ok(recovery, snap):
+                    return Decision(recovery, reason="energy_critical_cooldown")
+            return Decision("idle", reason="energy_critical_cooldown")
         return Decision("sleep", reason="energy_critical")
     if snap.fatigue > 65 and snap.energy < 50:
         return Decision("rest", reason="fatigue_rest")
@@ -175,12 +196,7 @@ def decide(snap: StateSnapshot) -> Decision:
     # 3c. 聊天驱动意图（最高优先事件档）
     if snap.pending_intents:
         intent = snap.pending_intents[0]
-        mapping = {
-            "go_out": "go_out", "walk": "walk", "eat": "eat",
-            "visit_friend": "visit_friend", "pet_care": "pet_play",
-            "create": "create", "study": "study",
-        }
-        act = mapping.get(intent.get("action_type", ""))
+        act = INTENT_ACTION_MAP.get(intent.get("action_type", ""))
         if act and _cooldown_ok(act, snap):
             return Decision(act, params={"intent_id": intent.get("id")},
                             reason="chat_intent")

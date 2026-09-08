@@ -53,6 +53,24 @@ TIER_WEIGHTS: dict[str, dict[str, float]] = {
 COLD_ALLOWED = (CHECK_IN, INTEREST_HOOK, SHARE_SELF, RECALL_SHARED, FOLLOW_UP)
 RECENT_AVOID = 2  # 避开最近 N 次已用意图（防"每次都一个路数"）
 
+# ── 非活跃角色停发（2026-09-08，用户拍板）──
+# 背景：09-07 报告 outreach approved 通过率 0.22%，窗口内 0 用户消息的「非活跃角色」投放无效；
+# 停发后不再消耗生成算力与每日主动额度，额度留给真正有互动的角色（当前=char13）。
+INACTIVE_CHAR_WINDOW_HOURS = 24.0
+
+
+def skip_inactive_char(idle_hours: float | None, window_hours: float = INACTIVE_CHAR_WINDOW_HOURS) -> bool:
+    """非活跃角色停发判据（纯函数，便于单测锁边界）。
+
+    - ``idle_hours``：该角色最近一条用户消息距今小时数；None=查不到任何用户消息（含新角色）→ 停发；
+    - ``window_hours <= 0``：恒 False（窗口调 0 即整体回退，等价 flag 关闭）。
+    """
+    if window_hours is None or window_hours <= 0:
+        return False
+    if idle_hours is None:
+        return True
+    return float(idle_hours) > float(window_hours)
+
 
 def staleness_tier(idle_minutes: int | None) -> str:
     """闲置分钟 → 新鲜度分级（纯函数，方案 §3）。

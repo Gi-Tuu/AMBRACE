@@ -168,3 +168,50 @@ def test_无候选兜底idle():
 def test_动作表包含return_home():
     assert "return_home" in ACTIONS
     assert ACTIONS["return_home"].location_to == "home"
+
+
+# ─────────── F3（2026-09-08）：意图映射补全 ───────────
+
+def test_f3_intent映射补全sleep_rest():
+    from app.life.decision import INTENT_ACTION_MAP
+    assert INTENT_ACTION_MAP["sleep"] == "sleep"
+    assert INTENT_ACTION_MAP["rest"] == "rest"
+
+
+def test_f3_sleep意图可被消费():
+    snap = _snap(pending_intents=[{"id": 7, "action_type": "sleep"}], energy=60)
+    d = decide(snap)
+    assert d.action == "sleep" and d.reason == "chat_intent"
+    assert d.params.get("intent_id") == 7
+
+
+def test_f3_rest意图可被消费():
+    snap = _snap(pending_intents=[{"id": 8, "action_type": "rest"}], energy=60)
+    d = decide(snap)
+    assert d.action == "rest" and d.reason == "chat_intent"
+
+
+# ─────────── F4（2026-09-08）：energy 连环睡眠治理 ───────────
+
+def test_f4_sleep恢复量上调():
+    assert ACTIONS["sleep"].energy_cost == -12
+
+
+def test_f4_energy冷却_刚睡过不再连睡():
+    """energy<20 且 90min 内睡过 → 冷却分支（rest/coffee/watch_show/idle），不再 sleep"""
+    snap = _snap(energy=12, last_action="sleep", last_action_tick=1, phase="afternoon")
+    d = decide(snap)
+    assert d.action != "sleep"
+    assert d.action in ("rest", "coffee", "watch_show", "idle")
+    assert d.reason == "energy_critical_cooldown"
+
+
+def test_f4_energy冷却_过期恢复强制睡():
+    snap = _snap(energy=12, last_action="sleep", last_action_tick=3, phase="afternoon")
+    d = decide(snap)
+    assert d.action == "sleep" and d.reason == "energy_critical"
+
+
+def test_f4_未睡过低体力仍强制睡():
+    snap = _snap(energy=12, last_action="eat", last_action_tick=0, phase="afternoon")
+    assert decide(snap).action == "sleep"

@@ -11,8 +11,30 @@ from app.models.character import ProactiveSettings
 from app.agent.llm_client import chat_completion
 from app.agent.user_profile import build_user_profile_text
 from app.utils.logger import get_logger
+# 3.10 事件流水（P1）：朋友圈域变更点埋点（落持久 domain_events，与既有 event_bus 广播并存）
+from app.events.store import append_domain_event
+from app.events.types import EventType as _ET
 
 _logger = get_logger("services.moment")
+
+
+async def _record_moment_comment_event(*, comment_id: int | None, moment_id: int,
+                                      actor_type: str, actor_id: int | None,
+                                      parent_id: int | None, round_kind: str,
+                                      content: str = "") -> None:
+    """四条 AI 评论生成点 + 用户评论共用的事件收敛口（P1，方案 §7.1）。
+
+    用显式 id 而非 ORM 对象入参：提交后对象已脱离 session，取属性易踩 DetachedInstance；
+    调用方在各自 commit+refresh 后把真实主键传进来，幂等键与重放口径一致。
+    """
+    await append_domain_event(
+        _ET.MOMENT_COMMENT_ADDED.value, "moment", moment_id,
+        entity_type="moment_comment", entity_id=comment_id,
+        actor_type=actor_type, actor_id=actor_id,
+        payload={"parent_id": parent_id, "round": round_kind, "content": (content or "")[:200]},
+        idempotency_key=f"moment.comment_added:moment_comment:{comment_id}",
+        origin="social_event" if actor_type == "ai" else "user_message",
+    )
 
 
 from app.utils.timeutil import beijing_day_start_utc as _beijing_day_start_utc
@@ -207,6 +229,16 @@ async def publish_moment(character_id: int, skip_interval: bool = False, extra_h
             publish("life.moment_published", _evt)
         except Exception:
             pass
+        # 3.10 事件流水（P1）：旧事件名 life.moment_published 双发保留（兼容窗口），
+        # 此处**追加**一条持久事件（只落表、不再被订阅，防回环，方案 §8.2）
+        await append_domain_event(
+            _ET.MOMENT_PUBLISHED.value, "moment", moment.id,
+            entity_type="ai_moment", entity_id=moment.id,
+            actor_type="ai", actor_id=character_id,
+            payload={"sender_type": "ai", "content": (content or "")[:200], "audience": "public"},
+            idempotency_key=f"moment.published:ai_moment:{moment.id}",
+            origin="social_event",
+        )
 
     # 自动存入记忆
     try:
@@ -555,6 +587,7 @@ async def maybe_ai_likes(moment_id: int, ai_chars: dict) -> list[str]:
     纯规则零 LLM；重复点赞由 unique(moment_id, character_id) + 查重兜底。
     """
     liked_names: list[str] = []
+    liked_char_ids: list[int] = []
     day_start = _beijing_day_start_utc()
     async with async_session_factory() as db:
         for char_id, char in ai_chars.items():
@@ -580,9 +613,23 @@ async def maybe_ai_likes(moment_id: int, ai_chars: dict) -> list[str]:
                 continue
             db.add(MomentAILike(moment_id=moment_id, character_id=char_id))
             liked_names.append(char.name)
+            liked_char_ids.append(int(char_id))
         if liked_names:
             await db.commit()
             _logger.info("AI likes on moment=%d: %s", moment_id, ",".join(liked_names))
+    # 3.10 事件流水（P1）：AI 批量赞整批合并成一条（防一事件一赞刷屏）；
+    # 幂等键用「动态 + 本轮点赞角色集合」确定性值，重跑不重复。
+    if liked_char_ids:
+        await append_domain_event(
+            _ET.MOMENT_AI_LIKED.value, "moment", moment_id,
+            actor_type="ai", actor_id=None,
+            payload={"char_ids": sorted(liked_char_ids), "count": len(liked_char_ids)},
+            idempotency_key=(
+                "moment.ai_liked:batch:"
+                f"{moment_id}:" + ",".join(str(c) for c in sorted(liked_char_ids))
+            ),
+            origin="social_event",
+        )
     return liked_names
 
 
@@ -673,6 +720,13 @@ async def _first_round_ai_replies(moment_id: int, ai_chars: dict, daily_limit: i
             )
             db.add(reply)
             await db.commit()
+            await db.refresh(reply)
+            _rid, _rparent, _rcontent = reply.id, reply.parent_id, reply.content
+        # 3.10 事件流水（P1）：AI 第一轮互评
+        await _record_moment_comment_event(
+            comment_id=_rid, moment_id=moment_id, actor_type="ai", actor_id=char_id,
+            parent_id=_rparent, round_kind="ai_first_round", content=_rcontent,
+        )
         _logger.info("AI first-round reply: char=%d -> comment=%d: %.40s", char_id, target.id, content)
 
 
@@ -764,6 +818,13 @@ async def _second_round_ai_replies(moment_id: int, ai_chars: dict, daily_limit: 
             )
             db.add(reply)
             await db.commit()
+            await db.refresh(reply)
+            _rid, _rparent, _rcontent = reply.id, reply.parent_id, reply.content
+        # 3.10 事件流水（P1）：AI 第二轮互评
+        await _record_moment_comment_event(
+            comment_id=_rid, moment_id=moment_id, actor_type="ai", actor_id=replied_id,
+            parent_id=_rparent, round_kind="ai_second_round", content=_rcontent,
+        )
         _logger.info("AI second-round reply: char=%d -> comment=%d: %.40s", replied_id, reply_c.id, content)
 
 
@@ -815,6 +876,13 @@ async def _generate_top_and_reply_comments(char_id, char, moment_id, existing_to
                 )
                 db.add(comment)
                 await db.commit()
+                await db.refresh(comment)
+                _cid, _cparent, _ccontent = comment.id, comment.parent_id, comment.content
+            # 3.10 事件流水（P1）：AI 顶级评论
+            await _record_moment_comment_event(
+                comment_id=_cid, moment_id=moment_id, actor_type="ai", actor_id=char_id,
+                parent_id=_cparent, round_kind="ai_top_or_reply", content=_ccontent,
+            )
             _logger.info("AI top comment: char=%d on moment=%d: %.40s", char_id, moment_id, content)
             added += 1
         else:
@@ -854,6 +922,13 @@ async def _generate_top_and_reply_comments(char_id, char, moment_id, existing_to
                     )
                     db.add(reply)
                     await db.commit()
+                    await db.refresh(reply)
+                    _rid, _rparent, _rcontent = reply.id, reply.parent_id, reply.content
+                # 3.10 事件流水（P1）：AI 回复其它 AI 顶级评论
+                await _record_moment_comment_event(
+                    comment_id=_rid, moment_id=moment_id, actor_type="ai", actor_id=char_id,
+                    parent_id=_rparent, round_kind="ai_top_or_reply", content=_rcontent,
+                )
                 _logger.info("AI->AI reply: char=%d replied to comment=%d: %.40s", char_id, target.id, content)
                 added += 1
 
@@ -948,6 +1023,13 @@ async def _reply_user_comments(char_id, char, moment_id, existing_comments, exis
             )
             db.add(reply)
             await db.commit()
+            await db.refresh(reply)
+            _rid, _rparent, _rcontent = reply.id, reply.parent_id, reply.content
+        # 3.10 事件流水（P1）：AI 回复用户评论
+        await _record_moment_comment_event(
+            comment_id=_rid, moment_id=moment_id, actor_type="ai", actor_id=char_id,
+            parent_id=_rparent, round_kind="ai_reply_user", content=_rcontent,
+        )
         _logger.info("AI->User reply: char=%d replied to user comment=%d: %.40s", char_id, uc.id, content)
 
 
@@ -971,12 +1053,23 @@ async def cleanup_deleted_character(character_id: int):
         moment_ids = await db.execute(
             select(AIMoment.id).where(AIMoment.character_id == character_id)
         )
-        for mid in moment_ids.scalars().all():
+        _purged_ids = list(moment_ids.scalars().all())
+        for mid in _purged_ids:
             m = await db.get(AIMoment, mid)
             if m:
                 delete_image_file(m.image_url)
                 m.is_active = False
         await db.commit()
+        _purged = len(_purged_ids)
+    # 3.10 事件流水（P1）：角色删除后的朋友圈清算（payload 带计数）
+    await append_domain_event(
+        _ET.MOMENT_CLEARED.value, "moment", character_id,
+        actor_type="system", actor_id=None,
+        payload={"scope": "character_purge", "character_id": character_id,
+                 "moment_count": _purged},
+        idempotency_key=f"moment.cleared:character_purge:{character_id}",
+        origin="system_event",
+    )
     _logger.info("Cleaned up moments for deleted character %d", character_id)
 
 
