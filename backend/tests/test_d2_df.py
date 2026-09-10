@@ -438,7 +438,7 @@ def test_runtime_light_context默认False走全量build_context(monkeypatch):
 
 
 def test_runtime_light_context_挡位1注入推理指令(monkeypatch):
-    """F1：light_context=True 且 reasoning_level==1 时注入【推理指令】（与全量 build_context 同语义）"""
+    """F1：light_context=True 且 reasoning_level==1 时注入【内心活动指令】（与全量 build_context 同语义）"""
     seen = {"states": []}
     char = _char(11, "小阳")
 
@@ -468,7 +468,7 @@ def test_runtime_light_context_挡位1注入推理指令(monkeypatch):
     ))
     assert res["status"] == "ok"
     sys_text = "\n".join(m["content"] for m in seen["states"][0]["context_messages"] if m["role"] == "system")
-    assert "【推理指令】" in sys_text
+    assert "【内心活动指令】" in sys_text
 
 
 # ---------------- F1：chat_groups 接线与 MAX_GROUP_SPEAKERS 边界 ----------------

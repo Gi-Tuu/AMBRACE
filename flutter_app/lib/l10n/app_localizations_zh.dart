@@ -2314,6 +2314,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get inProgress => '进行中';
 
   @override
+  String get innerThoughts => 'TA 的内心';
+
+  @override
   String get inputHint => '输入消息...';
 
   @override
@@ -3368,7 +3371,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get reasoningLevel => '思考过程';
 
   @override
-  String get reasoningLevelHint => '气泡顶部显示TA回复前的推理内容';
+  String get reasoningLevelHint => '气泡顶部显示TA回复前的内心活动（第一人称、称呼你的昵称）';
 
   @override
   String recordCount(Object count) {
@@ -4489,6 +4492,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get imageLoadFailed => '图片加载失败';
+
+  @override
+  String get aiGeneratedImage => 'AI 生图';
 
   @override
   String get continueLabel => '继续';

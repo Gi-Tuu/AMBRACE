@@ -117,6 +117,16 @@ class ChatMessage {
     return null;
   }
 
+  /// 是否为「AI 生图」图片消息（类型角标始终显示，不受 showTools 开关控制）。
+  /// 新数据 meta 含 kind=ai_image；老数据 meta 含 gen_image=true 或 tools 含「生图」。
+  bool get isAiGeneratedImage {
+    if (isUser || imageUrl == null || imageUrl!.isEmpty) return false;
+    if (extraMeta['kind'] == 'ai_image') return true;
+    if (extraMeta['gen_image'] == true) return true;
+    final t = tools;
+    return t != null && t.any((e) => e.contains('生图') || e.toLowerCase().contains('image'));
+  }
+
   /// MCP 工具结果列表（A1，#59 流式路径 MCP 工具循环；extra_meta.tool_results）。
   /// 每项形如 {tool, ok, summary, error}，前端在气泡观察区可折叠展示。
   List<Map<String, dynamic>>? get toolResults {

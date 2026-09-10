@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """扫描并收敛 Flutter App 硬编码色值。
 
-用法（在项目根 AMBRACE_ROOT 或任意目录执行均可，路径在脚本内固定）：
+用法（在项目根 D:\\AICompanionServer 或任意目录执行均可，路径在脚本内固定）：
   python scripts/scan_hardcoded_colors.py                # 仅扫描统计
   python scripts/scan_hardcoded_colors.py --dry-run      # 扫描并预览将替换的内容（不写入）
   python scripts/scan_hardcoded_colors.py --apply        # 扫描并执行 token 收敛替换

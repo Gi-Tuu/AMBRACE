@@ -2409,6 +2409,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get inProgress => 'In progress';
 
   @override
+  String get innerThoughts => 'Inner thoughts';
+
+  @override
   String get inputHint => 'Type a message...';
 
   @override
@@ -3491,7 +3494,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get reasoningLevel => 'Thinking';
 
   @override
-  String get reasoningLevelHint => 'Show TA\'s reasoning above the bubble';
+  String get reasoningLevelHint =>
+      'Show TA\'s inner thoughts above the bubble (first person, uses your nickname)';
 
   @override
   String recordCount(Object count) {
@@ -4643,6 +4647,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get imageLoadFailed => 'Image failed to load';
+
+  @override
+  String get aiGeneratedImage => 'AI-generated image';
 
   @override
   String get continueLabel => 'Continue';

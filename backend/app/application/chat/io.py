@@ -15,12 +15,21 @@ _logger = get_logger("services.chat")
 
 
 async def _append_ai_image_message(session_id: int, image_url: str, prompt: str, content: str | None = None) -> None:
+    # 配文（IMG_TEXT）允许为空：为空时前端不渲染配文，不再强制兜底「给你画好啦～」
+    # （提示词已要求不要用该通用口吻，见 agent/context/legacy.py）。
+    caption = (content or "").strip()[:60]
+    meta = {
+        "gen_image": True,       # 兼容既有判断
+        "kind": "ai_image",      # 消息类型角标（前端据此始终显示「AI 生图」，不受 showTools 开关控制）
+        "tools": ["生图"],       # 与主文本气泡能力标签同口径（showTools 开时也能在能力区看到）
+        "prompt": prompt,        # 画面 prompt 仅留痕/排查，前端不展示
+    }
     async with async_session_factory() as db:
         msg = ChatMessage(
             session_id=session_id, sender_type="ai",
-            content=(content or "给你画好啦～")[:60],
+            content=caption,
             image_url=image_url,
-            extra_meta=json.dumps({"gen_image": True, "prompt": prompt}, ensure_ascii=False),
+            extra_meta=json.dumps(meta, ensure_ascii=False),
         )
         db.add(msg)
         await db.commit()
@@ -49,6 +58,8 @@ async def _push_ws_ai_message(session_id: int, msg: ChatMessage) -> None:
                 "sender_type": "ai",
                 "content": msg.content,
                 "image_url": msg.image_url,
+                # 实时上屏与 REST 历史一致：图片消息拿到 kind/tools/gen_image
+                "extra_meta": msg.extra_meta,
                 "created_at": msg.created_at.isoformat(),
             },
         })

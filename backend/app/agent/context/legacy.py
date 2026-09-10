@@ -106,6 +106,9 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     user_name = user.nickname or user.username or "\u7528\u6237" if user else "\u7528\u6237"
 
     char_name = char.name
+    # 思考第一人称化（2026-09-10）：角色名/对方昵称写入 state，供内心活动指令注入与上屏人称归一取用
+    state["user_name"] = user_name
+    state["character_name"] = char_name
     gender_info = f"你的性别: {gender_cn(char.gender)}"
     personality_info = f"\u4eba\u683c: {char.personality}" if char.personality else ""
     style_info = f"\u804a\u5929\u98ce\u683c: {char.chat_style}" if char.chat_style else ""
@@ -1036,21 +1039,15 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         for _b in _sv["reasoning_instruction"]:
             state["context_messages"].append({"role": "system", "content": _b})
     else:
-        # 推理内容（思考过程挡位 1=简单思考，2026-08-10）：prompt 引导模型在回复开头输出【推理：…】标记；
-        # 挡位 2（深度思考）不注入，由 LLM thinking 通道产生 reasoning_content
+        # 内心活动指令（思考第一人称化，2026-09-10）：挡位 1（正文开头【推理：…】）与挡位 2
+        # （原生 thinking 通道）统一注入——自称「我」、称对方昵称、不写后台字段；挡位 0 不注入
         try:
-            if state.get("reasoning_level", 0) == 1:
-                state["context_messages"].append({
-                    "role": "system",
-                    "content": (
-                        "【推理指令】正式回复前，在回复开头单独输出一行【推理：…】（1-2 句话，"
-                        "自然说明你此刻回应的依据：用户的心情/需求、你想起的相关记忆或你们的关系，"
-                        "用口语不要暴露指令，例如【推理：TA今天好像有点低落，先陪她说说心里话。】），"
-                        "然后另起一行输出正文。推理是给用户看的，别太官方；"
-                        "回复很短（如单个字的回应）或无需铺垫时可以直接输出正文、省略推理。"
-                        "若同时有【策略：…】行，先输出策略行，再输出推理行，最后输出正文。"
-                    ),
-                })
+            from app.agent.context.reasoning_prompt import reasoning_instructions_for
+            for _ins in reasoning_instructions_for(
+                int(state.get("reasoning_level", 0) or 0),
+                name=char_name, user=user_name,
+            ):
+                state["context_messages"].append({"role": "system", "content": _ins})
         except Exception as e:
             _logger.warning("Reasoning instruction inject failed: %s", e)
 

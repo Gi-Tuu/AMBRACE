@@ -11,6 +11,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.utils.logger import get_logger
+
+_logger = get_logger("agent.actions")
+
 # ── 动作类型（与方案 5.1 AgentAction.action_type 对齐）──
 SEARCH = "SEARCH"
 RECALL = "RECALL"
@@ -50,8 +54,23 @@ _SEARCH_RE = re.compile(r"[\[【]\s*SEARCH\s*[\]】]\s*(.*?)(?:[\[【]\s*/SEARCH
 # （兼容中英文/全半角括号、闭合标签可省略）；标记内允许「时间=YYYY-MM；查询」轻量前缀语法，
 # 由 loop.run_recall_loop 解析，本层只做提取与剥离。
 _RECALL_RE = re.compile(r"[\[【]\s*RECALL\s*[\]】]\s*(.*?)(?:[\[【]\s*/RECALL\s*[\]】]|$)", re.M | re.S)
-_GEN_IMAGE_RE = re.compile(r"\[GEN_IMAGE\](.*?)\[/GEN_IMAGE\]", re.S)
-_IMG_TEXT_RE = re.compile(r"\[IMG_TEXT\](.*?)\[/IMG_TEXT\]", re.S)
+# 生图标记（P0'，2026-09-10 容错）：模型常漏写 [/GEN_IMAGE] / [/IMG_TEXT]（现场 session 11 的
+# 11521/11522 两条消息），旧「开+闭」成对正则提取失败 → 既不触发生图也不剥离标记，标记原样落库。
+# 容错策略：闭合标签可选，且**闭合分支优先**（有闭合时语义与旧版逐字一致，含跨行画面描述）；
+# 无闭合时按边界截断，绝不吞掉后续标记——
+#   GEN_IMAGE：下一个标记（[ / 【）→ 段尾（空行）→ 文末（画面描述可能换行，故不以行尾为界）；
+#   IMG_TEXT：下一个标记（[ / 【）→ 行尾 → 文末（提示词要求配文为 12 字内单行）。
+# 双分支写在同一正则内，finditer/sub 单次调用即可兼容两种形态；正文提取统一走 _marker_body。
+_GEN_IMAGE_RE = re.compile(
+    r"\[GEN_IMAGE\](?:(.*?)\[/GEN_IMAGE\]|(.*?)(?=[\[【]|\r?\n[ \t]*\r?\n|\Z))",
+    re.S,
+)
+_IMG_TEXT_RE = re.compile(
+    r"\[IMG_TEXT\](?:(.*?)\[/IMG_TEXT\]|(.*?)(?=[\[【]|\r?\n|\Z))",
+    re.S,
+)
+# 孤立闭合标签（开标签缺失/重复闭合的漏网产物）：任何情况下都不该出现在展示文本里
+_IMG_ORPHAN_CLOSE_RE = re.compile(r"\[/(?:GEN_IMAGE|IMG_TEXT)\]")
 # 兼容英文/中文括号、闭合标签可省略（无闭合时取到行尾）；2026-08-14 修复 AI 输出【CAL_NOTE】无闭合导致不落库
 _CAL_NOTE_RE = re.compile(r"[\[【]\s*CAL_NOTE\s*[\]】]\s*(.*?)(?:[\[【]\s*/CAL_NOTE\s*[\]】]|$)", re.M)
 _MEMO_RE = re.compile(r"[\[【]\s*MEMO\s*[\]】]\s*(.*?)(?:[\[【]\s*/MEMO\s*[\]】]|$)", re.M)
@@ -97,20 +116,40 @@ def extract_recall(text: str) -> tuple[str, str | None]:
     return clean, query or None
 
 
+def _marker_body(m: "re.Match[str]") -> str:
+    """取「闭合/无闭合」双分支标记的正文（groups 里第一个非 None 分支；P0' 容错用）"""
+    for g in m.groups():
+        if g is not None:
+            return g
+    return ""
+
+
 def extract_gen_image(text: str) -> tuple[str, str | None, str | None]:
-    """提取生图标记，返回 (清理后的文本, 画面描述或None, 图片消息文案或None)；与旧 _extract_gen_image 一致"""
+    """提取生图标记，返回 (清理后的文本, 画面描述或None, 图片消息文案或None)。
+
+    P0'（2026-09-10）：闭合标签可选——漏写 [/GEN_IMAGE]/[/IMG_TEXT] 时仍提取并剥离，
+    返回值语义与截断规则（配文 60 字上限在落库侧）保持不变；孤立闭合标签一并清除。
+    """
     if not text:
         return text, None, None
     img_text = None
     t = _IMG_TEXT_RE.search(text)
     if t:
-        img_text = t.group(1).strip() or None
+        img_text = _marker_body(t).strip() or None
         text = _IMG_TEXT_RE.sub("", text)
+    elif "[IMG_TEXT]" in text:
+        # 格式漂移告警（不改变行为）：有开标签却没提出正文，说明标记形态又变了
+        _logger.warning("IMG_TEXT marker present but not extracted: %s", text[:80])
     m = _GEN_IMAGE_RE.search(text)
     if not m:
+        if "[GEN_IMAGE]" in text:
+            _logger.warning("GEN_IMAGE marker present but not extracted: %s", text[:80])
+        if _IMG_ORPHAN_CLOSE_RE.search(text):
+            text = _IMG_ORPHAN_CLOSE_RE.sub("", text).rstrip()
         return text, None, img_text
-    prompt = m.group(1).strip()
-    clean = _GEN_IMAGE_RE.sub("", text).rstrip()
+    prompt = _marker_body(m).strip()
+    clean = _GEN_IMAGE_RE.sub("", text)
+    clean = _IMG_ORPHAN_CLOSE_RE.sub("", clean).rstrip()
     return clean, prompt or None, img_text
 
 
@@ -224,11 +263,11 @@ def parse_actions(text: str) -> list[AgentAction]:
         if q:
             actions.append(AgentAction(RECALL, {"query": q[:80]}, m.group(0)))
     for m in _IMG_TEXT_RE.finditer(text):
-        t = m.group(1).strip()
+        t = _marker_body(m).strip()
         if t:
             actions.append(AgentAction(IMG_TEXT, {"text": t}, m.group(0)))
     for m in _GEN_IMAGE_RE.finditer(text):
-        p = m.group(1).strip()
+        p = _marker_body(m).strip()
         if p:
             actions.append(AgentAction(GEN_IMAGE, {"prompt": p}, m.group(0)))
     for m in _CAL_NOTE_RE.finditer(text):
@@ -249,13 +288,20 @@ def parse_actions(text: str) -> list[AgentAction]:
     return actions
 
 
-# 剥离顺序：SEARCH 允许无闭合到行尾，需先剥离避免吞掉后续标记
-_STRIP_PATTERNS = [_SEARCH_RE, _RECALL_RE, _IMG_TEXT_RE, _GEN_IMAGE_RE, _CAL_NOTE_RE, _MEMO_RE, _TIMER_RE, _MCP_TOOL_RE]
+# 剥离顺序：SEARCH 允许无闭合到行尾，需先剥离避免吞掉后续标记；
+# P0'：IMG_TEXT/GEN_IMAGE 的无闭合分支以「下一个标记」为界，故不会吞掉后面的 CAL_NOTE/MEMO；
+# 末位 _IMG_ORPHAN_CLOSE_RE 清孤立闭合标签，保证展示文本零标记残留。
+_STRIP_PATTERNS = [
+    _SEARCH_RE, _RECALL_RE, _IMG_TEXT_RE, _GEN_IMAGE_RE, _CAL_NOTE_RE, _MEMO_RE, _TIMER_RE,
+    _MCP_TOOL_RE, _IMG_ORPHAN_CLOSE_RE,
+]
 
 
 def strip_actions(text: str) -> str:
     """统一剥离动作标记（SEARCH/GEN_IMAGE/IMG_TEXT/CAL_NOTE/MEMO/timer）。
 
+    P0'（2026-09-10）：GEN_IMAGE/IMG_TEXT 的开标签即便没有闭合标签也一律剥离，
+    禁止 `[GEN_IMAGE]` / `[IMG_TEXT]` 字样残留到展示文本。
     状态更新/自述/记忆等 response_parser 链路标记不在此剥离（仍由 parse_response 处理）。
     """
     if not text:

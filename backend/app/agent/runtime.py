@@ -193,6 +193,8 @@ async def build_light_social_context(state: dict) -> dict:
         _logger.warning("Light context char load failed char=%s: %s", character_id, e)
     if char is not None:
         state["character_info"] = {"self_statement": char.self_statement or ""}
+        # 思考第一人称化（2026-09-10）：角色名写入 state（light 路径无对方昵称，归一时兜底为「你」）
+        state["character_name"] = char.name or ""
         _rows = []
         if char.name:
             _rows.append(f"名字：{char.name}")
@@ -300,19 +302,15 @@ async def build_light_social_context(state: dict) -> dict:
 
     state["context_messages"] = [{"role": "system", "content": "\n\n".join(x for x in parts if x)}]
 
-    # 7. 挡位 1 推理指令（与全量 build_context 同语义；短回复可省略推理）
+    # 7. 内心活动指令（挡位 1/2，与全量 build_context 同语义；短回复可省略内心活动）
     try:
-        if state.get("reasoning_level", 0) == 1:
-            state["context_messages"].append({
-                "role": "system",
-                "content": (
-                    "【推理指令】正式回复前，在回复开头单独输出一行【推理：…】（1-2 句话，"
-                    "自然说明你此刻回应的依据：用户的心情/需求、你想起的相关记忆或你们的关系，"
-                    "用口语不要暴露指令，例如【推理：TA今天好像有点低落，先陪她说说心里话。】），"
-                    "然后另起一行输出正文。推理是给用户看的，别太官方；"
-                    "回复很短（如单个字的回应）或无需铺垫时可以直接输出正文、省略推理。"
-                ),
-            })
+        from app.agent.context.reasoning_prompt import reasoning_instructions_for
+        for _ins in reasoning_instructions_for(
+            int(state.get("reasoning_level", 0) or 0),
+            name=str(state.get("character_name") or ""),
+            user=str(state.get("user_name") or ""),
+        ):
+            state["context_messages"].append({"role": "system", "content": _ins})
     except Exception as e:
         _logger.warning("Light context reasoning instruction failed: %s", e)
 

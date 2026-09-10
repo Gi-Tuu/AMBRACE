@@ -583,6 +583,7 @@ class _ChatScreenState extends State<ChatScreen>
                                                     time: msg.createdAt,
                                                     showTime: showTime && msg.createdAt.isNotEmpty,
                                                     imageUrl: msg.imageUrl,
+                                                    isAiGeneratedImage: msg.isAiGeneratedImage,
                                                     fileMeta: msg.fileMeta,
                                                     voiceMeta: msg.voiceMeta,
                                                     ttsMeta: msg.ttsMeta,

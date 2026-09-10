@@ -19,6 +19,8 @@ from app.memory import add_chat_memory_extraction
 from app.memory.extractor import SELF_STATEMENT_MAX_LEN
 from app.application.chat.tools import (
     _extract_gen_image,
+    _sanitize_persist_text,
+    _sanitize_chunk_texts,
     _extract_search,
     _search_throttle,
     _search_inject_enabled,
@@ -675,8 +677,12 @@ async def _run_agent_core(
     # 标记重新带回来）
     _marker_src = _source_text if _is_stream else full_text
     clean_text, gen_prompt, img_text = _extract_gen_image(_marker_src)
-    if gen_prompt and not _is_stream:
-        full_text = _extract_gen_image(full_text)[0]
+    # P0'（2026-09-10）：非流式直接用 clean_text 回写展示文本——原实现只在 gen_prompt 命中时
+    # 回写，模型漏写闭合标签且只给了 [IMG_TEXT] 时会残留标记（现场 11521）。
+    # 流式展示文本由 chunker 剥离（strip_stream_display→strip_actions，已容错无闭合标签），
+    # 统一兜底清洗在本函数末尾（CAL_NOTE/MEMO 提取之后，避免影响提取源）。
+    if not _is_stream and (gen_prompt or img_text):
+        full_text = clean_text
 
     # Task Trace（Phase A）：写 trace（先只写不读；失败静默）
     try:
@@ -751,6 +757,14 @@ async def _run_agent_core(
             await create_event(timer_info)
     except Exception as e:
         _logger.warning("AI tag strip failed: %s", e)
+
+    # P0'（2026-09-10）：展示/落库文本零标记兜底——放在 CAL_NOTE/MEMO/timer 提取之后，
+    # 提取源不受影响；此后 full_text 进落库（HTTP 单条 / chunked 分块 / SSE done）与推送，
+    # 任何漏网标记（含模型漏写闭合标签的 [GEN_IMAGE]/[IMG_TEXT]）在此统一剥净。
+    _clean_final = _sanitize_persist_text(full_text)
+    if _clean_final != (full_text or "").strip():
+        _logger.warning("Final text had marker residue, sanitized: %s", (full_text or "")[:80])
+    full_text = _clean_final
     final_state["ai_response"] = full_text
 
     return {
@@ -1054,7 +1068,10 @@ async def send_and_receive_chunked(
     _memo_text = core["memo_text"]
 
     from app.agent.nodes import split_response
-    chunks = split_response(full_text, final_state.get("emotional_state", ""))
+    # P0'（2026-09-10）：源文本已在 _run_agent_core 末尾剥净，这里逐块兜底（纯标记块直接丢弃，
+    # 禁止 [GEN_IMAGE] 段落作为独立消息落库）；full_text 本就为空时保持原行为不动
+    _chunks_raw = split_response(full_text, final_state.get("emotional_state", ""))
+    chunks = _sanitize_chunk_texts(_chunks_raw) if full_text else _chunks_raw
 
     # AI 语音回复（TTS，仅语音对话场景）：edge-tts 云端免费，失败静默降级为纯文字
     tts_url = None

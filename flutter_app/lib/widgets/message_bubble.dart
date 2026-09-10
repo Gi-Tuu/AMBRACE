@@ -34,6 +34,8 @@ class MessageBubble extends StatelessWidget {
   final String? statusUpdate;
   final bool showReasoning;
   final bool showTools;
+  /// AI 生图图片消息（类型角标，始终显示；由调用处据 ChatMessage.isAiGeneratedImage 传入）
+  final bool isAiGeneratedImage;
   /// SSE 真流式进行中：正文末尾显示闪烁光标（打字机效果）
   final bool isStreaming;
   /// AI 消息是否显示头像（B3：连续 AI 消息仅组首条显示，调用方传入）
@@ -63,6 +65,7 @@ class MessageBubble extends StatelessWidget {
     this.statusUpdate,
     this.showReasoning = false,
     this.showTools = false,
+    this.isAiGeneratedImage = false,
     this.isStreaming = false,
     this.showAiAvatar = true,
   });
@@ -255,9 +258,10 @@ class MessageBubble extends StatelessWidget {
           // 思考过程/调用能力（AI 消息顶部，仅产生且开关打开时显示，默认折叠）
           if (!isUser && showReasoning && (reasoning ?? '').isNotEmpty)
             _CollapsibleMeta(
-              icon: Icons.psychology_outlined,
-              label: l10n.thinkingProcess,
+              icon: Icons.auto_awesome,
+              label: l10n.innerThoughts,
               detail: reasoning!,
+              monologue: true,
             ),
           // R6（2026-09-09）：能力列表 chip 化（后端已归一为中文短列表、去重、上限 6 项），
           // 不再 join('、') 成一坨；超过 3 个折叠为「等 N 项」，点击展开换行排列。
@@ -297,13 +301,48 @@ class MessageBubble extends StatelessWidget {
                 ),
               ),
             ),
+            // ── 消息类型角标：始终显示（不受 showTools 控制），等同语音时长/文件名的类型说明 ──
+            if (isAiGeneratedImage)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    l10n.aiGeneratedImage,
+                    style: TextStyle(
+                      fontSize: AppTypography.captionSize,
+                      height: AppTypography.captionHeight,
+                      fontStyle: FontStyle.italic,
+                      color: bubbleTextColor.withValues(alpha: 0.5),
+                    ),
+                  ),
+                ),
+              ),
+            // ── IMG_TEXT 配文：小字斜体；为空不渲染（后端已允许空配文）──
+            if (stage.text.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    stage.text,
+                    style: TextStyle(
+                      fontSize: AppTypography.captionSize,
+                      height: AppTypography.captionHeight,
+                      fontStyle: FontStyle.italic,
+                      color: bubbleTextColor.withValues(alpha: 0.78),
+                    ),
+                  ),
+                ),
+              ),
             const SizedBox(height: 6),
           ],
           if (fileMeta != null) ...[
             _buildFileCard(context),
             if (stage.text.isNotEmpty) const SizedBox(height: 6),
           ],
-          if (stage.text.isNotEmpty)
+          // 纯图片消息的配文已在图片块内以小字渲染，这里跳过；纯文本/其它消息维持 15 号正文
+          if (stage.text.isNotEmpty && !(imageUrl != null && imageUrl!.isNotEmpty))
             Text(
               stage.text,
               style: TextStyle(fontSize: 15, color: bubbleTextColor),
@@ -477,11 +516,15 @@ class _CollapsibleMeta extends StatefulWidget {
   final IconData icon;
   final String label;
   final String detail;
+  /// 内心活动变体（思考第一人称化，2026-09-10）：斜体 + 左侧竖线 + 更淡底色，
+  /// 与工具结果/能力 chip 等系统日志观感区分开
+  final bool monologue;
 
   const _CollapsibleMeta({
     required this.icon,
     required this.label,
     required this.detail,
+    this.monologue = false,
   });
 
   @override
@@ -526,7 +569,11 @@ class _CollapsibleMetaState extends State<_CollapsibleMeta> {
                         widget.detail,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: AppTypography.captionSize, color: fg.withValues(alpha: 0.7)),
+                        style: TextStyle(
+                          fontSize: AppTypography.captionSize,
+                          color: fg.withValues(alpha: 0.7),
+                          fontStyle: widget.monologue ? FontStyle.italic : null,
+                        ),
                       ),
                     ),
                   Icon(
@@ -541,24 +588,45 @@ class _CollapsibleMetaState extends State<_CollapsibleMeta> {
           if (_expanded)
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              padding: widget.monologue
+                  ? const EdgeInsets.symmetric(vertical: 6)
+                  : const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               decoration: BoxDecoration(
-                color: scheme.onSurface.withValues(alpha: 0.05),
+                // 内心活动变体底色更淡（0.04），普通折叠块维持 0.05
+                color: scheme.onSurface.withValues(alpha: widget.monologue ? 0.04 : 0.05),
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: Text(
-                widget.detail,
-                style: TextStyle(
-                  fontSize: AppTypography.captionSize,
-                  color: fg.withValues(alpha: 0.85),
-                  height: 1.4,
-                ),
-              ),
+              // 左侧竖线（摘句感）只给内心活动变体；非均匀 border 不能与 borderRadius 同层，
+              // 故用内层 Container 承载
+              child: widget.monologue
+                  ? Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          left: BorderSide(
+                            color: scheme.primary.withValues(alpha: 0.5),
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      child: _detailText(fg),
+                    )
+                  : _detailText(fg),
             ),
         ],
       ),
     );
   }
+
+  Widget _detailText(Color fg) => Text(
+        widget.detail,
+        style: TextStyle(
+          fontSize: AppTypography.captionSize,
+          color: fg.withValues(alpha: 0.85),
+          height: 1.4,
+          fontStyle: widget.monologue ? FontStyle.italic : null,
+        ),
+      );
 }
 
 /// 调用能力 chip 块（R6，2026-09-09）：每项一个 chip，默认显示前 3 个，

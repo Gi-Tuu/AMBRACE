@@ -27,7 +27,10 @@ class AgentState(TypedDict):
     # ---- 输出 ----
     ai_response: str           # AI 回复内容
     reasoning_level: int        # 思考过程挡位：0=关闭 / 1=简单思考 / 2=深度思考（2026-08-10）
-    reasoning: str | None       # LLM 思考过程（角色开启「思考过程」开关时产生，2026-08-10）
+    reasoning: str | None       # LLM 思考过程（上屏用：已做人称归一 + 穿帮脱敏，2026-09-10）
+    raw_reasoning: str | None   # 原始思考（挡位 2 后台留底，不进对方可见消息，2026-09-10）
+    character_name: str         # 角色名（context_builder 写入，供内心活动指令与人称归一）
+    user_name: str              # 对方昵称（同上；缺失时归一兜底为「你」）
     tools_used: list[str]       # 本次回复调用的能力（识图/生图/语音回复/扩展，2026-08-10）
     should_update_memory: bool # 是否需要存入新记忆
     new_memories: list[dict]   # 新发现的记忆

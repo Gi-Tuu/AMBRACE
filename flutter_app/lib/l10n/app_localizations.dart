@@ -4377,6 +4377,12 @@ abstract class AppLocalizations {
   /// **'进行中'**
   String get inProgress;
 
+  /// No description provided for @innerThoughts.
+  ///
+  /// In zh, this message translates to:
+  /// **'TA 的内心'**
+  String get innerThoughts;
+
   /// No description provided for @inputHint.
   ///
   /// In zh, this message translates to:
@@ -6372,7 +6378,7 @@ abstract class AppLocalizations {
   /// No description provided for @reasoningLevelHint.
   ///
   /// In zh, this message translates to:
-  /// **'气泡顶部显示TA回复前的推理内容'**
+  /// **'气泡顶部显示TA回复前的内心活动（第一人称、称呼你的昵称）'**
   String get reasoningLevelHint;
 
   /// No description provided for @recordCount.
@@ -8456,6 +8462,12 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'图片加载失败'**
   String get imageLoadFailed;
+
+  /// No description provided for @aiGeneratedImage.
+  ///
+  /// In zh, this message translates to:
+  /// **'AI 生图'**
+  String get aiGeneratedImage;
 
   /// No description provided for @continueLabel.
   ///

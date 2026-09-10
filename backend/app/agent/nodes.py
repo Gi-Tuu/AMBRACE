@@ -330,7 +330,11 @@ async def generate_response(state: AgentState) -> AgentState:
             user_id=state.get("user_id"),
             character_id=state.get("character_id"),
         )
-        state["reasoning"] = (reasoning or "").strip() or None
+        # 思考第一人称化（2026-09-10）：原始思考仅后台留底，上屏字段走人称归一 + 穿帮脱敏
+        from app.agent.context.reasoning_prompt import normalize_reasoning_for_display
+        state["raw_reasoning"] = (reasoning or "").strip() or None
+        state["reasoning"] = normalize_reasoning_for_display(
+            reasoning, state.get("character_name"), state.get("user_name"))
         state["streamed"] = False
     else:
         response = await chat_completion(

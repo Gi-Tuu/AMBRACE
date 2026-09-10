@@ -13,6 +13,7 @@ from sqlalchemy import delete, select
 from app.db.database import async_session_factory
 from app.models.chat import ChatMessage
 from app.application.chat.io import _push_user_notify
+from app.application.chat.tools import _sanitize_chunk_texts, _sanitize_persist_text
 from app.utils.errors import friendly_llm_error
 from app.utils.logger import get_logger
 
@@ -163,8 +164,11 @@ async def _persist_ai_chunks(
     tts_urls/tts 用于语音逐句合成：每个块额外携带自身 tts.url（首块 tools 追加「语音回复」）。
     返回已落库的块列表（含 id/created_at/extra_meta），供流式端点逐块推送。
     character_id（F-3，v3.4.6 审查）：批量事件 actor_id 透传角色 id（与 _block_sink/WS 路径对齐）。
+    P0'（2026-09-10）：落库前逐块兜底剥标（纯标记块丢弃），防止模型漏写闭合标签时
+    [GEN_IMAGE]/[IMG_TEXT] 段落被当成独立 AI 消息落库（现场 11521/11522）。
     """
     import json as _json
+    chunks = _sanitize_chunk_texts(chunks)
     saved: list[dict] = []
     _total = len(chunks)
     async with async_session_factory() as db:
@@ -266,12 +270,17 @@ async def send_and_receive_stream(
             # 生成期只带每块 tts.url（首块含「语音回复」工具标注）；生成后由
             # _backfill_stream_tts_meta 补齐首/末块 reasoning/tools/status/cal/memo。
             import json as _json
+            # P0'（2026-09-10）：实时落库前兜底剥标（漏写闭合标签的 [GEN_IMAGE]/[IMG_TEXT]
+            # 不得进正文）。此处不丢块——块数须与 stream_blocks 一一对应，否则完整性校验会误判回退。
+            _clean = _sanitize_persist_text(blk_text)
+            if _clean != (blk_text or "").strip():
+                _logger.warning("Stream block had marker residue, sanitized: %s", (blk_text or "")[:60])
             meta = _assemble_chunk_meta(
                 index, 0, {}, None, extra_capabilities, None, None, tts_url, tts=True,
             )
             async with async_session_factory() as db:
                 m = ChatMessage(
-                    session_id=session_id, sender_type="ai", content=blk_text,
+                    session_id=session_id, sender_type="ai", content=_clean,
                     extra_meta=_json.dumps(meta, ensure_ascii=False) if meta else None,
                 )
                 db.add(m)
@@ -404,6 +413,7 @@ async def send_and_receive_stream(
         # 保证该轮 AI 块数与 stream_blocks 一致、done.blocks 与全文对应（历史不缺失）。
         saved = core["stream_saved"]
         all_blocks = core.get("stream_blocks") or []
+        # P0'：完整性校验按「清洗后仍有正文的块」计数——_block_sink 不丢块，故两侧口径一致
         if len(saved) < len(all_blocks):
             _logger.warning(
                 "TTS stream partial: %d/%d blocks saved, falling back to batch",
@@ -479,6 +489,9 @@ async def send_and_receive_stream(
         from app.agent.nodes import split_response
         chunk_texts = split_response(full_text, final_state.get("emotional_state", ""))
         chunk_texts = chunk_texts or ([full_text] if full_text else [])
+    # P0'（2026-09-10）：分块落库/逐句 TTS 前统一兜底剥标（纯标记块丢弃），保证任意分块不含
+    # [GEN_IMAGE]/[IMG_TEXT]；在 _synthesize_chunks_tts 之前清洗，tts_urls 与块严格一一对应。
+    chunk_texts = _sanitize_chunk_texts(chunk_texts)
 
     tts_urls = None
     if tts:

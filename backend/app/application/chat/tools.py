@@ -31,6 +31,37 @@ def _extract_gen_image(text: str) -> tuple[str, str | None, str | None]:
     return _agent_actions.extract_gen_image(text)
 
 
+def _sanitize_persist_text(text: str) -> str:
+    """落库/展示文本的统一兜底清洗（P0'，2026-09-10）。
+
+    剥离全部动作标记（含漏写闭合标签的 [GEN_IMAGE]/[IMG_TEXT]）+ 尾部未闭合标记残片，
+    防止标记段落被当成正文落库（现场：session 11 的 11521/11522 两条消息）。
+    无标记时返回原文（仅去尾部空白），失败静默返回原文。
+    """
+    if not text:
+        return text
+    try:
+        from app.agent.response_parser import strip_unclosed_markers
+        out = strip_unclosed_markers(_agent_actions.strip_actions(text))
+    except Exception:
+        return text
+    return out.strip()
+
+
+def _sanitize_chunk_texts(chunks: list[str]) -> list[str]:
+    """分块落库前逐块兜底清洗（P0'）：剥标后丢弃变空的块（纯标记块不落库）。"""
+    if not chunks:
+        return chunks
+    out: list[str] = []
+    for c in chunks:
+        cleaned = _sanitize_persist_text(c or "")
+        if cleaned:
+            out.append(cleaned)
+        elif (c or "").strip():
+            _logger.warning("Chunk dropped: marker-only text %s", (c or "")[:60])
+    return out
+
+
 def _extract_search(text: str) -> tuple[str, str | None]:
     """提取自主搜索标记，返回 (清理后文本, 查询词或None)。
 

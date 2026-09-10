@@ -359,7 +359,10 @@ def parse_response(response: str, state: dict) -> dict:
     #     解析进 state["reasoning"]（落库 extra_meta，前端气泡顶部展示），并从正文剥离
     _reasoning_match = re.match(r"[\[【]\s*推理\s*[：:]\s*([^\]】]+)[\]】]\s*", response)
     if _reasoning_match:
-        state["reasoning"] = _reasoning_match.group(1).strip() or None
+        # 思考第一人称化（2026-09-10）：与挡位 2 共用上屏归一管线（名字自称→我、用户→昵称、剥穿帮）
+        from app.agent.context.reasoning_prompt import normalize_reasoning_for_display
+        state["reasoning"] = normalize_reasoning_for_display(
+            _reasoning_match.group(1), state.get("character_name"), state.get("user_name"))
         response = response[_reasoning_match.end():].strip()
     # 无【推理】标记时不覆盖 state["reasoning"]：深度思考挡位（level 2）的
     # reasoning_content 已由 nodes.generate_response 写入，避免被清空

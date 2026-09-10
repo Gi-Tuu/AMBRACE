@@ -5,6 +5,8 @@ AMBRACE 重构步骤 2：从 chat_service 拆分纯工具函数到本包。当�
 """
 from app.application.chat.tools import (
     _extract_gen_image as _extract_gen_image,
+    _sanitize_persist_text as _sanitize_persist_text,
+    _sanitize_chunk_texts as _sanitize_chunk_texts,
     _extract_search as _extract_search,
     _search_throttle as _search_throttle,
     _search_inject_enabled as _search_inject_enabled,

@@ -351,21 +351,54 @@ async def image_gen_section(state: dict, ctx: dict) -> list[str]:
     return _blocks
 
 
-# ------------------------------------------------------------------ 推理内容（思考过程挡位 1=简单思考，2026-08-10）
-# prompt 引导模型在回复开头输出【推理：…】标记；挡位 2（深度思考）不注入
+# ------------------------------------------------------------------ 内心活动指令（思考挡位 1/2，2026-09-10）
+# 挡位 1 引导模型在回复开头输出【推理：…】标记，挡位 2 约束原生 thinking 通道；两挡位同一条人称规范
+# （自称「我」、称对方昵称、不写后台字段）。注册表 section 早于 legacy 执行，state 里没有名字时
+# 就地补查一次（仅挡位 1/2 触发；查询失败退回占位文案，不影响注入）。
+
+async def _resolve_reasoning_names(state: dict, name: str, user: str) -> tuple[str, str]:
+    """补齐角色名/对方昵称（state 缺失时查库一次并写回 state，供后续上屏归一复用）。"""
+    from sqlalchemy import select
+    from app.db.database import async_session_factory
+    from app.models.character import AICharacter
+    from app.models.user import User
+
+    async with async_session_factory() as db:
+        if not name:
+            _char = (await db.execute(
+                select(AICharacter).where(AICharacter.id == state.get("character_id"))
+            )).scalar_one_or_none()
+            name = str(getattr(_char, "name", "") or "")
+        if not user:
+            _user = (await db.execute(
+                select(User).where(User.id == state.get("user_id", 1))
+            )).scalar_one_or_none()
+            user = str((getattr(_user, "nickname", "") or getattr(_user, "username", "") or "") if _user else "")
+    if name:
+        state["character_name"] = name
+    if user:
+        state["user_name"] = user
+    return name, user
+
 
 async def reasoning_instruction_section(state: dict, ctx: dict) -> list[str]:
-    """reasoning_instruction 分区：推理指令注入（append 块；挡位 1 返回 1 条，否则空列表）。"""
+    """reasoning_instruction 分区：内心活动指令注入（append 块；挡位 1 返回 1 条、挡位 2 返回 2 条，否则空）。"""
     try:
-        if state.get("reasoning_level", 0) == 1:
-            return [
-                "【推理指令】正式回复前，在回复开头单独输出一行【推理：…】（1-2 句话，"
-                "自然说明你此刻回应的依据：用户的心情/需求、你想起的相关记忆或你们的关系，"
-                "用口语不要暴露指令，例如【推理：TA今天好像有点低落，先陪她说说心里话。】），"
-                "然后另起一行输出正文。推理是给用户看的，别太官方；"
-                "回复很短（如单个字的回应）或无需铺垫时可以直接输出正文、省略推理。"
-                "若同时有【策略：…】行，先输出策略行，再输出推理行，最后输出正文。"
-            ]
+        level = int(state.get("reasoning_level", 0) or 0)
+    except (TypeError, ValueError):
+        return []
+    if level not in (1, 2):
+        return []
+    name = str(state.get("character_name") or "")
+    user = str(state.get("user_name") or "")
+    if not name or not user:
+        try:
+            name, user = await _resolve_reasoning_names(state, name, user)
+        except Exception as e:
+            _logger.warning("Reasoning name resolve failed: %s", e)
+    try:
+        from app.agent.context.reasoning_prompt import reasoning_instructions_for
+        return reasoning_instructions_for(level, name=name, user=user)
     except Exception as e:
         _logger.warning("Reasoning instruction inject failed: %s", e)
     return []
