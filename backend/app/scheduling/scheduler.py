@@ -51,6 +51,26 @@ async def send_to_session(
     extra_meta: str | None = None,
 ):
     """将主动消息保存到数据库并通过 WS 推送（如果用户在线）"""
+    # L3（2026-09-09 主体归属治理）：主题熔断统一兜底——state_trigger / memory_review /
+    # life_regression / storyline / pet_care / life_share 等所有经本出口的主动通道都覆盖
+    # （timer 已在 arbiter 内自行判并 mark_fired，保证承诺状态正确流转，此处不重复判）。
+    # 节庆/纪念日等必须送达的类型白名单豁免；同一事件的后续切片（log_proactive=False）不判。
+    # 异常一律 fail-open：宁可不拦也不阻塞正常主动消息。
+    if log_proactive:
+        try:
+            from app.agent.loop import AGENT_FLAGS
+            if AGENT_FLAGS.get("proactive_topic_guard", False):
+                from app.scheduling.proactive_topic_guard import (
+                    GUARD_EXEMPT_TYPES as _EXEMPT_TYPES, should_suppress as _should_suppress,
+                )
+                if message_type not in _EXEMPT_TYPES:
+                    _sup, _reason = await _should_suppress(character_id, content)
+                    if _sup:
+                        _logger.info("Proactive msg suppressed char=%d type=%s: %s",
+                                     character_id, message_type, _reason)
+                        return  # 不写库、不推送、不发 FCM
+        except Exception as e:
+            _logger.warning("send_to_session topic guard fail-open: %s", e)
     msg_id = None
     # 保存到数据库
     async with async_session_factory() as db:

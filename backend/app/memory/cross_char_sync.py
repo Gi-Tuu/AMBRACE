@@ -14,7 +14,7 @@ from sqlalchemy import select
 from app.db.database import async_session_factory
 from app.models.memory import Memory
 from app.memory.supersede import ACTIVE, STALE
-from app.memory.user_facts import MUTABLE_SLOTS, get_active_user_facts
+from app.memory.user_facts import MUTABLE_SLOTS, get_active_user_facts, user_fact_slot_enabled
 
 
 async def stale_character_slot_memory(
@@ -111,6 +111,9 @@ async def align_character_to_user_facts(character_id: int, user_id: int) -> dict
     report: dict[str, int] = {}
     try:
         for f in await get_active_user_facts(user_id):
+            # 双保险（2026-09-10）：即便上游显式传了全量槽，未启用槽也不对齐/stale/投影。
+            if not user_fact_slot_enabled(f.slot):
+                continue
             if not f.previous_value:
                 continue
             n = await stale_character_slot_memory(character_id, f.slot, f.previous_value)

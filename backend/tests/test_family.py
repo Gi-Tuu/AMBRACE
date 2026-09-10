@@ -9,7 +9,6 @@
 """
 import asyncio
 import os
-import tempfile
 from datetime import datetime, timedelta
 
 import pytest
@@ -23,12 +22,13 @@ from app.api import admin as admin_api
 from app.auth import router as auth_router
 from app.auth.deps import get_current_user_id
 from app.application import permission_service as perm
+from app.utils.timeutil import now_naive_utc
 
 
 @pytest.fixture()
-def family_db(monkeypatch):
+def family_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：patch 各模块绑定的 async_session_factory（不触碰 backend/data）。"""
-    tmp = tempfile.mkdtemp(prefix='family_test_')
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
     engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -129,7 +129,7 @@ async def _generate_code(factory, creator_id: int) -> str:
     async with factory() as db:
         from app.models.user import AccountInvite
         db.add(AccountInvite(code='AAAA0001', creator_id=creator_id,
-                             expires_at=datetime.utcnow() + timedelta(minutes=5)))
+                             expires_at=now_naive_utc() + timedelta(minutes=5)))
         await db.commit()
         return 'AAAA0001'
 
@@ -137,7 +137,7 @@ async def _generate_code(factory, creator_id: int) -> str:
 def test_redeem_expired(family_db):
     asyncio.run(_add_user(family_db, 1, 'main'))
     asyncio.run(_add_user(family_db, 2, 'sub'))
-    asyncio.run(_seed_invite(family_db, 'AAAA0002', 1, datetime.utcnow() - timedelta(minutes=1)))
+    asyncio.run(_seed_invite(family_db, 'AAAA0002', 1, now_naive_utc() - timedelta(minutes=1)))
     client = _make_client(2)
     r = client.post('/api/v1/account/link', json={'code': 'AAAA0002'})
     assert r.status_code == 400, r.text
@@ -147,7 +147,7 @@ def test_redeem_single_use(family_db):
     asyncio.run(_add_user(family_db, 1, 'main'))
     asyncio.run(_add_user(family_db, 2, 'subA'))
     asyncio.run(_add_user(family_db, 3, 'subB'))
-    asyncio.run(_seed_invite(family_db, 'AAAA0003', 1, datetime.utcnow() + timedelta(minutes=5)))
+    asyncio.run(_seed_invite(family_db, 'AAAA0003', 1, now_naive_utc() + timedelta(minutes=5)))
     client = _make_client(2)
     r = client.post('/api/v1/account/link', json={'code': 'AAAA0003'})
     assert r.status_code == 200, r.text
@@ -159,7 +159,7 @@ def test_redeem_single_use(family_db):
 
 def test_redeem_self_rejected(family_db):
     asyncio.run(_add_user(family_db, 1, 'main'))
-    asyncio.run(_seed_invite(family_db, 'AAAA0004', 1, datetime.utcnow() + timedelta(minutes=5)))
+    asyncio.run(_seed_invite(family_db, 'AAAA0004', 1, now_naive_utc() + timedelta(minutes=5)))
     client = _make_client(1)
     r = client.post('/api/v1/account/link', json={'code': 'AAAA0004'})
     assert r.status_code == 400, r.text
@@ -169,7 +169,7 @@ def test_redeem_already_linked_rejected(family_db):
     # 已是子账号再兑换 → 400（重复）
     asyncio.run(_add_user(family_db, 1, 'main'))
     asyncio.run(_add_user(family_db, 2, 'sub', parent_id=1))
-    asyncio.run(_seed_invite(family_db, 'AAAA0005', 1, datetime.utcnow() + timedelta(minutes=5)))
+    asyncio.run(_seed_invite(family_db, 'AAAA0005', 1, now_naive_utc() + timedelta(minutes=5)))
     client = _make_client(2)
     r = client.post('/api/v1/account/link', json={'code': 'AAAA0005'})
     assert r.status_code == 400, r.text
@@ -180,7 +180,7 @@ def test_redeem_creator_is_sub_rejected(family_db):
     asyncio.run(_add_user(family_db, 1, 'main'))
     asyncio.run(_add_user(family_db, 2, 'sub', parent_id=1))
     asyncio.run(_add_user(family_db, 3, 'candidate'))
-    asyncio.run(_seed_invite(family_db, 'AAAA0006', 2, datetime.utcnow() + timedelta(minutes=5)))
+    asyncio.run(_seed_invite(family_db, 'AAAA0006', 2, now_naive_utc() + timedelta(minutes=5)))
     client = _make_client(3)
     r = client.post('/api/v1/account/link', json={'code': 'AAAA0006'})
     assert r.status_code == 400, r.text
@@ -195,7 +195,7 @@ def test_redeem_concurrent_used_by_guard(family_db):
     asyncio.run(_add_user(family_db, 1, 'main'))
     asyncio.run(_add_user(family_db, 2, 's1'))
     asyncio.run(_add_user(family_db, 3, 's2'))
-    asyncio.run(_seed_invite(family_db, 'AAAA0007', 1, datetime.utcnow() + timedelta(minutes=5)))
+    asyncio.run(_seed_invite(family_db, 'AAAA0007', 1, now_naive_utc() + timedelta(minutes=5)))
 
     async def _redeem(uid):
         async with async_session_factory() as db:

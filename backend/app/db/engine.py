@@ -38,6 +38,9 @@ if settings.database_url.startswith("sqlite") and ":memory:" not in settings.dat
             cur.execute("PRAGMA synchronous=NORMAL;")       # WAL 下 NORMAL 安全且更快
             cur.execute("PRAGMA busy_timeout=10000;")       # 毫秒级，与 connect_args.timeout 双保险
             cur.execute("PRAGMA wal_autocheckpoint=1000;")  # 每 1000 页自动 checkpoint，防 -wal 无限增长
+            cur.execute("PRAGMA foreign_keys=ON;")          # P4（2026-09-09）：引擎强制外键——
+            # 前置条件：删角色统一级联(cascade)+ondelete 已落库+孤儿清零(447 删/20 置 NULL)，
+            # 见 c9d0e1f2a3b4 迁移。回滚 = 删本行（FK 关闭=旧行为）。
         finally:
             cur.close()
 

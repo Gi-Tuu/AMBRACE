@@ -22,6 +22,7 @@ async def list_pets(
     result = await db.execute(
         select(Pet).where(
             Pet.user_id == user_id,
+            Pet.abandoned_at.is_(None),
             or_(Pet.owner_type.is_(None), Pet.owner_type == "user"),
         ).order_by(Pet.created_at.asc())
     )
@@ -52,6 +53,7 @@ async def adopt_pet(
     count = (await db.execute(
         select(Pet).where(
             Pet.user_id == user_id,
+            Pet.abandoned_at.is_(None),
             or_(Pet.owner_type.is_(None), Pet.owner_type == "user"),
         )
     )).scalars().all()
@@ -73,7 +75,9 @@ async def adopt_pet(
 
 async def _get_owned_pet(db: AsyncSession, pet_id: int, user_id: int, lang: str = "zh") -> Pet:
     result = await db.execute(
-        select(Pet).where(Pet.id == pet_id, Pet.user_id == user_id)
+        select(Pet).where(
+            Pet.id == pet_id, Pet.user_id == user_id, Pet.abandoned_at.is_(None)
+        )
     )
     pet = result.scalar_one_or_none()
     if not pet:

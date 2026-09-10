@@ -9,8 +9,15 @@
 - shared_events.recall_text → format_memory_line(m, max_len=120)
 
 行为等价替换为主：各调用点传入的字段决定是否出现认知前缀/纠正后缀，截断长度与内容不变。
+
+T3/C1（2026-09-10，v3.4.6 第三轮）：在 [记录于] 之后、认知前缀之前插入**时态标签**
+（flag `memory_line_tense_tag` 默认开；plan 未过期=［计划］、已过期=［旧安排·已过期］、
+episodic=［往事］、transient=［当时状态］、enduring 不加）——四处注入点自动继承，防旧记忆
+（如「去长沙」计划）被当现状续写。关 flag 即回旧行（无时态标签）。
 """
 from __future__ import annotations
+
+from app.memory.tense import classify_tense, is_plan_expired
 
 
 def epistemic_prefix(status) -> str:
@@ -21,7 +28,15 @@ def epistemic_prefix(status) -> str:
     return f"[{status}] "
 
 
-def format_memory_line(m: dict, max_len: int = 150, prefix: str = "- ", include_speaker: bool = False) -> str:
+# 时态 → 短标签（往事/旧安排/当时状态，明确告诉模型这不是现状；enduring 不加）
+_TENSE_TAG = {
+    "episodic": "［往事］",
+    "transient": "［当时状态］",
+}
+
+
+def format_memory_line(m: dict, max_len: int = 150, prefix: str = "- ", include_speaker: bool = False,
+                       tense_hint: str | None = None) -> str:
     """记忆注入行格式化（纯函数，X-1/M-P1-2）：
     `{prefix}[记录于 YYYY-MM-DD] [认知前缀][说话人] 内容[:max_len]`；
     被用户纠正过的记忆（contradiction_count>0）行尾追加「（你后来纠正过，以你最新说法为准）」，
@@ -32,6 +47,9 @@ def format_memory_line(m: dict, max_len: int = 150, prefix: str = "- ", include_
     - prefix：行首前缀（默认 "- "；persona 最近情绪事件无前缀传 ""）。
     - include_speaker：是否附带说话人标注（X-2，2026-08-18：主链路 context_builder 记忆注入区已启用；
       主动消息/Shared Memory/persona 三处保持 False 不改变既有行为；默认 False）。
+    - tense_hint：显式指定时态分类，传入即跳过 classify_tense（I4，2026-09-10 第四轮：共享事件恒为
+      「已发生的共同经历」→ 传 "episodic"，避免文本含「明天/计划/打算」等计划词时被 classify_tense
+      第 4 步误判 plan 而错标［计划/旧安排·已过期］）。默认 None = 原逻辑，其它调用点零影响。
     """
     mem_text = m.get("content", "") or m.get("title", "")
     if not mem_text:
@@ -53,4 +71,22 @@ def format_memory_line(m: dict, max_len: int = 150, prefix: str = "- ", include_
             _sp_tag = "[系统说的] "
     _cc = m.get("contradiction_count") or 0
     _cc_tag = "（你后来纠正过，以你最新说法为准）" if _cc > 0 else ""
-    return f"{prefix}{_rec_tag}{_pre}{_sp_tag}{mem_text[:max_len]}{_cc_tag}"
+
+    # ── 时态标签（flag 化，默认开；纯增益标注，不改召回/排序/写库）──
+    # 时间标签之后、认知前缀之前。plan 区分「未过期=计划 / 已过期=旧安排」，episodic/transient
+    # 标注「往事/当时状态」，enduring 不加——告诉模型这不是现状，防旧「长沙」计划当正在发生。
+    _tense_tag = ""
+    try:
+        from app.agent.loop import AGENT_FLAGS  # 延迟 import，避免循环导入
+        if bool(AGENT_FLAGS.get("memory_line_tense_tag", True)):
+            _tcls = tense_hint or classify_tense(m)  # 显式 hint 优先（I4：共享事件恒 episodic）
+            if _tcls == "plan":
+                _tense_tag = "［旧安排·已过期］ " if is_plan_expired(m) else "［计划］ "
+            else:
+                _tag = _TENSE_TAG.get(_tcls)
+                if _tag:
+                    _tense_tag = _tag + " "
+    except Exception:
+        _tense_tag = ""
+
+    return f"{prefix}{_rec_tag}{_tense_tag}{_pre}{_sp_tag}{mem_text[:max_len]}{_cc_tag}"

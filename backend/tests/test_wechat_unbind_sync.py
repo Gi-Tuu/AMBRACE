@@ -77,6 +77,10 @@ def ws_db(ws_plugin, tmp_path, monkeypatch):
 
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # T5（2026-09-10）：插件表已从 Base.metadata 剥离到独立 plugin_metadata，
+            # 本临时库须显式补建插件表（插件已在本文件 fixture 加载，plugin_metadata 已注册对应表）。
+            from app.plugins.plugin_base import plugin_metadata
+            await conn.run_sync(plugin_metadata.create_all)
 
     asyncio.run(_init())
     import app.db.database as db_mod

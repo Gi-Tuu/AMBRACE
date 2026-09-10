@@ -239,10 +239,13 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
         if (_taskApiKey.text.trim().isNotEmpty) 'api_key': _taskApiKey.text.trim(),
       };
 
-  Future<void> _testConnection(Map<String, dynamic> body) async {
+  Future<void> _testConnection(Map<String, dynamic> body,
+      {String modality = 'llm'}) async {
     final l10n = AppLocalizations.of(context)!;
+    // 带上当前标签页模态，供后端选择对应探测接口（缺省 llm，老后端忽略该字段）
+    final payload = Map<String, dynamic>.from(body)..['modality'] = modality;
     try {
-      final r = await ApiClient().testApiConnection(body);
+      final r = await ApiClient().testApiConnection(payload);
       if (!mounted) return;
       final ok = r['ok'] == true;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -552,7 +555,7 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
               _field(_srvApiKey, l10n.apiKeyKeep, obscure: true, enabled: _srvEnabled,
                   hint: l10n.apiKeyRotateHint),
               Row(children: [
-                Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_srvBody()))),
+                Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_srvBody(), modality: 'llm'))),
                 const SizedBox(width: 8),
                 Expanded(child: _saveButton(l10n.saveSrvLlm, () => ApiClient().updateServerApiConfig(_srvBody()))),
               ]),
@@ -809,7 +812,7 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
             _field(_spModel, l10n.model, enabled: _spEnabled),
             _field(_spApiKey, l10n.apiKeyKeep, obscure: true, enabled: _spEnabled),
             Row(children: [
-              Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_spBody()))),
+              Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_spBody(), modality: 'speech'))),
               const SizedBox(width: 8),
               Expanded(child: _saveButton(l10n.save, () => ApiClient().updateSpeechServerConfig(_spBody()))),
             ]),
@@ -853,7 +856,7 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
             _field(_vlmModel, l10n.model, enabled: _vlmEnabled),
             _field(_vlmApiKey, l10n.apiKeyKeep, obscure: true, enabled: _vlmEnabled),
             Row(children: [
-              Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_vlmBody()))),
+              Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_vlmBody(), modality: 'vlm'))),
               const SizedBox(width: 8),
               Expanded(child: _saveButton(l10n.save, () => ApiClient().updateVlmServerConfig(_vlmBody()))),
             ]),
@@ -900,7 +903,7 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
             _field(_imgApiKey, l10n.apiKeyKeep, obscure: true, enabled: _imgEnabled),
             _field(_imgDailyLimit, l10n.dailyLimit, enabled: _imgEnabled),
             Row(children: [
-              Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_imgBody()))),
+              Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_imgBody(), modality: 'image'))),
               const SizedBox(width: 8),
               Expanded(child: _saveButton(l10n.save, () => ApiClient().updateImageGenServerConfig(_imgBody()))),
             ]),
@@ -940,7 +943,7 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
             _field(_taskModel, l10n.model, enabled: _taskEnabled),
             _field(_taskApiKey, l10n.apiKeyKeep, obscure: true, enabled: _taskEnabled),
             Row(children: [
-              Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_taskBody()))),
+              Expanded(child: _outlineButton(l10n.testConnection, () => _testConnection(_taskBody(), modality: 'task'))),
               const SizedBox(width: 8),
               Expanded(child: _saveButton(l10n.save, () => ApiClient().updateServerTaskApiConfig(_task, _taskBody()))),
             ]),

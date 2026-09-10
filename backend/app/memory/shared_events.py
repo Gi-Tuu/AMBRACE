@@ -102,7 +102,13 @@ async def recall_text(db, user_id: int, character_id: int, limit: int = 2) -> st
         if d:
             _ev_t = e.event_time or e.created_at
             # X-1（2026-08-18）：与主链路共用公共格式化函数（max_len=120 保持既有截断长度）
-            _line = format_memory_line({"content": d, "created_at": _ev_t}, max_len=120)
+            # I4（2026-09-10 第四轮）：共享事件恒为「已发生的共同经历」→ 显式 memory_type=event +
+            # tense_hint=episodic，避免文本含「明天/计划/打算」时被 classify_tense 第 4 步误判 plan。
+            _line = format_memory_line(
+                {"content": d, "created_at": _ev_t, "memory_type": "event"},
+                max_len=120,
+                tense_hint="episodic",
+            )
             if _line:
                 lines.append(_line)
     return "\n".join(lines) if lines else ""

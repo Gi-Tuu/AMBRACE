@@ -5,7 +5,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -16,6 +15,7 @@ from app.scheduling.message_generator import (
     _context_overlap_ratio,
     _parrot_blocked,
 )
+from app.utils.timeutil import now_naive_utc
 
 
 # ────────────────────────── C：字面重合守卫（纯函数） ──────────────────────────
@@ -84,9 +84,9 @@ def test_parrot_重合率不受context长度稀释():
 # ────────────────────────── A：防重复数据源并入 AI 对话回复（真实临时库） ──────────────────────────
 
 @pytest.fixture()
-def proac_db(monkeypatch):
+def proac_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：patch app.db.database.async_session_factory（不触碰 backend/data）。"""
-    tmp = tempfile.mkdtemp(prefix="parrot_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -109,7 +109,7 @@ def proac_db(monkeypatch):
 
 def test_recent_proactive_并入ai对话回复(proac_db):
     """主动消息日志 + 最近 24h AI 对话回复合并去重、按时间倒序、整体截断 400"""
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     from app.models.character import AICharacter, ProactiveMessageLog
     from app.models.chat import ChatMessage, ChatSession
     from app.scheduling.arbiter import get_recent_proactive_messages
@@ -119,7 +119,7 @@ def test_recent_proactive_并入ai对话回复(proac_db):
             db.add(AICharacter(id=13, user_id=1, name="sam"))
             db.add(ChatSession(id=11, user_id=1, character_id=13))
             await db.commit()
-            now = datetime.utcnow()
+            now = now_naive_utc()
             # 两条 AI 对话回复（较新）+ 一条主动消息日志（更旧）
             db.add(ChatMessage(session_id=11, sender_type="ai", content="对话回复甲，最新。",
                                created_at=now - timedelta(minutes=5)))
@@ -145,7 +145,6 @@ def test_recent_proactive_并入ai对话回复(proac_db):
 
 def test_recent_proactive_对话回复查询失败不影响主动日志(proac_db, monkeypatch):
     """A 的 fail-open：对话回复段异常时仍返回主动消息日志内容（不影响主动链路）"""
-    from datetime import datetime
     from app.models.character import AICharacter, ProactiveMessageLog
     from app.scheduling.arbiter import get_recent_proactive_messages
 
@@ -153,7 +152,7 @@ def test_recent_proactive_对话回复查询失败不影响主动日志(proac_db
         async with proac_db() as db:
             db.add(AICharacter(id=14, user_id=1, name="t"))
             db.add(ProactiveMessageLog(character_id=14, session_id=None, message_type="storyline",
-                                       content="只有主动日志。", created_at=datetime.utcnow()))
+                                       content="只有主动日志。", created_at=now_naive_utc()))
             await db.commit()
 
     def _boom(*a, **k):

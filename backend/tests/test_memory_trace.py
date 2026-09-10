@@ -18,7 +18,6 @@
 import asyncio
 import json
 import os
-import tempfile
 
 import pytest
 from fastapi import FastAPI
@@ -44,9 +43,9 @@ async def _noop(*a, **k):
 # ---------------- 通用 fixture：临时 SQLite 文件库（不触碰 backend/data） ----------------
 
 @pytest.fixture()
-def mem_db(monkeypatch):
+def mem_db(monkeypatch, tmp_path):
     """临时库：monkeypatch 记忆模块的 async_session_factory（_rerank/search_memories 用）。"""
-    tmp = tempfile.mkdtemp(prefix="memory_trace_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -293,9 +292,9 @@ def test_debug_volume_limits(mem_db, monkeypatch):
 # ---------------- API：GET /{character_id}/memory-trace ----------------
 
 @pytest.fixture()
-def trace_db(monkeypatch):
+def trace_db(monkeypatch, tmp_path):
     """临时库：种子一个角色；同时 monkeypatch characters_api.async_session_factory 供端点查询。"""
-    tmp = tempfile.mkdtemp(prefix="memory_trace_api_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

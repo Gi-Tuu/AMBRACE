@@ -17,6 +17,12 @@ REVIEW_MAX_PER_DAY = 3        # 每角色每天最多主动复习次数
 REVIEW_RETRY_DAYS = 3         # 发出后未获回应，3 天后重试
 REVIEW_SUCCESS_WINDOW_HOURS = 24  # 用户回复成功判定窗口
 REVIEW_MIN_INTERVAL_MINUTES = 90  # 同角色两条复习消息最小间隔（与主动消息一致，防存量到期扎堆连发）
+# 主动复习「回忆化」（2026-09-09，L1/L2）：一次性事件复习强化收口 + 怀旧日额度
+REVIEW_NOSTALGIA_MAX_PER_DAY = 1   # 每角色每天"怀旧式复习"上限（往事/过期计划，不刷屏）
+PLAN_REVIEW_S_CAP = 10.0      # 已过期计划/瞬时状态：主动复习强化 S 封顶（远低于 S_MAX_DAYS=60）
+PLAN_REVIEW_COUNT_CAP = 3     # 计划类 event 因主动复习强化次数封顶，之后退出复习轮转
+EPISODIC_REVIEW_S_CAP = 30.0  # 真正的往事（episodic）：保留适度强化空间（中位而非全砍）
+EPISODIC_REVIEW_COUNT_CAP = 6  # 往事主动复习强化次数上限（之后退出复习轮转）
 # AI 自主评星（P2）
 AI_RATING_MAX_PER_CHAR = 10   # 每角色每天最多复评条数
 AI_RATING_BATCH = 10          # 单次 LLM 调用批量评星条数

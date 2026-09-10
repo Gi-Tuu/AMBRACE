@@ -113,6 +113,18 @@ def strip_unclosed_markers(text: str) -> str:
     return text
 
 
+# §4.6（2026-09-09）：流结束时对「最后一个未闭合开括号→结尾」的回收扫描——
+# 该段在 feed 期间被 _find_hold_index 一直 hold（不进展示也不进 clean）。若它**不是**已知
+# 动作/结构化标记的前缀，说明只是普通文本括号未闭合（如截断的「（笑着摆手」），
+# 则丢弃悬空开括号本身、保留其后正文；命中已知标记前缀则维持原策略整段丢弃
+# （标记段不入展示，由 marker_truncated 埋点 + 通道 B 补提兜底）。
+_UNCLOSED_TAIL_MARKER_RE = re.compile(
+    r"^[\[【]\s*(?:记忆|自述更新|自述删除|自述|状态更新|策略|推理|timer|计时器"
+    r"|SEARCH|RECALL|GEN_IMAGE|IMG_TEXT|CAL_NOTE|MEMO|mcp\.)",
+    re.IGNORECASE,
+)
+
+
 def _find_hold_index(raw: str) -> int:
     """返回最后一个未闭合开括号的位置（从该位置起需要 hold，保证展示文本单调）。
 
@@ -233,11 +245,19 @@ class IncrementalResponseChunker:
         return out, rem
 
     def flush(self) -> list[str]:
-        """流结束：冲刷最后一块（含残余缓冲）。"""
+        """流结束：冲刷最后一块（含残余缓冲）。
+
+        §4.6：冲刷前先对「最后一个未闭合开括号→结尾」做一次回收扫描，把悬空括号之后的
+        正文捞回来（原实现该段随 hold 一起被丢弃，只有括号本身是垃圾）。
+        """
         if self._emotional:
             text = self._clean.strip()
             self._reset()
             return [text] if text else []
+        recovered = self._recover_dangling_tail()
+        if recovered:
+            self._clean += recovered
+            self._block += recovered
         # 处理可能残余的完整块 + 强制冲刷不足一块的剩余
         blocks, rem = self._split_sentences(self._block)
         out = list(blocks)
@@ -245,6 +265,22 @@ class IncrementalResponseChunker:
             out.append(rem)
         self._reset()
         return [b for b in out if b.strip()]
+
+    def _recover_dangling_tail(self) -> str:
+        """回收「最后一个未闭合开括号→结尾」的正文（§4.6）。
+
+        feed 期间该段被 hold 住不进展示；流结束时若它不是已知动作/结构化标记的前缀，
+        只丢弃悬空的开括号本身、保留其后正文（否则维持原策略整段丢弃）。
+        返回空串表示无需回收（无悬空括号，或该段是标记前缀）。
+        """
+        hold = _find_hold_index(self._raw)
+        if hold >= len(self._raw):
+            return ""
+        tail = self._raw[hold:]
+        if _UNCLOSED_TAIL_MARKER_RE.match(tail):
+            return ""
+        body = strip_unclosed_markers(tail[1:])  # 丢悬空开括号本身
+        return strip_stream_display(body)
 
     def _reset(self) -> None:
         self._raw = ""

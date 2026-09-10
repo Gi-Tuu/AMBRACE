@@ -10,7 +10,6 @@
 """
 import asyncio
 import os
-import tempfile
 from datetime import datetime
 
 import pytest
@@ -21,12 +20,12 @@ from app.agent.context.section_overlay import group_dynamics_section
 
 
 @pytest.fixture()
-def gd_db(monkeypatch):
+def gd_db(monkeypatch, tmp_path):
     """临时 SQLite 库：seed 一个用户 + 一个群的成员与若干 normal/game 群消息，patch 会话工厂。"""
     import app.models  # noqa: F401
     from app.models.base import Base
 
-    tmp = tempfile.mkdtemp(prefix="group_dyn_")
+    tmp = str(tmp_path)
     engine = create_async_engine(
         f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool
     )

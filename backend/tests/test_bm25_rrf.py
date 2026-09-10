@@ -14,7 +14,6 @@
 import asyncio
 import json
 import os
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -32,9 +31,9 @@ async def _noop(*a, **k):
 
 
 @pytest.fixture()
-def mem_db(monkeypatch):
+def mem_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库 + 持久化根隔离到临时目录（不触碰 backend/data）。"""
-    tmp = tempfile.mkdtemp(prefix="bm25_rrf_test_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

@@ -8,7 +8,6 @@
 """
 import asyncio
 import os
-import tempfile
 from datetime import datetime, timezone
 
 import pytest
@@ -49,9 +48,9 @@ def _now_naive_utc():
 
 
 @pytest.fixture()
-def liveness_db(monkeypatch):
+def liveness_db(monkeypatch, tmp_path):
     """临时 SQLite（空闲端口）+ patch app.db.database.async_session_factory（不触碰 backend/data）。"""
-    tmp = tempfile.mkdtemp(prefix="liveness_test_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

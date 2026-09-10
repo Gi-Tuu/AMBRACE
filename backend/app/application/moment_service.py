@@ -87,7 +87,7 @@ async def build_moment_prompt(char, extra_hint: str = "") -> str:
         from app.application.pet_service import SPECIES_META
         async with async_session_factory() as db:
             pr = await db.execute(
-                select(Pet).where(Pet.user_id == char.user_id, Pet.owner_type.is_(None)).limit(2)
+                select(Pet).where(Pet.user_id == char.user_id, Pet.owner_type.is_(None), Pet.abandoned_at.is_(None)).limit(2)
             )
             pets = pr.scalars().all()
         if pets:
@@ -432,12 +432,13 @@ async def generate_comments_for_moment(moment_id: int):
 
 
 async def _resolve_author_name(moment) -> str:
-    """获取动态作者名"""
+    """获取动态作者名（用户动态/角色缺失返回空串，绝不返回 None——与 _resolve_author_gender 对称）"""
     if moment.character_id:
         async with async_session_factory() as db:
             ar = await db.execute(select(AICharacter).where(AICharacter.id == moment.character_id))
             ac = ar.scalar_one_or_none()
             return ac.name if ac else ""
+    return ""
 
 
 async def _resolve_author_gender(moment) -> str:
@@ -492,16 +493,24 @@ async def _get_today_ai_comment_count_for_char(char_id: int) -> int:
             )
         )
         all_c = result.scalars().all()
+    # §4.5（2026-09-09）：子评论的父评论判定由「每条新开 session 查一次」改为一次批量查询
+    # （原实现每条子评论一次 session + 一次 SELECT，评论多时线性增长）。语义不变：
+    # 顶级评论计 1；子评论仅当父评论存在且为 AI 所发时计 1。
+    parent_ids = [c.parent_id for c in all_c if c.parent_id is not None]
+    ai_parent_ids: set[int] = set()
+    if parent_ids:
+        async with async_session_factory() as db:
+            pres = await db.execute(
+                select(MomentComment.id).where(
+                    MomentComment.id.in_(parent_ids),
+                    MomentComment.sender_type == "ai",
+                )
+            )
+            ai_parent_ids = set(pres.scalars().all())
     count = 0
     for c in all_c:
-        if c.parent_id is None:
+        if c.parent_id is None or c.parent_id in ai_parent_ids:
             count += 1
-        else:
-            async with async_session_factory() as db:
-                p = await db.execute(select(MomentComment).where(MomentComment.id == c.parent_id))
-                parent = p.scalar_one_or_none()
-            if parent and parent.sender_type == "ai":
-                count += 1
     return count
 
 
@@ -702,7 +711,7 @@ async def _first_round_ai_replies(moment_id: int, ai_chars: dict, daily_limit: i
         prompt_text = (
             f"你是{char.name}，性格{char.personality or '友善'}。"
             f"动态原文：\"{dynamic_text or '（无文字）'}\"\n"
-            f"你在回复{target.sender_name}的评论，说\"你\"时指的是{target.sender_name}，不要把{author_name}做的事安到{target.sender_name}头上。\n"
+            f"你在回复{target.sender_name}的评论，说\"你\"时指的是{target.sender_name}，不要把{author_name or '朋友'}做的事安到{target.sender_name}头上。\n"
             f"{role_block}\n"
             f"{identity_hint}"
             f"在这条动态下，{target.sender_name}评论说：\"{target.content[:60]}...\"\n"
@@ -906,7 +915,7 @@ async def _generate_top_and_reply_comments(char_id, char, moment_id, existing_to
             prompt_text = (
                 f"你是{char.name}，性格{char.personality or '友善'}。"
                 f"动态原文：\"{dynamic_text or '（无文字）'}\"\n"
-                f"你在回复{target.sender_name}的评论，说\"你\"时指的是{target.sender_name}，不要把{author_name}做的事安到{target.sender_name}头上。\n"
+                f"你在回复{target.sender_name}的评论，说\"你\"时指的是{target.sender_name}，不要把{author_name or '朋友'}做的事安到{target.sender_name}头上。\n"
                 f"{role_block}\n"
                 f"{identity_hint}"
                 f"在这条动态下，{target.sender_name}评论说：\"{target.content[:60]}...\"\n"
@@ -1000,7 +1009,7 @@ async def _reply_user_comments(char_id, char, moment_id, existing_comments, exis
             prompt_text = (
                 f"你是{char.name}，性格{char.personality or '友善'}。"
                 f"动态原文：\"{dynamic_text or '（无文字）'}\"\n"
-                f"你在回复用户的评论，说\"你\"时指的是用户，不要把{author_name}做的事安到用户头上。\n"
+                f"你在回复用户的评论，说\"你\"时指的是用户，不要把{author_name or '朋友'}做的事安到用户头上。\n"
                 f"{role_block}\n"
                 f"{identity_hint}"
                 f"用户在这条动态下评论说：\"{uc.content[:80]}...\"{parent_note}\n"

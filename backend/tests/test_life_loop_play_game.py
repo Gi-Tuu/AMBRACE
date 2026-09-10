@@ -8,7 +8,6 @@
 import asyncio
 import os
 import random
-import tempfile
 from types import SimpleNamespace
 
 import pytest
@@ -26,8 +25,8 @@ async def _noop_ai(sid: int) -> None:
 
 
 @pytest.fixture
-def life_db(monkeypatch):
-    tmp = tempfile.mkdtemp(prefix="life_play_test_")
+def life_db(monkeypatch, tmp_path):
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)

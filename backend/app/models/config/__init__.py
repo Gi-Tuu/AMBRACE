@@ -19,7 +19,7 @@ class ApiConfig(Base):
     __tablename__ = "api_configs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵（自由整型归属，不挂 users FK；0/-1 哨兵对 FK 违约）
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     api_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     model: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -34,7 +34,7 @@ class VlmConfig(Base):
     __tablename__ = "vlm_configs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵（自由整型归属，不挂 users FK；0/-1 哨兵对 FK 违约）
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     api_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -48,7 +48,7 @@ class SpeechConfig(Base):
     __tablename__ = "speech_configs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵（自由整型归属，不挂 users FK；0/-1 哨兵对 FK 违约）
     provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     api_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -63,7 +63,7 @@ class MultimodalConfig(Base):
     __tablename__ = "multimodal_configs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵（自由整型归属，不挂 users FK；0/-1 哨兵对 FK 违约）
     provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     api_key: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -13,7 +13,6 @@
 - 宠物报警只派给同用户最近互动角色，避免多角色重复响应同一宠物；
 - 提供模块级 run_character_tick(character_id, user_id) 单角色立即执行（即时聊天指令用）。
 """
-import asyncio
 import json
 import random
 from datetime import datetime, timedelta, timezone
@@ -52,27 +51,29 @@ def _beijing_date_str() -> str:
     return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
 
 
+def _prune_llm_copy_counts() -> None:
+    """§4.4B（2026-09-09）：清理 _llm_copy_counts 里非今日的 key。
+
+    key 本身已带北京日期（``(character_id, 'YYYY-MM-DD')``），限额语义天然跨天重置；
+    但进程长跑时旧日期 key 会缓慢累积（每角色每天一个）。每次取 key 前顺手按当日清理一次，
+    成本 O(角色数)，无需额外调度。
+    """
+    today = _beijing_date_str()
+    stale = [k for k in _llm_copy_counts if k[1] != today]
+    for k in stale:
+        _llm_copy_counts.pop(k, None)
+
+
 # F5（2026-09-08）：写库遇 database is locked 的有限退避重试（0.3s/0.6s，共 2 次重试后放弃）
-_LOCK_RETRY_DELAYS = (0.3, 0.6)
+# L5（2026-09-09）：实现收敛到 app/life/life_writer.py（life_tick/activity 与 life_loop 共用一套），
+#   此处保留同名入口，退避间隔与语义不变。
+from app.life.life_writer import LOCK_RETRY_DELAYS as _LOCK_RETRY_DELAYS  # noqa: F401
+from app.life.life_writer import retry_on_lock as _retry_on_lock_impl
 
 
 async def _retry_on_lock(fn, what: str):
     """写库协程遇 OperationalError(database is locked) 退避重试；非锁错误或重试耗尽直接抛出。"""
-    from sqlalchemy.exc import OperationalError
-    delays = (0.0, *_LOCK_RETRY_DELAYS)
-    err = None
-    for attempt, delay in enumerate(delays):
-        try:
-            if delay:
-                await asyncio.sleep(delay)
-            return await fn()
-        except OperationalError as e:
-            if "locked" not in str(e).lower():
-                raise
-            err = e
-            _logger.warning("life loop %s database locked (attempt %d/%d)",
-                            what, attempt + 1, len(delays))
-    raise err
+    return await _retry_on_lock_impl(fn, what)
 
 
 async def run_character_tick(character_id: int, user_id: int) -> None:
@@ -95,6 +96,12 @@ class LifeLoopTask:
         hour = beijing_hour()
         phase = phase_of(hour)
         is_night = phase == "sleep"
+        # L5（2026-09-09）：每轮开头收尾一次悬空 started（>30min 无 completed_at），失败静默
+        try:
+            from app.life.life_writer import close_orphan_activities
+            await close_orphan_activities()
+        except Exception as e:
+            _logger.warning("life loop orphan cleanup failed: %s", e)
         try:
             async with async_session_factory() as db:
                 chars = (
@@ -169,7 +176,7 @@ class LifeLoopTask:
 
         # 宠物报警（修正 2026-08-26：同用户多角色时只派给最近互动的角色，避免多角色重复响应同一宠物）
         pets = (await db.execute(
-            select(Pet).where(Pet.user_id == char.user_id)
+            select(Pet).where(Pet.user_id == char.user_id, Pet.abandoned_at.is_(None))
         )).scalars().all()
         recent_char = await self._recent_interacted_character(db, char.user_id)
         pet_alerts = []
@@ -418,6 +425,17 @@ class LifeLoopTask:
         await _retry_on_lock(lambda: db.commit(), f"log-start char={char.id}")
         await db.refresh(log)
 
+        # §4.4（2026-09-09）：活动前状态快照——失败时按它回写 life_states。
+        # 不能用 rollback 撤销：started 日志与本轮 L5「pre-memory commit」都已单独提交，
+        # 会话内回滚已无意义（详见 _restore_state_after_failure）。
+        snapshot = {
+            "energy": st.energy,
+            "location": st.location,
+            "current_room": st.current_room,
+            "location_updated_at": st.location_updated_at,
+            "needs": dict(needs),
+        }
+
         try:
             # Phase 2（2026-08-26）：自主开局——创建游戏会话并调度 AI 回合，不走标准状态回流
             if decision.action == "play_game":
@@ -470,25 +488,27 @@ class LifeLoopTask:
 
             # 记忆沉淀（仅值得记的动作）——记忆节流：每角色每天 life_loop ≤5 条
             memory_id = None
+            memory_failed = False
             if act.memory:
                 summary = await self._build_summary(db, char, decision, act)
                 if await self._memory_allowed_today(db, char.id):
-                    from app.memory.service import save_memory
-
-                    async def _save_mem():
-                        return await save_memory(
-                            user_id=char.user_id, character_id=char.id,
-                            memory_type="event", content=summary,
-                            importance=act.memory_importance,
-                            sub_type="life_event", source="life",
-                            speaker_type="character", speaker_id=char.id,
-                            epistemic_status="FACT",
-                        )
-
-                    # F5（2026-09-08）：写记忆遇 database is locked 退避重试
-                    # （09-08 study 4 次 failed 根因；save_memory 独立 session，重试安全）
-                    mem = await _retry_on_lock(_save_mem, f"save_memory char={char.id}")
+                    # L5（2026-09-09）：**写记忆前先提交本轮状态回流，释放 SQLite 唯一写锁**。
+                    # 原顺序：st.energy/needs 改了未提交 → _memory_allowed_today 查询触发
+                    # autoflush → 外部 session 拿到写锁并持有到本函数末尾 → save_memory 另开连接
+                    # 只能在 busy_timeout(10s) 后报 locked，而锁的持有者正是等待方自己，
+                    # 单靠 0.3/0.6s 重试永远等不到（09-09 每 30min 一批 5 条 failed 的真正根因）。
+                    await _retry_on_lock(lambda: db.commit(), f"pre-memory flush char={char.id}")
+                    from app.life.life_writer import save_life_memory_with_retry
+                    mem = await save_life_memory_with_retry(
+                        user_id=char.user_id, character_id=char.id,
+                        memory_type="event", content=summary,
+                        importance=act.memory_importance,
+                        sub_type="life_event", source="life",
+                        speaker_type="character", speaker_id=char.id,
+                        epistemic_status="FACT",
+                    )
                     memory_id = mem.id if mem else None
+                    memory_failed = mem is None
 
                     # 回聊缓冲
                     if act.followup_window and act.visible:
@@ -506,6 +526,7 @@ class LifeLoopTask:
             log.output_json = json.dumps({
                 "summary": "", "satisfied": satisfied,
                 "location": st.location, "room": st.current_room,
+                "memory_failed": memory_failed,
             }, ensure_ascii=False)
             log.memory_id = memory_id
             log.completed_at = _now()
@@ -517,9 +538,45 @@ class LifeLoopTask:
         except Exception as e:
             _logger.warning("life loop execute failed: char=%d act=%s: %s",
                             char.id, decision.action, e)
-            log.status = "failed"
-            log.output_json = json.dumps({"error": str(e)[:200]}, ensure_ascii=False)
-            await db.commit()
+            try:
+                log.status = "failed"
+                log.output_json = json.dumps({"error": str(e)[:200]}, ensure_ascii=False)
+                await db.commit()
+            except Exception as ce:
+                # 标 failed 失败不得阻断下面的状态回写
+                _logger.warning("life loop mark-failed commit error char=%d: %s", char.id, ce)
+            # 活动失败 → 状态回到活动前（state 本体的脏改必须撤销）
+            await self._restore_state_after_failure(char.id, snapshot)
+
+    async def _restore_state_after_failure(self, character_id: int, snapshot: dict) -> None:
+        """§4.4（2026-09-09）：活动失败后按快照回写 life_states（独立短事务，幂等）。
+
+        背景：_execute 里 started 日志先单独 commit，L5 又在写记忆前加了一次
+        「pre-memory commit」释放 SQLite 写锁——因此慢操作（_build_summary/LLM、
+        add_followup、记忆写入）抛错时，状态回流（energy/needs/location）早已固化，
+        只把日志标 failed 会留下「活动失败但状态按活动进行过落库」的脏状态。
+        本函数用独立短事务按快照回写被改字段；自身失败只记 warning，不二次抛。
+
+        注：目标推进/日程/意图 consumed 等副作用发生在失败段之前且已提交，本期不回滚
+        （其本身幂等/低害）；生活状态本体必须回写。
+        """
+        try:
+            async with async_session_factory() as db:
+                st = (await db.execute(
+                    select(LifeState).where(LifeState.character_id == character_id)
+                )).scalar_one_or_none()
+                if st is None:
+                    return
+                st.energy = snapshot["energy"]
+                st.location = snapshot["location"]
+                st.current_room = snapshot["current_room"]
+                st.location_updated_at = snapshot["location_updated_at"]
+                st.needs_json = json.dumps(snapshot["needs"], ensure_ascii=False)
+                await db.commit()
+                _logger.info("life loop state restored char=%d after failed activity",
+                             character_id)
+        except Exception as e:
+            _logger.warning("life loop state restore failed char=%d: %s", character_id, e)
 
     async def _memory_allowed_today(self, db, character_id: int) -> bool:
         """记忆节流（修正 2026-08-26）：每角色每天 life_loop 记忆 ≤5 条。"""
@@ -578,6 +635,7 @@ class LifeLoopTask:
         return templates.get(decision.action, f"{char.name}做了「{act.label}」。")
 
     def _llm_copy_key(self, character_id: int):
+        _prune_llm_copy_counts()
         return (character_id, _beijing_date_str())
 
     def _llm_copy_allowed(self, character_id: int) -> bool:

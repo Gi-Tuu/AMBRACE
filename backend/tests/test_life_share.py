@@ -3,7 +3,6 @@
 import asyncio
 import os
 import random
-import tempfile
 
 import pytest
 from sqlalchemy import select
@@ -16,8 +15,8 @@ from app.models.character import ProactiveTriggerLog
 
 
 @pytest.fixture
-def share_db():
-    tmp = tempfile.mkdtemp(prefix="life_share_test_")
+def share_db(tmp_path):
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)

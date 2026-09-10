@@ -105,10 +105,66 @@ def load_plugin_dir(path: Path) -> dict | None:
             "path": str(path),
         }
         _loaded[name] = {"info": info, "module": module, "hooks": _loaded[name].get("hooks", {}), "actions": _loaded[name].get("actions", {}), "router": _loaded[name].get("router")}
+        # ── T5（2026-09-10）：该插件若注册了 ORM 表，加载即幂等建表 ──────────────
+        # checkfirst=True，失败只告警、不影响加载成功（测试/热安装路径的建表保障：
+        # 插件表已不在主 Base.metadata，init_db 的 create_all 不再顺带建）。
+        try:
+            _ensure_plugin_tables_sync()
+        except Exception as _e:
+            _logger.warning("post-load ensure plugin tables failed (%s): %s", name, _e)
         return info
     except Exception as e:
         _logger.warning("插件 %s 加载失败: %s", path.name, e)
         return None
+
+
+# ── T5：插件独立 metadata 幂等建表（2026-09-10）────────────────────────────
+def _ensure_plugin_tables_sync() -> list[str]:
+    """对已加载插件注册到 ``plugin_metadata`` 的表幂等 create_all(checkfirst)。
+
+    - 同步执行（SQLite CREATE TABLE 毫秒级；插件加载是低频动作）；
+    - 生产主路径由 lifespan 在线程池调异步版 :func:`ensure_plugin_tables`；
+    - 测试 / 运行时热安装在 :func:`load_plugin_dir` 成功后内联调一次（加载即建表，
+      不依赖调用方记得初始化）；
+    - ``checkfirst=True``：物理表已存在则跳过 —— 存量库零数据迁移；版本链已建的
+      douyin 表跳过、wechat 表在此建立；未加载的渠道其表不在 metadata、不会被建。
+    - 建表失败只告警、不抛出（单插件隔离，不拖垮其它插件与内核启动）。
+
+    返回：本次纳入建表的插件表名清单（已存在/新建都算；失败返回空列表）。
+    """
+    try:
+        from app.plugins.plugin_base import plugin_metadata
+    except Exception as e:  # pragma: no cover - 防御
+        _logger.warning("plugin_metadata import failed: %s", e)
+        return []
+    if not plugin_metadata.tables:
+        return []  # 尚无插件注册任何表（config-only 插件 / 未加载渠道）→ no-op
+    try:
+        from sqlalchemy import create_engine
+        from sqlalchemy.pool import NullPool
+
+        from app.db.migrate import _sync_url  # 复用现成的「去 +aiosqlite / +asyncpg」同步 URL 推导
+        url = _sync_url()
+    except Exception as e:
+        _logger.warning("resolve plugin db url failed: %s", e)
+        return []
+    names = sorted(plugin_metadata.tables.keys())
+    try:
+        # 与 migrate.py 一致：短连接、用完即弃，SQLite 下避免连接残留
+        eng = create_engine(url, poolclass=NullPool)
+        try:
+            plugin_metadata.create_all(eng, checkfirst=True)
+        finally:
+            eng.dispose()
+    except Exception as e:
+        _logger.warning("ensure plugin tables failed (%s): %s", names, e)
+        return []
+    return names
+
+
+async def ensure_plugin_tables() -> list[str]:
+    """lifespan 调用：线程池中幂等建立插件表（不阻塞事件循环）。"""
+    return await asyncio.to_thread(_ensure_plugin_tables_sync)
 
 
 async def sync_plugins_db() -> None:
@@ -476,7 +532,8 @@ def mount_plugin_routers(app) -> None:
 
 def preload_channels() -> int:
     """X5（2026-09-01）：仅加载 manifest 声明 channel 的渠道插件（main.py lifespan 在 init_db
-    之前调用——渠道自有 ORM 模型随 main.py 加载注册进 Base.metadata，create_all 建表齐全）。
+    之前调用——渠道自有 ORM 模型随 main.py 加载注册进插件独立 plugin_metadata（T5），
+    并由 load_plugin_dir 内联的 ensure 幂等建表）。
     正式加载仍由 sync_plugins_db 统一重扫（渠道注册为同源替换语义）。返回预加载数。"""
     count = 0
     for d in _scan_dir(EXAMPLE_DIR) + _scan_dir(USER_DIR):

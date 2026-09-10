@@ -67,7 +67,7 @@ class CharacterState(Base):
     __tablename__ = "character_states"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), unique=True, nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), unique=True, nullable=False)
     mood: Mapped[int] = mapped_column(Integer, default=50)           # 心情
     body_temp: Mapped[int] = mapped_column(Integer, default=50)      # 体温（指数，50=正常体感）
     desire: Mapped[int] = mapped_column(Integer, default=50)         # 性欲
@@ -88,7 +88,7 @@ class CharacterStateHistory(Base):
     __tablename__ = "character_state_history"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
     mood: Mapped[int] = mapped_column(Integer, default=50)
     body_temp: Mapped[int] = mapped_column(Integer, default=50)
     desire: Mapped[int] = mapped_column(Integer, default=50)
@@ -110,7 +110,7 @@ class RelationshipEvent(Base):
     __tablename__ = "relationship_events"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     event: Mapped[str] = mapped_column(String(300), nullable=False)      # 事件摘要（≤300）
     content: Mapped[str | None] = mapped_column(Text, nullable=True)     # 原始上下文（截断）
@@ -127,7 +127,7 @@ class StateTriggerLog(Base):
     __tablename__ = "state_trigger_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     trigger_key: Mapped[str] = mapped_column(String(40), nullable=False)  # 如 anger_high / anger_mood_low
     value: Mapped[str] = mapped_column(String(200), default="")           # 触发时八维快照
     recovered: Mapped[bool] = mapped_column(Boolean, default=False)       # 是否已回落（回落后才可再触发）
@@ -153,7 +153,7 @@ class StorylineEvent(Base):
     __tablename__ = "storyline_events"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     storyline_key: Mapped[str] = mapped_column(String(30), nullable=False)  # cold_war / jealousy / fatigue
     node_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(10), nullable=False, default="active")  # active/done/skipped/aborted
@@ -176,7 +176,7 @@ class ProactiveStorylineItem(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     character_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("ai_characters.id"), nullable=False, index=True
+        Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True
     )
     session_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("chat_sessions.id"), nullable=False
@@ -198,7 +198,7 @@ class ProactiveSettings(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     character_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("ai_characters.id"), nullable=False, unique=True
+        Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, unique=True
     )
     enable_proactive: Mapped[bool] = mapped_column(Boolean, default=True)
     idle_threshold_minutes: Mapped[int] = mapped_column(Integer, default=120)  # 闲置多久算"离线"
@@ -252,7 +252,7 @@ class ProactiveMessageLog(Base):
     __tablename__ = "proactive_message_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     session_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("chat_sessions.id"), nullable=True)
     message_type: Mapped[str] = mapped_column(
         String(20), nullable=False
@@ -266,7 +266,7 @@ class ProactiveTriggerLog(Base):
     __tablename__ = "proactive_trigger_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     trigger_type: Mapped[str] = mapped_column(String(40), nullable=False, default="")
     trigger_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

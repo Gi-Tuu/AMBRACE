@@ -98,7 +98,7 @@ async def collect_pet_events() -> list[dict]:
     remind_before = now_naive - timedelta(hours=REMIND_INTERVAL_HOURS)
     async with async_session_factory() as db:
         result = await db.execute(
-            select(Pet).where(or_(Pet.owner_type.is_(None), Pet.owner_type == "user"))  # 仅用户宠物（AI 养宠 Phase 3 预留）
+            select(Pet).where(Pet.abandoned_at.is_(None), or_(Pet.owner_type.is_(None), Pet.owner_type == "user"))  # 仅用户宠物（AI 养宠 Phase 3 预留）
         )
         pets = result.scalars().all()
     items = []
@@ -132,7 +132,7 @@ async def run_pet_remind(char_id: int, user_id: int, pet_id: int) -> bool:
             _logger.info("Pet remind char=%d skipped: daily limit", char_id)
             return False
         pet = await db.get(Pet, pet_id)
-        if pet is None or pet.user_id != user_id:
+        if pet is None or pet.user_id != user_id or pet.abandoned_at is not None:
             return False
         # 6h 最小提醒间隔（collect_pet_events 已过滤，此处双保险防同 tick 重复执行）
         remind_before = now_naive - timedelta(hours=REMIND_INTERVAL_HOURS)
@@ -272,7 +272,7 @@ async def collect_ai_adopt_events() -> list[dict]:
         chars = (await db.execute(
             select(AICharacter).where(AICharacter.is_active == True)  # noqa: E712
         )).scalars().all()
-        pet_rows = (await db.execute(select(Pet).where(Pet.owner_type == "ai"))).scalars().all()
+        pet_rows = (await db.execute(select(Pet).where(Pet.owner_type == "ai", Pet.abandoned_at.is_(None)))).scalars().all()
     has_pet = {(p.owner_id, p.user_id) for p in pet_rows}
     events = []
     for c in chars:
@@ -407,7 +407,7 @@ async def collect_ai_care_events() -> list[dict]:
     now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
     care_before = now_naive - timedelta(hours=AI_CARE_INTERVAL_HOURS)
     async with async_session_factory() as db:
-        pets = (await db.execute(select(Pet).where(Pet.owner_type == "ai"))).scalars().all()
+        pets = (await db.execute(select(Pet).where(Pet.owner_type == "ai", Pet.abandoned_at.is_(None)))).scalars().all()
     items = []
     for pet in pets:
         if pet.hunger >= 30 and pet.cleanliness >= 30 and pet.mood >= 30 and pet.energy >= 30:
@@ -465,7 +465,7 @@ async def run_ai_care(char_id: int, user_id: int, pet_id: int) -> bool:
 
     async with async_session_factory() as db:
         pet = await db.get(Pet, pet_id)
-        if pet is None or pet.owner_type != "ai" or pet.owner_id != char_id:
+        if pet is None or pet.owner_type != "ai" or pet.owner_id != char_id or pet.abandoned_at is not None:
             return False
         char = await db.get(AICharacter, char_id)
     action = None
@@ -481,6 +481,8 @@ async def run_ai_care(char_id: int, user_id: int, pet_id: int) -> bool:
     try:
         async with async_session_factory() as db:
             pet2 = await db.get(Pet, pet_id)
+            if pet2 is None or pet2.abandoned_at is not None:
+                return False
             await pet_service.interact_by(db, pet2, action, user_id, actor="ai", owner_char_name=char_name)
     except Exception as e:
         _logger.warning("AI care interact failed char=%d pet=%d: %s", char_id, pet_id, e)
@@ -524,9 +526,9 @@ async def collect_pet_visit_events() -> list[dict]:
     import random
     async with async_session_factory() as db:
         user_pets = (await db.execute(
-            select(Pet).where(or_(Pet.owner_type.is_(None), Pet.owner_type == "user"))
+            select(Pet).where(Pet.abandoned_at.is_(None), or_(Pet.owner_type.is_(None), Pet.owner_type == "user"))
         )).scalars().all()
-        ai_pets = (await db.execute(select(Pet).where(Pet.owner_type == "ai"))).scalars().all()
+        ai_pets = (await db.execute(select(Pet).where(Pet.owner_type == "ai", Pet.abandoned_at.is_(None)))).scalars().all()
     by_user = {p.user_id for p in user_pets}
     events = []
     for ai_pet in ai_pets:
@@ -552,12 +554,13 @@ async def run_pet_visit(char_id: int, user_id: int, ai_pet_id: int) -> bool:
 
     async with async_session_factory() as db:
         ai_pet = await db.get(Pet, ai_pet_id)
-        if ai_pet is None or ai_pet.owner_type != "ai" or ai_pet.owner_id != char_id:
+        if ai_pet is None or ai_pet.owner_type != "ai" or ai_pet.owner_id != char_id or ai_pet.abandoned_at is not None:
             return False
         char = await db.get(AICharacter, char_id)
         user_pet = (await db.execute(
             select(Pet).where(
                 Pet.user_id == user_id,
+                Pet.abandoned_at.is_(None),
                 or_(Pet.owner_type.is_(None), Pet.owner_type == "user"),
             ).order_by(Pet.id.asc()).limit(1)
         )).scalar_one_or_none()

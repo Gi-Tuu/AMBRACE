@@ -10,7 +10,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -92,10 +91,10 @@ def test_tiered_lines_order():
 # ---------------- L1：DailySummary 经 ChatSession join ----------------
 
 @pytest.fixture()
-def l1_db(monkeypatch):
+def l1_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：monkeypatch app.db.database.async_session_factory（load_l1_summary 内延迟 import）。"""
     import app.db.database as db_mod
-    tmp = tempfile.mkdtemp(prefix="memory_tiers_l1_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

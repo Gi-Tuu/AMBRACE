@@ -110,6 +110,22 @@ def test_note_calendar_execute_tool_落库去重():
     spec = get_tool("note_calendar")
     assert spec is not None
     assert spec.execute is not None  # 步骤 8：执行入口已接入（非占位登记）
+    # 引擎已强制外键（2026-09-09）：calendar_notes.character_id 需父 ai_characters 行
+    from app.models.character import AICharacter
+
+    async def _ensure_char():
+        from sqlalchemy import select as _sel
+        from app.db.database import async_session_factory as _asf0
+        from app.models.user import User
+        async with _asf0() as db:
+            # 引擎已强制外键（2026-09-09）：ai_characters.user_id 需父 users 行，先建主账号
+            if (await db.execute(_sel(User.id).where(User.id == 1))).scalar_one_or_none() is None:
+                db.add(User(id=1, username="phasef_admin", nickname="PhaseF 测试", is_admin=True))
+                await db.commit()
+            if (await db.execute(_sel(AICharacter).where(AICharacter.id == 88001))).scalar_one_or_none() is None:
+                db.add(AICharacter(id=88001, user_id=1, name="phasef_fk_test"))
+                await db.commit()
+    asyncio.run(_ensure_char())
     char_id, note_date, note_text, note_author = 88001, "2099-12-31", "测试去重备注", "测试角色"
     payload = {"character_id": char_id, "date": note_date, "text": note_text, "author": note_author}
 
@@ -139,16 +155,18 @@ def test_note_calendar_execute_tool_落库去重():
     assert out2["result"]["ok"] is False  # 去重
     assert asyncio.run(_count()) == 1  # 仍只有 1 条
 
-    # 清理测试数据
+    # 清理测试数据（FK 强制：删角色级联清 calendar；显式删 calendar 亦幂等）
     async def _cleanup():
         from sqlalchemy import delete as _del
         from app.db.database import async_session_factory as _asf2
         from app.models.device import CalendarNote
+        from app.models.character import AICharacter
         async with _asf2() as db:
             await db.execute(_del(CalendarNote).where(
                 CalendarNote.character_id == char_id,
                 CalendarNote.note_text == note_text,
             ))
+            await db.execute(_del(AICharacter).where(AICharacter.id == char_id))
             await db.commit()
 
     asyncio.run(_cleanup())

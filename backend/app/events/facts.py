@@ -26,6 +26,15 @@ _logger = get_logger("events.facts")
 PUBLIC_AUDIENCE = "public"
 MAX_FACTS_PER_CHAR = 12  # 每 (用户, 角色) 活跃事实上限，超出按最旧淘汰
 STATUS_FRESH_HOURS = 12  # status 类瞬时状态注入新鲜度窗口（2026-08-16：防 stale 状态反复注入）
+# C2-②（2026-09-10）：各瞬时谓词分别定窗——位置比状态稳定，但返程/出行后 72h 必须失效
+# （防旧城市常驻）；心情与状态同寿命。activity 不入表：它由 fold_activity 写 3 天 TTL 兜底。
+LOCATION_FRESH_HOURS = 72
+MOOD_FRESH_HOURS = 12
+_TRANSIENT_FRESH_HOURS = {
+    "status": STATUS_FRESH_HOURS,
+    "mood": MOOD_FRESH_HOURS,
+    "location": LOCATION_FRESH_HOURS,
+}
 
 # ── Ariadne 模块F：Curated Knowledge（2026-09-04）──
 KIND_STATUS = "status"                 # 瞬时状态事实（既有语义，默认）
@@ -68,12 +77,17 @@ def _naive_utc(dt):
     return dt.replace(tzinfo=None) if dt.tzinfo else dt
 
 
-def _status_fresh(asserted_at: datetime | None, now: datetime) -> bool:
-    """status 事实是否在新鲜窗口内（naive UTC 比较；asserted_at 缺失视为不新鲜，保守不注入）"""
+def _predicate_fresh(asserted_at: datetime | None, now: datetime, hours: int) -> bool:
+    """瞬时事实是否在指定新鲜窗口内（naive UTC 比较；asserted_at 缺失视为不新鲜，保守不注入）"""
     if asserted_at is None:
         return False
     at = asserted_at.replace(tzinfo=None) if asserted_at.tzinfo else asserted_at
-    return (now - at) <= timedelta(hours=STATUS_FRESH_HOURS)
+    return (now - at) <= timedelta(hours=hours)
+
+
+def _status_fresh(asserted_at: datetime | None, now: datetime) -> bool:
+    """status 事实是否在新鲜窗口内（兼容包装：等价于 _predicate_fresh(..., STATUS_FRESH_HOURS)）"""
+    return _predicate_fresh(asserted_at, now, STATUS_FRESH_HOURS)
 
 
 def _latest_facts_by_predicate(facts: list, predicates: set) -> list:
@@ -340,13 +354,16 @@ async def get_active_facts(
                 exp = f.expires_at.replace(tzinfo=None) if f.expires_at.tzinfo else f.expires_at
                 if exp <= now:
                     continue
-            # 瞬时状态新鲜度兜底（2026-08-16）：status 事实超过窗口不注入（兼容无 TTL 旧数据）
-            if f.predicate == "status" and not _status_fresh(f.asserted_at, now):
+            # 瞬时状态新鲜度兜底（2026-08-16 起 status；C2-② 2026-09-10 泛化到 mood/location）：
+            # 兼容无 TTL 旧数据——status/mood 12h、location 72h，超窗不注入。
+            fresh_h = _TRANSIENT_FRESH_HOURS.get(f.predicate)
+            if fresh_h is not None and not _predicate_fresh(f.asserted_at, now, fresh_h):
                 continue
             if audience_visible(f.audience, viewer_type, v_id):
                 out.append(f)
-        # 矛盾状态只取最新（2026-08-16）：status/activity 同 predicate 只注入最新一条，避免场景错乱
-        out = _latest_facts_by_predicate(out, {"status", "activity"})
+        # 矛盾瞬时事实只取最新（2026-08-16 status/activity；C2-① 2026-09-10 补 location/mood）：
+        # 同 predicate 只注入最新一条，避免场景错乱/旧城市常驻。
+        out = _latest_facts_by_predicate(out, {"status", "activity", "location", "mood"})
         # 权威事实稳定优先（P1-3）：同一角色多条事实时权威设定不被瞬时状态挤掉
         out = sorted(out, key=lambda f: (0 if getattr(f, "is_authoritative", False) else 1), reverse=False)
         return out[:limit]

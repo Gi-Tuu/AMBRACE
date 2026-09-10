@@ -7,7 +7,6 @@
 #   最后一个主账号受「不能操作自己」规则保护）
 import asyncio
 import os
-import tempfile
 
 import pytest
 from fastapi import FastAPI
@@ -25,9 +24,9 @@ OTHER = 99
 
 
 @pytest.fixture()
-def db_factory(monkeypatch):
+def db_factory(monkeypatch, tmp_path):
     """临时 SQLite 文件库：patch 各模块绑定的 async_session_factory（不触碰 backend/data）"""
-    tmp = tempfile.mkdtemp(prefix='admin_test_')
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
     engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -87,11 +86,11 @@ def _make_client(user_id: int) -> TestClient:
 
 # ---------------- 一次性种子 ----------------
 
-def _run_seed(admin_ids, pre_admins: list[int], monkeypatch):
+def _run_seed(admin_ids, pre_admins: list[int], monkeypatch, tmp_path):
     """在临时库建表+塞用户后跑 init_db，返回 {id: is_admin}"""
     import app.db.database as db_mod
     from app.config import settings
-    tmp = tempfile.mkdtemp(prefix='admin_seed_')
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
     engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
     monkeypatch.setattr(db_mod, 'engine', engine)
@@ -128,15 +127,15 @@ def _run_seed(admin_ids, pre_admins: list[int], monkeypatch):
     return result
 
 
-def test_seed_writes_env_admins_when_none_exist(monkeypatch):
+def test_seed_writes_env_admins_when_none_exist(monkeypatch, tmp_path):
     # #68 修订：表中用户均为独立主账号（parent_id IS NULL）→ 一致性修正统一置为 admin
-    result = _run_seed([1, 3], [], monkeypatch)
+    result = _run_seed([1, 3], [], monkeypatch, tmp_path)
     assert result == {1: True, 3: True, 5: True}
 
 
-def test_seed_skips_when_ui_admin_exists(monkeypatch):
+def test_seed_skips_when_ui_admin_exists(monkeypatch, tmp_path):
     # #68 修订：一致性修正把所有独立主账号置为 admin（不受 UI/env 是否已设影响）
-    result = _run_seed([1, 3], [5], monkeypatch)
+    result = _run_seed([1, 3], [5], monkeypatch, tmp_path)
     assert result == {1: True, 3: True, 5: True}
 
 

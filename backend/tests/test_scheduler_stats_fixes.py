@@ -9,7 +9,6 @@
 import asyncio
 import os
 import sqlite3
-import tempfile
 from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
 
@@ -83,8 +82,8 @@ async def _seed_stats(factory):
 
 
 @pytest.fixture()
-def stats_client():
-    tmp = tempfile.mkdtemp(prefix="stats_")
+def stats_client(tmp_path):
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db").replace("\\", "/")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -227,13 +226,13 @@ def test_trigger_test_ok_still_works(monkeypatch):
 
 # ---------------- ③ P2-2：Alembic 新迁移建出两张表 ----------------
 
-def test_alembic_migration_creates_new_tables(monkeypatch):
+def test_alembic_migration_creates_new_tables(monkeypatch, tmp_path):
     """全新库 alembic upgrade head 后 user_rhythm / browser_snapshots / mcp_servers / mcp_call_logs + life_loop + user_llm_configs 新表存在。"""
     from alembic import command
     from app.config import settings as _settings
     from app.db.migrate import _alembic_config
 
-    tmp = tempfile.mkdtemp(prefix="alembic_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "fresh.db").replace("\\", "/")
     monkeypatch.setattr(_settings, "database_url", "sqlite+aiosqlite:///" + db_path)
 

@@ -155,7 +155,7 @@ async def run_daily_memory_maintenance() -> dict:
             return {"enabled": False}
     except Exception:
         pass
-    out = {"summaries": 0, "dedup_removed": 0, "pinned_refreshed": 0, "preoccupations_decayed": 0, "cold_archived": 0, "char_aligned": 0}
+    out = {"summaries": 0, "dedup_removed": 0, "pinned_refreshed": 0, "preoccupations_decayed": 0, "cold_archived": 0, "char_aligned": 0, "stale_plans_expired": 0}
     try:
         out["summaries"] = await generate_today_summaries()
     except Exception as e:
@@ -184,6 +184,13 @@ async def run_daily_memory_maintenance() -> dict:
         out["cold_archived"] = await archive_cold_superseded(days=ARCHIVE_COLD_DAYS)
     except Exception as e:
         _logger.warning("Cold archive maintenance failed: %s", e)
+    # L4（2026-09-09 主动复习回忆化）：过期计划自动退场（flag review_plan_expire_stale 灰度默认关；
+    # 内部已静默兜底，此处再兜一层，保证日终维护永不因此阻塞）
+    try:
+        from app.memory.maintain_plan_expiry import expire_stale_plans
+        out["stale_plans_expired"] = await expire_stale_plans()
+    except Exception as e:
+        _logger.warning("Plan expiry maintenance failed: %s", e)
     # §20（2026-09-04）：跨角色用户事实对齐 sweep（flag cross_char_fact_sync 开才跑，覆盖长期不活跃角色）
     try:
         from app.agent.loop import AGENT_FLAGS as _af

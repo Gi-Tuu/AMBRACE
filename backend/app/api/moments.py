@@ -89,38 +89,90 @@ async def list_moments(skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, 
 
     moment_list = []
     _moment_ids = []
+
+    # ── T6 批量预取：角色 / 用户 / 点赞，消除主循环 N+1（原每条 AI 动态查角色 2 次 + 逐条查点赞）──
+    ai_ids = {m.character_id for m in moments if m.sender_type == "ai" and m.character_id}
+    user_ids = {m.user_id for m in moments if m.sender_type == "user" and m.user_id}
+    moment_ids = [m.id for m in moments]
+
+    from app.models.user import User
+    char_map: dict[int, AICharacter] = {}
+    if ai_ids:
+        char_map = {
+            c.id: c for c in (await db.execute(
+                select(AICharacter).where(AICharacter.id.in_(ai_ids), AICharacter.is_active == True)  # noqa: E712
+            )).scalars().all()
+        }
+    user_map: dict[int, User] = {}
+    if user_ids:
+        user_map = {u.id: u for u in (await db.execute(
+            select(User).where(User.id.in_(user_ids))
+        )).scalars().all()}
+
+    ul_rows: list[MomentLike] = []
+    ai_like_rows: list[MomentAILike] = []
+    liked_by_me_ids: set[int] = set()
+    ai_like_count: dict[int, int] = {}
+    if moment_ids:
+        ul_rows = (await db.execute(
+            select(MomentLike).where(MomentLike.moment_id.in_(moment_ids))
+            .order_by(MomentLike.created_at.asc())
+        )).scalars().all()
+        liked_by_me_ids = {r.moment_id for r in ul_rows if r.user_id == user_id}
+
+        ai_like_rows = (await db.execute(
+            select(MomentAILike).where(MomentAILike.moment_id.in_(moment_ids))
+            .order_by(MomentAILike.created_at.asc())
+        )).scalars().all()
+        for mid, cnt in (await db.execute(
+            select(MomentAILike.moment_id, func.count(MomentAILike.id))
+            .where(MomentAILike.moment_id.in_(moment_ids))
+            .group_by(MomentAILike.moment_id)
+        )).all():
+            ai_like_count[mid] = cnt
+
+        liker_user_ids = {r.user_id for r in ul_rows if r.user_id}
+        liker_char_ids = {r.character_id for r in ai_like_rows if r.character_id}
+        liker_user_map = {u.id: (u.nickname or u.username or "我") for u in (
+            await db.execute(select(User).where(User.id.in_(liker_user_ids)))
+        ).scalars().all()} if liker_user_ids else {}
+        liker_char_map = {c.id: c.name for c in (
+            await db.execute(select(AICharacter).where(AICharacter.id.in_(liker_char_ids)))
+        ).scalars().all()} if liker_char_ids else {}
+    else:
+        liker_user_map, liker_char_map = {}, {}
+
+    ul_by_moment: dict[int, list[MomentLike]] = {}
+    for r in ul_rows:
+        ul_by_moment.setdefault(r.moment_id, []).append(r)
+    ail_by_moment: dict[int, list[MomentAILike]] = {}
+    for r in ai_like_rows:
+        ail_by_moment.setdefault(r.moment_id, []).append(r)
+
+    def _likers_batched(m: AIMoment) -> tuple[int, list[str]]:
+        names = [liker_user_map[r.user_id] for r in ul_by_moment.get(m.id, []) if r.user_id in liker_user_map]
+        names += [liker_char_map[r.character_id] for r in ail_by_moment.get(m.id, []) if r.character_id in liker_char_map]
+        total = (m.likes_count or 0) + ai_like_count.get(m.id, 0)
+        return total, names
+
     for m in moments:
         char_name = ""
         avatar_url = ""
         author_tz = 8  # 作者所在时区：AI 取角色 timezone_offset，用户默认北京
 
         if m.sender_type == "ai" and m.character_id:
-            char_result = await db.execute(select(AICharacter).where(AICharacter.id == m.character_id, AICharacter.is_active == True))
-            char = char_result.scalar_one_or_none()
-            if not char:
+            char = char_map.get(m.character_id)
+            if not char:  # 角色已删/停用：跳过（合并原 98/113 两次查询为一次字典命中）
                 continue
             char_name = char.name
             avatar_url = char.avatar_url or ""
             author_tz = char.timezone_offset if char.timezone_offset is not None else 8
         elif m.sender_type == "user" and m.user_id:
-            from app.models.user import User
-            u_result = await db.execute(select(User).where(User.id == m.user_id))
-            u = u_result.scalar_one_or_none()
+            u = user_map.get(m.user_id)
             char_name = u.nickname if u and u.nickname else (u.username if u else "我")
             avatar_url = (u.avatar_url if u else "") or ""
 
-        # 跳过已删除角色的动态
-        if m.sender_type == "ai" and m.character_id:
-            cr = await db.execute(select(AICharacter).where(AICharacter.id == m.character_id, AICharacter.is_active == True))
-            if cr.scalar_one_or_none() is None:
-                continue
-
-        like_result = await db.execute(
-            select(MomentLike).where(MomentLike.moment_id == m.id, MomentLike.user_id == user_id)
-        )
-        liked_by_me = like_result.first() is not None
-
-        total_likes, likers = await _likers_for_moment(db, m)
+        total_likes, likers = _likers_batched(m)
 
         moment_list.append(MomentResponse(
             id=m.id, character_id=m.character_id or 0,
@@ -130,7 +182,7 @@ async def list_moments(skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, 
             avatar_url=avatar_url,
             likes_count=total_likes, is_active=m.is_active,
             created_at=m.created_at, author_tz_offset=author_tz,
-            liked_by_me=liked_by_me,
+            liked_by_me=(m.id in liked_by_me_ids),
             likers=likers,
         ))
         _moment_ids.append(m.id)
@@ -566,9 +618,68 @@ async def mark_moments_read(db: AsyncSession = Depends(get_db), user_id: int = D
     return {"status": "ok"}
 
 
+async def _batch_likers(db: AsyncSession, moments: list[AIMoment]) -> dict[int, tuple[int, list[str]]]:
+    """``_likers_for_moment`` 的批量版：3~4 次查询算完全部动态的「谁赞了」。
+
+    返回 ``{moment_id: (总赞数, 名字列表)}``，与逐条 ``_likers_for_moment`` 逐字段等价：
+    总赞数 = ``moment.likes_count`` + AI 赞条数；名字列表 = 用户赞（昵称/用户名/「我」，
+    created_at 升序）在前、AI 赞（角色名，created_at 升序）在后。
+    """
+    out: dict[int, tuple[int, list[str]]] = {}
+    if not moments:
+        return out
+    from app.models.user import User
+
+    mids = [m.id for m in moments]
+    totals = {m.id: (m.likes_count or 0) for m in moments}
+    names: dict[int, list[str]] = {m.id: [] for m in moments}
+
+    ul_rows = (await db.execute(
+        select(MomentLike)
+        .where(MomentLike.moment_id.in_(mids))
+        .order_by(MomentLike.moment_id.asc(), MomentLike.created_at.asc())
+    )).scalars().all()
+    uids = {r.user_id for r in ul_rows}
+    users = {}
+    if uids:
+        users = {u.id: u for u in (await db.execute(
+            select(User).where(User.id.in_(uids))
+        )).scalars().all()}
+    for r in ul_rows:
+        u = users.get(r.user_id)
+        if u:
+            names[r.moment_id].append(u.nickname or u.username or "我")
+
+    ai_rows = (await db.execute(
+        select(MomentAILike)
+        .where(MomentAILike.moment_id.in_(mids))
+        .order_by(MomentAILike.moment_id.asc(), MomentAILike.created_at.asc())
+    )).scalars().all()
+    cids = {r.character_id for r in ai_rows}
+    chars = {}
+    if cids:
+        chars = {c.id: c for c in (await db.execute(
+            select(AICharacter).where(AICharacter.id.in_(cids))
+        )).scalars().all()}
+    for r in ai_rows:
+        totals[r.moment_id] = totals.get(r.moment_id, 0) + 1
+        ac = chars.get(r.character_id)
+        if ac:
+            names[r.moment_id].append(ac.name)
+
+    for mid in totals:
+        out[mid] = (totals[mid], names[mid])
+    return out
+
+
 @router.get("/archive")
 async def list_moments_archive(db: AsyncSession = Depends(get_db), user_id: int = Depends(get_current_user_id)):
-    """朋友圈归档—按日期分组"""
+    """朋友圈归档—按日期分组。
+
+    §4.5（2026-09-09）：原实现在循环内逐条查 AICharacter/User/MomentLike/_likers_for_moment
+    （最坏 200×4~5 ≈ 上千次查询）。改为进入循环前一次性批量预取，循环内零查询；
+    返回结构与原实现逐字段等价。
+    """
     from collections import defaultdict
 
     stmt = (
@@ -581,32 +692,52 @@ async def list_moments_archive(db: AsyncSession = Depends(get_db), user_id: int 
     moments = result.scalars().all()
 
     days = defaultdict(list)
+    if not moments:
+        return {"days": [], "total_days": 0}
+
+    mids = [m.id for m in moments]
+
+    # ── 批量预取（循环内零查询）──
+    char_ids = {m.character_id for m in moments if m.sender_type == "ai" and m.character_id}
+    user_ids = {m.user_id for m in moments if m.sender_type == "user" and m.user_id}
+    chars: dict[int, AICharacter] = {}
+    if char_ids:
+        chars = {c.id: c for c in (await db.execute(
+            select(AICharacter).where(
+                AICharacter.id.in_(char_ids), AICharacter.is_active == True)
+        )).scalars().all()}
+    users = {}
+    if user_ids:
+        from app.models.user import User
+        users = {u.id: u for u in (await db.execute(
+            select(User).where(User.id.in_(user_ids))
+        )).scalars().all()}
+    my_likes = set((await db.execute(
+        select(MomentLike.moment_id).where(
+            MomentLike.moment_id.in_(mids), MomentLike.user_id == user_id)
+    )).scalars().all())
+    likers_map = await _batch_likers(db, moments)
+
     for m in moments:
         author_tz = 8  # 作者所在时区：AI 取角色 timezone_offset，用户默认北京；日期分组按作者地区
         char_name = ""
         avatar_url = ""
         if m.sender_type == "ai" and m.character_id:
-            char_result = await db.execute(select(AICharacter).where(AICharacter.id == m.character_id, AICharacter.is_active == True))
-            char = char_result.scalar_one_or_none()
+            char = chars.get(m.character_id)
             if not char:
                 continue
             char_name = char.name
             avatar_url = char.avatar_url or ""
             author_tz = char.timezone_offset if char.timezone_offset is not None else 8
         elif m.sender_type == "user" and m.user_id:
-            from app.models.user import User
-            u_result = await db.execute(select(User).where(User.id == m.user_id))
-            u = u_result.scalar_one_or_none()
+            u = users.get(m.user_id)
             char_name = u.nickname if u and u.nickname else (u.username if u else "我")
             avatar_url = (u.avatar_url if u else "") or ""
 
         day_key = shift_utc_naive(m.created_at, author_tz).strftime("%Y-%m-%d")
 
-        like_result = await db.execute(
-            select(MomentLike).where(MomentLike.moment_id == m.id, MomentLike.user_id == user_id)
-        )
-        liked_by_me = like_result.first() is not None
-        total_likes, likers = await _likers_for_moment(db, m)
+        liked_by_me = m.id in my_likes
+        total_likes, likers = likers_map.get(m.id, (0, []))
 
         days[day_key].append({
             "id": m.id, "character_id": m.character_id or 0,

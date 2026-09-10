@@ -493,7 +493,19 @@ async def generate_proactive_event(
         except Exception:
             return ""
 
-    user_profile, persona_extra, weather_line, check_in_line, recent_memories, reflection_line = (
+    # C3（2026-09-10）：用户当前现状权威锚点（三源聚合，默认无授权数据=空串、零行为变化）。
+    # 主动消息通道没有 section_world.location，这里【带】User 城市（include_profile_location=True）。
+    async def _load_current_state_anchor() -> str:
+        if not character_id or not user_id:
+            return ""
+        try:
+            from app.memory.current_state import current_user_state_anchor
+            return await current_user_state_anchor(
+                character_id=character_id, user_id=user_id, include_profile_location=True)
+        except Exception:
+            return ""
+
+    user_profile, persona_extra, weather_line, check_in_line, recent_memories, reflection_line, state_anchor = (
         await _asyncio.gather(
             _load_user_profile(),
             _load_persona_extra(),
@@ -501,6 +513,7 @@ async def generate_proactive_event(
             _load_check_in_line(),
             _load_recent_memories(),
             _load_recent_reflection(character_id),
+            _load_current_state_anchor(),
         )
     )
 
@@ -526,8 +539,13 @@ async def generate_proactive_event(
         prompt += f"{check_in_line}\n"
     if user_profile:
         prompt += f"\n好友画像（用于区分你和好友的身份，不要混淆）：\n{user_profile}\n"
+    if state_anchor:  # C3：先声明「TA 现在怎样」，紧接着的记忆块带［往事］标签，一正一反
+        prompt += state_anchor
     if recent_memories:
-        prompt += f"\n你记得的近期事情（保持这些记忆一致，不要与之矛盾）：\n{recent_memories}\n"
+        prompt += (
+            f"\n以下是你与 TA 的过往记忆片段。带［往事］/［当时状态］/［旧安排·已过期］标签的属于过去发生的"
+            f"事，不代表 TA 现在的状态；发起话题请基于当前时间与近况（保持这些记忆一致，不要与之矛盾）：\n{recent_memories}\n"
+        )
     if reflection_line:
         prompt += f"\n{reflection_line}\n"
     # P0-2（2026-08-24）：主动消息承接强制化——主指令前注入「最近聊了什么」承接块，要求承接现状、避免突兀换话题；

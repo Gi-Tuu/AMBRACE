@@ -114,7 +114,7 @@ async def save_memory(
                     new_pct = _normalize_importance(importance)
                     if new_pct > float(m.importance or 40.0):
                         m.importance = min(DECAY_MAX_PCT, new_pct)
-                    _apply_reinforce(m, REINFORCE_FACTOR_WRITE, _now_naive())
+                    _apply_reinforce(m, REINFORCE_FACTOR_WRITE, _now_naive(), channel="write")
                     # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，
                     # 不含自身 id（去掉「∪ 自身 id」自环噪声）。
                     m.derived_from_ids = _merge_derived(m.derived_from_ids, derived_from_ids or [])
@@ -148,7 +148,7 @@ async def save_memory(
                     new_pct = _normalize_importance(importance)
                     if new_pct > float(m.importance or 40.0):
                         m.importance = min(DECAY_MAX_PCT, new_pct)
-                    _apply_reinforce(m, REINFORCE_FACTOR_WRITE, _now_naive())
+                    _apply_reinforce(m, REINFORCE_FACTOR_WRITE, _now_naive(), channel="write")
                     # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，不含自身 id。
                     m.derived_from_ids = _merge_derived(m.derived_from_ids, derived_from_ids or [])
                     await db.commit()
@@ -183,7 +183,7 @@ async def save_memory(
                     new_pct = _normalize_importance(importance)
                     if new_pct > float(_m.importance or 40.0):
                         _m.importance = min(DECAY_MAX_PCT, new_pct)
-                    _apply_reinforce(_m, REINFORCE_FACTOR_WRITE, _now_naive())
+                    _apply_reinforce(_m, REINFORCE_FACTOR_WRITE, _now_naive(), channel="write")
                     # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，不含自身 id。
                     _m.derived_from_ids = _merge_derived(_m.derived_from_ids, derived_from_ids or [])
                     await db.commit()
@@ -232,6 +232,19 @@ async def save_memory(
             next_review_at=_now_naive() + timedelta(days=_initial_strength(memory_type)),
             derived_from_ids=json.dumps(list(derived_from_ids or []), ensure_ascii=False, default=str),
         )
+        # L4 提取侧（2026-09-09 主动复习回忆化）：计划类记忆落库时写 valid_to + 标 sub_type=plan。
+        # flag review_plan_validity_extract 灰度默认关；关=零行为（不写不标，逐字节旧路径）。
+        # 提取器（extractor.extract_single / 【记忆】标记路径）所有写入都经 save_memory，故在此单点收口；
+        # 显式 sub_type（slot/status/relationship 等）不覆盖，只收敛默认/extracted 路径。
+        try:
+            from app.agent.loop import AGENT_FLAGS
+            if AGENT_FLAGS.get("review_plan_validity_extract", False):
+                from app.memory.tense import classify_tense, plan_valid_until
+                if classify_tense(memory) == "plan" and sub_type in (None, "extracted", "plan"):
+                    memory.sub_type = "plan"
+                    memory.valid_to = plan_valid_until(memory, _now_naive())
+        except Exception:
+            pass
         db.add(memory)
         await db.flush()
         await db.commit()

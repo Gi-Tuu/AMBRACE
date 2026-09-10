@@ -6,7 +6,6 @@ import hashlib
 import io
 import json
 import os
-import tempfile
 import zipfile
 
 import pytest
@@ -36,9 +35,9 @@ def _reset_market_cache():
 
 
 @pytest.fixture()
-def market_db(monkeypatch):
+def market_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：monkeypatch emoji_market.async_session_factory（不触碰 backend/data）。"""
-    tmp = tempfile.mkdtemp(prefix="emoji_market_test_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

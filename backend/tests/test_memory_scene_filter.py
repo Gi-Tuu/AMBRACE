@@ -11,7 +11,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -87,14 +86,14 @@ async def _noop(*a, **k):
 
 
 @pytest.fixture()
-def scene_db(monkeypatch):
+def scene_db(monkeypatch, tmp_path):
     """临时库 + 检索原语桩：让 search_memories 走到 _rerank（回填 source/sub_type/group_id）。"""
     import app.models  # noqa: F401
     from app.models.base import Base
     import app.db.database as db_mod
     import app.memory.service as memsvc
 
-    tmp = tempfile.mkdtemp(prefix="scene_")
+    tmp = str(tmp_path)
     engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}",
                                  poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

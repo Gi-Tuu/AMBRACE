@@ -12,7 +12,6 @@
 import asyncio
 import os
 import random
-import tempfile
 
 import pytest
 from fastapi import FastAPI
@@ -199,8 +198,8 @@ async def _noop_ai(sid: int) -> None:
 
 
 @pytest.fixture
-def game_guard_db(monkeypatch):
-    tmp = tempfile.mkdtemp(prefix="game_guard_test_")
+def game_guard_db(monkeypatch, tmp_path):
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)

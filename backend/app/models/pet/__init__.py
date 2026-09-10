@@ -36,6 +36,7 @@ class Pet(Base):
     status_text: Mapped[str] = mapped_column(String(50), default="精神满满")
     owner_type: Mapped[str | None] = mapped_column(String(10), nullable=True)  # user/ai（预留）
     owner_id: Mapped[int | None] = mapped_column(Integer, nullable=True)       # 预留
+    abandoned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)  # 遗弃软删时间（非空=已遗弃，列表/互动一律过滤）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -46,7 +47,7 @@ class PetActivity(Base):
     __tablename__ = "pet_activities"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    pet_id: Mapped[int] = mapped_column(Integer, ForeignKey("pets.id"), nullable=False)
+    pet_id: Mapped[int] = mapped_column(Integer, ForeignKey("pets.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     action: Mapped[str] = mapped_column(String(20), nullable=False)  # feed/play/clean/adopt/abandon/remind
     actor: Mapped[str] = mapped_column(String(10), default="user")  # user=用户（含拜访）/ ai=角色自己照顾

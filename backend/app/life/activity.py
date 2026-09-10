@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.agent.llm_client import chat_completion
-from app.memory.service import save_memory
 from app.models.life import LifeActivityLog, LifeArtifact
 from app.models.agent import ToolPermission
 
@@ -194,7 +193,10 @@ async def run_activity(db, user_id: int, character, phase: str, needs: dict[str,
         except Exception as e:
             _logger.warning("life interest/goal hook failed: %s", e)
         # 记忆（Life Event）→ source=life，私·织库候选
-        mem = await save_memory(
+        # L5（2026-09-09）：写记忆走统一重试包装（app/life/life_writer）；写失败不再把整条
+        # 活动标 failed——活动本身（状态/兴趣/目标/产物）已完成，仅记忆缺失，output_json 记 memory_failed。
+        from app.life.life_writer import save_life_memory_with_retry
+        mem = await save_life_memory_with_retry(
             user_id=user_id, character_id=character.id,
             memory_type="event", content=content[:500],
             importance=act["memory_importance"], sub_type=act["sub_type"], source="life",
@@ -205,6 +207,7 @@ async def run_activity(db, user_id: int, character, phase: str, needs: dict[str,
         log.output_json = json.dumps({
             "summary": content[:200], "satisfied": satisfied,
             "artifact_id": artifact_id, "trace": trace,
+            "memory_failed": mem is None,
         }, ensure_ascii=False)
         log.memory_id = mem.id if mem is not None else None
         # B-TZ 修复（2026-09-01 审查）：统一 UTC naive（与 base.py finish() 写法一致），

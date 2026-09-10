@@ -220,7 +220,7 @@ async def build_timeline(user_id: int, character_id: int) -> dict:
 
         # 宠物（家庭共享事件，按用户维度）
         result = await db.execute(
-            select(Pet).where(Pet.user_id == user_id).order_by(Pet.created_at.asc())
+            select(Pet).where(Pet.user_id == user_id, Pet.abandoned_at.is_(None)).order_by(Pet.created_at.asc())
         )
         pets = result.scalars().all()
 

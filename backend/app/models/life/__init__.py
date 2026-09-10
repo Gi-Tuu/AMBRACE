@@ -22,7 +22,7 @@ class LifeState(Base):
     __tablename__ = "life_states"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), unique=True, nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), unique=True, nullable=False)
     energy: Mapped[int] = mapped_column(Integer, default=70)          # 精力 0-100
     focus: Mapped[int] = mapped_column(Integer, default=50)           # 专注 0-100
     needs_json: Mapped[str] = mapped_column(Text, default="{}")       # 8 需求 JSON（curiosity/productivity/...）
@@ -42,7 +42,7 @@ class LifeActivityLog(Base):
     __tablename__ = "life_activity_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
     activity_type: Mapped[str] = mapped_column(String(30), nullable=False)  # rest/organize_memory/reflect/social_prepare/browse/create/learn
     status: Mapped[str] = mapped_column(String(16), default="started")      # started/completed/failed/skipped
     input_json: Mapped[str] = mapped_column(Text, default="{}")
@@ -64,7 +64,7 @@ class LifeArtifact(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
     type: Mapped[str] = mapped_column(String(16), default="text")        # text/image/note
     title: Mapped[str] = mapped_column(String(120), default="")
     content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -83,7 +83,7 @@ class LifeInterest(Base):
     __tablename__ = "life_interests"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(60), nullable=False)       # 兴趣名（如 摄影/诗歌/天文）
     level: Mapped[int] = mapped_column(Integer, default=20)             # 0-100
     source: Mapped[str] = mapped_column(String(30), default="seed")     # seed/browse/learn/create/user
@@ -101,7 +101,7 @@ class LifeGoal(Base):
     __tablename__ = "life_goals"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
     type: Mapped[str] = mapped_column(String(20), default="growth")     # relationship/creative/growth/explore/skill
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
@@ -125,7 +125,7 @@ class LifeSchedule(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
     start_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)   # UTC naive
@@ -143,7 +143,7 @@ class LifeFollowup(Base):
     __tablename__ = "life_followups"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     summary: Mapped[str] = mapped_column(String(300), nullable=False)       # 一句话回聊素材
     action: Mapped[str] = mapped_column(String(30), default="")            # 来源动作
@@ -160,7 +160,7 @@ class LifeChatIntent(Base):
     __tablename__ = "life_chat_intents"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     action_type: Mapped[str] = mapped_column(String(30), nullable=False)
     horizon: Mapped[str] = mapped_column(String(12), default="today")
@@ -178,7 +178,7 @@ class AIDiary(Base):
     __tablename__ = "ai_diaries"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     diary_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -221,7 +221,7 @@ class AIMoment(Base):
     __tablename__ = "ai_moments"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=True)
+    character_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="SET NULL"), nullable=True)
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sender_type: Mapped[str] = mapped_column(String(10), default="ai")  # ai / user
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -291,7 +291,7 @@ class ScheduledEvent(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     session_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_sessions.id"), nullable=False)
     trigger_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     event_type: Mapped[str] = mapped_column(String(30), default="back")  # shower/sleep/meal/back
@@ -311,7 +311,7 @@ class TimelineEvent(Base):
     __tablename__ = "timeline_events"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
     event_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
     title: Mapped[str] = mapped_column(String(50), nullable=False)
     desc: Mapped[str] = mapped_column(String(200), default="")
@@ -340,7 +340,7 @@ class ImageGenConfig(Base):
     __tablename__ = "image_gen_configs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵（自由整型归属，不挂 users FK；0/-1 哨兵对 FK 违约）
     provider: Mapped[str | None] = mapped_column(String(50), nullable=True)  # openai / dashscope
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     api_key: Mapped[str | None] = mapped_column(String(255), nullable=True)

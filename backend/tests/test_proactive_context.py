@@ -16,7 +16,6 @@ P0-2（M）承接最近语境强制化 + 扩容：
 """
 import asyncio
 import os
-import tempfile
 from datetime import datetime, timedelta
 
 import pytest
@@ -261,9 +260,9 @@ def test_proactive_prompt_active_topics_wording(monkeypatch):
 # ---------------- P0-2：get_last_messages 扩容（10 条 × 120 字） ----------------
 
 @pytest.fixture()
-def ctx_db(monkeypatch):
+def ctx_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：monkeypatch triggers 的 async_session_factory（不触碰 backend/data）"""
-    tmp = tempfile.mkdtemp(prefix="poc_ctx_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

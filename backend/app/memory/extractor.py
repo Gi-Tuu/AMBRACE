@@ -231,12 +231,16 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
     prompt = EXTRACT_PROMPT.format(conversation=conv, today=_today_str)
     # §20（2026-09-04）：开 global_user_facts 时，借用同一次提取让 LLM 多吐一个 SLOT 归槽字段
     # （不新增 LLM 调用）；关=原 prompt 逐字节一致（零行为变化）。
+    # 细粒度（2026-09-10）：只提示【已启用槽】，全关则整段不追加（零行为）。
     try:
-        from app.agent.loop import AGENT_FLAGS as _flags_now
-        if bool(_flags_now.get("global_user_facts", False)):
-            prompt += ("\n额外要求：若上方 USER_INFO 属于用户可变近况（所在城市/工作学业/感情状态/"
-                       "居住情况/进行中计划/身体状态），另输出一行：SLOT: location|job|relationship|"
-                       "living|goal_state|health；否则输出：SLOT: 无。")
+        from app.memory.user_facts import MUTABLE_SLOTS, enabled_user_fact_slots
+        _enabled_slots = enabled_user_fact_slots()
+        if _enabled_slots:
+            _slot_lines = [f'  - "{s}"：{MUTABLE_SLOTS[s][0]}' for s in _enabled_slots]
+            prompt += (
+                '\n额外要求：若上方 USER_INFO 属于用户可变近况，另输出一行：SLOT: '
+                f'{"|".join(_enabled_slots)}；否则输出：SLOT: 无。\n' + "\n".join(_slot_lines)
+            )
     except Exception:
         pass
     response = await llm_call(messages=[{"role":"user","content":prompt}], temperature=0.1, max_tokens=EXTRACT_MAX_TOKENS, task=TASK_MEMORY)
@@ -313,13 +317,19 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
                 continue
             from app.memory import save_memory
             _spk_type, _spk_id, _epi = _resolve_speaker(val, user_msg, ai_msg, user_id, character_id)
-            # §20（2026-09-04）：global_user_facts 开且为 USER_INFO → 归槽 upsert 用户级事实 + 旧值失效；
-            # 关=原 sub_type="extracted" 路径（逐字节一致，零行为变化）。
-            if mtype == "user_info" and bool(_flags.get("global_user_facts", False)):
-                from app.memory.user_facts import MUTABLE_SLOTS, classify_slot, upsert_user_fact
+            # §20（2026-09-04）：USER_INFO → 归槽 upsert 用户级事实 + 旧值失效；
+            # 细粒度（2026-09-10）：命中槽且该槽【已启用】才归槽；全关则与现状一致落 extracted。
+            if mtype == "user_info":
+                from app.memory.user_facts import (
+                    MUTABLE_SLOTS, classify_slot, upsert_user_fact,
+                    user_fact_slot_enabled, settle_location_on_home_return,
+                )
                 slot_raw = (_get_val(response, "SLOT") or "").strip()
                 slot = slot_raw if slot_raw in MUTABLE_SLOTS else classify_slot(val)
-                if slot:
+                # C2-③ 回家信号优先：独立于 LLM SLOT（F-4 收紧后「我到家了」常无地点宾语、slot=None）；
+                # settle 内部自带 location 槽门控（槽关直接 False），命中则不重复 upsert location。
+                _home_settled = await settle_location_on_home_return(user_id, user_msg or val)
+                if slot and user_fact_slot_enabled(slot) and not _home_settled:
                     change = await upsert_user_fact(user_id, slot, val, source="chat")
                     # 旧值失效放「新记忆写入前」：避免 sub_type/文本命中到刚写入的新值记忆误标 stale
                     if change is not None:

@@ -8,6 +8,8 @@ from app.utils.timeutil import (
     beijing_day_start_utc,
     now_naive_utc,
     shift_utc_naive,
+    to_naive_utc,
+    utcnow_naive,
 )
 
 
@@ -82,3 +84,33 @@ def test_app_local_now_default_utc8():
     assert now.utcoffset() == timedelta(hours=8)
     utc_hour = now.astimezone(timezone.utc).hour
     assert (now.hour - utc_hour) % 24 in (8, -16)
+
+
+def test_utcnow_naive_无时区():
+    """utcnow_naive 返回 naive UTC（匹配裸 DateTime 列存储约定）。"""
+    dt = utcnow_naive()
+    assert dt.tzinfo is None
+
+
+def test_to_naive_utc_none透传():
+    assert to_naive_utc(None) is None
+
+
+def test_to_naive_utc_naive原样():
+    dt = datetime(2026, 8, 12, 4, 20, 0)
+    assert to_naive_utc(dt) is dt  # 已 naive 原对象透传
+
+
+def test_to_naive_utc_aware_utc转naive():
+    dt = datetime(2026, 8, 12, 4, 20, 0, tzinfo=timezone.utc)
+    out = to_naive_utc(dt)
+    assert out.tzinfo is None
+    assert out == datetime(2026, 8, 12, 4, 20, 0)
+
+
+def test_to_naive_utc_aware_别时区归一():
+    # UTC+8 的 12:20 == UTC 的 04:20
+    dt = datetime(2026, 8, 12, 12, 20, 0, tzinfo=timezone(timedelta(hours=8)))
+    out = to_naive_utc(dt)
+    assert out.tzinfo is None
+    assert out == datetime(2026, 8, 12, 4, 20, 0)

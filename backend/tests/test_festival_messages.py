@@ -5,7 +5,6 @@
 # - arbiter festival 分支生成失败时标记当日已处理（防每 30 秒无限重试）
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy import select
@@ -16,9 +15,9 @@ from app.scheduling import message_generator as mg
 
 
 @pytest.fixture()
-def msg_db(monkeypatch):
+def msg_db(monkeypatch, tmp_path):
     '''临时库：patch async_session_factory（不触碰 backend/data）'''
-    tmp = tempfile.mkdtemp(prefix='festival_test_')
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
     engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

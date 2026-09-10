@@ -16,7 +16,6 @@ import asyncio
 import datetime
 import json
 import os
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -33,10 +32,10 @@ async def _noop(*a, **k):
 
 
 @pytest.fixture()
-def mem_db(monkeypatch):
+def mem_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：monkeypatch memsvc.async_session_factory（不触碰 backend/data）。
     bm25_index 的懒构建复用 memsvc.async_session_factory，故此处 patch 即隔离临时库。"""
-    tmp = tempfile.mkdtemp(prefix="bm25_retrieval_test_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

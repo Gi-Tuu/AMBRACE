@@ -156,11 +156,27 @@ async def _cleanup_mcp():
             await asyncio.sleep(0.8)
 
 
+async def _ensure_test_users():
+    """确保测试依赖的用户存在（引擎已强制外键：mcp_servers.user_id 需父 users 行）。
+
+    主账号 ADMIN=1（本文件共用），提前插好父用户，避免空沙箱下 _make_server 外键失败。
+    """
+    from sqlalchemy import select as _sel
+    from app.models.user import User
+
+    async with async_session_factory() as db:
+        existing = set((await db.execute(_sel(User.id).where(User.id == ADMIN))).scalars().all())
+        if ADMIN not in existing:
+            db.add(User(id=ADMIN, username="mcp_ph1_admin", nickname="MCP PH1 测试", is_admin=True))
+            await db.commit()
+
+
 @pytest.fixture(autouse=True)
 def _mcp_isolation():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
+        loop.run_until_complete(_ensure_test_users())
         yield
         loop.run_until_complete(_cleanup_mcp())
         pending = [t for t in asyncio.all_tasks(loop) if not t.done()]

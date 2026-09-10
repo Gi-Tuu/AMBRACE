@@ -20,7 +20,7 @@ class GameSession(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
-    group_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("chat_groups.id"), nullable=True)
+    group_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("chat_groups.id", ondelete="SET NULL"), nullable=True)
     # null = 从游戏机直接发起（非群聊场景）
     game_type: Mapped[str] = mapped_column(String(30), index=True)
     # undercover / truth_or_dare / twenty_q / werewolf / liars_bar / turtle_soup
@@ -53,7 +53,7 @@ class GamePlayer(Base):
     session_id: Mapped[int] = mapped_column(Integer, ForeignKey("game_sessions.id"), index=True)
     player_type: Mapped[str] = mapped_column(String(10))  # user / ai
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    character_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=True)
+    character_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=True)
     seat: Mapped[int] = mapped_column(Integer, default=0)  # 座次
     role: Mapped[str] = mapped_column(String(20), default="")  # civilian/undercover/wolf/seer/...
     is_spectator: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -97,7 +97,7 @@ class GameMemory(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     session_id: Mapped[int] = mapped_column(Integer, ForeignKey("game_sessions.id"), index=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), index=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), index=True)
     # 该记忆属于哪个角色（用户不写，用户视角由前端实时从 events 渲染）
     my_role: Mapped[str] = mapped_column(String(20), default="")
     my_word: Mapped[str] = mapped_column(String(40), default="")

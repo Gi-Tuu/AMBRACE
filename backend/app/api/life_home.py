@@ -295,7 +295,7 @@ async def home_state(character_id: int = 0, user_id: int = Depends(get_current_u
         if char is None or char.user_id != user_id:
             raise HTTPException(404, tr_lang(lang, "character_not_found"))
         pets = (
-            await db.execute(select(Pet).where(Pet.user_id == user_id))
+            await db.execute(select(Pet).where(Pet.user_id == user_id, Pet.abandoned_at.is_(None)))
         ).scalars().all()
         user = await db.get(User, user_id)
 
@@ -425,7 +425,7 @@ async def home_event(payload: dict, user_id: int = Depends(get_current_user_id),
         async with async_session_factory() as db:
             cid = await _resolve_character(db, user_id, character_id, lang)
             pet = (await db.execute(
-                select(Pet).where(Pet.id == pet_id, Pet.user_id == user_id)
+                select(Pet).where(Pet.id == pet_id, Pet.user_id == user_id, Pet.abandoned_at.is_(None))
             )).scalar_one_or_none()
             if pet is None:
                 raise HTTPException(404, tr_lang(lang, "pet_not_found"))

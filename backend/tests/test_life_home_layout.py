@@ -9,7 +9,6 @@
 import asyncio
 import json
 import os
-import tempfile
 
 import pytest
 from fastapi import FastAPI
@@ -60,9 +59,9 @@ def _living_sofa(rooms: list) -> dict:
 
 
 @pytest.fixture()
-def home_db(monkeypatch):
+def home_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：monkeypatch life_home.async_session_factory（不触碰 backend/data）"""
-    tmp = tempfile.mkdtemp(prefix="life_home_layout_test_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -94,8 +93,8 @@ def _read_st(factory) -> LifeState | None:
 
 # ---------------- 迁移幂等 ----------------
 
-def test_init_db_布局列迁移幂等(monkeypatch):
-    tmp = tempfile.mkdtemp(prefix="life_home_migrate_test_")
+def test_init_db_布局列迁移幂等(monkeypatch, tmp_path):
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
 

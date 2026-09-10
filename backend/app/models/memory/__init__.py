@@ -20,7 +20,7 @@ class Memory(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     memory_type: Mapped[str] = mapped_column(
         String(20), nullable=False
     )  # "user_info" | "preference" | "event" | "insight"
@@ -107,7 +107,7 @@ class ConversationTopic(Base):
     __tablename__ = "conversation_topics"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     topic: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="进行中")  # 进行中/搁置/完成
@@ -129,7 +129,7 @@ class StageMemory(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)  # 舞台事件描述（AI 第一人称）
     stage_kind: Mapped[str] = mapped_column(String(20), default="roleplay")  # roleplay=角色扮演
@@ -144,7 +144,7 @@ class ReflectionLog(Base):
     __tablename__ = "reflection_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # AI 回复消息 id
     triggers: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 触发原因
@@ -194,7 +194,8 @@ class WeaveCard(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    # 多角色共享卡片：归属角色被删时置空而非删卡（SET NULL 要求列可空；实库当前 NOT NULL，待后续迁移）
+    character_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="SET NULL"), nullable=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)  # 卡片标题（12 字内）
     summary: Mapped[str] = mapped_column(Text, nullable=False)  # 概要（卡片展示）
     detail: Mapped[str] = mapped_column(Text, nullable=False)  # 详情 JSON（time/weather/location/mood/events/details）
@@ -218,8 +219,8 @@ class WeaveCardMemory(Base):
     __tablename__ = "weave_card_memories"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    card_id: Mapped[int] = mapped_column(Integer, ForeignKey("weave_cards.id"), nullable=False)
-    memory_id: Mapped[int] = mapped_column(Integer, ForeignKey("memories.id"), nullable=False)
+    card_id: Mapped[int] = mapped_column(Integer, ForeignKey("weave_cards.id", ondelete="CASCADE"), nullable=False)
+    memory_id: Mapped[int] = mapped_column(Integer, ForeignKey("memories.id", ondelete="CASCADE"), nullable=False)
 
     card = relationship(
         "WeaveCard", back_populates="memories"
@@ -229,8 +230,8 @@ class WeaveCardCharacter(Base):
     __tablename__ = "weave_card_characters"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    card_id: Mapped[int] = mapped_column(Integer, ForeignKey("weave_cards.id"), nullable=False)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    card_id: Mapped[int] = mapped_column(Integer, ForeignKey("weave_cards.id", ondelete="CASCADE"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
 
 # ── lorebook.py ──
 # Lorebook 条目模型（P1-2，2026-08-16）：用户/角色可自定义的关键词触发设定条目

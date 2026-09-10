@@ -9,7 +9,6 @@
 """
 import asyncio
 import os
-import tempfile
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
@@ -32,9 +31,9 @@ async def _noop(*a, **k):
 
 
 @pytest.fixture()
-def mem_db(monkeypatch):
+def mem_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：monkeypatch 记忆模块的 async_session_factory（不触碰 backend/data）"""
-    tmp = tempfile.mkdtemp(prefix="memory_p1_test_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -230,7 +229,8 @@ def test_注入行_无矛盾记忆不带后缀():
 
 
 def test_注入行_截断后再追加后缀():
-    content = "用户说他下周要去北京出差见客户" + "字" * 200
+    # 内容选非未来时/非事件词句，避免新加的时态标签参与长度计算（本用例只验证截断+后缀顺序）
+    content = "用户说他喜欢喝美式咖啡" + "字" * 200
     line = format_memory_line({
         "content": content,
         "created_at": datetime(2026, 8, 1),
@@ -238,7 +238,7 @@ def test_注入行_截断后再追加后缀():
         "reliability_score": 0.9,
         "contradiction_count": 3,
     })
-    assert "用户说他下周要去北京出差见客户" in line
+    assert "用户说他喜欢喝美式咖啡" in line
     assert len(line[:line.index("（你后来纠正过")]) <= 150 + len("- [记录于 2026-08-01] ")  # 后缀在截断之后
 
 

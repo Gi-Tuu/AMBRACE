@@ -138,6 +138,15 @@ AGENT_FLAGS = {
     # global_user_facts：用户级可变事实层总开关——开=GPS/跨角色事实写入 + [USER NOW] 注入分区；
     #   关=不写/不读 user_facts（抽取出原路径、注入空）。
     "global_user_facts": False,
+    # ── 细粒度槽开关（2026-09-10，用户拍板；先只搭框架，【全部默认关，含 location】；
+    #    真机观察 C2 新鲜窗 / 回家识别 / C3 锚点稳定后，再经 runtime flag 手动只开 location）──
+    # 语义：总闸开=全槽启用；总闸关时按各槽 flag 独立决定（user_fact_slot_enabled）。
+    "user_fact_location": False,      # 位置：最不敏感、最易过时；GPS/城市/聊天归槽写 location
+    "user_fact_job": False,           # 工作/学业
+    "user_fact_relationship": False,  # 感情状态（隐私，默认关）
+    "user_fact_living": False,        # 居住状况（独居/和谁住）
+    "user_fact_goal_state": False,    # 近期目标/状态
+    "user_fact_health": False,        # 健康（隐私，默认关）
     # cross_char_fact_sync：跨角色对齐——开=角色构建上下文前惰性对齐 + 每日 sweep，把同槽旧值
     #   per-char 记忆标 stale（复用 #70，不删可追溯）；关=不对齐。
     "cross_char_fact_sync": False,
@@ -182,6 +191,45 @@ AGENT_FLAGS = {
     # （trigger=tool），让「工具轨迹」能看到真实工具成败；关=不写（默认，零写放大）。
     # MCP 工具不落（已有 mcp_call_logs，前端 MCP 分区读取，避免双记）。
     "agent_tool_exec_trace": False,
+    # ── 主动复习「回忆化」+ 过期计划记忆治理（2026-09-09，L0-L4）──
+    # 设计意图（用户定调）：复习=回忆/怀旧，把旧记忆当往事回味，不当"当前仍成立/即将发生"续写叮嘱。
+    # review_exclude_expired_plan 开=复习选片/情境复习排除过期计划与瞬时状态（L1，默认开；关=旧选片）；
+    # review_reinforce_event_cap 开=一次性事件经"主动复习成功"强化按 tense 分流收口（L2：过期计划
+    #   S≤10/次数≤3，往事适度 S≤30/次数≤6，达上限退出复习轮转；检索/写入通道不受影响；默认开）；
+    # review_reminisce_framework 开=复习 hint 改「回忆框架」+ 时态口吻 + 现状锚点 + 输出本地闸门
+    #   （L3，默认开；关=逐字节回旧 hint）；
+    # review_plan_expire_stale 开=每日维护把过期计划自动置 stale（L4，默认关灰度）；
+    # review_plan_validity_extract 开=提取/写入侧给计划写 valid_to（L4，默认关灰度）。
+    "review_exclude_expired_plan": True,
+    "review_reinforce_event_cap": True,
+    "review_reminisce_framework": True,
+    "review_plan_expire_stale": False,
+    "review_plan_validity_extract": False,
+    # ── 记忆注入行时态标注（2026-09-10，第三轮 T3/C1）──
+    # memory_line_tense_tag 开=format_memory_line 在 [记录于] 之后插时态标签：plan 未过期=［计划］、
+    #   已过期=［旧安排·已过期］、episodic=［往事］、transient=［当时状态］、enduring 不加；
+    #   纯提示词标注，不动召回/排序/写库。关=回旧行（无时态标签）。
+    "memory_line_tense_tag": True,
+    # ── AI 生活主动消息「主体归属 + 同主题复读 + 零上下文催促」治理（2026-09-09，L0-L5）──
+    # 设计意图（用户定调）：AI 自己去做的事（吃饭/洗澡/开会）到点应**自述回来**，不该反过来
+    #   招呼用户；同一生活主题在数小时内被 timer/state_trigger/memory_review/life_regression/
+    #   storyline 五条通道各催一遍要收口；用户已回应/已离场就该停。全部零 LLM 优先、fail-open。
+    # promise_self_side_split 开=创建侧按受益方分流（AI 自理→back 到点自述「我回来了」，
+    #   为用户做才 ready）；**注意这是新增主动消息源**（AI 自理从「完全不建事件」变为「建 back」），
+    #   不是纯 bug 修复，需与 timer_render_subject_fix 同批灰度；关=沿用 F1a 现状正则结果。
+    # timer_render_subject_fix 开=到期渲染按 (owner, event_type) 三套话术 + 现状锚点 +
+    #   __SKIP__ 闸门 + 删掉硬编码「粥好了」few-shot 例子；关=走 _build_timer_hint_legacy 逐字节等价。
+    # proactive_topic_guard 开=主题熔断（timer 发送前判 + send_to_session 统一兜底 + ready
+    #   闭环检查扩到 owner=ai 并纳入离场/婉拒词）；关=不做任何抑制。
+    # life_event_no_replay 开=一次性生活动作（source=life 的 event）不进主动复习、不被
+    #   life_regression 高频复读（与「回忆化」L1 同处一个筛选段，共用 flag 体系）；关=维持现选片。
+    # life_memory_write_retry 开=life 写记忆加固（写前先提交释放自持锁 + 统一退避重试 +
+    #   悬空 started 收尾）；**默认开（纯加固）**，关=回旧裸写路径。
+    "promise_self_side_split": False,
+    "timer_render_subject_fix": False,
+    "proactive_topic_guard": False,
+    "life_event_no_replay": False,
+    "life_memory_write_retry": True,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）
@@ -245,7 +293,9 @@ async def run_recall_loop(
     import re as _re
     steps: list[dict] = []
     try:
-        for _ in range(MAX_RECALL_ROUNDS + 1):  # 最多解析→补查一轮，第二轮只清理
+        # 二跳最多 MAX_RECALL_ROUNDS(=1) 次：与 run_search_loop 的 rounds 语义一致（无 +1）；
+        # 超限时残留的 [RECALL] 由循环后兜底剥离（幂等）
+        for _ in range(MAX_RECALL_ROUNDS):
             clean, q = _actions.extract_recall(final_state.get("ai_response") or "")
             if not q:
                 final_state["ai_response"] = clean

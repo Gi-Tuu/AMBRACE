@@ -13,7 +13,6 @@
 """
 import asyncio
 import os
-import tempfile
 from datetime import datetime, timedelta
 
 import pytest
@@ -25,9 +24,9 @@ from app.models.memory import ProspectiveIntent
 
 
 @pytest.fixture()
-def pi_db(monkeypatch):
+def pi_db(monkeypatch, tmp_path):
     """临时库：create_all + 把 database / prospective_intent / extractor / facts 的工厂指向临时工厂。"""
-    tmp = tempfile.mkdtemp(prefix="ariadne_g_")
+    tmp = str(tmp_path)
     engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
 

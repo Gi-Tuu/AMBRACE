@@ -40,15 +40,35 @@ def _run(coro):
 
 
 async def _cleanup():
+    from app.models.user import User
+
     async with async_session_factory() as db:
         await db.execute(delete(MCPServer).where(MCPServer.name.like(TEST_PREFIX + "%")))
-        await db.execute(delete(ToolPermission).where(ToolPermission.user_id == PERM_UID))
+        # 主账号 ADMIN=1 与独立测试用户 PERM_UID 都会写 tool_permissions（方向 B：仅清测试用例自身行）
+        await db.execute(delete(ToolPermission).where(ToolPermission.user_id.in_((ADMIN, PERM_UID))))
+        # 引擎已强制外键（2026-09-09）：父 users 前置。仅删独立测试用户，主账号 id=1 为会话种子/共享，保留。
+        await db.execute(delete(User).where(User.id == PERM_UID))
         await db.commit()
+
+
+async def _ensure_test_users():
+    """确保主账号 ADMIN=1 与独立测试用户 PERM_UID=9101 存在（外键前置：ToolPermission.user_id FK）。"""
+    from app.models.user import User
+    from sqlalchemy import select as _sel
+
+    async with async_session_factory() as db:
+        exist = set((await db.execute(_sel(User.id).where(User.id.in_((ADMIN, PERM_UID))))).scalars().all())
+        for uid in (ADMIN, PERM_UID):
+            if uid not in exist:
+                db.add(User(id=uid, username=f"mcp_ph3_{uid}", nickname="MCP PH3 测试", is_admin=(uid == ADMIN)))
+        if set((ADMIN, PERM_UID)) - exist:
+            await db.commit()
 
 
 @pytest.fixture(autouse=True)
 def _isolate():
     _run(_cleanup())
+    _run(_ensure_test_users())
     yield
     _run(_cleanup())
 

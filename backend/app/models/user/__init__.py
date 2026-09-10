@@ -92,7 +92,7 @@ class PrivacyRequest(Base):
     __tablename__ = "privacy_requests"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     target_type: Mapped[str] = mapped_column(String(10), nullable=False)  # diary / phone
     status: Mapped[str] = mapped_column(String(10), nullable=False, default="applied")  # applied / approved / rejected

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from pydantic import BaseModel
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.status import classify as _classify_status
@@ -356,11 +356,6 @@ async def delete_character(
     await _get_owned_character(db, character_id, user_id, lang)
     from sqlalchemy import delete as sa_delete
     from app.models.memory import Memory
-    from app.models.life import AIDiary
-    from app.models.life import AIMoment, MomentLike, MomentAILike, MomentComment
-    from app.models.character import ProactiveSettings
-    from app.models.life import ScheduledEvent
-    from app.models.character import ProactiveStorylineItem
 
     result = await db.execute(
         select(AICharacter).where(AICharacter.id == character_id)
@@ -368,16 +363,6 @@ async def delete_character(
     character = result.scalar_one_or_none()
     if not character:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
-    # 级联清理（全部关联数据；聊天记录等一律清除）
-    await db.execute(sa_delete(MomentComment).where(
-        MomentComment.sender_type == "ai", MomentComment.sender_id == character_id))
-    moment_ids = (await db.execute(
-        select(AIMoment.id).where(AIMoment.character_id == character_id))).scalars().all()
-    if moment_ids:
-        await db.execute(sa_delete(MomentLike).where(MomentLike.moment_id.in_(moment_ids)))
-        await db.execute(sa_delete(MomentAILike).where(MomentAILike.moment_id.in_(moment_ids)))
-        await db.execute(sa_delete(MomentComment).where(MomentComment.moment_id.in_(moment_ids)))
-        await db.execute(sa_delete(AIMoment).where(AIMoment.character_id == character_id))
     # 2026-08-13：其他角色对被删角色的记忆保留，标记"离开" + 生成【xxx离开了】记忆（避免割裂感，随遗忘机制自然淡去）
     char_name = (character.name or "").strip()
     hit_char_ids: list = []
@@ -412,48 +397,17 @@ async def delete_character(
                 m.departed_names = ",".join(names)[:255]
         except Exception as _e:
             _logger.warning("Departure marking failed char=%d: %s", character_id, _e)
-    # 记忆：先清向量库（按角色），再删记录（仅删被删角色自己的记忆；其他角色的记忆保留）
+    # 级联清理（全部关联数据；聊天记录等一律清除）
+    # v3.4.6（2026-09-09）：原先散落的手写 sa_delete 收敛为统一清单
+    # app/application/character_cascade.py——覆盖此前漏清的 character_state_history /
+    # life_*（8 张）/ weave_* / 虚拟手机 / 群聊 / 游戏 / 关系·情绪·剧情 / 隐私权限等，
+    # 并保持原有已清表不重不漏。向量库删除与「离开标记」逻辑保持原样。
+    from app.application.character_cascade import cascade_delete_character
     from app.db.vector_store import delete_memory_vectors_by_character
+
     await delete_memory_vectors_by_character(character_id)
-    await db.execute(sa_delete(Memory).where(Memory.character_id == character_id))
-    # #70-C2：连冷归档 memory_archive 一起物理删（删除角色=完全清除）
-    try:
-        from app.models.memory import MemoryArchive
-        await db.execute(sa_delete(MemoryArchive).where(MemoryArchive.character_id == character_id))
-    except Exception:
-        pass
-    await db.execute(sa_delete(AIDiary).where(AIDiary.character_id == character_id))
-    await db.execute(sa_delete(ProactiveSettings).where(ProactiveSettings.character_id == character_id))
-    await db.execute(sa_delete(ScheduledEvent).where(ScheduledEvent.character_id == character_id))
-    await db.execute(sa_delete(ProactiveStorylineItem).where(ProactiveStorylineItem.character_id == character_id))
-
-    # 聊天记录/会话/日摘要/提取记录/主动消息日志（用户要求：删除角色=清除其全部内容）
-    from app.models.chat import ChatSession
-    from app.models.chat import ChatMessage
-    from app.models.memory import DailySummary
-    from app.models.memory import ProcessedExtraction
-    from app.models.character import ProactiveMessageLog
-
-    session_ids = list((await db.execute(
-        select(ChatSession.id).where(ChatSession.character_id == character_id))).scalars().all())
-    if session_ids:
-        # 先删提取记录（依赖消息 id 子查询），再删消息/摘要/会话
-        await db.execute(sa_delete(ProcessedExtraction).where(
-            ProcessedExtraction.user_message_id.in_(
-                select(ChatMessage.id).where(ChatMessage.session_id.in_(session_ids)))))
-        await db.execute(sa_delete(ChatMessage).where(ChatMessage.session_id.in_(session_ids)))
-        await db.execute(sa_delete(DailySummary).where(DailySummary.session_id.in_(session_ids)))
-        await db.execute(sa_delete(ChatSession).where(ChatSession.character_id == character_id))
-    await db.execute(sa_delete(ProactiveMessageLog).where(ProactiveMessageLog.character_id == character_id))
-
-    # 状态八维 / AI 间私聊 / 时光页大事记（补漏，随角色彻底清除）
-    from app.models.character import CharacterState
-    await db.execute(sa_delete(CharacterState).where(CharacterState.character_id == character_id))
-    from app.models.chat import AIChat
-    await db.execute(sa_delete(AIChat).where(
-        or_(AIChat.character_a_id == character_id, AIChat.character_b_id == character_id)))
-    from app.models.life import TimelineEvent
-    await db.execute(sa_delete(TimelineEvent).where(TimelineEvent.character_id == character_id))
+    cascade_stats = await cascade_delete_character(db, character_id)
+    _logger.info("Cascade delete character=%d stats=%s", character_id, cascade_stats)
 
     # 硬删除角色行本身（删除角色 = 完全清除，前端不再需要 is_active 过滤）
     await db.execute(sa_delete(AICharacter).where(AICharacter.id == character_id))

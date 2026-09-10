@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """抖音渠道自有 ORM 模型（X5 渠道外迁，2026-09-01 自 app/models/social 迁入）。
 
-归属原则（X5）：渠道的数据模型定义在渠道扩展包内，由 main.py 加载期 import 本模块注册进
-Base.metadata（main.py lifespan 在 init_db create_all 之前预加载渠道插件，保证全新安装建表）。
+归属原则（T5 修订，2026-09-10）：渠道数据模型定义在渠道扩展包内，继承
+``app.plugins.plugin_base.PluginBase``，注册进**插件独立 ``plugin_metadata``**；由 registry
+在插件加载后 ``plugin_metadata.create_all(checkfirst=True)`` 幂等建表（存量库零数据迁移；
+douyin 表历史上亦在主 alembic baseline/a7b8/b8c9 建过，checkfirst 自动跳过）。
 与用户记忆库严格隔离：douyin_* 表只服务本渠道，source=plugin:douyin_mcp。
 
 一机多主（2026-09-05，拍板 Q4「正名」）：各表 user_id 正名为 tenant_id（语义=家庭 root 的
@@ -15,10 +17,10 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base
+from app.plugins.plugin_base import PluginBase  # T5：插件表入独立 metadata
 
 
-class DouyinAccount(Base):
+class DouyinAccount(PluginBase):
     """抖音账号绑定/登录状态（per-tenant/per-bot：tenant_id=家庭 root，bot_account_id=抖音号稳定键）"""
     __tablename__ = "douyin_accounts"
     __table_args__ = (
@@ -37,7 +39,7 @@ class DouyinAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
-class DouyinPost(Base):
+class DouyinPost(PluginBase):
     """AI 账号发布记录 + 数据（图文先行；stats_json 存播放/点赞/评论）"""
     __tablename__ = "douyin_posts"
 
@@ -52,7 +54,7 @@ class DouyinPost(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class DouyinComment(Base):
+class DouyinComment(PluginBase):
     """AI 账号收到的评论（增量去重；replied=是否已回复，Phase 2 回评用）"""
     __tablename__ = "douyin_comments"
     __table_args__ = (UniqueConstraint("tenant_id", "douyin_post_id", "content", name="uq_douyin_comment"),)
@@ -74,7 +76,7 @@ class DouyinComment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class DouyinPending(Base):
+class DouyinPending(PluginBase):
     """AI 抖音写操作待确认任务（默认人工确认：图文发布 / 评论回复）"""
     __tablename__ = "douyin_pending"
 
@@ -98,7 +100,7 @@ class DouyinPending(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
-class DouyinViewedNote(Base):
+class DouyinViewedNote(PluginBase):
     """AI 看过的抖音图文（VLM 理解结果；仅作短期感知，不进用户记忆库；2026-08-10 计划 15）。
 
     C3（2026-09-05 落地审查）：aweme_id 由全局 unique 改为 (tenant_id, aweme_id) 复合唯一——

@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 
 def _utc_naive() -> datetime:
-    """W6（v3.4.4 审查）：替代已弃用的 datetime.utcnow()——UTC naive 口径（DB created_at/expires_at 均为 naive）。"""
+    """W6（v3.4.4 审查）：替代已弃用的 datetime.utcnow（Python 3.12 起弃用）——UTC naive 口径（DB created_at/expires_at 均为 naive）。"""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 import secrets
 

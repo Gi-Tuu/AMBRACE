@@ -422,17 +422,32 @@ async def update_server_task_api_config(
     return {"status": "ok", "task": task, "enabled": bool(cfg.enabled), "configured": True}
 
 
+# 连接测试支持的模态 → 错误文案里的中文标签（非法/缺失 modality 一律回落 llm）
+_MODALITY_LABELS = {
+    "llm": "聊天(LLM)", "task": "任务", "vlm": "识图(VLM)", "image": "生图", "speech": "语音(TTS)",
+}
+
+
 async def test_api_connection(
     body: dict,
     user_id: int,
 ):
-    """连接测试：最小请求校验 {base_url, api_key, model}；api_key 为空则用服务器级全局配置。
-    多 Key（密钥池）逐个尝试，任一成功即 ok；返回耗时与命中 Key 尾号。"""
-    import asyncio
+    """连接测试：按模态（modality）选择最小探测请求，校验 {base_url, api_key, model}。
+
+    modality 取值：llm（默认）/ task / vlm / image / speech；缺省或非法值回落 llm
+    （老 App 不带该字段 → 行为与改动前逐字节一致）。
+    - llm / task / vlm：chat.completions 最小请求（识图为多模态 chat，纯文本 hi 可用）；
+    - image：先 GET /v1/models 零成本探测，网关不支持时按 provider 退一次最小真实生图；
+    - speech：先 OpenAI 兼容 /v1/audio/speech，不通再按 tts_service 端点规则打百炼私有端点。
+    api_key 为空则回退服务器级全局配置（沿用旧行为）。多 Key 逐个尝试，任一成功即 ok。
+    """
     import time
     from app.agent.llm_client import (
         get_llm_client, get_server_llm_config, _split_api_keys,
     )
+    modality = (body.get("modality") or "llm").strip().lower()
+    if modality not in _MODALITY_LABELS:
+        modality = "llm"
     base_url = (body.get("base_url") or "").strip()
     # P1 安全加固（2026-08-16）：仅允许 http/https 协议，防 file:// 等 SSRF
     if base_url and not (base_url.startswith("http://") or base_url.startswith("https://")):
@@ -456,20 +471,191 @@ async def test_api_connection(
         try:
             client = get_llm_client(api_key=key, base_url=base_url)
             t0 = time.monotonic()
-            await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=model or "gpt-4o-mini",
-                    messages=[{"role": "user", "content": "hi"}],
-                    max_tokens=1,
-                ),
-                timeout=30,
-            )
+            if modality == "image":
+                probe, used_model = await _probe_image(client, key, base_url, model, provider)
+            elif modality == "speech":
+                probe, used_model = await _probe_speech(client, key, base_url, model, provider)
+            else:  # llm / task / vlm：统一走 chat 最小请求
+                probe, used_model = await _probe_chat(client, model or "gpt-4o-mini")
             latency_ms = int((time.monotonic() - t0) * 1000)
-            return {"ok": True, "model": model or "gpt-4o-mini", "latency_ms": latency_ms,
-                    "api_key_tail": key[-6:] if len(key) > 6 else key, "provider": provider or None}
+            return {"ok": True, "model": used_model, "latency_ms": latency_ms,
+                    "api_key_tail": key[-6:] if len(key) > 6 else key, "provider": provider or None,
+                    "modality": modality, "probe": probe}
         except Exception as e:
-            last_err = str(e)[:300]
-    return {"ok": False, "error": last_err}
+            last_err = _classify_probe_error(e, modality)
+    return {"ok": False, "error": last_err, "modality": modality}
+
+
+# ── 各模态最小探测（失败抛异常，由 test_api_connection 统一分类）──────────────────
+
+async def _probe_chat(client, model: str) -> tuple[str, str]:
+    """LLM / 任务 / 识图：chat.completions 最小请求（识图模型本身即多模态 chat）。"""
+    import asyncio
+    await asyncio.wait_for(
+        client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=1,
+        ),
+        timeout=30,
+    )
+    return "chat_completions", model
+
+
+async def _probe_models_list(client, model: str) -> tuple[str, str]:
+    """零成本探测：GET /v1/models 校验地址 + 鉴权（+ 模型可见性）。
+
+    鉴权失败（401/403）直接抛异常（上层判 Key 错误，不再兜底）；其它失败由调用方兜底。
+    """
+    import asyncio
+    resp = await asyncio.wait_for(client.models.list(), timeout=20)
+    ids: list[str] = []
+    try:
+        ids = [i for i in (getattr(m, "id", "") or "" for m in (resp.data or [])) if i]
+    except Exception:
+        ids = []
+    if model and ids and model not in ids:
+        # 网关回了列表但不含该模型：多数中转不回全量，不冤判，仅备注
+        return "models_list(模型列表未包含该模型，多数中转不回全量，已按鉴权通过处理)", model
+    return "models_list", model
+
+
+async def _probe_image(client, api_key: str, base_url: str, model: str, provider: str) -> tuple[str, str]:
+    """生图探测：优先零成本 /v1/models；网关不支持（404 等）时按 provider 退一次最小真实生图。"""
+    import asyncio
+    try:
+        return await _probe_models_list(client, model)
+    except Exception as e:
+        if _status_code_of(e) in (401, 403):
+            raise  # Key 问题，直接判失败
+    if provider.lower() == "dashscope":
+        return await _probe_image_dashscope(api_key, base_url, model)
+    await asyncio.wait_for(
+        client.images.generate(
+            model=model,
+            prompt="a minimal red dot",
+            n=1,
+            size="1024x1024",
+        ),
+        timeout=60,
+    )
+    return "images_generates(已实际生成一张测试图)", model
+
+
+async def _probe_image_dashscope(api_key: str, base_url: str, model: str) -> tuple[str, str]:
+    """百炼 qwen-image：POST {base_url}/chat/completions，content 列表格式（与 DashScopeChatImageProvider 一致）。"""
+    import httpx
+    url = base_url.rstrip("/") + "/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "."}]}],
+    }
+    async with httpx.AsyncClient(proxy=None, timeout=60) as http:
+        r = await http.post(
+            url,
+            headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"},
+            json=payload,
+        )
+        r.raise_for_status()
+    return "dashscope_chat_image(已实际生成一张测试图)", model
+
+
+async def _probe_speech(client, api_key: str, base_url: str, model: str, provider: str) -> tuple[str, str]:
+    """语音(TTS)最小探测：① OpenAI 兼容 /v1/audio/speech；② 百炼私有 multimodal-generation 端点。
+
+    端点规则复用 tts_service._tts_endpoints（与真实合成链路同源），但只打与所配 base_url 同主机的
+    端点（_tts_endpoints 另附的公开兜底主机在检测场景不探，避免把用户 Key 发到无关第三方）。
+    两者都不通时给友好提示（语音链路有 edge-tts 兜底，可保存后用「试听」最终确认），不抛生硬 503。
+    """
+    import asyncio
+    import httpx
+    from urllib.parse import urlparse
+
+    from app.application.tts_service import _tts_endpoints
+
+    cfg_netloc = urlparse(base_url).netloc
+    errs: list[str] = []
+    # ① OpenAI 兼容 audio.speech（部分网关提供）
+    try:
+        await asyncio.wait_for(
+            client.audio.speech.create(model=model, voice="alloy", input="你好", response_format="mp3"),
+            timeout=30,
+        )
+        return "audio_speech", model
+    except Exception as e:
+        if _status_code_of(e) in (401, 403):
+            raise
+        errs.append(str(e)[:120])
+
+    # ② 百炼私有 TTS 端点
+    for endpoint, _models in _tts_endpoints({"base_url": base_url, "model": model}):
+        if urlparse(endpoint).netloc != cfg_netloc:
+            continue
+        try:
+            async with httpx.AsyncClient(proxy=None, timeout=30) as http:
+                r = await http.post(
+                    endpoint,
+                    headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"},
+                    json={
+                        "model": model,
+                        "input": {"text": "你好", "voice": "Cherry"},
+                        "parameters": {"format": "mp3", "sample_rate": 24000},
+                    },
+                )
+            if r.status_code in (401, 403):
+                r.raise_for_status()
+            if r.status_code == 200:
+                data = r.json()
+                audio_url = str((((data or {}).get("output") or {}).get("audio") or {}).get("url") or "")
+                if audio_url.startswith("http"):
+                    return "dashscope_tts", model
+            r.raise_for_status()
+        except Exception as e:
+            if _status_code_of(e) in (401, 403):
+                raise
+            errs.append(str(e)[:120])
+    raise RuntimeError(
+        "语音(TTS)检测未通过（%s）。语音链路较特殊（百炼私有端点 + edge-tts 兜底），"
+        "可保存后用角色编辑页「试听」做最终确认；ASR 不在本检测范围。" % (errs[-1] if errs else "端点未返回音频")
+    )
+
+
+def _status_code_of(exc: Exception) -> int | None:
+    """取异常携带的 HTTP 状态码：openai SDK 挂 status_code，httpx 挂 response.status_code。"""
+    sc = getattr(exc, "status_code", None)
+    if isinstance(sc, int):
+        return sc
+    resp = getattr(exc, "response", None)
+    sc = getattr(resp, "status_code", None)
+    return sc if isinstance(sc, int) else None
+
+
+def _classify_probe_error(exc: Exception, modality: str) -> str:
+    """把底层异常翻译成可读中文，重点消除「生图/语音模型被 chat 探测」这类假失败。"""
+    sc = _status_code_of(exc)
+    msg = str(exc) or repr(exc)
+    low = msg.lower()
+    label = _MODALITY_LABELS.get(modality, modality)
+    if msg.startswith("语音(TTS)检测未通过"):
+        return msg[:300]  # _probe_speech 已给出友好结论，不再二次分类
+    if sc in (401, 403):
+        return f"API Key 无效或无权限（HTTP {sc}）：请检查 Key 是否正确、是否已开通{label}能力。"
+    if sc == 404:
+        if ("model" in low and "exist" in low) or "unknown model" in low or "model not" in low:
+            return f"模型不存在或该网关无此模型（404）：请确认模型名拼写、该服务是否提供此模型。原始信息：{msg[:180]}"
+        return (f"接口路径不存在（404）：请确认 Base URL 是否应包含 /v1，且与「{label}」标签页匹配；"
+                f"生图/语音模型不能填到聊天地址上。原始信息：{msg[:160]}")
+    if sc == 503 or "only supported on" in low or "images/generations" in low or "images/edits" in low:
+        return (f"模型与模态不匹配（HTTP {sc or 503}）：该模型不支持当前检测所用接口。"
+                f"生图模型应在「生图」标签页检测（已自动改走生图接口）；若仍报错，请确认 provider 与模型名。"
+                f"原始信息：{msg[:180]}")
+    if sc == 400:
+        return f"请求被网关判定为参数错误（400）：多为模型名/规格不匹配。原始信息：{msg[:200]}"
+    if sc == 429:
+        return "触发限流/额度不足（429）：请稍后重试或检查账户额度。"
+    if "timeout" in low or "timed out" in low or "connect" in low or "unreachable" in low:
+        return f"连接超时或无法到达 Base URL：请检查网络/代理/地址是否正确。原始信息：{msg[:160]}"
+    return msg[:300]
 
 
 async def get_image_gen_server_config(

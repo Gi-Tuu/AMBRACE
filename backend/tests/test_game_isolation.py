@@ -10,7 +10,6 @@ import dataclasses
 import json
 import os
 import random
-import tempfile
 from datetime import datetime, timezone
 
 import pytest
@@ -107,8 +106,8 @@ def test_undercover_spectator_has_no_word():
 
 # ---------------- 游戏记忆隔离（DB） ----------------
 @pytest.fixture
-def game_db(monkeypatch):
-    tmp = tempfile.mkdtemp(prefix="game_isolation_test_")
+def game_db(monkeypatch, tmp_path):
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)

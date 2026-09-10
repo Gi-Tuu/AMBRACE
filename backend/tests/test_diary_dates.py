@@ -6,7 +6,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from fastapi import FastAPI
@@ -24,9 +23,9 @@ USER = 1
 
 
 @pytest.fixture()
-def diary_db():
+def diary_db(tmp_path):
     """临时 SQLite 文件库（不触碰 backend/data），seed 一个角色 + 该角色若干日记。"""
-    tmp = tempfile.mkdtemp(prefix='char_diary_dates_')
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
     engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

@@ -149,7 +149,7 @@ def test_mg_recall_shared_uses_chain_when_present(monkeypatch):
         })
         prompt = captured["messages"][1]["content"]
         assert "一起去看海" in prompt
-        assert "你记得的近期事情" in prompt
+        assert "过往记忆片段" in prompt   # 主动消息记忆分区头含现状声明（C1-第三步）
     finally:
         loop_mod.AGENT_FLAGS["memory_chain_builder"] = False
 

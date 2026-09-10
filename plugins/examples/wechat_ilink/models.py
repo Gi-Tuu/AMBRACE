@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""wechat_ilink 渠道自有表（X5：main.py 加载期 import 注册进 Base.metadata，存量零迁移）。
+"""wechat_ilink 渠道自有表（T5：继承 PluginBase 注册进插件独立 plugin_metadata，存量零迁移）。
 
 【命名空间】渠道插件顶层模块名易撞，本插件沿用包内相对导入/文件名，新渠道须用包内相对导入或模块名前缀（registry 加载器保持现状）。
 
-归属原则（X5）：渠道的数据模型定义在渠道扩展包内，由 main.py 加载期 import 本模块注册进
-Base.metadata（main.py lifespan 在 init_db create_all 之前预加载渠道插件，保证全新安装建表）。
+归属原则（T5 修订，2026-09-10）：渠道数据模型定义在渠道扩展包内，继承
+``app.plugins.plugin_base.PluginBase``，注册进**插件独立 ``plugin_metadata``**；由 registry
+在插件加载后 ``plugin_metadata.create_all(checkfirst=True)`` 幂等建表（存量库零数据迁移；
+wechat_ilink_* 表不在主 alembic 版本链内，历史上即由插件侧建/自愈）。
 与用户记忆库严格隔离：wechat_ilink_* 表只服务本渠道，source=plugin:wechat_ilink。
 凭据安全（P0-4）：``bot_token`` 只存密文 ``bot_token_enc``（换绑后更新），绝不裸存、
 不进日志、不进前端返回。
@@ -14,10 +16,10 @@ from datetime import datetime
 from sqlalchemy import BigInteger, Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base
+from app.plugins.plugin_base import PluginBase  # T5：插件表入独立 metadata
 
 
-class WeChatILinkBinding(Base):
+class WeChatILinkBinding(PluginBase):
     """微信桥绑定 + 轻状态（一机多主：tenant_id=家庭 root、bot_account_id=ClawBot 稳定键）。
 
     唯一键（一机多主 2026-09-05，替代旧全库 UQ(character_id)）：
@@ -54,7 +56,7 @@ class WeChatILinkBinding(Base):
     )
 
 
-class WeChatILinkMessage(Base):
+class WeChatILinkMessage(PluginBase):
     """收发消息流水：幂等去重 + 配额统计 + 排障。"""
     __tablename__ = "wechat_ilink_messages"
 

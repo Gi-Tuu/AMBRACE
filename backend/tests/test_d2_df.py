@@ -23,6 +23,7 @@ from app.scheduling import ai_social as ai_social_mod
 from app.domain.emotion import care as emotion_mod  # F2-a：实现迁至 domain/emotion/care，patch 须指向定义模块
 from app.scheduling import memory_review as review_mod
 from app.scheduling import pet_care as pet_mod
+from app.utils.timeutil import now_naive_utc
 
 
 # ---------------- 通用假 DB（按 pk 的 db.get + 空查询结果） ----------------
@@ -254,7 +255,9 @@ def test_memory_review_level2_不走include_reasoning(monkeypatch):
     assert "include_reasoning" not in calls[0]
     assert calls[0].get("task") == "review"
     assert sent, "memory_review 应发送"
-    assert json.loads(sent[0]["extra"]) == {"memory_id": 9}  # _review_extra 仅保留 memory_id
+    meta = json.loads(sent[0]["extra"])
+    assert meta["memory_id"] == 9  # D2-D：_review_extra 不含 reasoning
+    assert meta["tense"] == "enduring"  # L1/L3（2026-09-09 回忆化）：extra_meta 新增 tense 标注
 
 
 def test_pet_llm_level2_不走include_reasoning(monkeypatch):
@@ -665,7 +668,7 @@ def test_arbiter_plugin_runtime_light_context默认False(monkeypatch):
 def _sam_fix_setup(monkeypatch, reply_text, hours_ago,
                    mem_content="夫妻关系：抖音运营被动收入，别乱发照片"):
     """F4/F5 共用装配：昨晚哄睡聊天 + 距今 N 小时 + LLM 返回指定文本；返回 (hints, sent, mem)。"""
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     hints = []
     sent = []
     mem = SimpleNamespace(id=9, content=mem_content, memory_type="user_info",
@@ -681,7 +684,7 @@ def _sam_fix_setup(monkeypatch, reply_text, hours_ago,
         return "用户: 宝宝晚安，抱抱我睡\n你: 嗯，抱紧了。明天要早起，别磨蹭。"
 
     async def _last_msg_time(sid):
-        return datetime.utcnow() - timedelta(hours=hours_ago)
+        return now_naive_utc() - timedelta(hours=hours_ago)
 
     async def _fake_send(session_id, character_id, user_id, content, message_type="", **kw):
         sent.append(content)

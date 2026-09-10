@@ -49,6 +49,66 @@ def _cn_now_prefix(now: datetime | None = None) -> str:
             f"{now.hour:02d}:{now.minute:02d}。")
 
 
+# ── L4（2026-09-09 主体归属治理）：一次性生活动作不主动复读 ──
+# 吃饭/做饭这类动作结束即失效（「桌上粥还温着」过了饭点再提就是复读），给出有效窗口（小时）。
+_ONE_OFF_WINDOW_HOURS = {"meal": 6}
+
+
+def _life_no_replay_on() -> bool:
+    """L4 flag（与 memory_review 共用）：life_event_no_replay（默认关；关=维持现选片）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("life_event_no_replay", False))
+    except Exception:
+        return False
+
+
+def _one_off_skip(mem, user_texts: list[str], now) -> bool:
+    """L4 纯函数：该生活记忆是否不该再主动复述（用户已闭环该主题 / 已超过动作有效窗口）。"""
+    try:
+        from app.scheduling.proactive_topic_guard import topic_bucket, topic_closed_by_user
+    except Exception:
+        return False
+    bucket = topic_bucket(mem.content or "")
+    if not bucket:
+        return False
+    if topic_closed_by_user(user_texts, bucket):
+        return True
+    win = _ONE_OFF_WINDOW_HOURS.get(bucket)
+    if win and getattr(mem, "created_at", None) is not None:
+        try:
+            age_hours = (now - mem.created_at).total_seconds() / 3600
+            if age_hours > win:
+                return True
+        except Exception:
+            return False
+    return False
+
+
+async def _recent_user_texts(user_id: int, character_id: int, limit: int = 8) -> list[str]:
+    """用户最近若干条消息（该角色最新会话，只用于判主题闭环；异常返回空，fail-open）。"""
+    from app.models.chat import ChatMessage
+    try:
+        from app.application.chat_service import get_latest_session_id
+        async with async_session_factory() as db:
+            session_id = await get_latest_session_id(user_id, character_id)
+            if not session_id:
+                return []
+            rows = (await db.execute(
+                select(ChatMessage.content)
+                .where(
+                    ChatMessage.session_id == session_id,
+                    ChatMessage.sender_type == "user",
+                )
+                .order_by(ChatMessage.id.desc())
+                .limit(limit)
+            )).all()
+        return [r[0] or "" for r in rows]
+    except Exception as e:
+        _logger.warning("life regression user texts failed: %s", e)
+        return []
+
+
 EVENT_TYPE = "life_regression"
 MAX_PER_DAY = 1            # 每角色每日最多 1 次
 LOOKBACK_HOURS = 24        # 检索近 24h 的生活记忆
@@ -148,6 +208,13 @@ async def collect_life_regression_events() -> list[dict]:
             def _hit(m) -> bool:
                 return any(kw in (m.content or "") for kw in _hot_kw) if _hot_kw else False
             lives = sorted(lives, key=lambda m: (int(_hit(m)), float(m.importance or 0)), reverse=True)[:2]
+            # L4：跳过用户已闭环主题与已过动作有效窗口的一次性生活动作（每日 ≤1 限额不变）
+            if _life_no_replay_on():
+                _utexts = await _recent_user_texts(user_id, char_id)
+                _now = datetime.now(timezone.utc).replace(tzinfo=None)
+                lives = [m for m in lives if not _one_off_skip(m, _utexts, _now)]
+            if not lives:
+                continue
             items = [
                 {"id": m.id, "content": (m.content or "")[:200], "sub_type": m.sub_type or "life_event"}
                 for m in lives

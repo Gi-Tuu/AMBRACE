@@ -11,7 +11,6 @@ group_cognition_on=True 以验证写入路径（不定义/改动 AGENT_FLAGS，�
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy import select
@@ -23,14 +22,14 @@ from app.models.memory import Memory
 
 
 @pytest.fixture()
-def gmem_db(monkeypatch):
+def gmem_db(monkeypatch, tmp_path):
     """临时库 + 把 group_memory 的 async_session_factory 指向临时工厂。"""
     import app.models  # noqa: F401
     from app.models.base import Base
     import app.db.database as db_mod
     import app.memory.service as memsvc
 
-    tmp = tempfile.mkdtemp(prefix="gmem_")
+    tmp = str(tmp_path)
     engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}",
                                  poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

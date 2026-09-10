@@ -12,7 +12,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy import select
@@ -26,8 +25,8 @@ from app.models.domain_event import DomainEvent
 
 
 @pytest.fixture()
-def tmp_db(monkeypatch):
-    tmp = tempfile.mkdtemp(prefix="session_read_")
+def tmp_db(monkeypatch, tmp_path):
+    tmp = str(tmp_path)
     engine = create_async_engine(
         f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool
     )
@@ -41,7 +40,8 @@ def tmp_db(monkeypatch):
     asyncio.run(_init())
     monkeypatch.setattr(st, "async_session_factory", factory)
     monkeypatch.setattr(st, "domain_events_enabled", lambda: True)
-    return factory
+    yield factory
+    engine.sync_engine.dispose()
 
 
 def _mk_sessions(db, updated_at_marker):

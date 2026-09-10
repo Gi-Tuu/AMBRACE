@@ -102,6 +102,37 @@ def test_flag开_命中_注入并再生成(monkeypatch, _flag_on):
     assert seen["q"] == "青岛" and seen["limit"] == 6  # memory_recall_hop_limit 默认 6
 
 
+def test_flag开_再生成仍带RECALL_只二跳一次(monkeypatch, _flag_on):
+    """§4.1（2026-09-09）off-by-one 回归：MAX_RECALL_ROUNDS=1 → 检索/再生成各至多 1 次。
+
+    模型第一跳再生成后仍输出 [RECALL] 时，不得再跑第二次检索 + 第二次 LLM。
+    """
+    from app.agent import loop
+    calls = {"search": 0, "regen": 0}
+
+    async def _fake_search(*a, **k):
+        calls["search"] += 1
+        return [{"id": 1, "content": "旧事", "type": "event", "importance": 40.0,
+                 "created_at": "2025-01-01", "epistemic_status": None}]
+
+    async def _regen(state):
+        calls["regen"] += 1
+        state["ai_response"] = "重组后的回复[RECALL]还想再查[/RECALL]"
+        return state
+
+    async def _reinforce(*a, **k):
+        return None
+
+    monkeypatch.setattr("app.memory.search_memories", _fake_search)
+    monkeypatch.setattr("app.agent.nodes.generate_response", _regen)
+    monkeypatch.setattr("app.memory.service.reinforce_memories", _reinforce)
+    st, steps = asyncio.run(loop.run_recall_loop(
+        _state("首轮[RECALL]青岛[/RECALL]"), user_id=1, character_id=7))
+    assert calls == {"search": 1, "regen": 1}   # 修复前为 {2, 2}
+    assert len(steps) == 1 and steps[0]["action"] == "RECALL"
+    assert st["ai_response"] == "重组后的回复"  # 超限残留标记由循环后兜底剥离
+
+
 def test_flag开_无命中_用首轮正文不再生成(monkeypatch, _flag_on):
     from app.agent import loop
     regen_called = {"n": 0}

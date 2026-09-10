@@ -13,7 +13,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -23,9 +22,9 @@ from app.models.memory import WorldFact
 
 
 @pytest.fixture()
-def cf_db(monkeypatch):
+def cf_db(monkeypatch, tmp_path):
     """临时库：create_all 全模型 + 把 facts 模块的 async_session_factory 指向临时工厂。"""
-    tmp = tempfile.mkdtemp(prefix="ariadne_f_")
+    tmp = str(tmp_path)
     engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
 

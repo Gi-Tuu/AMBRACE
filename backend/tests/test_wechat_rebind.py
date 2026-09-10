@@ -10,7 +10,6 @@
 import asyncio
 import os
 import pathlib
-import tempfile
 
 import pytest
 from fastapi import FastAPI
@@ -41,10 +40,10 @@ def wc_plugin():
 
 
 @pytest.fixture()
-def wc_db(monkeypatch, wc_plugin):
+def wc_db(monkeypatch, wc_plugin, tmp_path):
     """临时 SQLite 文件库：patch 各模块绑定的 async_session_factory（不触碰 backend/data）。"""
     monkeypatch.setenv("AMBRACE_SECRET_KEY", _SECRET_KEY)
-    tmp = tempfile.mkdtemp(prefix="wechat_rebind_test_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -54,6 +53,10 @@ def wc_db(monkeypatch, wc_plugin):
         from app.models.base import Base
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # T5（2026-09-10）：插件表已从 Base.metadata 剥离到独立 plugin_metadata，
+            # 本临时库须显式补建插件表（插件已在本文件 fixture 加载，plugin_metadata 已注册对应表）。
+            from app.plugins.plugin_base import plugin_metadata
+            await conn.run_sync(plugin_metadata.create_all)
 
     asyncio.run(_init())
     import app.db.database as db_mod

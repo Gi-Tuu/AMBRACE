@@ -9,7 +9,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from fastapi import FastAPI
@@ -30,9 +29,9 @@ ENV_KEY = "sk-env12345678"
 
 
 @pytest.fixture()
-def llm_db(monkeypatch):
+def llm_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：patch async_session_factory（不触碰 backend/data）。"""
-    tmp = tempfile.mkdtemp(prefix='llmcfg_test_')
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
     engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

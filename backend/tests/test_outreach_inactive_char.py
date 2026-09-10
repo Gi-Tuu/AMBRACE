@@ -13,7 +13,6 @@
 """
 import asyncio
 import os
-import tempfile
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -109,9 +108,9 @@ def test_门控_查询异常_fail_open不停发(_flag, monkeypatch):
 # ── 最近用户消息查询（临时库）──
 
 @pytest.fixture()
-def tmp_db(monkeypatch):
+def tmp_db(monkeypatch, tmp_path):
     """临时 SQLite：create_all 全模型 + 把 arbiter 的 session factory 指向临时工厂。"""
-    tmp = tempfile.mkdtemp(prefix="inactive_char_")
+    tmp = str(tmp_path)
     engine = create_async_engine(
         f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool
     )
@@ -126,7 +125,8 @@ def tmp_db(monkeypatch):
 
     asyncio.run(_init())
     monkeypatch.setattr(arbiter, "async_session_factory", factory)
-    return factory
+    yield factory
+    engine.sync_engine.dispose()
 
 
 def test_查最近用户消息_无任何消息返回None(tmp_db):

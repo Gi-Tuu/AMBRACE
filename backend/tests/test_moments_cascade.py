@@ -13,7 +13,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy import func, select
@@ -25,8 +24,8 @@ from app.models.life import AIMoment, MomentAILike, MomentComment, MomentLike
 
 
 @pytest.fixture()
-def tmp_db(monkeypatch):
-    tmp = tempfile.mkdtemp(prefix="moments_cascade_")
+def tmp_db(monkeypatch, tmp_path):
+    tmp = str(tmp_path)
     engine = create_async_engine(
         f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool
     )
@@ -50,7 +49,8 @@ def tmp_db(monkeypatch):
         })
 
     monkeypatch.setattr(moments_api, "append_domain_event", _append)
-    return factory, calls
+    yield factory, calls
+    engine.sync_engine.dispose()
 
 
 def _mk_moment(db, mid, character_id=None, user_id=None, sender="user"):

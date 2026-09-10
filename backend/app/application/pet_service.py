@@ -303,21 +303,24 @@ async def get_activities(
 
 
 async def abandon_pet(pet_id: int, user_id: int) -> bool:
-    """遗弃宠物（硬删除 pets 行 + 互动展示区记录 + 写'遗弃'记忆给所有活跃角色；不影响角色与用户既有记忆）"""
+    """遗弃宠物（软删：置 abandoned_at，保留 pets 行 → 活动与记忆可追溯，不撞外键、不再 500）。
+
+    先落「遗弃」活动与角色记忆（此时 pet 行仍在、外键有效），最后才置 abandoned_at 并 commit；
+    已有活动记录的宠物不会再触发 pet_activities.pet_id RESTRICT → 事务回滚的 IntegrityError。
+    幂等：已遗弃（abandoned_at 非空）直接返回 False，不重复写。
+    """
     async with async_session_factory() as db:
         pet = await db.get(Pet, pet_id)
         if pet is None or pet.user_id != user_id:
             return False
+        if getattr(pet, "abandoned_at", None) is not None:
+            return False  # 已遗弃，幂等
         name = pet.name
         species = species_label(pet.species)
-        await db.delete(pet)
-        await db.commit()
-    _logger.info("Pet abandoned: id=%d name=%s user=%d", pet_id, name, user_id)
-    # 记录遗弃（先落活动，再写记忆；表独立于 pets，删除宠物后仍保留）
-    await log_activity(pet_id, user_id, "abandon", f"用户遗弃了{name}（{species}）")
-    # 写记忆：让所有活跃角色知道宠物被遗弃（记忆与角色/用户绑定，不随宠物删除）
-    try:
-        async with async_session_factory() as db:
+        # 1) 先落「遗弃」活动（此时 pet 行仍在，外键有效）
+        await log_activity(pet_id, user_id, "abandon", f"用户遗弃了{name}（{species}）")
+        # 2) 写记忆给所有活跃角色（既有逻辑，保留）
+        try:
             chars = (
                 await db.execute(
                     select(AICharacter).where(
@@ -326,23 +329,27 @@ async def abandon_pet(pet_id: int, user_id: int) -> bool:
                     )
                 )
             ).scalars().all()
-        for ch in chars:
-            try:
-                await save_memory(
-                    user_id=user_id,
-                    character_id=ch.id,
-                    memory_type="event",
-                    content=f"用户遗弃了宠物{name}（{species}）",
-                    importance=2,
-                    source="pet",
-                    skip_dedup=True,
-                    speaker_type="user", speaker_id=user_id,
-                    epistemic_status="FACT",
-                )
-            except Exception as e:
-                _logger.warning("Abandon memory char=%d failed: %s", ch.id, e)
-    except Exception as e:
-        _logger.warning("Abandon memory save failed: %s", e)
+            for ch in chars:
+                try:
+                    await save_memory(
+                        user_id=user_id,
+                        character_id=ch.id,
+                        memory_type="event",
+                        content=f"用户遗弃了宠物{name}（{species}）",
+                        importance=2,
+                        source="pet",
+                        skip_dedup=True,
+                        speaker_type="user", speaker_id=user_id,
+                        epistemic_status="FACT",
+                    )
+                except Exception as e:
+                    _logger.warning("Abandon memory char=%d failed: %s", ch.id, e)
+        except Exception as e:
+            _logger.warning("Abandon memory save failed: %s", e)
+        # 3) 最后置软删标记（不 db.delete，外键永不悬空）
+        pet.abandoned_at = _now_naive()
+        await db.commit()
+    _logger.info("Pet abandoned(soft): id=%d name=%s user=%d", pet_id, name, user_id)
     return True
 
 # ── Phase 3：AI 自主养宠物（owner_type="ai"） ──
@@ -359,7 +366,7 @@ async def list_ai_pets(user_id: int) -> list[dict]:
             ).order_by(AICharacter.id)
         )).scalars().all()
         pet_rows = (await db.execute(
-            select(Pet).where(Pet.user_id == user_id, Pet.owner_type == "ai")
+            select(Pet).where(Pet.user_id == user_id, Pet.owner_type == "ai", Pet.abandoned_at.is_(None))
         )).scalars().all()
         pet_by_char: dict[int, Pet] = {p.owner_id: p for p in pet_rows}
         items = []
@@ -387,7 +394,8 @@ async def ai_adopt(character_id: int, user_id: int, species: str, name: str) -> 
             raise ValueError("角色不存在")
         existing = (await db.execute(
             select(Pet).where(
-                Pet.user_id == user_id, Pet.owner_type == "ai", Pet.owner_id == character_id
+                Pet.user_id == user_id, Pet.owner_type == "ai", Pet.owner_id == character_id,
+                Pet.abandoned_at.is_(None),
             )
         )).scalars().all()
         if len(existing) >= MAX_AI_PETS:

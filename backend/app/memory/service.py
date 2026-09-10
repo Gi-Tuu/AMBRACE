@@ -18,6 +18,8 @@ from app.memory.constants import (  # noqa: F401  # F4 再导出
     DECAY_MAX_PCT,
     VECTOR_DEDUP_THRESHOLD, S_DEFAULT, S_MIN_DAYS, S_MAX_DAYS,
     REINFORCE_FACTOR_WRITE,
+    EPISODIC_REVIEW_S_CAP, EPISODIC_REVIEW_COUNT_CAP,
+    PLAN_REVIEW_S_CAP, PLAN_REVIEW_COUNT_CAP,
 )
 from app.memory.decay import retention_pct  # noqa: F401  # F4 再导出
 from app.memory.bm25_index import search as bm25_search, invalidate as bm25_invalidate  # noqa: F401  # F4 再导出（检索增强）
@@ -86,25 +88,72 @@ def _merge_derived(raw, extra_ids: list[int]) -> str:
     return json.dumps(cur, ensure_ascii=False)
 
 
-def _apply_reinforce(m, factor: float, now) -> None:
+def _review_caps_for(m) -> tuple[float | None, int | None]:
+    """L2（2026-09-09 主动复习「回忆化」）：一次性事件经"主动复习成功"强化的 (S 上限, 次数上限)。
+
+    - 已过期/失效计划与瞬时状态收死（PLAN_REVIEW_*，防养出 7018 那种 S=60/复习 14 次的永生记忆）；
+    - 真正的往事（episodic）保留适度强化空间（EPISODIC_REVIEW_*，中位而非全砍，不误伤正常回忆）；
+    - 恒久记忆（enduring）不上限，仍可走到 S_MAX_DAYS；
+    - 仅 channel="review"（AI 主动翻旧账）收口；检索/写入命中（retrieve/write）维持轻量强化。
+    flag review_reinforce_event_cap 关 = 全部返回 None（旧强化行为，可到 60）。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        if not AGENT_FLAGS.get("review_reinforce_event_cap", True):
+            return None, None
+    except Exception:
+        return None, None
+    from app.memory.tense import classify_tense, is_plan_expired
+    tense = classify_tense(m)
+    if tense == "plan":
+        if is_plan_expired(m):
+            return PLAN_REVIEW_S_CAP, PLAN_REVIEW_COUNT_CAP
+        return EPISODIC_REVIEW_S_CAP, EPISODIC_REVIEW_COUNT_CAP  # 有效期内安排：适度（临期确认仍可巩固）
+    if tense == "transient":
+        return PLAN_REVIEW_S_CAP, PLAN_REVIEW_COUNT_CAP
+    if tense == "episodic":
+        return EPISODIC_REVIEW_S_CAP, EPISODIC_REVIEW_COUNT_CAP
+    return None, None
+
+
+def _apply_reinforce(m, factor: float, now, *, channel: str = "retrieve") -> None:
     """艾宾浩斯强化（同步，操作 ORM 对象，由调用方 commit）：
     S *= factor（上限 S_MAX）、review_count+1、刷新 last_reinforce_at、
     取消删除倒计时，importance 回升到至少"复习半日后保留率"。
     强化视为一次成功复习：排下次主动复习时间（now + S 天）。is_locked 记忆不参与。
+
+    channel: write=写入查重命中 / retrieve=检索命中 / review=主动复习成功。
+    L2（2026-09-09）：review 通道对一次性事件按 tense 分流收口（S/次数封顶、
+    达上限后退出主动复习轮转 next_review_at=None），检索/写入通道不受影响。
     """
     import math
     from datetime import timedelta
     if m.is_locked:
         return
+    s_cap: float | None = None
+    count_cap: int | None = None
+    if channel == "review":
+        s_cap, count_cap = _review_caps_for(m)
+    if count_cap is not None and (m.review_count or 0) >= count_cap:
+        # 已达复习强化上限：不再强化、不再延长主动复习周期（停止主动翻旧账），检索仍可见
+        m.last_reinforce_at = now
+        m.next_review_at = None
+        m.updated_at = now
+        return
     s = float(m.strength_days or S_DEFAULT)
-    m.strength_days = min(S_MAX_DAYS, max(S_MIN_DAYS, s * factor))
+    s_max = S_MAX_DAYS if s_cap is None else min(S_MAX_DAYS, float(s_cap))
+    m.strength_days = min(s_max, max(S_MIN_DAYS, s * factor))
     m.review_count = (m.review_count or 0) + 1
     m.last_reinforce_at = now
     m.delete_at = None
     s_new = float(m.strength_days)
     pct = min(DECAY_MAX_PCT, max(float(m.importance or 40.0), math.exp(-0.5 / s_new) * 120.0))
     m.importance = pct
-    m.next_review_at = now + timedelta(days=s_new)
+    # 一次性事件达次数上限后不再排远期主动复习（退出复习轮转，保留检索可见）
+    if channel == "review" and count_cap is not None and (m.review_count or 0) >= count_cap:
+        m.next_review_at = None
+    else:
+        m.next_review_at = now + timedelta(days=s_new)
     m.updated_at = now
 
 
@@ -112,10 +161,13 @@ async def reinforce_memories(
     memory_ids: list[int],
     factor: float,
     debounce_hours: float = 0.0,
+    *,
+    channel: str = "retrieve",
 ) -> None:
     """艾宾浩斯强化（独立 session 版）：S *= factor + review_count+1 + 刷新遗忘起点。
 
     debounce_hours > 0 时距上次强化不足该时长则跳过（检索命中防抖）。
+    channel 透传 _apply_reinforce（review=主动复习成功，受 L2 一次性事件收口约束）。
     """
     from datetime import timedelta
     if not memory_ids:
@@ -132,7 +184,7 @@ async def reinforce_memories(
                 last = last.replace(tzinfo=None) if last.tzinfo else last
                 if (now - last) < timedelta(hours=debounce_hours):
                     continue
-            _apply_reinforce(m, factor, now)
+            _apply_reinforce(m, factor, now, channel=channel)
         await db.commit()
 
 

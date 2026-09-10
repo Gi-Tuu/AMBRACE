@@ -639,7 +639,7 @@ async def delete_message(
                 pass
             await db.delete(mem)
             _n_mem += 1
-        _logger.info("Deleted %d memories linked to message %d", mem_result.scalars().all().__len__(), message_id)
+        _logger.info("Deleted %d memories linked to message %d", _n_mem, message_id)
     except Exception as e:
         _logger.warning("Failed to delete memories for msg %d: %s", message_id, e)
 

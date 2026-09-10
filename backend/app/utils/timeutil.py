@@ -39,8 +39,26 @@ def app_local_hour() -> int:
 
 
 def now_naive_utc() -> datetime:
-    """当前 UTC 时间（naive，匹配库内存储约定）"""
+    """当前 UTC 时间（naive，匹配库内存储约定）——全库唯一写库时间入口。"""
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def utcnow_naive() -> datetime:
+    """[deprecated] 等价 now_naive_utc，保留兼容；新代码请用 now_naive_utc（T9 收敛，2026-09-10）。"""
+    return now_naive_utc()
+
+
+def to_naive_utc(dt: datetime | None) -> datetime | None:
+    """把任意 datetime 归一为 naive UTC，落库前统一调用，杜绝 aware 写裸列。
+
+    带 tzinfo 先 astimezone(UTC) 再去 tzinfo（保持同一时刻）；本身就是 naive UTC
+    或 None 时原样透传，幂等。
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def beijing_day_start_utc() -> datetime:

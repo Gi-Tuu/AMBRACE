@@ -21,7 +21,7 @@ class ChatSession(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -84,7 +84,7 @@ class ChatGroupMember(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     group_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_groups.id"), nullable=False, index=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     # 静音（群聊调度 L1，2026-08-25）：静音角色不参与自动选择（被 @ 仍强制回）
     muted: Mapped[bool] = mapped_column(Boolean, default=False)
 class ChatGroupMessage(Base):
@@ -93,7 +93,7 @@ class ChatGroupMessage(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     group_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_groups.id"), nullable=False, index=True)
     sender_type: Mapped[str] = mapped_column(String(10), default="ai")  # user / ai
-    character_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=True)
+    character_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     # 1=用户 @ 该角色后的回应，需弹通知（@我的才弹，2026-08-15）
@@ -109,7 +109,7 @@ class GroupMemory(Base):
     __tablename__ = "group_memories"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_groups.id"), nullable=False, index=True)
+    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_groups.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     # 一轮聚合的归属（可空）：同一轮群聊的多条公开发言汇成 1 条群事件时共享 round_id
     round_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
@@ -131,8 +131,8 @@ class AIChat(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    character_a_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
-    character_b_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False, index=True)
+    character_a_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
+    character_b_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
     speaker_id: Mapped[int] = mapped_column(Integer, nullable=False)  # 发言角色 id（a 或 b）
     round_seq: Mapped[int] = mapped_column(Integer, default=0)  # 同事件内轮次（0 起，0=事件首条）
     content: Mapped[str] = mapped_column(Text, nullable=False)

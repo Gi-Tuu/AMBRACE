@@ -15,7 +15,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy import select
@@ -30,7 +29,7 @@ async def _noop(*a, **k):
 
 
 @pytest.fixture()
-def c_db(monkeypatch):
+def c_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：monkeypatch 相关模块的 async_session_factory（不触碰 backend/data）。
 
     用假 Chroma collection 隔离向量通道（不触碰真实 ChromaDB），使测试只验证 SQLite 状态过滤 +
@@ -51,7 +50,7 @@ def c_db(monkeypatch):
     import app.agent.trace as trace
     import app.events as events
 
-    tmp = tempfile.mkdtemp(prefix="memory_supersede_test_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

@@ -112,6 +112,22 @@ def router():
     return r
 
 
+def plugin_base():
+    """返回插件独立 ORM 基类（T5，2026-09-10）：插件确需自带关系表时继承它。
+
+    优先用 PluginStore KV（简单配置/状态/凭据）；确需关系表（多行列、要索引/唯一约束/流水）
+    才用 ORM，且：
+    - 继承本基类（**禁止** ``from app.models.base import Base``）；
+    - 表名带插件前缀、不建跨 metadata 外键、schema 演进靠插件自身幂等建表/heal。
+
+    与 ``from app.plugins.plugin_base import PluginBase`` 等价（同类），本入口供
+    「能力都从 sdk 取」风格使用。
+    """
+    from app.plugins.plugin_base import PluginBase
+
+    return PluginBase
+
+
 def register_game(game_type: str, engine_cls, meta: dict) -> None:
     """X1（2026-08-31）：注册游戏扩展包（仅插件 main.py 加载期可调）。
 

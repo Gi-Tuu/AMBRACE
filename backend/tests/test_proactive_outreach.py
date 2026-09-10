@@ -13,12 +13,13 @@
 import asyncio
 import os
 import random
-import tempfile
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
+
+from app.utils.timeutil import now_naive_utc
 
 from app.domain.proactivity import outreach as oc
 from app.scheduling import arbiter
@@ -120,9 +121,9 @@ def test_has_invitation_pure():
 # ═══════════════════ topic_tracker 时效加载（临时库） ═══════════════════
 
 @pytest.fixture()
-def topic_db(monkeypatch):
+def topic_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：patch app.db.database.async_session_factory（不触碰 backend/data）。"""
-    tmp = tempfile.mkdtemp(prefix="fresh_topic_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -148,7 +149,7 @@ def test_load_fresh_active_topics_time_governance(topic_db):
     from app.models.character import AICharacter
     from app.models.memory import ConversationTopic
 
-    now = datetime.utcnow()
+    now = now_naive_utc()
 
     async def _seed():
         async with topic_db() as db:
@@ -453,7 +454,7 @@ def test_active_channel_persona_uses_fresh_topics(topic_db, monkeypatch):
     from app.models.character import AICharacter
     from app.models.memory import ConversationTopic
 
-    now = datetime.utcnow()
+    now = now_naive_utc()
 
     async def _seed():
         async with topic_db() as db:

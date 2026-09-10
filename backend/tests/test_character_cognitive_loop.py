@@ -9,7 +9,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from fastapi import FastAPI
@@ -26,9 +25,9 @@ USER = 1
 
 
 @pytest.fixture()
-def char_db():
+def char_db(tmp_path):
     """临时 SQLite 文件库（不触碰 backend/data），种子一个角色并返回 (factory, character_id)。"""
-    tmp = tempfile.mkdtemp(prefix='char_cognitive_')
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
     engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

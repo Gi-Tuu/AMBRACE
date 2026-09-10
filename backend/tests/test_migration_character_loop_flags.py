@@ -6,7 +6,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy import text as sa_text
@@ -18,8 +17,8 @@ from app.models.character import AICharacter
 
 
 @pytest.fixture
-def mig_db():
-    tmp = tempfile.mkdtemp(prefix="char_loop_mig_")
+def mig_db(tmp_path):
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -55,13 +54,13 @@ def test_migrate_updates_existing_zero_rows(mig_db):
     asyncio.run(_run())
 
 
-def test_migrate_skips_when_columns_missing(mig_db):
+def test_migrate_skips_when_columns_missing(mig_db, tmp_path):
     """列缺失（远古库首次启动）→ 跳过且不写哨兵、不崩（加列已由 bootstrap 迁移承接，3.8 收敛）。
 
     哨兵不写是关键：bootstrap 补列后的下次启动仍会执行存量 0→1 迁移。
     """
     # 再造一个旧表：去掉两个开关列（模拟老 schema；不用 create_all 以免自动带新列）
-    tmp = tempfile.mkdtemp(prefix="char_loop_old_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "old.db")
     old_engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
 

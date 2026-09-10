@@ -5,6 +5,7 @@ from sqlalchemy import select
 from app.db.database import async_session_factory
 from app.models.life import ScheduledEvent
 from app.utils.logger import get_logger
+from app.utils.timeutil import to_naive_utc
 
 _logger = get_logger("scheduler.promise")
 
@@ -37,7 +38,7 @@ async def create_event(timer_info: dict) -> ScheduledEvent | None:
             user_id=timer_info["user_id"],
             character_id=timer_info["character_id"],
             session_id=timer_info["session_id"],
-            trigger_at=timer_info["trigger_at"],
+            trigger_at=to_naive_utc(timer_info["trigger_at"]),
             event_type=timer_info.get("event_type", "back"),
             source_message_id=timer_info.get("source_message_id"),
             owner=owner,
@@ -54,23 +55,59 @@ async def create_event(timer_info: dict) -> ScheduledEvent | None:
 
 
 async def get_due_events() -> list[ScheduledEvent]:
-    """获取已到期且状态为 pending 的事件（Python 层二次判定，规避 naive/aware 比较隐患）"""
+    """获取已到期且状态为 pending 的事件（Python 层二次判定，规避 naive/aware 比较隐患）。
+
+    §4.3（2026-09-09）：运行期同样按 GRACE_MINUTES 回收——超过宽限期的 pending 一律标
+    expired 且不再返回。此前只有启动时的 recover_overdue_events 回收，服务器长期不重启时
+    一个被限额/DND 反复挡下的事件会一直 due，限制解除后补发严重过期的「我回来了/我办完事了」。
+
+    注：SQL 侧只加 ``trigger_at IS NOT NULL`` 粗筛，不做时间上下界比较——该列在 SQLite
+    按字符串存储，一旦历史行混入带偏移的写法会让 SQL 比较与 Python 判定不等价，
+    故到期/过期的精判全部留在 Python 层（naive 一律按 UTC 解释），保证行为等价。
+    """
     now = datetime.now(timezone.utc)
     async with async_session_factory() as db:
         result = await db.execute(
-            select(ScheduledEvent).where(ScheduledEvent.status == "pending")
+            select(ScheduledEvent).where(
+                ScheduledEvent.status == "pending",
+                ScheduledEvent.trigger_at.is_not(None),
+            )
         )
         events = list(result.scalars().all())
-    due = []
+    due: list[ScheduledEvent] = []
+    expired_ids: list[int] = []
     for e in events:
         ts = e.trigger_at
         if ts is None:
             continue
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
-        if ts <= now:
+        if ts > now:
+            continue
+        overdue_min = (now - ts).total_seconds() / 60
+        if overdue_min > GRACE_MINUTES:
+            expired_ids.append(e.id)  # 运行期回收：过宽限即过期，不再补发
+        else:
             due.append(e)
+    if expired_ids:
+        await _mark_expired(expired_ids)
     return due
+
+
+async def _mark_expired(event_ids: list[int]) -> None:
+    """独立短事务把超宽限的 pending 事件置 expired（幂等：只改仍为 pending 的；失败只记 warning）。"""
+    try:
+        async with async_session_factory() as db:
+            for eid in event_ids:
+                ev = await db.get(ScheduledEvent, eid)
+                if ev is not None and ev.status == "pending":
+                    ev.status = "expired"
+            await db.commit()
+            _logger.info(
+                "Runtime expired %d stale scheduled events: %s", len(event_ids), event_ids
+            )
+    except Exception as e:
+        _logger.warning("Runtime expire stale scheduled events failed ids=%s: %s", event_ids, e)
 
 
 async def recover_overdue_events() -> None:

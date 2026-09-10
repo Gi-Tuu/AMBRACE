@@ -66,13 +66,58 @@ _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     ("plugins", "sha256"),
     ("plugins", "consented_permissions"),
     ("plugins", "consented_at"),
-    # ── 一机多主 / 渠道绑定 per-账号化（2026-09-05，28→31）──
-    # 插件自有表：表不存在=渠道插件未装载（全新/未装渠道）→ 判落后走 upgrade，
-    # a7b8c9d0e1f2 迁移段以 _has_table 守卫自动跳过，安全。
+    # ── 一机多主 / 渠道绑定 per-账号化（2026-09-05，28→31；T5 2026-09-10 回退到 29）──
+    # channel_bindings 是【主表】（app/models/channel/__init__.py），保留。
     ("channel_bindings", "tenant_id"),
-    ("wechat_ilink_bindings", "tenant_id"),
-    ("douyin_accounts", "tenant_id"),
+    # T5（2026-09-10）：以下两条为【插件表】，已移出主 Base.metadata、不在主 schema 判别内 ——
+    # 插件表的存在性由 registry.ensure_plugin_tables() 幂等保证（未装载渠道=本就不该有表），
+    # 若继续列为主哨兵，未装某渠道的部署会被反复判「落后」而去 upgrade，
+    # 但版本链并不建 wechat_ilink_*（baseline 只建 douyin_*），反而造成无意义重放。
+    # ("wechat_ilink_bindings", "tenant_id"),   # 移除（插件表，registry 建）
+    # ("douyin_accounts", "tenant_id"),         # 移除（插件表；版本链 baseline 仍建、_migration_chain_tables 自动判别仍覆盖）
 ]
+
+
+def _migration_chain_tables(cfg: Config) -> set[str]:
+    """遍历版本链全部迁移脚本，正则收集 ``create_table('x'`` 的表名（含插件/渠道等非 ORM 表）。
+
+    §6.3（2026-09-09）：把「当前 schema」判别从人工列哨兵升级为自动比对——版本链建过的表
+    必须全部存在；缺任一即判落后走 upgrade head（迁移自带 has_table 守卫，幂等补齐）。
+    避免未来新增「只在某迁移 create_table、不在主 ORM」的表时，忘加哨兵列导致新库永久缺表。
+    """
+    import re
+
+    script = ScriptDirectory.from_config(cfg)
+    names: set[str] = set()
+    for rev in script.walk_revisions():
+        # rev.path 一般为相对 script_location；拼绝对路径读取，读不到则跳过（保守）。
+        path = Path(rev.path) if Path(rev.path).is_absolute() else (_ALEMBIC_DIR / rev.path)
+        if not path.exists():
+            continue
+        try:
+            txt = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        names.update(re.findall(r"create_table\(\s*[\'\"]([a-zA-Z0-9_]+)[\'\"]", txt))
+    return names
+
+
+def _schema_is_current_auto(sync_url: str, cfg: Config) -> bool:
+    """自动比对「版本链建过的全部表」vs 实际库表：need ⊆ have 才算当前 schema。
+
+    与 _schema_is_current（人工 31 列哨兵）取「与」使用——两判都过才 stamp，任一存疑
+    （表缺失/版本链不可读）都走 upgrade head，保守且幂等。
+    """
+    engine = create_engine(sync_url, poolclass=NullPool)
+    try:
+        insp = sa_inspect(engine)
+        have = set(insp.get_table_names())
+        need = _migration_chain_tables(cfg)
+        if not need:
+            return False  # 版本链为空/不可读 → 保守判非当前，走 upgrade 补齐
+        return need.issubset(have)
+    finally:
+        engine.dispose()
 
 
 def _alembic_config() -> Config:
@@ -116,7 +161,7 @@ def _has_any_table(sync_url: str) -> bool:
 
 
 def _schema_is_current(sync_url: str) -> bool:
-    """判别库是否已是当前 schema（链上新增的 31 列全部存在）。
+    """判别库是否已是当前 schema（链上新增的哨兵列全部存在）。
 
     仅当「每一张相关表都存在且含对应列」才返回 True；任一表缺失/列缺失 → False（判为落后库）。
     保守取向：宁可判为「落后」去 upgrade head（正确且幂等），不误判为「当前」去 stamp。
@@ -165,8 +210,10 @@ def _ensure_alembic_revision_sync() -> str:
             # 全新空库：无任何表 → 仅标记为已迁移到 head（不重放）。
             command.stamp(cfg, head)
             return f"stamped:{head}"
-        if _schema_is_current(sync_url):
+        if _schema_is_current(sync_url) and _schema_is_current_auto(sync_url, cfg):
             # 有表、无版本，且 schema 已是当前（init_db/create_all 已建到当前模型）→ 标记，不重放。
+            # §6.3：人工列哨兵（_schema_is_current）与版本链建表全集自动比对取「与」，
+            # 防新增非 ORM 表漏加哨兵时新库被误判当前而永久缺表。
             command.stamp(cfg, head)
             return f"stamped:{head}"
         # 非空老库：schema 落后（缺链上新增列）→ 整链重放补齐（守卫幂等，安全）。

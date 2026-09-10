@@ -8,7 +8,6 @@
 """
 import asyncio
 import os
-import tempfile
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -28,9 +27,9 @@ async def _noop(*a, **k):
 
 
 @pytest.fixture()
-def cdb(monkeypatch):
+def cdb(monkeypatch, tmp_path):
     """临时 SQLite 文件库：把 chain_builder / api 归属校验 / vector_store 等都指向临时库。"""
-    tmp = tempfile.mkdtemp(prefix="chain_builder_test_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

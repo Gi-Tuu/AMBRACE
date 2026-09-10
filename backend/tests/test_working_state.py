@@ -9,18 +9,19 @@ LLM 提取是外部服务边界，测试在 service 边界 patch chat_completion
 """
 import asyncio
 import os
-import tempfile
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.utils.timeutil import now_naive_utc
+
 
 @pytest.fixture
-def ws_db(monkeypatch):
-    tmp = tempfile.mkdtemp(prefix="ws_m3a_test_")
+def ws_db(monkeypatch, tmp_path):
+    tmp = str(tmp_path)
     engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -62,7 +63,7 @@ def _seed_turn(factory, *, memories: list[str], memory_ids: list[int] | None = N
                 db.add(Memory(id=(memory_ids or [500, 501, 502, 503])[i], user_id=1, character_id=11,
                               memory_type="event", content=content, scope="private"))
             await db.commit()
-        return datetime.utcnow() - timedelta(minutes=5)
+        return now_naive_utc() - timedelta(minutes=5)
 
     return asyncio.run(_run())
 
@@ -165,7 +166,7 @@ def test_evaluate_turn_creates_row_and_supersedes(ws_db, monkeypatch):
 
     # 第二轮：30 分钟节流生效 → 不写新行
     _patch_extraction(monkeypatch, {"ongoing": [], "relationship_notes": [], "open_questions": []})
-    turn2 = datetime.utcnow()
+    turn2 = now_naive_utc()
 
     async def _run2():
         await svc.maybe_evaluate_working_state(1, 11, 7, "又说话了", "嗯")
@@ -204,7 +205,7 @@ def test_evaluate_turn_supersedes_old_active_row(ws_db, monkeypatch):
     async def _age():
         async with ws_db() as db:
             row = (await db.execute(select(Memory).where(Memory.memory_type == "working_state"))).scalars().first()
-            row.created_at = datetime.utcnow() - timedelta(hours=2)
+            row.created_at = now_naive_utc() - timedelta(hours=2)
             db.add(Memory(id=900, user_id=1, character_id=11, memory_type="event",
                           content="考试定在周四", scope="private"))
             await db.commit()
@@ -212,7 +213,7 @@ def test_evaluate_turn_supersedes_old_active_row(ws_db, monkeypatch):
     asyncio.run(_age())
     _patch_extraction(monkeypatch, {"ongoing": [{"topic": "考试复习", "detail": "v2 定在周四", "evidence_ids": [900]}],
                                     "relationship_notes": [], "open_questions": []})
-    turn2 = datetime.utcnow()
+    turn2 = now_naive_utc()
 
     async def _run2():
         await svc.maybe_evaluate_working_state(1, 11, 7, "考试定在周四了", "好好复习")

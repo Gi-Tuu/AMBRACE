@@ -34,17 +34,36 @@ def _run(coro):
 
 
 async def _cleanup():
+    from app.models.user import User
+
     for sid in list(mcp_manager._conns.keys()):
         mcp_manager._conns.pop(sid, None)
     async with async_session_factory() as db:
         await db.execute(delete(McpCallLog).where(McpCallLog.user_id == UID))
         await db.execute(delete(MCPServer).where(MCPServer.name.like(TEST_PREFIX + "%")))
+        # 引擎已强制外键（2026-09-09）：父 users 前置。仅删独立测试用户，主账号 id=1 为会话种子/共享，保留。
+        await db.execute(delete(User).where(User.id == UID))
         await db.commit()
+
+
+async def _ensure_test_users():
+    """确保主账号 ADMIN=1 与独立测试用户 UID=9200 存在（外键前置：mcp_servers.user_id FK）。"""
+    from app.models.user import User
+    from sqlalchemy import select as _sel
+
+    async with async_session_factory() as db:
+        exist = set((await db.execute(_sel(User.id).where(User.id.in_((ADMIN, UID))))).scalars().all())
+        for uid in (ADMIN, UID):
+            if uid not in exist:
+                db.add(User(id=uid, username=f"mcp_ph4_{uid}", nickname="MCP PH4 测试", is_admin=(uid == ADMIN)))
+        if set((ADMIN, UID)) - exist:
+            await db.commit()
 
 
 @pytest.fixture(autouse=True)
 def _isolate():
     _run(_cleanup())
+    _run(_ensure_test_users())
     yield
     _run(_cleanup())
 

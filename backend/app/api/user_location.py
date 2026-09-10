@@ -98,10 +98,10 @@ async def update_user_location(data: UserLocationUpdate, user_id: int = Depends(
                             _u.location_city = city
                             await _db.commit()
                             # §20（2026-09-04）：GPS 反查城市落定后 upsert 用户级事实源（零 LLM，flag 开才写）
+                            # 细粒度（2026-09-10）：改按 location 单槽门控（默认关=零行为变化）
                             try:
-                                from app.agent.loop import AGENT_FLAGS as _af
-                                if bool(_af.get("global_user_facts", False)):
-                                    from app.memory.user_facts import upsert_user_fact
+                                from app.memory.user_facts import upsert_user_fact, user_fact_slot_enabled
+                                if user_fact_slot_enabled("location"):
                                     await upsert_user_fact(user_id, "location", city, source="gps")
                             except Exception:
                                 pass
@@ -133,12 +133,11 @@ async def update_user_location(data: UserLocationUpdate, user_id: int = Depends(
         await db.refresh(user)
         _final_city = user.location_city or user.user_location
         # §20（2026-09-04）：跨角色用户事实——GPS/自定义城市落定后 upsert 用户级事实源
-        # （flag global_user_facts 开才写；零 LLM；失败静默）。放 commit 之后，避免与 DB 事务耦合。
+        # （零 LLM；失败静默；细粒度 2026-09-10 起按 location 单槽门控）。放 commit 之后，避免与 DB 事务耦合。
         if _final_city:
             try:
-                from app.agent.loop import AGENT_FLAGS as _af
-                if bool(_af.get("global_user_facts", False)):
-                    from app.memory.user_facts import upsert_user_fact
+                from app.memory.user_facts import upsert_user_fact, user_fact_slot_enabled
+                if user_fact_slot_enabled("location"):
                     await upsert_user_fact(user_id, "location", _final_city, source="gps")
             except Exception:
                 pass

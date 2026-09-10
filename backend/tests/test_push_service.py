@@ -6,7 +6,6 @@ mock 掉 fcm_provider，禁止真发 FCM。
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -17,9 +16,9 @@ from app.application.push.fcm_provider import FcmSendResult
 
 
 @pytest.fixture()
-def push_db(monkeypatch):
+def push_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：patch push_service 绑定的 async_session_factory。"""
-    tmp = tempfile.mkdtemp(prefix='push_test_')
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
     engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

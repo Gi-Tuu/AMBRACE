@@ -9,7 +9,6 @@ _settle_game 原先不做 persist_state 就跑 finalize_game——其 SELECT 触
 import asyncio
 import json
 import os
-import tempfile
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -19,8 +18,8 @@ from app.api.games import _create_session_in_db, _settle_game
 
 
 @pytest.fixture
-def game_db(monkeypatch):
-    tmp = tempfile.mkdtemp(prefix="b5_settle_test_")
+def game_db(monkeypatch, tmp_path):
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)

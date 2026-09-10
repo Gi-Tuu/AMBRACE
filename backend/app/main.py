@@ -90,7 +90,8 @@ async def lifespan(app: FastAPI):
     # 「失败静默、不阻塞回复」铁律（见 docs/dev-changelog 2026-08-16 定调）。
     readiness.reset()
     # ── 启动步骤 1（可选路径）：渠道插件预加载（X5，须在 init_db 前）──────────────
-    # 渠道自带 ORM 模型在加载期 import 注册进 Base.metadata，保证 create_all 建表齐全。
+    # 渠道自带 ORM 模型在加载期 import 注册进插件独立 plugin_metadata（T5），
+    # 由 registry 加载后幂等建表（不再依赖主 create_all 顺带建）。
     # 分级：可选——失败仅降级登记（/ready 可见），不阻断启动（渠道插件缺失不影响核心）。
     try:
         from app.plugins.registry import preload_channels
@@ -124,6 +125,18 @@ async def lifespan(app: FastAPI):
     else:
         readiness.mark("alembic", True, critical=True, msg="alembic not present")
         logger.info("Alembic not present; skip database migration versioning")
+
+    # ── 启动步骤 3.5（可选路径，T5）：插件独立 metadata 幂等建表 ────────────────
+    # 必须在 ensure_alembic_revision 之后：让主版本链先对齐（老库整链重放会建/改 douyin 表），
+    # 插件 create_all 只补版本链不管的表（wechat_ilink_*）与兜底缺失（checkfirst 跳过已存在）。
+    # 失败只告警、不阻断启动（渠道能力后续可自愈/重试）。
+    try:
+        from app.plugins import registry as _plugin_registry
+        _plugin_tables = await _plugin_registry.ensure_plugin_tables()
+        if _plugin_tables:
+            logger.info("Plugin tables ensured: %s", _plugin_tables)
+    except Exception as _pte:
+        logger.warning("ensure_plugin_tables failed at startup: %s", _pte)
 
     # ── 启动步骤 4（可选路径）：运行时 Feature Flag ───────────────────────────────
     # DB 覆盖硬编码默认（2026-08-18，开关 API 热更新无需重启）。失败仅降级登记。

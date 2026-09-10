@@ -8,7 +8,6 @@
 import asyncio
 import json
 import os
-import tempfile
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -50,9 +49,9 @@ def load_ai_diary():
 
 
 @pytest.fixture()
-def store_db(monkeypatch):
+def store_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：monkeypatch plugin_bridge_service.async_session_factory"""
-    tmp = tempfile.mkdtemp(prefix="plugin_store_test_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

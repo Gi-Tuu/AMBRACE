@@ -5,17 +5,16 @@
 - downgrade 回父修订 e5f6a7b8c9d0 → 表与索引干净删除。
 """
 import os
-import tempfile
 
 import pytest
 from sqlalchemy import create_engine, inspect
 
 
 @pytest.fixture()
-def mig_db(monkeypatch):
+def mig_db(monkeypatch, tmp_path):
     """临时库：把 settings.database_url 指向临时 DB，跑真实 alembic 迁移链。"""
     import app.config as cfg
-    tmp = tempfile.mkdtemp(prefix="group_mem_mig_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "mig.db")
     monkeypatch.setattr(cfg.settings, "database_url", "sqlite+aiosqlite:///" + db_path)
     yield db_path
@@ -41,8 +40,8 @@ def test_migration_upgrade_downgrade(mig_db):
 
     # 升级到 head：group_memories 出现，脚本单头无分叉
     command.upgrade(cfg, "head")
-    assert _heads() == {"b6c7d8e9f0a1"}, (
-        f"期望单头 b6c7d8e9f0a1（domain_events.created_at 单列索引，v3.4.6 审查 F-9），实际 {_heads()}"
+    assert _heads() == {"e1b2c3d4e5f6"}, (
+        f"期望单头 e1b2c3d4e5f6（第四轮 2026-09-10：补回被 batch recreate/has_table 守卫丢失的索引；前序 d0a1b2c3d4e5=T1/T2 DB 兜底：pets.abandoned_at + 群/宠物 FK ondelete，2026-09-10），实际 {_heads()}"
     )
 
     eng = create_engine("sqlite:///" + db_path)

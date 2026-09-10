@@ -8,7 +8,6 @@
 import asyncio
 import os
 import sqlite3
-import tempfile
 
 import pytest
 from fastapi import HTTPException
@@ -23,10 +22,10 @@ async def _noop(*a, **k):
 
 
 @pytest.fixture()
-def mig_db(monkeypatch):
+def mig_db(monkeypatch, tmp_path):
     """临时库：把 settings.database_url 指向临时 DB，跑真实 alembic 迁移链。"""
     import app.config as cfg
-    tmp = tempfile.mkdtemp(prefix="memory_supersede_mig_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "mig.db")
     monkeypatch.setattr(cfg.settings, "database_url", "sqlite+aiosqlite:///" + db_path)
     yield db_path
@@ -67,11 +66,11 @@ def test_migration_upgrade_downgrade(mig_db):
 
 # ---------------- backfill：缺 status 补 active ----------------
 
-def test_backfill(monkeypatch):
+def test_backfill(monkeypatch, tmp_path):
     import importlib.util
     import app.config as cfg
 
-    tmp = tempfile.mkdtemp(prefix="memory_supersede_bf_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "bf.db")
     conn = sqlite3.connect(db_path)
     conn.execute("CREATE TABLE memories (id INTEGER PRIMARY KEY, character_id INTEGER)")
@@ -116,14 +115,14 @@ def test_backfill(monkeypatch):
 # ---------------- 管理/调试接口：归属校验 + 成功/失败 ----------------
 
 @pytest.fixture()
-def api_db(monkeypatch):
+def api_db(monkeypatch, tmp_path):
     import app.db.database as db_mod
     import app.memory.service as memsvc
     import app.memory.supersede as sup
     import app.db.vector_store as vs
     import app.memory.bm25_index as bm25
 
-    tmp = tempfile.mkdtemp(prefix="memory_supersede_api_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

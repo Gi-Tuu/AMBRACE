@@ -8,7 +8,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy import text as sa_text
@@ -25,9 +24,9 @@ async def _noop(*a, **k):
 
 
 @pytest.fixture()
-def mem_db(monkeypatch):
+def mem_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：monkeypatch 记忆模块的 async_session_factory（不触碰 backend/data）"""
-    tmp = tempfile.mkdtemp(prefix="memory_locked_test_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -221,8 +220,8 @@ def test_24h合并_锁定记忆跳过_新建而非合并(mem_db, monkeypatch):
 
 # ---------------- M-P0-2：索引迁移（database.init_db）----------------
 
-def test_init_db_记忆索引迁移幂等(monkeypatch):
-    tmp = tempfile.mkdtemp(prefix="memory_idx_test_")
+def test_init_db_记忆索引迁移幂等(monkeypatch, tmp_path):
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
 

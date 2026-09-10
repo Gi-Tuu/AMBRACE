@@ -2,7 +2,6 @@
 """Ariadne 模块 C：沿链半故事化组装单测（纯函数 + section 空实现退化等价 + F-1 端到端成块）。"""
 import asyncio
 import os
-import tempfile
 from datetime import datetime
 
 import pytest
@@ -17,13 +16,13 @@ def _m(id_, content, created_at, chain_id=None):
 
 
 @pytest.fixture()
-def sa_db(monkeypatch):
+def sa_db(monkeypatch, tmp_path):
     """临时库：create_all 全模型 + 把 story_assemble 的异步工厂指向临时工厂。
 
     F-1 端到端：get_chain_index_for_hits 经 ``app.db.database.async_session_factory`` 取链，
     故 patch 该接缝（函数内延迟 import 取到 patch 值），与既有 user_facts/chain_builder 测试一致。
     """
-    tmp = tempfile.mkdtemp(prefix="story_assemble_")
+    tmp = str(tmp_path)
     engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -245,7 +244,8 @@ def test_section_flag关_与旧路径逐字节一致(sa_db, monkeypatch):
     out = asyncio.run(
         sm.memories_section({"character_id": char_id, "retrieved_memories": retrieved}, {})
     )
-    assert out == "- [记录于 2025-07-20] 后来又去了青岛吃烧烤"
+    # 旧路径 = format_memory_line 单行；T3（2026-09-10）起 event 记忆带［往事］时态标签
+    assert out == "- [记录于 2025-07-20] ［往事］ 后来又去了青岛吃烧烤"
     assert "┌" not in out and "└" not in out
 
 

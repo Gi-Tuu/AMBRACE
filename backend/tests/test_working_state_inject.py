@@ -13,7 +13,6 @@
 import asyncio
 import json
 import os
-import tempfile
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -125,8 +124,8 @@ def test_inject_allowed_none_char():
 
 
 @pytest.fixture()
-def ws_inject_db(monkeypatch):
-    tmp = tempfile.mkdtemp(prefix="ws_m3b_test_")
+def ws_inject_db(monkeypatch, tmp_path):
+    tmp = str(tmp_path)
     engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
 

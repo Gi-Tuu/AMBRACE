@@ -26,6 +26,13 @@ class LifeTickTask(BaseTask):
         from app.life.life_state import apply_tick, get_life_state, phase_of, beijing_hour, default_needs
         from app.life.activity import run_activity
 
+        # L5（2026-09-09）：悬空 started 活动收尾（与 life_loop 共用同一函数，幂等；失败静默）
+        try:
+            from app.life.life_writer import close_orphan_activities
+            await close_orphan_activities()
+        except Exception as e:
+            _logger.warning("life tick orphan cleanup failed: %s", e)
+
         hour = beijing_hour()
         phase = phase_of(hour)
         try:

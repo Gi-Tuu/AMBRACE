@@ -13,7 +13,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -26,9 +25,9 @@ from app.models.mcp import MCPServer
 
 
 @pytest.fixture()
-def mcp_db(monkeypatch):
+def mcp_db(monkeypatch, tmp_path):
     """临时 SQLite（空闲端口）+ patch app.db.database.async_session_factory。"""
-    tmp = tempfile.mkdtemp(prefix="mcp_selfheal_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

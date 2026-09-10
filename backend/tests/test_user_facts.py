@@ -12,7 +12,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -23,9 +22,9 @@ from app.models.user import GlobalUserFact, User
 
 
 @pytest.fixture()
-def uf_db(monkeypatch):
+def uf_db(monkeypatch, tmp_path):
     """临时库：create_all 全模型 + 把 user_facts / cross_char_sync 的异步工厂指向临时工厂。"""
-    tmp = tempfile.mkdtemp(prefix="user_facts_")
+    tmp = str(tmp_path)
     engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -132,14 +131,15 @@ def test_upsert_user_fact_records_previous(uf_db):
     # 改值 → 记录 previous_value
     change2 = asyncio.run(upsert_user_fact(1, "location", "湛江", source="chat"))
     assert change2 == ("长沙", "湛江")
-    rows = asyncio.run(get_active_user_facts(1))
+    rows = asyncio.run(get_active_user_facts(1, slots=["location"]))
     assert len(rows) == 1
     assert rows[0].value == "湛江"
     assert rows[0].previous_value == "长沙"
     assert rows[0].source == "chat"
     # 多槽互不影响
     asyncio.run(upsert_user_fact(1, "job", "程序员"))
-    assert len(asyncio.run(get_active_user_facts(1))) == 2
+    # 细粒度槽（2026-09-10）：默认只取【启用槽】，显式传 slots 才取全量（本例两槽都查）
+    assert len(asyncio.run(get_active_user_facts(1, slots=["location", "job"]))) == 2
 
 
 def test_upsert_user_fact_unique_slot(uf_db):
@@ -147,7 +147,7 @@ def test_upsert_user_fact_unique_slot(uf_db):
     _seed_user(uf_db, 1)
     asyncio.run(upsert_user_fact(1, "location", "a"))
     asyncio.run(upsert_user_fact(1, "location", "b"))
-    rows = asyncio.run(get_active_user_facts(1))
+    rows = asyncio.run(get_active_user_facts(1, slots=["location"]))
     assert len(rows) == 1
     assert rows[0].value == "b"
     assert rows[0].previous_value == "a"
@@ -162,12 +162,12 @@ def test_upsert_user_fact_refreshes_valid_from(uf_db):
     from app.memory.user_facts import upsert_user_fact, get_active_user_facts
     _seed_user(uf_db, 1)
     asyncio.run(upsert_user_fact(1, "location", "长沙", source="gps"))
-    first = asyncio.run(get_active_user_facts(1))[0]
+    first = asyncio.run(get_active_user_facts(1, slots=["location"]))[0]
     vf_first = first.valid_from
     assert vf_first is not None
     # 第二次 upsert（改值）→ valid_from 必须前进（严格晚于首次建档）
     asyncio.run(upsert_user_fact(1, "location", "湛江", source="chat"))
-    second = asyncio.run(get_active_user_facts(1))[0]
+    second = asyncio.run(get_active_user_facts(1, slots=["location"]))[0]
     assert second.value == "湛江"
     assert second.valid_from is not None
     assert second.valid_from > vf_first
@@ -178,7 +178,7 @@ def test_upsert_user_fact_empty_value_no_op(uf_db):
     _seed_user(uf_db, 1)
     assert asyncio.run(upsert_user_fact(1, "location", "")) is None
     assert asyncio.run(upsert_user_fact(1, "", "x")) is None
-    assert asyncio.run(get_active_user_facts(1)) == []
+    assert asyncio.run(get_active_user_facts(1, slots=["location"])) == []
 
 
 # ── stale_character_slot_memory ──
@@ -219,9 +219,12 @@ def test_stale_character_slot_memory_matches_extracted_history(uf_db):
 
 # ── align / sweep ──
 
-def test_align_character_idempotent(uf_db):
+def test_align_character_idempotent(uf_db, monkeypatch):
     from app.memory.user_facts import upsert_user_fact
     from app.memory.cross_char_sync import align_character_to_user_facts
+    # 细粒度槽（2026-09-10）：对齐只处理【启用槽】，此处开总闸（等价于 6 槽全开）后测对齐机制
+    from app.agent.loop import AGENT_FLAGS as _af
+    monkeypatch.setitem(_af, "global_user_facts", True)
     factory = uf_db
     _seed_user(factory, 1)
     asyncio.run(upsert_user_fact(1, "location", "长沙", source="gps"))
@@ -238,9 +241,11 @@ def test_align_character_idempotent(uf_db):
     assert rep2.get("location") == 0
 
 
-def test_sweep_all_characters_alignment(uf_db):
+def test_sweep_all_characters_alignment(uf_db, monkeypatch):
     from app.memory.user_facts import upsert_user_fact
     from app.memory.cross_char_sync import sweep_all_characters_alignment
+    from app.agent.loop import AGENT_FLAGS as _af
+    monkeypatch.setitem(_af, "global_user_facts", True)  # 同上：启用槽后测 sweep 机制
     factory = uf_db
     _seed_user(factory, 1)
     c1 = _seed_char(factory, "A")
@@ -261,9 +266,9 @@ def test_sweep_all_characters_alignment(uf_db):
 def test_build_user_now_text(uf_db):
     from app.memory.user_facts import upsert_user_fact, build_user_now_text
     _seed_user(uf_db, 1)
-    assert asyncio.run(build_user_now_text(1)) == "无"
+    assert asyncio.run(build_user_now_text(1, slots=["location"])) == "无"
     asyncio.run(upsert_user_fact(1, "location", "湛江", source="gps"))
-    text = asyncio.run(build_user_now_text(1))
+    text = asyncio.run(build_user_now_text(1, slots=["location"]))
     assert "位置/城市" in text
     assert "湛江" in text
     assert "更新于" in text

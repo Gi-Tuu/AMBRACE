@@ -4,7 +4,6 @@
 # - system API：GET /feature-flags 主账号返回、非主账号 403；PUT 切换成功、缺 enabled 400、未知 key 404
 import asyncio
 import os
-import tempfile
 
 import pytest
 from fastapi import FastAPI
@@ -20,9 +19,9 @@ OTHER = 200
 
 
 @pytest.fixture()
-def flag_db(monkeypatch):
+def flag_db(monkeypatch, tmp_path):
     '''临时 SQLite 文件库：patch async_session_factory（不触碰 backend/data）'''
-    tmp = tempfile.mkdtemp(prefix='flag_test_')
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
     engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

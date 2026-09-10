@@ -102,6 +102,41 @@ def test_delta_monotonic_no_shrink():
     assert all(lens[i] <= lens[i + 1] for i in range(len(lens) - 1))
 
 
+def test_结尾悬空神态括号_回收正文不丢():
+    """§4.6（2026-09-09）：流以未闭合「（神态…」结尾时，尾部正文不得随 hold 一起丢失。
+
+    修复前：未闭合开括号及其后全部文本被 hold，flush 时整段丢弃 → 后续正文丢失。
+    修复后：丢弃悬空括号本身，保留其后正文；展示文本不残留悬空的「（」。
+    """
+    ch = IncrementalResponseChunker()
+    blocks = _feed_all("今天天气真好。（笑着摆了摆手，我们回家吧。", ch, 4)
+    merged = "".join(blocks)
+    assert "（" not in merged           # 悬空开括号本身被丢弃
+    assert "我们回家吧。" in merged      # 正文不丢
+    assert merged.startswith("今天天气真好。")
+
+
+def test_结尾悬空标记段仍整段丢弃():
+    """已知动作/结构化标记的未闭合尾巴维持原策略：不回收（由 marker_truncated 兜底）。"""
+    for tail in ("[SEARCH", "【记忆：用户喜欢咖啡", "[mcp.weather.query", "[timer:20m"):
+        ch = IncrementalResponseChunker()
+        merged = "".join(_feed_all(f"正文。{tail}", ch, 3))
+        assert merged == "正文。", tail
+
+
+def test_回收不与单调保证冲突():
+    """回收只在 flush 发生：feed 期间展示增量仍单调不回退。"""
+    ch = IncrementalResponseChunker()
+    seq = []
+    for piece in ["早餐。", "（站起来看了看", "，我们出发吧。"]:
+        ch.feed(piece)
+        seq.append(ch.clean_text)
+    assert seq[0] == "早餐。"
+    assert all(len(seq[i]) <= len(seq[i + 1]) for i in range(len(seq) - 1))
+    out = "".join(ch.flush())
+    assert "（" not in out and "我们出发吧。" in out
+
+
 def test_strip_stream_display_removes_markers():
     assert strip_stream_display("正文【记忆：xxx】尾部") == "正文尾部"
     assert strip_stream_display("【状态更新：准备睡觉】晚安") == "晚安"

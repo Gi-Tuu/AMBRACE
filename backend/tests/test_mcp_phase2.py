@@ -39,8 +39,11 @@ from app.models.agent import ToolPermission
 ADMIN = 1
 TEST_PREFIX = "mcp_ph2_"
 
-# 独立测试 user_id（非主账号、无既有权限行）
+# 独立测试 user_id（非主账号、无既有权限行）；多用户隔离用例另用 9201-9204。
+# 引擎已强制外键（2026-09-09）：SSE/状态用例以 user_id=ADMIN=1 落 mcp_servers，需父 users 行，
+# 故把主账号 id=1 一并纳入确保/清理集合（方向 B：仅本文件自建，不动 conftest 全局种子）。
 PERM_UID = 9100
+TEST_UIDS = {1, 9100, 9201, 9202, 9203, 9204}
 
 
 def _run(coro):
@@ -58,15 +61,31 @@ async def _cleanup():
     # 清空归属缓存，避免跨用例的 30s TTL 污染（P1 归属 filter 依赖该查询）
     from app.mcp import ownership as _ownership
     _ownership._CACHE.clear()
+    from app.models.user import User
     async with async_session_factory() as db:
         await db.execute(delete(MCPServer).where(MCPServer.name.like(TEST_PREFIX + "%")))
-        await db.execute(delete(ToolPermission).where(ToolPermission.user_id == PERM_UID))
+        await db.execute(delete(ToolPermission).where(ToolPermission.user_id.in_(TEST_UIDS)))
+        # 引擎已强制外键（2026-09-09）：tool_permissions/mcp_servers 的假独立 uid 需父 users 行
+        await db.execute(delete(User).where(User.id.in_(TEST_UIDS)))
         await db.commit()
+
+
+async def _ensure_test_users():
+    """确保全部独立测试用户存在（FK 强制后插权限/服务器行需父 users 行）。"""
+    from app.models.user import User
+    from sqlalchemy import select as _sel
+    async with async_session_factory() as db:
+        exist = set((await db.execute(_sel(User.id).where(User.id.in_(TEST_UIDS)))).scalars().all())
+        for uid in sorted(TEST_UIDS - exist):
+            db.add(User(id=uid, username=f"mcp_ph2_{uid}", nickname="MCP PH2 测试"))
+        if TEST_UIDS - exist:
+            await db.commit()
 
 
 @pytest.fixture(autouse=True)
 def _isolate():
     _run(_cleanup())
+    _run(_ensure_test_users())
     yield
     _run(_cleanup())
 

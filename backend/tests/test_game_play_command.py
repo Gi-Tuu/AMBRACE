@@ -8,7 +8,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from fastapi import FastAPI
@@ -33,8 +32,8 @@ async def _fake_llm(**kwargs) -> str:
 
 
 @pytest.fixture
-def play_db(monkeypatch):
-    tmp = tempfile.mkdtemp(prefix="play_cmd_test_")
+def play_db(monkeypatch, tmp_path):
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)

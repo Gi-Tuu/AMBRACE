@@ -10,7 +10,6 @@
 """
 import asyncio
 import os
-import tempfile
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -24,9 +23,9 @@ from app.memory.format import format_memory_line
 
 
 @pytest.fixture()
-def mem_db(monkeypatch):
+def mem_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：monkeypatch context_builder 的 async_session_factory（不触碰 backend/data）"""
-    tmp = tempfile.mkdtemp(prefix="gen_p1_test_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -297,7 +296,7 @@ def test_message_generator_最近记忆格式():
 
 
 def test_shared_recall_text_格式与公共函数一致(mem_db):
-    """Shared Memory recall_text 行与 format_memory_line(max_len=120) 输出完全一致"""
+    """Shared Memory recall_text 行与 format_memory_line(max_len=120, tense_hint="episodic") 一致（I4 后恒标［往事］）"""
     async def _main():
         from app.models.memory import SharedEvent
         from app.memory.shared_events import recall_text
@@ -308,11 +307,11 @@ def test_shared_recall_text_格式与公共函数一致(mem_db):
             await db.commit()
             txt = await recall_text(db, 1, 1, limit=2)
         expected = format_memory_line(
-            {"content": "用户和角色第一次一起看海", "created_at": datetime(2026, 8, 1)},
-            max_len=120,
+            {"content": "用户和角色第一次一起看海", "created_at": datetime(2026, 8, 1), "memory_type": "event"},
+            max_len=120, tense_hint="episodic",
         )
         return txt, expected
 
     txt, expected = asyncio.run(_main())
     assert txt == expected
-    assert txt == "- [记录于 2026-08-01] 用户和角色第一次一起看海"
+    assert txt == "- [记录于 2026-08-01] ［往事］ 用户和角色第一次一起看海"

@@ -6,6 +6,13 @@
 - 节点流式 _stream_generate_tts：逐句合成（mock）→ 实时落库（block_sink）→ 推 block（带 tts_url）；
 - 服务层 send_and_receive_stream(tts=True)：走实时 stream_saved 路径（回填首/末块），
   不再重推 block（避免与实时推送重复）。
+
+已知 flake（T8-c，2026-09-10，v3.4.6 第三轮登记，不阻断）：
+全量 pytest 偶发一例 `PytestUnhandledThreadExceptionWarning: Event loop is closed`，
+归属到本文件的 `test_stream_generate_non_tts_no_block_sink`。根因是跨用例的 aiosqlite
+连接 worker 线程在其 creator 事件循环关闭之后才回调（上游 asyncio.run 多次创建/关闭
+loop 与全局引擎连接复用的交互），**不是生产 bug**——隔离运行本模块 9 用例不复现，
+且生产 loop 生命周期与测试不同。后续若做连接层/测试库隔离重构时一并评估。
 """
 import asyncio
 

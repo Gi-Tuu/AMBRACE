@@ -81,6 +81,50 @@ _VAGUE_PATTERNS = [
 MAX_MINUTES = 24 * 60
 
 
+# ── L1（2026-09-09，主动消息主体归属治理）：AI 时间承诺的「受益方」分类（零 LLM）──
+# 背景：AI 说「我去吃饭了」是**自己离开**，到点应自述「我回来了」（back，新主动消息源）；
+# 只有「我给你煮粥，好了叫你」这类**为用户做**的承诺，到点才该招呼用户（ready）。
+# 旧行为（F1a）是把 AI 纯动作句直接跳过不建事件，AI 自理完全静默；本分流把它演进为
+# 「AI 自理 → back，到点自述回来」，属**新增主动消息源**，由 flag 包裹、默认关、逐角色灰度。
+
+# AI 自己去做自己的事（自理离开，到点应"我回来了"，不该招呼用户）
+_SELF_ACTION_HINTS = (
+    "我去吃饭", "我去吃个饭", "我先吃", "我先去吃", "我去食堂", "我去垫两口", "我垫两口",
+    "我去洗澡", "我洗个澡", "我去睡", "我去睡会", "我去休息", "我去开会", "我去忙",
+    "我先去忙", "我去处理", "我出门", "我出去一趟", "我去上课",
+)
+# AI 为用户做、好了要叫用户（到点招呼用户合理）
+_FOR_USER_HINTS = (
+    "给你做", "给你煮", "给你熬", "给你留", "给你弄", "给你热", "帮你做", "帮你弄",
+    "煮给你", "做给你", "留给你", "等你回来吃", "等你吃", "叫你", "喊你", "喂你",
+    "给你下面", "给你做饭", "你回来就能吃",
+)
+
+
+def classify_ai_promise_side(text: str) -> str:
+    """判定 AI 这句时间承诺的受益方（仅对 sender='ai' 有意义）。
+
+    返回 'for_user'（为用户做、好了叫 TA → ready）或 'self'（AI 自理离开 → back）。
+    纯规则、零 LLM；for_user 信号优先（明确"给你/叫你"即以用户为受益方），无信号默认 self
+    （安全侧——AI 自述要去做某事，不该反过来招呼用户）。
+    """
+    t = text or ""
+    if any(k in t for k in _FOR_USER_HINTS):
+        return "for_user"
+    if any(k in t for k in _SELF_ACTION_HINTS):
+        return "self"
+    return "self"
+
+
+def _self_side_split_on() -> bool:
+    """L1 flag：promise_self_side_split（默认关；关=完全沿用 F1a 现状的正则结果）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("promise_self_side_split", False))
+    except Exception:
+        return False
+
+
 def extract_timer(
     response: str,
     user_id: int,
@@ -142,6 +186,22 @@ def extract_timer(
         return None
 
     minutes = int(min(max(minutes, 1), MAX_MINUTES))
+
+    # L1（2026-09-09）：AI 侧承诺按受益方分流（flag promise_self_side_split，默认关）。
+    #   self（AI 自理离开，如"我去吃饭"）→ back（到点自述"我回来了"），绝不建 ready；
+    #   for_user（AI 为用户做、好了叫 TA）→ 保留解析出的 ready/meal 等。
+    # 该分流在**最终 return 前统一纠偏**，因此无论命中 _PATTERNS 还是 _VAGUE_PATTERNS 的
+    # 哪条正则，AI 自理句都落到 back，补齐 F1a 只改 _VAGUE 三条的缺口。
+    # 用户侧承诺（sender='user'）完全不受影响；flag 关时 side 恒为 'user'、event_type 不变。
+    side = "user"
+    try:
+        if sender == "ai" and _self_side_split_on():
+            side = classify_ai_promise_side(response)
+            if side == "self":
+                event_type = "back"
+    except Exception:
+        side = "user"
+
     return {
         "user_id": user_id,
         "character_id": character_id,
@@ -151,6 +211,7 @@ def extract_timer(
         "source_message_id": source_message_id,
         "sender": sender if sender in ("ai", "user") else "ai",
         "promise_text": promise_text,
+        "side": side,  # 受益方（'user'/'self'/'for_user'）；落库不新增列（零迁移），供观测/日志
     }
 
 

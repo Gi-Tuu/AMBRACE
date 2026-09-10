@@ -6,7 +6,6 @@
 """
 import asyncio
 import os
-import tempfile
 
 import pytest
 from fastapi import FastAPI
@@ -20,9 +19,9 @@ from app.auth.deps import get_current_user_id
 
 
 @pytest.fixture()
-def device_db(monkeypatch):
+def device_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：patch device API 绑定的 async_session_factory。"""
-    tmp = tempfile.mkdtemp(prefix='device_test_')
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
     engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

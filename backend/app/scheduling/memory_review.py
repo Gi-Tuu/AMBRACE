@@ -18,8 +18,9 @@ from app.memory.flags import memory_v2_enabled as _memory_v2_enabled
 from app.models.character import ProactiveMessageLog
 from app.memory.constants import (
     REVIEW_MIN_IMPORTANCE, REVIEW_MAX_PER_DAY, REVIEW_RETRY_DAYS, REVIEW_SUCCESS_WINDOW_HOURS,
-    REVIEW_MIN_INTERVAL_MINUTES, REINFORCE_FACTOR_RETRIEVE,
+    REVIEW_MIN_INTERVAL_MINUTES, REINFORCE_FACTOR_RETRIEVE, REVIEW_NOSTALGIA_MAX_PER_DAY,
 )
+from app.memory.tense import classify_tense, is_plan_expired, days_since
 from app.utils.logger import get_logger
 from app.utils.dnd import user_in_dnd_period as _user_in_dnd_period
 
@@ -118,13 +119,43 @@ async def _last_message_time(session_id: int) -> datetime | None:
     return row[0] if row else None
 
 
+def _exclude_flag_on() -> bool:
+    """L1 flag（2026-09-09 主动复习「回忆化」）：选片排除过期计划/瞬时状态（默认开；关=旧选片）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("review_exclude_expired_plan", True))
+    except Exception:
+        return False
+
+
+def _life_no_replay_on() -> bool:
+    """L4 flag（2026-09-09 主体归属治理）：一次性生活动作不主动复读（默认关；关=维持现选片）。
+
+    与「回忆化」L1 的 review_exclude_expired_plan 同属一批 flag 体系，不另起第二套。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("life_event_no_replay", False))
+    except Exception:
+        return False
+
+
+def _reminisce_flag_on() -> bool:
+    """L3 flag：复习生成改「回忆框架」hint + 输出闸门（默认开；关=逐字节回旧 hint）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("review_reminisce_framework", True))
+    except Exception:
+        return False
+
+
 async def collect_review_events() -> list[dict]:
     """扫描到期记忆 → 每角色 1 条候选（arbiter 事件源，priority=1）。"""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
     async with async_session_factory() as db:
-        rows = (await db.execute(
-            select(Memory.character_id, Memory.user_id, Memory.id)
+        mems = (await db.execute(
+            select(Memory)
             .where(
                 Memory.is_archived == False,
                 Memory.is_pinned == False,
@@ -135,12 +166,29 @@ async def collect_review_events() -> list[dict]:
                 _active_status_clause(),
             )
             .order_by(Memory.next_review_at.asc())
-        )).all()
+        )).scalars().all()
+        # —— L1（2026-09-09 主动复习「回忆化」）：时态过滤 ——
+        # 过期计划不再主动当新闻提（仍可检索、降权可怀旧）；瞬时状态不进主动复习（走 world_facts）。
+        # flag review_exclude_expired_plan 关 = 逐字节回到旧选片行为。
+        try:
+            if _exclude_flag_on():
+                mems = [m for m in mems
+                        if classify_tense(m) != "transient"
+                        and not (classify_tense(m) == "plan" and is_plan_expired(m, now))]
+            # L4（2026-09-09 主体归属治理）：一次性生活动作（source=life 的 event 记忆，
+            # 如「粥在锅里」「桌上粥还温着」）天然短时效、结束即失效，不进主动到期播报
+            # ——仍可检索怀旧，只是不由系统主动反复提。与「回忆化」L1 同处一个筛选段。
+            if _life_no_replay_on():
+                mems = [m for m in mems
+                        if not (getattr(m, "source", None) == "life"
+                                and (m.memory_type or "") == "event")]
+        except Exception as e:
+            _logger.warning("review tense filter failed: %s", e)
     # 每角色只取最早到期的一条
     per_char: dict[int, tuple] = {}
-    for cid, uid, mid in rows:
-        if uid and cid not in per_char:
-            per_char[cid] = (cid, uid, mid)
+    for m in mems:
+        if m.user_id and m.character_id not in per_char:
+            per_char[m.character_id] = (m.character_id, m.user_id, m.id)
     # 审计 P2-04：无活跃会话的角色不产生复习候选（避免每 tick 空转出候选 + 写 rejected 日志）
     if per_char:
         try:
@@ -173,6 +221,21 @@ async def _daily_count(db, character_id: int) -> int:
             ProactiveMessageLog.character_id == character_id,
             ProactiveMessageLog.message_type == REVIEW_TYPE,
             ProactiveMessageLog.created_at >= today_start,
+        )
+    )).scalar() or 0
+
+
+async def _daily_count_by_tense(db, character_id: int, tense: str = "nostalgia") -> int:
+    """L1（2026-09-09）：该角色今天已发的「怀旧式复习」条数（extra_meta.tense 计数，SQLite json_extract）。"""
+    cn_tz = timezone(timedelta(hours=8))
+    today_start = datetime.now(cn_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = today_start.astimezone(timezone.utc).replace(tzinfo=None)
+    return (await db.execute(
+        select(func.count(ProactiveMessageLog.id)).where(
+            ProactiveMessageLog.character_id == character_id,
+            ProactiveMessageLog.message_type == REVIEW_TYPE,
+            ProactiveMessageLog.created_at >= today_start,
+            func.json_extract(ProactiveMessageLog.extra_meta, "$.tense") == tense,
         )
     )).scalar() or 0
 
@@ -215,6 +278,75 @@ async def _last_review_at(db, character_id: int):
     )).scalar_one_or_none()
 
 
+# ── L3（2026-09-09 主动复习「回忆化」）：回忆框架 hint + 输出本地闸门 ──
+# 设计意图（用户定调，最高约束）：记忆复习 =「回忆/怀旧」——把旧记忆当往事回味，
+# 不当"最近/当前仍成立/即将发生"的状态续写、叮嘱、指挥（治 7018/7021 "电脑记得带"时空错位）。
+_TENSE_RULES = {
+    "nostalgia": (
+        "这是**已经发生过 / 已经过期的往事**，不是现在正在发生、也不是未来还要发生的事。"
+        "必须用回忆、回味的口吻（'我记得…''还记得那回…''上次…''那时候…'），用过去时提起；"
+        "**禁止**据此提醒、叮嘱、安排 TA 现在或未来去做什么（不要出现'记得带/别忘了/到了报平安/明天…/快…'这类当下或临期指令）；"
+        "可以感慨、调侃、回味，或轻轻联系到 TA 现在的状态，但绝不能把旧安排说成马上要发生。"
+    ),
+    "plan": (
+        "这是 TA **之前提过、目前仍在有效期内**的安排；开口要以'你之前说/计划…'引用，"
+        "可以做一次轻确认或提醒，但要明确这是早前的约定，不要当成此刻刚发生。"
+    ),
+    "enduring": (
+        "这是你了解的关于 TA 的长期事实 / 偏好 / 关系记忆；可以自然地回忆并顺势带到当下的关心，"
+        "但仍是'你一直记得 TA…'的口吻，而不是新发生的事件。"
+    ),
+}
+
+# 输出闸门词表（零 LLM）：当下/临期指令词 vs 回忆指代词
+_DIRECTIVE_HINTS = ("记得带", "别忘了", "别忘", "到了报平安", "报平安", "明天", "后天",
+                    "快出门", "赶紧", "别迟到", "记得拿", "带上", "收拾好", "准备出发")
+_REMINISCE_HINTS = ("我记得", "还记得", "上次", "那回", "那时候", "当初", "以前", "那会儿", "想起那")
+
+
+def _is_wrong_tense_directive(text: str, is_nostalgia: bool) -> bool:
+    """L3 输出闸门：怀旧/过期计划记忆却生成当下/临期叮嘱、且全句无任何回忆指代词 → 拦截。
+
+    保守设计：三者同时成立才拦（正常"我记得你上次去长沙还…"不会误伤）。
+    """
+    if not is_nostalgia or not text:
+        return False
+    if any(k in text for k in _REMINISCE_HINTS):
+        return False
+    return any(k in text for k in _DIRECTIVE_HINTS)
+
+
+def _review_phrase(mem, now_naive) -> tuple[str, bool, str]:
+    """L3：时态化回忆引导语。返回 (引导语, 是否怀旧, 时态 kind ∈ nostalgia/plan/enduring)。"""
+    tense = classify_tense(mem)
+    d = days_since(mem, now_naive)
+    ago = f"（记录于 {mem.created_at:%m月%d日}，距今约 {d} 天）" if d is not None and d >= 3 else ""
+    if tense == "plan":
+        if is_plan_expired(mem, now_naive):
+            return f"你回忆起一个**已经过去的旧安排**{ago}", True, "nostalgia"
+        return f"你想起 TA 之前跟你提过的一个还没到的安排{ago}", False, "plan"
+    if tense == "episodic":
+        return f"你回忆起一段**往事**{ago}", True, "nostalgia"
+    if tense == "transient":
+        return f"你想起一条当时的状态{ago}", True, "nostalgia"
+    return f"你想起关于 TA 的一件事{ago}", False, "enduring"
+
+
+async def _current_status_anchor(char_id: int, user_id: int) -> str:
+    """L3：当前现状锚点（只读，失败静默返回空串）——防与"早已回家/开学"矛盾。
+
+    C3（2026-09-10）：下沉到 app.memory.current_state（三源聚合：per-char WorldFact + User
+    表已授权城市 + GlobalUserFact 启用槽）。旧实现只查 per-char WorldFact subject=user
+    （当前无写入点、恒空）；新实现额外在用户已授权位置感知时锚定当前城市。失败静默语义不变。
+    """
+    try:
+        from app.memory.current_state import current_user_state_anchor
+        return await current_user_state_anchor(
+            character_id=char_id, user_id=user_id, include_profile_location=True)
+    except Exception:
+        return ""
+
+
 async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
     """执行一次主动复习：限额/免打扰/会话检查 → 先占位重排（防失败重试烧 token）→ LLM 生成 → 发送 → 记录。"""
     from app.scheduling.scheduler import send_to_session
@@ -243,6 +375,12 @@ async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
         mem = await db.get(Memory, memory_id)
         if mem is None or mem.is_archived or mem.is_pinned or mem.is_locked:
             return False
+        # L1/L3（2026-09-09）：时态定位（纯函数）+ 怀旧日额度——往事/过期计划即便被回忆也不刷屏
+        phrase, is_nostalgia, tense_kind = _review_phrase(mem, now_naive)
+        if is_nostalgia and _exclude_flag_on():
+            if await _daily_count_by_tense(db, char_id, "nostalgia") >= REVIEW_NOSTALGIA_MAX_PER_DAY:
+                _logger.info("Memory review char=%d skipped: nostalgia daily limit", char_id)
+                return False
         char = await db.get(AICharacter, char_id)
         content_src = mem.content
         mem_type = mem.memory_type
@@ -287,17 +425,38 @@ async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
         persona_block = f"{active_persona}\n" if active_persona else ""
         label = _TYPE_LABEL.get(mem_type, "一件事")
         context_line = _recent_context_line(recent_context, gap_hours, last_msg_at)
-        hint = (
-            f"{_cn_now_prefix()}\n"
-            f"{identity}\n"
-            f"{persona_block}"
-            f"你想起了{label}：{content_src[:120]}{context_line}"
-            "自然地跟用户提一句，像老朋友聊天一样（1-2 句话，口语化），"
-            "不要生硬转折，不要提'记忆''复习''想起以前记录'这类字眼。"
-            f"你要说的话必须围绕「你想起了{label}」的内容展开（可以是确认、更新、调侃），"
-            "最近聊天只决定你开口的语气和方式，不能只顺着最近聊天接话，更不能复述最近聊天里的句子。"
-            "必须全程以第一人称'我'说话（你=角色本人），不要以旁观者视角提及你自己的名字或'某人'这类第三人称。"
-        )
+        # L3：hint 改「回忆框架」——时态化引导语 + 记录日期/距今 + 当前现状锚点 + 时态口吻规则。
+        # 保留 F1 时间锚点（_cn_now_prefix）/ F4 场景标注（context_line）/ F5 防复读，只在其上叠加时态定位。
+        _reminisce = _reminisce_flag_on()
+        status_anchor = ""
+        if _reminisce and is_nostalgia:
+            status_anchor = await _current_status_anchor(char_id, user_id)
+        if _reminisce:
+            tense_rule = _TENSE_RULES["nostalgia" if is_nostalgia else tense_kind]
+            hint = (
+                f"{_cn_now_prefix()}\n"
+                f"{identity}\n{persona_block}"
+                f"{status_anchor}"
+                f"{phrase}：{content_src[:120]}{context_line}\n"
+                f"{tense_rule}\n"
+                "自然地跟 TA 提一句，像老朋友回忆往事一样（1-2 句话，口语化），"
+                "不要生硬转折，不要提'记忆''复习''想起以前记录'这类字眼。"
+                "你要说的话必须围绕刚才回忆起的内容展开（可以感慨、确认、调侃），"  # F5(a) 聚焦记忆约束保留
+                "必须全程以第一人称'我'说话（你=角色本人），不要以旁观者视角提及你自己的名字或'某人'。"
+                "最近聊天只决定你开口的语气，不能只顺着最近聊天接话，更不能复述最近聊天里的句子。"
+            )
+        else:
+            hint = (  # flag 关：逐字节回到旧 hint（回退路径）
+                f"{_cn_now_prefix()}\n"
+                f"{identity}\n"
+                f"{persona_block}"
+                f"你想起了{label}：{content_src[:120]}{context_line}"
+                "自然地跟用户提一句，像老朋友聊天一样（1-2 句话，口语化），"
+                "不要生硬转折，不要提'记忆''复习''想起以前记录'这类字眼。"
+                f"你要说的话必须围绕「你想起了{label}」的内容展开（可以是确认、更新、调侃），"
+                "最近聊天只决定你开口的语气和方式，不能只顺着最近聊天接话，更不能复述最近聊天里的句子。"
+                "必须全程以第一人称'我'说话（你=角色本人），不要以旁观者视角提及你自己的名字或'某人'这类第三人称。"
+            )
         from app.agent.llm_client import load_character_reasoning_level
         _rl = await load_character_reasoning_level(char_id)
         _msgs = [
@@ -320,12 +479,22 @@ async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
             _logger.info("Memory review char=%d mem=%d blocked: replay of recent chat",
                          char_id, memory_id)
             return False
+        # L3：输出本地闸门（零 LLM）——怀旧记忆却生成"当下叮嘱式回忆"（如"电脑记得带"）→ 拦截不发送
+        #（next_review_at 已在占位阶段顺延 3 天，不会重试烧 token）
+        if _is_wrong_tense_directive(text, is_nostalgia):
+            _logger.info("Memory review char=%d mem=%d blocked: wrong-tense directive",
+                         char_id, memory_id)
+            return False
     except Exception as e:
         _logger.warning("Memory review LLM failed char=%d: %s", char_id, e)
         return False
 
     # 发送（send_to_session 内部已落库 ChatMessage + ProactiveMessageLog[含 extra_meta] + WS 推送）
+    # L1 §4.3：extra_meta 记 tense（nostalgia/plan/enduring），供怀旧限频计数与观察；
+    # 两个相关 flag 全关时不写（extra_meta 逐字节回到旧行为）
     _review_extra = {"memory_id": memory_id}
+    if _exclude_flag_on() or _reminisce_flag_on():
+        _review_extra["tense"] = tense_kind
     if _review_reasoning:
         _review_extra["reasoning"] = _review_reasoning
     await send_to_session(
@@ -383,7 +552,9 @@ async def maybe_review_success(user_id: int, character_id: int, user_content: st
             return 0
         mem_id_for_reinforce = mem.id
     from app.memory.service import reinforce_memories
-    await reinforce_memories([mem_id_for_reinforce], factor=REINFORCE_FACTOR_RETRIEVE * 4 / 3)
+    # L2：主动复习成功通道（channel=review）——一次性事件按 tense 分流收口（S/次数封顶）
+    await reinforce_memories([mem_id_for_reinforce], factor=REINFORCE_FACTOR_RETRIEVE * 4 / 3,
+                             channel="review")
     _logger.info("Memory review success: char=%d mem=%d user replied related", character_id, mem_id_for_reinforce)
     return 1
 
@@ -433,6 +604,16 @@ async def _pick_contextual_memory(character_id: int, user_id: int, user_msg: str
                 .order_by(Memory.importance.desc(), Memory.id.desc())
                 .limit(20)
             )).scalars().all()
+            if not rows:
+                return None
+            # L1（2026-09-09）：情境复习同样排除过期计划/瞬时状态（深夜/情绪场景不把旧计划翻出当新闻）
+            try:
+                if _exclude_flag_on():
+                    rows = [m for m in rows
+                            if classify_tense(m) != "transient"
+                            and not (classify_tense(m) == "plan" and is_plan_expired(m))]
+            except Exception:
+                pass
             if not rows:
                 return None
             topics = (await db.execute(

@@ -10,7 +10,6 @@
 import asyncio
 import json
 import os
-import tempfile
 
 import pytest
 from sqlalchemy import select
@@ -21,9 +20,9 @@ import app.application.chat_service as cs
 
 
 @pytest.fixture()
-def chat_db(monkeypatch):
+def chat_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：patch chat_service 绑定各模块的 async_session_factory（不触碰 backend/data）。"""
-    tmp = tempfile.mkdtemp(prefix="wechat_origin_test_")
+    tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -33,6 +32,10 @@ def chat_db(monkeypatch):
         from app.models.base import Base
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # T5（2026-09-10）：插件表已从 Base.metadata 剥离到独立 plugin_metadata，
+            # 本临时库须显式补建插件表（插件已在本文件 fixture 加载，plugin_metadata 已注册对应表）。
+            from app.plugins.plugin_base import plugin_metadata
+            await conn.run_sync(plugin_metadata.create_all)
 
     asyncio.run(_init())
     import app.db.database as db_mod

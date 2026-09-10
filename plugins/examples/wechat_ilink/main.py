@@ -3,8 +3,8 @@
 
 【命名空间】渠道插件顶层模块名易撞，本插件沿用包内相对导入/文件名，新渠道须用包内相对导入或模块名前缀（registry 加载器保持现状）。
 
-- 加载期：import models 注册渠道自有表进 Base.metadata（X5 惯例，须在 init_db 前——
-  main.py lifespan 已做渠道预加载）；`sdk.register_channel` 注册渠道（ChannelPort + meta 上报
+- 加载期：import models 注册渠道自有表进插件独立 plugin_metadata（T5，2026-09-10；registry
+  加载后幂等建表）；`sdk.register_channel` 注册渠道（ChannelPort + meta 上报
   binding unique_per_family，使内核绑定裁决自动生效）；`routes.mount(sdk.router())` 挂载 http_router。
 - **schedule_tick（PR3）**：manifest.hooks 声明 schedule_tick；``cfg.enabled`` 才轮询；插件自行
   节流 + 重入锁；ILinkClient 出错/超时只记日志（P0-5，绝不拖垮主链路）。
@@ -20,7 +20,7 @@ if _PLUGIN_DIR not in sys.path:
 
 from app.plugins import sdk  # noqa: E402
 
-import models  # noqa: F401, E402  # X5：渠道自有 ORM（加载期注册进 Base.metadata）
+import models  # noqa: F401, E402  # T5：渠道自有 ORM（加载期注册进插件独立 plugin_metadata）
 from port import WeChatILinkPort, build_meta, make_client  # noqa: E402
 import routes  # noqa: E402
 import inbound  # noqa: E402

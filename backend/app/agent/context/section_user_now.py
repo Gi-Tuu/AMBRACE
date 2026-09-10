@@ -2,7 +2,7 @@
 """「用户最新状态」跨角色权威分区（§20.6，2026-09-04 落地）。
 
 确定性供给（不走向量）：所有角色共享用户级事实（location/job/relationship/living/goal_state/health），
-在提示词层面声明「与旧记忆冲突时以此为准」。flag ``global_user_facts`` 关闭时返回空（零行为变化）。
+在提示词层面声明「与旧记忆冲突时以此为准」。无任何【启用槽】（总闸或该槽 flag）时返回空（零行为变化）。
 注册为 TARGET_APPEND 独立 system 块（不动模板槽，与 world_facts 槽不抢位）。
 """
 from __future__ import annotations
@@ -18,9 +18,11 @@ _HEADER = "【用户最新状态（跨角色权威；与下方会衰减的旧记
 
 
 async def user_now_section(state: dict, ctx: dict) -> list[str]:
-    from app.agent.loop import AGENT_FLAGS
-    if not AGENT_FLAGS.get("global_user_facts", False):
-        return []  # 默认关：零行为变化
+    # 细粒度（2026-09-10）：无【启用槽】直接返回（槽全关=零行为变化；总闸开=全槽启用）；
+    # build_user_now_text 内部同样按启用槽过滤，这层只是早退省一次空查询。
+    from app.memory.user_facts import enabled_user_fact_slots
+    if not enabled_user_fact_slots():
+        return []
     user_id = state.get("user_id", 1)
     try:
         from app.memory.user_facts import build_user_now_text

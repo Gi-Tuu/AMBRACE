@@ -42,7 +42,7 @@ _PLUGIN_DIR = _os.path.dirname(_os.path.abspath(__file__))
 if _PLUGIN_DIR not in _sys.path:
     _sys.path.insert(0, _PLUGIN_DIR)
 
-import douyin_models  # noqa: F401,E402  # X5：渠道自有 ORM 模型（加载期注册进 Base.metadata；须在 init_db 前——main.py lifespan 已做渠道预加载）
+import douyin_models  # noqa: F401,E402  # T5：渠道自有 ORM 模型（加载期注册进插件独立 plugin_metadata，registry 加载后幂等建表）
 from music import (  # noqa: E402
     MUSIC_MOODS,
     normalize_music_mood,
