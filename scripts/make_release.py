@@ -13,7 +13,10 @@ import sys
 import zipfile
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_ROOT = r"D:\Codex-Projects\output"
+# 输出目录：优先读环境变量 AMBRACE_RELEASE_OUT，缺省用项目根同级 release_output/
+OUT_ROOT = os.environ.get("AMBRACE_RELEASE_OUT") or os.path.abspath(
+    os.path.join(PROJECT_ROOT, "..", "release_output")
+)
 OUT_DIR = os.path.join(OUT_ROOT, "ai_companion_public")
 
 # git 跟踪清单 = 复制白名单（排除一切未入库的本机生成物）
@@ -30,19 +33,8 @@ EXCLUDE_PREFIX = (".agents/", "flutter.bat",  # 内部工具/技能目录与本�
                   "docs/")
 
 # 副本内脱敏替换（相对路径 → [(old, new), ...]）
-DESENS = {
-    # F-7：lib/screens 目录已删除（重构为 lib/features），改为实际路径；onboarding 服务器地址
-    #       hint 已在源码改为不暴露内网段（http://服务器IP:8000），此键兜底旧的真实内网 IP。
-    "flutter_app/lib/features/auth/onboarding_screen.dart": [("192.168.1.100", "192.168.x.x")],
-    "scripts/make_release.py": [
-        (r"D:\Codex-Projects\output", "release_output"),
-        ("192.168.1.100", "192.168.x.x"),
-    ],
-    # 脱敏本机内部路径（开发/评估脚本，发布包不暴露作者磁盘路径）
-    "scripts/scan_hardcoded_colors.py": [
-        (r"D:\\AICompanionServer", "AMBRACE_ROOT"),
-    ],
-}
+# 仓库代码/脚本已不含作者本机路径，按需在此追加规则。
+DESENS = {}
 
 README = """# 拥爱（AMBRACE）
 
@@ -464,7 +456,7 @@ def main():
             full = os.path.join(root2, n)
             rel = os.path.relpath(full, OUT_DIR).replace("\\", "/")
             if rel == "scripts/make_release.py":
-                continue  # 其 OUT_ROOT 已脱敏；剩余命中是其自身正则模式定义，跳过
+                continue  # 自身含安全扫描的正则模式定义（盘符/IP 片段），跳过
             rel = os.path.relpath(full, OUT_DIR).replace("\\", "/")
             try:
                 text = io.open(full, encoding="utf-8", errors="ignore").read()

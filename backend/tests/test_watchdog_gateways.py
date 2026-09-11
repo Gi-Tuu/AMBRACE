@@ -112,7 +112,7 @@ def test_start_gateway_respects_paused(monkeypatch):
     monkeypatch.setattr(watchdog, "is_paused", lambda: True)
     monkeypatch.setattr(watchdog.subprocess, "Popen", lambda *a, **k: popped.append((a, k)))
     watchdog._start_gateway({
-        "name": "OpenClaw", "command": ["node", "x.js"], "cwd": "C:\\Users\\sheng",
+        "name": "OpenClaw", "command": ["node", "x.js"], "cwd": "C:\\Users\\example",
         "probe": {"kind": "tcp", "port": 18789},
     })
     assert popped == []

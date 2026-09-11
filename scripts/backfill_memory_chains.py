@@ -8,7 +8,7 @@
 未传 ``--db-url`` 时直接报错退出（不默认 DATABASE_URL 里的生产库）。
 
 用法（示例，均在 backend 外、scripts 目录下运行）：
-    python scripts/backfill_memory_chains.py --db-url "sqlite+aiosqlite:///D:/Codex-Projects/output/_tmp_backfill_b1b.db"
+    python scripts/backfill_memory_chains.py --db-url "sqlite+aiosqlite:///<输出目录>/_tmp_backfill_b1b.db"
     python scripts/backfill_memory_chains.py --db-url <url> --character 12 --batch 500
 """
 import argparse

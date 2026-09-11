@@ -1,6 +1,6 @@
 // UI 截图测试：聊天 / 宠物 / 首页 三张真实渲染 PNG。
 // 仅新增测试文件，不改动任何生产代码；用 mock provider + mock ApiClient(dio adapter) 构造正常主界面状态。
-// 截图写入 D:\Codex-Projects\output\ui_screenshots\{chat|pet|home}.png。
+// 截图写入输出目录下的 {chat|pet|home}.png：目录优先读环境变量 AMBRACE_SHOT_DIR，缺省 <项目根>/build/ui_screenshots。
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -202,6 +202,14 @@ Widget _wrapL10n(ThemeData theme, Widget home) => MaterialApp(
 
 Key _captureKey() => const Key('capture_boundary');
 
+// 截图输出目录：优先读环境变量 AMBRACE_SHOT_DIR，缺省 <项目根>/build/ui_screenshots
+String _shotPath(String fileName) {
+  final sep = Platform.pathSeparator;
+  final dir = Platform.environment['AMBRACE_SHOT_DIR'] ??
+      '${Directory.current.path}${sep}build${sep}ui_screenshots';
+  return '$dir$sep$fileName';
+}
+
 Future<void> _capture(WidgetTester tester, Key key, String outPath) async {
   final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(key));
   await tester.runAsync(() async {
@@ -285,7 +293,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300)); // 入场动画 280ms 播完
     await tester.pump(const Duration(milliseconds: 150)); // 自动滚到底
 
-    await _capture(tester, key, r'D:\Codex-Projects\output\ui_screenshots\chat.png');
+    await _capture(tester, key, _shotPath('chat.png'));
   });
 
   testWidgets('截图：宠物界面（正常待机/交互后状态）', (tester) async {
@@ -321,7 +329,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pump(const Duration(milliseconds: 200));
 
-    await _capture(tester, key, r'D:\Codex-Projects\output\ui_screenshots\pet.png');
+    await _capture(tester, key, _shotPath('pet.png'));
   });
 
   testWidgets('截图：首页（好友列表 + 入口 + 底部导航）', (tester) async {
@@ -350,7 +358,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pump(const Duration(milliseconds: 200));
 
-    await _capture(tester, key, r'D:\Codex-Projects\output\ui_screenshots\home.png');
+    await _capture(tester, key, _shotPath('home.png'));
   });
 }
 

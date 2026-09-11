@@ -36,7 +36,10 @@ from app.memory.tense import (
 )
 
 DEFAULT_DB = os.path.join(SERVER_DIR, "backend", "data", "sqlite", "ai_companion.db")
-DEFAULT_OUT = r"D:\Codex-Projects\output\AMBRACE_存量治理_清单_20260909"
+# 输出目录：优先读环境变量 AMBRACE_PLAN_EXPIRY_OUT，缺省用项目根同级 output/ 下的固定子目录
+DEFAULT_OUT = os.environ.get("AMBRACE_PLAN_EXPIRY_OUT") or os.path.abspath(
+    os.path.join(SERVER_DIR, "..", "output", "AMBRACE_存量治理_清单_20260909")
+)
 HIGH_S_THRESHOLD = 55.0   # 交接口径：S>=55 高优 event 清单
 EVENT_S_CAP = 10.0        # §8.2 修复口径：event S 复位上限
 EVENT_REVIEW_CAP = 3      # §8.2 修复口径：event 复习次数上限

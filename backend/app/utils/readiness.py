@@ -6,7 +6,7 @@
 - 本例是进程内单例登记表（module-level dict），非持久化、无跨进程协议：/ready 据此返回
   200/503，供 watchdog/部署探针判断「启动是否完整」，不代替运行期依赖探活（/health）。
 
-参考：D:\\Users\\sheng\\Downloads\\AMBRACE_两份外部审查_核验汇总与修复方案_20260902.md 3.5 节。
+参考：见 3.5 readiness 评审文档 3.5 节。
 """
 import threading
 

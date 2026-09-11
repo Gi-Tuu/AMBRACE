@@ -154,9 +154,9 @@ def start_server():
 #     "gateways": [
 #       {"name": "OpenClaw Gateway", "enabled": true,
 #        "command": ["C:\\Program Files\\nodejs\\node.exe",
-#                    "C:\\Users\\sheng\\AppData\\Roaming\\npm\\node_modules\\openclaw\\dist\\index.js",
+#                    "C:\\Users\\<用户名>\\AppData\\Roaming\\npm\\node_modules\\openclaw\\dist\\index.js",
 #                    "gateway", "--port", "18789"],
-#        "cwd": "C:\\Users\\sheng",
+#        "cwd": "C:\\Users\\<用户名>",
 #        "probe": {"kind": "tcp", "host": "127.0.0.1", "port": 18789},
 #        "grace_sec": 30}
 #     ]

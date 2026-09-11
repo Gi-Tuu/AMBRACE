@@ -9,7 +9,7 @@ from app.application.system import _get_lan_ip, _is_private_ipv4  # F8：api 门
 
 
 def test_is_private_common():
-    assert _is_private_ipv4("192.168.1.21")
+    assert _is_private_ipv4("192.168.50.7")
     assert _is_private_ipv4("10.0.0.5")
     assert _is_private_ipv4("172.16.3.4")
 
@@ -27,7 +27,7 @@ def _fake_sock(*_a, **_k):
 
 def test_get_lan_ip_prefers_real_iface(monkeypatch):
     fake = {
-        "WLAN": [type("A", (), {"family": socket.AF_INET, "address": "192.168.1.21"})()],
+        "WLAN": [type("A", (), {"family": socket.AF_INET, "address": "192.168.50.7"})()],
         "vEthernet (WSL)": [type("A", (), {"family": socket.AF_INET, "address": "172.29.240.1"})()],
         "Tailscale": [type("A", (), {"family": socket.AF_INET, "address": "100.89.98.7"})()],
         "iKuuuVPN": [type("A", (), {"family": socket.AF_INET, "address": "198.18.0.1"})()],
@@ -35,4 +35,4 @@ def test_get_lan_ip_prefers_real_iface(monkeypatch):
     }
     monkeypatch.setattr(psutil, "net_if_addrs", lambda: fake)
     monkeypatch.setattr(socket, "socket", _fake_sock)
-    assert _get_lan_ip() == "192.168.1.21"
+    assert _get_lan_ip() == "192.168.50.7"
