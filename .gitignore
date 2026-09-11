@@ -90,4 +90,10 @@ backend/data/marketplace_cache/
 # 内部 agent 技能库与协作收件箱（不进开源仓；发布包也已排除）
 .agents/
 .agent-inbox/
+
+# 工具/框架产物（2026-09-11 第五轮 P3-7 补录，避免误提交与 git status 噪音）
+.workbuddy/
+.pytest_cache/
+**/.pytest_cache/
+flutter_app/.flutter_tool_state
 scripts/dev_account_activity.py

@@ -6,7 +6,7 @@
 """
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, WebSocket
+from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket
 from fastapi.responses import JSONResponse
 
 from app.application import system as _svc
@@ -39,9 +39,8 @@ async def ready_check():
     return JSONResponse(snap, status_code=200 if snap["ready"] else 503)
 
 
-@router.get("/liveness")
-async def liveness_check():
-    """运行期活性（与 /health、/ready 并列，不改其语义）：关键循环心跳 + MCP 概况 + 渠道活跃度。
+async def _liveness_detail() -> dict:
+    """运行期活性明细（P3-B：自原公开 /liveness 原样抽出，逻辑逐字节不变）。
 
     - 全段 try 隔离：任一子系统异常只落到对应字段的 _error，绝不使端点 500。
     - 总体 stalled=True 表示存在「进程活着但关键循环停摆/卡死」，供控制台告警与 watchdog 二级判断。
@@ -122,12 +121,43 @@ async def liveness_check():
     except Exception as e:
         info["channels"]["_error"] = repr(e)
 
-    return JSONResponse(info, status_code=200)
+    return info
+
+
+@router.get("/liveness")
+async def liveness_check():
+    """运行期活性探针（公开最小集）：K8s livenessProbe 只需「活着 + 是否停摆」布尔。
+
+    明细（loops / mcp / channels）已挪到鉴权端点 GET /liveness/detail（登录且仅主账号），
+    公开面不再暴露内部循环心跳、MCP 断连清单与渠道绑定细节。
+    """
+    detail = await _liveness_detail()
+    return JSONResponse({"status": "alive", "stalled": bool(detail.get("stalled"))}, status_code=200)
+
+
+@router.get("/liveness/detail")
+async def liveness_detail(user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
+    """运行期活性明细（登录 + 仅主账号）：loops / mcp / channels 全量（运维信息）。"""
+    from app.application.permission_service import is_admin_user
+    from app.i18n import tr_lang
+    if not await is_admin_user(user_id):
+        raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_manage_only"))
+    return JSONResponse(await _liveness_detail(), status_code=200)
 
 
 @router.get("/status")
 async def system_status():
-    """服务器运行状态（含局域网 IP 与图片理解配置状态，便于部署者填手机端服务器地址）"""
+    """服务器运行状态（公开最小集）：server / version / status / timestamp。
+
+    不含 lan_ip / vlm 等内部信息；部署者填手机端服务器地址所需的明细见鉴权端点
+    GET /status/detail（需登录）。
+    """
+    return await _svc.system_status_public()
+
+
+@router.get("/status/detail")
+async def system_status_detail(user_id: int = Depends(get_current_user_id)):
+    """服务器运行状态明细（需登录）：局域网 IP + 识图配置状态，供部署者填手机端服务器地址。"""
     return await _svc.system_status()
 
 

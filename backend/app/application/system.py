@@ -201,9 +201,23 @@ def _backup_info(zip_path: str) -> dict:
     }
 
 
+async def system_status_public() -> dict:
+    """匿名可见的最小状态：在线布尔 + 版本，不含局域网 IP / 内网 base_url。
+
+    P3-B：公开 /status 只回这四项；完整版 system_status()（含 lan_ip / vlm）挪到需登录的
+    GET /status/detail。
+    """
+    return {
+        "server": "AMBRACE Server",
+        "version": get_project_version(),
+        "status": "running",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 async def system_status(
 ):
-    """服务器运行状态（含局域网 IP 与图片理解配置状态，便于部署者填手机端服务器地址）"""
+    """服务器运行状态（完整版，含局域网 IP 与图片理解配置状态）——仅经鉴权端点回传。"""
     from app.config import settings
     return {
         "server": "AMBRACE Server",

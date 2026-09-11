@@ -179,7 +179,7 @@ class ProactiveStorylineItem(Base):
         Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True
     )
     session_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("chat_sessions.id"), nullable=False
+        Integer, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False
     )
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     group_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
@@ -253,7 +253,7 @@ class ProactiveMessageLog(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
-    session_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("chat_sessions.id"), nullable=True)
+    session_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("chat_sessions.id", ondelete="SET NULL"), nullable=True)
     message_type: Mapped[str] = mapped_column(
         String(20), nullable=False
     )  # proactive / birthday / holiday

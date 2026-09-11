@@ -515,6 +515,17 @@ async def build_context(state: dict, *, stream: bool | None = None) -> dict:
     `stream`（P2-A）：显式标记流式模式；None 时从 state 推断（state["stream_sink"] 非空 = 流式）。
     流式模式下 MCP 工具声明/资源摘要不注入（见 section_mcp）。
     """
+    # P3-4（2026-09-11）：思考名字解析前移——注册表 section 早于 legacy 执行，原 section 内
+    # _resolve_reasoning_names 每轮各开 session 查 ai_characters/users。在构建上下文前一次性
+    # 解析角色名/对方昵称写入 state；reasoning_instruction_section 改只读 state（缺失则占位兜底）。
+    # 仅挡位 1/2 需要，避免为不动思考的用户额外查库（与旧行为一致：挡位 0 不查）。
+    try:
+        if int(state.get("reasoning_level", 0) or 0) in (1, 2):
+            from app.agent.context.section_overlay import _ensure_reasoning_names
+            await _ensure_reasoning_names(state)
+    except (TypeError, ValueError):
+        pass
+
     try:
         from app.agent.loop import AGENT_FLAGS
         use_registry = AGENT_FLAGS.get("agent_context_registry", True)

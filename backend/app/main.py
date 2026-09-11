@@ -309,14 +309,29 @@ app = FastAPI(
 # detail 同时保留在顶层兼容位（旧前端/测试仍可读 detail 字段），不破坏 401/403/404/422 语义。
 register_exception_handlers(app)
 
-# CORS 配置（允许手机端跨域访问；P2-3：来源可用 CORS_ORIGINS 环境变量配置，逗号分隔，默认 * 全放行；allow_credentials 保持 False）
-_CORS_ORIGINS = [o.strip() for o in _os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()] or ["*"]
+# CORS 配置（允许手机端跨域访问；P2-3：来源可用 CORS_ORIGINS 环境变量配置，逗号分隔，默认 * 全放行）
+# P3-A 部署形态分流：未显式配置（或显式 '*'）→ 维持现状（'*' + allow_credentials=False + methods/headers '*'，
+# 取值逐字不变）；显式配置具体 origin 列表（SaaS/公网）→ 严格白名单，收紧 methods/headers，此时才允许
+# allow_credentials=True（浏览器本身也不允许 '*' 与凭据并用）。
+_CORS_RAW = _os.environ.get("CORS_ORIGINS", "*").strip()
+_CORS_ORIGINS = [o.strip() for o in _CORS_RAW.split(",") if o.strip()] or ["*"]
+_CORS_WILDCARD = "*" in _CORS_ORIGINS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=not _CORS_WILDCARD,
+    allow_methods=["*"] if _CORS_WILDCARD else ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"] if _CORS_WILDCARD else [
+        # P3-A 连带修正（2026-09-11）：严格白名单必须覆盖客户端/服务端实际使用的自定义头，否则浏览器
+        # 预检（OPTIONS）会因这些头不在 Access-Control-Allow-Headers 而被拒。全仓扫描来源：
+        #   后端 Header(...) 形参：lang（多处 i18n 错误文案）、x-api-client（api/chat.py:307）、
+        #     x-ambrace-bridge-secret / x-ambrace-tenant-id（api/plugins.py:252-253,293-294）
+        #   后端 request.headers.get：X-Lang（app/i18n.py:188）
+        #   前端 Flutter headers：X-Lang（lib/services/api/chat_api.dart）、Authorization（api_client.dart）
+        "Authorization", "Content-Type", "X-Requested-With",
+        "lang", "X-Lang", "x-api-client",
+        "x-ambrace-bridge-secret", "x-ambrace-tenant-id",
+    ],
 )
 
 # 图片上传静态目录（必须先创建目录，StaticFiles 要求存在）

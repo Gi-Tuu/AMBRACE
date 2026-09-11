@@ -51,6 +51,46 @@ jobs:
       - name: Test (pytest)
         run: pytest backend/tests -q
 
+  # 主开发 / 发 APK 在 Windows：覆盖 Windows 特有路径、SO_REUSEADDR、aiosqlite 线程、
+  # pwsh 脚本语法（不跑 Docker smoke）。
+  backend-windows:
+    name: Backend py${{ matrix.python-version }} (Windows, ruff + pytest)
+    runs-on: windows-latest
+    # 观察期设置（临时）：Windows job 首次入 CI，平台相关失败暂不阻塞主线；
+    # 稳定后（建议观察约一周）删除本行转强制门禁。
+    continue-on-error: true
+    defaults:
+      run:
+        shell: pwsh
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ "3.12", "3.13" ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        working-directory: backend
+        run: ruff check app
+
+      - name: Test (pytest)
+        working-directory: backend
+        env:
+          SKIP_MODEL_DOWNLOAD: "1"
+        run: pytest -q -p no:cacheprovider
+
   frontend:
     name: Flutter (analyze + test)
     runs-on: ubuntu-latest

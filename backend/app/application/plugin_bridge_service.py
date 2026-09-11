@@ -8,12 +8,11 @@ import ipaddress
 import json
 import socket
 import time as _time
-import urllib.error
 import urllib.parse
-import urllib.request
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from fastapi import HTTPException
 from sqlalchemy import select
 
@@ -198,11 +197,133 @@ def _sanitize_headers(headers: dict | None) -> dict:
     return out
 
 
-def _http_fetch(url: str, method: str, data, headers: dict, timeout: float, max_bytes: int) -> dict:
-    """同步 urllib 请求（在 to_thread 中调用）：禁重定向；不转发 Cookie/Authorization；
-    响应 ≤max_bytes；返回 {"ok": bool, "data": {status,headers,body} | "error"}"""
-    hdrs = {"User-Agent": _UA}
-    hdrs.update(_sanitize_headers(headers))
+# ---- 连接层 pin-IP（P2-B，2026-09-11；与 app/mcp/transport.py 的异步 _PinnedIP* 对称）----
+# 背景：_check_url_allowed() 只在校验那一刻解析并判定地址；若不在连接层把 TCP 目标钉到该 IP，
+# 校验与真正连接之间还会再走一次系统 DNS，留下 DNS-rebinding / TOCTOU 窗口。
+# 这里把连接目标改写为校验通过的 IP；SNI/Host 头/证书校验仍按原域名（https 域名校验不变）。
+
+# httpcore 同步 NetworkBackend 的模块路径随版本变化（实测 1.0.9 为 httpcore._backends.sync），按序探测。
+_SYNC_BACKEND_PATHS = (
+    "httpcore._backends.sync",          # httpcore >= 1.0（本仓库 venv 1.0.9 实测可用）
+    "httpcore._backends.sync_backend",  # 兼容其它布局
+)
+
+
+def _make_sync_network_backend():
+    """按已安装 httpcore 的实际布局构造同步 NetworkBackend；不可用则抛异常（调用方回退普通路径）"""
+    import importlib
+    last_err: Exception | None = None
+    for path in _SYNC_BACKEND_PATHS:
+        try:
+            cls = getattr(importlib.import_module(path), "SyncBackend", None)
+            if cls is None:
+                continue
+            return cls()
+        except Exception as e:
+            last_err = e
+    raise RuntimeError(f"httpcore sync backend unavailable: {last_err}")
+
+
+class _PinnedSyncNetworkBackend:
+    """把 TCP 连接的目标地址改写为 SSRF 校验时解析出的 IP（仅 IP 层，不改 TLS 证书校验）。
+
+    组合包装 httpcore 的 SyncBackend（避免模块顶层依赖 httpcore 私有路径）：连接池仍以 URL 主机名
+    做 SNI/Host 头/证书校验，这里只替换底层 socket 的连接目标地址。按解析顺序逐个尝试（等价于
+    socket.create_connection 的多地址回退），因此双栈域名的 IPv6/IPv4 回退行为不变；候选地址全部来自
+    校验时那一轮解析，连接期不再触发系统 DNS。
+    """
+
+    def __init__(self, pinned_ips: list[str]) -> None:
+        self._inner = _make_sync_network_backend()
+        self._pinned_ips = list(pinned_ips)
+
+    def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        if not self._pinned_ips:
+            return self._inner.connect_tcp(host, port, timeout, local_address, socket_options)
+        last_err: Exception | None = None
+        for ip in self._pinned_ips:
+            try:
+                return self._inner.connect_tcp(ip, port, timeout, local_address, socket_options)
+            except Exception as e:
+                last_err = e
+        raise last_err if last_err is not None else OSError("no pinned address")
+
+    def connect_unix_socket(self, *a, **kw):
+        return self._inner.connect_unix_socket(*a, **kw)
+
+
+class _PinnedSyncHTTPTransport(httpx.HTTPTransport):
+    """httpx 同步传输：注入 _PinnedSyncNetworkBackend，把插件桥 http 连接绑定到已校验 IP。
+
+    构造失败由 _build_pin_transport 捕获并回退普通传输（与 MCP 的 _build_pinned_http_client 同策略）。
+    """
+
+    def __init__(self, pinned_ips: list[str]) -> None:
+        import httpcore as _hc
+        ssl_context = httpx.create_ssl_context(verify=True, trust_env=True)
+        self._pool = _hc.ConnectionPool(
+            ssl_context=ssl_context,
+            max_connections=100,
+            max_keepalive_connections=20,
+            keepalive_expiry=5.0,
+            http1=True,
+            http2=False,
+            network_backend=_PinnedSyncNetworkBackend(pinned_ips),
+        )
+
+
+def _resolve_pin_ips(url: str) -> tuple[list[str], bool]:
+    """解析 URL host 得到连接期应钉住的 IP 列表（与 MCP 的 _resolve_mcp_ip 对称，复用同一套 SSRF 判定）。
+
+    返回 (pin_ips, drifted)：
+    - pin_ips：连接层把 TCP 目标改写为这些校验通过的 IP（按解析顺序尝试）；[] = 不适用 pin
+      （协议/host 不合法、解析失败），调用方回退普通路径（与改动前行为一致）；
+    - drifted：True = 本次解析命中被拦截地址，即 _check_url_allowed() 通过之后地址发生漂移
+      （DNS-rebinding / TOCTOU 窗口）。调用方必须直接拒绝，绝不能回退到会重新解析的普通路径。
+    - plugin_http_allow_private=True：内网显式放行语义不变（不做拦截判定），仍尽量 pin 到解析地址。
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return [], False
+    if parsed.scheme not in ("http", "https"):
+        return [], False
+    host = parsed.hostname
+    if not host:
+        return [], False
+    try:
+        infos = socket.getaddrinfo(
+            host, parsed.port or (443 if parsed.scheme == "https" else 80),
+            proto=socket.IPPROTO_TCP,
+        )
+    except Exception:
+        return [], False
+    ips: list[str] = []
+    for info in infos:
+        if info and len(info) > 4 and info[4][0] not in ips:
+            ips.append(info[4][0])
+    if not ips:
+        return [], False
+    if not getattr(settings, "plugin_http_allow_private", False):
+        for ip_str in ips:
+            if _is_blocked_ip(ip_str):
+                return [], True
+    return ips, False
+
+
+def _build_pin_transport(pin_ips: list[str]):
+    """构造 pin 到指定 IP 的同步 httpx 传输；不可用（httpcore 内部路径变动/构造异常）返回 None 走普通路径。"""
+    if not pin_ips:
+        return None
+    try:
+        return _PinnedSyncHTTPTransport(pin_ips)
+    except Exception as e:
+        _logger.warning("plugin bridge http pin transport unavailable, fallback to plain: %s", e)
+        return None
+
+
+def _encode_request_body(data, hdrs: dict) -> bytes | None:
+    """把桥请求 data 编码为 bytes 并按需补 Content-Type（改动前 207-218 行的逻辑原样抽出，行为不变）"""
     body = None
     if data is not None:
         if isinstance(data, bytes):
@@ -216,30 +337,42 @@ def _http_fetch(url: str, method: str, data, headers: dict, timeout: float, max_
                 body = None
         if body is not None and "content-type" not in {k.lower() for k in hdrs}:
             hdrs["Content-Type"] = "application/json"
+    return body
 
-    class _NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, *a, **kw):
-            raise urllib.error.HTTPError(url, 302, "redirect blocked", {}, None)
 
-    opener = urllib.request.build_opener(_NoRedirect)
-    req = urllib.request.Request(url, data=body, headers=hdrs, method=str(method or "GET").upper())
+def _http_fetch(url: str, method: str, data, headers: dict, timeout: float, max_bytes: int) -> dict:
+    """同步 httpx 请求（在 to_thread 中调用）：连接层 pin 到 _check_url_allowed() 校验通过的 IP（P2-B）；
+    禁重定向（follow_redirects=False，3xx 原样返回不跟随）；不转发 Cookie/Authorization；
+    响应 ≤max_bytes（超限 413）；返回 {"ok": bool, "data": {status,headers,body} | "error"}"""
+    hdrs = {"User-Agent": _UA}
+    hdrs.update(_sanitize_headers(headers))
+    body = _encode_request_body(data, hdrs)
+
+    pin_ips, drifted = _resolve_pin_ips(url)
+    if drifted:
+        # 校验后地址漂移（疑似 DNS-rebinding）：直接拒绝，不回退到会重新解析的普通路径
+        _logger.warning("plugin bridge http blocked: address drifted after validation %s", url)
+        return {"ok": False, "error": tr_lang("zh", "http_ssrf_blocked")}
+    transport = _build_pin_transport(pin_ips)  # 无 pin 或构造失败时返回 None → 走普通传输
+
     try:
-        with opener.open(req, timeout=timeout) as resp:
-            raw = resp.read(max_bytes + 1)
-            if len(raw) > max_bytes:
-                return {"ok": True, "data": {"status": 413, "headers": {}, "body": "response too large"}}
-            rheaders = {k: v for k, v in resp.headers.items() if k.lower() not in ("set-cookie", "cookie")}
-            text = raw.decode("utf-8", errors="replace")
-            return {"ok": True, "data": {"status": resp.status, "headers": rheaders, "body": text}}
-    except urllib.error.HTTPError as e:
-        # 4xx/5xx：状态码 + 响应体对插件可见（不抛错）
-        try:
-            raw = e.read(max_bytes + 1)
-            text = raw.decode("utf-8", errors="replace")
-        except Exception:
-            text = ""
-        return {"ok": True, "data": {"status": e.code, "headers": {}, "body": text}}
+        with httpx.Client(timeout=timeout, follow_redirects=False, transport=transport) as cli:
+            with cli.stream(str(method or "GET").upper(), url, content=body, headers=hdrs) as resp:
+                buf = bytearray()
+                for chunk in resp.iter_bytes():
+                    buf.extend(chunk)
+                    if len(buf) > max_bytes:
+                        return {"ok": True, "data": {"status": 413, "headers": {}, "body": "response too large"}}
+                raw = bytes(buf)
+                rheaders = {k: v for k, v in resp.headers.items() if k.lower() not in ("set-cookie", "cookie")}
+                return {"ok": True, "data": {
+                    "status": resp.status_code,
+                    "headers": rheaders,
+                    "body": raw.decode("utf-8", errors="replace"),
+                }}
     except Exception as e:
+        # 说明：流式读取下 4xx/5xx 不抛错，而是正常返回 status 与错误体（与 urllib 版「状态码 + 错误体
+        # 对插件可见」语义一致），故此处只兜连接/超时/读流类异常。
         _logger.warning("plugin bridge http failed %s: %s", url, e)
         return {"ok": False, "error": tr_lang("zh", "http_failed", err=str(e)[:200])}
 

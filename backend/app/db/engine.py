@@ -1,5 +1,4 @@
 """DB 引擎（F1 拆分，2026-08-31）：引擎创建与 SQLite 目录准备；会话工厂见 session.py。"""
-"""数据库连接与会话管理（原 database.py 头部）"""
 import os
 from pathlib import Path
 
@@ -8,6 +7,17 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
+
+import sqlite3
+from datetime import date, datetime, time
+
+# P3-2（2026-09-11）：Python 3.12 起 sqlite3 默认 datetime adapter 被弃用，全量测试出现
+# "default datetime adapter is deprecated" 告警。显式注册与旧默认行为完全一致的适配器
+# （datetime 用空格分隔含微秒的 isoformat；date/time 用 isoformat），消除告警且写库格式不变。
+# 仅影响原生 datetime 经 sqlite3 序列化路径，已存数据（如 2026-09-10 15:54:19.123456）格式保持。
+sqlite3.register_adapter(datetime, lambda dt: dt.isoformat(" "))
+sqlite3.register_adapter(date, lambda d: d.isoformat())
+sqlite3.register_adapter(time, lambda t: t.isoformat())
 
 # 首次部署时 backend/data/sqlite/ 尚不存在，SQLite 会报 unable to open database file
 if settings.database_url.startswith("sqlite"):

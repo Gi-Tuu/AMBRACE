@@ -8,6 +8,7 @@
 import asyncio
 import json
 import os
+import socket
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -20,6 +21,7 @@ from app.api.plugins import router as plugins_router
 from app.api.plugin_bridge import router as plugin_bridge_router
 from app.auth.deps import get_current_user_id
 from app.config import settings
+from app.i18n import tr_lang
 from app.plugins import registry
 from app.application import plugin_bridge_service
 
@@ -275,6 +277,160 @@ def test_http_不转发cookie_authorization():
     })
     assert "Cookie" not in out and "Authorization" not in out
     assert out.get("X-Custom") == "v"
+
+
+# ---------------- http 连接层 pin-IP（P2-B） ----------------
+
+@pytest.fixture()
+def local_http():
+    """本机 http 服务（127.0.0.1 随机端口）：P2-B 连接层 pin 回归用，不依赖外网"""
+    import http.server
+    import threading
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        status = 200
+        payload = b'{"pong": 1}'
+        extra_headers: dict = {}
+
+        def _respond(self):
+            self.send_response(self.status)
+            for k, v in type(self).extra_headers.items():
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(type(self).payload)))
+            self.end_headers()
+            self.wfile.write(type(self).payload)
+
+        do_GET = _respond
+        do_POST = _respond
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+    try:
+        yield srv, _Handler
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        th.join(timeout=5)
+
+
+def test_http_pin_连接目标是已校验IP(local_http, monkeypatch):
+    """P2-B：连接层 pin —— 真实连接打在校验/解析出的 IP 字面量上（域名不再参与连接期 DNS）"""
+    srv, _ = local_http
+    port = srv.server_address[1]
+    calls: list[str] = []
+
+    def _fake_gai(host, port_, *a, **kw):
+        calls.append(str(host))
+        ip = "127.0.0.1" if str(host) == "plugin-pin.test" else str(host)
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, port_))]
+
+    monkeypatch.setattr(settings, "plugin_http_allow_http", True)
+    monkeypatch.setattr(settings, "plugin_http_allow_private", True)  # 显式放行内网（本机回环服务）
+    monkeypatch.setattr("socket.getaddrinfo", _fake_gai)
+    r = asyncio.run(plugin_bridge_service.http_proxy(
+        {"url": f"http://plugin-pin.test:{port}/ping"}, lang="zh",
+    ))
+    assert r["ok"] is True, r
+    assert r["data"]["status"] == 200
+    assert r["data"]["body"] == '{"pong": 1}'
+    # 域名只在 pin 解析时查一次；连接层拿到的是 IP 字面量（未 pin 的话连接期会再查一次域名）
+    assert calls.count("plugin-pin.test") == 1, calls
+    assert "127.0.0.1" in calls[1:], calls
+
+
+def test_http_pin_校验后地址漂移直接拒绝(monkeypatch):
+    """P2-B：_check_url_allowed 通过后地址漂移命中拦截（疑似 DNS-rebinding）→ 直接拒绝，不回退普通路径"""
+    state = {"n": 0}
+
+    def _fake_gai(host, port_, *a, **kw):
+        state["n"] += 1
+        ip = "93.184.216.34" if state["n"] == 1 else "127.0.0.1"  # 第二次解析已漂移到内网
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, port_))]
+
+    hits: list = []
+
+    def _no_connect(*a, **kw):
+        hits.append(a)
+        raise OSError("must not connect after detected rebinding")
+
+    monkeypatch.setattr(settings, "plugin_http_allow_private", False)
+    monkeypatch.setattr("socket.getaddrinfo", _fake_gai)
+    monkeypatch.setattr("socket.create_connection", _no_connect)
+    r = asyncio.run(plugin_bridge_service.http_proxy({"url": "https://drift.test/x"}, lang="zh"))
+    assert r["ok"] is False, r
+    assert r["error"] == tr_lang("zh", "http_ssrf_blocked")
+    assert hits == []      # 绝不用漂移后的地址发起连接
+    assert state["n"] == 2  # 校验一次 + pin 解析一次
+
+
+def test_http_pin_多地址按解析顺序回退(monkeypatch):
+    """P2-B：pin 保留同一轮解析的全部地址（双栈 IPv6/IPv4 回退行为不变），任一中拦截即整体拒绝"""
+    monkeypatch.setattr(settings, "plugin_http_allow_private", False)
+    monkeypatch.setattr("socket.getaddrinfo", lambda host, port_, *a, **kw: [
+        (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+         ("2606:2800:220:1:248:1893:25c8:1946", port_, 0, 0)),
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", port_)),
+    ])
+    ips, drifted = plugin_bridge_service._resolve_pin_ips("https://example.com/")
+    assert drifted is False
+    assert ips == ["2606:2800:220:1:248:1893:25c8:1946", "93.184.216.34"]
+    # 任一地址命中拦截 → ([], True)（判定与 _check_url_allowed 同源）
+    monkeypatch.setattr("socket.getaddrinfo", lambda host, port_, *a, **kw: [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", port_)),
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("10.0.0.5", port_)),
+    ])
+    assert plugin_bridge_service._resolve_pin_ips("https://example.com/") == ([], True)
+    # 非 http(s) / 解析失败 → 不 pin（回退普通路径）
+    assert plugin_bridge_service._resolve_pin_ips("ftp://example.com/") == ([], False)
+
+
+def test_http_pin_构造失败回退普通路径(local_http, monkeypatch):
+    """P2-B：pin 机制不可用（httpcore 内部路径变动/构造异常）→ 回退普通路径，插件请求不因此报错"""
+    srv, _ = local_http
+    port = srv.server_address[1]
+
+    def _boom():
+        raise RuntimeError("httpcore sync backend layout changed")
+
+    monkeypatch.setattr(settings, "plugin_http_allow_http", True)
+    monkeypatch.setattr(settings, "plugin_http_allow_private", True)
+    monkeypatch.setattr(plugin_bridge_service, "_make_sync_network_backend", _boom)
+    r = asyncio.run(plugin_bridge_service.http_proxy(
+        {"url": f"http://127.0.0.1:{port}/ping"}, lang="zh",
+    ))
+    assert r["ok"] is True, r
+    assert r["data"]["status"] == 200
+    assert r["data"]["body"] == '{"pong": 1}'
+
+
+def test_http_响应超限413(local_http, monkeypatch):
+    """P2-B：流式读取仍按 max_bytes 截断（超限 413）"""
+    srv, handler = local_http
+    port = srv.server_address[1]
+    handler.payload = b"x" * 2048
+    monkeypatch.setattr(settings, "plugin_http_allow_private", True)
+    r = plugin_bridge_service._http_fetch(f"http://127.0.0.1:{port}/big", "GET", None, {}, 5.0, 64)
+    assert r["ok"] is True, r
+    assert r["data"] == {"status": 413, "headers": {}, "body": "response too large"}
+
+
+def test_http_3xx不跟随(local_http, monkeypatch):
+    """P2-B：3xx 原样返回、不跟随重定向"""
+    srv, handler = local_http
+    port = srv.server_address[1]
+    handler.status = 302
+    handler.payload = b""
+    handler.extra_headers = {"Location": "http://127.0.0.1:1/other"}
+    monkeypatch.setattr(settings, "plugin_http_allow_private", True)
+    r = plugin_bridge_service._http_fetch(f"http://127.0.0.1:{port}/r", "GET", None, {}, 5.0, 1024)
+    assert r["ok"] is True, r
+    assert r["data"]["status"] == 302
+    assert r["data"]["headers"].get("location") == "http://127.0.0.1:1/other"
 
 
 # ---------------- ai 分发 ----------------

@@ -258,6 +258,15 @@ def _scene_filter(rows: list[dict], scene: str | None,
     return out
 
 
+def _like_escape(q: str) -> str:
+    """P3-E：转义 LIKE 通配符（参数化绑定已防注入，此处只处理通配符语义）。
+
+    先转义反斜杠自身，再转义 % 与 _；配合调用处 `.like(..., escape="\\\\")` 使用，
+    避免用户搜「50%」「a_b」时把 % / _ 当通配符而误召回「5012」「axb」。
+    """
+    return q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 async def search_memories(
     character_id: int,
     query: str,
@@ -420,7 +429,7 @@ async def search_memories(
                     Memory.character_id == character_id,
                     Memory.is_archived == False,
                     Memory.memory_type != "working_state",  # M3-a：工作记忆不进召回（注入走专用分区）
-                    Memory.content.like(f"%{query}%"),
+                    Memory.content.like(f"%{_like_escape(query)}%", escape="\\"),   # P3-E：% / _ 不再当通配符
                     _retrievable_status_clause(),   # #70-C：双通道过滤（flag 关=永真）
                 )
                 .order_by(Memory.importance.desc(), Memory.created_at.desc())

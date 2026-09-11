@@ -9,7 +9,6 @@ from app.utils.timeutil import (
     now_naive_utc,
     shift_utc_naive,
     to_naive_utc,
-    utcnow_naive,
 )
 
 
@@ -84,12 +83,6 @@ def test_app_local_now_default_utc8():
     assert now.utcoffset() == timedelta(hours=8)
     utc_hour = now.astimezone(timezone.utc).hour
     assert (now.hour - utc_hour) % 24 in (8, -16)
-
-
-def test_utcnow_naive_无时区():
-    """utcnow_naive 返回 naive UTC（匹配裸 DateTime 列存储约定）。"""
-    dt = utcnow_naive()
-    assert dt.tzinfo is None
 
 
 def test_to_naive_utc_none透传():

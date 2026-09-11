@@ -7,6 +7,7 @@ import '../features/weave/weave_view_mode.dart';
 import '../theme/font_variant.dart';
 import '../theme/skins/skin_registry.dart';
 import '../services/api_client.dart';
+import '../services/secure_token_store.dart';
 
 class SettingsProvider extends ChangeNotifier {
   String _serverUrl = '';
@@ -72,7 +73,8 @@ class SettingsProvider extends ChangeNotifier {
     _nickname = prefs.getString('nickname') ??
         (ui.PlatformDispatcher.instance.locale.languageCode.startsWith('en') ? 'User' : '用户');
     _avatarUrl = prefs.getString('avatar_url') ?? '';
-    _token = prefs.getString('auth_token') ?? '';
+    // P2-A：优先安全存储；旧版明文 token 在此处一次性迁移（见 SecureTokenStore.readToken）
+    _token = await SecureTokenStore.instance.readToken();
     _userId = prefs.getInt('user_id') ?? 0;
     _isLoggedIn = _token.isNotEmpty;
     _isAdmin = prefs.getBool('is_admin') ?? false;
@@ -188,7 +190,8 @@ class SettingsProvider extends ChangeNotifier {
     _nickname = nickname;
     _isLoggedIn = true;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('auth_token', token);
+    // P2-A：凭据入安全存储，同时清除 prefs 中的旧明文（user_id/nickname 非凭据，仍留 prefs）
+    await SecureTokenStore.instance.writeToken(token);
     await prefs.setInt('user_id', userId);
     await prefs.setString('nickname', nickname);
     notifyListeners();
@@ -236,7 +239,8 @@ class SettingsProvider extends ChangeNotifier {
     _parentId = null;
     _isSub = false;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('auth_token');
+    // P2-A：登出时安全存储与 prefs 两处都清（deleteToken 内部已做降级兜底）
+    await SecureTokenStore.instance.deleteToken();
     await prefs.remove('user_id');
     await prefs.remove('avatar_url');
     // B4（2026-09-01 审查）：登出时同步清掉 ApiClient 单例残留的认证头

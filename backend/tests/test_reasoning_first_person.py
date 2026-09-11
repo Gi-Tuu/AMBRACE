@@ -11,6 +11,7 @@
 - 注入条数（0 关=0 条 / 1=1 条含名字与昵称 / 2=2 条）
 """
 import asyncio
+import re
 
 from app.agent import nodes
 from app.agent.context.reasoning_prompt import (
@@ -71,7 +72,8 @@ def test_穿帮剔除_系统注入与数值技术字段整句删除():
         "他今天很累，我先共情、回短点。"
     )
     out = _norm(raw, "Sam", "轩")
-    assert out == "他今天很累，我先共情、回短点。"
+    # 新语义：只丢含穿帮词的最小子句，其余子句保留（「、」按取舍统一成「，」）
+    assert out == "先提一下。他今天很累，我先共情，回短点。"
     for leak in ("天气注入", "注入为准", "饱食度", "0%", "GEN_IMAGE", "max_tokens"):
         assert leak not in out
 
@@ -90,12 +92,63 @@ def test_空输入与全穿帮返回None():
     assert _norm("天气注入说是晴。", "Sam", "轩") is None
 
 
+# ── P1-1 回归：逗号长句只丢穿帮子句，不整条清空 ────────────────────
+
+def test_穿帮剔除_夹带穿帮词的长句不整条清空():
+    raw = "他刚回来，肉也焖好了，天气注入说是晴以当前注入为准，我先把肉盛出来问他吃没。"
+    out = _norm(raw, "Sam", "轩")
+    assert out is not None
+    assert "肉也焖好了" in out
+    assert "我先把肉盛出来" in out
+    assert "天气注入" not in out
+    assert "以当前注入为准" not in out
+
+
+def test_穿帮剔除_夹带数值只丢数值子句():
+    raw = "可以提团子饿了，兔子饱食度0%，我顺口问一句。"
+    out = _norm(raw, "Sam", "轩")
+    assert out is not None
+    assert "团子饿了" in out
+    assert "我顺口问一句" in out
+    assert "0%" not in out
+    assert "饱食度" not in out
+
+
+def test_穿帮剔除_全句皆穿帮仍返回None():
+    assert _norm("天气注入说是晴，以当前注入为准。", "Sam", "轩") is None
+
+
+# ── P1-2 回归：长度标签交替顺序 ─────────────────────────────────
+
+def test_长度标签_中长不残留单字长():
+    out = _norm("长度：中长。", "Sam", "轩")
+    assert out == "我回长一点。"
+    assert "我正常回长" not in out
+    assert "长度" not in out
+
+
+# ── P1-3 回归：段间不用半角空格拼接 ─────────────────────────────
+
+def test_上屏排版_句末符后不跟半角空格():
+    out = _norm("他会累。 我先陪他说。 回短点。", "Sam", "轩")
+    assert out == "他会累。我先陪他说。回短点。"
+    assert re.search(r"[。！？!?][ 　]", out) is None
+
+
+def test_已知取舍_顿号分号归一为逗号且连续句末符只留一个():
+    # 取舍 1：段内重拼把「、」「；」统一成「，」（只改标点形态、不改语义）
+    assert _norm("他今天很累，我先共情、回短点。", "Sam", "轩") == "他今天很累，我先共情，回短点。"
+    assert _norm("策略：简短回应；长度：短。", "Sam", "轩") == "简短回应，我回短点。"
+    # 取舍 2：连续句末符只保留第一个，后一个标点丢弃
+    assert _norm("好。！那我回了。", "Sam", "轩") == "好。那我回了。"
+
+
 def test_名字昵称缺失时只做脱敏不报错():
-    # 名字/昵称为 None：跳过自称替换（昵称缺失仍按「你」兜底），穿帮句照常剔除
+    # 名字/昵称为 None：跳过自称替换（昵称缺失仍按「你」兜底），穿帮子句照常剔除
     out = _norm("用户说累了，饱食度0%。他想早点睡，我陪着。", None, None)
-    assert out == "他想早点睡，我陪着。"   # 含饱食度/百分比的整句被删
+    assert out == "你说累了。他想早点睡，我陪着。"   # 只删含饱食度/百分比的最小子句
     out2 = _norm("用户说累了。他想早点睡，我陪着。", None, None)
-    assert out2 == "你说累了。 他想早点睡，我陪着。"
+    assert out2 == "你说累了。他想早点睡，我陪着。"
 
 
 # ── 挡位 2（nodes.generate_response）────────────────────────────
@@ -174,3 +227,29 @@ def test_注入分区_挡位1与2都注入_挡位0不注入():
     assert len(_run(1)) == 1
     assert len(_run(2)) == 2
     assert "Sam" in _run(1)[0] and "轩" in _run(1)[0]
+
+
+# ── P3-6（2026-09-11）：上屏归一后相邻重复短句去重 ────────────────────
+
+def test_去重_相邻相同短句合并():
+    # 模型正文自写一遍 + 长度标签转换 → 相邻重复短句应合并为一句
+    out = _norm("我回短点。我回短点。", "Sam", "轩")
+    assert out == "我回短点。"
+
+
+def test_去重_长度标签转换与正文重复合并():
+    # 「长度：短」→「我回短点」，叠加模型正文「我回短点。」→ 归一后合并为单句
+    out = _norm("长度：短。我回短点。", "Sam", "轩")
+    assert out == "我回短点。"
+
+
+def test_去重_两个不同短句不动():
+    out = _norm("他回来了。她出去了。", "Sam", "轩")
+    assert out == "他回来了。她出去了。"
+
+
+def test_去重_长句重复不动():
+    # 长句（>12 字）即便相邻重复也不去重
+    long = "今天天气真不错我们一起去散步吧。"
+    out = _norm(long + long, "Sam", "轩")
+    assert out == long + long

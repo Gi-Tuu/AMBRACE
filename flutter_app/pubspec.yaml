@@ -17,6 +17,8 @@ dependencies:
   web_socket_channel: ^3.0.0
   provider: ^6.1.0
   shared_preferences: ^2.2.0
+  # P2-A（2026-09-11 审查）：JWT 会话凭据改存安全存储（Android Keystore / iOS Keychain）
+  flutter_secure_storage: ^11.1.0
   flutter_local_notifications: ^20.1.0
   flutter_background_service: ^5.0.10
   image_picker: ^1.1.2

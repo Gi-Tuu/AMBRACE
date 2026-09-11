@@ -91,7 +91,7 @@ class DailySummary(Base):
     __tablename__ = "daily_summaries"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_sessions.id"), nullable=False)
+    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
     summary_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
     summary_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     key_points: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON

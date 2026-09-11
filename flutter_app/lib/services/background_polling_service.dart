@@ -8,6 +8,7 @@ import "package:shared_preferences/shared_preferences.dart";
 import "phone_perception_service.dart";
 import "unread_engine.dart";
 import "background_ws_client.dart";
+import "secure_token_store.dart";
 import "../utils/service_l10n.dart";
 import "../utils/app_lang.dart";
 
@@ -113,7 +114,8 @@ void onStart(ServiceInstance service) async {
   // #55 后台保活：维持用户级通知 WebSocket 长连接（指数退避重连），实时收推送弹通知
   final prefs = await SharedPreferences.getInstance();
   _bgServerUrl = prefs.getString("server_url") ?? "";
-  _bgToken = prefs.getString("auth_token") ?? "";
+  // P2-A：token 已迁安全存储（Keystore）；DartPluginRegistrant 已注册插件，后台 isolate 同样可读
+  _bgToken = await SecureTokenStore.instance.readToken();
   _startEventWs(plugin);
 }
 
@@ -141,7 +143,7 @@ Future<void> _autoReportNotifications() async {
     final prefs = await SharedPreferences.getInstance();
     if (!(prefs.getBool(PhonePerceptionService.autoNotifyKey) ?? false)) return;
     final baseUrl = prefs.getString("server_url") ?? "";
-    final token = prefs.getString("auth_token") ?? "";
+    final token = await SecureTokenStore.instance.readToken();
     if (baseUrl.isEmpty || token.isEmpty) return;
     final notifs = await PhonePerceptionService.readCachedNotifications();
     if (notifs.isEmpty) return;
@@ -160,7 +162,7 @@ Future<void> _pollOnce(FlutterLocalNotificationsPlugin plugin) async {
     final l10n = ServiceL10n(await appLang());
     final prefs = await SharedPreferences.getInstance();
     final baseUrl = prefs.getString("server_url") ?? "";
-    final token = prefs.getString("auth_token") ?? "";
+    final token = await SecureTokenStore.instance.readToken();
     if (baseUrl.isEmpty || token.isEmpty) return;
     _bgServerUrl = baseUrl;
     _bgToken = token;

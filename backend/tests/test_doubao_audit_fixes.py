@@ -12,6 +12,7 @@ from starlette.testclient import TestClient
 
 from app.api import chat as chat_api
 from app.api import system as system_api
+from app.auth.config import create_token
 from app.auth.deps import get_current_user_id
 
 
@@ -44,6 +45,42 @@ def test_status_version_matches_project_version():
     assert r.status_code == 200
     body = r.json()
     assert body["version"] == get_project_version()
+
+
+# ---------------- P3-B：/status 公开最小面 + /status/detail 鉴权（2026-09-11） ----------------
+
+def _admin_headers() -> dict:
+    """真实 JWT（user_id=1 主账号），走真实 HTTPBearer 鉴权。"""
+    return {"Authorization": f"Bearer {create_token(1)}"}
+
+
+def test_status_public_excludes_internal_info():
+    """匿名 GET /status 只含 server/version/status/timestamp，不含 lan_ip / vlm 内部信息。"""
+    r = _make_system_client().get("/api/v1/system/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body.keys()) == {"server", "version", "status", "timestamp"}
+    assert body["server"] == "AMBRACE Server"
+    assert body["status"] == "running"
+    assert body["timestamp"]
+    assert "lan_ip" not in body
+    assert "vlm" not in body
+
+
+def test_status_detail_requires_auth():
+    """无 token 访问 /status/detail → 401（未带凭据，不进入业务逻辑）。"""
+    r = _make_system_client().get("/api/v1/system/status/detail")
+    assert r.status_code == 401
+
+
+def test_status_detail_returns_full_payload_with_admin_token():
+    """主账号 token → 200 且含完整明细（lan_ip / vlm）。"""
+    r = _make_system_client().get("/api/v1/system/status/detail", headers=_admin_headers())
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body.keys()) == {"server", "version", "status", "timestamp", "lan_ip", "vlm"}
+    assert isinstance(body["lan_ip"], str)
+    assert "enabled" in body["vlm"] and "base_url" in body["vlm"]
 
 
 # ---------------- P1-4：未配置 API Key 返回 400 ----------------

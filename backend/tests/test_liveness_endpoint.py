@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """运行期活性端点 (/api/v1/system/liveness) 集成测试。
 
+P3-B（2026-09-11）端点形状变更：公开 `/liveness` 只回 {status, stalled}（K8s 探针用）；
+全量明细（loops / mcp / channels）挪到鉴权端点 `/liveness/detail`（登录 + 仅主账号）。
+原明细断言保留，改打 detail 端点（判定：形状确实变了，非为绿弱化）。
+
 - channels 段必须读 wechat_ilink_bindings 的 last_inbound_at/last_outbound_at（只读绑定表；经 DB 反射）。
 - 子系统隔离：任一子系统异常只落到对应段 _error，端点绝不 500。
 - loops 段 stalled 正确驱动整体 stalled。
@@ -18,6 +22,7 @@ from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
 
 from app.api import system as system_api
+from app.auth.config import create_token
 from app.models.mcp import MCPServer
 
 # 只建 liveness 端点读取所需的表结构；独立于全局 Base.metadata / 渠道插件加载
@@ -97,13 +102,22 @@ def _make_client():
     return TestClient(app)
 
 
+def _admin_headers() -> dict:
+    """真实 JWT（user_id=1 主账号）——走真实 HTTPBearer + is_admin_user 判定，不打桩依赖。"""
+    return {"Authorization": f"Bearer {create_token(1)}"}
+
+
+DETAIL_URL = "/api/v1/system/liveness/detail"
+PUBLIC_URL = "/api/v1/system/liveness"
+
+
 def test_liveness_reads_bindings(liveness_db):
     """channels 段读绑定表 last_inbound_at/last_outbound_at。"""
     now = _now_naive_utc()
     _add_binding(liveness_db, character_id=7, enabled=True, last_in=now, last_out=now)
     _add_binding(liveness_db, character_id=8, enabled=False, last_in=None, last_out=None)
 
-    r = _make_client().get("/api/v1/system/liveness")
+    r = _make_client().get(DETAIL_URL, headers=_admin_headers())
     assert r.status_code == 200
     j = r.json()
     assert j["stalled"] is False
@@ -131,7 +145,7 @@ def test_liveness_mcp_down_ids_reported(liveness_db):
             await db.commit()
     asyncio.run(_seed())
 
-    r = _make_client().get("/api/v1/system/liveness")
+    r = _make_client().get(DETAIL_URL, headers=_admin_headers())
     assert r.status_code == 200
     mcp = r.json()["mcp"]
     assert mcp["expected"] == 1
@@ -147,7 +161,7 @@ def test_liveness_sub_system_isolation(liveness_db, monkeypatch):
 
     # 让端点访问的 async_session_factory 抛错（mcp / channels 两段都会命中）
     monkeypatch.setattr("app.db.database.async_session_factory", _boom_factory)
-    r = _make_client().get("/api/v1/system/liveness")
+    r = _make_client().get(DETAIL_URL, headers=_admin_headers())
     assert r.status_code == 200
     j = r.json()
     assert "_error" in j["mcp"]
@@ -157,7 +171,10 @@ def test_liveness_sub_system_isolation(liveness_db, monkeypatch):
 
 
 def test_liveness_stalled_from_loops(monkeypatch):
-    """loops 段负责整体 stalled：登记一个陈旧（stalled）目标 → 整体 stalled=True。"""
+    """loops 段负责整体 stalled：登记一个陈旧（stalled）目标 → 整体 stalled=True。
+
+    P3-B：公开端点与 detail 端点都必须反映 stalled（公开面只多一个 status 字段）。
+    """
     import time as _t
     import app.utils.supervisor as sv_mod
 
@@ -178,12 +195,49 @@ def test_liveness_stalled_from_loops(monkeypatch):
         s._targets["scheduler"].last_beat = _t.monotonic() - 100
         monkeypatch.setattr(sv_mod, "supervisor", s)
 
-        r = _make_client().get("/api/v1/system/liveness")
+        r = _make_client().get(DETAIL_URL, headers=_admin_headers())
         assert r.status_code == 200
         j = r.json()
         assert j["loops"]["scheduler"]["stalled"] is True
         assert j["stalled"] is True
 
+        pub = _make_client().get(PUBLIC_URL)
+        assert pub.status_code == 200
+        assert pub.json() == {"status": "alive", "stalled": True}
+
         await s.stop()
 
     asyncio.run(scenario())
+
+
+# ── P3-B：公开 /liveness 最小面 + detail 端点鉴权 ──────────────────────────────
+
+def test_liveness_public_has_only_status_and_stalled(liveness_db):
+    """匿名 GET /liveness 只含 status / stalled 两字段，绝不含 loops / mcp / channels。"""
+    _add_binding(liveness_db, character_id=7, enabled=True,
+                 last_in=_now_naive_utc(), last_out=_now_naive_utc())
+    r = _make_client().get(PUBLIC_URL)
+    assert r.status_code == 200
+    j = r.json()
+    assert set(j.keys()) == {"status", "stalled"}
+    assert j["status"] == "alive"
+    assert j["stalled"] is False
+    for leaked in ("loops", "mcp", "channels"):
+        assert leaked not in j
+
+
+def test_liveness_detail_requires_auth(liveness_db):
+    """无 token → 401；非主账号 token → 403（明细属运维信息）。"""
+    c = _make_client()
+    assert c.get(DETAIL_URL).status_code == 401
+    other = {"Authorization": f"Bearer {create_token(200)}"}
+    assert c.get(DETAIL_URL, headers=other).status_code == 403
+
+
+def test_liveness_detail_admin_full_payload(liveness_db):
+    """主账号 token → 200 且含完整明细段（loops / mcp / channels / stalled）。"""
+    r = _make_client().get(DETAIL_URL, headers=_admin_headers())
+    assert r.status_code == 200
+    j = r.json()
+    assert set(j.keys()) == {"loops", "mcp", "channels", "stalled"}
+    assert j["stalled"] is False

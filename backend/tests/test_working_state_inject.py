@@ -5,6 +5,7 @@
 - render_working_state：三桶按优先级渲染一行式短句；空/非法输入返回空串；每桶上限 3；
 - traffic_hit：同 key 恒定（确定性分桶）、ratio<=0 恒 False / >=1 恒 True、命中率≈ratio；
 - inject_allowed：仅灰度白名单角色（char13）命中比例桶才注入；其余角色恒 False；
+  （2026-09-11 扩量：白名单内比例 15%→100%，故 char13 恒命中；门控逻辑仍保留「白名单 + 分桶」两段）
   全量开关 working_state_inject 开=任意角色注入；
 - section 端到端：有行+灰度命中→注入【工作记忆】块；无行→空；非灰度角色→空（零行为）。
 
@@ -61,7 +62,8 @@ def test_render_skips_entry_without_identity():
 
 def test_traffic_hit_is_deterministic_for_same_key():
     assert sws.traffic_hit("13:7") == sws.traffic_hit("13:7")
-    assert sws.traffic_hit("13:7") == sws.traffic_hit("13:7", 0.15)
+    assert sws.traffic_hit("13:7", 0.15) == sws.traffic_hit("13:7", 0.15)
+    # 与模块默认比例解耦：显式 15% 口径的自洽性由本用例保证
 
 
 def test_traffic_hit_boundaries():
@@ -71,9 +73,9 @@ def test_traffic_hit_boundaries():
 
 
 def test_traffic_hit_ratio_roughly_holds():
-    hits = sum(1 for i in range(2000) if sws.traffic_hit(f"13:{i}"))
+    hits = sum(1 for i in range(2000) if sws.traffic_hit(f"13:{i}", 0.15))
     ratio = hits / 2000
-    assert 0.10 <= ratio <= 0.20  # 标称 15%，2000 样本下应落在该区间
+    assert 0.10 <= ratio <= 0.20  # 显式按 15% 口径：2000 样本下应落在该区间
 
 
 # ────── inject_allowed（灰度门控）─────────────────────────────────────────
@@ -87,18 +89,22 @@ def _session_hit(cid: int = 13) -> int:
 
 
 def _session_miss(cid: int = 13) -> int:
+    """按 15% 口径找一个未命中会话（模块默认比例 2026-09-11 起为 1.0，故必须显式传入）。"""
     for s in range(1, 5000):
-        if not sws.traffic_hit(f"{cid}:{s}"):
+        if not sws.traffic_hit(f"{cid}:{s}", 0.15):
             return s
-    raise AssertionError("15% 比例下应存在未命中会话")
+    raise AssertionError("15% 口径下应存在未命中会话")
 
 
 def test_inject_allowed_gray_char_hit():
     assert sws.inject_allowed(13, _session_hit())
 
 
-def test_inject_allowed_gray_char_miss():
-    assert not sws.inject_allowed(13, _session_miss())
+def test_inject_allowed_gray_char_miss(monkeypatch):
+    """分桶未命中 → 不注入（用固定 miss 复核门控，与当前比例常量解耦）。"""
+    monkeypatch.setattr(sws, "traffic_hit", lambda key, ratio=0.15: False)
+    assert not sws.inject_allowed(13, 7)
+    assert _session_miss() > 0  # 15% 口径下确实存在未命中会话
 
 
 def test_inject_allowed_other_chars_never():

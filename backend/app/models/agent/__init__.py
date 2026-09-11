@@ -143,7 +143,7 @@ class PendingPermissionAction(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_sessions.id"), nullable=False)
+    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
     character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     scope: Mapped[str] = mapped_column(String(40), nullable=False)
     action: Mapped[str] = mapped_column(Text, nullable=False)  # JSON 动作载荷（如生图 prompt）

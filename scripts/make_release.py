@@ -165,7 +165,7 @@ cd backend
 局域网/手机访问被拦时，以管理员运行 `scripts\\open_firewall.bat` 放行 8000 端口（Linux 防火墙见 2.4 第 5 步）。
 
 ### 2.2 获取服务器地址（手机端填写）
-服务器启动后运行 `python scripts/get_server_info.py`，会打印局域网地址（手机与服务器同一 Wi-Fi 时填）：`http://192.168.x.x:8000`；也可直接访问 `http://127.0.0.1:8000/api/v1/system/status` 查看 `lan_ip`。
+服务器启动后运行 `python scripts/get_server_info.py`，会打印局域网地址（手机与服务器同一 Wi-Fi 时填）：`http://192.168.x.x:8000`；也可登录后在 App/控制台内查看（`GET /api/v1/system/status/detail`），公开的 `/api/v1/system/status` 已不再返回 `lan_ip`。
 
 ### 2.3 Tailscale 远程连接（跨网络访问电脑上的服务器）
 手机与电脑不在同一 Wi-Fi（用 4G/5G 流量、或人在异地）时，局域网地址不可达，推荐用 **Tailscale** 组网：把两台设备放进同一个加密虚拟局域网，电脑的 8000 端口就像在同一 Wi-Fi 一样可达。

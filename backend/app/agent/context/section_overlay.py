@@ -356,33 +356,49 @@ async def image_gen_section(state: dict, ctx: dict) -> list[str]:
 # （自称「我」、称对方昵称、不写后台字段）。注册表 section 早于 legacy 执行，state 里没有名字时
 # 就地补查一次（仅挡位 1/2 触发；查询失败退回占位文案，不影响注入）。
 
-async def _resolve_reasoning_names(state: dict, name: str, user: str) -> tuple[str, str]:
-    """补齐角色名/对方昵称（state 缺失时查库一次并写回 state，供后续上屏归一复用）。"""
+async def _ensure_reasoning_names(state: dict) -> None:
+    """一次性解析角色名/对方昵称写入 state（P3-4：调用链更早且只执行一次，section 只读 state）。
+
+    注册表 section 早于 legacy 执行，state 里尚无名字；原 section 内每轮各开 session 查
+    ai_characters/users（每轮 +2 次查库）。改在 build_context 入口统一解析并写回 state，
+    reasoning_instruction_section 仅从 state 读，不再为每轮请求查这两张表。
+    已存在则跳过；仍缺失则留空（section 走占位兜底，不在此查库）。
+    """
+    name = str(state.get("character_name") or "")
+    user = str(state.get("user_name") or "")
+    if name and user:
+        return
     from sqlalchemy import select
     from app.db.database import async_session_factory
     from app.models.character import AICharacter
     from app.models.user import User
 
-    async with async_session_factory() as db:
-        if not name:
-            _char = (await db.execute(
-                select(AICharacter).where(AICharacter.id == state.get("character_id"))
-            )).scalar_one_or_none()
-            name = str(getattr(_char, "name", "") or "")
-        if not user:
-            _user = (await db.execute(
-                select(User).where(User.id == state.get("user_id", 1))
-            )).scalar_one_or_none()
-            user = str((getattr(_user, "nickname", "") or getattr(_user, "username", "") or "") if _user else "")
-    if name:
-        state["character_name"] = name
-    if user:
-        state["user_name"] = user
-    return name, user
+    try:
+        async with async_session_factory() as db:
+            if not name:
+                _char = (await db.execute(
+                    select(AICharacter).where(AICharacter.id == state.get("character_id"))
+                )).scalar_one_or_none()
+                name = str(getattr(_char, "name", "") or "")
+                if name:
+                    state["character_name"] = name
+            if not user:
+                _user = (await db.execute(
+                    select(User).where(User.id == state.get("user_id", 1))
+                )).scalar_one_or_none()
+                user = str((getattr(_user, "nickname", "") or getattr(_user, "username", "") or "") if _user else "")
+                if user:
+                    state["user_name"] = user
+    except Exception as e:
+        _logger.warning("Reasoning name resolve failed: %s", e)
 
 
 async def reasoning_instruction_section(state: dict, ctx: dict) -> list[str]:
-    """reasoning_instruction 分区：内心活动指令注入（append 块；挡位 1 返回 1 条、挡位 2 返回 2 条，否则空）。"""
+    """reasoning_instruction 分区：内心活动指令注入（append 块；挡位 1 返回 1 条、挡位 2 返回 2 条，否则空）。
+
+    P3-4：角色名/对方昵称由 build_context 入口统一解析写入 state；此处只读 state，缺失则用空串让
+    指令模板走占位兜底（「（你的名字）」/「你/TA」），不再为每轮请求查 ai_characters/users。
+    """
     try:
         level = int(state.get("reasoning_level", 0) or 0)
     except (TypeError, ValueError):
@@ -391,11 +407,6 @@ async def reasoning_instruction_section(state: dict, ctx: dict) -> list[str]:
         return []
     name = str(state.get("character_name") or "")
     user = str(state.get("user_name") or "")
-    if not name or not user:
-        try:
-            name, user = await _resolve_reasoning_names(state, name, user)
-        except Exception as e:
-            _logger.warning("Reasoning name resolve failed: %s", e)
     try:
         from app.agent.context.reasoning_prompt import reasoning_instructions_for
         return reasoning_instructions_for(level, name=name, user=user)

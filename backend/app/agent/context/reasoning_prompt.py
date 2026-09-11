@@ -59,7 +59,9 @@ _LEAK_RE = re.compile("|".join(_REASONING_LEAK_LINE), re.IGNORECASE)
 
 # ── B. 自我编排标签：只去标签前缀、保留其后内容（不删整句）──
 _LABEL_PREFIX_RE = re.compile(r"(策略|规划建议|回复长度)\s*[：:]\s*")
-_LEN_RE = re.compile(r"长度\s*[：:]\s*(很?短|短|中等?|中长?|偏长|长)")
+# 备选项按「长串/具体值优先」排列：中长/中等 必须先于 中、很短/短 单调即可，
+# 否则「长度：中长」会被 中 吃成「我正常回」+ 残留「长」。
+_LEN_RE = re.compile(r"长度\s*[：:]\s*(很短|偏长|中长|中等|短|中|长)")
 _LEN_MAP = {
     "短": "我回短点", "很短": "我回短点", "中": "我正常回", "中等": "我正常回",
     "中长": "我回长一点", "偏长": "我回长一点", "长": "我回长一点",
@@ -110,6 +112,75 @@ def _addressee_by_nickname(text: str, nick: str | None) -> str:
     return text.replace("用户", repl)
 
 
+# 段末标点（真正会保留的）；\n 与 / 只当切段边界，不进输出
+_SEG_TERM = "。！？!?"
+_SEG_SPLIT_RE = re.compile(r"([。！？!?\n/])")
+_SUBCLAUSE_SPLIT_RE = re.compile(r"[，,、；;]")
+
+
+def _strip_leak_segments(text: str) -> str:
+    """按句切段、段内按最小子句剔除穿帮，剩余子句用「，」重拼，各段直接拼接。
+
+    与旧实现（整段命中 _LEAK_RE 即整段删）相比，这里只丢真正含穿帮词的子句，
+    避免「他刚回来，肉也焖好了，天气注入说是晴以当前注入为准，我先把肉盛出来问他吃没。」
+    这类逗号长句被整条清空、前端思考块凭空消失。
+
+    已知取舍（有意为之，非缺陷）：
+    - 段内重拼会把原有的「、」「；」统一成「，」，只改标点形态、不改语义；
+    - 连续句末符（如「。！」）只保留第一个，后一个标点会被丢弃；
+    - \\n 与 / 只作为切段边界，不保留在输出里。
+    """
+    kept_segments: list[str] = []
+    buffer = ""
+
+    def _render(buf: str) -> str:
+        clauses = [c.strip() for c in _SUBCLAUSE_SPLIT_RE.split(buf) if c.strip()]
+        return "，".join(c for c in clauses if not _LEAK_RE.search(c))
+
+    for piece in _SEG_SPLIT_RE.split(text):
+        if not piece:
+            continue
+        if piece in "。！？!?\n/":  # 段末符：收束当前段
+            buf, buffer = buffer.strip(), ""
+            if not buf:
+                continue  # 连续句末符：该段只有标点没有正文，丢弃后一个标点
+            seg = _render(buf)
+            if seg:
+                kept_segments.append(seg + piece if piece in _SEG_TERM else seg)
+        else:
+            buffer += piece
+    tail = buffer.strip()  # 收尾：没有句末符结尾的残余正文
+    if tail:
+        seg = _render(tail)
+        if seg:
+            kept_segments.append(seg)
+    return "".join(kept_segments)
+
+
+# ── C2. 上屏归一后保守去重（P3-6，2026-09-11）──
+# 相邻两句完全相同且每句 ≤12 字才合并为一句——源于模型正文自写一遍 + 长度标签转换
+# （如「我回短点。」叠加「长度：短」→「我回短点。」）产生的「我回短点。我回短点。」。
+# 长句 / 两个不同短句 / 其它标点语气一律不动（仅针对句末符分隔的相邻整句）。
+_SENT_SPLIT_RE = re.compile(r"(?<=[。！？!?])")
+
+
+def _dedup_adjacent_short_sentences(text: str) -> str:
+    """相邻完全相同的短句（每句 ≤12 字）合并为一句；不动长句、不改其它标点语气。"""
+    if not text:
+        return text
+    parts = _SENT_SPLIT_RE.split(text)
+    if len(parts) <= 1:
+        return text
+    out: list[str] = []
+    for p in parts:
+        if not p:
+            continue
+        if out and out[-1] == p and len(p.rstrip("。！？!?")) <= 12:
+            continue  # 相邻重复短句：丢弃后一句
+        out.append(p)
+    return "".join(out)
+
+
 def normalize_reasoning_for_display(
     raw: str | None,
     character_name: str | None = None,
@@ -131,15 +202,9 @@ def normalize_reasoning_for_display(
     # A. 对称人称归一
     text = _self_first_person(text, character_name)
     text = _addressee_by_nickname(text, user_name)
-    # C. 按句/片段切分，剔除真穿帮句
-    parts = re.split(r"(?<=[。！？!?；;\n/])", text)
-    kept = []
-    for p in parts:
-        s = p.strip().strip(" /　")
-        if not s:
-            continue
-        if _LEAK_RE.search(s):
-            continue
-        kept.append(s)
-    out = " ".join(kept).strip()
+    # C. 按句切段、段内按最小子句剔除真穿帮（只丢含穿帮词的子句；取舍见 _strip_leak_segments）
+    out = _strip_leak_segments(text)
+    # P3-6：相邻重复短句保守去重（仅完全相同的短句合并，不动长句/其它标点）
+    if out:
+        out = _dedup_adjacent_short_sentences(out)
     return out or None

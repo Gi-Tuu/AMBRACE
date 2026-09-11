@@ -50,7 +50,7 @@ class GamePlayer(Base):
     __tablename__ = "game_players"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("game_sessions.id"), index=True)
+    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("game_sessions.id", ondelete="CASCADE"), index=True)
     player_type: Mapped[str] = mapped_column(String(10))  # user / ai
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     character_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=True)
@@ -69,7 +69,7 @@ class GameEvent(Base):
     __tablename__ = "game_events"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("game_sessions.id"), index=True)
+    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("game_sessions.id", ondelete="CASCADE"), index=True)
     round: Mapped[int] = mapped_column(Integer, default=0)
     phase: Mapped[str] = mapped_column(String(30), default="")
     event_type: Mapped[str] = mapped_column(String(30))
@@ -96,7 +96,7 @@ class GameMemory(Base):
     __tablename__ = "game_memories"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("game_sessions.id"), index=True)
+    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("game_sessions.id", ondelete="CASCADE"), index=True)
     character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), index=True)
     # 该记忆属于哪个角色（用户不写，用户视角由前端实时从 events 渲染）
     my_role: Mapped[str] = mapped_column(String(20), default="")

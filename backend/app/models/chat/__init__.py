@@ -46,7 +46,7 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_sessions.id"), nullable=False)
+    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
     sender_type: Mapped[str] = mapped_column(
         String(10), nullable=False
     )  # "user" | "ai" | "system"
@@ -83,7 +83,7 @@ class ChatGroupMember(Base):
     __table_args__ = (UniqueConstraint("group_id", "character_id", name="uq_group_character"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_groups.id"), nullable=False, index=True)
+    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_groups.id", ondelete="CASCADE"), nullable=False, index=True)
     character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     # 静音（群聊调度 L1，2026-08-25）：静音角色不参与自动选择（被 @ 仍强制回）
     muted: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -91,7 +91,7 @@ class ChatGroupMessage(Base):
     __tablename__ = "chat_group_messages"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_groups.id"), nullable=False, index=True)
+    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_groups.id", ondelete="CASCADE"), nullable=False, index=True)
     sender_type: Mapped[str] = mapped_column(String(10), default="ai")  # user / ai
     character_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)

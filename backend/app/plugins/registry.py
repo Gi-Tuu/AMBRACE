@@ -118,17 +118,102 @@ def load_plugin_dir(path: Path) -> dict | None:
         return None
 
 
+# ── P3-5：插件表 schema reconcile（2026-09-11）────────────────────────────
+def _py_default_literal(col):
+    """ORM 列的 Python 端标量 default → SQL 字面量。
+
+    SQLite 的 ``ALTER TABLE ADD COLUMN`` 要求：新增 NOT NULL 列必须带 DEFAULT。
+    插件里这些后加列（aweme_id/comment_id/music_mood/post_type/video_path）在
+    ORM 上都带 ``default=""``/``default="image"`` 标量默认，据此产出 DEFAULT 子句；
+    取不到标量默认则返回 None（调用方改以可空加列，绝不阻塞收敛）。
+    """
+    try:
+        d = getattr(col, "default", None)
+        if d is None or not getattr(d, "is_scalar", False):
+            return None
+        arg = d.arg
+        # 注意顺序：bool 是 int 的子类，必须先判 bool
+        if isinstance(arg, str):
+            return "'" + arg.replace("'", "''") + "'"
+        if isinstance(arg, bool):
+            return "1" if arg else "0"
+        if isinstance(arg, (int, float)):
+            return str(arg)
+    except Exception:
+        return None
+    return None
+
+
+def _reconcile_plugin_schema(eng):
+    """把已存在的物理插件表向 ``plugin_metadata`` 当前 ORM 定义收敛：缺列补列、缺索引补索引。
+
+    背景（P3-5）：抖音 5 表历史上由主 alembic baseline/a7b8/b8c9 建过，之后 ORM 加列、
+    加 tenant 单列索引未补迁移，而 create_all(checkfirst) 见表在就整体跳过 → 整链重放的
+    新库缺列（运行时 no such column）、缺索引。本函数让「无论表由 baseline / 老库 /
+    create_all 建」都收敛到当前 ORM；微信表历来由 ORM 建，跑本函数为 0 操作。
+
+    能力边界（SQLite 限制，刻意不做，理由见方案 §2.4）：
+    - 不收紧 NOT NULL、不改列类型（需 batch 重建表，风险 > 收益）；
+    - 不 DROP 列（向前兼容，旧版本库可能被新版本读到多列）。
+
+    返回 ``(added_cols, added_idx)``，供启动日志核对。
+    """
+    import sqlalchemy as sa
+    from sqlalchemy.dialects import sqlite as sa_sqlite
+    from sqlalchemy.schema import CreateIndex
+
+    from app.plugins.plugin_base import plugin_metadata
+
+    added_cols: list[str] = []
+    added_idx: list[str] = []
+    dialect = sa_sqlite.dialect()
+
+    insp = sa.inspect(eng)
+    have_tables = set(insp.get_table_names())
+    for tname, tbl in plugin_metadata.tables.items():
+        if tname not in have_tables:
+            continue  # 缺表交给 create_all 建
+        phys_cols = {c["name"] for c in insp.get_columns(tname)}
+        # 1) 缺列 → ALTER TABLE ADD COLUMN（NOT NULL 必须带 DEFAULT；否则以可空加列）
+        for col in tbl.columns:
+            if col.name in phys_cols:
+                continue
+            coltype = col.type.compile(dialect=dialect)
+            lit = _py_default_literal(col)
+            if (not col.nullable) and lit is not None:
+                ddl = (f"ALTER TABLE {tname} ADD COLUMN {col.name} {coltype} "
+                       f"NOT NULL DEFAULT {lit}")
+            else:
+                ddl = f"ALTER TABLE {tname} ADD COLUMN {col.name} {coltype}"
+            with eng.begin() as conn:
+                conn.execute(sa.text(ddl))
+            added_cols.append(f"{tname}.{col.name}")
+        # 2) 缺索引 → CREATE [UNIQUE] INDEX IF NOT EXISTS（让 SQLAlchemy 编译，
+        #    自动带 IF NOT EXISTS / UNIQUE / partial WHERE，避免手拼 SQL 出错）
+        insp = sa.inspect(eng)  # 补列后反射缓存可能过期，重建 inspector
+        phys_idx = {ix["name"] for ix in insp.get_indexes(tname)}
+        for idx in tbl.indexes:
+            if idx.name is None or idx.name in phys_idx:
+                continue
+            with eng.begin() as conn:
+                conn.execute(CreateIndex(idx, if_not_exists=True))
+            added_idx.append(f"{tname}.{idx.name}")
+    return added_cols, added_idx
+
+
 # ── T5：插件独立 metadata 幂等建表（2026-09-10）────────────────────────────
 def _ensure_plugin_tables_sync() -> list[str]:
-    """对已加载插件注册到 ``plugin_metadata`` 的表幂等 create_all(checkfirst)。
+    """对已加载插件注册到 ``plugin_metadata`` 的表幂等建表 + schema 收敛。
 
     - 同步执行（SQLite CREATE TABLE 毫秒级；插件加载是低频动作）；
     - 生产主路径由 lifespan 在线程池调异步版 :func:`ensure_plugin_tables`；
     - 测试 / 运行时热安装在 :func:`load_plugin_dir` 成功后内联调一次（加载即建表，
       不依赖调用方记得初始化）；
-    - ``checkfirst=True``：物理表已存在则跳过 —— 存量库零数据迁移；版本链已建的
-      douyin 表跳过、wechat 表在此建立；未加载的渠道其表不在 metadata、不会被建。
-    - 建表失败只告警、不抛出（单插件隔离，不拖垮其它插件与内核启动）。
+    - ``create_all(checkfirst=True)`` **建缺表**（表已存在即跳过），随后 P3-5
+      reconcile **补已存在表的缺列/缺索引** —— 存量库幂等收敛、零数据迁移；版本链
+      已建的 douyin 旧表在此补齐 ORM 后加的列与索引，wechat 表在此建立；
+      未加载的渠道其表不在 metadata、不会被建。
+    - 建表/收敛失败只告警、不抛出（单插件隔离，不拖垮其它插件与内核启动）。
 
     返回：本次纳入建表的插件表名清单（已存在/新建都算；失败返回空列表）。
     """
@@ -154,6 +239,18 @@ def _ensure_plugin_tables_sync() -> list[str]:
         eng = create_engine(url, poolclass=NullPool)
         try:
             plugin_metadata.create_all(eng, checkfirst=True)
+            # P3-5：create_all 只建缺表、见表在就跳过；再做一次幂等 reconcile，
+            # 把 baseline/老库建出的旧插件表补齐 ORM 后加的列与索引（零数据风险、只做加法）
+            added_cols, added_idx = _reconcile_plugin_schema(eng)
+            if added_cols or added_idx:
+                _logger.info(
+                    "插件表 schema 收敛：补列 %s；补索引 %s", added_cols, added_idx
+                )
+            else:
+                # 0 操作也留痕：否则线上分不清「跑过没问题」和「根本没执行」
+                _logger.info(
+                    "插件表 schema 收敛：无缺失（%d 张表，补列 0、补索引 0）", len(names)
+                )
         finally:
             eng.dispose()
     except Exception as e:

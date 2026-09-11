@@ -14,6 +14,7 @@ import '../providers/chat_provider.dart';
 import '../features/chat/chat_screen.dart';
 import '../widgets/app_page_route.dart';
 import 'api_client.dart';
+import 'secure_token_store.dart';
 import '../utils/service_l10n.dart';
 import '../utils/app_lang.dart';
 
@@ -25,7 +26,8 @@ import '../utils/app_lang.dart';
 ///
 /// 初始化流程：
 /// 1. 检查 ENABLE_FCM 编译开关
-/// 2. 从 SharedPreferences 读取 server_url/auth_token 并自行配置 ApiClient（init 可能先于登录后 configure 执行）
+/// 2. 读取 server_url/auth_token 并自行配置 ApiClient（init 可能先于登录后 configure 执行；
+///    P2-A 后 token 来自 SecureTokenStore 安全存储）
 /// 3. 从后端 GET /api/v1/device/fcm-config 获取 Firebase 客户端配置
 /// 4. 用 FirebaseOptions 手动初始化（不依赖 google-services.json）
 /// 5. 请求权限 → 获取 token → 注册到后端
@@ -70,7 +72,7 @@ class FcmPushService {
       return;
     }
 
-    // 从 SharedPreferences 读取 server_url/auth_token 并自行配置 ApiClient。
+    // 读取 server_url（prefs）与 auth_token（P2-A：安全存储）并自行配置 ApiClient。
     // main() 里的 init() 在 MultiProvider/ApiClient.configure 之前执行，因此这里必须自给自足；
     // 未配置服务器地址时直接返回，等登录页 configure 成功后再次调用 init()。
     final prefs = await SharedPreferences.getInstance();
@@ -79,7 +81,7 @@ class FcmPushService {
       debugPrint('[FCM] server_url not set, skip init');
       return;
     }
-    final authToken = prefs.getString('auth_token') ?? '';
+    final authToken = await SecureTokenStore.instance.readToken();
     if (authToken.isEmpty) {
       debugPrint('[FCM] not logged in, skip init');
       return;

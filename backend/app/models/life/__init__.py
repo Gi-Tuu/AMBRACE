@@ -239,7 +239,7 @@ class MomentLike(Base):
     __tablename__ = "moment_likes"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    moment_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_moments.id"), nullable=False)
+    moment_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_moments.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -251,7 +251,7 @@ class MomentAILike(Base):
     __tablename__ = "moment_ai_likes"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    moment_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_moments.id"), nullable=False)
+    moment_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_moments.id", ondelete="CASCADE"), nullable=False)
     character_id: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -262,8 +262,8 @@ class MomentComment(Base):
     __tablename__ = "moment_comments"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    moment_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_moments.id"), nullable=False)
-    parent_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("moment_comments.id"), nullable=True)
+    moment_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_moments.id", ondelete="CASCADE"), nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("moment_comments.id", ondelete="CASCADE"), nullable=True)
     sender_type: Mapped[str] = mapped_column(String(10), nullable=False)  # ai / user
     sender_id: Mapped[int] = mapped_column(Integer, nullable=False)
     sender_name: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -292,7 +292,7 @@ class ScheduledEvent(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
-    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_sessions.id"), nullable=False)
+    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
     trigger_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     event_type: Mapped[str] = mapped_column(String(30), default="back")  # shower/sleep/meal/back
     status: Mapped[str] = mapped_column(String(20), default="pending")   # pending/fired/cancelled/expired

@@ -43,11 +43,6 @@ def now_naive_utc() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def utcnow_naive() -> datetime:
-    """[deprecated] 等价 now_naive_utc，保留兼容；新代码请用 now_naive_utc（T9 收敛，2026-09-10）。"""
-    return now_naive_utc()
-
-
 def to_naive_utc(dt: datetime | None) -> datetime | None:
     """把任意 datetime 归一为 naive UTC，落库前统一调用，杜绝 aware 写裸列。
 

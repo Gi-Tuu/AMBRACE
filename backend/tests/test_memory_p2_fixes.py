@@ -2,6 +2,7 @@
 """记忆链路 P2 修复测试（2026-08-18，审查 M-P2-5 / M-P2-2 / M-P2-3 / M-P2-4 / M-P2-1）：
 - _normalize_importance 双标度归一化（1-5 星与百分比）；
 - keyword 兜底路径与向量路径同样产出 reliability 与 rerank 加分（mock 向量失败）；
+- P3-E：LIKE 兜底转义用户输入的 % / _（「50%」不误配「5012」，「a_b」不误配「axb」）；
 - catchup 配对：连续两条用户消息第一条也能与后续 AI 消息配对；
 - 截断头尾采样保留尾部关键信息；
 - summarize_identity 意义输入 / 情境复习分支在 why_it_matters 非空时命中（不依赖 sub_type）。
@@ -21,6 +22,7 @@ import app.memory.service as memsvc
 import app.memory.summary as summary_mod
 import app.scheduling.memory_review as review_mod
 from app.memory.extractor import _pair_user_ai, _truncate_sample
+from app.memory.retrieve import _like_escape
 from app.memory.service import _normalize_importance
 from app.models.memory import Memory
 
@@ -142,6 +144,62 @@ def test_keyword_兜底_置顶记忆恒在前(mem_db, monkeypatch):
 
     hits, pinned, normal = asyncio.run(_main())
     assert hits[0]["id"] == pinned.id            # 置顶 +10000 恒在前（兜底路径同样生效）
+
+
+# ---------------- P3-E：LIKE 兜底转义用户输入的 % / _ ----------------
+
+def test_like_escape_纯函数():
+    """% 与 _ 转义为字面量，反斜杠自身先转义；无通配符输入零改动。"""
+    assert _like_escape("50%") == "50\\%"
+    assert _like_escape("a_b") == "a\\_b"
+    assert _like_escape("c\\d") == "c\\\\d"                 # 反斜杠先转义，避免二次转义
+    assert _like_escape("100%_off\\") == "100\\%\\_off\\\\"
+    assert _like_escape("普通文本") == "普通文本"            # 无通配符：逐字不变
+
+
+def _force_like_fallback(monkeypatch):
+    """dense 抛错 + BM25 返回空 → search_memories 必然走 Like 关键词兜底。"""
+    async def _boom(c):
+        raise RuntimeError("dense down")
+
+    async def _empty_bm25(character_id, query, top_k=5):
+        return []
+
+    monkeypatch.setattr(memsvc, "text_embedding", _boom)
+    monkeypatch.setattr(memsvc, "vector_search", _boom)
+    monkeypatch.setattr(memsvc, "bm25_search", _empty_bm25)
+
+
+def test_keyword_兜底_百分号不当通配符(mem_db, monkeypatch):
+    """搜「50%」只命中字面含「50%」的记忆，不匹配「5012」（% 不再当通配符）。"""
+    _force_like_fallback(monkeypatch)
+
+    async def _main():
+        literal = await _seed(mem_db, **_base_kw(content="用户说完成度达到50%很开心"))
+        decoy = await _seed(mem_db, **_base_kw(content="用户编号5012的记录"))
+        hits = await memsvc.search_memories(character_id=1, query="50%", limit=5)
+        return hits, literal.id, decoy.id
+
+    hits, literal_id, decoy_id = asyncio.run(_main())
+    ids = [h["id"] for h in hits]
+    assert literal_id in ids        # 字面含「50%」的记忆命中
+    assert decoy_id not in ids      # 「5012」不再被 % 通配匹配
+
+
+def test_keyword_兜底_下划线不当单字符通配(mem_db, monkeypatch):
+    """搜「a_b」只命中字面含「a_b」的记忆，不匹配「axb」（_ 不再当单字符通配）。"""
+    _force_like_fallback(monkeypatch)
+
+    async def _main():
+        literal = await _seed(mem_db, **_base_kw(content="用户文件名a_b已保存"))
+        decoy = await _seed(mem_db, **_base_kw(content="用户文件名axb已保存"))
+        hits = await memsvc.search_memories(character_id=1, query="a_b", limit=5)
+        return hits, literal.id, decoy.id
+
+    hits, literal_id, decoy_id = asyncio.run(_main())
+    ids = [h["id"] for h in hits]
+    assert literal_id in ids        # 字面含「a_b」的记忆命中
+    assert decoy_id not in ids      # 「axb」不再被 _ 单字符通配匹配
 
 
 # ---------------- M-P2-4：catchup 配对 ----------------
