@@ -8,6 +8,53 @@ on:
     branches: [ main ]
 
 jobs:
+  # 变更侦测（2026-09-12）：只动 flutter_app/ 或 docs/ 的推送，跳过与前端无关的重量级任务
+  # （Windows 后端矩阵 + Docker 构建/冒烟）；其余任何情况一律全开，避免漏检。
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      heavy: ${{ steps.filter.outputs.heavy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        name: Decide whether heavy jobs are needed
+        shell: bash
+        run: |
+          set -u
+          BASE="${{ github.event.before }}"
+          if [ "${{ github.event_name }}" != "push" ] || [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            echo "非 push 事件或拿不到上一个提交 -> 全开"
+            echo "heavy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            git fetch --depth=1 origin "$BASE" >/dev/null 2>&1 || true
+          fi
+          if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "取不到基线提交 -> 全开"
+            echo "heavy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHANGED="$(git diff --name-only "$BASE" HEAD || true)"
+          echo "变更文件（最多显示 50 个）："
+          printf '%s\n' "$CHANGED" | head -n 50
+          if [ -z "$CHANGED" ]; then
+            echo "无差异信息 -> 全开"
+            echo "heavy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          OTHER="$(printf '%s\n' "$CHANGED" | grep -vE '^(flutter_app/|docs/)' || true)"
+          if [ -n "$OTHER" ]; then
+            echo "heavy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "仅 flutter_app/ 与 docs/ 变更 -> 跳过重量级任务"
+            echo "heavy=false" >> "$GITHUB_OUTPUT"
+          fi
+
   backend:
     name: Backend py${{ matrix.py }} (ruff + pytest)
     runs-on: ubuntu-latest
@@ -54,6 +101,8 @@ jobs:
   # 主开发 / 发 APK 在 Windows：覆盖 Windows 特有路径、SO_REUSEADDR、aiosqlite 线程、
   # pwsh 脚本语法（不跑 Docker smoke）。
   backend-windows:
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
     name: Backend py${{ matrix.python-version }} (Windows, ruff + pytest)
     runs-on: windows-latest
     # 观察期设置（临时）：Windows job 首次入 CI，平台相关失败暂不阻塞主线；
@@ -116,7 +165,8 @@ jobs:
   smoke:
     name: Docker build + health + API smoke
     runs-on: ubuntu-latest
-    needs: backend
+    needs: [backend, changes]
+    if: needs.changes.outputs.heavy == 'true'
     steps:
       - uses: actions/checkout@v4
 
