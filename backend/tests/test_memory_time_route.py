@@ -6,14 +6,13 @@ flag 开 + time_range → 时间专属记忆进入结果；flag 关 → 与旧�
 """
 import asyncio
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.memory.retrieve import search_memories
-from app.utils.timeutil import now_naive_utc
 
 
 @pytest.fixture()
@@ -37,7 +36,6 @@ def tdb(monkeypatch, tmp_path):
     monkeypatch.setattr(memsvc, "async_session_factory", factory)
 
     async def _seed():
-        now = now_naive_utc()
         async with factory() as db:
             # 时间专属：2026-07 窗口内、与查询词「猫」语义无关（LIKE/向量都不命中）
             db.add(__import__("app.models.memory", fromlist=["Memory"]).Memory(

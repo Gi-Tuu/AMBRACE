@@ -86,7 +86,6 @@ def test_settle_autoflush_survives_dirty_engine_rows(game_db):
     factory = game_db
 
     async def _run():
-        from app.models.game import GamePlayer
         async with factory() as db:
             session, eng = await _create_session_in_db(
                 db, user_id=1, game_type="liars_bar",

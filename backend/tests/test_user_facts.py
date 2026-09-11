@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.models.memory import Memory
-from app.models.user import GlobalUserFact, User
+from app.models.user import User
 
 
 # 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
@@ -280,7 +280,7 @@ def test_build_user_now_text(uf_db):
 
 def test_user_now_section_flag_gate(uf_db, monkeypatch):
     from app.agent.loop import AGENT_FLAGS as _af
-    from app.memory.user_facts import upsert_user_fact, build_user_now_text
+    from app.memory.user_facts import upsert_user_fact
     from app.agent.context.section_user_now import user_now_section
     _seed_user(uf_db, 1)
     # flag 关 → 空（零行为变化）；即使已有事实

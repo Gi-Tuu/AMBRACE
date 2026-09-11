@@ -14,7 +14,6 @@ import zipfile
 from types import SimpleNamespace
 
 import pytest
-import sqlalchemy as sa
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool

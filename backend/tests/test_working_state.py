@@ -98,7 +98,6 @@ def _rows(factory):
     return asyncio.run(_run())
 
 
-import json  # noqa: E402  （供 _rows 解析 content）
 
 from app.memory import working_state as ws  # noqa: E402
 from app.application import working_state_service as svc  # noqa: E402
@@ -147,8 +146,7 @@ def test_apply_desired_bucket_cap():
 
 
 def test_evaluate_turn_creates_row_and_supersedes(ws_db, monkeypatch):
-    from app.models.memory import Memory
-    turn_started = _seed_turn(ws_db, memories=["用户提到下周要考试"], memory_ids=[600])
+    _seed_turn(ws_db, memories=["用户提到下周要考试"], memory_ids=[600])
     _patch_extraction(monkeypatch, {
         "ongoing": [{"topic": "考试复习", "detail": "下周考试", "evidence_ids": [600]}],
         "relationship_notes": [], "open_questions": [],
@@ -170,7 +168,6 @@ def test_evaluate_turn_creates_row_and_supersedes(ws_db, monkeypatch):
 
     # 第二轮：30 分钟节流生效 → 不写新行
     _patch_extraction(monkeypatch, {"ongoing": [], "relationship_notes": [], "open_questions": []})
-    turn2 = now_naive_utc()
 
     async def _run2():
         await svc.maybe_evaluate_working_state(1, 11, 7, "又说话了", "嗯")
@@ -182,7 +179,7 @@ def test_evaluate_turn_creates_row_and_supersedes(ws_db, monkeypatch):
 def test_evaluate_turn_flag_off_is_noop(ws_db, monkeypatch):
     from app.agent.loop import AGENT_FLAGS
     monkeypatch.setitem(AGENT_FLAGS, "working_state_enabled", False)
-    turn_started = _seed_turn(ws_db, memories=["用户提到下周要考试"], memory_ids=[601])
+    _seed_turn(ws_db, memories=["用户提到下周要考试"], memory_ids=[601])
     _patch_extraction(monkeypatch, {"ongoing": [{"topic": "x", "evidence_ids": [601]}],
                                     "relationship_notes": [], "open_questions": []})
 
@@ -195,7 +192,7 @@ def test_evaluate_turn_flag_off_is_noop(ws_db, monkeypatch):
 
 def test_evaluate_turn_supersedes_old_active_row(ws_db, monkeypatch):
     """节流窗口已过（旧行 created_at 推前 1 小时）→ 第二轮正常滚动覆盖并标 superseded。"""
-    turn1 = _seed_turn(ws_db, memories=["用户提到下周要考试"], memory_ids=[610])
+    _seed_turn(ws_db, memories=["用户提到下周要考试"], memory_ids=[610])
     _patch_extraction(monkeypatch, {"ongoing": [{"topic": "考试复习", "detail": "v1", "evidence_ids": [610]}],
                                     "relationship_notes": [], "open_questions": []})
 
@@ -217,7 +214,6 @@ def test_evaluate_turn_supersedes_old_active_row(ws_db, monkeypatch):
     asyncio.run(_age())
     _patch_extraction(monkeypatch, {"ongoing": [{"topic": "考试复习", "detail": "v2 定在周四", "evidence_ids": [900]}],
                                     "relationship_notes": [], "open_questions": []})
-    turn2 = now_naive_utc()
 
     async def _run2():
         await svc.maybe_evaluate_working_state(1, 11, 7, "考试定在周四了", "好好复习")
@@ -232,7 +228,7 @@ def test_evaluate_turn_supersedes_old_active_row(ws_db, monkeypatch):
 
 
 def test_evaluate_turn_bad_json_skipped(ws_db, monkeypatch):
-    turn_started = _seed_turn(ws_db, memories=["用户提到下周要考试"], memory_ids=[620])
+    _seed_turn(ws_db, memories=["用户提到下周要考试"], memory_ids=[620])
     from app.application import working_state_service as _svc
 
     async def fake_bad(**kw):

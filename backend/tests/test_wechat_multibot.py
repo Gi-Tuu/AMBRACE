@@ -19,7 +19,6 @@ from starlette.testclient import TestClient
 from app.plugins import registry
 from app.providers import registry as prov_reg
 
-import os as _os
 
 _PLUGIN_DIR = pathlib.Path(__file__).resolve().parents[2] / "plugins" / "examples" / "wechat_ilink"
 _PLUGIN_DIR_STR = str(_PLUGIN_DIR)
