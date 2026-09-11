@@ -23,6 +23,10 @@ from sqlalchemy.pool import NullPool
 from app.models.memory import ProspectiveIntent
 
 
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
+pytestmark = pytest.mark.slow
+
 @pytest.fixture()
 def pi_db(monkeypatch, tmp_path):
     """临时库：create_all + 把 database / prospective_intent / extractor / facts 的工厂指向临时工厂。"""

@@ -28,6 +28,10 @@ from app.application import permission_service as perm
 CB_URL = "/api/v1/channels/{ch}/bindings"
 
 
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
+pytestmark = pytest.mark.slow
+
 @pytest.fixture()
 def cb_db(tmp_path, monkeypatch):
     """独立临时库 + 登录态依赖打桩（get_current_user_id → header X-Test-User）。"""

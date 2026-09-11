@@ -25,6 +25,10 @@ from app.application import permission_service as perm
 from app.utils.timeutil import now_naive_utc
 
 
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
+pytestmark = pytest.mark.slow
+
 @pytest.fixture()
 def family_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：patch 各模块绑定的 async_session_factory（不触碰 backend/data）。"""

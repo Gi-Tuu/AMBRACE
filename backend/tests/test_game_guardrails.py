@@ -34,6 +34,10 @@ _REAL_RESUME = games_api._resume_ai_turns
 
 
 # ---------------- 纯函数：§5.1 ----------------
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
+pytestmark = pytest.mark.slow
+
 def _sig(target=2):
     return canonical_signature(1, "night", 2, "kill", {"target_seat": target})
 

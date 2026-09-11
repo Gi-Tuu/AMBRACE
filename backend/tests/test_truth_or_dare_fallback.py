@@ -19,6 +19,12 @@ from tests.test_game_api import game_api_db, _make_client, _REAL_RESUME  # noqa:
 # 引擎单元测试：fallback_action 返回值
 # ──────────────────────────────────────────────
 
+import pytest
+
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
+pytestmark = pytest.mark.slow
+
 class _FakePlayer:
     def __init__(self, seat, name, player_type="ai", user_id=None):
         self.seat = seat

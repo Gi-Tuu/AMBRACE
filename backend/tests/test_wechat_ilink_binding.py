@@ -27,6 +27,10 @@ _PLUGIN_DIR = pathlib.Path(__file__).resolve().parents[2] / "plugins" / "example
 _SECRET_KEY = "wechat-ilink-test-secret-000000000000000000000001"
 
 
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
+pytestmark = pytest.mark.slow
+
 def _load_plugin():
     """经内核插件加载器装配 wechat_ilink（渠道注册 + 模型进 Base.metadata + router）。"""
     if not registry.load_plugin_dir(_PLUGIN_DIR):

@@ -11,6 +11,10 @@ from sqlalchemy.pool import NullPool
 from app.memory.story_assemble import assemble_story_lines, get_chain_index_for_hits
 
 
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
+pytestmark = pytest.mark.slow
+
 def _m(id_, content, created_at, chain_id=None):
     return {"id": id_, "content": content, "created_at": created_at, "chain_id": chain_id}
 

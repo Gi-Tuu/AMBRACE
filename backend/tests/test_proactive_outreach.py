@@ -27,6 +27,10 @@ from app.scheduling import arbiter
 
 # ═══════════════════ outreach 纯函数（零 IO） ═══════════════════
 
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
+pytestmark = pytest.mark.slow
+
 def test_staleness_tier_boundaries():
     """分级边界：≤2h continue；≤24h recent；≤72h stale；>72h cold；None → recent。"""
     assert oc.staleness_tier(0) == oc.TIER_CONTINUE

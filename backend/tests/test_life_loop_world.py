@@ -25,6 +25,10 @@ OWNER = 100
 ADMIN = 1
 
 
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
+pytestmark = pytest.mark.slow
+
 def _make_client(user_id: int) -> TestClient:
     app = FastAPI()
     app.include_router(life_home_router)

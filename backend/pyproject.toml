@@ -16,3 +16,10 @@ pythonpath = ["."]
 filterwarnings = [
     "ignore::DeprecationWarning:chromadb.telemetry.opentelemetry",
 ]
+
+# 快测档（2026-09-12 起）：重量级/集成型用例打 slow 标记（每例要建一次临时库，约 3 秒）。
+# 默认行为不变（全量照跑）；日常开发可用 pytest -m "not slow" 只跑快测档。
+# 判定依据 = 实测 per-test 耗时，见 docs/engineering-protocol.md「测试纪律」。
+markers = [
+    "slow: 重量级/集成型用例（起临时库等），默认仍会跑；日常可用 -m not-slow 跳过",
+]

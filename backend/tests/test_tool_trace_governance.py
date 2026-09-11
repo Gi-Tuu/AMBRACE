@@ -37,6 +37,10 @@ CHAR = 88101
 
 # ────────────────────────── R1：arbiter trace 口径 ──────────────────────────
 
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
+pytestmark = pytest.mark.slow
+
 def _trace_calls(monkeypatch):
     calls = []
     monkeypatch.setattr("app.agent.trace.enqueue_task_log", lambda **kw: calls.append(kw))
