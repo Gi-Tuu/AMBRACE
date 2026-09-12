@@ -1,4 +1,4 @@
-package com.aicompanion.ai_companion
+package com.gituu.ambrace.ai_companion
 
 import android.app.Notification
 import android.content.ComponentName
@@ -65,7 +65,7 @@ class PhonePerceptionNotificationService : NotificationListenerService() {
         if (sbn == null) return
         try {
             val pkg = sbn.packageName ?: return
-            if (pkg == "com.aicompanion.ai_companion") return
+            if (pkg == "com.gituu.ambrace.ai_companion") return
             // 通知白名单：空 = 全部允许；非空 = 只缓存勾选的 app
             // 白名单由 Flutter 设置页写入 FlutterSharedPreferences（key=flutter.pp_notif_whitelist）
             val wl = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
@@ -109,7 +109,7 @@ class PhonePerceptionNotificationService : NotificationListenerService() {
                 val list = ArrayList(lastNotifications)
                 for (sbn in active) {
                     val pkg = sbn.packageName ?: continue
-                    if (pkg == "com.aicompanion.ai_companion") continue
+                    if (pkg == "com.gituu.ambrace.ai_companion") continue
                     val extras = sbn.notification?.extras ?: continue
                     val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
                     val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()

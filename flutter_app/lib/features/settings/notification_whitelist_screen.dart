@@ -31,7 +31,7 @@ class _NotificationWhitelistScreenState extends State<NotificationWhitelistScree
       _apps.clear();
       for (final n in notifs) {
         final pkg = (n["package"] ?? "").toString();
-        if (pkg.isEmpty || pkg == "com.aicompanion.ai_companion") continue;
+        if (pkg.isEmpty || pkg == "com.gituu.ambrace.ai_companion") continue;
         final app = (n["app"] ?? pkg).toString();
         _apps[pkg] = app;
       }

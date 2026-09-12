@@ -646,7 +646,7 @@
       "name": {}
     }
   },
-  "deepThinking": "Deep Thinking",
+  "simpleThinking": "Inner Monologue",
   "deleteCountdown": "Deletes in 3 days if not revived",
   "deleteDiaryConfirm": "Delete the diary for {date}?",
   "deleteDiaryTitle": "Delete Diary",
@@ -1163,7 +1163,7 @@
   "settingsTitle": "Settings",
   "showTools": "Capabilities",
   "showToolsHint": "Show capabilities used in this reply (vision/image/voice/extensions)",
-  "simpleThinking": "Light Thinking",
+  "deepThinking": "Smart Reasoning",
   "simplifiedChinese": "简体中文",
   "socialGroup": "Social",
   "sourceBio": "Self Statement",

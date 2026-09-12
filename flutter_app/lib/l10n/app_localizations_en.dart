@@ -2014,7 +2014,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get deepThinking => 'Deep Thinking';
+  String get simpleThinking => 'Inner Monologue';
 
   @override
   String get deleteCountdown => 'Deletes in 3 days if not revived';
@@ -3631,7 +3631,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Show capabilities used in this reply (vision/image/voice/extensions)';
 
   @override
-  String get simpleThinking => 'Light Thinking';
+  String get deepThinking => 'Smart Reasoning';
 
   @override
   String get simplifiedChinese => '简体中文';

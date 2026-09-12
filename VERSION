@@ -1,9 +1,16 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.4.6
-DATE: 2026-09-07
-STATUS: 开源发布版 v3.4.6（爱琴海典藏皮肤 + 记忆推进）
+VERSION: 3.4.7
+DATE: 2026-09-12
+STATUS: 开源发布版 v3.4.7（新包名 com.gituu.ambrace + FCM 离线推送 + 思考标记修复）
 
 CHANGELOG:
+
+3.4.7 - Release (2026-09-12)
+  - App: 应用标识迁移为 com.gituu.ambrace（旧版需先卸载再装新包、重新登录一次）；新增 FCM 离线推送——App 退后台或被划掉后也能收到角色主动消息通知
+  - Fix: 思考【推理】标记不再泄漏到聊天正文（无冒号/内容含括号容错；无闭合时只剥标记、不吞正文）；设置文案改为「内心独白 / 智能思索」
+  - Security: 登录凭据改存系统安全区（Android Keystore / iOS Keychain）；状态接口信息最小化；插件桥请求 pin-IP 防 DNS 重绑定；CORS 按部署形态分流
+  - Plugin: 补齐抖音插件浏览器依赖 playwright（环境重建漏装导致 Edge 预热失败）
+  - Tests: backend pytest 2079 passed / 2 skipped；快测档 1335 passed / 1 skipped；ruff 0；flutter analyze 0 / flutter test 463
 
 3.4.6 - Release (2026-09-07)
   - Skin: 新增第 7 款「爱琴海典藏 / Aegean Codex」皮肤——羊皮纸/星夜双版；公式几何重做（三柱/桂冠/卡框），含真机修复与深色适配

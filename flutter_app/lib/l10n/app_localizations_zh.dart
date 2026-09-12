@@ -1927,7 +1927,7 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get deepThinking => '深度思考';
+  String get simpleThinking => '内心独白';
 
   @override
   String get deleteCountdown => '删除倒计时 · 3 天内自动清除';
@@ -3504,7 +3504,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get showToolsHint => '气泡内显示本次回复使用的能力（识图/生图/语音/扩展）';
 
   @override
-  String get simpleThinking => '简单思考';
+  String get deepThinking => '智能思索';
 
   @override
   String get simplifiedChinese => '简体中文';

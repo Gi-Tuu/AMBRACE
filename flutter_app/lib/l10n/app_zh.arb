@@ -646,7 +646,7 @@
       "days": {}
     }
   },
-  "deepThinking": "深度思考",
+  "simpleThinking": "内心独白",
   "deleteCountdown": "删除倒计时 · 3 天内自动清除",
   "deleteDiaryConfirm": "确定删除 {date} 的日记？",
   "deleteDiaryTitle": "删除日记",
@@ -1163,7 +1163,7 @@
   "settingsTitle": "设置",
   "showTools": "调用能力",
   "showToolsHint": "气泡内显示本次回复使用的能力（识图/生图/语音/扩展）",
-  "simpleThinking": "简单思考",
+  "deepThinking": "智能思索",
   "simplifiedChinese": "简体中文",
   "socialGroup": "社交",
   "sourceBio": "自述",

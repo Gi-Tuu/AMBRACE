@@ -97,3 +97,8 @@ backend/data/marketplace_cache/
 **/.pytest_cache/
 flutter_app/.flutter_tool_state
 scripts/dev_account_activity.py
+
+# Firebase / FCM 凭证（2026-09-12）：服务账号私钥与客户端配置，绝不入库、不入公开仓
+fcm-service-account*.json
+*firebase-adminsdk*.json
+google-services.json

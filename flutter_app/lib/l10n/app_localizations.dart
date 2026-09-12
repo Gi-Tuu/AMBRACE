@@ -3651,11 +3651,11 @@ abstract class AppLocalizations {
   /// **'认识 {name} 第 {days} 天'**
   String daysKnown(Object name, Object days);
 
-  /// No description provided for @deepThinking.
+  /// No description provided for @simpleThinking.
   ///
   /// In zh, this message translates to:
-  /// **'深度思考'**
-  String get deepThinking;
+  /// **'内心独白'**
+  String get simpleThinking;
 
   /// No description provided for @deleteCountdown.
   ///
@@ -6633,11 +6633,11 @@ abstract class AppLocalizations {
   /// **'气泡内显示本次回复使用的能力（识图/生图/语音/扩展）'**
   String get showToolsHint;
 
-  /// No description provided for @simpleThinking.
+  /// No description provided for @deepThinking.
   ///
   /// In zh, this message translates to:
-  /// **'简单思考'**
-  String get simpleThinking;
+  /// **'智能思索'**
+  String get deepThinking;
 
   /// No description provided for @simplifiedChinese.
   ///

@@ -12,7 +12,7 @@ const List<String> kWorkflowTriggers = ["帮我执行", "帮我运行", "跑一�
 /// 手机感知（AI 走出沙箱 Phase 1）：读取屏幕文字/剪贴板/相册最近列表 → 上传服务器 → 注入聊天上下文。
 /// 全部能力默认关闭，需在设置页逐项授权；数据只发自家服务器。
 class PhonePerceptionService {
-  static const MethodChannel _channel = MethodChannel("com.aicompanion/phone_perception");
+  static const MethodChannel _channel = MethodChannel("com.gituu.ambrace/phone_perception");
 
   static const String enabledKey = "phone_perception_enabled";
   static const String screenKey = "pp_screen_enabled";

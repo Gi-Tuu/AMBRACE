@@ -5,7 +5,7 @@ import "package:shared_preferences/shared_preferences.dart";
 /// Shizuku 权限通道（2026-08-12）：ADB/root 启动 Shizuku 后授权，可执行系统级 shell
 /// （应用列表 / 系统设置 / 模拟操作前置）。v1 提供：状态查询 / 授权请求 / shell 执行 / 应用列表。
 class ShizukuService {
-  static const MethodChannel _channel = MethodChannel("com.aicompanion/phone_perception");
+  static const MethodChannel _channel = MethodChannel("com.gituu.ambrace/phone_perception");
 
   static const String enabledKey = "pp_shizuku_enabled";
 

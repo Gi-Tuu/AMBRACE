@@ -87,7 +87,10 @@ _OPEN_MAP = {"【": "】", "[": "]", "（": "）", "(": ")"}
 
 # 展示层需剥离的正文标记（与 parse_response / actions 同源；仅剥离「已闭合」标记）
 _DISPLAY_STRIP_PATTERNS = [
-    re.compile(r"[\[【]\s*(?:策略|推理|记忆|自述更新|自述删除|状态更新)\s*[：:][^\]】]*[\]】]"),
+    re.compile(r"[\[【]\s*(?:策略|记忆|自述更新|自述删除|状态更新)\s*[：:][^\]】]*[\]】]"),
+    # 推理标记（2026-09-12 容错）：冒号可选（模型实测会写【推理】（…）】无冒号形态），
+    # 字面「推理」限定避免误伤普通方括号文本。
+    re.compile(r"[\[【]\s*推理\s*[：:]?[^\]】]*[\]】]", re.IGNORECASE),
 ]
 
 # 展示层需剥离的「尾部未闭合结构化标记」兜底正则（M2-S5）。收敛到一处常量，
@@ -355,15 +358,41 @@ def parse_response(response: str, state: dict) -> dict:
     else:
         state["plan_strategy"] = None
 
-    # 0.5 推理内容（2026-08-10）：角色开启「思考过程」时模型在开头输出【推理：…】；
-    #     解析进 state["reasoning"]（落库 extra_meta，前端气泡顶部展示），并从正文剥离
-    _reasoning_match = re.match(r"[\[【]\s*推理\s*[：:]\s*([^\]】]+)[\]】]\s*", response)
-    if _reasoning_match:
-        # 思考第一人称化（2026-09-10）：与挡位 2 共用上屏归一管线（名字自称→我、用户→昵称、剥穿帮）
-        from app.agent.context.reasoning_prompt import normalize_reasoning_for_display
-        state["reasoning"] = normalize_reasoning_for_display(
-            _reasoning_match.group(1), state.get("character_name"), state.get("user_name"))
-        response = response[_reasoning_match.end():].strip()
+    # 0.5 推理内容（2026-08-10；2026-09-12 容错）：角色开启「思考过程」时模型在开头输出
+    #     【推理：…】/【推理】…】（无冒号、内容可含括号——生产 id=11642 实证）。
+    #     解析进 state["reasoning"]（落库 extra_meta，前端气泡顶部展示），并从正文剥离。
+    _reasoning_head = re.match(r"[\[【]\s*推理\s*(?:[：:]\s*)?(?:[\]】]\s*)?", response, re.IGNORECASE)
+    if _reasoning_head:
+        rest = response[_reasoning_head.end():]
+        _line_end = rest.find("\n")
+        _line = rest if _line_end == -1 else rest[:_line_end]
+        _after_line = "" if _line_end == -1 else rest[_line_end + 1:]
+        _rs = _line.rstrip()
+        if _rs and _rs[-1] in "】]":
+            # 常规形态：标记单独成行、以闭合收尾 → 内容取到行末闭合，内容里的括号原样保留
+            _content = _rs[:-1].strip()
+            response = _after_line.strip()
+        else:
+            _first = -1
+            for _ch in ("】", "]"):
+                _p = _line.find(_ch)
+                if _p != -1 and (_first == -1 or _p < _first):
+                    _first = _p
+            if _first != -1:
+                # 标记与正文同行的畸形形态 → 内容取到第一个闭合，其余一律留作正文（绝不吞回复）
+                _content = _line[:_first].strip()
+                response = (_line[_first + 1:] + _after_line).strip()
+            else:
+                # 无闭合（截断）：只剥掉标记本身，正文原样保留——宁可把这段当正文，也不能让整条回复消失
+                _content = ""
+                response = rest.strip()
+        # 与挡位 2 的关系（口径：丢弃）：state["reasoning"] 已有原生思考（level 2 的
+        # reasoning_content）时，标记行内容**丢弃不覆盖**——避免「两段思考」；正文仍剥离。
+        if _content and not state.get("reasoning"):
+            # 思考第一人称化（2026-09-10）：与挡位 2 共用上屏归一管线（名字自称→我、用户→昵称、剥穿帮）
+            from app.agent.context.reasoning_prompt import normalize_reasoning_for_display
+            state["reasoning"] = normalize_reasoning_for_display(
+                _content, state.get("character_name"), state.get("user_name"))
     # 无【推理】标记时不覆盖 state["reasoning"]：深度思考挡位（level 2）的
     # reasoning_content 已由 nodes.generate_response 写入，避免被清空
 
