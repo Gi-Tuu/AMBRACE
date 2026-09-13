@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:dio/dio.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -54,6 +55,42 @@ class FcmPushService {
 
   bool get isAvailable => _initialized;
 
+  /// 非阻塞初始化（2026-09-13 黑屏/登录卡顿修复）：
+  /// 启动与登录路径只「触发」不等待——init() 内含网络请求与系统权限弹窗，
+  /// 等待它会拖住首帧和登录跳转。整体加超时兜底：超时只放弃等待，底层流程继续。
+  /// 初始化诊断上报（2026-09-13）：把「卡在哪一步」报到服务端，便于真机排查。
+  /// 公开接口、尽力而为——失败静默，绝不影响 App。
+  Future<void> _diag(String stage, [String? detail]) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final serverUrl = prefs.getString('server_url') ?? '';
+      if (serverUrl.isEmpty) return;
+      final token = await SecureTokenStore.instance
+          .readToken()
+          .timeout(const Duration(seconds: 3));
+      await Dio().post(
+        '$serverUrl/api/v1/device/fcm-diagnostic',
+        data: {
+          'device_id': _deviceId ?? '',
+          'stage': stage,
+          'detail': detail ?? '',
+        },
+        options: Options(
+          connectTimeout: const Duration(seconds: 4),
+          receiveTimeout: const Duration(seconds: 4),
+          headers: token.isEmpty ? null : {'Authorization': 'Bearer $token'},
+        ),
+      );
+    } catch (_) {}
+  }
+
+  void initInBackground({Duration timeout = const Duration(seconds: 8)}) {
+    init().timeout(timeout).catchError((Object e) {
+      debugPrint('[FCM] init (background) timeout/failed: $e');
+      _diag('init_failed', '$e');
+    });
+  }
+
   Future<void> init() async {
     // 已初始化：只重新取 token 注册（token 可能已刷新或登录账号变化），不重复初始化 Firebase。
     // 这在登录/注册/引导页 configure 成功后再调用时安全（可重入）。
@@ -69,6 +106,7 @@ class FcmPushService {
 
     if (!enableFcm) {
       debugPrint('[FCM] disabled at compile time (ENABLE_FCM not set)');
+      _diag('compile_flag_off');
       return;
     }
 
@@ -79,11 +117,13 @@ class FcmPushService {
     final serverUrl = prefs.getString('server_url') ?? '';
     if (serverUrl.isEmpty) {
       debugPrint('[FCM] server_url not set, skip init');
+      _diag('no_server_url');
       return;
     }
     final authToken = await SecureTokenStore.instance.readToken();
     if (authToken.isEmpty) {
       debugPrint('[FCM] not logged in, skip init');
+      _diag('no_auth_token');
       return;
     }
     ApiClient().configure(baseUrl: serverUrl, token: authToken);
@@ -95,14 +135,17 @@ class FcmPushService {
       final data = resp.data as Map<String, dynamic>;
       if (data['enabled'] == true) {
         fcmConfig = data;
+        _diag('config_ok');
       }
     } catch (e) {
       debugPrint('[FCM] fetch fcm-config failed: $e');
+      _diag('config_fail', '$e');
       return;
     }
 
     if (fcmConfig == null) {
       debugPrint('[FCM] FCM not enabled on server');
+      _diag('server_disabled');
       return;
     }
 
@@ -120,8 +163,10 @@ class FcmPushService {
         );
         // 必须在 Firebase 初始化后注册后台消息处理器，否则顶层函数是死代码。
         FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+        _diag('firebase_ok');
       } catch (e) {
         debugPrint('[FCM] Firebase.initializeApp failed (no GMS?): $e');
+        _diag('firebase_fail', '$e');
         return;
       }
     }
@@ -130,17 +175,18 @@ class FcmPushService {
 
     // 请求通知权限
     try {
-      final settings = await fm.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
+      // 超时兜底：权限弹窗被划掉/无人应答时不能永久挂住初始化
+      final settings = await fm
+          .requestPermission(alert: true, badge: true, sound: true)
+          .timeout(const Duration(seconds: 20));
+      _diag('permission', settings.authorizationStatus.name);
       if (settings.authorizationStatus == AuthorizationStatus.denied) {
         debugPrint('[FCM] notification permission denied');
         return;
       }
     } catch (e) {
       debugPrint('[FCM] requestPermission failed: $e');
+      _diag('permission_fail', '$e');
       return;
     }
 
@@ -160,12 +206,17 @@ class FcmPushService {
 
   Future<void> _registerToken(FirebaseMessaging fm) async {
     try {
-      final token = await fm.getToken();
-      if (token != null) {
+      final token = await fm.getToken().timeout(const Duration(seconds: 8));
+      if (token == null) {
+        debugPrint('[FCM] getToken returned null');
+        _diag('token_null');
+      } else {
+        _diag('token_ok', 'len=${token.length}');
         await _registerTokenWithBackend(token);
       }
     } catch (e) {
       debugPrint('[FCM] getToken failed: $e');
+      _diag('token_fail', '$e');
     }
   }
 
@@ -179,8 +230,10 @@ class FcmPushService {
         'push_token': token,
         'app_version': const String.fromEnvironment('APP_VERSION', defaultValue: ''),
       });
+      _diag('register_ok');
     } catch (e) {
       debugPrint('[FCM] register token failed: $e');
+      _diag('register_fail', '$e');
     }
   }
 

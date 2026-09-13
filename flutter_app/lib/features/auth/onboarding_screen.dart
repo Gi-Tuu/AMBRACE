@@ -152,7 +152,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       final nickname = data['nickname'] as String;
       await settings.setAuth(token, userId, nickname);
       ApiClient().configure(baseUrl: settings.serverUrl, token: token);
-      await FcmPushService.instance.init();
+      FcmPushService.instance.initInBackground(); // 不阻塞登录跳转（09-13 卡顿修复）
       await settings.syncProfileFromServer();
       if (!mounted) return;
       setState(() => _accountDone = true);

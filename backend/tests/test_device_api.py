@@ -5,6 +5,7 @@
 参照 tests/test_family.py 的 TestClient / _make_client 写法。
 """
 import asyncio
+import json
 import os
 
 import pytest
@@ -83,12 +84,33 @@ async def _get_token(factory, user_id, device_id, provider="fcm"):
 
 # ── 鉴权 ──
 
-def test_fcm_config_public(device_db):
-    """/fcm-config 是公开接口，未登录也可访问；默认未启用返回 enabled=false。"""
+def test_fcm_config_public(device_db, monkeypatch):
+    """/fcm-config 是公开接口，未登录也可访问；未配置时返回 enabled=false。
+
+    2026-09-13 隔离修复：本机 .env 配了 FCM 凭据时原用例会失败——改为显式自造配置，
+    不再依赖跑测机器的环境（与 test_fcm_smoke.py 同一思路）。
+    """
+    monkeypatch.setattr(device_api.settings, 'push_fcm_enabled', False, raising=False)
+    monkeypatch.setattr(device_api.settings, 'push_fcm_client_config', '', raising=False)
     client = _make_public_client()
     r = client.get('/api/v1/device/fcm-config')
     assert r.status_code == 200, r.text
     assert r.json() == {"enabled": False}
+
+
+def test_fcm_config_enabled_when_configured(device_db, monkeypatch):
+    """配好凭据时返回完整客户端配置（enabled=true）——服务端侧正常态。"""
+    monkeypatch.setattr(device_api.settings, 'push_fcm_enabled', True, raising=False)
+    monkeypatch.setattr(
+        device_api.settings, 'push_fcm_client_config',
+        json.dumps({'apiKey': 'k', 'appId': 'a', 'messagingSenderId': 's', 'projectId': 'p'}),
+        raising=False,
+    )
+    client = _make_public_client()
+    r = client.get('/api/v1/device/fcm-config')
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body['enabled'] is True and body['projectId'] == 'p'
 
 
 def test_register_requires_auth(device_db):
@@ -229,5 +251,15 @@ def test_unregister_unknown_ok(device_db):
     client = _make_client(1)
     r = client.delete('/api/v1/device/unregister',
                       params={"device_id": "ghost", "push_provider": "fcm"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ok": True}
+
+
+def test_fcm_diagnostic_accepts_report(device_db):
+    """FCM 诊断上报：公开接口，只写日志，返回 ok（2026-09-13 排查真机拿不到 token）。"""
+    client = _make_client(1)
+    r = client.post('/api/v1/device/fcm-diagnostic', json={
+        'device_id': 'dev1', 'stage': 'token_null', 'detail': 'getToken returned null',
+    })
     assert r.status_code == 200, r.text
     assert r.json() == {"ok": True}

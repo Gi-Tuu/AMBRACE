@@ -733,7 +733,10 @@ class PluginCardState extends State<PluginCard> {
             const SizedBox(height: 2),
             Text(l10n.channelBindingAddBotHint, style: TextStyle(fontSize: 10, color: Colors.grey)),
             const SizedBox(height: 2),
-            Row(
+            // 09-13 真机反馈：三个按钮在窄屏放不下会溢出卡片 → 改 Wrap 自动换行
+            Wrap(
+              spacing: 0,
+              runSpacing: 0,
               children: [
                 TextButton.icon(
                   onPressed: _chSaving.contains(channel)

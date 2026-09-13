@@ -171,4 +171,37 @@ void main() {
     expect(find.text('刷新 bot 列表'), findsNothing); // 子账号无写入口
     expect(find.text('仅主账号可配置渠道绑定'), findsOneWidget);
   });
+
+  testWidgets('09-13 真机反馈：窄屏（300 宽）下微信引导按钮行不再溢出卡片', (tester) async {
+    final api = FakeApiAdapter();
+    ApiClient().dio.httpClientAdapter = api;
+    api.json('GET', '/api/v1/channels/wechat/bindings', _twoBots);
+    api.json('GET', '/api/v1/characters', _chars);
+
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('zh'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: Center(
+          child: SizedBox(
+            width: 300,
+            child: SingleChildScrollView(
+              child: PluginCard(
+                plugin: _plugin('wechat_ilink'),
+                isAdmin: true,
+                onChanged: () {},
+                onToast: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // 旧实现是 Row：此宽度下三个按钮放不下会抛 RenderFlex overflow；改 Wrap 后应为空
+    expect(tester.takeException(), isNull);
+    expect(find.text('刷新 bot 列表'), findsOneWidget);
+  });
 }

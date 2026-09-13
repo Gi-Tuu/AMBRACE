@@ -13,8 +13,11 @@ from app.auth.deps import get_current_user_id
 from app.config import settings
 from app.db.database import async_session_factory
 from app.models.device import UserDeviceToken
+from app.utils.logger import get_logger
 
 router = APIRouter(prefix="/api/v1/device", tags=["Device Push"])
+
+_logger = get_logger("api.device")
 
 
 @router.get("/fcm-config")
@@ -123,4 +126,26 @@ async def heartbeat(
         if existing:
             existing.last_seen_at = datetime.now(timezone.utc)
             await db.commit()
+    return {"ok": True}
+
+
+class FcmDiagRequest(BaseModel):
+    device_id: str = ""
+    stage: str
+    detail: str | None = None
+
+
+@router.post("/fcm-diagnostic")
+async def fcm_diagnostic(body: FcmDiagRequest):
+    """客户端 FCM 初始化诊断上报（公开接口，只写日志）。
+
+    用于排查真机拿不到推送 token 的原因（无 GMS / 到不了 FCM 服务 / 权限未授予等）：
+    客户端在每个阶段上报一次，按 stage 记日志即可定位卡点。
+    """
+    _logger.info(
+        "fcm_diag device=%s stage=%s detail=%s",
+        (body.device_id or "")[:16],
+        body.stage,
+        (body.detail or "")[:300],
+    )
     return {"ok": True}

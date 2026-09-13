@@ -47,7 +47,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         data['nickname'] as String,
       );
       ApiClient().configure(baseUrl: settings.serverUrl, token: token);
-      await FcmPushService.instance.init();
+      FcmPushService.instance.initInBackground(); // 不阻塞登录跳转（09-13 卡顿修复）
       await settings.syncProfileFromServer();
       if (mounted) Navigator.pushReplacementNamed(context, '/home');
     } on DioException catch (e) {

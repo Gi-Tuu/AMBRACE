@@ -74,7 +74,7 @@ class _LoginScreenState extends State<LoginScreen> {
         data['nickname'] as String,
       );
       ApiClient().configure(baseUrl: settings.serverUrl, token: token);
-      await FcmPushService.instance.init();
+      FcmPushService.instance.initInBackground(); // 不阻塞登录跳转（09-13 卡顿修复）
       await settings.syncProfileFromServer();
       appNavigatorKey.currentState?.pushReplacementNamed('/home');
     } on DioException catch (e) {
@@ -160,7 +160,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _serverUrlCtrl.text = settings.serverUrl;
       if (settings.isLoggedIn) {
         ApiClient().configure(baseUrl: settings.serverUrl, token: settings.token);
-        await FcmPushService.instance.init();
+        FcmPushService.instance.initInBackground(); // 不阻塞登录跳转（09-13 卡顿修复）
         appNavigatorKey.currentState?.pushReplacementNamed('/home');
         return;
       }

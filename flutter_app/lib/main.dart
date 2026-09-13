@@ -24,7 +24,17 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // 显式初始化皮肤注册表（注册内置皮肤；未来插件可在此后注册自定义皮肤）
   SkinRegistry.initialize();
-  // 初始化失败不允许阻塞启动（闪退防御：任何初始化异常都降级，不影响打开 app）
+  _setupLifecycleObserver();
+  // 2026-09-13 黑屏修复：runApp 之前不再 await 任何服务初始化。
+  // 原因：FcmPushService.init() 会做网络请求（device/fcm-config、register）+ 系统通知权限弹窗 + 取 token；
+  // 网络慢或权限弹窗没人应答时，首帧被一直挡住，用户看到的就是「打开后长时间黑屏」。
+  // 现在先渲染首帧（登录页/引导页立即可见），三个服务在首帧后异步初始化，任一失败都只降级不影响使用。
+  runApp(const AICompanionApp());
+  WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrapServices());
+}
+
+/// 首帧之后的后台初始化（顺序执行；每个都 try/catch 降级，任何异常不影响 App 使用）。
+Future<void> _bootstrapServices() async {
   try {
     await NotificationService().init();
   } catch (e) {
@@ -42,8 +52,6 @@ void main() async {
   } catch (e) {
     debugPrint('FCM init failed: $e');
   }
-  _setupLifecycleObserver();
-  runApp(const AICompanionApp());
 }
 
 /// 监听 app 前后台：写 app_in_foreground 标志，供前台服务与 Flutter 层双源去重
