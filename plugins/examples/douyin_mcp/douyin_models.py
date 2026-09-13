@@ -29,8 +29,11 @@ class DouyinAccount(PluginBase):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     tenant_id: Mapped[int] = mapped_column(Integer, index=True)          # 家庭 root user_id（显式传，无默认）
-    bot_account_id: Mapped[str] = mapped_column(String(64), default="default")  # 抖音号稳定键（单账号恒 default）
-    bot_label: Mapped[str] = mapped_column(String(100), default="")      # 面板展示名
+    # 2026-09-12（拍板 C）：库侧本就是 nullable + server_default（迁移 a7b8c9d0e1f2 只加了 server_default），
+    # 与 ORM 的 NOT NULL 声明不一致。此处把 ORM 对齐到库（nullable=True），消除"声明与库不符"隐患；
+    # 等渠道绑定 per-account 专项重建该表时，再统一收紧为 NOT NULL（见 plans 第六节 6.3）。
+    bot_account_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default="default")  # 抖音号稳定键（单账号恒 default）
+    bot_label: Mapped[str | None] = mapped_column(String(100), nullable=True, default="")      # 面板展示名
     account_name: Mapped[str] = mapped_column(String(100), default="")
     bound: Mapped[bool] = mapped_column(Boolean, default=False)
     logged_in: Mapped[bool] = mapped_column(Boolean, default=False)

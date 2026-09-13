@@ -71,7 +71,7 @@ class _RelationshipScreenState extends State<RelationshipScreen> {
     final p = partners.first;
     final g = (p["gender"] as String? ?? "").toLowerCase();
     final gt = (g == "男" || g == "male") ? l10n.genderMale : ((g == "女" || g == "female") ? l10n.genderFemale : l10n.unknown);
-    return "${p["name"]}（$gt）";
+    return "${p["name"]}${l10n.wrapParen(gt)}";
   }
 
   Future<void> _editItem(Map<String, dynamic> item) async {
@@ -93,7 +93,7 @@ class _RelationshipScreenState extends State<RelationshipScreen> {
     final rtLabel = _relationTypeLabel(rt, l10n);
     final summary = item["relationship_summary"] as String? ?? "";
     final base = isPartner ? l10n.relationPartnerLabel(rtLabel) : rtLabel;
-    return summary.isNotEmpty ? "$base｜$summary" : base;
+    return summary.isNotEmpty ? "$base${l10n.sepBar}$summary" : base;
   }
 
   @override

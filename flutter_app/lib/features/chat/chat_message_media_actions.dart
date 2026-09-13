@@ -62,7 +62,7 @@ mixin ChatMessageMediaActions<T extends StatefulWidget> on State<T> {
                               final it = items[i];
                               final owner = it['owner'] == 'user' ? l10n.userPromised : l10n.aiPromised;
                               final hint = it['content_hint'] as String? ?? l10n.doSomething;
-                              final left = '${it['left_minutes']}${l10n.minutesLater}（${it['due_at']}）';
+                              final left = '${it['left_minutes']}${l10n.minutesLater}${l10n.wrapParen('${it['due_at']}')}';
                               return ListTile(
                                 dense: true,
                                 contentPadding: EdgeInsets.zero,
@@ -72,7 +72,7 @@ mixin ChatMessageMediaActions<T extends StatefulWidget> on State<T> {
                                       : Icons.smart_toy_outlined,
                                   size: 20,
                                 ),
-                                title: Text('$owner「$hint」', maxLines: 2, overflow: TextOverflow.ellipsis),
+                                title: Text('$owner${l10n.wrapTitleBracket(hint)}', maxLines: 2, overflow: TextOverflow.ellipsis),
                                 subtitle: Text(left, style: const TextStyle(fontSize: 12)),
                                 trailing: IconButton(
                                   icon: const Icon(Icons.delete_outline, size: 20),
@@ -142,6 +142,15 @@ mixin ChatMessageMediaActions<T extends StatefulWidget> on State<T> {
             Text(l10n.quote),
           ]),
         ),
+        if (!msg.isUser && msg.degradedReply)
+          PopupMenuItem<String>(
+            value: 'say_again',
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.refresh, size: 18),
+              SizedBox(width: 8),
+              Text(l10n.menuSayAgain),
+            ]),
+          ),
         PopupMenuItem<String>(
           value: 'copy',
           child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -160,6 +169,9 @@ mixin ChatMessageMediaActions<T extends StatefulWidget> on State<T> {
       case 'quote':
         applyQuote(msg);
         break;
+      case 'say_again':
+        await _resayLast(msg);
+        break;
       case 'copy':
         final stripped = StageText.parse(msg.content).text;
         await Clipboard.setData(ClipboardData(text: stripped.isEmpty ? msg.content : stripped));
@@ -170,6 +182,31 @@ mixin ChatMessageMediaActions<T extends StatefulWidget> on State<T> {
         }
         break;
     }
+  }
+
+  /// 「让 TA 再说一次」（2026-09-13 证据B）：对降级回复，取其上一条用户消息重走一轮生成
+  /// （复用现有 sendMessage 入口，不新增后端端点）。
+  Future<void> _resayLast(ChatMessage degraded) async {
+    final chat = context.read<ChatProvider>();
+    final idx = chat.messages.indexOf(degraded);
+    String? content;
+    for (var i = idx - 1; i >= 0; i--) {
+      final m = chat.messages[i];
+      if (m.isUser) {
+        content = m.content;
+        break;
+      }
+    }
+    final l10n = AppLocalizations.of(context)!;
+    if (content == null || content.trim().isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.degradedNoSource), duration: const Duration(seconds: 2)),
+        );
+      }
+      return;
+    }
+    await chat.sendMessage(content);
   }
 
   /// 删除确认（文案统一「删除」；删除为物理删除，连带小字/引用一并消失）

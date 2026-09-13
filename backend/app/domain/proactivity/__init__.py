@@ -24,6 +24,29 @@ from app.domain.proactivity.decision import (  # noqa: F401
     scheduler_gray_character,
 )
 # B1-③（2026-09-04）：主动接触意图层（闲置分级 + 意图选择，方案 §1-§9）纯模块
+from app.domain.proactivity.pacing import (  # noqa: F401
+    FLAG_HOUR_WINDOW,
+    FLAG_SESSION_RATE,
+    FLAG_TYPE_MIX,
+    HOUR_WINDOW_END,
+    HOUR_WINDOW_START,
+    LOW_YIELD_TYPES,
+    OUTREACH_PACING_GRAY_CHARS,
+    OUTREACH_PACING_RATIO,
+    PACING_FLAGS,
+    SESSION_DAILY_LIMIT,
+    SESSION_MIN_INTERVAL_MINUTES,
+    SESSION_RATE_TYPES,
+    TYPE_DAILY_LIMITS,
+    TYPE_MIX_COUNTED_TYPES,
+    flag_on,
+    gate_active,
+    hour_window_allows,
+    pacing_gray_hit,
+    session_rate_allows,
+    traffic_hit,
+    type_mix_allows,
+)
 from app.domain.proactivity.outreach import (  # noqa: F401
     ALL_INTENTS,
     CHECK_IN,
@@ -63,4 +86,12 @@ __all__ = [
     "ALL_INTENTS", "TIER_WEIGHTS", "COLD_ALLOWED", "RECENT_AVOID", "MEMORY_QUERY_BY_INTENT",
     "OutreachMaterials", "OutreachPlan",
     "staleness_tier", "select_outreach", "_candidates",
+    # outreach 投放口径三闸（2026-09-13 交接 §二）
+    "FLAG_HOUR_WINDOW", "FLAG_TYPE_MIX", "FLAG_SESSION_RATE", "PACING_FLAGS",
+    "OUTREACH_PACING_GRAY_CHARS", "OUTREACH_PACING_RATIO",
+    "LOW_YIELD_TYPES", "HOUR_WINDOW_START", "HOUR_WINDOW_END",
+    "TYPE_DAILY_LIMITS", "TYPE_MIX_COUNTED_TYPES",
+    "SESSION_DAILY_LIMIT", "SESSION_MIN_INTERVAL_MINUTES", "SESSION_RATE_TYPES",
+    "flag_on", "gate_active", "pacing_gray_hit", "traffic_hit",
+    "hour_window_allows", "type_mix_allows", "session_rate_allows",
 ]

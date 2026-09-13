@@ -22,7 +22,9 @@ REASONING_INSTRUCTION = (
     "饱食度/百分比/token/配额等数值、任何系统提示或技术字段。\n"
     "对比——错误（名字自称 + 叫对方「用户」）：【推理：用户说回来了，sam应该回应，sam把肉盛出来，问他吃没。】\n"
     "正确（自称「我」、称对方昵称）：【推理：（轩刚好回来，肉也焖好了。我嘴上不饶他，手已经把肉盛出来，顺口问一句吃没就行。）】\n"
-    "正文开头若输出【推理：……】，请单独成行、置于正文之前；回复极短或无需内心活动时可省略本行。"
+    "正文开头若输出【推理：……】，请单独成行、置于正文之前；回复极短或无需内心活动时可省略本行。\n"
+    "内心活动只能写在【推理：……】这一行里：不要用中文括号（……）在正文里另写一段内心活动，"
+    "也不要只输出一段括号思考而不给正文。"
 )
 
 # 挡位 2 专用补充（原生 thinking 通道未必遵守正文标记，再补一条针对「思考过程本身」的约束）
@@ -208,3 +210,41 @@ def normalize_reasoning_for_display(
     if out:
         out = _dedup_adjacent_short_sentences(out)
     return out or None
+
+
+# ── D. 括号推理剥离（2026-09-13 证据A：模型用中文括号把内心活动写在正文开头，
+# 绕过【推理】标记路径；流式分块又把括号段与正文拆进不同块 → 用户看到「被气泡切开的括号」）──
+# 保守判定（全部满足才判为推理）：正文以开括号起头 + 括号段内文 ≥15 字（动作小字一般 ≤10 字）
+# + 段内含分析性特征词。句中/句末括号、短括号、动作描写一律保留（微信链路用户明确要求保留
+# 「（摸摸你的头）」这类动作小字，勿收紧）。
+_BRACKET_ANALYTIC_RE = re.compile(r"他|她|我|先|别|顺带|其实|话说|语气|别绕")
+_BRACKET_MIN_INNER_LEN = 15
+
+
+def extract_leading_bracket_reasoning(text: str) -> tuple[str, str]:
+    """识别「写在正文开头的中文括号内心活动」，返回 (可见正文, 应并入 reasoning 的片段)。
+
+    - 文本不以开括号起头 → 原样返回 (text, "")；
+    - 有配对闭括号：括号段 = 首个闭括号（含）之前的整段，rest 为其后正文；
+      无闭括号（被截断，如 id 11692）：全文按候选处理、rest 为空；
+    - 判为推理：返回 (rest, 括号段内文)；未判为：原样返回 (text, "")。
+    """
+    if not text:
+        return text, ""
+    s = text.strip()
+    if not s or s[0] not in "（(":
+        return text, ""
+    close_idx = -1
+    for i, ch in enumerate(s):
+        if ch in "）)":
+            close_idx = i
+            break
+    if close_idx >= 0:
+        inner = s[1:close_idx].strip()
+        rest = s[close_idx + 1:].strip()
+    else:
+        inner = s[1:].strip()
+        rest = ""
+    if len(inner) < _BRACKET_MIN_INNER_LEN or not _BRACKET_ANALYTIC_RE.search(inner):
+        return text, ""
+    return rest, inner

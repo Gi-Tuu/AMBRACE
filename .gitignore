@@ -102,3 +102,4 @@ scripts/dev_account_activity.py
 fcm-service-account*.json
 *firebase-adminsdk*.json
 google-services.json
+backend/.pytest_tmp/

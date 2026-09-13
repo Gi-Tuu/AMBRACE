@@ -947,7 +947,7 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
           ),
           const SizedBox(height: 4),
           Text(
-            '${ai?['name'] ?? ''}：${ai?['current_status'] ?? ''}',
+            '${ai?['name'] ?? ''}${l10n.sepColon}${ai?['current_status'] ?? ''}',
             style: const TextStyle(fontSize: 12, color: Colors.grey),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,

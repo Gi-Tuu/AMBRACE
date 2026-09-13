@@ -291,6 +291,7 @@ class McpPromptTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final name = prompt['name'] as String? ?? '';
     final desc = prompt['description'] as String? ?? '';
     final args = prompt['arguments'];
@@ -326,7 +327,7 @@ class McpPromptTile extends StatelessWidget {
           if (argNames.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 2, left: 20),
-              child: Text(argNames.join('、'),
+              child: Text(argNames.join(l10n.listSeparator),
                   style: const TextStyle(fontSize: 10, color: AppColors.textSecondary)),
             ),
         ],

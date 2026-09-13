@@ -86,30 +86,37 @@ class ShizukuService {
   }
 
   /// 快照数据 → 自然语言文本（注入 AI 上下文用）
-  static String formatSnapshot(Map<String, dynamic> d) {
+  /// isEn：服务层无 BuildContext，沿用 appLang() 判定（与 utils/service_l10n.dart 的 isEn 分支同口径）
+  static String formatSnapshot(Map<String, dynamic> d, {required bool isEn}) {
     final parts = <String>[];
     final screenOn = d['screenOn'] == true;
-    parts.add(screenOn ? '屏幕亮起' : '屏幕熄灭');
+    parts.add(screenOn ? (isEn ? 'Screen on' : '屏幕亮起') : (isEn ? 'Screen off' : '屏幕熄灭'));
     final onMs = d['screenOnMs'];
     if (onMs is num && onMs > 0) {
       final min = (onMs / 60000).round();
-      parts.add('已亮 $min 分钟');
+      parts.add(isEn ? 'On for $min min' : '已亮 $min 分钟');
     }
     final fg = d['foregroundApp'] as String? ?? '';
-    if (fg.isNotEmpty) parts.add('前台应用：$fg');
+    if (fg.isNotEmpty) parts.add(isEn ? 'Foreground app: $fg' : '前台应用：$fg');
     final level = d['batteryLevel'];
     if (level is num) {
-      final charging = d['batteryCharging'] == true ? ' 充电中' : '';
-      parts.add('电池 ${level.toInt()}%$charging');
+      final charging = d['batteryCharging'] == true ? (isEn ? ' charging' : ' 充电中') : '';
+      parts.add(isEn ? 'Battery ${level.toInt()}%$charging' : '电池 ${level.toInt()}%$charging');
     }
     final net = d['network'] as String? ?? '';
-    if (net.isNotEmpty) parts.add('网络：$net');
-    parts.add('勿扰：${d['dnd'] == true ? '开启' : '关闭'}');
+    if (net.isNotEmpty) parts.add(isEn ? 'Network: $net' : '网络：$net');
+    parts.add(isEn
+        ? 'DND: ${d['dnd'] == true ? 'on' : 'off'}'
+        : '勿扰：${d['dnd'] == true ? '开启' : '关闭'}');
     final dev = d['device'] as String? ?? '';
     final ver = d['androidVersion'] as String? ?? '';
     if (dev.isNotEmpty || ver.isNotEmpty) {
-      parts.add('设备：${[dev, ver].where((e) => e.isNotEmpty).join(' / ')}');
+      parts.add(isEn
+          ? 'Device: ${[dev, ver].where((e) => e.isNotEmpty).join(' / ')}'
+          : '设备：${[dev, ver].where((e) => e.isNotEmpty).join(' / ')}');
     }
-    return '手机状态：${parts.join('；')}';
+    return isEn
+        ? 'Phone status: ${parts.join('; ')}'
+        : '手机状态：${parts.join('；')}';
   }
 }

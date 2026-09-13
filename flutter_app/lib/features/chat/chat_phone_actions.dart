@@ -33,7 +33,7 @@ mixin ChatPhoneActions<T extends StatefulWidget> on State<T> {  /// 3.4a：先�
           final wfOk = wfResults.every((r) => r['ok'] == true);
           final wfSummary = wfResults
               .map((r) => l10n.chatWfStep(r['step'], r['ok'] == true ? '✓' : '✗', r['message'] ?? ''))
-              .join('；');
+              .join(l10n.sepSemicolon);
           await PhonePerceptionService.uploadActionResult('workflow', wfName, wfOk, wfSummary);
           if (mounted) {
             messenger.showSnackBar(SnackBar(
@@ -75,7 +75,7 @@ mixin ChatPhoneActions<T extends StatefulWidget> on State<T> {  /// 3.4a：先�
         final allOk = results.every((r) => r["ok"] == true);
         final summary = results
             .map((r) => l10n.chatWfStep(r["step"], r["ok"] ? "✓" : "✗", r["message"]))
-            .join("；");
+            .join(l10n.sepSemicolon);
         await PhonePerceptionService.uploadActionResult(
           "sequence",
           template["type"] as String? ?? "",

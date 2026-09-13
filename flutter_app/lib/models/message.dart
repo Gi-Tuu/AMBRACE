@@ -107,6 +107,9 @@ class ChatMessage {
   /// 思考过程（AI 气泡顶部折叠展示；仅角色开启「思考过程」开关时产生）
   String? get reasoning => extraMeta['reasoning'] is String ? extraMeta['reasoning'] as String : null;
 
+  /// 思考过载降级标记（2026-09-13 证据B：正文空/纯标点且补写失败；气泡下方灰字提示 + 可重说）
+  bool get degradedReply => extraMeta['degraded_reply'] == true;
+
   /// 状态更新（2026-08-14：AI 输出【状态更新：】剥离后附在最后一个气泡，小字显示）
   String? get statusUpdate =>
       extraMeta['status_update'] is String ? extraMeta['status_update'] as String : null;

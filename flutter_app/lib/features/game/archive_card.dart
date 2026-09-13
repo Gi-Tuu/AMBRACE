@@ -46,7 +46,7 @@ class _ArchiveCardState extends State<ArchiveCard> {
         title: Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text(
           '${l10n.archivePlayerCount('$playerCount')} · ${l10n.archiveRounds('$rounds')} · '
-          '${winnerNames.isNotEmpty ? l10n.archiveWinner(winnerNames.join('、')) : l10n.archiveDraw}',
+          '${winnerNames.isNotEmpty ? l10n.archiveWinner(winnerNames.join(l10n.sepList)) : l10n.archiveDraw}',
           style: const TextStyle(fontSize: 12),
         ),
         children: [

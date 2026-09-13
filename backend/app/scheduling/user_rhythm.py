@@ -20,6 +20,8 @@ STALE_AFTER_HOURS = 24
 
 # 权重缓存：{user_id: (expire_ts, weight)}（60s 过期）
 _weight_cache: dict[int, tuple[float, float]] = {}
+# 活跃时段只读缓存：{user_id: (expire_ts, active_hours)}（60s 过期；outreach 时段窗口闸个性化用）
+_active_hours_cache: dict[int, tuple[float, list[list[int]]]] = {}
 
 
 def infer_active_hours(
@@ -132,6 +134,36 @@ def _row_age_hours(row) -> float | None:
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
     return (datetime.now(timezone.utc) - ts).total_seconds() / 3600.0
+
+
+async def get_active_hours(user_id: int) -> list[list[int]]:
+    """只读该用户**已学到**的活跃时段（2026-09-13：outreach 时段窗口闸个性化用）。
+
+    - 无行 / 行过期（>STALE_AFTER_HOURS）/ 解析失败 / 任何异常 → []（调用方回退默认窗口）；
+    - **不触发重学、不写库**（避免在闸门判定路径产生写副作用；重学仍由 get_rhythm_weight 负责）；
+    - 带 60s 进程内缓存。
+    """
+    now_ts = time.time()
+    cached = _active_hours_cache.get(user_id)
+    if cached and now_ts - cached[0] < 60:
+        return cached[1]
+    active: list[list[int]] = []
+    try:
+        from app.models.life import UserRhythm
+        from app.db.database import async_session_factory
+        async with async_session_factory() as db:
+            row = (await db.execute(
+                select(UserRhythm).where(UserRhythm.user_id == user_id)
+            )).scalar_one_or_none()
+        if row is not None:
+            age = _row_age_hours(row)
+            if age is None or age <= STALE_AFTER_HOURS:
+                active = json.loads(row.active_hours or "[]")
+    except Exception as e:
+        _logger.warning("get_active_hours failed user=%d: %s", user_id, e)
+        active = []
+    _active_hours_cache[user_id] = (now_ts, active)
+    return active
 
 
 async def get_rhythm_weight(user_id: int, cn_hour: int) -> float:

@@ -17,6 +17,7 @@ from app.scheduling.life_regression import run_life_regression
 from app.scheduling.prospective_intent import run_prospective_due  # Ariadne 模块G（2026-09-04）
 from app.utils.logger import get_logger
 from app.utils.async_tasks import spawn_background
+from app.utils.timeutil import beijing_day_start_utc, now_naive_utc
 
 # AMBRACE 3.10：arbiter 事件源 TriggerSource 化——导入 sources 包即触发各源注册
 from app.scheduling.sources import SourceContext, all_sources, get_source, to_item_dict
@@ -46,6 +47,19 @@ from app.domain.proactivity.decision import (  # noqa: E402,F401
 from app.domain.proactivity.sleep import SLEEP_KEYWORDS, SLEEP_HOUR  # noqa: E402,F401
 # B1-③（2026-09-04，方案 §5.4）：主动接触意图层纯函数（闲置分级 + 意图选择）
 from app.domain.proactivity import outreach as _oc  # noqa: E402
+# 2026-09-13（Codex 交接 §二）：outreach 投放口径三闸纯决策层（时段窗口 / 类型配比 / 单会话限频）
+from app.domain.proactivity.pacing import (  # noqa: E402,F401
+    FLAG_HOUR_WINDOW,
+    FLAG_SESSION_RATE,
+    FLAG_TYPE_MIX,
+    LOW_YIELD_TYPES,
+    SESSION_RATE_TYPES,
+    TYPE_MIX_COUNTED_TYPES,
+    gate_active,
+    hour_window_allows,
+    session_rate_allows,
+    type_mix_allows,
+)
 
 # 审计 P1-06：rejected 触发日志节流（同角色同类型最小间隔秒，approved 必记）
 REJECTED_LOG_THROTTLE_SECONDS = 300
@@ -133,6 +147,65 @@ async def get_motivation_approved_count(character_id: int, since) -> int:
             )
         )
         return result.scalar() or 0
+
+
+# ── outreach 投放口径三闸（2026-09-13 交接 §②③）——「已发送」计数 IO ──
+
+
+def _cn_hour_now() -> int:
+    """当前北京时间小时（时段窗口闸用；单独成函数便于测试注入，锁定时段）。"""
+    return datetime.now(timezone(timedelta(hours=8))).hour
+
+
+async def get_daily_sent_count(character_id: int, message_type: str) -> int:
+    """该角色**北京时间当日已发送**的某类型主动消息数（类型配比闸 ②）。
+
+    统计口径（交接 §②③，与项目既有「已发送」口径一致，勿改成候选口径）：
+    - 只算 ``proactive_message_logs``（``send_to_session`` 落库的「已发送」行，log_proactive=True），
+      **不统计候选/审批流水**（``proactive_trigger_logs`` 的 approved/rejected 都不算）；
+    - 同一 storyline 事件的后续切片不重复计数（``send_to_session`` 不再落 log），
+      与 ``get_hourly_active_count`` / ``MAX_PER_HOUR`` 同源同口径；
+    - 日期边界 = 北京时间当天 00:00（复用 ``utils.timeutil.beijing_day_start_utc``）。
+    """
+    since = beijing_day_start_utc()
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(func.count()).where(
+                ProactiveMessageLog.character_id == character_id,
+                ProactiveMessageLog.message_type == message_type,
+                ProactiveMessageLog.created_at >= since,
+            )
+        )
+        return result.scalar() or 0
+
+
+async def get_session_daily_sent_count(character_id: int, session_id: int) -> int:
+    """同一 (character_id, session_id) 当日**已发送**主动消息数（单会话限频闸 ③，口径同 ②）。"""
+    since = beijing_day_start_utc()
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(func.count()).where(
+                ProactiveMessageLog.character_id == character_id,
+                ProactiveMessageLog.session_id == session_id,
+                ProactiveMessageLog.created_at >= since,
+            )
+        )
+        return result.scalar() or 0
+
+
+async def get_session_last_sent_at(character_id: int, session_id: int) -> datetime | None:
+    """同一 (character_id, session_id) 最近一条**已发送**主动消息时间（最小间隔闸 ③，口径同上）。"""
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(ProactiveMessageLog.created_at)
+            .where(
+                ProactiveMessageLog.character_id == character_id,
+                ProactiveMessageLog.session_id == session_id,
+            )
+            .order_by(ProactiveMessageLog.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
 
 async def get_recent_proactive_messages(character_id: int, limit: int = 2) -> str:
@@ -642,6 +715,104 @@ async def _annotate_outreach_plan(item: dict, char_id: int, mats_cache: dict, re
 
 # ── 仲裁 ──
 
+def _mark_gate(item: dict, gate: str) -> None:
+    """闸门命中留痕：写 ``candidate.trigger_reason`` 追加 ``[gate=...]``（交接 §三观测口径）。
+
+    run_tick 随后调 ``log_trigger_candidate(item, False)`` → ``proactive_trigger_logs``
+    的 trigger_reason 带 ``[gate=hour|type|session_rate]``、reject_reason =
+    ``rejected / [gate=...]``，可按天统计各闸拦截量（rejected 行本身受既有 5 分钟节流，
+    见 ``log_trigger_candidate``）。
+    """
+    item["_gate"] = gate
+    cand = item.get("candidate")
+    if isinstance(cand, dict):
+        reason = str(cand.get("trigger_reason") or "")
+        marker = f"[gate={gate}]"
+        if marker not in reason:
+            cand["trigger_reason"] = f"{reason} {marker}".strip()
+    _logger.info("Proactive %s skipped: [gate=%s]", item.get("type"), gate)
+
+
+async def _user_active_hours(user_id) -> list:
+    """读用户已学到的活跃时段（user_rhythm **只读**，不触发重学/写库）；无数据/失败 → []。"""
+    if not user_id:
+        return []
+    try:
+        from app.scheduling.user_rhythm import get_active_hours
+        return await get_active_hours(user_id)
+    except Exception:
+        return []
+
+
+async def _pacing_gate(
+    item: dict,
+    etype: str,
+    char_id: int,
+    candidate: dict,
+    *,
+    cn_hour: int | None = None,
+    now: datetime | None = None,
+) -> str | None:
+    """outreach 投放口径三闸（2026-09-13 交接 §二）：返回命中的闸门名（hour/type/session_rate）或 None。
+
+    - 三个开关全关（默认）或角色不在灰度白名单 → 立即 None：**不查库、不拦截、零行为变化**；
+    - ① hour：低效类型（ai_care/life_regression/memory_review[/_contextual]）仅 12:00–23:00 投放；
+    - ② type：memory_review ≤6/日、ai_care ≤4/日（按已发送计数）；
+    - ③ session_rate：同 (character_id, session_id) ≤8/日 且最小间隔 ≥45 分钟（按已发送计数，
+      与 ``MAX_PER_HOUR`` 叠加不替换）；候选不带 session_id 时按最新会话兜底；
+    - 命中由调用方 ``_mark_gate`` + ``return False`` 走原 rejected 日志链路；
+    - 任一步异常 fail-open（返回 None 照常投放），绝不阻塞主动链路。
+    """
+    try:
+        session_id = candidate.get("session_id")
+        on_hour = gate_active(char_id, session_id, FLAG_HOUR_WINDOW)
+        on_mix = gate_active(char_id, session_id, FLAG_TYPE_MIX)
+        on_rate = gate_active(char_id, session_id, FLAG_SESSION_RATE)
+        if not (on_hour or on_mix or on_rate):
+            return None
+        if cn_hour is None:
+            cn_hour = _cn_hour_now()
+
+        # ① 时段窗口闸：低效类型窗口外跳过（个性化活跃时段只扩不缩）
+        if on_hour and etype in LOW_YIELD_TYPES:
+            if not hour_window_allows(etype, cn_hour):
+                _hours = await _user_active_hours(candidate.get("user_id"))
+                if not hour_window_allows(etype, cn_hour, active_hours=_hours):
+                    return "hour"
+
+        # ② 类型配比闸：每角色每日上限（按「已发送」计数）
+        if on_mix:
+            _counted = TYPE_MIX_COUNTED_TYPES.get(etype)
+            if _counted is not None:
+                _sent = await get_daily_sent_count(char_id, _counted)
+                if not type_mix_allows(etype, _sent):
+                    return "type"
+
+        # ③ 单会话限频闸：日上限 + 最小间隔（按「已发送」计数；与 MAX_PER_HOUR 叠加）
+        if on_rate and etype in SESSION_RATE_TYPES:
+            if session_id is None:
+                _uid = candidate.get("user_id")
+                if _uid:
+                    from app.application.chat_service import get_latest_session_id
+                    session_id = await get_latest_session_id(_uid, char_id)
+                # 兜底解出会话后按会话维度重算灰度桶（比例 <1 时同一角色不同会话可不同命中）
+                if session_id is not None:
+                    on_rate = gate_active(char_id, session_id, FLAG_SESSION_RATE)
+            if on_rate and session_id is not None:
+                _sent = await get_session_daily_sent_count(char_id, session_id)
+                _last = await get_session_last_sent_at(char_id, session_id)
+                _minutes = None
+                if _last is not None:
+                    _last_naive = _last.replace(tzinfo=None) if _last.tzinfo else _last
+                    _minutes = ((now or now_naive_utc()) - _last_naive).total_seconds() / 60.0
+                if not session_rate_allows(_sent, _minutes):
+                    return "session_rate"
+        return None
+    except Exception as e:
+        _logger.warning("outreach pacing gate fail-open: %s", e)
+        return None
+
+
 async def run_tick() -> list[str]:
     """统一调度：收集 → 去重 → 限额 → 执行。返回执行的日志列表"""
     executed = []
@@ -751,6 +922,9 @@ async def log_trigger_candidate(item: dict, executed: bool) -> None:
     _outreach = cand.get("outreach_intent")
     if _outreach:
         reason = f"{reason} [outreach={_outreach}]" if reason else f"[outreach={_outreach}]"
+    # 2026-09-13（交接 §三）：投放口径三闸命中 → reject_reason 记 rejected / [gate=...]，
+    # 与 trigger_reason 的 [gate=...] 标记同源（_mark_gate 写入），便于按天统计各闸拦截量。
+    _gate = item.get("_gate")
     async with async_session_factory() as db:
         # 审计第三批 P2-05：candidate 缺 user_id 时按角色归属自动兜底（防 proactive_trigger_logs 写 NULL）
         uid = cand.get("user_id")
@@ -764,7 +938,10 @@ async def log_trigger_candidate(item: dict, executed: bool) -> None:
             trigger_reason=str(reason)[:300] or None,
             priority=int(item.get("priority") or 0),
             decision="approved" if executed else "rejected",
-            reject_reason=None if executed else "限额/条件拦截",
+            reject_reason=(
+                None if executed
+                else (f"rejected / [gate={_gate}]" if _gate else "限额/条件拦截")
+            ),
         ))
         await db.commit()
 
@@ -1151,6 +1328,13 @@ async def _execute(item: dict) -> bool:
 
     # 每小时保护（特殊事件同样计入）
     if await get_hourly_active_count(char_id) >= MAX_PER_HOUR:
+        return False
+
+    # ── outreach 投放口径三闸（2026-09-13 交接 §二；三个开关默认关 = 逐字节现状）──
+    # 命中即留痕 [gate=...] 并 return False（跳过审批/生成，不占额度；日志走 log_trigger_candidate）
+    _pacing_hit = await _pacing_gate(item, etype, char_id, candidate)
+    if _pacing_hit:
+        _mark_gate(item, _pacing_hit)
         return False
 
     # 主动到期复习（P1）：到期记忆自然提及；限额/免打扰在 memory_review 内部处理

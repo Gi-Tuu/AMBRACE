@@ -32,6 +32,9 @@ class MessageBubble extends StatelessWidget {
   final List<Map<String, dynamic>>? toolResults;
   /// 状态更新小字（2026-08-14：显示在气泡内容文本下方）
   final String? statusUpdate;
+
+  /// 思考过载降级标记（2026-09-13 证据B）：AI 气泡下方灰字「（TA 想得太久，一时没说出来）」
+  final bool degradedReply;
   final bool showReasoning;
   final bool showTools;
   /// AI 生图图片消息（类型角标，始终显示；由调用处据 ChatMessage.isAiGeneratedImage 传入）
@@ -63,6 +66,7 @@ class MessageBubble extends StatelessWidget {
     this.tools,
     this.toolResults,
     this.statusUpdate,
+    this.degradedReply = false,
     this.showReasoning = false,
     this.showTools = false,
     this.isAiGeneratedImage = false,
@@ -215,6 +219,9 @@ class MessageBubble extends StatelessWidget {
         : (skinColors?.bubbleAiText ?? Theme.of(context).colorScheme.onSurfaceVariant);
     // 状态更新/日历备注/备忘小字行（2026-08-14：标记保留在正文，前端剥离为气泡下方小字；兼容旧消息无 meta）
     final markerLines = <String>[...stage.markers];
+    if (!isUser && degradedReply) {
+      markerLines.add(AppLocalizations.of(context)!.degradedReplyHint);
+    }
     if (statusUpdate != null &&
         statusUpdate!.isNotEmpty &&
         !markerLines.any((l) => l.startsWith('状态更新：'))) {

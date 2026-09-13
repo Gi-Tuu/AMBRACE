@@ -181,9 +181,30 @@ async def _cleanup(session_id: int) -> None:
         await db.commit()
 
 
-def test_落库无泄漏_流式分块路径():
-    """复刻现场的两块（含未闭合标记）走 _persist_ai_chunks：落库文本零标记、纯标记块不落库。"""
+def test_落库无泄漏_流式分块路径(tmp_path, monkeypatch):
+    """复刻现场的两块（含未闭合标记）走 _persist_ai_chunks：落库文本零标记、纯标记块不落库。
+
+    P3（2026-09-12 技术债收口）：本用例改用**独立临时库**，不再共用会话级沙箱库——
+    CI py3.12 曾现 `sqlite3.OperationalError: database is locked`（与其它用例并发写同一
+    沙箱文件），独立库对该竞争彻底免疫；沙箱库仍供本文件其余用例使用。
+    """
+    import app.application.chat.streaming as _streaming
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/t.db", poolclass=NullPool)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
     async def _run():
+        import app.models  # noqa: F401  注册全部 ORM 表
+        from app.models.base import Base
+
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        # 本用例内：被测代码与本文件的 DB 帮手统一走独立库
+        monkeypatch.setitem(globals(), "async_session_factory", factory)
+        monkeypatch.setattr(_streaming, "async_session_factory", factory)
+
         session_id = await _seed_session()
         try:
             saved = await _persist_ai_chunks(
@@ -193,7 +214,7 @@ def test_落库无泄漏_流式分块路径():
             # [GEN_IMAGE] 整段块被清成空 → 不落库，只剩一条正文消息
             assert len(saved) == 1, f"纯标记块不应落库，实际 {[s['content'] for s in saved]}"
             assert saved[0]["content"] == "行，等着。画胖点，跟你喂的一个样。"
-            async with async_session_factory() as db:
+            async with factory() as db:
                 rows = (await db.execute(
                     select(ChatMessage).where(ChatMessage.session_id == session_id)
                 )).scalars().all()
@@ -204,7 +225,10 @@ def test_落库无泄漏_流式分块路径():
         finally:
             await _cleanup(session_id)
 
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    finally:
+        asyncio.run(engine.dispose())
 
 
 def test_落库无泄漏_流式生成到落库全链路(monkeypatch):

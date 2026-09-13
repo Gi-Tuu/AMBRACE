@@ -368,6 +368,8 @@ pypika==0.51.1
     # via chromadb
 pyproject-hooks==1.2.0
     # via build
+qrcode[pil]==8.2
+    # via -r backend/requirements.in  # 手工补录（本地渠道登录页二维码渲染，2026-09-12；下次 pip-compile 归位）
 python-dateutil==2.9.0.post0
     # via kubernetes
 python-dotenv==1.2.3

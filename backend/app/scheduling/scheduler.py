@@ -200,6 +200,7 @@ async def scheduler_loop():
     game_stuck_counter = 0
     reflection_counter = 0
     memory_counter = 0
+    pis_stale_counter = 0
     _diary_generated_today = False
     _reflection_done_today = False
     _memory_maintenance_done_today = False
@@ -230,6 +231,7 @@ async def scheduler_loop():
             game_stuck_counter += TICK
             reflection_counter += TICK
             memory_counter += TICK
+            pis_stale_counter += TICK
 
             try:
                 # 统一仲裁：定时承诺 + 生日/节日 + 随机节律（含朋友圈发布/互动）
@@ -387,6 +389,21 @@ async def scheduler_loop():
                     except Exception as e:
                         _logger.warning("Daily memory maintenance error: %s", e)
                     _memory_maintenance_done_today = True
+
+            # 前瞻约定时效治理（2026-09-13，②）：每小时把 due_end 超窗（默认 12h）的 pending
+            # promise 置 stale（留痕不删，仍可检索/回忆，但不进主动提起）。幂等、异常隔离。
+            if pis_stale_counter >= 3600:
+                pis_stale_counter = 0
+                try:
+                    from app.scheduling.prospective_intent import (
+                        expire_overdue as _pis_expire, mark_stale_overdue as _pis_stale,
+                    )
+                    _n_stale = await _pis_stale()
+                    _n_exp = await _pis_expire()
+                    if _n_stale or _n_exp:
+                        _logger.info("Prospective intent sweep: stale=%d expired=%d", _n_stale, _n_exp)
+                except Exception as e:
+                    _logger.warning("Prospective intent stale sweep error: %s", e)
 
             # 纪念日检查（Phase C Shared Memory）：每日一次（原 _check_anniversaries_today 未接线死代码，2026-08-17 接入）
             if _last_anniv_date != date.today():

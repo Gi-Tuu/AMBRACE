@@ -29,6 +29,16 @@ _logger = get_logger("scheduler.memory_review")
 REVIEW_TYPE = "memory_review"
 _TYPE_LABEL = {"user_info": "关于你的事", "preference": "你的喜好", "event": "发生过的事", "insight": "我的一些想法"}
 
+# ── ② outreach 投放口径：memory_review「可回复化」（2026-09-13 交接 §②）──
+# 目标：把 memory_review 从「单向推送」改成「可回复」——结尾带一个**具体、可回答**的问题
+# （针对这条回忆里的人/事/物本身），禁空泛问候式提问。开关 ``outreach_type_mix_v1``（默认关）
+# 且角色命中同一灰度白名单时才生效；关 = hint 逐字节回到旧文案（一键回退）。
+REPLYABLE_QUESTION_RULE = (
+    "最后必须用一个具体的、对方一句话就能接上的问题收尾：针对上面这条回忆里的人/事/物本身提问"
+    "（时间、地点、当时的感受、后来怎么样了等）；禁止空泛问候式提问"
+    "（如「你今天怎么样」「最近还好吗」「在忙什么」）。"
+)
+
 # F1/F4/F5（2026-09-08，Sam 主动消息错接昨晚剧情 P0）：
 # 主动复习生成注入"现在"时间锚点 + 最近聊天"场景已结束"标注 + 轻量防复读闸门。
 _CN_WEEKDAYS = "一二三四五六日"
@@ -347,6 +357,23 @@ async def _current_status_anchor(char_id: int, user_id: int) -> str:
         return ""
 
 
+def replyable_question_enabled(char_id: int, session_id=None, *, flags=None) -> bool:
+    """memory_review 可回复化是否生效：``outreach_type_mix_v1`` 开 **且** 角色命中同一灰度白名单。
+
+    纯判定（零 IO）；默认关 = False → 调用方不改 hint（逐字节旧文案）。
+    """
+    from app.domain.proactivity import pacing
+    return pacing.gate_active(char_id, session_id, pacing.FLAG_TYPE_MIX, flags=flags)
+
+
+def apply_replyable_question_rule(hint: str) -> str:
+    """把「结尾带具体可回答问题」要求追加到复习 hint 末尾（纯函数；重复调用幂等）。"""
+    text = hint or ""
+    if REPLYABLE_QUESTION_RULE in text:
+        return text
+    return f"{text}{REPLYABLE_QUESTION_RULE}"
+
+
 async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
     """执行一次主动复习：限额/免打扰/会话检查 → 先占位重排（防失败重试烧 token）→ LLM 生成 → 发送 → 记录。"""
     from app.scheduling.scheduler import send_to_session
@@ -457,6 +484,9 @@ async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
                 "最近聊天只决定你开口的语气和方式，不能只顺着最近聊天接话，更不能复述最近聊天里的句子。"
                 "必须全程以第一人称'我'说话（你=角色本人），不要以旁观者视角提及你自己的名字或'某人'这类第三人称。"
             )
+        # ② outreach 投放口径（2026-09-13 交接 §②）：可回复化——flag 开且命中灰度才追加具体问题规则
+        if replyable_question_enabled(char_id, session_id):
+            hint = apply_replyable_question_rule(hint)
         from app.agent.llm_client import load_character_reasoning_level
         _rl = await load_character_reasoning_level(char_id)
         _msgs = [

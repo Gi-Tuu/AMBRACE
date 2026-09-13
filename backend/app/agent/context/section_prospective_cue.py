@@ -33,7 +33,12 @@ async def prospective_cue_section(state: dict, ctx: dict) -> list[str]:
         return []
     if not hits:
         return []
-    lines = [f"- 你之前还惦记着这件事（线索被本轮对话触发）：{r.content[:120]}" for r in hits[:3]]
+    # ① 主体口径（2026-09-13）：cue 一律用户侧（kind=cue → side=user）；开关开时把口径写实，
+    # 避免 AI 把自己的话渲染成"用户答应/用户提过"的反向错误。开关关＝逐字节回退旧行。
+    if AGENT_FLAGS.get("promise_self_side_split", False):
+        lines = [f"- 用户之前提到过这件事（线索被本轮对话触发）：{r.content[:120]}" for r in hits[:3]]
+    else:
+        lines = [f"- 你之前还惦记着这件事（线索被本轮对话触发）：{r.content[:120]}" for r in hits[:3]]
     from app.agent.context_builder import _clip_text_to_quota
     text = _clip_text_to_quota(
         "【待兑现的约定/心愿（被当前话题触发，可自然提起，不要生硬复述）】\n" + "\n".join(lines),

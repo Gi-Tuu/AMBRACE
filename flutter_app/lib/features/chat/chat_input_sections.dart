@@ -41,7 +41,7 @@ class PermissionCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${l10n.aiWantsToCall}【$scopeLabel】',
+                  '${l10n.aiWantsToCall}${l10n.wrapLenticular(scopeLabel)}',
                   style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF7A5B12)),
                 ),
                 if (prompt.isNotEmpty)
@@ -101,7 +101,7 @@ class QuoteBar extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              '${l10n.quotePrefix} $sender：$content',
+              '${l10n.quotePrefix} $sender${l10n.sepColon}$content',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 12, color: Colors.grey.shade700),

@@ -141,7 +141,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(DropdownButton<int>), findsOneWidget);
+    // C8 原意（红点2 收敛，2026-09-12）：抖音卡不出现**微信语境**的新增引导；
+    // 允许抖音自己的「扫码登录新号 + 刷新列表」（中性文案，不出现「bot」术语）。
+    expect(find.text('新增 bot：先在网关（openclaw）扫码登录新微信号，再点「刷新 bot 列表」绑定角色'),
+        findsNothing);
+    expect(find.text('查看可添加的 bot'), findsNothing);
     expect(find.text('刷新 bot 列表'), findsNothing);
+    expect(find.text('刷新列表'), findsOneWidget);
+    expect(find.text('扫码登录新号'), findsOneWidget);
   });
 
   testWidgets('C8 子账号：多 bot 只读（无 Dropdown、显示角色名、无添加引导按钮）', (tester) async {

@@ -2023,6 +2023,116 @@ async def _char_allowed(char_id) -> bool:
     return await _char_allowed_async(char_id)
 
 
+# ================= 扫码会话（bind/qr，2026-09-12：App 内扫码，登录二维码截屏回传） =================
+# 交接：AMBRACE_扫码绑定下放手机_交接_Codex致Zcode_20260912。红线：保持有头 Edge（反风控），
+# 复用 _PLAYWRIGHT_EXECUTOR 单 worker（不绕开串行），旧 POST /bind 保留为电脑端兼容路径。
+# 会话模型：start 派发长驻 worker（整个会话生命周期都跑在 worker 线程内，Playwright sync API
+# 对象不跨线程）；status/cancel 只读写 session dict（GIL 下安全）。TTL 与 _BIND_TIMEOUT_S 对齐。
+
+import base64 as _b64
+import threading as _threading
+import uuid as _uuid
+
+from io import BytesIO as _BytesIO
+
+from PIL import Image as _PILImage
+
+_QR_SESSIONS: dict = {}
+_QR_SESSIONS_LOCK = _threading.Lock()
+_QR_SESSION_KEEP = 20  # 最多保留的历史会话数（防无界增长）
+
+# 登录二维码候选选择器（依次尝试 element.screenshot()；写成常量便于风控改版后修补）。
+# 未命中时回落「整屏截图 + 中心区域裁剪」（不回传整屏，防截到账号信息）。
+_QR_IMG_SELECTORS = (
+    "[class*='qrcode'] img",
+    "img[src*='qrcode']",
+    "[class*='web-login-scan-code'] img",
+    "[class*='scan-code'] img",
+)
+
+
+def _capture_qr_png(page) -> bytes | None:
+    """抓登录二维码 PNG：优先候选选择器的元素截图（110~420px 才像二维码）；失败回落整屏中心裁剪。"""
+    try:
+        for sel in _QR_IMG_SELECTORS:
+            try:
+                el = page.query_selector(sel)
+                if el is None:
+                    continue
+                box = el.bounding_box()
+                if not box or not (110 <= box.get("width", 0) <= 420 and 110 <= box.get("height", 0) <= 420):
+                    continue  # 尺寸不像二维码（过滤隐藏图/装饰图）
+                return el.screenshot()
+            except Exception:  # noqa: BLE001 - 单候选失败继续下一个
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        raw = page.screenshot()
+        img = _PILImage.open(_BytesIO(raw))
+        w, h = img.size
+        crop = img.crop((int(w * 0.28), int(h * 0.18), int(w * 0.72), int(h * 0.80)))
+        buf = _BytesIO()
+        crop.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _sync_qr_session(session: dict) -> None:
+    """扫码会话 worker：弹有头 Edge → 抖音首页 → 持续截二维码回传 → 出现登录 cookie 即成功。
+
+    全程运行在 _PLAYWRIGHT_EXECUTOR 单 worker 线程；结束时必关上下文（不留进程/不占 profile 锁）。
+    """
+    p, ctx = None, None
+    try:
+        p, ctx = _launch(headless=False)
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto(_DOUYIN_HOME, timeout=60000)
+        session["state"] = "waiting"
+        sdk.log("bind/qr 会话开始（App 扫码，等待最多 %s 秒）", _BIND_TIMEOUT_S)
+        deadline = time.time() + _BIND_TIMEOUT_S
+        while time.time() < deadline:
+            if session.get("cancelled"):
+                session["state"] = "expired"
+                session["message"] = "会话已取消"
+                return
+            if _has_login_cookie(ctx):
+                name = ""
+                try:
+                    name = _fetch_account_name(page)
+                except Exception:  # noqa: BLE001
+                    pass
+                _shot(page, "bind_qr_success")
+                session["state"] = "success"
+                session["account_name"] = name
+                sdk.log("bind/qr 会话成功：账号=%s", name or "(未取到)")
+                return
+            img = _capture_qr_png(page)
+            if img:
+                session["image_png_base64"] = _b64.b64encode(img).decode("ascii")
+            time.sleep(2)
+        _shot(page, "bind_qr_timeout")
+        session["state"] = "expired"
+        session["message"] = "超时未检测到登录，请重试"
+    except Exception as e:  # noqa: BLE001
+        session["state"] = "failed"
+        session["message"] = f"扫码会话异常: {e}"
+        sdk.log("bind/qr 会话异常: %s", e)
+    finally:
+        _close_ctx(p, ctx)
+
+
+def _purge_qr_sessions() -> None:
+    """清理历史会话（只保留最近 _QR_SESSION_KEEP 个）。"""
+    with _QR_SESSIONS_LOCK:
+        if len(_QR_SESSIONS) <= _QR_SESSION_KEEP:
+            return
+        items = sorted(_QR_SESSIONS.items(), key=lambda kv: kv[1].get("created_at", 0))
+        for k, _ in items[:-_QR_SESSION_KEEP]:
+            _QR_SESSIONS.pop(k, None)
+
+
 # ================= Hook 实现 =================
 router = sdk.router()
 
@@ -2046,6 +2156,71 @@ async def bind():
     ok = bool(result.get("ok"))
     await _upsert_account({"bound": ok, "logged_in": ok})
     return result
+
+
+@router.post("/bind/qr/start")
+async def bind_qr_start():
+    """发起 App 扫码会话：派发 worker 弹有头 Edge 打开抖音并持续回传登录二维码截图。
+
+    同一时刻只允许一个活跃会话（浏览器上下文单 worker 串行）：已有会话时直接返回它（断线重连
+    场景 App 重新打开弹层可接续）。会话 TTL=_BIND_TIMEOUT_S（300s），到点自动关窗置 expired。
+    """
+    with _QR_SESSIONS_LOCK:
+        for s in _QR_SESSIONS.values():
+            if s.get("state") in ("starting", "waiting"):
+                return {"ok": True, "session_id": s["id"], "resumed": True,
+                        "state": s.get("state", ""),
+                        "image_png_base64": s.get("image_png_base64", ""),
+                        "expires_at": s.get("expires_at", "")}
+        sid = _uuid.uuid4().hex
+        session = {
+            "id": sid, "state": "starting", "image_png_base64": "",
+            "account_name": "", "message": "", "cancelled": False, "db_synced": False,
+            "created_at": time.time(),
+            "expires_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _QR_SESSIONS[sid] = session
+    # 后台派发（不 await 完成）：future 由 worker 自行结束；cancel 置位由 worker 检查
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(_PLAYWRIGHT_EXECUTOR, _sync_qr_session, session)
+    _purge_qr_sessions()
+    return {"ok": True, "session_id": sid, "resumed": False, "state": "starting",
+            "image_png_base64": "", "expires_at": session["expires_at"]}
+
+
+@router.get("/bind/qr/status")
+async def bind_qr_status(session_id: str = ""):
+    """轮询扫码会话：{state: starting|waiting|success|expired|failed, image_png_base64?, account_name?}。
+
+    success 时首次顺带落 douyin_accounts（账号名/登录态），与旧 /bind 落库口径一致。
+    """
+    session = _QR_SESSIONS.get(session_id)
+    if session is None:
+        return {"ok": False, "state": "failed", "message": "会话不存在或已结束"}
+    if session.get("state") == "success" and not session.get("db_synced"):
+        session["db_synced"] = True
+        try:
+            await _upsert_account({"bound": True, "logged_in": True,
+                                   "account_name": session.get("account_name", "")})
+        except Exception as e:  # noqa: BLE001 - 落库失败不吞成功状态
+            sdk.log("bind/qr success 落库失败: %s", e)
+    out = {"ok": True, "state": session.get("state", ""),
+           "account_name": session.get("account_name", ""),
+           "message": session.get("message", "")}
+    if session.get("image_png_base64"):
+        out["image_png_base64"] = session["image_png_base64"]
+    return out
+
+
+@router.post("/bind/qr/cancel")
+async def bind_qr_cancel(payload: dict):
+    """取消扫码会话（App 关弹层时调用）：worker 2s 内检查到置位后关窗退出，不占 profile 锁。"""
+    sid = str((payload or {}).get("session_id") or "").strip()
+    session = _QR_SESSIONS.get(sid)
+    if session is None:
+        return {"ok": True, "cancelled": False}
+    session["cancelled"] = True
+    return {"ok": True, "cancelled": True}
 
 
 @router.post("/notes/fetch")

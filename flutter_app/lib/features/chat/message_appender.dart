@@ -27,10 +27,25 @@ class MessageAppender {
     for (final chunk in (result['chunks'] as List? ?? [])) {
       messages.add(ChatMessage.fromJson(chunk as Map<String, dynamic>));
     }
-    messages.sort((a, b) {
-      final c = a.createdAt.compareTo(b.createdAt);
-      return c != 0 ? c : a.id.compareTo(b.id);
-    });
+    messages.sort(compareMessages);
+  }
+
+  /// 统一消息比较器（2026-09-13 气泡顺序修复）：
+  /// ① createdAt 用 DateTime.parse 后比较（原字符串比较在 ISO 格式差异下会乱序）；
+  /// ② 同时刻先按角色（user 在前）——修复「用户气泡用服务器时间、AI 流式占位几乎同时创建，
+  ///    占位按『本地优先』排到用户上方」的现场（证据 C）；
+  /// ③ 仍相同按 id 升序（本地占位 id<0 恒在正式块前，等价于保持插入序）。
+  /// 注意：不再按 isLocal 排序（本地消息之间的先后交给 id/插入顺序，不再劫持跨角色顺序）。
+  static int compareMessages(ChatMessage a, ChatMessage b) {
+    final ta = DateTime.tryParse(a.createdAt) ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final tb = DateTime.tryParse(b.createdAt) ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final c = ta.compareTo(tb);
+    if (c != 0) return c;
+    const roleOrder = {'user': 0, 'ai': 1};
+    final ra = roleOrder[a.senderType] ?? 2;
+    final rb = roleOrder[b.senderType] ?? 2;
+    if (ra != rb) return ra - rb;
+    return a.id.compareTo(b.id);
   }
 
   /// 按块 id 去重追加（P3-5）。若 `messages` 已含同一 id 的正式块（非本地临时气泡），
@@ -51,14 +66,7 @@ class MessageAppender {
     messages.removeWhere((m) => m.isLocal && m.isAI && m.content.isEmpty && m.id < 0);
   }
 
-  /// 排序（messages getter 复用）：按时间升序；时间相同则本地气泡优先，仍相同按 id 升序。
+  /// 排序（messages getter 复用）：时间升序 → 同时刻 user 在前 → id 升序（见 compareMessages）。
   static List<ChatMessage> sorted(List<ChatMessage> messages) =>
-      List<ChatMessage>.from(messages)..sort((a, b) {
-        final ta = DateTime.tryParse(a.createdAt) ?? DateTime.fromMillisecondsSinceEpoch(0);
-        final tb = DateTime.tryParse(b.createdAt) ?? DateTime.fromMillisecondsSinceEpoch(0);
-        int c = ta.compareTo(tb);
-        if (c != 0) return c;
-        if (a.isLocal != b.isLocal) return a.isLocal ? -1 : 1;
-        return a.id.compareTo(b.id);
-      });
+      List<ChatMessage>.from(messages)..sort(compareMessages);
 }

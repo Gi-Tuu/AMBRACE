@@ -3,13 +3,14 @@
 
 【命名空间】渠道插件顶层模块名易撞，本插件沿用包内相对导入/文件名，新渠道须用包内相对导入或模块名前缀（registry 加载器保持现状）。
 
-NEEDS_RUNTIME_VERIFICATION：端点与字段来自官方插件行为 + 社区抓包交叉核实，
-可能随微信版本变化；集中在本文件，真机扫码联调后只改这里。
+RUNTIME_VERIFIED（2026-09-12 部分闭环）：取码/状态端点已实测（waiting 态 + 字段结构），
+状态机全量字段依据腾讯官方插件源码（@tencent-weixin/openclaw-weixin src/auth/login-qr.ts，
+本机 ~/.openclaw/npm/projects/ 有副本）；confirmed 态待真机扫码闭环后最终确认。
 
 本文件是纯协议层（PR1）：
 - 不挂钩子、不读写 DB、不影响运行；
 - 端点统一集中在 _EP 常量字典（§2.1/§8.2），一处改全局生效；
-- 所有真机未核实的端点/字段标注 NEEDS_RUNTIME_VERIFICATION，未闭环前不得宣称可用；
+- 仍未真机核实的分支（confirmed 载荷细节）在方法 docstring 标注，闭环后更新；
 - 对外公共方法统一返回 dict：成功含 ``ok: True``，失败吞掉超时/HTTP/协议错误并返回
   约定错误结构 ``{"ok": False, "kind": ..., "message": ...}``，绝不让 ILink 异常向上抛
   （P0-5：iLink 宕机/断网不得影响主链路）。
@@ -20,7 +21,10 @@ import httpx
 
 DEFAULT_HOST = "https://ilinkai.weixin.qq.com"
 
-# 集中管理端点，便于真机校准（§2.1）。路径/参数名以真机抓包为准（NEEDS_RUNTIME_VERIFICATION）。
+# 集中管理端点，便于真机校准（§2.1）。
+# 【2026-09-12 真机核准】取码 GET /get_bot_qrcode?bot_type=3 返回 {qrcode, qrcode_img_content, ret="0"}
+# 实测通过；qrcode_img_content 是**URL 字符串**（https://liteapp.weixin.qq.com/q/...，非 base64 图），
+# 需由展示端自行渲染成二维码。状态端点为**长轮询**（腾讯官方客户端 35s 超时，见 auth/login-qr.ts）。
 _EP = {
     "qrcode": "/ilink/bot/get_bot_qrcode",
     "qrcode_status": "/ilink/bot/get_qrcode_status",
@@ -30,8 +34,12 @@ _EP = {
     "sendtyping": "/ilink/bot/sendtyping",
 }
 
-# ret 成功值真机核实（NEEDS_RUNTIME_VERIFICATION）：默认 "0"/空/"None" 视为成功。
+# ret 成功值真机核实（2026-09-12 实测 ret="0"）：默认 "0"/空/"None" 视为成功。
 _SUCCESS_RET = ("0", "", "None")
+
+# 状态长轮询客户端超时：对齐腾讯官方 login-qr.ts 的 QR_LONG_POLL_TIMEOUT_MS=35s（留 5s 余量）。
+# 上游在无状态变化时会挂住连接直到超时，客户端超时 = 仍在等待（App/调用方把 wait 当正常态继续轮询）。
+_QR_STATUS_TIMEOUT_S = 40.0
 
 
 class ILinkError(RuntimeError):
@@ -118,11 +126,22 @@ class ILinkClient:
     # ---------- 绑定流程（不依赖已存 token 的静态阶段） ----------
 
     @staticmethod
-    async def fetch_qrcode(bot_type: int = 3) -> dict:
-        """取绑定二维码。返回 ``{ok, qrcode, qrcode_img_content, ret}``（字段以真机为准）。"""
+    async def fetch_qrcode(bot_type: int = 3, local_token_list: list[str] | None = None) -> dict:
+        """取绑定二维码。返回 ``{ok, qrcode, qrcode_img_content, ret}``。
+
+        【2026-09-12 核准】qrcode_img_content 为 URL 字符串（需渲染成二维码图，非 base64 图片）。
+        对齐腾讯官方 fetchQRCode（POST + local_token_list=本机已登录 bot token，最新在前最多 10 个）：
+        上游据此识别「扫码的 bot 已连接过」并回 binded_redirect。GET 方式（旧实现）实测也可取码，
+        但缺 local_token_list 时上游无法做已连接判定。
+        """
         try:
+            body = {"local_token_list": [str(t) for t in (local_token_list or [])][:10]}
             async with httpx.AsyncClient(timeout=15) as c:
-                r = await c.get(DEFAULT_HOST + _EP["qrcode"], params={"bot_type": bot_type})
+                r = await c.post(
+                    DEFAULT_HOST + _EP["qrcode"],
+                    params={"bot_type": bot_type},
+                    json=body,
+                )
                 r.raise_for_status()
                 data = r.json()
                 if not isinstance(data, dict):
@@ -134,20 +153,48 @@ class ILinkClient:
             return _error(_kind_of(e), f"fetch_qrcode failed: {e}", ret=getattr(e, "ret", None))
 
     @staticmethod
-    async def fetch_qrcode_status(qrcode: str) -> dict:
-        """轮询扫码状态。confirmed 时含 bot_token/ilink_bot_id/baseurl/ilink_user_id（字段以真机为准）。
+    async def fetch_qrcode_status(
+        qrcode: str,
+        verify_code: str = "",
+        base_url: str = "",
+        timeout: float = _QR_STATUS_TIMEOUT_S,
+    ) -> dict:
+        """轮询扫码状态（长轮询，无变化时上游挂住直到超时）。
 
-        注意：qrcode/status 响应不一定带 ret，故此处不强制 ret 成功值，仅吞掉异常。
+        【2026-09-12 核准（依据腾讯官方 auth/login-qr.ts）】成功响应含 ``status`` 字段：
+        wait / scaned / confirmed / expired / scaned_but_redirect / need_verifycode /
+        verify_code_blocked / binded_redirect；confirmed 时含
+        bot_token / ilink_bot_id / baseurl / ilink_user_id；scaned_but_redirect 时含
+        redirect_host（IDC 分流，后续轮询须切换到 https://{redirect_host}）。
+        need_verifycode 时须在下轮轮询携带 verify_code（用户在微信上看到的数字配对码）。
+
+        客户端超时/网络错误 → 返回 ``{ok: True, status: "wait"}``（对齐官方：视为仍在等待，
+        由调用方继续轮询）；协议错误 → 约定错误结构。
         """
         try:
-            async with httpx.AsyncClient(timeout=15) as c:
-                r = await c.get(DEFAULT_HOST + _EP["qrcode_status"], params={"qrcode": qrcode})
+            params: dict = {"qrcode": qrcode}
+            if verify_code:
+                params["verify_code"] = verify_code
+            url = (base_url or DEFAULT_HOST).strip().rstrip("/") + _EP["qrcode_status"]
+            async with httpx.AsyncClient(timeout=timeout) as c:
+                r = await c.get(url, params=params)
                 r.raise_for_status()
                 data = r.json()
                 if not isinstance(data, dict):
                     raise ILinkError("qrcode_status unexpected payload type")
             return _ok(**data)
         except Exception as e:  # noqa: BLE001
+            # 异常映射（2026-09-12 红点修复拍板，对齐官方 pollQRStatus 并收窄）：
+            # - 客户端超时 = 长轮询无变化 → wait 继续轮询（官方 AbortError→wait 口径）；
+            # - 真实 HTTP 4xx/5xx = 真故障 → 约定错误结构 kind="http"（吞成 wait 会让用户
+            #   静默卡住、排障无线索；App 侧连续错误会给可见提示）；
+            # - 其余传输层网络抖动（连接失败/读断等）→ wait 重试（官方「网络错误视为等待」口径）。
+            if isinstance(e, httpx.TimeoutException):
+                return _ok(status="wait")
+            if isinstance(e, httpx.HTTPStatusError):
+                return _error("http", f"fetch_qrcode_status http {e.response.status_code}")
+            if isinstance(e, httpx.HTTPError):
+                return _ok(status="wait")
             return _error(_kind_of(e), f"fetch_qrcode_status failed: {e}", ret=getattr(e, "ret", None))
 
     # ---------- 收消息（长轮询） ----------

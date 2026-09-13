@@ -70,12 +70,26 @@ def test_push_rate_limit():
     assert _check_rate_limit(888, "normal"), "Different user should have own bucket"
 
 
-def test_fcm_provider_lazy():
-    """FCM provider 未配置时懒初始化安全返回 None，不崩溃。"""
-    from app.application.push.fcm_provider import _ensure_app
+def test_fcm_provider_lazy(monkeypatch):
+    """FCM provider 未配置时懒初始化安全返回 None，不崩溃。
 
-    result = _ensure_app()
-    assert result is None
+    测试隔离（2026-09-13）：本机 `.env` 可能已配好 FCM 凭据（`PUSH_FCM_ENABLED=true`），
+    那会让本用例在开发机上必然失败（CI 无凭据所以一直是绿的）——用例必须自造「未配置」
+    环境，不依赖宿主配置。
+    """
+    from types import SimpleNamespace
+
+    from app.application.push import fcm_provider as fp
+
+    # 覆盖 provider 读的 settings 与懒初始化状态，保证「未启用」这条分支可复现
+    monkeypatch.setattr(fp, "settings", SimpleNamespace(
+        push_fcm_enabled=False, push_fcm_credentials_path="", push_fcm_project_id="",
+    ), raising=False)
+    monkeypatch.setattr(fp, "_app", None, raising=False)
+    monkeypatch.setattr(fp, "_init_attempted", False, raising=False)
+    monkeypatch.setattr(fp, "_init_fail_count", 0, raising=False)
+
+    assert fp._ensure_app() is None
 
 
 def test_device_api_routes():

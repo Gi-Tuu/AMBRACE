@@ -90,6 +90,89 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
     }
   }
 
+  /// 各高级开关的 l10n 文案（界面优先取此；catalog 中文仅作兜底）。
+  /// 不依赖动态 key 查找（Flutter l10n 不支持），逐键静态映射。
+  static final Map<String, FlagMeta Function(AppLocalizations)> _flagMetaL10n = {
+    'agent_loop_chat': (l) => FlagMeta(title: l.flagAgentLoopChatTitle, short_: l.flagAgentLoopChatHint, detail: l.flagAgentLoopChatDetail),
+    'agent_loop_search': (l) => FlagMeta(title: l.flagAgentLoopSearchTitle, short_: l.flagAgentLoopSearchHint, detail: l.flagAgentLoopSearchDetail),
+    'agent_loop_scheduler': (l) => FlagMeta(title: l.flagAgentLoopSchedulerTitle, short_: l.flagAgentLoopSchedulerHint, detail: l.flagAgentLoopSchedulerDetail),
+    'agent_tool_events': (l) => FlagMeta(title: l.flagAgentToolEventsTitle, short_: l.flagAgentToolEventsHint, detail: l.flagAgentToolEventsDetail),
+    'agent_context_trim': (l) => FlagMeta(title: l.flagAgentContextTrimTitle, short_: l.flagAgentContextTrimHint, detail: l.flagAgentContextTrimDetail),
+    'agent_trace_group': (l) => FlagMeta(title: l.flagAgentTraceGroupTitle, short_: l.flagAgentTraceGroupHint, detail: l.flagAgentTraceGroupDetail),
+    'agent_daily_reflection': (l) => FlagMeta(title: l.flagAgentDailyReflectionTitle, short_: l.flagAgentDailyReflectionHint, detail: l.flagAgentDailyReflectionDetail),
+    'agent_reflection_inject': (l) => FlagMeta(title: l.flagAgentReflectionInjectTitle, short_: l.flagAgentReflectionInjectHint, detail: l.flagAgentReflectionInjectDetail),
+    'agent_daily_memory_maintenance': (l) => FlagMeta(title: l.flagAgentDailyMemoryMaintenanceTitle, short_: l.flagAgentDailyMemoryMaintenanceHint, detail: l.flagAgentDailyMemoryMaintenanceDetail),
+    'proactive_naturalness_score': (l) => FlagMeta(title: l.flagProactiveNaturalnessScoreTitle, short_: l.flagProactiveNaturalnessScoreHint, detail: l.flagProactiveNaturalnessScoreDetail),
+    'proactive_user_rhythm': (l) => FlagMeta(title: l.flagProactiveUserRhythmTitle, short_: l.flagProactiveUserRhythmHint, detail: l.flagProactiveUserRhythmDetail),
+    'group_chat_games': (l) => FlagMeta(title: l.flagGroupChatGamesTitle, short_: l.flagGroupChatGamesHint, detail: l.flagGroupChatGamesDetail),
+    'game_undercover': (l) => FlagMeta(title: l.flagGameUndercoverTitle, short_: l.flagGameUndercoverHint, detail: l.flagGameUndercoverDetail),
+    'game_truth_or_dare': (l) => FlagMeta(title: l.flagGameTruthOrDareTitle, short_: l.flagGameTruthOrDareHint, detail: l.flagGameTruthOrDareDetail),
+    'game_twenty_q': (l) => FlagMeta(title: l.flagGameTwentyQTitle, short_: l.flagGameTwentyQHint, detail: l.flagGameTwentyQDetail),
+    'game_werewolf': (l) => FlagMeta(title: l.flagGameWerewolfTitle, short_: l.flagGameWerewolfHint, detail: l.flagGameWerewolfDetail),
+    'game_liars_bar': (l) => FlagMeta(title: l.flagGameLiarsBarTitle, short_: l.flagGameLiarsBarHint, detail: l.flagGameLiarsBarDetail),
+    'game_turtle_soup': (l) => FlagMeta(title: l.flagGameTurtleSoupTitle, short_: l.flagGameTurtleSoupHint, detail: l.flagGameTurtleSoupDetail),
+    'game_memory_bridge': (l) => FlagMeta(title: l.flagGameMemoryBridgeTitle, short_: l.flagGameMemoryBridgeHint, detail: l.flagGameMemoryBridgeDetail),
+    'game_ai_autoplay': (l) => FlagMeta(title: l.flagGameAiAutoplayTitle, short_: l.flagGameAiAutoplayHint, detail: l.flagGameAiAutoplayDetail),
+    'life_loop_enabled': (l) => FlagMeta(title: l.flagLifeLoopEnabledTitle, short_: l.flagLifeLoopEnabledHint, detail: l.flagLifeLoopEnabledDetail),
+    'life_loop_visible': (l) => FlagMeta(title: l.flagLifeLoopVisibleTitle, short_: l.flagLifeLoopVisibleHint, detail: l.flagLifeLoopVisibleDetail),
+    'life_loop_llm': (l) => FlagMeta(title: l.flagLifeLoopLlmTitle, short_: l.flagLifeLoopLlmHint, detail: l.flagLifeLoopLlmDetail),
+    'life_chat_driven_enabled': (l) => FlagMeta(title: l.flagLifeChatDrivenEnabledTitle, short_: l.flagLifeChatDrivenEnabledHint, detail: l.flagLifeChatDrivenEnabledDetail),
+    'life_home_worldmap_enabled': (l) => FlagMeta(title: l.flagLifeHomeWorldmapEnabledTitle, short_: l.flagLifeHomeWorldmapEnabledHint, detail: l.flagLifeHomeWorldmapEnabledDetail),
+    'reply_delay_enabled': (l) => FlagMeta(title: l.flagReplyDelayEnabledTitle, short_: l.flagReplyDelayEnabledHint, detail: l.flagReplyDelayEnabledDetail),
+    'spring_emotion_enabled': (l) => FlagMeta(title: l.flagSpringEmotionEnabledTitle, short_: l.flagSpringEmotionEnabledHint, detail: l.flagSpringEmotionEnabledDetail),
+    'life_share_enabled': (l) => FlagMeta(title: l.flagLifeShareEnabledTitle, short_: l.flagLifeShareEnabledHint, detail: l.flagLifeShareEnabledDetail),
+    'preoccupation_enabled': (l) => FlagMeta(title: l.flagPreoccupationEnabledTitle, short_: l.flagPreoccupationEnabledHint, detail: l.flagPreoccupationEnabledDetail),
+    'proactive_outreach_v2': (l) => FlagMeta(title: l.flagProactiveOutreachV2Title, short_: l.flagProactiveOutreachV2Hint, detail: l.flagProactiveOutreachV2Detail),
+    'memory_temporal_recall': (l) => FlagMeta(title: l.flagMemoryTemporalRecallTitle, short_: l.flagMemoryTemporalRecallHint, detail: l.flagMemoryTemporalRecallDetail),
+    'memory_recall_second_hop': (l) => FlagMeta(title: l.flagMemoryRecallSecondHopTitle, short_: l.flagMemoryRecallSecondHopHint, detail: l.flagMemoryRecallSecondHopDetail),
+    'memory_story_assemble': (l) => FlagMeta(title: l.flagMemoryStoryAssembleTitle, short_: l.flagMemoryStoryAssembleHint, detail: l.flagMemoryStoryAssembleDetail),
+    'memory_peak_cutoff': (l) => FlagMeta(title: l.flagMemoryPeakCutoffTitle, short_: l.flagMemoryPeakCutoffHint, detail: l.flagMemoryPeakCutoffDetail),
+    'memory_chain_builder': (l) => FlagMeta(title: l.flagMemoryChainBuilderTitle, short_: l.flagMemoryChainBuilderHint, detail: l.flagMemoryChainBuilderDetail),
+    'memory_chain_expand': (l) => FlagMeta(title: l.flagMemoryChainExpandTitle, short_: l.flagMemoryChainExpandHint, detail: l.flagMemoryChainExpandDetail),
+    'recall_top5': (l) => FlagMeta(title: l.flagRecallTop5Title, short_: l.flagRecallTop5Hint, detail: l.flagRecallTop5Detail),
+    'recall_diversify': (l) => FlagMeta(title: l.flagRecallDiversifyTitle, short_: l.flagRecallDiversifyHint, detail: l.flagRecallDiversifyDetail),
+    'memory_tiered_decay': (l) => FlagMeta(title: l.flagMemoryTieredDecayTitle, short_: l.flagMemoryTieredDecayHint, detail: l.flagMemoryTieredDecayDetail),
+    'memory_tiered_inject': (l) => FlagMeta(title: l.flagMemoryTieredInjectTitle, short_: l.flagMemoryTieredInjectHint, detail: l.flagMemoryTieredInjectDetail),
+    'memory_trace_debug': (l) => FlagMeta(title: l.flagMemoryTraceDebugTitle, short_: l.flagMemoryTraceDebugHint, detail: l.flagMemoryTraceDebugDetail),
+    'memory_supersede': (l) => FlagMeta(title: l.flagMemorySupersedeTitle, short_: l.flagMemorySupersedeHint, detail: l.flagMemorySupersedeDetail),
+    'marker_recovery': (l) => FlagMeta(title: l.flagMarkerRecoveryTitle, short_: l.flagMarkerRecoveryHint, detail: l.flagMarkerRecoveryDetail),
+    'review_daily_plus': (l) => FlagMeta(title: l.flagReviewDailyPlusTitle, short_: l.flagReviewDailyPlusHint, detail: l.flagReviewDailyPlusDetail),
+    'curated_knowledge': (l) => FlagMeta(title: l.flagCuratedKnowledgeTitle, short_: l.flagCuratedKnowledgeHint, detail: l.flagCuratedKnowledgeDetail),
+    'prospective_intent_enabled': (l) => FlagMeta(title: l.flagProspectiveIntentEnabledTitle, short_: l.flagProspectiveIntentEnabledHint, detail: l.flagProspectiveIntentEnabledDetail),
+    'prospective_intent_trigger': (l) => FlagMeta(title: l.flagProspectiveIntentTriggerTitle, short_: l.flagProspectiveIntentTriggerHint, detail: l.flagProspectiveIntentTriggerDetail),
+    'global_user_facts': (l) => FlagMeta(title: l.flagGlobalUserFactsTitle, short_: l.flagGlobalUserFactsHint, detail: l.flagGlobalUserFactsDetail),
+    'cross_char_fact_sync': (l) => FlagMeta(title: l.flagCrossCharFactSyncTitle, short_: l.flagCrossCharFactSyncHint, detail: l.flagCrossCharFactSyncDetail),
+    'cross_char_fact_projection': (l) => FlagMeta(title: l.flagCrossCharFactProjectionTitle, short_: l.flagCrossCharFactProjectionHint, detail: l.flagCrossCharFactProjectionDetail),
+    'working_state_enabled': (l) => FlagMeta(title: l.flagWorkingStateEnabledTitle, short_: l.flagWorkingStateEnabledHint, detail: l.flagWorkingStateEnabledDetail),
+    'provider_registry': (l) => FlagMeta(title: l.flagProviderRegistryTitle, short_: l.flagProviderRegistryHint, detail: l.flagProviderRegistryDetail),
+  };
+
+  /// 高级开关文案：优先取 l10n；catalog 未登记（理论上不会发生）时回退中文兜底
+  FlagMeta _localizedMeta(String key, AppLocalizations l10n) {
+    final f = _flagMetaL10n[key];
+    if (f != null) return f(l10n);
+    return FeatureFlagCatalog.metaOf(key);
+  }
+
+  /// 组标题本地化（catalog 中文仅作兜底，界面优先取 l10n）
+  String _groupTitle(String zh, AppLocalizations l10n) {
+    switch (zh) {
+      case "智能体运行与认知": return l10n.flagGroupAgentRuntime;
+      case "主动消息": return l10n.flagGroupProactive;
+      case "群聊小游戏": return l10n.flagGroupGroupGames;
+      case "AI 自主生活": return l10n.flagGroupLifeLoop;
+      case "生命感增强": return l10n.flagGroupLifeSense;
+      case "主动消息自然化（B1）": return l10n.flagGroupProactiveNatural;
+      case "记忆检索与注入（实验灰度）": return l10n.flagGroupMemory;
+      case "编纂知识与前瞻意图": return l10n.flagGroupCurated;
+      case "跨角色用户事实（B1）": return l10n.flagGroupCrossChar;
+      case "工作记忆（M3）": return l10n.flagGroupWorking;
+      case "插件与提供商": return l10n.flagGroupProvider;
+      case "其他高级开关": return l10n.flagGroupOther;
+      default: return zh;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -153,14 +236,14 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
         // 高级开关：按模块折叠
         for (final g in groups)
           _CollapsibleFlagGroup(
-            title: g.title,
+            title: _groupTitle(g.title, l10n),
             // 2026-09-04：全部默认折叠（不因组内被改过而自动展开），需要时手动点开
             initiallyOpen: false,
             tiles: [
               for (final k in g.keys)
                 _FlagTileData(
                   rawKey: k,
-                  meta: FeatureFlagCatalog.metaOf(k),
+                  meta: _localizedMeta(k, l10n),
                   value: _flags[k] ?? false,
                   source: _sources[k] ?? 'default',
                 ),

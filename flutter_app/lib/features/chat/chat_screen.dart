@@ -588,6 +588,7 @@ class _ChatScreenState extends State<ChatScreen>
                                                     voiceMeta: msg.voiceMeta,
                                                     ttsMeta: msg.ttsMeta,
                                                     reasoning: msg.reasoning,
+                                                    degradedReply: msg.degradedReply,
                                                     tools: msg.tools,
                                                     toolResults: msg.toolResults,
                                                     statusUpdate: msg.statusUpdate,

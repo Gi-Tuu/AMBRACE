@@ -23,7 +23,7 @@ class WeaveDetailSheet extends StatelessWidget {
         Icon(icon, size: 15, color: AppColors.accent),
         const SizedBox(width: 6),
         Text(
-          '$label：',
+          '$label${l10n.sepColon}',
           style: const TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w500,

@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import tkinter as tk
@@ -1315,11 +1316,22 @@ class ControllerApp:
         tk.Button(right, text="刷新", bg=t.sidebar, fg=t.accent_glow, activebackground=t.sidebar,
                   activeforeground=t.accent_glow, relief="flat", bd=0, font=(FONT, 11, "bold"),
                   cursor="hand2", command=self._do_refresh).pack(side="left", padx=(0, SP_SM))
+        tk.Button(right, text="渠道登录", bg=t.sidebar, fg=t.accent_glow, activebackground=t.sidebar,
+                  activeforeground=t.accent_glow, relief="flat", bd=0, font=(FONT, 11, "bold"),
+                  cursor="hand2", command=self._open_channel_login).pack(side="left", padx=(0, SP_SM))
         tk.Button(right, text="设置", bg=t.sidebar, fg=t.accent_glow, activebackground=t.sidebar,
                   activeforeground=t.accent_glow, relief="flat", bd=0, font=(FONT, 11, "bold"),
                   cursor="hand2", command=self.open_settings).pack(side="left")
 
         tk.Frame(self.root, height=1, bg=t.divider).pack(side="top", fill="x")
+
+    def _open_channel_login(self) -> None:
+        """打开本地渠道登录页（仅 127.0.0.1 可访问；P2 扫码绑定下放手机，2026-09-12）。"""
+        self._set_msg(f"已在浏览器打开渠道登录页 http://127.0.0.1:{TARGET_PORT}/channel-login")
+        threading.Thread(
+            target=lambda: webbrowser.open(f"http://127.0.0.1:{TARGET_PORT}/channel-login"),
+            daemon=True,
+        ).start()
 
     def _build_statusbar(self) -> None:
         t = self.theme

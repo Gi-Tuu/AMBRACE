@@ -135,7 +135,7 @@ class _ExtensionsScreenState extends State<ExtensionsScreen> {
         permissions: perms.isNotEmpty ? perms : null,
       );
       if (!mounted) return;
-      _toast('${l10n.pluginInstallSuccess}（${plugin['name']}）');
+      _toast(l10n.pluginInstallSuccessNamed(plugin['name'] ?? ''));
       await _load();
     } catch (e) {
       _toast('${l10n.pluginInstallFail}: ${_errMsg(e)}');
@@ -246,7 +246,7 @@ class _ExtensionsScreenState extends State<ExtensionsScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      '${l10n.pluginRiskTitle}：${l10n.pluginRiskHint}',
+                      l10n.pluginRiskBanner(l10n.pluginRiskTitle, l10n.pluginRiskHint),
                       style: const TextStyle(fontSize: 12),
                     ),
                   ),

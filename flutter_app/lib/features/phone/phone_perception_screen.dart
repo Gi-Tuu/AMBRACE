@@ -11,6 +11,7 @@ import "../../features/settings/notification_whitelist_screen.dart";
 import "shizuku_screen.dart";
 import "workflow_screen.dart";
 import "../../services/shizuku_service.dart";
+import "../../utils/app_lang.dart";
 import "package:ai_companion/l10n/app_localizations.dart";
 import "package:ai_companion/theme/tokens.dart";
 
@@ -158,7 +159,7 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
     setState(() => _shizukuBusy = true);
     final r = await ShizukuService.getSystemSnapshot();
     final data = Map<String, dynamic>.from(r["data"] as Map? ?? {});
-    final text = ShizukuService.formatSnapshot(data);
+    final text = ShizukuService.formatSnapshot(data, isEn: await appLang() == "en");
     final ok = await PhonePerceptionService.uploadSnapshot(text, "shizuku_system");
     if (!mounted) return;
     setState(() {

@@ -36,6 +36,7 @@ from app.api import (
     account_router,
     device_router,
 )
+from app.api.channel_login import router as channel_login_router  # 本地渠道登录页（P2，2026-09-12）
 from app.api.ai_api import router as ai_api_router
 from app.auth.router import router as auth_router
 from app.db.database import init_db
@@ -352,6 +353,7 @@ ROUTERS = [
     life_router, life_home_router, voice_router, weave_router, permissions_router,
     phone_workflows_router, ai_api_router, mcp_router, games_router, llm_configs_router,
     account_router, device_router, channel_bindings_router,
+    channel_login_router,
 ]
 for _r in ROUTERS:
     app.include_router(_r)

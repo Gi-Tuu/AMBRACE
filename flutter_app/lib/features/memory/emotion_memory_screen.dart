@@ -381,9 +381,10 @@ class _EmotionMemoryScreenState extends State<EmotionMemoryScreen> {
   }
 
   String _dimSummary(EmotionEvent e) {
+    final l10n = AppLocalizations.of(context)!;
     final parts = e.dimChanges
         .map((c) => c.from == null ? '${c.cn}${c.to ?? '?'}' : '${c.cn} ${c.from}→${c.to}')
         .toList();
-    return parts.join('、');
+    return parts.join(l10n.sepList);
   }
 }

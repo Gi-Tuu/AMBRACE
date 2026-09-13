@@ -186,7 +186,7 @@ class _GameConsoleScreenState extends State<GameConsoleScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('${l10n.gameSelectPlayers}（$_neededMin-$_neededMax）',
+        Text('${l10n.gameSelectPlayers}${l10n.wrapParen('$_neededMin-$_neededMax')}',
             style: const TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         Wrap(

@@ -158,19 +158,19 @@ class _CharacterDetailScreenState extends State<CharacterDetailScreen> {
 
     final basicParts = <String>[];
     if (char.gender != null && char.gender!.isNotEmpty) {
-      basicParts.add('${l10n.gender}：${char.gender}');
+      basicParts.add('${l10n.gender}${l10n.sepColon}${char.gender}');
     }
     if (char.birthday != null && char.birthday!.isNotEmpty) {
-      basicParts.add('${l10n.birthday}：${char.birthday}');
+      basicParts.add('${l10n.birthday}${l10n.sepColon}${char.birthday}');
     }
-    if (char.height != null) basicParts.add('${l10n.height}：${char.height} cm');
-    if (char.weight != null) basicParts.add('${l10n.weight}：${char.weight} kg');
+    if (char.height != null) basicParts.add('${l10n.height}${l10n.sepColon}${char.height} cm');
+    if (char.weight != null) basicParts.add('${l10n.weight}${l10n.sepColon}${char.weight} kg');
 
     final cards = <BubbleCardData>[
       BubbleCardData(
         icon: Icons.label_outline,
         title: l10n.personality,
-        preview: tags.isEmpty ? l10n.noTags : tags.join('、'),
+        preview: tags.isEmpty ? l10n.noTags : tags.join(l10n.sepList),
         detailBuilder: (_) => Wrap(
           spacing: 8,
           runSpacing: 8,

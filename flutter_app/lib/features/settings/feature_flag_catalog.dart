@@ -134,6 +134,8 @@ class FeatureFlagCatalog {
   ];
 
   // ── 每个键的中文名称 / 两行短说明 / 完整说明 ────────────────────
+  // 注意：以下中文文案仅作兜底，界面展示优先取 feature_flags_screen 里的 l10n（flagXxxTitle/Hint/Detail）。
+  // 新增或调整某个开关的说明，请在 app_zh.arb / app_en.arb 双语同步，不要只改这里的中文。
   static const Map<String, FlagMeta> _metas = {
     // 智能体运行与认知
     'agent_loop_chat': FlagMeta(

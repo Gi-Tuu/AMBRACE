@@ -37,6 +37,8 @@ def _assemble_chunk_meta(
         _reasoning = (final_state.get("reasoning") or "").strip()
         if _reasoning:
             _meta["reasoning"] = _reasoning
+        if final_state.get("degraded_reply"):
+            _meta["degraded_reply"] = True
         _tools = list(final_state.get("tools_used") or [])
         if gen_prompt:
             _tools.append("生图")

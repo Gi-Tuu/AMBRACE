@@ -4,6 +4,7 @@ from sqlalchemy import select, func, and_, or_
 from app.db.database import async_session_factory
 import asyncio
 import json
+import re
 from app.utils.async_tasks import spawn_background
 import time
 from datetime import datetime, timezone
@@ -19,7 +20,7 @@ from app.memory import add_chat_memory_extraction
 from app.memory.extractor import SELF_STATEMENT_MAX_LEN
 from app.application.chat.tools import (
     _extract_gen_image,
-    _sanitize_persist_text,
+    _sanitize_persist_full,
     _sanitize_chunk_texts,
     _extract_search,
     _search_throttle,
@@ -398,6 +399,67 @@ async def _resolve_emotional_state(character_id: int, snapshot: dict | None = No
         return ""
 
 
+# ---- 思考过载兜底（2026-09-13 证据B）：可见正文空/纯标点 + 长推理/截断 → 轻量补写一次 ----
+_DEGRADED_REASONING_MIN = 300          # 思考字数阈值（≥ 视为「思考过载」）
+_DEGRADED_CONTINUATION_TIMEOUT_S = 25.0
+# 纯标点正文（……/。/！/？/~ 等；证据 B 现场即 content="……"）
+_PUNCT_ONLY_RE = re.compile(r"^[\s。．.!！?？～~…，,、；;：:·—－\-]+$")
+
+
+async def _try_degraded_continuation(
+    session_id: int, user_id: int, character_id: int, reasoning_text: str,
+) -> str:
+    """思考过载兜底：轻量补写一次——人设 + 最近对话 +「把想好的直接说出来」。
+
+    限 1 次、带超时；任何失败返回空串（调用方落 degraded_reply 标记 + reply_degraded 埋点）。
+    补写结果本身为空/纯标点/剥括号推理后为空 → 同样视为失败。
+    """
+    try:
+        from sqlalchemy import select as _select
+        from app.models.character import AICharacter as _AIChar
+        from app.models.chat import ChatMessage as _CM
+
+        async with async_session_factory() as db:
+            char = (await db.execute(
+                _select(_AIChar).where(_AIChar.id == character_id)
+            )).scalar_one_or_none()
+            recent = (await db.execute(
+                _select(_CM).where(_CM.session_id == session_id)
+                .order_by(_CM.created_at.desc(), _CM.id.desc()).limit(10)
+            )).scalars().all()
+        if char is None:
+            return ""
+        system = f"你是{char.name}。"
+        if (char.personality or "").strip():
+            system += f"人设：{char.personality.strip()}"
+        if (char.chat_style or "").strip():
+            system += f"\n聊天风格：{char.chat_style.strip()}"
+        messages: list[dict] = [{"role": "system", "content": system}]
+        for m in reversed(recent):
+            c = (m.content or "").strip()
+            if not c:
+                continue
+            messages.append({"role": "assistant" if m.sender_type == "ai" else "user", "content": c})
+        messages.append({"role": "system", "content": (
+            "你刚才想得太多，没有把话说出口。请把刚才想好的内容，用一两句话自然地直接说给对方，"
+            f"保持{char.name}平时的语气；不要解释你想了什么、不要再写任何思考过程、"
+            "不要用括号包裹内心活动，直接给正文。")})
+        from app.agent.llm_client import chat_completion as _cc
+
+        out = await asyncio.wait_for(
+            _cc(messages, user_id=user_id, character_id=character_id),
+            timeout=_DEGRADED_CONTINUATION_TIMEOUT_S,
+        )
+        text = (out or "").strip() if isinstance(out, str) else ""
+        if not text or _PUNCT_ONLY_RE.fullmatch(text):
+            return ""
+        visible, _extra = _sanitize_persist_full(text)
+        return visible
+    except Exception as e:  # noqa: BLE001 - 兜底路径任何失败都静默降级
+        _logger.warning("Degraded continuation failed: %s", e)
+        return ""
+
+
 async def _run_agent_core(
     session_id: int, user_id: int, character_id: int, content: str,
     lang: str, user_msg_id: int | None,
@@ -761,10 +823,35 @@ async def _run_agent_core(
     # P0'（2026-09-10）：展示/落库文本零标记兜底——放在 CAL_NOTE/MEMO/timer 提取之后，
     # 提取源不受影响；此后 full_text 进落库（HTTP 单条 / chunked 分块 / SSE done）与推送，
     # 任何漏网标记（含模型漏写闭合标签的 [GEN_IMAGE]/[IMG_TEXT]）在此统一剥净。
-    _clean_final = _sanitize_persist_text(full_text)
+    # 证据A（2026-09-13）：剥「正文开头的中文括号内心活动」→ 并入 reasoning 走既有上屏管线
+    _clean_final, _bracket_reasoning = _sanitize_persist_full(full_text)
+    if _bracket_reasoning:
+        _prev_reasoning = (final_state.get("reasoning") or "").strip()
+        final_state["reasoning"] = (
+            (_prev_reasoning + "\n") if _prev_reasoning else "") + _bracket_reasoning
+        final_state["reasoning_bracket_stripped"] = True
+        _logger.info("reasoning_bracket_stripped len=%s preview=%s",
+                     len(_bracket_reasoning), _bracket_reasoning[:40])
     if _clean_final != (full_text or "").strip():
         _logger.warning("Final text had marker residue, sanitized: %s", (full_text or "")[:80])
     full_text = _clean_final
+
+    # 证据B（2026-09-13）：思考过载兜底——可见正文为空/纯标点 且（长推理 ≥300 字或标记截断）
+    _vis = full_text.strip()
+    if not _vis or _PUNCT_ONLY_RE.fullmatch(_vis):
+        _reasoning_now = (final_state.get("reasoning") or "").strip()
+        if final_state.get("marker_truncated") or len(_reasoning_now) >= _DEGRADED_REASONING_MIN:
+            _degraded_reason = "empty" if not _vis else "punct_only"
+            _continuation = await _try_degraded_continuation(
+                session_id, user_id, character_id, _reasoning_now)
+            if _continuation:
+                full_text = _continuation
+                _logger.info("reply_degraded recovered reason=%s len=%s",
+                             _degraded_reason, len(_continuation))
+            else:
+                final_state["degraded_reply"] = True
+                _logger.info("reply_degraded reason=%s reasoning_len=%s",
+                             _degraded_reason, len(_reasoning_now))
     final_state["ai_response"] = full_text
 
     return {
@@ -961,6 +1048,8 @@ async def send_and_receive(
     _reasoning = (final_state.get("reasoning") or "").strip()
     if _reasoning:
         _meta["reasoning"] = _reasoning
+    if final_state.get("degraded_reply"):
+        _meta["degraded_reply"] = True
     _tools = list(final_state.get("tools_used") or [])
     if gen_prompt:
         _tools.append("生图")
@@ -988,6 +1077,9 @@ async def send_and_receive(
         await db.flush()
         await db.commit()
         await db.refresh(ai_msg)
+
+    if final_state.get("reasoning_bracket_stripped"):
+        _logger.info("reasoning_bracket_stripped msg_id=%s", ai_msg.id)
 
     # 3.10 事件流水（P0）：AI 单条回复（HTTP 路径）
     await append_domain_event(
@@ -1105,6 +1197,8 @@ async def send_and_receive_chunked(
     _reasoning = (final_state.get("reasoning") or "").strip()
     if _reasoning:
         _meta["reasoning"] = _reasoning
+    if final_state.get("degraded_reply"):
+        _meta["degraded_reply"] = True
     _tools = list(final_state.get("tools_used") or [])
     if gen_prompt:
         _tools.append("生图")
@@ -1292,6 +1386,8 @@ async def continue_chat(
     _creasoning = (final_state.get("reasoning") or "").strip()
     if _creasoning:
         _cmeta["reasoning"] = _creasoning
+    if final_state.get("degraded_reply"):
+        _cmeta["degraded_reply"] = True
     _ctools = list(final_state.get("tools_used") or [])
     if _ctools:
         _cmeta["tools"] = _ctools

@@ -5,6 +5,7 @@ import '../../services/api_client.dart';
 import '../../models/character.dart';
 import 'plugin_chat_screen.dart';
 import 'plugin_webview_screen.dart';
+import 'channel_qr_login_sheet.dart';
 import "package:ai_companion/theme/tokens.dart";
 import 'extensions_screen.dart' show pluginTypeLabel, pluginTypeColor, pluginTypeIcon;
 import 'plugin_forms.dart' show PluginConfigForm, ZeroCodeConfigEditor;
@@ -278,7 +279,7 @@ class PluginCardState extends State<PluginCard> {
                         style: const TextStyle(fontSize: 11)),
                   ),
                   if (author.isNotEmpty)
-                    Text('${l10n.pluginAuthor}：$author', style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                    Text(l10n.pluginAuthorValue(author), style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                   // 3.9：来源 + 校验和短值（非内置才显示来源徽标；sha256 有则显示）
                   if ((p['source'] as String? ?? 'builtin') != 'builtin')
                     Text(_sourceLabel(l10n, p['source'] as String? ?? 'builtin'),
@@ -727,12 +728,24 @@ class PluginCardState extends State<PluginCard> {
           ],
           // C8（2026-09-06 多 ClawBot）+ 添加未绑定 bot 链路：引导区 = 刷新已绑 + 查看可添加 bot。
           // 扫码在网关（openclaw）侧完成；拥爱同机读取网关账号列出「已登录未绑定」的 bot，App 内选角色绑定。
+          // 扫码绑定下放手机（2026-09-12）：微信支持 App 内直接扫码登录新号（无需电脑网关命令行）。
           if (channel == 'wechat' && widget.isAdmin) ...[
             const SizedBox(height: 2),
             Text(l10n.channelBindingAddBotHint, style: TextStyle(fontSize: 10, color: Colors.grey)),
             const SizedBox(height: 2),
             Row(
               children: [
+                TextButton.icon(
+                  onPressed: _chSaving.contains(channel)
+                      ? null
+                      : () => _openWechatQrLogin(channel),
+                  icon: const Icon(Icons.qr_code_scanner, size: 15),
+                  label: Text(l10n.channelQrScanLogin, style: const TextStyle(fontSize: 11)),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
                 TextButton.icon(
                   onPressed: _chSaving.contains(channel)
                       ? null
@@ -814,9 +827,67 @@ class PluginCardState extends State<PluginCard> {
                 ],
             ],
           ],
+          // 扫码绑定下放手机（2026-09-12）：抖音 App 内扫码登录——服务器弹有头 Edge
+          // 截屏回传登录二维码（原有 /bind 电脑端路径保留为兜底入口）。
+          if (channel == 'douyin' && widget.isAdmin) ...[
+            const SizedBox(height: 2),
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: _chSaving.contains(channel)
+                      ? null
+                      : () => _openDouyinQrLogin(channel),
+                  icon: const Icon(Icons.qr_code_scanner, size: 15),
+                  label: Text(l10n.channelQrScanLogin, style: const TextStyle(fontSize: 11)),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _chSaving.contains(channel)
+                      ? null
+                      : () => _loadChannelBindings(channel),
+                  icon: const Icon(Icons.refresh, size: 15),
+                  // 中性文案（红点2，2026-09-12）：「bot」是微信 ClawBot 术语，抖音卡不沿用
+                  label: Text(l10n.channelRefreshList, style: const TextStyle(fontSize: 11)),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+              ],
+            ),
+          ],
         const SizedBox(height: 4),
       ],
     );
+  }
+
+  /// 打开微信扫码登录弹层；成功（pop true）后刷新绑定列表。
+  Future<void> _openWechatQrLogin(String channel) async {
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const WechatQrLoginSheet(),
+    );
+    if (ok == true && mounted) {
+      await _loadChannelBindings(channel);
+      widget.onChanged();
+    }
+  }
+
+  /// 打开抖音扫码绑定弹层；成功（pop true）后刷新绑定列表。
+  Future<void> _openDouyinQrLogin(String channel) async {
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const DouyinBindSheet(),
+    );
+    if (ok == true && mounted) {
+      await _loadChannelBindings(channel);
+      widget.onChanged();
+    }
   }
 
   Future<void> _saveConfig(Map<String, dynamic> values) async {

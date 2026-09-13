@@ -401,7 +401,7 @@ class _CharacterListScreenState extends State<CharacterListScreen>
           final subtitle = ((g['members'] as List?) ?? const [])
               .map((m) => (m as Map)['name']?.toString() ?? '')
               .where((s) => s.isNotEmpty)
-              .join('、');
+              .join(l10n.sepList);
           return Padding(
             padding: const EdgeInsets.only(bottom: AppSpacing.xs),
             child: StaggeredEntrance(

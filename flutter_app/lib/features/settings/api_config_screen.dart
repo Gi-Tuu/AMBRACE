@@ -296,7 +296,7 @@ class _ApiConfigScreenState extends State<ApiConfigScreen> {
           for (final t in _taskList)
             DropdownMenuItem(
               value: t['task'] as String,
-              child: Text('${t['name']}（${t['task']}）'),
+              child: Text('${t['name']}${l10n.wrapParen(t['task'] as String)}'),
             ),
         ],
         onChanged: (v) async {

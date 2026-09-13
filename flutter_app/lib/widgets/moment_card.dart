@@ -175,7 +175,7 @@ class _MomentCommentsSectionState extends State<MomentCommentsSection> {
                   style: const TextStyle(fontSize: 13, color: nameBlue),
                 ),
               TextSpan(
-                text: '：',
+                text: l10n.sepColon,
                 style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurface),
               ),
               TextSpan(
@@ -406,7 +406,7 @@ class MomentCard extends StatelessWidget {
   }
 
   String _likersText(List<String> likers, AppLocalizations l10n) {
-    final names = likers.take(3).join("、");
+    final names = likers.take(3).join(l10n.sepList);
     if (likers.length <= 3) return l10n.likersText1(names);
     return l10n.likersTextMany(names, likers.length);
   }

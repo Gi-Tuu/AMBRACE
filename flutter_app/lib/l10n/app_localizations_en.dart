@@ -587,6 +587,27 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String pluginAuthorValue(Object author) {
+    return 'Author: $author';
+  }
+
+  @override
+  String pluginInstallSuccessNamed(Object name) {
+    return 'Installed ($name)';
+  }
+
+  @override
+  String pluginRiskBanner(Object hint, Object title) {
+    return '$title: $hint';
+  }
+
+  @override
+  String get listSeparator => ', ';
+
+  @override
+  String get serverUrlHint => 'http://SERVER_IP:8000';
+
+  @override
   String get arrangement => 'Plan';
 
   @override
@@ -5733,6 +5754,106 @@ class AppLocalizationsEn extends AppLocalizations {
   String get channelBindingBind => 'Bind';
 
   @override
+  String get channelRefreshList => 'Refresh list';
+
+  @override
+  String get degradedReplyHint => '(TA thought too long and lost the words)';
+
+  @override
+  String get menuSayAgain => 'Ask TA to say it again';
+
+  @override
+  String get degradedNoSource => 'Cannot find the original message to retry';
+
+  @override
+  String get channelQrScanLogin => 'Scan to log in a new bot';
+
+  @override
+  String get channelQrLoginTitle => 'Scan to Log In';
+
+  @override
+  String get channelQrFetching => 'Fetching QR code…';
+
+  @override
+  String get channelQrScanHintWechat =>
+      'Scan the QR code with WeChat on your phone';
+
+  @override
+  String get channelQrScanHintDouyin =>
+      'Scan the QR code with the Douyin app to log in';
+
+  @override
+  String get channelQrWaiting => 'Waiting for scan…';
+
+  @override
+  String get channelQrScanned => 'Scanned. Please confirm on your phone';
+
+  @override
+  String get channelQrNeedVerifyTitle => 'Enter pairing code';
+
+  @override
+  String get channelQrNeedVerifyHint =>
+      'Enter the number shown in WeChat on your phone to continue';
+
+  @override
+  String get channelQrVerifyWrong => 'The number doesn\'t match. Try again';
+
+  @override
+  String get channelQrVerifyBlocked =>
+      'Too many wrong attempts. Try again later';
+
+  @override
+  String get channelQrRefreshing => 'QR code expired. Refreshing…';
+
+  @override
+  String get channelQrExpiredFinal =>
+      'QR code expired too many times. Try again later';
+
+  @override
+  String get channelQrRefresh => 'Refresh QR code';
+
+  @override
+  String get channelQrPickChar => 'Pick a character to bind the new bot';
+
+  @override
+  String get channelQrBinding => 'Binding…';
+
+  @override
+  String channelQrBindSuccess(Object name) {
+    return 'Added and bound to $name';
+  }
+
+  @override
+  String get channelQrGatewayPending =>
+      'New bot saved to the gateway. Restart the gateway to start messaging';
+
+  @override
+  String get channelQrBindedRedirect =>
+      'This bot is already connected. Use \"View available bots\" to bind';
+
+  @override
+  String get channelQrLoadFailed => 'Failed to load QR code. Please retry';
+
+  @override
+  String get douyinQrTitle => 'Scan to Log In (Douyin)';
+
+  @override
+  String get douyinQrWaiting => 'Waiting for login…';
+
+  @override
+  String get douyinQrBindOnPc => 'Scan on the computer';
+
+  @override
+  String get douyinQrBindOnPcHint =>
+      'A browser window will open on the server; scan with Douyin there';
+
+  @override
+  String get douyinQrSuccess => 'Logged in. Account bound';
+
+  @override
+  String get douyinQrEnded => 'Scan session ended';
+
+  @override
   String agentMindRetrievalCount(Object count) {
     return '$count records';
   }
@@ -6576,4 +6697,640 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get memoryTraceNoData => 'No data';
+
+  @override
+  String get sepList => ', ';
+
+  @override
+  String get sepSemicolon => '; ';
+
+  @override
+  String get sepColon => ': ';
+
+  @override
+  String get sepBar => ' | ';
+
+  @override
+  String wrapParen(String value) {
+    return '($value)';
+  }
+
+  @override
+  String wrapTitleBracket(String value) {
+    return '\"$value\"';
+  }
+
+  @override
+  String wrapLenticular(String value) {
+    return '[$value]';
+  }
+
+  @override
+  String get flagGroupAgentRuntime => 'Agent Runtime & Cognition';
+
+  @override
+  String get flagGroupProactive => 'Proactive Messages';
+
+  @override
+  String get flagGroupGroupGames => 'Group Chat Games';
+
+  @override
+  String get flagGroupLifeLoop => 'AI Autonomous Life';
+
+  @override
+  String get flagGroupLifeSense => 'Life-like Enhancements';
+
+  @override
+  String get flagGroupProactiveNatural => 'Natural Proactive Outreach (B1)';
+
+  @override
+  String get flagGroupMemory => 'Memory Retrieval & Injection (Beta)';
+
+  @override
+  String get flagGroupCurated => 'Curated Knowledge & Foresight';
+
+  @override
+  String get flagGroupCrossChar => 'Cross-character User Facts (B1)';
+
+  @override
+  String get flagGroupWorking => 'Working Memory (M3)';
+
+  @override
+  String get flagGroupProvider => 'Plugins & Providers';
+
+  @override
+  String get flagGroupOther => 'Other Advanced Flags';
+
+  @override
+  String get flagAgentLoopChatTitle => 'Chat Main Loop';
+
+  @override
+  String get flagAgentLoopChatHint =>
+      'AI replies go through the unified agent loop: understand -> memory -> plan -> answer.';
+
+  @override
+  String get flagAgentLoopChatDetail =>
+      'When on, every chat passes through the unified Runtime, injecting world knowledge and memory before answering, for more consistent characters. Off falls back to the old direct-generation path. Usually keep on; turn off only to debug the new path.';
+
+  @override
+  String get flagAgentLoopSearchTitle => 'Web Search Loop';
+
+  @override
+  String get flagAgentLoopSearchHint =>
+      'Lets the AI run web searches automatically when needed, with one follow-up search if results are thin.';
+
+  @override
+  String get flagAgentLoopSearchDetail =>
+      'When on, the AI can search, read real results, then answer - up to 1 follow-up search. Off falls back to single-shot generation with no web access.';
+
+  @override
+  String get flagAgentLoopSchedulerTitle => 'Proactive Task Loop';
+
+  @override
+  String get flagAgentLoopSchedulerHint =>
+      'Scheduled or proactive triggers go through the unified agent loop.';
+
+  @override
+  String get flagAgentLoopSchedulerDetail =>
+      'Makes timed reminders and proactive check-ins pass through the unified Runtime and log their process. Off uses the old path for proactive tasks.';
+
+  @override
+  String get flagAgentToolEventsTitle => 'Tool Event Weaving';
+
+  @override
+  String get flagAgentToolEventsHint =>
+      'Key events from AI tool calls are auto-saved into the weave/memory.';
+
+  @override
+  String get flagAgentToolEventsDetail =>
+      'When on, tool results are written as memory increments. Off means tool execution does not feed memory.';
+
+  @override
+  String get flagAgentContextTrimTitle => 'Heat-based Context Trim';
+
+  @override
+  String get flagAgentContextTrimHint =>
+      'Less context for low-frequency characters, full context for high-frequency ones, to save tokens.';
+
+  @override
+  String get flagAgentContextTrimDetail =>
+      'Low-frequency characters get trimmed day-summaries/weave injection; high-frequency keep full. Off injects full context for everyone, costing more tokens.';
+
+  @override
+  String get flagAgentTraceGroupTitle => 'Group Chat Trace';
+
+  @override
+  String get flagAgentTraceGroupHint =>
+      'Records each character\'s decision process in group chats (write-only, for debugging).';
+
+  @override
+  String get flagAgentTraceGroupDetail =>
+      'An observability log that does not affect replies. Off stops writing group chat traces.';
+
+  @override
+  String get flagAgentDailyReflectionTitle => 'Daily Reflection';
+
+  @override
+  String get flagAgentDailyReflectionHint =>
+      'Lets the AI periodically reflect on recent experiences (about every 7 days).';
+
+  @override
+  String get flagAgentDailyReflectionDetail =>
+      'Reflection keeps the character\'s words and actions more coherent. Off stops generating periodic reflections.';
+
+  @override
+  String get flagAgentReflectionInjectTitle => 'Reflection in Outreach';
+
+  @override
+  String get flagAgentReflectionInjectHint =>
+      'Attaches the latest reflection when sending proactive messages, for more relevant content.';
+
+  @override
+  String get flagAgentReflectionInjectDetail =>
+      'Requires Daily Reflection. Off means proactive messages do not inject reflections.';
+
+  @override
+  String get flagAgentDailyMemoryMaintenanceTitle => 'Daily Memory Maintenance';
+
+  @override
+  String get flagAgentDailyMemoryMaintenanceHint =>
+      'Auto-completes daily summaries, dedupes, and pins summaries to keep the memory base tidy.';
+
+  @override
+  String get flagAgentDailyMemoryMaintenanceDetail =>
+      'Off stops these upkeep tasks; over time this may accumulate duplicate memories or miss summaries.';
+
+  @override
+  String get flagProactiveNaturalnessScoreTitle => 'Outreach Naturalness Score';
+
+  @override
+  String get flagProactiveNaturalnessScoreHint =>
+      'Scores low-priority proactive messages; if unnatural, retries once, otherwise drops them.';
+
+  @override
+  String get flagProactiveNaturalnessScoreDetail =>
+      'Reduces stiff, intrusive proactive messages. Off sends them as-is.';
+
+  @override
+  String get flagProactiveUserRhythmTitle => 'User Routine Learning';
+
+  @override
+  String get flagProactiveUserRhythmHint =>
+      'Learns your active hours and delays low-priority proactive messages when you\'re away.';
+
+  @override
+  String get flagProactiveUserRhythmDetail =>
+      'Infers routine from chat and proactive logs. Off sends anytime regardless of time.';
+
+  @override
+  String get flagGroupChatGamesTitle => 'Group Chat Games';
+
+  @override
+  String get flagGroupChatGamesHint =>
+      'Master switch for the game console and its related APIs.';
+
+  @override
+  String get flagGroupChatGamesDetail =>
+      'Off hides the game entry and APIs, rolling back games entirely without affecting chat.';
+
+  @override
+  String get flagGameUndercoverTitle => 'Who Is the Spy';
+
+  @override
+  String get flagGameUndercoverHint =>
+      'A party game where players describe words in turns and vote out the spy.';
+
+  @override
+  String get flagGameUndercoverDetail =>
+      'Enables this individual game. Off removes it from the selection.';
+
+  @override
+  String get flagGameTruthOrDareTitle => 'Truth or Dare';
+
+  @override
+  String get flagGameTruthOrDareHint =>
+      'A light game of taking turns choosing truth or dare.';
+
+  @override
+  String get flagGameTruthOrDareDetail =>
+      'Enables this individual game. Off removes it from the selection.';
+
+  @override
+  String get flagGameTwentyQTitle => '20 Questions';
+
+  @override
+  String get flagGameTwentyQHint =>
+      'Guess the word the other is thinking of within a limited number of yes/no rounds.';
+
+  @override
+  String get flagGameTwentyQDetail =>
+      'Enables this individual game. Off removes it from the selection.';
+
+  @override
+  String get flagGameWerewolfTitle => 'Werewolf';
+
+  @override
+  String get flagGameWerewolfHint =>
+      'A multiplayer game of night actions plus day debate and voting, with a system host.';
+
+  @override
+  String get flagGameWerewolfDetail =>
+      'Enables this individual game. Off removes it from the selection.';
+
+  @override
+  String get flagGameLiarsBarTitle => 'Liar\'s Bar';
+
+  @override
+  String get flagGameLiarsBarHint =>
+      'A mind game of declaring your card and calling out the previous player.';
+
+  @override
+  String get flagGameLiarsBarDetail =>
+      'Enables this individual game. Off removes it from the selection.';
+
+  @override
+  String get flagGameTurtleSoupTitle => 'Turtle Soup';
+
+  @override
+  String get flagGameTurtleSoupHint =>
+      'Reconstruct the truth behind a story through yes/no questions, with AI as host.';
+
+  @override
+  String get flagGameTurtleSoupDetail =>
+      'Enables this individual game. Off removes it from the selection.';
+
+  @override
+  String get flagGameMemoryBridgeTitle => 'Game Memory Bridge';
+
+  @override
+  String get flagGameMemoryBridgeHint =>
+      'Leaves a summary pointer in main memory that links back to the standalone game memory.';
+
+  @override
+  String get flagGameMemoryBridgeDetail =>
+      'On leaves a trace of \'what was played\' in main memory and can pull game details. Off keeps game play only in the standalone game memory, not mixed into life memory.';
+
+  @override
+  String get flagGameAiAutoplayTitle => 'AI Auto-turn';
+
+  @override
+  String get flagGameAiAutoplayHint =>
+      'When it\'s the AI\'s turn, acts automatically - no manual next step.';
+
+  @override
+  String get flagGameAiAutoplayDetail =>
+      'On by default for smooth flow. Off requires manual advancement each AI step, mainly for debugging.';
+
+  @override
+  String get flagLifeLoopEnabledTitle => 'Life Loop Master';
+
+  @override
+  String get flagLifeLoopEnabledHint =>
+      'About every 30 minutes the AI decides its own action, forming its own life rhythm.';
+
+  @override
+  String get flagLifeLoopEnabledDetail =>
+      'Off stops the character\'s autonomous life loop; it also stops progressing while you\'re offline.';
+
+  @override
+  String get flagLifeLoopVisibleTitle => 'Life Actions Visible';
+
+  @override
+  String get flagLifeLoopVisibleHint =>
+      'Lets autonomous life produce output visible to you (moments, shares, etc.).';
+
+  @override
+  String get flagLifeLoopVisibleDetail =>
+      'Off keeps life actions only in the background log, not shown to you.';
+
+  @override
+  String get flagLifeLoopLlmTitle => 'Life Text Generation';
+
+  @override
+  String get flagLifeLoopLlmHint =>
+      'Lets the model write life text (up to 2 per character per day).';
+
+  @override
+  String get flagLifeLoopLlmDetail =>
+      'Makes diaries/moments livelier. Off uses only template rules to save tokens.';
+
+  @override
+  String get flagLifeChatDrivenEnabledTitle => 'Chat-driven Life';
+
+  @override
+  String get flagLifeChatDrivenEnabledHint =>
+      'Detects life intent from chat and links it to change the AI\'s goals and activities.';
+
+  @override
+  String get flagLifeChatDrivenEnabledDetail =>
+      'For example, something you mention affects the character\'s later plans. Off means chat does not drive the life loop.';
+
+  @override
+  String get flagLifeHomeWorldmapEnabledTitle => 'Home World Map';
+
+  @override
+  String get flagLifeHomeWorldmapEnabledHint =>
+      'The world map feature and related autonomous behaviors in \'Home\'.';
+
+  @override
+  String get flagLifeHomeWorldmapEnabledDetail =>
+      'Off hides the world map in Home.';
+
+  @override
+  String get flagReplyDelayEnabledTitle => 'Dynamic Reply Delay';
+
+  @override
+  String get flagReplyDelayEnabledHint =>
+      'Adds a natural brief delay to replies by context (only when you message first).';
+
+  @override
+  String get flagReplyDelayEnabledDetail =>
+      'Simulates human thinking/typing rhythm. Off starts replies immediately.';
+
+  @override
+  String get flagSpringEmotionEnabledTitle => 'Spring-damper Emotions';
+
+  @override
+  String get flagSpringEmotionEnabledHint =>
+      'Four-dimensional emotion plus personality baseline; mood swings naturally settle back to baseline.';
+
+  @override
+  String get flagSpringEmotionEnabledDetail =>
+      'Makes mood fluctuate like a real person rather than jump. Off uses the old simple emotion model.';
+
+  @override
+  String get flagLifeShareEnabledTitle => 'Natural Activity Sharing';
+
+  @override
+  String get flagLifeShareEnabledHint =>
+      'Naturally shares a finished activity at a good moment (with frequency gating to avoid spam).';
+
+  @override
+  String get flagLifeShareEnabledDetail =>
+      'Off means the AI won\'t proactively share a just-finished activity.';
+
+  @override
+  String get flagPreoccupationEnabledTitle => 'Quiet Preoccupation';
+
+  @override
+  String get flagPreoccupationEnabledHint =>
+      'Lets the character occasionally carry a small unspoken worry, for a stronger sense of attachment.';
+
+  @override
+  String get flagPreoccupationEnabledDetail =>
+      'Reuses a memory subtype. Off disables this effect.';
+
+  @override
+  String get flagProactiveOutreachV2Title => 'Natural Proactive Outreach';
+
+  @override
+  String get flagProactiveOutreachV2Hint =>
+      'Picks a \'contact intent\' by idle time and material, ditching forced old-story continuations and line-by-line repeats.';
+
+  @override
+  String get flagProactiveOutreachV2Detail =>
+      'On: the run_tick aggregator picks contact intent by idle tier / material premise / avoiding recent intents; message generation takes the intent branch (with transition lines, must throw back a question). Off: intent not involved, old path byte-identical. Recommend observing in beta before full rollout.';
+
+  @override
+  String get flagMemoryTemporalRecallTitle => 'Temporal Memory Recall';
+
+  @override
+  String get flagMemoryTemporalRecallHint =>
+      'When you mention a specific time (yesterday/last week/a month), adds a deterministic time-window recall.';
+
+  @override
+  String get flagMemoryTemporalRecallDetail =>
+      'Ariadne module A: default off = zero behavior change; on = first hop parses the user\'s literal time range and takes the time path, merged and reranked with semantic recall.';
+
+  @override
+  String get flagMemoryRecallSecondHopTitle =>
+      'On-demand Second-hop Recall (RECALL)';
+
+  @override
+  String get flagMemoryRecallSecondHopHint =>
+      'Lets the AI emit a [RECALL] marker in the first pass, then recalls memory again before a second generation.';
+
+  @override
+  String get flagMemoryRecallSecondHopDetail =>
+      'Ariadne module B: default off = only strips marker, zero behavior; on = non-streaming path mirrors the web-search loop for one memory second-hop (streaming only strips).';
+
+  @override
+  String get flagMemoryStoryAssembleTitle => 'Chain Story Assembly';
+
+  @override
+  String get flagMemoryStoryAssembleHint =>
+      'Assembles nodes of the same memory chain into a short cause-and-effect narrative before injecting.';
+
+  @override
+  String get flagMemoryStoryAssembleDetail =>
+      'Ariadne module C: default off; currently a framework merge (once chain data is ready, on = inject small chained blocks, otherwise equivalent to the original path).';
+
+  @override
+  String get flagMemoryPeakCutoffTitle => 'Natural Memory Convergence';
+
+  @override
+  String get flagMemoryPeakCutoffHint =>
+      'Weakly related memories naturally converge when below the relevance floor, avoiding forced counts.';
+
+  @override
+  String get flagMemoryPeakCutoffDetail =>
+      'Ariadne module D: default off; threshold calibrated on a 104-case benchmark (dense-distance floor 0.50). Counts naturally drop in abstain/weak cases.';
+
+  @override
+  String get flagMemoryChainBuilderTitle => 'Memory Chain Builder';
+
+  @override
+  String get flagMemoryChainBuilderHint =>
+      'New event/insight memories auto-attach to nearby existing memory chains (zero extra LLM).';
+
+  @override
+  String get flagMemoryChainBuilderDetail =>
+      'B1: default off = no chaining (regression guard); on = async attach after write, similarity 0.82, 14-day window, chain length cap 12.';
+
+  @override
+  String get flagMemoryChainExpandTitle => 'Chain Context Expansion';
+
+  @override
+  String get flagMemoryChainExpandHint =>
+      'On a hit, fills up to 2 adjacent nodes along the chain for fuller context.';
+
+  @override
+  String get flagMemoryChainExpandDetail =>
+      'B1: default off; on = expanded nodes at 0.9 weight, under token quota and 5-round dedup, never bypassing budget.';
+
+  @override
+  String get flagRecallTop5Title => 'Main Recall Top 5';
+
+  @override
+  String get flagRecallTop5Hint =>
+      'Expands the main memory recall output from 3 to 5 items (M1-S1).';
+
+  @override
+  String get flagRecallTop5Detail =>
+      'Off = falls back to the old 3-item output.';
+
+  @override
+  String get flagRecallDiversifyTitle => 'Type Diversity Rerank';
+
+  @override
+  String get flagRecallDiversifyHint =>
+      'Reranks recall results by type before truncation, avoiding one type dominating.';
+
+  @override
+  String get flagRecallDiversifyDetail =>
+      'S1: take 2 per type in one round, then fill by original order; off = pure score truncation.';
+
+  @override
+  String get flagMemoryTieredDecayTitle => 'Tiered Memory Decay';
+
+  @override
+  String get flagMemoryTieredDecayHint =>
+      'High-confidence persists, low-confidence decays faster, archived when below threshold.';
+
+  @override
+  String get flagMemoryTieredDecayDetail =>
+      'M2-S2 beta: default off = byte-identical to current; recommend running the tiered snapshot script before enabling.';
+
+  @override
+  String get flagMemoryTieredInjectTitle => 'Tiered Memory Injection';
+
+  @override
+  String get flagMemoryTieredInjectHint =>
+      'Core memories full, the rest trimmed and tiered, to save tokens.';
+
+  @override
+  String get flagMemoryTieredInjectDetail =>
+      '#70 plan A: on = Top1 full + rest trimmed injection; off = unified old path, byte-identical.';
+
+  @override
+  String get flagMemoryTraceDebugTitle => 'Memory Recall Trace Debug';
+
+  @override
+  String get flagMemoryTraceDebugHint =>
+      'Writes recall query/each-path hits/ranking scores to trace for debugging.';
+
+  @override
+  String get flagMemoryTraceDebugDetail =>
+      '#70 plan B: only extra observability, no effect on replies; off = recall/rank/trace identical to current.';
+
+  @override
+  String get flagMemorySupersedeTitle => 'Memory Supersede Chain';
+
+  @override
+  String get flagMemorySupersedeHint =>
+      'After new facts replace old, stale memories are filtered out by status and no longer injected.';
+
+  @override
+  String get flagMemorySupersedeDetail =>
+      '#70 plan C: default off (wrong supersede hurts more than none); on = SQLite+Chroma dual-path by status.';
+
+  @override
+  String get flagMarkerRecoveryTitle => 'Marker Truncation Guard';
+
+  @override
+  String get flagMarkerRecoveryHint =>
+      'When a memory marker is cut by context, the source message immediately goes through a backup channel for re-extraction.';
+
+  @override
+  String get flagMarkerRecoveryDetail =>
+      'M2-S5: write-side dedup to avoid repeats; off = relies only on batch re-extraction.';
+
+  @override
+  String get flagReviewDailyPlusTitle => 'Proactive Review Boost';
+
+  @override
+  String get flagReviewDailyPlusHint =>
+      'Raises the daily proactive review quota from 3 to 4 items (M1-S7).';
+
+  @override
+  String get flagReviewDailyPlusDetail =>
+      'Off = falls back to 3 per day, 90-minute minimum interval unchanged.';
+
+  @override
+  String get flagCuratedKnowledgeTitle => 'Curated Knowledge Layer';
+
+  @override
+  String get flagCuratedKnowledgeHint =>
+      'Long-stable facts like personality rules / user hard profile / relationship baseline injected deterministically, not decaying with memory.';
+
+  @override
+  String get flagCuratedKnowledgeDetail =>
+      'Ariadne module F: reuses the world_facts authority layer with kind separation; default off = zero behavior; on = constraint always present + rest injected by core TopN and trigger-word hits.';
+
+  @override
+  String get flagProspectiveIntentEnabledTitle => 'Foresight Intent - Write';
+
+  @override
+  String get flagProspectiveIntentEnabledHint =>
+      'When a \'future promise / do-this-when\' cue appears in chat, extract and store it (zero extra LLM).';
+
+  @override
+  String get flagProspectiveIntentEnabledDetail =>
+      'Ariadne module G write phase: default off; on = extractor piggybacks an INTENT line and stores to prospective_intents (idempotent). Enable this phase first to collect data.';
+
+  @override
+  String get flagProspectiveIntentTriggerTitle => 'Foresight Intent - Trigger';
+
+  @override
+  String get flagProspectiveIntentTriggerHint =>
+      'Due promises are raised naturally by the AI; cue hits only remind within the round, no proactive message.';
+
+  @override
+  String get flagProspectiveIntentTriggerDetail =>
+      'Ariadne module G trigger phase: default off; on = time-based due collection into arbiter + deterministic chat-cue hit injection. Recommend enabling 2-3 days after the write phase.';
+
+  @override
+  String get flagGlobalUserFactsTitle => 'Global User Facts (USER NOW)';
+
+  @override
+  String get flagGlobalUserFactsHint =>
+      'User-level single-value facts (location, etc.) shared across characters, so low-activity ones aren\'t stuck on old info.';
+
+  @override
+  String get flagGlobalUserFactsDetail =>
+      'B1 master switch: default off; on = GPS/chat writes user_facts and injects into [USER NOW]; off = neither writes nor reads.';
+
+  @override
+  String get flagCrossCharFactSyncTitle => 'Cross-character Fact Sync';
+
+  @override
+  String get flagCrossCharFactSyncHint =>
+      'Before building context / daily, mark each character\'s old same-slot memory as stale (reuses supersede chain).';
+
+  @override
+  String get flagCrossCharFactSyncDetail =>
+      'B1: default off; on = lazy align + daily sweep, no delete, traceable; off = no alignment.';
+
+  @override
+  String get flagCrossCharFactProjectionTitle => 'Fact Change Projection';
+
+  @override
+  String get flagCrossCharFactProjectionHint =>
+      'When a user fact changes, leaves a \'cross-character sync\' projection in the memory book (optional).';
+
+  @override
+  String get flagCrossCharFactProjectionDetail =>
+      'B1: default off; on = change projection written with source=global_sync and a dedup guard.';
+
+  @override
+  String get flagWorkingStateEnabledTitle => 'Working Memory Accumulation';
+
+  @override
+  String get flagWorkingStateEnabledHint =>
+      'After each round, evaluates current cognitive state and rolling-overwrites into working memory.';
+
+  @override
+  String get flagWorkingStateEnabledDetail =>
+      'M3-a: already on for data accumulation; injection is a separate M3-b beta. Off = skip writes entirely.';
+
+  @override
+  String get flagProviderRegistryTitle => 'Provider Registry';
+
+  @override
+  String get flagProviderRegistryHint =>
+      'LLM/TTS resolve implementations via the app/providers registry (plugins can register Providers).';
+
+  @override
+  String get flagProviderRegistryDetail =>
+      'X3: on = pick implementation by configured provider field (built-in openai_compatible/dashscope default); off = direct built-in, byte-identical to old path.';
 }

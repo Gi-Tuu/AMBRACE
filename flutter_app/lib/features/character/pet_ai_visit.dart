@@ -34,7 +34,7 @@ class AiPetPanelState extends State<AiPetPanel> {
       await ApiClient().petAction((pet['id'] as num).toInt(), action);
       widget.onChanged();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${pet['name']}：${l10n.actionSucceeded(label)}')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${pet['name']}${l10n.sepColon}${l10n.actionSucceeded(label)}')));
       }
       await _refresh();
     } catch (_) {

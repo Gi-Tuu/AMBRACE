@@ -181,7 +181,7 @@ class _WorkflowScreenState extends State<WorkflowScreen> {
     final allOk = results.every((r) => r['ok'] == true);
     final summary = results
         .map((r) => l10n.chatWfStep(r['ok'] == true ? '✓' : '✗', r['message'] ?? '', r['step']))
-        .join('；');
+        .join(l10n.sepSemicolon);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(allOk ? l10n.chatWfDone(summary) : l10n.chatWfInterrupted(summary), maxLines: 3),
     ));

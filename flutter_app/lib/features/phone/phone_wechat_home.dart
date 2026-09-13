@@ -360,7 +360,7 @@ class WechatHomeScreenState extends State<WechatHomeScreen> {
         ? '${lastMsg['sender_name'] ?? ''}: ${lastMsg['content'] ?? ''}'
         : (g['members'] as List? ?? [])
             .map((m) => (m as Map)['name']?.toString() ?? '')
-            .join('、');
+            .join(l10n.sepList);
     final unread = _groupUnread[gid] ?? 0;
     // Aurora P3：ListTile → AuroraCard 行（长按删群包外层 GestureDetector）
     return Padding(

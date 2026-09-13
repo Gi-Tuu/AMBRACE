@@ -89,6 +89,21 @@ AGENT_FLAGS = {
     #   不生成候选、不占每日配额、不写 approved 日志，额度留给有互动的角色（当前=char13）；
     #   关（或 INACTIVE_CHAR_WINDOW_HOURS<=0）=零行为，一键回退。
     "proactive_inactive_char_skip": True,
+    # ── outreach 投放口径三闸（2026-09-13，Codex 交接 §二）──
+    # 三个独立开关，**全部默认 False = 逐字节现状**；置 False 即一键回退（runtime_flags 可热切，
+    # 键已在 AGENT_FLAGS 登记，重启加载新代码后即可经 flag_service 热改）。
+    # 灰度：开关开 **且** 角色命中 domain/proactivity/pacing.py 的 OUTREACH_PACING_GRAY_CHARS
+    #   （当前仅 char13）+ 比例桶（1.0）才生效；关=不查库、不拦截、零行为变化。
+    # ① outreach_hour_window_v1：低效类型（ai_care/life_regression/memory_review）仅
+    #    12:00–23:00（北京时间）投放，窗口外跳过（个性化活跃时段只扩不缩）；
+    # ② outreach_type_mix_v1：memory_review ≤6/日、ai_care ≤4/日（按已发送计数），并把
+    #    memory_review 生成提示词改成「结尾带一个具体、可回答的问题」（可回复化）；
+    # ③ outreach_session_rate_v1：同 (character_id, session_id) ≤8/日 且最小间隔 45 分钟
+    #    （与 MAX_PER_HOUR 叠加，不替换；同样按已发送计数）。
+    # 命中留痕：proactive_trigger_logs.trigger_reason 带 [gate=hour|type|session_rate]。
+    "outreach_hour_window_v1": False,
+    "outreach_type_mix_v1": False,
+    "outreach_session_rate_v1": False,
     "memory_peak_cutoff": False,  # Ariadne 模块 D（2026-09-04）：自然收敛替代硬截断（默认关；开=按 rerank 分数断档/地板收敛，弃权/弱相关场景条数自然减少；阈值经模块 E v2 标定）
     "recall_diversify": True,  # S1：按类型多样性重排（每类先取 2 条一轮再按原序补齐；关=纯 _ranked[:limit]）
     # ── Life Loop v1.1（2026-08-26；2026-08-27 用户拍板全量开启）──

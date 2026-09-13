@@ -104,7 +104,7 @@ class _ChatGroupListScreenState extends State<ChatGroupListScreen> {
                             subtitle: Text(
                               (g['members'] as List? ?? [])
                                   .map((m) => (m as Map)['name']?.toString() ?? '')
-                                  .join('、'),
+                                  .join(l10n.sepList),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle),

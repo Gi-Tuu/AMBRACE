@@ -86,7 +86,7 @@ class _GameRoomScreenState extends State<GameRoomScreen> {
         const SizedBox(height: 4),
         Text(
           winners.isNotEmpty
-              ? '🏆 ${l10n.gameWinLabel}: ${winners.join('、')}'
+              ? '🏆 ${l10n.gameWinLabel}: ${winners.join(l10n.sepList)}'
               : '🏳️ ${l10n.gameDrawLabel}',
           style: const TextStyle(fontSize: 14, color: Colors.grey),
         ),
@@ -159,7 +159,7 @@ class _GameRoomScreenState extends State<GameRoomScreen> {
     final private = (my['private'] as Map<String, dynamic>?) ?? {};
     final role = (my['role'] as String?) ?? '';
     final word = (private['word'] as String?) ?? '';
-    final wolfTeam = ((private['wolf_team'] as List?) ?? const []).map((e) => '$e').join('、');
+    final wolfTeam = ((private['wolf_team'] as List?) ?? const []).map((e) => '$e').join(l10n.sepList);
     final cards = ((private['cards'] as List?) ?? const []).map((e) => '$e').join(' ');
     final checks = (private['checks'] as Map<String, dynamic>?) ?? {};
     final isSpectator = my['is_spectator'] == true;
@@ -189,7 +189,7 @@ class _GameRoomScreenState extends State<GameRoomScreen> {
             ],
             if (checks.isNotEmpty) ...[
               const SizedBox(height: 4),
-              Text(l10n.gameSeerChecks(checks.entries.map((e) => '${e.key}号${e.value == true ? l10n.gameWolf : l10n.gameGoodPerson}').join('；')),
+              Text(l10n.gameSeerChecks(checks.entries.map((e) => '${e.key}号${e.value == true ? l10n.gameWolf : l10n.gameGoodPerson}').join(l10n.sepSemicolon)),
                   style: const TextStyle(fontSize: 13)),
             ],
             if (isSpectator)

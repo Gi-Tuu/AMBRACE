@@ -160,7 +160,7 @@ class PetHomeState extends State<PetHome> {
                         const SizedBox(width: 6),
                         Flexible(
                           child: Text(
-                            "（${pet.speciesLabel}）",
+                            l10n.wrapParen(pet.speciesLabel),
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(fontSize: 13, color: AppColors.textMuted),
                           ),

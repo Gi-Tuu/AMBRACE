@@ -5,9 +5,17 @@ import "package:flutter/services.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "api_client.dart";
 import "shizuku_service.dart";
+import "../utils/app_lang.dart";
 
 /// 工作流触发词（2026-08-14 P1：帮我执行/跑一下 XX）
-const List<String> kWorkflowTriggers = ["帮我执行", "帮我运行", "跑一下", "执行一下", "执行工作流", "工作流", "帮我跑"];
+/// 中文表 + 英文表统一匹配（不按界面语言二选一；用户打字语言可能与界面不一致）
+const List<String> kWorkflowTriggersZh = ["帮我执行", "帮我运行", "跑一下", "执行一下", "执行工作流", "工作流", "帮我跑"];
+const List<String> kWorkflowTriggersEn = [
+  "run my workflow", "run workflow", "run the workflow", "execute workflow",
+  "execute my workflow", "start my workflow", "start workflow", "trigger workflow",
+  "my workflow", "workflow",
+];
+const List<String> kWorkflowTriggers = [...kWorkflowTriggersZh, ...kWorkflowTriggersEn];
 
 /// 手机感知（AI 走出沙箱 Phase 1）：读取屏幕文字/剪贴板/相册最近列表 → 上传服务器 → 注入聊天上下文。
 /// 全部能力默认关闭，需在设置页逐项授权；数据只发自家服务器。
@@ -25,6 +33,13 @@ class PhonePerceptionService {
   static const String actionsKey = "pp_actions_enabled";
   static const String usageStatsKey = "pp_usage_stats_enabled";
   /// 模拟操作由设置页开关（pp_actions_enabled）控制；2026-08-14 恢复双通道执行（无障碍 + Shizuku）
+
+  // === 服务层本地化（无 BuildContext，沿用 appLang() + en 内联分支）===
+  /// 口径与 UI 层 l10n 通用 key 一致：sepList / sepSemicolon / sepColon / wrapParen
+  static String sepListOf(bool en) => en ? ", " : "、";
+  static String sepSemicolonOf(bool en) => en ? "; " : "；";
+  static String sepColonOf(bool en) => en ? ": " : "：";
+  static String wrapParenOf(bool en, String v) => en ? "($v)" : "（$v）";
 
   // === 开关持久化 ===
   static Future<bool> isEnabled() async =>
@@ -101,14 +116,14 @@ class PhonePerceptionService {
     }
   }
 
-  static String _fmtDuration(int ms) {
+  static String _fmtDuration(int ms, bool en) {
     final totalMin = (ms / 60000).round();
-    if (totalMin < 1) return "不足1分钟";
+    if (totalMin < 1) return en ? "<1 min" : "不足1分钟";
     final h = totalMin ~/ 60;
     final m = totalMin % 60;
-    if (h == 0) return "$m分钟";
-    if (m == 0) return "$h小时";
-    return "$h小时$m分钟";
+    if (h == 0) return en ? "$m min" : "$m分钟";
+    if (m == 0) return en ? "$h h" : "$h小时";
+    return en ? "$h h $m min" : "$h小时$m分钟";
   }
 
   /// 查询并上报使用时长快照到服务器（source=usage_stats）
@@ -116,10 +131,13 @@ class PhonePerceptionService {
     if (!Platform.isAndroid) return null;
     final items = await getUsageStats(top: top);
     if (items.isEmpty) return null;
+    final en = await appLang() == "en";
     final parts = items
-        .map((e) => "${e["app_name"]} ${_fmtDuration((e["total_ms"] as num?)?.toInt() ?? 0)}")
+        .map((e) => "${e["app_name"]} ${_fmtDuration((e["total_ms"] as num?)?.toInt() ?? 0, en)}")
         .toList();
-    final content = "最近24小时使用：${parts.join("、")}";
+    final content = en
+        ? "Last 24h usage: ${parts.join(sepListOf(en))}"
+        : "最近24小时使用：${parts.join(sepListOf(en))}";
     try {
       final form = FormData.fromMap({
         "source": "usage_stats",
@@ -152,7 +170,7 @@ class PhonePerceptionService {
     try {
       final r = await ShizukuService.getSystemSnapshot();
       final data = Map<String, dynamic>.from(r["data"] as Map? ?? {});
-      final text = ShizukuService.formatSnapshot(data);
+      final text = ShizukuService.formatSnapshot(data, isEn: await appLang() == "en");
       if (text.isEmpty) return false;
       return await uploadSnapshot(text, "shizuku_system");
     } catch (_) {
@@ -173,26 +191,30 @@ class PhonePerceptionService {
 
   /// 执行单步动作：action ∈ click/long_click/scroll；target 必须来自当前节点树
   static Future<Map<dynamic, dynamic>> performAction(String action, String target) async {
-    if (!Platform.isAndroid) return {"ok": false, "message": "非 Android"};
+    final en = await appLang() == "en";
+    if (!Platform.isAndroid) return {"ok": false, "message": en ? "Not Android" : "非 Android"};
     try {
       final r = await _channel.invokeMethod(
         "performAction",
         {"action": action, "target": target},
-      ) as Map? ?? {"ok": false, "message": "执行失败"};
+      ) as Map? ??
+          {"ok": false, "message": en ? "Execution failed" : "执行失败"};
       return r;
     } catch (_) {
-      return {"ok": false, "message": "执行通道异常"};
+      return {"ok": false, "message": en ? "Execution channel error" : "执行通道异常"};
     }
   }
 
   /// 输入文本到当前聚焦输入框（≤50 字）
   static Future<Map<dynamic, dynamic>> setTextOnFocus(String text) async {
-    if (!Platform.isAndroid) return {"ok": false, "message": "非 Android"};
+    final en = await appLang() == "en";
+    if (!Platform.isAndroid) return {"ok": false, "message": en ? "Not Android" : "非 Android"};
     try {
-      final r = await _channel.invokeMethod("setText", {"text": text}) as Map? ?? {"ok": false, "message": "输入失败"};
+      final r = await _channel.invokeMethod("setText", {"text": text}) as Map? ??
+          {"ok": false, "message": en ? "Input failed" : "输入失败"};
       return r;
     } catch (_) {
-      return {"ok": false, "message": "输入通道异常"};
+      return {"ok": false, "message": en ? "Input channel error" : "输入通道异常"};
     }
   }
 
@@ -200,19 +222,22 @@ class PhonePerceptionService {
   static Future<bool> uploadActionResult(String action, String target, bool ok, String message) async {
     try {
       final dio = ApiClient().dio;
+      final en = await appLang() == "en";
       final label = switch (action) {
-        "click" => "点击",
-        "long_click" => "长按",
-        "scroll" => "滚动",
-        "set_text" => "输入",
+        "click" => en ? "tap" : "点击",
+        "long_click" => en ? "long press" : "长按",
+        "scroll" => en ? "scroll" : "滚动",
+        "set_text" => en ? "input" : "输入",
         _ => action,
       };
-      final status = ok ? "成功" : "失败";
+      final status = ok ? (en ? "succeeded" : "成功") : (en ? "failed" : "失败");
       await dio.post(
         "/api/v1/phone/perception",
         data: FormData.fromMap({
           "source": "action_result",
-          "content": "操作[$label]“$target”→$status${ok ? "" : "（$message）"}",
+          "content": en
+              ? "Action [$label] “$target” -> $status${ok ? "" : " ($message)"}"
+              : "操作[$label]“$target”→$status${ok ? "" : "（$message）"}",
         }),
       );
       return true;
@@ -380,6 +405,7 @@ class PhonePerceptionService {
       return {"status": "no_sources"};
     }
 
+    final en = await appLang() == "en";
     final uploads = <Map<String, String>>[];
     if (screenOn) {
       final s = await getScreenStatus();
@@ -395,18 +421,24 @@ class PhonePerceptionService {
       final photos = await getRecentPhotos(limit: 8);
       if (photos.isNotEmpty) {
         final lines = photos
-            .map((p) => "${p["name"]}（${p["date"]}）")
-            .join("、");
-        uploads.add({"source": "media", "content": "最近相册：$lines"});
+            .map((p) => "${p["name"]}${wrapParenOf(en, '${p["date"]}')}")
+            .join(sepListOf(en));
+        uploads.add({"source": "media", "content": en ? "Recent photos${sepColonOf(en)}$lines" : "最近相册：$lines"});
       }
     }
     if (mediaFilesOn) {
       for (final t in ["video", "audio", "document"]) {
         final files = await getRecentMediaFiles(type: t, limit: 5);
         if (files.isNotEmpty) {
-          final label = t == "video" ? "最近视频" : (t == "audio" ? "最近音频" : "最近文档");
-          final lines = files.map((f) => "${f["name"]}（${f["date"]}）").join("、");
-          uploads.add({"source": "media_$t", "content": "$label：$lines"});
+          final label = t == "video"
+              ? (en ? "Recent videos" : "最近视频")
+              : (t == "audio"
+                  ? (en ? "Recent audio" : "最近音频")
+                  : (en ? "Recent documents" : "最近文档"));
+          final lines = files
+              .map((f) => "${f["name"]}${wrapParenOf(en, '${f["date"]}')}")
+              .join(sepListOf(en));
+          uploads.add({"source": "media_$t", "content": "$label${sepColonOf(en)}$lines"});
         }
       }
     }
@@ -416,10 +448,10 @@ class PhonePerceptionService {
         final lines = notifs.take(5).map((n) {
           final t = (n["title"] ?? "").trim();
           final x = (n["text"] ?? "").trim();
-          final body = [t, x].where((e) => e.isNotEmpty).join("：");
-          return "${n["app"] ?? "通知"}：$body";
-        }).join("；");
-        uploads.add({"source": "notification", "content": "最近通知：$lines"});
+          final body = [t, x].where((e) => e.isNotEmpty).join(sepColonOf(en));
+          return "${n["app"] ?? (en ? "notification" : "通知")}${sepColonOf(en)}$body";
+        }).join(sepSemicolonOf(en));
+        uploads.add({"source": "notification", "content": en ? "Recent notifications${sepColonOf(en)}$lines" : "最近通知：$lines"});
       }
     }
     if (uploads.isEmpty) return {"status": "empty"};
@@ -489,8 +521,8 @@ class PhonePerceptionService {
 
   /// 聊天触发词检测：用户在问/提及 AI 感知手机时，先采集上传再发送
   static bool hasPerceptionIntent(String text) {
-    final t = text.trim();
-    const patterns = [
+    final t = text.trim().toLowerCase();
+    const zhPatterns = [
       "你在干嘛", "你在干什么", "你看到", "你现在看到", "你看我", "我刚刚复制",
       "我刚复制", "我最近在看", "我在看", "我现在在", "我在做什么", "我手机",
       "我刚在", "我刚刚在", "你知道我", "看得到", "看到什么", "我屏幕",
@@ -498,7 +530,23 @@ class PhonePerceptionService {
       "谁给我发", "谁找我", "我手机通知", "通知", "谁发消息", "谁找我聊天",
       "我收到", "有人给我发", "新消息",
     ];
-    return patterns.any(t.contains);
+    const enPatterns = [
+      "what are you doing",
+      "what do you see", "what are you looking at", "what am i looking at",
+      "what can you see", "can you see my", "check my screen", "look at my screen",
+      "look at my phone", "are you looking at me",
+      "what am i watching", "what am i doing", "what am i reading",
+      "what am i scrolling", "guess what i am doing", "guess what i'm doing",
+      "my phone", "my screen",
+      "what did i copy", "i just copied", "i copied", "check my clipboard",
+      "who messaged me", "who texted me", "who sent me", "who messaged",
+      "who texted", "any new messages", "new messages", "any messages",
+      "did i get a message",
+      "any notifications", "my notifications", "notification", "any new notification",
+      "i received", "did i get", "someone messaged me", "anyone messaged me",
+      "new message",
+    ];
+    return zhPatterns.any(t.contains) || enPatterns.any(t.contains);
   }
 
   /// P1：从聊天文本匹配用户自建工作流（“帮我执行 XX / 跑一下 XX”）；未命中返回 null
@@ -507,16 +555,18 @@ class PhonePerceptionService {
       final data = await ApiClient().listWorkflows();
       final items = (data['items'] as List? ?? []).cast<Map<String, dynamic>>();
       if (items.isEmpty) return null;
-      var rest = text;
+      // 统一小写后再剥离触发词与标点（兼容 Run my workflow 等英文大小写）
+      var rest = text.toLowerCase();
       for (final t in kWorkflowTriggers) {
         rest = rest.replaceAll(t, '');
       }
-      rest = rest.replaceAll(RegExp('[“”"\'，。！？!?、\\s]'), '');
+      // 中英标点一起清：补上英文 , . ; :，否则英文句剥离不干净、工作流名匹配不上
+      rest = rest.replaceAll(RegExp('[“”"\'，。！？!?、\\s,.;:]'), '');
       if (rest.isEmpty) {
         return items.length == 1 ? items.first : null;
       }
       for (final w in items) {
-        final name = w['name'] as String? ?? '';
+        final name = (w['name'] as String? ?? '').toLowerCase();
         if (name.contains(rest) || rest.contains(name)) return w;
       }
       return null;
@@ -527,15 +577,33 @@ class PhonePerceptionService {
 
   /// Phase 3 动作意图词：用户让 AI“帮我点/按/发/输入/滑”等
   static bool hasActionIntent(String text) {
-    final t = text.trim();
-    const patterns = [
+    final t = text.trim().toLowerCase();
+    const zhPatterns = [
       "帮我点", "帮我按", "帮我发", "帮我操作", "帮我输入", "帮我回复",
       "帮我打", "帮我滑动", "帮我滑", "帮我长按", "帮我点赞", "帮我播放",
       "帮我暂停", "点一下", "帮我发送", "帮我截图", "帮我退出", "帮我返回",
       "帮我回", "帮我回复", "帮我写",
       "回他", "回她", "回ta", "回复他", "回复她", "帮我切歌", "切歌",
     ];
-    return patterns.any(t.contains);
+    const enPatterns = [
+      "tap for me", "help me tap", "click for me", "help me click",
+      "press for me", "help me press",
+      "send for me", "send it", "help me send",
+      "operate for me", "do it for me", "help me do",
+      "type for me", "input for me", "enter for me", "help me type",
+      "reply to him", "reply to her", "reply to them", "reply for me", "help me reply",
+      "swipe for me", "help me swipe", "scroll for me", "help me scroll",
+      "long press for me", "hold for me",
+      "like for me", "give a like",
+      "play for me", "play it", "help me play",
+      "pause for me", "pause it", "help me pause",
+      "take a screenshot", "screenshot for me", "help me screenshot",
+      "close it for me", "exit for me", "help me exit",
+      "go back", "go back for me", "help me go back",
+      "write for me", "help me write",
+      "skip this song", "next song", "change song", "switch song", "skip song",
+    ];
+    return zhPatterns.any(t.contains) || enPatterns.any(t.contains);
   }
 
   /// 3.4a：把“帮我回/发/发布/点赞/播放”等意图解析为动作序列模板。
@@ -634,6 +702,7 @@ class PhonePerceptionService {
     List<Map>? edges,
   }) async {
     final results = <Map<String, dynamic>>[];
+    final en = await appLang() == "en";
     final edgeList = edges ?? const [];
     if (edgeList.isEmpty) {
       for (var i = 0; i < nodes.length; i++) {
@@ -655,7 +724,10 @@ class PhonePerceptionService {
       if (total >= 30) {
         results.add({
           "step": total + 1, "action": "stop", "target": "",
-          "ok": false, "message": "达到执行上限 30 步，已自动停止",
+          "ok": false,
+          "message": en
+              ? "Reached the 30-step limit; stopped automatically"
+              : "达到执行上限 30 步，已自动停止",
         });
         break;
       }
@@ -665,7 +737,10 @@ class PhonePerceptionService {
       if (visitCount[currentId]! > 3) {
         results.add({
           "step": total + 1, "action": "stop", "target": "",
-          "ok": false, "message": "检测到重复循环，已自动停止",
+          "ok": false,
+          "message": en
+              ? "Loop detected; stopped automatically"
+              : "检测到重复循环，已自动停止",
         });
         break;
       }
@@ -722,6 +797,7 @@ class PhonePerceptionService {
   static Future<Map<String, dynamic>> _executeSingleStep(Map step, int stepNo) async {
     await Future.delayed(const Duration(milliseconds: 700));
     final action = step["action"] as String? ?? "click";
+    final en = await appLang() == "en";
     final Map<dynamic, dynamic> res;
     switch (action) {
       case "set_text":
@@ -739,7 +815,7 @@ class PhonePerceptionService {
         res = await performAction(action, step["target"] as String? ?? "");
     }
     final ok = res["ok"] as bool? ?? false;
-    final msg = res["message"] as String? ?? "执行完成";
+    final msg = res["message"] as String? ?? (en ? "Completed" : "执行完成");
     return {
       "step": stepNo,
       "action": action,
@@ -752,29 +828,30 @@ class PhonePerceptionService {
   /// Shizuku 通道步骤执行（2026-08-14）：input tap/swipe/text、am start/monkey、keyevent
   static Future<Map<dynamic, dynamic>> _runShizukuStep(Map step) async {
     final action = step["action"] as String? ?? "";
+    final en = await appLang() == "en";
     if (action == "wait") {
       await Future.delayed(Duration(milliseconds: (step["ms"] as num? ?? 800).toInt()));
-      return {"ok": true, "message": "等待完成"};
+      return {"ok": true, "message": en ? "Wait finished" : "等待完成"};
     }
-    if (!Platform.isAndroid) return {"ok": false, "message": "非 Android"};
+    if (!Platform.isAndroid) return {"ok": false, "message": en ? "Not Android" : "非 Android"};
     try {
       final st = await ShizukuService.status();
       if (st["permissionGranted"] != true) {
-        return {"ok": false, "message": "Shizuku 未授权，无法执行系统级操作"};
+        return {"ok": false, "message": en ? "Shizuku not authorized; cannot run system-level actions" : "Shizuku 未授权，无法执行系统级操作"};
       }
       switch (action) {
         case "launch_app":
           final pkg = (step["target"] as String? ?? "").trim();
-          if (pkg.isEmpty) return {"ok": false, "message": "缺少应用包名"};
+          if (pkg.isEmpty) return {"ok": false, "message": en ? "Missing app package name" : "缺少应用包名"};
           final r = await ShizukuService.runShell("monkey -p $pkg 1");
           final ok = r["ok"] == true;
-          return {"ok": ok, "message": ok ? "已启动 $pkg" : "启动失败：${r['stderr'] ?? ''}"};
+          return {"ok": ok, "message": ok ? (en ? "Launched $pkg" : "已启动 $pkg") : (en ? "Launch failed: ${r['stderr'] ?? ''}" : "启动失败：${r['stderr'] ?? ''}")};
         case "tap_xy":
           final x = (step["x"] as num? ?? 0).toInt();
           final y = (step["y"] as num? ?? 0).toInt();
           final r = await ShizukuService.runShell("input tap $x $y");
           final ok = r["ok"] == true;
-          return {"ok": ok, "message": ok ? "已点击 ($x, $y)" : "点击失败"};
+          return {"ok": ok, "message": ok ? (en ? "Tapped ($x, $y)" : "已点击 ($x, $y)") : (en ? "Tap failed" : "点击失败")};
         case "swipe":
           final x1 = (step["x1"] as num? ?? 0).toInt();
           final y1 = (step["y1"] as num? ?? 0).toInt();
@@ -783,20 +860,20 @@ class PhonePerceptionService {
           final dur = (step["ms"] as num? ?? 300).toInt();
           final r = await ShizukuService.runShell("input swipe $x1 $y1 $x2 $y2 $dur");
           final ok = r["ok"] == true;
-          return {"ok": ok, "message": ok ? "已滑动" : "滑动失败"};
+          return {"ok": ok, "message": ok ? (en ? "Swiped" : "已滑动") : (en ? "Swipe failed" : "滑动失败")};
         case "back":
           final r = await ShizukuService.runShell("input keyevent 4");
           final ok = r["ok"] == true;
-          return {"ok": ok, "message": ok ? "已返回" : "返回失败"};
+          return {"ok": ok, "message": ok ? (en ? "Navigated back" : "已返回") : (en ? "Back failed" : "返回失败")};
         case "go_home":
           final r = await ShizukuService.runShell("input keyevent 3");
           final ok = r["ok"] == true;
-          return {"ok": ok, "message": ok ? "已返回主页" : "返回主页失败"};
+          return {"ok": ok, "message": ok ? (en ? "Returned home" : "已返回主页") : (en ? "Home failed" : "返回主页失败")};
         default:
-          return {"ok": false, "message": "未知 Shizuku 步骤：$action"};
+          return {"ok": false, "message": en ? "Unknown Shizuku step: $action" : "未知 Shizuku 步骤：$action"};
       }
     } catch (e) {
-      return {"ok": false, "message": "Shizuku 执行异常：$e"};
+      return {"ok": false, "message": en ? "Shizuku error: $e" : "Shizuku 执行异常：$e"};
     }
   }
 }

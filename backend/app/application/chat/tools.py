@@ -31,21 +31,39 @@ def _extract_gen_image(text: str) -> tuple[str, str | None, str | None]:
     return _agent_actions.extract_gen_image(text)
 
 
-def _sanitize_persist_text(text: str) -> str:
-    """落库/展示文本的统一兜底清洗（P0'，2026-09-10）。
+def _sanitize_persist_full(text: str) -> tuple[str, str]:
+    """落库/展示清洗的完整出口（2026-09-13）：返回 (可见正文, 剥离出的括号推理片段)。
 
-    剥离全部动作标记（含漏写闭合标签的 [GEN_IMAGE]/[IMG_TEXT]）+ 尾部未闭合标记残片，
-    防止标记段落被当成正文落库（现场：session 11 的 11521/11522 两条消息）。
+    ①剥动作标记（含漏写闭合的 [GEN_IMAGE]/[IMG_TEXT]）+ 尾部未闭合残片（P0'）；
+    ②剥「正文开头的中文括号内心活动」（证据 A：模型绕过【推理】标记路径；判定保守，
+    见 reasoning_prompt.extract_leading_bracket_reasoning——短括号/动作小字/句中括号不动）。
+    同源一份：整条路径与分块路径都经 _sanitize_persist_text → 本函数，规则不漂移。
+    """
+    if not text:
+        return text, ""
+    try:
+        from app.agent.context.reasoning_prompt import extract_leading_bracket_reasoning
+        from app.agent.response_parser import strip_unclosed_markers
+        visible, extra_reasoning = extract_leading_bracket_reasoning(text)
+        out = strip_unclosed_markers(_agent_actions.strip_actions(visible))
+        return out.strip(), extra_reasoning
+    except Exception:
+        return text, ""
+
+
+def _sanitize_persist_text(text: str) -> str:
+    """落库/展示文本的统一兜底清洗（P0'，2026-09-10；2026-09-13 并入括号推理剥离）。
+
+    剥离全部动作标记（含漏写闭合标签的 [GEN_IMAGE]/[IMG_TEXT]）+ 尾部未闭合标记残片 +
+    开头的中文括号内心活动段，防止标记/推理段落被当成正文落库
+    （现场：session 11 的 11521/11522、09-12 晚的 11692/11684/11669）。
     无标记时返回原文（仅去尾部空白），失败静默返回原文。
+    需要同时拿到剥离出的推理片段时调 _sanitize_persist_full。
     """
     if not text:
         return text
-    try:
-        from app.agent.response_parser import strip_unclosed_markers
-        out = strip_unclosed_markers(_agent_actions.strip_actions(text))
-    except Exception:
-        return text
-    return out.strip()
+    out, _ = _sanitize_persist_full(text)
+    return out
 
 
 def _sanitize_chunk_texts(chunks: list[str]) -> list[str]:

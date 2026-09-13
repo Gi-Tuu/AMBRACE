@@ -63,8 +63,10 @@ class _FakeAsyncClient:
         self.calls.append(("GET", url, params))
         return self._make(self._get)
 
-    async def post(self, url, json=None):
-        self.calls.append(("POST", url, json))
+    async def post(self, url, json=None, params=None):
+        # 2026-09-12：fetch_qrcode 改 POST + bot_type(query) + local_token_list(body)，
+        # fake 同步支持 params（4 元组：method/url/params/json）
+        self.calls.append(("POST", url, params, json))
         return self._make(self._post)
 
     async def aclose(self):
@@ -115,17 +117,28 @@ def test_endpoint_constants_structure():
 
 # ------------------------------------------------------------------ 取码
 def test_fetch_qrcode_success(monkeypatch):
-    instances = _patch(monkeypatch, get=_Resp({"ret": 0, "qrcode": "q1", "qrcode_img_content": "https://x"}))
+    instances = _patch(monkeypatch, post=_Resp({"ret": 0, "qrcode": "q1", "qrcode_img_content": "https://x"}))
     res = _run(ilink.ILinkClient.fetch_qrcode())
     assert res["ok"] is True
     assert res["qrcode"] == "q1"
     assert res["ret"] == 0
-    # 使用默认 host + 端点，bot_type=3
-    assert instances[0].calls == [("GET", _DEFAULT_HOST + "/ilink/bot/get_bot_qrcode", {"bot_type": 3})]
+    # 2026-09-12 核准：POST + bot_type(query) + local_token_list(body，缺省空列表)
+    assert instances[0].calls == [
+        ("POST", _DEFAULT_HOST + "/ilink/bot/get_bot_qrcode", {"bot_type": 3}, {"local_token_list": []})
+    ]
+
+
+def test_fetch_qrcode_success_with_local_tokens(monkeypatch):
+    instances = _patch(monkeypatch, post=_Resp({"ret": 0, "qrcode": "q1", "qrcode_img_content": "https://x"}))
+    res = _run(ilink.ILinkClient.fetch_qrcode(local_token_list=["t1", "t2"]))
+    assert res["ok"] is True
+    assert instances[0].calls == [
+        ("POST", _DEFAULT_HOST + "/ilink/bot/get_bot_qrcode", {"bot_type": 3}, {"local_token_list": ["t1", "t2"]})
+    ]
 
 
 def test_fetch_qrcode_http_error(monkeypatch):
-    _patch(monkeypatch, get=_Resp({"ret": 0}, status_code=500))
+    _patch(monkeypatch, post=_Resp({"ret": 0}, status_code=500))
     res = _run(ilink.ILinkClient.fetch_qrcode())
     assert res["ok"] is False
     assert res["kind"] == "http"
@@ -133,8 +146,8 @@ def test_fetch_qrcode_http_error(monkeypatch):
 
 
 def test_fetch_qrcode_timeout(monkeypatch):
-    req = httpx.Request("GET", _DEFAULT_HOST + "/ilink/bot/get_bot_qrcode", params={"bot_type": 3})
-    _patch(monkeypatch, get=httpx.TimeoutException("timed out", request=req))
+    req = httpx.Request("POST", _DEFAULT_HOST + "/ilink/bot/get_bot_qrcode")
+    _patch(monkeypatch, post=httpx.TimeoutException("timed out", request=req))
     res = _run(ilink.ILinkClient.fetch_qrcode())
     assert res["ok"] is False
     assert res["kind"] == "timeout"
@@ -142,7 +155,7 @@ def test_fetch_qrcode_timeout(monkeypatch):
 
 def test_fetch_qrcode_protocol_ret_error(monkeypatch):
     # ret 非成功值 → 协议错误，并带回 ret
-    _patch(monkeypatch, get=_Resp({"ret": 500, "errmsg": "expired"}))
+    _patch(monkeypatch, post=_Resp({"ret": 500, "errmsg": "expired"}))
     res = _run(ilink.ILinkClient.fetch_qrcode())
     assert res["ok"] is False
     assert res["kind"] == "protocol"
@@ -163,6 +176,7 @@ def test_fetch_qrcode_status_success(monkeypatch):
 
 
 def test_fetch_qrcode_status_http_error(monkeypatch):
+    # 2026-09-12 口径：真实 HTTP 4xx/5xx 是真故障，映射 {ok:False, kind:"http"}（只超时/网络抖动→wait）
     _patch(monkeypatch, get=_Resp({}, status_code=503))
     res = _run(ilink.ILinkClient.fetch_qrcode_status("q1"))
     assert res["ok"] is False
@@ -212,7 +226,7 @@ def test_send_text_with_context_token(monkeypatch):
     res = _run(client.send_text("你好呀", context_token="c-1"))
     assert res["ok"] is True
     assert res["msg_id"] == "out1"
-    body = instances[0].calls[0][2]
+    body = instances[0].calls[0][3]  # post 4 元组：(method, url, params, json)
     assert body["bot_token"] == "tok"
     assert body["content"] == "你好呀"
     assert body["msg_type"] == "text"
@@ -225,7 +239,7 @@ def test_send_text_without_context_token(monkeypatch):
     client = ilink.ILinkClient("tok")
     res = _run(client.send_text("主动推送"))
     assert res["ok"] is True
-    body = instances[0].calls[0][2]
+    body = instances[0].calls[0][3]  # post 4 元组：(method, url, params, json)
     assert body["content"] == "主动推送"
     assert body["msg_type"] == "text"
     assert "context_token" not in body  # 不带=主动推送
@@ -257,7 +271,7 @@ def test_send_typing_success(monkeypatch):
     # getconfig 拿 ticket，再 sendtyping 带 ticket
     assert instances[0].calls[0][1] == _DEFAULT_HOST + "/ilink/bot/getconfig"
     assert instances[0].calls[1][1] == _DEFAULT_HOST + "/ilink/bot/sendtyping"
-    assert instances[0].calls[1][2] == {"bot_token": "tok", "ticket": "tk1"}
+    assert instances[0].calls[1][3] == {"bot_token": "tok", "ticket": "tk1"}
 
 
 def test_send_typing_missing_ticket(monkeypatch):

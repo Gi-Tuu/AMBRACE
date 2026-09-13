@@ -283,6 +283,82 @@ extension PluginsApi on ApiClient {
     });
     return Map<String, dynamic>.from(r.data as Map);
   }
+
+  // ── 扫码绑定下放手机（2026-09-12）：微信 ClawBot 取码 / 轮询 / 绑定 ──
+
+  /// 取绑定二维码。qrcode_img_content 是**待渲染成二维码的 URL 字符串**（2026-09-12 实测，
+  /// 非 base64 图片），App 用 qr_flutter 自行渲染。
+  Future<Map<String, dynamic>> fetchWechatLoginQrcode() async {
+    final r = await dio.get(
+      '/api/v1/plugins/wechat_ilink/qrcode',
+      options: Options(receiveTimeout: const Duration(seconds: 20)),
+    );
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
+  /// 轮询扫码状态。后端是 ~35s 长轮询（无变化返回 {ok,status:"wait"}），receiveTimeout 必须
+  /// 覆盖 40s 服务端超时。status 全集：wait/scaned/confirmed/expired/scaned_but_redirect/
+  /// need_verifycode/verify_code_blocked/binded_redirect；confirmed 含 bot_token/baseurl/
+  /// ilink_user_id/ilink_bot_id（原样回传 [bindWechatLogin]）。
+  Future<Map<String, dynamic>> pollWechatLoginStatus(String qrcode, {String verifyCode = ''}) async {
+    final r = await dio.get(
+      '/api/v1/plugins/wechat_ilink/qrcode/${Uri.encodeComponent(qrcode)}',
+      queryParameters: {if (verifyCode.isNotEmpty) 'verify_code': verifyCode},
+      options: Options(receiveTimeout: const Duration(seconds: 50)),
+    );
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
+  /// 绑定扫码确认的新 bot：confirmed 载荷原样回传（后端做白名单/裁决后落库 + 写网关账号文件）。
+  /// 响应含 gateway_registered / gateway_restart_pending（网关需重启一次才拉新 bot 消息）。
+  Future<Map<String, dynamic>> bindWechatLogin({
+    required int characterId,
+    required String botToken,
+    required String baseurl,
+    required String ilinkUserId,
+    required String ilinkBotId,
+  }) async {
+    final r = await dio.post('/api/v1/plugins/wechat_ilink/bind', data: {
+      'character_id': characterId,
+      'bot_token': botToken,
+      'baseurl': baseurl,
+      'ilink_user_id': ilinkUserId,
+      'ilink_bot_id': ilinkBotId,
+    });
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
+  // ── 扫码绑定下放手机（2026-09-12）：抖音二维码回传会话 ──
+
+  /// 发起抖音扫码会话：服务器弹有头 Edge 打开抖音并回传登录二维码截图（base64 PNG）。
+  Future<Map<String, dynamic>> startDouyinQrBind() async {
+    final r = await dio.post('/api/v1/plugins/douyin_mcp/bind/qr/start',
+        options: Options(receiveTimeout: const Duration(seconds: 60)));
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
+  /// 轮询抖音扫码会话状态：{state, image_png_base64?, account_name?, message?}。
+  Future<Map<String, dynamic>> pollDouyinQrBind(String sessionId) async {
+    final r = await dio.get('/api/v1/plugins/douyin_mcp/bind/qr/status',
+        queryParameters: {'session_id': sessionId},
+        options: Options(receiveTimeout: const Duration(seconds: 20)));
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
+  /// 取消抖音扫码会话（App 关弹层时调用；服务器 worker 随即关窗，不占 profile 锁）。
+  Future<void> cancelDouyinQrBind(String sessionId) async {
+    try {
+      await dio.post('/api/v1/plugins/douyin_mcp/bind/qr/cancel',
+          data: {'session_id': sessionId});
+    } catch (_) {} // 尽力而为：失败靠会话 TTL 自动过期兜底
+  }
+
+  /// 兜底：走旧 POST /bind（服务器上弹有头 Edge，电脑前直接扫码）。
+  Future<Map<String, dynamic>> bindDouyinLegacy() async {
+    final r = await dio.post('/api/v1/plugins/douyin_mcp/bind',
+        options: Options(receiveTimeout: const Duration(seconds: 320)));
+    return Map<String, dynamic>.from(r.data as Map);
+  }
 }
 
 /// #65：构造插件页面/图标鉴权请求头（纯函数，可单测）。

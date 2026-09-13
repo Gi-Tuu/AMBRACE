@@ -331,7 +331,11 @@ class MemoryArchive(Base):
 # 与 memories 正交：不进检索/衰减/查重/#70 supersede；状态机独立。
 #   kind：promise=有时间窗的承诺/约定；cue=纯线索（due_* 为空，靠 cue_terms 命中）。
 #   status：pending → matched（线索命中、本轮已提醒）/ discharged（已兑现，即焚）
-#                    / expired（due_end+7 天宽限仍未兑现，留痕）/ cancelled（用户说算了）。
+#                    / expired（due_end+7 天宽限仍未兑现，留痕）/ cancelled（用户说算了）
+#                    / stale（2026-09-13 ② 时效收窄：due_end 超自然提起窗口未兑现，留痕不删，
+#                      仍可被检索/回忆，但不进主动提起）。
+#   cue_terms_json（2026-09-13 ①）：dict 包装含元数据 side=self|user（AI 自述承诺 / 用户侧），
+#     只加标记不改语义、零迁移；旧 list 格式仍兼容。
 class ProspectiveIntent(Base):
     __tablename__ = "prospective_intents"
     # 与迁移 d4e5f6a7b8c9 完全一致的命名索引（create_all 与 upgrade 结构必须一致）；

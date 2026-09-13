@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import time
 from urllib.parse import urlparse
 
 from fastapi import Depends, Header, HTTPException
@@ -412,21 +413,71 @@ def mount(router):
     """在 sdk.router() 返回的插件路由器上挂载 http_router 端点（前缀 /api/v1/plugins/wechat_ilink，强制登录态）。
 
     端点：/qrcode、/qrcode/{qrcode}、/bind、/unbind、/rebind（任务 B）、/status。
+    【扫码绑定下放手机，2026-09-12】/qrcode 增强（local_token_list）、/qrcode/{qrcode} 增强
+    （verify_code 配对码 + IDC redirect_host 记忆，见 _QR_REDIRECT_HOSTS）、/bind 落盘网关账号。
     """
+
+    # ── IDC redirect_host 记忆（scaned_but_redirect）：qrcode → (host, ts)，10 分钟过期。
+    # 状态端点是长轮询且无服务端会话，由本映射记住「该码后续轮询要换的域名」（腾讯官方
+    # 用客户端 activeLogin.currentApiBaseUrl 记忆；我们无状态代理，改为服务端按码记忆，
+    # 客户端（App）不用感知 IDC 分流）。host 必须过白名单（同 baseurl 口径，防 SSRF）。
+    _QR_REDIRECT_HOSTS: dict[str, tuple[str, float]] = {}
+    _QR_REDIRECT_TTL_S = 600.0
+
+    def _remember_poll_host(qrcode: str, redirect_host: str) -> None:
+        host = str(redirect_host or "").strip().lower()
+        now = time.monotonic()
+        if host:
+            _QR_REDIRECT_HOSTS[qrcode] = (host, now)
+        # 顺手清理过期项（防无界增长）
+        for k in [k for k, (_, ts) in _QR_REDIRECT_HOSTS.items() if now - ts > _QR_REDIRECT_TTL_S]:
+            _QR_REDIRECT_HOSTS.pop(k, None)
+
+    def _poll_base_url(qrcode: str) -> str:
+        entry = _QR_REDIRECT_HOSTS.get(qrcode)
+        if not entry:
+            return ""
+        host, ts = entry
+        if time.monotonic() - ts > _QR_REDIRECT_TTL_S:
+            _QR_REDIRECT_HOSTS.pop(qrcode, None)
+            return ""
+        # 白名单：只允许微信官方域（P3-2 同口径），scheme 强制 https
+        if not any(host == s or host.endswith("." + s) for s in _ALLOWED_HOST_SUFFIXES):
+            _QR_REDIRECT_HOSTS.pop(qrcode, None)
+            return ""
+        return f"https://{host}"
 
     @router.get("/qrcode")
     async def create_qrcode():
-        """申请绑定二维码（转 iLink get_bot_qrcode，NEEDS_RUNTIME_VERIFICATION）。"""
-        from ilink_client import ILinkClient  # noqa: PLC0415
+        """申请绑定二维码（转 iLink get_bot_qrcode，2026-09-12 实测通过）。
 
-        return await ILinkClient.fetch_qrcode()
+        对齐腾讯官方 fetchQRCode 上报 local_token_list（本机网关已登录 bot token，最新在前
+        最多 10 个）——上游据此识别「扫码 bot 已连接过本机网关」回 binded_redirect，App 据此
+        引导走「添加已登录机器人」而非重复扫码。
+        """
+        from ilink_client import ILinkClient  # noqa: PLC0415
+        import gateway_accounts  # noqa: PLC0415
+
+        return await ILinkClient.fetch_qrcode(
+            local_token_list=gateway_accounts.read_local_bot_tokens())
 
     @router.get("/qrcode/{qrcode}")
-    async def qrcode_status(qrcode: str):
-        """轮询扫码状态；confirmed 时含 bot_token/baseurl/ilink_user_id/ilink_bot_id（真机校准）。"""
+    async def qrcode_status(qrcode: str, verify_code: str = ""):
+        """轮询扫码状态（长轮询 ~35s，无变化返回 {ok,status:"wait"}；2026-09-12 核准状态机）。
+
+        status：wait / scaned / confirmed / expired / scaned_but_redirect /
+        need_verifycode（需配对码，App 提示输入后经 verify_code 带回）/
+        verify_code_blocked / binded_redirect。confirmed 含
+        bot_token/baseurl/ilink_user_id/ilink_bot_id（App 原样回传 /bind）。
+        """
         from ilink_client import ILinkClient  # noqa: PLC0415
 
-        return await ILinkClient.fetch_qrcode_status(qrcode)
+        result = await ILinkClient.fetch_qrcode_status(
+            qrcode, verify_code=verify_code.strip(), base_url=_poll_base_url(qrcode))
+        # IDC 分流：记住该码后续轮询要换的域名（白名单校验在 _poll_base_url 读取时做）
+        if result.get("ok") and str(result.get("status") or "") == "scaned_but_redirect":
+            _remember_poll_host(qrcode, str(result.get("redirect_host") or ""))
+        return result
 
     @router.post("/bind")
     async def bind(body: dict, user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
@@ -484,7 +535,25 @@ def mount(router):
                 sdk.log("wechat_ilink /bind 补偿回滚失败 user=%s char=%s，请人工核对绑定裁决面",
                         user_id, character_id)
             raise
-        return {"ok": True, "character_id": character_id}
+
+        # 扫码绑定下放手机（2026-09-12）：把 confirmed 凭据落盘为网关账号文件（等价
+        # openclaw channels login 的写盘动作）。只加不改：已注册的 account 不覆盖；
+        # best-effort 失败不影响绑定结果（凭据已加密落拥爱库，可人工 openclaw login 兜底）。
+        # 网关启动时发现账号（无热加载），新写盘需重启网关一次才开始拉消息 → 响应带
+        # gateway_registered / gateway_restart_pending，App 据此提示；不自动杀网关进程。
+        gateway_registered = True
+        gateway_restart_pending = False
+        if confirmed.get("bot_token") and confirmed.get("ilink_bot_id"):
+            import gateway_accounts  # noqa: PLC0415
+
+            _was = gateway_accounts.account_registered(bot_account_id)
+            gateway_registered = gateway_accounts.register_account(
+                bot_account_id, confirmed["bot_token"],
+                baseurl=confirmed.get("baseurl") or "", user_id=confirmed.get("ilink_user_id") or "")
+            gateway_restart_pending = bool(gateway_registered and not _was)
+        return {"ok": True, "character_id": character_id,
+                "gateway_registered": gateway_registered,
+                "gateway_restart_pending": gateway_restart_pending}
 
 
     @router.post("/unbind")

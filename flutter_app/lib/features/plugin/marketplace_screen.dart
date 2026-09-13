@@ -423,7 +423,7 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
                           ],
                         ),
                         if (author.isNotEmpty)
-                          Text('${l10n.pluginAuthor}：$author',
+                          Text(l10n.pluginAuthorValue(author),
                               style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                       ],
                     ),
@@ -842,7 +842,7 @@ class _MarketplaceDetailScreenState extends State<MarketplaceDetailScreen> {
               Text('v${item['version'] ?? ''}',
                   style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
               const SizedBox(width: 8),
-              Text('${l10n.pluginAuthor}：${item['author'] ?? ''}',
+              Text(l10n.pluginAuthorValue(item['author'] ?? ''),
                   style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
             ],
           ),
