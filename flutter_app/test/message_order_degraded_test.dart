@@ -77,7 +77,8 @@ void main() {
 
   test('④ appendMessageResult：createdAt 用 DateTime.parse（字符串比较会乱序的场景）', () {
     final list = <ChatMessage>[
-      _msg(1, 'user', '早', '2026-09-12T09:00:00'),
+      // 用户侧显式带 Z：与服务器口径统一，避免用例依赖跑测机器时区（CI 为 UTC）
+      _msg(1, 'user', '早', '2026-09-12T09:00:00Z'),
     ];
     MessageAppender.appendMessageResult(list, {
       'ai_message': {
@@ -85,9 +86,9 @@ void main() {
         'session_id': 1,
         'sender_type': 'ai',
         'content': '早呀',
-        // 服务器 UTC 时间：fromJson 补 Z → UTC 08:00 = 本地 16:00（晚于 user 09:00）；
-        // 旧字符串比较「空格 < T」会把它排到最前（乱序现场）
-        'created_at': '2026-09-12 08:00:00',
+        // 服务器时间：fromJson 补 Z → UTC 10:00Z，晚于 user 09:00Z（任何时区下都成立）
+        // 旧字符串比较「空格 < T/Z」会把它排到最前（乱序现场）
+        'created_at': '2026-09-12 10:00:00',
       },
       'chunks': <Map<String, dynamic>>[
         {
@@ -95,7 +96,7 @@ void main() {
           'session_id': 1,
           'sender_type': 'ai',
           'content': '补',
-          'created_at': '2026-09-12 08:00:05',
+          'created_at': '2026-09-12 10:00:05',
         },
       ],
     }, 'ai_message');
