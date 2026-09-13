@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """工作记忆三桶结构化状态（M3-a 纯函数层，2026-09-01）。
 
-docs/设计_M3工作记忆_20260901.md：每 (user_id, character_id) 一条活跃 Memory 行
+docs/archive/architecture/设计_M3工作记忆_20260901.md：每 (user_id, character_id) 一条活跃 Memory 行
 （memory_type="working_state"，content=结构化 JSON），三桶结构：
 
     {"version": 1,

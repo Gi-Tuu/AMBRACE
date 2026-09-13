@@ -5,7 +5,7 @@ Revision ID: 6d39454c2517
 Revises: d3e4f5a6b7c8
 Create Date: 2026-09-03 00:00:00.000000
 
-背景（docs/db-ddl-convergence-audit-20260902.md）：
+背景（docs/archive/audits/db-ddl-convergence-audit-20260902.md）：
 - init_db.py（app/db/database.py 的兼容层）在 ``create_all`` 之后手工 ``ALTER TABLE ... ADD COLUMN``
   补齐了 87 个目标列（86 条 ``ADD COLUMN`` 语句）。这些列在版本链中只出现在基线 ``create_table``，
   对「已存在表」重放链时基线被 ``has_table`` 守卫跳过，因此**没有迁移会通过 ``add_column`` 补齐它们**。

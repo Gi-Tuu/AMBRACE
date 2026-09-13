@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """工作记忆服务（M3-a，2026-09-01）：turn 结束后异步评估/滚动覆盖 working_state 行。
 
-docs/设计_M3工作记忆_20260901.md：
+docs/archive/architecture/设计_M3工作记忆_20260901.md：
 - 每 (user_id, character_id) 一条活跃行（判定=id 降序最新，不依赖 supersede 过滤——P0 修订）；
 - 提取：LLM 输出"完整期望三桶"，服务端 diff（app/memory/working_state.py）；
 - 证据门控：evidence_ids 统一 Memory.id，只认本轮新增且真实存在的记忆；

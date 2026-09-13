@@ -68,7 +68,7 @@ AGENT_FLAGS = {
     "game_turtle_soup": True,        # 海龟汤（Phase 2）
     "game_memory_bridge": True,      # 主记忆摘要指针（关=游戏详情只存游戏库）
     "game_ai_autoplay": True,        # AI 自动回合（关=需手动触发 AI 行动，调试用）
-    # ── M1 记忆 P0（2026-08-31，docs/执行方案_记忆与生成_20260831.md S1）──
+    # ── M1 记忆 P0（2026-08-31，docs/archive/architecture/执行方案_记忆与生成_20260831.md S1）──
     "recall_top5": True,       # S1：主路召回出口 5 条（关=回退旧 3 条；rerank 后截断前做类型多样性重排）
     "memory_temporal_recall": False,  # Ariadne 模块 A（2026-09-03）：时间维度确定性检索路（默认关=零行为变化；开=用户原话解析出时间区间时补一条确定性时间路召回，与语义路合并重排）
     "memory_recall_second_hop": False,  # Ariadne 模块 B（2026-09-04）：按需二跳联想检索（默认关=只剥离 [RECALL] 标记零行为变化；开=非流式路径镜像 run_search_loop：首轮输出 [RECALL]查询词[/RECALL] → 本地检索 → 注入【补充记忆】→ 再生成 1 次；流式只剥离不中途二跳）
@@ -114,11 +114,11 @@ AGENT_FLAGS = {
     "review_daily_plus": True,            # M1-S7（2026-08-31）：主动复习日额度 3→4（关=回退 3；90min 间隔不变）
     "memory_tiered_decay": False,         # M2-S2（2026-08-31）：分层衰减——高置信持久/低置信加速/跌破阈值冷归档。默认关（灰度开关，开启前先跑 scripts/diagnostics/memory_tiering_snapshot.py 快照）；关=逐字节现状
     "marker_recovery": True,              # M2-S5（2026-08-31）：标记截断保底——A 通道标记被截断时本条源消息立即走通道 B 提取（写侧查重防重复）；关=仅批量补提
-    # ── X3 Provider 端口（2026-08-31，docs/执行方案_扩展化_20260831.md 批次 X3）──
+    # ── X3 Provider 端口（2026-08-31，docs/archive/architecture/执行方案_扩展化_20260831.md 批次 X3）──
     # provider_registry 开=LLM/TTS 经 app/providers 注册口解析实现（内置 openai_compatible/dashscope 为默认实现，
     # 插件可经 sdk.register_provider 注册并以配置 provider 字段选中）；关=直连内置实现（与旧链路逐字节一致）。
     "provider_registry": True,
-    # ── M3-a 工作记忆（2026-09-01，docs/设计_M3工作记忆_20260901.md）──
+    # ── M3-a 工作记忆（2026-09-01，docs/archive/architecture/设计_M3工作记忆_20260901.md）──
     # working_state_enabled 开=turn 结束后异步评估/滚动覆盖 working_state 行（写入链路，fail-open）；
     # 关=完全跳过（无行产生；注入为 M3-b 另行灰度）。默认关（快照脚本可回滚）。
     "working_state_enabled": True,  # 2026-09-01 用户拍板：开启数据积累（注入仍为 M3-b 未灰度）

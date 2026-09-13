@@ -64,7 +64,10 @@ void main() {
     expect(sorted.last.senderType, 'ai');
   });
 
-  test('③ 流式结束落正式块（n>1）后顺序稳定：user → 占位 → 块1 → 块2', () {
+  test('③ 流式块确认期间顺序稳定：user → 块1 → 块2 → 仍在流式的占位（占位恒在最后）', () {
+    // 2026-09-13 真机反馈②后口径：正在生成的本地占位气泡代表「最新的一条」，
+    // 无论时间戳如何都必须排在最后（此前它会被排到用户消息上方）。
+    // 真实链路里 _confirmBlock 会就地替换占位、或把尾段作为新占位追加到末尾，与本口径一致。
     final list = <ChatMessage>[
       _msg(-1, 'ai', '…', t, isLocal: true),
       _msg(101, 'ai', '第二块', '2026-09-12T15:32:42.500'),
@@ -72,7 +75,8 @@ void main() {
       _msg(100, 'user', '在忙吗', t),
     ];
     final sorted = MessageAppender.sorted(list);
-    expect(sorted.map((m) => m.content).toList(), ['在忙吗', '…', '第一块', '第二块']);
+    expect(sorted.map((m) => m.content).toList(), ['在忙吗', '第一块', '第二块', '…']);
+    expect(sorted.last.isLocal, isTrue);
   });
 
   test('④ appendMessageResult：createdAt 用 DateTime.parse（字符串比较会乱序的场景）', () {
@@ -101,6 +105,19 @@ void main() {
       ],
     }, 'ai_message');
     expect(list.map((m) => m.content).toList(), ['早', '早呀', '补']);
+  });
+
+  test('⑦ 正在生成的本地占位气泡恒排最后（时间戳异常也不许跑到用户上方）', () {
+    // 真机现场（09-13）：流式占位气泡出现在用户刚发的消息上方，打印完才恢复。
+    // 抽掉时间戳口径依赖：即便占位气泡的时间戳比用户消息早，也必须排在最后。
+    final list = <ChatMessage>[
+      _msg(-1, 'ai', '……', '2026-09-13T07:00:00Z', isLocal: true),
+      _msg(100, 'user', '在忙吗', '2026-09-13T15:32:42Z'),
+    ];
+    final sorted = MessageAppender.sorted(list);
+    expect(sorted.last.senderType, 'ai');
+    expect(sorted.last.isLocal, isTrue);
+    expect(sorted.first.content, '在忙吗');
   });
 
   testWidgets('⑤ 降级标记：AI 气泡下方灰字提示（证据 B）', (tester) async {

@@ -6,5 +6,5 @@
 - memory / relationship / emotion / games / weave / life：领域引擎
 依赖只允许向内：api → application → domain → infra → shared(models/schemas/utils)。
 约定：每域一个 __init__ 门面只导出稳定接口；跨域联动走 events 总线，不互相直 import。
-详见 docs/执行方案_全项目重构_20260831.md。
+详见 docs/archive/architecture/执行方案_全项目重构_20260831.md。
 """

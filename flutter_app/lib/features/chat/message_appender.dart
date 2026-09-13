@@ -67,6 +67,20 @@ class MessageAppender {
   }
 
   /// 排序（messages getter 复用）：时间升序 → 同时刻 user 在前 → id 升序（见 compareMessages）。
-  static List<ChatMessage> sorted(List<ChatMessage> messages) =>
-      List<ChatMessage>.from(messages)..sort(compareMessages);
+  ///
+  /// 2026-09-13 真机反馈②：正在生成的本地 AI 占位气泡（id<0）**强制排在最后**。
+  /// 它是「最新的一条」，任何时间戳口径差异都不该让它跑到用户刚发的消息上方
+  /// （真机现场：回复生成中气泡出现在用户气泡上方，打印完才恢复）。
+  static List<ChatMessage> sorted(List<ChatMessage> messages) {
+    final list = List<ChatMessage>.from(messages)..sort(compareMessages);
+    final streaming = <ChatMessage>[];
+    for (var i = list.length - 1; i >= 0; i--) {
+      final m = list[i];
+      if (m.isLocal && m.isAI && m.id < 0) {
+        streaming.insert(0, list.removeAt(i));
+      }
+    }
+    if (streaming.isNotEmpty) list.addAll(streaming);
+    return list;
+  }
 }

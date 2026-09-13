@@ -163,3 +163,19 @@ def test_recent_proactive_对话回复查询失败不影响主动日志(proac_db
     monkeypatch.setattr("app.utils.timeutil.now_naive_utc", _boom)
     out = asyncio.run(get_recent_proactive_messages(14, 2))
     assert "只有主动日志。" in out
+
+
+# ---- 2026-09-13 真机反馈：主动消息只剩「……」不应发出 ----
+
+def test_可见内容判定_纯省略号视为空():
+    from app.scheduling.message_generator import _has_visible_content
+    assert _has_visible_content(["……"]) is False
+    assert _has_visible_content(["。。。", "  "]) is False
+    assert _has_visible_content([]) is False
+
+
+def test_可见内容判定_有字有数字算有内容():
+    from app.scheduling.message_generator import _has_visible_content
+    assert _has_visible_content(["嗯，知道了"]) is True
+    assert _has_visible_content(["……", "刚到家"]) is True
+    assert _has_visible_content(["ok"]) is True

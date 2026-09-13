@@ -33,7 +33,7 @@ from browser import (
 
 # ------------------------------------------------------------------ 抓包确认常量（TODO）
 # 以下 URL/字段名来自方案 3.4 的调研推断，需人工在 DevTools Network（筛选 comment）抓包确认。
-# 抓包确认步骤见 docs/douyin-mcp-upgrade-plan.md 第六节。确认后只需调整这些常量，代码无需改动。
+# 抓包确认步骤见 docs/archive/architecture/douyin-mcp-upgrade-plan.md 第六节。确认后只需调整这些常量，代码无需改动。
 # 若确认带签名参数（x-bogus/a-bogus）：保持 page.evaluate fetch（浏览器自动带签名），不要改 Python requests。
 _COMMENT_REPLY_API_URL = "https://creator.douyin.com/aweme/v1/comment/reply/"  # TODO(抓包确认)：可能是 /aweme/v2/comment/reply/
 _COMMENT_LIST_API_URL = "https://creator.douyin.com/aweme/v1/comment/list/"  # TODO(抓包确认)：评论列表接口

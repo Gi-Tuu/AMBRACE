@@ -19,6 +19,14 @@ from app.domain.proactivity.outreach import (
 
 _logger = get_logger("scheduler.message_generator")
 
+# 2026-09-13：主动消息可见内容判定（只看数字/拉丁字母/汉字，标点与省略号不算内容）
+_VISIBLE_RE = re.compile(r"[0-9A-Za-z\u4e00-\u9fff]")
+
+
+def _has_visible_content(segments: list[str]) -> bool:
+    """主动消息是否有可读内容：纯标点/省略号/空白视为无内容（2026-09-13）。"""
+    return bool(_VISIBLE_RE.search("".join(segments or [])))
+
 
 async def _gen_with_reasoning(messages: list[dict], character_id: int | None, user_id: int | None,
                               temperature: float, max_tokens: int) -> tuple[str, str]:
@@ -731,6 +739,19 @@ async def generate_proactive_event(
                 segments = _seg_stripped
     except Exception as e:
         _logger.warning("Proactive memo save failed: %s", e)
+
+    # 2026-09-13 真机反馈：正文只剩标点/省略号（如「……」）时不要发出去——
+    # 主动搭话没有"等待中的用户"，发一条空话只会变成噪音和未读红点。
+    # （交互回复仍保留「……」+ 灰字提示，走 degraded_reply 标记。）
+    _joined_seg = "".join(segments)
+    if not _has_visible_content(segments):
+        _logger.info("Proactive event dropped: no visible content char=%d", character_id or 0)
+        try:
+            from app.memory.observability import obs_event
+            obs_event(character_id, "proactive_empty_dropped", {"chars": len(_joined_seg)})
+        except Exception:
+            pass
+        return [] if not return_reasoning else ([], last_reasoning)
 
     _logger.info("Proactive event segments for '%s': %d", character_name, len(segments))
     if return_reasoning:

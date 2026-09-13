@@ -998,7 +998,7 @@ async def _run_post_processing(
         spawn_background(_gen_image_flow(user_id, character_id, session_id, gen_prompt, img_text))
 
     # M3-a（2026-09-01）：工作记忆评估——turn 结束异步触发（flag 关/fail-open/30min 节流，
-    # docs/设计_M3工作记忆_20260901.md §3；P1-2：实现前核验 _run_agent_core 收尾存在 ✓）
+    # docs/archive/architecture/设计_M3工作记忆_20260901.md §3；P1-2：实现前核验 _run_agent_core 收尾存在 ✓）
     try:
         from app.application.working_state_service import maybe_evaluate_working_state
         spawn_background(maybe_evaluate_working_state(
@@ -1353,6 +1353,8 @@ async def continue_chat(
     full_text = (final_state.get("ai_response") or "").strip()
     if not full_text:
         full_text = "……"
+        # 2026-09-13：空正文兜底也要打降级标记，客户端才会显示灰字提示（此前只有主链路打）
+        final_state["degraded_reply"] = True
 
     # 清理可能残留的标记（记忆/自述/状态），避免出现在聊天内容里
     full_text = _re.sub(

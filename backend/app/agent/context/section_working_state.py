@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""工作记忆注入分区（M3-b，2026-09-07，docs/设计_M3工作记忆_20260901.md §4.1）。
+"""工作记忆注入分区（M3-b，2026-09-07，docs/archive/architecture/设计_M3工作记忆_20260901.md §4.1）。
 
 M3-a（``working_state_enabled``）已开并在攒数据；本分区是 M3-b 的**注入段**：把该角色
 最新一条 working_state 行（三桶：进行中/未决问题/近期关系）渲染为独立 system 块注入上下文。
