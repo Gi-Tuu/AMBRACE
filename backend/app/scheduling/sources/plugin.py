@@ -1,12 +1,16 @@
 """AMBRACE 3.10 —— 插件主动候选触发源（arbiter collect_plugin_events，等价迁入）。
 
-X6（2026-09-16）：flag ``proactive_strategy_plugins`` 开且有策略包接管类别时，本源额外做两件事
+X6（2026-09-16）：flag ``proactive_strategy_plugins`` 开且有策略包接管类别时，本源额外做三件事
 （flag 关 / 无包接管时全部跳过，与迁移前逐字节一致）：
 
 1. **下发 roster**：把内核「选人」结果经 ``ctx`` 传给 proactive_candidate hook
    （``{"strategy_categories": [...], "roster": [...]}``），策略包只做内容判定；
 2. **内核去重**：策略候选按 ``(character_id, message_type, 北京日界)`` 去重
-   —— 策略包无状态、每 tick 都投同样的候选，靠这里保证同一触发日只发一次。
+   —— 策略包无状态、每 tick 都投同样的候选，靠这里保证同一触发日只发一次；
+3. **内核执行路由**（X6-b）：策略候选按类别落回内核既定执行链——
+   ``exec_type_of`` 决定 arbiter 事件类型（如 memory_review→run_memory_review、
+   rhythm→剧情线），``prepare_candidate`` 做内核保留的频控闸与素材装配；
+   未登记类别（第三方策略包）仍走 hint 生成路径（type="plugin"，逐字节旧行为）。
 """
 from __future__ import annotations
 
@@ -56,12 +60,9 @@ class PluginSource:
                         continue
                     if not c.get("character_id") or not c.get("user_id"):
                         continue
-                    if not await self._keep(c, claims):
-                        continue
-                    items.append(TriggerItem(
-                        type="plugin", priority=1,
-                        candidate={**c, "plugin": r.get("plugin", "")},
-                    ))
+                    item = await self._build(c, claims, r.get("plugin", ""))
+                    if item is not None:
+                        items.append(item)
                 continue
             if not isinstance(cand, dict):
                 continue
@@ -69,13 +70,28 @@ class PluginSource:
             uid = cand.get("user_id")
             if not cid or not uid:
                 continue
-            if not await self._keep(cand, claims):
-                continue
-            items.append(TriggerItem(
-                type="plugin", priority=1,
-                candidate={**cand, "plugin": r.get("plugin", "")},
-            ))
+            item = await self._build(cand, claims, r.get("plugin", ""))
+            if item is not None:
+                items.append(item)
         return items
+
+    async def _build(self, cand: dict, claims: set[str], plugin: str) -> TriggerItem | None:
+        """去重 → 内核执行前处理（频控闸 + 素材装配）→ 定事件类型。None = 丢弃。"""
+        if not await self._keep(cand, claims):
+            return None
+        try:
+            from .strategy import exec_type_of, prepare_candidate
+
+            prepared = await prepare_candidate(cand)
+        except Exception as e:
+            _logger.warning("strategy candidate prepare failed: %s", e)
+            return None
+        if prepared is None:      # 内核闸未通过（如节律日上限/有未发完剧情）→ 不发
+            return None
+        return TriggerItem(
+            type=exec_type_of(prepared), priority=1,
+            candidate={**prepared, "plugin": plugin},
+        )
 
     async def _keep(self, cand: dict, claims: set[str]) -> bool:
         """策略候选的内核侧去重（非策略候选 / 无接管类别 → 恒 True，零变化）。"""

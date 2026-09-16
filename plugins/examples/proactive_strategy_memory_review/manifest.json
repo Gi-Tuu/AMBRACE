@@ -1,0 +1,25 @@
+{
+  "name": "proactive_strategy_memory_review",
+  "version": "1.0.0",
+  "description": "示例策略包（X6-b）：主动复习（到期记忆）的内容策略外放。只决定「复习哪条记忆」，日上限/抽检间隔/时态闸门/生成/发送全部仍由内核 run_memory_review 负责。",
+  "author": "AICompanion",
+  "category": "plugin",
+  "type": "http",
+  "hooks": [
+    "proactive_candidate"
+  ],
+  "permissions": [
+    "proactive:read"
+  ],
+  "context_keys": [
+    "due_reviews"
+  ],
+  "config": {
+    "strategy_category": "memory_review",
+    "max_per_char": 1,
+    "min_importance": 40
+  },
+  "icon": "🔁",
+  "hook_timeout": 10,
+  "usage": "开启前先把内核 flag proactive_strategy_plugins 置为 True（否则内核不下发 roster，本包零输出）。开启后：内核让位 memory_review 源，本包经只读素材端口取该角色的到期复习条目并选出要复习的一条；候选回内核后仍按既定口径 message_type=memory_review 走 run_memory_review（日上限/抽检间隔/时态闸门/复习成功判定一律不变），并按 (角色, message_type, 北京日界) 去重防双发。可改 max_per_char（每角色每 tick 最多几条，默认 1）、min_importance（低于该重要度的到期条目不投，默认 40，与内核一致）。"
+}

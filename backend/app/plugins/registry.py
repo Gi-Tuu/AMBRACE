@@ -101,6 +101,8 @@ def load_plugin_dir(path: Path) -> dict | None:
             # R6（2026-09-09）：中文展示名（可选；未填时由 ability_labels.plugin_label 美化 name 兜底）
             "display_name": str(manifest.get("display_name", "") or ""),
             "hook_timeout": manifest.get("hook_timeout"),  # per-plugin hook 超时（秒，可选；2026-08-16 审计修复）
+            # X6-b：策略包只读素材白名单（sdk.get_proactive_context 按此过滤 key）
+            "context_keys": list(manifest.get("context_keys") or []),
             "content": dict(manifest.get("content") or {}) if plugin_type == "content" else {},  # X2：内容包数据（已过 schema 校验）
             "path": str(path),
         }
@@ -278,6 +280,12 @@ async def sync_plugins_db() -> None:
     try:
         from app.providers.registry import unregister_providers_not_in
         unregister_providers_not_in(set())
+    except Exception:
+        pass
+    # X6-b（2026-09-17）：策略类别登记同规则清理（目录被删的插件其登记在此一并清理，防幽灵让位）
+    try:
+        from app.scheduling.sources.strategy import reset_registrations
+        reset_registrations()
     except Exception:
         pass
     _enabled.clear()

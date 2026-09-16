@@ -17,7 +17,21 @@ VALID_PERMISSIONS = (
     "write_memory", "send_message",
     # X4（2026-08-31）：只读权限组——SDK 只读端口（get_persona/search_memory/get_relationship/get_life_state）
     "persona:read", "memory:read", "life:read", "relationship:read",
+    # X6-b（2026-09-17）：主动策略包只读素材端口 sdk.get_proactive_context
+    "proactive:read",
 )
+
+# X6-b（2026-09-17）：manifest.context_keys 白名单——策略包能读哪些只读素材。
+# **必须与 app/scheduling/sources/strategy.py 的 CONTEXT_KEYS 同步**（内核侧实现以它为准）。
+VALID_CONTEXT_KEYS = (
+    "roster",           # 谁有资格（内核选人结果）
+    "character_state",  # 角色当前八维状态（需 character_id）
+    "due_reviews",      # 该角色到期/待复习记忆（需 character_id）
+    "recent_intents",   # 该角色最近的前瞻意图（需 character_id）
+    "time_ctx",         # 北京日期/小时/时段（全局）
+)
+MAX_CONTEXT_KEYS = 8          # context_keys 条数上限（防声明一大串吃上下文）
+MAX_CONTEXT_KEY_CHARS = 32    # 单个 key 长度上限
 
 # 48a：插件页面资源扩展名白名单（页面托管端点 GET /{name}/page/{filepath} 只放行这些扩展名）
 PAGE_EXT_WHITELIST = (
@@ -226,6 +240,33 @@ def validate_icon_field(icon) -> str | None:
     return None
 
 
+def validate_context_keys_field(keys) -> str | None:
+    """校验 manifest.context_keys（X6-b）：可选；数组、≤8 项、每项非空 ≤32 字符、须在白名单内。
+
+    未声明 = 策略包读不到任何素材（``sdk.get_proactive_context`` 恒返回空）；
+    未知 key 一律拒绝（白名单决定能读什么，装包即暴露问题，不留到运行时静默失效）。
+    """
+    if keys is None:
+        return None
+    if not isinstance(keys, list):
+        return "context_keys 必须是数组"
+    if len(keys) > MAX_CONTEXT_KEYS:
+        return f"context_keys 最多 {MAX_CONTEXT_KEYS} 项"
+    seen: set[str] = set()
+    for k in keys:
+        if not isinstance(k, str) or not k.strip():
+            return "context_keys 每项必须是非空字符串"
+        k = k.strip()
+        if len(k) > MAX_CONTEXT_KEY_CHARS:
+            return f"context_keys 每项最多 {MAX_CONTEXT_KEY_CHARS} 字符"
+        if k not in VALID_CONTEXT_KEYS:
+            return f"未知 context_key: {k}"
+        if k in seen:
+            return f"context_keys 重复: {k}"
+        seen.add(k)
+    return None
+
+
 def validate_manifest(data: dict) -> str | None:
     """返回错误信息；None 表示合法"""
     if not isinstance(data, dict):
@@ -280,6 +321,10 @@ def validate_manifest(data: dict) -> str | None:
             return cerr
     elif data.get("content") is not None:
         return "content 块仅 type=content 内容包可用"
+    # X6-b：context_keys 白名单校验（策略包只读素材端口）
+    ctx_err = validate_context_keys_field(data.get("context_keys"))
+    if ctx_err:
+        return ctx_err
     # 48a：page / icon 字段校验（页面插件）
     page_err = validate_page_field(data.get("page"))
     if page_err:

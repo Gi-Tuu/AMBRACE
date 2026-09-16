@@ -1,0 +1,45 @@
+{
+  "name": "proactive_strategy_rhythm",
+  "version": "1.0.0",
+  "description": "示例策略包（X6-b）：随机想起（节律）的内容策略外放。只决定「今天该不该发、发哪一类」，选人/频控/去重/关系门/免打扰/素材装配/拍板/发送全部由内核负责。",
+  "author": "AICompanion",
+  "category": "plugin",
+  "type": "http",
+  "hooks": [
+    "proactive_candidate"
+  ],
+  "permissions": [
+    "proactive:read"
+  ],
+  "context_keys": [
+    "time_ctx",
+    "character_state"
+  ],
+  "config": {
+    "strategy_category": "rhythm",
+    "probability": 0.4,
+    "windows": {
+      "清晨": 0.6,
+      "上午": 0.4,
+      "午间": 0.5,
+      "下午": 0.4,
+      "傍晚": 0.6,
+      "晚间": 0.7,
+      "深夜": 0.3
+    },
+    "behaviors": {
+      "清晨": ["greeting", "status_update"],
+      "上午": ["status_update", "moment_publish"],
+      "午间": ["status_update", "moment_comment"],
+      "下午": ["proactive_chat", "moment_comment"],
+      "傍晚": ["status_update", "moment_publish"],
+      "晚间": ["proactive_chat", "moment_comment"],
+      "深夜": ["goodnight", "proactive_chat"]
+    },
+    "tired_fatigue": 75,
+    "happy_mood": 75
+  },
+  "icon": "🌙",
+  "hook_timeout": 10,
+  "usage": "开启前先把内核 flag proactive_strategy_plugins 置为 True（否则内核不下发 roster，本包零输出）。开启后：内核让位 rhythm 源，本包按「时段 + 角色状态」决定今天该不该发起、发起哪一类行为（greeting/status_update/proactive_chat/goodnight/moment_publish/moment_comment），候选回内核后仍由内核做每日上限、pending 计时器/剧情线互斥、素材装配与剧情线生成发送。可改 probability（全局概率）、windows（时段概率覆盖）、behaviors（时段行为表）、tired_fatigue/happy_mood（状态偏置阈值）。"
+}

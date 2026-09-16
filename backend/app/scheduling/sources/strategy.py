@@ -2,25 +2,36 @@
 
 职责边界（改动前先读，别越界）
 ------------------------------
-- **内核（本模块 + special/plugin 两个源 + arbiter）**：选人（roster）、频控、去重、
+- **内核（本模块 + 各策略源 + plugin 源 + arbiter）**：选人（roster）、频控、去重、
   关系门、免打扰、拍板与发送。
 - **策略包（插件）**：只回答「今天该不该发、发哪一类、文案怎么说」，返回候选；
   **不做选人、不做频控、不去重、不判免打扰、不自己发消息**。
 
 让位机制（防双发）
 ------------------
-flag ``proactive_strategy_plugins``（默认 False）开 **且** 有已启用插件在 manifest
-``config.strategy_category`` 声明接管某类别时：
+flag ``proactive_strategy_plugins``（默认 False）开 **且** 有已启用插件接管某类别时
+（manifest ``config.strategy_category`` 声明 或 ``sdk.register_proactive_strategy`` 注册）：
 
-1. 内核同名策略源整体让位（本轮仅 ``special``）→ 同一触发日同一类别只有一个生产者；
+1. 内核同名策略源整体让位（special / rhythm / memory_review）→ 同一触发日同一类别只有一个生产者；
 2. 内核仍按 ``(character_id, message_type, 北京日界)`` 对策略候选做去重兜底
    —— 即使让位判定失效（如用户改了 config），也只会发一次；
 3. flag 关 / 无策略包接管时：hook ctx 不下发 roster → 策略包返回空 →
    内核各源行为与现状逐字节一致（零行为变化）。
+
+X6-b（2026-09-17）新增两个端口
+------------------------------
+1. **只读素材端口**（pull 式）：``build_proactive_context()`` 供 ``sdk.get_proactive_context``
+   调用——策略包按需拉取内核侧只读素材（roster / character_state / due_reviews /
+   recent_intents / time_ctx），manifest ``context_keys`` 白名单决定能读什么，逐 key
+   fail-open（单 key 失败只丢该 key），单次返回体量设上限。
+2. **类别注册口**：``register_strategy()`` 供 ``sdk.register_proactive_strategy`` 调用——
+   让位表与 message_type 白名单由「内核兜底 + 插件注册」动态构建，冲突拒绝后加载者。
 """
 from __future__ import annotations
 
-from typing import Any
+import json
+import re
+from typing import Any, Iterable
 
 from app.utils.logger import get_logger
 
@@ -32,11 +43,73 @@ STRATEGY_FLAG = "proactive_strategy_plugins"
 STRATEGY_CATEGORY_KEY = "strategy_category"
 # 策略候选声明落库口径的键（内核校验后才采信）
 STRATEGY_CANDIDATE_KEY = "strategy"
-# 本轮迁移的类别 → 允许的 message_type（白名单，防止插件伪造落库口径）
-CATEGORY_MESSAGE_TYPES: dict[str, tuple[str, ...]] = {
+
+# ── 类别注册（X6-b）────────────────────────────────────────────────────────
+# 类别名 / message_type 命名规则：小写字母开头，仅小写字母数字下划线（防伪造内核事件类型）
+_CATEGORY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+_MESSAGE_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+MAX_MESSAGE_TYPES = 8
+
+# 内核兜底类别（内置策略源的 message_type 白名单）。
+# 插件注册同名类别会被拒绝（与内置类别冲突）——内置口径由内核自己守。
+BUILTIN_CATEGORIES: dict[str, tuple[str, ...]] = {
     "special": ("birthday", "holiday", "anniversary"),
 }
 
+# 内核执行路由：策略候选落回内核哪条执行链。
+#   "candidate" = 用候选声明的 message_type 作为 arbiter 事件类型（走内核既定执行链，
+#                 如 rhythm→剧情线、memory_review→run_memory_review，频控/抽检语义不变）；
+#   未登记 = 走 hint 生成路径（type="plugin"），第三方策略包默认全部落这里。
+CATEGORY_EXEC_ROUTE: dict[str, str] = {
+    "rhythm": "candidate",
+    "memory_review": "candidate",
+}
+# 内核执行前处理（频控闸 + 素材装配）：类别 → 实现键（见 prepare_candidate）
+CATEGORY_KERNEL_PREP: dict[str, str] = {"rhythm": "rhythm"}
+
+# category -> {"source": 插件名, "message_types": tuple[str, ...]}
+_REGISTRY: dict[str, dict] = {}
+# 注册被拒原因（加载告警；只留最近若干条，供排障与测试断言）
+_REGISTRY_WARNINGS: list[str] = []
+MAX_WARNINGS = 20
+
+# ── 只读素材端口（X6-b）────────────────────────────────────────────────────
+# 白名单 key（manifest.context_keys 只能从这里选；与 plugins/manifest.VALID_CONTEXT_KEYS 同步）
+CONTEXT_KEYS: tuple[str, ...] = (
+    "roster",           # 谁有资格（内核选人结果）
+    "character_state",  # 角色当前八维状态（需 character_id）
+    "due_reviews",      # 该角色到期/待复习记忆（需 character_id）
+    "recent_intents",   # 该角色最近的前瞻意图（需 character_id）
+    "time_ctx",         # 北京日期/小时/时段（全局）
+)
+# 需要 character_id 的 key（不给 = 不下发，防跨角色取数）
+PER_CHAR_CONTEXT_KEYS: tuple[str, ...] = ("character_state", "due_reviews", "recent_intents")
+# 单 key 条数上限（防插件把上下文吃爆）
+CONTEXT_ITEM_LIMITS: dict[str, int] = {
+    "roster": 20, "character_state": 8, "due_reviews": 3, "recent_intents": 3, "time_ctx": 8,
+}
+# 文本字段截断长度
+CONTEXT_SUMMARY_CHARS = 80
+# 单次返回体量上限（字符，序列化后；超出则逐条瘦身）
+MAX_CONTEXT_CHARS = 6000
+# 角色状态八维（与 sdk.get_life_state 同口径）
+_CHAR_STATE_KEYS = (
+    "mood", "body_temp", "desire", "possessiveness",
+    "fatigue", "sensitivity", "comfort", "anger",
+)
+
+
+def _warn(msg: str) -> None:
+    """登记一条加载告警（有界）+ 打日志（供扩展页/排障）。"""
+    try:
+        _REGISTRY_WARNINGS.append(msg)
+        del _REGISTRY_WARNINGS[:-MAX_WARNINGS]
+    except Exception:
+        pass
+    _logger.warning("proactive strategy: %s", msg)
+
+
+# ---------------------------------------------------------------- flag / 让位
 
 def strategy_enabled() -> bool:
     """flag 是否开启（读 AGENT_FLAGS 内存；异常→False，即回退旧行为）。"""
@@ -48,22 +121,99 @@ def strategy_enabled() -> bool:
         return False
 
 
-def claimed_categories() -> set[str]:
-    """当前【已启用】插件声明接管的策略类别集合（进程内缓存读取，零 DB）。
+def register_strategy(category: str, message_types: Iterable[str], source: str) -> bool:
+    """内核侧登记一个策略类别（插件加载期调用；冲突/非法 → False，不覆盖已有登记。
 
-    读取插件 manifest 的默认 config 与 DB 覆盖值的合并结果（``list_plugins()``）；
-    未启用 / 未声明的不算接管。异常→空集（=内核不让位，回退旧行为）。
+    拒绝规则（fail-back：被拒 = 该包不接管，内核行为不变）：
+    1. 类别名非法（非 ``[a-z][a-z0-9_]{0,31}``）；
+    2. 与内核内置类别冲突（``BUILTIN_CATEGORIES``，口径由内核守）；
+    3. message_types 为空 / 非字符串 / 命名非法 / 超过 ``MAX_MESSAGE_TYPES``；
+    4. 该类别已被**另一个**插件注册（先到先得，后加载者被拒并留加载告警）。
+    同一插件重复登记（重载）= 覆盖，不算冲突。
+    """
+    try:
+        cat = category.strip() if isinstance(category, str) else ""
+        if not _CATEGORY_RE.fullmatch(cat):
+            _warn(f"策略类别名非法被拒: {category!r}（source={source}）")
+            return False
+        if cat in BUILTIN_CATEGORIES:
+            _warn(f"策略类别与内置类别冲突被拒: {cat}（source={source}）")
+            return False
+        mts = _normalize_message_types(message_types)
+        if not mts:
+            _warn(f"策略类别 {cat} 的 message_types 非法被拒（source={source}）")
+            return False
+        prev = _REGISTRY.get(cat)
+        if prev and prev.get("source") != source:
+            _warn(f"策略类别 {cat} 已被插件 {prev.get('source')} 注册，拒绝后加载者 {source}")
+            return False
+        _REGISTRY[cat] = {"source": source, "message_types": mts}
+        return True
+    except Exception as e:  # 隔离：注册失败只影响该包
+        _warn(f"策略类别注册异常: {category!r}（source={source}）: {e}")
+        return False
+
+
+def _normalize_message_types(message_types: Iterable[str]) -> tuple[str, ...]:
+    """清洗 message_type 白名单：保序去重、命名校验、条数上限；非法返回空元组。"""
+    if isinstance(message_types, str) or not isinstance(message_types, Iterable):
+        return ()
+    out: list[str] = []
+    for mt in message_types:
+        s = mt.strip() if isinstance(mt, str) else ""
+        if not _MESSAGE_TYPE_RE.fullmatch(s):
+            return ()
+        if s not in out:
+            out.append(s)
+        if len(out) > MAX_MESSAGE_TYPES:
+            return ()
+    return tuple(out)
+
+
+def reset_registrations() -> None:
+    """清空全部插件类别登记（sync_plugins_db 重扫前调用，防残留幽灵类别）。"""
+    _REGISTRY.clear()
+    _REGISTRY_WARNINGS.clear()
+
+
+def strategy_registry() -> dict[str, dict]:
+    """当前类别登记表快照（观测/测试用）：{category: {"source", "message_types"}}。"""
+    return {k: {"source": v.get("source"), "message_types": tuple(v.get("message_types") or ())}
+            for k, v in _REGISTRY.items()}
+
+
+def strategy_warnings() -> list[str]:
+    """最近若干条注册告警（加载告警）。"""
+    return list(_REGISTRY_WARNINGS)
+
+
+def category_message_types() -> dict[str, tuple[str, ...]]:
+    """message_type 白名单：内核兜底 + 插件注册（冲突已拒，故不重叠）。"""
+    out: dict[str, tuple[str, ...]] = dict(BUILTIN_CATEGORIES)
+    for cat, rec in _REGISTRY.items():
+        out[cat] = tuple(rec.get("message_types") or ())
+    return out
+
+
+def claimed_categories() -> set[str]:
+    """当前【已启用】插件接管的策略类别集合（进程内缓存读取，零 DB）。
+
+    来源二选一即可：manifest ``config.strategy_category`` 声明，或 ``sdk.register_proactive_strategy``
+    注册。未启用 / 插件已卸载的登记不算接管。异常→空集（=内核不让位，回退旧行为）。
     """
     out: set[str] = set()
     try:
         from app.plugins.registry import list_plugins
 
+        enabled: set[str] = set()
         for p in list_plugins():
             if not p.get("enabled"):
                 continue
+            enabled.add(str(p.get("name") or ""))
             cat = (p.get("config") or {}).get(STRATEGY_CATEGORY_KEY)
             if isinstance(cat, str) and cat.strip():
                 out.add(cat.strip())
+        out |= {cat for cat, rec in _REGISTRY.items() if rec.get("source") in enabled}
     except Exception as e:  # 隔离：扫描失败 = 不让位
         _logger.warning("strategy claims scan failed: %s", e)
         return set()
@@ -93,13 +243,46 @@ def message_type_of(candidate: dict) -> str | None:
     cat = category_of(candidate)
     if not cat:
         return None
-    allowed = CATEGORY_MESSAGE_TYPES.get(cat)
+    allowed = category_message_types().get(cat)
     if not allowed:
         return None
     mt = (candidate or {}).get("message_type")
     if isinstance(mt, str) and mt in allowed:
         return mt
     return None
+
+
+def exec_type_of(candidate: dict) -> str:
+    """策略候选在 arbiter 的事件类型（内核执行路由）。
+
+    - 登记了 ``CATEGORY_EXEC_ROUTE == "candidate"`` 的类别：用其 message_type 作事件类型
+      （走内核既定执行链，频控/抽检语义不变）；
+    - 其余（含未登记类别，如第三方策略包）：``"plugin"``（hint 生成路径）。
+    """
+    cat = category_of(candidate)
+    if not cat or CATEGORY_EXEC_ROUTE.get(cat) != "candidate":
+        return "plugin"
+    return message_type_of(candidate) or "plugin"
+
+
+async def prepare_candidate(candidate: dict) -> dict | None:
+    """内核执行前处理（频控闸 + 素材装配）：返回装配后的候选，None = 丢弃。
+
+    只有登记了 ``CATEGORY_KERNEL_PREP`` 的类别才会被处理；其余原样返回。
+    处理异常 → None（宁可不发，也不绕过内核频控）。
+    """
+    cat = category_of(candidate)
+    key = CATEGORY_KERNEL_PREP.get(cat or "")
+    if not key:
+        return candidate
+    try:
+        if key == "rhythm":
+            from .rhythm import prepare_strategy_candidate as _prep
+            return await _prep(candidate)
+    except Exception as e:
+        _logger.warning("strategy kernel prep failed(%s): %s", cat, e)
+        return None
+    return candidate
 
 
 async def sent_today(character_id: int, message_type: str) -> bool:
@@ -173,3 +356,162 @@ async def build_roster() -> list[dict[str, Any]]:
 def build_hook_ctx(categories: set[str], roster: list[dict]) -> dict:
     """拼装下发给 proactive_candidate hook 的 ctx（仅在 flag 开且有接管时调用）。"""
     return {"strategy_categories": sorted(categories), "roster": roster}
+
+
+# ---------------------------------------------------------------- 只读素材端口
+
+def _fit(payload: dict) -> dict:
+    """体量收口：序列化后超过 MAX_CONTEXT_CHARS 时，从最长的列表逐条瘦身。"""
+    try:
+        while len(json.dumps(payload, ensure_ascii=False)) > MAX_CONTEXT_CHARS:
+            big = None
+            for k, v in payload.items():
+                if isinstance(v, list) and v and (big is None or len(v) > len(payload[big])):
+                    big = k
+            if big is None:
+                break
+            payload[big] = payload[big][:-1]
+    except Exception as e:
+        _logger.warning("proactive context fit failed: %s", e)
+        return {}
+    return payload
+
+
+def _iso(dt: Any) -> str | None:
+    try:
+        return dt.isoformat() if dt is not None else None
+    except Exception:
+        return None
+
+
+def _clip(v: Any, n: int = CONTEXT_SUMMARY_CHARS) -> str:
+    return str(v or "")[:n]
+
+
+async def _ctx_roster(character_id: int | None) -> list[dict]:
+    return (await build_roster())[: CONTEXT_ITEM_LIMITS["roster"]]
+
+
+async def _ctx_character_state(character_id: int | None) -> dict:
+    """角色当前八维状态（复用既有只读封装 get_character_states，不新查库绕开）。"""
+    from app.application.character_state_service import get_character_states
+
+    st = await get_character_states(int(character_id))
+    out = {}
+    for k in _CHAR_STATE_KEYS:
+        try:
+            out[k] = int(st.get(k, 50))
+        except Exception:
+            out[k] = 50
+    return out
+
+
+async def _ctx_due_reviews(character_id: int | None) -> list[dict]:
+    """该角色到期/待复习的记忆（复用 collect_review_events 的到期与时态口径 + 活跃会话过滤）。"""
+    from sqlalchemy import select
+
+    from app.db.database import async_session_factory
+    from app.models.memory import Memory
+    from app.scheduling.memory_review import collect_review_events
+
+    events = await collect_review_events()   # 内核既定口径：到期 + 时态过滤 + 有活跃会话
+    ids = [int(e["candidate"]["memory_id"]) for e in events
+           if int(e["candidate"].get("character_id") or 0) == int(character_id)]
+    if not ids:
+        return []
+    ids = ids[: CONTEXT_ITEM_LIMITS["due_reviews"]]
+    async with async_session_factory() as db:
+        rows = (await db.execute(select(Memory).where(Memory.id.in_(ids)))).scalars().all()
+    by_id = {m.id: m for m in rows}
+    out = []
+    for mid in ids:
+        m = by_id.get(mid)
+        if m is None:
+            continue
+        out.append({
+            "id": mid,
+            "summary": _clip(getattr(m, "title", None) or m.content),
+            "memory_type": m.memory_type or "",
+            "importance": float(getattr(m, "importance", 0) or 0),
+            "due_at": _iso(getattr(m, "next_review_at", None)),
+        })
+    return out
+
+
+async def _ctx_recent_intents(character_id: int | None) -> list[dict]:
+    """该角色最近未完成的前瞻意图（pending；id + 摘要 + 状态 + 到期窗口）。"""
+    from sqlalchemy import select
+
+    from app.db.database import async_session_factory
+    from app.models.memory import ProspectiveIntent
+
+    limit = CONTEXT_ITEM_LIMITS["recent_intents"]
+    async with async_session_factory() as db:
+        rows = (
+            await db.execute(
+                select(ProspectiveIntent)
+                .where(
+                    ProspectiveIntent.character_id == int(character_id),
+                    ProspectiveIntent.status == "pending",
+                )
+                .order_by(ProspectiveIntent.id.desc())
+                .limit(limit)
+            )
+        ).scalars().all()
+    return [{
+        "id": r.id,
+        "summary": _clip(r.content),
+        "status": r.status or "",
+        "kind": r.kind or "",
+        "due_at": _iso(r.due_start) or _iso(r.due_end),
+    } for r in rows]
+
+
+async def _ctx_time_ctx(character_id: int | None) -> dict:
+    """北京日期/小时/时段语义（中性表述，不含任何具体地点/节假日硬编码）。"""
+    from app.scheduling.life_rhythm import get_time_window
+    from app.utils.timeutil import app_local_now
+
+    now = app_local_now()
+    window = get_time_window() or {}
+    return {
+        "date": now.strftime("%Y-%m-%d"),
+        "hour": int(now.hour),
+        "minute": int(now.minute),
+        "weekday": int(now.weekday()),          # 0=周一 … 6=周日
+        "is_weekend": bool(now.weekday() >= 5),
+        "window": window.get("name") or "",     # 清晨/上午/午间/下午/傍晚/晚间/深夜
+        "tendencies": [str(t) for t in (window.get("tendencies") or [])][:4],
+    }
+
+
+_CONTEXT_BUILDERS = {
+    "roster": _ctx_roster,
+    "character_state": _ctx_character_state,
+    "due_reviews": _ctx_due_reviews,
+    "recent_intents": _ctx_recent_intents,
+    "time_ctx": _ctx_time_ctx,
+}
+
+
+async def build_proactive_context(keys: Iterable[str], *, character_id: int | None = None) -> dict:
+    """只读素材端口内核侧实现（pull 式，白名单 + 限量 + 逐 key fail-open）。
+
+    - ``keys`` 已由 sdk 侧按 manifest ``context_keys`` 白名单过滤；此处再与 ``CONTEXT_KEYS`` 求交；
+    - 需要 ``character_id`` 的 key（character_state/due_reviews/recent_intents）未提供则跳过；
+    - 单 key 构造失败只丢该 key（不阻塞主链路），整体异常返回已构造部分 / 空 dict。
+    """
+    out: dict[str, Any] = {}
+    try:
+        for k in keys or ():
+            if k not in _CONTEXT_BUILDERS:
+                continue
+            if k in PER_CHAR_CONTEXT_KEYS and not character_id:
+                continue
+            try:
+                out[k] = await _CONTEXT_BUILDERS[k](character_id)
+            except Exception as e:
+                _logger.warning("proactive context %s failed char=%s: %s", k, character_id, e)
+    except Exception as e:  # 隔离：素材端口绝不阻塞主动链路
+        _logger.warning("proactive context build failed: %s", e)
+    return _fit(out)

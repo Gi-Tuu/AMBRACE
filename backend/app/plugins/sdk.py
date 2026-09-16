@@ -177,6 +177,29 @@ def register_channel(name: str, port, meta: dict | None = None) -> None:
     _reg(name, port, meta=meta, source=source)
 
 
+def register_proactive_strategy(category: str, message_types: list[str], *, source: str | None = None) -> bool:
+    """X6-b（2026-09-17）：注册主动内容策略类别（仅插件 main.py 加载期可调）。
+
+    - 登记后本包即「接管」该策略类别：内核同名策略源整体让位（防双发），
+      内核的 message_type 白名单亦由此构建（防插件伪造落库口径）；
+    - ``message_types`` 必须非空、命名 ``[a-z][a-z0-9_]{1,32}``、≤8 个；
+    - 冲突拒绝（后加载者被拒，留加载告警）：①类别名非法 ②与内核内置类别冲突（如 ``special``）
+      ③该类别已被另一个插件注册；同一插件重载=覆盖；
+    - 被拒返回 False（本包不接管，内核行为不变），插件应据此决定是否继续注册 hook。
+
+    选人 / 频控 / 去重 / 关系门 / 免打扰 / 配比 / 拍板 / 发送**全部仍在内核**：
+    策略包只回答「今天该不该发、发哪一类、文案怎么说」。契约见 docs/plugin-development.md §14。
+    """
+    name = registry.current_plugin_name()
+    if name is None:
+        raise RuntimeError("sdk.register_proactive_strategy 只能在插件 main.py 加载时调用")
+    from app.scheduling.sources.strategy import register_strategy
+    ok = register_strategy(category, message_types, source or name)
+    if not ok:
+        log("策略类别注册被拒: category=%s（内核行为不变，本包不接管）", category)
+    return ok
+
+
 def register_channel_binding_hooks(channel: str, hooks: dict) -> None:
     """X5 扩展（2026-09-06 解绑联动修复）：注册渠道级「绑定联动」回调（仅插件 main.py 加载期可调）。
 
@@ -256,6 +279,34 @@ async def get_life_state(character_id: int) -> dict:
     st = await get_character_states(int(character_id))
     keys = ("mood", "body_temp", "desire", "possessiveness", "fatigue", "sensitivity", "comfort", "anger")
     return {k: int(st.get(k, 50)) for k in keys}
+
+
+async def get_proactive_context(keys: list[str], character_id: int | None = None) -> dict:
+    """X6-b（2026-09-17）：拉取内核侧**只读**素材（需 proactive:read + manifest context_keys 白名单）。
+
+    pull 式（不用 hook 全量推送）：推送要每 tick 对所有角色下发全量素材（角色一多就是
+    N×M 查询，且大多数策略包一个 key 都不用）；pull 让策略包按自己需要付代价，
+    只在真正要判定的那一 tick 取数。
+
+    - ``keys`` 必须与 manifest ``context_keys`` 求交，**未声明的 key 一律不返回**；
+    - 可用 key：``roster``（谁有资格）/ ``character_state``（八维状态，需 character_id）/
+      ``due_reviews``（到期复习记忆，需 character_id）/ ``recent_intents``（未完成前瞻意图，
+      需 character_id）/ ``time_ctx``（北京日期/小时/时段）；
+    - 逐 key 限量（条数 + 文本截断）与整体体量上限由内核收口；单 key 失败只丢该 key；
+    - 只读取、不写库、不发网络请求；异常 fail-open 返回空 dict（绝不阻塞主动链路）。
+
+    示例（策略包内）：
+        ctx_data = await sdk.get_proactive_context(["time_ctx"])
+        per_char = await sdk.get_proactive_context(["due_reviews"], character_id=entry["character_id"])
+    """
+    require_permission("proactive:read")
+    name = registry.current_plugin_name()
+    if name is None:
+        raise RuntimeError("sdk.get_proactive_context 只能在插件上下文中调用")
+    allowed = set((registry._loaded.get(name, {}).get("info") or {}).get("context_keys") or [])
+    wanted = [k for k in (keys or []) if k in allowed]
+    from app.scheduling.sources.strategy import build_proactive_context
+    return await build_proactive_context(wanted, character_id=character_id)
 
 
 async def emit(event_type: str, payload: dict) -> None:
