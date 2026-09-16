@@ -30,6 +30,8 @@ from app.life.life_state import (
 )
 from app.life.decision import decide, StateSnapshot, Decision, ACTIONS, INTENT_ACTION_MAP
 from app.life.followup import add_followup
+from app.life import space as _space          # 批次三(2026-09-16) 空间模型
+from app.life import relations as _relations   # 批次三(2026-09-16) 亲属守卫
 from app.utils.logger import get_logger
 
 _logger = get_logger("life.loop")
@@ -129,12 +131,19 @@ class LifeLoopTask:
         # 夜间：只做恢复性结算，不决策
         if is_night:
             await apply_tick(db, char.id, "sleep")
-            if st.location != "home":
-                st.location = "home"
-                st.current_room = "bedroom"
+            # 批次三(2026-09-16)：睡眠落点随住校/假期（住校→宿舍，假期→东莞家），
+            # 不再恒写 home/bedroom（角色一边说「去食堂」一边系统里 home/bedroom 的矛盾）。
+            sleep_loc, sleep_room = _space.sleep_location()
+            if st.location != sleep_loc or st.current_room != sleep_room:
+                st.location = sleep_loc
+                st.current_room = sleep_room
                 st.location_updated_at = _now()
                 await db.commit()
             return
+
+        # 批次三 P0-5(2026-09-16)：白天按作息把「在家/在宿舍」的角色放到真实空间
+        # （宿舍→教学楼→食堂→图书馆，见 space.student_day_location）；外出中不干预。
+        await self._sync_day_space(db, st, phase)
 
         # 收集决策输入
         snap = await self._build_snapshot(db, char, st, needs, phase)
@@ -151,6 +160,23 @@ class LifeLoopTask:
 
         # 执行
         await self._execute(db, char, st, needs, decision, snap)
+
+    async def _sync_day_space(self, db, st, phase: str) -> None:
+        """批次三 P0-5(2026-09-16)：白天把本地基地内的角色同步到作息对应的空间。
+
+        只改写「本地基地」地点（home/dorm/campus/canteen/library）：外出中（world/friend/
+        outside/exit）保持不动，由决策器门控决定是否回家。住校学期按
+        ``space.student_day_location`` 得到 宿舍/教学楼/食堂/图书馆；假期回落 home/bedroom。
+        """
+        if not _space.at_base(st.location):
+            return
+        loc, room = _space.student_day_location(phase, beijing_hour())
+        if st.location == loc and st.current_room == room:
+            return
+        st.location = loc
+        st.current_room = room
+        st.location_updated_at = _now()
+        await db.commit()
 
     async def _build_snapshot(self, db, char, st, needs, phase) -> StateSnapshot:
         cs = (await db.execute(
@@ -458,10 +484,13 @@ class LifeLoopTask:
             satisfied = dict(act.needs_satisfied)
             st.energy = clamp(st.energy - act.energy_cost)
             if act.location_to:
-                st.location = act.location_to
+                # 批次三(2026-09-16)：决策器落点是字面 home，这里按住校/假期归一到真实住处
+                st.location = _space.normalize_location(act.location_to)
                 st.location_updated_at = _now()
             if act.room_to:
-                st.current_room = act.room_to
+                # 批次三(2026-09-16)：房间必须在该空间真实存在——宿舍/教学楼/食堂/图书馆没有
+                # 厨房，eat 落 canteen 而不是凭空 kitchen 炖肉；图书馆里也不会出现卧室。
+                st.current_room = _space.room_for(st.location, act.room_to, decision.action)
             # 需求结算
             for k, v in satisfied.items():
                 needs[k] = clamp(needs.get(k, 50) - v)
@@ -487,44 +516,64 @@ class LifeLoopTask:
                     intent.consumed_at = _now()
 
             # 记忆沉淀（仅值得记的动作）——记忆节流：每角色每天 life_loop ≤5 条
+            # 批次三 P0-1/P0-5 止血(2026-09-16)：
+            # - study 产出「真实主题 + 收获」的具体总结（任务1-A），不再用「学了一会儿新东西」
+            #   这种恒定模板句；
+            # - 其余动作只有在拿到真实内容（非模板句、无凭空亲属）时才落记忆，否则
+            #   memory_id=null；output_json.summary 用 null 而非空串占位；
+            # - 记忆写入统一 skip_dedup（life_writer），不同活动不会复用同一 memory_id。
             memory_id = None
             memory_failed = False
+            summary_out = None
             if act.memory:
                 summary = await self._build_summary(db, char, decision, act)
-                if await self._memory_allowed_today(db, char.id):
-                    # L5（2026-09-09）：**写记忆前先提交本轮状态回流，释放 SQLite 唯一写锁**。
-                    # 原顺序：st.energy/needs 改了未提交 → _memory_allowed_today 查询触发
-                    # autoflush → 外部 session 拿到写锁并持有到本函数末尾 → save_memory 另开连接
-                    # 只能在 busy_timeout(10s) 后报 locked，而锁的持有者正是等待方自己，
-                    # 单靠 0.3/0.6s 重试永远等不到（09-09 每 30min 一批 5 条 failed 的真正根因）。
-                    await _retry_on_lock(lambda: db.commit(), f"pre-memory flush char={char.id}")
-                    from app.life.life_writer import save_life_memory_with_retry
-                    mem = await save_life_memory_with_retry(
-                        user_id=char.user_id, character_id=char.id,
-                        memory_type="event", content=summary,
-                        importance=act.memory_importance,
-                        sub_type="life_event", source="life",
-                        speaker_type="character", speaker_id=char.id,
-                        epistemic_status="FACT",
-                    )
-                    memory_id = mem.id if mem else None
-                    memory_failed = mem is None
-
-                    # 回聊缓冲
-                    if act.followup_window and act.visible:
-                        await add_followup(
-                            db, char.id, char.user_id, summary,
-                            decision.action, memory_id, act.followup_window,
+                tpl = self._template_summary(char, decision, act)
+                known = await _relations.resolve_known_people(db, char.id)
+                has_relation = _relations.mentions_unspecified_relation(summary, known)
+                meaningful = self.is_meaningful_summary(summary, tpl, has_relation)
+                if meaningful:
+                    summary_out = summary
+                    if await self._memory_allowed_today(db, char.id):
+                        # L5（2026-09-09）：**写记忆前先提交本轮状态回流，释放 SQLite 唯一写锁**。
+                        # 原顺序：st.energy/needs 改了未提交 → _memory_allowed_today 查询触发
+                        # autoflush → 外部 session 拿到写锁并持有到本函数末尾 → save_memory 另开连接
+                        # 只能在 busy_timeout(10s) 后报 locked，而锁的持有者正是等待方自己，
+                        # 单靠 0.3/0.6s 重试永远等不到（09-09 每 30min 一批 5 条 failed 的真正根因）。
+                        await _retry_on_lock(lambda: db.commit(), f"pre-memory flush char={char.id}")
+                        from app.life.life_writer import save_life_memory_with_retry
+                        mem = await save_life_memory_with_retry(
+                            user_id=char.user_id, character_id=char.id,
+                            memory_type="event", content=summary,
+                            importance=act.memory_importance,
+                            sub_type="life_event", source="life",
+                            speaker_type="character", speaker_id=char.id,
+                            epistemic_status="FACT",
                         )
+                        memory_id = mem.id if mem else None
+                        memory_failed = mem is None
+
+                        # 回聊缓冲
+                        if act.followup_window and act.visible:
+                            await add_followup(
+                                db, char.id, char.user_id, summary,
+                                decision.action, memory_id, act.followup_window,
+                            )
+                    # 配额已满：summary_out 已记录真实摘要，仅不写记忆
+                else:
+                    if summary and summary.strip():
+                        _logger.info(
+                            "life loop skip meaningless memory char=%d act=%s template=%s relation=%s",
+                            char.id, decision.action, summary == tpl, has_relation)
 
             # 出门后自动归来（2 个 tick 后）
             if act.location_to in ("world", "friend", "outside"):
-                # 归来由下个 tick 的决策器处理：energy 低或时间晚时回 home
+                # 归来由下个 tick 的决策器处理：energy 低或时间晚时回 home/dorm
                 pass
 
             log.status = "completed"
             log.output_json = json.dumps({
-                "summary": "", "satisfied": satisfied,
+                # 批次三(2026-09-16)：summary 不再用空串占位——有真实内容给内容，否则显式 null
+                "summary": summary_out, "satisfied": satisfied,
                 "location": st.location, "room": st.current_room,
                 "memory_failed": memory_failed,
             }, ensure_ascii=False)
@@ -533,7 +582,7 @@ class LifeLoopTask:
             await _retry_on_lock(lambda: db.commit(), f"complete char={char.id}")
 
             # 事件广播（复用现有事件总线）
-            self._publish_event(char, decision, act, memory_id)
+            self._publish_event(char, decision, act, memory_id, summary_out)
 
         except Exception as e:
             _logger.warning("life loop execute failed: char=%d act=%s: %s",
@@ -595,8 +644,36 @@ class LifeLoopTask:
         )).scalar() or 0
         return int(count) < _DAILY_MEMORY_LIMIT
 
+    @staticmethod
+    def is_meaningful_summary(summary: str | None, template: str | None = None,
+                              has_unspecified_relation: bool = False) -> bool:
+        """批次三 P0-1(2026-09-16)：这条总结是否值得沉淀为记忆。
+
+        只有同时满足才算真实内容：
+        - 非空；
+        - 不等于恒定模板句（如 study 的「学了一会儿新东西，感觉有收获。」——它曾被
+          save_memory 去重合并反复挂到同一条 memory_id）；
+        - 不含凭空生成的亲属内容（P0-5）。
+
+        否则 ``memory_id=null``、``output_json.summary=null``，宁可不沉淀也不写垃圾记忆。
+        """
+        if not summary or not summary.strip():
+            return False
+        if template is not None and summary == template:
+            return False
+        return not has_unspecified_relation
+
     async def _build_summary(self, db, char, decision, act) -> str:
-        """生成记忆内容。life_loop_llm=False 时用模板；True 时用 LLM（每角色每日 ≤2 次）。"""
+        """生成记忆内容。life_loop_llm=False 时用模板；True 时用 LLM（每角色每日 ≤2 次）。
+
+        批次三 P0-1(2026-09-16)：study 不再返回恒定模板句——优先用「真实主题 + 一句收获」
+        的具体总结（任务1-A），让 study 真正沉淀且不会因高度相似被合并到同一条 memory_id。
+        批次三 P0-5：LLM 文案注入当前空间约束（宿舍没厨房就不写做饭/等你回家）。
+        """
+        if decision.action == "study":
+            specific = await self._study_summary(db, char)
+            if specific:
+                return specific
         from app.agent.loop import AGENT_FLAGS
         if not AGENT_FLAGS.get("life_loop_llm", False):
             return self._template_summary(char, decision, act)
@@ -605,11 +682,13 @@ class LifeLoopTask:
             return self._template_summary(char, decision, act)
         try:
             from app.agent.llm_client import chat_completion
+            location = await self._current_location(db, char.id)
             text = await chat_completion(
                 messages=[
                     {"role": "system", "content": (
                         f"你是{char.name}，用第一人称写一句生活动态（20-40字，"
                         "自然真诚，不要提AI，不要编造具体人名/地点/数据）。"
+                        + _space.space_guard(location)
                     )},
                     {"role": "user", "content": f"你刚{act.label}了。"},
                 ],
@@ -620,6 +699,69 @@ class LifeLoopTask:
             return (text or "").strip()[:200]
         except Exception:
             return self._template_summary(char, decision, act)
+
+    @staticmethod
+    async def _current_location(db, character_id: int) -> str:
+        """角色当前空间（读不到时按住校/假期回落真实住处）；供内容/话术约束使用。"""
+        try:
+            st = (await db.execute(
+                select(LifeState).where(LifeState.character_id == character_id)
+            )).scalar_one_or_none()
+            if st is not None and (st.location or "").strip():
+                return st.location
+        except Exception:
+            pass
+        return _space.home_base()[0]
+
+    async def _study_summary(self, db, char) -> str:
+        """study 具体总结：真实学习主题（目标/兴趣/日程）+ 一句收获（句式轮换，非恒定模板）。
+
+        取不到真实主题时返回 ""（调用方回落到模板 → 模板被判无意义 → 不写记忆），
+        宁可不沉淀也不写恒定模板句（任务1-B 兜底）。
+        """
+        topic = await self._study_topic(db, char.id)
+        if not topic:
+            return ""
+        takeaway = random.choice((
+            "弄明白了一个之前卡住的点，顺手记了几笔。",
+            "把之前模糊的地方理清了，有点收获。",
+            "对其中一处细节想通了，记下来备查。",
+            "整理了一遍要点，比昨天清楚一些。",
+        ))
+        return f"{char.name}学了「{topic}」，{takeaway}"
+
+    async def _study_topic(self, db, character_id: int) -> str:
+        """学习主题（真实数据，不编造）：进行中目标标题 → 最高兴趣 → 到点日程标题。"""
+        try:
+            goals = (await db.execute(
+                select(LifeGoal).where(
+                    LifeGoal.character_id == character_id, LifeGoal.status == "active"
+                ).order_by(LifeGoal.priority.desc(), LifeGoal.id.desc()).limit(1)
+            )).scalars().all()
+            if goals and (goals[0].title or "").strip():
+                return goals[0].title.strip()[:40]
+            from app.models.life import LifeInterest
+            interests = (await db.execute(
+                select(LifeInterest).where(
+                    LifeInterest.character_id == character_id, LifeInterest.level >= 20
+                ).order_by(LifeInterest.level.desc()).limit(1)
+            )).scalars().all()
+            if interests and (interests[0].name or "").strip():
+                return f"{interests[0].name.strip()[:20]}相关的内容"
+            now = _now()
+            scheds = (await db.execute(
+                select(LifeSchedule).where(
+                    LifeSchedule.character_id == character_id,
+                    LifeSchedule.status.in_(["scheduled", "active"]),
+                    LifeSchedule.title.like("%学%"),
+                    LifeSchedule.end_time >= now,
+                ).order_by(LifeSchedule.start_time.desc()).limit(1)
+            )).scalars().all()
+            if scheds and (scheds[0].title or "").strip():
+                return scheds[0].title.strip()[:40]
+        except Exception as e:
+            _logger.warning("life loop study topic failed char=%d: %s", character_id, e)
+        return ""
 
     def _template_summary(self, char, decision, act) -> str:
         """模板记忆文案（零 LLM；LLM 关闭或超限时兜底）。"""
@@ -645,7 +787,7 @@ class LifeLoopTask:
         k = self._llm_copy_key(character_id)
         _llm_copy_counts[k] = _llm_copy_counts.get(k, 0) + 1
 
-    def _publish_event(self, char, decision, act, memory_id):
+    def _publish_event(self, char, decision, act, memory_id, summary: str | None = None):
         try:
             from app.events import publish
             from app.events.schema import make_event
@@ -658,7 +800,7 @@ class LifeLoopTask:
                 data={
                     "user_id": char.user_id, "character_id": char.id,
                     "activity_type": decision.action, "memory_id": memory_id,
-                    "visible": act.visible, "summary": "",
+                    "visible": act.visible, "summary": summary or "",
                 },
             )
             publish("life.activity_completed", evt)

@@ -1414,8 +1414,12 @@ async def _execute(item: dict) -> bool:
             return False
         if len(content) < 2:
             return False
+        # X6（2026-09-16）：策略候选声明的落库口径（内核白名单校验过）→ 供内核去重/统计；
+        #   普通插件候选无该键 → message_type 仍为 "plugin"（逐字节旧行为）。
         await engine2.send_to_session(
-            session_id, char_id, candidate["user_id"], content, message_type="plugin",
+            session_id, char_id, candidate["user_id"], content,
+            message_type=candidate.get("message_type") or "plugin",
+            holiday_name=candidate.get("holiday_name"),
         )
         _logger.info("Plugin proactive sent char=%d plugin=%s", char_id, candidate.get("plugin", ""))
         return True
@@ -1643,6 +1647,10 @@ async def _plugin_proactive_runtime(char_id: int, candidate: dict, session_id: i
     # F2（2026-08-18）：渠道/插件 hint 短回复同样复用轻量上下文 Flag（默认关=全量 build_context 零变化）
     from app.agent import loop as _loop
     light_context = bool(_loop.AGENT_FLAGS.get("agent_social_light_context", False))
+    # X6（2026-09-16）：策略候选（节日/生日/纪念日等）用中性提示语，不当作「外部平台动态」；
+    #   普通插件候选不带 strategy 键 → 文案逐字节不变。
+    _is_strategy = bool(candidate.get("strategy"))
+    _lead = "【今日提醒】" if _is_strategy else "【外部动态】你在外部平台看到一条新动态："
     res = await _runtime.run_social_reply(
         character_id=char_id,
         user_id=candidate.get("user_id"),
@@ -1651,7 +1659,7 @@ async def _plugin_proactive_runtime(char_id: int, candidate: dict, session_id: i
         extra_system=[{
             "role": "system",
             "content": (
-                f"【外部动态】你在外部平台看到一条新动态：{hint}。"
+                f"{_lead}{hint}。"
                 "请像朋友一样自然地用 1-2 句话提起这件事（不要提平台名、不要提'AI'、不要加话题标签、"
                 "不要输出任何动作标记）。"
             ),
@@ -1666,7 +1674,10 @@ async def _plugin_proactive_runtime(char_id: int, candidate: dict, session_id: i
         _logger.warning("Plugin proactive runtime failed char=%d plugin=%s", char_id, candidate.get("plugin", ""))
         return False
     await engine2.send_to_session(
-        session_id, char_id, candidate["user_id"], content, message_type="plugin",
+        session_id, char_id, candidate["user_id"], content,
+        # X6（2026-09-16）：策略候选按声明口径落库（供内核去重/统计）；普通候选仍是 plugin。
+        message_type=candidate.get("message_type") or "plugin",
+        holiday_name=candidate.get("holiday_name"),
     )
     _logger.info("Plugin proactive sent (runtime) char=%d plugin=%s", char_id, candidate.get("plugin", ""))
     return True

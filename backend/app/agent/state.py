@@ -20,6 +20,7 @@ class AgentState(TypedDict):
     intent: str                # 用户意图: "chat" / "query" / "command"
     source_id: int | None       # 当前消息ID（用于记忆关联）
     retrieved_memories: list[dict]   # 检索到的相关记忆
+    utility_feedback_done: bool      # 召回后效用反馈已调度标记（小增量 2026-09-16；flag 关时永不写入）
     context_messages: list[dict]     # 最近聊天上下文
     character_info: dict       # 角色信息（名称/人格/风格）
     temperature: float         # LLM 温度（context_builder 按角色/认知策略设定，generate_response 读取）

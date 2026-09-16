@@ -13,7 +13,7 @@ from app.scheduling.memory_review import (
 )
 
 _MEM = "用户近期将去长沙，期间可能因不便携带电脑而断联"
-_STATE = "\nTA 当前已知现状（以此为准，旧记忆不得与此矛盾）：位置：湛江市；状态：在读学生。\n"
+_STATE = "\nTA 当前已知现状（以此为准，旧记忆不得与此矛盾）：位置：示例市；状态：在读学生。\n"
 
 
 def test_recall_block_怀旧带过去时标签():
@@ -42,7 +42,7 @@ def test_current_state_block_带分区与禁拼装声明():
     blk = build_review_current_state_block(_STATE)
     assert blk.startswith("【当前现状")
     assert "禁止参与本块拼装" in blk
-    assert "湛江市" in blk
+    assert "示例市" in blk
     # status_anchor 自身带的换行被 strip，不留空行
     assert "\n\n\n" not in blk
 
@@ -58,5 +58,5 @@ def test_回忆块与现状块物理分区_内容互不进入():
     recall = build_review_recall_block("你回忆起一段**往事**", _MEM)
     state = build_review_current_state_block(_STATE)
     assert _MEM not in state          # 复习命中不参与 current_state 拼装
-    assert "湛江市" not in recall     # 现状内容也不倒灌进回忆块
+    assert "示例市" not in recall     # 现状内容也不倒灌进回忆块
     assert recall != state

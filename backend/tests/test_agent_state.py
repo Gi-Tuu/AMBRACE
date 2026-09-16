@@ -37,7 +37,11 @@ async def _ctrl_perceive(state):
 
 
 async def _ctrl_retrieve(state):
-    state["retrieved_memories"] = []
+    """模拟真实 retrieve_memories：默认召回空列表（与旧行为一致）。
+
+    `_CTRL["memories"]` 预置时按预置值召回（供召回后效用反馈的接线测试用）。
+    """
+    state["retrieved_memories"] = list(_CTRL.get("memories") or [])
     return state
 
 
@@ -272,3 +276,60 @@ def test_agentstate_annotations_cover_chat_service_initial_state():
         f"chat_service initial_state 的 key 有 {len(missing)} 个未在 AgentState.__annotations__ 中声明："
         f"{sorted(missing)}（LangGraph 1.x 会静默丢弃，导致功能失效）"
     )
+
+
+# ── §九 5：召回后效用反馈接线（小增量 2026-09-16；flag 默认关=零行为变化）──
+
+def test_utility_feedback_wired_when_flag_on(monkeypatch):
+    """flag 开：回复完成后按「本轮召回 + 最终回复」调度一次效用反馈（fire-and-forget、不阻塞回复）。"""
+    from app.memory import utility_feedback as uf
+
+    captured = {}
+
+    async def _fake_completion(**kw):
+        return "你上次说喜欢喝美式咖啡，今天还喝吗"
+
+    monkeypatch.setattr(nodes, "chat_completion", _fake_completion)
+    monkeypatch.setattr(nodes, "_has_after_generate_hook", lambda: False)
+    monkeypatch.setattr("app.agent.llm_client.get_user_llm_config", _get_cfg)
+    monkeypatch.setattr(uf, "is_enabled", lambda: True)
+    monkeypatch.setattr(uf, "schedule_utility_feedback", lambda **kw: captured.update(kw))
+    monkeypatch.setitem(
+        _CTRL, "memories", [{"id": 5, "content": "用户喜欢喝美式咖啡"}]
+    )
+
+    final = asyncio.run(_build_test_agent().ainvoke(_base_initial_state()))
+
+    assert captured.get("character_id") == 2
+    assert captured.get("user_id") == 1
+    assert captured.get("recalled") == [{"id": 5, "content": "用户喜欢喝美式咖啡"}]
+    assert captured.get("ai_response") == "你上次说喜欢喝美式咖啡，今天还喝吗"
+    assert captured.get("round_id") == 1
+    assert final.get("utility_feedback_done") is True
+
+
+def test_utility_feedback_zero_state_change_when_flag_off(monkeypatch):
+    """flag 默认关：不调度、也不新增 state 键（逐字节零行为变化）。"""
+    from app.agent.loop import AGENT_FLAGS
+    from app.memory import utility_feedback as uf
+
+    assert AGENT_FLAGS.get("memory_utility_feedback") is False   # 预注册默认关
+    monkeypatch.setitem(AGENT_FLAGS, "memory_utility_feedback", False)
+
+    called = []
+
+    async def _fake_completion(**kw):
+        return "你上次说喜欢喝美式咖啡"
+
+    monkeypatch.setattr(nodes, "chat_completion", _fake_completion)
+    monkeypatch.setattr(nodes, "_has_after_generate_hook", lambda: False)
+    monkeypatch.setattr("app.agent.llm_client.get_user_llm_config", _get_cfg)
+    monkeypatch.setattr(uf, "schedule_utility_feedback", lambda **kw: called.append(kw))
+    monkeypatch.setitem(
+        _CTRL, "memories", [{"id": 5, "content": "用户喜欢喝美式咖啡"}]
+    )
+
+    final = asyncio.run(_build_test_agent().ainvoke(_base_initial_state()))
+
+    assert called == []
+    assert not final.get("utility_feedback_done")   # flag 关：state 无新增键（None/缺失）

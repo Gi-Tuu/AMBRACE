@@ -175,6 +175,8 @@ def strip_stream_display(text: str) -> str:
     """剥离展示层不需要的正文标记（推理/记忆/自述/状态/策略 + 工具动作标记）。
 
     仅作用于「已闭合」标记（未闭合部分由 _find_hold_index 提前 hold），返回干净展示文本。
+    P1-4（2026-09-16）：最后再过一道生图残片清洗（无闭合/变体 [GEN_IMAGE]/[IMG_TEXT]
+    及其同行 prompt），保证生图 prompt 绝不进可见正文。
     """
     if not text:
         return text
@@ -185,6 +187,8 @@ def strip_stream_display(text: str) -> str:
     try:
         from app.agent.actions import strip_actions
         out = strip_actions(out)
+        from app.agent.actions import strip_image_residue
+        out = strip_image_residue(out)
     except Exception:
         pass
     return out

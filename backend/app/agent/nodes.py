@@ -416,6 +416,28 @@ async def generate_response(state: AgentState) -> AgentState:
             except Exception as e:
                 _logger.warning("\u4fdd\u5b58\u8bb0\u5fc6\u5931\u8d25: %s", e)
 
+    # 召回后效用反馈（小增量 2026-09-16，flag `memory_utility_feedback` 默认关=零行为变化）：
+    # 用本轮召回注入的记忆 + 最终回复做确定性效用判定（positive/negative），异步微调 importance。
+    # 仅用户聊天轮（有 user_message + 已召回记忆 + 尚未跑过）触发；fire-and-forget、失败静默。
+    # 先判 flag 再写 state：flag 关时不新增/不修改任何 state 键（逐字节零行为变化）。
+    try:
+        from app.memory.utility_feedback import is_enabled, schedule_utility_feedback
+        if (is_enabled()
+                and not state.get("utility_feedback_done")
+                and state.get("user_message")
+                and state.get("retrieved_memories")
+                and state.get("ai_response")):
+            schedule_utility_feedback(
+                character_id=state.get("character_id"),
+                user_id=state.get("user_id"),
+                recalled=state.get("retrieved_memories") or [],
+                ai_response=state.get("ai_response") or "",
+                round_id=state.get("session_id"),
+            )
+            state["utility_feedback_done"] = True
+    except Exception:
+        pass
+
     return state
 
 

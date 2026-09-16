@@ -14,6 +14,9 @@
   2. `save_life_memory_with_retry`——记忆写入包装：失败返回 None 不抛出，活动照常 completed；
   3. `close_orphan_activities`——悬空 started（>30min 无 completed_at）置 timeout 收尾。
 
+批次三 P0-1（2026-09-16）追加：`save_life_memory_with_retry` 对 life 活动记忆统一
+`skip_dedup=True`——禁止不同活动复用同一 memory_id（离散事件各留一条自己的记录）。
+
 锁的正面修法在调用方（写记忆前先提交外部 session 释放锁，见 life_loop._execute），
 本模块只提供统一的重试/收尾能力，不重复叠加第二套重试。
 """
@@ -76,9 +79,18 @@ async def retry_on_lock(fn, what: str, delays: tuple[float, ...] = LOCK_RETRY_DE
 async def save_life_memory_with_retry(**save_kwargs):
     """life 活动写记忆：独立短事务 + locked 退避；失败返回 None（不抛出、不拖垮活动）。
 
-    flag 关闭时**原样直调** `save_memory`（异常照旧上抛，行为与加固前逐字节一致）。
+    批次三 P0-1 追加(2026-09-16)：**禁止不同活动复用同一 memory_id**。
+    ``save_memory`` 默认会在向量/字符/24h 同主题命中时把新内容合并进旧记忆并返回旧行，
+    life 活动（尤其 study 的恒定模板句）因此被反复挂到同一条 ``memory_id``（生产库最多 15 次）。
+    这里对 life 活动记忆统一使用 ``skip_dedup=True``（离散事件语义：每次活动各留一条自己的记录），
+    从根上保证每条活动拿到的是新行；同一活动内部的重试仍复用同一次 save 调用，不受影响。
+
+    flag 关闭时**原样直调** `save_memory`（异常照旧上抛，与加固前的失败语义一致）；
+    唯一有意保留的差异是上面的 ``skip_dedup=True``（批次三 P0-1，与 flag 无关）。
     """
     from app.memory.service import save_memory
+    # 已是离散事件：跳过去重合并且挂旧记忆（调用方可显式覆盖为 False 以恢复旧行为）
+    save_kwargs.setdefault("skip_dedup", True)
     if not flag_on():
         return await save_memory(**save_kwargs)
     try:

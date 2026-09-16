@@ -50,7 +50,7 @@ def _mk_world_facts_db(tmp_path):
         (42, 3, 13, "curated", "用户是学校工作人员", "active", "fact", "2026-09-12 06:03:40"),
         (64, 3, 13, "curated", "用户是设计师，从事设计工作", "active", "fact", "2026-09-14 14:01:36"),
         # 批次一现状锚点（char13）
-        (200, 3, 13, "curated", "用户当前常驻：湛江市·广东海洋大学湖光校区·学生宿舍", "active", "fact", "2026-09-16 05:00:00"),
+        (200, 3, 13, "curated", "用户当前常驻：示例市·示例大学·学生宿舍", "active", "fact", "2026-09-16 05:00:00"),
         # 关系基线重复：char13 三条、char6 两条
         (13, 3, 13, "curated", "我是用户的老公，关系稳定", "active", "relationship_baseline", "2026-09-10 05:24:53"),
         (94, 3, 13, "curated", "我是用户的老公，称呼sam", "active", "relationship_baseline", "2026-09-16 02:54:58"),
@@ -144,12 +144,15 @@ def test_gov_residual_valid_to(gov):
     assert near.tzinfo is None
 
 
-def test_gov_anchor_payload(gov):
+def test_gov_anchor_payload(gov, monkeypatch):
+    # 脚本默认值是中性占位（公开仓脱敏），测试注入示例口径后断言结构
+    monkeypatch.setattr(gov, "ANCHOR_FACT", "用户当前常驻：示例市·示例大学·学生宿舍；身份：在读学生（大二）")
+    monkeypatch.setattr(gov, "ANCHOR_USER_FACT", "常驻示例市·示例大学·学生宿舍（大二在读学生）")
     p = gov.anchor_payload()
     assert p["kind"] == "fact" and p["predicate"] == "curated"
-    assert "湛江市" in p["object_value"] and "广东海洋大学湖光校区" in p["object_value"]
+    assert "示例市" in p["object_value"] and "示例大学" in p["object_value"]
     assert "宿舍" in p["object_value"] and "大二" in p["object_value"]
-    assert p["user_fact_slot"] == "location" and "湛江市" in p["user_fact_value"]
+    assert p["user_fact_slot"] == "location" and "示例市" in p["user_fact_value"]
     assert p["is_authoritative"] is True
     # 触发键覆盖「现状/在哪/位置/学校/宿舍」等现状问法（复用 get_curated_facts._trigger_hit 置顶）
     assert {"现状", "在哪", "位置", "学校", "宿舍"} <= set(p["links"])

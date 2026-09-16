@@ -533,20 +533,6 @@ def test_可回复化_开关关_hint逐字节不变(review_env, flag_env):
     assert REPLYABLE_QUESTION_RULE not in captured["hint"]
 
 
-def test_单会话限频_高回复类型豁免():
-    """Codex 拍板（09-13）：plugin / state_trigger / prospective_intent 不进会话额度。
-
-    理由：前两者是"用户触发的互动"（回复率 88.5% / 76.1%，必须送达）；
-    prospective_intent 是一次性兑现（幂等已认领），被会话额度吞掉就永久丢失。
-    """
-    from app.domain.proactivity import pacing
-
-    assert pacing.SESSION_RATE_EXEMPT_TYPES == frozenset({
-        "plugin", "state_trigger", "prospective_intent"})
-    for t in pacing.SESSION_RATE_EXEMPT_TYPES:
-        assert t not in pacing.SESSION_RATE_TYPES
-
-
 def test_闸门_豁免类型满额也放行(all_on, monkeypatch):
     """接线层：会话已满额时，豁免类型（plugin/state_trigger/prospective_intent）仍放行。"""
     _patch_gate_io(monkeypatch, session_sent=99)

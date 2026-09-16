@@ -214,6 +214,19 @@ async def delete_world_fact(
     return await _svc.delete_world_fact(db, character_id, fact_id, user_id, lang)
 
 
+@router.get("/{character_id}/world-facts/{fact_id}/history")
+async def get_world_fact_history(
+    character_id: int,
+    fact_id: int,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """事实「修正历史」只读（小增量 2026-09-16）：返回该事实槽的当前值 + 历史版本链（含 superseded 旧版）。
+    零新表、零写、无回滚；鉴权/用户隔离照旧。"""
+    return await _svc.get_world_fact_history(db, character_id, fact_id, user_id, lang)
+
+
 @router.get("/{character_id}/state-history")
 async def get_state_history(
     character_id: int,

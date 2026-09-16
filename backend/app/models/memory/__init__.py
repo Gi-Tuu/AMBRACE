@@ -331,14 +331,16 @@ class MemoryArchive(Base):
 #
 # - 仅当 flag memory_write_receipt 开时由 save_memory 写分支 / supersede_memory 异步写入，失败静默；
 # - character_id / memory_id 均可空：部分场景无具体记忆 id（如全局记忆 / 拒绝落库）；
-# - action ∈ create/update/merge/supersede/stale/reject/downgrade（与迁移/回执模块一致）。
+# - action ∈ create/update/merge/supersede/stale/reject/downgrade（与迁移/回执模块一致）；
+#   2026-09-16 追加 utility_feedback=召回后效用反馈回执（flag memory_utility_feedback，
+#   仅借表存证、不新增列/约束；列宽 String(20) 内）。
 class MemoryWriteReceipt(Base):
     __tablename__ = "memory_write_receipts"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     character_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 可空：全局记忆等场景
     memory_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 可空：无具体记忆 id 的拒绝/降级
-    action: Mapped[str] = mapped_column(String(20), nullable=False)  # create/update/merge/supersede/stale/reject/downgrade
+    action: Mapped[str] = mapped_column(String(20), nullable=False)  # create/update/merge/supersede/stale/reject/downgrade/utility_feedback
     reason: Mapped[str | None] = mapped_column(String(255), nullable=True)  # 人类可读原因
     detail_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # 结构化补充（命中 id / 相似度 / 来源等）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)

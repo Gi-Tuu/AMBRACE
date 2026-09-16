@@ -259,6 +259,20 @@ AGENT_FLAGS = {
     # group_memory_compact 开=每日 23:00 后把 >7 天的群记忆按群合并成 1 条 system 摘要、
     #   旧行软删（is_archived=1，留痕不物理删）；关=完全跳过、逐字节现状。
     "group_memory_compact": False,
+    # ── 批次四（2026-09-16）：主动消息分块口径护栏（允许分块，禁止残句/空块；生成前校验现实约束）──
+    # 开＝分块时过滤残句/空块并做现实校验；关＝逐字节现状。
+    "proactive_segment_guard": False,
+    # ── 小增量（2026-09-16）：召回后效用反馈（Slowave 式），用于调 salience/衰减 ──
+    # 开＝召回后异步写轻量反馈并据此微调；关＝零行为变化。
+    "memory_utility_feedback": False,
+    # ── X6 主动内容策略包外放（2026-09-16，默认关=逐字节旧行为）──
+    # proactive_strategy_plugins 开＝「内容策略」交给策略包：内核向 proactive_candidate hook
+    #   下发 roster（选人结果），被接管的策略源（本轮仅 special）整体让位；关=内核各策略源
+    #   照旧产出、hook ctx 不带 roster（策略包返回空），与现状逐字节一致。
+    #   防双发两道闸：①让位（同一类别只留一个生产者）②内核按 (角色, message_type, 北京日界)
+    #   去重（策略候选落库口径由内核校验，见 scheduling/sources/strategy.py）。
+    #   回退：置回 False 即可（runtime_flags 热切，无需重启）。
+    "proactive_strategy_plugins": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

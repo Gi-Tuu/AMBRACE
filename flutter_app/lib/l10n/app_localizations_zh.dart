@@ -1741,6 +1741,30 @@ class AppLocalizationsZh extends AppLocalizations {
   String get worldFactContentHint => '如：我住在杭州 / 我养了一只叫团团的猫';
 
   @override
+  String get worldFactHistory => '历史版本';
+
+  @override
+  String get worldFactHistoryCurrentLabel => '当前';
+
+  @override
+  String get worldFactHistorySuperseded => '已取代';
+
+  @override
+  String get worldFactHistoryAuthor => '作者';
+
+  @override
+  String get worldFactHistoryAsserted => '生效';
+
+  @override
+  String get worldFactHistorySupersededAt => '取代于';
+
+  @override
+  String get worldFactHistoryEmpty => '这个设定还没有被修改过';
+
+  @override
+  String get worldFactHistoryLoadFailed => '历史加载失败';
+
+  @override
   String get cancel => '取消';
 
   @override

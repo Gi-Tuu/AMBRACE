@@ -3309,6 +3309,54 @@ abstract class AppLocalizations {
   /// **'如：我住在杭州 / 我养了一只叫团团的猫'**
   String get worldFactContentHint;
 
+  /// No description provided for @worldFactHistory.
+  ///
+  /// In zh, this message translates to:
+  /// **'历史版本'**
+  String get worldFactHistory;
+
+  /// No description provided for @worldFactHistoryCurrentLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'当前'**
+  String get worldFactHistoryCurrentLabel;
+
+  /// No description provided for @worldFactHistorySuperseded.
+  ///
+  /// In zh, this message translates to:
+  /// **'已取代'**
+  String get worldFactHistorySuperseded;
+
+  /// No description provided for @worldFactHistoryAuthor.
+  ///
+  /// In zh, this message translates to:
+  /// **'作者'**
+  String get worldFactHistoryAuthor;
+
+  /// No description provided for @worldFactHistoryAsserted.
+  ///
+  /// In zh, this message translates to:
+  /// **'生效'**
+  String get worldFactHistoryAsserted;
+
+  /// No description provided for @worldFactHistorySupersededAt.
+  ///
+  /// In zh, this message translates to:
+  /// **'取代于'**
+  String get worldFactHistorySupersededAt;
+
+  /// No description provided for @worldFactHistoryEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'这个设定还没有被修改过'**
+  String get worldFactHistoryEmpty;
+
+  /// No description provided for @worldFactHistoryLoadFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'历史加载失败'**
+  String get worldFactHistoryLoadFailed;
+
   /// No description provided for @cancel.
   ///
   /// In zh, this message translates to:

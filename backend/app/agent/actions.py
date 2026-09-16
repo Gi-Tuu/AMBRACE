@@ -61,16 +61,20 @@ _RECALL_RE = re.compile(r"[\[【]\s*RECALL\s*[\]】]\s*(.*?)(?:[\[【]\s*/RECALL
 #   GEN_IMAGE：下一个标记（[ / 【）→ 段尾（空行）→ 文末（画面描述可能换行，故不以行尾为界）；
 #   IMG_TEXT：下一个标记（[ / 【）→ 行尾 → 文末（提示词要求配文为 12 字内单行）。
 # 双分支写在同一正则内，finditer/sub 单次调用即可兼容两种形态；正文提取统一走 _marker_body。
+# P1-4（2026-09-16）：容忍全/半角方括号、标记内空白与大小写漂移（【GEN_IMAGE】/[ GEN_IMAGE ]），
+# 避免变体标记漏剥把整段生图 prompt 留在可见正文里。
 _GEN_IMAGE_RE = re.compile(
-    r"\[GEN_IMAGE\](?:(.*?)\[/GEN_IMAGE\]|(.*?)(?=[\[【]|\r?\n[ \t]*\r?\n|\Z))",
-    re.S,
+    r"[\[【]\s*GEN_IMAGE\s*[\]】](?:(.*?)[\[【]\s*/\s*GEN_IMAGE\s*[\]】]|(.*?)(?=[\[【]|\r?\n[ \t]*\r?\n|\Z))",
+    re.S | re.IGNORECASE,
 )
 _IMG_TEXT_RE = re.compile(
-    r"\[IMG_TEXT\](?:(.*?)\[/IMG_TEXT\]|(.*?)(?=[\[【]|\r?\n|\Z))",
-    re.S,
+    r"[\[【]\s*IMG_TEXT\s*[\]】](?:(.*?)[\[【]\s*/\s*IMG_TEXT\s*[\]】]|(.*?)(?=[\[【]|\r?\n|\Z))",
+    re.S | re.IGNORECASE,
 )
 # 孤立闭合标签（开标签缺失/重复闭合的漏网产物）：任何情况下都不该出现在展示文本里
-_IMG_ORPHAN_CLOSE_RE = re.compile(r"\[/(?:GEN_IMAGE|IMG_TEXT)\]")
+_IMG_ORPHAN_CLOSE_RE = re.compile(r"[\[【]\s*/\s*(?:GEN_IMAGE|IMG_TEXT)\s*[\]】]", re.IGNORECASE)
+# 裸开标签（无正文/变体）：只用于「剥标记本身」的兜底，不吞后续正文
+_IMG_OPEN_ONLY_RE = re.compile(r"[\[【]\s*/?\s*(?:GEN_IMAGE|IMG_TEXT)\s*[\]】]", re.IGNORECASE)
 # 兼容英文/中文括号、闭合标签可省略（无闭合时取到行尾）；2026-08-14 修复 AI 输出【CAL_NOTE】无闭合导致不落库
 _CAL_NOTE_RE = re.compile(r"[\[【]\s*CAL_NOTE\s*[\]】]\s*(.*?)(?:[\[【]\s*/CAL_NOTE\s*[\]】]|$)", re.M)
 _MEMO_RE = re.compile(r"[\[【]\s*MEMO\s*[\]】]\s*(.*?)(?:[\[【]\s*/MEMO\s*[\]】]|$)", re.M)
@@ -124,32 +128,112 @@ def _marker_body(m: "re.Match[str]") -> str:
     return ""
 
 
+# ── P1-4（2026-09-16）：生图 prompt 只进 meta，绝不进可见 content ──────────────
+# 配文（[IMG_TEXT]）提示词要求 12 字内；超过此长度与落库截断（io.py 60 字）同口径，
+# 一律判为「不是配文」（防整段生图 prompt 被当配文上屏）。
+_CAPTION_MAX_LEN = 60
+
+
+def _norm_for_cmp(s: str) -> str:
+    return re.sub(r"\s+", "", s or "")
+
+
+def is_bare_image_prompt(visible: str, prompt: str | None) -> bool:
+    """可见文本是否「就是生图 prompt 本身」（无独立文案/正文）。
+
+    归一化去空白后完全相同、互为子串（≥8 字）、或 ≥70% 字符来自 prompt → 判为裸 prompt。
+    prompt 缺失/为空 → 一律 False（不误伤正文）。
+    """
+    a = _norm_for_cmp(visible)
+    b = _norm_for_cmp(prompt)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if len(a) >= 8 and (a in b or b in a):
+        return True
+    try:
+        from difflib import SequenceMatcher
+        matched = sum(bl.size for bl in SequenceMatcher(None, a, b).get_matching_blocks())
+        return matched / len(a) > 0.7
+    except Exception:
+        return False
+
+
+def sanitize_image_prompt(prompt: str | None) -> str:
+    """画面描述清洗：去掉混入的标记/闭合标签残片，保留描述正文（只进 meta，不上屏）。"""
+    t = (prompt or "").strip()
+    if not t:
+        return ""
+    t = _IMG_ORPHAN_CLOSE_RE.sub("", t)
+    t = _IMG_OPEN_ONLY_RE.sub("", t)
+    return t.strip()
+
+
+def sanitize_image_caption(caption: str | None, prompt: str | None = None) -> str | None:
+    """图片消息配文（[IMG_TEXT]）清洗：剥净标记残片；空配文或裸 prompt → None（前端不渲染配文）。
+
+    绝不允许把生图 prompt 当作图片消息 content 落库（P1-4 核心约束）。
+    配文提示词要求 12 字内，故超长（> _CAPTION_MAX_LEN，与落库截断同口径）一律判非配文。
+    """
+    if not caption:
+        return None
+    t = _IMG_ORPHAN_CLOSE_RE.sub("", caption)
+    t = _IMG_OPEN_ONLY_RE.sub("", t).strip()
+    if not t or len(t) > _CAPTION_MAX_LEN or is_bare_image_prompt(t, prompt):
+        return None
+    return t
+
+
+def strip_image_residue(text: str) -> str:
+    """兜底剥离无闭合/变体生图标记及其同行 prompt（展示/落库路径共用，P1-4）。
+
+    与 extract_gen_image 的差异：不解析、只剥标记与「标记后同行描述」，用于任何
+    可能把生图 prompt 暴露到可见文本的路径做最后一道清洗。
+    """
+    if not text:
+        return text
+    return re.sub(
+        r"[\[【]\s*/?\s*(?:GEN_IMAGE|IMG_TEXT)\s*[\]】][^\n]*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
 def extract_gen_image(text: str) -> tuple[str, str | None, str | None]:
     """提取生图标记，返回 (清理后的文本, 画面描述或None, 图片消息文案或None)。
 
     P0'（2026-09-10）：闭合标签可选——漏写 [/GEN_IMAGE]/[/IMG_TEXT] 时仍提取并剥离，
     返回值语义与截断规则（配文 60 字上限在落库侧）保持不变；孤立闭合标签一并清除。
+    P1-4（2026-09-16）：先取画面描述，再对照它清洗配文（同一段文字不可能既是配文又是 prompt）；
+    正文若剥完只剩 prompt 本身（无独立正文）则回退为空串（不允许裸 prompt 进可见 content）。
     """
     if not text:
         return text, None, None
+    # 先解析画面描述：配文的「裸 prompt」判定必须拿它对照（否则 [IMG_TEXT] 里抄一遍
+    # 同样的 prompt 会被当成人设文案落库 → 整段 prompt 上屏，P1-4 现场形态）
+    m = _GEN_IMAGE_RE.search(text)
+    prompt = sanitize_image_prompt(_marker_body(m).strip()) if m else ""
     img_text = None
     t = _IMG_TEXT_RE.search(text)
     if t:
-        img_text = _marker_body(t).strip() or None
+        img_text = sanitize_image_caption(_marker_body(t).strip() or None, prompt or None)
         text = _IMG_TEXT_RE.sub("", text)
     elif "[IMG_TEXT]" in text:
         # 格式漂移告警（不改变行为）：有开标签却没提出正文，说明标记形态又变了
         _logger.warning("IMG_TEXT marker present but not extracted: %s", text[:80])
-    m = _GEN_IMAGE_RE.search(text)
     if not m:
         if "[GEN_IMAGE]" in text:
             _logger.warning("GEN_IMAGE marker present but not extracted: %s", text[:80])
         if _IMG_ORPHAN_CLOSE_RE.search(text):
             text = _IMG_ORPHAN_CLOSE_RE.sub("", text).rstrip()
         return text, None, img_text
-    prompt = _marker_body(m).strip()
     clean = _GEN_IMAGE_RE.sub("", text)
     clean = _IMG_ORPHAN_CLOSE_RE.sub("", clean).rstrip()
+    clean = strip_image_residue(clean).rstrip()  # P1-4：变体/无闭合标记残片兜底剥净
+    if is_bare_image_prompt(clean, prompt):   # 剥完只剩 prompt → 无可见正文
+        clean = ""
     return clean, prompt or None, img_text
 
 
@@ -262,12 +346,18 @@ def parse_actions(text: str) -> list[AgentAction]:
         q = (m.group(1) or "").strip()
         if q:
             actions.append(AgentAction(RECALL, {"query": q[:80]}, m.group(0)))
+    # P1-4：配文与画面描述必须对照判定——同一段文字既作 GEN_IMAGE 又作 IMG_TEXT 时，
+    # 配文应按「裸 prompt」剔除（先取画面描述，再判配文）
+    _gen_prompt: str | None = None
+    _gm = _GEN_IMAGE_RE.search(text)
+    if _gm:
+        _gen_prompt = sanitize_image_prompt(_marker_body(_gm).strip()) or None
     for m in _IMG_TEXT_RE.finditer(text):
-        t = _marker_body(m).strip()
+        t = sanitize_image_caption(_marker_body(m).strip() or None, _gen_prompt)
         if t:
             actions.append(AgentAction(IMG_TEXT, {"text": t}, m.group(0)))
     for m in _GEN_IMAGE_RE.finditer(text):
-        p = _marker_body(m).strip()
+        p = sanitize_image_prompt(_marker_body(m).strip())
         if p:
             actions.append(AgentAction(GEN_IMAGE, {"prompt": p}, m.group(0)))
     for m in _CAL_NOTE_RE.finditer(text):

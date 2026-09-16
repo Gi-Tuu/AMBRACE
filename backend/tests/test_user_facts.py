@@ -91,7 +91,7 @@ def _seed_memory(factory, *, character_id, content, memory_type="user_info", sub
 
 def test_classify_slot():
     from app.memory.user_facts import classify_slot
-    assert classify_slot("我从长沙回湛江了") == "location"
+    assert classify_slot("我从示例城回示例市了") == "location"
     assert classify_slot("我正在准备考研") == "goal_state"
     assert classify_slot("我离职了") == "job"
     assert classify_slot("用户今天去公园散步") is None  # 一次性事件不误归
@@ -117,7 +117,7 @@ def test_classify_slot_location_regex_tightened():
     assert classify_slot("从失败里走出来") is None
     # 正例（地点宾语明确）
     assert classify_slot("我回到东莞了") == "location"
-    assert classify_slot("我从长沙回湛江了") == "location"
+    assert classify_slot("我从示例城回示例市了") == "location"
     assert classify_slot("用户这个月搬回了老家") == "location"
     assert classify_slot("我回到了四川老家") == "location"
 
@@ -128,17 +128,17 @@ def test_upsert_user_fact_records_previous(uf_db):
     from app.memory.user_facts import upsert_user_fact, get_active_user_facts
     factory = uf_db
     _seed_user(factory, 1)
-    change = asyncio.run(upsert_user_fact(1, "location", "长沙", source="gps"))
-    assert change == (None, "长沙")
+    change = asyncio.run(upsert_user_fact(1, "location", "示例城", source="gps"))
+    assert change == (None, "示例城")
     # 同值幂等
-    assert asyncio.run(upsert_user_fact(1, "location", "长沙", source="gps")) is None
+    assert asyncio.run(upsert_user_fact(1, "location", "示例城", source="gps")) is None
     # 改值 → 记录 previous_value
-    change2 = asyncio.run(upsert_user_fact(1, "location", "湛江", source="chat"))
-    assert change2 == ("长沙", "湛江")
+    change2 = asyncio.run(upsert_user_fact(1, "location", "示例市", source="chat"))
+    assert change2 == ("示例城", "示例市")
     rows = asyncio.run(get_active_user_facts(1, slots=["location"]))
     assert len(rows) == 1
-    assert rows[0].value == "湛江"
-    assert rows[0].previous_value == "长沙"
+    assert rows[0].value == "示例市"
+    assert rows[0].previous_value == "示例城"
     assert rows[0].source == "chat"
     # 多槽互不影响
     asyncio.run(upsert_user_fact(1, "job", "程序员"))
@@ -165,14 +165,14 @@ def test_upsert_user_fact_refreshes_valid_from(uf_db):
     """
     from app.memory.user_facts import upsert_user_fact, get_active_user_facts
     _seed_user(uf_db, 1)
-    asyncio.run(upsert_user_fact(1, "location", "长沙", source="gps"))
+    asyncio.run(upsert_user_fact(1, "location", "示例城", source="gps"))
     first = asyncio.run(get_active_user_facts(1, slots=["location"]))[0]
     vf_first = first.valid_from
     assert vf_first is not None
     # 第二次 upsert（改值）→ valid_from 必须前进（严格晚于首次建档）
-    asyncio.run(upsert_user_fact(1, "location", "湛江", source="chat"))
+    asyncio.run(upsert_user_fact(1, "location", "示例市", source="chat"))
     second = asyncio.run(get_active_user_facts(1, slots=["location"]))[0]
-    assert second.value == "湛江"
+    assert second.value == "示例市"
     assert second.valid_from is not None
     assert second.valid_from > vf_first
 
@@ -191,10 +191,10 @@ def test_stale_character_slot_memory(uf_db):
     from app.memory.cross_char_sync import stale_character_slot_memory
     factory = uf_db
     _seed_user(factory, 1)
-    oid = _seed_memory(factory, character_id=100, content="用户住在长沙", sub_type="location")
-    nid = _seed_memory(factory, character_id=100, content="用户住在湛江", sub_type="location")
+    oid = _seed_memory(factory, character_id=100, content="用户住在示例城", sub_type="location")
+    nid = _seed_memory(factory, character_id=100, content="用户住在示例市", sub_type="location")
     iid = _seed_memory(factory, character_id=100, content="我觉得用户很坚强", memory_type="insight", sub_type="relationship")
-    n = asyncio.run(stale_character_slot_memory(100, "location", "长沙"))
+    n = asyncio.run(stale_character_slot_memory(100, "location", "示例城"))
 
     async def _check():
         async with factory() as db:
@@ -202,7 +202,7 @@ def test_stale_character_slot_memory(uf_db):
             new = await db.get(Memory, nid)
             ins = await db.get(Memory, iid)
             return old.status, new.status, ins.status
-    # 只命中旧值（内容含「长沙」）；新值与 insight 不误伤
+    # 只命中旧值（内容含「示例城」）；新值与 insight 不误伤
     assert n == 1
     assert asyncio.run(_check()) == ("stale", "active", "active")
 
@@ -212,8 +212,8 @@ def test_stale_character_slot_memory_matches_extracted_history(uf_db):
     factory = uf_db
     _seed_user(factory, 1)
     # 历史自由文本（sub_type=extracted）含旧城市名可被命中
-    eid = _seed_memory(factory, character_id=7, content="用户生活在长沙", sub_type="extracted")
-    n = asyncio.run(stale_character_slot_memory(7, "location", "长沙"))
+    eid = _seed_memory(factory, character_id=7, content="用户生活在示例城", sub_type="extracted")
+    n = asyncio.run(stale_character_slot_memory(7, "location", "示例城"))
     assert n == 1
     async def _st():
         async with factory() as db:
@@ -231,9 +231,9 @@ def test_align_character_idempotent(uf_db, monkeypatch):
     monkeypatch.setitem(_af, "global_user_facts", True)
     factory = uf_db
     _seed_user(factory, 1)
-    asyncio.run(upsert_user_fact(1, "location", "长沙", source="gps"))
-    asyncio.run(upsert_user_fact(1, "location", "湛江", source="gps"))  # previous_value=长沙
-    mid = _seed_memory(factory, character_id=5, content="用户住在长沙", sub_type="location")
+    asyncio.run(upsert_user_fact(1, "location", "示例城", source="gps"))
+    asyncio.run(upsert_user_fact(1, "location", "示例市", source="gps"))  # previous_value=示例城
+    mid = _seed_memory(factory, character_id=5, content="用户住在示例城", sub_type="location")
     rep1 = asyncio.run(align_character_to_user_facts(5, 1))
     assert rep1.get("location") == 1
     async def _st():
@@ -254,9 +254,9 @@ def test_sweep_all_characters_alignment(uf_db, monkeypatch):
     _seed_user(factory, 1)
     c1 = _seed_char(factory, "A")
     _seed_char(factory, "B")
-    asyncio.run(upsert_user_fact(1, "location", "长沙", source="gps"))
-    asyncio.run(upsert_user_fact(1, "location", "湛江", source="gps"))
-    mid = _seed_memory(factory, character_id=c1, content="用户住在长沙", sub_type="location")
+    asyncio.run(upsert_user_fact(1, "location", "示例城", source="gps"))
+    asyncio.run(upsert_user_fact(1, "location", "示例市", source="gps"))
+    mid = _seed_memory(factory, character_id=c1, content="用户住在示例城", sub_type="location")
     n = asyncio.run(sweep_all_characters_alignment(1))
     assert n == 2  # 处理全部角色
     async def _st():
@@ -271,10 +271,10 @@ def test_build_user_now_text(uf_db):
     from app.memory.user_facts import upsert_user_fact, build_user_now_text
     _seed_user(uf_db, 1)
     assert asyncio.run(build_user_now_text(1, slots=["location"])) == "无"
-    asyncio.run(upsert_user_fact(1, "location", "湛江", source="gps"))
+    asyncio.run(upsert_user_fact(1, "location", "示例市", source="gps"))
     text = asyncio.run(build_user_now_text(1, slots=["location"]))
     assert "位置/城市" in text
-    assert "湛江" in text
+    assert "示例市" in text
     assert "更新于" in text
 
 
@@ -284,7 +284,7 @@ def test_user_now_section_flag_gate(uf_db, monkeypatch):
     from app.agent.context.section_user_now import user_now_section
     _seed_user(uf_db, 1)
     # flag 关 → 空（零行为变化）；即使已有事实
-    asyncio.run(upsert_user_fact(1, "location", "湛江"))
+    asyncio.run(upsert_user_fact(1, "location", "示例市"))
     monkeypatch.setitem(_af, "global_user_facts", False)
     assert asyncio.run(user_now_section({"user_id": 1}, {})) == []
     # flag 开 → 注入一个 system 块，含权威标题与事实
@@ -292,4 +292,4 @@ def test_user_now_section_flag_gate(uf_db, monkeypatch):
     blocks = asyncio.run(user_now_section({"user_id": 1}, {}))
     assert len(blocks) == 1
     assert "【用户最新状态" in blocks[0]
-    assert "湛江" in blocks[0]
+    assert "示例市" in blocks[0]

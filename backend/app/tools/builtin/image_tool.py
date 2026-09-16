@@ -12,18 +12,25 @@ async def _execute_image(payload: dict, *, user_id=None, character_id=None, sess
 
     实际生成流程（_gen_image_flow）内部自处理 AI 能力权限（forbid/ask）与每日额度；
     此处先做工具级权限三档（scope="image_gen"），再把生成委托给 services 层。
+
+    P1-4（2026-09-16）：落库前统一清洗——画面描述去标记残片（prompt 只进 extra_meta），
+    配文经同一出口判定「裸 prompt → None」，绝不让整段生图 prompt 变成可见 content。
     """
+    from app.agent.actions import sanitize_image_caption, sanitize_image_prompt
     from app.application.chat.tools import _gen_image_flow
 
-    prompt = str(payload.get("prompt") or "")
+    prompt = sanitize_image_prompt(str(payload.get("prompt") or ""))
     if not prompt:
         return {"ok": False, "summary": "生图指令缺少画面描述"}
+    raw_caption = payload.get("img_text")
+    caption = sanitize_image_caption(
+        str(raw_caption).strip() if raw_caption else None, prompt)
     await _gen_image_flow(
         int(payload.get("user_id") or user_id or 0),
         int(payload.get("character_id") or character_id or 0),
         int(payload.get("session_id") or session_id or 0),
         prompt,
-        payload.get("img_text"),
+        caption,
     )
     return {"ok": True, "summary": "图片生成任务已提交"}
 

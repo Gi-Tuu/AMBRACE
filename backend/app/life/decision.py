@@ -9,6 +9,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
+from app.life import space as _space  # 批次三(2026-09-16)：外出/基地地点门控
+
 # F4（2026-09-08）：energy_critical 再触发冷却（1 tick=30min；3 tick=90min，保守值可调）
 ENERGY_CRITICAL_COOLDOWN_TICKS = 3
 
@@ -41,7 +43,9 @@ ACTIONS: dict[str, ActionDef] = {
     "eat": ActionDef("eat", "吃饭", energy_cost=2, mood_delta=5,
                      needs_satisfied={"relaxation": 5}, room_to="kitchen", cooldown_ticks=4),
     "study": ActionDef("study", "学习", energy_cost=6, mood_delta=2,
-                       needs_satisfied={"learning": 18, "curiosity": 8},
+                       # 批次三(2026-09-16)：learning 原 -18 频繁把 learning 耗到 4（贴边），
+                       # 降到 -12 + curiosity -5，配合 settle_needs 衰减曲线不再长期贴边。
+                       needs_satisfied={"learning": 12, "curiosity": 5},
                        room_to="bedroom", memory=True, cooldown_ticks=3),
     "create": ActionDef("create", "创作", energy_cost=8, mood_delta=5,
                         needs_satisfied={"creativity": 20},
@@ -84,6 +88,8 @@ ACTIONS: dict[str, ActionDef] = {
     "idle": ActionDef("idle", "发呆", energy_cost=-1, mood_delta=1,
                       needs_satisfied={}, cooldown_ticks=0),
     # 修正 2026-08-26：外出状态回程动作（决策器 location 门控使用）
+    # 批次三(2026-09-16)：这里保持字面 ``home``（纯函数不感知校历）；真正落点由
+    # life_loop 经 ``space.normalize_location`` 归一到 dorm（住校）/home（假期）。
     "return_home": ActionDef("return_home", "回家", energy_cost=-4, mood_delta=2,
                              location_to="home", room_to="living",
                              memory=False, cooldown_ticks=2),
@@ -134,7 +140,9 @@ def decide(snap: StateSnapshot) -> Decision:
     """纯函数决策。返回 Decision；零 LLM、零 IO。"""
 
     # ① 硬约束：外出状态门控（修正 2026-08-26：人在外时禁止室内动作，避免"人在外面却在客厅看剧"）
-    if snap.location not in (None, "", "home"):
+    # 批次三(2026-09-16)：门控只对「外出地点」生效——宿舍/教学楼/食堂/图书馆是本地基地，
+    # 不再被误判为外出而反复强制回家（住校现实）。
+    if _space.is_away(snap.location):
         if snap.phase == "sleep" or snap.energy < 60 or snap.phase == "evening":
             return Decision("return_home", reason="come_back")
         out_acts = [

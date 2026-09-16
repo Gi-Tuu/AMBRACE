@@ -949,6 +949,33 @@ async def delete_world_fact(
     return {"ok": True}
 
 
+async def get_world_fact_history(
+    db: AsyncSession,
+    character_id: int,
+    fact_id: int,
+    user_id: int,
+    lang: str,
+):
+    """事实「修正历史」只读接口（小增量 2026-09-16）：给定一条事实 id，返回其 (subject,predicate)
+    槽的当前值 + 历史版本链（倒序；超上限只回最近 N 版并带 truncated 标记）。零新表、零写、
+    与既有世界事实接口同口径（用户隔离 / 角色归属）。
+
+    事实不存在 / 非本角色 / 非本人 → 404；其余按 (character_id, user_id) 隔离查历史。
+    本期只读：不提供写历史 / 回滚。
+    """
+    await _get_owned_character(db, character_id, user_id, lang)
+    from app.models.memory import WorldFact
+    from app.events.facts import get_fact_history
+    async with async_session_factory() as db2:
+        f = await db2.get(WorldFact, fact_id)
+        if f is None or f.character_id != character_id or f.user_id != user_id:
+            raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
+        return await get_fact_history(
+            character_id=character_id, user_id=user_id,
+            subject_type=f.subject_type, subject_id=f.subject_id, predicate=f.predicate,
+        )
+
+
 async def get_state_history(
     db: AsyncSession,
     character_id: int,

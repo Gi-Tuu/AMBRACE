@@ -28,6 +28,130 @@ def _has_visible_content(segments: list[str]) -> bool:
     return bool(_VISIBLE_RE.search("".join(segments or [])))
 
 
+# ── 批次四（2026-09-16）：主动消息分块护栏（flag proactive_segment_guard，默认关）──
+# 关＝逐字节现状；开＝①过滤残句/空块并合并碎片段 ②未闭合括号/引号不落刀
+# ③生成前注入当前场景事实 + 生成后轻量现实校验（家庭场景词 vs 住校场景）。
+_SEGMENT_MIN_LEN = 4   # 碎片段阈值（字符数，可配）：低于此长度视为残句，优先并入相邻段
+_SEGMENT_MAX = 4       # 段数上限（与现状一致）
+# 家庭场景词（常量词表，可扩展）：用户住校时命中即判现实冲突（宿舍无厨房）
+_FAMILY_SCENE_WORDS = (
+    "锅里", "留饭", "给你留着饭", "留了饭", "回家吃饭", "回来吃饭", "在家等你",
+    "等你回家", "家里的饭", "饭菜给你", "给你留了饭",
+)
+# 住校场景判定词：出现在「当前场景事实」文本里即视为用户在住校/校园场景
+_SCHOOL_SCENE_WORDS = ("宿舍", "教学楼", "食堂", "住校", "寝室", "校区", "学校")
+# 未闭合引号对（只认成对的中文/全角引号，避免英文撇号误判导致过度合并）
+_QUOTE_PAIRS = {"“": "”", "「": "」", "『": "』", "‘": "’", "【": "】"}
+_QUOTE_CLOSES = set(_QUOTE_PAIRS.values())
+
+
+def _segment_guard_on() -> bool:
+    """Feature Flag：主动消息分块护栏（默认关；关=逐字节现状）。"""
+    try:
+        from app.agent import loop as _loop
+        return bool(_loop.AGENT_FLAGS.get("proactive_segment_guard", False))
+    except Exception:
+        return False
+
+
+def _quote_unbalanced(text: str) -> bool:
+    """成对中文/全角引号是否未闭合（只统计声明过的引号对，普通英文引号不参与）。"""
+    opens = sum((text or "").count(ch) for ch in _QUOTE_PAIRS)
+    closes = sum((text or "").count(ch) for ch in _QUOTE_CLOSES)
+    return opens > closes
+
+
+def _has_unclosed_delimiter(text: str) -> bool:
+    """文本是否停在未闭合的括号/引号里（落刀点判定，2026-09-16）。
+
+    复用 response_parser 既有的括号深度思路（`_bracket_depth`），再补一层引号配对；
+    为 True 时不得在此处切段，须并入下一段。
+    """
+    if not text:
+        return False
+    try:
+        from app.agent.response_parser import _bracket_depth
+        if _bracket_depth(0, text) > 0:
+            return True
+    except Exception:
+        pass
+    return _quote_unbalanced(text)
+
+
+def _split_response_lines(response: str) -> list[str]:
+    """开＝按行切段；未闭合括号/引号不落刀（把后续行并进当前段）。"""
+    out: list[str] = []
+    for ln in (response or "").splitlines():
+        s = ln.strip().strip('"').strip("'")
+        if not s:
+            continue
+        if out and _has_unclosed_delimiter(out[-1]):
+            out[-1] = out[-1] + s
+        else:
+            out.append(s)
+    return out
+
+
+def _normalize_segments(segments: list[str], min_len: int = _SEGMENT_MIN_LEN) -> list[str]:
+    """开＝过滤空/纯标点段 + 合并长度不足阈值的碎片段（优先并入相邻段，无法合并则丢弃）。
+
+    - 纯空白/纯标点/纯省略号段直接丢弃（禁止空块）；
+    - 长度 < min_len 的碎片段并入前一段；前面无可并入段时暂挂，遇到下一段并入；
+      若整条都是碎片、前后都无可并段，则丢弃（宁可不发残句）。
+    """
+    cleaned: list[str] = []
+    for s in segments or []:
+        s2 = (s or "").strip()
+        if not s2 or not _has_visible_content([s2]):
+            continue
+        cleaned.append(s2)
+    merged: list[str] = []
+    pending = ""  # 前导碎片：暂无前段可并，等待并入其后第一段
+    for s in cleaned:
+        if len(s) < min_len:
+            if merged:
+                merged[-1] += s
+            else:
+                pending += s
+            continue
+        merged.append(pending + s)
+        pending = ""
+    if pending:  # 全是碎片（无完整段可并）：若能拼出达阈值的一段则合并成单段，否则丢弃
+        merged = [pending] if len(pending) >= min_len else []
+    return merged
+
+
+def _scene_is_school(scene_text: str) -> bool:
+    """当前场景是否为住校/校园（命中宿舍/教学楼/食堂… 任一即真）。"""
+    return any(w in (scene_text or "") for w in _SCHOOL_SCENE_WORDS)
+
+
+def _conflicting_segment_indexes(segments: list[str], scene_text: str) -> list[int]:
+    """现实冲突段下标：住校场景下命中家庭场景词（锅里/留饭/回家吃饭…）的段。"""
+    if not _scene_is_school(scene_text):
+        return []
+    return [i for i, s in enumerate(segments or []) if any(w in (s or "") for w in _FAMILY_SCENE_WORDS)]
+
+
+def _apply_segment_guard(
+    segments: list[str],
+    scene_text: str = "",
+    *,
+    drop_conflicts: bool = False,
+) -> tuple[list[str], list[int]]:
+    """开＝残句/空块过滤 + 现实约束校验；返回 (清洗后段列表, 冲突段下标)。
+
+    drop_conflicts=False：只报告冲突段下标（调用方决定重试）；
+    drop_conflicts=True：重试后仍冲突 → 直接丢弃冲突段（不发送穿帮内容）。
+    """
+    kept = _normalize_segments(segments)
+    conflicts = _conflicting_segment_indexes(kept, scene_text)
+    if drop_conflicts and conflicts:
+        drop = set(conflicts)
+        kept = [s for i, s in enumerate(kept) if i not in drop]
+    return kept, conflicts
+
+
 async def _gen_with_reasoning(messages: list[dict], character_id: int | None, user_id: int | None,
                               temperature: float, max_tokens: int) -> tuple[str, str]:
     """主动消息 LLM 调用（2026-08-15）：按角色思考挡位决定是否开推理。
@@ -309,6 +433,37 @@ async def _load_recent_reflection(character_id: int | None) -> str:
         return ""
 
 
+async def _load_scene_facts(user_id: int | None) -> str:
+    """当前场景事实（批次四，2026-09-16）：user_facts.slot='location' + 用户作息活跃时段。
+
+    仅 flag `proactive_segment_guard` 开时调用（关=空串、零 DB 查询/零行为变化）；
+    location 槽沿用既有细粒度开关 `user_fact_slot_enabled` 门控（不绕过隐私开关）。
+    失败静默返回已收集部分；无数据返回空串（调用方据此不注入）。
+    """
+    if not _segment_guard_on() or not user_id:
+        return ""
+    parts: list[str] = []
+    try:
+        from app.memory.user_facts import get_active_user_facts, user_fact_slot_enabled
+        if user_fact_slot_enabled("location"):
+            for _r in await get_active_user_facts(user_id, slots=["location"]):
+                _v = (_r.value or "").strip()
+                if _v:
+                    parts.append(f"TA 现在的位置：{_v}")
+    except Exception:
+        pass
+    try:
+        from app.scheduling.user_rhythm import get_active_hours
+        _hours = await get_active_hours(user_id)
+        _rng = "、".join(
+            f"{int(a)}点-{int(b)}点" for a, b in (_hours or []) if a is not None and b is not None)
+        if _rng:
+            parts.append(f"TA 的作息活跃时段：{_rng}")
+    except Exception:
+        pass
+    return "\n".join(parts)
+
+
 async def generate_proactive_event(
     character_name: str,
     character_bio: str,
@@ -513,7 +668,10 @@ async def generate_proactive_event(
         except Exception:
             return ""
 
-    user_profile, persona_extra, weather_line, check_in_line, recent_memories, reflection_line, state_anchor = (
+    # 批次四（2026-09-16）：当前场景事实（flag proactive_segment_guard 开才取；关=直接空串零开销）。
+    # 现状锚点已在别处注入，这里补 user_facts.slot='location' 与用户作息（活跃时段），
+    # 一并用于生成后的住校/家庭场景轻量校验。
+    user_profile, persona_extra, weather_line, check_in_line, recent_memories, reflection_line, state_anchor, scene_facts = (
         await _asyncio.gather(
             _load_user_profile(),
             _load_persona_extra(),
@@ -522,8 +680,11 @@ async def generate_proactive_event(
             _load_recent_memories(),
             _load_recent_reflection(character_id),
             _load_current_state_anchor(),
+            _load_scene_facts(user_id),
         )
     )
+    # 现实约束校验用场景文本：现状锚点（含 location/living 槽）+ location 事实 + 作息
+    scene_text = "\n".join(b for b in (state_anchor, scene_facts) if b)
 
     # 注入当前状态与关系（保持事件连贯，避免与私聊状态矛盾）
     status_line = f"你当前的状态：{current_status}" if current_status else ""
@@ -549,6 +710,15 @@ async def generate_proactive_event(
         prompt += f"\n好友画像（用于区分你和好友的身份，不要混淆）：\n{user_profile}\n"
     if state_anchor:  # C3：先声明「TA 现在怎样」，紧接着的记忆块带［往事］标签，一正一反
         prompt += state_anchor
+    # 批次四（2026-09-16，flag 开）：生成前注入当前场景事实 + 现实约束（禁止与用户现状冲突的家庭场景）
+    if _segment_guard_on():
+        _scene_bits = [b for b in (state_anchor, scene_facts) if b]
+        if _scene_bits:
+            prompt += (
+                "\n当前场景事实（务必与之一致，不得与 TA 现在的居住/所处场景矛盾；"
+                "例如 TA 住校、宿舍没有厨房，就不要说「锅里给你留着」「回家吃饭」这类家庭场景）：\n"
+                + "\n".join(_scene_bits) + "\n"
+            )
     if recent_memories:
         prompt += (
             f"\n以下是你与 TA 的过往记忆片段。带［往事］/［当时状态］/［旧安排·已过期］标签的属于过去发生的"
@@ -620,13 +790,19 @@ async def generate_proactive_event(
     segments: list[str] = []
     ok = False
     last_reasoning = ""
+    _guard_on = _segment_guard_on()   # 批次四：分块护栏（默认关=逐字节现状）
+    _reality_conflict = False
     for attempt in range(2):
         response, last_reasoning = await _gen_with_reasoning(
             messages, character_id, user_id, temperature=0.9, max_tokens=512)
         response = (response or "").strip().strip('"').strip("'")
 
-        segments = [ln.strip().strip('"').strip("'") for ln in response.splitlines()]
-        segments = [s for s in segments if s]
+        if _guard_on:
+            # 开：未闭合括号/引号不落刀（后续行并入当前段）
+            segments = _split_response_lines(response)
+        else:
+            segments = [ln.strip().strip('"').strip("'") for ln in response.splitlines()]
+            segments = [s for s in segments if s]
 
         # 兜底：模型没分行时按句子切（单段超 50 字触发；每段约 1~2 句，25 字左右）
         if len(segments) == 1 and len(segments[0]) > 50:
@@ -635,6 +811,9 @@ async def generate_proactive_event(
             cur = ""
             for part in parts:
                 if cur and len(cur) + len(part) > 25:
+                    if _guard_on and _has_unclosed_delimiter(cur):
+                        cur += part  # 批次四：切点在未闭合括号/引号里 → 不落刀
+                        continue
                     merged.append(cur.strip())
                     cur = part
                 else:
@@ -652,17 +831,33 @@ async def generate_proactive_event(
             segments = ["……"]
         segments = [s[:200] for s in segments]
 
+        # 批次四（flag 开）：残句/空块过滤 + 现实约束校验（住校场景命中家庭场景词 → 拦截重试）
+        _reality_conflict = False
+        if _guard_on:
+            segments, _conf = _apply_segment_guard(segments, scene_text)
+            _reality_conflict = bool(_conf)
+            if len(segments) > _SEGMENT_MAX:  # 段数上限保持 4
+                segments = segments[:_SEGMENT_MAX - 1] + ["".join(segments[_SEGMENT_MAX - 1:])[:300]]
+            if not segments:
+                segments = ["……"]
+
         ok, cleaned = _validate_segments(segments)
         # #28 ①：低优先级主动消息自然度评分——Flag 开时低于重试阈值 → 追加修正要求重试一次
         nat_low = _naturalness_flag() and score_naturalness(segments) < NATURALNESS_RETRY_THRESHOLD
         # B1-③（方案 §5.3d）：计划要求抛回问题但生成结果没有 → 与自然度低分相同的"追加修正重试一次"
         need_question = bool((outreach_plan or {}).get("must_return_question"))
         no_question = need_question and not _has_invitation("".join(segments))
-        if ok and not nat_low and not no_question:
+        if ok and not nat_low and not no_question and not _reality_conflict:
             break
         segments = cleaned or segments
         if attempt == 0:
-            if no_question:
+            if _reality_conflict:
+                _hint = (
+                    "上一条输出与 TA 当前的真实场景冲突（如 TA 住校、宿舍没有厨房，"
+                    "就不要写「锅里给你留着」「回家吃饭」这类家庭场景）。请按 TA 的真实场景重新生成，"
+                    "直接输出最终内容，不要解释。"
+                )
+            elif no_question:
                 _hint = (
                     "结尾请自然地留一个让好友容易接的话头/一个轻松问题（只问一个），不要自顾自说完，"
                     "直接输出最终内容。"
@@ -676,6 +871,23 @@ async def generate_proactive_event(
             else:
                 _hint = "上一条输出未通过校验（出现与AI身份相关的词或单条过长）。请重新生成：每条不超过80字，不要出现任何暴露AI身份的词。"
             messages = messages + [{"role": "user", "content": _hint}]
+    # 批次四（flag 开）：重试后仍冲突 → 丢弃冲突段（绝不把穿帮内容发出去）
+    if _guard_on:
+        segments, _conf_left = _apply_segment_guard(segments, scene_text, drop_conflicts=True)
+        if _conf_left:
+            _logger.info("Proactive segment guard: %d segment(s) dropped (reality conflict) char=%d",
+                         len(_conf_left), character_id or 0)
+        if not segments:
+            segments = ["……"]
+    # 批次四任务 3（2026-09-16，P1-5）：思考口径统一——主动链路 reasoning 与普通聊天
+    # （nodes 挡位 2 / response_parser 挡位 1）走同一条上屏归一管线：第一人称内心独白，
+    # 元话语黑名单（策略/长度/我决定加图/本轮提醒/规则说…）与提示词回声整句剔除。
+    # 只影响 extra_meta.reasoning 上屏字段；失败静默（归一异常退回原始 reasoning，不阻断发送）。
+    try:
+        from app.agent.context.reasoning_prompt import normalize_reasoning_for_display as _norm_reasoning
+        last_reasoning = _norm_reasoning(last_reasoning, character_name, user_name) or ""
+    except Exception as _rnorm_e:
+        _logger.warning("Proactive reasoning normalize failed: %s", _rnorm_e)
     # 终检：两轮后若仍含违禁词/超长，绝不再回退原文，用安全占位，保证不发出违规片段
     _ok, _final = _validate_segments(segments)
     if not _ok:

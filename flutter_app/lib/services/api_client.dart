@@ -216,6 +216,14 @@ class ApiClient {
     await _dio.delete('/api/v1/characters/$characterId/world-facts/$factId');
   }
 
+  /// 事实「修正历史」只读（小增量 2026-09-16）：返回该事实槽的当前值 + 历史版本链。
+  Future<Map<String, dynamic>> getWorldFactHistory(int characterId, int factId) async {
+    final r = await _dio.get(
+      '/api/v1/characters/$characterId/world-facts/$factId/history',
+    );
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
   /// 将后端返回的相对路径（如 /uploads/...）解析为完整 URL
   String resolveUrl(String? url) {
     if (url == null || url.isEmpty) return "";

@@ -8,6 +8,8 @@
 
 action 取值（与迁移/模型一致）：
     create / update / merge / supersede / stale / reject / downgrade
+    （另 utility_feedback=召回后效用反馈回执，2026-09-16 由 memory/utility_feedback.py 直写本表，
+     不经本模块闸控——它有自己的 flag memory_utility_feedback）
 """
 from __future__ import annotations
 

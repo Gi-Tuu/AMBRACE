@@ -5,8 +5,8 @@
 - goal_derived Goal 推导：有 deadline 的 active Goal，deadline 前 1 天生成准备日程
 - ai_generated AI 自生成：reflect 活动顺手输出 [SCHEDULE] YYYY-MM-DD HH:MM 标题 [/SCHEDULE]
 
-状态机：scheduled → active（时间到）→ completed（结束视为完成）/ overdue（低优先级超时）
-约束：每角色活跃（scheduled+active）≤5 条；不单独推送，只在对话/回归摘要自然提及。
+状态机：scheduled → active（时间到）→ completed（到点结束）；overdue 仅作漏太久的异常兜底
+约束：每角色活跃（scheduled+active）≤5 条（固定作息不受此限，必须能补生成）；不单独推送，只在对话/回归摘要自然提及。
 """
 import re
 from datetime import datetime, timedelta, timezone
@@ -23,9 +23,12 @@ FIXED_ROUTINES = [
     {"title": "午休", "time": "12:30", "priority": 1},
     {"title": "睡觉", "time": "23:00", "priority": 1},
 ]
-MAX_ACTIVE = 5          # 每角色活跃日程上限
+MAX_ACTIVE = 5          # 每角色活跃日程上限（固定作息不受限，见 ensure_fixed_routines）
 GOAL_LEAD_DAYS = 1      # deadline 前 1 天生成准备日程
 DEFAULT_DURATION_MIN = 60
+# 批次三(2026-09-16)：漏了太久（服务停机/新增角色）的作息，到点时已过此宽限 → overdue 异常兜底，
+# 而不是假装「刚刚完成」。窗口内的过期作息正常走 active→completed（当天补生成即时收敛）。
+MISSED_GRACE = timedelta(hours=6)
 
 _SCHEDULE_RE = re.compile(r"\[SCHEDULE\]\s*(.*?)\s*\[/SCHEDULE\]", re.S)
 
@@ -91,8 +94,9 @@ async def _active_count(db, character_id: int) -> int:
 async def create_schedule(db, user_id: int, character_id: int, title: str, start_time: datetime,
                           end_time: datetime | None = None, priority: int = 2, source: str = "ai_generated",
                           source_goal_id: int | None = None, recurrence: str | None = None,
-                          description: str = "") -> LifeSchedule | None:
-    if await _active_count(db, character_id) >= MAX_ACTIVE:
+                          description: str = "", enforce_cap: bool = True) -> LifeSchedule | None:
+    """创建日程；``enforce_cap=False`` 时不受活跃上限约束（固定作息必须能补生成）。"""
+    if enforce_cap and await _active_count(db, character_id) >= MAX_ACTIVE:
         _logger.info("schedule create skipped char=%d: active limit %d", character_id, MAX_ACTIVE)
         return None
     s = LifeSchedule(
@@ -108,7 +112,12 @@ async def create_schedule(db, user_id: int, character_id: int, title: str, start
 
 
 async def ensure_fixed_routines(db, character_id: int, user_id: int) -> int:
-    """每日固定作息（北京时间）：生成当天尚未创建的作息；已过的时间不补（明天自然生成）"""
+    """每日固定作息（北京时间）：生成当天尚未创建的作息。
+
+    批次三 P0-5 修复(2026-09-16)：原逻辑 ``start <= now`` 跳过已过作息 → 漏生成「起床」
+    （如 9-16 当天 07:00 起床在运行时刻已过去则永远不建）。现改为：当天任一时刻都补生成
+    缺失的作息，再由 ``advance_schedules`` 按时流转（已过→completed，到点→active）。
+    """
     from app.utils.timeutil import now_naive_utc
     now = now_naive_utc()
     bj = now + timedelta(hours=8)
@@ -116,8 +125,6 @@ async def ensure_fixed_routines(db, character_id: int, user_id: int) -> int:
     for rt in FIXED_ROUTINES:
         hh, mm = (int(x) for x in rt["time"].split(":"))
         start = _beijing_to_utc_naive(bj.year, bj.month, bj.day, hh, mm)
-        if start <= now:
-            continue
         exist = await db.execute(
             select(LifeSchedule).where(
                 LifeSchedule.character_id == character_id,
@@ -129,7 +136,8 @@ async def ensure_fixed_routines(db, character_id: int, user_id: int) -> int:
         )
         if exist.scalar_one_or_none() is None:
             await create_schedule(db, user_id, character_id, rt["title"], start,
-                                  priority=rt["priority"], source="fixed_routine", recurrence="daily")
+                                  priority=rt["priority"], source="fixed_routine", recurrence="daily",
+                                  enforce_cap=False)
             created += 1
     return created
 
@@ -174,7 +182,18 @@ async def ensure_goal_derived(db, character_id: int, user_id: int) -> int:
 
 
 async def advance_schedules(db, character_id: int) -> int:
-    """状态流转：scheduled → active（时间到）；到结束时间 → completed（低优先级固定作息超时 → overdue）"""
+    """状态机：``scheduled → active（到点）→ completed（到点结束）``。
+
+    批次三 P0-5 修复(2026-09-16)：原逻辑把固定作息超时一律标 overdue，导致作息表几乎全
+    overdue（到点不流转，靠事后批量补 completed_at）。现改为：
+
+    - 到点（``now >= start``）且未超宽限 → ``active``；
+    - ``active`` 且 ``now >= end`` → ``completed``（正常出口）；
+    - 到点时已过 ``MISSED_GRACE``（默认 6h，服务停机/新角色补生成）→ ``overdue`` 兜底，
+      不假装刚刚完成。
+
+    这样「当天补生成」的过期作息会在同一轮内 scheduled→active→completed 收敛。
+    """
     from app.utils.timeutil import now_naive_utc
     now = now_naive_utc()
     rows = (
@@ -188,16 +207,22 @@ async def advance_schedules(db, character_id: int) -> int:
     changed = 0
     for s in rows:
         st = s.start_time.replace(tzinfo=None) if s.start_time and s.start_time.tzinfo else s.start_time
+        if st is None:
+            continue
         et = s.end_time.replace(tzinfo=None) if s.end_time and s.end_time.tzinfo else s.end_time
         et = et or (st + timedelta(minutes=DEFAULT_DURATION_MIN))
-        if s.status == "scheduled" and now >= st:
+        if s.status == "scheduled":
+            if now < st:
+                continue  # 未到点：保持 scheduled
+            if now >= et + MISSED_GRACE:
+                s.status = "overdue"   # 异常兜底：漏太久，不假装刚完成
+                s.completed_at = now
+                changed += 1
+                continue
             s.status = "active"
             changed += 1
-        if now >= et + timedelta(minutes=15):
-            if s.priority <= 1 and s.source == "fixed_routine":
-                s.status = "overdue"
-            else:
-                s.status = "completed"
+        if s.status == "active" and now >= et:
+            s.status = "completed"     # 正常出口
             s.completed_at = now
             changed += 1
     if changed:
@@ -206,10 +231,17 @@ async def advance_schedules(db, character_id: int) -> int:
 
 
 async def schedule_tick(db, character_id: int, user_id: int) -> dict:
-    """LifeTick 入口：固定作息生成 + Goal 推导 + 状态流转"""
+    """LifeTick 入口：先收尾存量 → 补生成当天固定作息/Goal 推导 → 再流转新生成的。
+
+    批次三(2026-09-16)：两趟 ``advance_schedules`` 是必要的——第一趟把昨日/悬空作息收尾，
+    释放活跃额度；第二趟让「当天补生成」的已过时段（如 07:00 起床）同轮收敛为 completed，
+    否则要等下一个 tick，作息表再次表现成「到点不流转」。
+    """
+    changed = await advance_schedules(db, character_id)
     created_r = await ensure_fixed_routines(db, character_id, user_id)
     created_g = await ensure_goal_derived(db, character_id, user_id)
-    changed = await advance_schedules(db, character_id)
+    if created_r or created_g:
+        changed += await advance_schedules(db, character_id)
     if created_r or created_g or changed:
         _logger.info("schedule tick char=%d: routines=%d goal_derived=%d state_changed=%d",
                      character_id, created_r, created_g, changed)

@@ -460,6 +460,27 @@ async def _try_degraded_continuation(
         return ""
 
 
+def _merge_bracket_reasoning(final_state: dict, bracket_reasoning: str) -> bool:
+    """把「正文开头中文括号内心活动」并入 final_state["reasoning"]，统一走同一归一管线。
+
+    P1-6（2026-09-16）：原实现是在既有 reasoning 已归一后直接字符串拼接（证据 A 括号推理），
+    该片段因此绕过 normalize_reasoning_for_display——「用户」/名字自称/策略·长度·我决定加图
+    这类元话语仍可能上屏。现改为：片段与既有思考合并后整段过一遍归一（全链路唯一出口）。
+    归一后为空则不写入（返回是否写入），既有 reasoning 不被清空。
+    """
+    if not bracket_reasoning:
+        return False
+    from app.agent.context.reasoning_prompt import normalize_reasoning_for_display
+    _prev = (final_state.get("reasoning") or "").strip()
+    _merged = f"{_prev}\n{bracket_reasoning}" if _prev else bracket_reasoning
+    _normalized = normalize_reasoning_for_display(
+        _merged, final_state.get("character_name"), final_state.get("user_name"))
+    if not _normalized:
+        return False
+    final_state["reasoning"] = _normalized
+    return True
+
+
 async def _run_agent_core(
     session_id: int, user_id: int, character_id: int, content: str,
     lang: str, user_msg_id: int | None,
@@ -824,14 +845,14 @@ async def _run_agent_core(
     # 提取源不受影响；此后 full_text 进落库（HTTP 单条 / chunked 分块 / SSE done）与推送，
     # 任何漏网标记（含模型漏写闭合标签的 [GEN_IMAGE]/[IMG_TEXT]）在此统一剥净。
     # 证据A（2026-09-13）：剥「正文开头的中文括号内心活动」→ 并入 reasoning 走既有上屏管线
+    # P1-6（2026-09-16）：并入时与既有 reasoning 合并后统一过 normalize_reasoning_for_display，
+    # 修掉「归一之后才追加」的旁路（元话语不再随该片段漏出）
     _clean_final, _bracket_reasoning = _sanitize_persist_full(full_text)
     if _bracket_reasoning:
-        _prev_reasoning = (final_state.get("reasoning") or "").strip()
-        final_state["reasoning"] = (
-            (_prev_reasoning + "\n") if _prev_reasoning else "") + _bracket_reasoning
+        _merged_bracket = _merge_bracket_reasoning(final_state, _bracket_reasoning)
         final_state["reasoning_bracket_stripped"] = True
-        _logger.info("reasoning_bracket_stripped len=%s preview=%s",
-                     len(_bracket_reasoning), _bracket_reasoning[:40])
+        _logger.info("reasoning_bracket_stripped merged=%s len=%s preview=%s",
+                     _merged_bracket, len(_bracket_reasoning), _bracket_reasoning[:40])
     if _clean_final != (full_text or "").strip():
         _logger.warning("Final text had marker residue, sanitized: %s", (full_text or "")[:80])
     full_text = _clean_final

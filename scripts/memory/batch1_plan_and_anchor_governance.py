@@ -13,7 +13,7 @@
   [anchor]    任务5 建立「当前现状锚点」（高权重、长有效期，走既有注入通道）：
               a) world_facts：curated ``kind='fact'``（is_authoritative=1、无 TTL、无 stale_after）
                  → section_curated【关于用户与世界的稳定事实】与 world_facts 槽；links_json 触发键
-                 让「现状/在哪/位置/学校/宿舍/湛江」这类问法把它顶到该类最前（复用 get_curated_facts
+                 让「现状/在哪/位置/学校/宿舍」这类问法把它顶到该类最前（复用 get_curated_facts
                  既有 ``_trigger_hit``，不新增机制）；
               b) user_facts：``slot='location'`` 单值槽（旧值进 previous_value）
                  → [USER NOW]（section_user_now）与 current_state_anchor（section_current_state）即刻生效，
@@ -45,11 +45,11 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 _BACKEND = _ROOT / "backend"
 sys.path.insert(0, str(_BACKEND))
 
-# ── 任务5 常量（口径来自体检报告 P0-3：常驻 湛江·广海湖光校区·学生宿舍；大二学生）──
-ANCHOR_FACT = "用户当前常驻：湛江市·广东海洋大学湖光校区·学生宿舍；身份：在读学生（大二）"
-ANCHOR_USER_FACT = "常驻湛江市·广东海洋大学湖光校区·学生宿舍（大二在读学生）"
-ANCHOR_LINKS = ("现状", "在哪", "位置", "学校", "宿舍", "校区", "湛江", "常驻", "住哪")
-ANCHOR_CHAR_FALLBACK = 13          # 取不到活跃角色时兜底（sam）
+# ── 任务5 常量（占位默认值：请用 --fact/--user-fact 传入你自己的现状口径）──
+ANCHOR_FACT = "用户当前常驻：<城市>·<学校/校区>·<住所>；身份：<身份>"
+ANCHOR_USER_FACT = "常驻<城市>·<学校/校区>·<住所>（<身份>）"
+ANCHOR_LINKS = ("现状", "在哪", "位置", "学校", "宿舍", "校区", "常驻", "住哪")
+ANCHOR_CHAR_FALLBACK = 13          # 取不到活跃角色时兜底（首个活跃角色 id）
 DEFAULT_USER_ID = 3                # 体检报告数据所属用户
 DEFAULT_RESIDUAL_IDS = (7017, 7522, 7573, 7663, 7721)
 PLAN_BATCH = 200                   # 单次限额（与 EXPIRE_BATCH_LIMIT 对齐）

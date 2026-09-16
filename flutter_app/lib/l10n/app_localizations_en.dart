@@ -1825,6 +1825,30 @@ class AppLocalizationsEn extends AppLocalizations {
       'e.g. I live in Changsha / I have a cat named Mangmang';
 
   @override
+  String get worldFactHistory => 'History';
+
+  @override
+  String get worldFactHistoryCurrentLabel => 'Current';
+
+  @override
+  String get worldFactHistorySuperseded => 'Superseded';
+
+  @override
+  String get worldFactHistoryAuthor => 'Author';
+
+  @override
+  String get worldFactHistoryAsserted => 'Asserted';
+
+  @override
+  String get worldFactHistorySupersededAt => 'Superseded at';
+
+  @override
+  String get worldFactHistoryEmpty => 'This setting has not been changed yet';
+
+  @override
+  String get worldFactHistoryLoadFailed => 'Failed to load history';
+
+  @override
   String get cancel => 'Cancel';
 
   @override

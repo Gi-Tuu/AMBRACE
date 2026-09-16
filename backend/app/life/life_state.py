@@ -17,6 +17,12 @@ NEEDS = [
     "creativity", "learning", "reflection", "entertainment",
 ]
 
+# 批次三(2026-09-16)：需求基线与弹性曲线（settle_needs 向基线收敛，避免长期贴边）
+NEEDS_BASELINE = 55          # 需求自然收敛中心（原无衰减 → 恒 100）
+NEEDS_DECAY = 0.25           # 高于基线时的回落系数（截断取整，防跳变）
+NEEDS_RECOVER_RATE = 0.10    # 低于基线时的回升系数（温和，避免刚被满足就弹回）
+NEEDS_RECOVER_MAX = 6        # 单 tick 回升上限
+
 
 def default_needs() -> dict[str, int]:
     return {k: 50 for k in NEEDS}
@@ -57,12 +63,32 @@ def settle_focus(energy: int) -> int:
 
 
 def settle_needs(needs: dict[str, int], satisfied: dict[str, int] | None = None) -> dict[str, int]:
-    """需求自然增长 +3-8，被活动满足的 -10-20"""
+    """需求自然变化（批次三 P0-5 重做，2026-09-16）。
+
+    旧公式：固定 +3~8 增长、从无回落 → 不被活动满足的需求长期贴边 100；
+    learning 被 study 频繁 -18 直接耗到 4。
+
+    新公式（三段，全部截断取整，避免跳跃）：
+    1. 自然增长 +2~5；
+    2. 减去本次活动满足量（``satisfied``）；
+    3. 向基线 ``NEEDS_BASELINE`` 弹性收敛：
+       - 高于基线 → 回落 ``(v-B) * NEEDS_DECAY``（顶格 100 逐 tick 降到 ~70 均衡）；
+       - 低于基线 → 温和回升 ``min(NEEDS_RECOVER_MAX, (B-v) * NEEDS_RECOVER_RATE)``
+         （被耗到 4 的 learning 会真实回升，但不会刚满足就弹回）。
+
+    均衡点 ≈ 基线 + 增长/衰减系数（≈70），因此需求既不再顶格 100，也不再单边探底；
+    ``decision._score_action`` 的 60 阈值附近长期有真实波动。
+    """
     out = {}
     for k in NEEDS:
-        v = int(needs.get(k, 50)) + random.randint(3, 8)
+        v = int(needs.get(k, 50))
+        v += random.randint(2, 5)
         if satisfied:
             v -= int(satisfied.get(k, 0))
+        if v > NEEDS_BASELINE:
+            v -= int((v - NEEDS_BASELINE) * NEEDS_DECAY)
+        else:
+            v += min(NEEDS_RECOVER_MAX, int((NEEDS_BASELINE - v) * NEEDS_RECOVER_RATE))
         out[k] = clamp(v)
     return out
 

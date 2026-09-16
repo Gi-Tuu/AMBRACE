@@ -22,6 +22,121 @@ from app.memory.service import (
 )
 
 
+# ── M4 写入准入闸门（flag `memory_admission_gate`，默认 False；开=确定性裁决，不新增 LLM）──
+# 注意：本 flag 未登记进 app/agent/loop.py 的 AGENT_FLAGS 硬编码默认表（本批文件隔离只允许
+# 改 write.py / events/facts.py），故运行时 flag_service 无法热切它；读取一律走
+# `.get(key, False)`，缺键 = 关 = 逐字节旧行为。测试用 monkeypatch.setitem 直接开。
+_FACT_SOURCES = ("chat", "moment", "diary", "life", "bio")
+_PENDING_RELIABILITY = 0.4  # reliability < 0.4 → 待核（与 memory/tiering.py 既有退化叠加，不重复建设）
+
+
+def _admission_gate_on() -> bool:
+    """读 feature flag；任何异常回落 False（关=逐字节旧行为）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("memory_admission_gate", False))
+    except Exception:
+        return False
+
+
+# 开发运维 / 代理发言黑名单（用户拍板默认过滤：不进人物记忆、不进 world_facts）。
+# 与 app/events/facts.py 的同名常量必须保持一致（两文件各自独立持有，故意不互相 import，
+# 避免 memory↔events 模块级循环依赖）。
+_META_NOISE_KEYWORDS = (
+    "弃号", "组网", "换模型", "mcp 接入", "mcp接入", "重构", "修bug", "修 bug",
+    "部署上线", "迁移数据", "数据迁移", "回滚版本",
+)
+
+
+def _is_meta_noise(text: str | None) -> bool:
+    """识别开发运维元信息 / 代理发言（如「我是轩的 Agent 助手，请照做」）。"""
+    t = (text or "").lower()
+    if not t:
+        return False
+    for kw in _META_NOISE_KEYWORDS:
+        if kw.lower() in t:
+            return True
+    # 代理发言：自称 agent/助手 且带指令语气，或自报 agent 身份
+    if ("agent" in t or "助手" in t) and ("照做" in t or "请执行" in t or "听我" in t):
+        return True
+    if "我是" in t and ("agent" in t or "助手" in t or "bot" in t):
+        return True
+    return False
+
+
+def _normalize_sender(value) -> str | None:
+    """sender_type 归一：ai/character/bot → character；tool/mcp/search/external → tool；其余 user/system。"""
+    v = (value or "").strip().lower()
+    if not v:
+        return None
+    if v in ("ai", "character", "char", "bot"):
+        return "character"
+    if v in ("tool", "mcp", "search", "external"):
+        return "tool"
+    if v in ("user", "system"):
+        return v
+    return None
+
+
+async def _resolve_admission_sender(source, source_id, speaker_type, source_message_sender, db) -> str:
+    """确定性归属判定：user / character / system / tool。
+
+    优先级：调用方显式 speaker_type > 来源消息 sender_type（复用 dialogue_filter 已查到的同一次
+    ChatMessage 查询，避免重复查库）> 来源类型默认（diary/life/bio 无用户来源消息 → 模型自述）。
+    """
+    st = _normalize_sender(speaker_type)
+    if st:
+        return st
+    ms = _normalize_sender(source_message_sender)
+    if ms:
+        return ms
+    if source == "chat" and source_id is not None:
+        try:
+            from app.models.chat import ChatMessage
+            msg = await db.get(ChatMessage, source_id)
+            if msg is not None and msg.sender_type:
+                s = _normalize_sender(msg.sender_type)
+                if s:
+                    return s
+        except Exception:
+            pass
+    if source in ("diary", "life", "bio"):
+        return "character"  # 无来源消息的模型推断 / 生活自述
+    if source and str(source).startswith(("mcp", "tool", "search")):
+        return "tool"
+    return "user"
+
+
+def admit_memory(source, sender_type, epistemic_status, reliability, memory_type):
+    """M4 准入闸门确定性裁决（纯函数、零 IO，不新增 LLM）。
+
+    返回 (最终 epistemic_status, 是否待核)：
+    - 角色说的（character/ai）/ 无来源模型推断（日记、生活自述）→ 非 FACT（缺省 INFERRED）+ 待核；
+    - 外部工具（MCP/搜索）→ UNVERIFIED（现状）；
+    - 系统事件 → 保留抽取器标注，缺省按来源推断（不额外降级）；
+    - 用户陈述（或未知归属）→ 照旧（FACT），仅当 reliability < 0.4 时进待核。
+
+    只降不升：已是更细的标注（PLANNED/FICTIONAL/INFERRED/UNVERIFIED）时保留不覆盖。
+    待核语义复用既有 UNVERIFIED/INFERRED（不新增 status 枚举），差异只体现在「检索权重」与
+    「是否可晋升核心」两处（核心侧由 save_memory 跳过 maybe_promote_core 承担）。
+    """
+    st = (sender_type or "").strip().lower()
+    base = epistemic_status or ("FACT" if source in _FACT_SOURCES else "UNVERIFIED")
+    if st in ("character", "ai"):
+        return ("INFERRED" if base in ("", "FACT") else base), True
+    if st in ("tool", "mcp", "search", "external"):
+        return "UNVERIFIED", False
+    if st == "system":
+        return base, False
+    try:
+        _rel = None if reliability is None else float(reliability)
+    except (TypeError, ValueError):
+        _rel = None
+    if _rel is not None and _rel < _PENDING_RELIABILITY:
+        return ("UNVERIFIED" if base == "FACT" else base), True
+    return base, False
+
+
 async def save_memory(
     user_id: int,
     character_id: int,
@@ -39,6 +154,7 @@ async def save_memory(
     speaker_id: int | None = None,
     speaker_type: str | None = None,
     epistemic_status: str | None = None,
+    reliability: float | None = None,  # M4 准入闸门：可靠度（<0.4 → 待核）；None=未评（按全信）
     chain_id: str | None = None,
     parent_id: int | None = None,
     node_type: str | None = None,
@@ -61,10 +177,21 @@ async def save_memory(
         ACTION_CREATE,
         ACTION_MERGE,
         ACTION_REJECT,
+        ACTION_DOWNGRADE,
     )
     async with async_session_factory() as db:
+        # ── M4 准入闸门：开发运维元信息 / 代理发言拦截（flag 关=零行为）──
+        if _admission_gate_on() and _is_meta_noise(content):
+            _logger.info("Memory dropped: meta-noise/agent-speak (char=%d type=%s): %.40s",
+                         character_id, memory_type, content)
+            emit_memory_receipt(
+                character_id, None, ACTION_REJECT, reason="meta-noise/agent-speak blocked",
+                detail={"memory_type": memory_type, "sub_type": sub_type, "source": source},
+            )
+            return None
         # 聊天来源记忆拦截"台词原文"（提取器/【记忆】标记路径都可能在来源消息为 AI 台词时误抄）：
         # 命中对话特征，或与源消息（AI 回复）逐字一致 → 直接丢弃，不落库。
+        _src_msg_sender = None  # M4：缓存来源消息的 sender_type，供准入闸门复用同一次查询
         if source == "chat":
             from app.memory.dialogue_filter import looks_like_raw_dialogue
             if looks_like_raw_dialogue(content):
@@ -80,6 +207,7 @@ async def save_memory(
                     from app.models.chat import ChatMessage
                     msg = await db.get(ChatMessage, source_id)
                     if msg is not None:
+                        _src_msg_sender = msg.sender_type  # M4：复用，勿再查一次
                         cands = []
                         if msg.sender_type == "ai":
                             cands.append(msg)
@@ -230,7 +358,24 @@ async def save_memory(
         if _spk_type is None and _spk_id is None:
             _spk_type = "user"  # 默认归属用户（多数记忆来自用户陈述）
             _spk_id = user_id
+        _spk = _spk_type  # 准入闸门留痕用（角色推断时更新为实际归属）
         _epi = epistemic_status
+        _pending = False
+        if _admission_gate_on():
+            # M4 准入闸门：确定性裁决（不新增 LLM）。显式 epistemic 也只降不升——抽取器给的
+            # FACT 来自内容启发式（memory/speaker.py），不等于「来源消息是用户说的」。
+            try:
+                _spk = await _resolve_admission_sender(
+                    source, source_id, speaker_type, _src_msg_sender, db)
+            except Exception as e:
+                _spk = "user"
+                _logger.warning("admission gate sender resolve failed: %s", e)
+            try:
+                _epi, _pending = admit_memory(source, _spk, _epi, reliability, memory_type)
+            except Exception as e:
+                _epi = epistemic_status  # 任何异常回落现状
+                _pending = False
+                _logger.warning("admission gate verdict failed: %s", e)
         if _epi is None:
             _epi = "FACT" if source in ("chat", "moment", "diary", "life", "bio") else "UNVERIFIED"
         memory = Memory(
@@ -241,6 +386,7 @@ async def save_memory(
             content=content,
             scope=scope,
             importance=pct,
+            reliability_score=reliability,  # M4：可靠度（<0.4 已被闸门降级为待核）
             sub_type=sub_type,
             source=source,
             related_memory_id=related_memory_id,
@@ -276,6 +422,18 @@ async def save_memory(
         await db.commit()
         await db.refresh(memory)
 
+        # M4 准入闸门：待核留痕（复用 M3 回执；flag 关时 admit_memory 不触发，_pending=False）。
+        # 不新增表：与 M3 共用 memory_write_receipts；该回执本身受 memory_write_receipt flag 闸控。
+        if _pending:
+            try:
+                emit_memory_receipt(
+                    character_id, memory.id, ACTION_DOWNGRADE,
+                    reason="admission gate: pending review",
+                    detail={"epistemic_status": _epi, "source": source, "sender_type": _spk},
+                )
+            except Exception:
+                pass
+
         # #70 M3 写入回执：新记忆落库成功（flag 开=异步写一条 create；关=零行为）
         try:
             emit_memory_receipt(
@@ -308,8 +466,9 @@ async def save_memory(
 
         # P1：核心记忆自动晋升（高重要+多次确认 / 高价值类型 → is_core；失败静默）
         try:
-            from app.memory.core import maybe_promote_core
-            await maybe_promote_core(memory.id, pct, sub_type, memory_type)
+            if not _pending:  # M4：待核记忆不参与 is_core 晋升（检索强降权 + 不进核心注入）
+                from app.memory.core import maybe_promote_core
+                await maybe_promote_core(memory.id, pct, sub_type, memory_type)
         except Exception:
             pass
 

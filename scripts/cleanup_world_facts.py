@@ -6,11 +6,11 @@
 
   1) 三条已核实错误的身份事实 → status='superseded'（**走 supersede 链，不用裸 expired**）：
      #15「用户是宣传部艺术负责人」、#42「用户是学校工作人员」、#64「用户是设计师，从事设计工作」
-     （用户实际是在读大二学生）。若同角色已存在批次一的「当前现状锚点」事实，则把 superseded_by
+     （与用户实际的稳定画像冲突）。若同角色已存在批次一的「当前现状锚点」事实，则把 superseded_by
      指向它（形成真正的取代链）；否则 superseded_by 留空（仅置位，与 assert_fact 的 12 条淘汰路径同形）。
   2) kind='relationship_baseline' 的 active 重复合并：**按 character_id 分组**各保留 1 条权威记录
      （asserted_at 最新，并列取 id 最大），组内其余置 superseded 且 superseded_by=保留行 id。
-     说明：交接写「合并为 1 条」，但该表按角色隔离（char13=sam / char6=DeepSeek 各一套语义：
+     说明：交接写「合并为 1 条」，但该表按角色隔离（各角色各一套语义：
      「我是用户的老公」vs「用户的对象是sam（男）」），跨角色合并会让别的角色错认自己的身份关系，
      故按角色各留 1 条权威记录（实测 14 → 2），此为对交接的唯一有意偏离，已在交付回报中标注。
   3) 裸 expired（status='expired'）只**打印清单与来源**，不做任何修改。来源已核实为

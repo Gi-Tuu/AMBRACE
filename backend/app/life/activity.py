@@ -14,8 +14,33 @@ from sqlalchemy import select
 from app.agent.llm_client import chat_completion
 from app.models.life import LifeActivityLog, LifeArtifact
 from app.models.agent import ToolPermission
+from app.life import relations as _relations   # 批次三(2026-09-16) 亲属守卫
+from app.life import space as _space            # 批次三(2026-09-16) 空间模型
 
 _logger = get_logger("life.activity")
+
+# 批次三 P0-5 止血(2026-09-16)：禁止凭空生成家人/亲属。仅在用户明确提及过某人时才能写该人物；
+# 未设定任何家人/亲属时，绝不要编造「妈妈/父亲/奶奶/室友的家人」等，改为写自己的感受或具体事物。
+_RELATION_GUARD = (
+    "重要的人必须是用户明确向你提及过的真实人物；如果你从未听用户提起过家人或亲属，"
+    "就不要写任何家人/亲属（如妈妈、父亲、奶奶、老妈、家人等），改为写你自己的感受或眼下的具体事物。"
+    "严禁凭空生成亲属。"
+)
+
+# 亲属内容被拦下后的中性占位文案（仅用于活动日志展示，绝不写记忆/产物）
+_RELATION_NEUTRAL = "{name}静静待了一会儿，想着自己的事。"
+
+
+def guard_relation_content(character_name: str, content: str,
+                           known_people: list[str] | None = None) -> tuple[str, bool]:
+    """批次三 P0-5(2026-09-16)：亲属守卫——纯函数，便于单测。
+
+    返回 ``(内容, 是否被拦下)``。被拦下时内容替换为中性文案（不含任何亲属词），
+    调用方据此**不写记忆、不落产物**（凭空亲属内容不进入长期记忆）。
+    """
+    if _relations.mentions_unspecified_relation(content, known_people):
+        return _RELATION_NEUTRAL.format(name=character_name), True
+    return content, False
 
 
 def _today_cn() -> str:
@@ -158,12 +183,17 @@ async def run_activity(db, user_id: int, character, phase: str, needs: dict[str,
         content = ""
         artifact_id = None
         trace = None
+        # 批次三 P0-1(2026-09-16)：占位内容（纯数值活动的固定句 / LLM 与真实浏览都失败的兜底句）
+        # 只写活动日志，绝不写记忆、不落产物——避免恒定模板句被去重合并挂到同一条 memory_id。
+        placeholder = False
         if name == "rest":
             content = f"{character.name}休息了一会儿，放空自己，缓了缓神。"
+            placeholder = True
         else:
             content, trace = await _generate_content(db, user_id, character, name)
         if not content:
             content = f"{character.name}完成了「{act['label']}」，感觉不错。"
+            placeholder = True
         # AI 日程（Phase B-2）：reflect 活动顺手生成 [SCHEDULE] 标记 → 落库并剥离标记
         if name == "reflect":
             try:
@@ -178,8 +208,18 @@ async def run_activity(db, user_id: int, character, phase: str, needs: dict[str,
                     _logger.info("schedule created from reflect: char=%d %s", character.id, _sched["title"])
             except Exception as e:
                 _logger.warning("schedule from reflect failed: %s", e)
+        # 批次三 P0-5 止血(2026-09-16)：亲属守卫——未设定亲属却生成了家人/亲属内容时，
+        # 内容替换为中性文案，且**不再写记忆/产物**（凭空亲属内容不进入长期记忆）。
+        known_people = await _relations.resolve_known_people(db, character.id)
+        content, relation_blocked = guard_relation_content(character.name, content, known_people)
+        if relation_blocked:
+            _logger.info("life activity relation-guard char=%d act=%s: drop family content",
+                         character.id, name)
+        # 是否值得沉淀：真实内容（非占位、非凭空亲属）才写记忆/产物
+        substantive = bool(content and content.strip()) and not placeholder and not relation_blocked
         # 产物落库（Phase 2：create/browse/learn 生成可展示成果；rest/organize/reflect/social_prepare 无）
-        if name in ("create", "browse", "learn"):
+        # 批次三(2026-09-16)：占位/亲属内容不落产物，避免伪造「学习笔记」这类成果。
+        if name in ("create", "browse", "learn") and substantive:
             artifact = await _create_artifact(db, user_id, character, name, content, satisfied)
             artifact_id = artifact.id if artifact is not None else None
         # 兴趣成长 + 目标推进（Phase 3）：活动完成 → 对应兴趣 +delta、对应类型目标 progress+1
@@ -195,19 +235,26 @@ async def run_activity(db, user_id: int, character, phase: str, needs: dict[str,
         # 记忆（Life Event）→ source=life，私·织库候选
         # L5（2026-09-09）：写记忆走统一重试包装（app/life/life_writer）；写失败不再把整条
         # 活动标 failed——活动本身（状态/兴趣/目标/产物）已完成，仅记忆缺失，output_json 记 memory_failed。
-        from app.life.life_writer import save_life_memory_with_retry
-        mem = await save_life_memory_with_retry(
-            user_id=user_id, character_id=character.id,
-            memory_type="event", content=content[:500],
-            importance=act["memory_importance"], sub_type=act["sub_type"], source="life",
-            speaker_type="character", speaker_id=character.id,
-            epistemic_status="FACT",
-        )
+        # 批次三 P0-1(2026-09-16)：只有真实内容才写；无真实文本 → memory_id=null（不写恒定模板句）。
+        mem = None
+        if substantive:
+            from app.life.life_writer import save_life_memory_with_retry
+            mem = await save_life_memory_with_retry(
+                user_id=user_id, character_id=character.id,
+                memory_type="event", content=content[:500],
+                importance=act["memory_importance"], sub_type=act["sub_type"], source="life",
+                speaker_type="character", speaker_id=character.id,
+                epistemic_status="FACT",
+            )
+        memory_failed = substantive and mem is None
         log.status = "completed"
         log.output_json = json.dumps({
-            "summary": content[:200], "satisfied": satisfied,
+            # 批次三(2026-09-16)：summary 不再用空串占位——有真实内容给内容，否则显式 null
+            "summary": content[:200] if substantive else None,
+            "satisfied": satisfied,
             "artifact_id": artifact_id, "trace": trace,
-            "memory_failed": mem is None,
+            "memory_failed": memory_failed,
+            "placeholder": placeholder, "relation_blocked": relation_blocked,
         }, ensure_ascii=False)
         log.memory_id = mem.id if mem is not None else None
         # B-TZ 修复（2026-09-01 审查）：统一 UTC naive（与 base.py finish() 写法一致），
@@ -215,8 +262,8 @@ async def run_activity(db, user_id: int, character, phase: str, needs: dict[str,
         from datetime import timezone as _tz
         log.completed_at = datetime.now(_tz.utc).replace(tzinfo=None)
         await db.commit()
-        _logger.info("life activity done: char=%d act=%s mem=%s artifact=%s",
-                     character.id, name, log.memory_id, artifact_id)
+        _logger.info("life activity done: char=%d act=%s mem=%s artifact=%s substantive=%s",
+                     character.id, name, log.memory_id, artifact_id, substantive)
         # 事件发布（2026-08-14 演进规划 v2 Phase A）：活动完成广播，订阅者负责朋友圈联动等
         try:
             from app.events import publish
@@ -233,7 +280,7 @@ async def run_activity(db, user_id: int, character, phase: str, needs: dict[str,
                     "activity_type": name,
                     "memory_id": mem.id if mem is not None else None,
                     "artifact_id": artifact_id,
-                    "summary": (content or "")[:200],
+                    "summary": content[:200] if substantive else "",
                     "importance": act["memory_importance"],
                 },
             )
@@ -396,6 +443,20 @@ async def _real_browse(db, user_id: int, character, name: str) -> tuple[str, dic
         return None
 
 
+async def _current_location(db, character_id: int) -> str:
+    """角色的当前空间（读不到时按住校/假期回落真实住处）。"""
+    try:
+        from app.models.life import LifeState
+        st = (await db.execute(
+            select(LifeState).where(LifeState.character_id == character_id)
+        )).scalar_one_or_none()
+        if st is not None and (st.location or "").strip():
+            return st.location
+    except Exception:
+        pass
+    return _space.home_base()[0]
+
+
 async def _generate_content(db, user_id: int, character, name: str) -> tuple[str, dict | None]:
     """活动内容生成：browse/learn 优先真实浏览（browser=allow + 插件可用，失败静默降级）；
     返回 (content, trace)；trace 为真实浏览记录（含 URL），无则 None。"""
@@ -436,6 +497,10 @@ async def _generate_content(db, user_id: int, character, name: str) -> tuple[str
         return ""
     # 时间锚定（2026-08-17）：活动内容生成注入当下日期 + 禁相对时间词，防「今天」漂移
     prompt = prompt + f"（现在是{_today_cn()}，你的当下时间。内容中禁止使用「今天/昨天/刚才/最近/这几天/下周」等相对时间词，涉及时间写具体日期（YYYY年M月D日）；不确切的用「有一次/某天/之前」等中性表述。）"
+    # 批次三 P0-5 止血(2026-09-16)：禁止凭空生成亲属
+    prompt = prompt + _RELATION_GUARD
+    # 批次三 P0-5 止血(2026-09-16)：内容必须与当前空间相符（宿舍没厨房 → 不写做饭/等你回家）
+    prompt = prompt + _space.space_guard(await _current_location(db, character.id))
     try:
         text = await chat_completion(
             messages=[

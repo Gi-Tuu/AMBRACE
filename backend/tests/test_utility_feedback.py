@@ -1,0 +1,256 @@
+# -*- coding: utf-8 -*-
+"""召回后效用反馈测试（小增量 2026-09-16）
+
+- classify_utility_signal：positive / negative / neutral 三条确定性判定；
+- flag 关 = 零写入（schedule 不调度 apply）；
+- apply：positive 微强化 / negative 微降权 / neutral 跳过，并写 memory_write_receipts 回执；
+- 异步失败不影响主流程（apply 内部捕获，不抛）。
+
+（项目未装 pytest-asyncio，统一 asyncio.run 同步执行；临时 SQLite 文件库，不触碰 backend/data）
+"""
+import asyncio
+import os
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+
+import app.db.database as dbmod
+from app.memory import utility_feedback as uf
+
+pytestmark = pytest.mark.slow
+
+
+@pytest.fixture()
+def mem_db(monkeypatch, tmp_path):
+    """临时 SQLite 文件库：monkeypatch 全局 async_session_factory（不触碰 backend/data）"""
+    db_path = os.path.join(str(tmp_path), "t.db")
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def _init():
+        import app.models  # noqa: F401  # 注册全部模型
+        from app.models.base import Base
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(_init())
+    monkeypatch.setattr(dbmod, "async_session_factory", factory)
+    yield factory
+    asyncio.run(engine.dispose())
+
+
+# ─────────────────────────── classify 纯函数 ───────────────────────────
+
+def test_classify_negative_on_correction_words():
+    sig = uf.classify_utility_signal(
+        "用户喜欢喝美式咖啡",
+        "你说的不对，你记错了，我其实喝拿铁",
+    )
+    assert sig == "negative"
+
+
+def test_classify_positive_when_fragment_used():
+    sig = uf.classify_utility_signal(
+        "用户喜欢喝美式咖啡",
+        "你上次说喜欢喝美式咖啡，今天要不要再点一杯",
+    )
+    assert sig == "positive"
+
+
+def test_classify_neutral_when_unrelated():
+    sig = uf.classify_utility_signal("用户喜欢喝美式咖啡", "今天天气不错")
+    assert sig == "neutral"
+
+
+def test_classify_negative_takes_precedence_over_positive():
+    # 回复同时含纠正词与记忆片段 → 判 negative（记忆被隐含纠正优先）
+    sig = uf.classify_utility_signal(
+        "用户喜欢喝美式咖啡",
+        "你记错了，其实你说过喜欢喝美式咖啡",
+    )
+    assert sig == "negative"
+
+
+def test_core_snippet_strips_markers():
+    assert uf._core_snippet("[记录于 2026-08-16][往事] 用户喜欢喝美式咖啡") == "用户喜欢喝美式咖啡"
+
+
+# ─────────────────────────── flag 关 = 零写入 ───────────────────────────
+
+def test_flag_off_does_not_schedule_apply(monkeypatch):
+    called = []
+    monkeypatch.setattr(uf, "_flag_on", lambda: False)
+    monkeypatch.setattr(uf, "apply_utility_feedback", lambda *a, **k: called.append(1))
+    uf.schedule_utility_feedback(
+        1, 1, [{"id": 5, "content": "用户喜欢喝美式咖啡"}], "你上次说喜欢喝美式咖啡"
+    )
+    assert called == []  # flag 关：apply 永不被调度（零写入）
+
+
+def test_flag_off_schedule_returns_without_exception():
+    # flag 默认关：即便传入召回与回复也不抛、不写
+    uf.schedule_utility_feedback(
+        1, 1, [{"id": 5, "content": "x"}], "回复文本"
+    )
+
+
+def test_is_enabled_delegates_to_flag(monkeypatch):
+    # nodes 侧早判用的公开入口：与内部 _flag_on 同源，不会分叉（flag 关时调用方零 state 改动）
+    monkeypatch.setattr(uf, "_flag_on", lambda: False)
+    assert uf.is_enabled() is False
+    monkeypatch.setattr(uf, "_flag_on", lambda: True)
+    assert uf.is_enabled() is True
+
+
+# ─────────────────────────── apply 作用 + 回执 ───────────────────────────
+
+async def _seed_memory(factory, importance=40.0, is_archived=False):
+    from app.models.memory import Memory
+    async with factory() as db:
+        m = Memory(
+            user_id=1, character_id=1, memory_type="user_info",
+            content="用户喜欢喝美式咖啡", importance=importance, is_archived=is_archived,
+        )
+        db.add(m)
+        await db.commit()
+        await db.refresh(m)
+        return m.id
+
+
+async def _read_memory(factory, mid):
+    from app.models.memory import Memory
+    async with factory() as db:
+        m = await db.get(Memory, mid)
+        return float(m.importance) if m else None
+
+
+async def _count_receipts(factory, mid):
+    from app.models.memory import MemoryWriteReceipt
+    async with factory() as db:
+        rows = (await db.execute(
+            select(MemoryWriteReceipt).where(MemoryWriteReceipt.memory_id == mid)
+        )).scalars().all()
+        return [(r.action, r.reason) for r in rows]
+
+
+async def _read_receipt_details(factory, mid):
+    import json as _json
+    from app.models.memory import MemoryWriteReceipt
+    async with factory() as db:
+        rows = (await db.execute(
+            select(MemoryWriteReceipt).where(MemoryWriteReceipt.memory_id == mid)
+        )).scalars().all()
+        return [_json.loads(r.detail_json) for r in rows]
+
+
+def test_apply_positive_nudges_importance_and_writes_receipt(mem_db):
+    mid = asyncio.run(_seed_memory(mem_db, 40.0))
+
+    asyncio.run(uf.apply_utility_feedback(1, 1, [(mid, "positive")]))
+
+    imp = asyncio.run(_read_memory(mem_db, mid))
+    assert imp == pytest.approx(40.0 + uf.UTILITY_POSITIVE_IMPORTANCE_DELTA)
+    receipts = asyncio.run(_count_receipts(mem_db, mid))
+    assert receipts == [("utility_feedback", "positive")]
+
+
+def test_apply_negative_lowers_importance(mem_db):
+    mid = asyncio.run(_seed_memory(mem_db, 40.0))
+
+    asyncio.run(uf.apply_utility_feedback(1, 1, [(mid, "negative")]))
+
+    imp = asyncio.run(_read_memory(mem_db, mid))
+    assert imp == pytest.approx(40.0 - uf.UTILITY_NEGATIVE_IMPORTANCE_DELTA)
+    receipts = asyncio.run(_count_receipts(mem_db, mid))
+    assert receipts == [("utility_feedback", "negative")]
+
+
+def test_apply_neutral_skips_and_writes_no_receipt(mem_db):
+    mid = asyncio.run(_seed_memory(mem_db, 40.0))
+
+    asyncio.run(uf.apply_utility_feedback(1, 1, [(mid, "neutral")]))
+
+    imp = asyncio.run(_read_memory(mem_db, mid))
+    assert imp == pytest.approx(40.0)  # 不变
+    receipts = asyncio.run(_count_receipts(mem_db, mid))
+    assert receipts == []
+
+
+def test_apply_multiple_signals(mem_db):
+    m1 = asyncio.run(_seed_memory(mem_db, 40.0))
+    m2 = asyncio.run(_seed_memory(mem_db, 40.0))
+
+    asyncio.run(uf.apply_utility_feedback(1, 1, [(m1, "positive"), (m2, "negative")]))
+
+    assert asyncio.run(_read_memory(mem_db, m1)) == pytest.approx(40.0 + uf.UTILITY_POSITIVE_IMPORTANCE_DELTA)
+    assert asyncio.run(_read_memory(mem_db, m2)) == pytest.approx(40.0 - uf.UTILITY_NEGATIVE_IMPORTANCE_DELTA)
+
+
+def test_apply_archived_memory_keeps_importance_but_leaves_receipt(mem_db):
+    """已归档/不存在的记忆：不改权重，但仍留一条可追溯回执（detail 标 skipped=true）。"""
+    mid = asyncio.run(_seed_memory(mem_db, 40.0, is_archived=True))
+
+    asyncio.run(uf.apply_utility_feedback(1, 1, [(mid, "positive")]))
+
+    assert asyncio.run(_read_memory(mem_db, mid)) == pytest.approx(40.0)  # 权重不变
+    details = asyncio.run(_read_receipt_details(mem_db, mid))
+    assert len(details) == 1
+    assert details[0]["signal"] == "positive"
+    assert details[0]["skipped"] is True
+    assert details[0]["user_id"] == 1        # 回执记「谁」
+
+
+def test_apply_missing_memory_is_silent_and_leaves_receipt(mem_db):
+    """记忆 id 不存在（已物理删）：不抛、留 skipped 回执。"""
+    asyncio.run(uf.apply_utility_feedback(1, 1, [(987654, "negative")]))
+    details = asyncio.run(_read_receipt_details(mem_db, 987654))
+    assert len(details) == 1
+    assert details[0]["skipped"] is True
+
+
+# ─────────────────────────── 异步失败不影响主流程 ───────────────────────────
+
+class _BoomFactory:
+    """async_session_factory 替身：进入即抛，模拟 DB 不可用。"""
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        raise RuntimeError("db down")
+
+    async def __aexit__(self, *a):
+        return False
+
+
+def test_apply_async_failure_is_silent(monkeypatch):
+    monkeypatch.setattr(dbmod, "async_session_factory", _BoomFactory())
+    # 不应抛出异常（失败静默、不阻塞主链路）
+    asyncio.run(uf.apply_utility_feedback(1, 1, [(9, "positive")]))
+
+
+# ─────────────────────────── schedule(flag 开) 端到端 ───────────────────────────
+
+def test_schedule_flag_on_writes_receipt(mem_db, monkeypatch):
+    mid = asyncio.run(_seed_memory(mem_db, 40.0))
+    monkeypatch.setattr(uf, "_flag_on", lambda: True)
+    # spawn_background 替身为同步执行，便于断言（不依赖事件循环调度时机）
+    captured = {}
+
+    def _run_sync(coro):
+        captured["coro"] = coro
+        return None
+
+    # schedule 内部从 app.utils.async_tasks 导入 spawn_background，patch 该名字
+    import app.utils.async_tasks as at
+    monkeypatch.setattr(at, "spawn_background", _run_sync)
+
+    uf.schedule_utility_feedback(
+        1, 1, [{"id": mid, "content": "用户喜欢喝美式咖啡"}], "你上次说喜欢喝美式咖啡"
+    )
+    assert "coro" in captured
+    asyncio.run(captured["coro"])  # 真正执行 apply
+    receipts = asyncio.run(_count_receipts(mem_db, mid))
+    assert receipts and receipts[0][1] == "positive"

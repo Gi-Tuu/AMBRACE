@@ -25,6 +25,16 @@ MAX_INJECT_TOPICS = 3           # 注入上下文最多条数
 PROACTIVE_FRESH_TOPIC_HOURS = 72      # 普通话题 72h 后不再主动承接（修复远期话题被反复续）
 PROACTIVE_GOAL_MAX_DAYS = 14          # 目标类放宽到 14 天（目标本就长期），且显式标注为目标跟进
 
+# P1-6（2026-09-16）：噪声片段清洗——话题表曾因机械切残片充满「的事」「卧室】」「站一天」
+# 等半句/括号碎片。提取时统一剥离【】（）与尾助词，并拒绝纯标点/无意义碎片（长度下限 2）。
+_BRACKET_RE = re.compile(r"[【】()（）\[\]<>《》「」“”\"']")
+_FRAGMENT_TRAIL_RE = re.compile(r"[的了呢吧吗啊呀嘛哈哟嘞呗嗯呃~～]+$")
+# 无意义碎片白名单（含括号/动作残片、纯疑问尾词），命中即视为噪声不建档
+_NOISE_FRAGMENTS = frozenset({
+    "的事", "做的事哦", "的事哦", "弄弄", "哪儿", "啥", "什么", "吗", "呢", "啊",
+    "呀", "哦", "呃", "嗯", "是头疼", "你呢", "干嘛", "干嘛呀",
+})  # 与 scripts/cleanup_conversation_topics.py 同口径
+
 # 候选话题提取模式：动作+目标（限定长度，避免整句误提取）
 _TOPIC_PATTERNS = [
     re.compile(r"(?:我|我们)(?:打算|准备|计划|想)[^，。！？!?,;；]{0,12}(?:参加|去|做|学|写|考|买|开始|尝试|报)([^，。！？!?,;；\s]{2,14})"),
@@ -34,6 +44,28 @@ _TOPIC_PATTERNS = [
     re.compile(r"(?:\d+月\d+日|\d+号)(?:要|去|参加|考|交|办)([^，。！？!?,;；\s]{2,14})"),
 ]
 _CLEAN_RE = re.compile(r"[的了呢吧吗啊呀嘛哈]$")
+
+
+def _clean_fragment(raw: str) -> str:
+    """剥离【】（）等括号与动作残片、尾助词，得到规范话题短语。"""
+    t = _BRACKET_RE.sub("", raw or "").strip()
+    t = t.strip(" ，。！？!?；;、（）()【】-—…·~～　")
+    t = _FRAGMENT_TRAIL_RE.sub("", t).strip()
+    t = _CLEAN_RE.sub("", t).strip()
+    return t
+
+
+def _is_noise_topic(t: str) -> bool:
+    """噪声判别：空/纯标点/无意义碎片/过短均判噪声（不建档）。"""
+    if not t:
+        return True
+    if all(ch in " ，。！？!?；;、（）()【】…·—-~～　" for ch in t):
+        return True
+    if t in _NOISE_FRAGMENTS:
+        return True
+    if len(t) < 2:
+        return True
+    return False
 
 # 目标记忆（v2.1 Phase 3a）：长期目标类表达 → 话题标 goal=true
 _GOAL_PATTERNS = [
@@ -54,13 +86,13 @@ def _extract_candidates(text: str) -> list[tuple[str, bool]]:
     cands: list[tuple[str, bool]] = []
     for pat in _TOPIC_PATTERNS:
         for m in pat.finditer(text or ""):
-            t = _CLEAN_RE.sub("", m.group(1).strip())
-            if 2 <= len(t) <= 14 and t not in [c[0] for c in cands]:
+            t = _clean_fragment(_CLEAN_RE.sub("", m.group(1).strip()))
+            if 2 <= len(t) <= 14 and not _is_noise_topic(t) and t not in [c[0] for c in cands]:
                 cands.append((t, False))
     for pat in _GOAL_PATTERNS:
         for m in pat.finditer(text or ""):
-            t = _CLEAN_RE.sub("", m.group(1).strip())
-            if 2 <= len(t) <= 14 and t not in [c[0] for c in cands]:
+            t = _clean_fragment(_CLEAN_RE.sub("", m.group(1).strip()))
+            if 2 <= len(t) <= 14 and not _is_noise_topic(t) and t not in [c[0] for c in cands]:
                 cands.append((t, True))
     return cands
 
@@ -214,6 +246,9 @@ async def update_topic_resolution(character_id: int, user_id: int, user_msg: str
             changed = False
             for r in targets:
                 r.status = kind
+                # P1-6（2026-09-16）：终态不再挂「进行中」——status 与 progress 必须一致
+                if kind in ("完成", "搁置"):
+                    r.progress = kind
                 changed = True
             if changed:
                 await db.commit()
