@@ -116,7 +116,7 @@ def test_classify_slot_location_regex_tightened():
     assert classify_slot("回到过去") is None
     assert classify_slot("从失败里走出来") is None
     # 正例（地点宾语明确）
-    assert classify_slot("我回到东莞了") == "location"
+    assert classify_slot("我回到老家了") == "location"
     assert classify_slot("我从示例城回示例市了") == "location"
     assert classify_slot("用户这个月搬回了老家") == "location"
     assert classify_slot("我回到了四川老家") == "location"

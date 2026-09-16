@@ -5,7 +5,7 @@ bedroom/living/kitchen；而用户住校（宿舍无厨房），角色一边私�
 「去食堂垫两口」一边在系统里炖肉（eat→kitchen 做饭）。
 
 止血策略（改动尽量小，不引入新表/新服务）：
-- 地点/房间枚举扩展为可表达 宿舍 / 教学楼 / 食堂 / 图书馆 / 家（东莞）。
+- 地点/房间枚举扩展为可表达 宿舍 / 教学楼 / 食堂 / 图书馆 / 老家。
 - 纯函数推导「当前应处的空间」「该空间有哪些房间」「是否有厨房」，由 life_loop 调用，
   让住校角色白天在 campus/canteen/library、晚上回 dorm，而非永远 home/bedroom。
 - ``room_for`` 做空间合法性归一：不在有厨房的空间（宿舍/教学楼/食堂/图书馆）不落
@@ -20,7 +20,7 @@ from datetime import datetime
 
 # 地点枚举（在原有 home/world/friend/outside/exit 基础上扩展）
 LOCATIONS: tuple[str, ...] = (
-    "home",    # 东莞家（假期）
+    "home",    # 老家（假期）
     "dorm",    # 宿舍（住校）
     "campus",  # 教学楼
     "canteen", # 食堂
@@ -59,12 +59,12 @@ _DEFAULT_ROOM: dict[str, str] = {
     "friend": "exit", "outside": "exit", "exit": "exit",
 }
 
-# 有厨房（可做饭）的地点：仅东莞家；宿舍无厨房（住校现实）
+# 有厨房（可做饭）的地点：仅老家（home）；宿舍无厨房（住校现实）
 _KITCHEN_LOCATIONS: tuple[str, ...] = ("home",)
 
 # 地点中文标签（内容生成/话术约束用）
 SPACE_LABELS: dict[str, str] = {
-    "home": "东莞的家里（有厨房）",
+    "home": "老家的家里（有厨房）",
     "dorm": "学校宿舍（没有厨房）",
     "campus": "教学楼",
     "canteen": "食堂",
@@ -131,7 +131,7 @@ _TERM_TIME_DEFAULT = True
 
 
 def is_term_time(now: datetime | None = None) -> bool:
-    """是否为住校学期内（决定住在宿舍还是东莞家）。
+    """是否为住校学期内（决定住在宿舍还是老家）。
 
     默认 True（住校）。后续接入真实校历/用户设定时，按日期返回即可。
     """
@@ -139,14 +139,14 @@ def is_term_time(now: datetime | None = None) -> bool:
 
 
 def home_base(now: datetime | None = None) -> tuple[str, str]:
-    """角色「回到的家」：住校 → 宿舍；假期 → 东莞家。"""
+    """角色「回到的家」：住校 → 宿舍；假期 → 老家。"""
     if is_term_time(now):
         return "dorm", "bedroom"
     return "home", "bedroom"
 
 
 def sleep_location(now: datetime | None = None) -> tuple[str, str]:
-    """夜间睡眠落点：住校 → 宿舍卧室；假期 → 东莞家卧室。"""
+    """夜间睡眠落点：住校 → 宿舍卧室；假期 → 老家卧室。"""
     return home_base(now)
 
 

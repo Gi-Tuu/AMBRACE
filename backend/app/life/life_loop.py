@@ -131,7 +131,7 @@ class LifeLoopTask:
         # 夜间：只做恢复性结算，不决策
         if is_night:
             await apply_tick(db, char.id, "sleep")
-            # 批次三(2026-09-16)：睡眠落点随住校/假期（住校→宿舍，假期→东莞家），
+            # 批次三(2026-09-16)：睡眠落点随住校/假期（住校→宿舍，假期→老家），
             # 不再恒写 home/bedroom（角色一边说「去食堂」一边系统里 home/bedroom 的矛盾）。
             sleep_loc, sleep_room = _space.sleep_location()
             if st.location != sleep_loc or st.current_room != sleep_room:

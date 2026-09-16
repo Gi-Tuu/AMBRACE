@@ -48,7 +48,7 @@ class _Char:
 
 # ═══════════════════════ 任务3：空间模型 ═══════════════════════
 
-def test_space_只有东莞家有厨房():
+def test_space_只有老家有厨房():
     assert space.has_kitchen("home") is True
     for loc in ("dorm", "campus", "canteen", "library", "world", None):
         assert space.has_kitchen(loc) is False
