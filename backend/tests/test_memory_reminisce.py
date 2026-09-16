@@ -435,6 +435,12 @@ def test_run_review_hint_reminisce_framework(run_review_env):
     assert "已经发生过 / 已经过期的往事" in hint          # 时态口吻规则
     assert "禁止" in hint and "记得带" in hint            # 禁当下叮嘱
     assert "现在是北京时间" in hint                        # F1 时间锚点保留
+    # 批次一任务4（2026-09-16）：复习命中 = 回忆，与「当前现状」物理分区
+    assert "【当前现状" in hint and "【回忆·过去时" in hint
+    assert "［回忆·过去时］" in hint
+    state_part = hint.split("【回忆·过去时", 1)[0]
+    assert "橘子洲" not in state_part                     # 复习命中不进 current_state 拼装
+    assert hint.index("【当前现状") < hint.index("【回忆·过去时")
     import json
     meta = json.loads(captured["extra_meta"])
     assert meta == {"memory_id": m.id, "tense": "nostalgia"}

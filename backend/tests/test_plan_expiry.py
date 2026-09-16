@@ -219,6 +219,97 @@ def test_expire_库异常静默返回0(expiry_db, monkeypatch):
     assert asyncio.run(mpe.expire_stale_plans()) == 0
 
 
+# ───────── 批次一（2026-09-16）任务3：扫描窗覆盖面修正（只扩覆盖面，不放宽过期判定）─────────
+
+def test_classify_tense_显式plan标记优先于类型恒久粗判():
+    """任务3 根因之二：sub_type='plan' 必须压过「user_info/preference 非 extracted → enduring」的粗判。
+
+    线上实证 9865（user_info/plan）在旧判定顺序下恒为 enduring → valid_to 永不写、永不过期。
+    """
+    from types import SimpleNamespace
+    from app.memory.tense import classify_tense, is_plan_expired
+
+    def _m(**kw):
+        base = dict(memory_type="user_info", sub_type="plan", content="用户说吃饱了要去睡觉",
+                    title=None, why_it_matters=None, is_core=False, core_category=None,
+                    created_at=NOW, valid_to=None)
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    assert classify_tense(_m()) == "plan"
+    assert is_plan_expired(_m(created_at=datetime(2026, 9, 1, 8, 0, 0)), NOW) is True
+    # 未过有效期仍不是「已过期」（安全边界不放宽）
+    assert is_plan_expired(_m(created_at=NOW), NOW) is False
+    # 非 plan 的 user_info 粗判保持不变（sub_type=None / 其它 → enduring）
+    assert classify_tense(_m(sub_type=None, content="用户是学生")) == "enduring"
+    assert classify_tense(_m(sub_type="goal", content="用户是学生")) == "enduring"
+    # 核心记忆仍是最高优先级
+    assert classify_tense(_m(is_core=True)) == "enduring"
+
+def test_expire_扫描窗覆盖非event计划并排除偏好与日记(expiry_db, monkeypatch):
+    """任务3 覆盖面：user_info/extracted 与显式 sub_type=plan 入窗；preference/insight 不入窗（安全边界）。
+
+    对应线上实证：7017「用户将前往长沙出差/旅行，行程6天」(user_info/extracted) 与
+    9865（user_info/plan）在原口径（memory_type=='event'）下永远扫不到。
+    """
+    import app.memory.maintain_plan_expiry as mpe
+    factory, calls = expiry_db
+    _set_flag(monkeypatch, "review_plan_expire_stale", True)
+
+    async def _main():
+        a = await _seed(factory, memory_type="user_info", sub_type="extracted",
+                        content="用户将前往长沙出差/旅行，行程6天",
+                        created_at=datetime(2026, 8, 13, 4, 46, 0))
+        b = await _seed(factory, memory_type="user_info", sub_type="plan",
+                        content="用户说吃饱了要去睡觉",
+                        created_at=datetime(2026, 9, 1, 8, 0, 0))
+        # 不入窗（不改安全边界）：偏好里的"计划"字眼、日记里的"明天"
+        c = await _seed(factory, memory_type="preference", sub_type="extracted",
+                        content="用户喜欢饺子，AI计划做清蒸鲈鱼",
+                        created_at=datetime(2026, 8, 8, 6, 0, 0))
+        d = await _seed(factory, memory_type="insight", sub_type="diary",
+                        content="日记: 明天出发去长沙",
+                        created_at=datetime(2026, 8, 14, 15, 0, 0))
+        # 显式 plan 但未过期
+        e = await _seed(factory, memory_type="user_info", sub_type="plan",
+                        content="用户准备下周去成都旅行", created_at=NOW)
+        n = await mpe.expire_stale_plans()
+        return n, [await _get(factory, x.id) for x in (a, b, c, d, e)]
+
+    n, (ra, rb, rc, rd, re_) = asyncio.run(_main())
+    assert n == 2
+    assert ra.status == "stale" and ra.valid_to is not None      # 长沙出差残留（报告点名 7017 形态）
+    assert rb.status == "stale"                                  # 显式 sub_type=plan
+    assert rc.status == "active" and rc.valid_to is None         # preference 不入窗
+    assert rd.status == "active" and rd.valid_to is None         # insight/日记 不入窗
+    assert re_.status == "active" and re_.valid_to is None       # 未过期 plan 不动
+    assert calls["vectors"] and sorted(calls["vectors"][0][0]) == sorted([ra.id, rb.id])
+
+
+def test_list_expired_plans_只读且与expire同口径(expiry_db, monkeypatch):
+    """list_expired_plans 只读（不改 status），条数与随后 expire_stale_plans 的处理数一致。"""
+    import app.memory.maintain_plan_expiry as mpe
+    factory, _ = expiry_db
+    _set_flag(monkeypatch, "review_plan_expire_stale", True)
+
+    async def _main():
+        a = await _seed(factory, **_expired_plan_kw())
+        b = await _seed(factory, memory_type="user_info", sub_type="extracted",
+                        content="用户将前往长沙出差/旅行，行程6天",
+                        created_at=datetime(2026, 8, 13, 4, 46, 0))
+        await _seed(factory, memory_type="event", content="用户计划下周去长沙出差", created_at=NOW)
+        listed = await mpe.list_expired_plans()
+        statuses_after_list = [(await _get(factory, x.id)).status for x in (a, b)]
+        n = await mpe.expire_stale_plans()
+        return a.id, b.id, listed, statuses_after_list, n
+
+    aid, bid, listed, statuses_after_list, n = asyncio.run(_main())
+    assert {r["id"] for r in listed} == {aid, bid}          # 只读清单 = 随后 expire 会处理的集合
+    assert statuses_after_list == ["active", "active"]       # 只读，未改任何 status
+    assert n == 2
+
+
+
 # ────────────────────────── 日终维护挂载 ──────────────────────────
 
 def _patch_daily_steps(monkeypatch):

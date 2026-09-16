@@ -75,13 +75,18 @@ def classify_tense(m) -> str:
     # 1) 恒久：核心记忆 / 关系身份 / 偏好 / 一般印象
     if _g(m, "is_core", False) or _g(m, "core_category", None) == "identity":
         return "enduring"
+    # 1.5) L4 提取侧显式标注的计划（sub_type=plan）**优先于按 memory_type 的恒久粗判**
+    #      （2026-09-16 批次一任务3 修正判定顺序）：原顺序把 sub_type='plan' 排在
+    #      「user_info/preference 且 sub != extracted → enduring」之后，导致显式计划标记被吞掉——
+    #      线上实证 9865「用户说吃饱了要去睡觉，下午可能没课」(user_info/plan) 恒为 enduring，
+    #      valid_to 永远不写、永不过期。显式标注是提取侧（review_plan_validity_extract）写下的权威
+    #      计划信号，先判它不放宽「已过期」边界（is_plan_expired 仍要求已过有效期）。
+    if (_g(m, "sub_type", "") or "") == "plan":
+        return "plan"
     if mtype in ("preference", "user_info") and sub != "extracted":
         return "enduring"
     if sub in ("relationship", "emotion"):
         return "enduring"
-    # 2) L4 提取侧显式标注的计划（sub_type=plan）
-    if sub == "plan":
-        return "plan"
     # 3) 瞬时状态
     if sub == "status" or "状态更新" in t:
         return "transient"

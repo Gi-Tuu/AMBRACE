@@ -89,6 +89,38 @@ def _recent_context_line(recent_context: str, gap_hours: float | None,
     )
 
 
+# ── 任务4（2026-09-16，批次一）：复习命中 = 回忆，与「当前现状」物理分区 ──
+# 用户 09-09 定调、体检报告 P0-3 复述：「复习应该是回忆，不是当最近的记忆」。复习召回的旧记忆
+# 必须在注入时显式打「回忆（过去时）」标签、与「当前现状」分区，**禁止参与 current_state 拼装**，
+# 也不得把旧事件当作当下场景描述（storyline #1067/#1070 reasoning 泄漏的正是这一点）。
+_RECALL_HEADER_NOSTALGIA = (
+    "【回忆·过去时（以下是**已经发生过的往事**，不是现在正在发生的事；"
+    "禁止当作当下场景描述，禁止并入下面的「当前现状」块）】"
+)
+_RECALL_HEADER_NEUTRAL = (
+    "【想起的事（以下是早前提过的内容，不是当前现状；"
+    "须与下面的「当前现状」块分开叙述，不得混为一谈）】"
+)
+_CURRENT_STATE_HEADER = (
+    "【当前现状（以此为准；上面的「回忆/想起」块不属于现状，"
+    "**禁止参与本块拼装**，冲突时以本块为准）】"
+)
+
+
+def build_review_recall_block(phrase: str, content: str, context_line: str = "",
+                              *, nostalgia: bool = True) -> str:
+    """复习命中记忆的「回忆块」（纯函数）：显式过去时标签 + 封在独立分区内，不进现状块。"""
+    header = _RECALL_HEADER_NOSTALGIA if nostalgia else _RECALL_HEADER_NEUTRAL
+    tag = "［回忆·过去时］" if nostalgia else "［想起的事］"
+    return f"{header}\n{tag}{phrase}：{(content or '')[:120]}{context_line or ''}"
+
+
+def build_review_current_state_block(status_anchor: str) -> str:
+    """「当前现状」块（纯函数）：与回忆块物理分区；复习命中不得参与本块拼装。"""
+    body = (status_anchor or "").strip() or "（暂无已知现状锚点）"
+    return f"{_CURRENT_STATE_HEADER}\n{body}"
+
+
 def _is_replay_of_recent(text: str, recent_context: str, memory_content: str) -> bool:
     """F5-b：与最近聊天某句相似 >0.5 且与记忆内容无主题重合 → 判复读不发送。
 
@@ -460,17 +492,22 @@ async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
             status_anchor = await _current_status_anchor(char_id, user_id)
         if _reminisce:
             tense_rule = _TENSE_RULES["nostalgia" if is_nostalgia else tense_kind]
+            # 任务4：先立「当前现状」块，再放「回忆/想起」块——物理分区，复习命中不进现状拼装。
+            state_block = build_review_current_state_block(status_anchor)
+            recall_block = build_review_recall_block(
+                phrase, content_src, context_line, nostalgia=is_nostalgia)
             hint = (
                 f"{_cn_now_prefix()}\n"
                 f"{identity}\n{persona_block}"
-                f"{status_anchor}"
-                f"{phrase}：{content_src[:120]}{context_line}\n"
+                f"{state_block}\n"
+                f"{recall_block}\n"
                 f"{tense_rule}\n"
                 "自然地跟 TA 提一句，像老朋友回忆往事一样（1-2 句话，口语化），"
                 "不要生硬转折，不要提'记忆''复习''想起以前记录'这类字眼。"
                 "你要说的话必须围绕刚才回忆起的内容展开（可以感慨、确认、调侃），"  # F5(a) 聚焦记忆约束保留
                 "必须全程以第一人称'我'说话（你=角色本人），不要以旁观者视角提及你自己的名字或'某人'。"
                 "最近聊天只决定你开口的语气，不能只顺着最近聊天接话，更不能复述最近聊天里的句子。"
+                "「回忆/想起」块只用于回忆：不得说成现在正在发生，也不得把其中的内容并进「当前现状」。"
             )
         else:
             hint = (  # flag 关：逐字节回到旧 hint（回退路径）

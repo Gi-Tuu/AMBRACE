@@ -260,4 +260,10 @@ def test_alembic_migration_creates_new_tables(monkeypatch, tmp_path):
     assert "group_memories" in names  # #72（2026-09-04）群共享长期记忆子库新表
     assert "alembic_version" in names
     assert "domain_events" in names  # 3.10 事件流水（2026-09-08，append-only outbox-lite）
-    assert len(names) == 107  # 94 张应用表 + 4 张游戏表 + user_llm_configs + user_device_tokens + memory_archive(#70 C) + prospective_intents(模块G) + user_facts(§20) + group_memories(#72) + channel_bindings(一机多主) + domain_events(3.10) + alembic_version
+    assert "group_char_cognitions" in names  # #72 PR-C 逐角色认知（2026-09-15）
+    assert "memory_write_receipts" in names  # #70 M3 写入回执（2026-09-15）
+    assert "game_stats" in names  # #62 Phase 3 成就与统计（2026-09-15）
+    assert "game_achievements" in names
+    assert "game_content_overrides" in names
+    # 不硬编码总数（每加一张表都要改死数字，已三次回归）：断言"必需表在" + 数量不回退
+    assert len(names) >= 107  # 107 = 94 应用表 + 4 游戏表 + user_llm_configs + user_device_tokens + memory_archive + prospective_intents + user_facts + group_memories + domain_events

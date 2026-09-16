@@ -17,6 +17,12 @@
   超窗由 mark_stale_overdue() 置 stale；cue 同构纳入时效治理（2026-09-15，plans #72）——带时间窗的 cue
   （日期型跨天 / 非日期型超 CUE_ACTIVE_WINDOW_HOURS）与无 due 的纯线索（创建超 STALE_NODUE_DAYS 天）
   一律置 stale（留痕不删，仍可检索/回忆，但不进主动提起 / 线索注入）。
+- ② 时效口径修正（2026-09-16，批次一任务1/2）：
+  * 日期型 promise（due_end 时分=23:59）= **到期日当天**（北京自然日 00:00–23:59）任一时刻可自然提起，
+    跨天即作废；mark_stale_overdue() 必须豁免日期型（否则当天上午就被 2 小时窗清掉）。
+    精确时刻型（非 23:59）维持 [now - 2h, now] 与超窗 stale 不变。
+  * 无 due 的陈旧闸从「仅 cue」扩到 promise：kind∈{cue,promise} 且 due_end 为空、创建超
+    STALE_NODUE_DAYS 天 → stale。判定唯一走 _intent_is_stale()（在线硬闸与周期清扫共用）。
 - ③ 去模板去重：同一 intent 幂等只提一次（原子认领 pending→discharged，失败回滚）；
   同角色一小时内同款开场最多 1 条（recent_opener_exists）；写入期近重复合并。
 - ④ 存量清理只读/写脚本化：scripts/cleanup_prospective_intents.py（dry-run 默认）。
@@ -49,9 +55,11 @@ PROMISE_ACTIVE_WINDOW_HOURS = 2    # ② due_end 之后 ≤ N 小时才可自然
 #    2026-09-14 收紧：12h 太宽（叠加下面的时区口径错位，会拖到第二天傍晚还在提昨天的事）。
 CUE_ACTIVE_WINDOW_HOURS = 24       # ②cue 带「非日期型」时间窗时，到期后宽限 N 小时再 stale
 #    （当前提取器只产出日期型 due=23:59，跨天硬闸优先；此分支仅为防御未来出现时分粒度 due）
-STALE_NODUE_DAYS = 30              # ④ 无 due 的 cue 创建超 M 天 → stale
+STALE_NODUE_DAYS = 30              # ④ 无 due 的 intent（cue 纯线索 / promise 无时间窗）创建超 M 天 → stale
 #    2026-09-15 接线（plans #72）：由 mark_stale_cues() 周期清扫 + match_cue_intents() 在线硬闸使用，
 #    原来是定义后未引用的死常量，导致纯线索 cue 永不过期。
+#    2026-09-16（批次一任务2）：覆盖范围扩到 kind='promise' 且 due_end is null（仅 pending/matched），
+#    判定统一收敛到 _intent_is_stale()，在线路径与周期清扫共用同一口径。
 SIMILAR_INTENT_THRESHOLD = 0.95    # ③ 写入期近重复合并阈值（同角色 + 同 due 窗口）
 OPENING_COOLDOWN_HOURS = 1         # ③ 同款开场冷却：同角色一小时内最多 1 条
 IDEMPOTENT_FIRED_PREFIX = "prospective_intent_fired"  # ③ 幂等键前缀
@@ -99,24 +107,28 @@ def _is_date_scoped(due_end: datetime | None) -> bool:
     return due_end is not None and due_end.hour == 23 and due_end.minute == 59
 
 
-def _cue_is_stale(
+def _intent_is_stale(
     row,
     *,
     now_utc: datetime | None = None,
     now_local: datetime | None = None,
 ) -> bool:
-    """线索型（cue）是否已陈旧应退场（2026-09-15，plans #72）。
+    """意图是否已陈旧应退场（2026-09-15 plans #72；2026-09-16 批次一任务2 收敛为唯一判定）。
 
-    与 promise 的 stale/cross-day 同构，但 cue 有两类时间字段、时区口径不同：
-    - ``due_end``：提取器按**北京日历日**写入（日期型统一 23:59）→ 用北京 now 判：
-      日期型跨天即 stale（周末的线索下周不再翻）；非日期型超 CUE_ACTIVE_WINDOW_HOURS 即 stale。
-    - ``due_end`` 为空（纯线索）：看 ``created_at``（SQLite CURRENT_TIMESTAMP，**UTC**）
-      → 用 UTC now 判，创建超 STALE_NODUE_DAYS 天即 stale（接线原死常量）。
+    覆盖两类时间字段、时区口径不同：
+    - ``due_end`` 非空且 kind=cue：提取器按**北京日历日**写入（日期型统一 23:59）→ 用北京 now 判：
+      日期型跨天即 stale；非日期型超 CUE_ACTIVE_WINDOW_HOURS 即 stale。
+      （kind=promise 的非空 due_end 由 ``mark_stale_overdue`` / ``collect_due_promises`` 负责，
+       本函数对其返回 False，避免两套窗口口径互相打架。）
+    - ``due_end`` 为空（cue 纯线索 / promise 无时间窗）：看 ``created_at``
+      （SQLite CURRENT_TIMESTAMP，**UTC**）→ 用 UTC now 判，创建超 STALE_NODUE_DAYS 天即 stale。
 
-    只对 pending/matched 的 cue 生效；promise 与 discharged/cancelled/expired/stale 一律返回 False。
-    在线匹配（match_cue_intents）与周期清扫（mark_stale_cues）共用本函数，保证口径唯一。
+    只对 pending/matched 生效；discharged/cancelled/expired/stale 一律返回 False。
+    在线匹配（match_cue_intents）、到期采集（collect_due_promises）与周期清扫（mark_stale_cues）
+    共用本函数，保证口径唯一。
     """
-    if getattr(row, "kind", None) != "cue":
+    kind = getattr(row, "kind", None)
+    if kind not in ("cue", "promise"):
         return False
     if getattr(row, "status", None) not in ("pending", "matched"):
         return False
@@ -124,6 +136,8 @@ def _cue_is_stale(
     now_local = now_local or _now_local_naive()
     due = getattr(row, "due_end", None)
     if due is not None:
+        if kind != "cue":
+            return False  # promise 的到期/超窗走 mark_stale_overdue（2h 窗）与跨天闸
         if _is_date_scoped(due):
             return due.date() < now_local.date()
         return due < (now_local - timedelta(hours=CUE_ACTIVE_WINDOW_HOURS))
@@ -131,6 +145,17 @@ def _cue_is_stale(
     if created is not None:
         return created < (now_utc - timedelta(days=STALE_NODUE_DAYS))
     return False
+
+
+def _cue_is_stale(
+    row,
+    *,
+    now_utc: datetime | None = None,
+    now_local: datetime | None = None,
+) -> bool:
+    """兼容别名：历史调用点/测试使用 ``_cue_is_stale``；判定唯一走 ``_intent_is_stale``。"""
+    return _intent_is_stale(row, now_utc=now_utc, now_local=now_local)
+
 
 
 def _loads_cue_terms(s: str) -> list[str]:
@@ -376,6 +401,10 @@ async def mark_stale_overdue(*, window_hours: float | None = None) -> int:
     判定：status=pending、kind=promise、due_end 非空且 `due_end < now - N 小时`
     （N 默认 ``PROMISE_ACTIVE_WINDOW_HOURS``）。周期任务调用，幂等。
     只动 pending：discharged/cancelled/expired/matched/cue 一律不受影响。
+
+    2026-09-16（批次一任务1）：**日期型 promise（due_end 时分=23:59）豁免本函数**——它的口径是
+    「到期日当天任一时刻可自然提起」，若仍按 2 小时窗清，当天上午就把当天的约定杀掉了。日期型只在
+    跨天时 stale，由 ``collect_due_promises`` 的跨天闸（与 ``run_prospective_due`` 的防御硬闸）负责。
     """
     hours = PROMISE_ACTIVE_WINDOW_HOURS if window_hours is None else float(window_hours)
     cutoff = _now_local_naive() - timedelta(hours=hours)
@@ -388,32 +417,39 @@ async def mark_stale_overdue(*, window_hours: float | None = None) -> int:
                 ProspectiveIntent.due_end < cutoff,
             )
         )).scalars().all()
+        n = 0
         for r in rows:
+            if _is_date_scoped(r.due_end):
+                continue  # 任务1：日期型只在跨天时 stale（当天全天有效）
             r.status = "stale"
             db.add(r)
-        await db.commit()
-        return len(rows)
+            n += 1
+        if n:
+            await db.commit()
+        return n
 
 
 async def mark_stale_cues() -> int:
-    """②cue 纳入 stale 覆盖（2026-09-15，plans #72）：陈旧线索置 stale（留痕不删，仍可检索/回忆，
-    但不再在线索命中时注入「你之前还惦记着…」）。周期任务每小时调用，幂等。
+    """②cue/promise 无 due 纳入 stale 覆盖（2026-09-15 plans #72；2026-09-16 批次一任务2 扩到 promise）。
 
-    覆盖两类：带时间窗的 cue（日期型跨天 / 非日期型超 CUE_ACTIVE_WINDOW_HOURS）；
-    无时间窗的 cue（created_at 超 STALE_NODUE_DAYS 天）。只动 pending/matched 的 cue；
-    promise 与已终态行不受影响。判定唯一走 ``_cue_is_stale``。
+    陈旧线索/承诺置 stale（留痕不删，仍可检索/回忆，但不再在线索命中时注入「你之前还惦记着…」，
+    也不再被任何主动通道翻出来）。周期任务每小时调用，幂等。
+
+    覆盖：① 带时间窗的 cue（日期型跨天 / 非日期型超 CUE_ACTIVE_WINDOW_HOURS）；
+    ② 无时间窗的 cue 与 **无时间窗的 promise**（created_at 超 STALE_NODUE_DAYS 天）。
+    只动 pending/matched；已终态行不受影响。判定唯一走 ``_intent_is_stale``（与在线硬闸同口径）。
     """
     now_utc, now_local = _now_naive(), _now_local_naive()
     async with async_session_factory() as db:
         rows = (await db.execute(
             select(ProspectiveIntent).where(
                 ProspectiveIntent.status.in_(["pending", "matched"]),
-                ProspectiveIntent.kind == "cue",
+                ProspectiveIntent.kind.in_(["cue", "promise"]),
             )
         )).scalars().all()
         n = 0
         for r in rows:
-            if _cue_is_stale(r, now_utc=now_utc, now_local=now_local):
+            if _intent_is_stale(r, now_utc=now_utc, now_local=now_local):
                 r.status = "stale"
                 db.add(r)
                 n += 1
@@ -446,12 +482,19 @@ async def cancel_by_content(character_id: int, text: str) -> int:
 async def collect_due_promises() -> list[dict]:
     """返回「可自然提起」的 pending promise 候选，供 TriggerSource。
 
-    ② 时效收窄（2026-09-13）：先 expire（7 天宽限）/ mark_stale（N 小时超窗）清理，
-    再只捞 `now - N 小时 <= due_end <= now` 的窗口内候选——迟到一天不再被翻出来提。
+    ② 时效收窄（2026-09-13）：先 expire（7 天宽限）/ mark_stale（N 小时超窗）清理，再筛候选。
+
+    ② 口径修正（2026-09-16，批次一任务1）：候选分两档——
+    - **日期型**（due_end 时分=23:59）：到期日**当天（北京自然日 00:00–23:59）任一时刻**都可自然提起
+      （提取器只写 23:59，旧口径把可提起窗口压成当天 23:59:00–23:59:59 一分钟，错过就静默作废）；
+      跨天（due_end.date() < now.date()）则直接置 stale 作废，不再第二天翻旧账。
+    - **精确时刻型**（非 23:59）：维持既有 `[now - window, now]` 不变。
+
+    任务2：无 due 的 promise 不走时间窗，改用与周期清扫同一判定（_intent_is_stale，创建超 30 天 → stale）。
     """
     await expire_overdue()          # 先清 7 天宽限外（保持既有 expired 语义）
-    await mark_stale_overdue()      # 再把 N 小时超窗置 stale（不进主动提起）
-    now = _now_local_naive()
+    await mark_stale_overdue()      # 再把非日期型的 N 小时超窗置 stale（日期型豁免，见该函数）
+    now_utc, now = _now_naive(), _now_local_naive()
     window_start = now - timedelta(hours=PROMISE_ACTIVE_WINDOW_HOURS)
     async with async_session_factory() as db:
         rows = (await db.execute(
@@ -459,16 +502,19 @@ async def collect_due_promises() -> list[dict]:
                 ProspectiveIntent.status == "pending",
                 ProspectiveIntent.kind == "promise",
                 ProspectiveIntent.due_end.is_not(None),
-                ProspectiveIntent.due_end <= now,
-                ProspectiveIntent.due_end >= window_start,
             ).order_by(ProspectiveIntent.due_end.asc())
         )).scalars().all()
         candidates = []
         stale_ids: list[int] = []
         for r in rows:
-            # 2026-09-14：日期型约定跨天即作废——不再「第二天接着提昨天的事」（用户明确反馈）。
-            if _is_date_scoped(r.due_end) and r.due_end.date() < now.date():
-                stale_ids.append(r.id)
+            if _is_date_scoped(r.due_end):
+                # 日期型：当天全天有效；跨天即作废（2026-09-14 用户明确反馈「第二天接着提昨天的事」）
+                if r.due_end.date() < now.date():
+                    stale_ids.append(r.id)
+                    continue
+                if r.due_end.date() > now.date():
+                    continue  # 未来日期（防御：正常不会出现 pending 的未来 due）
+            elif not (window_start <= r.due_end <= now):
                 continue
             candidates.append({
                 "pis_id": r.id, "user_id": r.user_id, "character_id": r.character_id,
@@ -477,9 +523,21 @@ async def collect_due_promises() -> list[dict]:
                 "session_id": r.chat_session_id,  # arbiter 发送/追踪统一用 session_id 键
                 "chat_session_id": r.chat_session_id,
             })
+        # 任务2（在线硬闸）：无 due 的 pending promise 创建超 STALE_NODUE_DAYS 天 → stale，
+        # 与 mark_stale_cues() 周期清扫共用 _intent_is_stale，口径唯一。
+        nodue_rows = (await db.execute(
+            select(ProspectiveIntent).where(
+                ProspectiveIntent.status.in_(["pending", "matched"]),
+                ProspectiveIntent.kind == "promise",
+                ProspectiveIntent.due_end.is_(None),
+            )
+        )).scalars().all()
+        for r in nodue_rows:
+            if _intent_is_stale(r, now_utc=now_utc, now_local=now):
+                stale_ids.append(r.id)
     if stale_ids:
         await _set_status(stale_ids, "stale")   # 留痕不删，只是不再主动提起
-        _logger.info("Prospective intents marked stale (cross-day): %d", len(stale_ids))
+        _logger.info("Prospective intents marked stale (cross-day/nodue): %d", len(stale_ids))
     return candidates
 
 
@@ -517,7 +575,7 @@ async def match_cue_intents(character_id: int, user_text: str) -> list[Prospecti
         live: list[ProspectiveIntent] = []
         changed = False
         for r in rows:
-            if _cue_is_stale(r, now_utc=now_utc, now_local=now_local):
+            if _intent_is_stale(r, now_utc=now_utc, now_local=now_local):
                 r.status = "stale"          # 陈旧线索在线退场（留痕不删）
                 db.add(r)
                 changed = True

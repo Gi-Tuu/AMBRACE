@@ -404,8 +404,9 @@ async def scheduler_loop():
                         _logger.warning("Group memory compact schedule error: %s", e)
                     _group_memory_compact_done_today = True
 
-            # 前瞻约定时效治理（2026-09-13 ②；2026-09-15 扩到 cue，plans #72）：每小时把超窗/跨天/
-            # 超龄的 pending 约定置 stale——promise 走 due_end 活性窗口（2h），cue 走「日期型跨天 + 无 due 30 天」。
+            # 前瞻约定时效治理（2026-09-13 ②；2026-09-15 扩到 cue，plans #72；2026-09-16 批次一任务1/2）：
+            # 每小时把超窗/跨天/超龄的 pending 约定置 stale——promise 走 due_end 活性窗口（2h，日期型 23:59 豁免、
+            # 只在当天有效、跨天作废），cue 走「日期型跨天 + 无 due 30 天」，无 due 的 promise 同样按 30 天超龄清退。
             # 留痕不删，仍可检索/回忆，但不进主动提起/线索注入。幂等、异常隔离。
             if pis_stale_counter >= 3600:
                 pis_stale_counter = 0

@@ -528,3 +528,124 @@ def test_mark_stale_cues_sweep_and_idempotent(pi_db, monkeypatch):
     assert rows[discharged] == "discharged"
     assert rows[promise] == "pending"                        # cue 清扫不碰 promise
     assert asyncio.run(mark_stale_cues()) == 0               # 幂等
+
+
+# ───────── 批次一（2026-09-16）任务1/任务2：日期型当天可提 + 无 due promise 陈旧闸 ─────────
+
+def test_intent_is_stale_nodue_promise_and_cue():
+    """任务2 纯函数口径：无 due 的 promise 与 cue 同闸（31 天 stale / 29 天有效）；带 due 的 promise 不归本函数。"""
+    from app.scheduling.prospective_intent import _intent_is_stale
+    now_utc = datetime(2026, 9, 16, 2, 0)        # 北京 10:00
+    now_local = now_utc + timedelta(hours=8)
+
+    def _row(kind="promise", status="pending", due_end=None, created=None):
+        return SimpleNamespace(kind=kind, status=status, due_end=due_end, created_at=created)
+
+    # ① 无 due promise：31 天 → stale，29 天 → 仍在
+    assert _intent_is_stale(_row(created=now_utc - timedelta(days=31)),
+                            now_utc=now_utc, now_local=now_local) is True
+    assert _intent_is_stale(_row(created=now_utc - timedelta(days=29)),
+                            now_utc=now_utc, now_local=now_local) is False
+    # ② matched 属半激活态，同样纳入
+    assert _intent_is_stale(_row(status="matched", created=now_utc - timedelta(days=31)),
+                            now_utc=now_utc, now_local=now_local) is True
+    # ③ 带 due 的 promise 不归本函数（交给 mark_stale_overdue / collect_due_promises）
+    assert _intent_is_stale(_row(due_end=now_local - timedelta(hours=20)),
+                            now_utc=now_utc, now_local=now_local) is False
+    # ④ 终态一律不动
+    assert _intent_is_stale(_row(status="discharged", created=now_utc - timedelta(days=99)),
+                            now_utc=now_utc, now_local=now_local) is False
+    # ⑤ cue 原有口径不变（日期型跨天 / 无 due 超龄）
+    assert _intent_is_stale(_row(kind="cue", due_end=datetime(2026, 9, 15, 23, 59)),
+                            now_utc=now_utc, now_local=now_local) is True
+    assert _intent_is_stale(_row(kind="cue", due_end=datetime(2026, 9, 16, 23, 59)),
+                            now_utc=now_utc, now_local=now_local) is False
+    assert _intent_is_stale(_row(kind="cue", created=now_utc - timedelta(days=31)),
+                            now_utc=now_utc, now_local=now_local) is True
+
+
+@pytest.mark.slow
+def test_date_scoped_promise_raiseable_all_day_then_stale_next_day(pi_db, monkeypatch):
+    """任务1 ①②：日期型约定到期日当天任一时刻（北京 10:00）可被捞到；跨天不再捞且置 stale。
+
+    同时也验证 mark_stale_overdue 豁免日期型（否则当天上午就被 2 小时窗清掉）。
+    """
+    import app.scheduling.prospective_intent as pi
+    from app.scheduling.prospective_intent import (
+        collect_due_promises, mark_stale_overdue, upsert_intent,
+    )
+    monkeypatch.setattr(pi, "_now_naive", lambda: datetime(2026, 9, 15, 2, 0))   # 北京 09-15 10:00
+    today_eod = datetime(2026, 9, 15, 23, 59)                                    # 日期型（23:59）
+    pid = asyncio.run(upsert_intent(user_id=1, character_id=11, content="用户答应今天把豆腐煎了",
+                                    kind="promise", due_end=today_eod, source_message_id=2011))
+
+    # 当天上午：2 小时窗清理必须豁免日期型
+    assert asyncio.run(mark_stale_overdue()) == 0
+    due = asyncio.run(collect_due_promises())
+    assert pid in {c["pis_id"] for c in due}
+    assert {i: v[2] for i, v in _rows_of(pi_db).items()}[pid] == "pending"
+
+    # 次日同一时刻：跨天 → 不再捞，且被置 stale（留痕不删）
+    monkeypatch.setattr(pi, "_now_naive", lambda: datetime(2026, 9, 16, 2, 0))
+    due_next = asyncio.run(collect_due_promises())
+    assert pid not in {c["pis_id"] for c in due_next}
+    assert {i: v[2] for i, v in _rows_of(pi_db).items()}[pid] == "stale"
+
+
+@pytest.mark.slow
+def test_exact_time_promise_window_unchanged_and_nodue_untouched(pi_db, monkeypatch):
+    """任务1 ③④：精确时刻型维持 [now-2h, now]（超窗 stale）；无 due promise 不受本条影响。"""
+    import app.scheduling.prospective_intent as pi
+    from app.scheduling.prospective_intent import collect_due_promises, upsert_intent
+    fixed_utc = datetime(2026, 9, 15, 2, 0)                                       # 北京 10:00
+    monkeypatch.setattr(pi, "_now_naive", lambda: fixed_utc)
+    now_local = pi._now_local_naive()
+
+    in_win = asyncio.run(upsert_intent(user_id=1, character_id=11, content="用户答应18:30收游戏",
+                                       kind="promise", due_end=now_local - timedelta(hours=1),
+                                       source_message_id=2021))
+    late = asyncio.run(upsert_intent(user_id=1, character_id=11, content="用户答应昨晚十点收游戏",
+                                     kind="promise", due_end=now_local - timedelta(hours=20),
+                                     source_message_id=2022))
+    nodue = asyncio.run(upsert_intent(user_id=1, character_id=11, content="用户吃完饭后要报备一声",
+                                      kind="promise", cue_terms=["报备"], source_message_id=2023))
+
+    due = asyncio.run(collect_due_promises())
+    ids = {c["pis_id"] for c in due}
+    assert in_win in ids and late not in ids and nodue not in ids
+    rows = {i: v[2] for i, v in _rows_of(pi_db).items()}
+    assert rows[in_win] == "pending"
+    assert rows[late] == "stale"        # 精确时刻型超 2h → stale（现状不变）
+    assert rows[nodue] == "pending"     # 无 due 且新鲜 → 不受任务1影响
+
+
+@pytest.mark.slow
+def test_nodue_promise_swept_by_periodic_and_online(pi_db, monkeypatch):
+    """任务2：无 due promise 创建超 30 天 → 周期清扫 + 在线采集两条路径都置 stale；新鲜的不动。"""
+    import app.scheduling.prospective_intent as pi
+    from app.scheduling.prospective_intent import (
+        collect_due_promises, mark_stale_cues, upsert_intent,
+    )
+    fixed_utc = datetime(2026, 9, 16, 2, 0)
+    monkeypatch.setattr(pi, "_now_naive", lambda: fixed_utc)
+
+    old = asyncio.run(upsert_intent(user_id=1, character_id=11, content="用户吃完饭后要告诉我一声",
+                                    kind="promise", cue_terms=["吃完饭"], source_message_id=2031))
+    fresh = asyncio.run(upsert_intent(user_id=1, character_id=11, content="下次聚餐先跟用户报备",
+                                      kind="promise", cue_terms=["聚餐"], source_message_id=2032))
+    asyncio.run(_age_created_at(pi_db, old, fixed_utc - timedelta(days=31)))
+    asyncio.run(_age_created_at(pi_db, fresh, fixed_utc))
+
+    # 周期清扫（每小时）：只 stale 超龄那条
+    assert asyncio.run(mark_stale_cues()) == 1
+    rows = {i: v[2] for i, v in _rows_of(pi_db).items()}
+    assert rows[old] == "stale" and rows[fresh] == "pending"
+
+    # 在线路径（collect_due_promises 内 lazy sweep）：超龄的再置一条，仍新鲜的不动
+    stale2 = asyncio.run(upsert_intent(user_id=1, character_id=11, content="用户洗完澡要说一声",
+                                       kind="promise", cue_terms=["洗澡"], source_message_id=2033))
+    asyncio.run(_age_created_at(pi_db, stale2, fixed_utc - timedelta(days=45)))
+    asyncio.run(collect_due_promises())
+    rows = {i: v[2] for i, v in _rows_of(pi_db).items()}
+    assert rows[stale2] == "stale" and rows[fresh] == "pending"
+    assert asyncio.run(mark_stale_cues()) == 0               # 幂等

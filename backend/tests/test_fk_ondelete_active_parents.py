@@ -134,7 +134,9 @@ def test_physical_ondelete_after_migrate(monkeypatch, tmp_path):
     con = sqlite3.connect(str(db))
     try:
         ver = con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert ver == "f2b3c4d5e6f7", f"迁移链 head 应为 f2b3c4d5e6f7，实际 {ver}"
+        from alembic.script import ScriptDirectory
+        expected = ScriptDirectory.from_config(_alembic_config()).get_current_head()  # 不硬编码：新增迁移后自动跟随单头
+        assert ver == expected, f"迁移链 head 应为 {expected}（当前单头），实际 {ver}"
         _assert_all_cases(con)
         _assert_users_fks_match_orm(con)
     finally:

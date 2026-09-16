@@ -6,6 +6,7 @@
 """
 import asyncio
 import io
+import os
 
 
 def test_flag_default_off():
@@ -95,7 +96,8 @@ def test_emit_swallows_db_errors(monkeypatch):
 
 def test_write_points_wired():
     """接线守卫：create 1 + merge 3 + reject 2 落在 write.py；supersede / stale 落在 supersede.py。"""
-    root = "D:/AMBRACE/backend/app/memory/"
+    root = os.path.join(os.path.dirname(__file__), "..", "app", "memory")  # 相对本文件，避免本机绝对路径（CI 上必挂）
+    root = os.path.normpath(root) + os.sep
     w = io.open(root + "write.py", encoding="utf-8").read()
     s = io.open(root + "supersede.py", encoding="utf-8").read()
     assert w.count("emit_memory_receipt(") >= 6
