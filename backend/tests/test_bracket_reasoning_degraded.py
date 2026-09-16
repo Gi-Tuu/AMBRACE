@@ -49,6 +49,15 @@ def test_action_long_without_analytic_kept():
     assert extract_leading_bracket_reasoning(text) == (text, "")
 
 
+def test_action_long_with_analytic_words_kept():
+    """2026-09-15 真机反馈：动作描写含「我/他」等分析特征词且超长时会被误判成推理，
+    亲密/日常场景的括号动作整段消失——动作开头的括号一律保留正文。"""
+    text = "（我把他按在墙上，手托着他后腰慢慢来）先别动。"
+    assert extract_leading_bracket_reasoning(text) == (text, "")
+    text2 = "（他低头笑了一下，顺手把我捞进怀里）怎么了。"
+    assert extract_leading_bracket_reasoning(text2) == (text2, "")
+
+
 def test_mid_text_bracket_kept():
     """句中括号一律保留（只处理正文开头）。"""
     text = "行。（看他一眼）走吧。"

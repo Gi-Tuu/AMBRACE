@@ -326,6 +326,30 @@ class MemoryArchive(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+# ── memory_write_receipt.py ──
+# #70 M3：记忆写入回执（memory_write_receipts）——「这条记忆为什么在/不在」终态追踪。
+#
+# - 仅当 flag memory_write_receipt 开时由 save_memory 写分支 / supersede_memory 异步写入，失败静默；
+# - character_id / memory_id 均可空：部分场景无具体记忆 id（如全局记忆 / 拒绝落库）；
+# - action ∈ create/update/merge/supersede/stale/reject/downgrade（与迁移/回执模块一致）。
+class MemoryWriteReceipt(Base):
+    __tablename__ = "memory_write_receipts"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    character_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 可空：全局记忆等场景
+    memory_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 可空：无具体记忆 id 的拒绝/降级
+    action: Mapped[str] = mapped_column(String(20), nullable=False)  # create/update/merge/supersede/stale/reject/downgrade
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)  # 人类可读原因
+    detail_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # 结构化补充（命中 id / 相似度 / 来源等）
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    # 索引：按角色 + 时间回看（与单 memory_id 反查）；不加逐列 index=True，避免 create_all 与 upgrade 漂移。
+    __table_args__ = (
+        Index("idx_mwr_char_created", "character_id", "created_at"),
+        Index("idx_mwr_memory", "memory_id"),
+    )
+
+
 # ── prospective_intent.py ──
 # Ariadne 模块G：前瞻意图（未来某时间窗 / 某线索出现时才兑现）。2026-09-04。
 # 与 memories 正交：不进检索/衰减/查重/#70 supersede；状态机独立。

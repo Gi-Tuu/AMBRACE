@@ -12,6 +12,7 @@ from __future__ import annotations
 import random
 
 from app.games.base import ActionResult, GameContext, GameEngine, PlayerView
+from app.games.content_store import register_builtin_content
 from app.games.gm import gm_announce
 
 # 硬性黑名单：命中一律拦截（暴力/危险/性/越界称呼）
@@ -47,6 +48,10 @@ _SAFE_DARE = [
     "做一个你最拿手的表情。",
     "说出你今天最想感谢的人。",
 ]
+# #62 Phase 3：安全题模板登记为内容源兜底（用户自定义 / 插件内容包可整段覆盖）。
+# 注意：暴力/性/越界黑名单（_BLOCK_WORDS/_HIGH_INTIMACY）是硬性安全护栏，不外置、不可覆盖。
+register_builtin_content("truth_or_dare", "safe_truth", _SAFE_TRUTH)
+register_builtin_content("truth_or_dare", "safe_dare", _SAFE_DARE)
 
 
 class TruthOrDareEngine(GameEngine):
@@ -101,8 +106,12 @@ class TruthOrDareEngine(GameEngine):
                     return True
         return False
 
-    def _safe(self, want: str) -> str:
-        pool = _SAFE_TRUTH if want == "truth" else _SAFE_DARE
+    async def _safe(self, want: str) -> str:
+        """安全兜底题（#62 Phase 3：可被用户/插件内容覆盖，取不到回落内置模板）。"""
+        if want == "truth":
+            pool = self.content("safe_truth", _SAFE_TRUTH) or _SAFE_TRUTH
+        else:
+            pool = self.content("safe_dare", _SAFE_DARE) or _SAFE_DARE
         return random.choice(pool)
 
     def _compute_winner(self) -> str:
@@ -139,10 +148,10 @@ class TruthOrDareEngine(GameEngine):
             content = (payload.get("content") or "").strip()
             guarded = False
             if not content:
-                content = self._safe(want)
+                content = await self._safe(want)
                 guarded = True
             elif self._guard(content, want, self._tier(seat)):
-                content = self._safe(want)
+                content = await self._safe(want)
                 guarded = True
             content = content[:300]
             key = "last_question" if want == "truth" else "last_task"
@@ -298,7 +307,7 @@ class TruthOrDareEngine(GameEngine):
         if stage == "give":
             want = self.state.get("last_choice")
             return {"action": "give_truth" if want == "truth" else "give_dare",
-                    "content": self._safe(want), "payload": {}}
+                    "content": await self._safe(want), "payload": {}}
         if stage == "answer":
             want = self.state.get("last_choice")
             if want == "dare":

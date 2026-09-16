@@ -64,18 +64,27 @@ def _split_by_stage_blocks(text: str) -> list[str]:
     parts = _STAGE_BLOCK_RE.split(text)
     chunks: list[str] = []
     cur = ""
+    depth = 0
     for part in parts:
         if not part:
             continue
         if _STAGE_BLOCK_RE.fullmatch(part.strip()):
+            if depth > 0:
+                # 2026-09-15：前面还有未闭合开括号 → 这里的「闭合」只是外层括号的收尾，
+                # 不能当气泡分开点，否则一个括号段会被切成两个气泡
+                cur += part
+                depth = _bracket_depth(depth, part)
+                continue
             if cur.strip():
                 cur += part  # 括号归属前一段末尾 → 该气泡结束
                 chunks.append(cur)
                 cur = ""
             else:
                 cur = part  # 前导括号：留在本气泡开头（上方小字）
+            depth = _bracket_depth(depth, part)
         else:
             cur += part
+            depth = _bracket_depth(depth, part)
     if cur.strip():
         chunks.append(cur)
     return [c.strip() for c in chunks if c.strip()]
@@ -84,6 +93,22 @@ def _split_by_stage_blocks(text: str) -> list[str]:
 # ── 增量流式语义切块（SSE 真流式链路）─────────────────────────────
 # 开/闭括号配对：用于判断「未闭合括号」并保持块边界单调（不闪退、不把块切进标记/神态块中间）。
 _OPEN_MAP = {"【": "】", "[": "]", "（": "）", "(": ")"}
+_CLOSE_CHARS = tuple(_OPEN_MAP.values())
+
+
+def _bracket_depth(depth: int, text: str) -> int:
+    """在已有深度 depth（≥0，来自前文）上累计 text 的括号开合，返回新深度（下限 0）。
+
+    >0 表示仍有未闭合开括号：切分时必须把该段并入下一块，不得在括号中间落刀
+    （2026-09-15 真机缺陷：角色 sam 的「（推理…」与「）正文」被切成两个气泡，
+    逐块的 extract_leading_bracket_reasoning 两端都不匹配 → 推理原文连括号上屏）。
+    """
+    for ch in text:
+        if ch in _OPEN_MAP:
+            depth += 1
+        elif ch in _CLOSE_CHARS and depth > 0:
+            depth -= 1
+    return depth
 
 # 展示层需剥离的正文标记（与 parse_response / actions 同源；仅剥离「已闭合」标记）
 _DISPLAY_STRIP_PATTERNS = [
@@ -232,6 +257,7 @@ class IncrementalResponseChunker:
         acc = ""
         acc_len = 0
         cnt = 0
+        depth = 0
         for s in complete:
             s = s.strip()
             if not s:
@@ -239,7 +265,9 @@ class IncrementalResponseChunker:
             acc += s
             acc_len += len(s)
             cnt += 1
-            if cnt >= self._max_s or acc_len > self._max_len:
+            depth = _bracket_depth(depth, s)
+            # 2026-09-15：未闭合括号不落刀（并入下一块），否则括号段被切成两个气泡
+            if depth <= 0 and (cnt >= self._max_s or acc_len > self._max_len):
                 out.append(acc)
                 acc = ""
                 acc_len = 0
@@ -292,12 +320,34 @@ class IncrementalResponseChunker:
         self.disp_delta = ""
 
 
+def _strip_leading_bracket_reasoning(text: str) -> str:
+    """先剥后切（2026-09-15）：切分前对整段剥离开头的中文括号内心活动 + 尾部未闭合标记残片。
+
+    与落库清洗 _sanitize_persist_text 同源（extract_leading_bracket_reasoning +
+    strip_unclosed_markers），只是不剥动作标记（切分不该吞掉动作内容）。
+    剥离后为空 = 整段都是推理（无可见正文）→ 原样返回，交给下游 degraded 兜底，
+    绝不因剥离把回复变没。
+    """
+    if not text or text[0] not in "（(":
+        return text
+    try:
+        from app.agent.context.reasoning_prompt import extract_leading_bracket_reasoning
+        visible, _extra = extract_leading_bracket_reasoning(text)
+    except Exception:
+        return text
+    visible = strip_unclosed_markers(visible).strip()
+    return visible or text
+
+
 def split_response(text: str, emotional_state: str = "") -> list[str]:
     """将长回复拆分成多条消息块（chunked 回复用）；独立表情行单独成块；
     普通态下括号块（动作/神态）作为新的气泡分开点（情绪态保持整段连贯不拆）"""
     text = text.strip()
     if not text:
         return [text]
+    # 2026-09-15：先剥后切——整段先剥一次开头的括号内心活动 + 尾部未闭合标记残片，
+    # 保证开头的括号推理不进切分（切分后逐块剥离时两段都不匹配 → 推理原文上屏）。
+    text = _strip_leading_bracket_reasoning(text)
     # 先抽出独立表情行，其余正文按原逻辑拆分
     emoji_lines = []
     body_parts = []
@@ -325,10 +375,12 @@ def split_response(text: str, emotional_state: str = "") -> list[str]:
         if not sentences:
             chunks = [body]
         else:
-            chunks = []; cur = []; clen = 0
+            chunks = []; cur = []; clen = 0; depth = 0
             for s in sentences:
                 cur.append(s); clen += len(s)
-                if len(cur) >= 3 or clen > 80:
+                depth = _bracket_depth(depth, s)
+                # 2026-09-15：未闭合括号不落刀（并入下一块），闭合后或文本结束时再切
+                if depth <= 0 and (len(cur) >= 3 or clen > 80):
                     chunks.append("".join(cur)); cur = []; clen = 0
             if cur: chunks.append("".join(cur))
             if not chunks:

@@ -98,6 +98,9 @@ from app.models._all import (
     WeaveCardMemory,
     WorldFact,
     ProspectiveIntent,
+    GameContentOverride,
+    GameStats,
+    GameAchievement,
 )
 
 __all__ = [
@@ -193,4 +196,7 @@ __all__ = [
     "WeaveCardMemory",
     "WorldFact",
     "ProspectiveIntent",
+    "GameContentOverride",
+    "GameStats",
+    "GameAchievement",
 ]

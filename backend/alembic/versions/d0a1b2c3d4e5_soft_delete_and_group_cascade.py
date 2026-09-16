@@ -41,6 +41,47 @@ branch_labels = None
 depends_on = None
 
 
+def _rebuild_copy_table(meta, conn, tname):
+    """batch recreate 的 copy_from：以当前 ORM metadata 为单一事实源（to_metadata 深拷贝列/列级外键/
+    表级约束/索引，含 ondelete），但只保留『DB 已存在』的列——避免『未来迁移新增的列』（如本仓后续给
+    group_memories 加 is_archived）被提前 SELECT，导致从基线 alembic upgrade head 失败。
+
+    对『已升级到本迁移之后』的存量库无行为变化（未来列尚未存在，过滤结果即全模型列），
+    仅修复『从基线整链重放』路径；列上的外键（含 ondelete）随列保留 → 重建后 ondelete 生效。
+    """
+    from sqlalchemy import (
+        ForeignKeyConstraint as _FK,
+        Index as _Idx,
+        MetaData as _MD,
+        Table as _Tbl,
+    )
+
+    model_table = meta.tables[tname]
+    existing = {c["name"] for c in sa_inspect(conn).get_columns(tname)}
+    # 深拷贝，避免直接改全局 Base.metadata；逐列 append（列级外键随列保留）再补回表级约束/索引
+    src = model_table.to_metadata(_MD())
+    new_t = _Tbl(src.name, _MD(), **src.kwargs)
+    for col in src.columns:
+        if col.name in existing:
+            new_t.append_column(col._copy())
+    for const in src.constraints:
+        if isinstance(const, _FK):
+            if set(c.name for c in const.columns) <= existing:
+                new_t.append_constraint(const._copy(target_table=new_t))
+        elif not getattr(const, "_column_flag", False):
+            if set(c.name for c in const.columns) <= existing:
+                new_t.append_constraint(const._copy(target_table=new_t))
+    for idx in src.indexes:
+        if set(c.name for c in idx.columns) <= existing:
+            _Idx(
+                idx.name,
+                unique=idx.unique,
+                *[new_t.c[c.name] for c in idx.columns],
+                **idx.kwargs,
+            )
+    return new_t
+
+
 def upgrade() -> None:
     import app.models  # noqa: F401  # 确保所有模型注册到 Base.metadata
     from app.models.base import Base
@@ -59,9 +100,9 @@ def upgrade() -> None:
     for tname in REBUILD_FK_TABLES:
         if tname not in meta.tables:
             raise RuntimeError(f"ORM metadata 缺表 {tname}——中止，防止重建丢列")
-        table = meta.tables[tname]
+        copy_t = _rebuild_copy_table(meta, conn, tname)
         op.execute("PRAGMA foreign_keys=OFF")
-        with op.batch_alter_table(tname, recreate="always", copy_from=table):
+        with op.batch_alter_table(tname, recreate="always", copy_from=copy_t):
             pass
         op.execute("PRAGMA foreign_keys=ON")
         # 补回 batch 重建丢弃的隐式列索引

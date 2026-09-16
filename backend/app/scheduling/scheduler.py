@@ -204,6 +204,7 @@ async def scheduler_loop():
     _diary_generated_today = False
     _reflection_done_today = False
     _memory_maintenance_done_today = False
+    _group_memory_compact_done_today = False
     _last_date = date.today()
     _last_anniv_date = date.today()
     TICK = 30  # 统一 tick 间隔（秒）
@@ -215,6 +216,7 @@ async def scheduler_loop():
                 _last_date = date.today()
                 _diary_generated_today = False
                 _reflection_done_today = False
+                _group_memory_compact_done_today = False
 
             await asyncio.sleep(TICK)
             from app.utils.supervisor import supervisor
@@ -390,18 +392,36 @@ async def scheduler_loop():
                         _logger.warning("Daily memory maintenance error: %s", e)
                     _memory_maintenance_done_today = True
 
-            # 前瞻约定时效治理（2026-09-13，②）：每小时把 due_end 超窗（默认 12h）的 pending
-            # promise 置 stale（留痕不删，仍可检索/回忆，但不进主动提起）。幂等、异常隔离。
+                # 群记忆日终合并收敛（#72 PR-C P5，2026-09-16：23:00 后触发一次，受 group_memory_compact 闸控）
+                # 与记忆维护同一段（memory_counter>=600）；每天最多跑一次；关 flag 时零行为变化。
+                if local_hour >= 23 and not _group_memory_compact_done_today:
+                    try:
+                        from app.agent.loop import AGENT_FLAGS
+                        if AGENT_FLAGS.get("group_memory_compact", False):
+                            from app.memory.group_memory import compact_group_memories
+                            spawn_background(compact_group_memories(), name="sched-group-memory-compact")
+                    except Exception as e:
+                        _logger.warning("Group memory compact schedule error: %s", e)
+                    _group_memory_compact_done_today = True
+
+            # 前瞻约定时效治理（2026-09-13 ②；2026-09-15 扩到 cue，plans #72）：每小时把超窗/跨天/
+            # 超龄的 pending 约定置 stale——promise 走 due_end 活性窗口（2h），cue 走「日期型跨天 + 无 due 30 天」。
+            # 留痕不删，仍可检索/回忆，但不进主动提起/线索注入。幂等、异常隔离。
             if pis_stale_counter >= 3600:
                 pis_stale_counter = 0
                 try:
                     from app.scheduling.prospective_intent import (
                         expire_overdue as _pis_expire, mark_stale_overdue as _pis_stale,
+                        mark_stale_cues as _pis_stale_cue,
                     )
                     _n_stale = await _pis_stale()
                     _n_exp = await _pis_expire()
-                    if _n_stale or _n_exp:
-                        _logger.info("Prospective intent sweep: stale=%d expired=%d", _n_stale, _n_exp)
+                    _n_cue = await _pis_stale_cue()
+                    if _n_stale or _n_exp or _n_cue:
+                        _logger.info(
+                            "Prospective intent sweep: stale=%d expired=%d stale_cue=%d",
+                            _n_stale, _n_exp, _n_cue,
+                        )
                 except Exception as e:
                     _logger.warning("Prospective intent stale sweep error: %s", e)
 

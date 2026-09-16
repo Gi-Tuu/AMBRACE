@@ -181,6 +181,51 @@ class _WorldFactCreate(BaseModel):
     predicate: str = "setting"
 
 
+# 世界事实写入去重阈值（2026-09-15）：同角色 + 同 predicate 下，与既有活跃事实文本
+# 相似度 >= 此值时认为语义重复，旧的置 superseded（留痕不删），避免策展层反复写入越攒越多。
+# 复用前瞻意图的相似度工具（纯函数、零 IO），阈值比其写入期（0.95）略松。
+_WORLD_FACT_SIMILAR_THRESHOLD = 0.9
+
+
+async def _supersede_similar_world_facts(
+    db2: AsyncSession,
+    *,
+    user_id: int,
+    character_id: int,
+    predicate: str,
+    text: str,
+    exclude_id: int | None = None,
+) -> list[int]:
+    """把同 (character_id, predicate) 下与 text 高度相似的活跃事实置 superseded，返回被停用 id 列表。
+
+    只标记不删除（留痕）；superseded_by 留空（此处尚未插入新行，由调用方补写）。
+    """
+    from app.models.memory import WorldFact
+    from app.scheduling.prospective_intent import similar_intent_text
+    from app.utils.timeutil import now_naive_utc
+
+    rows = (await db2.execute(
+        select(WorldFact).where(
+            WorldFact.character_id == character_id,
+            WorldFact.user_id == user_id,
+            WorldFact.predicate == predicate,
+            WorldFact.status == "active",
+        )
+    )).scalars().all()
+    now = now_naive_utc()
+    hit_ids: list[int] = []
+    for r in rows:
+        if exclude_id is not None and r.id == exclude_id:
+            continue
+        if similar_intent_text(r.object_value or "", text, _WORLD_FACT_SIMILAR_THRESHOLD):
+            r.status = "superseded"
+            r.superseded_at = now
+            hit_ids.append(r.id)
+    if hit_ids:
+        _logger.info("World fact dedupe char=%d predicate=%s superseded=%s", character_id, predicate, hit_ids)
+    return hit_ids
+
+
 async def create_character(
     db: AsyncSession,
     data: CharacterCreate,
@@ -795,13 +840,23 @@ async def create_world_fact(
     user_id: int,
     lang: str,
 ):
-    """创建用户定义的权威世界设定（P1-3）：不可动摇事实，AI 推断不能覆盖"""
+    """创建用户定义的权威世界设定（P1-3）：不可动摇事实，AI 推断不能覆盖。
+
+    2026-09-15 写入去重：写入前把同 (character_id, predicate) 下高度相似的活跃事实
+    置 superseded（留痕不删），只保留新值，避免语义重复事实越攒越多。
+    """
     await _get_owned_character(db, character_id, user_id, lang)
     from app.events.facts import assert_fact
     text = (data.content or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "character_not_found"))
     predicate = (data.predicate or "setting").strip()[:20] or "setting"
+    async with async_session_factory() as db2:
+        await _supersede_similar_world_facts(
+            db2, user_id=user_id, character_id=character_id,
+            predicate=predicate, text=text,
+        )
+        await db2.commit()
     fid = await assert_fact(
         subject_type="character", subject_id=character_id, predicate=predicate,
         object_value=text, user_id=user_id, character_id=character_id,
@@ -815,6 +870,61 @@ async def create_world_fact(
     return {"ok": True, "id": fid}
 
 
+async def update_world_fact(
+    db: AsyncSession,
+    character_id: int,
+    fact_id: int,
+    data: _WorldFactCreate,
+    user_id: int,
+    lang: str,
+):
+    """编辑世界事实（2026-09-15）：本角色本用户的活跃事实均可改（含策展层写入的 system 事实）。
+
+    - 改完把该行 author 置 user / is_authoritative=1 / epistemic_status=FACT（用户改动即权威）；
+    - 改前把同 subject-predicate 的其它活跃旧值置 superseded（留痕不删），避免改出矛盾双份；
+    - 目标行不存在 / 非本角色 / 非本人 / 非活跃 → 404。
+    """
+    await _get_owned_character(db, character_id, user_id, lang)
+    from app.models.memory import WorldFact
+    from app.utils.timeutil import now_naive_utc
+
+    text = (data.content or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "character_not_found"))
+    predicate = (data.predicate or "setting").strip()[:20] or "setting"
+    now = now_naive_utc()
+    async with async_session_factory() as db2:
+        f = await db2.get(WorldFact, fact_id)
+        if (f is None or f.character_id != character_id or f.user_id != user_id
+                or f.status != "active"):
+            raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
+        olds = (await db2.execute(
+            select(WorldFact).where(
+                WorldFact.character_id == character_id,
+                WorldFact.user_id == user_id,
+                WorldFact.id != fact_id,
+                WorldFact.subject_type == f.subject_type,
+                WorldFact.subject_id == f.subject_id,
+                WorldFact.predicate == predicate,
+                WorldFact.status == "active",
+            )
+        )).scalars().all()
+        for o in olds:
+            o.status = "superseded"
+            o.superseded_by = fact_id
+            o.superseded_at = now
+        f.object_value = text[:200]
+        f.predicate = predicate
+        f.author = "user"
+        f.is_authoritative = True
+        f.epistemic_status = "FACT"
+        f.source = "user_setting"
+        f.confidence = 1.0
+        f.asserted_at = now
+        await db2.commit()
+    return {"ok": True, "id": fact_id}
+
+
 async def delete_world_fact(
     db: AsyncSession,
     character_id: int,
@@ -822,15 +932,18 @@ async def delete_world_fact(
     user_id: int,
     lang: str,
 ):
-    """删除世界事实（P1-3）：仅用户自己创建的权威设定可删（系统/聊天折叠事实不可删，防误操作）"""
+    """删除世界事实（P1-3，2026-09-15 放宽）：本角色本用户的**任意**活跃事实均可删。
+
+    原先 author != "user" 时 403，导致策展层（system）写入的事实全部删不掉；现按用户
+    所有权判定即可。仍为软删（status="expired"，留痕不物理删）。
+    """
     await _get_owned_character(db, character_id, user_id, lang)
     from app.models.memory import WorldFact
     async with async_session_factory() as db2:
         f = await db2.get(WorldFact, fact_id)
-        if f is None or f.character_id != character_id or f.user_id != user_id:
+        if (f is None or f.character_id != character_id or f.user_id != user_id
+                or f.status != "active"):
             raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
-        if f.author != "user":
-            raise HTTPException(status_code=403, detail=tr_lang(lang, "character_not_found"))
         f.status = "expired"
         await db2.commit()
     return {"ok": True}

@@ -199,6 +199,19 @@ class ApiClient {
     return Map<String, dynamic>.from(r.data as Map);
   }
 
+  Future<Map<String, dynamic>> updateWorldFact(
+    int characterId,
+    int factId, {
+    required String content,
+    String? predicate,
+  }) async {
+    final r = await _dio.put(
+      '/api/v1/characters/$characterId/world-facts/$factId',
+      data: {'content': content, if (predicate != null) 'predicate': predicate},
+    );
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
   Future<void> deleteWorldFact(int characterId, int factId) async {
     await _dio.delete('/api/v1/characters/$characterId/world-facts/$factId');
   }

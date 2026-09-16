@@ -24,7 +24,10 @@ REASONING_INSTRUCTION = (
     "正确（自称「我」、称对方昵称）：【推理：（轩刚好回来，肉也焖好了。我嘴上不饶他，手已经把肉盛出来，顺口问一句吃没就行。）】\n"
     "正文开头若输出【推理：……】，请单独成行、置于正文之前；回复极短或无需内心活动时可省略本行。\n"
     "内心活动只能写在【推理：……】这一行里：不要用中文括号（……）在正文里另写一段内心活动，"
-    "也不要只输出一段括号思考而不给正文。"
+    "也不要只输出一段括号思考而不给正文。\n"
+    "但**正文里的动作、神态与场景小字必须照常写**，用中文括号放在动作发生的位置，"
+    "例如（把你按在墙上）、（低头笑了一下）、（手已经托住你后腰）——它们是正文的画面感，"
+    "不是内心活动：不要省略、不要改写进【推理】行、也不要因为图省事就少写。"
 )
 
 # 挡位 2 专用补充（原生 thinking 通道未必遵守正文标记，再补一条针对「思考过程本身」的约束）
@@ -219,6 +222,17 @@ def normalize_reasoning_for_display(
 # 「（摸摸你的头）」这类动作小字，勿收紧）。
 _BRACKET_ANALYTIC_RE = re.compile(r"他|她|我|先|别|顺带|其实|话说|语气|别绕")
 _BRACKET_MIN_INNER_LEN = 15
+# 2026-09-15 真机反馈：亲密/日常场景的「动作小字」被误当推理吃掉过（真机：动作描写整体消失、剧情变干）。
+# 判定改为「含身体动作/神态词 且 不含强分析标记」→ 一律当正文保留；只有强分析标记才是内心活动。
+_BRACKET_ACTION_WORD_RE = re.compile(
+    r"抱|搂|揽|亲|吻|摸|抚|揉|捏|拍|推|拉|攥|握|扣|压|按|抵|蹭|托|扶|拽|勾|牵|抬|低头|抬头|回头|转身|俯身|凑|贴|靠|"
+    r"笑|叹|瞥|瞪|盯|看|望|伸手|解|掀|扯|脱|穿|捞|拥|枕|趴|躺|坐|站|跪|蹲|迈|退|走|递|端|拿|盛|倒|擦|"
+    r"手|臂|掌|指|腰|肩|下巴|额头|唇|舌头|胸|腿"
+)
+_BRACKET_META_RE = re.compile(
+    r"其实|别绕|顺带|话说|语气|应该|毕竟|是不是|要不要|估计|打算|想着|琢磨|意识到|看起来|"
+    r"先别|别让|不能|怕|得让|怎么|怎么办|怎么回|怎么答|说什么|接什么"
+)
 
 
 def extract_leading_bracket_reasoning(text: str) -> tuple[str, str]:
@@ -245,6 +259,8 @@ def extract_leading_bracket_reasoning(text: str) -> tuple[str, str]:
     else:
         inner = s[1:].strip()
         rest = ""
+    if _BRACKET_ACTION_WORD_RE.search(inner) and not _BRACKET_META_RE.search(inner):
+        return text, ""          # 动作/神态描写＝正文画面感，保留（2026-09-15 真机反馈）
     if len(inner) < _BRACKET_MIN_INNER_LEN or not _BRACKET_ANALYTIC_RE.search(inner):
         return text, ""
     return rest, inner

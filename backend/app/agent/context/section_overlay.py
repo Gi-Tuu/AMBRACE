@@ -269,6 +269,56 @@ async def group_dynamics_section(state: dict, ctx: dict) -> list[str]:
     return []
 
 
+# ------------------------------------------------------------------ 逐角色群聊认知（#72 PR-C P3，2026-09-15）
+# 只注入「该角色在本群的私有认知」（owner 本人可见），绝不跨角色/跨群互见；
+# 两级闸（group_cognition_enabled_for）关 → 空；无 group_id（非群聊上下文）→ 空。
+
+async def group_char_cognition_section(state: dict, ctx: dict) -> list[str]:
+    """group_char_cognition 分区：注入该角色在本群的私有认知（stance），仅本人可见。
+
+    - 两级闸（全局 flag 且 群 cognition_enabled）才注入；关=零行为变化；
+    - 只取本角色+本群的认知（recall_char_cognition 已按 character_id+group_id 过滤），
+      绝不出现他人认知（跨角色互见=严重回归）；
+    - 同角色内顺序：共享 FACT（P2 公开块）在前、本「我的看法」在后——本块显式标注
+      「可能与群里的既定事实不同（以群共同记忆的 FACT 为准）」消解潜在冲突；
+    - 单独 budget（_SECTION_QUOTA_TOKENS["group_char_cognition"]）防膨胀；注入即落 trace。
+    """
+    try:
+        from app.memory.group_memory import (
+            group_cognition_enabled_for, recall_char_cognition, _trace_group_cognition,
+        )
+        from app.agent.context_builder import _clip_text_to_quota, _SECTION_QUOTA_TOKENS
+
+        if not await group_cognition_enabled_for(state.get("group_id") or 0):
+            return []
+        cogs = await recall_char_cognition(state["character_id"], state["group_id"])
+        has_stance = bool(cogs)
+        # 注入观测（抽样即可，只写不读、失败静默）
+        try:
+            _trace_group_cognition("group_cognition_inject", state.get("character_id"), {
+                "group_id": state.get("group_id"),
+                "user_id": state.get("user_id"),
+                "has_shared": bool(state.get("group_shared_fact", False)),
+                "has_stance": has_stance,
+            })
+        except Exception:
+            pass
+        if not cogs:
+            return []
+        header = (
+            "【我的群聊看法】以下是我个人的看法，可能与群里的既定事实不同"
+            "（以群共同记忆的 FACT 为准，不要与之矛盾）："
+        )
+        body = "\n".join(f"- {c}" for c in cogs)
+        return [_clip_text_to_quota(
+            header + "\n" + body,
+            _SECTION_QUOTA_TOKENS["group_char_cognition"],
+        )]
+    except Exception as e:
+        _logger.warning("group char cognition inject failed: %s", e)
+    return []
+
+
 # ------------------------------------------------------------------ 生图开关（角色级）
 # 开启时注入"聊天内AI发图"指令，LLM 按需输出 [GEN_IMAGE] 标记
 
@@ -493,26 +543,32 @@ register_section(ContextSection(
     order=55,
 ))
 register_section(ContextSection(
+    key="group_char_cognition",
+    builder=group_char_cognition_section,
+    target=TARGET_APPEND,
+    order=56,
+))
+register_section(ContextSection(
     key="image_gen",
     builder=image_gen_section,
     target=TARGET_APPEND,
-    order=56,
+    order=57,
 ))
 register_section(ContextSection(
     key="reasoning_instruction",
     builder=reasoning_instruction_section,
     target=TARGET_APPEND,
-    order=57,
+    order=58,
 ))
 register_section(ContextSection(
     key="lang_instruction",
     builder=lang_instruction_section,
     target=TARGET_APPEND,
-    order=58,
+    order=59,
 ))
 register_section(ContextSection(
     key="continue_payload",
     builder=continue_payload_section,
     target=TARGET_APPEND,
-    order=59,
+    order=60,
 ))

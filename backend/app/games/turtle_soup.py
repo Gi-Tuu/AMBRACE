@@ -13,6 +13,7 @@ import json
 import random
 
 from app.games.base import ActionResult, GameContext, GameEngine, PlayerView
+from app.games.content_store import register_builtin_content
 from app.games.gm import gm_announce
 
 _ANSWER_TEXT = {"yes": "是", "no": "否", "possible": "可能", "unrelated": "无关", "unknown": "不知道"}
@@ -61,6 +62,8 @@ PUZZLES = [
         "keywords": ["生日", "明天", "带", "分享", "留着"],
     },
 ]
+# #62 Phase 3：内置题库登记为内容源兜底（用户自定义 / 插件内容包可整段覆盖）。
+register_builtin_content("turtle_soup", "puzzles", PUZZLES)
 
 
 class TurtleSoupEngine(GameEngine):
@@ -81,7 +84,9 @@ class TurtleSoupEngine(GameEngine):
             thinker, guesser = ai_players[0], players[1]
         else:
             thinker, guesser = players[0], players[1]
-        puzzle = random.choice(PUZZLES)
+        puzzles = [p for p in self.content("puzzles", PUZZLES)
+                   if isinstance(p, dict) and p.get("surface") and p.get("truth")] or PUZZLES
+        puzzle = random.choice(puzzles)
         truth = puzzle["truth"]
         keywords = puzzle["keywords"]
         surface = puzzle["surface"]

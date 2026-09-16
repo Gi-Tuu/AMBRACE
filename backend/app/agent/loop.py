@@ -143,6 +143,10 @@ AGENT_FLAGS = {
     # memory_supersede 开=superseded/stale 状态激活，双通道（SQLite+Chroma）过滤，读取点按状态分流；
     # 关=所有读取/注入/统计与现状逐字节一致（回归保护）。禁止默认 True（误取代比不取代更伤）。
     "memory_supersede": False,
+    # ── #70 附录 C 可选 M3：记忆写入回执（memory_write_receipt，2026-09-15 落地；默认关=零写入、零行为变化）──
+    # memory_write_receipt 开=save_memory 写分支 / supersede_memory 异步写 memory_write_receipts
+    #   （终态追踪「这条记忆为什么在/不在」）；关=完全跳过（不写不读，逐字节旧链路）。
+    "memory_write_receipt": False,
     # Ariadne 模块F（2026-09-04）：Curated Knowledge 编纂知识层（world_facts 加 kind 分治 + 确定性注入）
     "curated_knowledge": False,
     # Ariadne 模块G（2026-09-04）：前瞻意图。enabled=写入（extractor 便车落表）；
@@ -245,6 +249,16 @@ AGENT_FLAGS = {
     "proactive_topic_guard": False,
     "life_event_no_replay": False,
     "life_memory_write_retry": True,
+    # ── #72 PR-C 群聊认知升级（group_cognition_v2，2026-09-15）──
+    # group_cognition_v2 开=群聊认知能力（P1 纯数据层 + P2 共享记忆接线已合；P3 逐角色认知
+    #   生成+私有注入+预算+仲裁、P4 观测+群级灰度列生效 待后续拆包）。总开关：本项默认关，
+    #   app/memory/group_memory.group_cognition_on() 已读该键、异常即 False——关=零行为变化
+    #   （PR-B 双轨均未接线状态原样保留）；开 + 群级 chat_groups.cognition_enabled 才走双轨。
+    "group_cognition_v2": False,
+    # ── #72 PR-C P5 群记忆日终合并收敛（2026-09-16，默认关=零行为变化）──
+    # group_memory_compact 开=每日 23:00 后把 >7 天的群记忆按群合并成 1 条 system 摘要、
+    #   旧行软删（is_archived=1，留痕不物理删）；关=完全跳过、逐字节现状。
+    "group_memory_compact": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

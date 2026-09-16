@@ -7333,4 +7333,131 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get flagProviderRegistryDetail =>
       'X3: on = pick implementation by configured provider field (built-in openai_compatible/dashscope default); off = direct built-in, byte-identical to old path.';
+
+  @override
+  String get gameContentTitle => 'Game Content';
+
+  @override
+  String get gameContentEmpty => 'No editable content for this game';
+
+  @override
+  String get gameContentSource => 'Source';
+
+  @override
+  String get gameContentSourceUser => 'My Custom';
+
+  @override
+  String get gameContentSourcePlugin => 'Content Pack';
+
+  @override
+  String get gameContentSourceBuiltin => 'Built-in';
+
+  @override
+  String gameContentCount(int count) {
+    return '$count items';
+  }
+
+  @override
+  String get gameContentHintLine => 'One item per line';
+
+  @override
+  String get gameContentHintPair => 'One pair per line: wordA / wordB';
+
+  @override
+  String get gameContentHintPuzzle =>
+      'One puzzle per line: surface / truth / keyword1,keyword2';
+
+  @override
+  String get gameContentRestore => 'Restore Defaults';
+
+  @override
+  String get gameContentRestoreConfirm =>
+      'Restore the built-in or content-pack defaults?';
+
+  @override
+  String get gameContentSaved => 'Saved';
+
+  @override
+  String gameContentSaveFailed(String err) {
+    return 'Save failed: $err';
+  }
+
+  @override
+  String get gameContentRestored => 'Defaults restored';
+
+  @override
+  String gameContentRestoreFailed(String err) {
+    return 'Restore failed: $err';
+  }
+
+  @override
+  String gameContentLoadFailed(String err) {
+    return 'Failed to load content: $err';
+  }
+
+  @override
+  String gameContentParseFailed(int line) {
+    return 'Line $line has an invalid format';
+  }
+
+  @override
+  String get gameContentMinOne => 'At least one item is required';
+
+  @override
+  String get gameContentApplyHint => 'Applies to new games after saving';
+
+  @override
+  String get gameAchievementsTitle => 'Achievements & Stats';
+
+  @override
+  String get gameStatsScope => 'Scope';
+
+  @override
+  String get gameStatsTitle => 'Cumulative Stats';
+
+  @override
+  String get gameStatsTotal => 'Total';
+
+  @override
+  String get gameStatsGames => 'Games';
+
+  @override
+  String get gameStatsWins => 'Wins';
+
+  @override
+  String get gameStatsLosses => 'Losses';
+
+  @override
+  String get gameStatsDraws => 'Draws';
+
+  @override
+  String get gameStatsAborted => 'Aborted';
+
+  @override
+  String get gameStatsRounds => 'Rounds';
+
+  @override
+  String get gameStatsWinRate => 'Win Rate';
+
+  @override
+  String get gameStatsEmpty => 'No game stats yet';
+
+  @override
+  String get gameAchievementsList => 'Achievements';
+
+  @override
+  String gameAchievementsUnlockedCount(int count, int total) {
+    return '$count/$total unlocked';
+  }
+
+  @override
+  String get gameAchievementsLocked => 'Locked';
+
+  @override
+  String gameAchievementsProgress(int progress, int target) {
+    return 'Progress $progress/$target';
+  }
+
+  @override
+  String get gameAchievementsAll => 'All Games';
 }

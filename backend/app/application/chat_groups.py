@@ -274,6 +274,30 @@ async def _save_group_memory(group_id: int, user_id: int, user_content: str, rep
                     epistemic_status="FACT",
                     skip_dedup=True,
                 )
+        # #72 PR-C P2（2026-09-15）：群共享记忆双轨接线——本轮落库后把一轮群聊聚合为 1 条
+        # 群共享事件（append_group_event 自带 group_cognition_on() 总闸 + 失败静默；关 flag 时零行为变化）。
+        try:
+            from app.memory.group_memory import append_group_event
+            await append_group_event(
+                group_id=group_id, user_id=user_id, round_id=None,
+                user_content=user_content, replies=replies, name_map=name_map,
+            )
+        except Exception:
+            pass
+        # #72 PR-C P3（2026-09-15）：逐角色认知生成调度（两级闸内才触发，不阻塞主回复）。
+        # 以「发射后不管」后台协程异步生成（spawn_background 持强引用防 GC、异常静默）；
+        # 关 flag / 群未开 cognition_enabled → group_cognition_enabled_for 直接短路，零 DB 查询、零行为变化。
+        try:
+            from app.memory.group_memory import group_cognition_enabled_for, generate_char_cognitions
+            from app.utils.async_tasks import spawn_background
+            if await group_cognition_enabled_for(group_id):
+                topic_key = f"g{group_id}:u{user_id}:{(user_content or '').strip()[:60]}"
+                spawn_background(generate_char_cognitions(
+                    group_id=group_id, user_id=user_id, user_content=user_content,
+                    replies=replies, name_map=name_map, round_id=None, topic_key=topic_key,
+                ))
+        except Exception:
+            pass
         _logger.info("Group memory saved: group=%d members=%d entries=%d", group_id, len(members), len(entries))
     except Exception as e:
         _logger.warning("Group memory save failed: %s", e)
@@ -483,6 +507,16 @@ async def _generate_replies_runtime(
     from app.agent import loop as _loop
     light_context = bool(_loop.AGENT_FLAGS.get("agent_social_light_context", False))
 
+    # #72 PR-C P2（2026-09-15）：群共享记忆注入公开上下文——所有角色看到同一份群里确认发生过的
+    # FACT。受两级闸 group_cognition_enabled_for（关=不取不注入，与现状逐字节一致）；异常静默不阻塞主回复。
+    shared_memory: list[str] = []
+    try:
+        from app.memory.group_memory import group_cognition_enabled_for, recall_group_longterm
+        if await group_cognition_enabled_for(group_id):
+            shared_memory = await recall_group_longterm(group_id)
+    except Exception:
+        shared_memory = []
+
     # 最近群消息（公开，所有人可见；与旧链路同一数据源与条数）
     recent = (
         await db.execute(
@@ -533,6 +567,11 @@ async def _generate_replies_runtime(
             "指代规则：用'我'自称，提到其他角色必须直接用名字（如'小丽'），禁止用'他/她'等模糊指代。\n"
             "不要输出任何动作标记（如 [SEARCH]/[GEN_IMAGE]/[CAL_NOTE]/[MEMO]/【状态更新】），直接输出要说的话。"
         )
+        if shared_memory:
+            public += (
+                "\n\n【群共同记忆】（群里大家都确认发生过的事，以这些事实为准，不要与它们矛盾）\n"
+                + "\n".join(shared_memory)
+            )
         if spoken:
             public += "\n\n已有人先说了（请自然承接，不要重复）：\n" + "\n".join(spoken)
         res = await _runtime.run_social_reply(
@@ -543,6 +582,8 @@ async def _generate_replies_runtime(
             extra_system=[{"role": "system", "content": public}],
             lang="zh",
             max_text=200,
+            group_id=group_id,  # #72 PR-C P3：透传群 id 供私有认知 section 按本群注入（仅 owner 可见）
+            group_shared_fact=bool(shared_memory),  # 供注入观测 has_shared
             save_memory=False,  # P3-4（2026-08-25）：群聊记忆统一由 _save_group_memory 按群落库；这里不再重复落记忆。
             # 原 save_memory=True 会让 Runtime 的 generate_response 走 extractor 落一条（extractor 不感知群聊，
             # 且与 _save_group_memory 双写重复记忆、speaker/归属不一致）。改 False 后行为变化仅在

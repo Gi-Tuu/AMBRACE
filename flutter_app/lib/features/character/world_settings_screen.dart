@@ -37,13 +37,17 @@ class _WorldSettingsScreenState extends State<WorldSettingsScreen> {
     }
   }
 
-  Future<void> _add() async {
+  /// 新增/编辑共用的输入弹窗（复用新增对话框样式）：返回输入的文本，取消返回 null。
+  Future<String?> _showFactDialog({
+    required String title,
+    String initialValue = "",
+  }) async {
     final l10n = AppLocalizations.of(context)!;
-    final ctrl = TextEditingController();
+    final ctrl = TextEditingController(text: initialValue);
     final value = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(l10n.worldFactAdd),
+        title: Text(title),
         content: TextField(
           controller: ctrl,
           maxLines: 2,
@@ -63,9 +67,37 @@ class _WorldSettingsScreenState extends State<WorldSettingsScreen> {
       ),
     );
     ctrl.dispose();
+    return value;
+  }
+
+  Future<void> _add() async {
+    final l10n = AppLocalizations.of(context)!;
+    final value = await _showFactDialog(title: l10n.worldFactAdd);
     if (value == null || value.isEmpty) return;
     try {
       await ApiClient().createWorldFact(widget.characterId, value);
+      _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$e")));
+    }
+  }
+
+  /// 编辑任意一条事实（含策展层写入的 system 事实）：保存后该条升为用户权威设定。
+  Future<void> _edit(Map<String, dynamic> item) async {
+    final l10n = AppLocalizations.of(context)!;
+    final value = await _showFactDialog(
+      title: l10n.edit,
+      initialValue: "${item['object_value'] ?? ''}",
+    );
+    if (value == null || value.isEmpty) return;
+    if (value == item['object_value']) return;
+    try {
+      await ApiClient().updateWorldFact(
+        widget.characterId,
+        item['id'] as int,
+        content: value,
+      );
       _load();
     } catch (e) {
       if (!mounted) return;
@@ -160,13 +192,23 @@ class _WorldSettingsScreenState extends State<WorldSettingsScreen> {
                                   "author: ${_items[i]['author'] ?? ''} · ${_items[i]['predicate'] ?? ''}",
                                   style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle),
                                 ),
-                                trailing: _items[i]['author'] == "user"
-                                    ? IconButton(
-                                        icon: const Icon(Icons.delete_outline,
-                                            size: 20, color: AppColors.error),
-                                        onPressed: () => _delete(_items[i]),
-                                      )
-                                    : const Icon(Icons.lock_outline, size: 16, color: IosCardColors.subtitle),
+                                // 每一行都可编辑 + 删除（含策展层写入的 system 事实，删前二次确认）
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.edit_outlined,
+                                          size: 20, color: IosCardColors.subtitle),
+                                      tooltip: l10n.edit,
+                                      onPressed: () => _edit(_items[i]),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete_outline,
+                                          size: 20, color: AppColors.error),
+                                      onPressed: () => _delete(_items[i]),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ],
                           ],

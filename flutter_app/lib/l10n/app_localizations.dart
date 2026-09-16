@@ -13160,6 +13160,228 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'X3：开=按配置 provider 字段选实现（内置 openai_compatible/dashscope 默认）；关=直连内置实现，与旧链路逐字节一致。'**
   String get flagProviderRegistryDetail;
+
+  /// No description provided for @gameContentTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'游戏内容'**
+  String get gameContentTitle;
+
+  /// No description provided for @gameContentEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'该游戏暂无可编辑内容'**
+  String get gameContentEmpty;
+
+  /// No description provided for @gameContentSource.
+  ///
+  /// In zh, this message translates to:
+  /// **'来源'**
+  String get gameContentSource;
+
+  /// No description provided for @gameContentSourceUser.
+  ///
+  /// In zh, this message translates to:
+  /// **'我的自定义'**
+  String get gameContentSourceUser;
+
+  /// No description provided for @gameContentSourcePlugin.
+  ///
+  /// In zh, this message translates to:
+  /// **'内容包'**
+  String get gameContentSourcePlugin;
+
+  /// No description provided for @gameContentSourceBuiltin.
+  ///
+  /// In zh, this message translates to:
+  /// **'内置默认'**
+  String get gameContentSourceBuiltin;
+
+  /// No description provided for @gameContentCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'{count} 条'**
+  String gameContentCount(int count);
+
+  /// No description provided for @gameContentHintLine.
+  ///
+  /// In zh, this message translates to:
+  /// **'每行一条'**
+  String get gameContentHintLine;
+
+  /// No description provided for @gameContentHintPair.
+  ///
+  /// In zh, this message translates to:
+  /// **'每行一对，格式：词A / 词B'**
+  String get gameContentHintPair;
+
+  /// No description provided for @gameContentHintPuzzle.
+  ///
+  /// In zh, this message translates to:
+  /// **'每行一条，格式：汤面 / 汤底 / 关键词1,关键词2'**
+  String get gameContentHintPuzzle;
+
+  /// No description provided for @gameContentRestore.
+  ///
+  /// In zh, this message translates to:
+  /// **'恢复默认'**
+  String get gameContentRestore;
+
+  /// No description provided for @gameContentRestoreConfirm.
+  ///
+  /// In zh, this message translates to:
+  /// **'确定恢复为内置或内容包的默认内容？'**
+  String get gameContentRestoreConfirm;
+
+  /// No description provided for @gameContentSaved.
+  ///
+  /// In zh, this message translates to:
+  /// **'已保存'**
+  String get gameContentSaved;
+
+  /// No description provided for @gameContentSaveFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'保存失败：{err}'**
+  String gameContentSaveFailed(String err);
+
+  /// No description provided for @gameContentRestored.
+  ///
+  /// In zh, this message translates to:
+  /// **'已恢复默认'**
+  String get gameContentRestored;
+
+  /// No description provided for @gameContentRestoreFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'恢复失败：{err}'**
+  String gameContentRestoreFailed(String err);
+
+  /// No description provided for @gameContentLoadFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'内容加载失败：{err}'**
+  String gameContentLoadFailed(String err);
+
+  /// No description provided for @gameContentParseFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'第 {line} 行格式不正确'**
+  String gameContentParseFailed(int line);
+
+  /// No description provided for @gameContentMinOne.
+  ///
+  /// In zh, this message translates to:
+  /// **'至少需要一条内容'**
+  String get gameContentMinOne;
+
+  /// No description provided for @gameContentApplyHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'保存后对新开局生效'**
+  String get gameContentApplyHint;
+
+  /// No description provided for @gameAchievementsTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'成就与统计'**
+  String get gameAchievementsTitle;
+
+  /// No description provided for @gameStatsScope.
+  ///
+  /// In zh, this message translates to:
+  /// **'统计对象'**
+  String get gameStatsScope;
+
+  /// No description provided for @gameStatsTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'累计统计'**
+  String get gameStatsTitle;
+
+  /// No description provided for @gameStatsTotal.
+  ///
+  /// In zh, this message translates to:
+  /// **'合计'**
+  String get gameStatsTotal;
+
+  /// No description provided for @gameStatsGames.
+  ///
+  /// In zh, this message translates to:
+  /// **'局数'**
+  String get gameStatsGames;
+
+  /// No description provided for @gameStatsWins.
+  ///
+  /// In zh, this message translates to:
+  /// **'胜'**
+  String get gameStatsWins;
+
+  /// No description provided for @gameStatsLosses.
+  ///
+  /// In zh, this message translates to:
+  /// **'负'**
+  String get gameStatsLosses;
+
+  /// No description provided for @gameStatsDraws.
+  ///
+  /// In zh, this message translates to:
+  /// **'平'**
+  String get gameStatsDraws;
+
+  /// No description provided for @gameStatsAborted.
+  ///
+  /// In zh, this message translates to:
+  /// **'中止'**
+  String get gameStatsAborted;
+
+  /// No description provided for @gameStatsRounds.
+  ///
+  /// In zh, this message translates to:
+  /// **'回合数'**
+  String get gameStatsRounds;
+
+  /// No description provided for @gameStatsWinRate.
+  ///
+  /// In zh, this message translates to:
+  /// **'胜率'**
+  String get gameStatsWinRate;
+
+  /// No description provided for @gameStatsEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'还没有对局统计'**
+  String get gameStatsEmpty;
+
+  /// No description provided for @gameAchievementsList.
+  ///
+  /// In zh, this message translates to:
+  /// **'成就'**
+  String get gameAchievementsList;
+
+  /// No description provided for @gameAchievementsUnlockedCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'已解锁 {count}/{total}'**
+  String gameAchievementsUnlockedCount(int count, int total);
+
+  /// No description provided for @gameAchievementsLocked.
+  ///
+  /// In zh, this message translates to:
+  /// **'未解锁'**
+  String get gameAchievementsLocked;
+
+  /// No description provided for @gameAchievementsProgress.
+  ///
+  /// In zh, this message translates to:
+  /// **'进度 {progress}/{target}'**
+  String gameAchievementsProgress(int progress, int target);
+
+  /// No description provided for @gameAchievementsAll.
+  ///
+  /// In zh, this message translates to:
+  /// **'全部游戏'**
+  String get gameAchievementsAll;
 }
 
 class _AppLocalizationsDelegate

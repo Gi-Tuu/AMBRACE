@@ -8,7 +8,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -111,9 +111,113 @@ class GameMemory(Base):
     summary: Mapped[str] = mapped_column(String(300), default="")
     # 一句话角色视角总结（模板生成，零 LLM）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+# ── content.py（#62 Phase 3：自定义词库/题库外置）──
+# 用户自定义内容覆盖表（user_id + game_type + key）；运行时优先级最高。
+class GameContentOverride(Base):
+    """某用户对某游戏某内容 key（word_pool/word_pairs/puzzles/...）的自定义覆盖。
+
+    解析顺序「用户自定义 > 插件内容包 > 内置常量」中的最高优先级来源；
+    values_json 为 JSON 数组，结构由 app.games.content_store.validate_content_values 校验。
+    """
+
+    __tablename__ = "game_content_overrides"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    game_type: Mapped[str] = mapped_column(String(30), index=True)
+    content_key: Mapped[str] = mapped_column(String(40))
+    values_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("ux_game_content_user_key", "user_id", "game_type", "content_key", unique=True),
+    )
+
+
+# ── stats.py（#62 Phase 3：游戏成就与统计，纯数据不改关系）──
+# 按 user（character_id=NULL）/ character / game_type 累计的战绩。
+class GameStats(Base):
+    """游戏统计累计（每个 user×character×game_type 一行）。
+
+    - character_id IS NULL：用户本人（真人参局）维度的累计；
+    - character_id 非空：某 AI 角色在该用户名下的累计；
+    - games_played 只统计完整结算（finished，含平局）的局数；无胜负终止（aborted）
+      单列 aborted，绝不进胜场；total_rounds 累计所有终局（含 aborted）的回合数。
+    """
+
+    __tablename__ = "game_stats"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    character_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    game_type: Mapped[str] = mapped_column(String(30), index=True)
+    games_played: Mapped[int] = mapped_column(Integer, default=0)
+    wins: Mapped[int] = mapped_column(Integer, default=0)
+    losses: Mapped[int] = mapped_column(Integer, default=0)
+    draws: Mapped[int] = mapped_column(Integer, default=0)
+    aborted: Mapped[int] = mapped_column(Integer, default=0)
+    total_rounds: Mapped[int] = mapped_column(Integer, default=0)
+    last_played_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    # 用户行与角色行分别唯一（SQLite/PG 的 NULL 在唯一索引里互不相等，故用部分索引）
+    __table_args__ = (
+        Index("ux_game_stats_user", "user_id", "game_type", unique=True,
+              sqlite_where=text("character_id IS NULL"),
+              postgresql_where=text("character_id IS NULL")),
+        Index("ux_game_stats_char", "user_id", "game_type", "character_id", unique=True,
+              sqlite_where=text("character_id IS NOT NULL"),
+              postgresql_where=text("character_id IS NOT NULL")),
+    )
+
+
+# 成就解锁记录（同 (user, character, game_type, key) 只解锁一次；含定义快照）。
+class GameAchievement(Base):
+    """成就解锁记录：达成时插入一行，唯一索引保证「同一成就只解锁一次」。
+
+    game_type="*" 表示跨游戏聚合成就；否则为单游戏成就。进度未达成的成就不落库，
+    查询时按统计实时计算 progress（见 app.games.achievements.list_achievements）。
+    """
+
+    __tablename__ = "game_achievements"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    character_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    game_type: Mapped[str] = mapped_column(String(30), default="*")
+    achievement_key: Mapped[str] = mapped_column(String(50))
+    title: Mapped[str] = mapped_column(String(64), default="")
+    description: Mapped[str] = mapped_column(String(200), default="")
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    target: Mapped[int] = mapped_column(Integer, default=1)
+    unlocked: Mapped[bool] = mapped_column(Boolean, default=True)
+    unlocked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("ux_game_ach_user", "user_id", "game_type", "achievement_key", unique=True,
+              sqlite_where=text("character_id IS NULL"),
+              postgresql_where=text("character_id IS NULL")),
+        Index("ux_game_ach_char", "user_id", "game_type", "character_id", "achievement_key", unique=True,
+              sqlite_where=text("character_id IS NOT NULL"),
+              postgresql_where=text("character_id IS NOT NULL")),
+    )
+
+
 __all__ = [
     "GameSession",
     "GamePlayer",
     "GameEvent",
     "GameMemory",
+    "GameContentOverride",
+    "GameStats",
+    "GameAchievement",
 ]

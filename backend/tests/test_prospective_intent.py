@@ -96,10 +96,10 @@ def test_upsert_idempotent_and_conservative(pi_db):
 def test_state_machine_collect_discharge_expire_cancel(pi_db):
     from app.scheduling.prospective_intent import (
         upsert_intent, collect_due_promises, mark_discharged_many,
-        cancel_by_content, _now_naive,
+        cancel_by_content, _now_local_naive,
     )
     factory = pi_db
-    now = _now_naive()
+    now = _now_local_naive()   # 库内 due_* 是北京日历日口径（2026-09-14 统一）
     due = now - timedelta(minutes=5)
     past_grace = now - timedelta(days=8)   # due_end 超过 7 天宽限
 
@@ -231,10 +231,10 @@ def test_extractor_flag_off_zero(pi_db, monkeypatch):
 def test_trigger_source_flag_gate(pi_db, monkeypatch):
     from app.scheduling.sources.prospective_intent import ProspectiveIntentSource
     from app.scheduling.sources.base import SourceContext
-    from app.scheduling.prospective_intent import upsert_intent, _now_naive
+    from app.scheduling.prospective_intent import upsert_intent, _now_local_naive
     from app.agent.loop import AGENT_FLAGS
     asyncio.run(upsert_intent(user_id=1, character_id=11, content="下周带你去吃火锅",
-                              kind="promise", due_end=_now_naive() - timedelta(minutes=1),
+                              kind="promise", due_end=_now_local_naive() - timedelta(minutes=1),
                               source_message_id=401, chat_session_id=7))
     src = ProspectiveIntentSource()
 

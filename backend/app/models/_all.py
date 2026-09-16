@@ -5,8 +5,8 @@
 from app.models.base import Base
 from app.models.user import User, UserState, UserDndSettings, PrivacyRequest, BrowserSnapshot, AccountInvite, GlobalUserFact
 from app.models.character import AICharacter, CharacterState, CharacterStateHistory, RelationshipEvent, StateTriggerLog, StorylineEvent, ProactiveStorylineItem, ProactiveSettings, HolidayPreference, ProactiveMessageLog, ProactiveTriggerLog
-from app.models.chat import ChatSession, ChatMessage, ChatGroup, ChatGroupMember, ChatGroupMessage, GroupMemory, AIChat
-from app.models.memory import Memory, DailySummary, ConversationTopic, StageMemory, ReflectionLog, ProcessedExtraction, SharedEvent, WeaveCard, WeaveCardMemory, WeaveCardCharacter, LorebookEntry, WorldFact, MemoryArchive, ProspectiveIntent
+from app.models.chat import ChatSession, ChatMessage, ChatGroup, ChatGroupMember, ChatGroupMessage, GroupMemory, GroupCharCognition, AIChat
+from app.models.memory import Memory, DailySummary, ConversationTopic, StageMemory, ReflectionLog, ProcessedExtraction, SharedEvent, WeaveCard, WeaveCardMemory, WeaveCardCharacter, LorebookEntry, WorldFact, MemoryArchive, MemoryWriteReceipt, ProspectiveIntent
 from app.models.life import LifeState, LifeActivityLog, LifeArtifact, LifeInterest, LifeGoal, LifeSchedule, LifeFollowup, LifeChatIntent, AIDiary, UserDiary, UserMemo, AIMoment, MomentLike, MomentAILike, MomentComment, MomentReadMark, ScheduledEvent, TimelineEvent, ImageGenTask, ImageGenConfig, UserRhythm, UserWorkflow, UserEmojiPack, UserCustomEmoji
 from app.models.pet import Pet, PetActivity
 from app.models.agent import AgentTask, AgentTaskLog, LlmUsage, LlmUsageLimit, TaskLlmConfig, EmotionCareTask, ToolPermission, PendingPermissionAction
@@ -15,7 +15,10 @@ from app.models.plugin import Plugin, PluginStore
 from app.models.config import ApiConfig, VlmConfig, SpeechConfig, MultimodalConfig, MarketplaceConfig, RuntimeFlag, UserLlmConfig
 from app.models.social import PlatformProfile, SocialMemory  # X5：渠道自有模型迁至渠道扩展包，加载期注册进 metadata
 from app.models.device import PhoneDesktop, PhoneLayout, CalendarNote, BrowserHistory, MemoNote, PhoneSnapshot, CheckInRequest, PhoneAutoState, UserDeviceToken
-from app.models.game import GameSession, GamePlayer, GameEvent, GameMemory
+from app.models.game import (
+    GameSession, GamePlayer, GameEvent, GameMemory,
+    GameContentOverride, GameStats, GameAchievement,
+)
 from app.models.channel import ChannelBinding  # 一机多主：渠道绑定内核一等公民（2026-09-05）
 from app.models.domain_event import DomainEvent  # 3.10 事件流水（append-only，2026-09-08）
 
@@ -40,6 +43,7 @@ __all__ = [
     "ChatGroupMember",
     "ChatGroupMessage",
     "GroupMemory",
+    "GroupCharCognition",
     "ChatMessage",
     "ChatSession",
     "CheckInRequest",
@@ -117,9 +121,13 @@ __all__ = [
     "WeaveCardMemory",
     "WorldFact",
     "MemoryArchive",
+    "MemoryWriteReceipt",
     "ProspectiveIntent",
     "GameSession",
     "GamePlayer",
     "GameEvent",
     "GameMemory",
+    "GameContentOverride",
+    "GameStats",
+    "GameAchievement",
 ]

@@ -189,6 +189,19 @@ async def create_world_fact(
     return await _svc.create_world_fact(db, character_id, data, user_id, lang)
 
 
+@router.put("/{character_id}/world-facts/{fact_id}")
+async def update_world_fact(
+    character_id: int,
+    fact_id: int,
+    data: _WorldFactCreate,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """编辑世界事实（2026-09-15）：本角色本用户的活跃事实均可改，改后升为权威（author=user/FACT）"""
+    return await _svc.update_world_fact(db, character_id, fact_id, data, user_id, lang)
+
+
 @router.delete("/{character_id}/world-facts/{fact_id}")
 async def delete_world_fact(
     character_id: int,
@@ -197,7 +210,7 @@ async def delete_world_fact(
     user_id: int = Depends(get_current_user_id),
     lang: str = Header(default="zh"),
 ):
-    """删除世界事实（P1-3）：仅用户自己创建的权威设定可删（系统/聊天折叠事实不可删，防误操作）"""
+    """删除世界事实（P1-3，2026-09-15 放宽）：本角色本用户的任意活跃事实均可删（软删留痕）"""
     return await _svc.delete_world_fact(db, character_id, fact_id, user_id, lang)
 
 

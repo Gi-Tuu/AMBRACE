@@ -1,0 +1,12 @@
+{
+  "name": "game_template",
+  "version": "1.0.0",
+  "description": "猜数字——游戏扩展包（game_pack）模板：演示 GameEngine 全部必需接口 + 私有信息隔离，复制整个目录即可改成自己的游戏",
+  "author": "AMBRACE",
+  "category": "plugin",
+  "type": "http",
+  "permissions": [],
+  "hooks": [],
+  "config": {},
+  "usage": "本目录是游戏扩展包模板（可直接跑的「猜数字」示例）。复制整个目录、改 manifest 的 name 与 main.py 的引擎类，即可上架自己的游戏。内核负责房间/回合/主持/游戏记忆隔离，扩展包只写规则引擎。"
+}

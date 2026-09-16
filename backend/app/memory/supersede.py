@@ -52,6 +52,22 @@ async def supersede_memory(old_id: int, new_id: int | None = None, *,
         await _mark_vectors([old_id] + stale_ids, {old_id: SUPERSEDED})
         await _bm25_invalidate_safe(character_id)
         _logger.info("supersede mem=%s -> %s, stale=%s", old_id, new_id, stale_ids)
+        # #70 M3 write-receipt (flag off = no-op): one for supersede row, one per cascaded stale row
+        try:
+            from app.memory.receipt import (
+                emit_memory_receipt, ACTION_SUPERSEDE, ACTION_STALE,
+            )
+            emit_memory_receipt(
+                character_id, old_id, ACTION_SUPERSEDE, reason=reason or "superseded",
+                detail={"new_id": new_id, "stale_count": len(stale_ids)},
+            )
+            for _sid in stale_ids:
+                emit_memory_receipt(
+                    character_id, _sid, ACTION_STALE, reason="cascade stale from supersede",
+                    detail={"seed_id": old_id},
+                )
+        except Exception:
+            pass
         return True
     except Exception as e:
         _logger.warning("supersede_memory failed old=%s: %s", old_id, e)

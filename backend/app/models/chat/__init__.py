@@ -78,6 +78,9 @@ class ChatGroup(Base):
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(60), default="家庭群聊")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # #72 PR-C 群级灰度开关（2026-09-15）：群聊认知升级二级闸。全局 flag group_cognition_v2 开
+    # 且本列=1 时该群走双轨（共享记忆写入 + 后续逐角色认知）；默认关=零行为变化。
+    cognition_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=sa.text("0"))
 class ChatGroupMember(Base):
     __tablename__ = "chat_group_members"
     __table_args__ = (UniqueConstraint("group_id", "character_id", name="uq_group_character"),)
@@ -118,10 +121,39 @@ class GroupMemory(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)              # 本地聚合或异步摘要后的群事件文本
     epistemic_status: Mapped[str] = mapped_column(String(12), default="FACT")
     importance: Mapped[float] = mapped_column(Float, default=40)  # 与 memories 量纲一致（0-120，同 memories.importance=Float）
+    # #72 PR-C P5（2026-09-16）：日终合并收敛归档标记——被合并的旧事件置 1（留痕不物理删，仍可检索/回忆）；
+    # 摘要行本身 is_archived=0（活跃、可注入）。注入侧 recall_group_longterm 过滤 is_archived=0。
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=sa.text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
     __table_args__ = (
         Index("idx_group_mem_group_created", "group_id", "created_at"),
+    )
+
+# ── group_char_cognition.py（#72 PR-C，2026-09-15）：逐角色 × 群 × 话题窗口的认知 ──
+# 与 group_memories 并列但本质不同：group_memories 是群共享客观事件（一份/群、谁都能看），
+# 本表是某角色对同一话题/轮次的个人认知/立场/小结（owner=该角色、主观、仅本人可见，P3 注入私有上下文）。
+# 不复用 group_memories 加角色维，避免 recall_group_longterm（按群取共享 FACT）与逐角色抽取互相污染。
+# group_id 对 chat_groups 为 ondelete CASCADE（群删→认知连带清）；本表为纯增量，旧数据零迁移。
+class GroupCharCognition(Base):
+    __tablename__ = "group_char_cognitions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("chat_groups.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False, index=True)
+    # 关联一轮群聊（与 group_memories.round_id 同构，可空）；topic_key 为话题/线程去重键（幂等用）
+    round_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    topic_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    cognition_type: Mapped[str] = mapped_column(String(12), default="stance")  # 'summary'|'stance'|'reaction'
+    content: Mapped[str] = mapped_column(Text, nullable=False)              # 该角色的认知摘要文本
+    importance: Mapped[float] = mapped_column(Float, default=40)  # 与 memories/group_memories 量纲一致
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default=sa.text("0"))  # 超额软删（可追溯不物理删）
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    __table_args__ = (
+        Index("idx_gcc_group_char", "group_id", "character_id", "created_at"),
+        Index("idx_gcc_round", "round_id"),
     )
 
 # ── ai_chat.py ──
@@ -142,6 +174,7 @@ __all__ = [
     "ChatMessage",
     "ChatGroup",
     "ChatGroupMember",
+    "GroupCharCognition",
     "ChatGroupMessage",
     "GroupMemory",
     "AIChat",

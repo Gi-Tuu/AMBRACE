@@ -251,6 +251,9 @@ def _scene_filter(rows: list[dict], scene: str | None,
         if scene == "dm":
             if src == "group" and sub != "group_summary":
                 continue
+            # #72 PR-C P3（2026-09-15）：DM 不召回逐角色群认知（与 group 逐条流水同理，保持 DM 干净）
+            if src == "group_cognition":
+                continue
         if scene == "group":
             if src == "group" and gid is not None and group_id is not None and gid != group_id:
                 continue

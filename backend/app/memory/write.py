@@ -56,6 +56,12 @@ async def save_memory(
         find_similar_memory,
         text_embedding,
     )
+    from app.memory.receipt import (
+        emit_memory_receipt,
+        ACTION_CREATE,
+        ACTION_MERGE,
+        ACTION_REJECT,
+    )
     async with async_session_factory() as db:
         # 聊天来源记忆拦截"台词原文"（提取器/【记忆】标记路径都可能在来源消息为 AI 台词时误抄）：
         # 命中对话特征，或与源消息（AI 回复）逐字一致 → 直接丢弃，不落库。
@@ -64,6 +70,10 @@ async def save_memory(
             if looks_like_raw_dialogue(content):
                 _logger.info("Memory dropped: raw dialogue (char=%d type=%s sub=%s): %.40s",
                              character_id, memory_type, sub_type, content)
+                emit_memory_receipt(
+                    character_id, None, ACTION_REJECT, reason="raw dialogue dropped",
+                    detail={"memory_type": memory_type, "sub_type": sub_type, "source": source},
+                )
                 return None
             if source_id is not None and len(content) <= 60:
                 try:
@@ -91,6 +101,10 @@ async def save_memory(
                             if raw and c and (raw == c or raw.startswith(c) or raw.endswith(c)):
                                 _logger.info("Memory dropped: verbatim AI line (char=%d type=%s): %.40s",
                                              character_id, memory_type, content)
+                                emit_memory_receipt(
+                                    character_id, None, ACTION_REJECT, reason="verbatim AI line dropped",
+                                    detail={"memory_type": memory_type, "sub_type": sub_type, "source": source},
+                                )
                                 return None
                 except Exception:
                     pass
@@ -125,6 +139,10 @@ async def save_memory(
                     from app.memory.observability import obs_event
                     obs_event(character_id, "dual_write_dup_merge",
                               {"hit_id": mem_id, "sim": round(float(sim), 3)}, kind="vector_dedup")
+                    emit_memory_receipt(
+                        character_id, m.id, ACTION_MERGE, reason="write-time vector dedup",
+                        detail={"kind": "vector_dedup", "sim": round(float(sim), 3)},
+                    )
                     return m
 
             # 2) 字符级查重兜底（嵌入失败或旧记忆无向量时仍能命中）
@@ -157,6 +175,10 @@ async def save_memory(
                     # M1-S11：dual_write_dup_merge（kind=text_dedup）
                     from app.memory.observability import obs_event
                     obs_event(character_id, "dual_write_dup_merge", {"hit_id": m.id}, kind="text_dedup")
+                    emit_memory_receipt(
+                        character_id, m.id, ACTION_MERGE, reason="write-time text dedup",
+                        detail={"kind": "text_dedup"},
+                    )
                     return m
 
             # 3) 24h 同主题合并（2026-08-08）：同角色同类型 24h 内、字符相似 >0.6 → 更新原记忆而非新增。
@@ -194,6 +216,10 @@ async def save_memory(
                     obs_event(character_id, "dual_write_dup_merge",
                               {"hit_id": _m.id, "sim": round(SequenceMatcher(None, _a, b).ratio(), 3)},
                               kind="merge")
+                    emit_memory_receipt(
+                        character_id, _m.id, ACTION_MERGE, reason="write-time topic merge 24h",
+                        detail={"kind": "merge", "sim": round(SequenceMatcher(None, _a, b).ratio(), 3)},
+                    )
                     return _m
 
 
@@ -249,6 +275,21 @@ async def save_memory(
         await db.flush()
         await db.commit()
         await db.refresh(memory)
+
+        # #70 M3 写入回执：新记忆落库成功（flag 开=异步写一条 create；关=零行为）
+        try:
+            emit_memory_receipt(
+                character_id, memory.id, ACTION_CREATE,
+                reason="new memory written",
+                detail={
+                    "memory_type": memory.memory_type,
+                    "sub_type": memory.sub_type,
+                    "source": memory.source,
+                    "importance": float(memory.importance or 0),
+                },
+            )
+        except Exception:
+            pass
 
         # 生成向量并存入 ChromaDB（复用查重阶段算好的嵌入，避免重复推理）
         try:

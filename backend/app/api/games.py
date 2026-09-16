@@ -221,6 +221,8 @@ async def _create_session_in_db(
             name_by_seat[p.seat]["name"] = "你"
     engine.build_player_meta(name_by_seat)
     engine.players = seats
+    # #62 Phase 3：载入用户自定义词库/题库（用户自定义 > 插件内容包 > 内置常量）。
+    await engine.load_content(db)
 
     init_events = await engine.setup()
     session.status = "playing"
@@ -489,8 +491,18 @@ async def abort_session(sid: int, user_id: int = Depends(get_current_user_id)):
             raise HTTPException(404, "游戏不存在")
         if session.user_id != user_id:
             raise HTTPException(403, "只有创建者可以解散")
+        was_playing = session.status == "playing"
         session.status = "aborted"
         session.finished_at = datetime.now(timezone.utc)
+        # #62 Phase 3：用户主动解散也走同一统计口径（aborted 单列，不计胜场）。
+        if was_playing:
+            try:
+                from app.games.achievements import record_game_result
+                engine = engine_for(session.game_type)(session)
+                await engine.load(db)
+                await record_game_result(db, session, engine, aborted=True)
+            except Exception as e:  # 统计失败静默，绝不阻塞解散
+                _logger.warning("abort stats record failed sid=%s: %s", sid, e)
         await db.commit()
         _ai_turn_locks.pop(sid, None)  # v3.3.5 审查修复：解散后清理进程内锁
         _game_ws_clients.pop(sid, None)  # #65 审查修复：解散后清理 WS 集合，防内存缓慢增长
@@ -544,6 +556,96 @@ async def history(
         return {"items": items}
 
 
+# ── 内容源（#62 Phase 3：自定义词库/题库；用户自定义 > 插件内容包 > 内置常量）──
+@router.get("/content")
+async def get_content(game_type: str = Query(...), user_id: int = Depends(get_current_user_id)):
+    """列出某游戏当前生效的内容（按 key，标注 source=user/plugin/builtin）。"""
+    game_type = (game_type or "").strip()
+    try:
+        engine_for(game_type)
+    except ValueError:
+        raise HTTPException(400, f"未知游戏: {game_type}")
+    from app.games import content_store
+    async with async_session_factory() as db:
+        items = await content_store.list_effective(db, user_id=user_id, game_type=game_type)
+    return {"game_type": game_type, "items": items}
+
+
+@router.put("/content")
+async def put_content(data: dict, user_id: int = Depends(get_current_user_id)):
+    """写入/覆盖某游戏某 key 的用户自定义内容（整段替换该 key 的生效内容）。"""
+    game_type = (data.get("game_type") or "").strip()
+    key = (data.get("key") or "").strip()
+    values = data.get("values")
+    try:
+        engine_for(game_type)
+    except ValueError:
+        raise HTTPException(400, f"未知游戏: {game_type}")
+    from app.games import content_store
+    err = content_store.validate_write(game_type, key, values)
+    if err:
+        raise HTTPException(400, err)
+    async with async_session_factory() as db:
+        await content_store.upsert_user_override(
+            db, user_id=user_id, game_type=game_type, key=key, values=values
+        )
+        await db.commit()
+    return {"ok": True, "game_type": game_type, "key": key, "count": len(values)}
+
+
+@router.delete("/content/{game_type}/{key}")
+async def delete_content(game_type: str, key: str, user_id: int = Depends(get_current_user_id)):
+    """删除用户自定义内容（回落插件内容包 / 内置常量）。"""
+    game_type = (game_type or "").strip()
+    key = (key or "").strip()
+    from app.games import content_store
+    if not content_store.game_type_re.match(game_type) or not content_store.content_key_re.match(key):
+        raise HTTPException(400, "game_type/key 非法")
+    async with async_session_factory() as db:
+        removed = await content_store.delete_user_override(
+            db, user_id=user_id, game_type=game_type, key=key
+        )
+        await db.commit()
+    return {"ok": True, "removed": removed}
+
+
+# ── 成就与统计（#62 Phase 3，纯数据只读查询）──
+async def _check_char_owned(db: AsyncSession, character_id: int, user_id: int) -> None:
+    from app.models.character import AICharacter
+    c = await db.get(AICharacter, int(character_id))
+    if c is None or c.user_id != user_id:
+        raise HTTPException(404, "角色不存在或不属于你")
+
+
+@router.get("/stats")
+async def game_stats(
+    character_id: int | None = Query(None), game_type: str | None = Query(None),
+    user_id: int = Depends(get_current_user_id),
+):
+    """查询某用户（或某角色）的游戏统计累计。"""
+    from app.games import achievements
+    async with async_session_factory() as db:
+        if character_id is not None:
+            await _check_char_owned(db, character_id, user_id)
+        items = await achievements.list_stats(
+            db, user_id=user_id, character_id=character_id, game_type=game_type
+        )
+    return {"items": items}
+
+
+@router.get("/achievements")
+async def game_achievements(
+    character_id: int | None = Query(None), user_id: int = Depends(get_current_user_id)
+):
+    """查询某用户（或某角色）的成就（含未达成进度与解锁时间）。"""
+    from app.games import achievements
+    async with async_session_factory() as db:
+        if character_id is not None:
+            await _check_char_owned(db, character_id, user_id)
+        items = await achievements.list_achievements(db, user_id=user_id, character_id=character_id)
+    return {"items": items}
+
+
 # ── 结算：finish + archive + memory_bridge ──
 async def _abort_game(db: AsyncSession, session, engine: GameEngine, reason: str) -> None:
     """口径2（2026-09-06 拍板）：无 draw 语义引擎的护栏末级止血=无胜负终止。
@@ -555,6 +657,9 @@ async def _abort_game(db: AsyncSession, session, engine: GameEngine, reason: str
 
     engine.abort_in_place()
     db.add(session)
+    # #62 Phase 3：无胜负终止也记账（aborted 单列，绝不计胜场）；幂等、失败静默。
+    from app.games.achievements import record_game_result
+    await record_game_result(db, session, engine, aborted=True)
     _ai_turn_locks.pop(session.id, None)
     _game_ws_clients.pop(session.id, None)
     drop_guard(session.id)
@@ -591,6 +696,9 @@ async def _settle_game(db: AsyncSession, session, engine: GameEngine, winner: st
     db.add(session)
     # 主记忆摘要指针 + game_memories（每 AI 角色）
     await finalize_game(db, session, engine)
+    # #62 Phase 3：终局统计 + 成就判定（幂等、失败静默、不阻塞主链路）
+    from app.games.achievements import record_game_result
+    await record_game_result(db, session, engine, aborted=False)
     _ai_turn_locks.pop(session.id, None)  # v3.3.5 审查修复：结算后清理进程内锁，防长期运行内存增长
     _game_ws_clients.pop(session.id, None)  # v3.3.6 审查修复：结算后清理 WS 空集合，防缓慢增长
     drop_guard(session.id)  # 🛡️ 2026-09-04：结算后清理护栏进程内状态

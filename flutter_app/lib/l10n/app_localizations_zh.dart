@@ -7035,4 +7035,129 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get flagProviderRegistryDetail =>
       'X3：开=按配置 provider 字段选实现（内置 openai_compatible/dashscope 默认）；关=直连内置实现，与旧链路逐字节一致。';
+
+  @override
+  String get gameContentTitle => '游戏内容';
+
+  @override
+  String get gameContentEmpty => '该游戏暂无可编辑内容';
+
+  @override
+  String get gameContentSource => '来源';
+
+  @override
+  String get gameContentSourceUser => '我的自定义';
+
+  @override
+  String get gameContentSourcePlugin => '内容包';
+
+  @override
+  String get gameContentSourceBuiltin => '内置默认';
+
+  @override
+  String gameContentCount(int count) {
+    return '$count 条';
+  }
+
+  @override
+  String get gameContentHintLine => '每行一条';
+
+  @override
+  String get gameContentHintPair => '每行一对，格式：词A / 词B';
+
+  @override
+  String get gameContentHintPuzzle => '每行一条，格式：汤面 / 汤底 / 关键词1,关键词2';
+
+  @override
+  String get gameContentRestore => '恢复默认';
+
+  @override
+  String get gameContentRestoreConfirm => '确定恢复为内置或内容包的默认内容？';
+
+  @override
+  String get gameContentSaved => '已保存';
+
+  @override
+  String gameContentSaveFailed(String err) {
+    return '保存失败：$err';
+  }
+
+  @override
+  String get gameContentRestored => '已恢复默认';
+
+  @override
+  String gameContentRestoreFailed(String err) {
+    return '恢复失败：$err';
+  }
+
+  @override
+  String gameContentLoadFailed(String err) {
+    return '内容加载失败：$err';
+  }
+
+  @override
+  String gameContentParseFailed(int line) {
+    return '第 $line 行格式不正确';
+  }
+
+  @override
+  String get gameContentMinOne => '至少需要一条内容';
+
+  @override
+  String get gameContentApplyHint => '保存后对新开局生效';
+
+  @override
+  String get gameAchievementsTitle => '成就与统计';
+
+  @override
+  String get gameStatsScope => '统计对象';
+
+  @override
+  String get gameStatsTitle => '累计统计';
+
+  @override
+  String get gameStatsTotal => '合计';
+
+  @override
+  String get gameStatsGames => '局数';
+
+  @override
+  String get gameStatsWins => '胜';
+
+  @override
+  String get gameStatsLosses => '负';
+
+  @override
+  String get gameStatsDraws => '平';
+
+  @override
+  String get gameStatsAborted => '中止';
+
+  @override
+  String get gameStatsRounds => '回合数';
+
+  @override
+  String get gameStatsWinRate => '胜率';
+
+  @override
+  String get gameStatsEmpty => '还没有对局统计';
+
+  @override
+  String get gameAchievementsList => '成就';
+
+  @override
+  String gameAchievementsUnlockedCount(int count, int total) {
+    return '已解锁 $count/$total';
+  }
+
+  @override
+  String get gameAchievementsLocked => '未解锁';
+
+  @override
+  String gameAchievementsProgress(int progress, int target) {
+    return '进度 $progress/$target';
+  }
+
+  @override
+  String get gameAchievementsAll => '全部游戏';
 }

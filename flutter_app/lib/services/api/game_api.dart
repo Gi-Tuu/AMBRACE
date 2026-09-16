@@ -95,4 +95,73 @@ extension GameApi on ApiClient {
     return ((r.data as Map<String, dynamic>)['items'] as List? ?? const [])
         .cast<Map<String, dynamic>>();
   }
+
+  // ── 内容源（#62 Phase 3：用户自定义 > 插件内容包 > 内置常量）──
+
+  /// 列出某游戏当前生效内容：items = [{key, source: user|plugin|builtin, count, values}]。
+  Future<List<Map<String, dynamic>>> getGameContent(String gameType) async {
+    final r = await dio.get(
+      '/api/v1/games/content',
+      queryParameters: {'game_type': gameType},
+    );
+    return ((r.data as Map<String, dynamic>)['items'] as List? ?? const [])
+        .cast<Map<String, dynamic>>();
+  }
+
+  /// 写入/覆盖某游戏某 key 的用户自定义内容（整段替换）。
+  Future<Map<String, dynamic>> putGameContent({
+    required String gameType,
+    required String key,
+    required List<dynamic> values,
+  }) async {
+    final r = await dio.put('/api/v1/games/content', data: {
+      'game_type': gameType,
+      'key': key,
+      'values': values,
+    });
+    return r.data as Map<String, dynamic>;
+  }
+
+  /// 删除用户自定义内容（回落插件内容包 / 内置常量）。
+  Future<Map<String, dynamic>> deleteGameContent({
+    required String gameType,
+    required String key,
+  }) async {
+    final r = await dio.delete('/api/v1/games/content/$gameType/$key');
+    return r.data as Map<String, dynamic>;
+  }
+
+  // ── 成就与统计（#62 Phase 3）──
+
+  /// 累计统计（character_id 为空 = 用户本人）。
+  /// items = [{game_type, character_id, games_played, wins, losses, draws,
+  /// aborted, total_rounds, win_rate, last_played_at}]。
+  Future<List<Map<String, dynamic>>> getGameStats({
+    int? characterId,
+    String? gameType,
+  }) async {
+    final r = await dio.get(
+      '/api/v1/games/stats',
+      queryParameters: {
+        if (characterId != null) 'character_id': characterId,
+        if (gameType != null) 'game_type': gameType,
+      },
+    );
+    return ((r.data as Map<String, dynamic>)['items'] as List? ?? const [])
+        .cast<Map<String, dynamic>>();
+  }
+
+  /// 成就列表（含未达成进度）。
+  /// items = [{key, game_type, title, description, metric, target, progress,
+  /// unlocked, unlocked_at}]。
+  Future<List<Map<String, dynamic>>> getGameAchievements({int? characterId}) async {
+    final r = await dio.get(
+      '/api/v1/games/achievements',
+      queryParameters: {
+        if (characterId != null) 'character_id': characterId,
+      },
+    );
+    return ((r.data as Map<String, dynamic>)['items'] as List? ?? const [])
+        .cast<Map<String, dynamic>>();
+  }
 }

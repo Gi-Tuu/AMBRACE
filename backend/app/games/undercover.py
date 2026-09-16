@@ -10,6 +10,7 @@ import json
 import random
 
 from app.games.base import ActionResult, GameContext, GameEngine, PlayerView
+from app.games.content_store import register_builtin_content
 from app.games.gm import gm_announce
 
 # 词对库（偏角色生活/兴趣/共同经历，不选生僻词；50+ 对）
@@ -30,6 +31,8 @@ WORD_PAIRS = [
     ("闹钟", "手表"), ("口琴", "笛子"), ("围裙", "袖套"), ("面包", "馒头"),
     ("红烧肉", "糖醋排骨"), ("篮球", "足球"),
 ]
+# #62 Phase 3：内置词对登记为内容源兜底（用户自定义 / 插件内容包可整段覆盖）。
+register_builtin_content("undercover", "word_pairs", WORD_PAIRS)
 
 
 class UndercoverEngine(GameEngine):
@@ -43,7 +46,9 @@ class UndercoverEngine(GameEngine):
     async def setup(self, player_seats: list[dict] | None = None) -> list[dict]:
         players = [p for p in self.players if not p.is_spectator]
         n = len(players)
-        pair = random.choice(WORD_PAIRS)
+        pairs = [p for p in self.content("word_pairs", WORD_PAIRS)
+                 if isinstance(p, (list, tuple)) and len(p) == 2] or WORD_PAIRS
+        pair = random.choice(pairs)
         n_undercover = 1 if n <= 5 else 2
         words = [pair[0]] * (n - n_undercover) + [pair[1]] * n_undercover
         random.shuffle(words)

@@ -76,6 +76,8 @@ class GameEngine(ABC):
         self.state: dict = {}
         self.players: list = []
         self._events: list[dict] = []
+        # #62 Phase 3：本局用户在该游戏下的自定义内容覆盖（load_content 载入）。
+        self._content_overrides: dict[str, list] = {}
 
     # ── 生命周期（子类实现）────
     @abstractmethod
@@ -188,6 +190,43 @@ class GameEngine(ABC):
             select(GameEvent).where(GameEvent.session_id == self.session.id).order_by(GameEvent.id)
         )
         self._events = [_event_to_dict(e) for e in evs.scalars().all()]
+        await self.load_content(db)
+
+    # ── 内容源（#62 Phase 3：用户自定义 > 插件内容包 > 内置常量兜底）────
+    async def load_content(self, db) -> None:
+        """载入本局创建者的自定义内容覆盖（失败静默=无覆盖，绝不阻塞对局）。
+
+        供 action / resume 等经 ``load(db)`` 的路径自动获得；创建对局路径由
+        ``_create_session_in_db`` 显式调用一次（见 app/api/games.py）。
+        """
+        self._content_overrides = {}
+        try:
+            from app.games import content_store
+            user_id = getattr(self.session, "user_id", None)
+            if user_id is None or not self.game_type:
+                return
+            self._content_overrides = await content_store.load_user_overrides(
+                db, user_id=int(user_id), game_type=self.game_type
+            )
+        except Exception:
+            self._content_overrides = {}
+
+    def content(self, key: str, default=None) -> list:
+        """解析生效内容：用户自定义 > 插件内容包 > 内置 default（首个非空来源整段胜出）。
+
+        引擎改动最小化示例：``pool = self.content("word_pool", _WORD_POOL)``。
+        default 传 None 时回落 content_store 已登记的内置常量（无则空数组）。
+        """
+        from app.games import content_store
+        vals = self._content_overrides.get(key)
+        if vals:
+            return list(vals)
+        vals = content_store.plugin_content(self.game_type, key)
+        if vals:
+            return list(vals)
+        if default is None:
+            return content_store.builtin_content(self.game_type, key) or []
+        return list(default)
 
     async def persist_event(self, db, event: dict):
         """落一条 game_event（不 commit，由调用方统一提交）。"""
@@ -318,6 +357,10 @@ class GameEngine(ABC):
         # 投降方：判负（出局）并转为观战，后续 view/回合/信息隔离自然把他排除
         p.alive = False
         p.is_spectator = True
+        # #62 Phase 3：标记投降座次——统计结算时据此把"转观战者"补记为负场（不被漏记）。
+        marks = self.state.setdefault("surrendered_seats", [])
+        if isinstance(marks, list) and seat not in marks:
+            marks.append(seat)
 
         remaining = self.in_play_players()
         if len(remaining) <= 1:

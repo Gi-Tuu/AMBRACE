@@ -40,9 +40,10 @@ def test_migration_upgrade_downgrade(mig_db):
 
     # 升级到 head：group_memories 出现，脚本单头无分叉
     command.upgrade(cfg, "head")
-    assert _heads() == {"f2b3c4d5e6f7"}, (
-        f"期望单头 f2b3c4d5e6f7（第五轮 P3-1 2026-09-11：活跃父表子 FK ondelete 落库，batch 重建 14 表；"
-        f"前序 e1b2c3d4e5f6=第四轮补回被 batch recreate/has_table 守卫丢失的索引），实际 {_heads()}"
+    assert _heads() == {"a3b4c5d6e7f8"}, (
+        f"期望单头 a3b4c5d6e7f8（#72 PR-C P5 群记忆日终合并收敛：group_memories 加 is_archived；"
+        f"前序 e2f3a4b5c6d7=#62 群聊游戏 Phase 3，f2b3c4d5e6f7=第五轮 P3-1 活跃父表子 FK ondelete），"
+        f"实际 {_heads()}"
     )
 
     eng = create_engine("sqlite:///" + db_path)

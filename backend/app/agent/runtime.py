@@ -46,6 +46,8 @@ def _build_initial_state(
     lang: str,
     reasoning_level: int,
     save_memory: bool,
+    group_id: int | None = None,
+    group_shared_fact: bool = False,
 ) -> dict:
     """构建初始 state（与主链路 chat_service._run_agent_core 同构的最小集合）"""
     state = {
@@ -67,6 +69,8 @@ def _build_initial_state(
         "lang": lang,
         "reasoning_level": reasoning_level,
         "tools_used": [],
+        "group_id": group_id,            # #72 PR-C P3：群聊上下文标记（非群聊为 None → 私有认知 section 不注入）
+        "group_shared_fact": group_shared_fact,  # #72 PR-C P4：注入观测 has_shared
     }
     if not save_memory:
         # 机器生成内容（如渠道 hint）不落记忆：parse_response 仍解析，但 generate_response 跳过落库
@@ -331,6 +335,8 @@ async def run_social_reply(
     save_memory: bool = True,
     allow_tools: bool = False,
     light_context: bool = False,  # F1/F2（2026-08-18）：True=轻量上下文（群聊/渠道短回复，prompt ≈-64%）；默认 False=全量 build_context 零变化
+    group_id: int | None = None,  # #72 PR-C P3：群聊上下文标记（非群聊为 None → 私有认知 section 不注入）
+    group_shared_fact: bool = False,  # #72 PR-C P4：注入观测 has_shared
 ) -> dict:
     """统一 Runtime 薄封装：群聊/渠道等社交短回复的生成入口。
 
@@ -362,6 +368,7 @@ async def run_social_reply(
             character_id=character_id, user_id=user_id, session_id=session_id,
             user_message=user_message, lang=lang,
             reasoning_level=reasoning_level, save_memory=save_memory,
+            group_id=group_id, group_shared_fact=group_shared_fact,
         )
 
         # 3. 上下文注入（知识边界按角色隔离：只注入该角色自己的记忆 + 平台公开上下文由调用方传入）

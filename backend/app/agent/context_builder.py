@@ -110,6 +110,7 @@ _SECTION_QUOTA_TOKENS: dict[str, int] = {
     "authoritative_facts": 300,
     "mcp_tools": 800,  # Phase 2（2026-08-26）：MCP 工具声明注入配额
     "mcp_resources": 400,  # Phase 4（2026-08-28）：MCP 资源摘要注入配额（默认开；无资源零行为变化）
+    "group_char_cognition": 300,  # #72 PR-C P3（2026-09-15）：逐角色群聊认知注入配额（≈600 字；单独 budget 防膨胀）
 }
 _EST_CHARS_PER_TOKEN = 2
 # G-P1-2（2026-08-18）：system 整体 token 硬顶（组装完成后超限时从尾部裁剪各 system 块；配额内零行为变化）

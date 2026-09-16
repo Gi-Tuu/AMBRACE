@@ -11,6 +11,7 @@ import json
 import random
 
 from app.games.base import ActionResult, GameContext, GameEngine, PlayerView
+from app.games.content_store import register_builtin_content
 from app.games.gm import gm_announce
 
 _WORD_POOL = [
@@ -22,6 +23,8 @@ _WORD_POOL = [
     "唱歌", "跳舞", "画画", "写诗", "阅读", "看电影", "下棋", "旅行", "钓鱼", "做家务",
     "医生", "老师", "警察", "厨师", "程序员", "设计师", "司机", "宇航员", "记者", "画家",
 ]
+# #62 Phase 3：内置常量登记为内容源的兜底（用户自定义 / 插件内容包可整段覆盖）。
+register_builtin_content("twenty_q", "word_pool", _WORD_POOL)
 
 _ANSWER_TEXT = {"yes": "是", "no": "否", "possible": "可能", "uncertain": "不确定"}
 
@@ -42,7 +45,7 @@ class TwentyQEngine(GameEngine):
             thinker, guesser = ai_players[0], user_players[0]
         else:
             thinker, guesser = players[0], players[1]
-        word = random.choice(_WORD_POOL)
+        word = random.choice(self.content("word_pool", _WORD_POOL))
         for p in players:
             p.role = "thinker" if p.seat == thinker.seat else "guesser"
             p.alive = True
@@ -229,7 +232,7 @@ class TwentyQEngine(GameEngine):
         if stage == "ask" and seat == self.state.get("guesser_seat"):
             n = int(self.state.get("questions", 0))
             if n >= 4 and n % 4 == 3:
-                gw = random.choice(_WORD_POOL)
+                gw = random.choice(self.content("word_pool", _WORD_POOL))
                 return {"action": "guess", "content": f"我猜是{gw}", "payload": {"word": gw}}
             return {"action": "ask", "content": "是生活里常见的东西吗？", "payload": {}}
         return {"action": "skip", "content": "", "payload": {}}
