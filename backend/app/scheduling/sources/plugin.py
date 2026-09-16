@@ -94,18 +94,23 @@ class PluginSource:
         )
 
     async def _keep(self, cand: dict, claims: set[str]) -> bool:
-        """策略候选的内核侧去重（非策略候选 / 无接管类别 → 恒 True，零变化）。"""
+        """策略候选的内核侧去重（非策略候选 / 无接管类别 → 恒 True，零变化）。
+
+        去重口径**按类别登记**（``strategy.CATEGORY_DEDUP``）：想念/节律落库是
+        ``storyline``，按 proactive_message_logs 查 message_type 会空转，故走触发日志。
+        """
         if not claims:
             return True
         try:
-            from .strategy import category_of, message_type_of, sent_today
+            from .strategy import category_of, message_type_of, sent_recently
 
-            if category_of(cand) not in claims:
+            cat = category_of(cand)
+            if cat not in claims:
                 return True
             mt = message_type_of(cand)
             if not mt:
                 return True
-            return not await sent_today(int(cand["character_id"]), mt)
+            return not await sent_recently(int(cand["character_id"]), cat or "", mt)
         except Exception as e:
             _logger.warning("strategy dedup failed: %s", e)
             return True

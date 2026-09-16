@@ -1,0 +1,27 @@
+{
+  "name": "proactive_strategy_unfinished_topic",
+  "version": "1.0.0",
+  "description": "示例策略包（X6-c）：对话未收尾跟进（unfinished_topic）的内容策略外放。只决定「哪个话头值得追问」，选人/每日 1 条配额/最小间隔/免打扰/话头正文复核/生成/发送全部由内核负责。",
+  "author": "AICompanion",
+  "category": "plugin",
+  "type": "http",
+  "hooks": [
+    "proactive_candidate"
+  ],
+  "permissions": [
+    "proactive:read"
+  ],
+  "context_keys": [
+    "open_topics",
+    "recent_intents"
+  ],
+  "config": {
+    "strategy_category": "unfinished_topic",
+    "min_importance": 0.6,
+    "min_hours_since": 2.0,
+    "max_per_char": 1
+  },
+  "icon": "💬",
+  "hook_timeout": 10,
+  "usage": "开启前先把内核 flag proactive_strategy_plugins 置为 True（否则内核不下发 roster，本包零输出）。开启后：内核让位 unfinished_topic 源，本包从 open_topics 里挑一个值得追问的话头（跳过已有前瞻意图在追的），候选只带 topic_id；回内核后由内核复核话题归属与状态、补会话与话头正文，并做每日 1 条配额、最小间隔（距最后一条消息 2 小时）、免打扰与未回复冷却，再走 run_unfinished_topic 生成发送。可改 min_importance（话题重要度下限）、min_hours_since（话头至少冷了多久才追）、max_per_char（每角色每 tick 最多几条）。"
+}

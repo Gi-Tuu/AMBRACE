@@ -281,7 +281,9 @@ async def get_life_state(character_id: int) -> dict:
     return {k: int(st.get(k, 50)) for k in keys}
 
 
-async def get_proactive_context(keys: list[str], character_id: int | None = None) -> dict:
+async def get_proactive_context(
+    keys: list[str], character_id: int | None = None, *, category: str | None = None,
+) -> dict:
     """X6-b（2026-09-17）：拉取内核侧**只读**素材（需 proactive:read + manifest context_keys 白名单）。
 
     pull 式（不用 hook 全量推送）：推送要每 tick 对所有角色下发全量素材（角色一多就是
@@ -291,13 +293,20 @@ async def get_proactive_context(keys: list[str], character_id: int | None = None
     - ``keys`` 必须与 manifest ``context_keys`` 求交，**未声明的 key 一律不返回**；
     - 可用 key：``roster``（谁有资格）/ ``character_state``（八维状态，需 character_id）/
       ``due_reviews``（到期复习记忆，需 character_id）/ ``recent_intents``（未完成前瞻意图，
-      需 character_id）/ ``time_ctx``（北京日期/小时/时段）；
+      需 character_id）/ ``time_ctx``（北京日期/小时/时段）/
+      ``relationship``（关系标量，需 character_id）/ ``user_rhythm``（距上次用户消息小时数
+      + 用户活跃时段权重，需 character_id）/ ``quota``（该类别 6h/当日已用数与上限，
+      需 character_id）/ ``open_topics``（未收尾话题，需 character_id）；
+    - ``category``：只有 ``quota`` 需要（统计哪个类别的配额）。**不传则按调用方插件
+      已登记的类别自动推导**（一个包登记多个类别时请显式传，否则取第一个）；
     - 逐 key 限量（条数 + 文本截断）与整体体量上限由内核收口；单 key 失败只丢该 key；
     - 只读取、不写库、不发网络请求；异常 fail-open 返回空 dict（绝不阻塞主动链路）。
 
     示例（策略包内）：
         ctx_data = await sdk.get_proactive_context(["time_ctx"])
         per_char = await sdk.get_proactive_context(["due_reviews"], character_id=entry["character_id"])
+        quota = (await sdk.get_proactive_context(["quota"], character_id=entry["character_id"])
+                 ).get("quota") or {}
     """
     require_permission("proactive:read")
     name = registry.current_plugin_name()
@@ -305,8 +314,11 @@ async def get_proactive_context(keys: list[str], character_id: int | None = None
         raise RuntimeError("sdk.get_proactive_context 只能在插件上下文中调用")
     allowed = set((registry._loaded.get(name, {}).get("info") or {}).get("context_keys") or [])
     wanted = [k for k in (keys or []) if k in allowed]
-    from app.scheduling.sources.strategy import build_proactive_context
-    return await build_proactive_context(wanted, character_id=character_id)
+    from app.scheduling.sources.strategy import build_proactive_context, category_of_source
+    cat = category
+    if not cat and "quota" in wanted:
+        cat = category_of_source(name)      # 未显式指定 → 用本包登记的类别
+    return await build_proactive_context(wanted, character_id=character_id, category=cat)
 
 
 async def emit(event_type: str, payload: dict) -> None:

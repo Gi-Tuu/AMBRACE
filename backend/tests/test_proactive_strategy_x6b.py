@@ -181,8 +181,10 @@ def test_两个新策略包_manifest与类别登记(pack_rhythm, pack_review):
         assert "time_ctx" in m["context_keys"] or cat == "memory_review"
         assert "proactive_candidate" in registry._loaded[pack]["hooks"]
 
+    # 只断言「本轮两个包登记成功」：test_plugins 会加载全部示例插件，
+    # 全局登记表里还有别的示例包（如 X6-c 的 motivation / unfinished_topic），不能做全等断言
     reg = strategy_mod.strategy_registry()
-    assert set(reg) == {"rhythm", "memory_review"}
+    assert {"rhythm", "memory_review"} <= set(reg)
     assert reg["rhythm"]["message_types"] == RHYTHM_BEHAVIORS
     assert reg["memory_review"]["message_types"] == ("memory_review",)
 

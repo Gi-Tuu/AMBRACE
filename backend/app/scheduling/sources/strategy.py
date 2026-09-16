@@ -26,11 +26,23 @@ X6-b（2026-09-17）新增两个端口
    fail-open（单 key 失败只丢该 key），单次返回体量设上限。
 2. **类别注册口**：``register_strategy()`` 供 ``sdk.register_proactive_strategy`` 调用——
    让位表与 message_type 白名单由「内核兜底 + 插件注册」动态构建，冲突拒绝后加载者。
+
+X6-c（2026-09-17）扩两个类别 + 四个素材 key
+------------------------------------------
+- 新增 ``motivation`` / ``unfinished_topic`` 两个可外放类别：二者各有**独立配额与独立
+  生成链路**，除「让位 + 去重」外还登记了 **内核 prepare**（:func:`prepare_candidate`）——
+  配额判定、去重、关系门、免打扰、素材装配全部在内核，策略包只给候选与「想发什么」；
+- 素材端口补 4 个 key：``relationship`` / ``user_rhythm`` / ``quota`` / ``open_topics``
+  （``quota`` 需类别参数，由 sdk 按调用插件自动推导或显式传入）；
+- **去重口径按类别登记**（:data:`CATEGORY_DEDUP`）：节律/想念落库是 ``storyline``，
+  按 ``proactive_message_logs`` 查 message_type 会空转，故这两类改用
+  ``proactive_trigger_logs``(decision=approved) 判定「当日/近 6h 是否已发」。
 """
 from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from app.utils.logger import get_logger
@@ -58,14 +70,43 @@ BUILTIN_CATEGORIES: dict[str, tuple[str, ...]] = {
 
 # 内核执行路由：策略候选落回内核哪条执行链。
 #   "candidate" = 用候选声明的 message_type 作为 arbiter 事件类型（走内核既定执行链，
-#                 如 rhythm→剧情线、memory_review→run_memory_review，频控/抽检语义不变）；
+#                 如 rhythm→剧情线、memory_review→run_memory_review、
+#                 motivation→剧情线想念通道（独立配额）、unfinished_topic→run_unfinished_topic，
+#                 频控/抽检语义不变）；
 #   未登记 = 走 hint 生成路径（type="plugin"），第三方策略包默认全部落这里。
 CATEGORY_EXEC_ROUTE: dict[str, str] = {
     "rhythm": "candidate",
     "memory_review": "candidate",
+    "motivation": "candidate",
+    "unfinished_topic": "candidate",
 }
 # 内核执行前处理（频控闸 + 素材装配）：类别 → 实现键（见 prepare_candidate）
-CATEGORY_KERNEL_PREP: dict[str, str] = {"rhythm": "rhythm"}
+# 这两类各有独立配额与独立生成链路，**必须**在内核 prepare 里把配额/去重/关系门/免打扰做完，
+# 策略包只提供候选与「想发什么」（它无状态、每 tick 都投，靠 prepare 收口）。
+CATEGORY_KERNEL_PREP: dict[str, str] = {
+    "rhythm": "rhythm",
+    "motivation": "motivation",
+    "unfinished_topic": "unfinished_topic",
+}
+
+# 类别配额的计数口径（X6-c）：类别 → 计数来源。
+#   "message_log" = proactive_message_logs(message_type=落库口径)（「已发送」口径，默认）；
+#   "trigger_log" = proactive_trigger_logs(trigger_type=事件类型, decision=approved)
+#                   （motivation 专用：想念消息落库 message_type 统一为 storyline，
+#                    只有触发日志能区分，与 arbiter.get_motivation_approved_count 同口径）。
+CATEGORY_QUOTA_SOURCE: dict[str, str] = {"motivation": "trigger_log"}
+
+# 类别去重口径（X6-c）：类别 → (计数来源, 窗口)；未登记类别走 DEFAULT_DEDUP。
+#   "day" = 北京当日已发过即不再发；"6h" = 近 6 小时已发过即不再发。
+#   rhythm / motivation 走 trigger_log：二者落库 message_type 是 storyline，
+#   按 proactive_message_logs 查会「去重闸空转」（与 X6-b 已知问题同源）。
+CATEGORY_DEDUP: dict[str, tuple[str, str]] = {
+    "rhythm": ("trigger_log", "day"),
+    "memory_review": ("message_log", "day"),
+    "motivation": ("trigger_log", "6h"),
+    "unfinished_topic": ("message_log", "day"),
+}
+DEFAULT_DEDUP: tuple[str, str] = ("message_log", "day")
 
 # category -> {"source": 插件名, "message_types": tuple[str, ...]}
 _REGISTRY: dict[str, dict] = {}
@@ -81,12 +122,21 @@ CONTEXT_KEYS: tuple[str, ...] = (
     "due_reviews",      # 该角色到期/待复习记忆（需 character_id）
     "recent_intents",   # 该角色最近的前瞻意图（需 character_id）
     "time_ctx",         # 北京日期/小时/时段（全局）
+    # X6-c：供 motivation / unfinished_topic 两类使用
+    "relationship",     # 关系标量 trust/attachment/curiosity（需 character_id）
+    "user_rhythm",      # 距上次用户消息小时数 + 用户活跃时段权重（需 character_id）
+    "quota",            # 该类别 6h / 当日已用数与上限（需 character_id；见 quota_used）
+    "open_topics",      # 未收尾话题 / 最近话头（需 character_id）
 )
 # 需要 character_id 的 key（不给 = 不下发，防跨角色取数）
-PER_CHAR_CONTEXT_KEYS: tuple[str, ...] = ("character_state", "due_reviews", "recent_intents")
+PER_CHAR_CONTEXT_KEYS: tuple[str, ...] = (
+    "character_state", "due_reviews", "recent_intents",
+    "relationship", "user_rhythm", "quota", "open_topics",
+)
 # 单 key 条数上限（防插件把上下文吃爆）
 CONTEXT_ITEM_LIMITS: dict[str, int] = {
     "roster": 20, "character_state": 8, "due_reviews": 3, "recent_intents": 3, "time_ctx": 8,
+    "relationship": 8, "user_rhythm": 8, "quota": 8, "open_topics": 3,
 }
 # 文本字段截断长度
 CONTEXT_SUMMARY_CHARS = 80
@@ -97,6 +147,8 @@ _CHAR_STATE_KEYS = (
     "mood", "body_temp", "desire", "possessiveness",
     "fatigue", "sensitivity", "comfort", "anger",
 )
+# 关系标量（与 sdk.get_relationship 同口径）
+_RELATION_KEYS = ("trust", "attachment", "curiosity")
 
 
 def _warn(msg: str) -> None:
@@ -270,6 +322,10 @@ async def prepare_candidate(candidate: dict) -> dict | None:
 
     只有登记了 ``CATEGORY_KERNEL_PREP`` 的类别才会被处理；其余原样返回。
     处理异常 → None（宁可不发，也不绕过内核频控）。
+
+    X6-c：``motivation`` / ``unfinished_topic`` 两类各有独立配额与独立生成链路，
+    配额判定 / 去重 / 关系门 / 免打扰 / 素材装配**全部在各自内核源里做**
+    （策略包无状态、每 tick 都投同样的候选，靠这些闸收口成「一天只发该发的量」）。
     """
     cat = category_of(candidate)
     key = CATEGORY_KERNEL_PREP.get(cat or "")
@@ -278,11 +334,142 @@ async def prepare_candidate(candidate: dict) -> dict | None:
     try:
         if key == "rhythm":
             from .rhythm import prepare_strategy_candidate as _prep
-            return await _prep(candidate)
+        elif key == "motivation":
+            from .motivation import prepare_strategy_candidate as _prep
+        elif key == "unfinished_topic":
+            from .unfinished_topic import prepare_strategy_candidate as _prep
+        else:
+            return candidate
+        return await _prep(candidate)
     except Exception as e:
         _logger.warning("strategy kernel prep failed(%s): %s", cat, e)
         return None
-    return candidate
+
+
+def category_of_source(source: str) -> str | None:
+    """该插件（source）登记的第一个策略类别（供 sdk 推导 quota 的类别参数）。
+
+    一个插件登记多个类别时结果不唯一，此时策略包应显式传 ``category``。
+    """
+    try:
+        for cat, rec in _REGISTRY.items():
+            if rec.get("source") == source:
+                return cat
+    except Exception:
+        pass
+    return None
+
+
+async def _count_message_log(character_id: int, message_type: str, since) -> int:
+    """proactive_message_logs 计数（「已发送」口径）。"""
+    from sqlalchemy import func, select
+
+    from app.db.database import async_session_factory
+    from app.models.character import ProactiveMessageLog
+
+    async with async_session_factory() as db:
+        return int(
+            (
+                await db.execute(
+                    select(func.count()).where(
+                        ProactiveMessageLog.character_id == character_id,
+                        ProactiveMessageLog.message_type == message_type,
+                        ProactiveMessageLog.created_at >= since,
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+
+
+async def _count_trigger_log(character_id: int, trigger_type: str, since) -> int:
+    """proactive_trigger_logs 计数（「已执行」口径，decision=approved）。
+
+    trigger_type 即 arbiter 事件类型（= 策略候选的 message_type），与
+    ``arbiter.log_trigger_candidate`` 写入口径一致。
+    """
+    from sqlalchemy import func, select
+
+    from app.db.database import async_session_factory
+    from app.models.character import ProactiveTriggerLog
+
+    async with async_session_factory() as db:
+        return int(
+            (
+                await db.execute(
+                    select(func.count()).where(
+                        ProactiveTriggerLog.character_id == character_id,
+                        ProactiveTriggerLog.trigger_type == trigger_type,
+                        ProactiveTriggerLog.decision == "approved",
+                        ProactiveTriggerLog.created_at >= since,
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+
+
+def _since(window: str):
+    """窗口 → 起始时间（naive UTC）。"""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if window == "6h":
+        return now - timedelta(hours=6)
+    from app.utils.timeutil import beijing_day_start_utc
+
+    return beijing_day_start_utc()
+
+
+async def quota_used(character_id: int, category: str, *, message_type: str | None = None) -> dict:
+    """内核只读配额计数（X6-c）：该类别近 6h / 北京当日**已用数**与上限。
+
+    计数口径按 :data:`CATEGORY_QUOTA_SOURCE` 分两类（见其注释）：想念类只有触发日志能区分，
+    其余走「已发送」消息日志。上限只填内核已知的类别（未知 → ``None``，策略包只拿到计数）。
+
+    返回 ``{"used_6h": int, "used_today": int, "limit_6h": int|None, "limit_day": int|None}``；
+    查询失败**上抛**（调用方决定：素材端口丢该 key，内核 prepare 丢弃候选）。
+    """
+    mt = message_type or category
+    source = CATEGORY_QUOTA_SOURCE.get(category, "message_log")
+    counter = _count_trigger_log if source == "trigger_log" else _count_message_log
+    return {
+        "used_6h": await counter(character_id, mt, _since("6h")),
+        "used_today": await counter(character_id, mt, _since("day")),
+        "limit_6h": category_quota_limits(category).get("6h"),
+        "limit_day": category_quota_limits(category).get("day"),
+    }
+
+
+def category_quota_limits(category: str) -> dict:
+    """该类别的内核配额上限（未知类别 → 空 dict，策略包只拿到已用计数）。"""
+    if category == "motivation":
+        from app.domain.proactivity.decision import MOTIVATION_MAX_PER_DAY, MOTIVATION_MAX_PER_6H
+
+        return {"6h": MOTIVATION_MAX_PER_6H, "day": MOTIVATION_MAX_PER_DAY}
+    if category == "unfinished_topic":
+        from app.scheduling.unfinished_topic import MAX_DAILY
+
+        return {"day": MAX_DAILY}
+    return {}
+
+
+async def sent_recently(character_id: int, category: str, message_type: str) -> bool:
+    """该角色该口径下「近期是否已发过」（内核去重，按类别登记，见 :data:`CATEGORY_DEDUP`）。
+
+    默认（未登记类别）与 ``sent_today`` 完全一致；查询失败 fail-open 返回 False
+    （宁可多一次，还有小时限额与内核 prepare 的配额闸兜底）。
+    """
+    try:
+        source, window = CATEGORY_DEDUP.get(category or "", DEFAULT_DEDUP)
+        if source == "message_log" and window == "day":
+            return await sent_today(character_id, message_type)   # 沿用既有实现（含 fail-open）
+        counter = _count_trigger_log if source == "trigger_log" else _count_message_log
+        return await counter(character_id, message_type, _since(window)) > 0
+    except Exception as e:
+        _logger.warning(
+            "strategy dedup query failed char=%s cat=%s type=%s: %s",
+            character_id, category, message_type, e,
+        )
+        return False
 
 
 async def sent_today(character_id: int, message_type: str) -> bool:
@@ -467,6 +654,118 @@ async def _ctx_recent_intents(character_id: int | None) -> list[dict]:
     } for r in rows]
 
 
+async def _ctx_relationship(character_id: int | None) -> dict:
+    """关系标量（与 ``sdk.get_relationship`` **同一数据源**：character_state_service）。"""
+    from app.application.character_state_service import get_character_states
+
+    st = await get_character_states(int(character_id))
+    out = {}
+    for k in _RELATION_KEYS:
+        try:
+            out[k] = int(st.get(k, 50))
+        except Exception:
+            out[k] = 50
+    return out
+
+
+async def _ctx_user_rhythm(character_id: int | None) -> dict:
+    """用户作息侧素材（只读，复用既有学习结果，不触发重学/不写库）。
+
+    - ``hours_since_last_user_message``：距该角色最近一条用户消息的小时数（跨会话；
+      从未对话 → ``None``，策略包按「无信号」处理）；
+    - ``active_hours`` / ``weight``：已学到的活跃时段与当前小时权重（``get_active_hours``
+      只读 + 纯函数 ``hourly_rhythm_weight``；未学到 → ``weight=1.0``，即不挡）。
+    """
+    from app.scheduling import arbiter
+    from app.scheduling.user_rhythm import get_active_hours, hourly_rhythm_weight
+
+    hours = await arbiter.get_hours_since_last_user_message(int(character_id))
+    user_id = await _user_id_of(int(character_id))
+    active: list[list[int]] = []
+    weight = 1.0
+    if user_id:
+        active = list(await get_active_hours(user_id) or [])
+        cn_hour = datetime.now(timezone(timedelta(hours=8))).hour
+        weight = hourly_rhythm_weight(cn_hour, active)
+    return {
+        "hours_since_last_user_message": None if hours is None else round(float(hours), 2),
+        "active_hours": active[:4],
+        "weight": float(weight),
+        "learned": bool(active),
+    }
+
+
+async def _quota_for(character_id: int | None, category: str | None) -> dict:
+    """``quota``：该类别 6h / 当日已用数与上限（类别由 sdk 推导或策略包显式传入）。"""
+    cat = (category or "").strip()
+    if not cat:
+        return {}
+    return await quota_used(int(character_id), cat)
+
+
+async def _ctx_open_topics(character_id: int | None) -> list[dict]:
+    """未收尾话题 / 最近话头（复用 topic_tracker 的时效口径：进行中 + 72h/目标 14 天）。"""
+    from sqlalchemy import select
+
+    from app.agent.topic_tracker import PROACTIVE_FRESH_TOPIC_HOURS, PROACTIVE_GOAL_MAX_DAYS
+    from app.db.database import async_session_factory
+    from app.models.memory import ConversationTopic
+
+    limit = CONTEXT_ITEM_LIMITS["open_topics"]
+    async with async_session_factory() as db:
+        rows = (
+            await db.execute(
+                select(ConversationTopic)
+                .where(
+                    ConversationTopic.character_id == int(character_id),
+                    ConversationTopic.status == "进行中",
+                )
+                .order_by(
+                    ConversationTopic.importance.desc(),
+                    ConversationTopic.last_touched_at.desc(),
+                )
+                .limit(limit)
+            )
+        ).scalars().all()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    out = []
+    for r in rows:
+        last = r.last_touched_at
+        last = last.replace(tzinfo=None) if last is not None and last.tzinfo else last
+        if last is None:
+            continue
+        age_h = (now - last).total_seconds() / 3600.0
+        max_h = PROACTIVE_GOAL_MAX_DAYS * 24 if r.goal else PROACTIVE_FRESH_TOPIC_HOURS
+        if age_h > max_h:
+            continue                     # 过期话题不主动续（与 topic_tracker 同口径）
+        out.append({
+            "id": r.id,
+            "topic": _clip(r.topic),
+            "importance": float(getattr(r, "importance", 0) or 0),
+            "goal": bool(getattr(r, "goal", False)),
+            "hours_since": round(age_h, 1),
+        })
+    return out
+
+
+async def _user_id_of(character_id: int) -> int | None:
+    """角色归属用户（只读小查询；取不到 → None，素材 degrade 但不失败）。"""
+    from sqlalchemy import select
+
+    from app.db.database import async_session_factory
+    from app.models.chat import ChatSession
+
+    async with async_session_factory() as db:
+        return (
+            await db.execute(
+                select(ChatSession.user_id)
+                .where(ChatSession.character_id == character_id)
+                .order_by(ChatSession.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+
 async def _ctx_time_ctx(character_id: int | None) -> dict:
     """北京日期/小时/时段语义（中性表述，不含任何具体地点/节假日硬编码）。"""
     from app.scheduling.life_rhythm import get_time_window
@@ -491,25 +790,42 @@ _CONTEXT_BUILDERS = {
     "due_reviews": _ctx_due_reviews,
     "recent_intents": _ctx_recent_intents,
     "time_ctx": _ctx_time_ctx,
+    "relationship": _ctx_relationship,
+    "user_rhythm": _ctx_user_rhythm,
+    "open_topics": _ctx_open_topics,
 }
+# 需要「类别」参数的素材（quota：哪个类别的配额）——签名 ``(character_id, category)``
+_CONTEXT_BUILDERS_PER_CATEGORY = {"quota": _quota_for}
 
 
-async def build_proactive_context(keys: Iterable[str], *, character_id: int | None = None) -> dict:
+def _builder_of(key: str):
+    return _CONTEXT_BUILDERS.get(key) or _CONTEXT_BUILDERS_PER_CATEGORY.get(key)
+
+
+async def build_proactive_context(
+    keys: Iterable[str], *, character_id: int | None = None, category: str | None = None,
+) -> dict:
     """只读素材端口内核侧实现（pull 式，白名单 + 限量 + 逐 key fail-open）。
 
     - ``keys`` 已由 sdk 侧按 manifest ``context_keys`` 白名单过滤；此处再与 ``CONTEXT_KEYS`` 求交；
-    - 需要 ``character_id`` 的 key（character_state/due_reviews/recent_intents）未提供则跳过；
+    - 需要 ``character_id`` 的 key（character_state/due_reviews/recent_intents/relationship/
+      user_rhythm/quota/open_topics）未提供则跳过；
+    - ``category`` 仅供 ``quota`` 使用（哪个类别的配额）；未传则该 key 返回空；
     - 单 key 构造失败只丢该 key（不阻塞主链路），整体异常返回已构造部分 / 空 dict。
     """
     out: dict[str, Any] = {}
     try:
         for k in keys or ():
-            if k not in _CONTEXT_BUILDERS:
+            builder = _builder_of(k)
+            if builder is None:
                 continue
             if k in PER_CHAR_CONTEXT_KEYS and not character_id:
                 continue
             try:
-                out[k] = await _CONTEXT_BUILDERS[k](character_id)
+                if k in _CONTEXT_BUILDERS_PER_CATEGORY:
+                    out[k] = await builder(character_id, category)
+                else:
+                    out[k] = await builder(character_id)
             except Exception as e:
                 _logger.warning("proactive context %s failed char=%s: %s", k, character_id, e)
     except Exception as e:  # 隔离：素材端口绝不阻塞主动链路

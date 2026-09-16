@@ -1,0 +1,29 @@
+{
+  "name": "proactive_strategy_motivation",
+  "version": "1.0.0",
+  "description": "示例策略包（X6-c）：想念驱动主动搭话（motivation）的内容策略外放。只决定「此刻要不要表达渴望、想说什么」，选人/关系门/免打扰/独立配额（6h 1 条、每日 2 条）/素材装配/生成/发送全部由内核负责。",
+  "author": "AICompanion",
+  "category": "plugin",
+  "type": "http",
+  "hooks": [
+    "proactive_candidate"
+  ],
+  "permissions": [
+    "proactive:read"
+  ],
+  "context_keys": [
+    "relationship",
+    "user_rhythm",
+    "quota",
+    "character_state"
+  ],
+  "config": {
+    "strategy_category": "motivation",
+    "min_score": 0.45,
+    "min_idle_hours": 2.0,
+    "tired_fatigue": 75
+  },
+  "icon": "💗",
+  "hook_timeout": 10,
+  "usage": "开启前先把内核 flag proactive_strategy_plugins 置为 True（否则内核不下发 roster，本包零输出）。开启后：内核让位 motivation 源，本包按「关系标量 + 用户作息 + 角色状态」决定此刻要不要表达渴望（先用 quota 自查省一次取数），候选回内核后仍由内核做关系门（渴望度阈值）、免打扰、独立配额（近 6h 1 条 / 每日 2 条）、素材装配与剧情线生成发送。可改 min_score（渴望度下限）、min_idle_hours（距上次用户消息不足则不开口）、tired_fatigue（疲惫抑制阈值）。"
+}

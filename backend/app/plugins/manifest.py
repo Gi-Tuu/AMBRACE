@@ -29,6 +29,11 @@ VALID_CONTEXT_KEYS = (
     "due_reviews",      # 该角色到期/待复习记忆（需 character_id）
     "recent_intents",   # 该角色最近的前瞻意图（需 character_id）
     "time_ctx",         # 北京日期/小时/时段（全局）
+    # X6-c（2026-09-17）：motivation / unfinished_topic 两类所用素材
+    "relationship",     # 关系标量 trust/attachment/curiosity（需 character_id）
+    "user_rhythm",      # 距上次用户消息小时数 + 用户活跃时段权重（需 character_id）
+    "quota",            # 该类别 6h / 当日已用数与上限（需 character_id）
+    "open_topics",      # 未收尾话题 / 最近话头（需 character_id）
 )
 MAX_CONTEXT_KEYS = 8          # context_keys 条数上限（防声明一大串吃上下文）
 MAX_CONTEXT_KEY_CHARS = 32    # 单个 key 长度上限
