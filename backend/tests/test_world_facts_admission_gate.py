@@ -340,6 +340,7 @@ def test_flag关_上限淘汰无链(cf_db):
 
 def test_禁止裸expired_源码守卫():
     """本批不新增 status='expired' 写入：停用一律走 supersede 链（守卫防回归）。"""
-    src = io.open(os.path.join("app", "events", "facts.py"), encoding="utf-8").read()
+    _backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # CI 从仓库根目录跑 pytest，相对路径不可靠
+    src = io.open(os.path.join(_backend_dir, "app", "events", "facts.py"), encoding="utf-8").read()
     assert re.search(r"status\s*=\s*[\"']expired[\"']", src) is None
     assert "superseded_by" in src and "superseded_at" in src

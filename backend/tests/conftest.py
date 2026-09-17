@@ -167,3 +167,20 @@ def _reset_event_bus_after_test():
     """用例结束后清空全局事件总线订阅者，防止内置订阅者残留污染后续用例。"""
     yield
     event_bus._subscribers = {}
+
+
+@pytest.fixture(autouse=True)
+def _reset_admin_cache_between_tests():
+    """每个用例前后清一次「主账号判定」进程内缓存（2026-09-17 CI 修复护栏）。
+
+    背景：permission_service.is_admin_user 读会话共享测试库的 users 表，并带 30s 进程内缓存。
+    任一用例往共享库写入 id=1 的非主账号用户后，后续所有依赖主账号判定的用例
+    （功能开关 / 活性明细 / 生活主页）都会拿到 is_admin=0 → 403 / 404，删该用户时还会被
+    残留外键挡住。根因已按用例隔离修掉（私有 tmp_path 库），此处再加一道护栏，
+    避免同类跨用例污染以「主账号判定」的形式扩散。
+    """
+    from app.application import permission_service as perm
+
+    perm._admin_cache.clear()
+    yield
+    perm._admin_cache.clear()

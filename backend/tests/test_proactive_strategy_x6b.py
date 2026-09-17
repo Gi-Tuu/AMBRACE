@@ -239,7 +239,8 @@ def test_内核侧未知key不返回(clean_registry):
     """内核实现层再兜一道：白名单外的 key 一律不返回。"""
     out = asyncio.run(strategy_mod.build_proactive_context(["time_ctx", "not_a_key"]))
     assert set(out) == {"time_ctx"}
-    assert out["time_ctx"]["date"] == datetime.date.today().strftime("%Y-%m-%d")
+    from app.utils.timeutil import app_local_now  # 口径统一：内核按北京时给 date，CI 跑机是 UTC
+    assert out["time_ctx"]["date"] == app_local_now().strftime("%Y-%m-%d")
     assert isinstance(out["time_ctx"]["hour"], int)
     assert "window" in out["time_ctx"]
 

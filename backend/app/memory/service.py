@@ -88,7 +88,7 @@ def _merge_derived(raw, extra_ids: list[int]) -> str:
     return json.dumps(cur, ensure_ascii=False)
 
 
-def _review_caps_for(m) -> tuple[float | None, int | None]:
+def _review_caps_for(m, now=None) -> tuple[float | None, int | None]:
     """L2（2026-09-09 主动复习「回忆化」）：一次性事件经"主动复习成功"强化的 (S 上限, 次数上限)。
 
     - 已过期/失效计划与瞬时状态收死（PLAN_REVIEW_*，防养出 7018 那种 S=60/复习 14 次的永生记忆）；
@@ -96,6 +96,8 @@ def _review_caps_for(m) -> tuple[float | None, int | None]:
     - 恒久记忆（enduring）不上限，仍可走到 S_MAX_DAYS；
     - 仅 channel="review"（AI 主动翻旧账）收口；检索/写入命中（retrieve/write）维持轻量强化。
     flag review_reinforce_event_cap 关 = 全部返回 None（旧强化行为，可到 60）。
+    now 由 _apply_reinforce 透传（缺省=真实当前时间）：判定与强化用同一时刻，避免用
+    墙钟给纯对象/回放用例做过期判定（2026-09-17 修复：该处曾随日历翻车）。
     """
     try:
         from app.agent.loop import AGENT_FLAGS
@@ -106,7 +108,7 @@ def _review_caps_for(m) -> tuple[float | None, int | None]:
     from app.memory.tense import classify_tense, is_plan_expired
     tense = classify_tense(m)
     if tense == "plan":
-        if is_plan_expired(m):
+        if is_plan_expired(m, now):
             return PLAN_REVIEW_S_CAP, PLAN_REVIEW_COUNT_CAP
         return EPISODIC_REVIEW_S_CAP, EPISODIC_REVIEW_COUNT_CAP  # 有效期内安排：适度（临期确认仍可巩固）
     if tense == "transient":
@@ -133,7 +135,7 @@ def _apply_reinforce(m, factor: float, now, *, channel: str = "retrieve") -> Non
     s_cap: float | None = None
     count_cap: int | None = None
     if channel == "review":
-        s_cap, count_cap = _review_caps_for(m)
+        s_cap, count_cap = _review_caps_for(m, now)
     if count_cap is not None and (m.review_count or 0) >= count_cap:
         # 已达复习强化上限：不再强化、不再延长主动复习周期（停止主动翻旧账），检索仍可见
         m.last_reinforce_at = now

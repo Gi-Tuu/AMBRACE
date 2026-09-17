@@ -42,24 +42,46 @@ def test_topic_overlap_merge_semantics():
     assert _overlap("复习高数", "复习线代") is False
 
 
-def test_topic_status_progress_consistency(tmp_path):
-    """终态（完成）不再挂 progress=进行中：用户说「搞定」后 progress 同步为完成。"""
-    from sqlalchemy import text
+def test_topic_status_progress_consistency(tmp_path, monkeypatch):
+    """终态（完成）不再挂 progress=进行中：用户说「搞定」后 progress 同步为完成。
 
-    from app.db.database import async_session_factory
+    隔离（2026-09-17 CI 修复）：原实现把 users / ai_characters / conversation_topics
+    写进「会话共享测试库」，且写入 id=1 的非主账号用户——后续依赖主账号判定的用例
+    （feature-flags / liveness / life-home）读库拿到 is_admin=0 → 403/404；
+    再往后删 users 时又被残留的 ai_characters 外键挡住（26 例 teardown ERROR）。
+    改为 tmp_path 私有库 + 打桩 topic_tracker 的会话工厂，互不污染。
+    """
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from app.agent import topic_tracker as tracker_mod
+
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'batch5_topics.db'}", poolclass=NullPool)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def _init():
+        import app.models  # noqa: F401  # 注册全部模型
+        from app.models.base import Base
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(_init())
+    monkeypatch.setattr(tracker_mod, "async_session_factory", factory)
 
     async def _setup():
-        async with async_session_factory() as db:
+        async with factory() as db:
             await db.execute(text(
                 "INSERT INTO users (id, username, nickname) VALUES (1,'u1','U')"))
             await db.commit()
-        async with async_session_factory() as db:
+        async with factory() as db:
             await db.execute(text(
                 "INSERT INTO ai_characters (id, user_id, name, is_partner, is_active, "
                 "cognitive_loop_enabled, memory_v2_enabled, talkativeness_locked) "
                 "VALUES (1,1,'x',0,1,1,1,0)"))
             await db.commit()
-        async with async_session_factory() as db:
+        async with factory() as db:
             await db.execute(text(
                 "INSERT INTO conversation_topics "
                 "(id, character_id, user_id, topic, status, progress, goal, importance, follow_up) "
@@ -68,7 +90,7 @@ def test_topic_status_progress_consistency(tmp_path):
 
     async def _run():
         await update_topic_resolution(1, 1, "复习搞定了终于")
-        async with async_session_factory() as db:
+        async with factory() as db:
             row = (await db.execute(text(
                 "SELECT status, progress FROM conversation_topics WHERE topic='复习高数'"
             ))).fetchone()
@@ -79,6 +101,7 @@ def test_topic_status_progress_consistency(tmp_path):
     # runtime 路径：用户说「搞定」→ 终态（完成）不再挂「进行中」
     assert status == "完成"
     assert progress == "完成"  # P1-6：终态不再挂「进行中」
+    asyncio.run(engine.dispose())
 
 
 # ───────────────────────── P1-7 reflection 真校验 ─────────────────────────
