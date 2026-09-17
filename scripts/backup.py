@@ -73,7 +73,12 @@ def _add_sqlite_backup(zf: zipfile.ZipFile) -> int:
 
 
 def rotate_logs() -> str:
-    """清理 7 天前的轮转日志（app.log.YYYY-MM-DD）；当前活动日志 app.log/server_stderr.log/watchdog.log 不删"""
+    """清理 7 天前的轮转日志（app.log.YYYY-MM-DD）；当前活动日志 app.log/server_stderr.log/watchdog.log 不删
+
+    C1（2026-09-17）：stdio / 网关日志（server_stderr.log、server_stdout.log、gateway_*.log）由
+    scripts/log_rotate.py 在「打开重定向句柄之前」做启动前轮转（滚动为 <path>.1/.2），本函数只管
+    app.log.YYYY-MM-DD 的按天清理。两套命名并存且不冲突：本函数正则只匹配 ^app\\.log\\.(\\d{4}-\\d{2}-\\d{2})$。
+    """
     if not os.path.isdir(LOG_DIR):
         return "日志轮换：无日志目录"
     cutoff = datetime.now() - timedelta(days=LOG_KEEP_DAYS)

@@ -514,7 +514,10 @@ def test_flag关_rhythm_逐字节旧行为(monkeypatch, pack_rhythm):
     monkeypatch.setattr(life_rhythm, "pick_behavior", lambda w, override=None: "proactive_chat")
 
     async def _last(sid):
-        return datetime.datetime(2026, 9, 17, 2, 0, 0)
+        # 与内核同口径（sources/rhythm.py 用 datetime.now(timezone.utc) naive）取「刚刚」：
+        # 原写死 2026-09-17T02:00 属于时间炸弹——现实时间越过该点后 idle_minutes 必然 >0（
+        # 2026-09-17 当天 02:00 UTC 后该用例翻红，属测试自身缺陷，非产品行为变化）。
+        return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
     monkeypatch.setattr("app.scheduling.arbiter._session_last_message_at", _last)
     out = [i.to_dict() for i in asyncio.run(RhythmSource().collect(SourceContext()))]

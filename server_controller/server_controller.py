@@ -77,6 +77,13 @@ OLLAMA_PORT = 11434
 OLLAMA_LABEL = "图像理解服务（Ollama）"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
+# C1（2026-09-17）：stdio 日志的「启动前轮转」，实现位于 backend 的兄弟目录 scripts/log_rotate.py。
+# 注意：控制台以 server_controller/ 为 sys.path[0]（与 server_manager/watchdog 以 scripts/ 为
+# sys.path[0] 不同），直接同级 import 会 ImportError，故先把 scripts/ 显式加入 sys.path。
+# 坑：本文件 SERVER_DIR 指 backend/（scripts/ 在项目根下），必须用 PROJECT_ROOT 拼，不能用 SERVER_DIR。
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
+from log_rotate import rotate_stdio_log  # noqa: E402
+
 
 # ═══════════════════════════════════════════════════════════════
 # 主题
@@ -718,6 +725,10 @@ def _run_manager(cmd: str) -> None:
 def _start_uvicorn():
     try:
         os.makedirs(os.path.dirname(STDERR_LOG), exist_ok=True)
+        # C1：打开重定向句柄之前轮转（控制台侧无 log()，直接打印即可）
+        _rot = rotate_stdio_log(STDERR_LOG, max_mb=10, keep=2)
+        if _rot:
+            print(_rot)
         with open(STDERR_LOG, "a", encoding="utf-8") as f:
             subprocess.Popen(
                 [PYTHONW, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", str(TARGET_PORT)],
@@ -828,6 +839,18 @@ def _stop_ollama() -> None:
             raise RuntimeError(f"Ollama 停止失败: {e}")
 
 
+def _log_read_path(path: str) -> str:
+    """C1：启动前轮转后当前日志为空（或尚未重建）时优先读 .1。
+    否则控制台日志区会显示一片空白，容易被误判成「服务启动失败」。"""
+    alt = path + ".1"
+    try:
+        if os.path.exists(alt) and (not os.path.isfile(path) or os.path.getsize(path) == 0):
+            return alt
+    except OSError:
+        pass
+    return path
+
+
 def _tail_log():
     def tail(path, size=12000):
         if not os.path.exists(path):
@@ -841,7 +864,8 @@ def _tail_log():
             return "\n".join(data.splitlines()[-LOG_TAIL:])
         except Exception:
             return ""
-    parts = [p for p in (tail(APP_LOG), tail(STDERR_LOG)) if p.strip()]
+    # C1：server_stderr.log 刚被轮转过（当前为空）时回退读 .1，避免日志区空白
+    parts = [p for p in (tail(APP_LOG), tail(_log_read_path(STDERR_LOG))) if p.strip()]
     return "\n".join(parts)
 
 
@@ -1964,14 +1988,16 @@ class ControllerApp:
         self._run_ollama_action("正在停止 Ollama", fn, "ollama_stopped")
 
     def open_log(self):
-        if not os.path.exists(STDERR_LOG):
+        # C1：当前文件刚被轮转为空时优先用系统查看器打开 .1，避免打开到空白文件
+        _path = _log_read_path(STDERR_LOG)
+        if not os.path.exists(_path):
             return
         if os.name == "nt":
-            os.startfile(STDERR_LOG)
+            os.startfile(_path)
         elif sys.platform == "darwin":
-            subprocess.Popen(["open", STDERR_LOG])
+            subprocess.Popen(["open", _path])
         else:
-            subprocess.Popen(["xdg-open", STDERR_LOG])
+            subprocess.Popen(["xdg-open", _path])
 
     # ── 监控目标切换 ──
 

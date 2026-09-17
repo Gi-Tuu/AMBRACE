@@ -7,6 +7,15 @@ import sys
 import time
 from datetime import datetime
 
+# C1（2026-09-17）：stdio/网关重定向日志的「启动前轮转」，实现与调用方同级（scripts/log_rotate.py）。
+# 正常以「python <脚本绝对路径>」运行时 sys.path[0] 即 scripts/，同级导入可用；
+# 兜底：被按文件路径加载（如单测 importlib 加载）时 scripts/ 不在 sys.path，补一次再导入。
+try:
+    from log_rotate import rotate_stdio_log
+except ImportError:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from log_rotate import rotate_stdio_log
+
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # scripts/ 上一级
 SERVER_DIR = os.path.join(_PROJECT_ROOT, "backend")
 # B6（2026-09-06）：PYTHONW 按 os.name 分支——Windows 用 venv/Scripts/pythonw.exe（GUI 子系统、
@@ -133,7 +142,12 @@ def start_server():
         return
     log("Server down detected, restarting...")
     try:
-        with open(os.path.join(SERVER_DIR, "data", "logs", "server_stderr.log"), "a", encoding="utf-8") as f:
+        # C1：内联路径提为变量复用，并在打开重定向句柄之前轮转（超出 10MB 滚动为 .1/.2）
+        _stderr = os.path.join(SERVER_DIR, "data", "logs", "server_stderr.log")
+        _m = rotate_stdio_log(_stderr, max_mb=10, keep=2)
+        if _m:
+            log(_m)
+        with open(_stderr, "a", encoding="utf-8") as f:
             subprocess.Popen(
                 [PYTHONW, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"],
                 cwd=SERVER_DIR,
@@ -240,6 +254,10 @@ def _start_gateway(gw):
         if os.name == "nt":
             kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
             kw["stdin"] = subprocess.DEVNULL
+            # C1：打开重定向句柄之前先轮转网关日志（超 10MB 滚动为 .1/.2）
+            _m = rotate_stdio_log(log_path, max_mb=10, keep=2)
+            if _m:
+                log(_m)
             kw["stdout"] = open(log_path, "a", encoding="utf-8")
             kw["stderr"] = subprocess.STDOUT
         else:

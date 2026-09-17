@@ -52,6 +52,15 @@ import sys
 import time
 from datetime import datetime
 
+# C1（2026-09-17）：stdio 重定向日志的「启动前轮转」，实现与调用方同级（scripts/log_rotate.py）。
+# 正常以「python <脚本绝对路径>」运行时 sys.path[0] 即 scripts/，同级导入可用；
+# 兜底：被按文件路径加载（如单测 importlib 加载）时 scripts/ 不在 sys.path，补一次再导入。
+try:
+    from log_rotate import rotate_stdio_log
+except ImportError:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from log_rotate import rotate_stdio_log
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 项目根
 BACKEND_DIR = os.path.join(BASE_DIR, "backend")
 PYTHONW = os.path.join(BACKEND_DIR, ".venv", "Scripts", "pythonw.exe")
@@ -149,9 +158,21 @@ def http_ready(timeout: float = 2.0) -> bool:
         return False
 
 
+def _log_read_path(path: str) -> str:
+    """C1：启动前轮转后当前日志为空（或尚未重建）时优先读 .1。
+    否则体检面板会显示一片空白，容易被误判成「服务启动失败」。"""
+    alt = path + ".1"
+    try:
+        if os.path.exists(alt) and (not os.path.isfile(path) or os.path.getsize(path) == 0):
+            return alt
+    except OSError:
+        pass
+    return path
+
+
 def read_tail(path: str, n: int = 15) -> str:
     try:
-        with open(path, "rb") as f:
+        with open(_log_read_path(path), "rb") as f:
             f.seek(0, 2)
             size = f.tell()
             f.seek(max(0, size - 16000))
@@ -165,6 +186,10 @@ def read_tail(path: str, n: int = 15) -> str:
 def start_uvicorn() -> None:
     """启动唯一 uvicorn（pythonw 静默）"""
     os.makedirs(LOGS_DIR, exist_ok=True)
+    # C1：必须在打开重定向句柄之前轮转（Windows 上被占用的日志无法改名）
+    _rot = rotate_stdio_log(STDERR_LOG, max_mb=10, keep=2) + rotate_stdio_log(STDOUT_LOG, max_mb=10, keep=2)
+    if _rot:
+        log(_rot)
     with open(STDOUT_LOG, "a", encoding="utf-8") as fout:
         with open(STDERR_LOG, "a", encoding="utf-8") as ferr:
             subprocess.Popen(
