@@ -43,8 +43,12 @@ def test_diversify_edge_cases():
     assert _diversify_by_type([_m(1, "event")], 3)[0]["id"] == 1
 
 
-def test_recall_flags_registered():
-    """flag 必须在 AGENT_FLAGS 注册（runtime flag 热更新只认已注册键）"""
+def test_recall_flags_固化常开():
+    """recall_top5 / recall_diversify 已固化常开（2026-09-17 用户拍板）：不再经 AGENT_FLAGS 控制，恒执行。"""
     from app.agent.loop import AGENT_FLAGS
-    assert "recall_top5" in AGENT_FLAGS and AGENT_FLAGS["recall_top5"] is True
-    assert "recall_diversify" in AGENT_FLAGS and AGENT_FLAGS["recall_diversify"] is True
+    assert "recall_top5" not in AGENT_FLAGS
+    assert "recall_diversify" not in AGENT_FLAGS
+    # 多样性重排纯函数行为不变
+    ranked = [_m(1, "event"), _m(2, "event"), _m(3, "event"), _m(4, "preference"), _m(5, "event")]
+    out = _diversify_by_type(ranked, 3)
+    assert [m["type"] for m in out] == ["event", "event", "preference"]

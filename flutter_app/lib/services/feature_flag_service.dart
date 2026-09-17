@@ -20,13 +20,19 @@ class FeatureFlagService extends ChangeNotifier {
     'weave_3d': true,
   };
 
-  final Map<String, ({bool enabled, String source})> _flags = {};
+  final Map<String, ({bool enabled, String source, String? type, num? value})> _flags = {};
 
   /// 读取某 flag：默认 false（未加载/未知 key 均视为关）。
   bool isEnabled(String key) => _flags[key]?.enabled ?? (_knownDefaults[key] ?? false);
 
   /// flag 来源（db=被 DB 覆盖 / default=硬编码默认），未加载时用默认值。
   String sourceOf(String key) => _flags[key]?.source ?? 'default';
+
+  /// flag 注册类型（"bool"/"int"/...）；老后端未下发时为 null。
+  String? flagType(String key) => _flags[key]?.type;
+
+  /// flag 数值（int/float，仅非 bool 类型有意义）；老后端未下发时为 null。
+  num? flagValue(String key) => _flags[key]?.value;
 
   /// 是否已从服务器加载到该 key（用于 UI 区分「可见白名单」与「高级开关」列表）。
   bool contains(String key) => _flags.containsKey(key);
@@ -45,6 +51,8 @@ class FeatureFlagService extends ChangeNotifier {
           _flags[k] = (
             enabled: (f['enabled'] as bool?) ?? false,
             source: f['source'] as String? ?? 'default',
+            type: f['type'] as String?,
+            value: f['value'] as num?,
           );
         }
       }
@@ -57,14 +65,25 @@ class FeatureFlagService extends ChangeNotifier {
   /// 切换 flag：先乐观更新本地缓存（画布/页面即时生效），再写服务器；
   /// 失败回滚并返回 false。
   Future<bool> setFlag(String key, bool enabled) async {
-    final prev = _flags[key]?.enabled ?? false;
-    _flags[key] = (enabled: enabled, source: 'db');
+    final prevEntry = _flags[key];
+    final prev = prevEntry?.enabled ?? false;
+    _flags[key] = (
+      enabled: enabled,
+      source: 'db',
+      type: prevEntry?.type,
+      value: prevEntry?.value,
+    );
     notifyListeners();
     try {
       await ApiClient().updateFeatureFlag(key, enabled);
       return true;
     } catch (_) {
-      _flags[key] = (enabled: prev, source: 'db');
+      _flags[key] = (
+        enabled: prev,
+        source: 'db',
+        type: prevEntry?.type,
+        value: prevEntry?.value,
+      );
       notifyListeners();
       return false;
     }
@@ -73,8 +92,8 @@ class FeatureFlagService extends ChangeNotifier {
   /// 测试/调试用：直接写本地缓存（不访问服务器；生产代码不调用）。
   /// 供 widget 测试固定某 flag 的取值（如织网 3D 强制关闭以测 2.5D 画布）。
   @visibleForTesting
-  void debugSetLocal(String key, bool enabled) {
-    _flags[key] = (enabled: enabled, source: 'test');
+  void debugSetLocal(String key, bool enabled, {String? type, num? value}) {
+    _flags[key] = (enabled: enabled, source: 'test', type: type, value: value);
     notifyListeners();
   }
 }

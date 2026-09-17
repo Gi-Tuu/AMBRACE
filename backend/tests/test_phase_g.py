@@ -97,32 +97,15 @@ def test_tool_blocked_也发布事件():
     assert received and received[0]["status"] == "blocked"
 
 
-def test_on_tool_executed_flag关不联动(monkeypatch):
+def test_on_tool_executed_固化常开_ok联动(monkeypatch):
+    """agent_tool_events 已固化常开（2026-09-17 用户拍板）：成功工具执行恒联动织库增量，仅 ok 触发。"""
     from app.events import handlers
     calls = []
     monkeypatch.setattr("app.weave.incremental.schedule_incremental_weave", lambda *a, **k: calls.append(a))
-    loop.AGENT_FLAGS["agent_tool_events"] = False
-    try:
-        asyncio.run(handlers._on_tool_executed(
-            {"status": "ok", "tool": "search", "user_id": 1, "character_id": 2},
-        ))
-    finally:
-        loop.AGENT_FLAGS["agent_tool_events"] = False
-    assert calls == []  # 默认关 = 完全无联动
-
-
-def test_on_tool_executed_flag开仅ok联动(monkeypatch):
-    from app.events import handlers
-    calls = []
-    monkeypatch.setattr("app.weave.incremental.schedule_incremental_weave", lambda *a, **k: calls.append(a))
-    loop.AGENT_FLAGS["agent_tool_events"] = True
-    try:
-        asyncio.run(handlers._on_tool_executed(
-            {"status": "ok", "tool": "search", "user_id": 1, "character_id": 2},
-        ))
-        asyncio.run(handlers._on_tool_executed(
-            {"status": "blocked", "tool": "search", "user_id": 1, "character_id": 2},
-        ))
-    finally:
-        loop.AGENT_FLAGS["agent_tool_events"] = False
+    asyncio.run(handlers._on_tool_executed(
+        {"status": "ok", "tool": "search", "user_id": 1, "character_id": 2},
+    ))
+    asyncio.run(handlers._on_tool_executed(
+        {"status": "blocked", "tool": "search", "user_id": 1, "character_id": 2},
+    ))
     assert len(calls) == 1  # 只有 ok 联动

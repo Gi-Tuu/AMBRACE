@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 """wechat_ilink PR2 绑定/解绑测试：
 
-- 绑定裁决走**内核完整 PUT 路径**（/api/v1/plugins/wechat_ilink），与抖音完全同语义：
-  子账号 403、跨家庭 403、多角色 400、家庭单选成功、换绑 400、空数组解绑成功。
+- **双路契约（channel_binding_v2 自 2026-09-17 起默认开）**：flag 开（默认）→ /bind、/unbind
+  走 channel_bindings 新表（租户化，ChannelBindingService），**不再回写旧全局
+  config.allowed_character_ids**；flag 关（显式回落）→ 旧「内核完整 PUT」路径。
+- 旧路径裁决语义（/api/v1/plugins/wechat_ilink 完整 PUT，与抖音同语义）：子账号 403、
+  跨家庭 403、多角色 400、家庭单选成功、换绑 400、空数组解绑成功。
 - 插件自有绑定表：稳定 ilink_user_id 重新扫码 → 轮换凭据**不新增行**（P1-3）；
   解绑清凭据停状态；baseurl 非白名单被拒（P3-2 SSRF）。
+- 2026-09-17 批次一任务4：断言从旧全局 config 迁到新表 + 插件行（见
+  test_unbind_route_clears_binding）。
 """
 import asyncio
 import os
@@ -223,8 +228,14 @@ def test_bind_route_rejects_untrusted_baseurl(wc_db):
     assert len(_get_bindings(wc_db)) == 0
 
 
-def test_unbind_route_clears_binding(wc_db):
-    """解绑：走内核空数组解绑 + 清凭据停状态（token 解绑即删）。"""
+def test_unbind_route_clears_binding(wc_db, monkeypatch):
+    """解绑（channel_binding_v2 默认开）：新表落绑定 + 插件行停用清凭据。
+
+    2026-09-17 批次一任务4（契约漂移修正）：/bind、/unbind 走 channel_bindings 新表后，
+    旧断言 registry._db_config["allowed_character_ids"] 已不再被写，改为断言新表与插件行。
+    """
+    import app.agent.loop as _loop
+    monkeypatch.setitem(_loop.AGENT_FLAGS, "channel_binding_v2", True)  # 锁死被测路径
     asyncio.run(_add_user(wc_db, 1, "main", is_admin=True))
     asyncio.run(_add_char(wc_db, 101, 1, "角色A"))
     client = _make_client(1)
@@ -233,15 +244,49 @@ def test_unbind_route_clears_binding(wc_db):
         "character_id": 101, "bot_token": "tok", "baseurl": "https://base.weixin.qq.com",
         "ilink_user_id": "wx_uid_unbind", "ilink_bot_id": "bot-1"})
     assert r.status_code == 200, r.text
-    assert asyncio.run(_bind_config(wc_db)) == "101"
+    # 新表：bind 后 (tenant, 'wechat', bot="bot-1") → 101 且 enabled
+    tenant = _tenant(wc_db, 1)
+    cb = _get_channel_bindings(wc_db)
+    assert len(cb) == 1
+    assert (cb[0].channel, cb[0].tenant_id, cb[0].bot_account_id) == ("wechat", tenant, "bot-1")
+    assert cb[0].character_id == 101
+    assert cb[0].enabled is True
 
     r2 = client.post("/api/v1/plugins/wechat_ilink/unbind", json={"character_id": 101})
     assert r2.status_code == 200, r2.text
-    assert asyncio.run(_bind_config(wc_db)) == ""  # 内核已清 allowed_character_ids
+    # 插件绑定行停用 + 凭据清空（token 解绑即删，P0-4）
     rows = _get_bindings(wc_db)
     assert len(rows) == 1
     assert rows[0].enabled is False
-    assert rows[0].bot_token_enc == ""  # token 解绑即删（P0-4）
+    assert rows[0].bot_token_enc == ""
+    # 新表：解绑后该 bot 的绑定行被物理删除（2026-09-17 修复：v2 分支原按 DEFAULT_BOT 匹配，
+    # 多 bot 归一化键（"bot-1"）的行删不掉 → 解绑实际不生效；现按解析出的目标 bot 删，
+    # 并在此锁定该不变量，防回归）
+    assert _get_channel_bindings(wc_db) == []
+
+
+def _tenant(factory, user_id: int) -> int:
+    """租户键（家庭 root user_id），与 channel_bindings 写入同源 tenant_scope。"""
+    from app.application.tenant_scope import resolve_tenant
+
+    async def _q():
+        async with factory() as db:
+            return await resolve_tenant(db, user_id)
+
+    return asyncio.run(_q())
+
+
+def _get_channel_bindings(factory, channel: str = "wechat"):
+    """读内核 channel_bindings 新表（channel_binding_v2 契约面）。"""
+    from app.models.channel import ChannelBinding
+
+    async def _q():
+        async with factory() as db:
+            return (await db.execute(
+                select(ChannelBinding).where(ChannelBinding.channel == channel)
+            )).scalars().all()
+
+    return asyncio.run(_q())
 
 
 def test_status_route_reports_binding_with_masked_uid(wc_db):

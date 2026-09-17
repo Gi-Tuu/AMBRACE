@@ -44,11 +44,47 @@ def mem_db(monkeypatch, tmp_path):
 # ─────────────────────────── classify 纯函数 ───────────────────────────
 
 def test_classify_negative_on_correction_words():
+    # 真实纠正且指代该条记忆（纠正词 + 记忆关键片段共现）→ negative
     sig = uf.classify_utility_signal(
         "用户喜欢喝美式咖啡",
-        "你说的不对，你记错了，我其实喝拿铁",
+        "你记错了，我其实喜欢喝美式咖啡",
     )
     assert sig == "negative"
+
+
+def test_classify_casual_negation_no_false_negative():
+    # 随口否定但完全不涉及该条记忆（无关键片段）→ neutral，不误伤整轮召回池
+    sig = uf.classify_utility_signal(
+        "用户喜欢喝美式咖啡",
+        "不对不对，今天好累啊",
+    )
+    assert sig == "neutral"
+
+
+def test_classify_correction_without_reference_is_neutral():
+    # 纠正词命中但文本未引用该条记忆 → neutral（收紧前会误判 negative）
+    sig = uf.classify_utility_signal(
+        "用户喜欢喝美式咖啡",
+        "你说得不对，不过这件事先这样吧",
+    )
+    assert sig == "neutral"
+
+
+def test_classify_negative_via_user_message_reference():
+    # 用户消息含纠正词、但 AI 回复与用户消息都未引用该条记忆关键片段 → neutral（不误判）
+    sig = uf.classify_utility_signal(
+        "用户喜欢喝美式咖啡",
+        "好的，那我重新记一下",            # AI 回复无记忆片段
+        user_message="你记错了，我根本不喝美式",  # 纠正词但无记忆片段
+    )
+    assert sig == "neutral"
+    # 纠正词在用户消息、记忆指代也在用户消息（跨两段联合判定）→ negative
+    sig2 = uf.classify_utility_signal(
+        "用户喜欢喝美式咖啡",
+        "你上次说喜欢喝美式咖啡对吧",     # AI 回复引用了记忆
+        user_message="你记错了，我明明喜欢喝美式咖啡，拿铁才是后来才喝的",
+    )
+    assert sig2 == "negative"
 
 
 def test_classify_positive_when_fragment_used():

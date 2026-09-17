@@ -28,6 +28,13 @@ def ws_db(monkeypatch, tmp_path):
     tmp = str(tmp_path)
     engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    # P3-11（2026-09-17）：记录经本 factory 建出的全部 session，teardown 显式 close 后再 dispose。
+    _sessions: list = []
+
+    def _make_session(*args, **kwargs):
+        s = factory(*args, **kwargs)
+        _sessions.append(s)
+        return s
 
     async def _init():
         import app.models  # noqa: F401
@@ -45,11 +52,33 @@ def ws_db(monkeypatch, tmp_path):
     asyncio.run(_init())
 
     import app.db.database as db_mod
-    monkeypatch.setattr(db_mod, "async_session_factory", factory)
+    monkeypatch.setattr(db_mod, "async_session_factory", _make_session)
     from app.agent.loop import AGENT_FLAGS
     monkeypatch.setitem(AGENT_FLAGS, "working_state_enabled", True)
-    yield factory
-    asyncio.run(engine.dispose())
+    # P3-11（2026-09-17）根因（实测定位）：working_state_service 的 obs_event 埋点受
+    # AGENT_FLAGS["memory_trace_debug"]（默认开）门控，经 agent.trace.enqueue_task_log →
+    # spawn_background 发射后不管地写 agent_task_logs。本文件每个用例是多次 asyncio.run，
+    # 循环结束时会把未跑完的后台任务取消，被取消的 write_task_log 丢下一个未 close 的
+    # aiosqlite 连接 → 其 worker 线程收尾回调撞上已关闭的事件循环，抛
+    # PytestUnhandledThreadExceptionWarning: RuntimeError: Event loop is closed
+    # （实测 4 个 ws 用例各泄漏 1 条连接；关掉本开关后泄漏归零）。
+    # 本文件不测可观测性埋点，故在 fixture 内关掉 trace 开关，消除这条后台写。
+    monkeypatch.setitem(AGENT_FLAGS, "memory_trace_debug", False)
+    yield _make_session
+
+    # P3-11 收尾纪律（Windows / Python 3.14）：**先显式 close 全部 session，再 dispose engine**，
+    # 且都在同一事件循环内完成（旧写法只在独立 asyncio.run 里 dispose engine，既不关 session、
+    # 回调又落到已关闭的旧循环）。配合上面的开关关闭，本文件不再产生
+    # PytestUnhandledThreadExceptionWarning / 未关闭 aiosqlite 连接。
+    async def _teardown():
+        for s in _sessions:
+            try:
+                await s.close()
+            except Exception:
+                pass
+        await engine.dispose()
+
+    asyncio.run(_teardown())
 
 
 def _seed_turn(factory, *, memories: list[str], memory_ids: list[int] | None = None):

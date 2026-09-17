@@ -98,14 +98,15 @@ async def confirm_memory(memory_id: int) -> None:
 async def get_core_memories(character_id: int, limit: int = 10) -> list[Memory]:
     """核心记忆（无条件注入源）。"""
     try:
-        from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
+        # 2026-09-17 批次一（任务2）：无条件注入 = 现状面 → 恒 active 新口径
+        from app.memory.service import current_facts_status_clause
         async with async_session_factory() as db:
             rows = (await db.execute(
                 select(Memory).where(
                     Memory.character_id == character_id,
                     Memory.is_core == True,
                     Memory.is_archived == False,
-                    _active_status_clause(),
+                    current_facts_status_clause(),
                 ).order_by(Memory.importance.desc()).limit(limit)
             )).scalars().all()
             return list(rows)
@@ -117,7 +118,8 @@ async def get_core_memories(character_id: int, limit: int = 10) -> list[Memory]:
 async def get_relationship_anchors(character_id: int, user_id: int, limit: int = 5) -> list[Memory]:
     """关系锚点：importance ≥ 80 的关系/共享/事件记忆。"""
     try:
-        from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
+        # 2026-09-17 批次一（任务2）：关系锚点注入 = 现状面 → 恒 active 新口径
+        from app.memory.service import current_facts_status_clause
         async with async_session_factory() as db:
             rows = (await db.execute(
                 select(Memory).where(
@@ -126,7 +128,7 @@ async def get_relationship_anchors(character_id: int, user_id: int, limit: int =
                     Memory.is_archived == False,
                     Memory.importance >= 80.0,
                     Memory.memory_type.in_(["event", "insight"]),
-                    _active_status_clause(),
+                    current_facts_status_clause(),
                 ).order_by(Memory.importance.desc(), Memory.created_at.desc()).limit(limit)
             )).scalars().all()
             return list(rows)

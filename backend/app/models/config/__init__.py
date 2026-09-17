@@ -110,7 +110,7 @@ class UserLlmConfig(Base):
     __table_args__ = (UniqueConstraint("user_id", "name", name="uq_user_llm_user_name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)  # index=True（P3-4）：迁移 c8d9 建过 ix_user_llm_configs_user_id，ORM 侧此前漏声明
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)

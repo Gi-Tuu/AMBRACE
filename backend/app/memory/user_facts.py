@@ -13,8 +13,13 @@ import re
 from sqlalchemy import select
 
 from app.db.database import async_session_factory
+from app.memory.location_guard import looks_like_location_value, strong_location_value
+from app.memory.slot_guard import slot_value_reject_reason
 from app.models.user import GlobalUserFact
+from app.utils.logger import get_logger
 from app.utils.timeutil import now_naive_utc
+
+_logger = get_logger("memory.user_facts")
 
 # 可变单值槽：key=槽位；value=(中文标签, 关键词正则列表)。
 # 正则字符串 `re.search`（任一命中即归槽）。宁紧勿松：一次性事件/场景词别误归为可变状态。
@@ -66,17 +71,23 @@ USER_FACT_SLOT_FLAGS: dict[str, str] = {
 }
 
 
+# 敏感槽（2026-09-17 用户拍板：能力保留、默认关、抽取边界不变）：不吃总闸旁路，须各自显式开启。
+_SENSITIVE_SLOTS: frozenset[str] = frozenset({"relationship", "health"})
+
 def user_fact_slot_enabled(slot: str) -> bool:
-    """某事实槽是否启用：总闸 global_user_facts 开→全槽启用；否则看该槽独立 flag（默认全关）。
+    """某事实槽是否启用：显式开启优先；relationship/health 两槽不受总闸旁路（须显式开启）；其余槽跟随总闸。
 
     延迟读取 AGENT_FLAGS（函数内 import）：保证 runtime flag 热更即时生效，且避免模块级循环 import。
+    回退＝把 user_fact_relationship / user_fact_health 置 False。
     """
     try:
         from app.agent.loop import AGENT_FLAGS
-        if bool(AGENT_FLAGS.get("global_user_facts", False)):
-            return True
         flag = USER_FACT_SLOT_FLAGS.get(slot)
-        return bool(AGENT_FLAGS.get(flag, False)) if flag else False
+        if flag and bool(AGENT_FLAGS.get(flag, False)):
+            return True
+        if slot in _SENSITIVE_SLOTS:
+            return False
+        return bool(AGENT_FLAGS.get("global_user_facts", False))
     except Exception:
         return False
 
@@ -84,6 +95,114 @@ def user_fact_slot_enabled(slot: str) -> bool:
 def enabled_user_fact_slots() -> list[str]:
     """当前启用的槽列表（按 MUTABLE_SLOTS 声明顺序）；全关返回空列表。"""
     return [s for s in MUTABLE_SLOTS if user_fact_slot_enabled(s)]
+
+
+# ── 跨角色位置共享 + 易变槽 TTL（2026-09-17 批次二任务2）────────────────────
+# 现象：global_user_facts / 6 细槽默认关 → 低活跃朋友角色（DeepSeek/Dom）拿不到权威位置，
+# 只靠各自记忆里的长沙碎片，AI 生活/朋友圈又把错误现状写回，形成自激回声腔。
+# 口径（交接红线）：
+# - 位置属低敏，走独立开关 user_current_location_share（默认开），**不吃细槽总闸**；
+# - relationship（感情）/ health（健康）两槽仍为 opt-in：本模块的共享读路径只从
+#   enabled_user_fact_slots()（显式开启）取槽，永不把这两槽带出去；
+# - 写侧细槽门控（user_fact_slot_enabled）保持不变——共享是「读/注入」侧的放行。
+_SHARED_SLOTS_BY_FLAG: dict[str, str] = {"location": "user_current_location_share"}
+
+# 易变槽 TTL（天）：对齐 world_facts 的时效链，避免权威值本身永不失效。
+# location 30 天（常驻类权威由 batch1_anchor/manual 写入，30 天足够覆盖一个学期内的稳定期）；
+# health 14 天（身体状态最易变）；job/living 60 天。None = 不过期（relationship/goal_state）。
+VOLATILE_FACT_TTL_DAYS: dict[str, int] = {"location": 30, "health": 14, "job": 60, "living": 60}
+
+
+def user_current_location_shared() -> bool:
+    """位置槽跨角色共享开关（默认开）：不吃细槽总闸，独立门控。
+
+    延迟读取 AGENT_FLAGS（热更即时生效、避免循环 import）；读取异常按关处理（保守）。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get(_SHARED_SLOTS_BY_FLAG["location"], True))
+    except Exception:
+        return False
+
+
+def readable_user_fact_slots() -> list[str]:
+    """读取侧槽白名单：已启用槽 + 共享槽（按 MUTABLE_SLOTS 声明顺序去重）。
+
+    enabled = 显式 opt-in / 总闸旁路的非敏感槽（relationship/health 仍需显式开）；
+    shared  = user_current_location_share 放行的 location（默认开、不吃总闸）。
+    """
+    slots = set(enabled_user_fact_slots())
+    if user_current_location_shared():
+        slots.add("location")
+    return [s for s in MUTABLE_SLOTS if s in slots]
+
+
+def fact_valid_to(slot: str, now=None):
+    """易变槽本次写入的有效期截止（非易变槽返回 None=不过期）。"""
+    days = VOLATILE_FACT_TTL_DAYS.get((slot or "").strip())
+    if not days:
+        return None
+    from datetime import timedelta
+    return (now or now_naive_utc()) + timedelta(days=days)
+
+
+def fact_is_expired(row, now=None) -> bool:
+    """槽值是否已过 valid_to（None=不过期）。兼容 ORM 行与 dict。"""
+    vt = row.get("valid_to") if isinstance(row, dict) else getattr(row, "valid_to", None)
+    if vt is None:
+        return False
+    if getattr(vt, "tzinfo", None):
+        vt = vt.replace(tzinfo=None)
+    return (now or now_naive_utc()) > vt
+
+
+def resolve_location_value(row) -> str | None:
+    """位置槽可共享值：现行值通过证据锚点则用它；否则回退 previous_value（仅强锚点）。
+
+    生产实证（2026-09-17 只读）：user_id=3 的 location 现行值被无关聊天行覆盖，
+    真实权威「常驻湛江市·…」被挤进 previous_value —— 现行值不达标时回退强锚点旧值，
+    避免低活跃角色继续拿不到权威位置；旧「长沙」这类弱值不满足强锚点，不会复活。
+    """
+    if row is None:
+        return None
+    cur = ((row.get("value") if isinstance(row, dict) else getattr(row, "value", None)) or "").strip()
+    if cur and looks_like_location_value(cur):
+        return cur
+    prev = ((row.get("previous_value") if isinstance(row, dict) else getattr(row, "previous_value", None)) or "").strip()
+    if prev and strong_location_value(prev):
+        return prev
+    return None
+
+
+async def get_shared_user_facts(user_id: int) -> dict[str, str]:
+    """跨角色共享的用户权威现状（低敏槽）：已启用槽 + 共享 location。
+
+    供现状锚点（app.memory.current_state）、主动消息/朋友圈/生活生成器、定时兑现锚点共用；
+    失败返回 {}（fail-open）。relationship/health 只有在显式开启时才会出现在结果里。
+    """
+    slots = readable_user_fact_slots()
+    if not slots:
+        return {}
+    out: dict[str, str] = {}
+    for r in await get_active_user_facts(user_id, slots=slots):
+        value = (r.value or "").strip()
+        if r.slot == "location":
+            # 位置一律走证据锚点 + previous_value 强锚点回退：现行值若是整句垃圾或弱值，
+            # 共享出去的是真正的常驻权威（生产 user_id=3 修正为「常驻湛江市·…」）。
+            value = resolve_location_value(r) or ""
+        if value:
+            out[r.slot] = value
+    return out
+
+
+async def get_authoritative_user_location(user_id: int) -> str | None:
+    """用户权威位置（跨角色共享，不受 global_user_facts / 细槽总闸门控）。
+
+    位置共享开关关 / 无可用值 → None。
+    """
+    if not user_current_location_shared():
+        return None
+    return (await get_shared_user_facts(user_id)).get("location")
 
 
 def classify_slot(text: str) -> str | None:
@@ -106,12 +225,24 @@ async def upsert_user_fact(
 ) -> tuple[str | None, str] | None:
     """新值取代旧值（单值槽），返回 (previous_value, value)；值未变或失败返回 None。幂等。
 
+    - 先过**通用槽值闸**（``slot_guard.slot_value_reject_reason``，第三批）：整句聊天行
+      fail-closed 拒写（warning 日志可观测），不触碰 DB，因此不影响 ``previous_value``；
     - ``previous_value`` 供对旧记忆做失效匹配；
     - ``(user_id, slot)`` 唯一约束保证不产生重复行。
     """
     slot = (slot or "").strip()
     value = (value or "").strip()[:200]
     if not slot or not value:
+        return None
+    # 第三批任务1（通用槽值闸，2026-09-17）：槽值必须是短语，不能是整句聊天行——生产实证
+    # health/living/goal_state/job 四槽已被整句覆盖（见 app/memory/slot_guard.py 模块头）。
+    # 判据 = 通用规则 + 槽特异叠加（location 沿用 location_guard 证据锚点，不改变既有位置行为）；
+    # fail-closed：不过闸就不写该槽（调用方仍落普通 memories），只记 warning，不阻断主链路；
+    # 校验不过时直接 return，不触碰 DB → 被拒写入绝不会覆盖 previous_value。
+    reason = slot_value_reject_reason(slot, value)
+    if reason:
+        _logger.warning("user_fact slot write rejected slot=%s user=%s reason=%s value=%.60s",
+                        slot, user_id, reason, value)
         return None
     try:
         async with async_session_factory() as db:
@@ -128,6 +259,7 @@ async def upsert_user_fact(
                 db.add(GlobalUserFact(
                     user_id=user_id, slot=slot, value=value, previous_value=old,
                     source=source, confidence=confidence, valid_from=now_naive_utc(),
+                    valid_to=fact_valid_to(slot),
                 ))
             else:
                 row.previous_value = old
@@ -135,6 +267,7 @@ async def upsert_user_fact(
                 row.source = source
                 row.confidence = confidence
                 row.valid_from = now_naive_utc()  # 【F-2】当前值生效起点，与"更新于"文案一致
+                row.valid_to = fact_valid_to(slot)  # 批次二任务2.5：易变槽 TTL，避免权威值永不失效
                 row.updated_at = now_naive_utc()
             await db.commit()
             return old, value
@@ -156,7 +289,7 @@ async def get_active_user_facts(user_id: int, slots: list[str] | None = None) ->
         return []
     try:
         async with async_session_factory() as db:
-            return list((await db.execute(
+            rows = list((await db.execute(
                 select(GlobalUserFact).where(
                     GlobalUserFact.user_id == user_id,
                     GlobalUserFact.slot.in_(list(slots)),
@@ -164,6 +297,9 @@ async def get_active_user_facts(user_id: int, slots: list[str] | None = None) ->
             )).scalars().all())
     except Exception:
         return []
+    # 批次二任务2.5：易变槽 TTL（valid_to 已过 → 不再作为权威现状读取）
+    _now = now_naive_utc()
+    return [r for r in rows if not fact_is_expired(r, _now)]
 
 
 async def build_user_now_text(user_id: int, slots: list[str] | None = None,

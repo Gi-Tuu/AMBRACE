@@ -216,46 +216,50 @@ class _WechatQrLoginSheetState extends State<WechatQrLoginSheet> {
   Future<void> _promptVerifyCode() async {
     final l10n = AppLocalizations.of(context)!;
     final ctrl = TextEditingController(text: _verifyCode);
-    final code = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (c) => AlertDialog(
-        title: Text(l10n.channelQrNeedVerifyTitle),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(_wrongVerify ? l10n.channelQrVerifyWrong : l10n.channelQrNeedVerifyHint,
-                style: const TextStyle(fontSize: 13)),
-            const SizedBox(height: 10),
-            TextField(
-              controller: ctrl,
-              autofocus: true,
-              keyboardType: TextInputType.number,
-              maxLength: 8,
-              decoration: InputDecoration(counterText: '', isDense: true, border: const OutlineInputBorder()),
+    try {
+      final code = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (c) => AlertDialog(
+          title: Text(l10n.channelQrNeedVerifyTitle),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(_wrongVerify ? l10n.channelQrVerifyWrong : l10n.channelQrNeedVerifyHint,
+                  style: const TextStyle(fontSize: 13)),
+              const SizedBox(height: 10),
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                maxLength: 8,
+                decoration: InputDecoration(counterText: '', isDense: true, border: const OutlineInputBorder()),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(c, ''),
+              child: Text(l10n.cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(c, ctrl.text.trim()),
+              child: Text(l10n.confirm),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(c, ''),
-            child: Text(l10n.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(c, ctrl.text.trim()),
-            child: Text(l10n.confirm),
-          ),
-        ],
-      ),
-    );
-    if (!mounted) return;
-    if (code == null || code.isEmpty) return; // 取消：保持等待
-    setState(() {
-      _verifyCode = code;
-      _wrongVerify = true; // 若再次 need_verifycode，提示改为「不匹配」
-      _statusText = AppLocalizations.of(context)!.channelQrScanned;
-    });
+      );
+      if (!mounted) return;
+      if (code == null || code.isEmpty) return; // 取消：保持等待
+      setState(() {
+        _verifyCode = code;
+        _wrongVerify = true; // 若再次 need_verifycode，提示改为「不匹配」
+        _statusText = AppLocalizations.of(context)!.channelQrScanned;
+      });
+    } finally {
+      ctrl.dispose();
+    }
   }
 
   Future<void> _onConfirmed(Map<String, dynamic> resp) async {

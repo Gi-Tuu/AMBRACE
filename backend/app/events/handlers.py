@@ -32,9 +32,7 @@ async def _on_memory_written(payload: dict) -> None:
 
 
 async def _on_tool_executed(payload: dict) -> None:
-    """工具执行完成（Phase G）：flag agent_tool_events 开启时联动织库增量（每角色防抖由 weave 内部控制）；
-
-    默认关 = 完全无联动（tool.executed 事件仍可被其他订阅者追踪）。
+    """工具执行完成（Phase G）：工具执行联动织库增量（曾为灰度开关 agent_tool_events，2026-09-17 固化常开；每角色防抖由 weave 内部控制）。
 
     R5（2026-09-09，工具轨迹治理批次四）：flag agent_tool_exec_trace 开启时，
     插件/内置工具单次成败落 agent_task_logs（trigger=tool），让「工具轨迹」可见真实工具执行。
@@ -42,8 +40,8 @@ async def _on_tool_executed(payload: dict) -> None:
     前端 MCP 分区读取，避免双记）。
     """
     try:
-        from app.agent import loop as _loop
-        if _loop.AGENT_FLAGS.get("agent_tool_events", False) and payload.get("status") == "ok":
+        # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：工具执行联动织库增量恒执行
+        if payload.get("status") == "ok":
             user_id = payload.get("user_id")
             character_id = payload.get("character_id")
             if user_id and character_id:

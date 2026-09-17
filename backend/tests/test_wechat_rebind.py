@@ -114,6 +114,30 @@ async def _bind_config(factory) -> str:
     return registry._db_config.get("wechat_ilink", {}).get("allowed_character_ids", "")
 
 
+def _tenant(factory, user_id: int) -> int:
+    """租户键（家庭 root user_id），与 channel_bindings 写入同源 tenant_scope。"""
+    from app.application.tenant_scope import resolve_tenant
+
+    async def _q():
+        async with factory() as db:
+            return await resolve_tenant(db, user_id)
+
+    return asyncio.run(_q())
+
+
+def _get_channel_bindings(factory, channel: str = "wechat"):
+    """读内核 channel_bindings 新表（channel_binding_v2 契约面）。"""
+    from app.models.channel import ChannelBinding
+
+    async def _q():
+        async with factory() as db:
+            return (await db.execute(
+                select(ChannelBinding).where(ChannelBinding.channel == channel)
+            )).scalars().all()
+
+    return asyncio.run(_q())
+
+
 def _get_bindings(factory):
     M = registry._loaded["wechat_ilink"]["module"].models
 
@@ -126,8 +150,14 @@ def _get_bindings(factory):
 
 # ------------------------------------------------------------------ /rebind 换绑
 
-def test_rebind_success_switches_config_and_binding_role(wc_db):
-    """换绑：目标=同家庭另一角色 → config 与绑定行角色一起切过去，凭据保留不清。"""
+def test_rebind_success_switches_config_and_binding_role(wc_db, monkeypatch):
+    """换绑：目标=同家庭另一角色 → channel_bindings 新表与绑定行角色一起切过去，凭据保留不清。
+
+    2026-09-17 批次一任务4（契约漂移修正）：/rebind 走 channel_bindings（flag 默认开），
+    不再回写旧全局 config；断言落到新表 + 插件行。
+    """
+    import app.agent.loop as _loop
+    monkeypatch.setitem(_loop.AGENT_FLAGS, "channel_binding_v2", True)  # 锁死被测路径
     asyncio.run(_add_user(wc_db, 1, "main", is_admin=True))
     asyncio.run(_add_char(wc_db, 101, 1, "角色A"))
     asyncio.run(_add_char(wc_db, 102, 1, "角色B"))
@@ -135,14 +165,18 @@ def test_rebind_success_switches_config_and_binding_role(wc_db):
     r = client.put("/api/v1/plugins/wechat_ilink", json={"config": {"allowed_character_ids": [101]}})
     assert r.status_code == 200, r.text
     asyncio.run(_seed_binding(wc_db, 1, 101, token="enc-keep", baseurl="https://base.weixin.qq.com"))
-    assert asyncio.run(_bind_config(wc_db)) == "101"
 
     r2 = client.post("/api/v1/plugins/wechat_ilink/rebind", json={"character_id": 102})
     assert r2.status_code == 200, r2.text
     assert r2.json()["rebound"] is True
     assert r2.json()["character_id"] == 102
-    # config 切到 102
-    assert asyncio.run(_bind_config(wc_db)) == "102"
+    # 新表：(tenant, 'wechat', bot="default") → 102 且 enabled
+    tenant = _tenant(wc_db, 1)
+    cb = _get_channel_bindings(wc_db)
+    assert len(cb) == 1
+    assert (cb[0].channel, cb[0].tenant_id, cb[0].bot_account_id) == ("wechat", tenant, "default")
+    assert cb[0].character_id == 102
+    assert cb[0].enabled is True
     # 绑定行角色切到 102；enabled 保持 True；bot_token_enc/baseurl 保留（区别于解绑）
     rows = _get_bindings(wc_db)
     assert len(rows) == 1

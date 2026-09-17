@@ -6,8 +6,8 @@
   强制 bot_account_id="default" 表达（渠道 meta["binding"]["mode"] 上报，缺省 family_single）；
 - 错误语义沿用既有 i18n key（channel_bind_main_only / channel_bind_cross_family /
   channel_bind_occupied 等），以异常类型承载、由调用方（API/插件路由）转 HTTP 状态码；
-- flag channel_binding_v2 默认关：关闭时渠道插件走旧全局 config 路径（见
-  app/providers/channel_binding_reader.py 回落分支），本服务仅被 flag 开路径或测试调用。
+- flag channel_binding_v2 已于 2026-09-17 转正为默认开：关闭（或显式置 False）时渠道插件走旧全局 config 路径（见
+  app/providers/channel_binding_reader.py 回落分支），本服务被 flag 开路径或测试调用。
 """
 from __future__ import annotations
 

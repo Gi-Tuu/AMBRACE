@@ -811,6 +811,8 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
                 _prob = 0.60 if _trust >= 70 else 0.30
                 if _rnd.random() < _prob:
                     from app.models.memory import Memory as _MemL
+                    # 2026-09-17 批次一（任务2）：AI 生活注入 = 现状面 → 恒 active 新口径
+                    from app.memory.service import current_facts_status_clause
 
                     async with async_session_factory() as db:
                         _lives = (
@@ -821,6 +823,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
                                     _MemL.character_id == state["character_id"],
                                     _MemL.source == "life",
                                     _MemL.delete_at.is_(None),
+                                    current_facts_status_clause(),
                                 )
                                 .order_by(_MemL.importance.desc(), _MemL.created_at.desc())
                                 .limit(2)

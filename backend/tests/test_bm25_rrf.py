@@ -203,7 +203,7 @@ def test_索引持久化_重启直接加载不再懒构建(mem_db, monkeypatch):
         bm25._cache.clear()                           # 模拟重启：仅清进程内缓存，保留落盘
         called = []
 
-        async def _no_build(cid):
+        async def _no_build(cid, status=None):
             called.append(cid)
             return None
         monkeypatch.setattr(bm25, "_build_index", _no_build)

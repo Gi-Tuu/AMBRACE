@@ -7,9 +7,11 @@ flag ``memory_utility_feedback`` 已预注册（默认关）；本模块全部�
 我们已有艾宾浩斯强化、reliability（矛盾纠正）、tiering（低置信加速退化），缺的正是这一环。
 
 信号（确定性规则，不引入 LLM）：
-- negative：回复文本命中纠正词（复用 reliability.CORRECT_WORDS）→ 记忆被隐含纠正；
-- positive：记忆关键片段出现在回复文本 → 记忆被用上；
+- negative：本轮文本（用户消息 + AI 回复）**同时**命中纠正词（复用 reliability.CORRECT_WORDS）
+  **且**出现针对该条记忆的指代/承接（记忆关键片段被引用）→ 记忆被明确纠正才整轮降权；
+- positive：记忆关键片段出现在回复文本（被用上），且无纠正 → 微上调；
 - neutral：两者皆无 → 不调整。
+  （收紧点：仅「随口否定」但不涉及该条记忆 → 判 neutral，不再误伤整轮召回池。）
 
 作用（最小可用、幅度极小、常量可配）：
 - positive → ``Memory.importance`` 微上调；negative → 微下调（复用既有 salient 权重通道，
@@ -85,20 +87,24 @@ def _contains_key_fragment(snippet: str, resp: str, min_len: int = UTILITY_POSIT
     return False
 
 
-def classify_utility_signal(memory_content: str, ai_response: str) -> str:
+def classify_utility_signal(memory_content: str, ai_response: str, user_message: str = "") -> str:
     """确定性效用判定（纯函数，可单测）：'negative' / 'positive' / 'neutral'。
 
-    - 回复命中纠正词 → negative（记忆被隐含纠正，整轮召回池降权）；
-    - 否则记忆关键片段出现在回复 → positive（记忆被用上）；
-    - 否则 → neutral（不调整）。
+    - 文本（用户消息 + AI 回复）同时命中纠正词 **且** 含该条记忆关键片段 → negative（记忆被明确纠正，整轮降权）；
+    - 否则记忆关键片段出现在文本 → positive（记忆被用上）；
+    - 否则 → neutral（不调整；含「随口否定但不涉及该条记忆」的情形）。
+
+    ``user_message`` 默认空：纠正词多为用户侧措辞，跨两段联合判定可更准；缺省时退回只看 AI 回复的旧口径。
     """
-    resp = (ai_response or "")
-    # ① 回复命中纠正词 → negative
-    if any(w in resp for w in _correction_words()):
-        return "negative"
-    # ② 记忆关键片段出现在回复 → positive
+    resp = f"{(user_message or '')}\n{(ai_response or '')}"
     snippet = _core_snippet(memory_content)
-    if _contains_key_fragment(snippet, resp):
+    # ① 记忆被指代/引用（话题词重叠）→ 先判定 reference
+    referenced = _contains_key_fragment(snippet, resp)
+    # ② 纠正词 + 该条记忆被引用 → negative（收紧：随口否定不误伤）
+    if referenced and any(w in resp for w in _correction_words()):
+        return "negative"
+    # ③ 记忆关键片段出现在回复 → positive（记忆被用上）
+    if referenced:
         return "positive"
     return "neutral"
 
@@ -184,9 +190,11 @@ def schedule_utility_feedback(
     recalled: list[dict],
     ai_response: str,
     round_id: int | None = None,
+    user_message: str = "",
 ) -> None:
     """fire-and-forget 入口（不阻塞回复）。``recalled`` = state['retrieved_memories']（含 id/content）。
 
+    ``user_message``：本轮用户原始消息，用于收窄 negative 判据（纠正词多为用户措辞，且需与该条记忆指代共现）。
     flag 关 → 直接返回（零行为变化）。异步失败不影响主流程。
     """
     if not _flag_on():
@@ -199,7 +207,7 @@ def schedule_utility_feedback(
             mid = r.get("id")
             if mid is None:
                 continue
-            sig = classify_utility_signal(r.get("content") or "", ai_response)
+            sig = classify_utility_signal(r.get("content") or "", ai_response, user_message=user_message)
             if sig != "neutral":
                 items.append((int(mid), sig))
         if not items:

@@ -8,6 +8,14 @@ from app.memory import list_memories
 from app.memory.sources import memory_source_meta
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
+# P3-12（2026-09-17）：async_session_factory / Memory / AICharacter / purge_memory 原在多个函数内重复
+# import，统一上提。其中 session 工厂经**模块对象引用**（db_mod.async_session_factory）调用而非早绑定
+# 函数名——测试用 monkeypatch ``app.db.database.async_session_factory`` 注入临时库，依赖「调用时取属性」
+# 的 late binding；直接 from ... import 会让 patch 失效（实测让本文件 API 用例整片 404）。
+from app.db import database as db_mod
+from app.models.memory import Memory
+from app.models.character import AICharacter
+from app.memory.supersede import purge_memory  # 原在 2 个端点内重复 import，上提
 
 router = APIRouter(prefix="/api/v1/memories", tags=["Memories"])
 _logger = get_logger("api.memories")
@@ -42,10 +50,7 @@ async def get_memories(
 
 async def _get_owned_memory(memory_id: int, user_id: int):
     """按归属获取记忆（用户本人 + 本人角色的记忆；置顶摘要为角色级归属）"""
-    from sqlalchemy import select
-    from app.db.database import async_session_factory
-    from app.models.memory import Memory
-    async with async_session_factory() as db:
+    async with db_mod.async_session_factory() as db:
         result = await db.execute(
             select(Memory).where(
                 Memory.id == memory_id,
@@ -63,12 +68,9 @@ async def get_memory(
     lang: str = Header(default="zh"),
 ):
     """获取单条记忆详情"""
-    from sqlalchemy import select
-    from app.db.database import async_session_factory
-    from app.models.memory import Memory
     if await _get_owned_memory(memory_id, user_id) is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
-    async with async_session_factory() as db:
+    async with db_mod.async_session_factory() as db:
         result = await db.execute(select(Memory).where(Memory.id == memory_id))
         mem = result.scalar_one_or_none()
         meta = memory_source_meta(mem.source, mem.sub_type)
@@ -133,14 +135,12 @@ async def update_memory_content(
     lang: str = Header(default="zh"),
 ):
     """改内容：重算向量并覆盖/替换 + version+=1（保留 created_at，updated_at 自动刷新）"""
-    from app.db.database import async_session_factory
-    from app.models.memory import Memory
     if await _get_owned_memory(memory_id, user_id) is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
     content = (data.get("content") or "")
     if not content.strip():
         raise HTTPException(status_code=400, detail=tr_lang(lang, "content_empty"))
-    async with async_session_factory() as db:
+    async with db_mod.async_session_factory() as db:
         mem = (await db.execute(
             select(Memory).where(Memory.id == memory_id, Memory.user_id == user_id)
         )).scalar_one_or_none()
@@ -182,11 +182,9 @@ async def update_memory(
     lang: str = Header(default="zh"),
 ):
     """更新记忆（重要性等）"""
-    from app.db.database import async_session_factory
-    from app.models.memory import Memory
     if await _get_owned_memory(memory_id, user_id) is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
-    async with async_session_factory() as db:
+    async with db_mod.async_session_factory() as db:
         result = await db.execute(select(Memory).where(Memory.id == memory_id, Memory.user_id == user_id))
         mem = result.scalar_one_or_none()
         if not mem:
@@ -227,9 +225,7 @@ async def deduplicate(
     lang: str = Header(default="zh"),
 ):
     """对该角色去重记忆"""
-    from app.models.character import AICharacter
-    from app.db.database import async_session_factory
-    async with async_session_factory() as db:
+    async with db_mod.async_session_factory() as db:
         cresult = await db.execute(select(AICharacter).where(AICharacter.id == character_id, AICharacter.user_id == user_id))
         if cresult.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
@@ -246,9 +242,7 @@ async def summarize_character_memories(
     lang: str = Header(default="zh"),
 ):
     """生成/刷新角色记忆置顶摘要（6 小时节流）"""
-    from app.models.character import AICharacter
-    from app.db.database import async_session_factory
-    async with async_session_factory() as db:
+    async with db_mod.async_session_factory() as db:
         cresult = await db.execute(select(AICharacter).where(AICharacter.id == character_id, AICharacter.user_id == user_id))
         if cresult.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
@@ -265,11 +259,9 @@ async def remove_memory_tree(
     lang: str = Header(default="zh"),
 ):
     """记忆链条级联软删：cascade=false 仅返回直接子列表供前端二次确认；cascade=true 对根+子逐个软删。"""
-    from app.db.database import async_session_factory
-    from app.models.memory import Memory
     if await _get_owned_memory(memory_id, user_id) is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
-    async with async_session_factory() as db:
+    async with db_mod.async_session_factory() as db:
         rows = (await db.execute(
             select(Memory).where(Memory.parent_id == memory_id, Memory.user_id == user_id)
         )).scalars().all()
@@ -291,7 +283,6 @@ async def remove_memory_tree(
             ],
         }
     deleted = 0
-    from app.memory.supersede import purge_memory
     for mid in [memory_id] + [c.id for c in rows]:
         try:
             if await purge_memory(mid):
@@ -313,7 +304,6 @@ async def remove_memory(
     保留），此处归属校验查热表会 404，无法经单删 API 清归档；冷归档属长期留存历史，清归档走管理工具。"""
     if await _get_owned_memory(memory_id, user_id) is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
-    from app.memory.supersede import purge_memory
     deleted = await purge_memory(memory_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))

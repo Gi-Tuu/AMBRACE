@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """S3 渠道绑定 API 测试（/api/v1/channels/{channel}/bindings）。
 
-- flag 关（channel_binding_v2 默认关）：GET 回落旧全局 config 合成行；PUT 走既有内核
+- flag 关（channel_binding_v2 现已默认开；旧路径用例经显式 delitem/置 False 覆盖）：GET 回落旧全局 config 合成行；PUT 走既有内核
   update_plugin 裁决；DELETE 空串解绑——与现 App 行为等价；
 - flag 开：GET 只列本租户；PUT 双 bot 并存（bot_single）；DELETE 只删指定 bot；
   子账号 PUT/DELETE 403、GET 跟随其 root；跨租户 A/B 互不影响（后绑覆盖先绑回归）。

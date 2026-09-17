@@ -40,11 +40,11 @@ def test_migration_upgrade_downgrade(mig_db):
 
     # 升级到 head：group_memories 出现，脚本单头无分叉
     command.upgrade(cfg, "head")
-    assert _heads() == {"a3b4c5d6e7f8"}, (
-        f"期望单头 a3b4c5d6e7f8（#72 PR-C P5 群记忆日终合并收敛：group_memories 加 is_archived；"
-        f"前序 e2f3a4b5c6d7=#62 群聊游戏 Phase 3，f2b3c4d5e6f7=第五轮 P3-1 活跃父表子 FK ondelete），"
-        f"实际 {_heads()}"
-    )
+    # 单头断言不硬编码具体 revision：新增迁移后自动跟随（同 test_fk_ondelete_active_parents 口径）。
+    # 原硬编码 {"a3b4c5d6e7f8"} 在后续每批新增迁移后都会误报失败（b2c3d4e5f6a7 起已 stale）。
+    heads = _heads()
+    assert len(heads) == 1, f"迁移链应单头无分叉，实际 {heads}"
+    assert heads != {None}, f"head 解析为空：{heads}"
 
     eng = create_engine("sqlite:///" + db_path)
     insp = inspect(eng)

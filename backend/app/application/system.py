@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.i18n import tr_lang
 from app.application.permission_service import is_admin_user
 from app.utils.logger import get_logger
+from app.utils.timeutil import app_local_now
 from app.utils.version import get_project_version
 
 _logger = get_logger("application.system")
@@ -881,13 +882,20 @@ async def get_llm_usage(
     # 00:00-08:00 的"今日/本月"会错窗（本地零点=前一天 16:00 UTC）。
     from datetime import timezone as _tz
 
-    def _to_utc_naive(local_naive: datetime) -> datetime:
-        return local_naive.astimezone(_tz.utc).replace(tzinfo=None)
+    def _to_utc_naive(local_dt: datetime) -> datetime:
+        """带 tzinfo 的本地时间 → UTC naive（供库内 UTC naive 列比较）。"""
+        return local_dt.astimezone(_tz.utc).replace(tzinfo=None)
 
-    now_local = datetime.now()
-    today0 = _to_utc_naive(datetime(now_local.year, now_local.month, now_local.day))
+    # P3-12（2026-09-17）：原为裸 datetime.now()——取的是**服务器 OS 本地时区**，与本仓
+    # 「用户可感知窗口统一走 app_local_now()（按 settings.APP_TZ_OFFSET_HOURS）」的规约不一致
+    # （见 app/utils/timeutil.py 顶部：正因分散定义出过"北京日期当 UTC 零点"的 8 小时窗口偏差）。
+    # 此处语义就是"用户本地日历的今日/近 7 日/本月"，故改用 app_local_now()；
+    # 默认 +8 且服务器 OS 同区时与旧值逐字节等价，跨区部署时才真正纠正。
+    # （:1025/:1042 的备份目录时间戳按现状保留：那是服务器本地目录命名，不是用户可感知窗口。）
+    now_local = app_local_now()
+    today0 = _to_utc_naive(datetime(now_local.year, now_local.month, now_local.day, tzinfo=now_local.tzinfo))
     week0 = today0 - timedelta(days=6)
-    month0 = _to_utc_naive(datetime(now_local.year, now_local.month, 1))
+    month0 = _to_utc_naive(datetime(now_local.year, now_local.month, 1, tzinfo=now_local.tzinfo))
 
     async with async_session_factory() as db:
         is_sub = await is_sub_account(db, user_id)

@@ -50,7 +50,12 @@ class AICharacter(Base):
     # 认知循环 / 记忆架构 v2.1 开关（2026-08-27 用户拍板全量开启）
     cognitive_loop_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     memory_v2_enabled: Mapped[bool] = mapped_column(Boolean, default=True)  # 记忆架构 v2.1（意义/目标/情境复习）
-    user_llm_config_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("user_llm_configs.id"), nullable=True, default=None)  # 角色绑定 LLM 配置（#68 P0-P2：默认/我的配置/主账号共享配置）
+    # 角色绑定 LLM 配置（#68 P0-P2：默认/我的配置/主账号共享配置）。
+    # ondelete=SET NULL（P3-2 硬化，2026-09-17）：删除 user_llm_configs 行时 DB 层自动清角色引用，
+    # 与 llm_config_service.delete_config 的应用层显式置 NULL 同义（DB 兜底），迁移 e8f9a0b1c2d3 落库。
+    user_llm_config_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("user_llm_configs.id", ondelete="SET NULL"), nullable=True, default=None
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

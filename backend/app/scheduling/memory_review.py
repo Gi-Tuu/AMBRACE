@@ -194,7 +194,7 @@ def _reminisce_flag_on() -> bool:
 async def collect_review_events() -> list[dict]:
     """扫描到期记忆 → 每角色 1 条候选（arbiter 事件源，priority=1）。"""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
+    from app.memory.service import _retrievable_status_clause  # 2026-09-17 批次一任务2：主动复习=怀旧/复习面 → 维持 active+stale（现状面新口径不适用；flag 关=永真）
     async with async_session_factory() as db:
         mems = (await db.execute(
             select(Memory)
@@ -205,7 +205,7 @@ async def collect_review_events() -> list[dict]:
                 Memory.importance >= REVIEW_MIN_IMPORTANCE,
                 Memory.next_review_at.is_not(None),
                 Memory.next_review_at <= now,
-                _active_status_clause(),
+                _retrievable_status_clause(),
             )
             .order_by(Memory.next_review_at.asc())
         )).scalars().all()
@@ -656,7 +656,7 @@ async def _pick_contextual_memory(character_id: int, user_id: int, user_msg: str
     try:
         from app.models.memory import ConversationTopic
         from app.models.memory import Memory
-        from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
+        from app.memory.service import _retrievable_status_clause  # 2026-09-17 批次一任务2：主动复习=怀旧/复习面 → 维持 active+stale（现状面新口径不适用；flag 关=永真）
         async with async_session_factory() as db:
             rows = (await db.execute(
                 select(Memory)
@@ -666,7 +666,7 @@ async def _pick_contextual_memory(character_id: int, user_id: int, user_msg: str
                     Memory.is_pinned == False,
                     Memory.is_locked == False,
                     Memory.importance >= REVIEW_MIN_IMPORTANCE,
-                    _active_status_clause(),
+                    _retrievable_status_clause(),
                 )
                 .order_by(Memory.importance.desc(), Memory.id.desc())
                 .limit(20)

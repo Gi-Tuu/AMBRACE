@@ -19,6 +19,9 @@ class _ShizukuScreenState extends State<ShizukuScreen> with WidgetsBindingObserv
   bool _busy = false;
   List<String> _packages = [];
   String _shellCmd = "pm list packages -3";
+  // 2026-09-17（P3-5 同类补修）：壳命令输入框的 controller 提升为字段并在 dispose 释放
+  // —— 原写法在 build 内 new TextEditingController，每次重建都泄漏且不释放。
+  late final TextEditingController _shellCtrl = TextEditingController(text: _shellCmd);
   String _shellOut = "";
   String _shellErr = "";
 
@@ -32,6 +35,7 @@ class _ShizukuScreenState extends State<ShizukuScreen> with WidgetsBindingObserv
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _shellCtrl.dispose();
     super.dispose();
   }
 
@@ -191,7 +195,7 @@ class _ShizukuScreenState extends State<ShizukuScreen> with WidgetsBindingObserv
                 Text(l10n.shizukuShellDebug, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
                 TextField(
-                  controller: TextEditingController(text: _shellCmd),
+                  controller: _shellCtrl,
                   onChanged: (v) => _shellCmd = v,
                   decoration: InputDecoration(
                     isDense: true,

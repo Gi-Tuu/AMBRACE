@@ -6,6 +6,7 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone, timedelta
 
+import httpx
 from sqlalchemy import select, func
 
 from app.config import settings
@@ -14,6 +15,21 @@ from app.models.life import ImageGenTask
 from app.utils.logger import get_logger
 
 _logger = get_logger("services.image_gen")
+
+
+def _direct_http_client(**kwargs) -> httpx.AsyncClient:
+    """构造**显式绕过系统代理**的 httpx 客户端（生图链路的既有口径，P3-8 在此集中说明）。
+
+    P3-8（2026-09-17）判断：报告建议「改为读 settings 代理（与 LLM/识图一致）」，但实测本仓
+    **没有** settings.proxy / 环境代理配置项，且 LLM 客户端本就走 ``proxy=None``
+    （app/agent/llm_client.py:92，注释「绕过系统代理」是刻意设计）；识图客户端不传 proxy、
+    走 httpx 默认的 ``trust_env``。「读 settings 代理」既无配置项可读，也会与 LLM 口径相反。
+    生图目标（DashScope/OpenAI 兼容端点）与结果图对象存储 CDN 多为境内直连可达，显式直连可避免
+    VPN/系统代理截断长耗时的图片流（生图超时 240s）。故**保留现状**，把散落的 ``proxy=None``
+    收敛到本函数并显式注明理由，不再有 4 处无解释的裸调用。
+    """
+    kwargs.setdefault("proxy", None)
+    return httpx.AsyncClient(**kwargs)
 
 
 class ImageGenProvider(ABC):
@@ -34,8 +50,7 @@ class OpenAICompatImageProvider(ImageGenProvider):
 
     async def generate(self, prompt: str) -> bytes:
         from openai import AsyncOpenAI
-        import httpx
-        _http_client = httpx.AsyncClient(proxy=None)
+        _http_client = _direct_http_client()
         client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url, http_client=_http_client)
         try:
             resp = await client.images.generate(
@@ -48,7 +63,7 @@ class OpenAICompatImageProvider(ImageGenProvider):
             if getattr(item, "b64_json", None):
                 return base64.b64decode(item.b64_json)
             if getattr(item, "url", None):
-                async with httpx.AsyncClient(proxy=None, timeout=120) as dl:
+                async with _direct_http_client(timeout=120) as dl:
                     r = await dl.get(item.url)
                     r.raise_for_status()
                     return r.content
@@ -69,13 +84,12 @@ class DashScopeChatImageProvider(ImageGenProvider):
         self.model = model
 
     async def generate(self, prompt: str) -> bytes:
-        import httpx
         url = self.base_url + "/chat/completions"
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
         }
-        async with httpx.AsyncClient(proxy=None, timeout=240) as client:
+        async with _direct_http_client(timeout=240) as client:
             r = await client.post(
                 url,
                 headers={"Authorization": "Bearer " + self.api_key, "Content-Type": "application/json"},
@@ -86,7 +100,7 @@ class DashScopeChatImageProvider(ImageGenProvider):
         img_url = self._extract_image_url(data)
         if not img_url:
             raise RuntimeError("生图响应缺少图片 URL")
-        async with httpx.AsyncClient(proxy=None, timeout=120) as dl:
+        async with _direct_http_client(timeout=120) as dl:
             rr = await dl.get(img_url)
             rr.raise_for_status()
             return rr.content

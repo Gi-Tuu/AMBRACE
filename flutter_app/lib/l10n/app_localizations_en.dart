@@ -491,7 +491,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get flagWeave3DHint =>
-      '3D sphere view for the weave canvas (experimental; turn off on low-end devices)';
+      'Shows a 3D relationship view in the Weave library.';
 
   @override
   String get apiConfig => 'API Config';
@@ -2699,6 +2699,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get marketPermRelationshipRead => 'Can read relationship network';
+
+  @override
+  String get marketPermProactiveRead =>
+      'Can read proactive strategy materials (read-only)';
 
   @override
   String marketPermUnknown(Object perm) {
@@ -6797,17 +6801,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'When on, every chat passes through the unified Runtime, injecting world knowledge and memory before answering, for more consistent characters. Off falls back to the old direct-generation path. Usually keep on; turn off only to debug the new path.';
 
   @override
-  String get flagAgentLoopSearchTitle => 'Web Search Loop';
-
-  @override
-  String get flagAgentLoopSearchHint =>
-      'Lets the AI run web searches automatically when needed, with one follow-up search if results are thin.';
-
-  @override
-  String get flagAgentLoopSearchDetail =>
-      'When on, the AI can search, read real results, then answer - up to 1 follow-up search. Off falls back to single-shot generation with no web access.';
-
-  @override
   String get flagAgentLoopSchedulerTitle => 'Proactive Task Loop';
 
   @override
@@ -6817,17 +6810,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get flagAgentLoopSchedulerDetail =>
       'Makes timed reminders and proactive check-ins pass through the unified Runtime and log their process. Off uses the old path for proactive tasks.';
-
-  @override
-  String get flagAgentToolEventsTitle => 'Tool Event Weaving';
-
-  @override
-  String get flagAgentToolEventsHint =>
-      'Key events from AI tool calls are auto-saved into the weave/memory.';
-
-  @override
-  String get flagAgentToolEventsDetail =>
-      'When on, tool results are written as memory increments. Off means tool execution does not feed memory.';
 
   @override
   String get flagAgentContextTrimTitle => 'Heat-based Context Trim';
@@ -6850,39 +6832,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get flagAgentTraceGroupDetail =>
       'An observability log that does not affect replies. Off stops writing group chat traces.';
-
-  @override
-  String get flagAgentDailyReflectionTitle => 'Daily Reflection';
-
-  @override
-  String get flagAgentDailyReflectionHint =>
-      'Lets the AI periodically reflect on recent experiences (about every 7 days).';
-
-  @override
-  String get flagAgentDailyReflectionDetail =>
-      'Reflection keeps the character\'s words and actions more coherent. Off stops generating periodic reflections.';
-
-  @override
-  String get flagAgentReflectionInjectTitle => 'Reflection in Outreach';
-
-  @override
-  String get flagAgentReflectionInjectHint =>
-      'Attaches the latest reflection when sending proactive messages, for more relevant content.';
-
-  @override
-  String get flagAgentReflectionInjectDetail =>
-      'Requires Daily Reflection. Off means proactive messages do not inject reflections.';
-
-  @override
-  String get flagAgentDailyMemoryMaintenanceTitle => 'Daily Memory Maintenance';
-
-  @override
-  String get flagAgentDailyMemoryMaintenanceHint =>
-      'Auto-completes daily summaries, dedupes, and pins summaries to keep the memory base tidy.';
-
-  @override
-  String get flagAgentDailyMemoryMaintenanceDetail =>
-      'Off stops these upkeep tasks; over time this may accumulate duplicate memories or miss summaries.';
 
   @override
   String get flagProactiveNaturalnessScoreTitle => 'Outreach Naturalness Score';
@@ -6918,94 +6867,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'Off hides the game entry and APIs, rolling back games entirely without affecting chat.';
 
   @override
-  String get flagGameUndercoverTitle => 'Who Is the Spy';
-
-  @override
-  String get flagGameUndercoverHint =>
-      'A party game where players describe words in turns and vote out the spy.';
-
-  @override
-  String get flagGameUndercoverDetail =>
-      'Enables this individual game. Off removes it from the selection.';
-
-  @override
-  String get flagGameTruthOrDareTitle => 'Truth or Dare';
-
-  @override
-  String get flagGameTruthOrDareHint =>
-      'A light game of taking turns choosing truth or dare.';
-
-  @override
-  String get flagGameTruthOrDareDetail =>
-      'Enables this individual game. Off removes it from the selection.';
-
-  @override
-  String get flagGameTwentyQTitle => '20 Questions';
-
-  @override
-  String get flagGameTwentyQHint =>
-      'Guess the word the other is thinking of within a limited number of yes/no rounds.';
-
-  @override
-  String get flagGameTwentyQDetail =>
-      'Enables this individual game. Off removes it from the selection.';
-
-  @override
-  String get flagGameWerewolfTitle => 'Werewolf';
-
-  @override
-  String get flagGameWerewolfHint =>
-      'A multiplayer game of night actions plus day debate and voting, with a system host.';
-
-  @override
-  String get flagGameWerewolfDetail =>
-      'Enables this individual game. Off removes it from the selection.';
-
-  @override
-  String get flagGameLiarsBarTitle => 'Liar\'s Bar';
-
-  @override
-  String get flagGameLiarsBarHint =>
-      'A mind game of declaring your card and calling out the previous player.';
-
-  @override
-  String get flagGameLiarsBarDetail =>
-      'Enables this individual game. Off removes it from the selection.';
-
-  @override
-  String get flagGameTurtleSoupTitle => 'Turtle Soup';
-
-  @override
-  String get flagGameTurtleSoupHint =>
-      'Reconstruct the truth behind a story through yes/no questions, with AI as host.';
-
-  @override
-  String get flagGameTurtleSoupDetail =>
-      'Enables this individual game. Off removes it from the selection.';
-
-  @override
-  String get flagGameMemoryBridgeTitle => 'Game Memory Bridge';
-
-  @override
-  String get flagGameMemoryBridgeHint =>
-      'Leaves a summary pointer in main memory that links back to the standalone game memory.';
-
-  @override
-  String get flagGameMemoryBridgeDetail =>
-      'On leaves a trace of \'what was played\' in main memory and can pull game details. Off keeps game play only in the standalone game memory, not mixed into life memory.';
-
-  @override
-  String get flagGameAiAutoplayTitle => 'AI Auto-turn';
-
-  @override
-  String get flagGameAiAutoplayHint =>
-      'When it\'s the AI\'s turn, acts automatically - no manual next step.';
-
-  @override
-  String get flagGameAiAutoplayDetail =>
-      'On by default for smooth flow. Off requires manual advancement each AI step, mainly for debugging.';
-
-  @override
   String get flagLifeLoopEnabledTitle => 'Life Loop Master';
 
   @override
@@ -7015,17 +6876,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get flagLifeLoopEnabledDetail =>
       'Off stops the character\'s autonomous life loop; it also stops progressing while you\'re offline.';
-
-  @override
-  String get flagLifeLoopVisibleTitle => 'Life Actions Visible';
-
-  @override
-  String get flagLifeLoopVisibleHint =>
-      'Lets autonomous life produce output visible to you (moments, shares, etc.).';
-
-  @override
-  String get flagLifeLoopVisibleDetail =>
-      'Off keeps life actions only in the background log, not shown to you.';
 
   @override
   String get flagLifeLoopLlmTitle => 'Life Text Generation';
@@ -7183,28 +7033,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'B1: default off; on = expanded nodes at 0.9 weight, under token quota and 5-round dedup, never bypassing budget.';
 
   @override
-  String get flagRecallTop5Title => 'Main Recall Top 5';
-
-  @override
-  String get flagRecallTop5Hint =>
-      'Expands the main memory recall output from 3 to 5 items (M1-S1).';
-
-  @override
-  String get flagRecallTop5Detail =>
-      'Off = falls back to the old 3-item output.';
-
-  @override
-  String get flagRecallDiversifyTitle => 'Type Diversity Rerank';
-
-  @override
-  String get flagRecallDiversifyHint =>
-      'Reranks recall results by type before truncation, avoiding one type dominating.';
-
-  @override
-  String get flagRecallDiversifyDetail =>
-      'S1: take 2 per type in one round, then fill by original order; off = pure score truncation.';
-
-  @override
   String get flagMemoryTieredDecayTitle => 'Tiered Memory Decay';
 
   @override
@@ -7247,6 +7075,17 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get flagMemorySupersedeDetail =>
       '#70 plan C: default off (wrong supersede hurts more than none); on = SQLite+Chroma dual-path by status.';
+
+  @override
+  String get flagCurrentFactsActiveOnlyTitle => 'Current facts: active only';
+
+  @override
+  String get flagCurrentFactsActiveOnlyHint =>
+      'Injected current status only uses memories that are still valid; stale ones no longer pass as current facts.';
+
+  @override
+  String get flagCurrentFactsActiveOnlyDetail =>
+      'On (default): the current-facts surface only reads still-valid memories; recalled stale ones are tagged as past and always down-weighted. The nostalgia/review surface still sees old memories. Off = revert to the old behavior.';
 
   @override
   String get flagMarkerRecoveryTitle => 'Marker Truncation Guard';
@@ -7312,7 +7151,19 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get flagGlobalUserFactsDetail =>
-      'B1 master switch: default off; on = GPS/chat writes user_facts and injects into [USER NOW]; off = neither writes nor reads.';
+      'Master switch (default off). When on, your recent context (location, work, living, current goals...) is extracted from chats and GPS into user_facts and shared across all your characters. Relationship and health are NOT covered by this switch - enable them separately.';
+
+  @override
+  String get flagUserCurrentLocationShareTitle =>
+      'Location sharing (cross-character)';
+
+  @override
+  String get flagUserCurrentLocationShareHint =>
+      'Shares your authoritative location across all characters, so low-activity ones stop drifting to old places.';
+
+  @override
+  String get flagUserCurrentLocationShareDetail =>
+      'On (default): shares only the low-sensitivity location value, used for current-situation injection and proactive messages. Sensitive categories (relationship, health) are unaffected and still need separate opt-in. Off = no location sharing.';
 
   @override
   String get flagCrossCharFactSyncTitle => 'Cross-character Fact Sync';
@@ -7484,4 +7335,450 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get gameAchievementsAll => 'All Games';
+
+  @override
+  String get flagAgentLoopGroupChatTitle => 'Group chat cognitive loop';
+
+  @override
+  String get flagAgentLoopGroupChatHint =>
+      'Lets AI roles in group chats use the unified cognitive loop (understand/memory/plan).';
+
+  @override
+  String get flagAgentLoopGroupChatDetail =>
+      'On: group messages also go through the unified Runtime for more coherent roles. Off: group chats use the legacy path.';
+
+  @override
+  String get flagAgentLoopSocialTitle => 'Social loop';
+
+  @override
+  String get flagAgentLoopSocialHint =>
+      'Unified cognitive loop for social interactions (moments/comments).';
+
+  @override
+  String get flagAgentLoopSocialDetail =>
+      'On: social interactions go through the unified Runtime and are logged. Off: legacy path.';
+
+  @override
+  String get flagAgentSocialLightContextTitle => 'Social light context';
+
+  @override
+  String get flagAgentSocialLightContextHint =>
+      'Injects a lightweight context in social scenes to save tokens.';
+
+  @override
+  String get flagAgentSocialLightContextDetail =>
+      'Already explicitly enabled locally. On: social replies carry trimmed context, high-frequency roles stay full. Off: uniform full injection.';
+
+  @override
+  String get flagWeave3DTitle => 'Weave 3D view';
+
+  @override
+  String get flagWeave3DDetail =>
+      'The frontend canvas actually reads this flag. Off hides the 3D view but does not affect other features.';
+
+  @override
+  String get flagProactiveInactiveCharSkipTitle => 'Skip inactive characters';
+
+  @override
+  String get flagProactiveInactiveCharSkipHint =>
+      'Characters with no interaction in the last 24h are skipped for proactive messages (09-08).';
+
+  @override
+  String get flagProactiveInactiveCharSkipDetail =>
+      'Reduces disturbance. On: long-inactive characters are skipped; others behave normally.';
+
+  @override
+  String get flagProactiveStrategyPluginsTitle => 'Content strategy plugins';
+
+  @override
+  String get flagProactiveStrategyPluginsHint =>
+      'Enables the X6 content strategy packs (source handoff + double-send guard).';
+
+  @override
+  String get flagProactiveStrategyPluginsDetail =>
+      'Note: flag on does not mean active - an enabled strategy plugin must take over that category. Only the rhythm pack is enabled now; with no plugin this flag is empty.';
+
+  @override
+  String get flagProactiveSegmentGuardTitle => 'Segment guard';
+
+  @override
+  String get flagProactiveSegmentGuardHint =>
+      'Filters broken/empty segments and runs a reality check (segment guard).';
+
+  @override
+  String get flagProactiveSegmentGuardDetail =>
+      'Proactive message segments are validated by the guard before sending, dropping fragments and implausible text.';
+
+  @override
+  String get flagProactiveTopicGuardTitle => 'Topic circuit breaker';
+
+  @override
+  String get flagProactiveTopicGuardHint =>
+      'Stops repeating the same topic / over-nudging (topic breaker).';
+
+  @override
+  String get flagProactiveTopicGuardDetail =>
+      'Prevents hammering one topic or over-nudging in a short window; once tripped, that topic is dropped this round.';
+
+  @override
+  String get flagOutreachHourWindowV1Title => 'Outreach hour window';
+
+  @override
+  String get flagOutreachHourWindowV1Hint =>
+      'Restricts proactive outreach to 9-22h.';
+
+  @override
+  String get flagOutreachHourWindowV1Detail =>
+      'One of the three outreach gates. Note: only takes real effect when flag on AND the graylisted role (char13 only) AND ratio bucket match - currently only for graylisted roles; others are unchanged.';
+
+  @override
+  String get flagOutreachTypeMixV1Title => 'Outreach type mix';
+
+  @override
+  String get flagOutreachTypeMixV1Hint =>
+      'Caps the ratio of each outreach type to prevent one type spamming.';
+
+  @override
+  String get flagOutreachTypeMixV1Detail =>
+      'One of the three outreach gates. Currently only for graylisted roles (flag on + role allowlist + ratio bucket).';
+
+  @override
+  String get flagOutreachSessionRateV1Title => 'Outreach session rate';
+
+  @override
+  String get flagOutreachSessionRateV1Hint =>
+      'Per-session throttling of proactive messages (one of three gates).';
+
+  @override
+  String get flagOutreachSessionRateV1Detail =>
+      'One of the three outreach gates. Note: this key is not explicitly on locally and uses the code default False; even if on it only affects graylisted roles (char13).';
+
+  @override
+  String get flagPromiseSelfSideSplitTitle => 'Promise by beneficiary';
+
+  @override
+  String get flagPromiseSelfSideSplitHint =>
+      'Splits promises by beneficiary; self-handled ones auto-report back.';
+
+  @override
+  String get flagPromiseSelfSideSplitDetail =>
+      'On: self-contained promises are handled by the AI and reported at the right moment, reducing needless nudges.';
+
+  @override
+  String get flagTimerRenderSubjectFixTitle => 'Timer render fix';
+
+  @override
+  String get flagTimerRenderSubjectFixHint =>
+      'Due/reminder rendering uses (owner,type) phrasing + status anchor + __SKIP__ gate.';
+
+  @override
+  String get flagTimerRenderSubjectFixDetail =>
+      'Makes due/timer reminders fit context and avoids repeats; content hitting the __SKIP__ gate is not rendered.';
+
+  @override
+  String get flagLifeEventNoReplayTitle => 'No replay of one-shot life events';
+
+  @override
+  String get flagLifeEventNoReplayHint =>
+      'One-shot life events are not reviewed or repeatedly replayed.';
+
+  @override
+  String get flagLifeEventNoReplayDetail =>
+      'Past one-shot life events are only recorded, never pushed again, avoiding repeated reminders.';
+
+  @override
+  String get flagLifeMemoryWriteRetryTitle => 'Life memory write retry';
+
+  @override
+  String get flagLifeMemoryWriteRetryHint =>
+      'Hardens life memory writes (commit-then-release lock + backoff retry).';
+
+  @override
+  String get flagLifeMemoryWriteRetryDetail =>
+      'Only improves write reliability, not content; auto-retries on failure without affecting existing memory.';
+
+  @override
+  String get flagMemoryWriteReceiptTitle => 'Write receipt';
+
+  @override
+  String get flagMemoryWriteReceiptHint => 'Memory write receipt (09-15).';
+
+  @override
+  String get flagMemoryWriteReceiptDetail =>
+      'On: each memory write produces a receipt for confirmation and debugging; off: no receipt.';
+
+  @override
+  String get flagMemoryAdmissionGateTitle => 'World-fact admission gate';
+
+  @override
+  String get flagMemoryAdmissionGateHint =>
+      'Admission gate for M4 world_facts writes (dedup / contradiction裁决).';
+
+  @override
+  String get flagMemoryAdmissionGateDetail =>
+      'On: before writing world facts it dedups and resolves contradictions for better consistency; off: writes directly.';
+
+  @override
+  String get flagMemoryUtilityFeedbackTitle => 'Recall utility feedback';
+
+  @override
+  String get flagMemoryUtilityFeedbackHint =>
+      'Post-recall utility feedback looping back to salience/decay (09-16).';
+
+  @override
+  String get flagMemoryUtilityFeedbackDetail =>
+      'Feeds real user reactions on recalled content back to salience/decay to improve later recall; default off and still off locally.';
+
+  @override
+  String get flagWorkingStateInjectTitle => 'Working memory injection';
+
+  @override
+  String get flagWorkingStateInjectHint =>
+      'M3-b: inject working memory into the reply context.';
+
+  @override
+  String get flagWorkingStateInjectDetail =>
+      'Injection is still in gray release. Note: even when off, graylisted role char13 still gets ~15% injection via a code constant (not controllable by this runtime flag); currently only for graylisted roles.';
+
+  @override
+  String get flagReviewExcludeExpiredPlanTitle =>
+      'Exclude expired plans from review';
+
+  @override
+  String get flagReviewExcludeExpiredPlanHint =>
+      'L1: review selection excludes expired plans / transient states.';
+
+  @override
+  String get flagReviewExcludeExpiredPlanDetail =>
+      'Review no longer picks up expired or transient-only plans, cutting wasted review.';
+
+  @override
+  String get flagReviewReinforceEventCapTitle => 'Reinforce event cap';
+
+  @override
+  String get flagReviewReinforceEventCapHint =>
+      'L2: one-shot event reinforcement split by tense + capped.';
+
+  @override
+  String get flagReviewReinforceEventCapDetail =>
+      'Prevents over-reinforcing one-shot events; split by tense with a cap to keep review quality.';
+
+  @override
+  String get flagReviewReminisceFrameworkTitle => 'Reminisce framework';
+
+  @override
+  String get flagReviewReminisceFrameworkHint =>
+      'L3: review hints switch to a reminisce framework + tense tone + status anchor.';
+
+  @override
+  String get flagReviewReminisceFrameworkDetail =>
+      'Review is presented in a more natural recalling tone with tense and status anchors for coherence.';
+
+  @override
+  String get flagReviewPlanExpireStaleTitle => 'Expire stale plans';
+
+  @override
+  String get flagReviewPlanExpireStaleHint =>
+      'L4: daily maintenance marks expired plans stale automatically.';
+
+  @override
+  String get flagReviewPlanExpireStaleDetail =>
+      'Daily maintenance scans plans and auto-marks expired ones stale so they are not treated as current.';
+
+  @override
+  String get flagReviewPlanValidityExtractTitle => 'Plan validity extraction';
+
+  @override
+  String get flagReviewPlanValidityExtractHint =>
+      'L4: extract/write side records valid_to for plans.';
+
+  @override
+  String get flagReviewPlanValidityExtractDetail =>
+      'When extracting or saving a plan it also records valid_to, giving later expiry checks a basis.';
+
+  @override
+  String get flagUserFactLocationTitle => 'Location slot';
+
+  @override
+  String get flagUserFactLocationHint =>
+      'Extracts location/city context (GPS + chat slotting).';
+
+  @override
+  String get flagUserFactLocationDetail =>
+      'One of the cross-character user-fact slots: location/city. Turns on with the master switch, or can be enabled on its own.';
+
+  @override
+  String get flagUserFactJobTitle => 'Job/study slot';
+
+  @override
+  String get flagUserFactJobHint => 'Extracts work/study context.';
+
+  @override
+  String get flagUserFactJobDetail =>
+      'One of the cross-character user-fact slots: work/study. Turns on with the master switch, or can be enabled on its own.';
+
+  @override
+  String get flagUserFactRelationshipTitle => 'Relationship slot (private)';
+
+  @override
+  String get flagUserFactRelationshipHint =>
+      'Extracts relationship/romantic status (private).';
+
+  @override
+  String get flagUserFactRelationshipDetail =>
+      'One of the cross-character user-fact slots: relationship status (sensitive). Not covered by the master switch - must be enabled on its own; once on it is shared across all your characters like other facts.';
+
+  @override
+  String get flagUserFactLivingTitle => 'Living situation slot';
+
+  @override
+  String get flagUserFactLivingHint =>
+      'Extracts living situation (alone/with whom).';
+
+  @override
+  String get flagUserFactLivingDetail =>
+      'One of the cross-character user-fact slots: living situation. Turns on with the master switch, or can be enabled on its own.';
+
+  @override
+  String get flagUserFactGoalStateTitle => 'Goal/state slot';
+
+  @override
+  String get flagUserFactGoalStateHint =>
+      'Extracts recent goals/status context.';
+
+  @override
+  String get flagUserFactGoalStateDetail =>
+      'One of the cross-character user-fact slots: current goals/status. Turns on with the master switch, or can be enabled on its own.';
+
+  @override
+  String get flagUserFactHealthTitle => 'Health slot (private)';
+
+  @override
+  String get flagUserFactHealthHint => 'Extracts health context (private).';
+
+  @override
+  String get flagUserFactHealthDetail =>
+      'One of the cross-character user-fact slots: health (sensitive). Not covered by the master switch - must be enabled on its own; once on it is shared across all your characters like other facts.';
+
+  @override
+  String get flagChannelBindingV2Title => 'Channel binding v2';
+
+  @override
+  String get flagChannelBindingV2Hint =>
+      'Channel binding v2 (MCP/Douyin/WeChat bound per main account).';
+
+  @override
+  String get flagChannelBindingV2Detail =>
+      'Docs once claimed it graduated, but the code default is still hard-coded False; locally it is ON only via a runtime_flags override. A fresh deploy without that override falls back to off.';
+
+  @override
+  String get flagDomainEventLogEnabledTitle => 'Domain event log';
+
+  @override
+  String get flagDomainEventLogEnabledHint =>
+      'Enables domain-event stream writing.';
+
+  @override
+  String get flagDomainEventLogEnabledDetail =>
+      'Writes key system events to the event stream for auditing/debugging; off: no logging.';
+
+  @override
+  String get flagDomainEventRetentionDaysTitle => 'Event retention days';
+
+  @override
+  String get flagDomainEventRetentionDaysHint =>
+      'Domain-event retention in days, 0 = forever (numeric).';
+
+  @override
+  String get flagDomainEventRetentionDaysDetail =>
+      'A numeric key - the hot-swap channel only supports bool, so it cannot be tuned from the switch page (not hot-swappable; needs config/code change); 0 means keep forever.';
+
+  @override
+  String get flagGroupCognitionV2Title => 'Group cognition v2';
+
+  @override
+  String get flagGroupCognitionV2Hint =>
+      '#72 group chat cognition upgrade (P1/P2 merged, P3/P4 pending).';
+
+  @override
+  String get flagGroupCognitionV2Detail =>
+      'Upgrades group cognition; also needs the per-group chat_groups.cognition_enabled gate to take effect for a specific group.';
+
+  @override
+  String get flagGroupMemoryCompactTitle => 'Group memory compaction';
+
+  @override
+  String get flagGroupMemoryCompactHint =>
+      '#72 P5: group memories older than 7 days are compacted to one summary nightly, old rows soft-deleted.';
+
+  @override
+  String get flagGroupMemoryCompactDetail =>
+      'Lowers storage and injection cost for long groups; old group memories merge into a summary with original rows soft-deleted.';
+
+  @override
+  String get flagAgentTraceSchedulerOnlyExecutedTitle =>
+      'Log only executed plans';
+
+  @override
+  String get flagAgentTraceSchedulerOnlyExecutedHint =>
+      'R1: untriggered proactive tasks no longer write task_logs (stops log amplification).';
+
+  @override
+  String get flagAgentTraceSchedulerOnlyExecutedDetail =>
+      'Only logs actually triggered plans, cutting noise; off: legacy behavior logs everything.';
+
+  @override
+  String get flagAgentTraceSchedulerMarkExecErrorTitle =>
+      'Mark exec failure as error';
+
+  @override
+  String get flagAgentTraceSchedulerMarkExecErrorHint =>
+      'R1: real execution failures are marked status=error (not blocked).';
+
+  @override
+  String get flagAgentTraceSchedulerMarkExecErrorDetail =>
+      'Marks execution results more accurately for debugging; off: failures may be marked blocked.';
+
+  @override
+  String get flagMcpStreamDeclarationsTitle => 'Streaming MCP declarations';
+
+  @override
+  String get flagMcpStreamDeclarationsHint =>
+      'R3: streaming sessions also inject MCP tool declarations (needs #59 stream-end tool_result).';
+
+  @override
+  String get flagMcpStreamDeclarationsDetail =>
+      'Lets streaming replies carry MCP tool declarations; off: streaming path does not inject them.';
+
+  @override
+  String get flagAgentToolExecTraceTitle => 'Tool exec trace';
+
+  @override
+  String get flagAgentToolExecTraceHint =>
+      'R5: every plugin/built-in tool execution is logged (MCP tools skipped to avoid double logging).';
+
+  @override
+  String get flagAgentToolExecTraceDetail =>
+      'Records real tool execution traces; MCP tools are not double-logged; off: only partial logging.';
+
+  @override
+  String get flagGroupProactivePacing => 'Proactive pacing (B1)';
+
+  @override
+  String get flagGroupReviewRecall => 'Review & reminiscence (H)';
+
+  @override
+  String get flagGroupChannelGroup => 'Channel binding & group cognition';
+
+  @override
+  String get flagGroupToolTrace => 'Tool trace governance';
+
+  @override
+  String flagNumericValue(Object value) {
+    return 'Current value: $value';
+  }
+
+  @override
+  String get flagNumericReadOnly =>
+      'This flag is numeric and cannot be changed in the app.';
 }

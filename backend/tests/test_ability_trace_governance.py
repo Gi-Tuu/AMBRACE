@@ -256,43 +256,11 @@ def test_R6_启用插件全集不再填充(monkeypatch):
         "context_messages": [], "ai_response": "", "new_memories": [],
         "tools_used": [], "skip_memory_save": True, "lang": "zh",
     }
-    loop.AGENT_FLAGS["chat_tools_list_real_only"] = True
-    try:
-        out = asyncio.run(nodes.generate_response(state))
-    finally:
-        loop.AGENT_FLAGS["chat_tools_list_real_only"] = True
+    out = asyncio.run(nodes.generate_response(state))
     tools = out.get("tools_used") or []
     assert not any(str(t).startswith("扩展：") for t in tools)
 
 
-def test_R6_flag关回退启用插件全集(monkeypatch):
-    """flag 关 → 回退旧行为（「扩展：启用插件 id 列表」），保证可一键回退。"""
-    import app.agent.nodes as nodes
-    from app.plugins import registry
-
-    registry.load_plugin_dir(registry.EXAMPLE_DIR / "douyin_mcp")
-    registry._enabled["douyin_mcp"] = True
-
-    async def _cfg(uid):
-        return None
-
-    async def _chat(**kw):
-        return "你好呀"
-
-    monkeypatch.setattr("app.agent.llm_client.get_user_llm_config", _cfg)
-    monkeypatch.setattr(nodes, "chat_completion", _chat)
-    state = {
-        "user_message": "hi", "character_id": 1, "user_id": 1, "session_id": 1,
-        "context_messages": [], "ai_response": "", "new_memories": [],
-        "tools_used": [], "skip_memory_save": True, "lang": "zh",
-    }
-    loop.AGENT_FLAGS["chat_tools_list_real_only"] = False
-    try:
-        out = asyncio.run(nodes.generate_response(state))
-    finally:
-        loop.AGENT_FLAGS["chat_tools_list_real_only"] = True
-    tools = out.get("tools_used") or []
-    assert any(str(t).startswith("扩展：") and "douyin_mcp" in str(t) for t in tools)
 
 
 def test_R6_工具真实执行成功才回填(monkeypatch):

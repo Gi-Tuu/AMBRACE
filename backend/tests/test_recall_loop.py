@@ -98,7 +98,7 @@ def test_flag开_命中_注入并再生成(monkeypatch, _flag_on):
     msgs = st["context_messages"]
     assert len(msgs) == 2 and "【补充记忆】" in msgs[-1]["content"]
     assert "去年夏天去了青岛" in msgs[-1]["content"]
-    assert seen["q"] == "青岛" and seen["limit"] == 6  # memory_recall_hop_limit 默认 6
+    assert seen["q"] == "青岛" and seen["limit"] == 6  # _hop_limit 已固化为常量 6（2026-09-17 删除原 memory_recall_hop_limit flag）
 
 
 def test_flag开_再生成仍带RECALL_只二跳一次(monkeypatch, _flag_on):

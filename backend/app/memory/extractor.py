@@ -12,6 +12,7 @@ from app.agent.llm_client import chat_completion as llm_call, TASK_MEMORY
 from app.events.schema import EPISTEMIC_FACT, EPISTEMIC_INFERRED
 from app.utils.logger import get_logger
 from app.memory.speaker import resolve_speaker_from_content  # X-2（2026-08-18）：统一归属判定公共函数
+from app.memory.meta_guard import is_meta_without_anchor  # 批次二任务1：元对话/情绪宣泄守卫
 
 _logger = get_logger("memory.extractor")
 BATCH_SIZE = 4  # C1（2026-08-18 降本）：2->4 条/批，调用次数 -30~50%，30min 节流不变
@@ -319,6 +320,14 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
             _spk_type, _spk_id, _epi = _resolve_speaker(val, user_msg, ai_msg, user_id, character_id)
             # §20（2026-09-04）：USER_INFO → 归槽 upsert 用户级事实 + 旧值失效；
             # 细粒度（2026-09-10）：命中槽且该槽【已启用】才归槽；全关则与现状一致落 extracted。
+            # 批次二任务1（元对话 & 情绪宣泄守卫，纯规则先拦、fail-open）：讨论 AI 本身 /
+            # 系统 / 记忆机制 / 报错 / 情绪宣泄，且无真实用户事实锚点（人名/职业/位置/稳定偏好）
+            # → 不是用户恒久事实：降级 event + sub_type=meta_guard（classify_tense 恒判 episodic
+            # 只作往事），且不做槽位 upsert（不污染跨角色权威现状）。
+            _meta_downgrade = mtype == "user_info" and is_meta_without_anchor(val)
+            if _meta_downgrade:
+                mtype = "event"
+                _logger.info("Meta-dialogue downgraded char=%d: %.50s", character_id, val)
             if mtype == "user_info":
                 from app.memory.user_facts import (
                     MUTABLE_SLOTS, classify_slot, upsert_user_fact,
@@ -339,7 +348,7 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
                                       speaker_type=_spk_type, speaker_id=_spk_id, epistemic_status=_epi)
                     saved += 1
                     continue
-            await save_memory(user_id=user_id,character_id=character_id,memory_type=mtype,content=val[:100],importance=imp,source="chat",sub_type="extracted",source_id=source_id,
+            await save_memory(user_id=user_id,character_id=character_id,memory_type=mtype,content=val[:100],importance=imp,source="chat",sub_type=("meta_guard" if _meta_downgrade else "extracted"),source_id=source_id,
                               speaker_type=_spk_type, speaker_id=_spk_id, epistemic_status=_epi)
             saved += 1
 

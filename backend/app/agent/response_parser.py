@@ -26,16 +26,42 @@ _EMOTIONAL_KEYWORDS = [
 
 
 def extract_info_from_message(text: str) -> list[dict]:
-    """从消息中用正则提取个人信息"""
+    """从消息中用正则提取个人信息（2026-09-17 批次二任务1：title 证据锚点 + 元对话守卫）。
+
+    - title 证据锚点：「用户的名字」要求捕获 token 像人名、「用户的职业」要求含职业语义词；
+      不满足 → 泛化 title（「一段对话」）并把类型降为 event（classify_tense 恒判 episodic，
+      不进恒久画像）。生产实证：id=9814「我是个失败的爱人」被 `我是` 正则抓成「用户的名字」。
+    - 元对话/情绪宣泄守卫：整条消息命中元对话词且无真实事实锚点（人名/职业/位置/稳定偏好）
+      → 全部候选降级为 event + 泛化 title（讨论 AI/记忆机制/报错/气话不是用户事实）。
+    纯规则、零额外调用；守卫自身异常 fail-open（退回旧行为，不阻塞提取）。
+    """
+    try:
+        from app.memory.meta_guard import GENERIC_TITLE, apply_title_anchor, is_meta_without_anchor
+        _meta = is_meta_without_anchor(text)
+    except Exception:
+        GENERIC_TITLE, apply_title_anchor, _meta = "一段对话", None, False
     memories = []
     for pattern, mem_type, title_prefix in _INFO_PATTERNS:
-        if re.search(pattern, text):
+        if not re.search(pattern, text):
+            continue
+        title = title_prefix
+        title_ok = True
+        if apply_title_anchor is not None:
+            title, title_ok = apply_title_anchor(title_prefix, text)
+        if _meta or not title_ok:
             memories.append({
-                "type": mem_type,
-                "title": title_prefix,
+                "type": "event",
+                "title": GENERIC_TITLE,
                 "content": text[:100],
                 "importance": 2,
             })
+            continue
+        memories.append({
+            "type": mem_type,
+            "title": title,
+            "content": text[:100],
+            "importance": 2,
+        })
     return memories
 
 

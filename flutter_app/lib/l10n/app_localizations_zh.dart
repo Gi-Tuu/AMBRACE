@@ -471,7 +471,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get flagWeave3D => '织网 3D（实验）';
 
   @override
-  String get flagWeave3DHint => '织库画布切换为 3D 球视图（实验功能，低端机可关）';
+  String get flagWeave3DHint => '在「织库」中展示 3D 关系视图。';
 
   @override
   String get apiConfig => 'API 配置';
@@ -2593,6 +2593,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get marketPermRelationshipRead => '可读取关系网';
+
+  @override
+  String get marketPermProactiveRead => '可读取主动策略素材（只读）';
 
   @override
   String marketPermUnknown(Object perm) {
@@ -6571,16 +6574,6 @@ class AppLocalizationsZh extends AppLocalizations {
       '开启后每条聊天都经过统一 Runtime，注入世界认知与记忆后再回答，角色更连贯；关闭则回退到旧的直接生成链路。一般保持开启，仅在排查新链路问题时临时关闭。';
 
   @override
-  String get flagAgentLoopSearchTitle => '联网搜索循环';
-
-  @override
-  String get flagAgentLoopSearchHint => '允许 AI 在需要时自动联网搜索，结果不足时再补查一次。';
-
-  @override
-  String get flagAgentLoopSearchDetail =>
-      '开启后 AI 可发起搜索、读取真实结果再回答，最多补查 1 次；关闭则退回单次生成、不联网。';
-
-  @override
   String get flagAgentLoopSchedulerTitle => '主动任务循环';
 
   @override
@@ -6589,15 +6582,6 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get flagAgentLoopSchedulerDetail =>
       '让到点触发的提醒、主动关心等经过统一 Runtime 并记录过程；关闭后主动任务走旧链路。';
-
-  @override
-  String get flagAgentToolEventsTitle => '工具联动织库';
-
-  @override
-  String get flagAgentToolEventsHint => 'AI 调用工具产生的关键事件，自动增量写入织库/记忆。';
-
-  @override
-  String get flagAgentToolEventsDetail => '开启后工具执行结果会沉淀为记忆增量；关闭则工具执行不联动记忆。';
 
   @override
   String get flagAgentContextTrimTitle => '上下文按热度裁剪';
@@ -6617,35 +6601,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get flagAgentTraceGroupDetail => '属于可观测日志，不影响回复内容；关闭后不再写群聊 trace。';
-
-  @override
-  String get flagAgentDailyReflectionTitle => '周期复盘';
-
-  @override
-  String get flagAgentDailyReflectionHint => '让 AI 周期性复盘近期经历（约每 7 天一次）。';
-
-  @override
-  String get flagAgentDailyReflectionDetail => '复盘结果让角色言行更连贯；关闭后不再生成周期复盘。';
-
-  @override
-  String get flagAgentReflectionInjectTitle => '复盘注入主动消息';
-
-  @override
-  String get flagAgentReflectionInjectHint => '发主动消息时带上最近一次复盘，内容更贴合 AI 近况。';
-
-  @override
-  String get flagAgentReflectionInjectDetail => '需配合「周期复盘」使用；关闭后主动消息不注入复盘。';
-
-  @override
-  String get flagAgentDailyMemoryMaintenanceTitle => '日终记忆维护';
-
-  @override
-  String get flagAgentDailyMemoryMaintenanceHint =>
-      '每天自动补日摘要、去重、补置顶摘要，保持记忆库整洁。';
-
-  @override
-  String get flagAgentDailyMemoryMaintenanceDetail =>
-      '关闭后这些维护不再自动执行，长期可能积累重复记忆或缺失摘要。';
 
   @override
   String get flagProactiveNaturalnessScoreTitle => '主动消息自然度评分';
@@ -6677,79 +6632,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get flagGroupChatGamesDetail => '关闭后游戏入口与 API 都不展示，可整体回退游戏功能，不影响聊天。';
 
   @override
-  String get flagGameUndercoverTitle => '谁是卧底';
-
-  @override
-  String get flagGameUndercoverHint => '多人轮流描述词语、投票找出卧底的桌游。';
-
-  @override
-  String get flagGameUndercoverDetail => '单个游戏的启用开关；关闭后该游戏不在可选列表。';
-
-  @override
-  String get flagGameTruthOrDareTitle => '真心话大冒险';
-
-  @override
-  String get flagGameTruthOrDareHint => '轮流选择真心话或大冒险的轻量游戏。';
-
-  @override
-  String get flagGameTruthOrDareDetail => '单个游戏的启用开关；关闭后不可选。';
-
-  @override
-  String get flagGameTwentyQTitle => '猜词 20 问';
-
-  @override
-  String get flagGameTwentyQHint => '用是非问句在限定轮数内猜出对方想的词。';
-
-  @override
-  String get flagGameTwentyQDetail => '单个游戏的启用开关；关闭后不可选。';
-
-  @override
-  String get flagGameWerewolfTitle => '狼人杀';
-
-  @override
-  String get flagGameWerewolfHint => '夜晚行动 + 白天发言投票的多人桌游，含系统主持人。';
-
-  @override
-  String get flagGameWerewolfDetail => '单个游戏的启用开关；关闭后不可选。';
-
-  @override
-  String get flagGameLiarsBarTitle => '骗子酒馆';
-
-  @override
-  String get flagGameLiarsBarHint => '声明牌面、可质疑上家的心理博弈游戏。';
-
-  @override
-  String get flagGameLiarsBarDetail => '单个游戏的启用开关；关闭后不可选。';
-
-  @override
-  String get flagGameTurtleSoupTitle => '海龟汤';
-
-  @override
-  String get flagGameTurtleSoupHint => '通过是非提问，还原「汤面」背后真相，AI 当主持人。';
-
-  @override
-  String get flagGameTurtleSoupDetail => '单个游戏的启用开关；关闭后不可选。';
-
-  @override
-  String get flagGameMemoryBridgeTitle => '游戏记忆桥接';
-
-  @override
-  String get flagGameMemoryBridgeHint => '在主记忆留一条游戏摘要指针，可回溯到独立游戏记忆库。';
-
-  @override
-  String get flagGameMemoryBridgeDetail =>
-      '开启后「玩过什么」会在主记忆留痕并可调取游戏库详情；关闭则游戏过程只存在独立游戏库，不混入生活记忆。';
-
-  @override
-  String get flagGameAiAutoplayTitle => 'AI 自动回合';
-
-  @override
-  String get flagGameAiAutoplayHint => '轮到 AI 角色时自动行动，无需手动点下一步。';
-
-  @override
-  String get flagGameAiAutoplayDetail => '默认开以保证流程顺畅；关闭后每步 AI 行动需手动推进，主要用于调试。';
-
-  @override
   String get flagLifeLoopEnabledTitle => '生活循环主开关';
 
   @override
@@ -6757,15 +6639,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get flagLifeLoopEnabledDetail => '关闭后角色的自主生活循环停止；你离线时也不再推进其生活。';
-
-  @override
-  String get flagLifeLoopVisibleTitle => '生活行为对外可见';
-
-  @override
-  String get flagLifeLoopVisibleHint => '允许自主生活产生面向你可见的输出（动态、分享等）。';
-
-  @override
-  String get flagLifeLoopVisibleDetail => '关闭后生活行为只在后台记录，不向你展示。';
 
   @override
   String get flagLifeLoopLlmTitle => '生活文案生成';
@@ -6902,24 +6775,6 @@ class AppLocalizationsZh extends AppLocalizations {
       'B1②：默认关；开=扩充节点降权 0.9、受 token 配额与 5 轮去重约束，不绕过预算。';
 
   @override
-  String get flagRecallTop5Title => '主路召回 5 条';
-
-  @override
-  String get flagRecallTop5Hint => '记忆主路召回出口由 3 条扩到 5 条（M1-S1）。';
-
-  @override
-  String get flagRecallTop5Detail => '关=回退旧的 3 条出口。';
-
-  @override
-  String get flagRecallDiversifyTitle => '类型多样性重排';
-
-  @override
-  String get flagRecallDiversifyHint => '召回结果按类型均衡后再截断，避免清一色同一类记忆。';
-
-  @override
-  String get flagRecallDiversifyDetail => 'S1：每类先取 2 条一轮再按原序补齐；关=纯按分数截断。';
-
-  @override
   String get flagMemoryTieredDecayTitle => '记忆分层衰减';
 
   @override
@@ -6958,6 +6813,17 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get flagMemorySupersedeDetail =>
       '#70 方案C：默认关（误取代比不取代更伤）；开=SQLite+Chroma 双通道按状态分流。';
+
+  @override
+  String get flagCurrentFactsActiveOnlyTitle => '现状面只用现行记忆';
+
+  @override
+  String get flagCurrentFactsActiveOnlyHint =>
+      '注入的「现状/近况」只取当前有效的记忆，旧现状不再冒充新事实。';
+
+  @override
+  String get flagCurrentFactsActiveOnlyDetail =>
+      '开（默认）：现状/事实注入面恒只取现行记忆，旧记忆即使被召回也会标成「往事/已过时」并统一降权；怀旧/复习面仍能看到旧往事。关 = 一键回退旧行为。';
 
   @override
   String get flagMarkerRecoveryTitle => '标记截断保底';
@@ -7017,7 +6883,18 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get flagGlobalUserFactsDetail =>
-      'B1④ 总开关：默认关；开=GPS/对话写入 user_facts 并注入 [USER NOW] 分区；关=不写不读。';
+      '总开关（默认关）。开启后，系统会从对话与 GPS 抽取你的近况（位置、工作、居住、近期目标等），写入 user_facts 并在你所有角色之间共享；感情与健康两类不受这个开关影响，需要单独开启。';
+
+  @override
+  String get flagUserCurrentLocationShareTitle => '位置共享（跨角色）';
+
+  @override
+  String get flagUserCurrentLocationShareHint =>
+      '把你的权威位置共享给所有角色，低活跃角色不再停留在旧地点。';
+
+  @override
+  String get flagUserCurrentLocationShareDetail =>
+      '默认开：只共享「位置」这一类低敏权威值，用于现状/近况注入与主动消息；感情、健康等敏感类别不受此项影响，仍需单独开启。关 = 不共享位置。';
 
   @override
   String get flagCrossCharFactSyncTitle => '跨角色事实对齐';
@@ -7184,4 +7061,411 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get gameAchievementsAll => '全部游戏';
+
+  @override
+  String get flagAgentLoopGroupChatTitle => '群聊认知循环';
+
+  @override
+  String get flagAgentLoopGroupChatHint => '群聊中让 AI 角色参与统一的认知循环（理解/记忆/规划）。';
+
+  @override
+  String get flagAgentLoopGroupChatDetail =>
+      '开启后群聊消息也经统一 Runtime 处理，角色表现更连贯；关闭则群聊走旧链路。';
+
+  @override
+  String get flagAgentLoopSocialTitle => '社交循环';
+
+  @override
+  String get flagAgentLoopSocialHint => '朋友圈/评论互动等社交行为的统一认知循环。';
+
+  @override
+  String get flagAgentLoopSocialDetail => '开启后社交互动经统一 Runtime 并记录过程；关闭走旧链路。';
+
+  @override
+  String get flagAgentSocialLightContextTitle => '社交轻量上下文';
+
+  @override
+  String get flagAgentSocialLightContextHint => '社交场景注入轻量上下文，降低 token 占用。';
+
+  @override
+  String get flagAgentSocialLightContextDetail =>
+      '本机已显式开启；开启后社交回复携带精简上下文，高频角色保持全量；关闭则统一全量注入。';
+
+  @override
+  String get flagWeave3DTitle => '织库 3D 视图';
+
+  @override
+  String get flagWeave3DDetail => '前端画布真在读此开关；关闭则织库不展示 3D 视图，不影响其他功能。';
+
+  @override
+  String get flagProactiveInactiveCharSkipTitle => '静默角色免打扰';
+
+  @override
+  String get flagProactiveInactiveCharSkipHint => '近 24 小时无互动的角色不再主动搭话（09-08）。';
+
+  @override
+  String get flagProactiveInactiveCharSkipDetail =>
+      '减少打扰；开启后长时间未互动的角色跳过主动消息，其余角色照常。';
+
+  @override
+  String get flagProactiveStrategyPluginsTitle => '内容策略包外放';
+
+  @override
+  String get flagProactiveStrategyPluginsHint => '启用 X6 内容策略包（策略源让位 + 防双发）。';
+
+  @override
+  String get flagProactiveStrategyPluginsDetail =>
+      '注意：flag 开不等于生效——还需有已启用的策略插件接管该类别；当前仅启用 rhythm 一个策略包。未启用插件时此开关为空。';
+
+  @override
+  String get flagProactiveSegmentGuardTitle => '分块护栏';
+
+  @override
+  String get flagProactiveSegmentGuardHint => '过滤残句/空块并做现实校验（分块护栏）。';
+
+  @override
+  String get flagProactiveSegmentGuardDetail =>
+      '主动消息生成的分块经护栏校验后再发，过滤残缺内容与明显不现实的表述。';
+
+  @override
+  String get flagProactiveTopicGuardTitle => '主题熔断';
+
+  @override
+  String get flagProactiveTopicGuardHint => '同主题复读/催促收口（主题熔断）。';
+
+  @override
+  String get flagProactiveTopicGuardDetail =>
+      '防止短期内反复同一主题、过度催促；触发熔断时本轮不再重复该主题。';
+
+  @override
+  String get flagOutreachHourWindowV1Title => '投放时段窗';
+
+  @override
+  String get flagOutreachHourWindowV1Hint => '主动投放限制在 9–22 点之间。';
+
+  @override
+  String get flagOutreachHourWindowV1Detail =>
+      'outreach 三闸之一。注意：flag 开 + 命中灰度角色白名单（仅 char13）+ 比例桶 才真正生效，当前仅对灰度角色生效；非白名单角色无变化。';
+
+  @override
+  String get flagOutreachTypeMixV1Title => '投放类型配额';
+
+  @override
+  String get flagOutreachTypeMixV1Hint => '限制各类型主动消息比例，防止某类刷屏。';
+
+  @override
+  String get flagOutreachTypeMixV1Detail =>
+      'outreach 三闸之一。当前仅对灰度角色生效（flag 开 + 角色白名单 + 比例桶才真正生效）。';
+
+  @override
+  String get flagOutreachSessionRateV1Title => '会话级节流';
+
+  @override
+  String get flagOutreachSessionRateV1Hint => '单会话级别的主动消息节流（三闸之一）。';
+
+  @override
+  String get flagOutreachSessionRateV1Detail =>
+      'outreach 三闸之一。注意：本机未显式开启此键，运行时走代码默认 False；且 flag 即使开也仅对灰度角色（char13）生效。';
+
+  @override
+  String get flagPromiseSelfSideSplitTitle => '承诺按受益方分流';
+
+  @override
+  String get flagPromiseSelfSideSplitHint => '承诺按受益方分流，AI 自理的到点自述「我回来了」。';
+
+  @override
+  String get flagPromiseSelfSideSplitDetail =>
+      '开启后自洽类承诺由 AI 自行处理并在合适时机告知，减少不必要打扰。';
+
+  @override
+  String get flagTimerRenderSubjectFixTitle => '到期渲染话术修复';
+
+  @override
+  String get flagTimerRenderSubjectFixHint =>
+      '到期提醒按 (owner,type) 三套话术 + 现状锚点 + __SKIP__ 闸门。';
+
+  @override
+  String get flagTimerRenderSubjectFixDetail =>
+      '让到期/计时提醒更贴合上下文、避免重复；命中 __SKIP__ 闸门的内容不渲染。';
+
+  @override
+  String get flagLifeEventNoReplayTitle => '一次性生活动作不回放';
+
+  @override
+  String get flagLifeEventNoReplayHint => '一次性生活动作不进复习、不被高频复读。';
+
+  @override
+  String get flagLifeEventNoReplayDetail => '已发生的一次性生活事件只记录不重复推送，避免反复提醒同一件事。';
+
+  @override
+  String get flagLifeMemoryWriteRetryTitle => '生活写记忆加固';
+
+  @override
+  String get flagLifeMemoryWriteRetryHint => '生活写记忆加固（先提交释放锁 + 退避重试，纯加固）。';
+
+  @override
+  String get flagLifeMemoryWriteRetryDetail => '仅增强写入可靠性，不改变内容；失败自动重试，不影响既有记忆。';
+
+  @override
+  String get flagMemoryWriteReceiptTitle => '写入回执';
+
+  @override
+  String get flagMemoryWriteReceiptHint => '记忆写入回执（09-15）。';
+
+  @override
+  String get flagMemoryWriteReceiptDetail =>
+      '开启后每次记忆写入产生回执，便于确认写入成功与排查；关闭则无回执。';
+
+  @override
+  String get flagMemoryAdmissionGateTitle => '世界事实写入准入闸';
+
+  @override
+  String get flagMemoryAdmissionGateHint =>
+      'M4 world_facts 写入准入闸门（拦截/查重/矛盾裁决）。';
+
+  @override
+  String get flagMemoryAdmissionGateDetail =>
+      '开启后写入世界事实前做查重与矛盾裁决，提升事实一致性；关闭则直接写入。';
+
+  @override
+  String get flagMemoryUtilityFeedbackTitle => '召回效用反馈';
+
+  @override
+  String get flagMemoryUtilityFeedbackHint => '召回后效用反馈，回调 salience/衰减（09-16）。';
+
+  @override
+  String get flagMemoryUtilityFeedbackDetail =>
+      '根据用户对召回内容的实际反应回调显著性/衰减，优化后续召回；默认关，本机仍关。';
+
+  @override
+  String get flagWorkingStateInjectTitle => '工作记忆注入';
+
+  @override
+  String get flagWorkingStateInjectHint => 'M3-b：把工作记忆注入到回复上下文。';
+
+  @override
+  String get flagWorkingStateInjectDetail =>
+      '注入为灰度阶段。注意：即使本键关着，灰度角色 char13 仍有约 15% 会话注入（代码常量灰度，非 runtime flag 可控）；当前仅对灰度角色生效。';
+
+  @override
+  String get flagReviewExcludeExpiredPlanTitle => '复习排除过期计划';
+
+  @override
+  String get flagReviewExcludeExpiredPlanHint => 'L1：复习选片排除过期计划/瞬时状态。';
+
+  @override
+  String get flagReviewExcludeExpiredPlanDetail =>
+      '复习不再挑入已经过期或仅瞬时有效的计划，减少无效复习。';
+
+  @override
+  String get flagReviewReinforceEventCapTitle => '事件强化上限';
+
+  @override
+  String get flagReviewReinforceEventCapHint => 'L2：一次性事件强化按 tense 分流收口 + 上限。';
+
+  @override
+  String get flagReviewReinforceEventCapDetail =>
+      '防止一次性事件被过度强化；按时态分流并设上限，保持复习质量。';
+
+  @override
+  String get flagReviewReminisceFrameworkTitle => '回忆框架';
+
+  @override
+  String get flagReviewReminisceFrameworkHint => 'L3：复习提示改「回忆框架」+ 时态口吻 + 现状锚点。';
+
+  @override
+  String get flagReviewReminisceFrameworkDetail =>
+      '复习以更自然的「回忆」口吻呈现，带时态与现状锚点，体验更连贯。';
+
+  @override
+  String get flagReviewPlanExpireStaleTitle => '过期计划置 stale';
+
+  @override
+  String get flagReviewPlanExpireStaleHint => 'L4：每日维护把过期计划自动置 stale。';
+
+  @override
+  String get flagReviewPlanExpireStaleDetail =>
+      '每日维护扫描计划，过期的自动标记 stale，不再被当作现行安排。';
+
+  @override
+  String get flagReviewPlanValidityExtractTitle => '计划有效期提取';
+
+  @override
+  String get flagReviewPlanValidityExtractHint => 'L4：提取/写入侧给计划写 valid_to。';
+
+  @override
+  String get flagReviewPlanValidityExtractDetail =>
+      '在计划提取与落库时补充有效期限 valid_to，为后续过期判定提供依据。';
+
+  @override
+  String get flagUserFactLocationTitle => '位置/城市槽';
+
+  @override
+  String get flagUserFactLocationHint => '抽取位置/城市近况（GPS + 聊天归槽）。';
+
+  @override
+  String get flagUserFactLocationDetail =>
+      '跨角色用户事实细槽之一：位置/城市。总闸开启时本槽随之启用，也可以单独开启。';
+
+  @override
+  String get flagUserFactJobTitle => '工作/学业槽';
+
+  @override
+  String get flagUserFactJobHint => '抽取工作/学业近况。';
+
+  @override
+  String get flagUserFactJobDetail => '跨角色用户事实细槽之一：工作/学业。总闸开启时本槽随之启用，也可以单独开启。';
+
+  @override
+  String get flagUserFactRelationshipTitle => '感情状态槽（隐私）';
+
+  @override
+  String get flagUserFactRelationshipHint => '抽取感情/恋爱状态近况（隐私）。';
+
+  @override
+  String get flagUserFactRelationshipDetail =>
+      '跨角色用户事实细槽之一：感情状态，属敏感隐私。不受总闸影响，必须单独开启；开启后会和其他事实一样在你所有角色之间共享。';
+
+  @override
+  String get flagUserFactLivingTitle => '居住状况槽';
+
+  @override
+  String get flagUserFactLivingHint => '抽取居住状况（独居/和谁住）。';
+
+  @override
+  String get flagUserFactLivingDetail =>
+      '跨角色用户事实细槽之一：居住状况。总闸开启时本槽随之启用，也可以单独开启。';
+
+  @override
+  String get flagUserFactGoalStateTitle => '近期目标状态槽';
+
+  @override
+  String get flagUserFactGoalStateHint => '抽取近期目标/状态近况。';
+
+  @override
+  String get flagUserFactGoalStateDetail =>
+      '跨角色用户事实细槽之一：近期目标/状态。总闸开启时本槽随之启用，也可以单独开启。';
+
+  @override
+  String get flagUserFactHealthTitle => '健康槽（隐私）';
+
+  @override
+  String get flagUserFactHealthHint => '抽取健康近况（隐私）。';
+
+  @override
+  String get flagUserFactHealthDetail =>
+      '跨角色用户事实细槽之一：健康，属敏感隐私。不受总闸影响，必须单独开启；开启后会和其他事实一样在你所有角色之间共享。';
+
+  @override
+  String get flagChannelBindingV2Title => '渠道绑定 v2';
+
+  @override
+  String get flagChannelBindingV2Hint => '渠道绑定 v2（MCP/抖音/微信按主账号独立绑定）。';
+
+  @override
+  String get flagChannelBindingV2Detail =>
+      '文档曾称已转正，但代码硬编码默认仍是 False，当前靠本机 runtime_flags 覆盖为 ON；换机/重建库若无此覆盖则回退为关。';
+
+  @override
+  String get flagDomainEventLogEnabledTitle => '领域事件流水';
+
+  @override
+  String get flagDomainEventLogEnabledHint => '开启领域事件（domain event）流水写入。';
+
+  @override
+  String get flagDomainEventLogEnabledDetail =>
+      '把系统关键事件写入事件流水，便于审计与排查；关闭则不再记录。';
+
+  @override
+  String get flagDomainEventRetentionDaysTitle => '事件保留天数';
+
+  @override
+  String get flagDomainEventRetentionDaysHint => '领域事件保留天数，0=永久（数字型）。';
+
+  @override
+  String get flagDomainEventRetentionDaysDetail =>
+      '为数字型键，热切通道只支持布尔，无法通过开关页调整（不可热切，需改配置/代码）；0 表示永久保留。';
+
+  @override
+  String get flagGroupCognitionV2Title => '群聊认知升级';
+
+  @override
+  String get flagGroupCognitionV2Hint => '#72 群聊认知升级（P1/P2 已合，P3/P4 待拆）。';
+
+  @override
+  String get flagGroupCognitionV2Detail =>
+      '升级群聊认知处理；还需群级 chat_groups.cognition_enabled 二次门控才对具体群生效。';
+
+  @override
+  String get flagGroupMemoryCompactTitle => '群记忆日终合并';
+
+  @override
+  String get flagGroupMemoryCompactHint => '#72 P5：>7 天群记忆日终合并为 1 条摘要、旧行软删。';
+
+  @override
+  String get flagGroupMemoryCompactDetail =>
+      '降低长群记忆存储与注入成本；开启后老旧群记忆合并为摘要，原始行软删除。';
+
+  @override
+  String get flagAgentTraceSchedulerOnlyExecutedTitle => '计划仅记已执行';
+
+  @override
+  String get flagAgentTraceSchedulerOnlyExecutedHint =>
+      'R1：未触发的主动任务不再写 task_logs（止血写放大）。';
+
+  @override
+  String get flagAgentTraceSchedulerOnlyExecutedDetail =>
+      '仅记录真实触发的计划，减少无谓日志；关闭则旧行为全量写日志。';
+
+  @override
+  String get flagAgentTraceSchedulerMarkExecErrorTitle => '执行失败记 error';
+
+  @override
+  String get flagAgentTraceSchedulerMarkExecErrorHint =>
+      'R1：真执行失败记 status=error（而非 blocked）。';
+
+  @override
+  String get flagAgentTraceSchedulerMarkExecErrorDetail =>
+      '更准确标记执行结果，便于排查；关闭则失败可能被记为 blocked。';
+
+  @override
+  String get flagMcpStreamDeclarationsTitle => '流式 MCP 声明';
+
+  @override
+  String get flagMcpStreamDeclarationsHint =>
+      'R3：流式会话也注入 MCP 工具声明（依赖 #59 流尾 tool_result）。';
+
+  @override
+  String get flagMcpStreamDeclarationsDetail => '让流式回复也能带 MCP 工具声明；关闭则流式路径不注入。';
+
+  @override
+  String get flagAgentToolExecTraceTitle => '工具执行落日志';
+
+  @override
+  String get flagAgentToolExecTraceHint =>
+      'R5：插件/内置工具每次执行落 task_logs（MCP 工具不落，避免双记）。';
+
+  @override
+  String get flagAgentToolExecTraceDetail =>
+      '记录工具真实执行轨迹；MCP 工具不重复记录以防双记；关闭则只记录部分。';
+
+  @override
+  String get flagGroupProactivePacing => '主动投放节制（B1）';
+
+  @override
+  String get flagGroupReviewRecall => '主动复习与回忆化（H）';
+
+  @override
+  String get flagGroupChannelGroup => '渠道绑定与群认知';
+
+  @override
+  String get flagGroupToolTrace => '工具轨迹治理';
+
+  @override
+  String flagNumericValue(Object value) {
+    return '当前值：$value';
+  }
+
+  @override
+  String get flagNumericReadOnly => '该开关为数值型，暂不支持在 App 内热改';
 }

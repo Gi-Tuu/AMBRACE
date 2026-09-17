@@ -403,13 +403,11 @@ def _describe_idle(idle_minutes: int | None, hours_idle: int) -> str:
 
 
 async def _load_recent_reflection(character_id: int | None) -> str:
-    """反思驱动（Phase J/P1，2026-08-16）：最近一条每日复盘（ai_reflection）注入文本；无/flag 关返回空串。"""
+    """反思驱动（Phase J/P1，2026-08-16）：最近一条每日复盘（ai_reflection）注入文本；曾为灰度开关 agent_reflection_inject，2026-09-17 固化常开（恒注入，无复盘则返回空串）。"""
     if not character_id:
         return ""
+    # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：最近复盘恒注入
     try:
-        from app.agent import loop as _loop
-        if not _loop.AGENT_FLAGS.get("agent_reflection_inject", True):
-            return ""
         from sqlalchemy import select as _sa_sel
         from app.models.memory import Memory
         from app.db.database import async_session_factory
@@ -462,6 +460,29 @@ async def _load_scene_facts(user_id: int | None) -> str:
     except Exception:
         pass
     return "\n".join(parts)
+
+
+async def _load_authoritative_user_location(user_id: int | None) -> str:
+    """用户权威位置（2026-09-17 批次二任务2.3）：user_facts 共享 location。
+
+    主动消息是最易「用旧现状续写」的通道：生成器必须引用权威位置，而不是靠相似记忆检索出的
+    旧碎片（生产实证：DeepSeek 8/18→9/13 数十条「轩在长沙」，用户 8 月底已回湛江）。
+    位置槽走独立开关 user_current_location_share（默认开、不吃细槽总闸）。
+    无权威值 → 空串（调用方据此不注入，零行为差异）。
+    """
+    if not user_id:
+        return ""
+    try:
+        from app.memory.user_facts import get_authoritative_user_location
+        loc = (await get_authoritative_user_location(user_id) or "").strip()
+    except Exception:
+        return ""
+    if not loc:
+        return ""
+    return (
+        f"用户当前权威位置：{loc}（以此为准；不得写用户在其他城市，"
+        "旧记忆里的其他地点一律按过去处理）。"
+    )
 
 
 async def generate_proactive_event(
@@ -609,13 +630,17 @@ async def generate_proactive_event(
                 _mem_lines = []
                 for _m in mems:
                     # X-1（2026-08-18）：与主链路共用公共格式化函数（max_len=80）；
-                    # 仅传既有字段（content/created_at/epistemic_status），不传 reliability_score/
-                    # contradiction_count，避免引入主链路才有的 UNVERIFIED/纠正后缀（行为等价替换）
+                    # 不传 reliability_score/contradiction_count（避免引入主链路才有的 UNVERIFIED/纠正后缀）。
+                    # 2026-09-17 批次一（任务2/3）：补 status/type/sub_type——主动消息是最易「用旧现状续写」的
+                    # 通道，必须让 stale 行带［往事/已过时］前缀、天然已发生来源带［往事］。
                     _line = format_memory_line(
                         {
                             "content": _m.get("content") or "",
                             "created_at": _m.get("created_at"),
                             "epistemic_status": _m.get("epistemic_status"),
+                            "status": _m.get("status"),
+                            "memory_type": _m.get("type"),
+                            "sub_type": _m.get("sub_type"),
                         },
                         max_len=80,
                     )
@@ -641,12 +666,17 @@ async def generate_proactive_event(
             mems = await search_memories(character_id, query=_mem_query, limit=3)
             _mem_lines = []
             for _m in mems:
-                # format_memory_line 已带 [记录于 YYYY-MM-DD]，确保远期记忆带真实日期，不再谎称"近期"
+                # format_memory_line 已带 [记录于 YYYY-MM-DD]，确保远期记忆带真实日期，不再谎称"近期"。
+                # 2026-09-17 批次一（任务2/3）：补 status/type/sub_type，让 stale 行带［往事/已过时］、
+                # 天然已发生来源带［往事］（主动消息不得把旧现状当现行事实续写）。
                 _line = format_memory_line(
                     {
                         "content": _m.get("content") or "",
                         "created_at": _m.get("created_at"),
                         "epistemic_status": _m.get("epistemic_status"),
+                        "status": _m.get("status"),
+                        "memory_type": _m.get("type"),
+                        "sub_type": _m.get("sub_type"),
                     },
                     max_len=80,
                 )
@@ -671,7 +701,8 @@ async def generate_proactive_event(
     # 批次四（2026-09-16）：当前场景事实（flag proactive_segment_guard 开才取；关=直接空串零开销）。
     # 现状锚点已在别处注入，这里补 user_facts.slot='location' 与用户作息（活跃时段），
     # 一并用于生成后的住校/家庭场景轻量校验。
-    user_profile, persona_extra, weather_line, check_in_line, recent_memories, reflection_line, state_anchor, scene_facts = (
+    (user_profile, persona_extra, weather_line, check_in_line, recent_memories, reflection_line,
+     state_anchor, scene_facts, user_loc_line) = (
         await _asyncio.gather(
             _load_user_profile(),
             _load_persona_extra(),
@@ -681,10 +712,13 @@ async def generate_proactive_event(
             _load_recent_reflection(character_id),
             _load_current_state_anchor(),
             _load_scene_facts(user_id),
+            # 批次二任务2.3/2.4：权威用户现状无条件前置拉取（低活跃角色同样覆盖，不依赖
+            # 该角色自己的旧记忆/相似检索），供 prompt 与生成后一致性校验共用。
+            _load_authoritative_user_location(user_id),
         )
     )
-    # 现实约束校验用场景文本：现状锚点（含 location/living 槽）+ location 事实 + 作息
-    scene_text = "\n".join(b for b in (state_anchor, scene_facts) if b)
+    # 现实约束校验用场景文本：现状锚点（含 location/living 槽）+ location 事实 + 作息 + 权威位置
+    scene_text = "\n".join(b for b in (state_anchor, scene_facts, user_loc_line) if b)
 
     # 注入当前状态与关系（保持事件连贯，避免与私聊状态矛盾）
     status_line = f"你当前的状态：{current_status}" if current_status else ""
@@ -708,6 +742,8 @@ async def generate_proactive_event(
         prompt += f"{check_in_line}\n"
     if user_profile:
         prompt += f"\n好友画像（用于区分你和好友的身份，不要混淆）：\n{user_profile}\n"
+    if user_loc_line:  # 批次二任务2.3：权威用户位置先声明（与旧记忆块一正一反）
+        prompt += user_loc_line + "\n"
     if state_anchor:  # C3：先声明「TA 现在怎样」，紧接着的记忆块带［往事］标签，一正一反
         prompt += state_anchor
     # 批次四（2026-09-16，flag 开）：生成前注入当前场景事实 + 现实约束（禁止与用户现状冲突的家庭场景）
@@ -847,11 +883,30 @@ async def generate_proactive_event(
         # B1-③（方案 §5.3d）：计划要求抛回问题但生成结果没有 → 与自然度低分相同的"追加修正重试一次"
         need_question = bool((outreach_plan or {}).get("must_return_question"))
         no_question = need_question and not _has_invitation("".join(segments))
-        if ok and not nat_low and not no_question and not _reality_conflict:
+        # 批次二任务2.3（现状一致性校验）：把用户写到权威位置以外的城市 → 同分数不足一样重试一次
+        _loc_conflict = None
+        if user_loc_line:
+            try:
+                from app.memory.location_guard import location_conflict as _loc_conflict_fn
+                _loc_conflict = _loc_conflict_fn("".join(segments), user_loc_line)
+            except Exception:
+                _loc_conflict = None
+        if ok and not nat_low and not no_question and not _reality_conflict and not _loc_conflict:
             break
         segments = cleaned or segments
         if attempt == 0:
-            if _reality_conflict:
+            if _loc_conflict:
+                _auth_city = ""
+                try:
+                    from app.memory.location_guard import authoritative_city
+                    _auth_city = authoritative_city(user_loc_line) or ""
+                except Exception:
+                    _auth_city = ""
+                _hint = (
+                    f"上一条输出与用户的真实位置冲突（用户现在在{_auth_city or 'TA 的常住地'}，"
+                    f"不要写他在{_loc_conflict}）。请按权威位置重新生成，直接输出最终内容，不要解释。"
+                )
+            elif _reality_conflict:
                 _hint = (
                     "上一条输出与 TA 当前的真实场景冲突（如 TA 住校、宿舍没有厨房，"
                     "就不要写「锅里给你留着」「回家吃饭」这类家庭场景）。请按 TA 的真实场景重新生成，"
@@ -879,6 +934,26 @@ async def generate_proactive_event(
                          len(_conf_left), character_id or 0)
         if not segments:
             segments = ["……"]
+    # 批次二任务2.3（发送前现状一致性校验）：两轮后仍把用户写到别的城市 → 丢弃冲突段；
+    # 全冲突则整条不发（宁可少发一条，也绝不把错误现状当此刻事实发出去）。
+    if user_loc_line:
+        try:
+            from app.memory.location_guard import location_conflict as _loc_conflict_final
+            _kept_segs = [s for s in segments if not _loc_conflict_final(s, user_loc_line)]
+            if len(_kept_segs) != len(segments):
+                _logger.info("Proactive location guard: %d segment(s) dropped char=%s",
+                             len(segments) - len(_kept_segs), character_id)
+            if not _kept_segs:
+                try:
+                    from app.memory.observability import obs_event
+                    obs_event(character_id, "proactive_location_conflict_dropped",
+                              {"authoritative": user_loc_line[:60]})
+                except Exception:
+                    pass
+                return [] if not return_reasoning else ([], last_reasoning)
+            segments = _kept_segs
+        except Exception:
+            pass
     # 批次四任务 3（2026-09-16，P1-5）：思考口径统一——主动链路 reasoning 与普通聊天
     # （nodes 挡位 2 / response_parser 挡位 1）走同一条上屏归一管线：第一人称内心独白，
     # 元话语黑名单（策略/长度/我决定加图/本轮提醒/规则说…）与提示词回声整句剔除。

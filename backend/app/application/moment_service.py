@@ -115,6 +115,21 @@ async def build_moment_prompt(char, extra_hint: str = "") -> str:
     except Exception:
         weather_line = ""
 
+    # 批次二任务2.3：用户权威位置（共享 location 槽，默认开、不吃细槽总闸）——
+    # 朋友圈是最易把用户旧位置当现状写回的通道（生产实证：8/18→9/13 数十条「轩在长沙」），
+    # 生成器必须引用权威 user_facts.location，而不是靠相似记忆检索出的旧碎片。
+    user_loc_line = ""
+    try:
+        from app.memory.user_facts import get_authoritative_user_location
+        _loc = (await get_authoritative_user_location(char.user_id or 1) or "").strip()
+        if _loc:
+            user_loc_line = (
+                f"用户当前权威位置：{_loc}（以此为准；不得写用户在其他城市，"
+                "旧记忆里的其他地点一律按过去处理）。"
+            )
+    except Exception:
+        user_loc_line = ""
+
     return (
         f"你是{char.name}，请在朋友圈发一条文字动态。\n"
         f"你的性格：{char.personality or ''}\n"
@@ -124,7 +139,8 @@ async def build_moment_prompt(char, extra_hint: str = "") -> str:
         + f"你当前的状态：{status}\n"
         f"你和用户的关系：{relation_line or '普通朋友'}\n"
         f"用户画像（不要混淆你和用户的身份）：{user_profile or '用户昵称: 用户'}\n"
-        f"最近和用户的聊天：\n{recent_chat or '（暂无）'}\n"
+        + (f"{user_loc_line}\n" if user_loc_line else "")
+        + f"最近和用户的聊天：\n{recent_chat or '（暂无）'}\n"
         f"你上一条朋友圈：{last_moment or '（暂无）'}\n"
         f"{pets_line}"
         "\n"
@@ -194,9 +210,36 @@ async def publish_moment(character_id: int, skip_interval: bool = False, extra_h
                     return None
 
     # 生成内容
-    content = await _generate_moment_content(await build_moment_prompt(char, extra_hint), char.name)
+    _moment_prompt = await build_moment_prompt(char, extra_hint)
+    content = await _generate_moment_content(_moment_prompt, char.name)
     if not content or len(content) < 5:
         return None
+    # 批次二任务2.3（写入前现状一致性校验）：拟写内容与权威 location 冲突（把用户写到别的城市）
+    # → 带修正要求重生成一次；仍冲突则不发布（绝不把错误现状写成 moment/记忆回灌检索）。
+    _auth_loc = ""
+    try:
+        from app.memory.user_facts import get_authoritative_user_location
+        _auth_loc = (await get_authoritative_user_location(char.user_id or 1) or "").strip()
+    except Exception:
+        _auth_loc = ""
+    if _auth_loc:
+        try:
+            from app.memory.location_guard import location_conflict as _loc_conflict
+            _conflict = _loc_conflict(content, _auth_loc)
+            if _conflict:
+                _logger.info("Moment location conflict char=%d: %s vs authoritative %.40s",
+                             character_id, _conflict, _auth_loc)
+                content = await _generate_moment_content(
+                    _moment_prompt
+                    + f"\n注意：上一条草稿把用户写到了{_conflict}，与权威位置冲突；"
+                      f"用户现在在{_auth_loc}，请重写，不要写用户在其他城市。",
+                    char.name,
+                )
+                if not content or len(content) < 5 or _loc_conflict(content, _auth_loc):
+                    _logger.info("Moment dropped: location conflict persists char=%d", character_id)
+                    return None
+        except Exception:
+            pass
 
     async with async_session_factory() as db:
         moment = AIMoment(

@@ -15,6 +15,12 @@ bootstrap 亦未固化 anger 列，远古库（有 control 无 anger）依赖此
 """
 from app.config import settings
 from app.db.engine import engine
+from app.utils.logger import get_logger
+
+# P3-12（2026-09-17）：本文件原有 12 处 print 改为 logging（启动期迁移/种子/回填日志统一进 app.log，
+# 并随时间轮转；print 在服务化部署里无级别、无落地、无法过滤）。
+_logger = get_logger("db.init_db")
+
 # P1-1 一次性迁移哨兵（2026-08-27 用户拍板全量开启）：
 # 存量 0→1 只执行一次，之后用户手动关闭的角色开关不会被重启重置。
 _MIGRATION_LIFE_V2_FLAGS = "migration_life_v2_flags_20260827"
@@ -74,7 +80,7 @@ async def init_db():
         # 初始化关系数据：默认关系类型为朋友（对象关系由用户在"关系网"页面自行设置）
         if "relation_type" in await _table_cols(conn, "ai_characters"):
             await conn.execute(sa_text("UPDATE ai_characters SET relation_type='朋友' WHERE relation_type IS NULL"))
-            print("[migrate] relationships initialized")
+            _logger.info("[migrate] relationships initialized")
 
         # plugin_stores 表：插件命名空间 KV（48a 桥 API store.set/get；幂等创建，存量库自动补建）
         await conn.execute(sa_text(
@@ -89,7 +95,7 @@ async def init_db():
             "  UNIQUE(plugin_name, user_id, key)"
             ")"
         ))
-        print("[migrate] plugin_stores ensured")
+        _logger.info("[migrate] plugin_stores ensured")
 
         # 存量回填：遗忘起点 = decay_base_at（无则 created_at）；S 按旧 importance 反推（幂等：只填 NULL）
         _mem_cols = await _table_cols(conn, "memories")
@@ -119,7 +125,7 @@ async def init_db():
                 "'+' || CAST(ROUND(strength_days) AS INTEGER) || ' days') "
                 "WHERE next_review_at IS NOT NULL AND typeof(next_review_at) != 'text'"
             ))
-            print("[migrate] memories forgetting-curve backfill done")
+            _logger.info("[migrate] memories forgetting-curve backfill done")
 
         # #46 主账号管理（选择型）：is_admin 一次性种子（幂等；加列已由 bootstrap 承接）
         # 仅在表中尚无任何 is_admin=1 时，从 settings.admin_user_ids（env）写入，避免覆盖 UI 管理结果
@@ -144,10 +150,10 @@ async def init_db():
                     _first = (await conn.execute(sa_text("SELECT MIN(id) FROM users"))).scalar()
                     if _first:
                         await conn.execute(sa_text(f"UPDATE users SET is_admin = 1 WHERE id = {int(_first)}"))
-                        print(f"[migrate] users.is_admin seeded to first user id={_first}")
+                        _logger.info("[migrate] users.is_admin seeded to first user id=%s", _first)
                 else:
                     await conn.execute(sa_text(f"UPDATE users SET is_admin = 1 WHERE id IN ({','.join(_seed_ids)})"))
-                    print(f"[migrate] users.is_admin seeded from env ADMIN_USER_IDS={settings.admin_user_ids}")
+                    _logger.info("[migrate] users.is_admin seeded from env ADMIN_USER_IDS=%s", settings.admin_user_ids)
 
         # #68 修订（2026-08-28）：is_admin 与 parent_id 一致性（幂等自愈）
         # 独立主账号（parent_id IS NULL）→ is_admin=1；子账号（parent_id IS NOT NULL）→ is_admin=0。
@@ -160,7 +166,7 @@ async def init_db():
             await conn.execute(sa_text(
                 "UPDATE users SET is_admin = 0 WHERE parent_id IS NOT NULL AND is_admin = 1"
             ))
-            print("[migrate] users.is_admin/parent_id consistency ensured")
+            _logger.info("[migrate] users.is_admin/parent_id consistency ensured")
 
         # pets 归属标签（2026-08-07）：存量用户宠物显式标 owner_type='user'（AI 养宠 Phase 3 预留字段落地）
         if "owner_type" in await _table_cols(conn, "pets"):
@@ -168,7 +174,7 @@ async def init_db():
                 "UPDATE pets SET owner_type = 'user', owner_id = user_id "
                 "WHERE owner_type IS NULL OR owner_type = ''"
             ))
-            print("[migrate] pets.owner_type backfilled ('user' for legacy)")
+            _logger.info("[migrate] pets.owner_type backfilled ('user' for legacy)")
 
         # character_states：控制力 control 列 -> 怒气值 anger（2026-08-05，语义方向反转：anger=100-control）
         # 例外保留的结构迁移：版本链无等价改名迁移、bootstrap 未固化 anger 列，
@@ -177,7 +183,7 @@ async def init_db():
         if "anger" not in _sc_cols and "control" in _sc_cols:
             await conn.execute(sa_text("ALTER TABLE character_states RENAME COLUMN control TO anger"))
             await conn.execute(sa_text("UPDATE character_states SET anger = 100 - anger"))
-            print("[migrate] character_states.control -> anger (value inverted)")
+            _logger.info("[migrate] character_states.control -> anger (value inverted)")
 
         # character_states 最近互动时间回填（疲劳休息判定用；幂等：只填 NULL；
         # drift 写库会刷新 updated_at，故单独一列、只补历史空值不覆盖现值）
@@ -185,7 +191,7 @@ async def init_db():
             await conn.execute(sa_text(
                 "UPDATE character_states SET last_activity_at = updated_at WHERE last_activity_at IS NULL"
             ))
-            print("[migrate] character_states.last_activity_at backfilled (=updated_at, NULL only)")
+            _logger.info("[migrate] character_states.last_activity_at backfilled (=updated_at, NULL only)")
 
         # 旧数据 importance 按 1-5 迁移为百分比（×20，上限 120%）
         if "decay_base_at" in _mem_cols:
@@ -193,7 +199,7 @@ async def init_db():
             if one and one > 0:
                 await conn.execute(sa_text("UPDATE memories SET importance = importance * 20 WHERE importance <= 5 AND is_archived = 0"))
                 await conn.execute(sa_text("UPDATE memories SET decay_base_at = created_at WHERE decay_base_at IS NULL"))
-                print(f"[migrate] memories.importance scaled to pct (rows={one})")
+                _logger.info("[migrate] memories.importance scaled to pct (rows=%s)", one)
 
         # P1-1（2026-08-27 用户拍板全量开启）：老角色认知循环/记忆 v2.1 开关从默认关迁移为默认开。
         await _migrate_ai_character_loop_flags(conn)
@@ -213,7 +219,7 @@ async def init_db():
                 "(platform, visibility, relationship_level, memory_access, tone, content_style, enabled) VALUES "
                 + ", ".join(_seed_rows)
             ))
-            print(f"[migrate] platform_profiles seeded (app + {len(_ch_names)} channels)")
+            _logger.info("[migrate] platform_profiles seeded (app + %s channels)", len(_ch_names))
 
         # 高频表索引补充（审计 P1-05，2026-08-15）：消息/记忆/动态/评论/会话按查询路径建索引
         _idx_list = [
@@ -237,7 +243,7 @@ async def init_db():
         ]
         for _ix, _tb, _cols in _idx_list:
             await conn.execute(sa_text(f"CREATE INDEX IF NOT EXISTS {_ix} ON {_tb} ({_cols})"))
-        print("[migrate] high-frequency table indexes ensured")
+        _logger.info("[migrate] high-frequency table indexes ensured")
 
         # 人工 DDL 冻结基线：本文件所有「加列 / 改表 / 建索引」语句都只能出现在下方 FREEZE 哨兵之前。
         # 3.8 收敛后本文件手工加列语句已归零（CI 基准 86 只减不增，防回潮）；上述例外（control→anger

@@ -47,18 +47,58 @@ def _supersede_flag_on() -> bool:
         return False
 
 
+def _current_facts_flag_on() -> bool:
+    """2026-09-17 批次一（任务2）：现状/事实面新口径门控 current_facts_active_only（默认 True）。
+
+    延迟 import AGENT_FLAGS（避免顶层循环依赖 loop）；键未登记/读取异常按默认 True 处理
+    （与硬编码默认一致）。置 False = 一键回退旧行为（status 子句退回 memory_supersede 门控）。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("current_facts_active_only", True))
+    except Exception:
+        return True
+
+
+def _legacy_active_status_clause():
+    """旧口径（现状面新 flag 关时的回退）：memory_supersede 门控，关=永真，与改造前逐字节一致。"""
+    if not _supersede_flag_on():
+        return _sql_true()
+    return Memory.status == _ACTIVE
+
+
 def _retrievable_status_clause():
-    """检索可见集合 = {active, stale}（stale 在 rerank 降权）。flag 关返回永真，与现状逐字节一致。"""
+    """**怀旧/复习面**可见集合 = {active, stale}（stale 在 rerank 恒降权）。flag 关返回永真，与现状逐字节一致。
+
+    2026-09-17 批次一（任务2）：拆口径——本子句仍按 memory_supersede 门控且保留 stale（怀旧可见），
+    现状/事实注入面请改用 ``current_facts_status_clause()``（恒 active）。
+    """
     if not _supersede_flag_on():
         return _sql_true()
     return Memory.status.in_([_ACTIVE, _STALE])
 
 
-def _active_status_clause():
-    """无条件注入/展示/结算 = 仅 active。flag 关返回永真，与现状逐字节一致。"""
-    if not _supersede_flag_on():
-        return _sql_true()
+def current_facts_status_clause():
+    """现状/事实注入面：恒「仅 active」——stale/superseded/expired 一律不取。
+
+    2026-09-17 批次一（任务2）新增：不复用 memory_supersede（它是「怀旧可见性」门控且默认关，
+    拿它当现状面闸门会让旧现状与现行事实同分竞争——线上 DeepSeek/Dom 反复「你在长沙」的根因）。
+    current_facts_active_only（默认 True）开 = 恒 active；关 = 回退旧 _active_status_clause 语义。
+    """
+    if not _current_facts_flag_on():
+        return _legacy_active_status_clause()
     return Memory.status == _ACTIVE
+
+
+def _active_status_clause():
+    """既有调用点（衰减/评星/意义/去重/时间线/摘要/展示）= 只作用于当前有效记忆。
+
+    2026-09-17 批次一（任务2）：语义收紧为「恒 active」（与 current_facts_status_clause 同口径），
+    由 current_facts_active_only（默认 True）包住；关掉即回退旧行为（memory_supersede 门控）。
+    """
+    if _current_facts_flag_on():
+        return Memory.status == _ACTIVE
+    return _legacy_active_status_clause()
 
 
 def star_from_pct(pct: float) -> int:

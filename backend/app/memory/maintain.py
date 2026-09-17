@@ -11,9 +11,9 @@ from app.models.memory import Memory
 from app.memory.decay import retention_pct
 from app.memory.service import (
     S_DEFAULT,
-    _active_status_clause,
     _logger,
     _now_naive,
+    _retrievable_status_clause,
     star_from_pct,
 )
 
@@ -37,7 +37,9 @@ async def list_memories(
 
     now = _now_naive()
     async with async_session_factory() as db:
-        query = select(Memory).where(Memory.is_archived == False, _active_status_clause())
+        # 2026-09-17 批次一（任务2）：记忆列表是**管理/怀旧面**（用户要能看到旧记忆并按状态管理），
+        # 故维持 active+stale（不复用现状面「恒 active」新口径，避免旧记忆在列表里凭空消失）。
+        query = select(Memory).where(Memory.is_archived == False, _retrievable_status_clause())
         # M3-a（2026-09-01）：工作记忆行不进常规记忆列表（注入走 M1-c 预留分区，M3-b 另行灰度）
         if memory_type != "working_state":
             query = query.where(Memory.memory_type != "working_state")

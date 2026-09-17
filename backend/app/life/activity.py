@@ -501,6 +501,18 @@ async def _generate_content(db, user_id: int, character, name: str) -> tuple[str
     prompt = prompt + _RELATION_GUARD
     # 批次三 P0-5 止血(2026-09-16)：内容必须与当前空间相符（宿舍没厨房 → 不写做饭/等你回家）
     prompt = prompt + _space.space_guard(await _current_location(db, character.id))
+    # 批次二任务2.3（2026-09-17）：AI 生活内容同样引用用户权威位置，不得把用户写到别的城市
+    # （共享 location 槽，默认开、不吃细槽总闸；无权威值则不注入，零行为差异）。
+    try:
+        from app.memory.user_facts import get_authoritative_user_location
+        _u_loc = (await get_authoritative_user_location(user_id) or "").strip()
+        if _u_loc:
+            prompt = prompt + (
+                f"用户当前权威位置：{_u_loc}（以此为准；不得写用户在其他城市，"
+                "旧记忆里的其他地点一律按过去处理）。"
+            )
+    except Exception:
+        pass
     try:
         text = await chat_completion(
             messages=[

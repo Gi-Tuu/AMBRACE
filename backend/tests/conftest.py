@@ -104,7 +104,12 @@ def _init_test_schema():
     # 顶部引导已把 DATABASE_URL 指向会话沙箱库，init_db + 对齐 alembic 均作用其上
     asyncio.run(init_db())
     asyncio.run(ensure_alembic_revision())
-    # T5（2026-09-10）：插件表改由独立 plugin_metadata 管理，主 create_all 不再顺带建；
+    # T5（2026-09-10）：**渠道/第三方插件自带的业务表**（douyin_* / wechat_ilink_*，共 7 张）改由
+    # 独立 plugin_metadata 管理，主 metadata 的 create_all 不再顺带建它们——test_plugin_isolated_metadata
+    # 测的就是这一层（DOUYIN/WECHAT 集合与主 metadata 不相交、且只在 plugin_metadata）。
+    # ⚠️ 内核自有的 plugin_stores（插件命名空间 KV，app/models/plugin/__init__.py）**不属于**该剥离范围：
+    # 它一直在主 Base.metadata 里，主 create_all 照建（init_db 另有幂等 CREATE TABLE IF NOT EXISTS）。
+    # 不要把「插件表已剥离」误读成「主 metadata 不含任何 plugin_* 表」（P3-10 注释口径更正，2026-09-17）。
     # 会话库统一兜底一次（已加载到的渠道插件幂等建表；各测试 load_plugin_dir 内也会内联建，
     # 此处为「未显式加载插件却用到插件表」路径的保险）。
     from app.plugins import registry as _plugin_registry

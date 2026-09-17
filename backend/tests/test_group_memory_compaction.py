@@ -247,9 +247,11 @@ def test_migration_head_and_downgrade(mig_db):
     db_path = mig_db
     cfg = _alembic_cfg()
 
-    # 单头：链无分叉
-    assert _heads() == {_MY_REV}, (
-        f"期望单头 {_MY_REV}（#72 PR-C P5：group_memories 加 is_archived 归档列），实际 {_heads()}"
+    # 单头：链无分叉（不硬编码具体 revision——新增迁移后自动跟随；原硬编码 _MY_REV 在后续批次
+    # 新增迁移后会误报，b2c3d4e5f6a7 起已 stale）
+    heads = _heads()
+    assert len(heads) == 1, (
+        f"迁移链应单头无分叉（本批 _MY_REV={_MY_REV} 已不是链头），实际 {heads}"
     )
 
     # 建当前模型 schema（含 is_archived），再 stamp 到 head（生产即 init_db + stamp）

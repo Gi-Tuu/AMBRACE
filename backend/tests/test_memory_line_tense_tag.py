@@ -4,7 +4,7 @@
 背景：format_memory_line 被 6+ 处共用（主聊天分区/#70 分层/主动消息/persona/shared），
 原无时态标注，旧「去长沙」plan/「在长沙」episodic 被当现状续写（Sam 旧记忆窜回漏网通道）。
 本次：tense.py 兼容 dict（_g 取值器）+ format_memory_line 在 [记录于] 后插时态标签
-（flag memory_line_tense_tag 默认开）。本文件验证时态标签与极简 dict 不受误伤。
+（曾为 flag memory_line_tense_tag，2026-09-17 固化常开）。本文件验证时态标签与极简 dict 不受误伤。
 """
 from datetime import datetime
 
@@ -76,19 +76,18 @@ def test_enduring_恒久记忆_不加标签():
     assert "［往事］" not in line and "［计划］" not in line
 
 
-def test_flag关_回旧行():
-    """flag 关（memory_line_tense_tag=False）→ 无时态标签，逐字节回旧链路。"""
-    import app.agent.loop as loop_mod
-    from unittest.mock import patch
-    with patch.dict(loop_mod.AGENT_FLAGS, {"memory_line_tense_tag": False}):
-        line = format_memory_line({
-            "content": "要去长沙出差",
-            "created_at": datetime(2026, 8, 25),
-            "sub_type": "plan",
-            "memory_type": "event",
-            "valid_to": datetime(2026, 8, 26),
-        })
-    assert "［" not in line  # 无任何全角方括号时态标签
+def test_固化常开_恒加时态标签():
+    """memory_line_tense_tag 已固化常开（2026-09-17 用户拍板）：恒插时态标签，无 flag 短路。"""
+    from app.agent import loop as loop_mod
+    assert "memory_line_tense_tag" not in loop_mod.AGENT_FLAGS
+    line = format_memory_line({
+        "content": "要去长沙出差",
+        "created_at": datetime(2026, 8, 25),
+        "sub_type": "plan",
+        "memory_type": "event",
+        "valid_to": datetime(2026, 8, 26),
+    })
+    assert "［旧安排·已过期］" in line  # 固化常开：过期计划恒标旧安排
     assert "要去长沙出差" in line
 
 

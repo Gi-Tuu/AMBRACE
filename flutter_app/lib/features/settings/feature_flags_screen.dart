@@ -24,11 +24,18 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
   final Map<String, bool> _flags = {};
   final Map<String, String> _sources = {};
 
+  // 用户语义白名单（2026-09-17 开关瘦身批次）：直接可见；其余内部/运维开关收进折叠区
   static const List<String> _visibleKeys = [
+    'weave_3d',
     'agent_social_light_context',
     'agent_loop_group_chat',
     'agent_loop_social',
-    'weave_3d',
+    'global_user_facts',
+    'user_fact_location',
+    'user_current_location_share',
+    'user_fact_relationship',
+    'user_fact_health',
+    'proactive_outreach_v2',
   ];
 
   @override
@@ -70,51 +77,18 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
     }
   }
 
-  String _flagTitle(String key, AppLocalizations l10n) {
-    switch (key) {
-      case 'agent_social_light_context': return l10n.flagLightReply;
-      case 'agent_loop_group_chat': return l10n.flagGroupRuntime;
-      case 'agent_loop_social': return l10n.flagSocialRuntime;
-      case 'weave_3d': return l10n.flagWeave3D;
-      default: return key;
-    }
-  }
-
-  String _flagHint(String key, AppLocalizations l10n) {
-    switch (key) {
-      case 'agent_social_light_context': return l10n.flagLightReplyHint;
-      case 'agent_loop_group_chat': return l10n.flagGroupRuntimeHint;
-      case 'agent_loop_social': return l10n.flagSocialRuntimeHint;
-      case 'weave_3d': return l10n.flagWeave3DHint;
-      default: return l10n.flagAdvancedHint;
-    }
-  }
-
   /// 各高级开关的 l10n 文案（界面优先取此；catalog 中文仅作兜底）。
   /// 不依赖动态 key 查找（Flutter l10n 不支持），逐键静态映射。
   static final Map<String, FlagMeta Function(AppLocalizations)> _flagMetaL10n = {
     'agent_loop_chat': (l) => FlagMeta(title: l.flagAgentLoopChatTitle, short_: l.flagAgentLoopChatHint, detail: l.flagAgentLoopChatDetail),
-    'agent_loop_search': (l) => FlagMeta(title: l.flagAgentLoopSearchTitle, short_: l.flagAgentLoopSearchHint, detail: l.flagAgentLoopSearchDetail),
     'agent_loop_scheduler': (l) => FlagMeta(title: l.flagAgentLoopSchedulerTitle, short_: l.flagAgentLoopSchedulerHint, detail: l.flagAgentLoopSchedulerDetail),
-    'agent_tool_events': (l) => FlagMeta(title: l.flagAgentToolEventsTitle, short_: l.flagAgentToolEventsHint, detail: l.flagAgentToolEventsDetail),
     'agent_context_trim': (l) => FlagMeta(title: l.flagAgentContextTrimTitle, short_: l.flagAgentContextTrimHint, detail: l.flagAgentContextTrimDetail),
+    'current_facts_active_only': (l) => FlagMeta(title: l.flagCurrentFactsActiveOnlyTitle, short_: l.flagCurrentFactsActiveOnlyHint, detail: l.flagCurrentFactsActiveOnlyDetail),
     'agent_trace_group': (l) => FlagMeta(title: l.flagAgentTraceGroupTitle, short_: l.flagAgentTraceGroupHint, detail: l.flagAgentTraceGroupDetail),
-    'agent_daily_reflection': (l) => FlagMeta(title: l.flagAgentDailyReflectionTitle, short_: l.flagAgentDailyReflectionHint, detail: l.flagAgentDailyReflectionDetail),
-    'agent_reflection_inject': (l) => FlagMeta(title: l.flagAgentReflectionInjectTitle, short_: l.flagAgentReflectionInjectHint, detail: l.flagAgentReflectionInjectDetail),
-    'agent_daily_memory_maintenance': (l) => FlagMeta(title: l.flagAgentDailyMemoryMaintenanceTitle, short_: l.flagAgentDailyMemoryMaintenanceHint, detail: l.flagAgentDailyMemoryMaintenanceDetail),
     'proactive_naturalness_score': (l) => FlagMeta(title: l.flagProactiveNaturalnessScoreTitle, short_: l.flagProactiveNaturalnessScoreHint, detail: l.flagProactiveNaturalnessScoreDetail),
     'proactive_user_rhythm': (l) => FlagMeta(title: l.flagProactiveUserRhythmTitle, short_: l.flagProactiveUserRhythmHint, detail: l.flagProactiveUserRhythmDetail),
     'group_chat_games': (l) => FlagMeta(title: l.flagGroupChatGamesTitle, short_: l.flagGroupChatGamesHint, detail: l.flagGroupChatGamesDetail),
-    'game_undercover': (l) => FlagMeta(title: l.flagGameUndercoverTitle, short_: l.flagGameUndercoverHint, detail: l.flagGameUndercoverDetail),
-    'game_truth_or_dare': (l) => FlagMeta(title: l.flagGameTruthOrDareTitle, short_: l.flagGameTruthOrDareHint, detail: l.flagGameTruthOrDareDetail),
-    'game_twenty_q': (l) => FlagMeta(title: l.flagGameTwentyQTitle, short_: l.flagGameTwentyQHint, detail: l.flagGameTwentyQDetail),
-    'game_werewolf': (l) => FlagMeta(title: l.flagGameWerewolfTitle, short_: l.flagGameWerewolfHint, detail: l.flagGameWerewolfDetail),
-    'game_liars_bar': (l) => FlagMeta(title: l.flagGameLiarsBarTitle, short_: l.flagGameLiarsBarHint, detail: l.flagGameLiarsBarDetail),
-    'game_turtle_soup': (l) => FlagMeta(title: l.flagGameTurtleSoupTitle, short_: l.flagGameTurtleSoupHint, detail: l.flagGameTurtleSoupDetail),
-    'game_memory_bridge': (l) => FlagMeta(title: l.flagGameMemoryBridgeTitle, short_: l.flagGameMemoryBridgeHint, detail: l.flagGameMemoryBridgeDetail),
-    'game_ai_autoplay': (l) => FlagMeta(title: l.flagGameAiAutoplayTitle, short_: l.flagGameAiAutoplayHint, detail: l.flagGameAiAutoplayDetail),
     'life_loop_enabled': (l) => FlagMeta(title: l.flagLifeLoopEnabledTitle, short_: l.flagLifeLoopEnabledHint, detail: l.flagLifeLoopEnabledDetail),
-    'life_loop_visible': (l) => FlagMeta(title: l.flagLifeLoopVisibleTitle, short_: l.flagLifeLoopVisibleHint, detail: l.flagLifeLoopVisibleDetail),
     'life_loop_llm': (l) => FlagMeta(title: l.flagLifeLoopLlmTitle, short_: l.flagLifeLoopLlmHint, detail: l.flagLifeLoopLlmDetail),
     'life_chat_driven_enabled': (l) => FlagMeta(title: l.flagLifeChatDrivenEnabledTitle, short_: l.flagLifeChatDrivenEnabledHint, detail: l.flagLifeChatDrivenEnabledDetail),
     'life_home_worldmap_enabled': (l) => FlagMeta(title: l.flagLifeHomeWorldmapEnabledTitle, short_: l.flagLifeHomeWorldmapEnabledHint, detail: l.flagLifeHomeWorldmapEnabledDetail),
@@ -129,8 +103,6 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
     'memory_peak_cutoff': (l) => FlagMeta(title: l.flagMemoryPeakCutoffTitle, short_: l.flagMemoryPeakCutoffHint, detail: l.flagMemoryPeakCutoffDetail),
     'memory_chain_builder': (l) => FlagMeta(title: l.flagMemoryChainBuilderTitle, short_: l.flagMemoryChainBuilderHint, detail: l.flagMemoryChainBuilderDetail),
     'memory_chain_expand': (l) => FlagMeta(title: l.flagMemoryChainExpandTitle, short_: l.flagMemoryChainExpandHint, detail: l.flagMemoryChainExpandDetail),
-    'recall_top5': (l) => FlagMeta(title: l.flagRecallTop5Title, short_: l.flagRecallTop5Hint, detail: l.flagRecallTop5Detail),
-    'recall_diversify': (l) => FlagMeta(title: l.flagRecallDiversifyTitle, short_: l.flagRecallDiversifyHint, detail: l.flagRecallDiversifyDetail),
     'memory_tiered_decay': (l) => FlagMeta(title: l.flagMemoryTieredDecayTitle, short_: l.flagMemoryTieredDecayHint, detail: l.flagMemoryTieredDecayDetail),
     'memory_tiered_inject': (l) => FlagMeta(title: l.flagMemoryTieredInjectTitle, short_: l.flagMemoryTieredInjectHint, detail: l.flagMemoryTieredInjectDetail),
     'memory_trace_debug': (l) => FlagMeta(title: l.flagMemoryTraceDebugTitle, short_: l.flagMemoryTraceDebugHint, detail: l.flagMemoryTraceDebugDetail),
@@ -141,10 +113,50 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
     'prospective_intent_enabled': (l) => FlagMeta(title: l.flagProspectiveIntentEnabledTitle, short_: l.flagProspectiveIntentEnabledHint, detail: l.flagProspectiveIntentEnabledDetail),
     'prospective_intent_trigger': (l) => FlagMeta(title: l.flagProspectiveIntentTriggerTitle, short_: l.flagProspectiveIntentTriggerHint, detail: l.flagProspectiveIntentTriggerDetail),
     'global_user_facts': (l) => FlagMeta(title: l.flagGlobalUserFactsTitle, short_: l.flagGlobalUserFactsHint, detail: l.flagGlobalUserFactsDetail),
+    'user_current_location_share': (l) => FlagMeta(title: l.flagUserCurrentLocationShareTitle, short_: l.flagUserCurrentLocationShareHint, detail: l.flagUserCurrentLocationShareDetail),
     'cross_char_fact_sync': (l) => FlagMeta(title: l.flagCrossCharFactSyncTitle, short_: l.flagCrossCharFactSyncHint, detail: l.flagCrossCharFactSyncDetail),
     'cross_char_fact_projection': (l) => FlagMeta(title: l.flagCrossCharFactProjectionTitle, short_: l.flagCrossCharFactProjectionHint, detail: l.flagCrossCharFactProjectionDetail),
     'working_state_enabled': (l) => FlagMeta(title: l.flagWorkingStateEnabledTitle, short_: l.flagWorkingStateEnabledHint, detail: l.flagWorkingStateEnabledDetail),
     'provider_registry': (l) => FlagMeta(title: l.flagProviderRegistryTitle, short_: l.flagProviderRegistryHint, detail: l.flagProviderRegistryDetail),
+    'agent_loop_group_chat': (l) => FlagMeta(title: l.flagAgentLoopGroupChatTitle, short_: l.flagAgentLoopGroupChatHint, detail: l.flagAgentLoopGroupChatDetail),
+    'agent_loop_social': (l) => FlagMeta(title: l.flagAgentLoopSocialTitle, short_: l.flagAgentLoopSocialHint, detail: l.flagAgentLoopSocialDetail),
+    'agent_social_light_context': (l) => FlagMeta(title: l.flagAgentSocialLightContextTitle, short_: l.flagAgentSocialLightContextHint, detail: l.flagAgentSocialLightContextDetail),
+    'weave_3d': (l) => FlagMeta(title: l.flagWeave3DTitle, short_: l.flagWeave3DHint, detail: l.flagWeave3DDetail),
+    'proactive_inactive_char_skip': (l) => FlagMeta(title: l.flagProactiveInactiveCharSkipTitle, short_: l.flagProactiveInactiveCharSkipHint, detail: l.flagProactiveInactiveCharSkipDetail),
+    'proactive_strategy_plugins': (l) => FlagMeta(title: l.flagProactiveStrategyPluginsTitle, short_: l.flagProactiveStrategyPluginsHint, detail: l.flagProactiveStrategyPluginsDetail),
+    'proactive_segment_guard': (l) => FlagMeta(title: l.flagProactiveSegmentGuardTitle, short_: l.flagProactiveSegmentGuardHint, detail: l.flagProactiveSegmentGuardDetail),
+    'proactive_topic_guard': (l) => FlagMeta(title: l.flagProactiveTopicGuardTitle, short_: l.flagProactiveTopicGuardHint, detail: l.flagProactiveTopicGuardDetail),
+    'outreach_hour_window_v1': (l) => FlagMeta(title: l.flagOutreachHourWindowV1Title, short_: l.flagOutreachHourWindowV1Hint, detail: l.flagOutreachHourWindowV1Detail),
+    'outreach_type_mix_v1': (l) => FlagMeta(title: l.flagOutreachTypeMixV1Title, short_: l.flagOutreachTypeMixV1Hint, detail: l.flagOutreachTypeMixV1Detail),
+    'outreach_session_rate_v1': (l) => FlagMeta(title: l.flagOutreachSessionRateV1Title, short_: l.flagOutreachSessionRateV1Hint, detail: l.flagOutreachSessionRateV1Detail),
+    'promise_self_side_split': (l) => FlagMeta(title: l.flagPromiseSelfSideSplitTitle, short_: l.flagPromiseSelfSideSplitHint, detail: l.flagPromiseSelfSideSplitDetail),
+    'timer_render_subject_fix': (l) => FlagMeta(title: l.flagTimerRenderSubjectFixTitle, short_: l.flagTimerRenderSubjectFixHint, detail: l.flagTimerRenderSubjectFixDetail),
+    'life_event_no_replay': (l) => FlagMeta(title: l.flagLifeEventNoReplayTitle, short_: l.flagLifeEventNoReplayHint, detail: l.flagLifeEventNoReplayDetail),
+    'life_memory_write_retry': (l) => FlagMeta(title: l.flagLifeMemoryWriteRetryTitle, short_: l.flagLifeMemoryWriteRetryHint, detail: l.flagLifeMemoryWriteRetryDetail),
+    'memory_write_receipt': (l) => FlagMeta(title: l.flagMemoryWriteReceiptTitle, short_: l.flagMemoryWriteReceiptHint, detail: l.flagMemoryWriteReceiptDetail),
+    'memory_admission_gate': (l) => FlagMeta(title: l.flagMemoryAdmissionGateTitle, short_: l.flagMemoryAdmissionGateHint, detail: l.flagMemoryAdmissionGateDetail),
+    'memory_utility_feedback': (l) => FlagMeta(title: l.flagMemoryUtilityFeedbackTitle, short_: l.flagMemoryUtilityFeedbackHint, detail: l.flagMemoryUtilityFeedbackDetail),
+    'working_state_inject': (l) => FlagMeta(title: l.flagWorkingStateInjectTitle, short_: l.flagWorkingStateInjectHint, detail: l.flagWorkingStateInjectDetail),
+    'review_exclude_expired_plan': (l) => FlagMeta(title: l.flagReviewExcludeExpiredPlanTitle, short_: l.flagReviewExcludeExpiredPlanHint, detail: l.flagReviewExcludeExpiredPlanDetail),
+    'review_reinforce_event_cap': (l) => FlagMeta(title: l.flagReviewReinforceEventCapTitle, short_: l.flagReviewReinforceEventCapHint, detail: l.flagReviewReinforceEventCapDetail),
+    'review_reminisce_framework': (l) => FlagMeta(title: l.flagReviewReminisceFrameworkTitle, short_: l.flagReviewReminisceFrameworkHint, detail: l.flagReviewReminisceFrameworkDetail),
+    'review_plan_expire_stale': (l) => FlagMeta(title: l.flagReviewPlanExpireStaleTitle, short_: l.flagReviewPlanExpireStaleHint, detail: l.flagReviewPlanExpireStaleDetail),
+    'review_plan_validity_extract': (l) => FlagMeta(title: l.flagReviewPlanValidityExtractTitle, short_: l.flagReviewPlanValidityExtractHint, detail: l.flagReviewPlanValidityExtractDetail),
+    'user_fact_location': (l) => FlagMeta(title: l.flagUserFactLocationTitle, short_: l.flagUserFactLocationHint, detail: l.flagUserFactLocationDetail),
+    'user_fact_job': (l) => FlagMeta(title: l.flagUserFactJobTitle, short_: l.flagUserFactJobHint, detail: l.flagUserFactJobDetail),
+    'user_fact_relationship': (l) => FlagMeta(title: l.flagUserFactRelationshipTitle, short_: l.flagUserFactRelationshipHint, detail: l.flagUserFactRelationshipDetail),
+    'user_fact_living': (l) => FlagMeta(title: l.flagUserFactLivingTitle, short_: l.flagUserFactLivingHint, detail: l.flagUserFactLivingDetail),
+    'user_fact_goal_state': (l) => FlagMeta(title: l.flagUserFactGoalStateTitle, short_: l.flagUserFactGoalStateHint, detail: l.flagUserFactGoalStateDetail),
+    'user_fact_health': (l) => FlagMeta(title: l.flagUserFactHealthTitle, short_: l.flagUserFactHealthHint, detail: l.flagUserFactHealthDetail),
+    'channel_binding_v2': (l) => FlagMeta(title: l.flagChannelBindingV2Title, short_: l.flagChannelBindingV2Hint, detail: l.flagChannelBindingV2Detail),
+    'domain_event_log_enabled': (l) => FlagMeta(title: l.flagDomainEventLogEnabledTitle, short_: l.flagDomainEventLogEnabledHint, detail: l.flagDomainEventLogEnabledDetail),
+    'domain_event_retention_days': (l) => FlagMeta(title: l.flagDomainEventRetentionDaysTitle, short_: l.flagDomainEventRetentionDaysHint, detail: l.flagDomainEventRetentionDaysDetail),
+    'group_cognition_v2': (l) => FlagMeta(title: l.flagGroupCognitionV2Title, short_: l.flagGroupCognitionV2Hint, detail: l.flagGroupCognitionV2Detail),
+    'group_memory_compact': (l) => FlagMeta(title: l.flagGroupMemoryCompactTitle, short_: l.flagGroupMemoryCompactHint, detail: l.flagGroupMemoryCompactDetail),
+    'agent_trace_scheduler_only_executed': (l) => FlagMeta(title: l.flagAgentTraceSchedulerOnlyExecutedTitle, short_: l.flagAgentTraceSchedulerOnlyExecutedHint, detail: l.flagAgentTraceSchedulerOnlyExecutedDetail),
+    'agent_trace_scheduler_mark_exec_error': (l) => FlagMeta(title: l.flagAgentTraceSchedulerMarkExecErrorTitle, short_: l.flagAgentTraceSchedulerMarkExecErrorHint, detail: l.flagAgentTraceSchedulerMarkExecErrorDetail),
+    'mcp_stream_declarations': (l) => FlagMeta(title: l.flagMcpStreamDeclarationsTitle, short_: l.flagMcpStreamDeclarationsHint, detail: l.flagMcpStreamDeclarationsDetail),
+    'agent_tool_exec_trace': (l) => FlagMeta(title: l.flagAgentToolExecTraceTitle, short_: l.flagAgentToolExecTraceHint, detail: l.flagAgentToolExecTraceDetail),
   };
 
   /// 高级开关文案：优先取 l10n；catalog 未登记（理论上不会发生）时回退中文兜底
@@ -152,25 +164,6 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
     final f = _flagMetaL10n[key];
     if (f != null) return f(l10n);
     return FeatureFlagCatalog.metaOf(key);
-  }
-
-  /// 组标题本地化（catalog 中文仅作兜底，界面优先取 l10n）
-  String _groupTitle(String zh, AppLocalizations l10n) {
-    switch (zh) {
-      case "智能体运行与认知": return l10n.flagGroupAgentRuntime;
-      case "主动消息": return l10n.flagGroupProactive;
-      case "群聊小游戏": return l10n.flagGroupGroupGames;
-      case "AI 自主生活": return l10n.flagGroupLifeLoop;
-      case "生命感增强": return l10n.flagGroupLifeSense;
-      case "主动消息自然化（B1）": return l10n.flagGroupProactiveNatural;
-      case "记忆检索与注入（实验灰度）": return l10n.flagGroupMemory;
-      case "编纂知识与前瞻意图": return l10n.flagGroupCurated;
-      case "跨角色用户事实（B1）": return l10n.flagGroupCrossChar;
-      case "工作记忆（M3）": return l10n.flagGroupWorking;
-      case "插件与提供商": return l10n.flagGroupProvider;
-      case "其他高级开关": return l10n.flagGroupOther;
-      default: return zh;
-    }
   }
 
   @override
@@ -210,44 +203,46 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
   }
 
   Widget _adminBody(AppLocalizations l10n) {
+    // 用户语义白名单：直接可见（2026-09-17 开关瘦身批次）
     final visible = _visibleKeys.where((k) => _flags.containsKey(k)).toList();
-    // 高级键 = 全部已加载键 - 顶部常用键
+    // 其余内部/运维开关：收进一个默认折叠的区块（标题复用既有 l10n.flagGroupOther，不新增硬编码文案）
     final advancedKeys =
-        _flags.keys.where((k) => !_visibleKeys.contains(k)).toSet();
-    final groups = FeatureFlagCatalog.groupEntries(advancedKeys);
+        _flags.keys.where((k) => !_visibleKeys.contains(k)).toList();
+    final advancedTiles = advancedKeys
+        .map((k) => _FlagTileData(
+              rawKey: k,
+              meta: _localizedMeta(k, l10n),
+              value: _flags[k] ?? false,
+              source: _sources[k] ?? 'default',
+              type: FeatureFlagService.instance.flagType(k),
+              numValue: FeatureFlagService.instance.flagValue(k),
+            ))
+        .toList();
 
     return ListView(
       padding: const EdgeInsets.only(top: 8, bottom: 24),
       children: [
-        // 常用开关：保持原样
+        // 常用/用户语义开关
         IosCardGroup(
           title: l10n.featureFlagsHint,
           children: [
             for (final k in visible)
               SwitchListTile(
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                title: Text(_flagTitle(k, l10n)),
-                subtitle: Text(_flagHint(k, l10n), style: const TextStyle(fontSize: 11)),
+                title: Text(_localizedMeta(k, l10n).title),
+                subtitle: Text(_localizedMeta(k, l10n).short_,
+                    style: const TextStyle(fontSize: 11)),
                 value: _flags[k] ?? false,
                 onChanged: (v) => _toggle(k, v),
               ),
           ],
         ),
-        // 高级开关：按模块折叠
-        for (final g in groups)
+        // 内部/运维开关：默认折叠，不点开不渲染、不占屏
+        if (advancedTiles.isNotEmpty)
           _CollapsibleFlagGroup(
-            title: _groupTitle(g.title, l10n),
-            // 2026-09-04：全部默认折叠（不因组内被改过而自动展开），需要时手动点开
+            title: l10n.flagGroupOther,
             initiallyOpen: false,
-            tiles: [
-              for (final k in g.keys)
-                _FlagTileData(
-                  rawKey: k,
-                  meta: _localizedMeta(k, l10n),
-                  value: _flags[k] ?? false,
-                  source: _sources[k] ?? 'default',
-                ),
-            ],
+            tiles: advancedTiles,
             onChanged: _toggle,
             detailLabel: l10n.flagDetail,
             collapseLabel: l10n.flagCollapse,
@@ -375,11 +370,15 @@ class _FlagTileData {
   final FlagMeta meta;
   final bool value;
   final String source;
+  final String? type;
+  final num? numValue;
   const _FlagTileData({
     required this.rawKey,
     required this.meta,
     required this.value,
     required this.source,
+    this.type,
+    this.numValue,
   });
 }
 
@@ -406,10 +405,16 @@ class _FlagTileState extends State<_FlagTile> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final scheme = Theme.of(context).colorScheme;
     final m = widget.data.meta;
     final hasDetail = m.detail.isNotEmpty;
     final expanded = _openDetail && hasDetail;
+    // 数字型（type != bool 或 value 为数值）：只读展示当前值，不渲染 Switch；
+    // 老后端未下发 type/value 时退化为原 Switch 行为（isNumeric=false）。
+    final isNumeric =
+        (widget.data.type != null && widget.data.type != 'bool') ||
+        widget.data.numValue != null;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -431,6 +436,14 @@ class _FlagTileState extends State<_FlagTile> {
                   overflow: expanded ? null : TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant, height: 1.35),
                 ),
+                if (isNumeric)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      l10n.flagNumericReadOnly,
+                      style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                    ),
+                  ),
                 if (hasDetail)
                   Align(
                     alignment: Alignment.centerRight,
@@ -467,10 +480,25 @@ class _FlagTileState extends State<_FlagTile> {
             ),
           ),
           const SizedBox(width: 8),
-          Switch.adaptive(
-            value: widget.data.value,
-            onChanged: widget.onChanged,
-          ),
+          if (isNumeric)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                widget.data.numValue != null
+                    ? l10n.flagNumericValue(widget.data.numValue!)
+                    : (widget.data.type ?? ''),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+            )
+          else
+            Switch.adaptive(
+              value: widget.data.value,
+              onChanged: widget.onChanged,
+            ),
         ],
       ),
     );

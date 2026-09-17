@@ -156,6 +156,9 @@ class GlobalUserFact(Base):
     epistemic_status: Mapped[str] = mapped_column(String(12), default="FACT", server_default="FACT")
     confidence: Mapped[float] = mapped_column(Float, default=1.0, server_default="1.0")
     valid_from: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # 2026-09-17 批次二任务2.5：易变槽（location/living/job/health）TTL 截止；NULL=不过期。
+    # 对齐 world_facts 时效链，避免「权威值本身永不失效」；读取侧过期不注入（user_facts.fact_is_expired）。
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (

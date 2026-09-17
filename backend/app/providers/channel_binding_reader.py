@@ -24,7 +24,7 @@ _PLUGIN_OF = {
 
 
 def channel_binding_v2_enabled() -> bool:
-    """读 AGENT_FLAGS 的 channel_binding_v2（runtime_flags 可热覆盖；默认关=回落旧路径）。"""
+    """读 AGENT_FLAGS 的 channel_binding_v2（runtime_flags 可热覆盖；2026-09-17 起默认开；关=回落旧路径）。"""
     try:
         from app.agent.loop import AGENT_FLAGS  # noqa: PLC0415 - 惰性 import 防加载环
 

@@ -563,12 +563,19 @@ def mount(router):
         character_id = _parse_character_id(body)
         from app.db.database import async_session_factory  # noqa: PLC0415
 
+        # C5 修复（2026-09-17）：v2 分支原先不传 bot_account_id，恒按 DEFAULT_BOT("default") 匹配
+        # → 多 bot 归一化键（如 "bot-1" / "<ilink_bot_id>"）的行删不掉，解绑后 channel_bindings
+        # 仍 enabled=True，而运行时按渠道读全部启用行 ⇒ 解绑实际不生效。故与 /bind、/rebind
+        # 对齐：先解析目标 bot，再按 bot 删绑定行（多 bot 并存且未显式传 id 时按既有语义 400）。
+        async with async_session_factory() as db:
+            _bot = await _resolve_bot_for_user(db, user_id, str(body.get("bot_account_id") or ""))
+
         if _binding_v2_enabled():
             from app.application import channel_binding_service as _svc  # noqa: PLC0415
 
             try:
                 async with async_session_factory() as db:
-                    await _svc.remove_binding(db, user_id, "wechat")
+                    await _svc.remove_binding(db, user_id, "wechat", _bot)
                     await db.commit()
             except HTTPException:
                 raise
@@ -578,7 +585,6 @@ def mount(router):
             await _kernel_unbind(user_id, lang)
 
         async with async_session_factory() as db:
-            _bot = await _resolve_bot_for_user(db, user_id, str(body.get("bot_account_id") or ""))
             await _clear_binding(db, user_id, character_id, bot_account_id=_bot)
             await db.commit()
         return {"ok": True, "unbound": True, "character_id": character_id}

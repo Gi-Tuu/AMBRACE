@@ -116,16 +116,16 @@ def test_loop_超过轮数上限剥离():
     assert regen_count == 2
 
 
-def test_loop_flag关闭退回单次搜索():
+def test_loop_agent_loop_search_已固化恒受控多轮搜索():
+    # 2026-09-17：agent_loop_search 固化为恒定受控多轮搜索，不再经 flag 控制
+    # （原「关=退回旧单次二次生成」路径已删除；行为恒定开）
+    assert "agent_loop_search" not in loop.AGENT_FLAGS
     st = _state("[SEARCH]q1[/SEARCH]")
-    loop.AGENT_FLAGS["agent_loop_search"] = False
-    try:
-        (out, steps), calls, _ = _run(st, regen_texts=["[SEARCH]q2[/SEARCH]"])
-        assert len(steps) == 1
-        assert calls["search"] == ["q1"]
-        assert "[SEARCH]" not in out["ai_response"]
-    finally:
-        loop.AGENT_FLAGS["agent_loop_search"] = True
+    (out, steps), calls, _ = _run(st, regen_texts=["[SEARCH]q2[/SEARCH]"])
+    # 恒定走受控多轮搜索：最多 2 次真实搜索
+    assert len(steps) == 2
+    assert calls["search"] == ["q1", "q2"]
+    assert "[SEARCH]" not in out["ai_response"]
 
 
 def test_loop_无标记不触发():
@@ -170,4 +170,4 @@ def test_loop_限制常量():
     assert loop.MAX_LLM_STEPS == 3
     assert loop.MAX_SEARCH_ROUNDS == 2
     assert loop.SEARCH_RETRY == 1
-    assert loop.AGENT_FLAGS.get("agent_loop_search") is True
+    assert "agent_loop_search" not in loop.AGENT_FLAGS

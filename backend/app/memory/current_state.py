@@ -7,7 +7,8 @@
 数据源（全部为用户已授权或 flag 门控，默认零新增外呼、零越界、失败静默）：
   源1 per-char WorldFact（subject_type=user，predicate∈status/activity/location/mood，每谓词最新且过 C2 新鲜窗）；
   源2 User 表城市（location_enabled 已授权的位置感知，独立老开关，不依赖 global_user_facts）；
-  源3 GlobalUserFact（仅 enabled_user_fact_slots() 启用槽，flag 门控，默认空）。
+  源3 GlobalUserFact（已启用槽 + 共享 location：user_current_location_share 默认开、不吃细槽总闸；
+      relationship/health 仍须显式开启，共享读路径不旁路 opt-in）。
 无任何现状 → 返回空串（调用方据此不注入，默认零行为变化）。
 """
 from __future__ import annotations
@@ -73,12 +74,15 @@ async def _profile_location(user_id: int) -> str | None:
 
 
 async def _global_slot_facts(user_id: int) -> dict[str, str]:
-    """源3：GlobalUserFact 启用槽（flag 门控，默认空）。"""
+    """源3：GlobalUserFact 可共享槽（已启用槽 + 共享 location，flag 门控）。
+
+    2026-09-17 批次二任务2：改用 get_shared_user_facts —— 位置槽走独立开关
+    user_current_location_share（默认开、不吃细槽总闸），低活跃朋友角色也能拿到权威位置；
+    relationship/health 仍须显式开启（红线：共享读路径不旁路 opt-in）。
+    """
     try:
-        from app.memory.user_facts import get_active_user_facts, enabled_user_fact_slots
-        if not enabled_user_fact_slots():
-            return {}
-        return {f.slot: f.value for f in (await get_active_user_facts(user_id)) if f.value}
+        from app.memory.user_facts import get_shared_user_facts
+        return await get_shared_user_facts(user_id)
     except Exception:
         return {}
 

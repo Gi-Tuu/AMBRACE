@@ -33,6 +33,8 @@ String _permRisk(AppLocalizations l10n, String perm) {
       return l10n.marketPermLifeRead;
     case 'relationship:read':
       return l10n.marketPermRelationshipRead;
+    case 'proactive:read':
+      return l10n.marketPermProactiveRead;
     default:
       return l10n.marketPermUnknown(perm);
   }
@@ -505,6 +507,8 @@ class _RemoteMarketConfigScreenState extends State<_RemoteMarketConfigScreen> {
   final List<String> _hosts = [];
   final _urlCtrl = TextEditingController();
   final _hostCtrl = TextEditingController();
+  final _intervalCtrl = TextEditingController(text: '24');
+  final _maxZipMbCtrl = TextEditingController(text: '10');
 
   @override
   void initState() {
@@ -516,6 +520,8 @@ class _RemoteMarketConfigScreenState extends State<_RemoteMarketConfigScreen> {
   void dispose() {
     _urlCtrl.dispose();
     _hostCtrl.dispose();
+    _intervalCtrl.dispose();
+    _maxZipMbCtrl.dispose();
     super.dispose();
   }
 
@@ -527,7 +533,9 @@ class _RemoteMarketConfigScreenState extends State<_RemoteMarketConfigScreen> {
       setState(() {
         _enabled = cfg['enabled'] == true;
         _interval = (cfg['refresh_interval_hours'] as num?)?.toInt() ?? 24;
+        _intervalCtrl.text = '$_interval';
         _maxZipMb = (cfg['max_zip_mb'] as num?)?.toInt() ?? 10;
+        _maxZipMbCtrl.text = '$_maxZipMb';
         _urls
           ..clear()
           ..addAll((cfg['urls'] as List? ?? []).cast<String>());
@@ -668,7 +676,7 @@ class _RemoteMarketConfigScreenState extends State<_RemoteMarketConfigScreen> {
                     const SizedBox(height: 6),
                     TextField(
                       keyboardType: TextInputType.number,
-                      controller: TextEditingController(text: '$_interval'),
+                      controller: _intervalCtrl,
                       onChanged: (v) => _interval = int.tryParse(v) ?? 24,
                       decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
                     ),
@@ -678,7 +686,7 @@ class _RemoteMarketConfigScreenState extends State<_RemoteMarketConfigScreen> {
                     const SizedBox(height: 6),
                     TextField(
                       keyboardType: TextInputType.number,
-                      controller: TextEditingController(text: '$_maxZipMb'),
+                      controller: _maxZipMbCtrl,
                       onChanged: (v) => _maxZipMb = int.tryParse(v) ?? 10,
                       decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
                     ),

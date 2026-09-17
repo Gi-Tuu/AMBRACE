@@ -4,6 +4,11 @@ import secrets
 from jose import jwt
 
 from app.config import settings
+from app.utils.logger import get_logger
+
+# P3-12（2026-09-17）：原 2 处 print 改 logging（密钥生成/持久化失败属启动期可观测事件，
+# 应进 app.log 并可分级；print 无级别、无落地）。
+_logger = get_logger("auth.config")
 
 
 def _load_or_create_secret() -> str:
@@ -22,9 +27,9 @@ def _load_or_create_secret() -> str:
     try:
         key_file.parent.mkdir(parents=True, exist_ok=True)
         key_file.write_text(key, encoding="utf-8")
-        print(f"[auth] AUTH_SECRET_KEY 未配置，已自动生成持久化密钥: {key_file}")
+        _logger.info("[auth] AUTH_SECRET_KEY 未配置，已自动生成持久化密钥: %s", key_file)
     except Exception as e:
-        print(f"[auth] 密钥持久化失败（仍使用本次随机密钥）: {e}")
+        _logger.warning("[auth] 密钥持久化失败（仍使用本次随机密钥）: %s", e)
     return key
 
 

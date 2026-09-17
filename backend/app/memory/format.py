@@ -11,13 +11,13 @@
 行为等价替换为主：各调用点传入的字段决定是否出现认知前缀/纠正后缀，截断长度与内容不变。
 
 T3/C1（2026-09-10，v3.4.6 第三轮）：在 [记录于] 之后、认知前缀之前插入**时态标签**
-（flag `memory_line_tense_tag` 默认开；plan 未过期=［计划］、已过期=［旧安排·已过期］、
+（曾为 flag `memory_line_tense_tag`，2026-09-17 固化常开；plan 未过期=［计划］、已过期=［旧安排·已过期］、
 episodic=［往事］、transient=［当时状态］、enduring 不加）——四处注入点自动继承，防旧记忆
-（如「去长沙」计划）被当现状续写。关 flag 即回旧行（无时态标签）。
+（如「去长沙」计划）被当现状续写。
 """
 from __future__ import annotations
 
-from app.memory.tense import classify_tense, is_plan_expired
+from app.memory.tense import classify_tense, is_happened_source, is_plan_expired
 
 
 def epistemic_prefix(status) -> str:
@@ -49,7 +49,8 @@ def format_memory_line(m: dict, max_len: int = 150, prefix: str = "- ", include_
       主动消息/Shared Memory/persona 三处保持 False 不改变既有行为；默认 False）。
     - tense_hint：显式指定时态分类，传入即跳过 classify_tense（I4，2026-09-10 第四轮：共享事件恒为
       「已发生的共同经历」→ 传 "episodic"，避免文本含「明天/计划/打算」等计划词时被 classify_tense
-      第 4 步误判 plan 而错标［计划/旧安排·已过期］）。默认 None = 原逻辑，其它调用点零影响。
+      第 4 步误判 plan 而错标［计划/旧安排·已过期］）。默认 None 时按来源推断（2026-09-17 批次一
+      任务3：moment/diary/群聊共享/life_event/game_summary 统一按 episodic），再否则 classify_tense。
     """
     mem_text = m.get("content", "") or m.get("title", "")
     if not mem_text:
@@ -72,21 +73,24 @@ def format_memory_line(m: dict, max_len: int = 150, prefix: str = "- ", include_
     _cc = m.get("contradiction_count") or 0
     _cc_tag = "（你后来纠正过，以你最新说法为准）" if _cc > 0 else ""
 
-    # ── 时态标签（flag 化，默认开；纯增益标注，不改召回/排序/写库）──
+    # ── 时态标签（曾为 flag memory_line_tense_tag，2026-09-17 固化常开；纯增益标注，不改召回/排序/写库）──
     # 时间标签之后、认知前缀之前。plan 区分「未过期=计划 / 已过期=旧安排」，episodic/transient
     # 标注「往事/当时状态」，enduring 不加——告诉模型这不是现状，防旧「长沙」计划当正在发生。
     _tense_tag = ""
-    try:
-        from app.agent.loop import AGENT_FLAGS  # 延迟 import，避免循环导入
-        if bool(AGENT_FLAGS.get("memory_line_tense_tag", True)):
-            _tcls = tense_hint or classify_tense(m)  # 显式 hint 优先（I4：共享事件恒 episodic）
-            if _tcls == "plan":
-                _tense_tag = "［旧安排·已过期］ " if is_plan_expired(m) else "［计划］ "
-            else:
-                _tag = _TENSE_TAG.get(_tcls)
-                if _tag:
-                    _tense_tag = _tag + " "
-    except Exception:
-        _tense_tag = ""
+    # 2026-09-17 批次一（任务3）：moment/diary/群聊共享/life_event/game_summary 等「天然已发生
+    # 来源」统一补 episodic hint（与 shared_events 的 I4 同源），避免只因子句含「明天/打算」
+    # 就被判成未过期计划；显式 tense_hint 优先级最高。
+    _tcls = tense_hint or ("episodic" if is_happened_source(m) else classify_tense(m))
+    if _tcls == "plan":
+        _tense_tag = "［旧安排·已过期］ " if is_plan_expired(m) else "［计划］ "
+    else:
+        _tag = _TENSE_TAG.get(_tcls)
+        if _tag:
+            _tense_tag = _tag + " "
+
+    # 2026-09-17 批次一（任务1/2 配套）：stale/superseded/expired 行即使被怀旧面召回，也强制打
+    # ［往事/已过时］（覆盖上一步的时态标签），保证模型「看得见时效」——不再把失效旧现状当现行事实。
+    if str(m.get("status") or "").strip().lower() in ("stale", "superseded", "expired"):
+        _tense_tag = "［往事/已过时］ "
 
     return f"{prefix}{_rec_tag}{_tense_tag}{_pre}{_sp_tag}{mem_text[:max_len]}{_cc_tag}"

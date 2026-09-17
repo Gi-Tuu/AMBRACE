@@ -87,11 +87,31 @@ def _supersede_flag_on() -> bool:
         return False
 
 
-def _char_where(character_id: int, supersede_on: bool) -> dict:
-    """#70-C：按角色检索的 where 子句——flag 开=只取 active/stale（双通道过滤），关=旧行为。
+def _current_facts_flag_on() -> bool:
+    """2026-09-17 批次一（任务2）：现状面新口径 current_facts_active_only（默认 True）。
+
+    延迟 import（避免 vector_store 顶层依赖 loop 造成环），与 service._current_facts_flag_on 同口径。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("current_facts_active_only", True))
+    except Exception:
+        return True
+
+
+def _char_where(character_id: int, supersede_on: bool, status: str | None = None) -> dict:
+    """按角色检索的 where 子句。
+
+    - ``status`` 非空：**现状面**——只取该状态（不受 memory_supersede 门控；旧现状不得参与现状面）。
+    - ``status`` 空：旧行为 / 怀旧面——flag 开=active/stale（stale 保留，怀旧可见），关=不做状态过滤。
 
     由 vector_store 的读取函数与 supersede 相关测试共用（可独立单测）。
     """
+    if status:
+        return {"$and": [
+            {"character_id": character_id},
+            {"status": {"$in": [status]}},
+        ]}
     if not supersede_on:
         return {"character_id": character_id}          # 旧行为（逐字节一致）
     return {"$and": [
@@ -104,15 +124,16 @@ async def search_memories(
     character_id: int,
     query_embedding: list[float],
     limit: int = 5,
+    status: str | None = None,
 ) -> list[dict]:
-    """向量搜索相关记忆（#70-C：flag 开时用 _char_where 过滤 active/stale）"""
+    """向量搜索相关记忆（怀旧/复习面：默认 active+stale；现状面调用方显式传 status="active"）。"""
     collection = await get_or_create_collection()
     try:
         results = await asyncio.to_thread(
             collection.query,
             query_embeddings=[query_embedding],
             n_results=limit,
-            where=_char_where(character_id, _supersede_flag_on()),
+            where=_char_where(character_id, _supersede_flag_on(), status),
         )
     except Exception:
         return []
@@ -135,19 +156,25 @@ async def find_similar_memory(
     query_embedding: list[float],
     limit: int = 20,
     min_similarity: float = 0.9,
+    status: str | None = None,
 ):
     """在 ChromaDB 中查找同角色与给定向量最相似的记忆。
 
     返回 (memory_id, similarity) 或 None（cosine 空间：distance = 1 - similarity）。
     用于写路径向量查重：语义相同的记忆不新增，改为更新原记忆。
+
+    2026-09-17 批次一（任务2）：这是**现状面**向量查询——默认只与现行（active）向量比对，
+    避免新写入的现行事实被一条 stale 旧现状（旧「在长沙」）吞并成「合并到旧行」；
+    current_facts_active_only 关 = 回退旧行为（status=None 不做状态过滤）。
     """
+    _status = status if status is not None else ("active" if _current_facts_flag_on() else None)
     collection = await get_or_create_collection()
     try:
         results = await asyncio.to_thread(
             collection.query,
             query_embeddings=[query_embedding],
             n_results=limit,
-            where=_char_where(character_id, _supersede_flag_on()),
+            where=_char_where(character_id, _supersede_flag_on(), _status),
         )
     except Exception:
         return None

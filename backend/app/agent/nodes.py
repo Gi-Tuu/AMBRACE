@@ -73,12 +73,8 @@ async def retrieve_memories(state: AgentState) -> AgentState:
     _cont = state.get("continue_payload") or {}
     _last_ai = (_cont.get("last_ai_content") or "").strip()
     _query = _last_ai if _last_ai else state["user_message"]
-    # M1-S1（2026-08-31）：召回出口 flag 化——recall_top5 开=5 条（默认），关=回退旧 3 条
-    try:
-        from app.agent.loop import AGENT_FLAGS as _af
-        _recall_limit = 5 if _af.get("recall_top5", True) else 3
-    except Exception:
-        _recall_limit = 5
+    # M1-S1（2026-08-31）：召回出口恒 5 条（曾为 flag recall_top5，2026-09-17 固化常开，不再回退旧 3 条）
+    _recall_limit = 5
     # Ariadne 模块 A（2026-09-03）：用户原话的时间表达 → 确定性时间路（纯函数解析，识别不了=None；
     # flag memory_temporal_recall 关时检索层忽略该参数，行为与旧版一致）。注意用用户原话解析而非
     # _query（继续指令场景 _query 是上一条 AI 消息，其时间词指过去语境，不代表本轮用户意图）。
@@ -365,17 +361,8 @@ async def generate_response(state: AgentState) -> AgentState:
         except Exception:
             pass
 
-    # 调用能力（R6，2026-09-09）：默认只列「本轮真实用到」的能力，由各执行成功点经
-    # ability_labels.record_ability_used 累计；此处不再用「全部启用插件」全集填充（多报 + 英文 id）。
-    # flag 关（回退）时保留旧行为兜底。
-    try:
-        from app.agent import loop as _loop
-        if not _loop.AGENT_FLAGS.get("chat_tools_list_real_only", True):
-            from app.plugins.registry import list_plugins
-            enabled_plugins = [p.get("name") for p in list_plugins() if p.get("enabled")]
-            state["tools_used"] = [f"扩展：{'、'.join(enabled_plugins)}"] if enabled_plugins else []
-    except Exception:
-        state["tools_used"] = []
+    # 调用能力（R6，2026-09-09）：只列「本轮真实用到」的能力，由各执行成功点经
+    # ability_labels.record_ability_used 累计（曾为灰度开关 chat_tools_list_real_only，2026-09-17 固化常开，不再回退旧「全部插件」行为）。
 
     # 解析回复（提取记忆/自述/状态更新）
     state = parse_response(response, state)
@@ -433,6 +420,7 @@ async def generate_response(state: AgentState) -> AgentState:
                 recalled=state.get("retrieved_memories") or [],
                 ai_response=state.get("ai_response") or "",
                 round_id=state.get("session_id"),
+                user_message=state.get("user_message") or "",
             )
             state["utility_feedback_done"] = True
     except Exception:

@@ -286,7 +286,6 @@ def test_daily_reflection_carries_annotations(monkeypatch):
         return "活动记录"
     monkeypatch.setattr(dr, "_used_recently", _f_false)
     monkeypatch.setattr(dr, "_collect_week_data", _f_data)
-    monkeypatch.setitem(_loop.AGENT_FLAGS, "agent_daily_reflection", True)
 
     captured = {}
     async def _fake_llm(*a, **k):

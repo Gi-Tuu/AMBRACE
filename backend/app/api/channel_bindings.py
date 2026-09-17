@@ -3,7 +3,7 @@
 
 App 渠道卡统一走本路由：GET/PUT/DELETE /api/v1/channels/{channel}/bindings[/{bot_account_id}]。
 - tenant = 当前登录主账号（家庭 root），经 app/application/tenant_scope 解析（SaaS S0 同源）；
-- **灰度双读/双写**：flag channel_binding_v2 开 → channel_bindings 新表（ChannelBindingService）；
+- **双读/双写（channel_binding_v2 已于 2026-09-17 转正为默认开）**：flag 开 → channel_bindings 新表（ChannelBindingService）；
   关或新表无行 → 回落旧全局 config（plugin allowed_character_ids 合成 "default" 单行只读展示 /
   PUT 走既有内核 update_plugin 裁决），保证灰度期 App 面板照常可用；
 - 子账号只读（写操作 403，i18n channel_bind_main_only）；所有查询/写入带 tenant。
@@ -14,6 +14,11 @@ from sqlalchemy.exc import IntegrityError
 from app.auth.deps import get_current_user_id
 from app.application import channel_binding_service as svc
 from app.application.tenant_scope import resolve_tenant
+# P3-12（2026-09-17）：async_session_factory 原在 4 个函数内重复 import，统一上提——但用**模块对象
+# 引用**（db_mod.async_session_factory）而非把函数名早绑定进本模块：测试通过 monkeypatch
+# ``app.db.database.async_session_factory`` 注入临时库，依赖的正是「调用时取属性」这层语义；
+# 直接 ``from app.db.database import async_session_factory`` 会早绑定、让 patch 失效（实测整片 404）。
+from app.db import database as db_mod
 from app.i18n import tr_lang
 from app.providers.channel_binding_reader import (
     fallback_global_ids,
@@ -79,9 +84,7 @@ async def list_my_bindings(channel: str, user_id: int = Depends(get_current_user
       （不合成全局行，杜绝跨租户幽灵）；渠道表全空 → 旧全局串（按归属过滤）合成行；
     - flag 关：旧全局 config 合成行（灰度期面板照常可用）。
     """
-    from app.db.database import async_session_factory
-
-    async with async_session_factory() as db:
+    async with db_mod.async_session_factory() as db:
         tenant = await resolve_tenant(db, user_id)
         rows: list[dict] = []
         if channel_binding_v2_enabled():
@@ -108,8 +111,6 @@ async def put_binding(channel: str, bot_account_id: str, body: dict,
     幂等口径（对齐 bind-available，2026-09-06）：目标 bot 属本租户（含已停用行）或 in
     available 列表 → 放行；属他租户 / 未登录 / 任意 id → 渠道回调抛 404，本方法不 commit
     （整事务回滚，不残留半绑定）。无联动回调的渠道（如 douyin）= 原行为不受影响。"""
-    from app.db.database import async_session_factory
-
     try:
         character_id = int(body.get("character_id"))
     except (TypeError, ValueError):
@@ -122,7 +123,7 @@ async def put_binding(channel: str, bot_account_id: str, body: dict,
         from app.providers import channel as channel_prov
 
         try:
-            async with async_session_factory() as db:
+            async with db_mod.async_session_factory() as db:
                 tenant_id = await resolve_tenant(db, user_id)
                 row = await svc.upsert_binding(db, user_id, channel, character_id,
                                                bot_account_id=bot_account_id, bot_label=bot_label)
@@ -153,13 +154,11 @@ async def del_binding(channel: str, bot_account_id: str,
     """解绑：flag 开=删该 bot 的 channel_bindings 行 + 渠道「解绑联动」回调（插件自洽停用其
     自有绑定行：enabled=0、token 清空、保留行历史——对齐 _clear_binding 语义，保证两表一致）；
     flag 关=内核空串解绑（旧语义）。无联动回调的渠道（如 douyin）= 原行为不受影响。"""
-    from app.db.database import async_session_factory
-
     if channel_binding_v2_enabled():
         from app.providers import channel as channel_prov
 
         try:
-            async with async_session_factory() as db:
+            async with db_mod.async_session_factory() as db:
                 tenant_id = await resolve_tenant(db, user_id)
                 await svc.remove_binding(db, user_id, channel, bot_account_id)
                 # 解绑联动（插件自洽）：删 channel_bindings 行后停用渠道自有绑定行（(tenant, bot)
@@ -184,9 +183,7 @@ async def del_binding(channel: str, bot_account_id: str,
 # 供 S0/SaaS 复用的请求级租户依赖（S4）：路由参数直接 current_tenant = Depends(get_current_tenant)
 async def get_current_tenant(user_id: int = Depends(get_current_user_id)) -> int:
     """FastAPI 依赖：登录态 → 统一租户键（家庭 root）。渠道绑定 API 已用；S0 全量铺开时直接 import。"""
-    from app.db.database import async_session_factory
-
-    async with async_session_factory() as db:
+    async with db_mod.async_session_factory() as db:
         return await resolve_tenant(db, user_id)
 
 

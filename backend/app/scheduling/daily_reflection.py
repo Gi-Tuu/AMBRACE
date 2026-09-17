@@ -5,7 +5,7 @@ from app.utils.timeutil import beijing_day_start_utc as _beijing_day_start_utc
 - 复盘沉淀为记忆（type=ai_reflection，importance=6，source=reflection）——AI 之后可自然想起
   （反思驱动雏形：高权重记忆参与后续检索，主动消息可自然延续计划）
 - 写 agent_task_logs（trigger=reflection）统一可观测；失败静默
-- Feature Flag agent_daily_reflection（2026-08-17 起全量默认开，开源包基线）
+- Feature Flag agent_daily_reflection（曾为灰度开关，2026-09-17 固化常开，功能常驻不下放；周复盘恒执行）
 """
 import json
 import time
@@ -90,10 +90,8 @@ def _build_prompt(character_name: str, data: str, today: str | None = None) -> s
 
 async def generate_daily_reflection(character_id: int, user_id: int | None = None) -> bool:
     """生成单角色周复盘：数据收集 → LLM 总结 → 沉淀记忆 + trace。返回是否成功。"""
+    # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：周复盘恒执行
     try:
-        from app.agent import loop as _loop
-        if not _loop.AGENT_FLAGS.get("agent_daily_reflection", False):
-            return False
         if await _used_recently(character_id):
             return False
         async with async_session_factory() as db:

@@ -5,7 +5,7 @@
 - flag agent_tool_exec_trace 默认关 = 零写放大（不写 agent_task_logs）；
 - 开启后：插件/内置工具 ok/error 均落一条；MCP 工具跳过（已有 mcp_call_logs，避免双记）；
   scheduler 前缀/空工具名等噪音不落；
-- 与既有织库联动（agent_tool_events）并列、互不影响；
+- 与既有织库联动（agent_tool_events，已固化常开）并列、互不影响；
 - 轨迹写入失败静默，不影响事件主链路。
 
 纯 monkeypatch 测试（不触碰 backend/data）；项目未装 pytest-asyncio，统一 asyncio.run。
@@ -103,8 +103,8 @@ def test_R5_开启_scheduler前缀与空工具名不落(monkeypatch):
     assert calls == []
 
 
-def test_R5_与织库联动互不影响(monkeypatch):
-    """trace 开、weave 关 → 只写轨迹不触发织库；weave 开、trace 关 → 只织库不写轨迹。"""
+def test_R5_织库联动已固化常开(monkeypatch):
+    """agent_tool_events 已固化常开（2026-09-17 用户拍板）：weave 恒触发；trace 仍由 agent_tool_exec_trace 独立控制。"""
     calls = _trace_calls(monkeypatch)
     weave_calls = []
     monkeypatch.setattr(
@@ -112,23 +112,23 @@ def test_R5_与织库联动互不影响(monkeypatch):
         lambda uid, cid, domain: weave_calls.append((uid, cid, domain)),
     )
 
+    # trace 关：只织库、不写轨迹
+    loop.AGENT_FLAGS["agent_tool_exec_trace"] = False
+    try:
+        asyncio.run(_on_tool_executed(_payload()))
+    finally:
+        loop.AGENT_FLAGS["agent_tool_exec_trace"] = False
+    assert len(calls) == 0
+    assert weave_calls == [(1, 88101, "shared")]  # 固化常开：恒联动织库
+
+    # trace 开：既织库又写轨迹
     loop.AGENT_FLAGS["agent_tool_exec_trace"] = True
-    loop.AGENT_FLAGS["agent_tool_events"] = False
     try:
         asyncio.run(_on_tool_executed(_payload()))
     finally:
         loop.AGENT_FLAGS["agent_tool_exec_trace"] = False
     assert len(calls) == 1
-    assert weave_calls == []
-
-    loop.AGENT_FLAGS["agent_tool_exec_trace"] = False
-    loop.AGENT_FLAGS["agent_tool_events"] = True
-    try:
-        asyncio.run(_on_tool_executed(_payload()))
-    finally:
-        loop.AGENT_FLAGS["agent_tool_events"] = True  # 恢复仓库基线（默认 True）
-    assert len(calls) == 1  # 未新增
-    assert weave_calls == [(1, 88101, "shared")]
+    assert weave_calls == [(1, 88101, "shared"), (1, 88101, "shared")]
 
 
 def test_R5_轨迹写入异常静默不破坏事件链(monkeypatch):

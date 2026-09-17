@@ -5,7 +5,9 @@
 1. 加载两渠道插件后，其表只在 plugin_metadata、不在主 Base.metadata；
 2. 插件表零外键（跨 metadata 不允许 FK）；
 3. ensure_plugin_tables 幂等（重复调用不报错、返回同组表）；
-4. 只 create_all 主 metadata 的干净库里不含插件表。
+4. 只 create_all 主 metadata 的干净库里不含**渠道/第三方插件自带的业务表**。
+   注意口径（P3-10 更正，2026-09-17）：被剥离的只是插件自带业务表（douyin_* / wechat_ilink_*）；
+   内核自有的 ``plugin_stores``（插件命名空间 KV，app/models/plugin）仍属主 metadata、主 create_all 必建。
 """
 import asyncio
 
@@ -61,7 +63,13 @@ def test_ensure_plugin_tables_idempotent():
 
 
 def test_main_metadata_create_all_does_not_build_plugin_tables(tmp_path):
-    """只对主 metadata create_all 的干净库里【不】含插件表（证明主建表不再顺带建插件表）。"""
+    """只对主 metadata create_all 的干净库里【不】含**渠道插件自带的业务表**（证明主建表不再顺带建它们）。
+
+    P3-10（2026-09-17）：本用例测的层次是「渠道/第三方插件业务表（DOUYIN/WECHAT）已剥离到
+    plugin_metadata」。内核自有的 ``plugin_stores`` **不**在该剥离范围内——它是插件命名空间 KV
+    （app/models/plugin/__init__.py），一直在主 metadata，主 create_all 照建（下方断言钉死这一点，
+    避免把「插件表已剥离」误读成「主 metadata 无任何 plugin_* 表」）。
+    """
     import app.models  # noqa: F401  确保主模型已注册
 
     eng = create_engine(f"sqlite:///{(tmp_path / 'main_only.db').as_posix()}")
@@ -72,6 +80,9 @@ def test_main_metadata_create_all_does_not_build_plugin_tables(tmp_path):
         eng.dispose()
     assert "ai_characters" in have and "memories" in have
     assert DOUYIN.isdisjoint(have) and WECHAT.isdisjoint(have)
+    # 内核 plugin_stores 仍属主 metadata 且被 create_all 建出（与插件业务表剥离口径互不矛盾）
+    assert "plugin_stores" in Base.metadata.tables
+    assert "plugin_stores" in have
 
 
 def test_sdk_plugin_base_exposes_same_class():

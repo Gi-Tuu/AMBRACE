@@ -267,23 +267,31 @@ def _load_persisted(character_id: int) -> "_IndexEntry | None":
         return None
 
 
-async def _build_index(character_id: int) -> "_IndexEntry | None":
+async def _build_index(character_id: int, status: str | None = None) -> "_IndexEntry | None":
     """懒构建：读该角色活跃记忆（is_archived=0 且 delete_at is null）content 建索引。
+
+    ``status``：None=怀旧/默认索引（active+stale，维持既有口径）；"active"=**现状面**索引
+    （2026-09-17 批次一任务2，旧现状不进现状面稀疏路）。
 
     DB/分词异常静默返回 None（不影响主链路）。复用 app.memory.service 的 async_session_factory，
     使测试里对 memsvc.async_session_factory 的 monkeypatch 自动生效（隔离临时库）。
     """
     try:
         from app.memory.service import async_session_factory as _factory, _retrievable_status_clause
+        _conds = [
+            Memory.character_id == character_id,
+            Memory.is_archived == False,      # noqa: E712
+            Memory.delete_at.is_(None),
+            Memory.memory_type != "working_state",  # M3-a：工作记忆不走 BM25 语料
+        ]
+        # 现状面：恒 active（不受 memory_supersede 门控）；怀旧面：旧口径（active/stale 或永真）
+        if status:
+            _conds.append(Memory.status == status)
+        else:
+            _conds.append(_retrievable_status_clause())
         async with _factory() as db:
             rows = (await db.execute(
-                select(Memory).where(
-                    Memory.character_id == character_id,
-                    Memory.is_archived == False,      # noqa: E712
-                    Memory.delete_at.is_(None),
-                    Memory.memory_type != "working_state",  # M3-a：工作记忆不走 BM25 语料
-                    _retrievable_status_clause(),      # #70-C：仅 active/stale 建稀疏索引（flag 关=永真）
-                ).order_by(Memory.id.asc())
+                select(Memory).where(*_conds).order_by(Memory.id.asc())
             )).scalars().all()
         memory_ids: list = []
         docs: list = []
@@ -301,44 +309,58 @@ async def _build_index(character_id: int) -> "_IndexEntry | None":
         return None
 
 
-def _get_cached(character_id: int) -> "_IndexEntry | None":
-    entry = _cache.get(character_id)
+def _cache_key(character_id: int, status: str | None = None) -> tuple:
+    """缓存键（2026-09-17 批次一任务2）：(character_id, status)。status 空=怀旧/默认索引。"""
+    return (int(character_id), status or "")
+
+
+def _get_cached(key) -> "_IndexEntry | None":
+    """取缓存项。key 可为 (character_id, status) 元组，或裸 character_id（兼容旧调用=默认索引）。"""
+    if not isinstance(key, tuple):
+        key = _cache_key(key)
+    entry = _cache.get(key)
     if entry is None:
         return None
     if time.monotonic() - entry.built_at > _BM25_TTL_SECONDS:
-        _cache.pop(character_id, None)   # 惰性过期
+        _cache.pop(key, None)   # 惰性过期
         return None
-    _cache.move_to_end(character_id)     # LRU 触达
+    _cache.move_to_end(key)     # LRU 触达
     return entry
 
 
-def _store_in_cache(character_id: int, entry: "_IndexEntry") -> None:
+def _store_in_cache(key: tuple, entry: "_IndexEntry") -> None:
     """入 LRU 缓存并移到最后，超容量从最久未用开始淘汰。"""
-    _cache[character_id] = entry
-    _cache.move_to_end(character_id)
+    _cache[key] = entry
+    _cache.move_to_end(key)
     while len(_cache) > _BM25_CACHE_MAX:
         _cache.popitem(last=False)
 
 
-async def _get_index(character_id: int) -> "_IndexEntry | None":
-    entry = _get_cached(character_id)
+async def _get_index(character_id: int, status: str | None = None) -> "_IndexEntry | None":
+    key = _cache_key(character_id, status)
+    entry = _get_cached(key)
     if entry is not None:
         return entry
     # 2026-08-23 深化：重启后首次检索先尝试从盘加载（省去重新分词）；失败静默回退懒构建。
-    entry = _load_persisted(character_id)
-    if entry is not None:
-        _store_in_cache(character_id, entry)
-        return entry
-    entry = await _build_index(character_id)
+    # 2026-09-17 批次一任务2：落盘只服务默认（怀旧/active+stale）索引，现状面索引不落盘。
+    if status is None:
+        entry = _load_persisted(character_id)
+        if entry is not None:
+            _store_in_cache(key, entry)
+            return entry
+    entry = await _build_index(character_id, status)
     if entry is None:
         return None
-    _store_in_cache(character_id, entry)
-    _persist_entry(character_id, entry)
+    _store_in_cache(key, entry)
+    if status is None:
+        _persist_entry(character_id, entry)
     return entry
 
 
-async def search(character_id: int, query: str, top_k: int = 5) -> list:
+async def search(character_id: int, query: str, top_k: int = 5, status: str | None = None) -> list:
     """BM25 稀疏检索：返回 [(memory_id, score)]，按分数降序取 top_k。
+
+    ``status``（2026-09-17 批次一任务2）：None=怀旧/复习面（维持 active+stale）；"active"=现状面。
 
     - 「命中」= 至少与一个查询词元共享（词元集交集），**不依赖 BM25 分数是否为 0**——
       rank_bm25 的 idf 在小语料上对「出现于恰好一半文档」的词会取 0（log(1)），若仅按
@@ -348,7 +370,7 @@ async def search(character_id: int, query: str, top_k: int = 5) -> list:
     - 异常静默返回 []（不影响主链路）。
     """
     try:
-        entry = await _get_index(character_id)
+        entry = await _get_index(character_id, status)
         if entry is None or entry.bm25 is None:
             return []
         q_tokens = tokenize(query)
@@ -368,9 +390,14 @@ async def search(character_id: int, query: str, top_k: int = 5) -> list:
 
 
 def invalidate(character_id: int) -> None:
-    """使某角色索引失效（记忆写入/改内容/删除后调用；下次检索懒重建），并删除落盘缓存。"""
-    _cache.pop(character_id, None)
-    _remove_persisted(character_id)
+    """使某角色索引失效（记忆写入/改内容/删除后调用；下次检索懒重建），并删除落盘缓存。
+
+    2026-09-17 批次一任务2：缓存键含 status，故一次清掉该角色的全部状态变体。
+    """
+    _cid = int(character_id)
+    for _k in [k for k in list(_cache.keys()) if k[0] == _cid]:
+        _cache.pop(_k, None)
+    _remove_persisted(_cid)
 
 
 def clear_cache() -> None:

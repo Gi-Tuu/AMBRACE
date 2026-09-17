@@ -19,7 +19,6 @@ from app.memory.service import (
     _logger,
     _now_naive,
     _retrievable_status_clause,
-    _supersede_flag_on,
 )
 
 
@@ -121,8 +120,10 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
                 r["reliability_score"] = None
         score += (_hit.get(r["id"], 1) - 1) * 5
         score += _bonus.get(r["id"], 0.0)   # RRF：按稠密/稀疏两路 rank 融合的相关性加权
-        # #70-C：stale（派生失效结论）降权 0.5，排序落到同分 active 之后；flag 关不参与（逐字节一致）
-        if _supersede_flag_on() and r.get("status") == _STALE:
+        # #70-C / 2026-09-17 批次一（任务2）：stale（派生失效结论）降权 0.5 **无条件生效**——
+        # 排序落到同分 active 之后。memory_supersede flag 从此只决定「怀旧面能否召回 stale」，
+        # 不再门控降权本身（否则 flag 关时旧现状与现行事实同分竞争，旧「长沙」盖过现行湛江）。
+        if r.get("status") == _STALE:
             score *= 0.5
         r["_score"] = score
     results.sort(key=lambda x: x.get("_score") or 0, reverse=True)
@@ -511,12 +512,8 @@ async def search_memories(
             debug.update(_rk_debug)
         else:
             _ranked = await _rerank(results, character_id, hit_count, relevance_bonus=relevance_bonus)
-        # M1-S1（2026-08-31）：类型多样性重排（flag 开）——防单一类型占满出口；关=纯 _ranked[:limit] 旧行为
-        try:
-            from app.agent.loop import AGENT_FLAGS as _af
-            _diversify = bool(_af.get("recall_diversify", True))
-        except Exception:
-            _diversify = True
+        # M1-S1（2026-08-31）：类型多样性重排（曾为 flag recall_diversify，2026-09-17 固化常开）——防单一类型占满出口
+        _diversify = True
         if _peak_on:
             # 模块 D：先自然收敛（断档/地板截断）再类型均衡；条数可少于 limit（弃权/弱相关场景）
             _kept = peak_cutoff(_ranked)

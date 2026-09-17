@@ -219,5 +219,7 @@ def _build_pinned_http_client(url, headers=None, timeout=None, auth=None):
         return httpx.AsyncClient(**base_kw)
     try:
         return httpx.AsyncClient(transport=_PinnedIPHTTPTransport(pin_ip), **base_kw)
-    except Exception:
+    except Exception as e:
+        # P3-6（2026-09-17）：此前静默回退，pin-IP 防 DNS rebinding 失效时零观测；补告警（不阻断连接）。
+        _logger.warning("MCP pinned client failed, fallback to plain client: %s", e)
         return httpx.AsyncClient(**base_kw)

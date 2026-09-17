@@ -111,11 +111,13 @@ class UserDeviceToken(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)  # index=True（P3-4）：与 ix_user_device_tokens_user_id 对齐
     device_id: Mapped[str] = mapped_column(String(64), nullable=False)  # App 生成的设备 UUID
     platform: Mapped[str] = mapped_column(String(16), nullable=False)  # android | ios
     push_provider: Mapped[str] = mapped_column(String(16), nullable=False)  # fcm | apns
-    push_token: Mapped[str] = mapped_column(String(512), nullable=False)  # FCM registration token
+    # push_token index=True（P3-4）：修正迁移 d9e0 的命名错位——它建的是 ix_user_device_tokens_token，
+    # 列名实为 push_token；ORM 隐式索引名应为 ix_user_device_tokens_push_token（迁移 e8f9a0b1c2d3 改名）。
+    push_token: Mapped[str] = mapped_column(String(512), nullable=False, index=True)  # FCM registration token
     app_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False

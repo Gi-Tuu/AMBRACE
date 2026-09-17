@@ -6,16 +6,16 @@ from app.agent import loop
 from app.scheduling import message_generator as mg
 
 
-def test_load_recent_reflection_flag关不查库(monkeypatch):
+def test_load_recent_reflection_固化常开_恒尝试加载(monkeypatch):
+    """agent_reflection_inject 已固化常开（2026-09-17 用户拍板）：不再有 flag 短路，恒尝试加载最近复盘。"""
+    from app.agent import loop as _loop
+    assert "agent_reflection_inject" not in _loop.AGENT_FLAGS
+    # 故障静默仍保留：DB 异常返回空串（验证已无 flag 短路、真正走到 DB）
     def _boom():
-        raise AssertionError("flag 关不应查 DB")
+        raise RuntimeError("db down")
 
     monkeypatch.setattr("app.db.database.async_session_factory", _boom)
-    loop.AGENT_FLAGS["agent_reflection_inject"] = False
-    try:
-        r = asyncio.run(mg._load_recent_reflection(11))
-    finally:
-        loop.AGENT_FLAGS["agent_reflection_inject"] = True
+    r = asyncio.run(mg._load_recent_reflection(11))
     assert r == ""
 
 
@@ -29,9 +29,5 @@ def test_load_recent_reflection_异常静默(monkeypatch):
         raise RuntimeError("db down")
 
     monkeypatch.setattr("app.db.database.async_session_factory", _boom)
-    loop.AGENT_FLAGS["agent_reflection_inject"] = True
-    try:
-        r = asyncio.run(mg._load_recent_reflection(11))
-    finally:
-        loop.AGENT_FLAGS["agent_reflection_inject"] = True
-    assert r == ""
+    r = asyncio.run(mg._load_recent_reflection(11))
+    assert r == ""  # 故障静默（固化常开后仍无 flag 短路）

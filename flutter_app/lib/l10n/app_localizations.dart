@@ -978,7 +978,7 @@ abstract class AppLocalizations {
   /// No description provided for @flagWeave3DHint.
   ///
   /// In zh, this message translates to:
-  /// **'织库画布切换为 3D 球视图（实验功能，低端机可关）'**
+  /// **'在「织库」中展示 3D 关系视图。'**
   String get flagWeave3DHint;
 
   /// No description provided for @apiConfig.
@@ -4898,6 +4898,12 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'可读取关系网'**
   String get marketPermRelationshipRead;
+
+  /// No description provided for @marketPermProactiveRead.
+  ///
+  /// In zh, this message translates to:
+  /// **'可读取主动策略素材（只读）'**
+  String get marketPermProactiveRead;
 
   /// No description provided for @marketPermUnknown.
   ///
@@ -12291,24 +12297,6 @@ abstract class AppLocalizations {
   /// **'开启后每条聊天都经过统一 Runtime，注入世界认知与记忆后再回答，角色更连贯；关闭则回退到旧的直接生成链路。一般保持开启，仅在排查新链路问题时临时关闭。'**
   String get flagAgentLoopChatDetail;
 
-  /// No description provided for @flagAgentLoopSearchTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'联网搜索循环'**
-  String get flagAgentLoopSearchTitle;
-
-  /// No description provided for @flagAgentLoopSearchHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'允许 AI 在需要时自动联网搜索，结果不足时再补查一次。'**
-  String get flagAgentLoopSearchHint;
-
-  /// No description provided for @flagAgentLoopSearchDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'开启后 AI 可发起搜索、读取真实结果再回答，最多补查 1 次；关闭则退回单次生成、不联网。'**
-  String get flagAgentLoopSearchDetail;
-
   /// No description provided for @flagAgentLoopSchedulerTitle.
   ///
   /// In zh, this message translates to:
@@ -12326,24 +12314,6 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'让到点触发的提醒、主动关心等经过统一 Runtime 并记录过程；关闭后主动任务走旧链路。'**
   String get flagAgentLoopSchedulerDetail;
-
-  /// No description provided for @flagAgentToolEventsTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'工具联动织库'**
-  String get flagAgentToolEventsTitle;
-
-  /// No description provided for @flagAgentToolEventsHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'AI 调用工具产生的关键事件，自动增量写入织库/记忆。'**
-  String get flagAgentToolEventsHint;
-
-  /// No description provided for @flagAgentToolEventsDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'开启后工具执行结果会沉淀为记忆增量；关闭则工具执行不联动记忆。'**
-  String get flagAgentToolEventsDetail;
 
   /// No description provided for @flagAgentContextTrimTitle.
   ///
@@ -12380,60 +12350,6 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'属于可观测日志，不影响回复内容；关闭后不再写群聊 trace。'**
   String get flagAgentTraceGroupDetail;
-
-  /// No description provided for @flagAgentDailyReflectionTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'周期复盘'**
-  String get flagAgentDailyReflectionTitle;
-
-  /// No description provided for @flagAgentDailyReflectionHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'让 AI 周期性复盘近期经历（约每 7 天一次）。'**
-  String get flagAgentDailyReflectionHint;
-
-  /// No description provided for @flagAgentDailyReflectionDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'复盘结果让角色言行更连贯；关闭后不再生成周期复盘。'**
-  String get flagAgentDailyReflectionDetail;
-
-  /// No description provided for @flagAgentReflectionInjectTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'复盘注入主动消息'**
-  String get flagAgentReflectionInjectTitle;
-
-  /// No description provided for @flagAgentReflectionInjectHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'发主动消息时带上最近一次复盘，内容更贴合 AI 近况。'**
-  String get flagAgentReflectionInjectHint;
-
-  /// No description provided for @flagAgentReflectionInjectDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'需配合「周期复盘」使用；关闭后主动消息不注入复盘。'**
-  String get flagAgentReflectionInjectDetail;
-
-  /// No description provided for @flagAgentDailyMemoryMaintenanceTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'日终记忆维护'**
-  String get flagAgentDailyMemoryMaintenanceTitle;
-
-  /// No description provided for @flagAgentDailyMemoryMaintenanceHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'每天自动补日摘要、去重、补置顶摘要，保持记忆库整洁。'**
-  String get flagAgentDailyMemoryMaintenanceHint;
-
-  /// No description provided for @flagAgentDailyMemoryMaintenanceDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'关闭后这些维护不再自动执行，长期可能积累重复记忆或缺失摘要。'**
-  String get flagAgentDailyMemoryMaintenanceDetail;
 
   /// No description provided for @flagProactiveNaturalnessScoreTitle.
   ///
@@ -12489,150 +12405,6 @@ abstract class AppLocalizations {
   /// **'关闭后游戏入口与 API 都不展示，可整体回退游戏功能，不影响聊天。'**
   String get flagGroupChatGamesDetail;
 
-  /// No description provided for @flagGameUndercoverTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'谁是卧底'**
-  String get flagGameUndercoverTitle;
-
-  /// No description provided for @flagGameUndercoverHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'多人轮流描述词语、投票找出卧底的桌游。'**
-  String get flagGameUndercoverHint;
-
-  /// No description provided for @flagGameUndercoverDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'单个游戏的启用开关；关闭后该游戏不在可选列表。'**
-  String get flagGameUndercoverDetail;
-
-  /// No description provided for @flagGameTruthOrDareTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'真心话大冒险'**
-  String get flagGameTruthOrDareTitle;
-
-  /// No description provided for @flagGameTruthOrDareHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'轮流选择真心话或大冒险的轻量游戏。'**
-  String get flagGameTruthOrDareHint;
-
-  /// No description provided for @flagGameTruthOrDareDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'单个游戏的启用开关；关闭后不可选。'**
-  String get flagGameTruthOrDareDetail;
-
-  /// No description provided for @flagGameTwentyQTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'猜词 20 问'**
-  String get flagGameTwentyQTitle;
-
-  /// No description provided for @flagGameTwentyQHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'用是非问句在限定轮数内猜出对方想的词。'**
-  String get flagGameTwentyQHint;
-
-  /// No description provided for @flagGameTwentyQDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'单个游戏的启用开关；关闭后不可选。'**
-  String get flagGameTwentyQDetail;
-
-  /// No description provided for @flagGameWerewolfTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'狼人杀'**
-  String get flagGameWerewolfTitle;
-
-  /// No description provided for @flagGameWerewolfHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'夜晚行动 + 白天发言投票的多人桌游，含系统主持人。'**
-  String get flagGameWerewolfHint;
-
-  /// No description provided for @flagGameWerewolfDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'单个游戏的启用开关；关闭后不可选。'**
-  String get flagGameWerewolfDetail;
-
-  /// No description provided for @flagGameLiarsBarTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'骗子酒馆'**
-  String get flagGameLiarsBarTitle;
-
-  /// No description provided for @flagGameLiarsBarHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'声明牌面、可质疑上家的心理博弈游戏。'**
-  String get flagGameLiarsBarHint;
-
-  /// No description provided for @flagGameLiarsBarDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'单个游戏的启用开关；关闭后不可选。'**
-  String get flagGameLiarsBarDetail;
-
-  /// No description provided for @flagGameTurtleSoupTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'海龟汤'**
-  String get flagGameTurtleSoupTitle;
-
-  /// No description provided for @flagGameTurtleSoupHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'通过是非提问，还原「汤面」背后真相，AI 当主持人。'**
-  String get flagGameTurtleSoupHint;
-
-  /// No description provided for @flagGameTurtleSoupDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'单个游戏的启用开关；关闭后不可选。'**
-  String get flagGameTurtleSoupDetail;
-
-  /// No description provided for @flagGameMemoryBridgeTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'游戏记忆桥接'**
-  String get flagGameMemoryBridgeTitle;
-
-  /// No description provided for @flagGameMemoryBridgeHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'在主记忆留一条游戏摘要指针，可回溯到独立游戏记忆库。'**
-  String get flagGameMemoryBridgeHint;
-
-  /// No description provided for @flagGameMemoryBridgeDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'开启后「玩过什么」会在主记忆留痕并可调取游戏库详情；关闭则游戏过程只存在独立游戏库，不混入生活记忆。'**
-  String get flagGameMemoryBridgeDetail;
-
-  /// No description provided for @flagGameAiAutoplayTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'AI 自动回合'**
-  String get flagGameAiAutoplayTitle;
-
-  /// No description provided for @flagGameAiAutoplayHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'轮到 AI 角色时自动行动，无需手动点下一步。'**
-  String get flagGameAiAutoplayHint;
-
-  /// No description provided for @flagGameAiAutoplayDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'默认开以保证流程顺畅；关闭后每步 AI 行动需手动推进，主要用于调试。'**
-  String get flagGameAiAutoplayDetail;
-
   /// No description provided for @flagLifeLoopEnabledTitle.
   ///
   /// In zh, this message translates to:
@@ -12650,24 +12422,6 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'关闭后角色的自主生活循环停止；你离线时也不再推进其生活。'**
   String get flagLifeLoopEnabledDetail;
-
-  /// No description provided for @flagLifeLoopVisibleTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'生活行为对外可见'**
-  String get flagLifeLoopVisibleTitle;
-
-  /// No description provided for @flagLifeLoopVisibleHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'允许自主生活产生面向你可见的输出（动态、分享等）。'**
-  String get flagLifeLoopVisibleHint;
-
-  /// No description provided for @flagLifeLoopVisibleDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'关闭后生活行为只在后台记录，不向你展示。'**
-  String get flagLifeLoopVisibleDetail;
 
   /// No description provided for @flagLifeLoopLlmTitle.
   ///
@@ -12921,42 +12675,6 @@ abstract class AppLocalizations {
   /// **'B1②：默认关；开=扩充节点降权 0.9、受 token 配额与 5 轮去重约束，不绕过预算。'**
   String get flagMemoryChainExpandDetail;
 
-  /// No description provided for @flagRecallTop5Title.
-  ///
-  /// In zh, this message translates to:
-  /// **'主路召回 5 条'**
-  String get flagRecallTop5Title;
-
-  /// No description provided for @flagRecallTop5Hint.
-  ///
-  /// In zh, this message translates to:
-  /// **'记忆主路召回出口由 3 条扩到 5 条（M1-S1）。'**
-  String get flagRecallTop5Hint;
-
-  /// No description provided for @flagRecallTop5Detail.
-  ///
-  /// In zh, this message translates to:
-  /// **'关=回退旧的 3 条出口。'**
-  String get flagRecallTop5Detail;
-
-  /// No description provided for @flagRecallDiversifyTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'类型多样性重排'**
-  String get flagRecallDiversifyTitle;
-
-  /// No description provided for @flagRecallDiversifyHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'召回结果按类型均衡后再截断，避免清一色同一类记忆。'**
-  String get flagRecallDiversifyHint;
-
-  /// No description provided for @flagRecallDiversifyDetail.
-  ///
-  /// In zh, this message translates to:
-  /// **'S1：每类先取 2 条一轮再按原序补齐；关=纯按分数截断。'**
-  String get flagRecallDiversifyDetail;
-
   /// No description provided for @flagMemoryTieredDecayTitle.
   ///
   /// In zh, this message translates to:
@@ -13028,6 +12746,24 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'#70 方案C：默认关（误取代比不取代更伤）；开=SQLite+Chroma 双通道按状态分流。'**
   String get flagMemorySupersedeDetail;
+
+  /// No description provided for @flagCurrentFactsActiveOnlyTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'现状面只用现行记忆'**
+  String get flagCurrentFactsActiveOnlyTitle;
+
+  /// No description provided for @flagCurrentFactsActiveOnlyHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'注入的「现状/近况」只取当前有效的记忆，旧现状不再冒充新事实。'**
+  String get flagCurrentFactsActiveOnlyHint;
+
+  /// No description provided for @flagCurrentFactsActiveOnlyDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'开（默认）：现状/事实注入面恒只取现行记忆，旧记忆即使被召回也会标成「往事/已过时」并统一降权；怀旧/复习面仍能看到旧往事。关 = 一键回退旧行为。'**
+  String get flagCurrentFactsActiveOnlyDetail;
 
   /// No description provided for @flagMarkerRecoveryTitle.
   ///
@@ -13134,8 +12870,26 @@ abstract class AppLocalizations {
   /// No description provided for @flagGlobalUserFactsDetail.
   ///
   /// In zh, this message translates to:
-  /// **'B1④ 总开关：默认关；开=GPS/对话写入 user_facts 并注入 [USER NOW] 分区；关=不写不读。'**
+  /// **'总开关（默认关）。开启后，系统会从对话与 GPS 抽取你的近况（位置、工作、居住、近期目标等），写入 user_facts 并在你所有角色之间共享；感情与健康两类不受这个开关影响，需要单独开启。'**
   String get flagGlobalUserFactsDetail;
+
+  /// No description provided for @flagUserCurrentLocationShareTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'位置共享（跨角色）'**
+  String get flagUserCurrentLocationShareTitle;
+
+  /// No description provided for @flagUserCurrentLocationShareHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'把你的权威位置共享给所有角色，低活跃角色不再停留在旧地点。'**
+  String get flagUserCurrentLocationShareHint;
+
+  /// No description provided for @flagUserCurrentLocationShareDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'默认开：只共享「位置」这一类低敏权威值，用于现状/近况注入与主动消息；感情、健康等敏感类别不受此项影响，仍需单独开启。关 = 不共享位置。'**
+  String get flagUserCurrentLocationShareDetail;
 
   /// No description provided for @flagCrossCharFactSyncTitle.
   ///
@@ -13430,6 +13184,738 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'全部游戏'**
   String get gameAchievementsAll;
+
+  /// No description provided for @flagAgentLoopGroupChatTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'群聊认知循环'**
+  String get flagAgentLoopGroupChatTitle;
+
+  /// No description provided for @flagAgentLoopGroupChatHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'群聊中让 AI 角色参与统一的认知循环（理解/记忆/规划）。'**
+  String get flagAgentLoopGroupChatHint;
+
+  /// No description provided for @flagAgentLoopGroupChatDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'开启后群聊消息也经统一 Runtime 处理，角色表现更连贯；关闭则群聊走旧链路。'**
+  String get flagAgentLoopGroupChatDetail;
+
+  /// No description provided for @flagAgentLoopSocialTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'社交循环'**
+  String get flagAgentLoopSocialTitle;
+
+  /// No description provided for @flagAgentLoopSocialHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'朋友圈/评论互动等社交行为的统一认知循环。'**
+  String get flagAgentLoopSocialHint;
+
+  /// No description provided for @flagAgentLoopSocialDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'开启后社交互动经统一 Runtime 并记录过程；关闭走旧链路。'**
+  String get flagAgentLoopSocialDetail;
+
+  /// No description provided for @flagAgentSocialLightContextTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'社交轻量上下文'**
+  String get flagAgentSocialLightContextTitle;
+
+  /// No description provided for @flagAgentSocialLightContextHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'社交场景注入轻量上下文，降低 token 占用。'**
+  String get flagAgentSocialLightContextHint;
+
+  /// No description provided for @flagAgentSocialLightContextDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'本机已显式开启；开启后社交回复携带精简上下文，高频角色保持全量；关闭则统一全量注入。'**
+  String get flagAgentSocialLightContextDetail;
+
+  /// No description provided for @flagWeave3DTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'织库 3D 视图'**
+  String get flagWeave3DTitle;
+
+  /// No description provided for @flagWeave3DDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'前端画布真在读此开关；关闭则织库不展示 3D 视图，不影响其他功能。'**
+  String get flagWeave3DDetail;
+
+  /// No description provided for @flagProactiveInactiveCharSkipTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'静默角色免打扰'**
+  String get flagProactiveInactiveCharSkipTitle;
+
+  /// No description provided for @flagProactiveInactiveCharSkipHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'近 24 小时无互动的角色不再主动搭话（09-08）。'**
+  String get flagProactiveInactiveCharSkipHint;
+
+  /// No description provided for @flagProactiveInactiveCharSkipDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'减少打扰；开启后长时间未互动的角色跳过主动消息，其余角色照常。'**
+  String get flagProactiveInactiveCharSkipDetail;
+
+  /// No description provided for @flagProactiveStrategyPluginsTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'内容策略包外放'**
+  String get flagProactiveStrategyPluginsTitle;
+
+  /// No description provided for @flagProactiveStrategyPluginsHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'启用 X6 内容策略包（策略源让位 + 防双发）。'**
+  String get flagProactiveStrategyPluginsHint;
+
+  /// No description provided for @flagProactiveStrategyPluginsDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'注意：flag 开不等于生效——还需有已启用的策略插件接管该类别；当前仅启用 rhythm 一个策略包。未启用插件时此开关为空。'**
+  String get flagProactiveStrategyPluginsDetail;
+
+  /// No description provided for @flagProactiveSegmentGuardTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'分块护栏'**
+  String get flagProactiveSegmentGuardTitle;
+
+  /// No description provided for @flagProactiveSegmentGuardHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'过滤残句/空块并做现实校验（分块护栏）。'**
+  String get flagProactiveSegmentGuardHint;
+
+  /// No description provided for @flagProactiveSegmentGuardDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'主动消息生成的分块经护栏校验后再发，过滤残缺内容与明显不现实的表述。'**
+  String get flagProactiveSegmentGuardDetail;
+
+  /// No description provided for @flagProactiveTopicGuardTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'主题熔断'**
+  String get flagProactiveTopicGuardTitle;
+
+  /// No description provided for @flagProactiveTopicGuardHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'同主题复读/催促收口（主题熔断）。'**
+  String get flagProactiveTopicGuardHint;
+
+  /// No description provided for @flagProactiveTopicGuardDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'防止短期内反复同一主题、过度催促；触发熔断时本轮不再重复该主题。'**
+  String get flagProactiveTopicGuardDetail;
+
+  /// No description provided for @flagOutreachHourWindowV1Title.
+  ///
+  /// In zh, this message translates to:
+  /// **'投放时段窗'**
+  String get flagOutreachHourWindowV1Title;
+
+  /// No description provided for @flagOutreachHourWindowV1Hint.
+  ///
+  /// In zh, this message translates to:
+  /// **'主动投放限制在 9–22 点之间。'**
+  String get flagOutreachHourWindowV1Hint;
+
+  /// No description provided for @flagOutreachHourWindowV1Detail.
+  ///
+  /// In zh, this message translates to:
+  /// **'outreach 三闸之一。注意：flag 开 + 命中灰度角色白名单（仅 char13）+ 比例桶 才真正生效，当前仅对灰度角色生效；非白名单角色无变化。'**
+  String get flagOutreachHourWindowV1Detail;
+
+  /// No description provided for @flagOutreachTypeMixV1Title.
+  ///
+  /// In zh, this message translates to:
+  /// **'投放类型配额'**
+  String get flagOutreachTypeMixV1Title;
+
+  /// No description provided for @flagOutreachTypeMixV1Hint.
+  ///
+  /// In zh, this message translates to:
+  /// **'限制各类型主动消息比例，防止某类刷屏。'**
+  String get flagOutreachTypeMixV1Hint;
+
+  /// No description provided for @flagOutreachTypeMixV1Detail.
+  ///
+  /// In zh, this message translates to:
+  /// **'outreach 三闸之一。当前仅对灰度角色生效（flag 开 + 角色白名单 + 比例桶才真正生效）。'**
+  String get flagOutreachTypeMixV1Detail;
+
+  /// No description provided for @flagOutreachSessionRateV1Title.
+  ///
+  /// In zh, this message translates to:
+  /// **'会话级节流'**
+  String get flagOutreachSessionRateV1Title;
+
+  /// No description provided for @flagOutreachSessionRateV1Hint.
+  ///
+  /// In zh, this message translates to:
+  /// **'单会话级别的主动消息节流（三闸之一）。'**
+  String get flagOutreachSessionRateV1Hint;
+
+  /// No description provided for @flagOutreachSessionRateV1Detail.
+  ///
+  /// In zh, this message translates to:
+  /// **'outreach 三闸之一。注意：本机未显式开启此键，运行时走代码默认 False；且 flag 即使开也仅对灰度角色（char13）生效。'**
+  String get flagOutreachSessionRateV1Detail;
+
+  /// No description provided for @flagPromiseSelfSideSplitTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'承诺按受益方分流'**
+  String get flagPromiseSelfSideSplitTitle;
+
+  /// No description provided for @flagPromiseSelfSideSplitHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'承诺按受益方分流，AI 自理的到点自述「我回来了」。'**
+  String get flagPromiseSelfSideSplitHint;
+
+  /// No description provided for @flagPromiseSelfSideSplitDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'开启后自洽类承诺由 AI 自行处理并在合适时机告知，减少不必要打扰。'**
+  String get flagPromiseSelfSideSplitDetail;
+
+  /// No description provided for @flagTimerRenderSubjectFixTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'到期渲染话术修复'**
+  String get flagTimerRenderSubjectFixTitle;
+
+  /// No description provided for @flagTimerRenderSubjectFixHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'到期提醒按 (owner,type) 三套话术 + 现状锚点 + __SKIP__ 闸门。'**
+  String get flagTimerRenderSubjectFixHint;
+
+  /// No description provided for @flagTimerRenderSubjectFixDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'让到期/计时提醒更贴合上下文、避免重复；命中 __SKIP__ 闸门的内容不渲染。'**
+  String get flagTimerRenderSubjectFixDetail;
+
+  /// No description provided for @flagLifeEventNoReplayTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'一次性生活动作不回放'**
+  String get flagLifeEventNoReplayTitle;
+
+  /// No description provided for @flagLifeEventNoReplayHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'一次性生活动作不进复习、不被高频复读。'**
+  String get flagLifeEventNoReplayHint;
+
+  /// No description provided for @flagLifeEventNoReplayDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'已发生的一次性生活事件只记录不重复推送，避免反复提醒同一件事。'**
+  String get flagLifeEventNoReplayDetail;
+
+  /// No description provided for @flagLifeMemoryWriteRetryTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'生活写记忆加固'**
+  String get flagLifeMemoryWriteRetryTitle;
+
+  /// No description provided for @flagLifeMemoryWriteRetryHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'生活写记忆加固（先提交释放锁 + 退避重试，纯加固）。'**
+  String get flagLifeMemoryWriteRetryHint;
+
+  /// No description provided for @flagLifeMemoryWriteRetryDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'仅增强写入可靠性，不改变内容；失败自动重试，不影响既有记忆。'**
+  String get flagLifeMemoryWriteRetryDetail;
+
+  /// No description provided for @flagMemoryWriteReceiptTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'写入回执'**
+  String get flagMemoryWriteReceiptTitle;
+
+  /// No description provided for @flagMemoryWriteReceiptHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'记忆写入回执（09-15）。'**
+  String get flagMemoryWriteReceiptHint;
+
+  /// No description provided for @flagMemoryWriteReceiptDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'开启后每次记忆写入产生回执，便于确认写入成功与排查；关闭则无回执。'**
+  String get flagMemoryWriteReceiptDetail;
+
+  /// No description provided for @flagMemoryAdmissionGateTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'世界事实写入准入闸'**
+  String get flagMemoryAdmissionGateTitle;
+
+  /// No description provided for @flagMemoryAdmissionGateHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'M4 world_facts 写入准入闸门（拦截/查重/矛盾裁决）。'**
+  String get flagMemoryAdmissionGateHint;
+
+  /// No description provided for @flagMemoryAdmissionGateDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'开启后写入世界事实前做查重与矛盾裁决，提升事实一致性；关闭则直接写入。'**
+  String get flagMemoryAdmissionGateDetail;
+
+  /// No description provided for @flagMemoryUtilityFeedbackTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'召回效用反馈'**
+  String get flagMemoryUtilityFeedbackTitle;
+
+  /// No description provided for @flagMemoryUtilityFeedbackHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'召回后效用反馈，回调 salience/衰减（09-16）。'**
+  String get flagMemoryUtilityFeedbackHint;
+
+  /// No description provided for @flagMemoryUtilityFeedbackDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'根据用户对召回内容的实际反应回调显著性/衰减，优化后续召回；默认关，本机仍关。'**
+  String get flagMemoryUtilityFeedbackDetail;
+
+  /// No description provided for @flagWorkingStateInjectTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'工作记忆注入'**
+  String get flagWorkingStateInjectTitle;
+
+  /// No description provided for @flagWorkingStateInjectHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'M3-b：把工作记忆注入到回复上下文。'**
+  String get flagWorkingStateInjectHint;
+
+  /// No description provided for @flagWorkingStateInjectDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'注入为灰度阶段。注意：即使本键关着，灰度角色 char13 仍有约 15% 会话注入（代码常量灰度，非 runtime flag 可控）；当前仅对灰度角色生效。'**
+  String get flagWorkingStateInjectDetail;
+
+  /// No description provided for @flagReviewExcludeExpiredPlanTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'复习排除过期计划'**
+  String get flagReviewExcludeExpiredPlanTitle;
+
+  /// No description provided for @flagReviewExcludeExpiredPlanHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'L1：复习选片排除过期计划/瞬时状态。'**
+  String get flagReviewExcludeExpiredPlanHint;
+
+  /// No description provided for @flagReviewExcludeExpiredPlanDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'复习不再挑入已经过期或仅瞬时有效的计划，减少无效复习。'**
+  String get flagReviewExcludeExpiredPlanDetail;
+
+  /// No description provided for @flagReviewReinforceEventCapTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'事件强化上限'**
+  String get flagReviewReinforceEventCapTitle;
+
+  /// No description provided for @flagReviewReinforceEventCapHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'L2：一次性事件强化按 tense 分流收口 + 上限。'**
+  String get flagReviewReinforceEventCapHint;
+
+  /// No description provided for @flagReviewReinforceEventCapDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'防止一次性事件被过度强化；按时态分流并设上限，保持复习质量。'**
+  String get flagReviewReinforceEventCapDetail;
+
+  /// No description provided for @flagReviewReminisceFrameworkTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'回忆框架'**
+  String get flagReviewReminisceFrameworkTitle;
+
+  /// No description provided for @flagReviewReminisceFrameworkHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'L3：复习提示改「回忆框架」+ 时态口吻 + 现状锚点。'**
+  String get flagReviewReminisceFrameworkHint;
+
+  /// No description provided for @flagReviewReminisceFrameworkDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'复习以更自然的「回忆」口吻呈现，带时态与现状锚点，体验更连贯。'**
+  String get flagReviewReminisceFrameworkDetail;
+
+  /// No description provided for @flagReviewPlanExpireStaleTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'过期计划置 stale'**
+  String get flagReviewPlanExpireStaleTitle;
+
+  /// No description provided for @flagReviewPlanExpireStaleHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'L4：每日维护把过期计划自动置 stale。'**
+  String get flagReviewPlanExpireStaleHint;
+
+  /// No description provided for @flagReviewPlanExpireStaleDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'每日维护扫描计划，过期的自动标记 stale，不再被当作现行安排。'**
+  String get flagReviewPlanExpireStaleDetail;
+
+  /// No description provided for @flagReviewPlanValidityExtractTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'计划有效期提取'**
+  String get flagReviewPlanValidityExtractTitle;
+
+  /// No description provided for @flagReviewPlanValidityExtractHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'L4：提取/写入侧给计划写 valid_to。'**
+  String get flagReviewPlanValidityExtractHint;
+
+  /// No description provided for @flagReviewPlanValidityExtractDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'在计划提取与落库时补充有效期限 valid_to，为后续过期判定提供依据。'**
+  String get flagReviewPlanValidityExtractDetail;
+
+  /// No description provided for @flagUserFactLocationTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'位置/城市槽'**
+  String get flagUserFactLocationTitle;
+
+  /// No description provided for @flagUserFactLocationHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'抽取位置/城市近况（GPS + 聊天归槽）。'**
+  String get flagUserFactLocationHint;
+
+  /// No description provided for @flagUserFactLocationDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'跨角色用户事实细槽之一：位置/城市。总闸开启时本槽随之启用，也可以单独开启。'**
+  String get flagUserFactLocationDetail;
+
+  /// No description provided for @flagUserFactJobTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'工作/学业槽'**
+  String get flagUserFactJobTitle;
+
+  /// No description provided for @flagUserFactJobHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'抽取工作/学业近况。'**
+  String get flagUserFactJobHint;
+
+  /// No description provided for @flagUserFactJobDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'跨角色用户事实细槽之一：工作/学业。总闸开启时本槽随之启用，也可以单独开启。'**
+  String get flagUserFactJobDetail;
+
+  /// No description provided for @flagUserFactRelationshipTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'感情状态槽（隐私）'**
+  String get flagUserFactRelationshipTitle;
+
+  /// No description provided for @flagUserFactRelationshipHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'抽取感情/恋爱状态近况（隐私）。'**
+  String get flagUserFactRelationshipHint;
+
+  /// No description provided for @flagUserFactRelationshipDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'跨角色用户事实细槽之一：感情状态，属敏感隐私。不受总闸影响，必须单独开启；开启后会和其他事实一样在你所有角色之间共享。'**
+  String get flagUserFactRelationshipDetail;
+
+  /// No description provided for @flagUserFactLivingTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'居住状况槽'**
+  String get flagUserFactLivingTitle;
+
+  /// No description provided for @flagUserFactLivingHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'抽取居住状况（独居/和谁住）。'**
+  String get flagUserFactLivingHint;
+
+  /// No description provided for @flagUserFactLivingDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'跨角色用户事实细槽之一：居住状况。总闸开启时本槽随之启用，也可以单独开启。'**
+  String get flagUserFactLivingDetail;
+
+  /// No description provided for @flagUserFactGoalStateTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'近期目标状态槽'**
+  String get flagUserFactGoalStateTitle;
+
+  /// No description provided for @flagUserFactGoalStateHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'抽取近期目标/状态近况。'**
+  String get flagUserFactGoalStateHint;
+
+  /// No description provided for @flagUserFactGoalStateDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'跨角色用户事实细槽之一：近期目标/状态。总闸开启时本槽随之启用，也可以单独开启。'**
+  String get flagUserFactGoalStateDetail;
+
+  /// No description provided for @flagUserFactHealthTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'健康槽（隐私）'**
+  String get flagUserFactHealthTitle;
+
+  /// No description provided for @flagUserFactHealthHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'抽取健康近况（隐私）。'**
+  String get flagUserFactHealthHint;
+
+  /// No description provided for @flagUserFactHealthDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'跨角色用户事实细槽之一：健康，属敏感隐私。不受总闸影响，必须单独开启；开启后会和其他事实一样在你所有角色之间共享。'**
+  String get flagUserFactHealthDetail;
+
+  /// No description provided for @flagChannelBindingV2Title.
+  ///
+  /// In zh, this message translates to:
+  /// **'渠道绑定 v2'**
+  String get flagChannelBindingV2Title;
+
+  /// No description provided for @flagChannelBindingV2Hint.
+  ///
+  /// In zh, this message translates to:
+  /// **'渠道绑定 v2（MCP/抖音/微信按主账号独立绑定）。'**
+  String get flagChannelBindingV2Hint;
+
+  /// No description provided for @flagChannelBindingV2Detail.
+  ///
+  /// In zh, this message translates to:
+  /// **'文档曾称已转正，但代码硬编码默认仍是 False，当前靠本机 runtime_flags 覆盖为 ON；换机/重建库若无此覆盖则回退为关。'**
+  String get flagChannelBindingV2Detail;
+
+  /// No description provided for @flagDomainEventLogEnabledTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'领域事件流水'**
+  String get flagDomainEventLogEnabledTitle;
+
+  /// No description provided for @flagDomainEventLogEnabledHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'开启领域事件（domain event）流水写入。'**
+  String get flagDomainEventLogEnabledHint;
+
+  /// No description provided for @flagDomainEventLogEnabledDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'把系统关键事件写入事件流水，便于审计与排查；关闭则不再记录。'**
+  String get flagDomainEventLogEnabledDetail;
+
+  /// No description provided for @flagDomainEventRetentionDaysTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'事件保留天数'**
+  String get flagDomainEventRetentionDaysTitle;
+
+  /// No description provided for @flagDomainEventRetentionDaysHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'领域事件保留天数，0=永久（数字型）。'**
+  String get flagDomainEventRetentionDaysHint;
+
+  /// No description provided for @flagDomainEventRetentionDaysDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'为数字型键，热切通道只支持布尔，无法通过开关页调整（不可热切，需改配置/代码）；0 表示永久保留。'**
+  String get flagDomainEventRetentionDaysDetail;
+
+  /// No description provided for @flagGroupCognitionV2Title.
+  ///
+  /// In zh, this message translates to:
+  /// **'群聊认知升级'**
+  String get flagGroupCognitionV2Title;
+
+  /// No description provided for @flagGroupCognitionV2Hint.
+  ///
+  /// In zh, this message translates to:
+  /// **'#72 群聊认知升级（P1/P2 已合，P3/P4 待拆）。'**
+  String get flagGroupCognitionV2Hint;
+
+  /// No description provided for @flagGroupCognitionV2Detail.
+  ///
+  /// In zh, this message translates to:
+  /// **'升级群聊认知处理；还需群级 chat_groups.cognition_enabled 二次门控才对具体群生效。'**
+  String get flagGroupCognitionV2Detail;
+
+  /// No description provided for @flagGroupMemoryCompactTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'群记忆日终合并'**
+  String get flagGroupMemoryCompactTitle;
+
+  /// No description provided for @flagGroupMemoryCompactHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'#72 P5：>7 天群记忆日终合并为 1 条摘要、旧行软删。'**
+  String get flagGroupMemoryCompactHint;
+
+  /// No description provided for @flagGroupMemoryCompactDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'降低长群记忆存储与注入成本；开启后老旧群记忆合并为摘要，原始行软删除。'**
+  String get flagGroupMemoryCompactDetail;
+
+  /// No description provided for @flagAgentTraceSchedulerOnlyExecutedTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'计划仅记已执行'**
+  String get flagAgentTraceSchedulerOnlyExecutedTitle;
+
+  /// No description provided for @flagAgentTraceSchedulerOnlyExecutedHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'R1：未触发的主动任务不再写 task_logs（止血写放大）。'**
+  String get flagAgentTraceSchedulerOnlyExecutedHint;
+
+  /// No description provided for @flagAgentTraceSchedulerOnlyExecutedDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'仅记录真实触发的计划，减少无谓日志；关闭则旧行为全量写日志。'**
+  String get flagAgentTraceSchedulerOnlyExecutedDetail;
+
+  /// No description provided for @flagAgentTraceSchedulerMarkExecErrorTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'执行失败记 error'**
+  String get flagAgentTraceSchedulerMarkExecErrorTitle;
+
+  /// No description provided for @flagAgentTraceSchedulerMarkExecErrorHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'R1：真执行失败记 status=error（而非 blocked）。'**
+  String get flagAgentTraceSchedulerMarkExecErrorHint;
+
+  /// No description provided for @flagAgentTraceSchedulerMarkExecErrorDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'更准确标记执行结果，便于排查；关闭则失败可能被记为 blocked。'**
+  String get flagAgentTraceSchedulerMarkExecErrorDetail;
+
+  /// No description provided for @flagMcpStreamDeclarationsTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'流式 MCP 声明'**
+  String get flagMcpStreamDeclarationsTitle;
+
+  /// No description provided for @flagMcpStreamDeclarationsHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'R3：流式会话也注入 MCP 工具声明（依赖 #59 流尾 tool_result）。'**
+  String get flagMcpStreamDeclarationsHint;
+
+  /// No description provided for @flagMcpStreamDeclarationsDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'让流式回复也能带 MCP 工具声明；关闭则流式路径不注入。'**
+  String get flagMcpStreamDeclarationsDetail;
+
+  /// No description provided for @flagAgentToolExecTraceTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'工具执行落日志'**
+  String get flagAgentToolExecTraceTitle;
+
+  /// No description provided for @flagAgentToolExecTraceHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'R5：插件/内置工具每次执行落 task_logs（MCP 工具不落，避免双记）。'**
+  String get flagAgentToolExecTraceHint;
+
+  /// No description provided for @flagAgentToolExecTraceDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'记录工具真实执行轨迹；MCP 工具不重复记录以防双记；关闭则只记录部分。'**
+  String get flagAgentToolExecTraceDetail;
+
+  /// No description provided for @flagGroupProactivePacing.
+  ///
+  /// In zh, this message translates to:
+  /// **'主动投放节制（B1）'**
+  String get flagGroupProactivePacing;
+
+  /// No description provided for @flagGroupReviewRecall.
+  ///
+  /// In zh, this message translates to:
+  /// **'主动复习与回忆化（H）'**
+  String get flagGroupReviewRecall;
+
+  /// No description provided for @flagGroupChannelGroup.
+  ///
+  /// In zh, this message translates to:
+  /// **'渠道绑定与群认知'**
+  String get flagGroupChannelGroup;
+
+  /// No description provided for @flagGroupToolTrace.
+  ///
+  /// In zh, this message translates to:
+  /// **'工具轨迹治理'**
+  String get flagGroupToolTrace;
+
+  /// No description provided for @flagNumericValue.
+  ///
+  /// In zh, this message translates to:
+  /// **'当前值：{value}'**
+  String flagNumericValue(Object value);
+
+  /// No description provided for @flagNumericReadOnly.
+  ///
+  /// In zh, this message translates to:
+  /// **'该开关为数值型，暂不支持在 App 内热改'**
+  String get flagNumericReadOnly;
 }
 
 class _AppLocalizationsDelegate

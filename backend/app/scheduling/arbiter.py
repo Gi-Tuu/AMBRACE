@@ -1130,6 +1130,21 @@ async def _timer_current_anchor(event) -> str:
                          f"/{getattr(st, 'current_room', '') or ''}。")
     except Exception:
         pass
+    # 2026-09-17 批次二任务2.2：并列组装「用户权威现状」（共享 location + 已启用低敏槽 +
+    # User 已授权城市），与 AI 自己的 life_states 同处一个 section——低活跃朋友角色不再只靠
+    # 各自记忆里的旧位置碎片（用户 8 月底已回湛江，AI 仍在 9 月反复「你在长沙」）。
+    try:
+        async with async_session_factory() as db:
+            _ch = await db.get(AICharacter, event.character_id)
+        _uid = getattr(_ch, "user_id", None)
+        if _uid:
+            from app.memory.current_state import current_user_state_anchor
+            _user_anchor = await current_user_state_anchor(
+                character_id=event.character_id, user_id=_uid, include_profile_location=True)
+            if _user_anchor:
+                lines.append(_user_anchor.strip())
+    except Exception:
+        pass
     return "\n".join(lines)
 
 

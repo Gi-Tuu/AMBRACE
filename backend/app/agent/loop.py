@@ -5,9 +5,9 @@
 - execute：解析动作并执行工具（搜索；失败自动重试 1 次，单工具超时 30s）
 - observe：工具结果注入为带标注上下文（【搜索结果】），条件满足再决策（补查）
 
-统一限制（方案 5.3）：最多 2 次搜索 / 3 次 LLM 调用；节流或开关不通过、搜索失败、
-超限 → 静默降级（剥离标记、不编造成功）。Feature Flag agent_loop_search=False 时
-退回旧单次「搜索→二次生成」行为（search_rounds=1）。
+统一限制（方案 5.3）：最多 2 次搜索 / 3 次 LLM 调用；节流或搜索失败、
+超限 → 静默降级（剥离标记、不编造成功）。
+（agent_loop_search 已于 2026-09-17 固化为恒定受控多轮搜索，不再经 flag 控制。）
 """
 import asyncio
 from typing import Awaitable, Callable
@@ -31,48 +31,38 @@ TOOL_TIMEOUT_SEC = 30.0  # 单工具执行超时
 SEARCH_RETRY = 1  # 只读工具失败自动重试次数（方案 5.2）
 
 # Feature Flag（2026-08-17 开源包基线：全部默认开启；各 Flag 作用/前值/回滚方法见 docs/feature-flags.md）：
-# agent_loop_search 开=受控搜索循环（最多补查 1 次、失败静默降级）；关=退回旧单次二次生成；
+# agent_loop_search：2026-09-17 固化——恒定走受控多轮搜索（曾为灰度开关；关=退回旧单次二次生成，现恒定开，不再经 flag 控制）
 # agent_loop_scheduler 开=arbiter 主动任务写 AgentTask trace（含 10% 角色 route=scheduler_gray 对比标记 + 灰度角色真实任务记录）；
 # agent_loop_chat 开=主链路日历/备忘等本地工具经统一执行入口 execute_tool；
-# agent_tool_events 开=工具执行联动织库增量（tool.executed 订阅）；
+# agent_tool_events（已固化常开，2026-09-17 用户拍板：功能常驻不下放）：工具执行联动织库增量（tool.executed 订阅）
 # agent_trace_group 开=群聊角色回应写 AgentTask trace（只写不读可观测）；
-# agent_daily_reflection 开=周复盘（每 7 天 1 次，2026-08-17 转全量）；
-# agent_reflection_inject 开=主动消息注入最近复盘（反思驱动）；
+# agent_daily_reflection（已固化常开，2026-09-17 用户拍板：功能常驻不下放）：周复盘（每 7 天 1 次）
+# agent_reflection_inject（已固化常开，2026-09-17 用户拍板：功能常驻不下放）：主动消息注入最近复盘（反思驱动）
 # agent_context_trim 开=认知注入按角色热度裁剪（低频角色缩小日摘要/织库）；
 # agent_loop_group_chat 开=群聊回应走统一 Runtime（逐角色 build_context 注入世界认知，知识不串线）；关=旧单次 JSON 链路（Phase E，2026-08-18 全量开启）；
 # agent_loop_social 开=渠道/插件主动候选走统一 Runtime（世界认知注入 + 防 hint 污染记忆）；关=旧裸生成链路（Phase E，2026-08-18 全量开启；X5 渠道化时按渠道语义改名，行为不变）；
 # agent_social_light_context 开=群聊/渠道社交短回复走轻量上下文（跳过完整世界认知，单次 prompt ≈-64%；F1/F2，2026-08-18 全量开启）；关=全量 build_context（回退）
 AGENT_FLAGS = {
-    "agent_loop_search": True,
     "agent_loop_scheduler": True,  # 2026-08-17 全量基线（开源包）：主动任务 trace + 10% 灰度 route 对比
     "agent_loop_chat": True,
-    "agent_tool_events": True,  # 2026-08-17 全量基线（开源包）：工具执行联动织库增量
+    # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：agent_tool_events（工具执行联动织库增量）
     "agent_trace_group": True,
-    "agent_daily_reflection": True,  # 2026-08-17 全量基线（开源包）：周复盘
-    "agent_reflection_inject": True,
+    # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：agent_daily_reflection（周复盘）
+    # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：agent_reflection_inject（主动消息注入最近复盘）
     "agent_context_trim": True,  # 认知注入按角色热度裁剪（2026-08-16）
-    "agent_daily_memory_maintenance": True,  # 日终记忆维护（P0-5，2026-08-16：日摘要补生成+去重+置顶摘要补生成，默认开）
+    # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：agent_daily_memory_maintenance（日终记忆维护）
     "agent_loop_group_chat": True,  # Phase E（2026-08-18）：群聊回应走统一 Runtime（2026-08-18 用户拍板全量体验；回退改 False 重启即恢复旧链路）
     "agent_loop_social": True,  # Phase E（2026-08-18）：渠道/插件主动候选走统一 Runtime（X5 渠道化改名；回退改 False 重启即恢复旧链路）
     "agent_social_light_context": True,
     "weave_3d": True,  # 织网 3D（P2 转默认开；仅客户端画布读它选 2D/3D 视图；低端机客户端自动降级 2.5D）  # F1/F2（2026-08-18 用户拍板全量开启）：群聊/渠道社交短回复走轻量上下文（单次 prompt ≈-64%；回退改 False 重启即恢复全量 build_context）。与 agent_loop_group_chat/agent_loop_social 正交：前者管走不走 Runtime，后者管 Runtime 内是否用轻量上下文
     "proactive_naturalness_score": True,  # #28 ①（2026-08-24）：低优先主动消息自然度评分——生成后按规则评分，低于阈值重试 1 次/仍低则降级跳过；关=纯现状
     "proactive_user_rhythm": True,  # #28 ②（2026-08-24）：用户作息学习——从聊天/主动日志推断活跃时段，低优先主动消息在时段外降优先级/推迟；关=纯现状
-    # 群聊游戏 Phase 1（2026-08-26）：只加不改既有 flag。总开关=群聊游戏；各游戏开关；主记忆摘要指针；AI 自动回合。
+    # 群聊游戏 Phase 1（2026-08-26）：总开关=群聊游戏（各游戏/记忆指针/AI 自动回合开关已于 2026-09-17 删除，功能常驻，不再下放修改按钮）
     "group_chat_games": True,        # 游戏总开关（关=游戏入口/API 不展示，可回退）
-    "game_undercover": True,         # 谁是卧底
-    "game_truth_or_dare": True,      # 真心话大冒险
-    "game_twenty_q": True,           # 猜词20问
-    "game_werewolf": True,           # 狼人杀（Phase 2）
-    "game_liars_bar": True,          # 骗子酒馆（Phase 2）
-    "game_turtle_soup": True,        # 海龟汤（Phase 2）
-    "game_memory_bridge": True,      # 主记忆摘要指针（关=游戏详情只存游戏库）
-    "game_ai_autoplay": True,        # AI 自动回合（关=需手动触发 AI 行动，调试用）
     # ── M1 记忆 P0（2026-08-31，docs/archive/architecture/执行方案_记忆与生成_20260831.md S1）──
-    "recall_top5": True,       # S1：主路召回出口 5 条（关=回退旧 3 条；rerank 后截断前做类型多样性重排）
+    # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：recall_top5（主路召回出口 5 条）
     "memory_temporal_recall": False,  # Ariadne 模块 A（2026-09-03）：时间维度确定性检索路（默认关=零行为变化；开=用户原话解析出时间区间时补一条确定性时间路召回，与语义路合并重排）
     "memory_recall_second_hop": False,  # Ariadne 模块 B（2026-09-04）：按需二跳联想检索（默认关=只剥离 [RECALL] 标记零行为变化；开=非流式路径镜像 run_search_loop：首轮输出 [RECALL]查询词[/RECALL] → 本地检索 → 注入【补充记忆】→ 再生成 1 次；流式只剥离不中途二跳）
-    "memory_recall_hop_limit": 6,  # Ariadne 模块 B：二跳召回条数（runtime_flag 表只支持 bool 覆盖，本项为硬编码默认值；调小可回退 4）
     "memory_story_assemble": False,  # Ariadne 模块 C（2026-09-04）：沿链半故事化组装（默认关；链建链器另案——空 index 时即使开 flag 也走原路径逐字节等价；建链器落地后开=成链小块注入）
     # ── B1-② 记忆链条建链器（2026-09-04，方案 §10-§18，阶段 C0-C5）──
     # memory_chain_builder 开=写入后异步挂链（chain_id/parent_id/node_type，零额外 LLM，
@@ -105,10 +95,9 @@ AGENT_FLAGS = {
     "outreach_type_mix_v1": False,
     "outreach_session_rate_v1": False,
     "memory_peak_cutoff": False,  # Ariadne 模块 D（2026-09-04）：自然收敛替代硬截断（默认关；开=按 rerank 分数断档/地板收敛，弃权/弱相关场景条数自然减少；阈值经模块 E v2 标定）
-    "recall_diversify": True,  # S1：按类型多样性重排（每类先取 2 条一轮再按原序补齐；关=纯 _ranked[:limit]）
+    # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：recall_diversify（按类型多样性重排）
     # ── Life Loop v1.1（2026-08-26；2026-08-27 用户拍板全量开启）──
     "life_loop_enabled": True,            # 主开关：30min 行为决策循环
-    "life_loop_visible": True,            # 允许自主行为产生面向用户输出
     "life_loop_llm": True,                # 允许 LLM 生成生活文案（每角色每日≤2次）
     "life_chat_driven_enabled": True,     # 聊天→生活意图链路
     "review_daily_plus": True,            # M1-S7（2026-08-31）：主动复习日额度 3→4（关=回退 3；90min 间隔不变）
@@ -143,6 +132,14 @@ AGENT_FLAGS = {
     # memory_supersede 开=superseded/stale 状态激活，双通道（SQLite+Chroma）过滤，读取点按状态分流；
     # 关=所有读取/注入/统计与现状逐字节一致（回归保护）。禁止默认 True（误取代比不取代更伤）。
     "memory_supersede": False,
+    # ── 2026-09-17 批次一（任务2）：现状面 / 怀旧面拆口径（docs/feature-flags.md F 档）──
+    # current_facts_active_only 开（默认）= 现状/事实注入面（current_facts_status_clause /
+    #   _active_status_clause）恒「仅 active」——stale/superseded/expired 的旧现状不再与现行事实
+    #   同分竞争（线上 DeepSeek/Dom 反复「你在长沙」的根因）；同时写侧向量查重只与现行向量比对。
+    #   怀旧/复习面（_retrievable_status_clause / 向量 / BM25 默认路）仍保留 stale 可见，
+    #   且 stale 在 rerank 恒降权 0.5（降权不再受 memory_supersede 门控）。
+    # 关 = 一键回退旧行为（status 子句退回 memory_supersede 门控，关=永真）。
+    "current_facts_active_only": True,
     # ── #70 附录 C 可选 M3：记忆写入回执（memory_write_receipt，2026-09-15 落地；默认关=零写入、零行为变化）──
     # memory_write_receipt 开=save_memory 写分支 / supersede_memory 异步写 memory_write_receipts
     #   （终态追踪「这条记忆为什么在/不在」）；关=完全跳过（不写不读，逐字节旧链路）。
@@ -166,17 +163,26 @@ AGENT_FLAGS = {
     "user_fact_living": False,        # 居住状况（独居/和谁住）
     "user_fact_goal_state": False,    # 近期目标/状态
     "user_fact_health": False,        # 健康（隐私，默认关）
+    # ── 2026-09-17 批次二（任务2）：位置类不吃细槽总闸（跨角色共享用户权威现状）──
+    # user_current_location_share 开（默认）= 读取/注入侧独立放行 location 槽（共享读路径
+    #   get_shared_user_facts / get_authoritative_user_location / 现状锚点 / 定时兑现锚点 /
+    #   主动消息·朋友圈·生活生成器），不受 global_user_facts 与细槽 flag 门控——修复低活跃朋友
+    #   角色拿不到权威位置、只靠各自旧「长沙」碎片并被 AI 朋友圈写回放大的回声腔。
+    #   写侧细槽门控（user_fact_slot_enabled）保持不变；relationship/health 两槽仍 opt-in
+    #   （红线：共享读路径只从 enabled_user_fact_slots() 取槽，永不旁路这两槽）。
+    #   关 = 一键回退：共享读路径不再包含 location（逐字节回到仅启用槽）。
+    "user_current_location_share": True,
     # cross_char_fact_sync：跨角色对齐——开=角色构建上下文前惰性对齐 + 每日 sweep，把同槽旧值
     #   per-char 记忆标 stale（复用 #70，不删可追溯）；关=不对齐。
     "cross_char_fact_sync": False,
     # cross_char_fact_projection：变化投影——开=对齐时按模板投影一条 global_sync 记忆进记忆本
     #   （零 LLM，skip_dedup）；关=只标 stale + 靠 [USER NOW] 注入（默认推荐关）。
     "cross_char_fact_projection": False,
-    # ── 一机多主 / 渠道绑定 per-账号化（2026-09-05，交接拍板，默认关=回落旧路径）──
+    # ── 一机多主 / 渠道绑定 per-账号化（2026-09-05，交接拍板，2026-09-17 落地默认开；关=回落旧路径）──
     # channel_binding_v2 开=渠道绑定读 channel_bindings 新表（租户隔离，读写走 ChannelBindingService）；
     #   关=渠道插件/读取层回落旧全局 config allowed_character_ids 串（单主部署语义等价，零行为变化）。
     #   新表/新列迁移幂等常驻（alembic a7b8c9d0e1f2），关 flag 即全链路回退、无数据删除。
-    "channel_binding_v2": False,
+    "channel_binding_v2": True,  # 已转正（2026-09-17 落地默认行为）；回退＝置 False 或运行时关 flag
     # ── 3.10 chat/moment 事件流水（2026-09-08，方案路线 A：outbox-lite）──
     # domain_event_log_enabled 开=业务 commit 成功后以独立 session 追加一条 append-only 领域事件
     #   （domain_events 表；只写不读，主表仍是唯一权威读源，不是经典 Event Sourcing）；
@@ -197,9 +203,9 @@ AGENT_FLAGS = {
     "agent_trace_scheduler_only_executed": True,
     "agent_trace_scheduler_mark_exec_error": True,
     # ── 工具轨迹治理 R6（2026-09-09，方案 §4.6）──
-    # chat_tools_list_real_only 开=私聊气泡「调用能力」只列本轮真实用到的能力（中文、去重、
-    #   上限、隐藏内部工具），不再把「全部启用中插件」的英文 id 拼成一坨；关=回退旧行为。
-    "chat_tools_list_real_only": True,
+    # chat_tools_list_real_only（已固化常开）：私聊气泡「调用能力」只列本轮真实用到的能力（中文、去重、
+    #   上限、隐藏内部工具），不再把「全部启用中插件」的英文 id 拼成一坨（2026-09-17 固化常开，不再回退旧行为）。
+    # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：chat_tools_list_real_only（私聊气泡只列本轮真实能力）
     # ── 工具轨迹治理 R3（2026-09-09，方案 §4.3.1）──
     # mcp_stream_declarations 开=流式会话也注入 MCP 工具声明（前提：#59 流尾 tool_result 通道已上线，
     # 见 application/chat/streaming.py run_stream_mcp_tool_stage + sink("tool_result", …)）；
@@ -225,10 +231,10 @@ AGENT_FLAGS = {
     "review_plan_expire_stale": False,
     "review_plan_validity_extract": False,
     # ── 记忆注入行时态标注（2026-09-10，第三轮 T3/C1）──
-    # memory_line_tense_tag 开=format_memory_line 在 [记录于] 之后插时态标签：plan 未过期=［计划］、
+    # memory_line_tense_tag（已固化常开）：format_memory_line 在 [记录于] 之后插时态标签：plan 未过期=［计划］、
     #   已过期=［旧安排·已过期］、episodic=［往事］、transient=［当时状态］、enduring 不加；
-    #   纯提示词标注，不动召回/排序/写库。关=回旧行（无时态标签）。
-    "memory_line_tense_tag": True,
+    #   纯提示词标注，不动召回/排序/写库（2026-09-17 固化常开，不再回旧行）。
+    # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：memory_line_tense_tag（format_memory_line 插时态标签）
     # ── AI 生活主动消息「主体归属 + 同主题复读 + 零上下文催促」治理（2026-09-09，L0-L5）──
     # 设计意图（用户定调）：AI 自己去做的事（吃饭/洗澡/开会）到点应**自述回来**，不该反过来
     #   招呼用户；同一生活主题在数小时内被 timer/state_trigger/memory_review/life_regression/
@@ -259,6 +265,11 @@ AGENT_FLAGS = {
     # group_memory_compact 开=每日 23:00 后把 >7 天的群记忆按群合并成 1 条 system 摘要、
     #   旧行软删（is_archived=1，留痕不物理删）；关=完全跳过、逐字节现状。
     "group_memory_compact": False,
+    # ── 批次二（2026-09-16）：M4 world_facts 写入准入闸门（补登记，2026-09-17 Codex 复核发现）──
+    # 开＝world_facts 写入前做元信息拦截 / 同义查重合并 / 矛盾冲突改走裁决（app/events/facts.py）；
+    #   关＝逐字节旧行为。**此前只在 facts.py 读取、未登记进本表**，导致 runtime_flags 写 1 也不生效
+    #   （flag_service 只合并「已登记键」）——灰度会白开，故补登记。
+    "memory_admission_gate": False,
     # ── 批次四（2026-09-16）：主动消息分块口径护栏（允许分块，禁止残句/空块；生成前校验现实约束）──
     # 开＝分块时过滤残句/空块并做现实校验；关＝逐字节现状。
     "proactive_segment_guard": False,
@@ -363,7 +374,7 @@ async def run_recall_loop(
                 t_range = parse_time_range(tm.group(1), tz_offset_min=tz_offset_min)
                 qq = tm.group(2).strip() or q
             from app.memory import search_memories
-            _hop_limit = int(AGENT_FLAGS.get("memory_recall_hop_limit", 6) or 6)
+            _hop_limit = 6  # 曾为 flag（memory_recall_hop_limit）；因热切通道只支持 bool，热切会静默把 6 变成 1，故固化为常量；要调参改这里
             hits = await search_memories(
                 character_id=character_id,
                 query=qq,
@@ -429,8 +440,7 @@ async def run_search_loop(
     """
     steps: list[dict] = []
     rounds = MAX_SEARCH_ROUNDS
-    if not AGENT_FLAGS.get("agent_loop_search", True):
-        rounds = 1  # Feature Flag 关：退回旧单次二次生成
+    # agent_loop_search：2026-09-17 固化为恒定受控多轮搜索（曾为灰度开关；关=退回旧单次二次生成，现恒定开）
     if max_steps is not None:
         rounds = max(1, min(max_steps - 1, MAX_SEARCH_ROUNDS))
     try:

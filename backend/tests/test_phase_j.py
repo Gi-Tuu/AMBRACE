@@ -16,21 +16,30 @@ def test_build_prompt_纯函数():
     assert "AI/复盘/系统" in p2  # 提示禁止提系统字眼
 
 
-def test_generate_flag关不执行(monkeypatch):
+def test_generate_固化常开_不再受flag控制(monkeypatch):
+    """agent_daily_reflection 已固化常开（2026-09-17 用户拍板）：AGENT_FLAGS 不再含此键，复盘恒执行。"""
+    from app.agent import loop as _loop
+    assert "agent_daily_reflection" not in _loop.AGENT_FLAGS
     calls = []
 
     async def _fake_llm(**kw):
         calls.append(kw)
-        return "今天的复盘内容"
+        return "今天搜索了天气，本周复盘内容已生成完毕。"
 
     monkeypatch.setattr("app.agent.llm_client.chat_completion", _fake_llm)
-    loop.AGENT_FLAGS["agent_daily_reflection"] = False
-    try:
-        ok = asyncio.run(daily_reflection.generate_daily_reflection(11, 4))
-    finally:
-        loop.AGENT_FLAGS["agent_daily_reflection"] = False
-    assert ok is False
-    assert calls == []  # flag 关不调 LLM
+
+    async def _no_use(cid):
+        return False
+
+    monkeypatch.setattr(daily_reflection, "_used_recently", _no_use)
+
+    async def _no_data(cid):
+        return ""
+
+    monkeypatch.setattr(daily_reflection, "_collect_week_data", _no_data)
+    ok = asyncio.run(daily_reflection.generate_daily_reflection(11, 4))
+    assert ok is True
+    assert calls  # 恒执行复盘（不再受 flag 控制）
 
 
 def test_generate_flag开生成并沉淀(monkeypatch):
@@ -54,11 +63,7 @@ def test_generate_flag开生成并沉淀(monkeypatch):
     monkeypatch.setattr("app.agent.trace.enqueue_task_log", lambda **kw: calls["trace"].append(kw))
     monkeypatch.setattr(daily_reflection, "_used_recently", _no_use)
     monkeypatch.setattr(daily_reflection, "_collect_week_data", _no_data)
-    loop.AGENT_FLAGS["agent_daily_reflection"] = True
-    try:
-        ok = asyncio.run(daily_reflection.generate_daily_reflection(11, 4))
-    finally:
-        loop.AGENT_FLAGS["agent_daily_reflection"] = False
+    ok = asyncio.run(daily_reflection.generate_daily_reflection(11, 4))
     assert ok is True
     assert calls["llm"] and calls["llm"][0]["task"] == "reflection"
     assert calls["memory"] and calls["memory"][0]["memory_type"] == "ai_reflection"
@@ -79,11 +84,7 @@ def test_generate_已用过不重复(monkeypatch):
 
     monkeypatch.setattr("app.agent.llm_client.chat_completion", _fake_llm)
     monkeypatch.setattr(daily_reflection, "_used_recently", _used)
-    loop.AGENT_FLAGS["agent_daily_reflection"] = True
-    try:
-        ok = asyncio.run(daily_reflection.generate_daily_reflection(11, 4))
-    finally:
-        loop.AGENT_FLAGS["agent_daily_reflection"] = False
+    ok = asyncio.run(daily_reflection.generate_daily_reflection(11, 4))
     assert ok is False
     assert calls == []  # 间隔期内最多 1 次
 
@@ -101,9 +102,5 @@ def test_generate_内容过短返回False(monkeypatch):
     monkeypatch.setattr("app.agent.llm_client.chat_completion", _fake_llm)
     monkeypatch.setattr(daily_reflection, "_used_recently", _no_use)
     monkeypatch.setattr(daily_reflection, "_collect_week_data", _no_data)
-    loop.AGENT_FLAGS["agent_daily_reflection"] = True
-    try:
-        ok = asyncio.run(daily_reflection.generate_daily_reflection(11, 4))
-    finally:
-        loop.AGENT_FLAGS["agent_daily_reflection"] = False
+    ok = asyncio.run(daily_reflection.generate_daily_reflection(11, 4))
     assert ok is False

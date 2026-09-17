@@ -5,7 +5,7 @@ from app.utils.timeutil import beijing_day_start_utc as _beijing_day_start_utc
 2. 低价值记忆合并/淘汰：复用 memory/dedup.deduplicate_memories 全量向量去重（零 LLM）；
 3. 置顶摘要补生成：复用 memory/summary.summarize_memories（force=False，尊重 6h 节流，缺失才生成）。
 
-Feature Flag：agent_daily_memory_maintenance（默认开，可一键关闭）。
+Feature Flag：agent_daily_memory_maintenance（曾为灰度开关，2026-09-17 固化常开，功能常驻不下放；日终维护恒执行）
 """
 from datetime import datetime, timedelta, timezone
 
@@ -148,13 +148,8 @@ async def refresh_pinned_summaries() -> int:
 
 
 async def run_daily_memory_maintenance() -> dict:
-    """日终记忆维护主入口（23:00 后调度调用；Flag 关闭则跳过）"""
-    try:
-        from app.agent.loop import AGENT_FLAGS
-        if not AGENT_FLAGS.get("agent_daily_memory_maintenance", True):
-            return {"enabled": False}
-    except Exception:
-        pass
+    """日终记忆维护主入口（23:00 后调度调用；2026-09-17 固化常开，不再跳过）"""
+    # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：日终记忆维护恒执行
     out = {"summaries": 0, "dedup_removed": 0, "pinned_refreshed": 0, "preoccupations_decayed": 0, "cold_archived": 0, "char_aligned": 0, "stale_plans_expired": 0}
     try:
         out["summaries"] = await generate_today_summaries()

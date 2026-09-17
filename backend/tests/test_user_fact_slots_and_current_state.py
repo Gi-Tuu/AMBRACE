@@ -112,10 +112,31 @@ def test_only_location_slot(monkeypatch):
     assert user_fact_slot_enabled("job") is False
 
 
-def test_master_gate_enables_all(monkeypatch):
-    from app.memory.user_facts import MUTABLE_SLOTS, enabled_user_fact_slots
+def test_master_gate_enables_non_sensitive_only(monkeypatch):
+    """2026-09-17 拍板：总闸只旁路 4 个非敏感槽；感情/健康不受总闸影响，须显式开启。"""
+    from app.memory.user_facts import MUTABLE_SLOTS, enabled_user_fact_slots, user_fact_slot_enabled
     _set_flags(monkeypatch, global_user_facts=True)
-    assert set(enabled_user_fact_slots()) == set(MUTABLE_SLOTS.keys())
+    assert set(MUTABLE_SLOTS.keys()) == {'location', 'job', 'relationship', 'living', 'goal_state', 'health'}
+    assert set(enabled_user_fact_slots()) == {'location', 'job', 'living', 'goal_state'}
+    assert user_fact_slot_enabled('relationship') is False
+    assert user_fact_slot_enabled('health') is False
+
+
+def test_sensitive_slot_needs_explicit_enable_under_master(monkeypatch):
+    """总闸开 + 只显式开感情 → 感情 True、健康仍 False。"""
+    from app.memory.user_facts import enabled_user_fact_slots, user_fact_slot_enabled
+    _set_flags(monkeypatch, global_user_facts=True, user_fact_relationship=True)
+    assert user_fact_slot_enabled('relationship') is True
+    assert user_fact_slot_enabled('health') is False
+    assert 'relationship' in enabled_user_fact_slots()
+
+
+def test_sensitive_slot_explicit_enable_with_master_off(monkeypatch):
+    """总闸关 + 显式开健康 → 只健康一个槽启用（opt-in 独立生效）。"""
+    from app.memory.user_facts import enabled_user_fact_slots, user_fact_slot_enabled
+    _set_flags(monkeypatch, user_fact_health=True)
+    assert user_fact_slot_enabled('health') is True
+    assert enabled_user_fact_slots() == ['health']
 
 
 def test_slot_flag_hot_switch_affects_read(monkeypatch, b_db):
@@ -341,3 +362,38 @@ def test_proactive_anchor_empty_by_default(monkeypatch, b_db):
     _seed_user(factory, location_enabled=False)
     _set_flags(monkeypatch)
     assert asyncio.run(current_user_state_anchor(character_id=1, user_id=1, include_profile_location=True)) == ""
+
+
+# ── 批次二（2026-09-17）任务2：位置类不吃细槽总闸 + 红线（感情/健康仍 opt-in）──
+
+def test_location_share_lets_location_through_sensitive_slots_stay_false(monkeypatch):
+    """放行 location 后，感情/健康两槽仍为 False（交接红线：必须显式开启）。
+
+    user_current_location_share（默认开）只作用于**读取/注入侧**的 location 共享：
+    写侧细槽门控（user_fact_slot_enabled）与总闸旁路集合均不变，relationship/health
+    永远不会被本次放行带出去。
+    """
+    from app.memory.user_facts import (
+        enabled_user_fact_slots, user_current_location_shared, user_fact_slot_enabled,
+    )
+    _set_flags(monkeypatch)  # 总闸关 + 6 槽全关
+    assert user_current_location_shared() is True
+    assert user_fact_slot_enabled('location') is False       # 写侧仍 opt-in
+    assert enabled_user_fact_slots() == []
+    assert user_fact_slot_enabled('relationship') is False   # 红线
+    assert user_fact_slot_enabled('health') is False         # 红线
+    _set_flags(monkeypatch, global_user_facts=True)          # 即便总闸开，敏感槽仍不被旁路
+    assert user_fact_slot_enabled('relationship') is False
+    assert user_fact_slot_enabled('health') is False
+
+
+def test_shared_location_read_excludes_sensitive_slots(monkeypatch, b_db):
+    """共享读路径只带 location：库里已有感情/健康行也不会带出去。"""
+    from app.memory.user_facts import get_shared_user_facts, upsert_user_fact
+    factory = b_db
+    _seed_user(factory)
+    asyncio.run(upsert_user_fact(1, "location", "湛江市", source="manual"))
+    asyncio.run(upsert_user_fact(1, "relationship", "已婚", source="chat"))
+    asyncio.run(upsert_user_fact(1, "health", "生病", source="chat"))
+    _set_flags(monkeypatch)  # 全关：仍能拿到 location，但拿不到感情/健康
+    assert asyncio.run(get_shared_user_facts(1)) == {"location": "湛江市"}
