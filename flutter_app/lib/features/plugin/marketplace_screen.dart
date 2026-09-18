@@ -87,6 +87,47 @@ Future<bool?> showConsentDialog(BuildContext context, List<String> perms) async 
   );
 }
 
+/// 远程安装来源确认框（P3-14）：风险文案之外，额外展示市场来源与校验和短值供判断可信度
+Future<bool?> showRemoteInstallConfirmDialog(
+    BuildContext context, Map<String, dynamic> item) async {
+  final l10n = AppLocalizations.of(context)!;
+  final src = item['source'] as String? ?? 'remote';
+  final market = src.startsWith('remote:') && src.length > 7
+      ? src.substring(7)
+      : l10n.marketSourceRemote;
+  final sha = (item['sha256'] as String? ?? '').trim();
+  final shaShort = sha.length > 10 ? '${sha.substring(0, 10)}…' : sha;
+  return await showDialog<bool>(
+    context: context,
+    builder: (c) => AlertDialog(
+      title: Text(l10n.marketRemoteConfig),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(l10n.marketRemoteInstallTip, style: const TextStyle(fontSize: 12.5)),
+          const SizedBox(height: 10),
+          Text('${l10n.marketSourceRemote}: $market',
+              style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
+          if (sha.isNotEmpty)
+            Text('${l10n.pluginSha256}: $shaShort',
+                style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(c, false),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(c, true),
+          child: Text(l10n.marketInstall),
+        ),
+      ],
+    ),
+  );
+}
+
 class _MarketplaceScreenState extends State<MarketplaceScreen> {
   bool _loading = true;
   bool _isAdmin = false;
@@ -143,23 +184,7 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
     final perms = (item['permissions'] as List? ?? []).cast<String>();
     // 远程条目安装前来源二次确认（第三方代码与服务器同权限）
     if (isRemote) {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (c) => AlertDialog(
-          title: Text(l10n.marketRemoteConfig),
-          content: Text(l10n.marketRemoteInstallTip),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: Text(l10n.cancel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: Text(l10n.marketInstall),
-            ),
-          ],
-        ),
-      );
+      final ok = await showRemoteInstallConfirmDialog(context, item);
       if (ok != true || !mounted) return;
     }
     // 3.9：权限清单确认（manifest.permissions 非空时）
@@ -767,23 +792,7 @@ class _MarketplaceDetailScreenState extends State<MarketplaceDetailScreen> {
     }
     final perms = (widget.item['permissions'] as List? ?? []).cast<String>();
     if (isRemote) {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (c) => AlertDialog(
-          title: Text(l10n.marketRemoteConfig),
-          content: Text(l10n.marketRemoteInstallTip),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: Text(l10n.cancel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: Text(l10n.marketInstall),
-            ),
-          ],
-        ),
-      );
+      final ok = await showRemoteInstallConfirmDialog(context, widget.item);
       if (ok != true || !mounted) return;
     }
     // 3.9：权限清单确认

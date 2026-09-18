@@ -292,7 +292,7 @@ def test_utility_feedback_wired_when_flag_on(monkeypatch):
     monkeypatch.setattr(nodes, "chat_completion", _fake_completion)
     monkeypatch.setattr(nodes, "_has_after_generate_hook", lambda: False)
     monkeypatch.setattr("app.agent.llm_client.get_user_llm_config", _get_cfg)
-    monkeypatch.setattr(uf, "is_enabled", lambda: True)
+    monkeypatch.setattr(uf, "is_enabled", lambda *a, **k: True)
     monkeypatch.setattr(uf, "schedule_utility_feedback", lambda **kw: captured.update(kw))
     monkeypatch.setitem(
         _CTRL, "memories", [{"id": 5, "content": "用户喜欢喝美式咖啡"}]

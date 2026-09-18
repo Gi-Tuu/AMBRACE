@@ -117,7 +117,7 @@ def test_core_snippet_strips_markers():
 
 def test_flag_off_does_not_schedule_apply(monkeypatch):
     called = []
-    monkeypatch.setattr(uf, "_flag_on", lambda: False)
+    monkeypatch.setattr(uf, "_flag_on", lambda *a, **k: False)
     monkeypatch.setattr(uf, "apply_utility_feedback", lambda *a, **k: called.append(1))
     uf.schedule_utility_feedback(
         1, 1, [{"id": 5, "content": "用户喜欢喝美式咖啡"}], "你上次说喜欢喝美式咖啡"
@@ -134,9 +134,9 @@ def test_flag_off_schedule_returns_without_exception():
 
 def test_is_enabled_delegates_to_flag(monkeypatch):
     # nodes 侧早判用的公开入口：与内部 _flag_on 同源，不会分叉（flag 关时调用方零 state 改动）
-    monkeypatch.setattr(uf, "_flag_on", lambda: False)
+    monkeypatch.setattr(uf, "_flag_on", lambda *a, **k: False)
     assert uf.is_enabled() is False
-    monkeypatch.setattr(uf, "_flag_on", lambda: True)
+    monkeypatch.setattr(uf, "_flag_on", lambda *a, **k: True)
     assert uf.is_enabled() is True
 
 
@@ -271,7 +271,7 @@ def test_apply_async_failure_is_silent(monkeypatch):
 
 def test_schedule_flag_on_writes_receipt(mem_db, monkeypatch):
     mid = asyncio.run(_seed_memory(mem_db, 40.0))
-    monkeypatch.setattr(uf, "_flag_on", lambda: True)
+    monkeypatch.setattr(uf, "_flag_on", lambda *a, **k: True)
     # spawn_background 替身为同步执行，便于断言（不依赖事件循环调度时机）
     captured = {}
 
@@ -290,3 +290,46 @@ def test_schedule_flag_on_writes_receipt(mem_db, monkeypatch):
     asyncio.run(captured["coro"])  # 真正执行 apply
     receipts = asyncio.run(_count_receipts(mem_db, mid))
     assert receipts and receipts[0][1] == "positive"
+
+
+def test_gray_chars_gate(monkeypatch):
+    """灰度口径（09-18 用户拍板：先只在 char13 观察）：总开关开 **且** 角色命中白名单才生效。
+
+    - 开关关 → 白名单角色也不生效（回滚＝关总开关，无需改代码）；
+    - 开关开 → 仅 char13 生效，其余角色零行为变化；
+    - 角色缺失/非法 → 保守 False。
+    """
+    from app.agent.loop import AGENT_FLAGS
+
+    monkeypatch.setitem(AGENT_FLAGS, "memory_utility_feedback", False)
+    assert uf.is_enabled(13) is False
+    assert uf.is_enabled(6) is False
+
+    monkeypatch.setitem(AGENT_FLAGS, "memory_utility_feedback", True)
+    assert uf.is_enabled(13) is True
+    assert uf.is_enabled(6) is False
+    assert uf.is_enabled(None) is False
+    assert uf.is_enabled("13") is True
+    assert uf.is_enabled("abc") is False
+    assert uf.UTILITY_FEEDBACK_GRAY_CHARS == frozenset({13})
+
+
+def test_schedule_notes_neutral_and_scheduled(monkeypatch):
+    """2026-09-18 补的可观测性：区分「判 neutral 未写回执」与「判出信号已调度」。"""
+    import app.memory.observability as obs
+    import app.utils.async_tasks as at
+
+    seen: list = []
+    monkeypatch.setattr(obs, "obs_event", lambda *a, **k: seen.append((a, k)))
+    monkeypatch.setattr(uf, "_flag_on", lambda *a, **k: True)
+    monkeypatch.setattr(at, "spawn_background", lambda c: c.close())
+    recalled = [{"id": 7, "content": "用户喜欢喝美式咖啡"}]
+
+    monkeypatch.setattr(uf, "classify_utility_signal", lambda *a, **k: "neutral")
+    uf.schedule_utility_feedback(character_id=13, user_id=1, recalled=recalled, ai_response="好的", user_message="在吗")
+    assert any("utility_feedback_note" in str(x) and "neutral" in str(x) for x in seen), seen
+
+    seen.clear()
+    monkeypatch.setattr(uf, "classify_utility_signal", lambda *a, **k: "positive")
+    uf.schedule_utility_feedback(character_id=13, user_id=1, recalled=recalled, ai_response="好的", user_message="在吗")
+    assert any("utility_feedback_note" in str(x) and "scheduled" in str(x) for x in seen), seen

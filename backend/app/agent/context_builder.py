@@ -220,6 +220,39 @@ def _apply_system_total_quota(messages: list[dict], character_id: int | None = N
             pass
 
 
+def _enforce_user_message_last(messages: list[dict], *, user_index: int | None = None) -> int:
+    """红线②宿主不变式（2026-09-18，插件 hook 越位治理）：宿主写入的本轮 user 消息必须**是最后一条**。
+
+    - 正常路径（插件块已被宿主落在 user 之前）→ 零移动、零行为变化，返回 0；
+    - 纵深防御：任何落在宿主 user 之后的块（未来 hook / 第三方插件 / `before_generate` 越位）按
+      **原相对顺序** splice 到宿主 user 之前；只改位置，不改 role/content、不删内容；
+    - 锚点优先用宿主自己 append user 时记录的下标 `user_index`（防插件伪造 `role=user` 把锚点带偏）；
+      下标非法或该位已非 user 时，退化为「最后一条 role=user」；两者都没有则不动；
+    - 返回移动条数；调用方在 >0 时 warning + 埋点，便于发现回归。
+    """
+    if not messages:
+        return 0
+    anchor: int | None = None
+    if (
+        user_index is not None
+        and 0 <= user_index < len(messages)
+        and (messages[user_index] or {}).get("role") == "user"
+    ):
+        anchor = user_index
+    else:
+        for _i in range(len(messages) - 1, -1, -1):
+            if (messages[_i] or {}).get("role") == "user":
+                anchor = _i
+                break
+    if anchor is None or anchor == len(messages) - 1:
+        return 0
+    moved = messages[anchor + 1:]
+    if not moved:
+        return 0
+    del messages[anchor + 1:]
+    messages[anchor:anchor] = moved
+    return len(moved)
+
 async def _is_hot_character(character_id: int, user_id: int) -> bool:
     """近 7 天该 (用户, 角色) 聊天消息数 >= HOT_THRESHOLD_7D_MSGS 视为高频角色；异常保守返回 True（不裁剪）"""
     try:
@@ -454,11 +487,11 @@ SYSTEM_PROMPT_TEMPLATE = """你是一个名叫"{name}"的朋友。
 [CAL_NOTE]日期 内容[/CAL_NOTE] — 重要日程/约定/待办/关键偏好时输出（日期可省=今天，≤50字）
 [MEMO]内容[/MEMO] — 用户交代要记住的事/要点时输出（≤80字，成对闭合，一次最多 1 条，日常闲聊不强制）
 
-## 最近的对话上下文（越往下越新）
-{chat_history}
-
 ## 当前世界状态（正在进行/刚发生的事；自然带过；没有写"无"）
 {world_facts}
+
+## 最近的对话上下文（越往下越新）
+{chat_history}
 
 ## 核心记忆（重要事实，优先引用）
 {core_memories}

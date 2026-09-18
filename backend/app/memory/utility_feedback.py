@@ -35,25 +35,45 @@ UTILITY_POSITIVE_CONTAINS_MIN = 6
 
 # 记忆正文用于命中检测的连续核心片段最小长度（短于此不参与 positive 命中）
 UTILITY_MIN_SNIPPET_LEN = 6
+# ── 灰度白名单（2026-09-18 用户拍板：先只在 char13 观察）─────────────────────────
+# 口径与 section_working_state.WORKING_STATE_INJECT_GRAY_CHARS / domain/proactivity/pacing.py
+# 的 OUTREACH_PACING_GRAY_CHARS 一致：**总开关开 且 角色命中白名单** 才生效，其余角色零行为变化。
+# 扩量 = 把角色加进来；热回滚 = 关总开关 memory_utility_feedback（无需改代码）。
+UTILITY_FEEDBACK_GRAY_CHARS = frozenset({13})
+
 
 _CORRECT_WORDS: tuple | None = None  # 延迟取自 reliability（避免顶层循环依赖）
 
 
-def _flag_on() -> bool:
-    """读 feature flag；任何异常回落 False（关=逐字节旧行为）。"""
+def _flag_on(character_id=None) -> bool:
+    """读 feature flag + 灰度白名单；任何异常回落 False（关=逐字节旧行为）。
+
+    口径（与 M3-b section_working_state / outreach pacing 灰度一致）：
+    **总开关 memory_utility_feedback 开 且 角色命中 UTILITY_FEEDBACK_GRAY_CHARS** 才生效；
+    角色为空 / 非法 / 非白名单 → False（保守，零行为变化）。
+    """
     try:
         from app.agent.loop import AGENT_FLAGS
-        return bool(AGENT_FLAGS.get("memory_utility_feedback", False))
+        if not AGENT_FLAGS.get("memory_utility_feedback", False):
+            return False
     except Exception:
         return False
+    if character_id is None:
+        return False
+    try:
+        cid = int(character_id)
+    except (TypeError, ValueError):
+        return False
+    return cid in UTILITY_FEEDBACK_GRAY_CHARS
 
 
-def is_enabled() -> bool:
-    """flag 是否开启（供调用点早判：flag 关时调用方不产生任何状态改动）。
+def is_enabled(character_id=None) -> bool:
+    """flag + 灰度是否对本角色开启（供调用点早判：关时调用方不产生任何状态改动）。
 
-    与 ``schedule_utility_feedback`` 内的判定复用同一实现，二者不会分叉。
+    与 schedule_utility_feedback 内的判定复用同一实现，二者不会分叉；
+    character_id 必传才能真正生效（白名单口径），缺省即 False。
     """
-    return _flag_on()
+    return _flag_on(character_id)
 
 
 def _correction_words() -> tuple:
@@ -184,6 +204,21 @@ def _detail_json(
     )
 
 
+def _note(character_id, kind: str, n: int) -> None:
+    """轻量埋点：区分「闸门没触发」与「触发了但判 neutral / 判出信号」（2026-09-18 补）。
+
+    背景：灰度开启首日 `memory_write_receipts` 里**没有** utility 回执，无法区分是
+    「本轮根本没触发」还是「触发了但三类信号全 neutral（按设计不写回执）」——这层不可观测会让
+    后续观察无据可依。metric `utility_feedback_note`，detail=`{"kind": neutral|scheduled, "n": N}`；失败静默。
+    """
+    try:
+        from app.memory.observability import obs_event
+
+        obs_event(character_id, "utility_feedback_note", {"kind": kind, "n": n})
+    except Exception:
+        pass
+
+
 def schedule_utility_feedback(
     character_id: int,
     user_id: int,
@@ -197,7 +232,7 @@ def schedule_utility_feedback(
     ``user_message``：本轮用户原始消息，用于收窄 negative 判据（纠正词多为用户措辞，且需与该条记忆指代共现）。
     flag 关 → 直接返回（零行为变化）。异步失败不影响主流程。
     """
-    if not _flag_on():
+    if not _flag_on(character_id):
         return
     if not recalled or not (ai_response or "").strip():
         return
@@ -211,7 +246,10 @@ def schedule_utility_feedback(
             if sig != "neutral":
                 items.append((int(mid), sig))
         if not items:
+            # 召回了记忆但三类信号全 neutral（按设计不写回执）→ 留一条埋点，避免「没触发/判中性」不可分
+            _note(character_id, "neutral", len(recalled))
             return
+        _note(character_id, "scheduled", len(items))
         from app.utils.async_tasks import spawn_background
         spawn_background(apply_utility_feedback(character_id, user_id, items, round_id))
     except Exception as e:

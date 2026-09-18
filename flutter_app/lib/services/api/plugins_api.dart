@@ -261,6 +261,31 @@ extension PluginsApi on ApiClient {
     return Map<String, dynamic>.from(r.data as Map);
   }
 
+  // ── 微信桥 per-tenant 共享密钥（一机多主收尾，2026-09-18；后端包 C 已上线）──
+  // GET 只回脱敏预览（has_secret/masked），明文不回传；密钥仅在本端生成/输入后由 PUT 落库，
+  // 并在保存成功时于 UI 完整展示一次。仅独立主账号可调（后端 assert_standalone_owner，子账号 403）。
+
+  /// 查看本家庭桥接密钥状态（脱敏）。
+  Future<Map<String, dynamic>> getWechatBridgeSecret() async {
+    final r = await dio.get('/api/v1/plugins/wechat_ilink/bridge-secret');
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
+  /// 写入/轮换本家庭桥接密钥（后端要求 ≥16 字符；Fernet 加密落库）。
+  Future<Map<String, dynamic>> putWechatBridgeSecret(String secret) async {
+    final r = await dio.put(
+      '/api/v1/plugins/wechat_ilink/bridge-secret',
+      data: {'secret': secret},
+    );
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
+  /// 删除本家庭桥接密钥（回落服务器全局 env 语义）。
+  Future<Map<String, dynamic>> deleteWechatBridgeSecret() async {
+    final r = await dio.delete('/api/v1/plugins/wechat_ilink/bridge-secret');
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
   // ── App 添加未绑定 ClawBot（2026-09-06）：可用 bot 列表 + 绑定执行 ──
 
   /// 网关已登录、拥爱未绑定的 bot 列表（仅主账号；后端同机读取 openclaw accounts）。

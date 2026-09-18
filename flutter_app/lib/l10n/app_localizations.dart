@@ -10581,6 +10581,114 @@ abstract class AppLocalizations {
   /// **'获取二维码失败，请重试'**
   String get channelQrLoadFailed;
 
+  /// No description provided for @channelSecretEntry.
+  ///
+  /// In zh, this message translates to:
+  /// **'桥接密钥'**
+  String get channelSecretEntry;
+
+  /// No description provided for @channelSecretTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'微信桥接密钥'**
+  String get channelSecretTitle;
+
+  /// No description provided for @channelSecretInput.
+  ///
+  /// In zh, this message translates to:
+  /// **'共享密钥（至少 16 字符）'**
+  String get channelSecretInput;
+
+  /// No description provided for @channelSecretGuide.
+  ///
+  /// In zh, this message translates to:
+  /// **'这是微信网关与拥爱之间的共享密钥，需与网关（openclaw）转发配置中的 X-AMBRACE-Bridge-Secret 保持一致。未单独配置时使用服务器全局密钥。更换后请同步更新网关，否则微信消息将无法转发。'**
+  String get channelSecretGuide;
+
+  /// No description provided for @channelSecretStatusConfigured.
+  ///
+  /// In zh, this message translates to:
+  /// **'已配置本家庭专用密钥'**
+  String get channelSecretStatusConfigured;
+
+  /// No description provided for @channelSecretStatusNone.
+  ///
+  /// In zh, this message translates to:
+  /// **'未配置（使用服务器全局密钥）'**
+  String get channelSecretStatusNone;
+
+  /// No description provided for @channelSecretGenerate.
+  ///
+  /// In zh, this message translates to:
+  /// **'随机生成'**
+  String get channelSecretGenerate;
+
+  /// No description provided for @channelSecretSave.
+  ///
+  /// In zh, this message translates to:
+  /// **'保存'**
+  String get channelSecretSave;
+
+  /// No description provided for @channelSecretDelete.
+  ///
+  /// In zh, this message translates to:
+  /// **'删除专用密钥'**
+  String get channelSecretDelete;
+
+  /// No description provided for @channelSecretDeleteConfirm.
+  ///
+  /// In zh, this message translates to:
+  /// **'删除后将回落使用服务器全局密钥。确定删除本家庭的专用桥接密钥？'**
+  String get channelSecretDeleteConfirm;
+
+  /// No description provided for @channelSecretCancel.
+  ///
+  /// In zh, this message translates to:
+  /// **'取消'**
+  String get channelSecretCancel;
+
+  /// No description provided for @channelSecretMinLen.
+  ///
+  /// In zh, this message translates to:
+  /// **'密钥至少 16 个字符'**
+  String get channelSecretMinLen;
+
+  /// No description provided for @channelSecretOnceTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'密钥仅显示一次'**
+  String get channelSecretOnceTitle;
+
+  /// No description provided for @channelSecretOnceHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'请立即复制并填入网关（openclaw）的 X-AMBRACE-Bridge-Secret 配置。关闭后将无法再次查看完整密钥，只能重新生成。'**
+  String get channelSecretOnceHint;
+
+  /// No description provided for @channelSecretCopy.
+  ///
+  /// In zh, this message translates to:
+  /// **'复制密钥'**
+  String get channelSecretCopy;
+
+  /// No description provided for @channelSecretClose.
+  ///
+  /// In zh, this message translates to:
+  /// **'我已保存'**
+  String get channelSecretClose;
+
+  /// No description provided for @channelSecretCopied.
+  ///
+  /// In zh, this message translates to:
+  /// **'已复制到剪贴板'**
+  String get channelSecretCopied;
+
+  /// No description provided for @channelSecretDeleted.
+  ///
+  /// In zh, this message translates to:
+  /// **'已删除，回落使用服务器全局密钥'**
+  String get channelSecretDeleted;
+
   /// No description provided for @douyinQrTitle.
   ///
   /// In zh, this message translates to:

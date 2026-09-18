@@ -6,6 +6,7 @@ import '../../models/character.dart';
 import 'plugin_chat_screen.dart';
 import 'plugin_webview_screen.dart';
 import 'channel_qr_login_sheet.dart';
+import 'wechat_bridge_secret_screen.dart';
 import "package:ai_companion/theme/tokens.dart";
 import 'extensions_screen.dart' show pluginTypeLabel, pluginTypeColor, pluginTypeIcon;
 import 'plugin_forms.dart' show PluginConfigForm, ZeroCodeConfigEditor;
@@ -766,6 +767,21 @@ class PluginCardState extends State<PluginCard> {
                       : () => _loadChannelBindings(channel),
                   icon: const Icon(Icons.refresh, size: 15),
                   label: Text(l10n.channelBindingRefresh, style: const TextStyle(fontSize: 11)),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _chSaving.contains(channel)
+                      ? null
+                      : () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const WechatBridgeSecretScreen(),
+                            ),
+                          ),
+                  icon: const Icon(Icons.key_outlined, size: 15),
+                  label: Text(l10n.channelSecretEntry, style: const TextStyle(fontSize: 11)),
                   style: TextButton.styleFrom(
                     visualDensity: VisualDensity.compact,
                     padding: const EdgeInsets.symmetric(horizontal: 8),

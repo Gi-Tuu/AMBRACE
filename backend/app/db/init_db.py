@@ -69,6 +69,86 @@ async def _migrate_ai_character_loop_flags(conn) -> None:
             pass
 
 
+async def _backfill_channel_bindings_from_global_config(conn) -> None:
+    """P3-1（2026-09-18）：create_all 建表路径等价于 alembic a7b8c9d0e1f2 的渠道回填。
+
+    走 create_all 建表的部署（本机默认：init_db 启动期补表，与 alembic 链并存）不会跑
+    a7b8c9d0e1f2 那段回填 → channel_bindings 表存在但为空。此处补一次等价回填：将旧全局
+    config（plugins.config_json.allowed_character_ids，单选）在「该渠道绑定表为空」时搬进
+    channel_bindings。
+
+    与 alembic 路径逐字段等价（INSERT 字段/字面量完全一致）；硬约束：
+    - 幂等：只在「该渠道绑定表为空」时搬，已有任意一行 → 整渠道跳过；
+    - fail-open：单渠道异常只记 _logger.warning，绝不阻塞启动、不影响其他渠道；
+    - 不动 alembic 迁移、不动任何 flag、不改读取端（reader 兜底保留）。
+    """
+    from sqlalchemy import text as sa_text
+
+    try:
+        cb_cols = await _table_cols(conn, "channel_bindings")
+        if "channel" not in cb_cols:
+            return  # 表尚不存在（远古库首次启动）→ 跳过，下次启动补齐
+        plug_cols = await _table_cols(conn, "plugins")
+        if "config_json" not in plug_cols or "name" not in plug_cols:
+            return
+    except Exception:
+        return
+
+    for plugin_name, channel in (("wechat_ilink", "wechat"), ("douyin_mcp", "douyin")):
+        try:
+            already = (await conn.execute(sa_text(
+                "SELECT 1 FROM channel_bindings WHERE channel = :ch LIMIT 1"
+            ), {"ch": channel})).first()
+            if already is not None:
+                continue  # 该渠道任一租户已写入 → 整渠道跳过（幂等，与 alembic 同判据）
+
+            prow = (await conn.execute(sa_text(
+                "SELECT config_json FROM plugins WHERE name = :n"
+            ), {"n": plugin_name})).first()
+            if prow is None:
+                continue
+
+            cfg: dict = {}
+            try:
+                import json
+                cfg = json.loads(prow[0] or "{}")
+            except Exception:
+                cfg = {}
+
+            raw = cfg.get("allowed_character_ids", "")
+            raw = ",".join(str(x) for x in raw) if isinstance(raw, list) else str(raw or "")
+            ids = [int(x) for x in raw.split(",") if x.strip().isdigit()]
+
+            for cid in ids[:1]:  # 旧模型本就单选，只搬第一条（与 alembic 一致）
+                char_cols = await _table_cols(conn, "ai_characters")
+                if "user_id" not in char_cols:
+                    chrow = None
+                else:
+                    chrow = (await conn.execute(sa_text(
+                        "SELECT user_id FROM ai_characters WHERE id = :cid"
+                    ), {"cid": cid})).first()
+                if chrow is None:
+                    continue
+                owner = int(chrow[0] or 0)
+                if owner <= 0:
+                    continue
+                user_cols = await _table_cols(conn, "users")
+                urow = None
+                if "parent_id" in user_cols:
+                    urow = (await conn.execute(sa_text(
+                        "SELECT parent_id FROM users WHERE id = :uid"
+                    ), {"uid": owner})).first()
+                tenant = int(urow[0]) if (urow is not None and urow[0]) else owner
+                await conn.execute(sa_text(
+                    "INSERT INTO channel_bindings (channel, tenant_id, owner_user_id, bot_account_id,"
+                    " bot_label, character_id, enabled, extra_json)"
+                    " VALUES (:ch, :t, :o, 'default', '', :cid, 1, '{}')"
+                ), {"ch": channel, "t": tenant, "o": owner, "cid": cid})
+            _logger.info("[migrate] channel_bindings backfilled for %s (create_all path)", channel)
+        except Exception as exc:  # fail-open：单渠道异常不影响启动与其他渠道
+            _logger.warning("[migrate] channel_bindings backfill skipped for %s: %s", channel, exc)
+
+
 async def init_db():
     """创建所有表（测试/初始化用）+ 幂等种子与一次性回填（列在位守卫，见模块 docstring）"""
     import app.models  # noqa: F401  # 确保所有模型注册到 Base.metadata
@@ -244,6 +324,10 @@ async def init_db():
         for _ix, _tb, _cols in _idx_list:
             await conn.execute(sa_text(f"CREATE INDEX IF NOT EXISTS {_ix} ON {_tb} ({_cols})"))
         _logger.info("[migrate] high-frequency table indexes ensured")
+
+        # P3-1（2026-09-18）：create_all 建表路径渠道回填（等价 alembic a7b8c9d0e1f2）。
+        # 纯数据回填（INSERT），非结构变更，置于 FREEZE 之前。幂等 + fail-open（见函数 docstring）。
+        await _backfill_channel_bindings_from_global_config(conn)
 
         # 人工 DDL 冻结基线：本文件所有「加列 / 改表 / 建索引」语句都只能出现在下方 FREEZE 哨兵之前。
         # 3.8 收敛后本文件手工加列语句已归零（CI 基准 86 只减不增，防回潮）；上述例外（control→anger

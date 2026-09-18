@@ -5863,6 +5863,65 @@ class AppLocalizationsEn extends AppLocalizations {
   String get channelQrLoadFailed => 'Failed to load QR code. Please retry';
 
   @override
+  String get channelSecretEntry => 'Bridge Secret';
+
+  @override
+  String get channelSecretTitle => 'WeChat Bridge Secret';
+
+  @override
+  String get channelSecretInput => 'Shared secret (at least 16 chars)';
+
+  @override
+  String get channelSecretGuide =>
+      'Shared secret between the WeChat gateway and AMBRACE; it must match X-AMBRACE-Bridge-Secret in the gateway (openclaw) forwarding config. When unset, the server-wide secret is used. After rotating it, update the gateway too or WeChat messages will fail to relay.';
+
+  @override
+  String get channelSecretStatusConfigured =>
+      'Family-specific secret configured';
+
+  @override
+  String get channelSecretStatusNone => 'Not set (using server-wide secret)';
+
+  @override
+  String get channelSecretGenerate => 'Generate random';
+
+  @override
+  String get channelSecretSave => 'Save';
+
+  @override
+  String get channelSecretDelete => 'Remove family secret';
+
+  @override
+  String get channelSecretDeleteConfirm =>
+      'After removal the server-wide secret will be used again. Remove this family\'s bridge secret?';
+
+  @override
+  String get channelSecretCancel => 'Cancel';
+
+  @override
+  String get channelSecretMinLen => 'Secret must be at least 16 characters';
+
+  @override
+  String get channelSecretOnceTitle => 'Secret shown only once';
+
+  @override
+  String get channelSecretOnceHint =>
+      'Copy it now into the gateway (openclaw) X-AMBRACE-Bridge-Secret setting. It cannot be viewed again after closing; you can only regenerate it.';
+
+  @override
+  String get channelSecretCopy => 'Copy secret';
+
+  @override
+  String get channelSecretClose => 'I\'ve saved it';
+
+  @override
+  String get channelSecretCopied => 'Copied to clipboard';
+
+  @override
+  String get channelSecretDeleted =>
+      'Removed; falling back to the server-wide secret';
+
+  @override
   String get douyinQrTitle => 'Scan to Log In (Douyin)';
 
   @override

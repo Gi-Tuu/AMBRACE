@@ -279,6 +279,22 @@ async def generate_response(state: AgentState) -> AgentState:
     except Exception:
         pass
 
+    # 红线②宿主不变式（2026-09-18）：before_generate 与 context_inject 同构——同一 context_messages、
+    # 同样无校验 append，且在装配之后运行；装配尾部的护栏管不到它，故此处再兜一次。
+    # 正常路径零移动（无插件越位 = 零行为变化），仅越位时告警。
+    try:
+        from app.agent.context_builder import _enforce_user_message_last as _enf_user_last
+
+        _moved_before_gen = _enf_user_last(
+            state["context_messages"], user_index=state.get("_host_user_msg_index")
+        )
+        if _moved_before_gen:
+            _logger.warning(
+                "before_generate: 归位 %d 个落在宿主 user 之后的块（红线②护栏）", _moved_before_gen
+            )
+    except Exception:
+        pass
+
     # 渠道提示 + L1 输出规范（任务 A / P3-2 / 2026-09-05）：微信桥消息插入一条 system 提示，仅进 LLM 上下文
     # （不落库、不进记忆、不改 content/user_message；channel_hint 非 wechat_ilink 时零行为变化）。
     # 文本 = WECHAT_CHANNEL_HINT（集中一处常量，供测试断言）。去重走 AgentState.channel_hint_injected
@@ -409,7 +425,7 @@ async def generate_response(state: AgentState) -> AgentState:
     # 先判 flag 再写 state：flag 关时不新增/不修改任何 state 键（逐字节零行为变化）。
     try:
         from app.memory.utility_feedback import is_enabled, schedule_utility_feedback
-        if (is_enabled()
+        if (is_enabled(state.get("character_id"))
                 and not state.get("utility_feedback_done")
                 and state.get("user_message")
                 and state.get("retrieved_memories")

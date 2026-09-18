@@ -142,15 +142,33 @@ _DISPLAY_STRIP_PATTERNS = [
     # 推理标记（2026-09-12 容错）：冒号可选（模型实测会写【推理】（…）】无冒号形态），
     # 字面「推理」限定避免误伤普通方括号文本。
     re.compile(r"[\[【]\s*推理\s*[：:]?[^\]】]*[\]】]", re.IGNORECASE),
+    # 自造标记族（2026-09-18）：模型会给自己加「定时备注」，如现场那条
+    # 「（搁下围裙…）先把饭吃了。[cron: 今晚与轩一起洗澡]」——cron 不在任何内核标记约定里，
+    # 属模型自造；只按字面关键字剥离，**不放开通用方括号**（避免误伤 [笑] 这类正文）。
+    re.compile(r"[\[【]\s*cron\s*[：:]?[^\]】]*[\]】]", re.IGNORECASE),
 ]
 
 # 展示层需剥离的「尾部未闭合结构化标记」兜底正则（M2-S5）。收敛到一处常量，
 # 供 parse_response 与微信出口净文（wechat_text）共用，避免两处漂移。
 # 只匹配「紧跟 [ 或 【 的已知标记关键字」，未闭合到行尾即剥离；普通文本括号/方括号不受影响。
 UNCLOSED_MARKER_TAIL_RE = re.compile(
-    r"[\[【]\s*(?:记忆|自述更新|自述删除|自述|状态更新|策略|推理|timer|SEARCH|CAL_NOTE|MEMO)[^\]】]*$",
+    r"[\[【]\s*(?:记忆|自述更新|自述删除|自述|状态更新|策略|推理|timer|SEARCH|CAL_NOTE|MEMO|cron)[^\]】]*$",
     re.IGNORECASE,
 )
+
+
+def _emit_marker_stripped(sample: str, where: str) -> None:
+    """剥离「模型自造 / 未登记标记」时记一条轻量埋点（失败静默，不影响主链路）。
+
+    用途（2026-09-18 新增）：量化此类穿帮的出现频率——现场是 sam 正文尾部出现
+    `[cron: 今晚与轩一起洗澡]`；走既有 memory obs 通道（受 `memory_trace_debug` 控制，默认开）。
+    """
+    try:
+        from app.memory.observability import obs_event
+
+        obs_event(None, "marker_stripped", {"where": where, "sample": (sample or "")[:40]})
+    except Exception:
+        pass
 
 
 def strip_unclosed_markers(text: str) -> str:
@@ -163,6 +181,7 @@ def strip_unclosed_markers(text: str) -> str:
         return text
     m = UNCLOSED_MARKER_TAIL_RE.search(text)
     if m:
+        _emit_marker_stripped(text[m.start():], "unclosed_tail")
         return text[: m.start()].rstrip()
     return text
 
@@ -173,7 +192,7 @@ def strip_unclosed_markers(text: str) -> str:
 # 则丢弃悬空开括号本身、保留其后正文；命中已知标记前缀则维持原策略整段丢弃
 # （标记段不入展示，由 marker_truncated 埋点 + 通道 B 补提兜底）。
 _UNCLOSED_TAIL_MARKER_RE = re.compile(
-    r"^[\[【]\s*(?:记忆|自述更新|自述删除|自述|状态更新|策略|推理|timer|计时器"
+    r"^[\[【]\s*(?:记忆|自述更新|自述删除|自述|状态更新|策略|推理|timer|计时器|cron"
     r"|SEARCH|RECALL|GEN_IMAGE|IMG_TEXT|CAL_NOTE|MEMO|mcp\.)",
     re.IGNORECASE,
 )
@@ -208,6 +227,10 @@ def strip_stream_display(text: str) -> str:
         return text
     out = text
     for pat in _DISPLAY_STRIP_PATTERNS:
+        _hit = pat.search(out)
+        # 只为「自造标记（cron）」记埋点：推理/记忆等常规标记每轮都在剥，埋点会被刷爆。
+        if _hit and "cron" in _hit.group(0).lower():
+            _emit_marker_stripped(_hit.group(0), "display_closed")
         out = pat.sub("", out)
     # 工具动作标记（SEARCH/GEN_IMAGE/IMG_TEXT/CAL_NOTE/MEMO/timer）统一剥离
     try:

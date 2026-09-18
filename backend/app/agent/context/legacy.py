@@ -29,6 +29,7 @@ from app.agent.context_builder import (
     _build_user_manual_state_text,
     _bump_memory_round,
     _clip_text_to_quota,
+    _enforce_user_message_last,
     _inject_core_anchors_loops,
     _is_hot_character,
     _trim_limits,
@@ -705,6 +706,24 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     for _mcp_b in mcp_resources_blocks:
         state["context_messages"].append({"role": "system", "content": _mcp_b})
 
+    # ── 现状三连（2026-09-18 挂载）：C3 用户当前现状锚点 → 用户最新状态 → 工作记忆 ──
+    # 三者此前只注册未挂载（builder 每轮都跑、结果无人消费 = 永不注入，见
+    # docs/context-order-convention.md §2.4）。此处只做挂载：沿用 builder 返回的 list[str]，
+    # 不改任何闸门/灰度/预算判据；闸门关或无数据时 builder 返回空列表 → 追加零条（零行为变化）。
+    # 落位：紧邻主模板记忆区（memories/core_memories）之后、织库等素材块之前；MCP 能力声明
+    # 按 §2.2 约定仍保持最前，故本组排在其后。
+    if _sv and "current_state_anchor" in _sv:
+        for _b in _sv["current_state_anchor"]:
+            state["context_messages"].append({"role": "system", "content": _b})
+
+    if _sv and "user_now" in _sv:
+        for _b in _sv["user_now"]:
+            state["context_messages"].append({"role": "system", "content": _b})
+
+    if _sv and "working_state" in _sv:
+        for _b in _sv["working_state"]:
+            state["context_messages"].append({"role": "system", "content": _b})
+
     if _sv and "weave_full" in _sv:
         for _b in _sv["weave_full"]:
             state["context_messages"].append({"role": "system", "content": _b})
@@ -897,6 +916,13 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         except Exception:
             pass
 
+    # Ariadne 模块 B（2026-09-18 挂载）：[RECALL] 记忆调取规则声明，紧随 search_capability
+    # （同为「能力声明」类，相邻落位）。flag memory_recall_second_hop 默认关 → builder 返回
+    # 空列表 → 追加零条（零行为变化）；只挂载，不改闸门。
+    if _sv and "recall_capability" in _sv:
+        for _b in _sv["recall_capability"]:
+            state["context_messages"].append({"role": "system", "content": _b})
+
     if _sv and "group_dynamics" in _sv:
         for _b in _sv["group_dynamics"]:
             state["context_messages"].append({"role": "system", "content": _b})
@@ -954,6 +980,12 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
                     })
         except Exception as e:
             _logger.warning("group recall inject failed: %s", e)
+
+    # #72 PR-C P3（2026-09-18 挂载）：逐角色群聊私有认知，紧随 group_dynamics（群聊语境相邻）。
+    # 两级闸 group_cognition_enabled_for 关 / 无 group_id / 无认知 → builder 返回空列表 → 零行为变化。
+    if _sv and "group_char_cognition" in _sv:
+        for _b in _sv["group_char_cognition"]:
+            state["context_messages"].append({"role": "system", "content": _b})
 
     if _sv and "image_gen" in _sv:
         for _b in _sv["image_gen"]:
@@ -1112,6 +1144,32 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     if _sv and "prospective_cue" in _sv:
         for _pc_b in _sv["prospective_cue"]:
             state["context_messages"].append({"role": "system", "content": _pc_b})
+    # 插件系统：context_inject / inject_prompt_skill（2026-09-18 位移 + 护栏）
+    # 两处调用由「user 消息之后」整体前移到 continue_payload 与 user 消息**之前**：插件自行 append
+    # 的块因此天然落在宿主 user 之前，不再破坏红线②「user 消息恒为最后一条」（见
+    # docs/context-order-convention.md §0.1/§2.3）。插件可见契约（ctx 字段、append 写法）不变，
+    # 异常隔离 try/except: pass 保持原样。
+
+    # 插件系统：context_inject（启用插件可向上下文追加内容；异常隔离）
+    try:
+        from app.plugins.registry import run_hook
+        await run_hook("context_inject", {
+            "user_id": state.get("user_id", 1),
+            "character_id": state.get("character_id"),
+            "session_id": state.get("session_id"),
+            "user_message": state.get("user_message", ""),
+            "context_messages": state["context_messages"],
+        })
+    except Exception:
+        pass
+
+    # 48c：配置驱动零代码技能注入（type=prompt 插件触发匹配后追加 system 消息；异常隔离不阻断主链路）
+    try:
+        from app.plugins.config_hooks import inject_prompt_skill
+        await inject_prompt_skill(state)
+    except Exception:
+        pass
+
     if _sv and "continue_payload" in _sv:
         for _b in _sv["continue_payload"]:
             state["context_messages"].append({"role": "system", "content": _b})
@@ -1134,24 +1192,32 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         "role": "user",
         "content": state["user_message"],
     })
+    # 宿主 user 消息下标：红线②护栏锚点（legacy 装配尾部 + nodes.generate_response 的
+    # before_generate 之后各用一次；不依赖「最后一条 role=user」，防插件伪造 user 把锚点带偏）
+    _host_user_idx = len(state["context_messages"]) - 1
+    state["_host_user_msg_index"] = _host_user_idx
 
-    # 插件系统：context_inject（启用插件可向上下文追加内容；异常隔离）
-    try:
-        from app.plugins.registry import run_hook
-        await run_hook("context_inject", {
-            "user_id": state.get("user_id", 1),
-            "character_id": state.get("character_id"),
-            "session_id": state.get("session_id"),
-            "user_message": state.get("user_message", ""),
-            "context_messages": state["context_messages"],
-        })
-    except Exception:
-        pass
 
-    # 48c：配置驱动零代码技能注入（type=prompt 插件触发匹配后追加 system 消息；异常隔离不阻断主链路）
+    # ── 红线②宿主不变式（2026-09-18）：任何落在宿主 user 消息之后的块归位到 user 之前 ──
+    # 正常路径（插件块已由位移落在 user 之前）零移动 → 与改动前逐字节一致；仅在真越位时告警 + 埋点。
     try:
-        from app.plugins.config_hooks import inject_prompt_skill
-        await inject_prompt_skill(state)
+        _moved_after_user = _enforce_user_message_last(
+            state["context_messages"], user_index=state.get("_host_user_msg_index")
+        )
+        if _moved_after_user:
+            _logger.warning(
+                "context: 归位 %d 个落在宿主 user 之后的块（红线②护栏）", _moved_after_user
+            )
+            try:
+                from app.memory.observability import obs_event
+
+                obs_event(
+                    state.get("character_id"),
+                    "context_user_last_enforced",
+                    {"moved": _moved_after_user},
+                )
+            except Exception:
+                pass
     except Exception:
         pass
 

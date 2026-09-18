@@ -3,6 +3,11 @@
 本文件只承载注册表骨架（分区元数据 + 注册表），不承载具体 builder 实现；
 具体 section 实现见 ``section_mcp.py`` / ``section_memories.py``（后续步骤再接入
 persona/summaries/moments/pet/phone/world/overlay 等）。
+
+顺序约定：见 docs/context-order-convention.md（状态/条件前置、素材居中、诉求最后）。
+注意 ``order`` 只决定本表内 builder 的**执行**顺序：**append 块的真实落位**由
+``legacy.py`` 的 ``if _sv and "<key>" in _sv`` 链决定，template 槽的落位由
+``SYSTEM_PROMPT_TEMPLATE`` 字面量决定——改 order 不等于改注入顺序。
 """
 from __future__ import annotations
 
@@ -28,7 +33,8 @@ class ContextSection:
     - ``target``：TARGET_TEMPLATE（填模板槽）/ TARGET_APPEND（追加 system 块）。
     - ``slot``：target=template 时对应的 SYSTEM_PROMPT_TEMPLATE 占位槽名（如 memories）。
     - ``quota_tokens``：0=不裁剪；>0 时按估算 token 裁剪。
-    - ``order``：append 块注入顺序；template 槽无影响。
+    - ``order``：builder 执行顺序（(order, key) 兜底）；不决定注入落位（见文件头 docstring
+      与 docs/context-order-convention.md 的取号规则与三条红线）。
     - ``enabled``：可整体开关（如 Feature Flag）。
     """
 
