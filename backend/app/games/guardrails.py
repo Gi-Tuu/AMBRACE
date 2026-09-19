@@ -2,7 +2,11 @@
 
 进程内计数，不做 schema 迁移：
 - 同 (round,phase,seat,action,规范化payload) 连续重复 → 三级收敛（换目标 → 强推阶段 → 止血）；
-- 单局 AI 决策（≈LLM 调用）总数硬上限 → 止血结束，防止任何形态的空转烧钱。
+- 单局 AI 决策（≈LLM 调用）总数硬上限 → 止血结束，防止任何形态的空转烧钱；
+- P2-1：连续「双重 apply 都失败」计数 → 达 FORCE 阈值确定性硬强推、达 ABORT 阈值止血，
+  覆盖"动作根本 apply 不进去"这一条绕过重复/总数计数的失效路径。
+- 故障注入专项（2026-09-18）：同一计数在调度层扩展覆盖 engine.advance() 抛异常（连续未推进语义），
+  且 decisions_cap / streak 止血分支统一落 phase=result 用户可见结束事件——全引擎有限步收敛。
 
 状态放模块级而非引擎实例：_resume_ai_turns 每轮都重新 engine.load 新建引擎，
 只有模块级状态才能跨"重载"连续累计重复序列与总决策数。
@@ -34,6 +38,16 @@ AI_ONLY_HARD_LIMIT = 5               # AI_ONLY：更快止血
 
 MODE_NORMAL = "normal"
 MODE_AI_ONLY = "ai_only"
+
+# ── P2-1（2026-09-18）：「双重 apply 都失败」的收敛阈值（与 MODE_* 同级；不分档位）──
+# 背景：apply_action 直接失败时 streak/decisions 一个计数都不涨，整条兜底网被绕过，
+# 旧代码只 warning 后静默 return → 对局停在 AI 回合，前端无限等待。
+# 口径：每次「本轮没推进」记 1 次，成功推进（apply ok 且 advance 未抛异常）后归零；
+# 计数在 _REGISTRY 按 session_id 保留，跨 resume_stuck 重 spawn 累计。
+# 故障注入专项（2026-09-18）扩展：engine.advance() 抛异常同样是「本轮没推进」（调度层已不抛），
+# 走同一套 FORCE/ABORT 分流，故该计数语义 = 连续未推进轮数（含双重 apply 失败 + advance 异常）。
+APPLY_FAIL_FORCE_LIMIT = 2   # 连续失败达 2 次 → 确定性硬强推（跳过本轮动作推进阶段），对局继续
+APPLY_FAIL_ABORT_LIMIT = 3   # 连续失败达 3 次 → 护栏末级止血（_guard_stop 终局 + 用户可见广播）
 
 
 @dataclass(frozen=True)
@@ -82,10 +96,22 @@ class SessionGuard:
     advanced_at_rp: tuple | None = None  # 强推时的 (round, phase)，用于判断强推是否真的挪动了
     mode: str = MODE_NORMAL            # 阈值档位（口径1）：normal / ai_only，首次获取时判定固化
     mode_locked: bool = False          # 档位是否已固化（固化后局内不再重判，防逐轮漂移）
+    # P2-1：连续「本轮没推进」次数（双重 apply 失败，故障注入专项起含 advance 抛异常）。成功推进后
+    # 归零；达阈值由调度方分流（FORCE=确定性硬强推 / ABORT=末级止血），使动作落不下去也逃不出兜底网。
+    apply_failures: int = 0
 
     def bump_decision(self) -> int:
         self.decisions += 1
         return self.decisions
+
+    def bump_apply_failure(self) -> int:
+        """记一次「本轮没推进」，返回连续未推进次数（语义：连续、成功推进后归零）。"""
+        self.apply_failures += 1
+        return self.apply_failures
+
+    def reset_apply_failures(self) -> None:
+        """成功推进（apply ok）后归零连续失败序列。"""
+        self.apply_failures = 0
 
 
 # session_id -> SessionGuard（进程内；终局清理）

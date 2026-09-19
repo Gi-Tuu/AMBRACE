@@ -9,6 +9,7 @@ r"""
   backend\.venv\Scripts\python.exe scripts\server_manager.py start    启动
   backend\.venv\Scripts\python.exe scripts\server_manager.py stop     停止
   backend\.venv\Scripts\python.exe scripts\server_manager.py restart  重启
+  （POSIX / Linux·macOS）backend/.venv/bin/python scripts/server_manager.py status|repair|start|stop|restart
 
 【常见问题排查表】
 1. 手机连不上服务器（连接失败/超时）
@@ -46,6 +47,7 @@ r"""
   数据库时间 UTC naive，北京时间 = UTC+8。
 """
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -53,18 +55,25 @@ import time
 from datetime import datetime
 
 # C1（2026-09-17）：stdio 重定向日志的「启动前轮转」，实现与调用方同级（scripts/log_rotate.py）。
+# P3-9（2026-09-2x）：跨平台拉起键 / venv 解释器路径 / 端口与命令行 PID 查询同样收敛到同级
+# scripts/platform_util.py。
 # 正常以「python <脚本绝对路径>」运行时 sys.path[0] 即 scripts/，同级导入可用；
 # 兜底：被按文件路径加载（如单测 importlib 加载）时 scripts/ 不在 sys.path，补一次再导入。
 try:
     from log_rotate import rotate_stdio_log
+    import platform_util
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from log_rotate import rotate_stdio_log
+    import platform_util
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 项目根
 BACKEND_DIR = os.path.join(BASE_DIR, "backend")
-PYTHONW = os.path.join(BACKEND_DIR, ".venv", "Scripts", "pythonw.exe")
-PYTHON = os.path.join(BACKEND_DIR, ".venv", "Scripts", "python.exe")
+
+# B6 补（2026-09-19）/ P3-9（2026-09-2x）：与 watchdog / server_controller 对齐——Windows 用
+# venv/Scripts/pythonw.exe，POSIX 用 venv/bin/python（POSIX 无 pythonw，也没有 GUI 子系统概念）；
+# 拉起键 Windows = creationflags、POSIX = start_new_session。统一由 platform_util 提供。
+PYTHONW, PYTHON = platform_util.venv_python_paths(BACKEND_DIR)
 WATCHDOG_PY = os.path.join(BASE_DIR, "scripts", "watchdog.py")
 LOGS_DIR = os.path.join(BACKEND_DIR, "data", "logs")
 STDERR_LOG = os.path.join(LOGS_DIR, "server_stderr.log")
@@ -77,7 +86,11 @@ PORT = 8000
 # P2-2：单实例锁端口可配置（与 backend/app/main.py 同步，读环境变量 INSTANCE_LOCK_PORT，默认 8766）
 LOCK_PORT_UVICORN = int(os.environ.get("INSTANCE_LOCK_PORT", "8766"))
 LOCK_PORT_WATCHDOG = 8765
-NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+# 隐藏短命子进程（PowerShell）窗口；POSIX 上该属性不存在 -> 0。
+# P3-9：拉起键里的 Windows-only 常量已收敛到 platform_util.popen_kwargs()；
+# 本常量保持收敛前的原值（NO_WINDOW | CREATE_NEW_PROCESS_GROUP），行为逐位一致。
+NO_WINDOW = (getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
 
 
 def _now() -> str:
@@ -101,39 +114,35 @@ def _ps(cmd: str) -> str:
         return ""
 
 
+def _sh(cmd: list) -> str:
+    """运行 POSIX 命令并返回 stdout（15s 超时）；Windows 侧不使用（用 _ps）。"""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        return (r.stdout or "").strip()
+    except Exception:
+        return ""
+
+
 def get_port_pids(port: int) -> list:
-    """返回监听指定端口的所有 PID（权威实例判定）"""
-    out = _ps(
-        "Get-NetTCPConnection -State Listen -LocalPort {0} -ErrorAction SilentlyContinue "
-        "| Select-Object -ExpandProperty OwningProcess".format(port)
-    )
-    pids = []
-    for line in out.splitlines():
-        line = line.strip()
-        if line.isdigit():
-            pids.append(int(line))
-    return sorted(set(pids))
+    """返回监听指定端口的所有 PID（权威实例判定）：实现见 scripts/platform_util.port_pids()。"""
+    return platform_util.port_pids(port)
 
 
 def get_cmdline_pids(keyword: str) -> list:
-    """按命令行关键字匹配 pythonw/python 进程 PID"""
-    esc = keyword.replace("'", "''")
-    out = _ps(
-        "Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' or Name='python.exe'\" "
-        "| Where-Object {{ $_.CommandLine -like '*{0}*' }} "
-        "| Select-Object -ExpandProperty ProcessId".format(esc)
-    )
-    pids = []
-    for line in out.splitlines():
-        line = line.strip()
-        if line.isdigit():
-            pids.append(int(line))
-    return sorted(set(pids))
+    """按命令行关键字匹配进程 PID：实现见 scripts/platform_util.cmdline_pids()。"""
+    return platform_util.cmdline_pids(keyword)
 
 
-def kill_pids(pids) -> None:
+def kill_pids(pids, force: bool = False) -> None:
+    """终止进程：Windows 用 Stop-Process -Force（等同强杀）；POSIX 默认 SIGTERM，force=True 时 SIGKILL。"""
     for pid in pids:
-        _ps("Stop-Process -Id {0} -Force -ErrorAction SilentlyContinue".format(pid))
+        if os.name == "nt":
+            _ps("Stop-Process -Id {0} -Force -ErrorAction SilentlyContinue".format(pid))
+        else:
+            try:
+                os.kill(int(pid), signal.SIGKILL if force else signal.SIGTERM)
+            except Exception:
+                pass
 
 
 def http_ok(timeout: float = 1.5) -> bool:
@@ -195,8 +204,8 @@ def start_uvicorn() -> None:
             subprocess.Popen(
                 [PYTHONW, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", str(PORT)],
                 cwd=BACKEND_DIR,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
                 stdout=fout, stderr=ferr,
+                **platform_util.popen_kwargs(),
             )
     log("uvicorn 启动命令已发出（加载模型约需 30-60 秒）")
 
@@ -204,7 +213,7 @@ def start_uvicorn() -> None:
 def start_watchdog() -> None:
     subprocess.Popen(
         [PYTHONW, WATCHDOG_PY],
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+        **platform_util.popen_kwargs(),
     )
     log("watchdog 启动命令已发出")
 
@@ -252,9 +261,13 @@ def stop_all() -> None:
     clean_lock_files()
     time.sleep(1.5)
     # 等 8000/8765/8766 三端口真正释放，避免 start 与残留实例竞态
-    for _ in range(10):
+    # POSIX：SIGTERM 属优雅终止，宽限后半程仍占端口的一律升级 SIGKILL（Windows 侧 Stop-Process -Force 已是强杀）
+    for i in range(10):
         if not (get_port_pids(PORT) or get_port_pids(LOCK_PORT_UVICORN) or get_port_pids(LOCK_PORT_WATCHDOG)):
             break
+        if os.name != "nt" and i >= 4:
+            kill_pids(sorted(set(get_port_pids(PORT) + get_port_pids(LOCK_PORT_UVICORN)
+                                 + get_port_pids(LOCK_PORT_WATCHDOG))), force=True)
         time.sleep(0.5)
 
 
@@ -285,11 +298,17 @@ def cmd_status() -> int:
     print("暂停标记 paused.flag   : {0}".format("存在（守护暂停）" if paused else "不存在"))
 
     print("\n-- 相关进程 --")
-    procs = _ps(
-        "Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' or Name='python.exe'\" "
-        "| Where-Object { $_.CommandLine -match 'uvicorn|watchdog' } "
-        "| Select-Object ProcessId, @{N='Cmd';E={$_.CommandLine}} | Format-Table -AutoSize | Out-String -Width 200"
-    )
+    if os.name == "nt":
+        procs = _ps(
+            "Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' or Name='python.exe'\" "
+            "| Where-Object { $_.CommandLine -match 'uvicorn|watchdog' } "
+            "| Select-Object ProcessId, @{N='Cmd';E={$_.CommandLine}} | Format-Table -AutoSize | Out-String -Width 200"
+        )
+    else:
+        procs = "\n".join(
+            l for l in _sh(["ps", "-eo", "pid=,args="]).splitlines()
+            if "uvicorn" in l or "watchdog" in l
+        )
     print(procs if procs else "(无)")
 
     print("\n-- server_stderr.log 尾部 --")
@@ -306,7 +325,10 @@ def cmd_status() -> int:
         print("警告：8000 有监听但 HTTP 无响应 -> 运行 repair 重启")
     else:
         print("异常：服务器未运行 -> 运行 start（或 repair）")
-    print("注意：venv pythonw 的 shim+worker 成对进程属正常现象，勿当作双实例。")
+    if os.name == "nt":
+        print("注意：venv pythonw 的 shim+worker 成对进程属正常现象，勿当作双实例。")
+    else:
+        print("注意：POSIX 侧 uvicorn / watchdog 各只有一个进程，出现重复 PID 即为真双实例。")
     return 0
 
 

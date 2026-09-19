@@ -2,8 +2,9 @@
 
 关键：prompt 中绝不出现其他玩家 hidden 信息。
 LLM 调用走 app.agent.llm_client.chat_completion（task=game，temperature 0.85，
-max_tokens 300）。本函数只负责 LLM 决策 + JSON 解析；动作校验与 apply 统一由
-调度方 _resume_ai_turns 负责。LLM 失败/解析失败用引擎的随机合法动作兜底，不阻塞游戏。
+max_tokens 300）。本函数只负责 LLM 决策 + JSON 解析 + 轻量动作合法性校验（P2-1）；
+规则判定与 apply 统一由调度方 _resume_ai_turns 负责。LLM 失败/解析失败/动作不合法
+一律用引擎的随机合法动作兜底，不阻塞游戏。
 """
 from __future__ import annotations
 
@@ -14,12 +15,45 @@ from app.utils.logger import get_logger
 
 _logger = get_logger("games.ai_player")
 
+# P2-1（2026-09-18）：期望动作 → 该期望下引擎同样接受的替代动作（只登记引擎 apply_action
+# 实际放行的分支，不改引擎规则）。用于把"为空/非字符串/与当前阶段不符"的 LLM 输出拦在
+# 调度方之前直接走 fallback，避免明显非法动作被送进 apply（进而双 apply 失败 → 静默卡死）。
+_ALT_ACTIONS: dict[str, tuple[str, ...]] = {
+    "follow_or_challenge": ("declare", "challenge"),   # liars_bar：跟牌或质疑
+    "answer_truth": ("penalty",),                      # truth_or_dare：真心话可选接受惩罚
+    "complete_dare": ("penalty",),                     # truth_or_dare：大冒险可选接受惩罚
+    "ask_soup": ("guess_soup",),                       # turtle_soup：可随时直接猜真相
+    "guess_soup": ("ask_soup",),                       # turtle_soup：也可继续提问
+    "ask": ("guess",),                                 # twenty_q：可随时直接猜词
+    "guess": ("ask",),                                 # twenty_q：也可继续提问
+}
+
+_SURRENDER = "surrender"  # 与具体游戏解耦的通用动作，任何阶段都合法（由调度方分流结算）
+
+
+def _action_valid(engine_expected: str, action) -> bool:
+    """轻量合法性判定（不查引擎规则，只看「与当前期望是否相符」）：
+
+    - 非字符串 / 空串 → 非法；
+    - surrender → 合法（通用动作）；
+    - 等于 expected_action → 合法；
+    - 属于该 expected 下引擎同样放行的替代动作 → 合法；
+    - 其余（阶段不符/动作集外）→ 非法，调用方直接走 fallback_action。
+    """
+    if not isinstance(action, str) or not action.strip():
+        return False
+    action = action.strip()
+    if action == _SURRENDER or action == engine_expected:
+        return True
+    return action in _ALT_ACTIONS.get(engine_expected, ())
+
 
 async def ai_decide(engine, seat: int) -> dict:
     """让 AI 玩家决策。返回 {"action": "...", "content": "...", "payload": {...}}。
 
-    只负责 LLM 决策 + JSON 解析，不校验/不 apply——动作校验与 apply 统一由
-    调度方 _resume_ai_turns 负责，避免对同一引擎实例二次 apply 造成双重效果。
+    只负责 LLM 决策 + JSON 解析 + P2-1 轻量校验（action 是否与当前 expected_action 相符）；
+    不做规则判定、不 apply——真正的动作校验与 apply 统一由调度方 _resume_ai_turns 负责，
+    避免对同一引擎实例二次 apply 造成双重效果。
     """
     ctx: GameContext = engine.build_ai_prompt(seat)
     expected = engine.expected_action(seat)
@@ -43,9 +77,20 @@ async def ai_decide(engine, seat: int) -> dict:
         _logger.warning("ai_decide LLM failed seat=%d: %s", seat, e)
         decision = None
 
-    # LLM 解析成功直接返回 decision；失败/解析失败用引擎的随机合法动作兜底（不阻塞游戏）
-    if decision:
+    # P2-1：解析成功也要过轻量校验——action 为空/非字符串/与当前阶段不符时弃用，
+    # 直接走引擎兜底动作，避免把明显非法动作送到调度方（进而双 apply 失败卡死）。
+    if isinstance(decision, dict) and _action_valid(expected, decision.get("action")):
+        # P3-①（2026-09-19）：校验内部用的是 strip 后的值，这里把清洗值写回 decision——
+        # 调度方 apply_action 走精确成员匹配，" kill " 这类带首尾空白的输出会过校验却在
+        # 引擎被判非法（多一次无效 apply）。判定逻辑不变，非 str / 空串仍走 fallback。
+        decision["action"] = decision["action"].strip()
         return decision
+    if decision:
+        _logger.warning(
+            "ai_decide action=%r rejected (expected=%s seat=%d), use fallback_action",
+            decision.get("action") if isinstance(decision, dict) else type(decision).__name__,
+            expected, seat,
+        )
     # 兜底：引擎提供默认合法动作
     return await engine.fallback_action(seat)
 

@@ -5,7 +5,9 @@
 - state_json 持久化 next_turn_seat（由引擎 current_turn_seat 推导）；
 - 每事件单独落库（persist_event 只 add 不 commit，调用方统一 commit）；
 - 只在 commit 后 sleep 1.2s；
-- 直到轮到用户或结束；llm 失败 fallback 不阻塞。
+- 直到轮到用户或结束；llm 失败 fallback 不阻塞；
+- P2-1：LLM 决策 + fallback 双重 apply 都失败时按 guardrails.apply_failures 分级收敛
+  （确定性推进 → 硬强推 → 止血终局），绝不静默 return 卡死。
 """
 from __future__ import annotations
 
@@ -26,9 +28,11 @@ from app.games.ai_player import ai_decide
 from app.games.guardrails import (
     get_guard, set_guard_mode, drop_guard, guard_before_llm, guard_after_signature,
     canonical_signature, mark_forced_advance, guard_tier, GuardMove,
+    APPLY_FAIL_FORCE_LIMIT, APPLY_FAIL_ABORT_LIMIT,
 )
 from app.models.game import GameSession, GamePlayer, GameEvent
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc
 
 _logger = get_logger("api.games")
 
@@ -223,10 +227,13 @@ async def _create_session_in_db(
     engine.players = seats
     # #62 Phase 3：载入用户自定义词库/题库（用户自定义 > 插件内容包 > 内置常量）。
     await engine.load_content(db)
+    # P3-⑤（2026-09-19）：创建路径不走 load()，此处显式解析一次创建者语言，
+    # 保证 setup() 首轮播报 / 匿名名回落用 User.lang，而不是回落 settings.default_lang。
+    await engine.resolve_lang(db)
 
     init_events = await engine.setup()
     session.status = "playing"
-    session.started_at = datetime.now(timezone.utc)
+    session.started_at = now_naive_utc()
     for ev in init_events:
         await engine.persist_event(db, ev)
     await engine.persist_state(db)
@@ -327,7 +334,34 @@ async def player_action(sid: int, data: dict, user_id: int = Depends(get_current
             await engine.persist_event(db, result.event)
             await _mirror_to_group(db, engine, session, result.event)
             broadcast.append(result.event)
-        adv_events = await engine.advance()
+        # 故障注入专项（2026-09-19）：玩家路径的 engine.advance() 异常同样必须止血——
+        # 旧代码是裸调用，引擎抛错时请求直接 500、对局停在 playing（前端无限等待）。
+        # 对齐 AI 回合路径口径：log/obs → _guard_stop_visible 落用户可见结束事件并终局。
+        try:
+            adv_events = await engine.advance()
+        except Exception as e:
+            _logger.error("game guard: player advance raised session=%d seat=%d action=%s: %s",
+                          sid, seat, action, e, exc_info=True)
+            from app.memory.observability import obs_event
+            obs_event(None, "game_guard_player_advance_error", {
+                "session_id": sid, "seat": seat, "action": action, "error": str(e)[:200],
+            })
+            draws = getattr(engine, "has_draw_semantics", True)
+            try:
+                await _guard_stop_visible(
+                    db, session, engine, sid,
+                    reason=f"player_advance_error@{seat}",
+                    reason_tag="player_advance_error",
+                    payload={"seat": seat, "action": action, "error": str(e)[:200]},
+                    content=("⚠️ 对局推进异常，已自动结束并按平局结算。"
+                             if draws else "⚠️ 对局推进异常，已自动终止。"),
+                )
+            except Exception as ge:
+                # 止血自身失败不吞：先留痕再原样冒泡（显式 500 好过假装成功）。
+                _logger.error("game guard: player advance stop failed session=%d: %s",
+                              sid, ge, exc_info=True)
+                raise
+            return {"ok": True, "finished": True, "aborted": True, "winner_side": None}
         for ev in adv_events:
             await engine.persist_event(db, ev)
             await _mirror_to_group(db, engine, session, ev)
@@ -493,7 +527,7 @@ async def abort_session(sid: int, user_id: int = Depends(get_current_user_id)):
             raise HTTPException(403, "只有创建者可以解散")
         was_playing = session.status == "playing"
         session.status = "aborted"
-        session.finished_at = datetime.now(timezone.utc)
+        session.finished_at = now_naive_utc()
         # #62 Phase 3：用户主动解散也走同一统计口径（aborted 单列，不计胜场）。
         if was_playing:
             try:
@@ -655,14 +689,24 @@ async def _abort_game(db: AsyncSession, session, engine: GameEngine, reason: str
     """
     from app.memory.observability import obs_event
 
+    sid = session.id
     engine.abort_in_place()
     db.add(session)
+    # 🛡️ 2026-09-19（终局持久化解耦）：无胜负终止的终态先独立 commit——记账（成就/统计）
+    # 失败不得回滚终态，否则 status 永远 playing 而结束事件已落库 → 二次止血 → 重复结束事件。
+    await db.commit()
     # #62 Phase 3：无胜负终止也记账（aborted 单列，绝不计胜场）；幂等、失败静默。
-    from app.games.achievements import record_game_result
-    await record_game_result(db, session, engine, aborted=True)
-    _ai_turn_locks.pop(session.id, None)
-    _game_ws_clients.pop(session.id, None)
-    drop_guard(session.id)
+    try:
+        from app.games.achievements import record_game_result
+        await record_game_result(db, session, engine, aborted=True)
+        await db.commit()
+    except Exception:
+        _logger.error("game abort: record_game_result failed session=%s", sid, exc_info=True)
+        await db.rollback()
+        await db.refresh(session)
+    _ai_turn_locks.pop(sid, None)
+    _game_ws_clients.pop(sid, None)
+    drop_guard(sid)
     _logger.error(
         "game guard: no-draw engine aborted in place session=%d game=%s reason=%s",
         session.id, session.game_type, reason,
@@ -688,20 +732,49 @@ async def _settle_game(db: AsyncSession, session, engine: GameEngine, winner: st
     # B5（2026-09-01）：先 persist_state 把引擎内存态（含 liars_bar 的 private_json dict）
     # 序列化写回 ORM 脏字段——后续 finalize_game 的 SELECT 会触发 autoflush，
     # 不先序列化则 dict 绑 Text 列直接打爆事务（结算失败、对局卡 playing）。
+    sid = session.id
     await engine.persist_state(db)
     await engine.finish(db, winner)
+    # 🛡️ 2026-09-19（终局持久化解耦）：终态（status/winner/finished_at）与增强步骤
+    # （archive/finalize/记账）解耦——finish 后立刻独立 commit。否则增强步骤任一确定性抛错，
+    # 调用方末尾的 commit 不执行 → finish 的终态随会话退出 rollback（status 永远 playing），
+    # 而 _guard_stop_visible 已把 end_ev 落库 → 二次止血 → 重复结束事件（每 10 分钟再堆一条）。
+    # 增强步骤各自容错：失败只 error + rollback（只回滚该步骤自身），绝不动已提交的终态。
+    await db.commit()
+
     from app.games.archive import build_archive
-    from app.games.memory_bridge import finalize_game
-    session.archive_json = json.dumps(build_archive(session, engine), ensure_ascii=False)
-    db.add(session)
-    # 主记忆摘要指针 + game_memories（每 AI 角色）
-    await finalize_game(db, session, engine)
-    # #62 Phase 3：终局统计 + 成就判定（幂等、失败静默、不阻塞主链路）
-    from app.games.achievements import record_game_result
-    await record_game_result(db, session, engine, aborted=False)
-    _ai_turn_locks.pop(session.id, None)  # v3.3.5 审查修复：结算后清理进程内锁，防长期运行内存增长
-    _game_ws_clients.pop(session.id, None)  # v3.3.6 审查修复：结算后清理 WS 空集合，防缓慢增长
-    drop_guard(session.id)  # 🛡️ 2026-09-04：结算后清理护栏进程内状态
+    try:
+        session.archive_json = json.dumps(build_archive(session, engine), ensure_ascii=False)
+        db.add(session)
+        await db.commit()
+    except Exception:
+        _logger.error("game settle: archive build/write failed session=%s", sid, exc_info=True)
+        await db.rollback()
+        await db.refresh(session)  # rollback 会 expire ORM 对象，后续步骤读字段前先重载
+
+    try:
+        # 主记忆摘要指针 + game_memories（每 AI 角色）
+        from app.games.memory_bridge import finalize_game
+        await finalize_game(db, session, engine)
+        await db.commit()
+    except Exception:
+        _logger.error("game settle: finalize_game failed session=%s", sid, exc_info=True)
+        await db.rollback()
+        await db.refresh(session)
+
+    try:
+        # #62 Phase 3：终局统计 + 成就判定（幂等、失败静默、不阻塞主链路）
+        from app.games.achievements import record_game_result
+        await record_game_result(db, session, engine, aborted=False)
+        await db.commit()
+    except Exception:
+        _logger.error("game settle: record_game_result failed session=%s", sid, exc_info=True)
+        await db.rollback()
+        await db.refresh(session)
+
+    _ai_turn_locks.pop(sid, None)  # v3.3.5 审查修复：结算后清理进程内锁，防长期运行内存增长
+    _game_ws_clients.pop(sid, None)  # v3.3.6 审查修复：结算后清理 WS 空集合，防缓慢增长
+    drop_guard(sid)  # 🛡️ 2026-09-04：结算后清理护栏进程内状态
 
 
 # ── 投降后处理：落事件 → 结束结算 或 跳过投降者回合继续（用户/AI 共用）──
@@ -741,6 +814,191 @@ async def _run_surrender(db: AsyncSession, session, engine: GameEngine,
     return {"ok": True, "ended": False}
 
 
+# ── P2-1（2026-09-18）：双重 apply 都失败的收敛（沿用 guardrails 计数，不新造机制）──
+# 背景：LLM 决策 apply 失败 + fallback_action 再 apply 仍失败时，旧代码只 warning 后静默
+# return——不落库、不推进、不累计 guard、不广播，对局停在 AI 回合；resume_stuck_games 只会
+# 每 10 分钟空转重 spawn。这里改为按 SessionGuard.apply_failures 分级：确定性推进 → 硬强推
+# → 末级止血，且任何分支都留可见痕迹（日志 + 落库/广播）。
+async def _apply_fail_force_push(db: AsyncSession, session, engine: GameEngine,
+                                 session_id: int, seat: int, n_fail: int) -> bool:
+    """「双重 apply 都失败」未到止血阈值时的确定性推进（零 LLM、不依赖 fallback 合法性）。
+
+    - n_fail < APPLY_FAIL_FORCE_LIMIT：阶段级确定性推进 engine.advance()（丢弃本轮 AI 动作）；
+    - n_fail >= APPLY_FAIL_FORCE_LIMIT：硬强推 engine.timeout()（跳过本轮动作 + 推进；其内部
+      fallback 是否合法不影响阶段推进本身）。
+
+    事件落库/镜像/广播 + persist_state 后返回 False（调用方 continue，计数继续累计）；
+    若强推过程中分出胜负则走 _settle_game 终局并返回 True。引擎完全推不动时（advance/timeout
+    空且回合指针不动）本轮也无副作用，但计数每轮 +1，必然在有限轮内到达 ABORT 阈值。
+    """
+    hard = n_fail >= APPLY_FAIL_FORCE_LIMIT
+    _logger.error(
+        "game guard: ai apply failed twice session=%d seat=%d apply_failures=%d -> %s",
+        session_id, seat, n_fail, "force-timeout" if hard else "advance",
+    )
+    from app.memory.observability import obs_event
+    obs_event(None, "game_guard_apply_fail_push", {
+        "session_id": session_id, "seat": seat, "apply_failures": n_fail,
+        "move": "timeout" if hard else "advance",
+    })
+    events = []
+    rp_before = (int(session.round or 0), session.phase or "")
+    pushed = False
+    try:
+        events = await (engine.timeout() if hard else engine.advance())
+        pushed = True
+    except Exception as e:
+        # 引擎在异常态下抛错也不能再静默退出：本轮无事件，计数仍 +1 → 有限轮内到 ABORT。
+        _logger.error("game guard: apply-fail push raised session=%d n_fail=%d: %s",
+                      session_id, n_fail, e, exc_info=True)
+    # P3-②（2026-09-19）：确定性推进后 (round, phase) 真的移动 → 引擎已真实推进，连续失败
+    # 序列成为过去式，归零 apply_failures。否则该计数会跨用户回合一直累计，用户下次入口刚
+    # 失败一次就可能直接触达止血阈值（误止血）。
+    if pushed and (int(session.round or 0), session.phase or "") != rp_before:
+        get_guard(session_id).reset_apply_failures()
+    broadcast = list(events)
+    for ev in events:
+        await engine.persist_event(db, ev)
+        await _mirror_to_group(db, engine, session, ev)
+    winner = await engine.check_winner()
+    if winner:
+        await _settle_game(db, session, engine, winner)
+    else:
+        await engine.persist_state(db)
+    await db.commit()
+    for ev in broadcast:
+        await _broadcast_game_event(session_id, ev, session.phase)
+    if winner:
+        _logger.info("game finished by apply-fail push session=%d winner=%s", session_id, winner)
+        drop_guard(session_id)
+        return True
+    return False
+
+
+def _as_decision_dict(value) -> dict:
+    """归一化 AI / 兜底决策：非 dict（None / list / str 等坏输出）一律视为空决策。
+
+    故障注入专项（2026-09-18）：ai_decide 或 fallback_action 返回 None 时，旧调度层直接
+    ``decision.get(...)`` 抛 AttributeError → 异常退出、对局停在 playing。空决策会走到
+    apply 失败 → 引擎兜底 → guardrails 收敛，绝不会静默卡死。
+    """
+    return value if isinstance(value, dict) else {}
+
+
+async def _guard_stop_visible(db: AsyncSession, session, engine: GameEngine, session_id: int,
+                              *, reason: str, reason_tag: str, payload: dict | None = None,
+                              content: str | None = None) -> dict:
+    """护栏末级止血 + 用户可见结束事件（落库 + 群镜像 + WS 广播）。
+
+    故障注入专项（2026-09-18）：止血终局必须有用户可见痕迹——旧 decisions_cap / streak 两条止血分支
+    只 _guard_stop 不落事件，前端拿不到结束信号（只能干等）。这里与 _apply_fail_abort 同口径
+    统一补上：先落 phase=result 公开事件，再 _guard_stop 分流（有平局语义 → _settle_game(draw)；
+    无 → _abort_game），最后广播。返回结束事件 dict。引擎/DB 语义零改动，只加"可见化"。
+    """
+    draws = getattr(engine, "has_draw_semantics", True)
+    end_ev = {
+        "event_type": "win" if draws else "announce",
+        "phase": "result",
+        "visibility": "public",
+        "content": content or ("⚠️ 对局长时间无法推进，已自动结束并按平局结算。"
+                               if draws else "⚠️ 对局长时间无法推进，已自动终止。"),
+        "payload": {"reason": reason_tag, **(payload or {}),
+                    "winner_side": "draw" if draws else None},
+    }
+    from app.memory.observability import obs_event
+    obs_event(None, "game_guard_stop", {
+        "session_id": session_id, "reason": reason_tag, "draw_semantics": bool(draws),
+    })
+    # 🛡️ 2026-09-19（幂等去重）：同一 session 已有 phase="result" 结束事件时不再重复落库/镜像/
+    # commit——覆盖「首次止血终局未持久化（增强步骤抛错）→ 二次止血」叠加出的重复结束事件，
+    # 以及 resume_stuck 每 10 分钟重试的堆积。事件不重复落，但广播照旧（前端仍能收到结束信号）。
+    dup = (await db.execute(
+        select(GameEvent.id).where(
+            GameEvent.session_id == session_id,
+            GameEvent.phase == "result",
+        ).limit(1)
+    )).scalar_one_or_none()
+    if dup is None:
+        await engine.persist_event(db, end_ev)
+        await _mirror_to_group(db, engine, session, end_ev)
+        await db.commit()
+    else:
+        _logger.warning(
+            "game guard: session=%d already has phase=result event, skip duplicate end event",
+            session_id,
+        )
+    try:
+        await _guard_stop(db, session, engine, reason=reason)
+        await db.commit()
+    finally:
+        # 无论止血是否成功，都把"用户可见结束事件"推给在线连接，消除前端无限等待
+        await _broadcast_game_event(session_id, end_ev, "result")
+    return end_ev
+
+
+async def _apply_fail_abort(db: AsyncSession, session, engine: GameEngine,
+                            session_id: int, seat: int, n_fail: int) -> None:
+    """连续「双重 apply 都失败」达 APPLY_FAIL_ABORT_LIMIT：止血终局 + 用户可见结束事件。
+
+    payload 带 reason/apply_failures，作为 guardrails 计数的持久化终局记录。
+    """
+    draws = getattr(engine, "has_draw_semantics", True)
+    from app.memory.observability import obs_event
+    obs_event(None, "game_guard_apply_fail_abort", {
+        "session_id": session_id, "seat": seat, "apply_failures": n_fail,
+        "draw_semantics": bool(draws),
+    })
+    await _guard_stop_visible(
+        db, session, engine, session_id,
+        reason=f"apply_fail:{n_fail}@{seat}",
+        reason_tag="apply_fail_abort",
+        payload={"apply_failures": n_fail, "seat": seat},
+        content=("⚠️ 对局因 AI 行动连续失败已自动结束，按平局结算。"
+                 if draws else "⚠️ 对局因 AI 行动连续失败已自动终止。"),
+    )
+    drop_guard(session_id)
+    _logger.error(
+        "game guard: session=%d seat=%d stopped after %d consecutive double-apply failures",
+        session_id, seat, n_fail,
+    )
+
+
+async def _emergency_stop_after_crash(session_id: int, exc: Exception) -> None:
+    """故障注入专项（2026-09-18）：_resume_ai_turns 未预期异常后的止血网。
+
+    背景：引擎方法（advance/timeout/check_winner/...）抛错时旧代码只 log 后经 finally 清 guard，
+    session 仍是 playing、无任何事件 → 前端无限等待 + resume_stuck 每 10 分钟空转重 spawn。
+    这里用**独立 DB 会话**把仍在 playing 的对局止血终局并广播可见结束事件；幂等、自身异常静默
+    （绝不掩盖原始异常，也不再让对局卡死）。
+    """
+    err = f"{type(exc).__name__}: {exc}"[:200]
+    try:
+        async with async_session_factory() as db:
+            session = await db.get(GameSession, session_id)
+            if session is None or session.status != "playing":
+                return
+            engine = engine_for(session.game_type)(session)
+            await engine.load(db)
+            from app.memory.observability import obs_event
+            obs_event(None, "game_guard_crash_abort", {
+                "session_id": session_id, "game_type": session.game_type, "error": err,
+            })
+            draws = getattr(engine, "has_draw_semantics", True)
+            await _guard_stop_visible(
+                db, session, engine, session_id,
+                reason=f"resume_crash:{type(exc).__name__}",
+                reason_tag="resume_crash",
+                payload={"error": err},
+                content=("⚠️ 对局因系统异常已自动结束，按平局结算。"
+                         if draws else "⚠️ 对局因系统异常已自动终止。"),
+            )
+            _logger.error("game guard: session=%d stopped after unhandled resume error", session_id)
+    except Exception as e2:
+        _logger.error("game guard: emergency stop failed session=%d: %s", session_id, e2, exc_info=True)
+    finally:
+        drop_guard(session_id)
+
+
 # ── AI 回合调度（幂等可续跑）──
 async def _resume_ai_turns(session_id: int) -> None:
     """推进所有 AI 回合，直到轮到用户或游戏结束。可被任意入口安全重复调用。
@@ -751,18 +1009,23 @@ async def _resume_ai_turns(session_id: int) -> None:
     if lock.locked():
         return
     async with lock:
+        # P3-2（2026-09-18）：最外层 try/finally，保证异常终局 / session 已非 playing 退出时清理
+        # 模块级 guardrails._REGISTRY[session_id]，避免长期运行缓慢泄漏。
+        # 硬约束：正常「轮到用户、对局继续」的返回路径（_user_continues=True）绝对不清理 guard
+        # —— 该路径下 session 仍为 playing，用户下一步还要继续累计 streak/decisions。
+        _user_continues = False
         try:
             async with async_session_factory() as db:
                 while True:
                     session = await db.get(GameSession, session_id)
                     if session is None or session.status != "playing":
-                        drop_guard(session_id)  # 🛡️ 非 playing 退出时清理
-                        return
+                        return  # 非 playing 退出：finally 清理 guard
                     engine = engine_for(session.game_type)(session)
                     await engine.load(db)
                     seat = engine.current_turn_seat()
                     if seat is None or not engine.is_ai(seat):
-                        return  # 轮到用户 / 已结束；guard 保留（用户下一步还要累计），终局时才清
+                        _user_continues = True  # 轮到用户 / 已结束；guard 保留（用户下一步还要累计）
+                        return
                     guard = get_guard(session_id)
                     # 口径1（2026-09-06 拍板）：首次获取 guard 时按本局 GamePlayer 判定 ai_only
                     # 并固化（registry 跨 load 保留，不逐轮重判漂移）；判定异常保守回落 NORMAL。
@@ -791,16 +1054,20 @@ async def _resume_ai_turns(session_id: int) -> None:
                             "game guard: session=%d mode=%s AI decisions reached %d (cap %d), stop runaway",
                             session_id, guard.mode, n_decided, _tier.max_decisions,
                         )
-                        await _guard_stop(db, session, engine, reason=f"decisions_cap:{n_decided}")
-                        await db.commit()
+                        # 故障注入专项：止血必须落"用户可见结束事件"并广播，否则前端只能干等。
+                        await _guard_stop_visible(
+                            db, session, engine, session_id,
+                            reason=f"decisions_cap:{n_decided}", reason_tag="decisions_cap",
+                            payload={"decisions": n_decided, "cap": _tier.max_decisions},
+                        )
                         drop_guard(session_id)
                         return
                     if pre == GuardMove.FORCE_FALLBACK:
                         _logger.warning("game guard: session=%d mode=%s over soft limit(%d), fallback without LLM",
                                         session_id, guard.mode, n_decided)
-                        decision = await engine.fallback_action(seat)
+                        decision = _as_decision_dict(await engine.fallback_action(seat))
                     else:
-                        decision = await ai_decide(engine, seat)  # 仅此分支产生 LLM 计费
+                        decision = _as_decision_dict(await ai_decide(engine, seat))  # 仅此分支产生 LLM 计费
 
                     payload = dict(decision.get("payload") or {})
                     if decision.get("content"):
@@ -811,17 +1078,27 @@ async def _resume_ai_turns(session_id: int) -> None:
                         sbc: list = []
                         out = await _run_surrender(db, session, engine, seat, sbc)
                         if not out.get("ok"):
-                            _logger.warning("ai surrender rejected seat=%s -> %s", seat, out.get("error"))
-                            return  # 不空转；等待下一次入口触发
-                        await db.commit()
-                        for ev in sbc:
-                            await _broadcast_game_event(session_id, ev, session.phase)
-                        if out.get("ended"):
-                            _logger.info("game ended by ai surrender session=%d", session_id)
-                            drop_guard(session_id)  # 🛡️ 终局清理
-                            return
-                        await asyncio.sleep(1.2)
-                        continue
+                            # P3-④（2026-09-19）：投降被拒不再 return（旧行为会留 10 分钟空窗，
+                            # 直到 resume_stuck_games 重捞）。回落引擎兜底动作，继续走本轮统一的
+                            # apply 管线——失败则由 guardrails 分级收敛，绝不空转。
+                            _logger.warning(
+                                "ai surrender rejected seat=%s -> %s, fallback to engine action",
+                                seat, out.get("error"),
+                            )
+                            decision = _as_decision_dict(await engine.fallback_action(seat))
+                            payload = dict(decision.get("payload") or {})
+                            if decision.get("content"):
+                                payload.setdefault("content", decision["content"])
+                        else:
+                            await db.commit()
+                            for ev in sbc:
+                                await _broadcast_game_event(session_id, ev, session.phase)
+                            if out.get("ended"):
+                                _logger.info("game ended by ai surrender session=%d", session_id)
+                                drop_guard(session_id)  # 🛡️ 终局清理
+                                return
+                            await asyncio.sleep(1.2)
+                            continue
 
                     # 🛡️ 闸门②：结构化重复检测（排除 content 自然语言）
                     sig = canonical_signature(
@@ -835,8 +1112,12 @@ async def _resume_ai_turns(session_id: int) -> None:
                             "game guard: session=%d mode=%s stuck at rp=%s sig streak=%d",
                             session_id, guard.mode, rp, guard.streak,
                         )
-                        await _guard_stop(db, session, engine, reason=f"streak:{guard.streak}@{rp}")
-                        await db.commit()
+                        # 故障注入专项：止血落可见结束事件 + 广播（前端不再无限等待）。
+                        await _guard_stop_visible(
+                            db, session, engine, session_id,
+                            reason=f"streak:{guard.streak}@{rp}", reason_tag="streak_abort",
+                            payload={"streak": guard.streak, "round": rp[0], "phase": rp[1]},
+                        )
                         drop_guard(session_id)
                         return
 
@@ -844,7 +1125,14 @@ async def _resume_ai_turns(session_id: int) -> None:
                         # 换目标也救不回来：确定性强推阶段（timeout 内部=fallback+advance），不调 LLM
                         _logger.warning("game guard: force-advance session=%d rp=%s", session_id, rp)
                         mark_forced_advance(guard, rp)
-                        adv = await engine.timeout()
+                        try:
+                            adv = await engine.timeout()
+                        except Exception as e:
+                            # 故障注入专项：timeout 抛错不能让本轮直接崩出（否则停在 playing）；
+                            # 本轮无事件，streak/decisions 仍继续累计 → 有限轮内到 ABORT。
+                            _logger.error("game guard: force-advance timeout raised session=%d rp=%s: %s",
+                                          session_id, rp, e, exc_info=True)
+                            adv = []
                         broadcast = []
                         for ev in adv:
                             await engine.persist_event(db, ev)
@@ -868,7 +1156,7 @@ async def _resume_ai_turns(session_id: int) -> None:
                     if move == GuardMove.FORCE_FALLBACK:
                         # 丢弃重复的 LLM 决策，强制换一个合法动作（如狼人换刀）
                         _logger.warning("game guard: force-fallback session=%d rp=%s seat=%d", session_id, rp, seat)
-                        decision = await engine.fallback_action(seat)
+                        decision = _as_decision_dict(await engine.fallback_action(seat))
                         payload = dict(decision.get("payload") or {})
                         if decision.get("content"):
                             payload.setdefault("content", decision["content"])
@@ -881,7 +1169,7 @@ async def _resume_ai_turns(session_id: int) -> None:
                         result = None
                     if result is None or not result.ok:
                         _logger.info("ai apply rejected seat=%d, fallback_action", seat)
-                        fb = await engine.fallback_action(seat)
+                        fb = _as_decision_dict(await engine.fallback_action(seat))
                         if fb:
                             payload = dict(fb.get("payload") or {})
                             if fb.get("content"):
@@ -891,14 +1179,40 @@ async def _resume_ai_turns(session_id: int) -> None:
                             except Exception:
                                 result = None
                     if result is None or not result.ok:
-                        _logger.warning("ai apply still failed seat=%d, aborting resume", seat)
-                        return
+                        # P2-1：双重 apply 都失败——不再静默 return。按 guardrails 连续失败计数
+                        # 分级收敛（计数跨 resume_stuck 重 spawn 保留，成功推进后归零）：
+                        # ① 首次：确定性阶段推进；② ≥FORCE：确定性硬强推；③ ≥ABORT：止血终局。
+                        n_fail = guard.bump_apply_failure()
+                        if n_fail >= APPLY_FAIL_ABORT_LIMIT:
+                            await _apply_fail_abort(db, session, engine, session_id, seat, n_fail)
+                            return
+                        if await _apply_fail_force_push(db, session, engine, session_id, seat, n_fail):
+                            return
+                        await asyncio.sleep(1.2)
+                        continue
                     broadcast = []
                     if result.event:
                         await engine.persist_event(db, result.event)
                         await _mirror_to_group(db, engine, session, result.event)
                         broadcast.append(result.event)
-                    adv_events = await engine.advance()
+                    # 故障注入专项：引擎 advance 抛错同样属于「本轮推不动」——不能让它崩出调度层把对局
+                    # 留在 playing。记为一次连续失败，走与双重 apply 失败相同的分级收敛。
+                    # 因此「成功推进归零」移到 advance 成功之后：否则 apply 恒成功 + advance 恒抛
+                    # 异常时，失败序列会被反复清零 → 无限空转。
+                    try:
+                        adv_events = await engine.advance()
+                    except Exception as e:
+                        _logger.error("game guard: engine.advance raised session=%d seat=%d: %s",
+                                      session_id, seat, e, exc_info=True)
+                        n_fail = guard.bump_apply_failure()
+                        if n_fail >= APPLY_FAIL_ABORT_LIMIT:
+                            await _apply_fail_abort(db, session, engine, session_id, seat, n_fail)
+                            return
+                        if await _apply_fail_force_push(db, session, engine, session_id, seat, n_fail):
+                            return
+                        await asyncio.sleep(1.2)
+                        continue
+                    guard.reset_apply_failures()  # apply + advance 全成功才算真正推进，连续失败序列归零
                     for ev in adv_events:
                         await engine.persist_event(db, ev)
                         await _mirror_to_group(db, engine, session, ev)
@@ -919,6 +1233,16 @@ async def _resume_ai_turns(session_id: int) -> None:
                     await asyncio.sleep(1.2)  # 只在提交后 sleep，避免长事务
         except Exception as e:
             _logger.error("_resume_ai_turns failed session=%d: %s", session_id, e, exc_info=True)
+            # 故障注入专项：未预期异常不得让对局停在 playing（前端无限等待 + resume_stuck 空转重 spawn）。
+            # 用独立会话止血终局并广播可见结束事件。
+            if not _user_continues:
+                await _emergency_stop_after_crash(session_id, e)
+        finally:
+            # P3-2（2026-09-18）：除「正常轮到用户、对局继续」外，任何退出都清理 guard
+            # （异常退出 / session 已非 playing / 各类终局返回）。drop_guard 幂等，终局分支已
+            # 显式 drop 也不冲突；唯一不清的是 _user_continues 路径（保留累计状态）。
+            if not _user_continues:
+                drop_guard(session_id)
 
 
 async def resume_stuck_games() -> None:

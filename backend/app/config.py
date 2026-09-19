@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     server_host: str = "0.0.0.0"
     server_port: int = 8000
 
+    # ---- i18n（P3-1，2026-09-18）：界面语言默认值；GameEngine 取不到本局创建者语言时回落此值 ----
+    default_lang: str = "zh"  # zh / en
+
     # ---- 数据库 ----
     database_url: str = "sqlite+aiosqlite:///./data/sqlite/ai_companion.db"
 

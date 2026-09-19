@@ -8,21 +8,27 @@ import time
 from datetime import datetime
 
 # C1（2026-09-17）：stdio/网关重定向日志的「启动前轮转」，实现与调用方同级（scripts/log_rotate.py）。
+# P3-9（2026-09-2x）：跨平台拉起键 / venv 解释器路径同样收敛到同级 scripts/platform_util.py。
 # 正常以「python <脚本绝对路径>」运行时 sys.path[0] 即 scripts/，同级导入可用；
 # 兜底：被按文件路径加载（如单测 importlib 加载）时 scripts/ 不在 sys.path，补一次再导入。
 try:
     from log_rotate import rotate_stdio_log
+    import platform_util
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from log_rotate import rotate_stdio_log
+    import platform_util
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # scripts/ 上一级
 SERVER_DIR = os.path.join(_PROJECT_ROOT, "backend")
-# B6（2026-09-06）：PYTHONW 按 os.name 分支——Windows 用 venv/Scripts/pythonw.exe（GUI 子系统、
-# 无控制台窗口），POSIX 用 venv/bin/python。与 server_controller 的 _VENV_BIN 对齐，不再硬编码 Windows。
-_VENV_BIN = "Scripts" if os.name == "nt" else "bin"
-PYTHONW = os.path.join(SERVER_DIR, ".venv", _VENV_BIN,
-                       "pythonw.exe" if os.name == "nt" else "python")
+# B6（2026-09-06）/ P3-9（2026-09-2x）：PYTHONW 与「拉起键」统一由 scripts/platform_util.py 给出。
+# Windows 用 venv/Scripts/pythonw.exe（GUI 子系统、无控制台窗口），POSIX 用 venv/bin/python；
+# 拉起键 Windows = creationflags（无窗口 + 脱离控制台）、POSIX = start_new_session（脱离父会话）。
+# 此前 start_server() 里直接写了 CREATE_NEW_PROCESS_GROUP（Windows-only 常量），POSIX 上
+# AttributeError 会被 except 吞掉，表现为「Linux 上探测正常、每次拉起都失败」= 只探测不自愈。
+PYTHONW, _PYTHON = platform_util.venv_python_paths(SERVER_DIR)
+
+
 LOG = os.path.join(SERVER_DIR, "data", "logs", "watchdog.log")
 LOCK_PORT = 8765  # 单实例锁端口
 LOCKS_DIR = os.path.join(SERVER_DIR, "data", "locks")
@@ -151,9 +157,9 @@ def start_server():
             subprocess.Popen(
                 [PYTHONW, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"],
                 cwd=SERVER_DIR,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
                 stdout=f,
                 stderr=subprocess.STDOUT,
+                **platform_util.popen_kwargs(),
             )
         log("Restart command issued")
     except Exception as e:
@@ -251,8 +257,8 @@ def _start_gateway(gw):
             return
         kw = {"cwd": gw.get("cwd") or SERVER_DIR}
         log_path = os.path.join(SERVER_DIR, "data", "logs", f"gateway_{name}.log")
+        kw.update(platform_util.popen_kwargs())
         if os.name == "nt":
-            kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
             kw["stdin"] = subprocess.DEVNULL
             # C1：打开重定向句柄之前先轮转网关日志（超 10MB 滚动为 .1/.2）
             _m = rotate_stdio_log(log_path, max_mb=10, keep=2)
@@ -260,8 +266,6 @@ def _start_gateway(gw):
                 log(_m)
             kw["stdout"] = open(log_path, "a", encoding="utf-8")
             kw["stderr"] = subprocess.STDOUT
-        else:
-            kw["start_new_session"] = True
         subprocess.Popen(args, **kw)
         log(f"Gateway [{name}] (re)started: {' '.join(args)}")
     except Exception as e:

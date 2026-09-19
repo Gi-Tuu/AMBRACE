@@ -471,7 +471,15 @@ class MCPClientManager:
 
             transport = self._open_transport(cfg)
             read, write = await transport.__aenter__()
-            sess = ClientSession(read, write)
+
+            # P3-3（2026-09-18）：补 notification_callback（本 SDK 用 message_handler 形参），
+            # 接收 server→client 通知：tools/list_changed 重列工具并刷新内存缓存 + 回写
+            # tools_cache_json；progress 等其它通知只记日志；回调内任何异常吞掉并 warning，
+            # 绝不影响主请求流程。_nh 闭包捕获本 worker 的 conn / session（通知到来时已建好）。
+            async def _nh(notification):
+                await self._notification_handler(conn.server_id, session, notification)
+
+            sess = ClientSession(read, write, message_handler=_nh)
             session = await sess.__aenter__()
             await asyncio.wait_for(session.initialize(), timeout=_connect_timeout())
             result = await asyncio.wait_for(session.list_tools(), timeout=_connect_timeout())
@@ -597,8 +605,40 @@ class MCPClientManager:
             _logger.warning("mcp worker get prompt failed name=%s: %s", cmd["name"], e)
             cmd["future"].set_result({"ok": False, "error": str(e)})
 
+    async def _notification_handler(self, server_id: int, session, notification) -> None:
+        """server→client 通知处理（message_handler）：tools/list_changed 重列工具并刷新缓存；
+        progress 等其它通知只记日志；回调内任何异常吞掉并 warning，绝不抛回影响主链路。
+
+        - tools/list_changed：session.list_tools() 重列 → 刷新 conn.tools 内存缓存 +
+          回写既有 tools_cache_json（复用 _cache_tools_db，不新造缓存层）；
+        - 取不到 conn（如已断开/试连）直接 debug 跳过。
+        """
+        try:
+            from mcp import types as mcp_types
+
+            if isinstance(notification, mcp_types.ToolListChangedNotification):
+                conn = self._conns.get(server_id)
+                if conn is None:
+                    _logger.debug("mcp tools/list_changed for unknown server=%s (ignored)", server_id)
+                    return
+                try:
+                    result = await session.list_tools()
+                    tools = [self._tool_to_dict(t) for t in result.tools]
+                    conn.tools = tools
+                    await self._cache_tools_db(server_id, tools)
+                    _logger.info("mcp tools/list_changed server=%s refreshed %d tools", server_id, len(tools))
+                except Exception as e:
+                    _logger.warning("mcp tools refresh on list_changed failed server=%s: %s", server_id, e)
+            elif isinstance(notification, mcp_types.ProgressNotification):
+                tok = getattr(getattr(notification, "params", None), "progressToken", None)
+                _logger.info("mcp progress notification server=%s token=%s", server_id, tok)
+            else:
+                _logger.debug("mcp notification server=%s method=%s", server_id,
+                              getattr(notification, "method", "?"))
+        except Exception as e:
+            _logger.warning("mcp notification handler error server=%s: %s", server_id, e)
+
     async def _try_list_resources(self, session) -> list[dict]:
-        """连接时发现资源（旧 server 不支持则空列表；异常隔离）。"""
         try:
             result = await asyncio.wait_for(session.list_resources(), timeout=_connect_timeout())
             return [self._resource_to_dict(r) for r in result.resources]
@@ -687,8 +727,17 @@ class MCPClientManager:
         from mcp import ClientSession
 
         transport = self._open_transport(cfg)
+
+        # P3-3（2026-09-18）：试连也补 notification_callback；试连为一次性、无持久 conn，
+        # 故 list_changed 仅记日志（无可刷新缓存），progress 等同上，异常吞掉。
+        async def _probe_nh(notification):
+            try:
+                _logger.debug("mcp probe notification method=%s", getattr(notification, "method", "?"))
+            except Exception as e:
+                _logger.warning("mcp probe notification handler error: %s", e)
+
         async with transport as (read, write):
-            async with ClientSession(read, write) as session:
+            async with ClientSession(read, write, message_handler=_probe_nh) as session:
                 await asyncio.wait_for(session.initialize(), timeout=_connect_timeout())
                 result = await asyncio.wait_for(session.list_tools(), timeout=_connect_timeout())
                 return [self._tool_to_dict(t) for t in result.tools]

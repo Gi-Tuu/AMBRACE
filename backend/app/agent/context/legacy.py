@@ -624,6 +624,10 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     user_profile_text = _clip_text_to_quota(user_profile_text, _qt["user_profile"])
     user_notes_text = _clip_text_to_quota(user_notes_text, _qt["user_notes"])
     storyline_status = _clip_text_to_quota(storyline_status, _qt["storyline"])
+    # 哨兵归一（2026-09-19 落位配套）：无进行中剧情线时 persona.py:99 给哨兵值「无」，
+    # 模板落位后会凭空多出一行「无」→ 空串/「无」统一归一为空串，不注入；有剧情线时原样保留。
+    if isinstance(storyline_status, str) and storyline_status.strip() in ("", "无"):
+        storyline_status = ""
     character_feelings = _clip_text_to_quota(character_feelings, _qt["feelings"])
     recent_emotion = _clip_text_to_quota(recent_emotion, _qt["recent_emotion"])
     user_emotion = _clip_text_to_quota(user_emotion, _qt["user_emotion"])
@@ -723,6 +727,15 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     if _sv and "working_state" in _sv:
         for _b in _sv["working_state"]:
             state["context_messages"].append({"role": "system", "content": _b})
+
+    # location（2026-09-19 顺序审计）：location 属状态类，从 append 链尾上移并入现状组
+    # （current_state_anchor / user_now / working_state 之后、织库等素材块之前）；
+    # 零 token，纯位移，不改文本/配额/闸门（见 docs/context-order-convention.md §2.2）。
+    if _sv and "location" in _sv:
+        for _loc_b in _sv["location"]:
+            state["context_messages"].append({"role": "system", "content": _loc_b})
+    elif location_text:
+        state["context_messages"].append({"role": "system", "content": location_text})
 
     if _sv and "weave_full" in _sv:
         for _b in _sv["weave_full"]:
@@ -1122,7 +1135,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
                   len(chat_history.split("\n")) if chat_history else 0,
                   len(state.get("retrieved_memories", [])))
 
-    # 追加时间提示 + 位置感知 + 用户消息
+    # 追加时间提示 + 用户消息（location 已于 2026-09-19 上移并入现状组，见上方三连之后）
     if _sv and "time_prompt" in _sv:
         for _tp_b in _sv["time_prompt"]:
             state["context_messages"].append({"role": "system", "content": _tp_b})
@@ -1131,11 +1144,6 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
             "role": "system",
             "content": f"\u3010\u5f53\u524d\u65f6\u95f4\u3011{current_time_str}\u3002\u5982\u679c\u7528\u6237\u95ee\u5230\u65f6\u95f4\u3001\u65e5\u671f\u3001\u661f\u671f\u51e0\uff0c\u8bf7\u76f4\u63a5\u7528\u4e0a\u9762\u7684\u65f6\u95f4\u56de\u7b54\uff1b\u8ddd\u4e0a\u6b21\u4e92\u52a8\u7684\u65f6\u957f\u53ef\u7528\u6765\u4f53\u4f1a\u201c\u591a\u4e45\u6ca1\u804a\u4e86\u201d\u7684\u611f\u89c9\uff0c\u81ea\u7136\u5730\u63d0\u53ca\uff0c\u4e0d\u8981\u523b\u610f\u5ff5\u6570\u636e\u3002\uff1b\u5404\u6ce8\u5165\u5206\u533a\uff08\u8bb0\u5fc6/\u670b\u53cb\u5708/\u7b14\u8bb0/\u7ec7\u5e93\u7b49\uff09\u91cc\u7684\u201c\u4eca\u5929/\u6628\u5929/\u6700\u8fd1\u201d\u7b49\u65f6\u95f4\u8bcd\u5c5e\u4e8e\u8be5\u8bb0\u5f55\u53d1\u751f\u5f53\u65f6\uff0c\u4e0d\u662f\u73b0\u5728\u3002",
         })
-    if _sv and "location" in _sv:
-        for _loc_b in _sv["location"]:
-            state["context_messages"].append({"role": "system", "content": _loc_b})
-    elif location_text:
-        state["context_messages"].append({"role": "system", "content": location_text})
     # Ariadne 模块F/G（2026-09-04）：curated 编纂知识层 + prospective cue 线索命中。
     # flag 关 / 无内容时分区返回空列表 → 追加零条（与现状逐字节一致，零行为变化）。
     if _sv and "curated_knowledge" in _sv:

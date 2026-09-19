@@ -73,6 +73,10 @@ class TurtleSoupEngine(GameEngine):
     max_players = 2
     needs_gm = False
     MAX_QUESTIONS = 20
+    # 口径2（2026-09-19 复检 P3-③）：本引擎无平局结局——check_winner 只认 guesser/thinker，
+    # 终局由单值 state["phase_result"] 二选一产生，gm 模板也没有 draw 键。
+    # 因此护栏末级止血不得伪造平局：has_draw_semantics=False → 走 abort 分支（无胜负终止）。
+    has_draw_semantics = False
 
     async def setup(self, player_seats: list[dict] | None = None) -> list[dict]:
         players = [p for p in self.players if not p.is_spectator]

@@ -105,8 +105,9 @@ jobs:
     if: needs.changes.outputs.heavy == 'true'
     name: Backend py${{ matrix.python-version }} (Windows, ruff + pytest)
     runs-on: windows-latest
-    # 观察期设置（临时）：Windows job 首次入 CI，平台相关失败暂不阻塞主线；
-    # 稳定后（建议观察约一周）删除本行转强制门禁。
+    # 观察期设置（临时）：Windows job 首次入 CI，平台相关失败暂不阻塞主线。
+    # 观察期：自 2026-09-18 起约一周；转正日期 2026-09-25。到期后由用户拍板是否去掉
+    # continue-on-error（本次只改注释、未真转正、未改 job 行为）。
     continue-on-error: true
     defaults:
       run:

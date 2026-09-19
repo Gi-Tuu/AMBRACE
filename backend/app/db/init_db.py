@@ -117,7 +117,14 @@ async def _backfill_channel_bindings_from_global_config(conn) -> None:
 
             raw = cfg.get("allowed_character_ids", "")
             raw = ",".join(str(x) for x in raw) if isinstance(raw, list) else str(raw or "")
-            ids = [int(x) for x in raw.split(",") if x.strip().isdigit()]
+            ids: list[int] = []
+            for _tok in raw.split(","):
+                if not _tok.strip().isdigit():
+                    continue
+                try:
+                    ids.append(int(_tok))
+                except ValueError:
+                    continue  # '³' 等 Unicode 数字 isdigit() 为 True 但 int() 会抛，跳过即可
 
             for cid in ids[:1]:  # 旧模型本就单选，只搬第一条（与 alembic 一致）
                 char_cols = await _table_cols(conn, "ai_characters")

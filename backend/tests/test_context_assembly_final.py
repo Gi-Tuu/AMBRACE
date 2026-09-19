@@ -28,9 +28,10 @@ from sqlalchemy.pool import NullPool
 
 import app.agent.context as _ctx  # noqa: F401  触发所有 section_*.py 注册
 from app.agent.context import legacy as legacy_mod
-from app.agent.context.sections import TARGET_APPEND, get_sections
+from app.agent.context.sections import TARGET_APPEND, TARGET_TEMPLATE, get_sections
 
 LEGACY_PY = Path(__file__).resolve().parents[1] / "app" / "agent" / "context" / "legacy.py"
+CONTEXT_BUILDER_PY = Path(__file__).resolve().parents[1] / "app" / "agent" / "context_builder.py"
 
 # 本批挂载的 5 个分区（顺序 = legacy.py 挂载链中的先后，用于相对顺序断言）
 MOUNTED_KEYS = (
@@ -443,3 +444,52 @@ def test_source_order_hooks_before_user_guard_after():
     assert None not in (ci, ips, user_ln, enf, quota), (ci, ips, user_ln, enf, quota)
     assert ci < user_ln and ips < user_ln, "插件 hook 调用必须早于 user append"
     assert user_ln < enf < quota, "护栏必须在 user append 之后、配额裁剪之前"
+
+
+# ────────────────────────────────────────────────────────────── 6. template 槽位护栏（2026-09-19）
+# 与 §3 的 append 护栏同族：template 分区的 slot 若未出现在 SYSTEM_PROMPT_TEMPLATE 里，
+# ``str.format(**kwargs)`` 会**静默丢弃**该值（算了就丢）。append 侧护栏只扫 TARGET_APPEND，
+# 结构上盖不住 template 槽（2026-09-19 只读审计发现，见 output/AMBRACE_上下文分区顺序审计_dsh_20260919.md）。
+
+# 棘轮清单（只减不增）：注册为 template 槽但模板无占位。当前已清空——
+# 2026-09-19 storyline_status 已落位（模板「你们最近的剧情」段新增 {storyline_status}，
+# legacy.py 同步做哨兵「无」归一），清单清空；此后新增 template 槽缺占位直接判红。
+EXEMPT_TEMPLATE_SLOTS = set()
+
+
+def _template_placeholders() -> set[str]:
+    """从 context_builder.py 的 SYSTEM_PROMPT_TEMPLATE 字面量抽取 ``{槽}`` 占位名。"""
+    src = CONTEXT_BUILDER_PY.read_text(encoding="utf-8")
+    m = re.search(r'SYSTEM_PROMPT_TEMPLATE\s*=\s*r?(?:"""(.*?)"""|\'\'\'(.*?)\'\'\')', src, re.S)
+    assert m, "未能定位 SYSTEM_PROMPT_TEMPLATE 字面量（解析逻辑失效）"
+    body = m.group(1) if m.group(1) is not None else (m.group(2) or "")
+    return set(re.findall(r"\{([a-z_][a-z0-9_]*)\}", body))
+
+
+def test_every_template_section_has_placeholder_or_exempt():
+    """护栏：enabled 的 template 分区，其 slot 必须在 SYSTEM_PROMPT_TEMPLATE 里有占位。
+
+    否则 ``.format()`` 静默丢弃该分区产出 —— 与 09-18 append 侧「算了就丢」同类缺陷。
+    """
+    placeholders = _template_placeholders()
+    assert placeholders, "模板占位解析为空（解析逻辑失效）"
+    missing = [
+        s.key for s in get_sections()
+        if s.target == TARGET_TEMPLATE and s.enabled and s.slot
+        and s.slot not in placeholders and s.slot not in EXEMPT_TEMPLATE_SLOTS
+    ]
+    assert not missing, (
+        "以下 template 分区注册了 slot 但 SYSTEM_PROMPT_TEMPLATE 无对应占位"
+        f"（.format() 会静默丢弃，算了就丢）: {missing}"
+    )
+
+
+def test_template_slot_guard_is_not_vacuous():
+    """护栏自检：占位解析必须含已知真实槽；棘轮清单不得残留已注销的 slot。"""
+    placeholders = _template_placeholders()
+    for known in ("memories", "chat_history", "world_facts", "current_time"):
+        assert known in placeholders, f"模板占位解析漏掉了已知槽 {known}"
+    registered = {s.slot for s in get_sections() if s.target == TARGET_TEMPLATE}
+    assert EXEMPT_TEMPLATE_SLOTS <= registered, (
+        f"棘轮清单里的 slot 已不存在，请清理: {EXEMPT_TEMPLATE_SLOTS - registered}"
+    )

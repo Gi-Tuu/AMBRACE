@@ -59,12 +59,24 @@ def set_titlebar_theme(hwnd, dark: bool):
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER_DIR = os.path.join(PROJECT_ROOT, "backend")
-_VENV_BIN = "Scripts" if os.name == "nt" else "bin"
-PYTHONW = os.path.join(SERVER_DIR, ".venv", _VENV_BIN, "pythonw.exe" if os.name == "nt" else "python")
+
+# C1（2026-09-17）：stdio 日志的「启动前轮转」，实现位于 backend 的兄弟目录 scripts/log_rotate.py。
+# 注意：控制台以 server_controller/ 为 sys.path[0]（与 server_manager/watchdog 以 scripts/ 为
+# sys.path[0] 不同），直接同级 import 会 ImportError，故先把 scripts/ 显式加入 sys.path。
+# 坑：本文件 SERVER_DIR 指 backend/（scripts/ 在项目根下），必须用 PROJECT_ROOT 拼，不能用 SERVER_DIR。
+# P3-9（2026-09-2x）：跨平台拉起键 / venv 解释器路径也收敛到同级 scripts/platform_util.py，
+# 与 log_rotate 共用这次 sys.path 注入。
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
+from log_rotate import rotate_stdio_log  # noqa: E402
+import platform_util  # noqa: E402
+
+# B6/P3-9：Windows 用 .venv/Scripts/pythonw.exe（GUI 子系统、无控制台窗口）+ python.exe，
+# POSIX 用 .venv/bin/python（无 pythonw，两个入口同路径）；拉起键 Windows = creationflags、
+# POSIX = start_new_session。统一由 platform_util 提供（原先 server_controller 各写一份）。
+PYTHONW, PYTHON = platform_util.venv_python_paths(SERVER_DIR)
 PAUSE_FLAG = os.path.join(SERVER_DIR, "data", "paused.flag")
 APP_LOG = os.path.join(SERVER_DIR, "data", "logs", "app.log")
 STDERR_LOG = os.path.join(SERVER_DIR, "data", "logs", "server_stderr.log")
-PYTHON = os.path.join(SERVER_DIR, ".venv", _VENV_BIN, "python.exe" if os.name == "nt" else "python")
 MANAGER_PY = os.path.join(PROJECT_ROOT, "scripts", "server_manager.py")
 CONFIG = os.path.join(SERVER_DIR, "data", "server_config.json")
 DEFAULT_REFRESH_MS = 20000
@@ -75,14 +87,10 @@ POLL_MS = 200
 LOG_TAIL = 40
 OLLAMA_PORT = 11434
 OLLAMA_LABEL = "图像理解服务（Ollama）"
-NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-
-# C1（2026-09-17）：stdio 日志的「启动前轮转」，实现位于 backend 的兄弟目录 scripts/log_rotate.py。
-# 注意：控制台以 server_controller/ 为 sys.path[0]（与 server_manager/watchdog 以 scripts/ 为
-# sys.path[0] 不同），直接同级 import 会 ImportError，故先把 scripts/ 显式加入 sys.path。
-# 坑：本文件 SERVER_DIR 指 backend/（scripts/ 在项目根下），必须用 PROJECT_ROOT 拼，不能用 SERVER_DIR。
-sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
-from log_rotate import rotate_stdio_log  # noqa: E402
+# 隐藏短命子进程（PowerShell）窗口；POSIX 上该属性不存在 -> 0。
+# P3-9 复核修正（2026-09-19，Codex）：保留 CREATE_NEW_PROCESS_GROUP 位，与收敛前逐位一致。
+NO_WINDOW = (getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -473,12 +481,6 @@ def _ollama_models_dir() -> str:
     return ""
 
 
-def _popen_kwargs() -> dict:
-    if os.name == "nt":
-        return {"creationflags": NO_WINDOW | subprocess.DETACHED_PROCESS}
-    return {"start_new_session": True}
-
-
 def _get_refresh_ms() -> int:
     try:
         with open(CONFIG, "r", encoding="utf-8") as f:
@@ -717,7 +719,7 @@ def _get_pid() -> int:
 
 def _run_manager(cmd: str) -> None:
     try:
-        subprocess.Popen([PYTHON, MANAGER_PY, cmd], **_popen_kwargs())
+        subprocess.Popen([PYTHON, MANAGER_PY, cmd], **platform_util.popen_kwargs())
     except Exception as e:
         raise RuntimeError("执行失败: {0}".format(e))
 
@@ -732,7 +734,7 @@ def _start_uvicorn():
         with open(STDERR_LOG, "a", encoding="utf-8") as f:
             subprocess.Popen(
                 [PYTHONW, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", str(TARGET_PORT)],
-                cwd=SERVER_DIR, stdout=f, stderr=subprocess.STDOUT, **_popen_kwargs())
+                cwd=SERVER_DIR, stdout=f, stderr=subprocess.STDOUT, **platform_util.popen_kwargs())
     except Exception as e:
         raise RuntimeError(f"启动失败: {e}")
 
@@ -764,7 +766,7 @@ def _start_ollama(low_vram: bool = False) -> None:
             env["OLLAMA_MODELS"] = models_dir
         if low_vram:
             env["LLAMA_ARG_N_GPU_LAYERS"] = "0"
-        subprocess.Popen([exe, "serve"], env=env, **_popen_kwargs())
+        subprocess.Popen([exe, "serve"], env=env, **platform_util.popen_kwargs())
     except Exception as e:
         raise RuntimeError(f"Ollama 启动失败: {e}")
 

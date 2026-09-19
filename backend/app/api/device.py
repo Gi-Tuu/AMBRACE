@@ -3,7 +3,6 @@
 App 端 FCM token 注册/注销/心跳，以及公开的 FCM 客户端配置获取。
 """
 import json
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -14,6 +13,7 @@ from app.config import settings
 from app.db.database import async_session_factory
 from app.models.device import UserDeviceToken
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc
 
 router = APIRouter(prefix="/api/v1/device", tags=["Device Push"])
 
@@ -76,7 +76,7 @@ async def register_token(
             existing.push_token = body.push_token
             existing.platform = body.platform
             existing.app_version = body.app_version
-            existing.last_seen_at = datetime.now(timezone.utc)
+            existing.last_seen_at = now_naive_utc()
         else:
             db.add(UserDeviceToken(
                 user_id=user_id,
@@ -124,7 +124,7 @@ async def heartbeat(
         )
         existing = (await db.execute(stmt)).scalar_one_or_none()
         if existing:
-            existing.last_seen_at = datetime.now(timezone.utc)
+            existing.last_seen_at = now_naive_utc()
             await db.commit()
     return {"ok": True}
 

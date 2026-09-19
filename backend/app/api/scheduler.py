@@ -13,6 +13,7 @@ from app.utils.logger import get_logger
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
 from app.utils.errors import friendly_llm_error
+from app.utils.timeutil import now_naive_utc
 
 router = APIRouter(prefix="/api/v1/scheduler", tags=["Scheduler"])
 # #28 ③ 手动触发测试接口：独立 router（挂在 /api/v1/proactive，管理员专用）
@@ -183,13 +184,13 @@ async def get_proactive_stats(
     user_id: int = Depends(get_current_user_id),
 ):
     """主动消息效果统计：触发/发送/拦截数量 + 用户回复率（按消息后该会话是否有用户回复估算）"""
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
     from sqlalchemy import func as sa_func
     from app.models.chat import ChatMessage
     from app.models.character import ProactiveMessageLog, ProactiveTriggerLog
 
     days = max(1, min(days, 90))
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = now_naive_utc() - timedelta(days=days)
     cond_log = [ProactiveMessageLog.created_at >= since]
     cond_trig = [ProactiveTriggerLog.created_at >= since]
     if character_id is not None:
@@ -423,6 +424,8 @@ async def list_timers(
         ).order_by(_SE.trigger_at.asc())
     )
     events = result.scalars().all()
+    # 口径自洽：下面把库内 naive UTC 显式提升为 aware（ts.replace(tzinfo=timezone.utc)）后再比较，
+    # 全程 aware 运算且不写库，故此处保持 aware now，不必归一为 now_naive_utc()。
     now = datetime.now(timezone.utc)
     cn_tz = timezone(timedelta(hours=8))
     out = []

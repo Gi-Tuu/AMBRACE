@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+
+from app.i18n import tr_lang
+from app.utils.timeutil import now_naive_utc
 
 
 @dataclass
@@ -78,6 +80,9 @@ class GameEngine(ABC):
         self._events: list[dict] = []
         # #62 Phase 3：本局用户在该游戏下的自定义内容覆盖（load_content 载入）。
         self._content_overrides: dict[str, list] = {}
+        # P3-1（2026-09-18）：本局创建者界面语言（load 时从 User 取），供 name_of 等系统播报本地化；
+        # 取不到回落 settings.default_lang。不新增全局单例。
+        self.lang: str | None = None
 
     # ── 生命周期（子类实现）────
     @abstractmethod
@@ -178,6 +183,9 @@ class GameEngine(ABC):
         session = await db.get(GameSession, self.session.id)
         if session is not None:
             self.session = session
+        # P3-1（2026-09-18）：记录本局创建者界面语言（解析逻辑抽到 resolve_lang，
+        # 供不经 load() 的创建路径复用），取不到回落 settings 默认。
+        await self.resolve_lang(db)
         res = await db.execute(
             select(GamePlayer).where(GamePlayer.session_id == self.session.id).order_by(GamePlayer.seat)
         )
@@ -191,6 +199,25 @@ class GameEngine(ABC):
         )
         self._events = [_event_to_dict(e) for e in evs.scalars().all()]
         await self.load_content(db)
+
+    async def resolve_lang(self, db) -> None:
+        """解析本局创建者界面语言 → self.lang（P3-1 引入，P3-⑤ 2026-09-19 抽成公共方法）。
+
+        供 name_of 等系统播报本地化；取不到（无 user_id / 用户不存在 / 异常）置 None，
+        由 _resolve_lang 回落 settings.default_lang。
+        抽出来的原因：创建对局路径（app/api/games.py _create_session_in_db）只调 setup()
+        不调 load()，若不显式调用一次，新建局首轮的匿名名回落会用服务端默认语言而非用户语言。
+        """
+        try:
+            if self.session is not None and self.session.user_id is not None:
+                from app.models.user import User
+
+                u = await db.get(User, int(self.session.user_id))
+                self.lang = u.lang if u is not None else None
+            else:
+                self.lang = None
+        except Exception:
+            self.lang = None
 
     # ── 内容源（#62 Phase 3：用户自定义 > 插件内容包 > 内置常量兜底）────
     async def load_content(self, db) -> None:
@@ -274,7 +301,7 @@ class GameEngine(ABC):
         """游戏结束：置 status/winner/finished_at（子类可覆盖补充计分）。"""
         self.session.status = "finished"
         self.session.winner_side = winner
-        self.session.finished_at = datetime.now(timezone.utc)
+        self.session.finished_at = now_naive_utc()
         db.add(self.session)
 
     def abort_in_place(self) -> None:
@@ -295,7 +322,7 @@ class GameEngine(ABC):
         entry = pm.setdefault(str(seat), {})
         entry.update(kw)
 
-    def name_of(self, seat: int) -> str:
+    def name_of(self, seat: int, lang: str | None = None) -> str:
         m = self._meta(seat)
         name = m.get("name")
         if name:
@@ -304,8 +331,20 @@ class GameEngine(ABC):
         if p is None:
             return f"{seat}号"
         if p.player_type == "user":
-            return "用户"
+            # P3-1（2026-09-18）：真人玩家缺名字时不再硬编码中文，走服务端 i18n（tr_lang）。
+            # lang 优先级：调用方显式传入 > 本局引擎语言（load 取 User.lang）> settings.default_lang。
+            return tr_lang(self._resolve_lang(lang), "game_player_anonymous")
         return f"{seat}号"
+
+    def _resolve_lang(self, lang: str | None) -> str:
+        """解析 name_of 等本地化所需语言：显式 > 引擎自身 > settings 默认。"""
+        if lang:
+            return lang
+        if getattr(self, "lang", None):
+            return self.lang  # type: ignore[return-value]
+        from app.config import settings
+
+        return getattr(settings, "default_lang", "zh")
 
     def persona_of(self, seat: int) -> dict:
         m = self._meta(seat)

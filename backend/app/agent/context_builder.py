@@ -459,6 +459,7 @@ SYSTEM_PROMPT_TEMPLATE = """你是一个名叫"{name}"的朋友。
 
 ## 你们最近的剧情（自然带过保持连续；没有忽略）
 {storyline_recall}
+{storyline_status}
 
 ## 最近的情绪事件（自然接住；没有忽略）
 {recent_emotion}
