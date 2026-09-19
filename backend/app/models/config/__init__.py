@@ -123,6 +123,33 @@ class UserLlmConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+# ── flag_setting.py（控制台管理面 P2，2026-09-19）──
+# 开关策略元数据（契约 §2）：控制台可对每个 Feature Flag 设置「允许用户自助 / 服务器锁定」。
+# 缺行 = self_service=1 / server_locked=0（与现状一致：用户仍可自助改），故上线不锁死任何开关页。
+# 语义：server_locked=1 → App 侧写该开关一律 403（仅控制台可改）；self_service=0 → 用户不可自助改。
+class FlagSetting(Base):
+    __tablename__ = "flag_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    self_service: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    server_locked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    title: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    desc: Mapped[str | None] = mapped_column("desc", Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+# ── server_setting.py（控制台管理面 P2，2026-09-19）──
+# 服务器级字符串配置 KV（注册策略等，契约 §2）：**禁止塞进 AGENT_FLAGS**（该字典只合并 bool）。
+# 缺行 = 调用方默认值（注册策略 open），见 app/application/server_settings_service.py。
+class ServerSetting(Base):
+    __tablename__ = "server_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
 __all__ = [
     "ApiConfig",
     "VlmConfig",
@@ -131,4 +158,6 @@ __all__ = [
     "MarketplaceConfig",
     "RuntimeFlag",
     "UserLlmConfig",
+    "FlagSetting",
+    "ServerSetting",
 ]

@@ -5,6 +5,9 @@ class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=2, max_length=30)
     password: str = Field(..., min_length=8, max_length=64)
     nickname: str | None = Field(None, max_length=30)
+    # 账号独立 P2：invite_only 注册策略下必填（受邀码来自主账号 POST /api/v1/account/invite-code）；
+    # 默认 open 策略下该字段被忽略（可选，旧客户端不带该字段不会 422）。
+    invite_code: str | None = Field(None, max_length=16)
 
 
 class LoginRequest(BaseModel):

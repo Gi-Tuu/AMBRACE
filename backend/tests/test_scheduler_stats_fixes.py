@@ -141,14 +141,47 @@ def test_stats_with_character_id_still_ok(stats_client):
 
 # ---------------- ② P2-1：trigger_test 无 LLM Key 400 / 其他异常 502 ----------------
 
+class _FakeRes:
+    """最小结果集替身：支持 scalar_one_or_none / scalars().all()。"""
+
+    def __init__(self, one):
+        self._one = one
+
+    def scalar_one_or_none(self):
+        return self._one
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return [] if self._one is None else [self._one]
+
+
 class _FakeSession:
-    def __init__(self, char):
+    def __init__(self, char, actor_user_id=None):
         self._char = char
+        self._actor = actor_user_id
 
     async def get(self, model, pk, **kw):
         if self._char is None:
             return None
         return self._char if pk == self._char.id else None
+
+    async def execute(self, stmt, *a, **kw):
+        """账号独立 P1：trigger_test 新增租户归属查询（先解析家庭成员，再校验角色归属）。
+
+        - users 表查询（get_family_root_id / get_family_member_ids）→ 返回空（无家庭关系，
+          账号自身即租户根）；
+        - 其余（AICharacter 归属查询）→ 模拟 WHERE 归属谓词：仅当角色归属者 == 请求账号
+          （无家庭关系时 scope=[actor]）才返回该角色，否则返回空 → 路由 404。
+        """
+        if "users" in str(stmt):
+            return _FakeRes(None)
+        owner_ok = (
+            self._char is not None
+            and (self._actor is None or getattr(self._char, "user_id", None) == self._actor)
+        )
+        return _FakeRes(self._char if owner_ok else None)
 
 
 def _char(char_id=1):
@@ -164,7 +197,7 @@ def _make_app(char, user_id):
     app.include_router(scheduler_api.proactive_router)
 
     async def _fake_db():
-        yield _FakeSession(char)
+        yield _FakeSession(char, user_id)
 
     app.dependency_overrides[get_db] = _fake_db
     app.dependency_overrides[get_current_user_id] = lambda: user_id
@@ -222,6 +255,19 @@ def test_trigger_test_ok_still_works(monkeypatch):
     body = r.json()
     assert body["content"] == "你好呀！\n今天天气不错。"
     assert body["naturalness_score"] == score_naturalness(["你好呀！", "今天天气不错。"])
+
+
+def test_trigger_test_cross_tenant_denied(monkeypatch):
+    """账号独立 P1：主账号触发别家角色（跨租户）→ 404，不得读到别家私聊历史。
+
+    原实现只校验 is_admin，无角色归属校验（审计列为跨租户读）；现由 _check_char_owned 收敛。
+    """
+    _patch_api_deps(monkeypatch, (["不该被生成"], ""))
+    foreign = _char()
+    foreign.user_id = 999  # 别家账号
+    client = TestClient(_make_app(foreign, ADMIN))
+    r = client.post("/api/v1/proactive/trigger/test", json={"character_id": 1})
+    assert r.status_code == 404
 
 
 # ---------------- ③ P2-2：Alembic 新迁移建出两张表 ----------------

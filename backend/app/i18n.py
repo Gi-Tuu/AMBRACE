@@ -30,6 +30,11 @@ _MESSAGES: dict[str, tuple[str, str]] = {
     "message_not_found": ("消息不存在", "Message not found"),
     "moment_daily_limit_or_not_found": ("今日已达发布上限或角色不存在", "Daily publish limit reached or character not found"),
     "content_empty": ("内容不能为空", "Content cannot be empty"),
+    # 账号独立 P1：模态配置回落链末端（角色绑定→用户默认→家庭默认→服务器默认→此处）
+    "config_not_configured": (
+        "{modality} 未配置：请在「我的 LLM / API 配置」中填写，或由服务器管理员配置服务器级默认",
+        "{modality} is not configured: set it in your API settings, or ask the server admin to configure a server-level default",
+    ),
     "invalid_importance": ("无效的重要性值", "Invalid importance value"),
     "invalid_memory_id": ("无效的记忆id", "Invalid memory id"),
     "supersede_failed": ("取代操作失败", "Supersede failed"),
@@ -151,6 +156,22 @@ _MESSAGES: dict[str, tuple[str, str]] = {
     # #68 修订：主账号管理按家庭范围隔离（2026-08-28）
     "admin_cannot_toggle_self": ("不能修改自己的主账号状态", "You cannot change your own admin status"),
     "admin_target_not_in_family": ("只能管理自己家庭内的账号", "You can only manage accounts in your own family"),
+    # 账号独立 P2：控制台管理面（2026-09-19）
+    "account_disabled": ("该账号已被服务器管理员禁用，请联系管理员", "This account has been disabled by the server admin"),
+    "account_cannot_disable_self": ("不能禁用自己", "You cannot disable your own account"),
+    "disabled_invalid": ("disabled 参数无效", "Invalid disabled parameter"),
+    "llm_mode_invalid": ("llm_mode 参数无效（仅 own / default_allowed / blocked）", "Invalid llm_mode (own / default_allowed / blocked only)"),
+    "llm_blocked_by_admin": ("该账号的模型调用已被服务器管理员禁用", "Model access for this account has been disabled by the server admin"),
+    "modality_invalid": ("不支持的模态", "Unsupported modality"),
+    "registration_mode_invalid": ("注册策略参数无效（仅 open / invite_only / closed）", "Invalid registration mode (open / invite_only / closed only)"),
+    "registration_closed": ("服务器已关闭注册，请联系管理员", "Registration is closed on this server"),
+    "registration_invite_required": ("服务器仅限邀请注册，请在注册时填写邀请码", "Registration is invite-only; an invite code is required"),
+    "invite_code_invalid": ("邀请码无效或已过期", "The invite code is invalid or expired"),
+    "sub_account_limit_reached": ("该主账号的子账号已达上限", "The main account has reached its sub-account limit"),
+    "flag_server_locked": ("该开关已被服务器锁定，仅控制台可修改", "This flag is locked by the server; only the console can change it"),
+    "flag_self_service_disabled": ("该开关已关闭用户自助修改", "Self-service changes are disabled for this flag"),
+    "flag_type_not_bool": ("该键不是布尔型开关，禁止热切", "This key is not a boolean flag and cannot be toggled"),
+    "flag_key_invalid": ("该开关不存在", "Unknown feature flag"),
     # #28 ③ 手动触发测试接口（2026-08-24）
     "trigger_test_forbidden": ("仅主账号可执行手动触发测试", "Only main account can run trigger test"),
     "trigger_test_character_required": ("请指定要测试的角色", "Character id is required"),

@@ -36,6 +36,55 @@ def validate_password_strength(request: Request, password: str, username: str = 
         raise HTTPException(status_code=400, detail=tr(request, "password_need_alpha_digit"));
 
 
+async def _require_registration_invite(db, code: str | None, request: Request):
+    """invite_only 注册：校验受邀码（存在 / 未消费 / 未过期 / 发码者为主账号 / 未超子账号上限）。
+
+    契约 §1.4 只规定 ``closed`` 的行为；``invite_only`` 的具体形态契约未覆盖，本轮实现为
+    「注册须携带主账号发出的受邀码（POST /api/v1/account/invite-code），成功后新账号直接挂在
+    该主账号下（子账号）并一次性消费该码」——复用既有 account_invites 原语，不新造一套。
+    """
+    from datetime import datetime, timezone
+
+    from app.application.family_service import MAX_SUB_ACCOUNTS, count_sub_accounts
+    from app.models.user import AccountInvite
+
+    c = (code or "").strip().upper()
+    if not c:
+        raise HTTPException(status_code=403, detail=tr(request, "registration_invite_required"))
+    invite = (await db.execute(
+        select(AccountInvite).where(AccountInvite.code == c)
+    )).scalar_one_or_none()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if (invite is None or invite.used_by is not None
+            or (invite.expires_at is not None and invite.expires_at < now)):
+        raise HTTPException(status_code=403, detail=tr(request, "invite_code_invalid"))
+    creator = (await db.execute(select(User).where(User.id == invite.creator_id))).scalar_one_or_none()
+    if creator is None or creator.parent_id is not None:
+        raise HTTPException(status_code=403, detail=tr(request, "invite_code_invalid"))
+    if await count_sub_accounts(db, creator.id) >= MAX_SUB_ACCOUNTS:
+        raise HTTPException(status_code=403, detail=tr(request, "sub_account_limit_reached"))
+    return invite
+
+
+async def _consume_registration_invite(db, invite, new_user_id: int, request: Request) -> None:
+    """一次性消费受邀码（同事务条件更新防并发；rowcount=0 → 409）。"""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import update
+
+    from app.models.user import AccountInvite
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    res = await db.execute(
+        update(AccountInvite)
+        .where(AccountInvite.id == invite.id, AccountInvite.used_by.is_(None))
+        .values(used_by=new_user_id, used_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    if res.rowcount != 1:
+        raise HTTPException(status_code=409, detail=tr(request, "invite_code_invalid"))
+
+
 _logger = get_logger("auth")
 
 
@@ -43,6 +92,19 @@ _logger = get_logger("auth")
 async def register(data: RegisterRequest, request: Request):
     validate_password_strength(request, data.password, data.username)
     async with async_session_factory() as db:
+        # 注册策略门禁（账号独立 P2，契约 §1.4）：closed → 403 可读；invite_only → 须带受邀码。
+        # 缺行/非法值/读失败 → open（与现状一致，fail-open）。
+        from app.application.server_settings_service import (
+            REGISTRATION_MODE_CLOSED,
+            REGISTRATION_MODE_INVITE_ONLY,
+            get_registration_mode,
+        )
+        reg_mode = await get_registration_mode(db)
+        if reg_mode == REGISTRATION_MODE_CLOSED:
+            raise HTTPException(status_code=403, detail=tr(request, "registration_closed"))
+        invite = None
+        if reg_mode == REGISTRATION_MODE_INVITE_ONLY:
+            invite = await _require_registration_invite(db, data.invite_code, request)
         result = await db.execute(select(User).where(User.username == data.username))
         if result.scalar_one_or_none():
             raise HTTPException(status_code=400, detail=tr(request, "username_exists"))
@@ -55,14 +117,19 @@ async def register(data: RegisterRequest, request: Request):
             username=data.username,
             nickname=data.nickname or data.username,
             password_hash=bcrypt.hashpw(data.password.encode(), bcrypt.gensalt()).decode(),
-            is_admin=bool(has_admin == 0),
+            # 受邀注册（invite_only）：新账号直接挂到发码主账号下 → 子账号（is_admin=0，
+            # 与 init_db 的 parent_id/is_admin 一致性自愈同口径）。
+            is_admin=bool(has_admin == 0) if invite is None else False,
+            parent_id=invite.creator_id if invite is not None else None,
         )
         db.add(user)
         await db.flush()
         await db.refresh(user)
+        if invite is not None:
+            await _consume_registration_invite(db, invite, user.id, request)
         await db.commit()
         token = create_token(user.id)
-        _logger.info("User registered: id=%d username=%s", user.id, user.username)
+        _logger.info("User registered: id=%d username=%s mode=%s", user.id, user.username, reg_mode)
         return AuthResponse(access_token=token, user_id=user.id, username=user.username, nickname=user.nickname)
 
 
@@ -81,6 +148,10 @@ async def login(data: LoginRequest, request: Request):
     if not bcrypt.checkpw(data.password.encode(), user.password_hash.encode()):
         ratelimit.record_failure(key)
         raise HTTPException(status_code=401, detail=tr(request, "wrong_credentials"))
+    # 账号门禁（账号独立 P2，契约 §4）：被控制台禁用的账号登录直接 403。放在凭据校验之后，
+    # 避免未认证请求凭状态码探测账号是否被禁用；不计入失败限流（这不是凭据攻击）。
+    if getattr(user, "disabled_at", None) is not None:
+        raise HTTPException(status_code=403, detail=tr(request, "account_disabled"))
     ratelimit.record_success(key)
     token = create_token(user.id)
     return AuthResponse(access_token=token, user_id=user.id, username=user.username, nickname=user.nickname)

@@ -12,7 +12,8 @@ from app.models.pet import Pet, PetActivity
 from app.models.agent import AgentTask, AgentTaskLog, LlmUsage, LlmUsageLimit, TaskLlmConfig, EmotionCareTask, ToolPermission, PendingPermissionAction
 from app.models.mcp import MCPServer, McpCallLog
 from app.models.plugin import Plugin, PluginStore
-from app.models.config import ApiConfig, VlmConfig, SpeechConfig, MultimodalConfig, MarketplaceConfig, RuntimeFlag, UserLlmConfig
+from app.models.config import ApiConfig, VlmConfig, SpeechConfig, MultimodalConfig, MarketplaceConfig, RuntimeFlag, UserLlmConfig, FlagSetting, ServerSetting
+from app.models.admin import AdminAuditLog  # 控制台审计域（账号独立 P2，2026-09-19）
 from app.models.social import PlatformProfile, SocialMemory  # X5：渠道自有模型迁至渠道扩展包，加载期注册进 metadata
 from app.models.device import PhoneDesktop, PhoneLayout, CalendarNote, BrowserHistory, MemoNote, PhoneSnapshot, CheckInRequest, PhoneAutoState, UserDeviceToken
 from app.models.game import (
@@ -33,6 +34,9 @@ __all__ = [
     "AgentTask",
     "AgentTaskLog",
     "ApiConfig",
+    "AdminAuditLog",
+    "FlagSetting",
+    "ServerSetting",
     "BrowserHistory",
     "BrowserSnapshot",
     "CalendarNote",

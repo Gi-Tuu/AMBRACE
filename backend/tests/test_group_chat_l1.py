@@ -280,11 +280,19 @@ def test_generate_greeting_text_返回LLM输出(monkeypatch):
 def test_generate_greeting_写回greeting_message(monkeypatch):
     char = SimpleNamespace(id=1, name="小阳", personality="阳光开朗",
                            chat_style="活泼", bio="程序员", user_id=4, greeting_message=None)
-    class _Res:
-        def scalar_one_or_none(self): return char
+    class _Rows:
+        """结果集替身：账号独立 P1 起租户解析会额外查 users 表（取 parent_id / 家庭成员）。"""
+        def __init__(self, rows, one):
+            self._rows, self._one = rows, one
+        def scalar_one_or_none(self): return self._one
+        def scalars(self): return self
+        def all(self): return list(self._rows)
     class _Db:
         committed = False
-        async def execute(self, stmt, *a, **kw): return _Res()
+        async def execute(self, stmt, *a, **kw):
+            if "users" in str(stmt):
+                return _Rows([], None)   # 无家庭关系：账号自身即租户根
+            return _Rows([char], char)
         async def flush(self): pass
         async def refresh(self, obj): pass
         async def commit(self): self.committed = True
@@ -302,11 +310,18 @@ def test_generate_greeting_写回greeting_message(monkeypatch):
 def test_generate_greeting_失败静默不落库(monkeypatch):
     char = SimpleNamespace(id=1, name="小阳", personality="阳光",
                            chat_style="活泼", bio="程序员", user_id=4, greeting_message=None)
-    class _Res:
-        def scalar_one_or_none(self): return char
+    class _Rows:
+        def __init__(self, rows, one):
+            self._rows, self._one = rows, one
+        def scalar_one_or_none(self): return self._one
+        def scalars(self): return self
+        def all(self): return list(self._rows)
     class _Db:
         committed = False
-        async def execute(self, stmt, *a, **kw): return _Res()
+        async def execute(self, stmt, *a, **kw):
+            if "users" in str(stmt):
+                return _Rows([], None)
+            return _Rows([char], char)
         async def flush(self): pass
         async def refresh(self, obj): pass
         async def commit(self): self.committed = True

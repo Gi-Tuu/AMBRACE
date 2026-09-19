@@ -11,6 +11,7 @@ from app.scheduling.holiday_calendar import get_holidays
 from app.scheduling import scheduler as scheduler_engine
 from app.utils.logger import get_logger
 from app.auth.deps import get_current_user_id
+from app.application.tenant_service import tenant_scope_ids
 from app.i18n import tr_lang
 from app.utils.errors import friendly_llm_error
 from app.utils.timeutil import now_naive_utc
@@ -25,10 +26,11 @@ _logger = get_logger("api.scheduler")
 
 
 async def _check_char_owned(db: AsyncSession, character_id: int, user_id: int, lang: str = "zh"):
+    """校验角色归属本账号租户（账号独立 P1：跨家庭 → 404；家庭内共享）。"""
     char_result = await db.execute(
         select(AICharacter).where(
             AICharacter.id == character_id,
-            AICharacter.user_id == user_id,
+            AICharacter.user_id.in_(await tenant_scope_ids(db, user_id)),
         )
     )
     if char_result.scalar_one_or_none() is None:
@@ -194,11 +196,15 @@ async def get_proactive_stats(
     cond_log = [ProactiveMessageLog.created_at >= since]
     cond_trig = [ProactiveTriggerLog.created_at >= since]
     if character_id is not None:
+        # 账号独立 P1：带 character_id 时必须先过租户归属（否则可读别家角色的主动统计）。
+        # ProactiveMessageLog 无 user_id 列，故此处是唯一闸门。
+        await _check_char_owned(db, character_id, user_id)
         cond_log.append(ProactiveMessageLog.character_id == character_id)
         cond_trig.append(ProactiveTriggerLog.character_id == character_id)
     else:
-        cond_trig.append(ProactiveTriggerLog.user_id == user_id)
-        char_ids_subq = select(AICharacter.id).where(AICharacter.user_id == user_id)
+        scope_ids = await tenant_scope_ids(db, user_id)
+        cond_trig.append(ProactiveTriggerLog.user_id.in_(scope_ids))
+        char_ids_subq = select(AICharacter.id).where(AICharacter.user_id.in_(scope_ids))
         cond_log.append(ProactiveMessageLog.character_id.in_(char_ids_subq))
 
     sent_rows = (await db.execute(
@@ -270,6 +276,9 @@ async def trigger_test(
     char = await db.get(AICharacter, character_id)
     if char is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
+    # 账号独立 P1（2026-09-19 审计修正）：此处原先只校验 is_admin，未校验角色归属，
+    # 造成「任一主账号可读别家角色私聊历史」的跨租户读；现将角色收敛到本账号租户。
+    await _check_char_owned(db, character_id, user_id, lang)
 
     from app.scheduling.triggers import get_latest_session, get_last_messages
     from app.scheduling.message_generator import generate_proactive_event, score_naturalness
@@ -419,7 +428,7 @@ async def list_timers(
     result = await db.execute(
         select(_SE).where(
             _SE.character_id == character_id,
-            _SE.user_id == user_id,
+            _SE.user_id.in_(await tenant_scope_ids(db, user_id)),
             _SE.status == "pending",
         ).order_by(_SE.trigger_at.asc())
     )
@@ -462,7 +471,7 @@ async def delete_timer(
     await _check_char_owned(db, character_id, user_id, lang)
     from app.models.life import ScheduledEvent as _SE
     event = await db.get(_SE, event_id)
-    if event is None or event.character_id != character_id or event.user_id != user_id:
+    if event is None or event.character_id != character_id or event.user_id not in await tenant_scope_ids(db, user_id):
         raise HTTPException(status_code=404, detail=tr_lang(lang, "timer_not_found"))
     event.status = "cancelled"
     await db.commit()

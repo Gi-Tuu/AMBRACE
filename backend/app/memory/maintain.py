@@ -24,6 +24,7 @@ async def list_memories(
     memory_type: str | None = None,
     skip: int = 0,
     limit: int = 800,
+    user_ids: list[int] | None = None,
 ) -> tuple[list[dict], int]:
     """列出记忆（按 importance 排序）；顺带惰性衰减。返回 (切片结果, 总数)。
 
@@ -31,6 +32,9 @@ async def list_memories(
     数十秒），且 _apply_decay 的 commit 使 ORM 属性过期、session 关闭后再访问
     抛 DetachedInstanceError（GET /api/v1/memories 500）。改为：单 session 内
     snapshot 全部字段，衰减批量落库（一次 commit），session 外只操作快照。
+
+    user_ids（账号独立 P1，2026-09-19）：租户账号白名单（tenant_scope_ids），优先于
+    user_id；缺省 None 时行为与改造前逐字节一致（严格单账号过滤）。
     """
     from datetime import datetime
     from app.memory.service import async_session_factory, delete_memory_vector
@@ -43,7 +47,10 @@ async def list_memories(
         # M3-a（2026-09-01）：工作记忆行不进常规记忆列表（注入走 M1-c 预留分区，M3-b 另行灰度）
         if memory_type != "working_state":
             query = query.where(Memory.memory_type != "working_state")
-        if user_id is not None:
+        if user_ids:
+            # 账号独立 P1：按租户账号白名单过滤（family 口径=家庭成员 / user 口径=仅自己）
+            query = query.where(Memory.user_id.in_(user_ids))
+        elif user_id is not None:
             # 严格按用户隔离（置顶摘要写入时 user_id 已为角色拥有者）
             query = query.where(Memory.user_id == user_id)
         if character_id:

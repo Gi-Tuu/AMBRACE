@@ -4,7 +4,7 @@
 - 迁移幂等：life_states.home_layout_json 列（临时库 init_db 跑两次，不触碰 backend/data）
 - GET /state：默认布局 / 自定义布局生效 / 非法 JSON 回退默认
 - PUT /layout：保存成功 / 校验拒绝（未知房间、未知家具 key、坐标越界、尺寸越界、
-  家具超量、JSON 超限）/ 归属 404（非 owner 非主账号）/ 主账号放行 / 部分房间保存
+  家具超量、JSON 超限）/ 归属 404（跨家庭，含全局主账号）/ 家庭内放行（家庭根 + 子账号）/ 部分房间保存
 """
 import asyncio
 import json
@@ -402,10 +402,31 @@ def test_put_他人角色404(home_db):
     assert r.status_code == 404
 
 
-def test_put_主账号放行(home_db):
-    client = _make_client(ADMIN)  # 主账号（ADMIN_USER_IDS 默认 [1]）
+def test_put_跨家庭主账号拒绝(home_db):
+    """账号独立 P1（2026-09-19 审计修正）：全局 is_admin 不再放行跨租户写入。
+
+    原用例名「主账号放行」断言的是 `char.user_id != user_id and not is_admin(user_id)`
+    ——任一主账号可写别家角色布局（跨租户写）。现统一走 tenant_service 租户归属谓词：
+    跨家庭（含主账号）一律 404。
+    """
+    client = _make_client(ADMIN)  # 主账号（ADMIN_USER_IDS 默认 [1]），但不属角色 owner 租户
     r = client.put("/api/v1/life-home/layout", json=_valid_payload())
-    assert r.status_code == 200
+    assert r.status_code == 404
+
+
+def test_put_家庭内子账号放行(home_db):
+    """账号独立 P1 正向：同租户（家庭根 + 子账号）写角色布局放行。"""
+    async def _seed_family():
+        async with home_db() as db:
+            db.add(User(id=OWNER, username="owner", nickname="家主", is_admin=True))
+            db.add(User(id=OWNER + 1, username="sub", nickname="子号", is_admin=False,
+                        parent_id=OWNER))
+            await db.commit()
+
+    asyncio.run(_seed_family())
+    client = _make_client(OWNER + 1)  # 子账号：家庭根=OWNER=角色 owner → 家庭内放行
+    r = client.put("/api/v1/life-home/layout", json=_valid_payload())
+    assert r.status_code == 200, r.text
     assert r.json() == {"saved": True}
 
 

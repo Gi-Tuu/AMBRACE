@@ -329,6 +329,7 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
                 mtype = "event"
                 _logger.info("Meta-dialogue downgraded char=%d: %.50s", character_id, val)
             if mtype == "user_info":
+                from app.memory.slot_guard import normalize_slot_value
                 from app.memory.user_facts import (
                     MUTABLE_SLOTS, classify_slot, upsert_user_fact,
                     user_fact_slot_enabled, settle_location_on_home_return,
@@ -339,7 +340,17 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
                 # settle 内部自带 location 槽门控（槽关直接 False），命中则不重复 upsert location。
                 _home_settled = await settle_location_on_home_return(user_id, user_msg or val)
                 if slot and user_fact_slot_enabled(slot) and not _home_settled:
-                    change = await upsert_user_fact(user_id, slot, val, source="chat")
+                    # 槽值规范化 L1（2026-09-19）：LLM 正文常是「用户…」整句，直接进槽必被主语闸
+                    # 拒；先做本地确定性归一再写。归一不出值就原样传 val，让槽闸照旧拒写（fail-closed）。
+                    norm = normalize_slot_value(slot, val)
+                    if norm is None:
+                        _slot_val = val
+                    else:
+                        _slot_val = norm
+                        if norm != val:
+                            _logger.info("Slot value normalized char=%d slot=%s raw=%.60s norm=%.60s",
+                                         character_id, slot, val, norm)
+                    change = await upsert_user_fact(user_id, slot, _slot_val, source="chat")
                     # 旧值失效放「新记忆写入前」：避免 sub_type/文本命中到刚写入的新值记忆误标 stale
                     if change is not None:
                         from app.memory.cross_char_sync import stale_character_slot_memory

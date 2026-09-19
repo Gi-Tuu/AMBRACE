@@ -86,6 +86,46 @@ async def _require_admin(user_id: int, lang: str = "zh") -> None:
         raise HTTPException(status_code=403, detail=tr_lang(lang, "admin_config_only"))
 
 
+async def _require_server_admin(user_id: int, lang: str = "zh") -> None:
+    """服务器控制台管理员门禁（账号独立 P2，契约 §3）：写类服务器级端点用。
+
+    ``is_admin``（家庭主账号，家庭内管理）与 ``server_admin``（服务器控制台管理员，跨家庭管
+    服务器级配置）分离后，**写类**服务器级端点收紧为 server_admin（非 server_admin → 403）；
+    **读类**（get_*）保持既有 _require_admin（is_admin），避免非 server_admin 账号的 App 页面
+    因读接口 403 报错。判定走 permission_service.is_server_admin（DB 权威 + 30s 缓存 + env 兜底）。
+    """
+    from app.application.permission_service import is_server_admin
+    if not await is_server_admin(user_id):
+        raise HTTPException(status_code=403, detail=tr_lang(lang, "admin_config_only"))
+
+
+# 服务器级配置审计快照字段（api_key 由 admin_audit_service._dump 统一脱敏为 "***"，不进审计明文）
+_API_CFG_FIELDS = ("base_url", "api_key", "model", "provider", "enabled")
+_VLM_CFG_FIELDS = ("base_url", "api_key", "model", "enabled")
+_IMAGE_CFG_FIELDS = ("provider", "base_url", "api_key", "model", "enabled", "daily_limit")
+_SPEECH_CFG_FIELDS = ("provider", "base_url", "api_key", "model", "enabled")
+
+
+def _cfg_snapshot(cfg, fields) -> dict:
+    """配置行 → 审计快照（None=无行；api_key 只留是否已配置，脱敏由 admin_audit_service 兜底）。"""
+    if cfg is None:
+        return {"configured": False}
+    out = {"configured": True}
+    for f in fields:
+        v = getattr(cfg, f, None)
+        if f == "api_key":
+            v = "***" if v else None
+        out[f] = v
+    return out
+
+
+async def _audit(db, actor_user_id, action: str, target: str | None = None,
+                 before=None, after=None) -> None:
+    """控制台写动作审计（契约 §0/§1.5）；fail-open，见 app/application/admin_audit_service。"""
+    from app.application.admin_audit_service import record
+    await record(db, actor_user_id, action, target, before, after)
+
+
 def _task_cfg_payload(cfg) -> dict:
     return {
         "enabled": bool(cfg.enabled) if cfg else False,
@@ -296,10 +336,8 @@ async def get_server_api_config(
 ):
     """读取服务器级全局 API 配置（api_key 不回传明文）"""
     await _require_admin(user_id, lang)
-    from app.models.config import ApiConfig
-    from app.agent.llm_client import SERVER_CONFIG_UID
-    result = await db.execute(select(ApiConfig).where(ApiConfig.user_id == SERVER_CONFIG_UID))
-    cfg = result.scalar_one_or_none()
+    from app.application.llm_config_service import get_server_modality_row
+    cfg = await get_server_modality_row(db, "llm")  # 四模态统一出口（账号独立 P1）
     if not cfg:
         return {"enabled": False, "base_url": None, "model": None, "provider": None, "has_api_key": False, "configured": False}
     return {
@@ -318,17 +356,17 @@ async def update_server_api_config(
     user_id: int,
     lang: str,
 ):
-    """写入服务器级全局 API 配置（影响所有未配 BYOK 的调用；仅主账号）"""
-    await _require_admin(user_id, lang)
-    from app.models.config import ApiConfig
-    from app.agent.llm_client import SERVER_CONFIG_UID
-    result = await db.execute(select(ApiConfig).where(ApiConfig.user_id == SERVER_CONFIG_UID))
-    cfg = result.scalar_one_or_none()
+    """写入服务器级全局 API 配置（影响所有未配 BYOK 的调用；仅服务器控制台管理员）"""
+    await _require_server_admin(user_id, lang)
+    from app.application.llm_config_service import (
+        get_or_create_server_modality_row,
+        get_server_modality_row,
+    )
+    cfg = await get_server_modality_row(db, "llm")  # 四模态统一出口（账号独立 P1）
     is_new = cfg is None
+    _before = _cfg_snapshot(cfg, _API_CFG_FIELDS)
     if cfg is None:
-        cfg = ApiConfig(user_id=SERVER_CONFIG_UID)
-        db.add(cfg)
-        await db.flush()
+        cfg = await get_or_create_server_modality_row(db, "llm")
     if "base_url" in data:
         cfg.base_url = (data.get("base_url") or "").strip() or None
     if "api_key" in data:
@@ -342,6 +380,8 @@ async def update_server_api_config(
     # 方案 A：新建配置且传了 api_key 但未显式传 enabled 时，自动启用（避免 Key 存了不生效）
     if is_new and "enabled" not in data and cfg.api_key:
         cfg.enabled = True
+    await _audit(db, user_id, "server.api_config.update", "modality:llm",
+                 _before, _cfg_snapshot(cfg, _API_CFG_FIELDS))
     await db.commit()
     _logger.info("server api-config updated user=%d enabled=%s base_url=%s provider=%s", user_id, bool(cfg.enabled), cfg.base_url, cfg.provider)
     return {"status": "ok", "enabled": bool(cfg.enabled), "configured": True}
@@ -413,11 +453,12 @@ async def update_server_task_api_config(
     user_id: int,
     lang: str,
 ):
-    """写入服务器级任务 LLM 配置（仅主账号；影响所有用户的该任务调用）"""
-    await _require_admin(user_id, lang)
+    """写入服务器级任务 LLM 配置（仅服务器控制台管理员；影响所有用户的该任务调用）"""
+    await _require_server_admin(user_id, lang)
     from app.models.agent import TaskLlmConfig
     from app.agent.llm_client import SERVER_CONFIG_UID
     cfg = await _get_task_cfg(db, SERVER_CONFIG_UID, task)
+    _before = _cfg_snapshot(cfg, _API_CFG_FIELDS)
     if cfg is None:
         cfg = TaskLlmConfig(user_id=SERVER_CONFIG_UID, task=task)
         db.add(cfg)
@@ -432,6 +473,8 @@ async def update_server_task_api_config(
         cfg.provider = (data.get("provider") or "").strip() or None
     if "enabled" in data:
         cfg.enabled = bool(data.get("enabled"))
+    await _audit(db, user_id, "server.task_api_config.update", "task:" + task,
+                 _before, _cfg_snapshot(cfg, _API_CFG_FIELDS))
     await db.commit()
     _logger.info("server task api-config updated task=%s enabled=%s model=%s", task, bool(cfg.enabled), cfg.model)
     return {"status": "ok", "task": task, "enabled": bool(cfg.enabled), "configured": True}
@@ -680,10 +723,8 @@ async def get_image_gen_server_config(
 ):
     """读取服务器级生图配置（api_key 不回传明文）"""
     await _require_admin(user_id, lang)
-    from app.models.life import ImageGenConfig
-    from app.agent.llm_client import SERVER_CONFIG_UID
-    result = await db.execute(select(ImageGenConfig).where(ImageGenConfig.user_id == SERVER_CONFIG_UID))
-    cfg = result.scalar_one_or_none()
+    from app.application.llm_config_service import get_server_modality_row
+    cfg = await get_server_modality_row(db, "image")  # 四模态统一出口（账号独立 P1）
     if not cfg:
         return {"enabled": False, "provider": None, "base_url": None, "model": None,
                 "has_api_key": False, "daily_limit": 10, "configured": False}
@@ -704,16 +745,15 @@ async def update_image_gen_server_config(
     user_id: int,
     lang: str,
 ):
-    """写入服务器级生图配置（影响聊天内 AI 发图与 /images 接口；仅主账号）"""
-    await _require_admin(user_id, lang)
-    from app.models.life import ImageGenConfig
-    from app.agent.llm_client import SERVER_CONFIG_UID
-    result = await db.execute(select(ImageGenConfig).where(ImageGenConfig.user_id == SERVER_CONFIG_UID))
-    cfg = result.scalar_one_or_none()
-    if cfg is None:
-        cfg = ImageGenConfig(user_id=SERVER_CONFIG_UID)
-        db.add(cfg)
-        await db.flush()
+    """写入服务器级生图配置（影响聊天内 AI 发图与 /images 接口；仅服务器控制台管理员）"""
+    await _require_server_admin(user_id, lang)
+    from app.application.llm_config_service import (
+        get_or_create_server_modality_row,
+        get_server_modality_row,
+    )
+    # 审计前置快照：先读既有行（无行不建行，避免只读动作顺手造哨兵行）
+    _before = _cfg_snapshot(await get_server_modality_row(db, "image"), _IMAGE_CFG_FIELDS)
+    cfg = await get_or_create_server_modality_row(db, "image")  # 四模态统一出口（账号独立 P1）
     for field in ("provider", "base_url", "api_key", "model"):
         if field in data:
             setattr(cfg, field, (data.get(field) or "").strip() or None)
@@ -724,6 +764,8 @@ async def update_image_gen_server_config(
             cfg.daily_limit = max(1, int(data.get("daily_limit")))
         except (TypeError, ValueError):
             cfg.daily_limit = 10
+    await _audit(db, user_id, "server.image_gen_config.update", "modality:image",
+                 _before, _cfg_snapshot(cfg, _IMAGE_CFG_FIELDS))
     await db.commit()
     _logger.info("server image-gen-config updated user=%d enabled=%s provider=%s", user_id, bool(cfg.enabled), cfg.provider)
     return {"status": "ok", "enabled": bool(cfg.enabled), "configured": True}
@@ -736,10 +778,8 @@ async def get_vlm_server_config(
 ):
     """读取服务器级识图配置（api_key 不回传明文）"""
     await _require_admin(user_id, lang)
-    from app.models.config import VlmConfig
-    from app.agent.llm_client import SERVER_CONFIG_UID
-    result = await db.execute(select(VlmConfig).where(VlmConfig.user_id == SERVER_CONFIG_UID))
-    cfg = result.scalar_one_or_none()
+    from app.application.llm_config_service import get_server_modality_row
+    cfg = await get_server_modality_row(db, "vlm")  # 四模态统一出口（账号独立 P1）
     if not cfg:
         return {"enabled": False, "base_url": None, "model": None, "has_api_key": False, "configured": False}
     return {
@@ -757,21 +797,21 @@ async def update_vlm_server_config(
     user_id: int,
     lang: str,
 ):
-    """写入服务器级识图配置（影响聊天/手机感知等图片理解；仅主账号）"""
-    await _require_admin(user_id, lang)
-    from app.models.config import VlmConfig
-    from app.agent.llm_client import SERVER_CONFIG_UID
-    result = await db.execute(select(VlmConfig).where(VlmConfig.user_id == SERVER_CONFIG_UID))
-    cfg = result.scalar_one_or_none()
-    if cfg is None:
-        cfg = VlmConfig(user_id=SERVER_CONFIG_UID)
-        db.add(cfg)
-        await db.flush()
+    """写入服务器级识图配置（影响聊天/手机感知等图片理解；仅服务器控制台管理员）"""
+    await _require_server_admin(user_id, lang)
+    from app.application.llm_config_service import (
+        get_or_create_server_modality_row,
+        get_server_modality_row,
+    )
+    _before = _cfg_snapshot(await get_server_modality_row(db, "vlm"), _VLM_CFG_FIELDS)
+    cfg = await get_or_create_server_modality_row(db, "vlm")  # 四模态统一出口（账号独立 P1）
     for field in ("base_url", "api_key", "model"):
         if field in data:
             setattr(cfg, field, (data.get(field) or "").strip() or None)
     if "enabled" in data:
         cfg.enabled = bool(data.get("enabled"))
+    await _audit(db, user_id, "server.vlm_config.update", "modality:vlm",
+                 _before, _cfg_snapshot(cfg, _VLM_CFG_FIELDS))
     await db.commit()
     _logger.info("server vlm-config updated user=%d enabled=%s base_url=%s", user_id, bool(cfg.enabled), cfg.base_url)
     return {"status": "ok", "enabled": bool(cfg.enabled), "configured": True}
@@ -784,10 +824,8 @@ async def get_speech_server_config(
 ):
     """读取服务器级语音大模型配置（api_key 不回传明文）"""
     await _require_admin(user_id, lang)
-    from app.models.config import SpeechConfig
-    from app.agent.llm_client import SERVER_CONFIG_UID
-    result = await db.execute(select(SpeechConfig).where(SpeechConfig.user_id == SERVER_CONFIG_UID))
-    cfg = result.scalar_one_or_none()
+    from app.application.llm_config_service import get_server_modality_row
+    cfg = await get_server_modality_row(db, "speech")  # 四模态统一出口（账号独立 P1）
     if not cfg:
         return {"enabled": False, "provider": None, "base_url": None, "model": None,
                 "has_api_key": False, "configured": False}
@@ -807,21 +845,21 @@ async def update_speech_server_config(
     user_id: int,
     lang: str,
 ):
-    """写入服务器级语音大模型配置（仅主账号）"""
-    await _require_admin(user_id, lang)
-    from app.models.config import SpeechConfig
-    from app.agent.llm_client import SERVER_CONFIG_UID
-    result = await db.execute(select(SpeechConfig).where(SpeechConfig.user_id == SERVER_CONFIG_UID))
-    cfg = result.scalar_one_or_none()
-    if cfg is None:
-        cfg = SpeechConfig(user_id=SERVER_CONFIG_UID)
-        db.add(cfg)
-        await db.flush()
+    """写入服务器级语音大模型配置（仅服务器控制台管理员）"""
+    await _require_server_admin(user_id, lang)
+    from app.application.llm_config_service import (
+        get_or_create_server_modality_row,
+        get_server_modality_row,
+    )
+    _before = _cfg_snapshot(await get_server_modality_row(db, "speech"), _SPEECH_CFG_FIELDS)
+    cfg = await get_or_create_server_modality_row(db, "speech")  # 四模态统一出口（账号独立 P1）
     for field in ("provider", "base_url", "api_key", "model"):
         if field in data:
             setattr(cfg, field, (data.get(field) or "").strip() or None)
     if "enabled" in data:
         cfg.enabled = bool(data.get("enabled"))
+    await _audit(db, user_id, "server.speech_config.update", "modality:speech",
+                 _before, _cfg_snapshot(cfg, _SPEECH_CFG_FIELDS))
     await db.commit()
     _logger.info("server speech-config updated user=%d enabled=%s provider=%s", user_id, bool(cfg.enabled), cfg.provider)
     return {"status": "ok", "enabled": bool(cfg.enabled), "configured": True}
@@ -965,8 +1003,8 @@ async def update_llm_usage_limit(
     user_id: int,
     lang: str,
 ):
-    """设置免费额度总量（tokens，仅主账号；0=清除总额设置）"""
-    await _require_admin(user_id, lang)
+    """设置免费额度总量（tokens，仅服务器控制台管理员；0=清除总额设置）"""
+    await _require_server_admin(user_id, lang)
     from app.db.database import async_session_factory
     from app.models.agent import LlmUsageLimit
     try:
@@ -977,11 +1015,14 @@ async def update_llm_usage_limit(
         row = (await db.execute(
             select(LlmUsageLimit).where(LlmUsageLimit.id == 1)
         )).scalar_one_or_none()
+        _before = {"total_limit": int(row.total_limit) if row is not None else None}
         if row is None:
             db.add(LlmUsageLimit(id=1, total_limit=limit, updated_by=user_id))
         else:
             row.total_limit = limit
             row.updated_by = user_id
+        await _audit(db, user_id, "server.llm_usage_limit.update", "llm_usage_limit",
+                     _before, {"total_limit": limit})
         await db.commit()
     return {"total_limit": limit}
 
@@ -990,7 +1031,10 @@ async def get_feature_flags(
     user_id: int,
     lang: str,
 ):
-    '''读取全部运行时 Feature Flag（主账号）；source: db=DB 覆盖 / default=硬编码默认'''
+    '''读取全部运行时 Feature Flag（主账号 = is_admin）；source: db=DB 覆盖 / default=硬编码默认
+
+    契约 §3：读类保持现状（_require_admin），避免非 server_admin 账号的 App 开关页读接口 403。
+    '''
     await _require_admin(user_id, lang)
     from app.application import flag_service
     return {'status': 'ok', 'flags': await flag_service.get_all_flags()}
@@ -1002,14 +1046,34 @@ async def update_feature_flag(
     user_id: int,
     lang: str,
 ):
-    '''切换 Feature Flag（主账号）：写 DB + 热更新内存立即生效；未知 key 返回 404'''
+    '''切换 Feature Flag（本账号可用；服务器控制台可逐键锁定）：写 DB + 热更新内存立即生效；未知 key 返回 404
+
+    账号独立 P2（契约 §1.3 **Codex 09-19 修订**）：本端点即「用户侧写开关」路径——
+    - 写权限**保持既有 `_require_admin`**：本产品里每个独立账号都用自己的 App 开关页，若一并
+      收紧为 require_server_admin，会让所有非服务器管理员的账号一写开关就 403（功能回归）；
+    - 服务器控制权改由**逐键策略**承担：``flag_settings.server_locked=1`` → 403（锁定＝仅控制台
+      PUT /api/v1/admin/server/flags/{key} 可改）；``self_service=0`` → 同样不可自助改（403）。
+      这正是用户要的「能让某些开关关闭、不放开开关权限」。
+    - 真正「服务器级」的写入口（四模态服务器配置 / 任务 API 配置 / 额度 / 备份触发与下载）仍收紧为
+      ``require_server_admin``（见契约 §3 与 `_require_server_admin`）。
+    '''
     await _require_admin(user_id, lang)
     if 'enabled' not in data:
         raise HTTPException(status_code=400, detail='enabled required')
     from app.application import flag_service
+    from app.agent.loop import AGENT_FLAGS
+    # 先取策略与旧值（各自只读；策略读失败 fail-open 到「自助开、未锁定」）
+    policy = await flag_service.get_flag_policy(key)
+    if policy['server_locked']:
+        raise HTTPException(status_code=403, detail=tr_lang(lang, 'flag_server_locked'))
+    if not policy['self_service']:
+        raise HTTPException(status_code=403, detail=tr_lang(lang, 'flag_self_service_disabled'))
+    _before = {'enabled': bool(AGENT_FLAGS.get(key)) if key in AGENT_FLAGS else None}
     ok = await flag_service.set_runtime_flag(key, bool(data.get('enabled')))
     if not ok:
         raise HTTPException(status_code=404, detail='unknown feature flag: ' + key)
+    await _audit(None, user_id, 'server.feature_flag.update', 'flag:' + key,
+                 _before, {'enabled': bool(data.get('enabled'))})
     return {'status': 'ok', 'key': key, 'enabled': bool(data.get('enabled'))}
 
 
@@ -1017,11 +1081,11 @@ async def trigger_backup(
     user_id: int,
     lang: str,
 ):
-    """触发一次备份（数据库 + 配置 + 源码快照），仅主账号。
+    """触发一次备份（数据库 + 配置 + 源码快照），仅服务器控制台管理员。
 
     当天已有备份（如多次调用）则直接返回现有文件信息；返回 {path, size, created_at}。
     """
-    await _require_admin(user_id, lang)
+    await _require_server_admin(user_id, lang)
     import os as _os
     mod = _load_backup_module()
     try:
@@ -1034,15 +1098,21 @@ async def trigger_backup(
     zip_path = _os.path.join(mod.BACKUP_ROOT, f"{today}.zip")
     if not _os.path.isfile(zip_path):
         raise HTTPException(status_code=500, detail=tr_lang(lang, "backup_failed"))
-    return {"status": "ok", **_backup_info(zip_path)}
+    info = {"status": "ok", **_backup_info(zip_path)}
+    await _audit(None, user_id, "server.backup.trigger", "backup", None,
+                 {"path": info.get("path"), "size": info.get("size")})
+    return info
 
 
 async def download_backup(
     user_id: int,
     lang: str,
 ):
-    """下载当天 / 最近一份备份 zip（仅主账号）；文件名用 ascii 安全名。"""
-    await _require_admin(user_id, lang)
+    """下载当天 / 最近一份备份 zip（仅服务器控制台管理员）；文件名用 ascii 安全名。
+
+    纯读动作（无状态变更），按契约 §1.5「写动作覆盖面」不进审计表。
+    """
+    await _require_server_admin(user_id, lang)
     import os as _os
     from fastapi.responses import FileResponse
     mod = _load_backup_module()

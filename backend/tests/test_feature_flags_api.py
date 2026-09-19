@@ -18,6 +18,23 @@ ADMIN = 1
 OTHER = 200
 
 
+@pytest.fixture(autouse=True)
+def _server_admin_as_user1(monkeypatch):
+    '''账号独立 P2（契约 §3）：写类服务器级端点（PUT /feature-flags/{key}）收紧为 require_server_admin。
+
+    本文件聚焦「端点行为」（200/400/404 语义），统一把 1 号账号视为 server_admin，使断言不再依赖
+    「会话共享测试库里 id=1 是否存在、server_admin 是否为 1」。真实判定链（DB 权威 + 30s 缓存 +
+    env 兜底 + 非 server_admin 一律 403）由 tests/test_admin_console_p2.py 与
+    test_tenant_isolation_matrix.py 覆盖。
+    '''
+    from app.application import permission_service as perm
+
+    async def _is_server_admin(uid: int) -> bool:
+        return int(uid) == ADMIN
+
+    monkeypatch.setattr(perm, 'is_server_admin', _is_server_admin)
+
+
 @pytest.fixture()
 def flag_db(monkeypatch, tmp_path):
     '''临时 SQLite 文件库：patch async_session_factory（不触碰 backend/data）'''

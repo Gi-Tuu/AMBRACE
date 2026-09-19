@@ -71,6 +71,18 @@ class Settings(BaseSettings):
             return [v]
         return v
 
+    # ---- 租户口径（账号独立 P1，2026-09-19）----
+    # family（默认）= 归属键取家庭根账号（跨家庭隔离 / 家庭内共享）；
+    # user = 每账号彻底独立（租户键=账号自身）。统一出口 app/application/tenant_service.py，
+    # 所有用户维度资源的归属判断走同一 helper，切口径只改该模块读取处。
+    tenant_key_mode: str = "family"
+
+    # /uploads 静态目录鉴权严格模式（账号独立 P1，2026-09-19）。
+    # False（默认）= 兼容：无身份的裸 URL 请求放行（App 现状是 Image.network 裸 URL 取图，
+    #   置 True 会让所有图片/语音 404）；带身份（Authorization / ?token=）的请求始终按租户比对。
+    # True = 严格：租户归属路径的匿名请求一律 404，共享资源（pets_assets/emojis/market/tts）仍放行。
+    uploads_require_auth: bool = False
+
     # ---- 主动交流调度器 ----
     scheduler_idle_interval: int = 300  # 闲置检查间隔（秒）
     scheduler_birthday_interval: int = 600  # 生日检查间隔

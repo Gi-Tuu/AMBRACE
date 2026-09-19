@@ -42,6 +42,8 @@ backend/data/uploads/*
 backend/data/locks/
 backend/data/paused.flag
 backend/data/server_config.json
+# 控制台管理面登录令牌（账号独立 P2，2026-09-19）：本地缓存 JWT，绝不入库
+backend/data/console_token.json
 
 # 备份目录（独立于版本库）
 backups/

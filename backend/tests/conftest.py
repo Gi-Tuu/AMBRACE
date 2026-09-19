@@ -176,16 +176,24 @@ def _reset_event_bus_after_test():
 
 @pytest.fixture(autouse=True)
 def _reset_admin_cache_between_tests():
-    """每个用例前后清一次「主账号判定」进程内缓存（2026-09-17 CI 修复护栏）。
+    """每个用例前后清一次权限/门禁进程内缓存（2026-09-17 CI 修复护栏；P2 扩到账号门禁）。
 
     背景：permission_service.is_admin_user 读会话共享测试库的 users 表，并带 30s 进程内缓存。
     任一用例往共享库写入 id=1 的非主账号用户后，后续所有依赖主账号判定的用例
     （功能开关 / 活性明细 / 生活主页）都会拿到 is_admin=0 → 403 / 404，删该用户时还会被
     残留外键挡住。根因已按用例隔离修掉（私有 tmp_path 库），此处再加一道护栏，
     避免同类跨用例污染以「主账号判定」的形式扩散。
+
+    账号独立 P2（2026-09-19）：server_admin 判定与账号门禁状态（disabled_at / llm_mode）
+    同样是 30s 进程内缓存，跨用例残留会让「这个用例禁用某账号」泄漏到后续用例
+    （表现为莫名的 403），故一并清除。
     """
     from app.application import permission_service as perm
 
     perm._admin_cache.clear()
+    perm._server_admin_cache.clear()
+    perm._account_state_cache.clear()
     yield
     perm._admin_cache.clear()
+    perm._server_admin_cache.clear()
+    perm._account_state_cache.clear()

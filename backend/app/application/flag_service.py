@@ -115,3 +115,84 @@ async def get_all_flags() -> list:
         }
         for k, v in AGENT_FLAGS.items()
     ]
+
+
+# ── 开关策略元数据（控制台管理面 P2，2026-09-19）─────────────────────────────────
+# flag_settings 每键一行：self_service（是否允许用户自助改）/ server_locked（锁定 = 仅控制台可改）。
+# 缺行 = self_service=1 / server_locked=0 —— 与现状一致（用户仍可自助），故上线不锁死任何开关页。
+# 读失败/表缺失一律 fail-open 到默认值：策略是旁路管控，不能把开关页与 App 写链路打挂。
+# 注意：本段只承载「策略元数据」；非 bool 键仍由上方 set_runtime_flag 的类型防护拒绝热切。
+
+FLAG_POLICY_DEFAULTS = {'self_service': True, 'server_locked': False}
+
+
+def _policy_default(key: str) -> dict:
+    '''缺行策略：自助开、未锁定、无标题/描述（契约 §1.3：可先只给 key，title/desc 缺省即可）。'''
+    return {'key': key, 'self_service': True, 'server_locked': False,
+            'title': None, 'desc': None, 'exists': False}
+
+
+async def _policy_session(db):
+    '''策略读写会话：传入 db 用调用方事务（不 commit）；否则自开会话。'''
+    if db is not None:
+        yield db
+        return
+    from app.db.database import async_session_factory
+    async with async_session_factory() as own:
+        yield own
+
+
+async def get_flag_policies(keys, db=None) -> dict:
+    '''批量读开关策略：{key: {self_service, server_locked, title, desc, exists}}；缺行按默认。'''
+    out = {}
+    for k in keys or []:
+        out[k] = _policy_default(k)
+    if not out:
+        return out
+    try:
+        from sqlalchemy import select
+        from app.models.config import FlagSetting
+        async for session in _policy_session(db):
+            rows = (await session.execute(
+                select(FlagSetting).where(FlagSetting.key.in_(list(out.keys())))
+            )).scalars().all()
+            for r in rows:
+                if r.key in out:
+                    out[r.key] = {'key': r.key, 'self_service': bool(r.self_service),
+                                  'server_locked': bool(r.server_locked), 'title': r.title,
+                                  'desc': r.desc, 'exists': True}
+    except Exception as e:
+        _logger.warning('flag policy read failed: %s', e)
+    return out
+
+
+async def get_flag_policy(key: str, db=None) -> dict:
+    '''单键策略（缺行/读失败 → 默认：自助开、未锁定）。'''
+    return (await get_flag_policies([key], db=db)).get(key) or _policy_default(key)
+
+
+async def set_flag_policy(key: str, *, self_service=None, server_locked=None, db=None) -> dict:
+    '''写开关策略（缺行新建）；返回最新策略。key 是否合法由调用方校验（本函数只管策略行）。'''
+    from sqlalchemy import select
+    from app.models.config import FlagSetting
+    async for session in _policy_session(db):
+        row = (await session.execute(
+            select(FlagSetting).where(FlagSetting.key == key)
+        )).scalar_one_or_none()
+        if row is None:
+            row = FlagSetting(key=key)
+            session.add(row)
+            await session.flush()
+        if self_service is not None:
+            row.self_service = bool(self_service)
+        if server_locked is not None:
+            row.server_locked = bool(server_locked)
+        await session.flush()
+        await session.refresh(row)
+        result = {'key': key, 'self_service': bool(row.self_service),
+                  'server_locked': bool(row.server_locked), 'title': row.title,
+                  'desc': row.desc, 'exists': True}
+        if db is None:
+            await session.commit()
+        return result
+    return _policy_default(key)

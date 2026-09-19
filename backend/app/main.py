@@ -336,11 +336,13 @@ app.add_middleware(
 )
 
 # 图片上传静态目录（必须先创建目录，StaticFiles 要求存在）
-from fastapi.staticfiles import StaticFiles
 from app.config import settings as _settings
+from app.uploads_gate import TenantStaticFiles
 _uploads_dir = str(_settings.PROJECT_ROOT / "data" / "uploads")
 _os.makedirs(_uploads_dir, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=_uploads_dir), name="uploads")
+# 账号独立 P1：改用带租户闸门的 StaticFiles（跨租户 404；匿名按 settings.uploads_require_auth）。
+# 闸门与目录解析见 app/uploads_gate.py 的模块 docstring（含 App 兼容口径与残余风险）。
+app.mount("/uploads", TenantStaticFiles(directory=_uploads_dir), name="uploads")
 
 # 注册路由（单一清单循环注册；顺序即路由匹配优先级，调整前须确认无前缀遮蔽）
 ROUTERS = [

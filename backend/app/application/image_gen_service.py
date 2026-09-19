@@ -135,8 +135,15 @@ class DashScopeChatImageProvider(ImageGenProvider):
         return None
 
 
-async def get_image_gen_config() -> dict:
-    """生图生效配置：服务器级 DB（image_gen_configs user_id=0）优先，.env 兜底"""
+async def get_image_gen_config(user_id: int | None = None) -> dict:
+    """生图生效配置：四模态统一回落链（用户/家庭/服务器 DB）优先，.env 兜底。
+
+    账号独立 P1（2026-09-19）：DB 查表收敛到唯一出口
+    ``llm_config_service.resolve_modality_config("image", ...)``（此前本函数直读
+    ``image_gen_configs`` 的 SERVER_CONFIG_UID 哨兵行，与 system.py 双份实现）。
+    ``user_id``：可选归属账号；缺省 None 时链路直达服务器级默认，行为与改造前一致。
+    .env 语义（image_gen_enabled 等）仍按本模态原样保留，合并优先级不变。
+    """
     cfg = {
         "enabled": bool(settings.image_gen_enabled),
         "provider": (settings.image_gen_provider or "openai").lower(),
@@ -146,24 +153,16 @@ async def get_image_gen_config() -> dict:
         "daily_limit": settings.image_gen_daily_limit or 10,
     }
     try:
-        from sqlalchemy import select
-        from app.db.database import async_session_factory
-        from app.agent.llm_client import SERVER_CONFIG_UID
-        from app.models.life import ImageGenConfig
-        async with async_session_factory() as db:
-            row = (
-                await db.execute(
-                    select(ImageGenConfig).where(ImageGenConfig.user_id == SERVER_CONFIG_UID)
-                )
-            ).scalar_one_or_none()
-        if row is not None and row.enabled and (row.base_url or row.api_key):
+        from app.application.llm_config_service import resolve_modality_config
+        row = await resolve_modality_config("image", user_id=user_id)
+        if row is not None:
             cfg = {
                 "enabled": True,
-                "provider": (row.provider or "openai").lower(),
-                "base_url": row.base_url or settings.image_gen_base_url,
-                "api_key": row.api_key or settings.image_gen_api_key,
-                "model": row.model or settings.image_gen_model,
-                "daily_limit": row.daily_limit or settings.image_gen_daily_limit or 10,
+                "provider": (row.get("provider") or "openai").lower(),
+                "base_url": row.get("base_url") or settings.image_gen_base_url,
+                "api_key": row.get("api_key") or settings.image_gen_api_key,
+                "model": row.get("model") or settings.image_gen_model,
+                "daily_limit": row.get("daily_limit") or settings.image_gen_daily_limit or 10,
             }
     except Exception as e:
         _logger.warning("get_image_gen_config failed: %s", e)

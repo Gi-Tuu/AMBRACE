@@ -628,8 +628,17 @@ async def delete_message(
 
     # 删除关联记忆（来自该消息触发的记忆）
     try:
+        from app.application.tenant_service import tenant_scope_ids
         mem_result = await db.execute(
-            select(Memory).where(Memory.source_id == message_id)
+            select(Memory).where(
+                Memory.source_id == message_id,
+                # 账号独立 P1（09-19 审计修正）：source_id 在不同来源间不是同一 id 空间——
+                # 游戏记忆用「对局 session.id」做 source_id，与消息 id 会撞号，旧写法
+                # （只按 source_id 匹配）会跨账号硬删他人的游戏记忆。故①限本账号租户
+                # ②排除 source="game" 的撞号行。
+                Memory.user_id.in_(await tenant_scope_ids(db, user_id)),
+                Memory.source != "game",
+            )
         )
         for mem in mem_result.scalars().all():
             try:

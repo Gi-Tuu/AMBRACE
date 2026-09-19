@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy import select
 
 from app.db.database import async_session_factory
+from app.application.tenant_service import tenant_scope_ids
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
 from app.utils.clamp import clamp_int as _clamp
@@ -220,11 +221,6 @@ def _lover_name(char) -> str | None:
     return None
 
 
-async def _is_admin(user_id: int) -> bool:
-    from app.application.permission_service import is_admin_user
-    return await is_admin_user(user_id)
-
-
 # 交互动作 → 状态增量（stamina/mood/hunger）与生活活动映射
 ACTIONS = {
     "sleep":    {"stamina": 25, "mood": 5,  "hunger": -5,  "activity": "rest",             "label": "睡觉"},
@@ -253,7 +249,7 @@ async def _resolve_character(db, user_id: int, character_id: int, lang: str = "z
     char = (
         await db.execute(
             select(AICharacter)
-            .where(AICharacter.user_id == user_id, AICharacter.is_active == True)
+            .where(AICharacter.user_id.in_(await tenant_scope_ids(db, user_id)), AICharacter.is_active == True)
             .order_by(AICharacter.updated_at.desc())
         )
     ).scalars().first()
@@ -292,7 +288,7 @@ async def home_state(character_id: int = 0, user_id: int = Depends(get_current_u
     async with async_session_factory() as db:
         cid = await _resolve_character(db, user_id, character_id, lang)
         char, st, cs, needs = await _read_holder(db, cid)
-        if char is None or char.user_id != user_id:
+        if char is None or char.user_id not in await tenant_scope_ids(db, user_id):
             raise HTTPException(404, tr_lang(lang, "character_not_found"))
         pets = (
             await db.execute(select(Pet).where(Pet.user_id == user_id, Pet.abandoned_at.is_(None)))
@@ -371,7 +367,10 @@ async def save_home_layout(payload: dict, user_id: int = Depends(get_current_use
     async with async_session_factory() as db:
         cid = await _resolve_character(db, user_id, character_id, lang)
         char, st, cs, needs = await _read_holder(db, cid)
-        if char is None or (char.user_id != user_id and not await _is_admin(user_id)):
+        # 账号独立 P1（2026-09-19 审计修正）：原为 `char.user_id != user_id and not await _is_admin(user_id)`
+        # —— 任一全局 is_admin 账号都能写别家角色的布局（跨租户写）。现统一走租户归属谓词
+        # （tenant_service：family 口径=家庭根，家庭内共享；user 口径=每账号独立）。
+        if char is None or char.user_id not in await tenant_scope_ids(db, user_id):
             raise HTTPException(404, tr_lang(lang, "character_not_found"))
 
         custom: dict[str, dict] = {}
@@ -454,7 +453,7 @@ async def home_event(payload: dict, user_id: int = Depends(get_current_user_id),
     async with async_session_factory() as db:
         cid = await _resolve_character(db, user_id, character_id, lang)
         char, st, cs, needs = await _read_holder(db, cid)
-        if char is None or char.user_id != user_id:
+        if char is None or char.user_id not in await tenant_scope_ids(db, user_id):
             raise HTTPException(404, tr_lang(lang, "character_not_found"))
         st.energy = _clamp((st.energy or 70) + spec["stamina"])
         cs.mood = _clamp((cs.mood or 50) + spec["mood"])

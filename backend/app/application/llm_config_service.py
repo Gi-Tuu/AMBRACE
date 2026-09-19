@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.config import UserLlmConfig
 from app.models.character import AICharacter
 from app.application.family_service import get_family_root_id, is_sub_account
+from app.i18n import tr_lang
 
 
 def mask_api_key(api_key: str | None) -> str:
@@ -180,6 +181,207 @@ async def resolve_family_default_config(user_id: int | None, db: AsyncSession | 
             "model": cfg.model, "provider": getattr(cfg, "provider", None),
             "config_id": cfg.id,
         }
+
+
+# ── 四模态配置统一出口（账号独立 P1，2026-09-19）────────────────────────────────
+#
+# 背景：四模态（聊天 LLM / 识图 VLM / 生图 / 语音 Speech；外加全模态 Multimodal）各有
+# 一条「服务器级哨兵行」（user_id=SERVER_CONFIG_UID），此前被 app/application/system.py
+# （4 处 get/update 成对直读直写）、image_gen_service.py:151、image_understanding_service.py:125
+# 各自写 SQL 直读——口径分散、易漏（语音/全模态就被漏在 system.py 里）。
+#
+# 本段把「四模态查表」收敛成唯一出口，并补齐统一回落链：
+#   角色绑定（ai_characters.user_llm_config_id，仅 LLM）
+#     → 用户默认（本用户 enabled 行；LLM 另含 user_llm_configs.is_default）
+#     → 家庭默认（家庭根 enabled 行；LLM 另含根账号 shared_with_subs 默认）
+#     → 服务器默认（user_id=SERVER_CONFIG_UID 且 enabled）
+#     → （可选）.env 兜底（各模态 .env 语义分别定义，保留在调用方）
+#     → 明确可读报错（required=True 时抛 400 + i18n config_not_configured）
+#
+# 调用方：system.py（服务器级读写）、image_gen_service.get_image_gen_config、
+# image_understanding_service.get_vlm_config。新增模态只改 _MODALITY_TABLES 一处。
+
+# 模态 → (模块路径, 模型类名)；懒加载避免 import 环
+_MODALITY_TABLES: dict[str, tuple[str, str]] = {
+    "llm": ("app.models.config", "ApiConfig"),
+    "vlm": ("app.models.config", "VlmConfig"),
+    "speech": ("app.models.config", "SpeechConfig"),
+    "multimodal": ("app.models.config", "MultimodalConfig"),
+    "image": ("app.models.life", "ImageGenConfig"),
+}
+
+# 模态 → 中文标签（报错文案用；system.py 的连接测试标签是另一套，勿混）
+MODALITY_LABELS: dict[str, str] = {
+    "llm": "聊天(LLM)",
+    "task": "任务",
+    "vlm": "识图(VLM)",
+    "image": "生图",
+    "speech": "语音",
+    "multimodal": "全模态",
+}
+
+
+def normalize_modality(modality: str | None) -> str:
+    """模态名归一：别名 image_gen → image；未知/空 → llm（与 test_api_connection 旧语义一致）。"""
+    m = str(modality or "").strip().lower()
+    if m == "image_gen":
+        m = "image"
+    return m if m in _MODALITY_TABLES else "llm"
+
+
+def modality_label(modality: str | None) -> str:
+    """模态可读标签（报错文案）。"""
+    m = normalize_modality(modality)
+    return MODALITY_LABELS.get(m, m)
+
+
+def _modality_model(modality: str | None):
+    """模态 → ORM 模型类（懒加载）。"""
+    spec = _MODALITY_TABLES[normalize_modality(modality)]
+    import importlib
+    return getattr(importlib.import_module(spec[0]), spec[1])
+
+
+async def get_server_modality_row(db: AsyncSession, modality: str | None):
+    """服务器级哨兵行（user_id=SERVER_CONFIG_UID）——四模态唯一读取口；无行返回 None。"""
+    from app.agent.llm_client import SERVER_CONFIG_UID
+    model = _modality_model(modality)
+    return (await db.execute(
+        select(model).where(model.user_id == SERVER_CONFIG_UID)
+    )).scalar_one_or_none()
+
+
+async def get_or_create_server_modality_row(db: AsyncSession, modality: str | None):
+    """服务器级哨兵行：无则新建（flush 后返回）——四模态唯一写入口。"""
+    from app.agent.llm_client import SERVER_CONFIG_UID
+    row = await get_server_modality_row(db, modality)
+    if row is None:
+        row = _modality_model(modality)(user_id=SERVER_CONFIG_UID)
+        db.add(row)
+        await db.flush()
+    return row
+
+
+def _table_cfg_payload(cfg, *, scope: str, modality: str) -> dict:
+    """模态配置行 → 归一化生效配置（含 scope 来源，供调用方与审计）。"""
+    return {
+        "modality": normalize_modality(modality),
+        "scope": scope,
+        "base_url": getattr(cfg, "base_url", None),
+        "api_key": getattr(cfg, "api_key", None),
+        "model": getattr(cfg, "model", None),
+        "provider": getattr(cfg, "provider", None),
+        "enabled": bool(getattr(cfg, "enabled", False)),
+        "config_id": getattr(cfg, "id", None),
+        # 模态专有列（生图 daily_limit / 识图无 / 语音无）——存在则带上，不存在为 None
+        "daily_limit": getattr(cfg, "daily_limit", None),
+        "timeout_sec": getattr(cfg, "timeout_sec", None),
+        "source_table": _MODALITY_TABLES[normalize_modality(modality)][1],
+    }
+
+
+def _row_usable(row) -> bool:
+    """生效判据（与既有服务逐字一致）：enabled 且 (base_url 或 api_key) 非空。"""
+    return bool(row is not None and getattr(row, "enabled", False)
+                and (getattr(row, "base_url", None) or getattr(row, "api_key", None)))
+
+
+async def _find_modality_row(session: AsyncSession, model, owner_user_id: int | None):
+    """该模态表中某归属者的 enabled 行（唯一列约束下至多一行）。
+
+    注意用 ``is None`` 判空而非 falsy：服务器级哨兵 ``SERVER_CONFIG_UID = 0`` 是合法归属值，
+    ``if not owner_user_id`` 会把服务器级默认整级吞掉（P1 单测抓到的真实缺陷）。
+    """
+    if owner_user_id is None:
+        return None
+    return (await session.execute(
+        select(model).where(model.user_id == owner_user_id, model.enabled == True)  # noqa: E712
+    )).scalar_one_or_none()
+
+
+async def resolve_modality_config(
+    modality: str | None,
+    user_id: int | None = None,
+    character_id: int | None = None,
+    db: AsyncSession | None = None,
+    *,
+    required: bool = False,
+    lang: str = "zh",
+) -> dict | None:
+    """四模态统一回落链（账号独立 P1）。
+
+    角色绑定 → 用户默认 → 家庭默认 → 服务器默认 → None（required=True 时抛 400）。
+
+    账号门禁（账号独立 P2，2026-09-19）：``users.llm_mode='blocked'`` → 403 llm_blocked_by_admin；
+    ``'own'`` → 跳过「服务器默认」一级（不回落到服务器 Key）；``'default_allowed'``（默认）→ 现状行为。
+
+    - LLM 额外先走 #68 的 user_llm_configs 链（角色绑定 → 用户默认 → 根账号 shared_with_subs），
+      再走 api_configs 的用户/家庭/服务器三级；非 LLM 模态只有本模态表的用户/家庭/服务器三级。
+    - ``required=True``：整链未命中 → HTTPException(400, config_not_configured)（明确可读报错）。
+    - ``db=None``：自开会话（后台任务/无请求上下文调用方）。
+    """
+    m = normalize_modality(modality)
+    async for session in _with_db(db):
+        # ── 账号门禁（账号独立 P2）：本函数是四模态唯一出口，门禁在此唯一生效（契约 §4）──
+        # blocked → 该账号的模型调用被服务器管理员拒绝；own → 不回落服务器默认；
+        # default_allowed（默认）→ 现状行为。user_id 缺失/0（服务器级哨兵、后台自调用）不设限。
+        account_mode = "default_allowed"  # permission_service.DEFAULT_LLM_MODE
+        if user_id and int(user_id) > 0:
+            from app.application.permission_service import (
+                LLM_MODE_BLOCKED,
+                LLM_MODE_OWN,
+                get_account_state,
+            )
+            _disabled, account_mode = await get_account_state(user_id)
+            if _disabled:
+                raise HTTPException(status_code=403, detail=tr_lang(lang, "account_disabled"))
+            if account_mode == LLM_MODE_BLOCKED:
+                raise HTTPException(status_code=403, detail=tr_lang(lang, "llm_blocked_by_admin"))
+            if account_mode != LLM_MODE_OWN:
+                account_mode = "default_allowed"
+        if m == "llm":
+            # 1) 角色绑定（#68：ai_characters.user_llm_config_id）
+            bound = await resolve_character_llm_config(character_id, user_id, session)
+            if bound:
+                return {**bound, "modality": m, "scope": "character",
+                        "enabled": True, "source_table": "user_llm_configs"}
+            # 2) 用户默认（user_llm_configs.is_default）
+            own = await resolve_user_default_config(user_id, session)
+            if own:
+                return {**own, "modality": m, "scope": "user",
+                        "enabled": True, "source_table": "user_llm_configs"}
+            # 3) 家庭默认（根账号 shared_with_subs 默认，仅子账号）
+            fam = await resolve_family_default_config(user_id, session)
+            if fam:
+                return {**fam, "modality": m, "scope": "family",
+                        "enabled": True, "source_table": "user_llm_configs"}
+
+        model = _modality_model(m)
+        # 2') 用户默认 / 3') 家庭默认（api_configs 等：该用户行 → 家庭根行）
+        row = await _find_modality_row(session, model, user_id)
+        if _row_usable(row):
+            return _table_cfg_payload(row, scope="user", modality=m)
+        root = await get_family_root_id(session, user_id)
+        if root and int(root) != int(user_id or 0):
+            row = await _find_modality_row(session, model, int(root))
+            if _row_usable(row):
+                return _table_cfg_payload(row, scope="family", modality=m)
+
+        # 4) 服务器默认（user_id=SERVER_CONFIG_UID）——llm_mode='own' 的账号跳过本级
+        # （账号独立 P2：契约 §4「own → 不回落到服务器默认」；家庭层回落保留）
+        if account_mode != "own":
+            from app.agent.llm_client import SERVER_CONFIG_UID
+            row = await _find_modality_row(session, model, SERVER_CONFIG_UID)
+            if _row_usable(row):
+                return _table_cfg_payload(row, scope="server", modality=m)
+
+        if required:
+            raise HTTPException(
+                status_code=400,
+                detail=tr_lang(lang, "config_not_configured", modality=modality_label(m)),
+            )
+        return None
+    return None
 
 
 # ── CRUD（API 用；接受显式 db 会话）──

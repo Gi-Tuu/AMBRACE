@@ -10,6 +10,7 @@ from app.db.database import get_db
 from app.models.life import AIMoment, MomentLike, MomentAILike, MomentComment
 from app.models.character import AICharacter
 from app.auth.deps import get_current_user_id
+from app.application.tenant_service import tenant_scope_ids
 from app.i18n import tr_lang
 from app.schemas.moment import (
     MomentResponse, MomentListResponse, LikeResponse,
@@ -25,26 +26,31 @@ router = APIRouter(prefix="/api/v1/moments", tags=["Moments"])
 _logger = get_logger("api.moments")
 
 
-def _visible_moment_filter(user_id: int):
-    """当前用户可见动态：自己发的动态 + 自己 AI 角色的动态"""
+def _visible_moment_filter(scope_ids: list[int]):
+    """本账号租户可见动态：租户内用户发的动态 + 租户内 AI 角色的动态。
+
+    账号独立 P1：``scope_ids`` 由 ``tenant_service.tenant_scope_ids`` 给出
+    （family 口径=家庭成员，跨家庭天然隔离；user 口径=仅自己）。
+    """
     return or_(
-        and_(AIMoment.sender_type == "user", AIMoment.user_id == user_id),
+        and_(AIMoment.sender_type == "user", AIMoment.user_id.in_(scope_ids)),
         AIMoment.character_id.in_(
-            select(AICharacter.id).where(AICharacter.user_id == user_id)
+            select(AICharacter.id).where(AICharacter.user_id.in_(scope_ids))
         ),
     )
 
 
 async def _is_moment_visible(db: AsyncSession, moment_id: int, user_id: int) -> bool:
-    """评论等子资源接口的可见性校验：动态必须属于当前用户（本人或本人 AI 角色）"""
+    """评论等子资源接口的可见性校验：动态必须属于本账号租户（账号独立 P1）"""
+    scope_ids = await tenant_scope_ids(db, user_id)
     moment = await db.get(AIMoment, moment_id)
     if not moment or not moment.is_active:
         return False
     if moment.sender_type == "user":
-        return moment.user_id == user_id
+        return moment.user_id in scope_ids
     cresult = await db.execute(
         select(AICharacter.id).where(
-            AICharacter.id == moment.character_id, AICharacter.user_id == user_id
+            AICharacter.id == moment.character_id, AICharacter.user_id.in_(scope_ids)
         )
     )
     return cresult.scalar_one_or_none() is not None
@@ -80,7 +86,7 @@ async def _likers_for_moment(db: AsyncSession, moment: AIMoment) -> tuple[int, l
 async def list_moments(skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200), db: AsyncSession = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     stmt = (
         select(AIMoment)
-        .where(AIMoment.is_active == True, _visible_moment_filter(user_id))
+        .where(AIMoment.is_active == True, _visible_moment_filter(await tenant_scope_ids(db, user_id)))
         .order_by(AIMoment.created_at.desc())
         .offset(skip).limit(limit)
     )
@@ -208,7 +214,7 @@ async def manually_publish_moment(
     lang: str = Header(default="zh"),
 ):
     """手动为角色发布一条朋友圈"""
-    cresult = await db.execute(select(AICharacter).where(AICharacter.id == character_id, AICharacter.user_id == user_id))
+    cresult = await db.execute(select(AICharacter).where(AICharacter.id == character_id, AICharacter.user_id.in_(await tenant_scope_ids(db, user_id))))
     if cresult.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
     from app.application.moment_service import publish_moment, generate_comments_for_moment
@@ -428,10 +434,10 @@ async def delete_moment(moment_id: int, db: AsyncSession = Depends(get_db), user
         raise HTTPException(status_code=404, detail=tr_lang(lang, "moment_not_found"))
     # 归属校验：用户动态须本人；AI 动态须本人角色
     if moment.sender_type == "user":
-        if moment.user_id != user_id:
+        if moment.user_id not in await tenant_scope_ids(db, user_id):
             raise HTTPException(status_code=403, detail=tr_lang(lang, "delete_own_moment_only"))
     else:
-        cresult = await db.execute(select(AICharacter.id).where(AICharacter.id == moment.character_id, AICharacter.user_id == user_id))
+        cresult = await db.execute(select(AICharacter.id).where(AICharacter.id == moment.character_id, AICharacter.user_id.in_(await tenant_scope_ids(db, user_id))))
         if cresult.scalar_one_or_none() is None:
             raise HTTPException(status_code=403, detail=tr_lang(lang, "delete_own_moment_only"))
     from app.application.upload_service import delete_image_file
@@ -509,7 +515,7 @@ async def clear_character_moments(
     user_id: int = Depends(get_current_user_id),
     lang: str = Header(default="zh"),
 ):
-    cresult = await db.execute(select(AICharacter).where(AICharacter.id == character_id, AICharacter.user_id == user_id))
+    cresult = await db.execute(select(AICharacter).where(AICharacter.id == character_id, AICharacter.user_id.in_(await tenant_scope_ids(db, user_id))))
     if cresult.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
     start = beijing_day_start_utc()
@@ -684,7 +690,7 @@ async def list_moments_archive(db: AsyncSession = Depends(get_db), user_id: int 
 
     stmt = (
         select(AIMoment)
-        .where(AIMoment.is_active == True, _visible_moment_filter(user_id))
+        .where(AIMoment.is_active == True, _visible_moment_filter(await tenant_scope_ids(db, user_id)))
         .order_by(AIMoment.created_at.desc())
         .limit(200)
     )

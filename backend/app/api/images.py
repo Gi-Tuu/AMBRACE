@@ -22,7 +22,12 @@ class GenerateRequest(BaseModel):
 
 @router.post("/generate")
 async def generate_image(data: GenerateRequest, user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
-    """创建生图任务，立即返回 task_id；完成后用 GET /tasks/{id} 取图"""
+    """创建生图任务，立即返回 task_id；完成后用 GET /tasks/{id} 取图
+
+    账号独立 P1：body 的 character_id / session_id 是「引用他行」——落库前必须过租户归属
+    （否则可把别家角色/会话 id 记进本账号任务，形成跨租户引用）。
+    """
+    await _assert_refs_in_tenant(user_id, data.character_id, data.session_id, lang)
     if await get_image_provider() is None:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "image_gen_not_configured"))
     if await check_daily_limit(user_id):
@@ -33,6 +38,32 @@ async def generate_image(data: GenerateRequest, user_id: int = Depends(get_curre
     )
     schedule_image_gen(task.id)
     return {"task_id": task.id, "status": task.status}
+
+
+async def _assert_refs_in_tenant(user_id: int, character_id: int | None, session_id: int | None, lang: str) -> None:
+    """校验 body 引用的 character_id / session_id 归属本账号租户，否则 404。"""
+    if character_id is None and session_id is None:
+        return
+    from sqlalchemy import select
+
+    from app.db.database import async_session_factory
+    from app.models.character import AICharacter
+    from app.application.tenant_service import tenant_scope_ids
+
+    async with async_session_factory() as db:
+        scope_ids = await tenant_scope_ids(db, user_id)
+        if character_id is not None:
+            hit = (await db.execute(
+                select(AICharacter.id).where(
+                    AICharacter.id == character_id, AICharacter.user_id.in_(scope_ids)
+                )
+            )).scalar_one_or_none()
+            if hit is None:
+                raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
+        if session_id is not None:
+            from app.application.chat_service import get_owned_session
+            if await get_owned_session(db, session_id, user_id) is None:
+                raise HTTPException(status_code=404, detail=tr_lang(lang, "session_not_found"))
 
 
 @router.get("/tasks/{task_id}")

@@ -8,6 +8,7 @@ import io
 import os
 import zipfile
 
+import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
@@ -17,6 +18,21 @@ from app.auth.deps import get_current_user_id
 
 ADMIN = 1
 OTHER = 200
+
+
+@pytest.fixture(autouse=True)
+def _server_admin_as_user1(monkeypatch):
+    '''账号独立 P2（契约 §3）：备份触发/下载收紧为 require_server_admin（写类/管理类端点）。
+
+    本文件聚焦「备份端点行为」，统一把 1 号账号视为 server_admin，使断言不依赖会话共享测试库里
+    id=1 的 server_admin 取值；非主账号 403 断言仍走真实判定（OTHER 不在 env 名单 → False）。
+    '''
+    from app.application import permission_service as perm
+
+    async def _is_server_admin(uid: int) -> bool:
+        return int(uid) == ADMIN
+
+    monkeypatch.setattr(perm, 'is_server_admin', _is_server_admin)
 
 
 def _make_client(user_id: int) -> TestClient:

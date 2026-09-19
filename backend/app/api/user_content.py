@@ -7,6 +7,7 @@ from app.db.database import async_session_factory
 from app.models.life import UserMemo
 from app.models.life import UserDiary
 from app.auth.deps import get_current_user_id
+from app.application.tenant_service import tenant_scope_ids
 from app.i18n import tr_lang
 from app.utils.logger import get_logger
 
@@ -33,9 +34,10 @@ def _diary_json(d):
 # ── 备忘录 ──
 @router.get("/memos")
 async def list_memos(user_id: int = Depends(get_current_user_id)):
+    """备忘录列表（账号独立 P1：本账号租户白名单——家庭内共享、跨家庭隔离）"""
     async with async_session_factory() as db:
         result = await db.execute(
-            select(UserMemo).where(UserMemo.user_id == user_id).order_by(UserMemo.updated_at.desc())
+            select(UserMemo).where(UserMemo.user_id.in_(await tenant_scope_ids(db, user_id))).order_by(UserMemo.updated_at.desc())
         )
         memos = result.scalars().all()
     return {"memos": [_memo_json(m) for m in memos], "total": len(memos)}
@@ -68,7 +70,7 @@ async def update_memo(
 ):
     async with async_session_factory() as db:
         memo = await db.get(UserMemo, memo_id)
-        if memo is None or memo.user_id != user_id:
+        if memo is None or memo.user_id not in await tenant_scope_ids(db, user_id):
             raise HTTPException(status_code=404, detail=tr_lang(lang, "memo_not_found"))
         if "title" in payload:
             memo.title = str(payload["title"] or "").strip()[:100] or None
@@ -90,7 +92,7 @@ async def delete_memo(
 ):
     async with async_session_factory() as db:
         memo = await db.get(UserMemo, memo_id)
-        if memo is None or memo.user_id != user_id:
+        if memo is None or memo.user_id not in await tenant_scope_ids(db, user_id):
             raise HTTPException(status_code=404, detail=tr_lang(lang, "memo_not_found"))
         await db.delete(memo)
         await db.commit()
@@ -100,9 +102,10 @@ async def delete_memo(
 # ── 用户日记 ──
 @router.get("/diaries")
 async def list_diaries(user_id: int = Depends(get_current_user_id)):
+    """日记列表（账号独立 P1：本账号租户白名单——家庭内共享、跨家庭隔离）"""
     async with async_session_factory() as db:
         result = await db.execute(
-            select(UserDiary).where(UserDiary.user_id == user_id).order_by(UserDiary.diary_date.desc())
+            select(UserDiary).where(UserDiary.user_id.in_(await tenant_scope_ids(db, user_id))).order_by(UserDiary.diary_date.desc())
         )
         diaries = result.scalars().all()
     return {"diaries": [_diary_json(d) for d in diaries], "total": len(diaries)}
@@ -121,10 +124,11 @@ async def get_diary(
     async with async_session_factory() as db:
         result = await db.execute(
             select(UserDiary).where(
-                UserDiary.user_id == user_id, UserDiary.diary_date == diary_date
-            )
+                UserDiary.user_id.in_(await tenant_scope_ids(db, user_id)),
+                UserDiary.diary_date == diary_date,
+            ).order_by(UserDiary.updated_at.desc()).limit(1)
         )
-        diary = result.scalar_one_or_none()
+        diary = result.scalars().first()
     if diary is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "no_diary_today"))
     return _diary_json(diary)
@@ -145,6 +149,9 @@ async def upsert_diary(
     if not content:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "content_empty"))
     async with async_session_factory() as db:
+        # 写入目标恒为「本账号自己的那一天」：账号独立 P1 下读放宽到租户，但写行归属
+        # 仍按 actor（新建行的 user_id=actor），故此处不能用租户白名单（否则同日多行会
+        # 触发 scalar_one_or_none 的 MultipleResultsFound，且会误改家庭其他成员的日记）。
         result = await db.execute(
             select(UserDiary).where(
                 UserDiary.user_id == user_id, UserDiary.diary_date == diary_date
@@ -169,7 +176,7 @@ async def delete_diary(
 ):
     async with async_session_factory() as db:
         diary = await db.get(UserDiary, diary_id)
-        if diary is None or diary.user_id != user_id:
+        if diary is None or diary.user_id not in await tenant_scope_ids(db, user_id):
             raise HTTPException(status_code=404, detail=tr_lang(lang, "diary_not_found"))
         await db.delete(diary)
         await db.commit()

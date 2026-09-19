@@ -18,6 +18,7 @@ from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.i18n import tr_lang
+from app.application.tenant_service import tenant_scope_ids
 from app.db.database import async_session_factory
 from app.models.chat import ChatGroup, ChatGroupMember, ChatGroupMessage, GroupMemory
 from app.models.character import AICharacter
@@ -118,9 +119,17 @@ def _select_speakers(chars, at_chars, muted_ids=frozenset(), max_speakers: int =
 
 
 async def _owned_group(db: AsyncSession, group_id: int, user_id: int, lang: str = "zh") -> ChatGroup:
+    """群归属闸门（账号独立 P1）：群属主须在本账号租户内，否则 404。
+
+    chat_group_messages 无 user_id/租户列，**所有**群消息读写的唯一鉴权就是本函数，
+    故新端点查 ChatGroupMessage 前必须先过这里。
+    """
     g = (
         await db.execute(
-            select(ChatGroup).where(ChatGroup.id == group_id, ChatGroup.user_id == user_id)
+            select(ChatGroup).where(
+                ChatGroup.id == group_id,
+                ChatGroup.user_id.in_(await tenant_scope_ids(db, user_id)),
+            )
         )
     ).scalar_one_or_none()
     if g is None:
@@ -738,7 +747,7 @@ async def create_group(
         raise HTTPException(status_code=400, detail=tr_lang(lang, "group_max_members", max=MAX_MEMBERS))
     # 校验角色归属
     cr = await db.execute(
-        select(AICharacter.id).where(AICharacter.id.in_(char_ids), AICharacter.user_id == user_id)
+        select(AICharacter.id).where(AICharacter.id.in_(char_ids), AICharacter.user_id.in_(await tenant_scope_ids(db, user_id)))
     )
     owned = {row[0] for row in cr.all()}
     if owned != set(char_ids):
@@ -758,10 +767,10 @@ async def list_groups(
     db: AsyncSession,
     user_id: int,
 ):
-    """群列表（含成员角色名）"""
+    """群列表（含成员角色名；账号独立 P1：本账号租户内共享、跨家庭隔离）"""
     groups = (
         await db.execute(
-            select(ChatGroup).where(ChatGroup.user_id == user_id).order_by(ChatGroup.id.desc())
+            select(ChatGroup).where(ChatGroup.user_id.in_(await tenant_scope_ids(db, user_id))).order_by(ChatGroup.id.desc())
         )
     ).scalars().all()
     items = []
@@ -799,7 +808,7 @@ async def add_members(
     if not char_ids:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "group_min_two"))
     cr = await db.execute(
-        select(AICharacter.id).where(AICharacter.id.in_(char_ids), AICharacter.user_id == user_id)
+        select(AICharacter.id).where(AICharacter.id.in_(char_ids), AICharacter.user_id.in_(await tenant_scope_ids(db, user_id)))
     )
     owned = {row[0] for row in cr.all()}
     if owned != set(char_ids):
@@ -899,7 +908,7 @@ async def list_mentions(
     after_id: int = 0,
 ):
     """@我的才弹：返回用户 @ 角色后该角色的回应（notify_user=1 且 id>after_id，时间正序）"""
-    gids = select(ChatGroup.id).where(ChatGroup.user_id == user_id)
+    gids = select(ChatGroup.id).where(ChatGroup.user_id.in_(await tenant_scope_ids(db, user_id)))
     rows = (
         await db.execute(
             select(ChatGroupMessage)

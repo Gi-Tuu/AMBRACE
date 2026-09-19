@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.status import classify as _classify_status
+from app.application.tenant_service import tenant_scope_ids
 from app.db.database import async_session_factory
 from app.i18n import tr_lang
 from app.models.character import AICharacter
@@ -30,11 +31,15 @@ _logger = get_logger("application.characters")
 
 
 async def _get_owned_character(db: AsyncSession, character_id: int, user_id: int, lang: str = "zh"):
-    """按用户归属获取角色，不存在或非本人返回 404"""
+    """按租户归属获取角色：不在本账号租户内（跨家庭）→ 404。
+
+    账号独立 P1：归属谓词统一走 app.application.tenant_service（tenant_key_mode=family 时
+    口径为家庭根，家庭内共享；切 user 即每账号独立）。
+    """
     result = await db.execute(
         select(AICharacter).where(
             AICharacter.id == character_id,
-            AICharacter.user_id == user_id,
+            AICharacter.user_id.in_(await tenant_scope_ids(db, user_id)),
         )
     )
     char = result.scalar_one_or_none()
@@ -207,7 +212,7 @@ async def _supersede_similar_world_facts(
     rows = (await db2.execute(
         select(WorldFact).where(
             WorldFact.character_id == character_id,
-            WorldFact.user_id == user_id,
+            WorldFact.user_id.in_(await tenant_scope_ids(db2, user_id)),
             WorldFact.predicate == predicate,
             WorldFact.status == "active",
         )
@@ -300,10 +305,10 @@ async def list_characters(
     db: AsyncSession,
     user_id: int,
 ):
-    """获取当前用户的 AI 角色列表"""
+    """获取当前用户租户的 AI 角色列表（账号独立 P1：家庭内共享、跨家庭隔离）"""
     result = await db.execute(
         select(AICharacter).where(
-            AICharacter.user_id == user_id,
+            AICharacter.user_id.in_(await tenant_scope_ids(db, user_id)),
             AICharacter.is_active == True,
         )
     )
@@ -333,11 +338,11 @@ async def get_character(
     user_id: int,
     lang: str,
 ):
-    """获取单个 AI 角色详情"""
+    """获取单个 AI 角色详情（账号独立 P1：租户归属过滤）"""
     result = await db.execute(
         select(AICharacter).where(
             AICharacter.id == character_id,
-            AICharacter.user_id == user_id,
+            AICharacter.user_id.in_(await tenant_scope_ids(db, user_id)),
         )
     )
     character = result.scalar_one_or_none()
@@ -416,7 +421,7 @@ async def delete_character(
             # 重名处理：其他同名角色（id 不同）的记忆不参与匹配，避免误判为提到被删角色
             same_name_ids = set((await db.execute(
                 select(AICharacter.id).where(
-                    AICharacter.user_id == user_id,
+                    AICharacter.user_id.in_(await tenant_scope_ids(db, user_id)),
                     AICharacter.id != character_id,
                     AICharacter.name == char_name,
                 )
@@ -424,7 +429,7 @@ async def delete_character(
             # #70-C OBS-4：跨角色重名查询属维护性查询，**故意包含历史**（含 superseded/stale，
             # 便于重名先后离开也能分别记录/去重），故不加 _active_status_clause()。
             stmt = select(Memory).where(
-                Memory.user_id == user_id,
+                Memory.user_id.in_(await tenant_scope_ids(db, user_id)),
                 Memory.character_id != character_id,
                 Memory.is_archived == False,
             )
@@ -769,7 +774,7 @@ async def update_lorebook(
     import json as _json
     async with async_session_factory() as db2:
         entry = await db2.get(LorebookEntry, entry_id)
-        if entry is None or entry.character_id != character_id or entry.user_id != user_id:
+        if entry is None or entry.character_id != character_id or entry.user_id not in await tenant_scope_ids(db2, user_id):
             raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
         entry.title = data.title.strip()[:50]
         entry.content = data.content.strip()
@@ -797,7 +802,7 @@ async def delete_lorebook(
     from app.models.memory import LorebookEntry
     async with async_session_factory() as db2:
         entry = await db2.get(LorebookEntry, entry_id)
-        if entry is None or entry.character_id != character_id or entry.user_id != user_id:
+        if entry is None or entry.character_id != character_id or entry.user_id not in await tenant_scope_ids(db2, user_id):
             raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
         await db2.delete(entry)
         await db2.commit()
@@ -818,7 +823,7 @@ async def list_world_facts(
     async with async_session_factory() as db2:
         rows = (await db2.execute(
             select(WorldFact)
-            .where(WorldFact.character_id == character_id, WorldFact.user_id == user_id, WorldFact.status == "active")
+            .where(WorldFact.character_id == character_id, WorldFact.user_id.in_(await tenant_scope_ids(db2, user_id)), WorldFact.status == "active")
             .order_by(WorldFact.is_authoritative.desc(), WorldFact.asserted_at.desc())
             .limit(50)
         )).scalars().all()
@@ -895,13 +900,14 @@ async def update_world_fact(
     now = now_naive_utc()
     async with async_session_factory() as db2:
         f = await db2.get(WorldFact, fact_id)
-        if (f is None or f.character_id != character_id or f.user_id != user_id
+        if (f is None or f.character_id != character_id
+                or f.user_id not in await tenant_scope_ids(db2, user_id)
                 or f.status != "active"):
             raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
         olds = (await db2.execute(
             select(WorldFact).where(
                 WorldFact.character_id == character_id,
-                WorldFact.user_id == user_id,
+                WorldFact.user_id.in_(await tenant_scope_ids(db2, user_id)),
                 WorldFact.id != fact_id,
                 WorldFact.subject_type == f.subject_type,
                 WorldFact.subject_id == f.subject_id,
@@ -941,7 +947,8 @@ async def delete_world_fact(
     from app.models.memory import WorldFact
     async with async_session_factory() as db2:
         f = await db2.get(WorldFact, fact_id)
-        if (f is None or f.character_id != character_id or f.user_id != user_id
+        if (f is None or f.character_id != character_id
+                or f.user_id not in await tenant_scope_ids(db2, user_id)
                 or f.status != "active"):
             raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
         f.status = "expired"
@@ -968,7 +975,7 @@ async def get_world_fact_history(
     from app.events.facts import get_fact_history
     async with async_session_factory() as db2:
         f = await db2.get(WorldFact, fact_id)
-        if f is None or f.character_id != character_id or f.user_id != user_id:
+        if f is None or f.character_id != character_id or f.user_id not in await tenant_scope_ids(db2, user_id):
             raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
         return await get_fact_history(
             character_id=character_id, user_id=user_id,

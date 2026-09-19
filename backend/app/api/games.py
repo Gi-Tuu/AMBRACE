@@ -92,6 +92,19 @@ async def create_session(data: dict, user_id: int = Depends(get_current_user_id)
     group_id = data.get("group_id")
     if group_id is not None:
         group_id = int(group_id)
+        # 账号独立 P1（09-19 审计修正）：群归属校验——旧写法不校验 group_id 归属，
+        # 可把对局挂到别家群，事件经 _mirror_to_group 写进他人群并被其 LLM prompt 读到。
+        from app.models.chat import ChatGroup
+        from app.application.tenant_service import tenant_scope_ids
+        async with async_session_factory() as _gdb:
+            _owned_group = (await _gdb.execute(
+                select(ChatGroup.id).where(
+                    ChatGroup.id == group_id,
+                    ChatGroup.user_id.in_(await tenant_scope_ids(_gdb, user_id)),
+                )
+            )).scalar_one_or_none()
+        if _owned_group is None:
+            raise HTTPException(404, "群聊不存在")
 
     # 拉取 AI 角色信息（人名/人设/关系）
     all_char_ids = list(dict.fromkeys(player_ids + spectator_ids))

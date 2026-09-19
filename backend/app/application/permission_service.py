@@ -256,11 +256,18 @@ from app.models.user import User
 
 _ADMIN_CACHE_TTL = 30.0
 _admin_cache: dict[int, tuple[bool, float]] = {}
+_server_admin_cache: dict[int, tuple[bool, float]] = {}
 
 
 def _invalidate_admin_cache() -> None:
     """主账号集合变更后失效缓存（设置/取消主账号时调用）"""
     _admin_cache.clear()
+    _server_admin_cache.clear()
+
+
+def _invalidate_server_admin_cache() -> None:
+    """服务器控制台管理员集合变更后失效缓存（账号独立 P1）。"""
+    _server_admin_cache.clear()
 
 
 def _is_admin_fallback(user_id: int) -> bool:
@@ -297,3 +304,97 @@ def is_admin_user_sync(user_id: int) -> bool:
     if cached and cached[1] > now:
         return cached[0]
     return _is_admin_fallback(user_id)
+
+
+# ================= 服务器控制台管理员（账号独立 P1，2026-09-19） =================
+# is_admin = 家庭主账号（家庭内管理）；server_admin = 服务器控制台管理员（跨家庭）。
+# 数据源：users.server_admin（DB 权威）；读失败/用户不存在时回落 settings.admin_user_ids
+# （与 is_admin_user 同口径的兜底，避免远古库缺列时把唯一管理员锁死）。
+
+
+async def _load_server_admin_from_db(user_id: int) -> bool:
+    async with async_session_factory() as db:
+        row = (await db.execute(select(User.server_admin).where(User.id == user_id))).first()
+    if row is None:
+        return _is_admin_fallback(user_id)
+    return bool(row.server_admin)
+
+
+async def is_server_admin(user_id: int) -> bool:
+    """服务器控制台管理员判定（async）：读 users.server_admin + 30s 短缓存；失败降级 env 兜底"""
+    now = _time.time()
+    cached = _server_admin_cache.get(user_id)
+    if cached and cached[1] > now:
+        return cached[0]
+    try:
+        result = await _load_server_admin_from_db(user_id)
+    except Exception:
+        result = _is_admin_fallback(user_id)
+    _server_admin_cache[user_id] = (result, now + _ADMIN_CACHE_TTL)
+    return result
+
+
+# ================= 账号门禁（账号独立 P2，2026-09-19） =================
+# 控制台可对每个账号设：
+# - users.disabled_at 非空 = 禁用（登录 403 + 后续请求在 get_current_user_id 阶段 403）；
+# - users.llm_mode = 模型来源策略（own / default_allowed / blocked），生效点在四模态唯一出口
+#   app/application/llm_config_service.resolve_modality_config。
+# 二者同源于 users 一行 → 共用一个 30s 短缓存（契约 §4：避免每请求查库）。
+# fail-open：读失败/用户不存在 → (False, default_allowed)，与改动前行为一致（不给旧库/异常路径
+# 制造新的 403）。
+
+LLM_MODE_OWN = "own"
+LLM_MODE_DEFAULT_ALLOWED = "default_allowed"
+LLM_MODE_BLOCKED = "blocked"
+LLM_MODES = (LLM_MODE_OWN, LLM_MODE_DEFAULT_ALLOWED, LLM_MODE_BLOCKED)
+DEFAULT_LLM_MODE = LLM_MODE_DEFAULT_ALLOWED
+
+_account_state_cache: dict[int, tuple[tuple[bool, str], float]] = {}
+
+
+def _invalidate_account_state_cache(user_id: int | None = None) -> None:
+    """账号门禁状态变更后失效缓存（禁用/启用、llm_mode 变更时调用；None=全清）。"""
+    if user_id is None:
+        _account_state_cache.clear()
+    else:
+        _account_state_cache.pop(int(user_id), None)
+
+
+async def _load_account_state_from_db(user_id: int) -> tuple[bool, str]:
+    async with async_session_factory() as db:
+        row = (await db.execute(
+            select(User.disabled_at, User.llm_mode).where(User.id == user_id)
+        )).first()
+    if row is None:
+        return False, DEFAULT_LLM_MODE
+    mode = str(row.llm_mode or DEFAULT_LLM_MODE).strip().lower()
+    if mode not in LLM_MODES:
+        mode = DEFAULT_LLM_MODE
+    return bool(row.disabled_at is not None), mode
+
+
+async def get_account_state(user_id: int | None) -> tuple[bool, str]:
+    """(是否禁用, llm_mode)：users 一行 + 30s 短缓存；异常/缺行 → (False, default_allowed)。"""
+    if not user_id or int(user_id) <= 0:
+        return False, DEFAULT_LLM_MODE
+    uid = int(user_id)
+    now = _time.time()
+    cached = _account_state_cache.get(uid)
+    if cached and cached[1] > now:
+        return cached[0]
+    try:
+        result = await _load_account_state_from_db(uid)
+    except Exception:
+        result = (False, DEFAULT_LLM_MODE)
+    _account_state_cache[uid] = (result, now + _ADMIN_CACHE_TTL)
+    return result
+
+
+async def is_account_disabled(user_id: int | None) -> bool:
+    """账号是否被控制台禁用（缺列/异常 → False，fail-open）。"""
+    return (await get_account_state(user_id))[0]
+
+
+async def get_account_llm_mode(user_id: int | None) -> str:
+    """账号模型来源策略（缺列/异常 → default_allowed，即现状行为）。"""
+    return (await get_account_state(user_id))[1]

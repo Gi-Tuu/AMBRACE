@@ -7,6 +7,7 @@ from app.schemas.memory import MemoryResponse, MemoryListResponse
 from app.memory import list_memories
 from app.memory.sources import memory_source_meta
 from app.auth.deps import get_current_user_id
+from app.application.tenant_service import tenant_scope_ids
 from app.i18n import tr_lang
 # P3-12（2026-09-17）：async_session_factory / Memory / AICharacter / purge_memory 原在多个函数内重复
 # import，统一上提。其中 session 工厂经**模块对象引用**（db_mod.async_session_factory）调用而非早绑定
@@ -29,9 +30,11 @@ async def get_memories(
     limit: int = 800,
     user_id: int = Depends(get_current_user_id),
 ):
-    """获取记忆列表"""
+    """获取记忆列表（账号独立 P1：按本账号租户白名单过滤——家庭内共享、跨家庭隔离）"""
     _logger.debug("List memories: character_id=%s type=%s skip=%d limit=%d", character_id, memory_type, skip, limit)
-    memories, total = await list_memories(user_id=user_id,
+    async with db_mod.async_session_factory() as _db:
+        scope_ids = await tenant_scope_ids(_db, user_id)
+    memories, total = await list_memories(user_ids=scope_ids,
         character_id=character_id,
         memory_type=memory_type,
         skip=skip,
@@ -49,12 +52,12 @@ async def get_memories(
 
 
 async def _get_owned_memory(memory_id: int, user_id: int):
-    """按归属获取记忆（用户本人 + 本人角色的记忆；置顶摘要为角色级归属）"""
+    """按租户归属获取记忆（账号独立 P1：跨家庭 → None → 404；置顶摘要为角色级归属）"""
     async with db_mod.async_session_factory() as db:
         result = await db.execute(
             select(Memory).where(
                 Memory.id == memory_id,
-                Memory.user_id == user_id,
+                Memory.user_id.in_(await tenant_scope_ids(db, user_id)),
             )
         )
         mem = result.scalar_one_or_none()
@@ -109,6 +112,8 @@ async def get_memory_chain(
         raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
     from app.memory.chain_builder import get_chain_nodes
     nodes = await get_chain_nodes(memory_id)
+    async with db_mod.async_session_factory() as _db:
+        scope_ids = await tenant_scope_ids(_db, user_id)
     return {"status": "ok", "chain": [
         {
             "id": x.id,
@@ -123,7 +128,7 @@ async def get_memory_chain(
             "is_archived": x.is_archived,
         }
         for x in nodes
-        if x.user_id == user_id
+        if x.user_id in scope_ids
     ]}
 
 
@@ -142,7 +147,7 @@ async def update_memory_content(
         raise HTTPException(status_code=400, detail=tr_lang(lang, "content_empty"))
     async with db_mod.async_session_factory() as db:
         mem = (await db.execute(
-            select(Memory).where(Memory.id == memory_id, Memory.user_id == user_id)
+            select(Memory).where(Memory.id == memory_id, Memory.user_id.in_(await tenant_scope_ids(db, user_id)))
         )).scalar_one_or_none()
         if not mem:
             raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
@@ -185,7 +190,7 @@ async def update_memory(
     if await _get_owned_memory(memory_id, user_id) is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
     async with db_mod.async_session_factory() as db:
-        result = await db.execute(select(Memory).where(Memory.id == memory_id, Memory.user_id == user_id))
+        result = await db.execute(select(Memory).where(Memory.id == memory_id, Memory.user_id.in_(await tenant_scope_ids(db, user_id))))
         mem = result.scalar_one_or_none()
         if not mem:
             raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
@@ -226,7 +231,7 @@ async def deduplicate(
 ):
     """对该角色去重记忆"""
     async with db_mod.async_session_factory() as db:
-        cresult = await db.execute(select(AICharacter).where(AICharacter.id == character_id, AICharacter.user_id == user_id))
+        cresult = await db.execute(select(AICharacter).where(AICharacter.id == character_id, AICharacter.user_id.in_(await tenant_scope_ids(db, user_id))))
         if cresult.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
     from app.memory import deduplicate_memories
@@ -243,7 +248,7 @@ async def summarize_character_memories(
 ):
     """生成/刷新角色记忆置顶摘要（6 小时节流）"""
     async with db_mod.async_session_factory() as db:
-        cresult = await db.execute(select(AICharacter).where(AICharacter.id == character_id, AICharacter.user_id == user_id))
+        cresult = await db.execute(select(AICharacter).where(AICharacter.id == character_id, AICharacter.user_id.in_(await tenant_scope_ids(db, user_id))))
         if cresult.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
     from app.memory import summarize_memories
@@ -263,7 +268,7 @@ async def remove_memory_tree(
         raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
     async with db_mod.async_session_factory() as db:
         rows = (await db.execute(
-            select(Memory).where(Memory.parent_id == memory_id, Memory.user_id == user_id)
+            select(Memory).where(Memory.parent_id == memory_id, Memory.user_id.in_(await tenant_scope_ids(db, user_id)))
         )).scalars().all()
     if not cascade:
         return {

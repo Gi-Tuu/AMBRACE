@@ -110,8 +110,14 @@ def extract_text_ocr(image_path: str) -> str:
         return ""
 
 
-async def get_vlm_config() -> dict:
-    """识图生效配置：服务器级 DB（vlm_configs user_id=0）优先，.env 兜底"""
+async def get_vlm_config(user_id: int | None = None) -> dict:
+    """识图生效配置：四模态统一回落链（用户/家庭/服务器 DB）优先，.env 兜底。
+
+    账号独立 P1（2026-09-19）：DB 查表收敛到唯一出口
+    ``llm_config_service.resolve_modality_config("vlm", ...)``（此前本函数直读
+    ``vlm_configs`` 的 SERVER_CONFIG_UID 哨兵行）。``user_id`` 缺省 None 时链路直达
+    服务器级默认，行为与改造前逐字段一致。
+    """
     cfg = {
         "enabled": bool(settings.vlm_enabled),
         "base_url": settings.vlm_base_url,
@@ -120,20 +126,14 @@ async def get_vlm_config() -> dict:
         "timeout_sec": settings.vlm_timeout_sec,
     }
     try:
-        from sqlalchemy import select
-        from app.db.database import async_session_factory
-        from app.agent.llm_client import SERVER_CONFIG_UID
-        from app.models.config import VlmConfig
-        async with async_session_factory() as db:
-            row = (
-                await db.execute(select(VlmConfig).where(VlmConfig.user_id == SERVER_CONFIG_UID))
-            ).scalar_one_or_none()
-        if row is not None and row.enabled and (row.base_url or row.api_key):
+        from app.application.llm_config_service import resolve_modality_config
+        row = await resolve_modality_config("vlm", user_id=user_id)
+        if row is not None:
             cfg = {
                 "enabled": True,
-                "base_url": row.base_url or settings.vlm_base_url,
-                "api_key": row.api_key or settings.vlm_api_key,
-                "model": row.model or settings.vlm_model,
+                "base_url": row.get("base_url") or settings.vlm_base_url,
+                "api_key": row.get("api_key") or settings.vlm_api_key,
+                "model": row.get("model") or settings.vlm_model,
                 "timeout_sec": settings.vlm_timeout_sec,
             }
     except Exception as e:

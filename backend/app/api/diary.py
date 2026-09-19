@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
 from app.models.life import AIDiary
 from app.models.character import AICharacter
+from app.application.tenant_service import tenant_scope_ids
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
 from app.schemas.diary import DiaryEntryResponse, DiaryListResponse
@@ -16,11 +17,15 @@ _logger = get_logger("api.diary")
 
 
 async def _check_character_owned(db: AsyncSession, character_id: int, user_id: int, lang: str = "zh"):
-    """校验角色归属当前用户"""
+    """校验角色归属本账号租户（账号独立 P1：跨家庭 → 404，家庭内共享）。
+
+    日记无独立 user_id 列（AIDiary 仅 character_id），归属完全由角色归属承载，
+    故此处是日记面唯一的租户闸门。
+    """
     result = await db.execute(
         select(AICharacter).where(
             AICharacter.id == character_id,
-            AICharacter.user_id == user_id,
+            AICharacter.user_id.in_(await tenant_scope_ids(db, user_id)),
         )
     )
     if result.scalar_one_or_none() is None:

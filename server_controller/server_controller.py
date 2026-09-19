@@ -1176,6 +1176,245 @@ def _fmt_int(v) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 管理面 HTTP 客户端（账号独立 P2，2026-09-19）
+#
+# 契约 §0 铁律：控制台只调 HTTP API，禁止直连 DB；管理逻辑全部落在后端服务层。
+# 统一前缀 /api/v1/admin/server，登录走 POST /api/v1/auth/login 拿 JWT，
+# 缓存在 backend/data/console_token.json（该文件含凭据，不入 git）。
+#
+# 线程约定：以下函数一律在后台线程里被调用（见 ControllerApp._run_admin），
+# 任何网络/解析异常都在本层收敛成 AdminApiError，绝不向外抛到 Tk 主循环。
+# ═══════════════════════════════════════════════════════════════
+
+CONSOLE_TOKEN_FILE = os.path.join(SERVER_DIR, "data", "console_token.json")
+ADMIN_API_PREFIX = "/api/v1/admin/server"
+AUTH_LOGIN_PATH = "/api/v1/auth/login"
+ADMIN_TIMEOUT = 6.0
+# 模态键顺序（契约 §1.2：key ∈ llm|image|vlm|speech|multimodal），仅用于展示排序
+MODALITY_ORDER = ("llm", "multimodal", "image", "vlm", "speech")
+ACCOUNT_LLM_MODES = ("own", "default_allowed", "blocked")
+
+
+class AdminApiError(Exception):
+    """管理面请求失败。
+
+    code：0=网络不可达/响应不可解析，401/403=登录态或权限问题，
+    404=后端接口未就绪（另一端在并行开发），其余为后端原样返回的状态码。
+    """
+
+    def __init__(self, message, code=0, path=""):
+        Exception.__init__(self, message)
+        self.message = message
+        self.code = code
+        self.path = path
+
+
+_CONSOLE_SESSION = {}
+
+
+def _console_token_read() -> dict:
+    """读取缓存登录态 {token, username, user_id}；文件缺失/损坏时返回空 dict。"""
+    try:
+        with open(CONSOLE_TOKEN_FILE, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("token"):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def _console_session() -> dict:
+    """当前会话（内存优先，首次访问时从 console_token.json 恢复）。"""
+    global _CONSOLE_SESSION
+    if not _CONSOLE_SESSION:
+        _CONSOLE_SESSION = _console_token_read()
+    return _CONSOLE_SESSION
+
+
+def _console_login_state() -> str:
+    """已登录用户名；未登录返回空串。"""
+    s = _console_session()
+    return str(s.get("username") or "") if s.get("token") else ""
+
+
+def _console_set_session(token: str, username: str = "", user_id=None) -> None:
+    global _CONSOLE_SESSION
+    _CONSOLE_SESSION = {"token": token, "username": username, "user_id": user_id}
+    payload = dict(_CONSOLE_SESSION)
+    payload["saved_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        os.makedirs(os.path.dirname(CONSOLE_TOKEN_FILE), exist_ok=True)
+        with open(CONSOLE_TOKEN_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception:
+        # 落盘失败只意味着下次启动要重新登录，不影响本次会话
+        _safe_traceback()
+
+
+def _console_clear_session() -> None:
+    global _CONSOLE_SESSION
+    _CONSOLE_SESSION = {}
+    try:
+        if os.path.exists(CONSOLE_TOKEN_FILE):
+            os.remove(CONSOLE_TOKEN_FILE)
+    except Exception:
+        _safe_traceback()
+
+
+def _http_json(method: str, path: str, body=None, token: str = "", timeout: float = ADMIN_TIMEOUT):
+    """发一个 JSON HTTP 请求，返回 (status, parsed)。网络失败抛 AdminApiError(code=0)。
+
+    非 2xx 不抛（HTTPError 的响应体也要读出来，后端可读提示在 detail 里）；
+    响应体不是 JSON 时返回空 dict，由上层按状态码给文案。
+    """
+    import urllib.error
+    import urllib.request
+    url = _target_base() + path
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    if token:
+        req.add_header("Authorization", "Bearer " + str(token))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read()
+            status = int(getattr(r, "status", 200) or 200)
+    except urllib.error.HTTPError as e:
+        status = int(e.code or 0)
+        try:
+            raw = e.read()
+        except Exception:
+            raw = b""
+    except Exception as e:
+        raise AdminApiError("无法连接后端 %s（%s）" % (url, e), code=0, path=path)
+    try:
+        parsed = json.loads(raw.decode("utf-8")) if raw else {}
+    except Exception:
+        parsed = {}
+    return status, parsed
+
+
+def _err_text(parsed, default: str = "") -> str:
+    """从 FastAPI 响应里取可读 detail（detail 可能是 str 或 dict）。"""
+    if isinstance(parsed, dict):
+        detail = parsed.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()[:200]
+        if isinstance(detail, dict):
+            for k in ("message", "detail", "msg"):
+                v = detail.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()[:200]
+    return default
+
+
+def _admin_request(method: str, sub: str, body=None) -> dict:
+    """管理面统一请求（自动带 Bearer）。成功返回 dict，失败抛 AdminApiError。
+
+    语义化状态码（前端不做业务规则，只翻译后端返回）：
+    - 无 token → 401（不发请求）
+    - 401 → 清会话（token 过期/失效）
+    - 403 → 保留会话：可能是非 server_admin，也可能是开关被服务器锁定
+    - 404/405 → 接口未就绪（后端另一路在并行开发）
+    """
+    path = ADMIN_API_PREFIX + sub
+    token = str(_console_session().get("token") or "")
+    if not token:
+        raise AdminApiError("未登录或权限不足，请重新登录", code=401, path=path)
+    status, data = _http_json(method, path, body=body, token=token)
+    if status == 401:
+        _console_clear_session()
+        raise AdminApiError("未登录或权限不足，请重新登录", code=401, path=path)
+    if status == 403:
+        raise AdminApiError(_err_text(data, "未登录或权限不足，请重新登录"), code=403, path=path)
+    if status in (404, 405):
+        raise AdminApiError("接口未就绪：%s %s" % (method, path), code=404, path=path)
+    if not (200 <= status < 300):
+        raise AdminApiError("后端返回 %d：%s" % (status, _err_text(data, str(data)[:200])),
+                            code=status, path=path)
+    return data if isinstance(data, dict) else {"data": data}
+
+
+def _admin_login(username: str, password: str) -> dict:
+    """POST /api/v1/auth/login，成功则缓存 JWT 到 console_token.json。"""
+    status, data = _http_json("POST", AUTH_LOGIN_PATH,
+                              body={"username": username, "password": password})
+    if status in (401, 403):
+        raise AdminApiError(_err_text(data, "用户名或密码不正确"), code=status, path=AUTH_LOGIN_PATH)
+    if status == 429:
+        raise AdminApiError(_err_text(data, "尝试次数过多，请稍后再试"), code=status, path=AUTH_LOGIN_PATH)
+    if not (200 <= status < 300):
+        raise AdminApiError("登录失败（后端返回 %d）：%s" % (status, _err_text(data, str(data)[:200])),
+                            code=status, path=AUTH_LOGIN_PATH)
+    token = str(data.get("access_token") or "") if isinstance(data, dict) else ""
+    if not token:
+        raise AdminApiError("登录响应缺少 access_token", code=0, path=AUTH_LOGIN_PATH)
+    _console_set_session(token, str(data.get("username") or username), data.get("user_id"))
+    return data
+
+
+def _sorted_modalities(rows) -> list:
+    """按契约模态顺序排序，未知键排在后面（后端新增模态不需要改前端）。"""
+    def _rank(r):
+        k = str(r.get("key") or "")
+        return (MODALITY_ORDER.index(k), k) if k in MODALITY_ORDER else (99, k)
+    try:
+        return sorted([r for r in (rows or []) if isinstance(r, dict)], key=_rank)
+    except Exception:
+        return list(rows or [])
+
+
+def _fmt_audit_val(v, limit: int = 46) -> str:
+    """审计「前/后值」摘要：dict/list 压成 k=v; k=v，密钥类字段打码，超长截断。"""
+    if v is None or v == "" or v == {} or v == []:
+        return "—"
+    s = ""
+    try:
+        if isinstance(v, dict):
+            parts = []
+            for k, val in v.items():
+                lk = str(k).lower()
+                if any(t in lk for t in ("api_key", "token", "password", "secret")):
+                    val = "***" if val else "—"
+                parts.append("%s=%s" % (k, val))
+            s = "; ".join(parts)
+        elif isinstance(v, (list, tuple)):
+            s = "; ".join(str(x) for x in v)
+        else:
+            s = str(v)
+    except Exception:
+        s = str(v)
+    s = s.replace("\n", " ").strip()
+    if not s:
+        return "—"
+    return s[:limit] + "…" if len(s) > limit else s
+
+
+def _clear_frame(frame) -> None:
+    """清空容器内子控件（列表重渲染用，主线程调用）。"""
+    try:
+        for child in frame.winfo_children():
+            child.destroy()
+    except Exception:
+        _safe_traceback()
+
+
+def _fmt_dt(v) -> str:
+    """后端 UTC naive 时间串 → 北京时间展示（只截断到分钟，解析失败原样显示）。"""
+    s = str(v or "").strip()
+    if not s:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "").replace("/", "-"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone(timedelta(hours=8))).strftime("%m-%d %H:%M")
+    except Exception:
+        return s.replace("T", " ")[:16]
+
+
+# ═══════════════════════════════════════════════════════════════
 # 主应用
 # ═══════════════════════════════════════════════════════════════
 
@@ -1183,6 +1422,11 @@ class ControllerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self._q: "queue.Queue[tuple]" = queue.Queue()
+        # 管理面（账号独立 P2）：页内控件登记表 + 请求串行闸门
+        self._admin_meta = {}
+        self._admin_busy = False
+        self._admin_login_tip = None
+        self._admin_login_pwd_var = None
 
         # 加载主题
         cfg0 = _load_config()
@@ -1387,10 +1631,16 @@ class ControllerApp:
         self._content.pack(side="left", fill="both", expand=True)
 
         self._nav_widgets = {}
+        self._admin_meta = {}
+        self._admin_login_tip = None
         nav_items = [
             ("dashboard", "仪表盘", "dashboard"),
             ("server", "服务器控制", "server"),
             ("log", "运行日志", "log"),
+            ("models", "默认模型", "dashboard"),
+            ("accounts", "账号管理", "diamond"),
+            ("flags", "开关与权限", "dot"),
+            ("audit", "审计", "log"),
         ]
         for key, label, icon in nav_items:
             item = tk.Frame(self._sidebar, bg=t.sidebar, cursor="hand2")
@@ -1411,6 +1661,10 @@ class ControllerApp:
             "dashboard": self._build_dashboard_page(),
             "server": self._build_server_page(),
             "log": self._build_log_page(),
+            "models": self._build_models_page(),
+            "accounts": self._build_accounts_page(),
+            "flags": self._build_flags_page(),
+            "audit": self._build_audit_page(),
         }
 
     def _select_page(self, key: str) -> None:
@@ -1436,6 +1690,7 @@ class ControllerApp:
             self._refresh_log_tick()
         else:
             self._stop_log_timer()
+        self._maybe_load_admin_page(key)
 
     def _nav_hover(self, key: str, entering: bool) -> None:
         if key == self._nav:
@@ -1785,6 +2040,604 @@ class ControllerApp:
         self.log_box.pack(fill="both", expand=True)
         return page
 
+    # ── 管理面（账号独立 P2）：公共骨架 ──
+
+    def _make_admin_page(self, title: str, subtitle: str):
+        """管理页容器：与仪表盘/服务器页同一纵向滚动范式，返回 (page, pad)。"""
+        t = self.theme
+        page = tk.Frame(self._content, bg=t.bg)
+        _scroll = tk.Canvas(page, bg=t.bg, highlightthickness=0, bd=0)
+        _sb = ttk.Scrollbar(page, orient="vertical", command=_scroll.yview)
+        _scroll.configure(yscrollcommand=_sb.set)
+        _sb.pack(side="right", fill="y")
+        _scroll.pack(side="left", fill="both", expand=True)
+        pad = tk.Frame(_scroll, bg=t.bg)
+        _pad_win = _scroll.create_window((SP_LG, SP_SM), window=pad, anchor="nw")
+        pad.bind("<Configure>",
+                 lambda e: _scroll.configure(scrollregion=_scroll.bbox("all")))
+
+        def _fit_width(e, c=_scroll, w=_pad_win):
+            c.itemconfig(w, width=max(1, e.width - 2 * SP_LG))
+        _scroll.bind("<Configure>", _fit_width)
+
+        def _on_enter(e, c=_scroll):
+            c.bind_all("<MouseWheel>",
+                       lambda ev: c.yview_scroll(int(-ev.delta / 120), "units"))
+
+        def _on_leave(e, c=_scroll):
+            c.unbind_all("<MouseWheel>")
+        _scroll.bind("<Enter>", _on_enter)
+        _scroll.bind("<Leave>", _on_leave)
+
+        tk.Label(pad, text=title, fg=t.text, bg=t.bg, font=(FONT, 16, "bold")).pack(anchor="w")
+        tk.Label(pad, text=subtitle, fg=t.text_muted, bg=t.bg,
+                 font=(FONT, 11)).pack(anchor="w", pady=(2, SP_MD))
+        return page, pad
+
+    def _admin_card(self, parent, **pack_kw):
+        """自适应高度圆角卡片（列表内容长短不定，不钉死高度以免裁切）。"""
+        t = self.theme
+        card = RoundedCard(parent, t, pad=3, fit_inner=True)
+        card.pack(**pack_kw)
+        inner = card.inner
+        inner.config(padx=SP_LG, pady=SP_SM)
+        return card, inner
+
+    def _admin_login_bar(self, pad, refresh_cb):
+        """每页统一的登录态条（当前账号 + 刷新 + 登录/退出）+ 本页结果提示行。"""
+        t = self.theme
+        _, bar = self._admin_card(pad, fill="x", pady=(0, SP_SM))
+        row = tk.Frame(bar, bg=t.card)
+        row.pack(fill="x")
+        who = _console_login_state()
+        dot = _make_icon(row, 10, "dot", t.success if who else t.error, t.card)
+        dot.pack(side="left")
+        lab = tk.Label(row, text=("已登录：%s" % who) if who else "未登录",
+                       fg=t.text if who else t.error, bg=t.card, font=(FONT, 11, "bold"))
+        lab.pack(side="left", padx=(SP_XS, 0))
+        RoundedButton(row, t, "刷新", command=refresh_cb, variant="primary",
+                      height=28, font_size=10).pack(side="right")
+        RoundedButton(row, t, "退出", command=self._admin_logout, variant="neutral",
+                      height=28, font_size=10).pack(side="right", padx=(0, SP_XS))
+        RoundedButton(row, t, "登录", command=self._open_admin_login, variant="neutral",
+                      height=28, font_size=10).pack(side="right", padx=(0, SP_XS))
+        hint = tk.Label(bar, text="", anchor="w", justify="left", fg=t.text_muted,
+                        bg=t.card, font=(FONT, 10))
+        hint.pack(fill="x", pady=(SP_XS, 0))
+        return lab, dot, hint
+
+    def _set_admin_status(self, key: str, text: str, kind: str = "info") -> None:
+        """页内结果提示（只做显示，不做业务判断）。kind: info/ok/warn/err/pending。"""
+        meta = self._admin_meta.get(key)
+        if not meta:
+            return
+        t = self.theme
+        color = {"ok": t.success, "warn": t.warning, "err": t.error,
+                 "pending": t.accent_glow}.get(kind, t.text_muted)
+        try:
+            meta["status"].config(text=text, fg=color)
+        except Exception:
+            _safe_traceback()
+
+    def _admin_note(self, key: str, text: str) -> None:
+        """整页占位提示（接口未就绪 / 未登录时把请求路径显示出来，方便联调）。"""
+        meta = self._admin_meta.get(key)
+        if not meta:
+            return
+        t = self.theme
+        body = meta["body"]
+        _clear_frame(body)
+        tk.Label(body, text=text, anchor="w", justify="left", fg=t.warning,
+                 bg=t.surface_alt, font=(FONT, 11), padx=SP_MD, pady=SP_MD).pack(fill="x")
+
+    def _refresh_admin_login_bars(self) -> None:
+        who = _console_login_state()
+        t = self.theme
+        for meta in self._admin_meta.values():
+            try:
+                meta["login_label"].config(
+                    text=("已登录：%s" % who) if who else "未登录",
+                    fg=t.text if who else t.error)
+                meta["login_dot"]._paint_icon(t.success if who else t.error)
+            except Exception:
+                _safe_traceback()
+
+    def _reload_admin_page(self, key: str) -> None:
+        meta = self._admin_meta.get(key)
+        if meta:
+            try:
+                meta["loader"]()
+            except Exception as e:
+                _safe_traceback()
+                self._set_msg("刷新失败: %s" % e)
+
+    def _maybe_load_admin_page(self, key: str) -> None:
+        """管理页首次进入才拉数据（避免启动即打后端；也不给未登录用户报错刷屏）。"""
+        meta = self._admin_meta.get(key)
+        if meta is None or meta.get("loaded"):
+            return
+        meta["loaded"] = True
+        self.root.after(150, meta["loader"])
+
+    # ── 管理面：后台请求 + 主线程回投 ──
+
+    def _run_admin(self, title: str, work, on_ok=None, page_key: str = "") -> None:
+        """后台线程执行管理面请求，结果经 _poll 回投主线程（Tk 主线程绝不阻塞）。"""
+        if self._admin_busy:
+            self._set_msg("管理面请求处理中，请稍候…")
+            return
+        self._admin_busy = True
+        self._set_msg("%s…" % title)
+
+        def job():
+            try:
+                payload = work()
+            except AdminApiError as e:
+                self._q.put(("admin_err", e.message, e, page_key))
+            except Exception as e:
+                _safe_traceback()
+                self._q.put(("admin_err", "请求异常: %s" % e, None, page_key))
+            else:
+                self._q.put(("admin_ok", payload, on_ok))
+            finally:
+                self._q.put(("admin_done", None, None))
+
+        threading.Thread(target=job, daemon=True).start()
+
+    def _on_admin_error(self, text: str, err, page_key: str = "") -> None:
+        """错误落到页面上：登录态问题给重新登录入口，404 显示接口路径。"""
+        code = getattr(err, "code", 0) if err is not None else 0
+        path = getattr(err, "path", "") if err is not None else ""
+        tip = getattr(self, "_admin_login_tip", None)
+        if tip is not None:
+            try:
+                if tip.winfo_exists():
+                    tip.config(text=text)
+                    var = getattr(self, "_admin_login_pwd_var", None)
+                    if var is not None:
+                        var.set("")
+            except Exception:
+                pass
+        if code == 401:
+            text = "未登录或权限不足，请重新登录"
+        if page_key:
+            self._set_admin_status(page_key, "%s（%s）" % (text, path) if path else text, "err")
+            if code in (401, 404):
+                self._admin_note(page_key, "%s\n请求路径：%s %s" % (
+                    text, path, "（点右上角「登录」后重试）" if code == 401 else "（后端接口可能尚未上线）"))
+        else:
+            self._set_msg(text)
+        self._refresh_admin_login_bars()
+        self._set_msg(text[:120])
+
+    # ── 管理面：登录 / 退出 ──
+
+    def _open_admin_login(self) -> None:
+        t = self.theme
+        self._style_ttk()
+        win = tk.Toplevel(self.root)
+        win.title("控制台管理登录")
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.configure(bg=t.bg)
+        card = RoundedCard(win, t, pad=3, fit_inner=True)
+        card.pack(fill="both", expand=True, padx=SP_LG, pady=SP_LG)
+        f = card.inner
+        f.config(padx=SP_LG, pady=SP_LG)
+        tk.Label(f, text="服务器管理登录", fg=t.text, bg=t.card,
+                 font=(FONT, 13, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
+        tk.Label(f, text="目标 %s（凭据缓存在 backend/data/console_token.json）" % _target_base(),
+                 fg=t.text_muted, bg=t.card, font=(FONT, 10)).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(2, SP_MD))
+        tk.Label(f, text="用户名", fg=t.text_sec, bg=t.card, font=(FONT, 11)).grid(
+            row=2, column=0, sticky="w", padx=(0, SP_SM))
+        user_var = tk.StringVar(value=_console_login_state())
+        ttk.Entry(f, textvariable=user_var, width=24).grid(row=2, column=1, sticky="w")
+        tk.Label(f, text="密码", fg=t.text_sec, bg=t.card, font=(FONT, 11)).grid(
+            row=3, column=0, sticky="w", padx=(0, SP_SM), pady=(SP_XS, 0))
+        pwd_var = tk.StringVar()
+        self._admin_login_pwd_var = pwd_var
+        pwd_entry = ttk.Entry(f, textvariable=pwd_var, show="*", width=24)
+        pwd_entry.grid(row=3, column=1, sticky="w", pady=(SP_XS, 0))
+        tip = tk.Label(f, text="", anchor="w", justify="left", fg=t.error, bg=t.card,
+                       font=(FONT, 10), wraplength=320)
+        tip.grid(row=4, column=0, columnspan=2, sticky="w", pady=(SP_SM, 0))
+        self._admin_login_tip = tip
+
+        def submit():
+            uname = user_var.get().strip()
+            pwd = pwd_var.get()
+            if self._admin_busy:
+                tip.config(text="上一个管理面请求还在处理中，请稍候再登录")
+                return
+            tip.config(text="")
+
+            def ok(_data):
+                self._admin_login_tip = None
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
+                self._refresh_admin_login_bars()
+                self._set_msg("登录成功：%s" % uname)
+                # 其余管理页回到「待加载」：切过去自动重拉，不停留在旧的未登录提示
+                for k, m in self._admin_meta.items():
+                    m["loaded"] = False
+                cur = self._admin_meta.get(self._nav)
+                if cur is not None:
+                    cur["loaded"] = True
+                    self._reload_admin_page(self._nav)
+
+            self._run_admin("登录中", lambda: _admin_login(uname, pwd), ok, self._nav)
+
+        btns = tk.Frame(f, bg=t.card)
+        btns.grid(row=5, column=0, columnspan=2, sticky="w", pady=(SP_MD, 0))
+        RoundedButton(btns, t, "登录", command=submit, variant="primary",
+                      height=32, font_size=11).pack(side="left", padx=(0, SP_XS))
+        RoundedButton(btns, t, "取消", command=win.destroy, variant="neutral",
+                      height=32, font_size=11).pack(side="left")
+
+        def on_close():
+            self._admin_login_tip = None
+            try:
+                win.destroy()
+            except Exception:
+                pass
+        win.protocol("WM_DELETE_WINDOW", on_close)
+        pwd_entry.bind("<Return>", lambda e: submit())
+        pwd_entry.focus_set()
+        win.grab_set()
+
+    def _admin_logout(self) -> None:
+        _console_clear_session()
+        self._refresh_admin_login_bars()
+        for key in list(self._admin_meta):
+            self._set_admin_status(key, "已退出登录", "warn")
+        self._set_msg("已退出登录（本地 token 缓存已清除）")
+
+    # ── 默认模型页 ──
+
+    def _build_models_page(self) -> tk.Frame:
+        t = self.theme
+        page, pad = self._make_admin_page(
+            "默认模型", "服务器级各模态默认配置（无自有配置的账号回落到这里；api_key 不回显明文）")
+        login_label, login_dot, hint = self._admin_login_bar(pad, self._load_modalities)
+        body = tk.Frame(pad, bg=t.bg)
+        body.pack(fill="x")
+        self._admin_meta["models"] = {"status": hint, "login_label": login_label,
+                                      "login_dot": login_dot, "body": body,
+                                      "path": ADMIN_API_PREFIX + "/modalities",
+                                      "loader": self._load_modalities}
+        return page
+
+    def _load_modalities(self) -> None:
+        def ok(data):
+            rows = _sorted_modalities(data.get("modalities"))
+            self._render_modalities(rows)
+            self._set_admin_status(
+                "models",
+                "共 %d 个模态（GET %s）" % (len(rows), ADMIN_API_PREFIX + "/modalities"), "ok")
+
+        self._set_admin_status("models", "加载中… GET %s" % (ADMIN_API_PREFIX + "/modalities"),
+                               "pending")
+        self._run_admin("读取默认模型", lambda: _admin_request("GET", "/modalities"), ok, "models")
+
+    def _render_modalities(self, rows) -> None:
+        meta = self._admin_meta["models"]
+        body = meta["body"]
+        t = self.theme
+        _clear_frame(body)
+        if not rows:
+            self._admin_note("models", "后端未返回任何模态（GET %s）" % meta["path"])
+            return
+        for r in rows:
+            key = str(r.get("key") or "")
+            _, card = self._admin_card(body, fill="x", pady=(0, SP_SM))
+            head = tk.Frame(card, bg=t.card)
+            head.pack(fill="x")
+            _make_icon(head, 10, "dot", t.success if r.get("enabled") else t.text_muted,
+                       t.card).pack(side="left")
+            tk.Label(head, text="%s（%s）" % (r.get("label") or key, key),
+                     fg=t.text, bg=t.card, font=(FONT, 12, "bold")).pack(side="left", padx=(SP_XS, 0))
+            tk.Label(head, text="provider %s · 日限额 %s" % (r.get("provider") or "—",
+                                                             r.get("daily_limit")),
+                     fg=t.text_muted, bg=t.card, font=(FONT, 10)).pack(side="right")
+            form = tk.Frame(card, bg=t.card)
+            form.pack(fill="x", pady=(SP_XS, 0))
+            en_var = tk.BooleanVar(value=bool(r.get("enabled")))
+            ttk.Checkbutton(form, text="启用", variable=en_var).pack(side="left")
+            fields = {}
+            for fname, flabel, fwidth in (("model", "模型", 20), ("base_url", "Base URL", 24)):
+                tk.Label(form, text=flabel, fg=t.text_muted, bg=t.card,
+                         font=(FONT, 10)).pack(side="left", padx=(SP_MD, 4))
+                var = tk.StringVar(value=str(r.get(fname) or ""))
+                ttk.Entry(form, textvariable=var, width=fwidth).pack(side="left")
+                fields[fname] = var
+            tk.Label(form, text="api_key", fg=t.text_muted, bg=t.card,
+                     font=(FONT, 10)).pack(side="left", padx=(SP_MD, 4))
+            ak_var = tk.StringVar()
+            ttk.Entry(form, textvariable=ak_var, width=16).pack(side="left")
+            fields["api_key"] = ak_var
+            tk.Label(form, text="留空＝不修改（当前 %s）" % ("已配置" if r.get("has_api_key") else "未配置"),
+                     fg=t.text_muted, bg=t.card, font=(FONT, 10)).pack(side="left", padx=(4, 0))
+            RoundedButton(form, t, "保存", variant="primary", height=28, font_size=10,
+                          command=lambda k=key, f=fields, ev=en_var: self._save_modality(k, f, ev)
+                          ).pack(side="right")
+            RoundedButton(form, t, "清空密钥", variant="neutral", height=28, font_size=10,
+                          command=lambda k=key: self._clear_modality_key(k)
+                          ).pack(side="right", padx=(0, SP_XS))
+
+    def _save_modality(self, key: str, fields: dict, en_var) -> None:
+        body = {"enabled": bool(en_var.get()),
+                "model": fields["model"].get().strip(),
+                "base_url": fields["base_url"].get().strip()}
+        ak = fields["api_key"].get().strip()
+        if ak:
+            body["api_key"] = ak
+
+        def ok(_data):
+            self._set_msg("已保存默认模型：%s" % key)
+            self._load_modalities()
+
+        self._run_admin("保存 %s" % key,
+                        lambda: _admin_request("PUT", "/modalities/%s" % key, body), ok, "models")
+
+    def _clear_modality_key(self, key: str) -> None:
+        def ok(_data):
+            self._set_msg("已清空 %s 的 api_key" % key)
+            self._load_modalities()
+
+        self._run_admin("清空 %s 密钥" % key,
+                        lambda: _admin_request("PUT", "/modalities/%s" % key, {"api_key": ""}),
+                        ok, "models")
+
+    # ── 账号管理页 ──
+
+    def _build_accounts_page(self) -> tk.Frame:
+        t = self.theme
+        page, pad = self._make_admin_page(
+            "账号管理", "跨家庭账号：禁用/启用、授予/取消控制台管理员、设置 llm_mode（护栏以后端为准）")
+        login_label, login_dot, hint = self._admin_login_bar(pad, self._load_accounts)
+        body = tk.Frame(pad, bg=t.bg)
+        body.pack(fill="x")
+        self._admin_meta["accounts"] = {"status": hint, "login_label": login_label,
+                                        "login_dot": login_dot, "body": body,
+                                        "path": ADMIN_API_PREFIX + "/accounts",
+                                        "loader": self._load_accounts}
+        return page
+
+    def _load_accounts(self) -> None:
+        def ok(data):
+            rows = [r for r in (data.get("accounts") or []) if isinstance(r, dict)]
+            self._render_accounts(rows)
+            self._set_admin_status("accounts", "共 %d 个账号（GET %s）"
+                                   % (len(rows), ADMIN_API_PREFIX + "/accounts"), "ok")
+
+        self._set_admin_status("accounts", "加载中… GET %s/accounts" % ADMIN_API_PREFIX, "pending")
+        self._run_admin("读取账号", lambda: _admin_request("GET", "/accounts"), ok, "accounts")
+
+    def _render_accounts(self, rows) -> None:
+        meta = self._admin_meta["accounts"]
+        body = meta["body"]
+        t = self.theme
+        _clear_frame(body)
+        if not rows:
+            self._admin_note("accounts", "后端未返回任何账号（GET %s）" % meta["path"])
+            return
+        cols = (("id", 5), ("用户名", 12), ("昵称", 12), ("主账号", 7),
+                ("控制台", 7), ("禁用", 14), ("llm_mode", 15), ("操作", 30))
+        _, card = self._admin_card(body, fill="x")
+        for ci, (name, width) in enumerate(cols):
+            tk.Label(card, text=name, width=width, anchor="w", fg=t.text_sec, bg=t.card,
+                     font=(FONT, 10, "bold")).grid(row=0, column=ci, sticky="w", pady=(0, 2))
+        tk.Frame(card, bg=t.hairline, height=1).grid(row=1, column=0, columnspan=len(cols),
+                                                     sticky="ew", pady=(0, SP_XS))
+        for ri, r in enumerate(rows, start=2):
+            uid = r.get("id")
+            row_bg = _hex_mix(t.card, t.error, 0.14) if r.get("disabled_at") else t.card
+            disabled_txt = ("禁用中 %s" % _fmt_dt(r.get("disabled_at"))) if r.get("disabled_at") else "正常"
+            cells = [str(uid), str(r.get("username") or ""), str(r.get("nickname") or ""),
+                     "是" if r.get("is_admin") else "否",
+                     "是" if r.get("server_admin") else "否",
+                     disabled_txt, str(r.get("llm_mode") or "")]
+            for ci, txt in enumerate(cells):
+                fg = t.text
+                if ci == 5:
+                    fg = t.error if r.get("disabled_at") else t.text_sec
+                elif ci == 4:
+                    fg = t.accent_glow if r.get("server_admin") else t.text_sec
+                tk.Label(card, text=txt or "—", width=cols[ci][1], anchor="w", fg=fg, bg=row_bg,
+                         font=(FONT, 10)).grid(row=ri, column=ci, sticky="w", pady=1)
+            act = tk.Frame(card, bg=row_bg)
+            act.grid(row=ri, column=len(cols) - 1, sticky="w")
+            mode_var = tk.StringVar(value=str(r.get("llm_mode") or "default_allowed"))
+            ttk.Combobox(act, textvariable=mode_var, values=list(ACCOUNT_LLM_MODES),
+                         state="readonly", width=14).pack(side="left")
+            RoundedButton(act, t, "设模式", variant="neutral", height=26, font_size=9,
+                          command=lambda i=uid, v=mode_var: self._set_account_llm_mode(i, v)
+                          ).pack(side="left", padx=(4, SP_XS))
+            RoundedButton(act, t, "取消管理员" if r.get("server_admin") else "设为管理员",
+                          variant="neutral", height=26, font_size=9,
+                          command=lambda i=uid, en=not bool(r.get("server_admin")):
+                          self._set_account_server_admin(i, en)).pack(side="left", padx=(0, SP_XS))
+            RoundedButton(act, t, "启用" if r.get("disabled_at") else "禁用",
+                          variant="danger" if not r.get("disabled_at") else "neutral",
+                          height=26, font_size=9,
+                          command=lambda i=uid, d=not bool(r.get("disabled_at")):
+                          self._set_account_disabled(i, d)).pack(side="left")
+
+    def _set_account_disabled(self, uid, disabled: bool) -> None:
+        def ok(_data):
+            self._set_msg("账号 %s 已%s" % (uid, "禁用" if disabled else "启用"))
+            self._load_accounts()
+
+        self._run_admin("更新账号 %s" % uid,
+                        lambda: _admin_request("PUT", "/accounts/%s/disabled" % uid,
+                                               {"disabled": bool(disabled)}),
+                        ok, "accounts")
+
+    def _set_account_server_admin(self, uid, enabled: bool) -> None:
+        def ok(_data):
+            self._set_msg("账号 %s %s控制台管理员" % (uid, "已授予" if enabled else "已取消"))
+            self._load_accounts()
+
+        self._run_admin("更新账号 %s" % uid,
+                        lambda: _admin_request("PUT", "/accounts/%s/server-admin" % uid,
+                                               {"enabled": bool(enabled)}),
+                        ok, "accounts")
+
+    def _set_account_llm_mode(self, uid, mode_var) -> None:
+        mode = str(mode_var.get() or "")
+
+        def ok(_data):
+            self._set_msg("账号 %s llm_mode=%s" % (uid, mode))
+            self._load_accounts()
+
+        self._run_admin("更新账号 %s" % uid,
+                        lambda: _admin_request("PUT", "/accounts/%s/llm-mode" % uid,
+                                               {"llm_mode": mode}),
+                        ok, "accounts")
+
+    # ── 开关与权限页 ──
+
+    def _build_flags_page(self) -> tk.Frame:
+        t = self.theme
+        page, pad = self._make_admin_page(
+            "开关与权限", "功能开关当前值 + 允许用户自助 + 服务器锁定（锁定行高亮，用户侧写该开关一律 403）")
+        login_label, login_dot, hint = self._admin_login_bar(pad, self._load_flags)
+        body = tk.Frame(pad, bg=t.bg)
+        body.pack(fill="x")
+        self._admin_meta["flags"] = {"status": hint, "login_label": login_label,
+                                     "login_dot": login_dot, "body": body,
+                                     "path": ADMIN_API_PREFIX + "/flags",
+                                     "loader": self._load_flags}
+        return page
+
+    def _load_flags(self) -> None:
+        def ok(data):
+            rows = [r for r in (data.get("flags") or []) if isinstance(r, dict)]
+            self._render_flags(rows)
+            self._set_admin_status("flags", "共 %d 个开关（GET %s）"
+                                   % (len(rows), ADMIN_API_PREFIX + "/flags"), "ok")
+
+        self._set_admin_status("flags", "加载中… GET %s/flags" % ADMIN_API_PREFIX, "pending")
+        self._run_admin("读取开关", lambda: _admin_request("GET", "/flags"), ok, "flags")
+
+    def _render_flags(self, rows) -> None:
+        meta = self._admin_meta["flags"]
+        body = meta["body"]
+        t = self.theme
+        _clear_frame(body)
+        if not rows:
+            self._admin_note("flags", "后端未返回任何开关（GET %s）" % meta["path"])
+            return
+        cols = (("key", 30), ("当前值", 10), ("允许自助", 10), ("服务器锁定", 12), ("操作", 8))
+        _, card = self._admin_card(body, fill="x")
+        for ci, (name, width) in enumerate(cols):
+            tk.Label(card, text=name, width=width, anchor="w", fg=t.text_sec, bg=t.card,
+                     font=(FONT, 10, "bold")).grid(row=0, column=ci, sticky="w", pady=(0, 2))
+        tk.Frame(card, bg=t.hairline, height=1).grid(row=1, column=0, columnspan=len(cols),
+                                                     sticky="ew", pady=(0, SP_XS))
+        for ri, r in enumerate(rows, start=2):
+            key = str(r.get("key") or "")
+            locked = bool(r.get("server_locked"))
+            row_bg = _hex_mix(t.card, t.warning, 0.20) if locked else t.card
+            title = str(r.get("title") or "").strip()
+            desc = str(r.get("desc") or "").strip()
+            name_txt = key if not title else "%s（%s）" % (key, title)
+            if desc:
+                name_txt += "\n%s" % desc[:80]
+            tk.Label(card, text=name_txt, width=cols[0][1], anchor="w", justify="left",
+                     fg=t.warning if locked else t.text, bg=row_bg,
+                     font=(FONT, 10, "bold" if locked else "normal")).grid(
+                row=ri, column=0, sticky="w", pady=1)
+            vars_ = (tk.BooleanVar(value=bool(r.get("enabled"))),
+                     tk.BooleanVar(value=bool(r.get("self_service"))),
+                     tk.BooleanVar(value=locked))
+            for ci, var in enumerate(vars_, start=1):
+                ttk.Checkbutton(card, variable=var).grid(row=ri, column=ci, sticky="w")
+            RoundedButton(card, t, "保存", variant="primary", height=26, font_size=9,
+                          command=lambda k=key, vs=vars_: self._save_flag(k, vs)
+                          ).grid(row=ri, column=len(cols) - 1, sticky="w")
+
+    def _save_flag(self, key: str, vars_) -> None:
+        body = {"enabled": bool(vars_[0].get()), "self_service": bool(vars_[1].get()),
+                "server_locked": bool(vars_[2].get())}
+
+        def ok(_data):
+            self._set_msg("已保存开关 %s" % key)
+            self._load_flags()
+
+        self._run_admin("更新开关 %s" % key,
+                        lambda: _admin_request("PUT", "/flags/%s" % key, body), ok, "flags")
+
+    # ── 审计页 ──
+
+    def _build_audit_page(self) -> tk.Frame:
+        t = self.theme
+        page, pad = self._make_admin_page(
+            "审计", "管理面写动作留痕（时间/操作者/动作/目标/前后值摘要），按 created_at 倒序")
+        login_label, login_dot, hint = self._admin_login_bar(pad, self._load_audit)
+        _, filter_bar = self._admin_card(pad, fill="x", pady=(0, SP_SM))
+        frow = tk.Frame(filter_bar, bg=t.card)
+        frow.pack(fill="x")
+        tk.Label(frow, text="最近条数", fg=t.text_sec, bg=t.card,
+                 font=(FONT, 11)).pack(side="left")
+        self._audit_limit_var = tk.StringVar(value="100")
+        ttk.Entry(frow, textvariable=self._audit_limit_var, width=8).pack(side="left", padx=(SP_XS, 0))
+        body = tk.Frame(pad, bg=t.bg)
+        body.pack(fill="x")
+        self._admin_meta["audit"] = {"status": hint, "login_label": login_label,
+                                     "login_dot": login_dot, "body": body,
+                                     "path": ADMIN_API_PREFIX + "/audit",
+                                     "loader": self._load_audit}
+        return page
+
+    def _load_audit(self) -> None:
+        try:
+            limit = int(str(self._audit_limit_var.get()).strip() or 100)
+        except Exception:
+            limit = 100
+        sub = "/audit?limit=%d" % limit
+
+        def ok(data):
+            rows = [r for r in (data.get("entries") or []) if isinstance(r, dict)]
+            self._render_audit(rows, limit)
+            self._set_admin_status("audit", "共 %d 条（GET %s/audit?limit=%d）"
+                                   % (len(rows), ADMIN_API_PREFIX, limit), "ok")
+
+        self._set_admin_status("audit", "加载中… GET %s/audit?limit=%d" % (ADMIN_API_PREFIX, limit),
+                               "pending")
+        self._run_admin("读取审计", lambda: _admin_request("GET", sub), ok, "audit")
+
+    def _render_audit(self, rows, limit: int) -> None:
+        meta = self._admin_meta["audit"]
+        body = meta["body"]
+        t = self.theme
+        _clear_frame(body)
+        if not rows:
+            self._admin_note("audit", "暂无审计记录（GET %s/audit?limit=%d）" % (ADMIN_API_PREFIX, limit))
+            return
+        cols = (("时间", 17), ("操作者", 14), ("动作", 22), ("目标", 20), ("前值", 24), ("后值", 24))
+        _, card = self._admin_card(body, fill="x")
+        for ci, (name, width) in enumerate(cols):
+            tk.Label(card, text=name, width=width, anchor="w", fg=t.text_sec, bg=t.card,
+                     font=(FONT, 10, "bold")).grid(row=0, column=ci, sticky="w", pady=(0, 2))
+        tk.Frame(card, bg=t.hairline, height=1).grid(row=1, column=0, columnspan=len(cols),
+                                                     sticky="ew", pady=(0, SP_XS))
+        for ri, r in enumerate(rows, start=2):
+            row_bg = t.card if ri % 2 else _hex_mix(t.card, t.surface_alt, 0.5)
+            cells = [_fmt_dt(r.get("created_at")),
+                     str(r.get("actor_username") or r.get("actor_user_id") or "—"),
+                     str(r.get("action") or "—"),
+                     str(r.get("target") or "—"),
+                     _fmt_audit_val(r.get("before")),
+                     _fmt_audit_val(r.get("after"))]
+            for ci, txt in enumerate(cells):
+                tk.Label(card, text=txt, width=cols[ci][1], anchor="w",
+                         fg=t.text if ci in (0, 2) else t.text_sec, bg=row_bg,
+                         font=(FONT, 10)).grid(row=ri, column=ci, sticky="w", pady=1)
+
     # ── ttk 主题（Checkbutton / Entry 仍用 ttk）──
 
     def _style_ttk(self):
@@ -1857,6 +2710,24 @@ class ControllerApp:
                         _safe_traceback()
                 elif kind == "catchup":
                     self._start_catchup(item[1])
+                elif kind == "admin_ok":
+                    # 先释放串行闸门再回投：回调里常接「保存后回读」（_load_xxx），
+                    # 若等 admin_done 才解锁，这次回读会被 _run_admin 当成重复请求挡掉。
+                    self._admin_busy = False
+                    try:
+                        if item[2]:
+                            item[2](item[1])
+                    except Exception as e:
+                        _safe_traceback()
+                        self._set_msg("管理面渲染异常: %s" % e)
+                elif kind == "admin_err":
+                    self._admin_busy = False
+                    try:
+                        self._on_admin_error(item[1], item[2], item[3] if len(item) > 3 else "")
+                    except Exception:
+                        _safe_traceback()
+                elif kind == "admin_done":
+                    self._admin_busy = False
         except queue.Empty:
             pass
         self.root.after(POLL_MS, self._poll)

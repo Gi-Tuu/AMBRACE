@@ -156,6 +156,41 @@ async def _backfill_channel_bindings_from_global_config(conn) -> None:
             _logger.warning("[migrate] channel_bindings backfill skipped for %s: %s", channel, exc)
 
 
+async def _backfill_server_admin(conn) -> None:
+    """账号独立 P1（2026-09-19）：server_admin 存量回填（与 Alembic c4d5e6f7a8b9 等价、幂等）。
+
+    **口径（09-19 复核修正）**：本产品里「独立账号」默认都是家庭主账号（`parent_id IS NULL →
+    is_admin=1`，见下方一致性自愈），所以**不能**按 `is_admin=1` 回填——那会把每个新注册账号
+    都变成服务器控制台管理员，`require_server_admin` 闸门形同虚设（Qwen 只读审计 09-19 发现：
+    生产库 13/13 账号全被授予）。权威来源＝`.env ADMIN_USER_IDS`（`settings.admin_user_ids`，
+    其语义本就是「服务器级配置管理账号」）；名单为空/无效时，再退化为「最早创建的账号」
+    做一次性引导，避免控制台彻底进不去。
+
+    加列由 Alembic 承接（本文件 FREEZE 后禁止手工 DDL，见文末哨兵）；此处只做数据回填。
+    列未就绪（远古库首次启动，bootstrap 稍后补列）→ 本次跳过，下次启动补齐。
+    """
+    from sqlalchemy import text as _text
+    if "server_admin" not in await _table_cols(conn, "users"):
+        return
+    ids = [int(i) for i in (getattr(settings, "admin_user_ids", None) or []) if str(i).strip()]
+    if ids:
+        # 数字白名单拼接（来源是配置里的 int 列表，无注入面）
+        await conn.execute(_text(
+            "UPDATE users SET server_admin = 1 WHERE id IN (%s) AND server_admin = 0"
+            % ",".join(str(i) for i in ids)
+        ))
+        _logger.info("[migrate] users.server_admin seeded from env ADMIN_USER_IDS=%s", ids)
+    # 引导兜底：一个 server_admin 都没有 → 取最早账号（否则控制台永远进不去）
+    has_any = (await conn.execute(_text(
+        "SELECT id FROM users WHERE server_admin = 1 LIMIT 1"
+    ))).first()
+    if has_any is None:
+        await conn.execute(_text(
+            "UPDATE users SET server_admin = 1 WHERE id = (SELECT MIN(id) FROM users)"
+        ))
+        _logger.info("[migrate] users.server_admin bootstrapped to the oldest account")
+
+
 async def init_db():
     """创建所有表（测试/初始化用）+ 幂等种子与一次性回填（列在位守卫，见模块 docstring）"""
     import app.models  # noqa: F401  # 确保所有模型注册到 Base.metadata
@@ -254,6 +289,9 @@ async def init_db():
                 "UPDATE users SET is_admin = 0 WHERE parent_id IS NOT NULL AND is_admin = 1"
             ))
             _logger.info("[migrate] users.is_admin/parent_id consistency ensured")
+
+        # 账号独立 P1（2026-09-19）：server_admin 存量回填（与 Alembic c4d5e6f7a8b9 等价、幂等）。
+        await _backfill_server_admin(conn)
 
         # pets 归属标签（2026-08-07）：存量用户宠物显式标 owner_type='user'（AI 养宠 Phase 3 预留字段落地）
         if "owner_type" in await _table_cols(conn, "pets"):
