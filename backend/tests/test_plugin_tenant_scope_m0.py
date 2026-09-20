@@ -2,7 +2,8 @@
 """A2 M0 插件归户修复测试（2026-09-20）。
 
 三块：
-- M0-1 browser_mcp：快照按 user_id 读写（读只返回本账号、缺 user_id 返回空、url 属他人跳过不覆盖）；
+- M0-1 browser_mcp：快照按 user_id 读写（读只返回本账号、缺 user_id 返回空/不写；
+  唯一键已是 (user_id,url) 联合，同一网址各账号各存一行、互不覆盖）；
 - M0-2 douyin_mcp：`_caller_tenant` 解析失败 None / `_get_account(None)=={}` / 跨租户目标行 404 /
   `_char_allowed` 异常 fail-closed / inject 无租户不注入；
 - M0-3 内核「已禁用插件」路由闸：flag 关=逐字节旧行为，开=disabled 插件 bridge/chat/page 全 404。
@@ -117,15 +118,17 @@ def test_browser_缺user_id返回空_fail_closed(db_factory, browser_mod):
     assert asyncio.run(browser_mod._recent_snapshots(5, "")) == []
 
 
-def test_browser_写冲突跳过不覆盖他人行(db_factory, browser_mod):
+def test_browser_同一网址各账号各存一行互不覆盖(db_factory, browser_mod):
     asyncio.run(browser_mod._save_snapshot("https://x/same", "x.com", "T1", "正文1", [], 1))
-    # 2 号账号浏览同一 url（url 全局唯一键）→ 跳过，绝不覆盖 1 号的行
+    # 2 号账号浏览同一 url（(user_id,url) 联合唯一）→ 各存一行，绝不覆盖 1 号的行
     asyncio.run(browser_mod._save_snapshot("https://x/same", "x.com", "T2", "正文2", [], 2))
-    rows = _browser_rows(db_factory)
-    assert rows == [(1, "https://x/same", "T1")]
-    # 本人再浏览同 url → 更新自己的行
+    assert _browser_rows(db_factory) == [(1, "https://x/same", "T1"), (2, "https://x/same", "T2")]
+    # 本人再浏览同 url → 更新自己的行，不新增、也不碰对方那行
     asyncio.run(browser_mod._save_snapshot("https://x/same", "x.com", "T3", "正文3", [], 1))
-    assert _browser_rows(db_factory) == [(1, "https://x/same", "T3")]
+    assert _browser_rows(db_factory) == [(1, "https://x/same", "T3"), (2, "https://x/same", "T2")]
+    # 读侧各看各的
+    assert [s["title"] for s in asyncio.run(browser_mod._recent_snapshots(5, 1))] == ["T3"]
+    assert [s["title"] for s in asyncio.run(browser_mod._recent_snapshots(5, 2))] == ["T2"]
 
 
 def test_browser_缺user_id不写快照(db_factory, browser_mod):
@@ -220,8 +223,8 @@ def test_pending_upcoming_只列本租户_无租户返回空(dy_db, douyin_mod, 
 
 
 def test_confirm_reject_跨租户404(dy_db, douyin_mod, monkeypatch):
-    # 注：_random_execute_at 有既有缺陷（cn.hour<7 分支 minute=randint(30,60) 可能取到 60 → ValueError），
-    # 与本批次无关、另行登记，这里打桩固定执行时间以隔离被测口径。
+    # 注：_random_execute_at 的 randint(30, 60) 非法分钟缺陷已修复（上界收 59，回归测试
+    # test_douyin_quiet_hours.py）；此处固定执行时间只为消除随机性、隔离被测租户口径。
     from datetime import datetime as _dt, timedelta as _td
     monkeypatch.setattr(douyin_mod, "_random_execute_at",
                         lambda: _dt(2030, 1, 1, 12, 0, 0) + _td(minutes=30))

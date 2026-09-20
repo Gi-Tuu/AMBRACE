@@ -279,8 +279,8 @@ class GameEngine(ABC):
         from app.models.game import GamePlayer
         session = self.session
         session.state_json = json.dumps(self.state, ensure_ascii=False)
-        session.phase = self.session.phase or ""
-        session.winner_side = self.session.winner_side
+        # phase / winner_side 由引擎直接写在 ORM 对象上（session is self.session），
+        # 持久化依赖 SQLAlchemy 脏检查在 commit 时落盘——此处不需要也不应该自赋值。
         for p in self.players:
             row = await db.get(GamePlayer, p.id) if getattr(p, "id", None) else None
             if row is None:
@@ -404,6 +404,8 @@ class GameEngine(ABC):
         remaining = self.in_play_players()
         if len(remaining) <= 1:
             # 单人 / 双人 / 多人仅剩 2 人：投降方输，对局结束
+            # 约定（P3-8）：现有引擎 min_players=2，remaining 为空只在「对方早已出局、本人再投降」
+            # 时出现，故按平局收；未来若引入单人模式（player_mode="single"），该分支应判玩家负而不是 draw。
             winner = f"seat_{remaining[0].seat}" if remaining else "draw"
             tail = "，对局结束" if remaining else "，双方均不在场，按平局结束"
             return {

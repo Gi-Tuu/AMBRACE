@@ -11,8 +11,9 @@
 - ``/uploads`` 是裸 ``StaticFiles`` 挂载（``app/main.py``），不经 FastAPI 依赖。
 - **没有**任何「上传文件归属表」：归属只能从路径段推导（``avatars/{uid}``、``moments/{uid}``、
   ``images/{uid}``、``phone/{uid}``、``emojis/user/{uid}`` 是用户目录；``{session_id}/``、
-  ``files/{sid}/``、``voice/{sid}/`` 需回查 ``ChatSession.user_id``；``pets_assets/``、``pets/``、
-  ``tts/``、``emojis/market/`` 等为共享资源，无归属）。
+  ``files/{sid}/``、``voice/{sid}/`` 需回查 ``ChatSession.user_id``；``douyin/{task_id}/`` 是待发布
+  私有草稿，需回查插件表 ``DouyinPending.tenant_id``（该列本身即家庭根，P3-3 起移出共享白名单）；
+  ``pets_assets/``、``pets/``、``tts/``、``emojis/market/`` 等为共享资源，无归属）。
 
 因此本闸门采取「**带身份即强制、匿名按开关**」的兼容方案：
 
@@ -37,8 +38,9 @@ from app.utils.logger import get_logger
 
 _logger = get_logger("uploads.guard")
 
-# 共享/资源类目录（无归属，任何身份都放行）：宠物素材、市场表情、TTS 产物、渠道草稿等
-_SHARED_HEADS = {"pets_assets", "pets", "tts", "preview", "market", "douyin"}
+# 共享/资源类目录（无归属，任何身份都放行）：宠物素材、市场表情、TTS 产物等
+# 注意：``douyin`` 曾在此白名单，P3-3（2026-09-20）移出——``douyin/{task_id}/`` 是待发布私有草稿
+_SHARED_HEADS = {"pets_assets", "pets", "tts", "preview", "market"}
 # 用户子目录（第 2 段是 user_id）
 _USER_HEADS = {"avatars", "moments", "images", "phone"}
 # 会话子目录（第 2 段是 chat_session_id）
@@ -51,6 +53,7 @@ def resolve_upload_scope(rel_path: str) -> tuple[str, int | None]:
     kind 取值：
     - ``user``       ：key = 归属 user_id（路径已含用户目录）
     - ``session``    ：key = chat_session_id（需再回查 ChatSession.user_id）
+    - ``douyin_task``：key = douyin_pending.id（需再回查 DouyinPending.tenant_id = 家庭根）
     - ``shared``     ：共享/资源目录，无归属（放行）
     - ``unresolved`` ：无法判定（放行并告警；避免把未知目录误判成越权）
     """
@@ -73,6 +76,11 @@ def resolve_upload_scope(rel_path: str) -> tuple[str, int | None]:
         return "unresolved", None
     if head.isdigit():  # 私聊图片直接落 uploads/{session_id}/...
         return "session", int(head)
+    if head == "douyin":
+        # douyin/{task_id}/... 私有草稿（待发布配图/视频），第 2 段 = DouyinPending.id
+        if len(parts) >= 2 and parts[1].isdigit():
+            return "douyin_task", int(parts[1])
+        return "shared", None  # 非任务目录：维持原共享放行口径（与 unresolved 同为放行，不误伤未知布局）
     if head in _SHARED_HEADS or head.startswith("."):
         return "shared", None
     return "unresolved", None
@@ -132,6 +140,26 @@ async def _owner_user_id_for(db, kind: str, key: int | None) -> int | None:
     )).scalar_one_or_none()
 
 
+async def _owner_tenant_for(db, kind: str, key: int | None) -> int | None:
+    """``douyin_task`` 归属回查：douyin_pending.tenant_id（该列本身就是家庭根）。
+
+    插件模型必须延迟 import（核心 app 不硬依赖插件包），且任何失败一律返回 None 交由
+    调用方按兼容口径放行：插件未加载（``douyin_models`` 不可导入）、表未建、
+    任务行已删（孤儿草稿）都属此类。
+    """
+    if kind != "douyin_task" or key is None:
+        return None
+    try:
+        import douyin_models  # 插件目录由插件 main.py 注入 sys.path；未加载时这里 ImportError
+        from sqlalchemy import select
+        return (await db.execute(
+            select(douyin_models.DouyinPending.tenant_id).where(douyin_models.DouyinPending.id == int(key))
+        )).scalar_one_or_none()
+    except Exception as e:
+        _logger.debug("uploads guard: douyin owner tenant unavailable task=%s: %s", key, e)
+        return None
+
+
 async def decide_upload_access(rel_path: str, scope) -> bool:
     """闸门裁决：True=放行，False=拒绝（调用方回 404）。
 
@@ -153,6 +181,22 @@ async def decide_upload_access(rel_path: str, scope) -> bool:
     from app.db.database import async_session_factory
     from app.application.tenant_service import tenant_key
     async with async_session_factory() as db:
+        if kind == "douyin_task":
+            owner_tenant = await _owner_tenant_for(db, kind, key)
+            if owner_tenant is None:
+                # 归属查不到（插件未加载 / 任务已删）：证不了跨租户 → 回兼容口径放行，核心 app 不硬依赖插件
+                _logger.debug("uploads guard: douyin owner unresolved, compat allow path=%s", rel_path)
+                return True
+            actor_tenant = await tenant_key(db, actor)
+            if actor_tenant is None:
+                return not _require_auth()  # 请求账号已不可解析：严格模式拒绝，兼容模式放行
+            if int(actor_tenant) != int(owner_tenant):
+                _logger.info(
+                    "uploads guard: cross-tenant denied path=%s actor=%s owner_tenant=%s",
+                    rel_path, actor, owner_tenant
+                )
+                return False
+            return True
         owner_user_id = await _owner_user_id_for(db, kind, key)
         if owner_user_id is None and kind == "session":
             # 会话已删/文件孤儿：无法证明跨租户 → 保持兼容放行（identity 已校验在案）

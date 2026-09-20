@@ -6849,15 +6849,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get flagGroupOther => 'Other Advanced Flags';
 
   @override
-  String get flagAgentLoopChatTitle => 'Chat Main Loop';
+  String get flagAgentLoopChatTitle => 'Unified chat tool entry';
 
   @override
   String get flagAgentLoopChatHint =>
-      'AI replies go through the unified agent loop: understand -> memory -> plan -> answer.';
+      'Calendar notes and memos from chat are recorded through one shared tool entry.';
 
   @override
   String get flagAgentLoopChatDetail =>
-      'When on, every chat passes through the unified Runtime, injecting world knowledge and memory before answering, for more consistent characters. Off falls back to the old direct-generation path. Usually keep on; turn off only to debug the new path.';
+      'Affects only how chat tools such as calendar notes and memos get recorded: when on they run through the unified tool entry and leave a trace of the run, when off they fall back to the older direct save. Either way they are still saved and the reply itself is unchanged. Usually keep it on; turn it off only to debug the tool path.';
 
   @override
   String get flagAgentLoopSchedulerTitle => 'Proactive Task Loop';

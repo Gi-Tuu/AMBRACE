@@ -121,10 +121,17 @@ class PrivacyRequest(Base):
 class BrowserSnapshot(Base):
     """网页浏览短期快照（30 分钟过期清理；严格记忆隔离：不写 memories 表）"""
     __tablename__ = "browser_snapshots"
+    # 唯一键为 (user_id, url) 联合（A2 后续批次，2026-09-20）：同一网址各账号各存一行。
+    # 旧口径是 url 全局唯一，导致多账号浏览同一 URL 只能少写一份。
+    __table_args__ = (
+        UniqueConstraint("user_id", "url", name="uq_browser_snapshots_user_url"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, default=1)
-    url: Mapped[str] = mapped_column(String(500), unique=True, default="")
+    # 不写 default=1：唯一插入点 browser_mcp._save_snapshot 总是显式传 user_id，
+    # 保留默认值只会在漏传时把无归属快照静默记到 user 1（串号）；去掉后由 NOT NULL 直接报错。
+    user_id: Mapped[int] = mapped_column(Integer)
+    url: Mapped[str] = mapped_column(String(500), default="")
     domain: Mapped[str] = mapped_column(String(200), default="")
     title: Mapped[str] = mapped_column(String(300), default="")
     text: Mapped[str] = mapped_column(Text, default="")

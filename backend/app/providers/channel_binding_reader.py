@@ -117,7 +117,8 @@ async def bound_characters_for_runtime(db: AsyncSession, channel: str, tenant_id
 async def all_bound_characters(db: AsyncSession, channel: str) -> list[tuple[int, int]]:
     """无租户上下文的插件侧遍历用：[(tenant_id, character_id), ...]（tenant 为角色归属家庭 root）。
 
-    - flag 开：channel_bindings 启用行直接返回（tenant 即租户键）；
+    - flag 开：channel_bindings 启用行直接返回（tenant 即租户键）；无启用行时按 C2 判据分流
+      （渠道表有行但全 disabled → 空；渠道表全空 → 回落旧全局串）；
     - flag 关：旧全局 config 串 → 逐角色解析其归属家庭 root（单主部署等价）。
     解析不出归属的角色跳过（不猜租户）。
     """
@@ -132,6 +133,13 @@ async def all_bound_characters(db: AsyncSession, channel: str) -> list[tuple[int
         ).order_by(ChannelBinding.id))).scalars().all()
         if rows:
             return [(int(r.tenant_id), int(r.character_id)) for r in rows]
+        # P3-1（2026-09-20）：flag 开且无启用行有两种语义相反的「空」，必须用 channel_taken_over
+        # 区分（与 bound_characters_for_runtime 的 C2 判据对齐）：
+        # - 渠道表有行但全部 enabled=False（用户主动停用/解绑）→ 返回空，绝不回落旧全局串，
+        #   否则插件侧仍会往已停用的角色推消息（解绑幽灵）；
+        # - 渠道表全空（尚无任何租户走过 v2 写路径）→ 才回落旧全局 config 串（灰度兼容）。
+        if await channel_taken_over(db, channel):
+            return []
 
     out: list[tuple[int, int]] = []
     for cid in await _fallback_global_ids(db, channel):

@@ -192,7 +192,7 @@ def _random_execute_at() -> datetime:
     t = datetime.now(timezone.utc) + timedelta(minutes=delay_min)
     cn = t.astimezone(timezone(timedelta(hours=8)))
     if cn.hour < 7:
-        cn = cn.replace(hour=7, minute=random.randint(30, 60), second=0, microsecond=0)
+        cn = cn.replace(hour=7, minute=random.randint(30, 59), second=0, microsecond=0)
         t = cn.astimezone(timezone.utc).replace(tzinfo=None)
     return t.replace(tzinfo=None)
 

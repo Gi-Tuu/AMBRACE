@@ -506,7 +506,9 @@ def test_migration_alembic_upgrade_downgrade_再upgrade(tmp_path, monkeypatch):
                 sa.text("SELECT name FROM sqlite_master WHERE type='table'"))}
             ver = conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar()
         assert "plugin_consents" in tables
-        assert ver == "b9c0d1e2f3a4"
+        # 2026-09-20：链头随新迁移前移，不再硬编码 b9c0d1e2f3a4（P3-5 的 c0d1e2f3a4b5 一加就红）
+        from alembic.script import ScriptDirectory
+        assert ver == ScriptDirectory.from_config(cfg).get_current_head()  # 单头且落在当前链头
 
         command.downgrade(cfg, "a8b9c0d1e2f3")
         with engine.connect() as conn:
@@ -519,7 +521,7 @@ def test_migration_alembic_upgrade_downgrade_再upgrade(tmp_path, monkeypatch):
             tables3 = {r[0] for r in conn.execute(
                 sa.text("SELECT name FROM sqlite_master WHERE type='table'"))}
             ver3 = conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar()
-        assert "plugin_consents" in tables3 and ver3 == "b9c0d1e2f3a4"
+        assert "plugin_consents" in tables3 and ver3 == ScriptDirectory.from_config(cfg).get_current_head()
     finally:
         engine.dispose()
 
@@ -537,7 +539,7 @@ def test_migration_哨兵命中与单链头():
     cfg.set_main_option("script_location", str(backend / "alembic"))
     script = ScriptDirectory.from_config(cfg)
     heads = script.get_heads()
-    assert heads == ["b9c0d1e2f3a4"]  # 单头（新增迁移不得分叉）
+    assert len(heads) == 1, heads  # 单头（新增迁移不得分叉；链头随新迁移前移，勿硬编码）
     revs = [r.revision for r in script.walk_revisions(base="base", head=heads[0])]
     assert "a8b9c0d1e2f3" in revs and "b9c0d1e2f3a4" in revs
 

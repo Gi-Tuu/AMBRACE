@@ -19,7 +19,7 @@ class GameSession(Base):
     __tablename__ = "game_sessions"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     group_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("chat_groups.id", ondelete="SET NULL"), nullable=True)
     # null = 从游戏机直接发起（非群聊场景）
     game_type: Mapped[str] = mapped_column(String(30), index=True)

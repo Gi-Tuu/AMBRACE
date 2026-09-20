@@ -1051,7 +1051,8 @@ def test_p2_douyin_pending_and_confirm_cross_tenant_404(douyin_matrix_env, matri
     client, mod = douyin_matrix_env
     _seed_douyin_pending(matrix_db, [(1, "image_post", "pending"), (2, "image_post", "pending")])
     from datetime import datetime as _dt, timedelta as _td
-    # 隔离既有 _random_execute_at 缺陷（与本批无关），固定执行时间
+    # _random_execute_at 非法分钟缺陷已修复（randint 上界 59 + 回归测试 test_douyin_quiet_hours.py）；
+    # 这里固定执行时间只为消除随机性，与本批租户口径无关。
     monkeypatch.setattr(mod, "_random_execute_at",
                         lambda: _dt(2030, 1, 1, 12, 0, 0) + _td(minutes=30))
 

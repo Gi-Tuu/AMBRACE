@@ -452,7 +452,11 @@ async def get_state(
         else:
             view_seat = -1  # 观战视角（只公开事件）
         if session.status == "playing":
-            _spawn_background(_resume_ai_turns(sid))
+            # P3-9：轮询频繁，只在「确有 AI 待行动 + 无续跑协程在跑」时才 spawn，
+            # 等待玩家动作 / 无需推进的局直接返回，避免反复创建立即退出的空转协程。
+            pending_seat = engine.current_turn_seat()
+            if pending_seat is not None and engine.is_ai(pending_seat) and not _lazy_lock(sid).locked():
+                _spawn_background(_resume_ai_turns(sid))
         return _build_state(engine, user_seat=view_seat)
 
 

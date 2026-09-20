@@ -2157,14 +2157,18 @@ class ControllerApp:
         except Exception:
             _safe_traceback()
 
-    def _admin_note(self, key: str, text: str) -> None:
-        """整页占位提示（接口未就绪 / 未登录时把请求路径显示出来，方便联调）。"""
+    def _admin_note(self, key: str, text: str, clear: bool = True) -> None:
+        """整页占位提示（接口未就绪 / 未登录时把请求路径显示出来，方便联调）。
+
+        clear=False 时保留 body 已有内容（如额度卡），只追加提示行。
+        """
         meta = self._admin_meta.get(key)
         if not meta:
             return
         t = self.theme
         body = meta["body"]
-        _clear_frame(body)
+        if clear:
+            _clear_frame(body)
         tk.Label(body, text=text, anchor="w", justify="left", fg=t.warning,
                  bg=t.surface_alt, font=(FONT, 11), padx=SP_MD, pady=SP_MD).pack(fill="x")
 
@@ -2378,7 +2382,7 @@ class ControllerApp:
             tk.Label(head, text="%s（%s）" % (r.get("label") or key, key),
                      fg=t.text, bg=t.card, font=(FONT, 12, "bold")).pack(side="left", padx=(SP_XS, 0))
             tk.Label(head, text="provider %s · 日限额 %s" % (r.get("provider") or "—",
-                                                             r.get("daily_limit")),
+                                                             r.get("daily_limit") or "—"),
                      fg=t.text_muted, bg=t.card, font=(FONT, 10)).pack(side="right")
             form = tk.Frame(card, bg=t.card)
             form.pack(fill="x", pady=(SP_XS, 0))
@@ -2455,7 +2459,8 @@ class ControllerApp:
 
         def work():
             # A8：顺带读「服务器默认额度」；该接口未就绪（404/未登录）时降级为不显示，不影响账号表
-            out = {"accounts": _admin_request("GET", "/accounts")}
+            # 注意：_admin_request 返回的已经是信封 dict（{"accounts": [...]}），不能再包一层
+            out = _admin_request("GET", "/accounts")
             try:
                 out["limit"] = _admin_request("GET", "/llm-limit")
             except AdminApiError:
@@ -2470,10 +2475,14 @@ class ControllerApp:
         body = meta["body"]
         t = self.theme
         _clear_frame(body)
-        if not rows:
-            self._admin_note("accounts", "后端未返回任何账号（GET %s）" % meta["path"])
-            return
         self._render_server_llm_limit(limit)
+        if not rows:
+            self._admin_note(
+                "accounts",
+                "接口 200 但 accounts 为空（GET %s）：请确认账号数据是否存在，"
+                "以及响应结构是否变更（信封字段是否仍为 accounts）" % meta["path"],
+                clear=False)
+            return
         cols = (("id", 5), ("用户名", 12), ("昵称", 12), ("主账号", 7),
                 ("控制台", 7), ("禁用", 14), ("LLM 额度", 22), ("llm_mode", 15), ("操作", 34))
         _, card = self._admin_card(body, fill="x")

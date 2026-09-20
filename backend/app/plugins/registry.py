@@ -907,6 +907,58 @@ async def plugin_visible_for_caller(name: str, user_id: int | None) -> bool:
     return await plugin_in_runtime_scope(name, user_id=user_id)
 
 
+def plugin_disabled_route_gate_enabled() -> bool:
+    """A2 M0-3：读 ``plugin_disabled_route_gate`` flag（默认关；延迟 import + 异常兜底 False）。
+
+    与 ``app/api/plugin_bridge.py`` 的 ``_plugin_disabled_gate`` 同一 flag 名、同一语义
+    （「插件停用后彻底不可访问」）：桥 / chat / 页面托管 / 插件自定义 REST 共用一处判定口径。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("plugin_disabled_route_gate", False))
+    except Exception:
+        return False
+
+
+def plugin_http_gate(name: str):
+    """P2-2（2026-09-20）：插件自定义 REST（``sdk.router()``）的统一依赖闸。
+
+    工厂闭包：插件名在 ``sdk.router()`` 创建期即已知，按名生成依赖，运行期不必解析路径。
+    补齐桥（``/{name}/bridge``）与页面托管（``/{name}/page/...``）早已具备、唯独自定义
+    REST 缺失的两道闸，避免「停用插件的页面 404、但它的 API 仍可调」：
+
+    1. **运行时禁用闸**（flag ``plugin_disabled_route_gate``）：只读内存缓存 ``_enabled``
+       （由 ``sync_plugins_db`` / ``set_plugin_state`` 维护），零查库；停用 → 404；
+    2. **租户可见性闸**：复用 :func:`plugin_visible_for_caller`（flag
+       ``plugin_runtime_scope`` 的判定收在其内部）；对本调用者不可见 → 404；
+    3. 过闸后 ``push_sdk_context(name, user_id=调用者)``，响应结束 ``reset_sdk_context``。
+       异步生成器依赖与端点在同一协程内执行，故插件 HTTP handler 里的 ``sdk.*``
+       能解析到自己的身份（改前恒为 None：REST 路径上 get_config / require_permission /
+       save_memory 等全部失效）；同时把 caller 写进上下文，使 M4 归属断言在 REST 路径生效。
+
+    两个 flag 全关（默认）时本依赖只有一次内存读并立即放行，与改动前逐字节一致、不查库。
+    404 复用既有 ``plugin_not_found`` 文案（不新增 i18n key、不泄漏插件存在性）。
+    """
+    from fastapi import Depends, Header, HTTPException
+
+    from app.auth.deps import get_current_user_id
+    from app.i18n import tr_lang
+
+    async def gate(user_id: int = Depends(get_current_user_id),
+                   lang: str = Header(default="zh")):
+        if plugin_disabled_route_gate_enabled() and not bool(_enabled.get(name, False)):
+            raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_not_found"))
+        if not await plugin_visible_for_caller(name, user_id):
+            raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_not_found"))
+        _token = push_sdk_context(name, user_id=user_id)
+        try:
+            yield
+        finally:
+            reset_sdk_context(_token)
+
+    return gate
+
+
 def _warn_no_caller_once(hook_name: str, callsite: str) -> None:
     """「拿不到 caller」告警一次（按 hook@调用点去重，避免 hot path 刷屏）。"""
     key = f"{hook_name}@{callsite}"

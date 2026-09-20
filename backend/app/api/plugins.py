@@ -254,6 +254,11 @@ async def update_plugin(
         raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_not_found"))
     enabled = body.get("enabled")
     config = body.get("config")
+    # P3-2（2026-09-20）：enabled/config 都没传时原先直通 set_plugin_state(全 None) 并返回 200，
+    # 等于「调用方一个字段都没改却拿到成功」——拼错键名/漏传参数被静默吞掉。空 body 一律 400
+    # （复用既有 i18n key，不新增）。显式传 null 与不传同义，也算空。
+    if enabled is None and config is None:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "config_invalid"))
     if config is not None and not isinstance(config, dict):
         raise HTTPException(status_code=400, detail=tr_lang(lang, "config_invalid"))
     _channel_config = config is not None and _is_channel_plugin(name)

@@ -187,10 +187,12 @@ def router():
     from fastapi import APIRouter, Depends
     # P0-11 安全加固（2026-08-16）：插件 HTTP 路由统一要求登录态，防局域网匿名调用（SSRF/RCE 面）
     from app.auth.deps import get_current_user_id
+    # P2-2（2026-09-20）：登录态之后叠加插件闸（停用 404 / 跨租户 404 / 推送插件上下文），
+    # 与桥、页面托管同口径；两 flag 全关时该依赖为 no-op（行为逐字节不变）。
     r = APIRouter(
         prefix=f"/api/v1/plugins/{name}",
         tags=[name],
-        dependencies=[Depends(get_current_user_id)],
+        dependencies=[Depends(get_current_user_id), Depends(registry.plugin_http_gate(name))],
     )
     registry._loaded[name]["router"] = r
     return r

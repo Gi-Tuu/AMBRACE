@@ -6620,14 +6620,14 @@ class AppLocalizationsZh extends AppLocalizations {
   String get flagGroupOther => '其他高级开关';
 
   @override
-  String get flagAgentLoopChatTitle => '聊天主循环';
+  String get flagAgentLoopChatTitle => '聊天工具统一入口';
 
   @override
-  String get flagAgentLoopChatHint => 'AI 回复走统一的智能体主循环：理解 → 记忆 → 规划 → 回答。';
+  String get flagAgentLoopChatHint => '聊天里的日历备注、备忘录走统一的工具入口记录。';
 
   @override
   String get flagAgentLoopChatDetail =>
-      '开启后每条聊天都经过统一 Runtime，注入世界认知与记忆后再回答，角色更连贯；关闭则回退到旧的直接生成链路。一般保持开启，仅在排查新链路问题时临时关闭。';
+      '只影响聊天里日历备注、备忘录这类本地工具的记录方式：开启时经统一工具入口执行并留下过程记录，关闭时回退到旧的直接保存方式。两种情况都会正常记录，不改变回复内容。一般保持开启，仅在排查工具链路问题时临时关闭。';
 
   @override
   String get flagAgentLoopSchedulerTitle => '主动任务循环';

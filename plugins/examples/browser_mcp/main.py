@@ -194,10 +194,11 @@ async def _ensure_schema() -> None:
         async with async_session_factory() as db:
             await db.execute(text(
                 "CREATE TABLE IF NOT EXISTS browser_snapshots ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER DEFAULT 1, "
-                "url VARCHAR(500) NOT NULL UNIQUE, domain VARCHAR(200) DEFAULT '', "
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, "
+                "url VARCHAR(500) NOT NULL, domain VARCHAR(200) DEFAULT '', "
                 "title VARCHAR(300) DEFAULT '', text TEXT DEFAULT '', "
-                "image_urls_json TEXT DEFAULT '[]', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+                "image_urls_json TEXT DEFAULT '[]', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+                "CONSTRAINT uq_browser_snapshots_user_url UNIQUE (user_id, url))"
             ))
             await db.commit()
         _ensure_done = True
@@ -205,11 +206,10 @@ async def _ensure_schema() -> None:
         pass
 
 async def _save_snapshot(url: str, domain: str, title: str, text: str, images: list, user_id=None) -> None:
-    """保存短期快照（A2 M0-1，2026-09-20：按账号归户，只写/更新本账号自己的行）。
+    """保存短期快照（A2 后续批次，2026-09-20：按账号归户，只写/更新本账号自己的行）。
 
     口径：user_id 缺失/非法 → 跳过不写（不写无归属快照）；
-    该 url 已属于别的账号 → 跳过不覆盖（browser_snapshots.url 是**全局唯一键**，
-    M0 不做 schema 变更，宁可少写不得串号；唯一键改 (user_id,url) 属后续批次）。
+    browser_snapshots 唯一键为 **(user_id, url) 联合唯一**，同一网址各账号各存一行、互不覆盖。
     """
     try:
         uid = int(user_id or 0)
@@ -228,12 +228,6 @@ async def _save_snapshot(url: str, domain: str, title: str, text: str, images: l
                 .where(BrowserSnapshot.url == url[:500], BrowserSnapshot.user_id == uid)
             )).scalars().first()
             if row is None:
-                other = (await db.execute(
-                    select(BrowserSnapshot.id).where(BrowserSnapshot.url == url[:500]).limit(1)
-                )).scalars().first()
-                if other is not None:
-                    sdk.log("browser 快照保存跳过：该 url 已属于其他账号（url 全局唯一，禁止覆盖他人行）")
-                    return
                 db.add(BrowserSnapshot(
                     user_id=uid, url=url[:500], domain=domain[:200], title=title[:300],
                     text=text[:8000], image_urls_json=json.dumps(images, ensure_ascii=False)[:4000],
