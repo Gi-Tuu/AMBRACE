@@ -31,6 +31,8 @@ import app.scheduling.message_generator as mg_mod
 import app.application.weather_service as weather_mod
 from app.memory.embedding_cache import get_cached_embedding
 
+pytestmark = pytest.mark.slow
+
 
 # ---------------- G-P2-2：主动消息前置查询并行 ----------------
 

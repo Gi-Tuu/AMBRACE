@@ -27,6 +27,8 @@ from app.scheduling import state_triggers
 from app.scheduling import message_generator as mg
 from app.scheduling.arbiter import _context_sort_bonus, CONTEXT_SORT_BONUS
 
+pytestmark = pytest.mark.slow
+
 
 # ---------------- P0-2：arbiter 排序加权纯函数 ----------------
 

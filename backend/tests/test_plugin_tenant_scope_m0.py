@@ -16,35 +16,38 @@ import sys
 
 import pytest
 from fastapi import FastAPI, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api import plugin_bridge as bridge_api
 from app.api import plugins as plugins_api
 from app.auth.deps import get_current_user_id
 from app.plugins import registry
 
+pytestmark = pytest.mark.slow
+
 
 # ---------------------------------------------------------------- 临时库 / 插件装载
 
 @pytest.fixture()
 def db_factory(monkeypatch, tmp_path):
-    """私有临时库：monkeypatch app.db.database.async_session_factory（插件函数内延迟 import，可生效）"""
+    """私有临时库（模板库克隆，含插件独立表 plugin_metadata，见 tests/_dbclone.py）：
+    monkeypatch app.db.database.async_session_factory（插件函数内延迟 import，可生效）"""
     db_path = (tmp_path / "t.db").as_posix()
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path, with_plugins=True)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401  # 注册主 metadata
-        from app.models.base import Base
-        from app.plugins.plugin_base import plugin_metadata
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-            # 渠道插件自有表（douyin_*）在独立 plugin_metadata（已装载插件即已注册）
-            await conn.run_sync(plugin_metadata.create_all)
+    async def _seed_parents():
+        # _dbclone 默认开 FK（生产同款 PRAGMA）：browser_snapshots.user_id 需父行先存在
+        # （本文件账号口径：1 与 2；缺父行时 _save_snapshot 会静默吞掉 IntegrityError）
+        from app.models.user import User
+        async with factory() as db:
+            db.add(User(id=1, username="m0_u1", nickname="M0账号1"))
+            db.add(User(id=2, username="m0_u2", nickname="M0账号2"))
+            await db.commit()
 
-    asyncio.run(_init())
+    asyncio.run(_seed_parents())
     monkeypatch.setattr("app.db.database.async_session_factory", factory)
     yield factory
     asyncio.run(engine.dispose())

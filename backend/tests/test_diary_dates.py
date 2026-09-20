@@ -19,6 +19,8 @@ from app.db.database import get_db
 from app.models.character import AICharacter
 from app.models.life import AIDiary
 
+pytestmark = pytest.mark.slow
+
 USER = 1
 
 

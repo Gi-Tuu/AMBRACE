@@ -18,6 +18,8 @@ from sqlalchemy.pool import NullPool
 
 from app.memory.retrieve import _scene_filter, search_memories
 
+pytestmark = pytest.mark.slow
+
 
 # ---------------- _scene_filter 纯函数（表驱动） ----------------
 

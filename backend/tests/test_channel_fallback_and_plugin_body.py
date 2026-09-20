@@ -31,6 +31,8 @@ from app.models.user import User
 from app.plugins import registry
 from app.providers.channel_binding_reader import all_bound_characters
 
+pytestmark = pytest.mark.slow
+
 ROOT_UID = 1
 DEMO_PLUGIN = "p3_scope_demo"
 

@@ -18,6 +18,8 @@ from sqlalchemy.pool import NullPool
 
 from app.agent.context.section_overlay import group_dynamics_section
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.fixture()
 def gd_db(monkeypatch, tmp_path):

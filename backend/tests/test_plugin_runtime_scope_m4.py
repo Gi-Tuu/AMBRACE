@@ -33,6 +33,8 @@ from app.api import plugins as plugins_api
 from app.auth.config import create_token
 from app.plugins import registry, sdk
 
+pytestmark = pytest.mark.slow
+
 # 账号：1=家庭根；2=1 的子账号（家庭根同为 1）；3=另一个家庭根。
 ROOT_UID, SUB_UID, OTHER_UID = 1, 2, 3
 # 角色：11 属账号 1；21 属账号 3。

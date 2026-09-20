@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool
 
+pytestmark = pytest.mark.slow
+
 _PLUGIN_DIR = os.path.join(os.path.dirname(__file__).replace("\\tests", "\\tests"), "..", "..", "plugins", "examples", "wechat_ilink")
 _PLUGIN_DIR = os.path.abspath(_PLUGIN_DIR)
 

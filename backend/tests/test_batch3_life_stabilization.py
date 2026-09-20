@@ -24,6 +24,8 @@ from app.life.decision import ACTIONS, Decision, StateSnapshot, decide
 from app.life.life_loop import LifeLoopTask
 from app.life.life_state import NEEDS, default_needs, settle_needs
 
+pytestmark = pytest.mark.slow
+
 _NEEDS = {k: 50 for k in NEEDS}
 
 

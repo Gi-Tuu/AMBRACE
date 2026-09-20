@@ -33,6 +33,8 @@ from app.api import plugins as plugins_api
 from app.auth.deps import get_current_user_id
 from app.plugins import registry, sdk
 
+pytestmark = pytest.mark.slow
+
 # 闸相关三 flag（本批次只前两个参与判定；plugin_user_scope 属列表可见性，一并归零防串扰）
 GATE_FLAGS = ("plugin_disabled_route_gate", "plugin_user_scope", "plugin_runtime_scope")
 ROOT_UID, OTHER_UID = 1, 3

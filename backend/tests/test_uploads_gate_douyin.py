@@ -30,6 +30,8 @@ from app.models.user import User
 from app.plugins import registry
 from app.uploads_gate import TenantStaticFiles, resolve_upload_scope
 
+pytestmark = pytest.mark.slow
+
 _A_ROOT, _A_SUB, _B_ROOT = 1, 3, 2          # 家庭 A：root=1 + 子账号 3；家庭 B：root=2
 _TASK_A, _TASK_B = 501, 502                 # 两家庭各自的抖音待发布草稿任务
 _PLUGIN_DIR = registry.EXAMPLE_DIR / "douyin_mcp"

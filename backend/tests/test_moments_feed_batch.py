@@ -17,6 +17,8 @@ from app.models.character import AICharacter
 from app.models.life import AIMoment, MomentAILike, MomentLike
 from app.models.user import User
 
+pytestmark = pytest.mark.slow
+
 NOW = datetime(2026, 9, 10, 12, 0, 0)
 
 

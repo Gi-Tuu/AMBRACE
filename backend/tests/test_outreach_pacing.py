@@ -25,6 +25,8 @@ from sqlalchemy.pool import NullPool
 from app.domain.proactivity import pacing
 from app.scheduling import arbiter
 
+pytestmark = pytest.mark.slow
+
 C_WHITE = 13     # 灰度白名单内（OUTREACH_PACING_GRAY_CHARS）
 C_OTHER = 18     # 白名单外
 USER_ID = 99001

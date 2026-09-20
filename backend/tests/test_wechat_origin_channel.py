@@ -18,6 +18,8 @@ from sqlalchemy.pool import NullPool
 
 import app.application.chat_service as cs
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.fixture()
 def chat_db(monkeypatch, tmp_path):

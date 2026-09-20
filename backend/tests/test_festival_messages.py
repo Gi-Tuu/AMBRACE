@@ -13,6 +13,8 @@ from sqlalchemy.pool import NullPool
 
 from app.scheduling import message_generator as mg
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.fixture()
 def msg_db(monkeypatch, tmp_path):

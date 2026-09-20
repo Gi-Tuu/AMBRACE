@@ -17,6 +17,8 @@ from app.scheduling.message_generator import (
 )
 from app.utils.timeutil import now_naive_utc
 
+pytestmark = pytest.mark.slow
+
 
 # ────────────────────────── C：字面重合守卫（纯函数） ──────────────────────────
 

@@ -24,6 +24,8 @@ from app.scheduling.message_generator import (
     score_naturalness,
 )
 
+pytestmark = pytest.mark.slow
+
 ADMIN = 1
 OTHER = 200
 

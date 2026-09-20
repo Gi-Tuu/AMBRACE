@@ -20,6 +20,8 @@ from sqlalchemy.pool import NullPool
 
 from app.memory.tense import classify_tense
 
+pytestmark = pytest.mark.slow
+
 _SLOT_FLAGS = (
     "user_fact_location", "user_fact_job", "user_fact_relationship",
     "user_fact_living", "user_fact_goal_state", "user_fact_health",

@@ -22,6 +22,8 @@ from sqlalchemy.pool import NullPool
 
 from app.models.memory import ProspectiveIntent
 
+pytestmark = pytest.mark.slow
+
 
 # ───────────────────────── 纯函数（快测档，零 DB）─────────────────────────
 

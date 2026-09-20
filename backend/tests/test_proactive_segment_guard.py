@@ -17,6 +17,8 @@ from sqlalchemy.pool import NullPool
 
 from app.scheduling import message_generator as mg
 
+pytestmark = pytest.mark.slow
+
 _SCHOOL_ANCHOR = "\nTA 当前已知现状（以此为准，旧记忆不得与此矛盾）：位置：宿舍。\n"
 _FAMILY_RESP = "我把菜都热好了。\n锅里给你留着。"
 _SAFE_RESP = "我把菜都热好了。\n你那边忙完记得吃点东西。"

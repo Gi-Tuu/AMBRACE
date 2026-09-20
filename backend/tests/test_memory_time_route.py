@@ -14,6 +14,8 @@ from sqlalchemy.pool import NullPool
 
 from app.memory.retrieve import search_memories
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.fixture()
 def tdb(monkeypatch, tmp_path):

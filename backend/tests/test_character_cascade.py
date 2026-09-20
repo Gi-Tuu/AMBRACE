@@ -6,7 +6,7 @@
 2) 被删角色的私有数据各表归零；
 3) 共享数据不误删（他角色记忆/动态/群共享记忆、多角色共享织卡、仍有玩家的游戏局）。
 
-临时 SQLite：与 tests/test_device_api.py 同范式（临时文件库 + create_all + TestClient
+临时 SQLite：临时文件库（会话级模板库克隆，见 tests/_dbclone.py）+ TestClient
 override get_db/get_current_user_id）；向量库与「离开记忆」走全局会话，用 monkeypatch 隔离。
 """
 import asyncio
@@ -15,14 +15,15 @@ import sqlite3
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api import characters as characters_api
 from app.auth.deps import get_current_user_id
 from app.db.database import get_db
-from app.models.base import Base
+
+pytestmark = pytest.mark.slow
 
 USER_ID = 9001
 CHAR_A = 9101  # 被删角色
@@ -35,17 +36,11 @@ async def _noop(*_args, **_kwargs):
 
 @pytest.fixture()
 def cascade_env(tmp_path, monkeypatch):
-    """临时 SQLite 文件库（create_all 建表）+ 隔离全局副作用。"""
+    """临时 SQLite 文件库（模板库克隆，见 tests/_dbclone.py）+ 隔离全局副作用。"""
     db_path = tmp_path / "cascade.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models._all  # noqa: F401  保证全部模型注册进 Base.metadata
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     # 向量库与「离开记忆」用的是全局会话/全局向量目录，不参与本用例断言
     monkeypatch.setattr("app.db.vector_store.delete_memory_vectors_by_character", _noop)
     monkeypatch.setattr("app.memory.save_memory", _noop)

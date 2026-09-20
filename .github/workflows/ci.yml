@@ -6,15 +6,28 @@ on:
     tags: [ "v*" ]
   pull_request:
     branches: [ main ]
+  # nightly 全量：3:17 避开整点（整点是 GitHub 调度最拥堵的时候，容易排队延后）
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: 跑全量（含 slow 与全部 Windows 矩阵）
+        type: boolean
+        default: true
 
 jobs:
   # 变更侦测（2026-09-12）：只动 flutter_app/ 或 docs/ 的推送，跳过与前端无关的重量级任务
   # （Windows 后端矩阵 + Docker 构建/冒烟）；其余任何情况一律全开，避免漏检。
+  # 2026-09-20：Linux 后端矩阵也纳入同一守卫（纯 docs/前端推送不必再跑三版本全量），
+  # 并额外产出 full 供各后端 job 决定「全量档 / 快测档」。
   changes:
     name: Detect changed paths
     runs-on: ubuntu-latest
     outputs:
       heavy: ${{ steps.filter.outputs.heavy }}
+      # 本轮是否跑全量档（供后端各 job 决定 -m 过滤与 Windows 矩阵宽度）
+      full: ${{ steps.filter.outputs.full }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,6 +38,16 @@ jobs:
         shell: bash
         run: |
           set -u
+          # 全量档判定：nightly 定时、或手动派发时勾选 full -> 跑全量（含 slow、含完整 Windows 矩阵）；
+          # 普通 push / pull_request -> 只跑分层快测。放在脚本最前面写，
+          # 免得下面「拿不到基线就全开」的早退分支漏掉这个输出。
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event.inputs.full }}" = "true" ]; then
+            echo "本轮为全量档"
+            echo "full=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "本轮为快测档"
+            echo "full=false" >> "$GITHUB_OUTPUT"
+          fi
           BASE="${{ github.event.before }}"
           if [ "${{ github.event_name }}" != "push" ] || [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
             echo "非 push 事件或拿不到上一个提交 -> 全开"
@@ -56,6 +79,8 @@ jobs:
           fi
 
   backend:
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
     name: Backend py${{ matrix.py }} (ruff + pytest)
     runs-on: ubuntu-latest
     strategy:
@@ -64,6 +89,8 @@ jobs:
         # 项目声明的支持范围：setup.sh/README 声明 3.12+；本地 venv 为 3.14（pyproject target-version=py314）。
         # 锁文件在本地 3.14/Windows 生成（仅本机运行时可用）；个别钉版平台 wheel 若在 3.12/3.13 缺失，
         # 会由本 matrix 在 CI 捕获（NEEDS_RUNTIME_VERIFICATION）。
+        # 三个版本任何事件都跑（wheel/导入问题必须天天有覆盖），差别只在用例范围：
+        # push/PR 下只有主力 3.13 跑全量，3.12/3.14 跑快测档；nightly/手动 full 下三者都跑全量。
         py: [ "3.12", "3.13", "3.14" ]
     steps:
       - uses: actions/checkout@v4
@@ -96,19 +123,80 @@ jobs:
         run: python .github/scripts/check_frozen_dirs.py
 
       - name: Test (pytest)
-        run: pytest backend/tests -q
+        env:
+          SKIP_MODEL_DOWNLOAD: "1"
+        # 分层理由：全量跑时每个用例的 fixture 都要 create_all 建 112 张表落盘（实测约 1.6s/例，
+        # 而测试逻辑本身只要 0.03~0.45s），5 份矩阵重复这份开销直接把墙钟顶到 3 小时。
+        # 因此「function 级建库」的测试文件统一带 slow 标记：push/PR 只有主力 3.13 跑全量，
+        # 3.12/3.14 跑快测档（wheel/导入兼容性不受影响）；nightly 或手动 full=true 时三版本都跑全量。
+        # 注意下面条件的写法：GitHub 的 && / || 是按「真值」挑选的，所以过滤串必须放在真分支上、
+        # 空串放在假分支（写成 cond && '' || '-m ...' 会因为空串是假值而永远取到过滤串）。
+        # --durations=20 持续输出最慢用例，供后续按数据继续瘦身。
+        run: pytest backend/tests -q ${{ (needs.changes.outputs.full != 'true' && matrix.py != '3.13') && '-m "not slow"' || '' }} --durations=20
 
   # 主开发 / 发 APK 在 Windows：覆盖 Windows 特有路径、SO_REUSEADDR、aiosqlite 线程、
   # pwsh 脚本语法（不跑 Docker smoke）。
+  #
+  # 为什么拆成 quick / full 两个 job（而不是一个 job 带矩阵）：
+  # Windows 这边要变的不是「跑哪些用例」而是「跑几个 Python 版本」——GitHub 的 matrix 组合是
+  # 静态展开的，没有可靠的「按事件条件增删组合」写法，而 Windows 全量单 job 实测约 2 小时、
+  # 是整条流水线墙钟的大头，所以按档位拆两个 job，用 job 级 if（口径与 changes.heavy 一致）互斥：
+  #   push / pull_request        -> backend-windows：只有 3.13，跑快测档（-m "not slow"）
+  #   schedule / dispatch full   -> backend-windows-full：3.12 + 3.13，跑全量
   backend-windows:
     needs: changes
-    if: needs.changes.outputs.heavy == 'true'
-    name: Backend py${{ matrix.python-version }} (Windows, ruff + pytest)
+    if: needs.changes.outputs.heavy == 'true' && needs.changes.outputs.full != 'true'
+    name: Backend py${{ matrix.python-version }} (Windows, ruff + pytest quick)
     runs-on: windows-latest
-    # 观察期设置（临时）：Windows job 首次入 CI，平台相关失败暂不阻塞主线。
-    # 观察期：自 2026-09-18 起约一周；转正日期 2026-09-25。到期后由用户拍板是否去掉
-    # continue-on-error（本次只改注释、未真转正、未改 job 行为）。
-    continue-on-error: true
+    # 2026-09-20 转正（用户拍板）：去掉 continue-on-error，Windows 失败即阻断。
+    # 转正依据：本 job 已由「两版本全量」瘦身为「3.13 快测档」；且上一轮 Windows 全量
+    # （2996 passed）唯一的红是 test_group_cognition 子进程 ANSI 编码问题，已修 +
+    # 本 job 补 PYTHONIOENCODING 兜底。若日后出现平台性偶发不稳，再按「延长观察」重议。
+    defaults:
+      run:
+        shell: pwsh
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ "3.13" ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        working-directory: backend
+        run: ruff check app
+
+      - name: Test (pytest)
+        working-directory: backend
+        env:
+          SKIP_MODEL_DOWNLOAD: "1"
+          # Windows 子进程默认按 ANSI 代码页输出：非 ASCII（如 alembic 的「A → B」）会抛
+          # UnicodeEncodeError。这里统一给 pytest 及其子进程 UTF-8 IO（2026-09-20 唯一一条红）。
+          PYTHONIOENCODING: "utf-8"
+        # --basetemp 指到 job 工作区内：默认临时目录在会话清理时会踩 pytest-current junction
+        # 报「拒绝访问」，退出码变 2 导致 durations 报告拿不到；-p no:cacheprovider 保持原样
+        # （Windows 上跨 job 复用缓存目录反而会串味）。
+        run: pytest -q -p no:cacheprovider -m "not slow" --durations=20 --basetemp=.pytest-tmp
+
+  # Windows 全量档：只在 nightly 或手动勾选 full 时跑，把 3.12 与 slow 用例一起覆盖。
+  backend-windows-full:
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true' && needs.changes.outputs.full == 'true'
+    name: Backend py${{ matrix.python-version }} (Windows, ruff + pytest full)
+    runs-on: windows-latest
+    # 与 quick job 同步转正（2026-09-20 已去掉 continue-on-error）。
     defaults:
       run:
         shell: pwsh
@@ -139,7 +227,9 @@ jobs:
         working-directory: backend
         env:
           SKIP_MODEL_DOWNLOAD: "1"
-        run: pytest -q -p no:cacheprovider
+          PYTHONIOENCODING: "utf-8"
+        # 全量档不加 -m 过滤，slow 用例与 3.12 wheel 兼容性一并覆盖。
+        run: pytest -q -p no:cacheprovider --durations=20 --basetemp=.pytest-tmp
 
   frontend:
     name: Flutter (analyze + test)

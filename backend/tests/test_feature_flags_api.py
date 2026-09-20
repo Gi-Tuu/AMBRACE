@@ -14,6 +14,8 @@ from starlette.testclient import TestClient
 from app.api import system as system_api
 from app.auth.deps import get_current_user_id
 
+pytestmark = pytest.mark.slow
+
 ADMIN = 1
 OTHER = 200
 

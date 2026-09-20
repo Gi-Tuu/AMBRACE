@@ -21,6 +21,8 @@ from starlette.testclient import TestClient
 
 import pathlib as _pl
 
+pytestmark = pytest.mark.slow
+
 _PLUGIN_DIR = _pl.Path(__file__).resolve().parents[2] / "plugins" / "examples" / "wechat_ilink"
 _PLUGIN_DIR_STR = str(_PLUGIN_DIR)
 

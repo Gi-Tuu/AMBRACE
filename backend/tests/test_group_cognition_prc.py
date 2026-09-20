@@ -24,6 +24,8 @@ from app.models.user import User
 from app.memory import group_memory as gm
 from app.agent.context import section_overlay as overlay
 
+pytestmark = pytest.mark.slow
+
 
 USER = 1
 CHAR_A = 11

@@ -15,6 +15,8 @@ from sqlalchemy.pool import NullPool
 
 from app.application.chat_groups import delete_group
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.fixture()
 def group_db(tmp_path):

@@ -25,6 +25,8 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+pytestmark = pytest.mark.slow
+
 # 生产库 user_id=3 现行 location 权威值（29 字，须仍可过闸）
 _STRONG_LOCATION = "常驻湛江市·广东海洋大学湖光校区·学生宿舍（大二在读学生）"
 

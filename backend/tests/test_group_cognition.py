@@ -125,10 +125,15 @@ def test_migration_upgrade_head_and_downgrade_single_head(tmp_path):
     url = f"sqlite:///{db.as_posix()}"
     env = dict(__import__("os").environ)
     env["DATABASE_URL"] = url
+    # 2026-09-20：Windows CI（默认 ANSI/charmap 控制台）上 alembic 会打印
+    # 「Running upgrade A → B」里的 U+2192，子进程按代码页输出会抛 UnicodeEncodeError
+    # （当时是 Windows job 唯一一条红）；强制子进程 UTF-8 输出、父进程按 UTF-8 解码。
+    env["PYTHONIOENCODING"] = "utf-8"
 
     # 1) 空库 upgrade head（整链重放，含本迁移 f3c4d5e6f7a1）
     r1 = subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"],
-                        cwd=str(backend), env=env, capture_output=True, text=True)
+                        cwd=str(backend), env=env, capture_output=True, text=True,
+                        encoding="utf-8", errors="replace")
     assert r1.returncode == 0, r1.stderr
 
     conn = sqlite3.connect(str(db))
@@ -144,7 +149,8 @@ def test_migration_upgrade_head_and_downgrade_single_head(tmp_path):
 
     # 2) 单头校验
     r2 = subprocess.run([sys.executable, "-m", "alembic", "heads"],
-                        cwd=str(backend), env=env, capture_output=True, text=True)
+                        cwd=str(backend), env=env, capture_output=True, text=True,
+                        encoding="utf-8", errors="replace")
     assert r2.returncode == 0, r2.stderr
     # 单头校验（不硬编码具体 head：后续新增迁移时本用例无需改）
     head_lines = [ln for ln in r2.stdout.splitlines() if "(head)" in ln]
@@ -153,7 +159,8 @@ def test_migration_upgrade_head_and_downgrade_single_head(tmp_path):
 
     # 3) downgrade 到父节点 → 表与列干净移除（可回退）
     r3 = subprocess.run([sys.executable, "-m", "alembic", "downgrade", "f2b3c4d5e6f7"],
-                        cwd=str(backend), env=env, capture_output=True, text=True)
+                        cwd=str(backend), env=env, capture_output=True, text=True,
+                        encoding="utf-8", errors="replace")
     assert r3.returncode == 0, r3.stderr
 
     conn = sqlite3.connect(str(db))

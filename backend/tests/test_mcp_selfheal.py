@@ -23,6 +23,8 @@ from app.mcp.manager import MCPClientManager
 from app.mcp.transport import STATUS_CONNECTED
 from app.models.mcp import MCPServer
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.fixture()
 def mcp_db(monkeypatch, tmp_path):
