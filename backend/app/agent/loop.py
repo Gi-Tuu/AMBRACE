@@ -140,6 +140,7 @@ AGENT_FLAGS = {
     #   且 stale 在 rerank 恒降权 0.5（降权不再受 memory_supersede 门控）。
     # 关 = 一键回退旧行为（status 子句退回 memory_supersede 门控，关=永真）。
     "current_facts_active_only": True,
+    "vector_user_scope": False,  # A1（2026-09-19）向量账号归属：开=读取按 metadata.user_id/角色 owner 过滤（写入始终带）；关=逐字节旧行为。本键必须登记，否则 DB 里开了也不生效
     # ── #70 附录 C 可选 M3：记忆写入回执（memory_write_receipt，2026-09-15 落地；默认关=零写入、零行为变化）──
     # memory_write_receipt 开=save_memory 写分支 / supersede_memory 异步写 memory_write_receipts
     #   （终态追踪「这条记忆为什么在/不在」）；关=完全跳过（不写不读，逐字节旧链路）。
@@ -284,6 +285,12 @@ AGENT_FLAGS = {
     #   去重（策略候选落库口径由内核校验，见 scheduling/sources/strategy.py）。
     #   回退：置回 False 即可（runtime_flags 热切，无需重启）。
     "proactive_strategy_plugins": False,
+    # ── A2 M0-3（2026-09-20）：内核「已禁用插件」路由闸（插件归户批次）──
+    # 开＝插件 bridge / chat / 页面托管端点在插件 enabled=False 时一律 404（判定口径统一取
+    #   registry.get_plugin(name)["enabled"]，即 DB plugins.enabled 的内存缓存）；
+    #   关＝**逐字节旧行为**（只判插件是否存在，不判 enabled，与现状一致）。默认关=灰度门控，
+    #   本键必须登记，否则 DB/runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
+    "plugin_disabled_route_gate": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）
@@ -380,6 +387,7 @@ async def run_recall_loop(
                 query=qq,
                 limit=_hop_limit,
                 time_range=t_range,
+                user_id=user_id,  # A2 M0-4：透传调用者（memory_search hook ctx）
                 trace_meta={"user_id": user_id, "trigger": "recall_second_hop"},
             )
             steps.append({"action": "RECALL", "query": qq[:80], "n": len(hits)})

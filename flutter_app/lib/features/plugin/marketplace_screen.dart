@@ -130,7 +130,8 @@ Future<bool?> showRemoteInstallConfirmDialog(
 
 class _MarketplaceScreenState extends State<MarketplaceScreen> {
   bool _loading = true;
-  bool _isAdmin = false;
+  // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员
+  bool _isServerAdmin = false;
   bool _allowRemoteInstall = false;
   String? _error;
   _MarketFilter _filter = _MarketFilter.all;
@@ -141,7 +142,8 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
   @override
   void initState() {
     super.initState();
-    _isAdmin = context.read<SettingsProvider>().isAdmin;
+    // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员（原 isAdmin）
+    _isServerAdmin = context.read<SettingsProvider>().isServerAdmin;
     _load();
   }
 
@@ -245,7 +247,8 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
       appBar: AppBar(
         title: Text(l10n.marketplace),
         actions: [
-          if (_isAdmin)
+          // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员（远程市场配置入口=管理动作）
+          if (_isServerAdmin)
             IconButton(
               tooltip: l10n.marketRemoteConfig,
               icon: const Icon(Icons.cloud_sync_outlined),
@@ -470,7 +473,8 @@ class _MarketplaceScreenState extends State<MarketplaceScreen> {
                         style: const TextStyle(fontSize: 11, color: Colors.green),
                       ),
                     )
-                  else if (_isAdmin)
+                  else if (_isServerAdmin)
+                    // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员（市场安装按钮=管理动作）
                     FilledButton.tonal(
                       onPressed: (isRemote && !_allowRemoteInstall) ? null : () => _install(item),
                       style: FilledButton.styleFrom(
@@ -826,7 +830,8 @@ class _MarketplaceDetailScreenState extends State<MarketplaceDetailScreen> {
     final l10n = AppLocalizations.of(context)!;
     final item = widget.item;
     final installed = item['installed'] == true;
-    final isAdmin = context.read<SettingsProvider>().isAdmin;
+    // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员（详情页安装判据，原 isAdmin）
+    final isServerAdmin = context.read<SettingsProvider>().isServerAdmin;
     final category = item['category'] as String? ?? 'plugin';
     final hooks = (item['hooks'] as List? ?? []).cast<String>();
     final perms = (item['permissions'] as List? ?? []).cast<String>();
@@ -918,7 +923,8 @@ class _MarketplaceDetailScreenState extends State<MarketplaceDetailScreen> {
               ],
             ),
           ),
-          if (!installed && isAdmin) ...[
+          // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员（详情页安装按钮）
+          if (!installed && isServerAdmin) ...[
             const SizedBox(height: 20),
             FilledButton(
               onPressed: _installing ? null : _installDetail,

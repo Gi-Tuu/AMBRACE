@@ -103,7 +103,7 @@ def enabled_user_fact_slots() -> list[str]:
 # 口径（交接红线）：
 # - 位置属低敏，走独立开关 user_current_location_share（默认开），**不吃细槽总闸**；
 # - relationship（感情）/ health（健康）两槽仍为 opt-in：本模块的共享读路径只从
-#   enabled_user_fact_slots()（显式开启）取槽，永不把这两槽带出去；
+#   enabled_user_fact_slots_for(user_id)（显式开启）取槽，永不把这两槽带出去；
 # - 写侧细槽门控（user_fact_slot_enabled）保持不变——共享是「读/注入」侧的放行。
 _SHARED_SLOTS_BY_FLAG: dict[str, str] = {"location": "user_current_location_share"}
 
@@ -130,9 +130,70 @@ def readable_user_fact_slots() -> list[str]:
 
     enabled = 显式 opt-in / 总闸旁路的非敏感槽（relationship/health 仍需显式开）；
     shared  = user_current_location_share 放行的 location（默认开、不吃总闸）。
+
+    A5（2026-09-19）：本函数为**旧同步口径（只读进程级 AGENT_FLAGS）**，仅供未持有 user_id
+    的调用点/既有单测兼容；生产读路径请用 ``readable_user_fact_slots_for(user_id)``（按账号生效）。
     """
     slots = set(enabled_user_fact_slots())
     if user_current_location_shared():
+        slots.add("location")
+    return [s for s in MUTABLE_SLOTS if s in slots]
+
+
+# ── 按账号解析（A5 用户级开关覆盖，2026-09-19）────────────────────────────
+# 上面三个同步函数只读进程级 AGENT_FLAGS（旧口径，保留给无 user_id 的调用点与既有单测）；
+# 生产读路径一律走下面这组 async 版本：经 flag_service.resolve_flag(key, user_id) 解析
+# 「server_locked → 全局 / 该账号覆盖 → 用户值 / 否则全局值」，fail-open（异常回全局值）。
+# 默认口径：没有用户覆盖行的账号，取值与改动前逐字节一致（回落全局 AGENT_FLAGS）。
+
+
+async def _resolve_user_fact_flag(key: str, user_id) -> bool:
+    """按账号解析一个 flag；任何异常 fail-open 回全局现值（策略/覆盖是旁路，不打挂记忆链路）。"""
+    try:
+        from app.application import flag_service
+        return await flag_service.resolve_flag(key, user_id)
+    except Exception:
+        try:
+            from app.agent.loop import AGENT_FLAGS
+            return bool(AGENT_FLAGS.get(key, False))
+        except Exception:
+            return False
+
+
+async def user_fact_slot_enabled_for(slot: str, user_id=None) -> bool:
+    """按账号版 ``user_fact_slot_enabled``：语义完全一致，只是 flag 取值按 user_id 解析。
+
+    relationship/health 两敏感槽仍不受总闸旁路（须该账号各自显式开启），红线不变。
+    """
+    try:
+        flag = USER_FACT_SLOT_FLAGS.get(slot)
+        if flag and await _resolve_user_fact_flag(flag, user_id):
+            return True
+        if slot in _SENSITIVE_SLOTS:
+            return False
+        return await _resolve_user_fact_flag("global_user_facts", user_id)
+    except Exception:
+        return False
+
+
+async def enabled_user_fact_slots_for(user_id=None) -> list[str]:
+    """按账号版的「当前启用槽列表」（按 MUTABLE_SLOTS 声明顺序）。"""
+    out: list[str] = []
+    for s in MUTABLE_SLOTS:
+        if await user_fact_slot_enabled_for(s, user_id):
+            out.append(s)
+    return out
+
+
+async def user_current_location_shared_for(user_id=None) -> bool:
+    """按账号版的位置共享开关（默认开；独立于细槽总闸）。"""
+    return await _resolve_user_fact_flag(_SHARED_SLOTS_BY_FLAG["location"], user_id)
+
+
+async def readable_user_fact_slots_for(user_id=None) -> list[str]:
+    """按账号版的读取侧槽白名单：已启用槽 + 共享槽（去重，声明顺序）。"""
+    slots = set(await enabled_user_fact_slots_for(user_id))
+    if await user_current_location_shared_for(user_id):
         slots.add("location")
     return [s for s in MUTABLE_SLOTS if s in slots]
 
@@ -179,8 +240,10 @@ async def get_shared_user_facts(user_id: int) -> dict[str, str]:
 
     供现状锚点（app.memory.current_state）、主动消息/朋友圈/生活生成器、定时兑现锚点共用；
     失败返回 {}（fail-open）。relationship/health 只有在显式开启时才会出现在结果里。
+
+    A5（2026-09-19）：槽白名单按 **user_id** 解析（该账号的覆盖行优先），不再用进程级全局冒充。
     """
-    slots = readable_user_fact_slots()
+    slots = await readable_user_fact_slots_for(user_id)
     if not slots:
         return {}
     out: dict[str, str] = {}
@@ -200,7 +263,7 @@ async def get_authoritative_user_location(user_id: int) -> str | None:
 
     位置共享开关关 / 无可用值 → None。
     """
-    if not user_current_location_shared():
+    if not await user_current_location_shared_for(user_id):
         return None
     return (await get_shared_user_facts(user_id)).get("location")
 
@@ -278,13 +341,15 @@ async def upsert_user_fact(
 async def get_active_user_facts(user_id: int, slots: list[str] | None = None) -> list[GlobalUserFact]:
     """取某用户事实槽（按 slot 排序）；失败返回空列表。
 
-    slots=None → 只取【已启用槽】（enabled_user_fact_slots，安全默认）：使 [USER NOW]、
+    slots=None → 只取【该账号已启用槽】（enabled_user_fact_slots_for，安全默认）：使 [USER NOW]、
                  跨角色对齐 align/sweep 等既有调用点天然只处理启用槽，无需逐点加 if；
     slots=列表 → 只取白名单槽（测试 / 定向调用）；显式传空列表 → 返回空。
     注：(user_id, slot) 唯一约束保证每槽只有一行（单值取代），无需再按槽去重。
+
+    A5（2026-09-19）：默认槽集合按 **user_id** 解析（用户级覆盖生效）；异常 fail-open 回全局。
     """
     if slots is None:
-        slots = enabled_user_fact_slots()
+        slots = await enabled_user_fact_slots_for(user_id)
     if not slots:
         return []
     try:
@@ -363,7 +428,7 @@ async def settle_location_on_home_return(user_id: int, text: str,
       旧位置交由 location 72h 新鲜窗自然过期；
     - 收敛写入复用 upsert_user_fact（单值取代 + previous_value 留痕，零新机制）。
     """
-    if not user_fact_slot_enabled("location"):
+    if not await user_fact_slot_enabled_for("location", user_id):
         return False
     if not detect_home_return(text):
         return False

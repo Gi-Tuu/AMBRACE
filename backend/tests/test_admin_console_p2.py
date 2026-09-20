@@ -684,12 +684,20 @@ def test_console_p2_migration_adds_columns_tables_idempotent(tmp_path):
 
 
 def test_alembic_single_head_with_p2_migration():
-    """迁移链保持单头（本迁移是链头）——新增迁移不得分叉。"""
+    """迁移链保持单头，且 P2（c5d6e7f8a9b0）仍在链上——新增迁移不得分叉。
+
+    P3-4（2026-09-19）：不再硬编码 head＝c5d6e7f8a9b0（后续新增迁移会把 head 前移，
+    硬编码会让每个新迁移都误伤本用例）；改为「单头 + P2 修订可从 head 回溯到」，
+    与 tests/test_fk_ondelete_active_parents.py 的跟随单头写法一致。
+    """
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
     backend = Path(__file__).resolve().parents[1]
     cfg = Config(str(backend / "alembic.ini"))
     cfg.set_main_option("script_location", str(backend / "alembic"))
-    heads = ScriptDirectory.from_config(cfg).get_heads()
-    assert heads == ["c5d6e7f8a9b0"]
+    script = ScriptDirectory.from_config(cfg)
+    heads = script.get_heads()
+    assert len(heads) == 1, heads  # 单头：新增迁移不得分叉
+    revs = [r.revision for r in script.walk_revisions(base="base", head=heads[0])]
+    assert "c5d6e7f8a9b0" in revs  # P2 修订仍在 head 的祖先链上

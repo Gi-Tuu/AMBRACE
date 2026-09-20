@@ -121,7 +121,16 @@ class Settings(BaseSettings):
     mcp_connect_timeout: float = 10.0  # MCP Server 连接/初始化/发现超时（秒）
     mcp_call_timeout: int = 30  # 单次 MCP 工具调用超时（秒）
     mcp_reconnect_max: int = 3  # 连接失败最大重试次数（指数退避 1s/2s/4s）
-    mcp_http_allow_private: bool = False  # True 显式放行 MCP 内网/本地地址（SSRF 例外）
+    mcp_http_allow_private: bool = False  # [全局兜底] True 时【全局】放行 MCP 任意内网/本地地址（SSRF 例外，向后兼容）
+    # P3-4（2026-09-19）本地回环细粒度放行：本字段保持默认 False 不变；单个 MCP Server 可在其自身配置里用
+    # allow_loopback=True 显式标记（列 mcp_servers.allow_loopback，经 /api/v1/mcp/servers 增改/回显）。
+    # 两者关系与推荐用法：
+    # - mcp_http_allow_private=True 仍是【进程级全局】放行（连 192.168/10./172.16-31/169.254 云元数据服务
+    #   也会一起放开），只适合完全自托管/已隔离的可信内网部署，不应为了「本地游戏 MCP（Sims4/Minecraft
+    #   的 127.0.0.1）」而打开；
+    # - 常规做法：保持本开关 False，只给确需本地回环的单个 Server 置 allow_loopback=True —— 放行范围严格
+    #   限于该 Server，且要求 URL 解析结果【全部】是 loopback（127.0.0.0/8 / ::1 / localhost）；其余私网/
+    #   链路本地/云元数据地址即便标了 allow_loopback 也照旧拒绝（见 app/mcp/transport.py _resolve_mcp_ip）。
 
     # ---- FCM 离线推送（2026-08-28）----
     push_fcm_enabled: bool = False  # .env: PUSH_FCM_ENABLED=true 启用 FCM 离线推送

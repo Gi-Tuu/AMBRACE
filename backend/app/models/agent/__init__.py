@@ -83,6 +83,22 @@ class LlmUsageLimit(Base):
     total_limit: Mapped[int] = mapped_column(Integer, default=0)
     updated_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+class UserLlmLimit(Base):
+    """按账号 LLM 额度覆盖（A8，2026-09-20）：有行=该账号用这个值，无行=回落全局 llm_usage_limits.id=1。
+
+    与 LlmUsageLimit 的关系：全局行是「服务器默认」，本表是「账号覆盖」；生效值 = 覆盖 > 全局 > 未设置
+    （判定、回落、写入一律走 app/application/llm_quota.py，本模型只描述存储）。
+
+    - ``total_limit`` 允许 0：显式「该账号额度为 0」，与「无覆盖」靠**有无行**区分（不看值）；
+    - ``user_id`` 不挂 users 外键：与 api_configs.user_id 等既有「自由整型归属」一致（账号删除
+      后残留行不阻塞删除，且 0/-1 之类服务器哨兵对 FK 违约）。
+    """
+    __tablename__ = "user_llm_limits"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    total_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 # ── task_llm_config.py ──
 # 任务专用 LLM 配置：user_id=0=服务器级全局、>0=用户级；task 指定用途（记忆/卡片/情绪/状态/复习/主动消息/日记/时光）
@@ -155,6 +171,7 @@ __all__ = [
     "AgentTaskLog",
     "LlmUsage",
     "LlmUsageLimit",
+    "UserLlmLimit",
     "TaskLlmConfig",
     "EmotionCareTask",
     "ToolPermission",

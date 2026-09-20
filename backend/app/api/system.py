@@ -298,13 +298,19 @@ async def update_llm_usage_limit(body: dict, user_id: int = Depends(get_current_
 
 @router.get('/feature-flags')
 async def get_feature_flags(user_id: int = Depends(get_current_user_id), lang: str = Header(default='zh')):
-    '''读取全部运行时 Feature Flag（主账号）；source: db=DB 覆盖 / default=硬编码默认'''
+    '''读取全部运行时 Feature Flag（主账号）；source: db=DB 覆盖 / default=硬编码默认
+
+    A5（2026-09-19）：每条附 scope（'user'=按账号生效 / 'server'=服务器级）与 user_enabled
+    （本账号覆盖值，无覆盖 = null）。'''
     return await _svc.get_feature_flags(user_id, lang)
 
 
 @router.put('/feature-flags/{key}')
 async def update_feature_flag(key: str, data: dict, user_id: int = Depends(get_current_user_id), lang: str = Header(default='zh')):
-    '''切换 Feature Flag（主账号）：写 DB + 热更新内存立即生效；未知 key 返回 404'''
+    '''切换 Feature Flag（本账号）：写 DB + 热更新内存立即生效；未知 key 返回 404
+
+    A5（2026-09-19）：用户语义键写本账号覆盖行（返回 scope='user'、全局不变）；其余键保持现状
+    写全局（返回 scope='server'）；锁定/自助关策略仍 403。'''
     return await _svc.update_feature_flag(key, data, user_id, lang)
 
 

@@ -310,12 +310,17 @@ async def sync_plugins_db() -> None:
             info = _loaded[name]["info"]
             row = by_name.get(name)
             if row is None:
+                # A2 M1：同步路径（含 builtin）= 服务级，owner 两列显式留 NULL（「内置=服务级」）；
+                # 已安装行后续由 record_install_provenance 在 owner 为 NULL 时落安装者，
+                # 本函数绝不改写 owner_user_id/owner_tenant_id（重复同步不得覆盖已有 owner）。
                 db.add(Plugin(
                     name=name, version=info["version"], description=info["description"],
                     author=info["author"], category=info["category"],
                     type=info.get("type", "http"), enabled=False,
                     config_json=json.dumps(info["config"], ensure_ascii=False),
                     source=_src,
+                    owner_user_id=None,
+                    owner_tenant_id=None,
                 ))
             else:
                 row.version = info["version"]
@@ -371,8 +376,20 @@ async def get_plugin_consented_permissions(name: str) -> list[str]:
     return list((await get_plugin_provenance(name)).get("consented_permissions", []))
 
 
-async def record_install_provenance(name: str, *, source: str, source_url: str | None = None, sha256: str | None = None) -> None:
-    """安装/升级成功后记录来源（remote/local/builtin）+ 来源 url + sha256 实际计算值（3.9）。"""
+async def record_install_provenance(name: str, *, source: str, source_url: str | None = None,
+                                    sha256: str | None = None,
+                                    owner_user_id: int | None = None,
+                                    owner_tenant_id: int | None = None) -> None:
+    """安装/升级成功后记录来源（remote/local/builtin）+ 来源 url + sha256 实际计算值（3.9）
+    + 安装者归属（A2 M1，2026-09-20）。
+
+    归属口径：
+    - ``owner_user_id`` = 本次安装的调用者账号；``owner_tenant_id`` 缺省时经
+      ``family_service.get_family_root_id`` 解析其家庭根（同 session，失败不阻塞安装）；
+    - **只在目标列为 NULL 时写入**：内置/存量/服务级（NULL）首次被某账号安装时落该账号，
+      重复安装/重复同步绝不会把已有 owner 覆盖（尤其不得覆盖成 NULL）；
+    - 不传 owner_user_id（内置同步、存量调用点）→ 两列保持原值（新行即 NULL=服务级）。
+    """
     from sqlalchemy import select
     from app.db.database import async_session_factory
     from app.models.plugin import Plugin
@@ -388,6 +405,22 @@ async def record_install_provenance(name: str, *, source: str, source_url: str |
             row.source_url = source_url
         if sha256 is not None:
             row.sha256 = sha256
+        # A2 M1：安装者归属（只在 NULL 时落，不覆盖已有 owner；拿不到就留 NULL）
+        if owner_user_id is not None:
+            _uid = int(owner_user_id)
+            if row.owner_user_id is None:
+                row.owner_user_id = _uid
+            if row.owner_tenant_id is None:
+                _tid = owner_tenant_id
+                if _tid is None:
+                    try:
+                        from app.application.family_service import get_family_root_id
+                        _tid = await get_family_root_id(db, _uid)
+                    except Exception as _e:  # 家庭根不可用 → 留 NULL，不影响安装/来源记录
+                        _logger.warning("插件 %s 归属家庭根解析失败: %s", name, _e)
+                        _tid = None
+                if _tid is not None:
+                    row.owner_tenant_id = int(_tid)
         await db.commit()
     _db_prov[name] = await get_plugin_provenance(name)
 

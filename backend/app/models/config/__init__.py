@@ -94,6 +94,22 @@ class RuntimeFlag(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
+# ── user_runtime_flag.py（A5 用户级开关覆盖，2026-09-19）──
+# 用户级 Feature Flag 覆盖：把 App 里的「用户语义开关」从进程级全局改成按账号生效，
+# 消除「一台服务器上任何账号改一个开关，所有账号一起变」的多账号串扰。
+# 只有 USER_SCOPED_FLAG_KEYS（application/flag_service.py）会写本表；缺行 = 该账号无覆盖
+# = 回落全局 runtime_flags / AGENT_FLAGS 现值（行为与改动前逐字节一致）。
+# 联合主键 (user_id, key)：一个账号对一个键至多一行。
+class UserRuntimeFlag(Base):
+    __tablename__ = "user_runtime_flags"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True, nullable=False)
+    key: Mapped[str] = mapped_column(String(40), primary_key=True, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
 # ── user_llm_config.py ──
 # 用户多 LLM 配置（#68 账号体系 × API 配置整合 P0）。
 #
@@ -157,6 +173,7 @@ __all__ = [
     "MultimodalConfig",
     "MarketplaceConfig",
     "RuntimeFlag",
+    "UserRuntimeFlag",
     "UserLlmConfig",
     "FlagSetting",
     "ServerSetting",

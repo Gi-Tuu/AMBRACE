@@ -14024,6 +14024,12 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'该开关为数值型，暂不支持在 App 内热改'**
   String get flagNumericReadOnly;
+
+  /// No description provided for @flagScopeServerHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'服务器级开关：改动会影响本服务器上的所有账号'**
+  String get flagScopeServerHint;
 }
 
 class _AppLocalizationsDelegate

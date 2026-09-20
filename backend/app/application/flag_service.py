@@ -196,3 +196,129 @@ async def set_flag_policy(key: str, *, self_service=None, server_locked=None, db
             await session.commit()
         return result
     return _policy_default(key)
+
+
+# ── 用户级开关覆盖（A5，2026-09-19）────────────────────────────────────────────
+# 现象（Codex 只读侦察）：PUT /system/feature-flags/{key} 此前一律写全局 runtime_flags +
+# 热更新进程级 AGENT_FLAGS —— 一台服务器上任何账号改一个开关，**所有账号一起变**。
+# 方案：用户语义开关按账号落 user_runtime_flags 覆盖行，读侧走 resolve_flag 解析链：
+#   server_locked 策略 → 直接返回全局值（锁定即忽略用户覆盖）
+#   → 该账号有覆盖行 → 用户值
+#   → 否则全局值（AGENT_FLAGS 现值）。
+# 默认口径：没有覆盖行的账号，行为与改动前逐字节一致（回落全局 runtime_flags）。
+#
+# USER_SCOPED_FLAG_KEYS（本批只放 5 个隐私细槽族键）：
+# - global_user_facts / user_fact_location / user_fact_relationship / user_fact_health /
+#   user_current_location_share 已按账号生效；
+# - weave_3d / agent_social_light_context / agent_loop_group_chat / agent_loop_social /
+#   proactive_outreach_v2 这 5 个【本批保持服务器级】，下一批再接线。原因：这些键的读取点
+#   目前没有 user 上下文（多数在进程级循环/全局调度里读 AGENT_FLAGS），硬接会「白开」——
+#   写了用户覆盖也无人按账号读取，反而给出「已按账号生效」的错觉。
+# 注：flag_settings 策略判定（server_locked / self_service）与既有写路径完全一致，本段不放松权限。
+USER_SCOPED_FLAG_KEYS: frozenset[str] = frozenset({
+    'global_user_facts',
+    'user_fact_location',
+    'user_fact_relationship',
+    'user_fact_health',
+    'user_current_location_share',
+})
+
+
+def _global_flag_value(key: str) -> bool:
+    '''全局现值（AGENT_FLAGS）；键缺失/读取异常 → False（保守，与 get_all_flags 的 bool(v) 口径一致）。'''
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get(key, False))
+    except Exception:
+        return False
+
+
+async def get_user_flags(user_id) -> dict:
+    '''读该账号全部用户级覆盖行 {key: bool}；表缺失/异常返回 {}（fail-open，不打挂开关页）。'''
+    if not user_id:
+        return {}
+    try:
+        from sqlalchemy import select
+        from app.db.database import async_session_factory
+        from app.models.config import UserRuntimeFlag
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(UserRuntimeFlag).where(UserRuntimeFlag.user_id == int(user_id))
+            )).scalars().all()
+        return {r.key: bool(r.enabled) for r in rows}
+    except Exception as e:
+        _logger.warning('User runtime flags read failed user=%s: %s', user_id, e)
+        return {}
+
+
+async def resolve_flag(key: str, user_id=None) -> bool:
+    '''解析某键对某账号的生效值（A5 用户级开关解析链）；**任何异常 fail-open 回全局值**。
+
+    顺序：server_locked 策略 → 全局值（锁定即忽略用户覆盖）→ 该账号有覆盖 → 用户值 → 全局值。
+    策略是旁路管控、用户覆盖是可选层：缺表/读失败一律回全局现值，绝不抛错打挂业务链
+    （记忆/注入链路调用 resolve_flag，必须 fail-open）。
+    '''
+    global_value = _global_flag_value(key)
+    if not user_id:
+        return global_value
+    try:
+        policy = await get_flag_policy(key)  # 自身 fail-open（缺行为「自助开、未锁定」）
+        if policy.get('server_locked'):
+            return global_value
+        from sqlalchemy import select
+        from app.db.database import async_session_factory
+        from app.models.config import UserRuntimeFlag
+        async with async_session_factory() as db:
+            row = (await db.execute(
+                select(UserRuntimeFlag).where(
+                    UserRuntimeFlag.user_id == int(user_id),
+                    UserRuntimeFlag.key == key,
+                )
+            )).scalar_one_or_none()
+        if row is not None:
+            return bool(row.enabled)
+        return global_value
+    except Exception as e:
+        _logger.warning('resolve_flag fallback to global: key=%s user=%s err=%s', key, user_id, e)
+        return global_value
+
+
+async def set_user_flag(key: str, user_id, enabled) -> bool:
+    '''写某账号的用户级覆盖（upsert）；**不得**改进程级 AGENT_FLAGS。
+
+    key 必须在 AGENT_FLAGS 且当前值为 bool（沿用 set_runtime_flag 的类型防护：非 bool 键
+    （数字型等）返回 False 且不写库，避免 bool 覆盖把 int 键静默改成 1）。未知 key 返回 False。
+    失败返回 False（调用方据此回 404/500）。
+    '''
+    from app.agent.loop import AGENT_FLAGS
+    if key not in AGENT_FLAGS:
+        return False
+    if not isinstance(AGENT_FLAGS[key], bool):
+        _logger.warning('set_user_flag rejected: key=%s is not bool (type=%s), skip',
+                        key, type(AGENT_FLAGS[key]).__name__)
+        return False
+    if not user_id:
+        return False
+    try:
+        from sqlalchemy import select
+        from app.db.database import async_session_factory
+        from app.models.config import UserRuntimeFlag
+        async with async_session_factory() as db:
+            row = (await db.execute(
+                select(UserRuntimeFlag).where(
+                    UserRuntimeFlag.user_id == int(user_id),
+                    UserRuntimeFlag.key == key,
+                )
+            )).scalar_one_or_none()
+            if row is None:
+                db.add(UserRuntimeFlag(user_id=int(user_id), key=key, enabled=bool(enabled)))
+            else:
+                row.enabled = bool(enabled)
+            await db.commit()
+        # 刻意不touch AGENT_FLAGS：用户级覆盖只影响该账号，不能串到其它账号。
+        _logger.info('User runtime flag set: user=%s %s=%s', user_id, key, enabled)
+        return True
+    except Exception as e:
+        _logger.warning('Set user runtime flag %s user=%s failed: %s', key, user_id, e)
+        return False
+

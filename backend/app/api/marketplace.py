@@ -61,8 +61,12 @@ _DEFAULT_CONFIG = {
 
 
 async def _is_owner(user_id: int) -> bool:
-    from app.application.permission_service import is_admin_user
-    return await is_admin_user(user_id)
+    """市场管理权（A2 M2，2026-09-20）：与插件管理同口径收口到 server_admin。
+
+    保留同名薄封装，5 个调用点语义不变（403 文案沿用既有 i18n key）。
+    """
+    from app.application.permission_service import is_server_admin
+    return await is_server_admin(user_id)
 
 
 # ---------------- 配置读写 ----------------
@@ -466,7 +470,8 @@ def _merge_installed(items: list[dict]) -> list[dict]:
 
 # ---------------- 远程安装 ----------------
 
-async def _install_remote(item: dict, lang: str, body: dict | None = None) -> dict:
+async def _install_remote(item: dict, lang: str, body: dict | None = None,
+                           *, user_id: int | None = None) -> dict:
     """远程安装：默认开关校验 → 下载 zip → sha256 → zip 安全校验 → 权限同意 → 解压 → 加载校验，失败回滚。
 
     3.9 插件安全闸：
@@ -533,9 +538,10 @@ async def _install_remote(item: dict, lang: str, body: dict | None = None) -> di
             shutil.copytree(backup_dir, target)
             shutil.rmtree(backup_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=tr_lang(lang, "plugin_load_failed"))
-    # 3.9：记录来源 + sha256 实际值（索引未提供也记录）
+    # 3.9：记录来源 + sha256 实际值（索引未提供也记录）；A2 M1：同时落安装者归属
     await registry.record_install_provenance(name, source="remote", source_url=url,
-                                             sha256=hashlib.sha256(data).hexdigest())
+                                             sha256=hashlib.sha256(data).hexdigest(),
+                                             owner_user_id=user_id)
     await registry.sync_plugins_db()
     plugin = registry.get_plugin(name)
     return {"installed": True, "upgraded": backup_dir is not None, "source": item.get("source", "remote"), "plugin": plugin}
@@ -679,7 +685,7 @@ async def install_market_item(name: str, body: dict | None = None, user_id: int 
     if item is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "market_no_plugin"))
     if item.get("source") != "builtin":
-        return await _install_remote(item, lang, body)
+        return await _install_remote(item, lang, body, user_id=user_id)
     src = registry.EXAMPLE_DIR / item["name"]
     if not src.is_dir():
         raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_dir_not_found"))
@@ -706,7 +712,8 @@ async def install_market_item(name: str, body: dict | None = None, user_id: int 
     if loaded is None:
         shutil.rmtree(target, ignore_errors=True)
         raise HTTPException(status_code=500, detail=tr_lang(lang, "plugin_load_failed"))
-    await registry.record_install_provenance(item["name"], source="builtin")
+    # A2 M1：内置示例安装同样是「该账号的安装」，落安装者归属（NULL→调用者；不覆盖已有）
+    await registry.record_install_provenance(item["name"], source="builtin", owner_user_id=user_id)
     await registry.sync_plugins_db()
     plugin = registry.get_plugin(name)
     return {"installed": True, "plugin": plugin, "source": "builtin"}

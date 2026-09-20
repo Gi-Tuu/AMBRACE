@@ -27,7 +27,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from fastapi import Depends, File, Form, UploadFile
+from fastapi import Depends, File, Form, HTTPException, UploadFile
 
 from app.auth.deps import get_current_user_id  # 一机多主：登录态端点显式取 root 传租户
 from app.plugins import sdk
@@ -259,6 +259,26 @@ async def _tenant_for_user(user_id: int | None) -> int | None:
         return None
 
 
+async def _caller_tenant(user_id) -> int | None:
+    """A2 M0-2（2026-09-20）：登录态端点的统一租户入口；解析不到 → None（调用方「无租户=无数据」）。
+
+    实现复用既有 `_tenant_for_user`（family_service.get_family_root_id：子账号→parent_id，
+    独立主账号→自己），与 /draft/* 已落地的租户口径同源，不另起一套解析逻辑。
+    """
+    return await _tenant_for_user(user_id)
+
+
+async def _route_tenant(user_id) -> int | None:
+    """HTTP 路由取租户；无登录态上下文（内核 ChannelPort 直调）沿用写侧主绑定租户口径
+    （`_upsert_posts`/`_upsert_comments` 同为 `_douyin_primary_tenant`），保持内外一致。
+
+    登录态 HTTP 调用 user_id 恒非空 → 走 `_caller_tenant`；解析失败仍返回 None（fail-closed）。
+    """
+    if user_id:
+        return await _caller_tenant(user_id)
+    return await _douyin_primary_tenant()
+
+
 async def _char_allowed_async(char_id) -> bool:
     """角色是否在「其归属租户」的抖音绑定白名单内（统一走 reader；空绑定=全部角色，对齐旧语义）。
 
@@ -278,7 +298,8 @@ async def _char_allowed_async(char_id) -> bool:
             return True
         return cid in [int(x) for x in ids]
     except Exception:
-        return True
+        # A2 M0-2（2026-09-20）：异常分支改 **fail-closed**——解析失败时禁止感知抖音账号
+        return False
 
 
 async def _active_char_name() -> str:
@@ -942,14 +963,24 @@ async def _save_viewed_note(aweme_id: str, author: str, desc: str, image_urls: l
         sdk.log("保存图文理解失败: %s", e)
 
 
-async def _recent_viewed_notes(limit: int = 2) -> list[dict]:
-    """最近看过的抖音图文（供上下文注入/回复增强）"""
+async def _recent_viewed_notes(limit: int = 2, tenant_id: int | None = None) -> list[dict]:
+    """最近看过的抖音图文（供上下文注入/回复增强；A2 M0-2：只取本租户的行）。
+
+    tenant_id 为 None → 返回 []（无租户=无数据）。
+    """
+    if tenant_id is None:
+        return []
     from sqlalchemy import select
     from app.db.database import async_session_factory
     from douyin_models import DouyinViewedNote
     try:
         async with async_session_factory() as db:
-            rows = (await db.execute(select(DouyinViewedNote).order_by(DouyinViewedNote.id.desc()).limit(limit))).scalars().all()
+            rows = (await db.execute(
+                select(DouyinViewedNote)
+                .where(DouyinViewedNote.tenant_id == int(tenant_id))
+                .order_by(DouyinViewedNote.id.desc())
+                .limit(limit)
+            )).scalars().all()
             out = []
             for r in rows:
                 try:
@@ -1069,27 +1100,42 @@ def _sync_reply_comment(post_title: str, commenter: str, reply_text: str) -> dic
 
 
 # ================= DB 操作（异步） =================
-async def _get_account() -> dict:
+async def _get_account(tenant_id: int | None = None) -> dict:
+    """本租户的抖音账号行；**tenant_id 为 None → 返回 {}**（A2 M0-2：不再取全表第一行）。
+
+    口径：调用方必须显式传租户；无租户=无数据（不再用「全表第一行」兜底，防跨账号串读）。
+    """
+    if tenant_id is None:
+        return {}
     from app.db.database import async_session_factory
     from sqlalchemy import select
     from app.db.database import async_session_factory
     from douyin_models import DouyinAccount
     async with async_session_factory() as db:
-        row = (await db.execute(select(DouyinAccount).order_by(DouyinAccount.id.asc()).limit(1))).scalar_one_or_none()
+        row = (await db.execute(
+            select(DouyinAccount)
+            .where(DouyinAccount.tenant_id == int(tenant_id))
+            .order_by(DouyinAccount.id.asc())
+            .limit(1)
+        )).scalar_one_or_none()
         if row is None:
             return {"bound": False, "logged_in": False, "account_name": ""}
         return {"bound": bool(row.bound), "logged_in": bool(row.logged_in), "account_name": row.account_name or ""}
 
 
-async def _upsert_account(state: dict) -> None:
+async def _upsert_account(state: dict, tenant_id: int | None = None) -> None:
+    """落账号状态；A2 M0-2：传 tenant_id 时只写/更新**该租户**的行（None=旧口径全表第一行）。"""
     from app.db.database import async_session_factory
     from sqlalchemy import select
     from app.db.database import async_session_factory
     from douyin_models import DouyinAccount
     async with async_session_factory() as db:
-        row = (await db.execute(select(DouyinAccount).order_by(DouyinAccount.id.asc()).limit(1))).scalar_one_or_none()
+        q = select(DouyinAccount)
+        if tenant_id is not None:
+            q = q.where(DouyinAccount.tenant_id == int(tenant_id))
+        row = (await db.execute(q.order_by(DouyinAccount.id.asc()).limit(1))).scalar_one_or_none()
         if row is None:
-            tenant = await _douyin_primary_tenant()
+            tenant = tenant_id if tenant_id is not None else await _douyin_primary_tenant()
             if tenant is None:
                 sdk.log("douyin 账号状态落库跳过：无绑定角色（归属不明，不再写死 tenant=1）")
                 return
@@ -1713,7 +1759,7 @@ async def _run_pending_task(task_id: int) -> dict:
                     .limit(1)
                 )).scalars().first()
                 if _dup is None:
-                    _acc = await _get_account()
+                    _acc = await _get_account(row2.tenant_id)
                     db.add(DouyinComment(
                         tenant_id=int(row2.tenant_id or 0), douyin_post_id=row2.post_key or "", commenter=(_acc.get("account_name") or "账号")[:100],
                         content=(content or "")[:1000], commented_at=None, is_fan=False,
@@ -1960,14 +2006,15 @@ async def _auto_generate_image_post() -> None:
 
 
 # ================= 注入段落 ================
-async def _build_section() -> str:
+async def _build_section(tenant_id: int | None = None) -> str:
+    """注入段落（A2 M0-2：账号行与图文笔记只取本租户的数据）"""
     global _last_inject_ts
     await _ensure_douyin_schema()
     cfg = sdk.get_config()
     inject_min = int(cfg.get("inject_minutes", 120))
     if time.time() - _last_inject_ts < inject_min * 60:
         return ""
-    acc = await _get_account()
+    acc = await _get_account(tenant_id)
     if not acc.get("bound"):
         _last_inject_ts = time.time()
         return "【你的抖音账号】你有一个专属抖音账号，但尚未绑定登录。用户可在「扩展」里对 douyin_mcp 插件执行绑定后，你就能感知自己的账号动态。"
@@ -1999,7 +2046,7 @@ async def _build_section() -> str:
             parts.append(f"- {c['commenter']} 说「{c['content'][:60]}」")
     if not comments and not author_dialog:
         parts.append("- 暂无评论动态。")
-    notes = await _recent_viewed_notes(2)
+    notes = await _recent_viewed_notes(2, tenant_id)
     if notes:
         parts.append("你最近看过的抖音图文（VLM 图片理解）：")
         for n in notes:
@@ -2138,12 +2185,14 @@ router = sdk.router()
 
 
 @router.get("/status")
-async def status():
+async def status(user_id: int | None = Depends(get_current_user_id)):
+    """账号绑定状态：按调用者租户取账号行（HTTP 必带登录态；ChannelPort 直调用主绑定租户口径）"""
     global _last_status
+    tenant = await _route_tenant(user_id)
     try:
         st = await _run_sync(_sync_check_login)
-        acc = await _get_account()
-        await _upsert_account({"bound": acc.get("bound", False), "logged_in": st.get("logged_in", False), "account_name": st.get("account_name", "")})
+        acc = await _get_account(tenant)
+        await _upsert_account({"bound": acc.get("bound", False), "logged_in": st.get("logged_in", False), "account_name": st.get("account_name", "")}, tenant_id=tenant)
         _last_status = {"bound": acc.get("bound", False), "logged_in": bool(st.get("logged_in")), "message": st.get("message", "")}
     except Exception as e:
         _last_status = {"bound": False, "logged_in": False, "message": f"状态检查异常: {e}"}
@@ -2238,9 +2287,9 @@ async def fetch_note(payload: dict):
 
 
 @router.get("/notes/latest")
-async def latest_notes():
-    """最近看过的抖音图文（含 VLM 图片理解）"""
-    return {"ok": True, "notes": await _recent_viewed_notes(5)}
+async def latest_notes(user_id: int = Depends(get_current_user_id)):
+    """最近看过的抖音图文（含 VLM 图片理解；A2 M0-2：只返回本租户的行）"""
+    return {"ok": True, "notes": await _recent_viewed_notes(5, await _caller_tenant(user_id))}
 
 
 @router.post("/draft/image_post")
@@ -2429,7 +2478,7 @@ async def ai_draft(payload: dict):
             user_msg = f"粉丝「{commenter}」评论：{comment_content[:200]}"
             # 计划 15：回复时结合作品图片内容（VLM 理解），让回复更精准
             try:
-                for _n in await _recent_viewed_notes(5):
+                for _n in await _recent_viewed_notes(5, tenant):
                     if post_title and (_n.get("desc", "").startswith(post_title[:20]) or post_title[:10] in _n.get("desc", "")):
                         if _n.get("image_descs"):
                             user_msg += "\n作品图片内容：" + "；".join(d[:120] for d in _n["image_descs"][:2])
@@ -2528,8 +2577,11 @@ async def ai_draft(payload: dict):
 
 
 @router.get("/pending")
-async def pending_list():
-    """待确认任务列表（默认人工确认：图文发布 / 评论回复）"""
+async def pending_list(user_id: int = Depends(get_current_user_id)):
+    """待确认任务列表（默认人工确认：图文发布 / 评论回复；A2 M0-2：只列本租户的任务）"""
+    tenant = await _caller_tenant(user_id)
+    if tenant is None:
+        return {"items": []}  # 无租户=无数据
     from app.db.database import async_session_factory
     from sqlalchemy import select
     from app.db.database import async_session_factory
@@ -2537,7 +2589,7 @@ async def pending_list():
     async with async_session_factory() as db:
         rows = (await db.execute(
             select(DouyinPending)
-            .where(DouyinPending.status.in_(("pending", "manual")))
+            .where(DouyinPending.status.in_(("pending", "manual")), DouyinPending.tenant_id == int(tenant))
             .order_by(DouyinPending.id.desc())
             .limit(20)
         )).scalars().all()
@@ -2560,8 +2612,11 @@ async def pending_list():
 
 
 @router.get("/upcoming")
-async def upcoming_list():
-    """已确认待发布任务列表（发布倒计时：小信封展示 confirmed/running 任务与剩余秒数）"""
+async def upcoming_list(user_id: int = Depends(get_current_user_id)):
+    """已确认待发布任务列表（发布倒计时；A2 M0-2：只列本租户的任务）"""
+    tenant = await _caller_tenant(user_id)
+    if tenant is None:
+        return {"items": []}  # 无租户=无数据
     from app.db.database import async_session_factory
     from sqlalchemy import select
     from douyin_models import DouyinPending
@@ -2569,7 +2624,7 @@ async def upcoming_list():
     async with async_session_factory() as db:
         rows = (await db.execute(
             select(DouyinPending)
-            .where(DouyinPending.status.in_(("confirmed", "running")))
+            .where(DouyinPending.status.in_(("confirmed", "running")), DouyinPending.tenant_id == int(tenant))
             .order_by(DouyinPending.execute_at.asc())
             .limit(30)
         )).scalars().all()
@@ -2588,15 +2643,20 @@ async def upcoming_list():
 
 
 @router.post("/upload_image")
-async def upload_image(task_id: int = Form(...), file: UploadFile = File(...)):
-    """为图文草稿上传配图：保存到 uploads/douyin/{task_id}/，追加进 image_paths_json"""
+async def upload_image(task_id: int = Form(...), file: UploadFile = File(...),
+                       user_id: int | None = Depends(get_current_user_id)):
+    """为图文草稿上传配图：保存到 uploads/douyin/{task_id}/，追加进 image_paths_json。
+
+    A2 M0-2：目标行不属于本租户 → 404（不泄漏存在性，不用 403）。
+    """
+    tenant = await _route_tenant(user_id)
     from app.db.database import async_session_factory
     from douyin_models import DouyinPending
     from app.application.upload_service import save_image
     async with async_session_factory() as db:
         row = await db.get(DouyinPending, task_id)
-        if row is None:
-            return {"ok": False, "message": "任务不存在"}
+        if row is None or tenant is None or int(row.tenant_id or 0) != int(tenant):
+            raise HTTPException(status_code=404, detail="任务不存在")
         if row.kind != "image_post":
             return {"ok": False, "message": "仅图文任务可上传图片"}
         url = await save_image(file, f"douyin/{task_id}")
@@ -2613,15 +2673,17 @@ async def upload_image(task_id: int = Form(...), file: UploadFile = File(...)):
 
 
 @router.post("/upload_video")
-async def upload_video(task_id: int = Form(...), file: UploadFile = File(...)):
-    """为视频草稿上传视频文件（#67 P2）：保存到 uploads/douyin/{task_id}/ 并写 row.video_path"""
+async def upload_video(task_id: int = Form(...), file: UploadFile = File(...),
+                       user_id: int | None = Depends(get_current_user_id)):
+    """为视频草稿上传视频文件（#67 P2）；A2 M0-2：目标行不属于本租户 → 404。"""
+    tenant = await _route_tenant(user_id)
     from app.db.database import async_session_factory
     from douyin_models import DouyinPending
     from app.application.upload_service import save_video
     async with async_session_factory() as db:
         row = await db.get(DouyinPending, task_id)
-        if row is None:
-            return {"ok": False, "message": "任务不存在"}
+        if row is None or tenant is None or int(row.tenant_id or 0) != int(tenant):
+            raise HTTPException(status_code=404, detail="任务不存在")
         if row.kind != "video_post":
             return {"ok": False, "message": "仅视频任务可上传视频"}
         url = await save_video(file, f"douyin/{task_id}")
@@ -2631,14 +2693,18 @@ async def upload_video(task_id: int = Form(...), file: UploadFile = File(...)):
 
 
 @router.post("/confirm/{task_id}")
-async def confirm_task(task_id: int):
-    """确认草稿：进入随机执行队列（避开深夜静默），不立即发布"""
+async def confirm_task(task_id: int, user_id: int = Depends(get_current_user_id)):
+    """确认草稿：进入随机执行队列（避开深夜静默），不立即发布。
+
+    A2 M0-2：目标行不属于本租户 → 404（不泄漏存在性，不用 403）。
+    """
+    tenant = await _caller_tenant(user_id)
     from app.db.database import async_session_factory
     from douyin_models import DouyinPending
     async with async_session_factory() as db:
         row = await db.get(DouyinPending, task_id)
-        if row is None:
-            return {"ok": False, "message": "任务不存在"}
+        if row is None or tenant is None or int(row.tenant_id or 0) != int(tenant):
+            raise HTTPException(status_code=404, detail="任务不存在")
         if row.status != "pending":
             return {"ok": False, "message": f"任务状态为 {row.status}，无法确认"}
         freq = await _check_frequency(row.kind, is_fan=bool(row.is_fan), exclude_task_id=task_id)
@@ -2652,14 +2718,15 @@ async def confirm_task(task_id: int):
 
 
 @router.post("/reject/{task_id}")
-async def reject_task(task_id: int):
-    """拒绝草稿：任务标记 rejected，不执行"""
+async def reject_task(task_id: int, user_id: int = Depends(get_current_user_id)):
+    """拒绝草稿：任务标记 rejected，不执行。A2 M0-2：目标行不属于本租户 → 404。"""
+    tenant = await _caller_tenant(user_id)
     from app.db.database import async_session_factory
     from douyin_models import DouyinPending
     async with async_session_factory() as db:
         row = await db.get(DouyinPending, task_id)
-        if row is None:
-            return {"ok": False, "message": "任务不存在"}
+        if row is None or tenant is None or int(row.tenant_id or 0) != int(tenant):
+            raise HTTPException(status_code=404, detail="任务不存在")
         if row.status != "pending":
             return {"ok": False, "message": f"任务状态为 {row.status}，无法拒绝"}
         row.status = "rejected"
@@ -2668,12 +2735,15 @@ async def reject_task(task_id: int):
 
 
 @router.post("/refresh")
-async def refresh():
-    """手动刷新：登录保活 + 抓发布列表与新评论并落库（返回样本供调试）"""
+async def refresh(user_id: int = Depends(get_current_user_id)):
+    """手动刷新：登录保活 + 抓发布列表与新评论并落库（返回样本供调试）；A2 M0-2：按调用者租户"""
+    tenant = await _caller_tenant(user_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="无法确定归属主账号（登录态缺失）")
     cfg = sdk.get_config()
     st = await _run_sync(_sync_poll_once, int(cfg.get("max_comment_posts", 5)))
-    acc = await _get_account()
-    await _upsert_account({"bound": acc.get("bound", False), "logged_in": st.get("logged_in", False), "account_name": st.get("account_name", "")})
+    acc = await _get_account(tenant)
+    await _upsert_account({"bound": acc.get("bound", False), "logged_in": st.get("logged_in", False), "account_name": st.get("account_name", "")}, tenant_id=tenant)
     posts: list[dict] = st.get("posts") or []
     cmt: dict = st.get("comments") or {"post_title": "", "comments": []}
     if st.get("logged_in"):
@@ -2705,8 +2775,10 @@ async def on_tick(ctx):
             return
         _last_poll_ts = time.time()
         st = await _run_sync(_sync_poll_once, int(cfg.get("max_comment_posts", 5)))
-        acc = await _get_account()
-        await _upsert_account({"bound": acc.get("bound", False), "logged_in": st.get("logged_in", False), "account_name": st.get("account_name", "")})
+        # 定时轮询无登录态：沿用写侧主绑定租户口径（与 _upsert_posts/_upsert_comments 同源）
+        _tenant = await _douyin_primary_tenant()
+        acc = await _get_account(_tenant)
+        await _upsert_account({"bound": acc.get("bound", False), "logged_in": st.get("logged_in", False), "account_name": st.get("account_name", "")}, tenant_id=_tenant)
         if st.get("logged_in"):
             posts = st.get("posts") or []
             added_posts = await _upsert_posts(posts)
@@ -2726,10 +2798,14 @@ async def on_tick(ctx):
 @sdk.hook("context_inject")
 async def inject(ctx):
     try:
+        # A2 M0-2（2026-09-20）：按 ctx 的 user_id 解析租户；无租户 → 不注入（绝不注入他人账号行）
+        tenant = await _caller_tenant(ctx.get("user_id"))
+        if tenant is None:
+            return
         # 角色白名单：仅允许配置的角色感知抖音账号（空=全部角色）
         if not await _char_allowed(ctx.get("character_id")):
             return
-        section = await _build_section()
+        section = await _build_section(tenant)
         if section:
             ctx["context_messages"].append({"role": "system", "content": section})
             sdk.log("已注入抖音账号段落 (char=%s)", ctx.get("character_id"))

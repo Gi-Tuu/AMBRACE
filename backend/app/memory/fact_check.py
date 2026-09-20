@@ -53,7 +53,8 @@ async def async_fact_check(character_id: int, user_id: int, user_msg: str,
     try:
         from app.memory import search_memories
         from app.memory.reliability import apply_correction
-        hits = await search_memories(character_id=character_id, query=user_msg, limit=3)
+        hits = await search_memories(character_id=character_id, query=user_msg, limit=3,
+                                     user_id=user_id)  # A2 M0-4：透传调用者（hook ctx）
         if not hits:
             return
         facts = "\n".join(f"- [{h.get('id')}] {h.get('content', '')[:80]}" for h in hits)

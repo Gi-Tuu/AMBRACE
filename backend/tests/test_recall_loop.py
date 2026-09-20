@@ -71,7 +71,8 @@ def test_flag开_命中_注入并再生成(monkeypatch, _flag_on):
     ]
     seen = {}
 
-    async def _fake_search(*, character_id, query, limit, time_range=None, trace_meta=None):
+    async def _fake_search(*, character_id, query, limit, time_range=None, trace_meta=None,
+                           user_id=None):  # A2 M0-4：loop 透传调用者，假实现跟随签名
         seen.update(q=query, limit=limit, tr=time_range, meta=trace_meta)
         return hits
 
@@ -201,7 +202,8 @@ def test_时间语法透传时间路(monkeypatch, _flag_on):
     from app.agent import loop
     seen = {}
 
-    async def _fake_search(*, character_id, query, limit, time_range=None, trace_meta=None):
+    async def _fake_search(*, character_id, query, limit, time_range=None, trace_meta=None,
+                           user_id=None):  # A2 M0-4：loop 透传调用者，假实现跟随签名
         seen.update(q=query, tr=time_range)
         return [{"id": 3, "content": "青岛海风", "type": "event", "importance": 55.0,
                  "created_at": "2026-07-20", "epistemic_status": "FACT"}]

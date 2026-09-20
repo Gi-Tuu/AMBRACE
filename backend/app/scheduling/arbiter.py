@@ -641,8 +641,10 @@ async def _collect_outreach_materials(candidate: dict) -> "_oc.OutreachMaterials
             pass
         try:
             from app.memory import search_memories
-            has_shared = bool(await search_memories(char_id, query="和用户一起经历的事 用户说过的重要的事 用户的近况", limit=2))
-            has_interest = bool(await search_memories(char_id, query="用户的兴趣爱好偏好和喜欢的东西", limit=2))
+            has_shared = bool(await search_memories(char_id, query="和用户一起经历的事 用户说过的重要的事 用户的近况", limit=2,
+                                                    user_id=user_id))  # A2 M0-4：透传调用者（hook ctx）
+            has_interest = bool(await search_memories(char_id, query="用户的兴趣爱好偏好和喜欢的东西", limit=2,
+                                                      user_id=user_id))  # A2 M0-4：透传调用者（hook ctx）
         except Exception:
             pass
     try:

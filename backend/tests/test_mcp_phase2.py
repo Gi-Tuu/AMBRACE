@@ -577,7 +577,7 @@ def test_api_create_sse_requires_url(monkeypatch):
 def test_api_create_sse_with_url(monkeypatch):
     from app.mcp import manager as mgr
 
-    def fake_validate(url):
+    def fake_validate(url, allow_loopback=False):
         return None
 
     async def _fake(uid):

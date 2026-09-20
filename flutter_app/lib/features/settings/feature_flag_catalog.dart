@@ -4,7 +4,11 @@
 // - 这里只做「展示文案与分组」，开关真源仍是后端 AGENT_FLAGS / FeatureFlagService；
 // - 顶部 4 个常用开关不在本目录，仍由 FeatureFlagsScreen._visibleKeys 管理；
 // - 后端新增、这里未登记的键会自动进入「其他高级开关」兜底组，不会丢失。
+//
+// A4（2026-09-20）：目录元数据改由后端下发（GET /system/feature-flags 的 meta 字段），
+// 这里的中文文案降级为**回落**——后端没返回（离线/老后端/新键）时才用，保证不丢文案。
 // 纯展示文案/分组数据，无需依赖 Flutter UI 库。
+import '../../services/feature_flag_service.dart';
 
 class FlagMeta {
   /// 中文名称（一行）
@@ -28,8 +32,19 @@ class FlagGroup {
 class FeatureFlagCatalog {
   FeatureFlagCatalog._();
 
-  /// 单个 flag 的中文元数据。未登记键给通用兜底文案。
-  static FlagMeta metaOf(String key) {
+  /// 单个 flag 的展示元数据：后端下发优先 → 回落硬编码 _metas → 通用兜底文案。
+  ///
+  /// [backend] 传后端下发的 meta（无则 null）；后端只给一句话说明，既有硬编码的「详情」
+  /// 更长，故保留下来一起展示，避免改后端下发后信息变少。
+  static FlagMeta metaOf(String key, {FlagMetaInfo? backend}) {
+    if (backend != null && backend.title.isNotEmpty) {
+      final local = _metas[key];
+      return FlagMeta(
+        title: backend.title,
+        short_: backend.desc,
+        detail: local?.detail ?? '',
+      );
+    }
     return _metas[key] ??
         FlagMeta(
           title: key,
@@ -52,6 +67,45 @@ class FeatureFlagCatalog {
     }
     final rest = presentAdvancedKeys.where((k) => !used.contains(k)).toList()..sort();
     if (rest.isNotEmpty) out.add(FlagGroup('其他高级开关', rest));
+    return out;
+  }
+
+  /// 依据**后端元数据**产出有序分组（A4）：分组按 group_order、组内按 order 排序。
+  ///
+  /// 任意键缺后端 meta（离线 / 老后端 / 新键）时，这些键走既有 [groupEntries] 硬编码逻辑，
+  /// 不会丢。[labelOf] 可把分组 id 映射成本地化标题（不传则用分组 id）。
+  static List<FlagGroup> groupEntriesFromBackend(
+    Set<String> presentAdvancedKeys,
+    FeatureFlagService flags, {
+    String Function(String groupId)? labelOf,
+  }) {
+    final metas = <String, FlagMetaInfo>{};
+    final rest = <String>{};
+    for (final k in presentAdvancedKeys) {
+      final m = flags.metaOf(k);
+      if (m == null) {
+        rest.add(k);
+      } else {
+        metas[k] = m;
+      }
+    }
+    final buckets = <String, List<String>>{};
+    final groupOrder = <String, int>{};
+    for (final e in metas.entries) {
+      buckets.putIfAbsent(e.value.group, () => <String>[]).add(e.key);
+      groupOrder[e.value.group] = e.value.groupOrder;
+    }
+    final ids = buckets.keys.toList()
+      ..sort((a, b) {
+        final c = (groupOrder[a] ?? 999).compareTo(groupOrder[b] ?? 999);
+        return c != 0 ? c : a.compareTo(b);
+      });
+    final out = <FlagGroup>[];
+    for (final id in ids) {
+      final ks = buckets[id]!..sort((a, b) => metas[a]!.order.compareTo(metas[b]!.order));
+      out.add(FlagGroup(labelOf?.call(id) ?? id, ks));
+    }
+    if (rest.isNotEmpty) out.addAll(groupEntries(rest));
     return out;
   }
 

@@ -19,6 +19,8 @@ class SettingsProvider extends ChangeNotifier {
   bool _isConnected = false;
   bool _isLoggedIn = false;
   bool _isAdmin = false;
+  // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员，故与家庭主账号 is_admin 分列
+  bool _isServerAdmin = false;
   int? _parentId; // #68 P3 账号关联：父账号 id（NULL=独立主账号）
   bool _isSub = false; // #68 P3 账号关联：是否为子账号
   int _themeModeIndex = 0; // 0=跟随系统 1=浅色 2=深色
@@ -47,6 +49,8 @@ class SettingsProvider extends ChangeNotifier {
   bool get isConnected => _isConnected;
   bool get isLoggedIn => _isLoggedIn;
   bool get isAdmin => _isAdmin;
+  // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员
+  bool get isServerAdmin => _isServerAdmin;
   int? get parentId => _parentId;
   bool get isSub => _isSub;
   int get themeModeIndex => _themeModeIndex;
@@ -78,6 +82,8 @@ class SettingsProvider extends ChangeNotifier {
     _userId = prefs.getInt('user_id') ?? 0;
     _isLoggedIn = _token.isNotEmpty;
     _isAdmin = prefs.getBool('is_admin') ?? false;
+    // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员（旧后端无此键时为 false，不回落 is_admin）
+    _isServerAdmin = prefs.getBool('is_server_admin') ?? false;
     _themeModeIndex = prefs.getInt('theme_mode_index') ?? 0;
     _seedColorIndex = prefs.getInt('seed_color_index') ?? 0;
     // R8：正文字体档位（越界/缺省回退 system，与治理前行为一致）
@@ -220,6 +226,11 @@ class SettingsProvider extends ChangeNotifier {
       if (admin is bool) {
         await _setAdmin(admin);
       }
+      // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员（服务端未下发该字段则保持 false）
+      final serverAdmin = data['server_admin'];
+      if (serverAdmin is bool) {
+        await _setServerAdmin(serverAdmin);
+      }
       final pid = data['parent_id'];
       if (pid == null || pid is int) {
         _parentId = pid as int?;
@@ -260,6 +271,15 @@ class SettingsProvider extends ChangeNotifier {
     _isAdmin = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('is_admin', value);
+    notifyListeners();
+  }
+
+  /// A2-M2（2026-09-20）：插件管理权已收口到服务器管理员（写法照 _setAdmin，键 is_server_admin）
+  Future<void> _setServerAdmin(bool value) async {
+    if (_isServerAdmin == value) return;
+    _isServerAdmin = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('is_server_admin', value);
     notifyListeners();
   }
 

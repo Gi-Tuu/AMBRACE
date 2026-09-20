@@ -63,7 +63,8 @@ def _patch_chat_deps(monkeypatch, char=None, reply="好的呀～", persona=None,
         calls["byok_user"] = user_id
         return byok
 
-    async def _fake_search(character_id, query, limit, trace_meta):
+    async def _fake_search(character_id, query, limit, trace_meta, user_id=None):
+        # A2 M0-4：调用点新增 user_id 透传，假实现跟随签名（不改变既有 calls["search"] 形状）
         calls["search"] = (character_id, query, limit, trace_meta)
         return memories or []
 

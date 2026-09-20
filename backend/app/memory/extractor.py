@@ -234,8 +234,9 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
     # （不新增 LLM 调用）；关=原 prompt 逐字节一致（零行为变化）。
     # 细粒度（2026-09-10）：只提示【已启用槽】，全关则整段不追加（零行为）。
     try:
-        from app.memory.user_facts import MUTABLE_SLOTS, enabled_user_fact_slots
-        _enabled_slots = enabled_user_fact_slots()
+        from app.memory.user_facts import MUTABLE_SLOTS, enabled_user_fact_slots_for
+        # A5（2026-09-19）：按该账号解析启用槽（用户级覆盖优先），避免用全局值冒充 per-user。
+        _enabled_slots = await enabled_user_fact_slots_for(user_id)
         if _enabled_slots:
             _slot_lines = [f'  - "{s}"：{MUTABLE_SLOTS[s][0]}' for s in _enabled_slots]
             prompt += (
@@ -332,14 +333,14 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
                 from app.memory.slot_guard import normalize_slot_value
                 from app.memory.user_facts import (
                     MUTABLE_SLOTS, classify_slot, upsert_user_fact,
-                    user_fact_slot_enabled, settle_location_on_home_return,
+                    user_fact_slot_enabled_for, settle_location_on_home_return,
                 )
                 slot_raw = (_get_val(response, "SLOT") or "").strip()
                 slot = slot_raw if slot_raw in MUTABLE_SLOTS else classify_slot(val)
                 # C2-③ 回家信号优先：独立于 LLM SLOT（F-4 收紧后「我到家了」常无地点宾语、slot=None）；
                 # settle 内部自带 location 槽门控（槽关直接 False），命中则不重复 upsert location。
                 _home_settled = await settle_location_on_home_return(user_id, user_msg or val)
-                if slot and user_fact_slot_enabled(slot) and not _home_settled:
+                if slot and await user_fact_slot_enabled_for(slot, user_id) and not _home_settled:
                     # 槽值规范化 L1（2026-09-19）：LLM 正文常是「用户…」整句，直接进槽必被主语闸
                     # 拒；先做本地确定性归一再写。归一不出值就原样传 val，让槽闸照旧拒写（fail-closed）。
                     norm = normalize_slot_value(slot, val)

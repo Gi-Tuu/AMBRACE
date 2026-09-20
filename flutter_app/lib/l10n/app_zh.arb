@@ -2664,5 +2664,6 @@
   "flagGroupChannelGroup": "渠道绑定与群认知",
   "flagGroupToolTrace": "工具轨迹治理",
   "flagNumericValue": "当前值：{value}",
-  "flagNumericReadOnly": "该开关为数值型，暂不支持在 App 内热改"
+  "flagNumericReadOnly": "该开关为数值型，暂不支持在 App 内热改",
+  "flagScopeServerHint": "服务器级开关：改动会影响本服务器上的所有账号"
 }

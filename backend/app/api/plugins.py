@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
 from fastapi.responses import Response
 
+from app.api.plugin_bridge import _plugin_disabled_gate
 from app.auth.deps import get_current_user_id
 from app.i18n import tr_lang
 from app.plugins import registry
@@ -145,8 +146,14 @@ def build_plugin_chat_messages(persona: str, user_input: str, history: object | 
 
 
 async def _is_owner(user_id: int) -> bool:
-    from app.application.permission_service import is_admin_user
-    return await is_admin_user(user_id)
+    """插件管理权（A2 M2，2026-09-20）：收口到「服务器控制台管理员」server_admin。
+
+    保留同名薄封装，8 个调用点语义不变（403 文案沿用既有 i18n key）：
+    - 改前 = is_admin_user（家庭主账号，本机实测 17 账号里 15 个都是 1 → 任一普通账号都能全局装/停/改/卸插件）；
+    - 改后 = is_server_admin（users.server_admin，DB 权威 + 30s 缓存 + env ADMIN_USER_IDS 兜底）。
+    """
+    from app.application.permission_service import is_server_admin
+    return await is_server_admin(user_id)
 
 
 def _is_channel_plugin(plugin_name: str) -> bool:
@@ -164,6 +171,7 @@ async def _validate_channel_binding(user_id: int, plugin_name: str, config: dict
     - 调用者须为独立主账号（parent_id IS NULL），子账号 → 403；
     - allowed_character_ids 收窄为单选：>1 → 400；空数组 = 未绑定（允许）；
     - 所选角色 user_id 必须属于调用者家庭（跨家庭 → 403）；
+    - A2 M2：该渠道若已被**别的家庭根**绑定 → 409（不得静默覆盖他家庭占用）；
     - 全组唯一：同一家庭内已有其他角色绑定该渠道 → 400（先解绑/转移）。
     校验通过后把 allowed_character_ids 归一化为逗号分隔字符串（渠道插件按逗号读取）。
     """
@@ -207,6 +215,12 @@ async def _validate_channel_binding(user_id: int, plugin_name: str, config: dict
                     select(AICharacter).where(AICharacter.id.in_(existing_ids))
                 )).scalars().all()
                 existing_owner = {c.id: c.user_id for c in existing_chars}
+            # A2 M2（2026-09-20）：跨家庭占用——插件行是全局单行（config_json 全局唯一），
+            # 若该渠道当前绑定落在别的家庭根，本家庭不得静默覆盖（与既有 physical_singleton 同风格：
+            # 409 + 复用既有 key channel_bind_physical_taken，不新增 i18n key）。
+            # 本家庭内动作语义不变（下一分支仍是 400 channel_bind_occupied）。
+            if any(_owner_uid not in family_ids for _owner_uid in existing_owner.values()):
+                raise HTTPException(status_code=409, detail=tr_lang(lang, "channel_bind_physical_taken"))
             if any(existing_owner.get(eid) in family_ids and eid != ids[0] for eid in existing_ids):
                 raise HTTPException(status_code=400, detail=tr_lang(lang, "channel_bind_occupied"))
     # 归一化存储为逗号分隔字符串（保持渠道插件读取语义不变）
@@ -359,8 +373,11 @@ async def install_plugin(
         raise HTTPException(status_code=500, detail=tr_lang(lang, "install_failed", err=str(e)[:200]))
     _logger.info("插件 %s 安装到 %s", name, target)
 
-    # 3.9：记录来源（local）+ sha256 实际值
-    await registry.record_install_provenance(name, source="local", sha256=hashlib.sha256(data).hexdigest())
+    # 3.9：记录来源（local）+ sha256 实际值；A2 M1：同时落安装者归属（owner_user_id=调用者，
+    # owner_tenant_id 由 registry 经 family_service.get_family_root_id 解析）
+    await registry.record_install_provenance(
+        name, source="local", sha256=hashlib.sha256(data).hexdigest(), owner_user_id=user_id,
+    )
 
     # 重新扫描加载
     await registry.sync_plugins_db()
@@ -406,7 +423,8 @@ async def plugin_chat(
     config.chat.persona 作 system prompt + llm_client（用户 BYOK > 服务器级 DB > .env 三级回退）
     + 进程内限额（20/分、500/天）+ 不写记忆/不建会话 + 输出剥离动作标记。"""
     plugin = registry.get_plugin(name)
-    if plugin is None:
+    # A2 M0-3：已禁用插件路由闸（flag 门控，默认关=旧行为）；命中复用既有 plugin_not_found 文案
+    if plugin is None or _plugin_disabled_gate(plugin):
         raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_not_found"))
     if plugin.get("type") != "chat":
         raise HTTPException(status_code=400, detail=tr_lang(lang, "plugin_chat_not_chat_type", name=name))
@@ -474,6 +492,9 @@ async def plugin_page(
     if filepath == "plugin-bridge.js":
         from app.api.plugin_bridge import PLUGIN_BRIDGE_JS
         return Response(content=PLUGIN_BRIDGE_JS, media_type="application/javascript; charset=utf-8")
+    # A2 M0-3：已禁用插件路由闸（flag 门控，默认关=旧行为）；命中复用既有 plugin_page_not_found 文案
+    if _plugin_disabled_gate(registry.get_plugin(name)):
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_page_not_found"))
     plugin_dir = registry.resolve_plugin_dir(name)
     if plugin_dir is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_page_not_found"))

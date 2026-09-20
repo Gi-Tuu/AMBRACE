@@ -7524,4 +7524,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get flagNumericReadOnly => '该开关为数值型，暂不支持在 App 内热改';
+
+  @override
+  String get flagScopeServerHint => '服务器级开关：改动会影响本服务器上的所有账号';
 }

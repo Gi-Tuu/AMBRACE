@@ -760,12 +760,15 @@ class MCPClientManager:
             )
         if transport in ("sse", "streamable_http"):
             url = (row.url or "").strip()
-            validate_mcp_url(url)
+            # P3-4（2026-09-19）：行内显式回环标记 → SSRF 判定与 pin-IP 客户端用同一口径。
+            allow_loopback = bool(getattr(row, "allow_loopback", False))
+            validate_mcp_url(url, allow_loopback=allow_loopback)
             return _TransportConfig(
                 transport=transport,
                 name=row.name,
                 url=url,
                 headers=self._headers(row),
+                allow_loopback=allow_loopback,
             )
         raise ValueError(f"unsupported transport: {transport}")
 
@@ -801,13 +804,17 @@ class MCPClientManager:
             def _sse_client_factory(headers=None, timeout=None, auth=None):
                 # P3-8：连接期把 SSE 的 httpx client 绑定到已校验 IP（防 DNS rebinding）；
                 # 仍保留 mcp 传入的 headers/timeout/auth。绑定/解析失败会自动回退普通 client。
-                return _build_pinned_http_client(url, headers, timeout=timeout, auth=auth)
+                return _build_pinned_http_client(
+                    url, headers, timeout=timeout, auth=auth, allow_loopback=cfg.allow_loopback,
+                )
 
             return sse_client(url, headers=headers, httpx_client_factory=_sse_client_factory)
         if cfg.transport == "streamable_http":
             from mcp.client.streamable_http import streamable_http_client
 
-            http_client = _build_pinned_http_client(cfg.url, cfg.headers or None)
+            http_client = _build_pinned_http_client(
+                cfg.url, cfg.headers or None, allow_loopback=cfg.allow_loopback,
+            )
             return _ManagedHttpTransport(streamable_http_client(cfg.url, http_client=http_client), http_client)
         raise ValueError(f"unsupported transport: {cfg.transport}")
 

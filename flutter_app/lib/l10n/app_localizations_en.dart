@@ -7840,4 +7840,8 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get flagNumericReadOnly =>
       'This flag is numeric and cannot be changed in the app.';
+
+  @override
+  String get flagScopeServerHint =>
+      'Server-level switch: changes affect every account on this server';
 }

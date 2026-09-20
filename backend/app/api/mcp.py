@@ -37,6 +37,8 @@ class MCPServerCreate(BaseModel):
     headers: dict[str, str] = {}  # sse / streamable_http：自定义头
     enabled: bool = True
     auto_connect: bool = True
+    # P3-4（2026-09-19）：显式允许该 Server 连本地回环（仅 loopback；默认 False）。
+    allow_loopback: bool = False
 
 
 class MCPServerUpdate(BaseModel):
@@ -49,6 +51,7 @@ class MCPServerUpdate(BaseModel):
     headers: dict[str, str] | None = None
     enabled: bool | None = None
     auto_connect: bool | None = None
+    allow_loopback: bool | None = None
 
 
 class MCPToolPermissionUpdate(BaseModel):
@@ -76,6 +79,7 @@ def _serialize(row, *, status: str | None = None, last_error: str | None = None,
         "headers": json.loads(row.headers_json or "{}"),
         "enabled": bool(row.enabled),
         "auto_connect": bool(row.auto_connect),
+        "allow_loopback": bool(getattr(row, "allow_loopback", False)),  # P3-4
         "status": status if status is not None else row.status,
         "last_error": last_error if last_error is not None else row.last_error,
         "tools": tool_count if tool_count is not None else len(json.loads(row.tools_cache_json or "[]")),
@@ -119,8 +123,12 @@ def _validate_command(command: str, lang: str) -> None:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "mcp_command_required"))
 
 
-def _validate_http_config(transport: str, url: str, lang: str) -> None:
-    """sse / streamable_http 传输：url 必填 + SSRF 校验（复用 manager.validate_mcp_url）。"""
+def _validate_http_config(transport: str, url: str, lang: str, allow_loopback: bool = False) -> None:
+    """sse / streamable_http 传输：url 必填 + SSRF 校验（复用 manager.validate_mcp_url）。
+
+    P3-4（2026-09-19）：allow_loopback 透传该 Server 的显式回环标记，保证「保存时校验」与
+    「连接时校验」口径一致（仅 loopback 可放行，其余私网照旧拒绝）。
+    """
     if transport not in ("sse", "streamable_http"):
         return
     url = (url or "").strip()
@@ -129,7 +137,7 @@ def _validate_http_config(transport: str, url: str, lang: str) -> None:
     from app.mcp.manager import validate_mcp_url
 
     try:
-        validate_mcp_url(url)
+        validate_mcp_url(url, allow_loopback=allow_loopback)
     except Exception as e:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "mcp_url_invalid", err=str(e)[:200]))
 
@@ -345,7 +353,7 @@ async def create_server(
     if body.transport == "stdio":
         _validate_command(body.command, lang)
     else:
-        _validate_http_config(body.transport, body.url, lang)
+        _validate_http_config(body.transport, body.url, lang, body.allow_loopback)
 
     async with async_session_factory() as db:
         existing = (await db.execute(
@@ -364,6 +372,7 @@ async def create_server(
             headers_json=json.dumps(body.headers, ensure_ascii=False),
             enabled=body.enabled,
             auto_connect=body.auto_connect,
+            allow_loopback=bool(body.allow_loopback),  # P3-4
             status="disconnected",
         )
         db.add(row)
@@ -401,7 +410,9 @@ async def update_server(
             _validate_command("", lang)  # stdio 必须提供 command
     else:
         _url = data.get("url", row.url)
-        _validate_http_config(_target_transport, _url, lang)
+        # P3-4：allow_loopback 未提供时沿用存量值，校验口径与最终落库值一致。
+        _loopback = bool(data.get("allow_loopback", row.allow_loopback))
+        _validate_http_config(_target_transport, _url, lang, _loopback)
 
     # 连接配置变更 → 先断开（注销工具，状态置 disconnected，由 connect/reconnect 重新发现）
     conn_changed = (
@@ -413,6 +424,8 @@ async def update_server(
         or ("url" in data and data["url"] != row.url)
         or ("headers" in data)
         or ("enabled" in data and data["enabled"] != row.enabled)
+        # P3-4：回环标记变更会改变 SSRF 裁决（此前可能因拦截连不上）→ 视作连接配置变更，重连一次。
+        or ("allow_loopback" in data and bool(data["allow_loopback"]) != bool(row.allow_loopback))
     )
 
     async with async_session_factory() as db:
@@ -437,6 +450,8 @@ async def update_server(
             target.enabled = data["enabled"]
         if "auto_connect" in data:
             target.auto_connect = data["auto_connect"]
+        if "allow_loopback" in data:
+            target.allow_loopback = bool(data["allow_loopback"])  # P3-4
         if conn_changed:
             target.status = "disconnected"
             target.last_error = None

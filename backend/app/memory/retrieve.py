@@ -282,6 +282,9 @@ async def search_memories(
     scene: str | None = None,              # "dm" | "group" | None(不过滤)
     exclude_sources: set[str] | None = None,
     group_id: int | None = None,
+    # A2 M0-4（2026-09-20）：调用者账号，仅透传给 memory_search 插件 hook ctx（默认 None，
+    # 放末尾保证既有调用不破；检索/排序/hook 返回语义零变化）。
+    user_id: int | None = None,
 ) -> list[dict]:
     """检索记忆（认知循环 v2.1 多路召回）：向量优先，兜底关键词。
 
@@ -531,6 +534,8 @@ async def search_memories(
             "query": query,
             "results": list(results),
             "limit": limit,
+            # A2 M0-4：补调用者（ctx 多一个键不影响任何既有消费方；None=调用点拿不到）
+            "user_id": user_id,
         })
         if _hook_items:
             _seen = {r.get("id") for r in results}

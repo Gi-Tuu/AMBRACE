@@ -176,6 +176,9 @@ async def get_profile(request: Request, user_id: int = Depends(get_current_user_
         "avatar_url": user.avatar_url,
         "ai_social_enabled": bool(user.ai_social_enabled),
         "is_admin": bool(user.is_admin),
+        # A2 M2（2026-09-20）：服务器控制台管理员标记（插件/市场管理权口径）；
+        # 既有字段一个不动，此处仅追加（Flutter 侧由另一路读取该字段决定插件管理入口）。
+        "server_admin": bool(user.server_admin),
         # #68 P3 账号关联：parent_id（NULL=独立主账号）/ is_sub
         "parent_id": user.parent_id,
         "is_sub": bool(user.parent_id),

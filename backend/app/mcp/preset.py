@@ -79,6 +79,7 @@ async def preset_defaults() -> int:
                 headers_json=_json.dumps(item.get("headers") or {}, ensure_ascii=False),
                 enabled=bool(item.get("enabled", True)),
                 auto_connect=bool(item.get("auto_connect", True)),
+                allow_loopback=bool(item.get("allow_loopback", False)),  # P3-4：预置也可显式标记本地回环
                 status="disconnected",
             ))
             count += 1

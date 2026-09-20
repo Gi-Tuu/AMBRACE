@@ -442,8 +442,9 @@ async def _load_scene_facts(user_id: int | None) -> str:
         return ""
     parts: list[str] = []
     try:
-        from app.memory.user_facts import get_active_user_facts, user_fact_slot_enabled
-        if user_fact_slot_enabled("location"):
+        from app.memory.user_facts import get_active_user_facts, user_fact_slot_enabled_for
+        # A5（2026-09-19）：按 user_id 解析细槽开关（该账号覆盖优先），不用全局值冒充 per-user
+        if await user_fact_slot_enabled_for("location", user_id):
             for _r in await get_active_user_facts(user_id, slots=["location"]):
                 _v = (_r.value or "").strip()
                 if _v:
@@ -626,7 +627,8 @@ async def generate_proactive_event(
                     if _chain:
                         return _chain
                 from app.memory import search_memories
-                mems = await search_memories(character_id, query=current_status or "最近发生的事情", limit=4)
+                mems = await search_memories(character_id, query=current_status or "最近发生的事情", limit=4,
+                                            user_id=user_id)  # A2 M0-4：透传调用者（hook ctx）
                 _mem_lines = []
                 for _m in mems:
                     # X-1（2026-08-18）：与主链路共用公共格式化函数（max_len=80）；
@@ -663,7 +665,8 @@ async def generate_proactive_event(
                     if _chain:
                         return _chain
             from app.memory import search_memories
-            mems = await search_memories(character_id, query=_mem_query, limit=3)
+            mems = await search_memories(character_id, query=_mem_query, limit=3,
+                                        user_id=user_id)  # A2 M0-4：透传调用者（hook ctx）
             _mem_lines = []
             for _m in mems:
                 # format_memory_line 已带 [记录于 YYYY-MM-DD]，确保远期记忆带真实日期，不再谎称"近期"。

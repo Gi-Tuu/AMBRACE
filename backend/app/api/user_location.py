@@ -100,8 +100,9 @@ async def update_user_location(data: UserLocationUpdate, user_id: int = Depends(
                             # §20（2026-09-04）：GPS 反查城市落定后 upsert 用户级事实源（零 LLM，flag 开才写）
                             # 细粒度（2026-09-10）：改按 location 单槽门控（默认关=零行为变化）
                             try:
-                                from app.memory.user_facts import upsert_user_fact, user_fact_slot_enabled
-                                if user_fact_slot_enabled("location"):
+                                from app.memory.user_facts import upsert_user_fact, user_fact_slot_enabled_for
+                                # A5：按 user_id 解析（该账号的用户级覆盖优先）
+                                if await user_fact_slot_enabled_for("location", user_id):
                                     await upsert_user_fact(user_id, "location", city, source="gps")
                             except Exception:
                                 pass
@@ -136,8 +137,9 @@ async def update_user_location(data: UserLocationUpdate, user_id: int = Depends(
         # （零 LLM；失败静默；细粒度 2026-09-10 起按 location 单槽门控）。放 commit 之后，避免与 DB 事务耦合。
         if _final_city:
             try:
-                from app.memory.user_facts import upsert_user_fact, user_fact_slot_enabled
-                if user_fact_slot_enabled("location"):
+                from app.memory.user_facts import upsert_user_fact, user_fact_slot_enabled_for
+                # A5：按 user_id 解析（该账号的用户级覆盖优先）
+                if await user_fact_slot_enabled_for("location", user_id):
                     await upsert_user_fact(user_id, "location", _final_city, source="gps")
             except Exception:
                 pass

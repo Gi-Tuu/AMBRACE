@@ -37,6 +37,10 @@ class MCPServer(Base):
     headers_json: Mapped[str] = mapped_column(Text, default="{}")  # sse/http: 自定义头（预留）
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_connect: Mapped[bool] = mapped_column(Boolean, default=True)  # 启动时自动连接
+    # P3-4（2026-09-19）：显式标记「允许该 Server 连接本地回环」——仅当 URL 解析结果【全部】为
+    # loopback（127.0.0.0/8 / ::1 / localhost）时放行；192.168/10./172.16-31/169.254 元数据等其余
+    # 私网地址即便置 True 也照旧拒绝（判定见 app/mcp/transport.py _resolve_mcp_ip）。
+    allow_loopback: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     tools_cache_json: Mapped[str] = mapped_column(Text, default="[]")  # 上次发现工具缓存
     status: Mapped[str] = mapped_column(String(20), default="disconnected")  # disconnected|connecting|connected|error
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

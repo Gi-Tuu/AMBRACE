@@ -101,6 +101,7 @@ async def retrieve_memories(state: AgentState) -> AgentState:
         query=_query,
         limit=_recall_limit,
         queries=queries,
+        user_id=state.get("user_id"),  # A2 M0-4：透传调用者（memory_search hook ctx）
         trace_meta={
             "user_id": state.get("user_id"),
             "session_id": state.get("session_id"),
@@ -369,7 +370,12 @@ async def generate_response(state: AgentState) -> AgentState:
     if not state.get("streamed"):
         try:
             from app.plugins.registry import run_hook
-            _ctx = {"reply_text": response}
+            # A2 M0-4（2026-09-20）：ctx 补调用者上下文（取 state 现有值，不新造；零行为变更）
+            _ctx = {
+                "reply_text": response,
+                "user_id": state.get("user_id"),
+                "character_id": state.get("character_id"),
+            }
             await run_hook("after_generate", _ctx)
             _new = _ctx.get("reply_text")
             if isinstance(_new, str) and _new.strip():

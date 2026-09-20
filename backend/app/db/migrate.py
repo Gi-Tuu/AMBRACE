@@ -34,9 +34,10 @@ _BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
 _ALEMBIC_INI = _BACKEND_ROOT / "alembic.ini"
 _ALEMBIC_DIR = _BACKEND_ROOT / "alembic"
 
-# 「当前 schema」判别哨兵：列『只由版本链 add_column 引入、init_db 从不添加』的 28 列。
-# 全新/当前库（current create_all）含全部这些列；远古库（pre-alembic 旧库）缺其中若干。
+# 「当前 schema」判别哨兵：『只由版本链引入、init_db 从不添加』的表/列。
+# 全新/当前库（current create_all）含全部这些表/列；远古库（pre-alembic 旧库）缺其中若干。
 # 命中全部 → 判定为当前 schema → stamp（不重放）；缺任一 → 判定为落后 → upgrade head。
+# 注：create_all 路径会建出的表用「表级哨兵」（如 A5 的 user_runtime_flags），其余为列级哨兵。
 _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     ("users", "parent_id"),
     ("memories", "group_id"),
@@ -66,6 +67,22 @@ _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     ("plugins", "sha256"),
     ("plugins", "consented_permissions"),
     ("plugins", "consented_at"),
+    # ── A2 M1 插件归户（2026-09-20）：plugins.owner_user_id 只由迁移链 add_column 引入，
+    # init_db 的 create_all 会建（当前模型含该列）但远古库不会 —— 老库（有表无版本号）缺此列时
+    # 必须判「落后」走 upgrade head，否则会被 stamp 到 head 却永久缺列（select 直接报错）。
+    ("plugins", "owner_user_id"),
+    # ── P3-4（2026-09-19）：MCP 本地回环细粒度放行（mcp_servers.allow_loopback）──
+    # 该列只由 Alembic 迁移链 add_column 引入、init_db 从不添加：老库（有表但无版本号）缺此列时
+    # 必须判为「落后」走 upgrade head，否则会被 stamp 到 head 却永久缺列（select 直接报错）。
+    ("mcp_servers", "allow_loopback"),
+    # ── A5 用户级开关覆盖（2026-09-19）：user_runtime_flags 是【只由迁移链 create_table 引入】的表 ──
+    # 老库（有表但无版本号）缺此表时若不判「落后」，会被 stamp 到 head 却永久缺表
+    # （flag_service.resolve_flag/get_user_flags 直接 select 报错，用户级覆盖静默失效）。
+    ("user_runtime_flags", "user_id"),
+    # ── A8 LLM 额度按账号（2026-09-20）：user_llm_limits 同样是【只由迁移链 create_table 引入】的表 ──
+    # 老库（有表但无版本号）缺此表时若不判「落后」，会被 stamp 到 head 却永久缺表
+    # （llm_quota.resolve_limit / get_user_overrides 直接 select 报错，账号级额度静默失效）。
+    ("user_llm_limits", "user_id"),
     # ── 一机多主 / 渠道绑定 per-账号化（2026-09-05，28→31；T5 2026-09-10 回退到 29）──
     # channel_bindings 是【主表】（app/models/channel/__init__.py），保留。
     ("channel_bindings", "tenant_id"),

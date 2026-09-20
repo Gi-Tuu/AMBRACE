@@ -67,6 +67,21 @@ PLUGIN_BRIDGE_JS = """/* AMBRACE 插件桥 SDK（48a）：window.Ambrace.* → A
 """
 
 
+def _plugin_disabled_gate(plugin: dict) -> bool:
+    """A2 M0-3：flag plugin_disabled_route_gate 开时，已禁用插件（enabled=False）视为不可访问。
+
+    flag 关闭（默认）→ 恒 False（逐字节旧行为）；延迟 import + try/except 兜底 False。
+    权威口径：registry.get_plugin(name)["enabled"]（list_plugins 合并 DB plugins.enabled 的内存缓存）。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        if not AGENT_FLAGS.get("plugin_disabled_route_gate", False):
+            return False
+    except Exception:
+        return False
+    return not bool((plugin or {}).get("enabled", False))
+
+
 def _effective_api(api: str, params: dict) -> str:
     """解析实际生效的 api（call 统一入口递归一层）；用于 ai 限额判定"""
     if api == "call":
@@ -91,7 +106,8 @@ async def plugin_bridge(
     if api not in VALID_APIS:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "bridge_api_unknown", api=api or "(空)"))
     plugin = registry.get_plugin(name)
-    if plugin is None:
+    # A2 M0-3：已禁用插件路由闸（flag 门控，默认关=旧行为）；命中复用既有 plugin_not_found 文案
+    if plugin is None or _plugin_disabled_gate(plugin):
         raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_not_found"))
     # ai 限额：每用户每插件 10 次/分、200 次/天（settings 可配；进程内滑动窗口；429 + Retry-After）
     if _effective_api(api, params) == "ai":

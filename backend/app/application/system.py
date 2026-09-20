@@ -911,7 +911,7 @@ async def get_llm_usage(
     """
     from sqlalchemy import or_
     from app.db.database import async_session_factory
-    from app.models.agent import LlmUsage, LlmUsageLimit
+    from app.models.agent import LlmUsage  # A8：额度读数改走 llm_quota.resolve_limit，本函数不再直接读额度表
     from app.models.user import User
     from app.application.family_service import is_sub_account, get_family_member_ids
 
@@ -947,9 +947,6 @@ async def get_llm_usage(
         if include_server:
             cond = or_(cond, LlmUsage.user_id.is_(None))
         rows = (await db.execute(select(LlmUsage).where(cond))).scalars().all()
-        limit_row = (await db.execute(
-            select(LlmUsageLimit).where(LlmUsageLimit.id == 1)
-        )).scalar_one_or_none()
         nickname_map: dict[int, str] = {}
         if not is_sub and scope_ids:
             users = (await db.execute(select(User).where(User.id.in_(scope_ids)))).scalars().all()
@@ -982,10 +979,16 @@ async def get_llm_usage(
             if by_user_map.get(uid, 0) > 0
         ]
 
-    limit = limit_row.total_limit if limit_row else 0
+    # A8（2026-09-20）：额度改为按账号生效（覆盖 > 全局 > 未设置），与服务器控制台同口径 ——
+    # 统一走 app/application/llm_quota.resolve_limit（额度表唯一读写出口）；控制台给某账号设过
+    # 覆盖时，App 这里显示的就是该账号的真实额度（并回传 limit_source 便于前端区分来源）。
+    from app.application import llm_quota
+    _quota = await llm_quota.resolve_limit(user_id)
+    limit = int(_quota.get("total_limit") or 0)
     remaining = (limit - total) if (limit and limit > 0) else None
     return {
         "total_limit": limit,
+        "limit_source": _quota.get("source"),
         "used_total": total,
         "remaining": remaining,
         "today": today,
@@ -1003,28 +1006,31 @@ async def update_llm_usage_limit(
     user_id: int,
     lang: str,
 ):
-    """设置免费额度总量（tokens，仅服务器控制台管理员；0=清除总额设置）"""
+    """设置**本账号**的免费额度覆盖（tokens，服务器管理员；0=额度为 0，非「清除」）。
+
+    A8（2026-09-20）：额度从单行全局扩成「全局默认 + 账号覆盖」——
+    - App 侧写的是**自己账号**的覆盖行（不再改服务器全局默认）：全局默认由服务器控制台管理
+      （PUT /api/v1/admin/server/llm-limit），控制台还可逐账号设/清除覆盖；
+    - 与控制台同口径、同一出口：写走 llm_quota.set_user_limit，读走 resolve_limit（覆盖 > 全局 > 未设置）。
+    """
     await _require_server_admin(user_id, lang)
+    from app.application import llm_quota
     from app.db.database import async_session_factory
-    from app.models.agent import LlmUsageLimit
     try:
         limit = max(0, int(body.get("total_limit") or 0))
     except Exception:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "total_limit_invalid"))
+    _before = await llm_quota.resolve_limit(user_id)
+    try:
+        await llm_quota.set_user_limit(user_id, limit, user_id)
+    except Exception:
+        raise HTTPException(status_code=500, detail=tr_lang(lang, "config_invalid"))
     async with async_session_factory() as db:
-        row = (await db.execute(
-            select(LlmUsageLimit).where(LlmUsageLimit.id == 1)
-        )).scalar_one_or_none()
-        _before = {"total_limit": int(row.total_limit) if row is not None else None}
-        if row is None:
-            db.add(LlmUsageLimit(id=1, total_limit=limit, updated_by=user_id))
-        else:
-            row.total_limit = limit
-            row.updated_by = user_id
         await _audit(db, user_id, "server.llm_usage_limit.update", "llm_usage_limit",
-                     _before, {"total_limit": limit})
+                     _before, {"scope": "user", "total_limit": limit})
         await db.commit()
-    return {"total_limit": limit}
+    after = await llm_quota.resolve_limit(user_id)
+    return {"total_limit": int(after.get("total_limit") or 0), "limit_source": after.get("source")}
 
 
 async def get_feature_flags(
@@ -1034,10 +1040,32 @@ async def get_feature_flags(
     '''读取全部运行时 Feature Flag（主账号 = is_admin）；source: db=DB 覆盖 / default=硬编码默认
 
     契约 §3：读类保持现状（_require_admin），避免非 server_admin 账号的 App 开关页读接口 403。
+
+    A5 用户级开关覆盖（2026-09-19）：每个条目新增
+    - ``scope``：``'user'``（该键按账号生效，本批 5 个隐私细槽族键）/ ``'server'``（服务器级）；
+    - ``user_enabled``：**该账号**的覆盖值（无覆盖行 = ``null``）；
+    既有 key/enabled/value/type/source 字段语义保持不变。在服务层补充而非改 flag_service.get_all_flags
+    签名，保持既有 monkeypatch（无参 fake）与调用方兼容。
+
+    A4 目录元数据（2026-09-20）：每个条目**追加** ``meta``
+    ``{title, desc, group, group_order, order, visible}``（按请求 lang 选 zh/en，缺省 zh；
+    visible=True = App 常用开关直显）。来源 = ``app/application/flag_catalog.py`` 的纯内存字典，
+    **不打库**；既有字段（key/enabled/value/type/source/scope/user_enabled）语义与顺序均不变。
     '''
     await _require_admin(user_id, lang)
+    from app.application import flag_catalog
     from app.application import flag_service
-    return {'status': 'ok', 'flags': await flag_service.get_all_flags()}
+    flags = await flag_service.get_all_flags()
+    user_flags = await flag_service.get_user_flags(user_id)
+    for f in flags:
+        if f.get('key') in flag_service.USER_SCOPED_FLAG_KEYS:
+            f['scope'] = 'user'
+            f['user_enabled'] = user_flags.get(f['key'])  # 无覆盖 = None（不是 False）
+        else:
+            f['scope'] = 'server'
+            f['user_enabled'] = None
+        f['meta'] = flag_catalog.meta_for(f.get('key'), lang)
+    return {'status': 'ok', 'flags': flags}
 
 
 async def update_feature_flag(
@@ -1056,6 +1084,13 @@ async def update_feature_flag(
       这正是用户要的「能让某些开关关闭、不放开开关权限」。
     - 真正「服务器级」的写入口（四模态服务器配置 / 任务 API 配置 / 额度 / 备份触发与下载）仍收紧为
       ``require_server_admin``（见契约 §3 与 `_require_server_admin`）。
+
+    A5 用户级开关覆盖（2026-09-19）：写路径按 key 分流——
+    - key ∈ ``USER_SCOPED_FLAG_KEYS`` → 写**该账号的覆盖行**（不写全局、不动进程级 AGENT_FLAGS），
+      返回体沿用现状结构并标 ``scope='user'``；
+    - key ∉ USER_SCOPED → **保持现状写全局**（权限判定不变），返回 ``scope='server'``。
+    两条路径都**先过既有策略判定**（server_locked / self_service → 403），非 bool 键的类型防护
+    由 set_runtime_flag / set_user_flag 内部承担，均不得绕过。
     '''
     await _require_admin(user_id, lang)
     if 'enabled' not in data:
@@ -1068,13 +1103,23 @@ async def update_feature_flag(
         raise HTTPException(status_code=403, detail=tr_lang(lang, 'flag_server_locked'))
     if not policy['self_service']:
         raise HTTPException(status_code=403, detail=tr_lang(lang, 'flag_self_service_disabled'))
+    enabled = bool(data.get('enabled'))
+    if key in flag_service.USER_SCOPED_FLAG_KEYS:
+        # 用户语义键：写该账号覆盖行；全局值与其它账号均不受影响。
+        _before = {'enabled': bool(await flag_service.resolve_flag(key, user_id))}
+        ok = await flag_service.set_user_flag(key, user_id, enabled)
+        if not ok:
+            raise HTTPException(status_code=404, detail='unknown feature flag: ' + key)
+        await _audit(None, user_id, 'server.feature_flag.update', 'flag:' + key,
+                     _before, {'enabled': enabled, 'scope': 'user'})
+        return {'status': 'ok', 'key': key, 'enabled': enabled, 'scope': 'user'}
     _before = {'enabled': bool(AGENT_FLAGS.get(key)) if key in AGENT_FLAGS else None}
-    ok = await flag_service.set_runtime_flag(key, bool(data.get('enabled')))
+    ok = await flag_service.set_runtime_flag(key, enabled)
     if not ok:
         raise HTTPException(status_code=404, detail='unknown feature flag: ' + key)
     await _audit(None, user_id, 'server.feature_flag.update', 'flag:' + key,
-                 _before, {'enabled': bool(data.get('enabled'))})
-    return {'status': 'ok', 'key': key, 'enabled': bool(data.get('enabled'))}
+                 _before, {'enabled': enabled})
+    return {'status': 'ok', 'key': key, 'enabled': enabled, 'scope': 'server'}
 
 
 async def trigger_backup(

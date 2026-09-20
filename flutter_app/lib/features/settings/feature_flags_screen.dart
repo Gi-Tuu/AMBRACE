@@ -159,11 +159,28 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
     'agent_tool_exec_trace': (l) => FlagMeta(title: l.flagAgentToolExecTraceTitle, short_: l.flagAgentToolExecTraceHint, detail: l.flagAgentToolExecTraceDetail),
   };
 
-  /// 高级开关文案：优先取 l10n；catalog 未登记（理论上不会发生）时回退中文兜底
+  /// 开关文案（A4，2026-09-20）：后端下发元数据 → 既有 l10n → catalog 中文兜底。
+  /// 后端只下发一句话说明，既有 l10n 的「详情」更长，故保留下来，避免改后端下发后信息变少。
   FlagMeta _localizedMeta(String key, AppLocalizations l10n) {
+    final backend = FeatureFlagService.instance.metaOf(key);
+    if (backend != null) {
+      final local = _flagMetaL10n[key];
+      return FlagMeta(
+        title: backend.title,
+        short_: backend.desc,
+        detail: local != null ? local(l10n).detail : '',
+      );
+    }
     final f = _flagMetaL10n[key];
     if (f != null) return f(l10n);
     return FeatureFlagCatalog.metaOf(key);
+  }
+
+  /// 副标题：一句话说明 +（服务器级时）一行作用范围提示（提示文案走 l10n）。
+  String _subtitle(String key, AppLocalizations l10n) {
+    final base = _localizedMeta(key, l10n).short_;
+    if (FeatureFlagService.instance.isUserScoped(key)) return base;
+    return '$base\n${l10n.flagScopeServerHint}';
   }
 
   @override
@@ -203,11 +220,21 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
   }
 
   Widget _adminBody(AppLocalizations l10n) {
-    // 用户语义白名单：直接可见（2026-09-17 开关瘦身批次）
-    final visible = _visibleKeys.where((k) => _flags.containsKey(k)).toList();
+    // 常用开关（A4）：优先取后端目录里 visible=true 的键；后端没给（离线/老后端）回落既有白名单
+    final backendVisible =
+        FeatureFlagService.instance.visibleKeys.where(_flags.containsKey).toList();
+    final visible = backendVisible.isNotEmpty
+        ? backendVisible
+        : _visibleKeys.where((k) => _flags.containsKey(k)).toList();
     // 其余内部/运维开关：收进一个默认折叠的区块（标题复用既有 l10n.flagGroupOther，不新增硬编码文案）
-    final advancedKeys =
-        _flags.keys.where((k) => !_visibleKeys.contains(k)).toList();
+    // 顺序按后端目录的分组/组内序；缺后端元数据的键由 groupEntriesFromBackend 内部回落硬编码分组
+    final advancedKeys = FeatureFlagCatalog
+        .groupEntriesFromBackend(
+          _flags.keys.toSet().difference(visible.toSet()),
+          FeatureFlagService.instance,
+        )
+        .expand((g) => g.keys)
+        .toList();
     final advancedTiles = advancedKeys
         .map((k) => _FlagTileData(
               rawKey: k,
@@ -216,6 +243,7 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
               source: _sources[k] ?? 'default',
               type: FeatureFlagService.instance.flagType(k),
               numValue: FeatureFlagService.instance.flagValue(k),
+              serverLevel: !FeatureFlagService.instance.isUserScoped(k),
             ))
         .toList();
 
@@ -230,7 +258,7 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
               SwitchListTile(
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                 title: Text(_localizedMeta(k, l10n).title),
-                subtitle: Text(_localizedMeta(k, l10n).short_,
+                subtitle: Text(_subtitle(k, l10n),
                     style: const TextStyle(fontSize: 11)),
                 value: _flags[k] ?? false,
                 onChanged: (v) => _toggle(k, v),
@@ -372,6 +400,8 @@ class _FlagTileData {
   final String source;
   final String? type;
   final num? numValue;
+  /// 服务器级（非按账号生效）：副标题下追加一行作用范围提示（A4）。
+  final bool serverLevel;
   const _FlagTileData({
     required this.rawKey,
     required this.meta,
@@ -379,6 +409,7 @@ class _FlagTileData {
     required this.source,
     this.type,
     this.numValue,
+    this.serverLevel = false,
   });
 }
 
@@ -436,6 +467,15 @@ class _FlagTileState extends State<_FlagTile> {
                   overflow: expanded ? null : TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant, height: 1.35),
                 ),
+                // 服务器级：改动会影响本服务器上的所有账号（文案走 l10n，不硬编码）
+                if (widget.data.serverLevel)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      l10n.flagScopeServerHint,
+                      style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                    ),
+                  ),
                 if (isNumeric)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),

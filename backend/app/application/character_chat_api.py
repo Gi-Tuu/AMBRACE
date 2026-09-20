@@ -241,6 +241,7 @@ async def chat_with_character(
     try:
         mems = await search_memories(
             character_id=ai_id, query=input_text, limit=3, trace_meta={"user_id": user_id},
+            user_id=user_id,  # A2 M0-4：透传调用者（memory_search hook ctx）
         )
         if char.memory_v2_enabled or mems:
             if mems:

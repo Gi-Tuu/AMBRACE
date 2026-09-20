@@ -2,10 +2,13 @@
 from __future__ import annotations  # P0-1：延迟注解，避免 chromadb.Client(function) | None 在 Python<3.14 导入崩溃
 
 import asyncio
+import logging
 
 import chromadb
 from chromadb.config import Settings
 from app.config import settings
+
+_logger = logging.getLogger("db.vector_store")
 
 # 单例客户端（同步）
 _client: chromadb.Client | None = None
@@ -50,6 +53,7 @@ async def add_memory(
     importance: int = 1,
     document: str | None = None,
     status: str = "active",
+    user_id: int | None = None,
 ):
     """存入一条向量记忆（#70 方案A.4.1：支持自定义文档文本 document 与状态 status，向后兼容）。
 
@@ -58,7 +62,11 @@ async def add_memory(
       #70-C BUG-2 修复：若不写 status 键，开 flag 后 Chroma `$in[active,stale]` 会把
       「缺键」的新 active 向量整批漏掉，稠密召回与写前查重静默失效。flag 关时按
       character_id 过滤不看 status，多写一个键零副作用。
+    - ``user_id``（A1，2026-09-19）：账号归属。None 时回退「该角色 owner」= ai_characters.user_id
+      （进程内缓存）。**始终写 user_id**（与 status 同理：缺键会被 user_id 过滤条件整批漏掉）；
+      owner 亦查不到时不写该键并 warning，不抛异常。
     """
+    _uid = user_id if user_id is not None else await _character_owner_of(character_id)
     collection = await get_or_create_collection()
     _meta = {
         "memory_id": memory_id,
@@ -69,6 +77,11 @@ async def add_memory(
         # 会把「缺键」的新 active 向量整批漏掉，稠密召回与写前查重静默失效。
         "status": status,
     }
+    if _uid is not None:
+        # A1（2026-09-19）：始终写 user_id（与 status 同理，缺键会被 scope 过滤整批漏掉）。
+        _meta["user_id"] = int(_uid)
+    else:
+        _logger.warning("add_memory: character %s owner unresolved; user_id omitted", character_id)
     await asyncio.to_thread(
         collection.add,
         ids=[str(memory_id)],
@@ -99,6 +112,67 @@ def _current_facts_flag_on() -> bool:
         return True
 
 
+def _vector_user_scope_flag_on() -> bool:
+    """A1（2026-09-19）：读 vector_user_scope flag。延迟 import（照抄 _supersede_flag_on 风格）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("vector_user_scope", False))
+    except Exception:
+        return False
+
+
+# A1（2026-09-19）向量「账号归属」：角色 owner（ai_characters.user_id）进程内缓存。
+# 写路径回退与读路径 scope 兜底共用，避免每轮打库；上限 512，超出按插入序淘汰最旧一个。
+# 查询异常（DB 不可用等）不写缓存，下一轮可重试；明确的「无该角色」结果（None）写缓存。
+_OWNER_CACHE: dict[int, int | None] = {}
+_OWNER_CACHE_MAX = 512
+
+
+def _remember_owner(character_id: int, owner: int | None) -> None:
+    if character_id not in _OWNER_CACHE and len(_OWNER_CACHE) >= _OWNER_CACHE_MAX:
+        try:
+            _OWNER_CACHE.pop(next(iter(_OWNER_CACHE)))
+        except (StopIteration, KeyError):
+            pass
+    _OWNER_CACHE[character_id] = owner
+
+
+async def _character_owner_of(character_id: int) -> int | None:
+    """A1：查该角色 owner（ai_characters.user_id）。查不到/异常一律返回 None，不抛。
+
+    用项目既有会话工厂（app.db.database，与文件内既有风格一致）；函数内延迟 import，
+    不在模块顶层 import 造成环。
+    """
+    if character_id in _OWNER_CACHE:
+        return _OWNER_CACHE[character_id]
+    try:
+        from sqlalchemy import select
+
+        from app.db.database import async_session_factory
+        from app.models.character import AICharacter
+        async with async_session_factory() as db:
+            owner = (await db.execute(
+                select(AICharacter.user_id).where(AICharacter.id == character_id)
+            )).scalar_one_or_none()
+        owner = int(owner) if owner is not None else None
+    except Exception as e:
+        _logger.warning("character owner lookup failed char=%s: %s", character_id, e)
+        return None
+    _remember_owner(character_id, owner)
+    return owner
+
+
+async def _resolve_user_scope(character_id: int, user_ids: list[int] | None) -> list[int]:
+    """A1 scope 解析：显式 ``user_ids`` 非空 → 用它；为空 → ``[owner_of(character_id)]``。
+
+    返回去重升序 list；owner 查不到时返回 []（调用方据此不追加 user_id 子句，fail-open 保召回）。
+    """
+    if user_ids:
+        return sorted({int(u) for u in user_ids})
+    owner = await _character_owner_of(character_id)
+    return [owner] if owner is not None else []
+
+
 def _char_where(character_id: int, supersede_on: bool, status: str | None = None) -> dict:
     """按角色检索的 where 子句。
 
@@ -120,20 +194,39 @@ def _char_where(character_id: int, supersede_on: bool, status: str | None = None
     ]}
 
 
+def _char_where_scoped(character_id: int, supersede_on: bool, status: str | None = None,
+                       user_scope: list[int] | None = None) -> dict:
+    """A1（2026-09-19）：在 _char_where 结果外再包一层账号归属条件。
+
+    - ``user_scope`` 为空（flag 关 / scope 解析不出）→ 逐字节返回 _char_where 旧行为（连 where 都不变）。
+    - 非空 → ``{"$and": [<char_clause>, {"user_id": {"$in": sorted(scope)}}]}``。
+    """
+    clause = _char_where(character_id, supersede_on, status)
+    if not user_scope:
+        return clause
+    return {"$and": [clause, {"user_id": {"$in": sorted(user_scope)}}]}
+
+
 async def search_memories(
     character_id: int,
     query_embedding: list[float],
     limit: int = 5,
     status: str | None = None,
+    user_ids: list[int] | None = None,
 ) -> list[dict]:
-    """向量搜索相关记忆（怀旧/复习面：默认 active+stale；现状面调用方显式传 status="active"）。"""
+    """向量搜索相关记忆（怀旧/复习面：默认 active+stale；现状面调用方显式传 status="active"）。
+
+    A1（2026-09-19）：``user_ids`` = 账号 scope，缺省 None → 回退该角色 owner；
+    仅在 vector_user_scope flag 开时追加 user_id 过滤，flag 关 = 逐字节旧行为（where/返回结构/异常静默均不变）。
+    """
+    _scope = await _resolve_user_scope(character_id, user_ids) if _vector_user_scope_flag_on() else None
     collection = await get_or_create_collection()
     try:
         results = await asyncio.to_thread(
             collection.query,
             query_embeddings=[query_embedding],
             n_results=limit,
-            where=_char_where(character_id, _supersede_flag_on(), status),
+            where=_char_where_scoped(character_id, _supersede_flag_on(), status, _scope),
         )
     except Exception:
         return []
@@ -157,6 +250,7 @@ async def find_similar_memory(
     limit: int = 20,
     min_similarity: float = 0.9,
     status: str | None = None,
+    user_ids: list[int] | None = None,
 ):
     """在 ChromaDB 中查找同角色与给定向量最相似的记忆。
 
@@ -166,15 +260,18 @@ async def find_similar_memory(
     2026-09-17 批次一（任务2）：这是**现状面**向量查询——默认只与现行（active）向量比对，
     避免新写入的现行事实被一条 stale 旧现状（旧「在长沙」）吞并成「合并到旧行」；
     current_facts_active_only 关 = 回退旧行为（status=None 不做状态过滤）。
+
+    A1（2026-09-19）：``user_ids`` 同上（缺省回退角色 owner）；flag 关 = 逐字节旧行为。
     """
     _status = status if status is not None else ("active" if _current_facts_flag_on() else None)
+    _scope = await _resolve_user_scope(character_id, user_ids) if _vector_user_scope_flag_on() else None
     collection = await get_or_create_collection()
     try:
         results = await asyncio.to_thread(
             collection.query,
             query_embeddings=[query_embedding],
             n_results=limit,
-            where=_char_where(character_id, _supersede_flag_on(), _status),
+            where=_char_where_scoped(character_id, _supersede_flag_on(), _status, _scope),
         )
     except Exception:
         return None
@@ -188,13 +285,18 @@ async def find_similar_memory(
     return None
 
 
-async def get_all_vectors_by_character(character_id: int) -> dict:
-    """取该角色全部向量记忆：{memory_id: embedding}。用于全量向量去重。"""
+async def get_all_vectors_by_character(character_id: int, user_ids: list[int] | None = None) -> dict:
+    """取该角色全部向量记忆：{memory_id: embedding}。用于全量向量去重。
+
+    A1（2026-09-19）：``user_ids`` 同上（缺省回退角色 owner）；flag 关时 where 与旧文
+    逐字节一致（{"character_id": character_id}），返回结构与异常静默不变。
+    """
+    _scope = await _resolve_user_scope(character_id, user_ids) if _vector_user_scope_flag_on() else None
     collection = await get_or_create_collection()
     try:
         results = await asyncio.to_thread(
             collection.get,
-            where={"character_id": character_id},
+            where=_char_where_scoped(character_id, False, None, _scope),
             include=["embeddings"],
         )
     except Exception:
@@ -222,13 +324,17 @@ async def upsert_memory_vector(
     importance: int = 1,
     document: str | None = None,
     status: str = "active",
+    user_id: int | None = None,
 ):
     """更新（或插入）一条向量记忆：记忆内容被改写（如半重复融合）后重算嵌入同步到 ChromaDB。
 
     #70 方案A.4.1：支持自定义文档文本 document 与状态 status（向后兼容，默认值下旧调用零改动）。
     ``status`` **始终写入**（含默认 active）——#70-C BUG-2 修复：缺键会令开 flag 后的
     Chroma `$in[active,stale]` 把新 active 向量整批漏掉，稠密召回与写前查重静默失效。
+    ``user_id``（A1，2026-09-19）：同 add_memory——None 回退角色 owner，始终写入；
+    owner 查不到则不写该键并 warning，不抛异常。
     """
+    _uid = user_id if user_id is not None else await _character_owner_of(character_id)
     collection = await get_or_create_collection()
     _meta = {
         "memory_id": memory_id,
@@ -239,6 +345,12 @@ async def upsert_memory_vector(
         # 会把「缺键」的新 active 向量整批漏掉，稠密召回与写前查重静默失效。
         "status": status,
     }
+    if _uid is not None:
+        # A1（2026-09-19）：始终写 user_id（与 status 同理，缺键会被 scope 过滤整批漏掉）。
+        _meta["user_id"] = int(_uid)
+    else:
+        _logger.warning(
+            "upsert_memory_vector: character %s owner unresolved; user_id omitted", character_id)
     await asyncio.to_thread(
         collection.upsert,
         ids=[str(memory_id)],

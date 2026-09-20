@@ -43,9 +43,11 @@ def test_market_安装复制到临时目录(tmp_path, monkeypatch):
 
 
 def test_market_权限(monkeypatch):
-    async def _fake_is_admin(user_id: int) -> bool:
+    # A2 M2（2026-09-20）：_is_owner 口径由 is_admin_user 收口到 is_server_admin，
+    # 本用例改为打桩新口径（不依赖会话库 users 行的 is_admin/server_admin 分布）。
+    async def _fake_is_server_admin(user_id: int) -> bool:
         return user_id == 1
-    monkeypatch.setattr('app.application.permission_service.is_admin_user', _fake_is_admin)
+    monkeypatch.setattr('app.application.permission_service.is_server_admin', _fake_is_server_admin)
     assert asyncio.run(_is_owner(1))
     assert not asyncio.run(_is_owner(4))
     assert not asyncio.run(_is_owner(0))

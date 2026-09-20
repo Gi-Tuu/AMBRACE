@@ -91,7 +91,8 @@ async def _top_related_memory(character_id: int, user_id: int, query: str) -> Me
     """定位与当前消息最相关的一条记忆（向量检索 top1；失败静默）。"""
     try:
         from app.memory import search_memories
-        hits = await search_memories(character_id=character_id, query=query or "最近的事情", limit=1)
+        hits = await search_memories(character_id=character_id, query=query or "最近的事情", limit=1,
+                                     user_id=user_id)  # A2 M0-4：透传调用者（hook ctx）
         if not hits:
             return None
         async with async_session_factory() as db:

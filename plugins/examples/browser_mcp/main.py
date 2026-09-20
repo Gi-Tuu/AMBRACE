@@ -16,6 +16,9 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from fastapi import Depends
+
+from app.auth.deps import get_current_user_id
 from app.plugins import sdk
 
 _PROFILE_DIR = Path(__file__).resolve().parents[3] / "backend" / "data" / "browser_profile"
@@ -201,16 +204,38 @@ async def _ensure_schema() -> None:
     except Exception:
         pass
 
-async def _save_snapshot(url: str, domain: str, title: str, text: str, images: list) -> None:
+async def _save_snapshot(url: str, domain: str, title: str, text: str, images: list, user_id=None) -> None:
+    """保存短期快照（A2 M0-1，2026-09-20：按账号归户，只写/更新本账号自己的行）。
+
+    口径：user_id 缺失/非法 → 跳过不写（不写无归属快照）；
+    该 url 已属于别的账号 → 跳过不覆盖（browser_snapshots.url 是**全局唯一键**，
+    M0 不做 schema 变更，宁可少写不得串号；唯一键改 (user_id,url) 属后续批次）。
+    """
+    try:
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    if uid <= 0:
+        sdk.log("browser 快照保存跳过：缺少 user_id（不写无归属快照）")
+        return
     from app.db.database import async_session_factory
     from app.models.user import BrowserSnapshot
     from sqlalchemy import select
     try:
         async with async_session_factory() as db:
-            row = (await db.execute(select(BrowserSnapshot).where(BrowserSnapshot.url == url[:500]))).scalars().first()
+            row = (await db.execute(
+                select(BrowserSnapshot)
+                .where(BrowserSnapshot.url == url[:500], BrowserSnapshot.user_id == uid)
+            )).scalars().first()
             if row is None:
+                other = (await db.execute(
+                    select(BrowserSnapshot.id).where(BrowserSnapshot.url == url[:500]).limit(1)
+                )).scalars().first()
+                if other is not None:
+                    sdk.log("browser 快照保存跳过：该 url 已属于其他账号（url 全局唯一，禁止覆盖他人行）")
+                    return
                 db.add(BrowserSnapshot(
-                    user_id=1, url=url[:500], domain=domain[:200], title=title[:300],
+                    user_id=uid, url=url[:500], domain=domain[:200], title=title[:300],
                     text=text[:8000], image_urls_json=json.dumps(images, ensure_ascii=False)[:4000],
                 ))
             else:
@@ -221,19 +246,34 @@ async def _save_snapshot(url: str, domain: str, title: str, text: str, images: l
         sdk.log("browser 快照保存失败: %s", e)
 
 
-async def _recent_snapshots(limit: int = 5) -> list[dict]:
+async def _recent_snapshots(limit: int = 5, user_id=None) -> list[dict]:
+    """最近浏览快照（A2 M0-1：只返回本账号的行）。
+
+    user_id 缺失/非法 → 直接返回 []（fail-closed：宁可不注入，也不注入他人浏览记录）。
+    """
+    try:
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    if uid <= 0:
+        return []
     from app.db.database import async_session_factory
     from app.models.user import BrowserSnapshot
     from sqlalchemy import select
     try:
         async with async_session_factory() as db:
-            rows = (await db.execute(select(BrowserSnapshot).order_by(BrowserSnapshot.id.desc()).limit(limit))).scalars().all()
+            rows = (await db.execute(
+                select(BrowserSnapshot)
+                .where(BrowserSnapshot.user_id == uid)
+                .order_by(BrowserSnapshot.id.desc())
+                .limit(limit)
+            )).scalars().all()
             return [{"url": r.url[:120], "domain": r.domain, "title": r.title, "text": (r.text or "")[:200]} for r in rows]
     except Exception:
         return []
 
 
-async def browse(url: str) -> dict:
+async def browse(url: str, user_id=None) -> dict:
     """浏览网页并保存短期快照；返回标题/正文摘要（v1 不返回全文给调用方）"""
     await _ensure_schema()
     if not url.startswith(("http://", "https://")):
@@ -246,7 +286,7 @@ async def browse(url: str) -> dict:
         return res
     from urllib.parse import urlparse
     domain = urlparse(res.get("url") or url).netloc[:200]
-    await _save_snapshot(res["url"], domain, res.get("title", ""), res.get("text", ""), res.get("images") or [])
+    await _save_snapshot(res["url"], domain, res.get("title", ""), res.get("text", ""), res.get("images") or [], user_id)
     sdk.log("浏览器快照已保存: %s（%s 字）", domain, len(res.get("text") or ""))
     return {
         "ok": True,
@@ -466,18 +506,18 @@ router = sdk.router()
 
 
 @router.post("/browse")
-async def browse_route(payload: dict):
-    """浏览一个网页：{url}；返回标题/正文摘要/图片链接"""
+async def browse_route(payload: dict, user_id: int = Depends(get_current_user_id)):
+    """浏览一个网页：{url}；快照按调用者账号归户"""
     url = str(payload.get("url") or "").strip()
     if not url:
         return {"ok": False, "message": "url 必填"}
-    return await browse(url)
+    return await browse(url, user_id)
 
 
 @router.get("/latest")
-async def latest():
-    """最近浏览快照（仅元信息）"""
-    return {"ok": True, "snapshots": await _recent_snapshots(5)}
+async def latest(user_id: int = Depends(get_current_user_id)):
+    """最近浏览快照（仅元信息；只返回本账号的行）"""
+    return {"ok": True, "snapshots": await _recent_snapshots(5, user_id)}
 
 
 @router.post("/search")
@@ -497,7 +537,10 @@ async def inject(ctx):
         inject_min = int(cfg.get("inject_minutes", 480))
         if time.time() - _last_inject_ts < inject_min * 60:
             return
-        snaps = await _recent_snapshots(3)
+        uid = ctx.get("user_id")
+        if not uid:
+            return  # 拿不到 user_id → 不注入（绝不注入他人/全库快照）
+        snaps = await _recent_snapshots(3, uid)
         if not snaps:
             return
         lines = ["【你最近浏览过的网页】（仅域名与标题摘要，不含正文）："]

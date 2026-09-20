@@ -8,7 +8,7 @@ import 'marketplace_screen.dart';
 import 'mcp_tools_screen.dart';
 import '../../features/plugin/plugin_card.dart';
 
-/// 扩展（插件）页：分类列表 / 启用开关 / 参数配置 / zip 安装（仅主账号）
+/// 扩展（插件）页：分类列表 / 启用开关 / 参数配置 / zip 安装（仅服务器管理员）
 class ExtensionsScreen extends StatefulWidget {
   const ExtensionsScreen({super.key});
 
@@ -72,7 +72,8 @@ IconData pluginTypeIcon(String type, String category) {
 
 class _ExtensionsScreenState extends State<ExtensionsScreen> {
   bool _loading = true;
-  bool _isAdmin = false;
+  // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员
+  bool _isServerAdmin = false;
   String? _error;
   _PluginFilter _filter = _PluginFilter.all;
   List<Map<String, dynamic>> _plugins = [];
@@ -80,7 +81,8 @@ class _ExtensionsScreenState extends State<ExtensionsScreen> {
   @override
   void initState() {
     super.initState();
-    _isAdmin = context.read<SettingsProvider>().isAdmin;
+    // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员（原 isAdmin）
+    _isServerAdmin = context.read<SettingsProvider>().isServerAdmin;
     _load();
   }
 
@@ -194,7 +196,8 @@ class _ExtensionsScreenState extends State<ExtensionsScreen> {
               MaterialPageRoute(builder: (_) => const MarketplaceScreen()),
             ),
           ),
-          if (_isAdmin)
+          // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员（zip 安装入口）
+          if (_isServerAdmin)
             IconButton(
               tooltip: l10n.pluginInstallZip,
               icon: const Icon(Icons.file_upload_outlined),
@@ -254,7 +257,8 @@ class _ExtensionsScreenState extends State<ExtensionsScreen> {
               ),
             ),
           ),
-          if (!_isAdmin)
+          // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员（无管理权时的提示条，随判据同步）
+          if (!_isServerAdmin)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               child: Row(
@@ -302,7 +306,8 @@ class _ExtensionsScreenState extends State<ExtensionsScreen> {
       itemCount: filtered.length,
       itemBuilder: (context, i) => PluginCard(
         plugin: filtered[i],
-        isAdmin: _isAdmin,
+        // A2-M2（2026-09-20）：插件管理权已收口到服务器管理员（卡片内启停/改配置/卸载等动作按此判据）
+        isAdmin: _isServerAdmin,
         onChanged: _load,
         onToast: _toast,
       ),

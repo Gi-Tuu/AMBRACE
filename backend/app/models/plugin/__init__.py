@@ -33,6 +33,12 @@ class Plugin(Base):
     sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 实际计算值（索引未提供也记录）
     consented_permissions: Mapped[str] = mapped_column(Text, default="[]")  # 已同意权限集 JSON 数组（∪ 历次同意）
     consented_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 最近一次同意时间
+    # ---- A2 M1 插件归户（2026-09-20）：安装者归属（可空，本批零行为变更）----
+    # NULL = 内置/存量/服务级插件（全局，所有账号同等可见/可用）；
+    # 非 NULL = 该「安装者账号」及其「家庭根」（family_service.get_family_root_id）。
+    # 本批只落库记录，不做任何可见性过滤（可见性过滤属 M3，另批实施）。
+    owner_user_id: Mapped[int | None] = mapped_column(nullable=True)
+    owner_tenant_id: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

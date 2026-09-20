@@ -1193,6 +1193,31 @@ ADMIN_TIMEOUT = 6.0
 # 模态键顺序（契约 §1.2：key ∈ llm|image|vlm|speech|multimodal），仅用于展示排序
 MODALITY_ORDER = ("llm", "multimodal", "image", "vlm", "speech")
 ACCOUNT_LLM_MODES = ("own", "default_allowed", "blocked")
+# 注册策略（契约 §1.4：mode ∈ open|invite_only|closed；文案仅展示，拦截行为以后端为准）
+REGISTRATION_MODES = (("open", "开放", "任何人都能注册新账号（现状默认）"),
+                      ("invite_only", "仅邀请码", "注册需要邀请码"),
+                      ("closed", "关闭", "注册端点直接返回 403"))
+REGISTRATION_MODE_LABELS = {m: label for m, label, _desc in REGISTRATION_MODES}
+# 概览字段（契约 §1.6，只读展示；后端缺哪个字段就显示 —，控制台不做任何推算）
+OVERVIEW_FIELDS = (("accounts", "账号总数"),
+                  ("disabled", "已禁用账号"),
+                  ("server_admins", "控制台管理员"),
+                  ("flags_on", "开启的开关"),
+                  ("version", "后端版本"))
+# A8（2026-09-20）LLM 额度：source → 中文来源标签（控制台是内部工具，文案不做 i18n）
+LLM_LIMIT_SOURCE_LABELS = {"user": "账号覆盖", "global": "全局", "unset": "未设置"}
+
+
+def _llm_limit_text(row) -> str:
+    """账号额度展示：『生效值（来源）』；无生效额度显示「未设置」。
+
+    只做展示，不做任何推算：生效值/来源一律取后端给的 llm_total_limit / llm_total_limit_source。
+    """
+    src = str(row.get("llm_total_limit_source") or "")
+    val = row.get("llm_total_limit")
+    if src == "unset" or not val:
+        return "未设置"
+    return "%s（%s）" % (val, LLM_LIMIT_SOURCE_LABELS.get(src, src))
 
 
 class AdminApiError(Exception):
@@ -1412,6 +1437,15 @@ def _fmt_dt(v) -> str:
         return dt.astimezone(timezone(timedelta(hours=8))).strftime("%m-%d %H:%M")
     except Exception:
         return s.replace("T", " ")[:16]
+
+
+def _registration_mode_text(mode) -> str:
+    """mode → 「开放（open）」；未知值原样显示，未返回时给联调提示（不做业务推断）。"""
+    m = str(mode or "").strip()
+    if not m:
+        return "后端未返回 mode"
+    label = REGISTRATION_MODE_LABELS.get(m)
+    return "%s（%s）" % (label, m) if label else "未知策略（%s）" % m
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1639,8 +1673,10 @@ class ControllerApp:
             ("log", "运行日志", "log"),
             ("models", "默认模型", "dashboard"),
             ("accounts", "账号管理", "diamond"),
+            ("registration", "注册策略", "server"),
             ("flags", "开关与权限", "dot"),
             ("audit", "审计", "log"),
+            ("overview", "概览", "dashboard"),
         ]
         for key, label, icon in nav_items:
             item = tk.Frame(self._sidebar, bg=t.sidebar, cursor="hand2")
@@ -1663,8 +1699,10 @@ class ControllerApp:
             "log": self._build_log_page(),
             "models": self._build_models_page(),
             "accounts": self._build_accounts_page(),
+            "registration": self._build_registration_page(),
             "flags": self._build_flags_page(),
             "audit": self._build_audit_page(),
+            "overview": self._build_overview_page(),
         }
 
     def _select_page(self, key: str) -> None:
@@ -2408,15 +2446,26 @@ class ControllerApp:
 
     def _load_accounts(self) -> None:
         def ok(data):
-            rows = [r for r in (data.get("accounts") or []) if isinstance(r, dict)]
-            self._render_accounts(rows)
+            payload = data if isinstance(data, dict) else {}
+            rows = [r for r in (payload.get("accounts") or []) if isinstance(r, dict)]
+            limit = payload.get("limit")
+            self._render_accounts(rows, limit if isinstance(limit, dict) else None)
             self._set_admin_status("accounts", "共 %d 个账号（GET %s）"
                                    % (len(rows), ADMIN_API_PREFIX + "/accounts"), "ok")
 
-        self._set_admin_status("accounts", "加载中… GET %s/accounts" % ADMIN_API_PREFIX, "pending")
-        self._run_admin("读取账号", lambda: _admin_request("GET", "/accounts"), ok, "accounts")
+        def work():
+            # A8：顺带读「服务器默认额度」；该接口未就绪（404/未登录）时降级为不显示，不影响账号表
+            out = {"accounts": _admin_request("GET", "/accounts")}
+            try:
+                out["limit"] = _admin_request("GET", "/llm-limit")
+            except AdminApiError:
+                out["limit"] = None
+            return out
 
-    def _render_accounts(self, rows) -> None:
+        self._set_admin_status("accounts", "加载中… GET %s/accounts" % ADMIN_API_PREFIX, "pending")
+        self._run_admin("读取账号", work, ok, "accounts")
+
+    def _render_accounts(self, rows, limit=None) -> None:
         meta = self._admin_meta["accounts"]
         body = meta["body"]
         t = self.theme
@@ -2424,8 +2473,9 @@ class ControllerApp:
         if not rows:
             self._admin_note("accounts", "后端未返回任何账号（GET %s）" % meta["path"])
             return
+        self._render_server_llm_limit(limit)
         cols = (("id", 5), ("用户名", 12), ("昵称", 12), ("主账号", 7),
-                ("控制台", 7), ("禁用", 14), ("llm_mode", 15), ("操作", 30))
+                ("控制台", 7), ("禁用", 14), ("LLM 额度", 22), ("llm_mode", 15), ("操作", 34))
         _, card = self._admin_card(body, fill="x")
         for ci, (name, width) in enumerate(cols):
             tk.Label(card, text=name, width=width, anchor="w", fg=t.text_sec, bg=t.card,
@@ -2439,7 +2489,7 @@ class ControllerApp:
             cells = [str(uid), str(r.get("username") or ""), str(r.get("nickname") or ""),
                      "是" if r.get("is_admin") else "否",
                      "是" if r.get("server_admin") else "否",
-                     disabled_txt, str(r.get("llm_mode") or "")]
+                     disabled_txt, _llm_limit_text(r), str(r.get("llm_mode") or "")]
             for ci, txt in enumerate(cells):
                 fg = t.text
                 if ci == 5:
@@ -2465,6 +2515,14 @@ class ControllerApp:
                           height=26, font_size=9,
                           command=lambda i=uid, d=not bool(r.get("disabled_at")):
                           self._set_account_disabled(i, d)).pack(side="left")
+            # A8：额度覆盖（弹窗输入）+ 清除覆盖（仅该账号已有覆盖时给入口）
+            RoundedButton(act, t, "设额度", variant="neutral", height=26, font_size=9,
+                          command=lambda i=uid, o=r.get("llm_total_limit_own"):
+                          self._open_llm_limit_dialog(i, o)).pack(side="left", padx=(4, 0))
+            if r.get("llm_total_limit_own") is not None:
+                RoundedButton(act, t, "清除覆盖", variant="neutral", height=26, font_size=9,
+                              command=lambda i=uid: self._clear_account_llm_limit(i)
+                              ).pack(side="left", padx=(4, 0))
 
     def _set_account_disabled(self, uid, disabled: bool) -> None:
         def ok(_data):
@@ -2496,6 +2554,140 @@ class ControllerApp:
         self._run_admin("更新账号 %s" % uid,
                         lambda: _admin_request("PUT", "/accounts/%s/llm-mode" % uid,
                                                {"llm_mode": mode}),
+                        ok, "accounts")
+
+    # ── LLM 额度（A8：按账号覆盖 + 服务器默认）──
+
+    def _render_server_llm_limit(self, limit) -> None:
+        """服务器默认额度卡片（账号管理页顶部）：只读展示 + 可编辑保存。
+
+        接口未就绪/未登录（limit 为 None）时只给提示，不影响下方账号表。
+        """
+        body = self._admin_meta["accounts"]["body"]
+        t = self.theme
+        _, card = self._admin_card(body, fill="x", pady=(0, SP_SM))
+        tk.Label(card, text="服务器默认额度（账号无覆盖时回落到这里；0=未设置）", fg=t.text_sec,
+                 bg=t.card, font=(FONT, 10)).pack(anchor="w")
+        if not isinstance(limit, dict):
+            tk.Label(card, text="未读取到（GET %s/llm-limit）" % ADMIN_API_PREFIX,
+                     fg=t.warning, bg=t.card, font=(FONT, 11)).pack(anchor="w", pady=(0, SP_XS))
+            return
+        val = limit.get("total_limit")
+        src = str(limit.get("source") or "")
+        tk.Label(card, text="%s（%s）" % (val, LLM_LIMIT_SOURCE_LABELS.get(src, src)),
+                 fg=t.text, bg=t.card, font=(FONT, 14, "bold")).pack(anchor="w", pady=(0, SP_SM))
+        row = tk.Frame(card, bg=t.card)
+        row.pack(fill="x")
+        var = tk.StringVar(value="" if val is None else str(val))
+        ttk.Entry(row, textvariable=var, width=14).pack(side="left")
+        RoundedButton(row, t, "保存", variant="primary", height=28, font_size=10,
+                      command=lambda v=var: self._save_server_llm_limit(v)
+                      ).pack(side="left", padx=(SP_XS, 0))
+        tk.Label(row, text="负数/非整数由后端拒绝（400）", fg=t.text_muted, bg=t.card,
+                 font=(FONT, 10)).pack(side="left", padx=(SP_MD, 0))
+
+    def _save_server_llm_limit(self, var) -> None:
+        raw = str(var.get() or "").strip()
+        if not raw:
+            self._set_admin_status("accounts", "先填写额度再保存（0 表示未设置）", "warn")
+            return
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            self._set_admin_status("accounts", "额度必须是整数", "warn")
+            return
+        if value < 0:
+            self._set_admin_status("accounts", "额度不能为负数", "warn")
+            return
+
+        def ok(_data):
+            self._set_msg("已保存服务器默认额度：%d" % value)
+            self._load_accounts()
+
+        self._run_admin("保存服务器默认额度",
+                        lambda: _admin_request("PUT", "/llm-limit", {"total_limit": value}),
+                        ok, "accounts")
+
+    def _open_llm_limit_dialog(self, uid, own) -> None:
+        """单账号额度输入弹窗（提交走 _run_admin 后台线程，Tk 主线程不阻塞）。"""
+        t = self.theme
+        self._style_ttk()
+        win = tk.Toplevel(self.root)
+        win.title("设置账号 %s 的 LLM 额度" % uid)
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.configure(bg=t.bg)
+        card = RoundedCard(win, t, pad=3, fit_inner=True)
+        card.pack(fill="both", expand=True, padx=SP_LG, pady=SP_LG)
+        f = card.inner
+        f.config(padx=SP_LG, pady=SP_LG)
+        tk.Label(f, text="账号 %s 的 LLM 额度" % uid, fg=t.text, bg=t.card,
+                 font=(FONT, 13, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
+        tk.Label(f, text="保存=设账号覆盖；点「清除覆盖」= 删除覆盖回落服务器默认（0 表示额度为 0）",
+                 fg=t.text_muted, bg=t.card, font=(FONT, 10)).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(2, SP_MD))
+        tk.Label(f, text="额度", fg=t.text_sec, bg=t.card, font=(FONT, 11)).grid(
+            row=2, column=0, sticky="w", padx=(0, SP_SM))
+        var = tk.StringVar(value="" if own is None else str(own))
+        entry = ttk.Entry(f, textvariable=var, width=18)
+        entry.grid(row=2, column=1, sticky="w")
+        tip = tk.Label(f, text="", anchor="w", justify="left", fg=t.error, bg=t.card,
+                       font=(FONT, 10), wraplength=320)
+        tip.grid(row=3, column=0, columnspan=2, sticky="w", pady=(SP_SM, 0))
+
+        def close():
+            try:
+                win.destroy()
+            except Exception:
+                pass
+
+        def submit():
+            raw = str(var.get() or "").strip()
+            if not raw:
+                tip.config(text="请输入额度（0 表示额度为 0）")
+                return
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                tip.config(text="额度必须是整数")
+                return
+            if value < 0:
+                tip.config(text="额度不能为负数")
+                return
+            tip.config(text="")
+
+            def ok(_data):
+                close()
+                self._set_msg("账号 %s 额度已设为 %d" % (uid, value))
+                self._load_accounts()
+
+            self._run_admin("设置账号 %s 额度" % uid,
+                            lambda: _admin_request("PUT", "/accounts/%s/llm-limit" % uid,
+                                                   {"total_limit": value}),
+                            ok, "accounts")
+
+        btns = tk.Frame(f, bg=t.card)
+        btns.grid(row=4, column=0, columnspan=2, sticky="w", pady=(SP_MD, 0))
+        RoundedButton(btns, t, "保存", command=submit, variant="primary",
+                      height=32, font_size=11).pack(side="left", padx=(0, SP_XS))
+        RoundedButton(btns, t, "清除覆盖", variant="neutral", height=32, font_size=11,
+                      command=lambda: (close(), self._clear_account_llm_limit(uid))
+                      ).pack(side="left", padx=(0, SP_XS))
+        RoundedButton(btns, t, "取消", command=close, variant="neutral",
+                      height=32, font_size=11).pack(side="left")
+        win.protocol("WM_DELETE_WINDOW", close)
+        entry.bind("<Return>", lambda e: submit())
+        entry.focus_set()
+        win.grab_set()
+
+    def _clear_account_llm_limit(self, uid) -> None:
+        def ok(_data):
+            self._set_msg("账号 %s 已清除额度覆盖（回落服务器默认）" % uid)
+            self._load_accounts()
+
+        self._run_admin("清除账号 %s 额度覆盖" % uid,
+                        lambda: _admin_request("PUT", "/accounts/%s/llm-limit" % uid,
+                                               {"total_limit": None}),
                         ok, "accounts")
 
     # ── 开关与权限页 ──
@@ -2637,6 +2829,143 @@ class ControllerApp:
                 tk.Label(card, text=txt, width=cols[ci][1], anchor="w",
                          fg=t.text if ci in (0, 2) else t.text_sec, bg=row_bg,
                          font=(FONT, 10)).grid(row=ri, column=ci, sticky="w", pady=1)
+
+    # ── 注册策略页 ──
+
+    def _build_registration_page(self) -> tk.Frame:
+        t = self.theme
+        page, pad = self._make_admin_page(
+            "注册策略", "开放 / 仅邀请码 / 关闭（保存后自动回读确认；注册拦截与提示文案一律以后端为准）")
+        login_label, login_dot, hint = self._admin_login_bar(pad, self._load_registration)
+        body = tk.Frame(pad, bg=t.bg)
+        body.pack(fill="x")
+        self._admin_meta["registration"] = {"status": hint, "login_label": login_label,
+                                            "login_dot": login_dot, "body": body,
+                                            "path": ADMIN_API_PREFIX + "/registration",
+                                            "loader": self._load_registration}
+        return page
+
+    def _load_registration(self) -> None:
+        path = ADMIN_API_PREFIX + "/registration"
+
+        def ok(data):
+            mode = str(data.get("mode") or "")
+            self._render_registration(mode)
+            self._set_admin_status("registration", "当前 %s（GET %s）"
+                                   % (_registration_mode_text(mode), path), "ok")
+
+        self._set_admin_status("registration", "加载中… GET %s" % path, "pending")
+        self._run_admin("读取注册策略", lambda: _admin_request("GET", "/registration"),
+                        ok, "registration")
+
+    def _render_registration(self, mode: str) -> None:
+        meta = self._admin_meta["registration"]
+        body = meta["body"]
+        t = self.theme
+        _clear_frame(body)
+        _, card = self._admin_card(body, fill="x")
+        tk.Label(card, text="当前注册策略", fg=t.text_sec, bg=t.card,
+                 font=(FONT, 10)).pack(anchor="w")
+        tk.Label(card, text=_registration_mode_text(mode), fg=t.text, bg=t.card,
+                 font=(FONT, 14, "bold")).pack(anchor="w", pady=(0, SP_SM))
+        mode_var = tk.StringVar(value=mode)
+        for m, label, desc in REGISTRATION_MODES:
+            row = tk.Frame(card, bg=t.card)
+            row.pack(fill="x", pady=1)
+            tk.Radiobutton(row, text="%s（%s）" % (label, m), value=m, variable=mode_var,
+                           bg=t.card, fg=t.text, activebackground=t.card,
+                           activeforeground=t.text, selectcolor=t.entry_bg,
+                           font=(FONT, 11)).pack(side="left")
+            tk.Label(row, text=desc, fg=t.text_muted, bg=t.card,
+                     font=(FONT, 10)).pack(side="left", padx=(SP_MD, 0))
+            if m == mode:
+                tk.Label(row, text="← 生效中", fg=t.accent_glow, bg=t.card,
+                         font=(FONT, 10)).pack(side="right")
+        act = tk.Frame(card, bg=t.card)
+        act.pack(fill="x", pady=(SP_SM, 0))
+        RoundedButton(act, t, "保存", variant="primary", height=28, font_size=10,
+                      command=lambda v=mode_var: self._save_registration(v)
+                      ).pack(side="left")
+        RoundedButton(act, t, "放弃修改并重读", variant="neutral", height=28, font_size=10,
+                      command=self._load_registration).pack(side="left", padx=(SP_XS, 0))
+        tk.Label(act, text="403/401 时点右上角「登录」后重试", fg=t.text_muted, bg=t.card,
+                 font=(FONT, 10)).pack(side="right")
+
+    def _save_registration(self, mode_var) -> None:
+        mode = str(mode_var.get() or "")
+        if not mode:
+            self._set_admin_status("registration", "先选择一个策略再保存", "warn")
+            return
+
+        def ok(_data):
+            self._set_msg("已保存注册策略：%s" % mode)
+            self._load_registration()  # 保存后回读，页面显示以后端返回值为准
+
+        self._run_admin("保存注册策略",
+                        lambda: _admin_request("PUT", "/registration", {"mode": mode}),
+                        ok, "registration")
+
+    # ── 概览页 ──
+
+    def _build_overview_page(self) -> tk.Frame:
+        t = self.theme
+        page, pad = self._make_admin_page(
+            "概览", "账号数/禁用数/控制台管理员/开启开关/后端版本（只读，控制台不做任何推算）")
+        login_label, login_dot, hint = self._admin_login_bar(pad, self._load_overview)
+        _, tools = self._admin_card(pad, fill="x", pady=(0, SP_SM))
+        trow = tk.Frame(tools, bg=t.card)
+        trow.pack(fill="x")
+        tk.Label(trow, text="快速判断服务器现状；未登录或接口未就绪时只提示，不影响其他页签",
+                 fg=t.text_muted, bg=t.card, font=(FONT, 10)).pack(side="left")
+        RoundedButton(trow, t, "刷新", command=self._load_overview, variant="primary",
+                      height=28, font_size=10).pack(side="right")
+        body = tk.Frame(pad, bg=t.bg)
+        body.pack(fill="x")
+        self._admin_meta["overview"] = {"status": hint, "login_label": login_label,
+                                        "login_dot": login_dot, "body": body,
+                                        "path": ADMIN_API_PREFIX + "/overview",
+                                        "loader": self._load_overview}
+        return page
+
+    def _load_overview(self) -> None:
+        path = ADMIN_API_PREFIX + "/overview"
+
+        def ok(data):
+            shown = self._render_overview(data)
+            self._set_admin_status("overview", "已读取 %d 项（GET %s）" % (shown, path), "ok")
+
+        self._set_admin_status("overview", "加载中… GET %s" % path, "pending")
+        self._run_admin("读取概览", lambda: _admin_request("GET", "/overview"), ok, "overview")
+
+    def _render_overview(self, data) -> int:
+        """按契约字段顺序渲染，后端多给的字段附在后面；返回展示条数。"""
+        meta = self._admin_meta["overview"]
+        body = meta["body"]
+        t = self.theme
+        _clear_frame(body)
+        data = data if isinstance(data, dict) else {}
+        rows = [(label, data.get(key)) for key, label in OVERVIEW_FIELDS]
+        known = {key for key, _label in OVERVIEW_FIELDS}
+        rows += [(key, data.get(key)) for key in sorted(data) if key not in known]
+        if all(v is None for _label, v in rows):
+            self._admin_note("overview", "后端未返回任何概览字段（GET %s）" % meta["path"])
+            return 0
+        _, card = self._admin_card(body, fill="x")
+        for ci, (name, width) in enumerate((("指标", 18), ("值", 34))):
+            tk.Label(card, text=name, width=width, anchor="w", fg=t.text_sec, bg=t.card,
+                     font=(FONT, 10, "bold")).grid(row=0, column=ci, sticky="w", pady=(0, 2))
+        tk.Frame(card, bg=t.hairline, height=1).grid(row=1, column=0, columnspan=2,
+                                                     sticky="ew", pady=(0, SP_XS))
+        for ri, (label, val) in enumerate(rows, start=2):
+            row_bg = t.card if ri % 2 == 0 else _hex_mix(t.card, t.surface_alt, 0.5)
+            tk.Label(card, text=label, width=18, anchor="w", fg=t.text, bg=row_bg,
+                     font=(FONT, 10)).grid(row=ri, column=0, sticky="w", pady=1)
+            missing = val is None
+            tk.Label(card, text="—" if missing else str(val), width=34, anchor="w",
+                     fg=t.text_muted if missing else t.text, bg=row_bg,
+                     font=(FONT, 10, "normal" if missing else "bold")).grid(
+                row=ri, column=1, sticky="w", pady=1)
+        return len(rows)
 
     # ── ttk 主题（Checkbutton / Entry 仍用 ttk）──
 

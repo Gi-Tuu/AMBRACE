@@ -2664,5 +2664,6 @@
   "flagGroupChannelGroup": "Channel binding & group cognition",
   "flagGroupToolTrace": "Tool trace governance",
   "flagNumericValue": "Current value: {value}",
-  "flagNumericReadOnly": "This flag is numeric and cannot be changed in the app."
+  "flagNumericReadOnly": "This flag is numeric and cannot be changed in the app.",
+  "flagScopeServerHint": "Server-level switch: changes affect every account on this server"
 }

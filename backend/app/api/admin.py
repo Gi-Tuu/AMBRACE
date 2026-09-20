@@ -18,6 +18,13 @@
 - 开关与权限：GET/PUT /server/flags[/{key}]（flag_service + flag_settings 策略）；
 - 注册策略：GET/PUT /server/registration（server_settings KV）；
 - 审计：GET /server/audit；概览：GET /server/overview。
+
+A8 LLM 额度按账号（2026-09-20）：额度从单行全局扩成「全局默认 + 账号覆盖」——
+- GET /server/accounts 每账号附 llm_total_limit（生效值）/ llm_total_limit_own（覆盖值或 null）/
+  llm_total_limit_source（user/global/unset）；
+- PUT /server/accounts/{id}/llm-limit（null = 清除覆盖回落全局）；
+- GET/PUT /server/llm-limit（服务器默认额度，全局 id=1 行）。
+生效口径（覆盖 > 全局 > 未设置）与读写一律经 app/application/llm_quota.py（API 不直连额度表）。
 铁律（契约 §0）：控制台只调 HTTP API，本文件一律经服务层读写，控制台不得直连 DB；
 所有写动作落 admin_audit_log；api_key 永不回传明文（只回 has_api_key）。
 """
@@ -33,6 +40,7 @@ from app.db.database import async_session_factory
 from app.i18n import tr_lang
 from app.models.user import User
 from app.application.family_service import get_family_member_ids
+from app.application import llm_quota
 from app.application.permission_service import (
     DEFAULT_LLM_MODE,
     LLM_MODES,
@@ -169,6 +177,10 @@ async def list_server_accounts(
 
     ``last_login_at``：契约 §1.1 列出该字段但 §2 数据层未新增同名列（users 现无登录时间列），
     故**恒返回 null**（契约未覆盖，我这么做：不加契约未要求的列，UI 按可空处理）。
+
+    A8（2026-09-20）新增三个额度字段（既有字段一个不少、不改名）：``llm_total_limit``
+    （生效值）、``llm_total_limit_own``（账号覆盖值，无覆盖 = null）、
+    ``llm_total_limit_source``（user/global/unset）。覆盖值走 llm_quota 一次批量读（不 N+1）。
     """
     async with async_session_factory() as db:
         rows = (
@@ -180,8 +192,13 @@ async def list_server_accounts(
                 ).order_by(User.id)
             )
         ).all()
-    return {
-        "accounts": [
+    overrides = await llm_quota.get_user_overrides([r.id for r in rows])
+    global_limit = await llm_quota.get_global_limit()
+    accounts = []
+    for r in rows:
+        _own = overrides.get(r.id)
+        _total, _source = _llm_effective(_own, global_limit)
+        accounts.append(
             {
                 "id": r.id,
                 "username": r.username,
@@ -194,10 +211,25 @@ async def list_server_accounts(
                 "disabled_at": r.disabled_at.isoformat() if r.disabled_at else None,
                 "llm_mode": r.llm_mode or DEFAULT_LLM_MODE,
                 "last_login_at": None,
+                "llm_total_limit": _total,
+                "llm_total_limit_own": _own,
+                "llm_total_limit_source": _source,
             }
-            for r in rows
-        ]
-    }
+        )
+    return {"accounts": accounts}
+
+
+def _llm_effective(own: int | None, global_limit: int) -> tuple[int, str]:
+    """账号生效额度（覆盖 > 全局 > 未设置）→ ``(total_limit, source)``。
+
+    与 ``llm_quota.resolve_limit`` 同口径（此处是批量版：全局值由调用方读一次后传入，
+    避免账号清单里每个账号各读一次全局行）。
+    """
+    if own is not None:
+        return int(own), "user"
+    if int(global_limit or 0) > 0:
+        return int(global_limit), "global"
+    return 0, "unset"
 
 
 @router.put("/server/accounts/{target_user_id}/server-admin")
@@ -314,6 +346,122 @@ async def set_account_llm_mode(
     _invalidate_account_state_cache(target_user_id)
     _logger.info("account llm_mode=%s user=%d by=%d", mode, target_user_id, user_id)
     return {"status": "ok", "user_id": target_user_id, "llm_mode": mode}
+
+
+# ── LLM 额度（A8，2026-09-20：全局默认 + 按账号覆盖）──────────────────────────
+
+def _parse_llm_limit(raw, allow_null: bool) -> int | None:
+    """body 里的 ``total_limit`` → 非负整数；``None``（仅 allow_null）表示清除覆盖。
+
+    非法（负数 / 非整数 / bool / 字符串数字）→ ValueError，由路由翻译成 400。
+    """
+    if raw is None:
+        if allow_null:
+            return None
+        raise ValueError("total_limit_invalid")
+    if isinstance(raw, bool):
+        raise ValueError("total_limit_invalid")
+    if isinstance(raw, int):
+        v = raw
+    elif isinstance(raw, float) and float(raw).is_integer():
+        v = int(raw)
+    else:
+        raise ValueError("total_limit_invalid")
+    if v < 0:
+        raise ValueError("total_limit_invalid")
+    return v
+
+
+@router.put("/server/accounts/{target_user_id}/llm-limit")
+async def set_account_llm_limit(
+    target_user_id: int,
+    body: dict,
+    user_id: int = Depends(require_server_admin),
+    lang: str = Header(default="zh"),
+):
+    """设置/清除某账号的 LLM 额度覆盖（A8）。
+
+    body ``{"total_limit": int|null}``：``null`` = 清除覆盖（回落服务器默认）；
+    负数或非整数 → 400；账号不存在 → 404。写动作落审计 ``server.llm_limit.update``
+    （before/after 带 ``scope='user'``），返回 resolve 后的 ``{total_limit, source, own}``。
+
+    校验语义与 llm_quota 服务层一致（服务层再兜一道，非法同样 400）。
+    """
+    if not isinstance(body, dict) or "total_limit" not in body:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "config_invalid"))
+    try:
+        value = _parse_llm_limit(body.get("total_limit"), allow_null=True)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "config_invalid"))
+
+    async with async_session_factory() as db:
+        exists = (
+            await db.execute(select(User.id).where(User.id == target_user_id))
+        ).scalar_one_or_none()
+        if exists is None:
+            raise HTTPException(status_code=404, detail=tr_lang(lang, "user_not_found"))
+
+    _before = await llm_quota.resolve_limit(target_user_id)
+    try:
+        after = await llm_quota.set_user_limit(target_user_id, value, user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "config_invalid"))
+    except Exception as e:  # noqa: BLE001 —— 写失败如实回 500，不静默成功
+        _logger.warning("llm limit write failed user=%s: %s", target_user_id, e)
+        raise HTTPException(status_code=500, detail=tr_lang(lang, "config_invalid"))
+    await _audit_record(None, user_id, "server.llm_limit.update", "user:%d" % target_user_id,
+                        {"scope": "user", **_before}, {"scope": "user", **after})
+    _logger.info("account llm_limit user=%d value=%s by=%d", target_user_id, value, user_id)
+    return {"status": "ok", **after}
+
+
+@router.get("/server/llm-limit")
+async def get_server_llm_limit(
+    user_id: int = Depends(require_server_admin),
+):
+    """服务器默认额度（只读，全局 ``llm_usage_limits.id==1`` 行）：0 = 未设置。
+
+    账号无覆盖时回落到这里；控制台账号页展示「服务器默认额度」用本端点。
+    """
+    total = await llm_quota.get_global_limit()
+    return {
+        "scope": "global",
+        "total_limit": total,
+        "source": "global" if total > 0 else "unset",
+    }
+
+
+@router.put("/server/llm-limit")
+async def set_server_llm_limit(
+    body: dict,
+    user_id: int = Depends(require_server_admin),
+    lang: str = Header(default="zh"),
+):
+    """写服务器默认额度（全局 id=1 行）：body ``{"total_limit": int}``（>=0，0 = 未设置）。
+
+    负数/非整数 → 400；写动作落审计 ``server.llm_limit.update``（before/after 带 ``scope='global'``）。
+    App 侧既有 ``PUT /api/v1/system/llm-usage-limit`` 语义不变（本批不动 system.py）。
+    """
+    if not isinstance(body, dict) or "total_limit" not in body:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "config_invalid"))
+    try:
+        value = _parse_llm_limit(body.get("total_limit"), allow_null=False)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "config_invalid"))
+
+    _before = await llm_quota.get_global_limit()
+    try:
+        after = await llm_quota.set_global_limit(value, user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "config_invalid"))
+    except Exception as e:  # noqa: BLE001
+        _logger.warning("global llm limit write failed: %s", e)
+        raise HTTPException(status_code=500, detail=tr_lang(lang, "config_invalid"))
+    await _audit_record(None, user_id, "server.llm_limit.update", "global",
+                        {"scope": "global", "total_limit": _before},
+                        {"scope": "global", **after})
+    _logger.info("global llm_limit=%s by=%d", value, user_id)
+    return {"status": "ok", **after}
 
 
 # ── 默认模型（服务器级四模态配置，契约 §1.2）──────────────────────────────────

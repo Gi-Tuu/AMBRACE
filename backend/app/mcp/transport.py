@@ -2,6 +2,7 @@
 
 自 manager.py 原样搬移；app.mcp.manager 保留同名重导出（兼容面不变）。
 """
+import ipaddress
 import socket
 import urllib.parse
 from dataclasses import dataclass
@@ -73,6 +74,9 @@ class _TransportConfig:
     # sse / streamable_http
     url: str | None = None
     headers: dict[str, str] | None = None
+    # P3-4（2026-09-19）：该 Server 是否被显式标记允许本地回环（来自 mcp_servers.allow_loopback）；
+    # 透传给 SSRF 判定与 pin-IP 客户端，保证「保存校验」「连接校验」「连接绑定」用同一放行口径。
+    allow_loopback: bool = False
 
 
 class _ManagedHttpTransport:
@@ -95,22 +99,39 @@ class _ManagedHttpTransport:
                 _logger.warning("mcp httpx client close error: %s", e)
 
 
-def validate_mcp_url(url: str) -> None:
-    """SSRF 防护（MCP 专用）：复用 plugin_bridge 的 IP 判定；默认禁用内网/本地地址，可配置放行。
+def validate_mcp_url(url: str, allow_loopback: bool = False) -> None:
+    """SSRF 防护（MCP 专用）：复用 plugin_bridge 的 IP 判定；默认禁用内网/本地地址，支持细粒度放行。
 
     - 允许 http/https 方案（MCP 本地/远程 Server 可能用 http）；
     - 默认拦截私有/环回/链路本地/组播/保留/未指定/云元数据地址；
-    - settings.mcp_http_allow_private=True 时全量放行（自托管内网服务）。
+    - P3-4（2026-09-19）细粒度放行：allow_loopback=True（来自该 Server 的显式标记）且解析结果
+      【全部】为 loopback 时，仅放行 loopback（127.0.0.0/8 / ::1 / localhost）；loopback 之外的
+      私网/链路本地/云元数据地址即便标记也照旧拒绝——不要为此打开下面的全局开关；
+    - settings.mcp_http_allow_private=True 时全量放行（自托管内网服务；进程级全局语义，向后兼容）。
     - 校验失败抛 ValueError（connect/test_connect/API 会捕获并报告）。
     """
-    # P3-8（2026-08-25）：复用 _resolve_mcp_ip 同一套「解析 + SSRF 校验」（含 mcp_http_allow_private 放行）。
-    _resolve_mcp_ip(url)
+    # P3-8（2026-08-25）：复用 _resolve_mcp_ip 同一套「解析 + SSRF 校验」（含细粒度/全局放行）。
+    _resolve_mcp_ip(url, allow_loopback=allow_loopback)
 
 
-def _resolve_mcp_ip(url: str) -> str:
+def _is_loopback_ip(ip_str: str) -> bool:
+    """严格 loopback 判定（P3-4）：走 ipaddress 语义（127.0.0.0/8 与 ::1），不做字符串前缀匹配。
+
+    仅用于细粒度放行裁决：只有真正落在 loopback 段的解析结果才可能被例外放行；
+    无法解析的字符串一律 False（保守，不会因为形如 "127.0.0.1.evil" 的怪字符串被误放行）。
+    """
+    try:
+        return ipaddress.ip_address(ip_str).is_loopback
+    except ValueError:
+        return False
+
+
+def _resolve_mcp_ip(url: str, allow_loopback: bool = False) -> str:
     """解析 URL host 为 IP 并做 SSRF 校验，返回一个允许连接的目标 IP（连接期用于绑定，防 DNS rebinding）。
 
-    - settings.mcp_http_allow_private=True 时直接返回 ""（不绑定、原样全放行，保持既有内网放行逻辑）；
+    - allow_loopback（P3-4）：该 MCP Server 的显式本地回环标记；只有「标记为 True」且「host 的
+      【全部】解析结果都是 loopback」时才放行 loopback，其余私网/链路本地/云元数据地址即便标记也拒绝；
+    - settings.mcp_http_allow_private=True 时直接返回 ""（不绑定、原样全放行，保持既有全局放行逻辑）；
     - 解析失败 / host 缺失 / 任一解析 IP 命中私有/环回/链路本地/组播/保留/云元数据地址 → 抛 ValueError；
     - 返回解析出的可连接 IP：连接层把 TCP 目标绑定到该 IP，即使随后 DNS 被重新绑定到内网地址，
       流量仍打到已校验的公网 IP（缩小 validate_mcp_url 与真正连接之间的 TOCTOU/rebinding 窗口）。
@@ -132,10 +153,22 @@ def _resolve_mcp_ip(url: str) -> str:
         )
     except socket.gaierror:
         raise ValueError(f"url host unresolvable: {host}")
-    for info in infos:
-        if _is_blocked_ip(info[4][0]):
+    if not infos:
+        raise ValueError(f"url host unresolvable: {host}")
+    ips = [info[4][0] for info in infos]
+
+    # P3-4 细粒度例外：命中 loopback 时，必须「显式标记 allow_loopback」+「全部解析结果都是 loopback」
+    # 双条件同时成立才放行（防止域名一半解析到 loopback、一半解析到别处来钻空子）。
+    has_loopback = any(_is_loopback_ip(ip) for ip in ips)
+    if has_loopback and not (allow_loopback and all(_is_loopback_ip(ip) for ip in ips)):
+        raise ValueError("ssrf blocked (loopback address)")
+    # loopback 之外的地址照旧全量拦截（192.168/10./172.16-31/169.254 元数据等，标记也不放行）。
+    for ip in ips:
+        if _is_blocked_ip(ip) and not _is_loopback_ip(ip):
             raise ValueError("ssrf blocked (private/link-local address)")
-    return infos[0][4][0] if infos else ""
+    if has_loopback:
+        _logger.info("mcp ssrf loopback allowed host=%s ip=%s", host, ips[0])
+    return ips[0]
 
 
 class _PinnedIPNetworkBackend:
@@ -195,9 +228,11 @@ def _to_httpx_timeout(timeout):
     return timeout
 
 
-def _build_pinned_http_client(url, headers=None, timeout=None, auth=None):
+def _build_pinned_http_client(url, headers=None, timeout=None, auth=None, allow_loopback=False):
     """构建连接期绑定已校验 IP 的 httpx.AsyncClient（P3-8 防 DNS rebinding）。
 
+    - allow_loopback（P3-4）：该 Server 的显式本地回环标记，透传给 _resolve_mcp_ip，保证连接期与
+      校验期同一放行口径；loopback 目标同样绑定到已校验 IP（缩小 rebinding 窗口）；
     - mcp_http_allow_private=True：返回普通 client（不绑定，保持既有内网放行逻辑）；
     - 解析/校验失败或绑定构造失败：回退普通 client（不阻断 MCP 连接，行为与现状一致）。
     调用方（streamable_http 的 http_client / sse 的 httpx_client_factory）复用该 client。
@@ -212,7 +247,7 @@ def _build_pinned_http_client(url, headers=None, timeout=None, auth=None):
         base_kw["auth"] = auth
     pin_ip = ""
     try:
-        pin_ip = _resolve_mcp_ip(url)
+        pin_ip = _resolve_mcp_ip(url, allow_loopback=allow_loopback)
     except Exception:
         pin_ip = ""
     if not pin_ip:
