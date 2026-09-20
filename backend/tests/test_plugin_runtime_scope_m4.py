@@ -23,9 +23,9 @@ import sys
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.agent.loop import AGENT_FLAGS
 from app.api import plugin_bridge as bridge_api
@@ -67,18 +67,15 @@ def _patch_session_factories(monkeypatch, factory) -> None:
 
 @pytest.fixture()
 def m4_db(monkeypatch, tmp_path):
-    """私有临时库：家庭根 1（子账号 2）+ 家庭根 3 + 分属两家的两个角色。"""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'm4.db'}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    """私有临时库（模板库克隆，见 tests/_dbclone.py）：家庭根 1（子账号 2）+ 家庭根 3 +
+    分属两家的两个角色。"""
+    engine = clone_engine(tmp_path / "m4.db")
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401  # 注册主 metadata
-        from app.models.base import Base
+    async def _seed():
         from app.models.character import AICharacter
         from app.models.user import User
 
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
             db.add_all([
                 User(id=ROOT_UID, username="root", nickname="家庭根", is_admin=True),
@@ -91,7 +88,7 @@ def m4_db(monkeypatch, tmp_path):
             ])
             await db.commit()
 
-    asyncio.run(_init())
+    asyncio.run(_seed())
     _patch_session_factories(monkeypatch, factory)
     yield factory
     asyncio.run(engine.dispose())

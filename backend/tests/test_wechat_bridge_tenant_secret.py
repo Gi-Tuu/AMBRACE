@@ -13,9 +13,9 @@ import pathlib
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.plugins import registry
 from app.providers import registry as prov_reg
@@ -46,21 +46,9 @@ def wc_plugin():
 def wc_db(wc_plugin, tmp_path, monkeypatch):
     monkeypatch.setenv("AMBRACE_SECRET_KEY", "wechat-ilink-test-secret-000000000000000000000001")
     monkeypatch.setenv("WECHAT_ILINK_BRIDGE_SECRET", _GLOBAL_SECRET)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/t.db", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(tmp_path / "t.db", with_plugins="wechat_ilink")
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-            # T5（2026-09-10）：插件表已从 Base.metadata 剥离到独立 plugin_metadata，
-            # 本临时库须显式补建插件表（插件已在本文件 fixture 加载，plugin_metadata 已注册对应表）。
-            from app.plugins.plugin_base import plugin_metadata
-            await conn.run_sync(plugin_metadata.create_all)
-
-    asyncio.run(_init())
     import app.db.database as db_mod
     from app.application import permission_service as perm
 

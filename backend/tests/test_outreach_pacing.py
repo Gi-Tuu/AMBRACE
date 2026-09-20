@@ -19,8 +19,8 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.domain.proactivity import pacing
 from app.scheduling import arbiter
@@ -321,18 +321,28 @@ def test_可回复化_纯函数与灰度门控(flag_env):
 
 @pytest.fixture()
 def pacing_db(monkeypatch, tmp_path):
-    """临时 SQLite 文件库：patch app.db.database / arbiter / memory_review 的会话工厂（不触碰 backend/data）。"""
+    """临时 SQLite 文件库（模板库克隆，见 tests/_dbclone.py）：patch app.db.database /
+    arbiter / memory_review 的会话工厂（不触碰 backend/data）。"""
     tmp = str(tmp_path)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(os.path.join(tmp, "t.db"))
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    async def _seed_parents():
+        # _dbclone 默认开 FK（生产同款 PRAGMA）：memories 的 user_id / character_id、
+        # proactive_message_logs 的 character_id / session_id 需父行先存在
+        # （本文件账号口径：USER_ID；角色：C_WHITE / C_OTHER）
+        from app.models.character import AICharacter
+        from app.models.chat import ChatSession
+        from app.models.user import User
+        async with factory() as db:
+            db.add(User(id=USER_ID, username="pacing_u", nickname="投放用户"))
+            db.add(AICharacter(id=C_WHITE, user_id=USER_ID, name="白名单角色"))
+            db.add(AICharacter(id=C_OTHER, user_id=USER_ID, name="白名单外角色"))
+            for sid in (1, 7, 8, 9):
+                db.add(ChatSession(id=sid, user_id=USER_ID, character_id=C_WHITE))
+            await db.commit()
 
-    asyncio.run(_init())
+    asyncio.run(_seed_parents())
     import app.db.database as db_mod
     import app.scheduling.memory_review as mr
     monkeypatch.setattr(db_mod, "async_session_factory", factory)

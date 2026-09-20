@@ -11,9 +11,9 @@ import os
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api.games import router as games_router
 from app.api.chat_groups import router as chat_groups_router
@@ -31,7 +31,7 @@ async def _fake_llm(**kwargs) -> str:
     return '{"replies": []}'
 
 
-# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例克隆一份会话级模板库，见 tests/_dbclone.py），打 slow 标记。
 # 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
 pytestmark = pytest.mark.slow
 
@@ -39,17 +39,14 @@ pytestmark = pytest.mark.slow
 def play_db(monkeypatch, tmp_path):
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
     async def _init():
         import app.models  # noqa: F401
-        from app.models.base import Base
         from app.models.character import AICharacter
         from app.models.user import User
         from app.models.chat import ChatGroup, ChatGroupMember
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
             db.add(User(id=1, username="u1", nickname="用户一"))
             db.add(User(id=2, username="u2", nickname="用户二"))
@@ -58,6 +55,10 @@ def play_db(monkeypatch, tmp_path):
                                    chat_style="口语化", relation_type="朋友", is_active=True))
             db.add(AICharacter(id=201, user_id=2, name="外人", personality="内向",
                                chat_style="口语化", relation_type="朋友", is_active=True))
+            # 父行先落库：User/AICharacter 与 ChatGroup 之间无 ORM relationship，
+            # flush 排序按 mapper 名（app.models.chat.* < app.models.user.*），
+            # 不带这次 flush 会先 INSERT chat_groups / chat_group_members → FK 失败
+            await db.flush()
             # 群 1：5 个活跃成员（满足狼人杀 4-8）
             db.add(ChatGroup(id=1, user_id=1, name="快乐小家"))
             for cid in range(101, 106):

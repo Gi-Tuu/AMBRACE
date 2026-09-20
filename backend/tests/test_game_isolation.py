@@ -14,8 +14,8 @@ from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.games.undercover import UndercoverEngine
 from app.games.memory_bridge import finalize_game, _trim_summary_pointers
@@ -109,16 +109,25 @@ def test_undercover_spectator_has_no_word():
 def game_db(monkeypatch, tmp_path):
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
     async def _init():
         import app.models  # noqa: F401
-        from app.models.base import Base
+        from app.models.character import AICharacter
         from app.models.game import GameSession
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        from app.models.user import User
         async with factory() as db:
+            # _dbclone 默认开 FK（生产同款 PRAGMA）：game_sessions.user_id 需父行先存在，
+            # game_memories.character_id / memories.character_id 需 101-103 父行
+            db.add(User(id=1, username="u1", nickname="用户一"))
+            for i in (101, 102, 103):
+                db.add(AICharacter(id=i, user_id=1, name=f"角色{i}", personality="外向",
+                                   chat_style="口语化", relation_type="朋友", is_active=True))
+            # 父行先落库：User/AICharacter 与 GameSession 之间无 ORM relationship，
+            # flush 排序按 mapper 名（app.models.game.* < app.models.user.*），
+            # 不分两次 flush 会先 INSERT game_sessions → FK 失败
+            await db.flush()
             db.add(GameSession(user_id=1, game_type="undercover", player_mode="multi",
                                status="finished", round=3, phase="result", winner_side="civilians"))
             await db.commit()

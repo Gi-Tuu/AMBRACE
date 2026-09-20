@@ -16,8 +16,8 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.models.memory import Memory
 from app.memory.tense import (
@@ -28,7 +28,7 @@ from app.memory.tense import (
 NOW = datetime(2026, 9, 9, 12, 0, 0)
 
 
-# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例克隆一份会话级模板库，见 tests/_dbclone.py），打 slow 标记。
 # 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
 pytestmark = pytest.mark.slow
 
@@ -222,21 +222,28 @@ def test_reinforce_locked_untouched():
 
 @pytest.fixture()
 def r_db(monkeypatch, tmp_path):
-    """临时 SQLite 文件库：monkeypatch memory_review 的 async_session_factory（不触碰 backend/data）。"""
+    """临时 SQLite 文件库（模板库克隆，见 tests/_dbclone.py）：monkeypatch
+    memory_review 的 async_session_factory（不触碰 backend/data）。"""
     import app.scheduling.memory_review as mr
 
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    async def _seed_parents():
+        # _dbclone 默认开 FK（生产同款 PRAGMA）：memories / chat_sessions 的 user_id、
+        # character_id 与 proactive_message_logs 的 character_id 需父行先存在
+        # （本文件账号口径：3；角色：13/14/101-104/201）
+        from app.models.character import AICharacter
+        from app.models.user import User
+        async with factory() as db:
+            db.add(User(id=3, username="reminisce_u3", nickname="回忆用户"))
+            for cid in (13, 14, 101, 102, 103, 104, 201):
+                db.add(AICharacter(id=cid, user_id=3, name=f"回忆角色{cid}"))
+            await db.commit()
 
-    asyncio.run(_init())
+    asyncio.run(_seed_parents())
     monkeypatch.setattr(mr, "async_session_factory", factory)
     # C3（2026-09-10）：现状锚点已下沉到 app.memory.current_state（其内部从 app.db.database
     # 取会话工厂），这里一并 patch，保证复习用例仍走同一临时库。

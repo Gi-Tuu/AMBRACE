@@ -12,9 +12,9 @@ import socket
 
 import pytest
 from fastapi import FastAPI, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api.plugin_bridge import PLUGIN_BRIDGE_JS
 from app.api.plugins import router as plugins_router
@@ -26,7 +26,7 @@ from app.plugins import registry
 from app.application import plugin_bridge_service
 
 
-# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例克隆一份会话级模板库，见 tests/_dbclone.py），打 slow 标记。
 # 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
 pytestmark = pytest.mark.slow
 
@@ -56,19 +56,13 @@ def load_ai_diary():
 
 @pytest.fixture()
 def store_db(monkeypatch, tmp_path):
-    """临时 SQLite 文件库：monkeypatch plugin_bridge_service.async_session_factory"""
+    """临时 SQLite 文件库（模板库克隆，见 tests/_dbclone.py）：
+    monkeypatch plugin_bridge_service.async_session_factory"""
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401  # 注册全部模型
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     monkeypatch.setattr(plugin_bridge_service, "async_session_factory", factory)
     yield factory
     asyncio.run(engine.dispose())

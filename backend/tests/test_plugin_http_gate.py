@@ -24,9 +24,9 @@ import asyncio
 
 import pytest
 from fastapi import APIRouter, Depends, FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.agent.loop import AGENT_FLAGS
 from app.api import plugins as plugins_api
@@ -118,17 +118,12 @@ def _client(*routers: APIRouter, caller: int | None = ROOT_UID, raise_exc: bool 
 @pytest.fixture()
 def family_db(monkeypatch, tmp_path):
     """两个互不相干的家庭根（1 / 3），供 runtime_scope 可见性判定取数。"""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{(tmp_path / 'gate.db').as_posix()}",
-                                 poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(tmp_path / "gate.db")
+    factory = make_session_factory(engine)
 
     async def _init():
-        import app.models  # noqa: F401  # 注册主 metadata
-        from app.models.base import Base
         from app.models.user import User
 
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
             db.add_all([
                 User(id=ROOT_UID, username="root", nickname="家庭根", is_admin=True),

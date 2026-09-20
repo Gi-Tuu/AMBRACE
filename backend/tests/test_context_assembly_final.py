@@ -23,8 +23,8 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 import app.agent.context as _ctx  # noqa: F401  触发所有 section_*.py 注册
 from app.agent.context import legacy as legacy_mod
@@ -76,22 +76,19 @@ def _append_mount_keys() -> set[str]:
 
 @pytest.fixture(scope="session")
 def asm_db(tmp_path_factory):
-    """会话级临时库（pytest 托管 tmp_path_factory）：User + AICharacter(13) 一行就够。
+    """会话级临时库（模板库克隆，见 tests/_dbclone.py；pytest 托管 tmp_path_factory）：
+    User + AICharacter(13) 一行就够。
 
     装配函数只查这两张表就能走到 append 链；其余分区走 try/except 内联兜底（空库返回空）。
     """
     db_file = (tmp_path_factory.mktemp("ctx") / "ctx.db").as_posix()
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    engine = clone_engine(db_file)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
+    async def _seed():
         from app.models.character import AICharacter
         from app.models.user import User
 
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
             db.add(User(id=1, username="u1", nickname="用户"))
             db.add(AICharacter(
@@ -100,7 +97,7 @@ def asm_db(tmp_path_factory):
             ))
             await db.commit()
 
-    asyncio.run(_init())
+    asyncio.run(_seed())
     old = legacy_mod.async_session_factory
     legacy_mod.async_session_factory = factory
     yield factory

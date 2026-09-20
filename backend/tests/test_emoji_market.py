@@ -11,10 +11,9 @@ import zipfile
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 
-from app.models.base import Base
+from _dbclone import clone_engine, make_session_factory
+
 from app.models.life import UserEmojiPack
 from app.plugins.zip_safety import ZipSafetyError
 from app.application import emoji_market as m
@@ -24,7 +23,7 @@ _INDEX_URL = "https://raw.githubusercontent.com/Gi-Tuu/AMBRACE-emoji/main/index.
 
 # ---------------- 夹具 ----------------
 
-# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例克隆一份会话级模板库，见 tests/_dbclone.py），打 slow 标记。
 # 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
 pytestmark = pytest.mark.slow
 
@@ -40,17 +39,13 @@ def _reset_market_cache():
 
 @pytest.fixture()
 def market_db(monkeypatch, tmp_path):
-    """临时 SQLite 文件库：monkeypatch emoji_market.async_session_factory（不触碰 backend/data）。"""
+    """临时 SQLite 文件库（模板库克隆，见 tests/_dbclone.py）：
+    monkeypatch emoji_market.async_session_factory（不触碰 backend/data）。"""
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     monkeypatch.setattr(m, "async_session_factory", factory)
     yield factory
     asyncio.run(engine.dispose())

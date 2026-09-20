@@ -16,8 +16,8 @@ import random
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.utils.timeutil import now_naive_utc
 
@@ -27,7 +27,7 @@ from app.scheduling import arbiter
 
 # ═══════════════════ outreach 纯函数（零 IO） ═══════════════════
 
-# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例克隆一份会话级模板库，见 tests/_dbclone.py），打 slow 标记。
 # 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
 pytestmark = pytest.mark.slow
 
@@ -126,19 +126,22 @@ def test_has_invitation_pure():
 
 @pytest.fixture()
 def topic_db(monkeypatch, tmp_path):
-    """临时 SQLite 文件库：patch app.db.database.async_session_factory（不触碰 backend/data）。"""
+    """临时 SQLite 文件库（模板库克隆，见 tests/_dbclone.py）：patch
+    app.db.database.async_session_factory（不触碰 backend/data）。"""
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    async def _seed_parents():
+        # _dbclone 默认开 FK（生产同款 PRAGMA）：conversation_topics.user_id 需父行先存在
+        # （角色行由各用例自建，故这里只补账号 1）
+        from app.models.user import User
+        async with factory() as db:
+            db.add(User(id=1, username="topic_u1", nickname="话题用户"))
+            await db.commit()
 
-    asyncio.run(_init())
+    asyncio.run(_seed_parents())
     import app.db.database as db_mod
     monkeypatch.setattr(db_mod, "async_session_factory", factory)
     from app.agent import topic_tracker as tt

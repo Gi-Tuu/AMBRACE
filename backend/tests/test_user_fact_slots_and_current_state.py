@@ -15,8 +15,8 @@ import asyncio
 import os
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.models.memory import WorldFact
 from app.models.user import User
@@ -28,24 +28,16 @@ _SLOT_FLAGS = (
 )
 
 
-# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
+# 快测档（2026-09-12）：本文件是重量级/集成型用例（每例克隆一份会话级模板库，见 tests/_dbclone.py），打 slow 标记。
 # 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
 pytestmark = pytest.mark.slow
 
 @pytest.fixture()
 def b_db(monkeypatch, tmp_path):
-    """临时库：建全模型 + 把相关模块的异步工厂指向临时工厂。"""
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{os.path.join(str(tmp_path), 'b.db')}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    """临时库（模板库克隆，见 tests/_dbclone.py）：把相关模块的异步工厂指向临时工厂。"""
+    engine = clone_engine(os.path.join(str(tmp_path), "b.db"))
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     import app.db.database as db_mod
     import app.memory.user_facts as uf
     import app.memory.cross_char_sync as ccs

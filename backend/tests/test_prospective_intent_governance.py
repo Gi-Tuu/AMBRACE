@@ -17,8 +17,8 @@ from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.models.memory import ProspectiveIntent
 
@@ -156,25 +156,22 @@ def test_cue_is_stale_rules():
 
 @pytest.fixture()
 def pi_db(monkeypatch, tmp_path):
-    """临时库：create_all + 把 database / prospective_intent / scheduler 的工厂指向临时工厂。"""
+    """临时库（模板库克隆，见 tests/_dbclone.py）+ 把 database / prospective_intent 的
+    工厂指向临时工厂；种子（账号 1 / 角色 11）原样保留。"""
     tmp = str(tmp_path)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    engine = clone_engine(os.path.join(tmp, "t.db"))
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
+    async def _seed():
         from app.models.character import AICharacter
         from app.models.user import User
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
             db.add(User(id=1, username="u1", nickname="用户"))
             db.add(AICharacter(id=11, user_id=1, name="sam", personality="温柔",
                                chat_style="口语化", relation_type="朋友", is_active=True))
             await db.commit()
 
-    asyncio.run(_init())
+    asyncio.run(_seed())
     import app.db.database as db_mod
     import app.scheduling.prospective_intent as pi
     monkeypatch.setattr(db_mod, "async_session_factory", factory)

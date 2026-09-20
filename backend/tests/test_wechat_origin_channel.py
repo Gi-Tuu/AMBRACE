@@ -13,8 +13,8 @@ import os
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 import app.application.chat_service as cs
 
@@ -26,20 +26,24 @@ def chat_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：patch chat_service 绑定各模块的 async_session_factory（不触碰 backend/data）。"""
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-            # T5（2026-09-10）：插件表已从 Base.metadata 剥离到独立 plugin_metadata，
-            # 本临时库须显式补建插件表（插件已在本文件 fixture 加载，plugin_metadata 已注册对应表）。
-            from app.plugins.plugin_base import plugin_metadata
-            await conn.run_sync(plugin_metadata.create_all)
+    async def _seed_parents():
+        # _dbclone 默认开 FK（生产同款 PRAGMA）：chat_messages.session_id 有 FK →
+        # 先补父行（用户 13 / 角色 101 / 两个用例的会话 999 与 998），不动断言与用例体内查询口径
+        from app.models.character import AICharacter
+        from app.models.chat import ChatSession
+        from app.models.user import User
 
-    asyncio.run(_init())
+        async with factory() as db:
+            db.add(User(id=13, username="channel_origin_u13", nickname="渠道来源用例用户"))
+            db.add(AICharacter(id=101, user_id=13, name="小慧"))
+            db.add(ChatSession(id=999, user_id=13, character_id=101))
+            db.add(ChatSession(id=998, user_id=13, character_id=101))
+            await db.commit()
+
+    asyncio.run(_seed_parents())
     import app.db.database as db_mod
     monkeypatch.setattr(db_mod, "async_session_factory", factory)
     # chat_service 在模块顶层 `from app.db.database import async_session_factory`（导入期绑定），

@@ -33,10 +33,19 @@
 - 返回 ``create_async_engine("sqlite+aiosqlite:///<dst>", poolclass=NullPool)``，并对该
   engine **逐连接**注册生产同款 PRAGMA——``app/db/engine.py`` 的 listener 只挂在它自己的
   单例 engine 上，自建 engine 不吃，必须自己注册；
-- ``with_plugins=True``：模板需含插件独立表。插件表在
+- ``with_plugins``：模板需含插件独立表时用。插件表在
   ``app.plugins.plugin_base.plugin_metadata``（**不在** ``Base.metadata``），生产由
   ``registry._ensure_plugin_tables_sync()`` 建；此处先确保插件模型已注册
   （按被测文件原有做法加载插件目录），再 ``plugin_metadata.create_all(checkfirst=True)``。
+  取值见 :func:`clone_engine`：``False`` / ``True`` / 插件目录名（str）/ 插件目录名元组；
+  ``True`` 等价于 ``("douyin_mcp",)``（第 4 批前的历史语义，逐字节向后兼容）。
+
+注意（能力边界）：本 helper 只支持「把表注册进 ``plugin_metadata``（PluginBase）」的插件。
+若某插件是自己造 ``metadata`` / 用例体内内联 DDL 建表，本 helper 不代劳，由该文件自行处理。
+
+注意（超集语义）：``plugin_metadata`` 是**进程级全局** metadata，本 helper 按派单口径对其整体
+``create_all(checkfirst=True)``。故某档模板 = 「入参插件集合」的**超集**——同进程里先加载过别的
+插件，其表也会一并被建出（多出的表无害，用例只要求自己的表在）。模板分档缓存键仍是入参集合。
 """
 from __future__ import annotations
 
@@ -61,15 +70,18 @@ _PRAGMAS = (
     "PRAGMA foreign_keys=ON;",          # P4（2026-09-09）：引擎强制外键
 )
 
-# ``with_plugins=True`` 时按被测文件原有做法加载的插件目录（只有 douyin_mcp 注册了插件表；
-# 见 plugins/examples/douyin_mcp/douyin_models.py → PluginBase/plugin_metadata）。
-_PLUGIN_MODULE = "ai_plugin_douyin_mcp"
-_PLUGIN_DIR_NAME = "douyin_mcp"
+# ``with_plugins`` 为 True 时按被测文件原有做法加载的插件目录（只有 douyin_mcp 注册了插件表
+# 的「历史默认」；见 plugins/examples/douyin_mcp/douyin_models.py → PluginBase/plugin_metadata）。
+# 第 4 批（2026-09-21）起 with_plugins 接受插件目录清单，True 保留为 ("douyin_mcp",) 的别名。
+_PLUGIN_MODULE_PREFIX = "ai_plugin_"  # registry.load_plugin_dir 的模块命名口径：ai_plugin_{manifest.name}
+_DEFAULT_PLUGIN_DIRS: tuple[str, ...] = ("douyin_mcp",)
+# 历史模板文件名：with_plugins=True（仅 douyin）时的模板库文件名，保持逐字节不变。
+_LEGACY_PLUGIN_TEMPLATE_NAME = "template_plugins.db"
 
 # 每进程一个 mkdtemp 根目录（进程结束尽力清理；多进程并行时互不干扰）。
 _ROOT: Path | None = None
-# with_plugins -> 模板库路径（每进程最多两份：纯主表 / 主表+插件表）。
-_TEMPLATES: dict[bool, Path] = {}
+# frozenset(插件目录名) -> 模板库路径（每进程每个组合只建一次；空集 = 纯主表）。
+_TEMPLATES: dict[frozenset, Path] = {}
 
 
 def _root() -> Path:
@@ -81,17 +93,55 @@ def _root() -> Path:
     return _ROOT
 
 
-def _build_template(with_plugins: bool) -> Path:
+def _normalize_plugins(with_plugins) -> frozenset:
+    """把 ``with_plugins`` 归一到「插件目录名 frozenset」（模板缓存键）。
+
+    - ``False`` / ``None`` → ``frozenset()``（只主表；现状语义）；
+    - ``True`` → ``frozenset({"douyin_mcp"})``（**向后兼容**，第 4 批前唯一插件语义）；
+    - ``"wechat_ilink"`` → ``frozenset({"wechat_ilink"})``；
+    - ``("douyin_mcp", "wechat_ilink")`` → 对应集合（自动去重）。
+
+    非法类型（int/其它）直接 TypeError，避免「悄悄建出没有插件表的库」这种假绿。
+    """
+    if with_plugins is False or with_plugins is None:
+        return frozenset()
+    if with_plugins is True:
+        return frozenset(_DEFAULT_PLUGIN_DIRS)
+    if isinstance(with_plugins, str):
+        names = (with_plugins,)
+    elif isinstance(with_plugins, (tuple, list, set, frozenset)):
+        names = tuple(with_plugins)
+    else:
+        raise TypeError(
+            "with_plugins 只接受 bool | str | tuple[str, ...]，收到 "
+            f"{type(with_plugins).__name__}"
+        )
+    for n in names:
+        if not isinstance(n, str) or not n:
+            raise TypeError(f"with_plugins 中的插件目录名必须是非空 str，收到 {n!r}")
+    return frozenset(names)
+
+
+def _template_name(plugins: frozenset) -> str:
+    """模板库文件名：纯主表 / 仅 douyin（沿用历史名） / 其它组合按排序后的插件名拼。"""
+    if not plugins:
+        return "template.db"
+    if plugins == frozenset(_DEFAULT_PLUGIN_DIRS):
+        return _LEGACY_PLUGIN_TEMPLATE_NAME
+    return "template_plugins_" + "_".join(sorted(plugins)) + ".db"
+
+
+def _build_template(plugins: frozenset) -> Path:
     """同步建好模板库（一次 create_all，约 1 s），返回模板文件路径。"""
     import app.models  # noqa: F401  # 注册全部模型到 Base.metadata
     from app.models.base import Base
 
-    dst = _root() / ("template_plugins.db" if with_plugins else "template.db")
+    dst = _root() / _template_name(plugins)
     eng = create_engine(f"sqlite:///{dst.as_posix()}", poolclass=NullPool)
     try:
         Base.metadata.create_all(eng)
-        if with_plugins:
-            _ensure_plugin_models()
+        if plugins:
+            _ensure_plugin_models(plugins)
             from app.plugins.plugin_base import plugin_metadata
             plugin_metadata.create_all(eng, checkfirst=True)
     finally:
@@ -99,25 +149,33 @@ def _build_template(with_plugins: bool) -> Path:
     return dst
 
 
-def _ensure_plugin_models() -> None:
-    """确保渠道插件模型已注册进 ``plugin_metadata``（已装载则复用，不重复 exec）。
+def _ensure_plugin_models(plugins: frozenset) -> None:
+    """确保清单里的插件模型都已注册进 ``plugin_metadata``（已装载则复用，不重复 exec）。
 
     ``registry.load_plugin_dir`` 内部会 ``exec_module`` 插件 main.py；重复调用会重跑一遍
-    模块级代码，故这里按 ``sys.modules`` 去重——与 test_plugin_tenant_scope_m0.py 里
-    ``douyin_mod`` fixture 的「已装载则复用」口径一致。
+    模块级代码，故按 ``sys.modules[ai_plugin_{name}]`` 去重——与 test_plugin_tenant_scope_m0.py
+    里 ``douyin_mod`` fixture 的「已装载则复用」口径一致。
+
+    加载失败（目录不存在 / manifest 无效）直接抛错：静默跳过会建出缺表的模板库，
+    让用例以「no such table」误报成业务失败。
     """
-    if _PLUGIN_MODULE in sys.modules:
-        return
     from app.plugins import registry
-    registry.load_plugin_dir(registry.EXAMPLE_DIR / _PLUGIN_DIR_NAME)
+    for name in sorted(plugins):
+        if f"{_PLUGIN_MODULE_PREFIX}{name}" in sys.modules:
+            continue
+        d = registry.EXAMPLE_DIR / name
+        if not (d / "manifest.json").is_file():
+            raise FileNotFoundError(f"with_plugins 指定的插件目录不存在: {d}")
+        if registry.load_plugin_dir(d) is None:
+            raise RuntimeError(f"插件加载失败（见 registry 日志）: {name}")
 
 
-def _template(with_plugins: bool) -> Path:
-    """取（必要时建）本进程的模板库路径。"""
-    hit = _TEMPLATES.get(with_plugins)
+def _template(plugins: frozenset) -> Path:
+    """取（必要时建）本进程该插件组合的模板库路径。"""
+    hit = _TEMPLATES.get(plugins)
     if hit is None or not hit.exists():
-        hit = _build_template(with_plugins)
-        _TEMPLATES[with_plugins] = hit
+        hit = _build_template(plugins)
+        _TEMPLATES[plugins] = hit
     return hit
 
 
@@ -146,15 +204,24 @@ def _register_pragmas(engine) -> None:
             cur.close()
 
 
-def clone_engine(dst_path, with_plugins: bool = False, pragmas: bool = True):
+def clone_engine(dst_path, with_plugins=False, pragmas: bool = True):
     """把会话级模板库克隆到 ``dst_path``（用例自己的文件库），返回新的 async engine。
 
     参数
     ----
     dst_path : str | os.PathLike
         克隆目标文件路径，由调用方传入（通常 ``tmp_path / "x.db"``）。父目录不存在时自动创建。
-    with_plugins : bool
-        True 时模板额外含插件独立表（``plugin_metadata``；本 helper 会先加载 douyin_mcp）。
+    with_plugins : bool | str | tuple[str, ...]
+        模板需含哪些插件的独立表（``plugin_metadata``；helper 会先加载对应插件目录）：
+
+        - ``False``（默认）→ 只主表；
+        - ``True`` → 等价于 ``("douyin_mcp",)``（第 4 批前的历史语义，**逐字节向后兼容**）；
+        - ``"wechat_ilink"`` → 只加该插件的表；
+        - ``("douyin_mcp", "wechat_ilink")`` → 两者都加（自动去重）。
+
+        模板按 ``frozenset(插件目录名)`` 分档缓存：每进程每个组合只建一次模板库。
+        仅支持「表注册进 ``plugin_metadata``（PluginBase）」的插件；自造表/内联 DDL 的插件
+        不代劳（会因缺表直接报错，而不是偷偷建出空库）。
     pragmas : bool
         默认 True：新 engine 的每条连接执行生产同款 PRAGMA（含 ``foreign_keys=ON``）。
         仅在「开 FK 会让该文件无法在不动种子数据的前提下跑通」时才可以关——关掉前请先问
@@ -166,9 +233,10 @@ def clone_engine(dst_path, with_plugins: bool = False, pragmas: bool = True):
         ``create_async_engine("sqlite+aiosqlite:///<dst_path>", poolclass=NullPool)``；
         调用方负责在 teardown 里 ``asyncio.run(engine.dispose())``（或 ``engine.sync_engine.dispose()``）。
     """
+    plugins = _normalize_plugins(with_plugins)
     dst = Path(dst_path)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    _clone(_template(with_plugins), dst)
+    _clone(_template(plugins), dst)
     engine = create_async_engine(f"sqlite+aiosqlite:///{dst.as_posix()}", poolclass=NullPool)
     if pragmas:
         _register_pragmas(engine)

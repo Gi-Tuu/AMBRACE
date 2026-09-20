@@ -21,8 +21,8 @@ import re
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.agent import loop as _loop
 from app.events.facts import (
@@ -40,7 +40,7 @@ from app.events.facts import (
 )
 from app.models.memory import WorldFact
 
-# 快测档：本文件是集成型用例（每例起一次临时库），按项目纪律打 slow（默认仍跑）。
+# 快测档：本文件是集成型用例（每例克隆一份会话级模板库，见 tests/_dbclone.py），按项目纪律打 slow（默认仍跑）。
 pytestmark = pytest.mark.slow
 
 CHAR = 11
@@ -49,18 +49,11 @@ USER = 1
 
 @pytest.fixture()
 def cf_db(monkeypatch, tmp_path):
-    """临时库：create_all 全模型 + 把 facts 模块的 async_session_factory 指向临时工厂。"""
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{os.path.join(str(tmp_path), 't.db')}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    """临时库（模板库克隆，见 tests/_dbclone.py）：把 facts / database 的
+    async_session_factory 指向临时工厂。"""
+    engine = clone_engine(os.path.join(str(tmp_path), "t.db"))
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     import app.db.database as db_mod
     import app.events.facts as facts
     monkeypatch.setattr(db_mod, "async_session_factory", factory)

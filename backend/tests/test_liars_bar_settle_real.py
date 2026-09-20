@@ -11,8 +11,8 @@ import json
 import os
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api.games import _create_session_in_db, _settle_game
 
@@ -21,16 +21,13 @@ from app.api.games import _create_session_in_db, _settle_game
 def game_db(monkeypatch, tmp_path):
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
     async def _init():
         import app.models  # noqa: F401
-        from app.models.base import Base
         from app.models.character import AICharacter
         from app.models.user import User
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
             db.add(User(id=1, username="u1", nickname="用户一"))
             for i in (101, 102, 103):
