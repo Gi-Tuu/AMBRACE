@@ -1161,13 +1161,18 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     # 插件系统：context_inject（启用插件可向上下文追加内容；异常隔离）
     try:
         from app.plugins.registry import run_hook
+        _plugin_uid = state.get("user_id", 1)
         await run_hook("context_inject", {
-            "user_id": state.get("user_id", 1),
+            "user_id": _plugin_uid,
             "character_id": state.get("character_id"),
             "session_id": state.get("session_id"),
             "user_message": state.get("user_message", ""),
             "context_messages": state["context_messages"],
-        })
+        },
+            # A2 M4：显式带调用者（ctx 已有 user_id）→ flag 开时只分发给本账号可见插件
+            user_id=_plugin_uid,
+            callsite="agent/context/legacy.py:context_inject",
+        )
     except Exception:
         pass
 

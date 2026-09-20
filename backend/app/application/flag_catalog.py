@@ -256,6 +256,15 @@ _FLAG_ROWS: list[tuple] = [
      '插件被停用后，它的接口与页面也一并停止响应（默认保持关闭，仅在需要严格停用插件时开启）。',
      'Stopped plugins fully unreachable',
      'When a plugin is stopped, its endpoints and pages stop responding as well.'),
+    ('plugin_user_scope', 'provider', 1103, False, '插件列表按账号收敛',
+     '插件列表只看得到内置插件与自己家庭安装的插件，别的家庭装的插件不再出现。',
+     'Per-account plugin list',
+     'The plugin list shows only built-in plugins and those your own family installed.'),
+    ('plugin_runtime_scope', 'provider', 1104, False, '插件功能按账号隔离',
+     '别人家庭安装的插件不再参与你的对话、工具与页面，插件也不能替你操作别人的角色数据。',
+     'Per-account plugin runtime',
+     'Plugins installed by other families no longer take part in your chats, tools or pages, '
+     'and plugins cannot touch another account\'s character data.'),
 
     # ── 主动投放节制（B1）──
     ('outreach_hour_window_v1', 'pacing', 1201, False, '主动消息投放时段',

@@ -536,7 +536,11 @@ async def search_memories(
             "limit": limit,
             # A2 M0-4：补调用者（ctx 多一个键不影响任何既有消费方；None=调用点拿不到）
             "user_id": user_id,
-        })
+        },
+            # A2 M4：显式带调用者 → flag 开时只分发给本账号可见插件（拿不到 user_id 时 fail-closed）
+            user_id=user_id,
+            callsite="memory/retrieve.py:memory_search",
+        )
         if _hook_items:
             _seen = {r.get("id") for r in results}
             _extra: list[dict] = []

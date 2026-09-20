@@ -276,7 +276,11 @@ async def generate_response(state: AgentState) -> AgentState:
             "session_id": state.get("session_id"),
             "user_message": state.get("user_message", ""),
             "context_messages": state["context_messages"],
-        })
+        },
+            # A2 M4：显式带调用者 → flag 开时只分发给本账号可见插件
+            user_id=state.get("user_id", 1),
+            callsite="agent/nodes.py:before_generate",
+        )
     except Exception:
         pass
 
@@ -376,7 +380,10 @@ async def generate_response(state: AgentState) -> AgentState:
                 "user_id": state.get("user_id"),
                 "character_id": state.get("character_id"),
             }
-            await run_hook("after_generate", _ctx)
+            await run_hook("after_generate", _ctx,
+                           # A2 M4：显式带调用者（ctx 已有 user_id）→ flag 开时只分发给可见插件
+                           user_id=state.get("user_id"),
+                           callsite="agent/nodes.py:after_generate")
             _new = _ctx.get("reply_text")
             if isinstance(_new, str) and _new.strip():
                 response = _new

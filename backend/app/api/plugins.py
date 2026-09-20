@@ -229,8 +229,15 @@ async def _validate_channel_binding(user_id: int, plugin_name: str, config: dict
 
 @router.get("")
 async def list_plugins(user_id: int = Depends(get_current_user_id)):
-    """插件列表（含启用状态与配置）"""
-    items = registry.list_plugins()
+    """插件列表（含启用状态与配置）。
+
+    A2 M3（2026-09-20）：flag ``plugin_user_scope`` 开时按调用者家庭收敛可见集
+    （内置 + 本家庭安装 + 服务级）；flag 关时 viewer 参数被 registry 忽略，逐字节旧行为。
+    """
+    items = registry.list_plugins(
+        viewer_user_id=user_id,
+        viewer_tenant_id=await registry.resolve_viewer_tenant(user_id),
+    )
     return {"items": items, "total": len(items)}
 
 
@@ -249,10 +256,24 @@ async def update_plugin(
     config = body.get("config")
     if config is not None and not isinstance(config, dict):
         raise HTTPException(status_code=400, detail=tr_lang(lang, "config_invalid"))
-    if config is not None and _is_channel_plugin(name):
+    _channel_config = config is not None and _is_channel_plugin(name)
+    if _channel_config:
         # #68 P5/X5：注册渠道配置变更时校验组级唯一绑定（子账号 403 / 多角色 400 / 跨家庭 403 / 占用 400）
         await _validate_channel_binding(user_id, name, config, lang)
-    if not await _is_owner(user_id):
+    # A2 M2 例外（2026-09-20，Codex 复核后修）：**渠道绑定是家庭内动作**——渠道插件的 config
+    # （绑定/换绑/解绑）由**家庭主账号**（users.is_admin）写即可，唯一性/跨家庭占用由
+    # _validate_channel_binding 的组级校验兜底；**插件本体管理**（安装/卸载/启停 enabled、
+    # 以及非渠道插件的 config）仍限**服务器管理员**（server_admin，A2 M2 收口）。
+    # 立规原因：M2 收口时把 config 一并收紧，导致「家庭主账号换绑渠道」被 403
+    # （10 例渠道绑定用例红），与 A2 盘点报告 §M2 的「渠道绑定例外」相悖。
+    if enabled is not None:
+        if not await _is_owner(user_id):
+            raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_manage_only"))
+    elif _channel_config:
+        from app.application.permission_service import is_admin_user
+        if not await is_admin_user(user_id):
+            raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_manage_only"))
+    elif not await _is_owner(user_id):
         raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_manage_only"))
     if enabled is not None and not isinstance(enabled, bool):
         raise HTTPException(status_code=400, detail=tr_lang(lang, "enabled_invalid"))
@@ -356,6 +377,9 @@ async def install_plugin(
     await registry.require_plugin_consent(
         name, manifest.get("permissions", []) or [], lang,
         consent=consent, provided_permissions=provided,
+        # A2 M6：同意按「调用者租户」（家庭根）判定——同插件不同家庭各自同意一次。
+        tenant_id=await registry.resolve_tenant_for_user(user_id),
+        actor_user_id=user_id,
     )
 
     # 解压到 backend/data/plugins/<name>/
@@ -495,6 +519,9 @@ async def plugin_page(
     # A2 M0-3：已禁用插件路由闸（flag 门控，默认关=旧行为）；命中复用既有 plugin_page_not_found 文案
     if _plugin_disabled_gate(registry.get_plugin(name)):
         raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_page_not_found"))
+    # A2 M4：归属闸（flag plugin_runtime_scope 开时该插件对调用者不可见 → 404；复用既有文案）
+    if not await registry.plugin_visible_for_caller(name, user_id):
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_page_not_found"))
     plugin_dir = registry.resolve_plugin_dir(name)
     if plugin_dir is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_page_not_found"))
@@ -532,7 +559,27 @@ async def uninstall_plugin(
     user_id: int = Depends(get_current_user_id),
     lang: str = Header(default="zh"),
 ):
-    """卸载插件（48a，仅主账号）：删 USER_DIR 插件目录 + 清空 plugin_stores 行 + 禁用（删除 plugins 行）"""
+    """卸载插件（48a，仅 server_admin）：**服务器级**数据生命周期动作，显式回显影响面。
+
+    删除语义（A2 M5，2026-09-20 口径固化，**行为不变**）：
+    1. 删 USER_DIR 插件目录（内置插件仅存在于 EXAMPLE_DIR，无 USER_DIR 副本 → 400 不可卸载）；
+    2. **清空全部账号**的该插件命名空间 KV（``plugin_stores`` 按 ``plugin_name`` 全量删，
+       不限 ``user_id``——卸载是 server_admin 的服务器级动作，删除范围与改前逐行一致，
+       本批仅在响应体新增回显，不动删除语义）；
+    3. 删 ``plugins`` 行（含来源/同意/归属元数据）；
+    4. **不 DROP 插件自有表**（``<name>_*`` 业务表，如 douyin_*/wechat_ilink_*）：历史数据保留，
+       重装后仍可见；确需清理时用 ``scripts/plugins/prune_orphan_plugin_tables.py``
+       （默认 dry-run 只列出；``--apply --yes`` 才 DROP）。
+
+    响应体（M5 新增回显字段，不改删除语义）：
+    - ``stores_cleared``：本次删掉的 ``plugin_stores`` 行数（与删除谓词同口径先量后删）；
+    - ``accounts_affected``：受影响的 distinct ``user_id`` 数；
+    - ``plugin_tables_kept``：插件自有表保留 → 恒 True；``plugin_tables_note`` 附说明文案。
+
+    同事务落一条管理审计 ``plugin.uninstall``（before/after 记
+    ``{name, enabled, owner_user_id, stores_cleared, accounts_affected}``；审计 fail-open，
+    写入异常不影响卸载）。
+    """
     if not await _is_owner(user_id):
         raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_manage_only"))
     plugin_dir = registry.resolve_plugin_dir(name)
@@ -542,22 +589,64 @@ async def uninstall_plugin(
     # 内置插件（仅存在于 EXAMPLE_DIR，无 USER_DIR 副本）不可卸载
     if not plugin_dir.resolve().is_relative_to(user_dir):
         raise HTTPException(status_code=400, detail=tr_lang(lang, "plugin_uninstall_builtin"))
+    stores_cleared = 0
+    accounts_affected = 0
     try:
         shutil.rmtree(plugin_dir, ignore_errors=True)
-        from sqlalchemy import delete as sa_delete, select as sa_select
+        from sqlalchemy import delete as sa_delete, func as sa_func, select as sa_select
         from app.db.database import async_session_factory
+        from app.application import admin_audit_service
         from app.models.plugin import Plugin
         from app.models.plugin import PluginStore
         async with async_session_factory() as db:
-            await db.execute(sa_delete(PluginStore).where(PluginStore.plugin_name == name))
+            # M5：先量影响面（与删除同谓词 plugin_name；同一行可被多账号持有 → distinct 计数）
+            stores_cleared = int((await db.execute(
+                sa_select(sa_func.count()).select_from(PluginStore).where(
+                    PluginStore.plugin_name == name)
+            )).scalar_one() or 0)
+            accounts_affected = int((await db.execute(
+                sa_select(sa_func.count(sa_func.distinct(PluginStore.user_id))).where(
+                    PluginStore.plugin_name == name)
+            )).scalar_one() or 0)
             row = (await db.execute(sa_select(Plugin).where(Plugin.name == name))).scalar_one_or_none()
+            _before = {
+                "name": name,
+                "enabled": (bool(row.enabled) if row is not None else None),
+                "owner_user_id": (row.owner_user_id if row is not None else None),
+                "stores_cleared": stores_cleared,
+                "accounts_affected": accounts_affected,
+            }
+            await db.execute(sa_delete(PluginStore).where(PluginStore.plugin_name == name))
             if row is not None:
                 await db.delete(row)
+            # M5 管理审计：同事务 flush，随下方 commit 一并落库（fail-open，不阻塞卸载）
+            await admin_audit_service.record(
+                db, user_id, "plugin.uninstall", target=name,
+                before=_before,
+                after={
+                    "name": name,
+                    "enabled": False,
+                    "owner_user_id": None,
+                    "stores_cleared": stores_cleared,
+                    "accounts_affected": accounts_affected,
+                },
+            )
             await db.commit()
         # 重新扫描（内存加载 / 启用 / 配置缓存同步）
         await registry.sync_plugins_db()
     except Exception as e:
         _logger.warning("插件 %s 卸载失败: %s", name, e)
         raise HTTPException(status_code=500, detail=tr_lang(lang, "plugin_uninstall_failed", err=str(e)[:200]))
-    _logger.info("插件 %s 已卸载", name)
-    return {"uninstalled": True, "name": name}
+    _logger.info(
+        "插件 %s 已卸载（清 KV %d 行 / 影响 %d 账号；插件自有表保留）",
+        name, stores_cleared, accounts_affected,
+    )
+    return {
+        "uninstalled": True,
+        "name": name,
+        "stores_cleared": stores_cleared,
+        "accounts_affected": accounts_affected,
+        # M5：插件自有表（<name>_*）不 DROP —— 历史数据保留，重装后仍可见
+        "plugin_tables_kept": True,
+        "plugin_tables_note": "插件自有表（<name>_*）不删，历史数据保留，重装后仍可见",
+    }

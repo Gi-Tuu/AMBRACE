@@ -10,11 +10,89 @@
 - hook 装饰器只能在插件 main.py 被加载时调用（registry 会设置当前插件名）。
 - save_memory 需要 manifest 声明 permissions: ["write_memory"]，否则抛 PermissionError。
 """
+import time as _time
+
 from app.utils.logger import get_logger
 
 from app.plugins import registry
 
 _logger = get_logger("plugins")
+
+# ── A2 M4（2026-09-20）：sdk 原语归属断言（flag plugin_runtime_scope，默认关）──────────────
+# 插件自报的 user_id / character_id 必须落在「当前调用者家庭根」内，否则抛 PermissionError
+# （与 require_permission 同语义）；插件侧 API 签名不变。owner 反查走 30s 进程内缓存
+# （仿 app/mcp/ownership.py 的 _CACHE 写法）。
+_CHAR_ROOT_CACHE: dict[int, tuple[float, int | None]] = {}
+_CHAR_ROOT_TTL = 30.0
+
+
+def clear_sdk_owner_cache() -> None:
+    """清空角色归属缓存（测试隔离 / 归属变更后用）。"""
+    _CHAR_ROOT_CACHE.clear()
+
+
+async def _family_root_of(user_id: int | None) -> int | None:
+    """账号 → 家庭根（复用 registry 的缓存解析口；无 user_id / 解析失败 → None）。"""
+    if not user_id:
+        return None
+    return await registry.resolve_caller_tenant_cached(int(user_id))
+
+
+async def _character_family_root(character_id: object) -> int | None:
+    """角色 owner（ai_characters.user_id）→ 家庭根；30s 缓存；查不到 / 异常 → None（fail-closed）。"""
+    try:
+        cid = int(character_id)
+    except (TypeError, ValueError):
+        return None
+    now = _time.monotonic()
+    hit = _CHAR_ROOT_CACHE.get(cid)
+    if hit is not None and (now - hit[0]) < _CHAR_ROOT_TTL:
+        return hit[1]
+    root: int | None = None
+    try:
+        from sqlalchemy import select
+        from app.db.database import async_session_factory
+        from app.models.character import AICharacter
+
+        async with async_session_factory() as db:
+            owner = (await db.execute(
+                select(AICharacter.user_id).where(AICharacter.id == cid)
+            )).scalar_one_or_none()
+        if owner is not None:
+            root = await _family_root_of(int(owner))
+    except Exception as e:
+        _logger.warning("sdk 角色归属反查失败 character_id=%s: %s", cid, e)
+        root = None
+    _CHAR_ROOT_CACHE[cid] = (now, root)
+    return root
+
+
+async def _assert_caller_family(*, user_id: int | None = None,
+                                character_id: object | None = None) -> None:
+    """M4 flag 门控：断言插件自报的账号 / 角色属于当前调用者家庭根。
+
+    - flag 关 → 直接返回（逐字节旧行为）；
+    - 拿不到调用者（无 user_id/tenant_id，或家庭根解析失败）→ **fail-closed** 抛 PermissionError；
+    - 目标账号 / 角色查不到或家庭根不一致 → 抛 PermissionError（与 require_permission 同语义/文案风格）。
+    """
+    if not registry.plugin_runtime_scope_enabled():
+        return
+    name = registry.current_plugin_name() or "?"
+    ctx = registry.current_sdk_context()
+    caller_uid = ctx.get("user_id")
+    caller_tid = ctx.get("tenant_id")
+    if caller_tid is None and caller_uid is not None:
+        caller_tid = await _family_root_of(caller_uid)
+    if caller_tid is None:
+        raise PermissionError(f"插件 {name} 无调用者账号上下文，拒绝越权取数")
+    if user_id is not None:
+        target = await _family_root_of(user_id)
+        if target is None or int(target) != int(caller_tid):
+            raise PermissionError(f"插件 {name} 越权：user_id={user_id} 不属于当前调用者账号")
+    if character_id is not None:
+        target = await _character_family_root(character_id)
+        if target is None or int(target) != int(caller_tid):
+            raise PermissionError(f"插件 {name} 越权：character_id={character_id} 不属于当前调用者账号")
 
 
 def hook(hook_name: str):
@@ -78,8 +156,12 @@ def require_permission(perm: str) -> None:
 
 async def save_memory(user_id: int, character_id: int, memory_type: str, content: str,
                       importance: int = 2, **kwargs) -> None:
-    """写记忆（需 manifest permissions: ["write_memory"]），复用主链路 save_memory"""
+    """写记忆（需 manifest permissions: ["write_memory"]），复用主链路 save_memory
+
+    A2 M4：flag ``plugin_runtime_scope`` 开时校验自报 user_id 属于本 caller 家庭根（否则 PermissionError）。
+    """
     require_permission("write_memory")
+    await _assert_caller_family(user_id=user_id)
     from app.memory import save_memory as _save
     await _save(user_id=user_id, character_id=character_id, memory_type=memory_type,
                 content=content, importance=importance, **kwargs)
@@ -89,8 +171,10 @@ async def send_message(character_id: int, user_id: int, content: str, message_ty
     """代表角色向用户发送主动消息（需 manifest permissions: ["send_message"]）。
 
     复用主链路 _send_message（自动取最新会话、走每小时限额、落库 chat 消息）。
+    A2 M4：flag ``plugin_runtime_scope`` 开时校验自报 user_id 属于本 caller 家庭根（否则 PermissionError）。
     """
     require_permission("send_message")
+    await _assert_caller_family(user_id=user_id)
     from app.scheduling.storyline_engine import _send_message
     return await _send_message(character_id, user_id, content, message_type=message_type)
 
@@ -221,8 +305,12 @@ def register_channel_binding_hooks(channel: str, hooks: dict) -> None:
 
 
 async def get_persona(character_id: int) -> dict:
-    """只读人格公开字段（需 persona:read）：name/personality/self_statement。"""
+    """只读人格公开字段（需 persona:read）：name/personality/self_statement。
+
+    A2 M4：flag 开时校验 character_id 的 owner 属于本 caller 家庭根（否则 PermissionError）。
+    """
     require_permission("persona:read")
+    await _assert_caller_family(character_id=character_id)
     from sqlalchemy import select as _select
     from app.db.database import async_session_factory
     from app.models.character import AICharacter
@@ -239,8 +327,12 @@ async def get_persona(character_id: int) -> dict:
 
 
 async def search_memory(character_id: int, query: str, *, limit: int = 5, types: list[str] | None = None) -> list[dict]:
-    """受控记忆检索（需 memory:read）：走内核多路召回+重排，含权限过滤与类型筛选。"""
+    """受控记忆检索（需 memory:read）：走内核多路召回+重排，含权限过滤与类型筛选。
+
+    A2 M4：flag 开时校验 character_id 的 owner 属于本 caller 家庭根（否则 PermissionError）。
+    """
     require_permission("memory:read")
+    await _assert_caller_family(character_id=character_id)
     from app.memory.service import search_memories as _search
 
     results = await _search(character_id=int(character_id), query=str(query or ""), limit=max(1, min(int(limit), 10)))
@@ -259,8 +351,12 @@ async def search_memory(character_id: int, query: str, *, limit: int = 5, types:
 
 
 async def get_relationship(character_id: int) -> dict:
-    """只读关系快照（需 relationship:read）：信任/亲密度/好奇度（0-100 标量）。"""
+    """只读关系快照（需 relationship:read）：信任/亲密度/好奇度（0-100 标量）。
+
+    A2 M4：flag 开时校验 character_id 的 owner 属于本 caller 家庭根（否则 PermissionError）。
+    """
     require_permission("relationship:read")
+    await _assert_caller_family(character_id=character_id)
     from app.application.character_state_service import get_character_states
 
     st = await get_character_states(int(character_id))
@@ -272,8 +368,12 @@ async def get_relationship(character_id: int) -> dict:
 
 
 async def get_life_state(character_id: int) -> dict:
-    """只读当前状态快照（需 life:read）：八维中的体感/情绪维度（脱敏数值）。"""
+    """只读当前状态快照（需 life:read）：八维中的体感/情绪维度（脱敏数值）。
+
+    A2 M4：flag 开时校验 character_id 的 owner 属于本 caller 家庭根（否则 PermissionError）。
+    """
     require_permission("life:read")
+    await _assert_caller_family(character_id=character_id)
     from app.application.character_state_service import get_character_states
 
     st = await get_character_states(int(character_id))

@@ -71,6 +71,10 @@ _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     # init_db 的 create_all 会建（当前模型含该列）但远古库不会 —— 老库（有表无版本号）缺此列时
     # 必须判「落后」走 upgrade head，否则会被 stamp 到 head 却永久缺列（select 直接报错）。
     ("plugins", "owner_user_id"),
+    # ── A2 M6 插件同意按租户（2026-09-20）：plugin_consents 是【只由迁移链 create_table 引入】的表 ──
+    # 老库（有表但无版本号）缺此表时若不判「落后」，会被 stamp 到 head 却永久缺表
+    # （registry.get_tenant_consented_permissions / backfill 直接 select 报错，租户级同意静默失效）。
+    ("plugin_consents", "plugin_name"),
     # ── P3-4（2026-09-19）：MCP 本地回环细粒度放行（mcp_servers.allow_loopback）──
     # 该列只由 Alembic 迁移链 add_column 引入、init_db 从不添加：老库（有表但无版本号）缺此列时
     # 必须判为「落后」走 upgrade head，否则会被 stamp 到 head 却永久缺列（select 直接报错）。

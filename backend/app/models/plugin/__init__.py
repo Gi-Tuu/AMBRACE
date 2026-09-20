@@ -8,7 +8,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -62,7 +62,34 @@ class PluginStore(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+
+
+# ── plugin_consent.py ──
+# 插件权限「按租户」同意（A2 M6，2026-09-20）。
+#
+# 背景：M6 前 ``plugins.consented_permissions`` 是**服务级一次性**（任一人同意 → 之后所有人
+# 安装/升级都不再弹确认）。本表把同意拆到「家庭根租户」维度：同一插件在不同家庭各自同意一次；
+# 升级新增权限时同理。
+#
+# 口径（与 ``plugins.owner_tenant_id`` / ``channel_bindings.tenant_id`` 同口径，由
+# ``family_service.get_family_root_id`` 解析）：
+# - 联合主键 ``(plugin_name, tenant_id)``：一个插件一个租户至多一行；
+# - ``permissions_json``：该租户已同意权限集（JSON 数组，∪ 历次同意，保序去重）；
+# - ``consented_by``：最近一次同意者账号 id（NULL = 早期/服务级回填缺失）；
+# - 本表为读点权威；``plugins.consented_permissions`` 保留为兼容旧读点的服务级回落
+#   （仅对 ``owner_tenant_id IS NULL`` 的内置/存量插件生效）。
+class PluginConsent(Base):
+    __tablename__ = "plugin_consents"
+
+    plugin_name: Mapped[str] = mapped_column(String(100), primary_key=True, nullable=False)
+    tenant_id: Mapped[int] = mapped_column(Integer, primary_key=True, nullable=False)
+    permissions_json: Mapped[str] = mapped_column(Text, default="[]")
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    consented_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 __all__ = [
     "Plugin",
     "PluginStore",
+    "PluginConsent",
 ]

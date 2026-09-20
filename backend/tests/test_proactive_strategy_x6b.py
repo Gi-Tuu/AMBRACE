@@ -222,13 +222,11 @@ def test_白名单外key取不到(monkeypatch, pack_review):
     monkeypatch.setattr(strategy_mod, "build_proactive_context", _fake)
 
     async def _run():
-        registry._sdk_ctx["current"] = PACK_REVIEW
-        try:
+        # A2 M4（2026-09-20）：_sdk_ctx 改 ContextVar，用 registry.sdk_context 设置插件身份
+        with registry.sdk_context(PACK_REVIEW):
             return await sdk.get_proactive_context(
                 ["due_reviews", "time_ctx", "roster"], character_id=CHAR_ID,
             )
-        finally:
-            registry._sdk_ctx.pop("current", None)
 
     out = asyncio.run(_run())
     assert captured["keys"] == ["due_reviews"]        # 未声明的两个 key 已被过滤
@@ -556,7 +554,7 @@ def test_新类别未注册_完全不影响内核(monkeypatch, clean_registry):
 
     _stub_roster(monkeypatch, [_roster_entry()])
 
-    async def _fake_collect(hook_name, ctx, timeout=None):
+    async def _fake_collect(hook_name, ctx, timeout=None, **kw):
         return [{"plugin": "x", "result": {
             "character_id": CHAR_ID, "user_id": USER_ID, "session_id": SESSION_ID,
             "strategy": "memory_review", "message_type": "memory_review", "memory_id": 1,

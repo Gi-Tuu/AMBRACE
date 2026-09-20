@@ -291,6 +291,21 @@ AGENT_FLAGS = {
     #   关＝**逐字节旧行为**（只判插件是否存在，不判 enabled，与现状一致）。默认关=灰度门控，
     #   本键必须登记，否则 DB/runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
     "plugin_disabled_route_gate": False,
+    # ── A2 M3（2026-09-20）：插件列表按账号收敛（插件归户批次）──
+    # 开＝插件列表只显示「内置 + 调用者家庭安装 + 服务级（owner 为空）」的插件，市场 installed 标记
+    #   随同一可见集重算；调用者家庭解析失败 → 只保留内置与服务级（最保守集合，绝不全放）；
+    #   关＝**逐字节旧行为**（列表全量，不做任何归属过滤）。默认关=灰度门控。
+    #   本键必须登记，否则 DB/runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
+    "plugin_user_scope": False,
+    # ── A2 M4（2026-09-20）：插件运行面按账号过滤（插件归户批次）──
+    # 开＝插件的每一条运行面通路都有归属闸：hook 分发 / 工具登记 / prompt 注入 / 桥调用 /
+    #   页面托管都只对本调用者「可见」的插件生效（复用 M3 谓词 + 30s 缓存），sdk 原语
+    #   （save_memory / send_message / get_persona / search_memory / get_relationship /
+    #   get_life_state）断言自报 user_id/character_id 属于本 caller 家庭根，越权抛 PermissionError；
+    #   proactive_candidate 做角色归属配对校验；未登记 CATEGORY_KERNEL_PREP 的类别走通用闸。
+    #   拿不到 caller 的调用点一律 fail-closed（非内置插件不分发）。关＝**逐字节旧行为**。默认关=灰度门控。
+    #   本键必须登记，否则 DB/runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
+    "plugin_runtime_scope": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

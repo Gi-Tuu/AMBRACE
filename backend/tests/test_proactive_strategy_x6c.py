@@ -251,11 +251,9 @@ def test_quota_类别由sdk按登记自动推导(monkeypatch, pack_motivation):
     monkeypatch.setattr(strategy_mod, "build_proactive_context", _fake)
 
     async def _run():
-        registry._sdk_ctx["current"] = PACK_MOTIVATION
-        try:
+        # A2 M4（2026-09-20）：_sdk_ctx 改 ContextVar，用 registry.sdk_context 设置插件身份
+        with registry.sdk_context(PACK_MOTIVATION):
             return await sdk.get_proactive_context(["quota", "roster"], character_id=CHAR_ID)
-        finally:
-            registry._sdk_ctx.pop("current", None)
 
     out = asyncio.run(_run())
     assert captured["keys"] == ["quota"]          # roster 未声明 → 已被白名单过滤

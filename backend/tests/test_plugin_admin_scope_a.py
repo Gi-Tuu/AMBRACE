@@ -421,6 +421,7 @@ def test_migration_alembic_upgrade_downgrade_再upgrade(tmp_path, monkeypatch):
     """真实 alembic 命令链自检：stamp 到前一 head → upgrade head（跑本迁移）→ downgrade → 再 upgrade。"""
     from alembic import command
     from alembic.config import Config
+    from alembic.script import ScriptDirectory
 
     from app.config import settings
 
@@ -438,6 +439,9 @@ def test_migration_alembic_upgrade_downgrade_再upgrade(tmp_path, monkeypatch):
 
     cfg = Config(str(backend / "alembic.ini"))
     cfg.set_main_option("script_location", str(backend / "alembic"))
+    # A2 M6（2026-09-20）新增迁移后 head 前移：不硬编码，跟随当前单头（同
+    # test_fk_ondelete_active_parents 口径），避免每次新增迁移都要改本用例。
+    _head = ScriptDirectory.from_config(cfg).get_current_head()
     command.stamp(cfg, "b5c6d7e8f9a0")
     command.upgrade(cfg, "head")
 
@@ -447,7 +451,7 @@ def test_migration_alembic_upgrade_downgrade_再upgrade(tmp_path, monkeypatch):
             cols = {r[1] for r in conn.execute(sa.text("PRAGMA table_info(plugins)"))}
             ver = conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar()
         assert {"owner_user_id", "owner_tenant_id"} <= cols
-        assert ver == "a8b9c0d1e2f3"
+        assert ver == _head
 
         command.downgrade(cfg, "b5c6d7e8f9a0")
         with engine.connect() as conn:
@@ -459,7 +463,7 @@ def test_migration_alembic_upgrade_downgrade_再upgrade(tmp_path, monkeypatch):
             cols3 = {r[1] for r in conn.execute(sa.text("PRAGMA table_info(plugins)"))}
             ver3 = conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar()
         assert {"owner_user_id", "owner_tenant_id"} <= cols3
-        assert ver3 == "a8b9c0d1e2f3"
+        assert ver3 == _head
     finally:
         engine.dispose()
 
@@ -576,7 +580,8 @@ def test_after_generate_ctx含user_id与character_id(monkeypatch):
 
     captured: list[tuple[str, dict]] = []
 
-    async def _fake_run_hook(hook, ctx, timeout=None):
+    async def _fake_run_hook(hook, ctx, timeout=None, **kw):
+        # A2 M4：run_hook 新增 keyword-only 调用者/调用点形参（user_id/callsite），打桩一并吞掉
         captured.append((hook, dict(ctx)))
 
     async def _fake_completion(**kw):
@@ -613,7 +618,9 @@ def test_memory_search_hook_ctx含user_id(a_db, monkeypatch):
 
     captured: list[dict] = []
 
-    async def _fake_hook_collect(hook, ctx, timeout=None):
+    async def _fake_hook_collect(hook, ctx, timeout=None, **kw):
+        # A2 M4：run_hook_collect 新增 keyword-only 调用者/调用点形参（callsite 等），
+        # 打桩需一并吞掉，否则 TypeError 会被调用点异常隔离吞成空结果。
         captured.append(dict(ctx))
         return []
 

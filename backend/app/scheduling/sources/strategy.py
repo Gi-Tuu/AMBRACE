@@ -326,10 +326,18 @@ async def prepare_candidate(candidate: dict) -> dict | None:
     X6-c：``motivation`` / ``unfinished_topic`` 两类各有独立配额与独立生成链路，
     配额判定 / 去重 / 关系门 / 免打扰 / 素材装配**全部在各自内核源里做**
     （策略包无状态、每 tick 都投同样的候选，靠这些闸收口成「一天只发该发的量」）。
+
+    A2 M4（2026-09-20，flag ``plugin_runtime_scope``）：**声明了策略类别但未登记
+    ``CATEGORY_KERNEL_PREP``** 的候选不再原样直通，改走内核通用闸 :func:`_generic_kernel_prep`
+    （资格 + 免打扰 + 防骚扰 + 小时/最小间隔 + 类别日配额），堵住「插件新登记一个类别 = 零频控直通」。
+    未声明类别的普通插件候选（``category_of`` 为 None）不在本条口径内，保持逐字节旧行为。
+    flag 关 → 逐字节旧行为。
     """
     cat = category_of(candidate)
     key = CATEGORY_KERNEL_PREP.get(cat or "")
     if not key:
+        if cat and _runtime_scope_on():
+            return await _generic_kernel_prep(candidate)
         return candidate
     try:
         if key == "rhythm":
@@ -343,6 +351,84 @@ async def prepare_candidate(candidate: dict) -> dict | None:
         return await _prep(candidate)
     except Exception as e:
         _logger.warning("strategy kernel prep failed(%s): %s", cat, e)
+        return None
+
+
+# ── A2 M4（2026-09-20）：未登记 CATEGORY_KERNEL_PREP 的类别通用闸 ──────────────────────
+# 背景：未登记 prep 的类别过去在 prepare_candidate 里原样放行 → 插件新登记一个类别等于
+# 「零类别配额直通」（只剩 arbiter 的全局小时闸）。flag plugin_runtime_scope 开时改走本闸。
+# 口径选择（报告 §4 要求写明）：**通用闸**而非「register_strategy 强制声明 prep」——
+# 强制声明会让现网已登记的第三方类别在加载期直接注册失败（不可逆的兼容性破坏），
+# 而通用闸复用内核既有公共闸门，不新增插件契约，且 flag 关即回退。
+GENERIC_MAX_PER_DAY = 2  # 每角色每日上限（未登记类别无独立配额，取保守值 = MOTIVATION_MAX_PER_DAY）
+
+
+def _runtime_scope_on() -> bool:
+    """A2 M4 flag ``plugin_runtime_scope`` 是否开启（异常 → False = 旧行为）。"""
+    try:
+        from app.plugins.registry import plugin_runtime_scope_enabled
+
+        return bool(plugin_runtime_scope_enabled())
+    except Exception:
+        return False
+
+
+async def _generic_kernel_prep(candidate: dict) -> dict | None:
+    """未登记 ``CATEGORY_KERNEL_PREP`` 的「已声明类别」候选通用闸（M4 §4，flag 门控）。
+
+    全部复用内核公共闸门（不新增插件契约）：
+    1. **资格（选人）**：角色必须在内核 active 名单内（``arbiter.get_active_characters``）；
+    2. **免打扰**：``arbiter.is_dnd_now``（DND 时段不发）；
+    3. **防骚扰**：``arbiter.unreplied_cooldown_active``（连续未回复冷却）；
+    4. **小时保护 / 最小间隔**：``MAX_PER_HOUR`` / ``MIN_PROACTIVE_INTERVAL_MINUTES``；
+    5. **类别日配额**：该角色当日已执行的内核 plugin 类候选数 < ``GENERIC_MAX_PER_DAY``
+       （``proactive_trigger_logs`` approved 口径，与内核 plugin 事件类型同源）。
+
+    任何一步拿不到数据 / 抛异常 → None（宁可不发，也不绕过内核频控），返回原候选 = 放行。
+    """
+    try:
+        from app.domain.proactivity.decision import MAX_PER_HOUR, MIN_PROACTIVE_INTERVAL_MINUTES
+        from app.scheduling import arbiter
+
+        try:
+            cid = int(candidate.get("character_id") or 0)
+            uid = int(candidate.get("user_id") or 0)
+        except (TypeError, ValueError):
+            return None
+        if not cid or not uid:
+            return None
+
+        # 1) 资格（选人归内核）
+        active = {int(c["character_id"]) for c in await arbiter.get_active_characters()}
+        if cid not in active:
+            return None
+
+        # 2) 免打扰
+        cn_now = datetime.now(timezone(timedelta(hours=8)))
+        if await arbiter.is_dnd_now(cid, cn_now):
+            return None
+
+        # 3) 连续未回复冷却（防骚扰）
+        if await arbiter.unreplied_cooldown_active(cid, uid):
+            return None
+
+        # 4) 小时保护 + 最小间隔
+        if await arbiter.get_hourly_active_count(cid) >= MAX_PER_HOUR:
+            return None
+        last = await arbiter.get_last_proactive_time(cid)
+        if last is not None:
+            if last.tzinfo is not None:
+                last = last.replace(tzinfo=None)
+            if datetime.now(timezone.utc).replace(tzinfo=None) - last < timedelta(minutes=MIN_PROACTIVE_INTERVAL_MINUTES):
+                return None
+
+        # 5) 类别日配额（未登记类别共用一个保守日上限；触发日志口径与 plugin 事件类型同源）
+        used = await _count_trigger_log(cid, "plugin", _since("day"))
+        if used >= GENERIC_MAX_PER_DAY:
+            return None
+        return candidate
+    except Exception as e:
+        _logger.warning("strategy generic kernel prep failed: %s", e)
         return None
 
 

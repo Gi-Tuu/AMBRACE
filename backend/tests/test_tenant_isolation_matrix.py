@@ -736,3 +736,371 @@ def test_server_admin_dependency_and_console_endpoints(matrix_db):
         "/api/v1/admin/server/accounts/1/server-admin", headers=_auth(1), json={"enabled": False}
     ).status_code == 400
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10. 插件（A2 M3 可见性过滤 + M7 越权矩阵，2026-09-20）
+#
+# 统一约定：插件可见性以「调用者家庭根 = tenant 键」为隔离键（A2 M3，flag 门控）。
+# 隔离：私有临时库（复用 matrix_db）+ 假插件注册缓存 + 临时 USER_DIR；**不加载真实插件**
+# （douyin/browser 两条端点例外：只加载插件、表建在临时库，绝不写 backend/data / 生产库）。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import io
+import json
+import zipfile
+
+from app.api import marketplace as marketplace_api
+from app.api import plugin_bridge as plugin_bridge_api
+from app.api import plugins as plugins_api
+from app.plugins import registry as plugin_registry
+
+_BUILTIN_PLUGIN = "builtin_echo"        # source=builtin，owner 两列 NULL
+_FAM_A_PLUGIN = "fam_a_local"           # 家庭 A（uid=1）安装
+_FAM_B_PLUGIN = "fam_b_local"           # 家庭 B（uid=2）安装
+_SERVICE_PLUGIN = "service_local"       # 存量/服务级（owner 两列 NULL）
+_ALL_PLUGINS = (_BUILTIN_PLUGIN, _FAM_A_PLUGIN, _FAM_B_PLUGIN, _SERVICE_PLUGIN)
+
+
+def _fake_plugin_info(name: str) -> dict:
+    return {
+        "name": name, "version": "0.0.1", "description": "", "author": "",
+        "category": "plugin", "type": "http", "icon": "", "page": "",
+        "has_page": False, "hooks": [], "permissions": [], "config": {},
+        "usage": "", "display_name": "", "hook_timeout": None,
+        "context_keys": [], "content": {}, "path": "",
+    }
+
+
+def _fake_prov(source: str, owner_user_id, owner_tenant_id) -> dict:
+    return {"source": source, "source_url": None, "sha256": None,
+            "consented_permissions": [], "consented_at": None,
+            "owner_user_id": owner_user_id, "owner_tenant_id": owner_tenant_id}
+
+
+@pytest.fixture()
+def plugin_scope_env(matrix_db, monkeypatch, tmp_path):
+    """M3 可见性矩阵环境：4 个假插件（内置 / 家庭A / 家庭B / 服务级）+ 临时 USER_DIR。
+
+    直接替换 registry 的内存缓存（不 import 任何真实插件）；``sync_plugins_db`` 打桩为 no-op，
+    避免卸载/安装后的重扫执行真实插件代码或写 backend/data。
+    """
+    loaded = {
+        name: {"info": _fake_plugin_info(name), "module": None, "hooks": {},
+               "actions": {}, "router": None}
+        for name in _ALL_PLUGINS
+    }
+    prov = {
+        _BUILTIN_PLUGIN: _fake_prov("builtin", None, None),
+        _FAM_A_PLUGIN: _fake_prov("local", 1, 1),
+        _FAM_B_PLUGIN: _fake_prov("local", 2, 2),
+        _SERVICE_PLUGIN: _fake_prov("local", None, None),
+    }
+    user_dir = tmp_path / "user_plugins"
+    for name in (_FAM_A_PLUGIN, _FAM_B_PLUGIN):
+        d = user_dir / name
+        d.mkdir(parents=True)
+        (d / "manifest.json").write_text(json.dumps({"name": name}), encoding="utf-8")
+        (d / "index.html").write_text(f"<html>{name}</html>", encoding="utf-8")
+    (user_dir / _FAM_A_PLUGIN / "evil.py").write_text("x = 1\n", encoding="utf-8")
+
+    monkeypatch.setattr(plugin_registry, "_loaded", loaded)
+    monkeypatch.setattr(plugin_registry, "_enabled", {n: True for n in loaded})
+    monkeypatch.setattr(plugin_registry, "_db_config", {})
+    monkeypatch.setattr(plugin_registry, "_db_prov", prov)
+    monkeypatch.setattr(plugin_registry, "USER_DIR", user_dir)
+
+    async def _noop_sync():
+        return None
+
+    monkeypatch.setattr(plugin_registry, "sync_plugins_db", _noop_sync)
+    return user_dir
+
+
+def _plugin_client(*extra_routers) -> TestClient:
+    app = FastAPI()
+    for r in (plugins_api.router, plugin_bridge_api.router, marketplace_api.router, *extra_routers):
+        app.include_router(r)
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _plugin_names(resp) -> set:
+    return {i["name"] for i in resp.json()["items"]}
+
+
+def _set_scope_flag(monkeypatch, on: bool) -> None:
+    monkeypatch.setitem(agent_loop.AGENT_FLAGS, "plugin_user_scope", on)
+
+
+def _make_plugin_zip(name: str) -> bytes:
+    manifest = {"name": name, "version": "1.0.0", "description": "m7 测试包",
+                "type": "http", "permissions": []}
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False))
+        zf.writestr("main.py", "x = 1\n")
+    return buf.getvalue()
+
+
+# ── M3：GET /api/v1/plugins 可见性 ─────────────────────────────────────────────
+
+def test_p2_plugin_list_flag_off_is_global_old_behavior(plugin_scope_env):
+    """M3 flag 关（默认）：列表全量，A/B/子账号/无关家庭看到同一集合（逐字节旧行为）。"""
+    client = _plugin_client()
+    for uid in (1, 2, 3, 5):
+        r = client.get("/api/v1/plugins", headers=_auth(uid))
+        assert r.status_code == 200, r.text
+        assert _plugin_names(r) == set(_ALL_PLUGINS), (uid, r.text)
+
+
+def test_p2_plugin_list_flag_on_scoped_by_family(plugin_scope_env, monkeypatch):
+    """M3 flag 开：只看到内置 + 本家庭安装 + 服务级；跨租户安装的插件不可见（子账号随家庭根）。"""
+    _set_scope_flag(monkeypatch, True)
+    client = _plugin_client()
+    a = _plugin_names(client.get("/api/v1/plugins", headers=_auth(1)))
+    assert a == {_BUILTIN_PLUGIN, _FAM_A_PLUGIN, _SERVICE_PLUGIN}
+    assert _FAM_B_PLUGIN not in a                       # 跨租户装 → 不可见
+    # 子账号 3（家庭根=1）与家庭主账号同视图
+    assert _plugin_names(client.get("/api/v1/plugins", headers=_auth(3))) == a
+    # 家庭 B 反向看不到家庭 A 的插件
+    b = _plugin_names(client.get("/api/v1/plugins", headers=_auth(2)))
+    assert b == {_BUILTIN_PLUGIN, _FAM_B_PLUGIN, _SERVICE_PLUGIN}
+    assert _FAM_A_PLUGIN not in b
+    # 无自有插件的家庭 C 只看到内置与服务级
+    assert _plugin_names(client.get("/api/v1/plugins", headers=_auth(5))) == {
+        _BUILTIN_PLUGIN, _SERVICE_PLUGIN}
+
+
+def test_p2_plugin_list_flag_on_tenant_resolution_failure_fail_closed(plugin_scope_env, monkeypatch):
+    """M3 fail-closed：调用者家庭根解析失败 → 只保留内置 ∪ 服务级（绝不全放）。"""
+    _set_scope_flag(monkeypatch, True)
+
+    async def _boom(db, uid):
+        raise RuntimeError("family root 不可用")
+
+    monkeypatch.setattr("app.application.family_service.get_family_root_id", _boom)
+    # registry 层（未给 viewer_tenant_id = 解析失败口径）
+    items = plugin_registry.list_plugins(viewer_user_id=1, viewer_tenant_id=None)
+    assert {i["name"] for i in items} == {_BUILTIN_PLUGIN, _SERVICE_PLUGIN}
+    # 端到端同口径（resolve_viewer_tenant 内部吞异常返回 None）
+    client = _plugin_client()
+    assert _plugin_names(client.get("/api/v1/plugins", headers=_auth(1))) == {
+        _BUILTIN_PLUGIN, _SERVICE_PLUGIN}
+
+
+# ── M3：市场 installed 标记随可见集重算 ────────────────────────────────────────
+
+def test_p2_marketplace_installed_flag_scoped(plugin_scope_env, monkeypatch):
+    """M3：市场 installed 标记随可见集重算（flag 关=全量已装；flag 开=别家装→未安装）。"""
+    async def _no_remote():
+        return None
+
+    monkeypatch.setattr(marketplace_api, "get_remote_index", _no_remote)
+    monkeypatch.setattr(marketplace_api, "_all_items", lambda: [
+        {"name": _FAM_A_PLUGIN, "description": "", "category": "plugin"},
+        {"name": _FAM_B_PLUGIN, "description": "", "category": "plugin"},
+    ])
+    client = _plugin_client()
+    # flag 关：旧行为（全量），别家插件对 A 也显示已安装
+    r = client.get("/api/v1/marketplace", headers=_auth(1))
+    assert {i["name"]: i["installed"] for i in r.json()["items"]} == {
+        _FAM_A_PLUGIN: True, _FAM_B_PLUGIN: True}
+    # flag 开：installed 随可见集重算
+    _set_scope_flag(monkeypatch, True)
+    r = client.get("/api/v1/marketplace", headers=_auth(1))
+    assert {i["name"]: i["installed"] for i in r.json()["items"]} == {
+        _FAM_A_PLUGIN: True, _FAM_B_PLUGIN: False}
+    r = client.get("/api/v1/marketplace", headers=_auth(2))
+    assert {i["name"]: i["installed"] for i in r.json()["items"]} == {
+        _FAM_A_PLUGIN: False, _FAM_B_PLUGIN: True}
+
+
+# ── M7：插件管理端点越权矩阵 ──────────────────────────────────────────────────
+
+def test_p2_plugin_management_cross_account_gate(plugin_scope_env):
+    """M7：PUT /{name} 与 DELETE /{name} 是服务器级动作——非 server_admin 403、未登录 401。"""
+    client = _plugin_client()
+    # 未登录 → 401
+    assert client.put(f"/api/v1/plugins/{_FAM_B_PLUGIN}",
+                      json={"enabled": True}).status_code == 401
+    # 家庭 B 主账号（非 server_admin）→ 403（即便插件是自己装的，管理权也已收口）
+    assert client.put(f"/api/v1/plugins/{_FAM_B_PLUGIN}", headers=_auth(2),
+                      json={"enabled": True}).status_code == 403
+    assert client.delete(f"/api/v1/plugins/{_FAM_B_PLUGIN}", headers=_auth(2)).status_code == 403
+    # 子账号 3（非 server_admin）→ 403
+    assert client.put(f"/api/v1/plugins/{_FAM_A_PLUGIN}", headers=_auth(3),
+                      json={"enabled": True}).status_code == 403
+    # server_admin（家庭 A 根=1）可改任意插件（服务器级管理，不按家庭过滤）
+    r = client.put(f"/api/v1/plugins/{_FAM_B_PLUGIN}", headers=_auth(1), json={"enabled": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["enabled"] is True
+    # 插件不存在 → 404（先于权限判定）
+    assert client.put("/api/v1/plugins/no_such_plugin", headers=_auth(1),
+                      json={"enabled": True}).status_code == 404
+
+
+def test_p2_plugin_uninstall_builtin_forbidden_user_plugin_ok(plugin_scope_env):
+    """M7：内置插件不可卸载（400）；临时 USER_DIR 内的插件由 server_admin 卸载成功。"""
+    client = _plugin_client()
+    # 内置示例（仅存在于 EXAMPLE_DIR）→ 400，且不删任何文件
+    assert client.delete("/api/v1/plugins/ai_diary", headers=_auth(1)).status_code == 400
+    r = client.delete(f"/api/v1/plugins/{_FAM_B_PLUGIN}", headers=_auth(1))
+    assert r.status_code == 200, r.text
+    assert r.json()["uninstalled"] is True
+    assert not (plugin_scope_env / _FAM_B_PLUGIN).exists()  # 只删临时 USER_DIR
+    # 已卸载插件再读 → 仍由 fake 缓存返回（本用例只验证删除语义，不涉重扫）
+    assert (plugin_scope_env / _FAM_A_PLUGIN).is_dir()      # 未误删别家插件目录
+
+
+def test_p2_plugin_install_owner_gate_and_temp_user_dir(plugin_scope_env, monkeypatch):
+    """M7：本地 zip 安装仅 server_admin；写盘只落临时 USER_DIR（不碰 backend/data）。"""
+    client = _plugin_client()
+    data = _make_plugin_zip("m7_local_plugin")
+    # 非 server_admin → 403（在读包/解压前就被拦）
+    assert client.post("/api/v1/plugins/install", headers=_auth(2),
+                       files={"file": ("p.zip", data, "application/zip")}).status_code == 403
+    # 重扫打桩：只登记临时目录里已有的插件（不 import 真实插件、不执行插件代码）
+    loaded = plugin_registry._loaded
+
+    async def _fake_sync():
+        for d in plugin_scope_env.iterdir():
+            mf = d / "manifest.json"
+            if mf.is_file():
+                nm = json.loads(mf.read_text(encoding="utf-8")).get("name")
+                loaded.setdefault(nm, {"info": _fake_plugin_info(nm), "module": None,
+                                       "hooks": {}, "actions": {}, "router": None})
+
+    monkeypatch.setattr(plugin_registry, "sync_plugins_db", _fake_sync)
+    r = client.post("/api/v1/plugins/install", headers=_auth(1),
+                    files={"file": ("p.zip", data, "application/zip")})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "m7_local_plugin"
+    assert (plugin_scope_env / "m7_local_plugin" / "manifest.json").is_file()
+
+
+def test_p2_plugin_bridge_login_and_unknown(plugin_scope_env, monkeypatch):
+    """M7：bridge 强制登录（401）；插件不存在 404；已知插件放行（现状无归属校验，服务器级）。"""
+    async def _fake_dispatch(*a, **k):
+        return {"ok": True}
+
+    monkeypatch.setattr(plugin_bridge_api, "dispatch", _fake_dispatch)
+    client = _plugin_client()
+    body = {"api": "store.get", "params": {"key": "k"}}
+    assert client.post(f"/api/v1/plugins/{_FAM_B_PLUGIN}/bridge", json=body).status_code == 401
+    assert client.post("/api/v1/plugins/no_such_plugin/bridge", headers=_auth(1),
+                       json=body).status_code == 404
+    # 现状：bridge 无插件归属校验 → 别家装的插件同样放行（M3 只收敛列表可见性）
+    assert client.post(f"/api/v1/plugins/{_FAM_B_PLUGIN}/bridge", headers=_auth(1),
+                       json=body).status_code == 200
+
+
+def test_p2_plugin_page_hosting(plugin_scope_env):
+    """M7：页面托管——本家插件 200、未知 404、可执行扩展名 404；跨租户现状无归属校验。"""
+    client = _plugin_client()
+    assert client.get(f"/api/v1/plugins/{_FAM_A_PLUGIN}/page/index.html",
+                      headers=_auth(1)).status_code == 200
+    assert client.get("/api/v1/plugins/no_such_plugin/page/index.html",
+                      headers=_auth(1)).status_code == 404
+    assert client.get(f"/api/v1/plugins/{_FAM_A_PLUGIN}/page/evil.py",
+                      headers=_auth(1)).status_code == 404
+    assert client.get(f"/api/v1/plugins/{_FAM_A_PLUGIN}/page/index.html").status_code == 401
+    # 现状：页面托管无插件归属校验 → 别家插件页面同样 200（本批未覆盖，报告登记为已知缺口）
+    assert client.get(f"/api/v1/plugins/{_FAM_B_PLUGIN}/page/index.html",
+                      headers=_auth(1)).status_code == 200
+
+
+# ── M7：渠道插件端点（douyin / browser）跨租户 404 / 只见本账号 ────────────────
+
+@pytest.fixture()
+def douyin_matrix_env(matrix_db):
+    """装载 douyin_mcp（真实插件）并在临时库建其自有表；返回 (client, module)。"""
+    from app.plugins.plugin_base import plugin_metadata
+
+    assert plugin_registry.load_plugin_dir(plugin_registry.EXAMPLE_DIR / "douyin_mcp") is not None
+    mod = sys.modules.get("ai_plugin_douyin_mcp")
+    assert mod is not None, "douyin_mcp 应可加载"
+
+    async def _mk():
+        async with matrix_db() as db:
+            conn = await db.connection()
+            await conn.run_sync(plugin_metadata.create_all)
+            await db.commit()
+
+    asyncio.run(_mk())
+    router = plugin_registry._loaded["douyin_mcp"].get("router")
+    client = _plugin_client(router)
+    yield client, mod
+    plugin_registry._loaded.pop("douyin_mcp", None)
+    plugin_registry._enabled.pop("douyin_mcp", None)
+
+
+def _seed_douyin_pending(factory, rows) -> None:
+    import douyin_models
+
+    async def _go():
+        async with factory() as db:
+            for tid, kind, status in rows:
+                db.add(douyin_models.DouyinPending(
+                    tenant_id=tid, kind=kind, status=status, title="t"))
+            await db.commit()
+
+    asyncio.run(_go())
+
+
+def test_p2_douyin_pending_and_confirm_cross_tenant_404(douyin_matrix_env, matrix_db, monkeypatch):
+    """M7：抖音 /pending 只列本租户；跨租户 /confirm/{id} → 404（不泄漏存在性），本租户 200。"""
+    client, mod = douyin_matrix_env
+    _seed_douyin_pending(matrix_db, [(1, "image_post", "pending"), (2, "image_post", "pending")])
+    from datetime import datetime as _dt, timedelta as _td
+    # 隔离既有 _random_execute_at 缺陷（与本批无关），固定执行时间
+    monkeypatch.setattr(mod, "_random_execute_at",
+                        lambda: _dt(2030, 1, 1, 12, 0, 0) + _td(minutes=30))
+
+    a = client.get("/api/v1/plugins/douyin_mcp/pending", headers=_auth(1)).json()["items"]
+    b = client.get("/api/v1/plugins/douyin_mcp/pending", headers=_auth(2)).json()["items"]
+    assert len(a) == 1 and len(b) == 1
+    assert a[0]["id"] != b[0]["id"]                     # 各自只看自己的行
+    # 家庭 A 的账号去确认家庭 B 的任务 → 404
+    assert client.post(f"/api/v1/plugins/douyin_mcp/confirm/{b[0]['id']}",
+                       headers=_auth(1)).status_code == 404
+    assert client.post(f"/api/v1/plugins/douyin_mcp/confirm/{a[0]['id']}",
+                       headers=_auth(2)).status_code == 404
+    # 本租户确认 → 200
+    r = client.post(f"/api/v1/plugins/douyin_mcp/confirm/{a[0]['id']}", headers=_auth(1))
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True
+
+
+@pytest.fixture()
+def browser_matrix_env(matrix_db):
+    """装载 browser_mcp（真实插件）；快照表在主 metadata（临时库已建），返回 client。"""
+    assert plugin_registry.load_plugin_dir(plugin_registry.EXAMPLE_DIR / "browser_mcp") is not None
+    mod = sys.modules.get("ai_plugin_browser_mcp")
+    assert mod is not None, "browser_mcp 应可加载"
+    mod._ensure_done = True   # 表已由临时库 create_all 建好，跳过插件内联 DDL
+    router = plugin_registry._loaded["browser_mcp"].get("router")
+    client = _plugin_client(router)
+    yield client
+    plugin_registry._loaded.pop("browser_mcp", None)
+    plugin_registry._enabled.pop("browser_mcp", None)
+
+
+def test_p2_browser_latest_only_own_account(browser_matrix_env, matrix_db):
+    """M7：browser /latest 只见本账号快照（跨账号不可见）。"""
+    from app.models.user import BrowserSnapshot
+
+    async def _seed():
+        async with matrix_db() as db:
+            db.add(BrowserSnapshot(user_id=1, url="https://a.example/1", domain="a.example",
+                                   title="A1", text="t"))
+            db.add(BrowserSnapshot(user_id=2, url="https://b.example/1", domain="b.example",
+                                   title="B1", text="t"))
+            await db.commit()
+
+    asyncio.run(_seed())
+    r = browser_matrix_env.get("/api/v1/plugins/browser_mcp/latest", headers=_auth(1))
+    assert r.status_code == 200, r.text
+    urls = [s["url"] for s in r.json()["snapshots"]]
+    assert urls == ["https://a.example/1"]
+    r2 = browser_matrix_env.get("/api/v1/plugins/browser_mcp/latest", headers=_auth(2))
+    assert [s["url"] for s in r2.json()["snapshots"]] == ["https://b.example/1"]
+

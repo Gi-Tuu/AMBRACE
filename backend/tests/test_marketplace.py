@@ -51,3 +51,51 @@ def test_market_权限(monkeypatch):
     assert asyncio.run(_is_owner(1))
     assert not asyncio.run(_is_owner(4))
     assert not asyncio.run(_is_owner(0))
+
+
+def test_market_installed标记按flag分别断言(monkeypatch):
+    """A2 M3（2026-09-20）：市场 installed 标记随可见集重算，按 flag 分别断言。
+
+    - flag 关（默认）：全量口径，别家装的插件也显示「已安装」（既有旧断言语义）；
+    - flag 开：别的家庭安装的插件对本账号显示「未安装」，本家庭装机仍为「已安装」。
+    只注入内存缓存，不加载真实插件、不碰库。
+    """
+    from app.agent.loop import AGENT_FLAGS
+    from app.api.marketplace import _merge_installed
+
+    def _info(name):
+        return {"name": name, "version": "0.0.1", "description": "", "author": "",
+                "category": "plugin", "type": "http", "icon": "", "page": "",
+                "has_page": False, "hooks": [], "permissions": [], "config": {},
+                "usage": "", "display_name": "", "hook_timeout": None,
+                "context_keys": [], "content": {}, "path": ""}
+
+    names = ("mine_local", "other_local")
+    monkeypatch.setattr(registry, "_loaded",
+                        {n: {"info": _info(n), "module": None, "hooks": {},
+                             "actions": {}, "router": None} for n in names})
+    monkeypatch.setattr(registry, "_enabled", {n: True for n in names})
+    monkeypatch.setattr(registry, "_db_config", {})
+    monkeypatch.setattr(registry, "_db_prov", {
+        "mine_local": {"source": "local", "owner_user_id": 1, "owner_tenant_id": 1},
+        "other_local": {"source": "local", "owner_user_id": 2, "owner_tenant_id": 2},
+    })
+    items = [{"name": "mine_local", "has_page": False},
+             {"name": "other_local", "has_page": False}]
+
+    # flag 关：旧断言（全量已安装，与 viewer 无关）
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_user_scope", False)
+    out = {i["name"]: i["installed"] for i in
+           _merge_installed(items, viewer_user_id=1, viewer_tenant_id=1)}
+    assert out == {"mine_local": True, "other_local": True}
+    assert {i["name"]: i["installed"] for i in _merge_installed(items)} == {
+        "mine_local": True, "other_local": True}
+
+    # flag 开：installed 随可见集重算
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_user_scope", True)
+    out = {i["name"]: i["installed"] for i in
+           _merge_installed(items, viewer_user_id=1, viewer_tenant_id=1)}
+    assert out == {"mine_local": True, "other_local": False}
+    out2 = {i["name"]: i["installed"] for i in
+            _merge_installed(items, viewer_user_id=2, viewer_tenant_id=2)}
+    assert out2 == {"mine_local": False, "other_local": True}

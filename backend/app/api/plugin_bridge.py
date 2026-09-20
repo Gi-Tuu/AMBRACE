@@ -109,6 +109,9 @@ async def plugin_bridge(
     # A2 M0-3：已禁用插件路由闸（flag 门控，默认关=旧行为）；命中复用既有 plugin_not_found 文案
     if plugin is None or _plugin_disabled_gate(plugin):
         raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_not_found"))
+    # A2 M4：归属闸（flag plugin_runtime_scope 开时该插件对调用者不可见 → 404；复用既有文案）
+    if not await registry.plugin_visible_for_caller(name, user_id):
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_not_found"))
     # ai 限额：每用户每插件 10 次/分、200 次/天（settings 可配；进程内滑动窗口；429 + Retry-After）
     if _effective_api(api, params) == "ai":
         ok, retry_after = bridge_ai_rate_check(user_id, name)

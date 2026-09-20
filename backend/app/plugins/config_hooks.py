@@ -29,7 +29,12 @@ def match_prompt_trigger(user_message: str, cfg: dict) -> str | None:
 
 async def inject_prompt_skill(ctx: dict) -> None:
     """生成前注入：遍历已启用且 type=prompt 的插件，user_message 命中 trigger 时
-    向 ctx["context_messages"] 追加一条 system 消息（systemPrompt）。异常隔离。"""
+    向 ctx["context_messages"] 追加一条 system 消息（systemPrompt）。异常隔离。
+
+    A2 M4（2026-09-20）：flag ``plugin_runtime_scope`` 开时按可见性过滤——只注入「对该调用者
+    （ctx["user_id"] 的家庭根）可见」的插件；拿不到 caller → fail-closed 只注入内置插件。
+    flag 关 = 逐字节旧行为（只看 enabled + type）。
+    """
     try:
         from app.plugins import registry
         user_message = str(ctx.get("user_message") or "")
@@ -38,11 +43,15 @@ async def inject_prompt_skill(ctx: dict) -> None:
         context_messages = ctx.get("context_messages")
         if not isinstance(context_messages, list):
             return
+        _caller_uid = ctx.get("user_id")
         for name, entry in list(registry._loaded.items()):
             if not registry._enabled.get(name, False):
                 continue
             info = entry.get("info") or {}
             if info.get("type") != "prompt":
+                continue
+            # A2 M4：运行面归属闸（flag 门控；flag 关时恒 True，零行为变化）
+            if not await registry.plugin_in_runtime_scope(name, user_id=_caller_uid):
                 continue
             # 合并 DB 覆盖值（前端零代码编辑器保存后生效）
             base = dict(info.get("config") or {})

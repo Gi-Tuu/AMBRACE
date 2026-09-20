@@ -152,7 +152,7 @@ def test_flag关_hook不下发roster(monkeypatch, pack_enabled):
     _flag(monkeypatch, False)
     seen = {}
 
-    async def _fake_collect(hook_name, ctx, timeout=None):
+    async def _fake_collect(hook_name, ctx, timeout=None, **kw):
         seen["hook"] = hook_name
         seen["ctx"] = dict(ctx)
         return []
@@ -221,7 +221,7 @@ def test_策略包抛错_主链路不受影响(monkeypatch, pack_enabled):
     """hook 抛错 / 收集失败 → plugin 源返回空，不抛给 arbiter。"""
     _flag(monkeypatch, True)
 
-    async def _boom(hook_name, ctx, timeout=None):
+    async def _boom(hook_name, ctx, timeout=None, **kw):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(registry, "run_hook_collect", _boom)
@@ -277,7 +277,7 @@ def test_未声明message_type的策略候选不去重也不让位(monkeypatch, 
     """普通插件候选（无 strategy 键）不受策略逻辑影响，照旧产出。"""
     _flag(monkeypatch, True)
 
-    async def _fake_collect(hook_name, ctx, timeout=None):
+    async def _fake_collect(hook_name, ctx, timeout=None, **kw):
         assert ctx and ctx.get("roster")           # flag 开 → roster 已下发
         return [{"plugin": "x", "result": {
             "character_id": CHAR_ID, "user_id": USER_ID, "session_id": SESSION_ID,

@@ -98,22 +98,50 @@ def _plugin_risk_level(plugin_name: str) -> str:
     return RISK_MEDIUM
 
 
-def sync_plugin_tools() -> int:
+def sync_plugin_tools(viewer_user_id: int | None = None, *,
+                      viewer_tenant_id: int | None = None) -> int:
     """把已加载插件的 action 自动登记为 ToolSpec（Phase C，2026-08-16）。
 
     工具名 = f"{plugin}.{action}"；scope 按插件映射（browser/渠道注册/extension，与 permission_service._plugin_scope 一致）；
     执行入口由 ToolRunner 按 plugin+plugin_action 调 registry.run_plugin_action（与现有行为一致）。
     返回登记数。
+
+    A2 M4（2026-09-20）flag ``plugin_runtime_scope`` 开时只登记「可见 + enabled」插件的工具：
+    - enabled 判定沿用 ``registry.get_plugin(name)["enabled"]`` 口径（list_plugins 合并的
+      DB plugins.enabled 内存缓存，与 ``plugin_disabled_route_gate`` 一致）；
+    - 可见性 = M3 纯谓词 ``plugin_visible_to_tenant(viewer_tenant_id)``。本函数是同步函数，
+      无法 await 家庭根解析（与 ``registry.list_plugins`` 同限制）：启动期调用点（main.py）
+      拿不到调用者 → ``viewer_tenant_id=None``，按 M3 的 **fail-closed** 口径收敛到
+      「内置 ∪ 服务级（owner 为空）」，绝不因拿不到租户而全放；异步入口若已解析出家庭根，
+      可显式传 ``viewer_tenant_id`` 得到按账号的精确集合（``viewer_user_id`` 仅作调用意图标记）。
+    - flag 关 → 逐字节旧行为（不判 enabled、不判可见）。
     """
     try:
         from app.plugins import registry as _registry
     except Exception:
         return 0
+    _scope_on = False
+    try:
+        _scope_on = _registry.plugin_runtime_scope_enabled()
+    except Exception:
+        _scope_on = False
     count = 0
     for name, entry in list(_registry._loaded.items()):
         actions_map = (entry or {}).get("actions") or {}
         if not actions_map:
             continue
+        if _scope_on:
+            plugin = _registry.get_plugin(name) or {}
+            if not plugin.get("enabled"):
+                continue  # M4：停用插件的工具不登记（口径同 plugin_disabled_route_gate）
+            prov = _registry._db_prov.get(name, {}) or {}
+            if not _registry.plugin_visible_to_tenant(
+                source=prov.get("source", plugin.get("source", "builtin")),
+                owner_user_id=prov.get("owner_user_id"),
+                owner_tenant_id=prov.get("owner_tenant_id"),
+                viewer_tenant_id=viewer_tenant_id,
+            ):
+                continue  # M4：对本租户不可见 → 不登记
         try:
             from app.application import permission_service
             scope = permission_service._plugin_scope(name)

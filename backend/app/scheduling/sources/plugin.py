@@ -46,7 +46,13 @@ class PluginSource:
 
         try:
             from app.plugins.registry import run_hook_collect
-            results = await run_hook_collect("proactive_candidate", hook_ctx)
+            # A2 M4：本调用点是「全租户广播」（SourceContext 无固定 caller，roster 可含多家庭账号），
+            # 故只传调用点标识、不伪造 caller → flag plugin_runtime_scope 开时 fail-closed 到内置插件
+            # （内置策略包照常分发；第三方非内置策略包需等「按租户 roster 扇出」另行落地）。
+            results = await run_hook_collect(
+                "proactive_candidate", hook_ctx,
+                callsite="scheduling/sources/plugin.py:proactive_candidate",
+            )
         except Exception as e:
             _logger.warning("collect_plugin_events failed: %s", e)
             return []
@@ -77,6 +83,8 @@ class PluginSource:
 
     async def _build(self, cand: dict, claims: set[str], plugin: str) -> TriggerItem | None:
         """去重 → 内核执行前处理（频控闸 + 素材装配）→ 定事件类型。None = 丢弃。"""
+        if not await self._pairing_ok(cand, plugin):
+            return None
         if not await self._keep(cand, claims):
             return None
         try:
@@ -92,6 +100,41 @@ class PluginSource:
             type=exec_type_of(prepared), priority=1,
             candidate={**prepared, "plugin": plugin},
         )
+
+    async def _pairing_ok(self, cand: dict, plugin: str) -> bool:
+        """A2 M4（§4，flag ``plugin_runtime_scope`` 门控）：候选自报 user_id 与角色归属配对校验。
+
+        插件自报一个别的账号的 user_id，就能让内核按那个账号裁决（跨租户越权）——这里用
+        ``strategy._user_id_of`` 反查角色归属（该角色最新会话的 user_id）与自报值比对，
+        不符 / 反查不到 / 反查异常 → 丢弃候选并告警（**fail-closed**）。
+        flag 关 → 恒 True（逐字节旧行为）。
+        """
+        try:
+            from app.plugins.registry import plugin_runtime_scope_enabled
+            if not plugin_runtime_scope_enabled():
+                return True
+        except Exception:
+            return True
+        try:
+            cid = int(cand.get("character_id") or 0)
+            uid = int(cand.get("user_id") or 0)
+        except (TypeError, ValueError):
+            return False
+        if not cid or not uid:
+            return False
+        try:
+            from .strategy import _user_id_of
+            owner = await _user_id_of(cid)
+        except Exception as e:
+            _logger.warning("plugin candidate pairing lookup failed plugin=%s char=%s: %s", plugin, cid, e)
+            return False
+        if owner is None or int(owner) != uid:
+            _logger.warning(
+                "plugin proactive candidate dropped: user_id 与角色归属不符 plugin=%s char=%s claimed=%s owner=%s",
+                plugin, cid, uid, owner,
+            )
+            return False
+        return True
 
     async def _keep(self, cand: dict, claims: set[str]) -> bool:
         """策略候选的内核侧去重（非策略候选 / 无接管类别 → 恒 True，零变化）。

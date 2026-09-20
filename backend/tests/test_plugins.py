@@ -68,17 +68,58 @@ def test_hook_分发对未知hook安全():
 
 
 def test_send_message_权限检查():
-    registry._sdk_ctx["current"] = "good_night_topic"
-    try:
+    # A2 M4（2026-09-20）：registry._sdk_ctx 由进程级 dict 改为 ContextVar（并发身份不串），
+    # 这里改用 registry.sdk_context(...) 上下文管理器设置插件身份；断言口径逐条不变。
+    with registry.sdk_context("good_night_topic"):
         sdk.require_permission("send_message")  # 已声明，不抛
-    finally:
-        registry._sdk_ctx.pop("current", None)
-    registry._sdk_ctx["current"] = "http_echo"  # 未声明 send_message
-    try:
+    with registry.sdk_context("http_echo"):  # 未声明 send_message
         try:
             sdk.require_permission("send_message")
             raise AssertionError("应抛 PermissionError")
         except PermissionError:
             pass
-    finally:
-        registry._sdk_ctx.pop("current", None)
+
+
+def test_list_plugins_按flag分别断言_账号收敛(monkeypatch):
+    """A2 M3（2026-09-20）：list_plugins 的可见性过滤按 flag 分别断言。
+
+    - flag 关（默认）：viewer 参数被忽略，全量列表 = 既有旧断言；
+    - flag 开：只保留「内置 ∪ 本家庭安装 ∪ 服务级（owner 为空）」，且默认 None = 旧行为。
+    本用例只注入内存缓存（不加载真实插件、不碰库）。
+    """
+    from app.agent.loop import AGENT_FLAGS
+
+    def _info(name):
+        return {"name": name, "version": "0.0.1", "description": "", "author": "",
+                "category": "plugin", "type": "http", "icon": "", "page": "",
+                "has_page": False, "hooks": [], "permissions": [], "config": {},
+                "usage": "", "display_name": "", "hook_timeout": None,
+                "context_keys": [], "content": {}, "path": ""}
+
+    names = ("builtin_x", "mine_local", "other_local", "service_local")
+    monkeypatch.setattr(registry, "_loaded",
+                        {n: {"info": _info(n), "module": None, "hooks": {},
+                             "actions": {}, "router": None} for n in names})
+    monkeypatch.setattr(registry, "_enabled", {n: True for n in names})
+    monkeypatch.setattr(registry, "_db_config", {})
+    monkeypatch.setattr(registry, "_db_prov", {
+        "builtin_x": {"source": "builtin", "owner_user_id": None, "owner_tenant_id": None},
+        "mine_local": {"source": "local", "owner_user_id": 7, "owner_tenant_id": 7},
+        "other_local": {"source": "local", "owner_user_id": 8, "owner_tenant_id": 8},
+        "service_local": {"source": "local", "owner_user_id": None, "owner_tenant_id": None},
+    })
+    expect_all = {"builtin_x", "mine_local", "other_local", "service_local"}
+
+    # flag 关：即使传 viewer，仍是全量旧口径；不传 viewer 同样全量
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_user_scope", False)
+    assert {p["name"] for p in registry.list_plugins(viewer_user_id=7, viewer_tenant_id=7)} == expect_all
+    assert {p["name"] for p in registry.list_plugins()} == expect_all
+
+    # flag 开：本家庭 + 内置 + 服务级可见；别家安装的不可见
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_user_scope", True)
+    assert {p["name"] for p in registry.list_plugins(viewer_user_id=7, viewer_tenant_id=7)} == {
+        "builtin_x", "mine_local", "service_local"}
+    # flag 开 + 不传 viewer（既有调用方）→ 仍逐字节旧行为
+    assert {p["name"] for p in registry.list_plugins()} == expect_all
+    # flag 开 + 家庭根解析失败（viewer_tenant_id=None）→ fail-closed 到内置 ∪ 服务级
+    assert {p["name"] for p in registry.list_plugins(viewer_user_id=7)} == {"builtin_x", "service_local"}

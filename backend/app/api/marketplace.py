@@ -453,9 +453,15 @@ def _find_item(name: str) -> dict | None:
     return None
 
 
-def _merge_installed(items: list[dict]) -> list[dict]:
-    """合并 installed/enabled/installed_version/has_page 标记"""
-    installed_map = {p["name"]: p for p in registry.list_plugins()}
+def _merge_installed(items: list[dict], viewer_user_id: int | None = None,
+                     *, viewer_tenant_id: int | None = None) -> list[dict]:
+    """合并 installed/enabled/installed_version/has_page 标记。
+
+    A2 M3（2026-09-20）：``installed`` 随 plugin_user_scope 的可见集重算——flag 开时，
+    别的家庭安装的插件对本账号显示为「未安装」；viewer 缺省（None）= 逐字节旧行为。
+    """
+    installed_map = {p["name"]: p for p in registry.list_plugins(
+        viewer_user_id=viewer_user_id, viewer_tenant_id=viewer_tenant_id)}
     out: list[dict] = []
     for it in items:
         row = dict(it)
@@ -513,6 +519,10 @@ async def _install_remote(item: dict, lang: str, body: dict | None = None,
     await registry.require_plugin_consent(
         name, manifest.get("permissions", []) or [], lang,
         consent=bool(body.get("consent")), provided_permissions=body.get("permissions"),
+        # A2 M6（2026-09-20，Codex 补齐）：市场安装同样按**调用者租户**（家庭根）判定同意，
+        # 与 plugins.py 的本地安装口径一致；user_id 缺失时回落服务级（旧行为不变）。
+        tenant_id=await registry.resolve_tenant_for_user(user_id),
+        actor_user_id=user_id,
     )
     backup_dir = None
     if target.exists():
@@ -629,10 +639,16 @@ async def list_marketplace(
     installed: bool | None = Query(None, description="只看已安装(true)/未安装(false)"),
     user_id: int = Depends(get_current_user_id),
 ):
-    """市场列表：内置 + 远程缓存合并（同 name 远程覆盖内置）"""
+    """市场列表：内置 + 远程缓存合并（同 name 远程覆盖内置）
+
+    A2 M3（2026-09-20）：flag plugin_user_scope 开时，installed 标记按调用者可见集重算
+    （别的家庭装的插件显示未安装）；flag 关逐字节旧行为。
+    """
     await get_remote_index()  # 3.13：列表读取接通 plugin_market_url（TTL 缓存，失败降级本地）
+    viewer_tenant_id = await registry.resolve_viewer_tenant(user_id)
     out: list[dict] = []
-    for it in _merge_installed(_all_items()):
+    for it in _merge_installed(_all_items(), viewer_user_id=user_id,
+                               viewer_tenant_id=viewer_tenant_id):
         if q:
             ql = q.strip().lower()
             if ql and ql not in it["name"].lower() and ql not in (it["description"] or "").lower():
@@ -665,7 +681,11 @@ async def get_marketplace_item(name: str, user_id: int = Depends(get_current_use
             except Exception:
                 readme_text = ""
     row["readme_text"] = readme_text
-    installed_map = {p["name"]: p for p in registry.list_plugins()}
+    # A2 M3（2026-09-20）：详情页 installed 标记与列表同口径（flag 门控，随可见集重算）
+    installed_map = {p["name"]: p for p in registry.list_plugins(
+        viewer_user_id=user_id,
+        viewer_tenant_id=await registry.resolve_viewer_tenant(user_id),
+    )}
     pl = installed_map.get(item["name"])
     row["installed"] = pl is not None
     row["enabled"] = bool(pl.get("enabled")) if pl else False
