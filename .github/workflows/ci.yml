@@ -140,6 +140,37 @@ jobs:
         # Windows 全量档（slow 建库密集）暂不开，先观察。
         run: pytest backend/tests -q -n auto ${{ (needs.changes.outputs.full != 'true' && matrix.py != '3.13') && '-m "not slow"' || '' }} --durations=20
 
+  # 发布前「老库升级」演练（2026-09-21 接入 CI，用户拍板）：把 scripts/migrate_drill.py 的 5 种老库形态
+  # 在 CI 里重跑，守住「启动期自动对齐」这条发布关键路径 —— 演练脚本首次建立时就抓到 1 个会让旧库
+  # 启动失败的真实迁移缺陷（见 docs/migrate-drill.md §4）。
+  # 为什么 --base fresh：CI 没有生产库，脚本改用 init_db() + upgrade head 现建等价基线（本机实测约 10s）。
+  # 为什么单开一个 job：这一步不是 pytest（不能带 -n / -m），且必须真跑 alembic 链（不适用 dbclone 提速）；
+  # 守卫沿用 changes.heavy（与其余重型 job 一致），不单独维护一套路径过滤，避免漏检。
+  migrate-drill:
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
+    name: Migration drill (5 legacy DB shapes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Drill (fresh base; non-zero exit = some legacy shape broke)
+        env:
+          SKIP_MODEL_DOWNLOAD: "1"
+          PYTHONIOENCODING: "utf-8"
+        run: python scripts/migrate_drill.py --base fresh --out .migrate-drill
+
   # 主开发 / 发 APK 在 Windows：覆盖 Windows 特有路径、SO_REUSEADDR、aiosqlite 线程、
   # pwsh 脚本语法（不跑 Docker smoke）。
   #

@@ -105,3 +105,5 @@ fcm-service-account*.json
 *firebase-adminsdk*.json
 google-services.json
 backend/.pytest_tmp/
+# 老库升级演练的输出目录（2026-09-21；CI 与本地 --out .migrate-drill 用）
+.migrate-drill/

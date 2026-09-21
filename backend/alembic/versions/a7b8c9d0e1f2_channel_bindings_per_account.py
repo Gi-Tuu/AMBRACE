@@ -108,11 +108,15 @@ def _upgrade_wechat_bindings(bind) -> None:
     # 4) 唯一键替换：named UQ(character_id) 走 batch 重建（SQLite 不支持 DROP CONSTRAINT）；
     #    新唯一键以唯一索引落地（partial 与 messages 表先例一致）
     idxs = _index_names(bind, "wechat_ilink_bindings")
-    with op.batch_alter_table("wechat_ilink_bindings", schema=None) as batch_op:
-        try:
+    # 2026-09-21 演练实录（发布前老库升级演练发现）：SQLite 的 batch 模式把 drop_constraint
+    # **延迟到 with 退出时的 flush** 才真正执行 —— 旧库若已无该命名约束，ValueError 会在
+    # __exit__ 抛出，内层 try 抓不到 → 整链 upgrade 直接失败（启动期 ensure_alembic_revision
+    # 抛错 = 服务起不来）。故 try 必须包住**整个 with**，保持「缺失即跳过」的幂等语义。
+    try:
+        with op.batch_alter_table("wechat_ilink_bindings", schema=None) as batch_op:
             batch_op.drop_constraint("uq_wechat_ilink_char", type_="unique")
-        except Exception:
-            pass  # 旧库若已无该命名约束（或以同名列索引存在），保持幂等
+    except Exception:
+        pass  # 旧库若已无该命名约束（或以同名列索引存在），保持幂等
     if "uq_wechat_bot_wxuser" not in idxs:
         op.create_index(
             "uq_wechat_bot_wxuser", "wechat_ilink_bindings",
