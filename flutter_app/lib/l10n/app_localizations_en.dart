@@ -6849,6 +6849,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get flagGroupOther => 'Other Advanced Flags';
 
   @override
+  String get flagUserOverrideEnabled => 'Overridden: Enabled';
+
+  @override
+  String get flagUserOverrideDisabled => 'Overridden: Disabled';
+
+  @override
+  String get flagUserOverrideNone => 'Not overridden (falls back to global)';
+
+  @override
   String get flagAgentLoopChatTitle => 'Unified chat tool entry';
 
   @override

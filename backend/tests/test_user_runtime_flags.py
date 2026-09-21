@@ -348,6 +348,59 @@ def test_user_facts_read_paths_per_account(flag_db, monkeypatch):
     assert asyncio.run(uf.get_authoritative_user_location(USER_B)) is None
 
 
+# ══════════════════════════ 4b. 新增 5 键按账号隔离（batch G） ══════════════════════════
+
+# batch G 新接入的 5 个用户级键（已并入 USER_SCOPED_FLAG_KEYS）
+NEW_USER_SCOPED_KEYS = (
+    "weave_3d",
+    "agent_social_light_context",
+    "agent_loop_group_chat",
+    "agent_loop_social",
+    "proactive_outreach_v2",
+)
+
+
+@pytest.mark.parametrize("key", NEW_USER_SCOPED_KEYS)
+def test_new_user_scoped_keys_isolation_a_on_b_off(flag_db, monkeypatch, key):
+    """batch G：5 个新增用户级键——A 账号开 / B 账号关 → 按账号隔离（不依赖全局值）。"""
+    from app.agent.loop import AGENT_FLAGS
+    from app.application import flag_service
+
+    # 全局基准设为 False：验证「A 开 / B 关」是覆盖生效，而非回落全局
+    monkeypatch.setitem(AGENT_FLAGS, key, False)
+    assert asyncio.run(flag_service.set_user_flag(key, USER_A, True)) is True
+    assert asyncio.run(flag_service.set_user_flag(key, USER_B, False)) is True
+    assert asyncio.run(flag_service.resolve_flag(key, USER_A)) is True
+    assert asyncio.run(flag_service.resolve_flag(key, USER_B)) is False
+    # 反例：全局翻成 True，B 仍按覆盖 False（证明不是回落全局）
+    monkeypatch.setitem(AGENT_FLAGS, key, True)
+    assert asyncio.run(flag_service.resolve_flag(key, USER_A)) is True
+    assert asyncio.run(flag_service.resolve_flag(key, USER_B)) is False
+    # 另一账号 C 无覆盖 → 回落全局（此时 True）
+    assert asyncio.run(flag_service.resolve_flag(key, 999)) is True
+    # 缺 user_id → 回落全局值
+    assert asyncio.run(flag_service.resolve_flag(key)) is True
+
+
+def test_new_user_scoped_keys_no_override_falls_back_to_global(flag_db, monkeypatch):
+    """未设覆盖 ⇒ 回落全局值（fail-open）；多账号无覆盖时行为一致、不串扰。"""
+    from app.agent.loop import AGENT_FLAGS
+    from app.application import flag_service
+
+    for k in NEW_USER_SCOPED_KEYS:
+        monkeypatch.setitem(AGENT_FLAGS, k, True)
+    # 全局开、两账号均无覆盖 → 都回落全局 True
+    assert asyncio.run(flag_service.resolve_flags(list(NEW_USER_SCOPED_KEYS), USER_A)) == \
+        dict.fromkeys(NEW_USER_SCOPED_KEYS, True)
+    assert asyncio.run(flag_service.resolve_flags(list(NEW_USER_SCOPED_KEYS), USER_B)) == \
+        dict.fromkeys(NEW_USER_SCOPED_KEYS, True)
+    # 全局翻关 → 都回落全局 False（不与任何覆盖串扰）
+    for k in NEW_USER_SCOPED_KEYS:
+        monkeypatch.setitem(AGENT_FLAGS, k, False)
+    assert asyncio.run(flag_service.resolve_flags(list(NEW_USER_SCOPED_KEYS), USER_A)) == \
+        dict.fromkeys(NEW_USER_SCOPED_KEYS, False)
+
+
 # ══════════════════════════ 5. 批量解析（P3 遗留：细槽族查询放大） ══════════════════════════
 
 

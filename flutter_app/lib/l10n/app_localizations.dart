@@ -12387,6 +12387,24 @@ abstract class AppLocalizations {
   /// **'其他高级开关'**
   String get flagGroupOther;
 
+  /// No description provided for @flagUserOverrideEnabled.
+  ///
+  /// In zh, this message translates to:
+  /// **'已覆盖：开启'**
+  String get flagUserOverrideEnabled;
+
+  /// No description provided for @flagUserOverrideDisabled.
+  ///
+  /// In zh, this message translates to:
+  /// **'已覆盖：关闭'**
+  String get flagUserOverrideDisabled;
+
+  /// No description provided for @flagUserOverrideNone.
+  ///
+  /// In zh, this message translates to:
+  /// **'未覆盖（回落全局）'**
+  String get flagUserOverrideNone;
+
   /// No description provided for @flagAgentLoopChatTitle.
   ///
   /// In zh, this message translates to:

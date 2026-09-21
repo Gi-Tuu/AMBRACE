@@ -622,7 +622,10 @@ async def generate_proactive_event(
                 # + 建链器 memory_chain_builder 都已就绪时，优先用 pick_recall_chain 的链时间线作为回忆
                 # 素材（时间锚点天然清晰、有起承）；两 flag 默认关 → 走原语义检索，行为与现状逐字节一致。
                 from app.agent.loop import AGENT_FLAGS as _af
-                if _af.get("proactive_outreach_v2", False) and _af.get("memory_chain_builder", False):
+                from app.application.flag_service import resolve_flag
+                # batch G：proactive_outreach_v2 按账号解析（缺 user_id 回落全局，fail-open）；
+                # memory_chain_builder 非本批键，保持全局口径不变
+                if (await resolve_flag("proactive_outreach_v2", user_id)) and _af.get("memory_chain_builder", False):
                     from app.memory.chain_builder import pick_recall_chain
                     _chain = await pick_recall_chain(character_id)
                     if _chain:

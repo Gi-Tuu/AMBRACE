@@ -156,7 +156,9 @@ def test_R1_run_tick_执行抛错传exec_error(monkeypatch):
     monkeypatch.setattr(arbiter, "all_sources", lambda: [_Src()])
     monkeypatch.setattr(arbiter, "_execute", _boom)
     monkeypatch.setattr(arbiter, "_compute_motivation", _motivation)
-    monkeypatch.setattr(arbiter, "_outreach_enabled", lambda: False)
+    async def _outreach_off(*a, **k):
+        return False
+    monkeypatch.setattr(arbiter, "_outreach_enabled", _outreach_off)
     monkeypatch.setattr(arbiter, "_trace_scheduler_task", _trace)
     monkeypatch.setattr(arbiter, "log_trigger_candidate", _log_candidate)
     monkeypatch.setattr(_decay_mod, "run_relationship_decay", _noop_decay)
@@ -197,7 +199,9 @@ def test_R1_run_tick_未触发不传exec_error(monkeypatch):
     monkeypatch.setattr(arbiter, "all_sources", lambda: [_Src()])
     monkeypatch.setattr(arbiter, "_execute", _noop)
     monkeypatch.setattr(arbiter, "_compute_motivation", _motivation)
-    monkeypatch.setattr(arbiter, "_outreach_enabled", lambda: False)
+    async def _outreach_off(*a, **k):
+        return False
+    monkeypatch.setattr(arbiter, "_outreach_enabled", _outreach_off)
     monkeypatch.setattr(arbiter, "_trace_scheduler_task", _trace)
     monkeypatch.setattr(arbiter, "log_trigger_candidate", _log_candidate)
     monkeypatch.setattr(_decay_mod, "run_relationship_decay", _noop_decay)

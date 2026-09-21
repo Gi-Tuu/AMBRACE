@@ -207,20 +207,29 @@ async def set_flag_policy(key: str, *, self_service=None, server_locked=None, db
 #   → 否则全局值（AGENT_FLAGS 现值）。
 # 默认口径：没有覆盖行的账号，行为与改动前逐字节一致（回落全局 runtime_flags）。
 #
-# USER_SCOPED_FLAG_KEYS（本批只放 5 个隐私细槽族键）：
-# - global_user_facts / user_fact_location / user_fact_relationship / user_fact_health /
-#   user_current_location_share 已按账号生效；
-# - weave_3d / agent_social_light_context / agent_loop_group_chat / agent_loop_social /
-#   proactive_outreach_v2 这 5 个【本批保持服务器级】，下一批再接线。原因：这些键的读取点
-#   目前没有 user 上下文（多数在进程级循环/全局调度里读 AGENT_FLAGS），硬接会「白开」——
-#   写了用户覆盖也无人按账号读取，反而给出「已按账号生效」的错觉。
+# USER_SCOPED_FLAG_KEYS（共 10 个）：
+# - 隐私细槽族 5 个（global_user_facts / user_fact_location / user_fact_relationship /
+#   user_fact_health / user_current_location_share）按账号生效；
+# - 社交/群聊/主动接触族 5 个（weave_3d / agent_social_light_context / agent_loop_group_chat /
+#   agent_loop_social / proactive_outreach_v2）本批（batch G）已全部接 user_id 解析：
+#   读取点取得 user 上下文，缺 user_id 时回落全局值（fail-open）；weave_3d 后端运行期零读取、
+#   真消费者是客户端，仅加入集合供客户端按账号折叠。
 # 注：flag_settings 策略判定（server_locked / self_service）与既有写路径完全一致，本段不放松权限。
+# 10 个键（隐私细槽族 5 个 + 社交/群聊/主动接触族 5 个）均按账号生效；
+# 后 5 个的读取点已全部接 user_id 解析（batch G：chat_groups.py:395/517、arbiter.py:866/1403/1656、
+# message_generator.py:625），缺 user_id 时回落全局值（fail-open，与既有口径一致）。
 USER_SCOPED_FLAG_KEYS: frozenset[str] = frozenset({
     'global_user_facts',
     'user_fact_location',
     'user_fact_relationship',
     'user_fact_health',
     'user_current_location_share',
+    # ── 社交 / 群聊 / 主动接触族（batch G 接线）──
+    'weave_3d',
+    'agent_social_light_context',
+    'agent_loop_group_chat',
+    'agent_loop_social',
+    'proactive_outreach_v2',
 })
 
 

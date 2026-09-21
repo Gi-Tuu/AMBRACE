@@ -426,3 +426,60 @@ def test_arbiter_plugin_runtime_空内容不发送(monkeypatch):
     ))
     assert ok is False  # 内容 < 2 字视为失败
     assert sent == []
+
+
+# ───────────────────────────────────────────────────────────── 派单 F：user_id 兜底审计（不臆造 1 号账号）
+
+
+def test_runtime_build_state_缺caller不臆造1号账号():
+    """_build_initial_state 不再 user_id or 1：缺 caller → 键存在=None（fail-closed 注入空）。
+
+    旧写法 `user_id or 1` 会在群聊/主动/插件链臆造 1 号账号，让 Runtime 永远拿不到「无 caller」信号；
+    改后 key 恒在但值为 None，下游各 section 的 state.get(\"user_id\", 1) 读到 None → 查询退化 IS NULL 空结果。
+    """
+    st = runtime_mod._build_initial_state(
+        character_id=13, user_id=None, session_id=None, user_message="hi",
+        lang="zh", reasoning_level=0, save_memory=True,
+    )
+    assert "user_id" in st, "键必须存在（None 而非缺失，避免触发下游默认值）"
+    assert st["user_id"] is None, "缺 caller 不得臆造成 1 号账号"
+
+
+def test_runtime_build_state_带caller逐字节透传():
+    """有真实 caller 时与改前逐字节一致：state[\"user_id\"] 原样等于传入值（不 1、不 None）。"""
+    st = runtime_mod._build_initial_state(
+        character_id=13, user_id=4, session_id=99, user_message="hi",
+        lang="zh", reasoning_level=0, save_memory=True,
+    )
+    assert st["user_id"] == 4
+    assert st["character_id"] == 13 and st["session_id"] == 99
+
+
+def test_runtime_群聊冒烟_带caller仍正常生成(monkeypatch):
+    """主链冒烟（群聊）：带真实 caller 时 runtime 端到端返回 ok，且注入的 state 携带真实 user_id。"""
+    seen = {"states": []}
+
+    async def _fake_build(state):
+        state["context_messages"] = [{"role": "system", "content": "【世界认知】"}]
+        state["context_messages"].append({"role": "user", "content": state.get("user_message") or ""})
+        seen["states"].append(state)
+        return state
+
+    async def _fake_gen(state):
+        state["ai_response"] = "好的呀"
+        state["new_memories"] = []
+        return state
+
+    async def _fake_resolve(uid, cid):
+        return 99
+
+    monkeypatch.setattr("app.agent.context_builder.build_context", _fake_build)
+    monkeypatch.setattr("app.agent.nodes.generate_response", _fake_gen)
+    monkeypatch.setattr(runtime_mod, "_resolve_session_id", _fake_resolve)
+
+    res = asyncio.run(runtime_mod.run_social_reply(
+        character_id=11, user_id=4, session_id=None, user_message="在吗",
+        extra_system=[{"role": "system", "content": "【群公开】讨论中"}], max_text=200,
+    ))
+    assert res["status"] == "ok" and res["text"] == "好的呀"
+    assert seen["states"][0]["user_id"] == 4, "群聊链必须携带真实 caller，不得被兜底成 1"

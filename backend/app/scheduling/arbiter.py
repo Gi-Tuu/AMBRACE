@@ -607,11 +607,15 @@ async def collect_plugin_events() -> list[dict]:
 
 # ── B1-③（方案 §5.4）：主动接触意图层接线辅助（纯函数决策 + IO 素材采集）──
 
-def _outreach_enabled() -> bool:
-    """Feature Flag：proactive_outreach_v2（默认关）。关=intent 不参与、走旧链路零行为。"""
+async def _outreach_enabled(user_id=None) -> bool:
+    """Feature Flag：proactive_outreach_v2（默认关）。关=intent 不参与、走旧链路零行为。
+
+    batch G：按账号解析（缺 user_id 回落全局值，fail-open）；判据语义不变（默认关→
+    不走 intent 路径），仅取值从全局 AGENT_FLAGS 改为按 user_id 的 resolve_flag 解析链。
+    """
     try:
-        from app.agent import loop as _loop
-        return bool(_loop.AGENT_FLAGS.get("proactive_outreach_v2", False))
+        from app.application.flag_service import resolve_flag
+        return await resolve_flag("proactive_outreach_v2", user_id)
     except Exception:
         return False
 
@@ -863,7 +867,7 @@ async def run_tick() -> list[str]:
             _exec_error = False
             try:
                 # B1-③：flag 开 + 主动搭话类型 → 选意图并写回 candidate（flag 关=不动，零变化）
-                if _outreach_enabled() and item.get("type") in PROACTIVE_OUTREACH_TYPES:
+                if await _outreach_enabled((item.get("candidate") or {}).get("user_id")) and item.get("type") in PROACTIVE_OUTREACH_TYPES:
                     await _annotate_outreach_plan(item, char_id, _mats_cache, _recent_cache)
                 ok = await _execute(item)
             except Exception as e:
@@ -1399,8 +1403,9 @@ async def _execute(item: dict) -> bool:
         # Phase E（2026-08-18）：渠道/插件主动候选走统一 Runtime（Feature Flag agent_loop_social，X5 按渠道语义改名）。
         # 开=经 app/agent/runtime.py 薄封装：build_context 注入世界认知（知识不串线），hint 不落记忆；
         # 生成失败返回 False（与旧链路失败语义一致），各平台可独立回退。
-        from app.agent import loop as _loop
-        if _loop.AGENT_FLAGS.get("agent_loop_social", False):
+        # batch G：按账号解析（缺 user_id 回落全局值，fail-open）
+        from app.application.flag_service import resolve_flag
+        if await resolve_flag("agent_loop_social", candidate.get("user_id")):
             return await _plugin_proactive_runtime(char_id, candidate, session_id, hint)
         async with async_session_factory() as db:
             char = await db.get(AICharacter, char_id)
@@ -1652,8 +1657,9 @@ async def _plugin_proactive_runtime(char_id: int, candidate: dict, session_id: i
     from app.agent import runtime as _runtime
     from app.scheduling import scheduler as engine2
     # F2（2026-08-18）：渠道/插件 hint 短回复同样复用轻量上下文 Flag（默认关=全量 build_context 零变化）
-    from app.agent import loop as _loop
-    light_context = bool(_loop.AGENT_FLAGS.get("agent_social_light_context", False))
+    # batch G：按账号解析（缺 user_id 回落全局值，fail-open）
+    from app.application.flag_service import resolve_flag
+    light_context = await resolve_flag("agent_social_light_context", candidate.get("user_id"))
     # X6（2026-09-16）：策略候选（节日/生日/纪念日等）用中性提示语，不当作「外部平台动态」；
     #   普通插件候选不带 strategy 键 → 文案逐字节不变。
     _is_strategy = bool(candidate.get("strategy"))

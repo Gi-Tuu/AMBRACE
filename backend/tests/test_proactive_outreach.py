@@ -238,7 +238,7 @@ def test_run_tick_flag_off_zero_change(monkeypatch):
         return True
 
     _patch_run_tick(monkeypatch, _execute)
-    assert arbiter._outreach_enabled() is False
+    assert asyncio.run(arbiter._outreach_enabled()) is False
     executed = asyncio.run(arbiter.run_tick())
     assert executed == ["proactive_chat(char=1)"]
     cand = captured["candidate"]
@@ -258,7 +258,7 @@ def test_run_tick_flag_on_intent_effective(monkeypatch):
             return True
 
         _patch_run_tick(monkeypatch, _execute)
-        assert arbiter._outreach_enabled() is True
+        assert asyncio.run(arbiter._outreach_enabled()) is True
         executed = asyncio.run(arbiter.run_tick())
         assert executed == ["proactive_chat(char=1)"]
         cand = captured["candidate"]

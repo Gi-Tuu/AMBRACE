@@ -39,6 +39,46 @@ def _has_after_generate_hook() -> bool:
     return False
 
 
+# 宿主 before_generate 拿不到 caller 的告警去重（与 legacy._warned_inject_no_caller 同法，防 hot path 刷屏）
+_warned_before_generate_no_caller: set[str] = set()
+
+
+def _warn_before_generate_no_caller_once() -> None:
+    """生成前钩子缺 user_id → 不向插件分发 before_generate；每个进程只告警一次（不静默丢分发）。"""
+    if "before_generate" in _warned_before_generate_no_caller:
+        return
+    _warned_before_generate_no_caller.add("before_generate")
+    _logger.warning(
+        "宿主 before_generate 拿不到调用者（state 无 user_id）→ 不向插件分发（fail-closed，"
+        "不再兜底成 1 号账号）；若属误伤请修上游 state 透传，勿在此补默认值"
+    )
+
+
+async def _dispatch_before_generate(state: dict) -> None:
+    """插件 before_generate 分发（A2-M0 收尾 · 派单 F）。
+
+    与 legacy 的 context_inject 守卫同构：旧写法 ``state.get("user_id", 1)`` 会把「拿不到调用者」
+    的这一轮冒充 1 号账号——插件按 user_id 读写自己的数据会串号，runtime scope 开时可见性集也取错。
+    无 caller（键缺失或 None）= 无法判定归属 = 不分发（fail-closed），异常由调用方 try 隔离，绝不打挂主链路。
+    """
+    _gen_uid = state.get("user_id")
+    if not _gen_uid:
+        _warn_before_generate_no_caller_once()
+        return
+    from app.plugins.registry import run_hook
+    await run_hook("before_generate", {
+        "user_id": _gen_uid,
+        "character_id": state.get("character_id"),
+        "session_id": state.get("session_id"),
+        "user_message": state.get("user_message", ""),
+        "context_messages": state["context_messages"],
+    },
+        # A2 M4：显式带调用者（ctx 已有 user_id）→ flag 开时只分发给本账号可见插件
+        user_id=_gen_uid,
+        callsite="agent/nodes.py:before_generate",
+    )
+
+
 async def retrieve_memories(state: AgentState) -> AgentState:
     """检索相关记忆（向量检索 + 关键词）；命中即视为一次复习（艾宾浩斯强化，24h 防抖）"""
     from app.memory import search_memories
@@ -267,20 +307,9 @@ async def generate_response(state: AgentState) -> AgentState:
     from app.agent.llm_client import get_user_llm_config
     user_cfg = await get_user_llm_config(state.get("user_id"))
 
-    # 插件系统：before_generate（生成前可追加上下文/改写消息；异常隔离）
+    # 插件系统：before_generate（生成前可追加上下文/改写消息；异常隔离；缺 caller fail-closed 不分发）
     try:
-        from app.plugins.registry import run_hook
-        await run_hook("before_generate", {
-            "user_id": state.get("user_id", 1),
-            "character_id": state.get("character_id"),
-            "session_id": state.get("session_id"),
-            "user_message": state.get("user_message", ""),
-            "context_messages": state["context_messages"],
-        },
-            # A2 M4：显式带调用者 → flag 开时只分发给本账号可见插件
-            user_id=state.get("user_id", 1),
-            callsite="agent/nodes.py:before_generate",
-        )
+        await _dispatch_before_generate(state)
     except Exception:
         pass
 

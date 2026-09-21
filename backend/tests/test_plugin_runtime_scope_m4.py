@@ -651,3 +651,90 @@ def test_同步hook线程池内仍可见插件身份(monkeypatch):
     _install(monkeypatch, {BUILTIN: _spec(source="builtin", hooks={"context_inject": [_sync_hook]})})
     asyncio.run(registry.run_hook("context_inject", {}))
     assert seen == [BUILTIN]
+
+
+# ================================================================ 9) 派单 F：before_generate 缺 caller fail-closed
+
+def _bg_plugin(name: str, sink: list):
+    """假插件：before_generate hook 记录 (插件名, ctx 里的 user_id)，并往 context_messages 追加标记块。"""
+    async def _hook(ctx):
+        sink.append((name, ctx.get("user_id")))
+        ctx["context_messages"].append({"role": "system", "content": f"@@{name}@@"})
+    return _hook
+
+
+def _dispatch(state: dict):
+    import app.agent.nodes as nodes_mod
+    return asyncio.run(nodes_mod._dispatch_before_generate(state))
+
+
+def _mk_state(uid_default=True):
+    msgs = [{"role": "user", "content": "hi"}]
+    st = {
+        "user_id": ROOT_UID, "character_id": CHAR_MINE, "session_id": 1,
+        "user_message": "hi", "context_messages": msgs,
+    }
+    if not uid_default:
+        st.pop("user_id")  # 模拟宿主 state 根本没有 user_id（键缺失）
+    return st
+
+
+def test_before_generate_有caller_逐字节分发原样user_id(monkeypatch):
+    """有真实 caller：行为与改前一致——run_hook 收到原始 user_id，非内置插件照常收到（flag 关 = 全量）。
+
+    旧写法 state.get(\"user_id\", 1) 在有 caller 时同样返回真实 uid，故本用例锁定「有 caller 零行为变化」。
+    """
+    import app.agent.nodes as nodes_mod
+    nodes_mod._warned_before_generate_no_caller.clear()
+    _set_flag(monkeypatch, False)
+    calls: list = []
+    _install(monkeypatch, {
+        BUILTIN: _spec(source="builtin", hooks={"before_generate": [_bg_plugin(BUILTIN, calls)]}),
+        MINE: _spec(owner_user_id=ROOT_UID, owner_tenant_id=ROOT_UID,
+                    hooks={"before_generate": [_bg_plugin(MINE, calls)]}),
+    })
+    st = _mk_state(uid_default=True)
+    _dispatch(st)
+    assert calls == [(BUILTIN, ROOT_UID), (MINE, ROOT_UID)], \
+        "有 caller 时两插件都应收到分发、且 user_id 原样=真实 caller（不得变 1）"
+    assert any(f"@@{MINE}@@" in m["content"] for m in st["context_messages"]), "插件追加块应进上下文"
+    assert not nodes_mod._warned_before_generate_no_caller, "有 caller 不应告警"
+    nodes_mod._warned_before_generate_no_caller.clear()
+
+
+def test_before_generate_缺caller不分发_fail_closed(monkeypatch):
+    """缺 caller（键缺失）：不向任何插件分发 before_generate（不再臆造成 1 号账号）+ 告警一次。"""
+    import app.agent.nodes as nodes_mod
+    nodes_mod._warned_before_generate_no_caller.clear()
+    _set_flag(monkeypatch, False)  # 即便 flag 关（本会全量分发），守卫也应在缺 caller 时短路
+    calls: list = []
+    _install(monkeypatch, {
+        BUILTIN: _spec(source="builtin", hooks={"before_generate": [_bg_plugin(BUILTIN, calls)]}),
+        MINE: _spec(owner_user_id=ROOT_UID, owner_tenant_id=ROOT_UID,
+                    hooks={"before_generate": [_bg_plugin(MINE, calls)]}),
+    })
+    st = _mk_state(uid_default=False)
+    _dispatch(st)
+    assert calls == [], "缺 caller 仍分发 hook（user_id 被兜底成了 1 号账号）"
+    assert not any(f"@@{MINE}@@" in m["content"] for m in st["context_messages"]), "缺 caller 时插件块不得进上下文"
+    assert nodes_mod._warned_before_generate_no_caller, "缺 caller 应告警一次（不静默丢分发）"
+    # 不注入 ≠ 崩：宿主 user 消息仍在
+    assert st["context_messages"][-1]["role"] == "user"
+    nodes_mod._warned_before_generate_no_caller.clear()
+
+
+def test_before_generate_user_id为None同样fail_closed(monkeypatch):
+    """键存在但值为 None（runtime 缺 caller 时 state 的真实形态）→ 同样不分发。"""
+    import app.agent.nodes as nodes_mod
+    nodes_mod._warned_before_generate_no_caller.clear()
+    _set_flag(monkeypatch, False)
+    calls: list = []
+    _install(monkeypatch, {
+        MINE: _spec(owner_user_id=ROOT_UID, owner_tenant_id=ROOT_UID,
+                    hooks={"before_generate": [_bg_plugin(MINE, calls)]}),
+    })
+    st = _mk_state(uid_default=True)
+    st["user_id"] = None
+    _dispatch(st)
+    assert calls == [], "user_id=None 不得臆造成 1 号账号后分发"
+    nodes_mod._warned_before_generate_no_caller.clear()

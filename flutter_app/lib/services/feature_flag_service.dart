@@ -51,11 +51,29 @@ class FeatureFlagService extends ChangeNotifier {
     'weave_3d': true,
   };
 
-  final Map<String, ({bool enabled, String source, String? type, num? value, FlagMetaInfo? meta, String? scope})>
-      _flags = {};
+  final Map<
+      String,
+      ({
+        bool enabled,
+        String source,
+        String? type,
+        num? value,
+        FlagMetaInfo? meta,
+        String? scope,
+        bool? userEnabled
+      })> _flags = {};
 
-  /// 读取某 flag：默认 false（未加载/未知 key 均视为关）。
-  bool isEnabled(String key) => _flags[key]?.enabled ?? (_knownDefaults[key] ?? false);
+  /// 读取某 flag 的**生效值**（A5 账号独立 · 2026-09-21 客户端折叠批）：user-scoped 键有账号覆盖时取
+  /// `user_enabled`，否则取全局值；非用户级键 / 老后端未下发 scope 或 user_enabled 时与改动前逐字节一致。
+  bool isEnabled(String key) {
+    final e = _flags[key];
+    if (e == null) return _knownDefaults[key] ?? false;
+    if (e.scope == 'user' && e.userEnabled != null) return e.userEnabled!;
+    return e.enabled;
+  }
+
+  /// 全局值（服务器级现值）：服务器级键的唯一取值来源，也是用户级键无覆盖时的回落值。
+  bool globalEnabledOf(String key) => _flags[key]?.enabled ?? (_knownDefaults[key] ?? false);
 
   /// flag 来源（db=被 DB 覆盖 / default=硬编码默认），未加载时用默认值。
   String sourceOf(String key) => _flags[key]?.source ?? 'default';
@@ -77,6 +95,9 @@ class FeatureFlagService extends ChangeNotifier {
 
   /// 是否按账号生效（由后端 scope=='user' 推导）；false = 服务器级（改动影响本服务器所有账号）。
   bool isUserScoped(String key) => _flags[key]?.scope == 'user';
+
+  /// 用户级覆盖值（仅 user-scoped 旗标有意义）：true=用户开启、false=用户关闭、null=未覆盖（回落全局）。
+  bool? userEnabledOf(String key) => _flags[key]?.userEnabled;
 
   /// 后端下发的所有常用开关 key（visible=true），按元数据的 order 升序；为空表示无后端数据。
   List<String> get visibleKeys {
@@ -102,6 +123,7 @@ class FeatureFlagService extends ChangeNotifier {
             value: f['value'] as num?,
             meta: _parseMeta(f['meta']),
             scope: f['scope'] as String?,
+            userEnabled: f['user_enabled'] as bool?,
           );
         }
       }
@@ -123,6 +145,7 @@ class FeatureFlagService extends ChangeNotifier {
       value: prevEntry?.value,
       meta: prevEntry?.meta,
       scope: prevEntry?.scope,
+      userEnabled: prevEntry?.userEnabled,
     );
     notifyListeners();
     try {
@@ -136,6 +159,7 @@ class FeatureFlagService extends ChangeNotifier {
         value: prevEntry?.value,
         meta: prevEntry?.meta,
         scope: prevEntry?.scope,
+        userEnabled: prevEntry?.userEnabled,
       );
       notifyListeners();
       return false;
@@ -146,9 +170,9 @@ class FeatureFlagService extends ChangeNotifier {
   /// 供 widget 测试固定某 flag 的取值（如织网 3D 强制关闭以测 2.5D 画布）。
   @visibleForTesting
   void debugSetLocal(String key, bool enabled,
-      {String? type, num? value, FlagMetaInfo? meta, String? scope}) {
+      {String? type, num? value, FlagMetaInfo? meta, String? scope, bool? userEnabled}) {
     _flags[key] =
-        (enabled: enabled, source: 'test', type: type, value: value, meta: meta, scope: scope);
+        (enabled: enabled, source: 'test', type: type, value: value, meta: meta, scope: scope, userEnabled: userEnabled);
     notifyListeners();
   }
 

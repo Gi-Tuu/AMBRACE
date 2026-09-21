@@ -391,8 +391,8 @@ async def _generate_replies(db: AsyncSession, group_id: int, user_content: str, 
     # 开=逐角色 build_context 注入世界认知（知识不串线：角色只知道自己记忆+群里公开信息），
     # 经 app/agent/runtime.py 薄封装生成；异常回退旧链路兜底。
     try:
-        from app.agent import loop as _loop
-        if _loop.AGENT_FLAGS.get("agent_loop_group_chat", False):
+        from app.application.flag_service import resolve_flag
+        if await resolve_flag("agent_loop_group_chat", user_id):
             return await _generate_replies_runtime(
                 db, group_id, user_content, user_name, user_id,
                 chars=chars, char_map=char_map,
@@ -513,8 +513,9 @@ async def _generate_replies_runtime(
     from app.agent import runtime as _runtime
     # F1（2026-08-18）：群聊轻量上下文由 Feature Flag agent_social_light_context 控制（默认关=全量 build_context 零变化；
     # 灰度开 True 重启生效，回退改 False 重启；与 agent_loop_group_chat 正交——后者管走不走 Runtime）
-    from app.agent import loop as _loop
-    light_context = bool(_loop.AGENT_FLAGS.get("agent_social_light_context", False))
+    # batch G：按账号解析（缺 user_id 回落全局值，fail-open）
+    from app.application.flag_service import resolve_flag
+    light_context = await resolve_flag("agent_social_light_context", user_id)
 
     # #72 PR-C P2（2026-09-15）：群共享记忆注入公开上下文——所有角色看到同一份群里确认发生过的
     # FACT。受两级闸 group_cognition_enabled_for（关=不取不注入，与现状逐字节一致）；异常静默不阻塞主回复。

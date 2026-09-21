@@ -98,12 +98,12 @@ def test_group_order_stable_and_matches_app():
 
 
 def test_scope_matches_user_scoped_keys():
-    '''④ scope 由 USER_SCOPED_FLAG_KEYS 推导：user 5 键，其余 server。'''
+    '''④ scope 由 USER_SCOPED_FLAG_KEYS 推导：user 10 键，其余 server。'''
     items = {i['key']: i for g in catalog_for(list(AGENT_FLAGS), 'zh') for i in g['items']}
     user_keys = {k for k, i in items.items() if i['scope'] == 'user'}
     assert user_keys == set(flag_service.USER_SCOPED_FLAG_KEYS), \
         f'scope 与 USER_SCOPED_FLAG_KEYS 不一致：{user_keys ^ set(flag_service.USER_SCOPED_FLAG_KEYS)}'
-    assert len(user_keys) == 5, f'按账号生效的键应为 5 个，实际 {len(user_keys)}'
+    assert len(user_keys) == 10, f'按账号生效的键应为 10 个，实际 {len(user_keys)}'
     assert all(i['scope'] in ('user', 'server') for i in items.values())
 
 

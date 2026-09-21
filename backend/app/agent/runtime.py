@@ -54,7 +54,10 @@ def _build_initial_state(
     state = {
         "user_message": user_message or "",
         "character_id": character_id,
-        "user_id": user_id or 1,
+        # 派单 F（A2-M0 收尾）：不再 `or 1` 臆造 1 号账号。缺 caller 时键存在=None，
+        # 下游 section 的 state.get("user_id", 1) 读到 None（键在，默认不触发）→ 查询退化为
+        # IS NULL 空结果 = 不注入该用户数据（fail-closed）。本链仅群聊/主动/插件，外层 try 兜底崩不到主聊天。
+        "user_id": user_id,
         "session_id": session_id,
         "intent": "",
         "retrieved_memories": [],

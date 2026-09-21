@@ -6620,6 +6620,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get flagGroupOther => '其他高级开关';
 
   @override
+  String get flagUserOverrideEnabled => '已覆盖：开启';
+
+  @override
+  String get flagUserOverrideDisabled => '已覆盖：关闭';
+
+  @override
+  String get flagUserOverrideNone => '未覆盖（回落全局）';
+
+  @override
   String get flagAgentLoopChatTitle => '聊天工具统一入口';
 
   @override

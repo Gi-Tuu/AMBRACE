@@ -113,4 +113,60 @@ void main() {
         reason: '缺 type/value 时应退化为 Switch');
     expect(find.text('该开关为数值型，暂不支持在 App 内热改'), findsNothing);
   });
+
+  testWidgets('用户级 key：有账号覆盖时开关取覆盖值并显示覆盖状态', (tester) async {
+    // 全局关 + 本账号覆盖开 → 生效值应为 true（A5 user_enabled 折叠），并显示一行覆盖状态
+    ApiClient().dio.httpClientAdapter = _MockFlagsAdapter([
+      {
+        'key': 'weave_3d',
+        'enabled': false,
+        'source': 'db',
+        'scope': 'user',
+        'user_enabled': true,
+      },
+    ]);
+
+    await tester.pumpWidget(ChangeNotifierProvider<SettingsProvider>(
+      create: (_) => _AdminSettingsProvider(),
+      child: MaterialApp(
+        locale: const Locale('zh'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Material(child: const FeatureFlagsScreen(showAppBar: false)),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final tile = tester.widgetList<SwitchListTile>(find.byType(SwitchListTile)).first;
+    expect(tile.value, isTrue, reason: '生效值应取账号覆盖 true，而不是全局 false');
+    expect(find.textContaining('已覆盖：开启'), findsOneWidget);
+  });
+
+  testWidgets('服务器级 key：忽略下发的 user_enabled，仍取全局值', (tester) async {
+    // scope=server（非用户级）时 user_enabled 必须被忽略，否则会误显成「按账号生效」
+    ApiClient().dio.httpClientAdapter = _MockFlagsAdapter([
+      {
+        'key': 'weave_3d',
+        'enabled': false,
+        'source': 'db',
+        'scope': 'server',
+        'user_enabled': true,
+      },
+    ]);
+
+    await tester.pumpWidget(ChangeNotifierProvider<SettingsProvider>(
+      create: (_) => _AdminSettingsProvider(),
+      child: MaterialApp(
+        locale: const Locale('zh'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Material(child: const FeatureFlagsScreen(showAppBar: false)),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final tile = tester.widgetList<SwitchListTile>(find.byType(SwitchListTile)).first;
+    expect(tile.value, isFalse, reason: '非用户级键必须忽略 user_enabled，取全局值 false');
+    expect(find.textContaining('已覆盖：'), findsNothing);
+  });
 }

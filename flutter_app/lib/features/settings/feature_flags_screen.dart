@@ -176,11 +176,16 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
     return FeatureFlagCatalog.metaOf(key);
   }
 
-  /// 副标题：一句话说明 +（服务器级时）一行作用范围提示（提示文案走 l10n）。
+  /// 副标题：一句话说明 + 一行作用范围提示（A5：用户级键显示账号覆盖状态、服务器级显示影响范围；文案走 l10n）。
   String _subtitle(String key, AppLocalizations l10n) {
     final base = _localizedMeta(key, l10n).short_;
-    if (FeatureFlagService.instance.isUserScoped(key)) return base;
-    return '$base\n${l10n.flagScopeServerHint}';
+    final svc = FeatureFlagService.instance;
+    if (!svc.isUserScoped(key)) return '$base\n${l10n.flagScopeServerHint}';
+    final u = svc.userEnabledOf(key);
+    final scope = u == null
+        ? l10n.flagUserOverrideNone
+        : (u ? l10n.flagUserOverrideEnabled : l10n.flagUserOverrideDisabled);
+    return '$base\n$scope';
   }
 
   @override
@@ -226,6 +231,7 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
     final visible = backendVisible.isNotEmpty
         ? backendVisible
         : _visibleKeys.where((k) => _flags.containsKey(k)).toList();
+
     // 其余内部/运维开关：收进一个默认折叠的区块（标题复用既有 l10n.flagGroupOther，不新增硬编码文案）
     // 顺序按后端目录的分组/组内序；缺后端元数据的键由 groupEntriesFromBackend 内部回落硬编码分组
     final advancedKeys = FeatureFlagCatalog
@@ -244,6 +250,8 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
               type: FeatureFlagService.instance.flagType(k),
               numValue: FeatureFlagService.instance.flagValue(k),
               serverLevel: !FeatureFlagService.instance.isUserScoped(k),
+              // A5：用户级键带上本账号覆盖值，供行内展示覆盖状态（服务器级键恒为 null，不展示）
+              userEnabled: FeatureFlagService.instance.userEnabledOf(k),
             ))
         .toList();
 
@@ -402,6 +410,8 @@ class _FlagTileData {
   final num? numValue;
   /// 服务器级（非按账号生效）：副标题下追加一行作用范围提示（A4）。
   final bool serverLevel;
+  /// 用户级覆盖值（仅 user-scoped 旗标有意义）：true=用户开启、false=用户关闭、null=未覆盖（回落全局）。
+  final bool? userEnabled;
   const _FlagTileData({
     required this.rawKey,
     required this.meta,
@@ -410,6 +420,7 @@ class _FlagTileData {
     this.type,
     this.numValue,
     this.serverLevel = false,
+    this.userEnabled,
   });
 }
 
@@ -447,6 +458,17 @@ class _FlagTileState extends State<_FlagTile> {
         (widget.data.type != null && widget.data.type != 'bool') ||
         widget.data.numValue != null;
 
+    // 用户级覆盖状态文案
+    String? userOverrideText;
+    if (widget.data.userEnabled != null) {
+      userOverrideText = widget.data.userEnabled!
+          ? l10n.flagUserOverrideEnabled
+          : l10n.flagUserOverrideDisabled;
+    } else if (widget.data.userEnabled == null && widget.data.serverLevel == false) {
+      // user-scoped 但无覆盖行
+      userOverrideText = l10n.flagUserOverrideNone;
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
@@ -474,6 +496,15 @@ class _FlagTileState extends State<_FlagTile> {
                     child: Text(
                       l10n.flagScopeServerHint,
                       style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                    ),
+                  ),
+                // 用户级覆盖状态
+                if (userOverrideText != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      userOverrideText,
+                      style: TextStyle(fontSize: 11, color: scheme.primary),
                     ),
                   ),
                 if (isNumeric)
