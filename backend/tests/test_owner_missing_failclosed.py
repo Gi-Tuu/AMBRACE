@@ -24,7 +24,7 @@ feed 查不到、generate_comments_for_moment 又要求 owner）⇒ 唯一正确
 """
 import asyncio
 import warnings
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import func, select
@@ -32,6 +32,7 @@ from sqlalchemy.exc import SAWarning
 
 from _dbclone import clone_engine, make_session_factory
 
+from app.utils.timeutil import app_local_now
 from app.models.character import AICharacter
 from app.models.life import AIDiary, AIMoment
 from app.models.memory import Memory
@@ -216,16 +217,22 @@ def test_generate_diary_skips_ownerless_character(c1_db, monkeypatch):
 
     monkeypatch.setattr(dg, "chat_completion", _fake_llm)
 
-    assert asyncio.run(dg.generate_diary_for_character(CHAR_OWNERLESS)) is None
+    # 日记日期必须用**北京日期**：get_today_chat_context 的窗口是「北京 0 点 = UTC 前一天 16 点」起算，
+    # 而 CI runner 的进程时区是 UTC —— 在 UTC 16:00~24:00（北京 00:00~08:00）用 date.today() 会取到
+    # 「昨天」，种子消息（created_at=UTC now）就落在窗口外 → 生成直接返回 None。
+    # 2026-09-22 00:53（北京）CI 实测：3081 绿 / 唯一红就是这条（本机时区是北京，所以一直没显形）。
+    target_date = app_local_now().date()
+
+    assert asyncio.run(dg.generate_diary_for_character(CHAR_OWNERLESS, target_date)) is None
     assert _all(c1_db, AIDiary, AIDiary.character_id == CHAR_OWNERLESS) == []
     assert _count(c1_db, AIDiary) == 0, "无归属角色的日记仍落库"
     assert _count(c1_db, Memory, Memory.sub_type == "diary") == 0, "无归属角色的日记记忆写进了别人的库"
     assert llm_calls == [], "无归属角色仍在生成日记（守卫必须在 LLM 之前）"
 
-    out = asyncio.run(dg.generate_diary_for_character(CHAR_OK))
+    out = asyncio.run(dg.generate_diary_for_character(CHAR_OK, target_date))
     assert out is not None, "归属正常的角色日记生不出来 → 反证会是空断言"
     assert out["content"] == DIARY_TEXT
-    assert out["diary_date"] == date.today().strftime("%Y-%m-%d")
+    assert out["diary_date"] == target_date.strftime("%Y-%m-%d")
     rows = _all(c1_db, AIDiary, AIDiary.character_id == CHAR_OK)
     assert len(rows) == 1
     mems = _all(c1_db, Memory, Memory.sub_type == "diary")
