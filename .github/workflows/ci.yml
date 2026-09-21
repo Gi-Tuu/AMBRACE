@@ -194,12 +194,13 @@ jobs:
         # --basetemp 指到 job 工作区内：默认临时目录在会话清理时会踩 pytest-current junction
         # 报「拒绝访问」，退出码变 2 导致 durations 报告拿不到；-p no:cacheprovider 保持原样
         # （Windows 上跨 job 复用缓存目录反而会串味）。
-        # Windows 档不开 xdist（2026-09-21 21:5x 回退 -n 2）：本机同构复现证据——同一命令 -n 2（默认 load
-        # 分配）连续 4 次全红（每次固定 10 例，全是 tests/test_proactive_strategy_{pack,x6b,x6c} 的「插件策略包
-        # 未加载 → PluginSource.collect 返回 []」），-n 1（单进程）3/3 全绿、--dist loadfile 不稳（1 红 2 绿）
-        # ⇒ 属 Windows 上 xdist 的跨文件串味/顺序污染，与本批改动无关（Linux 三档 -n auto 全绿）。
-        # 先关并行保门禁可信（本档 ~95s → ~110s），根因另立待办（plans §六）。
-        run: pytest -q -p no:cacheprovider -m "not slow" --durations=20 --basetemp=.pytest-tmp
+        # -n 2（2026-09-21 恢复；当天 21:5x 曾临时回退，根因已修）：那次 10 例红（tests/test_proactive_strategy_*
+        # 的「插件策略包未加载」）根因＝**插件加载失败留下空占位条目毒化注册表**——coin_flip 二次加载时
+        # register_game_type 抛 ValueError → load_plugin_dir 不清占位 → list_plugins() 排序缺 "name" 抛
+        # KeyError('name') → claimed_categories() 静默成空集（包看起来没接管）。已修三处：①失败加载清占位；
+        # ②list_plugins 跳过无 info 条目；③同来源插件重载 = 覆盖（builtin 重复仍抛错）；回归
+        # tests/test_plugin_load_failure_hygiene.py。修复后本命令本机 2/2 全绿（1666 passed），故恢复 -n 2。
+        run: pytest -q -p no:cacheprovider -n 2 -m "not slow" --durations=20 --basetemp=.pytest-tmp
 
   # Windows 全量档：只在 nightly 或手动勾选 full 时跑，把 3.12 与 slow 用例一起覆盖。
   backend-windows-full:
@@ -240,10 +241,9 @@ jobs:
           SKIP_MODEL_DOWNLOAD: "1"
           PYTHONIOENCODING: "utf-8"
         # 全量档不加 -m 过滤，slow 用例与 3.12 wheel 兼容性一并覆盖。
-        # 与快测档同口径：本档也不开 xdist（2026-09-21 21:5x 回退 -n 2）。理由同上——Windows 上 xdist 会让
-        # 插件策略包那族稳定串味（10 例），而本档含 slow 建库用例、IO 更敏感，nightly 红点会掩盖真问题；
-        # 根因定位后再考虑恢复并行（plans §六 有据可查）。
-        run: pytest -q -p no:cacheprovider --durations=20 --basetemp=.pytest-tmp
+        # -n 2（2026-09-21 恢复，同快测档）：临时回退的根因＝插件加载失败留空占位毒化注册表，已修（见上）。
+        # 本档含 slow 建库用例、IO 更敏感，恢复后留意 nightly 稳定性。
+        run: pytest -q -p no:cacheprovider -n 2 --durations=20 --basetemp=.pytest-tmp
 
   frontend:
     name: Flutter (analyze + test)

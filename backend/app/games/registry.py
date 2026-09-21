@@ -27,7 +27,15 @@ def register_game_type(game_type: str, engine_cls: type[GameEngine], meta: dict,
     if not isinstance(game_type, str) or not _GAME_TYPE_RE.match(game_type or ""):
         raise ValueError(f"非法 game_type（需 2-24 位小写字母/数字/下划线）: {game_type!r}")
     if game_type in _REGISTRY:
-        raise ValueError(f"game_type already registered: {game_type}")
+        prev_src = str(_GAME_SOURCE.get(game_type) or "builtin")
+        new_src = str(source or "builtin")
+        # 2026-09-21（xdist 串味根因修复之二）：**同来源的插件重载** = 覆盖，不再抛错（与 strategy
+        # 注册表「同一插件重复登记（重载）= 覆盖」同口径）；其余情况仍抛错——含 builtin 重复注册
+        # （内核重复注册内置游戏是真 bug，必须继续暴露）与跨来源抢占同名 game_type。
+        # 历史 bug：重载示例插件 coin_flip 时这里抛 ValueError → load_plugin_dir 留下空占位条目 →
+        # plugins 注册表被毒化（list_plugins KeyError('name')）→ 插件策略包那族用例在 xdist 下串味变红。
+        if prev_src != new_src or new_src == "builtin":
+            raise ValueError(f"game_type already registered: {game_type}")
     if not (isinstance(engine_cls, type) and issubclass(engine_cls, GameEngine)):
         raise ValueError(f"engine_cls 必须是 GameEngine 子类: {engine_cls!r}")
     meta = dict(meta or {})

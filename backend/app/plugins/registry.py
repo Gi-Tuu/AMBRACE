@@ -84,6 +84,22 @@ def resolve_plugin_dir(name: str) -> Path | None:
     return None
 
 
+def _discard_partial_load(name: str | None) -> None:
+    """清掉加载中断留下的占位条目（load_plugin_dir 失败分支调用）。
+
+    2026-09-21：占位条目（``info={}``）没有 "name" 字段，会让后续 ``list_plugins()``
+    在 ``out.sort(key=lambda x: x["name"])`` 抛 KeyError —— 进而让 claimed_categories()
+    静默返回空集（插件策略包看起来没接管）、插件列表/市场页整体失败。
+    """
+    if not name:
+        return
+    entry = _loaded.get(name)
+    if entry and not (entry.get("info") or {}).get("name"):
+        _loaded.pop(name, None)
+        _enabled.pop(name, None)
+        sys.modules.pop(f"ai_plugin_{name}", None)
+
+
 def load_plugin_dir(path: Path) -> dict | None:
     """加载单个插件目录，返回 info dict；失败返回 None"""
     try:
@@ -152,6 +168,10 @@ def load_plugin_dir(path: Path) -> dict | None:
         return info
     except Exception as e:
         _logger.warning("插件 %s 加载失败: %s", path.name, e)
+        # 2026-09-21 修复（xdist 串味根因）：加载失败**不得留下半成品条目**——旧实现直接 return None，
+        # 占位条目（info={}）留在 _loaded 里没有 "name"，之后任何 list_plugins() 都会 KeyError('name')，
+        # 连锁把 claimed_categories() 打成空集 + 插件列表整体失败。
+        _discard_partial_load(locals().get("name"))
         return None
 
 
@@ -1015,7 +1035,12 @@ def list_plugins(viewer_user_id: int | None = None, *,
     _scope_on = viewer_user_id is not None and plugin_user_scope_enabled()
     out = []
     for name, entry in _loaded.items():
-        info = dict(entry["info"])
+        _raw_info = entry.get("info") or {}
+        if not _raw_info.get("name"):
+            # 加载中断残留的占位条目：跳过并告警，绝不让它拖垮整份列表（防御纵深，见 _discard_partial_load）
+            _logger.warning("插件 %s 注册表条目缺失 info（加载中断残留），已跳过", name)
+            continue
+        info = dict(_raw_info)
         info["enabled"] = bool(_enabled.get(name, False))
         saved = _db_config.get(name, {})
         merged = dict(info.get("config", {}))
