@@ -14,6 +14,7 @@ from app.db.database import async_session_factory
 from app.models.device import CheckInRequest, PhoneSnapshot
 from app.application.upload_service import UPLOAD_DIR, save_image
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc
 
 router = APIRouter(prefix="/api/v1/phone", tags=["Phone Perception"])
 _logger = get_logger("api.phone")
@@ -72,10 +73,8 @@ async def create_perception(
         # 命中即不写库（补传/重复采集不再把有效数据挤出 MAX_KEEP）。只按现有字段查，
         # 不加列不加迁移；client_key 仅进日志。带图快照不参与去重（content 可能同为空但图不同）。
         if text and not image_desc:
-            since = (
-                datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
-                - DEDUP_WINDOW
-            )
+            # 用项目统一入口（test_time_discipline 棘轮：禁止新增裸 aware 写法，2026-09-22 CI 抓到）
+            since = now_naive_utc() - DEDUP_WINDOW
             dup_id = (
                 await db.execute(
                     select(PhoneSnapshot.id)
