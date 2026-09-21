@@ -20,6 +20,8 @@ _logger = get_logger("api.phone")
 
 MAX_KEEP = 20          # 每用户最多保留的快照条数
 MAX_CONTENT = 2000     # 文本快照上限
+# 同内容去重窗口（2026-09-21 P2）：补传/重复采集不再写库，也不把有效数据挤出 MAX_KEEP
+DEDUP_WINDOW = timedelta(minutes=5)
 
 
 def _snapshot_to_dict(s: PhoneSnapshot) -> dict:
@@ -37,11 +39,13 @@ def _snapshot_to_dict(s: PhoneSnapshot) -> dict:
 async def create_perception(
     source: str = Form(""),
     content: str = Form(""),
+    client_key: str = Form(""),
     image: UploadFile | None = File(None),
     user_id: int = Depends(get_current_user_id),
     lang: str = Header(default="zh"),
 ):
-    """写入一条手机感知快照。source: accessibility/clipboard/media；content 为文本；image 可选（本地 VLM/OCR 转文字）。"""
+    """写入一条手机感知快照。source: accessibility/clipboard/media；content 为文本；image 可选（本地 VLM/OCR 转文字）。
+    client_key 为客户端确定性指纹（P2 补传用，仅进日志，不落库）。"""
     source = (source or "accessibility").strip()[:20]
     if source not in {"accessibility", "clipboard", "media", "media_video", "media_audio", "media_document", "notification", "action_result", "usage_stats", "shizuku_system"}:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "source_unsupported"))
@@ -64,6 +68,33 @@ async def create_perception(
         raise HTTPException(status_code=400, detail=tr_lang(lang, "content_empty_phone"))
 
     async with async_session_factory() as db:
+        # P2（盘点 S3 幂等）：写库前查一次「同用户 + 同 source + 同 content + 最近 5 分钟」，
+        # 命中即不写库（补传/重复采集不再把有效数据挤出 MAX_KEEP）。只按现有字段查，
+        # 不加列不加迁移；client_key 仅进日志。带图快照不参与去重（content 可能同为空但图不同）。
+        if text and not image_desc:
+            since = (
+                datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+                - DEDUP_WINDOW
+            )
+            dup_id = (
+                await db.execute(
+                    select(PhoneSnapshot.id)
+                    .where(
+                        PhoneSnapshot.user_id == user_id,
+                        PhoneSnapshot.source == source,
+                        PhoneSnapshot.content == text,
+                        PhoneSnapshot.created_at >= since,
+                    )
+                    .limit(1)
+                )
+            ).scalars().first()
+            if dup_id is not None:
+                _logger.info(
+                    "Perception deduped: user=%s source=%s existing=%s client_key=%s",
+                    user_id, source, dup_id, (client_key or "")[:64],
+                )
+                return {"status": "ok", "deduped": True}
+
         snap = PhoneSnapshot(
             user_id=user_id,
             source=source,

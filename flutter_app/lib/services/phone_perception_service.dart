@@ -5,6 +5,8 @@ import "package:flutter/services.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "api_client.dart";
 import "shizuku_service.dart";
+import "channel_status.dart";
+import "perception_outbox.dart";
 import "../utils/app_lang.dart";
 
 /// 工作流触发词（2026-08-14 P1：帮我执行/跑一下 XX）
@@ -64,8 +66,14 @@ class PhonePerceptionService {
     if (!Platform.isAndroid) return {};
     try {
       final r = await _channel.invokeMethod("getScreenText") as Map? ?? {};
+      await ChannelStatusTracker.recordOk(ChannelStatusTracker.kAccessibility);
       return r;
-    } catch (_) {
+    } catch (e) {
+      await ChannelStatusTracker.recordFail(
+        ChannelStatusTracker.kAccessibility,
+        ChannelStatusTracker.classifyException(e),
+        detail: "$e",
+      );
       return {};
     }
   }
@@ -151,16 +159,31 @@ class PhonePerceptionService {
   }
 
   /// 上传任意文本快照到服务器（source 需在服务端白名单内）
+  ///
+  /// P2（盘点 S3）：先落本地队列再直传——断网/弱网时数据留在队列，下一轮 `flush()` 补传；
+  /// 直传成功后 `markSent` 摘掉该条。返回值语义不变（成功 true / 失败 false）。
   static Future<bool> uploadSnapshot(String content, String source) async {
     if (content.trim().isEmpty) return false;
+    final clientKey = PerceptionOutbox.clientKeyOf(source, content);
+    await PerceptionOutbox.enqueue(source: source, content: content);
     try {
       final form = FormData.fromMap({
         "source": source,
         "content": content,
+        "client_key": clientKey,
       });
       await ApiClient().dio.post("/api/v1/phone/perception", data: form);
+      await PerceptionOutbox.markSent(clientKey);
+      await ChannelStatusTracker.recordOk(ChannelStatusTracker.kPerceptionUpload);
       return true;
-    } catch (_) {
+    } catch (e) {
+      // 失败：留在队列里等补传（不落第二份——入队时已按 clientKey 去重）
+      await ChannelStatusTracker.recordFail(
+        ChannelStatusTracker.kPerceptionUpload,
+        ChannelCode.networkError,
+        detail: "$e",
+        retriable: true,
+      );
       return false;
     }
   }
@@ -169,6 +192,10 @@ class PhonePerceptionService {
   static Future<bool> uploadShizukuSnapshotIfAvailable() async {
     try {
       final r = await ShizukuService.getSystemSnapshot();
+      // P1：全步失败（ok!=true）的空快照不再当有效数据上传（盘点 S2 根因）。
+      // 这里只拦截、不记账：失败已由 ShizukuService.getSystemSnapshot() 记过一次，
+      // 再记一次会让该通道 failCount 每失败一次 +2。
+      if (r["ok"] != true) return false;
       final data = Map<String, dynamic>.from(r["data"] as Map? ?? {});
       final text = ShizukuService.formatSnapshot(data, isEn: await appLang() == "en");
       if (text.isEmpty) return false;
@@ -252,8 +279,14 @@ class PhonePerceptionService {
     if (!Platform.isAndroid) return [];
     try {
       final r = await _channel.invokeMethod("getNotifications") as List? ?? [];
+      await ChannelStatusTracker.recordOk(ChannelStatusTracker.kNotification);
       return r.cast<Map<dynamic, dynamic>>().map((m) => Map<String, dynamic>.from(m)).toList();
-    } catch (_) {
+    } catch (e) {
+      await ChannelStatusTracker.recordFail(
+        ChannelStatusTracker.kNotification,
+        ChannelStatusTracker.classifyException(e),
+        detail: "$e",
+      );
       return [];
     }
   }
@@ -339,8 +372,14 @@ class PhonePerceptionService {
     if (!Platform.isAndroid) return {};
     try {
       final r = await _channel.invokeMethod('getServiceHealth') as Map? ?? {};
+      await ChannelStatusTracker.recordOk(ChannelStatusTracker.kServiceHealth);
       return Map<String, dynamic>.from(r);
-    } catch (_) {
+    } catch (e) {
+      await ChannelStatusTracker.recordFail(
+        ChannelStatusTracker.kServiceHealth,
+        ChannelStatusTracker.classifyException(e),
+        detail: "$e",
+      );
       return {};
     }
   }
@@ -396,6 +435,8 @@ class PhonePerceptionService {
   static Future<Map<String, dynamic>> collectAndUpload() async {
     final prefs = await SharedPreferences.getInstance();
     if (!(prefs.getBool(enabledKey) ?? false)) return {"status": "disabled"};
+    // P2：每轮开头先补传本地队列（感知总开关关着时不补，避免关闭后仍偷偷上传）
+    await PerceptionOutbox.flush();
     final screenOn = prefs.getBool(screenKey) ?? false;
     final clipOn = prefs.getBool(clipboardKey) ?? false;
     final mediaOn = prefs.getBool(mediaKey) ?? false;
@@ -458,14 +499,36 @@ class PhonePerceptionService {
 
     final dio = ApiClient().dio;
     var okCount = 0;
+    var failCount = 0;
     for (final u in uploads) {
+      final source = u["source"] ?? "";
+      final content = u["content"] ?? "";
+      final clientKey = PerceptionOutbox.clientKeyOf(source, content);
+      // P2：每条也「先落地再发送」，失败保留在队列里等下一轮 flush（同内容按 clientKey 去重）
+      await PerceptionOutbox.enqueue(source: source, content: content);
       try {
         await dio.post(
           "/api/v1/phone/perception",
-          data: FormData.fromMap({"source": u["source"], "content": u["content"]}),
+          data: FormData.fromMap({
+            "source": source,
+            "content": content,
+            "client_key": clientKey,
+          }),
         );
+        await PerceptionOutbox.markSent(clientKey);
         okCount++;
-      } catch (_) {}
+      } catch (_) {
+        failCount++;
+      }
+    }
+    if (failCount > 0) {
+      // 只按失败条数记一次，不为每条单独记账
+      await ChannelStatusTracker.recordFail(
+        ChannelStatusTracker.kPerceptionUpload,
+        ChannelCode.networkError,
+        detail: "upload failed $failCount/${uploads.length}",
+        retriable: true,
+      );
     }
     if (okCount == 0) return {"status": "network_error"};
     final total = uploads.map((u) => u["content"]).join("\n");
@@ -510,6 +573,9 @@ class PhonePerceptionService {
   }
 
   static Future<bool> clearAll() async {
+    // P2 复核补：一键清除必须连**本地待补传队列**一起清掉，否则剪贴板/通知原文
+    // 会残留在应用目录里（服务端删了、本地还在）；队列清空与网络无关，先做。
+    await PerceptionOutbox.clear();
     try {
       final dio = ApiClient().dio;
       await dio.delete("/api/v1/phone/perception");

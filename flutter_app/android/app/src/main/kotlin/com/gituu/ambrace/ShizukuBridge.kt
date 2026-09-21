@@ -17,6 +17,27 @@ object ShizukuBridge {
     const val CHANNEL_TAG = "ShizukuBridge"
     const val REQUEST_CODE = 20260812
 
+    // === 结构化错误码（2026-09-21 P3）：Dart 侧 ChannelStatusTracker.codeFromNative 消费 ===
+    // 取值含义：serverDown / noPermission = 只能靠用户动作（不重试）；deadObject = 连接类（退避重试）；
+    // timeout = 命令卡死（不重试）；ok = 成功。
+    const val CODE_OK = "ok"
+    const val CODE_SERVER_DOWN = "serverDown"
+    const val CODE_NO_PERMISSION = "noPermission"
+    const val CODE_DEAD_OBJECT = "deadObject"
+    const val CODE_TIMEOUT = "timeout"
+
+    /** runShell 最大执行次数（1 次首发 + 最多 2 次重试） */
+    const val MAX_ATTEMPTS = 3
+
+    /** 重试退避（毫秒）：第 1 次重试前 500ms、第 2 次重试前 1500ms */
+    private val RETRY_BACKOFF_MS = longArrayOf(500L, 1500L)
+
+    // 前置检查失败提示：文案逐字保持（Dart 侧 classifyShizukuStderr 依赖这些字串做兜底分类）
+    private const val MSG_SERVER_DOWN =
+        "Shizuku 服务未运行：请打开 Shizuku 应用启动服务（或重新用无线调试启动）"
+    private const val MSG_NO_PERMISSION =
+        "未获得 Shizuku 授权：请在 Shizuku 应用中为本应用开启授权"
+
     private val executor = Executors.newSingleThreadExecutor()
 
     /** Shizuku 服务是否在运行（需先在 Shizuku app 或 ADB 启动） */
@@ -47,23 +68,33 @@ object ShizukuBridge {
     }
 
             /** 在 Shizuku 授权下执行 shell 命令（如 "pm list packages -3"），异步回调结果
-     *  前置检查服务/授权并给出可操作提示；连接异常自动重置 binder 重试一次（覆盖安装/服务重启后常见）；
-     *  超时与连接异常转成用户可读信息（2026-08-14）。 */
+     *  前置检查服务/授权并给出可操作提示；连接类失败（deadObject）按 500ms → 1500ms 退避重试，
+     *  最多共 3 次执行，且每次重试前先 pingBinder() 探活，ping 不通即按 serverDown 立即结束；
+     *  前置检查失败与超时不重试（2026-09-21 P3，取代 2026-08-14 的单次 800ms 重试）。 */
     fun runShell(command: String, timeoutMs: Long = 15000L, callback: (Map<String, Any>) -> Unit) {
         executor.execute {
-            var attempts = 0
-            while (true) {
-                attempts++
-                val out = runShellOnce(command, timeoutMs)
-                val err = (out["stderr"] as? String).orEmpty()
-                if (attempts < 2 && (err.contains("process hasn't exited") || err.contains("DeadObject"))) {
-                    // Shizuku binder 连接失效（App 更新/服务重启后常见）：稍等重试一次
-                    Thread.sleep(800)
-                    continue
+            var out = runShellOnce(command, timeoutMs)
+            var attempt = 1
+            // 只重试「连接类失败」（deadObject）：serverDown / noPermission 得靠用户动作，
+            // timeout 说明命令本身卡死，重试只会更慢 —— 两者都不进这个循环。
+            while (out["retriable"] == true && out["code"] == CODE_DEAD_OBJECT && attempt < MAX_ATTEMPTS) {
+                // 重试前先重新探活：ping 不通说明服务真没了，立即按 serverDown 结束，不再退避
+                if (!isServerRunning()) {
+                    out = mapOf(
+                        "ok" to false,
+                        "stdout" to "",
+                        "stderr" to MSG_SERVER_DOWN,
+                        "code" to CODE_SERVER_DOWN,
+                        "retriable" to false,
+                    )
+                    break
                 }
-                callback(out)
-                break
+                val backoff = RETRY_BACKOFF_MS.getOrElse(attempt - 1) { RETRY_BACKOFF_MS.last() }
+                Thread.sleep(backoff)
+                attempt++
+                out = runShellOnce(command, timeoutMs)
             }
+            callback(out)
         }
     }
 
@@ -72,11 +103,17 @@ object ShizukuBridge {
         try {
             // 前置检查：服务与授权（避免在未就绪时反射调用触发 "process hasn't exited"）
             if (!isServerRunning()) {
-                out["stderr"] = "Shizuku 服务未运行：请打开 Shizuku 应用启动服务（或重新用无线调试启动）"
+                // 服务没开：重试无意义（用户不去开就永远失败），直接回调
+                out["stderr"] = MSG_SERVER_DOWN
+                out["code"] = CODE_SERVER_DOWN
+                out["retriable"] = false
                 return out
             }
             if (!isPermissionGranted()) {
-                out["stderr"] = "未获得 Shizuku 授权：请在 Shizuku 应用中为本应用开启授权"
+                // 没授权：同样只能由用户在 Shizuku app 里授权（此处不自动弹窗 / 不跳设置页）
+                out["stderr"] = MSG_NO_PERMISSION
+                out["code"] = CODE_NO_PERMISSION
+                out["retriable"] = false
                 return out
             }
             val args = command.trim().split(Regex("\\s+")).toTypedArray()
@@ -116,27 +153,40 @@ object ShizukuBridge {
             val stdout = sbOut.toString().trim()
             val stderr = sbErr.toString().trim()
             if (!exited) {
-                // 超时未退出：命令卡死/服务异常，销毁进程并提示
+                // 超时未退出：命令卡死/服务异常，销毁进程并提示（不重试：重试只会更慢）
                 try { process.destroy() } catch (_: Exception) {}
                 out["stderr"] = if (stderr.isNotBlank()) {
                     stderr
                 } else {
                     "命令执行超时（${timeoutMs}ms），Shizuku 服务可能异常，请重启 Shizuku 后重试"
                 }
+                out["code"] = CODE_TIMEOUT
+                out["retriable"] = true
             } else {
                 out["ok"] = true
                 out["stdout"] = stdout
                 out["stderr"] = stderr
+                out["code"] = CODE_OK
+                out["retriable"] = false
             }
         } catch (e: Exception) {
             val msg = e.message ?: e.toString()
             Log.e(CHANNEL_TAG, "runShell failed cmd=" + command, e)
             // Shizuku 常见连接异常：给用户可操作的提示而非原始报错
             out["stderr"] = when {
-                msg.contains("process hasn't exited") || msg.contains("DeadObject") ->
+                msg.contains("process hasn't exited") || msg.contains("DeadObject") -> {
+                    // 连接类失败：交给 runShell 的退避重试（最多再试 2 次）
+                    out["code"] = CODE_DEAD_OBJECT
+                    out["retriable"] = true
                     "Shizuku 连接异常：请先重启 Shizuku 服务，再回到本页重试"
-                msg.contains("Permission") || msg.contains("denied") ->
+                }
+                msg.contains("Permission") || msg.contains("denied") -> {
+                    // 权限被撤：只能由用户重新授权
+                    out["code"] = CODE_NO_PERMISSION
+                    out["retriable"] = false
                     "Shizuku 权限不足：请在 Shizuku 应用中为本应用开启授权"
+                }
+                // 其余异常不猜分类：不给 code，由 Dart 侧 classifyShizukuStderr 兜底（与 P1 行为一致）
                 else -> msg
             }
         }
@@ -177,9 +227,21 @@ object ShizukuBridge {
             "android" to "getprop ro.build.version.release",
         )
 
+        // 成功步数：runShell 回调 ok==true 且 stdout 非空才算（全 0 即为“通道没取到东西”，不再谎报成功）
+        var stepsOk = 0
+
         fun next(i: Int) {
             if (i >= steps.size) {
-                callback(mapOf("ok" to true, "data" to parseSystemSnapshot(data)))
+                val ok = stepsOk > 0
+                callback(
+                    mapOf(
+                        "ok" to ok,
+                        "data" to parseSystemSnapshot(data),
+                        "steps_ok" to stepsOk,
+                        "steps_total" to steps.size,
+                        "error" to if (ok) "" else "shizuku_snapshot_all_steps_failed",
+                    )
+                )
                 return
             }
             val (key, cmd) = steps[i]
@@ -187,6 +249,7 @@ object ShizukuBridge {
                 // 超时/非零退出也保留 stdout（dumpsys 输出大，读线程可能未完成）
                 val out = (r["stdout"] as? String).orEmpty().trim()
                 if (out.isNotEmpty()) data[key] = out
+                if (r["ok"] == true && out.isNotEmpty()) stepsOk++
                 next(i + 1)
             }
         }
