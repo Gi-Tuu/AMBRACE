@@ -21,9 +21,9 @@ import os
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 import app.memory.service as memsvc
 from app.agent.loop import AGENT_FLAGS
@@ -48,19 +48,26 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture()
 def mem_db(monkeypatch, tmp_path):
-    """临时库：monkeypatch 记忆模块的 async_session_factory（_rerank/search_memories 用）。"""
-    tmp = str(tmp_path)
-    db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    """临时库（模板库克隆，见 tests/_dbclone.py）+ 种子父行：monkeypatch 记忆模块的
+    async_session_factory（_rerank/search_memories 用）。
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    _dbclone 默认开 FK（生产同款 PRAGMA）：memories.user_id/character_id 是外键，
+    而 _base_kw 固定用 user_id=1/character_id=1，故补齐这一对父行（不带其它数据）。
+    """
+    from app.models.character import AICharacter
+    from app.models.user import User
 
-    asyncio.run(_init())
+    engine = clone_engine(os.path.join(str(tmp_path), "t.db"))
+    factory = make_session_factory(engine)
+
+    async def _seed():
+        async with factory() as db:
+            db.add(User(id=1, username="mt_u1", nickname="用户"))
+            await db.commit()
+            db.add(AICharacter(id=1, user_id=1, name="角色1"))
+            await db.commit()
+
+    asyncio.run(_seed())
     monkeypatch.setattr(memsvc, "async_session_factory", factory)
     monkeypatch.setattr(memsvc, "delete_memory_vector", _noop)
     yield factory
@@ -297,22 +304,21 @@ def test_debug_volume_limits(mem_db, monkeypatch):
 
 @pytest.fixture()
 def trace_db(monkeypatch, tmp_path):
-    """临时库：种子一个角色；同时 monkeypatch characters_api.async_session_factory 供端点查询。"""
-    tmp = str(tmp_path)
-    db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    """临时库（模板库克隆，见 tests/_dbclone.py）：种子一个角色；同时 monkeypatch
+    characters_api.async_session_factory 供端点查询。
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    _dbclone 默认开 FK：ai_characters.user_id 是外键，故先提交 users 再提交角色。
+    agent_task_logs 无外键（introspection 确认），日志行不必补父行。
+    """
+    from app.models.user import User
 
-    asyncio.run(_init())
+    engine = clone_engine(os.path.join(str(tmp_path), "t.db"))
+    factory = make_session_factory(engine)
 
     async def _seed():
         async with factory() as db:
+            db.add(User(id=1, username="mt_owner", nickname="本人"))
+            await db.commit()
             db.add(AICharacter(id=7, user_id=1, name="测试", cognitive_loop_enabled=False))
             await db.commit()
 

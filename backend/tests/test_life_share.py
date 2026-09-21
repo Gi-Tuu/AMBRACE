@@ -6,12 +6,13 @@ import random
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.scheduling import life_share
 from app.models.character import CharacterState
-from app.models.character import ProactiveTriggerLog
+from app.models.character import AICharacter, ProactiveTriggerLog
+from app.models.user import User
 
 
 # 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
@@ -20,16 +21,19 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture
 def share_db(tmp_path):
-    tmp = str(tmp_path)
-    db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    db_path = os.path.join(str(tmp_path), "t.db")
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
     async def _init():
         import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        # 克隆库默认开 FK（生产同款 PRAGMA）：父行 users → ai_characters → character_states 逐批提交
+        async with factory() as db:
+            db.add(User(id=1, username="ls_u1", nickname="主人"))
+            await db.commit()
+        async with factory() as db:
+            db.add(AICharacter(id=101, user_id=1, name="小爱", is_active=True))
+            await db.commit()
         async with factory() as db:
             db.add(CharacterState(character_id=101, trust=80, attachment=90, fatigue=30))
             await db.commit()

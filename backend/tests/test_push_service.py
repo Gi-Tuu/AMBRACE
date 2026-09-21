@@ -8,8 +8,8 @@ import asyncio
 import os
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 import app.application.push_service as push_service
 from app.application.push.fcm_provider import FcmSendResult
@@ -21,18 +21,21 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture()
 def push_db(monkeypatch, tmp_path):
-    """临时 SQLite 文件库：patch push_service 绑定的 async_session_factory。"""
+    """临时 SQLite 文件库（模板库克隆，见 tests/_dbclone.py）：patch push_service 绑定的
+    async_session_factory。"""
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
-    engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    async def _seed_parents():
+        # _dbclone 默认开 FK（生产同款 PRAGMA）：user_device_tokens.user_id 需 users 父行先存在
+        from app.models.user import User
+        async with factory() as db:
+            db.add(User(id=1, username='push_u1', nickname='推送用户'))
+            await db.commit()
 
-    asyncio.run(_init())
+    asyncio.run(_seed_parents())
     monkeypatch.setattr(push_service, 'async_session_factory', factory)
     yield factory
     engine.sync_engine.dispose()

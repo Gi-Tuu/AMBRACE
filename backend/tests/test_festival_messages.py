@@ -8,8 +8,8 @@ import os
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.scheduling import message_generator as mg
 
@@ -18,26 +18,35 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture()
 def msg_db(monkeypatch, tmp_path):
-    '''临时库：patch async_session_factory（不触碰 backend/data）'''
+    '''临时库（模板库克隆，见 tests/_dbclone.py）：patch async_session_factory（不触碰 backend/data）'''
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
-    engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    async def _seed_parents():
+        '''节日分支失败落 ProactiveMessageLog：character_id/session_id 都是真外键，父行逐层先提交。'''
+        from app.models.character import AICharacter
+        from app.models.chat import ChatSession
+        from app.models.user import User
+        async with factory() as db:
+            db.add(User(id=1, username='fm_u1', nickname='用户'))
+            await db.commit()
+        async with factory() as db:
+            db.add(AICharacter(id=11, user_id=1, name='小阳'))
+            await db.commit()
+        async with factory() as db:
+            db.add(ChatSession(id=1, user_id=1, character_id=11, title='t'))
+            await db.commit()
 
-    asyncio.run(_init())
+    asyncio.run(_seed_parents())
     import app.db.database as db_mod
     monkeypatch.setattr(db_mod, 'async_session_factory', factory)
     # arbiter 模块级绑定（from app.db.database import async_session_factory）需单独 patch
     import app.scheduling.arbiter as arbiter_mod
     monkeypatch.setattr(arbiter_mod, 'async_session_factory', factory)
     yield factory
-    engine.sync_engine.dispose()
+    asyncio.run(engine.dispose())
 
 
 def _patch_gen(monkeypatch, result):

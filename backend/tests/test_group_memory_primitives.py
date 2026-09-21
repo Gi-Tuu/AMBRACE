@@ -14,10 +14,9 @@ import os
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 
 import app.memory.group_memory as gm
+from _dbclone import clone_engine, make_session_factory
 from app.models.memory import Memory
 
 
@@ -27,31 +26,31 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture()
 def gmem_db(monkeypatch, tmp_path):
-    """临时库 + 把 group_memory 的 async_session_factory 指向临时工厂。"""
-    import app.models  # noqa: F401
-    from app.models.base import Base
+    """临时库（模板库克隆，见 tests/_dbclone.py）+ 把 group_memory 的 async_session_factory 指向临时工厂。"""
     import app.db.database as db_mod
     import app.memory.service as memsvc
 
     tmp = str(tmp_path)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}",
-                                 poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(os.path.join(tmp, 't.db'))
+    factory = make_session_factory(engine)
 
-    async def _init():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     monkeypatch.setattr(db_mod, "async_session_factory", factory)
     monkeypatch.setattr(memsvc, "async_session_factory", factory)
     monkeypatch.setattr(gm, "async_session_factory", factory)
 
     async def _seed_group():
         from app.models.chat import ChatGroup
+        from app.models.character import AICharacter
         from app.models.user import User
+        # 克隆库默认开 FK（生产同款 PRAGMA）：users→ai_characters→chat_groups 逐层提交
+        # （用例体的 memories 行要 character_id=1 这条父行）
         async with factory() as db:
             db.add(User(id=1, username="tester", nickname="测试"))
+            await db.commit()
+        async with factory() as db:
+            db.add(AICharacter(id=1, user_id=1, name="小阳"))
+            await db.commit()
+        async with factory() as db:
             g = ChatGroup(id=1, user_id=1, name="家庭群聊")
             db.add(g)
             await db.commit()

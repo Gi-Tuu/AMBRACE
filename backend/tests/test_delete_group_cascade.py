@@ -10,8 +10,8 @@ import os
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.application.chat_groups import delete_group
 
@@ -22,16 +22,8 @@ pytestmark = pytest.mark.slow
 def group_db(tmp_path):
     """临时 SQLite 文件库（delete_group 只依赖传入的 AsyncSession）。"""
     db_path = os.path.join(str(tmp_path), "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
     yield factory
     asyncio.run(engine.dispose())
 
@@ -43,10 +35,16 @@ def _seed(factory):
     from app.models.user import User
 
     async def _main():
+        # 克隆库默认开 FK（生产同款 PRAGMA）：父行（users/ai_characters/chat_groups）先提交，
+        # 子行（成员/消息/群记忆/对局）后提交；取值与条数一字未动。
         async with factory() as db:
             db.add(User(id=24001, username="u_t2", nickname="用户T2", is_admin=True))
+            await db.commit()
+        async with factory() as db:
             db.add(AICharacter(id=22101, user_id=24001, name="大壮", is_active=True))
             db.add(ChatGroup(id=24101, user_id=24001, name="测试群"))
+            await db.commit()
+        async with factory() as db:
             db.add(ChatGroupMember(group_id=24101, character_id=22101))
             db.add(ChatGroupMessage(group_id=24101, sender_type="user", content="大家好"))
             # 群记忆：T2 根因之一（group_memories.group_id RESTRICT）

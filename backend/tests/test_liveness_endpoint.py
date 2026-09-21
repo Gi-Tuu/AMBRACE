@@ -17,9 +17,9 @@ from datetime import datetime, timezone
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api import system as system_api
 from app.auth.config import create_token
@@ -58,23 +58,33 @@ def _now_naive_utc():
 
 @pytest.fixture()
 def liveness_db(monkeypatch, tmp_path):
-    """临时 SQLite（空闲端口）+ patch app.db.database.async_session_factory（不触碰 backend/data）。"""
-    tmp = str(tmp_path)
-    db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    import app.models  # noqa: F401  确保全部内核模型（含 mcp_servers）注册进 metadata
-    from app.models.base import Base
+    """临时库（模板库克隆，见 tests/_dbclone.py）+ patch app.db.database.async_session_factory
+    （不触碰 backend/data）。
+
+    建表后仍按测试专用 DDL 重建 wechat_ilink_bindings：全局 metadata 可能已被渠道插件模型注册
+    （其他用例 load wechat_ilink 后建表会一并建出模型版绑定表），统一重建为测试 DDL 形态，
+    列默认齐备且与插件模型解耦。
+    另种子 users(id=1, is_admin=True)：_dbclone 默认开 FK（生产同款 PRAGMA），
+    mcp_servers.user_id 是外键；is_admin=True 与旧口径（用户不存在→env 兜底为 admin）判定一致。
+    """
+    from app.models.user import User
+
+    db_path = os.path.join(str(tmp_path), "t.db")
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
     async def _init():
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-            # 全局 metadata 可能已被渠道插件模型注册（其他用例 load wechat_ilink 后 create_all
-            # 会一并建出模型版绑定表）；统一重建为测试 DDL 形态，列默认齐备且与插件模型解耦。
             await conn.execute(text("DROP TABLE IF EXISTS wechat_ilink_bindings"))
             await conn.execute(text(_BINDING_DDL))
 
+    async def _seed():
+        async with factory() as db:
+            db.add(User(id=1, username="lv_admin", nickname="主账号", is_admin=True))
+            await db.commit()
+
     asyncio.run(_init())
+    asyncio.run(_seed())
     import app.db.database as db_mod
     monkeypatch.setattr(db_mod, "async_session_factory", factory)
     yield factory

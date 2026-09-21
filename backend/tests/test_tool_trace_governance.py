@@ -16,9 +16,9 @@ import os
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.agent import loop
 from app.agent import status as agent_status
@@ -29,6 +29,7 @@ from app.db.database import get_db
 from app.models.agent import AgentTaskLog
 from app.models.character import AICharacter
 from app.models.mcp import McpCallLog
+from app.models.user import User
 from app.scheduling import arbiter
 
 USER = 1
@@ -221,26 +222,21 @@ def test_R2_classify_skipped独立中性桶():
 
 @pytest.fixture()
 def mind_db(tmp_path):
-    """临时 SQLite 文件库（不触碰 backend/data），种子一个角色并返回 (factory, character_id)。"""
-    tmp = str(tmp_path)
-    db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    """临时库（模板库克隆，见 tests/_dbclone.py，不触碰 backend/data），种子一个角色并返回 (factory, character_id)。"""
+    engine = clone_engine(os.path.join(str(tmp_path), "t.db"))
+    factory = make_session_factory(engine)
 
     async def _init():
         import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
-
-    async def _seed():
+        # 拆种子提交：克隆库默认开 FK（生产同款 PRAGMA），ai_characters.user_id 需 users 父行先落库
+        async with factory() as db:
+            db.add(User(id=USER, username="tt_u1", nickname="主人"))
+            await db.commit()
         async with factory() as db:
             db.add(AICharacter(id=CHAR, user_id=USER, name="测试", cognitive_loop_enabled=False))
             await db.commit()
 
-    asyncio.run(_seed())
+    asyncio.run(_init())
     yield factory, CHAR
     engine.sync_engine.dispose()
 

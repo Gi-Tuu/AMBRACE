@@ -11,15 +11,16 @@ import os
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.agent.loop import AGENT_FLAGS
 from app.api.life_home import WORLD_LAYOUT, ROOM_W, ROOM_H, router as life_home_router
 from app.auth.deps import get_current_user_id
 from app.models.character import AICharacter
 from app.models.life import LifeState
+from app.models.user import User
 
 OWNER = 100
 ADMIN = 1
@@ -38,17 +39,17 @@ def _make_client(user_id: int) -> TestClient:
 
 @pytest.fixture()
 def home_db(monkeypatch, tmp_path):
-    """临时 SQLite 文件库：monkeypatch life_home.async_session_factory（不触碰 backend/data）"""
-    tmp = str(tmp_path)
-    db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    """临时库（模板库克隆，见 tests/_dbclone.py）：monkeypatch life_home.async_session_factory（不触碰 backend/data）"""
+    db_path = os.path.join(str(tmp_path), "t.db")
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
     async def _init():
         import app.models  # noqa: F401  # 注册全部模型
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        # 克隆库默认开 FK（生产同款 PRAGMA）：父行 users 先 commit，子行 ai_characters 再一批
+        async with factory() as db:
+            db.add(User(id=OWNER, username="lh_owner", nickname="主人"))
+            await db.commit()
         async with factory() as db:
             db.add(AICharacter(id=1, user_id=OWNER, name="小爱", is_active=True))
             await db.commit()

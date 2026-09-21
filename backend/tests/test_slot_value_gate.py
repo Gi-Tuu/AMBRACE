@@ -22,8 +22,8 @@ import asyncio
 import os
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 pytestmark = pytest.mark.slow
 
@@ -68,18 +68,14 @@ _SLOT_FLAGS = (
 
 @pytest.fixture()
 def sg_db(monkeypatch, tmp_path):
-    """临时库：建全模型 + 把 user_facts/extractor/cross_char_sync 的工厂指向临时工厂。"""
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{os.path.join(str(tmp_path), 'sg.db')}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    """临时库（模板库克隆，见 tests/_dbclone.py）：把 user_facts/extractor/cross_char_sync
+    的工厂指向临时工厂。"""
+    engine = clone_engine(os.path.join(str(tmp_path), 'sg.db'))
+    factory = make_session_factory(engine)
 
     async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
         from app.models.character import AICharacter
         from app.models.user import User
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
             db.add(User(id=1, username="u1", nickname="用户"))
             db.add(AICharacter(id=1, user_id=1, name="酱", personality="温柔",

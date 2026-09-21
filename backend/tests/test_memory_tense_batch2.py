@@ -11,12 +11,11 @@
 用项目既有「临时 SQLite 文件库 + monkeypatch 异步工厂」夹具法，不触碰 backend/data。
 """
 import asyncio
-import os
 from datetime import timedelta
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.memory.tense import classify_tense
 
@@ -33,17 +32,9 @@ _STRONG_LOCATION = "常驻湛江市·广东海洋大学湖光校区·学生宿�
 @pytest.fixture()
 def b2_db(monkeypatch, tmp_path):
     """临时库：建全模型 + 把相关模块的异步工厂指向临时工厂（测试产物在 tmp_path）。"""
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{os.path.join(str(tmp_path), 'b2.db')}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
+    # 父行（users）由用例内 _seed_user 自建，与本文件账号口径一致（不重复补父行）。
+    engine = clone_engine(tmp_path / "b2.db")
+    factory = make_session_factory(engine)
     import app.db.database as db_mod
     import app.memory.user_facts as uf
     monkeypatch.setattr(db_mod, "async_session_factory", factory)

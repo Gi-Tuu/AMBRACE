@@ -29,7 +29,7 @@ jobs:
       # 本轮是否跑全量档（供后端各 job 决定 -m 过滤与 Windows 矩阵宽度）
       full: ${{ steps.filter.outputs.full }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -93,9 +93,9 @@ jobs:
         # push/PR 下只有主力 3.13 跑全量，3.12/3.14 跑快测档；nightly/手动 full 下三者都跑全量。
         py: [ "3.12", "3.13", "3.14" ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.py }}
           cache: pip
@@ -104,7 +104,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pytest
+          # pytest-xdist：本 job 的 pytest 用 -n auto 并行（提速第 2 阶段，2026-09-21）。
+          # 口径与本步骤原有的 ruff/pytest 一致（不读 requirements-dev.txt 钉版）。
+          pip install ruff pytest pytest-xdist pytest-timeout
           pip install -r backend/requirements.txt
 
       - name: Lint (ruff)
@@ -132,7 +134,11 @@ jobs:
         # 注意下面条件的写法：GitHub 的 && / || 是按「真值」挑选的，所以过滤串必须放在真分支上、
         # 空串放在假分支（写成 cond && '' || '-m ...' 会因为空串是假值而永远取到过滤串）。
         # --durations=20 持续输出最慢用例，供后续按数据继续瘦身。
-        run: pytest backend/tests -q ${{ (needs.changes.outputs.full != 'true' && matrix.py != '3.13') && '-m "not slow"' || '' }} --durations=20
+        # -n auto（提速第 2 阶段，2026-09-21）：只给 Linux 三个版本开并行。xdist 是「1 controller +
+        # N worker」进程模型，每个 worker 各自导入 conftest → 各自一套 mkdtemp 沙箱（_SESS_ROOT /
+        # _dbclone 模板根都是每进程唯一），因此不存在互删；Windows 快测档同日跟进 -n 2，
+        # Windows 全量档（slow 建库密集）暂不开，先观察。
+        run: pytest backend/tests -q -n auto ${{ (needs.changes.outputs.full != 'true' && matrix.py != '3.13') && '-m "not slow"' || '' }} --durations=20
 
   # 主开发 / 发 APK 在 Windows：覆盖 Windows 特有路径、SO_REUSEADDR、aiosqlite 线程、
   # pwsh 脚本语法（不跑 Docker smoke）。
@@ -160,9 +166,9 @@ jobs:
       matrix:
         python-version: [ "3.13" ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -188,7 +194,9 @@ jobs:
         # --basetemp 指到 job 工作区内：默认临时目录在会话清理时会踩 pytest-current junction
         # 报「拒绝访问」，退出码变 2 导致 durations 报告拿不到；-p no:cacheprovider 保持原样
         # （Windows 上跨 job 复用缓存目录反而会串味）。
-        run: pytest -q -p no:cacheprovider -m "not slow" --durations=20 --basetemp=.pytest-tmp
+        # -n 2（提速 P1，2026-09-21）：本机全量 -n 4 = 3000 passed/0 failed 已证并行下无沙箱互删、无串库；
+        # Windows runner 通常给 2 核，故取 -n 2 保守值；全量档（含 slow 建库密集）暂不开，先观察本档。
+        run: pytest -q -p no:cacheprovider -n 2 -m "not slow" --durations=20 --basetemp=.pytest-tmp
 
   # Windows 全量档：只在 nightly 或手动勾选 full 时跑，把 3.12 与 slow 用例一起覆盖。
   backend-windows-full:
@@ -205,9 +213,9 @@ jobs:
       matrix:
         python-version: [ "3.12", "3.13" ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -235,7 +243,7 @@ jobs:
     name: Flutter (analyze + test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: subosito/flutter-action@v2
         with:
@@ -259,7 +267,7 @@ jobs:
     needs: [backend, changes]
     if: needs.changes.outputs.heavy == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build image (models skipped; smoke only hits process-health)
         run: docker build -t ambrace:ci .

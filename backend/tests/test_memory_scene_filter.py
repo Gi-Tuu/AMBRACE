@@ -10,11 +10,10 @@
 （项目未装 pytest-asyncio，统一 asyncio.run 同步执行；临时 SQLite 文件库，不触碰 backend/data。）
 """
 import asyncio
-import os
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.memory.retrieve import _scene_filter, search_memories
 
@@ -91,20 +90,23 @@ async def _noop(*a, **k):
 def scene_db(monkeypatch, tmp_path):
     """临时库 + 检索原语桩：让 search_memories 走到 _rerank（回填 source/sub_type/group_id）。"""
     import app.models  # noqa: F401
-    from app.models.base import Base
     import app.db.database as db_mod
     import app.memory.service as memsvc
 
-    tmp = str(tmp_path)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}",
-                                 poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(tmp_path / "t.db")
+    factory = make_session_factory(engine)
 
-    async def _init():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    async def _seed_parents():
+        # _dbclone 默认开 FK（生产同款 PRAGMA）：memories 的 user_id / character_id 需父行先存在
+        # （本文件账号口径：1；角色：1）
+        from app.models.character import AICharacter
+        from app.models.user import User
+        async with factory() as db:
+            db.add(User(id=1, username="scene_u1", nickname="场景用户"))
+            db.add(AICharacter(id=1, user_id=1, name="场景角色1"))
+            await db.commit()
 
-    asyncio.run(_init())
+    asyncio.run(_seed_parents())
     monkeypatch.setattr(db_mod, "async_session_factory", factory)
     monkeypatch.setattr(memsvc, "async_session_factory", factory)
 

@@ -5,8 +5,8 @@ import os
 from datetime import datetime
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.memory.story_assemble import assemble_story_lines, get_chain_index_for_hits
 
@@ -21,22 +21,13 @@ def _m(id_, content, created_at, chain_id=None):
 
 @pytest.fixture()
 def sa_db(monkeypatch, tmp_path):
-    """临时库：create_all 全模型 + 把 story_assemble 的异步工厂指向临时工厂。
+    """临时库（模板库克隆，见 tests/_dbclone.py）：把 story_assemble 的异步工厂指向临时工厂。
 
     F-1 端到端：get_chain_index_for_hits 经 ``app.db.database.async_session_factory`` 取链，
     故 patch 该接缝（函数内延迟 import 取到 patch 值），与既有 user_facts/chain_builder 测试一致。
     """
-    tmp = str(tmp_path)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
+    engine = clone_engine(os.path.join(str(tmp_path), "t.db"))
+    factory = make_session_factory(engine)
     import app.db.database as db_mod
     monkeypatch.setattr(db_mod, "async_session_factory", factory)
     yield factory

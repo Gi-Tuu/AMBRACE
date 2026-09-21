@@ -9,8 +9,8 @@ import os
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api import moments as moments_api
 from app.models.character import AICharacter
@@ -25,16 +25,13 @@ NOW = datetime(2026, 9, 10, 12, 0, 0)
 @pytest.fixture()
 def env(monkeypatch, tmp_path):
     tmp = str(tmp_path)
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool
-    )
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    engine = clone_engine(os.path.join(tmp, 't.db'))
+    factory = make_session_factory(engine)
 
     async def _init():
         import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+
+        # 克隆库默认开 FK（生产同款 PRAGMA）：父行先落库并 commit，子行再一批提交。
         async with factory() as db:
             db.add_all([
                 User(id=1, username="u1", nickname="小明", password_hash="x"),
@@ -43,6 +40,10 @@ def env(monkeypatch, tmp_path):
                 AICharacter(id=11, user_id=1, name="小鹿", is_active=True, timezone_offset=8),
                 AICharacter(id=12, user_id=1, name="小狼", is_active=True, timezone_offset=0),
                 AICharacter(id=13, user_id=1, name="阿呆", is_active=False),
+            ])
+            await db.commit()
+        async with factory() as db:
+            db.add_all([
                 AIMoment(id=101, character_id=11, user_id=1, sender_type="ai",
                          content="小鹿发的动态", likes_count=2, is_active=True, created_at=NOW),
                 AIMoment(id=102, character_id=None, user_id=1, sender_type="user",

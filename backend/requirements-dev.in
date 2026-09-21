@@ -6,4 +6,6 @@
 #       若需安装则：pip install -r requirements-dev.txt
 pytest>=9.1.1
 pytest-asyncio>=0.24,<2
+pytest-xdist>=3.6
+pytest-timeout>=2.3
 ruff>=0.16

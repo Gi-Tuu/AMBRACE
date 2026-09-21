@@ -24,9 +24,9 @@ import os
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api import games as games_api
 from app.api.games import router as games_router
@@ -74,18 +74,18 @@ async def _noop_ai(sid: int) -> None:
 @pytest.fixture
 def player_action_db(monkeypatch, tmp_path):
     db_path = os.path.join(str(tmp_path), "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
     async def _init():
         import app.models  # noqa: F401
-        from app.models.base import Base
         from app.models.character import AICharacter
         from app.models.user import User
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        # 拆种子提交：克隆库默认开 FK（生产同款 PRAGMA），父行 users 先落库再插 ai_characters
         async with factory() as db:
             db.add(User(id=1, username="u1", nickname="用户一"))
+            await db.commit()
+        async with factory() as db:
             for i in range(101, 104):
                 db.add(AICharacter(id=i, user_id=1, name=f"角色{i}", personality="外向",
                                    chat_style="口语化", relation_type="朋友", is_active=True))

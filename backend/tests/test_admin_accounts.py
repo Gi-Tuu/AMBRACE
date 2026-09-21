@@ -11,9 +11,9 @@ import os
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api import admin as admin_api
 from app.auth.deps import get_current_user_id
@@ -29,19 +29,9 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture()
 def db_factory(monkeypatch, tmp_path):
-    """临时 SQLite 文件库：patch 各模块绑定的 async_session_factory（不触碰 backend/data）"""
-    tmp = str(tmp_path)
-    db_path = os.path.join(tmp, 't.db')
-    engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
+    """临时库（模板库克隆，见 tests/_dbclone.py）：patch 各模块绑定的 async_session_factory（不触碰 backend/data）"""
+    engine = clone_engine(os.path.join(str(tmp_path), 't.db'))
+    factory = make_session_factory(engine)
     import app.db.database as db_mod
     monkeypatch.setattr(db_mod, 'async_session_factory', factory)
     monkeypatch.setattr(admin_api, 'async_session_factory', factory)
@@ -91,24 +81,22 @@ def _make_client(user_id: int) -> TestClient:
 # ---------------- 一次性种子 ----------------
 
 def _run_seed(admin_ids, pre_admins: list[int], monkeypatch, tmp_path):
-    """在临时库建表+塞用户后跑 init_db，返回 {id: is_admin}"""
+    """在临时库（模板库克隆，见 tests/_dbclone.py）塞用户后跑 init_db，返回 {id: is_admin}。
+
+    建表由模板库承担（init_db 内部的 create_all 因 checkfirst 变成 no-op），签名与语义不变。
+    """
     import app.db.database as db_mod
     from app.config import settings
-    tmp = str(tmp_path)
-    db_path = os.path.join(tmp, 't.db')
-    engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
+    db_path = os.path.join(str(tmp_path), 't.db')
+    engine = clone_engine(db_path)
     monkeypatch.setattr(db_mod, 'engine', engine)
     import app.db.init_db as _initdb_mod  # F1 拆分：init_db 用实现模块的 engine 绑定
     monkeypatch.setattr(_initdb_mod, 'engine', engine)
     monkeypatch.setattr(settings, 'admin_user_ids', admin_ids)
 
     async def _run():
-        import app.models  # noqa: F401
         import app.models.user as um
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        factory = make_session_factory(engine)
         async with factory() as db:
             db.add_all([
                 um.User(id=1, username='a', nickname='A'),

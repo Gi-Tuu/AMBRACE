@@ -11,11 +11,10 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 
 import app.db.vector_store as _vs
 import app.memory.chain_builder as cb
+from _dbclone import clone_engine, make_session_factory
 from app.db import database as db_mod
 from app.models.memory import Memory
 
@@ -35,16 +34,21 @@ def cdb(monkeypatch, tmp_path):
     """临时 SQLite 文件库：把 chain_builder / api 归属校验 / vector_store 等都指向临时库。"""
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401  # 注册全部模型
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    async def _seed_parents():
+        from app.models.character import AICharacter
+        from app.models.user import User
+        # 克隆库默认开 FK（生产同款 PRAGMA）：用例体每条 memories 都要 users + ai_characters 父行
+        async with factory() as db:
+            db.add(User(id=1, username="cb_u1", nickname="本人"))
+            await db.commit()
+        async with factory() as db:
+            db.add(AICharacter(id=1, user_id=1, name="测试角色"))
+            await db.commit()
 
-    asyncio.run(_init())
+    asyncio.run(_seed_parents())
     monkeypatch.setattr(cb, "async_session_factory", factory)
     monkeypatch.setattr(db_mod, "async_session_factory", factory)  # API/_get_owned_memory 走临时库
     monkeypatch.setattr(_vs, "search_memories", _fake_search([]))  # 默认无近邻

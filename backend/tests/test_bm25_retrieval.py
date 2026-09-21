@@ -19,8 +19,8 @@ import os
 from pathlib import Path
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 import app.memory.bm25_index as bm25
 import app.memory.service as memsvc
@@ -37,20 +37,25 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture()
 def mem_db(monkeypatch, tmp_path):
-    """临时 SQLite 文件库：monkeypatch memsvc.async_session_factory（不触碰 backend/data）。
-    bm25_index 的懒构建复用 memsvc.async_session_factory，故此处 patch 即隔离临时库。"""
+    """临时 SQLite 文件库（模板库克隆，见 tests/_dbclone.py）：monkeypatch memsvc.async_session_factory
+    （不触碰 backend/data）。bm25_index 的懒构建复用 memsvc.async_session_factory，故此处 patch 即隔离临时库。"""
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401  # 注册全部模型
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    async def _seed_parents():
+        # _dbclone 默认开 FK（生产同款 PRAGMA）：memories.user_id / character_id 需父行先存在；
+        # 角色 1..21 对应「容量上限淘汰」用例逐角色种记忆的范围
+        from app.models.character import AICharacter
+        from app.models.user import User
+        async with factory() as db:
+            db.add(User(id=1, username="bm25_u1", nickname="BM25 用户"))
+            for cid in range(1, 22):
+                db.add(AICharacter(id=cid, user_id=1, name=f"角色{cid}"))
+            await db.commit()
 
-    asyncio.run(_init())
+    asyncio.run(_seed_parents())
     monkeypatch.setattr(memsvc, "async_session_factory", factory)
     monkeypatch.setattr(memsvc, "delete_memory_vector", _noop)
     bm25._persist_root = Path(tmp)   # 2026-08-23 深化：索引持久化隔离到临时目录，不污染生产缓存

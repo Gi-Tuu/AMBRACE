@@ -17,8 +17,8 @@ import os
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 import app.application.pet_service as pet_svc
 
@@ -33,18 +33,11 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture()
 def pet_db(monkeypatch, tmp_path):
-    """临时 SQLite 文件库 + 隔离全局副作用（pet_service 的 async_session_factory / save_memory）。"""
+    """临时库（模板库克隆，见 tests/_dbclone.py）+ 隔离全局副作用（pet_service 的 async_session_factory / save_memory）。"""
     db_path = os.path.join(str(tmp_path), "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     monkeypatch.setattr(pet_svc, "async_session_factory", factory)
     monkeypatch.setattr(pet_svc, "save_memory", _noop)
     yield factory
@@ -59,10 +52,14 @@ def _seed(factory):
 
     async def _main():
         async with factory() as db:
+            # 拆种子提交：克隆库默认开 FK（生产同款 PRAGMA），父行逐批落库
+            # users → ai_characters / pets → pet_activities（取值与行数一字未动）
             db.add(User(id=21001, username="u_t1", nickname="用户T1", is_admin=True))
+            await db.commit()
             db.add(AICharacter(id=22001, user_id=21001, name="小柔", is_active=True))
             db.add(Pet(id=23001, user_id=21001, name="毛毛", species="cat",
                        owner_type="user", created_at=datetime(2026, 8, 1)))
+            await db.commit()
             # 有活动记录：T1 根因正是「有活动宠物的硬删必撞 pet_activities.pet_id RESTRICT」
             db.add(PetActivity(pet_id=23001, user_id=21001, action="feed", actor="user",
                                content="用户喂了毛毛"))

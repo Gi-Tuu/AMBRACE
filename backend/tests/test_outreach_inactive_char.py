@@ -16,8 +16,8 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.domain.proactivity import outreach as oc
 from app.scheduling import arbiter
@@ -113,21 +113,28 @@ def test_门控_查询异常_fail_open不停发(_flag, monkeypatch):
 
 @pytest.fixture()
 def tmp_db(monkeypatch, tmp_path):
-    """临时 SQLite：create_all 全模型 + 把 arbiter 的 session factory 指向临时工厂。"""
-    tmp = str(tmp_path)
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool
-    )
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    """临时库（模板库克隆，见 tests/_dbclone.py）+ 种子父行：把 arbiter 的 session factory 指向临时工厂。
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
+    _dbclone 默认开 FK（生产同款 PRAGMA）：chat_sessions.user_id/character_id 是外键，
+    而下面几个用例只建会话不建用户/角色（旧库 FK 未强制），故在此统一补齐 1/2 号用户与
+    13/18 号角色；它们不带消息，不影响 get_hours_since_last_user_message 的判定。
+    """
+    from app.models.character import AICharacter
+    from app.models.user import User
 
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    engine = clone_engine(os.path.join(str(tmp_path), "t.db"))
+    factory = make_session_factory(engine)
 
-    asyncio.run(_init())
+    async def _seed():
+        async with factory() as db:
+            db.add_all([User(id=1, username="ou1", nickname="用户1"),
+                        User(id=2, username="ou2", nickname="用户2")])
+            await db.commit()
+            db.add_all([AICharacter(id=13, user_id=1, name="角色13"),
+                        AICharacter(id=18, user_id=1, name="角色18")])
+            await db.commit()
+
+    asyncio.run(_seed())
     monkeypatch.setattr(arbiter, "async_session_factory", factory)
     yield factory
     engine.sync_engine.dispose()

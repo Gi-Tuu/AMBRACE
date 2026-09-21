@@ -25,9 +25,9 @@ import pytest
 import sqlalchemy as sa
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api import admin as admin_api
 from app.api import system as system_api
@@ -73,16 +73,12 @@ def _patch_session_factories(monkeypatch, factory) -> None:
 @pytest.fixture()
 def p2_db(monkeypatch, tmp_path):
     """私有临时 SQLite：root(server_admin) / sub(子账号) / other(主账号但非 server_admin)。"""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/p2.db", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(tmp_path / "p2.db")
+    factory = make_session_factory(engine)
 
     async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
         from app.models.user import User
 
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
             db.add_all([
                 User(id=ROOT_UID, username="root", nickname="根", is_admin=True,

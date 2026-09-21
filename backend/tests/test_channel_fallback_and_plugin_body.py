@@ -17,9 +17,9 @@ import sys
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.agent import loop as agent_loop
 from app.application import permission_service  # noqa: F401 - 先入 sys.modules，保证接缝被替换
@@ -59,25 +59,27 @@ def _patch_session_factories(monkeypatch, factory) -> None:
 
 
 def _make_factory(tmp_path):
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{tmp_path / 'p3.db'}", poolclass=NullPool)
-    return engine, async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(tmp_path / "p3.db")
+    return engine, make_session_factory(engine)
 
 
 async def _create_schema(engine) -> None:
-    import app.models  # noqa: F401  # 注册主 metadata（含 users/characters/channel_bindings/plugins）
-    from app.models.base import Base
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """表结构由 ``_dbclone`` 模板库页级克隆提供（含 users/characters/channel_bindings/plugins），
+    原 ``Base.metadata.create_all`` 一步不再需要；保留本协程以便各调用点写法不变。"""
+    return None
 
 
 async def _seed_families(factory) -> None:
     """两个独立主账号家庭：user1→角色 101/103，user2→角色 102（与 test_channel_binding_v2 同法）。"""
+    # 克隆库默认开 FK（生产同款 PRAGMA）：父行 users 先提交，子行 ai_characters 后提交
     async with factory() as db:
         db.add_all([
             User(id=1, username="p3m1", nickname="m1", is_admin=True),
             User(id=2, username="p3m2", nickname="m2", is_admin=True),
+        ])
+        await db.commit()
+    async with factory() as db:
+        db.add_all([
             AICharacter(id=101, user_id=1, name="小慧"),
             AICharacter(id=103, user_id=1, name="小橙"),
             AICharacter(id=102, user_id=2, name="小蓝"),

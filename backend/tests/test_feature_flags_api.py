@@ -3,13 +3,12 @@
 # - flag_service：临时库 roundtrip（set 写库 + 热更新 AGENT_FLAGS / load 恢复覆盖 / source 标记 / 未知 key False）
 # - system API：GET /feature-flags 主账号返回、非主账号 403；PUT 切换成功、缺 enabled 400、未知 key 404
 import asyncio
-import os
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api import system as system_api
 from app.auth.deps import get_current_user_id
@@ -40,18 +39,9 @@ def _server_admin_as_user1(monkeypatch):
 @pytest.fixture()
 def flag_db(monkeypatch, tmp_path):
     '''临时 SQLite 文件库：patch async_session_factory（不触碰 backend/data）'''
-    tmp = str(tmp_path)
-    db_path = os.path.join(tmp, 't.db')
-    engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
+    db_path = tmp_path / 't.db'
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
     import app.db.database as db_mod
     monkeypatch.setattr(db_mod, 'async_session_factory', factory)
     yield factory

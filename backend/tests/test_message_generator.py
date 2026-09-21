@@ -7,8 +7,8 @@ import asyncio
 import os
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.scheduling.message_generator import (
     _PARROT_OVERLAP_THRESHOLD,
@@ -87,17 +87,18 @@ def test_parrot_重合率不受context长度稀释():
 
 @pytest.fixture()
 def proac_db(monkeypatch, tmp_path):
-    """临时 SQLite 文件库：patch app.db.database.async_session_factory（不触碰 backend/data）。"""
-    tmp = str(tmp_path)
-    db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    """临时库（模板库克隆，见 tests/_dbclone.py）：patch app.db.database.async_session_factory（不触碰 backend/data）。"""
+    db_path = os.path.join(str(tmp_path), "t.db")
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
     async def _init():
         import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        from app.models.user import User
+        # 克隆库默认开 FK（生产同款 PRAGMA）：用例体会插 ai_characters/chat_sessions，父行 users 先落库
+        async with factory() as db:
+            db.add(User(id=1, username="pm_u1", nickname="主人"))
+            await db.commit()
 
     asyncio.run(_init())
     import app.db.database as db_mod
@@ -119,6 +120,7 @@ def test_recent_proactive_并入ai对话回复(proac_db):
     async def _seed():
         async with proac_db() as db:
             db.add(AICharacter(id=13, user_id=1, name="sam"))
+            await db.commit()  # 拆种子提交：FK 开启下父行 ai_characters 须先落库，再插 chat_sessions
             db.add(ChatSession(id=11, user_id=1, character_id=13))
             await db.commit()
             now = now_naive_utc()
@@ -153,6 +155,7 @@ def test_recent_proactive_对话回复查询失败不影响主动日志(proac_db
     async def _seed():
         async with proac_db() as db:
             db.add(AICharacter(id=14, user_id=1, name="t"))
+            await db.commit()  # 拆种子提交：父行 ai_characters 先落库（proactive_message_logs.character_id 有 FK）
             db.add(ProactiveMessageLog(character_id=14, session_id=None, message_type="storyline",
                                        content="只有主动日志。", created_at=now_naive_utc()))
             await db.commit()

@@ -18,9 +18,9 @@ import os
 import pytest
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api import characters as characters_api
 from app.application import characters as svc
@@ -41,17 +41,18 @@ _OTHER_USER_ID = 999
 
 @pytest.fixture()
 def wf_db(monkeypatch, tmp_path):
-    """临时库：建全表 + 种子两个角色（本人 / 他人）；session factory 指向临时库。"""
+    """临时库（模板库克隆，见 tests/_dbclone.py）：种子两个角色（本人 / 他人）；
+    session factory 指向临时库。"""
     db_path = os.path.join(str(tmp_path), "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
     async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        from app.models.user import User
         async with factory() as db:
+            # _dbclone 默认开 FK（生产同款 PRAGMA）：ai_characters.user_id 需 users 父行先存在
+            db.add(User(id=_USER_ID, username="wfh_u1", nickname="本人"))
+            db.add(User(id=_OTHER_USER_ID, username="wfh_other", nickname="他人"))
             db.add(AICharacter(id=_CHAR_ID, user_id=_USER_ID, name="测试角色"))
             db.add(AICharacter(id=_OTHER_CHAR_ID, user_id=_OTHER_USER_ID, name="别人的角色"))
             await db.commit()

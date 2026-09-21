@@ -19,8 +19,8 @@ import zipfile
 from datetime import datetime
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 # 允许导入仓库根下的 scripts 包
 _REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
@@ -30,7 +30,9 @@ if _REPO not in sys.path:
 import scripts.memory.portable_pack as pp  # noqa: E402
 
 from app.db import database as db_mod  # noqa: E402
+from app.models.character import AICharacter  # noqa: E402
 from app.models.memory import Memory, MemoryArchive  # noqa: E402
+from app.models.user import User  # noqa: E402
 
 
 # ── 工具 ───────────────────────────────────────────────────────────
@@ -39,22 +41,30 @@ from app.models.memory import Memory, MemoryArchive  # noqa: E402
 # 全量默认照跑；日常开发用 pytest -m "not slow" 跳过本档（见 docs/engineering-protocol.md 十八）。
 pytestmark = pytest.mark.slow
 
+# 用例统一以 user_id=1 / character_id=3 读写 memories（有 FK），故每个库都先补这对父行
+_PACK_USER_ID = 1
+_PACK_CHAR_ID = 3
+
+
 def _run(coro):
     return asyncio.run(coro)
 
 
 def _build_db(base_dir, name="t.db"):
-    """临时 SQLite 文件库（不触碰 backend/data）。"""
-    os.makedirs(base_dir, exist_ok=True)
-    db_path = os.path.join(base_dir, name)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    """临时库（模板库克隆，见 tests/_dbclone.py；不触碰 backend/data）：含 user/角色父行。"""
+    engine = clone_engine(os.path.join(base_dir, name))
+    factory = make_session_factory(engine)
 
     async def _init():
         import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        # 拆种子提交：克隆库默认开 FK（生产同款 PRAGMA），users 先落库再插 ai_characters
+        async with factory() as db:
+            db.add(User(id=_PACK_USER_ID, username="pp_u1", nickname="主人"))
+            await db.commit()
+        async with factory() as db:
+            db.add(AICharacter(id=_PACK_CHAR_ID, user_id=_PACK_USER_ID,
+                               name="小爱", is_active=True))
+            await db.commit()
 
     asyncio.run(_init())
     return engine, factory

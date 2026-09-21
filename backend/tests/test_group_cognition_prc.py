@@ -11,11 +11,8 @@ import os
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 
 import app.models  # noqa: F401  注册全部模型（含 chat / agent）
-from app.models.base import Base
 from app.models.chat import (
     ChatGroup, ChatGroupMember, GroupCharCognition, GroupMemory,
 )
@@ -23,6 +20,7 @@ from app.models.character import AICharacter
 from app.models.user import User
 from app.memory import group_memory as gm
 from app.agent.context import section_overlay as overlay
+from _dbclone import clone_engine, make_session_factory
 
 pytestmark = pytest.mark.slow
 
@@ -38,29 +36,32 @@ G4 = 4   # cognition_enabled = True（用于跨群预算压测）
 
 def _make_db(tmp_path):
     db_path = os.path.join(str(tmp_path), "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _init():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
     async def _seed():
+        # 克隆库默认开 FK（生产同款 PRAGMA）：父行（users→ai_characters→chat_groups）逐层提交，
+        # 成员子行最后提交；取值与条数一字未动。
         async with factory() as db:
             db.add(User(id=USER, username="u", nickname="用户"))
+            await db.commit()
+        async with factory() as db:
             db.add(AICharacter(id=CHAR_A, user_id=USER, name="小阳"))
             db.add(AICharacter(id=CHAR_B, user_id=USER, name="小冰"))
+            await db.commit()
+        async with factory() as db:
             db.add(ChatGroup(id=G1, user_id=USER, name="测试群1", cognition_enabled=True))
             db.add(ChatGroup(id=G2, user_id=USER, name="测试群2", cognition_enabled=True))
             db.add(ChatGroup(id=G3, user_id=USER, name="测试群3", cognition_enabled=False))
             db.add(ChatGroup(id=G4, user_id=USER, name="测试群4", cognition_enabled=True))
+            await db.commit()
+        async with factory() as db:
             for gid in (G1, G3):
                 db.add(ChatGroupMember(group_id=gid, character_id=CHAR_A))
             db.add(ChatGroupMember(group_id=G1, character_id=CHAR_B))
             db.add(ChatGroupMember(group_id=G2, character_id=CHAR_A))
             await db.commit()
 
-    asyncio.run(_init())
     asyncio.run(_seed())
     return engine, factory
 

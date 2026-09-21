@@ -8,14 +8,13 @@
 - 关联受邀码后子账号 is_admin=False；解除关联后恢复 is_admin=True。
 """
 import asyncio
-import os
 
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api import account as account_api
 from app.api import admin as admin_api
@@ -31,16 +30,11 @@ pytestmark = pytest.mark.slow
 @pytest.fixture()
 def family_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：patch 各模块绑定的 async_session_factory（不触碰 backend/data）。"""
-    tmp = str(tmp_path)
-    db_path = os.path.join(tmp, 't.db')
-    engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    db_path = tmp_path / 't.db'
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
     async def _init():
-        import app.models  # noqa: F401  # 确保所有模型注册到 Base.metadata
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
             # 3 个独立主账号（模拟独立化后的状态：parent_id IS NULL → is_admin=1）
             db.add(User(id=1, username='u1', nickname='甲', is_admin=True))

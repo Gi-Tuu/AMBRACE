@@ -6,6 +6,8 @@
 #
 colorama==0.4.6
     # via pytest
+execnet==2.1.2
+    # via pytest-xdist
 iniconfig==2.3.0
     # via pytest
 packaging==26.3
@@ -18,7 +20,13 @@ pytest==9.1.1
     # via
     #   -r backend/requirements-dev.in
     #   pytest-asyncio
+    #   pytest-timeout
+    #   pytest-xdist
 pytest-asyncio==1.4.0
+    # via -r backend/requirements-dev.in
+pytest-timeout==2.4.0
+    # via -r backend/requirements-dev.in
+pytest-xdist==3.8.0
     # via -r backend/requirements-dev.in
 ruff==0.16.5
     # via -r backend/requirements-dev.in

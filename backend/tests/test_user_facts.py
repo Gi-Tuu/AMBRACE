@@ -14,8 +14,8 @@ import asyncio
 import os
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.models.memory import Memory
 from app.models.user import User
@@ -27,18 +27,9 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture()
 def uf_db(monkeypatch, tmp_path):
-    """临时库：create_all 全模型 + 把 user_facts / cross_char_sync 的异步工厂指向临时工厂。"""
-    tmp = str(tmp_path)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
+    """临时库（模板库克隆，见 tests/_dbclone.py）：把 user_facts / cross_char_sync 的异步工厂指向临时工厂。"""
+    engine = clone_engine(os.path.join(str(tmp_path), "t.db"))
+    factory = make_session_factory(engine)
     import app.db.database as db_mod
     import app.memory.user_facts as uf
     import app.memory.cross_char_sync as ccs
@@ -76,8 +67,15 @@ def _seed_char(factory, name: str, user_id: int = 1):
 
 
 def _seed_memory(factory, *, character_id, content, memory_type="user_info", sub_type=None, status="active"):
+    from app.models.character import AICharacter
     async def _run():
         async with factory() as db:
+            # _dbclone 默认开 FK（生产同款 PRAGMA）：memories.character_id 需 ai_characters 父行；
+            # 本文件多个用例只给 character_id 不建角色（旧库 FK 未强制），此处按 id 就地补齐，
+            # 已存在的角色不重复建（sweep 用例断言「处理全部角色」的条数依赖角色数不被抬高）。
+            if (await db.get(AICharacter, character_id)) is None:
+                db.add(AICharacter(id=character_id, user_id=1, name=f"补齐角色{character_id}"))
+                await db.commit()
             m = Memory(user_id=1, character_id=character_id, memory_type=memory_type,
                        content=content, sub_type=sub_type, importance=40, status=status)
             db.add(m)

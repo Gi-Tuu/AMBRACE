@@ -11,6 +11,9 @@ select = ["F"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# 单测硬上限（兜底挂死用例，避免一个卡死拖垮整轮 CI）。本机全量 slowest 实测 9.8s
+# （2026-09-21：真跑 alembic 的几个），180s 留足余量；确需长跑的用例就近 @pytest.mark.timeout(600) 放宽。
+timeout = 180
 # 2026-08-24：静音已知第三方弃用警告（chromadb 的 asyncio.iscoroutinefunction，Python 3.16 才移除），
 # 保持测试输出干净；项目自身警告不静音（aiosqlite 线程泄漏属偶发真实问题，见 dev-changelog 2026-08-17）。
 filterwarnings = [

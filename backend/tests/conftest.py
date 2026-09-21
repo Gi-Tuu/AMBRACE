@@ -197,3 +197,55 @@ def _reset_admin_cache_between_tests():
     perm._admin_cache.clear()
     perm._server_admin_cache.clear()
     perm._account_state_cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# CI 无 bge-m3 模型时注入确定性假向量（消除「本地有模型跑向量路径、CI 静默退化成 None」的分叉）。
+# - 触发条件：模型缺失（CI 无 backend/models/bge-m3）或显式 AMBRACE_FORCE_FAKE_EMBEDDING=1（本机验证用）。
+# - 假向量 1024 维（与 bge-m3 一致）、L2 归一化、按文本 sha256 确定性播种：同文本恒等、不同文本近似正交，
+#   足以走通「向量写入 / Chroma 检索 / RRF / 卡片生成」链路，但【不代表真实语义相似度】——
+#   断言真实语义召回质量的用例应打 slow 标记、在有模型的环境跑。
+# - 用 monkeypatch：用例内若自行 patch 某模块的 text_embedding（如故障注入 _boom_embed），
+#   用例级 patch 后生效、teardown 自动恢复到本 fixture 版本，互不污染。
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _deterministic_fake_embedding_when_model_missing(monkeypatch):
+    import hashlib
+    import sys
+
+    from app.memory import embedding as emb
+
+    force = os.environ.get("AMBRACE_FORCE_FAKE_EMBEDDING") == "1"
+    try:
+        available = emb.check_model_available()
+    except Exception:
+        available = False
+    if available and not force:
+        return  # 本机有真实 bge-m3（且未强制），不替换
+
+    import numpy as np
+
+    DIM = 1024
+
+    def _fake_vec(text: str):
+        seed = int(hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:16], 16)
+        rng = np.random.default_rng(seed)
+        v = rng.standard_normal(DIM).astype("float32")
+        return (v / max(float(np.linalg.norm(v)), 1e-9)).tolist()
+
+    async def _fake_text_embedding(text: str):
+        return await asyncio.to_thread(_fake_vec, text)
+
+    # ① 在替换源头【之前】收集所有模块级早绑定的 app.* 模块（否则替换后再比对会全部失配）
+    original = emb.text_embedding
+    bound_modules = []
+    for name, mod in list(sys.modules.items()):
+        if name != "app" and not name.startswith("app."):
+            continue
+        if getattr(mod, "text_embedding", None) is original:
+            bound_modules.append(mod)
+
+    # ② 替换源头 + 所有模块级早绑定（embedding_cache / service / card_generator 等）
+    monkeypatch.setattr(emb, "text_embedding", _fake_text_embedding)
+    for mod in bound_modules:
+        monkeypatch.setattr(mod, "text_embedding", _fake_text_embedding, raising=False)

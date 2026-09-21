@@ -13,8 +13,8 @@ from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.utils.timeutil import now_naive_utc
 
@@ -26,8 +26,8 @@ pytestmark = pytest.mark.slow
 @pytest.fixture
 def ws_db(monkeypatch, tmp_path):
     tmp = str(tmp_path)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    engine = clone_engine(os.path.join(tmp, 't.db'))
+    factory = make_session_factory(engine)
     # P3-11（2026-09-17）：记录经本 factory 建出的全部 session，teardown 显式 close 后再 dispose。
     _sessions: list = []
 
@@ -37,12 +37,8 @@ def ws_db(monkeypatch, tmp_path):
         return s
 
     async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
         from app.models.character import AICharacter
         from app.models.user import User
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
             db.add(User(id=1, username="u1", nickname="用户"))
             db.add(AICharacter(id=11, user_id=1, name="酱", personality="温柔",

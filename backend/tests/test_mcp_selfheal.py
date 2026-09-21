@@ -15,31 +15,32 @@ import asyncio
 import os
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.mcp.connection import _Connection
 from app.mcp.manager import MCPClientManager
 from app.mcp.transport import STATUS_CONNECTED
 from app.models.mcp import MCPServer
+from app.models.user import User
 
 pytestmark = pytest.mark.slow
 
 
 @pytest.fixture()
 def mcp_db(monkeypatch, tmp_path):
-    """临时 SQLite（空闲端口）+ patch app.db.database.async_session_factory。"""
-    tmp = str(tmp_path)
-    db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    """临时库（模板库克隆，见 tests/_dbclone.py，空闲端口）+ patch app.db.database.async_session_factory。"""
+    db_path = os.path.join(str(tmp_path), "t.db")
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
     import app.models  # noqa: F401  确保全部内核模型（含 mcp_servers）注册进 metadata
-    from app.models.base import Base
 
     async def _init():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        # 克隆库默认开 FK（生产同款 PRAGMA）：mcp_servers.user_id 需 users 父行先存在
+        async with factory() as db:
+            db.add(User(id=1, username="mcp_u1", nickname="主人"))
+            await db.commit()
 
     asyncio.run(_init())
     import app.db.database as db_mod

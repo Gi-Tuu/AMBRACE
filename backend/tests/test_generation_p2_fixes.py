@@ -16,8 +16,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 
 import app.agent.context_builder as cb_mod
 import app.agent.persona as persona_mod
@@ -29,6 +27,7 @@ import app.memory.embedding_cache as emb_cache
 import app.memory.service as memsvc
 import app.scheduling.message_generator as mg_mod
 import app.application.weather_service as weather_mod
+from _dbclone import clone_engine, make_session_factory
 from app.memory.embedding_cache import get_cached_embedding
 
 pytestmark = pytest.mark.slow
@@ -231,19 +230,11 @@ def test_八维状态_独立配额键():
 
 @pytest.fixture()
 def mem_db(monkeypatch, tmp_path):
-    """临时 SQLite 文件库：monkeypatch memory.service 的 async_session_factory（不触碰 backend/data）"""
+    """临时 SQLite 文件库（模板库克隆）：monkeypatch memory.service 的 async_session_factory（不触碰 backend/data）"""
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _init():
-        import app.models  # noqa: F401  # 注册全部模型
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
     monkeypatch.setattr(memsvc, "async_session_factory", factory)
     bm25._persist_root = Path(tmp)  # 2026-08-23 深化：索引持久化隔离到临时目录，不写生产/不跨测试泄漏
     bm25.clear_cache()  # 检索增强（2026-08-23）：BM25 索引为进程内全局缓存，避免跨测试的 character_id 复用污染

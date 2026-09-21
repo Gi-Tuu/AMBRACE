@@ -6,14 +6,13 @@
 - _record_usage_async 透传 user_id/config_id/group_owner_id（monkeypatch 捕获落库参数）
 """
 import asyncio
-import os
 from datetime import datetime
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.agent import llm_client
 from app.api import system as system_api
@@ -28,18 +27,10 @@ pytestmark = pytest.mark.slow
 @pytest.fixture()
 def usage_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：patch 各模块绑定的 async_session_factory（不触碰 backend/data）。"""
-    tmp = str(tmp_path)
-    db_path = os.path.join(tmp, 't.db')
-    engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
+    db_path = tmp_path / 't.db'
+    # 父行（users）由用例内 _add_user 自建，与本文件账号口径一致（不重复补父行）。
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
     import app.db.database as db_mod
     monkeypatch.setattr(db_mod, 'async_session_factory', factory)
     monkeypatch.setattr(perm, 'async_session_factory', factory)

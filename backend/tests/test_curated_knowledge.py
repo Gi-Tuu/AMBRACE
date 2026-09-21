@@ -15,8 +15,8 @@ import asyncio
 import os
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.models.memory import WorldFact
 
@@ -27,18 +27,12 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture()
 def cf_db(monkeypatch, tmp_path):
-    """临时库：create_all 全模型 + 把 facts 模块的 async_session_factory 指向临时工厂。"""
-    tmp = str(tmp_path)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{os.path.join(tmp, 't.db')}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    """临时库（模板库克隆，见 tests/_dbclone.py）：把 facts 模块的 async_session_factory 指向临时工厂。
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
+    world_facts 无外键（introspection 确认），故无需补 users/ai_characters 父行。
+    """
+    engine = clone_engine(os.path.join(str(tmp_path), "t.db"))
+    factory = make_session_factory(engine)
     import app.db.database as db_mod
     import app.events.facts as facts
     monkeypatch.setattr(db_mod, "async_session_factory", factory)

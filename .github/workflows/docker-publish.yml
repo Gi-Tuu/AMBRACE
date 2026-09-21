@@ -22,19 +22,19 @@ jobs:
     name: Build & push multi-arch image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # 多架构说明：bge-m3 依赖链（onnxruntime / chromadb / tokenizers / pyclipper / shapely /
       # numpy / Pillow 等）均提供 linux aarch64 wheel，rapidocr-onnxruntime 为纯 Python 通用包，
       # 故发布 linux/amd64 + linux/arm64 双架构（QEMU 模拟构建，耗时较长但无硬阻）。
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -44,7 +44,7 @@ jobs:
       # 容器启动时由 scripts/docker_entrypoint.sh 检测缺失则自动执行 scripts/download_models.py
       # 拉取（首启下载，compose 挂载 vol 缓存在宿主机，后续复用），保证 docker compose up 即可用。
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64

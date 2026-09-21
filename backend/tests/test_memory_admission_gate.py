@@ -14,12 +14,11 @@
 （项目未装 pytest-asyncio，统一 asyncio.run 同步执行。）
 """
 import asyncio
-import os
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.agent import loop as _loop
 from app.memory.write import (
@@ -119,18 +118,24 @@ def test_来源归属判定_模型自述与工具():
 
 @pytest.fixture()
 def gate_env(monkeypatch, tmp_path):
-    """临时库 + 屏蔽嵌入/后台任务/晋升/回执等外部副作用，只观察 save_memory 的落库与接线。"""
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{os.path.join(str(tmp_path), 't.db')}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    """临时库（模板库克隆，见 tests/_dbclone.py）+ 屏蔽嵌入/后台任务/晋升/回执等外部副作用，
+    只观察 save_memory 的落库与接线。"""
+    engine = clone_engine(tmp_path / "t.db")
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    async def _seed_parents():
+        # _dbclone 默认开 FK（生产同款 PRAGMA）：memories 的 user_id / character_id 与
+        # chat_messages 的 session_id 需父行先存在（本文件账号口径：1；角色：101；会话：1）
+        from app.models.chat import ChatSession
+        from app.models.character import AICharacter
+        from app.models.user import User
+        async with factory() as db:
+            db.add(User(id=1, username="gate_u1", nickname="闸门用户"))
+            db.add(AICharacter(id=101, user_id=1, name="闸门角色101"))
+            db.add(ChatSession(id=1, user_id=1, character_id=101))
+            await db.commit()
 
-    asyncio.run(_init())
+    asyncio.run(_seed_parents())
 
     import app.memory.service as svc
 

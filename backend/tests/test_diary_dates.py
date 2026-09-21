@@ -9,15 +9,16 @@ import os
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api import diary as diary_api
 from app.auth.deps import get_current_user_id
 from app.db.database import get_db
 from app.models.character import AICharacter
 from app.models.life import AIDiary
+from app.models.user import User
 
 pytestmark = pytest.mark.slow
 
@@ -26,22 +27,17 @@ USER = 1
 
 @pytest.fixture()
 def diary_db(tmp_path):
-    """临时 SQLite 文件库（不触碰 backend/data），seed 一个角色 + 该角色若干日记。"""
+    """临时 SQLite 文件库（模板库克隆，见 tests/_dbclone.py，不触碰 backend/data），
+    seed 一个用户角色 + 该角色若干日记。"""
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
-    engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
     async def _seed():
         async with factory() as db:
+            # _dbclone 默认开 FK（生产同款 PRAGMA）：ai_characters.user_id 需 users 父行先存在
+            db.add(User(id=USER, username='diary_u1', nickname='日记用户'))
             char = AICharacter(user_id=USER, name='测试')
             db.add(char)
             await db.commit()

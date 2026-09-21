@@ -13,9 +13,9 @@ from datetime import datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.api import account as account_api
 from app.api import admin as admin_api
@@ -31,19 +31,13 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture()
 def family_db(monkeypatch, tmp_path):
-    """临时 SQLite 文件库：patch 各模块绑定的 async_session_factory（不触碰 backend/data）。"""
+    """临时 SQLite 文件库（模板库克隆，见 tests/_dbclone.py）：patch 各模块绑定的
+    async_session_factory（不触碰 backend/data）。"""
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, 't.db')
-    engine = create_async_engine(f'sqlite+aiosqlite:///{db_path}', poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(db_path)
+    factory = make_session_factory(engine)
 
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     import app.db.database as db_mod
     monkeypatch.setattr(db_mod, 'async_session_factory', factory)
     monkeypatch.setattr(auth_router, 'async_session_factory', factory)  # auth/router.py 绑定的引用
