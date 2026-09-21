@@ -103,7 +103,7 @@ async def retrieve_memories(state: AgentState) -> AgentState:
             # 记忆架构 v2.1 Phase 4a：目标/未完成路（进行中目标话题 + follow_up 话题）
             try:
                 from app.agent.topic_tracker import load_active_goal_queries
-                extra.extend(await load_active_goal_queries(state["character_id"], state.get("user_id", 1)))
+                extra.extend(await load_active_goal_queries(state["character_id"], state.get("user_id")))
             except Exception as _e:
                 _logger.warning("Goal query build failed: %s", _e)
             queries = extra or None

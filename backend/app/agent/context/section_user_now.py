@@ -22,7 +22,7 @@ async def user_now_section(state: dict, ctx: dict) -> list[str]:
     # build_user_now_text 内部同样按启用槽过滤，这层只是早退省一次空查询。
     # A5（2026-09-19）：早退判据按 **user_id** 解析（该账号的用户级覆盖优先），不再用进程级全局冒充；
     # 故先取 user_id 再判（resolve 失败 fail-open 回全局，不阻断注入）。
-    user_id = state.get("user_id", 1)
+    user_id = state.get("user_id")
     from app.memory.user_facts import enabled_user_fact_slots_for
     if not await enabled_user_fact_slots_for(user_id):
         return []

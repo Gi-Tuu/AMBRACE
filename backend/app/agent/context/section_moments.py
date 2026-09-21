@@ -35,7 +35,7 @@ async def moments_section(state: dict, ctx: dict) -> str:
                 select(AIMoment)
                 .where(
                     AIMoment.sender_type == "user",
-                    AIMoment.user_id == state.get("user_id", 1),
+                    AIMoment.user_id == state.get("user_id"),
                     AIMoment.is_active == True,  # noqa: E712
                     AIMoment.created_at >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7),
                 )

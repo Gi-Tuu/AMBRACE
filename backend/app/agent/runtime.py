@@ -187,7 +187,7 @@ async def build_light_social_context(state: dict) -> dict:
     from app.models.character import AICharacter
 
     character_id = state.get("character_id")
-    user_id = state.get("user_id", 1)
+    user_id = state.get("user_id")
     parts: list[str] = []
 
     # 1. 角色基础人设 + 自述（供 response_parser 自述更新分支使用，与 build_context 同语义）

@@ -25,7 +25,7 @@ async def _persona(state: dict, ctx: dict) -> dict:
     p = ctx.get("_persona")
     if p is None:
         from app.agent.persona import assemble_persona_context
-        p = await assemble_persona_context(state.get("character_id"), state.get("user_id", 1))
+        p = await assemble_persona_context(state.get("character_id"), state.get("user_id"))
         ctx["_persona"] = p
     return p
 
@@ -62,7 +62,7 @@ async def user_manual_state_section(state: dict, ctx: dict) -> str:
     user_manual_state = ""
     try:
         async with async_session_factory() as db:
-            _ur = await db.execute(select(UserState).where(UserState.user_id == state.get("user_id", 1)))
+            _ur = await db.execute(select(UserState).where(UserState.user_id == state.get("user_id")))
             _u = _ur.scalar_one_or_none()
         if _u is not None:
             _cn = {"mood": "心情", "body_temp": "体温", "desire": "性欲", "possessiveness": "占有欲",
@@ -103,21 +103,21 @@ async def user_info_section(state: dict, ctx: dict) -> str:
     user_notes_text = ""
     try:
         from app.agent.user_profile import build_user_profile_text
-        user_profile_text = await build_user_profile_text(state.get("user_id", 1))
+        user_profile_text = await build_user_profile_text(state.get("user_id"))
     except Exception:
         try:
             from sqlalchemy import select
             from app.db.database import async_session_factory
             from app.models.user import User
             async with async_session_factory() as db:
-                user = (await db.execute(select(User).where(User.id == state.get("user_id", 1)))).scalar_one_or_none()
+                user = (await db.execute(select(User).where(User.id == state.get("user_id")))).scalar_one_or_none()
             user_name = (user.nickname or user.username or "\u7528\u6237") if user else "\u7528\u6237"
             user_profile_text = f"用户昵称: {user_name}"
         except Exception:
             user_profile_text = ""
     try:
         from app.agent.user_profile import build_user_notes_text
-        user_notes_text = await build_user_notes_text(state.get("user_id", 1))
+        user_notes_text = await build_user_notes_text(state.get("user_id"))
     except Exception as e:
         _logger.warning("Load user notes failed: %s", e)
         user_notes_text = ""

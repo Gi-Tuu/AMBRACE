@@ -14,7 +14,10 @@ def gender_cn(gender: str | None) -> str:
 async def build_user_profile_text(user_id: int = 1) -> str:
     """构建用户画像文本（昵称/性别/对象/与各 AI 角色的关系）"""
     async with async_session_factory() as db:
-        user = await db.get(User, user_id)
+        # B2 复核补（2026-09-21）：user_id 为 None（宿主无 caller）时不要走 db.get——
+        # SQLAlchemy 会抛 SAWarning「fully NULL primary key identity cannot load any object」，
+        # 语义上本来就是「查不到 → user=None」（与后面 `if user else "用户"` 兜底一致）。
+        user = (await db.get(User, user_id)) if user_id else None
         chars_result = await db.execute(
             select(AICharacter).where(AICharacter.user_id == user_id)
         )
@@ -88,7 +91,10 @@ async def build_role_prompt_block(char, user_id: int = 1) -> str:
     lines.append(f"你的性别：{gender_cn(char.gender)}")
 
     async with async_session_factory() as db:
-        user = await db.get(User, user_id)
+        # C 家族复核补（2026-09-21）：user_id 为 None（角色无归属 / 宿主无 caller）时不要走 db.get——
+        # SQLAlchemy 会抛 SAWarning「fully NULL primary key identity cannot load any object」，
+        # 语义上本来就是「查不到 → user=None」（与下面 `if user else "用户"` 兜底一致，同 build_user_profile_text）。
+        user = (await db.get(User, user_id)) if user_id else None
         partners = (
             await db.execute(select(AICharacter).where(
                 AICharacter.user_id == user_id, AICharacter.is_partner == True
@@ -117,7 +123,10 @@ async def build_role_prompt_block(char, user_id: int = 1) -> str:
 async def get_user_nickname(user_id: int = 1) -> str:
     """获取用户昵称（取不到返回通用词"用户"）"""
     async with async_session_factory() as db:
-        user = await db.get(User, user_id)
+        # C 家族复核补（2026-09-21）：user_id 为 None（角色无归属 / 宿主无 caller）时不要走 db.get——
+        # SQLAlchemy 会抛 SAWarning「fully NULL primary key identity cannot load any object」，
+        # 语义上本来就是「查不到 → user=None」（与下面 `if user else "用户"` 兜底一致，同 build_user_profile_text）。
+        user = (await db.get(User, user_id)) if user_id else None
     return (user.nickname or user.username) if user else "用户"
 
 

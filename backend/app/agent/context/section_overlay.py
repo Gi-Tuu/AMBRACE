@@ -130,7 +130,7 @@ async def life_share_section(state: dict, ctx: dict) -> list[str]:
                         await db.execute(
                             select(_MemL)
                             .where(
-                                _MemL.user_id == state.get("user_id", 1),
+                                _MemL.user_id == state.get("user_id"),
                                 _MemL.character_id == state["character_id"],
                                 _MemL.source == "life",
                                 _MemL.delete_at.is_(None),
@@ -434,7 +434,7 @@ async def _ensure_reasoning_names(state: dict) -> None:
                     state["character_name"] = name
             if not user:
                 _user = (await db.execute(
-                    select(User).where(User.id == state.get("user_id", 1))
+                    select(User).where(User.id == state.get("user_id"))
                 )).scalar_one_or_none()
                 user = str((getattr(_user, "nickname", "") or getattr(_user, "username", "") or "") if _user else "")
                 if user:

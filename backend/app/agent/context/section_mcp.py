@@ -210,7 +210,7 @@ async def mcp_tools_section(state: dict, ctx: dict) -> list[str]:
     返回 system 消息内容列表：有声明时 1 条，否则空列表（不追加块）。
     """
     text = await _build_mcp_tools_text(
-        state.get("user_id", 1),
+        state.get("user_id"),
         stream=ctx.get("is_stream", False),
         quota_chars=_MCP_TOOLS_QUOTA_TOKENS * ctx.get("est_chars_per_token", 2),
     )
@@ -222,7 +222,7 @@ async def mcp_resources_section(state: dict, ctx: dict) -> list[str]:
 
     返回 system 消息内容列表：有资源时 1 条，否则空列表（不追加块）。
     """
-    text = await _build_mcp_resources_text(state.get("user_id", 1), stream=ctx.get("is_stream", False))
+    text = await _build_mcp_resources_text(state.get("user_id"), stream=ctx.get("is_stream", False))
     return [text] if text else []
 
 

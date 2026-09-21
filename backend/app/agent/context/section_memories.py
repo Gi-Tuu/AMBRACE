@@ -169,7 +169,7 @@ async def _get_core_anchors_loops(state: dict, ctx: dict) -> tuple[str, str, str
     """
     if ctx.get("_core_anchors_loops") is None:
         ctx["_core_anchors_loops"] = await _inject_core_anchors_loops(
-            state.get("character_id"), state.get("user_id", 1), ctx["trim"]
+            state.get("character_id"), state.get("user_id"), ctx["trim"]
         )
     return ctx["_core_anchors_loops"]
 

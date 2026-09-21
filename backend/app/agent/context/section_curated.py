@@ -29,7 +29,7 @@ async def curated_knowledge_section(state: dict, ctx: dict) -> list[str]:
     if not AGENT_FLAGS.get("curated_knowledge", False):
         return []  # 默认关：零行为变化
     char_id = state.get("character_id")
-    user_id = state.get("user_id", 1)
+    user_id = state.get("user_id")
     if not char_id:
         return []
     try:

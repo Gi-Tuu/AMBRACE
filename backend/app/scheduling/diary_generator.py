@@ -83,9 +83,14 @@ async def generate_diary_for_character(
         if not char:
             return None
 
+        # 多账号隔离（C 家族）：与 publish_moment 同口径——无归属不生成（否则日记记忆写进 1 号账号）
+        if not char.user_id:
+            _logger.warning("Diary skipped: character has no owner char=%d", character_id)
+            return None
+
     try:
         from app.agent.user_profile import build_user_profile_text, build_relation_line, get_user_nickname
-        owner_id = char.user_id or 1
+        owner_id = char.user_id
         user_profile = await build_user_profile_text(owner_id)
         relation_line = await build_relation_line(char)
         user_nickname = await get_user_nickname(owner_id)

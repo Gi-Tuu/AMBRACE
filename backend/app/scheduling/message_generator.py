@@ -524,7 +524,7 @@ async def generate_proactive_event(
     async def _load_user_profile() -> str:
         try:
             from app.agent.user_profile import build_user_profile_text
-            return await build_user_profile_text(user_id or 1)
+            return await build_user_profile_text(user_id)
         except Exception:
             return ""
 
@@ -535,7 +535,7 @@ async def generate_proactive_event(
             # ── 旧链路：保持原样 ──
             try:
                 from app.agent.persona import assemble_persona_context
-                _p = await assemble_persona_context(character_id, user_id or 1)
+                _p = await assemble_persona_context(character_id, user_id)
                 if not _p.get("cognitive"):
                     return ""
                 _parts = []
@@ -551,7 +551,7 @@ async def generate_proactive_event(
         # ── B1-③ 新链路：按意图收敛素材（不再无差别注入剧情/进行中话题）──
         try:
             from app.agent.persona import assemble_persona_context
-            _p = await assemble_persona_context(character_id, user_id or 1)
+            _p = await assemble_persona_context(character_id, user_id)
             if not _p:
                 return ""
             _allow_topics = bool((outreach_plan or {}).get("allow_active_topics"))
@@ -562,7 +562,7 @@ async def generate_proactive_event(
             # 仅 FOLLOW_UP 且话题新鲜才注入"进行中话题"，措辞从"优先承接"改为"可自然问进展"
             if _allow_topics:
                 from app.agent.topic_tracker import load_fresh_active_topics_text
-                _t = await load_fresh_active_topics_text(character_id, user_id or 1)
+                _t = await load_fresh_active_topics_text(character_id, user_id)
                 if _t:
                     _parts.append("用户之前提过、且仍在时效内的事（可自然问一句进展，别生硬）：\n" + _t)
             # 仅"分享自己 + 刚分开"才带 AI 剧情状态；其余主动接触不背剧情
@@ -577,7 +577,7 @@ async def generate_proactive_event(
             return ""
         try:
             from app.application.weather_service import get_user_weather_line
-            return await get_user_weather_line(user_id or 1)
+            return await get_user_weather_line(user_id)
         except Exception:
             return ""
 
@@ -595,7 +595,7 @@ async def generate_proactive_event(
                 _ps = _r.scalar_one_or_none()
             if _ps is not None and getattr(_ps, "check_in_enabled", False):
                 from app.application.phone_service import get_check_in_foreground_app
-                _app = await get_check_in_foreground_app(user_id or 1)
+                _app = await get_check_in_foreground_app(user_id)
                 if _app:
                     return (
                         f"你开启了「查岗」：好友现在正在用{_app}，可以像朋友一样自然关心他此刻在做什么"
@@ -1003,8 +1003,13 @@ async def generate_proactive_event(
     try:
         if any("[CHECK_IN]" in s for s in segments):
             from app.application.phone_service import request_check_in
-            await request_check_in(user_id or 1, character_id)
-            _logger.info("Proactive check-in fired char=%d", character_id)
+            if not user_id:
+                # 多账号隔离（D 家族）：无归属时不登记查岗——check_in_requests.user_id 是 NOT NULL，
+                # 旧写法 or 1 会把请求登记到 1 号账号的手机队列（1 号客户端会去采集快照）
+                _logger.info("Proactive check-in skipped: no owner char=%d", character_id)
+            else:
+                await request_check_in(user_id, character_id)
+                _logger.info("Proactive check-in fired char=%d", character_id)
             segments = [s.replace("[CHECK_IN]", "").strip() for s in segments]
             segments = [s for s in segments if s]
             if not segments:

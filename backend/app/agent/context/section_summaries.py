@@ -34,7 +34,7 @@ async def _load_char_and_user(state: dict) -> tuple:
     try:
         async with async_session_factory() as db:
             user = (await db.execute(
-                select(User).where(User.id == state.get("user_id", 1))
+                select(User).where(User.id == state.get("user_id"))
             )).scalar_one_or_none()
     except Exception as e:
         _logger.warning("summaries user load failed: %s", e)

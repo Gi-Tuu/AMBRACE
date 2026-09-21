@@ -382,7 +382,7 @@ async def _build_older_summaries(state: dict, older_msgs: list, char_name: str, 
             gen_summary = await chat_completion(
                 messages=[{"role": "system", "content": gen_prompt}],
                 max_tokens=512, temperature=0,
-                task="memory", user_id=state.get("user_id", 1),
+                task="memory", user_id=state.get("user_id"),
             )
             gen_summary = gen_summary.strip()[:200]
         except Exception:
@@ -574,7 +574,7 @@ async def build_context(state: dict, *, stream: bool | None = None) -> dict:
         from app.agent.loop import AGENT_FLAGS as _af
         if bool(_af.get("cross_char_fact_sync", False)) and state.get("character_id"):
             from app.memory.cross_char_sync import align_character_to_user_facts
-            await align_character_to_user_facts(state["character_id"], state.get("user_id", 1))
+            await align_character_to_user_facts(state["character_id"], state.get("user_id"))
     except Exception:
         pass
 

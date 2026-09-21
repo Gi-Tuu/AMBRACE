@@ -51,7 +51,7 @@ async def _resolve_trim(state: dict) -> dict:
     try:
         from app.agent.loop import AGENT_FLAGS
         if AGENT_FLAGS.get("agent_context_trim", True):
-            hot = await _cb._is_hot_character(state["character_id"], state.get("user_id", 1))
+            hot = await _cb._is_hot_character(state["character_id"], state.get("user_id"))
     except Exception:
         hot = True
     return _cb._trim_limits(hot)

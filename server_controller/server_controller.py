@@ -69,6 +69,8 @@ SERVER_DIR = os.path.join(PROJECT_ROOT, "backend")
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
 from log_rotate import rotate_stdio_log  # noqa: E402
 import platform_util  # noqa: E402
+# V1 设计系统基座（同目录模块）：字号阶梯 / 间距栅格 / 图标与照片渲染器
+import console_ui as CUI  # noqa: E402
 
 # B6/P3-9：Windows 用 .venv/Scripts/pythonw.exe（GUI 子系统、无控制台窗口）+ python.exe，
 # POSIX 用 .venv/bin/python（无 pythonw，两个入口同路径）；拉起键 Windows = creationflags、
@@ -206,15 +208,9 @@ THEMES = {
 SP_XXS, SP_XS, SP_SM, SP_MD, SP_LG, SP_XL = 4, 8, 12, 16, 24, 32
 
 
-def _font_family() -> str:
-    if os.name == "nt":
-        return "Segoe UI"
-    if sys.platform == "darwin":
-        return "Helvetica Neue"
-    return "Noto Sans"
-
-
-FONT = _font_family()
+# 字体族单一真源在 console_ui.FONT_UI。这里曾经是 "Segoe UI"：中文靠系统回退字体渲染，
+# 量宽用 Segoe 的回退、绘制用另一个字体，按钮文字宽度会算不准（V3 统一后不再有两套族名）
+FONT = CUI.FONT_UI
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -235,7 +231,8 @@ class RoundedCard(tk.Canvas):
     """圆角卡片：Canvas 绘制圆角底 + 内嵌 Frame（inner）承载子控件。"""
     def __init__(self, parent, theme: Theme, radius=None, pad=4, fit_inner=False, **kw):
         self.theme = theme
-        self.radius = radius or theme.radius
+        # 圆角半径也按 DPI 走：卡片整体变大后还留 16px 的角，看起来像没做完
+        self.radius = CUI.px(radius or theme.radius)
         self.pad = pad
         self.fit_inner = fit_inner
         super().__init__(parent, bg=theme.bg, highlightthickness=0, bd=0, **kw)
@@ -250,8 +247,14 @@ class RoundedCard(tk.Canvas):
     def _fit_to_inner(self):
         if not self.fit_inner:
             return
-        w = self.inner.winfo_reqwidth() + 2 * self.pad
         h = self.inner.winfo_reqheight() + 2 * self.pad
+        mgr = self.winfo_manager()   # grid 出来的卡片没有 pack_info，直接问会抛 TclError
+        if mgr == "pack" and "x" in str(self.pack_info().get("fill", "")).lower():
+            # 横向被 pack 拉满 → 宽度由容器决定，这里只按内容长高，
+            # 否则卡片会缩成"内容请求宽"，整行工具条就塌了
+            w = self.winfo_reqwidth()
+        else:
+            w = self.inner.winfo_reqwidth() + 2 * self.pad
         if w > 1 and (self.winfo_reqwidth() != w or self.winfo_reqheight() != h):
             self.config(width=w, height=h)
 
@@ -284,15 +287,17 @@ class RoundedButton(tk.Canvas):
         self._hover = False
         self._press = False
         self._text = text
-        self._h = height
+        # height / 内边距都是 100% 基准值，这里统一换成物理像素（字体 Tk 已经自己缩过了，
+        # 按钮框不跟着缩就会出现"字撑破按钮"）
+        self._h = CUI.px(height)
         self._fs = font_size
         self._bold = bold
         # 根据文字自动计算宽度
         if width is None:
             import tkinter.font as tkfont
             fn = tkfont.Font(family=FONT, size=font_size, weight="bold" if bold else "normal")
-            width = fn.measure(text) + 32  # 左右各 16px 内边距
-        super().__init__(parent, bg=parent["bg"], highlightthickness=0, bd=0, height=height,
+            width = fn.measure(text) + CUI.px(32)  # 左右各 16（基准）内边距
+        super().__init__(parent, bg=parent["bg"], highlightthickness=0, bd=0, height=self._h,
                          width=width)
         self.bind("<Configure>", lambda e: self._draw())
         self.bind("<Enter>", self._on_enter)
@@ -369,9 +374,10 @@ class Segmented(tk.Canvas):
         self.opts = options
         self.callback = callback
         self.idx = 0
-        self._w0, self._h = width, height
+        # 宽高都是 100% 基准值：标签字号 Tk 会自动缩放，分段控件的框不跟着缩就会被字撑破
+        self._w0, self._h = CUI.px(width), CUI.px(height)
         super().__init__(parent, bg=parent["bg"], highlightthickness=0, bd=0,
-                         width=width, height=height)
+                         width=self._w0, height=self._h)
         self.bind("<Configure>", lambda e: self._draw())
         self.bind("<Button-1>", self._click)
 
@@ -407,7 +413,7 @@ class Segmented(tk.Canvas):
             else:
                 fg = t.text_sec
             self.create_text((x0 + x1) / 2, h / 2, text=label, fill=fg,
-                             font=(FONT, 9, "bold" if i == self.idx else "normal"))
+                             font=CUI.f("micro", i == self.idx))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -415,33 +421,52 @@ class Segmented(tk.Canvas):
 # ═══════════════════════════════════════════════════════════════
 
 def _make_icon(parent, size, kind, color, bg):
-    c = tk.Canvas(parent, width=size, height=size, bg=bg, highlightthickness=0, bd=0)
+    """图标工厂（V1）：Lucide 纯白 PNG → 按主题染色 → 缓存 PhotoImage。
+
+    契约与旧版逐字保持一致（返回 Canvas、带 _paint_icon(color)、可 config(bg=...)），
+    所以 _select_page / _nav_hover 等调用方一行都不用改。
+    画布尺寸用物理像素（CUI.px），否则高分屏下 21px 的图会被 16px 的画布裁掉。
+    未跑 build_icons.py（素材缺失）时退回旧手绘几何，不会渲染成空白。
+    """
+    name = CUI.ICON_MAP.get(kind, kind)
+    box = CUI.px(size)
+    c = tk.Canvas(parent, width=box, height=box, bg=bg, highlightthickness=0, bd=0)
 
     def paint(col):
         c.delete("all")
-        s = float(size)
-        if kind == "diamond":
-            c.create_polygon(s*0.50, s*0.06, s*0.94, s*0.50, s*0.50, s*0.94, s*0.06, s*0.50,
-                             fill=col, outline="")
-        elif kind == "dot":
-            c.create_oval(s*0.16, s*0.16, s*0.84, s*0.84, fill=col, outline="")
-        elif kind == "dashboard":
-            g = max(1, s*0.15); cell = (s - 3*g) / 2
-            for i in (0, 1):
-                for j in (0, 1):
-                    x, y = g + i*(cell+g), g + j*(cell+g)
-                    c.create_rectangle(x, y, x+cell, y+cell, fill=col, outline="")
-        elif kind == "server":
-            c.create_polygon(s*0.24, s*0.14, s*0.86, s*0.50, s*0.24, s*0.86, fill=col, outline="")
-        elif kind == "log":
-            lw = max(1, int(s*0.09)); g = max(1, s*0.24)
-            for i in range(3):
-                c.create_line(g, g*(i+0.5), s-g, g*(i+0.5), fill=col, width=lw)
+        ph = CUI.ICONS.get(name, size, col)
+        if ph is not None:
+            c._icon_ph = ph  # 持有引用，防 Tk 图像被 Python 侧 GC
+            c.create_image(box / 2, box / 2, image=ph, anchor="center")
+            return c
+        _paint_icon_fallback(c, size, kind, col)
         return c
 
     paint(color)
     c._paint_icon = paint
     return c
+
+
+def _paint_icon_fallback(c, size, kind, col):
+    """无图标素材时的几何兜底（V1 之前的画法，仅保证不空白）。"""
+    s = float(size)
+    if kind == "diamond":
+        c.create_polygon(s*0.50, s*0.06, s*0.94, s*0.50, s*0.50, s*0.94, s*0.06, s*0.50,
+                         fill=col, outline="")
+    elif kind == "dot":
+        c.create_oval(s*0.16, s*0.16, s*0.84, s*0.84, fill=col, outline="")
+    elif kind == "dashboard":
+        g = max(1, s*0.15); cell = (s - 3*g) / 2
+        for i in (0, 1):
+            for j in (0, 1):
+                x, y = g + i*(cell+g), g + j*(cell+g)
+                c.create_rectangle(x, y, x+cell, y+cell, fill=col, outline="")
+    elif kind == "server":
+        c.create_polygon(s*0.24, s*0.14, s*0.86, s*0.50, s*0.24, s*0.86, fill=col, outline="")
+    elif kind == "log":
+        lw = max(1, int(s*0.09)); g = max(1, s*0.24)
+        for i in range(3):
+            c.create_line(g, g*(i+0.5), s-g, g*(i+0.5), fill=col, width=lw)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1193,6 +1218,9 @@ ADMIN_TIMEOUT = 6.0
 # 模态键顺序（契约 §1.2：key ∈ llm|image|vlm|speech|multimodal），仅用于展示排序
 MODALITY_ORDER = ("llm", "multimodal", "image", "vlm", "speech")
 ACCOUNT_LLM_MODES = ("own", "default_allowed", "blocked")
+# 表格里显示中文、行操作菜单也用这一份文案（旧版直接抛 own/default_allowed/blocked 裸值）
+LLM_MODE_TEXT = {"own": "仅用自己的配置", "default_allowed": "可用服务器默认",
+                 "blocked": "禁用服务器默认"}
 # 注册策略（契约 §1.4：mode ∈ open|invite_only|closed；文案仅展示，拦截行为以后端为准）
 REGISTRATION_MODES = (("open", "开放", "任何人都能注册新账号（现状默认）"),
                       ("invite_only", "仅邀请码", "注册需要邀请码"),
@@ -1481,6 +1509,15 @@ class ControllerApp:
         root.minsize(int(1150 * scale), int(700 * scale))
         root.configure(bg=self.theme.bg)
         self._scale = scale
+        # V1：把 DPI 缩放与等宽族名交给设计系统（间距与图标按物理像素出图，Tk 不会自动缩放图片）
+        CUI.set_scale(scale)
+        CUI.init_fonts(root)
+        # 间距常量按 DPI 重绑：SP_* 是 100% 下的基准值，而 Tk 只自动缩放字号、
+        # 不缩放 padx/pady——150% 机器上不重绑就是"字大间距小"，整页挤成一团
+        global SP_XXS, SP_XS, SP_SM, SP_MD, SP_LG, SP_XL
+        SP_XXS, SP_XS, SP_SM, SP_MD, SP_LG, SP_XL = (
+            CUI.sp("xxs"), CUI.sp("xs"), CUI.sp("sm"),
+            CUI.sp("md"), CUI.sp("lg"), CUI.sp("xl"))
         self._apply_window_icon()
         self._apply_titlebar()
 
@@ -1593,7 +1630,7 @@ class ControllerApp:
 
     def _build_header(self) -> None:
         t = self.theme
-        header = tk.Frame(self.root, bg=t.sidebar, height=52)
+        header = tk.Frame(self.root, bg=t.sidebar, height=CUI.px(52))
         header.pack(side="top", fill="x")
         header.pack_propagate(False)
 
@@ -1601,30 +1638,30 @@ class ControllerApp:
         brand.pack(side="left", padx=(SP_LG, 0), pady=SP_SM)
         _make_icon(brand, 18, "diamond", t.accent_glow, t.sidebar).pack(side="left")
         tk.Label(brand, text="拥爱服务器控制台", fg=t.text, bg=t.sidebar,
-                 font=(FONT, 14, "bold")).pack(side="left", padx=(SP_XS, 0))
+                 font=CUI.f("h2", True)).pack(side="left", padx=(SP_XS, 0))
 
         right = tk.Frame(header, bg=t.sidebar)
         right.pack(side="right", padx=SP_LG, pady=SP_SM)
         self.header_dot = _make_icon(right, 10, "dot", t.text_muted, t.sidebar)
         self.header_dot.pack(side="left")
-        self.header_status_label = tk.Label(right, text="检测中…", fg=t.text, bg=t.sidebar, font=(FONT, 12, "bold"))
+        self.header_status_label = tk.Label(right, text="检测中…", fg=t.text, bg=t.sidebar, font=CUI.f("title", True))
         self.header_status_label.pack(side="left", padx=(SP_XS, SP_SM))
         self.header_port_label = tk.Label(
             right,
             text=("目标 %s:%d" % (TARGET_HOST, TARGET_PORT)) if _is_remote()
                  else ("端口 %d" % TARGET_PORT),
-            fg=t.text_sec, bg=t.sidebar, font=(FONT, 11))
+            fg=t.text_sec, bg=t.sidebar, font=CUI.f("body"))
         self.header_port_label.pack(side="left", padx=(0, SP_SM))
-        self.header_health_label = tk.Label(right, text="健康 —", fg=t.text_sec, bg=t.sidebar, font=(FONT, 11))
+        self.header_health_label = tk.Label(right, text="健康 —", fg=t.text_sec, bg=t.sidebar, font=CUI.f("body"))
         self.header_health_label.pack(side="left", padx=(0, SP_MD))
         tk.Button(right, text="刷新", bg=t.sidebar, fg=t.accent_glow, activebackground=t.sidebar,
-                  activeforeground=t.accent_glow, relief="flat", bd=0, font=(FONT, 11, "bold"),
+                  activeforeground=t.accent_glow, relief="flat", bd=0, font=CUI.f("body", True),
                   cursor="hand2", command=self._do_refresh).pack(side="left", padx=(0, SP_SM))
         tk.Button(right, text="渠道登录", bg=t.sidebar, fg=t.accent_glow, activebackground=t.sidebar,
-                  activeforeground=t.accent_glow, relief="flat", bd=0, font=(FONT, 11, "bold"),
+                  activeforeground=t.accent_glow, relief="flat", bd=0, font=CUI.f("body", True),
                   cursor="hand2", command=self._open_channel_login).pack(side="left", padx=(0, SP_SM))
         tk.Button(right, text="设置", bg=t.sidebar, fg=t.accent_glow, activebackground=t.sidebar,
-                  activeforeground=t.accent_glow, relief="flat", bd=0, font=(FONT, 11, "bold"),
+                  activeforeground=t.accent_glow, relief="flat", bd=0, font=CUI.f("body", True),
                   cursor="hand2", command=self.open_settings).pack(side="left")
 
         tk.Frame(self.root, height=1, bg=t.divider).pack(side="top", fill="x")
@@ -1639,16 +1676,16 @@ class ControllerApp:
 
     def _build_statusbar(self) -> None:
         t = self.theme
-        bar = tk.Frame(self.root, bg=t.sidebar, height=28)
+        bar = tk.Frame(self.root, bg=t.sidebar, height=CUI.px(28))
         bar.pack(side="bottom", fill="x")
         bar.pack_propagate(False)
         tk.Frame(bar, width=1, bg=t.divider).pack(side="left", fill="y")
-        self.msg = tk.Label(bar, text="就绪", fg=t.text_sec, bg=t.sidebar, font=(FONT, 10))
+        self.msg = tk.Label(bar, text="就绪", fg=t.text_sec, bg=t.sidebar, font=CUI.f("caption"))
         self.msg.pack(side="left", padx=SP_MD)
         self.refresh_label = tk.Label(bar, text=f"刷新间隔 {_get_refresh_ms() // 1000}s",
-                                      fg=t.text_muted, bg=t.sidebar, font=(FONT, 10))
+                                      fg=t.text_muted, bg=t.sidebar, font=CUI.f("caption"))
         self.refresh_label.pack(side="right", padx=(0, SP_SM))
-        self.last_refresh_label = tk.Label(bar, text="上次刷新 —", fg=t.text_muted, bg=t.sidebar, font=(FONT, 10))
+        self.last_refresh_label = tk.Label(bar, text="上次刷新 —", fg=t.text_muted, bg=t.sidebar, font=CUI.f("caption"))
         self.last_refresh_label.pack(side="right", padx=(0, SP_LG))
 
     def _build_body(self) -> None:
@@ -1656,7 +1693,8 @@ class ControllerApp:
         body = tk.Frame(self.root, bg=t.bg)
         body.pack(side="top", fill="both", expand=True)
 
-        self._sidebar = tk.Frame(body, bg=t.sidebar, width=208)
+        sb_w = max(208, CUI.px(160))   # 侧栏宽：按 160 逻辑像素给，100% 下仍是 208 不变
+        self._sidebar = tk.Frame(body, bg=t.sidebar, width=sb_w)
         self._sidebar.pack(side="left", fill="y")
         self._sidebar.pack_propagate(False)
         tk.Frame(self._sidebar, width=1, bg=t.divider).pack(side="right", fill="y")
@@ -1667,16 +1705,17 @@ class ControllerApp:
         self._nav_widgets = {}
         self._admin_meta = {}
         self._admin_login_tip = None
+        # V1：9 个入口各给一枚专属图标（旧版 5 个形状复用，dashboard×3 / dot×4，等于没有图标）
         nav_items = [
-            ("dashboard", "仪表盘", "dashboard"),
+            ("dashboard", "仪表盘", "layout-dashboard"),
             ("server", "服务器控制", "server"),
-            ("log", "运行日志", "log"),
-            ("models", "默认模型", "dashboard"),
-            ("accounts", "账号管理", "diamond"),
-            ("registration", "注册策略", "server"),
-            ("flags", "开关与权限", "dot"),
-            ("audit", "审计", "log"),
-            ("overview", "概览", "dashboard"),
+            ("log", "运行日志", "scroll-text"),
+            ("models", "默认模型", "brain"),
+            ("accounts", "账号管理", "users"),
+            ("registration", "注册策略", "ticket"),
+            ("flags", "开关与权限", "toggle-right"),
+            ("audit", "审计", "clipboard-list"),
+            ("overview", "概览", "gauge"),
         ]
         for key, label, icon in nav_items:
             item = tk.Frame(self._sidebar, bg=t.sidebar, cursor="hand2")
@@ -1685,13 +1724,19 @@ class ControllerApp:
             bar.pack(side="left", fill="y")
             ic = _make_icon(item, 16, icon, t.text_sec, t.sidebar)
             ic.pack(side="left", padx=(SP_MD, SP_SM), pady=SP_SM)
-            lb = tk.Label(item, text=label, bg=t.sidebar, fg=t.text_sec, font=(FONT, 12))
+            lb = tk.Label(item, text=label, bg=t.sidebar, fg=t.text_sec, font=CUI.f("title"))
             lb.pack(side="left", pady=SP_SM)
             for wid in (item, ic, lb, bar):
                 wid.bind("<Button-1>", lambda e, k=key: self._select_page(k))
                 wid.bind("<Enter>", lambda e, k=key: self._nav_hover(k, True))
                 wid.bind("<Leave>", lambda e, k=key: self._nav_hover(k, False))
             self._nav_widgets[key] = (item, ic, lb, bar)
+
+        # 侧栏底部品牌画框（照片槽位）：后建、贴底，窗口矮的时候先挤它而不是挤导航
+        plaque = CUI.photo_label(self._sidebar, t, "photo_sidebar_brand.jpg",
+                                 sb_w - 1, CUI.px(110), bg=t.sidebar)
+        if plaque is not None:
+            plaque.pack(side="bottom", pady=(0, CUI.sp("sm")))
 
         self._pages = {
             "dashboard": self._build_dashboard_page(),
@@ -1716,13 +1761,13 @@ class ControllerApp:
                 bar.config(bg=t.accent)
                 ic.config(bg=t.accent_dim)
                 ic._paint_icon(t.accent_glow)
-                lb.config(bg=t.accent_dim, fg=t.text, font=(FONT, 12, "bold"))
+                lb.config(bg=t.accent_dim, fg=t.text, font=CUI.f("title", True))
             else:
                 item.config(bg=t.sidebar)
                 bar.config(bg=t.sidebar)
                 ic.config(bg=t.sidebar)
                 ic._paint_icon(t.text_sec)
-                lb.config(bg=t.sidebar, fg=t.text_sec, font=(FONT, 12))
+                lb.config(bg=t.sidebar, fg=t.text_sec, font=CUI.f("title"))
         self._nav = key
         if key == "log":
             self._refresh_log_tick()
@@ -1758,18 +1803,30 @@ class ControllerApp:
         inner = card.inner
         inner.config(padx=SP_LG, pady=SP_MD)
         tk.Frame(inner, bg=t.card).pack(fill="both", expand=True)
-        tk.Label(inner, text=title, fg=t.text_sec, bg=t.card, font=(FONT, 11)).pack(anchor="w")
-        value = tk.Label(inner, text="—", fg=t.text, bg=t.card, font=(FONT, 22, "bold"))
+        tk.Label(inner, text=title, fg=t.text_sec, bg=t.card, font=CUI.f("body")).pack(anchor="w")
+        # KPI 数值走等宽族：数字宽度固定，卡片之间不再跳位
+        value = tk.Label(inner, text="—", fg=t.text, bg=t.card,
+                         font=CUI.f("num_xl", bold=True, num=True))
         value.pack(anchor="w", pady=(SP_XS, 2))
-        cap = tk.Label(inner, text=caption, fg=t.text_muted, bg=t.card, font=(FONT, 10))
+        cap = tk.Label(inner, text=caption, fg=t.text_muted, bg=t.card, font=CUI.f("caption"))
         cap.pack(anchor="w")
         tk.Frame(inner, bg=t.card).pack(fill="both", expand=True)
         return card, value, cap
 
-    def _wrap_card(self, parent, height=None, **pack_kw):
-        """返回一个圆角卡片及其 inner Frame，供自由布局使用。height 显式固定高度。"""
+    def _wrap_card(self, parent, height=None, fit=False, **pack_kw):
+        """返回一个圆角卡片及其 inner Frame，供自由布局使用。
+
+        `fit=True` 让卡片按内容长高——单行工具条一律走它：固定高度在 150% DPI 下
+        必然把按钮裁掉（按钮框本身已经按 DPI 放大，卡片高度却是 100% 时代写死的）。
+        `height=` 仍按 DPI 换算，只用于确实需要占位的块（如热力图卡）。
+        """
         t = self.theme
-        card = RoundedCard(parent, t, pad=3, height=height) if height else RoundedCard(parent, t, pad=3)
+        if fit:
+            card = RoundedCard(parent, t, pad=3, fit_inner=True)
+        elif height:
+            card = RoundedCard(parent, t, pad=3, height=CUI.px(height))
+        else:
+            card = RoundedCard(parent, t, pad=3)
         card.pack(**pack_kw)
         inner = card.inner
         inner.config(padx=SP_LG, pady=SP_LG)
@@ -1803,9 +1860,9 @@ class ControllerApp:
             _scroll.unbind_all("<MouseWheel>")
         _scroll.bind("<Enter>", _on_enter)
         _scroll.bind("<Leave>", _on_leave)
-        tk.Label(pad, text="服务器概览", fg=t.text, bg=t.bg, font=(FONT, 16, "bold")).pack(anchor="w")
+        tk.Label(pad, text="服务器概览", fg=t.text, bg=t.bg, font=CUI.f("h1", True)).pack(anchor="w")
         tk.Label(pad, text="运行状态、健康与数据规模一目了然", fg=t.text_muted, bg=t.bg,
-                 font=(FONT, 11)).pack(anchor="w", pady=(2, SP_MD))
+                 font=CUI.f("body")).pack(anchor="w", pady=(2, SP_MD))
 
         # 6 张 KPI 卡 2×3（自然高度）；热力图与占比卡按舒适高度排布，整页可滚动
         grid = tk.Frame(pad, bg=t.bg)
@@ -1822,7 +1879,7 @@ class ControllerApp:
         _, self.v_tokens, self.c_tokens = self._make_card(grid, 1, 2, "累计 Token", "Token 累计")
 
         # Token 活动卡：近 26 周热力图（每日/每周/累计），hover 查看当天用量与占比
-        heat_card = RoundedCard(grid, t, pad=3, height=330)
+        heat_card = RoundedCard(grid, t, pad=3, height=CUI.px(330))
         heat_card.grid(row=2, column=0, columnspan=3, sticky="nsew", padx=3, pady=3)
         heat_inner = heat_card.inner
         heat_inner.config(padx=SP_LG, pady=SP_XS)
@@ -1830,7 +1887,7 @@ class ControllerApp:
         heat_head.pack(fill="x")
         tk.Label(heat_head, text="Token 活动（近 26 周 · 悬停看当日任务构成）",
                  fg=t.text_sec, bg=t.card,
-                 font=(FONT, 11)).pack(side="left")
+                 font=CUI.f("body")).pack(side="left")
         self._heat_mode = "day"
         self._heat_days = []
         self._heat_series_vals = []
@@ -1842,7 +1899,7 @@ class ControllerApp:
             self._set_heat_mode, width=156, height=26)
         self.heat_seg.pack(side="right")
         self.heat_canvas = tk.Canvas(heat_inner, bg=t.card, highlightthickness=0, bd=0,
-                                     height=168)
+                                     height=CUI.px(168))
         self.heat_canvas.pack(fill="both", expand=True, pady=(2, 0))
         self.heat_canvas.bind("<Configure>", lambda e: self._draw_heatmap())
         self.heat_canvas.bind("<Motion>", self._on_heat_motion)
@@ -1953,11 +2010,11 @@ class ControllerApp:
         _scroll.bind("<Enter>", _on_enter)
         _scroll.bind("<Leave>", _on_leave)
 
-        tk.Label(pad, text="服务器控制", fg=t.text, bg=t.bg, font=(FONT, 16, "bold")).pack(anchor="w")
+        tk.Label(pad, text="服务器控制", fg=t.text, bg=t.bg, font=CUI.f("h1", True)).pack(anchor="w")
         tk.Label(pad, text="启动 / 停止 / 重启核心服务", fg=t.text_muted, bg=t.bg,
-                 font=(FONT, 11)).pack(anchor="w", pady=(2, SP_MD))
+                 font=CUI.f("body")).pack(anchor="w", pady=(2, SP_MD))
 
-        _, inner = self._wrap_card(pad, height=52, fill="x", pady=(0, SP_MD))
+        _, inner = self._wrap_card(pad, fit=True, fill="x", pady=(0, SP_MD))
         inner.config(pady=SP_XS)
         btn_row = tk.Frame(inner, bg=t.card)
         btn_row.pack(fill="x")
@@ -1967,20 +2024,20 @@ class ControllerApp:
         self.btn_stop.pack(side="left", padx=(0, SP_XS))
         self.btn_restart = RoundedButton(btn_row, t, "重启服务器", command=self.restart_server, variant="neutral")
         self.btn_restart.pack(side="left")
-        self.server_pid_label = tk.Label(btn_row, text="", fg=t.text_sec, bg=t.card, font=(FONT, 12))
+        self.server_pid_label = tk.Label(btn_row, text="", fg=t.text_sec, bg=t.card, font=CUI.f("title"))
         self.server_pid_label.pack(side="left", padx=SP_MD)
 
         # 图像理解服务（Ollama）：压缩为单行，与上方开关同一密度，不再独占整块
-        _, ol = self._wrap_card(pad, height=46, fill="x", pady=(0, SP_SM))
+        _, ol = self._wrap_card(pad, fit=True, fill="x", pady=(0, SP_SM))
         ol.config(pady=SP_XS)
         ol_row = tk.Frame(ol, bg=t.card)
         ol_row.pack(fill="x")
         self.ollama_dot = _make_icon(ol_row, 14, "dot", t.text_muted, t.card)
         self.ollama_dot.pack(side="left")
         tk.Label(ol_row, text=OLLAMA_LABEL, fg=t.text, bg=t.card,
-                 font=(FONT, 12, "bold")).pack(side="left", padx=(SP_XS, 0))
+                 font=CUI.f("title", True)).pack(side="left", padx=(SP_XS, 0))
         self.ollama_pid_label = tk.Label(ol_row, text="", fg=t.text_sec, bg=t.card,
-                                         font=(FONT, 11))
+                                         font=CUI.f("body"))
         self.ollama_pid_label.pack(side="left", padx=(SP_SM, 0))
         self._ollama_low_vram = _load_low_vram()
         self.low_vram_var = tk.BooleanVar(value=self._ollama_low_vram)
@@ -1996,16 +2053,16 @@ class ControllerApp:
         self.btn_ollama_start.pack(side="right")
 
         # 控制台监控目标：可指向本机或另一台远程后端（远程仅监控状态）
-        _, tgt = self._wrap_card(pad, height=96, fill="x", pady=(0, SP_SM))
+        _, tgt = self._wrap_card(pad, fit=True, fill="x", pady=(0, SP_SM))
         tgt.config(pady=SP_XS)
         tgt_row1 = tk.Frame(tgt, bg=t.card)
         tgt_row1.pack(fill="x")
         tk.Label(tgt_row1, text="控制台监控目标", width=14, anchor="w", fg=t.text, bg=t.card,
-                 font=(FONT, 12, "bold")).pack(side="left")
-        tk.Label(tgt_row1, text="主机", fg=t.text_muted, bg=t.card, font=(FONT, 10)).pack(side="left")
+                 font=CUI.f("title", True)).pack(side="left")
+        tk.Label(tgt_row1, text="主机", fg=t.text_muted, bg=t.card, font=CUI.f("caption")).pack(side="left")
         self.target_host_var = tk.StringVar(value=TARGET_HOST)
         ttk.Entry(tgt_row1, textvariable=self.target_host_var, width=18).pack(side="left", padx=(4, SP_XS))
-        tk.Label(tgt_row1, text="端口", fg=t.text_muted, bg=t.card, font=(FONT, 10)).pack(side="left")
+        tk.Label(tgt_row1, text="端口", fg=t.text_muted, bg=t.card, font=CUI.f("caption")).pack(side="left")
         self.target_port_var = tk.StringVar(value=str(TARGET_PORT))
         ttk.Entry(tgt_row1, textvariable=self.target_port_var, width=7).pack(side="left", padx=(4, SP_SM))
         RoundedButton(tgt_row1, t, "保存切换", command=self._save_target,
@@ -2015,17 +2072,17 @@ class ControllerApp:
         tgt_row2 = tk.Frame(tgt, bg=t.card)
         tgt_row2.pack(fill="x", pady=(SP_XS, 0))
         self.target_mode_label = tk.Label(tgt_row2, text="", anchor="w", fg=t.text_sec,
-                                          bg=t.card, font=(FONT, 10))
+                                          bg=t.card, font=CUI.f("caption"))
         self.target_mode_label.pack(side="left")
         self._refresh_target_ui()
 
         # 服务器地址（从仪表盘迁到这里：本机 / 局域网 / Tailscale，可一键复制）
-        _, addr_inner = self._wrap_card(pad, height=164, fill="x")
+        _, addr_inner = self._wrap_card(pad, fit=True, fill="x")
         addr_inner.config(pady=SP_SM)
         addr_head = tk.Frame(addr_inner, bg=t.card)
         addr_head.pack(fill="x")
         tk.Label(addr_head, text="服务器地址（手机端「设置 → 服务器地址」填写）",
-                 fg=t.text_sec, bg=t.card, font=(FONT, 11)).pack(side="left")
+                 fg=t.text_sec, bg=t.card, font=CUI.f("body")).pack(side="left")
         RoundedButton(addr_head, t, "重新探测", command=self._probe_addresses,
                       variant="neutral", height=28, font_size=10).pack(side="right")
         self._addr_value = {}
@@ -2038,9 +2095,9 @@ class ControllerApp:
             RoundedButton(_row, t, "复制", command=lambda k=_key: self._copy_address(k),
                           variant="neutral", height=26, font_size=9).pack(side="right")
             tk.Label(_row, text=_label, width=16, anchor="w", fg=t.text_muted,
-                     bg=t.card, font=(FONT, 10)).pack(side="left")
+                     bg=t.card, font=CUI.f("caption")).pack(side="left")
             _v = tk.Label(_row, text="探测中…", anchor="w", fg=t.text,
-                          bg=t.card, font=(FONT, 11, "bold"))
+                          bg=t.card, font=CUI.f("body", True))
             _v.pack(side="left", fill="x", expand=True)
             self._addr_value[_key] = _v
         # _addresses 只存纯净 URL（供复制），展示文本可带提示
@@ -2058,7 +2115,7 @@ class ControllerApp:
         pad.pack(fill="both", expand=True, padx=SP_LG, pady=SP_LG)
         head = tk.Frame(pad, bg=t.bg)
         head.pack(fill="x", pady=(0, SP_SM))
-        tk.Label(head, text="运行日志", fg=t.text, bg=t.bg, font=(FONT, 16, "bold")).pack(side="left")
+        tk.Label(head, text="运行日志", fg=t.text, bg=t.bg, font=CUI.f("h1", True)).pack(side="left")
         self.log_export_btn = RoundedButton(head, t, "导出日志", command=self.export_log, variant="neutral", height=32, font_size=10)
         self.log_export_btn.pack(side="right", padx=(SP_XS, 0))
         self.log_clear_btn = RoundedButton(head, t, "清空显示", command=self.clear_log_display, variant="neutral", height=32, font_size=10)
@@ -2076,7 +2133,34 @@ class ControllerApp:
                                                  highlightcolor=t.hairline,
                                                  selectbackground=t.accent_dim, selectforeground=t.text)
         self.log_box.pack(fill="both", expand=True)
+        # 空态画框：一行日志都还没有时居中压在文本区上（黑箱子里孤零零一行灰字很难看），
+        # 首行内容到达即撤。用 place 而不是 pack——不能把 log_box 挤下去。
+        self.log_empty = None
+        self._log_empty_shown = None
+        if CUI.PHOTOS.has("photo_empty_log.jpg"):
+            holder = tk.Frame(pad, bg=t.log_bg)
+            tile = CUI.photo_label(holder, t, "photo_empty_log.jpg", CUI.px(150), CUI.px(150))
+            if tile is not None:
+                tile.pack()
+                tk.Label(holder, text="还没有日志写入（app.log / server_stderr.log）",
+                         fg=t.text_sec, bg=t.log_bg, font=CUI.f("caption")
+                         ).pack(pady=(CUI.sp("sm"), 0))
+                self.log_empty = holder
+        self._sync_log_empty(False)
         return page
+
+    def _sync_log_empty(self, has_text: bool) -> None:
+        """日志空态画框的显隐（状态相同则不动，避免每次刷新都重画一遍）。"""
+        holder = getattr(self, "log_empty", None)
+        if holder is None:
+            return
+        if self._log_empty_shown == (not has_text):
+            return
+        self._log_empty_shown = not has_text
+        if self._log_empty_shown:
+            holder.place(relx=0.5, rely=0.5, anchor="center")
+        else:
+            holder.place_forget()
 
     # ── 管理面（账号独立 P2）：公共骨架 ──
 
@@ -2107,9 +2191,9 @@ class ControllerApp:
         _scroll.bind("<Enter>", _on_enter)
         _scroll.bind("<Leave>", _on_leave)
 
-        tk.Label(pad, text=title, fg=t.text, bg=t.bg, font=(FONT, 16, "bold")).pack(anchor="w")
+        tk.Label(pad, text=title, fg=t.text, bg=t.bg, font=CUI.f("h1", True)).pack(anchor="w")
         tk.Label(pad, text=subtitle, fg=t.text_muted, bg=t.bg,
-                 font=(FONT, 11)).pack(anchor="w", pady=(2, SP_MD))
+                 font=CUI.f("body")).pack(anchor="w", pady=(2, SP_MD))
         return page, pad
 
     def _admin_card(self, parent, **pack_kw):
@@ -2131,7 +2215,7 @@ class ControllerApp:
         dot = _make_icon(row, 10, "dot", t.success if who else t.error, t.card)
         dot.pack(side="left")
         lab = tk.Label(row, text=("已登录：%s" % who) if who else "未登录",
-                       fg=t.text if who else t.error, bg=t.card, font=(FONT, 11, "bold"))
+                       fg=t.text if who else t.error, bg=t.card, font=CUI.f("body", True))
         lab.pack(side="left", padx=(SP_XS, 0))
         RoundedButton(row, t, "刷新", command=refresh_cb, variant="primary",
                       height=28, font_size=10).pack(side="right")
@@ -2140,7 +2224,7 @@ class ControllerApp:
         RoundedButton(row, t, "登录", command=self._open_admin_login, variant="neutral",
                       height=28, font_size=10).pack(side="right", padx=(0, SP_XS))
         hint = tk.Label(bar, text="", anchor="w", justify="left", fg=t.text_muted,
-                        bg=t.card, font=(FONT, 10))
+                        bg=t.card, font=CUI.f("caption"))
         hint.pack(fill="x", pady=(SP_XS, 0))
         return lab, dot, hint
 
@@ -2157,10 +2241,13 @@ class ControllerApp:
         except Exception:
             _safe_traceback()
 
-    def _admin_note(self, key: str, text: str, clear: bool = True) -> None:
+    def _admin_note(self, key: str, text: str, clear: bool = True,
+                    illo: str = "", fg=None) -> None:
         """整页占位提示（接口未就绪 / 未登录时把请求路径显示出来，方便联调）。
 
         clear=False 时保留 body 已有内容（如额度卡），只追加提示行。
+        illo 给素材名时走「照片画框 + 居中说明」的空态版式；素材没到货或解码失败时
+        退回下面那条纯文字提示——**版式与上一版逐字一致**，不会留一个空框。
         """
         meta = self._admin_meta.get(key)
         if not meta:
@@ -2169,8 +2256,21 @@ class ControllerApp:
         body = meta["body"]
         if clear:
             _clear_frame(body)
-        tk.Label(body, text=text, anchor="w", justify="left", fg=t.warning,
-                 bg=t.surface_alt, font=(FONT, 11), padx=SP_MD, pady=SP_MD).pack(fill="x")
+        if illo:
+            tile = CUI.photo_label(body, t, illo, CUI.px(150), CUI.px(150))
+            if tile is not None:
+                # 左对齐而不是居中：管理页 body 在横向可滚的画布里，表格列宽合计会把
+                # 内框撑得比视口宽，居中反而把画框推到视口右侧之外
+                tile.pack(anchor="w", padx=SP_LG, pady=(CUI.sp("xl"), CUI.sp("md")))
+                # wraplength 是必需的：这些提示是一整句长文案，不折行会把 body 的
+                # 请求宽度撑到比视口还宽，于是"居中"的画框被顶到右边、文字掉到折叠线下
+                tk.Label(body, text=text, anchor="w", justify="left",
+                         fg=fg or t.text_sec, bg=t.bg, font=CUI.f("body"),
+                         wraplength=CUI.px(520)
+                         ).pack(anchor="w", padx=SP_LG, pady=(0, CUI.sp("xl")))
+                return
+        tk.Label(body, text=text, anchor="w", justify="left", fg=fg or t.warning,
+                 bg=t.surface_alt, font=CUI.f("body"), padx=SP_MD, pady=SP_MD).pack(fill="x")
 
     def _refresh_admin_login_bars(self) -> None:
         who = _console_login_state()
@@ -2244,9 +2344,14 @@ class ControllerApp:
             text = "未登录或权限不足，请重新登录"
         if page_key:
             self._set_admin_status(page_key, "%s（%s）" % (text, path) if path else text, "err")
-            if code in (401, 404):
+            if code in (401, 404, 0):
+                # 三种"这一页现在没有数据"的时刻各给一枚画框：没登录 / 接口没上线 / 后端不通
+                _illo = {401: "photo_locked_gate.jpg",
+                         404: "photo_empty_disconnected.jpg"}.get(code, "photo_offline.jpg")
                 self._admin_note(page_key, "%s\n请求路径：%s %s" % (
-                    text, path, "（点右上角「登录」后重试）" if code == 401 else "（后端接口可能尚未上线）"))
+                    text, path, "（点右上角「登录」后重试）" if code == 401
+                    else "（后端接口可能尚未上线）" if code == 404 else "（先启动后端再刷新）"),
+                    illo=_illo, fg=self.theme.error)
         else:
             self._set_msg(text)
         self._refresh_admin_login_bars()
@@ -2267,22 +2372,22 @@ class ControllerApp:
         f = card.inner
         f.config(padx=SP_LG, pady=SP_LG)
         tk.Label(f, text="服务器管理登录", fg=t.text, bg=t.card,
-                 font=(FONT, 13, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
+                 font=CUI.f("h2", True)).grid(row=0, column=0, columnspan=2, sticky="w")
         tk.Label(f, text="目标 %s（凭据缓存在 backend/data/console_token.json）" % _target_base(),
-                 fg=t.text_muted, bg=t.card, font=(FONT, 10)).grid(
+                 fg=t.text_muted, bg=t.card, font=CUI.f("caption")).grid(
             row=1, column=0, columnspan=2, sticky="w", pady=(2, SP_MD))
-        tk.Label(f, text="用户名", fg=t.text_sec, bg=t.card, font=(FONT, 11)).grid(
+        tk.Label(f, text="用户名", fg=t.text_sec, bg=t.card, font=CUI.f("body")).grid(
             row=2, column=0, sticky="w", padx=(0, SP_SM))
         user_var = tk.StringVar(value=_console_login_state())
         ttk.Entry(f, textvariable=user_var, width=24).grid(row=2, column=1, sticky="w")
-        tk.Label(f, text="密码", fg=t.text_sec, bg=t.card, font=(FONT, 11)).grid(
+        tk.Label(f, text="密码", fg=t.text_sec, bg=t.card, font=CUI.f("body")).grid(
             row=3, column=0, sticky="w", padx=(0, SP_SM), pady=(SP_XS, 0))
         pwd_var = tk.StringVar()
         self._admin_login_pwd_var = pwd_var
         pwd_entry = ttk.Entry(f, textvariable=pwd_var, show="*", width=24)
         pwd_entry.grid(row=3, column=1, sticky="w", pady=(SP_XS, 0))
         tip = tk.Label(f, text="", anchor="w", justify="left", fg=t.error, bg=t.card,
-                       font=(FONT, 10), wraplength=320)
+                       font=CUI.f("caption"), wraplength=320)
         tip.grid(row=4, column=0, columnspan=2, sticky="w", pady=(SP_SM, 0))
         self._admin_login_tip = tip
 
@@ -2380,10 +2485,10 @@ class ControllerApp:
             _make_icon(head, 10, "dot", t.success if r.get("enabled") else t.text_muted,
                        t.card).pack(side="left")
             tk.Label(head, text="%s（%s）" % (r.get("label") or key, key),
-                     fg=t.text, bg=t.card, font=(FONT, 12, "bold")).pack(side="left", padx=(SP_XS, 0))
+                     fg=t.text, bg=t.card, font=CUI.f("title", True)).pack(side="left", padx=(SP_XS, 0))
             tk.Label(head, text="provider %s · 日限额 %s" % (r.get("provider") or "—",
                                                              r.get("daily_limit") or "—"),
-                     fg=t.text_muted, bg=t.card, font=(FONT, 10)).pack(side="right")
+                     fg=t.text_muted, bg=t.card, font=CUI.f("caption")).pack(side="right")
             form = tk.Frame(card, bg=t.card)
             form.pack(fill="x", pady=(SP_XS, 0))
             en_var = tk.BooleanVar(value=bool(r.get("enabled")))
@@ -2391,17 +2496,17 @@ class ControllerApp:
             fields = {}
             for fname, flabel, fwidth in (("model", "模型", 20), ("base_url", "Base URL", 24)):
                 tk.Label(form, text=flabel, fg=t.text_muted, bg=t.card,
-                         font=(FONT, 10)).pack(side="left", padx=(SP_MD, 4))
+                         font=CUI.f("caption")).pack(side="left", padx=(SP_MD, 4))
                 var = tk.StringVar(value=str(r.get(fname) or ""))
                 ttk.Entry(form, textvariable=var, width=fwidth).pack(side="left")
                 fields[fname] = var
             tk.Label(form, text="api_key", fg=t.text_muted, bg=t.card,
-                     font=(FONT, 10)).pack(side="left", padx=(SP_MD, 4))
+                     font=CUI.f("caption")).pack(side="left", padx=(SP_MD, 4))
             ak_var = tk.StringVar()
             ttk.Entry(form, textvariable=ak_var, width=16).pack(side="left")
             fields["api_key"] = ak_var
             tk.Label(form, text="留空＝不修改（当前 %s）" % ("已配置" if r.get("has_api_key") else "未配置"),
-                     fg=t.text_muted, bg=t.card, font=(FONT, 10)).pack(side="left", padx=(4, 0))
+                     fg=t.text_muted, bg=t.card, font=CUI.f("caption")).pack(side="left", padx=(4, 0))
             RoundedButton(form, t, "保存", variant="primary", height=28, font_size=10,
                           command=lambda k=key, f=fields, ev=en_var: self._save_modality(k, f, ev)
                           ).pack(side="right")
@@ -2481,57 +2586,78 @@ class ControllerApp:
                 "accounts",
                 "接口 200 但 accounts 为空（GET %s）：请确认账号数据是否存在，"
                 "以及响应结构是否变更（信封字段是否仍为 accounts）" % meta["path"],
-                clear=False)
+                clear=False, illo="photo_empty_accounts.jpg", fg=t.text_sec)
             return
-        cols = (("id", 5), ("用户名", 12), ("昵称", 12), ("主账号", 7),
-                ("控制台", 7), ("禁用", 14), ("LLM 额度", 22), ("llm_mode", 15), ("操作", 34))
+        cols = (
+            {"label": "ID", "weight": 0, "min": 46},
+            {"label": "用户名", "weight": 2, "min": 110},
+            {"label": "昵称", "weight": 2, "min": 100},
+            {"label": "主账号", "weight": 1, "min": 78},
+            {"label": "控制台", "weight": 1, "min": 78},
+            {"label": "状态", "weight": 2, "min": 124},
+            {"label": "LLM 额度", "weight": 2, "min": 130},
+            {"label": "LLM 模式", "weight": 2, "min": 140},
+            {"label": "操作", "weight": 0, "min": 56},
+        )
         _, card = self._admin_card(body, fill="x")
-        for ci, (name, width) in enumerate(cols):
-            tk.Label(card, text=name, width=width, anchor="w", fg=t.text_sec, bg=t.card,
-                     font=(FONT, 10, "bold")).grid(row=0, column=ci, sticky="w", pady=(0, 2))
-        tk.Frame(card, bg=t.hairline, height=1).grid(row=1, column=0, columnspan=len(cols),
-                                                     sticky="ew", pady=(0, SP_XS))
-        for ri, r in enumerate(rows, start=2):
+        table = CUI.DataTable(card, t, cols)
+        for idx, r in enumerate(rows):
             uid = r.get("id")
-            row_bg = _hex_mix(t.card, t.error, 0.14) if r.get("disabled_at") else t.card
-            disabled_txt = ("禁用中 %s" % _fmt_dt(r.get("disabled_at"))) if r.get("disabled_at") else "正常"
-            cells = [str(uid), str(r.get("username") or ""), str(r.get("nickname") or ""),
-                     "是" if r.get("is_admin") else "否",
-                     "是" if r.get("server_admin") else "否",
-                     disabled_txt, _llm_limit_text(r), str(r.get("llm_mode") or "")]
-            for ci, txt in enumerate(cells):
-                fg = t.text
-                if ci == 5:
-                    fg = t.error if r.get("disabled_at") else t.text_sec
-                elif ci == 4:
-                    fg = t.accent_glow if r.get("server_admin") else t.text_sec
-                tk.Label(card, text=txt or "—", width=cols[ci][1], anchor="w", fg=fg, bg=row_bg,
-                         font=(FONT, 10)).grid(row=ri, column=ci, sticky="w", pady=1)
-            act = tk.Frame(card, bg=row_bg)
-            act.grid(row=ri, column=len(cols) - 1, sticky="w")
-            mode_var = tk.StringVar(value=str(r.get("llm_mode") or "default_allowed"))
-            ttk.Combobox(act, textvariable=mode_var, values=list(ACCOUNT_LLM_MODES),
-                         state="readonly", width=14).pack(side="left")
-            RoundedButton(act, t, "设模式", variant="neutral", height=26, font_size=9,
-                          command=lambda i=uid, v=mode_var: self._set_account_llm_mode(i, v)
-                          ).pack(side="left", padx=(4, SP_XS))
-            RoundedButton(act, t, "取消管理员" if r.get("server_admin") else "设为管理员",
-                          variant="neutral", height=26, font_size=9,
-                          command=lambda i=uid, en=not bool(r.get("server_admin")):
-                          self._set_account_server_admin(i, en)).pack(side="left", padx=(0, SP_XS))
-            RoundedButton(act, t, "启用" if r.get("disabled_at") else "禁用",
-                          variant="danger" if not r.get("disabled_at") else "neutral",
-                          height=26, font_size=9,
-                          command=lambda i=uid, d=not bool(r.get("disabled_at")):
-                          self._set_account_disabled(i, d)).pack(side="left")
-            # A8：额度覆盖（弹窗输入）+ 清除覆盖（仅该账号已有覆盖时给入口）
-            RoundedButton(act, t, "设额度", variant="neutral", height=26, font_size=9,
-                          command=lambda i=uid, o=r.get("llm_total_limit_own"):
-                          self._open_llm_limit_dialog(i, o)).pack(side="left", padx=(4, 0))
-            if r.get("llm_total_limit_own") is not None:
-                RoundedButton(act, t, "清除覆盖", variant="neutral", height=26, font_size=9,
-                              command=lambda i=uid: self._clear_account_llm_limit(i)
-                              ).pack(side="left", padx=(4, 0))
+            disabled = bool(r.get("disabled_at"))
+            base = t.card if idx % 2 == 0 else CUI.mix(t.card, t.card_hover, 0.55)
+            row = table.add_row(_hex_mix(base, t.error, 0.14) if disabled else base)
+            row.text(0, str(uid), num=True, fg=t.text)
+            row.text(1, str(r.get("username") or ""), fg=t.text)
+            nick = str(r.get("nickname") or "")
+            row.text(2, nick, fg=t.text_sec, tip=nick)
+            row.text(3, "是" if r.get("is_admin") else "否", fg=t.text_sec)
+            row.text(4, "是" if r.get("server_admin") else "否",
+                     fg=t.accent_glow if r.get("server_admin") else t.text_muted,
+                     bold=bool(r.get("server_admin")))
+            row.text(5, ("禁用中 %s" % _fmt_dt(r.get("disabled_at"))) if disabled else "正常",
+                     fg=t.error if disabled else t.success)
+            row.text(6, _llm_limit_text(r), num=True, fg=t.text)
+            mode = str(r.get("llm_mode") or "")
+            row.text(7, LLM_MODE_TEXT.get(mode, mode or "—"),
+                     fg=t.error if mode == "blocked" else t.text_sec)
+            # 操作收进 ⋯ 菜单：旧版每行 1 个下拉 + 5 个按钮，25 行＝125 个按钮，
+            # 是全站噪音最大的一屏；动作一个没少，只是不再常驻。
+            more = _make_icon(row.cell(8), 18, "more-horizontal", t.text_sec, row.bg)
+            more.config(cursor="hand2")
+            more.bind("<Button-1>", lambda e, rr=r: self._open_account_menu(e, rr))
+            more.pack(side="left")
+
+    def _open_account_menu(self, event, r) -> None:
+        """账号行操作菜单（替代旧的常驻下拉 + 5 个按钮）。"""
+        t = self.theme
+        uid = r.get("id")
+        attrs = dict(tearoff=0, bg=t.surface_alt, fg=t.text, bd=0, relief="flat",
+                     activebackground=t.accent_dim, activeforeground=t.text,
+                     font=CUI.f("body"))
+        m = tk.Menu(self.root, **attrs)
+        m.add_command(label="取消控制台管理员" if r.get("server_admin") else "设为控制台管理员",
+                      command=lambda i=uid, en=not bool(r.get("server_admin")):
+                      self._set_account_server_admin(i, en))
+        m.add_command(label="恢复账号" if r.get("disabled_at") else "禁用账号",
+                      command=lambda i=uid, d=not bool(r.get("disabled_at")):
+                      self._set_account_disabled(i, d))
+        m.add_separator()
+        cur = str(r.get("llm_mode") or "default_allowed")
+        sub = tk.Menu(m, **attrs)
+        for mode in ACCOUNT_LLM_MODES:
+            sub.add_command(
+                label="%s（当前）" % LLM_MODE_TEXT[mode] if mode == cur else LLM_MODE_TEXT[mode],
+                command=lambda i=uid, mm=mode: self._set_account_llm_mode(
+                    i, tk.StringVar(value=mm)))
+        m.add_cascade(label="LLM 模式", menu=sub)
+        m.add_command(label="设置额度覆盖…",
+                      command=lambda i=uid, o=r.get("llm_total_limit_own"):
+                      self._open_llm_limit_dialog(i, o))
+        if r.get("llm_total_limit_own") is not None:
+            m.add_command(label="清除额度覆盖",
+                          command=lambda i=uid: self._clear_account_llm_limit(i))
+        m.tk_popup(event.x_root, event.y_root)
+        m.grab_release()
 
     def _set_account_disabled(self, uid, disabled: bool) -> None:
         def ok(_data):
@@ -2576,15 +2702,15 @@ class ControllerApp:
         t = self.theme
         _, card = self._admin_card(body, fill="x", pady=(0, SP_SM))
         tk.Label(card, text="服务器默认额度（账号无覆盖时回落到这里；0=未设置）", fg=t.text_sec,
-                 bg=t.card, font=(FONT, 10)).pack(anchor="w")
+                 bg=t.card, font=CUI.f("caption")).pack(anchor="w")
         if not isinstance(limit, dict):
             tk.Label(card, text="未读取到（GET %s/llm-limit）" % ADMIN_API_PREFIX,
-                     fg=t.warning, bg=t.card, font=(FONT, 11)).pack(anchor="w", pady=(0, SP_XS))
+                     fg=t.warning, bg=t.card, font=CUI.f("body")).pack(anchor="w", pady=(0, SP_XS))
             return
         val = limit.get("total_limit")
         src = str(limit.get("source") or "")
         tk.Label(card, text="%s（%s）" % (val, LLM_LIMIT_SOURCE_LABELS.get(src, src)),
-                 fg=t.text, bg=t.card, font=(FONT, 14, "bold")).pack(anchor="w", pady=(0, SP_SM))
+                 fg=t.text, bg=t.card, font=CUI.f("h2", True)).pack(anchor="w", pady=(0, SP_SM))
         row = tk.Frame(card, bg=t.card)
         row.pack(fill="x")
         var = tk.StringVar(value="" if val is None else str(val))
@@ -2593,7 +2719,7 @@ class ControllerApp:
                       command=lambda v=var: self._save_server_llm_limit(v)
                       ).pack(side="left", padx=(SP_XS, 0))
         tk.Label(row, text="负数/非整数由后端拒绝（400）", fg=t.text_muted, bg=t.card,
-                 font=(FONT, 10)).pack(side="left", padx=(SP_MD, 0))
+                 font=CUI.f("caption")).pack(side="left", padx=(SP_MD, 0))
 
     def _save_server_llm_limit(self, var) -> None:
         raw = str(var.get() or "").strip()
@@ -2631,17 +2757,17 @@ class ControllerApp:
         f = card.inner
         f.config(padx=SP_LG, pady=SP_LG)
         tk.Label(f, text="账号 %s 的 LLM 额度" % uid, fg=t.text, bg=t.card,
-                 font=(FONT, 13, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
+                 font=CUI.f("h2", True)).grid(row=0, column=0, columnspan=2, sticky="w")
         tk.Label(f, text="保存=设账号覆盖；点「清除覆盖」= 删除覆盖回落服务器默认（0 表示额度为 0）",
-                 fg=t.text_muted, bg=t.card, font=(FONT, 10)).grid(
+                 fg=t.text_muted, bg=t.card, font=CUI.f("caption")).grid(
             row=1, column=0, columnspan=2, sticky="w", pady=(2, SP_MD))
-        tk.Label(f, text="额度", fg=t.text_sec, bg=t.card, font=(FONT, 11)).grid(
+        tk.Label(f, text="额度", fg=t.text_sec, bg=t.card, font=CUI.f("body")).grid(
             row=2, column=0, sticky="w", padx=(0, SP_SM))
         var = tk.StringVar(value="" if own is None else str(own))
         entry = ttk.Entry(f, textvariable=var, width=18)
         entry.grid(row=2, column=1, sticky="w")
         tip = tk.Label(f, text="", anchor="w", justify="left", fg=t.error, bg=t.card,
-                       font=(FONT, 10), wraplength=320)
+                       font=CUI.f("caption"), wraplength=320)
         tip.grid(row=3, column=0, columnspan=2, sticky="w", pady=(SP_SM, 0))
 
         def close():
@@ -2701,11 +2827,41 @@ class ControllerApp:
 
     # ── 开关与权限页 ──
 
+    # ── 开关与权限页（V2 重做）─────────────────────────────────────
+    # 旧版三宗罪：81 行平铺无分组、243 个原生黑框复选框、81 个常驻「保存」按钮，
+    # 而且 title/desc 恒为 null（管理端点不返回中文元数据），整页只有裸键名。
+    # 现在：分组折叠 + 搜索/筛选 + 自绘 Switch + 只有改动过的行才出现「保存」。
+    # 写库语义一字未改（仍是每行一次 PUT 三个字段），只是把噪音收掉。
+
     def _build_flags_page(self) -> tk.Frame:
         t = self.theme
         page, pad = self._make_admin_page(
             "开关与权限", "功能开关当前值 + 允许用户自助 + 服务器锁定（锁定行高亮，用户侧写该开关一律 403）")
         login_label, login_dot, hint = self._admin_login_bar(pad, self._load_flags)
+        # 工具条只建一次：_render_flags 会反复重建列表，搜索框若建在列表里，
+        # 每敲一个字都会被清掉焦点。
+        bar = tk.Frame(pad, bg=t.bg)
+        bar.pack(fill="x", pady=(0, CUI.sp("sm")))
+        self._flags_rows = []
+        self._flags_open = set()
+        self._flags_dirty = {}
+        self._flags_search = tk.StringVar()
+        self._flags_filter = tk.StringVar(value="all")
+        ent = tk.Entry(bar, textvariable=self._flags_search, width=20, bg=t.entry_bg,
+                       fg=t.text, insertbackground=t.text, relief="flat",
+                       highlightthickness=1, highlightbackground=t.hairline,
+                       highlightcolor=t.accent, font=CUI.f("body"))
+        ent.pack(side="left", ipady=CUI.sp("xxs"))
+        ent.bind("<KeyRelease>", lambda _e: self._render_flags())
+        CUI.Tooltip(ent, lambda: "按键名 / 中文名 / 说明搜索")
+        Segmented(bar, t, [("all", "全部"), ("diff", "与默认不同"),
+                           ("locked", "仅锁定"), ("on", "仅开启")],
+                  lambda v: (self._flags_filter.set(v), self._render_flags()),
+                  width=CUI.px(292), height=CUI.px(26)).pack(side="left", padx=(CUI.sp("md"), 0))
+        RoundedButton(bar, t, "展开全部", variant="neutral", height=CUI.px(26), font_size=10,
+                      command=self._flags_expand_all).pack(side="left", padx=(CUI.sp("md"), 0))
+        RoundedButton(bar, t, "收起全部", variant="neutral", height=CUI.px(26), font_size=10,
+                      command=self._flags_collapse_all).pack(side="left", padx=(CUI.sp("xs"), 0))
         body = tk.Frame(pad, bg=t.bg)
         body.pack(fill="x")
         self._admin_meta["flags"] = {"status": hint, "login_label": login_label,
@@ -2717,49 +2873,205 @@ class ControllerApp:
     def _load_flags(self) -> None:
         def ok(data):
             rows = [r for r in (data.get("flags") or []) if isinstance(r, dict)]
-            self._render_flags(rows)
-            self._set_admin_status("flags", "共 %d 个开关（GET %s）"
-                                   % (len(rows), ADMIN_API_PREFIX + "/flags"), "ok")
+            self._flags_rows = rows
+            self._flags_dirty = {}
+            self._render_flags()
+            self._set_admin_status("flags", "共 %d 个开关（策略 %s/flags ＋ 展示元数据 /system/feature-flags）"
+                                   % (len(rows), ADMIN_API_PREFIX), "ok")
+
+        def work():
+            # 中文标题/分组/是否常用/scope/source 只在 GET /api/v1/system/feature-flags 有，
+            # 管理面 /flags 的 title/desc 恒为 null → 两端口按键名在前端合并，不改后端。
+            admin = _admin_request("GET", "/flags")
+            pub_map = {}
+            try:
+                token = str(_console_session().get("token") or "")
+                status, pub = _http_json("GET", "/api/v1/system/feature-flags", token=token)
+                if 200 <= status < 300 and isinstance(pub, dict):
+                    for r in (pub.get("flags") or []):
+                        if isinstance(r, dict) and r.get("key"):
+                            pub_map[str(r["key"])] = r
+            except Exception:
+                _safe_traceback()
+            rows = []
+            for r in (admin.get("flags") or []):
+                if not isinstance(r, dict):
+                    continue
+                pub = pub_map.get(str(r.get("key") or ""), {})
+                cm = pub.get("meta") if isinstance(pub.get("meta"), dict) else {}
+                merged = dict(r)
+                merged["title"] = cm.get("title") or r.get("title")
+                merged["desc"] = cm.get("desc") or r.get("desc")
+                merged["group"] = str(cm.get("group") or "other")
+                merged["group_order"] = cm.get("group_order", 99)
+                merged["order"] = cm.get("order", 9999)
+                merged["visible"] = bool(cm.get("visible"))
+                merged["source"] = pub.get("source")
+                merged["scope"] = pub.get("scope")
+                merged["user_enabled"] = pub.get("user_enabled")
+                rows.append(merged)
+            return {"flags": rows}
 
         self._set_admin_status("flags", "加载中… GET %s/flags" % ADMIN_API_PREFIX, "pending")
-        self._run_admin("读取开关", lambda: _admin_request("GET", "/flags"), ok, "flags")
+        self._run_admin("读取开关", work, ok, "flags")
 
-    def _render_flags(self, rows) -> None:
+    def _flags_visible_rows(self) -> list:
+        q = str(self._flags_search.get() or "").strip().lower()
+        mode = str(self._flags_filter.get() or "all")
+        out = []
+        for r in self._flags_rows:
+            if mode == "diff" and str(r.get("source") or "") != "db":
+                continue
+            if mode == "locked" and not r.get("server_locked"):
+                continue
+            if mode == "on" and not r.get("enabled"):
+                continue
+            if q:
+                hay = " ".join([str(r.get("key") or ""), str(r.get("title") or ""),
+                                str(r.get("desc") or "")]).lower()
+                if q not in hay:
+                    continue
+            out.append(r)
+        return out
+
+    def _flags_expand_all(self) -> None:
+        self._flags_open = {str(r.get("group") or "other") for r in self._flags_rows}
+        self._render_flags()
+
+    def _flags_collapse_all(self) -> None:
+        self._flags_open = set()
+        self._render_flags()
+
+    def _flags_toggle_group(self, gid: str) -> None:
+        if gid in self._flags_open:
+            self._flags_open.discard(gid)
+        else:
+            self._flags_open.add(gid)
+        self._render_flags()
+
+    def _render_flags(self) -> None:
         meta = self._admin_meta["flags"]
         body = meta["body"]
         t = self.theme
         _clear_frame(body)
-        if not rows:
+        if not self._flags_rows:
             self._admin_note("flags", "后端未返回任何开关（GET %s）" % meta["path"])
             return
-        cols = (("key", 30), ("当前值", 10), ("允许自助", 10), ("服务器锁定", 12), ("操作", 8))
+        rows = self._flags_visible_rows()
+        if not rows:
+            self._admin_note("flags", "没有匹配的开关（搜索「%s」/ 筛选「%s」）"
+                             % (self._flags_search.get() or "—", self._flags_filter.get()),
+                             clear=False)
+            return
+        filtering = bool(str(self._flags_search.get() or "").strip()) or \
+            str(self._flags_filter.get() or "all") != "all"
+        groups: dict[str, list] = {}
+        for r in rows:
+            groups.setdefault(str(r.get("group") or "other"), []).append(r)
+        ordered = sorted(groups.items(), key=lambda kv: (
+            min(int(x.get("group_order", 99)) for x in kv[1]),
+            min(int(x.get("order", 9999)) for x in kv[1])))
+        # 「常用」置顶且始终展开（后端 meta.visible 决定，与 App 开关页同一真源）
+        hot = [r for r in rows if r.get("visible")]
+        if hot and not filtering:
+            self._flags_group_card(body, "常用", len(hot), True, t, hot)
+        for gid, grows in ordered:
+            if filtering:
+                self._flags_group_card(body, CUI.GROUP_LABELS.get(gid, gid), len(grows), True,
+                                       t, sorted(grows, key=lambda x: int(x.get("order", 9999))))
+                continue
+            if hot and not filtering:
+                grows = [r for r in grows if not r.get("visible")]
+                if not grows:
+                    continue
+            open_it = gid in self._flags_open
+            head = tk.Frame(body, bg=t.surface_alt, cursor="hand2")
+            head.pack(fill="x", pady=(CUI.sp("xs"), 0))
+            chev = _make_icon(head, 14, "chevron-right" if not open_it else "chevron-down",
+                              t.accent if open_it else t.text_sec, t.surface_alt)
+            chev.pack(side="left", padx=(CUI.sp("sm"), CUI.sp("xs")), pady=7)
+            tk.Label(head, text=CUI.GROUP_LABELS.get(gid, gid), bg=t.surface_alt, fg=t.text,
+                     font=CUI.f("h2")).pack(side="left")
+            tk.Label(head, text=str(len(grows)), bg=t.surface_alt, fg=t.text_muted,
+                     font=CUI.f("caption")).pack(side="left", padx=(CUI.sp("xs"), 0))
+            for wid in (head, chev):
+                wid.bind("<Button-1>", lambda _e, g=gid: self._flags_toggle_group(g))
+            if open_it:
+                self._flags_group_card(body, "", len(grows), True, t,
+                                       sorted(grows, key=lambda x: int(x.get("order", 9999))),
+                                       bare=True)
+
+    def _flags_group_card(self, body, label: str, count: int, _open: bool, t,
+                          rows: list, bare: bool = False) -> None:
+        """一个分组卡：表头 + 数据行。bare=True 时不再画组名（折叠头已在外面画过）。"""
+        if not bare:
+            head = tk.Frame(body, bg=t.surface_alt)
+            head.pack(fill="x", pady=(CUI.sp("xs"), 0))
+            tk.Label(head, text=label, bg=t.surface_alt, fg=t.text,
+                     font=CUI.f("h2")).pack(side="left", padx=CUI.sp("sm"), pady=7)
+            tk.Label(head, text=str(count), bg=t.surface_alt, fg=t.text_muted,
+                     font=CUI.f("caption")).pack(side="left")
         _, card = self._admin_card(body, fill="x")
-        for ci, (name, width) in enumerate(cols):
-            tk.Label(card, text=name, width=width, anchor="w", fg=t.text_sec, bg=t.card,
-                     font=(FONT, 10, "bold")).grid(row=0, column=ci, sticky="w", pady=(0, 2))
-        tk.Frame(card, bg=t.hairline, height=1).grid(row=1, column=0, columnspan=len(cols),
-                                                     sticky="ew", pady=(0, SP_XS))
+        card.grid_columnconfigure(0, weight=1)
+        for ci, name in ((1, "当前值"), (2, "允许自助"), (3, "服务器锁定")):
+            tk.Label(card, text=name, anchor="w", fg=t.text_muted, bg=t.card,
+                     font=CUI.f("caption", True)).grid(
+                row=0, column=ci, sticky="w", padx=(0, CUI.sp("md")), pady=(0, 4))
+        tk.Frame(card, bg=t.hairline, height=1).grid(row=1, column=0, columnspan=5,
+                                                     sticky="ew", pady=(0, CUI.sp("xxs")))
         for ri, r in enumerate(rows, start=2):
-            key = str(r.get("key") or "")
-            locked = bool(r.get("server_locked"))
-            row_bg = _hex_mix(t.card, t.warning, 0.20) if locked else t.card
-            title = str(r.get("title") or "").strip()
-            desc = str(r.get("desc") or "").strip()
-            name_txt = key if not title else "%s（%s）" % (key, title)
-            if desc:
-                name_txt += "\n%s" % desc[:80]
-            tk.Label(card, text=name_txt, width=cols[0][1], anchor="w", justify="left",
-                     fg=t.warning if locked else t.text, bg=row_bg,
-                     font=(FONT, 10, "bold" if locked else "normal")).grid(
-                row=ri, column=0, sticky="w", pady=1)
-            vars_ = (tk.BooleanVar(value=bool(r.get("enabled"))),
-                     tk.BooleanVar(value=bool(r.get("self_service"))),
-                     tk.BooleanVar(value=locked))
-            for ci, var in enumerate(vars_, start=1):
-                ttk.Checkbutton(card, variable=var).grid(row=ri, column=ci, sticky="w")
-            RoundedButton(card, t, "保存", variant="primary", height=26, font_size=9,
-                          command=lambda k=key, vs=vars_: self._save_flag(k, vs)
-                          ).grid(row=ri, column=len(cols) - 1, sticky="w")
+            self._flag_row(card, r, ri, t)
+
+    def _flag_row(self, card, r, ri: int, t) -> None:
+        key = str(r.get("key") or "")
+        locked = bool(r.get("server_locked"))
+        zebra = t.card if ri % 2 == 0 else _hex_mix(t.card, t.card_hover, 0.55)
+        row_bg = _hex_mix(t.card, t.warning, 0.18) if locked else zebra
+        title = str(r.get("title") or "").strip()
+        desc = str(r.get("desc") or "").strip()
+        name_f = tk.Frame(card, bg=row_bg)
+        name_f.grid(row=ri, column=0, sticky="w", pady=3)
+        tk.Label(name_f, text=key, anchor="w", bg=row_bg,
+                 fg=t.warning if locked else t.text,
+                 font=CUI.f("body", bool(locked))).pack(side="left")
+        if title:
+            tk.Label(name_f, text=title, anchor="w", bg=row_bg, fg=t.text_sec,
+                     font=CUI.f("caption")).pack(side="left", padx=(CUI.sp("sm"), 0))
+        if desc:
+            lb = tk.Label(name_f, text=desc if len(desc) <= 30 else desc[:29] + "…",
+                          anchor="w", bg=row_bg, fg=t.text_muted, font=CUI.f("caption"))
+            lb.pack(side="left", padx=(CUI.sp("sm"), 0))
+            CUI.Tooltip(lb, lambda d=desc: d)
+        if str(r.get("source") or "") == "db":
+            tk.Label(name_f, text="DB覆盖", bg=_hex_mix(row_bg, t.accent, 0.16),
+                     fg=t.accent_glow, font=CUI.f("micro"),
+                     padx=6, pady=1).pack(side="left", padx=(CUI.sp("sm"), 0))
+        if str(r.get("scope") or "") == "user":
+            tk.Label(name_f, text="按账号", bg=_hex_mix(row_bg, t.accent, 0.16),
+                     fg=t.accent_glow, font=CUI.f("micro"),
+                     padx=6, pady=1).pack(side="left", padx=(CUI.sp("xs"), 0))
+        vars_ = (tk.BooleanVar(value=bool(r.get("enabled"))),
+                 tk.BooleanVar(value=bool(r.get("self_service"))),
+                 tk.BooleanVar(value=locked))
+        # 三列都可编辑：控制台是服务器管理员面，锁不锁都要能改（用户侧的 403 由后端裁决）
+        for ci, var in enumerate(vars_, start=1):
+            CUI.Switch(card, t, variable=var, bg=row_bg,
+                       command=lambda k=key, vs=vars_: self._flag_mark_dirty(k, vs)
+                       ).grid(row=ri, column=ci, sticky="w", padx=(0, CUI.sp("md")))
+        slot = tk.Frame(card, bg=row_bg)
+        slot.grid(row=ri, column=4, sticky="w")
+        self._flags_dirty.setdefault(key, {"vars": vars_, "slot": slot, "dirty": False})
+
+    def _flag_mark_dirty(self, key: str, vars_) -> None:
+        """只有改动过的行才长出「保存」按钮——干净行不显示，81 行的视觉噪音就没了。"""
+        ent = self._flags_dirty.get(key)
+        if not ent or ent["dirty"]:
+            return
+        ent["dirty"] = True
+        RoundedButton(ent["slot"], self.theme, "保存", variant="primary",
+                      height=CUI.px(24), font_size=9,
+                      command=lambda k=key, vs=vars_: self._save_flag(k, vs)
+                      ).pack(side="left")
 
     def _save_flag(self, key: str, vars_) -> None:
         body = {"enabled": bool(vars_[0].get()), "self_service": bool(vars_[1].get()),
@@ -2783,7 +3095,7 @@ class ControllerApp:
         frow = tk.Frame(filter_bar, bg=t.card)
         frow.pack(fill="x")
         tk.Label(frow, text="最近条数", fg=t.text_sec, bg=t.card,
-                 font=(FONT, 11)).pack(side="left")
+                 font=CUI.f("body")).pack(side="left")
         self._audit_limit_var = tk.StringVar(value="100")
         ttk.Entry(frow, textvariable=self._audit_limit_var, width=8).pack(side="left", padx=(SP_XS, 0))
         body = tk.Frame(pad, bg=t.bg)
@@ -2817,27 +3129,31 @@ class ControllerApp:
         t = self.theme
         _clear_frame(body)
         if not rows:
-            self._admin_note("audit", "暂无审计记录（GET %s/audit?limit=%d）" % (ADMIN_API_PREFIX, limit))
+            self._admin_note("audit", "暂无审计记录（GET %s/audit?limit=%d）" % (ADMIN_API_PREFIX, limit),
+                             illo="photo_empty_audit.jpg", fg=t.text_sec)
             return
-        cols = (("时间", 17), ("操作者", 14), ("动作", 22), ("目标", 20), ("前值", 24), ("后值", 24))
+        cols = (
+            {"label": "时间", "weight": 0, "min": 150},
+            {"label": "操作者", "weight": 2, "min": 110},
+            {"label": "动作", "weight": 3, "min": 170},
+            {"label": "目标", "weight": 2, "min": 130},
+            {"label": "前值", "weight": 3, "min": 150},
+            {"label": "后值", "weight": 3, "min": 150},
+        )
         _, card = self._admin_card(body, fill="x")
-        for ci, (name, width) in enumerate(cols):
-            tk.Label(card, text=name, width=width, anchor="w", fg=t.text_sec, bg=t.card,
-                     font=(FONT, 10, "bold")).grid(row=0, column=ci, sticky="w", pady=(0, 2))
-        tk.Frame(card, bg=t.hairline, height=1).grid(row=1, column=0, columnspan=len(cols),
-                                                     sticky="ew", pady=(0, SP_XS))
-        for ri, r in enumerate(rows, start=2):
-            row_bg = t.card if ri % 2 else _hex_mix(t.card, t.surface_alt, 0.5)
-            cells = [_fmt_dt(r.get("created_at")),
-                     str(r.get("actor_username") or r.get("actor_user_id") or "—"),
-                     str(r.get("action") or "—"),
-                     str(r.get("target") or "—"),
-                     _fmt_audit_val(r.get("before")),
-                     _fmt_audit_val(r.get("after"))]
-            for ci, txt in enumerate(cells):
-                tk.Label(card, text=txt, width=cols[ci][1], anchor="w",
-                         fg=t.text if ci in (0, 2) else t.text_sec, bg=row_bg,
-                         font=(FONT, 10)).grid(row=ri, column=ci, sticky="w", pady=1)
+        table = CUI.DataTable(card, t, cols)
+        for r in rows:
+            row = table.add_row()
+            row.text(0, _fmt_dt(r.get("created_at")), num=True, fg=t.text)
+            row.text(1, str(r.get("actor_username") or r.get("actor_user_id") or "—"),
+                     fg=t.text)
+            row.text(2, str(r.get("action") or "—"), fg=t.text)
+            tgt = str(r.get("target") or "—")
+            row.text(3, tgt, fg=t.text_sec, tip=tgt)
+            before = _fmt_audit_val(r.get("before"))
+            after = _fmt_audit_val(r.get("after"))
+            row.text(4, before, fg=t.text_muted, tip=before)
+            row.text(5, after, fg=t.text_sec, tip=after)
 
     # ── 注册策略页 ──
 
@@ -2874,9 +3190,9 @@ class ControllerApp:
         _clear_frame(body)
         _, card = self._admin_card(body, fill="x")
         tk.Label(card, text="当前注册策略", fg=t.text_sec, bg=t.card,
-                 font=(FONT, 10)).pack(anchor="w")
+                 font=CUI.f("caption")).pack(anchor="w")
         tk.Label(card, text=_registration_mode_text(mode), fg=t.text, bg=t.card,
-                 font=(FONT, 14, "bold")).pack(anchor="w", pady=(0, SP_SM))
+                 font=CUI.f("h2", True)).pack(anchor="w", pady=(0, SP_SM))
         mode_var = tk.StringVar(value=mode)
         for m, label, desc in REGISTRATION_MODES:
             row = tk.Frame(card, bg=t.card)
@@ -2884,12 +3200,12 @@ class ControllerApp:
             tk.Radiobutton(row, text="%s（%s）" % (label, m), value=m, variable=mode_var,
                            bg=t.card, fg=t.text, activebackground=t.card,
                            activeforeground=t.text, selectcolor=t.entry_bg,
-                           font=(FONT, 11)).pack(side="left")
+                           font=CUI.f("body")).pack(side="left")
             tk.Label(row, text=desc, fg=t.text_muted, bg=t.card,
-                     font=(FONT, 10)).pack(side="left", padx=(SP_MD, 0))
+                     font=CUI.f("caption")).pack(side="left", padx=(SP_MD, 0))
             if m == mode:
                 tk.Label(row, text="← 生效中", fg=t.accent_glow, bg=t.card,
-                         font=(FONT, 10)).pack(side="right")
+                         font=CUI.f("caption")).pack(side="right")
         act = tk.Frame(card, bg=t.card)
         act.pack(fill="x", pady=(SP_SM, 0))
         RoundedButton(act, t, "保存", variant="primary", height=28, font_size=10,
@@ -2898,7 +3214,7 @@ class ControllerApp:
         RoundedButton(act, t, "放弃修改并重读", variant="neutral", height=28, font_size=10,
                       command=self._load_registration).pack(side="left", padx=(SP_XS, 0))
         tk.Label(act, text="403/401 时点右上角「登录」后重试", fg=t.text_muted, bg=t.card,
-                 font=(FONT, 10)).pack(side="right")
+                 font=CUI.f("caption")).pack(side="right")
 
     def _save_registration(self, mode_var) -> None:
         mode = str(mode_var.get() or "")
@@ -2921,11 +3237,23 @@ class ControllerApp:
         page, pad = self._make_admin_page(
             "概览", "账号数/禁用数/控制台管理员/开启开关/后端版本（只读，控制台不做任何推算）")
         login_label, login_dot, hint = self._admin_login_bar(pad, self._load_overview)
+        # 品牌横幅（照片槽位）：素材没到货时整块不建，页面与上一版逐字一致。
+        # 构图是"左上表盘 + 右侧大片空黑"，所以走 panel 模式（贴左 + 右缘渐隐），
+        # 文案压在右侧空区上；cover 成横条会把表盘裁掉。
+        if CUI.PHOTOS.has("photo_about_hero.jpg"):
+            hero = CUI.PhotoBanner(pad, t, "photo_about_hero.jpg", CUI.px(150), mode="panel")
+            hero.pack(fill="x", pady=(0, CUI.sp("sm")))
+            hbg = CUI.photo_bg(t)
+            tk.Label(hero, text="拥爱 · 服务器控制台", fg=CUI.photo_fg(t), bg=hbg,
+                     font=CUI.f("h1", True)).place(x=CUI.px(330), rely=0.34, anchor="w")
+            tk.Label(hero, text="为 AI 陪伴服务写的运维仪表盘",
+                     fg=CUI.mix(CUI.photo_fg(t), hbg, 0.38), bg=hbg,
+                     font=CUI.f("caption")).place(x=CUI.px(330), rely=0.63, anchor="w")
         _, tools = self._admin_card(pad, fill="x", pady=(0, SP_SM))
         trow = tk.Frame(tools, bg=t.card)
         trow.pack(fill="x")
         tk.Label(trow, text="快速判断服务器现状；未登录或接口未就绪时只提示，不影响其他页签",
-                 fg=t.text_muted, bg=t.card, font=(FONT, 10)).pack(side="left")
+                 fg=t.text_muted, bg=t.card, font=CUI.f("caption")).pack(side="left")
         RoundedButton(trow, t, "刷新", command=self._load_overview, variant="primary",
                       height=28, font_size=10).pack(side="right")
         body = tk.Frame(pad, bg=t.bg)
@@ -2959,21 +3287,19 @@ class ControllerApp:
         if all(v is None for _label, v in rows):
             self._admin_note("overview", "后端未返回任何概览字段（GET %s）" % meta["path"])
             return 0
-        _, card = self._admin_card(body, fill="x")
-        for ci, (name, width) in enumerate((("指标", 18), ("值", 34))):
-            tk.Label(card, text=name, width=width, anchor="w", fg=t.text_sec, bg=t.card,
-                     font=(FONT, 10, "bold")).grid(row=0, column=ci, sticky="w", pady=(0, 2))
-        tk.Frame(card, bg=t.hairline, height=1).grid(row=1, column=0, columnspan=2,
-                                                     sticky="ew", pady=(0, SP_XS))
-        for ri, (label, val) in enumerate(rows, start=2):
-            row_bg = t.card if ri % 2 == 0 else _hex_mix(t.card, t.surface_alt, 0.5)
-            tk.Label(card, text=label, width=18, anchor="w", fg=t.text, bg=row_bg,
-                     font=(FONT, 10)).grid(row=ri, column=0, sticky="w", pady=1)
+        table = CUI.DataTable(body, t, [
+            {"label": "指标", "weight": 2, "min": 150},
+            {"label": "值", "weight": 3, "min": 220},
+        ])
+        for label, val in rows:
             missing = val is None
-            tk.Label(card, text="—" if missing else str(val), width=34, anchor="w",
-                     fg=t.text_muted if missing else t.text, bg=row_bg,
-                     font=(FONT, 10, "normal" if missing else "bold")).grid(
-                row=ri, column=1, sticky="w", pady=1)
+            row = table.add_row()
+            row.text(0, str(label), "body", fg=t.text)
+            # 数值列走等宽族（宽度不随数字位数跳位）；缺值退到正文字号并用弱化色
+            row.text(1, "—" if missing else str(val),
+                     "num" if not missing else "body",
+                     fg=t.text_muted if missing else t.text,
+                     bold=not missing, num=not missing)
         return len(rows)
 
     # ── ttk 主题（Checkbutton / Entry 仍用 ttk）──
@@ -2985,7 +3311,7 @@ class ControllerApp:
             style.theme_use("clam")
         except Exception:
             pass
-        style.configure("TCheckbutton", background=t.card, foreground=t.text, font=(FONT, 11))
+        style.configure("TCheckbutton", background=t.card, foreground=t.text, font=CUI.f("body"))
         style.map("TCheckbutton", background=[("active", t.card)])
         style.configure("TEntry", fieldbackground=t.entry_bg, foreground=t.text,
                         bordercolor=t.hairline, lightcolor=t.hairline, darkcolor=t.hairline,
@@ -3283,7 +3609,7 @@ class ControllerApp:
         frame.config(padx=SP_LG, pady=SP_LG)
 
         # 主题切换
-        tk.Label(frame, text="界面主题", bg=t.card, fg=t.text, font=(FONT, 11, "bold")).grid(
+        tk.Label(frame, text="界面主题", bg=t.card, fg=t.text, font=CUI.f("body", True)).grid(
             row=0, column=0, sticky="w", pady=(0, SP_XS), padx=(0, SP_LG))
         theme_var = tk.StringVar(value=self.theme.label)
         theme_names = [th.label for th in THEMES.values()]
@@ -3303,18 +3629,18 @@ class ControllerApp:
         tk.Frame(frame, bg=t.divider, height=1).grid(
             row=1, column=0, columnspan=2, sticky="ew", pady=SP_SM)
 
-        tk.Label(frame, text="守护检测间隔（秒）", bg=t.card, fg=t.text, font=(FONT, 11)).grid(
+        tk.Label(frame, text="守护检测间隔（秒）", bg=t.card, fg=t.text, font=CUI.f("body")).grid(
             row=2, column=0, sticky="w", pady=(0, SP_XS), padx=(0, SP_LG))
         wd_var = tk.StringVar(value=str(cfg.get("watchdog_interval_sec", 120)))
         ttk.Entry(frame, textvariable=wd_var, width=14).grid(row=2, column=1, sticky="w", pady=(0, SP_XS))
 
-        tk.Label(frame, text="界面刷新间隔（秒）", bg=t.card, fg=t.text, font=(FONT, 11)).grid(
+        tk.Label(frame, text="界面刷新间隔（秒）", bg=t.card, fg=t.text, font=CUI.f("body")).grid(
             row=3, column=0, sticky="w", pady=(0, SP_MD), padx=(0, SP_LG))
         rf_var = tk.StringVar(value=str(int(cfg.get("controller_refresh_ms", DEFAULT_REFRESH_MS)) // 1000))
         ttk.Entry(frame, textvariable=rf_var, width=14).grid(row=3, column=1, sticky="w", pady=(0, SP_MD))
 
         tk.Label(frame, text="修改后立即生效：\n守护间隔下个检测周期生效，界面刷新即时生效。",
-                 bg=t.card, fg=t.text_sec, font=(FONT, 10)).grid(
+                 bg=t.card, fg=t.text_sec, font=CUI.f("caption")).grid(
             row=4, column=0, columnspan=2, sticky="w", pady=(0, SP_MD))
 
         def save():
@@ -3475,6 +3801,7 @@ class ControllerApp:
         self.log_box.config(state="normal")
         self.log_box.delete("1.0", "end")
         self.log_box.config(state="disabled")
+        self._sync_log_empty(False)
         self._set_msg("已清空显示（下次刷新恢复）")
 
     def _update_last_refresh(self) -> None:
@@ -3498,11 +3825,30 @@ class ControllerApp:
 
     def _heat_cell_colors(self):
         t = self.theme
-        return [t.surface_alt,
+        # 0 档不能等于"看不见"：用 hairline 而不是 surface_alt，空格子才读得出"当天没有量"
+        return [t.hairline,
                 _hex_mix(t.card, t.accent, .30),
                 _hex_mix(t.card, t.accent, .55),
                 _hex_mix(t.card, t.accent, .78),
                 t.accent]
+
+    def _draw_heat_legend(self, c, t, w, colors) -> None:
+        """色阶图例：画在画布右上角，跟着 `_draw_heatmap` 一起重绘（换主题不会留旧色）。
+
+        不写图例的话没人知道 0 档是"当天没有量"，而不是"这块还没画"。
+        """
+        s = CUI.px(9)
+        step = s + CUI.px(3)
+        pad_txt = CUI.px(20)
+        x = w - CUI.px(8) - (pad_txt * 2 + step * 5)
+        y = CUI.px(11)
+        c.create_text(x, y, anchor="w", text="少", fill=t.text_muted, font=CUI.f("nano"))
+        x0 = x + pad_txt
+        for i in range(5):
+            c.create_rectangle(x0 + i * step, y - s / 2, x0 + i * step + s, y + s / 2,
+                               fill=colors[i], outline=t.hairline)
+        c.create_text(x0 + step * 5 + CUI.px(4), y, anchor="w", text="多",
+                      fill=t.text_muted, font=CUI.f("nano"))
 
     def _draw_heatmap(self) -> None:
         if not hasattr(self, "heat_canvas"):
@@ -3520,26 +3866,28 @@ class ControllerApp:
                 self.root.after(120, self._draw_heatmap)
             return
         if not days:
-            c.create_text(w / 2, h / 2, text="暂无数据", fill=t.text_muted, font=(FONT, 11))
+            c.create_text(w / 2, h / 2, text="暂无数据", fill=t.text_muted, font=CUI.f("body"))
             return
         self._heat_retry = 0
         vals = _heat_series(days, self._heat_mode)
         levels = _heat_levels(vals)
         self._heat_series_vals, self._heat_levels = vals, levels
-        left, top, bottom = 30, 8, 22
+        # 轴位一律按 DPI 给：星期标签是两个字，左槽 30px 在 150% 下会把"周一"切成"号一"
+        left, top, bottom = CUI.px(46), CUI.px(26), CUI.px(26)
         ncols = math.ceil(len(days) / 7)
-        avail_w = w - left - 6
+        avail_w = w - left - CUI.px(6)
         # 格子同时受列宽/行高约束，设下限保证可见、设上限避免过大；17 列天然偏窄，左对齐
-        cell = max(9, min(avail_w / ncols, (h - top - bottom) / 7, 36))
-        gap = max(2, cell * .12)
+        cell = max(CUI.px(9), min(avail_w / ncols, (h - top - bottom) / 7, CUI.px(30)))
+        gap = max(CUI.px(2), cell * .12)
         size = cell - gap
         x0 = left
         colors = self._heat_cell_colors()
-        show_week = cell >= 11
+        self._draw_heat_legend(c, t, w, colors)
+        show_week = cell >= CUI.px(11)
         if show_week:
             for r, name in ((0, "周一"), (2, "周三"), (4, "周五")):
                 c.create_text(x0 - 6, top + r * cell + cell / 2, anchor="e",
-                              text=name, fill=t.text_muted, font=(FONT, 8))
+                              text=name, fill=t.text_muted, font=CUI.f("nano"))
         prev_month = None
         for i, d in enumerate(days):
             col, row = i // 7, i % 7
@@ -3547,16 +3895,17 @@ class ControllerApp:
             y = top + row * cell + gap / 2
             mon = int(d["date"][5:7])
             if row == 0 and mon != prev_month:
-                c.create_text(x, h - 8, anchor="w", text=f"{mon}月",
-                              fill=t.text_muted, font=(FONT, 8))
+                c.create_text(x, h - CUI.px(10), anchor="w", text=f"{mon}月",
+                              fill=t.text_muted, font=CUI.f("nano"))
                 prev_month = mon
             pts = _rr_points(x, y, x + size, y + size, 3)
             if d["future"]:
                 c.create_polygon(pts, smooth=True, splinesteps=8, fill="",
                                  outline=t.hairline, tags=("cell", str(i)))
             else:
+                # 空格子也描一圈淡边：不描的话"没有数据"和"没画出来"在界面上长得一样
                 c.create_polygon(pts, smooth=True, splinesteps=8,
-                                 fill=colors[levels[i]], outline="",
+                                 fill=colors[levels[i]], outline=t.hairline,
                                  tags=("cell", str(i)))
             self._heat_cells[i] = (x, y, size)
 
@@ -3624,7 +3973,7 @@ class ControllerApp:
             except Exception:
                 pass
             lab = tk.Label(tip, text=text, justify="left", bg="#20242F", fg="#E8EAF0",
-                           font=(FONT, 9), padx=8, pady=5, bd=0)
+                           font=CUI.f("micro"), padx=8, pady=5, bd=0)
             lab.pack()
             self._heat_tip = (tip, lab)
         tip, lab = self._heat_tip
@@ -3648,6 +3997,7 @@ class ControllerApp:
         if force_scroll or self.log_autoscroll_var.get():
             self.log_box.see("end")
         self.log_box.config(state="disabled")
+        self._sync_log_empty(bool(log_text.strip()))
 
     def _apply_refresh(self, alive: bool, pid: int, paused: bool, log_text: str,
                        ollama_alive: bool, ollama_pid: int, health: str, stats: dict):

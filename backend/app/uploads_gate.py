@@ -187,9 +187,17 @@ async def decide_upload_access(rel_path: str, scope) -> bool:
                 # 归属查不到（插件未加载 / 任务已删）：证不了跨租户 → 回兼容口径放行，核心 app 不硬依赖插件
                 _logger.debug("uploads guard: douyin owner unresolved, compat allow path=%s", rel_path)
                 return True
-            actor_tenant = await tenant_key(db, actor)
-            if actor_tenant is None:
-                return not _require_auth()  # 请求账号已不可解析：严格模式拒绝，兼容模式放行
+            # 口径同源（09-21 收口）：owner 侧读的是 douyin_pending.tenant_id（该列恒为**家庭根**），
+            # 因此调用者侧必须用同一把尺子——tenant_scope.resolve_tenant 恒按家庭根解析、
+            # 刻意**不跟随 TENANT_KEY_MODE**（见其 docstring 的口径护栏）。旧写法 tenant_service.tenant_key
+            # 会跟随开关：一旦切成 user 口径，子账号读自己家的草稿会被误判跨租户 → 404
+            # （现场表现为「抖音配图突然全挂」，且很难联想到是口径开关）。
+            from app.application.tenant_scope import resolve_tenant
+            try:
+                actor_tenant = await resolve_tenant(db, actor)
+            except ValueError:
+                # 归属解析不出来（如账号行已删）：严格模式拒绝、兼容模式放行（与 tenant_key 返回 None 同语义）
+                return not _require_auth()
             if int(actor_tenant) != int(owner_tenant):
                 _logger.info(
                     "uploads guard: cross-tenant denied path=%s actor=%s owner_tenant=%s",

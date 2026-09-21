@@ -22,7 +22,7 @@ async def phone_perception_section(state: dict, ctx: dict) -> str:
 
     phone_perception = "无"
     try:
-        phone_text = await get_recent_perception_text(state.get("user_id", 1))
+        phone_text = await get_recent_perception_text(state.get("user_id"))
         if phone_text:
             phone_perception = phone_text
     except Exception as e:

@@ -15,7 +15,7 @@ async def current_state_section(state: dict, ctx: dict) -> list[str]:
     from app.memory.current_state import current_user_state_anchor
     txt = await current_user_state_anchor(
         character_id=state.get("character_id"),
-        user_id=state.get("user_id", 1),
+        user_id=state.get("user_id"),
         include_profile_location=False,
     )
     return [txt] if txt else []

@@ -148,6 +148,23 @@ def test_p3_3_strict_mode_closes_the_gate(uploads, monkeypatch):
     assert uploads.get(f"/uploads/douyin/{_TASK_A}/x.png", headers=_auth(_B_ROOT)).status_code == 404
 
 
+def test_p3_3_user_mode_sub_account_still_sees_family_draft(uploads, monkeypatch):
+    """user 口径下也不许误伤自家人：owner 列恒为家庭根，调用者侧必须同源（09-21 收口）。
+
+    ``douyin_pending.tenant_id`` 存的是家庭根，而旧写法调用者侧走 ``tenant_service.tenant_key()``，
+    该函数**跟随 ``TENANT_KEY_MODE``**：切成 ``user`` 口径后子账号拿到的是自身 id ≠ 家庭根 →
+    自己家的草稿被判跨租户 404（现场表现为「抖音配图突然全挂」）。
+    本用例显式切到 user 口径再断言：本家庭子账号 / 家庭根仍 200，外家庭 root 仍 404。
+    """
+    monkeypatch.setattr(settings, "uploads_require_auth", False)
+    tenant_svc.set_tenant_key_mode(tenant_svc.TENANT_KEY_MODE_USER)
+
+    assert uploads.get(f"/uploads/douyin/{_TASK_A}/x.png", headers=_auth(_A_SUB)).status_code == 200
+    assert uploads.get(f"/uploads/douyin/{_TASK_A}/x.png", headers=_auth(_A_ROOT)).status_code == 200
+    assert uploads.get(f"/uploads/douyin/{_TASK_B}/y.png", headers=_auth(_B_ROOT)).status_code == 200
+    assert uploads.get(f"/uploads/douyin/{_TASK_A}/x.png", headers=_auth(_B_ROOT)).status_code == 404
+
+
 def test_p3_3_plugin_unloaded_falls_back_to_compat(uploads, monkeypatch):
     """插件未加载（douyin_models 不可导入）→ 回兼容口径放行：核心 app 不硬依赖插件。"""
     monkeypatch.setattr(settings, "uploads_require_auth", False)

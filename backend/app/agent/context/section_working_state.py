@@ -106,7 +106,7 @@ def render_working_state(state: dict | None) -> str:
 
 async def working_state_section(state: dict, ctx: dict) -> list[str]:
     char_id = state.get("character_id")
-    user_id = state.get("user_id", 1)
+    user_id = state.get("user_id")
     if not char_id:
         return []
     if not inject_allowed(char_id, state.get("session_id")):

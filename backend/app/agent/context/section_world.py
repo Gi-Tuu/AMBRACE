@@ -63,7 +63,7 @@ async def _compute_current_time_str(state: dict, ctx: dict) -> str:
             _sr = await db.execute(
                 select(ChatSession)
                 .where(
-                    ChatSession.user_id == state.get("user_id", 1),
+                    ChatSession.user_id == state.get("user_id"),
                     ChatSession.character_id == state["character_id"],
                 )
                 .order_by(ChatSession.updated_at.desc())
@@ -108,7 +108,7 @@ async def _load_user(state: dict, ctx: dict):
     user = None
     try:
         async with async_session_factory() as db:
-            user = (await db.execute(select(User).where(User.id == state.get("user_id", 1)))).scalar_one_or_none()
+            user = (await db.execute(select(User).where(User.id == state.get("user_id")))).scalar_one_or_none()
     except Exception as e:
         _logger.warning("world user load failed: %s", e)
     ctx["_user"] = user
@@ -120,7 +120,7 @@ async def world_facts_section(state: dict, ctx: dict) -> str:
     world_facts_text = "无"
     try:
         from app.events.facts import get_character_view
-        _wv = await get_character_view(state.get("character_id"), state.get("user_id", 1))
+        _wv = await get_character_view(state.get("character_id"), state.get("user_id"))
         if _wv:
             world_facts_text = _wv
     except Exception as e:
@@ -139,7 +139,7 @@ async def pending_timer_section(state: dict, ctx: dict) -> str:
     pending_timer_text = "无"
     try:
         from app.scheduling.promise_service import get_pending_timer_text
-        _pt = await get_pending_timer_text(state.get("character_id"), state.get("user_id", 1))
+        _pt = await get_pending_timer_text(state.get("character_id"), state.get("user_id"))
         if _pt:
             pending_timer_text = _pt
     except Exception as e:

@@ -102,7 +102,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         try:
             from app.agent.loop import AGENT_FLAGS
             if AGENT_FLAGS.get("agent_context_trim", True):
-                hot = await _is_hot_character(state["character_id"], state.get("user_id", 1))
+                hot = await _is_hot_character(state["character_id"], state.get("user_id"))
         except Exception:
             hot = True
         _trim = _trim_limits(hot)
@@ -117,7 +117,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     # 用户信息
     from app.models.user import User
     async with async_session_factory() as db:
-        u_result = await db.execute(select(User).where(User.id == state.get("user_id", 1)))
+        u_result = await db.execute(select(User).where(User.id == state.get("user_id")))
         user = u_result.scalar_one_or_none()
     user_name = user.nickname or user.username or "\u7528\u6237" if user else "\u7528\u6237"
 
@@ -140,7 +140,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         }
     else:
         from app.agent.persona import assemble_persona_context
-        _persona = await assemble_persona_context(state["character_id"], state.get("user_id", 1))
+        _persona = await assemble_persona_context(state["character_id"], state.get("user_id"))
     relationship = _persona["relationship"]
     current_status = _persona["current_status"]
 
@@ -265,7 +265,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     if "world_facts" not in _registry_done:
         try:
             from app.events.facts import get_character_view
-            _wv = await get_character_view(state.get("character_id"), state.get("user_id", 1))
+            _wv = await get_character_view(state.get("character_id"), state.get("user_id"))
             if _wv:
                 world_facts_text = _wv
         except Exception as e:
@@ -281,7 +281,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         loops_text = _section_values.get("open_loops", "\u65e0")
     else:
         core_text, anchors_text, loops_text = await _inject_core_anchors_loops(
-            state.get("character_id"), state.get("user_id", 1), _trim,
+            state.get("character_id"), state.get("user_id"), _trim,
         )
         memory_lines = _build_retrieved_memory_lines(state["character_id"], state.get("retrieved_memories", []))
         memories_text = "\n".join(memory_lines) if memory_lines else "\u6682\u65e0"
@@ -304,7 +304,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
                     select(AIMoment)
                     .where(
                         AIMoment.sender_type == "user",
-                        AIMoment.user_id == state.get("user_id", 1),
+                        AIMoment.user_id == state.get("user_id"),
                         AIMoment.is_active == True,
                         AIMoment.created_at >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7),
                     )
@@ -330,7 +330,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
             from app.models.pet import Pet as PetModel
             from app.application.pet_service import apply_decay as pet_apply_decay, species_label as pet_species_label, species_fact as pet_species_fact
             from sqlalchemy import or_ as _or_
-            _uid = state.get("user_id", 1)
+            _uid = state.get("user_id")
             _cid = state.get("character_id")
             async with async_session_factory() as db:
                 pets_result = await db.execute(
@@ -386,7 +386,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         try:
             from app.models.user import UserState
             async with async_session_factory() as db:
-                _ur = await db.execute(select(UserState).where(UserState.user_id == state.get("user_id", 1)))
+                _ur = await db.execute(select(UserState).where(UserState.user_id == state.get("user_id")))
                 _u = _ur.scalar_one_or_none()
             if _u is not None:
                 _cn = {"mood": "心情", "body_temp": "体温", "desire": "性欲", "possessiveness": "占有欲",
@@ -404,7 +404,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     if "phone_perception" not in _registry_done:
         try:
             from app.application.phone_service import get_recent_perception_text
-            phone_text = await get_recent_perception_text(state.get("user_id", 1))
+            phone_text = await get_recent_perception_text(state.get("user_id"))
             if phone_text:
                 phone_perception = phone_text
         except Exception as e:
@@ -430,7 +430,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     if "pending_timer" not in _registry_done:
         try:
             from app.scheduling.promise_service import get_pending_timer_text
-            _pt = await get_pending_timer_text(state.get("character_id"), state.get("user_id", 1))
+            _pt = await get_pending_timer_text(state.get("character_id"), state.get("user_id"))
             if _pt:
                 pending_timer_text = _pt
         except Exception as e:
@@ -471,7 +471,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
                 _sr = await db.execute(
                     select(ChatSession)
                     .where(
-                        ChatSession.user_id == state.get("user_id", 1),
+                        ChatSession.user_id == state.get("user_id"),
                         ChatSession.character_id == state["character_id"],
                     )
                     .order_by(ChatSession.updated_at.desc())
@@ -547,13 +547,13 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     if "user_info" not in _registry_done:
         try:
             from app.agent.user_profile import build_user_profile_text
-            user_profile_text = await build_user_profile_text(state.get("user_id", 1))
+            user_profile_text = await build_user_profile_text(state.get("user_id"))
         except Exception:
             user_profile_text = f"用户昵称: {user_name}"
         # 用户备忘录 + 最近日记（用户自己写、供角色阅读；注入失败静默降级）
         try:
             from app.agent.user_profile import build_user_notes_text
-            user_notes_text = await build_user_notes_text(state.get("user_id", 1))
+            user_notes_text = await build_user_notes_text(state.get("user_id"))
         except Exception as e:
             _logger.warning("Load user notes failed: %s", e)
             user_notes_text = ""
@@ -661,7 +661,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     else:
         mcp_tools_blocks = []
         mcp_tools_text = await _build_mcp_tools_text(
-            state.get("user_id", 1),
+            state.get("user_id"),
             stream=_is_stream_ctx,
             quota_chars=_qt["mcp_tools"] * _EST_CHARS_PER_TOKEN,
         )
@@ -670,7 +670,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         # MCP 资源摘要注入（Phase 4，2026-08-28）：已连接 Server 的资源摘要，按配额裁剪。
         # V2-8：流式模式不注入资源摘要（与工具声明行为一致），避免"提示可用工具但实际无法执行"。
         mcp_resources_blocks = []
-        mcp_resources_text = await _build_mcp_resources_text(state.get("user_id", 1), stream=_is_stream_ctx)
+        mcp_resources_text = await _build_mcp_resources_text(state.get("user_id"), stream=_is_stream_ctx)
         if mcp_resources_text:
             mcp_resources_blocks = [_clip_text_to_quota(mcp_resources_text, _qt["mcp_resources"])]
 
@@ -864,7 +864,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
                             await db.execute(
                                 select(_MemL)
                                 .where(
-                                    _MemL.user_id == state.get("user_id", 1),
+                                    _MemL.user_id == state.get("user_id"),
                                     _MemL.character_id == state["character_id"],
                                     _MemL.source == "life",
                                     _MemL.delete_at.is_(None),

@@ -31,7 +31,8 @@ async def pets_section(state: dict, ctx: dict) -> str:
 
     pets_text = "无"
     try:
-        _uid = state.get("user_id", 1)
+        # fail-closed（contextB6）：pets.user_id 为 NOT NULL，故缺 caller 时下面两个用户分支退化成 user_id IS NULL＝恒不匹配（也不会捞出无主宠物）；若该列将来放开 nullable，必须改成显式守卫（无 caller 时不加用户分支）。
+        _uid = state.get("user_id")
         _cid = state.get("character_id")
         async with async_session_factory() as db:
             pets_result = await db.execute(

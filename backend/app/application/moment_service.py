@@ -105,7 +105,7 @@ async def build_moment_prompt(char, extra_hint: str = "") -> str:
 
     try:
         from app.agent.user_profile import build_user_profile_text, build_relation_line
-        user_profile = await build_user_profile_text(char.user_id or 1)
+        user_profile = await build_user_profile_text(char.user_id)
         relation_line = await build_relation_line(char)
     except Exception:
         user_profile = ""
@@ -115,7 +115,7 @@ async def build_moment_prompt(char, extra_hint: str = "") -> str:
     weather_line = ""
     try:
         from app.application.weather_service import get_user_weather_line
-        weather_line = await get_user_weather_line(char.user_id or 1)
+        weather_line = await get_user_weather_line(char.user_id)
     except Exception:
         weather_line = ""
 
@@ -125,7 +125,7 @@ async def build_moment_prompt(char, extra_hint: str = "") -> str:
     user_loc_line = ""
     try:
         from app.memory.user_facts import get_authoritative_user_location
-        _loc = (await get_authoritative_user_location(char.user_id or 1) or "").strip()
+        _loc = (await get_authoritative_user_location(char.user_id) or "").strip()
         if _loc:
             user_loc_line = (
                 f"用户当前权威位置：{_loc}（以此为准；不得写用户在其他城市，"
@@ -181,6 +181,15 @@ async def publish_moment(character_id: int, skip_interval: bool = False, extra_h
             _logger.warning("Publish failed: char %d not found or inactive", character_id)
             return None
 
+        # 多账号隔离（C 家族）：角色归属缺失/为 0 时**不生成、不落库、不广播**。
+        # 旧写法 user_id=char.user_id or 1 会把无主角色的动态与记忆记到 1 号账号名下
+        # （ai_moments.user_id / memories.user_id 都会带上 1 号），属跨账号写串；
+        # 写 NULL 也不行：memories.user_id 是 NOT NULL（直接违约），ai_moments 的 NULL 行
+        # 没人能看到/评论（feed 按 user_id 过滤、generate_comments_for_moment 已要求 owner）。
+        if not char.user_id:
+            _logger.warning("Moment skipped: character has no owner char=%d", character_id)
+            return None
+
         # 检查每日上限（3条）
         day_start = _beijing_day_start_utc()
         count_result = await db.execute(
@@ -221,7 +230,7 @@ async def publish_moment(character_id: int, skip_interval: bool = False, extra_h
     _auth_loc = ""
     try:
         from app.memory.user_facts import get_authoritative_user_location
-        _auth_loc = (await get_authoritative_user_location(char.user_id or 1) or "").strip()
+        _auth_loc = (await get_authoritative_user_location(char.user_id) or "").strip()
     except Exception:
         _auth_loc = ""
     if _auth_loc:
@@ -379,7 +388,7 @@ async def generate_comments_for_moment(moment_id: int):
     author_name = await _resolve_author_name(moment)
     author_gender = await _resolve_author_gender(moment)
     try:
-        user_profile = await build_user_profile_text(moment.user_id or 1)
+        user_profile = await build_user_profile_text(moment.user_id)
     except Exception:
         user_profile = ""
 
@@ -563,7 +572,7 @@ async def _identity_block(char) -> str:
     """角色身份块：性别/用户性别/对象/关系，防止"对象是谁/谁是谁的谁"混淆。失败返回空串。"""
     try:
         from app.agent.user_profile import build_role_prompt_block
-        return await build_role_prompt_block(char, char.user_id or 1)
+        return await build_role_prompt_block(char, char.user_id)
     except Exception:
         return ""
 
