@@ -188,7 +188,10 @@ def main() -> int:
         bootstrap(Path(args.bootstrap))
         return 0
 
-    out = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="migrate_drill_"))
+    # 一律绝对化：子进程（--bootstrap / --case）的 cwd 是 backend/，相对路径会被它们按另一个根解析
+    # （2026-09-21 CI 首次接入踩到：--out .migrate-drill 时基线库被建到 backend/.migrate-drill/ 下，
+    #  父进程再按仓库根去找 base_fresh.db → sqlite3 OperationalError: unable to open database file）。
+    out = Path(args.out or tempfile.mkdtemp(prefix="migrate_drill_")).resolve()
     out.mkdir(parents=True, exist_ok=True)
     if args.base == "prod":
         base_db = _prod_db()
@@ -203,7 +206,11 @@ def main() -> int:
         if p.returncode != 0:
             print("bootstrap 失败:", (p.stdout or "")[-1200:] + (p.stderr or "")[-1200:])
             return 2
-        print("基线＝现建库（init_db + upgrade head）: %s" % base_db)
+        if not base_db.is_file():   # 兜底：路径口径不一致时给出明确原因，而不是后面 sqlite 报错
+            print("bootstrap 后基线库不存在: %s" % base_db)
+            return 2
+        print("基线＝现建库（init_db + upgrade head）: %s  (%.2f MB)"
+              % (base_db, base_db.stat().st_size / 1e6))
     print("演练工作目录: %s" % out)
     rows = []
     for name, kind, stmts in CASES:
