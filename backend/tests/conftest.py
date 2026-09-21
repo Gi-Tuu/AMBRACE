@@ -249,3 +249,35 @@ def _deterministic_fake_embedding_when_model_missing(monkeypatch):
     monkeypatch.setattr(emb, "text_embedding", _fake_text_embedding)
     for mod in bound_modules:
         monkeypatch.setattr(mod, "text_embedding", _fake_text_embedding, raising=False)
+
+
+# ── 早绑定工厂防泄漏（2026-09-21，修 CI 随机红）───────────────────────────────
+# 背景：93 个 app.* 模块在 import 期就 `from app.db.database import async_session_factory` 早绑定。
+# 若某个模块**首次**被 import 时正好落在别的用例的 monkeypatch 窗口内（该用例把工厂换成自己的临时库），
+# 它就会永久绑到那个临时工厂；此后这类用例的「按 `is original` 比对再替换」不再命中它，
+# 它的读/写会落到已删除的旧临时库（异常被 fail-open 吞掉），表现为随机的「刚写的行查不到」
+# （2026-09-21 实证：test_user_runtime_flags::test_user_facts_read_paths_per_account 在 -n 4 下约 1/2 概率红，
+# 诊断显示 flag 解析正常、工厂已补，但 GlobalUserFact 0 行）。
+# 修法：在任何 fixture 跑之前，先把 app.* 全量 import 一遍——保证早绑定拿到的是会话沙箱工厂，
+# 后续同类替换的 `is` 比对才成立。单个模块导入失败（可选依赖/平台差异）只告警，不阻断收集。
+def _preimport_app_modules() -> tuple[int, list[str]]:
+    import importlib
+    import pkgutil
+
+    import app as _app_pkg
+
+    ok = 0
+    failed: list[str] = []
+    for m in pkgutil.walk_packages(_app_pkg.__path__, prefix="app."):
+        try:
+            importlib.import_module(m.name)
+            ok += 1
+        except Exception as exc:  # noqa: BLE001 - 导入失败不应阻断测试收集
+            failed.append(f"{m.name}: {type(exc).__name__}: {exc}")
+    return ok, failed
+
+
+_PREIMPORT_OK, _PREIMPORT_FAILED = _preimport_app_modules()
+if _PREIMPORT_FAILED:
+    print(f"[conftest] preimport 有 {len(_PREIMPORT_FAILED)} 个模块导入失败（不阻断）："
+          + "; ".join(_PREIMPORT_FAILED[:5]))
