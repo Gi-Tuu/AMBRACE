@@ -6630,14 +6630,15 @@ class AppLocalizationsZh extends AppLocalizations {
       '只影响聊天里日历备注、备忘录这类本地工具的记录方式：开启时经统一工具入口执行并留下过程记录，关闭时回退到旧的直接保存方式。两种情况都会正常记录，不改变回复内容。一般保持开启，仅在排查工具链路问题时临时关闭。';
 
   @override
-  String get flagAgentLoopSchedulerTitle => '主动任务循环';
+  String get flagAgentLoopSchedulerTitle => '主动任务过程留痕';
 
   @override
-  String get flagAgentLoopSchedulerHint => '定时/主动触发的任务走统一智能体循环。';
+  String get flagAgentLoopSchedulerHint =>
+      '把到点提醒、主动关心这些任务的处理过程记下来，只用于排查问题；关掉也不影响这些提醒本身。';
 
   @override
   String get flagAgentLoopSchedulerDetail =>
-      '让到点触发的提醒、主动关心等经过统一 Runtime 并记录过程；关闭后主动任务走旧链路。';
+      '开启后，到点提醒、主动关心这些任务每次处理完会留下一条过程记录（有没有成功、花了多久），只用于排查问题。这些提醒什么时候发、说什么，都不受这个开关影响；关掉只是不再留这份记录。';
 
   @override
   String get flagAgentContextTrimTitle => '上下文按热度裁剪';
@@ -6679,13 +6680,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get flagProactiveUserRhythmDetail => '从聊天与主动日志推断作息；关闭则不区分时段，随时可能发。';
 
   @override
-  String get flagGroupChatGamesTitle => '群聊游戏总开关';
+  String get flagGroupChatGamesTitle => '小游戏总开关';
 
   @override
-  String get flagGroupChatGamesHint => '「小家 · 游戏机」整体入口与相关接口的总开关。';
+  String get flagGroupChatGamesHint =>
+      '小游戏功能的总开关：关闭后玩法列表清空、也不能从面板开局，卡住的对局不再自动推进；已经开始的对局仍可查看。';
 
   @override
-  String get flagGroupChatGamesDetail => '关闭后游戏入口与 API 都不展示，可整体回退游戏功能，不影响聊天。';
+  String get flagGroupChatGamesDetail =>
+      '小游戏功能的总开关。关闭后玩法列表清空、不能从面板开局，卡住的对局也不再自动推进；已经在进行的对局仍可查看历史。聊天本身不受影响。';
 
   @override
   String get flagLifeLoopEnabledTitle => '生活循环主开关';
@@ -6706,22 +6709,26 @@ class AppLocalizationsZh extends AppLocalizations {
   String get flagLifeLoopLlmDetail => '让日记/动态更生动；关闭则只用模板规则文案以节省 token。';
 
   @override
-  String get flagLifeChatDrivenEnabledTitle => '聊天驱动生活';
+  String get flagLifeChatDrivenEnabledTitle => '照你交代的事去安排';
 
   @override
-  String get flagLifeChatDrivenEnabledHint => '从聊天识别生活意图，联动改变 AI 的目标与活动。';
+  String get flagLifeChatDrivenEnabledHint =>
+      '你在聊天里明确让它去做的事（比如去休息、帮忙喂宠物）会排进它自己的日程并去做；随口提到的内容不会改变它的安排。';
 
   @override
-  String get flagLifeChatDrivenEnabledDetail => '例如你提到的事影响角色后续安排；关闭则聊天不联动生活循环。';
+  String get flagLifeChatDrivenEnabledDetail =>
+      '你在聊天里明确交代它去做的事（比如去休息一会儿、帮忙喂宠物）会排进它自己的日程并真的去做；随口提到、反问句、以及说的是它自己的内容都不算。同一类交代几分钟内只生效一次。';
 
   @override
   String get flagLifeHomeWorldmapEnabledTitle => '小家大地图';
 
   @override
-  String get flagLifeHomeWorldmapEnabledHint => '「小家」中的世界大地图功能与相关自主行为。';
+  String get flagLifeHomeWorldmapEnabledHint =>
+      '小家里用一整张地图展示各个房间和角色当前所在位置；关掉则回到原来的单个房间视图。';
 
   @override
-  String get flagLifeHomeWorldmapEnabledDetail => '关闭后小家不展示大地图。';
+  String get flagLifeHomeWorldmapEnabledDetail =>
+      '打开小家时会一并给出各房间的布局和角色当前在哪个房间，客户端据此画出整张大地图；关掉则回到只看单个房间的旧展示。';
 
   @override
   String get flagReplyDelayEnabledTitle => '动态回复延迟';
@@ -6754,10 +6761,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get flagPreoccupationEnabledTitle => '心事微澜';
 
   @override
-  String get flagPreoccupationEnabledHint => '让角色偶尔带着一点没说出口的小心事，更有牵挂感。';
+  String get flagPreoccupationEnabledHint =>
+      '闹别扭、吃醋或情绪低落之后，它会把这份心思压在心底几天，情绪也跟着偏低，直到你哄一句或时间慢慢冲淡。';
 
   @override
-  String get flagPreoccupationEnabledDetail => '复用记忆子类型实现；关闭则无此效果。';
+  String get flagPreoccupationEnabledDetail =>
+      '闹别扭、吃醋或情绪低落之后，它会把这份心思压在心底几天，期间情绪基调偏低，直到你哄一句、把话说开，或者时间慢慢把它冲淡。关掉后不再有这种憋着的小情绪，其它情绪变化照常。';
 
   @override
   String get flagProactiveOutreachV2Title => '主动消息自然化';
@@ -6791,14 +6800,15 @@ class AppLocalizationsZh extends AppLocalizations {
       'Ariadne 模块B：默认关=只剥离标记零行为；开=非流式路径镜像联网搜索循环做一次记忆二跳（流式只剥离）。';
 
   @override
-  String get flagMemoryStoryAssembleTitle => '沿链半故事化组装';
+  String get flagMemoryStoryAssembleTitle => '记忆成段叙述';
 
   @override
-  String get flagMemoryStoryAssembleHint => '把同一记忆链的节点拼成一小段有前因后果的叙述再注入。';
+  String get flagMemoryStoryAssembleHint =>
+      '把同一件事的前后记忆串成一小段有前因后果的叙述再使用；需先开启记忆自动挂链，否则没有变化。';
 
   @override
   String get flagMemoryStoryAssembleDetail =>
-      'Ariadne 模块C：默认关；当前为框架合入（链数据就绪后开=成链小块注入，否则与原路径等价）。';
+      '把同一件事的前后记忆串成一小段有前因后果的叙述再使用，而不是一条条零散地看。需要先开启「记忆自动挂链」——没有链数据时，打开它也等于没有变化。';
 
   @override
   String get flagMemoryPeakCutoffTitle => '记忆自然收敛（去硬截断）';
@@ -6834,41 +6844,45 @@ class AppLocalizationsZh extends AppLocalizations {
   String get flagMemoryTieredDecayTitle => '记忆分层衰减';
 
   @override
-  String get flagMemoryTieredDecayHint => '高置信持久、低置信加速衰减，跌破阈值转冷归档。';
+  String get flagMemoryTieredDecayHint =>
+      '有把握的事记得更久，没把握的推测忘得更快；重要的事到点后先收存起来而不是直接删掉，之后还能找回。';
 
   @override
   String get flagMemoryTieredDecayDetail =>
-      'M2-S2 灰度开关：默认关=现状逐字节一致；开启前建议先跑分层快照脚本。';
+      '按把握程度区别对待：有把握的事记得更久，没把握的推测忘得更快。重要的事到点后先收存起来而不是直接删掉，之后需要时还能找回；只有不重要的琐碎信息才会真的淡出。';
 
   @override
   String get flagMemoryTieredInjectTitle => '记忆分层注入';
 
   @override
-  String get flagMemoryTieredInjectHint => '核心记忆全量、其余记忆精简分层注入，节省 token。';
+  String get flagMemoryTieredInjectHint =>
+      '最重要的那条完整带入，其余只带一句要点，再补一行那天的背景，让它先抓重点又不丢上下文。';
 
   @override
   String get flagMemoryTieredInjectDetail =>
-      '#70 方案A：开=Top1 完整 + 其余精简注入；关=统一旧链路逐字节一致。';
+      '想起往事时，排在前面的那条完整带入，其余只带一句要点，再补一行那天的背景，让它先抓住重点又不丢上下文；同时一次带入的总量也略有增加。';
 
   @override
-  String get flagMemoryTraceDebugTitle => '记忆检索轨迹调试';
+  String get flagMemoryTraceDebugTitle => '记忆运行留痕';
 
   @override
-  String get flagMemoryTraceDebugHint => '把检索的 query/各路命中/排序分数写入 trace，便于排查。';
+  String get flagMemoryTraceDebugHint =>
+      '把找记忆、淡忘、合并、降级这些过程的详细留痕记下来，只用于排查问题，不改变任何回复内容。';
 
   @override
   String get flagMemoryTraceDebugDetail =>
-      '#70 方案B：只多写观测，不影响回复；关=检索/排序/trace 与现状一致。';
+      '把找记忆、淡忘、合并、降级这些过程的详细步骤记录下来，只用于排查问题，不改变任何回复内容，也不会让你多看到什么。排查记忆相关的问题时再开，平时可以关掉。';
 
   @override
-  String get flagMemorySupersedeTitle => '记忆取代链（supersede）';
+  String get flagMemorySupersedeTitle => '改口后收起旧记忆';
 
   @override
-  String get flagMemorySupersedeHint => '新事实取代旧事实后，旧记忆按状态过滤不再注入。';
+  String get flagMemorySupersedeHint =>
+      '你明确纠正过的事，被推翻的旧记忆会正式收起来，连怀旧、复习也不再翻出；关掉则它们仍可能被想起。';
 
   @override
   String get flagMemorySupersedeDetail =>
-      '#70 方案C：默认关（误取代比不取代更伤）；开=SQLite+Chroma 双通道按状态分流。';
+      '你明确纠正过的事，被推翻的旧记忆会被正式收起来，连怀旧、复习这类场合也不再翻出它。至于当下近况以哪条为准，由另一个开关单独保证。关掉后旧记忆仍可能在怀旧时被想起。';
 
   @override
   String get flagCurrentFactsActiveOnlyTitle => '现状面只用现行记忆';
@@ -6953,24 +6967,26 @@ class AppLocalizationsZh extends AppLocalizations {
       '默认开：只共享「位置」这一类低敏权威值，用于现状/近况注入与主动消息；感情、健康等敏感类别不受此项影响，仍需单独开启。关 = 不共享位置。';
 
   @override
-  String get flagCrossCharFactSyncTitle => '跨角色事实对齐';
+  String get flagCrossCharFactSyncTitle => '跨角色对齐';
 
   @override
-  String get flagCrossCharFactSyncHint => '构建上下文前/每日把各角色同槽旧值记忆标 stale（复用取代链）。';
+  String get flagCrossCharFactSyncHint =>
+      '你的某项近况有了新情况后，各角色记忆里还停留在旧情况的条目会被标记为已过时，不再当作当下事实。';
 
   @override
   String get flagCrossCharFactSyncDetail =>
-      'B1④：默认关；开=惰性对齐 + 每日 sweep，不删可追溯；关=不对齐。';
+      '你的某项近况有了新情况后，各角色记忆里还停留在旧情况的条目会被标记为已过时，不再被当作当下事实。只打标记、不删除，随时可以回退。';
 
   @override
-  String get flagCrossCharFactProjectionTitle => '事实变化投影';
+  String get flagCrossCharFactProjectionTitle => '变化留痕';
 
   @override
-  String get flagCrossCharFactProjectionHint => '用户事实变化时在记忆本留一条「跨角色同步」投影（可选）。';
+  String get flagCrossCharFactProjectionHint =>
+      '在「跨角色对齐」开启的前提下，你的近况发生更新时，记忆本里会额外留一条同步记录。';
 
   @override
   String get flagCrossCharFactProjectionDetail =>
-      'B1④：默认关；开启后变化投影以 source=global_sync 写入并做查重守卫。';
+      '在「跨角色对齐」开启的前提下：你的近况发生更新时，记忆本里会额外留一条同步记录，方便回看是哪次更新带来的变化；这条记录做过查重，不会反复留。对齐关掉时，单独开它没有效果。';
 
   @override
   String get flagWorkingStateEnabledTitle => '工作记忆数据积累';
@@ -7129,13 +7145,15 @@ class AppLocalizationsZh extends AppLocalizations {
       '开启后群聊消息也经统一 Runtime 处理，角色表现更连贯；关闭则群聊走旧链路。';
 
   @override
-  String get flagAgentLoopSocialTitle => '社交循环';
+  String get flagAgentLoopSocialTitle => '外部动态主动搭话';
 
   @override
-  String get flagAgentLoopSocialHint => '朋友圈/评论互动等社交行为的统一认知循环。';
+  String get flagAgentLoopSocialHint =>
+      'AI 主动提它在外部看到的新动态、到点的节日提醒时，会带上自己的记忆和你们的背景，也不会把外来的内容当成你俩的事记下来。';
 
   @override
-  String get flagAgentLoopSocialDetail => '开启后社交互动经统一 Runtime 并记录过程；关闭走旧链路。';
+  String get flagAgentLoopSocialDetail =>
+      '开启后，AI 在主动提它在外部看到的新动态、到点的节日提醒这类场合，会带着自己的记忆和你们的背景来说话，处理过程也会留一份记录以便排查。关掉后这些消息照发，只是回到旧的处理路径；外部看到的内容只当资讯看待，不会被记成你俩共同经历的事。';
 
   @override
   String get flagAgentSocialLightContextTitle => '社交轻量上下文';
@@ -7184,34 +7202,37 @@ class AppLocalizationsZh extends AppLocalizations {
       '主动消息生成的分块经护栏校验后再发，过滤残缺内容与明显不现实的表述。';
 
   @override
-  String get flagProactiveTopicGuardTitle => '主题熔断';
+  String get flagProactiveTopicGuardTitle => '同一话题不重复催';
 
   @override
-  String get flagProactiveTopicGuardHint => '同主题复读/催促收口（主题熔断）。';
+  String get flagProactiveTopicGuardHint =>
+      '你已经回应过、说过不用了，或同一件生活小事几小时内已被提过两次时，它就先不在这件事上主动念叨你。';
 
   @override
   String get flagProactiveTopicGuardDetail =>
-      '防止短期内反复同一主题、过度催促；触发熔断时本轮不再重复该主题。';
+      '你已经回过、说过不用了，或者同一件生活小事在几小时内已经被主动提过两次时，它就先不在这件事上继续念叨你，等新的话头。生日、节日、纪念日这类有时效的提醒不受此限制。';
 
   @override
-  String get flagOutreachHourWindowV1Title => '投放时段窗';
+  String get flagOutreachHourWindowV1Title => '主动消息投放时段';
 
   @override
-  String get flagOutreachHourWindowV1Hint => '主动投放限制在 9–22 点之间。';
+  String get flagOutreachHourWindowV1Hint =>
+      '关心、回忆这类不太期待回复的消息，只在中午到夜里这段时间发；你平时在线的时间会适当放宽。';
 
   @override
   String get flagOutreachHourWindowV1Detail =>
-      'outreach 三闸之一。注意：flag 开 + 命中灰度角色白名单（仅 char13）+ 比例桶 才真正生效，当前仅对灰度角色生效；非白名单角色无变化。';
+      '关心、回忆这类不太期待你回复的主动消息，只在中午到夜里这段时间发出；如果你平时在线的时段落在窗口外，会适当放宽到你活跃的时段。前提是这个角色本来就允许主动消息，否则这条限制无从生效。';
 
   @override
-  String get flagOutreachTypeMixV1Title => '投放类型配额';
+  String get flagOutreachTypeMixV1Title => '主动消息类型配额';
 
   @override
-  String get flagOutreachTypeMixV1Hint => '限制各类型主动消息比例，防止某类刷屏。';
+  String get flagOutreachTypeMixV1Hint =>
+      '给每类消息各设每日条数上限，避免某一类刷屏；翻出来的旧事也会以一句你真能接的话收尾，而不是空泛问候。';
 
   @override
   String get flagOutreachTypeMixV1Detail =>
-      'outreach 三闸之一。当前仅对灰度角色生效（flag 开 + 角色白名单 + 比例桶才真正生效）。';
+      '给每类主动消息各设每日条数上限，避免某一类反复刷屏；同时翻出来的旧事也会以一句你真能接的话收尾，而不是空泛问候。前提是这个角色本来就允许主动消息，否则这条限制无从生效。';
 
   @override
   String get flagOutreachSessionRateV1Title => '会话级节流';
@@ -7273,15 +7294,15 @@ class AppLocalizationsZh extends AppLocalizations {
       '开启后每次记忆写入产生回执，便于确认写入成功与排查；关闭则无回执。';
 
   @override
-  String get flagMemoryAdmissionGateTitle => '世界事实写入准入闸';
+  String get flagMemoryAdmissionGateTitle => '记录准入把关';
 
   @override
   String get flagMemoryAdmissionGateHint =>
-      'M4 world_facts 写入准入闸门（拦截/查重/矛盾裁决）。';
+      '记东西前先过一道规则：它自己推测的会标为待核实、不冒充你说过的，跟你无关的技术杂讯也不会入库，长期事实另外查重、判矛盾。';
 
   @override
   String get flagMemoryAdmissionGateDetail =>
-      '开启后写入世界事实前做查重与矛盾裁决，提升事实一致性；关闭则直接写入。';
+      '记东西前先过一道规则：它自己推测出来的会标成待核实，不会冒充你说过的话；跟你无关的技术杂讯直接不收；长期事实另外做查重和矛盾判断。关掉则按旧流程直接记录。';
 
   @override
   String get flagMemoryUtilityFeedbackTitle => '召回效用反馈';
@@ -7304,14 +7325,15 @@ class AppLocalizationsZh extends AppLocalizations {
       '注入为灰度阶段。注意：即使本键关着，灰度角色 char13 仍有约 15% 会话注入（代码常量灰度，非 runtime flag 可控）；当前仅对灰度角色生效。';
 
   @override
-  String get flagReviewExcludeExpiredPlanTitle => '复习排除过期计划';
+  String get flagReviewExcludeExpiredPlanTitle => '复习跳过过期安排';
 
   @override
-  String get flagReviewExcludeExpiredPlanHint => 'L1：复习选片排除过期计划/瞬时状态。';
+  String get flagReviewExcludeExpiredPlanHint =>
+      '回忆时不再挑入已经过期的安排和只属于当时的心情状态，怀旧话题每天最多提一次。';
 
   @override
   String get flagReviewExcludeExpiredPlanDetail =>
-      '复习不再挑入已经过期或仅瞬时有效的计划，减少无效复习。';
+      '回忆、复习挑素材时，不再挑入已经过期的安排，以及只属于当时心情状态的内容；怀旧话题每天最多主动提一次，避免刷屏。';
 
   @override
   String get flagReviewReinforceEventCapTitle => '事件强化上限';
@@ -7413,14 +7435,15 @@ class AppLocalizationsZh extends AppLocalizations {
       '跨角色用户事实细槽之一：健康，属敏感隐私。不受总闸影响，必须单独开启；开启后会和其他事实一样在你所有角色之间共享。';
 
   @override
-  String get flagChannelBindingV2Title => '渠道绑定 v2';
+  String get flagChannelBindingV2Title => '渠道绑定按账号独立';
 
   @override
-  String get flagChannelBindingV2Hint => '渠道绑定 v2（MCP/抖音/微信按主账号独立绑定）。';
+  String get flagChannelBindingV2Hint =>
+      '外部聊天渠道由每个账号各自绑定自己的角色，互不共用；关掉则退回所有账号共用同一条旧绑定。';
 
   @override
   String get flagChannelBindingV2Detail =>
-      '文档曾称已转正，但代码硬编码默认仍是 False，当前靠本机 runtime_flags 覆盖为 ON；换机/重建库若无此覆盖则回退为关。';
+      '外部聊天渠道由每个账号各自绑定自己的角色，谁连上来的就按谁的设置走，互不串号；关掉则退回所有账号共用同一条旧绑定。绑定存在服务器这边，换手机不需要重新连。';
 
   @override
   String get flagDomainEventLogEnabledTitle => '领域事件流水';

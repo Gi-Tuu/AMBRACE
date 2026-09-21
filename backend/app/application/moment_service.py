@@ -37,7 +37,11 @@ async def _record_moment_comment_event(*, comment_id: int | None, moment_id: int
     )
 
 
-from app.utils.timeutil import beijing_day_start_utc as _beijing_day_start_utc
+from app.utils.timeutil import (
+    beijing_day_start_utc as _beijing_day_start_utc,
+    now_naive_utc,
+    to_naive_utc,
+)
 
 
 async def build_moment_prompt(char, extra_hint: str = "") -> str:
@@ -201,10 +205,8 @@ async def publish_moment(character_id: int, skip_interval: bool = False, extra_h
             )
             last = last_result.scalar_one_or_none()
             if last:
-                last_ts = last.created_at
-                if last_ts is not None and last_ts.tzinfo is None:
-                    last_ts = last_ts.replace(tzinfo=timezone.utc)
-                elapsed = (datetime.now(timezone.utc) - last_ts).total_seconds()
+                last_ts = to_naive_utc(last.created_at)
+                elapsed = (now_naive_utc() - last_ts).total_seconds()
                 if elapsed < 7200:  # 2小时
                     _logger.debug("Publish skipped: interval < 2h for char %d", character_id)
                     return None

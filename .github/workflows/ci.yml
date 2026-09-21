@@ -237,7 +237,9 @@ jobs:
           SKIP_MODEL_DOWNLOAD: "1"
           PYTHONIOENCODING: "utf-8"
         # 全量档不加 -m 过滤，slow 用例与 3.12 wheel 兼容性一并覆盖。
-        run: pytest -q -p no:cacheprovider --durations=20 --basetemp=.pytest-tmp
+        # -n 2（09-21，用户拍板「尽快收掉」）：本机全量 -n 4 = 3000 passed/0 failed 已证并行隔离成立；
+        # 本档只在 nightly / 手动 full 触发，故先开 -n 2 观察（含 slow 建库用例，IO 更敏感）。
+        run: pytest -q -p no:cacheprovider -n 2 --durations=20 --basetemp=.pytest-tmp
 
   frontend:
     name: Flutter (analyze + test)

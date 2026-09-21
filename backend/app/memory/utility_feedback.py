@@ -7,11 +7,13 @@ flag ``memory_utility_feedback`` 已预注册（默认关）；本模块全部�
 我们已有艾宾浩斯强化、reliability（矛盾纠正）、tiering（低置信加速退化），缺的正是这一环。
 
 信号（确定性规则，不引入 LLM）：
-- negative：本轮文本（用户消息 + AI 回复）**同时**命中纠正词（复用 reliability.CORRECT_WORDS）
-  **且**出现针对该条记忆的指代/承接（记忆关键片段被引用）→ 记忆被明确纠正才整轮降权；
-- positive：记忆关键片段出现在回复文本（被用上），且无纠正 → 微上调；
-- neutral：两者皆无 → 不调整。
-  （收紧点：仅「随口否定」但不涉及该条记忆 → 判 neutral，不再误伤整轮召回池。）
+- negative：本轮文本（用户消息 + AI 回复）命中**纠正词**（在 reliability.CORRECT_WORDS 基础上扩量，
+  ``_UTILITY_EXTRA_CORRECT_WORDS``）→ 用户改口/否认，单命中即整轮降权（不再要求记忆片段共现）；
+- positive：文本命中**明确表态词**（认同/赞许/被说中，``_UTILITY_ATTITUDE_WORDS``），**或**记忆关键片段
+  出现在回复文本（被用上）→ 微上调；
+- neutral：以上皆无 → 不调整（无关闲聊不误记）。
+  （放宽点 2026-09-21 L2 任务2：原「纠正词 + 记忆被引用」双命中口径在 char13 灰度 29h 仅 1 positive /
+  0 negative，几近抓不到信号；改为任一强信号即记，并扩大纠正词表。）
 
 作用（最小可用、幅度极小、常量可配）：
 - positive → ``Memory.importance`` 微上调；negative → 微下调（复用既有 salient 权重通道，
@@ -81,10 +83,31 @@ def _correction_words() -> tuple:
     if _CORRECT_WORDS is None:
         try:
             from app.memory.reliability import CORRECT_WORDS
-            _CORRECT_WORDS = CORRECT_WORDS
+            _CORRECT_WORDS = CORRECT_WORDS + _UTILITY_EXTRA_CORRECT_WORDS
         except Exception:
-            _CORRECT_WORDS = ()
+            _CORRECT_WORDS = _UTILITY_EXTRA_CORRECT_WORDS
     return _CORRECT_WORDS
+
+
+# 效用反馈专用纠正词（在 reliability.CORRECT_WORDS 基础上扩量，2026-09-21 L2 任务2）：
+# 只影响效用反馈判据，不动 reliability 的「矛盾/纠正」语义（红线：记忆写入语义不变）。
+# 扩量的直接动机：char13 灰度 29h 内 12 个原纠正词在 342 条消息上命中 0 —— 词面太窄几乎不触发。
+_UTILITY_EXTRA_CORRECT_WORDS = (
+    "不对", "错了", "记反了", "记岔了", "搞反了", "你搞反了", "想错了", "理解有误",
+    "记混了", "不是那回事", "完全错了", "大错特错", "和我说的相反", "恰恰相反",
+    "恰好相反", "不是这样", "记错了吧", "弄错了", "说反了", "你想多了", "搞错了",
+    "记差了", "理解错了", "你理解反了", "正好相反",
+)
+
+# 效用反馈专用「明确表态」词（认同/赞许/被说中）：与纠正词并列的强正信号（任务2 放宽③）。
+# 选取偏具体的口语，降低无关闲聊误命中（纯闲聊如「今天天气不错」仍判 neutral）。
+_UTILITY_ATTITUDE_WORDS = (
+    "说得对", "没错", "对对对", "对呀对呀", "就是这样的", "你记得", "你记住了",
+    "记得很清楚", "你记性真好", "你竟然记得", "你还记得", "居然还记得",
+    "被你说中了", "一语中的", "说得真准", "正合我意", "正中下怀",
+    "正是我想说的", "你太懂我了", "就是嘛", "没错没错", "说中了", "还真被你说中了",
+    "被你猜中了", "料事如神",
+)
 
 
 def _core_snippet(content: str) -> str:
@@ -110,21 +133,25 @@ def _contains_key_fragment(snippet: str, resp: str, min_len: int = UTILITY_POSIT
 def classify_utility_signal(memory_content: str, ai_response: str, user_message: str = "") -> str:
     """确定性效用判定（纯函数，可单测）：'negative' / 'positive' / 'neutral'。
 
-    - 文本（用户消息 + AI 回复）同时命中纠正词 **且** 含该条记忆关键片段 → negative（记忆被明确纠正，整轮降权）；
-    - 否则记忆关键片段出现在文本 → positive（记忆被用上）；
-    - 否则 → neutral（不调整；含「随口否定但不涉及该条记忆」的情形）。
+    放宽判据（2026-09-21 L2 任务2）：命中任一强信号即记正/负，不再要求「纠正词 + 记忆被引用」
+    双命中——char13 灰度 29h 仅 1 positive / 0 negative，原双命中口径几乎抓不到信号：
+    - ① 纠正词命中（含扩量后的 ``_UTILITY_EXTRA_CORRECT_WORDS``）→ negative（用户改口/否认，单命中即可）；
+    - ③ 明确表态词命中（认同/赞许/被说中，``_UTILITY_ATTITUDE_WORDS``）→ positive；
+    - ② 记忆关键片段被引用（话题共现）→ positive（记忆被用上）；
+    - 其余 → neutral（无关闲聊不误记）。
 
-    ``user_message`` 默认空：纠正词多为用户侧措辞，跨两段联合判定可更准；缺省时退回只看 AI 回复的旧口径。
+    ``user_message`` 默认空：纠正词/表态词多为用户侧措辞，跨两段联合判定更准；缺省时退回只看 AI 回复。
     """
     resp = f"{(user_message or '')}\n{(ai_response or '')}"
     snippet = _core_snippet(memory_content)
-    # ① 记忆被指代/引用（话题词重叠）→ 先判定 reference
-    referenced = _contains_key_fragment(snippet, resp)
-    # ② 纠正词 + 该条记忆被引用 → negative（收紧：随口否定不误伤）
-    if referenced and any(w in resp for w in _correction_words()):
+    # ① 纠正词（扩量后）→ negative：弱化「需与记忆片段共现」要求，单命中即记负（提高负样本命中率）
+    if any(w in resp for w in _correction_words()):
         return "negative"
-    # ③ 记忆关键片段出现在回复 → positive（记忆被用上）
-    if referenced:
+    # ③ 对召回内容明确表态（认同/赞许/被说中）→ positive
+    if any(w in resp for w in _UTILITY_ATTITUDE_WORDS):
+        return "positive"
+    # ② 记忆关键片段被引用（话题共现）→ positive（记忆被用上）
+    if _contains_key_fragment(snippet, resp):
         return "positive"
     return "neutral"
 

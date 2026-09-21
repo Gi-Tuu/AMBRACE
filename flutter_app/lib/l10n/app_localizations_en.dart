@@ -6860,15 +6860,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'Affects only how chat tools such as calendar notes and memos get recorded: when on they run through the unified tool entry and leave a trace of the run, when off they fall back to the older direct save. Either way they are still saved and the reply itself is unchanged. Usually keep it on; turn it off only to debug the tool path.';
 
   @override
-  String get flagAgentLoopSchedulerTitle => 'Proactive Task Loop';
+  String get flagAgentLoopSchedulerTitle => 'Log proactive task handling';
 
   @override
   String get flagAgentLoopSchedulerHint =>
-      'Scheduled or proactive triggers go through the unified agent loop.';
+      'Keeps a record of how reminders and check-ins were handled, for troubleshooting only; turning it off does not affect those messages themselves.';
 
   @override
   String get flagAgentLoopSchedulerDetail =>
-      'Makes timed reminders and proactive check-ins pass through the unified Runtime and log their process. Off uses the old path for proactive tasks.';
+      'When on, each timed reminder and check-in leaves one process record once handled (whether it worked, how long it took), for troubleshooting only. When those messages go out and what they say is unaffected; turning it off only stops the record.';
 
   @override
   String get flagAgentContextTrimTitle => 'Heat-based Context Trim';
@@ -6915,15 +6915,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'Infers routine from chat and proactive logs. Off sends anytime regardless of time.';
 
   @override
-  String get flagGroupChatGamesTitle => 'Group Chat Games';
+  String get flagGroupChatGamesTitle => 'Games master switch';
 
   @override
   String get flagGroupChatGamesHint =>
-      'Master switch for the game console and its related APIs.';
+      'Master switch for games: when off, no games are offered and stalled rounds are no longer nudged forward; rounds already running stay visible.';
 
   @override
   String get flagGroupChatGamesDetail =>
-      'Off hides the game entry and APIs, rolling back games entirely without affecting chat.';
+      'Master switch for the mini games. When off, no games are offered, none can be started from the panel, and stalled rounds are no longer nudged forward; rounds already running stay readable. Chat itself is unaffected.';
 
   @override
   String get flagLifeLoopEnabledTitle => 'Life Loop Master';
@@ -6948,26 +6948,26 @@ class AppLocalizationsEn extends AppLocalizations {
       'Makes diaries/moments livelier. Off uses only template rules to save tokens.';
 
   @override
-  String get flagLifeChatDrivenEnabledTitle => 'Chat-driven Life';
+  String get flagLifeChatDrivenEnabledTitle => 'Follow through on what you ask';
 
   @override
   String get flagLifeChatDrivenEnabledHint =>
-      'Detects life intent from chat and links it to change the AI\'s goals and activities.';
+      'Things you explicitly ask it to do, such as taking a break or feeding the pet, go into its own schedule; passing mentions do not change its plans.';
 
   @override
   String get flagLifeChatDrivenEnabledDetail =>
-      'For example, something you mention affects the character\'s later plans. Off means chat does not drive the life loop.';
+      'Things you explicitly ask it to do in chat, such as taking a break or feeding the pet, go into its own schedule and it follows through. Passing mentions, questions, and things said about itself do not count. The same kind of request only takes effect once within a few minutes.';
 
   @override
-  String get flagLifeHomeWorldmapEnabledTitle => 'Home World Map';
+  String get flagLifeHomeWorldmapEnabledTitle => 'Home world map';
 
   @override
   String get flagLifeHomeWorldmapEnabledHint =>
-      'The world map feature and related autonomous behaviors in \'Home\'.';
+      'Home shows every room and where the character currently is on one map; turning it off falls back to the old single-room view.';
 
   @override
   String get flagLifeHomeWorldmapEnabledDetail =>
-      'Off hides the world map in Home.';
+      'Opening Home also provides the room layout and which room each character is currently in, so the app can draw the whole map; when off it falls back to the old single-room view.';
 
   @override
   String get flagReplyDelayEnabledTitle => 'Dynamic Reply Delay';
@@ -7003,15 +7003,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'Off means the AI won\'t proactively share a just-finished activity.';
 
   @override
-  String get flagPreoccupationEnabledTitle => 'Quiet Preoccupation';
+  String get flagPreoccupationEnabledTitle => 'Lingering thoughts';
 
   @override
   String get flagPreoccupationEnabledHint =>
-      'Lets the character occasionally carry a small unspoken worry, for a stronger sense of attachment.';
+      'After a quarrel, jealousy or a low mood it keeps that thought to itself for days and stays slightly out of sorts, until you soothe it or time passes.';
 
   @override
   String get flagPreoccupationEnabledDetail =>
-      'Reuses a memory subtype. Off disables this effect.';
+      'After a quarrel, jealousy or a low mood it keeps that thought to itself for days and stays slightly out of sorts, until you soothe it, talk it through, or time fades it. When off this buried mood is gone; other mood changes carry on as before.';
 
   @override
   String get flagProactiveOutreachV2Title => 'Natural Proactive Outreach';
@@ -7048,15 +7048,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'Ariadne module B: default off = only strips marker, zero behavior; on = non-streaming path mirrors the web-search loop for one memory second-hop (streaming only strips).';
 
   @override
-  String get flagMemoryStoryAssembleTitle => 'Chain Story Assembly';
+  String get flagMemoryStoryAssembleTitle => 'Story-like assembly';
 
   @override
   String get flagMemoryStoryAssembleHint =>
-      'Assembles nodes of the same memory chain into a short cause-and-effect narrative before injecting.';
+      'Stitches the earlier and later parts of the same thing into a short narrative. Needs memory chaining enabled first, otherwise nothing changes.';
 
   @override
   String get flagMemoryStoryAssembleDetail =>
-      'Ariadne module C: default off; currently a framework merge (once chain data is ready, on = inject small chained blocks, otherwise equivalent to the original path).';
+      'Stitches the earlier and later parts of the same thing into a short narrative with cause and effect, instead of a pile of separate lines. It needs memory chaining turned on first — with no chain data, switching this on changes nothing.';
 
   @override
   String get flagMemoryPeakCutoffTitle => 'Natural Memory Convergence';
@@ -7092,48 +7092,48 @@ class AppLocalizationsEn extends AppLocalizations {
       'B1: default off; on = expanded nodes at 0.9 weight, under token quota and 5-round dedup, never bypassing budget.';
 
   @override
-  String get flagMemoryTieredDecayTitle => 'Tiered Memory Decay';
+  String get flagMemoryTieredDecayTitle => 'Tiered memory decay';
 
   @override
   String get flagMemoryTieredDecayHint =>
-      'High-confidence persists, low-confidence decays faster, archived when below threshold.';
+      'Confident memories last longer while shaky guesses fade faster; important ones are set aside instead of deleted outright when they expire, and can come back.';
 
   @override
   String get flagMemoryTieredDecayDetail =>
-      'M2-S2 beta: default off = byte-identical to current; recommend running the tiered snapshot script before enabling.';
+      'It remembers according to how sure it was: confident memories last longer, shaky guesses fade faster. When something important expires it is set aside rather than deleted, and can come back later; only trivia truly fades away.';
 
   @override
-  String get flagMemoryTieredInjectTitle => 'Tiered Memory Injection';
+  String get flagMemoryTieredInjectTitle => 'Tiered memory injection';
 
   @override
   String get flagMemoryTieredInjectHint =>
-      'Core memories full, the rest trimmed and tiered, to save tokens.';
+      'The most important memory comes in full, the rest as a single key line, plus one line of background from that day so it keeps the highlights without losing context.';
 
   @override
   String get flagMemoryTieredInjectDetail =>
-      '#70 plan A: on = Top1 full + rest trimmed injection; off = unified old path, byte-identical.';
+      'When it recalls something, the top memory comes in full, the rest as a single key line, plus one line of background from that day — so it keeps the highlights without losing context. The total amount brought in at once also grows slightly.';
 
   @override
-  String get flagMemoryTraceDebugTitle => 'Memory Recall Trace Debug';
+  String get flagMemoryTraceDebugTitle => 'Memory diagnostics trace';
 
   @override
   String get flagMemoryTraceDebugHint =>
-      'Writes recall query/each-path hits/ranking scores to trace for debugging.';
+      'Records detailed steps for retrieval, forgetting, merging and downgrading; troubleshooting only, nothing about replies changes.';
 
   @override
   String get flagMemoryTraceDebugDetail =>
-      '#70 plan B: only extra observability, no effect on replies; off = recall/rank/trace identical to current.';
+      'Records the detailed steps of retrieval, forgetting, merging and downgrading, for troubleshooting only; it changes no reply and shows you nothing extra. Turn it on while investigating a memory issue, otherwise it can stay off.';
 
   @override
-  String get flagMemorySupersedeTitle => 'Memory Supersede Chain';
+  String get flagMemorySupersedeTitle => 'Retire superseded memories';
 
   @override
   String get flagMemorySupersedeHint =>
-      'After new facts replace old, stale memories are filtered out by status and no longer injected.';
+      'After you clearly correct something, the overturned memory is put away and no longer surfaces in reminiscing or review; when off it may still come up.';
 
   @override
   String get flagMemorySupersedeDetail =>
-      '#70 plan C: default off (wrong supersede hurts more than none); on = SQLite+Chroma dual-path by status.';
+      'After you clearly correct something, the overturned memory is put away for good and no longer surfaces even in reminiscing or review. Which memory counts as current is guaranteed by a separate switch. When off the old memory may still come back in nostalgic contexts.';
 
   @override
   String get flagCurrentFactsActiveOnlyTitle => 'Current facts: active only';
@@ -7225,26 +7225,26 @@ class AppLocalizationsEn extends AppLocalizations {
       'On (default): shares only the low-sensitivity location value, used for current-situation injection and proactive messages. Sensitive categories (relationship, health) are unaffected and still need separate opt-in. Off = no location sharing.';
 
   @override
-  String get flagCrossCharFactSyncTitle => 'Cross-character Fact Sync';
+  String get flagCrossCharFactSyncTitle => 'Cross-character sync';
 
   @override
   String get flagCrossCharFactSyncHint =>
-      'Before building context / daily, mark each character\'s old same-slot memory as stale (reuses supersede chain).';
+      'Once one of your facts is updated, entries still holding the old value in a character memory are marked outdated and no longer treated as current.';
 
   @override
   String get flagCrossCharFactSyncDetail =>
-      'B1: default off; on = lazy align + daily sweep, no delete, traceable; off = no alignment.';
+      'Once one of your facts is updated, the entries still holding the old value inside each character\'s memories are marked outdated and no longer treated as what is true now. They are only flagged, never deleted, and this can be undone.';
 
   @override
-  String get flagCrossCharFactProjectionTitle => 'Fact Change Projection';
+  String get flagCrossCharFactProjectionTitle => 'Change projection';
 
   @override
   String get flagCrossCharFactProjectionHint =>
-      'When a user fact changes, leaves a \'cross-character sync\' projection in the memory book (optional).';
+      'With cross-character sync enabled, an update to your facts also leaves a sync note in the memory book.';
 
   @override
   String get flagCrossCharFactProjectionDetail =>
-      'B1: default off; on = change projection written with source=global_sync and a dedup guard.';
+      'With cross-character sync enabled: when one of your facts is updated, a sync note is left in the memory book so you can see which update caused the change; that note is de-duplicated and not repeated. With sync off, turning this on alone does nothing.';
 
   @override
   String get flagWorkingStateEnabledTitle => 'Working Memory Accumulation';
@@ -7407,15 +7407,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'On: group messages also go through the unified Runtime for more coherent roles. Off: group chats use the legacy path.';
 
   @override
-  String get flagAgentLoopSocialTitle => 'Social loop';
+  String get flagAgentLoopSocialTitle => 'Chatter about external updates';
 
   @override
   String get flagAgentLoopSocialHint =>
-      'Unified cognitive loop for social interactions (moments/comments).';
+      'When it brings up something new it saw outside, or a reminder that is due, it draws on its own memory of you, and outside content is not filed as something the two of you share.';
 
   @override
   String get flagAgentLoopSocialDetail =>
-      'On: social interactions go through the unified Runtime and are logged. Off: legacy path.';
+      'When on, the AI brings up things it saw outside or a reminder that is due while drawing on its own memory of you, and the handling leaves a record for troubleshooting. When off those messages are still sent, just via the older path. Outside content stays news to it, never filed as something the two of you share.';
 
   @override
   String get flagAgentSocialLightContextTitle => 'Social light context';
@@ -7469,37 +7469,37 @@ class AppLocalizationsEn extends AppLocalizations {
       'Proactive message segments are validated by the guard before sending, dropping fragments and implausible text.';
 
   @override
-  String get flagProactiveTopicGuardTitle => 'Topic circuit breaker';
+  String get flagProactiveTopicGuardTitle => 'No nagging on one topic';
 
   @override
   String get flagProactiveTopicGuardHint =>
-      'Stops repeating the same topic / over-nudging (topic breaker).';
+      'Once you have answered, waved it off, or the same little thing has already come up twice within a few hours, it drops it for now.';
 
   @override
   String get flagProactiveTopicGuardDetail =>
-      'Prevents hammering one topic or over-nudging in a short window; once tripped, that topic is dropped this round.';
+      'Once you have answered, waved it off, or the same little thing has already been brought up twice within a few hours, it drops the subject and waits for a new opening. Time-sensitive reminders such as birthdays, holidays and anniversaries are exempt.';
 
   @override
-  String get flagOutreachHourWindowV1Title => 'Outreach hour window';
+  String get flagOutreachHourWindowV1Title => 'Outreach time window';
 
   @override
   String get flagOutreachHourWindowV1Hint =>
-      'Restricts proactive outreach to 9-22h.';
+      'Messages that rarely get a reply, such as check-ins and reminiscing, only go out between midday and night; the hours you are usually around widen that window.';
 
   @override
   String get flagOutreachHourWindowV1Detail =>
-      'One of the three outreach gates. Note: only takes real effect when flag on AND the graylisted role (char13 only) AND ratio bucket match - currently only for graylisted roles; others are unchanged.';
+      'Check-ins and reminiscing — messages that rarely expect a reply — only go out between midday and night; if the hours you are usually online fall outside that, the window widens to cover them. It applies only where proactive messages are already allowed for this character.';
 
   @override
-  String get flagOutreachTypeMixV1Title => 'Outreach type mix';
+  String get flagOutreachTypeMixV1Title => 'Outreach type quota';
 
   @override
   String get flagOutreachTypeMixV1Hint =>
-      'Caps the ratio of each outreach type to prevent one type spamming.';
+      'Each kind of message gets its own daily cap so one type cannot flood you, and recalls now end with something you can actually answer instead of a generic greeting.';
 
   @override
   String get flagOutreachTypeMixV1Detail =>
-      'One of the three outreach gates. Currently only for graylisted roles (flag on + role allowlist + ratio bucket).';
+      'Each kind of proactive message gets its own daily cap so one type cannot flood you, and something it recalls now ends with a line you can actually answer rather than a generic greeting. It applies only where proactive messages are already allowed for this character.';
 
   @override
   String get flagOutreachSessionRateV1Title => 'Outreach session rate';
@@ -7567,15 +7567,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'On: each memory write produces a receipt for confirmation and debugging; off: no receipt.';
 
   @override
-  String get flagMemoryAdmissionGateTitle => 'World-fact admission gate';
+  String get flagMemoryAdmissionGateTitle => 'Admission gate for memories';
 
   @override
   String get flagMemoryAdmissionGateHint =>
-      'Admission gate for M4 world_facts writes (dedup / contradiction裁决).';
+      'A rule pass before anything is stored: its own guesses are marked unverified instead of passing as your words, unrelated technical noise is never recorded, and long-term facts are de-duplicated and checked for conflicts.';
 
   @override
   String get flagMemoryAdmissionGateDetail =>
-      'On: before writing world facts it dedups and resolves contradictions for better consistency; off: writes directly.';
+      'A rule pass before anything is stored: its own guesses are marked as unverified instead of passing as your words, technical noise unrelated to you is never recorded, and long-term facts are additionally de-duplicated and checked for conflicts. When off things are recorded by the older flow.';
 
   @override
   String get flagMemoryUtilityFeedbackTitle => 'Recall utility feedback';
@@ -7601,15 +7601,15 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get flagReviewExcludeExpiredPlanTitle =>
-      'Exclude expired plans from review';
+      'Skip expired plans in review';
 
   @override
   String get flagReviewExcludeExpiredPlanHint =>
-      'L1: review selection excludes expired plans / transient states.';
+      'Recalls skip expired plans and momentary states, and nostalgic topics come up at most once a day.';
 
   @override
   String get flagReviewExcludeExpiredPlanDetail =>
-      'Review no longer picks up expired or transient-only plans, cutting wasted review.';
+      'When picking material to recall or review, expired plans and mood-only moments are no longer chosen, and nostalgic topics come up at most once a day.';
 
   @override
   String get flagReviewReinforceEventCapTitle => 'Reinforce event cap';
@@ -7720,15 +7720,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'One of the cross-character user-fact slots: health (sensitive). Not covered by the master switch - must be enabled on its own; once on it is shared across all your characters like other facts.';
 
   @override
-  String get flagChannelBindingV2Title => 'Channel binding v2';
+  String get flagChannelBindingV2Title => 'Per-account channel binding';
 
   @override
   String get flagChannelBindingV2Hint =>
-      'Channel binding v2 (MCP/Douyin/WeChat bound per main account).';
+      'External chat channels bind to characters per account instead of sharing one server-wide binding; turning it off falls back to the old shared binding.';
 
   @override
   String get flagChannelBindingV2Detail =>
-      'Docs once claimed it graduated, but the code default is still hard-coded False; locally it is ON only via a runtime_flags override. A fresh deploy without that override falls back to off.';
+      'External chat channels bind to characters per account, so each connection follows its own settings and never crosses over; turning it off falls back to one shared server-wide binding. Bindings live on the server, so changing phones needs no re-linking.';
 
   @override
   String get flagDomainEventLogEnabledTitle => 'Domain event log';

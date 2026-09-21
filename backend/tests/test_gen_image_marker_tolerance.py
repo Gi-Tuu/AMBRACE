@@ -17,7 +17,10 @@
 import asyncio
 import re
 
+import pytest
 from sqlalchemy import select
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.agent import actions
 from app.application.chat.streaming import _persist_ai_chunks
@@ -181,30 +184,34 @@ async def _cleanup(session_id: int) -> None:
         await db.commit()
 
 
-def test_落库无泄漏_流式分块路径(tmp_path, monkeypatch):
-    """复刻现场的两块（含未闭合标记）走 _persist_ai_chunks：落库文本零标记、纯标记块不落库。
-
-    P3（2026-09-12 技术债收口）：本用例改用**独立临时库**，不再共用会话级沙箱库——
-    CI py3.12 曾现 `sqlite3.OperationalError: database is locked`（与其它用例并发写同一
-    沙箱文件），独立库对该竞争彻底免疫；沙箱库仍供本文件其余用例使用。
+@pytest.fixture()
+def gen_image_clone(tmp_path, monkeypatch):
+    """独立临时库（会话级模板库克隆，见 tests/_dbclone.py）替代用例体内自建 create_all：
+    建表走页级拷贝（≈15ms/例），且仍是 per-test 独立文件库——原「CI py3.12 database is
+    locked」的并发写锁竞争风险不劣化（甚至更稳：克隆库不阻塞共享沙箱文件）。
     """
     import app.application.chat.streaming as _streaming
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-    from sqlalchemy.pool import NullPool
 
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/t.db", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    engine = clone_engine(tmp_path / "t.db")
+    factory = make_session_factory(engine)
+    # 本用例的 DB 帮手（_seed_session / _cleanup）与被测 _persist_ai_chunks 统一走克隆库
+    monkeypatch.setitem(globals(), "async_session_factory", factory)
+    monkeypatch.setattr(_streaming, "async_session_factory", factory)
+    yield factory
+    engine.sync_engine.dispose()
+
+
+def test_落库无泄漏_流式分块路径(gen_image_clone):
+    """复刻现场的两块（含未闭合标记）走 _persist_ai_chunks：落库文本零标记、纯标记块不落库。
+
+    E2 迁移：原用例体内自建 create_async_engine + Base.metadata.create_all 改为
+    `gen_image_clone` fixture 提供的克隆库（tests/_dbclone.clone_engine +
+    make_session_factory）；用例体只保留原断言与流程；仍是 per-test 独立文件库，
+    「database is locked」风险不劣化。
+    """
+    factory = gen_image_clone
 
     async def _run():
-        import app.models  # noqa: F401  注册全部 ORM 表
-        from app.models.base import Base
-
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        # 本用例内：被测代码与本文件的 DB 帮手统一走独立库
-        monkeypatch.setitem(globals(), "async_session_factory", factory)
-        monkeypatch.setattr(_streaming, "async_session_factory", factory)
-
         session_id = await _seed_session()
         try:
             saved = await _persist_ai_chunks(
@@ -225,10 +232,7 @@ def test_落库无泄漏_流式分块路径(tmp_path, monkeypatch):
         finally:
             await _cleanup(session_id)
 
-    try:
-        asyncio.run(_run())
-    finally:
-        asyncio.run(engine.dispose())
+    asyncio.run(_run())
 
 
 def test_落库无泄漏_流式生成到落库全链路(monkeypatch):

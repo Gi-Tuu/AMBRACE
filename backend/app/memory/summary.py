@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.db.database import async_session_factory
 from app.models.memory import Memory
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc, to_naive_utc
 from app.memory.constants import SUMMARY_TTL_HOURS, _TYPE_CN
 
 _logger = get_logger("memory.summary")
@@ -58,9 +59,7 @@ async def summarize_memories(character_id: int, memory_type: str, force: bool = 
             newest = max(existing, key=lambda m: m.updated_at or m.created_at)
             last = newest.updated_at or newest.created_at
             if isinstance(last, datetime):
-                if last.tzinfo is None:
-                    last = last.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) - last < timedelta(hours=SUMMARY_TTL_HOURS):
+                if now_naive_utc() - to_naive_utc(last) < timedelta(hours=SUMMARY_TTL_HOURS):
                     return {"generated": False, "memory_id": newest.id, "reason": "throttled"}
 
         # 最近 20 条该类型非摘要记忆
@@ -160,9 +159,7 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
             newest = max(existing, key=lambda m: m.updated_at or m.created_at)
             last = newest.updated_at or newest.created_at
             if isinstance(last, datetime):
-                if last.tzinfo is None:
-                    last = last.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) - last < timedelta(hours=IDENTITY_TTL_HOURS):
+                if now_naive_utc() - to_naive_utc(last) < timedelta(hours=IDENTITY_TTL_HOURS):
                     return {"generated": False, "memory_id": newest.id, "reason": "throttled"}
 
         rows = (await db.execute(

@@ -105,11 +105,16 @@ def asm_db(tmp_path_factory):
     asyncio.run(engine.dispose())
 
 
-def _assemble(sv: dict) -> list[dict]:
+_NO_CALLER = object()  # 传给 _assemble(user_id=...) 表示「宿主 state 里根本没有 user_id」
+
+
+def _assemble(sv: dict, *, user_id=1) -> list[dict]:
     """跑真正的装配函数，返回 state["context_messages"]。
 
     ``relationship`` 总是带上（注册表路径必然有该键）→ 跳过 assemble_persona_context；
     ``_trim`` 显式传入 → 跳过 _is_hot_character；两者都只是为了去掉与挂载无关的 DB 查询。
+    ``user_id`` 默认 1（既有口径）；传 ``_NO_CALLER`` 模拟宿主拿不到调用者（键缺失，
+    不是置 None——置 None 会让其它 ``state.get("user_id", 1)`` 分支读到 None，混进无关差异）。
     """
     from app.agent.context_builder import _trim_limits
 
@@ -130,6 +135,10 @@ def _assemble(sv: dict) -> list[dict]:
         "status_update": None,
         "lang": "zh",
     }
+    if user_id is _NO_CALLER:
+        state.pop("user_id")
+    else:
+        state["user_id"] = user_id
     out = asyncio.run(legacy_mod.build_context_legacy(
         state, _section_values={"relationship": "", **sv}, _trim=_trim_limits(True),
     ))
@@ -379,6 +388,39 @@ def test_context_inject_block_lands_before_user(asm_db):
     assert msgs[-1]["role"] == "user", "宿主 user 必须是最后一条"
     assert plugin_idx < last_user, "插件块落在 user 之后（越位未修）"
     assert joined.index("@@PLUGIN@@") < joined.index("@@CONTINUE@@"), "插件块必须在【系统指令】之前"
+
+
+def test_host_context_inject_requires_caller_fail_closed(asm_db):
+    """A2-M0 收尾：宿主 state 缺 user_id → **不向插件分发 context_inject**（不再兜底成 1 号账号）。
+
+    兜底写法 ``state.get("user_id", 1)`` 会把「拿不到调用者」的这一轮冒充 1 号账号：插件按
+    user_id 读写自己的数据（快照/账号）会串号，runtime scope 开时可见性集也取错。
+    先正跑（带 caller 必须注入）再反跑，确保「不注入」不是空断言（同 A 组自检口径）。
+    """
+    calls: list = []
+
+    async def _hook(ctx):
+        calls.append(ctx.get("user_id"))
+        ctx["context_messages"].append({"role": "system", "content": "@@NOID@@"})
+
+    _fake_plugin("_ctx_nocall", {"context_inject": [_hook]})
+    try:
+        msgs = _assemble({"continue_payload": ["@@CONTINUE@@"]})  # 带 caller（user_id=1）
+        assert calls == [1], "带 caller 时 hook 未跑 → 下面的反证是空断言"
+        assert any("@@NOID@@" in t for t in _system_texts(msgs))
+
+        calls.clear()
+        legacy_mod._warned_inject_no_caller.clear()
+        msgs2 = _assemble({"continue_payload": ["@@CONTINUE@@"]}, user_id=_NO_CALLER)
+        assert calls == [], "缺 caller 仍分发 hook（user_id 被兜底成了 1 号账号）"
+        assert not any("@@NOID@@" in t for t in _system_texts(msgs2)), "缺 caller 时插件块仍进了上下文"
+        assert legacy_mod._warned_inject_no_caller, "无 caller 应告警一次（不静默丢注入）"
+        # 不注入 ≠ 装配失败：宿主 user 仍是最后一条、继续指令仍在
+        assert msgs2[-1]["role"] == "user"
+        assert any("@@CONTINUE@@" in t for t in _system_texts(msgs2))
+    finally:
+        _drop_plugin("_ctx_nocall")
+        legacy_mod._warned_inject_no_caller.clear()
 
 
 def test_enforce_user_message_last_moves_strays(asm_db):

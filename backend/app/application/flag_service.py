@@ -251,36 +251,48 @@ async def get_user_flags(user_id) -> dict:
         return {}
 
 
+async def resolve_flags(keys, user_id=None) -> dict:
+    '''批量解析若干键对某账号的生效值：``{key: bool}``；**语义与逐键 resolve_flag 完全一致**。
+
+    细槽族一次要判定 6~8 个键，逐键解析＝每键 2 条小查询（策略 + 覆盖行）。本函数把
+    两层查询各自合并成一条：策略走 :func:`get_flag_policies`（IN 一次），覆盖行走
+    :func:`get_user_flags`（该账号全表一次），故 N 个键恒为 2 条查询。
+    fail-open 口径不变：任一层读失败（含缺表）只让**该层**回落到默认（未锁定 / 无覆盖），
+    最终值仍回全局现值，绝不抛错打挂业务链。
+    '''
+    ks = list(keys or [])
+    out = {k: _global_flag_value(k) for k in ks}  # 全局值先行：任何失败都停在默认上
+    if not ks or not user_id:
+        return out
+    try:
+        policies = await get_flag_policies(ks)
+    except Exception as e:  # 策略是旁路管控：读失败按「未锁定」处理（get_flag_policies 自身已兜）
+        _logger.warning('resolve_flags policy read failed user=%s: %s', user_id, e)
+        policies = {}
+    try:
+        overrides = await get_user_flags(user_id)
+    except Exception as e:  # 覆盖行读失败回全局（get_user_flags 自身已兜，这里是双保险）
+        _logger.warning('resolve_flags override read failed user=%s: %s', user_id, e)
+        overrides = {}
+    for k in ks:
+        if (policies.get(k) or {}).get('server_locked'):
+            continue  # 锁定即忽略用户覆盖（与单键口径一致）
+        if k in overrides:
+            out[k] = overrides[k]
+    return out
+
+
 async def resolve_flag(key: str, user_id=None) -> bool:
     '''解析某键对某账号的生效值（A5 用户级开关解析链）；**任何异常 fail-open 回全局值**。
 
     顺序：server_locked 策略 → 全局值（锁定即忽略用户覆盖）→ 该账号有覆盖 → 用户值 → 全局值。
     策略是旁路管控、用户覆盖是可选层：缺表/读失败一律回全局现值，绝不抛错打挂业务链
     （记忆/注入链路调用 resolve_flag，必须 fail-open）。
+
+    单键接口保持不变（实现委托给 :func:`resolve_flags`，同为 2 条查询）；
+    一次要判定多个键的调用方（如细槽族）请直接用批量版本，避免逐键查询放大。
     '''
-    global_value = _global_flag_value(key)
-    if not user_id:
-        return global_value
-    try:
-        policy = await get_flag_policy(key)  # 自身 fail-open（缺行为「自助开、未锁定」）
-        if policy.get('server_locked'):
-            return global_value
-        from sqlalchemy import select
-        from app.db.database import async_session_factory
-        from app.models.config import UserRuntimeFlag
-        async with async_session_factory() as db:
-            row = (await db.execute(
-                select(UserRuntimeFlag).where(
-                    UserRuntimeFlag.user_id == int(user_id),
-                    UserRuntimeFlag.key == key,
-                )
-            )).scalar_one_or_none()
-        if row is not None:
-            return bool(row.enabled)
-        return global_value
-    except Exception as e:
-        _logger.warning('resolve_flag fallback to global: key=%s user=%s err=%s', key, user_id, e)
-        return global_value
+    return (await resolve_flags([key], user_id)).get(key, _global_flag_value(key))
 
 
 async def set_user_flag(key: str, user_id, enabled) -> bool:

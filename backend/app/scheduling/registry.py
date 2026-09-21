@@ -1,6 +1,7 @@
 """调度器任务基类：BaseTask（life_tick 等定时任务复用）"""
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+
+from app.utils.timeutil import now_naive_utc
 
 
 class BaseTask(ABC):
@@ -14,7 +15,7 @@ class BaseTask(ABC):
         if elapsed < self.interval:
             return False
         if self.active_hours:
-            local_hour = (datetime.now(timezone.utc).hour + 8) % 24
+            local_hour = (now_naive_utc().hour + 8) % 24
             start, end = self.active_hours
             if not (start <= local_hour < end):
                 return False

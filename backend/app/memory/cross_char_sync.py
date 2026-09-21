@@ -89,8 +89,8 @@ async def _maybe_project_user_fact(
             if dup is not None:
                 return
         label = MUTABLE_SLOTS.get(slot, (slot,))[0]
-        from datetime import datetime, timezone
-        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        from app.utils.timeutil import now_naive_utc
+        date = now_naive_utc().strftime("%Y-%m-%d")
         content = f"用户当前{label}：{new_value}（{date} 更新）"
         from app.memory import save_memory
         await save_memory(

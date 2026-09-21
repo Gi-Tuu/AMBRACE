@@ -12,6 +12,7 @@ from app.db.database import async_session_factory
 from app.models.device import PhoneAutoState
 from app.models.character import AICharacter
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc, to_naive_utc
 
 _logger = get_logger("services.phone_auto_notify_service")
 
@@ -147,10 +148,8 @@ async def handle_auto_report(user_id: int, notifications: list[dict]) -> dict:
             _logger.info("Phone auto notify skipped: quiet hours user=%d", user_id)
         else:
             if state and state.last_trigger_at:
-                last = state.last_trigger_at
-                if last.tzinfo is None:
-                    last = last.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) - last < timedelta(minutes=MIN_TRIGGER_INTERVAL_MINUTES):
+                last = to_naive_utc(state.last_trigger_at)
+                if now_naive_utc() - last < timedelta(minutes=MIN_TRIGGER_INTERVAL_MINUTES):
                     _logger.info("Phone auto notify throttled user=%d", user_id)
                 else:
                     triggered = True

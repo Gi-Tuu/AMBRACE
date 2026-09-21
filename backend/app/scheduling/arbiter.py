@@ -17,7 +17,7 @@ from app.scheduling.life_regression import run_life_regression
 from app.scheduling.prospective_intent import run_prospective_due  # Ariadne 模块G（2026-09-04）
 from app.utils.logger import get_logger
 from app.utils.async_tasks import spawn_background
-from app.utils.timeutil import beijing_day_start_utc, now_naive_utc
+from app.utils.timeutil import beijing_day_start_utc, now_naive_utc, to_naive_utc
 
 # AMBRACE 3.10：arbiter 事件源 TriggerSource 化——导入 sources 包即触发各源注册
 from app.scheduling.sources import SourceContext, all_sources, get_source, to_item_dict
@@ -109,7 +109,7 @@ async def has_user_said_sleep(character_id: int, user_id: int) -> bool:
 
 async def get_hourly_active_count(character_id: int) -> int:
     """最近 1 小时该角色发出的主动消息数"""
-    since = datetime.now(timezone.utc) - timedelta(hours=1)
+    since = now_naive_utc() - timedelta(hours=1)
     async with async_session_factory() as db:
         result = await db.execute(
             select(func.count()).where(
@@ -292,10 +292,7 @@ async def unreplied_cooldown_active(character_id: int, user_id: int) -> bool:
             ).scalar() or 0
         if replied > 0:
             return False  # 最近这些消息里有用户回复 → 不冷却
-    last = logs[0].created_at
-    if last.tzinfo is None:
-        last = last.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) - last < timedelta(hours=UNREPLIED_COOLDOWN_HOURS)
+    return now_naive_utc() - to_naive_utc(logs[0].created_at) < timedelta(hours=UNREPLIED_COOLDOWN_HOURS)
 
 
 async def get_dnd_window(character_id: int) -> tuple[int, int] | None:
@@ -339,7 +336,7 @@ async def is_dnd_now(character_id: int, cn_now: datetime) -> bool:
 
 async def is_user_active(character_id: int, user_id: int) -> bool:
     """用户最近是否在活跃聊天（有用户消息）"""
-    since = datetime.now(timezone.utc) - timedelta(minutes=USER_ACTIVE_MINUTES)
+    since = now_naive_utc() - timedelta(minutes=USER_ACTIVE_MINUTES)
     async with async_session_factory() as db:
         from app.application.chat_service import get_latest_session_id
         session_id = await get_latest_session_id(user_id, character_id)
@@ -384,9 +381,7 @@ async def get_hours_since_last_user_message(character_id: int) -> float | None:
         raise
     if row is None:
         return None
-    if row.tzinfo is None:
-        row = row.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - row).total_seconds() / 3600.0
+    return (now_naive_utc() - to_naive_utc(row)).total_seconds() / 3600.0
 
 
 async def inactive_char_skip(character_id: int) -> bool:
@@ -415,7 +410,7 @@ async def has_pending_timer(character_id: int) -> bool:
             select(func.count()).where(
                 ScheduledEvent.character_id == character_id,
                 ScheduledEvent.status == "pending",
-                ScheduledEvent.trigger_at > datetime.now(timezone.utc),
+                ScheduledEvent.trigger_at > now_naive_utc(),
             )
         )
         return (result.scalar() or 0) > 0
@@ -567,10 +562,7 @@ async def _compute_motivation(character_id: int) -> float:
         hours = 24.0
         if st.last_activity_at is not None:
             try:
-                last = st.last_activity_at
-                if last.tzinfo is None:
-                    last = last.replace(tzinfo=timezone.utc)
-                hours = max(0.0, (datetime.now(timezone.utc) - last).total_seconds() / 3600.0)
+                hours = max(0.0, (now_naive_utc() - to_naive_utc(st.last_activity_at)).total_seconds() / 3600.0)
             except Exception:
                 pass
         score = _motivation_score(
@@ -1566,9 +1558,7 @@ async def _execute(item: dict) -> bool:
             # 最小间隔保护：避免同一角色短时间内连发（内容也容易重复）
             last_proactive = await get_last_proactive_time(char_id)
             if last_proactive is not None:
-                if last_proactive.tzinfo is None:
-                    last_proactive = last_proactive.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) - last_proactive < timedelta(minutes=MIN_PROACTIVE_INTERVAL_MINUTES):
+                if now_naive_utc() - to_naive_utc(last_proactive) < timedelta(minutes=MIN_PROACTIVE_INTERVAL_MINUTES):
                     _logger.info("Proactive msg char=%d skipped: min interval", char_id)
                     return False
 

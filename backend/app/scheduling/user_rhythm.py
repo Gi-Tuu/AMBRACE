@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc, to_naive_utc
 
 _logger = get_logger("scheduler.user_rhythm")
 
@@ -131,9 +132,7 @@ def _row_age_hours(row) -> float | None:
     ts = getattr(row, "learned_at", None)
     if ts is None:
         return None
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - ts).total_seconds() / 3600.0
+    return (now_naive_utc() - to_naive_utc(ts)).total_seconds() / 3600.0
 
 
 async def get_active_hours(user_id: int) -> list[list[int]]:

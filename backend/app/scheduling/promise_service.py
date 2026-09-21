@@ -1,11 +1,11 @@
 """定时承诺服务 — scheduled_events 表的创建、到期扫描、兑现"""
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from sqlalchemy import select
 
 from app.db.database import async_session_factory
 from app.models.life import ScheduledEvent
 from app.utils.logger import get_logger
-from app.utils.timeutil import to_naive_utc
+from app.utils.timeutil import now_naive_utc, to_naive_utc
 
 _logger = get_logger("scheduler.promise")
 
@@ -65,7 +65,7 @@ async def get_due_events() -> list[ScheduledEvent]:
     按字符串存储，一旦历史行混入带偏移的写法会让 SQL 比较与 Python 判定不等价，
     故到期/过期的精判全部留在 Python 层（naive 一律按 UTC 解释），保证行为等价。
     """
-    now = datetime.now(timezone.utc)
+    now = now_naive_utc()
     async with async_session_factory() as db:
         result = await db.execute(
             select(ScheduledEvent).where(
@@ -77,11 +77,9 @@ async def get_due_events() -> list[ScheduledEvent]:
     due: list[ScheduledEvent] = []
     expired_ids: list[int] = []
     for e in events:
-        ts = e.trigger_at
+        ts = to_naive_utc(e.trigger_at)
         if ts is None:
             continue
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
         if ts > now:
             continue
         overdue_min = (now - ts).total_seconds() / 60
@@ -112,12 +110,10 @@ async def _mark_expired(event_ids: list[int]) -> None:
 
 async def recover_overdue_events() -> None:
     """服务器启动/重启后恢复：2 小时内到期的补触发，超过的标记 expired"""
-    now = datetime.now(timezone.utc)
+    now = now_naive_utc()
     due = await get_due_events()
     for event in due:
-        trigger_ts = event.trigger_at
-        if trigger_ts is not None and trigger_ts.tzinfo is None:
-            trigger_ts = trigger_ts.replace(tzinfo=timezone.utc)
+        trigger_ts = to_naive_utc(event.trigger_at)
         overdue = (now - trigger_ts).total_seconds() / 60
         if overdue > GRACE_MINUTES:
             async with async_session_factory() as db:
@@ -146,7 +142,7 @@ async def get_pending_timer_text(character_id: int, user_id: int) -> str:
 
     返回空串表示无进行中承诺；有则给出「谁承诺了什么、还有多久、到点时间、行为约束」。
     """
-    now = datetime.now(timezone.utc)
+    now = now_naive_utc()
     async with async_session_factory() as db:
         result = await db.execute(
             select(ScheduledEvent)
@@ -159,17 +155,14 @@ async def get_pending_timer_text(character_id: int, user_id: int) -> str:
         )
         events = list(result.scalars().all())
     lines = []
-    cn_tz = timezone(timedelta(hours=8))
     for e in events:
-        ts = e.trigger_at
+        ts = to_naive_utc(e.trigger_at)
         if ts is None:
             continue
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
         if ts <= now:
             continue
         left_min = max(1, int((ts - now).total_seconds() / 60))
-        cn_ts = ts.astimezone(cn_tz)
+        cn_ts = ts + timedelta(hours=8)  # 北京时间（naive 换算，口径同旧 astimezone(+08)）
         hint = (e.content_hint or "").strip()
         owner = e.owner or "ai"
         if owner == "user":

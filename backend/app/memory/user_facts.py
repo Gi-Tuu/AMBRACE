@@ -142,22 +142,55 @@ def readable_user_fact_slots() -> list[str]:
 
 # ── 按账号解析（A5 用户级开关覆盖，2026-09-19）────────────────────────────
 # 上面三个同步函数只读进程级 AGENT_FLAGS（旧口径，保留给无 user_id 的调用点与既有单测）；
-# 生产读路径一律走下面这组 async 版本：经 flag_service.resolve_flag(key, user_id) 解析
+# 生产读路径一律走下面这组 async 版本：经 flag_service.resolve_flag(s)(key, user_id) 解析
 # 「server_locked → 全局 / 该账号覆盖 → 用户值 / 否则全局值」，fail-open（异常回全局值）。
 # 默认口径：没有用户覆盖行的账号，取值与改动前逐字节一致（回落全局 AGENT_FLAGS）。
+#
+# 批量化（2026-09-21，P3 遗留）：细槽族一次判定要摸 6 个槽 flag + 总闸（可读白名单再加
+# 位置共享开关）＝7~8 个键，逐键 resolve 是「每键 2 条小查询」的查询放大（约 12~16 条）。
+# 现统一「一次取该账号全部覆盖行 + 一次取全局策略」，再把纯判定套到每个槽上：
+# 单键与批量共用 ``_slot_enabled_from``，不存在两套口径会漂移。
+
+# 细槽族全部相关 flag 键（批量解析用；含总闸与位置共享开关）
+_SLOT_GATE_FLAG_KEYS: tuple[str, ...] = tuple(USER_FACT_SLOT_FLAGS.values()) + ("global_user_facts",)
+_READABLE_FLAG_KEYS: tuple[str, ...] = _SLOT_GATE_FLAG_KEYS + (_SHARED_SLOTS_BY_FLAG["location"],)
+
+
+async def _resolve_user_fact_flags(keys, user_id) -> dict:
+    """按账号批量解析若干 flag；任何异常 fail-open 回全局现值（策略/覆盖是旁路，不打挂记忆链路）。"""
+    ks = list(keys or [])
+    try:
+        from app.application import flag_service
+        values = dict(await flag_service.resolve_flags(ks, user_id))
+    except Exception:
+        values = {}
+    for k in ks:
+        if k not in values:
+            try:
+                from app.agent.loop import AGENT_FLAGS
+                values[k] = bool(AGENT_FLAGS.get(k, False))
+            except Exception:
+                values[k] = False
+    return values
 
 
 async def _resolve_user_fact_flag(key: str, user_id) -> bool:
-    """按账号解析一个 flag；任何异常 fail-open 回全局现值（策略/覆盖是旁路，不打挂记忆链路）。"""
-    try:
-        from app.application import flag_service
-        return await flag_service.resolve_flag(key, user_id)
-    except Exception:
-        try:
-            from app.agent.loop import AGENT_FLAGS
-            return bool(AGENT_FLAGS.get(key, False))
-        except Exception:
-            return False
+    """按账号解析一个 flag（批量版的单键外壳，口径完全一致）。"""
+    return (await _resolve_user_fact_flags([key], user_id)).get(key, False)
+
+
+def _slot_enabled_from(slot: str, value_of) -> bool:
+    """细槽生效判定的**单一实现**：显式开启优先；敏感槽（relationship/health）不吃总闸旁路；其余跟随总闸。
+
+    ``value_of(flag_key) -> bool`` 由调用方提供（单键现查 / 批量结果查表），故同步旧口径
+    （``user_fact_slot_enabled`` 直读 AGENT_FLAGS）与按账号口径共用同一条规则。
+    """
+    flag = USER_FACT_SLOT_FLAGS.get(slot)
+    if flag and value_of(flag):
+        return True
+    if slot in _SENSITIVE_SLOTS:
+        return False
+    return bool(value_of("global_user_facts"))
 
 
 async def user_fact_slot_enabled_for(slot: str, user_id=None) -> bool:
@@ -166,23 +199,17 @@ async def user_fact_slot_enabled_for(slot: str, user_id=None) -> bool:
     relationship/health 两敏感槽仍不受总闸旁路（须该账号各自显式开启），红线不变。
     """
     try:
-        flag = USER_FACT_SLOT_FLAGS.get(slot)
-        if flag and await _resolve_user_fact_flag(flag, user_id):
-            return True
-        if slot in _SENSITIVE_SLOTS:
-            return False
-        return await _resolve_user_fact_flag("global_user_facts", user_id)
+        keys = [k for k in (USER_FACT_SLOT_FLAGS.get(slot), "global_user_facts") if k]
+        values = await _resolve_user_fact_flags(keys, user_id)
+        return _slot_enabled_from(slot, values.get)
     except Exception:
         return False
 
 
 async def enabled_user_fact_slots_for(user_id=None) -> list[str]:
-    """按账号版的「当前启用槽列表」（按 MUTABLE_SLOTS 声明顺序）。"""
-    out: list[str] = []
-    for s in MUTABLE_SLOTS:
-        if await user_fact_slot_enabled_for(s, user_id):
-            out.append(s)
-    return out
+    """按账号版的「当前启用槽列表」（按 MUTABLE_SLOTS 声明顺序）；细槽族 flag 一次批量解析。"""
+    values = await _resolve_user_fact_flags(_SLOT_GATE_FLAG_KEYS, user_id)
+    return [s for s in MUTABLE_SLOTS if _slot_enabled_from(s, values.get)]
 
 
 async def user_current_location_shared_for(user_id=None) -> bool:
@@ -191,9 +218,13 @@ async def user_current_location_shared_for(user_id=None) -> bool:
 
 
 async def readable_user_fact_slots_for(user_id=None) -> list[str]:
-    """按账号版的读取侧槽白名单：已启用槽 + 共享槽（去重，声明顺序）。"""
-    slots = set(await enabled_user_fact_slots_for(user_id))
-    if await user_current_location_shared_for(user_id):
+    """按账号版的读取侧槽白名单：已启用槽 + 共享槽（去重，声明顺序）。
+
+    复用同一次批量解析（含位置共享开关），不再逐键查库。
+    """
+    values = await _resolve_user_fact_flags(_READABLE_FLAG_KEYS, user_id)
+    slots = {s for s in MUTABLE_SLOTS if _slot_enabled_from(s, values.get)}
+    if values.get(_SHARED_SLOTS_BY_FLAG["location"], False):
         slots.add("location")
     return [s for s in MUTABLE_SLOTS if s in slots]
 

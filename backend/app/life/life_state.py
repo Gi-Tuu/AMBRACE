@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.models.life import LifeState
+from app.utils.timeutil import now_naive_utc
 
 NEEDS = [
     "curiosity", "productivity", "relaxation", "social",
@@ -35,7 +36,7 @@ def clamp(v: float) -> int:
 def beijing_hour(now: datetime | None = None) -> int:
     """北京时间小时（0-23）"""
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = now_naive_utc()
     return (now.hour + 8) % 24
 
 

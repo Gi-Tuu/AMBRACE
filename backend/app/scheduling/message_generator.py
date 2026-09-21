@@ -1,8 +1,9 @@
 """主动消息生成器 — 调用 LLM 生成主动问候/搭话（注入行为类型 + 当前时间）"""
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import timedelta
 
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc
 from app.agent.llm_client import chat_completion, load_character_reasoning_level
 from app.memory.format import format_memory_line  # X-1（2026-08-18）：记忆注入行公共格式化
 # B1-③（2026-09-04，方案 §5.3）：主动接触意图层常量——分级/意图/转场句库，纯常量不入库
@@ -374,7 +375,7 @@ def _parrot_blocked(segments: list[str], last_context: str) -> tuple[bool, float
 
 def _describe_now() -> str:
     """生成当前时间的自然语言描述（北京时间，含日期）"""
-    now = datetime.now(timezone.utc)
+    now = now_naive_utc()
     bj = now + timedelta(hours=8)
     cn_hour = bj.hour
     weekdays = ["一", "二", "三", "四", "五", "六", "日"]

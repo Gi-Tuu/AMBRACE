@@ -8,10 +8,10 @@
 - 范围（2026-08-15 用户拍板）：只做可靠度纠正，不做违规重生成/内容拦截
 """
 import json
-from datetime import datetime, timezone
 
 from app.memory.flags import memory_v2_enabled as _memory_v2_enabled
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc
 
 _logger = get_logger("memory.fact_check")
 
@@ -23,7 +23,7 @@ _count_day: str = ""
 
 
 def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return now_naive_utc().strftime("%Y-%m-%d")
 
 
 def _check_limit(character_id: int) -> bool:

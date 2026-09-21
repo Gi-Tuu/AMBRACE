@@ -10,7 +10,7 @@
 """
 import json
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from sqlalchemy import select, func
 
@@ -18,6 +18,7 @@ from app.db.database import async_session_factory
 from app.models.chat import ChatGroup, ChatGroupMember, ChatGroupMessage
 from app.models.character import AICharacter
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc, to_naive_utc
 
 _logger = get_logger("scheduler.group_active")
 
@@ -31,7 +32,7 @@ MAX_CHARS = 200
 async def collect_group_events() -> list[dict]:
     """群空闲（无 AI 消息 > IDLE_HOURS）且有角色开主动 → 概率产出候选。"""
     try:
-        now = datetime.now(timezone.utc)
+        now = now_naive_utc()
         async with async_session_factory() as db:
             groups = (await db.execute(
                 select(ChatGroup).order_by(ChatGroup.id.desc())
@@ -58,10 +59,7 @@ async def collect_group_events() -> list[dict]:
                 ).scalar_one_or_none()
                 idle = True
                 if last_ai is not None:
-                    ts = last_ai
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)
-                    idle = (now - ts) > timedelta(hours=IDLE_HOURS)
+                    idle = (now - to_naive_utc(last_ai)) > timedelta(hours=IDLE_HOURS)
                 if not idle:
                     continue
                 # 群成员

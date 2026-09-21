@@ -8,6 +8,8 @@
 - API 口径：GET 带 scope + user_enabled（无覆盖 = null）；PUT 用户语义键写覆盖（全局不变、返回
   scope='user'）；PUT 服务器级键写全局（scope='server'）；锁定 / 自助关 → 403（两条路径都不放松）；
 - 接线：user_facts 细槽开关按账号取值（有覆盖 / 无覆盖两种账号），含 user_id 透传读路径；
+- 批量解析：``resolve_flags`` 与逐键 ``resolve_flag`` 取值等价且同样 fail-open；细槽族查询放大
+  的证据（逐键 12 条 → 批量恒 2 条，SQLAlchemy ``before_cursor_execute`` 计数）；
 - 迁移自检：单头 + 哨兵 + 临时库 upgrade head 建表 / downgrade 可逆 / 再 upgrade。
 
 全程临时 SQLite（create_all 或真实 alembic 临时库），**不连/不写生产库**（生产库只读）。
@@ -346,7 +348,105 @@ def test_user_facts_read_paths_per_account(flag_db, monkeypatch):
     assert asyncio.run(uf.get_authoritative_user_location(USER_B)) is None
 
 
-# ══════════════════════════ 5. 迁移自检 ══════════════════════════
+# ══════════════════════════ 5. 批量解析（P3 遗留：细槽族查询放大） ══════════════════════════
+
+
+def _counted(factory, run):
+    """asyncio.run(run()) 并统计期间真实下发到 SQLite 的语句数（口径同 test_moments_archive_batch）。"""
+    from sqlalchemy import event
+
+    engine = factory.kw["bind"].sync_engine
+    n = {"c": 0}
+
+    def _before(conn, cursor, statement, parameters, context, executemany):
+        n["c"] += 1
+
+    event.listen(engine, "before_cursor_execute", _before)
+    try:
+        return asyncio.run(run()), n["c"]
+    finally:
+        event.remove(engine, "before_cursor_execute", _before)
+
+
+def test_resolve_flags_批量与逐键口径等价(flag_db, monkeypatch):
+    """批量版取值必须与单键 ``resolve_flag`` 完全一致（锁定 > 覆盖 > 全局三层都不走样）。"""
+    from app.agent.loop import AGENT_FLAGS
+    from app.application import flag_service
+
+    keys = ["global_user_facts", "user_fact_location", "user_fact_health"]
+    for k in keys:
+        monkeypatch.setitem(AGENT_FLAGS, k, True)
+    # 无覆盖行 → 全部回全局
+    assert asyncio.run(flag_service.resolve_flags(keys, USER_A)) == dict.fromkeys(keys, True)
+    # A 覆盖 location=False、health=False 但 health 被锁定 → 批量结果逐键等于单键结果
+    assert asyncio.run(flag_service.set_user_flag("user_fact_location", USER_A, False)) is True
+    assert asyncio.run(flag_service.set_user_flag("user_fact_health", USER_A, False)) is True
+    asyncio.run(flag_service.set_flag_policy("user_fact_health", server_locked=True))
+    batch = asyncio.run(flag_service.resolve_flags(keys, USER_A))
+    assert batch == {k: asyncio.run(flag_service.resolve_flag(k, USER_A)) for k in keys}
+    assert batch["user_fact_location"] is False
+    assert batch["user_fact_health"] is True  # 锁定即忽略用户覆盖
+    # 解锁后覆盖重新生效（同一批量调用里两种层并存）
+    asyncio.run(flag_service.set_flag_policy("user_fact_health", server_locked=False))
+    assert asyncio.run(flag_service.resolve_flags(keys, USER_A)) == {
+        "global_user_facts": True, "user_fact_location": False, "user_fact_health": False}
+    # 另一账号无覆盖 → 同键批量取全局（多账号不串扰）
+    assert asyncio.run(flag_service.resolve_flags(keys, USER_B)) == dict.fromkeys(keys, True)
+    # 边界：空 keys / 无 user_id → 不查库口径不变（全回全局）
+    assert asyncio.run(flag_service.resolve_flags([], USER_A)) == {}
+    assert asyncio.run(flag_service.resolve_flags(keys)) == dict.fromkeys(keys, True)
+
+
+def test_resolve_flags_读失败仍_fail_open_回全局(monkeypatch):
+    """缺表/读失败：批量版与单键同口径——回全局现值，绝不抛错。"""
+    from app.agent.loop import AGENT_FLAGS
+    from app.application import flag_service
+
+    monkeypatch.setitem(AGENT_FLAGS, "global_user_facts", True)
+    monkeypatch.setitem(AGENT_FLAGS, "user_fact_health", False)
+
+    class _BrokenFactory:
+        def __call__(self):
+            raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr("app.db.database.async_session_factory", _BrokenFactory())
+    assert asyncio.run(flag_service.resolve_flags(
+        ["global_user_facts", "user_fact_health"], USER_A)) == {
+        "global_user_facts": True, "user_fact_health": False}
+
+
+def test_细槽族批量解析_逐键12条降到批量2条(flag_db, monkeypatch):
+    """查询放大的改前/改后证据：逐键＝每键 2 条（6 槽 12 条），批量＝恒 2 条，取值等价。"""
+    from app.agent.loop import AGENT_FLAGS
+    from app.memory import user_facts as uf
+
+    for k in ("global_user_facts", "user_fact_location", "user_fact_job", "user_fact_relationship",
+              "user_fact_living", "user_fact_goal_state", "user_fact_health",
+              "user_current_location_share"):
+        monkeypatch.setitem(AGENT_FLAGS, k, True)
+
+    # 改前口径 = 老 enabled_user_fact_slots_for 的实现（逐槽调单键判定）；显式跑一遍拿到真实条数
+    per_key = []
+    n_per_key = 0
+    for s in uf.MUTABLE_SLOTS:
+        value, n = _counted(flag_db, lambda s=s: uf.user_fact_slot_enabled_for(s, USER_A))
+        per_key.append(value)
+        n_per_key += n
+    assert n_per_key == 2 * len(uf.MUTABLE_SLOTS) == 12, "逐键口径＝每键 2 条（策略 + 覆盖行）"
+
+    batched, n_batch = _counted(flag_db, lambda: uf.enabled_user_fact_slots_for(USER_A))
+    assert n_batch == 2, "批量未收口（仍在逐键查库）"
+    assert batched == [s for s, v in zip(uf.MUTABLE_SLOTS, per_key) if v]  # 取值逐键等价
+
+    # 可读白名单（多一个位置共享开关）同一次批量内解决：改前 14 条 → 改后 2 条
+    readable, n_read = _counted(flag_db, lambda: uf.readable_user_fact_slots_for(USER_A))
+    assert n_read == 2
+    assert readable == list(uf.MUTABLE_SLOTS)
+    # 无 user_id（旧同步口径调用点）：不查库也照样给出全局结果
+    assert asyncio.run(uf.readable_user_fact_slots_for(None)) == list(uf.MUTABLE_SLOTS)
+
+
+# ══════════════════════════ 6. 迁移自检 ══════════════════════════
 
 def test_migration_single_head_sentinel_and_reversible(monkeypatch, tmp_path):
     """单头 + 哨兵在位；临时库 upgrade head 建表 / downgrade 可逆 / 再 upgrade。"""

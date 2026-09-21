@@ -56,32 +56,34 @@ def test_classify_negative_on_correction_words():
     assert sig == "negative"
 
 
-def test_classify_casual_negation_no_false_negative():
-    # 随口否定但完全不涉及该条记忆（无关键片段）→ neutral，不误伤整轮召回池
+def test_classify_correction_word_alone_now_negative():
+    # 放宽判据（2026-09-21 任务2）：纠正词单命中即记 negative，不再要求与记忆片段共现。
+    # 「不对不对」属 CORRECT_WORDS → negative（旧口径因无记忆片段会判 neutral，现已能记到）。
     sig = uf.classify_utility_signal(
         "用户喜欢喝美式咖啡",
         "不对不对，今天好累啊",
     )
-    assert sig == "neutral"
+    assert sig == "negative"
 
 
-def test_classify_correction_without_reference_is_neutral():
-    # 纠正词命中但文本未引用该条记忆 → neutral（收紧前会误判 negative）
+def test_classify_correction_without_reference_now_negative():
+    # 放宽判据（2026-09-21 任务2）：纠正词（扩量后含「不对」）单命中即 negative，
+    # 不再要求与记忆片段共现。「你说得不对」→ negative（旧口径因无记忆片段会判 neutral）。
     sig = uf.classify_utility_signal(
         "用户喜欢喝美式咖啡",
         "你说得不对，不过这件事先这样吧",
     )
-    assert sig == "neutral"
+    assert sig == "negative"
 
 
 def test_classify_negative_via_user_message_reference():
-    # 用户消息含纠正词、但 AI 回复与用户消息都未引用该条记忆关键片段 → neutral（不误判）
+    # 放宽判据：用户消息含纠正词（「你记错了」）→ 单命中即 negative，无需记忆片段共现
     sig = uf.classify_utility_signal(
         "用户喜欢喝美式咖啡",
         "好的，那我重新记一下",            # AI 回复无记忆片段
-        user_message="你记错了，我根本不喝美式",  # 纠正词但无记忆片段
+        user_message="你记错了，我根本不喝美式",  # 纠正词 → negative
     )
-    assert sig == "neutral"
+    assert sig == "negative"
     # 纠正词在用户消息、记忆指代也在用户消息（跨两段联合判定）→ negative
     sig2 = uf.classify_utility_signal(
         "用户喜欢喝美式咖啡",
@@ -102,6 +104,51 @@ def test_classify_positive_when_fragment_used():
 def test_classify_neutral_when_unrelated():
     sig = uf.classify_utility_signal("用户喜欢喝美式咖啡", "今天天气不错")
     assert sig == "neutral"
+
+
+# ─────────────────────────── 放宽判据（2026-09-21 任务2）───────────────────────────
+
+def test_relaxed_each_single_signal_records():
+    """放宽后：①纠正词 ②引用 ③明确表态 任一强信号即记反馈（sig != neutral）。
+
+    其中 ①纠正词单命中、③表态单命中为**改前记不到**的新捕获（旧双命中口径下 neutral）。
+    """
+    mem = "用户喜欢喝美式咖啡"
+    # ① 纠正词单命中（无记忆片段共现）→ negative（改前 neutral）
+    sig_correct = uf.classify_utility_signal(mem, "你记错了，我其实喝拿铁")
+    assert sig_correct == "negative"
+    # ② 记忆关键片段被引用 → positive（旧口径已 positive，仍记录）
+    sig_ref = uf.classify_utility_signal(mem, "你上次说喜欢喝美式咖啡，今天要不要再点一杯")
+    assert sig_ref == "positive"
+    # ③ 明确表态（认同/被说中）→ positive（改前 neutral）
+    sig_att = uf.classify_utility_signal(mem, "说得对，你竟然还记得我喜欢喝美式")
+    assert sig_att == "positive"
+
+
+def test_relaxed_expanded_correction_words_fire():
+    """扩大纠正词表（_UTILITY_EXTRA_CORRECT_WORDS）后，短纠正词也能触发 negative。"""
+    mem = "用户喜欢喝美式咖啡"
+    # 旧 CORRECT_WORDS 不含「不对」单用，扩量后命中
+    assert uf.classify_utility_signal(mem, "不对，我说的是别的") == "negative"
+    assert uf.classify_utility_signal(mem, "搞反了，顺序不是这样的") == "negative"
+    assert uf.classify_utility_signal(mem, "和我说的恰恰相反") == "negative"
+
+
+def test_relaxed_attitude_words_fire():
+    """明确表态词（_UTILITY_ATTITUDE_WORDS）任一命中 → positive（即便未引用记忆片段）。"""
+    mem = "用户喜欢喝美式咖啡"
+    assert uf.classify_utility_signal(mem, "被你说中了，我就爱喝美式") == "positive"
+    assert uf.classify_utility_signal(mem, "你记性真好，居然还记得") == "positive"
+    assert uf.classify_utility_signal(mem, "正合我意，你太懂我了") == "positive"
+
+
+def test_relaxed_noise_chatter_stays_neutral():
+    """噪声守卫：无关闲聊（不含纠正/表态/引用任一强信号）→ neutral，不误记。"""
+    mem = "用户喜欢喝美式咖啡"
+    assert uf.classify_utility_signal(mem, "今天天气不错，我们去散步吧") == "neutral"
+    assert uf.classify_utility_signal(mem, "哈哈哈这个也太好笑了") == "neutral"
+    # 纠正词/表态词未出现，纯叙述不触发
+    assert uf.classify_utility_signal(mem, "刚才看了一会儿书，有点累了") == "neutral"
 
 
 def test_classify_negative_takes_precedence_over_positive():

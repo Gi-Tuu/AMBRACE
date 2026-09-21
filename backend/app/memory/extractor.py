@@ -11,6 +11,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from app.agent.llm_client import chat_completion as llm_call, TASK_MEMORY
 from app.events.schema import EPISTEMIC_FACT, EPISTEMIC_INFERRED
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc
 from app.memory.speaker import resolve_speaker_from_content  # X-2（2026-08-18）：统一归属判定公共函数
 from app.memory.meta_guard import is_meta_without_anchor  # 批次二任务1：元对话/情绪宣泄守卫
 
@@ -114,6 +115,58 @@ def _raw_val(response, key):
         if line.strip().startswith(key + ":"):
             return line.strip()[len(key)+1:].strip()
     return ""
+
+
+# ── 槽值规范化 L2（2026-09-21）：提示词直出 SLOT_VALUE 短语短值 ──
+def _parse_slot_value_line(response: str) -> tuple[str, str] | None:
+    """从 `SLOT_VALUE: 槽名|短值` 行解析出 (slot, value)；缺字段/格式错/未启用槽 → None。
+
+    解析端优先取 SLOT_VALUE（上游提示词已要求短语级短值、禁整句），缺字段时调用方回落旧
+    SLOT 行 + L1 规整（向后兼容，不破坏旧格式）。
+    不用 ``_get_val``：避免其 `` | `` 重要度切分把无空格的「槽|值」误裁成只剩槽名。
+    """
+    for line in (response or "").split("\n"):
+        s = line.strip()
+        if not s.startswith("SLOT_VALUE:"):
+            continue
+        body = s[len("SLOT_VALUE:"):].strip()
+        if not body or _is_empty_val(body):
+            return None
+        if "|" not in body:
+            return None
+        slot, _, value = body.partition("|")
+        slot = slot.strip()
+        value = value.strip()
+        if not slot or not value:
+            return None
+        return slot, value
+    return None
+
+
+def _slot_fact_from_response(response: str, user_info_val: str, enabled_slots: list[str]) -> tuple[str, str] | None:
+    """从提取响应解出 (slot, value) 候选供 ``upsert_user_fact``。
+
+    - 优先 SLOT_VALUE 直出短语级短值（L2：提高入槽准确率，上游已要求短语、禁整句）；
+    - 缺字段/格式错 → 回落旧 SLOT 行（或本地关键词归槽）+ USER_INFO 正文经 L1 规整
+      （``normalize_slot_value``，向后兼容旧格式）；
+    - 槽不在 ``enabled_slots``（未启用/非法）→ 返回 None，调用方落普通记忆、不污染槽位。
+
+    纯函数、零 DB/LLM；写侧闸（``slot_value_reject_reason``）由 ``upsert_user_fact`` 把关，
+    本函数**不改判据**（红线：闸不变、记忆写入语义不变）。
+    """
+    from app.memory.user_facts import MUTABLE_SLOTS, classify_slot
+    from app.memory.slot_guard import normalize_slot_value
+
+    sv = _parse_slot_value_line(response)
+    if sv is not None and sv[0] in enabled_slots:
+        return sv  # (slot, value) 直出短值
+    # 回落旧解析：SLOT 行给槽名（否则本地关键词归槽），正文过 L1 规整
+    slot_raw = (_get_val(response, "SLOT") or "").strip()
+    slot = slot_raw if slot_raw in MUTABLE_SLOTS else classify_slot(user_info_val)
+    if not slot or slot not in enabled_slots:
+        return None
+    norm = normalize_slot_value(slot, user_info_val)
+    return slot, (norm if norm is not None else user_info_val)
 
 
 # ── Ariadne 模块F/G：extractor 便车解析（2026-09-04，行协议新增两行输出）──
@@ -240,8 +293,15 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
         if _enabled_slots:
             _slot_lines = [f'  - "{s}"：{MUTABLE_SLOTS[s][0]}' for s in _enabled_slots]
             prompt += (
-                '\n额外要求：若上方 USER_INFO 属于用户可变近况，另输出一行：SLOT: '
-                f'{"|".join(_enabled_slots)}；否则输出：SLOT: 无。\n' + "\n".join(_slot_lines)
+                '\n额外要求：若上方 USER_INFO 属于用户可变近况（工作/学业、感情、居住、'
+                '进行中计划、身体状态等），另输出两行：\n'
+                'SLOT: <命中槽名，或 无>\n'
+                'SLOT_VALUE: <槽名>|<短语级短值>\n'
+                '短值须为 2~12 字短语，禁止整句/叙述句/角色扮演台词/含标点或引号的聊天行；'
+                '拿不准就写「SLOT_VALUE: 无」。\n'
+                + "候选槽：\n" + "\n".join(_slot_lines)
+                + '\n示例：USER_INFO「用户最近在备考考研，每天刷题」→ '
+                'SLOT: goal_state / SLOT_VALUE: goal_state|备考考研'
             )
     except Exception:
         pass
@@ -330,36 +390,30 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
                 mtype = "event"
                 _logger.info("Meta-dialogue downgraded char=%d: %.50s", character_id, val)
             if mtype == "user_info":
-                from app.memory.slot_guard import normalize_slot_value
                 from app.memory.user_facts import (
-                    MUTABLE_SLOTS, classify_slot, upsert_user_fact,
-                    user_fact_slot_enabled_for, settle_location_on_home_return,
+                    upsert_user_fact, settle_location_on_home_return,
                 )
-                slot_raw = (_get_val(response, "SLOT") or "").strip()
-                slot = slot_raw if slot_raw in MUTABLE_SLOTS else classify_slot(val)
-                # C2-③ 回家信号优先：独立于 LLM SLOT（F-4 收紧后「我到家了」常无地点宾语、slot=None）；
-                # settle 内部自带 location 槽门控（槽关直接 False），命中则不重复 upsert location。
-                _home_settled = await settle_location_on_home_return(user_id, user_msg or val)
-                if slot and await user_fact_slot_enabled_for(slot, user_id) and not _home_settled:
-                    # 槽值规范化 L1（2026-09-19）：LLM 正文常是「用户…」整句，直接进槽必被主语闸
-                    # 拒；先做本地确定性归一再写。归一不出值就原样传 val，让槽闸照旧拒写（fail-closed）。
-                    norm = normalize_slot_value(slot, val)
-                    if norm is None:
-                        _slot_val = val
-                    else:
-                        _slot_val = norm
-                        if norm != val:
-                            _logger.info("Slot value normalized char=%d slot=%s raw=%.60s norm=%.60s",
-                                         character_id, slot, val, norm)
-                    change = await upsert_user_fact(user_id, slot, _slot_val, source="chat")
-                    # 旧值失效放「新记忆写入前」：避免 sub_type/文本命中到刚写入的新值记忆误标 stale
-                    if change is not None:
-                        from app.memory.cross_char_sync import stale_character_slot_memory
-                        await stale_character_slot_memory(character_id, slot, change[0])
-                    await save_memory(user_id=user_id,character_id=character_id,memory_type=mtype,content=val[:100],importance=imp,source="chat",sub_type=slot,source_id=source_id,
-                                      speaker_type=_spk_type, speaker_id=_spk_id, epistemic_status=_epi)
-                    saved += 1
-                    continue
+                # L2（2026-09-21）：优先 SLOT_VALUE 直出短语级短值；旧格式（无 SLOT_VALUE 行）
+                # 回落 L1 规整（normalize_slot_value），向后兼容、不破坏旧格式。
+                cand = _slot_fact_from_response(response, val, _enabled_slots)
+                if cand is not None:
+                    slot, _slot_val = cand
+                    # C2-③ 回家信号优先：独立于 LLM SLOT（F-4 收紧后「我到家了」常无地点宾语、
+                    # slot=None）；settle 内部自带 location 槽门控（槽关直接 False），命中则不重复 upsert。
+                    _home_settled = await settle_location_on_home_return(user_id, user_msg or val)
+                    if not _home_settled:
+                        if _slot_val != val:
+                            _logger.info("Slot value L2 char=%d slot=%s raw=%.60s slotval=%.60s",
+                                         character_id, slot, val, _slot_val)
+                        change = await upsert_user_fact(user_id, slot, _slot_val, source="chat")
+                        # 旧值失效放「新记忆写入前」：避免 sub_type/文本命中到刚写入的新值记忆误标 stale
+                        if change is not None:
+                            from app.memory.cross_char_sync import stale_character_slot_memory
+                            await stale_character_slot_memory(character_id, slot, change[0])
+                        await save_memory(user_id=user_id,character_id=character_id,memory_type=mtype,content=val[:100],importance=imp,source="chat",sub_type=slot,source_id=source_id,
+                                          speaker_type=_spk_type, speaker_id=_spk_id, epistemic_status=_epi)
+                        saved += 1
+                        continue
             await save_memory(user_id=user_id,character_id=character_id,memory_type=mtype,content=val[:100],importance=imp,source="chat",sub_type=("meta_guard" if _meta_downgrade else "extracted"),source_id=source_id,
                               speaker_type=_spk_type, speaker_id=_spk_id, epistemic_status=_epi)
             saved += 1
@@ -529,7 +583,7 @@ async def catchup_extract_all():
         return
     async with _catchup_lock:
         _logger.info("Catchup")
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+        cutoff = now_naive_utc() - timedelta(hours=2)
         processed = await _load_processed_ids()
         async with async_session_factory() as db:
             # 只补采仍处于活跃状态的角色的会话（过滤已删除角色，避免给残留角色写记忆）

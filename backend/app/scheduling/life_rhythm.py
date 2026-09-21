@@ -1,8 +1,9 @@
 """随机节律引擎 — 按时间窗概率采样，产生"AI 自己想做的事" """
 import random
-from datetime import datetime, timezone
+from datetime import datetime
 
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc
 
 _logger = get_logger("scheduler.life_rhythm")
 
@@ -25,7 +26,7 @@ FREQ_PROBABILITY = {"high": 0.7, "medium": 0.5, "low": 0.3}
 def get_time_window(now: datetime | None = None) -> dict | None:
     """返回当前时间所在的时间窗（无则 None，如凌晨 0-7 点不活跃）"""
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = now_naive_utc()
     cn_hour = (now.hour + 8) % 24  # 北京时间
     minutes = cn_hour * 60 + now.minute
     for w in TIME_WINDOWS:

@@ -14,6 +14,7 @@ from app.models.character import ProactiveMessageLog
 from app.scheduling.triggers import get_active_characters
 from app.domain.emotion.model import detect_user_emotion
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc
 
 _logger = get_logger("scheduler.life_regression")
 
@@ -142,7 +143,7 @@ async def _user_recent_emotion(user_id: int, character_id: int) -> str:
         session_id = await get_latest_session_id(user_id, character_id)
         if not session_id:
             return ""
-        since = datetime.now(timezone.utc) - timedelta(minutes=CHECK_USER_MINUTES)
+        since = now_naive_utc() - timedelta(minutes=CHECK_USER_MINUTES)
         row = (
             await db.execute(
                 select(ChatMessage.content)
@@ -164,7 +165,7 @@ async def collect_life_regression_events() -> list[dict]:
     """arbiter 事件源：近 24h 达标生活记忆 → 回归摘要候选（priority=2）"""
     events = []
     chars = await get_active_characters()
-    since = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)
+    since = now_naive_utc() - timedelta(hours=LOOKBACK_HOURS)
     for c in chars:
         try:
             char_id = c["character_id"]

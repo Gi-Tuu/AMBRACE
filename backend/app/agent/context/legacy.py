@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
 
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc, to_naive_utc
 from app.agent.context_builder import (
     AICharacter,
     AIMoment,
@@ -38,6 +39,20 @@ from app.agent.context_builder import (
 )
 
 _logger = get_logger("context.legacy")
+
+# 宿主 context_inject 拿不到 caller 的告警去重（与 registry._warned_no_caller 同法，防 hot path 刷屏）
+_warned_inject_no_caller: set[str] = set()
+
+
+def _warn_context_inject_no_caller_once() -> None:
+    """装配链缺 user_id → 不向插件分发 context_inject；每个进程只告警一次（不静默丢注入）。"""
+    if "context_inject" in _warned_inject_no_caller:
+        return
+    _warned_inject_no_caller.add("context_inject")
+    _logger.warning(
+        "宿主 context_inject 拿不到调用者（state 无 user_id）→ 不向插件分发（fail-closed，"
+        "不再兜底成 1 号账号）；若属误伤请修上游 state 透传，勿在此补默认值"
+    )
 
 
 async def build_context_legacy(state: dict, *, stream: bool | None = None, _section_values: dict | None = None, _trim: dict | None = None) -> dict:
@@ -464,10 +479,8 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
                 )
                 _last_session = _sr.scalar_one_or_none()
             if _last_session is not None and _last_session.updated_at is not None:
-                _last_dt = _last_session.updated_at
-                if _last_dt.tzinfo is None:
-                    _last_dt = _last_dt.replace(tzinfo=timezone.utc)
-                _delta = datetime.now(timezone.utc) - _last_dt
+                _last_dt = to_naive_utc(_last_session.updated_at)
+                _delta = now_naive_utc() - _last_dt
                 _secs = max(0, int(_delta.total_seconds()))
                 if _secs < 60:
                     _ago = "\u521a\u521a"
@@ -1159,20 +1172,27 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     # 异常隔离 try/except: pass 保持原样。
 
     # 插件系统：context_inject（启用插件可向上下文追加内容；异常隔离）
+    # A2-M0 收尾（2026-09-21）：**缺 caller 不再兜底成 1 号账号**。旧写法 state.get("user_id", 1) 会把
+    # 别人的这一轮当成 1 号账号：①插件按 user_id 读写自己的数据（快照/账号）会串到 1 号；②runtime
+    # scope 开时可见性过滤也拿 1 号的可见集去分发。无 caller = 无法判定归属 = 不注入（fail-closed），
+    # 与 M0 插件侧口径一致（test_browser_inject_按账号且无user_id不注入 同族）。
     try:
-        from app.plugins.registry import run_hook
-        _plugin_uid = state.get("user_id", 1)
-        await run_hook("context_inject", {
-            "user_id": _plugin_uid,
-            "character_id": state.get("character_id"),
-            "session_id": state.get("session_id"),
-            "user_message": state.get("user_message", ""),
-            "context_messages": state["context_messages"],
-        },
-            # A2 M4：显式带调用者（ctx 已有 user_id）→ flag 开时只分发给本账号可见插件
-            user_id=_plugin_uid,
-            callsite="agent/context/legacy.py:context_inject",
-        )
+        _plugin_uid = state.get("user_id")
+        if not _plugin_uid:
+            _warn_context_inject_no_caller_once()
+        else:
+            from app.plugins.registry import run_hook
+            await run_hook("context_inject", {
+                "user_id": _plugin_uid,
+                "character_id": state.get("character_id"),
+                "session_id": state.get("session_id"),
+                "user_message": state.get("user_message", ""),
+                "context_messages": state["context_messages"],
+            },
+                # A2 M4：显式带调用者（ctx 已有 user_id）→ flag 开时只分发给本账号可见插件
+                user_id=_plugin_uid,
+                callsite="agent/context/legacy.py:context_inject",
+            )
     except Exception:
         pass
 

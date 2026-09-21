@@ -21,6 +21,7 @@ from app.db.database import async_session_factory
 from app.models.character import CharacterState
 from app.models.character import ProactiveTriggerLog
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc
 
 _logger = get_logger("scheduler.life_share")
 
@@ -71,8 +72,8 @@ def should_share(base_prob: float, intimacy: float, fatigue: float, rng=None) ->
 
 async def _quota_ok(db, character_id: int) -> bool:
     """每角色每 6h ≤1、每日 ≤1（ProactiveTriggerLog trigger_type=life_share 计数）。"""
-    since_6h = datetime.now(timezone.utc) - _QUOTA_6H
-    since_24h = datetime.now(timezone.utc) - _QUOTA_24H
+    since_6h = now_naive_utc() - _QUOTA_6H
+    since_24h = now_naive_utc() - _QUOTA_24H
     for since in (since_6h, since_24h):
         cnt = (await db.execute(
             select(func.count()).where(

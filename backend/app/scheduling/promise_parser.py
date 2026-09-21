@@ -1,6 +1,8 @@
 """定时承诺解析器 — 从 LLM 回复/用户消息中提取时间承诺（[timer:xx] 标签 + 正则兜底）"""
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
+
+from app.utils.timeutil import now_naive_utc
 
 # [timer:20m] / [timer:30分钟] / 【计时器:1h】/ [timer:45s]
 _TIMER_TAG = re.compile(
@@ -206,7 +208,7 @@ def extract_timer(
         "user_id": user_id,
         "character_id": character_id,
         "session_id": session_id,
-        "trigger_at": datetime.now(timezone.utc) + timedelta(minutes=minutes),
+        "trigger_at": now_naive_utc() + timedelta(minutes=minutes),
         "event_type": event_type or "back",
         "source_message_id": source_message_id,
         "sender": sender if sender in ("ai", "user") else "ai",

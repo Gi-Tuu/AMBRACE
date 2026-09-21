@@ -20,7 +20,7 @@ agent_tasks / agent_task_logs / llm_usage / image_gen_tasks / channel_bindings /
 lorebook_entries / world_facts / shared_events / prospective_intents / memory_archive 以外
 的归档类。其中 moment_ai_likes 虽无外键，但属角色在他人动态下的互动，本模块一并清。
 """
-from sqlalchemy import delete as sa_delete, or_, select, update
+from sqlalchemy import delete as sa_delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import EmotionCareTask, PendingPermissionAction
@@ -159,8 +159,26 @@ async def cascade_delete_character(db: AsyncSession, character_id: int) -> dict:
         stats[label] = stats.get(label, 0) + n
         return n
 
-    async def _del(model, *where) -> int:
-        return await _exec(sa_delete(model).where(*where), model.__name__)
+    async def _del(model, *where, count_by_table_diff: bool = False) -> int:
+        """删除并计数；count_by_table_diff=True 时（自引用级联表如 MomentComment）改用
+        「删除前后该表总行数差」而非 rowcount——FK=ON 下删父会级联带走子回复，rowcount 只数到
+        语句直接匹配的行（父），会低估真实删除量；该口径不改变删除语句与顺序，仅校正计数。
+        """
+        stmt = sa_delete(model).where(*where)
+        try:
+            before = None
+            if count_by_table_diff:
+                before = int((await db.execute(select(func.count()).select_from(model))).scalar() or 0)
+            rp = await db.execute(stmt)
+        except Exception as e:
+            _logger.error("cascade delete failed step=%s char=%s: %s", model.__name__, character_id, e)
+            raise
+        n = int(rp.rowcount or 0)
+        if count_by_table_diff and before is not None:
+            after = int((await db.execute(select(func.count()).select_from(model))).scalar() or 0)
+            n = before - after
+        stats[model.__name__] = stats.get(model.__name__, 0) + n
+        return n
 
     async def _ids(stmt) -> list:
         return list((await db.execute(stmt)).scalars().all())
@@ -183,14 +201,14 @@ async def cascade_delete_character(db: AsyncSession, character_id: int) -> dict:
         await _del(MomentAILike, MomentAILike.moment_id.in_(moment_ids))
         comment_ids = await _collect_comment_ids(MomentComment.moment_id.in_(moment_ids))
         if comment_ids:
-            await _del(MomentComment, MomentComment.id.in_(comment_ids))
+            await _del(MomentComment, MomentComment.id.in_(comment_ids), count_by_table_diff=True)
         await _del(AIMoment, AIMoment.character_id == character_id)
     await _del(MomentAILike, MomentAILike.character_id == character_id)
     ai_comment_ids = await _collect_comment_ids(
         (MomentComment.sender_type == "ai") & (MomentComment.sender_id == character_id)
     )
     if ai_comment_ids:
-        await _del(MomentComment, MomentComment.id.in_(ai_comment_ids))
+        await _del(MomentComment, MomentComment.id.in_(ai_comment_ids), count_by_table_diff=True)
 
     # 2) 织库：先摘「织卡↔记忆」关联（二级孤儿来源，必须在删 Memory 之前），再处理卡片本体
     memory_ids = await _ids(select(Memory.id).where(Memory.character_id == character_id))

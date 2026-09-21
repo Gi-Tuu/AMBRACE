@@ -13,6 +13,7 @@ from app.models.chat import ChatMessage
 from app.models.character import ProactiveMessageLog
 from app.scheduling.triggers import get_active_characters, get_latest_session
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc, to_naive_utc
 
 _logger = get_logger("scheduler.unfinished_topic")
 
@@ -91,8 +92,7 @@ async def collect_unfinished_events() -> list[dict]:
                 continue
             # 距最后一条消息足够久（用户已离开对话）
             if isinstance(last_msg_at, datetime):
-                t = last_msg_at if last_msg_at.tzinfo else last_msg_at.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) - t < timedelta(minutes=MIN_GAP_MINUTES):
+                if now_naive_utc() - to_naive_utc(last_msg_at) < timedelta(minutes=MIN_GAP_MINUTES):
                     continue
             events.append({
                 "type": "unfinished_topic",

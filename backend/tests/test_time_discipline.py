@@ -53,40 +53,10 @@ KEEP_AWARE: dict[tuple[str, str], str] = {
         "list_timers：naive 列先显式提升为 aware 再比较/相减，全程 aware 且不写库",
 }
 
-# 存量裸 aware（P2-2 本轮只归一 6 处，其余待另行拍板后从这里逐条删除）
-LEGACY_AWARE = frozenset({
-    ("scheduling/arbiter.py", "since = datetime.now(timezone.utc) - timedelta(hours=1)"),
-    ("scheduling/arbiter.py", "return datetime.now(timezone.utc) - last < timedelta(hours=UNREPLIED_COOLDOWN_HOURS)"),
-    ("scheduling/arbiter.py", "since = datetime.now(timezone.utc) - timedelta(minutes=USER_ACTIVE_MINUTES)"),
-    ("scheduling/arbiter.py", "return (datetime.now(timezone.utc) - row).total_seconds() / 3600.0"),
-    ("scheduling/arbiter.py", "ScheduledEvent.trigger_at > datetime.now(timezone.utc),"),
-    ("scheduling/arbiter.py", "hours = max(0.0, (datetime.now(timezone.utc) - last).total_seconds() / 3600.0)"),
-    ("scheduling/arbiter.py", "if datetime.now(timezone.utc) - last_proactive < timedelta(minutes=MIN_PROACTIVE_INTERVAL_MINUTES):"),
-    ("scheduling/user_rhythm.py", "return (datetime.now(timezone.utc) - ts).total_seconds() / 3600.0"),
-    ("scheduling/unfinished_topic.py", "if datetime.now(timezone.utc) - t < timedelta(minutes=MIN_GAP_MINUTES):"),
-    ("scheduling/promise_parser.py", '"trigger_at": datetime.now(timezone.utc) + timedelta(minutes=minutes),'),
-    ("scheduling/life_rhythm.py", "now = datetime.now(timezone.utc)"),
-    ("scheduling/life_regression.py", "since = datetime.now(timezone.utc) - timedelta(minutes=CHECK_USER_MINUTES)"),
-    ("scheduling/life_regression.py", "since = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)"),
-    ("scheduling/group_active.py", "now = datetime.now(timezone.utc)"),
-    ("scheduling/scheduler.py", '"utc_now": datetime.now(timezone.utc),'),
-    ("scheduling/message_generator.py", "now = datetime.now(timezone.utc)"),
-    ("scheduling/registry.py", "local_hour = (datetime.now(timezone.utc).hour + 8) % 24"),
-    ("scheduling/life_share.py", "since_6h = datetime.now(timezone.utc) - _QUOTA_6H"),
-    ("scheduling/life_share.py", "since_24h = datetime.now(timezone.utc) - _QUOTA_24H"),
-    ("scheduling/promise_service.py", "now = datetime.now(timezone.utc)"),
-    ("life/life_state.py", "now = datetime.now(timezone.utc)"),
-    ("application/moment_service.py", "elapsed = (datetime.now(timezone.utc) - last_ts).total_seconds()"),
-    ("application/phone_auto_notify_service.py", "if datetime.now(timezone.utc) - last < timedelta(minutes=MIN_TRIGGER_INTERVAL_MINUTES):"),
-    ("memory/extractor.py", "cutoff = datetime.now(timezone.utc) - timedelta(hours=2)"),
-    ("memory/summary.py", "if datetime.now(timezone.utc) - last < timedelta(hours=SUMMARY_TTL_HOURS):"),
-    ("memory/summary.py", "if datetime.now(timezone.utc) - last < timedelta(hours=IDENTITY_TTL_HOURS):"),
-    ("memory/fact_check.py", 'return datetime.now(timezone.utc).strftime("%Y-%m-%d")'),
-    ("memory/cross_char_sync.py", 'date = datetime.now(timezone.utc).strftime("%Y-%m-%d")'),
-    ("agent/context/legacy.py", "_delta = datetime.now(timezone.utc) - _last_dt"),
-    ("agent/context/section_world.py", "_delta = datetime.now(timezone.utc) - _last_dt"),
-    ("agent/runtime.py", "_secs = max(0, int((datetime.now(timezone.utc) - _last_dt).total_seconds()))"),
-})
+# 存量裸 aware：P2-2 起逐条清理。**2026-09-21（.legacy_ 批）31 条全部归一完毕，清单清空**
+# （scheduling/* 20 条 → life/application/memory/agent 11 条；统一走 timeutil.now_naive_utc /
+#  to_naive_utc）。棘轮继续生效：新增裸 aware 立即红，本清单只允许保持为空或按需登记理由。
+LEGACY_AWARE: frozenset[tuple[str, str]] = frozenset()
 
 
 def _scan_app() -> tuple[list[str], set[tuple[str, str]]]:

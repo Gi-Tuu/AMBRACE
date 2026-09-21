@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone, timedelta
 
+from app.utils.timeutil import now_naive_utc, to_naive_utc
 from app.agent.context.sections import ContextSection, register_section, TARGET_TEMPLATE, TARGET_APPEND
 
 _logger = logging.getLogger("agent.context.section_world")
@@ -70,10 +71,8 @@ async def _compute_current_time_str(state: dict, ctx: dict) -> str:
             )
             _last_session = _sr.scalar_one_or_none()
         if _last_session is not None and _last_session.updated_at is not None:
-            _last_dt = _last_session.updated_at
-            if _last_dt.tzinfo is None:
-                _last_dt = _last_dt.replace(tzinfo=timezone.utc)
-            _delta = datetime.now(timezone.utc) - _last_dt
+            _last_dt = to_naive_utc(_last_session.updated_at)
+            _delta = now_naive_utc() - _last_dt
             _secs = max(0, int(_delta.total_seconds()))
             if _secs < 60:
                 _ago = "\u521a\u521a"

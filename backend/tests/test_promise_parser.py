@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """定时承诺解析器测试（promise_parser / promise_service 纯逻辑部分）"""
-from datetime import datetime, timezone
-
 from app.scheduling.promise_parser import extract_timer, strip_timer_tag
+from app.utils.timeutil import now_naive_utc
 
 
 def _info(text, sender="ai"):
@@ -15,7 +14,8 @@ def _info(text, sender="ai"):
 def _minutes(info):
     if info is None:
         return None
-    return (info["trigger_at"] - datetime.now(timezone.utc)).total_seconds() / 60
+    # trigger_at 是 naive UTC（库内存储口径），基准时钟同样取 naive UTC
+    return (info["trigger_at"] - now_naive_utc()).total_seconds() / 60
 
 
 def test_tag_minutes():

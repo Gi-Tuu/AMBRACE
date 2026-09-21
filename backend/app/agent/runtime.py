@@ -19,6 +19,7 @@ import asyncio
 import time
 
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc, to_naive_utc
 
 _logger = get_logger("agent.runtime")
 
@@ -273,10 +274,8 @@ async def build_light_social_context(state: dict) -> dict:
                 )
                 _last_session = _sr.scalar_one_or_none()
             if _last_session is not None and _last_session.updated_at is not None:
-                _last_dt = _last_session.updated_at
-                if _last_dt.tzinfo is None:
-                    _last_dt = _last_dt.replace(tzinfo=timezone.utc)
-                _secs = max(0, int((datetime.now(timezone.utc) - _last_dt).total_seconds()))
+                _last_dt = to_naive_utc(_last_session.updated_at)
+                _secs = max(0, int((now_naive_utc() - _last_dt).total_seconds()))
                 if _secs < 3600:
                     _ago = "刚刚"
                 elif _secs < 86400:

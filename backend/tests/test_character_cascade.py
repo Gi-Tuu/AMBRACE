@@ -20,6 +20,7 @@ from starlette.testclient import TestClient
 from _dbclone import clone_engine, make_session_factory
 
 from app.api import characters as characters_api
+from app.application.character_cascade import cascade_delete_character
 from app.auth.deps import get_current_user_id
 from app.db.database import get_db
 
@@ -401,3 +402,49 @@ def test_delete_character_leaves_no_orphan(cascade_env):
             assert await _count(db, WeaveCardMemory, card_id=ids["both_card_id"]) == 1
 
     asyncio.run(_check())
+
+
+def test_级联删除_stats_评论计数等于实际删除行数(cascade_env):
+    """E1：自引用级联表 MomentComment 的 stats 必须是「实际被删行数」（含被显式展开或 FK
+    级联带走的子回复），而非语句直接匹配的父行数。
+
+    构造「父评论 + 子回复 + 孙回复」共 3 行 → 走 cascade_delete_character → 断言
+    stats["MomentComment"] == 3（实际被删行数），且表中无残留。
+    """
+    factory, _db_path = cascade_env
+
+    async def _run():
+        from app.application.characters import AICharacter
+        from app.models.life import AIMoment, MomentComment
+        from app.models.user import User
+
+        async with factory() as db:
+            db.add(User(id=1, username="u1", nickname="我"))
+            db.add(AICharacter(id=2, user_id=1, name="角色A", personality="温柔"))
+            await db.flush()
+            m = AIMoment(id=1, character_id=2, user_id=1, sender_type="ai", content="动态")
+            db.add(m)
+            await db.flush()
+            # 父(1) → 子(2) → 孙(3)：自引用 parent_id 链
+            db.add(MomentComment(id=1, moment_id=1, parent_id=None,
+                                 sender_type="user", sender_id=1, sender_name="我", content="父"))
+            await db.flush()
+            db.add(MomentComment(id=2, moment_id=1, parent_id=1,
+                                 sender_type="ai", sender_id=2, sender_name="AI", content="子"))
+            await db.flush()
+            db.add(MomentComment(id=3, moment_id=1, parent_id=2,
+                                 sender_type="user", sender_id=1, sender_name="我", content="孙"))
+            await db.commit()
+        async with factory() as db:
+            stats = await cascade_delete_character(db, 2)
+            await db.commit()
+        async with factory() as db:
+            left = int((await db.execute(
+                select(func.count()).select_from(MomentComment)
+            )).scalar() or 0)
+        assert left == 0, f"评论未删干净: {left}"
+        # 实际被删 = 3（含被级联带走的子/孙），不是父行数 1
+        assert stats.get("MomentComment") == 3, \
+            f"stats[MomentComment] 应为实际删除行数 3，实际 {stats.get('MomentComment')}"
+
+    asyncio.run(_run())

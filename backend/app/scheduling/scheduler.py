@@ -8,7 +8,7 @@ from app.models.chat import ChatSession
 from app.models.character import ProactiveMessageLog
 from app.utils.logger import get_logger
 from app.utils.async_tasks import spawn_background
-from app.utils.timeutil import app_local_hour
+from app.utils.timeutil import app_local_hour, now_naive_utc
 from app.scheduling.diary_generator import generate_missing_diaries
 from app.scheduling.moment_publisher import publish_pending_moments  # keep publisher
 from app.application.moment_service import generate_pending_comments
@@ -252,7 +252,7 @@ async def scheduler_loop():
             try:
                 from app.plugins.registry import run_hook
                 await run_hook("schedule_tick", {
-                    "utc_now": datetime.now(timezone.utc),
+                    "utc_now": now_naive_utc(),
                     "local_hour": local_hour,
                 })
             except Exception as e:

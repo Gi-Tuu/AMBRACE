@@ -12408,19 +12408,19 @@ abstract class AppLocalizations {
   /// No description provided for @flagAgentLoopSchedulerTitle.
   ///
   /// In zh, this message translates to:
-  /// **'主动任务循环'**
+  /// **'主动任务过程留痕'**
   String get flagAgentLoopSchedulerTitle;
 
   /// No description provided for @flagAgentLoopSchedulerHint.
   ///
   /// In zh, this message translates to:
-  /// **'定时/主动触发的任务走统一智能体循环。'**
+  /// **'把到点提醒、主动关心这些任务的处理过程记下来，只用于排查问题；关掉也不影响这些提醒本身。'**
   String get flagAgentLoopSchedulerHint;
 
   /// No description provided for @flagAgentLoopSchedulerDetail.
   ///
   /// In zh, this message translates to:
-  /// **'让到点触发的提醒、主动关心等经过统一 Runtime 并记录过程；关闭后主动任务走旧链路。'**
+  /// **'开启后，到点提醒、主动关心这些任务每次处理完会留下一条过程记录（有没有成功、花了多久），只用于排查问题。这些提醒什么时候发、说什么，都不受这个开关影响；关掉只是不再留这份记录。'**
   String get flagAgentLoopSchedulerDetail;
 
   /// No description provided for @flagAgentContextTrimTitle.
@@ -12498,19 +12498,19 @@ abstract class AppLocalizations {
   /// No description provided for @flagGroupChatGamesTitle.
   ///
   /// In zh, this message translates to:
-  /// **'群聊游戏总开关'**
+  /// **'小游戏总开关'**
   String get flagGroupChatGamesTitle;
 
   /// No description provided for @flagGroupChatGamesHint.
   ///
   /// In zh, this message translates to:
-  /// **'「小家 · 游戏机」整体入口与相关接口的总开关。'**
+  /// **'小游戏功能的总开关：关闭后玩法列表清空、也不能从面板开局，卡住的对局不再自动推进；已经开始的对局仍可查看。'**
   String get flagGroupChatGamesHint;
 
   /// No description provided for @flagGroupChatGamesDetail.
   ///
   /// In zh, this message translates to:
-  /// **'关闭后游戏入口与 API 都不展示，可整体回退游戏功能，不影响聊天。'**
+  /// **'小游戏功能的总开关。关闭后玩法列表清空、不能从面板开局，卡住的对局也不再自动推进；已经在进行的对局仍可查看历史。聊天本身不受影响。'**
   String get flagGroupChatGamesDetail;
 
   /// No description provided for @flagLifeLoopEnabledTitle.
@@ -12552,19 +12552,19 @@ abstract class AppLocalizations {
   /// No description provided for @flagLifeChatDrivenEnabledTitle.
   ///
   /// In zh, this message translates to:
-  /// **'聊天驱动生活'**
+  /// **'照你交代的事去安排'**
   String get flagLifeChatDrivenEnabledTitle;
 
   /// No description provided for @flagLifeChatDrivenEnabledHint.
   ///
   /// In zh, this message translates to:
-  /// **'从聊天识别生活意图，联动改变 AI 的目标与活动。'**
+  /// **'你在聊天里明确让它去做的事（比如去休息、帮忙喂宠物）会排进它自己的日程并去做；随口提到的内容不会改变它的安排。'**
   String get flagLifeChatDrivenEnabledHint;
 
   /// No description provided for @flagLifeChatDrivenEnabledDetail.
   ///
   /// In zh, this message translates to:
-  /// **'例如你提到的事影响角色后续安排；关闭则聊天不联动生活循环。'**
+  /// **'你在聊天里明确交代它去做的事（比如去休息一会儿、帮忙喂宠物）会排进它自己的日程并真的去做；随口提到、反问句、以及说的是它自己的内容都不算。同一类交代几分钟内只生效一次。'**
   String get flagLifeChatDrivenEnabledDetail;
 
   /// No description provided for @flagLifeHomeWorldmapEnabledTitle.
@@ -12576,13 +12576,13 @@ abstract class AppLocalizations {
   /// No description provided for @flagLifeHomeWorldmapEnabledHint.
   ///
   /// In zh, this message translates to:
-  /// **'「小家」中的世界大地图功能与相关自主行为。'**
+  /// **'小家里用一整张地图展示各个房间和角色当前所在位置；关掉则回到原来的单个房间视图。'**
   String get flagLifeHomeWorldmapEnabledHint;
 
   /// No description provided for @flagLifeHomeWorldmapEnabledDetail.
   ///
   /// In zh, this message translates to:
-  /// **'关闭后小家不展示大地图。'**
+  /// **'打开小家时会一并给出各房间的布局和角色当前在哪个房间，客户端据此画出整张大地图；关掉则回到只看单个房间的旧展示。'**
   String get flagLifeHomeWorldmapEnabledDetail;
 
   /// No description provided for @flagReplyDelayEnabledTitle.
@@ -12648,13 +12648,13 @@ abstract class AppLocalizations {
   /// No description provided for @flagPreoccupationEnabledHint.
   ///
   /// In zh, this message translates to:
-  /// **'让角色偶尔带着一点没说出口的小心事，更有牵挂感。'**
+  /// **'闹别扭、吃醋或情绪低落之后，它会把这份心思压在心底几天，情绪也跟着偏低，直到你哄一句或时间慢慢冲淡。'**
   String get flagPreoccupationEnabledHint;
 
   /// No description provided for @flagPreoccupationEnabledDetail.
   ///
   /// In zh, this message translates to:
-  /// **'复用记忆子类型实现；关闭则无此效果。'**
+  /// **'闹别扭、吃醋或情绪低落之后，它会把这份心思压在心底几天，期间情绪基调偏低，直到你哄一句、把话说开，或者时间慢慢把它冲淡。关掉后不再有这种憋着的小情绪，其它情绪变化照常。'**
   String get flagPreoccupationEnabledDetail;
 
   /// No description provided for @flagProactiveOutreachV2Title.
@@ -12714,19 +12714,19 @@ abstract class AppLocalizations {
   /// No description provided for @flagMemoryStoryAssembleTitle.
   ///
   /// In zh, this message translates to:
-  /// **'沿链半故事化组装'**
+  /// **'记忆成段叙述'**
   String get flagMemoryStoryAssembleTitle;
 
   /// No description provided for @flagMemoryStoryAssembleHint.
   ///
   /// In zh, this message translates to:
-  /// **'把同一记忆链的节点拼成一小段有前因后果的叙述再注入。'**
+  /// **'把同一件事的前后记忆串成一小段有前因后果的叙述再使用；需先开启记忆自动挂链，否则没有变化。'**
   String get flagMemoryStoryAssembleHint;
 
   /// No description provided for @flagMemoryStoryAssembleDetail.
   ///
   /// In zh, this message translates to:
-  /// **'Ariadne 模块C：默认关；当前为框架合入（链数据就绪后开=成链小块注入，否则与原路径等价）。'**
+  /// **'把同一件事的前后记忆串成一小段有前因后果的叙述再使用，而不是一条条零散地看。需要先开启「记忆自动挂链」——没有链数据时，打开它也等于没有变化。'**
   String get flagMemoryStoryAssembleDetail;
 
   /// No description provided for @flagMemoryPeakCutoffTitle.
@@ -12792,13 +12792,13 @@ abstract class AppLocalizations {
   /// No description provided for @flagMemoryTieredDecayHint.
   ///
   /// In zh, this message translates to:
-  /// **'高置信持久、低置信加速衰减，跌破阈值转冷归档。'**
+  /// **'有把握的事记得更久，没把握的推测忘得更快；重要的事到点后先收存起来而不是直接删掉，之后还能找回。'**
   String get flagMemoryTieredDecayHint;
 
   /// No description provided for @flagMemoryTieredDecayDetail.
   ///
   /// In zh, this message translates to:
-  /// **'M2-S2 灰度开关：默认关=现状逐字节一致；开启前建议先跑分层快照脚本。'**
+  /// **'按把握程度区别对待：有把握的事记得更久，没把握的推测忘得更快。重要的事到点后先收存起来而不是直接删掉，之后需要时还能找回；只有不重要的琐碎信息才会真的淡出。'**
   String get flagMemoryTieredDecayDetail;
 
   /// No description provided for @flagMemoryTieredInjectTitle.
@@ -12810,49 +12810,49 @@ abstract class AppLocalizations {
   /// No description provided for @flagMemoryTieredInjectHint.
   ///
   /// In zh, this message translates to:
-  /// **'核心记忆全量、其余记忆精简分层注入，节省 token。'**
+  /// **'最重要的那条完整带入，其余只带一句要点，再补一行那天的背景，让它先抓重点又不丢上下文。'**
   String get flagMemoryTieredInjectHint;
 
   /// No description provided for @flagMemoryTieredInjectDetail.
   ///
   /// In zh, this message translates to:
-  /// **'#70 方案A：开=Top1 完整 + 其余精简注入；关=统一旧链路逐字节一致。'**
+  /// **'想起往事时，排在前面的那条完整带入，其余只带一句要点，再补一行那天的背景，让它先抓住重点又不丢上下文；同时一次带入的总量也略有增加。'**
   String get flagMemoryTieredInjectDetail;
 
   /// No description provided for @flagMemoryTraceDebugTitle.
   ///
   /// In zh, this message translates to:
-  /// **'记忆检索轨迹调试'**
+  /// **'记忆运行留痕'**
   String get flagMemoryTraceDebugTitle;
 
   /// No description provided for @flagMemoryTraceDebugHint.
   ///
   /// In zh, this message translates to:
-  /// **'把检索的 query/各路命中/排序分数写入 trace，便于排查。'**
+  /// **'把找记忆、淡忘、合并、降级这些过程的详细留痕记下来，只用于排查问题，不改变任何回复内容。'**
   String get flagMemoryTraceDebugHint;
 
   /// No description provided for @flagMemoryTraceDebugDetail.
   ///
   /// In zh, this message translates to:
-  /// **'#70 方案B：只多写观测，不影响回复；关=检索/排序/trace 与现状一致。'**
+  /// **'把找记忆、淡忘、合并、降级这些过程的详细步骤记录下来，只用于排查问题，不改变任何回复内容，也不会让你多看到什么。排查记忆相关的问题时再开，平时可以关掉。'**
   String get flagMemoryTraceDebugDetail;
 
   /// No description provided for @flagMemorySupersedeTitle.
   ///
   /// In zh, this message translates to:
-  /// **'记忆取代链（supersede）'**
+  /// **'改口后收起旧记忆'**
   String get flagMemorySupersedeTitle;
 
   /// No description provided for @flagMemorySupersedeHint.
   ///
   /// In zh, this message translates to:
-  /// **'新事实取代旧事实后，旧记忆按状态过滤不再注入。'**
+  /// **'你明确纠正过的事，被推翻的旧记忆会正式收起来，连怀旧、复习也不再翻出；关掉则它们仍可能被想起。'**
   String get flagMemorySupersedeHint;
 
   /// No description provided for @flagMemorySupersedeDetail.
   ///
   /// In zh, this message translates to:
-  /// **'#70 方案C：默认关（误取代比不取代更伤）；开=SQLite+Chroma 双通道按状态分流。'**
+  /// **'你明确纠正过的事，被推翻的旧记忆会被正式收起来，连怀旧、复习这类场合也不再翻出它。至于当下近况以哪条为准，由另一个开关单独保证。关掉后旧记忆仍可能在怀旧时被想起。'**
   String get flagMemorySupersedeDetail;
 
   /// No description provided for @flagCurrentFactsActiveOnlyTitle.
@@ -13002,37 +13002,37 @@ abstract class AppLocalizations {
   /// No description provided for @flagCrossCharFactSyncTitle.
   ///
   /// In zh, this message translates to:
-  /// **'跨角色事实对齐'**
+  /// **'跨角色对齐'**
   String get flagCrossCharFactSyncTitle;
 
   /// No description provided for @flagCrossCharFactSyncHint.
   ///
   /// In zh, this message translates to:
-  /// **'构建上下文前/每日把各角色同槽旧值记忆标 stale（复用取代链）。'**
+  /// **'你的某项近况有了新情况后，各角色记忆里还停留在旧情况的条目会被标记为已过时，不再当作当下事实。'**
   String get flagCrossCharFactSyncHint;
 
   /// No description provided for @flagCrossCharFactSyncDetail.
   ///
   /// In zh, this message translates to:
-  /// **'B1④：默认关；开=惰性对齐 + 每日 sweep，不删可追溯；关=不对齐。'**
+  /// **'你的某项近况有了新情况后，各角色记忆里还停留在旧情况的条目会被标记为已过时，不再被当作当下事实。只打标记、不删除，随时可以回退。'**
   String get flagCrossCharFactSyncDetail;
 
   /// No description provided for @flagCrossCharFactProjectionTitle.
   ///
   /// In zh, this message translates to:
-  /// **'事实变化投影'**
+  /// **'变化留痕'**
   String get flagCrossCharFactProjectionTitle;
 
   /// No description provided for @flagCrossCharFactProjectionHint.
   ///
   /// In zh, this message translates to:
-  /// **'用户事实变化时在记忆本留一条「跨角色同步」投影（可选）。'**
+  /// **'在「跨角色对齐」开启的前提下，你的近况发生更新时，记忆本里会额外留一条同步记录。'**
   String get flagCrossCharFactProjectionHint;
 
   /// No description provided for @flagCrossCharFactProjectionDetail.
   ///
   /// In zh, this message translates to:
-  /// **'B1④：默认关；开启后变化投影以 source=global_sync 写入并做查重守卫。'**
+  /// **'在「跨角色对齐」开启的前提下：你的近况发生更新时，记忆本里会额外留一条同步记录，方便回看是哪次更新带来的变化；这条记录做过查重，不会反复留。对齐关掉时，单独开它没有效果。'**
   String get flagCrossCharFactProjectionDetail;
 
   /// No description provided for @flagWorkingStateEnabledTitle.
@@ -13314,19 +13314,19 @@ abstract class AppLocalizations {
   /// No description provided for @flagAgentLoopSocialTitle.
   ///
   /// In zh, this message translates to:
-  /// **'社交循环'**
+  /// **'外部动态主动搭话'**
   String get flagAgentLoopSocialTitle;
 
   /// No description provided for @flagAgentLoopSocialHint.
   ///
   /// In zh, this message translates to:
-  /// **'朋友圈/评论互动等社交行为的统一认知循环。'**
+  /// **'AI 主动提它在外部看到的新动态、到点的节日提醒时，会带上自己的记忆和你们的背景，也不会把外来的内容当成你俩的事记下来。'**
   String get flagAgentLoopSocialHint;
 
   /// No description provided for @flagAgentLoopSocialDetail.
   ///
   /// In zh, this message translates to:
-  /// **'开启后社交互动经统一 Runtime 并记录过程；关闭走旧链路。'**
+  /// **'开启后，AI 在主动提它在外部看到的新动态、到点的节日提醒这类场合，会带着自己的记忆和你们的背景来说话，处理过程也会留一份记录以便排查。关掉后这些消息照发，只是回到旧的处理路径；外部看到的内容只当资讯看待，不会被记成你俩共同经历的事。'**
   String get flagAgentLoopSocialDetail;
 
   /// No description provided for @flagAgentSocialLightContextTitle.
@@ -13416,55 +13416,55 @@ abstract class AppLocalizations {
   /// No description provided for @flagProactiveTopicGuardTitle.
   ///
   /// In zh, this message translates to:
-  /// **'主题熔断'**
+  /// **'同一话题不重复催'**
   String get flagProactiveTopicGuardTitle;
 
   /// No description provided for @flagProactiveTopicGuardHint.
   ///
   /// In zh, this message translates to:
-  /// **'同主题复读/催促收口（主题熔断）。'**
+  /// **'你已经回应过、说过不用了，或同一件生活小事几小时内已被提过两次时，它就先不在这件事上主动念叨你。'**
   String get flagProactiveTopicGuardHint;
 
   /// No description provided for @flagProactiveTopicGuardDetail.
   ///
   /// In zh, this message translates to:
-  /// **'防止短期内反复同一主题、过度催促；触发熔断时本轮不再重复该主题。'**
+  /// **'你已经回过、说过不用了，或者同一件生活小事在几小时内已经被主动提过两次时，它就先不在这件事上继续念叨你，等新的话头。生日、节日、纪念日这类有时效的提醒不受此限制。'**
   String get flagProactiveTopicGuardDetail;
 
   /// No description provided for @flagOutreachHourWindowV1Title.
   ///
   /// In zh, this message translates to:
-  /// **'投放时段窗'**
+  /// **'主动消息投放时段'**
   String get flagOutreachHourWindowV1Title;
 
   /// No description provided for @flagOutreachHourWindowV1Hint.
   ///
   /// In zh, this message translates to:
-  /// **'主动投放限制在 9–22 点之间。'**
+  /// **'关心、回忆这类不太期待回复的消息，只在中午到夜里这段时间发；你平时在线的时间会适当放宽。'**
   String get flagOutreachHourWindowV1Hint;
 
   /// No description provided for @flagOutreachHourWindowV1Detail.
   ///
   /// In zh, this message translates to:
-  /// **'outreach 三闸之一。注意：flag 开 + 命中灰度角色白名单（仅 char13）+ 比例桶 才真正生效，当前仅对灰度角色生效；非白名单角色无变化。'**
+  /// **'关心、回忆这类不太期待你回复的主动消息，只在中午到夜里这段时间发出；如果你平时在线的时段落在窗口外，会适当放宽到你活跃的时段。前提是这个角色本来就允许主动消息，否则这条限制无从生效。'**
   String get flagOutreachHourWindowV1Detail;
 
   /// No description provided for @flagOutreachTypeMixV1Title.
   ///
   /// In zh, this message translates to:
-  /// **'投放类型配额'**
+  /// **'主动消息类型配额'**
   String get flagOutreachTypeMixV1Title;
 
   /// No description provided for @flagOutreachTypeMixV1Hint.
   ///
   /// In zh, this message translates to:
-  /// **'限制各类型主动消息比例，防止某类刷屏。'**
+  /// **'给每类消息各设每日条数上限，避免某一类刷屏；翻出来的旧事也会以一句你真能接的话收尾，而不是空泛问候。'**
   String get flagOutreachTypeMixV1Hint;
 
   /// No description provided for @flagOutreachTypeMixV1Detail.
   ///
   /// In zh, this message translates to:
-  /// **'outreach 三闸之一。当前仅对灰度角色生效（flag 开 + 角色白名单 + 比例桶才真正生效）。'**
+  /// **'给每类主动消息各设每日条数上限，避免某一类反复刷屏；同时翻出来的旧事也会以一句你真能接的话收尾，而不是空泛问候。前提是这个角色本来就允许主动消息，否则这条限制无从生效。'**
   String get flagOutreachTypeMixV1Detail;
 
   /// No description provided for @flagOutreachSessionRateV1Title.
@@ -13578,19 +13578,19 @@ abstract class AppLocalizations {
   /// No description provided for @flagMemoryAdmissionGateTitle.
   ///
   /// In zh, this message translates to:
-  /// **'世界事实写入准入闸'**
+  /// **'记录准入把关'**
   String get flagMemoryAdmissionGateTitle;
 
   /// No description provided for @flagMemoryAdmissionGateHint.
   ///
   /// In zh, this message translates to:
-  /// **'M4 world_facts 写入准入闸门（拦截/查重/矛盾裁决）。'**
+  /// **'记东西前先过一道规则：它自己推测的会标为待核实、不冒充你说过的，跟你无关的技术杂讯也不会入库，长期事实另外查重、判矛盾。'**
   String get flagMemoryAdmissionGateHint;
 
   /// No description provided for @flagMemoryAdmissionGateDetail.
   ///
   /// In zh, this message translates to:
-  /// **'开启后写入世界事实前做查重与矛盾裁决，提升事实一致性；关闭则直接写入。'**
+  /// **'记东西前先过一道规则：它自己推测出来的会标成待核实，不会冒充你说过的话；跟你无关的技术杂讯直接不收；长期事实另外做查重和矛盾判断。关掉则按旧流程直接记录。'**
   String get flagMemoryAdmissionGateDetail;
 
   /// No description provided for @flagMemoryUtilityFeedbackTitle.
@@ -13632,19 +13632,19 @@ abstract class AppLocalizations {
   /// No description provided for @flagReviewExcludeExpiredPlanTitle.
   ///
   /// In zh, this message translates to:
-  /// **'复习排除过期计划'**
+  /// **'复习跳过过期安排'**
   String get flagReviewExcludeExpiredPlanTitle;
 
   /// No description provided for @flagReviewExcludeExpiredPlanHint.
   ///
   /// In zh, this message translates to:
-  /// **'L1：复习选片排除过期计划/瞬时状态。'**
+  /// **'回忆时不再挑入已经过期的安排和只属于当时的心情状态，怀旧话题每天最多提一次。'**
   String get flagReviewExcludeExpiredPlanHint;
 
   /// No description provided for @flagReviewExcludeExpiredPlanDetail.
   ///
   /// In zh, this message translates to:
-  /// **'复习不再挑入已经过期或仅瞬时有效的计划，减少无效复习。'**
+  /// **'回忆、复习挑素材时，不再挑入已经过期的安排，以及只属于当时心情状态的内容；怀旧话题每天最多主动提一次，避免刷屏。'**
   String get flagReviewExcludeExpiredPlanDetail;
 
   /// No description provided for @flagReviewReinforceEventCapTitle.
@@ -13830,19 +13830,19 @@ abstract class AppLocalizations {
   /// No description provided for @flagChannelBindingV2Title.
   ///
   /// In zh, this message translates to:
-  /// **'渠道绑定 v2'**
+  /// **'渠道绑定按账号独立'**
   String get flagChannelBindingV2Title;
 
   /// No description provided for @flagChannelBindingV2Hint.
   ///
   /// In zh, this message translates to:
-  /// **'渠道绑定 v2（MCP/抖音/微信按主账号独立绑定）。'**
+  /// **'外部聊天渠道由每个账号各自绑定自己的角色，互不共用；关掉则退回所有账号共用同一条旧绑定。'**
   String get flagChannelBindingV2Hint;
 
   /// No description provided for @flagChannelBindingV2Detail.
   ///
   /// In zh, this message translates to:
-  /// **'文档曾称已转正，但代码硬编码默认仍是 False，当前靠本机 runtime_flags 覆盖为 ON；换机/重建库若无此覆盖则回退为关。'**
+  /// **'外部聊天渠道由每个账号各自绑定自己的角色，谁连上来的就按谁的设置走，互不串号；关掉则退回所有账号共用同一条旧绑定。绑定存在服务器这边，换手机不需要重新连。'**
   String get flagChannelBindingV2Detail;
 
   /// No description provided for @flagDomainEventLogEnabledTitle.
