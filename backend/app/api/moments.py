@@ -522,17 +522,23 @@ async def clear_character_moments(
     stmt = select(AIMoment).where(AIMoment.character_id == character_id, AIMoment.created_at >= start)
     result = await db.execute(stmt)
     moments = result.scalars().all()
-    # F-4（v3.4.6 审查）：子表 FK 无 ondelete，硬删动态前显式级联清评论/点赞/AI 赞
-    # （不依赖 SQLite FK），否则孤儿行累积。
+    # F-4（v3.4.6 审查）：三张子表的 moment_id 都已带 ON DELETE CASCADE（评论的自引用
+    # parent_id 也是），仍显式删除以兼容 FK 关闭的环境、并保持「不依赖 SQLite 级联」的既有语义。
+    # 计数先数后删：FK=ON 时删父评论会级联带走子回复，DELETE.rowcount 只数到语句直接匹配的行
+    # （会少报），COUNT 才是真正被删掉的行数（含被级联带走的孩子行）。
     _ids = [m.id for m in moments]
     _cnt_comments = _cnt_likes = _cnt_ai_likes = 0
     if _ids:
-        _cnt_comments = (await db.execute(
-            delete(MomentComment).where(MomentComment.moment_id.in_(_ids)))).rowcount or 0
-        _cnt_likes = (await db.execute(
-            delete(MomentLike).where(MomentLike.moment_id.in_(_ids)))).rowcount or 0
-        _cnt_ai_likes = (await db.execute(
-            delete(MomentAILike).where(MomentAILike.moment_id.in_(_ids)))).rowcount or 0
+        async def _count_then_clear(model):
+            n = int((await db.execute(
+                select(func.count()).select_from(model).where(model.moment_id.in_(_ids))
+            )).scalar() or 0)
+            await db.execute(delete(model).where(model.moment_id.in_(_ids)))
+            return n
+
+        _cnt_comments = await _count_then_clear(MomentComment)
+        _cnt_likes = await _count_then_clear(MomentLike)
+        _cnt_ai_likes = await _count_then_clear(MomentAILike)
     from app.application.upload_service import delete_image_file
     for m in moments:
         delete_image_file(m.image_url)
