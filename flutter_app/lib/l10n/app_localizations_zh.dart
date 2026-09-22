@@ -1385,6 +1385,9 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get ppShizukuCollectFailed => '采集失败：Shizuku 服务未运行，或系统命令没有返回数据（未上报）';
+
+  @override
   String get ppLocEnabledOn => '位置信息已开启，AI 可感知你所在城市';
 
   @override

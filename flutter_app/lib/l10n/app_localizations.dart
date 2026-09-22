@@ -2631,6 +2631,12 @@ abstract class AppLocalizations {
   /// **'{text}（上报失败）'**
   String ppShizukuUploadFailed(Object text);
 
+  /// No description provided for @ppShizukuCollectFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'采集失败：Shizuku 服务未运行，或系统命令没有返回数据（未上报）'**
+  String get ppShizukuCollectFailed;
+
   /// No description provided for @ppLocEnabledOn.
   ///
   /// In zh, this message translates to:

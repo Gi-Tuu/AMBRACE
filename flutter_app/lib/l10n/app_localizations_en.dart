@@ -1435,6 +1435,10 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get ppShizukuCollectFailed =>
+      'Collect failed: Shizuku service is not running, or the system commands returned nothing (not uploaded)';
+
+  @override
   String get ppLocEnabledOn => 'Location info enabled; AI can sense your city';
 
   @override

@@ -5,7 +5,7 @@ import "../../services/notification_service.dart";
 import "../../utils/beijing_time.dart";
 import "../../services/phone_perception_service.dart";
 import "../../services/api_client.dart";
-import "../../widgets/privacy_lock_view.dart";
+// 注：本页是**用户自己的系统级感知**，不接角色隐私上锁（见下方字段处说明）
 import "../../features/phone/perception_tiles.dart";
 import "../../features/settings/notification_whitelist_screen.dart";
 import "shizuku_screen.dart";
@@ -37,8 +37,9 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
   bool _historyLoading = false;
   List<Map<String, dynamic>> _history = [];
   bool _showHistory = false;
-  Map<String, dynamic>? _privacyStatus; // 小手机锁状态（characterId=0 由服务端按最近互动角色解析）
-  bool _phoneUnlocked = false;
+  // 本页**不做隐私上锁**（2026-09-22 用户拍板）：隐私上锁只锁角色侧内容（角色日记 / 内心 / 角色的小手机），
+  // 感知快照是用户自己的东西、且是系统级数据，不该被角色拦住查看。原实现按 target="phone" + characterId=0
+  // （服务端解析最近互动角色）在这里挂 PrivacyLockView，会出现「某角色的锁把用户自己的感知锁住」的错觉。
   bool _locationEnabled = false;
   bool _locationGpsEnabled = false;
   bool _locationFollow = false;
@@ -68,7 +69,6 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
     WidgetsBinding.instance.addObserver(this);
     NotificationService().setActiveScreen(ActiveScreen.other);
     _load();
-    _loadPrivacyStatus();
     _reportTimezone();
     _loadLocation();
     _loadUsageStatsState();
@@ -92,14 +92,6 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
     if (state == AppLifecycleState.resumed) {
       _loadHealth();
     }
-  }
-
-  /// 小手机隐私上锁状态（无角色上下文：服务端按最近互动角色解析）
-  Future<void> _loadPrivacyStatus() async {
-    try {
-      final s = await ApiClient().getPrivacyStatus(0, "phone");
-      if (mounted) setState(() => _privacyStatus = s);
-    } catch (_) {}
   }
 
   Future<void> _load() async {
@@ -158,6 +150,17 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
     final l10n = AppLocalizations.of(context)!;
     setState(() => _shizukuBusy = true);
     final r = await ShizukuService.getSystemSnapshot();
+    // P1 复核补（2026-09-22 真机反馈）：native 侧「8 条命令全失败」现在会回 ok=false，
+    // 本按钮必须同样拦一道——此前它不看 ok，照样把空 data 格式化成
+    // 「手机状态：屏幕熄灭；勿扰：关闭」上报，等于空壳仍旧写进感知历史。
+    if (r["ok"] != true) {
+      if (!mounted) return;
+      setState(() {
+        _shizukuBusy = false;
+        _shizukuSnapshot = l10n.ppShizukuCollectFailed;
+      });
+      return;
+    }
     final data = Map<String, dynamic>.from(r["data"] as Map? ?? {});
     final text = ShizukuService.formatSnapshot(data, isEn: await appLang() == "en");
     final ok = await PhonePerceptionService.uploadSnapshot(text, "shizuku_system");
@@ -346,13 +349,6 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
     final status = await PhonePerceptionService.getScreenStatus();
     if (!mounted) return;
     setState(() => _serviceEnabled = (status["serviceEnabled"] as bool? ?? false));
-  }
-
-  bool _isPhoneLocked() {
-    final s = _privacyStatus;
-    if (s == null) return false;
-    if (_phoneUnlocked) return false;
-    return s["enabled"] == true && s["locked"] == true;
   }
 
   Future<void> _loadHistory() async {
@@ -940,24 +936,11 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                   : const Icon(Icons.chevron_right, size: 18, color: AppColors.separator),
               onTap: () {
                 setState(() => _showHistory = !_showHistory);
-                // 小手机上锁时先展示申请面板，不直接加载历史内容
-                if (_showHistory && !_isPhoneLocked()) _loadHistory();
+                // 本页是用户自己的系统级感知，不做隐私上锁（2026-09-22 用户拍板）：展开即加载
+                if (_showHistory) _loadHistory();
               },
             ),
-            if (_showHistory && _isPhoneLocked())
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: PrivacyLockView(
-                  characterId: 0,
-                  target: "phone",
-                  contentName: l10n.ppLockContentName,
-                  onUnlocked: () {
-                    setState(() => _phoneUnlocked = true);
-                    _loadHistory();
-                  },
-                ),
-              ),
-            if (_showHistory && !_isPhoneLocked())
+            if (_showHistory)
               for (final s in _history)
                 ListTile(
                   dense: true,
