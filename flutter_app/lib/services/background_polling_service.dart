@@ -8,6 +8,7 @@ import "package:shared_preferences/shared_preferences.dart";
 import "phone_perception_service.dart";
 import "unread_engine.dart";
 import "background_ws_client.dart";
+import "bg_poll_guard.dart";
 import "secure_token_store.dart";
 import "../utils/service_l10n.dart";
 import "../utils/app_lang.dart";
@@ -108,20 +109,26 @@ void onStart(ServiceInstance service) async {
   }
 
   // 先轮询一次建立基线（不弹），之后每 15 秒增量比对（2026-08-18：30s→15s，小红点产生更灵敏）
-  timer = Timer.periodic(const Duration(seconds: 15), (_) => _pollOnce(plugin));
-  await _pollOnce(plugin);
+  // S5：首轮与定时轮统一走 _tick（在途跳过），避免单轮超过 15s 时两轮重叠
+  timer = Timer.periodic(const Duration(seconds: 15), (_) => _tick(plugin));
+  await _tick(plugin);
 
   // #55 后台保活：维持用户级通知 WebSocket 长连接（指数退避重连），实时收推送弹通知
   final prefs = await SharedPreferences.getInstance();
   _bgServerUrl = prefs.getString("server_url") ?? "";
   // P2-A：token 已迁安全存储（Keystore）；DartPluginRegistrant 已注册插件，后台 isolate 同样可读
   _bgToken = await SecureTokenStore.instance.readToken();
+  // S7：记下本次 WS 拿到的地址/token（与 _pollOnce 里的更新口径一致）
+  _wsServerUrl = _bgServerUrl;
+  _wsToken = _bgToken;
   _startEventWs(plugin);
 }
 
 // ---- 后台 isolate 内部状态 ----
 /// app 是否在前台（主 isolate 通过 invoke("setAppForeground") 维护；登录启动时在前台）
 bool _appInForeground = true;
+/// S5 轮询重入保护：true 表示上一轮 _pollOnce 尚未结束
+bool _pollInFlight = false;
 Map<int, int> _lastCounts = {};
 bool _baselineSet = false;
 final Map<int, int> _sessionMap = {};
@@ -131,6 +138,9 @@ final NotifyDebouncer _debouncer = NotifyDebouncer();
 // #55 后台保活：用户级通知 WebSocket 长连接（指数退避重连）
 String _bgServerUrl = '';
 String _bgToken = '';
+// S7 长连接跟随：记录 WS 当前实际生效的地址/token，供轮询比对后重建
+String _wsServerUrl = '';
+String _wsToken = '';
 Dio? _bgDio;
 EventWsClient? _wsClient;
 
@@ -155,6 +165,19 @@ Future<void> _autoReportNotifications() async {
     ));
     await dio.post("/api/v1/phone/perception/auto", data: {"notifications": notifs});
   } catch (_) {}
+}
+
+/// S5 轮询重入保护：计时器回调与启动首轮的统一入口。
+/// 上一轮尚未结束时跳过本轮（弱网下单轮耗时可能远超 15s），
+/// 保证任意时刻只有一轮 _pollOnce 在跑，不会交错改写共享状态。
+Future<void> _tick(FlutterLocalNotificationsPlugin plugin) async {
+  if (shouldSkipPoll(inFlight: _pollInFlight)) return;
+  _pollInFlight = true;
+  try {
+    await _pollOnce(plugin);
+  } finally {
+    _pollInFlight = false;
+  }
 }
 
 Future<void> _pollOnce(FlutterLocalNotificationsPlugin plugin) async {
@@ -312,6 +335,21 @@ Future<void> _pollOnce(FlutterLocalNotificationsPlugin plugin) async {
 
     _lastCounts = newCounts;
     _baselineSet = true;
+
+    // S7 长连接跟随：轮询每轮都会重读 server_url 与 Keystore token，
+    // 换账号/换服务器后让 WS 按新地址新 token 重建（此前只在 onStart 捕获一次）；
+    // 未启动且新地址/token 齐全时也在同一处启动
+    if (needWsRestart(
+      curServerUrl: baseUrl,
+      curToken: token,
+      wsServerUrl: _wsServerUrl,
+      wsToken: _wsToken,
+      wsActive: _wsClient != null,
+    )) {
+      _startEventWs(plugin);
+      _wsServerUrl = baseUrl;
+      _wsToken = token;
+    }
   } catch (e) {
     debugPrint("pollOnce error: $e");
   }

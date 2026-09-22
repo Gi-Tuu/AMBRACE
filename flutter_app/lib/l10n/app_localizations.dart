@@ -2637,6 +2637,24 @@ abstract class AppLocalizations {
   /// **'采集失败：Shizuku 服务未运行，或系统命令没有返回数据（未上报）'**
   String get ppShizukuCollectFailed;
 
+  /// No description provided for @ppDiagnosticsTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'导出诊断信息'**
+  String get ppDiagnosticsTitle;
+
+  /// No description provided for @ppDiagnosticsSub.
+  ///
+  /// In zh, this message translates to:
+  /// **'把感知日志与各通道健康状态拼成一段文本，可复制给开发者排查'**
+  String get ppDiagnosticsSub;
+
+  /// No description provided for @ppClearedLocalOnly.
+  ///
+  /// In zh, this message translates to:
+  /// **'已清本地待补传；服务端未能清除，联网后请再点一次'**
+  String get ppClearedLocalOnly;
+
   /// No description provided for @ppLocEnabledOn.
   ///
   /// In zh, this message translates to:

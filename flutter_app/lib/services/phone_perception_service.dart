@@ -415,6 +415,79 @@ class PhonePerceptionService {
     }
   }
 
+  /// P4（2026-09-22 通道状态可观测）：诊断信息取数外壳——日志 + 通道快照，拼成一段纯文本。
+  /// 拼接规则在 [formatDiagnostics]（纯函数，便于单测）。
+  static Future<String> buildDiagnosticsText() async {
+    final log = await exportPerceptionLog();
+    final channels = await ChannelStatusTracker.snapshotAll();
+    return formatDiagnostics(
+      channels: channels,
+      logContent: log["content"]?.toString() ?? "",
+      logPath: log["path"]?.toString() ?? "",
+      logError: log["error"]?.toString() ?? "",
+    );
+  }
+
+  /// 诊断文本拼接（固定格式，便于肉眼比对与复现）：
+  ///
+  ///     === perception log ===
+  ///     path: /storage/.../logs/phone_perception.log
+  ///     <日志原文>                                  取不到原文时这一行为 log: unavailable(<原因>)
+  ///     === channel status ===
+  ///     accessibility  code=ok retriable=false fails=0 lastOk=2026-09-22 13:54:06 lastErr=- detail=-
+  ///
+  /// 通道按名字排序；时间用本地可读格式；空值一律写 `-`。
+  static String formatDiagnostics({
+    required Map<String, dynamic> channels,
+    required String logContent,
+    String logPath = "",
+    String logError = "",
+  }) {
+    final out = StringBuffer();
+    out.writeln("=== perception log ===");
+    out.writeln("path: ${logPath.isEmpty ? "-" : logPath}");
+    final text = logContent.trim();
+    if (text.isEmpty) {
+      final reason = logError.trim().isEmpty ? "empty" : logError.trim();
+      out.writeln("log: unavailable($reason)");
+    } else {
+      out.writeln(text);
+    }
+    out.writeln("=== channel status ===");
+    final names = channels.keys.toList()..sort();
+    if (names.isEmpty) {
+      out.writeln("(none)");
+      return out.toString();
+    }
+    for (final name in names) {
+      final raw = channels[name];
+      final s = raw is Map ? Map<String, dynamic>.from(raw) : const <String, dynamic>{};
+      final code = s["code"]?.toString().trim() ?? "";
+      final detail = (s["detail"]?.toString().trim() ?? "").replaceAll(RegExp(r"\s*[\r\n]+\s*"), " ");
+      out.writeln(
+        "$name  code=${code.isEmpty ? "-" : code}"
+        " retriable=${s["retriable"] == true}"
+        " fails=${(s["failCount"] as num?)?.toInt() ?? 0}"
+        " lastOk=${_fmtDiagTime(s["lastOkAt"])}"
+        " lastErr=${_fmtDiagTime(s["lastErrorAt"])}"
+        " detail=${detail.isEmpty ? "-" : detail}",
+      );
+    }
+    return out.toString();
+  }
+
+  /// 诊断文本里的时间：ISO 字符串（落盘口径）→ 本地 `yyyy-MM-dd HH:mm:ss`；空值 `-`
+  static String _fmtDiagTime(Object? v) {
+    final raw = v?.toString().trim() ?? "";
+    if (raw.isEmpty) return "-";
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return raw;
+    final t = parsed.toLocal();
+    String two(int n) => n.toString().padLeft(2, "0");
+    return "${t.year}-${two(t.month)}-${two(t.day)} "
+        "${two(t.hour)}:${two(t.minute)}:${two(t.second)}";
+  }
+
   static Future<void> openAccessibilitySettings() async {
     if (!Platform.isAndroid) return;
     try {
@@ -572,16 +645,24 @@ class PhonePerceptionService {
     }
   }
 
-  static Future<bool> clearAll() async {
+  /// 一键清除（P4，2026-09-22）：返回结构化结果，UI 才能把「本地已清」与「服务端没清」
+  /// 分开说——断网时只回一句「清除失败」会让用户以为本地也没动。
+  /// 顺序保持原样：先清本地待补传队列（与网络无关），再删服务端。
+  static Future<Map<String, dynamic>> clearAll() async {
     // P2 复核补：一键清除必须连**本地待补传队列**一起清掉，否则剪贴板/通知原文
     // 会残留在应用目录里（服务端删了、本地还在）；队列清空与网络无关，先做。
-    await PerceptionOutbox.clear();
+    var localCleared = true;
+    try {
+      await PerceptionOutbox.clear();
+    } catch (_) {
+      localCleared = false;
+    }
     try {
       final dio = ApiClient().dio;
       await dio.delete("/api/v1/phone/perception");
-      return true;
-    } catch (_) {
-      return false;
+      return {"localCleared": localCleared, "serverOk": true, "serverError": ""};
+    } catch (e) {
+      return {"localCleared": localCleared, "serverOk": false, "serverError": "$e"};
     }
   }
 

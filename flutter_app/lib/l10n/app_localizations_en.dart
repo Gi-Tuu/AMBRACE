@@ -1439,6 +1439,17 @@ class AppLocalizationsEn extends AppLocalizations {
       'Collect failed: Shizuku service is not running, or the system commands returned nothing (not uploaded)';
 
   @override
+  String get ppDiagnosticsTitle => 'Export diagnostics';
+
+  @override
+  String get ppDiagnosticsSub =>
+      'Perception log plus per-channel health as one text block; copy it for debugging';
+
+  @override
+  String get ppClearedLocalOnly =>
+      'Local pending queue cleared; the server was not cleared — tap again once you are online';
+
+  @override
   String get ppLocEnabledOn => 'Location info enabled; AI can sense your city';
 
   @override

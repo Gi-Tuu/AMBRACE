@@ -1388,6 +1388,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get ppShizukuCollectFailed => '采集失败：Shizuku 服务未运行，或系统命令没有返回数据（未上报）';
 
   @override
+  String get ppDiagnosticsTitle => '导出诊断信息';
+
+  @override
+  String get ppDiagnosticsSub => '把感知日志与各通道健康状态拼成一段文本，可复制给开发者排查';
+
+  @override
+  String get ppClearedLocalOnly => '已清本地待补传；服务端未能清除，联网后请再点一次';
+
+  @override
   String get ppLocEnabledOn => '位置信息已开启，AI 可感知你所在城市';
 
   @override

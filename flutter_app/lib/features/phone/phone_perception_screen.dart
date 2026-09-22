@@ -1,5 +1,6 @@
 import "dart:async";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:geolocator/geolocator.dart";
 import "../../services/notification_service.dart";
 import "../../utils/beijing_time.dart";
@@ -380,11 +381,56 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
 
   Future<void> _clearAll() async {
     final l10n = AppLocalizations.of(context)!;
-    final ok = await PhonePerceptionService.clearAll();
-    _showSnack(ok ? l10n.ppClearedAll : l10n.ppClearFailed);
-    if (ok) {
+    final r = await PhonePerceptionService.clearAll();
+    final serverOk = r["serverOk"] == true;
+    final localCleared = r["localCleared"] == true;
+    _showSnack(serverOk ? l10n.ppClearedAll : l10n.ppClearedLocalOnly);
+    // 本地待补传队列清掉了就先空掉列表：留着「服务端还没删掉」的旧快照只会让人以为
+    // 本地也没清干净；服务端那部分联网后再点一次即可。
+    if (serverOk || localCleared) {
       setState(() => _history = []);
     }
+  }
+
+  /// P4：导出诊断信息——感知日志 + 各通道健康状态拼成一段文本，弹窗展示可复制。
+  /// 不写文件、不跳系统分享（零权限），排查时用户自己复制走。
+  Future<void> _showDiagnostics() async {
+    final l10n = AppLocalizations.of(context)!;
+    final text = await PhonePerceptionService.buildDiagnosticsText();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.ppDiagnosticsTitle),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 320,
+          child: Scrollbar(
+            child: SingleChildScrollView(
+              child: SelectableText(
+                text,
+                style: const TextStyle(fontSize: 11, fontFamily: "monospace", height: 1.5),
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: text));
+              if (!ctx.mounted) return;
+              Navigator.pop(ctx);
+              _showSnack(l10n.copied);
+            },
+            child: Text(l10n.copy),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(l10n.close),
+          ),
+        ],
+      ),
+    );
   }
 
 
@@ -915,6 +961,14 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                 l10n.ppPrivacyNote,
                 style: const TextStyle(fontSize: 12, color: AppColors.textMuted, height: 1.6),
               ),
+            ),
+            const PpDivider(),
+            // P4：通道健康在真机上没法观察（此前「导出感知日志」在 Dart 侧没有任何入口）
+            PpNav(
+              icon: Icons.bug_report_outlined,
+              title: l10n.ppDiagnosticsTitle,
+              subtitle: l10n.ppDiagnosticsSub,
+              onTap: _showDiagnostics,
             ),
           ]),
           // 操作与记录

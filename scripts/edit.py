@@ -69,6 +69,10 @@ def _first_eol(segment: str) -> str:
     """段内首个换行的原始写法；段内没有换行时返回空串。"""
     for i, ch in enumerate(segment):
         if ch == "\r":
+            # 2026-09-22 修：`\r\r\n`（双 CR 行尾，见 background_polling_service.dart）此前被读成裸 `\r`，
+            # 于是替换段内的新行会写成裸 CR —— 而且两种 numstat 口径都看不出来（静默损坏）。
+            if segment[i + 1 : i + 3] == "\r\n":
+                return "\r\r\n"
             return "\r\n" if segment[i + 1 : i + 2] == "\n" else "\r"
         if ch == "\n":
             return "\n"

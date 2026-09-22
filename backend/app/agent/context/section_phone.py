@@ -18,11 +18,11 @@ _logger = logging.getLogger("agent.context.section_phone")
 
 async def phone_perception_section(state: dict, ctx: dict) -> str:
     """phone_perception 分区：手机感知（template 槽；无则缺省「无」）。"""
-    from app.application.phone_service import get_recent_perception_text
+    from app.device.port import read_perception_context
 
     phone_perception = "无"
     try:
-        phone_text = await get_recent_perception_text(state.get("user_id"))
+        phone_text = await read_perception_context(state.get("user_id"))
         if phone_text:
             phone_perception = phone_text
     except Exception as e:
