@@ -37,6 +37,7 @@ from app.api import (
     device_router,
 )
 from app.api.channel_login import router as channel_login_router  # 本地渠道登录页（P2，2026-09-12）
+from app.api.device_actions import router as device_actions_router  # X7-M4a 行动裁决 API（零真实执行）
 from app.api.ai_api import router as ai_api_router
 from app.auth.router import router as auth_router
 from app.db.database import init_db
@@ -354,7 +355,7 @@ ROUTERS = [
     plugin_bridge_router, marketplace_router, platform_profiles_router, chat_groups_router,
     life_router, life_home_router, voice_router, weave_router, permissions_router,
     phone_workflows_router, ai_api_router, mcp_router, games_router, llm_configs_router,
-    account_router, device_router, channel_bindings_router,
+    account_router, device_router, channel_bindings_router, device_actions_router,
     channel_login_router,
 ]
 for _r in ROUTERS:

@@ -2649,6 +2649,72 @@ abstract class AppLocalizations {
   /// **'把感知日志与各通道健康状态拼成一段文本，可复制给开发者排查'**
   String get ppDiagnosticsSub;
 
+  /// No description provided for @ppActionSelfCheck.
+  ///
+  /// In zh, this message translates to:
+  /// **'行动闸门自检'**
+  String get ppActionSelfCheck;
+
+  /// No description provided for @ppActionSelfCheckSub.
+  ///
+  /// In zh, this message translates to:
+  /// **'以干跑方式提交一条意图，把服务端给出的理由原样显示，不执行任何动作'**
+  String get ppActionSelfCheckSub;
+
+  /// No description provided for @ppActionSelfCheckTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'自检结果'**
+  String get ppActionSelfCheckTitle;
+
+  /// No description provided for @ppActionSelfCheckAllowed.
+  ///
+  /// In zh, this message translates to:
+  /// **'已放行（{status}）'**
+  String ppActionSelfCheckAllowed(Object status);
+
+  /// No description provided for @ppActionSelfCheckDenied.
+  ///
+  /// In zh, this message translates to:
+  /// **'被拒绝：{reason}'**
+  String ppActionSelfCheckDenied(Object reason);
+
+  /// No description provided for @ppActionRunPending.
+  ///
+  /// In zh, this message translates to:
+  /// **'执行待办动作'**
+  String get ppActionRunPending;
+
+  /// No description provided for @ppActionRunPendingSub.
+  ///
+  /// In zh, this message translates to:
+  /// **'取回服务端已批准的动作意图，逐类确认后在本机执行并回报结果'**
+  String get ppActionRunPendingSub;
+
+  /// No description provided for @ppActionConfirmTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'确认执行该类动作'**
+  String get ppActionConfirmTitle;
+
+  /// No description provided for @ppActionConfirmBody.
+  ///
+  /// In zh, this message translates to:
+  /// **'即将执行「{action}」动作，需要你确认。'**
+  String ppActionConfirmBody(Object action);
+
+  /// No description provided for @ppActionResultTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'待办动作执行结果'**
+  String get ppActionResultTitle;
+
+  /// No description provided for @ppActionRunEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'没有待办动作'**
+  String get ppActionRunEmpty;
+
   /// No description provided for @ppClearedLocalOnly.
   ///
   /// In zh, this message translates to:
@@ -14072,6 +14138,168 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'服务器级开关：改动会影响本服务器上的所有账号'**
   String get flagScopeServerHint;
+
+  /// No description provided for @ppActionSubmitRun.
+  ///
+  /// In zh, this message translates to:
+  /// **'提交一条真实动作（本机自检）'**
+  String get ppActionSubmitRun;
+
+  /// No description provided for @ppActionSubmitRunSub.
+  ///
+  /// In zh, this message translates to:
+  /// **'为本应用提交一条真实行动意图，过闸门后立即执行一次'**
+  String get ppActionSubmitRunSub;
+
+  /// No description provided for @ppActionPolicy.
+  ///
+  /// In zh, this message translates to:
+  /// **'动作确认策略'**
+  String get ppActionPolicy;
+
+  /// No description provided for @ppActionPolicySub.
+  ///
+  /// In zh, this message translates to:
+  /// **'为每类动作单独设定确认强度：只首次授权时确认 / 每类本次会话确认 / 每次都确认'**
+  String get ppActionPolicySub;
+
+  /// No description provided for @ppActionPolicyTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'动作确认强度（逐类选择）'**
+  String get ppActionPolicyTitle;
+
+  /// No description provided for @ppActionPolicyCapOpenApp.
+  ///
+  /// In zh, this message translates to:
+  /// **'打开应用'**
+  String get ppActionPolicyCapOpenApp;
+
+  /// No description provided for @ppActionPolicyCapTap.
+  ///
+  /// In zh, this message translates to:
+  /// **'点击文本'**
+  String get ppActionPolicyCapTap;
+
+  /// No description provided for @ppActionPolicyCapSetText.
+  ///
+  /// In zh, this message translates to:
+  /// **'输入文本'**
+  String get ppActionPolicyCapSetText;
+
+  /// No description provided for @ppActionPolicyOnceEver.
+  ///
+  /// In zh, this message translates to:
+  /// **'轻：只在首次授权时确认一次，之后永久放行'**
+  String get ppActionPolicyOnceEver;
+
+  /// No description provided for @ppActionPolicyFirstPerType.
+  ///
+  /// In zh, this message translates to:
+  /// **'中：每类动作本次会话首次确认，之后放行（默认）'**
+  String get ppActionPolicyFirstPerType;
+
+  /// No description provided for @ppActionPolicyEveryTime.
+  ///
+  /// In zh, this message translates to:
+  /// **'重：每次执行都确认（高风险动作用这档）'**
+  String get ppActionPolicyEveryTime;
+
+  /// No description provided for @ppActionPolicySaved.
+  ///
+  /// In zh, this message translates to:
+  /// **'动作确认策略已保存'**
+  String get ppActionPolicySaved;
+
+  /// No description provided for @ppActionPolicySaveFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'动作确认策略保存失败（本机偏好不可写，仍按原档执行）'**
+  String get ppActionPolicySaveFailed;
+
+  /// No description provided for @ppActionWorkflowBridge.
+  ///
+  /// In zh, this message translates to:
+  /// **'工作流改走行动端口（内核裁决）'**
+  String get ppActionWorkflowBridge;
+
+  /// No description provided for @ppActionWorkflowBridgeSub.
+  ///
+  /// In zh, this message translates to:
+  /// **'打开后，整条只含「打开应用 / 点文本 / 输入文本」且以打开应用开头的工作流改走行动端口（走审批与审计）；含其他步骤的工作流仍走原有本机路径；端口一旦拒绝立即停止，不回退本机路径'**
+  String get ppActionWorkflowBridgeSub;
+
+  /// No description provided for @ppActionWfSelfCheck.
+  ///
+  /// In zh, this message translates to:
+  /// **'工作流端口自检'**
+  String get ppActionWfSelfCheck;
+
+  /// No description provided for @ppActionWfSelfCheckSub.
+  ///
+  /// In zh, this message translates to:
+  /// **'用最小可映射工作流真跑一遍新路径（打开本应用 + 点击本页一个可见标题）：显示走的是行动端口还是本机路径、每一步的结论，以及端口拒绝时服务端返回的原因（原样）'**
+  String get ppActionWfSelfCheckSub;
+
+  /// No description provided for @ppActionWfSelfCheckTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'工作流端口自检结果'**
+  String get ppActionWfSelfCheckTitle;
+
+  /// No description provided for @ppActionWfSelfCheckViaPort.
+  ///
+  /// In zh, this message translates to:
+  /// **'走的通道：行动端口（内核裁决 + 审计）'**
+  String get ppActionWfSelfCheckViaPort;
+
+  /// No description provided for @ppActionWfSelfCheckViaLegacy.
+  ///
+  /// In zh, this message translates to:
+  /// **'走的通道：本机路径'**
+  String get ppActionWfSelfCheckViaLegacy;
+
+  /// No description provided for @ppActionWfSelfCheckLegacyNote.
+  ///
+  /// In zh, this message translates to:
+  /// **'整条本可映射却走了本机路径＝端口开关未打开（或开关读取失败）'**
+  String get ppActionWfSelfCheckLegacyNote;
+
+  /// No description provided for @ppActionWfSelfCheckTarget.
+  ///
+  /// In zh, this message translates to:
+  /// **'目标应用：{app}'**
+  String ppActionWfSelfCheckTarget(Object app);
+
+  /// No description provided for @ppActionWfSelfCheckOk.
+  ///
+  /// In zh, this message translates to:
+  /// **'成功'**
+  String get ppActionWfSelfCheckOk;
+
+  /// No description provided for @ppActionWfSelfCheckFail.
+  ///
+  /// In zh, this message translates to:
+  /// **'失败'**
+  String get ppActionWfSelfCheckFail;
+
+  /// No description provided for @ppActionWfSelfCheckEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'没有任何步骤结论返回'**
+  String get ppActionWfSelfCheckEmpty;
+
+  /// No description provided for @ppActionWfSelfCheckNotMappable.
+  ///
+  /// In zh, this message translates to:
+  /// **'自检序列没能映射成端口意图，未执行任何动作：{reason}'**
+  String ppActionWfSelfCheckNotMappable(Object reason);
+
+  /// No description provided for @ppActionWfSelfCheckBridgeOff.
+  ///
+  /// In zh, this message translates to:
+  /// **'工作流端口开关未开，自检不会执行任何动作（先在上面打开开关）'**
+  String get ppActionWfSelfCheckBridgeOff;
 }
 
 class _AppLocalizationsDelegate

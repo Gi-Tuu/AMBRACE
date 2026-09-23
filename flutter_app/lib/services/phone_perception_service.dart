@@ -1,12 +1,14 @@
 import "dart:convert" as dart_convert;
 import "dart:io";
 import "package:dio/dio.dart";
+import "package:flutter/foundation.dart";
 import "package:flutter/services.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "api_client.dart";
 import "shizuku_service.dart";
 import "channel_status.dart";
 import "perception_outbox.dart";
+import "workflow_action_bridge.dart";
 import "../utils/app_lang.dart";
 
 /// 工作流触发词（2026-08-14 P1：帮我执行/跑一下 XX）
@@ -757,6 +759,14 @@ class PhonePerceptionService {
   /// 返回 {type, steps, content, sendText}；非模板意图返回 null。
   /// steps 元素：{action: click|long_click|set_text, target?, text?}
   /// [输入框] 为通用占位目标（Kotlin 节点树里空输入框以此标记，点击可聚焦）。
+  ///
+  /// **模板恒走旧路径，by design 不给它开端口映射（X7-M4d-3 拍板，勿“顺手补齐”）**：
+  /// ① 模板步骤的目标是占位符（如 `{action:"click", target:"[输入框]"}`），不是真实文本——塞进端口
+  ///    等于把“[输入框]”当文本去点，比旧路径（靠节点树里“可编辑”标记挑输入框）更危险；
+  /// ② 模板靠「自家 app 内切 tab + Navigator.pop」导航（见 chat_phone_actions 的 publish/like 分支），
+  ///    步骤里没有目标应用，也不声明要打开谁 ⇒ 端口要求的 `target_app` 只能靠猜；
+  /// ③ 端口能力是**声明式查询**（按文本找节点），模板的语义是“当前聚焦的输入框”，两者不同构。
+  /// 这里只把回落 INFO 降噪（见 [_templateAwareBridgeLog]），映射规则一条不改。
   static Map<String, dynamic>? parseActionTemplate(String text) {
     final t = text.trim();
     if (t.isEmpty) return null;
@@ -831,34 +841,114 @@ class PhonePerceptionService {
   /// set_text 直接写入聚焦输入框；任一步失败立即停止。返回每步结果列表。
   /// 2026-08-14 双通道：click/long_click/scroll/set_text 走无障碍；
   /// launch_app/tap_xy/swipe/back/wait 走 Shizuku（ADB 级 input/am/monkey）。
-  static Future<List<Map<String, dynamic>>> executeActionSequence(List<Map> steps) async {
-    final results = <Map<String, dynamic>>[];
-    for (var i = 0; i < steps.length; i++) {
-      final r = await _executeSingleStep(steps[i], i + 1);
-      results.add(r);
-      if (!(r["ok"] as bool? ?? false)) break;
-    }
-    return results;
+  /// X7-M4d：开关打开且**整条**可映射时改走行动端口（见 `workflow_action_bridge.dart`）；
+  /// 开关关 / 不可整条映射 → 仍逐步调 [_executeSingleStep]，旧路径行为与返回结构不变
+  /// （半新半旧不做，端口被拒也不回退旧路径）。
+  ///
+  /// 后面六个可选注入位**只给单测用**（不注入＝真机默认：prefs 开关 + 内置 HTTP 端口 + [_executeSingleStep]），
+  /// 生产调用方一律不传，行为与 M4d-1/M4d-2 逐字一致。
+  static Future<List<Map<String, dynamic>>> executeActionSequence(
+    List<Map> steps, {
+    LegacyStepExecutor? legacyStep,
+    WorkflowBridgeEnabled? bridgeEnabled,
+    WorkflowIntentSubmitter? submit,
+    WorkflowPendingRunner? runner,
+    WorkflowScopedPendingRunner? scopedRunner,
+    WorkflowInfoLog? log,
+  }) async {
+    return WorkflowActionBridge.runWorkflowSequence(
+      steps: steps,
+      legacyStep: legacyStep ?? _executeSingleStep,
+      bridgeEnabled: bridgeEnabled,
+      submit: submit,
+      runner: runner,
+      scopedRunner: scopedRunner,
+      // 降噪包在注入位**里面**：测试换的是落点（sink），去重逻辑本身照样被验
+      log: _templateAwareBridgeLog(steps, log ?? _bridgeInfo),
+    );
+  }
+
+  // ── 序列模板回落 INFO 的进程内降噪（M4d-3；模板为什么不接端口见 [parseActionTemplate] 注释）──
+
+  /// 已记过 `fallback_legacy` 的模板名（一个进程内每个模板只刷一条）。
+  static final Set<String> _templateFallbackLogged = <String>{};
+
+  /// 桥的 INFO 出口：套一层「同一模板的回落只记一次」。
+  /// 只影响 `fallback_legacy` 这一条 INFO；非模板序列（用户自己画的工作流）照记，其它行原样透传。
+  static WorkflowInfoLog _templateAwareBridgeLog(List<Map> steps, WorkflowInfoLog sink) {
+    return (line) {
+      if (line.startsWith("fallback_legacy")) {
+        final name = _actionTemplateNameOf(steps);
+        if (name != null && !_templateFallbackLogged.add(name)) return;
+      }
+      sink(line);
+    };
+  }
+
+  static void _bridgeInfo(String line) => debugPrint("[workflow_bridge][INFO] $line");
+
+  /// 序列形状（各步 `action:target` 按序拼接；set_text 只记存在、不记内容——内容每条都不同）
+  static String _actionShapeOf(List<Map> steps) => steps.map((s) {
+        final action = s["action"]?.toString() ?? "";
+        return action == "set_text" ? action : "$action:${s["target"]?.toString() ?? ""}";
+      }).join(">");
+
+  /// 认得出来的内置序列模板 → 模板名（reply/publish/like/play）；认不出来返回 null。
+  static String? _actionTemplateNameOf(List<Map> steps) =>
+      steps.isEmpty ? null : _actionTemplateNames[_actionShapeOf(steps)];
+
+  /// 形状表由 [parseActionTemplate] 现算（探针文案只为让它吐出四种形状）：
+  /// 把模板字面量抄第二份必然漂，改模板的人不会记得同步这里。
+  static final Map<String, String> _actionTemplateNames = _buildActionTemplateShapes();
+
+  static Map<String, String> _buildActionTemplateShapes() {
+    const probes = <String, String>{
+      "reply": '帮我回"自检"',
+      "publish": '发布"自检"',
+      "like": "点赞",
+      "play": "播放",
+    };
+    final out = <String, String>{};
+    probes.forEach((name, text) {
+      final raw = parseActionTemplate(text)?["steps"];
+      final steps = raw is List ? raw.cast<Map>() : const <Map>[];
+      if (steps.isNotEmpty) out[_actionShapeOf(steps)] = name;
+    });
+    return out;
   }
 
   /// 图工作流执行（2026-08-14 方案 C）：nodes + edges，支持分支/条件/循环
-  /// - 无 edges：按 nodes 顺序执行（等价旧 steps）
+  /// - 无 edges：等价普通步骤序列 ⇒ 与 [executeActionSequence] 同一条路（M4d-3 起同样可接行动端口）
   /// - 有 edges：从第一个节点开始图遍历；每节点最多 3 次、总步数上限 30 防死循环
   static Future<List<Map<String, dynamic>>> executeWorkflowGraph(
     List<Map> nodes, {
     List<Map>? edges,
+    LegacyStepExecutor? legacyStep,
+    WorkflowBridgeEnabled? bridgeEnabled,
+    WorkflowIntentSubmitter? submit,
+    WorkflowPendingRunner? runner,
+    WorkflowScopedPendingRunner? scopedRunner,
+    WorkflowInfoLog? log,
   }) async {
-    final results = <Map<String, dynamic>>[];
-    final en = await appLang() == "en";
     final edgeList = edges ?? const [];
     if (edgeList.isEmpty) {
-      for (var i = 0; i < nodes.length; i++) {
-        final r = await _executeSingleStep(nodes[i], i + 1);
-        results.add(r);
-        if (!(r["ok"] as bool? ?? false)) break;
-      }
-      return results;
+      // 没有连线＝按顺序跑的线性序列，与 steps 同构，直接复用同一条路径。
+      // 不会递归：桥不可映射时逐步调的是 [_executeSingleStep]，它不回本函数。
+      return executeActionSequence(
+        nodes,
+        legacyStep: legacyStep,
+        bridgeEnabled: bridgeEnabled,
+        submit: submit,
+        runner: runner,
+        scopedRunner: scopedRunner,
+        log: log,
+      );
     }
+    // 有 edges（分支/条件/循环）＝图，映射不成「一条意图跟着一条意图」的线性列表，恒走旧路径。
+    (log ?? _bridgeInfo)(
+        "fallback_legacy reason=branching_graph nodes=${nodes.length} edges=${edgeList.length}");
+    final results = <Map<String, dynamic>>[];
+    final en = await appLang() == "en";
     final nodesById = <String, Map<String, dynamic>>{};
     for (final n in nodes) {
       final id = n["id"] as String? ?? "";

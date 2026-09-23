@@ -127,6 +127,41 @@ class UserDeviceToken(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
+# ── device_action_lists.py（X7-M4c-3，2026-09-23 派单 P19）──
+# 行动闸门的「名单」落库：目标白名单（闸门④）+ 插件灰度名单（闸门③a）。
+#
+# - 两份名单此前只在进程内存（重启即清零），本批起以库为权威；限流/熔断计数仍是运行时统计，
+#   刻意不落库（重启清零属预期语义）。
+# - tenant_id 不挂 FK：与 plugin_consents.tenant_id 同口径（家庭根租户，允许解析不到时不写行）。
+# - 唯一约束即幂等写入的判据（重复添加不产生第二行）。
+class DeviceActionTarget(Base):
+    """行动目标白名单（闸门④）：一个租户一个目标应用一行，缺表/缺行＝全拒。"""
+    __tablename__ = "device_action_targets"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "target", name="uq_device_action_target_tenant_target"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)  # 家庭根租户
+    target: Mapped[str] = mapped_column(String(128), nullable=False)  # 包名（写入前已 strip）
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+class DeviceActionPlugin(Base):
+    """插件行动灰度名单（闸门③a 的逐插件放开集，全局不分租户）。"""
+    __tablename__ = "device_action_plugins"
+    __table_args__ = (
+        UniqueConstraint("plugin_name", name="uq_device_action_plugins_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plugin_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
 __all__ = [
     "PhoneDesktop",
     "PhoneLayout",
@@ -137,4 +172,6 @@ __all__ = [
     "CheckInRequest",
     "PhoneAutoState",
     "UserDeviceToken",
+    "DeviceActionTarget",
+    "DeviceActionPlugin",
 ]

@@ -1446,6 +1446,47 @@ class AppLocalizationsEn extends AppLocalizations {
       'Perception log plus per-channel health as one text block; copy it for debugging';
 
   @override
+  String get ppActionSelfCheck => 'Action gate self-check';
+
+  @override
+  String get ppActionSelfCheckSub =>
+      'Submits one dry-run intent and shows the server\'s reason verbatim; nothing is executed';
+
+  @override
+  String get ppActionSelfCheckTitle => 'Self-check result';
+
+  @override
+  String ppActionSelfCheckAllowed(Object status) {
+    return 'Allowed ($status)';
+  }
+
+  @override
+  String ppActionSelfCheckDenied(Object reason) {
+    return 'Denied: $reason';
+  }
+
+  @override
+  String get ppActionRunPending => 'Run pending actions';
+
+  @override
+  String get ppActionRunPendingSub =>
+      'Fetches server-approved intents, confirms each action kind once, runs them on this device and reports results';
+
+  @override
+  String get ppActionConfirmTitle => 'Confirm this action';
+
+  @override
+  String ppActionConfirmBody(Object action) {
+    return 'About to run \"$action\". Your confirmation is required.';
+  }
+
+  @override
+  String get ppActionResultTitle => 'Pending action results';
+
+  @override
+  String get ppActionRunEmpty => 'No pending actions';
+
+  @override
   String get ppClearedLocalOnly =>
       'Local pending queue cleared; the server was not cleared — tap again once you are online';
 
@@ -7868,4 +7909,102 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get flagScopeServerHint =>
       'Server-level switch: changes affect every account on this server';
+
+  @override
+  String get ppActionSubmitRun => 'Submit one real action (self-check)';
+
+  @override
+  String get ppActionSubmitRunSub =>
+      'Submit a real intent for this app and run it once if the gates allow';
+
+  @override
+  String get ppActionPolicy => 'Action confirmation policy';
+
+  @override
+  String get ppActionPolicySub =>
+      'Set the confirmation strength per action kind: confirm once at first grant / once per session per kind / confirm every time';
+
+  @override
+  String get ppActionPolicyTitle => 'Confirmation strength (per action kind)';
+
+  @override
+  String get ppActionPolicyCapOpenApp => 'Open app';
+
+  @override
+  String get ppActionPolicyCapTap => 'Tap by text';
+
+  @override
+  String get ppActionPolicyCapSetText => 'Input text';
+
+  @override
+  String get ppActionPolicyOnceEver =>
+      'Light: confirm only at first grant, then always allowed';
+
+  @override
+  String get ppActionPolicyFirstPerType =>
+      'Medium: confirm each action kind once per session (default)';
+
+  @override
+  String get ppActionPolicyEveryTime =>
+      'Heavy: confirm every execution (for high-risk actions)';
+
+  @override
+  String get ppActionPolicySaved => 'Action confirmation policy saved';
+
+  @override
+  String get ppActionPolicySaveFailed =>
+      'Failed to save the policy (local preferences not writable); previous settings still apply';
+
+  @override
+  String get ppActionWorkflowBridge =>
+      'Run workflows through the action port (kernel gate)';
+
+  @override
+  String get ppActionWorkflowBridgeSub =>
+      'When on, workflows made only of open-app / tap-text / type-text steps (starting with the app launch) go through the approved and audited action port; workflows with any other step keep the existing local path; a rejected step stops the run instead of falling back locally';
+
+  @override
+  String get ppActionWfSelfCheck => 'Workflow action-port self-check';
+
+  @override
+  String get ppActionWfSelfCheckSub =>
+      'Runs the smallest mappable workflow through the new path (open this app + tap a visible heading on this page): shows whether it went through the action port or the local path, the outcome of every step, and the server reason verbatim when the port rejects';
+
+  @override
+  String get ppActionWfSelfCheckTitle =>
+      'Workflow action-port self-check result';
+
+  @override
+  String get ppActionWfSelfCheckViaPort =>
+      'Path taken: action port (kernel decision + audit)';
+
+  @override
+  String get ppActionWfSelfCheckViaLegacy => 'Path taken: local path';
+
+  @override
+  String get ppActionWfSelfCheckLegacyNote =>
+      'The workflow was mappable but ran locally, so the action-port switch is off (or could not be read)';
+
+  @override
+  String ppActionWfSelfCheckTarget(Object app) {
+    return 'Target app: $app';
+  }
+
+  @override
+  String get ppActionWfSelfCheckOk => 'ok';
+
+  @override
+  String get ppActionWfSelfCheckFail => 'failed';
+
+  @override
+  String get ppActionWfSelfCheckEmpty => 'No step result came back';
+
+  @override
+  String ppActionWfSelfCheckNotMappable(Object reason) {
+    return 'The self-check sequence could not be mapped to port intents; nothing was executed: $reason';
+  }
+
+  @override
+  String get ppActionWfSelfCheckBridgeOff =>
+      'The workflow port switch is off, so the self-check runs no action. Turn it on first.';
 }

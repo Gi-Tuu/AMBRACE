@@ -1394,6 +1394,45 @@ class AppLocalizationsZh extends AppLocalizations {
   String get ppDiagnosticsSub => '把感知日志与各通道健康状态拼成一段文本，可复制给开发者排查';
 
   @override
+  String get ppActionSelfCheck => '行动闸门自检';
+
+  @override
+  String get ppActionSelfCheckSub => '以干跑方式提交一条意图，把服务端给出的理由原样显示，不执行任何动作';
+
+  @override
+  String get ppActionSelfCheckTitle => '自检结果';
+
+  @override
+  String ppActionSelfCheckAllowed(Object status) {
+    return '已放行（$status）';
+  }
+
+  @override
+  String ppActionSelfCheckDenied(Object reason) {
+    return '被拒绝：$reason';
+  }
+
+  @override
+  String get ppActionRunPending => '执行待办动作';
+
+  @override
+  String get ppActionRunPendingSub => '取回服务端已批准的动作意图，逐类确认后在本机执行并回报结果';
+
+  @override
+  String get ppActionConfirmTitle => '确认执行该类动作';
+
+  @override
+  String ppActionConfirmBody(Object action) {
+    return '即将执行「$action」动作，需要你确认。';
+  }
+
+  @override
+  String get ppActionResultTitle => '待办动作执行结果';
+
+  @override
+  String get ppActionRunEmpty => '没有待办动作';
+
+  @override
   String get ppClearedLocalOnly => '已清本地待补传；服务端未能清除，联网后请再点一次';
 
   @override
@@ -7571,4 +7610,91 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get flagScopeServerHint => '服务器级开关：改动会影响本服务器上的所有账号';
+
+  @override
+  String get ppActionSubmitRun => '提交一条真实动作（本机自检）';
+
+  @override
+  String get ppActionSubmitRunSub => '为本应用提交一条真实行动意图，过闸门后立即执行一次';
+
+  @override
+  String get ppActionPolicy => '动作确认策略';
+
+  @override
+  String get ppActionPolicySub => '为每类动作单独设定确认强度：只首次授权时确认 / 每类本次会话确认 / 每次都确认';
+
+  @override
+  String get ppActionPolicyTitle => '动作确认强度（逐类选择）';
+
+  @override
+  String get ppActionPolicyCapOpenApp => '打开应用';
+
+  @override
+  String get ppActionPolicyCapTap => '点击文本';
+
+  @override
+  String get ppActionPolicyCapSetText => '输入文本';
+
+  @override
+  String get ppActionPolicyOnceEver => '轻：只在首次授权时确认一次，之后永久放行';
+
+  @override
+  String get ppActionPolicyFirstPerType => '中：每类动作本次会话首次确认，之后放行（默认）';
+
+  @override
+  String get ppActionPolicyEveryTime => '重：每次执行都确认（高风险动作用这档）';
+
+  @override
+  String get ppActionPolicySaved => '动作确认策略已保存';
+
+  @override
+  String get ppActionPolicySaveFailed => '动作确认策略保存失败（本机偏好不可写，仍按原档执行）';
+
+  @override
+  String get ppActionWorkflowBridge => '工作流改走行动端口（内核裁决）';
+
+  @override
+  String get ppActionWorkflowBridgeSub =>
+      '打开后，整条只含「打开应用 / 点文本 / 输入文本」且以打开应用开头的工作流改走行动端口（走审批与审计）；含其他步骤的工作流仍走原有本机路径；端口一旦拒绝立即停止，不回退本机路径';
+
+  @override
+  String get ppActionWfSelfCheck => '工作流端口自检';
+
+  @override
+  String get ppActionWfSelfCheckSub =>
+      '用最小可映射工作流真跑一遍新路径（打开本应用 + 点击本页一个可见标题）：显示走的是行动端口还是本机路径、每一步的结论，以及端口拒绝时服务端返回的原因（原样）';
+
+  @override
+  String get ppActionWfSelfCheckTitle => '工作流端口自检结果';
+
+  @override
+  String get ppActionWfSelfCheckViaPort => '走的通道：行动端口（内核裁决 + 审计）';
+
+  @override
+  String get ppActionWfSelfCheckViaLegacy => '走的通道：本机路径';
+
+  @override
+  String get ppActionWfSelfCheckLegacyNote => '整条本可映射却走了本机路径＝端口开关未打开（或开关读取失败）';
+
+  @override
+  String ppActionWfSelfCheckTarget(Object app) {
+    return '目标应用：$app';
+  }
+
+  @override
+  String get ppActionWfSelfCheckOk => '成功';
+
+  @override
+  String get ppActionWfSelfCheckFail => '失败';
+
+  @override
+  String get ppActionWfSelfCheckEmpty => '没有任何步骤结论返回';
+
+  @override
+  String ppActionWfSelfCheckNotMappable(Object reason) {
+    return '自检序列没能映射成端口意图，未执行任何动作：$reason';
+  }
+
+  @override
+  String get ppActionWfSelfCheckBridgeOff => '工作流端口开关未开，自检不会执行任何动作（先在上面打开开关）';
 }

@@ -6,6 +6,10 @@ import "../../services/notification_service.dart";
 import "../../utils/beijing_time.dart";
 import "../../services/phone_perception_service.dart";
 import "../../services/api_client.dart";
+import "../../services/device_action_service.dart";
+import "../../services/device_action_executor.dart";
+import "../../services/device_action_prefs.dart";
+import "../../services/workflow_action_bridge.dart";
 // 注：本页是**用户自己的系统级感知**，不接角色隐私上锁（见下方字段处说明）
 import "../../features/phone/perception_tiles.dart";
 import "../../features/settings/notification_whitelist_screen.dart";
@@ -63,6 +67,12 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
   bool _expandLocation = false; // 位置信息子项
   Map<String, dynamic> _health = {}; // R5：统一健康检测
   bool _batteryOk = false; // R4：电池白名单
+  // M4b-2：行动执行器「每类首次确认」的已确认集合（决策④，随本页生命周期，退出页面即重来）
+  final Set<String> _actionConfirmed = <String>{};
+  // M4d：工作流是否改走行动端口（缺省＝关；只影响整条可映射的工作流，见 workflow_action_bridge）
+  bool _workflowBridgeOn = false;
+  // M4b-2 收尾：本机自检目标（= build.gradle 的 applicationId；打开自己无副作用）
+  static const String _selfActionTarget = "com.gituu.ambrace.ai_companion";
 
   @override
   void initState() {
@@ -106,6 +116,7 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
     final actions = await PhonePerceptionService.isActionsEnabled();
     final status = await PhonePerceptionService.getScreenStatus();
     final notifOk = await PhonePerceptionService.isNotificationAccessEnabled();
+    final workflowBridge = await DeviceActionPrefs.isWorkflowBridgeEnabled();
     if (!mounted) return;
     setState(() {
       _enabled = prefsEnabled;
@@ -118,6 +129,7 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
       _actionsOn = actions;
       _serviceEnabled = (status["serviceEnabled"] as bool? ?? false);
       _notifServiceEnabled = notifOk;
+      _workflowBridgeOn = workflowBridge;
     });
     // R5/R4：健康检测 + 电池白名单
     _loadHealth();
@@ -433,6 +445,303 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
     );
   }
 
+
+  /// M4b-2 自检：以 `dry_run=true` 提交一条意图，把服务端返回的 `reason` **原样**展示，
+  /// 让用户一眼看出自己被哪层闸门挡住（后端干跑不发 token、不入队，链路上不会有动作）。
+  Future<void> _selfCheckActionGate() async {
+    final l10n = AppLocalizations.of(context)!;
+    final r = await DeviceActionService.submitIntent(
+      capability: DeviceActionExecutor.capOpenApp,
+      targetApp: _selfActionTarget,
+      dryRun: true,
+    );
+    if (!mounted) return;
+    final line = r.allowed
+        ? l10n.ppActionSelfCheckAllowed(r.status)
+        : l10n.ppActionSelfCheckDenied(r.reason);
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.ppActionSelfCheckTitle),
+        content: SelectableText(line, style: const TextStyle(fontSize: 12, height: 1.5)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.close)),
+        ],
+      ),
+    );
+  }
+
+  /// M4b-2 收尾：内置链路自证——先提交一条**真实**意图（本应用 open_app），
+  /// 再复用「取待办 → 首次确认 → 执行 → 回报」那条路径。
+  /// 这是 M4b 验收口径「App 内置入口可执行一条 open_app 并留下审计」的入口；上面那条是干跑自检。
+  Future<void> _submitAndRunAction() async {
+    final l10n = AppLocalizations.of(context)!;
+    final granted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.ppActionSubmitRun),
+        content: Text(l10n.ppActionSubmitRunSub),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l10n.cancel)),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text(l10n.confirm)),
+        ],
+      ),
+    );
+    if (granted != true || !mounted) return;
+    final sub = await DeviceActionService.submitIntent(
+      capability: DeviceActionExecutor.capOpenApp,
+      targetApp: _selfActionTarget,
+    );
+    if (!mounted) return;
+    if (!sub.allowed) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(l10n.ppActionSelfCheckTitle),
+          content: SelectableText(l10n.ppActionSelfCheckDenied(sub.reason),
+              style: const TextStyle(fontSize: 12, height: 1.5)),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.close))],
+        ),
+      );
+      return;
+    }
+    await _runPendingActions();
+  }
+
+  /// M4c-5 三档确认策略设置：轻＝只在首次授权时确认一次（落 prefs）/ 中＝每类本次会话首次确认（默认）/
+  /// 重＝每次执行都确认。只读写本机 prefs，不碰后端；执行侧统一由 `DeviceActionExecutor.runOnce` 按档位判定。
+  Future<void> _showActionPolicySettings() async {
+    final l10n = AppLocalizations.of(context)!;
+    const caps = [
+      DeviceActionExecutor.capOpenApp,
+      DeviceActionExecutor.capTap,
+      DeviceActionExecutor.capSetText,
+    ];
+    final capLabels = <String, String>{
+      DeviceActionExecutor.capOpenApp: l10n.ppActionPolicyCapOpenApp,
+      DeviceActionExecutor.capTap: l10n.ppActionPolicyCapTap,
+      DeviceActionExecutor.capSetText: l10n.ppActionPolicyCapSetText,
+    };
+    final tierLabels = <ActionConfirmPolicy, String>{
+      ActionConfirmPolicy.onceEver: l10n.ppActionPolicyOnceEver,
+      ActionConfirmPolicy.firstPerType: l10n.ppActionPolicyFirstPerType,
+      ActionConfirmPolicy.everyTime: l10n.ppActionPolicyEveryTime,
+    };
+    final selected = <String, ActionConfirmPolicy>{};
+    for (final c in caps) {
+      selected[c] = await DeviceActionPrefs.policyFor(c); // 读失败＝中档，不抛给 UI
+    }
+    if (!mounted) return;
+    final save = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(l10n.ppActionPolicyTitle),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 380),
+              child: Scrollbar(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final c in caps)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                capLabels[c]!,
+                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                              ),
+                              RadioGroup<ActionConfirmPolicy>(
+                                groupValue: selected[c],
+                                onChanged: (v) {
+                                  if (v != null) setDialogState(() => selected[c] = v);
+                                },
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    for (final p in ActionConfirmPolicy.values)
+                                      RadioListTile<ActionConfirmPolicy>(
+                                        value: p,
+                                        dense: true,
+                                        contentPadding: EdgeInsets.zero,
+                                        title: Text(
+                                          tierLabels[p]!,
+                                          style: const TextStyle(fontSize: 12, height: 1.4),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l10n.cancel)),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text(l10n.confirm)),
+          ],
+        ),
+      ),
+    );
+    if (save != true) return;
+    var allOk = true;
+    for (final c in caps) {
+      allOk = await DeviceActionPrefs.setPolicy(c, selected[c]!) && allOk;
+    }
+    if (!mounted) return;
+    _showSnack(allOk ? l10n.ppActionPolicySaved : l10n.ppActionPolicySaveFailed);
+  }
+
+  /// M4b-2 执行待办：取回已批准的意图，逐类首次确认后在本机执行并回报（台账原样列出）。
+  Future<void> _runPendingActions() async {
+    final l10n = AppLocalizations.of(context)!;
+    final rows = await DeviceActionExecutor.runOnce(
+      confirmedTypes: _actionConfirmed,
+      confirm: (capability) async {
+        if (!mounted) return false;
+        final granted = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(l10n.ppActionConfirmTitle),
+            content: Text(l10n.ppActionConfirmBody(capability)),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l10n.cancel)),
+              TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text(l10n.confirm)),
+            ],
+          ),
+        );
+        return granted == true;
+      },
+    );
+    if (!mounted) return;
+    if (rows.isEmpty) {
+      _showSnack(l10n.ppActionRunEmpty);
+      return;
+    }
+    final text = rows
+        .map((r) => "${r["action_token"]}  ${r["capability"]}  -> ${r["status"]}  ${r["detail"]}")
+        .join("\n");
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.ppActionResultTitle),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Scrollbar(
+            child: SingleChildScrollView(
+              child: SelectableText(
+                text,
+                style: const TextStyle(fontSize: 11, fontFamily: "monospace", height: 1.5),
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.close)),
+        ],
+      ),
+    );
+  }
+
+  /// M4d-3「工作流端口自检」：用**最小可映射工作流**真跑一遍新路径，让真机验证自服务。
+  /// 序列固定为「打开本应用 → 点击本页一个真实可见的分组标题」两步：首步是 `launch_app`、
+  /// 两步都属可映射类型、包名合法；点击目标是纯文本标题（不可点，点了既不跳页也不改设置）。
+  /// 展示口径：走的通道 / 每步 step·action·target·ok·message / 端口返回的 reason **原样**单列一行；
+  /// 映射不了或端口被拒都不粉饰成成功，也不回退本机路径去“凑个能看的结论”。
+  Future<void> _runWorkflowPortSelfCheck() async {
+    final l10n = AppLocalizations.of(context)!;
+    // M4d-3 收尾（Codex，2026-09-23）：工作流端口开关**未开时一步都不执行**——否则自检会真的
+    // 打开本应用并点一下标题（真实副作用），而它本意只是验证「新端口能不能用」。
+    if (!await DeviceActionPrefs.isWorkflowBridgeEnabled()) {
+      if (!mounted) return;
+      await _showWorkflowSelfCheck(l10n, l10n.ppActionWfSelfCheckBridgeOff);
+      return;
+    }
+    final steps = workflowSelfCheckSteps(l10n.ppGroupActions);
+    final inspected = inspectWorkflow(steps);
+    final plan = inspected.plan;
+    if (plan == null) {
+      // 连自检序列都映射不了＝这条路的构造前提没了：一步都不执行，直接把机器可读原因原样带出
+      await _showWorkflowSelfCheck(l10n, l10n.ppActionWfSelfCheckNotMappable(inspected.reason));
+      return;
+    }
+    final rows = await WorkflowActionBridge.withConfirmHandler(
+      // 与「执行待办动作」同款确认弹窗；拿不到 context/文案一律 false（绝不默认放行）
+      (capability) async {
+        if (!mounted) return false;
+        final granted = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(l10n.ppActionConfirmTitle),
+            content: Text(l10n.ppActionConfirmBody(capability)),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l10n.cancel)),
+              TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text(l10n.confirm)),
+            ],
+          ),
+        );
+        return granted == true;
+      },
+      () => PhonePerceptionService.executeActionSequence(steps),
+    );
+    if (!mounted) return;
+    final via = rows.isEmpty ? "" : (rows.first["via"] ?? "").toString();
+    final lines = <String>[
+      via == WorkflowActionBridge.viaPort
+          ? l10n.ppActionWfSelfCheckViaPort
+          : l10n.ppActionWfSelfCheckViaLegacy,
+      if (via != WorkflowActionBridge.viaPort) l10n.ppActionWfSelfCheckLegacyNote,
+      l10n.ppActionWfSelfCheckTarget(plan.targetApp),
+      if (rows.isEmpty) l10n.ppActionWfSelfCheckEmpty,
+      for (final r in rows)
+        "${r["step"]}. ${r["action"]} [${r["target"]}] -> "
+            "${r["ok"] == true ? l10n.ppActionWfSelfCheckOk : l10n.ppActionWfSelfCheckFail}: ${r["message"] ?? ""}",
+    ];
+    final denied = rows
+        .where((r) => (r["via"] ?? "").toString() == WorkflowActionBridge.viaPort && r["ok"] != true)
+        .toList();
+    if (denied.isNotEmpty) {
+      // 端口拒绝＝服务端 reason 原样，不解释、不翻译、不加包装
+      lines.add(l10n.ppActionSelfCheckDenied((denied.first["message"] ?? "").toString()));
+    }
+    await _showWorkflowSelfCheck(l10n, lines.join("\n"));
+  }
+
+  Future<void> _showWorkflowSelfCheck(AppLocalizations l10n, String body) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.ppActionWfSelfCheckTitle),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Scrollbar(
+            child: SingleChildScrollView(
+              child: SelectableText(
+                body,
+                style: const TextStyle(fontSize: 11, fontFamily: "monospace", height: 1.5),
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.close)),
+        ],
+      ),
+    );
+  }
 
   String get _userLocationDisplay {
     final l10n = AppLocalizations.of(context)!;
@@ -969,6 +1278,56 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
               title: l10n.ppDiagnosticsTitle,
               subtitle: l10n.ppDiagnosticsSub,
               onTap: _showDiagnostics,
+            ),
+            // M4b-2：内置行动通道（后端批准 → 本机执行 → 回报）的两个入口
+            const PpDivider(),
+            PpNav(
+              icon: Icons.verified_outlined,
+              title: l10n.ppActionSelfCheck,
+              subtitle: l10n.ppActionSelfCheckSub,
+              onTap: _selfCheckActionGate,
+            ),
+            const PpDivider(),
+            PpNav(
+              icon: Icons.play_circle_outline,
+              title: l10n.ppActionRunPending,
+              subtitle: l10n.ppActionRunPendingSub,
+              onTap: _runPendingActions,
+            ),
+            const PpDivider(),
+            PpNav(
+              icon: Icons.open_in_new,
+              title: l10n.ppActionSubmitRun,
+              subtitle: l10n.ppActionSubmitRunSub,
+              onTap: _submitAndRunAction,
+            ),
+            // M4c-5：三档确认策略入口（轻/中/重逐类选择，只落本机 prefs）
+            const PpDivider(),
+            PpNav(
+              icon: Icons.rule_outlined,
+              title: l10n.ppActionPolicy,
+              subtitle: l10n.ppActionPolicySub,
+              onTap: _showActionPolicySettings,
+            ),
+            // M4d：工作流改走行动端口的客户端开关（缺省＝关＝旧路径逐字不变）
+            const PpDivider(),
+            PpSwitch(
+              icon: Icons.alt_route,
+              title: l10n.ppActionWorkflowBridge,
+              subtitle: l10n.ppActionWorkflowBridgeSub,
+              value: _workflowBridgeOn,
+              onChanged: (v) async {
+                setState(() => _workflowBridgeOn = v);
+                await DeviceActionPrefs.setWorkflowBridgeEnabled(v);
+              },
+            ),
+            // M4d-3：新路径一键自检（真机验证自服务：走没走端口、被拒的原因原样摊开）
+            const PpDivider(),
+            PpNav(
+              icon: Icons.route_outlined,
+              title: l10n.ppActionWfSelfCheck,
+              subtitle: l10n.ppActionWfSelfCheckSub,
+              onTap: _runWorkflowPortSelfCheck,
             ),
           ]),
           // 操作与记录

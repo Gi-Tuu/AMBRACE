@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
 import '../../services/home_tab_controller.dart';
 import '../../services/phone_perception_service.dart';
+import '../../services/workflow_action_bridge.dart';
 
 /// 手机感知动作流（AI 帮用户操作屏幕）：序列模板/节点选择/授权弹窗。
 /// mixin on State：直接使用 mounted/context；不触碰屏幕私有字段。
@@ -29,7 +30,7 @@ mixin ChatPhoneActions<T extends StatefulWidget> on State<T> {  /// 3.4a：先�
           ),
         );
         if (okRun == true && mounted) {
-          final wfResults = await PhonePerceptionService.executeActionSequence(wfSteps);
+          final wfResults = await _runSequenceWithConfirm(wfSteps);
           final wfOk = wfResults.every((r) => r['ok'] == true);
           final wfSummary = wfResults
               .map((r) => l10n.chatWfStep(r['step'], r['ok'] == true ? '✓' : '✗', r['message'] ?? ''))
@@ -71,7 +72,7 @@ mixin ChatPhoneActions<T extends StatefulWidget> on State<T> {  /// 3.4a：先�
           if (nav.canPop()) nav.pop();
           await Future.delayed(const Duration(milliseconds: 1000));
         }
-        final results = await PhonePerceptionService.executeActionSequence(steps);
+        final results = await _runSequenceWithConfirm(steps);
         final allOk = results.every((r) => r["ok"] == true);
         final summary = results
             .map((r) => l10n.chatWfStep(r["step"], r["ok"] ? "✓" : "✗", r["message"]))
@@ -189,6 +190,33 @@ mixin ChatPhoneActions<T extends StatefulWidget> on State<T> {  /// 3.4a：先�
       messenger.showSnackBar(SnackBar(content: Text(msg)));
     }
     return null;
+  }
+
+  /// M4d-2：工作流桥的确认弹窗只认 `confirmHandler`（没装＝拿不到同意，默认中档第一条就被 confirm_denied 中止），
+  /// 因此必须在真实触发点装、跑完必摘——handler 捕获本页面 context，悬挂引用＝页面卸载后仍会弹框或误放行。
+  Future<List<Map<String, dynamic>>> _runSequenceWithConfirm(List<Map> steps) =>
+      WorkflowActionBridge.withConfirmHandler(
+        _confirmWorkflowAction,
+        () => PhonePerceptionService.executeActionSequence(steps),
+      );
+
+  /// 与感知页同款的确认弹窗（复用 ppActionConfirm* 文案）；拿不到 context/文案一律 false（绝不默认放行）。
+  Future<bool> _confirmWorkflowAction(String capability) async {
+    if (!mounted) return false;
+    final l10n = AppLocalizations.of(context);
+    if (l10n == null) return false;
+    final granted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.ppActionConfirmTitle),
+        content: Text(l10n.ppActionConfirmBody(capability)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l10n.cancel)),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text(l10n.confirm)),
+        ],
+      ),
+    );
+    return granted == true;
   }
 
   /// 序列确认弹窗：展示每一步 + 干涉档位说明（轻度干涉默认）

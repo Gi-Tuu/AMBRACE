@@ -1235,6 +1235,19 @@ OVERVIEW_FIELDS = (("accounts", "账号总数"),
 # A8（2026-09-20）LLM 额度：source → 中文来源标签（控制台是内部工具，文案不做 i18n）
 LLM_LIMIT_SOURCE_LABELS = {"user": "账号覆盖", "global": "全局", "unset": "未设置"}
 
+# X7-M4e-2 行动通道页（控制台）：三条开关的键名 / 中文名 / 「读不到这一行」时的缺省方向。
+# 缺省方向照抄后端 app/device/actions.py（device_actions_enabled 与 device_actions_plugin_enabled
+# 缺行＝关、device_actions_force_dry_run 缺行＝开）；生效值一律以后端返回为准，控制台不做推算。
+DEVICE_ACTION_SWITCHES = (("global", "全局行动开关", "关"),
+                          ("plugin_enabled", "插件行动通道", "关"),
+                          ("force_dry_run", "插件强制干跑", "开"))
+DEVICE_ACTION_LABELS = {key: label for key, label, _default in DEVICE_ACTION_SWITCHES}
+# 两份名单：页面区块键 → 契约字段名 / 中文名词（§1：targets 用 target，plugins 用 plugin）
+DEVICE_ACTION_FIELDS = {"targets": "target", "plugins": "plugin"}
+DEVICE_ACTION_NOUNS = {"targets": "包名", "plugins": "插件名"}
+DEVICE_ACTION_SECTIONS = (("targets", "目标白名单", "应用包名，如 com.example.app"),
+                          ("plugins", "插件灰度名单", "插件名，如 browser_mcp"))
+
 
 def _llm_limit_text(row) -> str:
     """账号额度展示：『生效值（来源）』；无生效额度显示「未设置」。
@@ -1714,6 +1727,7 @@ class ControllerApp:
             ("accounts", "账号管理", "users"),
             ("registration", "注册策略", "ticket"),
             ("flags", "开关与权限", "toggle-right"),
+            ("device_actions", "行动通道", "check-circle-2"),
             ("audit", "审计", "clipboard-list"),
             ("overview", "概览", "gauge"),
         ]
@@ -1746,6 +1760,7 @@ class ControllerApp:
             "accounts": self._build_accounts_page(),
             "registration": self._build_registration_page(),
             "flags": self._build_flags_page(),
+            "device_actions": self._build_device_actions_page(),
             "audit": self._build_audit_page(),
             "overview": self._build_overview_page(),
         }
@@ -3301,6 +3316,273 @@ class ControllerApp:
                      fg=t.text_muted if missing else t.text,
                      bold=not missing, num=not missing)
         return len(rows)
+
+    # ── 行动通道（X7-M4e-2：三条开关 + 两份名单，一律走管理面 HTTP，不直连数据库）──
+
+    def _build_device_actions_page(self) -> tk.Frame:
+        """三段式：三条开关 / 目标白名单 / 插件灰度名单（控件只建一次，重绘只换列表行）。"""
+        t = self.theme
+        page, pad = self._make_admin_page(
+            "行动通道",
+            "三条开关 + 目标白名单 + 插件灰度名单（全部经 %s/device-actions 读写，控制台不碰数据库）"
+            % ADMIN_API_PREFIX)
+        login_label, login_dot, hint = self._admin_login_bar(pad, self._load_device_actions)
+        self._da_snapshot = {}
+        self._da_rows = {"targets": [], "plugins": []}
+        self._da_entry = {}
+        self._da_hint = {}
+        self._da_hint_default = {}
+        self._da_cap = {}
+        self._da_list_host = {}
+        self._da_switch = {}
+        # 整页提示位：未登录 / 接口未就绪时由 _admin_note 占用，放最上面才不会被三段挤出视口
+        body = tk.Frame(pad, bg=t.bg)
+        body.pack(fill="x")
+
+        _, sw_card = self._admin_card(pad, fill="x", pady=(SP_SM, SP_SM))
+        tk.Label(sw_card, text="三条开关", anchor="w", fg=t.text_sec, bg=t.card,
+                 font=CUI.f("caption", True)).pack(fill="x")
+        for key, label, default_text in DEVICE_ACTION_SWITCHES:
+            row = tk.Frame(sw_card, bg=t.card)
+            row.pack(fill="x", pady=CUI.sp("xxs"))
+            left = tk.Frame(row, bg=t.card)
+            left.pack(side="left", fill="x", expand=True)
+            tk.Label(left, text=label, anchor="w", fg=t.text, bg=t.card,
+                     font=CUI.f("body", True)).pack(anchor="w")
+            sub = tk.Label(left, text="未读取（GET %s/device-actions）" % ADMIN_API_PREFIX,
+                           anchor="w", fg=t.text_muted, bg=t.card, font=CUI.f("caption"))
+            sub.pack(anchor="w")
+            var = tk.BooleanVar(value=False)
+            sw = CUI.Switch(row, t, variable=var, bg=t.card,
+                            command=lambda k=key, v=var: self._save_device_action_switch(k, v))
+            sw.pack(side="right", padx=(SP_SM, 0))
+            self._da_switch[key] = {"var": var, "sw": sw, "sub": sub,
+                                    "default": default_text, "present": None}
+
+        for which, title, sample in DEVICE_ACTION_SECTIONS:
+            self._da_list_section(which, pad, title, sample)
+
+        self._admin_meta["device_actions"] = {"status": hint, "login_label": login_label,
+                                              "login_dot": login_dot, "body": body,
+                                              "path": ADMIN_API_PREFIX + "/device-actions",
+                                              "loader": self._load_device_actions}
+        return page
+
+    def _da_list_section(self, which: str, parent, title: str, sample: str) -> None:
+        """一份名单的区块卡：标题行（租户/上限）+ 输入行 + 提示行 + 列表行容器。"""
+        t = self.theme
+        _, card = self._admin_card(parent, fill="x", pady=(0, SP_SM))
+        head = tk.Frame(card, bg=t.card)
+        head.pack(fill="x")
+        tk.Label(head, text=title, anchor="w", fg=t.text, bg=t.card,
+                 font=CUI.f("h2", True)).pack(side="left")
+        cap = tk.Label(head, text="", fg=t.text_muted, bg=t.card, font=CUI.f("caption"))
+        cap.pack(side="right")
+        row = tk.Frame(card, bg=t.card)
+        row.pack(fill="x", pady=(SP_XS, 0))
+        var = tk.StringVar()
+        ent = tk.Entry(row, textvariable=var, bg=t.entry_bg, fg=t.text,
+                       insertbackground=t.text, relief="flat", highlightthickness=1,
+                       highlightbackground=t.hairline, highlightcolor=t.accent,
+                       font=CUI.f("body"))
+        ent.pack(side="left", fill="x", expand=True, ipady=CUI.sp("xxs"))
+        ent.bind("<Return>", lambda _e, w=which: self._add_device_action_item(w))
+        RoundedButton(row, t, "添加", variant="primary", height=28, font_size=10,
+                      command=lambda w=which: self._add_device_action_item(w)
+                      ).pack(side="left", padx=(SP_XS, 0))
+        hint_text = "提示：%s（回车或点「添加」提交，名单以服务端返回为准）" % sample
+        hint = tk.Label(card, text=hint_text, anchor="w", justify="left", fg=t.text_muted,
+                        bg=t.card, font=CUI.f("caption"))
+        hint.pack(fill="x", pady=(2, 0))
+        CUI.Tooltip(ent, lambda s=sample: s)
+        tk.Frame(card, bg=t.hairline, height=1).pack(fill="x", pady=(SP_XS, 0))
+        lst = tk.Frame(card, bg=t.card)
+        lst.pack(fill="x")
+        self._da_entry[which] = var
+        self._da_hint[which] = hint
+        self._da_hint_default[which] = hint_text
+        self._da_cap[which] = cap
+        self._da_list_host[which] = lst
+
+    def _da_note(self, which: str, text: str = "", kind: str = "info") -> None:
+        """区块内提示行（后端 reason 原样落在这里，不弹栈也不吞掉）；text 空则复位成默认提示。"""
+        lab = self._da_hint.get(which)
+        if lab is None:
+            return
+        t = self.theme
+        color = {"ok": t.success, "warn": t.warning, "err": t.error}.get(kind, t.text_muted)
+        try:
+            lab.config(text=text or self._da_hint_default.get(which, ""), fg=color)
+        except Exception:
+            _safe_traceback()
+
+    def _render_device_action_list(self, which: str) -> None:
+        t = self.theme
+        host = self._da_list_host.get(which)
+        if host is None:
+            return
+        _clear_frame(host)
+        names = self._da_rows.get(which) or []
+        if not names:
+            tk.Label(host, text="名单为空（后端返回 0 条）", anchor="w", fg=t.text_muted,
+                     bg=t.card, font=CUI.f("caption")).pack(fill="x", pady=CUI.sp("xxs"))
+            return
+        for i, name in enumerate(names):
+            zebra = t.card if i % 2 == 0 else _hex_mix(t.card, t.card_hover, 0.55)
+            row = tk.Frame(host, bg=zebra)
+            row.pack(fill="x", pady=1)
+            tk.Label(row, text=name, anchor="w", fg=t.text, bg=zebra,
+                     font=CUI.f("body")).pack(side="left", fill="x", expand=True)
+            RoundedButton(row, t, "删除", variant="neutral", height=24, font_size=9,
+                          command=lambda w=which, n=name: self._del_device_action_item(w, n)
+                          ).pack(side="right")
+
+    @staticmethod
+    def _da_names(value) -> list:
+        """契约里两份名单是字符串数组；万一后端给的是对象也照字面显示，绝不静默丢条目。"""
+        out = []
+        for item in (value or []):
+            text = (item if isinstance(item, str) else str(item)).strip()
+            if text and text not in out:
+                out.append(text)
+        return out
+
+    def _apply_device_actions(self, data: dict) -> None:
+        """整包落地：名单 + 上限/租户标题行 + 三条开关（全部取后端字段，缺就显示缺）。"""
+        self._da_snapshot = data
+        self._da_rows["targets"] = self._da_names(data.get("targets"))
+        self._da_rows["plugins"] = self._da_names(data.get("plugins"))
+        self._apply_device_action_switches(data.get("switches"))
+        limits = data.get("limits") if isinstance(data.get("limits"), dict) else {}
+        tenant = data.get("tenant_id")
+        for which, limit_key in (("targets", "targets_max"), ("plugins", "plugins_max")):
+            cap = limits.get(limit_key)
+            try:
+                self._da_cap[which].config(text="租户＝%s ｜ %s" % (
+                    "—" if tenant is None else tenant,
+                    "上限未知" if cap is None else "最多 %s 个" % cap))
+            except Exception:
+                _safe_traceback()
+            self._da_note(which)
+            self._render_device_action_list(which)
+
+    def _apply_device_action_switches(self, switches) -> None:
+        sw = switches if isinstance(switches, dict) else {}
+        present = sw.get("rows_present")
+        present = present if isinstance(present, dict) else None
+        t = self.theme
+        for key, _label, default_text in DEVICE_ACTION_SWITCHES:
+            ent = self._da_switch.get(key)
+            if ent is None:
+                continue
+            if present is not None:
+                ent["present"] = bool(present.get(key))
+            on_text = "开" if bool(sw.get(key)) else "关"
+            if ent["present"] is None:
+                sub = "后端生效值：%s（是否显式设置：后端未返回）" % on_text
+            elif ent["present"]:
+                sub = "已显式设置（后端生效值：%s）" % on_text
+            else:
+                sub = "未显式设置（默认：%s）" % default_text
+            try:
+                ent["var"].set(bool(sw.get(key)))
+                ent["sw"]._draw()
+                ent["sub"].config(text=sub,
+                                  fg=t.text_sec if ent["present"] else t.text_muted)
+            except Exception:
+                _safe_traceback()
+
+    def _load_device_actions(self) -> None:
+        path = ADMIN_API_PREFIX + "/device-actions"
+
+        def ok(data):
+            self._apply_device_actions(data if isinstance(data, dict) else {})
+            self._set_admin_status("device_actions", "已读取（GET %s）" % path, "ok")
+
+        self._set_admin_status("device_actions", "加载中… GET %s" % path, "pending")
+        self._run_admin("读取行动通道", lambda: _admin_request("GET", "/device-actions"),
+                        ok, "device_actions")
+
+    def _save_device_action_switch(self, key: str, var) -> None:
+        label = DEVICE_ACTION_LABELS.get(key, key)
+        wanted = bool(var.get())
+        ent = self._da_switch.get(key) or {}
+        snapshot = self._da_snapshot.get("switches") if isinstance(self._da_snapshot, dict) else None
+        # 滑块先退回上一次读到的服务器值，只由回包/回读落地：这一页是危险动作的总闸，
+        # 后端还没答应之前界面不能先替它说「已关」（写失败时最容易误导人的一刻）。
+        var.set(bool((snapshot or {}).get(key)))
+        try:
+            if ent.get("sw") is not None:
+                ent["sw"]._draw()
+        except Exception:
+            _safe_traceback()
+
+        def ok(data):
+            payload = data if isinstance(data, dict) else {}
+            if isinstance(payload.get("switches"), dict):
+                self._apply_device_action_switches(payload["switches"])
+            else:
+                self._load_device_actions()  # 回包没带 switches 就整页回读，不拿本地值充数
+            if payload.get("ok") is False:
+                self._set_admin_status("device_actions", "后端拒绝修改开关 %s：%s"
+                                       % (key, payload.get("reason")), "err")
+                return
+            self._set_admin_status("device_actions", "已保存开关 %s＝%s（PUT %s/switches）"
+                                   % (label, "开" if wanted else "关",
+                                      ADMIN_API_PREFIX + "/device-actions"), "ok")
+            self._set_msg("已保存开关 %s=%s" % (label, "开" if wanted else "关"))
+
+        self._run_admin("保存开关 %s" % label,
+                        lambda: _admin_request("PUT", "/device-actions/switches",
+                                               {"key": key, "enabled": wanted}),
+                        ok, "device_actions")
+
+    def _replace_da_rows(self, which: str, payload: dict) -> None:
+        """POST/DELETE 的回包都带最新整份名单（含删空时的 []），照它刷新，不再自行增删。"""
+        if isinstance(payload.get(which), list):
+            self._da_rows[which] = self._da_names(payload[which])
+        self._render_device_action_list(which)
+
+    def _add_device_action_item(self, which: str) -> None:
+        noun = DEVICE_ACTION_NOUNS.get(which, which)
+        raw = str(self._da_entry[which].get() or "").strip()
+        if not raw:
+            self._da_note(which, "先在输入框里填写%s再点添加" % noun, "warn")
+            return
+
+        def ok(data):
+            payload = data if isinstance(data, dict) else {}
+            self._replace_da_rows(which, payload)  # 先落地回包名单，条数才不是加之前的旧值
+            if payload.get("ok") is False:
+                self._da_note(which, "添加失败：%s"
+                              % str(payload.get("reason") or "后端未返回 reason"), "err")
+            else:
+                self._da_note(which, "已添加 %s（当前 %d 条）"
+                              % (raw, len(self._da_rows[which])), "ok")
+                self._da_entry[which].set("")
+
+        self._run_admin("添加%s" % noun,
+                        lambda: _admin_request("POST", "/device-actions/%s" % which,
+                                               {DEVICE_ACTION_FIELDS[which]: raw}),
+                        ok, "device_actions")
+
+    def _del_device_action_item(self, which: str, name: str) -> None:
+        noun = DEVICE_ACTION_NOUNS.get(which, which)
+
+        def ok(data):
+            payload = data if isinstance(data, dict) else {}
+            if payload.get("ok") is False:
+                self._da_note(which, "删除失败：%s"
+                              % str(payload.get("reason") or "后端未返回 reason"), "err")
+            else:
+                self._da_note(which, "已删除 %s（移除 %s 条）"
+                              % (name, payload.get("removed")), "ok")
+            self._replace_da_rows(which, payload)
+
+        self._run_admin("删除%s" % noun,
+                        lambda: _admin_request("DELETE", "/device-actions/%s" % which,
+                                               {DEVICE_ACTION_FIELDS[which]: name}),
+                        ok, "device_actions")
 
     # ── ttk 主题（Checkbutton / Entry 仍用 ttk）──
 

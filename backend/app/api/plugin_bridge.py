@@ -2,7 +2,10 @@
 
 - 未登录 401（get_current_user_id）；插件不存在 404；未知 api 400；ai 超限 429 + Retry-After；
 - 业务错误（AI 不存在 / store 超限 / http 被拒等）以 {"ok": false, "error"} 返回（JS Promise reject）；
-- openChat/toast/copy/navigate 为前端能力（Flutter 端直接执行），不经过本端点。
+- openChat/toast/copy/navigate 为前端能力（Flutter 端直接执行），不经过本端点；
+- X7-M4c-1 起 ``device_action``（插件提交行动意图 → 后端闸门裁决）也走本端点：**身份取路径 ``{name}``**
+  （params 里的 ``plugin`` 不采信），且必须先过本文件既有的三道校验（插件存在 / 未停用 / 对 caller 可见）
+  ——这正是「插件身份来自服务端可判定的来源」这条收口；闸门逻辑全在 ``app.device.actions``。
 """
 from fastapi import APIRouter, Depends, Header, HTTPException
 

@@ -100,6 +100,12 @@ _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     # 该列由迁移 f4a5b6c7d8e9 add_column 引入；老库（有表无版本号）缺此列时必须判「落后」走
     # upgrade head 补列，否则会被 stamp 到 head 却永久缺列（select PhoneSnapshot 直接报错）。
     ("phone_snapshots", "payload_json"),
+    # ── X7-M4c-3 行动名单落库（2026-09-23，派单 P19）：两张【只由迁移链 create_table 引入】的表 ──
+    # device_action_targets 是闸门④（目标白名单）的权威来源、device_action_plugins 是闸门③a
+    # （逐插件灰度）的权威来源。老库缺表时若不判「落后」，会被 stamp 到 head 却永久缺表——
+    # 读库异常被 fail-closed 吞成「名单为空＝全拒」，运维看到的是拒而不是缺表，问题被掩盖。
+    ("device_action_targets", "target"),
+    ("device_action_plugins", "plugin_name"),
 ]
 
 

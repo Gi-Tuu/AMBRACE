@@ -1,7 +1,10 @@
-"""48a 插件桥服务层：store KV / getUserInfo / http 代理（SSRF 防护）/ ai 分发（调 48b service）。
+"""48a 插件桥服务层：store KV / getUserInfo / http 代理（SSRF 防护）/ ai 分发（调 48b service）/
+device_action 行动裁决（X7-M4c-1，转发 ``app.device.actions``）。
 
 桥 API 白名单与 HTTP 级错误（401/404/400/429）在 app/api/plugin_bridge.py；
 本模块只实现能力本身，业务错误统一以 {"ok": False, "error": ...} 返回，由 API 层包成响应。
+例外：``device_action`` 的**被拒**不是桥的错误（行动被哪层闸门挡住是业务结论），仍按
+{"ok": True, "data": {"allowed": false, "reason": ...}} 返回，与内置行动端点同一份机器可读口径。
 """
 import asyncio
 import ipaddress
@@ -14,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.agent.llm_client import TASK_PLUGIN_AI, chat_completion, get_user_llm_config
@@ -26,8 +30,10 @@ from app.utils.logger import get_logger
 
 _logger = get_logger("services.plugin_bridge")
 
-# ---- 桥 API 白名单（含统一入口 call；openChat/toast/copy/navigate 为前端能力，不落后端）----
-VALID_APIS = ("ai", "getAiList", "getAiInfo", "getUserInfo", "store.set", "store.get", "http", "call")
+# ---- 桥 API 白名单（含统一入口 call；openChat/toast/copy/navigate 为前端能力，不落后端；
+#      device_action 为 X7-M4c-1 插件行动通道，身份取路径插件名）----
+VALID_APIS = ("ai", "getAiList", "getAiInfo", "getUserInfo", "store.set", "store.get", "http",
+              "call", "device_action")
 
 # ---- store 限额 ----
 MAX_STORE_VALUE_BYTES = 100 * 1024  # store value ≤100KB（序列化后 UTF-8 字节）
@@ -493,6 +499,63 @@ async def ai_dispatch(plugin_name: str, params: dict, user_id: int, lang: str = 
     return {"ok": True, "data": cleaned}
 
 
+# ---------------- device_action 行动裁决（X7-M4c-1） ----------------
+
+async def _action_tenant_id(user_id: int) -> int | None:
+    """当前调用账号的家庭根（＝租户），与内置行动端点同口径；解析失败返回 None（闸门 fail-closed）。
+
+    刻意走 ``database.async_session_factory``（按属性访问）而非本模块早绑定的同名 import：
+    行动闸门全部读点在 ``app.db.database`` 上，两处同源才不会「租户来自一份库、开关来自另一份库」，
+    测试也只需 patch 那一个名字。
+    """
+    from app.application.family_service import get_family_root_id
+    from app.db import database
+
+    try:
+        async with database.async_session_factory() as db:
+            return await get_family_root_id(db, user_id)
+    except Exception as e:  # 读库失败不得放行行动裁决的租户判定
+        _logger.warning("插件行动通道解析租户失败 user=%s: %s", user_id, e)
+        return None
+
+
+async def device_action_dispatch(plugin_name: str, params: dict, user_id: int,
+                                 lang: str = "zh") -> dict:
+    """插件提交一次行动意图 → 后端闸门裁决（**桥侧零真实执行**，执行体在 App 端取待办）。
+
+    身份只取**路径插件名** ``plugin_name``（``/{name}/bridge`` 的三道既有校验即其授权前提）；
+    ``params`` 里的 ``plugin`` 一律不采信——带了即拒 ``invalid_intent:plugin_not_allowed``。
+    本函数只做「params → ActionIntent → ``decide_action`` → 响应载荷」，闸门/灰度/强制干跑
+    全在 :mod:`app.device.actions`，此处不复制任何判定。
+    """
+    from app.device import actions as device_actions
+
+    params = params or {}
+    body = {k: v for k, v in params.items() if k != "plugin"}
+    dry_run = bool(body.get("dry_run") or False)
+
+    def _denied(reason: str) -> dict:
+        return {"ok": True, "data": {"allowed": False, "reason": reason, "dry_run": dry_run,
+                                     "status": device_actions.STATUS_DENIED}}
+
+    if str(params.get("plugin") or "").strip():
+        return _denied(f"{device_actions.REASON_INVALID_INTENT}"
+                       f":{device_actions.REASON_PLUGIN_NOT_ALLOWED}")
+    try:
+        intent = device_actions.ActionIntent.model_validate(body)
+    except ValidationError as e:
+        return _denied(device_actions.invalid_intent_reason(e))
+
+    tenant_id = await _action_tenant_id(user_id)
+    decision = await device_actions.decide_action(user_id=user_id, tenant_id=tenant_id,
+                                                  plugin_name=plugin_name, intent=intent)
+    result = {"allowed": decision.allowed, "reason": decision.reason,
+              "dry_run": decision.dry_run, "status": decision.status}
+    if decision.action_token:
+        result["action_token"] = decision.action_token
+    return {"ok": True, "data": result}
+
+
 # ---------------- 统一分发 ----------------
 
 async def dispatch(plugin_name: str, api: str, params: dict, user_id: int, lang: str = "zh") -> dict:
@@ -532,4 +595,6 @@ async def dispatch(plugin_name: str, api: str, params: dict, user_id: int, lang:
         return await store_get(plugin_name, user_id, params.get("key"))
     if api == "http":
         return await http_proxy(params, lang)
+    if api == "device_action":
+        return await device_action_dispatch(plugin_name, params, user_id, lang)
     return {"ok": False, "error": tr_lang(lang, "bridge_api_unknown", api=api)}

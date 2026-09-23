@@ -740,3 +740,163 @@ async def server_overview(
         "flags_on": sum(1 for v in AGENT_FLAGS.values() if isinstance(v, bool) and v),
         "version": get_project_version(),
     }
+
+
+# ── 行动通道管理端点（X7-M4e-1，派单 P25）──────────────────────────────────────
+# 三条行动开关刻意不在 AGENT_FLAGS/flag_catalog（故上面 PUT /server/flags 认不了它们），两份
+# 名单此前也只有设备侧端点（不属控制台前缀契约）。本组端点挂在既有 /server 前缀下补齐：控制台
+# 只调 HTTP API。**闸门逻辑一律不在本文件复制**——读写全部经 app.device.actions；校验复用设备侧
+# 同一份（app.api.device_actions 里的包名/插件名形态与容量上限）。
+
+async def _admin_tenant_id(user_id: int) -> int | None:
+    """当前管理员的家庭根（= 租户）；解析失败返回 None（调用方据此回错，不猜租户）。"""
+    from app.application.family_service import get_family_root_id
+
+    try:
+        async with async_session_factory() as db:
+            return await get_family_root_id(db, user_id)
+    except Exception as e:  # noqa: BLE001 —— 读库失败不得凭空指定一个租户
+        _logger.warning("device-actions 解析租户失败 user=%s: %s", user_id, e)
+        return None
+
+
+@router.get("/server/device-actions")
+async def get_server_device_actions(
+    user_id: int = Depends(require_server_admin),
+):
+    """行动通道总览：三开关生效态 + 本家庭目标白名单 + 插件灰度名单 + 容量上限。
+
+    ``tenant_id`` 取当前管理员家庭根；解析不到 → ``targets`` 空列表且 ``tenant_id`` 为 null
+    （与闸门④ fail-closed 同口径）。``switches`` 的生效值按各闸门缺省方向（见 action_flag_states）。
+    """
+    from app.api.device_actions import MAX_PLUGINS_GRAYLISTED, MAX_TARGETS_PER_TENANT
+    from app.device import actions
+
+    tenant_id = await _admin_tenant_id(user_id)
+    return {
+        "tenant_id": tenant_id,
+        "switches": await actions.action_flag_states(),
+        "targets": sorted(await actions.configured_targets(tenant_id)),
+        "plugins": sorted(await actions.configured_plugins()),
+        "limits": {"targets_max": MAX_TARGETS_PER_TENANT, "plugins_max": MAX_PLUGINS_GRAYLISTED},
+    }
+
+
+@router.put("/server/device-actions/switches")
+async def put_server_device_action_switch(
+    body: dict,
+    user_id: int = Depends(require_server_admin),
+    lang: str = Header(default="zh"),
+):
+    """改一条行动开关：body ``{"key": "global|plugin_enabled|force_dry_run", "enabled": bool}``。
+
+    非法 key（或缺 ``enabled``）→ 400；成功 → ``{"ok": true, "switches": {...}}``（同 GET 的
+    switches 段，回显写后的生效态）。写库失败 → 200 + ``ok=false``/``store_unavailable``（不静默成功）。
+    """
+    from app.device import actions
+
+    if not isinstance(body, dict) or "enabled" not in body:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "admin_enabled_invalid"))
+    key = str(body.get("key") or "").strip()
+    prev = (await actions.action_flag_states()).get(key)
+    try:
+        result = await actions.set_action_flag(key, bool(body.get("enabled")))
+    except ValueError:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "config_invalid"))
+    switches = await actions.action_flag_states()
+    if not result.get("ok"):
+        return {"ok": False, "reason": "store_unavailable", "switches": switches}
+    # 契约 §0：所有写动作落 admin_audit_log（X7-M4e-1 收尾补齐）
+    await _audit_record(None, user_id, "server.device_actions.switch.update", "flag:" + key,
+                        {"enabled": prev}, {"enabled": switches.get(key)})
+    return {"ok": True, "switches": switches}
+
+
+@router.post("/server/device-actions/targets")
+async def post_server_device_action_target(
+    body: dict,
+    user_id: int = Depends(require_server_admin),
+):
+    """给本家庭放开一个行动目标：复用设备侧同一套校验（包名形态 + ≤128 + 单租户 ≤20 + 幂等）。
+
+    非法 → 200 + ``invalid_target``；超容量 → 200 + ``too_many_targets``；写库失败 → ``store_unavailable``；
+    成功 → ``{"ok": true, "targets": [...]}``。租户解析不到 → ``tenant_unresolved``。
+    """
+    from app.api.device_actions import MAX_TARGETS_PER_TENANT, _valid_target
+    from app.device import actions
+
+    tenant_id = await _admin_tenant_id(user_id)
+    if tenant_id is None:
+        return {"ok": False, "reason": "tenant_unresolved"}
+    target = str((body or {}).get("target") or "").strip()
+    current = sorted(await actions.configured_targets(tenant_id))
+    if not _valid_target(target):
+        return {"ok": False, "reason": "invalid_target", "targets": current}
+    if len(set(current) | {target}) > MAX_TARGETS_PER_TENANT:
+        return {"ok": False, "reason": "too_many_targets", "targets": current}
+    if not await actions.allow_target(tenant_id, target):
+        return {"ok": False, "reason": "store_unavailable", "targets": current}
+    # 契约 §0：写动作落审计（目标只是包名，不含任何用户内容）
+    await _audit_record(None, user_id, "server.device_actions.target.add", "target:%s" % target,
+                        None, {"tenant_id": tenant_id})
+    return {"ok": True, "targets": sorted(await actions.configured_targets(tenant_id))}
+
+
+@router.delete("/server/device-actions/targets")
+async def delete_server_device_action_target(
+    body: dict,
+    user_id: int = Depends(require_server_admin),
+):
+    """删除本家庭一个行动目标（幂等）：``{"ok": true, "removed": <行数>, "targets": [...]}``。"""
+    from app.device import actions
+
+    tenant_id = await _admin_tenant_id(user_id)
+    if tenant_id is None:
+        return {"ok": False, "reason": "tenant_unresolved"}
+    target = str((body or {}).get("target") or "").strip()
+    removed = await actions.remove_target(tenant_id, target)
+    await _audit_record(None, user_id, "server.device_actions.target.remove", "target:%s" % target,
+                        {"tenant_id": tenant_id}, {"removed": removed})
+    return {"ok": True, "removed": removed,
+            "targets": sorted(await actions.configured_targets(tenant_id))}
+
+
+@router.post("/server/device-actions/plugins")
+async def post_server_device_action_plugin(
+    body: dict,
+    user_id: int = Depends(require_server_admin),
+):
+    """把一个插件放进行动灰度名单（全局不分租户）：校验非空 / ≤64 / 仅 ``[A-Za-z0-9_.-]`` / 上限 50。
+
+    非法 → 200 + ``invalid_plugin``；超容量 → 200 + ``too_many_plugins``；写库失败 → ``store_unavailable``；
+    成功 → ``{"ok": true, "plugins": [...]}``。幂等：重复添加不产生第二行。
+    """
+    from app.api.device_actions import MAX_PLUGINS_GRAYLISTED, PLUGIN_NAME_PATTERN
+    from app.device import actions
+
+    name = str((body or {}).get("plugin") or "").strip()
+    current = sorted(await actions.configured_plugins())
+    if not PLUGIN_NAME_PATTERN.fullmatch(name):
+        return {"ok": False, "reason": "invalid_plugin", "plugins": current}
+    if len(set(current) | {name}) > MAX_PLUGINS_GRAYLISTED:
+        return {"ok": False, "reason": "too_many_plugins", "plugins": current}
+    if not await actions.allow_plugin_actions(name):
+        return {"ok": False, "reason": "store_unavailable", "plugins": current}
+    # 契约 §0：写动作落审计（插件名属配置项，非用户内容）
+    await _audit_record(None, user_id, "server.device_actions.plugin.add", "plugin:" + name, None, None)
+    return {"ok": True, "plugins": sorted(await actions.configured_plugins())}
+
+
+@router.delete("/server/device-actions/plugins")
+async def delete_server_device_action_plugin(
+    body: dict,
+    user_id: int = Depends(require_server_admin),
+):
+    """从一个插件收回行动灰度（幂等）：``{"ok": true, "removed": <行数>, "plugins": [...]}``。"""
+    from app.device import actions
+
+    name = str((body or {}).get("plugin") or "").strip()
+    removed = await actions.revoke_plugin_actions(name)
+    await _audit_record(None, user_id, "server.device_actions.plugin.remove", "plugin:" + name,
+                        None, {"removed": removed})
+    return {"ok": True, "removed": removed, "plugins": sorted(await actions.configured_plugins())}

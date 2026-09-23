@@ -307,6 +307,11 @@ def _cfg():
     return _alembic_config()
 
 
+def _head() -> str:
+    """当前迁移链 head（**动态读取**：每加一个迁移都会前移，硬编码必红——M4c-3 的教训）。"""
+    return ScriptDirectory.from_config(_cfg()).get_current_head()
+
+
 def _point_at(db, monkeypatch) -> None:
     from app.config import settings
 
@@ -355,7 +360,8 @@ def test_版本链单头且本迁移挂在交接点头上():
     sd = ScriptDirectory.from_config(_cfg())
     heads = sd.get_heads()
     assert len(heads) == 1, f"版本链必须单头，实际 heads={heads}"
-    assert heads[0] == NEW_REV, f"新 head 应为 {NEW_REV}，实际 {heads[0]}"
+    assert heads[0] == _head(), f"版本链必须单头且落在当前 head，实际 {heads[0]}"
+    assert sd.get_revision(NEW_REV) is not None, "本文件要验的那一步必须仍在链上"
     rev = sd.get_revision(NEW_REV)
     assert rev.down_revision == PREV_HEAD, "本迁移 down_revision 应为交接前的 head"
     assert PREV_HEAD in {r.revision for r in sd.walk_revisions()}
@@ -386,7 +392,7 @@ def test_旧库补列且数据不丢_downgrade可逆(tmp_path, monkeypatch):
     assert "payload_json" in cols, "upgrade head 后应补上 payload_json"
     assert cols["payload_json"]["notnull"] == 0, "必须是 nullable（老行无需回填）"
     assert cols["payload_json"]["dflt"] is None
-    assert _version(db) == NEW_REV
+    assert _version(db) == _head()
     assert _snapshot_row(db) == ("老行正文", None), "老行必须原样保留、新列为 NULL"
 
     # 可逆：退回交接点 → 列消失；再 upgrade → 又回来（重复执行安全）
@@ -421,7 +427,7 @@ def test_新库形态命中守卫0操作且数据不丢(tmp_path, monkeypatch, c
     command.upgrade(_cfg(), "head")     # 第二次是 alembic 层 no-op
     out = capsys.readouterr()
     assert "0 操作" in out.out + out.err, f"新库应 0 操作：{out.out}{out.err}"
-    assert _version(db) == NEW_REV
+    assert _version(db) == _head()
     assert _snapshot_row(db) == ("新库老行", None), "0 操作路径不得动数据"
 
 
@@ -430,5 +436,5 @@ def test_整链重放落位新head且列可用(tmp_path, monkeypatch):
     db = tmp_path / "snap_chain.db"
     _point_at(db, monkeypatch)
     command.upgrade(_cfg(), "head")
-    assert _version(db) == NEW_REV
+    assert _version(db) == _head()
     assert "payload_json" in _columns(db)

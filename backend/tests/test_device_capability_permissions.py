@@ -2,9 +2,11 @@
 """X7-M3 能力级权限 + 强授权安装（判定侧）测试（派单 P11/P12 的 B 段，2026-09-22）。
 
 覆盖（与派单 B 段自检一一对应）：
-① 权限名并入：``manifest.VALID_PERMISSIONS`` 含全部 8 条 ``device:<capability>:read``，且与
+① 权限名并入：``manifest.VALID_PERMISSIONS`` 含全部 8 条 ``device:<capability>:read``（M3）与
+   3 条 ``device:<capability>:write``（M4a 行动能力），且与
    ``app.device.capabilities.CAPABILITIES`` **一一对应**（不多不少、格式固定、原有权限一个不少）；
-② 逐条同意：只同意 1 条能力 → ``has_capability_permission`` 对那条 True、对其余 7 条 False；
+② 逐条同意：只同意 1 条能力 → ``has_capability_permission`` 对那条 True、对其余各条（含 M4a
+   的 3 条行动能力）False；
 ③ 前置缺失一律 False（fail-closed）：插件已停用 / 本租户无同意行（别的租户有也不算）/
    插件未安装（无 ``plugins`` 行）/ 拿不到租户（``tenant_id=None`` 或非整数）/ 未知能力 id；
 ④ 审计：放行与拒绝各记一条 INFO，字段固定 ``plugin= tenant= capability= allowed=``。
@@ -55,11 +57,18 @@ async def _add_plugin(factory, name, *, enabled=True, owner_tenant_id=None):
 # ── ① 权限名并入 + 与 CAPABILITIES 一一对应 ──
 def test_能力级权限并入VALID_PERMISSIONS且与能力一一对应():
     perms = caps.capability_permissions()
+    read = {cid: spec for cid, spec in caps.CAPABILITIES.items() if spec.kind == "read"}
+    act = {cid: spec for cid, spec in caps.CAPABILITIES.items() if spec.kind == "act"}
 
-    assert len(perms) == len(caps.CAPABILITIES) == 8
-    assert len(set(perms)) == 8, "能力级权限名不得重名（重名即破坏一一对应）"
-    for cid, spec in caps.CAPABILITIES.items():
+    # M0 只读 8 条 + M4a 行动 3 条（读写是两条独立权限，各按 kind 校验后缀）
+    assert len(read) == 8 and len(act) == 3
+    assert len(perms) == len(caps.CAPABILITIES) == 11
+    assert len(set(perms)) == 11, "能力级权限名不得重名（重名即破坏一一对应）"
+    for cid, spec in read.items():
         assert spec.permission == f"device:{cid}:read"
+        assert spec.permission in manifest.VALID_PERMISSIONS, f"{spec.permission} 未并入白名单"
+    for cid, spec in act.items():
+        assert spec.permission == f"device:{cid}:write"
         assert spec.permission in manifest.VALID_PERMISSIONS, f"{spec.permission} 未并入白名单"
 
     # 反查：白名单里的 device: 权限 = 能力注册表全部权限，一条不多一条不少
@@ -71,13 +80,28 @@ def test_能力级权限并入VALID_PERMISSIONS且与能力一一对应():
 
 
 def test_能力级权限名格式与manifest校验口径():
-    for p in caps.capability_permissions():
-        assert p.startswith("device:") and p.endswith(":read")
-        assert p.count(":") == 2, f"{p} 不是 device:<capability>:read 三段式"
+    """三段式按 kind 分流：只读 ``device:<id>:read``、行动 ``device:<id>:write``；后缀不可互换。"""
+    for cid, spec in caps.CAPABILITIES.items():
+        p = spec.permission
+        suffix = ":read" if spec.kind == "read" else ":write"
+        assert p.startswith("device:") and p.endswith(suffix), p
+        assert p.count(":") == 2, f"{p} 不是 device:<capability>:{suffix[1:]} 三段式"
+        assert p == f"device:{cid}{suffix}", f"{spec.kind} 能力的权限名后缀漂移"
 
     base = {"name": "cap_probe", "version": "1.0.0", "description": "能力级权限探针"}
     # 并入生效：声明能力级权限的 manifest 通过校验（安装期据此逐条同意）
     assert manifest.validate_manifest({**base, "permissions": ["device:battery:read"]}) is None
+    # M4a：行动能力声明 :write 同样通过（读写分离，同意读不放开写）
+    assert manifest.validate_manifest(
+        {**base, "permissions": ["device:action_tap:write"]}
+    ) is None
+    # 后缀不得互换：行动能力没有 :read 名，只读能力也没有 :write 名
+    assert manifest.validate_manifest(
+        {**base, "permissions": ["device:action_tap:read"]}
+    ) == "未知权限: device:action_tap:read"
+    assert manifest.validate_manifest(
+        {**base, "permissions": ["device:battery:write"]}
+    ) == "未知权限: device:battery:write"
     # 不存在的能力 id 仍然拒绝（白名单没有放宽成「device: 前缀随便写」）
     assert manifest.validate_manifest(
         {**base, "permissions": ["device:nope:read"]}

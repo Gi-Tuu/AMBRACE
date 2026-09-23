@@ -2,7 +2,8 @@
 """X7-M0 能力契约骨架 + X7-M1 结构化承载测试（派单 P5 / P7-A）。
 
 覆盖：
-1) 能力注册表完整性（8 条齐全、权限命名、requires 合法、sources 非空）；
+1) 能力注册表完整性（M0 只读 8 条 + M4a 行动 3 条齐全、权限名按 kind 分流、requires 合法、
+   只读 sources 非空 / 行动 sources 为空）；
 2) M0 不并入、**M3 已并入** manifest.VALID_PERMISSIONS（断言反转为「必须并入」，逐条判定见 test_device_capability_permissions.py）；
 2b) P9：M1 新列已登记进启动期 schema 哨兵（``db.migrate._CURRENT_SCHEMA_SENTINELS``）；
 3) read_capability 三态（ok / empty / unknown 不抛）+ M1 的 ``value['structured']``；
@@ -60,28 +61,45 @@ async def _add_snap(factory, uid, source, content, *, minutes_ago=0, payload=Non
 
 
 # ── 1) 注册表完整性 ──
+# 只读 8 条（M0）+ 行动 3 条（M4a 决策②：open_app / tap / set_text）；id 固定，勿改名
+_READ_IDS = {"foreground_app", "screen_state", "battery", "network",
+             "dnd", "notifications", "usage_stats", "location"}
+_ACT_IDS = {"action_open_app", "action_tap", "action_set_text"}
+
+
 def test_能力注册表完整性():
-    expected = {
-        "foreground_app", "screen_state", "battery", "network",
-        "dnd", "notifications", "usage_stats", "location",
-    }
-    assert set(caps.CAPABILITIES) == expected
-    assert set(caps.CAPABILITY_IDS) == expected
+    assert set(caps.CAPABILITIES) == _READ_IDS | _ACT_IDS
+    assert set(caps.CAPABILITY_IDS) == _READ_IDS | _ACT_IDS
+    # 按 kind 分流：只读与行动各自成套，一条不多一条不少
+    assert {cid for cid, spec in caps.CAPABILITIES.items() if spec.kind == "read"} == _READ_IDS
+    assert {cid for cid, spec in caps.CAPABILITIES.items() if spec.kind == "act"} == _ACT_IDS
     for cid, spec in caps.CAPABILITIES.items():
         assert spec.id == cid
-        assert spec.kind == "read" and spec.kind in caps.VALID_KINDS
-        assert spec.permission.startswith("device:") and spec.permission.endswith(":read")
-        assert spec.permission == f"device:{cid}:read"
+        assert spec.kind in caps.VALID_KINDS
         assert spec.requires in caps.VALID_REQUIRES
         assert isinstance(spec.sensitive, bool)
-        assert spec.sources                      # sources 非空
-        assert "raw_text" in spec.schema
+        assert spec.confirmation in caps.VALID_CONFIRMATIONS
+        if spec.kind == "read":
+            assert spec.permission.startswith("device:") and spec.permission.endswith(":read")
+            assert spec.permission == f"device:{cid}:read"
+            assert spec.confirmation == "none"          # 只读无需确认
+            assert spec.sources                          # sources 非空
+            assert "raw_text" in spec.schema
+        else:
+            assert spec.permission.startswith("device:") and spec.permission.endswith(":write")
+            assert spec.permission == f"device:{cid}:write"
+            assert spec.confirmation == "first_per_type"  # 决策④：每类动作首次确认
+            assert spec.sensitive is True                # 行动类一律按敏感能力对待
+            assert spec.sources == ()                    # 行动类不读快照
+            assert "target_app" in spec.schema and "dry_run" in spec.schema
 
 
-# ── 2) M0 刻意不把能力级权限并入 manifest ──
+# ── 2) M3 把只读能力级权限并入 manifest；M4a 起行动能力（:write）一并并入 ──
 def test_能力级权限已并入_manifest_M3():
     perms = caps.capability_permissions()
-    assert len(perms) == 8
+    assert len(perms) == len(caps.CAPABILITIES) == 11
+    assert sum(1 for p in perms if p.endswith(":read")) == 8
+    assert sum(1 for p in perms if p.endswith(":write")) == 3
     for perm in perms:
         assert perm in manifest.VALID_PERMISSIONS
 
