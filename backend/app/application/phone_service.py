@@ -1,7 +1,7 @@
 """手机感知服务：快照读取与上下文注入文本组装（供 agent/context_builder 使用）。"""
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.db.database import async_session_factory
 from app.models.device import PhoneSnapshot
@@ -64,6 +64,11 @@ async def request_check_in(user_id: int, character_id: int) -> bool:
     try:
         from app.models.device import CheckInRequest
         async with async_session_factory() as db:
+            # 防刷窗口 5 分钟（口径不变）。它与 api/phone.CHECK_IN_TTL_SECONDS（600s）的关系：
+            # 窗口只拦「近 5 分钟内已有非 expired 请求」，而一条 pending 在 TTL（10 分钟）内、
+            # 且没人轮询时一直是 pending —— 单靠窗口会在「5–10 分钟」区间放出新的一条，
+            # 于是两条 pending 并存（前端按「最新 pending」取数，旧的那条永久悬挂）。
+            # 下面在真正登记前把既有 pending 一律标 expired（superseded），保证「同一用户至多一条 pending」。
             since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=5)
             recent = (await db.execute(
                 select(CheckInRequest).where(
@@ -73,6 +78,11 @@ async def request_check_in(user_id: int, character_id: int) -> bool:
             )).scalar_one_or_none()
             if recent is not None and recent.status != "expired":
                 return False
+            await db.execute(
+                update(CheckInRequest)
+                .where(CheckInRequest.user_id == user_id, CheckInRequest.status == "pending")
+                .values(status="expired")
+            )
             db.add(CheckInRequest(user_id=user_id, character_id=character_id, status="pending"))
             await db.commit()
             _logger.info("Check-in requested user=%d char=%d", user_id, character_id)

@@ -524,6 +524,53 @@ async def get_tenant_consented_permissions(name: str, tenant_id: int | None) -> 
         return []  # 已归户插件：别的租户的同意不生效
 
 
+async def has_capability_permission(plugin_name: str, tenant_id: int | None,
+                                    capability_id: str) -> bool:
+    """能力级权限只读判定（X7-M3，2026-09-22）：插件在某租户下**是否已同意**该设备能力。
+
+    fail-closed：下列条件**全部**成立才返回 True，任一不成立即 False（且绝不抛）：
+    1. ``capability_id`` 是已登记能力（``app.device.capabilities``；未知 id → False）；
+    2. 插件**已安装**（``plugins`` 表有行，即已装/已同步到库）且**未停用**（``enabled`` 为真）；
+       这里以库中行为准（``set_plugin_state`` 先写库再刷内存缓存，库是持久权威）；
+    3. 拿得到**具体租户**（``tenant_id`` 为空或非整数 → False）。能力级授权不采用
+       「未知调用者走服务级回落」那条既有兼容路径：拿不到租户就拒绝，宁可多拒不可误放；
+    4. 该租户的**已同意集**含该能力对应的权限名 ``device:<capability>:read``——已同意集取既有
+       口径 :func:`get_tenant_consented_permissions`（``plugin_consents`` 新表权威 + 内置/服务级
+       插件的服务级回落），与安装期同意判定同一份口径，本函数既不另立一套也不放宽它。
+
+    只读查询：不写库、不改任何既有函数签名与语义。放行与拒绝**各记一条 INFO 审计日志**，
+    字段固定 ``plugin=<name> tenant=<id> capability=<id> allowed=<true|false>``。
+    """
+    from sqlalchemy import select
+    from app.db.database import async_session_factory
+    from app.device.capabilities import get_capability
+    from app.models.plugin import Plugin
+
+    _spec = get_capability(capability_id)
+    _tid: int | None = None
+    if tenant_id is not None:
+        try:
+            _tid = int(tenant_id)
+        except (TypeError, ValueError):
+            _tid = None
+    _allowed = False
+    if _spec is not None and _tid is not None:
+        try:
+            async with async_session_factory() as db:
+                _row = (await db.execute(
+                    select(Plugin).where(Plugin.name == plugin_name)
+                )).scalar_one_or_none()
+        except Exception as e:  # 读库失败 → 按「未安装」处理（fail-closed）
+            _logger.warning("插件 %s 能力级权限判定读插件行失败: %s", plugin_name, e)
+            _row = None
+        if _row is not None and bool(_row.enabled):
+            _perms = await get_tenant_consented_permissions(plugin_name, _tid)
+            _allowed = _spec.permission in _perms
+    _logger.info("plugin=%s tenant=%s capability=%s allowed=%s",
+                 plugin_name, tenant_id, capability_id, "true" if _allowed else "false")
+    return _allowed
+
+
 async def record_install_provenance(name: str, *, source: str, source_url: str | None = None,
                                     sha256: str | None = None,
                                     owner_user_id: int | None = None,

@@ -1,0 +1,11 @@
+{
+  "_note": "合成样本，用于归一化回归，不含真实用户数据（vivo 风格：前台用 mResumedActivity/ComponentInfo 触发启发式①；power 文案略异但主正则仍命中；connectivity 缺 Transports 触发启发式②）",
+  "activity": "TASK com.bbk.launcher2 ... \n  mResumedActivity=ComponentInfo{com.bbk.launcher2/com.bbk.launcher2.Launcher}\n",
+  "power": "  mScreenOnTime=456789\n   mWakefulness=Awake\n",
+  "battery": "Current Battery Service state:\n  level: 55\n  status: 3\n",
+  "connectivity": "ConnectivityService state\n  active default network: NetworkAgentInfo{ network{101}  state:CONNECTED  WIFI }\n",
+  "zen": "1",
+  "manufacturer": "vivo",
+  "model": "V2507A",
+  "android": "16"
+}

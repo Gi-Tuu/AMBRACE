@@ -96,6 +96,10 @@ _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     # 但版本链并不建 wechat_ilink_*（baseline 只建 douyin_*），反而造成无意义重放。
     # ("wechat_ilink_bindings", "tenant_id"),   # 移除（插件表，registry 建）
     # ("douyin_accounts", "tenant_id"),         # 移除（插件表；版本链 baseline 仍建、_migration_chain_tables 自动判别仍覆盖）
+    # ── X7-M1 结构化承载（2026-09-22，派单 P9）：phone_snapshots.payload_json ──
+    # 该列由迁移 f4a5b6c7d8e9 add_column 引入；老库（有表无版本号）缺此列时必须判「落后」走
+    # upgrade head 补列，否则会被 stamp 到 head 却永久缺列（select PhoneSnapshot 直接报错）。
+    ("phone_snapshots", "payload_json"),
 ]
 
 

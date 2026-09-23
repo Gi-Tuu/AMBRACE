@@ -2,6 +2,7 @@ import "dart:io";
 import "package:flutter/services.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "channel_status.dart";
+import "snapshot_normalizer.dart";
 
 /// Shizuku 权限通道（2026-08-12）：ADB/root 启动 Shizuku 后授权，可执行系统级 shell
 /// （应用列表 / 系统设置 / 模拟操作前置）。v1 提供：状态查询 / 授权请求 / shell 执行 / 应用列表。
@@ -144,6 +145,8 @@ class ShizukuService {
           detail: m["error"]?.toString() ?? "",
         );
       }
+      // X7-M2b：normalized 由 native 回传的原始文本表 `raw` 喂入（无 raw 时仍是空 normalized）；原 data / ok / error 逐字不变
+      m["normalized"] = normalizeSnapshotPayload(m).toJson();
       return m;
     } catch (e) {
       await ChannelStatusTracker.recordFail(
@@ -151,7 +154,12 @@ class ShizukuService {
         ChannelStatusTracker.classifyException(e),
         detail: "$e",
       );
-      return {"ok": false, "data": <String, dynamic>{}, "error": "$e"};
+      return {
+        "ok": false,
+        "data": <String, dynamic>{},
+        "error": "$e",
+        "normalized": normalizeShizukuSnapshot(<String, dynamic>{}).toJson(),
+      };
     }
   }
 

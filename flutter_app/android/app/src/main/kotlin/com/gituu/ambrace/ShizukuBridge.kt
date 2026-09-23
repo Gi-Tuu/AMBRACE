@@ -237,6 +237,8 @@ object ShizukuBridge {
                     mapOf(
                         "ok" to ok,
                         "data" to parseSystemSnapshot(data),
+                        // M2b：原始 dumpsys/getprop 文本一并回传，Dart 归一化层要的是未解析原文而非解析后 map
+                        "raw" to data.toMap(),
                         "steps_ok" to stepsOk,
                         "steps_total" to steps.size,
                         "error" to if (ok) "" else "shizuku_snapshot_all_steps_failed",

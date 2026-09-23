@@ -1,0 +1,5 @@
+{
+  "_note": "合成样本，用于归一化回归，不含真实用户数据（残缺输入：只有 battery 与 zen，其余键缺失）",
+  "battery": "Current Battery Service state:\n  level: 20\n  status: 5\n",
+  "zen": "0"
+}

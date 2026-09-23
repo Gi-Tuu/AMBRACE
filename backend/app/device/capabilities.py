@@ -3,9 +3,13 @@
 把「设备能力」定义成一份可注册、可授权、可被内核消费的只读契约：本批只登记能力清单
 与端口读取，不改变任何现有行为。
 
-刻意留到后续里程碑（M0 只声明、不接线，避免插件现在就能声明一个还调不到的能力）：
-- 字段级结构化解析：M1；
-- 能力级权限名（``device:<id>:read``）并入 ``plugins.manifest.VALID_PERMISSIONS``：M3。
+里程碑状态（M0 只声明、不接线，避免插件现在就能声明一个还调不到的能力）：
+- 字段级结构化解析：**M1 已落地** —— ``read_capability.value.structured``
+  （该条快照的 ``payload_json`` 解析出的字段级对象；无载荷 / 非对象 / 坏 JSON 时回落
+  ``raw_text``，即 ``structured`` 为 ``None``）；
+- 能力级权限名（``device:<id>:read``）并入 ``plugins.manifest.VALID_PERMISSIONS``：**M3 已落地**
+  （manifest 经局部 import 动态取 :func:`capability_permissions`，清单只有这一份权威源）；
+  插件侧的「逐条同意 + fail-closed」判定见 ``plugins.registry.has_capability_permission``。
 """
 from __future__ import annotations
 
@@ -43,7 +47,8 @@ def _read(cid: str, requires: str, sensitive: bool, sources: tuple[str, ...]) ->
 
 
 # 8 条只读能力（id 固定，勿改名）。battery/network/dnd/location 当前无采集通道，
-# sources 先声明同名约定 source（read_capability 对它们恒 empty），M0 不做结构化解析。
+# sources 先声明同名约定 source（read_capability 对它们恒 empty）；载荷解析自 M1 起对所有
+# source 统一生效（有 payload_json 就出 structured），这四项只是暂无数据。
 _CAP_LIST: tuple[CapabilitySpec, ...] = (
     _read("foreground_app", "accessibility", False, ("accessibility", "shizuku_system")),
     _read("screen_state", "accessibility", False, ("accessibility",)),
@@ -67,5 +72,11 @@ def get_capability(capability_id: str) -> CapabilitySpec | None:
 
 
 def capability_permissions() -> tuple[str, ...]:
-    """全部能力级权限名（M3 才并入 manifest.VALID_PERMISSIONS，本批仅供登记/测试）。"""
+    """全部能力级权限名的**权威视图**（与 :data:`CAPABILITIES` 同源 ``_CAP_LIST``，一一对应不漂移）。
+
+    M3（2026-09-22）：``plugins.manifest.VALID_PERMISSIONS`` 经局部 import 动态并入本清单——
+    插件可声明 ``device:<capability>:read`` 并通过 manifest 校验，安装期随之逐条同意；
+    调用期判定见 ``plugins.registry.has_capability_permission``。本函数是「能力 ↔ 权限名」
+    的唯一口径，任何一处新增能力都自动同时生效，勿在别处再写一份清单。
+    """
     return tuple(spec.permission for spec in _CAP_LIST)

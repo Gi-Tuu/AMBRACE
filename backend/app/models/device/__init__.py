@@ -73,6 +73,8 @@ class PhoneSnapshot(Base):
     source: Mapped[str] = mapped_column(String(20), nullable=False)  # accessibility/clipboard/media
     content: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     image_desc: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # X7-M1 结构化承载：客户端字段级 JSON 对象文本（api.phone 只收合法对象且 ≤4000，非法即存 NULL）
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 class CheckInRequest(Base):
     """查岗请求（2026-08-15）：角色想感知用户手机时登记，前端轮询发现后立即采集上报"""

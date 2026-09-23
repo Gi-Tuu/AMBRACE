@@ -1,0 +1,11 @@
+{
+  "_note": "合成样本，用于归一化回归，不含真实用户数据（AOSP 风格：全字段齐全，走主正则）",
+  "activity": "TASK com.android.settings rootTaskId=1\n  topResumedActivity=ActivityRecord{7a1b2c3 u0 com.android.settings/.Settings #123}\n",
+  "power": "Power Manager State:\n  mWakefulness=Awake\n  mScreenOnTime=123456\n",
+  "battery": "Current Battery Service state:\n  AC powered: false\n  USB powered: true\n  level: 87\n  status: 2\n  health: good\n",
+  "connectivity": "Active default network: 100\n  Transports: WIFI\n",
+  "zen": "0",
+  "manufacturer": "Google",
+  "model": "Pixel 7",
+  "android": "14"
+}

@@ -13,12 +13,27 @@ VALID_HOOKS = (
     "tool_call_requested", "tool_permission_checked", "tool_execution_started",
     "tool_result", "tool_finished", "tool_error",
 )
+
+
+def device_capability_permissions() -> tuple[str, ...]:
+    """设备能力级权限名（``device:<capability>:read``，8 条）——**动态取**，不硬编码第二份清单。
+
+    X7-M3（2026-09-22）：能力级权限名的唯一权威源是 ``app.device.capabilities``（M0 起就有的
+    ``CAPABILITIES`` 注册表）。此处用**局部 import**（不是模块级 import）取它：①插件域与设备域
+    互不依赖，避免循环导入；②能力清单将来增删自动生效，不需要同步两处。
+    """
+    from app.device.capabilities import capability_permissions
+    return tuple(capability_permissions())
+
+
 VALID_PERMISSIONS = (
     "write_memory", "send_message",
     # X4（2026-08-31）：只读权限组——SDK 只读端口（get_persona/search_memory/get_relationship/get_life_state）
     "persona:read", "memory:read", "life:read", "relationship:read",
     # X6-b（2026-09-17）：主动策略包只读素材端口 sdk.get_proactive_context
     "proactive:read",
+    # X7-M3（2026-09-22）：设备能力级权限名 device:<capability>:read（8 条，来源见上）
+    *device_capability_permissions(),
 )
 
 # X6-b（2026-09-17）：manifest.context_keys 白名单——策略包能读哪些只读素材。

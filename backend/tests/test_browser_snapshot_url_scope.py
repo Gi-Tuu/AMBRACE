@@ -304,4 +304,8 @@ def test_full_chain_replay_lands_joint_unique(tmp_path, monkeypatch):
         ver = con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
     finally:
         con.close()
-    assert ver == NEW_REV, f"整链重放后版本应为 {NEW_REV}，实际 {ver}"
+    # 2026-09-22 修：整链重放后落在**当前 head**（此前断言 == NEW_REV；M1 加了
+    # phone_snapshots.payload_json 迁移后 head 前移，写死值在这一行炸——多花一轮 CI）。
+    # NEW_REV 仍是「本用例要验的那一步迁移」，保持不变。
+    head_now = ScriptDirectory.from_config(_cfg()).get_current_head()
+    assert ver == head_now, f"整链重放后版本应为 head={head_now}，实际 {ver}"
