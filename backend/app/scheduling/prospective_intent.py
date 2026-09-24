@@ -519,6 +519,8 @@ async def collect_due_promises() -> list[dict]:
             candidates.append({
                 "pis_id": r.id, "user_id": r.user_id, "character_id": r.character_id,
                 "content": r.content, "due_end": r.due_end,
+                # Q2b：兑现时把正文里的相对时间词按「写下计划那天」换算，需要基准日随候选下发
+                "created_at": r.created_at, "updated_at": r.updated_at,
                 "side": get_intent_side(r),  # ① 主体口径（self|user）
                 "session_id": r.chat_session_id,  # arbiter 发送/追踪统一用 session_id 键
                 "chat_session_id": r.chat_session_id,
@@ -607,6 +609,38 @@ def _is_cross_day(due_end: datetime | None, now_naive: datetime | None = None) -
     if due_end is None:
         return False
     return due_end.date() < (now_naive or _now_local_naive()).date()
+
+
+def _hint_content(candidate: dict, row=None) -> str:
+    """兑现提示词该用的正文（Q2b，2026-09-25）：相对时间词按基准日换成绝对日期。
+
+    ``content`` 是当初写下计划的那句话，里面的「明天/下周三」锚定的是写计划那天；兑现时早已
+    过期，原样塞进提示词会让模型说错时间（与 Q2 修的现状 trace 同一缺陷）。基准日取候选
+    ``created_at``，缺失退 ``updated_at``，两者都缺退 ``row`` 的同名字段（row 可能是 ORM 行
+    也可能是 dict）。基准日拿不到、或换算中任何异常 ⇒ 原样返回（fail-open，本函数绝不抛）。
+    """
+    cand = candidate if isinstance(candidate, dict) else {}
+    text = str(cand.get("content") or "").strip()
+    if not text:
+        return text
+
+    def _field(obj, key):
+        if isinstance(obj, dict):
+            return obj.get(key)
+        return getattr(obj, key, None)
+
+    try:
+        base = (
+            _field(cand, "created_at") or _field(cand, "updated_at")
+            or _field(row, "created_at") or _field(row, "updated_at")
+        )
+        if base is None:
+            return text
+        from app.utils.relative_time import absolutize_relative_dates
+        return absolutize_relative_dates(text, base) or text
+    except Exception as e:  # 绝不冒泡到主动消息主链路
+        _logger.warning("prospective hint absolutize failed, keep raw: %s", e)
+        return text
 
 
 def _build_prospective_hint_legacy(char_name: str, content: str) -> str:
@@ -703,6 +737,7 @@ async def run_prospective_due(candidate: dict) -> bool:
     ③ 幂等（2026-09-13）：进函数先原子认领 pending→discharged，拿不到＝已提过 → 跳过；
     生成/发送失败回滚 pending，下轮仍可重试（失败不算已提）。
     ① 渲染：promise_self_side_split 开 → 按 side 分流 + 跨天时间锚；关 → 旧话术逐字节回退。
+    Q2b（2026-09-25）：两个分支的正文都先经 ``_hint_content`` 把相对时间词绝对化（side 判定仍用原文）。
     ②③ 输出闸门：当下时态断言 / 冷却期内同款开场 → 约束重生成一次，仍违规则跳过。
     """
     char_id = candidate["character_id"]
@@ -730,19 +765,24 @@ async def run_prospective_due(candidate: dict) -> bool:
             char = await db.get(AICharacter, char_id)
         char_name = char.name if char else "我"
         side = candidate.get("side") if candidate.get("side") in ("self", "user") else None
-        if side is None:
+        # 基准日缺失时回退查这一行：与 side 兜底共用同一次 lazy 查询，不多查一遍
+        row = None
+        if side is None or not (candidate.get("created_at") or candidate.get("updated_at")):
             async with async_session_factory() as db:
                 row = await db.get(ProspectiveIntent, intent_id)
+        if side is None:
             side = get_intent_side(row) if row is not None else classify_intent_side(content)
         # ③ 开场冷却独立于 ① 的 side 开关（模板复读治理必须始终生效）；
         # ① side 分流才由 promise_self_side_split 门控（关＝旧话术逐字节回退）。
         recent_opener = await recent_opener_exists(char_id)
+        # Q2b：进提示词的正文按基准日绝对化；side 判定仍走原文（上面已定），两者不掺混
+        hint_content = _hint_content(candidate, row)
         if _side_split_on():
             hint = _build_prospective_hint(
-                char_name, content, side, candidate.get("due_end"), recent_opener=recent_opener,
+                char_name, hint_content, side, candidate.get("due_end"), recent_opener=recent_opener,
             )
         else:
-            hint = _build_prospective_hint_legacy(char_name, content)
+            hint = _build_prospective_hint_legacy(char_name, hint_content)
         _sys = {"role": "system", "content": "直接输出内容，不要加引号和标注。"}
         msg = (await chat_completion(
             messages=[_sys, {"role": "user", "content": hint}],

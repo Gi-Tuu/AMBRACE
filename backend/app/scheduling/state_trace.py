@@ -18,6 +18,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import select
 
 from app.utils.logger import get_logger
@@ -29,6 +31,18 @@ _logger = get_logger("scheduling.state_trace")
 TRACE_CONFIDENCE_MIN = 0.6
 TRACE_LINE_CHARS = 200    # 单行截断
 TRACE_TOTAL_CHARS = 1200  # 总长硬上限
+
+# Q1（2026-09-25）：同一类近况把「现状事实」段占满 ⇒ 按谓词收敛名额。
+# 依据（生产库 char13 实测）：active 且置信达标的 71 条里 curated 68 条、status/activity/setting
+# 各 1 条；旧 trace 8 条中 7 条是 curated（关系亲述 4 条 + 腰伤护理 3 条）——**重复只集中在
+# curated**，所以只对 curated 设上限，其它谓词不限（它们本来就各只有一条，设限只会误伤）。
+# 为什么不用相似度阈值判重：那 6 条关系亲述两两 SequenceMatcher ratio 仅 0.40~0.64、容器包含
+# 几乎不命中（每次措辞都不同），阈值既抓不净又会误合并 ⇒ 判据只用「规范化后完全相同」。
+TRACE_MAX_PER_PREDICATE = {"curated": 4}
+# 先多取再收敛：被跳过（重复 / 超名额）的行不该白占 prompt 名额，多取一批让别的谓词补进来；
+# 乘数 3 ≈ 覆盖 curated 的重复密度（68/71），硬上限 30 兜住查询与内存成本（不做无界多取）。
+TRACE_FACT_FETCH_MULTIPLIER = 3
+TRACE_FACT_FETCH_CAP = 30
 
 _HEADER = "【当前现状速读】（只用于你落笔前对齐此刻的现实，不要逐条复述、不要当成必须完成的任务）"
 _SEC_FACTS = "· 现状事实"
@@ -88,6 +102,44 @@ def _merge_status_row(rows: list, status_row) -> list:
     return [status_row] + list(rows)
 
 
+def _norm_fact_text(text) -> str:
+    """判重用的规范化：去空白、去中英文标点/符号、转小写（只用于比较，不改原值）。"""
+    return re.sub(r"[\W_]+", "", str(text or ""), flags=re.UNICODE).lower()
+
+
+def select_fact_rows(rows, *, limit: int, max_per_predicate: dict | None = None) -> list:
+    """Q1（2026-09-25）：事实行按谓词判重 + 名额收敛（**纯函数，零 DB / 零 LLM**）。
+
+    ``rows`` 由调用方按 ``updated_at desc`` 排好 ⇒ 最先出现的那条＝最新的那条。
+    - 判重：同 predicate 且规范化后的 object_value 完全相同 ⇒ 视为重复，只保留最先出现的；
+    - 名额：某 predicate 已选条数达到 ``max_per_predicate[predicate]`` ⇒ 后续该谓词一律跳过
+      （表里没有的谓词不限）；
+    - 选满 ``limit`` 即停；``limit`` ≤ 0 返回空列表；
+    - 脏行（predicate 为 None/空串、object_value 为空）不抛异常，按「谓词组键＝空串」正常参与
+      判重与计数；绝不就地修改 ``rows``。
+    """
+    out: list = []
+    if not limit or limit <= 0:
+        return out
+    quotas = max_per_predicate or {}
+    seen: set[tuple[str, str]] = set()
+    counts: dict[str, int] = {}
+    for row in rows or []:
+        predicate = str(_get(row, "predicate") or "").strip()
+        key = (predicate, _norm_fact_text(_get(row, "object_value")))
+        if key in seen:
+            continue
+        cap = quotas.get(predicate)
+        if cap is not None and counts.get(predicate, 0) >= cap:
+            continue
+        seen.add(key)
+        counts[predicate] = counts.get(predicate, 0) + 1
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def slot_line(row) -> str:
     """user_facts 行 → trace 行；无值返回空串。"""
     value = _one_line(_get(row, "value"))
@@ -99,9 +151,22 @@ def slot_line(row) -> str:
 
 
 def intent_line(row) -> str:
-    """prospective_intents 行 → trace 行；无内容返回空串。"""
+    """prospective_intents 行 → trace 行；无内容返回空串。
+
+    Q2（2026-09-25）：正文是当初写计划时的话，含「明天/下周三」这类相对时间词——事后注入即失真
+    ⇒ 以该行 created_at（缺失则 updated_at）为基准日换成绝对日期；两者都没有或换算失败原样输出。
+    """
     content = _one_line(_get(row, "content"))
-    return f"- {content}" if content else ""
+    if not content:
+        return ""
+    # 函数内 import 与 try 同包：失败也只可能是「这一行不换算」，绝不冒泡到主链路
+    try:
+        from app.utils.relative_time import absolutize_relative_dates
+        content = absolutize_relative_dates(
+            content, _get(row, "created_at") or _get(row, "updated_at")) or content
+    except Exception as e:  # 绝不冒泡到主链路
+        _logger.warning("state trace intent absolutize failed: %s", e)
+    return f"- {content}"
 
 
 def render_state_trace(fact_lines: list[str] | None = None,
@@ -160,6 +225,7 @@ async def build_state_trace(db, *, character_id=None, user_id=None,
 
         fact_rows: list = []
         if character_id and limit_facts > 0:
+            fetch_limit = min(limit_facts * TRACE_FACT_FETCH_MULTIPLIER, TRACE_FACT_FETCH_CAP)
             stmt = select(WorldFact).where(
                 WorldFact.character_id == character_id,
                 # 硬口径：只取 active + 置信达标；expired / superseded 一律不进
@@ -169,10 +235,15 @@ async def build_state_trace(db, *, character_id=None, user_id=None,
             if user_id:
                 stmt = stmt.where(WorldFact.user_id == user_id)
             fact_rows = list((await db.execute(
-                stmt.order_by(WorldFact.updated_at.desc()).limit(limit_facts)
+                # Q1：先多取（多取的量在收敛时砍掉），被跳过的重复/超额条目才不至于白占名额
+                stmt.order_by(WorldFact.updated_at.desc()).limit(fetch_limit)
             )).scalars().all())
-            # C7 保底（2026-09-24）：最新 N 条被 curated 占满时，当前 status 会被挤出 ⇒
-            # 补查一条最新 status 置顶；过滤条件与上面逐项一致（只多一个 predicate）。
+            # Q1（2026-09-25）：判重 + 同谓词名额收敛回 limit_facts 条。
+            fact_rows = select_fact_rows(fact_rows, limit=limit_facts,
+                                         max_per_predicate=TRACE_MAX_PER_PREDICATE)
+            # C7 保底（2026-09-24）：收敛后仍没有 status 行时，补查一条最新 status 置顶。
+            # **必须在收敛之后**（顺序反了会出现「保底补上、又被收敛规则挤掉」的自我打架）；
+            # 过滤条件与上面逐项一致（只多一个 predicate）。
             if not any(str(_get(r, "predicate") or "").strip() == "status" for r in fact_rows):
                 sstmt = select(WorldFact).where(
                     WorldFact.character_id == character_id,

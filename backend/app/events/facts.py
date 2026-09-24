@@ -80,6 +80,19 @@ _IDENTITY_PREDICATES = {
 _WORLD_FACT_SIMILARITY = 0.9
 _MIN_CORE_LEN = 6           # 通用文本「前缀包含」合并的最短核心长度
 _MIN_IDENTITY_CORE_LEN = 4  # 身份值「前缀包含」合并的最短长度
+# C13（2026-09-25）「共享核心前缀」合并阈值。依据（生产库实测）：char13 的 68 条 active curated
+# 里绝大多数是同一个核心「我是用户的老公」+ 各自补充（同住/照顾饮食起居/亲密主导…）。这一族是
+# 「共享长核心 + 各自后缀」形态——互不包含、相似度只有 0.4~0.64，故既有三条判据只命中 4 对。
+# 实测本条取 LCP>=7 且 >=短串 30% 时命中 178 对（恰好收敛那族），且不误并
+# 「用户腰不能压…」/「用户腰部有伤…」（LCP 仅 3 字）、「喜欢咖啡」/「喜欢喝茶」（LCP 2 字）。
+_CORE_PREFIX_MIN_LEN = 7        # 共享核心前缀最短长度（归一化后）
+_CORE_PREFIX_MIN_FRAC = 0.30    # 该前缀至少要占短串的这个比例
+# C13b（2026-09-25）：上述前缀还必须停在「子句边界」上，否则「同模板不同宾语」会被误并
+# （实测「用户平时喜欢喝美式咖啡」vs「用户平时喜欢喝拿铁咖啡」LCP=7、占比 63.6% ⇒ 误判同一条）。
+# 边界字符 = 归一化会剔除的空白/中英文标点 + 常见成对/连接符（用于看前缀后一个原文字符）。
+_CLAUSE_BOUNDARY_CHARS = set(
+    " \u3000\t\r\n，。！？、；：,.!?;:（）()【】[]「」『』“”‘’\"'~～-—"
+)
 
 # 开发运维 / 代理发言黑名单（用户拍板默认过滤：不进 world_facts、不进人物记忆）。
 # 与 app/memory/write.py 的同名常量必须保持一致（两文件各自独立持有，避免模块级循环依赖）。
@@ -157,6 +170,24 @@ def _same_identity_value(va: str | None, vb: str | None) -> bool:
     return len(short) >= _MIN_IDENTITY_CORE_LEN and long_.startswith(short)
 
 
+def _prefix_ends_at_clause_boundary(text: str | None, k: int) -> bool:
+    """归一化公共前缀（前 k 个字符）在原文中是否正好停在子句边界。
+
+    把第 k 个归一化字符反查回原文下标 p，看 p 的下一个原文字符：空白/中英文标点，或前缀
+    已吃掉整串（nxt 为空）⇒ 成立。逐字符归一化与整串归一化长度不一致时反查不可靠，保守判
+    否（宁可漏也不误并）。纯函数、零 IO。
+    """
+    s = text or ""
+    norm_pos: list[int] = []
+    for i, ch in enumerate(s):
+        norm_pos.extend([i] * len(_norm_fact_text(ch)))
+    if len(norm_pos) != len(_norm_fact_text(s)) or not 1 <= k <= len(norm_pos):
+        return False
+    p = norm_pos[k - 1]
+    nxt = s[p + 1] if p + 1 < len(s) else ""
+    return nxt == "" or nxt in _CLAUSE_BOUNDARY_CHARS
+
+
 def _same_fact_text(a: str | None, b: str | None) -> bool:
     """非身份类事实的同义判定（确定性、零 IO、零 LLM）。
 
@@ -167,6 +198,10 @@ def _same_fact_text(a: str | None, b: str | None) -> bool:
       都拦不住；用前缀而非任意子串包含，可保证「喜欢咖啡」/「喜欢喝茶」永不互并；
     - SequenceMatcher >= 0.9：沿用 application/characters.py 既有先例 _WORLD_FACT_SIMILAR_THRESHOLD=0.9
       （比前瞻意图写入期的 0.95 略松），只并近乎逐字重复者，不吞并不同粒度的事实。
+    - 共享核心前缀（C13，2026-09-25）：归一化后最长公共前缀 >= _CORE_PREFIX_MIN_LEN 且
+      >= _CORE_PREFIX_MIN_FRAC × 短串长度 → 视同一条，专治上面三条漏掉的「共享长核心 + 各自后缀」族。
+      C13b（2026-09-25）追加必要条件：该前缀还得停在子句边界（任一边成立即可），否则
+      「同模板不同宾语」（喜欢喝美式咖啡 / 喜欢喝拿铁咖啡）会被这一条误并。
     不引入 embedding 向量查重：写入侧禁用额外 LLM/向量推理（本批确定性约束）。
     """
     na, nb = _norm_fact_text(a), _norm_fact_text(b)
@@ -177,6 +212,15 @@ def _same_fact_text(a: str | None, b: str | None) -> bool:
     short, long_ = (na, nb) if len(na) <= len(nb) else (nb, na)
     if len(short) >= _MIN_CORE_LEN and long_.startswith(short):
         return True
+    shared = 0
+    for ca, cb in zip(na, nb):
+        if ca != cb:
+            break
+        shared += 1
+    if shared >= _CORE_PREFIX_MIN_LEN and shared >= _CORE_PREFIX_MIN_FRAC * len(short):
+        if (_prefix_ends_at_clause_boundary(a, shared)
+                or _prefix_ends_at_clause_boundary(b, shared)):
+            return True
     try:
         from app.scheduling.prospective_intent import similar_intent_text
         return similar_intent_text(na, nb, _WORLD_FACT_SIMILARITY)
