@@ -487,6 +487,74 @@ async def _load_authoritative_user_location(user_id: int | None) -> str:
     )
 
 
+# ── two-pass POC（2026-09-23，方案书 AMBRACE_two-pass_POC方案 §2）：生成前置「现状 trace」──
+# 灰度双条件（沿用 char13 先例）：AGENT_FLAGS["two_pass_trace"] 开 **且** 角色命中本白名单；
+# 关/未命中 → 不构造、不注入、不多一次查询（逐字旧行为）。trace 只读、零 LLM、不落库、不上屏。
+TWO_PASS_TRACE_GRAY_CHARS = frozenset({13})
+
+
+def two_pass_trace_allowed(character_id, *, flags=None) -> bool:
+    """现状 trace 是否对该角色生效（纯函数，flags 默认读 AGENT_FLAGS）。"""
+    if flags is None:
+        try:
+            from app.agent import loop as _loop
+            flags = _loop.AGENT_FLAGS
+        except Exception:
+            return False
+    if not bool((flags or {}).get("two_pass_trace", False)):
+        return False
+    if character_id is None:
+        return False
+    try:
+        return int(character_id) in TWO_PASS_TRACE_GRAY_CHARS
+    except (TypeError, ValueError):
+        return False
+
+
+async def _load_state_trace(character_id, user_id) -> tuple[str, float]:
+    """确定性构造现状 trace，返回 (trace 文本, 构造耗时 ms)。
+
+    fail-open：任何异常（含查库失败）→ 空串 + WARNING，主链路照旧生成，绝不冒泡。
+    """
+    import time
+    t0 = time.perf_counter()
+    try:
+        from app.db.database import async_session_factory
+        from app.scheduling.state_trace import build_state_trace
+        async with async_session_factory() as db:
+            text = await build_state_trace(db, character_id=character_id, user_id=user_id)
+    except Exception as e:
+        _logger.warning("Proactive state trace build failed char=%s: %s", character_id, e)
+        return "", 0.0
+    return text or "", (time.perf_counter() - t0) * 1000.0
+
+
+def _prepend_state_trace(messages: list[dict], trace_text: str) -> list[dict]:
+    """trace 前置到长历史/系统块之前（论文口径：前置重读才有效，插尾部会被长上下文淹没）。"""
+    if not trace_text:
+        return messages
+    return [{"role": "system", "content": trace_text}, *messages]
+
+
+def _note_state_trace_injected(character_id, trace_text: str, prompt_len: int, elapsed_ms: float) -> None:
+    """影子对照留痕：字段只有 {enabled, trace_len, trace_sha8, prompt_len, elapsed_ms}。
+
+    **绝不落 trace 全文**（POC 中间产物不进生产库正文；hash 够人工回查比对）。
+    """
+    import hashlib
+    try:
+        from app.memory.observability import obs_event
+        obs_event(character_id, "two_pass_trace", {
+            "enabled": True,
+            "trace_len": len(trace_text or ""),
+            "trace_sha8": hashlib.sha256((trace_text or "").encode("utf-8")).hexdigest()[:8],
+            "prompt_len": int(prompt_len),
+            "elapsed_ms": round(float(elapsed_ms), 1),
+        })
+    except Exception:
+        pass
+
+
 async def generate_proactive_event(
     character_name: str,
     character_bio: str,
@@ -829,6 +897,15 @@ async def generate_proactive_event(
         {"role": "system", "content": "你是一个真实的朋友，正在给好友发消息。按格式输出，每段一行。"},
         {"role": "user", "content": prompt},
     ]
+    # two-pass POC（2026-09-23）：生成前拼一块确定性「现状 trace」并**前置**到系统块/长历史之前。
+    # 双条件灰度（开关开 + 角色命中白名单）；trace 为空或构造异常 → 原样 messages（逐字旧行为）。
+    if two_pass_trace_allowed(character_id):
+        trace_text, trace_ms = await _load_state_trace(character_id, user_id)
+        if trace_text:
+            messages = _prepend_state_trace(messages, trace_text)
+            _note_state_trace_injected(
+                character_id, trace_text,
+                sum(len(m.get("content") or "") for m in messages), trace_ms)
     # 生成 + 规则校验：不通过则追加修正要求重试一次（2026-08-12）
     segments: list[str] = []
     ok = False

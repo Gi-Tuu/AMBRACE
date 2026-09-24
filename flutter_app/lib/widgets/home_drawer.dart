@@ -17,6 +17,7 @@ import '../features/home/profile_screen.dart';
 import '../features/settings/dnd_settings_screen.dart';
 import '../features/settings/api_config_screen.dart';
 import '../features/settings/permission_admin_screen.dart';
+import '../features/settings/account_admin_screen.dart';
 import '../features/phone/phone_perception_screen.dart';
 import '../features/settings/appearance_screen.dart';
 import '../features/settings/account_linking_screen.dart';
@@ -341,6 +342,19 @@ class HomeDrawer extends StatelessWidget {
           ],
         ),
         divider(),
+        // A6 收口：家庭管理员独立入口（复用现有 AccountAdminScreen，非主账号不显示）
+        if (s.isAdmin)
+          row(
+            icon: Icons.supervisor_account_outlined,
+            title: l10n.accountAdminTitle,
+            subtitle: l10n.accountAdminDrawerHint,
+            onTap: () {
+              onClose();
+              Navigator.push(
+                  context, AppPageRoute(builder: (_) => const AccountAdminScreen()));
+            },
+          ),
+        if (s.isAdmin) divider(),
         // #11 织库总入口从侧抽屉移除（已并入角色详情页 / 首页工具箱）
         row(
           icon: Icons.admin_panel_settings_outlined,

@@ -212,6 +212,18 @@ SP_XXS, SP_XS, SP_SM, SP_MD, SP_LG, SP_XL = 4, 8, 12, 16, 24, 32
 # 量宽用 Segoe 的回退、绘制用另一个字体，按钮文字宽度会算不准（V3 统一后不再有两套族名）
 FONT = CUI.FONT_UI
 
+# ── 字号 token（W1-2：四档语义名）────────────────────────────────────
+# 档位数值唯一真源在 console_ui.TYPE（Tk 按点给字号，DPI 由 Tk 自己缩放）。
+# 这里只暴露页面用得上的四档；控件一律传 FS_*，禁止再写裸字号——
+# 历史上全文件 8~22 混排 86 处，同一屏里三种"正文"尺寸就是这么来的。
+FS_TITLE = "h2"          # 卡片 / 小节标题
+FS_BODY = "body"         # 正文、按钮、输入框
+FS_CAPTION = "caption"   # 次要说明、注脚、密集行内控件
+FS_NUM = "num"           # 表格与 KPI 里的数值（等宽族）
+
+# Segmented 自动算宽时每段额外留的左右余量（逻辑像素）
+SEG_LABEL_PAD = 22
+
 
 # ═══════════════════════════════════════════════════════════════
 # 圆润组件
@@ -277,9 +289,13 @@ class RoundedCard(tk.Canvas):
 
 
 class RoundedButton(tk.Canvas):
-    """圆角按钮：Canvas 绘制，支持 hover/press/disabled 三态。"""
+    """圆角按钮：Canvas 绘制，支持 hover/press/disabled 三态。
+
+    `height` 一律给**逻辑像素**（100% 基准），这里统一乘 CUI.px；调用方自己乘会双缩。
+    字号走 FS_* 档位，不接受裸字号。
+    """
     def __init__(self, parent, theme: Theme, text, command=None,
-                 variant="primary", width=None, height=36, font_size=11, bold=True):
+                 variant="primary", width=None, height=36, font_role=FS_BODY, bold=True):
         self.theme = theme
         self.command = command
         self.variant = variant
@@ -290,12 +306,13 @@ class RoundedButton(tk.Canvas):
         # height / 内边距都是 100% 基准值，这里统一换成物理像素（字体 Tk 已经自己缩过了，
         # 按钮框不跟着缩就会出现"字撑破按钮"）
         self._h = CUI.px(height)
-        self._fs = font_size
+        self._fr = font_role
         self._bold = bold
         # 根据文字自动计算宽度
         if width is None:
             import tkinter.font as tkfont
-            fn = tkfont.Font(family=FONT, size=font_size, weight="bold" if bold else "normal")
+            fn = tkfont.Font(family=FONT, size=CUI.TYPE[font_role],
+                             weight="bold" if bold else "normal")
             width = fn.measure(text) + CUI.px(32)  # 左右各 16（基准）内边距
         super().__init__(parent, bg=parent["bg"], highlightthickness=0, bd=0, height=self._h,
                          width=width)
@@ -328,8 +345,8 @@ class RoundedButton(tk.Canvas):
         r = min(10, h // 2)
         pts = _rr_points(1, 1, w - 1, h - 1, r)
         self.create_polygon(pts, smooth=True, splinesteps=20, fill=bg, outline="", tags="btn")
-        fn = (FONT, self._fs, "bold") if self._bold else (FONT, self._fs)
-        self.create_text(w // 2, h // 2, text=self._text, fill=fg, font=fn, tags="btn")
+        self.create_text(w // 2, h // 2, text=self._text, fill=fg,
+                         font=CUI.f(self._fr, self._bold), tags="btn")
 
     def _on_enter(self, e):
         self._hover = True
@@ -368,12 +385,19 @@ class RoundedButton(tk.Canvas):
 
 
 class Segmented(tk.Canvas):
-    """分段选择器（每日/每周/累计）：胶囊底 + 高亮滑块，配色随当前 Theme。"""
+    """分段选择器（每日/每周/累计 等）：胶囊底 + 高亮滑块，配色随当前 Theme。
+
+    `width=None` 时按最宽标签自动算宽（旧的固定 156 在"与默认不同"这类长标签上会把字挤断）。
+    """
     def __init__(self, parent, theme: "Theme", options, callback, width=156, height=26):
         self.theme = theme
         self.opts = options
         self.callback = callback
         self.idx = 0
+        if width is None:
+            import tkinter.font as tkfont
+            fn = tkfont.Font(family=FONT, size=CUI.TYPE["micro"])
+            width = sum(fn.measure(str(lbl)) + SEG_LABEL_PAD for _v, lbl in options)
         # 宽高都是 100% 基准值：标签字号 Tk 会自动缩放，分段控件的框不跟着缩就会被字撑破
         self._w0, self._h = CUI.px(width), CUI.px(height)
         super().__init__(parent, bg=parent["bg"], highlightthickness=0, bd=0,
@@ -414,6 +438,57 @@ class Segmented(tk.Canvas):
                 fg = t.text_sec
             self.create_text((x0 + x1) / 2, h / 2, text=label, fill=fg,
                              font=CUI.f("micro", i == self.idx))
+
+
+class LabeledSwitch(tk.Frame):
+    """自绘开关 + 文字标签（替代原生 `ttk.Checkbutton` 的黑底方框勾）。
+
+    底色跟着所在行（卡片 / 斑马纹 / 页头），否则开关周围会露出一块异色方框。
+    `variable` 仍是 BooleanVar，业务侧读写口径与原来逐字一致；点文字等同点开关。
+    """
+
+    def __init__(self, parent, theme: Theme, text, variable, command=None,
+                 bg=None, font_role=FS_BODY, locked=False, switch_bg=None):
+        self._t = theme
+        self._bg = bg or theme.card
+        self._var = variable
+        self._locked = bool(locked)
+        self._command = command
+        super().__init__(parent, bg=self._bg)
+        self.sw = CUI.Switch(self, theme, variable=variable, locked=self._locked,
+                             bg=switch_bg or self._bg, command=self._fire)
+        self.sw.pack(side="left")
+        self.lab = tk.Label(self, text=text, bg=self._bg,
+                            fg=theme.text if not self._locked else theme.text_muted,
+                            font=CUI.f(font_role),
+                            cursor="" if self._locked else "hand2")
+        self.lab.pack(side="left", padx=(CUI.sp("xs"), 0))
+        self.lab.bind("<Button-1>", self._toggle)
+
+    def _toggle(self, _e=None):
+        # 派发给 Switch 自己的点击处理（翻转 + 重绘 + 回调只有一份实现，锁定判断也在里面）；
+        # 原先走 event_generate("<Button-1>") 在未映射的窗口上不保证送达，离屏自检里会静默失效
+        self.sw._on_click(_e)
+
+    def _fire(self):
+        if self._command:
+            self._command()
+
+    def set_locked(self, locked: bool) -> None:
+        self._locked = bool(locked)
+        self.sw.set_locked(self._locked)
+        self.lab.config(cursor="" if self._locked else "hand2",
+                        fg=self._t.text if not self._locked else self._t.text_muted)
+
+
+def _row_bg(theme: Theme, idx: int, tint: str = "", tint_ratio: float = 0.18) -> str:
+    """表格行底色：斑马纹（偶数行＝卡片原色，奇数行＝卡片→card_hover 0.55）+ 可选状态染色。
+
+    三张表（开关 / 账号 / 审计）原先各自手写同一套 `card→card_hover` 混合，
+    深浅偶有不一致；统一走这里，状态色（锁定=warning、禁用=error）只作为 tint 叠上去。
+    """
+    base = theme.card if idx % 2 == 0 else CUI.mix(theme.card, theme.card_hover, 0.55)
+    return CUI.mix(base, tint, tint_ratio) if tint else base
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1048,14 +1123,6 @@ TASK_LABELS = {
 }
 
 
-def _hex_mix(c1: str, c2: str, f: float) -> str:
-    def _hx(c):
-        c = c.lstrip("#")
-        return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
-    a, b = _hx(c1), _hx(c2)
-    return "#%02x%02x%02x" % tuple(int(a[i] + (b[i] - a[i]) * f) for i in range(3))
-
-
 def _read_token_heatmap(weeks=HEATMAP_WEEKS, db=None, today=None):
     """近 N 周按天用量：周一列对齐、定长 weeks*7，末尾为本周未来占位日（future=True）。"""
     if _is_remote():
@@ -1226,6 +1293,16 @@ REGISTRATION_MODES = (("open", "开放", "任何人都能注册新账号（现�
                       ("invite_only", "仅邀请码", "注册需要邀请码"),
                       ("closed", "关闭", "注册端点直接返回 403"))
 REGISTRATION_MODE_LABELS = {m: label for m, label, _desc in REGISTRATION_MODES}
+# 开关页表格列（与账号页/审计页同一个 DataTable 口径：weight 分宽度、min 保底不挤断）
+# 第 0 列名称列吃满剩余宽度；三个开关列按表头文字保底；最后一列是"拨过才长出"的保存槽位
+FLAG_COLS = (
+    {"label": "开关（键名 · 中文标题 · 说明）", "weight": 8, "min": 240},
+    {"label": "当前值", "weight": 0, "min": 60},
+    {"label": "允许自助", "weight": 0, "min": 60},
+    {"label": "服务器锁定", "weight": 0, "min": 60},
+    {"label": "", "weight": 0, "min": 56},
+)
+FLAG_SAVE_COL = len(FLAG_COLS) - 1
 # 概览字段（契约 §1.6，只读展示；后端缺哪个字段就显示 —，控制台不做任何推算）
 OVERVIEW_FIELDS = (("accounts", "账号总数"),
                   ("disabled", "已禁用账号"),
@@ -1667,15 +1744,12 @@ class ControllerApp:
         self.header_port_label.pack(side="left", padx=(0, SP_SM))
         self.header_health_label = tk.Label(right, text="健康 —", fg=t.text_sec, bg=t.sidebar, font=CUI.f("body"))
         self.header_health_label.pack(side="left", padx=(0, SP_MD))
-        tk.Button(right, text="刷新", bg=t.sidebar, fg=t.accent_glow, activebackground=t.sidebar,
-                  activeforeground=t.accent_glow, relief="flat", bd=0, font=CUI.f("body", True),
-                  cursor="hand2", command=self._do_refresh).pack(side="left", padx=(0, SP_SM))
-        tk.Button(right, text="渠道登录", bg=t.sidebar, fg=t.accent_glow, activebackground=t.sidebar,
-                  activeforeground=t.accent_glow, relief="flat", bd=0, font=CUI.f("body", True),
-                  cursor="hand2", command=self._open_channel_login).pack(side="left", padx=(0, SP_SM))
-        tk.Button(right, text="设置", bg=t.sidebar, fg=t.accent_glow, activebackground=t.sidebar,
-                  activeforeground=t.accent_glow, relief="flat", bd=0, font=CUI.f("body", True),
-                  cursor="hand2", command=self.open_settings).pack(side="left")
+        # 页头动作统一用自绘胶囊按钮（旧版是裸 tk.Button：无圆角、无 hover，与卡片质感断层）
+        for _text, _cmd, _variant in (("刷新", self._do_refresh, "neutral"),
+                                      ("渠道登录", self._open_channel_login, "neutral"),
+                                      ("设置", self.open_settings, "primary")):
+            RoundedButton(right, t, _text, command=_cmd, variant=_variant,
+                          height=28, font_role=FS_CAPTION).pack(side="left", padx=(0, SP_XS))
 
         tk.Frame(self.root, height=1, bg=t.divider).pack(side="top", fill="x")
 
@@ -1847,44 +1921,79 @@ class ControllerApp:
         inner.config(padx=SP_LG, pady=SP_LG)
         return card, inner
 
-    # ── 仪表盘 ──
+    # ── 页面容器 / 仪表盘 ──
 
-    def _build_dashboard_page(self) -> tk.Frame:
+    def _scroll_page(self, title: str, subtitle: str = ""):
+        """页面通用容器：纵向滚动画布 + 视口自适应，返回 (page, pad)。
+
+        两块自适应都在这里，页面侧只管往里填内容：
+        - **横向**：内容宽 = 视口宽 − 左右内边距，所以表格/卡片能铺满整屏（旧版只占左侧
+          一小块、右边全空）。
+        - **纵向**：窗口高 = max(内容自然高, 视口高)。内容短时铺满视口，页面里给最后一块
+          `expand=True` 就能吃掉剩余高度，空白只会落在**底部**而不是中部。
+        """
         t = self.theme
         page = tk.Frame(self._content, bg=t.bg)
-        # 纵向滚动容器：保证任何窗口高度下卡片都按自然高度排布，热力图不再被压没
-        _scroll = tk.Canvas(page, bg=t.bg, highlightthickness=0, bd=0)
-        _sb = ttk.Scrollbar(page, orient="vertical", command=_scroll.yview)
-        _scroll.configure(yscrollcommand=_sb.set)
-        _sb.pack(side="right", fill="y")
-        _scroll.pack(side="left", fill="both", expand=True)
-        pad = tk.Frame(_scroll, bg=t.bg)
-        _pad_win = _scroll.create_window((SP_LG, SP_SM), window=pad, anchor="nw")
-        pad.bind("<Configure>",
-                 lambda e: _scroll.configure(scrollregion=_scroll.bbox("all")))
+        scroll = tk.Canvas(page, bg=t.bg, highlightthickness=0, bd=0)
+        sb = ttk.Scrollbar(page, orient="vertical", command=scroll.yview)
+        scroll.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        scroll.pack(side="left", fill="both", expand=True)
+        pad = tk.Frame(scroll, bg=t.bg)
+        win = scroll.create_window((SP_LG, SP_SM), window=pad, anchor="nw")
 
-        def _fit_width(e, c=_scroll, w=_pad_win):
-            c.itemconfig(w, width=max(1, e.width - 2 * SP_LG))
-        _scroll.bind("<Configure>", _fit_width)
+        def _fit(_e=None, c=scroll, w=win):
+            vw = max(1, c.winfo_width() - 2 * SP_LG)
+            need = pad.winfo_reqheight()
+            vh = c.winfo_height()
+            # 内容比视口短 → 把 pad 拉到视口高（页面里那块 expand=True 吃掉剩余高度，
+            # 空白只会落在底部）；内容比视口长 → height=0 即"按内容自然高"，
+            # 绝不能把 pad 钉在旧高度上：管理页的行是 HTTP 回来后才补的，钉死会裁掉新行。
+            c.itemconfig(w, width=vw, height=(max(need, vh) if need <= vh else 0))
+            c.configure(scrollregion=c.bbox("all"))
 
-        def _on_enter(e, c=_scroll):
+        def _on_pad(_e, c=scroll):
+            # 内容长高后重算一次（_fit 读的是 reqheight，与实际被钉的尺寸无关，故幂等、不互相触发）
+            _fit()
+
+        pad.bind("<Configure>", _on_pad)
+        scroll.bind("<Configure>", _fit)
+
+        def _on_enter(_e, c=scroll):
             c.bind_all("<MouseWheel>",
                        lambda ev: c.yview_scroll(int(-ev.delta / 120), "units"))
 
-        def _on_leave(e):
-            _scroll.unbind_all("<MouseWheel>")
-        _scroll.bind("<Enter>", _on_enter)
-        _scroll.bind("<Leave>", _on_leave)
-        tk.Label(pad, text="服务器概览", fg=t.text, bg=t.bg, font=CUI.f("h1", True)).pack(anchor="w")
-        tk.Label(pad, text="运行状态、健康与数据规模一目了然", fg=t.text_muted, bg=t.bg,
-                 font=CUI.f("body")).pack(anchor="w", pady=(2, SP_MD))
+        def _on_leave(_e, c=scroll):
+            c.unbind_all("<MouseWheel>")
+        scroll.bind("<Enter>", _on_enter)
+        scroll.bind("<Leave>", _on_leave)
+        # 首帧视口还没定（winfo_width≈1），排一次等映射完成后再铺
+        scroll.after_idle(_fit)
 
-        # 6 张 KPI 卡 2×3（自然高度）；热力图与占比卡按舒适高度排布，整页可滚动
+        # 页头一行：左＝标题/副标题，右＝该页动作区（登录态 + 刷新/登录/退出）。
+        # 旧版是「标题一行 + 下面一张整宽登录卡」，两屏高度纯浪费（方案 §W1.4）。
+        head = tk.Frame(pad, bg=t.bg)
+        head.pack(fill="x", pady=(0, SP_MD))
+        left = tk.Frame(head, bg=t.bg)
+        left.pack(side="left")
+        tk.Label(left, text=title, fg=t.text, bg=t.bg, font=CUI.f("h1", True)).pack(anchor="w")
+        if subtitle:
+            tk.Label(left, text=subtitle, fg=t.text_muted, bg=t.bg,
+                     font=CUI.f(FS_BODY)).pack(anchor="w")
+        pad.head_right = tk.Frame(head, bg=t.bg)
+        pad.head_right.pack(side="right", anchor="n")
+        return page, pad
+
+    def _build_dashboard_page(self) -> tk.Frame:
+        t = self.theme
+        page, pad = self._scroll_page("服务器概览", "运行状态、健康与数据规模一目了然")
+
+        # 6 张 KPI 卡 2×3（自然高度）；热力图行吃剩余高度，下半屏不再空着
         grid = tk.Frame(pad, bg=t.bg)
-        grid.pack(fill="x")
+        grid.pack(fill="both", expand=True)
         for c in range(3):
             grid.columnconfigure(c, weight=1, uniform="kpi")
-        grid.rowconfigure(2, minsize=330)
+        grid.rowconfigure(2, weight=1, minsize=CUI.px(330))
 
         _, self.v_server, self.c_server = self._make_card(grid, 0, 0, "服务器状态")
         _, self.v_health, self.c_health = self._make_card(grid, 0, 1, "服务健康", "HTTP 探活")
@@ -2056,15 +2165,17 @@ class ControllerApp:
         self.ollama_pid_label.pack(side="left", padx=(SP_SM, 0))
         self._ollama_low_vram = _load_low_vram()
         self.low_vram_var = tk.BooleanVar(value=self._ollama_low_vram)
-        self.chk_low_vram = ttk.Checkbutton(
-            ol_row, text="省显存模式", variable=self.low_vram_var,
-            command=self.toggle_low_vram)
+        # 自绘开关替代原生 Checkbutton（同一屏里两种控件质感会断层）
+        self.chk_low_vram = LabeledSwitch(ol_row, t, "省显存", self.low_vram_var,
+                                          command=self.toggle_low_vram, bg=t.card,
+                                          font_role=FS_CAPTION)
         self.chk_low_vram.pack(side="right", padx=(SP_SM, SP_LG))
         self.btn_ollama_stop = RoundedButton(ol_row, t, "停止", command=self.stop_ollama,
-                                             variant="danger", height=30, font_size=10)
+                                             variant="danger", height=30, font_role=FS_CAPTION)
         self.btn_ollama_stop.pack(side="right", padx=(SP_XS, 0))
         self.btn_ollama_start = RoundedButton(ol_row, t, "启动", command=self.start_ollama,
-                                              variant="primary", height=30, font_size=10)
+                                              variant="primary", height=30,
+                                              font_role=FS_CAPTION)
         self.btn_ollama_start.pack(side="right")
 
         # 控制台监控目标：可指向本机或另一台远程后端（远程仅监控状态）
@@ -2081,9 +2192,9 @@ class ControllerApp:
         self.target_port_var = tk.StringVar(value=str(TARGET_PORT))
         ttk.Entry(tgt_row1, textvariable=self.target_port_var, width=7).pack(side="left", padx=(4, SP_SM))
         RoundedButton(tgt_row1, t, "保存切换", command=self._save_target,
-                      variant="primary", height=30, font_size=10).pack(side="left", padx=(0, SP_XS))
+                      variant="primary", height=30, font_role=FS_CAPTION).pack(side="left", padx=(0, SP_XS))
         RoundedButton(tgt_row1, t, "恢复本机", command=self._reset_target,
-                      variant="neutral", height=30, font_size=10).pack(side="left")
+                      variant="neutral", height=30, font_role=FS_CAPTION).pack(side="left")
         tgt_row2 = tk.Frame(tgt, bg=t.card)
         tgt_row2.pack(fill="x", pady=(SP_XS, 0))
         self.target_mode_label = tk.Label(tgt_row2, text="", anchor="w", fg=t.text_sec,
@@ -2099,7 +2210,7 @@ class ControllerApp:
         tk.Label(addr_head, text="服务器地址（手机端「设置 → 服务器地址」填写）",
                  fg=t.text_sec, bg=t.card, font=CUI.f("body")).pack(side="left")
         RoundedButton(addr_head, t, "重新探测", command=self._probe_addresses,
-                      variant="neutral", height=28, font_size=10).pack(side="right")
+                      variant="neutral", height=28, font_role=FS_CAPTION).pack(side="right")
         self._addr_value = {}
         for _key, _label in (("local", "本机访问"),
                              ("lan", "局域网（同 Wi-Fi）"),
@@ -2108,7 +2219,7 @@ class ControllerApp:
             _row.pack(fill="x", pady=1)
             # 先 pack 右侧按钮预留位置，避免长地址把「复制」挤出可视区
             RoundedButton(_row, t, "复制", command=lambda k=_key: self._copy_address(k),
-                          variant="neutral", height=26, font_size=9).pack(side="right")
+                          variant="neutral", height=26, font_role=FS_CAPTION).pack(side="right")
             tk.Label(_row, text=_label, width=16, anchor="w", fg=t.text_muted,
                      bg=t.card, font=CUI.f("caption")).pack(side="left")
             _v = tk.Label(_row, text="探测中…", anchor="w", fg=t.text,
@@ -2131,19 +2242,24 @@ class ControllerApp:
         head = tk.Frame(pad, bg=t.bg)
         head.pack(fill="x", pady=(0, SP_SM))
         tk.Label(head, text="运行日志", fg=t.text, bg=t.bg, font=CUI.f("h1", True)).pack(side="left")
-        self.log_export_btn = RoundedButton(head, t, "导出日志", command=self.export_log, variant="neutral", height=32, font_size=10)
+        self.log_export_btn = RoundedButton(head, t, "导出日志", command=self.export_log,
+                                            variant="neutral", height=32, font_role=FS_CAPTION)
         self.log_export_btn.pack(side="right", padx=(SP_XS, 0))
-        self.log_clear_btn = RoundedButton(head, t, "清空显示", command=self.clear_log_display, variant="neutral", height=32, font_size=10)
+        self.log_clear_btn = RoundedButton(head, t, "清空显示", command=self.clear_log_display,
+                                           variant="neutral", height=32, font_role=FS_CAPTION)
         self.log_clear_btn.pack(side="right", padx=(SP_XS, 0))
-        self.log_open_btn = RoundedButton(head, t, "打开日志文件", command=self.open_log, variant="neutral", height=32, font_size=10)
+        self.log_open_btn = RoundedButton(head, t, "打开日志文件", command=self.open_log,
+                                          variant="neutral", height=32, font_role=FS_CAPTION)
         self.log_open_btn.pack(side="right")
         self.log_autoscroll_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(head, text="自动滚动", variable=self.log_autoscroll_var,
-                        command=self._on_log_autoscroll).pack(side="right", padx=(0, SP_SM))
+        LabeledSwitch(head, t, "自动滚动", self.log_autoscroll_var,
+                      command=self._on_log_autoscroll, bg=t.bg).pack(side="right",
+                                                                     padx=(0, SP_SM))
 
         self.log_box = scrolledtext.ScrolledText(pad, height=18, state="disabled",
-                                                 bg=t.log_bg, fg=t.log_fg, insertbackground=t.accent_glow,
-                                                 font=("Consolas", 10), relief="flat", bd=0,
+                                                 bg=t.log_bg, fg=t.log_fg,
+                                                 insertbackground=t.accent_glow,
+                                                 font=CUI.f(FS_BODY, num=True), relief="flat", bd=0,
                                                  highlightthickness=1, highlightbackground=t.hairline,
                                                  highlightcolor=t.hairline,
                                                  selectbackground=t.accent_dim, selectforeground=t.text)
@@ -2180,36 +2296,8 @@ class ControllerApp:
     # ── 管理面（账号独立 P2）：公共骨架 ──
 
     def _make_admin_page(self, title: str, subtitle: str):
-        """管理页容器：与仪表盘/服务器页同一纵向滚动范式，返回 (page, pad)。"""
-        t = self.theme
-        page = tk.Frame(self._content, bg=t.bg)
-        _scroll = tk.Canvas(page, bg=t.bg, highlightthickness=0, bd=0)
-        _sb = ttk.Scrollbar(page, orient="vertical", command=_scroll.yview)
-        _scroll.configure(yscrollcommand=_sb.set)
-        _sb.pack(side="right", fill="y")
-        _scroll.pack(side="left", fill="both", expand=True)
-        pad = tk.Frame(_scroll, bg=t.bg)
-        _pad_win = _scroll.create_window((SP_LG, SP_SM), window=pad, anchor="nw")
-        pad.bind("<Configure>",
-                 lambda e: _scroll.configure(scrollregion=_scroll.bbox("all")))
-
-        def _fit_width(e, c=_scroll, w=_pad_win):
-            c.itemconfig(w, width=max(1, e.width - 2 * SP_LG))
-        _scroll.bind("<Configure>", _fit_width)
-
-        def _on_enter(e, c=_scroll):
-            c.bind_all("<MouseWheel>",
-                       lambda ev: c.yview_scroll(int(-ev.delta / 120), "units"))
-
-        def _on_leave(e, c=_scroll):
-            c.unbind_all("<MouseWheel>")
-        _scroll.bind("<Enter>", _on_enter)
-        _scroll.bind("<Leave>", _on_leave)
-
-        tk.Label(pad, text=title, fg=t.text, bg=t.bg, font=CUI.f("h1", True)).pack(anchor="w")
-        tk.Label(pad, text=subtitle, fg=t.text_muted, bg=t.bg,
-                 font=CUI.f("body")).pack(anchor="w", pady=(2, SP_MD))
-        return page, pad
+        """管理页容器：与仪表盘共用 `_scroll_page`（同一套视口自适应 + 滚动）。"""
+        return self._scroll_page(title, subtitle)
 
     def _admin_card(self, parent, **pack_kw):
         """自适应高度圆角卡片（列表内容长短不定，不钉死高度以免裁切）。"""
@@ -2221,48 +2309,74 @@ class ControllerApp:
         return card, inner
 
     def _admin_login_bar(self, pad, refresh_cb):
-        """每页统一的登录态条（当前账号 + 刷新 + 登录/退出）+ 本页结果提示行。"""
+        """登录态 + 页级动作落进页头右侧动作区，下面一行是本页结果提示（状态口径见 `_admin_color`）。
+
+        返回值仍是 (label, dot, hint)：`_refresh_admin_login_bars` 与各页 loader 都按这份引用更新。
+        """
         t = self.theme
-        _, bar = self._admin_card(pad, fill="x", pady=(0, SP_SM))
-        row = tk.Frame(bar, bg=t.card)
-        row.pack(fill="x")
+        row = pad.head_right
         who = _console_login_state()
-        dot = _make_icon(row, 10, "dot", t.success if who else t.error, t.card)
-        dot.pack(side="left")
-        lab = tk.Label(row, text=("已登录：%s" % who) if who else "未登录",
-                       fg=t.text if who else t.error, bg=t.card, font=CUI.f("body", True))
-        lab.pack(side="left", padx=(SP_XS, 0))
         RoundedButton(row, t, "刷新", command=refresh_cb, variant="primary",
-                      height=28, font_size=10).pack(side="right")
+                      height=28, font_role=FS_CAPTION).pack(side="right")
         RoundedButton(row, t, "退出", command=self._admin_logout, variant="neutral",
-                      height=28, font_size=10).pack(side="right", padx=(0, SP_XS))
+                      height=28, font_role=FS_CAPTION).pack(side="right", padx=(0, SP_XS))
         RoundedButton(row, t, "登录", command=self._open_admin_login, variant="neutral",
-                      height=28, font_size=10).pack(side="right", padx=(0, SP_XS))
-        hint = tk.Label(bar, text="", anchor="w", justify="left", fg=t.text_muted,
-                        bg=t.card, font=CUI.f("caption"))
-        hint.pack(fill="x", pady=(SP_XS, 0))
+                      height=28, font_role=FS_CAPTION).pack(side="right", padx=(0, SP_XS))
+        lab = tk.Label(row, text=("已登录：%s" % who) if who else "未登录",
+                       fg=t.text if who else t.error, bg=t.bg, font=CUI.f("body", True))
+        lab.pack(side="right", padx=(0, SP_XS))
+        dot = _make_icon(row, 10, "dot", t.success if who else t.error, t.bg)
+        dot.pack(side="right")
+        hint = tk.Label(pad, text="", anchor="w", justify="left", fg=t.text_muted,
+                        bg=t.bg, font=CUI.f(FS_CAPTION))
+        hint.pack(fill="x", pady=(0, SP_SM))
         return lab, dot, hint
 
+    def _admin_color(self, kind: str) -> str:
+        """状态取色唯一映射：页内状态行与整页占位共用，避免两处各自取色而不一致。"""
+        t = self.theme
+        return {"ok": t.success, "warn": t.warning,
+                "err": t.error, "error": t.error,
+                "pending": t.accent_glow, "loading": t.accent_glow,
+                "empty": t.text_sec}.get(kind, t.text_muted)
+
     def _set_admin_status(self, key: str, text: str, kind: str = "info") -> None:
-        """页内结果提示（只做显示，不做业务判断）。kind: info/ok/warn/err/pending。"""
+        """页内结果提示（只做显示，不做业务判断）。kind: info/ok/warn/err/pending。
+
+        pending 且页面还空着（首次进入）时，顺手补一块整页加载态——否则请求在飞的几秒
+        页面是一片死白，看不出来是在加载还是没做出来。重载时 body 里还有上次的结果，
+        不覆盖（避免每次刷新都闪一下）。
+        """
         meta = self._admin_meta.get(key)
         if not meta:
             return
-        t = self.theme
-        color = {"ok": t.success, "warn": t.warning, "err": t.error,
-                 "pending": t.accent_glow}.get(kind, t.text_muted)
         try:
-            meta["status"].config(text=text, fg=color)
+            meta["status"].config(text=text, fg=self._admin_color(kind))
+        except Exception:
+            _safe_traceback()
+        if kind != "pending":
+            return
+        body = meta.get("body")
+        try:
+            if body is None or body.winfo_children():
+                return
+            tk.Label(body, text=text, anchor="w", fg=self._admin_color("loading"),
+                     bg=self.theme.bg, font=CUI.f(FS_BODY)
+                     ).pack(anchor="w", padx=SP_LG, pady=(CUI.sp("md"), CUI.sp("xl")))
         except Exception:
             _safe_traceback()
 
-    def _admin_note(self, key: str, text: str, clear: bool = True,
-                    illo: str = "", fg=None) -> None:
-        """整页占位提示（接口未就绪 / 未登录时把请求路径显示出来，方便联调）。
+    def _admin_state(self, key: str, state: str, text: str,
+                     illo: str = "", clear: bool = True) -> None:
+        """整页三态占位（loading / empty / warn / error）：版式、取色、动作入口统一。
 
-        clear=False 时保留 body 已有内容（如额度卡），只追加提示行。
-        illo 给素材名时走「照片画框 + 居中说明」的空态版式；素材没到货或解码失败时
-        退回下面那条纯文字提示——**版式与上一版逐字一致**，不会留一个空框。
+        旧版每条占位都是"一行灰字/黄字铺满整宽"，既没有重试入口，也分不清
+        「正在加载 / 真的没数据 / 请求失败」。这里：
+        - 取色一律走 `_admin_color`，与页内状态行同一档；
+        - empty/warn/error 各给一枚「刷新 / 重试」按钮（loader 已在 meta 里，页面不必自写）；
+        - illo 给素材名时走「照片画框 + 说明」版式，素材缺失或解码失败自动退回纯文字，
+          不会留一个空框；
+        - clear=False 时保留 body 已有内容（如额度卡），只追加提示块。
         """
         meta = self._admin_meta.get(key)
         if not meta:
@@ -2271,21 +2385,30 @@ class ControllerApp:
         body = meta["body"]
         if clear:
             _clear_frame(body)
-        if illo:
-            tile = CUI.photo_label(body, t, illo, CUI.px(150), CUI.px(150))
-            if tile is not None:
-                # 左对齐而不是居中：管理页 body 在横向可滚的画布里，表格列宽合计会把
-                # 内框撑得比视口宽，居中反而把画框推到视口右侧之外
-                tile.pack(anchor="w", padx=SP_LG, pady=(CUI.sp("xl"), CUI.sp("md")))
-                # wraplength 是必需的：这些提示是一整句长文案，不折行会把 body 的
-                # 请求宽度撑到比视口还宽，于是"居中"的画框被顶到右边、文字掉到折叠线下
-                tk.Label(body, text=text, anchor="w", justify="left",
-                         fg=fg or t.text_sec, bg=t.bg, font=CUI.f("body"),
-                         wraplength=CUI.px(520)
-                         ).pack(anchor="w", padx=SP_LG, pady=(0, CUI.sp("xl")))
-                return
-        tk.Label(body, text=text, anchor="w", justify="left", fg=fg or t.warning,
-                 bg=t.surface_alt, font=CUI.f("body"), padx=SP_MD, pady=SP_MD).pack(fill="x")
+        tile = CUI.photo_label(body, t, illo, CUI.px(150), CUI.px(150)) if illo else None
+        if tile is not None:
+            # 左对齐而不是居中：管理页 body 在横向可滚的画布里，表格列宽合计会把
+            # 内框撑得比视口宽，居中反而把画框推到视口右侧之外
+            tile.pack(anchor="w", padx=SP_LG, pady=(CUI.sp("xl"), CUI.sp("md")))
+        row = tk.Frame(body, bg=t.bg)
+        row.pack(anchor="w", padx=SP_LG,
+                 pady=(0, CUI.sp("lg")) if tile is not None else (CUI.sp("sm"), CUI.sp("xl")))
+        # wraplength 是必需的：这些提示是一整句长文案，不折行会把 body 的请求宽度撑到
+        # 比视口还宽，于是"左对齐"的块被顶到右边、文字掉到折叠线下
+        tk.Label(row, text=text, anchor="w", justify="left", fg=self._admin_color(state),
+                 bg=t.bg, font=CUI.f(FS_BODY), wraplength=CUI.px(520)).pack(side="left")
+        loader = meta.get("loader")
+        if state != "loading" and callable(loader):
+            RoundedButton(row, t, "重试" if state == "error" else "刷新",
+                          command=loader, variant="neutral",
+                          height=26, font_role=FS_CAPTION
+                          ).pack(side="left", padx=(CUI.sp("md"), 0))
+        # 整页态（clear=True）时状态行归它管；追加式提示（如筛选无结果）不覆盖
+        # 页面上已有的"共 N 个开关（GET …）"计数
+        if clear:
+            self._set_admin_status(key, text.split("\n")[0],
+                                   {"loading": "pending", "error": "err",
+                                    "warn": "warn", "empty": "info"}.get(state, "info"))
 
     def _refresh_admin_login_bars(self) -> None:
         who = _console_login_state()
@@ -2363,10 +2486,10 @@ class ControllerApp:
                 # 三种"这一页现在没有数据"的时刻各给一枚画框：没登录 / 接口没上线 / 后端不通
                 _illo = {401: "photo_locked_gate.jpg",
                          404: "photo_empty_disconnected.jpg"}.get(code, "photo_offline.jpg")
-                self._admin_note(page_key, "%s\n请求路径：%s %s" % (
+                self._admin_state(page_key, "error", "%s\n请求路径：%s %s" % (
                     text, path, "（点右上角「登录」后重试）" if code == 401
                     else "（后端接口可能尚未上线）" if code == 404 else "（先启动后端再刷新）"),
-                    illo=_illo, fg=self.theme.error)
+                    illo=_illo)
         else:
             self._set_msg(text)
         self._refresh_admin_login_bars()
@@ -2435,9 +2558,9 @@ class ControllerApp:
         btns = tk.Frame(f, bg=t.card)
         btns.grid(row=5, column=0, columnspan=2, sticky="w", pady=(SP_MD, 0))
         RoundedButton(btns, t, "登录", command=submit, variant="primary",
-                      height=32, font_size=11).pack(side="left", padx=(0, SP_XS))
+                      height=32, font_role=FS_BODY).pack(side="left", padx=(0, SP_XS))
         RoundedButton(btns, t, "取消", command=win.destroy, variant="neutral",
-                      height=32, font_size=11).pack(side="left")
+                      height=32, font_role=FS_BODY).pack(side="left")
 
         def on_close():
             self._admin_login_tip = None
@@ -2490,44 +2613,72 @@ class ControllerApp:
         t = self.theme
         _clear_frame(body)
         if not rows:
-            self._admin_note("models", "后端未返回任何模态（GET %s）" % meta["path"])
+            self._admin_state("models", "warn", "后端未返回任何模态（GET %s）" % meta["path"])
             return
         for r in rows:
             key = str(r.get("key") or "")
             _, card = self._admin_card(body, fill="x", pady=(0, SP_SM))
+            # 4 列栅格：标签（按内容）/ 输入框（weight=1 跟着窗口拉伸）× 2 组。
+            # 旧版是一整条 pack(side=left) 的表单 + 固定字符宽 Entry，
+            # 于是 qwen3.5-omni-plus-2026-01-2 这类长值被裁成 "…2026"，右侧还大片空。
+            self._field_grid(card)
             head = tk.Frame(card, bg=t.card)
-            head.pack(fill="x")
+            head.grid(row=0, column=0, columnspan=4, sticky="we")
             _make_icon(head, 10, "dot", t.success if r.get("enabled") else t.text_muted,
                        t.card).pack(side="left")
             tk.Label(head, text="%s（%s）" % (r.get("label") or key, key),
-                     fg=t.text, bg=t.card, font=CUI.f("title", True)).pack(side="left", padx=(SP_XS, 0))
+                     fg=t.text, bg=t.card, font=CUI.f("title", True)
+                     ).pack(side="left", padx=(SP_XS, 0))
             tk.Label(head, text="provider %s · 日限额 %s" % (r.get("provider") or "—",
                                                              r.get("daily_limit") or "—"),
-                     fg=t.text_muted, bg=t.card, font=CUI.f("caption")).pack(side="right")
+                     fg=t.text_muted, bg=t.card, font=CUI.f(FS_CAPTION)).pack(side="right")
+
             form = tk.Frame(card, bg=t.card)
-            form.pack(fill="x", pady=(SP_XS, 0))
+            form.grid(row=1, column=0, columnspan=4, sticky="we", pady=(SP_XS, 0))
+            self._field_grid(form)
             en_var = tk.BooleanVar(value=bool(r.get("enabled")))
-            ttk.Checkbutton(form, text="启用", variable=en_var).pack(side="left")
+            LabeledSwitch(form, t, "启用", en_var, bg=t.card).grid(
+                row=0, column=0, columnspan=2, sticky="w", pady=(0, SP_XS))
+
             fields = {}
-            for fname, flabel, fwidth in (("model", "模型", 20), ("base_url", "Base URL", 24)):
+            spec = (("model", "模型", 0), ("base_url", "Base URL", 2))
+            for fname, flabel, col in spec:
                 tk.Label(form, text=flabel, fg=t.text_muted, bg=t.card,
-                         font=CUI.f("caption")).pack(side="left", padx=(SP_MD, 4))
+                         font=CUI.f(FS_CAPTION)).grid(
+                    row=1, column=col, sticky="e", padx=(SP_MD if col else 0, 4))
                 var = tk.StringVar(value=str(r.get(fname) or ""))
-                ttk.Entry(form, textvariable=var, width=fwidth).pack(side="left")
+                self._field_entry(form, var, row=1, column=col + 1)
                 fields[fname] = var
             tk.Label(form, text="api_key", fg=t.text_muted, bg=t.card,
-                     font=CUI.f("caption")).pack(side="left", padx=(SP_MD, 4))
+                     font=CUI.f(FS_CAPTION)).grid(row=2, column=0, sticky="e", padx=(0, 4))
             ak_var = tk.StringVar()
-            ttk.Entry(form, textvariable=ak_var, width=16).pack(side="left")
+            self._field_entry(form, ak_var, row=2, column=1)
             fields["api_key"] = ak_var
             tk.Label(form, text="留空＝不修改（当前 %s）" % ("已配置" if r.get("has_api_key") else "未配置"),
-                     fg=t.text_muted, bg=t.card, font=CUI.f("caption")).pack(side="left", padx=(4, 0))
-            RoundedButton(form, t, "保存", variant="primary", height=28, font_size=10,
+                     fg=t.text_muted, bg=t.card, font=CUI.f(FS_CAPTION)
+                     ).grid(row=2, column=2, columnspan=2, sticky="w", padx=(SP_MD, 0))
+            btns = tk.Frame(form, bg=t.card)
+            btns.grid(row=3, column=0, columnspan=4, sticky="e", pady=(SP_XS, 0))
+            RoundedButton(btns, t, "保存", variant="primary", height=28, font_role=FS_CAPTION,
                           command=lambda k=key, f=fields, ev=en_var: self._save_modality(k, f, ev)
                           ).pack(side="right")
-            RoundedButton(form, t, "清空密钥", variant="neutral", height=28, font_size=10,
+            RoundedButton(btns, t, "清空密钥", variant="neutral", height=28,
+                          font_role=FS_CAPTION,
                           command=lambda k=key: self._clear_modality_key(k)
                           ).pack(side="right", padx=(0, SP_XS))
+
+    def _field_grid(self, frame) -> None:
+        """「标签 / 输入框 / 标签 / 输入框」四列栅格：两个输入列等权拉伸。"""
+        for ci, wt in ((0, 0), (1, 1), (2, 0), (3, 1)):
+            frame.grid_columnconfigure(ci, weight=wt, minsize=CUI.px(140) if wt else 0,
+                                       uniform="field" if wt else "")
+
+    def _field_entry(self, parent, var, row, column):
+        """按列拉伸的输入框：值完整可读（超长走 tooltip），不再用固定字符宽裁字。"""
+        e = ttk.Entry(parent, textvariable=var, width=6)
+        e.grid(row=row, column=column, sticky="we", pady=2)
+        CUI.Tooltip(e, lambda v=var: str(v.get() or ""))
+        return e
 
     def _save_modality(self, key: str, fields: dict, en_var) -> None:
         body = {"enabled": bool(en_var.get()),
@@ -2597,11 +2748,11 @@ class ControllerApp:
         _clear_frame(body)
         self._render_server_llm_limit(limit)
         if not rows:
-            self._admin_note(
-                "accounts",
+            self._admin_state(
+                "accounts", "empty",
                 "接口 200 但 accounts 为空（GET %s）：请确认账号数据是否存在，"
                 "以及响应结构是否变更（信封字段是否仍为 accounts）" % meta["path"],
-                clear=False, illo="photo_empty_accounts.jpg", fg=t.text_sec)
+                clear=False, illo="photo_empty_accounts.jpg")
             return
         cols = (
             {"label": "ID", "weight": 0, "min": 46},
@@ -2619,8 +2770,7 @@ class ControllerApp:
         for idx, r in enumerate(rows):
             uid = r.get("id")
             disabled = bool(r.get("disabled_at"))
-            base = t.card if idx % 2 == 0 else CUI.mix(t.card, t.card_hover, 0.55)
-            row = table.add_row(_hex_mix(base, t.error, 0.14) if disabled else base)
+            row = table.add_row(_row_bg(t, idx, t.error if disabled else "", 0.14))
             row.text(0, str(uid), num=True, fg=t.text)
             row.text(1, str(r.get("username") or ""), fg=t.text)
             nick = str(r.get("nickname") or "")
@@ -2730,7 +2880,7 @@ class ControllerApp:
         row.pack(fill="x")
         var = tk.StringVar(value="" if val is None else str(val))
         ttk.Entry(row, textvariable=var, width=14).pack(side="left")
-        RoundedButton(row, t, "保存", variant="primary", height=28, font_size=10,
+        RoundedButton(row, t, "保存", variant="primary", height=28, font_role=FS_CAPTION,
                       command=lambda v=var: self._save_server_llm_limit(v)
                       ).pack(side="left", padx=(SP_XS, 0))
         tk.Label(row, text="负数/非整数由后端拒绝（400）", fg=t.text_muted, bg=t.card,
@@ -2819,12 +2969,12 @@ class ControllerApp:
         btns = tk.Frame(f, bg=t.card)
         btns.grid(row=4, column=0, columnspan=2, sticky="w", pady=(SP_MD, 0))
         RoundedButton(btns, t, "保存", command=submit, variant="primary",
-                      height=32, font_size=11).pack(side="left", padx=(0, SP_XS))
-        RoundedButton(btns, t, "清除覆盖", variant="neutral", height=32, font_size=11,
+                      height=32, font_role=FS_BODY).pack(side="left", padx=(0, SP_XS))
+        RoundedButton(btns, t, "清除覆盖", variant="neutral", height=32, font_role=FS_BODY,
                       command=lambda: (close(), self._clear_account_llm_limit(uid))
                       ).pack(side="left", padx=(0, SP_XS))
         RoundedButton(btns, t, "取消", command=close, variant="neutral",
-                      height=32, font_size=11).pack(side="left")
+                      height=32, font_role=FS_BODY).pack(side="left")
         win.protocol("WM_DELETE_WINDOW", close)
         entry.bind("<Return>", lambda e: submit())
         entry.focus_set()
@@ -2862,21 +3012,26 @@ class ControllerApp:
         self._flags_dirty = {}
         self._flags_search = tk.StringVar()
         self._flags_filter = tk.StringVar(value="all")
+        # 栅格而不是 pack(side=left)：搜索列 weight=1，窗口拉宽时工具条跟着铺满，
+        # 不会出现"表格铺满了、工具条还是那一小截"的错位
+        bar.grid_columnconfigure(0, weight=1)
         ent = tk.Entry(bar, textvariable=self._flags_search, width=20, bg=t.entry_bg,
                        fg=t.text, insertbackground=t.text, relief="flat",
                        highlightthickness=1, highlightbackground=t.hairline,
-                       highlightcolor=t.accent, font=CUI.f("body"))
-        ent.pack(side="left", ipady=CUI.sp("xxs"))
+                       highlightcolor=t.accent, font=CUI.f(FS_BODY))
+        ent.grid(row=0, column=0, sticky="we", ipady=CUI.sp("xxs"))
         ent.bind("<KeyRelease>", lambda _e: self._render_flags())
         CUI.Tooltip(ent, lambda: "按键名 / 中文名 / 说明搜索")
         Segmented(bar, t, [("all", "全部"), ("diff", "与默认不同"),
                            ("locked", "仅锁定"), ("on", "仅开启")],
                   lambda v: (self._flags_filter.set(v), self._render_flags()),
-                  width=CUI.px(292), height=CUI.px(26)).pack(side="left", padx=(CUI.sp("md"), 0))
-        RoundedButton(bar, t, "展开全部", variant="neutral", height=CUI.px(26), font_size=10,
-                      command=self._flags_expand_all).pack(side="left", padx=(CUI.sp("md"), 0))
-        RoundedButton(bar, t, "收起全部", variant="neutral", height=CUI.px(26), font_size=10,
-                      command=self._flags_collapse_all).pack(side="left", padx=(CUI.sp("xs"), 0))
+                  width=None, height=26).grid(row=0, column=1, padx=(CUI.sp("md"), 0))
+        RoundedButton(bar, t, "展开全部", variant="neutral", height=26, font_role=FS_CAPTION,
+                      command=self._flags_expand_all
+                      ).grid(row=0, column=2, padx=(CUI.sp("md"), 0))
+        RoundedButton(bar, t, "收起全部", variant="neutral", height=26, font_role=FS_CAPTION,
+                      command=self._flags_collapse_all
+                      ).grid(row=0, column=3, padx=(CUI.sp("xs"), 0))
         body = tk.Frame(pad, bg=t.bg)
         body.pack(fill="x")
         self._admin_meta["flags"] = {"status": hint, "login_label": login_label,
@@ -2970,13 +3125,13 @@ class ControllerApp:
         t = self.theme
         _clear_frame(body)
         if not self._flags_rows:
-            self._admin_note("flags", "后端未返回任何开关（GET %s）" % meta["path"])
+            self._admin_state("flags", "warn", "后端未返回任何开关（GET %s）" % meta["path"])
             return
         rows = self._flags_visible_rows()
         if not rows:
-            self._admin_note("flags", "没有匹配的开关（搜索「%s」/ 筛选「%s」）"
-                             % (self._flags_search.get() or "—", self._flags_filter.get()),
-                             clear=False)
+            self._admin_state("flags", "empty", "没有匹配的开关（搜索「%s」/ 筛选「%s」）"
+                              % (self._flags_search.get() or "—", self._flags_filter.get()),
+                              clear=False)
             return
         filtering = bool(str(self._flags_search.get() or "").strip()) or \
             str(self._flags_filter.get() or "all") != "all"
@@ -3018,64 +3173,70 @@ class ControllerApp:
 
     def _flags_group_card(self, body, label: str, count: int, _open: bool, t,
                           rows: list, bare: bool = False) -> None:
-        """一个分组卡：表头 + 数据行。bare=True 时不再画组名（折叠头已在外面画过）。"""
+        """一个分组卡：DataTable 表头 + 数据行。bare=True 时不再画组名（折叠头已在外面画过）。
+
+        表格走与账号页/审计页同一个 `CUI.DataTable`——列按 weight 铺满整卡，
+        不再是"名称列按内容 + 三列各占固定位"导致右侧大片空白。
+        """
         if not bare:
             head = tk.Frame(body, bg=t.surface_alt)
             head.pack(fill="x", pady=(CUI.sp("xs"), 0))
             tk.Label(head, text=label, bg=t.surface_alt, fg=t.text,
-                     font=CUI.f("h2")).pack(side="left", padx=CUI.sp("sm"), pady=7)
+                     font=CUI.f(FS_TITLE)).pack(side="left", padx=CUI.sp("sm"), pady=7)
             tk.Label(head, text=str(count), bg=t.surface_alt, fg=t.text_muted,
-                     font=CUI.f("caption")).pack(side="left")
+                     font=CUI.f(FS_CAPTION)).pack(side="left")
         _, card = self._admin_card(body, fill="x")
-        card.grid_columnconfigure(0, weight=1)
-        for ci, name in ((1, "当前值"), (2, "允许自助"), (3, "服务器锁定")):
-            tk.Label(card, text=name, anchor="w", fg=t.text_muted, bg=t.card,
-                     font=CUI.f("caption", True)).grid(
-                row=0, column=ci, sticky="w", padx=(0, CUI.sp("md")), pady=(0, 4))
-        tk.Frame(card, bg=t.hairline, height=1).grid(row=1, column=0, columnspan=5,
-                                                     sticky="ew", pady=(0, CUI.sp("xxs")))
-        for ri, r in enumerate(rows, start=2):
-            self._flag_row(card, r, ri, t)
+        table = CUI.DataTable(card, t, FLAG_COLS)
+        for ri, r in enumerate(rows):
+            self._flag_row(table, r, ri, t)
 
-    def _flag_row(self, card, r, ri: int, t) -> None:
+    def _flag_row(self, table, r, ri: int, t) -> None:
+        """一行开关：名称列（key + 中文标题 + 说明 + 来源徽标）+ 三个自绘开关 + 保存槽位。"""
         key = str(r.get("key") or "")
         locked = bool(r.get("server_locked"))
-        zebra = t.card if ri % 2 == 0 else _hex_mix(t.card, t.card_hover, 0.55)
-        row_bg = _hex_mix(t.card, t.warning, 0.18) if locked else zebra
-        title = str(r.get("title") or "").strip()
-        desc = str(r.get("desc") or "").strip()
-        name_f = tk.Frame(card, bg=row_bg)
-        name_f.grid(row=ri, column=0, sticky="w", pady=3)
-        tk.Label(name_f, text=key, anchor="w", bg=row_bg,
+        row_bg = _row_bg(t, ri, t.warning if locked else "")
+        row = table.add_row(row_bg)
+        cell = row.cell(0)
+        tk.Label(cell, text=key, anchor="w", bg=row_bg,
                  fg=t.warning if locked else t.text,
-                 font=CUI.f("body", bool(locked))).pack(side="left")
+                 font=CUI.f(FS_BODY, bool(locked))).pack(side="left")
+        title = str(r.get("title") or "").strip()
         if title:
-            tk.Label(name_f, text=title, anchor="w", bg=row_bg, fg=t.text_sec,
-                     font=CUI.f("caption")).pack(side="left", padx=(CUI.sp("sm"), 0))
+            tk.Label(cell, text=title, anchor="w", bg=row_bg, fg=t.text_sec,
+                     font=CUI.f(FS_CAPTION)).pack(side="left", padx=(CUI.sp("sm"), 0))
+        desc = str(r.get("desc") or "").strip()
         if desc:
-            lb = tk.Label(name_f, text=desc if len(desc) <= 30 else desc[:29] + "…",
-                          anchor="w", bg=row_bg, fg=t.text_muted, font=CUI.f("caption"))
+            lb = tk.Label(cell, text=desc if len(desc) <= 30 else desc[:29] + "…",
+                          anchor="w", bg=row_bg, fg=t.text_muted, font=CUI.f(FS_CAPTION))
             lb.pack(side="left", padx=(CUI.sp("sm"), 0))
             CUI.Tooltip(lb, lambda d=desc: d)
-        if str(r.get("source") or "") == "db":
-            tk.Label(name_f, text="DB覆盖", bg=_hex_mix(row_bg, t.accent, 0.16),
-                     fg=t.accent_glow, font=CUI.f("micro"),
-                     padx=6, pady=1).pack(side="left", padx=(CUI.sp("sm"), 0))
-        if str(r.get("scope") or "") == "user":
-            tk.Label(name_f, text="按账号", bg=_hex_mix(row_bg, t.accent, 0.16),
+        for badge, on in (("DB覆盖", str(r.get("source") or "") == "db"),
+                          ("按账号", str(r.get("scope") or "") == "user")):
+            if not on:
+                continue
+            tk.Label(cell, text=badge, bg=CUI.mix(row_bg, t.accent, 0.16),
                      fg=t.accent_glow, font=CUI.f("micro"),
                      padx=6, pady=1).pack(side="left", padx=(CUI.sp("xs"), 0))
-        vars_ = (tk.BooleanVar(value=bool(r.get("enabled"))),
-                 tk.BooleanVar(value=bool(r.get("self_service"))),
-                 tk.BooleanVar(value=locked))
+        prev = self._flags_dirty.get(key) or {}
+        if prev.get("dirty") and prev.get("vars"):
+            # 搜索/筛选会整表重渲染：已拨动但还没保存的行要留住用户改的值，
+            # 否则拨一下、敲一个字搜索，改动就被服务器返回值悄悄盖回去了
+            vars_ = prev["vars"]
+        else:
+            vars_ = (tk.BooleanVar(value=bool(r.get("enabled"))),
+                     tk.BooleanVar(value=bool(r.get("self_service"))),
+                     tk.BooleanVar(value=locked))
         # 三列都可编辑：控制台是服务器管理员面，锁不锁都要能改（用户侧的 403 由后端裁决）
         for ci, var in enumerate(vars_, start=1):
-            CUI.Switch(card, t, variable=var, bg=row_bg,
+            CUI.Switch(row.cell(ci), t, variable=var, bg=row_bg,
                        command=lambda k=key, vs=vars_: self._flag_mark_dirty(k, vs)
-                       ).grid(row=ri, column=ci, sticky="w", padx=(0, CUI.sp("md")))
-        slot = tk.Frame(card, bg=row_bg)
-        slot.grid(row=ri, column=4, sticky="w")
-        self._flags_dirty.setdefault(key, {"vars": vars_, "slot": slot, "dirty": False})
+                       ).pack(side="left")
+        # 槽位每帧都是新 Frame，必须跟着换（旧版用 setdefault 会一直指着上一轮的
+        # 已销毁帧，保存按钮 pack 进去直接抛 TclError）；只有"改过没有"跨重渲染保留
+        self._flags_dirty[key] = {"vars": vars_, "slot": row.cell(FLAG_SAVE_COL),
+                                  "dirty": bool(prev.get("dirty"))}
+        if prev.get("dirty"):
+            self._flag_show_save(key)
 
     def _flag_mark_dirty(self, key: str, vars_) -> None:
         """只有改动过的行才长出「保存」按钮——干净行不显示，81 行的视觉噪音就没了。"""
@@ -3083,9 +3244,16 @@ class ControllerApp:
         if not ent or ent["dirty"]:
             return
         ent["dirty"] = True
+        self._flag_show_save(key)
+
+    def _flag_show_save(self, key: str) -> None:
+        """在指定行的槽位里长出「保存」按钮（重渲染后也要能补画，故与脏标记分开）。"""
+        ent = self._flags_dirty.get(key)
+        if not ent:
+            return
         RoundedButton(ent["slot"], self.theme, "保存", variant="primary",
-                      height=CUI.px(24), font_size=9,
-                      command=lambda k=key, vs=vars_: self._save_flag(k, vs)
+                      height=24, font_role=FS_CAPTION,
+                      command=lambda k=key, vs=ent["vars"]: self._save_flag(k, vs)
                       ).pack(side="left")
 
     def _save_flag(self, key: str, vars_) -> None:
@@ -3144,8 +3312,9 @@ class ControllerApp:
         t = self.theme
         _clear_frame(body)
         if not rows:
-            self._admin_note("audit", "暂无审计记录（GET %s/audit?limit=%d）" % (ADMIN_API_PREFIX, limit),
-                             illo="photo_empty_audit.jpg", fg=t.text_sec)
+            self._admin_state("audit", "empty",
+                              "暂无审计记录（GET %s/audit?limit=%d）" % (ADMIN_API_PREFIX, limit),
+                              illo="photo_empty_audit.jpg")
             return
         cols = (
             {"label": "时间", "weight": 0, "min": 150},
@@ -3209,24 +3378,30 @@ class ControllerApp:
         tk.Label(card, text=_registration_mode_text(mode), fg=t.text, bg=t.card,
                  font=CUI.f("h2", True)).pack(anchor="w", pady=(0, SP_SM))
         mode_var = tk.StringVar(value=mode)
-        for m, label, desc in REGISTRATION_MODES:
-            row = tk.Frame(card, bg=t.card)
-            row.pack(fill="x", pady=1)
-            tk.Radiobutton(row, text="%s（%s）" % (label, m), value=m, variable=mode_var,
-                           bg=t.card, fg=t.text, activebackground=t.card,
-                           activeforeground=t.text, selectcolor=t.entry_bg,
-                           font=CUI.f("body")).pack(side="left")
-            tk.Label(row, text=desc, fg=t.text_muted, bg=t.card,
-                     font=CUI.f("caption")).pack(side="left", padx=(SP_MD, 0))
-            if m == mode:
-                tk.Label(row, text="← 生效中", fg=t.accent_glow, bg=t.card,
-                         font=CUI.f("caption")).pack(side="right")
+        desc_by_mode = {m: desc for m, _label, desc in REGISTRATION_MODES}
+        opts = [(m, label) for m, label, _desc in REGISTRATION_MODES]
+        seg_row = tk.Frame(card, bg=t.card)
+        seg_row.pack(fill="x")
+        desc = tk.Label(card, text=desc_by_mode.get(mode, ""), anchor="w", justify="left",
+                        fg=t.text_muted, bg=t.card, font=CUI.f(FS_CAPTION),
+                        wraplength=CUI.px(460))
+        desc.pack(fill="x", pady=(SP_XS, 0))
+
+        def _pick(v):
+            mode_var.set(v)
+            desc.config(text=desc_by_mode.get(v, ""))
+
+        seg = Segmented(seg_row, t, opts, _pick, width=None, height=28)
+        seg.pack(side="left")
+        seg.set_index(next((i for i, (v, _l) in enumerate(opts) if v == mode), 0), fire=False)
+        tk.Label(seg_row, text="生效中：%s" % _registration_mode_text(mode),
+                 fg=t.accent, bg=t.card, font=CUI.f(FS_CAPTION)).pack(side="left", padx=(SP_MD, 0))
         act = tk.Frame(card, bg=t.card)
         act.pack(fill="x", pady=(SP_SM, 0))
-        RoundedButton(act, t, "保存", variant="primary", height=28, font_size=10,
+        RoundedButton(act, t, "保存", variant="primary", height=28, font_role=FS_CAPTION,
                       command=lambda v=mode_var: self._save_registration(v)
                       ).pack(side="left")
-        RoundedButton(act, t, "放弃修改并重读", variant="neutral", height=28, font_size=10,
+        RoundedButton(act, t, "放弃修改并重读", variant="neutral", height=28, font_role=FS_CAPTION,
                       command=self._load_registration).pack(side="left", padx=(SP_XS, 0))
         tk.Label(act, text="403/401 时点右上角「登录」后重试", fg=t.text_muted, bg=t.card,
                  font=CUI.f("caption")).pack(side="right")
@@ -3264,13 +3439,8 @@ class ControllerApp:
             tk.Label(hero, text="为 AI 陪伴服务写的运维仪表盘",
                      fg=CUI.mix(CUI.photo_fg(t), hbg, 0.38), bg=hbg,
                      font=CUI.f("caption")).place(x=CUI.px(330), rely=0.63, anchor="w")
-        _, tools = self._admin_card(pad, fill="x", pady=(0, SP_SM))
-        trow = tk.Frame(tools, bg=t.card)
-        trow.pack(fill="x")
-        tk.Label(trow, text="快速判断服务器现状；未登录或接口未就绪时只提示，不影响其他页签",
-                 fg=t.text_muted, bg=t.card, font=CUI.f("caption")).pack(side="left")
-        RoundedButton(trow, t, "刷新", command=self._load_overview, variant="primary",
-                      height=28, font_size=10).pack(side="right")
+        # 工具卡已并入页头（刷新在登录态右侧、本页结果提示在 hint 行），
+        # 同一信息不再占三处：左下角状态条 / 页头 / 卡内提示（方案 §2.2）
         body = tk.Frame(pad, bg=t.bg)
         body.pack(fill="x")
         self._admin_meta["overview"] = {"status": hint, "login_label": login_label,
@@ -3300,7 +3470,8 @@ class ControllerApp:
         known = {key for key, _label in OVERVIEW_FIELDS}
         rows += [(key, data.get(key)) for key in sorted(data) if key not in known]
         if all(v is None for _label, v in rows):
-            self._admin_note("overview", "后端未返回任何概览字段（GET %s）" % meta["path"])
+            self._admin_state("overview", "warn",
+                              "后端未返回任何概览字段（GET %s）" % meta["path"])
             return 0
         table = CUI.DataTable(body, t, [
             {"label": "指标", "weight": 2, "min": 150},
@@ -3335,7 +3506,7 @@ class ControllerApp:
         self._da_cap = {}
         self._da_list_host = {}
         self._da_switch = {}
-        # 整页提示位：未登录 / 接口未就绪时由 _admin_note 占用，放最上面才不会被三段挤出视口
+        # 整页提示位：未登录 / 接口未就绪时由 _admin_state 占用，放最上面才不会被三段挤出视口
         body = tk.Frame(pad, bg=t.bg)
         body.pack(fill="x")
 
@@ -3387,7 +3558,7 @@ class ControllerApp:
                        font=CUI.f("body"))
         ent.pack(side="left", fill="x", expand=True, ipady=CUI.sp("xxs"))
         ent.bind("<Return>", lambda _e, w=which: self._add_device_action_item(w))
-        RoundedButton(row, t, "添加", variant="primary", height=28, font_size=10,
+        RoundedButton(row, t, "添加", variant="primary", height=28, font_role=FS_CAPTION,
                       command=lambda w=which: self._add_device_action_item(w)
                       ).pack(side="left", padx=(SP_XS, 0))
         hint_text = "提示：%s（回车或点「添加」提交，名单以服务端返回为准）" % sample
@@ -3428,12 +3599,12 @@ class ControllerApp:
                      bg=t.card, font=CUI.f("caption")).pack(fill="x", pady=CUI.sp("xxs"))
             return
         for i, name in enumerate(names):
-            zebra = t.card if i % 2 == 0 else _hex_mix(t.card, t.card_hover, 0.55)
+            zebra = _row_bg(t, i)
             row = tk.Frame(host, bg=zebra)
             row.pack(fill="x", pady=1)
             tk.Label(row, text=name, anchor="w", fg=t.text, bg=zebra,
                      font=CUI.f("body")).pack(side="left", fill="x", expand=True)
-            RoundedButton(row, t, "删除", variant="neutral", height=24, font_size=9,
+            RoundedButton(row, t, "删除", variant="neutral", height=24, font_role=FS_CAPTION,
                           command=lambda w=which, n=name: self._del_device_action_item(w, n)
                           ).pack(side="right")
 
@@ -3584,7 +3755,7 @@ class ControllerApp:
                                                {DEVICE_ACTION_FIELDS[which]: name}),
                         ok, "device_actions")
 
-    # ── ttk 主题（Checkbutton / Entry 仍用 ttk）──
+    # ── ttk 主题（只剩 Entry / Combobox / Scrollbar 用 ttk；勾选类一律自绘）──
 
     def _style_ttk(self):
         t = self.theme
@@ -3593,11 +3764,18 @@ class ControllerApp:
             style.theme_use("clam")
         except Exception:
             pass
-        style.configure("TCheckbutton", background=t.card, foreground=t.text, font=CUI.f("body"))
-        style.map("TCheckbutton", background=[("active", t.card)])
+        # 输入框字号走字号阶梯；内边距必须显式乘 DPI，否则高分屏下字大框小、基线错位
         style.configure("TEntry", fieldbackground=t.entry_bg, foreground=t.text,
                         bordercolor=t.hairline, lightcolor=t.hairline, darkcolor=t.hairline,
-                        insertcolor=t.text)
+                        insertcolor=t.text, font=CUI.f(FS_BODY), padding=CUI.sp("xxs"))
+        style.configure("TCombobox", fieldbackground=t.entry_bg, background=t.surface_alt,
+                        foreground=t.text, arrowcolor=t.text_sec, bordercolor=t.hairline,
+                        lightcolor=t.hairline, darkcolor=t.hairline, padding=CUI.sp("xxs"))
+        style.map("TCombobox", fieldbackground=[("readonly", t.entry_bg)])
+        style.configure("TScrollbar", background=t.surface_alt, troughcolor=t.bg,
+                        bordercolor=t.hairline, lightcolor=t.surface_alt,
+                        darkcolor=t.surface_alt, arrowsize=CUI.px(10))
+        style.map("TScrollbar", background=[("active", t.card_hover)])
 
     # ── 状态 / 消息 ──
 
@@ -3951,8 +4129,8 @@ class ControllerApp:
 
         btn_row = tk.Frame(frame, bg=t.card)
         btn_row.grid(row=5, column=0, columnspan=2, sticky="w")
-        RoundedButton(btn_row, t, "保存", command=save, variant="primary", height=32, font_size=11).pack(side="left", padx=(0, SP_XS))
-        RoundedButton(btn_row, t, "取消", command=win.destroy, variant="neutral", height=32, font_size=11).pack(side="left")
+        RoundedButton(btn_row, t, "保存", command=save, variant="primary", height=32, font_role=FS_BODY).pack(side="left", padx=(0, SP_XS))
+        RoundedButton(btn_row, t, "取消", command=win.destroy, variant="neutral", height=32, font_role=FS_BODY).pack(side="left")
 
         win.grab_set()
 
@@ -4106,30 +4284,45 @@ class ControllerApp:
         self._draw_heatmap()
 
     def _heat_cell_colors(self):
+        """5 档色阶（0/1/2/3/4）。
+
+        0 档是这页的关键：**不能等于"看不见"**。原先最低档与卡片底色同量级，26 周里前 22
+        周读起来像"这块还没画"。这里 0 档走灰（card→text_muted，色相与上层的青/蓝不同，
+        所以"没有量"和"量很小"不会混成一片），1–4 档再按 .38/.62/.82 抬亮度，
+        亮色主题下同一套 mix 口径依然成立（基色是各自的 card/accent）。
+        """
         t = self.theme
-        # 0 档不能等于"看不见"：用 hairline 而不是 surface_alt，空格子才读得出"当天没有量"
-        return [t.hairline,
-                _hex_mix(t.card, t.accent, .30),
-                _hex_mix(t.card, t.accent, .55),
-                _hex_mix(t.card, t.accent, .78),
+        zero = CUI.mix(t.card, t.text_muted, 0.30)
+        return [zero,
+                CUI.mix(t.card, t.accent, .38),
+                CUI.mix(t.card, t.accent, .62),
+                CUI.mix(t.card, t.accent, .82),
                 t.accent]
 
     def _draw_heat_legend(self, c, t, w, colors) -> None:
         """色阶图例：画在画布右上角，跟着 `_draw_heatmap` 一起重绘（换主题不会留旧色）。
 
-        不写图例的话没人知道 0 档是"当天没有量"，而不是"这块还没画"。
+        不写图例的话没人知道 0 档是"当天没有量"，而不是"这块还没画"；「未来」单独给一枚
+        空心格，因为空心是**唯一**表示"这几天还没发生"的记号，不标出来会被读成缺数据。
         """
         s = CUI.px(9)
         step = s + CUI.px(3)
         pad_txt = CUI.px(20)
-        x = w - CUI.px(8) - (pad_txt * 2 + step * 5)
+        fut_w = pad_txt + CUI.px(30)
+        if w < CUI.px(60) + pad_txt * 2 + step * 5 + fut_w:
+            return                      # 窄屏宁可没有图例，也不能把标签画到画布外
+        x = w - CUI.px(8) - (pad_txt * 2 + step * 5 + fut_w)
         y = CUI.px(11)
-        c.create_text(x, y, anchor="w", text="少", fill=t.text_muted, font=CUI.f("nano"))
+        c.create_text(x, y, anchor="w", text="0", fill=t.text_muted, font=CUI.f("nano"))
         x0 = x + pad_txt
         for i in range(5):
             c.create_rectangle(x0 + i * step, y - s / 2, x0 + i * step + s, y + s / 2,
                                fill=colors[i], outline=t.hairline)
-        c.create_text(x0 + step * 5 + CUI.px(4), y, anchor="w", text="多",
+        x1 = x0 + step * 5 + CUI.px(4)
+        c.create_text(x1, y, anchor="w", text="多", fill=t.text_muted, font=CUI.f("nano"))
+        x2 = x1 + pad_txt
+        c.create_rectangle(x2, y - s / 2, x2 + s, y + s / 2, fill="", outline=t.hairline)
+        c.create_text(x2 + s + CUI.px(3), y, anchor="w", text="未来",
                       fill=t.text_muted, font=CUI.f("nano"))
 
     def _draw_heatmap(self) -> None:
@@ -4360,7 +4553,6 @@ class ControllerApp:
     def _pulse_tick(self):
         self._pulse_phase = (self._pulse_phase + 1) % 60
         if self._alive:
-            t = self.theme
             ratio = (math.sin(self._pulse_phase / 60.0 * 2 * math.pi) + 1) / 2
             # 呼吸脉冲取主题 token（Aurora=teal 呼吸；dark/light=绿色系）
             hi = getattr(self.theme, "pulse_hi", "#34D399")

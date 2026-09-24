@@ -314,6 +314,14 @@ async def update_feature_flag(key: str, data: dict, user_id: int = Depends(get_c
     return await _svc.update_feature_flag(key, data, user_id, lang)
 
 
+# ── 上下文预算读数（P2b，2026-09-24：App「导出诊断信息」的预算节；登录用户只读自己的数据）──
+
+@router.get("/context-budget")
+async def get_context_budget(db: AsyncSession = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+    """上下文预算快照（纯读）：P2a 预留口径 + 本账号最近一次系统块超预算被裁的埋点。"""
+    return await _svc.get_context_budget(user_id, db)
+
+
 # ── 备份一键导出（#54，2026-08-23：仅主账号；复用 scripts/backup.do_backup）──
 
 @router.post("/backup")

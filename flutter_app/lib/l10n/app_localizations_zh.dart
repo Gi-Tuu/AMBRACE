@@ -5439,22 +5439,28 @@ class AppLocalizationsZh extends AppLocalizations {
   String get permissionManagementTitle => '权限管理';
 
   @override
-  String get permissionManagementHint => 'AI 能力 / 主账号 / 服务器功能';
+  String get permissionManagementHint => 'AI 能力 / 家庭管理员 / 服务器功能';
 
   @override
-  String get accountAdminTitle => '主账号管理';
+  String get accountAdminTitle => '家庭管理员';
 
   @override
-  String get accountAdminHint => '设置哪些账号是主账号（可管理服务器配置）';
+  String get accountAdminDrawerHint => '设置本家庭的家庭管理员';
 
   @override
-  String get accountAdminOnly => '仅主账号可管理';
+  String get accountAdminHint => '勾选哪些账号是家庭管理员（仅在本家庭内生效）';
 
   @override
-  String get accountAdminListTitle => '账号列表';
+  String get accountAdminOnly => '仅家庭管理员可管理';
 
   @override
-  String get accountMainLabel => '主账号';
+  String get accountAdminOnlyHint => '只有家庭管理员能管理本家庭的成员账号；如需该权限，请联系现有家庭管理员为你开启。';
+
+  @override
+  String get accountAdminListTitle => '家庭账号';
+
+  @override
+  String get accountMainLabel => '家庭管理员（我）';
 
   @override
   String get accountSubLabel => '子账号';
@@ -5469,7 +5475,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get accountAdminFailed => '操作失败，请重试';
 
   @override
-  String get accountAdminKeepOne => '至少保留一个主账号';
+  String get accountAdminKeepOne => '至少保留一个家庭管理员';
 
   @override
   String get updateAnnouncementHint => '最近更新内容，按天查看';

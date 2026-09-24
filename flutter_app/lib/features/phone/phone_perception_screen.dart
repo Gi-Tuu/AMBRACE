@@ -408,7 +408,18 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
   /// 不写文件、不跳系统分享（零权限），排查时用户自己复制走。
   Future<void> _showDiagnostics() async {
     final l10n = AppLocalizations.of(context)!;
-    final text = await PhonePerceptionService.buildDiagnosticsText();
+    // P2b：上下文预算节先取数再传入。取不到只让该节显示 unavailable(原因)，其余段落照旧导出。
+    Map<String, dynamic>? budget;
+    var budgetError = "";
+    try {
+      budget = await ApiClient().getContextBudget();
+    } catch (e) {
+      budgetError = e.toString();
+    }
+    final text = await PhonePerceptionService.buildDiagnosticsText(
+      budget: budget,
+      budgetError: budgetError,
+    );
     if (!mounted) return;
     await showDialog<void>(
       context: context,

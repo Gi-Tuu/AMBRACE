@@ -8,10 +8,11 @@ import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
 import '../../widgets/ios_card_group.dart';
 
-/// 主账号管理（#46 选择型，2026-08-24）
+/// 家庭管理员（#46 选择型，2026-08-24；A6 收口 2026-09-24 统一命名口径）
 ///
-/// 主账号 = users.is_admin=1 的可勾选账号集合；主账号在设置页直接勾选/取消账号。
-/// 替代原「批准子账号 + 同步权限」复杂方案（用户 2026-08-24 拍板）。
+/// 家庭管理员 = users.is_admin=1 的账号集合，权限范围只在**本家庭内**
+/// （后端 GET /admin/accounts 按家庭过滤，非管理员 403）。
+/// 入口有两条：抽屉独立入口（按 isAdmin 隐藏）与本页面内占位（按服务端 403 兜底）。
 class AccountAdminScreen extends StatefulWidget {
   const AccountAdminScreen({super.key, this.showAppBar = true});
 
@@ -45,7 +46,7 @@ class _AccountAdminScreenState extends State<AccountAdminScreen> {
       if (!mounted) return;
       setState(() {
         _accounts = accounts;
-        _isAdmin = true; // listAccounts 成功即当前账号为主账号
+        _isAdmin = true; // 列表拉取成功即本账号是本家庭管理员（服务端权威）
         _loading = false;
       });
     } catch (e) {
@@ -69,30 +70,32 @@ class _AccountAdminScreenState extends State<AccountAdminScreen> {
       final id = acc['id'] as int;
       await ApiClient().setAccountAdmin(id, value);
       if (!mounted) return;
-      setState(() {});
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(l10n.accountAdminSaved)));
+      // 以后端为准重拉列表（后端可能按规则改写，乐观状态不足以代表最终结果）
+      await _load();
     } catch (e) {
       if (!mounted) return;
       setState(() => acc['is_admin'] = prev);
       String msg = l10n.accountAdminFailed;
       if (e is DioException) {
         final status = e.response?.statusCode;
+        final rawDetail = e.response?.data?['detail'];
+        // 后端 detail 原文仅在「非空字符串」时直接展示，否则回落本地文案
+        final detail =
+            (rawDetail is String && rawDetail.isNotEmpty) ? rawDetail : null;
         if (status == 400) {
-          final detail = e.response?.data?['detail'];
-          // 区分两种 400：仅主账号/至少保留一个 → 复用保留一个文案；其余展示服务端 detail
+          // 区分两种 400：权限不足/至少保留一个 → 复用保留一个文案；其余展示服务端 detail
           if (detail == 'main_account_manage_only' || detail == 'admin_keep_one') {
             msg = l10n.accountAdminKeepOne;
           } else {
-            msg = detail?.toString() ?? l10n.accountAdminFailed;
+            msg = detail ?? l10n.accountAdminFailed;
           }
         } else if (status == 403) {
-          msg = l10n.accountAdminOnly; // "仅主账号可管理"
-        } else {
-          final detail = e.response?.data?['detail'];
-          if (detail is String && detail.isNotEmpty) {
-            msg = detail;
-          }
+          // 优先展示后端 detail 原文（后端按请求语言下发原因），为空才回落本地文案
+          msg = detail ?? l10n.accountAdminOnly;
+        } else if (detail != null) {
+          msg = detail;
         }
       }
       ScaffoldMessenger.of(context)
@@ -155,6 +158,15 @@ class _AccountAdminScreenState extends State<AccountAdminScreen> {
               const Icon(Icons.lock_outline, size: 48, color: Colors.grey),
               const SizedBox(height: 12),
               Text(l10n.accountAdminOnly, textAlign: TextAlign.center),
+              const SizedBox(height: 8),
+              Text(
+                l10n.accountAdminOnlyHint,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                    height: 1.4),
+              ),
             ],
           ),
         ),
@@ -194,10 +206,10 @@ class _AccountAdminScreenState extends State<AccountAdminScreen> {
     final parentId = acc['parent_id'] as int?;
     final isSubAccount = parentId != null;
 
-    // 副标题：自己 / 子账号 / 独立主账号
+    // 副标题：自己（家庭管理员 + 我）/ 子账号 / 其它独立账号
     String subtitle;
     if (isSelf) {
-      subtitle = l10n.accountMainLabel; // "主账号（你）"
+      subtitle = l10n.accountMainLabel;
     } else if (isSubAccount) {
       subtitle = '${l10n.accountSubLabel} · $username · #$id';
     } else {
@@ -217,7 +229,7 @@ class _AccountAdminScreenState extends State<AccountAdminScreen> {
       ),
       value: isAdmin,
       activeThumbColor: AppColors.accent,
-      // 自己的开关禁用（不能取消自己）；子账号可由主账号切换
+      // 自己的开关禁用（不能取消自己）；家庭内其它账号可由本家庭管理员切换
       onChanged: isSelf ? null : (value) => _toggle(acc, value),
     );
   }

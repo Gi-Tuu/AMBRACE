@@ -306,6 +306,32 @@ AGENT_FLAGS = {
     #   拿不到 caller 的调用点一律 fail-closed（非内置插件不分发）。关＝**逐字节旧行为**。默认关=灰度门控。
     #   本键必须登记，否则 DB/runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
     "plugin_runtime_scope": False,
+    # ── two-pass POC（2026-09-23，雷达 §3「two-pass 重读」/ 方案书 AMBRACE_two-pass_POC方案）──
+    # 开=主动消息生成**前**拼一块确定性「现状 trace」，前置到长历史/系统块之前（零 LLM、只读、
+    #   trace 不落库不写记忆不上屏）；关=不构造、不注入、不多一次查询（逐字旧行为）。
+    # 灰度双条件：本开关开 **且** 角色命中 scheduling/message_generator.py 的
+    #   TWO_PASS_TRACE_GRAY_CHARS（沿用 char13 灰度先例，当前仅 char13）。
+    # 回退：置回 False（runtime_flags 热切，无需重启）。默认关=零行为变化。
+    "two_pass_trace": False,
+    # ── P1 压缩存活项清单（2026-09-23，雷达 §2）──
+    # 开=上下文装配时注入一块确定性「存活项清单」（当前目标 / 未决问题·计划 / 硬约束），并拼进
+    #   日摘要生成 prompt 要求这些字段原文保留；清单块在 system 超预算裁剪时优先级 2，
+    #   只有【系统指令】/【本轮提醒】比它高（＝最后才被动）。只读、零 LLM、不落库、不上屏。
+    # 关=逐字旧行为（不多查库、不改 prompt、不注入块）。
+    # 灰度双条件：本开关开 **且** 角色命中 agent/context_builder.py 的
+    #   SURVIVAL_CHECKLIST_GRAY_CHARS（沿用 char13 灰度先例，当前仅 char13）。
+    # 回退：置回 False（runtime_flags 热切，无需重启）。默认关=零行为变化。
+    "survival_checklist": False,
+    # ── P2a 上下文预算预留（2026-09-23，雷达 §3）──
+    # 开=系统块总硬顶先减去两块预留（回复 REPLY_RESERVE_TOKENS=800 + 工具声明
+    #   TOOL_DEFS_RESERVE_TOKENS=500，见 agent/context_builder.py）再判定超限裁剪，
+    #   工具声明这类分区不再挤占回复额度；且真发生裁剪时，quota_clipped_sections 埋点
+    #   detail 补齐 {budget, used, reserve_reply, reserve_tools, clipped_blocks, freed_chars}
+    #   ——裁了什么不再静默。下限保护：预留吃掉全部额度时取保底预算，绝不出负数。
+    # 关=**逐字旧行为**（有效预算仍是 9000，埋点字段与旧版一致；没裁剪就一条都不写）。
+    # 回退：置回 False（runtime_flags 热切，无需重启）。默认关=零行为变化；
+    #   开前沿用既有安全阀口径：确认 quota_clipped_sections 仍为 0，否则=预留挤掉了真实内容，回滚。
+    "context_budget_reserve": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

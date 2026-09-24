@@ -73,6 +73,11 @@ _FLAG_ROWS: list[tuple] = [
     ('agent_trace_group', 'agent', 104, False, '群聊过程记录',
      '记录群聊里每次回应的判断过程，只用于排查问题，不影响回复内容。',
      'Group chat trace', 'Records how each group reply was decided; troubleshooting only, replies unaffected.'),
+    ('context_budget_reserve', 'agent', 105, False, '长对话预算预留与裁剪留痕',
+     '对话很长时，先给回复和工具各留出一块空间，再对超出的背景内容做取舍，并记下这次裁掉了什么，'
+     '避免要紧的部分被悄悄丢掉却查不到。',
+     'Reserve headroom in long conversations', 'In very long conversations it first sets aside room for the reply '
+     'and for tools, then trims the overflow and records what was trimmed, so nothing goes missing untraceably.'),
 
     # ── 主动消息 ──
     ('proactive_naturalness_score', 'proactive', 201, False, '主动消息自然度评分',
@@ -93,6 +98,11 @@ _FLAG_ROWS: list[tuple] = [
     ('proactive_topic_guard', 'proactive', 206, False, '同一话题不重复催',
      '你已经回应过、说过不用了，或同一件生活小事几小时内已被提过两次时，它就先不在这件事上主动念叨你。',
      'No nagging on one topic', 'Once you have answered, waved it off, or the same little thing has already come up twice within a few hours, it drops it for now.'),
+    ('two_pass_trace', 'proactive', 207, False, '开口前先读一遍现状',
+     '主动发消息前，先把它已知的当前状况（正在进行的事、你的近况、还没完成的约定）摆在最前面，'
+     '减少拿已经过时的情况当作此刻继续说。只影响它怎么组织措辞，不会因此多叫一次模型。',
+     'Re-read the current state before reaching out', 'Before it writes, it re-reads what is currently known — what is going on, your recent situation, '
+     'open plans — so stale snapshots are less likely to be described as if they were happening now.'),
 
     # ── 群聊小游戏 ──
     ('group_chat_games', 'games', 301, False, '小游戏总开关',
@@ -196,6 +206,11 @@ _FLAG_ROWS: list[tuple] = [
     ('vector_user_scope', 'memory', 717, False, '向量按账号隔离',
      '向量记忆按账号分开读取，不同账号之间互不可见。',
      'Per-account vectors', 'Vector memories are read per account so accounts never see each other content.'),
+    ('survival_checklist', 'memory', 718, False, '长对话压缩后仍记住要紧事',
+     '对话很长时，较早的内容会被收拢压缩；这条把「你正在推进的目标、还没办完的约定、你说过的硬性要求」单独保住，'
+     '压缩后也不丢，减少它拿已经过时的情况当作此刻继续说。',
+     'Keep the essentials through compaction', 'Long conversations get condensed; this keeps your current goal, '
+     'unfinished plans, and the hard requirements you stated intact, so stale situations are less likely to be described as happening now.'),
 
     # ── 编纂知识与前瞻意图 ──
     ('curated_knowledge', 'curated', 801, False, '长期知识层',

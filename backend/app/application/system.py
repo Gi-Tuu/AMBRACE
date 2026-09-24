@@ -1122,6 +1122,81 @@ async def update_feature_flag(
     return {'status': 'ok', 'key': key, 'enabled': enabled, 'scope': 'server'}
 
 
+# ── 上下文预算读数（P2b，2026-09-24：App「导出诊断信息」的 P2a 读数端）──
+
+# 与 context_builder._apply_system_total_quota 写埋点时的 route 同名（改埋点名此处同步）
+_CLIP_ROUTE = "quota_clipped_sections"
+_CLIP_WINDOW_HOURS = 24
+
+
+async def get_context_budget(
+    user_id: int,
+    db: AsyncSession,
+) -> dict:
+    """上下文预算读数：P2a 的预留口径 + 本账号最近一次「系统块超预算被裁」记录（纯读）。
+
+    预算段直接复用 app/agent/context_builder 的四个常量与两个纯函数（含私有的
+    ``_effective_system_budget_tokens``）——**读端把同一套算式再抄一遍，常量一调两边就失真**，
+    而这里要报的正是「装配时真正生效的那个数」，故按同包内部纯函数的既有约定直接调用而非复制实现。
+
+    裁剪段读 agent_task_logs 里 trigger='memory_obs' + route='quota_clipped_sections' 的埋点
+    （P2a 要求 C：真发生裁剪才写），**只看当前用户自己的行**。整段查库 fail-open：任何异常
+    （含 steps_json 是坏 JSON）都退化为「预算段照出 + 无裁剪记录 + error 文案」，绝不抛 500——
+    一次诊断导出不该因为读不到观测流水而失败。
+    """
+    from app.agent import context_builder as _cb
+
+    flag_enabled = _cb.context_budget_reserve_enabled()
+    payload: dict = {
+        "status": "ok",
+        "total_quota_tokens": _cb.TOTAL_SYSTEM_QUOTA_TOKENS,
+        "reserve_reply_tokens": _cb.REPLY_RESERVE_TOKENS,
+        "reserve_tools_tokens": _cb.TOOL_DEFS_RESERVE_TOKENS,
+        "floor_tokens": _cb.MIN_SYSTEM_BUDGET_TOKENS,
+        "effective_budget_tokens": _cb._effective_system_budget_tokens(reserve_enabled=flag_enabled),
+        "flag_enabled": flag_enabled,
+        "last_clip": None,
+        "clip_count_24h": 0,
+        "error": "",
+    }
+    try:
+        import json
+
+        from sqlalchemy import func
+        from app.models.agent import AgentTaskLog
+        from app.utils.timeutil import now_naive_utc
+
+        conds = (
+            AgentTaskLog.trigger == "memory_obs",
+            AgentTaskLog.route == _CLIP_ROUTE,
+            AgentTaskLog.user_id == user_id,
+        )
+        row = (await db.execute(
+            select(AgentTaskLog).where(*conds).order_by(AgentTaskLog.id.desc()).limit(1)
+        )).scalars().first()
+        since = now_naive_utc() - timedelta(hours=_CLIP_WINDOW_HOURS)
+        counted = (await db.execute(
+            select(func.count()).select_from(AgentTaskLog).where(
+                *conds, AgentTaskLog.created_at >= since)
+        )).scalar()
+        payload["clip_count_24h"] = int(counted or 0)
+        if row is not None and row.steps_json:
+            # detail 只回标量字段：埋点里的 blocks 数组带的是用户上下文块头部原文（≤24 字 ×8 条），
+            # 预算读数用不上，也不必再把它外流一次；解析不出 dict 按「无记录」处理。
+            detail = json.loads(row.steps_json)
+            if isinstance(detail, dict):
+                payload["last_clip"] = {
+                    "id": row.id,
+                    "character_id": row.character_id,
+                    "created_at": row.created_at.isoformat(sep=" ") if row.created_at else None,
+                    "detail": {k: v for k, v in detail.items()
+                               if not isinstance(v, (list, dict))},
+                }
+    except Exception as e:
+        payload["error"] = ("clip_query_failed: " + repr(e))[:200]
+    return payload
+
+
 async def trigger_backup(
     user_id: int,
     lang: str,

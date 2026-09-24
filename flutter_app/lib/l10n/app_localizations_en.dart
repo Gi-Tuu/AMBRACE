@@ -5634,23 +5634,31 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get permissionManagementHint =>
-      'AI capabilities / Main accounts / Server features';
+      'AI capabilities / Family admins / Server features';
 
   @override
-  String get accountAdminTitle => 'Main Accounts';
+  String get accountAdminTitle => 'Family admins';
+
+  @override
+  String get accountAdminDrawerHint =>
+      'Set the family admins of this household';
 
   @override
   String get accountAdminHint =>
-      'Choose which accounts are main accounts (can manage server config)';
+      'Choose which accounts are family admins (applies within this family only)';
 
   @override
-  String get accountAdminOnly => 'Only the main account can manage';
+  String get accountAdminOnly => 'Only a family admin can manage this';
 
   @override
-  String get accountAdminListTitle => 'Accounts';
+  String get accountAdminOnlyHint =>
+      'Only a family admin can manage accounts in this family. Ask an existing family admin to grant you the role.';
 
   @override
-  String get accountMainLabel => 'Main account';
+  String get accountAdminListTitle => 'Family accounts';
+
+  @override
+  String get accountMainLabel => 'Family admin (me)';
 
   @override
   String get accountSubLabel => 'Sub-account';
@@ -5665,7 +5673,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get accountAdminFailed => 'Operation failed, please retry';
 
   @override
-  String get accountAdminKeepOne => 'At least one main account must remain';
+  String get accountAdminKeepOne => 'At least one family admin must remain';
 
   @override
   String get updateAnnouncementHint => 'Recent update details, view by day';

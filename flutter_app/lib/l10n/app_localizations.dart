@@ -10158,37 +10158,49 @@ abstract class AppLocalizations {
   /// No description provided for @permissionManagementHint.
   ///
   /// In zh, this message translates to:
-  /// **'AI 能力 / 主账号 / 服务器功能'**
+  /// **'AI 能力 / 家庭管理员 / 服务器功能'**
   String get permissionManagementHint;
 
   /// No description provided for @accountAdminTitle.
   ///
   /// In zh, this message translates to:
-  /// **'主账号管理'**
+  /// **'家庭管理员'**
   String get accountAdminTitle;
+
+  /// No description provided for @accountAdminDrawerHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'设置本家庭的家庭管理员'**
+  String get accountAdminDrawerHint;
 
   /// No description provided for @accountAdminHint.
   ///
   /// In zh, this message translates to:
-  /// **'设置哪些账号是主账号（可管理服务器配置）'**
+  /// **'勾选哪些账号是家庭管理员（仅在本家庭内生效）'**
   String get accountAdminHint;
 
   /// No description provided for @accountAdminOnly.
   ///
   /// In zh, this message translates to:
-  /// **'仅主账号可管理'**
+  /// **'仅家庭管理员可管理'**
   String get accountAdminOnly;
+
+  /// No description provided for @accountAdminOnlyHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'只有家庭管理员能管理本家庭的成员账号；如需该权限，请联系现有家庭管理员为你开启。'**
+  String get accountAdminOnlyHint;
 
   /// No description provided for @accountAdminListTitle.
   ///
   /// In zh, this message translates to:
-  /// **'账号列表'**
+  /// **'家庭账号'**
   String get accountAdminListTitle;
 
   /// No description provided for @accountMainLabel.
   ///
   /// In zh, this message translates to:
-  /// **'主账号'**
+  /// **'家庭管理员（我）'**
   String get accountMainLabel;
 
   /// No description provided for @accountSubLabel.
@@ -10218,7 +10230,7 @@ abstract class AppLocalizations {
   /// No description provided for @accountAdminKeepOne.
   ///
   /// In zh, this message translates to:
-  /// **'至少保留一个主账号'**
+  /// **'至少保留一个家庭管理员'**
   String get accountAdminKeepOne;
 
   /// No description provided for @updateAnnouncementHint.

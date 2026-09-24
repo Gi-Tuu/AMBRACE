@@ -124,6 +124,13 @@ extension SystemApi on ApiClient {
     return r.data as Map<String, dynamic>;
   }
 
+  /// 上下文预算读数（P2b，2026-09-24）：P2a 预留口径 + 本账号最近一次系统块超预算被裁的埋点。
+  /// 纯读，任何登录用户只读自己的数据。
+  Future<Map<String, dynamic>> getContextBudget() async {
+    final r = await dio.get('/api/v1/system/context-budget');
+    return r.data as Map<String, dynamic>;
+  }
+
   // ── 备份一键导出（#54，2026-08-23：仅主账号）──
 
   /// 触发备份：返回 {path, size, created_at}（当天已存在则直接返回现有文件）

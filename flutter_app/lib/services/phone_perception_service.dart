@@ -419,7 +419,13 @@ class PhonePerceptionService {
 
   /// P4（2026-09-22 通道状态可观测）：诊断信息取数外壳——日志 + 通道快照，拼成一段纯文本。
   /// 拼接规则在 [formatDiagnostics]（纯函数，便于单测）。
-  static Future<String> buildDiagnosticsText() async {
+  ///
+  /// P2b（2026-09-24 上下文预算读数）：[budget]/[budgetError] 只做透传，本函数仍是取数外壳；
+  /// 两者都不传时输出与旧版逐字节一致。
+  static Future<String> buildDiagnosticsText({
+    Map<String, dynamic>? budget,
+    String budgetError = "",
+  }) async {
     final log = await exportPerceptionLog();
     final channels = await ChannelStatusTracker.snapshotAll();
     return formatDiagnostics(
@@ -427,6 +433,8 @@ class PhonePerceptionService {
       logContent: log["content"]?.toString() ?? "",
       logPath: log["path"]?.toString() ?? "",
       logError: log["error"]?.toString() ?? "",
+      budget: budget,
+      budgetError: budgetError,
     );
   }
 
@@ -439,11 +447,16 @@ class PhonePerceptionService {
   ///     accessibility  code=ok retriable=false fails=0 lastOk=2026-09-22 13:54:06 lastErr=- detail=-
   ///
   /// 通道按名字排序；时间用本地可读格式；空值一律写 `-`。
+  ///
+  /// [budget]（P2b 上下文预算读数）非 null 或 [budgetError] 非空时，末尾追加
+  /// `=== context budget ===` 一节；两者都不传时输出与本节加入前逐字节一致。
   static String formatDiagnostics({
     required Map<String, dynamic> channels,
     required String logContent,
     String logPath = "",
     String logError = "",
+    Map<String, dynamic>? budget,
+    String budgetError = "",
   }) {
     final out = StringBuffer();
     out.writeln("=== perception log ===");
@@ -459,7 +472,6 @@ class PhonePerceptionService {
     final names = channels.keys.toList()..sort();
     if (names.isEmpty) {
       out.writeln("(none)");
-      return out.toString();
     }
     for (final name in names) {
       final raw = channels[name];
@@ -475,6 +487,56 @@ class PhonePerceptionService {
         " detail=${detail.isEmpty ? "-" : detail}",
       );
     }
+    final err = budgetError.trim().replaceAll(RegExp(r"\s*[\r\n]+\s*"), " ");
+    if (budget != null || err.isNotEmpty) {
+      out.write(_formatContextBudgetSection(budget, err));
+    }
+    return out.toString();
+  }
+
+  /// 上下文预算节（P2b）：字段名与后端 GET /api/v1/system/context-budget 一一对应，
+  /// 值只回显不换算（服务端算式是权威，读端再算一遍必然漂移）。
+  static String _formatContextBudgetSection(Map<String, dynamic>? budget, String error) {
+    final out = StringBuffer();
+    out.writeln("=== context budget ===");
+    if (budget == null) {
+      out.writeln("status: unavailable(${error.isEmpty ? "no data" : error})");
+      return out.toString();
+    }
+    String val(String key) {
+      final v = budget[key];
+      return v == null ? "-" : v.toString();
+    }
+    out.writeln("status: ${val("status")}");
+    out.writeln("total_quota_tokens: ${val("total_quota_tokens")}");
+    out.writeln("reserve_reply_tokens: ${val("reserve_reply_tokens")}");
+    out.writeln("reserve_tools_tokens: ${val("reserve_tools_tokens")}");
+    out.writeln("floor_tokens: ${val("floor_tokens")}");
+    out.writeln("effective_budget_tokens: ${val("effective_budget_tokens")}");
+    out.writeln("flag_enabled: ${budget["flag_enabled"] == true}");
+    out.writeln("clip_count_24h: ${val("clip_count_24h")}");
+    final last = budget["last_clip"];
+    if (last is Map) {
+      final m = Map<String, dynamic>.from(last);
+      final detail = m["detail"];
+      final parts = <String>[];
+      if (detail is Map) {
+        final d = Map<String, dynamic>.from(detail);
+        final keys = [
+          for (final k in d.keys)
+            if (d[k] is num || d[k] is bool || d[k] is String) k
+        ]..sort();
+        parts.addAll([for (final k in keys) "$k=${d[k]}"]);
+      }
+      final body = parts.join(" ").replaceAll(RegExp(r"\s*[\r\n]+\s*"), " ");
+      out.writeln(
+        "clip_last: ${m["created_at"] ?? "-"} char=${m["character_id"] ?? "-"}"
+        "${body.isEmpty ? "" : " $body"}",
+      );
+    } else {
+      out.writeln("clip_last: -");
+    }
+    if (error.isNotEmpty) out.writeln("clip_error: unavailable($error)");
     return out.toString();
   }
 

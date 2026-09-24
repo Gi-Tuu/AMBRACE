@@ -217,4 +217,162 @@ void main() {
     expect(r["serverOk"], isFalse);
     expect(await PerceptionOutbox.pendingCount(), 0);
   });
+
+  // ── P2b（2026-09-24）：诊断文本的「上下文预算」节（P2a 的读数端）──────────────
+  // 口径：不传 budget 时输出必须与本节加入前逐字节一致；传了（或带 budgetError）才追加。
+
+  /// 字段名与后端 GET /api/v1/system/context-budget 一一对应（客户端只回显、不换算）
+  Map<String, dynamic> p2bBudget({Map<String, dynamic>? lastClip}) => <String, dynamic>{
+    "status": "ok",
+    "total_quota_tokens": 9000,
+    "reserve_reply_tokens": 800,
+    "reserve_tools_tokens": 500,
+    "floor_tokens": 256,
+    "effective_budget_tokens": 7700,
+    "flag_enabled": true,
+    "clip_count_24h": 2,
+    "last_clip": lastClip,
+    "error": "",
+  };
+
+  test("P2b：不传 budget → 输出与本节加入前逐字节一致（含空通道早返回路径）", () {
+    final got = PhonePerceptionService.formatDiagnostics(
+      channels: const <String, dynamic>{
+        "accessibility": <String, dynamic>{
+          "code": "ok",
+          "retriable": false,
+          "lastOkAt": null,
+          "lastErrorAt": null,
+          "failCount": 0,
+          "detail": "",
+        },
+      },
+      logContent: "line one\nline two",
+    );
+    expect(
+      got,
+      "=== perception log ===\n"
+      "path: -\n"
+      "line one\n"
+      "line two\n"
+      "=== channel status ===\n"
+      "accessibility  code=ok retriable=false fails=0 lastOk=- lastErr=- detail=-\n",
+    );
+    expect(got, isNot(contains("context budget")));
+
+    expect(
+      PhonePerceptionService.formatDiagnostics(channels: const {}, logContent: "x"),
+      "=== perception log ===\npath: -\nx\n=== channel status ===\n(none)\n",
+    );
+  });
+
+  test("P2b：传 budget → 末尾追加预算节，逐行数值正确；detail 里的数组不外流", () {
+    final text = PhonePerceptionService.formatDiagnostics(
+      channels: const <String, dynamic>{},
+      logContent: "x",
+      budget: p2bBudget(lastClip: <String, dynamic>{
+        "id": 77,
+        "character_id": 13,
+        "created_at": "2026-09-24 05:31:02",
+        "detail": <String, dynamic>{
+          "budget": 7700,
+          "used": 8120,
+          "reserve_reply": 800,
+          "reserve_tools": 500,
+          "clipped_blocks": 3,
+          "freed_chars": 1024,
+          "total_removed": 1024,
+          "blocks": <dynamic>[
+            <String, dynamic>{"removed": 10, "head": "SECRET_HEAD_ABC"},
+          ],
+        },
+      }),
+    );
+    final lines = linesOf(text);
+    final head = lines.indexOf("=== context budget ===");
+    expect(head, greaterThan(lines.indexOf("=== channel status ===")));
+    expect(head, greaterThan(0));
+    // (none) 占位之后照样出预算节（旧版这里是早返回，会丢节）
+    expect(lines.sublist(0, head), const [
+      "=== perception log ===",
+      "path: -",
+      "x",
+      "=== channel status ===",
+      "(none)",
+    ]);
+    expect(lines.sublist(head), const [
+      "=== context budget ===",
+      "status: ok",
+      "total_quota_tokens: 9000",
+      "reserve_reply_tokens: 800",
+      "reserve_tools_tokens: 500",
+      "floor_tokens: 256",
+      "effective_budget_tokens: 7700",
+      "flag_enabled: true",
+      "clip_count_24h: 2",
+      "clip_last: 2026-09-24 05:31:02 char=13 budget=7700 clipped_blocks=3 "
+          "freed_chars=1024 reserve_reply=800 reserve_tools=500 total_removed=1024 used=8120",
+    ]);
+    expect(text, isNot(contains("SECRET_HEAD_ABC")));
+  });
+
+  test("P2b：预算字段缺失 / 无裁剪记录 → 空值写 -、flag 未开写 false", () {
+    final lines = linesOf(
+      PhonePerceptionService.formatDiagnostics(
+        channels: const <String, dynamic>{},
+        logContent: "x",
+        budget: const <String, dynamic>{"status": "ok"},
+      ),
+    );
+    expect(lines.sublist(lines.indexOf("=== context budget ===")), const [
+      "=== context budget ===",
+      "status: ok",
+      "total_quota_tokens: -",
+      "reserve_reply_tokens: -",
+      "reserve_tools_tokens: -",
+      "floor_tokens: -",
+      "effective_budget_tokens: -",
+      "flag_enabled: false",
+      "clip_count_24h: -",
+      "clip_last: -",
+    ]);
+  });
+
+  test("P2b：取数失败 → 只有该节 unavailable，其余段落照旧；带 budget 时补 clip_error", () {
+    final lines = linesOf(
+      PhonePerceptionService.formatDiagnostics(
+        channels: const <String, dynamic>{},
+        logContent: "line one",
+        budgetError: "DioException [connection error]: offline\nhost 127.0.0.1",
+      ),
+    );
+    expect(lines.first, "=== perception log ===");
+    expect(lines, contains("line one"));
+    expect(lines, contains("=== channel status ==="));
+    // 原因里的换行折成一行，不能把预算节撑成两行
+    expect(
+      lines.last,
+      "status: unavailable(DioException [connection error]: offline host 127.0.0.1)",
+    );
+
+    final both = linesOf(
+      PhonePerceptionService.formatDiagnostics(
+        channels: const <String, dynamic>{},
+        logContent: "x",
+        budget: p2bBudget(),
+        budgetError: "clip_query_failed: RuntimeError('boom')",
+      ),
+    );
+    expect(both, contains("clip_last: -"));
+    expect(both.last, "clip_error: unavailable(clip_query_failed: RuntimeError('boom'))");
+  });
+
+  test("P2b：buildDiagnosticsText 透传 budget → 预算节随取数外壳一起出", () async {
+    final text = await PhonePerceptionService.buildDiagnosticsText(
+      budget: p2bBudget(),
+    );
+    expect(text, contains("=== context budget ==="));
+    expect(text, contains("effective_budget_tokens: 7700"));
+    expect(text, contains("=== channel status ==="));
+  });
 }

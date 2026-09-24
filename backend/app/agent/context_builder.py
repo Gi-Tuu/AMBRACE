@@ -118,6 +118,45 @@ TOTAL_SYSTEM_QUOTA_TOKENS = 9000  # B1（2026-08-18 降本）：14000->9000，�
 # G-P1-2（2026-08-18）：user_info（user_profile + user_notes 拼接）整体配额
 USER_INFO_QUOTA_TOKENS = 500
 
+# P2a（2026-09-23，雷达 §3）：上下文预算预留——系统块不再被允许把总硬顶用到顶，先给
+# 「模型回复」与「工具声明」各留一块额度（mcp_tools 这类工具声明分区因此不再挤占回复额度）。
+# 只在 flag context_budget_reserve 开时生效；关=逐字旧行为（有效预算仍是 TOTAL_SYSTEM_QUOTA_TOKENS）。
+REPLY_RESERVE_TOKENS = 800
+TOOL_DEFS_RESERVE_TOKENS = 500
+# 下限保护：预留之和 ≥ 总硬顶（配置退化）时的保底预算，绝不算出 0/负预算；
+# 且实际生效预算永不超过总硬顶（见 _effective_system_budget_tokens）。
+MIN_SYSTEM_BUDGET_TOKENS = 256
+
+
+def context_budget_reserve_enabled(*, flags: dict | None = None) -> bool:
+    """预算预留是否生效（纯函数，flags 默认读 AGENT_FLAGS；读不到按「关」处理）。"""
+    if flags is None:
+        try:
+            from app.agent import loop as _loop
+            flags = _loop.AGENT_FLAGS
+        except Exception:
+            return False
+    return bool((flags or {}).get("context_budget_reserve", False))
+
+
+def _effective_system_budget_tokens(*, reserve_enabled: bool | None = None) -> int:
+    """有效系统预算（纯函数，读模块级 TOTAL_SYSTEM_QUOTA_TOKENS，便于测试改桩）：
+
+    - 关（默认）：= TOTAL_SYSTEM_QUOTA_TOKENS，与改动前逐字一致；
+    - 开：= 总硬顶 − REPLY_RESERVE_TOKENS − TOOL_DEFS_RESERVE_TOKENS；
+    - 下限保护：总硬顶 ≤ 0 原样返回（旧语义=不做总量裁剪）；预留吃掉全部额度时取
+      ``min(MIN_SYSTEM_BUDGET_TOKENS, 总硬顶)`` 保底 —— 不出现负预算，也不越过总硬顶。
+    """
+    total = TOTAL_SYSTEM_QUOTA_TOKENS
+    if total <= 0:
+        return total
+    if reserve_enabled is None:
+        reserve_enabled = context_budget_reserve_enabled()
+    if not reserve_enabled:
+        return total
+    floor = min(MIN_SYSTEM_BUDGET_TOKENS, total)
+    return min(total, max(total - REPLY_RESERVE_TOKENS - TOOL_DEFS_RESERVE_TOKENS, floor))
+
 
 def _clip_text_to_quota(text: str, quota_tokens: int) -> str:
     """按估算 token 裁剪单块文本（纯函数）：超配额截断尾部；配额内原样返回（零行为变化）"""
@@ -151,6 +190,7 @@ _SYSTEM_BLOCK_PRIORITY: tuple[tuple[str, int], ...] = (
     ("【系统指令】", 1),   # 无消息兜底，绝不能丢
     ("【本轮提醒】", 1),   # 用户当前轮的明确指令
     ("【内心活动指令】", 2),   # 思考挡位引导（第一人称化后的标记，2026-09-10）
+    ("【存活项清单】", 2),   # P1（2026-09-23）：压缩后仍需成立的目标/未决计划/硬约束，超预算时最后才裁
     ("【全景记忆·织库】", 4), ("【设定·Lorebook】", 4), ("【AI 生活】", 4),
     ("【共同经历】", 4), ("【群聊动态】", 4), ("【生图指令】", 4), ("【搜索能力】", 4),
 )
@@ -176,18 +216,25 @@ def _clip_by_whole_lines(text: str, keep_chars: int) -> str:
 
 def _apply_system_total_quota(messages: list[dict], character_id: int | None = None) -> None:
     """G-P1-2：system 整体 token 硬顶（原地裁剪，纯函数）：
-    总量超 TOTAL_SYSTEM_QUOTA_TOKENS 时裁剪，只截断文本、保留消息结构（role 不变），
+    总量超有效预算（P2a：默认=TOTAL_SYSTEM_QUOTA_TOKENS；flag context_budget_reserve 开=
+    总硬顶减去回复/工具声明两块预留）时裁剪，只截断文本、保留消息结构（role 不变），
     配额内零行为变化。user 消息不参与配额（不裁剪用户消息本身）。
     M1-S4：裁剪顺序按块优先级（【本轮提醒】等关键块最后动，织库/Lorebook 等低价值块先牺牲，
     同级保持原相对顺序）；块内按整行边界裁剪，绝不切出半句话（原文 content[:n] 会切半句）。
-    M1-S11：发生裁剪时写 quota_clipped_sections 埋点（blocks≤8、head≤24 字符），失败静默。"""
-    if TOTAL_SYSTEM_QUOTA_TOKENS <= 0:
+    M1-S11：发生裁剪时写 quota_clipped_sections 埋点（blocks≤8、head≤24 字符），失败静默。
+    P2a 要求 B：预留生效（flag 开）且确实发生裁剪时，同一条埋点 detail 补齐
+    {budget, used, reserve_reply, reserve_tools, clipped_blocks, freed_chars}——裁剪不再静默；
+    要求 C：没发生裁剪时一律不写（不刷日志）；要求 A：flag 关时预算与埋点字段与旧版逐字一致。"""
+    reserve_on = context_budget_reserve_enabled()
+    budget_tokens = _effective_system_budget_tokens(reserve_enabled=reserve_on)
+    if budget_tokens <= 0:
         return
-    budget_chars = TOTAL_SYSTEM_QUOTA_TOKENS * _EST_CHARS_PER_TOKEN
+    budget_chars = budget_tokens * _EST_CHARS_PER_TOKEN
     system_indices = [i for i, m in enumerate(messages) if m.get("role") == "system"]
     total_chars = sum(len(messages[i].get("content") or "") for i in system_indices)
     if total_chars <= budget_chars:
         return
+    used_chars = total_chars
     _clipped: list[dict] = []
     # 低价值块（优先级数值大）先裁；同级内靠后的块先牺牲（稳定序：后追加的 extras 先让位）
     for i in sorted(system_indices, key=lambda j: (-_block_priority(messages[j].get("content") or ""), -j)):
@@ -210,12 +257,24 @@ def _apply_system_total_quota(messages: list[dict], character_id: int | None = N
             total_chars -= removed
             _clipped.append({"removed": removed, "head": c[:24]})
     if _clipped:
+        freed_chars = sum(c["removed"] for c in _clipped)
+        detail: dict = {"total_removed": freed_chars, "blocks": _clipped[:8]}
+        if reserve_on:
+            # 单位口径：budget / used / reserve_* = 估算 token（2 字符≈1 token）；freed_chars = 字符。
+            # used 是裁剪**前**的 system 用量（故 used ≥ budget）；裁剪后字符 = used*2 − freed_chars。
+            # reserve_reply / reserve_tools 报的是配置值；配置退化（预留之和 ≥ 总硬顶）时预算走
+            # 下限保护，此时与 budget 不构成恒等式，读端按「配了多少预留」理解即可。
+            detail.update({
+                "budget": budget_tokens,
+                "used": used_chars // _EST_CHARS_PER_TOKEN,
+                "reserve_reply": REPLY_RESERVE_TOKENS,
+                "reserve_tools": TOOL_DEFS_RESERVE_TOKENS,
+                "clipped_blocks": len(_clipped),
+                "freed_chars": freed_chars,
+            })
         try:
             from app.memory.observability import obs_event
-            obs_event(character_id, "quota_clipped_sections", {
-                "total_removed": sum(c["removed"] for c in _clipped),
-                "blocks": _clipped[:8],
-            })
+            obs_event(character_id, "quota_clipped_sections", detail)
         except Exception:
             pass
 
@@ -288,6 +347,124 @@ def _trim_limits(hot: bool) -> dict:
 # 注：_memory_id_of / _filter_recently_injected / _mark_memories_injected / _bump_memory_round /
 #     _build_retrieved_memory_lines / _inject_core_anchors_loops 已迁至
 #     app.agent.context.section_memories（上方重新导出，共享同一进程内去重轮次状态）。
+
+
+# ── P1 压缩存活项清单（2026-09-23，雷达 §2）────────────────────────────────
+# 灰度双条件（沿用 char13 先例）：AGENT_FLAGS["survival_checklist"] 开 **且** 角色命中本白名单；
+# 关/未命中 → 不查库、不改日摘要 prompt、不注入块（逐字旧行为）。清单只读、零 LLM、不落库。
+SURVIVAL_CHECKLIST_GRAY_CHARS = frozenset({13})
+
+# 日摘要 prompt 前置说明（要求 B①：清单字段必须原文保留）
+_SUMMARY_CHECKLIST_NOTE = "以下字段必须原文保留，不得改写、不得省略：\n"
+
+
+def survival_checklist_allowed(character_id, *, flags=None) -> bool:
+    """存活项清单是否对该角色生效（纯函数，flags 默认读 AGENT_FLAGS）。"""
+    if flags is None:
+        try:
+            from app.agent import loop as _loop
+            flags = _loop.AGENT_FLAGS
+        except Exception:
+            return False
+    if not bool((flags or {}).get("survival_checklist", False)):
+        return False
+    if character_id is None:
+        return False
+    try:
+        return int(character_id) in SURVIVAL_CHECKLIST_GRAY_CHARS
+    except (TypeError, ValueError):
+        return False
+
+
+async def _load_survival_checklist(character_id, user_id) -> tuple[str, dict, float]:
+    """确定性构造存活项清单，返回 ``(清单文本, 三段条数, 构造耗时 ms)``。
+
+    fail-open：任何异常（含查库失败）→ 空串 + WARNING，主链路照旧，绝不冒泡。
+    会话工厂**函数内 import**：与 two-pass 同口径，便于测试替换临时库。
+    """
+    import time
+    empty_counts = {"goal_n": 0, "open_n": 0, "hard_n": 0}
+    t0 = time.perf_counter()
+    try:
+        from app.db.database import async_session_factory as _factory
+        from app.agent.survival_checklist import build_checklist_detail
+        async with _factory() as db:
+            text, counts = await build_checklist_detail(db, user_id=user_id, character_id=character_id)
+    except Exception as e:
+        _logger.warning("Survival checklist build failed char=%s: %s", character_id, e)
+        return "", empty_counts, 0.0
+    return text or "", dict(counts or empty_counts), (time.perf_counter() - t0) * 1000.0
+
+
+def _note_survival_checklist_injected(character_id, block_text: str, counts: dict,
+                                      messages_n: int, elapsed_ms: float) -> None:
+    """注入留痕：只记 {enabled, checklist_len, checklist_sha8, goal_n, open_n, hard_n, messages_n, elapsed_ms}。
+
+    **绝不落清单正文**（含用户硬约束原文；hash 够人工回查比对）。
+    """
+    import hashlib
+    try:
+        from app.memory.observability import obs_event
+        obs_event(character_id, "survival_checklist", {
+            "enabled": True,
+            "checklist_len": len(block_text or ""),
+            "checklist_sha8": hashlib.sha256((block_text or "").encode("utf-8")).hexdigest()[:8],
+            "goal_n": int((counts or {}).get("goal_n", 0) or 0),
+            "open_n": int((counts or {}).get("open_n", 0) or 0),
+            "hard_n": int((counts or {}).get("hard_n", 0) or 0),
+            "messages_n": int(messages_n),
+            "elapsed_ms": round(float(elapsed_ms), 1),
+        })
+    except Exception:
+        pass
+
+
+def _insert_survival_block(messages: list[dict], state: dict, text: str) -> dict:
+    """把清单块插到宿主 user 消息**之前**（红线②：user 恒为最后一条），返回该块 dict。
+
+    锚点优先用宿主记录的 ``_host_user_msg_index``；非法则退化为「最后一条 role=user」；
+    都没有则追加到尾部。插入后同步修正宿主的 user 下标（防后续 hook 拿旧锚点）。
+    """
+    anchor: int | None = None
+    idx = state.get("_host_user_msg_index")
+    if isinstance(idx, int) and 0 <= idx < len(messages) and (messages[idx] or {}).get("role") == "user":
+        anchor = idx
+    else:
+        for i in range(len(messages) - 1, -1, -1):
+            if (messages[i] or {}).get("role") == "user":
+                anchor = i
+                break
+    block = {"role": "system", "content": text}
+    at = len(messages) if anchor is None else anchor
+    messages.insert(at, block)
+    if isinstance(idx, int) and idx >= at:
+        state["_host_user_msg_index"] = idx + 1
+    return block
+
+
+async def _inject_survival_checklist(state: dict) -> None:
+    """上下文装配尾部注入存活项清单块（原地改 ``state["context_messages"]``）。
+
+    flag 关 / 角色未命中灰度 → **直接返回**（不多一次查询、不改消息结构，逐字旧行为）。
+    注入后重跑一次 system 整体硬顶：清单块按优先级 2 参与裁剪，只有【系统指令】/【本轮提醒】比它高，
+    即超预算时它最后才被动。
+    """
+    char_id = state.get("character_id")
+    if not survival_checklist_allowed(char_id):
+        return
+    messages = state.get("context_messages")
+    if not isinstance(messages, list) or not messages:
+        return
+    text, counts, elapsed_ms = await _load_survival_checklist(char_id, state.get("user_id"))
+    if not text:
+        return
+    block = _insert_survival_block(messages, state, text)
+    try:
+        _apply_system_total_quota(messages, character_id=char_id)
+    except Exception as e:
+        _logger.warning("Survival checklist quota re-pass failed char=%s: %s", char_id, e)
+    _note_survival_checklist_injected(char_id, block.get("content") or "", counts,
+                                      len(messages), elapsed_ms)
 
 
 def _summary_dedup_note(prev_summaries: list[str]) -> str:
@@ -377,7 +554,16 @@ async def _build_older_summaries(state: dict, older_msgs: list, char_name: str, 
 
         _prev_texts = await _load_prev_summaries(state["session_id"], day_str)
         _dup_note = _summary_dedup_note(_prev_texts)
-        gen_prompt = f"\u8bf7\u7528\u4e2d\u6587\u6982\u62ec\u4ee5\u4e0b\u804a\u5929\u7684\u6838\u5fc3\u5185\u5bb9\uff0c\u5305\u62ec\u7528\u6237\u63d0\u5230\u7684\u4e2a\u4eba\u4fe1\u606f\u3001\u91cd\u8981\u4e8b\u4ef6\u3001\u504f\u597d\u3002\u56de\u590d\u572880\u5b57\u4ee5\u5185\u3002\n{_dup_note}{day_text}"
+        # P1（2026-09-23，要求 B①）：日摘要生成前把存活项清单拼进 prompt，并要求这些字段原文保留
+        # （摘要本身就是「压缩」这一步，字段此刻不留住就真丢了）。flag 关/未命中灰度 → _cl_note
+        # 保持空串 → prompt 与改动前逐字节一致；且只在真要补生成那一天时才多查这一次库。
+        _cl_note = ""
+        if survival_checklist_allowed(state.get("character_id")):
+            _cl_text, _cl_counts, _cl_ms = await _load_survival_checklist(
+                state.get("character_id"), state.get("user_id"))
+            if _cl_text:
+                _cl_note = _SUMMARY_CHECKLIST_NOTE + _cl_text + "\n\n"
+        gen_prompt = f"\u8bf7\u7528\u4e2d\u6587\u6982\u62ec\u4ee5\u4e0b\u804a\u5929\u7684\u6838\u5fc3\u5185\u5bb9\uff0c\u5305\u62ec\u7528\u6237\u63d0\u5230\u7684\u4e2a\u4eba\u4fe1\u606f\u3001\u91cd\u8981\u4e8b\u4ef6\u3001\u504f\u597d\u3002\u56de\u590d\u572880\u5b57\u4ee5\u5185\u3002\n{_dup_note}{_cl_note}{day_text}"
         try:
             gen_summary = await chat_completion(
                 messages=[{"role": "system", "content": gen_prompt}],
@@ -580,12 +766,20 @@ async def build_context(state: dict, *, stream: bool | None = None) -> dict:
 
     if use_registry:
         from app.agent import context as _ctx
-        return await _ctx.build_context(state, stream=stream)
+        result = await _ctx.build_context(state, stream=stream)
+    else:
+        # F8 回退观测：flag 关=旧实现直入（观测一版本零命中后可移除 flag-off 分支，F8-2 前置 A）
+        try:
+            from app.memory.observability import obs_event
+            obs_event(state.get("character_id"), "context_legacy_flag_off", {})
+        except Exception:
+            pass
+        result = await build_context_legacy(state, stream=stream)
 
-    # F8 回退观测：flag 关=旧实现直入（观测一版本零命中后可移除 flag-off 分支，F8-2 前置 A）
+    # P1 压缩存活项清单（要求 B②）：装配完成后作为高优先 system 块注入（灰度双条件，
+    # 关/未命中 → 直接返回，不多查库、消息结构逐字不变）。
     try:
-        from app.memory.observability import obs_event
-        obs_event(state.get("character_id"), "context_legacy_flag_off", {})
-    except Exception:
-        pass
-    return await build_context_legacy(state, stream=stream)
+        await _inject_survival_checklist(result if isinstance(result, dict) else state)
+    except Exception as e:
+        _logger.warning("Survival checklist inject skipped: %s", e)
+    return result
