@@ -37,7 +37,9 @@ _SEC_INTENTS = "· 未完成计划"
 _SEC_HEADERS = (_SEC_FACTS, _SEC_SLOTS, _SEC_INTENTS)
 
 # world_facts.predicate → 中文标签（未知谓词原样输出，宁漏不编）
-_PREDICATE_LABEL = {"status": "状态", "activity": "正在做", "location": "位置", "mood": "心情"}
+# C7（2026-09-24）：补 curated 的中文标签——此前会输出英文「- curated：…」夹在中文 prompt 里。
+_PREDICATE_LABEL = {"status": "状态", "activity": "正在做", "location": "位置", "mood": "心情",
+                    "curated": "近况"}
 # user_facts.slot → 中文标签
 _SLOT_LABEL = {
     "location": "位置/城市",
@@ -69,6 +71,21 @@ def fact_line(row) -> str:
     predicate = str(_get(row, "predicate") or "").strip()
     label = _PREDICATE_LABEL.get(predicate, predicate)
     return f"- {label}：{value}" if label else f"- {value}"
+
+
+def _merge_status_row(rows: list, status_row) -> list:
+    """C7 保底（2026-09-24）：rows 里没有 predicate=="status" 的行时，把 status_row 插到最前。
+
+    背景：事实按 updated_at desc 取 limit_facts（默认 8）条，char13 的最新若干条几乎
+    全是 curated（腰伤/关系），真正的当前 status（例如「正在给轩做腰部护理」）会被挤出；
+    这里保证它一定出现在 trace 里。已有 status 行或 status_row 为 None 时原样返回
+    （纯函数，便于单测；_get 同时支持 ORM 行与 dict）。
+    """
+    if any(str(_get(r, "predicate") or "").strip() == "status" for r in rows):
+        return rows
+    if status_row is None:
+        return rows
+    return [status_row] + list(rows)
 
 
 def slot_line(row) -> str:
@@ -154,6 +171,21 @@ async def build_state_trace(db, *, character_id=None, user_id=None,
             fact_rows = list((await db.execute(
                 stmt.order_by(WorldFact.updated_at.desc()).limit(limit_facts)
             )).scalars().all())
+            # C7 保底（2026-09-24）：最新 N 条被 curated 占满时，当前 status 会被挤出 ⇒
+            # 补查一条最新 status 置顶；过滤条件与上面逐项一致（只多一个 predicate）。
+            if not any(str(_get(r, "predicate") or "").strip() == "status" for r in fact_rows):
+                sstmt = select(WorldFact).where(
+                    WorldFact.character_id == character_id,
+                    WorldFact.status == "active",
+                    WorldFact.confidence >= TRACE_CONFIDENCE_MIN,
+                    WorldFact.predicate == "status",
+                )
+                if user_id:
+                    sstmt = sstmt.where(WorldFact.user_id == user_id)
+                status_row = (await db.execute(
+                    sstmt.order_by(WorldFact.updated_at.desc()).limit(1)
+                )).scalars().first()
+                fact_rows = _merge_status_row(fact_rows, status_row)
 
         slot_rows: list = []
         if user_id and limit_slots > 0:

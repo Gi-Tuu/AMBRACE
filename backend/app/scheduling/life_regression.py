@@ -50,6 +50,33 @@ def _cn_now_prefix(now: datetime | None = None) -> str:
             f"{now.hour:02d}:{now.minute:02d}。")
 
 
+async def _current_anchor(character_id: int, user_id: int) -> str:
+    """当前现状锚（fail-open：拿不到就返回空串，绝不抛）。A7（2026-09-24）"""
+    try:
+        from app.memory.current_state import current_user_state_anchor
+        return await current_user_state_anchor(character_id=character_id, user_id=user_id,
+                                               include_profile_location=True, max_chars=200)
+    except Exception:
+        return ""
+
+
+# A7：时空纪律固定文案（与 scheduling/pet_care.py 的 STATE_GUARD_DISCIPLINE 必须逐字一致，
+# 由 tests/test_proactive_state_guard_a7.py 钉住；方案 B 抽共享前置时这两份合并为一份）。
+STATE_GUARD_DISCIPLINE = (
+    "【时空纪律】上面【当前现状】里的内容才是TA现在的真实情况；你想起的过往、旧地点、旧安排都属往事，"
+    "提起时用「我记得…/还记得…」这类回忆口吻自然带过，不要当成现在正在发生的事；与【当前现状】冲突时一律以现状为准。"
+)
+
+
+def _state_guard_segments(anchor: str) -> list[str]:
+    """【当前现状】+【时空纪律】两段（纯函数，便于单测）；anchor 为空时只出纪律段。"""
+    segs: list[str] = []
+    if anchor and anchor.strip():
+        segs.append("【当前现状】" + anchor.strip())
+    segs.append(STATE_GUARD_DISCIPLINE)
+    return segs
+
+
 # ── L4（2026-09-09 主体归属治理）：一次性生活动作不主动复读 ──
 # 吃饭/做饭这类动作结束即失效（「桌上粥还温着」过了饭点再提就是复读），给出有效窗口（小时）。
 _ONE_OFF_WINDOW_HOURS = {"meal": 6}
@@ -266,8 +293,10 @@ async def run_life_regression(candidate: dict) -> bool:
             except Exception:
                 identity = f"你是{char_name}，性格{char.personality or '友善'}。\n"
         lines = "\n".join(f"- {it['content']}" for it in items)
+        guard = "\n".join(_state_guard_segments(await _current_anchor(char_id, user_id)))
         hint = (
             f"{_cn_now_prefix()}\n"
+            f"{guard}\n"
             f"{identity}"
             f"你是{char_name}，最近你的生活里发生了这些事：\n{lines}\n"
             "现在你和用户聊天，请像朋友一样自然地提起其中 1 件（1-2 句话，像随口分享自己的近况，"

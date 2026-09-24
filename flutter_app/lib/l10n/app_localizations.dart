@@ -10197,6 +10197,12 @@ abstract class AppLocalizations {
   /// **'家庭账号'**
   String get accountAdminListTitle;
 
+  /// No description provided for @accountAdminTools.
+  ///
+  /// In zh, this message translates to:
+  /// **'家庭工具'**
+  String get accountAdminTools;
+
   /// No description provided for @accountMainLabel.
   ///
   /// In zh, this message translates to:

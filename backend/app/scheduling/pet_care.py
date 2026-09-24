@@ -22,6 +22,43 @@ from app.utils.dnd import user_in_dnd_period as _user_in_dnd_period
 
 _logger = get_logger("scheduler.pet_care")
 
+
+# ── A7（2026-09-24）：主动消息「时空护栏」——CN 时间行 + 现状锚 + 回忆纪律 ──
+# 三条 prompt（提醒 / 领养告知 / 照顾分享）此前既无当前时间也无用户现状锚，
+# 会出现「用户已回湛江仍问长沙热不热」这类旧地点冒充现状的 bug。
+STATE_GUARD_DISCIPLINE = (
+    "【时空纪律】上面【当前现状】里的内容才是TA现在的真实情况；你想起的过往、旧地点、旧安排都属往事，"
+    "提起时用「我记得…/还记得…」这类回忆口吻自然带过，不要当成现在正在发生的事；与【当前现状】冲突时一律以现状为准。"
+)
+
+
+def _cn_now_line() -> str:
+    """北京时间一句话（口径与 life_regression._cn_now_prefix 一致）。A7"""
+    from app.utils.timeutil import app_local_now
+    now = app_local_now()
+    week = "一二三四五六日"[now.weekday()]
+    return (f"现在是北京时间 {now.year}年{now.month}月{now.day}日 "
+            f"星期{week} {now.hour:02d}:{now.minute:02d}。")
+
+
+async def _state_anchor(character_id: int, user_id: int) -> str:
+    """当前现状锚（fail-open：拿不到就返回空串，绝不抛）。A7"""
+    try:
+        from app.memory.current_state import current_user_state_anchor
+        return await current_user_state_anchor(character_id=character_id, user_id=user_id,
+                                               include_profile_location=True, max_chars=200)
+    except Exception:
+        return ""
+
+
+def _state_guard_block(anchor: str) -> str:
+    """拼「【当前现状】…\n【时空纪律】…」；anchor 空时只出纪律段，恒非空、结尾带换行。"""
+    segs: list[str] = []
+    if anchor and anchor.strip():
+        segs.append("【当前现状】" + anchor.strip())
+    segs.append(STATE_GUARD_DISCIPLINE)
+    return "\n".join(segs) + "\n"
+
 PET_EVENT_TYPE = "pet_remind"
 REMIND_INTERVAL_HOURS = 6   # 同一宠物两次提醒最小间隔
 LOW_THRESHOLD = 30          # 饥饿/脏阈值
@@ -187,7 +224,10 @@ async def run_pet_remind(char_id: int, user_id: int, pet_id: int) -> bool:
         except Exception:
             pet_fact = ""
         fact_line = f"它的习性：{pet_fact}。" if pet_fact else ""
+        guard = _state_guard_block(await _state_anchor(char_id, user_id))
         hint = (
+            f"{_cn_now_line()}\n"
+            f"{guard}"
             f"{identity}\n"
             f"{persona_block}"
             f"{owner_line}\n"
@@ -334,9 +374,10 @@ async def _gen_adopt_message(char: AICharacter, pet) -> tuple[str, str]:
         except Exception:
             persona_block = ""
         persona_block = f"{persona_block}\n" if persona_block else ""
+        guard = _state_guard_block(await _state_anchor(char.id, char.user_id))
         text, adopt_reasoning = await _pet_llm(
             messages=[{"role": "system", "content": "直接输出要说的话，不要加引号和标注。"},
-                      {"role": "user", "content": f"{identity}\n你是{char.name}。\n"
+                      {"role": "user", "content": f"{_cn_now_line()}\n{guard}{identity}\n你是{char.name}。\n"
                                                   f"背景：{char.bio or '无'}\n"
                                                   f"{persona_block}"
                                                   f"你刚领养了一只{_species_cn(pet.species)}取名叫{pet.name}。"
@@ -441,9 +482,10 @@ async def _gen_care_message(char: AICharacter, pet) -> tuple[str, str]:
         except Exception:
             persona_block = ""
         persona_block = f"{persona_block}\n" if persona_block else ""
+        guard = _state_guard_block(await _state_anchor(char.id, char.user_id))
         text, care_reasoning = await _pet_llm(
             messages=[{"role": "system", "content": "直接输出要说的话，不要加引号和标注。"},
-                      {"role": "user", "content": f"{identity}\n你是{char.name}。\n"
+                      {"role": "user", "content": f"{_cn_now_line()}\n{guard}{identity}\n你是{char.name}。\n"
                                                   f"背景：{char.bio or '无'}\n"
                                                   f"{persona_block}"
                                                   f"你刚照顾完自己的宠物{pet.name}（{_species_cn(pet.species)}）。"

@@ -136,3 +136,62 @@ def test_audit_value_masks_secrets_and_fits_the_cell():
     assert sc._fmt_audit_val({"api_key": "sk-very-secret"}) == "api_key=***"
     long_text = sc._fmt_audit_val({"note": "长" * 200})
     assert long_text.endswith("…") and len(long_text) <= 47
+
+
+def test_mousewheel_is_bound_once_at_app_level():
+    """滚轮只有 App 级一处绑定 + 各滚动容器登记，页内不得再自己绑/解绑。
+
+    实机反馈（2026-09-24）：「整个控制台的滚轮都很难用，必须压在滚动条上才能拖，
+    没有滚动条的页面甚至滚不了」。根因＝每个画布在 <Enter> 里全局绑滚轮、<Leave>
+    里全局解绑，而指针一移进内嵌卡片（RoundedCard 本身就是 Canvas）就会给画布触发
+    <Leave> ⇒ 绑定被摘掉，滚轮形同不存在；多画布时后绑的还会覆盖先绑的。
+
+    断言刻意只看**调用形态**（unbind_all + "<MouseWheel>" 这一对），不看注释文字：
+    注释里解释这段历史时必然会写到那几个字，否则这条棘轮会被自己的说明绊倒。
+    """
+    src = inspect.getsource(sc.ControllerApp)
+    assert src.count('bind_all("<MouseWheel>"') == 1, "滚轮绑定必须只剩 App 级一处"
+    assert '.unbind_all("<MouseWheel>")' not in src, "不得再在页内解绑全局滚轮"
+    # 定义 1 处 + 三处滚动容器（_scroll_page / 服务器页 / 危险弹窗正文）各 1 处
+    assert src.count("_register_scroll_canvas(") == 4, "滚动容器登记点数量变了，同步订正本用例"
+
+
+def test_mousewheel_fallback_takes_topmost_not_only_one():
+    """指针压在非画布处时的兜底：取【最后登记】的容器，不是「恰好只有一个才滚」。
+
+    旧判定 `len(shown) == 1` 在弹窗一开就失效——页面画布仍映射 + 弹窗画布 = 2 个，
+    结果页面和弹窗**谁都滚不动**（实机反馈：删除确认卡滚不动）。弹窗晚于页面登记，
+    所以 `shown[-1]` 天然选中最上层那个。
+    """
+    src = inspect.getsource(sc.ControllerApp._on_mousewheel)
+    assert "len(shown) == 1" not in src, "兜底不得要求「只有一个映射画布」"
+    assert "shown[-1]" in src, "兜底应取最后登记的（＝最上层）容器"
+
+
+def test_danger_dialog_is_three_pane_and_scrollable():
+    """危险弹窗三段式：标题钉顶、正文可滚、确认区钉底。
+
+    旧版整卡 `RoundedCard(fit_inner=True)` 按内容长高——删除确认卡有 20 行体量表加例外
+    与提示，卡片比屏幕还高，确认区被顶出屏幕外，而弹窗**没有任何滚动容器**，
+    于是"内容明明没显示全，却怎么滚都没反应"。
+    """
+    src = inspect.getsource(sc.ControllerApp._danger_dialog)
+    # 断言查【精确调用形态】而不是裸 `fit_inner=True`：注释里解释历史时必然会写到后者，
+    # 查裸串会被这条棘轮自己的说明绊倒（本用例第一版就栽在这儿）。
+    assert "RoundedCard(win, t, pad=3, fit_inner=True)" not in src, \
+        "弹窗整卡不得再按内容长高（会把确认区顶出屏幕）"
+    assert "_register_scroll_canvas(" in src, "弹窗正文必须登记进 App 级滚轮派发"
+    assert "DIALOG_BODY_MAX_H" in src, "正文高度要封顶，否则窗口比屏幕还高"
+    assert 'pack(side="bottom"' in src, "确认区要先占底部，才不会被正文 expand 挤没"
+
+
+def test_scroll_page_never_pins_the_content_height():
+    """`_scroll_page` 不得再把 pad 的高度钉死——「铺满视口」只能由 scrollregion 兜底。
+
+    钉高度会让内容变多时收不到 <Configure>，scrollregion 停在旧值，界面"滚不动又没显示全"。
+    断言查精确写法，避免被本用例自己的说明文字绊倒（同文件滚轮那条已经栽过一次）。
+    """
+    src = inspect.getsource(sc.ControllerApp._scroll_page)
+    assert "width=vw, height=0" in src, "pad 必须走内容自然高"
+    assert "if need <= vh else 0" not in src, "不得再按视口高钉 pad"
+    assert "max(need, vh)" in src, "视口铺满要改由 scrollregion 兜底"

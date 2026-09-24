@@ -165,6 +165,16 @@ void main() {
     expect(tileFor(tester, 'Papa').onChanged, isNull);
   });
 
+  testWidgets('家庭工具卡（管理员）：页内有「账号关联」入口，抽屉那条已收走', (tester) async {
+    ApiClient().dio.httpClientAdapter = _FakeAdminAdapter();
+    await pumpScreen(tester, _AdminSettingsProvider());
+    final l10n = l10nOf(tester, AccountAdminScreen);
+
+    expect(find.text(l10n.accountAdminTools), findsOneWidget);
+    expect(find.text(l10n.accountLinking), findsOneWidget);
+    expect(find.text(l10n.accountLinkingHint), findsOneWidget);
+  });
+
   testWidgets('非管理员进入：页内保留可读占位，不渲染列表', (tester) async {
     ApiClient().dio.httpClientAdapter =
         _FakeAdminAdapter(listStatus: 403, listDetail: 'server-refused');
@@ -174,6 +184,9 @@ void main() {
     expect(find.byType(SwitchListTile), findsNothing);
     expect(find.text(l10n.accountAdminOnly), findsOneWidget);
     expect(find.text(l10n.accountAdminOnlyHint), findsOneWidget);
+    // 子账号：抽屉那条入口按 isAdmin 收走了，所以页内这条必须还在
+    expect(find.text(l10n.accountAdminTools), findsOneWidget);
+    expect(find.text(l10n.accountLinking), findsOneWidget);
   });
 
   testWidgets('PUT 成功：重拉一次列表并以服务端返回值渲染 + 已保存提示', (tester) async {

@@ -362,3 +362,38 @@ def test_report_loader_goes_through_admin_request_only(app, stub):
     assert ("GET", API + "/accounts/4/purge-report") in stub.calls
     assert [m for m, _p in stub.calls if m not in ("GET", "POST")] == []
     assert all("DELETE" not in p.upper() for _m, p in stub.calls)
+
+
+# ── 弹窗滚动（实机反馈：内容明明没显示全，却怎么滚都没反应）────────────
+
+
+def test_delete_confirm_body_is_scrollable_and_footer_pinned(app):
+    """删除确认卡：正文登记进 App 级滚轮派发，确认输入区钉在底部不随正文滚走。"""
+    before = list(app._scroll_canvases)
+    app._show_delete_confirm(cf.delete_dry_run_payload())
+    win = last_dialog(app)
+    fresh = [c for c in app._scroll_canvases if c not in before]
+    assert len(fresh) == 1, "弹窗正文应新登记 1 个滚动画布，实际 %d 个" % len(fresh)
+    body = fresh[0]
+    assert app._scroll_canvases.index(body) == len(app._scroll_canvases) - 1,         "弹窗必须晚于页面登记，App 级兜底派发才会把它当成最上层那个"
+
+    foot = app._dialog_footer(win)
+    ent = entries_in(win)
+    assert ent, "确认输入区没渲染出来"
+    assert ent[0] in walk(foot), "确认输入区被塞进可滚动正文里：正文一长它就被顶出屏幕外"
+
+    win.ambrace_body_sync()
+    assert int(body.cget("height")) <= sc.CUI.px(sc.DIALOG_BODY_MAX_H), "正文高度没封顶"
+    region = str(body.cget("scrollregion") or "").split()
+    assert len(region) == 4 and float(region[3]) > 0, "正文没有算出 scrollregion＝滚不动"
+    win.destroy()
+
+
+def test_purge_now_dialog_also_scrollable(app, stub):
+    """「立即清除」确认卡同口径：它比删除确认更长（账本逐表行数）。"""
+    before = list(app._scroll_canvases)
+    app._open_purge_confirm_dialog(dict(NORMAL_ROW, deleted_at="2026-09-24T10:00:00"))
+    win = last_dialog(app)
+    assert len([c for c in app._scroll_canvases if c not in before]) == 1
+    assert entries_in(win)[0] in walk(app._dialog_footer(win))
+    win.destroy()

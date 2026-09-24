@@ -16,6 +16,9 @@ backend/data/douyin_profile/
 backend/data/browser_profile/
 backend/data/plugins/
 
+# 删号文件隔离区（2026-09-24，运行产物：被删账号的文件先移到这里、不直接删；绝不入库/不进公开仓）
+backend/data/trash/
+
 # 环境变量
 .env
 

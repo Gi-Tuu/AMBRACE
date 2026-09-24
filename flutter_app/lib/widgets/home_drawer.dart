@@ -327,18 +327,22 @@ class HomeDrawer extends StatelessWidget {
                     context, AppPageRoute(builder: (_) => const AppearanceScreen()));
               },
             ),
-            ListTile(
-              leading: const _RowIcon(icon: Icons.family_restroom),
-              title: Text(l10n.accountLinking, style: const TextStyle(fontSize: 14)),
-              subtitle:
-                  Text(l10n.accountLinkingHint, style: TextStyle(fontSize: 11, color: subColor)),
-              trailing: Icon(Icons.chevron_right, size: 18, color: chevColor),
-              onTap: () {
-                onClose();
-                Navigator.push(
-                    context, AppPageRoute(builder: (_) => const AccountLinkingScreen()));
-              },
-            ),
+            // 2026-09-24（用户拍板）：「账号关联」收进「家庭管理员」页，抽屉里只给
+            // **子账号**留一条 —— 家庭管理员那个抽屉入口按 isAdmin 隐藏，子账号进不去那个页，
+            // 一并收掉就等于他们没有兑换受邀码 / 解除关联的入口了。
+            if (!s.isAdmin)
+              ListTile(
+                leading: const _RowIcon(icon: Icons.family_restroom),
+                title: Text(l10n.accountLinking, style: const TextStyle(fontSize: 14)),
+                subtitle:
+                    Text(l10n.accountLinkingHint, style: TextStyle(fontSize: 11, color: subColor)),
+                trailing: Icon(Icons.chevron_right, size: 18, color: chevColor),
+                onTap: () {
+                  onClose();
+                  Navigator.push(
+                      context, AppPageRoute(builder: (_) => const AccountLinkingScreen()));
+                },
+              ),
           ],
         ),
         divider(),

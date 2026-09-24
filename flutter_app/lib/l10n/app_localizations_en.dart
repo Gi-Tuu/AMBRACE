@@ -5658,6 +5658,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get accountAdminListTitle => 'Family accounts';
 
   @override
+  String get accountAdminTools => 'Family tools';
+
+  @override
   String get accountMainLabel => 'Family admin (me)';
 
   @override

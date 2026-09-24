@@ -1363,6 +1363,9 @@ VOLUME_TABLE_ROWS_SHOWN = 20
 EXCEPTION_LINES_SHOWN = 8
 #: 危险操作确认卡的折行宽度（100% 基准值，用前一律 CUI.px；不折行会把弹窗撑到屏幕外）
 DANGER_TEXT_WRAP = 520
+# 危险弹窗正文最高这么多逻辑像素，超出走滚轮（删除确认卡有 20 行体量表 + 例外 + 提示，
+# 不封顶的话窗口比屏幕还高，底部的确认区直接被顶到屏幕外）
+DIALOG_BODY_MAX_H = 460
 
 
 def _purge_countdown_text(purge_after, now=None) -> str:
@@ -1928,6 +1931,8 @@ class ControllerApp:
         if plaque is not None:
             plaque.pack(side="bottom", pady=(0, CUI.sp("sm")))
 
+        # 滚轮派发用的容器登记表：页面构造期就要能登记，故先于 _pages 建好
+        self._scroll_canvases = []
         self._pages = {
             "dashboard": self._build_dashboard_page(),
             "server": self._build_server_page(),
@@ -1940,6 +1945,9 @@ class ControllerApp:
             "audit": self._build_audit_page(),
             "overview": self._build_overview_page(),
         }
+        # 全局滚轮：只绑一次（页面切换/重建都不再动绑定）。旧写法是每个画布各自
+        # bind_all，后绑的覆盖先绑的，谁 <Leave> 谁就把别人的绑定一起摘掉。
+        self.root.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
 
     def _select_page(self, key: str) -> None:
         t = self.theme
@@ -2025,14 +2033,80 @@ class ControllerApp:
 
     # ── 页面容器 / 仪表盘 ──
 
+    # ── 滚轮派发（2026-09-24）────────────────────────────────────────────
+
+    def _register_scroll_canvas(self, canvas) -> None:
+        """把「纵向滚动画布」登记进派发表（页面重建时幂等，不重复登记）。"""
+        self._live_scroll_canvases()          # 顺手清掉已销毁的（弹窗关掉后路径名失效）
+        if canvas not in self._scroll_canvases:
+            self._scroll_canvases.append(canvas)
+
+    def _live_scroll_canvases(self) -> list:
+        """返回仍存活的滚动画布，并把死的一次性摘掉。
+
+        弹窗每次打开都会登记一个正文画布；关掉后那个 Tcl 路径名就失效了，
+        留在表里会让**之后每一次滚轮**都在 `winfo_ismapped()` 上抛
+        `TclError: bad window path name`（滚轮当场失灵，且再也恢复不了）。
+        `winfo_exists()` 本身对死路径也会抛，所以整段包 try。
+        """
+        live = []
+        for c in self._scroll_canvases:
+            try:
+                if c.winfo_exists():
+                    live.append(c)
+            except tk.TclError:
+                pass
+        if len(live) != len(self._scroll_canvases):
+            self._scroll_canvases = live
+        return live
+
+    def _wheel_target(self, widget):
+        """从指针命中的控件往上找已登记的滚动画布；找不到返回 None。
+
+        两个容易踩的点：
+        - 卡片（RoundedCard）自己也是 Canvas，但它**没登记**，所以必须继续往上找，
+          不能「见到 Canvas 就滚它」；
+        - 先撞上 tk.Text（运行日志正文自带滚动区）就放弃，交给 Text 的类绑定自己滚，
+          否则一次滚轮会「正文滚一次 + 整页再滚一次」。
+        """
+        while widget is not None:
+            if widget in self._scroll_canvases:
+                return widget
+            if isinstance(widget, tk.Text):
+                return None
+            widget = getattr(widget, "master", None)
+        return None
+
+    def _on_mousewheel(self, ev):
+        """唯一的滚轮入口：按指针位置派发给对应的滚动画布。"""
+        try:
+            hit = self.root.winfo_containing(ev.x_root, ev.y_root)
+        except Exception:
+            hit = None
+        target = self._wheel_target(hit)
+        if target is None:
+            # 指针落在滚动条、页边、卡片外沿（都不是画布）：按「最上层那个」滚——
+            # 「必须把鼠标压在滚动条上才能滚」到此为止。
+            # 取【最后登记】的而不是「恰好只有一个才滚」：弹窗晚于页面登记，
+            # 旧写法在弹窗一开时数到 2 个映射画布，结果页面和弹窗谁都不滚了。
+            shown = [c for c in self._live_scroll_canvases() if c.winfo_ismapped()]
+            target = shown[-1] if shown else None
+        if target is None:
+            return None
+        delta = int(getattr(ev, "delta", 0) or 0)
+        if not delta:
+            return None
+        target.yview_scroll(int(-delta / 120) or -1, "units")
+        return "break"
+
     def _scroll_page(self, title: str, subtitle: str = ""):
         """页面通用容器：纵向滚动画布 + 视口自适应，返回 (page, pad)。
 
         两块自适应都在这里，页面侧只管往里填内容：
         - **横向**：内容宽 = 视口宽 − 左右内边距，所以表格/卡片能铺满整屏（旧版只占左侧
           一小块、右边全空）。
-        - **纵向**：窗口高 = max(内容自然高, 视口高)。内容短时铺满视口，页面里给最后一块
-          `expand=True` 就能吃掉剩余高度，空白只会落在**底部**而不是中部。
+        - **纵向**：pad 永远按内容自然高，`scrollregion` 至少铺到视口高——所以内容短时
+          没有多余滚动、内容变长时一定能滚到底（不钉控件尺寸，见 `_fit` 里的根因说明）。
         """
         t = self.theme
         page = tk.Frame(self._content, bg=t.bg)
@@ -2048,11 +2122,16 @@ class ControllerApp:
             vw = max(1, c.winfo_width() - 2 * SP_LG)
             need = pad.winfo_reqheight()
             vh = c.winfo_height()
-            # 内容比视口短 → 把 pad 拉到视口高（页面里那块 expand=True 吃掉剩余高度，
-            # 空白只会落在底部）；内容比视口长 → height=0 即"按内容自然高"，
-            # 绝不能把 pad 钉在旧高度上：管理页的行是 HTTP 回来后才补的，钉死会裁掉新行。
-            c.itemconfig(w, width=vw, height=(max(need, vh) if need <= vh else 0))
-            c.configure(scrollregion=c.bbox("all"))
+            # 高度**一律让 pad 走自然高**（height=0），"内容比视口短要铺满视口"改成给
+            # scrollregion 兜底，绝不再钉控件尺寸。
+            # 根因（实机反馈「有些界面根本滚不动，但它确实没显示完整」）：旧写法在内容短时
+            # 把 pad 的 itemconfig 高度钉成视口高，于是 HTTP 回来补进行数后 pad 的
+            # **被分配尺寸没变** → 它的 <Configure> 不触发 → _fit 不再重算 →
+            # scrollregion 永远停在旧的视口高，多出来的行既看不见又滚不到（审计/模型/开关页全中）。
+            c.itemconfig(w, width=vw, height=0)
+            # 区域要含内容窗在画布里的落点偏移（create_window 用的是 (SP_LG, SP_SM)）：
+            # 少算这 18px，滚到底时最后一行的下沿正好被切在视口外
+            c.configure(scrollregion=(0, 0, SP_LG + vw, SP_SM + max(need, vh)))
 
         def _on_pad(_e, c=scroll):
             # 内容长高后重算一次（_fit 读的是 reqheight，与实际被钉的尺寸无关，故幂等、不互相触发）
@@ -2061,14 +2140,11 @@ class ControllerApp:
         pad.bind("<Configure>", _on_pad)
         scroll.bind("<Configure>", _fit)
 
-        def _on_enter(_e, c=scroll):
-            c.bind_all("<MouseWheel>",
-                       lambda ev: c.yview_scroll(int(-ev.delta / 120), "units"))
-
-        def _on_leave(_e, c=scroll):
-            c.unbind_all("<MouseWheel>")
-        scroll.bind("<Enter>", _on_enter)
-        scroll.bind("<Leave>", _on_leave)
+        # 滚轮（2026-09-24 收口）：原先在各画布的 <Enter>/<Leave> 里 bind_all/unbind_all，
+        # 而指针一移进内嵌卡片（RoundedCard 本身也是 Canvas）就会触发画布的 <Leave>，
+        # 把全局绑定摘掉 —— 表现就是「滚轮几乎不生效，必须压在滚动条上拖」。
+        # 现在只登记容器，滚轮由 App 级唯一的处理器按指针命中派发（_on_mousewheel）。
+        self._register_scroll_canvas(scroll)
         # 首帧视口还没定（winfo_width≈1），排一次等映射完成后再铺
         scroll.after_idle(_fit)
 
@@ -2227,14 +2303,8 @@ class ControllerApp:
             c.itemconfig(w, width=max(1, e.width - 2 * SP_LG))
         _scroll.bind("<Configure>", _fit_width)
 
-        def _on_enter(e, c=_scroll):
-            c.bind_all("<MouseWheel>",
-                       lambda ev: c.yview_scroll(int(-ev.delta / 120), "units"))
-
-        def _on_leave(e):
-            _scroll.unbind_all("<MouseWheel>")
-        _scroll.bind("<Enter>", _on_enter)
-        _scroll.bind("<Leave>", _on_leave)
+        # 滚轮派发统一在 App 级（见 _on_mousewheel），这里只登记容器
+        self._register_scroll_canvas(_scroll)
 
         tk.Label(pad, text="服务器控制", fg=t.text, bg=t.bg, font=CUI.f("h1", True)).pack(anchor="w")
         tk.Label(pad, text="启动 / 停止 / 重启核心服务", fg=t.text_muted, bg=t.bg,
@@ -3162,30 +3232,73 @@ class ControllerApp:
     # 弹窗内部一律 pack：CUI.DataTable 会自己 pack，混用 grid 会直接 TclError。
 
     def _danger_dialog(self, title: str, heading: str, sub: str = "", sub_kind: str = "error"):
-        """危险操作 / 报告弹窗外壳 → ``(win, 内容容器)``（标题 + 一行说明 + 空白内容区）。"""
+        """危险操作 / 报告弹窗外壳 → ``(win, 正文容器)``。
+
+        三段式：**标题区钉顶、正文可滚、确认区钉底**。
+        旧版是 `RoundedCard(fit_inner=True)` 整卡按内容长高——删除确认卡有 20 行体量表
+        加例外与提示，卡片比屏幕还高，底部确认区直接被顶出屏幕外，而且弹窗**没有滚动容器**，
+        于是"内容明明没显示全，却怎么滚都没反应"。
+        正文画布登记进 `_scroll_canvases`，滚轮由 App 级 `_on_mousewheel` 按指针派发。
+        """
         t = self.theme
         win = tk.Toplevel(self.root)
         win.title(title)
         win.transient(self.root)
         win.configure(bg=t.bg)
-        card = RoundedCard(win, t, pad=3, fit_inner=True)
+        card = RoundedCard(win, t, pad=3)
         card.pack(fill="both", expand=True, padx=SP_LG, pady=SP_LG)
-        f = card.inner
-        f.config(padx=SP_LG, pady=SP_MD)
-        tk.Label(f, text=heading, fg=t.text, bg=t.card,
+        shell = card.inner
+        shell.config(padx=SP_LG, pady=SP_MD)
+
+        head = tk.Frame(shell, bg=t.card)
+        head.pack(side="top", fill="x")
+        tk.Label(head, text=heading, fg=t.text, bg=t.card,
                  font=CUI.f(FS_TITLE, True)).pack(anchor="w")
         if sub:
-            tk.Label(f, text=sub, fg=self._admin_color(sub_kind), bg=t.card,
+            tk.Label(head, text=sub, fg=self._admin_color(sub_kind), bg=t.card,
                      font=CUI.f(FS_CAPTION), anchor="w", justify="left",
                      wraplength=CUI.px(DANGER_TEXT_WRAP)).pack(anchor="w", pady=(2, SP_SM))
+
+        # 确认区先按 side=bottom 占位（空的时候高度 0），保证正文 expand 不会把它挤没
+        footer = tk.Frame(shell, bg=t.card)
+        footer.pack(side="bottom", fill="x")
+        win.ambrace_footer = footer
+
+        body = tk.Canvas(shell, bg=t.card, highlightthickness=0, bd=0)
+        bar = ttk.Scrollbar(shell, orient="vertical", command=body.yview)
+        body.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        body.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(body, bg=t.card)
+        win_id = body.create_window((0, 0), window=inner, anchor="nw")
+
+        def _sync(_e=None, c=body, w=win_id, content=inner):
+            # 只给【高度】封顶，宽度让内容自己决定：横向不裁，免得 DataTable 断字
+            content.update_idletasks()
+            c.configure(height=max(CUI.px(60), min(content.winfo_reqheight(),
+                                                   CUI.px(DIALOG_BODY_MAX_H))))
+            region = c.bbox(w) or (0, 0, 0, 0)
+            c.configure(scrollregion=region)
+
+        inner.bind("<Configure>", _sync)
+        self._register_scroll_canvas(body)
+        win.ambrace_body_sync = _sync
         win.protocol("WM_DELETE_WINDOW", lambda: self._close_dialog(win))
-        return win, f
+        return win, inner
+
+    def _dialog_footer(self, win) -> tk.Frame:
+        """弹窗底部钉住的确认区（标题与按钮不随正文滚走）。"""
+        foot = getattr(win, "ambrace_footer", None)
+        return foot if foot is not None else win
 
     def _close_dialog(self, win) -> None:
         try:
             win.destroy()
         except Exception:
             _safe_traceback()
+        # 弹窗正文画布随窗口一起作废：立刻从滚轮派发表摘掉，别等下一次"指针没命中
+        # 任何画布"才惰性清理（否则表里会攒着死路径名，兜底分支一碰就抛 TclError）
+        self._live_scroll_canvases()
 
     def _note_line(self, parent, text: str, kind: str = "info"):
         """卡片里的一行说明：次要字号 + 全站统一取色 + 折行（长路径不许撑破窗口）。"""
@@ -3319,7 +3432,7 @@ class ControllerApp:
         for g in guards:
             self._note_line(f, "护栏：%s" % g, "error")
         self._confirm_input_row(
-            f, username, "确认删除",
+            self._dialog_footer(win), username, "确认删除",
             lambda txt: self._submit_account_delete(uid, username, txt, win),
             enabled=not guards,
             blocked_text="后端护栏已挡（逐条原因见上），本次不会发出删除请求")
@@ -3361,7 +3474,7 @@ class ControllerApp:
                         % (_purge_countdown_text(r.get("purge_after")),
                            _fmt_dt(r.get("deleted_at"))), "warn")
         self._note_line(f, "清除完成后自动打开「清除结果」，逐表行数以后端账本为准。")
-        self._confirm_input_row(f, username, "立即清除",
+        self._confirm_input_row(self._dialog_footer(win), username, "立即清除",
                                 lambda txt: self._submit_purge(uid, username, txt, win))
         win.grab_set()
         return win

@@ -6,13 +6,16 @@ import 'package:ai_companion/theme/tokens.dart';
 
 import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
+import '../../widgets/app_page_route.dart';
 import '../../widgets/ios_card_group.dart';
+import 'account_linking_screen.dart';
 
 /// 家庭管理员（#46 选择型，2026-08-24；A6 收口 2026-09-24 统一命名口径）
 ///
 /// 家庭管理员 = users.is_admin=1 的账号集合，权限范围只在**本家庭内**
 /// （后端 GET /admin/accounts 按家庭过滤，非管理员 403）。
 /// 入口有两条：抽屉独立入口（按 isAdmin 隐藏）与本页面内占位（按服务端 403 兜底）。
+/// 2026-09-24 起本页还承接「账号关联」入口（原抽屉项，用户拍板收进本页）。
 class AccountAdminScreen extends StatefulWidget {
   const AccountAdminScreen({super.key, this.showAppBar = true});
 
@@ -148,33 +151,39 @@ class _AccountAdminScreenState extends State<AccountAdminScreen> {
         ),
       );
     }
+    // 非家庭管理员（含子账号）：占位照旧，但**家庭工具卡要保留**——子账号的
+    // 「兑换受邀码 / 解除关联」只在这里和抽屉里能进，抽屉那条按 isAdmin 收走了。
     if (!_isAdmin) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.lock_outline, size: 48, color: Colors.grey),
-              const SizedBox(height: 12),
-              Text(l10n.accountAdminOnly, textAlign: TextAlign.center),
-              const SizedBox(height: 8),
-              Text(
-                l10n.accountAdminOnlyHint,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textSecondary,
-                    height: 1.4),
-              ),
-            ],
+      return ListView(
+        padding: const EdgeInsets.only(top: 8, bottom: 32),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(32, 32, 32, 8),
+            child: Column(
+              children: [
+                const Icon(Icons.lock_outline, size: 48, color: Colors.grey),
+                const SizedBox(height: 12),
+                Text(l10n.accountAdminOnly, textAlign: TextAlign.center),
+                const SizedBox(height: 8),
+                Text(
+                  l10n.accountAdminOnlyHint,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                      height: 1.4),
+                ),
+              ],
+            ),
           ),
-        ),
+          _familyToolsCard(l10n),
+        ],
       );
     }
     return ListView(
       padding: const EdgeInsets.only(top: 8, bottom: 32),
       children: [
+        _familyToolsCard(l10n),
         IosCardGroup(
           title: l10n.accountAdminListTitle,
           children: [
@@ -189,6 +198,32 @@ class _AccountAdminScreenState extends State<AccountAdminScreen> {
             style: const TextStyle(
                 fontSize: 11, color: AppColors.textSecondary, height: 1.4),
           ),
+        ),
+      ],
+    );
+  }
+
+  /// 家庭工具卡（2026-09-24 用户拍板）：把抽屉里的「账号关联」收进家庭管理员页。
+  ///
+  /// 管理员看到的「账号关联」＝生成受邀码 / 踢出子账号；子账号看到的＝兑换受邀码 /
+  /// 解除关联。两边都要能进，所以本卡在**管理员与非管理员分支里都渲染**。
+  Widget _familyToolsCard(AppLocalizations l10n) {
+    return IosCardGroup(
+      title: l10n.accountAdminTools,
+      children: [
+        ListTile(
+          leading: const Icon(Icons.family_restroom, size: 20),
+          title: Text(
+            l10n.accountLinking,
+            style: const TextStyle(fontSize: 15, color: AppColors.textPrimary),
+          ),
+          subtitle: Text(
+            l10n.accountLinkingHint,
+            style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+          ),
+          trailing: const Icon(Icons.chevron_right, size: 18),
+          onTap: () => Navigator.push(
+              context, AppPageRoute(builder: (_) => const AccountLinkingScreen())),
         ),
       ],
     );

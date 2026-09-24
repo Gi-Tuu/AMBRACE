@@ -5460,6 +5460,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get accountAdminListTitle => '家庭账号';
 
   @override
+  String get accountAdminTools => '家庭工具';
+
+  @override
   String get accountMainLabel => '家庭管理员（我）';
 
   @override

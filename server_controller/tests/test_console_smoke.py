@@ -239,3 +239,46 @@ def test_flags_table_spans_the_card(app):
     assert tables, "开关页没走 DataTable"
     for col in tables[0].cols:
         assert int(col["min"]) > 0 or int(col["weight"]) > 0, "列既不给最小宽也不给权重＝会被压成 0"
+
+
+def _scroll_canvas_of(page):
+    """页内那个纵向滚动画布（页面结构：Frame → Canvas + Scrollbar）。"""
+    return [c for c in page.winfo_children() if isinstance(c, tk.Canvas)][0]
+
+
+def _ancestors(w):
+    while w is not None:
+        yield w
+        w = getattr(w, "master", None)
+
+
+def test_mousewheel_routes_to_the_page_canvas(app):
+    """滚轮按指针命中的控件派发：画布内**所有**控件（含卡片自绘 Canvas）都落到页画布。"""
+    assert app.root.bind_all("<MouseWheel>"), "App 级滚轮绑定没建起来"
+
+    for key in ("accounts", "server", "flags"):
+        page = app._pages[key]
+        canvas = _scroll_canvas_of(page)
+        assert canvas in app._scroll_canvases, "%s 页的滚动画布没登记" % key
+
+        routed = 0
+        for w in walk(canvas):
+            if w is canvas:
+                continue
+            # 自带滚动区的正文交给它自己（本用例只覆盖滚动画布型页面，日志页另有专测）
+            if any(isinstance(a, tk.Text) for a in list(_ancestors(w))[:-1]):
+                continue
+            assert app._wheel_target(w) is canvas, (
+                "%s 页：%s 没派发到页画布（被卡片自己的 Canvas 吃掉了？）"
+                % (key, type(w).__name__))
+            routed += 1
+        assert routed > 3, "%s 页派发覆盖太少（%d），用例可能已失效" % (key, routed)
+
+    assert app._wheel_target(None) is None
+
+
+def test_mousewheel_leaves_log_text_alone(app):
+    """运行日志正文自带滚动区：一次滚轮只能滚正文，不能连带滚整页。"""
+    texts = [w for w in walk(app._pages["log"]) if isinstance(w, tk.Text)]
+    assert texts, "运行日志页没有找到 Text 控件，用例失效"
+    assert app._wheel_target(texts[0]) is None

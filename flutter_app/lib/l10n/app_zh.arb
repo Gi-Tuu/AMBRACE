@@ -2010,6 +2010,7 @@
   "accountAdminOnly": "仅家庭管理员可管理",
   "accountAdminOnlyHint": "只有家庭管理员能管理本家庭的成员账号；如需该权限，请联系现有家庭管理员为你开启。",
   "accountAdminListTitle": "家庭账号",
+  "accountAdminTools": "家庭工具",
   "accountMainLabel": "家庭管理员（我）",
   "accountSubLabel": "子账号",
   "accountAdminLoadFailed": "加载失败，请重试",
