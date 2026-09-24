@@ -326,6 +326,11 @@ _FLAG_ROWS: list[tuple] = [
      '超过一周的群记忆每晚合并成一条摘要，旧记录软删除。',
      'Nightly group memory compaction',
      'Group memories older than a week merge into one summary nightly, and old rows are soft-deleted.'),
+    ('account_purge_scheduler', 'channel', 1406, False, '回收站到期自动清除',
+     '宽限期到期的回收站账号，在夜间低峰自动彻底删除；默认关闭，开启前请确认备份策略到位。',
+     'Automatic recycle-bin cleanup',
+     'Accounts past their grace period are permanently removed during a low-traffic overnight window; '
+     'off by default — confirm your backup routine first.'),
 
     # ── 工具轨迹治理 ──
     ('agent_trace_scheduler_only_executed', 'tool_trace', 1501, False, '只记录真正执行的任务',

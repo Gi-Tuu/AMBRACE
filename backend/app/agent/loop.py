@@ -332,6 +332,14 @@ AGENT_FLAGS = {
     # 回退：置回 False（runtime_flags 热切，无需重启）。默认关=零行为变化；
     #   开前沿用既有安全阀口径：确认 quota_clipped_sections 仍为 0，否则=预留挤掉了真实内容，回滚。
     "context_budget_reserve": False,
+    # ── 控制台删号·回收站到期自动清除（第二期第二批，2026-09-24；高危默认关）──
+    # 开=后台调度器在低峰窗口（默认北京时间 02:00–06:00）扫「宽限期已到」的回收站账号，
+    #   逐个交给 account_purge.purge_account 物理清除（进程内串行、每轮限量、最小间隔节流）。
+    #   关=**逐字零行为**：调度器一次都不查库、不产生任何差异（默认）。开前请确认备份策略到位
+    #   （清除器已内置 fail-closed 前置备份）；「不能删最后一个 server_admin」等护栏在清除器内
+    #   始终保留，命中只留 WARNING 不清。开法同其它灰度键：本键已登记进 AGENT_FLAGS，重启后可经
+    #   flag_service 热改。
+    "account_purge_scheduler": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

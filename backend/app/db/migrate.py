@@ -106,6 +106,20 @@ _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     # 读库异常被 fail-closed 吞成「名单为空＝全拒」，运维看到的是拒而不是缺表，问题被掩盖。
     ("device_action_targets", "target"),
     ("device_action_plugins", "plugin_name"),
+    # ── 控制台删号·第一期地基（2026-09-24，派单「删号第一批」）：users 回收站两列 ──
+    # 这两列【只由迁移 f6a7b8c9d0e1 add_column 引入】。老库（有表但无版本号）缺列时若不判
+    # 「落后」，会被 stamp 到 head 却永久缺列——标记删除直接 UPDATE 不存在的列（500），
+    # 而 GET /server/accounts 读 deleted_at 也会报错，删号功能整体不可用。
+    ("users", "deleted_at"),
+    ("users", "purge_after"),
+    # ── 控制台删号·第二期第一批（2026-09-24，派单「物理清除器」）：account_purge_jobs 进度账本 ──
+    # 该表【有 ORM 模型】（app/models/user/__init__.py::AccountPurgeJob，2026-09-24 Codex 复核补）：
+    # 哨兵表必须在 metadata 里，否则「主 ORM 建齐、只缺插件表」的库会被判落后（T5 同口径，见
+    # tests/test_migrate_schema_detect.py::test_manual_sentinel_ignores_plugin_tables）；
+    # 老库补齐由迁移 f7b8c9d0e1f2 的 create_table 负责。
+    # 老库（有表无版本号）缺此表时若不判「落后」，会被 stamp 到 head 却永久缺表：清除器无法
+    # 记账，表现为「删一半进程被重启后无从续跑」——正是这张表要防的那件事。
+    ("account_purge_jobs", "user_id"),
 ]
 
 

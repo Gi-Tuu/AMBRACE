@@ -378,6 +378,97 @@ async def delete_memory_vectors_by_character(character_id: int):
         pass
 
 
+#: 按账号删除时的分批大小（一次传几万个 id 给 Chroma 会把整批请求撑爆）
+_VECTOR_DELETE_CHUNK = 500
+
+
+def _as_int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+async def delete_memory_vectors_by_user(user_id: int, memory_ids: list[int] | None = None) -> dict:
+    """按**账号**删除向量记忆（控制台删号·第二期，方案 v2 §3.2 第 3 步）。
+
+    两条路都要走，缺一不可：
+
+    1. ``where={"user_id": uid}`` —— 2026-09-19（A1）起 metadata 始终写 ``user_id``，
+       这一句就能覆盖新数据，且由 Chroma 侧完成，最便宜；
+    2. **老向量没有 ``user_id`` 键**（A1 之前入库的）按 where 永远匹配不到 → 必须用
+       ``memory_id`` 反查补齐再删（向量文档 id 就是 ``str(memory_id)`，见 :func:`add_memory`）。
+       ``memory_ids`` 由调用方在**删 ``memories`` 行之前**取出传进来（行一旦删掉就永久不可反查）。
+
+    失败语义照抄 :func:`delete_memory_vectors_by_character`：**不抛穿**（向量库是旁路，
+    删不动不该让整条删号链断掉），以计数为主。单批失败退化成逐 id 删，
+    「一个删不掉的 id 不能拖垮整批」；仍失败的计入 ``unresolved``（进审计/报告）。
+
+    返回 ``{"by_user": n1, "by_memory": n2, "unresolved": n3}``。
+    """
+    uid = int(user_id)
+    out = {"by_user": 0, "by_memory": 0, "unresolved": 0}
+    try:
+        collection = await get_or_create_collection()
+    except Exception as e:  # 向量库整体不可用：计数 0，不抛
+        _logger.warning("delete_memory_vectors_by_user: collection unavailable user=%s: %s", uid, e)
+        return out
+
+    def _delete_ids(ids: list[str]) -> tuple[int, int]:
+        """删一批文档 id，返回 (成功数, 失败数)。整批失败时逐条重试。"""
+        if not ids:
+            return 0, 0
+        try:
+            collection.delete(ids=ids)
+            return len(ids), 0
+        except Exception as e:
+            _logger.warning("vector batch delete failed (%d ids): %s", len(ids), e)
+        ok = bad = 0
+        for one in ids:
+            try:
+                collection.delete(ids=[one])
+                ok += 1
+            except Exception:
+                bad += 1
+        return ok, bad
+
+    def _sync() -> dict:
+        # ① 新数据：metadata 带 user_id，直接按 where 删（计数用 get 先取，delete 不给条数）
+        try:
+            got = collection.get(where={"user_id": uid}, include=[])
+            out["by_user"] = len(got.get("ids") or [])
+        except Exception as e:
+            _logger.warning("vector get by user_id failed user=%s: %s", uid, e)
+        try:
+            collection.delete(where={"user_id": uid})
+        except Exception as e:
+            _logger.warning("vector delete by user_id failed user=%s: %s", uid, e)
+
+        # ② 老数据：按 memory_id 反查补齐（上面那句 where 匹配不到缺 user_id 键的向量）
+        ids = [str(int(m)) for m in (memory_ids or []) if _as_int(m) is not None]
+        for i in range(0, len(ids), _VECTOR_DELETE_CHUNK):
+            chunk = ids[i:i + _VECTOR_DELETE_CHUNK]
+            try:
+                present = collection.get(ids=chunk, include=[])
+            except Exception as e:
+                _logger.warning("vector get by memory_id failed chunk=%d: %s", i, e)
+                out["unresolved"] += len(chunk)
+                continue
+            alive = [str(x) for x in (present.get("ids") or [])]
+            if not alive:
+                continue  # 该记忆本就没有向量（未参与向量/已删），不算残留
+            ok, bad = _delete_ids(alive)
+            out["by_memory"] += ok
+            out["unresolved"] += bad
+        return out
+
+    try:
+        await asyncio.to_thread(_sync)
+    except Exception as e:  # 兜底：整体异常也不抛穿
+        _logger.warning("delete_memory_vectors_by_user failed user=%s: %s", uid, e)
+    return out
+
+
 async def mark_memory_vector_status(memory_id: int, status: str) -> None:
     """#70-C：只改向量 metadata.status（合并旧 metadata，不动向量本身）。
 

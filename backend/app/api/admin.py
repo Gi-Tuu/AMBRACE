@@ -25,6 +25,17 @@ A8 LLM 额度按账号（2026-09-20）：额度从单行全局扩成「全局默
 - PUT /server/accounts/{id}/llm-limit（null = 清除覆盖回落全局）；
 - GET/PUT /server/llm-limit（服务器默认额度，全局 id=1 行）。
 生效口径（覆盖 > 全局 > 未设置）与读写一律经 app/application/llm_quota.py（API 不直连额度表）。
+
+控制台删号·第一期第一批（2026-09-24，仅后端地基）：
+- POST /server/accounts/{id}/delete-dry-run（体量预览，零写入）、
+  POST /server/accounts/{id}/delete（标记进回收站）、
+  POST /server/accounts/{id}/restore（恢复）；
+- GET /server/accounts 新增 deleted_at/purge_after 与 include_deleted（默认隐藏回收站账号）。
+控制台删号·第二期第一批（2026-09-24，物理清除器）：
+- POST /server/accounts/{id}/purge（真删：备份 → 文件隔离 → 向量/BM25 → 按 cascade 清单分批删表）。
+控制台删号·第三期（2026-09-24，报告读端 + i18n 回填）：
+- GET  /server/accounts/{id}/purge-report（只读清除账本，无记录回 {"job": null}）；
+- 删号/清除的 12 条拒绝理由文案并入 app/i18n.py（原 account_deletion / account_purge 两份本地表删除）。
 铁律（契约 §0）：控制台只调 HTTP API，本文件一律经服务层读写，控制台不得直连 DB；
 所有写动作落 admin_audit_log；api_key 永不回传明文（只回 has_api_key）。
 """
@@ -39,6 +50,8 @@ from app.auth.deps import get_current_user_id, require_server_admin
 from app.db.database import async_session_factory
 from app.i18n import tr_lang
 from app.models.user import User
+from app.application import account_deletion
+from app.application import account_purge
 from app.application.family_service import get_family_member_ids
 from app.application import llm_quota
 from app.application.permission_service import (
@@ -168,6 +181,7 @@ async def set_account_admin(
 
 @router.get("/server/accounts")
 async def list_server_accounts(
+    include_deleted: bool = False,
     user_id: int = Depends(require_server_admin),
 ):
     """服务器控制台账号清单（跨家庭，只读）：全部账号 + 归属关系 + 两级管理标记 + P2 门禁字段。
@@ -181,17 +195,22 @@ async def list_server_accounts(
     A8（2026-09-20）新增三个额度字段（既有字段一个不少、不改名）：``llm_total_limit``
     （生效值）、``llm_total_limit_own``（账号覆盖值，无覆盖 = null）、
     ``llm_total_limit_source``（user/global/unset）。覆盖值走 llm_quota 一次批量读（不 N+1）。
+
+    删号一期（2026-09-24）：新增 ``deleted_at`` / ``purge_after``；**默认过滤回收站里的账号**
+    （``deleted_at IS NOT NULL`` 不出现），``?include_deleted=true`` 才列出——
+    回收站对普通客户端本来就不可见（标记删除同时写了 ``disabled_at``，走 P2 门禁）。
     """
     async with async_session_factory() as db:
-        rows = (
-            await db.execute(
-                select(
-                    User.id, User.username, User.nickname, User.avatar_url,
-                    User.is_admin, User.server_admin, User.parent_id,
-                    User.disabled_at, User.llm_mode,
-                ).order_by(User.id)
-            )
-        ).all()
+        stmt = (
+            select(
+                User.id, User.username, User.nickname, User.avatar_url,
+                User.is_admin, User.server_admin, User.parent_id,
+                User.disabled_at, User.llm_mode, User.deleted_at, User.purge_after,
+            ).order_by(User.id)
+        )
+        if not include_deleted:
+            stmt = stmt.where(User.deleted_at.is_(None))
+        rows = (await db.execute(stmt)).all()
     overrides = await llm_quota.get_user_overrides([r.id for r in rows])
     global_limit = await llm_quota.get_global_limit()
     accounts = []
@@ -211,6 +230,8 @@ async def list_server_accounts(
                 "disabled_at": r.disabled_at.isoformat() if r.disabled_at else None,
                 "llm_mode": r.llm_mode or DEFAULT_LLM_MODE,
                 "last_login_at": None,
+                "deleted_at": r.deleted_at.isoformat() if r.deleted_at else None,
+                "purge_after": r.purge_after.isoformat() if r.purge_after else None,
                 "llm_total_limit": _total,
                 "llm_total_limit_own": _own,
                 "llm_total_limit_source": _source,
@@ -346,6 +367,109 @@ async def set_account_llm_mode(
     _invalidate_account_state_cache(target_user_id)
     _logger.info("account llm_mode=%s user=%d by=%d", mode, target_user_id, user_id)
     return {"status": "ok", "user_id": target_user_id, "llm_mode": mode}
+
+
+# ── 账号删除（控制台删号·第一期第一批，2026-09-24：只标记，不做物理清除）───────────
+# 第一期只删不增：dry-run 零写入 → delete 标记进回收站（deleted_at/disabled_at/purge_after）
+# → restore 恢复。物理清除见下面的 purge（第二期第一批）；控制台 UI 是第三期。
+# 业务与护栏全在 app/application/account_deletion.py / account_purge.py（本文件只做 HTTP 编解码）。
+
+@router.post("/server/accounts/{target_user_id}/delete-dry-run")
+async def delete_dry_run(
+    target_user_id: int,
+    user_id: int = Depends(require_server_admin),
+    lang: str = Header(default="zh"),
+):
+    """删号体量预览（**零写入、零状态变化**）：会带走哪些表 × 各多少行 + 模式 + 例外 + 护栏结论。
+
+    cascade 清单由 :mod:`app.application.user_cascade` **扫实际库结构**得出（含插件表），
+    不是手写清单；``guards`` 非空表示当前不允许删（原因逐条列出，回包仍是 200）。
+    """
+    async with async_session_factory() as db:
+        return await account_deletion.preview_deletion(
+            db, actor_user_id=user_id, target_user_id=target_user_id, lang=lang)
+
+
+@router.post("/server/accounts/{target_user_id}/delete")
+async def delete_account(
+    target_user_id: int,
+    body: dict,
+    user_id: int = Depends(require_server_admin),
+    lang: str = Header(default="zh"),
+):
+    """标记删除（进回收站）：``deleted_at``/``disabled_at`` = now，``purge_after`` = now + 7 天。
+
+    body：``confirm_username``（必填，必须与目标用户名逐字符相等）、
+    ``purge_now``（可选 true = 立即到期；仅当「实际会删的行数」低于阈值时允许）。
+    护栏（删自己 / 最后一个 server_admin / 家庭最后一个主账号而家庭仍有人 / 家庭根名下有子账号）
+    任一命中 → 400。账号清单默认不再显示它（``include_deleted=true`` 可见）。
+    """
+    async with async_session_factory() as db:
+        result = await account_deletion.mark_deleted(
+            db, actor_user_id=user_id, target_user_id=target_user_id,
+            body=body or {}, lang=lang)
+    _logger.info("account marked deleted user=%d by=%d purge_after=%s",
+                 target_user_id, user_id, result["purge_after"])
+    return result
+
+
+@router.post("/server/accounts/{target_user_id}/restore")
+async def restore_account(
+    target_user_id: int,
+    user_id: int = Depends(require_server_admin),
+    lang: str = Header(default="zh"),
+):
+    """从回收站恢复：清空 ``deleted_at`` / ``purge_after`` / ``disabled_at``（幂等，写审计）。"""
+    async with async_session_factory() as db:
+        result = await account_deletion.restore(
+            db, actor_user_id=user_id, target_user_id=target_user_id, lang=lang)
+    _logger.info("account restored user=%d by=%d changed=%s",
+                 target_user_id, user_id, result["restored"])
+    return result
+
+
+@router.post("/server/accounts/{target_user_id}/purge")
+async def purge_account(
+    target_user_id: int,
+    body: dict,
+    user_id: int = Depends(require_server_admin),
+    lang: str = Header(default="zh"),
+):
+    """物理清除（第二期第一批）：备份 → 文件隔离进 trash → 向量/BM25 → 按 cascade 清单分批删表。
+
+    body：``confirm_username``（必填，与目标用户名逐字符相等）、
+    ``force``（可选 true = 宽限期未到也要立刻清，即控制台「立即清除」）。
+    **只能清回收站里的账号**（``deleted_at`` 非空）：未标记删除的账号一律 400，``force`` 也
+    不给它开后门。进度落 ``account_purge_jobs``：``done`` 重跑直接返回（不重复删、不报错），
+    ``running``/``failed`` 重跑从断点续删。
+
+    与第一期 ``delete`` 端点的分工（刻意不变）：``delete`` 带 ``purge_now=true`` **仍然只是**把
+    ``purge_after`` 设为 now（等于「到期，可以被清了」），真正的删除动作由本端点执行
+    ——期 2 调度器扫 ``purge_after`` 自动调它，期 3 控制台按钮手工调它。
+    """
+    async with async_session_factory() as db:
+        result = await account_purge.purge_account(
+            db, actor_user_id=user_id, target_user_id=target_user_id,
+            body=body or {}, lang=lang)
+    _logger.info("account purge user=%d by=%d status=%s rows=%s",
+                 target_user_id, user_id, result.get("status"), result.get("rows_deleted"))
+    return result
+
+
+@router.get("/server/accounts/{target_user_id}/purge-report")
+async def get_purge_report(
+    target_user_id: int,
+    user_id: int = Depends(require_server_admin),
+):
+    """物理清除报告（**只读**，控制台删号·第三期）：读 ``account_purge_jobs`` 账本。
+
+    回 ``{user_id, job, report, cursor}``：``job`` = 状态/起止/错误/重试；``report`` = 清除器
+    落盘的完整报告（逐表行数、文件隔离、向量/BM25 计数、backup_zip、foreign_key_check）；
+    ``cursor`` = 已处理到哪个阶段与已删行数。
+    该账号**从没被清过**时回 ``{"job": null}``（200，不是 404）——控制台据此显示「尚无清除记录」。
+    """
+    async with async_session_factory() as db:
+        return await account_purge.get_job_report(db, target_user_id)
 
 
 # ── LLM 额度（A8，2026-09-20：全局默认 + 按账号覆盖）──────────────────────────

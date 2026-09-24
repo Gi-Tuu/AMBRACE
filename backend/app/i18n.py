@@ -202,6 +202,41 @@ _MESSAGES: dict[str, tuple[str, str]] = {
     "platform_not_found": ("未知的平台", "Unknown platform"),
     # 游戏系统播报（P3-1，2026-09-18）：真人玩家未配置名字时的占位名
     "game_player_anonymous": ("用户", "User"),
+    # 控制台删号（2026-09-24 第一期/第二期；第三期回填：原 account_deletion / account_purge
+    # 两份本地表并入此处，**文案字符串逐字不变**——对外错误口径与既有测试都依赖它）
+    "cannot_delete_self": ("不能删除自己的账号", "You cannot delete your own account"),
+    "last_server_admin": (
+        "不能删除最后一个服务器管理员，请先授予其他账号",
+        "Cannot delete the last server admin; grant it to another account first"),
+    "family_last_admin": (
+        "家庭内至少保留一个主账号，不能删除该账号",
+        "At least one main account must remain in the family"),
+    "family_root_has_members": (
+        "该账号是家庭根，名下还有 {n} 个子账号，请先删除或转移子账号",
+        "This account is a family root with {n} sub-account(s); "
+        "delete or move the sub-accounts first"),
+    "already_deleted": ("该账号已在回收站中", "This account is already in the recycle bin"),
+    "confirm_username_required": (
+        "请填写 confirm_username 以确认删除",
+        "confirm_username is required to confirm deletion"),
+    "confirm_username_mismatch": (
+        "确认用户名与目标账号不一致，已终止删除",
+        "The confirmation username does not match the target account"),
+    "purge_now_over_threshold": (
+        "数据量 {rows} 行超过立即清除阈值 {limit} 行，请走 7 天宽限期（purge_now=false）",
+        "{rows} rows exceed the immediate-purge threshold of {limit}; "
+        "use the 7-day grace period instead (purge_now=false)"),
+    "not_in_recycle_bin": (
+        "只能清除回收站里的账号（该账号未标记删除）；请先调 delete 标记——"
+        "force 也只对已标记删除的账号生效",
+        "Only accounts already in the recycle bin can be purged; mark it with "
+        "delete first (force applies to already-deleted accounts only)"),
+    "grace_not_due": (
+        "宽限期未到（purge_after={at}），确认要提前清除请带 force=true",
+        "Grace period has not elapsed (purge_after={at}); pass force=true to purge now"),
+    "purge_failed": (
+        "物理清除中断（进度已落盘，可重跑续删）：{err}",
+        "Purge interrupted (progress persisted, rerun to resume): {err}"),
 }
 
 

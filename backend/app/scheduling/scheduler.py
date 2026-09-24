@@ -35,6 +35,10 @@ ACTIVE_HOUR_END = settings.scheduler_active_hour_end
 DIARY_CHECK_INTERVAL = 3600  # 1 小时
 MOMENT_CHECK_INTERVAL = 600  # 10 分钟
 
+# 控制台删号·回收站到期自动清除检查间隔（第二期第二批）：每 10 分钟看一眼窗口与到期，
+# 不满足条件 tick 内立刻返回（关 flag / 窗口外都零查库零行为），满足才清除（内部批间让出事件循环）。
+ACCOUNT_PURGE_CHECK_INTERVAL = 600
+
 # 主动事件切片快速发送间隔（秒）
 STORYLINE_FLUSH_INTERVAL = 3
 
@@ -201,6 +205,7 @@ async def scheduler_loop():
     reflection_counter = 0
     memory_counter = 0
     pis_stale_counter = 0
+    purge_counter = 0
     _diary_generated_today = False
     _reflection_done_today = False
     _memory_maintenance_done_today = False
@@ -234,6 +239,7 @@ async def scheduler_loop():
             reflection_counter += TICK
             memory_counter += TICK
             pis_stale_counter += TICK
+            purge_counter += TICK
 
             try:
                 # 统一仲裁：定时承诺 + 生日/节日 + 随机节律（含朋友圈发布/互动）
@@ -425,6 +431,19 @@ async def scheduler_loop():
                         )
                 except Exception as e:
                     _logger.warning("Prospective intent stale sweep error: %s", e)
+
+            # 控制台删号·回收站到期自动清除（第二期第二批，2026-09-24，flag 默认关=零行为）：
+            # 每 10 分钟看一眼低峰窗口与到期账号；关 flag / 窗口外 / 未到间隔都立刻返回不查库，
+            # 满足才交给 account_purge.purge_account 清除（进程内串行 + 批间让出事件循环）。
+            # 经 spawn_background 派发不阻塞主循环；account_purge_scheduler 内部 _PURGE_LOCK 保证
+            # 同一时刻只跑一个（上一拍没跑完则本拍直接跳过）。异常一律隔离，绝不掀翻主循环。
+            if purge_counter >= ACCOUNT_PURGE_CHECK_INTERVAL:
+                purge_counter = 0
+                try:
+                    from app.application.account_purge_scheduler import tick as _purge_tick
+                    spawn_background(_purge_tick(), name="sched-account-purge")
+                except Exception as e:
+                    _logger.warning("Account purge scheduler tick error: %s", e)
 
             # 纪念日检查（Phase C Shared Memory）：每日一次（原 _check_anniversaries_today 未接线死代码，2026-08-17 接入）
             if _last_anniv_date != date.today():

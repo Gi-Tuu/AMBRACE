@@ -43,7 +43,12 @@ def modality_payload():
         for i, k in enumerate(MODALITY_KEYS)]}
 
 
-def accounts_payload():
+def accounts_payload(query: str = ""):
+    """默认 3 个正常账号；`?include_deleted=true` 多给一个回收站行（宽限期按现在 +5 天）。
+
+    回收站行只在「显示回收站」打开时出现，正是后端 `include_deleted` 的口径；
+    关着就能拿到 4 行的话，「默认隐藏回收站」这条断言就永远钉不住了。
+    """
     rows = [
         {"id": 1, "username": "alpha", "nickname": "阿法", "is_admin": True,
          "server_admin": True, "disabled_at": None, "llm_mode": "own",
@@ -55,7 +60,111 @@ def accounts_payload():
          "server_admin": True, "disabled_at": None, "llm_mode": "default_allowed",
          "llm_total_limit": 3000, "llm_total_limit_source": "global"},
     ]
+    if "include_deleted=true" in (query or ""):
+        import datetime as _dt
+        now = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
+        rows.append({"id": 4, "username": "delta", "nickname": "德尔塔", "is_admin": True,
+                     "server_admin": False, "disabled_at": now.isoformat(timespec="seconds"),
+                     "deleted_at": now.isoformat(timespec="seconds"),
+                     "purge_after": (now + _dt.timedelta(days=5)).isoformat(timespec="seconds"),
+                     "llm_mode": "default_allowed",
+                     "llm_total_limit": 3000, "llm_total_limit_source": "global"})
     return {"accounts": rows}
+
+
+def delete_dry_run_payload():
+    """beta（id=2）可删：家庭根、两张表 1200 行、1 条例外、3 行判不出归属。"""
+    return {"user_id": 2, "username": "beta", "nickname": "贝塔",
+            "mode": "delete_family_root", "already_deleted": False, "grace_days": 7,
+            "guards": [], "may_delete": True,
+            "totals": {"tables": 2, "row_count": 1200, "undetermined_rows": 3,
+                       "editor_only_rows": 7},
+            "tables": [
+                {"table": "chat_messages", "rows": 900,
+                 "columns": [{"column": "user_id", "kind": "ownership", "rows": 900,
+                              "deletable": True}]},
+                {"table": "memories", "rows": 300,
+                 "columns": [{"column": "user_id", "kind": "ownership", "rows": 300,
+                              "deletable": True},
+                             {"column": "speaker_id", "kind": "dual", "rows": 0,
+                              "deletable": True},
+                             # 命中但不作为删除依据的列（后端 totals.editor_only_rows 那类）：
+                             # 确认卡的「命中归属列」不许把它混进来
+                             {"column": "editor_user_id", "kind": "ownership", "rows": 7,
+                              "deletable": False}]},
+            ],
+            "exceptions": [{"table": "admin_audit_logs", "column": "actor_user_id",
+                            "family": "user", "reason": "审计留档， actor 列不作为删除依据"}],
+            "undetermined_speaker_rows": [{"table": "group_messages", "column": "speaker_id",
+                                           "rows": 3}],
+            "warnings": [], "character_ids": [21],
+            "purge_now_allowed_below": 2000, "purge_now_would_be_allowed": True,
+            "dry_run": True}
+
+
+def delete_dry_run_guarded_payload():
+    """alpha（id=1）不许删：命中「最后一个 server_admin」→ 确认卡必须挡住。"""
+    payload = delete_dry_run_payload()
+    payload.update({"user_id": 1, "username": "alpha", "nickname": "阿法",
+                    "may_delete": False,
+                    "guards": ["这是最后一个服务器管理员账号，删掉后控制台再也进不去"]})
+    return payload
+
+
+def delete_marked_payload():
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
+    return {"status": "ok", "user_id": 2, "username": "beta", "mode": "delete_family_root",
+            "deleted_at": now.isoformat(timespec="seconds"),
+            "purge_after": (now + _dt.timedelta(days=7)).isoformat(timespec="seconds"),
+            "purge_now": False, "totals": {"tables": 2, "row_count": 1200,
+                                           "undetermined_rows": 3}}
+
+
+def restore_account_payload():
+    return {"status": "ok", "user_id": 4, "username": "delta", "restored": True}
+
+
+PURGE_REPORT = {
+    "user_id": 4,
+    "job": {"id": 9, "user_id": 4, "status": "done",
+            "started_at": "2026-09-24T02:00:00", "finished_at": "2026-09-24T02:00:41",
+            "error": None, "attempts": None},
+    "report": {"job_id": 9, "user_id": 4, "username": "delta", "mode": "delete_family_root",
+               "status": "done", "rows_deleted": 1200,
+               "tables": [{"table": "chat_messages", "rows": 900},
+                          {"table": "memories", "rows": 300}],
+               "files": {"trash_dir": "data/trash/4", "upload_dir_count": 6,
+                         "files_moved": 11, "partial_dirs": []},
+               "vectors": {"deleted": 300}, "bm25": {"characters": 1, "invalidated": 1},
+               "backup_zip": "backups/20260924.zip",
+               "foreign_key_check": [], "foreign_key_check_rows": 0,
+               "frozen": {"character_count": 1, "session_count": 2, "memory_count": 300},
+               "elapsed_seconds": 41.2},
+    "cursor": {"stages_done": ["backup_zip", "frozen", "files", "vectors", "bm25",
+                               "tables_done"],
+               "next_stage": None,
+               "tables_done": [{"table": "chat_messages", "rows": 900},
+                               {"table": "memories", "rows": 300}],
+               "tables_done_count": 2, "rows_deleted_so_far": 1200, "blocked_reason": None},
+}
+
+
+def purge_report_payload():
+    import copy
+    return copy.deepcopy(PURGE_REPORT)
+
+
+def purge_now_payload():
+    """`POST .../purge` 的回包就是清除器报告本身（_compact 的那几个字段）。"""
+    report = purge_report_payload()["report"]
+    report.update({"already_done": False, "idempotent": False})
+    return report
+
+
+def purge_report_absent_payload():
+    """从没被清过的账号：账本没有作业行 → 200 + `job: null`（不是 404）。"""
+    return {"user_id": 2, "job": None}
 
 
 def flags_payload(n: int = 12):
@@ -128,33 +237,60 @@ def heatmap_payload(days: int = 26 * 7):
 # ── 打桩基座 ────────────────────────────────────────────────────────
 
 class HttpCalls:
-    """记录每一次"HTTP"，让测试能断言没有任何端点绕过打桩直接出去。"""
+    """记录每一次"HTTP"，让测试能断言没有任何端点绕过打桩直接出去。
+
+    删号第三期起，管理面不再只有 GET：dry-run / delete / restore / purge 是 POST，
+    且必须带 body 断言位（`bodies`）——「确认删除只在后缀用户名匹配时才发出去」这条
+    护栏得能看到请求体长什么样。登记表里没写的端点照旧直接 AssertionError。
+    """
 
     def __init__(self):
         self.calls = []
+        self.bodies = []
 
     def __call__(self, method, path, body=None, token="", timeout=None):
         self.calls.append((method, path))
+        if body is not None:
+            self.bodies.append((method, path, body))
         key = path.split("?")[0]
-        table = {
+        query = path.partition("?")[2]
+        gets = {
             API + "/modalities": modality_payload,
-            API + "/accounts": accounts_payload,
+            API + "/accounts": lambda: accounts_payload(query),
             API + "/flags": flags_payload,
             API + "/audit": audit_payload,
             API + "/registration": registration_payload,
             API + "/overview": overview_payload,
             API + "/device-actions": device_actions_payload,
             API + "/llm-limit": llm_limit_payload,
+            API + "/accounts/4/purge-report": purge_report_payload,
+            API + "/accounts/2/purge-report": purge_report_absent_payload,
             "/api/v1/system/feature-flags": public_flags_payload,
+        }
+        posts = {
+            API + "/accounts/1/delete-dry-run": delete_dry_run_guarded_payload,
+            API + "/accounts/2/delete-dry-run": delete_dry_run_payload,
+            API + "/accounts/2/delete": delete_marked_payload,
+            API + "/accounts/2/restore": restore_account_payload,
+            API + "/accounts/4/restore": restore_account_payload,
+            API + "/accounts/4/purge": purge_now_payload,
             sc.AUTH_LOGIN_PATH: lambda: {"access_token": "t", "username": "alpha",
                                          "user_id": 1},
         }
+        table = posts if method == "POST" else gets
         if key not in table:
             raise AssertionError("冒烟出现了未登记的端点：%s %s" % (method, path))
         return 200, table[key]()
 
     def paths(self):
         return {p for _m, p in self.calls}
+
+    def body_for(self, method: str, path: str):
+        """最后一次发往 (method, path) 的请求体（没发过返回 None）。"""
+        for m, p, b in reversed(self.bodies):
+            if m == method and p.split("?")[0] == path:
+                return b
+        return None
 
 
 def _no_db(*_a, **_kw):

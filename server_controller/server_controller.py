@@ -1338,6 +1338,108 @@ def _llm_limit_text(row) -> str:
     return "%s（%s）" % (val, LLM_LIMIT_SOURCE_LABELS.get(src, src))
 
 
+# ── 控制台删号·第三期：回收站 / 删除确认 / 清除报告（展示口径；判据一律在后端）──
+
+#: dry-run 的 mode → 中文（后端给 delete_family_root / delete_sub_account，控制台不自行推断）
+ACCOUNT_SCOPE_TEXT = {
+    "delete_family_root": "家庭根（整户数据一并带走）",
+    "delete_sub_account": "子账号（仅该成员）",
+}
+#: 清除器 cursor 阶段名 → 中文（报告里的「已处理到哪」）
+PURGE_STAGE_TEXT = {
+    "backup_zip": "前置备份",
+    "frozen": "固化归属集合",
+    "files": "文件隔离",
+    "vectors": "向量删除",
+    "bm25": "BM25 失效",
+    "tables_done": "逐表删行",
+}
+PURGE_STATUS_TEXT = {"running": "清除中", "done": "已完成", "failed": "失败"}
+#: 宽限期已到但还没被清（后台调度器默认关，所以到点是常态而不是异常）
+PURGE_DUE_TEXT = "已到期，待清除"
+#: 确认卡里最多列几张表（一次 dry-run 动辄三十张表，全列出来卡片比屏幕还高）
+VOLUME_TABLE_ROWS_SHOWN = 20
+#: 例外 / 提示最多各列几条（再多就淹没「模式 + 体量」这两行主信息）
+EXCEPTION_LINES_SHOWN = 8
+#: 危险操作确认卡的折行宽度（100% 基准值，用前一律 CUI.px；不折行会把弹窗撑到屏幕外）
+DANGER_TEXT_WRAP = 520
+
+
+def _purge_countdown_text(purge_after, now=None) -> str:
+    """回收站行的倒计时文案：「X 天后自动清除」/「已到期，待清除」。
+
+    ``purge_after`` 是后端存的 naive UTC，这里补 tzinfo=UTC 后与 UTC 现在比——
+    换算成本地时区再比会整整差 8 小时（项目时间约定的老坑）。
+    缺字段或解析不出来只回「在回收站」，不猜剩余天数。
+    """
+    s = str(purge_after or "").strip()
+    if not s:
+        return "在回收站"
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "").replace("/", "-"))
+    except Exception:
+        return "在回收站"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    left = (dt - (now or datetime.now(timezone.utc))).total_seconds()
+    if left <= 0:
+        return PURGE_DUE_TEXT
+    # 向下取整 + 保底 1 天：还剩 3 天 23 小时该读作「3 天后」而不是 4 天后；
+    # 而不足一天的（left < 86400）显示 0 天会让人以为已经到期，所以兜到 1。
+    return "%d 天后自动清除" % max(1, int(left // 86400))
+
+
+def _account_rows_filtered(rows, query) -> list:
+    """账号页关键字/前缀筛选（与开关页搜索框同口径：小写包含匹配，空查询＝全给）。"""
+    q = str(query or "").strip().lower()
+    out = [r for r in (rows or []) if isinstance(r, dict)]
+    if not q:
+        return out
+    keep = []
+    for r in out:
+        hay = " ".join([str(r.get("username") or ""), str(r.get("nickname") or ""),
+                        str(r.get("id") or "")]).lower()
+        if q in hay:
+            keep.append(r)
+    return keep
+
+
+def _volume_table_rows(tables) -> list:
+    """dry-run 的 tables → 「表 / 行数 / 命中归属列」三列（后端已按行数降序排好）。
+
+    只列 ``deletable`` 为真的列：后端还会带回「命中但不作为删除依据」的列（如 editor 列），
+    把它们混进「命中归属列」会让人以为删得比实际更多。
+    """
+    out = []
+    for t in tables or []:
+        if not isinstance(t, dict):
+            continue
+        cols = {str(c.get("column") or "") for c in (t.get("columns") or [])
+                if isinstance(c, dict) and c.get("deletable")}
+        out.append([str(t.get("table") or ""), _fmt_int(t.get("rows")),
+                    "、".join(sorted(cols)) or "—"])
+    return out
+
+
+def _report_table_rows(report, cursor) -> list:
+    """清除报告 → 「表 / 行数」两列：优先完成态报告，报告没落地就读进度（半删状态也要看得清）。"""
+    src = (report or {}).get("tables") or (cursor or {}).get("tables_done") or []
+    out = []
+    for t in src:
+        if isinstance(t, dict) and t.get("table"):
+            out.append([str(t["table"]), _fmt_int(t.get("rows"))])
+    return out
+
+
+def _kv_brief(v) -> str:
+    """dict / list → 一行「k=v、k=v」（清除报告里向量、BM25 这类计数摘要，不摊成多行）。"""
+    if isinstance(v, dict):
+        return "、".join("%s=%s" % (k, vv) for k, vv in v.items()) or "—"
+    if isinstance(v, list):
+        return "、".join(str(x) for x in v) or "—"
+    return "—" if v is None else str(v)
+
+
 class AdminApiError(Exception):
     """管理面请求失败。
 
@@ -2709,8 +2811,29 @@ class ControllerApp:
     def _build_accounts_page(self) -> tk.Frame:
         t = self.theme
         page, pad = self._make_admin_page(
-            "账号管理", "跨家庭账号：禁用/启用、授予/取消控制台管理员、设置 llm_mode（护栏以后端为准）")
+            "账号管理", "跨家庭账号：禁用/启用、授予/取消控制台管理员、设置 llm_mode、"
+                       "删除进回收站与到期清除（护栏与判据一律以后端为准）")
         login_label, login_dot, hint = self._admin_login_bar(pad, self._load_accounts)
+        # 工具条只建一次（与开关页同理）：_render_accounts 反复重建列表，
+        # 搜索框若建在列表里，每敲一个字都会丢焦点。
+        bar = tk.Frame(pad, bg=t.bg)
+        bar.pack(fill="x", pady=(0, CUI.sp("sm")))
+        self._accounts_rows = []
+        self._accounts_search = tk.StringVar()
+        self._accounts_show_deleted = tk.BooleanVar(value=False)
+        # 栅格而不是 pack(side=left)：搜索列 weight=1，窗口拉宽时工具条跟着铺满
+        bar.grid_columnconfigure(0, weight=1)
+        ent = tk.Entry(bar, textvariable=self._accounts_search, width=20, bg=t.entry_bg,
+                       fg=t.text, insertbackground=t.text, relief="flat",
+                       highlightthickness=1, highlightbackground=t.hairline,
+                       highlightcolor=t.accent, font=CUI.f(FS_BODY))
+        ent.grid(row=0, column=0, sticky="we", ipady=CUI.sp("xxs"))
+        ent.bind("<KeyRelease>", lambda _e: self._render_accounts())
+        CUI.Tooltip(ent, lambda: "按用户名 / 昵称 / ID 筛选（在已取回的结果里筛）")
+        # 回收站默认藏起来：删号是低频动作，常驻会让正常账号列表混进一堆灰行
+        LabeledSwitch(bar, t, "显示回收站", self._accounts_show_deleted,
+                      command=self._load_accounts, bg=t.bg
+                      ).grid(row=0, column=1, padx=(CUI.sp("md"), 0))
         body = tk.Frame(pad, bg=t.bg)
         body.pack(fill="x")
         self._admin_meta["accounts"] = {"status": hint, "login_label": login_label,
@@ -2720,39 +2843,51 @@ class ControllerApp:
         return page
 
     def _load_accounts(self) -> None:
+        # 开关状态在主线程读好再进后台线程（BooleanVar 不是线程安全的）
+        sub = "/accounts?include_deleted=true" if self._accounts_show_deleted.get() else "/accounts"
+
         def ok(data):
             payload = data if isinstance(data, dict) else {}
             rows = [r for r in (payload.get("accounts") or []) if isinstance(r, dict)]
+            self._accounts_rows = rows
             limit = payload.get("limit")
-            self._render_accounts(rows, limit if isinstance(limit, dict) else None)
-            self._set_admin_status("accounts", "共 %d 个账号（GET %s）"
-                                   % (len(rows), ADMIN_API_PREFIX + "/accounts"), "ok")
+            self._render_accounts(limit if isinstance(limit, dict) else None)
+            self._set_admin_status("accounts", "共 %d 个账号（GET %s%s）"
+                                   % (len(rows), ADMIN_API_PREFIX, sub), "ok")
 
         def work():
             # A8：顺带读「服务器默认额度」；该接口未就绪（404/未登录）时降级为不显示，不影响账号表
             # 注意：_admin_request 返回的已经是信封 dict（{"accounts": [...]}），不能再包一层
-            out = _admin_request("GET", "/accounts")
+            out = _admin_request("GET", sub)
             try:
                 out["limit"] = _admin_request("GET", "/llm-limit")
             except AdminApiError:
                 out["limit"] = None
             return out
 
-        self._set_admin_status("accounts", "加载中… GET %s/accounts" % ADMIN_API_PREFIX, "pending")
+        self._set_admin_status("accounts", "加载中… GET %s%s" % (ADMIN_API_PREFIX, sub), "pending")
         self._run_admin("读取账号", work, ok, "accounts")
 
-    def _render_accounts(self, rows, limit=None) -> None:
+    def _render_accounts(self, limit=None) -> None:
         meta = self._admin_meta["accounts"]
         body = meta["body"]
         t = self.theme
         _clear_frame(body)
         self._render_server_llm_limit(limit)
-        if not rows:
+        if not self._accounts_rows:
             self._admin_state(
                 "accounts", "empty",
                 "接口 200 但 accounts 为空（GET %s）：请确认账号数据是否存在，"
                 "以及响应结构是否变更（信封字段是否仍为 accounts）" % meta["path"],
                 clear=False, illo="photo_empty_accounts.jpg")
+            return
+        rows = _account_rows_filtered(self._accounts_rows, self._accounts_search.get())
+        if not rows:
+            self._admin_state(
+                "accounts", "empty",
+                "没有匹配「%s」的账号（已取回 %d 个，清空搜索框可看全部）"
+                % (self._accounts_search.get(), len(self._accounts_rows)),
+                clear=False)
             return
         cols = (
             {"label": "ID", "weight": 0, "min": 46},
@@ -2769,37 +2904,65 @@ class ControllerApp:
         table = CUI.DataTable(card, t, cols)
         for idx, r in enumerate(rows):
             uid = r.get("id")
+            in_bin = bool(r.get("deleted_at"))
             disabled = bool(r.get("disabled_at"))
-            row = table.add_row(_row_bg(t, idx, t.error if disabled else "", 0.14))
-            row.text(0, str(uid), num=True, fg=t.text)
-            row.text(1, str(r.get("username") or ""), fg=t.text)
+            # 回收站行压一档（染色比「禁用中」更淡）：整行灰下去，一眼分得出哪些已经不能登录了
+            row = table.add_row(_row_bg(t, idx, t.error, 0.07 if in_bin else 0.14))
+            dim = t.text_muted if in_bin else t.text
+            row.text(0, str(uid), num=True, fg=dim)
+            row.text(1, str(r.get("username") or ""), fg=dim)
             nick = str(r.get("nickname") or "")
-            row.text(2, nick, fg=t.text_sec, tip=nick)
-            row.text(3, "是" if r.get("is_admin") else "否", fg=t.text_sec)
+            row.text(2, nick, fg=t.text_muted if in_bin else t.text_sec, tip=nick)
+            row.text(3, "是" if r.get("is_admin") else "否",
+                     fg=t.text_muted if in_bin else t.text_sec)
             row.text(4, "是" if r.get("server_admin") else "否",
-                     fg=t.accent_glow if r.get("server_admin") else t.text_muted,
-                     bold=bool(r.get("server_admin")))
-            row.text(5, ("禁用中 %s" % _fmt_dt(r.get("disabled_at"))) if disabled else "正常",
-                     fg=t.error if disabled else t.success)
-            row.text(6, _llm_limit_text(r), num=True, fg=t.text)
+                     fg=t.accent_glow if r.get("server_admin") and not in_bin else t.text_muted,
+                     bold=bool(r.get("server_admin") and not in_bin))
+            if in_bin:
+                row.text(5, "回收站 · %s" % _purge_countdown_text(r.get("purge_after")),
+                         fg=t.error, tip="标记删除 %s" % (_fmt_dt(r.get("deleted_at")) or "—"))
+            else:
+                row.text(5, ("禁用中 %s" % _fmt_dt(r.get("disabled_at")))
+                         if disabled else "正常", fg=t.error if disabled else t.success)
+            row.text(6, _llm_limit_text(r), num=True, fg=dim)
             mode = str(r.get("llm_mode") or "")
             row.text(7, LLM_MODE_TEXT.get(mode, mode or "—"),
                      fg=t.error if mode == "blocked" else t.text_sec)
             # 操作收进 ⋯ 菜单：旧版每行 1 个下拉 + 5 个按钮，25 行＝125 个按钮，
             # 是全站噪音最大的一屏；动作一个没少，只是不再常驻。
-            more = _make_icon(row.cell(8), 18, "more-horizontal", t.text_sec, row.bg)
+            more = _make_icon(row.cell(8), 18, "more-horizontal",
+                              t.text_muted if in_bin else t.text_sec, row.bg)
             more.config(cursor="hand2")
             more.bind("<Button-1>", lambda e, rr=r: self._open_account_menu(e, rr))
             more.pack(side="left")
 
     def _open_account_menu(self, event, r) -> None:
         """账号行操作菜单（替代旧的常驻下拉 + 5 个按钮）。"""
+        m = self._build_account_menu(r)
+        m.tk_popup(event.x_root, event.y_root)
+        m.grab_release()
+
+    def _build_account_menu(self, r) -> tk.Menu:
+        """按行状态给菜单项：正常账号才有「删除账号…」，回收站行只有恢复 / 立即清除 / 报告。
+
+        拆成可返回对象的纯构造函数是测试要的——`tk_popup` 需要真实指针事件，
+        离屏冒烟里只能断言菜单项本身（标签、颜色、回调挂没挂上）。
+        """
         t = self.theme
         uid = r.get("id")
         attrs = dict(tearoff=0, bg=t.surface_alt, fg=t.text, bd=0, relief="flat",
                      activebackground=t.accent_dim, activeforeground=t.text,
                      font=CUI.f("body"))
         m = tk.Menu(self.root, **attrs)
+        if r.get("deleted_at"):
+            m.add_command(label="恢复（移出回收站）",
+                          command=lambda i=uid, un=r.get("username"): self._restore_account(i, un))
+            m.add_command(label="立即清除", foreground=t.btn_danger_fg,
+                          activebackground=t.btn_danger_bg, activeforeground=t.btn_danger_fg,
+                          command=lambda rr=r: self._open_purge_confirm_dialog(rr))
+            m.add_command(label="查看清除结果",
+                          command=lambda i=uid, rr=r: self._load_purge_report(i, rr))
+            return m
         m.add_command(label="取消控制台管理员" if r.get("server_admin") else "设为控制台管理员",
                       command=lambda i=uid, en=not bool(r.get("server_admin")):
                       self._set_account_server_admin(i, en))
@@ -2821,8 +2984,11 @@ class ControllerApp:
         if r.get("llm_total_limit_own") is not None:
             m.add_command(label="清除额度覆盖",
                           command=lambda i=uid: self._clear_account_llm_limit(i))
-        m.tk_popup(event.x_root, event.y_root)
-        m.grab_release()
+        m.add_separator()
+        m.add_command(label="删除账号…", foreground=t.btn_danger_fg,
+                      activebackground=t.btn_danger_bg, activeforeground=t.btn_danger_fg,
+                      command=lambda rr=r: self._open_delete_account_dialog(rr))
+        return m
 
     def _set_account_disabled(self, uid, disabled: bool) -> None:
         def ok(_data):
@@ -2989,6 +3155,323 @@ class ControllerApp:
                         lambda: _admin_request("PUT", "/accounts/%s/llm-limit" % uid,
                                                {"total_limit": None}),
                         ok, "accounts")
+
+    # ── 删号·第三期：两段式删除确认 / 恢复 / 立即清除 / 清除报告 ──────────────
+    # 控制台只做两件事：把后端给的结论摆清楚，以及要一次「逐字符输入用户名」的确认。
+    # 护栏、体量、能否立即清除一律取后端回包，不在这里推断（判据不许有两套）。
+    # 弹窗内部一律 pack：CUI.DataTable 会自己 pack，混用 grid 会直接 TclError。
+
+    def _danger_dialog(self, title: str, heading: str, sub: str = "", sub_kind: str = "error"):
+        """危险操作 / 报告弹窗外壳 → ``(win, 内容容器)``（标题 + 一行说明 + 空白内容区）。"""
+        t = self.theme
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.transient(self.root)
+        win.configure(bg=t.bg)
+        card = RoundedCard(win, t, pad=3, fit_inner=True)
+        card.pack(fill="both", expand=True, padx=SP_LG, pady=SP_LG)
+        f = card.inner
+        f.config(padx=SP_LG, pady=SP_MD)
+        tk.Label(f, text=heading, fg=t.text, bg=t.card,
+                 font=CUI.f(FS_TITLE, True)).pack(anchor="w")
+        if sub:
+            tk.Label(f, text=sub, fg=self._admin_color(sub_kind), bg=t.card,
+                     font=CUI.f(FS_CAPTION), anchor="w", justify="left",
+                     wraplength=CUI.px(DANGER_TEXT_WRAP)).pack(anchor="w", pady=(2, SP_SM))
+        win.protocol("WM_DELETE_WINDOW", lambda: self._close_dialog(win))
+        return win, f
+
+    def _close_dialog(self, win) -> None:
+        try:
+            win.destroy()
+        except Exception:
+            _safe_traceback()
+
+    def _note_line(self, parent, text: str, kind: str = "info"):
+        """卡片里的一行说明：次要字号 + 全站统一取色 + 折行（长路径不许撑破窗口）。"""
+        t = self.theme
+        return tk.Label(parent, text=text, anchor="w", justify="left",
+                        fg=self._admin_color(kind), bg=t.card, font=CUI.f(FS_CAPTION),
+                        wraplength=CUI.px(DANGER_TEXT_WRAP)
+                        ).pack(anchor="w", pady=(SP_XS, 0))
+
+    def _dialog_close_row(self, parent) -> None:
+        t = self.theme
+        row = tk.Frame(parent, bg=t.card)
+        row.pack(anchor="w", pady=(SP_MD, 0))
+        RoundedButton(row, t, "关闭", variant="neutral", height=30, font_role=FS_BODY,
+                      command=lambda: self._close_dialog(parent.winfo_toplevel())
+                      ).pack(side="left")
+
+    def _confirm_input_row(self, parent, username, action_text, on_confirm,
+                           enabled: bool = True, blocked_text: str = ""):
+        """危险操作确认区：逐字符输入目标用户名才点亮按钮（与后端 ``confirm_username`` 同判据）。
+
+        ``enabled=False``（后端护栏已挡）时输入框根本不给——留一个点不亮的按钮只会诱导人硬闯，
+        护栏原因由调用方逐条摆出来。返回按钮对象，便于测试断言点亮状态。
+        """
+        t = self.theme
+        if not enabled:
+            self._note_line(parent, blocked_text or "后端护栏判定：当前不允许执行该操作", "error")
+            return None
+        row = tk.Frame(parent, bg=t.card)
+        row.pack(anchor="w", fill="x", pady=(SP_MD, 0))
+        tk.Label(row, text="输入用户名 %s 以确认" % username, fg=t.text_sec, bg=t.card,
+                 font=CUI.f(FS_BODY)).pack(side="left")
+        var = tk.StringVar()
+        ent = tk.Entry(row, textvariable=var, width=18, bg=t.entry_bg, fg=t.text,
+                       insertbackground=t.text, relief="flat", highlightthickness=1,
+                       highlightbackground=t.hairline, highlightcolor=t.error,
+                       font=CUI.f(FS_BODY))
+        ent.pack(side="left", padx=(CUI.sp("sm"), 0), ipady=CUI.sp("xxs"))
+        hint = tk.Label(parent, text="", anchor="w", justify="left", fg=t.error, bg=t.card,
+                        font=CUI.f(FS_CAPTION), wraplength=CUI.px(DANGER_TEXT_WRAP))
+        hint.pack(anchor="w", pady=(CUI.sp("xs"), 0))
+
+        def submit():
+            typed = str(var.get())
+            if typed != username:
+                hint.config(text="用户名不匹配：请逐字符输入「%s」" % username)
+                return
+            hint.config(text="")
+            on_confirm(typed)
+
+        btn = RoundedButton(row, t, action_text, variant="danger", height=32,
+                            font_role=FS_BODY, command=submit)
+        btn.pack(side="left", padx=(CUI.sp("md"), 0))
+        btn.config_state(False)   # 空输入＝不点亮（默认拒绝，而不是默认允许）
+        RoundedButton(row, t, "取消", variant="neutral", height=32, font_role=FS_BODY,
+                      command=lambda: self._close_dialog(parent.winfo_toplevel())
+                      ).pack(side="left", padx=(CUI.sp("xs"), 0))
+        var.trace_add("write", lambda *_a: btn.config_state(str(var.get()) == username))
+        ent.bind("<Return>", lambda _e: submit())
+        ent.focus_set()
+        return btn
+
+    # ── 删除账号（两段式：dry-run → 确认卡 → delete）──
+
+    def _open_delete_account_dialog(self, r) -> None:
+        """「删除账号…」第一段：POST ``delete-dry-run``（**零写入**）取体量清单，回包才开卡。"""
+        uid = r.get("id")
+        username = str(r.get("username") or "")
+
+        def ok(data):
+            self._show_delete_confirm(data if isinstance(data, dict) else {})
+
+        self._set_admin_status("accounts", "删除前体量预览：POST %s/accounts/%s/delete-dry-run"
+                               % (ADMIN_API_PREFIX, uid), "pending")
+        self._run_admin("删除前体量预览（%s）" % username,
+                        lambda: _admin_request("POST", "/accounts/%s/delete-dry-run" % uid),
+                        ok, "accounts")
+
+    def _show_delete_confirm(self, dry) -> tk.Toplevel:
+        """删除确认卡：体量清单（表 × 行数 × 命中列）+ 模式 + 例外 + 判不出归属 + 护栏结论。
+
+        拆成「只吃回包 dict」的函数是测试要的：真跑 dry-run 要打后端，这张卡的渲染离线可构造。
+        """
+        t = self.theme
+        uid = dry.get("user_id")
+        username = str(dry.get("username") or "")
+        guards = [str(x) for x in (dry.get("guards") or [])]
+        totals = dry.get("totals") if isinstance(dry.get("totals"), dict) else {}
+        tables = _volume_table_rows(dry.get("tables"))
+        mode = str(dry.get("mode") or "")
+        win, f = self._danger_dialog(
+            "确认删除账号：%s" % username,
+            "删除账号 %s%s" % (username,
+                             "（%s）" % dry.get("nickname") if dry.get("nickname") else ""),
+            "这一步只把账号移进回收站（默认 %s 天内可恢复）；到期后由后台清除器物理删除。"
+            % (dry.get("grace_days") if dry.get("grace_days") is not None else "—"), "warn")
+        self._note_line(f, "模式：%s" % ACCOUNT_SCOPE_TEXT.get(mode, mode or "后端未返回模式"))
+        self._note_line(
+            f, "体量：%s 张表 / %s 行随该账号带走；%s 行判定不出归属（不随本次删除）"
+            % (_fmt_int(totals.get("tables")), _fmt_int(totals.get("row_count")),
+               _fmt_int(totals.get("undetermined_rows"))))
+        if tables:
+            cols = ({"label": "表", "weight": 3, "min": 150},
+                    {"label": "行数", "weight": 1, "min": 60},
+                    {"label": "命中归属列", "weight": 2, "min": 110})
+            table = CUI.DataTable(f, t, cols)
+            for i, (name, rows_txt, colnames) in enumerate(tables[:VOLUME_TABLE_ROWS_SHOWN]):
+                row = table.add_row(_row_bg(t, i))
+                row.text(0, name, fg=t.text)
+                row.text(1, rows_txt, num=True, fg=t.text_sec)
+                row.text(2, colnames, fg=t.text_muted)
+            if len(tables) > VOLUME_TABLE_ROWS_SHOWN:
+                self._note_line(f, "另有 %d 张表未列出（完整清单在删除后的审计快照里）"
+                                % (len(tables) - VOLUME_TABLE_ROWS_SHOWN))
+        else:
+            self._note_line(f, "体量清单为空：本次不会带走任何数据行", "ok")
+        exc = [x for x in (dry.get("exceptions") or []) if isinstance(x, dict)]
+        for e in exc[:EXCEPTION_LINES_SHOWN]:
+            self._note_line(f, "例外 %s%s：%s" % (
+                str(e.get("table") or "—"),
+                "." + str(e["column"]) if e.get("column") else "",
+                str(e.get("reason") or "后端未给原因")), "warn")
+        if len(exc) > EXCEPTION_LINES_SHOWN:
+            self._note_line(f, "另有 %d 条例外未列出" % (len(exc) - EXCEPTION_LINES_SHOWN), "warn")
+        for w in [x for x in (dry.get("warnings") or []) if isinstance(x, dict)][:EXCEPTION_LINES_SHOWN]:
+            self._note_line(f, "提示：%s（%s 行）%s" % (
+                str(w.get("table") or "—"), _fmt_int(w.get("rows")),
+                ("：" + str(w.get("reason"))) if w.get("reason") else ""), "warn")
+        if dry.get("already_deleted"):
+            self._note_line(f, "该账号已在回收站里（重复标记会被后端拒绝）", "warn")
+        for g in guards:
+            self._note_line(f, "护栏：%s" % g, "error")
+        self._confirm_input_row(
+            f, username, "确认删除",
+            lambda txt: self._submit_account_delete(uid, username, txt, win),
+            enabled=not guards,
+            blocked_text="后端护栏已挡（逐条原因见上），本次不会发出删除请求")
+        win.grab_set()
+        return win
+
+    def _submit_account_delete(self, uid, username, confirm_text, win) -> None:
+        """第二段：真的发 ``delete``（带 ``confirm_username``）；成功才关卡片并刷新列表。"""
+        def ok(_data):
+            self._close_dialog(win)
+            self._set_msg("账号 %s 已移入回收站（打开「显示回收站」可恢复或立即清除）" % username)
+            self._load_accounts()
+
+        self._run_admin("删除账号 %s" % username,
+                        lambda: _admin_request("POST", "/accounts/%s/delete" % uid,
+                                               {"confirm_username": confirm_text}),
+                        ok, "accounts")
+
+    def _restore_account(self, uid, username="") -> None:
+        """恢复＝移出回收站（后端清空 deleted_at/purge_after/disabled_at）；与「撤销禁用」不是一回事。"""
+        def ok(_data):
+            self._set_msg("账号 %s 已移出回收站" % (username or uid))
+            self._load_accounts()
+
+        self._run_admin("恢复账号 %s" % uid,
+                        lambda: _admin_request("POST", "/accounts/%s/restore" % uid),
+                        ok, "accounts")
+
+    # ── 立即清除（回收站行）+ 清除结果（读账本）──
+
+    def _open_purge_confirm_dialog(self, r) -> tk.Toplevel:
+        """回收站行的「立即清除」：不可逆，输用户名才点亮（``force=true`` = 宽限期未到也立刻清）。"""
+        uid = r.get("id")
+        username = str(r.get("username") or "")
+        win, f = self._danger_dialog(
+            "立即清除：%s" % username, "立即物理清除账号 %s" % username,
+            "这一步**不可恢复**：先做前置备份，再删除该账号的全部数据行、文件、向量与 BM25 缓存。")
+        self._note_line(f, "回收站状态：%s（标记删除 %s）"
+                        % (_purge_countdown_text(r.get("purge_after")),
+                           _fmt_dt(r.get("deleted_at"))), "warn")
+        self._note_line(f, "清除完成后自动打开「清除结果」，逐表行数以后端账本为准。")
+        self._confirm_input_row(f, username, "立即清除",
+                                lambda txt: self._submit_purge(uid, username, txt, win))
+        win.grab_set()
+        return win
+
+    def _submit_purge(self, uid, username, confirm_text, win) -> None:
+        def ok(_data):
+            self._close_dialog(win)
+            self._set_msg("账号 %s 已物理清除（逐表行数读自清除账本）" % username)
+            self._load_purge_report(uid, {"username": username})
+
+        self._run_admin("立即清除账号 %s" % username,
+                        lambda: _admin_request("POST", "/accounts/%s/purge" % uid,
+                                               {"confirm_username": confirm_text, "force": True}),
+                        ok, "accounts")
+
+    def _load_purge_report(self, uid, r=None) -> None:
+        """GET ``purge-report``（只读）拉清除账本，交给展示函数；不直连库、不自己数行。"""
+        username = str((r or {}).get("username") or "")
+
+        def ok(data):
+            self._show_purge_report(data if isinstance(data, dict) else {}, username)
+
+        self._run_admin("读取清除结果（%s）" % (username or uid),
+                        lambda: _admin_request("GET", "/accounts/%s/purge-report" % uid),
+                        ok, "accounts")
+
+    def _show_purge_report(self, payload, username: str = "") -> tk.Toplevel:
+        """清除结果卡：状态 + 逐表行数（DataTable）+ 文件/向量/BM25 + 备份包 + 外键自检。
+
+        这就是方案 v2「审计页显示删了哪些表、各多少行」的落点：数字一律来自账本，
+        半删（running/failed）也照实显示进度，不粉饰成「已完成」。
+        """
+        t = self.theme
+        uid = payload.get("user_id")
+        job = payload.get("job") if isinstance(payload.get("job"), dict) else None
+        label = username or ("账号 %s" % uid)
+        win, f = self._danger_dialog(
+            "清除结果：%s" % label, "清除结果 · %s" % label,
+            "以下全部读自后端清除账本（GET %s/accounts/%s/purge-report）。"
+            % (ADMIN_API_PREFIX, "—" if uid is None else uid), "info")
+        if job is None:
+            self._note_line(f, "尚无清除记录：该账号还没被物理清除过（账本里没有作业行）", "empty")
+            self._dialog_close_row(f)
+            win.grab_set()
+            return win
+        report = payload.get("report") if isinstance(payload.get("report"), dict) else {}
+        cursor = payload.get("cursor") if isinstance(payload.get("cursor"), dict) else {}
+        status = str(job.get("status") or "")
+        self._note_line(
+            f, "状态：%s（job=%s）　开始 %s　结束 %s"
+            % (PURGE_STATUS_TEXT.get(status, status or "—"), job.get("id"),
+               _fmt_dt(job.get("started_at")), _fmt_dt(job.get("finished_at"))),
+            {"done": "ok", "failed": "error"}.get(status, "warn"))
+        if job.get("attempts") is not None:
+            self._note_line(f, "自动重试次数：%s" % job.get("attempts"))
+        if job.get("error"):
+            self._note_line(f, "错误：%s" % job.get("error"), "error")
+        if report.get("mode"):
+            self._note_line(f, "删除模式：%s" % ACCOUNT_SCOPE_TEXT.get(
+                str(report["mode"]), str(report["mode"])))
+        self._note_line(f, "已删除：%s 行" % _fmt_int(
+            report.get("rows_deleted", cursor.get("rows_deleted_so_far"))), "ok")
+        rows = _report_table_rows(report, cursor)
+        if rows:
+            cols = ({"label": "表", "weight": 3, "min": 150},
+                    {"label": "行数", "weight": 1, "min": 60})
+            table = CUI.DataTable(f, t, cols)
+            for i, (name, cnt) in enumerate(rows[:VOLUME_TABLE_ROWS_SHOWN]):
+                row = table.add_row(_row_bg(t, i))
+                row.text(0, name, fg=t.text)
+                row.text(1, cnt, num=True, fg=t.text_sec)
+            if len(rows) > VOLUME_TABLE_ROWS_SHOWN:
+                self._note_line(f, "另有 %d 张表未列出（完整账本在 account_purge_jobs.report_json）"
+                                % (len(rows) - VOLUME_TABLE_ROWS_SHOWN))
+        files = report.get("files") if isinstance(report.get("files"), dict) else {}
+        if files:
+            self._note_line(f, "文件隔离：%s 个文件搬进 %s"
+                            % (_fmt_int(files.get("files_moved")), files.get("trash_dir") or "—"))
+            if files.get("partial_dirs"):
+                self._note_line(f, "有目录被占用没搬走（源目录仍在）：%s"
+                                % _kv_brief(files.get("partial_dirs")), "warn")
+        if report.get("vectors") is not None:
+            self._note_line(f, "向量：%s" % _kv_brief(report.get("vectors")))
+        if report.get("bm25") is not None:
+            self._note_line(f, "BM25 缓存：%s" % _kv_brief(report.get("bm25")))
+        if report.get("backup_zip"):
+            self._note_line(f, "前置备份包：%s" % report.get("backup_zip"))
+        fk = report.get("foreign_key_check")
+        fk_rows = report.get("foreign_key_check_rows")
+        if fk_rows is None:
+            fk_rows = len(fk) if isinstance(fk, list) else None
+        self._note_line(f, "外键自检：%s" % ("无残留" if not fk_rows
+                                             else "%s 条残留" % _fmt_int(fk_rows)),
+                        "ok" if not fk_rows else "error")
+        if fk_rows and isinstance(fk, list):
+            for line in fk[:3]:
+                self._note_line(f, "残留：%s" % _kv_brief(line), "error")
+        stages = [PURGE_STAGE_TEXT.get(s, s) for s in (cursor.get("stages_done") or [])]
+        nxt = cursor.get("next_stage")
+        if stages or nxt:
+            self._note_line(f, "进度：%s%s" % (
+                " → ".join(stages) or "尚未开始",
+                "（下一步：%s）" % PURGE_STAGE_TEXT.get(str(nxt), nxt) if nxt else ""), "warn")
+        if cursor.get("blocked_reason"):
+            self._note_line(f, "挡在哪：%s" % cursor.get("blocked_reason"), "error")
+        if payload.get("report_raw"):
+            self._note_line(f, "账本报告未能解析（原文摘要）：%s" % payload.get("report_raw"), "warn")
+        self._dialog_close_row(f)
+        win.grab_set()
+        return win
 
     # ── 开关与权限页 ──
 

@@ -46,6 +46,13 @@ class User(Base):
     llm_mode: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="default_allowed", default="default_allowed"
     )
+    # 控制台删号·回收站（第一期地基，2026-09-24）：
+    # - deleted_at 非空 = 已标记删除（进回收站，同时强制 disabled_at），restore 清空两列；
+    # - purge_after = 宽限期到点时间（UTC naive），后台清除器只扫 ``deleted_at IS NOT NULL
+    #   AND purge_after <= now``。默认 NULL = 未进回收站，现有账号行为逐字节不变。
+    # 只由迁移 f6a7b8c9d0e1 引入，故两列都登记进 app/db/migrate.py 的当前 schema 哨兵。
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    purge_after: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None, index=True)  # 主账号关联（#68：NULL=独立主账号，非NULL=子账号；P3 受邀码关联用，P0-P2 只用于共享配置判定）
     # 位置信息（2026-08-08）：location_enabled 总开关；location_gps_enabled=获取地理位置（开启后用户位置不可自定义）；
     # location_follow=位置跟随（开启后 AI 位置与用户相同、不可自定义）；timezone_offset_minutes=用户本地时区（分钟，如 480=UTC+8）
@@ -188,6 +195,34 @@ class GlobalUserFact(Base):
     )
 
 
+# ── account_purge.py（控制台删号·第二期，2026-09-24）──
+# 物理清除器的进度账本。**必须留在 Base.metadata 里**：app/db/migrate.py 的哨兵登记了本表，
+# 而「主 ORM 建齐、只缺插件表」的库必须被判「当前」（tests/test_migrate_schema_detect.py
+# ::test_manual_sentinel_ignores_plugin_tables）——表不进 metadata 会让这类库被反复判落后去 upgrade。
+# DDL 与迁移 f7b8c9d0e1f2 逐项对齐（列名/类型/UNIQUE 名）。
+class AccountPurgeJob(Base):
+    """账号物理清除的进度账本：一账号一行（user_id 唯一），续跑定位键。
+
+    status: running / done / failed；cursor_json 存断点（已固化的备份 zip、角色/会话集合、每表进度），
+    report_json 存完整报告（逐表行数等），error 存失败原因。删号链本身不删本表（见 user_cascade.RETAINED_TABLES）。
+    """
+
+    __tablename__ = "account_purge_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="running")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cursor_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    report_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", name="uq_account_purge_jobs_user_id"),
+    )
+
+
 __all__ = [
     "User",
     "UserState",
@@ -196,4 +231,5 @@ __all__ = [
     "BrowserSnapshot",
     "AccountInvite",
     "GlobalUserFact",
+    "AccountPurgeJob",
 ]
