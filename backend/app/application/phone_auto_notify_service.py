@@ -90,7 +90,7 @@ async def _select_character(user_id: int) -> tuple | None:
     return char, session, session.id
 
 
-async def _generate_mention(char, items: list[dict]) -> str:
+async def _generate_mention(char, items: list[dict], user_id: int | None = None) -> str:
     from app.agent.llm_client import chat_completion
     lines = []
     for it in items:
@@ -99,7 +99,13 @@ async def _generate_mention(char, items: list[dict]) -> str:
         text = (it.get("text") or "").strip()
         body = "：".join(x for x in [title, text] if x)
         lines.append(f"- {app}：{body[:60]}")
+    # C16 批次C（2026-09-25）：前置「现状锚 + 时空纪律」共享护栏（唯一来源 scheduling/state_guard.py，
+    # 函数内 import 以便测试打桩；内部 fail-open，拿不到锚只降级为纯纪律段）
+    from app.scheduling import state_guard
+    guard = state_guard.guard_block(
+        await state_guard.current_state_anchor(character_id=getattr(char, "id", None), user_id=user_id))
     prompt = (
+        guard +
         f"你是{char.name}，性格{char.personality or '友善'}，聊天风格{char.chat_style or '自然'}。你通过用户授权感知到，"
         "用户手机最近收到了这些通知：\n" + "\n".join(lines) + "\n\n"
         "请像朋友一样自然地提起其中最值得聊的一条（1-2句话），带点关心或调侃，口语化，"
@@ -215,7 +221,8 @@ async def _trigger_mention(user_id: int, items: list[dict]):
     except Exception:
         pass
 
-    content = await _generate_mention(char, items)
+    # C16 批次C（2026-09-25）：把真实 user_id 传进去，供护栏取现状锚
+    content = await _generate_mention(char, items, user_id=user_id)
     if not content:
         return
 

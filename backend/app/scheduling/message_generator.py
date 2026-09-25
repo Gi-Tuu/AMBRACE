@@ -5,6 +5,7 @@ from datetime import timedelta
 from app.utils.logger import get_logger
 from app.utils.timeutil import now_naive_utc
 from app.agent.llm_client import chat_completion, load_character_reasoning_level
+from app.scheduling import state_guard
 from app.memory.format import format_memory_line  # X-1（2026-08-18）：记忆注入行公共格式化
 # B1-③（2026-09-04，方案 §5.3）：主动接触意图层常量——分级/意图/转场句库，纯常量不入库
 from app.domain.proactivity.outreach import (
@@ -1163,7 +1164,11 @@ async def generate_birthday_message(
 ) -> str:
     """生成生日祝福"""
     identity = await _load_identity_block(character_id)
+    # C16 批次A（2026-09-25）：前置「现状锚 + 时空纪律」共享护栏（唯一来源 scheduling/state_guard.py）
+    guard = state_guard.guard_block(
+        await state_guard.current_state_anchor(character_id=character_id, user_id=user_id))
     prompt = (
+        guard +
         f"你是「{character_name}」，今天是好友「{user_name}」的生日！\n"
         f"你的性格：{character_personality or '友善、温暖'}\n"
         + (f"\n你的身份（以这里为准，不要混淆你与用户/用户对象）：\n{identity}\n" if identity else "")
@@ -1192,7 +1197,11 @@ async def generate_anniversary_message(
 ) -> str:
     """生成认识纪念日消息（认识第 N 天）"""
     identity = await _load_identity_block(character_id)
+    # C16 批次A（2026-09-25）：前置「现状锚 + 时空纪律」共享护栏（唯一来源 scheduling/state_guard.py）
+    guard = state_guard.guard_block(
+        await state_guard.current_state_anchor(character_id=character_id, user_id=user_id))
     prompt = (
+        guard +
         f"你是「{character_name}」，今天是你和好友「{user_name}」认识的第 {days} 天！\n"
         f"你的性格：{character_personality or '友善、温暖'}\n"
         + (f"\n你的身份（以这里为准，不要混淆你与用户/用户对象）：\n{identity}\n" if identity else "")
@@ -1220,7 +1229,11 @@ async def generate_holiday_message(
 ) -> str:
     """生成节日祝福"""
     identity = await _load_identity_block(character_id)
+    # C16 批次A（2026-09-25）：前置「现状锚 + 时空纪律」共享护栏（唯一来源 scheduling/state_guard.py）
+    guard = state_guard.guard_block(
+        await state_guard.current_state_anchor(character_id=character_id, user_id=user_id))
     prompt = (
+        guard +
         f"你是「{character_name}」，今天是{holiday_name}。\n"
         f"你的性格：{character_personality or '友善、温暖'}\n"
         + (f"\n你的身份（以这里为准，不要混淆你与用户/用户对象）：\n{identity}\n" if identity else "")

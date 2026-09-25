@@ -177,9 +177,17 @@ async def run_emotion_care(char_id: int, user_id: int, task_id: int) -> bool:
             weather_line = await get_user_weather_line(user_id)
         except Exception:
             weather_line = ""
+        # C16 批次A（2026-09-25）：护栏块＝【当前现状】（锚＝app.memory.current_state 里的
+        # current_user_state_anchor）+【时空纪律】（state_guard.STATE_GUARD_DISCIPLINE），
+        # 置于 persona_block 之后、用户原话之前；取锚与文案唯一来源 scheduling/state_guard.py，
+        # 本文件刻意不复制第二份文案（一致性由 tests/test_proactive_state_guard_a7.py 钉住）。
+        from app.scheduling import state_guard
+        guard = state_guard.guard_block(
+            await state_guard.current_state_anchor(character_id=char_id, user_id=user_id))
         hint = (
             f"{identity}\n"
             f"{persona_block}"
+            + guard
             + (f"{weather_line}\n" if weather_line else "")
             + f"用户刚才跟你说：「{trigger_msg}」——听起来心情不太好。\n"
             "过了一阵子，你主动关心他一句：1-2 句话，口语化，像真的在意他。\n"

@@ -14,9 +14,10 @@
 覆盖矩阵（通道 / message_type / 覆盖方式 / 是否接锚）见交付报告，本文件只负责钉住行为。
 
 纪律常量与锚函数出处：
-- ``app/scheduling/life_regression.py:65`` STATE_GUARD_DISCIPLINE（A7）
-- ``app/scheduling/pet_care.py:29`` STATE_GUARD_DISCIPLINE（A7，与上者逐字一致）
+- ``app/scheduling/life_regression.py:60`` STATE_GUARD_DISCIPLINE（A7）
+- ``app/scheduling/pet_care.py:31`` STATE_GUARD_DISCIPLINE（A7，与上者逐字一致）
 - ``app/memory/current_state.py:90`` current_user_state_anchor（三源聚合现状锚）
+- C12a 起纪律文案的唯一定义在 app/scheduling/state_guard.py:9，上面两处是薄封装。
 """
 from __future__ import annotations
 
@@ -34,6 +35,7 @@ from app.scheduling import memory_review
 from app.scheduling import message_generator as mg
 from app.scheduling import pet_care
 from app.scheduling import prospective_intent
+from app.scheduling import state_guard
 from app.scheduling import state_triggers
 from app.scheduling import storyline_engine
 from app.scheduling import unfinished_topic
@@ -394,7 +396,6 @@ def test_timer_anchor_reaches_llm_payload(monkeypatch):
     assert SENTINEL not in messages[1]["content"], "timer 的锚实际在 system 块（docstring 口径已变，需复核本用例）"
 
 
-@pytest.mark.xfail(strict=False, reason="plugin Runtime 轻量上下文（默认开关）未接现状锚：只有全量 build_context 才带（本用例即该缺口的行为证据）")
 def test_plugin_runtime_anchor_needs_full_context_xfail(monkeypatch):
     """通道「插件/渠道主动候选（统一 Runtime 分支）」message_type=plugin。
 
@@ -415,7 +416,6 @@ def test_plugin_runtime_anchor_needs_full_context_xfail(monkeypatch):
 
 # ─────────── 未接锚／未接纪律：一律 xfail(strict=False)，不改业务代码 ───────────
 
-@pytest.mark.xfail(strict=False, reason="storyline 未接现状锚/纪律（storyline_engine.py:171-196 全模块无锚函数引用）")
 def test_storyline_llm_line_guard_missing_xfail(monkeypatch):
     """通道「剧情线」message_type=storyline —— **未接**。
 
@@ -437,7 +437,6 @@ def test_storyline_llm_line_guard_missing_xfail(monkeypatch):
     _assert_guarded(cap.user_prompt, FINGERPRINT["storyline"])
 
 
-@pytest.mark.xfail(strict=False, reason="life_share 未接现状锚/纪律（life_share.py:131-137 hint 无任何护栏段）")
 def test_life_share_prompt_guard_missing_xfail(monkeypatch):
     """通道「活动完成自然分享」message_type=life_share —— **未接**。
 
@@ -456,55 +455,66 @@ def test_life_share_prompt_guard_missing_xfail(monkeypatch):
     _assert_guarded(cap.user_prompt, FINGERPRINT["life_share"])
 
 
-@pytest.mark.xfail(strict=False, reason="prospective_intent 未接现状锚/纪律（prospective_intent.py:655-688 无锚函数引用）")
+def _assert_prospective_wired() -> None:
+    """prospective_intent 的**静态接线断言**（C16 批次C）：纯函数支持 guard 不算接上，
+    调用点 ``run_prospective_due`` 必须真的取锚构造护栏块并传进两个构建函数。"""
+    src = " ".join(inspect.getsource(prospective_intent.run_prospective_due).split())
+    assert "state_guard" in src and "guard_block" in src, (
+        "prospective_intent 调用点未接现状锚/时空纪律（run_prospective_due 里没有 state_guard.guard_block）")
+    assert "guard=_guard" in src, "prospective_intent 调用点算出了护栏块，却没传进提示词构建函数"
+    assert "_build_prospective_hint_legacy(char_name, hint_content, guard=_guard)" in src, (
+        "prospective_intent legacy 分支没有收到护栏块（guard 参数未传）")
+
+
 def test_prospective_hint_self_branch_guard_missing_xfail():
-    """通道「到期承诺」message_type=prospective_intent，side=self 分支 —— **未接**。
+    """通道「到期承诺」message_type=prospective_intent，side=self 分支 —— **已接**（C16 批次C，2026-09-25）。
 
-    prompt 构建：app/scheduling/prospective_intent.py:655 ``_build_prospective_hint``（纯函数，
-    flag promise_self_side_split 开时启用）。self 分支只有「自述口径」约束 + 跨天时间锚
-    （prospective_intent.py:675-681），没有用户现状锚、没有【时空纪律】段。行为断言＝直接调纯函数。
+    prompt 构建：app/scheduling/prospective_intent.py ``_build_prospective_hint``（纯函数，
+    flag promise_self_side_split 开时启用）。该纯函数无 character_id/user_id，护栏由调用点
+    ``run_prospective_due`` 取现状锚后经 ``guard=`` 传入并前置到提示词最前。
+    断言形态（本批升级）：①行为断言＝直接调纯函数并**显式传入** guard（哨兵 + 纪律段）；
+    ②静态接线断言＝见 ``_assert_prospective_wired``（防「函数支持 guard 但调用点不传」）。
     """
-    prompt = prospective_intent._build_prospective_hint("小爱", "周末给你做红烧肉", "self")
+    guard = state_guard.guard_block(SENTINEL)
+    prompt = prospective_intent._build_prospective_hint("小爱", "周末给你做红烧肉", "self", guard=guard)
     _assert_guarded(prompt, FINGERPRINT["prospective"])
+    assert SENTINEL in prompt, "显式传入的现状锚哨兵没有进提示词"
+    assert state_guard.STATE_GUARD_DISCIPLINE in prompt, "【时空纪律】段没有进提示词"
+    assert prompt.startswith(guard), "护栏块没有前置到提示词最前"
+    _assert_prospective_wired()
 
 
-@pytest.mark.xfail(strict=False, reason="prospective_intent 未接现状锚/纪律（prospective_intent.py:655-688 无锚函数引用）")
 def test_prospective_hint_user_branch_guard_missing_xfail():
-    """通道「到期承诺」message_type=prospective_intent，side=user 分支 —— **未接**。
+    """通道「到期承诺」message_type=prospective_intent，side=user 分支 —— **已接**（C16 批次C）。
 
-    同上（prospective_intent.py:668-673 else 分支）：只处理责任归属话术，
-    不涉及「用户现在在哪/现在怎样」，故旧地点冒充现状的 bug 在此通道仍然无护栏。
+    同上（``_build_prospective_hint`` 的 else 分支）：该分支原本只处理责任归属话术，
+    不涉及「用户现在在哪/现在怎样」，故旧地点冒充现状的 bug 靠本批接入的护栏块兜住。
     """
-    prompt = prospective_intent._build_prospective_hint("小爱", "周五交报告", "user")
+    guard = state_guard.guard_block(SENTINEL)
+    prompt = prospective_intent._build_prospective_hint("小爱", "周五交报告", "user", guard=guard)
     _assert_guarded(prompt, FINGERPRINT["prospective"])
+    assert SENTINEL in prompt, "显式传入的现状锚哨兵没有进提示词"
+    assert state_guard.STATE_GUARD_DISCIPLINE in prompt, "【时空纪律】段没有进提示词"
+    assert prompt.startswith(guard), "护栏块没有前置到提示词最前"
+    _assert_prospective_wired()
 
 
-test_prospective_hint_self_branch_guard_missing_xfail = pytest.mark.xfail(
-    strict=False,
-    reason="prospective_intent 未接现状锚/纪律（prospective_intent.py:655-688 无锚函数引用）")(
-        test_prospective_hint_self_branch_guard_missing_xfail)
-
-test_prospective_hint_user_branch_guard_missing_xfail = pytest.mark.xfail(
-    strict=False,
-    reason="prospective_intent 未接现状锚/纪律（prospective_intent.py:655-688 无锚函数引用）")(
-        test_prospective_hint_user_branch_guard_missing_xfail)
-
-
-@pytest.mark.xfail(strict=False, reason="prospective_intent legacy 话术未接锚/纪律（prospective_intent.py:646-652）")
 def test_prospective_hint_legacy_branch_guard_missing_xfail():
-    """通道「到期承诺」legacy 分支（flag promise_self_side_split 关，默认口径）—— **未接**。
+    """通道「到期承诺」legacy 分支（flag promise_self_side_split 关，默认口径）—— **已接**（C16 批次C）。
 
-    prompt 构建：app/scheduling/prospective_intent.py:646 ``_build_prospective_hint_legacy``，
-    与 2026-09-04 上线版本逐字节一致的话术，同样没有现状锚与纪律段。
+    prompt 构建：app/scheduling/prospective_intent.py ``_build_prospective_hint_legacy``，
+    话术本体与 2026-09-04 上线版本逐字节一致（guard 默认空串 ⇒ 旧口径可原样回退，
+    由 tests/test_prospective_intent_governance.py 钉住），本批只在其最前挂护栏块。
     """
-    prompt = prospective_intent._build_prospective_hint_legacy("小爱", "周五交报告")
+    guard = state_guard.guard_block(SENTINEL)
+    prompt = prospective_intent._build_prospective_hint_legacy("小爱", "周五交报告", guard)
     _assert_guarded(prompt, FINGERPRINT["prospective_legacy"])
-
-
-test_prospective_hint_legacy_branch_guard_missing_xfail = pytest.mark.xfail(
-    strict=False,
-    reason="prospective_intent legacy 话术未接锚/纪律（prospective_intent.py:646-652）")(
-        test_prospective_hint_legacy_branch_guard_missing_xfail)
+    assert SENTINEL in prompt, "显式传入的现状锚哨兵没有进提示词"
+    assert state_guard.STATE_GUARD_DISCIPLINE in prompt, "【时空纪律】段没有进提示词"
+    assert prompt.startswith(guard), "护栏块没有前置到提示词最前"
+    assert prospective_intent._build_prospective_hint_legacy(
+        "小爱", "周五交报告") == prompt[len(guard):], "guard 默认空串时旧话术被改动"
+    _assert_prospective_wired()
 
 
 def test_plugin_legacy_hint_branch_guard_missing_xfail(monkeypatch):
@@ -532,12 +542,6 @@ def test_plugin_legacy_hint_branch_guard_missing_xfail(monkeypatch):
     ok = asyncio.run(arbiter._execute({"type": "plugin", "candidate": candidate}))
     assert ok is True, "plugin 分支未走到发送（用例桩件失效）"
     _assert_guarded(cap.user_prompt, FINGERPRINT["plugin"])
-
-
-test_plugin_legacy_hint_branch_guard_missing_xfail = pytest.mark.xfail(
-    strict=False,
-    reason="plugin 旧分支未接锚/纪律（arbiter.py:1414-1425 hint 直接来自插件）")(
-        test_plugin_legacy_hint_branch_guard_missing_xfail)
 
 
 def test_state_trigger_prompt_guard_missing_xfail(monkeypatch):
@@ -577,12 +581,6 @@ def test_state_trigger_prompt_guard_missing_xfail(monkeypatch):
     _assert_guarded(cap.user_prompt, FINGERPRINT["state_trigger"])
 
 
-test_state_trigger_prompt_guard_missing_xfail = pytest.mark.xfail(
-    strict=False,
-    reason="state_trigger 未接用户现状锚/纪律（state_triggers.py 全模块无锚函数引用）")(
-        test_state_trigger_prompt_guard_missing_xfail)
-
-
 def test_unfinished_topic_prompt_guard_missing_xfail(monkeypatch):
     """通道「未收尾话题跟进」message_type=unfinished_topic —— **未接**。
 
@@ -604,12 +602,6 @@ def test_unfinished_topic_prompt_guard_missing_xfail(monkeypatch):
     _assert_guarded(cap.user_prompt, FINGERPRINT["unfinished"])
 
 
-test_unfinished_topic_prompt_guard_missing_xfail = pytest.mark.xfail(
-    strict=False,
-    reason="unfinished_topic 未接锚/纪律（unfinished_topic.py:137-142 hint 无护栏段）")(
-        test_unfinished_topic_prompt_guard_missing_xfail)
-
-
 def test_emotion_care_prompt_guard_missing_xfail(monkeypatch):
     """通道「情绪关怀」message_type=emotion_care —— **未接**（静态断言）。
 
@@ -623,18 +615,14 @@ def test_emotion_care_prompt_guard_missing_xfail(monkeypatch):
     assert "STATE_GUARD_DISCIPLINE" in src, "emotion_care 未接时空纪律（care.py:180-187）"
 
 
-test_emotion_care_prompt_guard_missing_xfail = pytest.mark.xfail(
-    strict=False,
-    reason="emotion_care 未接锚/纪律（care.py:180-187 只有 identity/persona/weather）")(
-        test_emotion_care_prompt_guard_missing_xfail)
-
-
 def test_notification_mention_prompt_guard_missing_xfail(monkeypatch):
-    """通道「手机通知提及」message_type=notification_mention —— **未接**。
+    """通道「手机通知提及」message_type=notification_mention —— **已接**（C16 批次C，2026-09-25）。
 
-    prompt 构建：app/application/phone_auto_notify_service.py:102-108（``_generate_mention``），
-    发送 phone_auto_notify_service.py:223。通知正文本身就是「此刻发生的事」，
-    但没有用户现状锚 → 容易把旧位置/旧状态混进关心里。行为断言＝直接调 _generate_mention。
+    prompt 构建：app/application/phone_auto_notify_service.py（``_generate_mention``），
+    发送 phone_auto_notify_service.py 的 ``_trigger_mention``。通知正文本身就是「此刻发生的事」，
+    原先没有用户现状锚 → 容易把旧位置/旧状态混进关心里；本批给 ``_generate_mention`` 加可选
+    ``user_id`` 并在函数内经 state_guard 取锚，护栏块前置到 prompt 最前（调用点传真实 user_id）。
+    行为断言＝直接调 _generate_mention 捕获真实 user prompt。
     """
     cap = _Capture("下午那个会别忘了，要不要我给你带点喝的？")
     char = SimpleNamespace(id=11, user_id=3, name="小爱", personality="友善", chat_style="自然")
@@ -646,12 +634,6 @@ def test_notification_mention_prompt_guard_missing_xfail(monkeypatch):
     )._generate_mention(char, [{"app": "日历", "title": "周会", "text": "下午三点"}]))
     assert text, "_generate_mention 返回空（用例桩件失效）"
     _assert_guarded(cap.user_prompt, FINGERPRINT["notification"])
-
-
-test_notification_mention_prompt_guard_missing_xfail = pytest.mark.xfail(
-    strict=False,
-    reason="notification_mention 未接锚/纪律（phone_auto_notify_service.py:102-108）")(
-        test_notification_mention_prompt_guard_missing_xfail)
 
 
 @pytest.mark.parametrize("kind", ["birthday", "holiday", "anniversary"])
@@ -680,12 +662,6 @@ def test_special_day_prompt_guard_missing_xfail(monkeypatch, kind):
             "小爱", "友善", "阿轩", "中秋", character_id=11, user_id=3))
     assert text, f"{kind} 生成返回空（用例桩件失效）"
     _assert_guarded(cap.user_prompt, FINGERPRINT[kind])
-
-
-test_special_day_prompt_guard_missing_xfail = pytest.mark.xfail(
-    strict=False,
-    reason="birthday/holiday/anniversary 未接锚/纪律（message_generator.py:1157/1185/1213）")(
-        test_special_day_prompt_guard_missing_xfail)
 
 
 # ─────────── 不适用通道：无 LLM 生成，护栏无从谈起（正向钉住事实） ───────────

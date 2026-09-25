@@ -539,7 +539,13 @@ async def _execute_rule_behavior(
     except Exception:
         active_persona = ""
     delay_line = f"你刚才的情绪发酵了约 {int(delay_minutes)} 分钟，越想越气/情绪越来越上头，" if delay_minutes else ""
+    # C16 批次B：私聊分支接「现状锚 + 时空纪律」共享护栏（前置到 user prompt，原话术逐字保留；
+    # state_guard 内部 fail-open，取锚失败也只降级为纯纪律段，不抛断）
+    from app.scheduling import state_guard
+    _guard_block = state_guard.guard_block(
+        await state_guard.current_state_anchor(character_id=character_id, user_id=user_id))
     hint = (
+        f"{_guard_block}"
         f"你是{name}，性格{personality}。\n"
         + (f"你的身份（不要混淆你与用户/用户的对象）：\n{identity}\n" if identity else "")
         + (f"你们最近在聊：\n{recent_ctx}\n" if recent_ctx else "")

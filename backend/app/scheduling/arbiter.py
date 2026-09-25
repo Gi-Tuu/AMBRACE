@@ -1411,11 +1411,17 @@ async def _execute(item: dict) -> bool:
             char = await db.get(AICharacter, char_id)
         char_name = char.name if char else "我"
         from app.agent.llm_client import chat_completion
+        # C16 批次B：旧裸生成分支接「现状锚 + 时空纪律」共享护栏（前置到 user prompt，
+        # 原话术逐字保留；state_guard 内部 fail-open，取锚失败也只降级为纯纪律段，不抛断）
+        from app.scheduling import state_guard
+        _guard_block = state_guard.guard_block(
+            await state_guard.current_state_anchor(character_id=char_id, user_id=candidate.get("user_id")))
         try:
             content = await chat_completion(
                 messages=[
                     {"role": "system", "content": "直接输出内容，不要加引号和标注。"},
                     {"role": "user", "content": (
+                        f"{_guard_block}"
                         f"你是{char_name}，{hint}，"
                         "请像朋友一样自然地用 1-2 句话提起这件事（不要提平台名、不要提'AI'、不要加话题标签）。"
                     )},

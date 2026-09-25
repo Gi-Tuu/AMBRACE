@@ -20,6 +20,7 @@ from sqlalchemy import func, select
 from app.db.database import async_session_factory
 from app.models.character import CharacterState
 from app.models.character import ProactiveTriggerLog
+from app.scheduling import state_guard
 from app.utils.logger import get_logger
 from app.utils.timeutil import now_naive_utc
 
@@ -128,7 +129,11 @@ async def _generate_share(character_id: int, user_id: int, activity_type: str, s
     except Exception:
         recent_ctx = ""
 
+    # C16 批次A（2026-09-25）：前置「现状锚 + 时空纪律」共享护栏（唯一来源 scheduling/state_guard.py）
+    guard = state_guard.guard_block(
+        await state_guard.current_state_anchor(character_id=character_id, user_id=user_id))
     hint = (
+        guard +
         f"你是{name}，性格{personality}。你刚做了一件小事，想随口自然提一句。\n"
         + (f"你们最近在聊：\n{recent_ctx}\n" if recent_ctx else "")
         + f"你刚完成：{activity_type}（{summary[:80]}）。\n"

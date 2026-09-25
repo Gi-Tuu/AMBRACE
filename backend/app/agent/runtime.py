@@ -292,6 +292,19 @@ async def build_light_social_context(state: dict) -> dict:
     except Exception as e:
         _logger.warning("Light context time failed char=%s: %s", character_id, e)
 
+    # 4b. C16 批次B：现状锚 + 时空纪律（紧跟时间行；轻量路径用精简锚 max_chars=120，
+    #     函数内直接取锚并自行 try/except 折空串 fail-open，纪律文案唯一来源 state_guard）
+    try:
+        from app.memory.current_state import current_user_state_anchor
+        _anchor = await current_user_state_anchor(
+            character_id=character_id, user_id=user_id,
+            include_profile_location=True, max_chars=120) or ""
+    except Exception:
+        _anchor = ""
+    from app.scheduling import state_guard
+    for _gseg in state_guard.guard_segments(_anchor):
+        parts.append(_gseg)
+
     # 5. 社交短回复约束（与调用方 extra_system 互补；不输出动作标记）
     parts.append(
         "回复要求：这是社交场景的短回复，用 1 句话自然回应（20-40 字，口语化，符合你的性格）；"

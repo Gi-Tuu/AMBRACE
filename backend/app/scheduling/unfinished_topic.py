@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from app.db.database import async_session_factory
 from app.models.chat import ChatMessage
 from app.models.character import ProactiveMessageLog
+from app.scheduling import state_guard
 from app.scheduling.triggers import get_active_characters, get_latest_session
 from app.utils.logger import get_logger
 from app.utils.timeutil import now_naive_utc, to_naive_utc
@@ -132,7 +133,11 @@ async def run_unfinished_topic(candidate: dict) -> bool:
                 identity = await build_role_prompt_block(char, user_id) + "\n"
             except Exception:
                 identity = f"你是{char_name}，性格{char.personality or '友善'}。\n"
+        # C16 批次A（2026-09-25）：前置「现状锚 + 时空纪律」共享护栏（唯一来源 scheduling/state_guard.py）
+        guard = state_guard.guard_block(
+            await state_guard.current_state_anchor(character_id=char_id, user_id=user_id))
         hint = (
+            guard +
             f"{identity}"
             f"你是{char_name}，用户之前说过：「{topic}」，像是在约下次或留了话头。"
             "请自然地捡起这个话题（例如'对了，你上次说的那个……'），1-2 句话，"

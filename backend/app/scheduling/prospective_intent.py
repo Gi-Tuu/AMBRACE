@@ -43,6 +43,7 @@ from sqlalchemy import select, update
 from app.db.database import async_session_factory
 from app.models.character import ProactiveMessageLog
 from app.models.memory import ProspectiveIntent
+from app.scheduling import state_guard
 from app.utils.logger import get_logger
 
 _logger = get_logger("scheduling.prospective_intent")
@@ -643,9 +644,13 @@ def _hint_content(candidate: dict, row=None) -> str:
         return text
 
 
-def _build_prospective_hint_legacy(char_name: str, content: str) -> str:
-    """① flag 关时的旧话术（与 2026-09-04 上线版本逐字节一致，保证可回退）。"""
-    return (
+def _build_prospective_hint_legacy(char_name: str, content: str, guard: str = "") -> str:
+    """① flag 关时的旧话术（与 2026-09-04 上线版本逐字节一致，保证可回退）。
+
+    C16 批次C（2026-09-25）：``guard`` 非空时前置「现状锚 + 时空纪律」护栏块；
+    默认空串 ⇒ 返回值与旧版逐字节一致（话术本体不在本函数内改动）。
+    """
+    return guard + (
         f"你是{char_name}。你和用户之前有过一个约定/用户曾提到过：「{content}」。"
         "现在到了合适的时间，请用自己的语气自然提起这件事（可以说'我记得你之前说过…'，"
         "但不要生硬念稿、不要提'AI'、不要加引号标注），并顺势把话题抛给用户，不要替用户做决定。"
@@ -654,9 +659,13 @@ def _build_prospective_hint_legacy(char_name: str, content: str) -> str:
 
 def _build_prospective_hint(
     char_name: str, content: str, side: str, due_end: datetime | None = None,
-    *, recent_opener: bool = False, now_naive: datetime | None = None,
+    *, recent_opener: bool = False, now_naive: datetime | None = None, guard: str = "",
 ) -> str:
-    """① 按 side 分流 + ② 跨天时间锚 + ③ 冷却期换开场 的渲染提示词（纯函数）。"""
+    """① 按 side 分流 + ② 跨天时间锚 + ③ 冷却期换开场 的渲染提示词（纯函数）。
+
+    C16 批次C（2026-09-25）：``guard`` 非空时前置到返回文本最前（护栏块由调用点取锚构造，
+    本函数保持无 IO 的纯函数）；默认空串 ⇒ 行为逐字不变。
+    """
     if side == "self":
         head = (
             f"你是{char_name}。这件事是**你自己**之前说要做的：「{content}」。"
@@ -685,7 +694,7 @@ def _build_prospective_hint(
             "这次必须换一种说法，不要再重复同款开场。"
         )
     parts.append("不要生硬念稿、不要提'AI'、不要加引号标注。")
-    return "".join(parts)
+    return guard + "".join(parts)
 
 
 async def claim_intent_for_fire(intent_id: int) -> bool:
@@ -777,12 +786,17 @@ async def run_prospective_due(candidate: dict) -> bool:
         recent_opener = await recent_opener_exists(char_id)
         # Q2b：进提示词的正文按基准日绝对化；side 判定仍走原文（上面已定），两者不掺混
         hint_content = _hint_content(candidate, row)
+        # C16 批次C（2026-09-25）：两个分支共用「现状锚 + 时空纪律」护栏块，
+        # 取锚与文案唯一来源 scheduling/state_guard.py（内部 fail-open，拿不到锚只降级为纯纪律段）
+        _guard = state_guard.guard_block(
+            await state_guard.current_state_anchor(character_id=char_id, user_id=user_id))
         if _side_split_on():
             hint = _build_prospective_hint(
                 char_name, hint_content, side, candidate.get("due_end"), recent_opener=recent_opener,
+                guard=_guard,
             )
         else:
-            hint = _build_prospective_hint_legacy(char_name, hint_content)
+            hint = _build_prospective_hint_legacy(char_name, hint_content, guard=_guard)
         _sys = {"role": "system", "content": "直接输出内容，不要加引号和标注。"}
         msg = (await chat_completion(
             messages=[_sys, {"role": "user", "content": hint}],

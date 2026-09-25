@@ -24,6 +24,7 @@ from app.models.chat import ChatSession
 from app.models.character import CharacterState
 from app.models.character import StorylineEvent
 from app.application.character_state_service import DIMENSIONS
+from app.scheduling import state_guard
 from app.utils.logger import get_logger
 
 _logger = get_logger("scheduler.storyline_engine")
@@ -185,7 +186,11 @@ async def _llm_line(
         except Exception:
             identity = ""
     from app.agent.llm_client import chat_completion
+    # C16 批次A（2026-09-25）：前置「现状锚 + 时空纪律」共享护栏（唯一来源 scheduling/state_guard.py）
+    guard = state_guard.guard_block(
+        await state_guard.current_state_anchor(character_id=character_id, user_id=user_id))
     hint = (
+        guard +
         f"你是{name}，性格{personality}。\n"
         + (f"你的身份（不要混淆你与用户/用户的对象）：\n{identity}\n" if identity else "")
         + f"你的当前状态：{state_lines}。\n"
