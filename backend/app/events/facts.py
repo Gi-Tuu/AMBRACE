@@ -445,6 +445,37 @@ async def assert_fact(
         return None
 
 
+def merge_curated_evidence(
+    rep_row, *, sources=None, links=None,
+    verify_state=None, stale_after=None, confidence=None,
+):
+    """把来路证据并入簇代表行（原地更新 rep_row 的 5 个证据列），供 assert_curated 与 C14b 清账共用。
+
+    归并语义与 assert_curated 的 same 分支逐字一致（纯字段归并、不 commit，由调用方落库）：
+    - sources_json：与 rep 现值取并集（按元素去重，保留 rep 原序 + 追加新元素）；
+    - links_json：取并集（set 去重后排序）；
+    - verify_state：按「未确认 < 机器确认 < 人工确认」只升不降；
+    - stale_after：给值即覆盖（谁的代表来路更晚由调用方决定后再传入）；
+    - confidence：取 max。
+    rep_row 只需暴露这 5 个列属性（ORM 行或 SimpleNamespace 均可）；来路值以已解析的
+    sources/links 列表与标量 verify_state/stale_after/confidence 传入。
+    """
+    old_src = _safe_json(rep_row.sources_json)
+    merged = old_src + [s for s in (sources or []) if s not in old_src]
+    rep_row.sources_json = json.dumps(merged, ensure_ascii=False)
+    rep_row.links_json = json.dumps(
+        sorted(set(_safe_json(rep_row.links_json)) | set(links or [])), ensure_ascii=False)
+    # 人工确认 > 机器确认 > 未确认（只升不降）
+    rank = {VERIFY_UNVERIFIED: 0, VERIFY_MACHINE: 1, VERIFY_HUMAN: 2}
+    if verify_state is not None and rank.get(verify_state, 0) > rank.get(rep_row.verify_state, 0):
+        rep_row.verify_state = verify_state
+    if stale_after is not None:
+        rep_row.stale_after = stale_after
+    if confidence is not None:
+        rep_row.confidence = max(float(rep_row.confidence or 0), float(confidence))
+    return rep_row
+
+
 async def assert_curated(
     db, *, character_id: int, user_id: int, kind: str,
     object_value: str, predicate: str = "curated",
@@ -502,17 +533,10 @@ async def assert_curated(
     else:
         same = next((r for r in existing if (r.object_value or "").strip() == obj), None)
     if same is not None:
-        old_src = _safe_json(same.sources_json)
-        merged = old_src + [s for s in (sources or []) if s not in old_src]
-        same.sources_json = json.dumps(merged, ensure_ascii=False)
-        same.links_json = json.dumps(sorted(set(_safe_json(same.links_json)) | set(links or [])), ensure_ascii=False)
-        # 人工确认 > 机器确认 > 未确认（只升不降）
-        rank = {VERIFY_UNVERIFIED: 0, VERIFY_MACHINE: 1, VERIFY_HUMAN: 2}
-        if rank.get(verify_state, 0) > rank.get(same.verify_state, 0):
-            same.verify_state = verify_state
-        if stale_after is not None:
-            same.stale_after = stale_after
-        same.confidence = max(float(same.confidence or 0), float(confidence))
+        merge_curated_evidence(
+            same, sources=sources, links=links, verify_state=verify_state,
+            stale_after=stale_after, confidence=confidence,
+        )
         db.add(same)
         return same
 

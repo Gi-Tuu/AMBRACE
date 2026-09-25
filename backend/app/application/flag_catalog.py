@@ -212,6 +212,13 @@ _FLAG_ROWS: list[tuple] = [
      '压缩后也不丢，减少它拿已经过时的情况当作此刻继续说。',
      'Keep the essentials through compaction', 'Long conversations get condensed; this keeps your current goal, '
      'unfinished plans, and the hard requirements you stated intact, so stale situations are less likely to be described as happening now.'),
+    ('decision_layer_shadow', 'memory', 719, False, '重要程度与归类判断留痕',
+     '在“这条记忆有多重要”“这是往事还是安排”这类自动判断上，额外记一条过程留痕，便于事后核对判断得准不准；'
+     '判断结果与现在完全一样，不会因此改任何东西，关掉则不留这条记录。',
+     'Judgement diagnostics note',
+     'Automatic calls such as how important a memory is, or whether something is a past event or an '
+     'arrangement, also leave a note so the judgement can be cross-checked later. The outcomes stay exactly '
+     'as they are now; turning this off simply stops leaving the note.'),
 
     # ── 编纂知识与前瞻意图 ──
     ('curated_knowledge', 'curated', 801, False, '长期知识层',

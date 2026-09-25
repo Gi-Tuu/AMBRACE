@@ -20,6 +20,20 @@ from datetime import datetime, timedelta
 
 SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 项目根目录
 BACKUP_ROOT = os.path.join(SERVER_DIR, "backups")
+
+# ── A8 方案 A（2026-09-25）：备份包内附醒目提示（凭据仍为明文，勿外发）──
+README_IN_ZIP = "README-BACKUP.txt"
+README_BACKUP_TEXT = (
+    "AMBRACE 备份包说明（自动生成）\n"
+    "\n"
+    "本压缩包包含 backend/data/sqlite/ai_companion.db 与 backend/data/server_config.json，\n"
+    "其中的模型 / 语音 / 多模态等 API 凭据目前仍是「明文」存储（见 docs/plans.md 的 A8 条目）。\n"
+    "\n"
+    "因此：\n"
+    "1) 请勿把本备份包外发、上传网盘或提交到代码仓库；\n"
+    "2) 需要迁移到别的机器时，也请通过安全渠道传输；\n"
+    "3) 未来的「本地凭据加密（A8 方案 B）」落地后，这里会改为密文，并在包内说明如何还原。\n"
+)
 KEEP_DAYS = 14
 
 SRC_DIRS = [
@@ -127,6 +141,8 @@ def do_backup() -> str:
 
     count = 0
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        # A8 方案 A（2026-09-25）：包内附醒目提示（凭据仍为明文，勿外发）
+        zf.writestr(README_IN_ZIP, README_BACKUP_TEXT)
         for d in SRC_DIRS:
             p = os.path.join(SERVER_DIR, d)
             if not os.path.isdir(p):

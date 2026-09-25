@@ -11,6 +11,12 @@ tense 取值：
 _DONE_MARKERS（回来了/到家/结束了…）优先级最高——已完成的行程不再视为未过期计划。
 2026-09-17 批次一：位置/易变现状不再一律判「恒久画像」（任务1）；天然已发生来源整体提前到
 PLAN_MARKERS 之前归往事（任务3）。
+
+阶段 0 观测约定（2026-09-25，决策层接线）：本模块**保持同步纯函数**——不 await、不写库、不加埋点。
+影子留痕一律发生在**调用方**：由 app/domain/decision/layer.py 的 observe_tense_decision 记录，
+它只**读**本模块的 PLAN_MARKERS / _DONE_MARKERS / _has_guard / _text 做「判定输入」留痕，
+不参与判定。因此这些常量与取值器改名/删除时判定本身不受影响，但留痕字段会跟着变——改前先确认
+layer 侧取值仍然合理（开关 decision_layer_shadow 默认关，关时留痕链路整条不执行）。
 """
 from __future__ import annotations
 

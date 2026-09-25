@@ -347,6 +347,12 @@ AGENT_FLAGS = {
     "device_actions_enabled": False,
     "device_actions_plugin_enabled": False,
     "device_actions_force_dry_run": True,
+    # ── 决策层阶段 0：影子留痕（A3，2026-09-25；默认关）──
+    # 开=在已接线的决策点（当前＝记忆评星、记忆时态）把「输入/输出/耗时/来源=legacy」记进
+    #   agent_task_logs（route=decision_layer_shadow），**判定结果仍由原算法给出、逐字不变**；
+    #   攒够这些留痕才谈阶段 1 的候选后端与校准（docs/decision-layer-research.md §8.6、§10）。
+    #   关=零行为：三原语只做一次透传调用，不建记录、不起计时器、不碰 IO，与没接这层完全一致。
+    "decision_layer_shadow": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

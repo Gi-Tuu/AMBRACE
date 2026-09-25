@@ -144,6 +144,11 @@ def _in_scope_dicts(db: Path) -> list[dict]:
         con.close()
 
 
+def json_loads(text):
+    import json
+    return json.loads(text)
+
+
 # ────────────────── 1：判据边界（脚本复用生产判据本身） ──────────────────
 
 def test_只共享三字前缀不合并():
@@ -337,3 +342,241 @@ def test_计划自检拦下非法簇():
     bad2 = [{"representative": b, "members": [a]}, {"representative": a, "members": []}]
     assert any("既是代表" in m for m in cc.plan_violations(bad2))
     assert cc.plan_violations([{"representative": b, "members": [a]}]) == []
+
+
+# ────────────────── 6：C14b §4.2 证据归并（复用生产 helper，不复制实现） ──────────────────
+
+def test_脚本证据归并复用生产helper不复制实现():
+    """钉死「不得自己重写一套归并逻辑」：脚本从 app.events.facts 引入同一个 merge helper，
+    自身不出现并集/只升/取 max 的重复实现（这些规则只存在于 facts.py 一处）。"""
+    src = _SCRIPT.read_text(encoding="utf-8")
+    assert "from app.events.facts import" in src and "merge_curated_evidence" in src
+    assert "old_src" not in src and "rank.get" not in src
+    # 该 helper 确实是生产 assert_curated 所用的同一函数（有 __code__、非脚本本地定义）
+    from app.events.facts import merge_curated_evidence
+    assert hasattr(merge_curated_evidence, "__code__")
+
+
+def test_归并helper_并集去重取max只升不降():
+    """纯函数直接吃 facts.merge_curated_evidence：sources/links 并集、confidence max、verify 只升。"""
+    import json
+    from types import SimpleNamespace
+
+    from app.events.facts import merge_curated_evidence
+
+    rep = SimpleNamespace(sources_json='[{"m": 0}]', links_json='["R"]',
+                          verify_state="unverified", stale_after=None, confidence=0.5)
+    merge_curated_evidence(rep, sources=[{"m": 1}, {"m": 0}], links=["A", "R"],
+                           verify_state="machine-confirmed",
+                           stale_after="2027-01-30 00:00:00.000000", confidence=1.0)
+    assert json.loads(rep.sources_json) == [{"m": 0}, {"m": 1}]   # 并集去重、保留 rep 原序
+    assert json.loads(rep.links_json) == ["A", "R"]               # 并集后排序
+    assert rep.confidence == 1.0                                  # 取 max
+    assert rep.verify_state == "machine-confirmed"                # 只升不降（unverified→machine）
+    # 再来一次更低的来路值：verify/confidence 都不得下降
+    merge_curated_evidence(rep, sources=[{"m": 2}], links=["C"],
+                           verify_state="unverified", stale_after=None, confidence=0.1)
+    assert rep.verify_state == "machine-confirmed"
+    assert rep.confidence == 1.0
+    assert json.loads(rep.sources_json) == [{"m": 0}, {"m": 1}, {"m": 2}]
+
+
+def test_stale取更晚_None视为永不过期不被有限值覆盖():
+    """§4.2：成员更晚才取更晚；代表 None＝永不过期，成员有限值不得覆盖；成员 None 不动代表。"""
+    assert cc._stale_to_merge(None, "2027-01-30 00:00:00.000000") is None      # 有限不覆盖 None
+    assert cc._stale_to_merge("2027-01-10 00:00:00.000000",
+                              "2027-01-30 00:00:00.000000") == "2027-01-30 00:00:00.000000"
+    assert cc._stale_to_merge("2027-01-30 00:00:00.000000",
+                              "2027-01-10 00:00:00.000000") is None             # 成员更早→不动
+    assert cc._stale_to_merge("2027-01-10 00:00:00.000000", None) is None       # 成员 None→不动
+
+
+# 证据归并专用簇（与主 seed 隔离，避免扰动既有计数断言）：ids 201/202→代表 203。
+def _seed_evidence(tmp_path: Path) -> Path:
+    from datetime import datetime
+
+    from _dbclone import clone_engine, make_session_factory
+
+    dst = Path(tmp_path) / "ev.db"
+    engine = clone_engine(str(dst))
+    factory = make_session_factory(engine)
+    rows = [
+        # id, sources_json, links_json, confidence, verify_state, stale_after
+        (203, '[{"m": 0}]', '["R"]', 0.5, "unverified", datetime(2027, 1, 10)),
+        (201, '[{"m": 1}]', '["A"]', 1.0, "machine-confirmed", datetime(2027, 1, 5)),
+        (202, '[{"m": 1}]', '["B"]', 0.8, "machine-confirmed", datetime(2027, 1, 30)),
+    ]
+
+    async def _fill():
+        async with factory() as db:
+            for rid, src, lnk, conf, verify, stale in rows:
+                db.add(WorldFact(
+                    id=rid, user_id=1, character_id=13, subject_type="character",
+                    subject_id=13, predicate="curated", status="active",
+                    kind="relationship_baseline", audience='["public"]',
+                    author="system", is_authoritative=True,
+                    object_value={201: "我是用户的老公",
+                                  202: "我是用户的老公，与用户同住",
+                                  203: "我是用户的老公，会为他做饭"}[rid],
+                    sources_json=src, links_json=lnk, confidence=conf,
+                    verify_state=verify, stale_after=stale,
+                ))
+            await db.commit()
+    asyncio.run(_fill())
+    asyncio.run(engine.dispose())
+    return dst
+
+
+def test_证据归并四项_代表行并入成员证据(tmp_path, capsys):
+    db = _seed_evidence(tmp_path)
+    assert cc.main(["--db", str(db), "--apply", "--yes"]) == 0
+    capsys.readouterr()
+
+    rep = _row(db, 203)
+    assert json_loads(rep["sources_json"]) == [{"m": 0}, {"m": 1}]   # 成员 {"m":1} 并入、去重一份
+    assert json_loads(rep["links_json"]) == ["A", "B", "R"]          # 三方并集排序
+    assert rep["confidence"] == 1.0                                  # max(0.5,1.0,0.8)
+    assert rep["verify_state"] == "machine-confirmed"                # 只升
+    assert rep["stale_after"].startswith("2027-01-30")               # 取更晚（成员202）
+    # 代表行身份/正文/状态一律不动
+    assert rep["status"] == "active" and rep["character_id"] == 13 and rep["predicate"] == "curated"
+    assert rep["object_value"] == "我是用户的老公，会为他做饭"
+
+    # 成员行仅被 supersede，自身证据一字不改
+    for mid, rep_id in ((201, 203), (202, 203)):
+        m = _row(db, mid)
+        assert m["status"] == "superseded" and m["superseded_by"] == rep_id
+    assert _row(db, 201)["sources_json"] == '[{"m": 1}]'
+    assert _row(db, 201)["confidence"] == 1.0
+    assert _row(db, 202)["links_json"] == '["B"]'
+
+
+def test_代表行永不过期不被成员有限值缩短(tmp_path, capsys):
+    """代表 stale_after=None（永不过期）时，成员即便有 stale 也不得把代表变成会过期。"""
+    from datetime import datetime
+
+    from _dbclone import clone_engine, make_session_factory
+
+    dst = Path(tmp_path) / "ev2.db"
+    engine = clone_engine(str(dst))
+    factory = make_session_factory(engine)
+    rows = [
+        (203, '[{"m": 0}]', '["R"]', 0.5, "unverified", None),                 # 代表：永不过期
+        (201, '[{"m": 1}]', '["A"]', 1.0, "machine-confirmed", datetime(2027, 1, 5)),  # 成员：会过期
+    ]
+
+    async def _fill():
+        async with factory() as db:
+            for rid, src, lnk, conf, verify, stale in rows:
+                db.add(WorldFact(
+                    id=rid, user_id=1, character_id=13, subject_type="character",
+                    subject_id=13, predicate="curated", status="active",
+                    kind="relationship_baseline", audience='["public"]', author="system",
+                    is_authoritative=True,
+                    object_value={201: "我是用户的老公",
+                                  203: "我是用户的老公，会为他做饭"}[rid],
+                    sources_json=src, links_json=lnk, confidence=conf,
+                    verify_state=verify, stale_after=stale,
+                ))
+            await db.commit()
+    asyncio.run(_fill())
+    asyncio.run(engine.dispose())
+
+    assert cc.main(["--db", str(dst), "--apply", "--yes"]) == 0
+    capsys.readouterr()
+    assert _row(dst, 203)["stale_after"] is None                    # 未被成员有限值覆盖
+    assert _row(dst, 203)["confidence"] == 1.0                      # 其它四项仍归并
+
+
+# ────────────────── 7：C14b §4.4 备份 / 审计 / 分批 ──────────────────
+
+def test_备份文件生成且非空(tmp_path, capsys):
+    db = _seed(tmp_path)
+    assert cc.main(["--db", str(db), "--apply", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "[备份]" in out
+    backups = list(tmp_path.glob("backup_curated_cleanup_*.sqlite"))
+    assert len(backups) == 1 and backups[0].stat().st_size > 0
+
+
+def test_备份失败_拒绝执行且不改库(tmp_path, capsys, monkeypatch):
+    """fail-closed：拿不到有效备份 ⇒ 直接拒绝写入并返回非 0，绝不「先跑再说」。"""
+    db = _seed(tmp_path)
+    before = _snapshot(db)
+
+    def boom(_path):
+        raise RuntimeError("模拟备份失败")
+
+    monkeypatch.setattr(cc, "create_backup", boom)
+    rc = cc.main(["--db", str(db), "--apply", "--yes"])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "备份" in err and "拒绝执行" in err
+    assert _snapshot(db) == before                       # 未产生任何写入
+    assert list(tmp_path.glob("backup_curated_cleanup_*.sqlite")) == []
+
+
+def test_审计日志含每行变更(tmp_path, capsys):
+    db = _seed(tmp_path)
+    assert cc.main(["--db", str(db), "--apply", "--yes"]) == 0
+    err = capsys.readouterr().err
+    audit = [ln for ln in err.splitlines() if ln.startswith("AUDIT ")]
+    ids = {int(ln.split("id=")[1].split()[0]) for ln in audit}
+    assert {101, 102, 110} <= ids                        # 每个成员行都有一条可追溯记录
+    for ln in audit:
+        for field in ("id=", "kind=", "status:", "superseded_by=", " at="):
+            assert field in ln, ln
+    assert any("active -> superseded" in ln for ln in audit)
+
+
+def test_审计日志可落文件(tmp_path, capsys):
+    db = _seed(tmp_path)
+    log = tmp_path / "audit.log"
+    assert cc.main(["--db", str(db), "--apply", "--yes", "--audit-log", str(log)]) == 0
+    capsys.readouterr()
+    content = log.read_text(encoding="utf-8")
+    for rid in (101, 102, 110):
+        assert f"id={rid}" in content
+
+
+def test_limit_分批跑两次效果等于一次(tmp_path, capsys):
+    (tmp_path / "b").mkdir()
+    (tmp_path / "f").mkdir()
+    dbb, dbf = _seed(tmp_path / "b"), _seed(tmp_path / "f")
+
+    # 每轮 limit=1（2 个含合并簇 ⇒ 两轮跑完）
+    assert cc.main(["--db", str(dbb), "--apply", "--yes", "--limit", "1"]) == 0
+    assert "分批" in capsys.readouterr().out
+    assert cc.main(["--db", str(dbb), "--apply", "--yes", "--limit", "1"]) == 0
+    assert "分批" in capsys.readouterr().out
+    # 一次跑完（对照）
+    assert cc.main(["--db", str(dbf), "--apply", "--yes"]) == 0
+    capsys.readouterr()
+
+    expect = {101: 103, 102: 103, 110: 111}
+    for rid, by in expect.items():
+        rb, rf = _row(dbb, rid), _row(dbf, rid)
+        assert rb["status"] == rf["status"] == "superseded"
+        assert rb["superseded_by"] == rf["superseded_by"] == by
+    for rid in (103, 111, 120, 121, 130, 131):           # 代表/未并行：两轮后仍 active 且正文一致
+        assert _row(dbb, rid)["status"] == "active"
+        assert _row(dbb, rid)["object_value"] == _row(dbf, rid)["object_value"]
+    # 第三次（已无同义 active 成员）⇒ 幂等 0 变更
+    assert cc.main(["--db", str(dbb), "--apply", "--yes", "--limit", "1"]) == 0
+    assert "0 变更" in capsys.readouterr().out
+
+
+def test_limit非法值拒绝执行(tmp_path, capsys):
+    db = _seed(tmp_path)
+    before = _snapshot(db)
+    assert cc.main(["--db", str(db), "--apply", "--yes", "--limit", "0"]) == 2
+    assert "--limit" in capsys.readouterr().err
+    assert _snapshot(db) == before
+
+
+def test_rollback开关本期拒绝(tmp_path, capsys):
+    db = _seed(tmp_path)
+    before = _snapshot(db)
+    assert cc.main(["--db", str(db), "--rollback"]) == 2
+    assert "rollback" in capsys.readouterr().err
+    assert _snapshot(db) == before

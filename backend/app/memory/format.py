@@ -81,6 +81,10 @@ def format_memory_line(m: dict, max_len: int = 150, prefix: str = "- ", include_
     # 来源」统一补 episodic hint（与 shared_events 的 I4 同源），避免只因子句含「明天/打算」
     # 就被判成未过期计划；显式 tense_hint 优先级最高。
     _tcls = tense_hint or ("episodic" if is_happened_source(m) else classify_tense(m))
+    # 挂点 B 决策层影子留痕（阶段 0，2026-09-25）：在生效值产生处记一次；
+    # flag decision_layer_shadow 关时 observe 首行即返回、零行为，且 fail-open + 缓冲写库。
+    from app.domain.decision import observe_tense_decision
+    observe_tense_decision(m, _tcls, tense_hint=tense_hint)
     if _tcls == "plan":
         _tense_tag = "［旧安排·已过期］ " if is_plan_expired(m) else "［计划］ "
     else:

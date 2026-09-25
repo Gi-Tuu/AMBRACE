@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func
 
 from app.db.database import async_session_factory
+from app.domain.decision import ask_score
 from app.models.memory import Memory
 from app.models.character import AICharacter
 from app.utils.logger import get_logger
@@ -59,7 +60,12 @@ async def _pick_candidates(db, character_id: int, limit: int) -> list:
 
 
 async def _rate_batch(character, items: list) -> list[dict]:
-    """一次 LLM 调用批量评星：返回 [{"id", "star"}]；失败/解析失败返回 []。"""
+    """一次 LLM 调用批量评星：返回 [{"id", "star"}]；失败/解析失败返回 []。
+
+    挂点 A（决策层阶段 0，2026-09-25）：每条星分经 ``ask_score(lo=1, hi=5)`` 走一遍统一口径，
+    ``legacy`` 就是原来的「夹到 1..5」算法 ⇒ 返回值与本层接线前逐字相同（透传、不裁剪、不转型）。
+    影子留痕只在 decision_layer_shadow 开时发生（一条星分＝一行 agent_task_logs），关时零行为。
+    """
     from app.agent.llm_client import chat_completion
     char_name = character.name if character else "我"
     mem_list = "\n".join(
@@ -92,10 +98,18 @@ async def _rate_batch(character, items: list) -> list[dict]:
         return []
     if not isinstance(data, list):
         return []
+    contents = {m.id: (m.content or "") for m in items}
     result = []
     for row in data:
         if isinstance(row, dict) and "id" in row and isinstance(row.get("star"), int):
-            result.append({"id": row["id"], "star": max(1, min(5, row["star"]))})
+            star, _conf = ask_score(
+                contents.get(row["id"], ""), "这条记忆对我们关系有多重要（1-5 星）", 1, 5,
+                # 默认参数按行求值＝把原来的「夹到 1..5」整段搬进 legacy，ask_score 交回的就是它本身
+                legacy=lambda v=max(1, min(5, row["star"])): v,
+                hook="memory_star_rating",
+                character_id=character.id if character else None,
+                context={"memory_id": row["id"], "raw_star": row["star"]})
+            result.append({"id": row["id"], "star": star})
     return result
 
 
