@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from app.db.database import async_session_factory
 from app.models.memory import Memory
 from app.models.character import ProactiveMessageLog
+from app.scheduling import state_guard
 from app.scheduling.triggers import get_active_characters
 from app.domain.emotion.model import detect_user_emotion
 from app.utils.logger import get_logger
@@ -52,29 +53,16 @@ def _cn_now_prefix(now: datetime | None = None) -> str:
 
 async def _current_anchor(character_id: int, user_id: int) -> str:
     """当前现状锚（fail-open：拿不到就返回空串，绝不抛）。A7（2026-09-24）"""
-    try:
-        from app.memory.current_state import current_user_state_anchor
-        return await current_user_state_anchor(character_id=character_id, user_id=user_id,
-                                               include_profile_location=True, max_chars=200)
-    except Exception:
-        return ""
+    return await state_guard.current_state_anchor(character_id, user_id)
 
 
-# A7：时空纪律固定文案（与 scheduling/pet_care.py 的 STATE_GUARD_DISCIPLINE 必须逐字一致，
-# 由 tests/test_proactive_state_guard_a7.py 钉住；方案 B 抽共享前置时这两份合并为一份）。
-STATE_GUARD_DISCIPLINE = (
-    "【时空纪律】上面【当前现状】里的内容才是TA现在的真实情况；你想起的过往、旧地点、旧安排都属往事，"
-    "提起时用「我记得…/还记得…」这类回忆口吻自然带过，不要当成现在正在发生的事；与【当前现状】冲突时一律以现状为准。"
-)
+# A7：时空纪律固定文案（C12a 起唯一来源为 scheduling/state_guard.py，此处保留原名供调用方与测试引用）
+STATE_GUARD_DISCIPLINE = state_guard.STATE_GUARD_DISCIPLINE
 
 
 def _state_guard_segments(anchor: str) -> list[str]:
     """【当前现状】+【时空纪律】两段（纯函数，便于单测）；anchor 为空时只出纪律段。"""
-    segs: list[str] = []
-    if anchor and anchor.strip():
-        segs.append("【当前现状】" + anchor.strip())
-    segs.append(STATE_GUARD_DISCIPLINE)
-    return segs
+    return state_guard.guard_segments(anchor)
 
 
 # ── L4（2026-09-09 主体归属治理）：一次性生活动作不主动复读 ──

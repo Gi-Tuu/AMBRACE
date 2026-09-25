@@ -1275,15 +1275,30 @@ def current_plugin_name() -> str | None:
 
 
 def mount_plugin_routers(app) -> None:
-    """挂载各插件的 http_router 到 FastAPI app（lifespan 启动时 sync_plugins_db 后调用）"""
+    """挂载各插件的 http_router 到 FastAPI app（lifespan 启动时 sync_plugins_db 后调用）
+
+    C3（2026-09-25）：flag ``plugin_disabled_route_gate`` 开时，已禁用插件（内存缓存
+    ``_enabled``，缺键视为禁用）直接**跳过挂载**，与请求级禁用闸同一口径；
+    flag 关时逐字旧行为——所有带 router 的插件照常挂载。
+    """
+    gate = plugin_disabled_route_gate_enabled()
     for name, entry in list(_loaded.items()):
         r = entry.get("router")
-        if r is not None:
+        if r is None:
+            continue
+        if gate:
             try:
-                app.include_router(r)
-                _logger.info("插件路由已挂载: /api/v1/plugins/%s", name)
-            except Exception as e:
-                _logger.warning("插件 %s 路由挂载失败: %s", name, e)
+                enabled = bool(_enabled.get(name, False))
+            except Exception:
+                enabled = True  # 判定失败只影响该插件：按旧行为挂载，请求级闸仍兜底
+            if not enabled:
+                _logger.info("插件路由跳过（插件已禁用）: %s", name)
+                continue
+        try:
+            app.include_router(r)
+            _logger.info("插件路由已挂载: /api/v1/plugins/%s", name)
+        except Exception as e:
+            _logger.warning("插件 %s 路由挂载失败: %s", name, e)
 
 def preload_channels() -> int:
     """X5（2026-09-01）：仅加载 manifest 声明 channel 的渠道插件（main.py lifespan 在 init_db

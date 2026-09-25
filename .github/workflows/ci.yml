@@ -331,3 +331,66 @@ jobs:
 
       - if: always()
         run: docker compose down -v
+
+  deploy-audit:
+    # C8/C9（2026-09-25）：Linux 侧部署体检。两条都有真实事故事由：
+    #   C8：本地开发在 Windows，pip-compile 在 Windows 解析会丢 sys_platform 标记
+    #       （requirements.txt 里 pywin32 那行的手工标记就是为此补的）
+    #       ⇒ 这里在 Linux 上实跑「锁可解析安装」，让标记缺失类问题在 CI 就暴露；
+    #   C9：scripts/*.sh 长期没在 Linux/macOS 上实测 ⇒ 这里做 bash 语法体检 + shellcheck 观察项。
+    # 门禁口径：Linux + Python 3.13（与锁的生成环境一致）为硬门禁；3.14 是目标版本，
+    # 但部分 wheel 可能还没跟上（C9 记过「Python target 3.14 需较新镜像」），单开观察 job。
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
+    name: "Deploy audit (Linux: locked deps resolve + deploy scripts)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.13（锁的生成环境）
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: 锁文件在 Linux 可解析（硬门禁）
+        run: |
+          set -e
+          python -m pip install --upgrade pip >/dev/null
+          for f in backend/requirements.txt backend/requirements-dev.txt backend/requirements-voice.txt; do
+            echo "== resolve $f =="
+            python -m pip install --dry-run --ignore-installed -r "$f"
+          done
+
+      - name: Linux 部署脚本语法体检
+        run: |
+          for f in scripts/*.sh; do
+            bash -n "$f"
+            echo "ok: $f"
+          done
+
+      - name: shellcheck（观察项，不拦）
+        continue-on-error: true
+        run: |
+          shellcheck --version || true
+          shellcheck -S warning scripts/*.sh || true
+
+  deploy-audit-py314:
+    # C9：目标 Python 3.14 的锁可解析性观察（不拦 CI；红了说明有 wheel 还没跟上，另行处理）。
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
+    name: Deploy audit (Python 3.14 observation)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: 锁文件在 Python 3.14 可解析（观察）
+        run: |
+          python -m pip install --upgrade pip >/dev/null
+          python -m pip install --dry-run --ignore-installed -r backend/requirements.txt

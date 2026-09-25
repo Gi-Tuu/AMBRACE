@@ -16,6 +16,7 @@ from app.db.database import async_session_factory
 from app.models.pet import Pet
 from app.models.character import AICharacter
 from app.models.character import ProactiveMessageLog
+from app.scheduling import state_guard
 from app.utils.logger import get_logger
 from app.agent.llm_client import chat_completion, load_character_reasoning_level
 from app.utils.dnd import user_in_dnd_period as _user_in_dnd_period
@@ -26,38 +27,23 @@ _logger = get_logger("scheduler.pet_care")
 # ── A7（2026-09-24）：主动消息「时空护栏」——CN 时间行 + 现状锚 + 回忆纪律 ──
 # 三条 prompt（提醒 / 领养告知 / 照顾分享）此前既无当前时间也无用户现状锚，
 # 会出现「用户已回湛江仍问长沙热不热」这类旧地点冒充现状的 bug。
-STATE_GUARD_DISCIPLINE = (
-    "【时空纪律】上面【当前现状】里的内容才是TA现在的真实情况；你想起的过往、旧地点、旧安排都属往事，"
-    "提起时用「我记得…/还记得…」这类回忆口吻自然带过，不要当成现在正在发生的事；与【当前现状】冲突时一律以现状为准。"
-)
+# C12a（2026-09-25）：实现收敛到 scheduling/state_guard.py，以下保留原名做薄封装。
+STATE_GUARD_DISCIPLINE = state_guard.STATE_GUARD_DISCIPLINE
 
 
 def _cn_now_line() -> str:
-    """北京时间一句话（口径与 life_regression._cn_now_prefix 一致）。A7"""
-    from app.utils.timeutil import app_local_now
-    now = app_local_now()
-    week = "一二三四五六日"[now.weekday()]
-    return (f"现在是北京时间 {now.year}年{now.month}月{now.day}日 "
-            f"星期{week} {now.hour:02d}:{now.minute:02d}。")
+    """北京时间一句话（无中文午别；life_regression._cn_now_prefix 带午别，两份未合并）。A7"""
+    return state_guard.cn_now_line()
 
 
 async def _state_anchor(character_id: int, user_id: int) -> str:
     """当前现状锚（fail-open：拿不到就返回空串，绝不抛）。A7"""
-    try:
-        from app.memory.current_state import current_user_state_anchor
-        return await current_user_state_anchor(character_id=character_id, user_id=user_id,
-                                               include_profile_location=True, max_chars=200)
-    except Exception:
-        return ""
+    return await state_guard.current_state_anchor(character_id, user_id)
 
 
 def _state_guard_block(anchor: str) -> str:
     """拼「【当前现状】…\n【时空纪律】…」；anchor 空时只出纪律段，恒非空、结尾带换行。"""
-    segs: list[str] = []
-    if anchor and anchor.strip():
-        segs.append("【当前现状】" + anchor.strip())
-    segs.append(STATE_GUARD_DISCIPLINE)
-    return "\n".join(segs) + "\n"
+    return state_guard.guard_block(anchor)
 
 PET_EVENT_TYPE = "pet_remind"
 REMIND_INTERVAL_HOURS = 6   # 同一宠物两次提醒最小间隔
