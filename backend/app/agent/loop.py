@@ -340,6 +340,13 @@ AGENT_FLAGS = {
     #   始终保留，命中只留 WARNING 不清。开法同其它灰度键：本键已登记进 AGENT_FLAGS，重启后可经
     #   flag_service 热改。
     "account_purge_scheduler": False,
+    # ── X7 行动通道三条闸（C1a，2026-09-25：从「直接读 runtime_flags」改登记进常规开关体系）──
+    # 缺省方向与原先各自更严的一侧逐字一致：两条总闸缺行＝关，强制干跑缺行＝开（裁决通过也不
+    #   下发可执行凭据）。三条键默认由服务器锁定（flag_service.SERVER_LOCKED_DEFAULT_KEYS）：
+    #   App 开关页可见但不可自助改，改写入口仍是服务器控制台（PUT /admin/server/device-actions/switches）。
+    "device_actions_enabled": False,
+    "device_actions_plugin_enabled": False,
+    "device_actions_force_dry_run": True,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

@@ -7,11 +7,11 @@ M4 是 X7 唯一「写」的一批，本批只做**裁决侧**：意图进来 �
 仍留内存。
 
 闸门（决策①③，2026-09-23 用户拍板：**默认全禁、逐条授权**；任一不过即拒，顺序固定）：
-① 全局 kill switch —— ``runtime_flags`` 的 ``device_actions_enabled``；**读不到该行即视为关**
-   （本批刻意不新建开关行、不登记进 ``AGENT_FLAGS``，故运维要开得先手工插行）；
+① 全局 kill switch —— ``AGENT_FLAGS`` 的 ``device_actions_enabled``（C1a 起登记进常规开关体系，
+   App 开关页可见但默认服务器锁定）；**取不到该键即视为关**；
 ② 账号级 —— ``user_runtime_flags`` 同名键（按 user_id），**缺行即关**；
 ③ 插件侧三条闸（M4c-1 灰度；**内置调用方整层不适用**，见下面「身份来源」段）：
-   ③a 灰度闸 —— 总闸 ``runtime_flags`` 的 ``device_actions_plugin_enabled``（**读不到即关**，
+   ③a 灰度闸 —— 总闸 ``AGENT_FLAGS`` 的 ``device_actions_plugin_enabled``（**取不到即关**，
        未开即拒 ``plugin_actions_disabled``）**且**该插件已被灰度放开（:data:`PLUGIN_ACTION_ENABLED_PLUGINS`
        ∪ :func:`allow_plugin_actions` 写进 ``device_action_plugins`` 的放开集，默认空集＝一条都不放，
        未命中拒 ``plugin_not_graylisted``；读库失败只认编译期常量，不额外放行）；
@@ -21,7 +21,7 @@ M4 是 X7 唯一「写」的一批，本批只做**裁决侧**：意图进来 �
 ④ 目标白名单 —— 按租户读 ``device_action_targets``，**无行＝空集＝全拒**（读库异常同样空集）；
    黑名单（:data:`TARGET_BLACKLIST`，编译期常量）优先于白名单。
 
-闸门之后另有 ``device_actions_force_dry_run``（**读不到即开＝强制干跑**，M4c-1）：为真时插件提交的
+闸门之后另有 ``device_actions_force_dry_run``（**取不到即开＝强制干跑**，M4c-1）：为真时插件提交的
 意图即使全部闸门通过也**不发 token、不入队**，只回 ``status="dry_run"``——灰度期「只看裁决、不动手机」。
 
 **内置调用方不受 ③a / ③b / 强制干跑这三条插件闸影响**（仍走 ①②④ + 熔断 + 限流 + 审计一条不少），
@@ -47,7 +47,8 @@ elapsed_ms dry_run reason``（值里的空格/换行折成下划线，保持单�
 
 会话工厂刻意按属性访问（``database.async_session_factory``）而非 ``from … import`` 绑死名字，
 与 :mod:`app.device.port` 同口径：测试只 patch ``app.db.database`` 上的名字即可覆盖本模块全部
-读点（闸门 ①② 的开关、闸门④ 与 ③a 的两份名单、以及它们的写入路径同源）。
+读点（闸门 ② 的账号级开关、闸门④ 与 ③a 的两份名单、以及它们的写入路径同源；闸门 ①/③a 总闸与
+强制干跑自 C1a 起读 ``AGENT_FLAGS`` 现值，不再打库）。
 """
 from __future__ import annotations
 
@@ -58,23 +59,25 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.db import database
-from app.device.capabilities import get_capability
+from app.device.capabilities import CAPABILITIES, get_capability
 from app.utils.logger import get_logger
 from app.utils.timeutil import now_naive_utc
 
 _logger = get_logger("device.actions")
 
-# ── 闸门 ①② 的键名（全局与账号级同名；不新建开关行，读不到即关）──
+# ── 闸门 ①② 的键名（全局与账号级同名；账号级仍直接读表，全局见下）──
 KILL_SWITCH_KEY = "device_actions_enabled"
 
-# ── 插件灰度闸（M4c-1 ③a + 强制干跑）的键名：与 KILL_SWITCH_KEY 同款「直接读表」口径 ──
-# 两者的缺省方向不同，都是刻意更严的一侧：
-#   PLUGIN_KILL_SWITCH_KEY 读不到＝关（插件通道整体不可用）；
-#   FORCE_DRY_RUN_KEY      读不到＝开（裁决通过也不下发可执行 token）。
+# ── 插件灰度闸（M4c-1 ③a + 强制干跑）的键名 ──
+# C1a（2026-09-25）起三条键都登记进 ``AGENT_FLAGS``（app/agent/loop.py），闸门读的是它的现值
+# （= 硬编码默认 + 启动时 DB 覆盖 + 控制台热改），不再各自打库；三者的缺省方向不同，都是刻意
+# 更严的一侧：
+#   KILL_SWITCH_KEY / PLUGIN_KILL_SWITCH_KEY 取不到＝关（通道不可用）；
+#   FORCE_DRY_RUN_KEY                        取不到＝开（裁决通过也不下发可执行 token）。
 PLUGIN_KILL_SWITCH_KEY = "device_actions_plugin_enabled"
 FORCE_DRY_RUN_KEY = "device_actions_force_dry_run"
 
-# ── 控制台（M4e-1）改这三条开关时用的**逻辑名** → 真实 ``runtime_flags`` 键 ──
+# ── 控制台（M4e-1）改这三条开关时用的**逻辑名** → 真实 ``runtime_flags`` 键（与 AGENT_FLAGS 同名）──
 # 控制台契约不暴露物理键名，只认这三个逻辑名；三者的缺省方向各不相同（见 :func:`action_flag_states`）。
 ACTION_FLAG_KEYS = {
     "global": KILL_SWITCH_KEY,
@@ -378,6 +381,96 @@ async def plugin_graylisted(name: str) -> bool:
     return name in await _stored_plugins()
 
 
+# ── 行动确认策略落库（C1b，2026-09-25 派单：X7 遗留②）──
+# 三档字面量与 Flutter 侧（``device_action_prefs.dart``）逐字对齐，缺省档＝中档。
+# 本段只负责「按账号存/取一行档位」，**不参与闸门裁决**：档位是 App 端的确认交互策略，
+# 服务端持久化只是让换机/重装后不必回到缺省档，不构成任何行为放开。
+ACTION_POLICY_TIERS: tuple[str, ...] = ("once_ever", "first_per_type", "every_time")
+ACTION_POLICY_DEFAULT = "first_per_type"
+
+
+def action_capabilities() -> tuple[str, ...]:
+    """``kind="act"`` 的能力 id —— 策略端点校验 capability 的唯一权威源（清单只在 capabilities）。"""
+    return tuple(spec.id for spec in CAPABILITIES.values() if spec.kind == "act")
+
+
+async def configured_policies(user_id: int | None) -> dict[str, str]:
+    """某账号**已配置过**的档位（``capability → policy``）。
+
+    无行＝没配过 → 返回空 dict（App 据此回落缺省档）；``user_id`` 拿不到同样回空 dict。
+    读库异常**也回空 dict**（绝不伪造档位）——App 端把「空」当成「服务端没配过」从而保留本机
+    现值，不会因为后端抖动就被清成缺省档。
+    """
+    from sqlalchemy import select
+
+    from app.models.device import DeviceActionPolicy
+
+    if user_id is None:
+        return {}
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        return {}
+    try:
+        async with database.async_session_factory() as db:
+            rows = (await db.execute(
+                select(DeviceActionPolicy.capability, DeviceActionPolicy.policy)
+                .where(DeviceActionPolicy.user_id == uid)
+            )).all()
+    except Exception as e:  # 缺表 / 库坏 → 当成「没配过」，不猜任何档位
+        _logger.warning("行动策略读库失败 user=%s err=%s", uid, e)
+        return {}
+    return {str(cap): str(pol) for cap, pol in rows}
+
+
+async def store_policy(user_id: int | None, capability: str, policy: str) -> bool:
+    """幂等 upsert 一行档位（同一 ``(user_id, capability)`` 永远只有一行）。
+
+    档位与能力名的合法性由**端点**校验（非法一律 400，不许静默落库）；本函数只负责写。
+    返回 ``False`` ＝「这一条没落库」（账号拿不到 / 写库异常），调用方必须据此如实回错——
+    假装成功会让 App 以为换档已跨端生效，而下次开机同步又回到旧档。
+    """
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.device import DeviceActionPolicy
+
+    if user_id is None:
+        return False                      # 拿不到账号＝不写库（不做全表匹配，与 remove_target 同口径）
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        return False
+
+    async def _row(db):
+        return (await db.execute(
+            select(DeviceActionPolicy).where(DeviceActionPolicy.user_id == uid,
+                                             DeviceActionPolicy.capability == capability)
+        )).scalar_one_or_none()
+
+    try:
+        async with database.async_session_factory() as db:
+            hit = await _row(db)
+            if hit is None:
+                db.add(DeviceActionPolicy(user_id=uid, capability=capability, policy=policy))
+            else:
+                hit.policy = policy
+            try:
+                await db.commit()
+            except IntegrityError:
+                # 并发下另一路刚插入同一 (user, capability)：唯一约束已挡住第二行，改写它那一行
+                await db.rollback()
+                hit = await _row(db)
+                if hit is None:
+                    return False
+                hit.policy = policy
+                await db.commit()
+    except Exception as e:
+        _logger.warning("行动策略写库失败 user=%s capability=%s err=%s", uid, capability, e)
+        return False
+    return True
+
+
 def reset_runtime_state() -> None:
     """清空进程内**运行时统计**（限流桶 / 熔断计数 / 待执行队列）。
 
@@ -439,9 +532,9 @@ async def _flag_enabled(model, user_id: int | None = None, *, key: str = KILL_SW
                         missing_means: bool = False) -> bool:
     """直接读一行开关；**无行 / 读失败一律按 ``missing_means`` 兜底**（fail-closed 到更严的一侧）。
 
-    ``model`` 取 ``RuntimeFlag``（全局）或 ``UserRuntimeFlag``（账号级，此时必须给 ``user_id``，
-    拿不到账号即关，不查库）。``missing_means`` 是「读不到这一行」时的取值：行动总开关传 ``False``
-    （读不到＝关），强制干跑传 ``True``（读不到＝开，宁可干跑也不误放真实动作）。
+    ``model`` 取 ``UserRuntimeFlag``（账号级，此时必须给 ``user_id``，拿不到账号即关，不查库）；
+    全局三条闸自 C1a 起改读 ``AGENT_FLAGS``（见 :func:`_agent_flag`），不再走本函数。
+    ``missing_means`` 是「读不到这一行」时的取值：账号级闸传 ``False``（读不到＝关）。
     """
     from sqlalchemy import select
 
@@ -461,10 +554,23 @@ async def _flag_enabled(model, user_id: int | None = None, *, key: str = KILL_SW
     return bool(row.enabled)
 
 
-async def _global_actions_enabled() -> bool:
-    from app.models.config import RuntimeFlag
+def _agent_flag(key: str, *, missing_means: bool) -> bool:
+    """读 ``AGENT_FLAGS`` 里的行动开关现值（C1a：三条键已登记进常规开关体系）。
 
-    return await _flag_enabled(RuntimeFlag)
+    现值来源：硬编码默认 → 启动时 ``load_runtime_flags`` 覆盖 → 控制台热改（:func:`set_action_flag`
+    与 ``flag_service.set_runtime_flag`` 都同步内存）。**取不到该键或读的过程中出任何异常**一律按
+    ``missing_means`` 兜底（关 / 关 / 开＝各自更严的一侧），绝不因读开关失败而放行行动。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS[key])
+    except Exception as e:  # 键缺失 / loop 导入失败 → 缺省方向
+        _logger.warning("行动开关读取失败 key=%s err=%s", key, e)
+        return missing_means
+
+
+async def _global_actions_enabled() -> bool:
+    return _agent_flag(KILL_SWITCH_KEY, missing_means=False)
 
 
 async def _account_actions_enabled(user_id: int | None) -> bool:
@@ -474,29 +580,27 @@ async def _account_actions_enabled(user_id: int | None) -> bool:
 
 
 async def _plugin_actions_enabled() -> bool:
-    """闸门 ③a 的插件总闸：**读不到该行即视为关**（与全局开关同口径）。"""
-    from app.models.config import RuntimeFlag
-
-    return await _flag_enabled(RuntimeFlag, key=PLUGIN_KILL_SWITCH_KEY)
+    """闸门 ③a 的插件总闸：**取不到该键即视为关**（与全局开关同口径）。"""
+    return _agent_flag(PLUGIN_KILL_SWITCH_KEY, missing_means=False)
 
 
 async def _force_dry_run() -> bool:
-    """插件提交的强制干跑闸：**读不到该行即视为开**（缺省更严，灰度期默认不动手机）。"""
-    from app.models.config import RuntimeFlag
-
-    return await _flag_enabled(RuntimeFlag, key=FORCE_DRY_RUN_KEY, missing_means=True)
+    """插件提交的强制干跑闸：**取不到该键即视为开**（缺省更严，灰度期默认不动手机）。"""
+    return _agent_flag(FORCE_DRY_RUN_KEY, missing_means=True)
 
 
 async def set_action_flag(key: str, enabled: bool) -> dict:
     """控制台改一条行动开关（M4e-1）：把三个**逻辑名**之一 upsert 进 ``runtime_flags``。
 
     只认 :data:`ACTION_FLAG_KEYS` 的三个键（``global`` / ``plugin_enabled`` / ``force_dry_run``），
-    映射到各自的物理键后**用 :class:`RuntimeFlag` 直写**——与各闸门读点同一张表，写成功后下一次
-    裁决即生效。**刻意不碰** ``AGENT_FLAGS`` 内存与 ``flag_catalog``（这三条开关本就不该进常规
-    flag 体系，见模块顶部说明）。非法逻辑名抛 :class:`ValueError`（由端点翻译成 400）。
+    映射到各自的物理键后**用 :class:`RuntimeFlag` 直写**；写成功后再把同一份值同步进
+    ``AGENT_FLAGS`` 内存（C1a：闸门读点与 App 开关页都看它），下一次裁决即生效。
+    **库里那一行才是权威**——进程重启后由 ``load_runtime_flags`` 从表里恢复。非法逻辑名抛
+    :class:`ValueError`（由端点翻译成 400）。
 
     写库失败**不抛异常**：返回 ``{"ok": False, "key": key, "error": "store_unavailable"}``，
-    调用方据此如实回错——绝不静默成功。成功返回 ``{"ok": True, "key": key, "enabled": bool}``。
+    调用方据此如实回错——绝不静默成功。内存同步失败只记 WARNING（库已写成功，不得回报成失败）。
+    成功返回 ``{"ok": True, "key": key, "enabled": bool}``。
     """
     from sqlalchemy import select
 
@@ -519,6 +623,11 @@ async def set_action_flag(key: str, enabled: bool) -> dict:
     except Exception as e:  # 写不动如实回错，绝不假装已生效
         _logger.warning("行动开关写入失败 key=%s err=%s", real_key, e)
         return {"ok": False, "key": key, "error": "store_unavailable"}
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        AGENT_FLAGS[real_key] = value
+    except Exception as e:  # 落库已成功：内存同步失败只留痕，不改写结果
+        _logger.warning("行动开关内存同步失败 key=%s err=%s", real_key, e)
     return {"ok": True, "key": key, "enabled": value}
 
 

@@ -21,6 +21,14 @@ M4c-3 起两份名单**落库持久**（``device_action_targets`` / ``device_act
 - ``GET  /api/v1/device/actions/plugins``：被灰度放开行动能力的插件（库里 ∪ 编译期常量，排序输出）；
 - ``POST /api/v1/device/actions/plugins``：放开一个插件（同上口径，全局上限 50 个）。
 
+C1b（2026-09-25，X7 遗留②）追加两个**行动确认策略**端点（挂 ``get_current_user_id``，只作用于
+调用者自己的行；落库 ``device_action_policies``，一人一条能力一行）：
+
+- ``GET /api/v1/device/actions/policy``：本账号已配置过的档位（无行＝空数组，App 回落缺省档）；
+- ``PUT /api/v1/device/actions/policy``：幂等 upsert 一条档位。**这是配置写入，不走「一律 200」**：
+  非法能力/非法档位一律 400 + 机器可读 ``detail``（绝不静默落库），写库失败回 503。
+  档位本身不参与闸门裁决——服务端只是把它从「只存本机」升级为「按账号持久化」。
+
 租户口径：``tenant_id`` 由当前账号解析为家庭根（``family_service.get_family_root_id``，与 A2/M6
 插件归户同口径），解析不到即 ``None`` —— 插件级闸门与目标白名单都按 ``None`` fail-closed 拒绝；
 白名单管理端点在解析不到时直接拒绝写入（``tenant_unresolved``）。
@@ -29,24 +37,28 @@ from __future__ import annotations
 
 import re
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
 
 from app.auth.deps import get_current_user_id, require_server_admin
 from app.db import database
 from app.device.actions import (
+    ACTION_POLICY_TIERS,
     BUILTIN_CALLER,
     REASON_INVALID_INTENT,
     REASON_PLUGIN_NOT_ALLOWED,
     STATUS_DENIED,
     ActionIntent,
+    action_capabilities,
     allow_plugin_actions,
     allow_target,
     configured_plugins,
+    configured_policies,
     configured_targets,
     decide_action,
     invalid_intent_reason,
     report_result,
+    store_policy,
     take_pending,
 )
 from app.utils.logger import get_logger
@@ -65,6 +77,11 @@ MAX_TARGETS_PER_TENANT = 20      # 单租户白名单容量上限（超出即拒
 # 插件名与 manifest 里的 name 同形（目录名口径：字母数字起头，可含 _ . -），≤64（与列宽一致）
 PLUGIN_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 MAX_PLUGINS_GRAYLISTED = 50      # 灰度名单容量上限（含编译期常量，超出即拒，不写入）
+
+# ── 确认策略入参约束（C1b）──
+# 能力名只认 capabilities 里 kind="act" 的三条（清单唯一权威源，不在此另写字面量）；
+# 档位三档字面量取自 app.device.actions（与 Flutter device_action_prefs.dart 逐字对齐）。
+ACTION_POLICY_CAPABILITIES: frozenset[str] = frozenset(action_capabilities())
 
 
 async def _resolve_tenant_id(user_id: int) -> int | None:
@@ -135,6 +152,50 @@ async def post_action_result(
     detail = str(payload.get("detail") or "")
     found = report_result(token, ok, detail, user_id=user_id)
     return {"ok": found}
+
+
+@router.get("/actions/policy")
+async def get_action_policies(user_id: int = Depends(get_current_user_id)) -> dict:
+    """本账号已配置过的确认档位（只回有行的能力，排序输出）。
+
+    ``{"status":"ok","items":[{"capability":..., "policy":...}]}``。**空数组＝这个账号一条都没配过**，
+    App 据此回落缺省档 ``first_per_type``（读路径语义与失败回落一律不变，服务端只是多一层来源）。
+    """
+    items = await configured_policies(user_id)
+    return {
+        "status": "ok",
+        "items": [{"capability": cap, "policy": pol} for cap, pol in sorted(items.items())],
+    }
+
+
+@router.put("/actions/policy")
+async def put_action_policy(
+    payload: dict,
+    user_id: int = Depends(get_current_user_id),
+) -> dict:
+    """设置本账号一条能力的档位（幂等 upsert：同 ``(账号, 能力)`` 重复写只有一行）。
+
+    与裁决端点的「一律 200 + reason」刻意不同：本端点是**配置写入**，非法入参一律 400 +
+    机器可读 ``detail``（``field_required:x`` / ``unknown_capability:x`` / ``invalid_policy:x``），
+    绝不静默落库；写不进库回 503 ``store_unavailable``（App 据此退回本机档并如实提示保存失败）。
+    """
+    body = payload or {}
+    capability = str(body.get("capability") or "").strip()
+    policy = str(body.get("policy") or "").strip()
+    if not capability:
+        raise HTTPException(status_code=400, detail="field_required:capability")
+    if not policy:
+        raise HTTPException(status_code=400, detail="field_required:policy")
+    if capability not in ACTION_POLICY_CAPABILITIES:
+        raise HTTPException(status_code=400, detail=f"unknown_capability:{capability}")
+    if policy not in ACTION_POLICY_TIERS:
+        raise HTTPException(status_code=400, detail=f"invalid_policy:{policy}")
+
+    if not await store_policy(user_id, capability, policy):
+        _logger.warning("确认档位写库失败 user=%s capability=%s", user_id, capability)
+        raise HTTPException(status_code=503, detail="store_unavailable")
+    _logger.info("确认档位更新 user=%s capability=%s policy=%s", user_id, capability, policy)
+    return {"status": "ok", "capability": capability, "policy": policy}
 
 
 def _valid_target(target: str) -> bool:

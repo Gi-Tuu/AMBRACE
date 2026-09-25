@@ -60,7 +60,9 @@ class FeatureFlagService extends ChangeNotifier {
         num? value,
         FlagMetaInfo? meta,
         String? scope,
-        bool? userEnabled
+        bool? userEnabled,
+        bool? locked,
+        bool? selfService
       })> _flags = {};
 
   /// 读取某 flag 的**生效值**（A5 账号独立 · 2026-09-21 客户端折叠批）：user-scoped 键有账号覆盖时取
@@ -99,6 +101,14 @@ class FeatureFlagService extends ChangeNotifier {
   /// 用户级覆盖值（仅 user-scoped 旗标有意义）：true=用户开启、false=用户关闭、null=未覆盖（回落全局）。
   bool? userEnabledOf(String key) => _flags[key]?.userEnabled;
 
+  /// 本条开关在 App 内是否**只读**（C1a，2026-09-25）：后端 locked=true 或 self_service=false。
+  /// 老后端不下发这两个字段时保持可改（与改动前逐字节一致）。
+  bool isReadOnly(String key) {
+    final e = _flags[key];
+    if (e == null) return false;
+    return e.locked == true || e.selfService == false;
+  }
+
   /// 后端下发的所有常用开关 key（visible=true），按元数据的 order 升序；为空表示无后端数据。
   List<String> get visibleKeys {
     final out = _flags.entries
@@ -124,6 +134,8 @@ class FeatureFlagService extends ChangeNotifier {
             meta: _parseMeta(f['meta']),
             scope: f['scope'] as String?,
             userEnabled: f['user_enabled'] as bool?,
+            locked: f['locked'] as bool?,
+            selfService: f['self_service'] as bool?,
           );
         }
       }
@@ -136,6 +148,8 @@ class FeatureFlagService extends ChangeNotifier {
   /// 切换 flag：先乐观更新本地缓存（画布/页面即时生效），再写服务器；
   /// 失败回滚并返回 false。
   Future<bool> setFlag(String key, bool enabled) async {
+    // 只读键（后端 locked / self_service=false）根本不发请求：服务端同样会回 403（C1a）
+    if (isReadOnly(key)) return false;
     final prevEntry = _flags[key];
     final prev = prevEntry?.enabled ?? false;
     _flags[key] = (
@@ -146,6 +160,8 @@ class FeatureFlagService extends ChangeNotifier {
       meta: prevEntry?.meta,
       scope: prevEntry?.scope,
       userEnabled: prevEntry?.userEnabled,
+      locked: prevEntry?.locked,
+      selfService: prevEntry?.selfService,
     );
     notifyListeners();
     try {
@@ -160,6 +176,8 @@ class FeatureFlagService extends ChangeNotifier {
         meta: prevEntry?.meta,
         scope: prevEntry?.scope,
         userEnabled: prevEntry?.userEnabled,
+        locked: prevEntry?.locked,
+        selfService: prevEntry?.selfService,
       );
       notifyListeners();
       return false;
@@ -170,9 +188,24 @@ class FeatureFlagService extends ChangeNotifier {
   /// 供 widget 测试固定某 flag 的取值（如织网 3D 强制关闭以测 2.5D 画布）。
   @visibleForTesting
   void debugSetLocal(String key, bool enabled,
-      {String? type, num? value, FlagMetaInfo? meta, String? scope, bool? userEnabled}) {
-    _flags[key] =
-        (enabled: enabled, source: 'test', type: type, value: value, meta: meta, scope: scope, userEnabled: userEnabled);
+      {String? type,
+      num? value,
+      FlagMetaInfo? meta,
+      String? scope,
+      bool? userEnabled,
+      bool? locked,
+      bool? selfService}) {
+    _flags[key] = (
+      enabled: enabled,
+      source: 'test',
+      type: type,
+      value: value,
+      meta: meta,
+      scope: scope,
+      userEnabled: userEnabled,
+      locked: locked,
+      selfService: selfService
+    );
     notifyListeners();
   }
 

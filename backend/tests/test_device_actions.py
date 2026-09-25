@@ -60,6 +60,9 @@ TARGET = "com.example.shop"
 ACT_WRITE_PERMS = [f"device:{cid}:write" for cid in
                    ("action_open_app", "action_tap", "action_set_text")]
 
+# 三条行动闸的键（C1a 起登记进 AGENT_FLAGS，闸门读它的现值；造数时要一并同步/还原）
+ACTION_FLAG_KEYS = (actions.KILL_SWITCH_KEY, actions.PLUGIN_KILL_SWITCH_KEY, actions.FORCE_DRY_RUN_KEY)
+
 # 审计行的固定字段顺序（缺序即视为契约漂移）
 AUDIT_FIELDS = ("ts", "tenant_id", "user_id", "plugin", "capability", "action", "target_app",
                 "by", "result", "elapsed_ms", "dry_run", "reason")
@@ -70,10 +73,18 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture()
 def act_db(monkeypatch, tmp_path):
-    """私有临时 SQLite（含 runtime_flags / user_runtime_flags / plugins / plugin_consents）。"""
+    """私有临时 SQLite（含 runtime_flags / user_runtime_flags / plugins / plugin_consents）。
+
+    C1a 起三条全局行动闸读 ``AGENT_FLAGS`` 现值（进程级字典），造数 helper 会同步它，故这里
+    登记原值、用例结束由 monkeypatch 自动还原，防止一个用例把闸门锁死给后面的用例。
+    """
+    from app.agent.loop import AGENT_FLAGS
+
     engine = clone_engine(tmp_path / "actions.db")
     factory = make_session_factory(engine)
     monkeypatch.setattr(database, "async_session_factory", factory)
+    for _k in ACTION_FLAG_KEYS:
+        monkeypatch.setitem(AGENT_FLAGS, _k, AGENT_FLAGS[_k])
     actions.reset_runtime_state()
     yield factory
     actions.reset_runtime_state()
@@ -109,10 +120,22 @@ def actions_log_records():
 
 
 # ── 造数据 helper ──
+def _sync_agent_flag(key: str, enabled: bool) -> None:
+    """插完库把同一份值同步进 ``AGENT_FLAGS``（C1a 起三条全局闸读它，不再直读 runtime_flags）。
+
+    生产里等价动作是 ``flag_service.set_runtime_flag`` / 控制台 ``set_action_flag``：写库 **且**
+    热更新内存。只插库不同步内存＝测的是 C1a 之前的口径，闸门根本看不见这一行。
+    """
+    from app.agent.loop import AGENT_FLAGS
+
+    AGENT_FLAGS[key] = bool(enabled)
+
+
 async def _set_global(factory, enabled=True):
     async with factory() as db:
         db.add(RuntimeFlag(key=actions.KILL_SWITCH_KEY, enabled=enabled))
         await db.commit()
+    _sync_agent_flag(actions.KILL_SWITCH_KEY, enabled)
 
 
 async def _set_flag(factory, key, enabled=True):
@@ -120,6 +143,7 @@ async def _set_flag(factory, key, enabled=True):
     async with factory() as db:
         db.add(RuntimeFlag(key=key, enabled=enabled))
         await db.commit()
+    _sync_agent_flag(key, enabled)
 
 
 async def _set_account(factory, user_id, enabled=True):
@@ -1067,3 +1091,39 @@ def test_灰度名单是库里与编译期常量的并集(act_db, monkeypatch):
     # 并集两侧都算命中；不在并集里的仍然不放开
     assert asyncio.run(actions.plugin_graylisted("compiled_in_gray")) is True
     assert asyncio.run(actions.plugin_graylisted("not_gray_at_all")) is False
+
+
+# ── ⑩ C1a：三条全局闸读 AGENT_FLAGS 现值（不再直读 runtime_flags），缺省方向不变 ──
+def test_全局闸门读AGENT_FLAGS现值且缺省方向不变(act_db, monkeypatch, actions_log_records):
+    from app.agent.loop import AGENT_FLAGS
+
+    # 库里一行都没有：默认方向就是原先更严的一侧（关 / 关 / 开）
+    assert asyncio.run(actions._global_actions_enabled()) is False
+    assert asyncio.run(actions._plugin_actions_enabled()) is False
+    assert asyncio.run(actions._force_dry_run()) is True
+
+    # 只改内存、库里不落任何行：闸门随之翻转（读点已与 App 开关页同源）
+    AGENT_FLAGS[actions.KILL_SWITCH_KEY] = True
+    AGENT_FLAGS[actions.PLUGIN_KILL_SWITCH_KEY] = True
+    AGENT_FLAGS[actions.FORCE_DRY_RUN_KEY] = False
+    assert asyncio.run(actions._global_actions_enabled()) is True
+    assert asyncio.run(actions._plugin_actions_enabled()) is True
+    assert asyncio.run(actions._force_dry_run()) is False
+
+    # 库整体读不了也不改变全局闸的判定（它已经不打库了），说明读点确实换了
+    class _Boom:
+        def __call__(self, *args, **kwargs):
+            raise RuntimeError("模拟读库失败")
+
+    monkeypatch.setattr(database, "async_session_factory", _Boom())
+    assert asyncio.run(actions._global_actions_enabled()) is True
+    assert asyncio.run(actions._force_dry_run()) is False
+
+    # 键整个取不到 → 回各自缺省方向并留 WARNING，绝不因读不到而放行
+    for key in ACTION_FLAG_KEYS:
+        AGENT_FLAGS.pop(key)
+    assert asyncio.run(actions._global_actions_enabled()) is False
+    assert asyncio.run(actions._plugin_actions_enabled()) is False
+    assert asyncio.run(actions._force_dry_run()) is True
+    assert any(r.levelno == logging.WARNING and "行动开关读取失败" in r.getMessage()
+               for r in actions_log_records), "取不到键要留 WARNING，不得静默"

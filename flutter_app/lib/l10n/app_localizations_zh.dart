@@ -7621,6 +7621,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get flagScopeServerHint => '服务器级开关：改动会影响本服务器上的所有账号';
 
   @override
+  String get flagServerControlled => '由服务器控制';
+
+  @override
   String get ppActionSubmitRun => '提交一条真实动作（本机自检）';
 
   @override

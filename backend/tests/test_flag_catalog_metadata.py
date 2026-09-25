@@ -51,6 +51,7 @@ EXPECTED_GROUP_IDS = [
     'review',           # 主动复习与回忆化（H）
     'channel',          # 渠道绑定与群认知
     'tool_trace',       # 工具轨迹治理
+    'device_action',    # 行动通道（C1a）
     'other',            # 其他高级开关（未登记键兜底）
 ]
 

@@ -1,7 +1,8 @@
 import "package:dio/dio.dart";
 import "api_client.dart";
 
-/// X7-M4b-2 内置行动通道（App 侧）——**纯 API 封装**：提交意图 / 取待办 / 回报结果。
+/// X7-M4b-2 内置行动通道（App 侧）——**纯 API 封装**：提交意图 / 取待办 / 回报结果 /
+/// 读写确认档位（C1b：档位按账号服务端持久化，本机 prefs 降级为缓存与离线回落）。
 ///
 /// 只做网络层，不做判定也不执行任何动作（判定与执行在 `device_action_executor.dart`）。
 /// 内置身份由**服务端端点**固定（`POST /api/v1/device/actions` 恒为内置，M4c-1 身份收口）：
@@ -39,9 +40,25 @@ class PendingActions {
   bool get isEmpty => items.isEmpty;
 }
 
+/// `GET .../policy` 的结果（C1b：行动确认档位按账号服务端持久化）。
+///
+/// `error` 非空表示**没拿到**（断网/未登录/回包形状不对），与「拿到了空集合」必须区分开：
+/// 空集合＝「这个账号一条都没配过」（合法，回落缺省档），而把「没拿到」当成前者会让一次网络抖动
+/// 就把用户配好的档位悄悄抹掉。
+class PolicySnapshot {
+  /// capability → policy（服务端只回**已配置过**的能力，三档字面量原样透传）
+  final Map<String, String> items;
+  final String error;
+
+  const PolicySnapshot(this.items, {this.error = ""});
+
+  bool get failed => error.isNotEmpty;
+}
+
 class DeviceActionService {
   static const String _submitPath = "/api/v1/device/actions";
   static const String _pendingPath = "/api/v1/device/actions/pending";
+  static const String _policyPath = "/api/v1/device/actions/policy";
 
   /// 提交一条行动意图 → 后端四层闸门裁决。
   ///
@@ -93,6 +110,44 @@ class DeviceActionService {
       );
     } catch (e) {
       return PendingActions(const [], error: _transportReason(e));
+    }
+  }
+
+  /// 拉本账号在服务端已配置的确认档位（C1b：服务端为权威，本机 prefs 只是缓存与离线回落）。
+  /// 失败一律折成 `error` 非空的结果，不抛给调用方（调用方据此**保留本机现值**）。
+  static Future<PolicySnapshot> fetchPolicies() async {
+    try {
+      final r = await ApiClient().dio.get(_policyPath);
+      final data = r.data is Map ? Map<String, dynamic>.from(r.data as Map) : const <String, dynamic>{};
+      if (data["status"] != "ok" || data["items"] is! List) {
+        return const PolicySnapshot(<String, String>{}, error: "bad_response");
+      }
+      final out = <String, String>{};
+      for (final e in (data["items"] as List)) {
+        if (e is! Map) continue;
+        final capability = e["capability"]?.toString() ?? "";
+        final policy = e["policy"]?.toString() ?? "";
+        if (capability.isNotEmpty && policy.isNotEmpty) out[capability] = policy;
+      }
+      return PolicySnapshot(out);
+    } catch (e) {
+      return PolicySnapshot(const {}, error: _transportReason(e));
+    }
+  }
+
+  /// 写一条档位到服务端（幂等 upsert，同 ``(账号, 能力)`` 只有一行）。
+  ///
+  /// true ＝ 服务端确认落库。非法能力/非法档位（400）、未登录、断网一律 false，不抛异常——
+  /// 调用方据此照常落本机 prefs，但**不得**把「只有本机生效」说成「已跨端生效」。
+  static Future<bool> savePolicy(String capability, String policy) async {
+    if (capability.isEmpty || policy.isEmpty) return false;
+    try {
+      final r = await ApiClient()
+          .dio.put(_policyPath, data: {"capability": capability, "policy": policy});
+      final data = r.data is Map ? Map<String, dynamic>.from(r.data as Map) : const <String, dynamic>{};
+      return data["status"] == "ok";
+    } catch (_) {
+      return false;
     }
   }
 

@@ -739,7 +739,9 @@ void main() {
       expect(await DeviceActionPrefs.isOnceEverConfirmed(DeviceActionExecutor.capSetText), isTrue);
       expect(await DeviceActionPrefs.isOnceEverConfirmed(DeviceActionExecutor.capTap), isFalse);
       expect(
-        await DeviceActionPrefs.setPolicy(DeviceActionExecutor.capSetText, ActionConfirmPolicy.everyTime),
+        await DeviceActionPrefs.setPolicy(DeviceActionExecutor.capSetText, ActionConfirmPolicy.everyTime,
+            put: (_, __) async => true, // C1b：本例只测本机键位口径，服务端注入「成功」
+        ),
         isTrue,
       );
       expect(await DeviceActionPrefs.policyFor(DeviceActionExecutor.capSetText),
@@ -747,6 +749,82 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getKeys().every((k) => !k.contains("com.example")), isTrue,
           reason: "绝不落动作内容/包名，只落能力名与策略名");
+    });
+
+    // ── C1b 追加（X7 遗留②）：档位改由服务端按账号持久化，本机 prefs 为缓存与离线回落 ──
+    // 全部走注入的假服务端，不碰真实网络（ApiClient 未配置也不该被调用）。
+    group("DeviceActionPrefs × C1b 服务端读写", () {
+      test("服务端成功 → 本机随之落档并回 true", () async {
+        TestWidgetsFlutterBinding.ensureInitialized();
+        SharedPreferences.setMockInitialValues({});
+        var called = <String>[];
+        final ok = await DeviceActionPrefs.setPolicy(DeviceActionExecutor.capTap,
+            ActionConfirmPolicy.everyTime, put: (cap, tier) async {
+          called.add("$cap=$tier");
+          return true;
+        });
+        expect(ok, isTrue);
+        expect(called, ["action_tap=every_time"], reason: "写路径必须先 PUT 服务端，且只送档位名");
+        expect(await DeviceActionPrefs.policyFor(DeviceActionExecutor.capTap),
+            ActionConfirmPolicy.everyTime);
+      });
+
+      test("服务端失败/抛异常 → 本机照样落档（离线仍按新档）但回 false", () async {
+        TestWidgetsFlutterBinding.ensureInitialized();
+        SharedPreferences.setMockInitialValues({});
+        expect(
+          await DeviceActionPrefs.setPolicy(DeviceActionExecutor.capTap, ActionConfirmPolicy.onceEver,
+              put: (_, __) async => false),
+          isFalse,
+          reason: "只有本机生效，不得说成已跨端保存成功",
+        );
+        expect(await DeviceActionPrefs.policyFor(DeviceActionExecutor.capTap),
+            ActionConfirmPolicy.onceEver, reason: "离线回落：本机仍按用户选的档位");
+        expect(
+          await DeviceActionPrefs.setPolicy(DeviceActionExecutor.capOpenApp,
+              ActionConfirmPolicy.everyTime, put: (_, __) async => throw StateError("离线")),
+          isFalse,
+          reason: "服务端抛异常同样折成 false，绝不冒泡给 UI",
+        );
+        expect(await DeviceActionPrefs.policyFor(DeviceActionExecutor.capOpenApp),
+            ActionConfirmPolicy.everyTime);
+      });
+
+      test("syncFromServer：服务端有行才覆盖本机，多余的本机键不删", () async {
+        TestWidgetsFlutterBinding.ensureInitialized();
+        SharedPreferences.setMockInitialValues({
+          "device_action_policy_action_tap": "first_per_type",
+          "device_action_policy_action_open_app": "every_time",
+        });
+        final ok = await DeviceActionPrefs.syncFromServer(
+            fetch: () async => const PolicySnapshot({"action_tap": "once_ever"}));
+        expect(ok, isTrue);
+        expect(await DeviceActionPrefs.policyFor(DeviceActionExecutor.capTap),
+            ActionConfirmPolicy.onceEver, reason: "服务端档位覆盖本机缓存");
+        expect(await DeviceActionPrefs.policyFor(DeviceActionExecutor.capOpenApp),
+            ActionConfirmPolicy.everyTime, reason: "服务端没这条＝没配过，不得抹掉本机现值");
+      });
+
+      test("syncFromServer 失败一律静默保留现值（绝不清空）", () async {
+        TestWidgetsFlutterBinding.ensureInitialized();
+        SharedPreferences.setMockInitialValues({
+          "device_action_policy_action_tap": "every_time",
+        });
+        expect(
+            await DeviceActionPrefs.syncFromServer(
+                fetch: () async => const PolicySnapshot({}, error: "request_failed:connectionError")),
+            isFalse);
+        expect(await DeviceActionPrefs.policyFor(DeviceActionExecutor.capTap),
+            ActionConfirmPolicy.everyTime, reason: "网络抖动不得把「重」档抹回缺省档");
+        expect(await DeviceActionPrefs.syncFromServer(fetch: () async => throw StateError("炸")), isFalse,
+            reason: "fetch 抛异常同样折成 false");
+        expect(await DeviceActionPrefs.policyFor(DeviceActionExecutor.capTap),
+            ActionConfirmPolicy.everyTime);
+        expect(await DeviceActionPrefs.syncFromServer(fetch: () async => const PolicySnapshot({})), isTrue,
+            reason: "服务端确实一条都没配过＝同步成功且本机不变");
+        expect(await DeviceActionPrefs.policyFor(DeviceActionExecutor.capTap),
+            ActionConfirmPolicy.everyTime);
+      });
     });
   });
 

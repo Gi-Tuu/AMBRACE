@@ -120,15 +120,31 @@ async def get_all_flags() -> list:
 # ── 开关策略元数据（控制台管理面 P2，2026-09-19）─────────────────────────────────
 # flag_settings 每键一行：self_service（是否允许用户自助改）/ server_locked（锁定 = 仅控制台可改）。
 # 缺行 = self_service=1 / server_locked=0 —— 与现状一致（用户仍可自助），故上线不锁死任何开关页。
+# 例外：SERVER_LOCKED_DEFAULT_KEYS 里的键缺行即锁定（见下方 C1a 段）。
 # 读失败/表缺失一律 fail-open 到默认值：策略是旁路管控，不能把开关页与 App 写链路打挂。
 # 注意：本段只承载「策略元数据」；非 bool 键仍由上方 set_runtime_flag 的类型防护拒绝热切。
 
 FLAG_POLICY_DEFAULTS = {'self_service': True, 'server_locked': False}
 
+# ── 默认就服务器锁定的键（C1a，2026-09-25）─────────────────────────────────────
+# X7 行动通道三条闸：App 开关页**可见**，但用户不可自助改（写一律 403），真正的改写入口仍是
+# 服务器控制台（PUT /api/v1/admin/server/device-actions/switches）。缺行时按本集合给出
+# server_locked=True；库里已有 flag_settings 行则以库行为准（不覆盖运维已配的策略）。
+SERVER_LOCKED_DEFAULT_KEYS: frozenset[str] = frozenset({
+    'device_actions_enabled',
+    'device_actions_plugin_enabled',
+    'device_actions_force_dry_run',
+})
+
 
 def _policy_default(key: str) -> dict:
-    '''缺行策略：自助开、未锁定、无标题/描述（契约 §1.3：可先只给 key，title/desc 缺省即可）。'''
-    return {'key': key, 'self_service': True, 'server_locked': False,
+    '''缺行策略：自助开、未锁定（例外见 :data:`SERVER_LOCKED_DEFAULT_KEYS`）、无标题/描述。
+
+    契约 §1.3：可先只给 key，title/desc 缺省即可。行动通道三条键缺行即锁定＝fail-closed
+    到更严的一侧（读库失败也不会把这三条闸放开）。
+    '''
+    locked = key in SERVER_LOCKED_DEFAULT_KEYS
+    return {'key': key, 'self_service': True, 'server_locked': locked,
             'title': None, 'desc': None, 'exists': False}
 
 

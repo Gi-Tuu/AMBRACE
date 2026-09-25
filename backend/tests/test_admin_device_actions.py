@@ -69,7 +69,13 @@ def _patch_session_factories(monkeypatch, factory) -> None:
 
 @pytest.fixture()
 def adm_db(monkeypatch, tmp_path):
-    """私有临时 SQLite：两个不同家庭的 server_admin + 一个非 server_admin 主账号。"""
+    """私有临时 SQLite：两个不同家庭的 server_admin + 一个非 server_admin 主账号。
+
+    C1a 起 ``set_action_flag`` 写库后同步 ``AGENT_FLAGS``（进程级字典），故登记原值、用例结束
+    由 monkeypatch 自动还原，防止一个用例把闸门锁死给后面的用例。
+    """
+    from app.agent.loop import AGENT_FLAGS
+
     engine = clone_engine(tmp_path / "adm_da.db")
     factory = make_session_factory(engine)
 
@@ -86,6 +92,8 @@ def adm_db(monkeypatch, tmp_path):
 
     asyncio.run(_init())
     _patch_session_factories(monkeypatch, factory)
+    for key in (actions.KILL_SWITCH_KEY, actions.PLUGIN_KILL_SWITCH_KEY, actions.FORCE_DRY_RUN_KEY):
+        monkeypatch.setitem(AGENT_FLAGS, key, AGENT_FLAGS[key])
     actions.reset_runtime_state()
     yield factory
     actions.reset_runtime_state()
@@ -269,13 +277,17 @@ def test_跨租户目标白名单彼此隔离(adm_db):
     assert "shared_p" in c.get(ROOT, headers=_auth(MGR_B)).json()["plugins"]
 
 
-# ── ⑪ 开关写入落 runtime_flags 且不污染 AGENT_FLAGS ──
-def test_开关落runtime_flags且不污染AGENT_FLAGS(adm_db):
+# ── ⑪ 开关写入落 runtime_flags 且同步 AGENT_FLAGS（C1a 反转：三条键必须进常规 flag 体系）──
+def test_开关落runtime_flags且同步AGENT_FLAGS(adm_db):
     from app.agent.loop import AGENT_FLAGS
     from app.models.config import RuntimeFlag
 
     three = (actions.KILL_SWITCH_KEY, actions.PLUGIN_KILL_SWITCH_KEY, actions.FORCE_DRY_RUN_KEY)
-    assert not (set(three) & set(AGENT_FLAGS.keys())), "这三条开关本就不该进常规 flag 体系"
+    assert set(three) <= set(AGENT_FLAGS.keys()), "三条开关必须进常规 flag 体系（App 开关页才看得见）"
+    # 默认值严格保持原缺省方向：两条总闸关、强制干跑开
+    assert AGENT_FLAGS[actions.KILL_SWITCH_KEY] is False
+    assert AGENT_FLAGS[actions.PLUGIN_KILL_SWITCH_KEY] is False
+    assert AGENT_FLAGS[actions.FORCE_DRY_RUN_KEY] is True
 
     c = _client()
     assert c.put(SWITCHES_URL, headers=_auth(MGR_A),
@@ -283,7 +295,7 @@ def test_开关落runtime_flags且不污染AGENT_FLAGS(adm_db):
 
     keys = {r.key: r.enabled for r in _rows(adm_db, RuntimeFlag)}
     assert keys.get(actions.PLUGIN_KILL_SWITCH_KEY) is True, "必须落在 runtime_flags"
-    assert not (set(three) & set(AGENT_FLAGS.keys())), "写开关不得把键塞进 AGENT_FLAGS 内存"
+    assert AGENT_FLAGS[actions.PLUGIN_KILL_SWITCH_KEY] is True, "库写成功后内存随之生效（闸门读它）"
 
 
 # ── ⑫ 删除后再 GET 确实少了那一条 ──

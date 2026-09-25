@@ -162,6 +162,28 @@ class DeviceActionPlugin(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
+# ── device_action_policies.py（X7-M4c-5 遗留② / C1b，2026-09-25 派单）──
+# 行动确认策略三档（once_ever / first_per_type / every_time）此前只存 App 本机 shared_preferences，
+# 换机/重装即回到缺省档。本表把它升级为**按账号服务端持久化**：一人一条能力一行，
+# 联合唯一 ``(user_id, capability)`` 即幂等写入的判据。**无行＝没配过**，App 回落中档 first_per_type
+# （读路径语义与失败回落一律不变，服务端只是多一层来源，不构成任何行为放开）。
+# 刻意不存「轻档永久放行」标记（device_action_once_ever_*）：那属于跨端放开执行，需另行拍板。
+class DeviceActionPolicy(Base):
+    """某账号某条行动能力的确认档位（服务端权威，App 本机 prefs 为缓存与离线回落）。"""
+    __tablename__ = "device_action_policies"
+    __table_args__ = (
+        UniqueConstraint("user_id", "capability", name="uq_device_action_policy_user_cap"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)  # 归属账号（删号按列名识别）
+    capability: Mapped[str] = mapped_column(String(64), nullable=False)  # kind="act" 的能力 id
+    policy: Mapped[str] = mapped_column(String(16), nullable=False)  # 三档字面量之一
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
 __all__ = [
     "PhoneDesktop",
     "PhoneLayout",
@@ -174,4 +196,5 @@ __all__ = [
     "UserDeviceToken",
     "DeviceActionTarget",
     "DeviceActionPlugin",
+    "DeviceActionPolicy",
 ]

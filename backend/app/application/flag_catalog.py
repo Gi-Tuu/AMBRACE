@@ -35,6 +35,7 @@ CATALOG_GROUPS: list[dict] = [
     {'id': 'review', 'order': 13, 'label_zh': '主动复习与回忆化（H）', 'label_en': 'Review & reminiscence (H)'},
     {'id': 'channel', 'order': 14, 'label_zh': '渠道绑定与群认知', 'label_en': 'Channel binding & group cognition'},
     {'id': 'tool_trace', 'order': 15, 'label_zh': '工具轨迹治理', 'label_en': 'Tool trace governance'},
+    {'id': 'device_action', 'order': 16, 'label_zh': '行动通道', 'label_en': 'Device Action Channel'},
     # 兜底组：未登记键落这里（App 侧同名「其他高级开关」，排在最后）
     {'id': 'other', 'order': 99, 'label_zh': '其他高级开关', 'label_en': 'Other Advanced Flags'},
 ]
@@ -345,6 +346,23 @@ _FLAG_ROWS: list[tuple] = [
     ('agent_tool_exec_trace', 'tool_trace', 1504, False, '工具执行留痕',
      '每次工具执行都留一条记录，方便看真实成败。',
      'Tool execution trace', 'Each tool execution is logged so real outcomes are visible.'),
+
+    # ── 行动通道（C1a：三条闸进常规开关页，默认由服务器锁定、App 内只读）──
+    ('device_actions_enabled', 'device_action', 1601, False, '手机操作总开关',
+     'AI 能不能在你的手机上替你做事（打开应用、点按、输入文字）的总闸；关掉后这类请求一律不执行。默认关闭。',
+     'Phone actions master switch',
+     'Whether the AI may act on your phone for you — opening apps, tapping, typing. '
+     'When off, such requests never run. Off by default.'),
+    ('device_actions_plugin_enabled', 'device_action', 1602, False, '插件提交手机操作',
+     '在总开关已开的前提下，允许被放开的插件提交手机操作请求；没被放开的插件仍会被拒绝。默认关闭。',
+     'Plugins may request phone actions',
+     'With the master switch on, lets released plugins ask for phone actions; '
+     'plugins not on the list are still refused. Off by default.'),
+    ('device_actions_force_dry_run', 'device_action', 1603, False, '只看结论不动手机',
+     '开启后，即使各项许可都已通过，也只给出判断结论，不会真的去操作手机。默认开启。',
+     'Judge only, never touch the phone',
+     'When on, even fully approved requests only get a verdict and never actually operate '
+     'the phone. On by default.'),
 ]
 
 FLAG_CATALOG: dict[str, dict] = {

@@ -673,7 +673,9 @@ def test_jobs_table_is_sentinel_and_chain_keeps_single_head():
     assert ("account_purge_jobs", "user_id") in _get_sentinels()
     assert "account_purge_jobs" in _migration_chain_tables(_alembic_config())
     script = ScriptDirectory.from_config(_alembic_config())
-    assert script.get_heads() == ["f7b8c9d0e1f2"]
+    # 只锁「单头」，不锁具体修订号：每加一个新迁移 head 都会前移，硬编码必红
+    # （同 tests/test_phone_perception_payload.py 的 M4c-3 教训；本批 C1b 的 f8a9b0c1d2e3 即为一例）
+    assert len(script.get_heads()) == 1, f"版本链必须单头，实际 heads={script.get_heads()}"
     # 从 head 能回溯到第一期之前的既有修订（确认这条链没被截断）
     assert script.get_revision("f6a7b8c9d0e1") is not None
 

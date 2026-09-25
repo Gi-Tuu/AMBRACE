@@ -14157,6 +14157,12 @@ abstract class AppLocalizations {
   /// **'服务器级开关：改动会影响本服务器上的所有账号'**
   String get flagScopeServerHint;
 
+  /// No description provided for @flagServerControlled.
+  ///
+  /// In zh, this message translates to:
+  /// **'由服务器控制'**
+  String get flagServerControlled;
+
   /// No description provided for @ppActionSubmitRun.
   ///
   /// In zh, this message translates to:

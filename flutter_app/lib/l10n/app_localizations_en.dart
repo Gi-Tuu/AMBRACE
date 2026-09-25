@@ -7922,6 +7922,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'Server-level switch: changes affect every account on this server';
 
   @override
+  String get flagServerControlled => 'Controlled by the server';
+
+  @override
   String get ppActionSubmitRun => 'Submit one real action (self-check)';
 
   @override

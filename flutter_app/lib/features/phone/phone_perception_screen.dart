@@ -520,7 +520,9 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
   }
 
   /// M4c-5 三档确认策略设置：轻＝只在首次授权时确认一次（落 prefs）/ 中＝每类本次会话首次确认（默认）/
-  /// 重＝每次执行都确认。只读写本机 prefs，不碰后端；执行侧统一由 `DeviceActionExecutor.runOnce` 按档位判定。
+  /// 重＝每次执行都确认。C1b 起档位**按账号存服务端**（本机 prefs 为缓存与离线回落）：打开面板先
+  /// 同步一次再渲染；保存由 `DeviceActionPrefs.setPolicy` 先写服务端再落本机。
+  /// 执行侧统一由 `DeviceActionExecutor.runOnce` 按档位判定（读路径仍是本机 prefs，语义未变）。
   Future<void> _showActionPolicySettings() async {
     final l10n = AppLocalizations.of(context)!;
     const caps = [
@@ -538,6 +540,9 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
       ActionConfirmPolicy.firstPerType: l10n.ppActionPolicyFirstPerType,
       ActionConfirmPolicy.everyTime: l10n.ppActionPolicyEveryTime,
     };
+    // C1b：先拉服务端档位覆盖本机缓存（失败静默保留现值，绝不清空），再读本机渲染
+    await DeviceActionPrefs.syncFromServer();
+    if (!mounted) return;
     final selected = <String, ActionConfirmPolicy>{};
     for (final c in caps) {
       selected[c] = await DeviceActionPrefs.policyFor(c); // 读失败＝中档，不抛给 UI

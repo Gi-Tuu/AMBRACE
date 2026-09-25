@@ -218,6 +218,12 @@ class FeatureFlagCatalog {
       'mcp_stream_declarations',
       'agent_tool_exec_trace',
     ]),
+    // C1a（2026-09-25）：行动通道三条闸进常规开关页；后端默认标为只读（由服务器控制）
+    FlagGroup('行动通道', [
+      'device_actions_enabled',
+      'device_actions_plugin_enabled',
+      'device_actions_force_dry_run',
+    ]),
   ];
 
   // ── 每个键的中文名称 / 两行短说明 / 完整说明 ────────────────────

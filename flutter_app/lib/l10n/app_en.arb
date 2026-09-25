@@ -2687,6 +2687,7 @@
   "flagNumericValue": "Current value: {value}",
   "flagNumericReadOnly": "This flag is numeric and cannot be changed in the app.",
   "flagScopeServerHint": "Server-level switch: changes affect every account on this server",
+  "flagServerControlled": "Controlled by the server",
   "ppActionSubmitRun": "Submit one real action (self-check)",
   "ppActionSubmitRunSub": "Submit a real intent for this app and run it once if the gates allow",
   "ppActionPolicy": "Action confirmation policy",

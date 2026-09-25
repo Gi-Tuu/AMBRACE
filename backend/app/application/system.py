@@ -1051,12 +1051,17 @@ async def get_feature_flags(
     ``{title, desc, group, group_order, order, visible}``（按请求 lang 选 zh/en，缺省 zh；
     visible=True = App 常用开关直显）。来源 = ``app/application/flag_catalog.py`` 的纯内存字典，
     **不打库**；既有字段（key/enabled/value/type/source/scope/user_enabled）语义与顺序均不变。
+
+    C1a（2026-09-25）：再**追加** ``locked`` 与 ``self_service`` 两个布尔（缺省语义同
+    ``get_flag_policy``：未锁定 / 可自助改），来源 = ``flag_settings`` 策略，**一次批量取**
+    （:func:`flag_service.get_flag_policies`，禁止逐键打库 N 次）。App 开关页据此把该条置灰只读。
     '''
     await _require_admin(user_id, lang)
     from app.application import flag_catalog
     from app.application import flag_service
     flags = await flag_service.get_all_flags()
     user_flags = await flag_service.get_user_flags(user_id)
+    policies = await flag_service.get_flag_policies([f.get('key') for f in flags])
     for f in flags:
         if f.get('key') in flag_service.USER_SCOPED_FLAG_KEYS:
             f['scope'] = 'user'
@@ -1065,6 +1070,9 @@ async def get_feature_flags(
             f['scope'] = 'server'
             f['user_enabled'] = None
         f['meta'] = flag_catalog.meta_for(f.get('key'), lang)
+        policy = policies.get(f.get('key')) or {}
+        f['locked'] = bool(policy.get('server_locked', False))
+        f['self_service'] = bool(policy.get('self_service', True))
     return {'status': 'ok', 'flags': flags}
 
 

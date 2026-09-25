@@ -63,6 +63,8 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
   }
 
   Future<void> _toggle(String key, bool value) async {
+    // 后端标了 locked / self_service=false 的键（如行动通道三条闸）不发 PUT，界面上也已是灰态
+    if (FeatureFlagService.instance.isReadOnly(key)) return;
     final prev = _flags[key];
     setState(() => _flags[key] = value);
     final l10n = AppLocalizations.of(context)!;
@@ -177,15 +179,20 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
   }
 
   /// 副标题：一句话说明 + 一行作用范围提示（A5：用户级键显示账号覆盖状态、服务器级显示影响范围；文案走 l10n）。
+  /// C1a：后端标为只读（locked / self_service=false）的键再追一行「由服务器控制」。
   String _subtitle(String key, AppLocalizations l10n) {
     final base = _localizedMeta(key, l10n).short_;
     final svc = FeatureFlagService.instance;
-    if (!svc.isUserScoped(key)) return '$base\n${l10n.flagScopeServerHint}';
+    final lockedHint =
+        svc.isReadOnly(key) ? '\n${l10n.flagServerControlled}' : '';
+    if (!svc.isUserScoped(key)) {
+      return '$base\n${l10n.flagScopeServerHint}$lockedHint';
+    }
     final u = svc.userEnabledOf(key);
     final scope = u == null
         ? l10n.flagUserOverrideNone
         : (u ? l10n.flagUserOverrideEnabled : l10n.flagUserOverrideDisabled);
-    return '$base\n$scope';
+    return '$base\n$scope$lockedHint';
   }
 
   @override
@@ -252,6 +259,8 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
               serverLevel: !FeatureFlagService.instance.isUserScoped(k),
               // A5：用户级键带上本账号覆盖值，供行内展示覆盖状态（服务器级键恒为 null，不展示）
               userEnabled: FeatureFlagService.instance.userEnabledOf(k),
+              // C1a：后端标只读的键（行动通道等）置灰、点了不发请求
+              readOnly: FeatureFlagService.instance.isReadOnly(k),
             ))
         .toList();
 
@@ -269,7 +278,10 @@ class _FeatureFlagsScreenState extends State<FeatureFlagsScreen> {
                 subtitle: Text(_subtitle(k, l10n),
                     style: const TextStyle(fontSize: 11)),
                 value: _flags[k] ?? false,
-                onChanged: (v) => _toggle(k, v),
+                // 后端标只读（locked / self_service=false）→ 灰态不可点，提示见副标题
+                onChanged: FeatureFlagService.instance.isReadOnly(k)
+                    ? null
+                    : (v) => _toggle(k, v),
               ),
           ],
         ),
@@ -412,6 +424,8 @@ class _FlagTileData {
   final bool serverLevel;
   /// 用户级覆盖值（仅 user-scoped 旗标有意义）：true=用户开启、false=用户关闭、null=未覆盖（回落全局）。
   final bool? userEnabled;
+  /// 后端标为只读（locked / self_service=false）：开关置灰、点击不发请求，副标题加一行提示。
+  final bool readOnly;
   const _FlagTileData({
     required this.rawKey,
     required this.meta,
@@ -421,6 +435,7 @@ class _FlagTileData {
     this.numValue,
     this.serverLevel = false,
     this.userEnabled,
+    this.readOnly = false,
   });
 }
 
@@ -515,6 +530,15 @@ class _FlagTileState extends State<_FlagTile> {
                       style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
                     ),
                   ),
+                // 后端标只读（行动通道等）：这条由服务器控制，App 内不可改
+                if (!isNumeric && widget.data.readOnly)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      l10n.flagServerControlled,
+                      style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                    ),
+                  ),
                 if (hasDetail)
                   Align(
                     alignment: Alignment.centerRight,
@@ -568,7 +592,8 @@ class _FlagTileState extends State<_FlagTile> {
           else
             Switch.adaptive(
               value: widget.data.value,
-              onChanged: widget.onChanged,
+              // 后端标只读 → 灰态、点击无效（不发 PUT）
+              onChanged: widget.data.readOnly ? null : widget.onChanged,
             ),
         ],
       ),
