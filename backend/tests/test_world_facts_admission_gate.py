@@ -127,6 +127,7 @@ def test_同义与矛盾判定():
 
 def test_flag关_curated逐字节旧行为(cf_db):
     """flag 关：同义不同文各写一行（旧行为）、machine-confirmed、无 review 窗口。"""
+    _flag_prev = _loop.AGENT_FLAGS.get("memory_admission_gate", False)
     _loop.AGENT_FLAGS["memory_admission_gate"] = False
     try:
         _curate(cf_db, kind=KIND_FACT, value="用户是设计师")
@@ -137,7 +138,7 @@ def test_flag关_curated逐字节旧行为(cf_db):
         assert all(r.is_authoritative for r in rows)
         assert all(r.stale_after is None for r in rows)
     finally:
-        _loop.AGENT_FLAGS.pop("memory_admission_gate", None)
+        _loop.AGENT_FLAGS["memory_admission_gate"] = _flag_prev
 
 
 def test_flag开_同义合并不新增行(cf_db, monkeypatch):
@@ -214,12 +215,13 @@ def test_flag开_元信息被拦不落库(cf_db, monkeypatch):
 
 
 def test_flag关_元信息仍落库(cf_db):
+    _flag_prev = _loop.AGENT_FLAGS.get("memory_admission_gate", False)
     _loop.AGENT_FLAGS["memory_admission_gate"] = False
     try:
         assert _curate(cf_db, kind=KIND_FACT, value="这次把记忆模块重构一下") is not None
         assert len(_active(cf_db)) == 1
     finally:
-        _loop.AGENT_FLAGS.pop("memory_admission_gate", None)
+        _loop.AGENT_FLAGS["memory_admission_gate"] = _flag_prev
 
 
 # ───────────────────────────── assert_fact 写入 ─────────────────────────────
@@ -245,6 +247,7 @@ def test_flag开_setting类不得标status且不永不过期(cf_db, monkeypatch)
 
 
 def test_flag关_setting仍裸status(cf_db):
+    _flag_prev = _loop.AGENT_FLAGS.get("memory_admission_gate", False)
     _loop.AGENT_FLAGS["memory_admission_gate"] = False
     try:
         fid = _fact(predicate="setting", object_value="是家里的大哥，有一个弟弟和妹妹",
@@ -254,7 +257,7 @@ def test_flag关_setting仍裸status(cf_db):
         assert row.stale_after is None
         assert row.expires_at is None
     finally:
-        _loop.AGENT_FLAGS.pop("memory_admission_gate", None)
+        _loop.AGENT_FLAGS["memory_admission_gate"] = _flag_prev
 
 
 def test_flag开_status类必须有TTL(cf_db, monkeypatch):
@@ -269,12 +272,13 @@ def test_flag开_status类必须有TTL(cf_db, monkeypatch):
 
 
 def test_flag关_status可无TTL(cf_db):
+    _flag_prev = _loop.AGENT_FLAGS.get("memory_admission_gate", False)
     _loop.AGENT_FLAGS["memory_admission_gate"] = False
     try:
         fid = _fact(predicate="status", object_value="正在做饭", ttl_minutes=None)
         assert _row_by_id(cf_db, fid).expires_at is None
     finally:
-        _loop.AGENT_FLAGS.pop("memory_admission_gate", None)
+        _loop.AGENT_FLAGS["memory_admission_gate"] = _flag_prev
 
 
 def test_flag开_机器身份矛盾进UNVERIFIED(cf_db, monkeypatch):
@@ -315,6 +319,7 @@ def test_flag开_上限淘汰带supersede链(cf_db, monkeypatch):
 
 def test_flag关_上限淘汰无链(cf_db):
     """flag 关 = 旧行为（只置 superseded_at，不补 superseded_by）。"""
+    _flag_prev = _loop.AGENT_FLAGS.get("memory_admission_gate", False)
     _loop.AGENT_FLAGS["memory_admission_gate"] = False
     try:
         for i in range(15):
@@ -328,7 +333,7 @@ def test_flag关_上限淘汰无链(cf_db):
         assert len(evicted) == 3
         assert all(r.superseded_by is None for r in evicted)
     finally:
-        _loop.AGENT_FLAGS.pop("memory_admission_gate", None)
+        _loop.AGENT_FLAGS["memory_admission_gate"] = _flag_prev
 
 
 def test_禁止裸expired_源码守卫():

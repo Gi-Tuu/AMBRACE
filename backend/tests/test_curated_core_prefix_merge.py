@@ -180,6 +180,9 @@ def test_flag开_核心不同各成一行(cf_db, monkeypatch):
 
 def test_flag关_同核心各写一行(cf_db):
     """flag 关 = 逐字节旧行为：新判据不参与（查重仍是 strip 全等）。"""
+    # 还原用「读原值再写回」，**不要用 pop**：pop 会把键整个删掉，污染同进程后续用例
+    # （test_flag_catalog_metadata 断言 catalog ↔ AGENT_FLAGS 双向一致；2026-09-25 CI 修复）
+    _flag_prev = _loop.AGENT_FLAGS.get("memory_admission_gate", False)
     _loop.AGENT_FLAGS["memory_admission_gate"] = False
     try:
         _curate(cf_db, kind=KIND_RELATION_BASE, value="我是小甲的伴侣，关系稳定")
@@ -189,7 +192,7 @@ def test_flag关_同核心各写一行(cf_db):
         assert [r.object_value for r in rows] == ["我是小甲的伴侣，关系稳定",
                                                  "我是小甲的伴侣，与甲同住"]
     finally:
-        _loop.AGENT_FLAGS.pop("memory_admission_gate", None)
+        _loop.AGENT_FLAGS["memory_admission_gate"] = _flag_prev
 
 
 # ───────────── g~j. C13b：公共前缀必须停在子句边界（2026-09-25 追加） ─────────────

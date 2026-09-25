@@ -175,6 +175,26 @@ def _reset_event_bus_after_test():
 
 
 @pytest.fixture(autouse=True)
+def _restore_agent_flags_after_test():
+    """用例结束后把全局 AGENT_FLAGS 还原成本用例开始前的快照（2026-09-25 CI 修复护栏）。
+
+    背景：test_flag_catalog_metadata 断言「flag_catalog ↔ AGENT_FLAGS 双向一致」。此前有 6 处用例用
+    `AGENT_FLAGS[k] = x` + `finally: AGENT_FLAGS.pop(k, None)` 还原——`pop` 会把**键**整个删掉
+    （不是还原成默认值），于是「谁先跑」决定该断言红不红：本地按文件顺序跑绿，CI 的 xdist 分片把
+    污染用例排到前面就红（2026-09-25 第 43 棒 py3.13 档实测）。那 6 处已改成「读原值再写回」，
+    这里再加一道快照护栏，让任何新增用例都不会再以「删键 / 改值不还原」的方式污染同进程后续用例。
+
+    就地 clear + update：其他模块持有的是同一个 dict 对象，必须保身份。
+    """
+    from app.agent.loop import AGENT_FLAGS
+
+    snapshot = dict(AGENT_FLAGS)
+    yield
+    AGENT_FLAGS.clear()
+    AGENT_FLAGS.update(snapshot)
+
+
+@pytest.fixture(autouse=True)
 def _reset_admin_cache_between_tests():
     """每个用例前后清一次权限/门禁进程内缓存（2026-09-17 CI 修复护栏；P2 扩到账号门禁）。
 
