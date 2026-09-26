@@ -128,6 +128,21 @@ async def lifespan(app: FastAPI):
         readiness.mark("alembic", True, critical=True, msg="alembic not present")
         logger.info("Alembic not present; skip database migration versioning")
 
+    # ── 启动步骤 3.1（可选路径，P3-7）：凭据主密钥健康探测 ───────────────────────
+    # 必须在 Alembic 对齐之后：探测要读的就是迁移后的凭据列。
+    # 分级：可选——密钥文件缺失时 load_or_create_master_key 会当场生成新密钥，启动不报错，
+    # 但既有密文会全部静默判空（用户视角＝「Key 凭空丢了」）。这里把事故提前到启动期可见：
+    # 结论固化在内存快照（/liveness 读出），失败只 WARNING + ERROR 一次，不阻断启动。
+    try:
+        from app.utils.credential_crypto import probe_stored_credentials
+        _cred = await probe_stored_credentials()
+        if _cred.get("ok"):
+            logger.info("Credential key probe ok: %s", _cred.get("detail"))
+        else:
+            logger.warning("Credential key probe FAILED: %s", _cred.get("detail"))
+    except Exception as _cre:
+        logger.warning("Credential key probe errored: %s", _cre)
+
     # ── 启动步骤 3.5（可选路径，T5）：插件独立 metadata 幂等建表 ────────────────
     # 必须在 ensure_alembic_revision 之后：让主版本链先对齐（老库整链重放会建/改 douyin 表），
     # 插件 create_all 只补版本链不管的表（wechat_ilink_*）与兜底缺失（checkfirst 跳过已存在）。

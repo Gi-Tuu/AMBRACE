@@ -39,7 +39,7 @@ async def deduplicate_memories(character_id: int, threshold: float = VECTOR_DEDU
     """去除该角色的重复记忆，返回删除数量。
 
     优先语义去重：取该角色全部向量，numpy 两两余弦相似度（to_thread 防阻塞事件循环），
-    相似度 >= threshold（默认 0.9）视为重复，保留置顶/重要性高的一条；
+    相似度 >= threshold（默认 0.86，见 memory/constants.py::VECTOR_DEDUP_THRESHOLD）视为重复，保留置顶/重要性高的一条；
     无向量的记忆之间回退字符级 SequenceMatcher（0.72）。
     """
     from app.memory.service import delete_memory, _retrievable_status_clause

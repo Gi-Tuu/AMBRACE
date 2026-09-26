@@ -392,6 +392,57 @@ async def _anniversary_tick():
         _logger.warning("Anniversary check error: %s", _ae)
 
 
+# 受邀码「已用」保留天数（P3-4）：兑换成功即一次性失效，留 7 天仅供审计回溯。
+INVITE_USED_RETENTION_DAYS = 7
+
+
+async def _invite_cleanup_tick():
+    """受邀码清理（P3-4，2026-09-26 批 C/D）：每天一次，删两类行。
+
+    ①过期未用（used_by IS NULL 且 expires_at < now）——5 分钟有效、过期即永不复用；
+    ②已用且 used_at 早于 7 天（已用行 used_by/used_at 均非空，NULL 行不会被时间比较命中）。
+    account_invites 此前只增不清（表一直长），本 tick 是唯一清理口；时间统一 UTC naive
+    （app/utils/timeutil.now_naive_utc，与 expires_at/used_at 写入口径一致）；异常一律隔离。
+    """
+    try:
+        from datetime import timedelta
+
+        from sqlalchemy import and_, delete, or_
+
+        from app.models.user import AccountInvite
+
+        now = now_naive_utc()
+        async with async_session_factory() as db:
+            rp = await db.execute(
+                delete(AccountInvite).where(or_(
+                    and_(AccountInvite.used_by.is_(None), AccountInvite.expires_at < now),
+                    AccountInvite.used_at < now - timedelta(days=INVITE_USED_RETENTION_DAYS),
+                ))
+            )
+            await db.commit()
+        _logger.info("Invite code cleanup (key=invite_cleanup, deleted=%d)", int(rp.rowcount or 0))
+    except Exception as e:
+        _logger.warning("Invite code cleanup error: %s", e)
+
+
+async def _credential_probe_tick():
+    """凭据主密钥健康复探（P3-7，2026-09-26 批 C/D）：每天一次。
+
+    启动那次只覆盖「进程起来那一刻」；密钥文件在运行期被删/被换（换机、误清 data 目录）
+    同样会让既有密文在 decrypt() 里静默判空，故每日复探一次。结论写内存快照
+    （GET /liveness 的 credentials 节，不参与 stalled 判定），失败告警按「同一结论每进程
+    只报一次」去重，见 credential_crypto.record_probe。异常一律隔离，绝不掀翻主循环。
+    """
+    try:
+        from app.utils.credential_crypto import probe_stored_credentials
+
+        result = await probe_stored_credentials()
+        _logger.info("Credential key probe (key=credential_probe, checked=%s, ok=%s): %s",
+                     result.get("checked"), result.get("ok"), result.get("detail"))
+    except Exception as e:
+        _logger.warning("Credential key probe error: %s", e)
+
+
 async def scheduler_loop():
     """主调度循环 — 统一仲裁：定时承诺 / 生日节日 / 随机节律"""
     global _running
@@ -513,6 +564,12 @@ async def scheduler_loop():
 
             # 纪念日检查（Phase C Shared Memory）：每日一次（原 _check_anniversaries_today 未接线死代码，2026-08-17 接入）
             await run_daily_if_due("anniversary", _anniversary_tick, reason="tick")
+
+            # 受邀码清理（P3-4，2026-09-26）：每日一次，删「过期未用」与「已用超 7 天」两类行
+            await run_daily_if_due("invite_cleanup", _invite_cleanup_tick, reason="tick")
+
+            # 凭据主密钥健康复探（P3-7，2026-09-26）：每日一次，结论进 /liveness 的 credentials 节
+            await run_daily_if_due("credential_probe", _credential_probe_tick, reason="tick")
 
     except asyncio.CancelledError:
         _logger.info("Scheduler cancelled")

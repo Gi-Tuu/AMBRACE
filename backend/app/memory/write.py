@@ -236,7 +236,7 @@ async def save_memory(
                                 return None
                 except Exception:
                     pass
-        # 写入前查重：优先向量语义查重（cosine >= 0.9），未命中再字符级兜底（最近 30 条 >= 0.72）
+        # 写入前查重：优先向量语义查重（cosine >= 0.86，见 memory/constants.py::VECTOR_DEDUP_THRESHOLD），未命中再字符级兜底（最近 30 条 >= 0.72）
         embedding = None
         if content and content.strip() and not skip_dedup:
             # 1) 向量语义查重：先算嵌入，命中高度相似则更新原记忆而非新增

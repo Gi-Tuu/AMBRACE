@@ -18,6 +18,7 @@ from app.agent.status import classify as _classify_status
 from app.application.tenant_service import tenant_scope_ids
 from app.db.database import async_session_factory
 from app.i18n import tr_lang
+from app.models.channel import ChannelBinding
 from app.models.character import AICharacter
 from app.schemas.character import (
     CharacterCreate,
@@ -404,6 +405,13 @@ async def delete_character(
 ):
     """删除 AI 角色（硬删除：清空全部关联数据 + 删除角色行，用户要求"删除角色=完全清除"）"""
     await _get_owned_character(db, character_id, user_id, lang)
+    # 2026-09-26 修复（审查 P2-2）：外部渠道绑定不随角色删除清理（抖音名额全局唯一），
+    # 直接删会让名额被孤儿绑定占死 ⇒ 显式拦截，要求先解绑。
+    _bindings = (await db.execute(
+        select(ChannelBinding).where(ChannelBinding.character_id == character_id)
+    )).scalars().all()
+    if _bindings:
+        raise HTTPException(status_code=409, detail=tr_lang(lang, "character_has_channel_binding"))
     from sqlalchemy import delete as sa_delete
     from app.models.memory import Memory
 

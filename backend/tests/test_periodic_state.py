@@ -502,3 +502,49 @@ def test_M2搬用后关键分支体仍在源码里():
         'from app.scheduling.scheduler import _check_anniversaries_today as _run_anniv',
     ):
         assert needle in src, needle
+
+
+# ──────────── ⑪ 跨午夜按「完成时刻」记账（P3-6，2026-09-26 批 C/D） ────────────
+
+def test_每日一次_跨午夜按完成日记账次日窗口不再跑(local_clock):
+    """23:59 开跑、00:05 跑完 ⇒ 成功日记「完成那天」。
+
+    旧口径（按 started 记账）会把成功日记成前一天 ⇒ 次日窗口内再跑一次；本例即该缺口的红灯。
+    """
+    started = datetime(2026, 9, 26, 15, 59)     # UTC ⇒ 本地 09-26 23:59
+    finished = datetime(2026, 9, 26, 16, 5)     # UTC ⇒ 本地 09-27 00:05（已跨午夜）
+    local_clock["now"] = started
+
+    async def _body():
+        local_clock["now"] = finished           # 任务跑着跑着跨了午夜
+
+    assert asyncio.run(pst.run_daily_if_due("anniversary", _body)) is True
+    assert pst.last_done("anniversary") == finished, "必须按完成时刻记账"
+    assert finished.strftime(pst._STATE_FMT) in pst._STATE_FILE.read_text(encoding="utf-8"), \
+        "台账里落的必须是完成时刻"
+    # 完成日（本地 09-27）当天：不得再判到期
+    assert pst.is_daily_due("anniversary", 0, now=datetime(2026, 9, 26, 20, 0)) is False
+    # 再往后一个本地日（09-28）恢复到期
+    assert pst.is_daily_due("anniversary", 0, now=datetime(2026, 9, 27, 20, 0)) is True
+
+
+def test_每日一次_同日执行行为不变(local_clock):
+    """回归保护：没跨午夜时完成时刻与开始时刻同日 ⇒ 当天仍只跑一次、次日窗口再跑。"""
+    started = datetime(2026, 9, 26, 15, 0)      # UTC ⇒ 本地 09-26 23:00
+    finished = datetime(2026, 9, 26, 15, 20)    # UTC ⇒ 本地 09-26 23:20（同日）
+    local_clock["now"] = started
+    ran = []
+
+    async def _body():
+        ran.append(1)
+        local_clock["now"] = finished
+
+    assert asyncio.run(pst.run_daily_if_due("diary", _body, min_local_hour=23)) is True
+    assert ran == [1]
+    assert pst.last_done("diary") == finished
+    assert pst.is_daily_due("diary", 23, now=finished + timedelta(minutes=30)) is False, \
+        "同日窗口内不得再跑"
+    assert asyncio.run(pst.run_daily_if_due("diary", _ok_body(ran), min_local_hour=23)) is False
+    local_clock["now"] = datetime(2026, 9, 27, 15, 0)   # 次日窗口（本地 09-27 23:00）
+    assert asyncio.run(pst.run_daily_if_due("diary", _ok_body(ran), min_local_hour=23)) is True
+    assert ran == [1, 1]

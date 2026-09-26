@@ -12,7 +12,7 @@ from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, Str
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
-from app.utils.credential_crypto import EncryptedString  # A8 方案 B：凭据列读写收敛在列定义处
+from app.utils.credential_crypto import EncryptedText  # A8 方案 B：凭据列读写收敛在列定义处（P3-1：DDL=TEXT）
 
 # ── life.py ──
 # AI 伙伴生活引擎模型（2026-08-12 Life Engine v2）
@@ -344,7 +344,7 @@ class ImageGenConfig(Base):
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵（自由整型归属，不挂 users FK；0/-1 哨兵对 FK 违约）
     provider: Mapped[str | None] = mapped_column(String(50), nullable=True)  # openai / dashscope
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    api_key: Mapped[str | None] = mapped_column(EncryptedString(255), nullable=True)
+    api_key: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     daily_limit: Mapped[int] = mapped_column(Integer, default=10)

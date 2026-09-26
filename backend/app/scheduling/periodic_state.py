@@ -267,18 +267,23 @@ async def run_daily_if_due(key: str, coro_factory: Callable[[], Awaitable[object
     async with lock:
         if not is_daily_due(key, min_local_hour):
             return False
-        started = now_naive_utc()
         last = last_done(key)
         _logger.info("Daily task start (key=%s, reason=%s, minLocalHour=%d, last=%s)",
                      key, reason, min_local_hour, last.strftime(_STATE_FMT) if last else "never")
         try:
             await coro_factory()
         except Exception as e:
-            mark_failed_daily(key, when=started)
+            # P3-6：失败同样按「完成时刻」记账 —— 退避闸门是「再过 15/30/60 分钟重试」，
+            # 从开始时刻算会把跑掉的时间白扣掉；跨午夜时也不会把失败记进前一天那一档。
+            mark_failed_daily(key, when=now_naive_utc())
             _logger.warning("Daily task failed (key=%s, streak=%d, retry gated): %s",
                             key, fail_streak(key), e)
             return True
-        mark_done(key, when=started)
+        # P3-6：按「完成时刻」登记成功日。按开始时刻记账时，一个 23:59 开始、00:05 结束的任务
+        # 会把成功日记成前一天 ⇒ 次日再跑一次；跨午夜按完成日登记，「每天最多一次」在跨天时才成立。
+        # （is_daily_due 的「本地日期」比较口径不动，动的只是记账时刻。）
+        finished = now_naive_utc()
+        mark_done(key, when=finished)
         _logger.info("Daily task done (key=%s, reason=%s, localDate=%s)",
-                     key, reason, local_now(started).date())
+                     key, reason, local_now(finished).date())
         return True

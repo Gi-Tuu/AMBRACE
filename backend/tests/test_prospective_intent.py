@@ -46,6 +46,10 @@ def pi_db(monkeypatch, tmp_path):
             await db.commit()
             db.add(AICharacter(id=11, user_id=1, name="酱", personality="温柔",
                                chat_style="口语化", relation_type="朋友", is_active=True))
+            await db.commit()            # 2026-09-26（审查 P2-1 防御回归）：真实链路必有一条私聊会话行，
+            # 此前夹具只种角色、用例却传 chat_session_id=7；护栏加上后暴露了这份失真。
+            from app.models.chat import ChatSession
+            db.add(ChatSession(id=7, user_id=1, character_id=11))
             await db.commit()
 
     asyncio.run(_seed())

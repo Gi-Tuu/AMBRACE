@@ -248,13 +248,38 @@ def test_all_credential_columns_use_the_encrypted_type():
         "user_llm_configs": UserLlmConfig,
     }
     for table, model in expected.items():
-        assert model.__table__.c.api_key.type.__class__ is cc.EncryptedString, table
-    # DDL 不得漂移（零 schema 变更＝不需要迁移）
+        assert model.__table__.c.api_key.type.__class__ is cc.EncryptedText, table
+    # DDL 不得漂移（P3-1：凭据列一律 TEXT，不再带长度）
     from sqlalchemy.dialects import sqlite
 
     d = sqlite.dialect()
-    assert ApiConfig.__table__.c.api_key.type.compile(dialect=d) == "VARCHAR(255)"
-    assert UserLlmConfig.__table__.c.api_key.type.compile(dialect=d) == "VARCHAR(500)"
+    assert ApiConfig.__table__.c.api_key.type.compile(dialect=d) == "TEXT"
+    assert UserLlmConfig.__table__.c.api_key.type.compile(dialect=d) == "TEXT"
+
+
+def test_encrypted_text_ddl_is_text(keyfile):
+    """EncryptedText 的 DDL 方言类型必须是 TEXT（无长度上限，密文膨胀不再受长度假设约束）。"""
+    from sqlalchemy.dialects import sqlite
+
+    d = sqlite.dialect()
+    assert cc.EncryptedText().compile(dialect=d) == "TEXT"
+    # 类型层不再携带长度（EncryptedString(255) 那种「按明文长度设列宽」的假设已废除）
+    assert getattr(cc.EncryptedText(), "length", None) is None
+    assert cc.EncryptedString(255).compile(dialect=d) == "VARCHAR(255)"
+    # cache_ok 不继承父类（SQLAlchemy 只读类自身 __dict__）⇒ 子类必须自己声明，否则语句不产缓存键
+    assert cc.EncryptedText.cache_ok is True
+
+
+def test_encrypted_text_roundtrips_long_plaintext(keyfile):
+    """明文 ≥ 500 字符（含中文）经 bind/result 往返必须原样解回。"""
+    from sqlalchemy.dialects import sqlite
+
+    col = cc.EncryptedText()
+    plain = "sk-密钥-" + "密钥x" * 300  # 900+ 字符，含中文
+    stored = col.process_bind_param(plain, sqlite.dialect())
+    assert stored.startswith(cc.PREFIX) and plain not in stored
+    assert len(stored) > len(plain), "密文比明文更长：旧的 VARCHAR(255)/VARCHAR(500) 假设站不住"
+    assert col.process_result_value(stored, sqlite.dialect()) == plain
 
 
 def test_each_credential_column_roundtrips_plaintext(clone_db):
@@ -448,3 +473,128 @@ def test_migration_refuses_when_backup_fails(tmp_path, keyfile, monkeypatch):
         script.main(["--apply", "--db", str(db), "--backup-dir", str(tmp_path / "bk")])
     assert _sha256(db) == before, "备份失败必须 fail-closed：库文件一个字节都不改"
     assert not (tmp_path / "bk").exists()
+
+
+# ── ⑦ 主密钥健康探测（P3-7，2026-09-26 全量审查批 C/D）────────────────────────
+# 守的底线：密钥文件被删/被换时，「既有密文解不开」必须**主动**暴露（启动/巡检探测 + 内存快照
+# + 每进程一次 ERROR），而不是等下一次业务调用把凭据静默判空（用户视角＝「Key 凭空丢了」）。
+
+@pytest.fixture()
+def probe_state(monkeypatch):
+    """复位模块级快照与告警去重集合（二者是进程内全局，逐例隔离防互相污染）。"""
+    monkeypatch.setattr(cc, "_LAST_PROBE", {})
+    monkeypatch.setattr(cc, "_ALERTED", set())
+
+
+def test_探测只统计密文样本_明文与空值不计入(keyfile, probe_state):
+    mixed = [cc.encrypt("sk-a"), "sk-legacy-plain", None, "", cc.encrypt("sk-b")]
+    result = cc.probe_ciphertexts(mixed)
+    assert (result["checked"], result["failed"], result["ok"]) == (2, 0, True), "明文解得开，与密钥健康无关"
+    assert cc.probe_ciphertexts(["plain", None, ""])["checked"] == 0
+    assert cc.probe_ciphertexts([])["ok"] is True, "无样本＝无证据，不报警"
+
+
+def test_换主密钥后探测判失败且样本全数解不开(keyfile, tmp_path, monkeypatch, probe_state):
+    stored = [cc.encrypt("sk-1"), cc.encrypt("sk-2"), "sk-plain"]
+    monkeypatch.setenv(cc.KEY_ENV_VAR, str(tmp_path / "rotated.key"))
+    cc.load_or_create_master_key()          # ＝密钥文件丢失后当场重建（换机/误清 data 目录）
+    result = cc.probe_ciphertexts(stored)
+    assert result["ok"] is False
+    assert result["failed"] == result["checked"] == 2
+    assert "解不开" in result["detail"]
+
+
+def test_快照按值返回且同一结论只告警一次(keyfile, tmp_path, monkeypatch, probe_state, caplog):
+    ct = cc.encrypt("sk-alert-once")
+    assert cc.last_probe()["checked"] == 0, "未探测前回报「尚未探测」，不能凭空判健康"
+    monkeypatch.setenv(cc.KEY_ENV_VAR, str(tmp_path / "rotated2.key"))
+    cc.load_or_create_master_key()
+    bad = cc.probe_ciphertexts([ct])
+    with caplog.at_level(logging.ERROR, logger="app.credential_crypto"):
+        for _ in range(3):                   # 模拟每日巡检重复探到同一结论
+            cc.record_probe(bad)
+    alerts = [r for r in caplog.records if r.levelno >= logging.ERROR and "主密钥不可用" in r.getMessage()]
+    assert len(alerts) == 1, "同一结论本进程只报一次（巡检不得刷屏）"
+    assert cc.KEY_ENV_VAR in alerts[0].getMessage(), "告警必须指向密钥文件这个根因"
+    snap = cc.last_probe()
+    assert snap == bad and snap is not bad, "快照按副本返回，防调用方改坏内部状态"
+    with caplog.at_level(logging.ERROR, logger="app.credential_crypto"):
+        cc.record_probe(cc.probe_ciphertexts([cc.encrypt("sk-ok")]))
+    assert cc.last_probe()["ok"] is True, "换回可用密钥后快照跟着恢复"
+
+
+def test_启动探测读原始密文而非ORM自动解密(clone_db, monkeypatch, probe_state):
+    """端到端：探测必须绕过 EncryptedText 的 result 处理器，否则解不开时拿到 None→被过滤→永远假绿。"""
+    from app.models.agent import TaskLlmConfig
+    from app.models.config import (
+        ApiConfig,
+        MultimodalConfig,
+        SpeechConfig,
+        UserLlmConfig,
+        VlmConfig,
+    )
+    from app.models.life import ImageGenConfig
+    from app.models.user import User
+
+    factory, _db_path = clone_db
+    secret = "sk-探测密钥-abc"
+
+    async def _seed():
+        async with factory() as db:
+            db.add(User(id=7301, username="u7301", nickname="u"))
+            await db.flush()
+            for model in (ApiConfig, VlmConfig, SpeechConfig, MultimodalConfig, ImageGenConfig):
+                db.add(model(user_id=0, api_key=secret))
+            db.add(TaskLlmConfig(user_id=7301, task="memory", api_key=secret))
+            db.add(UserLlmConfig(user_id=7301, name="cfg-1", api_key=secret))
+            await db.commit()
+
+    asyncio.run(_seed())
+    monkeypatch.setattr("app.db.database.async_session_factory", factory)
+
+    targets = set(cc.credential_probe_targets())
+    known = {(t, "api_key") for t in (
+        "api_configs", "vlm_configs", "speech_configs", "multimodal_configs",
+        "image_gen_configs", "task_llm_configs", "user_llm_configs")}
+    assert targets >= known, f"凭据列扫描漏了表：{sorted(known - targets)}（新表应自动进入探测面）"
+
+    healthy = asyncio.run(cc.probe_stored_credentials())
+    assert healthy["ok"] is True and healthy["checked"] == len(targets), healthy
+    assert cc.last_probe() == healthy, "启动探测结论必须落进 /liveness 读的快照"
+
+    monkeypatch.setenv(cc.KEY_ENV_VAR, str(_db_path.parent / "probe-rotated.key"))
+    cc.load_or_create_master_key()
+    broken = asyncio.run(cc.probe_stored_credentials())
+    assert broken["ok"] is False and broken["failed"] == broken["checked"] == len(targets), (
+        f"换密钥后必须逐表判失败（拿到 checked=0 说明探测走了 ORM 自动解密＝假绿）：{broken}"
+    )
+
+
+def test_启动探测异常只降级不抛(monkeypatch, probe_state):
+    def _boom(*_a, **_kw):
+        raise RuntimeError("模拟会话工厂不可用")
+
+    monkeypatch.setattr("app.db.database.async_session_factory", _boom)
+    result = asyncio.run(cc.probe_stored_credentials())
+    assert result["checked"] == 0 and result["failed"] == 0 and result["ok"] is True
+    assert result["detail"].startswith("probe error:")
+    assert cc.last_probe()["detail"].startswith("probe error:")
+
+
+def test_liveness转述快照但不因密钥故障判stalled(probe_state, monkeypatch):
+    """边界（P3-7）：/liveness 只**转述**内存快照。密文解不开是数据事故不是进程故障——
+    翻转 stalled 会驱动 watchdog 二级判断/自动重启，既修不好密钥又掩盖真因，故必须为 False。"""
+    from app.api import system as system_api
+    from app.utils.supervisor import supervisor
+
+    bad = {"checked": 3, "failed": 3, "ok": False, "detail": "3/3 个密文样本解不开，首个原因：GCM 认证失败"}
+    cc.record_probe(bad)
+    monkeypatch.setattr(supervisor, "liveness", lambda: {})   # 循环心跳置空，排除本例无关的停摆源
+
+    def _no_db(*_a, **_kw):
+        raise RuntimeError("本例不连库")
+
+    monkeypatch.setattr("app.db.database.async_session_factory", _no_db)
+    info = asyncio.run(system_api._liveness_detail())
+    assert info["credentials"] == bad, "明细必须原样转述快照（零 DB 查询）"
+    assert info["stalled"] is False, "密钥故障不得翻转 stalled"

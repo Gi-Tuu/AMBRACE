@@ -121,6 +121,15 @@ async def _liveness_detail() -> dict:
     except Exception as e:
         info["channels"]["_error"] = repr(e)
 
+    # 4) 凭据主密钥健康（P3-7）：只读启动/巡检留下的内存快照，零 DB 查询。
+    #    **刻意不参与 stalled 判定**：stalled=True 会驱动 watchdog 的二级判断/自动重启，而
+    #    「密文解不开」是数据事故不是进程故障——重启既修不好密钥，也会掩盖真实原因。
+    try:
+        from app.utils.credential_crypto import last_probe
+        info["credentials"] = last_probe()
+    except Exception as e:
+        info["credentials"] = {"_error": repr(e)}
+
     return info
 
 
@@ -137,7 +146,10 @@ async def liveness_check():
 
 @router.get("/liveness/detail")
 async def liveness_detail(user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
-    """运行期活性明细（登录 + 仅主账号）：loops / mcp / channels 全量（运维信息）。"""
+    """运行期活性明细（登录 + 仅主账号）：loops / mcp / channels / credentials 全量（运维信息）。
+
+    credentials 为主密钥健康快照（P3-7）：只反映「已有密文能否解开」，不参与 stalled 判定。
+    """
     from app.application.permission_service import is_admin_user
     from app.i18n import tr_lang
     if not await is_admin_user(user_id):

@@ -141,10 +141,14 @@ def test_flag开_choice与noul各写一条并带候选留痕(shadow_db, monkeypa
 
     rows = _fetch(shadow_db)
     assert len(rows) == 2
-    choice, noul = rows[0]["steps"], rows[1]["steps"]
-    assert choice["primitive"] == "choice" and choice["output"] == "plan"
+    # 2026-09-26：两条影子留痕各自 fire-and-forget 写入，xdist 重负载下入库先后不保证
+    # （实测全量跑出现过 id 互换）⇒ 按 primitive 取行，不依赖下标顺序（本用例只验内容）。
+    by_primitive = {r["steps"]["primitive"]: r["steps"] for r in rows}
+    assert set(by_primitive) == {"choice", "noul"}
+    choice, noul = by_primitive["choice"], by_primitive["noul"]
+    assert choice["output"] == "plan"
     assert choice["options"] == list(dl.TENSE_OPTIONS) and choice["output_in_options"] is True
-    assert noul["primitive"] == "noul" and noul["output"] is False
+    assert noul["output"] is False
 
 
 def test_confidence恒为None_不得被替换成0或1(shadow_db, monkeypatch):

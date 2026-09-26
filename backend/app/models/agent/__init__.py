@@ -12,7 +12,7 @@ from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Te
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
-from app.utils.credential_crypto import EncryptedString  # A8 方案 B：凭据列读写收敛在列定义处
+from app.utils.credential_crypto import EncryptedText  # A8 方案 B：凭据列读写收敛在列定义处（P3-1：DDL=TEXT）
 
 # ── task.py ──
 # Agent 任务表（Phase H，2026-08-16）：任务级状态（断点续作/进度/结果），与 agent_task_logs（执行流水）分离
@@ -113,7 +113,7 @@ class TaskLlmConfig(Base):
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, default=0)  # 0=服务器级全局哨兵
     task: Mapped[str] = mapped_column(String(20), nullable=False)
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    api_key: Mapped[str | None] = mapped_column(EncryptedString(500), nullable=True)  # 支持多 Key（逗号/JSON 数组）
+    api_key: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)  # 支持多 Key（逗号/JSON 数组）
     model: Mapped[str | None] = mapped_column(String(80), nullable=True)
     provider: Mapped[str | None] = mapped_column(String(30), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -1,9 +1,11 @@
 import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../models/character.dart';
 import '../../services/api_client.dart';
+import '../../services/api_exception.dart';
 import '../../theme/aurora_tokens.dart';
 import '../../widgets/ios_card_group.dart';
 import '../../features/character/edit_form_widgets.dart';
@@ -590,8 +592,15 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
                           if (context.mounted) Navigator.pop(context, true);
                         } catch (e) {
                           if (context.mounted) {
+                            // 拦截类错误（如「请先解绑渠道」）的文案由后端 detail 给出：
+                            // Dio 把 ApiException 挂在 DioException.error 上，取出即用，否则回退通用提示。
+                            final apiErr = e is ApiException
+                                ? e
+                                : (e is DioException ? e.error : null);
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(l10n.deleteFail)),
+                              SnackBar(content: Text(apiErr is ApiException
+                                  ? apiErr.message
+                                  : l10n.deleteFail)),
                             );
                           }
                         }

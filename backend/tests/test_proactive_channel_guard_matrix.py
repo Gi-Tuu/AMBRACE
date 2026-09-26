@@ -96,8 +96,20 @@ class _FakeResult:
 
 
 class _FakeSession:
+    """AsyncSession 替身。
+
+    签名对齐真实 API（2026-09-26 审查 P2-3）：``AsyncSession.add`` 是**同步**方法
+    （SQLAlchemy 2.0.52 实测 ``iscoroutinefunction(AsyncSession.add)=False``），生产代码
+    按同步调用（app/agent/trace.py:52、app/life/life_state.py:104）。旧写法把它也写成
+    ``async def``，于是 ``db.add(x)`` 造出协程却从不 await ⇒ 落库步骤被静默吞掉（pytest 报
+    RuntimeWarning: coroutine '_FakeSession.add' was never awaited），断言等于假覆盖。
+    ``AsyncSession.delete`` 相反，真实就是协程方法（``await db.delete(row)``），保持 async。
+    """
+
     def __init__(self, rows: dict | None = None):
         self._rows = rows or {}
+        self.added: list = []
+        self.deleted: list = []
 
     async def __aenter__(self):
         return self
@@ -111,10 +123,11 @@ class _FakeSession:
     async def get(self, model, _pk):
         return self._rows.get(getattr(model, "__name__", str(model)))
 
-    async def add(self, *_a, **_k):
-        return None
+    def add(self, obj, *_a, **_k):
+        self.added.append(obj)
 
-    async def delete(self, *_a, **_k):
+    async def delete(self, obj, *_a, **_k):
+        self.deleted.append(obj)
         return None
 
     async def commit(self):
@@ -124,9 +137,13 @@ class _FakeSession:
         return None
 
 
-def _fake_db(rows: dict | None = None):
+def _fake_db(rows: dict | None = None, sessions: list | None = None):
+    """会话工厂桩；``sessions`` 传入时把每次造出的会话记进去，供用例回看 ``added``/``deleted``。"""
     def _factory(*_a, **_k):
-        return _FakeSession(rows)
+        s = _FakeSession(rows)
+        if sessions is not None:
+            sessions.append(s)
+        return s
 
     return _factory
 
@@ -199,16 +216,16 @@ def _assert_guarded(prompt: str, fingerprint: str) -> None:
 
 # ─────────── 已接锚：行为断言（A7 两条通道 + C3/B1 三条通道） ───────────
 
-def _patch_mg_preloads(monkeypatch, cap: _Capture):
+def _patch_mg_preloads(monkeypatch, cap: _Capture, sessions: list | None = None):
     """静音 generate_proactive_event 的全部前置查询并把 LLM 换成捕获器。
 
     与 tests/test_proactive_context.py::_patch_mg_preloads 同一套桩件（本文件自带一份，
-    不依赖、不修改既有测试）。
+    不依赖、不修改既有测试）。``sessions`` 传入时可回看落库对象（P2-3 真断言用）。
     """
     monkeypatch.setattr("app.agent.user_profile.build_user_profile_text", _empty_str)
     monkeypatch.setattr("app.agent.persona.assemble_persona_context", _persona_ctx)
     monkeypatch.setattr("app.application.weather_service.get_user_weather_line", _empty_str)
-    monkeypatch.setattr("app.db.database.async_session_factory", _fake_db())
+    monkeypatch.setattr("app.db.database.async_session_factory", _fake_db(sessions=sessions))
     monkeypatch.setattr("app.memory.search_memories", _noop_list)
     monkeypatch.setattr(mg, "_load_recent_reflection", _empty_str)
     monkeypatch.setattr(mg, "chat_completion", cap)
@@ -236,7 +253,8 @@ def test_proactive_chat_channel_carries_state_anchor(monkeypatch):
     行为断言：真实跑完 prompt 构建并捕获 messages。
     """
     cap = _Capture()
-    _patch_mg_preloads(monkeypatch, cap)
+    sessions: list[_FakeSession] = []
+    _patch_mg_preloads(monkeypatch, cap, sessions)
     _patch_anchor(monkeypatch)
     segments = asyncio.run(mg.generate_proactive_event(
         character_name="小爱", character_bio="", character_personality="友善",
@@ -245,6 +263,12 @@ def test_proactive_chat_channel_carries_state_anchor(monkeypatch):
     ))
     assert segments, "generate_proactive_event 未产出分段（用例桩件失效）"
     _assert_guarded(cap.user_prompt, FINGERPRINT["proactive"])
+    # P2-3 真断言：留痕落库（app/agent/trace.py:52 ``db.add(AgentTaskLog(...))``）必须真的进到会话。
+    # 替身 add 若仍是 async，这一调用会造出协程却不 await ⇒ 对象凭空消失、覆盖造假。
+    from app.models.agent import AgentTaskLog
+    assert any(isinstance(o, AgentTaskLog) for s in sessions for o in s.added), (
+        "AgentTaskLog 没进替身会话：留痕落库步骤被签名不符的假替身静默吞掉"
+    )
 
 
 def test_life_regression_prompt_carries_anchor_and_discipline(monkeypatch):

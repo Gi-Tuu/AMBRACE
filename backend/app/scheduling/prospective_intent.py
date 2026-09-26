@@ -41,7 +41,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, update
 
 from app.db.database import async_session_factory
-from app.models.character import ProactiveMessageLog
+from app.models.chat import ChatSession
+from app.models.character import AICharacter, ProactiveMessageLog
 from app.models.memory import ProspectiveIntent
 from app.scheduling import state_guard
 from app.utils.logger import get_logger
@@ -763,12 +764,20 @@ async def run_prospective_due(candidate: dict) -> bool:
         _logger.info("Prospective due skipped (cross-day) pis=%s", pis_id)
         await _set_status([intent_id], "stale")
         return False
+    # 2026-09-26 修复（审查 P2-1 防御）：角色或私聊会话已被删除 → 终态取消，
+    # 不认领、不调 LLM（避免删角色后每个 tick 白烧一次 + 外键失败回滚重试）。
+    async with async_session_factory() as _probe:
+        _alive_char = await _probe.get(AICharacter, char_id)
+        _alive_sess = await _probe.get(ChatSession, session_id)
+    if _alive_char is None or _alive_sess is None:
+        _logger.info("Prospective due cancelled (owner/session missing) pis=%s", pis_id)
+        await _set_status([intent_id], "cancelled")
+        return False
     if not await claim_intent_for_fire(intent_id):
         _logger.info("Prospective due skipped (already fired) pis=%s", pis_id)
         return False
     try:
         from app.agent.llm_client import chat_completion
-        from app.models.character import AICharacter
         from app.scheduling import scheduler as engine
         async with async_session_factory() as db:
             char = await db.get(AICharacter, char_id)

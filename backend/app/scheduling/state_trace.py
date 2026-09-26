@@ -110,12 +110,12 @@ def _norm_fact_text(text) -> str:
 #    app.scheduling.prospective_intent），只在拼装层收敛，不改底层表、不调 LLM。
 #    与旧「规范化后完全相同」相比，本判据多拦两类同族重复（生产库 char13 实测）：
 #    ①「同一件事换措辞 + 各自补充」（关系亲述族：核心相同、后缀不同）；
-#    ②「同一句话里换了可变槽位」——人名（sam）与相对/绝对时间（明早 / 9月27日），
-#      这些槽位不改变「说的是同一件事」，故比较前先剥掉，再交给既有判据。
+#    ②「同一句话里换了可变槽位」——ASCII 拉丁串（人名 sam，但不止人名）与相对/绝对时间
+#      （明早 / 9月27日），这些槽位不改变「说的是同一件事」，故比较前先剥掉，再交给既有判据。
 #    剥离槽位后仍走「保守子集」：仅「短串前缀包含」+「近乎逐字重复（0.9）」两条，
 #    刻意不含 facts 的「共享核心前缀（C13）」——那会误并「喜欢喝美式咖啡 / 喜欢喝拿铁咖啡」
 #    这类同模板不同宾语者；实测本判据对 coffee/不同腰伤等 KEEP 全部不误并。
-_ASCII_NAME_RE = re.compile(r"[a-z]+", re.IGNORECASE)   # 拉丁人名 / 句柄（sam、AI 等）
+_ASCII_NAME_RE = re.compile(r"[a-z]+", re.IGNORECASE)   # 不是「人名正则」：任何 ASCII 拉丁串一律当区分性 token（sam / NBA / iPhone / PDF 都命中）
 _DATE_ABS_RE = re.compile(r"\d{4}年\d{1,2}月\d{1,2}[日号]|\d{1,2}月\d{1,2}[日号]|\d{4}年")
 _TIME_REL_RE = re.compile(
     r"(?:大前天|前天|昨天|昨晚|今晚|今晨|今早|今天|明早|明晚|明天|后天|大后天|"
@@ -133,7 +133,13 @@ _LONG_KEY_LEN = 40
 
 
 def _dedup_key(text) -> str:
-    """同义判重键：先剥离 ASCII 人名与相对/绝对时间槽位，再规范化。仅用于比较，不改原值。"""
+    """同义判重键：先剥离 ASCII 拉丁串与相对/绝对时间槽位，再规范化。仅用于比较，不改原值。
+
+    被剥掉的槽位不等于「不重要」——它们一律交给 :func:`_dedup_slots` 复核：**任何 ASCII 拉丁串
+    一律视为区分性 token**（人名 sam 只是最常见的一种，NBA / iPhone / PDF 同样命中），
+    两侧都有且不同即判「不是同一件事」。剥离只是为了让「同一件事换个写法」能对上键，
+    合并方向上永远保守 —— 宁可不并，不可误并。
+    """
     s = _DATE_ABS_RE.sub("", str(text or ""))
     s = _TIME_REL_RE.sub("", s)
     s = _CLOCK_RE.sub("", s)
@@ -142,7 +148,11 @@ def _dedup_key(text) -> str:
 
 
 def _dedup_slots(text) -> tuple[frozenset[str], frozenset[str]]:
-    """取出会被 _dedup_key 剥掉的「区分性槽位」：ASCII 人名集合 与 时间词集合（小写化）。"""
+    """取出会被 _dedup_key 剥掉的「区分性槽位」：ASCII 拉丁串集合 与 时间词集合（小写化）。
+
+    第一个集合的变量名沿用 ``names``，但它收的**不是人名**：``_ASCII_NAME_RE`` 是 ``[a-z]+``
+    （忽略大小写），任何 ASCII 拉丁串都算一个 token —— 命中即按区分性证据处理（宁不并、不误并）。
+    """
     s = str(text or "")
     names = frozenset(m.group(0).lower() for m in _ASCII_NAME_RE.finditer(s))
     dates = frozenset(
@@ -156,7 +166,7 @@ def _dedup_slots(text) -> tuple[frozenset[str], frozenset[str]]:
 def _slots_conflict(x: frozenset, y: frozenset) -> bool:
     """区分性槽位是否「明确冲突」：**两侧都非空**且不相等。
 
-    一侧为空不算冲突 —— 缺人名/缺时间只是写法省略（「我是bo，甲的伴侣」vs「我是甲的伴侣」
+    一侧为空不算冲突 —— 缺 ASCII 串/缺时间只是写法省略（「我是bo，甲的伴侣」vs「我是甲的伴侣」
     仍是同一件事），不构成「不是同一件事」的证据；两侧都有且不同才是硬证据。
     """
     return bool(x) and bool(y) and x != y
@@ -165,7 +175,7 @@ def _slots_conflict(x: frozenset, y: frozenset) -> bool:
 def _texts_duplicate(a, b, *, ignore_dates: bool = False) -> bool:
     """两条【原值】是否「同一件事」（确定性、零 LLM）：区分性槽位先比、再比键。
 
-    批 B（2026-09-26，中-3）：**先比区分性槽位**——人名两侧都有且不同（Sam vs Leo）⇒ 不同对象；
+    批 B（2026-09-26，中-3）：**先比区分性槽位**——ASCII 拉丁串两侧都有且不同（Sam vs Leo）⇒ 不同对象；
     时间两侧都有且不同（昨天 vs 今天）⇒ 不同事件；两者都不能并成一条。
     ``ignore_dates=True`` 供**计划段**使用：未完成计划里时间是「约定措辞」而非事件标识
     （「我答应明早给甲带饭」与「我答应9月27日给甲带饭吃」是同一个约定），故不拿它判冲突。
@@ -179,7 +189,7 @@ def _texts_duplicate(a, b, *, ignore_dates: bool = False) -> bool:
     na, da = _dedup_slots(a)
     nb, db = _dedup_slots(b)
     if _slots_conflict(na, nb):
-        return False          # 人名两侧都有且不同：不同对象，绝不合并
+        return False          # ASCII 拉丁串两侧都有且不同：不同对象，绝不合并
     if not ignore_dates and _slots_conflict(da, db):
         return False          # 时间两侧都有且不同：不同事件（计划段按措辞处理，不判冲突）
     ka, kb = _dedup_key(a), _dedup_key(b)
@@ -250,7 +260,7 @@ def select_intent_rows(rows, *, limit: int) -> list:
     ``rows`` 由调用方按 ``updated_at desc`` 排好。同义（``_texts_duplicate`` 判为同一件事）
     只保留最先出现（＝最新）的一条；空正文跳过；选满 ``limit`` 即停；``limit`` ≤ 0 返回空。
     比较基准是 ``content`` 原值（``_texts_duplicate(..., ignore_dates=True)`` 自己剥槽位与规范化）。
-    **批 B（中-3）口径**：计划段只用人名区分「不同约定」（「明天要和 Sam 去看电影」与
+    **批 B（中-3）口径**：计划段只用 ASCII 拉丁串区分「不同约定」（「明天要和 Sam 去看电影」与
     「明天要和 Leo 去看电影」各占一条），**时间词不判冲突**（「明早」与「9月27日」是同一个约定的
     两种写法，仍要归一）。渲染时 ``intent_line`` 仍按各自原行做绝对化，两者不掺混。
     绝不改动 ``rows``。
@@ -264,7 +274,7 @@ def select_intent_rows(rows, *, limit: int) -> list:
         if not content:
             continue
         key = _dedup_key(content)
-        # 计划段口径：时间是「约定措辞」不是事件标识 ⇒ ignore_dates=True（人名仍作区分）
+        # 计划段口径：时间是「约定措辞」不是事件标识 ⇒ ignore_dates=True（ASCII 拉丁串仍作区分）
         if key and any(_texts_duplicate(content, k, ignore_dates=True) for k in kept):
             continue
         kept.append(content)

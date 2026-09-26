@@ -26,6 +26,7 @@ _MESSAGES: dict[str, tuple[str, str]] = {
     "token_expired": ("Token无效或已过期", "Invalid or expired token"),
     # 聊天
     "character_not_found": ("角色不存在", "Character not found"),
+    "character_has_channel_binding": ("该角色仍绑定外部渠道（如抖音/微信），请先在「渠道管理」解绑后再删除", "This character is still bound to an external channel (e.g. Douyin/WeChat). Please unbind it in Channel Management first."),
     "session_not_found": ("会话不存在", "Conversation not found"),
     "message_not_found": ("消息不存在", "Message not found"),
     "moment_daily_limit_or_not_found": ("今日已达发布上限或角色不存在", "Daily publish limit reached or character not found"),

@@ -1,7 +1,7 @@
 name: ai_companion
 description: AMBRACE（拥爱）- 自托管的 AI 伙伴陪伴应用
 publish_to: none
-version: 3.4.9+30409
+version: 3.5.0-alpha.1+30500
 
 environment:
   sdk: ^3.6.0

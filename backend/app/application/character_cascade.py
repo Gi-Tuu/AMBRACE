@@ -17,8 +17,11 @@
 
 显式**不删**（无 character_id 外键，不构成 FK 孤儿，属共享/日志类，留给数据治理批）：
 agent_tasks / agent_task_logs / llm_usage / image_gen_tasks / channel_bindings /
-lorebook_entries / world_facts / shared_events / prospective_intents / memory_archive 以外
-的归档类。其中 moment_ai_likes 虽无外键，但属角色在他人动态下的互动，本模块一并清。
+lorebook_entries / world_facts / shared_events / memory_archive 以外的归档类。其中
+moment_ai_likes 虽无外键，但属角色在他人动态下的互动，本模块一并清。
+prospective_intents 不删行，但**未触发的（pending/matched）在此置 cancelled**（2026-09-26
+审查 P2-1）：留着会让到期触发反复「认领 → 白烧一次 LLM → 外键失败回滚重试」；已兑现/作废的
+行仍保留留痕。
 """
 from sqlalchemy import delete as sa_delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,6 +78,7 @@ from app.models.memory import (
     Memory,
     MemoryArchive,
     ProcessedExtraction,
+    ProspectiveIntent,
     ReflectionLog,
     StageMemory,
     WeaveCard,
@@ -83,6 +87,7 @@ from app.models.memory import (
 )
 from app.models.user import PrivacyRequest
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc
 
 _logger = get_logger("application.character_cascade")
 
@@ -193,6 +198,17 @@ async def cascade_delete_character(db: AsyncSession, character_id: int) -> dict:
                 break
             ids |= children
         return sorted(ids)
+
+    # 2026-09-26 修复（审查 P2-1）：取消该角色所有未触发的前瞻意图，
+    # 否则到期触发会「认领 → 白烧一次 LLM → 外键失败 → 回滚重试」反复烧到窗口结束。
+    await db.execute(
+        update(ProspectiveIntent)
+        .where(
+            ProspectiveIntent.character_id == character_id,
+            ProspectiveIntent.status.in_(("pending", "matched")),
+        )
+        .values(status="cancelled", updated_at=now_naive_utc())
+    )
 
     # 1) 朋友圈：TA 发的动态 → 赞/AI 赞/评论；再清 TA 作为 AI 发出的评论与点赞
     moment_ids = await _ids(select(AIMoment.id).where(AIMoment.character_id == character_id))

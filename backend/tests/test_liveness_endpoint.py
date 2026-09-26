@@ -249,9 +249,12 @@ def test_liveness_detail_requires_auth(liveness_db):
 
 
 def test_liveness_detail_admin_full_payload(liveness_db):
-    """主账号 token → 200 且含完整明细段（loops / mcp / channels / stalled）。"""
+    """主账号 token → 200 且含完整明细段（loops / mcp / channels / credentials / stalled）。
+
+    credentials 段（P3-7）＝主密钥健康快照，只转述、不参与 stalled 判定。
+    """
     r = _make_client().get(DETAIL_URL, headers=_admin_headers())
     assert r.status_code == 200
     j = r.json()
-    assert set(j.keys()) == {"loops", "mcp", "channels", "stalled"}
+    assert set(j.keys()) == {"loops", "mcp", "channels", "credentials", "stalled"}
     assert j["stalled"] is False
