@@ -7709,4 +7709,16 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get ppActionWfSelfCheckBridgeOff => '工作流端口开关未开，自检不会执行任何动作（先在上面打开开关）';
+
+  @override
+  String get statusExpired => '已过期';
+
+  @override
+  String get statusFuture => '未来';
+
+  @override
+  String get markDone => '标记完成';
+
+  @override
+  String get reopen => '重新打开';
 }

@@ -8021,4 +8021,16 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get ppActionWfSelfCheckBridgeOff =>
       'The workflow port switch is off, so the self-check runs no action. Turn it on first.';
+
+  @override
+  String get statusExpired => 'Expired';
+
+  @override
+  String get statusFuture => 'Upcoming';
+
+  @override
+  String get markDone => 'Mark done';
+
+  @override
+  String get reopen => 'Reopen';
 }

@@ -213,18 +213,54 @@ _ABANDON_WORDS = (
     "不搞了", "不想弄了", "先算了", "不学了", "不考了",
 )
 
+# 批 F-F1（2026-09-26）：「过去时间纠正」词表——用户明确说这事已经过去了（不是在说它完成，
+# 而是在说它不该再被提）。历史事故：话题「去面试新生」自 09-21 卡「进行中」，用户反复纠正
+# 「不是今天的事了 / 别再提」，原完成词表不认这类话术 ⇒ 指针永不熄灭。
+# 判据保守：只有消息里确实出现下列短语才生效。
+_PAST_CORRECTION_WORDS = (
+    "不是今天的事", "是前天的事", "已经过去", "早过了", "别再提", "提过好几次",
+    "不是这次", "早就结束了", "这事过去了",
+)
+
+# 过去纠正的「话题点名」判定专用停用字：纯虚词/标点不构成命中依据
+# （否则「的事」「这个」这类碎片会把不相干话题一起关掉）
+_FUNCTION_CHARS = frozenset(
+    "的了呢吧吗啊呀哦呃嗯哈么这那有的是就是不也还都很和你我他她它它们 "
+    ",，。.、;；!！?？~～-—…　"
+)
+
+
+def _shares_content_bigram(topic: str, msg: str) -> bool:
+    """话题与消息共享一个实词二字窗口（两字都不属虚词/标点）。
+
+    话题词往往带前后缀（如「去面试新生」），而纠正话术里只出现核心词（「面试」），
+    既有 _overlap 的 4 字公共子串口径命中不了 ⇒ 过去纠正需要更细的点名判定。
+    """
+    for i in range(len(topic) - 1):
+        gram = topic[i:i + 2]
+        if gram[0] in _FUNCTION_CHARS or gram[1] in _FUNCTION_CHARS:
+            continue
+        if gram in msg:
+            return True
+    return False
+
 
 async def update_topic_resolution(character_id: int, user_id: int, user_msg: str) -> None:
-    """用户消息含完成/搁置类词时，自动切换进行中话题状态（失败静默）。
+    """用户消息含完成/搁置/过去纠正类词时，自动切换进行中话题状态（失败静默）。
 
     匹配：消息中直接提到话题词或与话题重叠；完成类词无匹配时兜底最近一条
     （用户省略话题的语境，如只回"弄好了"）。
+    批 F-F1：命中「过去时间纠正」时语义等同完成，但**禁用兜底**——只关被点名的话题，
+    一条都没点名就什么都不做（避免把刚聊的别的话题误关）。
     """
     try:
         if not user_msg:
             return
+        is_past = any(w in user_msg for w in _PAST_CORRECTION_WORDS)
         kind = None
-        if any(w in user_msg for w in _COMPLETION_WORDS):
+        if is_past:
+            kind = "完成"
+        elif any(w in user_msg for w in _COMPLETION_WORDS):
             kind = "完成"
         elif any(w in user_msg for w in _ABANDON_WORDS):
             kind = "搁置"
@@ -241,8 +277,14 @@ async def update_topic_resolution(character_id: int, user_id: int, user_msg: str
             )).scalars().all()
             if not rows:
                 return
-            matched = [r for r in rows if r.topic in user_msg or _overlap(r.topic, user_msg)]
-            targets = matched if matched else (rows[:1] if kind == "完成" else [])
+            if is_past:
+                # 批 F-F1：禁用兜底——只关被点名的进行中话题，没点名就什么都不做
+                targets = [r for r in rows
+                           if r.topic and (r.topic in user_msg or _overlap(r.topic, user_msg)
+                                           or _shares_content_bigram(r.topic, user_msg))]
+            else:
+                matched = [r for r in rows if r.topic in user_msg or _overlap(r.topic, user_msg)]
+                targets = matched if matched else (rows[:1] if kind == "完成" else [])
             changed = False
             for r in targets:
                 r.status = kind
@@ -252,7 +294,8 @@ async def update_topic_resolution(character_id: int, user_id: int, user_msg: str
                 changed = True
             if changed:
                 await db.commit()
-                _logger.info("Topics resolved(%s): char=%d targets=%s", kind, character_id,
+                _logger.info("Topics resolved(%s%s): char=%d targets=%s", kind,
+                             "/past-correction" if is_past else "", character_id,
                              [r.topic for r in targets])
     except Exception as e:
         _logger.warning("Topic resolution failed: %s", e)

@@ -206,6 +206,51 @@ async def _save_memo_note(character_id: int, memo_text: str, note_author: str = 
         return False
 
 
+async def _mark_note_status(character_id: int, note_type: str, match_text: str,
+                           status: str = "done") -> dict:
+    """AI 侧「标记完成 / 重开」小手机备注（批G，2026-09-26）。
+
+    complete_note 形态的独立标记动作（与 add-only 的 note_calendar/note_memo 分开，
+    不改既有工具默认行为）。按文本片段匹配【本角色自己】的行：
+    - note_type: "calendar" | "memo"；status: "done" | "active"（重开）。
+    - 命中唯一才改；命中多条取最新一条（created_at 倒序首条）并在结果里说明；
+    - 命中不到 → ok=False 明确失败（绝不静默成功）。
+    返回 {ok, message, id?, status?, matched?}。
+    """
+    from sqlalchemy import select
+    match = (match_text or "").strip()
+    if not match or note_type not in ("calendar", "memo") or status not in ("done", "active"):
+        return {"ok": False, "message": "参数不合法（note_type/status/match_text）"}
+    try:
+        if note_type == "calendar":
+            from app.models.device import CalendarNote as _M
+            text_col = _M.note_text
+        else:
+            from app.models.device import MemoNote as _M
+            text_col = _M.text
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(_M)
+                .where(_M.character_id == character_id, text_col.like(f"%{match}%"))
+                .order_by(_M.created_at.desc())
+            )).scalars().all()
+            if not rows:
+                _kind = "日历" if note_type == "calendar" else "备忘"
+                return {"ok": False, "message": f"未找到包含「{match}」的{_kind}备注"}
+            target = rows[0]
+            target.status = status
+            await db.commit()
+            _snippet = (getattr(target, "note_text", None) or getattr(target, "text", "") or "")[:40]
+            _verb = "已完成" if status == "done" else "已重开"
+            msg = f"已将「{_snippet}」标记为{_verb}"
+            if len(rows) > 1:
+                msg += f"（匹配 {len(rows)} 条，已取最新一条）"
+            return {"ok": True, "message": msg, "id": target.id, "status": status, "matched": len(rows)}
+    except Exception as e:
+        _logger.warning("Note status mark failed: %s", e)
+        return {"ok": False, "message": f"标记失败：{e}"}
+
+
 async def _execute_note_tool(tool_name: str, payload: dict, character_id: int) -> None:
     """经统一工具执行入口执行本地小手机工具（Phase F：note_calendar/note_memo）。
 

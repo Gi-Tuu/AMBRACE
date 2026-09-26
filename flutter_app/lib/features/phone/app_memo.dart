@@ -85,6 +85,19 @@ class _MemoScreenState extends State<MemoScreen> {
     return author.isEmpty ? text : '$text  -  $author';
   }
 
+  Future<void> _toggleDone(Map<String, dynamic> m) async {
+    final done = (m['status'] as String? ?? 'active') == 'done';
+    try {
+      await ApiClient().updateMemoStatus(m['id'] as int, done ? 'active' : 'done');
+      _load();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(AppLocalizations.of(context)!.saveFail)));
+      }
+    }
+  }
+
   Future<void> _add() async {
     final text = _textCtrl.text.trim();
     if (text.isEmpty) return;
@@ -151,8 +164,14 @@ class _MemoScreenState extends State<MemoScreen> {
                                   horizontal: 12, vertical: 8),
                               child: Row(
                                 children: [
-                                  const Icon(Icons.sticky_note_2_outlined,
-                                      size: 20, color: Colors.orange),
+                                  Icon(
+                                      Icons.sticky_note_2_outlined,
+                                      size: 20,
+                                      color: (m['status'] as String? ??
+                                                  'active') ==
+                                              'done'
+                                          ? Colors.grey
+                                          : Colors.orange),
                                   const SizedBox(width: 10),
                                   Expanded(
                                     child: Column(
@@ -163,7 +182,16 @@ class _MemoScreenState extends State<MemoScreen> {
                                             overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
                                                 fontSize: 14,
-                                                color: scheme.onSurface)),
+                                                decoration: (m['status'] as String? ??
+                                                            'active') ==
+                                                        'done'
+                                                    ? TextDecoration.lineThrough
+                                                    : null,
+                                                color: (m['status'] as String? ??
+                                                            'active') ==
+                                                        'done'
+                                                    ? Colors.grey
+                                                    : scheme.onSurface)),
                                         Text(
                                           fmtTime(
                                               m['created_at'] as String? ?? ''),
@@ -174,6 +202,39 @@ class _MemoScreenState extends State<MemoScreen> {
                                       ],
                                     ),
                                   ),
+                                  GestureDetector(
+                                    onTap: () => _toggleDone(m),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: ((m['status'] as String? ??
+                                                    'active') ==
+                                                'done'
+                                            ? Colors.grey
+                                            : Colors.orange)
+                                        .withValues(alpha: 0.15),
+                                        borderRadius:
+                                            BorderRadius.circular(10),
+                                      ),
+                                      child: Text(
+                                        (m['status'] as String? ??
+                                                    'active') ==
+                                                'done'
+                                            ? l10n.completed
+                                            : l10n.todo,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: (m['status'] as String? ??
+                                                      'active') ==
+                                                  'done'
+                                              ? Colors.grey
+                                              : Colors.orange,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
                                   IconButton(
                                     icon: Icon(Icons.delete_outline,
                                         size: 18, color: scheme.error),

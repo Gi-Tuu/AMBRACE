@@ -19,11 +19,16 @@ LLM 通道 200 OK、评星函数手工调用完全正常 ⇒ 唯一原因就是�
 import asyncio
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from app.utils.logger import get_logger
-from app.utils.timeutil import now_naive_utc
+from app.utils.timeutil import (
+    app_tz_offset_hours,
+    now_naive_utc,
+    shift_utc_naive,
+    to_naive_utc,
+)
 
 _logger = get_logger("memory.maintenance")
 
@@ -123,6 +128,77 @@ def is_due(now: datetime | None = None, interval: timedelta = INTERVAL) -> bool:
     return (now or now_naive_utc()) - last >= interval
 
 
+# 批 F-F3（2026-09-26）：「过期未来口吻记忆」候选扫描——**只观察、不改任何数据**。
+# 背景：memories 里「用户明天要面试新生」这类短期未来表述一直 active，到期后没人失效，
+# 于是被检索/注入链路反复复读（Codex 已把 char13 的 4 条手工置 superseded）。
+# 本批只攒几天候选样本，再决定要不要自动失效（不做自动失效、不加 flag）。
+_STALE_FUTURE_WORDS = ("明天", "明早", "次日", "后天")
+_STALE_FUTURE_MEMORY_TYPES = ("user_info", "insight", "event")
+_STALE_FUTURE_MIN_AGE_DAYS = 2   # created_at 的本地日历日早于今天 ≥ 2 天才算候选
+
+
+def _local_date(dt: datetime, offset_hours: int):
+    """库内 UTC naive → 应用本地日历日（口径统一走 timeutil）。"""
+    return shift_utc_naive(to_naive_utc(dt), offset_hours).date()
+
+
+async def scan_stale_future_memories(
+    *,
+    session_factory=None,
+    now: datetime | None = None,
+) -> dict[int, list[tuple[int, str]]]:
+    """只读扫描过期未来口吻候选：返回 {character_id: [(memory_id, 正文 30 字摘要), ...]}。
+
+    判据：status='active' 且 memory_type ∈ (user_info/insight/event) 且正文含短日未来词
+    （明天/明早/次日/后天）且 created_at 的本地日历日早于今天 ≥ _STALE_FUTURE_MIN_AGE_DAYS 天。
+    纯只读（select），不写库、不改状态；任何异常一律隔离（打 WARNING 返回空），
+    绝不影响本拍维护的成败与退避。session_factory/now 仅供测试注入。
+    """
+    grouped: dict[int, list[tuple[int, str]]] = {}
+    try:
+        from sqlalchemy import select
+
+        from app.models.memory import Memory
+
+        if session_factory is None:
+            from app.db.database import async_session_factory
+            session_factory = async_session_factory
+
+        offset = app_tz_offset_hours()
+        now_utc = now_naive_utc() if now is None else to_naive_utc(now)
+        today_local = _local_date(now_utc, offset)
+        # 候选 ⇔ 本地日 ≤ 今天-N ⇔ created_at(UTC) 早于「本地 今天-(N-1) 日 00:00」对应的 UTC 点
+        cutoff_local = datetime.combine(
+            today_local - timedelta(days=_STALE_FUTURE_MIN_AGE_DAYS - 1), time.min)
+        cutoff_utc = shift_utc_naive(cutoff_local, -offset)
+
+        async with session_factory() as db:
+            rows = (await db.execute(
+                select(Memory.character_id, Memory.id, Memory.content)
+                .where(
+                    Memory.status == "active",
+                    Memory.memory_type.in_(_STALE_FUTURE_MEMORY_TYPES),
+                    Memory.created_at < cutoff_utc,
+                )
+                .order_by(Memory.character_id, Memory.id)
+            )).fetchall()
+
+        for cid, mid, content in rows:
+            text = (content or "").strip()
+            if not any(w in text for w in _STALE_FUTURE_WORDS):
+                continue
+            grouped.setdefault(int(cid), []).append((int(mid), text[:30]))
+        for cid, items in grouped.items():
+            _logger.info(
+                "Stale-future memory candidates (observe only): char=%d count=%d sample=%s",
+                cid, len(items), items[:3],
+            )
+    except Exception as e:
+        _logger.warning("Stale-future memory scan failed (observe only): %s", e)
+        return {}
+    return grouped
+
+
 async def run_if_due(*, reason: str = "tick", interval: timedelta = INTERVAL) -> bool:
     """到期就跑一次「记忆衰减 + AI 评星」，成功才刷新时间戳。返回是否真的跑了。
 
@@ -160,6 +236,10 @@ async def run_if_due(*, reason: str = "tick", interval: timedelta = INTERVAL) ->
         except Exception as e:
             ok = False
             detail.append("rating=fail(%s)" % e)
+        # 批 F-F3（2026-09-26）：过期未来口吻候选扫描——纯只读观察，函数内部已吞异常，
+        # 不计入本拍成败（不许因为扫描失败触发退避）。
+        stale = await scan_stale_future_memories()
+        detail.append("stale_future_candidates=%d" % sum(len(v) for v in stale.values()))
         if ok:
             _write_state(started, fail_streak=0)
             _logger.info("Periodic memory maintenance done (reason=%s, streak=0, backoff=%s, %s)",

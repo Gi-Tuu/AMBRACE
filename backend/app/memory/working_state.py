@@ -15,10 +15,70 @@ add/update/resolve 语义（设计 §3.2 的实现细化），证据门控 + 桶
 from __future__ import annotations
 
 import copy
+from datetime import datetime
+
+from app.utils.timeutil import (
+    app_tz_offset_hours,
+    now_naive_utc,
+    shift_utc_naive,
+    to_naive_utc,
+)
 
 BUCKET_LIMITS = {"ongoing": 3, "relationship_notes": 3, "open_questions": 3}
 IDENTITY_KEY = {"ongoing": "topic", "relationship_notes": "note", "open_questions": "question"}
 BUCKETS = tuple(BUCKET_LIMITS)
+
+# 批 F-F2（2026-09-26）：短跨度（日级以内）未来口吻词表。下周/下个月这类长跨度**一律不判过期**，
+# 避免误杀真实未来计划。历史事故：char13 的 ongoing 项 detail 写「sam提醒明天要面试新生…明早…」，
+# 落笔那天之后已翻日 ⇒ 「明天」早就过了，却被现状锚每轮注入、反复复读。
+_SHORT_FUTURE_WORDS = ("明天", "明早", "今天晚些", "次日", "后天")
+
+
+def _has_short_future_word(*texts) -> bool:
+    return any(w in (t or "") for t in texts for w in _SHORT_FUTURE_WORDS)
+
+
+def _local_date(dt: datetime):
+    """UTC（naive 或 aware）→ 应用本地时区日历日（口径统一走 timeutil，不手搓偏移）。"""
+    return shift_utc_naive(to_naive_utc(dt), app_tz_offset_hours()).date()
+
+
+def _parse_stamp(value) -> datetime | None:
+    """条目的 updated_at（ISO 串 / datetime）→ datetime；解析不出来返回 None（保守：不判过期）。"""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
+
+
+def expire_stale_future_clauses(items, *, now=None) -> tuple[list, list]:
+    """剔除「已翻日的短跨度未来口吻」ongoing 条目 → (保留项, 过期项)。
+
+    判据：条目 topic/detail 含明天/明早/今天晚些/次日/后天，**且**其 updated_at 的应用本地
+    日历日早于 now 的本地日历日（写下它的那天已经过了 ⇒ 口中的「明天/后天」必然已到期）。
+    保守边界：长跨度表述（下周/下个月）保留；updated_at 缺失或解析不出来一律保留。
+    now 缺省取 now_naive_utc()，仅供测试注入（UTC naive，与库内口径一致）。
+    """
+    if now is None:
+        now = now_naive_utc()
+    now_day = _local_date(now)
+    kept: list = []
+    expired: list = []
+    for item in items or []:
+        if not isinstance(item, dict) or not _has_short_future_word(
+                item.get("topic"), item.get("detail")):
+            kept.append(item)
+            continue
+        stamp = _parse_stamp(item.get("updated_at"))
+        if stamp is None or _local_date(stamp) >= now_day:
+            kept.append(item)
+        else:
+            expired.append(item)
+    return kept, expired
 
 
 def empty_state() -> dict:

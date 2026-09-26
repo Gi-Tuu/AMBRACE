@@ -77,6 +77,11 @@ extension PhoneDesktopApi on ApiClient {
     await dio.delete('/api/v1/phone-desktop/calendar-notes/$noteId');
   }
 
+  Future<void> updateCalendarNoteStatus(int noteId, String status) async {
+    await dio.patch('/api/v1/phone-desktop/calendar-notes/$noteId',
+        data: {'status': status});
+  }
+
   Future<List<Map<String, dynamic>>> getBrowserHistory(int characterId) async {
     final r = await dio.get(
       '/api/v1/phone-desktop/browser-history',
@@ -126,6 +131,11 @@ extension PhoneDesktopApi on ApiClient {
 
   Future<void> deletePhoneMemo(int memoId) async {
     await dio.delete('/api/v1/phone-desktop/memos/$memoId');
+  }
+
+  Future<void> updateMemoStatus(int memoId, String status) async {
+    await dio.patch('/api/v1/phone-desktop/memos/$memoId',
+        data: {'status': status});
   }
 
   Future<String> getPhoneWeather() async {

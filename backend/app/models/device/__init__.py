@@ -44,6 +44,7 @@ class CalendarNote(Base):
     note_date: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
     note_text: Mapped[str] = mapped_column(Text, nullable=False)
     author: Mapped[str | None] = mapped_column(String(50), nullable=True)  # 记录者署名（角色名/用户昵称，2026-08-14）
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="active", server_default="active")  # active / done（批G 备注状态标记，2026-09-26）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 class MemoNote(Base):
     """备忘录：AI/用户共同维护的便签（无日期绑定，AI 主动记录）"""
@@ -53,6 +54,7 @@ class MemoNote(Base):
     character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     author: Mapped[str | None] = mapped_column(String(50), nullable=True)  # 记录者署名（角色名/用户昵称，2026-08-14）
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="active", server_default="active")  # active / done（批G 备注状态标记，2026-09-26）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 class BrowserHistory(Base):
     """角色小手机浏览器搜索历史（保留 7 天）"""

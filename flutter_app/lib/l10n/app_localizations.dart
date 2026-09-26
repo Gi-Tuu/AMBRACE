@@ -14324,6 +14324,30 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'工作流端口开关未开，自检不会执行任何动作（先在上面打开开关）'**
   String get ppActionWfSelfCheckBridgeOff;
+
+  /// No description provided for @statusExpired.
+  ///
+  /// In zh, this message translates to:
+  /// **'已过期'**
+  String get statusExpired;
+
+  /// No description provided for @statusFuture.
+  ///
+  /// In zh, this message translates to:
+  /// **'未来'**
+  String get statusFuture;
+
+  /// No description provided for @markDone.
+  ///
+  /// In zh, this message translates to:
+  /// **'标记完成'**
+  String get markDone;
+
+  /// No description provided for @reopen.
+  ///
+  /// In zh, this message translates to:
+  /// **'重新打开'**
+  String get reopen;
 }
 
 class _AppLocalizationsDelegate

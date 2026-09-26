@@ -2714,5 +2714,9 @@
   "ppActionWfSelfCheckFail": "failed",
   "ppActionWfSelfCheckEmpty": "No step result came back",
   "ppActionWfSelfCheckNotMappable": "The self-check sequence could not be mapped to port intents; nothing was executed: {reason}",
-  "ppActionWfSelfCheckBridgeOff": "The workflow port switch is off, so the self-check runs no action. Turn it on first."
+  "ppActionWfSelfCheckBridgeOff": "The workflow port switch is off, so the self-check runs no action. Turn it on first.",
+  "statusExpired": "Expired",
+  "statusFuture": "Upcoming",
+  "markDone": "Mark done",
+  "reopen": "Reopen"
 }

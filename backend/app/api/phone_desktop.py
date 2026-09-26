@@ -179,6 +179,7 @@ async def list_calendar_notes(character_id: int, month: str | None = None, user_
         rows = (await db.execute(q.order_by(CalendarNote.note_date))).scalars().all()
     return {"notes": [
         {"id": r.id, "date": r.note_date, "text": r.note_text, "author": r.author,
+         "status": r.status,
          "created_at": r.created_at.isoformat() if r.created_at else ""}
         for r in rows
     ]}
@@ -224,6 +225,25 @@ async def delete_calendar_note(note_id: int, user_id: int = Depends(get_current_
     return {"status": "ok"}
 
 
+@router.patch("/calendar-notes/{note_id}")
+async def update_calendar_note_status(note_id: int, body: dict, user_id: int = Depends(get_current_user_id)):
+    """勾选/重开日历备注完成状态（status=active|done）：只能改本账号租户内角色的行（与 DELETE 同口径）"""
+    status = str(body.get("status") or "").strip()
+    if status not in ("active", "done"):
+        raise HTTPException(status_code=400, detail="invalid status")
+    async with async_session_factory() as db:
+        row = (await db.execute(
+            select(CalendarNote).where(CalendarNote.id == note_id)
+        )).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail="not found")
+        await _check_character_owned(row.character_id, user_id)
+        row.status = status
+        await db.commit()
+        await db.refresh(row)
+    return {"id": row.id, "date": row.note_date, "text": row.note_text, "author": row.author, "status": row.status}
+
+
 @router.get("/memos")
 async def list_memos(character_id: int, user_id: int = Depends(get_current_user_id)):
     await _check_character_owned(character_id, user_id)
@@ -237,6 +257,7 @@ async def list_memos(character_id: int, user_id: int = Depends(get_current_user_
         )).scalars().all()
     return {"items": [
         {"id": r.id, "text": r.text, "author": r.author,
+         "status": r.status,
          "created_at": r.created_at.isoformat() if r.created_at else ""}
         for r in rows
     ]}
@@ -286,6 +307,25 @@ async def delete_memo(memo_id: int, user_id: int = Depends(get_current_user_id))
         await db.execute(delete(MemoNote).where(MemoNote.id == memo_id))
         await db.commit()
     return {"status": "ok"}
+
+
+@router.patch("/memos/{memo_id}")
+async def update_memo_status(memo_id: int, body: dict, user_id: int = Depends(get_current_user_id)):
+    """勾选/重开备忘录完成状态（status=active|done）：只能改本账号租户内角色的行（与 DELETE 同口径）"""
+    status = str(body.get("status") or "").strip()
+    if status not in ("active", "done"):
+        raise HTTPException(status_code=400, detail="invalid status")
+    async with async_session_factory() as db:
+        row = (await db.execute(
+            select(MemoNote).where(MemoNote.id == memo_id)
+        )).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail="not found")
+        await _check_character_owned(row.character_id, user_id)
+        row.status = status
+        await db.commit()
+        await db.refresh(row)
+    return {"id": row.id, "text": row.text, "author": row.author, "status": row.status}
 
 
 @router.get("/browser-history")

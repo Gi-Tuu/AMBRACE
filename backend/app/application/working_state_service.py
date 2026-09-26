@@ -149,6 +149,22 @@ async def maybe_evaluate_working_state(
                 obs_event(character_id, "working_state_skipped", {"reason": "no_change", **stats})
                 return
     
+            # 批 F-F2（2026-09-26）：落库前剔除「已翻日的短跨度未来口吻」（明天/明早/次日/后天…），
+            # 否则过期计划随 working_state 被现状锚每轮注入 ⇒ 角色反复复读早已过去的事。
+            ongoing_kept, ongoing_expired = ws.expire_stale_future_clauses(
+                new_content.get("ongoing") or [])
+            if ongoing_expired:
+                new_content = {**new_content, "ongoing": ongoing_kept}
+                _logger.info(
+                    "working_state dropped stale-future ongoing: char=%d n=%d items=%s",
+                    character_id, len(ongoing_expired),
+                    [(e.get("topic"), (e.get("detail") or "")[:40]) for e in ongoing_expired],
+                )
+                if not any(new_content.get(b) for b in ws.BUCKETS):
+                    # 剔除后全空 = 无有效状态（与 apply_desired「全空不写」口径一致）
+                    obs_event(character_id, "working_state_skipped", {"reason": "all_stale_future"})
+                    return
+    
             async with async_session_factory() as db:
                 latest = await get_latest(db, user_id, character_id)
                 new_row = Memory(

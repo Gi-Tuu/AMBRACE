@@ -2714,5 +2714,9 @@
   "ppActionWfSelfCheckFail": "失败",
   "ppActionWfSelfCheckEmpty": "没有任何步骤结论返回",
   "ppActionWfSelfCheckNotMappable": "自检序列没能映射成端口意图，未执行任何动作：{reason}",
-  "ppActionWfSelfCheckBridgeOff": "工作流端口开关未开，自检不会执行任何动作（先在上面打开开关）"
+  "ppActionWfSelfCheckBridgeOff": "工作流端口开关未开，自检不会执行任何动作（先在上面打开开关）",
+  "statusExpired": "已过期",
+  "statusFuture": "未来",
+  "markDone": "标记完成",
+  "reopen": "重新打开"
 }

@@ -91,6 +91,26 @@ class _CalendarScreenState extends State<CalendarScreen> {
     return author.isEmpty ? text : '$text  -  $author';
   }
 
+  /// 备注状态徽标（批G）：done→已完成；否则按日期分 已过期/今天/未来
+  String _calBadgeText(String date, String status) {
+    final l10n = AppLocalizations.of(context)!;
+    if (status == 'done') return l10n.completed;
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    if (date.compareTo(today) < 0) return l10n.statusExpired;
+    if (date == today) return l10n.today;
+    return l10n.statusFuture;
+  }
+
+  Future<void> _toggleCalDone(Map<String, dynamic> n, BuildContext sheetCtx) async {
+    final done = (n['status'] as String? ?? 'active') == 'done';
+    try {
+      await ApiClient().updateCalendarNoteStatus(
+          n['id'] as int, done ? 'active' : 'done');
+    } catch (_) {}
+    if (sheetCtx.mounted) Navigator.pop(sheetCtx);
+    _load();
+  }
+
   /// 日程开始时间显示（P0-10 修复：空串/短串不越界）
   String _schedTimeText(String raw) {
     final t = formatInTz(raw);
@@ -143,19 +163,53 @@ class _CalendarScreenState extends State<CalendarScreen> {
               const SizedBox(height: 8),
             ],
             if (dayNotes.isNotEmpty)
-              ...dayNotes.map((n) => ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(_noteTitle(n)),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                      onPressed: () async {
-                        await ApiClient().deleteCalendarNote(n['id'] as int);
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        _load();
-                      },
+              ...dayNotes.map((n) {
+                final done = (n['status'] as String? ?? 'active') == 'done';
+                final date = n['date'] as String? ?? '';
+                return ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    _noteTitle(n),
+                    style: TextStyle(
+                      decoration:
+                          done ? TextDecoration.lineThrough : null,
+                      color: done ? Colors.grey : null,
                     ),
-                  )),
+                  ),
+                  subtitle: GestureDetector(
+                    onTap: () => _toggleCalDone(n, ctx),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: (done
+                                ? Colors.grey
+                                : Theme.of(ctx).colorScheme.primary)
+                            .withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        _calBadgeText(date, done ? 'done' : 'active'),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: done
+                              ? Colors.grey
+                              : Theme.of(ctx).colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                  ),
+                  trailing: IconButton(
+                    icon: Icon(
+                      done ? Icons.replay : Icons.check_circle_outline,
+                      size: 18,
+                    ),
+                    tooltip: done ? l10n.reopen : l10n.markDone,
+                    onPressed: () => _toggleCalDone(n, ctx),
+                  ),
+                );
+              }),
             TextField(
               controller: ctrl,
               maxLines: 2,
