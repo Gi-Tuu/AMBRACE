@@ -1,7 +1,7 @@
 """AgentAction 统一解析层（Phase A，2026-08-16）
 
 把散落在 chat_service 等处的「标记驱动工具调用」解析收敛为统一 AgentAction 表达：
-[SEARCH] / [GEN_IMAGE] / [IMG_TEXT] / [CAL_NOTE] / [MEMO] / [timer] / 【状态更新】
+[SEARCH] / [GEN_IMAGE] / [IMG_TEXT] / [CAL_NOTE] / [MEMO] / [CAL_DONE] / [MEMO_DONE] / [timer] / 【状态更新】
 仍是 LLM 输出标记（AgentAction 的序列化形式）。本层统一 parse_actions / strip_actions，
 并保留旧版各提取函数（行为与文案完全一致，供 chat_service 等调用点无缝切换）。
 """
@@ -22,10 +22,12 @@ GEN_IMAGE = "GEN_IMAGE"
 IMG_TEXT = "IMG_TEXT"
 CAL_NOTE = "CAL_NOTE"
 MEMO = "MEMO"
+# 批 G4（2026-09-26）：[CAL_DONE]/[MEMO_DONE] → 把「已经结束」的小手机日历/备忘条目标记完成
+NOTE_DONE = "NOTE_DONE"
 TIMER = "TIMER"
 STATUS_UPDATE = "STATUS_UPDATE"
 
-ACTION_TYPES = (SEARCH, RECALL, GEN_IMAGE, IMG_TEXT, CAL_NOTE, MEMO, TIMER, STATUS_UPDATE)
+ACTION_TYPES = (SEARCH, RECALL, GEN_IMAGE, IMG_TEXT, CAL_NOTE, MEMO, NOTE_DONE, TIMER, STATUS_UPDATE)
 
 
 @dataclass
@@ -78,6 +80,12 @@ _IMG_OPEN_ONLY_RE = re.compile(r"[\[【]\s*/?\s*(?:GEN_IMAGE|IMG_TEXT)\s*[\]】]
 # 兼容英文/中文括号、闭合标签可省略（无闭合时取到行尾）；2026-08-14 修复 AI 输出【CAL_NOTE】无闭合导致不落库
 _CAL_NOTE_RE = re.compile(r"[\[【]\s*CAL_NOTE\s*[\]】]\s*(.*?)(?:[\[【]\s*/CAL_NOTE\s*[\]】]|$)", re.M)
 _MEMO_RE = re.compile(r"[\[【]\s*MEMO\s*[\]】]\s*(.*?)(?:[\[【]\s*/MEMO\s*[\]】]|$)", re.M)
+# 小手机备注「标记完成」（批 G4，2026-09-26）：模型读小手机清单时，把已经结束（办完/过期）的条目
+# 打成完成 —— [CAL_DONE]关键词[/CAL_DONE] / [MEMO_DONE]关键词[/MEMO_DONE]（兼容中英文括号、闭合可省到
+# 行尾，与 CAL_NOTE/MEMO 同构；关键词只需能唯一认出清单里那一条，执行侧按片段 LIKE 匹配）。
+# 两条标记共用 action_type=NOTE_DONE，靠 payload["type"] 区分日历/备忘（ToolRegistry 单点登记）。
+_CAL_DONE_RE = re.compile(r"[\[【]\s*CAL_DONE\s*[\]】]\s*(.*?)(?:[\[【]\s*/CAL_DONE\s*[\]】]|$)", re.M)
+_MEMO_DONE_RE = re.compile(r"[\[【]\s*MEMO_DONE\s*[\]】]\s*(.*?)(?:[\[【]\s*/MEMO_DONE\s*[\]】]|$)", re.M)
 # [timer:20m] / 【计时器:30分钟】（与 promise_parser 同源，仅识别不执行）
 _TIMER_RE = re.compile(
     r"[\[【]\s*(?:timer|计时器)\s*[:：]\s*\d+\s*(?:h|小时|m|min|分钟|s|秒)?\s*[\]】]",
@@ -126,6 +134,16 @@ def _marker_body(m: "re.Match[str]") -> str:
         if g is not None:
             return g
     return ""
+
+
+def _extract_done_match(text: str, pattern: "re.Pattern[str]") -> str | None:
+    """提取 [CAL_DONE]/[MEMO_DONE] 的关键词（≤60 字）；无标记/空正文 → None（批 G4）"""
+    if not text:
+        return None
+    m = pattern.search(text)
+    if not m:
+        return None
+    return ((m.group(1) or "").strip()[:60]) or None
 
 
 # ── P1-4（2026-09-16）：生图 prompt 只进 meta，绝不进可见 content ──────────────
@@ -277,6 +295,16 @@ def extract_memo(text: str) -> str | None:
     return content[:80]
 
 
+def extract_cal_done(text: str) -> str | None:
+    """提取日历项「标记完成」关键词（[CAL_DONE]关键词[/CAL_DONE]）；无标记 → None（批 G4）"""
+    return _extract_done_match(text, _CAL_DONE_RE)
+
+
+def extract_memo_done(text: str) -> str | None:
+    """提取备忘项「标记完成」关键词（[MEMO_DONE]关键词[/MEMO_DONE]）；无标记 → None（批 G4）"""
+    return _extract_done_match(text, _MEMO_DONE_RE)
+
+
 def extract_timer_tag(text: str) -> str | None:
     """识别 [timer:xx] / 【计时器:xx】标记文本（仅识别，事件创建仍走 promise_parser）"""
     if not text:
@@ -360,6 +388,11 @@ def parse_actions(text: str) -> list[AgentAction]:
         p = sanitize_image_prompt(_marker_body(m).strip())
         if p:
             actions.append(AgentAction(GEN_IMAGE, {"prompt": p}, m.group(0)))
+    for _done_pat, _done_kind in ((_CAL_DONE_RE, "calendar"), (_MEMO_DONE_RE, "memo")):
+        for m in _done_pat.finditer(text):
+            _kw = (m.group(1) or "").strip()
+            if _kw:
+                actions.append(AgentAction(NOTE_DONE, {"type": _done_kind, "match": _kw[:60]}, m.group(0)))
     for m in _CAL_NOTE_RE.finditer(text):
         cal = extract_cal_note(m.group(0))
         if cal:
@@ -382,13 +415,14 @@ def parse_actions(text: str) -> list[AgentAction]:
 # P0'：IMG_TEXT/GEN_IMAGE 的无闭合分支以「下一个标记」为界，故不会吞掉后面的 CAL_NOTE/MEMO；
 # 末位 _IMG_ORPHAN_CLOSE_RE 清孤立闭合标签，保证展示文本零标记残留。
 _STRIP_PATTERNS = [
-    _SEARCH_RE, _RECALL_RE, _IMG_TEXT_RE, _GEN_IMAGE_RE, _CAL_NOTE_RE, _MEMO_RE, _TIMER_RE,
+    _SEARCH_RE, _RECALL_RE, _IMG_TEXT_RE, _GEN_IMAGE_RE, _CAL_DONE_RE, _MEMO_DONE_RE,
+    _CAL_NOTE_RE, _MEMO_RE, _TIMER_RE,
     _MCP_TOOL_RE, _IMG_ORPHAN_CLOSE_RE,
 ]
 
 
 def strip_actions(text: str) -> str:
-    """统一剥离动作标记（SEARCH/GEN_IMAGE/IMG_TEXT/CAL_NOTE/MEMO/timer）。
+    """统一剥离动作标记（SEARCH/GEN_IMAGE/IMG_TEXT/CAL_NOTE/MEMO/CAL_DONE/MEMO_DONE/timer）。
 
     P0'（2026-09-10）：GEN_IMAGE/IMG_TEXT 的开标签即便没有闭合标签也一律剥离，
     禁止 `[GEN_IMAGE]` / `[IMG_TEXT]` 字样残留到展示文本。

@@ -152,7 +152,7 @@ _DISPLAY_STRIP_PATTERNS = [
 # 供 parse_response 与微信出口净文（wechat_text）共用，避免两处漂移。
 # 只匹配「紧跟 [ 或 【 的已知标记关键字」，未闭合到行尾即剥离；普通文本括号/方括号不受影响。
 UNCLOSED_MARKER_TAIL_RE = re.compile(
-    r"[\[【]\s*(?:记忆|自述更新|自述删除|自述|状态更新|策略|推理|timer|SEARCH|CAL_NOTE|MEMO|cron)[^\]】]*$",
+    r"[\[【]\s*(?:记忆|自述更新|自述删除|自述|状态更新|策略|推理|timer|SEARCH|CAL_DONE|MEMO_DONE|CAL_NOTE|MEMO|cron)[^\]】]*$",
     re.IGNORECASE,
 )
 
@@ -193,7 +193,7 @@ def strip_unclosed_markers(text: str) -> str:
 # （标记段不入展示，由 marker_truncated 埋点 + 通道 B 补提兜底）。
 _UNCLOSED_TAIL_MARKER_RE = re.compile(
     r"^[\[【]\s*(?:记忆|自述更新|自述删除|自述|状态更新|策略|推理|timer|计时器|cron"
-    r"|SEARCH|RECALL|GEN_IMAGE|IMG_TEXT|CAL_NOTE|MEMO|mcp\.)",
+    r"|SEARCH|RECALL|GEN_IMAGE|IMG_TEXT|CAL_DONE|MEMO_DONE|CAL_NOTE|MEMO|mcp\.)",
     re.IGNORECASE,
 )
 

@@ -107,7 +107,7 @@ async def _run_tool_stage(state: dict, steps: list[dict], *, character_id: int, 
             payload.setdefault("character_id", character_id)
         # 本地小手机工具：经 tool_runner.execute_tool 统一执行（执行入口由内置工具 builtin 提供，
         # scope=None 无权限门禁；去重/署名/生命周期钩子/异常隔离语义与主链路 _save_phone_desktop_notes 一致）。
-        if spec is not None and spec.name in ("note_calendar", "note_memo"):
+        if spec is not None and spec.name in ("note_calendar", "note_memo", "note_done"):
             try:
                 from app.agent.tool_runner import execute_tool
                 res = await asyncio.wait_for(

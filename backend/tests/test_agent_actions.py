@@ -9,11 +9,17 @@ from app.agent import tools
 def test_parse_actions_识别全部标记():
     acts = actions.parse_actions(
         "a[SEARCH]猫咪吃什么[/SEARCH]b[GEN_IMAGE]猫猫吃鱼[/GEN_IMAGE]"
-        "[MEMO]喂猫[/MEMO][CAL_NOTE]明天 一起看电影[/CAL_NOTE][timer:20m]【状态更新：准备睡觉】"
+        "[MEMO]喂猫[/MEMO][CAL_NOTE]明天 一起看电影[/CAL_NOTE]"
+        "[CAL_DONE]面试新生[/CAL_DONE][MEMO_DONE]热月饼[/MEMO_DONE][timer:20m]【状态更新：准备睡觉】"
     )
     types = [a.action_type for a in acts]
-    # 解析顺序固定：SEARCH → IMG_TEXT → GEN_IMAGE → CAL_NOTE → MEMO → TIMER → STATUS_UPDATE
-    assert types == ["SEARCH", "GEN_IMAGE", "CAL_NOTE", "MEMO", "TIMER", "STATUS_UPDATE"]
+    # 解析顺序固定：SEARCH → IMG_TEXT → GEN_IMAGE → NOTE_DONE → CAL_NOTE → MEMO → TIMER → STATUS_UPDATE
+    assert types == ["SEARCH", "GEN_IMAGE", "NOTE_DONE", "NOTE_DONE", "CAL_NOTE", "MEMO", "TIMER", "STATUS_UPDATE"]
+    # 批 G4：两条完成标记共用一个 action_type，靠 payload.type 区分（日历/备忘各一条）
+    assert [a.payload for a in acts if a.action_type == "NOTE_DONE"] == [
+        {"type": "calendar", "match": "面试新生"},
+        {"type": "memo", "match": "热月饼"},
+    ]
     by = {a.action_type: a for a in acts}
     assert by["SEARCH"].payload["query"] == "猫咪吃什么"
     assert by["GEN_IMAGE"].payload["prompt"] == "猫猫吃鱼"
@@ -76,7 +82,9 @@ def test_actions_to_steps_截断长字段():
 
 def test_tool_registry_内置工具():
     names = {t.name for t in tools.list_tools()}
-    assert {"search", "image_gen", "note_calendar", "note_memo", "timer", "status_update"} <= names
+    assert {"search", "image_gen", "note_calendar", "note_memo", "note_done", "timer", "status_update"} <= names
+    # 批 G4：完成标记按 action_type 反查到唯一工具
+    assert tools.get_tool_by_action("NOTE_DONE").name == "note_done"
     assert tools.get_tool("search").idempotent is True
     assert tools.get_tool("image_gen").risk_level == "medium"
     assert tools.get_tool_by_action("GEN_IMAGE").name == "image_gen"

@@ -28,6 +28,8 @@ _BUILTIN_LABELS = {
     "CAL_NOTE": "记日历",
     "note_memo": "记备忘",
     "MEMO": "记备忘",
+    "note_done": "标记完成",
+    "NOTE_DONE": "标记完成",
     "timer": "定时提醒",
     "TIMER": "定时提醒",
     "create_timer": "定时提醒",

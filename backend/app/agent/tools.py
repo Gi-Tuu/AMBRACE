@@ -1,6 +1,6 @@
 """Tool Registry（Phase A，2026-08-16）：统一工具注册表（ToolSpec）。
 
-AMBRACE 重构步骤 8：4 个内置工具（search/image_gen/note_calendar/note_memo）的**执行入口**
+AMBRACE 重构步骤 8：5 个内置工具（search/image_gen/note_calendar/note_memo/note_done）的**执行入口**
 改由 app/tools/builtin/*.py 注册（execute 内惰性 import services），本文件只保留内部 AI 行为工具
 （timer/status_update/memory_extract/memory_fact_check/emotion_care/weave_card/memory_summary）。
 权限三档（Operit：全局默认 ALLOW/ASK/FORBID + 单工具例外）、频率/幂等门禁与工具生命周期钩子

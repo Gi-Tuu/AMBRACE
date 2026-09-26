@@ -80,6 +80,16 @@ def _sanitize_chunk_texts(chunks: list[str]) -> list[str]:
     return out
 
 
+def _extract_cal_done(text: str) -> str | None:
+    """提取日历「标记完成」关键词（批 G4）：实现收敛在统一解析层 app.agent.actions。"""
+    return _agent_actions.extract_cal_done(text)
+
+
+def _extract_memo_done(text: str) -> str | None:
+    """提取备忘「标记完成」关键词（批 G4）：实现收敛在统一解析层 app.agent.actions。"""
+    return _agent_actions.extract_memo_done(text)
+
+
 def _extract_search(text: str) -> tuple[str, str | None]:
     """提取自主搜索标记，返回 (清理后文本, 查询词或None)。
 
@@ -309,6 +319,23 @@ async def _save_phone_desktop_notes(character_id: int, full_text: str) -> None:
                 await _save_memo_note(character_id, _memo_text, _note_author)
     except Exception as e:
         _logger.warning("Memo save failed: %s", e)
+    # 备注标记完成 [CAL_DONE]/[MEMO_DONE]（批 G4，2026-09-26）：模型读小手机清单时把已结束的条目标掉；
+    # 执行侧按关键词 LIKE 匹配本角色行、命中多条取最新、命中不到明确失败（绝不静默成功）。
+    try:
+        for _kind, _kw in (
+            ("calendar", _extract_cal_done(full_text or "")),
+            ("memo", _extract_memo_done(full_text or "")),
+        ):
+            if not _kw:
+                continue
+            if _use_runtime:
+                await _execute_note_tool("note_done", {
+                    "character_id": character_id, "type": _kind, "match": _kw, "status": "done",
+                }, character_id)
+            else:
+                await _mark_note_status(character_id, _kind, _kw, "done")
+    except Exception as e:
+        _logger.warning("Note done mark failed: %s", e)
 
 
 async def _gen_image_flow(user_id: int, character_id: int, session_id: int, prompt: str, img_text: str | None = None) -> None:
