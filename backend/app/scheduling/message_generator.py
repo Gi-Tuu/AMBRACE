@@ -512,10 +512,12 @@ def two_pass_trace_allowed(character_id, *, flags=None) -> bool:
         return False
 
 
-async def _load_state_trace(character_id, user_id) -> tuple[str, float]:
-    """确定性构造现状 trace，返回 (trace 文本, 构造耗时 ms)。
+async def _load_state_trace(character_id, user_id) -> tuple[str, float, bool]:
+    """确定性构造现状 trace，返回 (trace 文本, 构造耗时 ms, 是否因异常而空)。
 
     fail-open：任何异常（含查库失败）→ 空串 + WARNING，主链路照旧生成，绝不冒泡。
+    第三位用于把「构造异常被吞掉」与「真·拼空」在数据上分开（低-5）：
+    正常返回 ``False``（即便 text 为空也是「真拼空」），``except`` 分支返回 ``True``。
     """
     import time
     t0 = time.perf_counter()
@@ -526,8 +528,8 @@ async def _load_state_trace(character_id, user_id) -> tuple[str, float]:
             text = await build_state_trace(db, character_id=character_id, user_id=user_id)
     except Exception as e:
         _logger.warning("Proactive state trace build failed char=%s: %s", character_id, e)
-        return "", 0.0
-    return text or "", (time.perf_counter() - t0) * 1000.0
+        return "", 0.0, True
+    return text or "", (time.perf_counter() - t0) * 1000.0, False
 
 
 def _prepend_state_trace(messages: list[dict], trace_text: str) -> list[dict]:
@@ -554,6 +556,34 @@ def _note_state_trace_injected(character_id, trace_text: str, prompt_len: int, e
         })
     except Exception:
         pass
+
+
+# two_pass 入口三态（2026-09-26 派单 Part B）：把「没跑到」与「跑到了但拼空」在数据上分开。
+# 判定口径不在此复制——allowed 只由 two_pass_trace_allowed() 给，本模块只做记录。
+GATE_ROUTE = "two_pass_gate"        # agent_task_logs.route（与 two_pass_trace 同表同通道）
+GATE_NOT_ALLOWED = "not_allowed"    # 开关关 / 角色不在白名单 ⇒ 本趟压根没跑
+GATE_EMPTY_TRACE = "empty_trace"    # 跑了但 trace 拼空（异常情形，需一眼看出）
+GATE_TRACE_ERROR = "trace_error"    # 查库/构造异常被 fail-open 吞掉（与真·拼空区分）
+GATE_INJECTED = "injected"          # 跑了且 trace 非空（详情见既有 two_pass_trace 事件）
+
+
+def _note_state_trace_gate(character_id, state: str, *, trace_len: int = 0,
+                           elapsed_ms: float = 0.0) -> None:
+    """入口留痕 + 调用计数：每次 generate_proactive_event 恰好一条，与 trace 是否为空无关。
+
+    与既有注入留痕走同一通道（obs_event → agent_task_logs / trigger=memory_obs），只换 route
+    便于聚合：本 route 当**分母**（调用了几次），``two_pass_trace`` 当**分子**（真注入了几次）。
+    """
+    try:
+        from app.memory.observability import obs_event
+        obs_event(character_id, GATE_ROUTE, {
+            "state": state,
+            "allowed": state != GATE_NOT_ALLOWED,
+            "trace_len": int(trace_len),
+            "elapsed_ms": round(float(elapsed_ms), 1),
+        })
+    except Exception as e:      # fail-open：留痕坏了不影响生成（obs_event 内部亦已吞一层）
+        _logger.warning("Proactive two-pass gate trace failed char=%s: %s", character_id, e)
 
 
 async def generate_proactive_event(
@@ -900,13 +930,23 @@ async def generate_proactive_event(
     ]
     # two-pass POC（2026-09-23）：生成前拼一块确定性「现状 trace」并**前置**到系统块/长历史之前。
     # 双条件灰度（开关开 + 角色命中白名单）；trace 为空或构造异常 → 原样 messages（逐字旧行为）。
-    if two_pass_trace_allowed(character_id):
-        trace_text, trace_ms = await _load_state_trace(character_id, user_id)
+    # 判定点三态留痕（2026-09-26 派单 Part B）：注入留痕只在「命中且有 trace」时才有，缺它分不清
+    # 是「没跑到」还是「跑到了但拼空」⇒ 这里每次调用补一条 two_pass_gate，生成结果逐字不变。
+    if not two_pass_trace_allowed(character_id):
+        _note_state_trace_gate(character_id, GATE_NOT_ALLOWED)
+    else:
+        trace_text, trace_ms, trace_err = await _load_state_trace(character_id, user_id)
         if trace_text:
             messages = _prepend_state_trace(messages, trace_text)
             _note_state_trace_injected(
                 character_id, trace_text,
                 sum(len(m.get("content") or "") for m in messages), trace_ms)
+            _note_state_trace_gate(character_id, GATE_INJECTED,
+                                   trace_len=len(trace_text), elapsed_ms=trace_ms)
+        elif trace_err:
+            _note_state_trace_gate(character_id, GATE_TRACE_ERROR)
+        else:
+            _note_state_trace_gate(character_id, GATE_EMPTY_TRACE)
     # 生成 + 规则校验：不通过则追加修正要求重试一次（2026-08-12）
     segments: list[str] = []
     ok = False

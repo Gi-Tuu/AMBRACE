@@ -36,8 +36,7 @@ TRACE_TOTAL_CHARS = 1200  # 总长硬上限
 # 依据（生产库 char13 实测）：active 且置信达标的 71 条里 curated 68 条、status/activity/setting
 # 各 1 条；旧 trace 8 条中 7 条是 curated（关系亲述 4 条 + 腰伤护理 3 条）——**重复只集中在
 # curated**，所以只对 curated 设上限，其它谓词不限（它们本来就各只有一条，设限只会误伤）。
-# 为什么不用相似度阈值判重：那 6 条关系亲述两两 SequenceMatcher ratio 仅 0.40~0.64、容器包含
-# 几乎不命中（每次措辞都不同），阈值既抓不净又会误合并 ⇒ 判据只用「规范化后完全相同」。
+# 判重口径见 _texts_duplicate（D1 起：复用近况同义合并判据，不再只用「规范化后完全相同」）。
 TRACE_MAX_PER_PREDICATE = {"curated": 4}
 # 先多取再收敛：被跳过（重复 / 超名额）的行不该白占 prompt 名额，多取一批让别的谓词补进来；
 # 乘数 3 ≈ 覆盖 curated 的重复密度（68/71），硬上限 30 兜住查询与内存成本（不做无界多取）。
@@ -107,11 +106,110 @@ def _norm_fact_text(text) -> str:
     return re.sub(r"[\W_]+", "", str(text or ""), flags=re.UNICODE).lower()
 
 
+# ── D1（2026-09-26）同义判重：复用「近况同义合并」既有判据（app.events.facts /
+#    app.scheduling.prospective_intent），只在拼装层收敛，不改底层表、不调 LLM。
+#    与旧「规范化后完全相同」相比，本判据多拦两类同族重复（生产库 char13 实测）：
+#    ①「同一件事换措辞 + 各自补充」（关系亲述族：核心相同、后缀不同）；
+#    ②「同一句话里换了可变槽位」——人名（sam）与相对/绝对时间（明早 / 9月27日），
+#      这些槽位不改变「说的是同一件事」，故比较前先剥掉，再交给既有判据。
+#    剥离槽位后仍走「保守子集」：仅「短串前缀包含」+「近乎逐字重复（0.9）」两条，
+#    刻意不含 facts 的「共享核心前缀（C13）」——那会误并「喜欢喝美式咖啡 / 喜欢喝拿铁咖啡」
+#    这类同模板不同宾语者；实测本判据对 coffee/不同腰伤等 KEEP 全部不误并。
+_ASCII_NAME_RE = re.compile(r"[a-z]+", re.IGNORECASE)   # 拉丁人名 / 句柄（sam、AI 等）
+_DATE_ABS_RE = re.compile(r"\d{4}年\d{1,2}月\d{1,2}[日号]|\d{1,2}月\d{1,2}[日号]|\d{4}年")
+_TIME_REL_RE = re.compile(
+    r"(?:大前天|前天|昨天|昨晚|今晚|今晨|今早|今天|明早|明晚|明天|后天|大后天|"
+    r"上午|中午|下午|晚上|早上|凌晨|傍晚|午夜)")
+_CLOCK_RE = re.compile(r"[一二三四五六七八九十两\d]{1,3}点(?:半|钟|过|多)?")
+_TRACE_MIN_CORE = 6     # 前缀包含最短核心（对齐 facts._MIN_CORE_LEN）
+# 近似阈值分档（批 B，2026-09-26）：误并的代价是丢约定/丢频次，宁少合；
+# 中长键写死 0.95（等长句差 2 字就可能是不同宾语：快递/外卖、美式/拿铁），
+# 短键放宽到 0.9（差一个字＝多加代词/助词，如「甲说晚点再说」vs「甲说他晚点再说」）。
+_TRACE_SIMILARITY = 0.95
+_TRACE_SIMILARITY_SHORT = 0.9
+_SHORT_KEY_LEN = 10    # ≤ 此长度算「短键」：差一个字仍视为近乎逐字重复
+# 等长句只差 k 字时 ratio = 1 - k/n，n≥40 时 k=2 已能撞上 0.95，故长句直接不走相似度路径。
+_LONG_KEY_LEN = 40
+
+
+def _dedup_key(text) -> str:
+    """同义判重键：先剥离 ASCII 人名与相对/绝对时间槽位，再规范化。仅用于比较，不改原值。"""
+    s = _DATE_ABS_RE.sub("", str(text or ""))
+    s = _TIME_REL_RE.sub("", s)
+    s = _CLOCK_RE.sub("", s)
+    s = _ASCII_NAME_RE.sub("", s)
+    return _norm_fact_text(s)
+
+
+def _dedup_slots(text) -> tuple[frozenset[str], frozenset[str]]:
+    """取出会被 _dedup_key 剥掉的「区分性槽位」：ASCII 人名集合 与 时间词集合（小写化）。"""
+    s = str(text or "")
+    names = frozenset(m.group(0).lower() for m in _ASCII_NAME_RE.finditer(s))
+    dates = frozenset(
+        [m.group(0) for m in _DATE_ABS_RE.finditer(s)]
+        + [m.group(0) for m in _TIME_REL_RE.finditer(s)]
+        + [m.group(0) for m in _CLOCK_RE.finditer(s)]
+    )
+    return names, dates
+
+
+def _slots_conflict(x: frozenset, y: frozenset) -> bool:
+    """区分性槽位是否「明确冲突」：**两侧都非空**且不相等。
+
+    一侧为空不算冲突 —— 缺人名/缺时间只是写法省略（「我是bo，甲的伴侣」vs「我是甲的伴侣」
+    仍是同一件事），不构成「不是同一件事」的证据；两侧都有且不同才是硬证据。
+    """
+    return bool(x) and bool(y) and x != y
+
+
+def _texts_duplicate(a, b, *, ignore_dates: bool = False) -> bool:
+    """两条【原值】是否「同一件事」（确定性、零 LLM）：区分性槽位先比、再比键。
+
+    批 B（2026-09-26，中-3）：**先比区分性槽位**——人名两侧都有且不同（Sam vs Leo）⇒ 不同对象；
+    时间两侧都有且不同（昨天 vs 今天）⇒ 不同事件；两者都不能并成一条。
+    ``ignore_dates=True`` 供**计划段**使用：未完成计划里时间是「约定措辞」而非事件标识
+    （「我答应明早给甲带饭」与「我答应9月27日给甲带饭吃」是同一个约定），故不拿它判冲突。
+    槽位一致时才在剥离槽位后的键上走三条保守判据（任一即视为重复）：
+    1. 键完全相同（含原「规范化后完全相同」）；
+    2. 短键 ≥ 6 字且是长键的前缀（核心相同、各自补充，如「我是用户的老公」⊂「…会照顾…」）；
+    3. SequenceMatcher 比值 ≥ 阈值（短键 ≤ 10 字取 0.9、其余取 0.95）且两侧键都 < 40 字
+       （长句只差 2 字也能撞上高阈值，故长句只认全等/前缀）。
+    刻意不用 C13 共享核心前缀（会误并同模板不同宾语）。任一异常一律保守判「不重复」。
+    """
+    na, da = _dedup_slots(a)
+    nb, db = _dedup_slots(b)
+    if _slots_conflict(na, nb):
+        return False          # 人名两侧都有且不同：不同对象，绝不合并
+    if not ignore_dates and _slots_conflict(da, db):
+        return False          # 时间两侧都有且不同：不同事件（计划段按措辞处理，不判冲突）
+    ka, kb = _dedup_key(a), _dedup_key(b)
+    if not ka or not kb:
+        return False
+    if ka == kb:
+        return True
+    short, long_ = (ka, kb) if len(ka) <= len(kb) else (kb, ka)
+    if len(short) >= _TRACE_MIN_CORE and long_.startswith(short):
+        return True
+    if max(len(ka), len(kb)) >= _LONG_KEY_LEN:   # 长句：只认全等/前缀，不做相似度
+        return False
+    sim = _TRACE_SIMILARITY
+    if max(len(ka), len(kb)) <= _SHORT_KEY_LEN:  # 短句差一个字＝近乎逐字重复
+        sim = _TRACE_SIMILARITY_SHORT
+    try:
+        from app.scheduling.prospective_intent import similar_intent_text
+        return similar_intent_text(ka, kb, sim)
+    except Exception:
+        return False
+
+
 def select_fact_rows(rows, *, limit: int, max_per_predicate: dict | None = None) -> list:
-    """Q1（2026-09-25）：事实行按谓词判重 + 名额收敛（**纯函数，零 DB / 零 LLM**）。
+    """事实行按谓词判重 + 名额收敛（**纯函数，零 DB / 零 LLM**）。
 
     ``rows`` 由调用方按 ``updated_at desc`` 排好 ⇒ 最先出现的那条＝最新的那条。
-    - 判重：同 predicate 且规范化后的 object_value 完全相同 ⇒ 视为重复，只保留最先出现的；
+    - 判重（D1）：同 predicate 且 ``_texts_duplicate`` 判为同一件事 ⇒ 只保留最先出现的那条
+      （先按规范化键 O(1) 命中完全重复，再对已保留行做保守近义比较）；
+      **批 B（中-3）**：O(1) 键带区分性槽位、两两比较一律传**原值**（由 ``_texts_duplicate`` 自己
+      判槽位）——「昨天 Sam 来聊天」与「今天 Sam 来聊天」时间槽位冲突 ⇒ 两条都留（原口径会被规范化键并掉）；
     - 名额：某 predicate 已选条数达到 ``max_per_predicate[predicate]`` ⇒ 后续该谓词一律跳过
       （表里没有的谓词不限）；
     - 选满 ``limit`` 即停；``limit`` ≤ 0 返回空列表；
@@ -122,18 +220,54 @@ def select_fact_rows(rows, *, limit: int, max_per_predicate: dict | None = None)
     if not limit or limit <= 0:
         return out
     quotas = max_per_predicate or {}
-    seen: set[tuple[str, str]] = set()
+    seen_keys: set[tuple] = set()
+    kept: list[tuple] = []  # (predicate, 原值)，仅供近义两两比较（|rows|≤30，成本可控）
     counts: dict[str, int] = {}
     for row in rows or []:
         predicate = str(_get(row, "predicate") or "").strip()
-        key = (predicate, _norm_fact_text(_get(row, "object_value")))
-        if key in seen:
-            continue
+        value = _get(row, "object_value")
+        key = _dedup_key(value)
+        slots = _dedup_slots(value)
+        if (predicate, key, slots) in seen_keys:
+            continue  # 规范化后完全相同（且槽位一致）：O(1) 命中
+        if key and any(predicate == p and _texts_duplicate(value, v) for p, v in kept):
+            continue  # 近义重复：复用既有判据（槽位冲突 ⇒ 不并，见 _texts_duplicate）
         cap = quotas.get(predicate)
         if cap is not None and counts.get(predicate, 0) >= cap:
             continue
-        seen.add(key)
+        seen_keys.add((predicate, key, slots))
+        kept.append((predicate, value))
         counts[predicate] = counts.get(predicate, 0) + 1
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def select_intent_rows(rows, *, limit: int) -> list:
+    """未完成计划行按语义判重收敛（**纯函数，零 DB / 零 LLM**）。
+
+    ``rows`` 由调用方按 ``updated_at desc`` 排好。同义（``_texts_duplicate`` 判为同一件事）
+    只保留最先出现（＝最新）的一条；空正文跳过；选满 ``limit`` 即停；``limit`` ≤ 0 返回空。
+    比较基准是 ``content`` 原值（``_texts_duplicate(..., ignore_dates=True)`` 自己剥槽位与规范化）。
+    **批 B（中-3）口径**：计划段只用人名区分「不同约定」（「明天要和 Sam 去看电影」与
+    「明天要和 Leo 去看电影」各占一条），**时间词不判冲突**（「明早」与「9月27日」是同一个约定的
+    两种写法，仍要归一）。渲染时 ``intent_line`` 仍按各自原行做绝对化，两者不掺混。
+    绝不改动 ``rows``。
+    """
+    out: list = []
+    if not limit or limit <= 0:
+        return out
+    kept: list[str] = []   # 原值，供近义两两比较（|rows| 有上限，成本可控）
+    for row in rows or []:
+        content = str(_get(row, "content") or "").strip()
+        if not content:
+            continue
+        key = _dedup_key(content)
+        # 计划段口径：时间是「约定措辞」不是事件标识 ⇒ ignore_dates=True（人名仍作区分）
+        if key and any(_texts_duplicate(content, k, ignore_dates=True) for k in kept):
+            continue
+        kept.append(content)
         out.append(row)
         if len(out) >= limit:
             break
@@ -271,15 +405,21 @@ async def build_state_trace(db, *, character_id=None, user_id=None,
 
         intent_rows: list = []
         if character_id and limit_intents > 0:
+            # 归类（2026-09-26）：本段是「未完成计划」，只收 promise；kind=="cue" 是话题/线索
+            # （如「用户说十一点的事记着」），不该混进计划 ⇒ 查询侧直接排除。
             istmt = select(ProspectiveIntent).where(
                 ProspectiveIntent.character_id == character_id,
                 ProspectiveIntent.status == "pending",  # discharged/matched/stale/expired 不进
+                ProspectiveIntent.kind == "promise",
             )
             if user_id:
                 istmt = istmt.where(ProspectiveIntent.user_id == user_id)
-            intent_rows = list((await db.execute(
-                istmt.order_by(ProspectiveIntent.updated_at.desc()).limit(limit_intents)
+            raw_intents = list((await db.execute(
+                # 同事实侧：先多取（同义收敛后腾出的名额由更旧的计划补上），再判重回 limit
+                istmt.order_by(ProspectiveIntent.updated_at.desc()).limit(
+                    min(limit_intents * TRACE_FACT_FETCH_MULTIPLIER, TRACE_FACT_FETCH_CAP))
             )).scalars().all())
+            intent_rows = select_intent_rows(raw_intents, limit=limit_intents)
 
         from app.memory.user_facts import fact_is_expired
         return render_state_trace(

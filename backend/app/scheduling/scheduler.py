@@ -42,6 +42,22 @@ ACCOUNT_PURGE_CHECK_INTERVAL = 600
 # 主动事件切片快速发送间隔（秒）
 STORYLINE_FLUSH_INTERVAL = 3
 
+# 周期任务持久化台账（2026-09-26 批次 PT）：判据从「进程内 tick 计数」换成「上次成功时间戳」
+# 的两个任务；阈值与迁走前按秒累加的计数阈值等价（6h / 1h）。
+from datetime import timedelta
+
+FILE_CLEANUP_INTERVAL = timedelta(hours=6)
+PIS_STALE_INTERVAL = timedelta(hours=1)
+
+# ── 长周期记忆维护（记忆衰减 + AI 自主评星）独立循环参数 ──
+# 每 300 秒问一次「到期没」：run_if_due() 内部只读状态文件 + 比时间（微秒级），
+# 不到期立刻返回 ⇒ 高频问零行为、零成本，不需要在外面再加任何判断。
+MEMORY_MAINTENANCE_INTERVAL = 300
+# 本循环的 stall 阈值必须显著大于间隔，不能照抄 scheduler 的 180s：到期那一拍要 await
+# 整轮维护（每角色 1 次批量 LLM 调用，单次 90s 超时上限 × 十余活跃角色，最坏约 20 分钟），
+# 于是「心跳间隔 = 300s + 单轮维护耗时」。阈值取 1800s 才不会让新循环自己又被误判 stalled。
+MEMORY_MAINTENANCE_STALL_SEC = 1800
+
 
 
 async def send_to_session(
@@ -177,6 +193,45 @@ async def _check_anniversaries_today() -> None:
         _logger.warning("Anniversary check failed: %s", e)
 
 
+async def _cleanup_files_tick():
+    """私聊文件保留 5 天 / 语音 14 天 / 事件流水（每 6h，幂等）。
+
+    2026-09-26 批次 PT：函数体逐字搬自原「每 21600 秒一拍」的文件清理分支，
+    只是判据从进程内计数换成持久化台账（app/scheduling/periodic_state.py）。
+    """
+    from app.application.upload_service import cleanup_expired_files, cleanup_expired_voice
+    spawn_background(cleanup_expired_files(days=5), name="sched-cleanup-files")
+    # 语音/TTS 音频保留 14 天：超期删除文件并清空消息元数据（仅保留转写/回复文本）
+    spawn_background(cleanup_expired_voice(days=14), name="sched-cleanup-voice")
+    # 3.10 事件流水保留策略（P1，方案 §8.5）：flag domain_event_retention_days=0 时
+    # 内部直接返回 0（不删），本地优先默认永久保留。
+    from app.events.store import purge_expired_domain_events
+    spawn_background(purge_expired_domain_events(), name="sched-purge-domain-events")
+
+
+async def _pis_stale_tick():
+    """前瞻约定时效治理（每 1h 幂等清扫）。
+
+    2026-09-26 批次 PT：函数体逐字搬自原「每 3600 秒一拍」的约定清扫分支
+    （含原有 try/except 与日志文案），只是判据换成持久化台账。
+    """
+    try:
+        from app.scheduling.prospective_intent import (
+            expire_overdue as _pis_expire, mark_stale_overdue as _pis_stale,
+            mark_stale_cues as _pis_stale_cue,
+        )
+        _n_stale = await _pis_stale()
+        _n_exp = await _pis_expire()
+        _n_cue = await _pis_stale_cue()
+        if _n_stale or _n_exp or _n_cue:
+            _logger.info(
+                "Prospective intent sweep: stale=%d expired=%d stale_cue=%d",
+                _n_stale, _n_exp, _n_cue,
+            )
+    except Exception as e:
+        _logger.warning("Prospective intent stale sweep error: %s", e)
+
+
 async def scheduler_loop():
     """主调度循环 — 统一仲裁：定时承诺 / 生日节日 / 随机节律"""
     global _running
@@ -192,19 +247,26 @@ async def scheduler_loop():
     except Exception as e:
         _logger.warning("Timer recovery on startup failed: %s", e)
 
+    # 长周期记忆维护（记忆衰减 + AI 自主评星）「按时间戳补齐」（2026-09-25）：
+    # 进程内 6 小时计数在频繁重启下可能永远到不了阈值（实测评星因此从 09-20 起停摆 5 天），
+    # 故启动即检查一次、到期就补跑；交给后台任务，不阻塞启动。
+    try:
+        from app.memory.maintenance_schedule import run_if_due as _run_maintenance
+        spawn_background(_run_maintenance(reason="startup"), name="sched-memory-maintenance-startup")
+    except Exception as e:
+        _logger.warning("Memory maintenance startup check failed: %s", e)
+
     comment_counter = 0
     extract_counter = 0
     diary_counter = 0
-    decay_counter = 0
+    identity_counter = 0
     state_decay_counter = 0
     moment_counter = 0
-    file_cleanup_counter = 0
     life_counter = 0
     life_loop_counter = 0
     game_stuck_counter = 0
     reflection_counter = 0
     memory_counter = 0
-    pis_stale_counter = 0
     purge_counter = 0
     _diary_generated_today = False
     _reflection_done_today = False
@@ -229,16 +291,14 @@ async def scheduler_loop():
             comment_counter += TICK
             extract_counter += TICK
             diary_counter += TICK
-            decay_counter += TICK
+            identity_counter += TICK
             state_decay_counter += TICK
             moment_counter += TICK
-            file_cleanup_counter += TICK
             life_counter += TICK
             life_loop_counter += TICK
             game_stuck_counter += TICK
             reflection_counter += TICK
             memory_counter += TICK
-            pis_stale_counter += TICK
             purge_counter += TICK
 
             try:
@@ -288,17 +348,12 @@ async def scheduler_loop():
                 extract_counter = 0
                 spawn_background(catchup_extract_all(), name="sched-catchup-extract")
 
-            # Memory decay (every 6h): lazy decay + countdown removal
-            if decay_counter >= 21600:
-                decay_counter = 0
-                from app.memory import run_memory_decay
-                spawn_background(run_memory_decay(), name="sched-memory-decay")
-                # AI 自主评星（P2，每 6h 与衰减同拍）：未评记忆批量 LLM 评星（每角色每日限额内）
-                from app.memory.ai_rating import run_ai_rating
-                spawn_background(run_ai_rating(), name="sched-ai-rating")
-
-                # 记忆架构 v2.1 Phase 5：身份画像提炼（遍历活跃角色，24h 节流内部拦截；失败静默；
-                # P0-1b 2026-08-16 起经统一内部工具入口执行，可观测 tool.executed 事件）
+            # 身份画像提炼（记忆架构 v2.1 Phase 5，每 5 分钟问一次）：遍历活跃角色，24h 节流由内部拦截；
+            # 失败静默；P0-1b 2026-08-16 起经统一内部工具入口执行，可观测 tool.executed 事件。
+            # 注：长周期记忆维护已于 2026-09-26 挪进独立 memory_maintenance_loop，本分支只留画像
+            # 提炼（两件事历史上挤在同一个计数分支里，现各归各处、节奏不变）。
+            if identity_counter >= 300:
+                identity_counter = 0
                 try:
                     from app.agent.internal_runner import run_internal
                     from app.models.character import AICharacter
@@ -325,17 +380,10 @@ async def scheduler_loop():
                 from app.application.character_state_service import drift_all_character_states
                 spawn_background(drift_all_character_states(), name="sched-state-drift")
 
-            # 私聊文件保留 5 天（每 6h 清理一次，幂等：仅删超期文件并标记消息过期）
-            if file_cleanup_counter >= 21600:
-                file_cleanup_counter = 0
-                from app.application.upload_service import cleanup_expired_files, cleanup_expired_voice
-                spawn_background(cleanup_expired_files(days=5), name="sched-cleanup-files")
-                # 语音/TTS 音频保留 14 天：超期删除文件并清空消息元数据（仅保留转写/回复文本）
-                spawn_background(cleanup_expired_voice(days=14), name="sched-cleanup-voice")
-                # 3.10 事件流水保留策略（P1，方案 §8.5）：flag domain_event_retention_days=0 时
-                # 内部直接返回 0（不删），本地优先默认永久保留。
-                from app.events.store import purge_expired_domain_events
-                spawn_background(purge_expired_domain_events(), name="sched-purge-domain-events")
+            # 私聊文件保留 5 天 / 语音 14 天 / 事件流水保留（2026-09-26 批次 PT：
+            # 判据由「进程内 tick 计数」改为持久化台账 —— 计数会在重启/卡顿重建后归零）
+            from app.scheduling.periodic_state import run_if_due
+            await run_if_due("file_cleanup", FILE_CLEANUP_INTERVAL, _cleanup_files_tick, reason="tick")
 
             # AI 离线生活（每 1 小时）：状态结算 + 概率活动执行（强度档位控制频率；异常隔离不影响主链路）
             if life_counter >= 3600:
@@ -414,23 +462,7 @@ async def scheduler_loop():
             # 每小时把超窗/跨天/超龄的 pending 约定置 stale——promise 走 due_end 活性窗口（2h，日期型 23:59 豁免、
             # 只在当天有效、跨天作废），cue 走「日期型跨天 + 无 due 30 天」，无 due 的 promise 同样按 30 天超龄清退。
             # 留痕不删，仍可检索/回忆，但不进主动提起/线索注入。幂等、异常隔离。
-            if pis_stale_counter >= 3600:
-                pis_stale_counter = 0
-                try:
-                    from app.scheduling.prospective_intent import (
-                        expire_overdue as _pis_expire, mark_stale_overdue as _pis_stale,
-                        mark_stale_cues as _pis_stale_cue,
-                    )
-                    _n_stale = await _pis_stale()
-                    _n_exp = await _pis_expire()
-                    _n_cue = await _pis_stale_cue()
-                    if _n_stale or _n_exp or _n_cue:
-                        _logger.info(
-                            "Prospective intent sweep: stale=%d expired=%d stale_cue=%d",
-                            _n_stale, _n_exp, _n_cue,
-                        )
-                except Exception as e:
-                    _logger.warning("Prospective intent stale sweep error: %s", e)
+            await run_if_due("pis_stale", PIS_STALE_INTERVAL, _pis_stale_tick, reason="tick")
 
             # 控制台删号·回收站到期自动清除（第二期第二批，2026-09-24，flag 默认关=零行为）：
             # 每 10 分钟看一眼低峰窗口与到期账号；关 flag / 窗口外 / 未到间隔都立刻返回不查库，
@@ -475,10 +507,34 @@ async def storyline_sender_loop():
         await asyncio.sleep(STORYLINE_FLUSH_INTERVAL)
 
 
+async def memory_maintenance_loop():
+    """长周期记忆维护（记忆衰减 + AI 自主评星）独立循环 —— 不再挂主调度循环的 tick 计数。
+
+    为什么要独立（2026-09-26 实测）：主循环单轮耗时并不稳定，同轮里要发主动消息时会直接在
+    循环内 await 多次 LLM 调用，单轮从 31 秒涨到分钟级（arbiter 日志条数按小时
+    06→3816 / 07→487 / 09→185 / 10→3）。后果有两个：① 单轮 >180 秒被监督者判 stalled，
+    10:48 实测 `supervisor stall detected target=scheduler` 后取消重建；② 重建把主循环里所有
+    tick 计数归零。挂在主循环上的长周期任务因此在忙时段严重延迟甚至长期不跑。
+    本循环只做这一件事，主循环忙不忙与它无关；间隔见 MEMORY_MAINTENANCE_INTERVAL。
+    """
+    from app.memory.maintenance_schedule import run_if_due
+    _logger.info("Memory maintenance loop started (interval=%ds)", MEMORY_MAINTENANCE_INTERVAL)
+    while _running:
+        await asyncio.sleep(MEMORY_MAINTENANCE_INTERVAL)
+        from app.utils.supervisor import supervisor
+        supervisor.heartbeat("memory_maintenance")
+        try:
+            if await run_if_due(reason="loop"):
+                _logger.info("Memory maintenance executed by independent loop")
+        except Exception as e:
+            # 异常隔离：单次失败只记 WARNING，绝不掀翻循环（判据在状态文件里，下一拍再问会补上）
+            _logger.warning("Memory maintenance loop error: %s", e)
+
+
 def start():
     """启动调度器（由 lifespan 调用）：登记到 supervisor 统一监督，支持崩溃/卡死后自愈重建。
 
-    对外语义不变（start()/is_running() 签名与含义保持）；两个常驻 loop 由 supervisor 重建，
+    对外语义不变（start()/is_running() 签名与含义保持）；三个常驻 loop 由 supervisor 重建，
     并每轮上报心跳供 /liveness 判断「是否还在前进」。
     """
     global _scheduler_task, _storyline_task
@@ -498,7 +554,15 @@ def start():
         _storyline_task = asyncio.current_task()
         await storyline_sender_loop()
 
+    async def _maintenance_factory():
+        global _running
+        _running = True
+        await memory_maintenance_loop()
+
     supervisor.register("scheduler", _sched_factory, stall_sec=180)  # 30s TICK × 6
+    # 阈值理由见 MEMORY_MAINTENANCE_STALL_SEC 处注释（到期那一拍要 await 整轮维护）
+    supervisor.register("memory_maintenance", _maintenance_factory,
+                        stall_sec=MEMORY_MAINTENANCE_STALL_SEC)
     supervisor.register("storyline", _story_factory, stall_sec=60)   # 3s 间隔，60s 无心跳即卡
     supervisor.start()
     # 回填模块级 task 引用，兼容旧代码对模块全局 _scheduler_task/_storyline_task 的读取

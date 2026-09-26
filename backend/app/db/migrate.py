@@ -20,6 +20,8 @@
   init_db 不要再新增手工 ALTER。
 """
 import asyncio
+import logging
+from contextlib import contextmanager
 from pathlib import Path
 
 from alembic import command
@@ -229,9 +231,65 @@ def _schema_is_current(sync_url: str) -> bool:
         engine.dispose()
 
 
+@contextmanager
+def _alembic_logging_guard():
+    """让 alembic 的 ``fileConfig`` 副作用不污染应用日志。
+
+    env.py 会按 alembic.ini 调 ``fileConfig``：它会把 root logger 的 handlers 换成
+    「console」、level 压到 WARN，并在默认 ``disable_existing_loggers=True`` 下把已存在
+    的应用 logger 全部置 ``disabled``。结果是「本次启动若真的跑了迁移，之后 app.log
+    一条不写」——服务进程活着、端口在听、却全无日志（2026-09-25 实测事故：日志停在
+    ``Database initialized`` 之后的 Alembic 对齐那一步）。
+
+    这里在进入前对日志设施做快照，退出时逐项还原；无论成败都在 ``finally`` 还原。
+    """
+    root = logging.getLogger()
+    saved_handlers = list(root.handlers)
+    saved_root_level = root.level
+    saved: dict[str, tuple[bool, int, bool]] = {}
+    for name, obj in list(logging.root.manager.loggerDict.items()):
+        if isinstance(obj, logging.Logger):
+            saved[name] = (obj.disabled, obj.level, obj.propagate)
+    try:
+        yield
+    finally:
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_root_level)
+        for name, (disabled, level, propagate) in saved.items():
+            obj = logging.root.manager.loggerDict.get(name)
+            if isinstance(obj, logging.Logger):
+                obj.disabled = disabled
+                obj.level = level
+                obj.propagate = propagate
+        # 快照里**没有**的 alembic* logger 是 fileConfig 期间新建的（env.py 加载时才产生）：
+        # 还原逻辑管不到它们，会在进程里留下一份没人管理的 handler/logger，属未收尾的全局污染。
+        for name in [n for n in logging.root.manager.loggerDict
+                     if (n == "alembic" or n.startswith("alembic.")) and n not in saved]:
+            obj = logging.root.manager.loggerDict.pop(name, None)
+            if not isinstance(obj, logging.Logger):
+                continue
+            for handler in obj.handlers:
+                try:
+                    handler.close()
+                except Exception:
+                    pass
+            obj.handlers.clear()
+
+
 def _ensure_alembic_revision_sync() -> str:
-    """同步执行对齐，返回动作描述（stamped / re-stamped / upgraded / already_at_head）。"""
+    """同步执行对齐，返回动作描述（stamped / re-stamped / upgraded / already_at_head）。
+
+    外层套 ``_alembic_logging_guard``：alembic 的 env.py 会 fileConfig（按 alembic.ini
+    重配 root 日志、并禁用已存在的 logger），跑完必须把应用日志原样还原，否则「启动时
+    跑过迁移」会让后端日志整体静默（2026-09-25 实测事故）。
+    """
+    with _alembic_logging_guard():
+        return _ensure_alembic_revision_sync_inner()
+
+
+def _ensure_alembic_revision_sync_inner() -> str:
     cfg = _alembic_config()
+
     script = ScriptDirectory.from_config(cfg)
     head = script.get_current_head()
     sync_url = _sync_url()

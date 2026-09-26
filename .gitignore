@@ -44,6 +44,12 @@ backend/data/uploads/*
 !backend/data/uploads/pets/
 backend/data/locks/
 backend/data/paused.flag
+# 长周期记忆维护的「上次执行时间戳」（app/memory/maintenance_schedule.py，2026-09-25）
+backend/data/last_memory_maintenance
+backend/data/last_memory_maintenance.tmp
+# AI 评星每日额度账本（app/memory/rating_quota.py，2026-09-25）
+backend/data/ai_rating_quota.json
+backend/data/ai_rating_quota.json.tmp
 backend/data/server_config.json
 # 控制台管理面登录令牌（账号独立 P2，2026-09-19）：本地缓存 JWT，绝不入库
 backend/data/console_token.json
@@ -107,6 +113,9 @@ scripts/dev_account_activity.py
 fcm-service-account*.json
 *firebase-adminsdk*.json
 google-services.json
-backend/.pytest_tmp/
+# 2026-09-26：改为通配，覆盖各会话自建的 basetemp 变体（.pytest_tmp_trace / .pytest_tmp_codex 等）
+backend/.pytest_tmp*/
 # 老库升级演练的输出目录（2026-09-21；CI 与本地 --out .migrate-drill 用）
 .migrate-drill/
+backend/data/periodic_state.json
+backend/data/periodic_state.json.tmp

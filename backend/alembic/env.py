@@ -23,7 +23,9 @@ from app.models._all import Base  # noqa: E402  # 导入全部模型，填充 Ba
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # 显式关掉 disable_existing_loggers：fileConfig 默认 True 会把应用已存在的 logger
+    # 全部置 disabled，导致「启动时跑过迁移」之后后端日志整体静默（2026-09-25 实测事故）。
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

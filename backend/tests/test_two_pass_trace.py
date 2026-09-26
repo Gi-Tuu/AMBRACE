@@ -364,7 +364,7 @@ def _run(character_id):
 
 
 async def _trace_ok(_cid, _uid):
-    return f"【当前现状速读】\n- 状态：在加班{_MARK}", 12.0
+    return f"【当前现状速读】\n- 状态：在加班{_MARK}", 12.0, False   # 批 B：三元组第三位＝是否因异常而空
 
 
 def test_flag关_不构造不注入不多一次查询(monkeypatch):
@@ -412,7 +412,7 @@ def test_trace为空时逐字旧行为(monkeypatch):
     monkeypatch.setitem(AGENT_FLAGS, "proactive_naturalness_score", False)
 
     async def _empty(_cid, _uid):
-        return "", 3.0
+        return "", 3.0, False
     captured = _patch_pipeline(monkeypatch, gen_responses=[_resp()], trace_loader=_empty)
     assert _run(_CHAR)
     assert [m["role"] for m in captured["messages"][0]] == ["system", "user"]
@@ -442,7 +442,8 @@ def test_trace构造抛异常_主链路照常生成(monkeypatch):
     monkeypatch.setattr("app.scheduling.state_trace.build_state_trace", _boom)
 
     captured = _patch_pipeline(monkeypatch, gen_responses=[_resp()], trace_loader=_KEEP)
-    assert asyncio.run(mg._load_state_trace(_CHAR, _USER)) == ("", 0.0), "异常必须收敛为空串"
+    assert asyncio.run(mg._load_state_trace(_CHAR, _USER)) == ("", 0.0, True), \
+        "异常必须收敛为空串，且第三位标出「是因异常而空」（批 B：与真·拼空区分）"
     assert _run(_CHAR), "trace 构造抛异常也必须照常生成（不阻塞主链路）"
     assert [m["role"] for m in captured["messages"][0]] == ["system", "user"], "异常时不得注入"
     assert any("boom-build" in m for m in recorded), f"应记 WARNING 并带上原因：{recorded}"
@@ -504,5 +505,7 @@ def test_端到端_灰度角色走真实临时库注入active现状(trace_db, mo
     assert msgs[0]["role"] == "system" and "在赶周报ZZZ" in msgs[0]["content"], \
         f"trace 应前置且只带 active 现状：{msgs[0]}"
     assert "上周的旧现状YYY" not in msgs[0]["content"]
-    assert len(events) == 1 and json.loads(events[0]["steps_json"])["enabled"] is True
-    assert "在赶周报ZZZ" not in events[0]["steps_json"]
+    # 按 route 取注入留痕（2026-09-26 起同通道还会多写一条 two_pass_gate 入口计数，见 test_two_pass_gate_trace）
+    inj = [e for e in events if e["route"] == "two_pass_trace"]
+    assert len(inj) == 1 and json.loads(inj[0]["steps_json"])["enabled"] is True
+    assert "在赶周报ZZZ" not in inj[0]["steps_json"]

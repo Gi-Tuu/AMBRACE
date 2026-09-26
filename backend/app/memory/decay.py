@@ -27,8 +27,11 @@ def retention_pct(dt_days: float, strength_days: float) -> float:
 async def _apply_decay(db, mem, now=None) -> bool:
     """艾宾浩斯惰性结算。返回 True 表示已删除（到期倒计时结束）。
 
-    结算即视为一次轻复习：刷新 last_reinforce_at（与旧版刷新 decay_base_at 语义一致），
-    防止每次读列表都按同一 Δt 反复重算。is_pinned 不参与。
+    结算不是强化：这里不刷新 last_reinforce_at。pct 从固定 base 计算天然幂等（重跑同值）；
+    一旦在结算路径刷新基准，下一轮就只结算「距上次结算」的 6 小时（S=7 天时 pct≈115.8），
+    全表 importance 被反复顶回近满值、遗忘曲线停摆，且失败重跑不再幂等。
+    真实强化路径（service.reinforce / 手动复习 / ai_rating apply）才更新 last_reinforce_at。
+    is_pinned 不参与。
     """
     from app.memory.service import delete_memory
     from datetime import datetime, timedelta
@@ -63,7 +66,6 @@ async def _apply_decay(db, mem, now=None) -> bool:
     s_eff = effective_strength_days(mem) if _tier else float(mem.strength_days or S_DEFAULT)
     pct = retention_pct(dt_days, s_eff)
     mem.importance = pct
-    mem.last_reinforce_at = now
     if pct < DECAY_THRESHOLD_PCT and mem.delete_at is None:
         if _tier and should_cold_archive(mem):
             # M2-S2：高置信记忆不进删除倒计时——直接冷归档（可逆：is_archived=False 恢复）
