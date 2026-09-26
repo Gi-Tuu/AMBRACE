@@ -73,6 +73,12 @@ async def _run_sections(state: dict, ctx: dict) -> dict:
     legacy 照常内联计算兜底（行为与现状一致）。
     """
     values: dict[str, object] = {}
+    # T5 M0 项3（2026-09-27，A4 批 6）：每段注入体量留痕——逐段累计 (key, chars, empty) 三元信息，
+    # 循环结束后**只写一条**聚合事件（不每段一条，避免刷量）。只读已收集结果，不改任何 section
+    # 返回值；复用既有观测通道与既有门控 memory_trace_debug（obs_event 内部已按它开关，不新造开关）；
+    # 异常一律吞掉。detail 里的 sections 取 chars 最大的前 16 段（obs_event 落库截到 1600 字符，
+    # 全量 40+ 段会截断成坏 JSON），总数/空段数/总字符数恒按全部段计。
+    _loads: list[dict] = []
     for sec in get_sections():
         if not sec.enabled:
             continue
@@ -96,6 +102,27 @@ async def _run_sections(state: dict, ctx: dict) -> dict:
                 values[sec.key] = [text]
             else:
                 values[sec.key] = list(text)
+        if sec.key in values:
+            _v = values[sec.key]
+            if isinstance(_v, str):
+                _chars = len(_v)
+            elif isinstance(_v, (list, tuple)):
+                _chars = sum(len(str(x)) for x in _v)
+            else:
+                _chars = 0
+            _loads.append({"key": sec.key, "chars": _chars, "empty": _chars <= 0})
+    try:
+        from app.memory.observability import obs_event
+
+        _top = sorted(_loads, key=lambda x: -x["chars"])[:16]
+        obs_event(state.get("character_id"), "section_budget", {
+            "sections": _top,
+            "total": len(_loads),
+            "n_empty": sum(1 for x in _loads if x["empty"]),
+            "chars_total": sum(x["chars"] for x in _loads),
+        })
+    except Exception as e:
+        _logger.warning("section budget obs failed: %s", e)
     return values
 
 

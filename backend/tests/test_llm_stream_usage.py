@@ -57,8 +57,9 @@ def _install_fakes(monkeypatch, chunks, calls):
     monkeypatch.setattr(
         llm_client, "_record_usage_async",
         lambda provider, model, prompt, completion, reasoning, task=None,
-               user_id=None, config_id=None, group_owner_id=None: calls.append(
-            (provider, model, prompt, completion, reasoning, task, user_id, config_id, group_owner_id)),
+               user_id=None, config_id=None, group_owner_id=None, estimated=False: calls.append(
+            (provider, model, prompt, completion, reasoning, task, user_id, config_id, group_owner_id,
+             estimated)),
     )
     fake_client = types.SimpleNamespace(
         chat=types.SimpleNamespace(completions=_FakeCompletions(chunks)),
@@ -87,11 +88,15 @@ def test_chat_completion_stream_records_usage_from_last_chunk(monkeypatch):
     asyncio.run(_run())
 
     assert "".join(out) == "你好世界"
-    assert calls == [("p", "m", 10, 20, 5, "chat", None, None, None)]
+    assert calls == [("p", "m", 10, 20, 5, "chat", None, None, None, False)]
 
 
 def test_chat_completion_stream_estimates_when_no_usage(monkeypatch):
-    """流式无 usage：按累计文本估算 completion tokens（prompt/reasoning=0）并注明。"""
+    """流式无 usage：completion 按累计文本估算；prompt 也按进上下文的文本估算并标 estimated。
+
+    A4 批 5 / T6-M0 项 2(b)（2026-09-27）改契约：旧行为是 prompt 一律记 0（prompt 是成本大头，
+    等于系统性低估），现改为「按消息文本字符数 / 2 估算 + estimated=True」标记为估算行。
+    """
     chunks = [
         _content_chunk("你好"),
         _content_chunk("世界"),
@@ -110,6 +115,6 @@ def test_chat_completion_stream_estimates_when_no_usage(monkeypatch):
 
     asyncio.run(_run())
 
-    # 累计文本 "你好世界。" = 5 字符 → 5 // 2 = 2 token（估算）
+    # 累计文本 "你好世界。" = 5 字符 → 5 // 2 = 2 token（估算）；prompt 侧 "hi" = 2 字符 → 1 token
     assert "".join(out) == "你好世界。"
-    assert calls == [("p", "m", 0, 2, 0, "chat", None, None, None)]
+    assert calls == [("p", "m", 1, 2, 0, "chat", None, None, None, True)]

@@ -1024,3 +1024,37 @@ async def delete_server_device_action_plugin(
     await _audit_record(None, user_id, "server.device_actions.plugin.remove", "plugin:" + name,
                         None, {"removed": removed})
     return {"ok": True, "removed": removed, "plugins": sorted(await actions.configured_plugins())}
+
+
+# ── 用量报表（A4 批 5 / T6 M1 项 1，只读聚合）───────────────────────────────────────
+# 控制台契约 §0：本文件不直连 DB，聚合全部在 app.application.system.usage_report。
+
+USAGE_REPORT_DAYS_MIN = 1
+USAGE_REPORT_DAYS_MAX = 90
+
+
+@router.get("/server/usage/report")
+async def server_usage_report(
+    days: int = 7,
+    user_id: int = Depends(require_server_admin),
+    lang: str = Header(default="zh"),
+):
+    """分用途/分自然日/分模型的 token 用量报表（窗口 = 最近 days 个应用本地日，含今天）。
+
+    返回 ``{window, total, by_task, by_day, by_model, estimated_calls}``；estimated_calls 是
+    估算行留痕计数（agent_task_logs.route=usage_estimated，M0 项 2(b) 写入点），用于把「流式
+    估算出来的用量」与「上游实测回传的用量」分开看。
+
+    ``days`` 限 1..90：越界 → **400 拒绝**（不静默归一——控制台是人在看数，悄悄改窗口比报错
+    更容易读错结论）。非整数值由 FastAPI 参数校验先行拦下（422），进不到本函数。
+    空库 / 读库失败 → 200 + 空结构（fail-open，见 usage_report）。
+    """
+    from app.application.system import usage_report
+
+    if not USAGE_REPORT_DAYS_MIN <= days <= USAGE_REPORT_DAYS_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{tr_lang(lang, 'config_invalid')}: days {USAGE_REPORT_DAYS_MIN}"
+                    f"-{USAGE_REPORT_DAYS_MAX}",
+        )
+    return await usage_report(days)

@@ -101,6 +101,26 @@ async def lorebook_section(state: dict, ctx: dict) -> list[str]:
 # ------------------------------------------------------------------ 私·织库「AI 生活」注入（角色设置-社交「AI 生活分享」开关，2026-08-12）
 # 信任机制与隐私上锁同源——trust≥60 有概率提及、≥70 高概率、<60 不提及（角色有权交流自己的私生活）
 
+# T5 M0 项1（2026-09-27，A4 批 6）：现状面子句口径对齐——legacy 版 life_share
+# （context/legacy.py:866-876，第 871 行）一直带 current_facts_status_clause()，注册表版
+# （agent_context_registry 默认 True 的活路径）漏了这个子句，两份实现口径漂移。
+# 用新开关 current_view_filter 包住：**关=返回空列表 → where 里不附加任何子句，与改动前逐字节一致**；
+# 开=追加子句。读开关异常一律按「关」处理（绝不打断注入）。
+# 语义提示：current_facts_active_only（线上默认 True）开时子句＝「恒 active」，开关打开后才有过滤效果。
+
+def _current_view_clauses() -> list:
+    """life_share 的现状面状态子句（开关关 → 空列表 = SQL 与今天逐字节一致）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        if not AGENT_FLAGS.get("current_view_filter", False):
+            return []
+        from app.memory.service import current_facts_status_clause
+        return [current_facts_status_clause()]
+    except Exception as e:
+        _logger.warning("current_view_filter flag read failed, treat as off: %s", e)
+        return []
+
+
 async def life_share_section(state: dict, ctx: dict) -> list[str]:
     """life_share 分区：AI 生活点滴注入（append 块；有内容返回 1 条，否则空列表）。"""
     try:
@@ -134,6 +154,8 @@ async def life_share_section(state: dict, ctx: dict) -> list[str]:
                                 _MemL.character_id == state["character_id"],
                                 _MemL.source == "life",
                                 _MemL.delete_at.is_(None),
+                                # T5 M0 项1：关=空列表（不附加，SQL 与改动前逐字节一致）；开=补现状面子句
+                                *_current_view_clauses(),
                             )
                             .order_by(_MemL.importance.desc(), _MemL.created_at.desc())
                             .limit(2)

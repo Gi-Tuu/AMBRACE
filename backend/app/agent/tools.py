@@ -83,7 +83,15 @@ def get_tool_by_action(action_type: str) -> ToolSpec | None:
 
 
 def list_tools() -> list[ToolSpec]:
-    return list(_REGISTRY.values())
+    """按工具名稳定排序返回（A4 批 5 / T6 成本与缓存护栏 M0 项 1，2026-09-27）。
+
+    依据：工具声明文本的顺序由本函数直接决定（context/section_mcp._build_mcp_tool_declarations
+    遍历 list_tools() 拼 JSON 声明进 system 前缀），而 _REGISTRY 是 dict，顺序＝注册顺序——
+    插件/MCP 工具的登记时机随启动流程变化，重启后同一批工具可能变序，使 system 前缀字节序
+    不稳定、上游 prompt 前缀缓存失配。排序只改变返回顺序，零语义变化：工具定义、行为、参数
+    都不动，既有调用点要么取集合（tests/test_agent_actions.py:84）要么逐项过滤，不依赖注册顺序。
+    """
+    return sorted(_REGISTRY.values(), key=lambda spec: spec.name)
 
 
 def _plugin_risk_level(plugin_name: str) -> str:

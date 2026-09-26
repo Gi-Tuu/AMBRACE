@@ -483,9 +483,13 @@ async def chat_completion(
         u = response.usage
         if u is not None:
             reasoning = getattr(getattr(u, "completion_tokens_details", None), "reasoning_tokens", None)
+            # A4 批 5 / T6 成本与缓存护栏 M0 项 2(a)（2026-09-27）：把上游 usage 里**已返回但原先没采**
+            # 的缓存字段一并打出来（命中数/未命中数/已缓存 prompt token），否则「缓存到底省了多少」
+            # 无从观测。上游没这些字段时打 cache=-（不凭空造 0）。纯日志，不改请求/返回/记账。
             _logger.info(
-                "LLM usage: prompt=%s completion=%s total=%s reasoning=%s",
+                "LLM usage: prompt=%s completion=%s total=%s reasoning=%s cache=%s",
                 u.prompt_tokens, u.completion_tokens, u.total_tokens, reasoning,
+                _usage_cache_text(u),
             )
             _record_usage_async(cfg.get("provider"), model_name,
                                 u.prompt_tokens or 0, u.completion_tokens or 0, reasoning or 0,
@@ -528,8 +532,16 @@ def _record_usage_async(provider: str | None, model: str | None,
                         reasoning_tokens: int, task: str | None = None,
                         user_id: int | None = None,
                         config_id: int | None = None,
-                        group_owner_id: int | None = None) -> None:
-    """异步落库单次 LLM 用量（后台任务，失败仅告警不影响主流程）"""
+                        group_owner_id: int | None = None,
+                        estimated: bool = False) -> None:
+    """异步落库单次 LLM 用量（后台任务，失败仅告警不影响主流程）
+
+    T6-M0 项 2(b)（2026-09-27）：``estimated=True`` 表示 prompt/completion 是**估算值**
+    （流式上游不回 usage）。llm_usage 表没有估算标记列、本单禁止改表，所以标记落在两处观测：
+    调用处日志 + 既有 obs 通道（agent_task_logs.steps_json，route=usage_estimated，
+    明细里 estimated=true），使估算行可追溯、不与实测行混读。obs 写入 fire-and-forget、
+    失败静默，不影响记账主路径。
+    """
     async def _do() -> None:
         try:
             from app.db.database import async_session_factory
@@ -551,6 +563,19 @@ def _record_usage_async(provider: str | None, model: str | None,
         except Exception as e:  # 用量统计失败不影响回复
             _logger.warning("usage record failed: %s", e)
 
+    if estimated:
+        try:
+            from app.memory.observability import obs_event
+            obs_event(None, "usage_estimated", {
+                "estimated": True,
+                "model": model,
+                "task": task,
+                "prompt_tokens_est": prompt_tokens,
+                "completion_tokens_est": completion_tokens,
+            })
+        except Exception:
+            pass  # 观测失败不影响记账
+
     try:
         spawn_background(_do())
     except Exception as e:
@@ -566,6 +591,78 @@ def _estimate_completion_tokens(text: str) -> int:
     if not text:
         return 0
     return max(1, len(text) // _EST_CHARS_PER_TOKEN)
+
+
+def _estimate_prompt_tokens(messages: list | None) -> int:
+    """估算 prompt token 数（T6-M0 项 2(b)）：把进上下文的文本按同口径折算。
+
+    只用于「上游不回 usage」时的记账观测，调用处必须带 estimated=True（绝不冒充实测值）。
+    多模态消息只取 text 段——图片二进制/URL 不参与折算（本仓硬约束：图片不进 deepseek）。
+    失败返回 0（fail-open，观测不得让调用失败）。
+    """
+    try:
+        parts: list[str] = []
+        for m in messages or []:
+            content = m.get("content") if isinstance(m, dict) else None
+            if isinstance(content, str):
+                parts.append(content)
+            elif isinstance(content, list):
+                for seg in content:
+                    if isinstance(seg, dict) and isinstance(seg.get("text"), str):
+                        parts.append(seg["text"])
+        return _estimate_completion_tokens("".join(parts))
+    except Exception as e:
+        _logger.warning("prompt token estimate failed: %s", e)
+        return 0
+
+
+# 上游 usage 里与「缓存命中」相关的既有字段（本仓上游 = openai 兼容客户端，extra=allow 透传厂商字段）：
+# - prompt_cache_hit_tokens / prompt_cache_miss_tokens：DeepSeek 兼容端点在 usage 顶层返回
+# - prompt_tokens_details.cached_tokens：OpenAI / 百炼兼容口径
+# 只解析这三处**真实存在**的字段，不猜别的名（缺失即不打，见 _usage_cache_text）。
+_USAGE_CACHE_TOP_KEYS = ("prompt_cache_hit_tokens", "prompt_cache_miss_tokens")
+
+
+def _usage_cache_fields(usage) -> dict:
+    """从上游 usage 提取缓存相关字段（T6-M0 项 2(a)，纯观测）。
+
+    返回 {字段名: 值}；上游没返回的字段**不出现**在结果里（不凭空补 0）。整体 fail-open：
+    任何异常都只回已取到的部分，不影响记账主路径。
+    """
+    out: dict = {}
+    try:
+        if usage is None:
+            return out
+        extra = getattr(usage, "model_extra", None)
+        if not isinstance(extra, dict):
+            extra = {}
+        for key in _USAGE_CACHE_TOP_KEYS:
+            val = getattr(usage, key, None)
+            if val is None:
+                val = extra.get(key)
+            if val is not None:
+                out[key] = val
+        details = getattr(usage, "prompt_tokens_details", None)
+        if details is None:
+            details = extra.get("prompt_tokens_details")
+        cached = None
+        if isinstance(details, dict):
+            cached = details.get("cached_tokens")
+        elif details is not None:
+            cached = getattr(details, "cached_tokens", None)
+        if cached is not None:
+            out["cached_tokens"] = cached
+    except Exception as e:
+        _logger.warning("usage cache fields parse failed: %s", e)
+    return out
+
+
+def _usage_cache_text(usage) -> str:
+    """把缓存字段渲染成日志片段（cache=k=v,...）；上游未返回则 '-'（表示无此维度，非 0 命中）。"""
+    fields = _usage_cache_fields(usage)
+    if not fields:
+        return "-"
+    return ",".join(f"{k}={fields[k]}" for k in sorted(fields))
 
 
 async def chat_completion_stream(
@@ -634,9 +731,11 @@ async def chat_completion_stream(
     try:
         if _last_usage is not None:
             _reasoning = getattr(getattr(_last_usage, "completion_tokens_details", None), "reasoning_tokens", None)
+            # T6-M0 项 2(a)：流式同样补缓存维度（口径与非流式一致；上游未返回则 cache=-）
             _logger.info(
-                "LLM stream usage: prompt=%s completion=%s total=%s reasoning=%s",
+                "LLM stream usage: prompt=%s completion=%s total=%s reasoning=%s cache=%s",
                 _last_usage.prompt_tokens, _last_usage.completion_tokens, _last_usage.total_tokens, _reasoning,
+                _usage_cache_text(_last_usage),
             )
             _record_usage_async(cfg.get("provider"), model_name,
                                 _last_usage.prompt_tokens or 0, _last_usage.completion_tokens or 0,
@@ -645,14 +744,21 @@ async def chat_completion_stream(
                                 config_id=cfg.get("config_id"),
                                 group_owner_id=await _resolve_group_owner_id(user_id))
         else:
+            # T6-M0 项 2(b)（2026-09-27）：上游 SSE 不回 usage 时，prompt 侧原来硬记 0，
+            # 使「一次流式调用的成本」被系统性低估成只剩输出（护栏/预算判断全失真）。
+            # 改为按既有同口径估算输入 token（字符数 / _EST_CHARS_PER_TOKEN，与
+            # context_builder._EST_CHARS_PER_TOKEN 一致），并显式标 estimated=True：
+            # 估算值绝不冒充实测值（库里无估算标记列、本单禁止改表，故标记落在日志 + 既有 obs 明细）。
+            _est_prompt = _estimate_prompt_tokens(messages)
             _est_tokens = _estimate_completion_tokens("".join(_est_parts))
             _logger.warning(
-                "LLM stream usage: NO usage in stream, estimated completion_tokens=%d (approx)",
-                _est_tokens,
+                "LLM stream usage: NO usage in stream, estimated=true prompt=%d completion=%d (chars/%d, approx)",
+                _est_prompt, _est_tokens, _EST_CHARS_PER_TOKEN,
             )
-            _record_usage_async(cfg.get("provider"), model_name, 0, _est_tokens, 0, task=task,
+            _record_usage_async(cfg.get("provider"), model_name, _est_prompt, _est_tokens, 0, task=task,
                                 user_id=user_id,
                                 config_id=cfg.get("config_id"),
-                                group_owner_id=await _resolve_group_owner_id(user_id))
+                                group_owner_id=await _resolve_group_owner_id(user_id),
+                                estimated=True)
     except Exception as e:
         _logger.warning("LLM stream usage log failed: %s", e)

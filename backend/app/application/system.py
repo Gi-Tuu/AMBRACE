@@ -979,6 +979,30 @@ async def get_llm_usage(
             if by_user_map.get(uid, 0) > 0
         ]
 
+    # A4 批 5 / T6 成本与缓存护栏 M0 项 3（2026-09-27）：按任务归因的用量桶 by_task。
+    # 依据：llm_usage.task 列早已存在（写入侧归因，审计 P1-07），但读端只有 by_model/by_user，
+    # 看不出「哪个用途吃掉多少 token」，成本/缓存护栏无法定位大头。这里是**纯读端聚合**
+    # （rows 已在内存），不新增列、不写迁移。整块 fail-open：聚合异常按空处理只记 WARNING，
+    # 不让用量接口 500（记账与观测不得让调用失败）。task 为空的行归到 "(untagged)"，
+    # 与「未知用途」区分开，避免把无归因用量误算进某个真实任务。
+    by_task: list[dict] = []
+    try:
+        _task_acc: dict[str, dict[str, int]] = {}
+        for r in rows:
+            _tk = (r.task or "")[:30] or "(untagged)"
+            _b = _task_acc.setdefault(_tk, {"calls": 0, "total": 0, "prompt": 0, "completion": 0})
+            _b["calls"] += 1
+            _b["total"] += r.total_tokens or 0
+            _b["prompt"] += r.prompt_tokens or 0
+            _b["completion"] += r.completion_tokens or 0
+        by_task = [
+            {"task": k, **v}
+            for k, v in sorted(_task_acc.items(), key=lambda kv: (-kv[1]["total"], kv[0]))
+        ]
+    except Exception as e:
+        _logger.warning("llm usage by_task aggregate failed: %s", e)
+        by_task = []
+
     # A8（2026-09-20）：额度改为按账号生效（覆盖 > 全局 > 未设置），与服务器控制台同口径 ——
     # 统一走 app/application/llm_quota.resolve_limit（额度表唯一读写出口）；控制台给某账号设过
     # 覆盖时，App 这里显示的就是该账号的真实额度（并回传 limit_source 便于前端区分来源）。
@@ -997,8 +1021,123 @@ async def get_llm_usage(
         "by_model": [{"model": k, "total": v}
                      for k, v in sorted(by_model.items(), key=lambda kv: -kv[1])],
         "by_user": by_user,
+        # T6-M0 项 3：只增不减——by_task 是新增项，上面既有字段口径一字未动（前端/既有测试不受影响）
+        "by_task": by_task,
         "can_edit_limit": await is_admin_user(user_id),
     }
+
+
+# ── A4 批 5 / T6 M1 项 1：分用途 / 分自然日 / 分模型的用量报表（服务器控制台只读）────
+# 依据：M0 项 3 的 by_task 只挂在 App 侧 get_llm_usage（家庭范围、只到 total 一项），控制台要的是
+# 「固定窗口内、四件套 token 全量 + 估算行留痕」的完整报表，才能回答「成本大头在哪个用途、
+# 流式估算占了多大比例」。纯读端聚合：不加列、不建表、不写迁移。
+_USAGE_UNTAGGED = "(untagged)"   # 与 M0 项 3 同哨兵：task 为空单独成桶，不混进真实用途
+_USAGE_UNKNOWN = "(unknown)"     # provider / model / 日期缺失的行归这里（与「无归因」同一思路）
+
+
+async def usage_report(days: int = 7) -> dict:
+    """窗口内 LLM 用量报表：total + by_task + by_day + by_model + estimated_calls（只读）。
+
+    口径与 ``get_llm_usage`` 一致：库内 created_at 是 UTC naive，窗口按 ``app_local_now()``
+    的应用本地日历切（days=N 含今天，向前推 N-1 个本地日界），自然日也按本地日界归桶。
+    SQL 侧不做方言相关的日期函数——窗口内一次 SELECT + 内存分桶（与既有读端同法）。
+    estimated_calls 取 agent_task_logs.route="usage_estimated"（M0 项 2(b) obs_event 写入点），
+    用于把「估算行」与「实测行」分开看（llm_usage 没有估算标记列，只能靠这条留痕对账）。
+
+    全程只 SELECT；fail-open：读库/聚合异常返回空结构 + WARNING，不让控制台 500。
+    days 的上下限校验在 API 层（app/api/admin.py）做，本函数按已校验值处理。
+    """
+    from sqlalchemy import func
+
+    from app.db.database import async_session_factory
+    from app.models.agent import AgentTaskLog, LlmUsage
+    from app.utils.timeutil import app_tz_offset_hours, now_naive_utc, shift_utc_naive
+
+    offset = app_tz_offset_hours()
+    now_local = app_local_now()
+    start_local = datetime(
+        now_local.year, now_local.month, now_local.day, tzinfo=now_local.tzinfo
+    ) - timedelta(days=days - 1)
+    start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = now_naive_utc()
+
+    def _blank() -> dict:
+        return {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                "total_tokens": 0, "reasoning_tokens": 0}
+
+    result = {
+        "window": {
+            "days": days,
+            "tz_offset_hours": offset,
+            "start_local": start_local.isoformat(timespec="seconds"),
+            "end_local": now_local.isoformat(timespec="seconds"),
+            "start_utc": start_utc.isoformat(timespec="seconds"),
+            "end_utc": end_utc.isoformat(timespec="seconds"),
+        },
+        "total": _blank(),
+        "by_task": [],
+        "by_day": [],
+        "by_model": [],
+        "estimated_calls": 0,
+    }
+
+    try:
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(
+                    LlmUsage.task, LlmUsage.provider, LlmUsage.model, LlmUsage.created_at,
+                    LlmUsage.prompt_tokens, LlmUsage.completion_tokens,
+                    LlmUsage.total_tokens, LlmUsage.reasoning_tokens,
+                ).where(LlmUsage.created_at >= start_utc, LlmUsage.created_at <= end_utc)
+            )).all()
+            result["estimated_calls"] = int((await db.execute(
+                select(func.count()).select_from(AgentTaskLog).where(
+                    AgentTaskLog.route == "usage_estimated",
+                    AgentTaskLog.created_at >= start_utc,
+                    AgentTaskLog.created_at <= end_utc,
+                )
+            )).scalar_one() or 0)
+    except Exception as e:
+        _logger.warning("usage report read failed days=%s: %s", days, e)
+        return result
+
+    def _emit(acc: dict, naming) -> list[dict]:
+        """桶 → 列表：total_tokens 降序，同额按名称升序（输出稳定，便于回归比对）。"""
+        return [
+            {**naming(k), **b}
+            for k, b in sorted(acc.items(), key=lambda kv: (-kv[1]["total_tokens"], str(kv[0])))
+        ]
+
+    task_acc: dict[str, dict] = {}
+    day_acc: dict[str, dict] = {}
+    model_acc: dict[tuple[str, str], dict] = {}
+    total_b = result["total"]
+    for r in rows:
+        metrics = {
+            "prompt_tokens": r.prompt_tokens or 0,
+            "completion_tokens": r.completion_tokens or 0,
+            "total_tokens": r.total_tokens or 0,
+            "reasoning_tokens": r.reasoning_tokens or 0,
+        }
+        day = (shift_utc_naive(r.created_at, offset).date().isoformat()
+               if r.created_at else _USAGE_UNKNOWN)
+        key_model = ((r.provider or "")[:30] or _USAGE_UNKNOWN,
+                     (r.model or "")[:50] or _USAGE_UNKNOWN)
+        for acc, key in ((task_acc, (r.task or "")[:30] or _USAGE_UNTAGGED),
+                         (day_acc, day), (model_acc, key_model)):
+            b = acc.setdefault(key, _blank())
+            b["calls"] += 1
+            for f, v in metrics.items():
+                b[f] += v
+        total_b["calls"] += 1
+        for f, v in metrics.items():
+            total_b[f] += v
+
+    result["by_task"] = _emit(task_acc, lambda k: {"task": k})
+    # by_day 不跟随「用量降序」：时间序列按日期升序才是可读的报表形态（其余三桶仍按用量降序）
+    result["by_day"] = [{"date": k, **day_acc[k]} for k in sorted(day_acc)]
+    result["by_model"] = _emit(model_acc, lambda k: {"provider": k[0], "model": k[1]})
+    return result
 
 
 async def update_llm_usage_limit(

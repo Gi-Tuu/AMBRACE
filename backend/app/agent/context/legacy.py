@@ -1257,4 +1257,24 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     # G-P1-2（2026-08-18）：system 整体 token 硬顶——所有分区 + 追加 system 块组装完成后，
     # 超限时从尾部裁剪各 system 块（追加块同样生效）；只截断文本、保留消息结构。
     _apply_system_total_quota(state["context_messages"], character_id=state.get("character_id"))
+    # T5 M0 项2（2026-09-27，A4 批 6）：装配尾部留痕「裁剪后 system 总字符 + 本次生效预算」。
+    # 为什么需要：流式路径拿不到 provider usage 时 token 记 0（agent/llm_client.py:648-656），
+    # 「上下文 token/轮」这个指标失真；本条不依赖 provider，每轮真装配只写一条。
+    # 约束：只留痕、不改任何装配结果；异常一律吞掉（仅 WARNING），不新增开关。
+    try:
+        from app.agent import context_builder as _cb
+        from app.memory.observability import obs_event as _obs_event
+
+        _sys_msgs = [m for m in state["context_messages"] if m.get("role") == "system"]
+        _obs_event(
+            state.get("character_id"),
+            "system_total_chars",
+            {
+                "system_chars": sum(len(m.get("content") or "") for m in _sys_msgs),
+                "budget_tokens": _cb._effective_system_budget_tokens(),
+                "reserve_on": _cb.context_budget_reserve_enabled(),
+            },
+        )
+    except Exception as _e:
+        _logger.warning("system total chars obs failed: %s", _e)
     return state

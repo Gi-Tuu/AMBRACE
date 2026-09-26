@@ -234,6 +234,13 @@ _FLAG_ROWS: list[tuple] = [
      'A short note of the before-reply call on whether to look through memories, so it can be '
      'cross-checked later. Whether memories are looked up stays exactly as it is now; turning this '
      'off simply stops leaving the note.'),
+    ('current_view_filter', 'memory', 722, False, '生活分享只认当下有效的记录',
+     '它跟你提自己的近况时，只用仍然有效的条目，已经被取代、收起来的旧近况不再冒充此刻；'
+     '默认关闭，关掉时与现在完全一样。',
+     'Life updates only from what still holds',
+     'When it shares how its own days have been going, only entries that still hold are used, so '
+     'superseded or archived ones no longer pass as the present. Off by default, and turning it off '
+     'keeps things exactly as they are now.'),
 
     # ── 编纂知识与前瞻意图 ──
     ('curated_knowledge', 'curated', 801, False, '长期知识层',

@@ -447,7 +447,10 @@ async def _try_degraded_continuation(
         from app.agent.llm_client import chat_completion as _cc
 
         out = await asyncio.wait_for(
-            _cc(messages, user_id=user_id, character_id=character_id),
+            # A4 批 5 / T6 M1 收口（2026-09-27）：补 task 归因 —— 本处经别名 `from ... import chat_completion as _cc`
+            # 调用，绕过了「按 ast.Name 匹配」的记账契约测试（tests/test_audit_batch3.py），导致这条降级续写
+            # 的用量落库 task=NULL、读端只能落 (untagged)。补上与其他对话调用一致的 task="chat"。
+            _cc(messages, user_id=user_id, character_id=character_id, task="chat"),
             timeout=_DEGRADED_CONTINUATION_TIMEOUT_S,
         )
         text = (out or "").strip() if isinstance(out, str) else ""
