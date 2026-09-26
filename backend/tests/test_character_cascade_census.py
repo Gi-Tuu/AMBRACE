@@ -23,6 +23,12 @@
 插件表的角色归属由插件自身生命周期负责（本批开发期临时把模板库换成 ``with_plugins=True``
 量过一次：``wechat_ilink_bindings`` / ``wechat_ilink_messages`` 带 character_id 而无归属清理，
 属真缺口；但级联模块不在本批改动清单内，已作为待排期遗留项上报）。
+
+2026-09-26 批 E 补了 ``plugin_census`` 档（把插件表也建进临时库再普查）：上面那句「无法修的
+红灯」的正解不是把插件表塞进主清单，而是另立一张**插件表归属策略表**——每张带 character_id
+的插件表必须显式登记 cleanup / disable / keep，未登记即红。wechat 两表的缺口当日由内核扩展点
+``app.providers.channel.notify_character_deleted`` + 微信插件 ``channel_on_character_deleted``
+承接，上述遗留项就此关闭。
 """
 import sqlite3
 
@@ -61,6 +67,26 @@ SPECS_DB_CASCADE_ONLY: dict[str, str] = {
     "game_stats": "战绩累计行 character_id 可空（NULL=真人维度）；靠物理外键 ON DELETE CASCADE",
     "group_char_cognitions": "群内「角色↔角色」认知条目；靠物理外键 ON DELETE CASCADE",
 }
+
+# ── 插件表归属策略表（with_plugins 档，2026-09-26 批 E）────────────────────────
+# 主 CHARACTER_DELETE_SPECS 永远覆盖不到插件自有表（跨 MetaData，且插件可能没装），
+# 所以插件表另立此表：每张**带 character_id 的插件表**必须登记，值 ∈
+#   cleanup＝删角色时物理删除该行 / disable＝保留行做留痕、停用并清凭据 / keep＝有意保留。
+# 未登记即红——这就是把「没人管」变成 CI 红灯的那条判据（承接者写在理由里）。
+PLUGIN_TABLE_POLICIES: dict[str, tuple[str, str]] = {
+    "wechat_ilink_bindings": (
+        "disable",
+        "绑定行保留留痕：enabled=0 且清空 bot_token_enc/ilink_bot_id/baseurl/poll_buf；"
+        "由微信插件 routes.channel_on_character_deleted 承接（内核只经 notify_character_deleted 转调），"
+        "语义对齐既有解绑 _clear_binding / channel_on_binding_removed",
+    ),
+    "wechat_ilink_messages": (
+        "cleanup",
+        "消息历史含用户与该角色的对话内容，删角色＝完全清除 ⇒ 物理删除；"
+        "由微信插件 routes.channel_on_character_deleted 承接（同一扩展点）",
+    ),
+}
+_PLUGIN_POLICY_VALUES = {"cleanup", "disable", "keep"}
 
 
 def _scan(db_path) -> dict[str, set[str]]:
@@ -133,3 +159,38 @@ def test_级联普查_例外理由非空且普查集合非平凡(census):
         assert all(reason.strip() for reason in listed.values()), f"{name} 存在空理由"
     assert len(census["with_col"]) >= 40, "普查集合异常小（临时库没建全？别再走 ORM 清单）"
     assert len(census["specs"]) >= 40, "CHARACTER_DELETE_SPECS 条目异常少（被误删/import 失败？）"
+
+
+@pytest.fixture()
+def plugin_census(tmp_path):
+    """把**插件自有表**也建进临时库后再普查（``with_plugins`` 会加载插件目录并注册其回调）。
+
+    插件表判定走 ``app.plugins.plugin_base.plugin_metadata``（T5 起插件 ORM 的独立 MetaData，
+    与主 ``Base.metadata`` 平行、物理同库）；口径仍是「实际库里有没有该列」，只是把
+    「哪些表属于插件」交给 metadata 说话。
+    """
+    db_path = tmp_path / "census_plugins.db"
+    engine = clone_engine(db_path, with_plugins=("douyin_mcp", "wechat_ilink"))
+    engine.sync_engine.dispose()  # 同 census：先放句柄，再用裸 sqlite3 读结构
+    scan = _scan(db_path)
+    from app.plugins.plugin_base import plugin_metadata
+
+    scan["plugin_with_col"] = scan["with_col"] & set(plugin_metadata.tables)
+    return scan
+
+
+def test_级联普查_插件表必须显式登记归属策略(plugin_census):
+    """批 E 判据：带 character_id 的插件表未登记策略即红（主 SPECS 覆盖不到它们）。"""
+    scanned = plugin_census["plugin_with_col"]
+    assert len(scanned) >= 2, f"插件档位只扫到 {sorted(scanned)}——with_plugins 未生效（防空转）"
+    unregistered = scanned - set(PLUGIN_TABLE_POLICIES)
+    assert not unregistered, (
+        f"以下插件表带 character_id 却未登记归属策略：{sorted(unregistered)}"
+        "；请在 PLUGIN_TABLE_POLICIES 写明 cleanup / disable / keep，并在理由里交代由谁承接"
+    )
+    for table, (policy, reason) in PLUGIN_TABLE_POLICIES.items():
+        assert policy in _PLUGIN_POLICY_VALUES, f"{table} 策略非法：{policy}（须属 {sorted(_PLUGIN_POLICY_VALUES)}）"
+        assert reason.strip(), f"{table} 缺理由——登记不能是空头支票"
+    # 僵尸防护：登记表里的表必须真的在库里且仍带 character_id（改名/删列后不许留着假审查）
+    zombie = set(PLUGIN_TABLE_POLICIES) - scanned
+    assert not zombie, f"PLUGIN_TABLE_POLICIES 存在僵尸条目（库里已无该 character_id 插件表）：{sorted(zombie)}"

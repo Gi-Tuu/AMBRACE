@@ -28,7 +28,11 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from app.utils.logger import get_logger
+
 _CHANNEL_KIND = "channel"
+
+_logger = get_logger("providers.channel")
 
 
 class ChannelPort(Protocol):
@@ -136,6 +140,9 @@ def channel_for_plugin(plugin_name: str) -> tuple[str, dict] | None:
 #                         抛 HTTPException(404) → 调用方不 commit，整事务回滚。
 # - "on_binding_removed": (db, tenant_id, bot_account_id) -> bool
 #                         解绑后停用渠道自有行；幂等，无命中行返回 False（不报错）。
+# - "on_character_deleted": (db, character_id, *, user_id=None) -> dict | None
+#                         角色被删后清理渠道自有数据（2026-09-26 批 E）；由 notify_character_deleted
+#                         统一转调，逐渠道 SAVEPOINT 隔离，失败只回滚该渠道、不阻断删角色。
 def set_channel_binding_hooks(name: str, hooks: dict) -> None:
     """设置渠道级「绑定联动」回调（插件 main.py 加载期经 sdk 调用；内核不 import 插件实现）。
 
@@ -167,3 +174,50 @@ async def invoke_channel_binding_hook(name: str, hook_name: str, *args, **kwargs
     if handler is None:
         return None
     return await handler(*args, **kwargs)
+
+
+async def notify_character_deleted(db, character_id: int, *, user_id: int | None = None) -> dict:
+    """角色被删后，通知所有已注册渠道清理其自有数据（2026-09-26 批 E）。
+
+    内核不 import 插件实现：只转调各渠道注册的 on_character_deleted 回调。
+    - 未注册该回调的渠道直接跳过（＝原行为）；
+    - 每个渠道一个 SAVEPOINT（db.begin_nested）：某渠道清理失败只回滚它自己，
+      记 WARNING，不影响其它渠道，也不影响角色的删除事务；
+    - 返回 {"channels": [成功渠道名...], "failed": [失败渠道名...]}。
+    回调签名（async）：on_character_deleted(db, character_id, *, user_id=None) -> dict | None
+    """
+    done: list[str] = []
+    failed: list[str] = []
+    savepoint_ok = True  # 后端不支持 SAVEPOINT（begin_nested 抛 NotImplementedError）时退化
+    try:
+        entries = list(_channel_entries())
+    except Exception as exc:  # noqa: BLE001 - 渠道枚举本身异常也不能阻断删角色（只记 ERROR）
+        _logger.error("notify_character_deleted 渠道枚举失败 char=%s: %s", character_id, exc)
+        return {"channels": done, "failed": ["<enumerate>"]}
+    for name, _ent in entries:
+        handler = _channel_binding_hooks(name).get("on_character_deleted")
+        if handler is None:
+            continue
+        savepoint = None
+        if savepoint_ok:
+            try:
+                savepoint = await db.begin_nested()
+            except NotImplementedError:
+                savepoint_ok = False
+                _logger.warning("后端不支持 SAVEPOINT，on_character_deleted 退化为直接调用（渠道 %s）", name)
+            except Exception as exc:  # noqa: BLE001 - 建 SAVEPOINT 失败：跳过该渠道，不影响其它渠道与删角色
+                _logger.warning("on_character_deleted 无法建立 SAVEPOINT（渠道 %s）: %s", name, exc)
+                failed.append(name)
+                continue
+        try:
+            await handler(db, int(character_id), user_id=user_id)
+            if savepoint is not None:
+                await savepoint.commit()
+            done.append(name)
+        except Exception as exc:  # noqa: BLE001 - 单渠道失败隔离：回滚它的 SAVEPOINT 后继续
+            if savepoint is not None:
+                await savepoint.rollback()
+            _logger.warning("channel on_character_deleted failed channel=%s char=%s: %s",
+                            name, character_id, exc)
+            failed.append(name)
+    return {"channels": done, "failed": failed}

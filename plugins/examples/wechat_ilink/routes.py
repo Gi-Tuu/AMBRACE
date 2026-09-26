@@ -342,6 +342,44 @@ async def channel_on_binding_removed(db, tenant_id: int, bot_account_id: str) ->
     return True
 
 
+async def channel_on_character_deleted(db, character_id: int, *, user_id: int | None = None) -> dict:
+    """删角色时清理本渠道自有数据（2026-09-26 批 E，用户拍板口径）：
+
+    ① 该角色的绑定行：enabled=0、bot_token_enc / ilink_bot_id / baseurl / poll_buf 全清空
+       （**保留行**做留痕，与既有解绑语义 _clear_binding / channel_on_binding_removed 一致）；
+    ② 该角色的消息历史：**物理删除**（删角色＝完全清除，消息含用户与角色的对话内容）。
+    按 character_id 精确匹配，不碰其它角色；幂等；返回 {"disabled": n, "messages_deleted": m}。
+    """
+    import models  # noqa: PLC0415
+    from sqlalchemy import delete as sa_delete, func, select  # noqa: PLC0415
+
+    from app.plugins import sdk  # noqa: PLC0415
+
+    cid = int(character_id)
+    rows = (await db.execute(
+        select(models.WeChatILinkBinding).where(models.WeChatILinkBinding.character_id == cid)
+    )).scalars().all()
+    # disabled 只计「本次真正改动」的行（仍启用或仍残留凭据）——重复调用第二次为 0，幂等可观测
+    changed = [r for r in rows
+               if r.enabled or r.bot_token_enc or r.ilink_bot_id or r.baseurl or r.poll_buf]
+    for r in rows:
+        r.enabled = False
+        r.bot_token_enc = ""
+        r.ilink_bot_id = ""
+        r.baseurl = ""
+        r.poll_buf = ""
+    messages_deleted = int((await db.execute(
+        select(func.count()).select_from(models.WeChatILinkMessage)
+        .where(models.WeChatILinkMessage.character_id == cid)
+    )).scalar() or 0)
+    if messages_deleted:
+        await db.execute(sa_delete(models.WeChatILinkMessage).where(
+            models.WeChatILinkMessage.character_id == cid))
+    sdk.log("wechat_ilink 删角色清理 user=%s char=%s disabled=%d messages_deleted=%d",
+            user_id, cid, len(changed), messages_deleted)
+    return {"disabled": len(changed), "messages_deleted": messages_deleted}
+
+
 async def get_binding_view(user_id: int | None = None) -> dict:
     """绑定状态视图（供 /status 路由与 ChannelPort.binding_status 复用，避免逻辑漂移）。
 

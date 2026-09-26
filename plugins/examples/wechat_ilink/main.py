@@ -33,9 +33,12 @@ sdk.register_channel("wechat", WeChatILinkPort(), meta=build_meta())
 # 内核 channels API（API/v1/channels/{channel}/bindings/{bot}）删/写 channel_bindings 行后，
 # 经渠道 registry 回调本插件停用/启用 wechat_ilink_bindings 的 (tenant, bot) 行，
 # 保持两表一致——内核不 import 本插件内部实现，联动逻辑在本插件。
+# on_character_deleted（2026-09-26 批 E）：删角色路径不经 channels API，内核改由
+# notify_character_deleted 逐渠道转调，清理本插件自有表（绑定停用留痕 + 消息物理删除）。
 sdk.register_channel_binding_hooks("wechat", {
     "on_binding_saved": routes.channel_on_binding_saved,
     "on_binding_removed": routes.channel_on_binding_removed,
+    "on_character_deleted": routes.channel_on_character_deleted,
 })
 
 # 挂载 http_router（前缀 /api/v1/plugins/wechat_ilink，强制登录态）。

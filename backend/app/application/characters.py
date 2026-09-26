@@ -473,6 +473,12 @@ async def delete_character(
     await db.flush()
     _logger.info("Deleted character: id=%d name=%s", character.id, character.name)
 
+    # 2026-09-26 批 E：转调各渠道 on_character_deleted，清理插件自有数据（内核不读写插件表）。
+    # 必须在上方「渠道绑定 409 拦截」之后：拦截防新漏（有内核绑定先解绑），这里兜存量与绕过路径。
+    from app.providers.channel import notify_character_deleted
+
+    await notify_character_deleted(db, character_id, user_id=user_id)
+
     # 2026-08-13：删除提交后，为相关角色生成【xxx离开了】记忆（须提交后再写，避免 SQLite 锁冲突）
     if char_name and hit_char_ids:
         try:
