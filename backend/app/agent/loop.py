@@ -313,6 +313,13 @@ AGENT_FLAGS = {
     #   TWO_PASS_TRACE_GRAY_CHARS（沿用 char13 灰度先例，当前仅 char13）。
     # 回退：置回 False（runtime_flags 热切，无需重启）。默认关=零行为变化。
     "two_pass_trace": False,
+    # ── C12b（2026-09-26）：two-pass 白名单放开总开关（默认关）──
+    # 开=两遍重读不再看灰度白名单 TWO_PASS_TRACE_GRAY_CHARS（对所有角色生效）；
+    #   关=**逐字旧行为**（仍须角色命中白名单，当前仅 char13）。默认关=零行为变化。
+    # 前置：主开关 two_pass_trace 必须同时为开，本键单独开不产生任何行为；
+    #   判定口径见 scheduling/message_generator.py: two_pass_trace_allowed()。
+    # 回退：置回 False（runtime_flags 热切，无需重启）。
+    "two_pass_trace_all_chars": False,
     # ── P1 压缩存活项清单（2026-09-23，雷达 §2）──
     # 开=上下文装配时注入一块确定性「存活项清单」（当前目标 / 未决问题·计划 / 硬约束），并拼进
     #   日摘要生成 prompt 要求这些字段原文保留；清单块在 system 超预算裁剪时优先级 2，

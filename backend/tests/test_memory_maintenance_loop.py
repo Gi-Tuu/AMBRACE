@@ -105,12 +105,14 @@ def test_stall_threshold_covers_one_full_round():
 
 def test_main_loop_no_longer_mounts_maintenance():
     src = inspect.getsource(scheduler.scheduler_loop)
-    # \b 是必要的：主循环里还有 state_decay_counter（状态八维回落），子串匹配会误报
-    assert not re.search(r"\bdecay_counter\b", src)        # 旧计数分支连同计数变量清干净
+    # 2026-09-26 批次 M2 起，主循环里的 tick 计数**全部**迁到 period_state 台账 ⇒ 直接钉「一个计数都不剩」
+    assert "counter" not in src.lower(), "主循环不应再有任何 xxx_counter 计数"
     # 2026-09-26 批次 PT 起，主循环里确实出现了 reason="tick"（文件清理 / 约定清扫改走
     # periodic_state 的持久化台账），所以「没有第二个挂载点」改为**精确钉住维护自己的挂载次数**：
     # `_run_maintenance(` 只允许出现在「启动补跑」那一处。
     assert src.count("_run_maintenance(") == 1, "长周期维护只剩「启动补跑」一个挂载点"
     assert 'reason="startup"' in src                       # 启动补跑仍在
-    assert "memory_summary" in src                         # 身份画像提炼仍在（行为等价）
-    assert "identity_counter >= 300" in src
+    # 批次 M2：身份画像分支也搬进台账（`_identity_tick`）——改为钉「工厂体里仍有 memory_summary」
+    # ＋「持久化间隔常量与迁走前的 300 秒等价」
+    assert "memory_summary" in inspect.getsource(scheduler._identity_tick)   # 身份画像提炼仍在（行为等价）
+    assert scheduler.IDENTITY_INTERVAL.total_seconds() == 300

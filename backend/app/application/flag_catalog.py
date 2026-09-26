@@ -104,6 +104,9 @@ _FLAG_ROWS: list[tuple] = [
      '减少拿已经过时的情况当作此刻继续说。只影响它怎么组织措辞，不会因此多叫一次模型。',
      'Re-read the current state before reaching out', 'Before it writes, it re-reads what is currently known — what is going on, your recent situation, '
      'open plans — so stale snapshots are less likely to be described as if they were happening now.'),
+    ('two_pass_trace_all_chars', 'proactive', 208, False, '两遍重读全量放开',
+     '两遍重读：对所有角色放开（默认关；开=不再看灰度白名单）',
+     'Re-read the current state for every character', 'Lets the re-read cover all characters rather than only the few in the grey-release list; off by default keeps things as they are.'),
 
     # ── 群聊小游戏 ──
     ('group_chat_games', 'games', 301, False, '小游戏总开关',

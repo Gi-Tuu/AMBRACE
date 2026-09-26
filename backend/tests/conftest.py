@@ -33,6 +33,10 @@ if os.environ.get("AMBRACE_TEST_KEEP_PROD") != "1":
     # 固定测试 JWT 密钥：auth/config.py 优先读 AUTH_SECRET_KEY，彻底不读/不写 data/auth_secret.key
     os.environ.setdefault("AUTH_SECRET_KEY",
                           "pytest-only-secret-0123456789abcdef0123456789abcdef")
+    # A8 方案 B（2026-09-26）：凭据主密钥同样指向会话沙箱，禁止任何测试在 backend/data/ 下
+    # 生成/覆盖 secrets.key（app/utils/credential_crypto.py 首次加密时会自动建该文件）。
+    os.environ.setdefault("AMBRACE_CREDENTIAL_KEY_FILE",
+                          (_SESS_ROOT / "data" / "secrets.key").as_posix())
 else:
     _SESS_ROOT = None
 

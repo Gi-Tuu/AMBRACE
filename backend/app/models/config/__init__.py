@@ -12,6 +12,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Uni
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
+from app.utils.credential_crypto import EncryptedString  # A8 方案 B：凭据列读写收敛在列定义处
 
 # ── api_config.py ──
 # API 配置：user_id=用户级 BYOK（聊天主链路优先）；user_id=0=服务器级全局（开源部署填一次，代码/.env 零密钥）
@@ -21,7 +22,7 @@ class ApiConfig(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵（自由整型归属，不挂 users FK；0/-1 哨兵对 FK 违约）
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    api_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    api_key: Mapped[str | None] = mapped_column(EncryptedString(255), nullable=True)
     model: Mapped[str | None] = mapped_column(String(50), nullable=True)
     provider: Mapped[str | None] = mapped_column(String(30), nullable=True)  # 供应商标识（深度思考开关适配用，2026-08-10）
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -36,7 +37,7 @@ class VlmConfig(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵（自由整型归属，不挂 users FK；0/-1 哨兵对 FK 违约）
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    api_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    api_key: Mapped[str | None] = mapped_column(EncryptedString(255), nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -51,7 +52,7 @@ class SpeechConfig(Base):
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵（自由整型归属，不挂 users FK；0/-1 哨兵对 FK 违约）
     provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    api_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    api_key: Mapped[str | None] = mapped_column(EncryptedString(255), nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -66,7 +67,7 @@ class MultimodalConfig(Base):
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)  # 0 = 服务器级全局配置哨兵（自由整型归属，不挂 users FK；0/-1 哨兵对 FK 违约）
     provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    api_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    api_key: Mapped[str | None] = mapped_column(EncryptedString(255), nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -129,7 +130,7 @@ class UserLlmConfig(Base):
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)  # index=True（P3-4）：迁移 c8d9 建过 ix_user_llm_configs_user_id，ORM 侧此前漏声明
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    api_key: Mapped[str | None] = mapped_column(EncryptedString(500), nullable=True)
     model: Mapped[str | None] = mapped_column(String(80), nullable=True)
     provider: Mapped[str | None] = mapped_column(String(30), nullable=True)  # 深思考开关厂商适配用
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)

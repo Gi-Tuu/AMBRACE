@@ -254,3 +254,83 @@ def test_gate留痕不新增LLM调用与trace构造(monkeypatch, obs_events):
     assert len(gen_calls) == 1, f"LLM 调用次数不得增加：{len(gen_calls)}"
     assert captured["loader"] == [(_CHAR, _USER)], f"trace 构造次数不得增加：{captured['loader']}"
     assert len(_gates(obs_events)) == 1
+
+
+# ────────────── ④ C12b（2026-09-26）：硬编码白名单 → 「白名单 + 运行期总开关」 ──────────────
+
+_ALL = "two_pass_trace_all_chars"
+
+
+def _flags2(monkeypatch, *, main_on: bool, all_on: bool):
+    """同时拨主开关与 C12b 新开关（自然度评分与本批无关，固定关）。返回被热改的 AGENT_FLAGS。"""
+    from app.agent.loop import AGENT_FLAGS
+    monkeypatch.setitem(AGENT_FLAGS, "two_pass_trace", main_on)
+    monkeypatch.setitem(AGENT_FLAGS, _ALL, all_on)
+    monkeypatch.setitem(AGENT_FLAGS, "proactive_naturalness_score", False)
+    return AGENT_FLAGS
+
+
+def test_C12b新开关默认关():
+    from app.agent.loop import AGENT_FLAGS
+    assert AGENT_FLAGS.get(_ALL) is False, "新 flag 必须默认关（否则本批就不是零行为变化）"
+    assert mg.TWO_PASS_TRACE_ALL_FLAG == _ALL, "常量与 AGENT_FLAGS 键名必须一致"
+
+
+def test_C12b主开关关_新开关怎么拨都不允许且gate记not_allowed(monkeypatch, obs_events):
+    """新开关单独开不产生任何行为：主开关仍是第一道闸。"""
+    flags = _flags2(monkeypatch, main_on=False, all_on=True)
+    assert mg.two_pass_trace_allowed(_CHAR, flags=flags) is False
+    assert mg.two_pass_trace_allowed(_OTHER_CHAR, flags=flags) is False
+
+    captured = _patch_pipeline(monkeypatch, gen_responses=[_resp()])
+    assert _run(_OTHER_CHAR)
+    gates = _gates(obs_events)
+    assert len(gates) == 1 and gates[0]["state"] == "not_allowed", f"主开关关必须记 not_allowed：{gates}"
+    assert gates[0]["allowed"] is False and gates[0]["trace_len"] == 0
+    assert captured["loader"] == [], "主开关关时仍不得构造 trace（不多一次查询）"
+
+
+@pytest.mark.parametrize("char,expected", [
+    (_CHAR, True),          # 白名单内：与本批前逐字一致
+    (_OTHER_CHAR, False),   # 白名单外：本批前只有 char13 会用
+    ("13", True),           # 字符串 id 同 int 口径
+    (None, False),          # 无角色
+    ("abc", False),         # 脏值不炸、按不生效处理
+])
+def test_C12b主开关开且新开关关_逐字维持白名单现状(monkeypatch, char, expected):
+    flags = _flags2(monkeypatch, main_on=True, all_on=False)
+    assert mg.two_pass_trace_allowed(char, flags=flags) is expected
+    assert mg.two_pass_trace_allowed(char) is expected, "热切口径：默认读 AGENT_FLAGS，与主开关同一份来源"
+
+
+def test_C12b新开关开_白名单外角色也允许且真注入trace(monkeypatch, obs_events):
+    """放开全量＝白名单不再参与判定，且必须走到真注入（gate 记 injected、messages 首位是 trace）。"""
+    flags = _flags2(monkeypatch, main_on=True, all_on=True)
+    assert mg.two_pass_trace_allowed(_OTHER_CHAR, flags=flags) is True
+    assert mg.two_pass_trace_allowed("1", flags=flags) is True, "字符串 id 同 int 口径"
+    assert mg.two_pass_trace_allowed(_CHAR, flags=flags) is True, "白名单内照常允许"
+    assert mg.two_pass_trace_allowed(None, flags=flags) is False, "无角色仍不生效"
+    assert mg.two_pass_trace_allowed("abc", flags=flags) is False, "脏值不炸、按不生效处理"
+
+    captured = _patch_pipeline(monkeypatch, gen_responses=[_resp()], trace_loader=_trace_ok)
+    assert _run(_OTHER_CHAR)
+    assert captured["loader"] == [(_OTHER_CHAR, _USER)], "放开后白名单外角色也要构造 trace"
+
+    gates = _gates(obs_events)
+    assert len(gates) == 1 and gates[0]["state"] == "injected" and gates[0]["allowed"] is True
+    assert gates[0]["trace_len"] == len(_trace_text())
+    msgs = captured["messages"][0]
+    assert msgs[0] == {"role": "system", "content": _trace_text()}, f"trace 必须真注入到首位：{msgs[0]}"
+
+
+def test_C12b新键在开关目录里有登记条目():
+    """目录条目（键名一致、默认关、非直显）——漏登记会被 test_flag_catalog_metadata 兜底拦下，这里额外钉住形态。"""
+    from app.agent.loop import AGENT_FLAGS
+    from app.application.flag_catalog import FLAG_CATALOG, meta_for
+    assert _ALL in AGENT_FLAGS, "新键必须登记进 AGENT_FLAGS（否则 runtime_flags 里开了也不生效）"
+    assert AGENT_FLAGS[_ALL] is False
+    assert _ALL in FLAG_CATALOG, "新键必须在目录里有自己的条目（不能落通用兜底文案）"
+    zh = meta_for(_ALL, 'zh')
+    assert zh['group'] == 'proactive' and zh['visible'] is False
+    assert zh['title'].strip() and '白名单' in zh['desc'], f"中文说明需点明白名单口径：{zh}"
+    assert meta_for(_ALL, 'en')['desc'].strip(), "en 说明不得为空"

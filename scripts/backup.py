@@ -5,6 +5,8 @@
   - 源码：backend/app、scripts、server_controller、flutter_app/lib、docs
   - 关键文件：AGENTS.md、flutter_app/pubspec.yaml、flutter_app/analysis_options.yaml
   - 数据：backend/data/sqlite/ai_companion.db（SQLite backup API，运行中可安全复制）、backend/data/server_config.json
+  - **不含任何密钥文件**（见 SECRET_BASENAMES：凭据主密钥 / JWT 签名密钥 / 推送服务账号），
+    库内凭据自 A8 方案 B 起为密文（enc:v1: 前缀），没有主密钥就解不开——这正是排除的意义。
 
 用法：
   backend\\.venv\\Scripts\\python.exe scripts\\backup.py            # 立即备份
@@ -21,20 +23,37 @@ from datetime import datetime, timedelta
 SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 项目根目录
 BACKUP_ROOT = os.path.join(SERVER_DIR, "backups")
 
-# ── A8 方案 A（2026-09-25）：备份包内附醒目提示（凭据仍为明文，勿外发）──
+# ── A8 方案 B（2026-09-26）：备份包内提示改为「凭据已加密，主密钥另存且不在本包内」──
 README_IN_ZIP = "README-BACKUP.txt"
 README_BACKUP_TEXT = (
     "AMBRACE 备份包说明（自动生成）\n"
     "\n"
-    "本压缩包包含 backend/data/sqlite/ai_companion.db 与 backend/data/server_config.json，\n"
-    "其中的模型 / 语音 / 多模态等 API 凭据目前仍是「明文」存储（见 docs/plans.md 的 A8 条目）。\n"
+    "本压缩包包含 backend/data/sqlite/ai_companion.db 与 backend/data/server_config.json。\n"
+    "其中的模型 / 语音 / 多模态等 API 凭据采用本地信封加密存储（AES-256-GCM，密文以 enc:v1: 开头），\n"
+    "解密用的主密钥是 backend/data/secrets.key —— **它刻意不在本备份包内**（同被排除的还有\n"
+    "auth_secret.key 登录签名密钥、fcm-service-account.json 推送服务账号）。\n"
     "\n"
     "因此：\n"
-    "1) 请勿把本备份包外发、上传网盘或提交到代码仓库；\n"
-    "2) 需要迁移到别的机器时，也请通过安全渠道传输；\n"
-    "3) 未来的「本地凭据加密（A8 方案 B）」落地后，这里会改为密文，并在包内说明如何还原。\n"
+    "1) 请勿把本备份包外发、上传网盘或提交到代码仓库；密钥文件同样按机密件对待，两者分开保存；\n"
+    "2) 还原到别的机器时，除本包外必须另拷 backend/data/secrets.key，并通过安全渠道传输；\n"
+    "3) 主密钥丢失＝凭据无法还原，只能在设置里重新填写（这是 A8 方案 B 已拍板的前提）；\n"
+    "4) 若库内字段仍是明文（尚未跑 backend\\scripts\\encrypt_credentials.py --apply），\n"
+    "   先跑一次 dry-run 看清处数，再由维护者手跑 --apply 完成加密。\n"
 )
 KEEP_DAYS = 14
+
+# A8 方案 B：密钥/凭据文件一律不进备份包（即便日后有人把 backend/data 加进 SRC_DIRS 也拦住）
+SECRET_BASENAMES = {
+    "secrets.key",                  # 凭据加密主密钥（app/utils/credential_crypto.py）
+    "auth_secret.key",              # JWT 签名密钥（app/auth/config.py）
+    "fcm-service-account.json",     # 推送服务账号（含私钥）
+}
+
+
+def is_secret_file(path: str) -> bool:
+    """是否属于「绝不打包」的密钥/凭据文件。"""
+    name = os.path.basename(path)
+    return name in SECRET_BASENAMES or name.endswith((".key", ".pem")) or ".pre-a8b-" in name
 
 SRC_DIRS = [
     "backend/app",
@@ -153,14 +172,16 @@ def do_backup() -> str:
                     if fn.endswith((".pyc", ".pyo")):
                         continue
                     fp = os.path.join(root, fn)
+                    if is_secret_file(fp):  # A8 方案 B：密钥文件绝不进包
+                        continue
                     zf.write(fp, os.path.relpath(fp, SERVER_DIR))
                     count += 1
         for f in SRC_FILES:
             fp = os.path.join(SERVER_DIR, f)
-            if os.path.isfile(fp):
+            if os.path.isfile(fp) and not is_secret_file(fp):
                 zf.write(fp, f)
                 count += 1
-        if os.path.isfile(CONFIG_FILE):
+        if os.path.isfile(CONFIG_FILE) and not is_secret_file(CONFIG_FILE):
             zf.write(CONFIG_FILE, os.path.relpath(CONFIG_FILE, SERVER_DIR))
             count += 1
         count += _add_sqlite_backup(zf)

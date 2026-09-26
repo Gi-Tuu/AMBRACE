@@ -492,10 +492,16 @@ async def _load_authoritative_user_location(user_id: int | None) -> str:
 # 灰度双条件（沿用 char13 先例）：AGENT_FLAGS["two_pass_trace"] 开 **且** 角色命中本白名单；
 # 关/未命中 → 不构造、不注入、不多一次查询（逐字旧行为）。trace 只读、零 LLM、不落库、不上屏。
 TWO_PASS_TRACE_GRAY_CHARS = frozenset({13})
+TWO_PASS_TRACE_ALL_FLAG = "two_pass_trace_all_chars"   # 运行期总开关（默认关）：开 ⇒ 不再看白名单
 
 
 def two_pass_trace_allowed(character_id, *, flags=None) -> bool:
-    """现状 trace 是否对该角色生效（纯函数，flags 默认读 AGENT_FLAGS）。"""
+    """主开关开 **且**（总开关开 或 角色在白名单里）才允许两遍重读。
+
+    2026-09-26（C12b）：白名单原为硬编码常量 {13}；现补一个运行期总开关，默认关 ⇒
+    行为与本批前逐字一致（只有 char13 会用）；放开全量＝由维护者把该 flag 打开。
+    两个开关读同一份 flags（默认 AGENT_FLAGS），口径完全一致。
+    """
     if flags is None:
         try:
             from app.agent import loop as _loop
@@ -507,9 +513,12 @@ def two_pass_trace_allowed(character_id, *, flags=None) -> bool:
     if character_id is None:
         return False
     try:
-        return int(character_id) in TWO_PASS_TRACE_GRAY_CHARS
+        char_id = int(character_id)
     except (TypeError, ValueError):
         return False
+    if bool((flags or {}).get(TWO_PASS_TRACE_ALL_FLAG, False)):
+        return True
+    return char_id in TWO_PASS_TRACE_GRAY_CHARS
 
 
 async def _load_state_trace(character_id, user_id) -> tuple[str, float, bool]:

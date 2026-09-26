@@ -6,7 +6,8 @@
 2. 失败按 15m→30m→60m→（任务自身 interval）阶梯退避，成功一次即归零；
 3. 同 key 不可重入，不同 key 各用各的锁互不阻塞；任务异常绝不冒泡给主循环；
 4. 写盘失败不静默：记 ERROR + 内存兜底，时间戳不倒退（否则会变成「每拍重跑」）；
-5. scheduler.py 里 file_cleanup / pis_stale 两个分支确实改走台账，其余 tick 计数原样保留。
+5. scheduler.py 里 file_cleanup / pis_stale 两个分支确实改走台账（M1）；M2 把剩下 13 个任务
+   也迁到台账，并新增「每日一次」口径 run_daily_if_due（见本文件末尾 M2 用例）。
 
 全部用 tmp_path + monkeypatch 隔离：不触生产库、不写 backend/data/。
 """
@@ -253,8 +254,251 @@ def test_scheduler接线_两个分支改走台账其余不动():
     assert "\n        _n_stale = await _pis_stale()" in src
     assert '"Prospective intent sweep: stale=%d expired=%d stale_cue=%d"' in src
 
-    # 其余 tick 分支一律不许动
-    for keep in ("moment_counter", "comment_counter", "extract_counter", "identity_counter",
-                 "state_decay_counter", "life_counter", "life_loop_counter", "game_stuck_counter",
-                 "diary_counter", "reflection_counter", "memory_counter", "purge_counter"):
-        assert f"{keep} += TICK" in src, f"{keep} 属于其它 tick 分支，必须原样保留"
+    # M2（2026-09-26 同批第二棒）：原先这里的「其余 tick 分支一律不许动」断言已由 M2 派单
+    # 明确推翻（那 12 个计数分支正是本批要迁走的目标），故改为断言它们已全部消失——
+    # 完整的 13 个 key / 工厂函数接线断言见本文件末尾 ⑨⑩。
+    assert "+= TICK" not in src, "主循环里不该再有进程内计数自增"
+
+
+# ──────────────────── ⑨ 「每日一次」口径 run_daily_if_due（M2） ────────────────────
+
+@pytest.fixture()
+def local_clock(state_file, monkeypatch):
+    """冻结 UTC 本拍时间并把应用时区钉在 +8：本地小时/本地日期完全可控。
+
+    约定：UTC 15:00 == 本地 23:00（北京），于是「23:00 窗口」可用整点时间直接摆。
+    """
+    monkeypatch.setattr(pst, "_LOCAL_RETRY_AT", {})
+    monkeypatch.setattr(pst, "app_tz_offset_hours", lambda: 8)
+    clock = {"now": datetime(2026, 9, 26, 15, 0, 0)}                        # 本地 09-26 23:00
+    monkeypatch.setattr(pst, "now_naive_utc", lambda: clock["now"])
+    return clock
+
+
+def _ok_body(ran):
+    async def _body():
+        ran.append(1)
+    return _body
+
+
+def test_每日一次_窗口外不跑也不记账(local_clock):
+    local_clock["now"] = datetime(2026, 9, 26, 14, 0, 0)                   # 本地 22:00
+    ran = []
+    assert asyncio.run(pst.run_daily_if_due("diary", _ok_body(ran), min_local_hour=23)) is False
+    assert ran == [], "窗口外不得执行"
+    assert not pst._STATE_FILE.exists(), "窗口外不记账：台账里连这个 key 都不该出现"
+    assert pst.last_done("diary") is None
+
+
+def test_每日一次_当天只跑一次跨天再跑(local_clock):
+    ran = []
+    assert asyncio.run(pst.run_daily_if_due("diary", _ok_body(ran), min_local_hour=23)) is True
+    assert asyncio.run(pst.run_daily_if_due("diary", _ok_body(ran), min_local_hour=23)) is False
+    assert ran == [1], "同一本地日内第二次必须被台账拦下"
+    assert pst.last_done("diary") == datetime(2026, 9, 26, 15, 0, 0)
+
+    local_clock["now"] = datetime(2026, 9, 26, 15, 30, 0)                   # 同一天窗口内
+    assert asyncio.run(pst.run_daily_if_due("diary", _ok_body(ran), min_local_hour=23)) is False
+    local_clock["now"] = datetime(2026, 9, 27, 15, 0, 0)                    # 次日窗口内（本地 09-27 23:00）
+    assert asyncio.run(pst.run_daily_if_due("diary", _ok_body(ran), min_local_hour=23)) is True
+    assert ran == [1, 1], "跨天后窗口内应再跑一次"
+
+
+def test_每日一次_窗口边界含起点不含前一天(local_clock):
+    """min_local_hour 边界：本地小时 == 阈值 ⇒ 跑；== 阈值-1 ⇒ 不跑。"""
+    ran = []
+    local_clock["now"] = datetime(2026, 9, 26, 15, 0, 0)                    # 本地 23:00 == 阈值
+    assert pst.is_daily_due("diary", 23) is True
+    assert asyncio.run(pst.run_daily_if_due("diary", _ok_body(ran), min_local_hour=23)) is True
+
+    local_clock["now"] = datetime(2026, 9, 27, 14, 0, 0)                    # 本地 22:00 == 阈值-1
+    assert pst.is_daily_due("diary", 23) is False
+    assert asyncio.run(pst.run_daily_if_due("diary", _ok_body(ran), min_local_hour=23)) is False
+    assert ran == [1], "阈值前一小时不得执行"
+    # min_local_hour=0（纪念日口径）：任何本地小时都在窗口内
+    local_clock["now"] = datetime(2026, 9, 27, 3, 0, 0)                     # 本地 11:00
+    assert asyncio.run(pst.run_daily_if_due("anniversary", _ok_body(ran))) is True
+    assert ran == [1, 1]
+
+
+def test_每日一次_失败不动当天标记退避到点后窗口内重试(local_clock, caplog):
+    """失败 ⇒ 返回 True、streak+1、当天仍未成功 ⇒ 15 分钟后窗口内再试（成功才清闸门）。"""
+    async def _boom():
+        raise RuntimeError("diary llm down")
+
+    with caplog.at_level(logging.WARNING):
+        assert asyncio.run(pst.run_daily_if_due("diary", _boom, min_local_hour=23)) is True
+    assert pst.fail_streak("diary") == 1
+    assert pst.last_done("diary") is None, "失败绝不能把当天标记写成「已成功」"
+    assert any("Daily task failed" in r.getMessage() for r in caplog.records), "失败必须留痕"
+
+    local_clock["now"] = datetime(2026, 9, 26, 15, 10, 0)                   # +10 分钟，退避未到
+    assert pst.is_daily_due("diary", 23) is False
+    local_clock["now"] = datetime(2026, 9, 26, 15, 15, 0)                   # +15 分钟，退避到点
+    assert pst.is_daily_due("diary", 23) is True, "当天没成功 ⇒ 退避后窗口内应重试"
+    ran = []
+    assert asyncio.run(pst.run_daily_if_due("diary", _ok_body(ran), min_local_hour=23)) is True
+    assert ran == [1] and pst.fail_streak("diary") == 0, "成功一次即归零并清掉退避闸门"
+    assert pst.is_daily_due("diary", 23) is False, "当天已成功 ⇒ 同窗口内不再跑"
+
+
+def test_每日一次_退避阶梯15m_30m_60m_然后等第二天窗口(local_clock):
+    """连败按 15m→30m→60m 退避；阶梯用尽后 next_retry_at 推到 +24h（＝第二天的窗口）。"""
+    now = datetime(2026, 9, 26, 15, 0, 0)
+    for streak, step in enumerate(
+        (timedelta(minutes=15), timedelta(minutes=30), timedelta(minutes=60),
+         pst.DAILY_INTERVAL, pst.DAILY_INTERVAL), start=1):
+        pst.mark_failed_daily("diary", when=now)
+        assert pst.fail_streak("diary") == streak
+        assert pst.next_retry_at("diary") == now + step, "第 %d 次失败应退避 %s" % (streak, step)
+        # 这里只验退避闸门，窗口阈值传 0（推进时间会跨过 23:00 窗口，那是上面两个用例管的事）
+        assert pst.is_daily_due("diary", 0, now=now + step - timedelta(seconds=1)) is False
+        assert pst.is_daily_due("diary", 0, now=now + step) is True
+        now = now + step
+    assert pst.last_done("diary") is None, "整串失败记账都不许伪造当天成功"
+
+
+def test_每日一次_写盘失败落内存兜底不丢退避闸门(tmp_path, monkeypatch, caplog):
+    """台账写不进去时，退避闸门也要落内存兜底，否则会退化成「每拍重试」打爆 LLM。"""
+    blocked = tmp_path / "blocked"
+    blocked.write_text("i am a file", encoding="utf-8")                    # 父目录是个文件 ⇒ 必写失败
+    monkeypatch.setattr(pst, "_STATE_FILE", blocked / "periodic_state.json")
+    monkeypatch.setattr(pst, "_LOCKS", {})
+    monkeypatch.setattr(pst, "_LOCAL_STAMPS", {})
+    monkeypatch.setattr(pst, "_LOCAL_RETRY_AT", {})
+    monkeypatch.setattr(pst, "app_tz_offset_hours", lambda: 8)
+    when = datetime(2026, 9, 26, 15, 0, 0)
+    monkeypatch.setattr(pst, "now_naive_utc", lambda: when)
+
+    with caplog.at_level(logging.ERROR):
+        pst.mark_failed_daily("diary", when=when)                           # 不抛
+    assert any("Write periodic state failed" in r.getMessage() for r in caplog.records)
+    assert pst.next_retry_at("diary") == when + pst.RETRY_BACKOFF[0], "闸门不能装作没发生"
+    assert pst.is_daily_due("diary", 23) is False
+    assert pst.last_done("diary") is None, "写失败也不得伪造当天成功"
+    # 与 M1 同款口径：内存兜底只兜「判据时间戳」，fail_streak 仍以文件为准（写不进去时档位不涨）
+
+
+def test_每日一次_同拍重入只跑一次(local_clock):
+    hold = asyncio.Event()
+    ran = []
+
+    async def _body():
+        ran.append(1)
+        await hold.wait()
+
+    async def _go():
+        first = asyncio.create_task(pst.run_daily_if_due("reflection", _body, min_local_hour=23))
+        for _ in range(100):
+            if ran:
+                break
+            await asyncio.sleep(0.01)
+        second = await pst.run_daily_if_due("reflection", _body, min_local_hour=23)
+        hold.set()
+        return await first, second
+
+    r1, r2 = asyncio.run(_go())
+    assert (r1, r2) == (True, False), "上一拍没跑完的这一拍必须返回 False"
+    assert ran == [1]
+
+
+# ──────────────────── ⑩ 13 个任务接线静态断言（M2） ────────────────────
+
+M2_KEYS = {
+    # key -> (interval 常量名 / None 表示每日一次, 协程工厂名)
+    "moment": ("MOMENT_INTERVAL", "_moment_tick"),
+    "comment": ("COMMENT_INTERVAL", "_comment_tick"),
+    "extract": ("EXTRACT_INTERVAL", "_extract_tick"),
+    "identity": ("IDENTITY_INTERVAL", "_identity_tick"),
+    "state_decay": ("STATE_DECAY_INTERVAL", "_state_decay_tick"),
+    "life": ("LIFE_INTERVAL", "_life_tick"),
+    "life_loop": ("LIFE_LOOP_INTERVAL", "_life_loop_tick"),
+    "game_stuck": ("GAME_STUCK_INTERVAL", "_game_stuck_tick"),
+    "purge": ("PURGE_INTERVAL", "_account_purge_tick"),
+    "diary": (None, "_diary_tick"),
+    "reflection": (None, "_reflection_tick"),
+    "group_compact": (None, "_group_compact_tick"),
+    "anniversary": (None, "_anniversary_tick"),
+}
+# 每天一次的四个任务里，只有纪念日本来就没有小时窗口（「每天第一拍」），故 min_local_hour 用默认 0
+DAILY_NO_WINDOW = {"anniversary"}
+# 原 memory 分支里挤着的第二件事（日终记忆维护）不在派单的 13 个 key 表里，但派单同时要求
+# 删掉它的当天标记与本任务无关的逻辑不搬 ⇒ 只能同样挂台账，见交付说明「拿不准」一节
+EXTRA_DAILY_KEYS = {"memory_maintenance": "_memory_maintenance_tick"}
+
+
+def _flat(src: str) -> str:
+    """折叠所有空白：断言实参时不受「一行写不下换行」影响。"""
+    return " ".join(src.split())
+
+
+def test_M2接线_十三个key全部改走台账():
+    src = _SCHEDULER_PY.read_text(encoding="utf-8-sig")
+    flat = _flat(src)
+
+    # ① 13 个 key 都出现在 run_if_due( / run_daily_if_due( 的实参里，且各就各位
+    for key, (iv, fn) in M2_KEYS.items():
+        if iv is None:
+            window = "" if key in DAILY_NO_WINDOW else "min_local_hour=23, "
+            want = 'await run_daily_if_due("%s", %s, %sreason="tick")' % (key, fn, window)
+        else:
+            want = 'await run_if_due("%s", %s, %s, reason="tick")' % (key, iv, fn)
+        assert want in flat, want
+    for key, fn in EXTRA_DAILY_KEYS.items():
+        assert 'await run_daily_if_due("%s", %s, min_local_hour=23, reason="tick")' % (key, fn) in flat
+
+    # ② 进程内计数判据全部消失（派单 §4：搬完后主循环里不应再出现任何计数变量）
+    assert "counter" not in src.lower(), "scheduler.py 里不得再出现任何 tick 计数变量"
+    assert "+= TICK" not in src, "主循环里不该再有计数自增"
+    assert "date.today()" not in src, "日期标记改由台账按「应用本地日期」记账"
+    assert "TICK = 30" in src and "await asyncio.sleep(TICK)" in src, "30 秒节拍本身不动"
+    assert "supervisor.heartbeat(\"scheduler\")" in src, "心跳不动"
+
+    # ③ 每个工厂函数都定义且被引用（定义处 + 接线处至少各一次）
+    factories = [(k, f) for k, (_iv, f) in M2_KEYS.items()] + list(EXTRA_DAILY_KEYS.items())
+    for key, fn in factories:
+        assert "async def %s():" % fn in src, "%s（%s）未定义" % (fn, key)
+        assert src.count(fn) >= 2, "%s 定义了却没被接线引用" % fn
+    for fn in ("_cleanup_files_tick", "_pis_stale_tick"):
+        assert src.count(fn) >= 2, "M1 的两个工厂不许动"
+
+
+def test_M2间隔常量与迁走前的秒数阈值等价():
+    src = _SCHEDULER_PY.read_text(encoding="utf-8-sig")
+    for decl in ("MOMENT_INTERVAL = timedelta(seconds=MOMENT_CHECK_INTERVAL)",      # 600s
+                 "COMMENT_INTERVAL = timedelta(seconds=300)",
+                 "EXTRACT_INTERVAL = timedelta(seconds=900)",
+                 "IDENTITY_INTERVAL = timedelta(seconds=300)",
+                 "STATE_DECAY_INTERVAL = timedelta(seconds=3600)",
+                 "LIFE_INTERVAL = timedelta(seconds=3600)",
+                 "LIFE_LOOP_INTERVAL = timedelta(seconds=1800)",
+                 "GAME_STUCK_INTERVAL = timedelta(seconds=300)",
+                 "PURGE_INTERVAL = timedelta(seconds=ACCOUNT_PURGE_CHECK_INTERVAL)"):  # 沿用常量
+        assert decl in src, decl
+    # 每日一次没有 interval 概念 ⇒ 不该冒出无用的窗口常量
+    assert "DIARY_WINDOW_INTERVAL" not in src
+
+
+def test_M2搬用后关键分支体仍在源码里():
+    """逐字搬用的抽样钉子：日志文案 / 窗口判断 / 任务名一旦被动过，这里就会红。"""
+    src = _SCHEDULER_PY.read_text(encoding="utf-8-sig")
+    for needle in (
+        'if 7 <= local_hour < 24:',
+        '_logger.warning("Publish pending moments error: %s", e)',
+        '_logger.warning("Generate comments error: %s", e)',
+        'name="sched-catchup-extract"',
+        '"memory_summary",',
+        '_logger.warning("Identity profile extraction failed: %s", _ipe)',
+        'name="sched-state-drift"',
+        '_logger.warning("Life tick error: %s", e)',
+        '_logger.warning("Life loop error: %s", e)',
+        'name="sched-resume-games"',
+        '_logger.debug("Scheduler: generating diaries...")',
+        'await generate_missing_diaries()',
+        '_logger.warning("Daily reflections error: %s", e)',
+        'await run_daily_memory_maintenance()',
+        'name="sched-group-memory-compact"',
+        'name="sched-account-purge"',
+        'from app.scheduling.scheduler import _check_anniversaries_today as _run_anniv',
+    ):
+        assert needle in src, needle

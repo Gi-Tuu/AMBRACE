@@ -1,6 +1,6 @@
 """主动交流调度引擎 — 后台异步循环"""
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from sqlalchemy import select
 from app.db.database import async_session_factory
 from app.models.chat import ChatMessage
@@ -43,11 +43,26 @@ ACCOUNT_PURGE_CHECK_INTERVAL = 600
 STORYLINE_FLUSH_INTERVAL = 3
 
 # 周期任务持久化台账（2026-09-26 批次 PT）：判据从「进程内 tick 计数」换成「上次成功时间戳」
-# 的两个任务；阈值与迁走前按秒累加的计数阈值等价（6h / 1h）。
+# 的任务；阈值与迁走前按秒累加的计数阈值等价。M1 迁 file_cleanup(6h)/pis_stale(1h)，
+# M2 迁剩下 13 个（朋友圈/评论/补采/画像/状态回落/离线生活/生活环/游戏续跑/删号/日记/
+# 复盘/日终记忆维护/群记忆收敛/纪念日），主循环里从此不再有进程内计数变量。
 from datetime import timedelta
+
+from app.scheduling.periodic_state import run_daily_if_due, run_if_due
 
 FILE_CLEANUP_INTERVAL = timedelta(hours=6)
 PIS_STALE_INTERVAL = timedelta(hours=1)
+MOMENT_INTERVAL = timedelta(seconds=MOMENT_CHECK_INTERVAL)      # 10 分钟
+COMMENT_INTERVAL = timedelta(seconds=300)                       # 5 分钟
+EXTRACT_INTERVAL = timedelta(seconds=900)                       # 15 分钟
+IDENTITY_INTERVAL = timedelta(seconds=300)                      # 5 分钟
+STATE_DECAY_INTERVAL = timedelta(seconds=3600)                  # 1 小时
+LIFE_INTERVAL = timedelta(seconds=3600)                         # 1 小时
+LIFE_LOOP_INTERVAL = timedelta(seconds=1800)                    # 30 分钟
+GAME_STUCK_INTERVAL = timedelta(seconds=300)                    # 5 分钟
+PURGE_INTERVAL = timedelta(seconds=ACCOUNT_PURGE_CHECK_INTERVAL)  # 10 分钟（沿用原常量）
+# 日记/复盘/日终记忆维护/群记忆收敛/纪念日走 run_daily_if_due（每天最多成功一次 + 本地小时
+# 窗口），没有 interval 概念，故此处不定义对应常量。
 
 # ── 长周期记忆维护（记忆衰减 + AI 自主评星）独立循环参数 ──
 # 每 300 秒问一次「到期没」：run_if_due() 内部只读状态文件 + 比时间（微秒级），
@@ -232,6 +247,151 @@ async def _pis_stale_tick():
         _logger.warning("Prospective intent stale sweep error: %s", e)
 
 
+# ── 周期任务协程工厂（2026-09-26 批次 PT / M2）───────────────────────────────
+# 以下 _xxx_tick 函数体**逐字搬自** scheduler_loop 里原「每 N 秒一拍」的 tick 计数分支（含
+# 窗口判断、内部 try/except 与日志文案；缩进由 16 空格降到 4 空格），只是判据从「进程内计数」
+# 换成持久化台账（app/scheduling/periodic_state.py）。随判据一起删掉的只有两类行：计数清零行、
+# 「当天已成功」标记行（改由台账按本地日期记账）。moment/comment 两个函数首行补一次
+# local_hour 取值（原来读的是主循环里的局部变量，搬出来后不在作用域内）。
+async def _moment_tick():
+    """AI 自主发朋友圈（10 分钟，7:00-24:00 窗口内）。"""
+    local_hour = app_local_hour()
+    if 7 <= local_hour < 24:
+        try:
+            await publish_pending_moments()
+        except Exception as e:
+            _logger.warning("Publish pending moments error: %s", e)
+
+
+async def _comment_tick():
+    """评论兜底（5 分钟，7:00-24:00 窗口内）：用户评论必被回复、0 评论动态被补评。"""
+    local_hour = app_local_hour()
+    if 7 <= local_hour < 24:
+        try:
+            await generate_pending_comments()
+        except Exception as e:
+            _logger.warning("Generate comments error: %s", e)
+
+
+async def _extract_tick():
+    """记忆补采（15 分钟）。"""
+    spawn_background(catchup_extract_all(), name="sched-catchup-extract")
+
+
+async def _identity_tick():
+    """身份画像提炼（5 分钟问一次，24h 节流由 internal_runner 内部拦截）。"""
+    try:
+        from app.agent.internal_runner import run_internal
+        from app.models.character import AICharacter
+        from sqlalchemy import select as _s
+        async with async_session_factory() as _db:
+            _chars = (await _db.execute(
+                _s(AICharacter).where(AICharacter.is_active == True, AICharacter.memory_v2_enabled == True)
+            )).scalars().all()
+        for _c in _chars:
+            spawn_background(
+                run_internal(
+                    "memory_summary",
+                    {"character_id": _c.id, "user_id": _c.user_id},
+                    character_id=_c.id, user_id=_c.user_id,
+                ),
+                name=f"sched-identity-{_c.id}",
+            )
+    except Exception as _ipe:
+        # B2（2026-09-06）：身份画像提炼失败不得完全静默——补日志以免「静默停摆」难定位。
+        _logger.warning("Identity profile extraction failed: %s", _ipe)
+
+
+async def _state_decay_tick():
+    """状态八维惰性回落 + 趋势快照（1h 兜底结算并写 character_state_history）。"""
+    from app.application.character_state_service import drift_all_character_states
+    spawn_background(drift_all_character_states(), name="sched-state-drift")
+
+
+async def _life_tick():
+    """AI 离线生活（1 小时）：状态结算 + 概率活动执行（强度档位控制频率）。"""
+    try:
+        from app.life.life_tick import LifeTickTask
+        await LifeTickTask().execute()
+    except Exception as e:
+        _logger.warning("Life tick error: %s", e)
+
+
+async def _life_loop_tick():
+    """AI Life Loop v1.1（2026-08-26）：30 分钟行为决策（独立于 life_tick 的每小时结算）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        if AGENT_FLAGS.get("life_loop_enabled", False):
+            from app.life.life_loop import LifeLoopTask
+            await LifeLoopTask().run()
+    except Exception as e:
+        _logger.warning("Life loop error: %s", e)
+
+
+async def _game_stuck_tick():
+    """群聊游戏恢复（5 分钟）：playing 且 10 分钟以上无新事件的对局自动续跑 AI 回合。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        if AGENT_FLAGS.get("group_chat_games", False):
+            from app.api.games import resume_stuck_games
+            spawn_background(resume_stuck_games(), name="sched-resume-games")
+    except Exception as e:
+        _logger.warning("Game stuck resume error: %s", e)
+
+
+async def _diary_tick():
+    """日记（23:00 后每天一次，总结当天）。"""
+    _logger.debug("Scheduler: generating diaries...")
+    await generate_missing_diaries()
+
+
+async def _reflection_tick():
+    """每日复盘（Phase J：23:00 后每天一次，Agent 自我反思与规划；flag 默认关）。"""
+    try:
+        from app.scheduling.daily_reflection import run_daily_reflections
+        await run_daily_reflections()
+    except Exception as e:
+        _logger.warning("Daily reflections error: %s", e)
+
+
+async def _memory_maintenance_tick():
+    """日终记忆维护（P0-5，2026-08-16：23:00 后每天一次）：日摘要补生成 + 去重 + 置顶摘要补生成。"""
+    try:
+        from app.scheduling.daily_memory_maintenance import run_daily_memory_maintenance
+        await run_daily_memory_maintenance()
+    except Exception as e:
+        _logger.warning("Daily memory maintenance error: %s", e)
+
+
+async def _group_compact_tick():
+    """群记忆日终合并收敛（#72 PR-C P5，2026-09-16：23:00 后每天一次，受 group_memory_compact 闸控）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        if AGENT_FLAGS.get("group_memory_compact", False):
+            from app.memory.group_memory import compact_group_memories
+            spawn_background(compact_group_memories(), name="sched-group-memory-compact")
+    except Exception as e:
+        _logger.warning("Group memory compact schedule error: %s", e)
+
+
+async def _account_purge_tick():
+    """控制台删号·回收站到期自动清除（10 分钟看一眼窗口与到期，不满足条件零查库）。"""
+    try:
+        from app.application.account_purge_scheduler import tick as _purge_tick
+        spawn_background(_purge_tick(), name="sched-account-purge")
+    except Exception as e:
+        _logger.warning("Account purge scheduler tick error: %s", e)
+
+
+async def _anniversary_tick():
+    """纪念日检查（Phase C Shared Memory）：每天一次、无小时窗口（进了新的一天第一拍即到点）。"""
+    try:
+        from app.scheduling.scheduler import _check_anniversaries_today as _run_anniv
+        await _run_anniv()
+    except Exception as _ae:
+        _logger.warning("Anniversary check error: %s", _ae)
+
+
 async def scheduler_loop():
     """主调度循环 — 统一仲裁：定时承诺 / 生日节日 / 随机节律"""
     global _running
@@ -256,50 +416,17 @@ async def scheduler_loop():
     except Exception as e:
         _logger.warning("Memory maintenance startup check failed: %s", e)
 
-    comment_counter = 0
-    extract_counter = 0
-    diary_counter = 0
-    identity_counter = 0
-    state_decay_counter = 0
-    moment_counter = 0
-    life_counter = 0
-    life_loop_counter = 0
-    game_stuck_counter = 0
-    reflection_counter = 0
-    memory_counter = 0
-    purge_counter = 0
-    _diary_generated_today = False
-    _reflection_done_today = False
-    _memory_maintenance_done_today = False
-    _group_memory_compact_done_today = False
-    _last_date = date.today()
-    _last_anniv_date = date.today()
     TICK = 30  # 统一 tick 间隔（秒）
+    # 2026-09-26 批次 PT（M2）：原先这里的 12 个「每 N 秒一拍」计数变量、四个「当天已成功」标记、
+    # _last_date/_last_anniv 日期标记与日期变更重置块全部删除——判据改由持久化台账
+    # （app/scheduling/periodic_state.py）持有，重启/被监督者重建都不清零。
+    # 日期变更也无需手工重置：台账按「应用本地日期」判当天是否已跑过。
 
     try:
         while _running:
-            # 检测日期变更，重置日记标记
-            if date.today() != _last_date:
-                _last_date = date.today()
-                _diary_generated_today = False
-                _reflection_done_today = False
-                _group_memory_compact_done_today = False
-
             await asyncio.sleep(TICK)
             from app.utils.supervisor import supervisor
             supervisor.heartbeat("scheduler")
-            comment_counter += TICK
-            extract_counter += TICK
-            diary_counter += TICK
-            identity_counter += TICK
-            state_decay_counter += TICK
-            moment_counter += TICK
-            life_counter += TICK
-            life_loop_counter += TICK
-            game_stuck_counter += TICK
-            reflection_counter += TICK
-            memory_counter += TICK
-            purge_counter += TICK
 
             try:
                 # 统一仲裁：定时承诺 + 生日/节日 + 随机节律（含朋友圈发布/互动）
@@ -326,137 +453,50 @@ async def scheduler_loop():
 
             # AI 自主发朋友圈（每 10 分钟，7:00-24:00）：发布待发动态（每日上限/间隔由 moment_service 控制）
             # 修复：_MomentPublishTask 注册后从未被执行（registry 无消费循环）→ AI 自主动态停滞
-            if moment_counter >= MOMENT_CHECK_INTERVAL:
-                moment_counter = 0
-                if 7 <= local_hour < 24:
-                    try:
-                        await publish_pending_moments()
-                    except Exception as e:
-                        _logger.warning("Publish pending moments error: %s", e)
+            await run_if_due("moment", MOMENT_INTERVAL, _moment_tick, reason="tick")
 
             # 评论兜底（每 5 分钟，P0-2 提频）：确保用户评论必被回复、0 评论动态被补评（不计上限）
-            if comment_counter >= 300:
-                comment_counter = 0
-                if 7 <= local_hour < 24:
-                    try:
-                        await generate_pending_comments()
-                    except Exception as e:
-                        _logger.warning("Generate comments error: %s", e)
+            await run_if_due("comment", COMMENT_INTERVAL, _comment_tick, reason="tick")
 
             # 记忆补采（每 15 分钟）
-            if extract_counter >= 900:
-                extract_counter = 0
-                spawn_background(catchup_extract_all(), name="sched-catchup-extract")
+            await run_if_due("extract", EXTRACT_INTERVAL, _extract_tick, reason="tick")
 
             # 身份画像提炼（记忆架构 v2.1 Phase 5，每 5 分钟问一次）：遍历活跃角色，24h 节流由内部拦截；
             # 失败静默；P0-1b 2026-08-16 起经统一内部工具入口执行，可观测 tool.executed 事件。
             # 注：长周期记忆维护已于 2026-09-26 挪进独立 memory_maintenance_loop，本分支只留画像
             # 提炼（两件事历史上挤在同一个计数分支里，现各归各处、节奏不变）。
-            if identity_counter >= 300:
-                identity_counter = 0
-                try:
-                    from app.agent.internal_runner import run_internal
-                    from app.models.character import AICharacter
-                    from sqlalchemy import select as _s
-                    async with async_session_factory() as _db:
-                        _chars = (await _db.execute(
-                            _s(AICharacter).where(AICharacter.is_active == True, AICharacter.memory_v2_enabled == True)
-                        )).scalars().all()
-                    for _c in _chars:
-                        spawn_background(
-                            run_internal(
-                                "memory_summary",
-                                {"character_id": _c.id, "user_id": _c.user_id},
-                                character_id=_c.id, user_id=_c.user_id,
-                            ),
-                            name=f"sched-identity-{_c.id}",
-                        )
-                except Exception as _ipe:
-                    # B2（2026-09-06）：身份画像提炼失败不得完全静默——补日志以免「静默停摆」难定位。
-                    _logger.warning("Identity profile extraction failed: %s", _ipe)
+            await run_if_due("identity", IDENTITY_INTERVAL, _identity_tick, reason="tick")
+
             # 状态八维惰性回落 + 趋势快照（每 1h 兜底结算并写 character_state_history；读时已惰性结算）
-            if state_decay_counter >= 3600:
-                state_decay_counter = 0
-                from app.application.character_state_service import drift_all_character_states
-                spawn_background(drift_all_character_states(), name="sched-state-drift")
+            await run_if_due("state_decay", STATE_DECAY_INTERVAL, _state_decay_tick, reason="tick")
 
             # 私聊文件保留 5 天 / 语音 14 天 / 事件流水保留（2026-09-26 批次 PT：
             # 判据由「进程内 tick 计数」改为持久化台账 —— 计数会在重启/卡顿重建后归零）
-            from app.scheduling.periodic_state import run_if_due
             await run_if_due("file_cleanup", FILE_CLEANUP_INTERVAL, _cleanup_files_tick, reason="tick")
 
             # AI 离线生活（每 1 小时）：状态结算 + 概率活动执行（强度档位控制频率；异常隔离不影响主链路）
-            if life_counter >= 3600:
-                life_counter = 0
-                try:
-                    from app.life.life_tick import LifeTickTask
-                    await LifeTickTask().execute()
-                except Exception as e:
-                    _logger.warning("Life tick error: %s", e)
+            await run_if_due("life", LIFE_INTERVAL, _life_tick, reason="tick")
 
             # AI Life Loop v1.1（2026-08-26）：30 分钟行为决策（独立于 life_tick 的每小时结算）
-            if life_loop_counter >= 1800:
-                life_loop_counter = 0
-                try:
-                    from app.agent.loop import AGENT_FLAGS
-                    if AGENT_FLAGS.get("life_loop_enabled", False):
-                        from app.life.life_loop import LifeLoopTask
-                        await LifeLoopTask().run()
-                except Exception as e:
-                    _logger.warning("Life loop error: %s", e)
+            await run_if_due("life_loop", LIFE_LOOP_INTERVAL, _life_loop_tick, reason="tick")
 
             # 群聊游戏恢复（v3.3.5 审查修复，每 5 分钟）：playing 且 10 分钟以上无新事件的对局自动续跑 AI 回合（服务器重启/断线兜底）
-            if game_stuck_counter >= 300:
-                game_stuck_counter = 0
-                try:
-                    from app.agent.loop import AGENT_FLAGS
-                    if AGENT_FLAGS.get("group_chat_games", False):
-                        from app.api.games import resume_stuck_games
-                        spawn_background(resume_stuck_games(), name="sched-resume-games")
-                except Exception as e:
-                    _logger.warning("Game stuck resume error: %s", e)
+            await run_if_due("game_stuck", GAME_STUCK_INTERVAL, _game_stuck_tick, reason="tick")
 
             # 日记（23:00 后触发一次，总结当天）
-            if diary_counter >= 600:
-                diary_counter = 0
-                if local_hour >= 23 and not _diary_generated_today:
-                    _logger.debug("Scheduler: generating diaries...")
-                    await generate_missing_diaries()
-                    _diary_generated_today = True
+            await run_daily_if_due("diary", _diary_tick, min_local_hour=23, reason="tick")
 
             # 每日复盘（Phase J：23:00 后触发一次，Agent 自我反思与规划；flag 默认关）
-            if reflection_counter >= 600:
-                reflection_counter = 0
-                if local_hour >= 23 and not _reflection_done_today:
-                    try:
-                        from app.scheduling.daily_reflection import run_daily_reflections
-                        await run_daily_reflections()
-                    except Exception as e:
-                        _logger.warning("Daily reflections error: %s", e)
-                    _reflection_done_today = True
+            await run_daily_if_due("reflection", _reflection_tick, min_local_hour=23, reason="tick")
 
             # 日终记忆维护（P0-5，2026-08-16：23:00 后触发一次）：日摘要补生成 + 去重 + 置顶摘要补生成
-            if memory_counter >= 600:
-                memory_counter = 0
-                if local_hour >= 23 and not _memory_maintenance_done_today:
-                    try:
-                        from app.scheduling.daily_memory_maintenance import run_daily_memory_maintenance
-                        await run_daily_memory_maintenance()
-                    except Exception as e:
-                        _logger.warning("Daily memory maintenance error: %s", e)
-                    _memory_maintenance_done_today = True
+            await run_daily_if_due("memory_maintenance", _memory_maintenance_tick,
+                                   min_local_hour=23, reason="tick")
 
-                # 群记忆日终合并收敛（#72 PR-C P5，2026-09-16：23:00 后触发一次，受 group_memory_compact 闸控）
-                # 与记忆维护同一段（memory_counter>=600）；每天最多跑一次；关 flag 时零行为变化。
-                if local_hour >= 23 and not _group_memory_compact_done_today:
-                    try:
-                        from app.agent.loop import AGENT_FLAGS
-                        if AGENT_FLAGS.get("group_memory_compact", False):
-                            from app.memory.group_memory import compact_group_memories
-                            spawn_background(compact_group_memories(), name="sched-group-memory-compact")
-                    except Exception as e:
-                        _logger.warning("Group memory compact schedule error: %s", e)
-                    _group_memory_compact_done_today = True
+            # 群记忆日终合并收敛（#72 PR-C P5，2026-09-16：23:00 后触发一次，受 group_memory_compact 闸控）
+            # 与日终记忆维护历史上挤在同一个 600 秒计数分支里，现各归一处；每天最多跑一次；关 flag 时零行为变化。
+            await run_daily_if_due("group_compact", _group_compact_tick,
+                                   min_local_hour=23, reason="tick")
 
             # 前瞻约定时效治理（2026-09-13 ②；2026-09-15 扩到 cue，plans #72；2026-09-16 批次一任务1/2）：
             # 每小时把超窗/跨天/超龄的 pending 约定置 stale——promise 走 due_end 活性窗口（2h，日期型 23:59 豁免、
@@ -469,22 +509,10 @@ async def scheduler_loop():
             # 满足才交给 account_purge.purge_account 清除（进程内串行 + 批间让出事件循环）。
             # 经 spawn_background 派发不阻塞主循环；account_purge_scheduler 内部 _PURGE_LOCK 保证
             # 同一时刻只跑一个（上一拍没跑完则本拍直接跳过）。异常一律隔离，绝不掀翻主循环。
-            if purge_counter >= ACCOUNT_PURGE_CHECK_INTERVAL:
-                purge_counter = 0
-                try:
-                    from app.application.account_purge_scheduler import tick as _purge_tick
-                    spawn_background(_purge_tick(), name="sched-account-purge")
-                except Exception as e:
-                    _logger.warning("Account purge scheduler tick error: %s", e)
+            await run_if_due("purge", PURGE_INTERVAL, _account_purge_tick, reason="tick")
 
             # 纪念日检查（Phase C Shared Memory）：每日一次（原 _check_anniversaries_today 未接线死代码，2026-08-17 接入）
-            if _last_anniv_date != date.today():
-                _last_anniv_date = date.today()
-                try:
-                    from app.scheduling.scheduler import _check_anniversaries_today as _run_anniv
-                    await _run_anniv()
-                except Exception as _ae:
-                    _logger.warning("Anniversary check error: %s", _ae)
+            await run_daily_if_due("anniversary", _anniversary_tick, reason="tick")
 
     except asyncio.CancelledError:
         _logger.info("Scheduler cancelled")
