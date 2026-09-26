@@ -199,6 +199,118 @@ async def scan_stale_future_memories(
     return grouped
 
 
+_LIFECYCLE_SCAN_LIMIT = 2000
+
+
+async def _scan_slot_layer(*, session_factory=None, now: datetime | None = None,
+                           per_fact_limit: int = 200) -> dict:
+    """A4 批 1（P3 配套）槽层只读观测：user_facts 现状 + 「旧值镜像」候选计数。
+
+    - 只 SELECT：不写 user_facts、不改 memories 状态；异常隔离（返回空统计）；
+    - stale_candidates 用 `lifecycle_policy.plan_slot_memory_stale` 算（与三层承接者同口径），
+      用于回答「这条链路现在有多少对象、会不会真生效」。
+    """
+    empty = {"facts": 0, "by_slot": {}, "with_prev": 0, "expired": 0,
+             "stale_candidates": 0, "line": "facts=0"}
+    try:
+        from sqlalchemy import select
+
+        from app.memory import lifecycle_policy as pol
+        from app.models.memory import Memory
+        from app.models.user import GlobalUserFact
+
+        if session_factory is None:
+            from app.db.database import async_session_factory
+            session_factory = async_session_factory
+        now_utc = now_naive_utc() if now is None else to_naive_utc(now)
+        async with session_factory() as db:
+            facts = list((await db.execute(select(GlobalUserFact))).scalars().all())
+        by_slot: dict[str, int] = {}
+        with_prev = 0
+        expired = 0
+        stale_candidates = 0
+        for f in facts:
+            by_slot[f.slot] = by_slot.get(f.slot, 0) + 1
+            if (f.previous_value or "").strip():
+                with_prev += 1
+            if getattr(f, "valid_to", None) is not None and f.valid_to <= now_utc:
+                expired += 1
+            old = (f.previous_value or "").strip()
+            if not old:
+                continue
+            async with session_factory() as db:
+                rows = (await db.execute(
+                    select(Memory.id, Memory.content).where(
+                        Memory.user_id == f.user_id,
+                        Memory.status == pol.ACTIVE_STATUS,
+                        Memory.memory_type == pol.SLOT_MEMORY_STALE_MEMORY_TYPE,
+                    ).limit(int(per_fact_limit))
+                )).fetchall()
+            plan = pol.plan_slot_memory_stale([(r[0], r[1]) for r in rows], old)
+            stale_candidates += len(plan["stale"])
+        line = pol.slot_layer_observation_line(facts=len(facts), by_slot=by_slot,
+                                               with_prev=with_prev, expired=expired,
+                                               stale_candidates=stale_candidates)
+        return {"facts": len(facts), "by_slot": by_slot, "with_prev": with_prev,
+                "expired": expired, "stale_candidates": stale_candidates, "line": line}
+    except Exception as e:
+        _logger.warning("Slot layer scan failed: %s", e)
+        return empty
+
+
+async def scan_lifecycle_policy(*, session_factory=None, now: datetime | None = None,
+                                limit: int = _LIFECYCLE_SCAN_LIMIT) -> dict | None:
+    """A4 批 1（T3）P1+P2：事实生命周期策略的**干跑观测**（只读 + 只记一条 INFO）。
+
+    - flag `fact_lifecycle_policy` 关（默认）→ 直接返回 None（这一拍不打这段，逐字节旧行为）；
+    - 开 → 抽样最近 `limit` 条 active 记忆，按 `memory.lifecycle_policy` 的策略表算 fact_kind 分布
+      与「按 TTL / valid_to 判失效」条数，返回 {sampled, by_kind, expired, line}；
+    - **纯只读**：不写库、不改状态、不改变任何筛选与排序；异常一律隔离（WARNING + 返回 None），
+      不影响本拍维护的成败与退避。session_factory / now 仅供测试注入。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        if not AGENT_FLAGS.get("fact_lifecycle_policy", False):
+            return None
+        from sqlalchemy import select
+
+        from app.memory import lifecycle_policy as pol
+        from app.models.memory import Memory
+
+        if session_factory is None:
+            from app.db.database import async_session_factory
+            session_factory = async_session_factory
+        now_utc = now_naive_utc() if now is None else to_naive_utc(now)
+        async with session_factory() as db:
+            rows = (await db.execute(
+                select(Memory.memory_type, Memory.sub_type, Memory.is_core,
+                       Memory.core_category, Memory.content, Memory.created_at,
+                       Memory.valid_to)
+                .where(Memory.status == "active")
+                .order_by(Memory.id.desc())
+                .limit(int(limit))
+            )).fetchall()
+        by_kind: dict[str, int] = {}
+        expired: dict[str, int] = {}
+        for mtype, sub, is_core, core_cat, content, created_at, valid_to in rows:
+            kind = pol.resolve_fact_kind(memory_type=mtype, sub_type=sub,
+                                         is_core=bool(is_core), core_category=core_cat,
+                                         text=content or "")
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+            if pol.is_expired(kind, created_at=created_at, valid_to=valid_to, now=now_utc):
+                expired[kind] = expired.get(kind, 0) + 1
+        line = pol.observation_line(sampled=len(rows), by_kind=by_kind, expired=expired)
+        # A4 批 1 / P3 配套（2026-09-27）：槽层只读观测（user_facts 现状 + 旧值镜像候选）
+        slots = await _scan_slot_layer(session_factory=session_factory, now=now_utc)
+        line = line + " | " + slots["line"]
+        _logger.info("Lifecycle policy dry-run: %s", line)
+        return {"sampled": len(rows), "by_kind": by_kind, "expired": expired,
+                "line": line, "slots": slots}
+    except Exception as e:
+        _logger.warning("Lifecycle policy scan failed: %s", e)
+        return None
+
+
 async def run_if_due(*, reason: str = "tick", interval: timedelta = INTERVAL) -> bool:
     """到期就跑一次「记忆衰减 + AI 评星」，成功才刷新时间戳。返回是否真的跑了。
 
@@ -240,6 +352,11 @@ async def run_if_due(*, reason: str = "tick", interval: timedelta = INTERVAL) ->
         # 不计入本拍成败（不许因为扫描失败触发退避）。
         stale = await scan_stale_future_memories()
         detail.append("stale_future_candidates=%d" % sum(len(v) for v in stale.values()))
+        # A4 批 1（T3）P1+P2（2026-09-26）：事实生命周期策略的**干跑观测** —— 只读 + 只记 INFO，
+        # 不筛选、不改状态、不写库；flag 关时返回 None（这一拍不打这段）；失败不计入本拍成败。
+        lifecycle = await scan_lifecycle_policy()
+        if lifecycle:
+            detail.append("lifecycle_policy[%s]" % lifecycle.get("line", "n/a"))
         if ok:
             _write_state(started, fail_streak=0)
             _logger.info("Periodic memory maintenance done (reason=%s, streak=0, backoff=%s, %s)",

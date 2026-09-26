@@ -231,6 +231,12 @@ AGENT_FLAGS = {
     "review_reminisce_framework": True,
     "review_plan_expire_stale": False,
     "review_plan_validity_extract": False,
+    # ── A4 批 1 / T3：事实生命周期策略表（2026-09-26；P0–P2 ＝ 零行为观测）──
+    # fact_lifecycle_policy 开=按 app/memory/lifecycle_policy.py 的统一策略表，随 6 小时维护拍子抽样统计
+    #   每类事实的分布与「按 TTL / valid_to 判定已失效」的条数，打一条 INFO；**纯只读、只记日志**：
+    #   不筛选、不改状态、不写库、不影响任何链路（P1+P2 干跑）。
+    #   关（默认）= 连扫描都不跑，逐字节旧行为。真正执行「同槽取代」的开关属 P3，需单独拍板后再登记。
+    "fact_lifecycle_policy": False,
     # ── 记忆注入行时态标注（2026-09-10，第三轮 T3/C1）──
     # memory_line_tense_tag（已固化常开）：format_memory_line 在 [记录于] 之后插时态标签：plan 未过期=［计划］、
     #   已过期=［旧安排·已过期］、episodic=［往事］、transient=［当时状态］、enduring 不加；
@@ -360,6 +366,12 @@ AGENT_FLAGS = {
     #   攒够这些留痕才谈阶段 1 的候选后端与校准（docs/decision-layer-research.md §8.6、§10）。
     #   关=零行为：三原语只做一次透传调用，不建记录、不起计时器、不碰 IO，与没接这层完全一致。
     "decision_layer_shadow": False,
+    # ── A4 批 2 / T4 P1：召回门影子留痕（2026-09-27；默认关）──
+    # 开=每轮检索后多算一次「这轮该不该检索」的纯规则判定，并把判定与实际命中数一起记进
+    #   agent_task_logs（route=recall_gate_shadow），**是否检索仍完全按原逻辑执行、逐字不变**；
+    #   攒够留痕才谈 P2 生效（新开关 recall_gate）与判效（漏召回率 / 无效检索率）。
+    #   关=零行为零开销：调用点首行即返回，不算判定、不建记录、不碰 IO。
+    "recall_gate_shadow": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

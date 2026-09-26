@@ -18,11 +18,43 @@ flag：memory_temporal_recall（默认关）——调用方在 flag 开时才把
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from app.utils.timeutil import now_naive_utc
 
 _ABS_RE = re.compile(r"(20\d{2})\s*[-年/.]\s*(\d{1,2})")
+# A4 批 2 / T4（2026-09-27）补全：N 天/周/月前（既有规则不覆盖）
+# 数词兼容阿拉伯数字与中文数词（真实对话里「三天前 / 两周前 / 上个月」远比「3天前」常见）
+_NUM_TOKEN = r"([0-9]{1,3}|[一二三四五六七八九十两]{1,3})"
+_DAYS_AGO_RE = re.compile(_NUM_TOKEN + r"\s*天前")
+_WEEKS_AGO_RE = re.compile(_NUM_TOKEN + r"\s*(?:周|星期|礼拜)前")
+_MONTHS_AGO_RE = re.compile(_NUM_TOKEN + r"\s*个?月前")
+_CN_DIGITS = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def cn_num(token: str) -> int | None:
+    """中文/阿拉伯数词 → int（支持 3 / 三 / 十二 / 二十三 / 两）；认不出返回 None。"""
+    s = (token or "").strip()
+    if not s:
+        return None
+    if s.isdigit():
+        return int(s)
+    if "十" in s:
+        left, _, right = s.partition("十")
+        if left and left not in _CN_DIGITS:
+            return None
+        if right and right not in _CN_DIGITS:
+            return None
+        tens = _CN_DIGITS[left] if left else 1
+        ones = _CN_DIGITS[right] if right else 0
+        return tens * 10 + ones
+    if len(s) == 1 and s in _CN_DIGITS:
+        return _CN_DIGITS[s]
+    return None
+# 「昨晚 / 昨儿 / 昨晚上」与「昨天」同窗（既有规则只认「昨天」）
+_YESTERDAY_NIGHT_RE = re.compile(r"昨晚|昨儿|昨晚上")
 _EARLY_RE = re.compile(r"刚认识|最早|一开始|起初|那阵|那时候")
 _WEEK_RE = re.compile(r"本周|这周|这一周")
 _LASTWEEK_RE = re.compile(r"上周")
@@ -103,8 +135,16 @@ def parse_time_range(
         y = now.year - 1
         return _day(y, 1, 1), _day(y + 1, 1, 1)
 
+    # A4 批 2（2026-09-27）：更具体的表达必须先判——「大前天」含「前天」、
+    # 「昨晚」不含「昨天」；顺序错了会把大前天算成前天（差一天）。
+    if "大前天" in t:
+        return _local_day_bounds(now, offset, -3)
+
     if "前天" in t:
         return _local_day_bounds(now, offset, -2)
+
+    if _YESTERDAY_NIGHT_RE.search(t):
+        return _local_day_bounds(now, offset, -1)
 
     if "昨天" in t:
         return _local_day_bounds(now, offset, -1)
@@ -128,3 +168,78 @@ def parse_time_range(
         return now - timedelta(days=3650), now - timedelta(days=30)
 
     return None
+
+
+# ── A4 批 2 / T4（2026-09-27）：结构化返回 + 高频表达补全 ─────────────────────
+
+
+@dataclass(frozen=True)
+class TimeQuery:
+    """时间短语的结构化解析结果（带分档，供观测与「范围前置」使用）。"""
+
+    start: datetime
+    end: datetime
+    kind: str          # day / week / month / year / fuzzy / days_ago / weeks_ago / months_ago
+    confidence: str    # high = 明确可限定范围；low = 宽窗/模糊（只兜底，不限定）
+
+
+def _parse_extra(text: str, now: datetime, offset: int) -> TimeQuery | None:
+    """补全规则（先于 parse_time_range 执行）：N 天/周/月前 —— 明确区间、高置信。"""
+    if not text:
+        return None
+    m = _DAYS_AGO_RE.search(text)
+    if m:
+        n = cn_num(m.group(1))
+        if n is not None and 1 <= n <= 365:
+            s, e = _local_day_bounds(now, offset, -n)
+            return TimeQuery(s, e, "days_ago", "high")
+    m = _WEEKS_AGO_RE.search(text)
+    if m:
+        n = cn_num(m.group(1))
+        if n is not None and 1 <= n <= 52:
+            s, e = _local_week_bounds(now, offset, -n)
+            return TimeQuery(s, e, "weeks_ago", "high")
+    m = _MONTHS_AGO_RE.search(text)
+    if m:
+        n = cn_num(m.group(1))
+        if n is not None and 1 <= n <= 24:
+            s, e = _local_month_bounds(now, offset, -n)
+            return TimeQuery(s, e, "months_ago", "high")
+    return None
+
+
+def _classify_kind(text: str) -> str:
+    if _ABS_RE.search(text):
+        return "month"
+    if "去年" in text:
+        return "year"
+    if _EARLY_RE.search(text):
+        return "fuzzy"
+    if _LASTWEEK_RE.search(text) or _WEEK_RE.search(text):
+        return "week"
+    if _LASTMONTH_RE.search(text) or _THISMONTH_RE.search(text):
+        return "month"
+    return "day"
+
+
+def parse_time_query(
+    text: str,
+    now: datetime | None = None,
+    tz_offset_min: int | None = None,
+) -> TimeQuery | None:
+    """时间短语 → 结构化区间（补全版）：先跑 N 天/周/月前，再回落既有 parse_time_range。
+
+    - 既有 parse_time_range 口径保持不变（除已修的两处误判：大前天 / 昨晚）；
+    - confidence=low 只用于「模糊早期」宽窗（3650d~30d）——「范围前置」只采信 high；
+    - 识别不了返回 None（绝不猜）。
+    """
+    now = now or now_naive_utc()
+    offset = tz_offset_min if tz_offset_min is not None else 0
+    q = _parse_extra(text or "", now, offset)
+    if q is not None:
+        return q
+    r = parse_time_range(text, now=now, tz_offset_min=tz_offset_min)
+    if r is None:
+        return None
+    kind = _classify_kind(text or "")
+    return TimeQuery(r[0], r[1], kind, "low" if kind == "fuzzy" else "high")

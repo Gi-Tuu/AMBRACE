@@ -222,6 +222,18 @@ _FLAG_ROWS: list[tuple] = [
      'Automatic calls such as how important a memory is, or whether something is a past event or an '
      'arrangement, also leave a note so the judgement can be cross-checked later. The outcomes stay exactly '
      'as they are now; turning this off simply stops leaving the note.'),
+    ('fact_lifecycle_policy', 'memory', 720, False, '事实过期口径留痕',
+     '按一张统一的策略表统计每类记忆的留存与过期情况，只在后台记录、不改动任何内容。',
+     'Fact lifetime policy (observation)',
+     'Counts how each kind of memory ages against one shared policy table. '
+     'Observation only — nothing is changed and no content is filtered.'),
+    ('recall_gate_shadow', 'memory', 721, False, '检索时机判断留痕',
+     '每一轮回复前额外记一条「这一轮要不要翻记忆」的判断过程，便于事后核对该判断准不准；'
+     '是否会翻记忆与现在完全一样，不会因此改任何东西，关掉则不留这条记录。',
+     'Retrieval timing note',
+     'A short note of the before-reply call on whether to look through memories, so it can be '
+     'cross-checked later. Whether memories are looked up stays exactly as it is now; turning this '
+     'off simply stops leaving the note.'),
 
     # ── 编纂知识与前瞻意图 ──
     ('curated_knowledge', 'curated', 801, False, '长期知识层',

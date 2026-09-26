@@ -150,6 +150,22 @@ async def retrieve_memories(state: AgentState) -> AgentState:
         time_range=_time_range,
     )
     state["retrieved_memories"] = memories
+    # A4 批 2 / T4 P1（2026-09-27）：召回门**影子**留痕 —— 只算一次判定并写一条 trace，
+    # **不改变是否检索**（本轮照旧全量检索）；开关 recall_gate_shadow 默认关，关时零行为、零开销。
+    try:
+        from app.memory.recall_gate import observe_retrieval_decision
+        observe_retrieval_decision(
+            state.get("user_message") or "",
+            has_time_phrase=_time_range is not None,
+            has_extra_queries=bool(queries),
+            is_continue=bool(_cont),
+            hit_count=len(memories or []),
+            character_id=state.get("character_id"),
+            user_id=state.get("user_id"),
+            task_id=state.get("task_id"),
+        )
+    except Exception as _e:
+        _logger.debug("Recall gate shadow failed: %s", _e)
     if memories:
         try:
             from app.memory.service import reinforce_memories
