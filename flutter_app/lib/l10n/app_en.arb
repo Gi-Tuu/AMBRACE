@@ -300,6 +300,12 @@
   "voiceYunyang": "Yunyang · News male",
   "voiceYunfeng": "Yunfeng · Mature male",
   "voiceYunlong": "Yunlong · Cantonese male",
+  "voiceCloudItem": "{name} (cloud)",
+  "@voiceCloudItem": {
+    "placeholders": {
+      "name": {}
+    }
+  },
   "voicePreviewFailConfig": "Preview failed: TTS unavailable, check server voice config",
   "voicePreviewFailNet": "Preview failed, check network",
   "avatarUploadFail": "Avatar upload failed",

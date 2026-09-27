@@ -933,6 +933,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get voiceYunlong => '雲龍 · 粤语男声';
 
   @override
+  String voiceCloudItem(Object name) {
+    return '$name（云端）';
+  }
+
+  @override
   String get voicePreviewFailConfig => '试听失败：语音合成不可用，请检查服务器语音配置';
 
   @override

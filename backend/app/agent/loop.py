@@ -380,6 +380,14 @@ AGENT_FLAGS = {
     #   本键单独开、current_facts_active_only 关时子句退化为旧口径（memory_supersede 门控）。
     # 回退：置回 False（runtime_flags 热切，无需重启）。
     "current_view_filter": False,
+    # ── S1 第二步（2026-09-27）：主动消息链「角色自主搜索」（默认关=逐字节旧行为）──
+    # 开=主动消息生成首轮若输出 [SEARCH]，走一次受控自主搜索（复用 run_search_loop 的 self 分支语义：
+    #   结果只作参考、模型可「什么都不说」→ 本轮不产出消息；搜索失败/被节流 → 仍发原候选），
+    #   regen 走 scheduling/message_generator.py 的 _gen_with_reasoning（不走 nodes.generate_response，
+    #   保持主动链 task="message"/按角色思考挡位）；本批不落小手机浏览记录。
+    # 关=不解析 [SEARCH]、不搜索、不加时延，与现状逐字节一致。
+    # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。默认关=零行为变化。
+    "proactive_self_search": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）
@@ -390,6 +398,21 @@ _SEARCH_RESULT_TEMPLATE = (
     "3. 你已经搜索完成，绝不要说'我去搜一下/等着我去查'这类话；如果这次结果仍不够或与问题无关，可以再输出一次 [SEARCH] 补充查询（最多再查 1 次），否则不要再输出 [SEARCH] 标记。"
     "4. 网络信息属未证实来源（Observation: UNVERIFIED），涉及事实/数字/做法请谨慎转述，不确定就说明是'网上说法'。"
 )
+
+# 搜索结果注入模板（S1 发起方口径，2026-09-27；initiator="self"＝角色自主搜索专用）
+# 与 user 版的口径差异只有一处：自主搜索没人等着回复，结果只是参考——
+# 模型可以「什么都不说」，此时不得再输出任何正文或标记，由 run_search_loop 判定本轮不产出消息。
+_SEARCH_RESULT_TEMPLATE_SELF = (
+    "【搜索结果】（这是你自己起意去查的资料，只作参考；没有人在等你回复）。\n"
+    "{result}\n\n"
+    "注意：1. 与你本来想说的内容相关就自然引用，不必交代来源；2. 结果用不上时你可以什么都不说——"
+    "决定不说就不要再输出任何正文或标记（留空即可，本轮不会发出消息）；"
+    "3. 无论说不说，都不要说'我去搜一下/等着我去查'这类话；如果这次结果仍不够或与问题无关，可以再输出一次 [SEARCH] 补充查询（最多再查 1 次），否则不要再输出 [SEARCH] 标记。"
+    "4. 网络信息属未证实来源（Observation: UNVERIFIED），涉及事实/数字/做法请谨慎转述，不确定就说明是'网上说法'。"
+)
+
+# 「本轮不产出消息」语义键（S1；self 分支专用）：调用方据此不追加消息（不替换已有消息、不报错）
+SEARCH_NO_MESSAGE_KEY = "search_no_message"
 
 
 async def _execute_search_tool(user_id: int, query: str, run_search: Callable[[str], Awaitable[str]]) -> dict:
@@ -527,6 +550,7 @@ async def run_search_loop(
     inject_enabled: Callable[[], bool],
     save_history: Callable[[int, str], Awaitable[None]],
     max_steps: int | None = None,
+    initiator: str = "user",
 ) -> tuple[dict, list[dict]]:
     """受控搜索循环：decide → 执行 SEARCH → observe（注入结果）→ 条件再决策。
 
@@ -534,24 +558,42 @@ async def run_search_loop(
     - 返回 (final_state, steps)：steps 为每轮搜索执行摘要（供 Task Trace）；
     - 节流/开关不通过、搜索失败 → 剥离标记静默降级（不编造成功）；
     - 超过搜索轮数上限 LLM 仍输出 [SEARCH] → 剥离标记直接返回。
+
+    发起方口径（S1，2026-09-27；``initiator``）：
+    - ``"user"``（默认，用户请求）：结果必须落到回复里，**不许静默**——再生成为空时回落到
+      上一轮正文（剥离标记后的模型自述文本）；模板用 _SEARCH_RESULT_TEMPLATE（文案逐字未变）。
+      非 "self" 的取值一律按 user 处理（宁可不静默，也不误吞用户的回复）。
+    - ``"self"``（角色自主）：结果只是参考，模板用 _SEARCH_RESULT_TEMPLATE_SELF；
+      模型选择「什么都不说」（再生成结果为空/只剩标记）时，按用户拍板口径给出
+      **本轮不产出消息** 的语义（final_state[SEARCH_NO_MESSAGE_KEY] = True），
+      不回填上一轮正文、不报错、也不替换任何已有消息。
     """
     steps: list[dict] = []
     rounds = MAX_SEARCH_ROUNDS
     # agent_loop_search：2026-09-17 固化为恒定受控多轮搜索（曾为灰度开关；关=退回旧单次二次生成，现恒定开）
     if max_steps is not None:
         rounds = max(1, min(max_steps - 1, MAX_SEARCH_ROUNDS))
+    self_initiated = initiator == "self"
+    prev_body = ""  # 各轮「剥离标记后的模型正文」，仅 user 分支用于空生成回落
+
+    def _no_silence(text: str) -> str:
+        """user 分支不许静默：本轮生成为空则回落上一轮正文；self 分支原样返回（允许不说）"""
+        if self_initiated or (text or "").strip():
+            return text
+        return prev_body
+
     try:
         round_no = 1
         while round_no <= rounds:
             clean, query = _actions.extract_search(final_state.get("ai_response") or "")
             if not query:
-                final_state["ai_response"] = clean
+                final_state["ai_response"] = _no_silence(clean)
                 break
             # 节流 / 搜索注入开关门禁（与旧行为一致）
             if not (throttle(user_id) and inject_enabled()):
-                final_state["ai_response"] = clean
+                final_state["ai_response"] = _no_silence(clean)
                 break
-            _logger.info("AI web search char=%d round=%d query=%s", character_id, round_no, query[:60])
+            _logger.info("AI web search char=%d round=%d query=%s initiator=%s", character_id, round_no, query[:60], initiator)
             # 执行搜索（Phase E：统一工具执行入口 execute_tool——权限三档 + 生命周期钩子 + 异常隔离；
             # 空结果重试 1 次由本层控制，单工具超时 30s）
             result = ""
@@ -568,17 +610,20 @@ async def run_search_loop(
             steps.append({"action": "SEARCH", "query": query[:80], "ok": bool(result), "round": round_no})
             if blocked or not result:
                 _logger.warning("AI web search %s round=%d query=%s: 降级为剥离标记", "blocked" if blocked else "failed", round_no, query[:60])
-                final_state["ai_response"] = clean
+                final_state["ai_response"] = _no_silence(clean)
                 break
             # observe：落浏览记录 + 注入结果 → 再决策（允许补查）
             try:
                 await save_history(character_id, query)
             except Exception as e:
                 _logger.warning("AI search history save failed: %s", e)
+            if clean.strip():
+                prev_body = clean
+            _template = _SEARCH_RESULT_TEMPLATE_SELF if self_initiated else _SEARCH_RESULT_TEMPLATE
             final_state["context_messages"] = final_state.get("context_messages") or []
             final_state["context_messages"] = final_state["context_messages"] + [{
                 "role": "system",
-                "content": _SEARCH_RESULT_TEMPLATE.format(result=result),
+                "content": _template.format(result=result),
             }]
             final_state["ai_response"] = ""
             from app.agent.nodes import generate_response as _regen
@@ -588,6 +633,12 @@ async def run_search_loop(
             round_no += 1
         # 超限/退出兜底：最后一次剥离（幂等）
         final_state["ai_response"] = _actions.extract_search(final_state.get("ai_response") or "")[0]
+        if self_initiated:
+            # 「不说」＝本轮不产出消息（不回填 prev_body、不报错）；有正文则维持正常返回
+            if not (final_state.get("ai_response") or "").strip():
+                final_state[SEARCH_NO_MESSAGE_KEY] = True
+        else:
+            final_state["ai_response"] = _no_silence(final_state["ai_response"])
     except Exception as e:
         _logger.warning("Agent search loop failed: %s", e)
         try:

@@ -50,6 +50,59 @@ VOICE_PRESETS = {
     "wanlung": {"label": "雲龍 · 粤语男声", "gender": "male", "edge": "zh-HK-WanLungNeural", "dashscope": "Ethan"},
 }
 MAX_TEXT_CHARS = 500  # 单条回复合成上限（超出截断，控制时长与存储）
+
+# ── S3 音色：云端音色清单（2026-09-27，形态 A＝云端音色可选）──────────
+# 清单不硬编码供应商全量音色表：默认集只放本部署实测可用的两个（Phase 0 P0 结论），
+# 服务端要扩就在 data/tts_voices.json 追加，无需改代码：
+#   [{"id": "Serena", "label": "Serena", "gender": "female"}, ...]
+# label 只放音色本名（供应商音色名是专有名词，语言中立），性别/属性由展示端自行本地化，
+# 避免服务端把中文文案灌进 App 界面。
+# 文件缺失/坏 JSON 一律退化成默认集（只影响下拉可选项，不影响合成链路）。
+# ai_characters.voice 的值域因此扩展为：VOICE_PRESETS 的 key ∪ 本清单的 id ∪ 空。
+_CLOUD_VOICE_DEFAULTS: list[dict] = [
+    {"id": "Ethan", "label": "Ethan", "gender": "male"},
+    {"id": "Cherry", "label": "Cherry", "gender": "female"},
+]
+_CLOUD_VOICE_FILE = settings.PROJECT_ROOT / "data" / "tts_voices.json"
+_CLOUD_VOICE_TTL = 60.0  # 秒；服务端改了文件一分钟内生效，不必重启
+_cloud_voice_cache: tuple[float, list[dict]] = (0.0, [])
+
+
+def list_cloud_voices(refresh: bool = False) -> list[dict]:
+    """云端音色清单（默认集 + data/tts_voices.json 追加项，按 id 去重，默认集优先）"""
+    global _cloud_voice_cache
+    now = _time.time()
+    if not refresh and now - _cloud_voice_cache[0] < _CLOUD_VOICE_TTL:
+        return _cloud_voice_cache[1]
+    merged = list(_CLOUD_VOICE_DEFAULTS)
+    try:
+        extra = json.loads(_CLOUD_VOICE_FILE.read_text(encoding="utf-8"))
+        if isinstance(extra, list):
+            merged += [e for e in extra if isinstance(e, dict) and str(e.get("id") or "").strip()]
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        _logger.warning("cloud voice file unreadable, use defaults: %s", e)
+    seen: set[str] = set()
+    result: list[dict] = []
+    for e in merged:
+        vid = str(e["id"]).strip()[:50]  # 50 = ai_characters.voice 列宽
+        if not vid or vid in seen or vid in VOICE_PRESETS:
+            continue  # 预设 key 不当云端音色：两值域必须不相交，否则扩充会悄悄改写老角色
+        seen.add(vid)
+        result.append({"id": vid, "label": str(e.get("label") or vid).strip()[:50],
+                       "gender": str(e.get("gender") or "").strip()[:10]})
+    _cloud_voice_cache = (now, result)
+    return result
+
+
+def resolve_cloud_voice(voice: str | None) -> str | None:
+    """voice 命中云端音色清单 ⇒ 返回该音色 id（当云端音色用）；否则 None（沿用既有语义）"""
+    v = (voice or "").strip()
+    if not v:
+        return None
+    return v if any(str(e["id"]) == v for e in list_cloud_voices()) else None
+
 _DASHSCOPE_TTS_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
 # 兜底模型：配置的模型（qwen3-tts-vd 等）HTTP 不可用时自动降级
 # - 私有 MaaS 端点（speech_configs.base_url 指向）用 qwen-tts-2025-05-22（2026-08-12 实测可用）
@@ -263,9 +316,16 @@ async def synthesize(
     voice_pitch: float | None = None,
     user_id: int | None = None,
     emotion: str | None = None,
+    tts_voice: str | None = None,
 ) -> str | None:
     """合成语音到 uploads/tts/{subdir}/，返回 /uploads/tts/... URL；失败返回 None（不阻塞主流程）。
     优先百炼（speech_configs 启用时）→ edge-tts 兜底。user_id 非空时受「语音回复」权限约束。
+
+    voice（S3 起值域扩展）：VOICE_PRESETS 的 key ∪ 云端音色清单的 id ∪ 空。
+    tts_voice：调用方**已解析**的云端音色 id（命中清单时非空，见 resolve_cloud_voice）。
+      - 命中（tts_voice 非空，或 voice 自身命中清单）⇒ 云端链路直接用该音色合成，
+        edge-tts 兜底仍按性别取默认（edge 不认云端音色 id）；
+      - 未命中 ⇒ 走既有语义（预设 key → 预设音色；空/未知 → 按性别默认），逐字节不变。
 
     emotion（Phase 0 P0，可空）：AI 的当前情绪标记（如 AgentState.emotional_state 的
     angry/sad/upset，或情感/感知派生的 sad/happy/excited/calm/tired 等；含中文别名）。
@@ -292,7 +352,9 @@ async def synthesize(
     uid = uuid.uuid4().hex[:8]
     # 自定义声色：音色 key → 预设；无则按性别默认（2026-08-11）
     preset = VOICE_PRESETS.get(voice or "") if voice else None
-    dash_voice = preset["dashscope"] if preset else _voice_for(gender, _DASHSCOPE_VOICES)
+    # S3：调用方解析值优先；只带 voice 值的旁路调用（试听等）就地解析，两条口径一致
+    cloud_voice = tts_voice or resolve_cloud_voice(voice)
+    dash_voice = cloud_voice or (preset["dashscope"] if preset else _voice_for(gender, _DASHSCOPE_VOICES))
     edge_voice = preset["edge"] if preset else _voice_for(gender, _EDGE_VOICES)
     # 语速/语调仅 edge-tts 兜底链路生效（百炼 qwen-tts 参数仅支持 format/sample_rate）
     # Phase 0 P0：按情绪映射叠加（emotion=None/未知时增量为 0，参数与旧行为一致）

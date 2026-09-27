@@ -31,12 +31,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.application import user_cascade
 from app.application.admin_audit_service import record as _audit_record
 from app.application.family_service import get_family_member_ids
 from app.i18n import tr_lang
+from app.models.channel import ChannelBinding
+from app.models.character import AICharacter
+from app.models.memory import ProspectiveIntent
 from app.models.user import User
 
 #: 回收站宽限期（天）：到点后第二期的清除器才真正物理删。
@@ -215,12 +218,45 @@ async def mark_deleted(db, *, actor_user_id: int, target_user_id: int, body: dic
     target.deleted_at = now
     target.disabled_at = now  # 复用 P2 门禁：回收站里的账号既不能登录也不能用旧 token
     target.purge_after = purge_at
+    # D-3（2026-09-27 派单）：宽限期内取消该账号未触发的前瞻意图，与删角色完全同语义、同谓词
+    # （character_cascade.py:204-211）。否则回收站里的账号每拍仍被到期扫描认领 → 白烧 LLM，
+    # 且生成的主动消息写进一个已 disabled_at 的账号会话（用户不可见＝纯浪费）。
+    # 归属键：ProspectiveIntent.user_id（NOT NULL，models/memory/__init__.py:375）——只按本账号
+    # user_id 取消，绝不用 get_family_member_ids（子账号的成员集含根/兄弟账号，会误伤他人）。
+    # 「取消即终态」：restore 不复活（cancelled 是状态机终态，无法安全区分原 pending/matched）。
+    await db.execute(
+        update(ProspectiveIntent)
+        .where(
+            ProspectiveIntent.user_id == int(target.id),
+            ProspectiveIntent.status.in_(("pending", "matched")),
+        )
+        .values(status="cancelled", updated_at=now)
+    )
+    # D-4（2026-09-27 派单）：宽限期内停用该账号名下角色的渠道绑定，保留行留痕。否则外部平台
+    # （微信/抖音）在 7 天里仍把真人消息路由进一个 App 侧已 403 的账号，并可能以该角色身份回复
+    # ——resolve_character 只看 enabled，不看账号门禁（channel_binding_service.py:158-162）。
+    # 归属键：ChannelBinding 没有 user_id，「该账号名下角色」＝ character_id ∈
+    # ai_characters.user_id==目标；**不用 tenant_id**——子账号的绑定行 tenant_id 是家庭根，
+    # 按租户停用会误伤父号/兄弟账号的绑定。
+    # 复用既有 enabled 语义、不新造状态：内核侧没有「用户主动停用」的写入口（解绑＝删行
+    # remove_binding:138-152，绑定＝恒置 True upsert_binding:131），enabled=0 只可能是这里写的。
+    bindings_disabled = int((await db.execute(
+        update(ChannelBinding)
+        .where(
+            ChannelBinding.character_id.in_(
+                select(AICharacter.id).where(AICharacter.user_id == int(target.id))
+            ),
+            ChannelBinding.enabled.is_(True),
+        )
+        .values(enabled=False, updated_at=now)
+    )).rowcount or 0)
     await _audit_record(db, actor_user_id, "account.delete", "user:%d" % int(target.id), before, {
         "username": target.username,
         "mode": plan["scope"],
         "deleted_at": now.isoformat(),
         "purge_after": purge_at.isoformat(),
         "purge_now": purge_now,
+        "bindings_disabled": bindings_disabled,
         "volume": totals,
         "top_tables": [{"table": t["table"], "rows": t["rows"]} for t in _volume_tables(plan)[:20]],
     })
@@ -260,10 +296,25 @@ async def restore(db, *, actor_user_id: int, target_user_id: int, lang: str = "z
     target.deleted_at = None
     target.purge_after = None
     target.disabled_at = None
+    # D-4 反向（与 D-3 刻意不同口径，勿「顺手」统一）：PIS 的 cancelled 是状态机终态，无法安全区分
+    # 原 pending / matched，故 restore 不复活；渠道绑定只有 enabled 一列、停用是标记删除代写的
+    # （内核无用户侧停用入口），账号出回收站必须复通——否则用户「恢复」了，外部渠道却静默失联。
+    # 谓词与 mark_deleted 对称：仍按角色归属取行，不碰同租户其它账号的绑定。
+    bindings_reenabled = int((await db.execute(
+        update(ChannelBinding)
+        .where(
+            ChannelBinding.character_id.in_(
+                select(AICharacter.id).where(AICharacter.user_id == int(target.id))
+            ),
+            ChannelBinding.enabled.is_(False),
+        )
+        .values(enabled=True, updated_at=now_utc())
+    )).rowcount or 0)
     await _audit_record(db, actor_user_id, "account.restore", "user:%d" % int(target.id), before, {
         "username": target.username,
         "deleted_at": None, "disabled_at": None, "purge_after": None,
         "changed": changed,
+        "bindings_reenabled": bindings_reenabled,
     })
     await db.commit()
     from app.application.permission_service import _invalidate_account_state_cache

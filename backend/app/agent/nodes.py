@@ -188,6 +188,7 @@ async def _synth_stream_block(text: str, state: AgentState) -> str | None:
         return await synthesize(
             text, subdir=state.get("tts_subdir") or "stream",
             gender=params.get("gender"), voice=params.get("voice"),
+            tts_voice=params.get("tts_voice"),
             voice_rate=params.get("voice_rate"), voice_pitch=params.get("voice_pitch"),
             user_id=state.get("user_id"),
             emotion=state.get("emotional_state") or None,

@@ -51,7 +51,6 @@ SPECS_EXCEPTIONS: dict[str, str] = {
     "image_gen_tasks": "无 character_id 外键；生图任务留痕含产物路径，属账号级资产",
     "lorebook_entries": "无 character_id 外键；设定集/世界观为多角色共享知识",
     "world_facts": "无 character_id 外键；世界事实为共享知识，同上",
-    "shared_events": "无 character_id 外键；跨角色共享事件（多角色共同经历），按角色删会破坏他人叙事",
     "memory_write_receipts": "无 character_id 外键且列可空；记忆写入回执是 append-only 审计流水",
     "prospective_intents": "不删行，但未触发的（pending/matched）在级联里置 cancelled（P2-1，防到期反复白烧 LLM）；已兑现/作废行留痕",
     "ai_moments": "二级级联：先按 moment_id 清赞/评论子树再删本体（级联第 1 步），不能按 character_id 直删",

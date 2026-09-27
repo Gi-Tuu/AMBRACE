@@ -75,6 +75,7 @@ async def _synthesize_sentence(text: str, params: dict, subdir: str, emotion: st
         subdir=subdir,
         gender=params.get("gender"),
         voice=params.get("voice"),
+        tts_voice=params.get("tts_voice"),
         voice_rate=params.get("voice_rate"),
         voice_pitch=params.get("voice_pitch"),
         emotion=emotion,

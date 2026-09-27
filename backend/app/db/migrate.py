@@ -122,6 +122,18 @@ _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     # 老库（有表无版本号）缺此表时若不判「落后」，会被 stamp 到 head 却永久缺表：清除器无法
     # 记账，表现为「删一半进程被重启后无从续跑」——正是这张表要防的那件事。
     ("account_purge_jobs", "user_id"),
+    # ── A4 批 5 / T6 M2 渠道归因（2026-09-27）：llm_usage.channel ──
+    # 该列【只由迁移 b4c5d6e7f8a9 add_column 引入】（init_db 幂等层不补，同 config_id /
+    # group_owner_id 两列的先例）。老库（有表但无版本号）缺此列时若不判「落后」，会被 stamp
+    # 到 head 却永久缺列——_record_usage_async 落库带 channel 直接报错（记账整条链失败），
+    # 且读端 select(LlmUsage) 也会炸。
+    ("llm_usage", "channel"),
+    # ── S2 M0 上下文预算档位（2026-09-27）：users.context_budget_tier ──
+    # 该列【只由迁移 c6d7e8f9a0b1 add_column 引入】（init_db 幂等层不补，同 deleted_at /
+    # purge_after / llm_usage.channel 的先例）。老库缺此列时若不判「落后」，会被 stamp 到 head
+    # 却永久缺列——档位读写（PUT /system/context-budget/tier）与 GET /system/context-budget
+    # 直接报错，且 select(User) 也会炸。
+    ("users", "context_budget_tier"),
 ]
 
 

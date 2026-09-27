@@ -17,11 +17,22 @@
 
 显式**不删**（无 character_id 外键，不构成 FK 孤儿，属共享/日志类，留给数据治理批）：
 agent_tasks / agent_task_logs / llm_usage / image_gen_tasks / channel_bindings /
-lorebook_entries / world_facts / shared_events / memory_archive 以外的归档类。其中
-moment_ai_likes 虽无外键，但属角色在他人动态下的互动，本模块一并清。
+lorebook_entries / world_facts / memory_archive 以外的归档类。其中 moment_ai_likes 虽无
+外键，但属角色在他人动态下的互动，本模块一并清。
 prospective_intents 不删行，但**未触发的（pending/matched）在此置 cancelled**（2026-09-26
 审查 P2-1）：留着会让到期触发反复「认领 → 白烧一次 LLM → 外键失败回滚重试」；已兑现/作废的
 行仍保留留痕。
+pets 中该角色的 AI 宠物（owner_type='ai' AND owner_id=character_id）在此**置 abandoned_at 软删
+（遗弃）**（2026-09-27 派单 D-2）：pets.owner_id 无外键，不处理会让 collect_ai_care_events 每拍
+把死角色的 AI 宠物当候选产出（与 PIS 白烧同形态）；沿用既有遗弃语义（保留行、不新造状态）。
+shared_events（共同经历）不属上面的「共享类」，在此按 character_id **直删**（2026-09-27 派单
+D-1）：一行恒为「某用户 × 某角色」的**成对**经历——user_id / character_id 均 NOT NULL 标量
+（models/memory/__init__.py:173-174），写入方一次只落一个角色（memory/shared_events.py:64-70），
+而**所有**读路径都要同时给 user_id 与 character_id 才取到行（同文件 :87-92 recall_text、
+api/life.py:288）⇒ 角色没了这行永远读不出来，只会让纪念日每日扫描空转（scheduler.py:198 对
+角色不存在的条目 continue）。表结构既不支持置空（NOT NULL）也没有失效标记列，故不采用
+「只清角色那一侧」；用户侧数据不受影响：账号级用户事实另存 user_facts，其他角色 / 其他账号
+的 shared_events 行按谓词天然保留。
 """
 from sqlalchemy import delete as sa_delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,11 +91,13 @@ from app.models.memory import (
     ProcessedExtraction,
     ProspectiveIntent,
     ReflectionLog,
+    SharedEvent,
     StageMemory,
     WeaveCard,
     WeaveCardCharacter,
     WeaveCardMemory,
 )
+from app.models.pet import Pet
 from app.models.user import PrivacyRequest
 from app.utils.logger import get_logger
 from app.utils.timeutil import now_naive_utc
@@ -122,6 +135,7 @@ CHARACTER_DELETE_SPECS = [
     (ReflectionLog, "character_id"),
     (MemoryArchive, "character_id"),
     (Memory, "character_id"),
+    (SharedEvent, "character_id"),  # D-1：成对经历行随角色消失（详见模块 docstring）
     (WeaveCardCharacter, "character_id"),  # 织卡-角色关联（卡本体按共享语义单独处理）
     # ── 虚拟手机 ──
     (PhoneLayout, "character_id"),
@@ -208,6 +222,20 @@ async def cascade_delete_character(db: AsyncSession, character_id: int) -> dict:
             ProspectiveIntent.status.in_(("pending", "matched")),
         )
         .values(status="cancelled", updated_at=now_naive_utc())
+    )
+
+    # D-2（2026-09-27 派单）：把该角色的 AI 宠物一并「遗弃」——复用既有 abandoned_at 软删语义
+    # （pet_service.abandon_pet 同口径：置时间戳、保留行 → 活动/外键不悬空），不新造状态、不删行。
+    # 否则 collect_ai_care_events 只按 owner_type=='ai' 选行（pets.owner_id 无外键），
+    # 死角色的 AI 宠物每拍仍被当候选产出（与 P2-1 修掉的 PIS 白烧同形态）。已遗弃的不动（幂等）。
+    await db.execute(
+        update(Pet)
+        .where(
+            Pet.owner_type == "ai",
+            Pet.owner_id == character_id,
+            Pet.abandoned_at.is_(None),
+        )
+        .values(abandoned_at=now_naive_utc())
     )
 
     # 1) 朋友圈：TA 发的动态 → 赞/AI 赞/评论；再清 TA 作为 AI 发出的评论与点赞

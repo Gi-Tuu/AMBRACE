@@ -107,6 +107,12 @@ _FLAG_ROWS: list[tuple] = [
     ('two_pass_trace_all_chars', 'proactive', 208, False, '两遍重读全量放开',
      '两遍重读：对所有角色放开（默认关；开=不再看灰度白名单）',
      'Re-read the current state for every character', 'Lets the re-read cover all characters rather than only the few in the grey-release list; off by default keeps things as they are.'),
+    ('proactive_self_search', 'proactive', 209, False, '主动搭话时自行查证',
+     '它主动找你说话时，遇到没把握的信息可以先自己查一下；查到什么，用得上才自然地说，用不上也可以不提。'
+     '默认关闭，关掉时与现在完全一样。',
+     'Look things up before reaching out', 'When it messages you on its own, it can first check anything it is unsure about; '
+     'it brings up a finding only if it is genuinely useful, and may simply not mention it. Off by default, and turning it '
+     'off keeps things exactly as they are now.'),
 
     # ── 群聊小游戏 ──
     ('group_chat_games', 'games', 301, False, '小游戏总开关',

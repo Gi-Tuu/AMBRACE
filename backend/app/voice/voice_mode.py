@@ -22,7 +22,11 @@ MAX_RECENT_MESSAGES = 12
 
 
 async def load_character_voice_params(character_id: int) -> dict:
-    """角色语音参数（TTS 合成用）：gender/voice/voice_rate/voice_pitch/name"""
+    """角色语音参数（TTS 合成用）：gender/voice/voice_rate/voice_pitch/name
+
+    S3（2026-09-27）额外透出 tts_voice＝已解析的云端音色 id（voice 命中云端音色清单时非空，
+    未命中为 None），调用点原样透传给 tts_service.synthesize，避免逐句合成时反复解析。
+    """
     from app.models.character import AICharacter
     async with async_session_factory() as db:
         row = (await db.execute(
@@ -30,9 +34,11 @@ async def load_character_voice_params(character_id: int) -> dict:
         )).scalar_one_or_none()
     if row is None:
         return {}
+    from app.application.tts_service import resolve_cloud_voice
     return {
         "gender": row.gender,
         "voice": row.voice,
+        "tts_voice": resolve_cloud_voice(row.voice),
         "voice_rate": row.voice_rate,
         "voice_pitch": row.voice_pitch,
         "name": row.name,

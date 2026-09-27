@@ -143,6 +143,11 @@ def plan_shadow_record(user_message, *, has_time_phrase=False, has_extra_queries
 
     - would_lose：门说「不用检索」但实际检索**命中了内容** ⇒ 门若生效会漏（越低越好）；
     - wasted：门说「要检索」但实际**空手**（无效检索，供上下文成本口径参考）。
+
+    另附一路「严格口径」（*_strict）：同一套判定把 has_extra_queries 强制为 False 再算一次
+    （＝「感知派生查询不算数时门会怎么判」）。线上感知派生查询几乎每轮都有，会把主判定短路成
+    extra_queries 而失去区分度，严格口径用于观察「去掉这一路后」门到底能不能筛掉东西。
+    **主判定 retrieve/reason/confidence 不受影响**，严格口径只写进留痕。
     """
     d = decide_retrieval(
         user_message,
@@ -150,11 +155,21 @@ def plan_shadow_record(user_message, *, has_time_phrase=False, has_extra_queries
         has_extra_queries=has_extra_queries,
         is_continue=is_continue,
     )
+    ds = decide_retrieval(
+        user_message,
+        has_time_phrase=has_time_phrase,
+        has_extra_queries=False,
+        is_continue=is_continue,
+    )
     hits = int(hit_count or 0)
     return {
         "retrieve": d.retrieve,
         "reason": d.reason,
         "confidence": d.confidence,
+        "retrieve_strict": ds.retrieve,
+        "reason_strict": ds.reason,
+        "confidence_strict": ds.confidence,
+        "would_skip_strict": not ds.retrieve,
         "hit_count": hits,
         "would_lose": (not d.retrieve) and hits > 0,
         "wasted": d.retrieve and hits == 0,

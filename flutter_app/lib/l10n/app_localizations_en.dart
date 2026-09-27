@@ -960,6 +960,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get voiceYunlong => 'Yunlong · Cantonese male';
 
   @override
+  String voiceCloudItem(Object name) {
+    return '$name (cloud)';
+  }
+
+  @override
   String get voicePreviewFailConfig =>
       'Preview failed: TTS unavailable, check server voice config';
 

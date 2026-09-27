@@ -26,7 +26,13 @@ class AICharacter(Base):
     weight: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     gender: Mapped[str | None] = mapped_column(String(10), nullable=True, default=None)
     birthday: Mapped[str | None] = mapped_column(String(10), nullable=True, default=None)  # YYYY-MM-DD
-    voice: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)  # 自定义声色：音色 key（NULL=按性别默认）
+    # 音色（S3 2026-09-27 值域扩展，未新增列/未迁移）：VOICE_PRESETS 预设 key ∪ 云端音色清单 id ∪ 空。
+    # 解析优先级（实现收敛在 app/application/tts_service.synthesize）：
+    #   ① 值命中云端音色清单（GET /api/v1/system/tts-voices）⇒ 云端链路直接用它合成，
+    #      edge-tts 兜底不认云端音色 id，仍按 ③ 取默认；
+    #   ② 否则命中预设 key ⇒ 用该预设的 dashscope / edge 音色；
+    #   ③ 否则（空 / NULL / 未知值）⇒ 按 gender 默认（男 Ethan / 女 Cherry / 未设 → 女）。
+    voice: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
     voice_rate: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)  # 语速倍率（1.0=正常；仅 edge-tts 兜底生效）
     voice_pitch: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)  # 语调 Hz 偏移（0=正常；仅 edge-tts 兜底生效）
     timezone_offset: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)  # 所在时区（UTC 偏移小时，NULL=北京时间 UTC+8；朋友圈时间按作者地区显示）

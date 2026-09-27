@@ -6,6 +6,7 @@ import time as _time
 from openai import AsyncOpenAI
 
 from app.config import settings
+from app.utils.llm_channel import CHANNEL_MAX_LEN, get_channel
 from app.utils.logger import get_logger
 
 _logger = get_logger("agent.llm")
@@ -533,7 +534,8 @@ def _record_usage_async(provider: str | None, model: str | None,
                         user_id: int | None = None,
                         config_id: int | None = None,
                         group_owner_id: int | None = None,
-                        estimated: bool = False) -> None:
+                        estimated: bool = False,
+                        *, channel: str | None = None) -> None:
     """异步落库单次 LLM 用量（后台任务，失败仅告警不影响主流程）
 
     T6-M0 项 2(b)（2026-09-27）：``estimated=True`` 表示 prompt/completion 是**估算值**
@@ -541,7 +543,20 @@ def _record_usage_async(provider: str | None, model: str | None,
     调用处日志 + 既有 obs 通道（agent_task_logs.steps_json，route=usage_estimated，
     明细里 estimated=true），使估算行可追溯、不与实测行混读。obs 写入 fire-and-forget、
     失败静默，不影响记账主路径。
+
+    T6-M2 渠道归因（2026-09-27）：``channel`` 是**全仓唯一的渠道读取点**。
+    ① 读取必须发生在 spawn 之前、且把值闭包进 ``_do``：落库本身走 ``spawn_background``，
+      子任务会先把上下文切成 ``server``（勘察 §3 防护 1；若把读取推迟到 ``_do`` 内，
+      前台行会被派生边界的清空逻辑一起抹掉——这是最容易写错的一处）。
+    ② 显式 ``channel=`` 优先于上下文：渠道名已在调用方手里的（插件/开放 API 入口）走显式传参。
+    ③ fail-open：取值异常只记 WARNING，渠道留 NULL（读端归 (unknown)），绝不影响记账。
     """
+    try:
+        _channel = ((channel or get_channel() or "")[:CHANNEL_MAX_LEN]) or None
+    except Exception as e:  # 归因失败不得影响记账
+        _logger.warning("usage channel resolve failed: %s", e)
+        _channel = None
+
     async def _do() -> None:
         try:
             from app.db.database import async_session_factory
@@ -555,6 +570,7 @@ def _record_usage_async(provider: str | None, model: str | None,
                     total_tokens=prompt_tokens + completion_tokens,
                     reasoning_tokens=reasoning_tokens,
                     task=(task or "")[:30] or None,
+                    channel=_channel,  # T6-M2：值在 spawn 前同步取自上下文/显式参数（见上方注）
                     user_id=user_id,
                     config_id=config_id,
                     group_owner_id=group_owner_id,

@@ -3,7 +3,7 @@
 业务体在 app/application/characters.py（F5-b，2026-08-31 迁入）；本文件保留路由与
 参数依赖注入（门面重导出已随 F8 删旧移除，历史 import 路径请改指 app.application.characters）。
 """
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application import characters as _svc
@@ -20,6 +20,18 @@ from app.schemas.character import (
 router = APIRouter(prefix="/api/v1/characters", tags=["Characters"])
 
 
+def _check_voice_or_400(value: str | None) -> None:
+    """S3 音色值域校验：空 ∪ 既有预设 key ∪ 云端音色清单 id；其余拒 400，脏值不入库。
+
+    值域解析口径收敛在 tts_service（VOICE_PRESETS / list_cloud_voices），此处只做入口把关。
+    """
+    from app.application.tts_service import VOICE_PRESETS, resolve_cloud_voice
+    v = (value or "").strip()
+    if not v or v in VOICE_PRESETS or resolve_cloud_voice(v):
+        return
+    raise HTTPException(status_code=400, detail="invalid_voice")
+
+
 @router.post("", response_model=CharacterResponse, status_code=status.HTTP_201_CREATED)
 async def create_character(
     data: CharacterCreate,
@@ -27,6 +39,7 @@ async def create_character(
     user_id: int = Depends(get_current_user_id),
 ):
     """创建新 AI 角色"""
+    _check_voice_or_400(data.voice)
     return await _svc.create_character(db, data, user_id)
 
 
@@ -81,6 +94,7 @@ async def update_character(
     lang: str = Header(default="zh"),
 ):
     """修改 AI 角色信息"""
+    _check_voice_or_400(data.voice)
     return await _svc.update_character(db, character_id, data, user_id, lang)
 
 

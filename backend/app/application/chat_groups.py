@@ -23,6 +23,7 @@ from app.db.database import async_session_factory
 from app.models.chat import ChatGroup, ChatGroupMember, ChatGroupMessage, GroupMemory
 from app.models.character import AICharacter
 from app.models.game import GameSession
+from app.models.memory import Memory
 from app.utils.logger import get_logger
 
 _logger = get_logger("application.chat_groups")
@@ -887,7 +888,7 @@ async def delete_group(
     user_id: int,
     lang: str,
 ):
-    """删除群：级联成员/消息/群记忆；群游戏对局脱离群（保留历史对局）。"""
+    """删除群：级联成员/消息/群记忆；群游戏对局与群内沉淀的个人记忆脱离群（本体都保留）。"""
     await _owned_group(db, group_id, user_id, lang)
     # 1) 群记忆随群删除（group_memories.group_id → DB 兜底 CASCADE）
     await db.execute(delete(GroupMemory).where(GroupMemory.group_id == group_id))
@@ -895,7 +896,12 @@ async def delete_group(
     await db.execute(
         update(GameSession).where(GameSession.group_id == group_id).values(group_id=None)
     )
-    # 3) 既有：成员 / 消息 / 群
+    # 3) D-5（2026-09-27 派单）：群内沉淀到个人记忆的指针同样脱群。memories.group_id 是**无外键**
+    #    的节流标记列（models/memory/__init__.py:30），群没了指针还挂着 → 按群节流/分组展示的读
+    #    路径会拿到查无此群的 id，且 PRAGMA foreign_key_check 永远查不出来。记忆本体属于角色/用户
+    #    （群只是标签）⇒ 置 NULL 不删行；NULL 正是该列文档化的「非群聊」取值，与第 2 步同范式。
+    await db.execute(update(Memory).where(Memory.group_id == group_id).values(group_id=None))
+    # 4) 既有：成员 / 消息 / 群
     await db.execute(delete(ChatGroupMember).where(ChatGroupMember.group_id == group_id))
     await db.execute(delete(ChatGroupMessage).where(ChatGroupMessage.group_id == group_id))
     await db.execute(delete(ChatGroup).where(ChatGroup.id == group_id))

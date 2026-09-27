@@ -300,6 +300,12 @@
   "voiceYunyang": "云扬 · 新闻男声",
   "voiceYunfeng": "云枫 · 成熟男声",
   "voiceYunlong": "雲龍 · 粤语男声",
+  "voiceCloudItem": "{name}（云端）",
+  "@voiceCloudItem": {
+    "placeholders": {
+      "name": {}
+    }
+  },
   "voicePreviewFailConfig": "试听失败：语音合成不可用，请检查服务器语音配置",
   "voicePreviewFailNet": "试听失败，请检查网络",
   "avatarUploadFail": "头像上传失败",

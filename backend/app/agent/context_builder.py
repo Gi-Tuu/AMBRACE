@@ -1,4 +1,5 @@
 """上下文构建器：组装 SYSTEM_PROMPT + 朋友圈/记忆/概要上下文"""
+import contextvars
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import func, select
 from app.db.database import async_session_factory
@@ -128,6 +129,150 @@ TOOL_DEFS_RESERVE_TOKENS = 500
 MIN_SYSTEM_BUDGET_TOKENS = 256
 
 
+# ── S2（2026-09-27，M0）账号级上下文预算档位 ────────────────────────────────
+# 三档「标准 / 加长 / 最长」= system 总预算 token。**分区配额 _SECTION_QUOTA_TOKENS 不随档位
+# 放大**：加长买的是「超顶时尾部裁剪少牺牲几块」，不是「单块可以无限膨胀」（各分区仍各自封顶）。
+# 取值依据（2026-09-27 实测：一轮 16 段共 8133 字符 ≈ 4k token，远低于 9000 硬顶 ⇒ 预算侧可行，
+# 真正的约束是注意力稀释与输入费用线性上涨）：
+#   standard  = TOTAL_SYSTEM_QUOTA_TOKENS（动态取，永不与现状硬顶漂移）→ 未设置账号逐字节旧行为
+#   extended  = 13000 ≈ 现状 ×1.45，覆盖「长历史 + 多分区同时在线」的典型场景（实测 4k 用量下
+#               这一档基本不会再触发尾部裁剪）
+#   max       = 18000 ≈ 现状 ×2，约等于降本前 B1 硬顶（14000）的 1.3 倍，仍是可控区间
+# 夹紧上限 20000 是**护栏不是档位**：再往上低价值块开始淹没【本轮提醒】/人设指令，注意力稀释的
+# 代价高于信息增益，且单个配置项不该能把一轮输入推到不可控水平。下限复用 MIN_SYSTEM_BUDGET_TOKENS
+# （256），保证任何脏值都算不出 0/负预算。越界一律夹回、绝不抛错（对话链路不能被配置打断）。
+CONTEXT_BUDGET_TIER_STANDARD = "standard"
+CONTEXT_BUDGET_TIER_EXTENDED = "extended"
+CONTEXT_BUDGET_TIER_MAX = "max"
+# 注：standard 刻意不入表——它的值恒等于 TOTAL_SYSTEM_QUOTA_TOKENS（见 context_budget_tier_tokens），
+# 写进表就会在硬顶调整时出现「表值 ≠ 现状」的第二个事实源。
+CONTEXT_BUDGET_TIERS: dict[str, int] = {
+    CONTEXT_BUDGET_TIER_EXTENDED: 13000,
+    CONTEXT_BUDGET_TIER_MAX: 18000,
+}
+CONTEXT_BUDGET_TIER_DEFAULT = CONTEXT_BUDGET_TIER_STANDARD
+CONTEXT_BUDGET_TIER_CEILING_TOKENS = 20000
+CONTEXT_BUDGET_TIER_FLOOR_TOKENS = MIN_SYSTEM_BUDGET_TOKENS
+
+# 本回合生效的档位（原值，None = 未解析/未设置 = 标准档）。
+# 为什么用 ContextVar 而不是参数透传：裁剪在装配链深处是**同步**函数
+# （_apply_system_total_quota(messages, character_id=...)），拿不到 user_id 也没有 db 会话；
+# 把 user_id/预算塞进该签名要改白名单外的 legacy.py。同项目先例：app/utils/llm_channel.py
+# 的渠道归因也是「协程入口 set、深处唯一读取点 get」。asyncio Task 创建时复制上下文快照
+# （见 app/api/chat.py:27 的同一认知），故并发回合之间互不污染。
+_tier_turn_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "context_budget_tier_turn", default=None
+)
+
+
+def _tier_clamp_bounds() -> tuple[int, int]:
+    """夹紧区间 (下限, 上限)：上限至少 1，下限不越过上限（常量被改坏也算得出合法区间）。"""
+    ceiling = max(int(CONTEXT_BUDGET_TIER_CEILING_TOKENS), 1)
+    return min(max(int(CONTEXT_BUDGET_TIER_FLOOR_TOKENS), 1), ceiling), ceiling
+
+
+def context_budget_tier_tokens(tier: object = None) -> int:
+    """档位 → 该档的 system 总预算 token（纯函数，任何输入都不抛错）：
+
+    - ``None`` / 空串 / 未知档名 / 非数字垃圾 → 标准档 = ``TOTAL_SYSTEM_QUOTA_TOKENS``
+      （历史脏值、将来版本回退、读库失败一律退回现状，不放大也不禁用）；
+    - ``standard`` / ``extended`` / ``max`` → 对应档值（standard 动态取总硬顶，见上注）；
+    - 数值或数字串 → 视为直接给出的 token 数，夹紧到 [FLOOR, CEILING]；
+    - 档表值本身越界（例如将来有人把 max 调成 30000）同样夹回上限。
+    """
+    floor, ceiling = _tier_clamp_bounds()
+    if tier is None or isinstance(tier, bool):  # bool 是 int 子类：True 不是预算，按未设置处理
+        return TOTAL_SYSTEM_QUOTA_TOKENS
+    if isinstance(tier, (int, float)):
+        return max(floor, min(int(tier), ceiling))
+    name = str(tier).strip().lower()
+    if not name or name == CONTEXT_BUDGET_TIER_STANDARD:
+        return TOTAL_SYSTEM_QUOTA_TOKENS
+    if name in CONTEXT_BUDGET_TIERS:
+        value = max(floor, min(int(CONTEXT_BUDGET_TIERS[name]), ceiling))
+        return value
+    try:  # 数字串按「直接给 token」处理（脏值路径，同样夹紧）
+        return max(floor, min(int(float(name)), ceiling))
+    except ValueError:
+        return TOTAL_SYSTEM_QUOTA_TOKENS
+
+
+def normalize_context_budget_tier(tier: object) -> str:
+    """任意输入 → 规范档位名（写入侧用，单调、不抛错、越界夹到最近的合法档）：
+
+    - 三个合法档名原样返回（大小写/空格归一）；``""`` / ``default`` / ``reset`` → standard；
+    - 数值：≥ max 档 → max，≥ extended 档 → extended，其余（含越界负值/0）→ standard；
+      即「25000」被夹回 max（=18000，仍 ≤ 上限 20000），而不是报错打断设置动作；
+    - 无法识别的字符串 → standard（等价于恢复默认）。
+    """
+    name = ("" if tier is None or isinstance(tier, bool) else str(tier)).strip().lower()
+    if name in CONTEXT_BUDGET_TIERS:
+        return name
+    if not name or name in (CONTEXT_BUDGET_TIER_STANDARD, "default", "reset"):
+        return CONTEXT_BUDGET_TIER_STANDARD
+    try:
+        value = int(float(name))
+    except ValueError:
+        return CONTEXT_BUDGET_TIER_STANDARD
+    if value >= context_budget_tier_tokens(CONTEXT_BUDGET_TIER_MAX):
+        return CONTEXT_BUDGET_TIER_MAX
+    if value >= context_budget_tier_tokens(CONTEXT_BUDGET_TIER_EXTENDED):
+        return CONTEXT_BUDGET_TIER_EXTENDED
+    return CONTEXT_BUDGET_TIER_STANDARD
+
+
+def get_turn_context_budget_tier() -> str | None:
+    """本回合档位原值（None = 未解析/未设置 → 标准档）；异常一律回退 None。"""
+    try:
+        return _tier_turn_var.get()
+    except Exception as e:  # 理论上不会发生（contextvar 在未运行上下文中才会抛）
+        _logger.warning("context budget tier read failed: %s", e)
+        return None
+
+
+def set_turn_context_budget_tier(tier: object) -> contextvars.Token | None:
+    """标记本回合档位（协程入口调用一次），返回 token 供 ``reset_turn_context_budget_tier`` 复原。
+
+    set 失败（理论上只在无运行上下文时）→ 返回 None，调用方照常往下走（fail-open=标准档）。
+    """
+    resolved = None if tier is None else normalize_context_budget_tier(tier)
+    try:
+        return _tier_turn_var.set(resolved)
+    except Exception as e:
+        _logger.warning("context budget tier set failed tier=%s: %s", tier, e)
+        return None
+
+
+def reset_turn_context_budget_tier(token: contextvars.Token | None) -> None:
+    """复原到 set 之前（token 为空或跨上下文 reset 只告警，绝不打断收尾）。"""
+    if token is None:
+        return
+    try:
+        _tier_turn_var.reset(token)
+    except Exception as e:
+        _logger.warning("context budget tier reset failed: %s", e)
+
+
+async def _resolve_account_budget_tier(user_id: object) -> str | None:
+    """按账号读档位原值（存储读端在 app/application/system.py，本函数只做 fail-open 包装）。
+
+    无 user_id / 无覆盖行 / 查库异常 → None（= 未设置 = 标准档 = 逐字节旧行为）。
+    """
+    try:
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        return None
+    if uid <= 0:
+        return None
+    try:
+        from app.application.system import read_account_context_budget_tier
+
+        return await read_account_context_budget_tier(uid)
+    except Exception as e:
+        _logger.warning("context budget tier resolve failed user=%s: %s", uid, e)
+        return None
+
+
 def context_budget_reserve_enabled(*, flags: dict | None = None) -> bool:
     """预算预留是否生效（纯函数，flags 默认读 AGENT_FLAGS；读不到按「关」处理）。"""
     if flags is None:
@@ -139,17 +284,31 @@ def context_budget_reserve_enabled(*, flags: dict | None = None) -> bool:
     return bool((flags or {}).get("context_budget_reserve", False))
 
 
-def _effective_system_budget_tokens(*, reserve_enabled: bool | None = None) -> int:
+def _effective_system_budget_tokens(
+    *, reserve_enabled: bool | None = None, tier: object = None
+) -> int:
     """有效系统预算（纯函数，读模块级 TOTAL_SYSTEM_QUOTA_TOKENS，便于测试改桩）：
 
     - 关（默认）：= TOTAL_SYSTEM_QUOTA_TOKENS，与改动前逐字一致；
     - 开：= 总硬顶 − REPLY_RESERVE_TOKENS − TOOL_DEFS_RESERVE_TOKENS；
     - 下限保护：总硬顶 ≤ 0 原样返回（旧语义=不做总量裁剪）；预留吃掉全部额度时取
       ``min(MIN_SYSTEM_BUDGET_TOKENS, 总硬顶)`` 保底 —— 不出现负预算，也不越过总硬顶。
+
+    S2（2026-09-27）档位维（在预留之前生效，两者叠加而非互斥）：
+    - ``tier`` 显式传入（读数端用，档名或 token 数均可）→ 按该档夹紧后的 token 数作总预算；
+    - 未传 → 读本回合 ContextVar（装配链深处唯一取值点）；未设置（ContextVar=None，含
+      「根本没走 build_context 入口」的旧调用点与测试）→ 逐字节旧行为 = TOTAL_SYSTEM_QUOTA_TOKENS；
+    - 档位只抬**总预算**，抬不动分区配额；超预算仍走 _apply_system_total_quota 既有裁剪 + 留痕。
     """
     total = TOTAL_SYSTEM_QUOTA_TOKENS
     if total <= 0:
-        return total
+        return total  # 旧语义的总开关：硬顶 ≤ 0 表示不做总量裁剪，档位无权把它打开
+    if tier is None:
+        tier = get_turn_context_budget_tier()
+    if tier is not None:
+        tier_total = context_budget_tier_tokens(tier)
+        if tier_total > 0:
+            total = tier_total
     if reserve_enabled is None:
         reserve_enabled = context_budget_reserve_enabled()
     if not reserve_enabled:
@@ -766,22 +925,29 @@ async def build_context(state: dict, *, stream: bool | None = None) -> dict:
     except Exception:
         pass
 
-    if use_registry:
-        from app.agent import context as _ctx
-        result = await _ctx.build_context(state, stream=stream)
-    else:
-        # F8 回退观测：flag 关=旧实现直入（观测一版本零命中后可移除 flag-off 分支，F8-2 前置 A）
-        try:
-            from app.memory.observability import obs_event
-            obs_event(state.get("character_id"), "context_legacy_flag_off", {})
-        except Exception:
-            pass
-        result = await build_context_legacy(state, stream=stream)
-
-    # P1 压缩存活项清单（要求 B②）：装配完成后作为高优先 system 块注入（灰度双条件，
-    # 关/未命中 → 直接返回，不多查库、消息结构逐字不变）。
+    # S2（2026-09-27，M0）：本回合生效预算档位——按账号解析后写入 ContextVar，供同步的
+    # _effective_system_budget_tokens 在装配深处取值（裁剪函数拿不到 user_id/db，见档位节注释）。
+    # 每轮入口必 set（含 None），故即使本轮异常退出没走到 finally，下一轮也会先覆盖成自己的值。
+    _tier_token = set_turn_context_budget_tier(await _resolve_account_budget_tier(state.get("user_id")))
     try:
-        await _inject_survival_checklist(result if isinstance(result, dict) else state)
-    except Exception as e:
-        _logger.warning("Survival checklist inject skipped: %s", e)
+        if use_registry:
+            from app.agent import context as _ctx
+            result = await _ctx.build_context(state, stream=stream)
+        else:
+            # F8 回退观测：flag 关=旧实现直入（观测一版本零命中后可移除 flag-off 分支，F8-2 前置 A）
+            try:
+                from app.memory.observability import obs_event
+                obs_event(state.get("character_id"), "context_legacy_flag_off", {})
+            except Exception:
+                pass
+            result = await build_context_legacy(state, stream=stream)
+
+        # P1 压缩存活项清单（要求 B②）：装配完成后作为高优先 system 块注入（灰度双条件，
+        # 关/未命中 → 直接返回，不多查库、消息结构逐字不变）。
+        try:
+            await _inject_survival_checklist(result if isinstance(result, dict) else state)
+        except Exception as e:
+            _logger.warning("Survival checklist inject skipped: %s", e)
+    finally:
+        reset_turn_context_budget_tier(_tier_token)
     return result

@@ -23,6 +23,12 @@ from app.application.chat_service import (
 )
 from app.auth.deps import get_current_user_id
 from app.utils.errors import friendly_llm_error
+# T6-M2 渠道归因：App 主链路（WS/SSE/HTTP 及各散点消息端点）在入口显式标 app。
+# 每个 HTTP 请求 / 每条 WS 连接都是独立 asyncio Task（contextvars 按 Task 复制快照），
+# 入口 set 只在本次请求内有效、不跨请求泄漏，故无需在响应返回处 reset；
+# 真正需要成对清理的是服务层的复用型常驻 task（见 chat_service.send_and_receive）。
+# 取值只在这里定，落库统一由 llm_client._record_usage_async 读取。
+from app.utils.llm_channel import CHANNEL_APP, set_channel
 from app.ws.connection_manager import connected_clients
 
 
@@ -45,6 +51,7 @@ async def save_upload_image(session_id: int, file: UploadFile, lang: str = "zh")
 @router.websocket("/ws/{session_id}")
 async def websocket_chat(websocket: WebSocket, session_id: int):
     """WebSocket 实时聊天（?token= 鉴权 + 会话归属校验）"""
+    set_channel(CHANNEL_APP)  # T6-M2：App 主链路（WS，含 continue_chat 续写）
     from jose import jwt, JWTError
     from app.auth.config import auth_settings as _as
     from app.db.database import async_session_factory as _dbf
@@ -311,6 +318,9 @@ async def send_message(
     P3-5：外部 API/脚本调用会多等最多 8s 自然延迟。`?natural_delay=false` 或携带
     `X-API-Client` 头时跳过；App 主链路（WS/SSE）仍保持延迟。
     """
+    # T6-M2：App 主链路（HTTP /send）。外部脚本/开放 API 也记 app——渠道词表本批只定
+    # app/wechat_ilink/server 三值，"api" 细分待插件与开放 API 侧显式传参那批（勘察 §2 末）。
+    set_channel(CHANNEL_APP)
     # 获取 session 信息（归属校验）
     session = await get_owned_session(db, data.session_id, user_id)
     if not session:
@@ -359,6 +369,9 @@ async def stream_message(
     - `{type:error, detail}`：流式异常（随后回退非流式 chunked 并继续推 block/done）；
     - `{type:cold_war, message}`：冷战拦截。
     """
+    # T6-M2：App 主链路（SSE）。必须在下面 create_task(_run) 之前设——Task 创建时复制上下文
+    # 快照，真流式生成跑在那个子 Task 里，晚设就赶不上（回退 chunked 也在同一子 Task 内）。
+    set_channel(CHANNEL_APP)
     session = await get_owned_session(db, session_id, user_id)
     if session is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "session_not_found"))
@@ -462,6 +475,7 @@ async def upload_chat_image(
     """上传图片消息：保存图片 → 本地图片理解（OCR）→ 生成 AI 回复。
     硬约束：图片文件/二进制绝不传入 deepseek；理解结果以文本形式进上下文。
     content 存用户配文（用户可见），extra_meta 存图片描述（仅 AI 上下文使用）。"""
+    set_channel(CHANNEL_APP)  # T6-M2：App 主链路（图片消息 → AI 回复）
     # 校验会话归属
     session = await get_owned_session(db, session_id, user_id)
     if session is None:
@@ -699,6 +713,7 @@ async def upload_chat_file(
 ):
     """上传文件消息：保存文件 → 文本类提取摘要（非文本仅元数据）→ 生成 AI 回复。
     文件二进制不进入 LLM；摘要/元数据以文本进上下文。content 存文件名（用户可见）。"""
+    set_channel(CHANNEL_APP)  # T6-M2：App 主链路（文件消息 → AI 回复）
     session = await get_owned_session(db, session_id, user_id)
     if session is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "session_not_found"))
@@ -857,6 +872,7 @@ async def send_emoji_message(
     lang: str = Header(default="zh"),
 ):
     """发送表情消息（自定义/市场贴图）：image 消息 + extra_meta.image_desc（表情名+含义），AI 直接理解，零 OCR 成本"""
+    set_channel(CHANNEL_APP)  # T6-M2：App 主链路（表情消息 → AI 回复）
     emoji_url = str(body.get("emoji_url") or "").strip()
     name = str(body.get("name") or "表情").strip()[:30]
     meaning = str(body.get("meaning") or "").strip()[:200]

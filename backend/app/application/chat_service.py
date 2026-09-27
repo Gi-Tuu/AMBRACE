@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 from app.utils.async_tasks import spawn_background
+from app.utils.llm_channel import reset_channel, set_channel
 import time
 from datetime import datetime, timezone
 
@@ -690,6 +691,7 @@ async def _run_agent_core(
                 throttle=_search_throttle,
                 inject_enabled=_search_inject_enabled,
                 save_history=_save_browser_history,
+                initiator="user",  # S1 发起方口径：聊天回合＝用户请求，必须回复（不许静默）
             )
             _trace_searched = bool(_loop_steps)
             if _loop_steps:
@@ -1052,11 +1054,19 @@ async def send_and_receive(
     )
 
     # 公共 Agent 主流程（HTTP 专属：用户定时承诺 / 自主搜索 Loop / 多工具任务化）
-    core = await _run_agent_core(
-        session_id, user_id, character_id, content, lang, user_msg_id,
-        user_timer=True, search_loop=True, run_chat_task=True, reply_delay=reply_delay,
-        channel_hint=channel,
-    )
+    # T6-M2 渠道归因：本函数是唯一带 channel 参数的对话入口（微信桥传 wechat_ilink）。
+    # 值进 contextvar，由 llm_client._record_usage_async 这个唯一读取点落到用量行；
+    # try/finally 必清——微信桥是常驻轮询 task，不清会把后续无关轮次的用量也染成 wechat。
+    # App 主链路不传 channel（恒 None），渠道由 API 入口侧设定，这里不做二次覆盖。
+    _ch_token = set_channel(channel) if channel else None
+    try:
+        core = await _run_agent_core(
+            session_id, user_id, character_id, content, lang, user_msg_id,
+            user_timer=True, search_loop=True, run_chat_task=True, reply_delay=reply_delay,
+            channel_hint=channel,
+        )
+    finally:
+        reset_channel(_ch_token)
     if core is None:
         return {"ai_message": None, "memories_updated": False, "cold_war": True}
 
@@ -1204,12 +1214,13 @@ async def send_and_receive_chunked(
                 )).first()
                 if row:
                     gender, voice, voice_rate, voice_pitch = row
-            from app.application.tts_service import synthesize
+            from app.application.tts_service import resolve_cloud_voice, synthesize
             # Phase 0 P0：从 final_state 情绪标记（emotional_state）取 emotion（无则 None）
             tts_url = await synthesize(
                 full_text, str(session_id),
                 gender=gender, voice=voice, voice_rate=voice_rate, voice_pitch=voice_pitch,
                 user_id=user_id, emotion=final_state.get("emotional_state") or None,
+                tts_voice=resolve_cloud_voice(voice),
             )
         except Exception as e:
             _logger.warning("TTS synthesis failed: %s", e)

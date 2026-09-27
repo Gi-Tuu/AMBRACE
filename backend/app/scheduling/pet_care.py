@@ -435,8 +435,20 @@ async def collect_ai_care_events() -> list[dict]:
     care_before = now_naive - timedelta(hours=AI_CARE_INTERVAL_HOURS)
     async with async_session_factory() as db:
         pets = (await db.execute(select(Pet).where(Pet.owner_type == "ai", Pet.abandoned_at.is_(None)))).scalars().all()
+        # D-2 兜底探针（2026-09-27 派单）：owner 角色可能已删（pets.owner_id 无外键）。主修是删角色
+        # 级联里遗弃 AI 宠物（character_cascade.py）；此处再加一层存在性短路——老数据 / 直接改库 /
+        # 其它删除路径留下的死角色候选一律跳过（与 prospective_intent.py:769-775 的 P2-1 探针同口径）。
+        owner_ids = {p.owner_id for p in pets if p.owner_id is not None}
+        alive_chars = set()
+        if owner_ids:
+            alive_chars = set((await db.execute(
+                select(AICharacter.id).where(AICharacter.id.in_(owner_ids))
+            )).scalars().all())
     items = []
     for pet in pets:
+        if pet.owner_id not in alive_chars:
+            _logger.info("AI care skipped (owner character missing) pet=%d owner=%s", pet.id, pet.owner_id)
+            continue
         if pet.hunger >= 30 and pet.cleanliness >= 30 and pet.mood >= 30 and pet.energy >= 30:
             continue
         if await _recent_care(pet.id, care_before):

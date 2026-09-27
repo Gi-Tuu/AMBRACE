@@ -75,6 +75,8 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
   // 角色绑定 LLM 配置（#68 P2：默认（不绑定）/ 我的 LLM 配置 / 主账号共享配置）
   int? _llmConfigId;
   List<Map<String, dynamic>> _llmConfigs = [];
+  // S3 音色：云端音色清单（服务端可扩，GET /api/v1/system/tts-voices）
+  List<Map<String, String>> _cloudVoices = [];
   final AudioPlayer _previewPlayer = AudioPlayer();
   bool _previewing = false;
   bool get isEditing => widget.character != null;
@@ -102,6 +104,7 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
     _talkativenessSet = c?.talkativeness != null;
     _llmConfigId = c?.userLlmConfigId;
     _loadLlmConfigs();
+    _loadCloudVoices();
   }
 
   @override
@@ -125,6 +128,25 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
       if (mounted) setState(() => _llmConfigs = list);
     } catch (_) {
       if (mounted) setState(() => _llmConfigs = []);
+    }
+  }
+
+  /// S3 音色：拉云端音色清单（服务端可扩）；拉不到只少几个候选，不打断编辑页
+  Future<void> _loadCloudVoices() async {
+    try {
+      final r = await ApiClient().dio.get('/api/v1/system/tts-voices');
+      final raw = (r.data as Map)['voices'] as List? ?? const [];
+      final list = raw
+          .whereType<Map>()
+          .map((e) => {
+                'id': '${e['id'] ?? ''}',
+                'label': '${e['label'] ?? ''}',
+              })
+          .where((e) => e['id']!.isNotEmpty)
+          .toList();
+      if (mounted) setState(() => _cloudVoices = list);
+    } catch (_) {
+      // 静默：下拉仍有「默认 + 本地预设」可用
     }
   }
 
@@ -303,6 +325,26 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
       case 'wanlung': return l10n.voiceYunlong;
       default: return key;
     }
+  }
+
+  /// 音色候选（S3）：默认（跟随角色性别）+ 本地预设 + 服务端云端音色清单
+  List<DropdownMenuItem<String>> _voiceItems(AppLocalizations l10n) {
+    final items = <DropdownMenuItem<String>>[
+      DropdownMenuItem(value: '', child: Text(l10n.voiceDefault)),
+      ...kVoicePresets.map(
+        (v) => DropdownMenuItem(value: v.key, child: Text(_voiceLabel(l10n, v.key))),
+      ),
+      ..._cloudVoices.map((v) => DropdownMenuItem(
+            value: v['id'],
+            child: Text(l10n.voiceCloudItem(
+                (v['label']?.isEmpty ?? true) ? v['id']! : v['label']!)),
+          )),
+    ];
+    // 已存值可能不在当前候选里（清单被服务端收窄 / 首次帧尚未拉到），补一项否则 Dropdown 抛断言
+    if (_voice.isNotEmpty && items.every((i) => i.value != _voice)) {
+      items.add(DropdownMenuItem(value: _voice, child: Text(_voiceLabel(l10n, _voice))));
+    }
+    return items;
   }
 
   String _genderLabel(AppLocalizations l10n, String g) {
@@ -489,12 +531,7 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
                   label: l10n.voiceLabel,
                   value: _voice,
                   helper: l10n.voiceHelper,
-                  items: [
-                    DropdownMenuItem(value: '', child: Text(l10n.voiceDefault)),
-                    ...kVoicePresets.map(
-                      (v) => DropdownMenuItem(value: v.key, child: Text(_voiceLabel(l10n, v.key))),
-                    ),
-                  ],
+                  items: _voiceItems(l10n),
                   onChanged: (v) => setState(() => _voice = v ?? ''),
                 ),
                 Divider(height: 1, indent: 46, color: scheme.outlineVariant),

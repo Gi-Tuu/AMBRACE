@@ -1797,6 +1797,12 @@ abstract class AppLocalizations {
   /// **'雲龍 · 粤语男声'**
   String get voiceYunlong;
 
+  /// No description provided for @voiceCloudItem.
+  ///
+  /// In zh, this message translates to:
+  /// **'{name}（云端）'**
+  String voiceCloudItem(Object name);
+
   /// No description provided for @voicePreviewFailConfig.
   ///
   /// In zh, this message translates to:

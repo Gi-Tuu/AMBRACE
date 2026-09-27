@@ -287,6 +287,17 @@ async def speech_preview(data: dict, user_id: int = Depends(get_current_user_id)
     return await _svc.speech_preview(data, user_id, lang)
 
 
+@router.get("/tts-voices")
+async def get_tts_voices(user_id: int = Depends(get_current_user_id)):
+    """S3 云端音色清单（只读）：角色「音色」下拉的数据源。
+
+    返回默认集（本部署实测可用的云端音色）+ 服务端 data/tts_voices.json 的扩充项；
+    与 ai_characters.voice 的值域对应（该列可存既有预设 key 或此处的 id）。
+    """
+    from app.application.tts_service import list_cloud_voices
+    return {"voices": list_cloud_voices()}
+
+
 @router.get("/updates")
 async def get_updates():
     """更新公告：解析 docs/changelog.md，按天折叠（最新在前），供 app 内「更新公告」页展示"""
@@ -330,8 +341,24 @@ async def update_feature_flag(key: str, data: dict, user_id: int = Depends(get_c
 
 @router.get("/context-budget")
 async def get_context_budget(db: AsyncSession = Depends(get_db), user_id: int = Depends(get_current_user_id)):
-    """上下文预算快照（纯读）：P2a 预留口径 + 本账号最近一次系统块超预算被裁的埋点。"""
+    """上下文预算快照（纯读）：S2 账号档位 + P2a 预留口径 + 本账号最近一轮实际占用/最近一次被裁的埋点。"""
     return await _svc.get_context_budget(user_id, db)
+
+
+# ── S2 上下文预算档位（M0，2026-09-27：账号级「上下文注入长度」偏好，只写本账号）──
+
+@router.put("/context-budget/tier")
+async def set_context_budget_tier(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """设置本账号上下文预算档位（standard / extended / max）。
+
+    越界与脏值不报错：服务端一律夹到最近的合法档（详见 application.system.set_context_budget_tier）；
+    下一轮对话装配即生效（装配入口每轮读库，无缓存）。"""
+    return await _svc.set_context_budget_tier(user_id, db, body, lang)
 
 
 # ── 备份一键导出（#54，2026-08-23：仅主账号；复用 scripts/backup.do_backup）──

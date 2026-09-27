@@ -181,6 +181,72 @@ async def _gen_with_reasoning(messages: list[dict], character_id: int | None, us
     return await chat_completion(messages=messages, temperature=temperature, max_tokens=max_tokens,
                                  task="message", user_id=user_id), "" 
 
+# ── S1 第二步（2026-09-27）：主动消息链「角色自主搜索」（proactive_self_search 开关，默认关）──
+# 复刻 agent/loop.py run_search_loop 的 self 分支语义（initiator="self"），唯一差异＝regen 走本文件
+# _gen_with_reasoning（task="message"、按角色思考挡位），不走 nodes.generate_response（后者 task="chat"
+# 且忽略主动链的思考挡位/上下文，会把主动消息带偏）。开关关时本函数永不被调用（逐字节旧行为）。
+
+async def _proactive_self_search(response: str, *, messages: list[dict],
+                                 character_id: int | None, user_id: int | None) -> tuple[str, bool]:
+    """主动消息首轮输出若含 [SEARCH]，跑一次受控自主搜索；返回 (最终正文, 本轮是否不产出消息)。
+
+    口径（用户 2026-09-27 拍板，与 run_search_loop self 分支一致）：
+    - 无 [SEARCH] / 被节流 / 搜索注入关 / 搜索失败 → (原候选剥离标记后, False)：仍发原候选，不套「不说」；
+    - 搜索成功且模型选择「说」 → (再生成正文, False)；
+    - 搜索成功且模型「什么都不说」（正文空/只剩标记） → ("", True)：由调用方 return []（走 segments 为空不发送那条路）。
+    本批不落小手机浏览记录（save_history 留空）；搜索/重试/轮数上限复用 loop.py 既有常量。
+    """
+    from app.agent.actions import extract_search
+    from app.agent.loop import MAX_SEARCH_ROUNDS, SEARCH_RETRY, _SEARCH_RESULT_TEMPLATE_SELF
+    from app.application.chat.tools import _run_web_search, _search_throttle, _search_inject_enabled
+
+    body = response or ""
+    searched = False  # 只有「成功搜索并再生成」后，空正文才判为「本轮不产出消息」
+    try:
+        round_no = 1
+        while round_no <= max(1, MAX_SEARCH_ROUNDS):
+            clean, query = extract_search(body)
+            if not query:  # 无 [SEARCH]（或补查轮已无标记）→ 剥离后原样返回
+                body = clean
+                break
+            # 节流 / 搜索注入开关门禁：不过 → 仍发原候选（剥离标记），不套「不说」
+            if not (_search_throttle(user_id) and _search_inject_enabled()):
+                _logger.info("Proactive self search throttled/off char=%s query=%.60s", character_id, query)
+                body = clean
+                break
+            _logger.info("Proactive self search char=%s round=%d query=%.60s", character_id, round_no, query)
+            # 执行搜索（与聊天链同一 _run_web_search 原语；空结果重试 SEARCH_RETRY 次）
+            result = ""
+            for _attempt in range(SEARCH_RETRY + 1):
+                result = await _run_web_search(query)
+                if result:
+                    break
+            if not result:  # 搜索失败/空 → 仍发原候选（剥离标记）
+                _logger.info("Proactive self search failed char=%s round=%d query=%.60s", character_id, round_no, query)
+                body = clean
+                break
+            # observe：注入 self 结果模板（只作参考）→ regen 走 _gen_with_reasoning（不落浏览记录）
+            _msgs = messages + [{
+                "role": "system",
+                "content": _SEARCH_RESULT_TEMPLATE_SELF.format(result=result),
+            }]
+            regen_text, _ = await _gen_with_reasoning(
+                _msgs, character_id, user_id, temperature=0.9, max_tokens=512)
+            body = (regen_text or "").strip()
+            searched = True
+            round_no += 1
+        # 兜底剥离（幂等）：self 分支下正文空 = 本轮不产出消息（仅当确实搜过一次才成立）
+        body = extract_search(body)[0]
+        return body, (searched and not body.strip())
+    except Exception as e:
+        _logger.warning("Proactive self search loop failed char=%s: %s", character_id, e)
+        # 异常一律发原候选（剥离标记），绝不因搜索环节把消息吞掉
+        try:
+            return extract_search(response or "")[0], False
+        except Exception:
+            return response or "", False
+
+
 # 行为类型 → 场景描述（注入 prompt 提升真实感）
 # 事件切片：行为类型 → 当前正在发生的一件事
 _EVENT_DESC = {
@@ -620,6 +686,14 @@ async def generate_proactive_event(
     """
     scenario = _EVENT_DESC.get(behavior, _EVENT_DESC["default"])
     idle_desc = _describe_idle(idle_minutes, 2)
+    # S1 第二步（2026-09-27）：主动链「角色自主搜索」开关（默认关=逐字节旧行为，读一次即可）。
+    # 关 ⇒ 下面既不往 prompt 里开放 [SEARCH]，也不在首轮生成后调用 _proactive_self_search（不读 SEARCH、不加时延）。
+    _self_search_on = False
+    try:
+        from app.agent.loop import AGENT_FLAGS as _af_pss
+        _self_search_on = bool(_af_pss.get("proactive_self_search", False))
+    except Exception:
+        _self_search_on = False
     # B1-③（方案 §5.3e）：主动接触补"双向"导向（仅 outreach 新链路启用，flag 关零变化）
     if outreach_intent:
         scenario += " 并自然地把话题引向好友/向好友抛一个小问题，不要只自顾自说。"
@@ -932,6 +1006,15 @@ async def generate_proactive_event(
         "（现在是几点就是几点，上午别写\"下午\"）。"
         "注入的『你记得的近期事情/复盘/记忆』里的时间词属于该记录发生时，别当成本次对话的今天。"
     )
+    # S1 第二步（proactive_self_search 开）：向主动链开放 [SEARCH]——除 [MEMO] 外再允许一个查证标记。
+    # 关时不追加这段（逐字节旧 prompt）。
+    if _self_search_on:
+        prompt += (
+            "\n【搜索能力】在 [MEMO] 之外，你还可以额外输出一次 [SEARCH]你想查证的内容[/SEARCH]"
+            "（单独占一行）：如果你要说的这件事里有个没把握的事实/说法想先查一下，系统会真实搜索并把结果交回给你，"
+            "你再决定怎么说。只在确实想查证时用（一条消息最多 1 次），不需要查证就绝对不要输出该标记；"
+            "查到后用不上也可以只字不提，但无论如何不要说『我去搜一下/等着我去查』这类话。\n"
+        )
 
     messages = [
         {"role": "system", "content": "你是一个真实的朋友，正在给好友发消息。按格式输出，每段一行。"},
@@ -966,6 +1049,16 @@ async def generate_proactive_event(
         response, last_reasoning = await _gen_with_reasoning(
             messages, character_id, user_id, temperature=0.9, max_tokens=512)
         response = (response or "").strip().strip('"').strip("'")
+
+        # S1 第二步：首轮生成后若含 [SEARCH]，走一次角色自主搜索（regen 走 _gen_with_reasoning）。
+        # 开关关 ⇒ 整段跳过（逐字节旧行为）；「本轮不产出消息」⇒ 直接 return []（走 segments 为空不发送那条路，
+        # 不填占位、不发空串/省略号）；搜索失败/被节流 ⇒ _proactive_self_search 已回原候选，继续往下发原候选。
+        if _self_search_on and attempt == 0:
+            response, _self_no_msg = await _proactive_self_search(
+                response, messages=messages, character_id=character_id, user_id=user_id)
+            if _self_no_msg:
+                _logger.info("Proactive self search: 角色选择不说，本轮不发消息 char=%s", character_id)
+                return [] if not return_reasoning else ([], last_reasoning)
 
         if _guard_on:
             # 开：未闭合括号/引号不落刀（后续行并入当前段）

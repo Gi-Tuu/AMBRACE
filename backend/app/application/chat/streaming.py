@@ -111,6 +111,7 @@ async def _synthesize_chunks_tts(
             url = await synthesize(
                 text, subdir=str(session_id),
                 gender=params.get("gender"), voice=params.get("voice"),
+                tts_voice=params.get("tts_voice"),
                 voice_rate=params.get("voice_rate"), voice_pitch=params.get("voice_pitch"),
                 user_id=user_id, emotion=emotion,
             )

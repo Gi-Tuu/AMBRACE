@@ -53,6 +53,11 @@ class User(Base):
     # 只由迁移 f6a7b8c9d0e1 引入，故两列都登记进 app/db/migrate.py 的当前 schema 哨兵。
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     purge_after: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # S2 上下文预算档位（2026-09-27，M0）：账号级「上下文注入长度」偏好，取值 standard / extended / max。
+    # 与同表 llm_mode 同属「账号级枚举偏好列」先例。NULL = 未设置 = 标准档 = 现状硬顶（逐字节旧行为），
+    # 故老行无需回填。档位 → token 的映射与夹紧只认 app/agent/context_builder.py 的档位表（单一事实源），
+    # 本列只存档位名不存 token，避免代码调档值时历史数据失真。
+    context_budget_tier: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
     parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None, index=True)  # 主账号关联（#68：NULL=独立主账号，非NULL=子账号；P3 受邀码关联用，P0-P2 只用于共享配置判定）
     # 位置信息（2026-08-08）：location_enabled 总开关；location_gps_enabled=获取地理位置（开启后用户位置不可自定义）；
     # location_follow=位置跟随（开启后 AI 位置与用户相同、不可自定义）；timezone_offset_minutes=用户本地时区（分钟，如 480=UTC+8）

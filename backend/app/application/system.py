@@ -1003,6 +1003,29 @@ async def get_llm_usage(
         _logger.warning("llm usage by_task aggregate failed: %s", e)
         by_task = []
 
+    # A4 批 5 / T6 M2 项 2（2026-09-27）：按渠道归因的用量桶 by_channel（app / wechat_ilink / server）。
+    # 与 by_task 同一段纯内存聚合写法（rows 已在内存，零新查询）。channel 为 NULL 的行**不回填**
+    # （勘察 §4：回填会把「渠道归因上线前的历史」与「将来某处漏传」永久混进同一格，失去排错能力），
+    # 这里单独归 (unknown) 桶——沿用 by_task 的 (untagged) 口径：无归因不与真实取值混读。
+    # 整块 fail-open：聚合异常按空处理只记 WARNING，不让用量接口 500。
+    by_channel: list[dict] = []
+    try:
+        _chan_acc: dict[str, dict[str, int]] = {}
+        for r in rows:
+            _ch = (r.channel or "")[:30] or _USAGE_UNKNOWN
+            _b = _chan_acc.setdefault(_ch, {"calls": 0, "total": 0, "prompt": 0, "completion": 0})
+            _b["calls"] += 1
+            _b["total"] += r.total_tokens or 0
+            _b["prompt"] += r.prompt_tokens or 0
+            _b["completion"] += r.completion_tokens or 0
+        by_channel = [
+            {"channel": k, **v}
+            for k, v in sorted(_chan_acc.items(), key=lambda kv: (-kv[1]["total"], kv[0]))
+        ]
+    except Exception as e:
+        _logger.warning("llm usage by_channel aggregate failed: %s", e)
+        by_channel = []
+
     # A8（2026-09-20）：额度改为按账号生效（覆盖 > 全局 > 未设置），与服务器控制台同口径 ——
     # 统一走 app/application/llm_quota.resolve_limit（额度表唯一读写出口）；控制台给某账号设过
     # 覆盖时，App 这里显示的就是该账号的真实额度（并回传 limit_source 便于前端区分来源）。
@@ -1023,6 +1046,8 @@ async def get_llm_usage(
         "by_user": by_user,
         # T6-M0 项 3：只增不减——by_task 是新增项，上面既有字段口径一字未动（前端/既有测试不受影响）
         "by_task": by_task,
+        # T6-M2 项 2：同样只增不减（by_channel 与 by_task 同构，NULL 归 (unknown)）
+        "by_channel": by_channel,
         "can_edit_limit": await is_admin_user(user_id),
     }
 
@@ -1036,7 +1061,7 @@ _USAGE_UNKNOWN = "(unknown)"     # provider / model / 日期缺失的行归这�
 
 
 async def usage_report(days: int = 7) -> dict:
-    """窗口内 LLM 用量报表：total + by_task + by_day + by_model + estimated_calls（只读）。
+    """窗口内 LLM 用量报表：total + by_task + by_channel + by_day + by_model + estimated_calls（只读）。
 
     口径与 ``get_llm_usage`` 一致：库内 created_at 是 UTC naive，窗口按 ``app_local_now()``
     的应用本地日历切（days=N 含今天，向前推 N-1 个本地日界），自然日也按本地日界归桶。
@@ -1076,6 +1101,7 @@ async def usage_report(days: int = 7) -> dict:
         },
         "total": _blank(),
         "by_task": [],
+        "by_channel": [],   # T6-M2：空结构也要带这个键（fail-open 返回体口径一致）
         "by_day": [],
         "by_model": [],
         "estimated_calls": 0,
@@ -1085,7 +1111,7 @@ async def usage_report(days: int = 7) -> dict:
         async with async_session_factory() as db:
             rows = (await db.execute(
                 select(
-                    LlmUsage.task, LlmUsage.provider, LlmUsage.model, LlmUsage.created_at,
+                    LlmUsage.task, LlmUsage.channel, LlmUsage.provider, LlmUsage.model, LlmUsage.created_at,
                     LlmUsage.prompt_tokens, LlmUsage.completion_tokens,
                     LlmUsage.total_tokens, LlmUsage.reasoning_tokens,
                 ).where(LlmUsage.created_at >= start_utc, LlmUsage.created_at <= end_utc)
@@ -1109,6 +1135,7 @@ async def usage_report(days: int = 7) -> dict:
         ]
 
     task_acc: dict[str, dict] = {}
+    chan_acc: dict[str, dict] = {}
     day_acc: dict[str, dict] = {}
     model_acc: dict[tuple[str, str], dict] = {}
     total_b = result["total"]
@@ -1124,6 +1151,7 @@ async def usage_report(days: int = 7) -> dict:
         key_model = ((r.provider or "")[:30] or _USAGE_UNKNOWN,
                      (r.model or "")[:50] or _USAGE_UNKNOWN)
         for acc, key in ((task_acc, (r.task or "")[:30] or _USAGE_UNTAGGED),
+                         (chan_acc, (getattr(r, "channel", None) or "")[:30] or _USAGE_UNKNOWN),
                          (day_acc, day), (model_acc, key_model)):
             b = acc.setdefault(key, _blank())
             b["calls"] += 1
@@ -1134,6 +1162,8 @@ async def usage_report(days: int = 7) -> dict:
             total_b[f] += v
 
     result["by_task"] = _emit(task_acc, lambda k: {"task": k})
+    # T6-M2 项 2：chan_acc 已在上面分桶，这里必须吐出（与 by_task 同排序口径：用量降序）
+    result["by_channel"] = _emit(chan_acc, lambda k: {"channel": k})
     # by_day 不跟随「用量降序」：时间序列按日期升序才是可读的报表形态（其余三桶仍按用量降序）
     result["by_day"] = [{"date": k, **day_acc[k]} for k in sorted(day_acc)]
     result["by_model"] = _emit(model_acc, lambda k: {"provider": k[0], "model": k[1]})
@@ -1274,34 +1304,135 @@ async def update_feature_flag(
 # 与 context_builder._apply_system_total_quota 写埋点时的 route 同名（改埋点名此处同步）
 _CLIP_ROUTE = "quota_clipped_sections"
 _CLIP_WINDOW_HOURS = 24
+# T5 M0 项2（2026-09-27）装配尾部留痕：每轮真装配写一条「system 总字符 + 本次生效预算」，
+# 不依赖 provider usage ⇒ 它就是 S2 读数端「最近一轮实际占用」的样本源。
+_USAGE_ROUTE = "system_total_chars"
+
+
+def _unknown_usage(reason: str = "no_sample") -> dict:
+    """无样本时的占用口径：只报「未知」+ 为什么未知，绝不拿预算值倒推一个占用数。"""
+    return {"status": "unknown", "reason": reason, "system_chars": None, "est_tokens": None}
+
+
+async def read_account_context_budget_tier(user_id: int, db: AsyncSession | None = None) -> str | None:
+    """读本账号的上下文预算档位**原值**（users.context_budget_tier 的唯一存储读端）。
+
+    - 未设置（列 NULL）/ 空串 / 账号不存在 → None（= 标准档 = 现状逐字节旧行为）；
+    - 本函数**不吞异常**：调用方各有自己的 fail-open 口径——对话装配链
+      （context_builder._resolve_account_budget_tier）异常退回标准档；读数端按「不可用」上报
+      （get_context_budget 的 tier_source），因为这里区分「没配」与「读不到」是有信息量的。
+    - ``db=None`` 时自开会话（装配链路上没有现成会话）。
+    """
+    from app.models.user import User
+
+    async def _one(session) -> str | None:
+        value = (await session.execute(
+            select(User.context_budget_tier).where(User.id == user_id)
+        )).scalar_one_or_none()
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    if db is not None:
+        return await _one(db)
+    from app.db.database import async_session_factory
+
+    async with async_session_factory() as session:
+        return await _one(session)
+
+
+async def set_context_budget_tier(
+    user_id: int,
+    db: AsyncSession,
+    data: dict | None,
+    lang: str = "zh",
+) -> dict:
+    """设置本账号上下文预算档位（S2 M0，2026-09-27；账号级偏好，只影响自己的装配预算）。
+
+    写入侧刻意不报错打断（档位是可调项不是校验题）：任何输入先过
+    ``context_builder.normalize_context_budget_tier``——合法名归一、越界数值夹到最近的合法档、
+    认不出的一律退回 standard。账号不存在才 404（系统边界，用户可感知）。
+
+    生效时机：下一轮装配（每轮入口重新读库，无缓存 ⇒ 改完即生效，不需重启、不需重连）。
+    """
+    from app.agent import context_builder as _cb
+    from app.models.user import User
+
+    tier = _cb.normalize_context_budget_tier((data or {}).get("tier"))
+    target = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "user_not_found"))
+    _before = {"context_budget_tier": target.context_budget_tier}
+    target.context_budget_tier = tier
+    await _audit(db, user_id, "server.context_budget_tier.update", "user:%d" % user_id,
+                 _before, {"context_budget_tier": tier})
+    await db.commit()
+    return {
+        "status": "ok",
+        "tier": tier,
+        "tier_budget_tokens": _cb.context_budget_tier_tokens(tier),
+        "previous_tier": _before["context_budget_tier"] or _cb.CONTEXT_BUDGET_TIER_DEFAULT,
+    }
 
 
 async def get_context_budget(
     user_id: int,
     db: AsyncSession,
 ) -> dict:
-    """上下文预算读数：P2a 的预留口径 + 本账号最近一次「系统块超预算被裁」记录（纯读）。
+    """上下文预算读数：档位 + P2a 预留口径 + 本账号最近一轮实际占用/最近一次被裁记录（纯读）。
 
-    预算段直接复用 app/agent/context_builder 的四个常量与两个纯函数（含私有的
+    预算段直接复用 app/agent/context_builder 的常量与纯函数（含私有的
     ``_effective_system_budget_tokens``）——**读端把同一套算式再抄一遍，常量一调两边就失真**，
     而这里要报的正是「装配时真正生效的那个数」，故按同包内部纯函数的既有约定直接调用而非复制实现。
+    S2 起该数还带账号档位维：读端显式传 ``tier=``（不依赖装配链的 ContextVar，二者在
+    请求上下文里本就不同）。
 
-    裁剪段读 agent_task_logs 里 trigger='memory_obs' + route='quota_clipped_sections' 的埋点
-    （P2a 要求 C：真发生裁剪才写），**只看当前用户自己的行**。整段查库 fail-open：任何异常
-    （含 steps_json 是坏 JSON）都退化为「预算段照出 + 无裁剪记录 + error 文案」，绝不抛 500——
-    一次诊断导出不该因为读不到观测流水而失败。
+    占用段读 agent_task_logs 里 trigger='memory_obs' + route='system_total_chars' 的每轮留痕
+    （T5 M0 项2），**只看当前用户自己的行**；无样本时 status='unknown'，不拿预算值冒充占用。
+    裁剪段同理读 route='quota_clipped_sections'（P2a 要求 C：真发生裁剪才写）。
+    整段查库 fail-open：任何异常（含 steps_json 是坏 JSON）都退化为「预算段照出 + 无记录 + error
+    文案」，绝不抛 500——一次诊断导出不该因为读不到观测流水而失败。
     """
     from app.agent import context_builder as _cb
 
     flag_enabled = _cb.context_budget_reserve_enabled()
+    stored_tier: str | None = None
+    tier_error = ""
+    try:
+        stored_tier = await read_account_context_budget_tier(user_id, db)
+    except Exception as e:
+        tier_error = ("tier_query_failed: " + repr(e))[:200]
+    # 档位三态：user=账号显式配置 / default=未配置（NULL，等价标准档）/ unavailable=读库失败
+    tier = _cb.normalize_context_budget_tier(stored_tier)
+    tier_source = ("user" if stored_tier else "default") if not tier_error else "unavailable"
     payload: dict = {
         "status": "ok",
         "total_quota_tokens": _cb.TOTAL_SYSTEM_QUOTA_TOKENS,
         "reserve_reply_tokens": _cb.REPLY_RESERVE_TOKENS,
         "reserve_tools_tokens": _cb.TOOL_DEFS_RESERVE_TOKENS,
         "floor_tokens": _cb.MIN_SYSTEM_BUDGET_TOKENS,
-        "effective_budget_tokens": _cb._effective_system_budget_tokens(reserve_enabled=flag_enabled),
+        # S2 档位段：当前档位 + 该档有效预算 + 可调档位表（档位 UI 在 App 下一批，这里只给词表；
+        # 刻意不回中文 label —— 展示文案归客户端 i18n，服务端只给 key 与数值）
+        "tier": tier,
+        "tier_source": tier_source,
+        "tier_stored": stored_tier,
+        "tier_error": tier_error,
+        "tier_budget_tokens": _cb.context_budget_tier_tokens(tier),
+        "tier_ceiling_tokens": _cb.CONTEXT_BUDGET_TIER_CEILING_TOKENS,
+        "tier_options": [
+            {
+                "key": key,
+                "budget_tokens": _cb.context_budget_tier_tokens(key),
+                "is_current": key == tier,
+            }
+            for key in (
+                _cb.CONTEXT_BUDGET_TIER_STANDARD,
+                _cb.CONTEXT_BUDGET_TIER_EXTENDED,
+                _cb.CONTEXT_BUDGET_TIER_MAX,
+            )
+        ],
+        "effective_budget_tokens": _cb._effective_system_budget_tokens(
+            reserve_enabled=flag_enabled, tier=tier),
         "flag_enabled": flag_enabled,
+        "last_usage": _unknown_usage(),
         "last_clip": None,
         "clip_count_24h": 0,
         "error": "",
@@ -1315,32 +1446,63 @@ async def get_context_budget(
 
         conds = (
             AgentTaskLog.trigger == "memory_obs",
-            AgentTaskLog.route == _CLIP_ROUTE,
             AgentTaskLog.user_id == user_id,
         )
-        row = (await db.execute(
-            select(AgentTaskLog).where(*conds).order_by(AgentTaskLog.id.desc()).limit(1)
-        )).scalars().first()
         since = now_naive_utc() - timedelta(hours=_CLIP_WINDOW_HOURS)
         counted = (await db.execute(
             select(func.count()).select_from(AgentTaskLog).where(
-                *conds, AgentTaskLog.created_at >= since)
+                *conds, AgentTaskLog.route == _CLIP_ROUTE, AgentTaskLog.created_at >= since)
         )).scalar()
         payload["clip_count_24h"] = int(counted or 0)
-        if row is not None and row.steps_json:
+
+        def _detail(row) -> dict | None:
             # detail 只回标量字段：埋点里的 blocks 数组带的是用户上下文块头部原文（≤24 字 ×8 条），
             # 预算读数用不上，也不必再把它外流一次；解析不出 dict 按「无记录」处理。
+            if not row or not row.steps_json:
+                return None
             detail = json.loads(row.steps_json)
-            if isinstance(detail, dict):
-                payload["last_clip"] = {
-                    "id": row.id,
-                    "character_id": row.character_id,
-                    "created_at": row.created_at.isoformat(sep=" ") if row.created_at else None,
-                    "detail": {k: v for k, v in detail.items()
-                               if not isinstance(v, (list, dict))},
-                }
+            if not isinstance(detail, dict):
+                return None
+            return {k: v for k, v in detail.items() if not isinstance(v, (list, dict))}
+
+        clip_row = (await db.execute(
+            select(AgentTaskLog).where(*conds, AgentTaskLog.route == _CLIP_ROUTE)
+            .order_by(AgentTaskLog.id.desc()).limit(1)
+        )).scalars().first()
+        clip_detail = _detail(clip_row)
+        if clip_detail is not None:
+            payload["last_clip"] = {
+                "id": clip_row.id,
+                "character_id": clip_row.character_id,
+                "created_at": clip_row.created_at.isoformat(sep=" ") if clip_row.created_at else None,
+                "detail": clip_detail,
+            }
+
+        usage_row = (await db.execute(
+            select(AgentTaskLog).where(*conds, AgentTaskLog.route == _USAGE_ROUTE)
+            .order_by(AgentTaskLog.id.desc()).limit(1)
+        )).scalars().first()
+        usage_detail = _detail(usage_row)
+        if usage_detail is None:
+            # 无样本：如实报「未知」，并给出为什么未知（该账号还没聊过一轮 / 观测开关关着）
+            payload["last_usage"] = _unknown_usage()
+        else:
+            chars = usage_detail.get("system_chars")
+            chars = int(chars) if isinstance(chars, (int, float)) else None
+            payload["last_usage"] = {
+                "status": "ok",
+                "id": usage_row.id,
+                "character_id": usage_row.character_id,
+                "created_at": usage_row.created_at.isoformat(sep=" ") if usage_row.created_at else None,
+                "system_chars": chars,
+                # 估算口径与装配侧一致：2 字符 ≈ 1 token（context_builder._EST_CHARS_PER_TOKEN）
+                "est_tokens": (chars // _cb._EST_CHARS_PER_TOKEN) if chars is not None else None,
+                "budget_tokens_at_turn": usage_detail.get("budget_tokens"),
+                "reserve_on": usage_detail.get("reserve_on"),
+            }
     except Exception as e:
-        payload["error"] = ("clip_query_failed: " + repr(e))[:200]
+        payload["error"] = ((payload["error"] + "; ") if payload["error"] else "") + (
+            "clip_query_failed: " + repr(e))[:200]
     return payload
 
 
