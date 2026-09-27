@@ -257,8 +257,8 @@ AGENT_FLAGS = {
     #   life_regression 高频复读（与「回忆化」L1 同处一个筛选段，共用 flag 体系）；关=维持现选片。
     # life_memory_write_retry 开=life 写记忆加固（写前先提交释放自持锁 + 统一退避重试 +
     #   悬空 started 收尾）；**默认开（纯加固）**，关=回旧裸写路径。
-    "promise_self_side_split": False,
-    "timer_render_subject_fix": False,
+    "promise_self_side_split": True,
+    "timer_render_subject_fix": True,
     "proactive_topic_guard": False,
     "life_event_no_replay": False,
     "life_memory_write_retry": True,
@@ -379,7 +379,7 @@ AGENT_FLAGS = {
     # 注意：现状面开关 current_facts_active_only（线上默认 True）开时子句才是「恒 active」，
     #   本键单独开、current_facts_active_only 关时子句退化为旧口径（memory_supersede 门控）。
     # 回退：置回 False（runtime_flags 热切，无需重启）。
-    "current_view_filter": False,
+    "current_view_filter": True,
     # ── S1 第二步（2026-09-27）：主动消息链「角色自主搜索」（默认关=逐字节旧行为）──
     # 开=主动消息生成首轮若输出 [SEARCH]，走一次受控自主搜索（复用 run_search_loop 的 self 分支语义：
     #   结果只作参考、模型可「什么都不说」→ 本轮不产出消息；搜索失败/被节流 → 仍发原候选），
@@ -396,6 +396,8 @@ AGENT_FLAGS = {
     #   首行即返回，连一次 SELECT 都不发。默认关＝零行为、零开销，一键回退。
     # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
     "relational_drive_shadow": False,
+    # P1-2（2026-09-28）：写路径查重只认现行（active）——关＝逐字节旧行为（默认关）。
+    "write_dedup_active_only": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

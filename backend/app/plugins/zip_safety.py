@@ -76,9 +76,16 @@ def extract_zip_bytes(data: bytes, names: list[str], target) -> None:
     from pathlib import Path
     zf = zipfile.ZipFile(io.BytesIO(data))
     target = Path(target)
+    # P2-10（2026-09-28 修复）：只有「整个包被一个顶层目录包着」时才剥掉那一段。
+    # 原实现无条件 norm.split("/", 1)[-1]，会把根级 manifest 包里的子目录一起拍平
+    # （pages/main.html → main.html），与 manifest.page 写的子目录路径冲突、页面再也取不到。
+    # 判定：所有条目顶层段相同、且那不是 manifest.json 本身 ⇒ 视为包装目录，剥掉；否则原样保留。
+    _norm = [n.replace("\\", "/").lstrip("/") for n in names]
+    _tops = {m.split("/", 1)[0] for m in _norm if m}
+    _prefix = (next(iter(_tops)) + "/") if (len(_tops) == 1 and "manifest.json" not in _tops) else ""
     for n in names:
-        norm = n.replace("\\", "/")
-        rel = norm.split("/", 1)[-1]
+        norm = n.replace("\\", "/").lstrip("/")
+        rel = norm[len(_prefix):] if _prefix and norm.startswith(_prefix) else norm
         if not rel:
             continue
         dest = target / rel

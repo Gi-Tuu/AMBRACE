@@ -39,6 +39,20 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
     super.initState();
     _memory = widget.memory;
     _loadChildren();
+    _refreshMemory();  // P2-11：补齐调用方没带的字段（如 why_it_matters）
+  }
+
+  /// P2-11（2026-09-28）：用服务端完整记录替换传入的精简对象。
+  ///
+  /// 织库详情（weave_detail_sheet._toMemory）只映射 8 个字段、没有 why_it_matters，
+  /// 于是详情页的「意义」卡片永远不显示。这里回拉一次完整记录；失败静默，保留传入值。
+  Future<void> _refreshMemory() async {
+    try {
+      final full = await _api.getMemory(widget.memory.id);
+      if (mounted) setState(() => _memory = full);
+    } catch (_) {
+      // 失败静默：维持调用方传入的对象（即改动前行为）
+    }
   }
 
   String _sourceLabel(String? source, AppLocalizations l10n) {

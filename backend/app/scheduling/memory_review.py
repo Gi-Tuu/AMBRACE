@@ -227,10 +227,24 @@ async def collect_review_events() -> list[dict]:
         except Exception as e:
             _logger.warning("review tense filter failed: %s", e)
     # 每角色只取最早到期的一条
+    # P1-5（2026-09-28 修复）：历史脏数据里 user_id 为 0/NULL 的记忆此前被整条跳过 ⇒ 高重要度记忆永远不进复习队列（等于被静默）。改为**回落到角色归属账号**（ai_characters.user_id）；兜底查不到（角色已删 / owner 为空）仍按原样跳过。影响面有界：每角色仍只取 1 条，复习渠道另有频控。
+    _need_owner = {m.character_id for m in mems if not m.user_id}
+    _owner_map: dict[int, int] = {}
+    if _need_owner:
+        try:
+            from app.models.character import AICharacter
+            async with async_session_factory() as db:
+                _rows = (await db.execute(
+                    select(AICharacter.id, AICharacter.user_id).where(AICharacter.id.in_(list(_need_owner)))
+                )).all()
+            _owner_map = {int(cid): int(uid) for cid, uid in _rows if uid}
+        except Exception as e:
+            _logger.warning("review owner fallback failed: %s", e)
     per_char: dict[int, tuple] = {}
     for m in mems:
-        if m.user_id and m.character_id not in per_char:
-            per_char[m.character_id] = (m.character_id, m.user_id, m.id)
+        _uid = m.user_id or _owner_map.get(m.character_id)
+        if _uid and m.character_id not in per_char:
+            per_char[m.character_id] = (m.character_id, _uid, m.id)
     # 审计 P2-04：无活跃会话的角色不产生复习候选（避免每 tick 空转出候选 + 写 rejected 日志）
     if per_char:
         try:

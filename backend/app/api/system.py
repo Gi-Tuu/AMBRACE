@@ -446,6 +446,25 @@ async def notifications_ws(websocket: WebSocket):
         await websocket.close(code=4401)
         return
 
+    # P2-7（2026-09-28 修复）：禁用 / 已删（回收站）账号不得建立通知长连接。
+    # HTTP 侧在 get_current_user_id 阶段已拒绝，但本 WS 此前只验 JWT ⇒ 被禁用账号仍能持续收推送。
+    try:
+        from sqlalchemy import select as _select
+
+        from app.db.database import async_session_factory
+        from app.models.user import User
+        async with async_session_factory() as _db:
+            _row = (await _db.execute(
+                _select(User.disabled_at).where(User.id == int(ws_user_id))
+            )).first()
+        # _row is None = 账号不存在；_row[0] 非空 = 已禁用（含进回收站的标记删除）
+        if _row is None or _row[0] is not None:
+            await websocket.close(code=4403)
+            return
+    except Exception:
+        # 查库失败不打断既有行为（与 HTTP 侧 fail-open 口径一致）：按原样放行
+        pass
+
     await websocket.accept()
     from app.ws.notify_manager import register, unregister
     _uid = int(ws_user_id)

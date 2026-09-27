@@ -258,7 +258,11 @@ async def change_password(
     request: Request,
     user_id: int = Depends(get_current_user_id),
 ):
-    """修改密码：需校验旧密码；新密码本地部署不设长度/字符限制。"""
+    """修改密码：需校验旧密码；**新密码沿用注册同口径的强度校验**（P2-8，2026-09-28 修复）。
+
+    修复前本端点不校验强度，等于给注册期策略留了绕过口（注册要求 8-64 + 字母数字组合 +
+    非弱口令/不含用户名，改密码却能设成 123）。口径收敛在 validate_password_strength（同文件）。
+    """
     async with async_session_factory() as db:
         result = await db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
@@ -266,6 +270,7 @@ async def change_password(
             raise HTTPException(status_code=404, detail=tr(request, "user_not_found"))
         if not bcrypt.checkpw(data.old_password.encode(), user.password_hash.encode()):
             raise HTTPException(status_code=400, detail=tr(request, "old_password_wrong"))
+        validate_password_strength(request, data.new_password, user.username)
         user.password_hash = bcrypt.hashpw(data.new_password.encode(), bcrypt.gensalt()).decode()
         await db.commit()
         _logger.info("Password changed user_id=%d", user_id)
@@ -273,7 +278,7 @@ async def change_password(
 
 @router.post("/forgot-password")
 async def forgot_password(data: ForgotPasswordRequest, request: Request):
-    """忘记密码（本地部署）：无需旧密码直接重置，不做强度校验。
+    """忘记密码（本地部署）：无需旧密码直接重置；强度沿用注册口径（2026-09-28 起）。
     P0-1 安全加固（2026-08-16 全项目审查）：主账号禁止该通道重置 + IP+用户名级失败限流，防账户接管。
     """
     client_ip = request.client.host if request.client else "unknown"
@@ -286,9 +291,14 @@ async def forgot_password(data: ForgotPasswordRequest, request: Request):
         if not user or not user.password_hash:
             ratelimit.record_failure(key)
             raise HTTPException(status_code=404, detail=tr(request, "user_not_found"))
-        if user.id == 1:
+        # 判据必须是「语义主账号」而非物理 id==1（2026-09-27 修复）：id==1 只在本机老库成立，
+        # 多主账号或老库自增跳号时，非 id=1 的根账号会被**未登录**调用本端点匿名重置 = 账户接管。
+        is_master = bool(user.parent_id is None and (user.is_admin or user.server_admin))
+        if is_master:
             # 主账号禁止通过 forgot-password 匿名重置（防止接管）
             raise HTTPException(status_code=403, detail="master account cannot be reset via forgot-password")
+        # P2-8 同族（2026-09-28 用户拍板）：本通道同样走注册口径的强度校验，堵住「注册要求强、找回可设弱」的绕过面
+        validate_password_strength(request, data.new_password, user.username)
         user.password_hash = bcrypt.hashpw(data.new_password.encode(), bcrypt.gensalt()).decode()
         await db.commit()
         ratelimit.record_success(key)

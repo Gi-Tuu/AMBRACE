@@ -20,6 +20,16 @@ extension MemoriesApi on ApiClient {
     return (memories: memories, total: data['total'] as int? ?? memories.length);
   }
 
+  /// P2-11（2026-09-28）：回拉单条记忆的**完整**记录。
+  ///
+  /// 织库等入口传给详情页的 Memory 是精简对象（只映射了 id/类型/内容/重要度等，
+  /// 没有 why_it_matters），导致详情页「意义」卡片永远不显示。
+  /// GET /api/v1/memories/{id} 返回完整 MemoryResponse，前端建好后回拉一次补齐。
+  Future<Memory> getMemory(int id) async {
+    final r = await dio.get("/api/v1/memories/$id");
+    return Memory.fromJson(Map<String, dynamic>.from(r.data as Map));
+  }
+
   Future<void> updateMemory(int id, Map<String, dynamic> data) async {
     await dio.patch("/api/v1/memories/$id", data: data);
   }

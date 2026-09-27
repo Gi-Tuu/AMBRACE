@@ -19,7 +19,17 @@ from app.memory.service import (
     _normalize_importance,
     _now_naive,
     _retrievable_status_clause,
+    current_facts_status_clause,
 )
+
+
+def _write_dedup_active_only_on() -> bool:
+    """P1-2（2026-09-28）：写路径查重只认现行（active）——新 flag，默认关（关＝逐字节旧行为）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("write_dedup_active_only", False))
+    except Exception:
+        return False
 
 
 # ── M4 写入准入闸门（flag `memory_admission_gate`，默认 False；开=确定性裁决，不新增 LLM）──
@@ -274,10 +284,13 @@ async def save_memory(
                     return m
 
             # 2) 字符级查重兜底（嵌入失败或旧记忆无向量时仍能命中）
+            # P1-2（2026-09-28，用户拍板方案 B）：本处查重若开 write_dedup_active_only，则只与现行（active）行比对；
+            # 关＝沿用 _retrievable_status_clause()（怀旧面语义、当前永真）＝逐字节旧行为。
+            _dedup_clause = current_facts_status_clause() if _write_dedup_active_only_on() else _retrievable_status_clause()
             from difflib import SequenceMatcher
             recent_result = await db.execute(
                 select(Memory)
-                .where(Memory.character_id == character_id, Memory.is_archived == False, _retrievable_status_clause())
+                .where(Memory.character_id == character_id, Memory.is_archived == False, _dedup_clause)
                 .order_by(Memory.created_at.desc())
                 .limit(30)
             )
