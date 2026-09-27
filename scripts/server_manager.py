@@ -202,7 +202,8 @@ def start_uvicorn() -> None:
     with open(STDOUT_LOG, "a", encoding="utf-8") as fout:
         with open(STDERR_LOG, "a", encoding="utf-8") as ferr:
             subprocess.Popen(
-                [PYTHONW, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", str(PORT)],
+                [PYTHONW, "-m", "uvicorn", "app.main:app",
+                 "--host", platform_util.resolve_bind_host(BACKEND_DIR), "--port", str(PORT)],
                 cwd=BACKEND_DIR,
                 stdout=fout, stderr=ferr,
                 **platform_util.popen_kwargs(),

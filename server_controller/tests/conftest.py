@@ -202,6 +202,30 @@ def registration_payload():
     return {"mode": "open", "invite_codes": 3}
 
 
+def identity_payload():
+    """身份页快照：fp 一律小写 hex（后端就是 hex），显示层再分组大写。"""
+    return {"mode": "off", "server_name": "AMBRACE Server",
+            "fp": "a1b2c3d4e5f6", "fp_display": "a1b2-c3d4-e5f6",
+            "key_created_at": "2026-09-27T02:03:04", "paired": True,
+            "pending": {"has_pending": False, "fp": "", "expires_in": 0},
+            "pair_stats": {"pair_success": 2, "pair_fail": 1},
+            "signed_paths": ["/api/v1/auth/login", "/api/v1/system/health"],
+            "bind_host": "0.0.0.0",
+            "hints": {"cors_wildcard": True, "uploads_require_auth": False}}
+
+
+def identity_issued_payload():
+    """配对码只出现在这一个响应里（且只给本机控制台）——测试拿它验证大字区。"""
+    return {"code": "ABCD2345EFGH", "fp": "a1b2c3d4e5f6",
+            "fp_display": "a1b2-c3d4-e5f6", "ttl_sec": 300, "expires_in": 300}
+
+
+def identity_rotated_payload():
+    payload = identity_issued_payload()
+    payload["note"] = "旧设备需重新配对（身份密钥与指纹已更换）"
+    return payload
+
+
 def overview_payload():
     return {"accounts": 25, "disabled": 2, "server_admins": 3, "flags_on": 69,
             "version": "3.4.1", "extra_field": "后端多给的字段也要显示"}
@@ -260,6 +284,7 @@ class HttpCalls:
             API + "/flags": flags_payload,
             API + "/audit": audit_payload,
             API + "/registration": registration_payload,
+            API + "/identity": identity_payload,
             API + "/overview": overview_payload,
             API + "/device-actions": device_actions_payload,
             API + "/llm-limit": llm_limit_payload,

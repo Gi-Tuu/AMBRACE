@@ -155,7 +155,8 @@ def start_server():
             log(_m)
         with open(_stderr, "a", encoding="utf-8") as f:
             subprocess.Popen(
-                [PYTHONW, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"],
+                [PYTHONW, "-m", "uvicorn", "app.main:app",
+                 "--host", platform_util.resolve_bind_host(SERVER_DIR), "--port", "8000"],
                 cwd=SERVER_DIR,
                 stdout=f,
                 stderr=subprocess.STDOUT,

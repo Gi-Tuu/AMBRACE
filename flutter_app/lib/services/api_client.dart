@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import 'api_exception.dart';
+import 'server_identity.dart';
 
 export 'api/profile_api.dart';
 export 'api/characters_api.dart';
@@ -49,10 +52,18 @@ class ApiClient {
       connectTimeout: const Duration(seconds: 5),
       receiveTimeout: const Duration(seconds: 10),
     ));
+    // 批 0-3 M0-b：身份拦截器必须在错误归一拦截器**之前**注册——
+    // dio 的 onError 按注册顺序传播，先还原原始 JSON，存量 401/detail 提取才不受影响。
+    _dio.interceptors.add(_IdentityInterceptor());
     // 统一错误归一（F7-c）：所有 DioException.error 挂 ApiException（分类+文案），
     // 异常抛出类型不变，存量 catch 兼容；401 按钩子处理（见 onUnauthorized）。
     _dio.interceptors.add(InterceptorsWrapper(
       onError: (e, handler) {
+        final err = e.error;
+        if (err is ApiException && err.kind == 'identity') {
+          handler.next(e); // 验签失败的语义不再被二次归类
+          return;
+        }
         final api = ApiException.fromDio(e);
         if (api.kind == 'unauthorized' &&
             _token.isNotEmpty &&
@@ -86,6 +97,8 @@ class ApiClient {
   void configure({required String baseUrl, String token = ""}) {
     _baseUrl = baseUrl;
     _dio.options.baseUrl = baseUrl;
+    ApiClientBaseUrl.current = baseUrl;
+    ServerIdentity.instance.kickLoad();
     // B4 修复（2026-09-01 审查）：以传入 token 为唯一准绳——非空就设置，空就彻底清头，
     // 避免登出/换号后 dio 单例残留上一个账号的 Authorization。
     if (token.isNotEmpty) {
@@ -136,6 +149,8 @@ class ApiClient {
   void updateBaseUrl(String url) {
     _baseUrl = url;
     _dio.options.baseUrl = url;
+    ApiClientBaseUrl.current = url;
+    ServerIdentity.instance.kickLoad();
   }
 
   void _setToken(String token) {
@@ -236,4 +251,138 @@ class ApiClient {
 List<T> parseListItems<T>(dynamic data, String key, T Function(dynamic) convert) {
   final items = (data as Map<String, dynamic>)[key] as List? ?? [];
   return items.map(convert).toList();
+}
+
+/// 批 0-3 M0-b：服务器身份固定 —— 请求带 nonce + 白名单响应验签。
+///
+/// 未配对 / 校验模式 `off` 时本拦截器对每个请求**不做任何事**（不加头、不改
+/// responseType、不改响应体），既有行为逐字节不变。
+///
+/// 三态处置（模式由 [ServerIdentity.verifyMode] 决定）：
+/// * `off`：不进本拦截器（[ServerIdentity.shouldGuard] 直接 false）；
+/// * `shadow`：验签但只累计 [ServerIdentity.mismatchCount] / 调试日志，响应照常放行；
+/// * `enforce`：**签名不符 / 格式非法**时拒绝该响应（抛 `ApiException(kind: 'identity')`）。
+///   响应**没有签名**（[VerifyOutcome.unsigned]）在 enforce 下同样只记录不拒绝——
+///   服务器 `identity_enforce_mode` 默认 off 且白名单外的端点一律不出签，
+///   拒绝未签名会把整个 App 打死（方案 §4.7「旧包永不被拒」的对称面）。
+class _IdentityInterceptor extends Interceptor {
+  static const String _nonceKey = 'ambrace_identity_nonce';
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    final identity = ServerIdentity.instance;
+    try {
+      if (!identity.isLoaded) {
+        // 只「kick」一次异步加载，绝不在拦截器里 await：
+        // 本轮按未配对处理（零行为变化），下一次请求起生效。
+        identity.kickLoad();
+        handler.next(options);
+        return;
+      }
+      if (!identity.shouldGuard(options.path)) {
+        handler.next(options);
+        return;
+      }
+      final nonce = ServerIdentity.newNonce();
+      options.headers[ServerIdentity.challengeHeader] = nonce;
+      options.extra[_nonceKey] = nonce;
+      // 验签摘要必须打在服务器返回的原始字节上：json 模式拿不到原文，
+      // 故先按纯文本取回，验签后在 onResponse 里还原成调用方期望的 Map。
+      options.responseType = ResponseType.plain;
+    } catch (_) {
+      // 任何异常（prefs 不可用等）都不得影响既有请求
+    }
+    handler.next(options);
+  }
+
+  @override
+  void onResponse(Response response, ResponseInterceptorHandler handler) {
+    final identity = ServerIdentity.instance;
+    final nonce = response.requestOptions.extra[_nonceKey];
+    if (nonce is! String) {
+      handler.next(response);
+      return;
+    }
+    final data = response.data;
+    if (data is! String) {
+      // 非文本响应（bytes/stream 等）拿不到原文，摘要无从比对：跳过，不误判为伪造
+      handler.next(response);
+      return;
+    }
+    final status = response.statusCode ?? 200;
+    final proof = response.headers.value(ServerIdentity.proofHeader);
+    final outcome = identity.verify(
+        nonce: nonce, status: status, bodyText: data, proof: proof);
+    _restoreJsonBody(response, data);
+    _log(identity, outcome, response.requestOptions.path, status);
+    final rejected = _rejectFor(identity, outcome, response, status);
+    if (rejected != null) {
+      handler.reject(rejected);
+      return;
+    }
+    handler.next(response);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    final identity = ServerIdentity.instance;
+    final nonce = err.requestOptions.extra[_nonceKey];
+    if (nonce is! String) {
+      handler.next(err);
+      return;
+    }
+    final response = err.response;
+    if (response != null) {
+      final data = response.data;
+      if (data is String) {
+        final status = response.statusCode ?? 0;
+        final outcome = identity.verify(
+            nonce: nonce,
+            status: status,
+            bodyText: data,
+            proof: response.headers.value(ServerIdentity.proofHeader));
+        _restoreJsonBody(response, data);
+        _log(identity, outcome, err.requestOptions.path, status);
+      }
+    }
+    // 错误响应一律保留原始语义（401 钩子/detail 文案不能被验签顶掉）
+    handler.next(err);
+  }
+
+  /// enforce 档下的拒绝异常；不拒绝时返回 null
+  static DioException? _rejectFor(ServerIdentity identity, VerifyOutcome outcome,
+      Response response, int status) {
+    if (identity.verifyMode != 'enforce') return null;
+    if (outcome != VerifyOutcome.mismatch && outcome != VerifyOutcome.malformed) {
+      return null;
+    }
+    return DioException(
+      requestOptions: response.requestOptions,
+      response: response,
+      type: DioExceptionType.badResponse,
+      error: ApiException(
+          kind: 'identity', statusCode: status, message: '服务器身份校验失败'),
+    );
+  }
+
+  /// 把被强制为 plain 的响应体还原成 JSON（非 JSON 时保持字符串，同 dio 的 json 兜底）
+  static void _restoreJsonBody(Response response, String? text) {
+    if (text == null) return;
+    try {
+      response.data = jsonDecode(text);
+    } catch (_) {
+      response.data = text;
+    }
+  }
+
+  static void _log(ServerIdentity identity, VerifyOutcome outcome, String path,
+      int status) {
+    if (outcome == VerifyOutcome.ok) return;
+    if (kDebugMode) {
+      debugPrint(
+          '[identity] $outcome $path status=$status '
+          'verified=${identity.verifiedCount} mismatch=${identity.mismatchCount} '
+          'unsigned=${identity.unsignedCount}');
+    }
+  }
 }

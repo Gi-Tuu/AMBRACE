@@ -8,12 +8,17 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/path/to/AMBRACE/backend
-# 用项目 venv 内的 python（替换 /path/to/AMBRACE）：
-ExecStart=/path/to/AMBRACE/backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+# 用项目 venv 内的 python（替换 /path/to/AMBRACE）。
+# 批 0-3「0 步」（方案 §4.6）：绑定地址统一读 SERVER_HOST —— 与 watchdog / 桌面控制台 /
+# 后端 app.config.settings.server_host 同一口径，收紧绑定面只改下面这一行
+# （例：只给局域网某网卡 → SERVER_HOST=192.168.1.10；只允许本机 → SERVER_HOST=127.0.0.1）。
+# 默认 0.0.0.0 与改动前逐字一致，不改现网行为。
+Environment=PYTHONUNBUFFERED=1
+Environment=SERVER_HOST=0.0.0.0
+ExecStart=/bin/sh -c 'exec /path/to/AMBRACE/backend/.venv/bin/python -m uvicorn app.main:app --host "${SERVER_HOST:-0.0.0.0}" --port 8000'
 Restart=on-failure
 RestartSec=5
 # 模型/数据路径在项目内，无需额外 User 配置；如需低权限运行可加 User=ambrace
-Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target

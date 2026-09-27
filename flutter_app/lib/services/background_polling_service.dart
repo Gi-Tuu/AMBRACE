@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:convert";
 import "dart:ui";
 import "package:flutter/foundation.dart";
 import "package:dio/dio.dart";
@@ -10,6 +11,7 @@ import "unread_engine.dart";
 import "background_ws_client.dart";
 import "bg_poll_guard.dart";
 import "secure_token_store.dart";
+import "server_identity.dart";
 import "../utils/service_l10n.dart";
 import "../utils/app_lang.dart";
 
@@ -157,12 +159,15 @@ Future<void> _autoReportNotifications() async {
     if (baseUrl.isEmpty || token.isEmpty) return;
     final notifs = await PhonePerceptionService.readCachedNotifications();
     if (notifs.isEmpty) return;
-    final dio = Dio(BaseOptions(
-      baseUrl: baseUrl,
-      headers: {"Authorization": "Bearer $token"},
-      connectTimeout: const Duration(seconds: 5),
-      receiveTimeout: const Duration(seconds: 10),
-    ));
+    final dio = _identityGuardedDio(
+      baseUrl,
+      BaseOptions(
+        baseUrl: baseUrl,
+        headers: {"Authorization": "Bearer $token"},
+        connectTimeout: const Duration(seconds: 5),
+        receiveTimeout: const Duration(seconds: 10),
+      ),
+    );
     await dio.post("/api/v1/phone/perception/auto", data: {"notifications": notifs});
   } catch (_) {}
 }
@@ -200,12 +205,15 @@ Future<void> _pollOnce(FlutterLocalNotificationsPlugin plugin) async {
       "endMinute": prefs.getInt("dnd_end_minute") ?? 0,
     };
 
-    final dio = Dio(BaseOptions(
-      baseUrl: baseUrl,
-      headers: {"Authorization": "Bearer $token"},
-      connectTimeout: const Duration(seconds: 5),
-      receiveTimeout: const Duration(seconds: 10),
-    ));
+    final dio = _identityGuardedDio(
+      baseUrl,
+      BaseOptions(
+        baseUrl: baseUrl,
+        headers: {"Authorization": "Bearer $token"},
+        connectTimeout: const Duration(seconds: 5),
+        receiveTimeout: const Duration(seconds: 10),
+      ),
+    );
 
     final resp = await dio.get("/api/v1/chat/unread");
     final list = resp.data["unread"] as List? ?? [];
@@ -427,10 +435,13 @@ Future<String> _characterName(Dio dio, int charId) async {
 Dio _ensureBgDio() {
   var dio = _bgDio;
   if (dio == null) {
-    dio = Dio(BaseOptions(
-      connectTimeout: const Duration(seconds: 5),
-      receiveTimeout: const Duration(seconds: 10),
-    ));
+    dio = _identityGuardedDio(
+      _bgServerUrl,
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 5),
+        receiveTimeout: const Duration(seconds: 10),
+      ),
+    );
     _bgDio = dio;
   }
   dio.options.baseUrl = _bgServerUrl;
@@ -488,4 +499,114 @@ Future<void> _handleNotifyEvent(
       content: event.content,
     ));
   } catch (_) {}
+}
+
+// ---- 批 0-3 M0-b 收尾：后台通道身份插桩（方案 §4.3.7） ----
+
+/// 后台 isolate 的每只 Dio 都挂上同一套服务器身份逻辑。
+/// isolate 之间不共享内存，故先把当前服务器地址写入 [ApiClientBaseUrl]、再从 prefs 读一次身份；
+/// 未配对或校验模式为 off（默认）时拦截器对每个请求不做任何事 —— 行为与改动前完全一致。
+Dio _identityGuardedDio(String baseUrl, BaseOptions options) {
+  if (baseUrl.isNotEmpty) ApiClientBaseUrl.current = baseUrl;
+  ServerIdentity.instance.kickLoad();
+  return Dio(options)..interceptors.add(const _BgIdentityInterceptor());
+}
+
+/// 三态处置：off 不进入；shadow 只计数与日志；enforce 仅在「有签名但不符/格式非法」时拒绝该响应。
+/// 响应没有签名（unsigned）在 enforce 下也只记录不拒绝 —— 服务器默认不出签，拒绝未签名会把后台通道打死。
+class _BgIdentityInterceptor extends Interceptor {
+  static const String _nonceKey = "ambrace_bg_identity_nonce";
+
+  const _BgIdentityInterceptor();
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    final identity = ServerIdentity.instance;
+    try {
+      if (!identity.isLoaded) {
+        // 只 kick 一次异步加载，绝不在拦截器里 await：本轮按未配对处理
+        identity.kickLoad();
+        handler.next(options);
+        return;
+      }
+      if (!identity.shouldGuard(options.path)) {
+        handler.next(options);
+        return;
+      }
+      final nonce = ServerIdentity.newNonce();
+      options.headers[ServerIdentity.challengeHeader] = nonce;
+      options.extra[_nonceKey] = nonce;
+      // 摘要必须打在服务器返回的原文上，故先按纯文本取回，验签后再还原成 JSON
+      options.responseType = ResponseType.plain;
+    } catch (_) {
+      // 任何异常（prefs 不可用等）都不得影响既有后台请求
+    }
+    handler.next(options);
+  }
+
+  @override
+  void onResponse(Response response, ResponseInterceptorHandler handler) {
+    final identity = ServerIdentity.instance;
+    final nonce = response.requestOptions.extra[_nonceKey];
+    final body = response.data;
+    if (nonce is! String || body is! String) {
+      handler.next(response);
+      return;
+    }
+    final status = response.statusCode ?? 200;
+    final outcome = identity.verify(
+        nonce: nonce,
+        status: status,
+        bodyText: body,
+        proof: response.headers.value(ServerIdentity.proofHeader));
+    _restoreJson(response, body);
+    _log(identity, outcome, response.requestOptions.path, status);
+    if (identity.verifyMode == "enforce" &&
+        (outcome == VerifyOutcome.mismatch ||
+            outcome == VerifyOutcome.malformed)) {
+      handler.reject(DioException(
+          requestOptions: response.requestOptions,
+          response: response,
+          type: DioExceptionType.badResponse,
+          error: "identity verify failed"));
+      return;
+    }
+    handler.next(response);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    final identity = ServerIdentity.instance;
+    final nonce = err.requestOptions.extra[_nonceKey];
+    final response = err.response;
+    final body = response?.data;
+    if (nonce is String && response != null && body is String) {
+      final status = response.statusCode ?? 0;
+      final outcome = identity.verify(
+          nonce: nonce,
+          status: status,
+          bodyText: body,
+          proof: response.headers.value(ServerIdentity.proofHeader));
+      _restoreJson(response, body);
+      _log(identity, outcome, err.requestOptions.path, status);
+    }
+    // 错误语义原样保留（后台只 catch 打印，不因验签改变错误）
+    handler.next(err);
+  }
+
+  static void _restoreJson(Response response, String text) {
+    try {
+      response.data = jsonDecode(text);
+    } catch (_) {
+      response.data = text;
+    }
+  }
+
+  static void _log(ServerIdentity identity, VerifyOutcome outcome, String path,
+      int status) {
+    if (outcome == VerifyOutcome.ok || !kDebugMode) return;
+    debugPrint("[bg-identity] $outcome $path status=$status "
+        "verified=${identity.verifiedCount} mismatch=${identity.mismatchCount} "
+        "unsigned=${identity.unsignedCount}");
+  }
 }

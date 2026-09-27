@@ -2724,5 +2724,47 @@
   "statusExpired": "已过期",
   "statusFuture": "未来",
   "markDone": "标记完成",
-  "reopen": "重新打开"
+  "reopen": "重新打开",
+  "serverIdentityTitle": "服务器身份",
+  "serverIdentityStatusUnpaired": "未配对：本机尚未固定该服务器身份",
+  "serverIdentityStatusPaired": "已配对，指纹 {fp}",
+  "@serverIdentityStatusPaired": {
+    "placeholders": {
+      "fp": {}
+    }
+  },
+  "serverIdentityPair": "配对",
+  "serverIdentityPairing": "正在配对…",
+  "serverIdentityCodeHint": "输入电脑上「服务器身份」页显示的一次性配对码（12 位）",
+  "serverIdentityCodeInvalid": "配对码需为 12 位，且不含 0/O/1/I/L",
+  "serverIdentityFingerprintConfirm": "请对照电脑屏幕上的指纹后确认：{name} · {fp}",
+  "@serverIdentityFingerprintConfirm": {
+    "placeholders": {
+      "name": {},
+      "fp": {}
+    }
+  },
+  "serverIdentityConfirmYes": "指纹一致",
+  "serverIdentityConfirmNo": "不一致，取消",
+  "serverIdentityFailedBody": "配对失败，请在电脑上重新生成配对码后重试",
+  "serverIdentityNoCode": "电脑上还没有生成配对码，请先在控制台点「生成配对码」",
+  "serverIdentityNetworkFail": "连不上该服务器地址，请检查服务器地址与网络",
+  "serverIdentityRevoked": "已解除配对，本机不再校验该服务器身份",
+  "serverIdentityUnpair": "解除配对",
+  "serverIdentityModeLabel": "验签模式",
+  "serverIdentityModeOff": "不校验",
+  "serverIdentityModeShadow": "只记录",
+  "serverIdentityModeEnforce": "拒绝可疑响应",
+  "serverIdentityMismatch": "服务器身份校验失败：响应签名与已配对身份不符",
+  "serverIdentityUnverifiedWarn": "部分受保护：图片/音频直链、下载直链、SSE 与 WebSocket 帧不做签名校验（{verified}/{mismatch}/{unsigned}）",
+  "@serverIdentityUnverifiedWarn": {
+    "placeholders": {
+      "verified": {},
+      "mismatch": {},
+      "unsigned": {}
+    }
+  },
+  "serverIdentityNote": "配对码只在手机上做本地派生，不会发送到网络；网络上只跑挑战与应答。",
+  "serverIdentityReconnectNeeded": "服务器地址已变更，需要重新配对",
+  "serverIdentityEntryHint": "尚未与该服务器配对"
 }

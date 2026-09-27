@@ -348,8 +348,22 @@ app.add_middleware(
         "Authorization", "Content-Type", "X-Requested-With",
         "lang", "X-Lang", "x-api-client",
         "x-ambrace-bridge-secret", "x-ambrace-tenant-id",
+        # 批 0-3 M0-a（2026-09-27）服务器身份固定：nonce 请求头 + 响应签名头。
+        # 严格白名单必须逐个列出，否则浏览器预检（OPTIONS）会被拒（PWA 场景）。
+        "x-ambrace-challenge", "x-ambrace-proof",
     ],
 )
+
+# 响应签名中间件（批 0-3 M0-a，方案 §4.2）：给 app/server_identity.py SIGN_PATHS 内的
+# JSON 响应追加 X-Ambrace-Proof。三态默认 off ＝ 不挂任何头、既有响应逐字节不变。
+# 位置口径：写在 CORS 之后；Starlette 的 add_middleware 是 insert(0)，故运行时它在最外层，
+# 预检（OPTIONS）与非白名单路径都在函数首行直接放行，不影响 CORS 头装配。
+from app import server_identity as _server_identity  # noqa: E402
+
+
+@app.middleware("http")
+async def _identity_proof_middleware(request: Request, call_next):
+    return await _server_identity.sign_response(request, call_next)
 
 # 图片上传静态目录（必须先创建目录，StaticFiles 要求存在）
 from app.config import settings as _settings

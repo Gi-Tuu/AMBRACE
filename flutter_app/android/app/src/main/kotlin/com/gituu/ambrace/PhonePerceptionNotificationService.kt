@@ -171,6 +171,16 @@ class PhonePerceptionNotificationService : NotificationListenerService() {
         reportToServer()
     }
 
+    /** 响应签名的防重放原料：16 字节随机数 → base64url（无填充、无换行），与 App 侧同形态 */
+    private fun identityNonce(): String {
+        val bytes = ByteArray(16)
+        java.security.SecureRandom().nextBytes(bytes)
+        return android.util.Base64.encodeToString(
+            bytes,
+            android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP
+        )
+    }
+
     /** 事件驱动上报：把通知缓存 POST 到自家服务器 /perception/auto（开关/地址/token 读 Flutter 预置，同进程无缓存问题） */
     private fun reportToServer() {
         try {
@@ -178,6 +188,10 @@ class PhonePerceptionNotificationService : NotificationListenerService() {
             if (!prefs.getBoolean("flutter.pp_auto_notify", false)) return
             val token = prefs.getString("flutter.auth_token", "") ?: ""
             val baseUrl = prefs.getString("flutter.server_url", "") ?: ""
+            // 批 0-3 M0-b：服务器身份密钥副本（App 配对成功后写入同一份 Flutter prefs，
+            // 与 flutter.auth_token / flutter.server_url 同口径）。本上报路径不在后端
+            // SIGN_PATHS 白名单内（响应不出签），故这里只带 nonce 作签名原料，不做验签。
+            val identityKey = prefs.getString("flutter.server_identity_key", "") ?: ""
             if (token.isEmpty() || baseUrl.isEmpty()) return
             if (lastNotifications.isEmpty()) return
             val arr = JSONArray()
@@ -194,6 +208,9 @@ class PhonePerceptionNotificationService : NotificationListenerService() {
                     conn.readTimeout = 10000
                     conn.setRequestProperty("Content-Type", "application/json")
                     conn.setRequestProperty("Authorization", "Bearer $token")
+                    if (identityKey.isNotEmpty()) {
+                        conn.setRequestProperty("X-Ambrace-Challenge", identityNonce())
+                    }
                     conn.doOutput = true
                     conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
                     val code = conn.responseCode

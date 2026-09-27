@@ -16,6 +16,7 @@
 棘轮：Windows-only 常量 ``CREATE_NEW_PROCESS_GROUP`` / ``DETACHED_PROCESS`` 只允许出现在本文件
 ``popen_kwargs()`` 内（``backend/tests/test_cross_platform_spawn.py`` 有 AST 守卫钉死）。
 """
+import json
 import os
 import re
 import subprocess
@@ -153,3 +154,30 @@ def cmdline_pids(keyword: str) -> list:
         "| Select-Object -ExpandProperty ProcessId".format(esc)
     )
     return _digit_lines(out)
+
+
+DEFAULT_BIND_HOST = "0.0.0.0"
+
+
+def resolve_bind_host(backend_dir: str) -> str:
+    """拉起 uvicorn 的 ``--host`` 唯一出口（批 0-3「0 步」，雷达 39 原话含「默认只绑 127.0.0.1」）。
+
+    优先级：环境变量 ``SERVER_HOST`` → ``backend/data/server_config.json`` 的 ``server_host``
+    → ``0.0.0.0``。默认值**刻意**与改动前三处硬编码逐字一致（改默认会断掉手机 App 直连），
+    目的是把「收紧绑定面」从三处改码变成一处配置；后端自身读的是
+    ``app.config.settings.server_host``（同一个 ``SERVER_HOST`` 环境变量），两边同源。
+
+    任何读取/解析失败都回落到默认值，绝不让守护进程因为配置坏了而拉不起服务。
+    """
+    raw = (os.environ.get("SERVER_HOST") or "").strip()
+    if raw:
+        return raw
+    try:
+        with open(os.path.join(backend_dir, "data", "server_config.json"), "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        host = str(cfg.get("server_host") or "").strip()
+        if host:
+            return host
+    except Exception:
+        pass
+    return DEFAULT_BIND_HOST

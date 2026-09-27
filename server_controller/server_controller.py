@@ -833,7 +833,8 @@ def _start_uvicorn():
             print(_rot)
         with open(STDERR_LOG, "a", encoding="utf-8") as f:
             subprocess.Popen(
-                [PYTHONW, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", str(TARGET_PORT)],
+                [PYTHONW, "-m", "uvicorn", "app.main:app",
+                 "--host", platform_util.resolve_bind_host(SERVER_DIR), "--port", str(TARGET_PORT)],
                 cwd=SERVER_DIR, stdout=f, stderr=subprocess.STDOUT, **platform_util.popen_kwargs())
     except Exception as e:
         raise RuntimeError(f"启动失败: {e}")
@@ -1311,6 +1312,15 @@ OVERVIEW_FIELDS = (("accounts", "账号总数"),
                   ("version", "后端版本"))
 # A8（2026-09-20）LLM 额度：source → 中文来源标签（控制台是内部工具，文案不做 i18n）
 LLM_LIMIT_SOURCE_LABELS = {"user": "账号覆盖", "global": "全局", "unset": "未设置"}
+# 批 0-3 M0-a 服务器身份：三态档位文案 (标签, 说明)。口径与后端
+# app/application/server_settings_service.py 的 IDENTITY_ENFORCE_MODES 一一对应，
+# 控制台只展示后端返回的 mode，不自行判定要不要签名。
+IDENTITY_MODE_TEXTS = {
+    "off": ("off（关闭，默认）", "不出签也不校验：既有响应逐字节不变"),
+    "shadow": ("shadow（影子）", "出签但不阻断：出不了签只记日志，绝不因签名问题拒绝请求"),
+    "enforce": ("enforce（强制）",
+                "出签；客户端已带 nonce 而服务器出不了签时拒绝（探针与旧版本不受影响）"),
+}
 
 # X7-M4e-2 行动通道页（控制台）：三条开关的键名 / 中文名 / 「读不到这一行」时的缺省方向。
 # 缺省方向照抄后端 app/device/actions.py（device_actions_enabled 与 device_actions_plugin_enabled
@@ -1671,6 +1681,22 @@ def _registration_mode_text(mode) -> str:
     return "%s（%s）" % (label, m) if label else "未知策略（%s）" % m
 
 
+def _identity_fp_text(fp) -> str:
+    """指纹（12 hex）→ 「ABCD-EFGH-IJKL」；没有活动密钥时明说，不拿空串糊过去。"""
+    s = str(fp or "").strip().upper()
+    if not s:
+        return "尚未配对（服务器无活动身份密钥）"
+    return "-".join(s[i:i + 4] for i in range(0, len(s), 4))
+
+
+def _identity_code_text(code) -> str:
+    """配对码 4 位分组显示（12 位 → 3 组），只为降低手抄出错率，不改变码本身。"""
+    s = str(code or "").strip().upper()
+    if not s:
+        return "—"
+    return " ".join(s[i:i + 4] for i in range(0, len(s), 4))
+
+
 # ═══════════════════════════════════════════════════════════════
 # 主应用
 # ═══════════════════════════════════════════════════════════════
@@ -1905,6 +1931,7 @@ class ControllerApp:
             ("models", "默认模型", "brain"),
             ("accounts", "账号管理", "users"),
             ("registration", "注册策略", "ticket"),
+            ("identity", "服务器身份", "copy"),
             ("flags", "开关与权限", "toggle-right"),
             ("device_actions", "行动通道", "check-circle-2"),
             ("audit", "审计", "clipboard-list"),
@@ -1940,6 +1967,7 @@ class ControllerApp:
             "models": self._build_models_page(),
             "accounts": self._build_accounts_page(),
             "registration": self._build_registration_page(),
+            "identity": self._build_identity_page(),
             "flags": self._build_flags_page(),
             "device_actions": self._build_device_actions_page(),
             "audit": self._build_audit_page(),
@@ -4015,6 +4043,217 @@ class ControllerApp:
         self._run_admin("保存注册策略",
                         lambda: _admin_request("PUT", "/registration", {"mode": mode}),
                         ok, "registration")
+
+    # ── 服务器身份页（批 0-3 M0-a）──
+
+    def _build_identity_page(self) -> tk.Frame:
+        t = self.theme
+        page, pad = self._make_admin_page(
+            "服务器身份",
+            "配对码只在本机控制台显示、绝不参与网络往返；指纹供客户端核对服务器（动作后自动回读）")
+        login_label, login_dot, hint = self._admin_login_bar(pad, self._load_identity)
+        body = tk.Frame(pad, bg=t.bg)
+        body.pack(fill="x")
+        self._admin_meta["identity"] = {"status": hint, "login_label": login_label,
+                                        "login_dot": login_dot, "body": body,
+                                        "path": ADMIN_API_PREFIX + "/identity",
+                                        "loader": self._load_identity}
+        # 本次控制台会话签发到的码只留在内存：不落盘、不进日志、不转发
+        self._identity_issued = None
+        self._identity_pending = {}
+        self._identity_code_after_id = None
+        return page
+
+    def _load_identity(self) -> None:
+        path = ADMIN_API_PREFIX + "/identity"
+
+        def ok(data):
+            self._render_identity_state(data)
+            self._set_admin_status("identity", "档位 %s ｜ 指纹 %s（GET %s）"
+                                   % (str(data.get("mode") or "?"),
+                                      _identity_fp_text(data.get("fp")), path), "ok")
+
+        self._set_admin_status("identity", "加载中… GET %s" % path, "pending")
+        self._run_admin("读取服务器身份", lambda: _admin_request("GET", "/identity"),
+                        ok, "identity")
+
+    def _identity_kv(self, parent, k: str, v: str, tip: str = "") -> None:
+        """卡内一行「键：值（+ 灰色补充说明）」，值一律用等宽数字角色便于核对指纹。"""
+        t = self.theme
+        row = tk.Frame(parent, bg=t.card)
+        row.pack(fill="x", pady=(SP_XXS, 0))
+        tk.Label(row, text=k, width=12, anchor="w", fg=t.text_sec, bg=t.card,
+                 font=CUI.f("caption")).pack(side="left")
+        tk.Label(row, text=v, fg=t.text, bg=t.card,
+                 font=CUI.f("num", False, True)).pack(side="left")
+        if tip:
+            tk.Label(row, text="　" + tip, fg=t.text_muted, bg=t.card,
+                     font=CUI.f("micro")).pack(side="left")
+
+    def _identity_code_display(self) -> tuple:
+        """(大字文案, 剩余秒数)：本控制台持有的码优先；只有服务端待用记录时不猜码。"""
+        now = time.time()
+        issued = getattr(self, "_identity_issued", None)
+        if issued and issued.get("code") and issued["expires_at"] > now:
+            return _identity_code_text(issued["code"]), int(issued["expires_at"] - now)
+        pend = getattr(self, "_identity_pending", None) or {}
+        if pend.get("has_pending"):
+            left = int(pend.get("expires_in") or 0)
+            if left > 0:
+                return "（本窗口未持有该码）", left
+        return "尚未签发", 0
+
+    def _render_identity_state(self, data: dict) -> None:
+        meta = self._admin_meta["identity"]
+        body = meta["body"]
+        t = self.theme
+        _clear_frame(body)
+        self._identity_pending = data.get("pending") or {}
+
+        mode = str(data.get("mode") or "")
+        label, desc = IDENTITY_MODE_TEXTS.get(
+            mode, ("未知档位（%s）" % mode, "档位以后端返回值为准，控制台不做推算"))
+        _, card = self._admin_card(body, fill="x")
+        tk.Label(card, text="校验档位（后端 identity_enforce_mode，默认 off）",
+                 fg=t.text_sec, bg=t.card, font=CUI.f("caption")).pack(anchor="w")
+        tk.Label(card, text=label, fg=t.accent, bg=t.card,
+                 font=CUI.f("h2", True)).pack(anchor="w", pady=(0, SP_XXS))
+        tk.Label(card, text=desc, anchor="w", justify="left", fg=t.text_muted, bg=t.card,
+                 font=CUI.f(FS_CAPTION), wraplength=CUI.px(520)).pack(fill="x", pady=(0, SP_SM))
+        stats = data.get("pair_stats") or {}
+        pend = self._identity_pending
+        self._identity_kv(card, "服务器名", str(data.get("server_name") or "—"))
+        self._identity_kv(card, "当前指纹", _identity_fp_text(data.get("fp")))
+        self._identity_kv(card, "密钥签发于", _fmt_dt(data.get("key_created_at")))
+        self._identity_kv(card, "待用配对码",
+                          ("有效（指纹 %s，剩 %d 秒）" % (_identity_fp_text(pend.get("fp")),
+                                                        int(pend.get("expires_in") or 0)))
+                          if pend.get("has_pending") else "无")
+        self._identity_kv(card, "配对计数",
+                          "成功 %d ／ 失败 %d" % (int(stats.get("pair_success") or 0),
+                                                 int(stats.get("pair_fail") or 0)))
+
+        # 配对码卡（大字 + 倒计时 + 复制/重生成）
+        _, card2 = self._admin_card(body, fill="x", pady=(SP_SM, 0))
+        tk.Label(card2, text="一次性配对码（12 位，去易混字符；请在客户端界面上亲手输入）",
+                 fg=t.text_sec, bg=t.card, font=CUI.f("caption")).pack(anchor="w")
+        txt, left = self._identity_code_display()
+        code_lab = tk.Label(card2, text=txt, fg=t.text if left else t.text_muted, bg=t.card,
+                            font=CUI.f("num_xl", True, True))
+        code_lab.pack(anchor="w", pady=(SP_XXS, SP_XS))
+        act = tk.Frame(card2, bg=t.card)
+        act.pack(fill="x")
+        ttl_lab = tk.Label(act, text=("剩余 %d 秒后失效" % left) if left > 0 else
+                           "码失效后重新生成即可；过期未用的码不会改动服务器身份",
+                           fg=t.text_muted, bg=t.card, font=CUI.f(FS_CAPTION))
+        ttl_lab.pack(side="left")
+        RoundedButton(act, t, "重新生成", variant="neutral", height=28, font_role=FS_CAPTION,
+                      command=self._issue_pairing_code).pack(side="right", padx=(SP_XS, 0))
+        RoundedButton(act, t, "复制", variant="primary", height=28, font_role=FS_CAPTION,
+                      command=self._copy_identity_code).pack(side="right")
+        meta["code_label"], meta["ttl_label"] = code_lab, ttl_lab
+        if getattr(self, "_identity_code_after_id", None):
+            try:
+                self.root.after_cancel(self._identity_code_after_id)
+            except Exception:
+                _safe_traceback()
+        self._identity_code_after_id = self.root.after(1000, self._identity_tick)
+
+        # 轮换（危险动作，明确告知后果）
+        _, card3 = self._admin_card(body, fill="x", pady=(SP_SM, 0))
+        tk.Label(card3, text="轮换身份密钥", fg=t.text_sec, bg=t.card,
+                 font=CUI.f("caption")).pack(anchor="w")
+        tk.Label(card3, text="旧密钥立即作废，所有已配对设备需要重新配对；轮换同时签发一个新的配对码。",
+                 anchor="w", justify="left", fg=t.text_muted, bg=t.card,
+                 font=CUI.f(FS_CAPTION), wraplength=CUI.px(520)).pack(fill="x", pady=(0, SP_SM))
+        RoundedButton(card3, t, "轮换身份密钥", variant="danger", height=28,
+                      font_role=FS_CAPTION, command=self._rotate_identity_key).pack(anchor="w")
+
+        # 「0 步」只读卡：给出部署面现状与提示，本单不改任何默认值
+        hints = data.get("hints") or {}
+        _, card4 = self._admin_card(body, fill="x", pady=(SP_SM, 0))
+        tk.Label(card4, text="部署面现状（只提示，不改默认值）", fg=t.text_sec, bg=t.card,
+                 font=CUI.f("caption")).pack(anchor="w")
+        self._identity_kv(card4, "监听地址", str(data.get("bind_host") or "—"),
+                          "收窄设环境变量 SERVER_HOST 后重启")
+        self._identity_kv(card4, "CORS",
+                          "通配（*）" if hints.get("cors_wildcard") else "已收敛",
+                          "收紧会连带影响 App 跨源请求，按需再议")
+        self._identity_kv(card4, "/uploads",
+                          "需要登录" if hints.get("uploads_require_auth") else "免鉴权（现状默认）",
+                          "打开开关 uploads_require_auth 后生效")
+        self._identity_kv(card4, "签名覆盖", "%d 个端点（窄集）" % len(data.get("signed_paths") or []),
+                          "仅健康/登录/配对等 JSON 端点")
+
+    def _identity_tick(self) -> None:
+        """配对码倒计时：只刷文案，不重新请求后端；页面被清掉即停链。"""
+        meta = self._admin_meta.get("identity") or {}
+        self._identity_code_after_id = None
+        lab = meta.get("code_label")
+        try:
+            if lab is None or not lab.winfo_exists():
+                return
+        except Exception:
+            return
+        txt, left = self._identity_code_display()
+        try:
+            t = self.theme
+            lab.config(text=txt, fg=t.text if left else t.text_muted)
+            meta["ttl_label"].config(
+                text=("剩余 %d 秒后失效" % left) if left > 0 else "已失效，请重新生成",
+                fg=t.text_muted)
+        except Exception:
+            _safe_traceback()
+            return
+        if left > 0:
+            self._identity_code_after_id = self.root.after(1000, self._identity_tick)
+
+    def _remember_issued_code(self, data: dict) -> None:
+        ttl = int(data.get("expires_in") or data.get("ttl_sec") or 0)
+        self._identity_issued = {"code": str(data.get("code") or ""),
+                                 "fp": str(data.get("fp") or ""),
+                                 "expires_at": time.time() + ttl}
+
+    def _issue_pairing_code(self) -> None:
+        def ok(data):
+            self._remember_issued_code(data)
+            self._set_msg("已生成一次性配对码（%d 秒内有效，只在本机显示）"
+                          % int(data.get("ttl_sec") or 0))
+            self._load_identity()
+
+        self._run_admin("生成配对码",
+                        lambda: _admin_request("POST", "/identity/pairing-code", {}),
+                        ok, "identity")
+
+    def _rotate_identity_key(self) -> None:
+        if not tk.messagebox.askyesno(
+                "确认轮换身份密钥",
+                "轮换后：\n"
+                "· 旧身份密钥立即作废，所有已配对设备需重新配对\n"
+                "· 同时签发一个新的配对码（新指纹）\n\n"
+                "确定继续吗？",
+                parent=self.root):
+            return
+
+        def ok(data):
+            self._remember_issued_code(data)
+            self._set_msg("身份密钥已轮换，新指纹 %s（旧设备需重新配对）"
+                          % _identity_fp_text(data.get("fp")))
+            self._load_identity()
+
+        self._run_admin("轮换身份密钥",
+                        lambda: _admin_request("POST", "/identity/rotate", {}),
+                        ok, "identity")
+
+    def _copy_identity_code(self) -> None:
+        issued = getattr(self, "_identity_issued", None) or {}
+        code = str(issued.get("code") or "")
+        if not code or issued.get("expires_at", 0) <= time.time():
+            self._set_msg("当前没有有效配对码可复制，请先「重新生成」")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(code)
+        self._set_msg("已复制配对码到本机剪贴板（不经过网络）")
 
     # ── 概览页 ──
 

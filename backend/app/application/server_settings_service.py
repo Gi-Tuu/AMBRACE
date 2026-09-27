@@ -27,6 +27,13 @@ REGISTRATION_MODES = (
 )
 DEFAULT_REGISTRATION_MODE = REGISTRATION_MODE_OPEN
 
+# ── 服务器身份固定灰度档位（批 0-3 M0-a，2026-09-27）───────────────────────────
+# off＝签发但不校验（默认，既有响应逐字节不变）；shadow＝出签但缺签不拒、只记日志；
+# enforce＝出签，且「带了 nonce 却出不了签」的请求才被拒（详见 app/server_identity.py）。
+IDENTITY_ENFORCE_MODE_KEY = "identity_enforce_mode"
+IDENTITY_ENFORCE_MODES = ("off", "shadow", "enforce")
+DEFAULT_IDENTITY_ENFORCE_MODE = "off"
+
 
 async def get_setting(db, key: str, default: str | None = None) -> str | None:
     """读一条字符串配置；缺行/空值 → default。"""
@@ -68,3 +75,14 @@ async def set_registration_mode(db, mode: str) -> str:
         raise ValueError("invalid registration mode: " + str(mode))
     await set_setting(db, REGISTRATION_MODE_KEY, m)
     return m
+
+
+async def get_identity_enforce_mode(db) -> str:
+    """身份校验灰度档位：缺行/脏值/读失败 → ``off``（默认零行为变化，与注册策略同风格）。"""
+    try:
+        mode = await get_setting(db, IDENTITY_ENFORCE_MODE_KEY, DEFAULT_IDENTITY_ENFORCE_MODE)
+    except Exception as e:  # noqa: BLE001 —— 配置表缺失/被锁不打挂被签名的端点
+        _logger.warning("identity enforce mode read failed: %s", e)
+        return DEFAULT_IDENTITY_ENFORCE_MODE
+    mode = str(mode or "").strip().lower()
+    return mode if mode in IDENTITY_ENFORCE_MODES else DEFAULT_IDENTITY_ENFORCE_MODE

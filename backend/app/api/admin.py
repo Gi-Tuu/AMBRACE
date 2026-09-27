@@ -17,6 +17,8 @@
 - 默认模型：GET/PUT /server/modalities[/{key}]（四模态唯一出口 llm_config_service）；
 - 开关与权限：GET/PUT /server/flags[/{key}]（flag_service + flag_settings 策略）；
 - 注册策略：GET/PUT /server/registration（server_settings KV）；
+- 服务器身份：GET /server/identity（快照）、POST /server/identity/{pairing-code,rotate}
+  （批 0-3 M0-a：配对码只给本机控制台显示，轮换＝作废旧密钥并重签发）；
 - 审计：GET /server/audit；概览：GET /server/overview。
 
 A8 LLM 额度按账号（2026-09-20）：额度从单行全局扩成「全局默认 + 账号覆盖」——
@@ -822,6 +824,85 @@ async def set_registration_policy(
 
     _logger.info("registration mode=%s by=%d", mode, user_id)
     return {"status": "ok", "mode": mode}
+
+
+# ── 服务器身份固定（批 0-3 M0-a，2026-09-27）──────────────────────────────────
+# 口径：配对码只在控制台屏幕显示（带外面），**绝不出现在任何面向 App 的端点/日志里**；
+# 只防「伪造服务器」，不防窃听（防窃听要等 TLS）。
+
+@router.get("/server/identity")
+async def get_server_identity(
+    user_id: int = Depends(require_server_admin),
+):
+    """身份快照（只读）：灰度档位 / 当前指纹 / 待用配对码 / 签名覆盖清单 / 部署面提示。
+
+    附带「0 步」读数：绑定地址、CORS 是否通配、``/uploads`` 是否免鉴权——**只提示、不改默认**。
+    """
+    import os as _os
+
+    from app import server_identity as _ident
+    from app.application.server_settings_service import get_identity_enforce_mode
+    from app.config import settings as _settings
+
+    async with async_session_factory() as db:
+        mode = await get_identity_enforce_mode(db)
+    cors_raw = (_os.environ.get("CORS_ORIGINS", "*") or "").strip()
+    fp = _ident.current_fingerprint()
+    return {
+        "mode": mode,
+        "server_name": _ident.SERVER_NAME,
+        "fp": fp,
+        "fp_display": _ident.format_fingerprint(fp) if fp else "",
+        "key_created_at": _ident.key_created_at(),
+        "paired": bool(fp),
+        "pending": _ident.pending_info(),
+        "pair_stats": _ident.pair_stats(),
+        "signed_paths": sorted(_ident.SIGN_PATHS),
+        "bind_host": _settings.server_host,
+        "hints": {
+            "cors_wildcard": ("*" in cors_raw or not cors_raw),
+            "uploads_require_auth": bool(_settings.uploads_require_auth),
+        },
+    }
+
+
+@router.post("/server/identity/pairing-code")
+async def post_server_identity_pairing_code(
+    body: dict | None = None,
+    user_id: int = Depends(require_server_admin),
+):
+    """签发一次性配对码（12 位去易混字符，默认 5 分钟有效）。
+
+    响应里的 ``code`` 只给本机桌面控制台显示；它**不进日志、不进任何面向 App 的端点**。
+    """
+    from app import server_identity as _ident
+
+    issued = _ident.issue_pairing_code()
+    async with async_session_factory() as db:
+        await _audit_record(db, user_id, "server.identity.pairing_code", "identity",
+                            None, {"fp": issued["fp"], "ttl_sec": issued["ttl_sec"]})
+        await db.commit()
+    _logger.info("pairing code issued fp=%s by=%d", issued["fp"], user_id)
+    return issued
+
+
+@router.post("/server/identity/rotate")
+async def post_server_identity_rotate(
+    body: dict | None = None,
+    user_id: int = Depends(require_server_admin),
+):
+    """轮换身份密钥：作废旧密钥（已配对设备立即失签，需重新配对）+ 签发新码。"""
+    from app import server_identity as _ident
+
+    _before = {"fp": _ident.current_fingerprint()}
+    issued = _ident.rotate_identity()
+    async with async_session_factory() as db:
+        await _audit_record(db, user_id, "server.identity.rotate", "identity",
+                            _before, {"fp": issued["fp"]})
+        await db.commit()
+    _logger.warning("identity key rotated by=%d old_fp=%s new_fp=%s",
+                    user_id, _before["fp"], issued["fp"])
+    return issued
 
 
 # ── 审计（契约 §1.5）──────────────────────────────────────────────────────────

@@ -14354,6 +14354,151 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'重新打开'**
   String get reopen;
+
+  /// No description provided for @serverIdentityTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'服务器身份'**
+  String get serverIdentityTitle;
+
+  /// No description provided for @serverIdentityStatusUnpaired.
+  ///
+  /// In zh, this message translates to:
+  /// **'未配对：本机尚未固定该服务器身份'**
+  String get serverIdentityStatusUnpaired;
+
+  /// No description provided for @serverIdentityStatusPaired.
+  ///
+  /// In zh, this message translates to:
+  /// **'已配对，指纹 {fp}'**
+  String serverIdentityStatusPaired(Object fp);
+
+  /// No description provided for @serverIdentityPair.
+  ///
+  /// In zh, this message translates to:
+  /// **'配对'**
+  String get serverIdentityPair;
+
+  /// No description provided for @serverIdentityPairing.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在配对…'**
+  String get serverIdentityPairing;
+
+  /// No description provided for @serverIdentityCodeHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'输入电脑上「服务器身份」页显示的一次性配对码（12 位）'**
+  String get serverIdentityCodeHint;
+
+  /// No description provided for @serverIdentityCodeInvalid.
+  ///
+  /// In zh, this message translates to:
+  /// **'配对码需为 12 位，且不含 0/O/1/I/L'**
+  String get serverIdentityCodeInvalid;
+
+  /// No description provided for @serverIdentityFingerprintConfirm.
+  ///
+  /// In zh, this message translates to:
+  /// **'请对照电脑屏幕上的指纹后确认：{name} · {fp}'**
+  String serverIdentityFingerprintConfirm(Object name, Object fp);
+
+  /// No description provided for @serverIdentityConfirmYes.
+  ///
+  /// In zh, this message translates to:
+  /// **'指纹一致'**
+  String get serverIdentityConfirmYes;
+
+  /// No description provided for @serverIdentityConfirmNo.
+  ///
+  /// In zh, this message translates to:
+  /// **'不一致，取消'**
+  String get serverIdentityConfirmNo;
+
+  /// No description provided for @serverIdentityFailedBody.
+  ///
+  /// In zh, this message translates to:
+  /// **'配对失败，请在电脑上重新生成配对码后重试'**
+  String get serverIdentityFailedBody;
+
+  /// No description provided for @serverIdentityNoCode.
+  ///
+  /// In zh, this message translates to:
+  /// **'电脑上还没有生成配对码，请先在控制台点「生成配对码」'**
+  String get serverIdentityNoCode;
+
+  /// No description provided for @serverIdentityNetworkFail.
+  ///
+  /// In zh, this message translates to:
+  /// **'连不上该服务器地址，请检查服务器地址与网络'**
+  String get serverIdentityNetworkFail;
+
+  /// No description provided for @serverIdentityRevoked.
+  ///
+  /// In zh, this message translates to:
+  /// **'已解除配对，本机不再校验该服务器身份'**
+  String get serverIdentityRevoked;
+
+  /// No description provided for @serverIdentityUnpair.
+  ///
+  /// In zh, this message translates to:
+  /// **'解除配对'**
+  String get serverIdentityUnpair;
+
+  /// No description provided for @serverIdentityModeLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'验签模式'**
+  String get serverIdentityModeLabel;
+
+  /// No description provided for @serverIdentityModeOff.
+  ///
+  /// In zh, this message translates to:
+  /// **'不校验'**
+  String get serverIdentityModeOff;
+
+  /// No description provided for @serverIdentityModeShadow.
+  ///
+  /// In zh, this message translates to:
+  /// **'只记录'**
+  String get serverIdentityModeShadow;
+
+  /// No description provided for @serverIdentityModeEnforce.
+  ///
+  /// In zh, this message translates to:
+  /// **'拒绝可疑响应'**
+  String get serverIdentityModeEnforce;
+
+  /// No description provided for @serverIdentityMismatch.
+  ///
+  /// In zh, this message translates to:
+  /// **'服务器身份校验失败：响应签名与已配对身份不符'**
+  String get serverIdentityMismatch;
+
+  /// No description provided for @serverIdentityUnverifiedWarn.
+  ///
+  /// In zh, this message translates to:
+  /// **'部分受保护：图片/音频直链、下载直链、SSE 与 WebSocket 帧不做签名校验（{verified}/{mismatch}/{unsigned}）'**
+  String serverIdentityUnverifiedWarn(
+      Object verified, Object mismatch, Object unsigned);
+
+  /// No description provided for @serverIdentityNote.
+  ///
+  /// In zh, this message translates to:
+  /// **'配对码只在手机上做本地派生，不会发送到网络；网络上只跑挑战与应答。'**
+  String get serverIdentityNote;
+
+  /// No description provided for @serverIdentityReconnectNeeded.
+  ///
+  /// In zh, this message translates to:
+  /// **'服务器地址已变更，需要重新配对'**
+  String get serverIdentityReconnectNeeded;
+
+  /// No description provided for @serverIdentityEntryHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'尚未与该服务器配对'**
+  String get serverIdentityEntryHint;
 }
 
 class _AppLocalizationsDelegate

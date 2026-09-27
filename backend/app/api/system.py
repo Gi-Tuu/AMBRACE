@@ -6,12 +6,15 @@
 """
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse
 
+from app import server_identity
 from app.application import system as _svc
+from app.auth import ratelimit
 from app.auth.deps import get_current_user_id
 from app.db.database import get_db
+from app.i18n import tr
 from app.utils.logger import get_logger
 from app.utils import readiness
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,8 +25,52 @@ _logger = get_logger("api.system")
 
 @router.get("/health")
 async def health_check():
-    """健康检查"""
-    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+    """健康检查（App 匿名校时也走这里）。
+
+    批 0-3 M0-a：非 ``off`` 档位追加 ``identity`` 节（服务器名 + 指纹提示 + 灰度档位）。
+    **该字段只作已配对设备自查/展示，不是信任根**——明文 http 下它本身可被替换，信任根
+    只有配对时带外确认过的那份密钥（方案 §3.1）。``off``（默认）时响应与改动前逐字节一致。
+    """
+    payload = {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+    ident = await server_identity.health_identity_block()
+    if ident:
+        payload["identity"] = ident
+    return payload
+
+
+@router.post("/identity/pair-start")
+async def identity_pair_start(request: Request):
+    """配对第 ③ 步（上）：领一次性 challenge。**配对码从不出网**。"""
+    client_ip = request.client.host if request.client else "unknown"
+    key = "pair:%s" % client_ip
+    if ratelimit.is_locked(key):
+        raise HTTPException(status_code=429, detail=tr(request, "too_many_attempts", minutes=1))
+    try:
+        return server_identity.pair_start()
+    except server_identity.PairError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
+
+
+@router.post("/identity/pair")
+async def identity_pair(request: Request, body: dict):
+    """配对第 ③ 步（下）：App 用 ``HKDF(配对码)`` 算出的 mac 换服务器指纹。
+
+    返回的 ``fp`` 供 App 与控制台屏幕（带外显示的那个）比对，不等即拒绝（首连指纹确认）。
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    key = "pair:%s" % client_ip
+    if ratelimit.is_locked(key):
+        raise HTTPException(status_code=429, detail=tr(request, "too_many_attempts", minutes=1))
+    data = body or {}
+    try:
+        result = server_identity.pair_finish(
+            str(data.get("challenge") or ""), str(data.get("mac") or ""))
+    except server_identity.PairError as e:
+        if ratelimit.record_failure(key):
+            _logger.warning("pairing rate-limited ip=%s", client_ip)
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
+    ratelimit.record_success(key)
+    return result
 
 
 @router.get("/ready")

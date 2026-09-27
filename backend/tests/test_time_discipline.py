@@ -40,7 +40,7 @@ EXEMPT_FILES = frozenset({"utils/timeutil.py"})
 # (相对 app/ 的路径, 去掉缩进与行尾注释后的源码行) -> 保持 aware 的理由
 KEEP_AWARE: dict[tuple[str, str], str] = {
     ("api/system.py",
-     'return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}'):
+     'payload = {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}'):
         "仅 /health 输出 JSON 时间戳，不入库",
     ("api/marketplace.py",
      '"last_refresh_at": datetime.now(timezone.utc).isoformat(),'):

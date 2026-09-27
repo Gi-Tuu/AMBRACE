@@ -19,6 +19,8 @@ import 'providers/diary_provider.dart';
 import 'providers/pets_provider.dart';
 import 'features/home/home_screen.dart';
 import 'features/auth/login_screen.dart';
+import 'features/auth/pair_server_screen.dart';
+import 'services/server_identity.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -60,6 +62,104 @@ void _setupLifecycleObserver() {
     onShow: () => NotificationService().setAppInForeground(true),
     onHide: () => NotificationService().setAppInForeground(false),
   );
+}
+
+// ---- 批 0-3 M0-b 收尾：服务器身份配对入口（方案 §4.3.4）----
+
+/// 栈顶路由名：配对页自身不再显示入口，避免与页面内容重复
+final ValueNotifier<String> _topRouteName = ValueNotifier<String>('');
+final NavigatorObserver _topRouteNameObserver = _TopRouteNameObserver();
+
+class _TopRouteNameObserver extends NavigatorObserver {
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previous) {
+    _topRouteName.value = route.settings.name ?? '';
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previous) {
+    _topRouteName.value = previous?.settings.name ?? '';
+  }
+}
+
+/// 「尚未与该服务器配对」提示 + 配对入口。
+/// 只在身份读取完成且本机未保存当前服务器身份时出现；已配对（含后端 off 未出签）完全不打扰。
+class _ServerIdentityPairEntry extends StatefulWidget {
+  const _ServerIdentityPairEntry();
+
+  @override
+  State<_ServerIdentityPairEntry> createState() => _ServerIdentityPairEntryState();
+}
+
+class _ServerIdentityPairEntryState extends State<_ServerIdentityPairEntry> {
+  bool _dismissed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 只后台读取，读不到（prefs 不可用/无网络）就当未配对处理，绝不影响既有渲染
+    ServerIdentity.instance.ensureLoaded().catchError((Object _) {}).then((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  Future<void> _openPairing() async {
+    await Navigator.of(context).pushNamed('/pair-server');
+    if (mounted) setState(() {}); // 配对/解除配对返回后立刻刷新提示
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final identity = ServerIdentity.instance;
+    return ValueListenableBuilder<String>(
+      valueListenable: _topRouteName,
+      builder: (context, topRoute, _) {
+        if (_dismissed ||
+            !identity.isLoaded ||
+            identity.isPaired ||
+            topRoute == '/pair-server') {
+          return const SizedBox.shrink();
+        }
+        // 换过服务器地址（本机存有旧指纹）时提示语不同于首次未配对
+        final hint = identity.fingerprint.isNotEmpty
+            ? l10n.serverIdentityReconnectNeeded
+            : l10n.serverIdentityEntryHint;
+        return Align(
+          alignment: Alignment.bottomLeft,
+          child: Padding(
+            padding: EdgeInsets.only(
+                left: 12,
+                // 抬到各页底部导航条之上，不遮挡既有操作
+                bottom: MediaQuery.paddingOf(context).bottom + 88),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 12, top: 2, bottom: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(hint,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall),
+                    ),
+                    TextButton(
+                      onPressed: _openPairing,
+                      child: Text(l10n.serverIdentityPair),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 16),
+                      onPressed: () => setState(() => _dismissed = true),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
 
 /// 解析语言：system=跟随设备语言（非 zh/en 一律回退简体中文），zh/en 直接使用。
@@ -132,7 +232,7 @@ class _AICompanionAppState extends State<AICompanionApp> with WidgetsBindingObse
             title: 'AMBRACE',
             debugShowCheckedModeBanner: false,
             navigatorKey: appNavigatorKey,
-            navigatorObservers: [appRouteObserver],
+            navigatorObservers: [appRouteObserver, _topRouteNameObserver],
             theme: AppTheme.light(settings.seedColorIndex, skinId: settings.skinId, fontVariant: settings.fontVariant),
             darkTheme: AppTheme.dark(settings.seedColorIndex, skinId: settings.skinId, fontVariant: settings.fontVariant),
             themeMode: AppTheme.modeFromIndex(settings.themeModeIndex),
@@ -140,6 +240,7 @@ class _AICompanionAppState extends State<AICompanionApp> with WidgetsBindingObse
               children: [
                 const AppBackground(), // 全局背景层（最底层，登录页也生效）
                 child ?? const SizedBox(),
+                const _ServerIdentityPairEntry(), // 未配对提示（已配对时不渲染任何像素）
               ],
             ),
             locale: _resolveLocale(settings.localeCode),
@@ -154,6 +255,7 @@ class _AICompanionAppState extends State<AICompanionApp> with WidgetsBindingObse
             routes: {
               '/home': (context) => const HomeScreen(),
               '/login': (context) => const LoginScreen(),
+              '/pair-server': (context) => const PairServerScreen(),
             },
           );
         },

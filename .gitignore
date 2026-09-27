@@ -78,6 +78,9 @@ backend/data/auth_secret.key
 # 安全（2026-09-26，A8 方案 B）：凭据加密主密钥不入库（丢了＝凭据重填；备份包亦已排除）
 backend/data/secrets.key
 
+# 安全（2026-09-27，批 0-3 M0-a）：服务器身份密钥不入库（丢了＝指纹变化，已配对设备需重新配对）
+backend/data/server_identity.key
+
 # 发布包隐私词名单（仅本机扫描用）
 scripts/.privacy_names
 

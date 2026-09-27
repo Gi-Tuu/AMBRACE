@@ -8,7 +8,8 @@ import 'package:dio/dio.dart';
 /// 文案时用 [ApiException.messageOf] 一行取用，无需逐处解析 Dio 错误类型。
 class ApiException implements Exception {
   /// unauthorized（401）/ network（断网/DNS）/ timeout / server（5xx）/
-  /// client（4xx 其余）/ cancelled / unknown
+  /// client（4xx 其余）/ cancelled / unknown /
+  /// identity（批 0-3 M0-b：响应签名校验不符，enforce 档拒绝；UI 可按 kind 走 l10n 文案）
   final String kind;
 
   /// HTTP 状态码（网络层失败为 null）

@@ -8038,4 +8038,93 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get reopen => 'Reopen';
+
+  @override
+  String get serverIdentityTitle => 'Server identity';
+
+  @override
+  String get serverIdentityStatusUnpaired =>
+      'Not paired: this server\'s identity is not pinned yet';
+
+  @override
+  String serverIdentityStatusPaired(Object fp) {
+    return 'Paired, fingerprint $fp';
+  }
+
+  @override
+  String get serverIdentityPair => 'Pair';
+
+  @override
+  String get serverIdentityPairing => 'Pairing…';
+
+  @override
+  String get serverIdentityCodeHint =>
+      'Enter the one-time pairing code shown on the Server identity page of your computer (12 characters)';
+
+  @override
+  String get serverIdentityCodeInvalid =>
+      'The pairing code must be 12 characters and excludes 0/O/1/I/L';
+
+  @override
+  String serverIdentityFingerprintConfirm(Object name, Object fp) {
+    return 'Compare the fingerprint shown on your computer screen before confirming: $name · $fp';
+  }
+
+  @override
+  String get serverIdentityConfirmYes => 'Fingerprint matches';
+
+  @override
+  String get serverIdentityConfirmNo => 'Does not match, cancel';
+
+  @override
+  String get serverIdentityFailedBody =>
+      'Pairing failed. Generate a new pairing code on your computer and try again';
+
+  @override
+  String get serverIdentityNoCode =>
+      'No pairing code has been issued. Click Generate pairing code in the console first';
+
+  @override
+  String get serverIdentityNetworkFail =>
+      'Cannot reach that server address. Check the address and your network';
+
+  @override
+  String get serverIdentityRevoked =>
+      'Unpaired. This device no longer verifies that server\'s identity';
+
+  @override
+  String get serverIdentityUnpair => 'Unpair';
+
+  @override
+  String get serverIdentityModeLabel => 'Verification mode';
+
+  @override
+  String get serverIdentityModeOff => 'Off';
+
+  @override
+  String get serverIdentityModeShadow => 'Log only';
+
+  @override
+  String get serverIdentityModeEnforce => 'Reject suspicious';
+
+  @override
+  String get serverIdentityMismatch =>
+      'Server identity check failed: the response signature does not match the paired identity';
+
+  @override
+  String serverIdentityUnverifiedWarn(
+      Object verified, Object mismatch, Object unsigned) {
+    return 'Partial protection: image/audio links, direct downloads, SSE and WebSocket frames are not signature-checked ($verified/$mismatch/$unsigned)';
+  }
+
+  @override
+  String get serverIdentityNote =>
+      'The pairing code is only used locally to derive a key and is never sent; only a challenge and its answer go over the network.';
+
+  @override
+  String get serverIdentityReconnectNeeded =>
+      'The server address changed; pairing is required again';
+
+  @override
+  String get serverIdentityEntryHint => 'This server is not paired yet';
 }

@@ -7726,4 +7726,83 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get reopen => '重新打开';
+
+  @override
+  String get serverIdentityTitle => '服务器身份';
+
+  @override
+  String get serverIdentityStatusUnpaired => '未配对：本机尚未固定该服务器身份';
+
+  @override
+  String serverIdentityStatusPaired(Object fp) {
+    return '已配对，指纹 $fp';
+  }
+
+  @override
+  String get serverIdentityPair => '配对';
+
+  @override
+  String get serverIdentityPairing => '正在配对…';
+
+  @override
+  String get serverIdentityCodeHint => '输入电脑上「服务器身份」页显示的一次性配对码（12 位）';
+
+  @override
+  String get serverIdentityCodeInvalid => '配对码需为 12 位，且不含 0/O/1/I/L';
+
+  @override
+  String serverIdentityFingerprintConfirm(Object name, Object fp) {
+    return '请对照电脑屏幕上的指纹后确认：$name · $fp';
+  }
+
+  @override
+  String get serverIdentityConfirmYes => '指纹一致';
+
+  @override
+  String get serverIdentityConfirmNo => '不一致，取消';
+
+  @override
+  String get serverIdentityFailedBody => '配对失败，请在电脑上重新生成配对码后重试';
+
+  @override
+  String get serverIdentityNoCode => '电脑上还没有生成配对码，请先在控制台点「生成配对码」';
+
+  @override
+  String get serverIdentityNetworkFail => '连不上该服务器地址，请检查服务器地址与网络';
+
+  @override
+  String get serverIdentityRevoked => '已解除配对，本机不再校验该服务器身份';
+
+  @override
+  String get serverIdentityUnpair => '解除配对';
+
+  @override
+  String get serverIdentityModeLabel => '验签模式';
+
+  @override
+  String get serverIdentityModeOff => '不校验';
+
+  @override
+  String get serverIdentityModeShadow => '只记录';
+
+  @override
+  String get serverIdentityModeEnforce => '拒绝可疑响应';
+
+  @override
+  String get serverIdentityMismatch => '服务器身份校验失败：响应签名与已配对身份不符';
+
+  @override
+  String serverIdentityUnverifiedWarn(
+      Object verified, Object mismatch, Object unsigned) {
+    return '部分受保护：图片/音频直链、下载直链、SSE 与 WebSocket 帧不做签名校验（$verified/$mismatch/$unsigned）';
+  }
+
+  @override
+  String get serverIdentityNote => '配对码只在手机上做本地派生，不会发送到网络；网络上只跑挑战与应答。';
+
+  @override
+  String get serverIdentityReconnectNeeded => '服务器地址已变更，需要重新配对';
+
+  @override
+  String get serverIdentityEntryHint => '尚未与该服务器配对';
 }

@@ -14,6 +14,9 @@ dependencies:
   intl: ^0.20.3
   cupertino_icons: ^1.0.8
   dio: ^5.4.0
+  # 批 0-3 M0-b（2026-09-27 拍板放行）：服务器身份固定需要 HMAC-SHA256/HKDF/SHA-256。
+  # pure-dart、Dart 官方包、无原生依赖；范围仅限 lib/services/server_identity.dart。
+  crypto: ^3.0.7
   web_socket_channel: ^3.0.0
   provider: ^6.1.0
   shared_preferences: ^2.2.0

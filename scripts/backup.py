@@ -31,7 +31,8 @@ README_BACKUP_TEXT = (
     "本压缩包包含 backend/data/sqlite/ai_companion.db 与 backend/data/server_config.json。\n"
     "其中的模型 / 语音 / 多模态等 API 凭据采用本地信封加密存储（AES-256-GCM，密文以 enc:v1: 开头），\n"
     "解密用的主密钥是 backend/data/secrets.key —— **它刻意不在本备份包内**（同被排除的还有\n"
-    "auth_secret.key 登录签名密钥、fcm-service-account.json 推送服务账号）。\n"
+    "auth_secret.key 登录签名密钥、server_identity.key 服务器身份密钥、fcm-service-account.json\n"
+    "推送服务账号）。\n"
     "\n"
     "因此：\n"
     "1) 请勿把本备份包外发、上传网盘或提交到代码仓库；密钥文件同样按机密件对待，两者分开保存；\n"
@@ -46,6 +47,7 @@ KEEP_DAYS = 14
 SECRET_BASENAMES = {
     "secrets.key",                  # 凭据加密主密钥（app/utils/credential_crypto.py）
     "auth_secret.key",              # JWT 签名密钥（app/auth/config.py）
+    "server_identity.key",          # 服务器身份密钥（批 0-3 M0-a，app/server_identity.py）
     "fcm-service-account.json",     # 推送服务账号（含私钥）
 }
 
