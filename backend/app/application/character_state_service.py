@@ -24,6 +24,8 @@ DIMENSIONS = [
 ]
 _DIM_KEYS = [d[0] for d in DIMENSIONS]
 _THROTTLE_MINUTES = 10
+# A4 批3 M1b2（影子态周期兜底）：只为「近 N 小时有过互动」的（角色, 用户）补结算水位
+_DRIVE_SETTLE_HOURS = 24
 _MAX_INPUT_CHARS = 150
 _LOCK: set[int] = set()  # 进程内防并发重复评估
 _DRIFT_RULES = {
@@ -241,6 +243,55 @@ def _apply_drift_sync(st, now: datetime) -> dict:
     return changed
 
 
+def _drive_settle_candidates(states, now: datetime) -> list[int]:
+    """挑出「近 _DRIVE_SETTLE_HOURS 小时有过互动」的角色 id（互动时刻＝last_activity_at，缺则退到 updated_at）。"""
+    since = now - timedelta(hours=_DRIVE_SETTLE_HOURS)
+    out: list[int] = []
+    for st in states:
+        act = getattr(st, "last_activity_at", None) or getattr(st, "updated_at", None)
+        if act is None:
+            continue
+        try:
+            if act.replace(tzinfo=None) > since:
+                out.append(st.character_id)
+        except Exception:
+            continue
+    return out
+
+
+async def settle_recent_relational_drives(char_ids: list[int], now: datetime) -> int:
+    """A4 批3 M1b2（影子态周期兜底）：给近期有互动的（角色, 用户）各补一次驱力水位结算。
+
+    为什么需要：tick 钩子只在「本轮要主动搭话」时结算、回合末钩子只在用户说话时结算，长静默期
+    两个钩子都不跑 ⇒ 表里水位停在旧游标（懒结算不丢增量，但读到的不是最新值）。本函数借用同文件
+    ``_THROTTLE_MINUTES`` 那套「到期才动」的思路，由 scheduler 约 2h 一次的漂移任务带动。
+
+    口径：
+    - **只 settle**（按游标补增量），绝不调 release_*——两档释放属 M2；
+    - 取数闸门在这里判：本函数要多发一次 SELECT 找 user_id，flag 关时一条都不该查；
+    - commit＝自开 session 自己提交（与另两处钩子同口径）。
+    返回结算过的对数（仅观测）。
+    """
+    from app.application import relational_drive_service as _drive
+
+    if not char_ids or not _drive.shadow_enabled():
+        return 0
+    settled = 0
+    async with async_session_factory() as db:
+        pairs = (await db.execute(
+            select(AICharacter.id, AICharacter.user_id).where(AICharacter.id.in_(char_ids))
+        )).all()
+        for char_id, user_id in pairs:
+            if not user_id:
+                continue
+            try:
+                await _drive.settle(db, int(char_id), int(user_id), now)
+                settled += 1
+            except Exception as e:
+                _logger.debug("Drive settle skip char=%s user=%s: %s", char_id, user_id, e)
+        await db.commit()
+    return settled
+
 
 async def drift_all_character_states() -> None:
     """scheduler 兜底（约 2h 一次）：全库结算一次状态漂移"""
@@ -261,12 +312,18 @@ async def drift_all_character_states() -> None:
                         _logger.debug("Drift settled char=%d: %s", st.character_id, changed)
                 except Exception:
                     continue
+            drive_due = _drive_settle_candidates(rows, now)  # 提交前行属性还有效，清单在此取
             await db.commit()
             for st in rows:
                 try:
                     await prune_state_history(st.character_id)
                 except Exception:
                     continue
+            # A4 批3 M1b2（影子态周期兜底）：顺带补齐驱力水位；异常静默，绝不影响漂移/落库
+            try:
+                await settle_recent_relational_drives(drive_due, now)
+            except Exception as e:
+                _logger.debug("Drive settle fallback skipped: %s", e)
     except Exception as e:
         _logger.warning("State drift all failed: %s", e)
 

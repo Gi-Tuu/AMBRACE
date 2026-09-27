@@ -259,6 +259,23 @@ async def _bump_relationship(character_id: int, user_id: int) -> None:
         _logger.warning("Relationship bump failed char=%d: %s", character_id, e)
 
 
+async def _settle_relational_drive(character_id: int, user_id: int) -> None:
+    """A4 批3 M1b2（影子态）：回合末补一次关系驱力水位结算——只记账，不改本轮回复。
+
+    commit 口径：钩子自开 session ⇒ 自己 commit（仓储层只 add/flush，不提交就把水位静默丢掉）。
+    flag 关 ⇒ 先读内存闸直接返回，连 session 都不建立（零额外查询，逐字节旧行为）。
+    """
+    try:
+        from app.application import relational_drive_service
+        if not relational_drive_service.shadow_enabled():
+            return
+        async with async_session_factory() as db:
+            await relational_drive_service.settle(db, character_id, user_id)
+            await db.commit()
+    except Exception as e:
+        _logger.debug("Relational drive settle skipped char=%d: %s", character_id, e)
+
+
 async def _load_reasoning_level(character_id: int) -> int:
     """读取角色「思考过程」挡位：0=关闭 / 1=简单思考 / 2=深度思考"""
     try:
@@ -1004,6 +1021,9 @@ async def _run_post_processing(
 
     # 认知循环 v2.1：用户发消息 → 关系标量互动加分（bump，失败静默）
     spawn_background(_bump_relationship(character_id, user_id))
+
+    # A4 批3 M1b2（影子态）：回合末结算一次关系驱力水位（只记账，不改回复；失败静默）
+    spawn_background(_settle_relational_drive(character_id, user_id))
 
     # 认知循环 v2.1：话题完成/搁置自动切换（本地零 LLM，失败静默）
     try:

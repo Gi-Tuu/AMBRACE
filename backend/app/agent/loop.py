@@ -388,6 +388,14 @@ AGENT_FLAGS = {
     # 关=不解析 [SEARCH]、不搜索、不加时延，与现状逐字节一致。
     # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。默认关=零行为变化。
     "proactive_self_search": False,
+    # ── A4 批 3 / M1b1：关系驱力影子态（2026-09-27；默认关=零行为变化）──
+    # 开＝(角色 × 用户) 的六驱力水位进入**影子态**：只 settle 落库（relational_drives 表）
+    #   + 写留痕 + 与现行意图做「影子改判」对比；**不改实际意图、不注入任何 section、
+    #   不改发送**——定调仍由现有加权随机给出，逐字节不变（钩子与改判留痕属下一单 M1b2）。
+    # 关＝**逐字节旧行为**：水位读写口（app/application/relational_drive_service.py）每个入口
+    #   首行即返回，连一次 SELECT 都不发。默认关＝零行为、零开销，一键回退。
+    # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
+    "relational_drive_shadow": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

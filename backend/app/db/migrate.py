@@ -134,6 +134,11 @@ _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     # 却永久缺列——档位读写（PUT /system/context-budget/tier）与 GET /system/context-budget
     # 直接报错，且 select(User) 也会炸。
     ("users", "context_budget_tier"),
+    # ── A4 批3 T1 M1a 关系驱力水位（2026-09-27）：relational_drives 表 ──
+    # 该表【只由迁移 a1c4e7f9b2d5 create_table 引入】（表级哨兵，同 plugin_consents /
+    # user_runtime_flags 的先例）。老库（有表但无版本号）缺此表时若不判「落后」，会被 stamp
+    # 到 head 却永久缺表——将来 M1b 的 settle/释放读写直接 select 报错，水位整条链静默失效。
+    ("relational_drives", "level"),
 ]
 
 

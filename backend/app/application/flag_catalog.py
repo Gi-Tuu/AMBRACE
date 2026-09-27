@@ -163,6 +163,13 @@ _FLAG_ROWS: list[tuple] = [
     ('proactive_outreach_v2', 'outreach_natural', 10, True, '主动消息自然化',
      '按闲置时长和手头素材挑一个自然的由头再找你，少硬接旧话题。',
      'Natural outreach', 'Picks a natural reason to reach out based on idle time and available material.'),
+    ('relational_drive_shadow', 'outreach_natural', 11, False, '惦记程度后台观察',
+     '在后台悄悄记下角色对你的「想念、牵挂、想分享」这些感觉随时间起伏的痕迹，只用于核对效果，'
+     '不改变任何回复、主动消息和发送时机。默认关闭。',
+     'Longing levels observed in the background',
+     'Quietly keeps a record of how feelings like missing you, worrying about you and wanting to share '
+     'drift over time, purely to check how they behave; it changes no replies, no proactive messages '
+     'and no timing. Off by default.'),
 
     # ── 记忆检索与注入（实验灰度）──
     ('memory_temporal_recall', 'memory', 701, False, '时间线索记忆检索',

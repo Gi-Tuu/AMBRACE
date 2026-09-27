@@ -1,4 +1,6 @@
 """主动交流系统 API — 设置管理"""
+from bisect import bisect_right
+
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +16,7 @@ from app.auth.deps import get_current_user_id
 from app.application.tenant_service import tenant_scope_ids
 from app.i18n import tr_lang
 from app.utils.errors import friendly_llm_error
-from app.utils.timeutil import now_naive_utc
+from app.utils.timeutil import now_naive_utc, to_naive_utc
 
 router = APIRouter(prefix="/api/v1/scheduler", tags=["Scheduler"])
 # #28 ③ 手动触发测试接口：独立 router（挂在 /api/v1/proactive，管理员专用）
@@ -182,10 +184,15 @@ async def update_settings(
 async def get_proactive_stats(
     character_id: int | None = None,
     days: int = 7,
+    reply_scan_limit: int = 200,
     db: AsyncSession = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    """主动消息效果统计：触发/发送/拦截数量 + 用户回复率（按消息后该会话是否有用户回复估算）"""
+    """主动消息效果统计：触发/发送/拦截数量 + 用户回复率（按消息后该会话是否有用户回复估算）
+
+    reply_scan_limit：回复率扫描条数上限，默认 200＝与旧实现逐字节一致；传 0＝不截断。
+    需要「按 intent/tier 切分 + 60 分钟窗口 + 不截断」的判效口径走只读端点 /stats/outreach。
+    """
     from datetime import timedelta
     from sqlalchemy import func as sa_func
     from app.models.chat import ChatMessage
@@ -213,8 +220,9 @@ async def get_proactive_stats(
     total_sent = len(sent_rows)
 
     # 回复率：每条主动消息后，同一会话是否出现用户新消息
+    # （A4 批3 M0：原硬编码「只扫前 200 条」改为可传参，默认 200＝行为不变；传 0＝不截断）
     replied = 0
-    for m in sent_rows[:200]:
+    for m in (sent_rows[:reply_scan_limit] if reply_scan_limit > 0 else sent_rows):
         if m.session_id is None:
             continue
         n = (await db.execute(
@@ -245,6 +253,201 @@ async def get_proactive_stats(
         "reply_rate": reply_rate,
         "trigger_type_stats": type_stats,
     }
+
+
+# ── 主动消息效果聚合（A4 批3 M0，2026-09-27：只读、按 intent × tier 切分、无条数截断） ──
+
+REPLY_WINDOW_MINUTES = 60  # 判效主口径：主动消息发出后 60 分钟内有用户消息＝被接住
+
+
+def _reply_flags(times, sent_at, window) -> tuple[bool, bool]:
+    """60 分钟窗口判定（A4 批3 M0 主口径；M1b2 按驱力切分复用同一处，**不另写第二套**）。
+
+    times＝该会话用户消息时刻的升序列表，sent_at＝该条主动消息发出时刻（均 naive UTC）。
+    返回 (发送之后任意时刻有回复, 首个回复是否落在 (sent_at, sent_at+window] 内)。
+    """
+    i = bisect_right(times, sent_at)  # 首个严格晚于发送时刻的用户消息
+    if i >= len(times):
+        return False, False
+    return True, times[i] <= sent_at + window
+
+
+async def collect_outreach_effect_stats(db, *, since, log_cond, days: int) -> dict:
+    """只读聚合：近 N 天主动消息按 intent × tier 的发送数 / 60 分钟回复率 / 每角色日均条数。
+
+    口径（判效复算以此为准）：
+    - 时间基准 UTC（库内 naive UTC），窗口 = [since, now]，days 由端点夹取；
+    - 数据源 = proactive_message_logs 全量扫描（**不带「前 200 条」截断**），分组维度取
+      extra_meta 的 intent × tier（A4 批3 M0 留痕补的 JSON 附加键）；老数据与其他发送通道
+      没有这两个键 → 归入 ("", "") 一组，不猜测、不回填；
+    - 回复判定：同一会话（session_id）内 sender_type='user' 的消息，时刻严格晚于该条主动消息；
+      60 分钟窗口 = (发送时刻, 发送时刻 + 60min]，即 59 分钟算接住、61 分钟不算；
+      replied_any_time / reply_rate_any 为旧口径（之后任意时刻有回复）参考行，与 GET /stats 一致；
+    - 回复率分母 = scorable（有 session_id 且时间可用的条数）；缺 session_id 的只计 sent，
+      不臆断为已回复；
+    - C1 每角色日均条数 = 该角色窗口内 sent / days。
+
+    A4 批3 M1b2 追加两段影子口径（同样只 SELECT，不因 flag 开关改变本端点行为）：
+    - ``shadow_agreement``：把 extra_meta 的 shadow_intent（「若按驱力定开会选什么」）与本行
+      intent（实际选定）逐条对比。agree＝两者都在且相等；disagree＝shadow_intent 在而不等于
+      intent（含 intent 缺键的行：意图链路没选出意图而驱力会选出，属背离）；missing＝shadow_intent
+      缺键或空串（M1b2 之前的老数据、以及无驱力可判的发送）；agreement_rate = agree/(agree+disagree)，
+      分母为 0 时给 0.0（缺键不进分母，避免老数据把一致率冲淡）。
+    - ``by_shadow_drive``：按 shadow_drive 分组的发送数与 60 分钟回复率，窗口判定与上面同一处
+      （``_reply_flags``）；缺键老数据与「无驱力」都归入空串组。
+    本函数只 SELECT：不写库、不建表、不改表结构。
+    """
+    import json as _json
+    from datetime import timedelta
+
+    from app.models.chat import ChatMessage
+    from app.models.character import ProactiveMessageLog
+
+    rows = (await db.execute(
+        select(
+            ProactiveMessageLog.created_at,
+            ProactiveMessageLog.character_id,
+            ProactiveMessageLog.session_id,
+            ProactiveMessageLog.extra_meta,
+        ).where(*log_cond)
+    )).all()
+
+    window = timedelta(minutes=REPLY_WINDOW_MINUTES)
+    events = []
+    sent_by_char: dict[int, int] = {}
+    for created_at, char_id, session_id, meta_raw in rows:
+        sent_at = to_naive_utc(created_at)
+        try:
+            meta = _json.loads(meta_raw) if meta_raw else {}
+        except (TypeError, ValueError):
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        key = (str(meta.get("intent") or ""), str(meta.get("tier") or ""))
+        # M1b2：影子留痕两键（缺键＝老数据，归空串）
+        drive_key = str(meta.get("shadow_drive") or "")
+        events.append((key, drive_key, str(meta.get("shadow_intent") or ""), session_id, sent_at))
+        sent_by_char[char_id] = sent_by_char.get(char_id, 0) + 1
+
+    # 一次性取回窗口内相关会话的用户消息时刻，内存二分判窗口（避免逐条 COUNT 的 N+1）
+    user_times: dict[int, list] = {}
+    session_ids = {sid for _k, _d, _si, sid, _t in events if sid is not None}
+    if session_ids:
+        for sid, t in (await db.execute(
+            select(ChatMessage.session_id, ChatMessage.created_at).where(
+                ChatMessage.session_id.in_(session_ids),
+                ChatMessage.sender_type == "user",
+                ChatMessage.created_at >= since,
+            )
+        )).all():
+            _u = to_naive_utc(t)
+            if _u is not None:
+                user_times.setdefault(sid, []).append(_u)
+        for _lst in user_times.values():
+            _lst.sort()
+
+    groups: dict[tuple[str, str], dict[str, int]] = {}
+    drive_groups: dict[str, dict[str, int]] = {}
+    agree = disagree = missing = 0
+    for key, drive, shadow_intent, session_id, sent_at in events:
+        st = groups.setdefault(key, {"sent": 0, "scorable": 0, "replied_60m": 0, "replied_any": 0})
+        st["sent"] += 1
+        # M1b2：影子一致率（与回复窗口无关，按条计）
+        if not shadow_intent:
+            missing += 1
+        elif shadow_intent == key[0]:
+            agree += 1
+        else:
+            disagree += 1
+        replied_any = replied_60m = False
+        if session_id is not None and sent_at is not None:
+            st["scorable"] += 1
+            replied_any, replied_60m = _reply_flags(user_times.get(session_id) or [], sent_at, window)
+        if replied_any:
+            st["replied_any"] += 1
+        if replied_60m:
+            st["replied_60m"] += 1
+        # M1b2：按驱力切分复用同一次判定（同一处窗口口径，不写第二套）
+        dt = drive_groups.setdefault(drive, {"sent": 0, "scorable": 0, "replied_60m": 0})
+        dt["sent"] += 1
+        if session_id is not None and sent_at is not None:
+            dt["scorable"] += 1
+        if replied_60m:
+            dt["replied_60m"] += 1
+
+    return {
+        "days": days,
+        "window_minutes": REPLY_WINDOW_MINUTES,
+        "total_sent": len(rows),
+        "groups": [
+            {
+                "intent": k[0],
+                "tier": k[1],
+                "sent": v["sent"],
+                "scorable": v["scorable"],
+                "replied_within_window": v["replied_60m"],
+                "reply_rate_60min": round(v["replied_60m"] / v["scorable"], 4) if v["scorable"] else 0.0,
+                "replied_any_time": v["replied_any"],
+                "reply_rate_any": round(v["replied_any"] / v["scorable"], 4) if v["scorable"] else 0.0,
+            }
+            for k, v in sorted(groups.items(), key=lambda kv: (-kv[1]["sent"], kv[0]))
+        ],
+        "per_character_daily": [
+            {"character_id": cid, "sent": n, "avg_per_day": round(n / days, 4) if days else 0.0}
+            for cid, n in sorted(sent_by_char.items())
+        ],
+        # ── A4 批3 M1b2：影子改判观测（只读，缺键老数据归空串/missing）──
+        "shadow_agreement": {
+            "total": agree + disagree + missing,
+            "agree": agree,
+            "disagree": disagree,
+            "missing": missing,
+            "agreement_rate": round(agree / (agree + disagree), 4) if (agree + disagree) else 0.0,
+        },
+        "by_shadow_drive": [
+            {
+                "drive": k,
+                "sent": v["sent"],
+                "scorable": v["scorable"],
+                "replied_within_window": v["replied_60m"],
+                "reply_rate_60min": round(v["replied_60m"] / v["scorable"], 4) if v["scorable"] else 0.0,
+            }
+            for k, v in sorted(drive_groups.items(), key=lambda kv: (-kv[1]["sent"], kv[0]))
+        ],
+    }
+
+
+@router.get("/stats/outreach")
+async def get_outreach_stats(
+    days: int = 30,
+    character_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """A4 批3 M0 只读聚合端点：近 N 天（默认 30，可传参）主动消息效果基线。
+
+    输出 ①按 intent × tier 的发送数 ②按 intent × tier 的 60 分钟窗口回复率
+    ③每角色日均条数（C1）④M1b2 影子段：shadow_agreement（驱力会选的意图 vs 实际意图一致率）
+    与 by_shadow_drive（按驱力切分的发送数/回复率）；完整口径见 collect_outreach_effect_stats
+    的 docstring。
+    租户归属与 GET /stats 同口径：带 character_id 先过归属校验（跨家庭 404），
+    不带则收敛到本账号租户下的角色。只读，不写库。
+    """
+    from datetime import timedelta
+
+    from app.models.character import ProactiveMessageLog
+
+    days = max(1, min(days, 365))
+    since = now_naive_utc() - timedelta(days=days)
+    cond_log = [ProactiveMessageLog.created_at >= since]
+    if character_id is not None:
+        await _check_char_owned(db, character_id, user_id)
+        cond_log.append(ProactiveMessageLog.character_id == character_id)
+    else:
+        scope_ids = await tenant_scope_ids(db, user_id)
+        char_ids_subq = select(AICharacter.id).where(AICharacter.user_id.in_(scope_ids))
+        cond_log.append(ProactiveMessageLog.character_id.in_(char_ids_subq))
+    return await collect_outreach_effect_stats(db, since=since, log_cond=cond_log, days=days)
 
 
 # ── 手动触发测试（#28 ③，2026-08-24） ──

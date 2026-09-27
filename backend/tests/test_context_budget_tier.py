@@ -578,7 +578,7 @@ def test_迁移幂等与可逆(tmp_path, monkeypatch):
         conn.commit()
 
     # ② upgrade head → 补列；历史行不回填（NULL = 未设置 = 标准档 = 该账号行为不变）
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, _NEW_REV)
     assert _alembic_version(db_path) == _NEW_REV
     assert "context_budget_tier" in _cols()
     assert _tiers() == [None], _tiers()
@@ -590,7 +590,7 @@ def test_迁移幂等与可逆(tmp_path, monkeypatch):
         conn.execute("INSERT INTO users (id, username, nickname, context_budget_tier) "
                      "VALUES (2, 'new', '新账号', 'max')")
         conn.commit()
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, _NEW_REV)
     assert _alembic_version(db_path) == _NEW_REV
     assert "context_budget_tier" in _cols()
     assert _tiers() == ["extended", "max"], _tiers()
@@ -605,6 +605,6 @@ def test_迁移幂等与可逆(tmp_path, monkeypatch):
         assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 2
 
     # ⑤ 再 upgrade：列补回（档位选择随列消失，按设计退回未设置）
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, _NEW_REV)
     assert "context_budget_tier" in _cols()
     assert _tiers() == [None, None], _tiers()

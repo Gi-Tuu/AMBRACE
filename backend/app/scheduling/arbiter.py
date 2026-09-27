@@ -68,6 +68,13 @@ _rejected_log_cache: dict[tuple[int, str], float] = {}
 # B1-③：可走接触意图选择的主动搭话事件类型（调用 generate_proactive_event 的几条）
 PROACTIVE_OUTREACH_TYPES = ("greeting", "proactive_chat", "goodnight", "status_update", "motivation")
 
+# A4 批3 M0（2026-09-27，只埋点、零语义）：本次接触的 intent/tier/materials 观测暂存。
+# 意图选择发生在 run_tick 汇总层（_annotate_outreach_plan），而 proactive_message_logs 的
+# 留痕发生在 3 秒切片循环真正发送时（flush_storyline_items → send_to_session），两处不在同一
+# 调用栈，故用「按角色覆盖写、发送时取走」的进程内暂存把三个键送到唯一留痕点。
+# 只观测：候选/频控/发送条数一律不读它；摘除本字典与下面两处读写即回到逐字节旧行为。
+_OUTREACH_SEND_TRACE: dict[int, dict] = {}
+
 
 
 
@@ -500,9 +507,14 @@ async def flush_storyline_items() -> int:
             _logger.warning("Storyline sleep check failed: %s", e)
         _reasoning = (item_obj.reasoning or "").strip() if getattr(item_obj, "reasoning", None) else ""
         _extra = None
-        if item_obj.seq == 0 and _reasoning:
+        if item_obj.seq == 0:
+            # A4 批3 M0：留痕补 intent/tier/materials 三个 JSON 附加键（旧读取方无感，既有键不动）。
+            # 无暂存 = 本次未走接触意图链路 → 不写键，payload 与改动前逐字节一致。
             import json as _json
-            _extra = _json.dumps({"reasoning": _reasoning}, ensure_ascii=False)
+            _meta = {"reasoning": _reasoning} if _reasoning else {}
+            _meta.update(_OUTREACH_SEND_TRACE.pop(item_obj.character_id, None) or {})
+            if _meta:
+                _extra = _json.dumps(_meta, ensure_ascii=False)
         await engine.send_to_session(
             item_obj.session_id, item_obj.character_id, item_obj.user_id,
             item_obj.content, message_type="storyline",
@@ -682,6 +694,39 @@ async def _get_recent_outreach_intents(character_id: int, limit: int = 2) -> lis
     return out
 
 
+async def _shadow_drive_note(item: dict, char_id: int, user_id: int, plan) -> None:
+    """A4 批3 M1b2（影子改判，**不改发送**）：懒结算水位 → 算「若按驱力定调会选哪个」→ 只写留痕。
+
+    口径：
+    - settle 时机遵守设计 §R8 懒结算——只结算「本次要处理的（角色, 用户）」，不做全量刷屏；
+    - commit：本钩子自开 session ⇒ 自己 commit（M1b1 把仓储层钉成只 add/flush，提交责任在
+      持 session 的一方；钩子不提交＝影子水位静默丢失）；
+    - flag 关 ⇒ 在开 session 之前先读一次内存闸，连连接都不建立（零额外查询，逐字节旧行为）；
+    - candidate 字段 / prompt / 发送条数一律不动：结果只进 item 的日志标记与 M0 观测暂存。
+    """
+    from app.application import relational_drive_service as _drive
+    from app.domain.relational import drives as _dv
+
+    if not _drive.shadow_enabled():
+        return
+    async with async_session_factory() as db:
+        levels = await _drive.settle(db, char_id, user_id)
+        await db.commit()
+    drive = _dv.top_candidate_drive(levels)
+    would = _dv.DRIVE_TO_INTENT.get(drive) if drive else None
+    level = float(levels.get(drive) or 0.0) if drive else 0.0
+    item["_drive_note"] = (
+        f"[drive={drive}:{level:.1f}→would={would or 'none'}|did={plan.intent or 'none'}]"
+        if drive else "[drive=none]"
+    )
+    trace = _OUTREACH_SEND_TRACE.get(char_id)
+    if trace is not None:
+        # 与 M0 三键同一个 dict（有暂存才写）。影子期口径＝「按驱力会选的」，M2 生效期换成「实际参与的」
+        trace["shadow_drive"] = drive or ""
+        trace["shadow_intent"] = would or ""
+        trace["level_at_send"] = level
+
+
 async def _annotate_outreach_plan(item: dict, char_id: int, mats_cache: dict, recent_cache: dict) -> None:
     """run_tick 汇总层统一"意图选择"：分级 + 素材前提 + 避开最近意图 → 写回 candidate。
 
@@ -707,6 +752,25 @@ async def _annotate_outreach_plan(item: dict, char_id: int, mats_cache: dict, re
             "memory_query": _plan.memory_query,
             "must_return_question": _plan.must_return_question,
         }
+        # A4 批3 M0：把本次实际使用的意图 / 档位 / 素材短标识暂存，供发送留痕点取走（只观测）
+        _mats = mats_cache[char_id]
+        _OUTREACH_SEND_TRACE[char_id] = {
+            "intent": str(_plan.intent or ""),
+            "tier": str(_plan.tier or ""),
+            "materials": [
+                k for k, has in (
+                    ("open_loop", _mats.has_open_loop),
+                    ("shared", _mats.has_shared_memory),
+                    ("interest", _mats.has_user_interest),
+                    ("life", _mats.has_life_now),
+                ) if has
+            ],
+        }
+        # A4 批3 M1b2：影子改判留痕（旁路观测；单独吞异常——绝不影响上面的意图选择结果与后续发送）
+        try:
+            await _shadow_drive_note(item, char_id, _uid, _plan)
+        except Exception as e:
+            _logger.debug("drive shadow skipped char=%d: %s", char_id, e)
     except Exception as e:
         _logger.warning("outreach annotate failed char=%d: %s", char_id, e)
 
@@ -920,6 +984,11 @@ async def log_trigger_candidate(item: dict, executed: bool) -> None:
     _outreach = cand.get("outreach_intent")
     if _outreach:
         reason = f"{reason} [outreach={_outreach}]" if reason else f"[outreach={_outreach}]"
+    # A4 批3 M1b2：观测信号——影子改判（relational_drive_shadow 开时由 _shadow_drive_note 写在 item 上；
+    # 关＝该键不存在 ⇒ 不附加，trigger_reason 与改动前逐字节一致）
+    _drive_note = item.get("_drive_note")
+    if _drive_note:
+        reason = f"{reason} {_drive_note}" if reason else _drive_note
     # 2026-09-13（交接 §三）：投放口径三闸命中 → reject_reason 记 rejected / [gate=...]，
     # 与 trigger_reason 的 [gate=...] 标记同源（_mark_gate 写入），便于按天统计各闸拦截量。
     _gate = item.get("_gate")
@@ -1582,6 +1651,9 @@ async def _execute(item: dict) -> bool:
         # B1-③：读 run_tick 汇总层选好的接触意图（flag 关/未标注 → None，走旧链路零变化）
         outreach_intent = candidate.get("outreach_intent")
         outreach_plan = candidate.get("outreach_plan")
+        if not outreach_intent:
+            # A4 批3 M0：本次未走接触意图链路 → 丢弃可能残留的观测暂存（宁可少留痕，也不给旧链路发送错标 intent/tier）
+            _OUTREACH_SEND_TRACE.pop(char_id, None)
         segments, event_reasoning = await generate_proactive_event(
             character_name=candidate["character_name"],
             character_bio=candidate["character_bio"],

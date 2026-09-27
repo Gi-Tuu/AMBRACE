@@ -8,7 +8,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -285,6 +285,38 @@ class ProactiveTriggerLog(Base):
     decision: Mapped[str] = mapped_column(String(16), default="pending")  # approved / rejected
     reject_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
+class RelationalDrive(Base):
+    """关系驱力水位（A4 批3 T1 M1a，2026-09-27）：角色 × 用户 × 驱力类型的持久水位。
+
+    行粒度与 ConversationTopic / RelationshipEvent 一致（角色×用户），家庭共享租户下
+    不同用户的水位互不串味。本单**只做存储**：增长/封顶/夜间倍率/释放/候选的算法在
+    ``app/domain/relational/``（纯函数、零 IO），settle 与释放的钩子属下一单 M1b。
+    ``intimacy`` 仅观测、永不进主动候选（口径见纯函数域常量）。
+    """
+    __tablename__ = "relational_drives"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    drive_key: Mapped[str] = mapped_column(String(20), nullable=False)  # longing/concern/affection/sharing/curiosity/intimacy
+    level: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 0–100 水位（与八维同量纲）
+    last_settled_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # 懒结算游标（UTC naive）：到此刻为止的增量已入账
+    last_released_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)  # 上次被用户互动释放的时刻
+    last_released_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 本次释放比例快照（观测部分/全额释放）
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("character_id", "user_id", "drive_key", name="uq_relational_drives_char_user_key"),
+        # 唯一热路径：取「该角色对该用户水位最高的驱力」
+        Index("ix_relational_drives_char_user_level", "character_id", "user_id", "level"),
+    )
+
+
 __all__ = [
     "AICharacter",
     "CharacterState",
@@ -297,4 +329,5 @@ __all__ = [
     "HolidayPreference",
     "ProactiveMessageLog",
     "ProactiveTriggerLog",
+    "RelationalDrive",
 ]

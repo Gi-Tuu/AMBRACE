@@ -45,6 +45,7 @@ from app.models.character import (
     ProactiveSettings,
     ProactiveStorylineItem,
     ProactiveTriggerLog,
+    RelationalDrive,
     RelationshipEvent,
     StateTriggerLog,
     StorylineEvent,
@@ -126,6 +127,7 @@ CHARACTER_DELETE_SPECS = [
     (ProactiveMessageLog, "character_id"),
     (ProactiveTriggerLog, "character_id"),
     # ── 关系 / 情绪 / 剧情 ──
+    (RelationalDrive, "character_id"),  # A4 批3 M1a（2026-09-27）：水位＝「角色 × 用户 × 类型」的私有冲动，随角色一起删（与 D-1 的成对经历同口径）
     (RelationshipEvent, "character_id"),
     (StateTriggerLog, "character_id"),
     (StorylineEvent, "character_id"),
