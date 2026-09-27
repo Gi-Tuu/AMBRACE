@@ -45,9 +45,19 @@ RHYTHM_BEHAVIORS = (
 
 @pytest.fixture
 def clean_registry():
-    """用例结束清空类别登记（防跨用例污染）。"""
+    """用例**前后**都清空类别登记与插件缓存（彻底防跨用例污染）。
+
+    P3-3（2026-09-28 修复）：原实现只在 yield 之后清，单跑干净、全量跑时会被前序用例
+    残留的插件加载 / _enabled / 类别登记污染（表现＝单跑绿、全量红）。故 setup 也清一次。
+    """
+    def _reset():
+        strategy_mod.reset_registrations()
+        registry._loaded.clear()
+        registry._enabled.clear()
+
+    _reset()
     yield
-    strategy_mod.reset_registrations()
+    _reset()
 
 
 @pytest.fixture

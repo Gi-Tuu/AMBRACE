@@ -11,11 +11,14 @@
 - start()：统一拉起全部登记目标 + 监督循环。
 - heartbeat(name)：被业务循环每轮调用，标记「我还在前进」——done 监督管不到卡死，靠它。
 - stop()：置 stopped 标记并取消全部目标（主动停，监督循环据此「不误拉」）；不清空登记。
-- liveness()：暴露每个目标 {alive, stalled, seconds_since_heartbeat, restarts, last_error}，
-  供 /api/v1/system/liveness 消费。
+- liveness()：暴露每个目标 {alive, stalled, seconds_since_heartbeat, restarts, last_error,
+  last_heartbeat}，供 /api/v1/system/liveness 消费。
+- selfcheck_loop()：独立于 _watch 的「心跳停滞自检」（main.py lifespan 起，不进被监督列表）。
+  09-27 实测第二段静默连 stall 日志都没有 ⇒ 监督循环自身可能没跑，需要第二双眼睛。
 """
 import asyncio
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
 from app.utils.logger import get_logger
@@ -28,6 +31,17 @@ DEFAULT_STALL_SEC = 180
 _BACKOFF = [1, 2, 4, 8, 16, 32, 60]
 # 监督巡检间隔（秒）
 _WATCH_INTERVAL = 15
+# 心跳停滞自检间隔（秒）：与 _watch 并行的第二双眼睛（阈值仍沿用各目标自己的 stall_sec）
+SELFCHECK_INTERVAL = 15
+
+
+def _iso_utc(now_mono: float, mono: float) -> str | None:
+    """把 monotonic 心跳时刻反推为 UTC 挂钟 ISO8601（naive，与库内时间口径一致）。"""
+    if not mono:
+        return None
+    delta = max(0.0, now_mono - mono)
+    return (datetime.now(timezone.utc).replace(tzinfo=None)
+            - timedelta(seconds=delta)).isoformat(timespec="seconds")
 
 
 class _Target:
@@ -123,6 +137,53 @@ class TaskSupervisor:
             await asyncio.sleep(_WATCH_INTERVAL)
             await self._tick()
 
+    # ------------------------------------------------------------------ 心跳停滞自检（独立于 _watch）
+
+    async def selfcheck_once(self) -> list:
+        """单轮自检（无 sleep；供 selfcheck_loop 与确定性单测复用）。
+
+        与 _tick 的分工：_tick 负责「判定 + 取消 + 退避重建」（语义不改），本方法只负责
+        ①用更完整的现场信息（目标名 / 停滞秒数 / 上次心跳时刻）补一条 ERROR 日志，
+        ②把重建交给 _tick 现成路径（不另写第二套 cancel/respawn），
+        ③兜住「_watch 监督循环自身没跑」这种 09-27 第二段静默的最可能形态——重新拉起它。
+        返回本轮判定为停滞的目标名列表。
+        """
+        now = time.monotonic()
+        stalled: list = []
+        for name, t in self._targets.items():
+            if t.stopped or not t.stall_sec:
+                continue
+            if t.task is None or t.task.done():
+                continue  # 任务已终结属 _tick 的「崩溃重建」路径，不是停滞
+            # 判定口径与 _tick 完全一致（心跳 + 启动时刻双双超阈值），避免对「首轮就该跑很久」的
+            # 目标（如 memory_maintenance）刷假告警，也保证自检日志与真正触发的重建对得上。
+            if now - t.last_beat > t.stall_sec and now - t.last_start > t.stall_sec:
+                stalled.append(name)
+                _log.error(
+                    "heartbeat selfcheck: target=%s no heartbeat for %ds (threshold=%ds, "
+                    "last heartbeat=%s), handing over to supervisor rebuild",
+                    name, int(now - t.last_beat), t.stall_sec, _iso_utc(now, t.last_beat))
+        if stalled:
+            await self._tick()
+
+        active = [t for t in self._targets.values() if not t.stopped]
+        if active and (self._watch_task is None or self._watch_task.done()):
+            _log.error("supervisor watch loop not running, respawning from selfcheck")
+            self._watch_task = asyncio.ensure_future(self._watch())
+        return stalled
+
+    async def selfcheck_loop(self, interval: int = SELFCHECK_INTERVAL) -> None:
+        """常驻心跳自检循环：由 main.py lifespan 以 create_task 起，**不进被监督列表**（否则一起卡住）。"""
+        _log.info("heartbeat selfcheck loop started (interval=%ds)", interval)
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self.selfcheck_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # 自检自己绝不能把 lifespan 拖崩
+                _log.error("heartbeat selfcheck round failed: %s", e)
+
     # ------------------------------------------------------------------ 生命周期
 
     def start(self) -> None:
@@ -149,6 +210,14 @@ class TaskSupervisor:
 
     # ------------------------------------------------------------------ 可观测性
 
+    def snapshot(self) -> dict:
+        """只读快照 {目标名: 最后心跳 ISO8601(UTC, naive) 或 None}。
+
+        纯读（monotonic 反推挂钟），不触碰 heartbeat / stall 判定 / 重建任何语义。
+        """
+        now = time.monotonic()
+        return {name: _iso_utc(now, t.last_beat) for name, t in self._targets.items()}
+
     def liveness(self) -> dict:
         now = time.monotonic()
         out: dict = {}
@@ -160,6 +229,7 @@ class TaskSupervisor:
                 "alive": alive,
                 "stalled": bool(stalled),
                 "seconds_since_heartbeat": since_beat,
+                "last_heartbeat": _iso_utc(now, t.last_beat),
                 "restarts": t.restarts,
                 "last_error": t.last_err or None,
             }

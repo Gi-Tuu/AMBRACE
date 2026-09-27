@@ -255,6 +255,14 @@ async def lifespan(app: FastAPI):
     readiness.mark("scheduler", True, critical=True)
     logger.info("Proactive scheduler started")
 
+    # ── 启动步骤 11b（兜底观测）：心跳停滞自检 ────────────────────────────────
+    # supervisor 的 _watch 巡检自身也可能没跑（09-27 21:48→00:48 整段静默连 stall 日志都没有），
+    # 故再起一个**不进被监督列表**的独立自检循环：按各目标既有 stall_sec 阈值判停滞、补 ERROR
+    # 现场日志，并复用 supervisor._tick 现成重建路径（不另写第二套 cancel/respawn）。
+    from app.utils.supervisor import supervisor as _supervisor
+    _hb_selfcheck_task = asyncio.create_task(_supervisor.selfcheck_loop())
+    logger.info("Heartbeat self-check loop scheduled (15s)")
+
     # ── 启动步骤 12（可选路径）：MCP 接入（常驻维护循环）────────────────────────
     # 启动后台重连 auto_connect=True 的 MCP Server（失败不阻塞启动，仅降级登记）；关闭时清理。
     # P0-B（2026-09-06）：原「一次性 reconnect_all()」改「常驻维护循环」：
@@ -299,6 +307,14 @@ async def lifespan(app: FastAPI):
     # 关闭时：停止调度器（async lifespan 内直接 await stop_async，确保 supervisor 关停时序完整）
     await scheduler_engine.stop_async()
     logger.info("Proactive scheduler stopped")
+
+    # 心跳自检循环收尾：targets 已 stopped，此处只是取消常驻 sleep 循环
+    if not _hb_selfcheck_task.done():
+        _hb_selfcheck_task.cancel()
+        try:
+            await _hb_selfcheck_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
     # MCP 关闭：取消后台重连任务 + 断开所有连接（清理 stdio 子进程）
     if _mcp_task is not None and not _mcp_task.done():

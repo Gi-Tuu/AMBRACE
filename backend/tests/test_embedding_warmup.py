@@ -49,7 +49,12 @@ def test_warmup_generic_failure_returns_false(monkeypatch):
 
 
 def test_load_embed_model_raises_when_model_missing(monkeypatch):
-    """模型缺失时底层同步加载函数按预期抛 RuntimeError（含下载指引）。"""
+    """模型缺失时底层同步加载函数按预期抛 RuntimeError（含下载指引）。
+
+    P3-2（2026-09-28 修复）：显式重置全局单例 _embed_model —— 否则全量跑时若前序用例已让它非 None，
+    _load_embed_model 会走缓存分支直接返回、不抛错（表现为单跑绿、全量红）。
+    """
+    monkeypatch.setattr(emb, "_embed_model", None)
     monkeypatch.setattr(emb, "check_model_available", lambda: False)
     with pytest.raises(RuntimeError):
         emb._load_embed_model()

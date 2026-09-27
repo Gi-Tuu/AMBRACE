@@ -18,6 +18,7 @@ _logger = get_logger("scheduler.engine")
 
 _scheduler_task: asyncio.Task | None = None
 _storyline_task: asyncio.Task | None = None
+_periodic_task: asyncio.Task | None = None
 _running = False
 
 # 检查间隔（秒）— 从配置读取
@@ -72,6 +73,12 @@ MEMORY_MAINTENANCE_INTERVAL = 300
 # 整轮维护（每角色 1 次批量 LLM 调用，单次 90s 超时上限 × 十余活跃角色，最坏约 20 分钟），
 # 于是「心跳间隔 = 300s + 单轮维护耗时」。阈值取 1800s 才不会让新循环自己又被误判 stalled。
 MEMORY_MAINTENANCE_STALL_SEC = 1800
+
+# ── 周期任务段独立循环（2026-09-28）stall 阈值 ──
+# 23:00 那一拍 diary/复盘/日终记忆维护/群收敛会连着 await 多次 LLM（与长周期记忆维护同类），
+# 心跳间隔 = 30s + 单轮全部周期任务耗时，阈值必须显著大于间隔（照抄 180s 会让新循环自己反复被
+# 误判 stalled 重建），取 1800s 与 MEMORY_MAINTENANCE_STALL_SEC 同档。
+PERIODIC_STALL_SEC = 1800
 
 
 
@@ -444,7 +451,11 @@ async def _credential_probe_tick():
 
 
 async def scheduler_loop():
-    """主调度循环 — 统一仲裁：定时承诺 / 生日节日 / 随机节律"""
+    """主调度循环 — 统一仲裁：定时承诺 / 生日节日 / 随机节律
+
+    2026-09-28：周期任务段（18 个台账任务 + 插件 schedule_tick）已整体挪进 periodic_loop，
+    本循环的 while 体只剩「sleep → 心跳 → await run_tick()」，不再被同轮周期任务拖累。
+    """
     global _running
     _running = True
     _logger.info("Scheduler v2 started (unified arbiter)")
@@ -486,6 +497,68 @@ async def scheduler_loop():
                     _logger.info("Arbiter executed: %s", ", ".join(executed))
             except Exception as e:
                 _logger.error("Arbiter tick error: %s", e)
+
+    except asyncio.CancelledError:
+        _logger.info("Scheduler cancelled")
+    finally:
+        _running = False
+        _logger.info("Scheduler stopped")
+
+
+async def storyline_sender_loop():
+    """主动事件切片快速发送循环（独立于 30 秒仲裁 tick，每 3 秒检查一次）"""
+    from app.scheduling.arbiter import flush_storyline_items
+    _logger.info("Storyline sender loop started")
+    while _running:
+        try:
+            await flush_storyline_items()
+        except Exception as e:
+            _logger.warning("Storyline flush error: %s", e)
+        from app.utils.supervisor import supervisor
+        supervisor.heartbeat("storyline")
+        await asyncio.sleep(STORYLINE_FLUSH_INTERVAL)
+
+
+async def memory_maintenance_loop():
+    """长周期记忆维护（记忆衰减 + AI 自主评星）独立循环 —— 不再挂主调度循环的 tick 计数。
+
+    为什么要独立（2026-09-26 实测）：主循环单轮耗时并不稳定，同轮里要发主动消息时会直接在
+    循环内 await 多次 LLM 调用，单轮从 31 秒涨到分钟级（arbiter 日志条数按小时
+    06→3816 / 07→487 / 09→185 / 10→3）。后果有两个：① 单轮 >180 秒被监督者判 stalled，
+    10:48 实测 `supervisor stall detected target=scheduler` 后取消重建；② 重建把主循环里所有
+    tick 计数归零。挂在主循环上的长周期任务因此在忙时段严重延迟甚至长期不跑。
+    本循环只做这一件事，主循环忙不忙与它无关；间隔见 MEMORY_MAINTENANCE_INTERVAL。
+    """
+    from app.memory.maintenance_schedule import run_if_due
+    _logger.info("Memory maintenance loop started (interval=%ds)", MEMORY_MAINTENANCE_INTERVAL)
+    while _running:
+        await asyncio.sleep(MEMORY_MAINTENANCE_INTERVAL)
+        from app.utils.supervisor import supervisor
+        supervisor.heartbeat("memory_maintenance")
+        try:
+            if await run_if_due(reason="loop"):
+                _logger.info("Memory maintenance executed by independent loop")
+        except Exception as e:
+            # 异常隔离：单次失败只记 WARNING，绝不掀翻循环（判据在状态文件里，下一拍再问会补上）
+            _logger.warning("Memory maintenance loop error: %s", e)
+
+
+async def periodic_loop():
+    """周期任务段独立循环 —— 台账类周期/每日任务不再挤在主调度循环同一轮。
+
+    为什么要独立（2026-09-28，与 memory_maintenance_loop 同一手法）：主循环单轮里 ``await
+    run_tick()`` 发主动消息时会在循环内 await 多次 LLM 调用，模型慢/不稳时单轮可达分钟级，
+    超过 180 秒即被监督者判 stalled 取消重建（09-26/09-27 实测）。判据虽已持久化在台账里，
+    但「同轮被取消」仍会让排在后面的周期任务饿死/错过 —— 09-27 的日记就是这么丢的。
+    本循环只做周期任务（主循环忙不忙与它无关），下面的任务、参数、顺序与搬走前一字未改。
+    """
+    TICK = 30  # 与主循环同间隔（秒）
+    _logger.info("Periodic loop started (interval=%ds)", TICK)
+    try:
+        while _running:
+            await asyncio.sleep(TICK)
+            from app.utils.supervisor import supervisor
+            supervisor.heartbeat("periodic")
 
             # B1（2026-09-06）：用户可感知窗口已迁「应用时区」（APP_TZ_OFFSET_HOURS 默认 +8）。
             # 其余 ~44 文件仍硬编码 UTC+8 的「用户可感知」换算，按批次渐进迁移（见源方案 §7 B1）；
@@ -572,57 +645,20 @@ async def scheduler_loop():
             await run_daily_if_due("credential_probe", _credential_probe_tick, reason="tick")
 
     except asyncio.CancelledError:
-        _logger.info("Scheduler cancelled")
+        _logger.info("Periodic loop cancelled")
     finally:
-        _running = False
-        _logger.info("Scheduler stopped")
-
-
-async def storyline_sender_loop():
-    """主动事件切片快速发送循环（独立于 30 秒仲裁 tick，每 3 秒检查一次）"""
-    from app.scheduling.arbiter import flush_storyline_items
-    _logger.info("Storyline sender loop started")
-    while _running:
-        try:
-            await flush_storyline_items()
-        except Exception as e:
-            _logger.warning("Storyline flush error: %s", e)
-        from app.utils.supervisor import supervisor
-        supervisor.heartbeat("storyline")
-        await asyncio.sleep(STORYLINE_FLUSH_INTERVAL)
-
-
-async def memory_maintenance_loop():
-    """长周期记忆维护（记忆衰减 + AI 自主评星）独立循环 —— 不再挂主调度循环的 tick 计数。
-
-    为什么要独立（2026-09-26 实测）：主循环单轮耗时并不稳定，同轮里要发主动消息时会直接在
-    循环内 await 多次 LLM 调用，单轮从 31 秒涨到分钟级（arbiter 日志条数按小时
-    06→3816 / 07→487 / 09→185 / 10→3）。后果有两个：① 单轮 >180 秒被监督者判 stalled，
-    10:48 实测 `supervisor stall detected target=scheduler` 后取消重建；② 重建把主循环里所有
-    tick 计数归零。挂在主循环上的长周期任务因此在忙时段严重延迟甚至长期不跑。
-    本循环只做这一件事，主循环忙不忙与它无关；间隔见 MEMORY_MAINTENANCE_INTERVAL。
-    """
-    from app.memory.maintenance_schedule import run_if_due
-    _logger.info("Memory maintenance loop started (interval=%ds)", MEMORY_MAINTENANCE_INTERVAL)
-    while _running:
-        await asyncio.sleep(MEMORY_MAINTENANCE_INTERVAL)
-        from app.utils.supervisor import supervisor
-        supervisor.heartbeat("memory_maintenance")
-        try:
-            if await run_if_due(reason="loop"):
-                _logger.info("Memory maintenance executed by independent loop")
-        except Exception as e:
-            # 异常隔离：单次失败只记 WARNING，绝不掀翻循环（判据在状态文件里，下一拍再问会补上）
-            _logger.warning("Memory maintenance loop error: %s", e)
+        # 刻意不写 _running = False：那是主循环的停机标志，本循环被监督者重建时
+        # 不得连带关掉其它常驻循环（停机统一走 stop()/stop_async()）。
+        _logger.info("Periodic loop stopped")
 
 
 def start():
     """启动调度器（由 lifespan 调用）：登记到 supervisor 统一监督，支持崩溃/卡死后自愈重建。
 
-    对外语义不变（start()/is_running() 签名与含义保持）；三个常驻 loop 由 supervisor 重建，
+    对外语义不变（start()/is_running() 签名与含义保持）；四个常驻 loop 由 supervisor 重建，
     并每轮上报心跳供 /liveness 判断「是否还在前进」。
     """
-    global _scheduler_task, _storyline_task
+    global _scheduler_task, _storyline_task, _periodic_task
     from app.utils.supervisor import supervisor
 
     # 适配器工厂：把现有协程包成「每次重建都重新读全局 _running」的工厂；
@@ -644,15 +680,23 @@ def start():
         _running = True
         await memory_maintenance_loop()
 
+    async def _periodic_factory():
+        global _running, _periodic_task
+        _running = True
+        _periodic_task = asyncio.current_task()
+        await periodic_loop()
+
     supervisor.register("scheduler", _sched_factory, stall_sec=180)  # 30s TICK × 6
     # 阈值理由见 MEMORY_MAINTENANCE_STALL_SEC 处注释（到期那一拍要 await 整轮维护）
     supervisor.register("memory_maintenance", _maintenance_factory,
                         stall_sec=MEMORY_MAINTENANCE_STALL_SEC)
+    supervisor.register("periodic", _periodic_factory, stall_sec=PERIODIC_STALL_SEC)
     supervisor.register("storyline", _story_factory, stall_sec=60)   # 3s 间隔，60s 无心跳即卡
     supervisor.start()
     # 回填模块级 task 引用，兼容旧代码对模块全局 _scheduler_task/_storyline_task 的读取
     _scheduler_task = supervisor._targets["scheduler"].task
     _storyline_task = supervisor._targets["storyline"].task
+    _periodic_task = supervisor._targets["periodic"].task
     _logger.info("Scheduler tasks registered under supervisor")
 
 

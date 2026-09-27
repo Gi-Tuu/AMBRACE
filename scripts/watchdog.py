@@ -1,6 +1,20 @@
 # -*- coding: utf-8 -*-
-"""拥爱（AMBRACE）服务器守护进程 — 每 60 秒检查端口，挂了自动拉起（后台运行，不占窗口）"""
+"""拥爱（AMBRACE）服务器守护进程 — 每 60 秒检查端口，挂了自动拉起（后台运行，不占窗口）
+
+判活口径（HB-2，2026-09-28 升级为「HTTP 优先 + TCP 兜底」；背景：09-27 21:48→00:48 整机僵死无人拉起）：
+  1) TCP probe（port_listening 8000）= **兜底判据**，语义与拉起流程完全不变：
+     不通 → 进程掉线 → 走 RESTART_GRACE_SEC 宽限 + start_server()。
+  2) 端口在听时追加 HTTP 判据（**优先判据**）GET /api/v1/system/liveness（5s 超时）：
+     非 200 / 超时 / 响应非 JSON / stalled=true ⇒ 判「进程活着但应用僵死」（事件循环被阻塞时内核
+     仍能完成 TCP 握手，这正是旧版误判「还活着」的原因）。连续 LIVENESS_HANG_CONFIRMATIONS 次
+     成立才动手（防单次抖动误杀）→ 杀掉 8000 监听者后复用既有 start_server() 拉起流程。
+  3) 端口在听且 HTTP 判活通过 ⇒ 健康（不再因单次 TCP 抖动误判）。
+  两条判据互斥执行：只有 1) 判定「端口在听」时才走 2)。HTTP 路由本身不存在（404/405，如运行中的
+  旧构建尚无 /liveness）不判僵死、**回退 TCP 判据视为健康**，避免把正常服务误杀。
+  宽限期 RESTART_GRACE_SEC 同样作用于僵死重启，避免启动期（先绑 8000 再加载模型）误杀。
+"""
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -35,6 +49,12 @@ LOCKS_DIR = os.path.join(SERVER_DIR, "data", "locks")
 PID_FILE = os.path.join(LOCKS_DIR, "watchdog.pid")
 RESTART_GRACE_SEC = 120  # 拉起宽限期：uvicorn 启动慢（加载模型）时防重复拉起
 _last_restart = 0.0
+
+# HB-2（2026-09-28）：HTTP /liveness 优先判据（TCP probe 保留兜底，见文件头）
+LIVENESS_URL = "http://127.0.0.1:8000/api/v1/system/liveness"
+LIVENESS_TIMEOUT_SEC = 5.0
+LIVENESS_HANG_CONFIRMATIONS = 3  # 连续 N 次判僵死才动手（默认间隔 120s ⇒ 约 6 分钟持续僵死）
+_hang_streak = 0
 PAUSE_FLAG = os.path.join(SERVER_DIR, "data", "paused.flag")  # 存在时暂停自动拉起（由控制台软件控制）
 CONFIG = os.path.join(SERVER_DIR, "data", "server_config.json")  # 控制台可修改的运行时配置
 DEFAULT_INTERVAL = 120  # 默认检测间隔（秒）
@@ -130,6 +150,85 @@ def port_listening(port: int, timeout: float = 1.0) -> bool:
             return True
     except OSError:
         return False
+
+
+def probe_liveness(url: str = LIVENESS_URL, timeout: float = LIVENESS_TIMEOUT_SEC):
+    """HTTP 判活（优先判据）：GET /liveness → (healthy, note)。
+
+    - 200 且 stalled 非真 → 健康；200 且 stalled=true → 应用僵死（循环停摆，进程还活着）。
+    - 404/405（运行中的构建尚无此路由）→ 不判僵死，回退 TCP 判据（视为健康）。
+    - 非 200 / 超时 / 连不上 / 响应不是 JSON → 判不健康（事件循环被阻塞时 TCP 握手仍会成功）。
+    """
+    import json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            status = int(resp.getcode())
+            body = resp.read(4096)
+    except Exception as e:
+        return False, "%s: %s" % (type(e).__name__, e)
+    if status in (404, 405):
+        return True, "liveness 路由不可用(HTTP %d)，回退 TCP 判据" % status
+    if not 200 <= status < 300:
+        return False, "HTTP %d" % status
+    try:
+        data = json.loads(body.decode("utf-8", "replace"))
+    except Exception:
+        return False, "liveness 响应非 JSON"
+    if not isinstance(data, dict):
+        return False, "liveness 响应形态异常"
+    if data.get("stalled"):
+        return False, "liveness stalled=true"
+    return True, "ok"
+
+
+def restart_hung_server():
+    """僵死处置：先终止仍监听 8000 的挂死实例，端口释放后复用既有 start_server() 拉起流程。"""
+    global _hang_streak, _last_restart
+    _hang_streak = 0
+    if is_paused():
+        log("Paused flag exists, skip hang restart")
+        return
+    pids = platform_util.port_pids(8000)
+    if not pids:
+        log("Hang suspected but no PID listening on 8000, defer to TCP path next cycle")
+        return
+    log("App hang confirmed, terminating hung listener pid=%s then restarting..." % pids)
+    for pid in pids:
+        try:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                               capture_output=True, timeout=15)
+            else:
+                os.kill(int(pid), signal.SIGTERM)
+        except Exception as e:
+            log(f"Kill pid {pid} failed: {e}")
+    for _ in range(10):  # 等端口真正释放，否则 start_server() 会按「已在听」跳过
+        if not port_listening(8000, timeout=0.5):
+            break
+        time.sleep(1.0)
+    start_server()
+    _last_restart = time.time()
+
+
+def check_app_liveness():
+    """端口在听时的二级判据（HTTP 优先）：连续 N 次不健康才按「应用僵死」处理。"""
+    global _hang_streak
+    healthy, note = probe_liveness()
+    if healthy:
+        if _hang_streak:
+            log(f"App liveness recovered (streak was {_hang_streak}/{LIVENESS_HANG_CONFIRMATIONS})")
+        _hang_streak = 0
+        return
+    _hang_streak += 1
+    log(f"App liveness check failed ({note}), streak={_hang_streak}/{LIVENESS_HANG_CONFIRMATIONS}")
+    if _hang_streak < LIVENESS_HANG_CONFIRMATIONS:
+        return
+    if time.time() - _last_restart < RESTART_GRACE_SEC:
+        log(f"Skip hang restart, within grace period ({RESTART_GRACE_SEC}s)")
+        _hang_streak = 0
+        return
+    restart_hung_server()
 
 
 def start_server():
@@ -295,14 +394,18 @@ def main():
         sys.exit(0)
     write_pid()
     log("Watchdog started (single instance, TCP probe + pid)")
-    global _last_restart
+    log("Liveness policy: HTTP /liveness first (timeout %.0fs, %d confirms) + TCP probe fallback"
+        % (LIVENESS_TIMEOUT_SEC, LIVENESS_HANG_CONFIRMATIONS))
+    global _last_restart, _hang_streak
     _last_restart = time.time()  # 启动即进入宽限期，避免启动慢时误判掉线
+    _hang_streak = 0
     try:
         while True:
             try:
                 run_daily_backup()
                 monitor_gateways()
                 if not port_listening(8000):
+                    _hang_streak = 0  # 端口都不通 = 走的是「掉线」判据，僵死计数不跨状态累积
                     if not is_paused():
                         now = time.time()
                         if now - _last_restart < RESTART_GRACE_SEC:
@@ -310,6 +413,9 @@ def main():
                         else:
                             start_server()
                             _last_restart = now
+                else:
+                    # 端口在听 ≠ 应用活着：僵死时内核仍能完成 TCP 握手，交给 HTTP 判据（HB-2）
+                    check_app_liveness()
             except Exception as e:
                 log(f"Check error: {e}")
             time.sleep(get_interval())

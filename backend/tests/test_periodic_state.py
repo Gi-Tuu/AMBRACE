@@ -503,6 +503,51 @@ def test_M2搬用后关键分支体仍在源码里():
     ):
         assert needle in src, needle
 
+def test_周期段已挪进独立循环且顺序参数一字未改():
+    """2026-09-28：周期任务段整体从主循环挪进 periodic_loop。
+
+    起因：主循环单轮里 ``await run_tick()`` 发主动消息时会在循环内 await 多次 LLM，慢时超 180 秒
+    被监督者判 stalled 取消重建，同轮的周期任务因此饿死/错过（09-27 的日记即此）。
+    M2 的接线断言查的是「整份文件」——光搬不挂也照样绿，故这里按**函数体**分别钉：
+    ① 主循环里一个台账调用都不剩；② periodic_loop 体内 18 个 key 齐全、参数与**顺序**不变；
+    ③ 心跳名与 supervisor.register 名一致（写错只会静默失去可观测性）。
+    """
+    import inspect
+    import re
+
+    from app.scheduling import scheduler
+
+    main = inspect.getsource(scheduler.scheduler_loop)
+    per = inspect.getsource(scheduler.periodic_loop)
+    assert "run_if_due(" not in main, "主循环不得再挂任何台账任务"
+    assert 'supervisor.heartbeat("scheduler")' in main and "await run_tick()" in main
+
+    ordered = re.findall(r'run_(?:daily_)?if_due\("([a-z_]+)"', per)
+    assert ordered == [
+        "moment", "comment", "extract", "identity", "state_decay", "file_cleanup",
+        "life", "life_loop", "game_stuck", "diary", "reflection", "memory_maintenance",
+        "group_compact", "pis_stale", "purge", "anniversary", "invite_cleanup",
+        "credential_probe",
+    ], "周期任务的集合或顺序被动过（应为原主循环顺序）"
+
+    flat = _flat(per)
+    for key, (iv, fn) in M2_KEYS.items():
+        if iv is None:
+            window = "" if key in DAILY_NO_WINDOW else "min_local_hour=23, "
+            want = 'await run_daily_if_due("%s", %s, %sreason="tick")' % (key, fn, window)
+        else:
+            want = 'await run_if_due("%s", %s, %s, reason="tick")' % (key, iv, fn)
+        assert want in flat, want
+    for key, fn in EXTRA_DAILY_KEYS.items():
+        assert 'await run_daily_if_due("%s", %s, min_local_hour=23, reason="tick")' % (key, fn) in flat
+
+    assert "TICK = 30" in per, "间隔与主循环同拍，不得改动"
+    assert 'supervisor.heartbeat("periodic")' in per
+    start_src = inspect.getsource(scheduler.start)
+    assert "await periodic_loop()" in start_src
+    assert 'supervisor.register("periodic", _periodic_factory, stall_sec=PERIODIC_STALL_SEC)' in start_src
+    # 阈值必须罩住「间隔 + 单轮最坏耗时」，否则新循环自己会被误判 stalled 反复重建
+    assert scheduler.PERIODIC_STALL_SEC > 10 * 30
 
 # ──────────── ⑪ 跨午夜按「完成时刻」记账（P3-6，2026-09-26 批 C/D） ────────────
 

@@ -199,7 +199,11 @@ def extract_timer(
     try:
         if sender == "ai" and _self_side_split_on():
             side = classify_ai_promise_side(response)
-            if side == "self":
+            # P2-1（2026-09-28 修复·收窄）：只豁免「正则层已明确识别的 AI 自理活动」中的 shower / sleep ——
+            # 转正 promise_self_side_split 后，「我去洗20分钟澡 / 我睡半小时」被无条件改写成 back（数据语义失真，
+            # 且打红 4 条既有用例）。meal 刻意**不豁免**：`test_L1_AI自理分流为back` 钉的「先去食堂吃个饭，
+            # 40分钟后回来」正是要按 side 纠偏为 back（有「回来」= 到点自述返回）。ready→back 的纠偏不受影响。
+            if side == "self" and event_type not in ("shower", "sleep"):
                 event_type = "back"
     except Exception:
         side = "user"

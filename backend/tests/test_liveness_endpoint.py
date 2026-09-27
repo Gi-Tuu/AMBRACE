@@ -249,12 +249,62 @@ def test_liveness_detail_requires_auth(liveness_db):
 
 
 def test_liveness_detail_admin_full_payload(liveness_db):
-    """主账号 token → 200 且含完整明细段（loops / mcp / channels / credentials / stalled）。
+    """主账号 token → 200 且含完整明细段（loops / heartbeats / mcp / channels / credentials / stalled）。
 
     credentials 段（P3-7）＝主密钥健康快照，只转述、不参与 stalled 判定。
+    heartbeats 段（HB-1）＝目标名 → 最后心跳 ISO8601，与 loops 同源只读。
     """
     r = _make_client().get(DETAIL_URL, headers=_admin_headers())
     assert r.status_code == 200
     j = r.json()
-    assert set(j.keys()) == {"loops", "mcp", "channels", "credentials", "stalled"}
+    assert set(j.keys()) == {"loops", "heartbeats", "mcp", "channels", "credentials", "stalled"}
     assert j["stalled"] is False
+    assert j["heartbeats"] == {}  # supervisor 无登记目标时为空表（不是缺键）
+
+
+def test_liveness_detail_heartbeats_follow_supervisor(monkeypatch):
+    """HB-1：heartbeats 逐目标给出最后心跳 ISO8601(UTC naive)；loops 每条也带 last_heartbeat。"""
+    import asyncio as _a
+    import time as _t
+    from datetime import datetime
+
+    import app.utils.supervisor as sv_mod
+
+    def _now_utc_naive():
+        return datetime.now(timezone.utc).replace(tzinfo=None)
+
+    def _boom_factory():
+        raise RuntimeError("no db")
+    monkeypatch.setattr("app.db.database.async_session_factory", _boom_factory)
+
+    async def _run_forever():
+        await _a.Event().wait()
+
+    async def scenario():
+        s = sv_mod.TaskSupervisor()
+        s.register("scheduler", _run_forever, stall_sec=180)
+        s.start()
+        monkeypatch.setattr(sv_mod, "supervisor", s)
+
+        j = _make_client().get(DETAIL_URL, headers=_admin_headers()).json()
+        assert set(j["heartbeats"]) == {"scheduler"}
+        iso = j["heartbeats"]["scheduler"]
+        assert abs((_now_utc_naive() - datetime.fromisoformat(iso)).total_seconds()) < 10, iso
+        assert j["loops"]["scheduler"]["last_heartbeat"]
+
+        # 心跳陈旧 → stalled=True 且 heartbeats 仍报出上次心跳时刻（供对账「停在哪一刻」）
+        s._targets["scheduler"].last_beat = _t.monotonic() - 500
+        j2 = _make_client().get(DETAIL_URL, headers=_admin_headers()).json()
+        assert j2["stalled"] is True
+        assert j2["loops"]["scheduler"]["stalled"] is True
+        gap = (_now_utc_naive() - datetime.fromisoformat(j2["heartbeats"]["scheduler"])).total_seconds()
+        assert 480 <= gap <= 520, gap
+
+        # 公开面保持 P3-B 最小契约（只有 status/stalled）：心跳明细属运维信息，不外泄
+        pub = _make_client().get(PUBLIC_URL).json()
+        assert set(pub.keys()) == {"status", "stalled"}
+        assert pub["stalled"] is True
+
+        await s.stop()
+
+    _a.run(scenario())

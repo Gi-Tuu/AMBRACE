@@ -94,12 +94,14 @@ async def _liveness_detail() -> dict:
     - channels 读 wechat_ilink_bindings 的 last_inbound_at/last_outbound_at（只读绑定表）；
       插件 self-poll 已关、不再有内存轮询心跳，网关进程自身存活性由 watchdog 的 18789 TCP probe 覆盖。
     """
-    info: dict = {"loops": {}, "mcp": {}, "channels": {}, "stalled": False}
+    info: dict = {"loops": {}, "heartbeats": {}, "mcp": {}, "channels": {}, "stalled": False}
 
     # 1) supervisor 监督的常驻循环（scheduler / storyline）
     try:
         from app.utils.supervisor import supervisor
         info["loops"] = supervisor.liveness()
+        # HB-1（2026-09-28）：单拆一节「目标名 → 最后心跳 ISO8601」只读快照，便于运维/对账直接读
+        info["heartbeats"] = supervisor.snapshot()
         if any(v.get("stalled") or not v.get("alive") for v in info["loops"].values()):
             info["stalled"] = True
     except Exception as e:
@@ -193,8 +195,9 @@ async def liveness_check():
 
 @router.get("/liveness/detail")
 async def liveness_detail(user_id: int = Depends(get_current_user_id), lang: str = Header(default="zh")):
-    """运行期活性明细（登录 + 仅主账号）：loops / mcp / channels / credentials 全量（运维信息）。
+    """运行期活性明细（登录 + 仅主账号）：loops / heartbeats / mcp / channels / credentials 全量（运维信息）。
 
+    heartbeats（HB-1）＝ 各被监督循环最后一次心跳的 ISO8601(UTC, naive)，与 loops 同源只读。
     credentials 为主密钥健康快照（P3-7）：只反映「已有密文能否解开」，不参与 stalled 判定。
     """
     from app.application.permission_service import is_admin_user

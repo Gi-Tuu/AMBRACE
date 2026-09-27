@@ -38,9 +38,12 @@ _KEY = "current_view_filter"
 
 
 def test_开关默认关且目录有条目():
-    """AGENT_FLAGS 默认 False；flag_catalog 有 memory 组 / order 722 / 不可见条目，zh·en 文案非空。"""
+    """AGENT_FLAGS 默认 **True**（2026-09-28 转正：生产 runtime_flags 早已为开，转正让新装部署同享；仍可关回旧行为）；
+
+    flag_catalog 有 memory 组 / order 722 / 不可见条目，zh·en 文案非空。
+    """
     assert _KEY in AGENT_FLAGS, "新键必须登记进 AGENT_FLAGS（否则 runtime_flags 开了也不生效）"
-    assert AGENT_FLAGS[_KEY] is False, "默认必须关（关=逐字节旧行为）"
+    assert AGENT_FLAGS[_KEY] is True, "09-28 转正后默认 True（关仍=逐字节旧行为）"
     assert _KEY in FLAG_CATALOG, "新键必须在开关目录里登记"
 
     m = FLAG_CATALOG[_KEY]

@@ -191,10 +191,18 @@ def is_daily_due(key: str, min_local_hour: int = 0, now: datetime | None = None)
     """
     now = now or now_naive_utc()
     local = local_now(now)
-    if not min_local_hour <= local.hour < 24:
-        return False
+    today = local.date()
     last = last_done(key)
-    if last is not None and local_now(last).date() == local.date():
+    last_date = local_now(last).date() if last is not None else None
+    if last_date == today:
+        return False  # 今天已成功
+    # 正常窗口：本地 [min_local_hour, 24)
+    in_window = min_local_hour <= local.hour < 24
+    # 跨天补跑（2026-09-28 加固）：上次成功日 < 昨天 ⇒ 已整整错过一天，任何时刻都允许补跑。
+    # 起因：09-27 主循环被 LLM 长调用拖到 stalled（supervisor 取消重建），23:00 的窗口整段不可用
+    # ⇒ 当天永远不跑；旧判据要求「窗口内」，于是要再等近 24 小时才补，期间内容一直缺。
+    overdue = last_date is not None and last_date < today - timedelta(days=1)
+    if not in_window and not overdue:
         return False
     gate = next_retry_at(key)
     return gate is None or now >= gate
