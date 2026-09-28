@@ -33,7 +33,7 @@ class PlatformProfile(Base):
     visibility: Mapped[str] = mapped_column(String(10), default="private")      # private=App / public=外部平台
     relationship_level: Mapped[str] = mapped_column(String(10), default="general")  # general / familiar / intimate（亲密度表达上限）
     memory_access: Mapped[str] = mapped_column(String(10), default="full")      # full=App / limited=外部平台（可注入记忆范围）
-    memory_restrict: Mapped[str] = mapped_column(String(10), default="off")       # 公开记忆收紧：off=现状(排identity+姓名) / relationship=额外排relationship子类型（2026-08-12）
+    memory_restrict: Mapped[str | None] = mapped_column(String(10), nullable=True, default="off")       # 公开记忆收紧：off=现状(排identity+姓名) / relationship=额外排relationship子类型（2026-08-12）
     tone: Mapped[str] = mapped_column(String(10), default="private")            # private / social / creative（表达语气）
     content_style: Mapped[str] = mapped_column(String(20), default="")          # 内容风格偏好（预留）
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)

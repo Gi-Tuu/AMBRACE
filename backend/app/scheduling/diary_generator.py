@@ -9,6 +9,7 @@ from app.models.chat import ChatMessage
 from app.models.character import ProactiveSettings
 from app.agent.llm_client import chat_completion
 from app.utils.logger import get_logger
+from app.utils.timeutil import app_local_now
 
 _logger = get_logger("scheduler.diary")
 
@@ -61,7 +62,7 @@ async def generate_diary_for_character(
 ) -> dict | None:
     """为角色生成指定日期的日记"""
     if target_date is None:
-        target_date = date.today()
+        target_date = app_local_now().date()
     date_str = target_date.strftime("%Y-%m-%d")
 
     # 检查是否已有日记
@@ -197,7 +198,7 @@ async def generate_missing_diaries():
         )
         settings_list = result.scalars().all()
 
-    today = date.today()
+    today = app_local_now().date()
     for settings in settings_list:
         for days_ago in range(1, 4):  # 补最近 3 天（昨天及以前）
             target_date = today - timedelta(days=days_ago)

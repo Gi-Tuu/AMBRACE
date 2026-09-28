@@ -24,7 +24,7 @@ class Plugin(Base):
     description: Mapped[str] = mapped_column(String(500), default="")
     author: Mapped[str] = mapped_column(String(100), default="")
     category: Mapped[str] = mapped_column(String(20), default="plugin")  # plugin / mcp
-    type: Mapped[str] = mapped_column(String(20), default="http")  # 48c：插件类型 http/prompt/chat/workflow/hybrid
+    type: Mapped[str | None] = mapped_column(String(20), nullable=True, default="http")  # 48c：插件类型 http/prompt/chat/workflow/hybrid
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     config_json: Mapped[str] = mapped_column(Text, default="{}")
     # ---- 3.9 插件安全闸（2026-09-02）：来源校验与同意记录 ----

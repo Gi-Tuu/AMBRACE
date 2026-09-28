@@ -17,11 +17,32 @@
 import os
 import re
 import sqlite3
+import sys
 import zipfile
 from datetime import datetime, timedelta
 
 SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 项目根目录
 BACKUP_ROOT = os.path.join(SERVER_DIR, "backups")
+
+# 批 2b（2026-09-28）：备份文件名的日期统一走「应用本地时区」的今天（见 backup_day_key）。
+# 独立运行（python scripts/backup.py）时按路径自举 backend/，使脚本与后端共用同一时区口径。
+_BACKEND_DIR = os.path.join(SERVER_DIR, "backend")
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
+
+from app.utils.timeutil import app_local_now, now_naive_utc  # noqa: E402
+
+
+def backup_day_key() -> str:
+    """当天备份文件名的日期键（YYYYMMDD，**应用本地时区**）。
+
+    生产端（本文件 do_backup）与消费端（application/system.py 的备份触发/下载、
+    application/account_purge.py 的前置备份）都只走这一个入口：两边各写一次
+    datetime.now().strftime("%Y%m%d") 时，服务器 OS 时区与应用时区不同（容器 UTC）
+    就会各自算出不同日期 ⇒ isfile() 失配 ⇒ trigger_backup 500 / 前置备份 fail-closed。
+    """
+    return app_local_now().strftime("%Y%m%d")
+
 
 # ── A8 方案 B（2026-09-26）：备份包内提示改为「凭据已加密，主密钥另存且不在本包内」──
 README_IN_ZIP = "README-BACKUP.txt"
@@ -116,6 +137,8 @@ def rotate_logs() -> str:
     """
     if not os.path.isdir(LOG_DIR):
         return "日志轮换：无日志目录"
+    # 归档名 app.log.YYYY-MM-DD 由 TimedRotatingFileHandler 按 **OS 本地时区** 生成，
+    # 故清理口径同为 OS 本地（与命名同源）。这是另一套命名，勿与备份文件名的应用时区混用。
     cutoff = datetime.now() - timedelta(days=LOG_KEEP_DAYS)
     removed = []
     for fn in os.listdir(LOG_DIR):
@@ -140,7 +163,9 @@ def prune_trigger_logs() -> str:
     try:
         if not os.path.isfile(DB_FILE):
             return "触发日志清理：无数据库"
-        cutoff = (datetime.now() - timedelta(days=TRIGGER_LOG_KEEP_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        # created_at 是库内 UTC naive 列（server_default=func.now()），清理口径必须同为 UTC naive：
+        # 旧写法用本地时区基准，在 UTC 容器里会把窗口多删 8 小时的数据。
+        cutoff = (now_naive_utc() - timedelta(days=TRIGGER_LOG_KEEP_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
         con = sqlite3.connect(DB_FILE)
         try:
             cur = con.execute("DELETE FROM proactive_trigger_logs WHERE created_at < ?", (cutoff,))
@@ -154,7 +179,7 @@ def prune_trigger_logs() -> str:
 
 def do_backup() -> str:
     os.makedirs(BACKUP_ROOT, exist_ok=True)
-    today = datetime.now().strftime("%Y%m%d")
+    today = backup_day_key()
     zip_path = os.path.join(BACKUP_ROOT, f"{today}.zip")
     if os.path.exists(zip_path):
         # 备份已存在（如当天多次调用）也执行日志轮换
@@ -190,7 +215,8 @@ def do_backup() -> str:
 
     # 清理过期备份
     removed = []
-    cutoff = datetime.now() - timedelta(days=KEEP_DAYS)
+    # 备份文件名按 backup_day_key()（应用本地时区）命名，过期判断取同一来源
+    cutoff = datetime.strptime(backup_day_key(), "%Y%m%d") - timedelta(days=KEEP_DAYS)
     for fn in os.listdir(BACKUP_ROOT):
         if not fn.endswith(".zip"):
             continue

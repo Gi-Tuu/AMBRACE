@@ -42,10 +42,14 @@ extension MemoriesApi on ApiClient {
     await dio.patch('/api/v1/memories/$id/content', data: {'content': content});
   }
 
-  Future<List<MemoryNode>> getMemoryChildren(int id) async {
-    final r = await dio.delete('/api/v1/memories/$id/tree', queryParameters: {'cascade': 'false'});
+  /// 记忆链条全时间线（同链 root→branch… 时间升序，含自身；未建链时仅自身）。
+  ///
+  /// 旧实现走 `DELETE /{id}/tree?cascade=false` 借删除接口读子节点（只看子、且动词不当），
+  /// 叶子/单节点记忆在链条卡里一律显示为空——改走只读的 GET /{id}/chain。
+  Future<List<MemoryNode>> getMemoryChain(int id) async {
+    final r = await dio.get('/api/v1/memories/$id/chain');
     final data = r.data as Map<String, dynamic>;
-    return (data['children'] as List)
+    return (data['chain'] as List)
         .map((j) => MemoryNode.fromJson(j as Map<String, dynamic>))
         .toList();
   }

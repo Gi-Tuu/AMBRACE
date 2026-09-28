@@ -607,3 +607,67 @@ def test_reset_registrations_清空登记表(clean_registry):
     strategy_mod.reset_registrations()
     assert strategy_mod.strategy_registry() == {}
     assert strategy_mod.strategy_warnings() == []
+
+
+def _collect_once(hook_ctx: dict) -> list:
+    """跑一次 proactive_candidate 分发（roster 由调用方给定，不碰 DB 角色数据）。"""
+    from app.plugins.registry import run_hook_collect
+
+    return asyncio.run(run_hook_collect(
+        "proactive_candidate", hook_ctx,
+        callsite="tests/test_proactive_strategy_x6b.py:mechanism",
+    ))
+
+
+def _collect_some(hook_ctx: dict, tries: int = 60) -> bool:
+    """rhythm 包按概率采样（上午 0.4），多跑几次以稳定观测「是否可能产出候选」。"""
+    return any(_collect_once(hook_ctx) for _ in range(tries))
+
+
+def _hook_ctx_with_roster() -> dict:
+    return {"strategy_categories": ["rhythm"], "roster": [_roster_entry()]}
+
+
+def test_time_ctx是闸_roster键桩空无效(monkeypatch, clean_registry):
+    """批 5 机制核实（2026-09-28）：`_CONTEXT_BUILDERS` 全键桩空之所以能让空库用例零候选，
+    真正的闸是 **time_ctx**，不是 roster 键。
+
+    事实链：①roster 由内核 `sources/plugin.py:42` 的 `build_hook_ctx(claims, await build_roster())`
+    经 hook_ctx 下发，**不走** `_CONTEXT_BUILDERS`；②`_CONTEXT_BUILDERS["time_ctx"]` 才是插件端口
+    `sdk.get_proactive_context(["time_ctx"])` 的落点（包内 main.py:107），window 为空即 return None
+    （main.py:110-112）。故「只桩 roster 键」是无效修法。
+
+    三组对照（roster 一律由调用方喂假条目，不依赖任何 DB 角色数据）：
+      A. time_ctx 桩空 → 零候选（闸在此）；
+      B. time_ctx 真实 ＋ roster 键桩空 → 仍能有候选 ⇒ roster 键不参与该判定；
+      C. roster 键恢复真实 → 与 B 同样「有候选」，反证 B 不是缺数据造成的假绿。
+    """
+    from app.scheduling import life_rhythm
+
+    registry.load_plugin_dir(registry.EXAMPLE_DIR / PACK_RHYTHM)
+    registry._enabled[PACK_RHYTHM] = True
+    _flag(monkeypatch, True)
+
+    # 时段钉在「上午」：真实 get_time_window() 在凌晨 0-7 点返回 None，会让 B/C 假绿
+    monkeypatch.setattr(
+        life_rhythm, "get_time_window",
+        lambda now=None: {"name": "上午", "tendencies": ["status_update"], "start": 540, "end": 720},
+    )
+
+    async def _empty(cid):
+        return []
+
+    builders = strategy_mod._CONTEXT_BUILDERS
+    orig_time, orig_roster = builders["time_ctx"], builders["roster"]
+    try:
+        builders["time_ctx"] = _empty                        # A
+        assert _collect_once(_hook_ctx_with_roster()) == []
+
+        builders["roster"] = _empty                          # B（只桩 roster 键）
+        builders["time_ctx"] = orig_time
+        assert _collect_some(_hook_ctx_with_roster()), "只桩 roster 键仍出候选 ⇒ 原修法机制不成立"
+
+        builders["roster"] = orig_roster                     # C
+        assert _collect_some(_hook_ctx_with_roster())
+    finally:
+        builders["time_ctx"], builders["roster"] = orig_time, orig_roster

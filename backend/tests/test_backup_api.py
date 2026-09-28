@@ -7,6 +7,7 @@
 import io
 import os
 import zipfile
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -106,3 +107,26 @@ def test_download_backup_not_found(tmp_path, monkeypatch):
 def test_download_backup_forbidden():
     r = _make_client(OTHER).get("/api/v1/system/backup/download")
     assert r.status_code == 403
+
+
+def test_backup_day_key_单一来源(tmp_path, monkeypatch):
+    '''批 2b（2026-09-28）：生产端与消费端共用 backup_day_key()，不再各自算备份日期。
+
+    生产端 = scripts/backup.py::do_backup 的落盘名；消费端 = trigger_backup /
+    download_backup / account_purge 前置备份。两侧各写一次 datetime.now() 时，服务器 OS
+    时区与应用时区不同（容器 UTC）就各自算出不同日期 ⇒ isfile() 失配 ⇒ 500 / fail-closed。
+    '''
+    mod = _isolated_backup_module(tmp_path, monkeypatch)
+    r = _make_client(ADMIN).post('/api/v1/system/backup')
+    assert r.status_code == 200
+    assert r.json()['path'] == mod.backup_day_key() + '.zip'
+    assert os.path.isfile(os.path.join(str(tmp_path), mod.backup_day_key() + '.zip'))
+
+    # 棘轮：三处消费端不得再自行拼日期（改了就会在跨时区部署下与生产端失配）
+    backend_root = Path(system_svc.__file__).resolve().parents[2]
+    for rel in ('app/application/system.py', 'app/application/account_purge.py'):
+        src = (backend_root / rel).read_text(encoding='utf-8')
+        assert 'backup_day_key()' in src, f'{rel} 未走 backup_day_key()'
+        assert '.strftime("%Y%m%d")' not in src, f'{rel} 又出现消费端自算备份日期'
+    backup_src = (backend_root.parent / 'scripts' / 'backup.py').read_text(encoding='utf-8')
+    assert backup_src.count('def backup_day_key()') == 1, '生产端日期键入口应唯一'

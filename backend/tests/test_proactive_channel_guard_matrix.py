@@ -577,8 +577,13 @@ def test_state_trigger_prompt_guard_missing_xfail(monkeypatch):
     行为断言：真跑 _execute_rule_behavior 私聊分支（桩件同 tests/test_proactive_context.py）。
     """
     cap = _Capture("有点累，你先别忙，我歇会儿。")
-    async def _boom():
-        raise RuntimeError("no db")
+
+    def _boom():
+        # 真工厂（async_sessionmaker）是**同步调用**返回异步上下文管理器；这里必须也同步抛错。
+        # 旧写法 `async def _boom()` 会造出一个永不 await 的协程（全量 29 条警告里剩的 1 条
+        # 「coroutine '_boom' was never awaited」就是它）；抛的类型/文案与 `async with <coroutine>`
+        # 逐字一致（TypeError），故各调用点的 except 分支与断言口径完全不变。
+        raise TypeError("'coroutine' object does not support the asynchronous context manager protocol")
 
     async def _sid(*_a, **_k):
         return 99

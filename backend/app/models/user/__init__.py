@@ -28,9 +28,9 @@ class User(Base):
     height: Mapped[float | None] = mapped_column(nullable=True)  # cm
     weight: Mapped[float | None] = mapped_column(nullable=True)  # kg
     bio: Mapped[str | None] = mapped_column(nullable=True)  # 个人简介
-    lang: Mapped[str] = mapped_column(String(10), nullable=False, server_default="'zh'", default="zh")  # 界面语言 zh/en（i18n）
-    ai_social_enabled: Mapped[bool] = mapped_column(Boolean, server_default="1", default=True)  # AI 间私聊开关（arbiter ai_social 采样时校验）
-    is_admin: Mapped[bool] = mapped_column(Boolean, server_default="0", default=False)  # 主账号（#46：可勾选的账号集合，优先于 settings.admin_user_ids）
+    lang: Mapped[str | None] = mapped_column(String(10), nullable=True, server_default="'zh'", default="zh")  # 界面语言 zh/en（i18n）
+    ai_social_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True, server_default="1", default=True)  # AI 间私聊开关（arbiter ai_social 采样时校验）
+    is_admin: Mapped[bool | None] = mapped_column(Boolean, nullable=True, server_default="0", default=False)  # 主账号（#46：可勾选的账号集合，优先于 settings.admin_user_ids）
     # 服务器控制台管理员（账号独立 P1，2026-09-19）：is_admin 是「家庭主账号」（家庭内管理），
     # server_admin 是「服务器控制台管理员」（跨家庭、管服务器级配置）。新增列默认 0；
     # 幂等迁移把存量 is_admin=1 一并置 server_admin=1（单家庭部署行为不变）。
@@ -61,11 +61,11 @@ class User(Base):
     parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None, index=True)  # 主账号关联（#68：NULL=独立主账号，非NULL=子账号；P3 受邀码关联用，P0-P2 只用于共享配置判定）
     # 位置信息（2026-08-08）：location_enabled 总开关；location_gps_enabled=获取地理位置（开启后用户位置不可自定义）；
     # location_follow=位置跟随（开启后 AI 位置与用户相同、不可自定义）；timezone_offset_minutes=用户本地时区（分钟，如 480=UTC+8）
-    location_enabled: Mapped[bool] = mapped_column(Boolean, server_default="0", default=False)
-    location_gps_enabled: Mapped[bool] = mapped_column(Boolean, server_default="0", default=False)
+    location_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True, server_default="0", default=False)
+    location_gps_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True, server_default="0", default=False)
     user_location: Mapped[str | None] = mapped_column(String(100), nullable=True)
     ai_location: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    location_follow: Mapped[bool] = mapped_column(Boolean, server_default="0", default=False)
+    location_follow: Mapped[bool | None] = mapped_column(Boolean, nullable=True, server_default="0", default=False)
     timezone_offset_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     location_lat: Mapped[float | None] = mapped_column(nullable=True)  # GPS 定位纬度（获取地理位置开启时上报）
     location_lng: Mapped[float | None] = mapped_column(nullable=True)  # GPS 定位经度

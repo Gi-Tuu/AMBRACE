@@ -41,7 +41,6 @@ import os
 import re
 import shutil
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +86,9 @@ def _run_backup() -> str:
 
     mod = _load_backup_module()
     summary = mod.do_backup()
-    zip_path = os.path.join(mod.BACKUP_ROOT, datetime.now().strftime("%Y%m%d") + ".zip")
+    # 批 2b：日期键取自生产端（scripts/backup.py::backup_day_key，应用本地时区）；
+    # 消费端自行算日期会在 OS 时区≠应用时区时与落盘名失配 ⇒ fail-closed 误报。
+    zip_path = os.path.join(mod.BACKUP_ROOT, mod.backup_day_key() + ".zip")
     if not os.path.isfile(zip_path):
         raise RuntimeError(f"备份未产出文件：{summary}")
     if os.path.getsize(zip_path) <= 0:

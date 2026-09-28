@@ -929,7 +929,9 @@ async def get_llm_usage(
     # （见 app/utils/timeutil.py 顶部：正因分散定义出过"北京日期当 UTC 零点"的 8 小时窗口偏差）。
     # 此处语义就是"用户本地日历的今日/近 7 日/本月"，故改用 app_local_now()；
     # 默认 +8 且服务器 OS 同区时与旧值逐字节等价，跨区部署时才真正纠正。
-    # （:1025/:1042 的备份目录时间戳按现状保留：那是服务器本地目录命名，不是用户可感知窗口。）
+    # （备份 zip 文件名的日期键同属「用户可感知」口径 —— 批 2b 起生产端
+    #  scripts/backup.py 与三处消费端（本模块 trigger_backup / download_backup、
+    #  application/account_purge.py 的前置备份）统一走 backup_day_key()＝应用本地时区。）
     now_local = app_local_now()
     today0 = _to_utc_naive(datetime(now_local.year, now_local.month, now_local.day, tzinfo=now_local.tzinfo))
     week0 = today0 - timedelta(days=6)
@@ -1523,7 +1525,7 @@ async def trigger_backup(
     except Exception as e:
         _logger.error("backup triggered failed: %s", e)
         raise HTTPException(status_code=500, detail=tr_lang(lang, "backup_failed"))
-    today = datetime.now().strftime("%Y%m%d")
+    today = mod.backup_day_key()  # 批 2b：与生产端同源（应用本地时区），勿再自行 datetime.now()
     zip_path = _os.path.join(mod.BACKUP_ROOT, f"{today}.zip")
     if not _os.path.isfile(zip_path):
         raise HTTPException(status_code=500, detail=tr_lang(lang, "backup_failed"))
@@ -1546,7 +1548,7 @@ async def download_backup(
     from fastapi.responses import FileResponse
     mod = _load_backup_module()
     candidate = None
-    today = datetime.now().strftime("%Y%m%d")
+    today = mod.backup_day_key()  # 批 2b：同 trigger_backup，取「应用本地时区」的今天
     today_zip = _os.path.join(mod.BACKUP_ROOT, f"{today}.zip")
     if _os.path.isfile(today_zip):
         candidate = today_zip

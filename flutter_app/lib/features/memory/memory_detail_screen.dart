@@ -21,8 +21,8 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
   final _api = ApiClient();
   late Memory _memory;
   bool _changed = false;
-  List<MemoryNode> _children = const [];
-  bool _loadingChildren = true;
+  List<MemoryNode> _chain = const [];
+  bool _loadingChain = true;
   String? _cachedOriginalSource;
   // 原始内容 Future 只取一次并缓存，避免 build 内联 Future 导致每条重建重取
   late final Future<String> _sourceFuture = _fetchOriginalSource();
@@ -38,7 +38,7 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
   void initState() {
     super.initState();
     _memory = widget.memory;
-    _loadChildren();
+    _loadChain();
     _refreshMemory();  // P2-11：补齐调用方没带的字段（如 why_it_matters）
   }
 
@@ -251,12 +251,12 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
   }
 
 
-  Future<void> _loadChildren() async {
+  Future<void> _loadChain() async {
     try {
-      final kids = await _api.getMemoryChildren(_memory.id);
-      if (mounted) setState(() { _children = kids; _loadingChildren = false; });
+      final nodes = await _api.getMemoryChain(_memory.id);
+      if (mounted) setState(() { _chain = nodes; _loadingChain = false; });
     } catch (_) {
-      if (mounted) setState(() => _loadingChildren = false);
+      if (mounted) setState(() => _loadingChain = false);
     }
   }
 
@@ -341,18 +341,20 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
   }
 
   Widget _buildChainCard(AppLocalizations l10n) {
+    // 全链时间线（含自身，服务端按 created_at 升序）：只有自身一条时才是「暂无关联记忆」
+    final related = _chain.where((n) => n.id != _memory.id).length;
     return IosCardGroup(children: [
       ExpansionTile(
         leading: Icon(Icons.account_tree_outlined, color: Theme.of(context).colorScheme.primary),
         title: Text(l10n.memoryChainTitle, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
         subtitle: Text(l10n.memoryChainChildren, style: const TextStyle(fontSize: 12, color: IosCardColors.subtitle)),
         children: [
-          if (_loadingChildren)
+          if (_loadingChain)
             const Padding(padding: EdgeInsets.all(16), child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))))
-          else if (_children.isEmpty)
+          else if (related == 0)
             Padding(padding: const EdgeInsets.all(16), child: Text(l10n.memoryChainEmpty, style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)))
           else
-            ..._children.map((c) => _buildChainNode(c)),
+            ..._chain.map((c) => _buildChainNode(c, isCurrent: c.id == _memory.id)),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
@@ -370,15 +372,23 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
     ]);
   }
 
-  Widget _buildChainNode(MemoryNode node) {
+  Widget _buildChainNode(MemoryNode node, {bool isCurrent = false}) {
     return Padding(
       padding: const EdgeInsets.only(left: 20, right: 16, top: 4, bottom: 4),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Padding(padding: EdgeInsets.only(top: 4, right: 8), child: Icon(Icons.subdirectory_arrow_right, size: 18, color: IosCardColors.subtitle)),
+        Padding(
+          padding: const EdgeInsets.only(top: 4, right: 8),
+          child: Icon(isCurrent ? Icons.radio_button_checked : Icons.subdirectory_arrow_right,
+              size: 18,
+              color: isCurrent ? Theme.of(context).colorScheme.primary : IosCardColors.subtitle),
+        ),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           if (node.title != null && node.title!.isNotEmpty)
-            Text(node.title!, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-          Text(node.content, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle, height: 1.4)),
+            Text(node.title!, style: TextStyle(fontSize: 14, fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500)),
+          Text(node.content, maxLines: 2, overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13, height: 1.4,
+                  color: isCurrent ? null : IosCardColors.subtitle,
+                  fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400)),
         ])),
       ]),
     );

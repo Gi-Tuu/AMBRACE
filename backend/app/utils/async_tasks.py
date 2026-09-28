@@ -30,9 +30,21 @@ def spawn_background(coro, *, name: str | None = None) -> asyncio.Task:
     - 任务内未捕获的异常在这里统一记日志（业务协程仍应自行 try/except）。
     """
     # 派生边界：后台任务不得继承本轮请求的 LLM 用量渠道（见 _detached）
-    if asyncio.iscoroutine(coro):
-        coro = _detached(coro)
-    task = asyncio.ensure_future(coro)
+    wrapped = _detached(coro) if asyncio.iscoroutine(coro) else coro
+    try:
+        task = asyncio.ensure_future(wrapped)
+    except Exception:
+        # 调度失败（典型＝调用点没有运行中的事件循环）时 ensure_future 会抛错，而刚包好的
+        # _detached 与业务协程都还没被执行过 —— 不显式 close 就留下「coroutine '_detached'
+        # was never awaited」并把闭包挂到 GC（2026-09-28 全量 29 条警告里 15 条来自这条路）。
+        # 语义不变：调度失败照旧抛给调用方。
+        for _c in (wrapped, coro):
+            if asyncio.iscoroutine(_c):
+                try:
+                    _c.close()
+                except Exception:
+                    pass
+        raise
     if name:
         try:
             task.set_name(name)

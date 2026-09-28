@@ -85,9 +85,10 @@ def _flag_on(monkeypatch, key, value=True):
 # ---------------- 纯函数/常量 ----------------
 
 def test_constants():
-    """关键常量符合方案：只对 event/insight 建链、阈值 0.82、14 天窗、链长上限 12。"""
+    """关键常量符合方案：只对 event/insight 建链、两层阈值（裸 0.70 硬下限 + 加权 0.78 入闸）、14 天窗、链长上限 12。"""
     assert cb.CHAINABLE_TYPES == {"event", "insight"}
-    assert cb.PARENT_SIM_THRESHOLD == 0.82
+    assert cb.PARENT_SIM_HARD_FLOOR == 0.70
+    assert cb.PARENT_SCORE_THRESHOLD == 0.78
     assert cb.CHAIN_WINDOW_DAYS == 14
     assert cb.MAX_CHAIN_NODES == 12
 
@@ -168,15 +169,15 @@ def test_近邻超14天_新开root(cdb, monkeypatch):
     assert row.node_type == "root"
 
 
-def test_相似度低于阈值_不挂(cdb, monkeypatch):
+def test_裸相似度低于硬下限_不挂(cdb, monkeypatch):
     _flag_on(monkeypatch, "memory_chain_builder")
 
     async def _main():
         parent = await _seed(cdb, user_id=1, character_id=1, memory_type="event",
                              content="旅行回忆", importance=60.0,
                              created_at=_NOW - timedelta(days=1), chain_id="c9", node_type="root")
-        # 距离 0.20 → sim=0.80 < 0.82：即使最相似也不挂
-        monkeypatch.setattr(_vs, "search_memories", _fake_search([{"id": parent.id, "distance": 0.20}]))
+        # 距离 0.35 → sim=0.65 < 硬下限 0.70：加权后 0.70 仍不足 0.78，绝不挂
+        monkeypatch.setattr(_vs, "search_memories", _fake_search([{"id": parent.id, "distance": 0.35}]))
         new = await _seed(cdb, user_id=1, character_id=1, memory_type="event",
                           content="另一位旅行回忆", importance=60.0, created_at=_NOW)
         await cb.link_new_memory(new.id, [0.1, 0.2])
@@ -187,6 +188,64 @@ def test_相似度低于阈值_不挂(cdb, monkeypatch):
     assert row.chain_id != "c9"
     assert row.parent_id is None
     assert row.node_type == "root"
+
+
+def test_非同类型加权分不足_不挂(cdb, monkeypatch):
+    """裸 0.75 过了硬下限，但跨类型无 +0.05 奖励 → 加权 0.75 < 0.78，仍不挂。"""
+    _flag_on(monkeypatch, "memory_chain_builder")
+
+    async def _main():
+        parent = await _seed(cdb, user_id=1, character_id=1, memory_type="insight",
+                             content="某个洞察", importance=60.0,
+                             created_at=_NOW - timedelta(days=1), chain_id="c9", node_type="root")
+        monkeypatch.setattr(_vs, "search_memories", _fake_search([{"id": parent.id, "distance": 0.25}]))
+        new = await _seed(cdb, user_id=1, character_id=1, memory_type="event",
+                          content="一件事", importance=60.0, created_at=_NOW)
+        await cb.link_new_memory(new.id, [0.1, 0.2])
+        return await _get(cdb, new.id)
+
+    row = asyncio.run(_main())
+    assert row.chain_id is not None and row.chain_id != "c9"
+    assert row.parent_id is None and row.node_type == "root"
+
+
+def test_同类型延续_裸相似度八折现在挂链(cdb, monkeypatch):
+    """两层阈值修订（2026-09-28）：同类型裸 0.80 + 0.05 = 0.85 ≥ 0.78 → 挂上（旧 0.82 单闸会另开 root）。"""
+    _flag_on(monkeypatch, "memory_chain_builder")
+
+    async def _main():
+        parent = await _seed(cdb, user_id=1, character_id=1, memory_type="event",
+                             content="旅行回忆", importance=60.0,
+                             created_at=_NOW - timedelta(days=1), chain_id="c9", node_type="root")
+        monkeypatch.setattr(_vs, "search_memories", _fake_search([{"id": parent.id, "distance": 0.20}]))
+        new = await _seed(cdb, user_id=1, character_id=1, memory_type="event",
+                          content="另一位旅行回忆", importance=60.0, created_at=_NOW)
+        await cb.link_new_memory(new.id, [0.1, 0.2])
+        return await _get(cdb, new.id)
+
+    row = asyncio.run(_main())
+    assert row.chain_id == "c9"
+    assert row.node_type == "branch"
+
+
+def test_合格父自身无链_提为root同建(cdb, monkeypatch):
+    """冷启动缝隙：父是建链器上线前的无链存量 → 提为 root，与新记忆同建一条链。"""
+    _flag_on(monkeypatch, "memory_chain_builder")
+
+    async def _main():
+        parent = await _seed(cdb, user_id=1, character_id=1, memory_type="event",
+                             content="早先的事", importance=60.0,
+                             created_at=_NOW - timedelta(days=2))  # 无 chain_id
+        monkeypatch.setattr(_vs, "search_memories", _fake_search([{"id": parent.id, "distance": 0.10}]))
+        new = await _seed(cdb, user_id=1, character_id=1, memory_type="event",
+                          content="这件事的后续", importance=60.0, created_at=_NOW)
+        await cb.link_new_memory(new.id, [0.1, 0.2])
+        return parent.id, await _get(cdb, new.id)
+
+    parent_id, row = asyncio.run(_main())
+    assert row.chain_id is not None and row.parent_id == parent_id and row.node_type == "branch"
+    p = asyncio.run(_get(cdb, parent_id))
+    assert p.chain_id == row.chain_id and p.parent_id is None and p.node_type == "root"
 
 
 def test_user_info不建链_and_幂等(cdb, monkeypatch):

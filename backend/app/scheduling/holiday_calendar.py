@@ -1,6 +1,8 @@
 """节日日历数据 — 中国常见节日 + 国际节日"""
 from datetime import date, timedelta
 
+from app.utils.timeutil import app_local_now
+
 try:
     from lunardate import LunarDate
     _HAS_LUNARDATE = True
@@ -95,7 +97,7 @@ def _content_holidays(today: date) -> list[dict]:
 def get_holidays(today: date | None = None) -> list[dict]:
     """获取指定日期的所有节日（为空则取当天）"""
     if today is None:
-        today = date.today()
+        today = app_local_now().date()
     key = today.strftime("%m-%d")
     result: list[dict] = []
 

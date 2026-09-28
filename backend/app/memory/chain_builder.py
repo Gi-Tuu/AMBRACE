@@ -8,8 +8,9 @@
 本模块 = 建链器本体（纯规则、零额外 LLM）：写入后异步把"同一件事的演进"挂成链。
 - 只对 event/insight 建时序链；user_info/preference 等静态画像不建链（否则把
   "用户喜欢美式"这种静态事实串成伪时间线）。
-- 找父：向量近邻（cosine ≥ 阈值）+ 14 天时间窗 + 同类型/关系情绪奖励排序；
-  达不到阈值就新开一条链（当 root），宁缺毋滥。
+- 找父：向量近邻（两层阈值：裸相似度硬下限 + 加权分入闸）+ 14 天时间窗 + 同角色；
+  合格父自身还没链时（建链器上线前的存量）把它提为 root，与 self 同建一条链；
+  找不到合格父就新开一条链（当 root），宁缺毋滥。
 - 全部异步、失败静默、幂等（已挂链的不重复挂）；flag ``memory_chain_builder`` 控制，默认关。
 
 另含沿链读取/扩展与 RECALL_SHARED 捞链（§14 / §15），供 ``section_memories`` /
@@ -32,12 +33,14 @@ from app.utils.logger import get_logger
 
 _logger = get_logger("memory.chain")
 
-# ── 常量（方案 §13.2）──
+# ── 常量（方案 §13.2；两层阈值 2026-09-28 按生产库离线回放修订）──
 CHAINABLE_TYPES = {"event", "insight"}   # 只对"事件/洞察"建时序链
-PARENT_SIM_THRESHOLD = 0.82              # 低于写前查重 0.86：相关延续即可挂，重复才合并
+PARENT_SIM_HARD_FLOOR = 0.70             # 裸相似度硬下限：低于此绝不挂（防错挂最后红线）
+PARENT_SCORE_THRESHOLD = 0.78            # 入闸看加权分（裸相似度 + 同类型/关系奖励）
 CHAIN_WINDOW_DAYS = 14                   # 只挂 14 天内的父，杜绝把陈年旧事拉成一条链
 MAX_CHAIN_NODES = 12                     # 每链节点上限，超限另开 root（防巨链）
-# 同类型 +0.05，关系/情绪互挂 +0.03（叠加在相似度上做排序，不改变阈值语义）
+PARENT_RECALL_LIMIT = 40                 # 选父向量化召回条数：10 时 7/16 的样本池内根本没有可建链候选
+# 同类型 +0.05，关系/情绪互挂 +0.03（叠加在相似度上，两层阈值下同时参与入闸与排序）
 SAME_TYPE_BONUS = 0.05
 RELATION_BONUS = 0.03
 RELATION_SUBS = {"relationship", "emotion"}
@@ -78,7 +81,7 @@ def _chainable(m: Memory) -> bool:
 
 def parent_score(sim: float, cand_mtype: str, cand_sub_type: str | None,
                  mtype: str, sub_type: str | None) -> float:
-    """父节点候选评分（纯函数，可单测）：裸相似度 + 类型奖励，奖励只影响排序不改变阈值。"""
+    """父节点候选评分（纯函数，可单测）：裸相似度 + 类型奖励，既用于入闸也用于排序。"""
     score = sim
     if cand_mtype == mtype:
         score += SAME_TYPE_BONUS
@@ -89,13 +92,16 @@ def parent_score(sim: float, cand_mtype: str, cand_sub_type: str | None,
 
 async def _best_parent(character_id: int, embedding: list[float], self_id: int,
                        mtype: str, sub_type: str | None) -> Memory | None:
-    """在近 14 天同角色候选里选最优父；达不到裸相似度阈值返回 None（→ 新开 root）。
+    """在近 14 天同角色候选里选最优父；两层阈值都不过返回 None（→ 新开 root）。
 
-    阈值看**裸相似度**（≥PARENT_SIM_THRESHOLD 才有资格），奖励只影响候选间排序，
-    不允许把不够像的硬拉进来（方案 §13.3 红线）。
+    入闸分两层（2026-09-28 修订，根因见生产库离线回放）：
+    ① 裸相似度 ≥ ``PARENT_SIM_HARD_FLOOR`` —— 不够像绝不挂（红线不变）；
+    ② 加权 ``parent_score`` ≥ ``PARENT_SCORE_THRESHOLD`` —— 同类型/关系延续允许略低裸分。
+    召回条数用 ``PARENT_RECALL_LIMIT``：向量库里 user_info/preference 等静态画像占比高，
+    只取 10 条时近半数样本的可建链父根本没进候选池（不是阈值挡的，是没看见）。
     """
     from app.db.vector_store import search_memories
-    neighbors = await search_memories(character_id, query_embedding=embedding, limit=10)
+    neighbors = await search_memories(character_id, query_embedding=embedding, limit=PARENT_RECALL_LIMIT)
     if not neighbors:
         return None
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=CHAIN_WINDOW_DAYS)
@@ -118,9 +124,11 @@ async def _best_parent(character_id: int, embedding: list[float], self_id: int,
                 if created < cutoff:
                     continue  # 超出时间窗不挂
             sim = 1.0 - float(n.get("distance") or 0.0)
-            if sim < PARENT_SIM_THRESHOLD:
-                continue  # 裸相似度不达标：不进候选
+            if sim < PARENT_SIM_HARD_FLOOR:
+                continue  # ① 裸相似度硬下限：不够像绝不挂
             score = parent_score(sim, cand.memory_type, cand.sub_type, mtype, sub_type)
+            if score < PARENT_SCORE_THRESHOLD:
+                continue  # ② 加权分不足：不挂
             if score > best_score:
                 best, best_score = cand, score
         return best
@@ -146,7 +154,16 @@ async def link_new_memory(memory_id: int, embedding: list[float] | None = None) 
                 from app.memory.embedding import text_embedding
                 embedding = await text_embedding(m.content)
             parent = await _best_parent(m.character_id, embedding, m.id, m.memory_type, m.sub_type)
-            if parent is not None and parent.chain_id:
+            if parent is not None:
+                # _best_parent 用自己的会话查出的父是 detached，改字段不会落库 → 按 id 取回本会话实例
+                parent = await db.get(Memory, parent.id)
+            if parent is not None and not parent.chain_id:
+                # 合格父自身还没链（建链器上线前的存量 / 当时挂链失败）：提为 root 与 self 同建一条，
+                # 否则 self 另开 root、parent 永远留在无链状态，这段演进被割成两截。
+                new_chain = uuid.uuid4().hex
+                parent.chain_id, parent.parent_id, parent.node_type = new_chain, None, "root"
+                m.chain_id, m.parent_id, m.node_type = new_chain, parent.id, "branch"
+            elif parent is not None:
                 cnt = (await db.execute(
                     select(Memory.id).where(Memory.chain_id == parent.chain_id)
                 )).scalars().all()

@@ -567,3 +567,30 @@ def test_迁移幂等与可逆(tmp_path, monkeypatch):
     command.upgrade(cfg, NEW_REV)
     assert "channel" in _cols()
     assert _channels() == [None, None], _channels()
+
+
+def test_无事件循环时调度失败会关闭两个协程():
+    """批 4 归属出的真泄漏（2026-09-28 全量 29 条警告里 15 条）：没有运行中事件循环时
+
+    `asyncio.ensure_future` 抛 RuntimeError，而刚包好的 `_detached` 与业务协程都没被执行过，
+    于是各留一条「coroutine ... was never awaited」并持有闭包到 GC。修法＝调度失败时把两个
+    协程显式 close，再照旧抛出（调用方可见行为不变）。
+    """
+    import gc
+    import warnings
+
+    from app.utils.async_tasks import spawn_background
+
+    async def _work():
+        return 1
+
+    coro = _work()
+    with pytest.raises(RuntimeError):
+        spawn_background(coro, name="no-loop")
+    assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        gc.collect()
+        leaked = [str(w.message) for w in caught if "never awaited" in str(w.message)]
+    assert leaked == [], f"仍有未 await 的协程残留：{leaked}"

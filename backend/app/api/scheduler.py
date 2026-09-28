@@ -16,7 +16,7 @@ from app.auth.deps import get_current_user_id
 from app.application.tenant_service import tenant_scope_ids
 from app.i18n import tr_lang
 from app.utils.errors import friendly_llm_error
-from app.utils.timeutil import now_naive_utc, to_naive_utc
+from app.utils.timeutil import now_naive_utc, to_naive_utc, app_local_now
 
 router = APIRouter(prefix="/api/v1/scheduler", tags=["Scheduler"])
 # #28 ③ 手动触发测试接口：独立 router（挂在 /api/v1/proactive，管理员专用）
@@ -525,10 +525,9 @@ async def trigger_test(
 @router.get("/holidays/today")
 async def get_today_holidays():
     """获取今天的所有节日"""
-    from datetime import date
-    holidays = get_holidays(date.today())
+    holidays = get_holidays(app_local_now().date())
     return {
-        "date": date.today().isoformat(),
+        "date": app_local_now().date().isoformat(),
         "holidays": holidays,
     }
 

@@ -64,8 +64,11 @@ def liveness_db(monkeypatch, tmp_path):
     建表后仍按测试专用 DDL 重建 wechat_ilink_bindings：全局 metadata 可能已被渠道插件模型注册
     （其他用例 load wechat_ilink 后建表会一并建出模型版绑定表），统一重建为测试 DDL 形态，
     列默认齐备且与插件模型解耦。
-    另种子 users(id=1, is_admin=True)：_dbclone 默认开 FK（生产同款 PRAGMA），
-    mcp_servers.user_id 是外键；is_admin=True 与旧口径（用户不存在→env 兜底为 admin）判定一致。
+    另种子 users(id=1, is_admin=True) / users(id=2, is_admin=False)：_dbclone 默认开 FK（生产同款
+    PRAGMA），mcp_servers.user_id 是外键；两行同时让主账号判定的正反用例都走 DB 权威判据，
+    不落在 settings.admin_user_ids（env）兜底上——CI 里 env 为空，靠兜底必然 403。
+
+    还须把 async_session_factory 一并绑到 permission_service 模块名上，见函数体内注释。
     """
     from app.models.user import User
 
@@ -81,12 +84,22 @@ def liveness_db(monkeypatch, tmp_path):
     async def _seed():
         async with factory() as db:
             db.add(User(id=1, username="lv_admin", nickname="主账号", is_admin=True))
+            db.add(User(id=2, username="lv_sub", nickname="子号", is_admin=False))
             await db.commit()
 
     asyncio.run(_init())
     asyncio.run(_seed())
     import app.db.database as db_mod
+    from app.application import permission_service as perm
     monkeypatch.setattr(db_mod, "async_session_factory", factory)
+    # permission_service 是 `from app.db.database import async_session_factory`（import 期绑定
+    # 成自己的模块名），只改 db_mod 上的属性对它无效 —— is_admin_user 于是读会话共享库的 users
+    # 表，主账号判定随「同进程前面哪个用例写过 users(id=1)」漂移（第 64 棒 CI 403 的根因）。
+    monkeypatch.setattr(perm, "async_session_factory", factory)
+    # _admin_cache 按 user_id 取键、不分库（30s TTL），先清掉上一个用例/共享库留下的判定
+    perm._admin_cache.clear()
+    perm._server_admin_cache.clear()
+    perm._account_state_cache.clear()
     yield factory
     engine.sync_engine.dispose()
 
@@ -117,7 +130,11 @@ def _make_client():
 
 
 def _admin_headers() -> dict:
-    """真实 JWT（user_id=1 主账号）——走真实 HTTPBearer + is_admin_user 判定，不打桩依赖。"""
+    """真实 JWT（user_id=1 主账号）——走真实 HTTPBearer + is_admin_user 判定，不打桩依赖。
+
+    前提：用例挂了 liveness_db（该 fixture 把 perm.async_session_factory 指向本用例临时库，
+    库里 id=1 是 is_admin=1）；否则判定会落到 env 兜底/共享库，随环境与执行顺序变。
+    """
     return {"Authorization": f"Bearer {create_token(1)}"}
 
 
@@ -184,7 +201,7 @@ def test_liveness_sub_system_isolation(liveness_db, monkeypatch):
     assert j["stalled"] in (True, False)
 
 
-def test_liveness_stalled_from_loops(monkeypatch):
+def test_liveness_stalled_from_loops(liveness_db, monkeypatch):
     """loops 段负责整体 stalled：登记一个陈旧（stalled）目标 → 整体 stalled=True。
 
     P3-B：公开端点与 detail 端点都必须反映 stalled（公开面只多一个 status 字段）。
@@ -244,7 +261,9 @@ def test_liveness_detail_requires_auth(liveness_db):
     """无 token → 401；非主账号 token → 403（明细属运维信息）。"""
     c = _make_client()
     assert c.get(DETAIL_URL).status_code == 401
-    other = {"Authorization": f"Bearer {create_token(200)}"}
+    # user_id=2 = 本用例临时库里播种的非主账号；不用未播种的 id（那会落 settings.admin_user_ids
+    # 兜底：CI 空、本机非空，「靠兜底拿到 403」属侥幸，等于没验到 DB 判据）
+    other = {"Authorization": f"Bearer {create_token(2)}"}
     assert c.get(DETAIL_URL, headers=other).status_code == 403
 
 
@@ -262,7 +281,7 @@ def test_liveness_detail_admin_full_payload(liveness_db):
     assert j["heartbeats"] == {}  # supervisor 无登记目标时为空表（不是缺键）
 
 
-def test_liveness_detail_heartbeats_follow_supervisor(monkeypatch):
+def test_liveness_detail_heartbeats_follow_supervisor(liveness_db, monkeypatch):
     """HB-1：heartbeats 逐目标给出最后心跳 ISO8601(UTC naive)；loops 每条也带 last_heartbeat。"""
     import asyncio as _a
     import time as _t

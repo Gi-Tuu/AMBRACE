@@ -194,7 +194,10 @@ class WeaveCard(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    # 多角色共享卡片：归属角色被删时置空而非删卡（SET NULL 要求列可空；实库当前 NOT NULL，待后续迁移）
+    # 多角色共享卡片：归属角色被删时置空而非删卡（SET NULL 要求列可空）。
+    # 2026-09-28 只读核实（生产库 PRAGMA）：该列**已是可空**、外键为 **ON DELETE SET NULL**
+    # （747 行 / 0 行 character_id 为 NULL）⇒ 原注释「实库当前 NOT NULL，待后续迁移」已过时，
+    # 由外部数据结构审查点出、Codex 核实后订正（代码本身与实库一致，无需迁移）。
     character_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="SET NULL"), nullable=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)  # 卡片标题（12 字内）
     summary: Mapped[str] = mapped_column(Text, nullable=False)  # 概要（卡片展示）
@@ -287,8 +290,8 @@ class WorldFact(Base):
     confidence: Mapped[float] = mapped_column(Float, default=1.0)  # 0-1
     epistemic_status: Mapped[str] = mapped_column(String(12), default="FACT")  # FACT/INFERRED/PLANNED
     audience: Mapped[str] = mapped_column(String(255), default="[]")  # JSON ["user:4","char:11"] 或 ["public"]
-    author: Mapped[str] = mapped_column(String(20), default="system")  # user/character/system（P1-3 权威事实层）
-    is_authoritative: Mapped[bool] = mapped_column(Boolean, default=False)  # 用户/创作者定义的不可动摇事实（P1-3）
+    author: Mapped[str | None] = mapped_column(String(20), nullable=True, default="system")  # user/character/system（P1-3 权威事实层）
+    is_authoritative: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)  # 用户/创作者定义的不可动摇事实（P1-3）
     source: Mapped[str | None] = mapped_column(String(30), nullable=True)  # chat_status/life_activity/user_setting
     source_event_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     superseded_by: Mapped[int | None] = mapped_column(Integer, nullable=True)

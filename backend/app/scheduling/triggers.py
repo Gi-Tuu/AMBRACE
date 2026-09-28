@@ -1,5 +1,5 @@
 """主动交流触发器 — 闲置/生日/节日条件检查"""
-from datetime import date, timedelta
+from datetime import timedelta
 from sqlalchemy import select, func
 from app.db.database import async_session_factory
 from app.models.chat import ChatSession
@@ -11,7 +11,7 @@ from app.models.character import (
 )
 from app.scheduling.holiday_calendar import get_holidays
 from app.utils.logger import get_logger
-from app.utils.timeutil import beijing_day_start_utc as _beijing_day_start_utc
+from app.utils.timeutil import beijing_day_start_utc as _beijing_day_start_utc, app_local_now
 
 _logger = get_logger("scheduler.triggers")
 
@@ -176,7 +176,7 @@ async def is_holiday_blocked(user_id: int, holiday_name: str) -> bool:
 
 async def get_birthday_candidates() -> list[dict]:
     """检查当天过生日的用户，返回需要发送祝福的候选列表"""
-    today = date.today()
+    today = app_local_now().date()
     today_mmdd = today.strftime("%m-%d")
     candidates = []
 
@@ -224,7 +224,6 @@ async def get_first_session(character_id: int, user_id: int) -> dict | None:
 
 async def get_anniversary_candidates() -> list[dict]:
     """认识纪念日候选：认识第 7/30/100/365/730 天当天触发，每角色每天最多一条"""
-    from datetime import date as _date
     active_chars = await get_active_characters()
     candidates = []
     for char_info in active_chars:
@@ -235,7 +234,7 @@ async def get_anniversary_candidates() -> list[dict]:
             if not session or not session["created_at"]:
                 continue
             first_bj = (session["created_at"] + timedelta(hours=8)).date()
-            days = (_date.today() - first_bj).days + 1
+            days = (app_local_now().date() - first_bj).days + 1
             if days not in _ANNIVERSARY_MILESTONES:
                 continue
             # 防重复：今天已发过 anniversary
@@ -259,7 +258,7 @@ async def get_anniversary_candidates() -> list[dict]:
 
 async def get_holiday_candidates() -> list[dict]:
     """检查当天节日，返回需要发送祝福的候选列表（同一天多个节日合并为一条）"""
-    today = date.today()
+    today = app_local_now().date()
     holidays = get_holidays(today)
     if not holidays:
         return []
