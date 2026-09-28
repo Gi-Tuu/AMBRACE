@@ -398,6 +398,21 @@ AGENT_FLAGS = {
     "relational_drive_shadow": False,
     # P1-2（2026-09-28）：写路径查重只认现行（active）——关＝逐字节旧行为（默认关）。
     "write_dedup_active_only": False,
+    # 批 0-2 M1a（2026-09-28）：感知来源打标 —— 关＝逐字节旧行为（默认关）。
+    # 开＝①新写入记忆若正文与「本轮感知语料」（最近 30 分钟 / 8 条手机快照）重合，
+    #   落库前把来源记为 perception、认知状态降为 INFERRED（只标注、不拒收，异常 fail-open）；
+    #   ②跨来源禁合并：感知条与非感知条不得互相并条（写路径三处查重 + curated 近似合并）；
+    #   ③召回输出补 source/sub_type 字段（只加字段，不改排序/条数/阈值）。
+    # 隔离四禁令（晋升/摘要/剔除）属 M2，另键另批，不在本 flag 范围内。
+    "perception_source_tag": False,
+    # 批 0-2 M2（2026-09-28）：感知隔离生效 —— 关＝逐字节旧行为（默认关）。前置＝perception_source_tag 已开
+    # （没有打标就没有 perception 条，本键开了也无料可隔离）。
+    # 开＝对「被隔离条」（perception_tier.is_quarantined：来源 perception 且未被用户认可为 FACT）执行隔离禁令：
+    #   ①晋升闸：不参与 is_core 晋升（其它晋升条件不变）；
+    #   ②摘要原料：置顶摘要 / 身份画像的取料查询排除被隔离条（专治「污染记忆再凝成画像注回 prompt」的二阶放大）；
+    #   ③召回降权：被隔离感知条仍召回、不剔除，仅在既有 rerank 加分体系里吃一个负向偏置（见 retrieve.py）。
+    # 用户点「这是真的」认可后（epistemic_status=FACT）自动脱隔，三条禁令一并解除，不引入第二套晋升机制。
+    "perception_isolate": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

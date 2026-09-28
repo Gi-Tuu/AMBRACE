@@ -255,6 +255,8 @@ _FLAG_ROWS: list[tuple] = [
      'superseded or archived ones no longer pass as the present. Off by default, and turning it off '
      'keeps things exactly as they are now.'),
     ("write_dedup_active_only", "memory", 723, False, "写入去重只认现行记录", "新记忆入库查重时只跟仍然有效的记录比对，避免新内容被已经失效的旧记录吞掉。默认关闭。", "Dedup only against current records", "When checking for duplicates on write, compare only against records that are still current, so a new note is never swallowed by an expired one. Off by default."),
+    ("perception_source_tag", "memory", 724, False, "手机观察单独归类", "从手机屏幕上看到的内容单独归类存放，不跟你亲口说过的话混在一起，两者也不会互相吞并。默认关闭。", "Keep phone observations in their own category", "What the phone screen shows is filed under its own category, so it never mixes with — or gets absorbed into — things you actually said. Off by default."),
+    ("perception_isolate", "memory", 725, False, "手机观察不进长期画像", "屏幕上看到的内容，在你确认「这是真的」之前，不参与核心记忆晋升、也不进摘要和身份画像；对话里仍然找得到。默认关闭。", "Keep phone observations out of the long-term portrait", "Until you confirm an observation is real, it never feeds core-memory promotion, summaries or your identity portrait — it still shows up in conversation. Off by default."),
 
     # ── 编纂知识与前瞻意图 ──
     ('curated_knowledge', 'curated', 801, False, '长期知识层',

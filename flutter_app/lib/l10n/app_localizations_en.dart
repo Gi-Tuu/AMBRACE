@@ -3296,6 +3296,28 @@ class AppLocalizationsEn extends AppLocalizations {
       'Password updated. Use the new password next time.';
 
   @override
+  String get perceptionAccept => 'This is true';
+
+  @override
+  String get perceptionAccepted => 'Accepted as fact';
+
+  @override
+  String get perceptionBadge => 'Phone observation';
+
+  @override
+  String get perceptionForget => 'Don\'t remember';
+
+  @override
+  String get perceptionForgotten => 'This observation is no longer remembered';
+
+  @override
+  String get perceptionHint =>
+      'This came from phone observation and may be misread. It joins your long-term memory only after you accept it; \"Don\'t remember\" just archives it, nothing is deleted.';
+
+  @override
+  String get perceptionRemembered => 'Marked as remembered';
+
+  @override
   String get petClean => 'Clean';
 
   @override
@@ -3777,6 +3799,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sourceMoment => 'Moments';
+
+  @override
+  String get sourcePerception => 'Phone observation';
 
   @override
   String sourcePrefix(Object source) {

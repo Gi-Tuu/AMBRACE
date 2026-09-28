@@ -34,6 +34,10 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
         "insight": l10n.memoryInsight,
       };
 
+  // 批 0-2 / M1b：手机观察条（source=perception）与「用户已认可」（epistemic_status=FACT）判定
+  bool get _isPerception => (_memory.source ?? "").toLowerCase() == "perception";
+  bool get _isAccepted => (_memory.epistemicStatus ?? "").toUpperCase() == "FACT";
+
   @override
   void initState() {
     super.initState();
@@ -62,6 +66,7 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
       case "diary": return l10n.sourceDiary;
       case "bio": return l10n.sourceBio;
       case "status": return l10n.sourceStatus;
+      case "perception": return l10n.sourcePerception;
       case "extracted": return l10n.sourceExtracted;
       case "relationship": return l10n.sourceRelationship;
       default: return source ?? l10n.unknown;
@@ -106,6 +111,9 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
           subType: _memory.subType,
           source: _memory.source,
           sourceId: _memory.sourceId,
+          sourceLabel: _memory.sourceLabel,
+          sourceIcon: _memory.sourceIcon,
+          epistemicStatus: _memory.epistemicStatus,
           title: _memory.title,
           content: _memory.content,
           importance: newValue,
@@ -142,6 +150,7 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
           sourceId: _memory.sourceId,
           sourceLabel: _memory.sourceLabel,
           sourceIcon: _memory.sourceIcon,
+          epistemicStatus: _memory.epistemicStatus,
           title: _memory.title,
           content: _memory.content,
           importance: _memory.importance,
@@ -169,6 +178,106 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.opFailedErr(e.toString()))));
       }
     }
+  }
+
+  /// M1b「这是真的」：认可后回拉完整记录（后端只升认知状态，来源保持 perception）
+  Future<void> _acceptPerception() async {
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      await _api.acceptPerceptionMemory(_memory.id);
+      final full = await _api.getMemory(_memory.id);
+      if (!mounted) return;
+      setState(() {
+        _memory = full;
+        _changed = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(l10n.perceptionRemembered),
+        duration: const Duration(seconds: 2),
+      ));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.opFailedErr(e.toString()))));
+      }
+    }
+  }
+
+  /// M1b「不记住」：撤回＝归档（不删行、可逆），成功后返回列表
+  Future<void> _forgetPerception() async {
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      await _api.archiveMemory(_memory.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(l10n.perceptionForgotten),
+        duration: const Duration(seconds: 2),
+      ));
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.opFailedErr(e.toString()))));
+      }
+    }
+  }
+
+  Widget _perceptionBadge(AppLocalizations l10n) {
+    final accepted = _isAccepted;
+    final color = accepted ? Colors.teal : Colors.amber;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.40)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(accepted ? Icons.verified_outlined : Icons.visibility_outlined, size: 15, color: color.shade700),
+          const SizedBox(width: 6),
+          Text(
+            accepted ? l10n.perceptionAccepted : l10n.perceptionBadge,
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color.shade700),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPerceptionCard(AppLocalizations l10n) {
+    return IosCardGroup(children: [
+      Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(l10n.perceptionHint, style: const TextStyle(fontSize: 13, height: 1.5, color: IosCardColors.subtitle)),
+            if (!_isAccepted) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      icon: const Icon(Icons.check_circle_outline, size: 18),
+                      label: Text(l10n.perceptionAccept),
+                      onPressed: _acceptPerception,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.do_not_disturb_alt_outlined, size: 18),
+                      label: Text(l10n.perceptionForget),
+                      onPressed: _forgetPerception,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    ]);
   }
 
   String _countdownText() {
@@ -293,7 +402,7 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
           _memory = Memory(
             id: _memory.id, memoryType: _memory.memoryType, subType: _memory.subType,
             source: _memory.source, sourceId: _memory.sourceId, sourceLabel: _memory.sourceLabel,
-            sourceIcon: _memory.sourceIcon, title: _memory.title, content: newContent,
+            sourceIcon: _memory.sourceIcon, epistemicStatus: _memory.epistemicStatus, title: _memory.title, content: newContent,
             importance: _memory.importance, importancePct: _memory.importancePct,
             createdAt: _memory.createdAt, updatedAt: _memory.updatedAt, deleteAt: null,
             isPinned: _memory.isPinned, isLocked: _memory.isLocked, whyItMatters: _memory.whyItMatters,
@@ -444,6 +553,10 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
                 ),
               ),
             ),
+            if (_isPerception) ...[
+              const SizedBox(height: 10),
+              Center(child: _perceptionBadge(l10n)),
+            ],
             const SizedBox(height: 24),
 
             // Title
@@ -470,6 +583,11 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
               ),
             ),
             const SizedBox(height: 24),
+
+            if (_isPerception) ...[
+              _buildPerceptionCard(l10n),
+              const SizedBox(height: 24),
+            ],
 
             // 意义（why_it_matters，v2.1）：完整展示，不截断、可长按复制
             if ((_memory.whyItMatters ?? '').trim().isNotEmpty) ...[

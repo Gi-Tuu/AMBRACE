@@ -42,6 +42,34 @@ def _core_category(sub_type: str | None, memory_type: str | None) -> str | None:
     return None
 
 
+def _perception_isolate_on() -> bool:
+    """批 0-2 M2（2026-09-28）：隔离禁令总闸，默认关（关＝逐字节旧行为）。
+
+    任何异常回落 False——读不到开关就等于没接线（方案风险 R8：回退必须退得干净）。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("perception_isolate", False))
+    except Exception:
+        return False
+
+
+def _quarantined_from_core(source, epistemic_status) -> bool:
+    """晋升来源闸（禁令 1）：被隔离的记忆不得晋升 is_core。
+
+    判据**只调用** M0 的纯函数 ``perception_tier.is_quarantined``（来源 perception 且未被认可为 FACT），
+    flag 关时恒 False ⇒ 晋升条件逐字节不变。用户点「这是真的」把认知状态升到 FACT 后自动脱隔，
+    之后照旧按 importance/confirmation_count 竞争名额，不设第二条晋升通道（方案 §2.3）。
+    """
+    if not _perception_isolate_on():
+        return False
+    from app.memory.perception_tier import is_quarantined
+    try:
+        return bool(is_quarantined(source, epistemic_status))
+    except Exception:
+        return False  # 判据异常 ⇒ 按旧行为放行，绝不因为隔离面出错而吞掉晋升
+
+
 async def maybe_promote_core(memory_id: int, importance: float,
                              sub_type: str | None, memory_type: str | None) -> None:
     """写入后自动晋升检查：高重要 或（已确认≥2次 且 重要≥阈值）→ is_core。失败静默。"""
@@ -50,6 +78,8 @@ async def maybe_promote_core(memory_id: int, importance: float,
             m = await db.get(Memory, memory_id)
             if m is None or m.is_core:
                 return
+            if _quarantined_from_core(m.source, m.epistemic_status):
+                return  # 禁令 1：未获认可的感知派生条不进核心记忆
             pct = float(m.importance or 0)
             confirmed = int(m.confirmation_count or 0)
             promote = pct >= CORE_MIN_IMPORTANCE and confirmed >= CORE_MIN_CONFIRMATIONS
@@ -87,7 +117,9 @@ async def confirm_memory(memory_id: int) -> None:
                 return
             m.confirmation_count = (m.confirmation_count or 0) + 1
             if (m.confirmation_count >= CORE_MIN_CONFIRMATIONS
-                    and float(m.importance or 0) >= CORE_MIN_IMPORTANCE):
+                    and float(m.importance or 0) >= CORE_MIN_IMPORTANCE
+                    and not _quarantined_from_core(m.source, m.epistemic_status)):
+                # 禁令 1 同口径：确认计数照旧累加（用户信号不丢），但未认可的感知条不因此拿到 is_core
                 m.is_core = True
                 m.core_category = _core_category(m.sub_type, m.memory_type) or "identity"
             await db.commit()

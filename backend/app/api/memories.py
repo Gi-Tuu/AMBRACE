@@ -51,6 +51,45 @@ async def get_memories(
     )
 
 
+@router.get("/stats/perception")
+async def get_perception_stats(
+    user_id: int = Depends(get_current_user_id),
+):
+    """感知记忆只读统计（批 0-2 / M1b，方案 §四-4）：观测打标量与「进画像层」占比。
+
+    口径：当前账号可见范围（``tenant_scope_ids``），不剔归档/不剔状态——纯计数、只 SELECT 不写库。
+    空库返回全 0（不报错）。``*_ratio`` 分母为 0 时同样返回 0。
+    """
+    from sqlalchemy import func
+
+    from app.memory.perception_tier import FACT_STATUS, PERCEPTION_SOURCE
+
+    async with db_mod.async_session_factory() as db:
+        scope_ids = await tenant_scope_ids(db, user_id)
+
+        async def _count(*conds) -> int:
+            if not scope_ids:
+                return 0
+            stmt = select(func.count(Memory.id)).where(Memory.user_id.in_(scope_ids), *conds)
+            return int((await db.execute(stmt)).scalar() or 0)
+
+        total = await _count()
+        p_total = await _count(Memory.source == PERCEPTION_SOURCE)
+        p_accepted = await _count(Memory.source == PERCEPTION_SOURCE,
+                                  Memory.epistemic_status == FACT_STATUS)
+        core_total = await _count(Memory.is_core.is_(True))
+        core_perception = await _count(Memory.is_core.is_(True),
+                                       Memory.source == PERCEPTION_SOURCE)
+    return {
+        "perception_total": p_total,
+        "perception_accepted": p_accepted,
+        "perception_ratio": round(p_total / total, 4) if total else 0,
+        "core_perception": core_perception,
+        "core_total": core_total,
+        "core_perception_ratio": round(core_perception / core_total, 4) if core_total else 0,
+    }
+
+
 async def _get_owned_memory(memory_id: int, user_id: int):
     """按租户归属获取记忆（账号独立 P1：跨家庭 → None → 404；置顶摘要为角色级归属）"""
     async with db_mod.async_session_factory() as db:
@@ -83,6 +122,7 @@ async def get_memory(
             memory_type=mem.memory_type, sub_type=mem.sub_type,
             source=mem.source, source_id=mem.source_id,
             source_label=meta["label"], source_icon=meta["icon"],
+            epistemic_status=mem.epistemic_status,
             speaker_type=mem.speaker_type, speaker_id=mem.speaker_id,
             title=mem.title, content=mem.content,
             importance=star_from_pct(mem.importance),
@@ -189,6 +229,8 @@ async def update_memory(
     """更新记忆（重要性等）"""
     if await _get_owned_memory(memory_id, user_id) is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
+    accepted = False
+    character_id = None
     async with db_mod.async_session_factory() as db:
         result = await db.execute(select(Memory).where(Memory.id == memory_id, Memory.user_id.in_(await tenant_scope_ids(db, user_id))))
         mem = result.scalar_one_or_none()
@@ -219,7 +261,27 @@ async def update_memory(
             mem.is_locked = bool(data["is_locked"])
             if mem.is_locked:
                 mem.delete_at = None
+        if "epistemic_status" in data:
+            # 批 0-2 / M1b「认可」：只允许把**感知派生条**认可为 FACT（方案 §2.3）。
+            # 来源不改——"这条来自手机观察"的证据永久保留；撤回走上面的 is_archived 分支。
+            from app.memory.perception_tier import FACT_STATUS, PERCEPTION_SOURCE
+
+            want = str(data["epistemic_status"] or "").strip().upper()
+            if want != FACT_STATUS:
+                raise HTTPException(status_code=400, detail=tr_lang(lang, "perception_status_value_invalid"))
+            if (mem.source or "").strip().lower() != PERCEPTION_SOURCE:
+                raise HTTPException(status_code=400, detail=tr_lang(lang, "perception_status_not_perception"))
+            mem.epistemic_status = FACT_STATUS
+            mem.confirmation_count = int(mem.confirmation_count or 0) + 1
+            character_id = mem.character_id
+            accepted = True
         await db.commit()
+    if accepted:
+        # 审计留痕（flag 关时 emit 内部直接 return，零写入）
+        from app.memory.receipt import ACTION_UPDATE, emit_memory_receipt
+
+        emit_memory_receipt(character_id, memory_id, ACTION_UPDATE,
+                            reason="perception accepted", detail={"epistemic_status": "FACT"})
     return {"status": "ok"}
 
 

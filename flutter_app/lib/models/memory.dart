@@ -7,6 +7,7 @@ class Memory {
   final int? sourceId;
   final String? sourceLabel;
   final String? sourceIcon;
+  final String? epistemicStatus;
   final String? speakerType;
   final int? speakerId;
   final String? title;
@@ -36,6 +37,7 @@ class Memory {
     this.sourceId,
     this.sourceLabel,
     this.sourceIcon,
+    this.epistemicStatus,
     this.speakerType,
     this.speakerId,
     this.title,
@@ -67,6 +69,7 @@ class Memory {
       sourceId: json['source_id'] as int?,
       sourceLabel: json['source_label'] as String?,
       sourceIcon: json['source_icon'] as String?,
+      epistemicStatus: json['epistemic_status'] as String?,
       speakerType: json['speaker_type'] as String?,
       speakerId: json['speaker_id'] as int?,
       title: json['title'] as String?,

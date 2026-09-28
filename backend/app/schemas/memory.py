@@ -13,6 +13,7 @@ class MemoryResponse(BaseModel):
     source_id: int | None = None
     source_label: str | None = None
     source_icon: str | None = None
+    epistemic_status: str | None = None  # FACT/INFERRED/...（M1b：前端据此决定「认可」按钮是否出现）
     speaker_type: str | None = None
     speaker_id: int | None = None
     title: str | None

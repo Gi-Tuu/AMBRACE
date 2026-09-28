@@ -42,6 +42,16 @@ extension MemoriesApi on ApiClient {
     await dio.patch('/api/v1/memories/$id/content', data: {'content': content});
   }
 
+  /// 批 0-2 / M1b「这是真的」：认可一条手机观察记忆（后端只升认知状态，来源保持不变）。
+  Future<void> acceptPerceptionMemory(int id) async {
+    await updateMemory(id, {'epistemic_status': 'FACT'});
+  }
+
+  /// 批 0-2 / M1b「不记住」：撤回＝归档（复用既有 is_archived，不删行、可逆）。
+  Future<void> archiveMemory(int id) async {
+    await updateMemory(id, {'is_archived': true});
+  }
+
   /// 记忆链条全时间线（同链 root→branch… 时间升序，含自身；未建链时仅自身）。
   ///
   /// 旧实现走 `DELETE /{id}/tree?cascade=false` 借删除接口读子节点（只看子、且动词不当），

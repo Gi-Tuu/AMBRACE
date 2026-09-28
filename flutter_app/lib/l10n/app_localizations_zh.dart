@@ -3170,6 +3170,27 @@ class AppLocalizationsZh extends AppLocalizations {
   String get passwordChanged => '密码已修改，下次请用新密码登录';
 
   @override
+  String get perceptionAccept => '这是真的';
+
+  @override
+  String get perceptionAccepted => '已认可为事实';
+
+  @override
+  String get perceptionBadge => '手机观察';
+
+  @override
+  String get perceptionForget => '不记住';
+
+  @override
+  String get perceptionForgotten => '已不记住这条观察';
+
+  @override
+  String get perceptionHint => '这条来自手机观察，可能是误读。认可后才会进入长期记忆；不记住只是归档，不会删除。';
+
+  @override
+  String get perceptionRemembered => '已确认记住';
+
+  @override
   String get petClean => '清洁';
 
   @override
@@ -3644,6 +3665,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get sourceMoment => '朋友圈';
+
+  @override
+  String get sourcePerception => '手机观察';
 
   @override
   String sourcePrefix(Object source) {

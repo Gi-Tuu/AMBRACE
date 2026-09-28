@@ -22,6 +22,50 @@ from app.memory.service import (
 )
 
 
+def _perception_tag_on() -> bool:
+    """批 0-2 M1a：召回输出是否补 source/sub_type 字段（flag 默认关＝逐字节旧输出）；异常回落 False。
+
+    本 flag 在这里**只决定输出多不多两个字段**：不改排序、不改条数、不改预算、不改阈值、
+    不剔除任何条目（剔除属 M2）。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("perception_source_tag", False))
+    except Exception:
+        return False
+
+
+# 批 0-2 M2 禁令 3（召回侧）：被隔离感知条的负向偏置。
+# 取 -15 的理由：既有加分档位是 +20（意义记忆）/ +15（关系情绪近 7 天、未完成话题）/ +10（状态剧情近 3 天），
+# 分数又被 importance（0~100 量级）主导。-15 与这些既有档位同量级 ⇒ 足以让「同分竞争的感知条」落到
+# 非感知条之后，又不至于把用户明确在问的感知条压到地板（本批要求「降权不剔除」，见方案 §2.2 / 待拍板 1）。
+PERCEPTION_QUARANTINE_PENALTY = -15.0
+
+
+def _perception_isolate_on() -> bool:
+    """批 0-2 M2：隔离禁令总闸（默认关＝排序逐字节旧行为）；异常回落 False（R8：回退退得干净）。
+
+    开时**只做一件事**：给被隔离的感知条在 rerank 里加一个负向偏置。
+    禁止把它当 exclude 用——用户问「刚才屏幕上那个」必须还能命中，条数不得因本偏置而减少。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("perception_isolate", False))
+    except Exception:
+        return False
+
+
+def _quarantine_penalty(source, epistemic_status) -> float:
+    """被隔离感知条的排序偏置（纯调用 M0 判据）；flag 关 / 非感知 / 已认可 ⇒ 0.0（逐字节旧行为）。"""
+    if not _perception_isolate_on():
+        return 0.0
+    from app.memory.perception_tier import is_quarantined
+    try:
+        return PERCEPTION_QUARANTINE_PENALTY if is_quarantined(source, epistemic_status) else 0.0
+    except Exception:
+        return 0.0
+
+
 async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, int] | None = None, relevance_bonus: dict[int, float] | None = None, return_debug: bool = False, _keep_score: bool = False):
     """B2 检索加权（向量路径与 keyword 兜底共用，M-P2-3）：以 DB 为准补全元数据
     （向量 meta 的 importance 可能过期），加分项：置顶恒在前、关系/情绪类近 7 天 +15、
@@ -96,6 +140,8 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
                 score += 20  # 意义记忆（v2.1）：已提炼"为什么重要"的里程碑记忆优先
             if (m.contradiction_count or 0) > 0:
                 score -= (m.contradiction_count or 0) * 10  # M-P1-2：被用户纠正过的记忆降权（矛盾惩罚）
+            # 批 0-2 M2 禁令 3：被隔离的感知条降权（负向偏置，**不剔除、不减条数**）；flag 关＝0.0 逐字节旧排序
+            score += _quarantine_penalty(m.source, m.epistemic_status)
             score += _topic_bonus(m.content)
             if days > 60:
                 score *= 0.8
@@ -569,6 +615,9 @@ async def search_memories(
     if scene is not None or exclude_sources or group_id is not None:
         results = _scene_filter(results, scene, exclude_sources, group_id)
 
+    # 批 0-2 M1a：flag `perception_source_tag` 开时输出补「来源/子类」两字段（观测与前端标注用）。
+    # 只加字段：排序、条数、预算、阈值、是否剔除一律不变（键追加在末尾，旧键顺序逐字节保持）。
+    _with_source = _perception_tag_on()
     _final = [
         {
             "id": r["id"],
@@ -583,6 +632,7 @@ async def search_memories(
             "contradiction_count": r.get("contradiction_count"),
             "why_it_matters": r.get("why_it_matters"),
             "status": r.get("status", "active"),
+            **({"source": r.get("source"), "sub_type": r.get("sub_type")} if _with_source else {}),
         }
         for r in results
     ]

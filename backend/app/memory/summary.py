@@ -1,7 +1,7 @@
 """记忆置顶摘要：按类型 LLM 概括最近记忆（6 小时节流）"""
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select, true
 
 from app.db.database import async_session_factory
 from app.models.memory import Memory
@@ -10,6 +10,34 @@ from app.utils.timeutil import now_naive_utc, to_naive_utc
 from app.memory.constants import SUMMARY_TTL_HOURS, _TYPE_CN
 
 _logger = get_logger("memory.summary")
+
+
+def _perception_isolate_on() -> bool:
+    """批 0-2 M2（2026-09-28）：隔离禁令总闸，默认关（关＝逐字节旧查询）。异常回落 False（R8：退得干净）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("perception_isolate", False))
+    except Exception:
+        return False
+
+
+def _not_quarantined_clause():
+    """摘要原料来源排除（禁令 2）：被隔离条不进置顶摘要 / 身份画像取料。
+
+    专治「二阶放大」（方案路径 C）：一条被感知污染的记忆若被凝成置顶摘要 / 身份画像，就会以
+    ``source="summary"`` 的名义长期回注 prompt，比单条记忆影响面大得多。
+    口径：**只用既有列**（source / epistemic_status）加 WHERE 条件，不改生成逻辑、prompt、条数上限；
+    谓句与 M0 纯函数 ``is_quarantined`` 同判（来源 perception 且认知状态非 FACT），
+    NULL / 大小写与首尾空白差异用 SQL 函数归一（列值本由应用层写入，这里只是防御脏数据）。
+    flag 关 ⇒ 返回永真条件 ⇒ 查询结果逐字节不变。
+    """
+    if not _perception_isolate_on():
+        return true()
+    from app.memory.perception_tier import FACT_STATUS, PERCEPTION_SOURCE
+
+    src = func.lower(func.trim(func.coalesce(Memory.source, "")))
+    st = func.upper(func.trim(func.coalesce(Memory.epistemic_status, "")))
+    return or_(src != PERCEPTION_SOURCE, st == FACT_STATUS)
 
 
 _OVERRIDE_NOW = None
@@ -71,6 +99,7 @@ async def summarize_memories(character_id: int, memory_type: str, force: bool = 
                 Memory.is_pinned == False,
                 Memory.is_archived == False,
                 _active_status_clause(),
+                _not_quarantined_clause(),  # 批 0-2 M2 禁令 2：被隔离条不进摘要原料（关=永真）
             )
             .order_by(Memory.importance.desc(), Memory.created_at.desc())
             .limit(20)
@@ -170,6 +199,7 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
                 Memory.is_pinned == False,
                 Memory.memory_type == "user_info",
                 _active_status_clause(),
+                _not_quarantined_clause(),  # 批 0-2 M2 禁令 2：身份画像取料同样排除被隔离条
             )
             .order_by(Memory.importance.desc(), Memory.created_at.desc())
             .limit(20)
@@ -181,6 +211,7 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
                 Memory.is_archived == False,
                 Memory.why_it_matters.is_not(None),
                 _active_status_clause(),
+                _not_quarantined_clause(),  # 同上（意义记忆也是画像原料）
             )
             .order_by(Memory.importance.desc(), Memory.created_at.desc())
             .limit(20)

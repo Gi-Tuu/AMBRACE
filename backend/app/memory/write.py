@@ -11,6 +11,13 @@ from sqlalchemy import select
 
 from app.models.memory import Memory
 from app.memory.constants import DECAY_MAX_PCT, REINFORCE_FACTOR_WRITE, VECTOR_DEDUP_THRESHOLD
+from app.memory.perception_tier import (
+    PERCEPTION_SOURCE,
+    SNAPSHOT_MAX_ROWS,
+    SNAPSHOT_WINDOW_MINUTES,
+    has_snapshot_tag,
+    snapshot_overlap,
+)
 from app.memory.service import (
     _apply_reinforce,
     _initial_strength,
@@ -30,6 +37,70 @@ def _write_dedup_active_only_on() -> bool:
         return bool(AGENT_FLAGS.get("write_dedup_active_only", False))
     except Exception:
         return False
+
+
+def _perception_tag_on() -> bool:
+    """批 0-2 M1a（2026-09-28）：感知来源打标 / 跨来源禁合并总闸，默认关（关＝逐字节旧行为）。
+
+    任何异常回落 False——开关读不到就等于没接线，绝不因为读开关而改变写入结果。
+    """
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("perception_source_tag", False))
+    except Exception:
+        return False
+
+
+def _cross_source_merge_blocked(incoming_source, candidate_source) -> bool:
+    """跨来源禁合并（批 0-2 方案 §2.2 禁令 3 的收窄版，纯判定 + flag 门控）。
+
+    口径（**只在感知 ↔ 非感知之间禁止**，不扩大为「必须同来源才准合并」）：
+    候选行与待写行来源不同，且其中一方是 ``perception`` ⇒ True（跳过该候选，不并条）。
+    同来源照旧合并；两边都不是感知照旧合并；flag 关恒 False＝逐字节旧行为。
+
+    为什么必须与打标同批生效：感知条若被「顺手并」进一条聊天记忆，它就``以 chat 名义获得长期
+    身份``，来源证据从此丢失、打标白做（方案风险 R2）。
+    """
+    if not _perception_tag_on():
+        return False
+    a = (incoming_source or "").strip().lower()
+    b = (candidate_source or "").strip().lower()
+    return a != b and PERCEPTION_SOURCE in (a, b)
+
+
+async def _recent_snapshots(db, user_id: int | None) -> list[tuple[str | None, str]]:
+    """取「本轮感知语料」：该用户最近快照的 (来源通道, 正文) 列表（写路径打标的比对素材）。
+
+    窗口/条数**只用** ``app/memory/perception_tier`` 的常量（与注入侧 ``app/device/port.py:37-38``
+    同源，对齐断言见 tests/test_perception_tier.py），本函数不写魔法数；复用调用方已开的会话，
+    不另开 session。异常不在此吞（由调用方 fail-open）。
+
+    M2 起同时取 ``source``（值空间 accessibility / clipboard / media，见 ``models/device``）：
+    打标命中时把**命中的那条快照的通道**记进记忆的 ``sub_type``，用于按通道观测与后续粒度。
+    """
+    if user_id is None:
+        return []
+    from datetime import timedelta
+
+    from app.models.device import PhoneSnapshot
+
+    cutoff = _now_naive() - timedelta(minutes=SNAPSHOT_WINDOW_MINUTES)
+    rows = (await db.execute(
+        select(PhoneSnapshot.source, PhoneSnapshot.content)
+        .where(PhoneSnapshot.user_id == user_id, PhoneSnapshot.created_at >= cutoff)
+        .order_by(PhoneSnapshot.created_at.desc(), PhoneSnapshot.id.desc())
+        .limit(SNAPSHOT_MAX_ROWS)
+    )).all()
+    return [(r[0], r[1]) for r in rows if r[1]]
+
+
+def _matched_snapshot_channel(corpus: list[tuple[str | None, str]], content: str) -> str | None:
+    """命中的那条快照的通道（纯函数，不查库）：正文按主判据命中的第一条；
+    仅标签残留命中（无一条正文重合）时取**最新一条**的通道——语料已按时间倒序。"""
+    for src, text in corpus:
+        if snapshot_overlap(content, [text]):
+            return src
+    return corpus[0][0] if corpus else None
 
 
 # ── M4 写入准入闸门（flag `memory_admission_gate`，默认 False；开=确定性裁决，不新增 LLM）──
@@ -188,6 +259,7 @@ async def save_memory(
         ACTION_MERGE,
         ACTION_REJECT,
         ACTION_DOWNGRADE,
+        ACTION_UPDATE,
     )
     async with async_session_factory() as db:
         # ── M4 准入闸门：开发运维元信息 / 代理发言拦截（flag 关=零行为）──
@@ -246,6 +318,34 @@ async def save_memory(
                                 return None
                 except Exception:
                     pass
+        # ── 批 0-2 M1a：感知来源打标（flag `perception_source_tag`，默认关＝逐字节旧行为）──
+        # 位置刻意排在「台词过滤 / 逐字拦截」之后：打标只改写来源归属，不得抢在既有拦截分支前面
+        # 改变它们的生效条件。判据**只标注、不拒收**——误标的代价（用户真说过的话被隔离）不可接受，
+        # 漏标的代价只是「少一条被隔离」，所以宁松勿紧、且任何异常一律 fail-open 按旧行为落库。
+        _perception_tagged = False
+        _source_before_tag = source
+        _sub_type_before_tag = sub_type
+        if _perception_tag_on():
+            try:
+                _corpus = await _recent_snapshots(db, user_id)
+                _texts = [t for _s, t in _corpus]
+                # 语料为空 ⇒ 不启用判据（本轮没有感知注入，保持旧行为、不报错）
+                if _texts and (has_snapshot_tag(content) or snapshot_overlap(content, _texts)):
+                    source = PERCEPTION_SOURCE
+                    epistemic_status = "INFERRED"  # 感知＝推断，未经用户认可绝不是事实（方案 §2.3）
+                    _perception_tagged = True
+                    # M2「sub_type 记通道」：把命中的那条快照的来源通道写进 sub_type
+                    # （accessibility / clipboard / media）。只在打标这一刻写，flag 关不写。
+                    _channel = _matched_snapshot_channel(_corpus, content)
+                    if _channel:
+                        sub_type = _channel
+                    _logger.info("Memory tagged perception: char=%d user=%d from=%s channel=%s: %.40s",
+                                 character_id, user_id, _source_before_tag, sub_type, content)
+            except Exception as _e:
+                source = _source_before_tag  # fail-open：打标本身不出错，只降级为旧行为
+                sub_type = _sub_type_before_tag  # 通道也只回退到打标前的值（同一次改写，一起撤）
+                _logger.warning("perception tagging failed (fail-open): char=%d user=%d err=%s",
+                                character_id, user_id, _e)
         # 写入前查重：优先向量语义查重（cosine >= 0.86，见 memory/constants.py::VECTOR_DEDUP_THRESHOLD），未命中再字符级兜底（最近 30 条 >= 0.72）
         embedding = None
         if content and content.strip() and not skip_dedup:
@@ -261,7 +361,13 @@ async def save_memory(
             if similar:
                 mem_id, sim = similar
                 m = await db.get(Memory, mem_id)
-                if m and not m.is_archived and not m.is_pinned and not m.is_locked:
+                if m is not None and _cross_source_merge_blocked(source, m.source):
+                    # 禁令 3：感知 ↔ 非感知不互并（并进去＝感知条以 chat 名义拿到长期身份）
+                    _logger.info("Memory dedup skip cross-source: char=%d vector-hit id=%d src=%s/%s",
+                                 character_id, mem_id, source, m.source)
+                    m = None  # 跳过该候选，继续走后续字符级 / 同主题查重（宁可多一条，不可并错条）
+            if similar and m:
+                if not m.is_archived and not m.is_pinned and not m.is_locked:
                     # 艾宾浩斯强化：写入查重命中 = 一次复习，S ×2 并刷新遗忘起点
                     new_pct = _normalize_importance(importance)
                     if new_pct > float(m.importance or 40.0):
@@ -297,6 +403,8 @@ async def save_memory(
             recent = recent_result.scalars().all()
             b = content.strip()[:80]
             for m in recent:
+                if _cross_source_merge_blocked(source, m.source):
+                    continue  # 禁令 3：感知 ↔ 非感知不互并
                 a = (m.content or "").strip()[:80]
                 if len(a) < 4 or len(b) < 4:
                     continue
@@ -339,6 +447,8 @@ async def save_memory(
             for _m in merge_rows:
                 if _m.is_pinned or _m.is_locked:
                     continue
+                if _cross_source_merge_blocked(source, _m.source):
+                    continue  # 禁令 3：感知 ↔ 非感知不互并
                 _a = (_m.content or "").strip()[:80]
                 if len(_a) < 4 or len(b) < 4:
                     continue
@@ -443,6 +553,20 @@ async def save_memory(
                     character_id, memory.id, ACTION_DOWNGRADE,
                     reason="admission gate: pending review",
                     detail={"epistemic_status": _epi, "source": source, "sender_type": _spk},
+                )
+            except Exception:
+                pass
+
+        # 批 0-2 M1a：感知打标留痕（复用 M3 回执表与发射口，不新造机制）。
+        # 记下「原本要写成什么来源」，误标时可据此人工复核/一键纠正（方案 §四「纠」）。
+        if _perception_tagged:
+            try:
+                emit_memory_receipt(
+                    character_id, memory.id, ACTION_UPDATE,
+                    reason="perception source tagged (screen-derived)",
+                    detail={"from_source": _source_before_tag, "to_source": PERCEPTION_SOURCE,
+                            "epistemic_status": _epi, "memory_type": memory_type,
+                            "sub_type": sub_type},
                 )
             except Exception:
                 pass

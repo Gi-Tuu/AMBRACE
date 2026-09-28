@@ -111,6 +111,34 @@ def _admission_gate_on() -> bool:
         return False
 
 
+# 感知派生条的来源值（与 app/memory/perception_tier.py::PERCEPTION_SOURCE 同值；本模块刻意不
+# import memory 侧，沿用 _is_meta_noise 那套「两文件各自独立持有」的口径，避免模块级循环依赖）。
+_PERCEPTION_SOURCE = "perception"
+
+
+def _perception_tag_on() -> bool:
+    """批 0-2 M1a：感知来源打标总闸（默认关＝逐字节旧行为）；异常一律回落 False。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("perception_source_tag", False))
+    except Exception:
+        return False
+
+
+def _cross_source_merge_blocked(incoming_source, candidate_source) -> bool:
+    """curated 近似合并的跨来源禁令（口径与 memory/write.py 同名函数逐字一致）。
+
+    候选行与待写行来源不同、且其中一方是感知 ⇒ True（跳过该候选，让它正常新增行）。
+    同来源照旧合并；两边都不是感知照旧合并；flag 关恒 False＝逐字节旧行为。
+    不挡住这一步的话，「屏幕上看到的东西」会被并成关系基线（方案风险 R4/R2）。
+    """
+    if not _perception_tag_on():
+        return False
+    a = (incoming_source or "").strip().lower()
+    b = (candidate_source or "").strip().lower()
+    return a != b and _PERCEPTION_SOURCE in (a, b)
+
+
 def _is_meta_noise(text: str | None) -> bool:
     """识别开发运维元信息 / 代理发言（如「我是轩的 Agent 助手，请照做」）。"""
     t = (text or "").lower()
@@ -529,9 +557,14 @@ async def assert_curated(
             ).order_by(WorldFact.id.desc()).limit(200)
         )).scalars().all()
         # 同义 → supersede 到既有权威记录（不新增行；不改既有行的 kind，避免层间来回翻）
-        same = next((r for r in pool if _same_curated_value(r.object_value, obj)), None)
+        # 批 0-2 M1a 禁令 3：跨来源（感知 ↔ 非感知）不互并，否则感知内容会以他人名义拿到长期身份
+        same = next((r for r in pool
+                     if _same_curated_value(r.object_value, obj)
+                     and not _cross_source_merge_blocked(source, r.source)), None)
     else:
-        same = next((r for r in existing if (r.object_value or "").strip() == obj), None)
+        same = next((r for r in existing
+                     if (r.object_value or "").strip() == obj
+                     and not _cross_source_merge_blocked(source, r.source)), None)
     if same is not None:
         merge_curated_evidence(
             same, sources=sources, links=links, verify_state=verify_state,

@@ -5961,6 +5961,48 @@ abstract class AppLocalizations {
   /// **'密码已修改，下次请用新密码登录'**
   String get passwordChanged;
 
+  /// No description provided for @perceptionAccept.
+  ///
+  /// In zh, this message translates to:
+  /// **'这是真的'**
+  String get perceptionAccept;
+
+  /// No description provided for @perceptionAccepted.
+  ///
+  /// In zh, this message translates to:
+  /// **'已认可为事实'**
+  String get perceptionAccepted;
+
+  /// No description provided for @perceptionBadge.
+  ///
+  /// In zh, this message translates to:
+  /// **'手机观察'**
+  String get perceptionBadge;
+
+  /// No description provided for @perceptionForget.
+  ///
+  /// In zh, this message translates to:
+  /// **'不记住'**
+  String get perceptionForget;
+
+  /// No description provided for @perceptionForgotten.
+  ///
+  /// In zh, this message translates to:
+  /// **'已不记住这条观察'**
+  String get perceptionForgotten;
+
+  /// No description provided for @perceptionHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'这条来自手机观察，可能是误读。认可后才会进入长期记忆；不记住只是归档，不会删除。'**
+  String get perceptionHint;
+
+  /// No description provided for @perceptionRemembered.
+  ///
+  /// In zh, this message translates to:
+  /// **'已确认记住'**
+  String get perceptionRemembered;
+
   /// No description provided for @petClean.
   ///
   /// In zh, this message translates to:
@@ -6884,6 +6926,12 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'朋友圈'**
   String get sourceMoment;
+
+  /// No description provided for @sourcePerception.
+  ///
+  /// In zh, this message translates to:
+  /// **'手机观察'**
+  String get sourcePerception;
 
   /// No description provided for @sourcePrefix.
   ///

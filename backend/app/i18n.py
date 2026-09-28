@@ -38,6 +38,9 @@ _MESSAGES: dict[str, tuple[str, str]] = {
     ),
     "invalid_importance": ("无效的重要性值", "Invalid importance value"),
     "invalid_memory_id": ("无效的记忆id", "Invalid memory id"),
+    # 批 0-2 / M1b：感知记忆「认可」语义
+    "perception_status_value_invalid": ("认知状态只支持认可为事实（FACT）", "Only accepting a memory as fact (FACT) is supported"),
+    "perception_status_not_perception": ("只有手机观察来源的记忆才能认可", "Only phone-observation memories can be accepted"),
     "supersede_failed": ("取代操作失败", "Supersede failed"),
     "restore_failed": ("恢复操作失败", "Restore failed"),
     "content_too_long": ("内容不能超过500字", "Content must be 500 characters or fewer"),

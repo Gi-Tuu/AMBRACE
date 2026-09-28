@@ -12,6 +12,8 @@ SOURCE_META: dict[str, dict] = {
     "pet": {"label": "宠物", "icon": "pet"},
     "life": {"label": "AI 生活", "icon": "life"},  # 2026-08-12 Life Engine：AI 自己的生活事件/反思/笔记
     "group": {"label": "群聊", "icon": "chat"},  # 2026-08-14 Phase 3：家庭群聊记忆
+    # 批 0-2 / M0：手机感知派生记忆（打标用；icon 复用 chat，暂不新增前端资源）
+    "perception": {"label": "手机感知", "icon": "chat"},
 }
 
 # chat 来源下的子分类（memories.sub_type 字段）细分展示
@@ -20,6 +22,12 @@ CHAT_SUB_META: dict[str, dict] = {
     "bio": {"label": "自述", "icon": "bio"},
     "status": {"label": "状态", "icon": "status"},
     "relationship": {"label": "关系", "icon": "relationship"},
+    # 批 0-2 / M2：感知派生条用 sub_type 记「命中的那条快照的通道」
+    # （取值空间见 app/models/device/__init__.py 的 PhoneSnapshot.source）。
+    # 只在展示层登记 label；icon 沿用 M0 的口径——复用 chat，不新增前端资源。
+    "accessibility": {"label": "无障碍观察", "icon": "chat"},
+    "clipboard": {"label": "剪贴板", "icon": "chat"},
+    "media": {"label": "相册与媒体", "icon": "chat"},
 }
 
 _UNKNOWN = {"label": "未知", "icon": "unknown"}
