@@ -294,7 +294,19 @@ def test_素材端口_体量上限(monkeypatch, clean_registry):
 
 
 def test_真实链路_空库不抛错(monkeypatch, clean_registry):
-    """两个包都启用 + flag 开，走真实 build_roster（沙箱库无角色）：不抛错、零候选。"""
+    """两个包都启用 + flag 开，走真实 PluginSource 链路：不抛错、零候选。
+
+    P3-3 续（2026-09-28）：原用例依赖「沙箱库恰好无角色」这一**全局前提** —— 全量跑时前序
+    用例留下的 AICharacter 会让 build_roster 命中、进而产出一条候选，于是 `collect() == []` 失败
+    （CI 与本机全量均复现；单跑绿＝假象）。改为把 roster 源桩成空列表：**空库语义等价**，
+    但仍走真实的 PluginSource + 注册表 + 包加载链路，与执行顺序无关。
+    """
+    async def _empty(cid):
+        return []
+
+    # 所有上下文键都桩空（＝空库语义），避免依赖任何一个键的 DB 内容
+    for _k in list(strategy_mod._CONTEXT_BUILDERS):
+        monkeypatch.setitem(strategy_mod._CONTEXT_BUILDERS, _k, _empty)
     registry.load_plugin_dir(registry.EXAMPLE_DIR / PACK_RHYTHM)
     registry.load_plugin_dir(registry.EXAMPLE_DIR / PACK_REVIEW)
     registry._enabled[PACK_RHYTHM] = True
