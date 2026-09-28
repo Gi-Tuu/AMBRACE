@@ -14547,6 +14547,180 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'尚未与该服务器配对'**
   String get serverIdentityEntryHint;
+
+  /// No description provided for @contextBudgetTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'上下文注入长度'**
+  String get contextBudgetTitle;
+
+  /// No description provided for @contextBudgetDrawerHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'调节每轮注入的背景信息量'**
+  String get contextBudgetDrawerHint;
+
+  /// No description provided for @contextBudgetTierSection.
+  ///
+  /// In zh, this message translates to:
+  /// **'注入档位'**
+  String get contextBudgetTierSection;
+
+  /// No description provided for @contextBudgetTierStandard.
+  ///
+  /// In zh, this message translates to:
+  /// **'标准'**
+  String get contextBudgetTierStandard;
+
+  /// No description provided for @contextBudgetTierExtended.
+  ///
+  /// In zh, this message translates to:
+  /// **'加长'**
+  String get contextBudgetTierExtended;
+
+  /// No description provided for @contextBudgetTierMax.
+  ///
+  /// In zh, this message translates to:
+  /// **'最大'**
+  String get contextBudgetTierMax;
+
+  /// No description provided for @contextBudgetTokensValue.
+  ///
+  /// In zh, this message translates to:
+  /// **'{tokens} tokens'**
+  String contextBudgetTokensValue(Object tokens);
+
+  /// No description provided for @contextBudgetCurrent.
+  ///
+  /// In zh, this message translates to:
+  /// **'当前'**
+  String get contextBudgetCurrent;
+
+  /// No description provided for @contextBudgetSourceUser.
+  ///
+  /// In zh, this message translates to:
+  /// **'已按你的选择'**
+  String get contextBudgetSourceUser;
+
+  /// No description provided for @contextBudgetSourceDefault.
+  ///
+  /// In zh, this message translates to:
+  /// **'默认（未单独设置）'**
+  String get contextBudgetSourceDefault;
+
+  /// No description provided for @contextBudgetSourceUnavailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂时读不到，显示默认值'**
+  String get contextBudgetSourceUnavailable;
+
+  /// No description provided for @contextBudgetReadoutSection.
+  ///
+  /// In zh, this message translates to:
+  /// **'实际读数'**
+  String get contextBudgetReadoutSection;
+
+  /// No description provided for @contextBudgetEffective.
+  ///
+  /// In zh, this message translates to:
+  /// **'本档实际生效预算'**
+  String get contextBudgetEffective;
+
+  /// No description provided for @contextBudgetCeiling.
+  ///
+  /// In zh, this message translates to:
+  /// **'档位上限'**
+  String get contextBudgetCeiling;
+
+  /// No description provided for @contextBudgetReserveReply.
+  ///
+  /// In zh, this message translates to:
+  /// **'预留：回复'**
+  String get contextBudgetReserveReply;
+
+  /// No description provided for @contextBudgetReserveTools.
+  ///
+  /// In zh, this message translates to:
+  /// **'预留：工具定义'**
+  String get contextBudgetReserveTools;
+
+  /// No description provided for @contextBudgetFloor.
+  ///
+  /// In zh, this message translates to:
+  /// **'预算下限'**
+  String get contextBudgetFloor;
+
+  /// No description provided for @contextBudgetLastUsage.
+  ///
+  /// In zh, this message translates to:
+  /// **'最近一轮实际占用'**
+  String get contextBudgetLastUsage;
+
+  /// No description provided for @contextBudgetNoSample.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无样本'**
+  String get contextBudgetNoSample;
+
+  /// No description provided for @contextBudgetLastClip.
+  ///
+  /// In zh, this message translates to:
+  /// **'最近一次裁剪'**
+  String get contextBudgetLastClip;
+
+  /// No description provided for @contextBudgetNoClip.
+  ///
+  /// In zh, this message translates to:
+  /// **'最近没有发生裁剪'**
+  String get contextBudgetNoClip;
+
+  /// No description provided for @contextBudgetClipCount24h.
+  ///
+  /// In zh, this message translates to:
+  /// **'近 24 小时裁剪次数'**
+  String get contextBudgetClipCount24h;
+
+  /// No description provided for @contextBudgetCostTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'代价提示'**
+  String get contextBudgetCostTitle;
+
+  /// No description provided for @contextBudgetCostNotice.
+  ///
+  /// In zh, this message translates to:
+  /// **'档位越高，每轮注入的背景信息越长：回复会更慢、消耗更大，角色也更容易把旧信息当成现状。建议先用标准档，确有需要再上调。'**
+  String get contextBudgetCostNotice;
+
+  /// No description provided for @contextBudgetLoading.
+  ///
+  /// In zh, this message translates to:
+  /// **'加载中…'**
+  String get contextBudgetLoading;
+
+  /// No description provided for @contextBudgetLoadFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'读取上下文预算失败'**
+  String get contextBudgetLoadFailed;
+
+  /// No description provided for @contextBudgetRetry.
+  ///
+  /// In zh, this message translates to:
+  /// **'重试'**
+  String get contextBudgetRetry;
+
+  /// No description provided for @contextBudgetSaved.
+  ///
+  /// In zh, this message translates to:
+  /// **'档位已保存'**
+  String get contextBudgetSaved;
+
+  /// No description provided for @contextBudgetSaveFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'档位保存失败，请重试'**
+  String get contextBudgetSaveFailed;
 }
 
 class _AppLocalizationsDelegate

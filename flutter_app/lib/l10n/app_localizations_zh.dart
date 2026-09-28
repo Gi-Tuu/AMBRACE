@@ -7829,4 +7829,94 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get serverIdentityEntryHint => '尚未与该服务器配对';
+
+  @override
+  String get contextBudgetTitle => '上下文注入长度';
+
+  @override
+  String get contextBudgetDrawerHint => '调节每轮注入的背景信息量';
+
+  @override
+  String get contextBudgetTierSection => '注入档位';
+
+  @override
+  String get contextBudgetTierStandard => '标准';
+
+  @override
+  String get contextBudgetTierExtended => '加长';
+
+  @override
+  String get contextBudgetTierMax => '最大';
+
+  @override
+  String contextBudgetTokensValue(Object tokens) {
+    return '$tokens tokens';
+  }
+
+  @override
+  String get contextBudgetCurrent => '当前';
+
+  @override
+  String get contextBudgetSourceUser => '已按你的选择';
+
+  @override
+  String get contextBudgetSourceDefault => '默认（未单独设置）';
+
+  @override
+  String get contextBudgetSourceUnavailable => '暂时读不到，显示默认值';
+
+  @override
+  String get contextBudgetReadoutSection => '实际读数';
+
+  @override
+  String get contextBudgetEffective => '本档实际生效预算';
+
+  @override
+  String get contextBudgetCeiling => '档位上限';
+
+  @override
+  String get contextBudgetReserveReply => '预留：回复';
+
+  @override
+  String get contextBudgetReserveTools => '预留：工具定义';
+
+  @override
+  String get contextBudgetFloor => '预算下限';
+
+  @override
+  String get contextBudgetLastUsage => '最近一轮实际占用';
+
+  @override
+  String get contextBudgetNoSample => '暂无样本';
+
+  @override
+  String get contextBudgetLastClip => '最近一次裁剪';
+
+  @override
+  String get contextBudgetNoClip => '最近没有发生裁剪';
+
+  @override
+  String get contextBudgetClipCount24h => '近 24 小时裁剪次数';
+
+  @override
+  String get contextBudgetCostTitle => '代价提示';
+
+  @override
+  String get contextBudgetCostNotice =>
+      '档位越高，每轮注入的背景信息越长：回复会更慢、消耗更大，角色也更容易把旧信息当成现状。建议先用标准档，确有需要再上调。';
+
+  @override
+  String get contextBudgetLoading => '加载中…';
+
+  @override
+  String get contextBudgetLoadFailed => '读取上下文预算失败';
+
+  @override
+  String get contextBudgetRetry => '重试';
+
+  @override
+  String get contextBudgetSaved => '档位已保存';
+
+  @override
+  String get contextBudgetSaveFailed => '档位保存失败，请重试';
 }

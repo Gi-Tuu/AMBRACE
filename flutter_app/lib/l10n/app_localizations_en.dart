@@ -8152,4 +8152,96 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get serverIdentityEntryHint => 'This server is not paired yet';
+
+  @override
+  String get contextBudgetTitle => 'Context length';
+
+  @override
+  String get contextBudgetDrawerHint =>
+      'Tune how much background is injected each turn';
+
+  @override
+  String get contextBudgetTierSection => 'Injection tier';
+
+  @override
+  String get contextBudgetTierStandard => 'Standard';
+
+  @override
+  String get contextBudgetTierExtended => 'Extended';
+
+  @override
+  String get contextBudgetTierMax => 'Max';
+
+  @override
+  String contextBudgetTokensValue(Object tokens) {
+    return '$tokens tokens';
+  }
+
+  @override
+  String get contextBudgetCurrent => 'current';
+
+  @override
+  String get contextBudgetSourceUser => 'Your choice';
+
+  @override
+  String get contextBudgetSourceDefault => 'Default (never changed)';
+
+  @override
+  String get contextBudgetSourceUnavailable =>
+      'Temporarily unavailable, showing default';
+
+  @override
+  String get contextBudgetReadoutSection => 'Live readout';
+
+  @override
+  String get contextBudgetEffective => 'Effective budget for this tier';
+
+  @override
+  String get contextBudgetCeiling => 'Tier ceiling';
+
+  @override
+  String get contextBudgetReserveReply => 'Reserved: reply';
+
+  @override
+  String get contextBudgetReserveTools => 'Reserved: tool defs';
+
+  @override
+  String get contextBudgetFloor => 'Budget floor';
+
+  @override
+  String get contextBudgetLastUsage => 'Last turn actual usage';
+
+  @override
+  String get contextBudgetNoSample => 'No samples yet';
+
+  @override
+  String get contextBudgetLastClip => 'Most recent clip';
+
+  @override
+  String get contextBudgetNoClip => 'No clipping recently';
+
+  @override
+  String get contextBudgetClipCount24h => 'Clips in last 24h';
+
+  @override
+  String get contextBudgetCostTitle => 'Trade-off';
+
+  @override
+  String get contextBudgetCostNotice =>
+      'A higher tier injects more background each turn: replies get slower and cost more, and the character is more likely to treat old information as current. Start with Standard and raise it only if you need to.';
+
+  @override
+  String get contextBudgetLoading => 'Loading…';
+
+  @override
+  String get contextBudgetLoadFailed => 'Failed to load context budget';
+
+  @override
+  String get contextBudgetRetry => 'Retry';
+
+  @override
+  String get contextBudgetSaved => 'Tier saved';
+
+  @override
+  String get contextBudgetSaveFailed => 'Failed to save tier, please retry';
 }

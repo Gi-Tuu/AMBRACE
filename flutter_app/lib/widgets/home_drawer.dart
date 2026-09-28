@@ -20,6 +20,7 @@ import '../features/settings/permission_admin_screen.dart';
 import '../features/settings/account_admin_screen.dart';
 import '../features/phone/phone_perception_screen.dart';
 import '../features/settings/appearance_screen.dart';
+import '../features/settings/context_budget_screen.dart';
 import '../features/settings/account_linking_screen.dart';
 import '../features/plugin/extensions_screen.dart';
 import '../features/settings/support_screen.dart';
@@ -325,6 +326,18 @@ class HomeDrawer extends StatelessWidget {
                 onClose();
                 Navigator.push(
                     context, AppPageRoute(builder: (_) => const AppearanceScreen()));
+              },
+            ),
+            ListTile(
+              leading: const _RowIcon(icon: Icons.straighten),
+              title: Text(l10n.contextBudgetTitle, style: const TextStyle(fontSize: 14)),
+              subtitle: Text(l10n.contextBudgetDrawerHint,
+                  style: TextStyle(fontSize: 11, color: subColor)),
+              trailing: Icon(Icons.chevron_right, size: 18, color: chevColor),
+              onTap: () {
+                onClose();
+                Navigator.push(
+                    context, AppPageRoute(builder: (_) => const ContextBudgetScreen()));
               },
             ),
             // 2026-09-24（用户拍板）：「账号关联」收进「家庭管理员」页，抽屉里只给
