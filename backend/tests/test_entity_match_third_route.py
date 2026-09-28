@@ -74,8 +74,17 @@ def test_新flag已登记展示元数据且order接在批0_7两键之后():
 
 
 def test_第三处登记_开关总表已写入本键():
-    """登记三处之第三处（docs/feature-flags.md）：漏这里＝热切能改但清单看不到，重演 memory_admission_gate 事故。"""
-    doc = (Path(__file__).resolve().parents[2] / "docs" / "feature-flags.md").read_text(encoding="utf-8")
+    """登记三处之第三处（docs/feature-flags.md）：漏这里＝热切能改但清单看不到，重演 memory_admission_gate 事故。
+
+    **CI 例外（2026-09-29 修）**：公开仓 CI 跑的是**脱敏快照**（docs/ 只留 changelog.md），
+    该文件在 CI checkout 里根本不存在 ⇒ 原先直接 read_text 会 FileNotFoundError 把 CI 打红
+    （第 69 棒实测：py3.12/py3.14 全量绿、只有本条挂）。故：文件不在＝跳过（该断言只对内部全仓有意义），
+    在则照旧强断言（内部回归不漏）。
+    """
+    doc_path = Path(__file__).resolve().parents[2] / "docs" / "feature-flags.md"
+    if not doc_path.is_file():
+        pytest.skip("脱敏快照无 docs/feature-flags.md（CI）；该断言只在内部全仓生效")
+    doc = doc_path.read_text(encoding="utf-8")
     assert "recall_entity_match" in doc
     assert "## 十三、批 0-11" in doc
 
