@@ -8121,6 +8121,21 @@ class AppLocalizationsEn extends AppLocalizations {
   String get serverIdentityUnpair => 'Unpair';
 
   @override
+  String serverIdentityStatusUnprotected(Object fp) {
+    return 'Paired (fingerprint $fp), but verification is off — nothing is checked';
+  }
+
+  @override
+  String serverIdentityStatusPartial(Object fp) {
+    return 'Partially protected (fingerprint $fp)';
+  }
+
+  @override
+  String serverIdentityStatusGuarded(Object fp) {
+    return 'Protected (fingerprint $fp): every whitelisted endpoint verified';
+  }
+
+  @override
   String get serverIdentityModeLabel => 'Verification mode';
 
   @override
@@ -8152,6 +8167,17 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get serverIdentityEntryHint => 'This server is not paired yet';
+
+  @override
+  String get serverIdentityEntryPair => 'Pair now';
+
+  @override
+  String get serverIdentityUnsupported =>
+      'This server does not provide an identity key; update the backend to a pairing-capable version';
+
+  @override
+  String get serverIdentityFpMismatch =>
+      'Pairing self-check failed: the key decoded locally does not match the fingerprint returned';
 
   @override
   String get contextBudgetTitle => 'Context length';

@@ -42,6 +42,7 @@ A8 LLM 额度按账号（2026-09-20）：额度从单行全局扩成「全局默
 所有写动作落 admin_audit_log；api_key 永不回传明文（只回 has_api_key）。
 """
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy import func, select
@@ -69,6 +70,36 @@ from app.utils.version import get_project_version
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
 _logger = get_logger("api.admin")
+
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+_PLATFORM_UTIL_PATH = _BACKEND_DIR.parent / "scripts" / "platform_util.py"
+
+
+def _load_platform_util():
+    """按文件路径加载 scripts/platform_util.py（仓库根不一定在 sys.path，与 _load_backup_module 同法）。
+
+    目的：面板的 bind_host 回显与拉起脚本用**同一个** ``resolve_bind_host``，回显＝实际 ``--host``。
+    """
+    import importlib.util as _ilu
+
+    spec = _ilu.spec_from_file_location("ambrace_platform_util", str(_PLATFORM_UTIL_PATH))
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _resolve_bind_host() -> str:
+    """绑定地址回显（批 0-3「0 步」口径修正）：只经 resolve_bind_host，不再读 settings.server_host。
+
+    settings 额外看得到 .env，而拉起脚本历史上看不到 —— 两者分开读就会造出
+    「面板显示已收窄、实际仍绑 0.0.0.0」的安全假象。加载失败才回落 settings 同名读数。
+    """
+    from app.config import settings as _settings
+
+    try:
+        return _load_platform_util().resolve_bind_host(str(_BACKEND_DIR))
+    except Exception:
+        return _settings.server_host
 
 
 @router.get("/accounts")
@@ -858,7 +889,7 @@ async def get_server_identity(
         "pending": _ident.pending_info(),
         "pair_stats": _ident.pair_stats(),
         "signed_paths": sorted(_ident.SIGN_PATHS),
-        "bind_host": _settings.server_host,
+        "bind_host": _resolve_bind_host(),
         "hints": {
             "cors_wildcard": ("*" in cors_raw or not cors_raw),
             "uploads_require_auth": bool(_settings.uploads_require_auth),
@@ -877,7 +908,11 @@ async def post_server_identity_pairing_code(
     """
     from app import server_identity as _ident
 
-    issued = _ident.issue_pairing_code()
+    try:
+        issued = _ident.issue_pairing_code()
+    except _ident.PairError as e:
+        # 身份密钥文件存在但不可用（损坏）：不签发，避免分发一份设备解不开的密钥
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
     async with async_session_factory() as db:
         await _audit_record(db, user_id, "server.identity.pairing_code", "identity",
                             None, {"fp": issued["fp"], "ttl_sec": issued["ttl_sec"]})
@@ -895,7 +930,10 @@ async def post_server_identity_rotate(
     from app import server_identity as _ident
 
     _before = {"fp": _ident.current_fingerprint()}
-    issued = _ident.rotate_identity()
+    try:
+        issued = _ident.rotate_identity()
+    except _ident.PairError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message) from e
     async with async_session_factory() as db:
         await _audit_record(db, user_id, "server.identity.rotate", "identity",
                             _before, {"fp": issued["fp"]})

@@ -2758,7 +2758,25 @@
   "serverIdentityNoCode": "电脑上还没有生成配对码，请先在控制台点「生成配对码」",
   "serverIdentityNetworkFail": "连不上该服务器地址，请检查服务器地址与网络",
   "serverIdentityRevoked": "已解除配对，本机不再校验该服务器身份",
-  "serverIdentityUnpair": "解除配对",
+    "serverIdentityUnpair": "解除配对",
+  "serverIdentityStatusUnprotected": "已配对（指纹 {fp}），但当前是「不校验」档，一条都没验",
+  "@serverIdentityStatusUnprotected": {
+    "placeholders": {
+      "fp": {}
+    }
+  },
+  "serverIdentityStatusPartial": "部分受保护（指纹 {fp}）",
+  "@serverIdentityStatusPartial": {
+    "placeholders": {
+      "fp": {}
+    }
+  },
+  "serverIdentityStatusGuarded": "受保护（指纹 {fp}）：白名单端点逐条验签通过",
+  "@serverIdentityStatusGuarded": {
+    "placeholders": {
+      "fp": {}
+    }
+  },
   "serverIdentityModeLabel": "验签模式",
   "serverIdentityModeOff": "不校验",
   "serverIdentityModeShadow": "只记录",
@@ -2774,7 +2792,10 @@
   },
   "serverIdentityNote": "配对码只在手机上做本地派生，不会发送到网络；网络上只跑挑战与应答。",
   "serverIdentityReconnectNeeded": "服务器地址已变更，需要重新配对",
-"serverIdentityEntryHint": "尚未与该服务器配对",
+  "serverIdentityEntryHint": "尚未与该服务器配对",
+  "serverIdentityEntryPair": "去配对",
+  "serverIdentityUnsupported": "该服务器不下发身份密钥，请确认后端已升级到支持配对的版本后重试",
+  "serverIdentityFpMismatch": "配对自检不通过：本机解出的密钥与服务器回带的指纹不一致，已放弃",
   "contextBudgetTitle": "上下文注入长度",
   "contextBudgetDrawerHint": "调节每轮注入的背景信息量",
   "contextBudgetTierSection": "注入档位",

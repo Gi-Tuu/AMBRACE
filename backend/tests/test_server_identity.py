@@ -7,7 +7,7 @@
 3. 轮换（旧密钥立即失效、新码可重配）；
 4. 配对码保密（硬断言：码不出现在任何响应体与日志文本）；
 5. challenge-response（篡改 1 字节失败 / 过期失败 / 跨实现向量）；
-6. 「0 步」绑定地址可配置化（未设配置仍旧值、脏配置不炸）；
+6. 「0 步」绑定地址可配置化（未设配置仍旧值、脏配置不炸、**面板回显与拉起同源**）；
 7. 签名头正确性（只有 SIGN_PATHS 内的 GET/POST JSON 响应挂头）。
 
 口径：**以代码实际实现为准**钉行为（实现与方案/派单文案的差异写在交付说明里，不改实现对齐）。
@@ -254,6 +254,18 @@ def _write_key(secret: bytes) -> None:
     Path(si.key_file_path()).write_text(base64.b64encode(secret).decode("ascii"), encoding="utf-8")
 
 
+def _break_key_file() -> None:
+    """把密钥文件写成非法内容：模拟「有文件但没有可用密钥」（自动生成只在**文件缺失**时发生）。"""
+    si.reset_state_for_test()
+    Path(si.key_file_path()).write_text("not-base64-!!", encoding="ascii")
+    si.reset_state_for_test()
+
+
+def _app_key(code: str, paired: dict) -> bytes:
+    """App 侧等价实现（M0-b 的 Dart）：用本地输入的码派生密钥流，还原服务器下发的身份密钥。"""
+    return si.unwrap_identity(paired["wrapped_key"], si.derive_keystream(code))
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1. 三态
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -308,16 +320,19 @@ def test_off_mode_read_failure_of_session_factory_does_not_break_health(id_db, m
 
 
 def test_shadow_mode_never_rejects_and_signs_when_paired(id_db, logtext):
-    """shadow：无密钥时不出签也照常 200（只记日志）；有密钥则出签且 App 侧可独立复算验证。"""
+    """shadow：密钥不可用时不出签也照常 200（只记日志）；可用则出签且 App 侧可独立复算验证。"""
     _set_mode(id_db, "shadow")
+    _break_key_file()
     c = _client(_api_app())
     r = c.get("/api/v1/system/health")
     assert r.status_code == 200, r.text
     assert si.PROOF_HEADER not in r.headers
     assert "无身份密钥" in logtext()
 
+    Path(si.key_file_path()).unlink()  # 移除坏文件：缺文件才会触发生成可用密钥
     code = _issue_code(c)
-    assert _do_pair(c, code)["fp"] == si.fingerprint_of(si.derive_shared(code))
+    paired = _do_pair(c, code)
+    assert paired["fp"] == si.fingerprint_of(si.load_or_create_identity())
 
     nonce = "nonce-shadow-1"
     r2 = c.get("/api/v1/system/health", headers={si.CHALLENGE_HEADER: nonce})
@@ -342,9 +357,10 @@ def test_shadow_mode_rejects_nothing_on_bad_client_signature(id_db):
                      headers={si.PROOF_HEADER: "v1 0 " + "00" * 32}).status_code == 200
 
 
-def test_enforce_rejects_when_key_missing_and_nonce_present(id_db, logtext):
-    """enforce：带 nonce 却出不了签（密钥缺失）⇒ 503 + identity_key_unavailable；无 nonce 照旧放行。"""
+def test_enforce_rejects_when_key_unavailable_and_nonce_present(id_db, logtext):
+    """enforce：带 nonce 却出不了签（密钥不可用）⇒ 503 + identity_key_unavailable；无 nonce 照旧放行。"""
     _set_mode(id_db, "enforce")
+    _break_key_file()
     probe = _client(_probe_app())
     r = probe.get("/api/v1/system/liveness", headers={si.CHALLENGE_HEADER: "nonce-1"})
     assert r.status_code == 503, r.text
@@ -393,30 +409,30 @@ def test_pair_start_without_pending_code_is_409(id_db):
 
 
 def test_pairing_roundtrip_yields_usable_key(id_db):
-    """pair-start → pair 拿到可用凭据：密钥落盘、指纹与控制台签发值一致、health 可验签。"""
+    """pair-start → pair 拿到可用凭据：身份密钥落盘、指纹与签发值一致、App 可解包并验签。"""
     c = _client(_api_app())
     issued = c.post("/api/v1/admin/server/identity/pairing-code", headers=_auth(), json={}).json()
     code = issued["code"]
+    site = si.load_or_create_identity()
     assert len(code) == si.CODE_LEN and set(code) <= set(si.CODE_ALPHABET)
-    assert issued["fp"] == si.fingerprint_of(si.derive_shared(code))
+    assert not (set(code) & set("0O1IiLl")), "易混字符不得出现在配对码里"
+    assert issued["fp"] == si.fingerprint_of(site)
     assert issued["fp_display"] == si.format_fingerprint(issued["fp"])
     assert issued["ttl_sec"] == si.CODE_TTL_SEC
 
-    challenge = _challenge(c)
-    r = c.post("/api/v1/system/identity/pair",
-               json={"challenge": challenge, "mac": si._pair_mac(si.derive_shared(code), challenge)})
-    assert r.status_code == 200, r.text
-    got = r.json()
+    got = _do_pair(c, code)
     assert got == {"status": "ok", "server_name": si.SERVER_NAME,
-                   "fp": issued["fp"], "fp_display": issued["fp_display"]}
-    assert si.active_secret() == si.derive_shared(code)
+                   "fp": issued["fp"], "fp_display": issued["fp_display"],
+                   "wrapped_key": si.wrap_identity(site, si.derive_keystream(code))}
+    assert _app_key(code, got) == site, "App 用码必须能还原出全站那份身份密钥"
     key = Path(si.key_file_path())
-    assert key.exists() and base64.b64decode(key.read_text(encoding="utf-8").strip()) == si.derive_shared(code)
+    assert key.exists() and base64.b64decode(key.read_text(encoding="utf-8").strip()) == site
+    assert si.active_secret() == site
 
     _set_mode(id_db, "shadow")
     nonce = "n1"
     r2 = c.get("/api/v1/system/health", headers={si.CHALLENGE_HEADER: nonce})
-    assert si.verify_proof(si.active_secret(), r2.headers[si.PROOF_HEADER], nonce, 200, r2.content)
+    assert si.verify_proof(site, r2.headers[si.PROOF_HEADER], nonce, 200, r2.content)
 
 
 def test_wrong_pairing_code_fails_indistinguishably(id_db):
@@ -432,7 +448,7 @@ def test_wrong_pairing_code_fails_indistinguishably(id_db):
     r2 = c.post("/api/v1/system/identity/pair", json={"challenge": challenge, "mac": "00" * 32})
     assert r2.status_code == 401 and r2.json()["detail"] == "pairing failed"
 
-    assert _do_pair(c, code)["fp"] == si.fingerprint_of(si.derive_shared(code)), "错码后正确码仍可用"
+    assert _do_pair(c, code)["fp"] == si.fingerprint_of(si.load_or_create_identity()), "错码后正确码仍可用"
 
 
 def test_pairing_code_is_single_use(id_db):
@@ -459,16 +475,17 @@ def test_pairing_code_expiry(id_db, monkeypatch):
 
 
 def test_challenge_expiry(id_db, monkeypatch):
-    """挑战过期 ⇒ 401（与错码同文案）且不落密钥。"""
+    """挑战过期 ⇒ 401（与错码同文案），且身份密钥不因失败配对而改变。"""
     c = _client(_api_app())
     code = _issue_code(c)
+    before = si.load_or_create_identity()
     monkeypatch.setattr(si, "CHALLENGE_TTL_SEC", -1)  # 造时钟：领到的挑战即刻过期
     challenge = _challenge(c)
     r = c.post("/api/v1/system/identity/pair",
                json={"challenge": challenge, "mac": si._pair_mac(si.derive_shared(code), challenge)})
     assert r.status_code == 401, r.text
     assert r.json()["detail"] == "pairing failed"
-    assert si.active_secret() is None
+    assert si.load_or_create_identity() == before
 
 
 def test_new_pairing_code_invalidates_previous_challenge(id_db):
@@ -508,12 +525,12 @@ def test_pair_stats_count_success_and_failure(id_db):
 # 3. 轮换
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def test_rotate_invalidates_old_key_and_new_code_works(id_db):
-    """rotate 后：旧密钥签名立即失效（停止出签）、旧 mac 重放被拒；新码可重配并得到新指纹。"""
+def test_rotate_replaces_identity_key_and_new_code_works(id_db):
+    """rotate：换新身份密钥（旧设备立即失配）+ 显式提示重配；新码可重配并解出新密钥。"""
     c = _client(_api_app())
     old_code = _issue_code(c)
-    old_fp = _do_pair(c, old_code)["fp"]
-    old_secret = si.derive_shared(old_code)
+    old_pair = _do_pair(c, old_code)
+    old_secret = _app_key(old_code, old_pair)
     _set_mode(id_db, "shadow")
     nonce = "nonce-rotate"
     r = c.get("/api/v1/system/health", headers={si.CHALLENGE_HEADER: nonce})
@@ -522,26 +539,29 @@ def test_rotate_invalidates_old_key_and_new_code_works(id_db):
     rr = c.post("/api/v1/admin/server/identity/rotate", headers=_auth(), json={})
     assert rr.status_code == 200, rr.text
     rotated = rr.json()
-    assert rotated["note"] and rotated["fp"] and rotated["fp"] != old_fp
-    assert si.active_secret() is None and si.current_fingerprint() == ""
-    assert not Path(si.key_file_path()).exists()
+    assert rotated["note"] and rotated["fp"] and rotated["fp"] != old_pair["fp"]
+    assert rotated["old_fp"] == old_pair["fp"], "轮换必须回带旧指纹供核对"
+    new_secret = si.load_or_create_identity()
+    assert new_secret != old_secret and Path(si.key_file_path()).exists()
 
     r2 = c.get("/api/v1/system/health", headers={si.CHALLENGE_HEADER: nonce})
-    assert r2.status_code == 200 and si.PROOF_HEADER not in r2.headers
+    assert r2.status_code == 200 and si.PROOF_HEADER in r2.headers
+    assert not si.verify_proof(old_secret, r2.headers[si.PROOF_HEADER], nonce, 200, r2.content), "旧设备必须验不过"
+    assert si.verify_proof(new_secret, r2.headers[si.PROOF_HEADER], nonce, 200, r2.content)
 
-    assert _do_pair(c, rotated["code"])["fp"] == rotated["fp"]
     assert c.post("/api/v1/system/identity/pair",
-                  json={"challenge": "x", "mac": si._pair_mac(old_secret, "x")}).status_code == 401
+                  json={"challenge": "x", "mac": si._pair_mac(si.derive_shared(old_code), "x")}).status_code == 401
+    assert _app_key(rotated["code"], _do_pair(c, rotated["code"])) == new_secret
 
 
 def test_rotate_without_previous_pair(id_db):
-    """未配对也能轮换（幂等：无旧密钥可删）；结果是拿到一张新码。"""
+    """未配对也能轮换：结果是把一份新密钥落盘 + 一张新码，此时还没有任何设备持有它。"""
     c = _client(_api_app())
     r = c.post("/api/v1/admin/server/identity/rotate", headers=_auth(), json={})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["fp"] == si.fingerprint_of(si.derive_shared(body["code"]))
-    assert si.active_secret() is None
+    assert body["fp"] == si.fingerprint_of(si.load_or_create_identity())
+    assert si.pair_stats()["pair_success"] == 0, "签发/轮换不等于已配对"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -601,6 +621,13 @@ def test_cross_implementation_vectors():
     assert fp == "94d09229adea" and si.format_fingerprint(fp) == "94d0-9229-adea"
     assert si._pair_mac(si.derive_shared(code), "test-challenge-abc") == (
         "30556b9e650f72065a5fa7e4809bc6086b144c1edc18cd426b1875acecafecef")
+    # 包裹密钥流（M0-b 必须同值）：与 pair-mac 密钥不同标签，且互不泄露
+    assert si.derive_keystream(code).hex() == (
+        "a355f1d8f56eca54a2922b52a5dc1d4c6f071c506cd042acf8ab6778d168f854")
+    assert si.derive_keystream(code) != si.derive_shared(code)
+    site = b"\x11" * 32
+    assert si.unwrap_identity(si.wrap_identity(site, si.derive_keystream(code)),
+                              si.derive_keystream(code)) == site
 
 
 def test_hkdf_matches_rfc5869_test_case_1():
@@ -666,6 +693,30 @@ def test_ttl_constants_match_plan():
 # 6. 「0 步」绑定地址可配置化
 # ═══════════════════════════════════════════════════════════════════════════════
 
+@pytest.fixture(autouse=True)
+def bind_host_isolated(monkeypatch, tmp_path):
+    """全局隔离：绑定地址一律只看 tmp 目录，绝不读本机真实 .env / server_config.json / 环境变量。
+
+    只改 ``_BACKEND_DIR``（admin 侧真实加载器仍按路径加载 scripts/platform_util.py，
+    这样「面板回显」与「拉起」两条链走的是同一份代码，而不是测试替身）。
+    """
+    monkeypatch.delenv("SERVER_HOST", raising=False)
+    monkeypatch.setattr(admin_api, "_BACKEND_DIR", tmp_path)
+
+
+def _mk_backend(tmp_path, *, dotenv=None, root_dotenv=None, cfg=None):
+    """造一个假的 repo 结构（tmp/backend ＋ tmp/.env），返回 backend 目录。"""
+    backend = tmp_path / "backend"
+    (backend / "data").mkdir(parents=True, exist_ok=True)
+    if cfg is not None:
+        (backend / "data" / "server_config.json").write_text(cfg, encoding="utf-8")
+    if dotenv is not None:
+        (backend / ".env").write_text(dotenv, encoding="utf-8")
+    if root_dotenv is not None:
+        (tmp_path / ".env").write_text(root_dotenv, encoding="utf-8")
+    return backend
+
+
 def test_resolve_bind_host_default_unchanged(tmp_path, monkeypatch):
     """未设任何配置 ⇒ 仍旧值 0.0.0.0（与改动前三处硬编码逐字一致），与后端 settings 默认同源。"""
     monkeypatch.delenv("SERVER_HOST", raising=False)
@@ -705,13 +756,139 @@ def test_resolve_bind_host_reads_config_and_survives_dirty_values(tmp_path, monk
 
 
 def test_bind_host_callers_delegated_to_single_source():
-    """三处拉起入口统一走 resolve_bind_host，不再各自硬编码 --host。"""
+    """三处拉起入口 + 管理面板回显，统一走 resolve_bind_host，不再各自硬编码 / 读 settings。"""
     repo = Path(__file__).resolve().parents[2]
     for path in (repo / "scripts" / "watchdog.py", repo / "scripts" / "server_manager.py",
                  repo / "server_controller" / "server_controller.py"):
         src = path.read_text(encoding="utf-8")
         assert "resolve_bind_host(" in src, path.name
         assert '"--host", "0.0.0.0"' not in src, path.name
+
+    admin_src = (repo / "backend" / "app" / "api" / "admin.py").read_text(encoding="utf-8")
+    assert "resolve_bind_host(str(_BACKEND_DIR))" in admin_src, "面板必须调同一个函数"
+    assert '"bind_host": _settings.server_host' not in admin_src, "面板不得退回读 settings"
+
+
+def test_resolve_bind_host_dotenv_narrows_the_real_bind(tmp_path):
+    """核心回归：只写 .env 也真的收窄监听（旧口径脚本读不到 .env，写了等于没写仍绑 0.0.0.0）。"""
+    backend = _mk_backend(tmp_path, dotenv="SERVER_HOST=127.0.0.1\n")
+    assert platform_util.resolve_bind_host(str(backend)) == "127.0.0.1"
+
+
+def test_resolve_bind_host_reads_repo_root_dotenv(tmp_path):
+    """app.config 的 env_file 指向仓库根 .env（＝ backend 的上一级），这一路径同样要读到。"""
+    backend = _mk_backend(tmp_path, root_dotenv='SERVER_HOST="10.20.30.40"\n')
+    assert platform_util.resolve_bind_host(str(backend)) == "10.20.30.40"
+    assert platform_util.read_env_file_value(str(backend / ".env"), "SERVER_HOST") == ""
+
+
+def test_resolve_bind_host_priority_ladder(tmp_path, monkeypatch):
+    """四级逐层压制：环境变量 > backend/.env > 仓库根 .env > server_config.json > 0.0.0.0。"""
+    cfg = '{"server_host": "10.0.0.4"}'
+    backend = _mk_backend(tmp_path, cfg=cfg)
+    assert platform_util.resolve_bind_host(str(backend)) == "10.0.0.4", "json 兜底"
+
+    backend = _mk_backend(tmp_path, cfg=cfg, root_dotenv="SERVER_HOST=10.0.0.5\n")
+    assert platform_util.resolve_bind_host(str(backend)) == "10.0.0.5", ".env 优先于 json"
+
+    backend = _mk_backend(tmp_path, cfg=cfg, root_dotenv="SERVER_HOST=10.0.0.5\n",
+                          dotenv="SERVER_HOST=10.0.0.6\n")
+    assert platform_util.resolve_bind_host(str(backend)) == "10.0.0.6", "backend/.env 优先于仓库根 .env"
+
+    monkeypatch.setenv("SERVER_HOST", "10.0.0.7")
+    assert platform_util.resolve_bind_host(str(backend)) == "10.0.0.7", "环境变量优先于 .env"
+
+    monkeypatch.setenv("SERVER_HOST", "   ")  # 空串不算设置（继续往下走）
+    assert platform_util.resolve_bind_host(str(backend)) == "10.0.0.6"
+
+
+def test_resolve_bind_host_dirty_dotenv_never_raises(tmp_path):
+    """.env 脏样本（空文件/纯注释/空值/无等号/引号/行尾注释/BOM/二进制）：不抛异常，按口径回落。"""
+    cases = [
+        ("", "0.0.0.0"),
+        ("\n\n   \n", "0.0.0.0"),
+        ("# SERVER_HOST=1.2.3.4\n", "0.0.0.0"),          # 整行注释不算生效
+        ("SERVER_HOST=\n", "0.0.0.0"),                     # 空值继续下一级
+        ("SERVER_HOST=   \n", "0.0.0.0"),
+        ("SERVER_HOST\n", "0.0.0.0"),                      # 缺等号
+        ("=oops\n", "0.0.0.0"),
+        ("OTHER_KEY=1\nJUNK LINE\n", "0.0.0.0"),
+        ("SERVER_HOST='127.0.0.1' # 只绑本机\n", "127.0.0.1"),   # 引号 + 行尾注释
+        ('SERVER_HOST="  127.0.0.9  "\n', "127.0.0.9"),          # 引号内空白
+        (" SERVER_HOST = 127.0.0.7 \n", "127.0.0.7"),            # 键/值两侧空白
+        (chr(0xFEFF) + "SERVER_HOST=127.0.0.8\n", "127.0.0.8"),      # UTF-8 BOM
+        ("SERVER_HOST=127.0.0.1\nSERVER_HOST=127.0.0.2\n", "127.0.0.2"),  # 同名取最后一次
+        ("\x00\xff\xfe junk\r\n", "0.0.0.0"),
+    ]
+    for i, (text, expected) in enumerate(cases):
+        backend = _mk_backend(tmp_path / ("case%d" % i), dotenv=text)
+        assert platform_util.resolve_bind_host(str(backend)) == expected, repr(text)
+
+
+def test_resolve_bind_host_dotenv_broken_file_fails_open(tmp_path):
+    """.env 是目录 / 无权限：读取失败一律回落下一级，绝不打挂守护进程拉起。"""
+    backend = tmp_path / "backend"
+    (backend / ".env").mkdir(parents=True)  # .env 是个目录：open 必然报错
+    (backend / "data").mkdir()
+    (backend / "data" / "server_config.json").write_text('{"server_host": "10.9.9.9"}', encoding="utf-8")
+    assert platform_util.resolve_bind_host(str(backend)) == "10.9.9.9"
+
+
+def test_admin_bind_host_matches_resolve_bind_host(id_db, monkeypatch, tmp_path):
+    """同源断言：面板 bind_host 与拉起函数在同一配置下逐字节一致（多种配置逐一走一遍）。"""
+    c = _client(_api_app())
+    scenarios = [
+        (dict(), "0.0.0.0"),
+        (dict(cfg='{"server_host": "10.0.0.4"}'), "10.0.0.4"),
+        (dict(dotenv="SERVER_HOST=127.0.0.1\n"), "127.0.0.1"),
+        (dict(dotenv="SERVER_HOST=127.0.0.1\n", cfg='{"server_host": "10.0.0.4"}'), "127.0.0.1"),
+        (dict(root_dotenv="SERVER_HOST=10.30.40.50\n", cfg='{"server_host": "10.0.0.4"}'), "10.30.40.50"),
+        (dict(dotenv="# SERVER_HOST=9.9.9.9", cfg='{"server_host": "10.0.0.8"}'), "10.0.0.8"),
+    ]
+    for n, (kwargs, expected) in enumerate(scenarios):
+        backend = _mk_backend(tmp_path / ("s%d" % n), **kwargs)
+        monkeypatch.setattr(admin_api, "_BACKEND_DIR", backend)
+        snapshot = c.get("/api/v1/admin/server/identity", headers=_auth()).json()
+        assert snapshot["bind_host"] == expected, kwargs
+        assert snapshot["bind_host"] == platform_util.resolve_bind_host(str(backend)), kwargs
+
+
+def test_admin_bind_host_does_not_echo_settings(id_db, monkeypatch, tmp_path):
+    """关键回归：面板不再读 settings.server_host —— 只写 .env 时两边**同时**收窄，不再有安全假象。"""
+    from app.config import settings as _settings
+
+    backend = _mk_backend(tmp_path, dotenv="SERVER_HOST=127.0.0.1\n")
+    monkeypatch.setattr(admin_api, "_BACKEND_DIR", backend)
+    monkeypatch.setattr(_settings, "server_host", "9.9.9.9", raising=False)  # 旧口径会回显这个值
+    snapshot = _client(_api_app()).get("/api/v1/admin/server/identity", headers=_auth()).json()
+    assert snapshot["bind_host"] == "127.0.0.1" != _settings.server_host
+    assert snapshot["bind_host"] == platform_util.resolve_bind_host(str(backend))
+
+
+def test_admin_bind_host_falls_back_when_scripts_module_missing(id_db, monkeypatch):
+    """加载 scripts 模块失败 ⇒ 面板不打 500，回落到后端同名读数。"""
+    from app.config import settings as _settings
+
+    def _boom():
+        raise OSError("no scripts dir")
+
+    monkeypatch.setattr(admin_api, "_load_platform_util", _boom)
+    monkeypatch.setattr(_settings, "server_host", "8.8.8.8", raising=False)
+    snapshot = _client(_api_app()).get("/api/v1/admin/server/identity", headers=_auth()).json()
+    assert snapshot["bind_host"] == "8.8.8.8" == _settings.server_host
+
+
+def test_admin_platform_util_loader_reads_the_scripts_file(tmp_path):
+    """admin 侧按路径加载的就是拉起脚本那份 platform_util.py（不得另存一份解析逻辑）。"""
+    repo = Path(__file__).resolve().parents[2]
+    mod = admin_api._load_platform_util()
+    assert Path(mod.__file__).resolve() == (repo / "scripts" / "platform_util.py")
+    assert Path(platform_util.__file__).resolve() == Path(mod.__file__).resolve()
+    assert mod.DEFAULT_BIND_HOST == platform_util.DEFAULT_BIND_HOST == "0.0.0.0"
+    # 同一份实现：对同一目录的判定逐字节一致（含 .env 场景）
+    backend = _mk_backend(tmp_path, dotenv="SERVER_HOST=127.0.0.1\n")
+    assert mod.resolve_bind_host(str(backend)) == platform_util.resolve_bind_host(str(backend)) == "127.0.0.1"
+
 
 
 def test_identity_key_file_is_gitignored_and_backup_excluded():
@@ -791,16 +968,14 @@ def test_challenge_header_longer_than_cap_still_signs(id_db):
 
 
 def test_key_file_dirty_content_treated_as_unsigned(ident_env):
-    """密钥文件缺失 / 空 / 非 base64 / 长度不对 ⇒ 视为未签发（None），不能让 health 挂掉。"""
+    """密钥文件存在但内容非法（空 / 非 base64 / 长度不对 / 二进制）⇒ 视为无可用密钥，且**不覆盖**。"""
     key = Path(ident_env["key_file"])
-    assert si.active_secret() is None and si.current_fingerprint() == ""
-    assert si.key_created_at() == ""
-
     for raw in ("", "   ", "not-base64-!!", base64.b64encode(b"short").decode("ascii"), "e30="):
         key.write_text(raw, encoding="utf-8")
         si.reset_state_for_test()
         assert si.active_secret() is None, repr(raw)
         assert si.current_fingerprint() == ""
+        assert key.read_text(encoding="utf-8") == raw, "坏文件必须原样留着（静默换密钥＝已配对设备集体失配）"
 
     key.write_bytes(b"\x00\x01")  # 二进制垃圾：读取抛错也不能崩
     si.reset_state_for_test()
@@ -809,7 +984,7 @@ def test_key_file_dirty_content_treated_as_unsigned(ident_env):
     _write_key(b"\x11" * 32)
     si.reset_state_for_test()
     assert si.active_secret() == b"\x11" * 32
-    assert si.current_fingerprint() == si.fingerprint_of(b"\x11" * 32)
+    assert si.get_fp() == si.fingerprint_of(b"\x11" * 32) == si.current_fingerprint()
     assert si.key_created_at()
 
 
@@ -833,9 +1008,9 @@ def test_console_identity_snapshot_shape(id_db):
     assert snapshot["server_name"] == si.SERVER_NAME
     assert snapshot["signed_paths"] == sorted(si.SIGN_PATHS)
     assert snapshot["bind_host"] == "0.0.0.0"
-    assert snapshot["paired"] is False and snapshot["fp"] == ""
+    assert snapshot["paired"] is True and snapshot["fp"] == si.fingerprint_of(si.load_or_create_identity())
     assert snapshot["pending"] == {"has_pending": True,
-                                   "fp": si.fingerprint_of(si.derive_shared(code)),
+                                   "fp": snapshot["fp"],
                                    "expires_in": pytest.approx(si.CODE_TTL_SEC, abs=2)}
     assert set(snapshot["hints"]) == {"cors_wildcard", "uploads_require_auth"}
     assert set(snapshot["pair_stats"]) == {"pair_success", "pair_fail"}
@@ -849,3 +1024,123 @@ def test_console_identity_endpoints_require_server_admin(id_db):
     for path in ("/api/v1/admin/server/identity/pairing-code",
                  "/api/v1/admin/server/identity/rotate"):
         assert c.post(path, json={}).status_code in (401, 403), path
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. 全站单份身份密钥（派单硬要求 / 方案 §6-R5）+ 落盘韧性 + 自查端点
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def test_issuing_new_pairing_code_does_not_change_identity_key(id_db):
+    """**核心回归**：签发新配对码、第二台设备配对都不得更换身份密钥（否则已配对设备全废）。"""
+    c = _client(_api_app())
+    first_code = _issue_code(c)
+    site = si.load_or_create_identity()
+    first_fp = _do_pair(c, first_code)["fp"]
+
+    second = c.post("/api/v1/admin/server/identity/pairing-code", headers=_auth(), json={}).json()
+    assert si.load_or_create_identity() == site, "生成新码不得改动身份密钥"
+    assert second["fp"] == first_fp, "控制台显示的指纹不得因再点一次生成码而跳动"
+
+    got = _do_pair(c, second["code"])
+    assert got["fp"] == first_fp and _app_key(second["code"], got) == site
+    assert si.load_or_create_identity() == site, "第二台设备配对同样不得改动身份密钥"
+
+
+def test_two_devices_from_two_codes_share_one_identity_key(id_db):
+    """两台设备分别用两张码配对：拿到的是同一份密钥，签名互可验（全站单份）。"""
+    c = _client(_api_app())
+    code_a = _issue_code(c)
+    key_a = _app_key(code_a, _do_pair(c, code_a))
+    code_b = _issue_code(c)
+    key_b = _app_key(code_b, _do_pair(c, code_b))
+    assert key_a == key_b == si.load_or_create_identity()
+
+    _set_mode(id_db, "shadow")
+    nonce = "two-dev"
+    r = c.get("/api/v1/system/health", headers={si.CHALLENGE_HEADER: nonce})
+    proof = r.headers[si.PROOF_HEADER]
+    assert si.verify_proof(key_a, proof, nonce, 200, r.content)
+    assert si.verify_proof(key_b, proof, nonce, 200, r.content)
+
+
+def test_pairing_never_writes_the_code_anywhere(id_db):
+    """服务器侧只存码的 sha256 摘要：内存态里既无明文码、也无码的可逆形式。"""
+    c = _client(_api_app())
+    code = _issue_code(c)
+    assert si.code_digest(code) == hashlib.sha256(code.encode("ascii")).hexdigest()
+    assert si.code_digest(code.lower()) == si.code_digest(code)  # 大小写不参与信任
+    with si._LOCK:
+        blob = json.dumps({k: (v.hex() if isinstance(v, bytes) else v)
+                           for k, v in si._PENDING.items()}, default=str)
+    assert code not in blob and code.lower() not in blob
+    assert set(si._PENDING) == {"code_sha256", "shared", "keystream", "wrapped", "fp", "expires_at"}
+
+
+def test_identity_key_file_missing_is_auto_generated_and_reused(id_db, logtext):
+    """缺文件 → 自动生成（32B）并落盘；同一路径的后续调用复用同一份，不重复生成。"""
+    assert not Path(si.key_file_path()).exists()
+    site = si.load_or_create_identity()
+    assert len(site) == 32 and Path(si.key_file_path()).exists()
+    assert si.load_or_create_identity() == site == si.active_secret()
+    assert si.get_fp() == si.fingerprint_of(site) != ""
+    assert "已自动生成" in logtext()
+    # off 档（默认）不碰密钥文件：既有部署零行为变化
+    si.reset_state_for_test()
+    Path(si.key_file_path()).unlink(missing_ok=True)
+    assert asyncio.run(si.current_mode()) == "off"
+    _client(_api_app()).get("/api/v1/system/health")
+    assert not Path(si.key_file_path()).exists(), "off 档不得顺手生成密钥"
+
+
+def test_identity_key_write_failure_fails_open_with_log(monkeypatch, ident_env, logtext):
+    """落盘失败 ⇒ fail-open：只用内存副本并记 WARNING，不抛异常、不打挂签发链路。"""
+    def _boom(_secret):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(si, "_write_key_file", _boom)
+    site = si.load_or_create_identity()
+    assert site and len(site) == 32
+    assert not Path(ident_env["key_file"]).exists()
+    assert "落盘失败" in logtext()
+    assert si.get_fp() == si.fingerprint_of(site)
+    # 内存副本照样能走完配对（进程活着就能用），只是重启后需重新配对
+    issued = si.issue_pairing_code()
+    challenge = si.pair_start()["challenge"]
+    got = si.pair_finish(challenge, si._pair_mac(si.derive_shared(issued["code"]), challenge))
+    assert got["fp"] == si.fingerprint_of(site) and _app_key(issued["code"], got) == site
+
+
+def test_code_issued_before_key_file_recovered_is_refused(id_db):
+    """密钥文件坏掉时签发 → 503（不把一份设备解不开的密钥分发出去），修复后可正常签发。"""
+    c = _client(_api_app())
+    _issue_code(c)                 # 先让密钥文件正常生成
+    _break_key_file()
+    r = c.post("/api/v1/admin/server/identity/pairing-code", headers=_auth(), json={})
+    assert r.status_code == 503, r.text
+    Path(si.key_file_path()).unlink()
+    assert c.post("/api/v1/admin/server/identity/pairing-code", headers=_auth(), json={}).status_code == 200
+
+
+def test_fingerprint_dual_source_agrees_and_mismatch_path(id_db):
+    """fp 双源比对：带外面（签发响应/控制台）与网络返回（pair 响应）一致；换密钥后必然不一致。"""
+    c = _client(_api_app())
+    code = _issue_code(c)
+    issued = c.get("/api/v1/admin/server/identity", headers=_auth()).json()
+    got = _do_pair(c, code)
+    assert issued["fp"] == got["fp"] == si.get_fp(), "两个来源必须同值，App 才可能做双源比对"
+    rotated = c.post("/api/v1/admin/server/identity/rotate", headers=_auth(), json={}).json()
+    assert rotated["fp"] != got["fp"], "轮换后旧设备的双源比对必须失败（这是它该拒绝的信号）"
+    assert si.fingerprint_of(_app_key(code, got)) == got["fp"]
+    assert si.fingerprint_of(_app_key(code, got)) != rotated["fp"]
+
+
+def test_identity_info_endpoint_is_anonymous_selfcheck(id_db):
+    """GET /identity/info：匿名可达、只回服务器名与指纹；**不是签名白名单成员**（不作信任根）。"""
+    c = _client(_api_app())
+    _issue_code(c)
+    r = c.get("/api/v1/system/identity/info")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"server_name": si.SERVER_NAME, "fp": si.get_fp(),
+                        "fp_display": si.format_fingerprint(si.get_fp())}
+    assert "/api/v1/system/identity/info" not in si.SIGN_PATHS
+    assert si.PROOF_HEADER not in r.headers, "自查端点自身不参与响应签名"

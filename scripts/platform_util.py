@@ -157,21 +157,67 @@ def cmdline_pids(keyword: str) -> list:
 
 
 DEFAULT_BIND_HOST = "0.0.0.0"
+BIND_HOST_ENV = "SERVER_HOST"
+
+
+def _unquote_env_value(raw: str) -> str:
+    """.env 值侧的清洗：去行尾「 # 注释」，再去成对引号与首尾空白。"""
+    v = (raw or "").strip()
+    cut = v.find("#")
+    if cut > 0 and v[cut - 1] in " \t":
+        v = v[:cut].strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+        return v[1:-1].strip()
+    return v
+
+
+def read_env_file_value(env_path: str, key: str) -> str:
+    """轻量解析 .env 取 ``key``（无依赖：逐行 KEY=VALUE，忽略空行/#注释，同名取最后一次赋值）。
+
+    文件缺失/无权限/编码坏字节/任何解析异常一律返回空串，绝不向上抛（守护进程必须能拉起服务）。
+    """
+    found = ""
+    try:
+        with open(env_path, "r", encoding="utf-8-sig", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, _, raw = line.partition("=")
+                if name.strip() == key:
+                    found = _unquote_env_value(raw)
+    except Exception:
+        return ""
+    return found
+
+
+def _env_file_paths(backend_dir: str) -> list:
+    """.env 候选路径：``backend/.env`` 优先，其次仓库根 ``.env``（app.config 的 env_file 实际读这里）。"""
+    return [os.path.join(backend_dir, ".env"),
+            os.path.join(backend_dir, os.pardir, ".env")]
 
 
 def resolve_bind_host(backend_dir: str) -> str:
     """拉起 uvicorn 的 ``--host`` 唯一出口（批 0-3「0 步」，雷达 39 原话含「默认只绑 127.0.0.1」）。
 
-    优先级：环境变量 ``SERVER_HOST`` → ``backend/data/server_config.json`` 的 ``server_host``
-    → ``0.0.0.0``。默认值**刻意**与改动前三处硬编码逐字一致（改默认会断掉手机 App 直连），
-    目的是把「收紧绑定面」从三处改码变成一处配置；后端自身读的是
-    ``app.config.settings.server_host``（同一个 ``SERVER_HOST`` 环境变量），两边同源。
+    四级优先级：环境变量 ``SERVER_HOST`` → ``.env`` 里的 ``SERVER_HOST``（先 ``backend/.env``
+    再仓库根 ``.env``）→ ``backend/data/server_config.json`` 的 ``server_host`` → ``0.0.0.0``。
+    默认值**刻意**与改动前三处硬编码逐字一致（改默认会断掉手机 App 直连），目的是把「收紧绑定面」
+    从三处改码变成一处配置。
 
-    任何读取/解析失败都回落到默认值，绝不让守护进程因为配置坏了而拉不起服务。
+    **约定：面板回显必须走同一个本函数**（``backend/app/api/admin.py`` 的 bind_host 调它，
+    不得改回读 ``app.config.settings.server_host``）——否则「只写 .env」时脚本读不到仍绑
+    0.0.0.0，而 settings 看得到 .env，管理面板会显示成「已收窄」的安全假象。
+
+    任何读取/解析失败都回落到下一级，绝不让守护进程因为配置坏了而拉不起服务。
     """
-    raw = (os.environ.get("SERVER_HOST") or "").strip()
+    raw = (os.environ.get(BIND_HOST_ENV) or "").strip()
     if raw:
         return raw
+    for path in _env_file_paths(backend_dir):
+        val = read_env_file_value(path, BIND_HOST_ENV)
+        if val:
+            return val
     try:
         with open(os.path.join(backend_dir, "data", "server_config.json"), "r", encoding="utf-8") as f:
             cfg = json.load(f)

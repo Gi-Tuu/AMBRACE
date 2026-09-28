@@ -22,6 +22,9 @@ sys.path.insert(0, str(BACKEND))
 LEGACY_PY = BACKEND / "app" / "agent" / "context" / "legacy.py"
 CB_PY = BACKEND / "app" / "agent" / "context_builder.py"
 
+# 内联（未注册）key 的落位分界：``state["context_messages"] = [`` 之前=填模板变量，之后=追加 system 块
+MAIN_TEMPLATE_ANCHOR = 'state["context_messages"] = ['
+
 
 def _read(p: Path) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
@@ -35,15 +38,20 @@ def enum_registry():
     return get_sections()
 
 
-def legacy_consumption() -> tuple[list[tuple[int, str, str]], list[str]]:
+def legacy_consumption(reg_target: dict[str, str] | None = None) -> tuple[list[tuple[int, str, str]], list[str]]:
     """抽取 legacy.py 里对 _section_values/_sv 的消费点，按源码行号顺序返回。
 
     - 返回 ``[(lineno, key, kind), ...]``，kind = template（覆盖模板槽变量）/ append（追加 system 块）；
     - 第二项 = legacy 用 ``_registry_done`` 跳过内联计算的位置说明（不参与落位）。
     注：registry order 只决定 builder 执行顺序，**落位由这里的源码先后决定**。
+
+    kind 判定口径（2026-09-28 修正）：**已注册分区以注册表 ``target`` 为准**——旧口径按「行号 < 600」
+    硬切，会把主模板填充段尾部（legacy.py 600~610 的 ``if "key" in _sv`` 赋值）误报成 append，
+    B 表因此混进 template 分区。未注册的内联 key 仍按主模板块锚点前后的行号判定。
     """
     src = _read(LEGACY_PY)
     lines = src.splitlines()
+    anchor = next((i for i, ln in enumerate(lines, 1) if MAIN_TEMPLATE_ANCHOR in ln), 600)
     pat_in = re.compile(r'"([a-z_]+)"\s+in\s+_sv')
     pat_get = re.compile(r'_section_values\.get\("([a-z_]+)"')
     out: list[tuple[int, str, str]] = []
@@ -53,8 +61,7 @@ def legacy_consumption() -> tuple[list[tuple[int, str, str]], list[str]]:
             if not m:
                 continue
             key = m.group(1)
-            # 690 行左右开始才真正 appendsystem 块；之前的消费只覆盖模板变量
-            kind = "template" if i < 600 else "append"
+            kind = (reg_target or {}).get(key) or ("template" if i < anchor else "append")
             out.append((i, key, kind))
     return out, [ln.strip() for ln in lines if "_registry_done" in ln]
 
@@ -102,13 +109,18 @@ def main() -> int:
     else:
         print("  无")
 
-    cons, _skips = legacy_consumption()
+    cons, _skips = legacy_consumption({s.key: s.target for s in secs})
     consumed: list[str] = []
     for lineno, key, kind in cons:
         if key not in consumed:
             consumed.append(key)
 
-    ap = [k for k in consumed if k in {c[1] for c in cons if c[2] == "append"}]
+    append_keys = {c[1] for c in cons if c[2] == "append"}
+    ap_first_line: dict[str, int] = {}
+    for lineno, key, kind in cons:
+        if kind == "append" and key not in ap_first_line:
+            ap_first_line[key] = lineno
+    ap = [k for k in consumed if k in append_keys]
     print()
     print("=" * 96)
     print("B. append 块真实注入顺序（legacy.py 消费点的源码先后 = 真实落位顺序）")
@@ -117,7 +129,8 @@ def main() -> int:
     for i, k in enumerate(ap, 1):
         src_kind = "registry" if k in reg_keys else "legacy-inline"
         sec = next((s for s in secs if s.key == k), None)
-        print(f"{i:>3} {k:<24} origin={src_kind:<14} registry_order={sec.order if sec else '-'}")
+        print(f"{i:>3} {k:<24} origin={src_kind:<14} registry_order={sec.order if sec else '-'}"
+              f"  legacy.py:{ap_first_line.get(k, '-')}")
 
     missed = [k for k in ap if k not in reg_keys]
     print()
@@ -145,15 +158,45 @@ def main() -> int:
         sec = next((s for s in secs if s.key == key), None) if key else None
         print(f"{i:>3} slot={k:<22} <- key={key!s:<24} order={sec.order if sec else '-'}")
 
+    # 尾部锚点行号实时解析（旧版硬编码 1191/1204 已随代码漂移，改为按源码搜索）
+    _lsrc = _read(LEGACY_PY).splitlines()
+
+    def _at(sub: str, frm: int = 0) -> int | None:
+        return next((i for i, ln in enumerate(_lsrc[frm:], frm + 1) if sub in ln), None)
+
+    _user_ln = _at('"role": "user"')
+    _hook_ln = _at('run_hook("context_inject"')
+    _enf_ln = _at("_enforce_user_message_last(", _user_ln or 0)
+    _quota_ln = _at("_apply_system_total_quota(state[")
+
     print()
     print("=" * 96)
-    print("D. 四段装配结论（见 legacy.py 源码：660 行 system 模板 → 1147~1171 插件 hook → continue_payload/user）")
+    print("D. 四段装配结论（system 模板 → append 块 → 插件 hook → user；锚点实时解析）")
     print("=" * 96)
     print("1) system 主模板块 #1：SYSTEM_PROMPT_TEMPLATE.format(...)（含 chat_history 槽，见 C 表位置）")
     print("2) 追加 system 块：按 B 表顺序（顺序由 legacy.py if 链决定，非 registry order）")
-    print("3) user 最新消息：legacy.py 1191 行 role=user（宿主写入，恒为最后一条）")
-    print("4) 插件 context_inject / inject_prompt_skill：1147~1171 行，由宿主位移到 user **之前**（方案 C，2026-09-18）")
-    print("   + 宿主不变式 _enforce_user_message_last：装配尾部 legacy.py 1204（配额裁剪之前）；nodes.py 282~295 同护栏")
+    print(f"3) user 最新消息：legacy.py:{_user_ln} role=user（宿主写入，恒为最后一条）")
+    print(f"4) 插件 context_inject / inject_prompt_skill：legacy.py:{_hook_ln} 起，由宿主位移到 user **之前**（方案 C，2026-09-18）")
+    print(f"   + 宿主不变式 _enforce_user_message_last：legacy.py:{_enf_ln}（配额裁剪 legacy.py:{_quota_ln} 之前）；nodes.py 同护栏")
+
+    # E. Markdown 表格（2026-09-28 新增：可直接粘进 docs/context-injection-order.md，免手抄）
+    print()
+    print("=" * 96)
+    print("E. Markdown（实测顺序表，可直接粘贴）")
+    print("=" * 96)
+    print()
+    print("| 落位 # | key | order | legacy.py 挂载点 |")
+    print("|---|---|---|---|")
+    for i, k in enumerate(ap, 1):
+        sec = next((s for s in secs if s.key == k), None)
+        print(f"| {i} | `{k}` | {sec.order if sec else '—'} | `legacy.py:{ap_first_line.get(k, '—')}` |")
+    print()
+    print("| 模板槽 # | slot | key | order |")
+    print("|---|---|---|---|")
+    for i, k in enumerate(tp, 1):
+        key = slot_of_key.get(k)
+        sec = next((s for s in secs if s.key == key), None) if key else None
+        print(f"| {i} | `{k}` | `{key or '—（字面量直写）'}` | {sec.order if sec else '—'} |")
     return 0
 
 

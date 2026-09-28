@@ -13,11 +13,18 @@
 
 跨实现契约（M0-b 的 Dart / Kotlin 必须逐字节对齐，测试 ``test_server_identity.py`` 固化了向量）::
 
-    shared  = HKDF-SHA256(ikm=code, salt=b"ambrace-id-v1", info=b"ambrace-pair-v1", L=32)
-    fp      = HMAC-SHA256(shared, b"ambrace-fp-v1")[:6].hex()  → 12 位十六进制，显示成 4-4-4
+    site    = 全站单份身份密钥（32B，backend/data/server_identity.key，缺文件自动生成）
+    shared  = HKDF-SHA256(ikm=code, salt=b"ambrace-id-v1", info=b"ambrace-pair-v1", L=32)  # 配对码本地派生
+    ks      = HKDF-SHA256(ikm=code, salt=b"ambrace-id-v1", info=b"ambrace-ks-v1",  L=32)  # 包裹用密钥流
+    fp      = HMAC-SHA256(site, b"ambrace-fp-v1")[:6].hex()  → 12 位十六进制，显示成 4-4-4
     pairMac = HMAC-SHA256(shared, b"v1\\n" + challenge).hex()
-    proof   = "v1 {ts} " + HMAC-SHA256(shared, "\\n".join([nonce or "-", status,
+    wrapped = hex(site XOR ks)            # 身份密钥以「码派生密钥流」包裹后随 pair 响应下发
+    proof   = "v1 {ts} " + HMAC-SHA256(site, "\\n".join([nonce or "-", status,
               sha256(body).hex(), str(ts)])).hex()
+
+**为什么是「包裹」而不是「用码当密钥」**（派单硬要求，方案 §6-R5）：身份密钥全站单份，
+签发新配对码、第二台设备配对都**不得**更换它——否则已配对设备集体失配。因此配对成功时
+服务器只把既有密钥包裹后交给新设备，密钥本身只在首次生成/显式 rotate 时变。
 
 **未覆盖清单（诚实记账，方案 §4.5 / 风险 R4）**：图片音频裸 URL、下载直链、SSE 分块、
 WebSocket 帧、Kotlin 原生通道都不在 :data:`SIGN_PATHS` 内 → 本模块只给「部分受保护」。
@@ -46,6 +53,7 @@ CHALLENGE_TTL_SEC = 60
 
 HKDF_SALT = b"ambrace-id-v1"
 HKDF_INFO = b"ambrace-pair-v1"
+KS_INFO = b"ambrace-ks-v1"          # 包裹身份密钥用的密钥流派生标签（与 pair-mac 密钥分开）
 FP_LABEL = b"ambrace-fp-v1"
 SERVER_NAME = "AMBRACE Server"        # 展示用，不参与信任（信任根只有密钥本身）
 KEY_FILE_ENV = "AMBRACE_SERVER_IDENTITY_KEY_FILE"
@@ -122,12 +130,13 @@ def _write_key_file(secret: bytes) -> None:
     _harden(path)
 
 
-# 状态缓存：(文件 mtime_ns, size) -> 密钥；配对了的密钥改动留痕（方案 §6-R5）
+# 状态缓存：(文件 mtime_ns, size) -> 密钥；密钥变更（含 rotate/文件被换）必须留痕（方案 §6-R5）
 _LOCK = threading.Lock()
+_STAMP_MEMORY = "in-memory"        # 密钥只在内存里（落盘失败 fail-open）时的缓存戳
 _ACTIVE: bytes | None = None
-_ACTIVE_STAMP: tuple | None = None
+_ACTIVE_STAMP: tuple | str | None = None
 _ACTIVE_FP: str = ""
-_PENDING: dict | None = None          # {secret, fp, expires_at}（明文里从不出现配对码）
+_PENDING: dict | None = None          # {code_sha256, shared, keystream, wrapped, fp, expires_at}（从不存明文码）
 _CHALLENGES: dict[str, float] = {}    # challenge -> expires_at
 _STATS = {"pair_success": 0, "pair_fail": 0}
 
@@ -141,25 +150,60 @@ def _file_stamp(path: Path) -> tuple | None:
     return (st.st_mtime_ns, st.st_size)
 
 
-def active_secret() -> bytes | None:
-    """当前用于响应签名的身份密钥；未签发/未配对 → None（不自动生成：自动生成的密钥没人持有，无意义）。"""
+def _persist(secret: bytes) -> tuple | str:
+    """身份密钥落盘并返回缓存戳；**写失败 fail-open**（只用内存副本，记 WARNING，不抛）。"""
+    try:
+        _write_key_file(secret)
+    except Exception as e:  # noqa: BLE001 —— 落盘失败不能让签发链路挂掉
+        _logger.warning("[identity] 身份密钥落盘失败，本次仅用内存副本（重启后需重新配对）: %s", e)
+        return _STAMP_MEMORY
+    return _file_stamp(key_file_path())
+
+
+def load_or_create_identity() -> bytes | None:
+    """全站单份身份密钥（派单 §2.1）：文件缺失自动生成并落盘；读不到可用密钥 → None。
+
+    - **缺文件 → 自动生成**（32B 随机）并落盘，写失败则退化为内存副本 + 日志（fail-open）；
+    - 文件存在但内容非法/读取失败 → 返回 None，**绝不静默覆盖**（覆盖＝已配对设备集体失配，
+      违反方案 §6-R5）；需要换密钥走显式 ``rotate_identity()``。
+    """
     global _ACTIVE, _ACTIVE_STAMP, _ACTIVE_FP
     path = key_file_path()
     stamp = _file_stamp(path)
+    want_stamp = _STAMP_MEMORY if stamp is None else stamp
     with _LOCK:
-        if _ACTIVE_STAMP == stamp:
+        if _ACTIVE is not None and _ACTIVE_STAMP == want_stamp:
             return _ACTIVE
-        secret = _read_key_file(path) if stamp is not None else None
-        fp = fingerprint_of(secret) if secret else ""
+    if stamp is None:
+        secret = secrets.token_bytes(32)
+        cached_with = _persist(secret)
+        fp = fingerprint_of(secret)
+        with _LOCK:
+            _ACTIVE, _ACTIVE_STAMP, _ACTIVE_FP = secret, cached_with, fp
+        _logger.info("[identity] 身份密钥文件缺失，已自动生成（fp=%s）", fp)
+        return secret
+    secret = _read_key_file(path)
+    fp = fingerprint_of(secret) if secret else ""
+    with _LOCK:
         if _ACTIVE_FP and fp and _ACTIVE_FP != fp:
             _logger.warning("[identity] 身份密钥已变更（%s -> %s），已配对设备需重新配对", _ACTIVE_FP, fp)
         _ACTIVE, _ACTIVE_STAMP, _ACTIVE_FP = secret, stamp, fp
-        return _ACTIVE
+    return secret
+
+
+def active_secret() -> bytes | None:
+    """当前用于响应签名/配对的身份密钥（等价于 :func:`load_or_create_identity`）。"""
+    return load_or_create_identity()
+
+
+def get_fp() -> str:
+    """当前身份密钥的指纹短码（12 位十六进制）；无可用密钥 → 空串。"""
+    secret = load_or_create_identity()
+    return fingerprint_of(secret) if secret else ""
 
 
 def current_fingerprint() -> str:
-    secret = active_secret()
-    return fingerprint_of(secret) if secret else ""
+    return get_fp()
 
 
 def key_created_at() -> str:
@@ -195,7 +239,32 @@ def hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int = 32) -> bytes
 
 
 def derive_shared(code: str) -> bytes:
+    """配对码本地派生的 pair-mac 密钥（App 侧同法，码本身永不过网）。"""
     return hkdf_sha256(code.strip().upper().encode("ascii"), HKDF_SALT, HKDF_INFO)
+
+
+def derive_keystream(code: str) -> bytes:
+    """配对码派生的**包裹用**密钥流（与 pair-mac 密钥不同标签，互不挪用）。"""
+    return hkdf_sha256(code.strip().upper().encode("ascii"), HKDF_SALT, KS_INFO)
+
+
+def wrap_identity(secret: bytes, keystream: bytes) -> str:
+    """身份密钥 ↔ 十六进制密文（对称：同一函数用于加与解）。
+
+    这不是加密（无保密性保证之外的抗 tamper 设计），只是「没有配对码就还原不出密钥」，
+    与整条链路口径一致：防伪造，不防窃听。
+    """
+    return bytes(a ^ b for a, b in zip(secret, keystream)).hex()
+
+
+def unwrap_identity(wrapped_hex: str, keystream: bytes) -> bytes:
+    """从包裹态还原身份密钥（App 侧口径：本地码派生密钥流 → 亦即同一 XOR）。"""
+    return bytes(a ^ b for a, b in zip(bytes.fromhex(wrapped_hex), keystream))
+
+
+def code_digest(code: str) -> str:
+    """配对码摘要（服务器只存这个，**不存明文码**）。"""
+    return hashlib.sha256(code.strip().upper().encode("ascii")).hexdigest()
 
 
 def fingerprint_of(secret: bytes) -> str:
@@ -244,11 +313,25 @@ def issue_pairing_code() -> dict:
 
     **code 只能回给桌面控制台**（本机带外面）；App 侧任何端点都不回配对码。
     新码会顶掉上一个未使用的码（同一时刻只允许一屏在输的码）。
+    **签发新码不改变身份密钥**（派单硬要求 / 方案 §6-R5）：``fp`` 恒为当前身份密钥指纹，
+    因此旧设备不受影响，控制台显示的指纹也不会因“再点一次生成码”而跳动。
     """
+    site = load_or_create_identity()
+    if site is None:
+        # 密钥文件存在但不可用（损坏/被换）：不签发，避免把一份设备无法使用的密钥继续分发
+        raise PairError(503, "identity key unavailable")
     code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LEN))
-    secret = derive_shared(code)
-    fp = fingerprint_of(secret)
-    pending = {"secret": secret, "fp": fp, "expires_at": time.time() + CODE_TTL_SEC}
+    shared = derive_shared(code)
+    keystream = derive_keystream(code)
+    fp = fingerprint_of(site)
+    pending = {
+        "code_sha256": code_digest(code),   # 只留摘要供核对/一次性，明文码不落任何存储
+        "shared": shared,
+        "keystream": keystream,
+        "wrapped": wrap_identity(site, keystream),
+        "fp": fp,
+        "expires_at": time.time() + CODE_TTL_SEC,
+    }
     global _PENDING
     with _LOCK:
         _PENDING = pending
@@ -280,25 +363,24 @@ def pending_info() -> dict:
 
 
 def rotate_identity() -> dict:
-    """作废旧身份密钥 + 签发新配对码（方案 §6-R5：显式两步，且必须提示旧设备要重配）。
+    """轮换身份密钥（方案 §6-R5：**显式两步**＝换新密钥+签新码，并提示旧设备需重新配对）。
 
-    旧密钥**立刻**失效：此后服务器不再出签（``off``/``shadow`` 下响应不带签名头，
-    ``enforce`` 下带 nonce 的请求会被拒），直到用新码完成一次成功配对。
+    这是唯一「合法地」改变身份密钥的入口（另一个是密钥文件缺失时的自动生成）。旧密钥
+    立刻失效：已配对设备验签会失败 → App 侧提示重新配对；``enforce`` 下服务器用新密钥出签，
+    旧设备解不开。签发过程本身不落明文码。
     """
     global _ACTIVE, _ACTIVE_STAMP, _ACTIVE_FP, _PENDING
-    path = key_file_path()
     with _LOCK:
         _PENDING = None
         _CHALLENGES.clear()
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        pass
-    except Exception as e:  # noqa: BLE001
-        _logger.warning("[identity] 旧身份密钥删除失败: %s", e)
+    old_fp = _ACTIVE_FP
+    secret = secrets.token_bytes(32)
+    cached_with = _persist(secret)
+    fp = fingerprint_of(secret)
     with _LOCK:
-        _ACTIVE, _ACTIVE_STAMP, _ACTIVE_FP = None, None, ""
+        _ACTIVE, _ACTIVE_STAMP, _ACTIVE_FP = secret, cached_with, fp
     issued = issue_pairing_code()
+    issued["old_fp"] = old_fp
     issued["note"] = "旧设备需重新配对（身份密钥与指纹已更换）"
     return issued
 
@@ -323,19 +405,17 @@ def pair_start() -> dict:
     with _LOCK:
         _CHALLENGES.clear()  # 只留最新一次挑战（同时只有一台设备在配）
         _CHALLENGES[challenge] = now + CHALLENGE_TTL_SEC
-        secret = _PENDING["secret"] if _PENDING else None
-    if secret is None:
-        raise PairError(409, "no active pairing code")
+        if _PENDING is None:
+            raise PairError(409, "no active pairing code")
     return {"challenge": challenge, "server_name": SERVER_NAME}
 
 
 def pair_finish(challenge: str, mac: str) -> dict:
-    """校验 challenge/mac，成功则提交身份密钥并返回指纹。
+    """校验 challenge/mac，成功返回身份密钥的包裹态 + 指纹（**不改动身份密钥**）。
 
+    App 侧用 ``HKDF(本地输入的码)`` 解出密钥并核对 ``fp`` 与控制台屏幕上的那个（双源比对）。
     失败文案对「无待用码 / 码已过期 / mac 不符」一律同一句（401），不给探测留缝隙。
     """
-    global _ACTIVE, _ACTIVE_STAMP, _ACTIVE_FP
-
     def _fail() -> PairError:
         with _LOCK:
             _STATS["pair_fail"] += 1
@@ -355,7 +435,7 @@ def pair_finish(challenge: str, mac: str) -> dict:
         raise _fail()
     if expires is None or pending is None:
         raise _fail()
-    if not hmac.compare_digest(_pair_mac(pending["secret"], str(challenge)), str(mac)[:256]):
+    if not hmac.compare_digest(_pair_mac(pending["shared"], str(challenge)), str(mac)[:256]):
         raise _fail()
     with _LOCK:
         _CHALLENGES.pop(str(challenge), None)
@@ -363,21 +443,15 @@ def pair_finish(challenge: str, mac: str) -> dict:
     taken = _take_pending()
     if taken is None:
         raise _fail()
-    try:
-        _write_key_file(taken["secret"])
-    except Exception as e:  # noqa: BLE001 —— 落盘失败就当没配对，不能留下「配对了但重启失签」
-        _logger.warning("[identity] 身份密钥落盘失败: %s", e)
-        raise _fail()
     with _LOCK:
         _STATS["pair_success"] += 1
-        global _ACTIVE, _ACTIVE_STAMP, _ACTIVE_FP
-        _ACTIVE, _ACTIVE_STAMP, _ACTIVE_FP = taken["secret"], ("", ""), taken["fp"]
-    _logger.info("[identity] 配对成功，身份密钥已生效（fp=%s）", taken["fp"])
+    _logger.info("[identity] 配对成功，身份密钥已下发（fp=%s，密钥未变更）", taken["fp"])
     return {
         "status": "ok",
         "server_name": SERVER_NAME,
         "fp": taken["fp"],
         "fp_display": format_fingerprint(taken["fp"]),
+        "wrapped_key": taken["wrapped"],
     }
 
 
@@ -386,7 +460,22 @@ def pair_stats() -> dict:
         return dict(_STATS)
 
 
-# ── enforce 模式读取 / health 字段 ────────────────────────────────────────────
+# ── enforce 模式读取 / health 字段 / 自查信息 ─────────────────────────────────
+
+def identity_info() -> dict:
+    """已配对设备**自查**用：服务器名 + 指纹短码。
+
+    **它不是信任根**：明文 http 下这个响应本身可被伪造者替换。信任根只有配对时经控制台屏幕
+    带外确认、并落进设备安全存储的那份身份密钥（方案 §3.1）。本端点存在只是为了让设备/运维
+    能核对「现在这台服务器还是不是我配过的那台」。
+    """
+    fp = get_fp()
+    return {
+        "server_name": SERVER_NAME,
+        "fp": fp,
+        "fp_display": format_fingerprint(fp) if fp else "",
+    }
+
 
 async def current_mode() -> str:
     """``off``（默认）/ ``shadow`` / ``enforce``；读失败一律回落 ``off``（零行为变化）。"""

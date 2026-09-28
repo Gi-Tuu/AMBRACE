@@ -54,6 +54,100 @@ def _perception_isolate_on() -> bool:
         return False
 
 
+# ── 批 0-8 晋升审计（2026-09-28，雷达 13 ＋ 簇5）────────────────────────────────
+# 目标：查得到「哪条记忆、什么时候、因为什么进了核心」，为后续治理与评测留证据。
+# 硬约束：**零新表、零新列、不改任何判据与阈值**——晋升条件（CORE_MIN_IMPORTANCE /
+#   CORE_MIN_CONFIRMATIONS / 高价值类别 +100 / 来源隔离闸）一字未动，本段只在判定成立后补留痕。
+# 载体：复用 #70-M3 的 memory_write_receipts（``emit_memory_receipt``），新增 action="promote"，
+#   与既有 action="utility_feedback" 同一先例（借表存证、不新增列/约束；action 列 String(20) 装得下）。
+# 闸控：``emit_memory_receipt`` 首行受既有 flag ``memory_write_receipt``（**默认关**）⇒ 关=零写入、
+#   晋升路径逐字节旧行为，故本批**不新增 flag**（再加一层闸只会多出两个开关的口径漂移；
+#   且本单文件隔离不允许改 app/agent/loop.py 与 application/flag_catalog.py，新键也无法热切）。
+# 纪律：沿用本模块「失败静默」——留痕任何异常都不许影响晋升结果（与既有 except 包裹同口径）。
+#
+# 只读查询口径（全部 sqlite3 ``mode=ro``；现成端点只到「事实修正历史」，晋升审计取 SQL）：
+#   -- 某角色什么时候、因为什么进了核心（按时间倒序）
+#   SELECT memory_id, reason, detail_json, created_at FROM memory_write_receipts
+#    WHERE character_id = ? AND action = 'promote' ORDER BY id DESC;
+#   -- 晋升依据分布（重要度门槛 / 高价值类别 / 用户确认三路各占多少）
+#   SELECT json_extract(detail_json, '$.rule') AS rule, count(*) FROM memory_write_receipts
+#    WHERE action = 'promote' GROUP BY rule ORDER BY 2 DESC;
+#   -- 「进了核心但行上已不是核心」的漂移（挤位/人工改动没留痕的行，靠两表对账暴露）
+#   SELECT r.memory_id FROM memory_write_receipts r
+#    JOIN memories m ON m.id = r.memory_id
+#    WHERE r.action = 'promote' AND m.is_core = 0 GROUP BY r.memory_id;
+ACTION_PROMOTE = "promote"
+
+# 晋升依据标识（回显**既有**阈值，只为让 reason 自证「因为什么」）
+_RULE_IMPORTANCE_CONFIRMED = "importance>=%d&confirmed>=%d" % (
+    CORE_MIN_IMPORTANCE, CORE_MIN_CONFIRMATIONS)
+_RULE_HIGH_VALUE = "high_value_category&importance>=100"
+_RULE_USER_CONFIRMATION = "user_confirmation(" + _RULE_IMPORTANCE_CONFIRMED + ")"
+
+
+def _promote_snapshot(m: Memory, category: str | None) -> dict:
+    """晋升审计所需的行内快照（**必须在 commit 前取**：异步会话 commit 后取属性有隐式刷新风险）。"""
+    return {
+        "character_id": m.character_id,
+        "memory_id": m.id,
+        "importance": float(m.importance or 0),
+        "confirmation_count": int(m.confirmation_count or 0),
+        "core_category": category,
+        "memory_type": m.memory_type,
+        "sub_type": m.sub_type,
+        "source": m.source,
+        "epistemic_status": m.epistemic_status,
+    }
+
+
+def _emit_promote_audit(snap: dict, *, rule: str, trigger: str, evicted_id: int | None) -> None:
+    """晋升留痕一条（批 0-8）：reason 写清晋升依据（重要度 / 确认数 / 类型），detail 存全量读数。
+
+    ``trigger``＝哪条路径促成的晋升（write=写入后自动检查 / confirmation=用户确认计数）；
+    ``evicted_id``＝因每角色上限（CORE_MAX_PER_CHAR）被挤掉核心位的那条（没有则 None），
+    一次晋升同时带走「谁让了位」，不必再为淘汰单开一类回执。
+    """
+    try:
+        from app.memory.receipt import emit_memory_receipt
+
+        _cat = snap["core_category"] or "-"
+        _reason = (
+            "core promote (%s) via %s: importance=%.0f confirmed=%d "
+            "category=%s type=%s sub_type=%s source=%s"
+        ) % (
+            trigger, rule, snap["importance"], snap["confirmation_count"],
+            _cat, snap["memory_type"] or "-", snap["sub_type"] or "-", snap["source"] or "-",
+        )
+        emit_memory_receipt(
+            snap["character_id"], snap["memory_id"], ACTION_PROMOTE,
+            reason=_reason,
+            detail={
+                "trigger": trigger,
+                "rule": rule,
+                "importance": snap["importance"],
+                "confirmation_count": snap["confirmation_count"],
+                "core_category": snap["core_category"],
+                "memory_type": snap["memory_type"],
+                "sub_type": snap["sub_type"],
+                "source": snap["source"],
+                "epistemic_status": snap["epistemic_status"],
+                "cap_per_char": CORE_MAX_PER_CHAR,
+                "evicted_memory_id": evicted_id,
+            },
+        )
+    except Exception as e:
+        _logger.warning("promote audit failed mem=%s: %s", snap.get("memory_id"), e)
+
+
+def _promote_rule_for(pct: float, confirmed: int, category: str | None) -> str:
+    """晋升依据标识（纯函数）：只回显既有判据走了哪条，不参与任何判定。"""
+    if pct >= CORE_MIN_IMPORTANCE and confirmed >= CORE_MIN_CONFIRMATIONS:
+        return _RULE_IMPORTANCE_CONFIRMED
+    if (category or "") in ("identity", "preference", "commitment") and pct >= 100.0:
+        return _RULE_HIGH_VALUE
+    return "unknown"
+
+
 def _quarantined_from_core(source, epistemic_status) -> bool:
     """晋升来源闸（禁令 1）：被隔离的记忆不得晋升 is_core。
 
@@ -89,6 +183,9 @@ async def maybe_promote_core(memory_id: int, importance: float,
                 promote = cat in ("identity", "preference", "commitment") and pct >= 100.0
             if not promote:
                 return
+            # 批 0-8 晋升审计：先取行内快照（commit 后属性有刷新风险），提交成功后再发回执
+            _rule = _promote_rule_for(pct, confirmed, _core_category(sub_type, memory_type))
+            _evicted_id: int | None = None
             # 超上限淘汰最不重要的一条
             cnt = (await db.execute(
                 select(func.count()).where(Memory.character_id == m.character_id, Memory.is_core == True)
@@ -101,9 +198,12 @@ async def maybe_promote_core(memory_id: int, importance: float,
                 )).scalar_one_or_none()
                 if old is not None:
                     old.is_core = False
+                    _evicted_id = old.id  # 谁让了位（随本次晋升一并留证，不再单开一类回执）
             m.is_core = True
             m.core_category = _core_category(sub_type, memory_type) or "identity"
+            _snap = _promote_snapshot(m, m.core_category)
             await db.commit()
+            _emit_promote_audit(_snap, rule=_rule, trigger="write", evicted_id=_evicted_id)
     except Exception as e:
         _logger.warning("maybe_promote_core failed mem=%s: %s", memory_id, e)
 
@@ -111,6 +211,7 @@ async def maybe_promote_core(memory_id: int, importance: float,
 async def confirm_memory(memory_id: int) -> None:
     """用户确认信号（"对/没错/记得"）：confirmation_count+1，达阈值自动晋升。失败静默。"""
     try:
+        _snap: dict | None = None
         async with async_session_factory() as db:
             m = await db.get(Memory, memory_id)
             if m is None:
@@ -122,7 +223,11 @@ async def confirm_memory(memory_id: int) -> None:
                 # 禁令 1 同口径：确认计数照旧累加（用户信号不丢），但未认可的感知条不因此拿到 is_core
                 m.is_core = True
                 m.core_category = _core_category(m.sub_type, m.memory_type) or "identity"
+                _snap = _promote_snapshot(m, m.core_category)  # 批 0-8：本次由「用户确认」促成的晋升
             await db.commit()
+        if _snap is not None:
+            _emit_promote_audit(_snap, rule=_RULE_USER_CONFIRMATION,
+                                trigger="confirmation", evicted_id=None)
     except Exception as e:
         _logger.warning("confirm_memory failed mem=%s: %s", memory_id, e)
 

@@ -73,6 +73,19 @@ AGENT_FLAGS = {
     #   关=意图不参与、走旧链路逐字节等价（默认关，可灰度/一键回退）。
     "memory_chain_builder": False,
     "memory_chain_expand": False,
+    # ── 批 0-7（2026-09-28，雷达 08）召回排序显式 recency ＋ 命中记忆的相邻块 ──
+    # 两个独立开关（可只开其一：①纯打分、②多一条只读查询），**均默认 False＝逐字节旧行为**。
+    # 为什么不用既有 flag 承载：memory_temporal_recall / memory_recall_second_hop / memory_peak_cutoff /
+    #   memory_chain_expand 生产 runtime_flags **已拨开**，复用任一把闸＝上线即改行为，违背「默认关」硬要求；
+    #   且四条语义各不相干（用户点时间才补路 / 模型主动补查 / 弱相关弃权 / 沿链而非时间邻域）。
+    "recall_recency_bonus": False,  # ①rerank 加显式时效档位（≤24h +20 / ≤7d +15 / ≤30d +10，分档不叠加，与既有 +20/+15/+10 同量级）；开=新条更易靠前（截断场景可挤掉低分旧条），条数/预算不变
+    "recall_neighbor_block": False,  # ②命中条带出同角色（群记忆同群）±30 分钟邻居——**只补本轮不足 limit 的空缺槽位**，不挤占已有结果、不新增条数；memory_peak_cutoff 开时不生效（不破坏弃权语义）
+    # ── 批 0-11（2026-09-28，雷达 44）专名匹配「第三路」──
+    # 默认 False＝那条 LIKE 粗筛查询一次都不发、RRF 仍是两路、排序与 trace 逐字节旧行为。
+    # 开＝在向量（bge-m3）+ 关键词（BM25）之外补一路**确定性**专名匹配（人名/昵称/关系称谓，
+    #   纯字符串+正则+字典，零模型零外网零新依赖，见 memory/entity_match.py），命中的 id 并入
+    #   既有 RRF 与 _rerank：只多一路证据（重叠即 +5），不插队、不剔除、条数与预算不变。
+    "recall_entity_match": False,
     "proactive_outreach_v2": False,
     # B1-③ 配额让位（2026-09-08，用户拍板）：proactive_inactive_char_skip 开=近 24h 内无任何用户
     #   消息的角色直接停发主动搭话（greeting/proactive_chat/goodnight/status_update/motivation）——

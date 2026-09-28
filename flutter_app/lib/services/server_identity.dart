@@ -13,10 +13,16 @@ import 'secure_token_store.dart';
 /// 跨实现契约必须与 `backend/app/server_identity.py` 逐字节一致（派单以该实现为准）：
 ///
 ///     shared  = HKDF-SHA256(ikm=code, salt="ambrace-id-v1", info="ambrace-pair-v1", L=32)
-///     fp      = HMAC-SHA256(shared, "ambrace-fp-v1")[:6].hex()      → 12 位十六进制，4-4-4 展示
+///     ks      = HKDF-SHA256(ikm=code, salt="ambrace-id-v1", info="ambrace-ks-v1",  L=32)
+///     site    = wrapped_key XOR ks          # 身份密钥（全站单份），配对时以密钥流包裹后下发
+///     fp      = HMAC-SHA256(site, "ambrace-fp-v1")[:6].hex()  → 12 位十六进制，4-4-4 展示
 ///     pairMac = HMAC-SHA256(shared, "v1\n" + challenge).hex()
-///     proof   = "v1 {ts} " + HMAC-SHA256(shared, "\n".join([nonce, status,
+///     proof   = "v1 {ts} " + HMAC-SHA256(site, "\n".join([nonce, status,
 ///                sha256(body).hex(), ts])).hex()
+///
+/// **验签用的密钥是 site，不是 code 派生的 shared**：身份密钥全站单份，签发新配对码、
+/// 第二台设备配对都不更换它（后端方案 §6-R5）。因此配对成功必须解包 wrapped_key 拿到
+/// site，绝不能拿 shared 去验签——shared 只用于配对 mac，拿它验签会条条不符。
 ///
 /// 三条口径同后端：配对码绝不过网（只本地派生）；只防伪造不防窃听；
 /// **未配对 / 校验模式 off 时本文件不改变任何既有请求与响应处理**。
@@ -36,13 +42,30 @@ enum VerifyOutcome {
   malformed,
 }
 
+/// 保护状态三档（App「服务器身份」入口显示用，方案 §4.5：**不许制造全绿错觉**）。
+enum ProtectionState {
+  /// 未配对（本机没有该服务器的身份密钥，或该地址换过服务器需要重新配对）
+  unpaired,
+
+  /// 部分受保护：已配对，但白名单外的通道（图片/音频直链、下载直链、SSE 分块、
+  /// WebSocket 帧、原生通道）不做签名校验；验签模式非 enforce，或本轮出现过未签名/不符，
+  /// 也归这一档（宁少报不多报）
+  partial,
+
+  /// 未受保护：已配对但验签模式为 off（默认档），请求照发照收、不做任何校验
+  unprotected,
+
+  /// 受保护：enforce 档，且本轮受管请求全部验签通过（仍只是「白名单内」受保护）
+  guarded,
+}
+
 /// 配对结果（[ServerIdentity.pair] 不抛异常，统一返回值，便于 UI 走 l10n 文案）。
 class PairResult {
   final bool ok;
   final String serverName;
   final String fingerprint;
 
-  /// 失败原因（`no_code` / `rejected` / `network`），成功时为 null
+  /// 失败原因（`no_code` / `rejected` / `network` / `unsupported` / `fp_mismatch`），成功时为 null
   final String? failure;
 
   const PairResult.success(this.serverName, this.fingerprint)
@@ -60,8 +83,11 @@ class PairResult {
 
 /// 服务器身份（每 App 安装一份，绑定配对时的服务器地址）。
 class ServerIdentity {
-  ServerIdentity({SecureKeyValueStore? secure})
-      : _secure = secure ?? const FlutterSecureKeyValueStore();
+  ServerIdentity({SecureKeyValueStore? secure, Dio Function(BaseOptions)? newDio})
+      : _secure = secure ?? const FlutterSecureKeyValueStore(),
+        _newDio = newDio ?? _defaultDio;
+
+  static Dio _defaultDio(BaseOptions options) => Dio(options);
 
   static final ServerIdentity instance = ServerIdentity();
 
@@ -77,6 +103,10 @@ class ServerIdentity {
   static const List<int> _hkdfInfo = [
     // ambrace-pair-v1
     0x61, 0x6d, 0x62, 0x72, 0x61, 0x63, 0x65, 0x2d, 0x70, 0x61, 0x69, 0x72, 0x2d, 0x76, 0x31
+  ];
+  static const List<int> _hkdfKsInfo = [
+    // ambrace-ks-v1（包裹身份密钥用的密钥流派生标签，与 pair-mac 密钥分开）
+    0x61, 0x6d, 0x62, 0x72, 0x61, 0x63, 0x65, 0x2d, 0x6b, 0x73, 0x2d, 0x76, 0x31
   ];
   static const List<int> _fpLabel = [
     // ambrace-fp-v1
@@ -104,8 +134,9 @@ class ServerIdentity {
   static const Duration _secureTimeout = Duration(seconds: 3);
 
   final SecureKeyValueStore _secure;
+  final Dio Function(BaseOptions) _newDio;
 
-  Uint8List? _shared;
+  Uint8List? _site;
   String _pairedBaseUrl = '';
   String _fingerprint = '';
   String _mode = 'off';
@@ -121,7 +152,7 @@ class ServerIdentity {
 
   /// 当前地址是否已完成配对（换地址即视为未配对，必须重新配对）。
   bool get isPaired {
-    final key = _shared;
+    final key = _site;
     if (key == null || key.isEmpty) return false;
     if (_pairedBaseUrl.isEmpty) return false;
     return _pairedBaseUrl == normalizeBaseUrl(ApiClientBaseUrl.current);
@@ -135,6 +166,18 @@ class ServerIdentity {
 
   set verifyMode(String value) {
     _mode = const {'off', 'shadow', 'enforce'}.contains(value) ? value : 'off';
+  }
+
+  /// 入口显示的保护状态（方案 §4.5：白名单外的通道永不声称已覆盖，故最高只到「受保护」
+  /// 而非「全部受保护」；只要不是 enforce 或本轮出现过未签名/不符，一律报「部分受保护」）。
+  ProtectionState get protectionState {
+    if (!isPaired) return ProtectionState.unpaired;
+    if (_mode == 'off') return ProtectionState.unprotected;
+    if (_mode == 'enforce' && mismatchCount == 0 && unsignedCount == 0 &&
+        verifiedCount > 0) {
+      return ProtectionState.guarded;
+    }
+    return ProtectionState.partial;
   }
 
   static String formatFingerprint(String fp) {
@@ -189,7 +232,7 @@ class ServerIdentity {
 
   /// 测试专用：清空进程内状态（与后端 `reset_state_for_test` 对称；生产路径不调用）
   void resetForTest() {
-    _shared = null;
+    _site = null;
     _pairedBaseUrl = '';
     _fingerprint = '';
     _mode = 'off';
@@ -202,11 +245,10 @@ class ServerIdentity {
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
-    _mode = prefs.getString(prefKeyVerifyMode) ?? 'off';
+    verifyMode = prefs.getString(prefKeyVerifyMode) ?? 'off';
     _pairedBaseUrl = prefs.getString(prefKeyBaseUrl) ?? '';
     _fingerprint = prefs.getString(prefKeyFingerprint) ?? '';
-    final stored = await _readStoredKey(prefs);
-    _shared = stored;
+    _site = await _readStoredKey(prefs);
   }
 
   Future<Uint8List?> _readStoredKey(SharedPreferences prefs) async {
@@ -234,8 +276,8 @@ class ServerIdentity {
   }
 
   /// 配对成功后落盘（安全存储 + 明文 prefs 副本供 Kotlin 通道读取）
-  Future<void> _persist(Uint8List shared, String fp, String baseUrl) async {
-    final b64 = base64Encode(shared);
+  Future<void> _persist(Uint8List site, String fp, String baseUrl) async {
+    final b64 = base64Encode(site);
     final prefs = await SharedPreferences.getInstance();
     if (SecureTokenStore.platformSupportsSecure) {
       try {
@@ -247,7 +289,7 @@ class ServerIdentity {
     await prefs.setString(prefKeyIdentity, b64);
     await prefs.setString(prefKeyFingerprint, fp);
     await prefs.setString(prefKeyBaseUrl, normalizeBaseUrl(baseUrl));
-    _shared = shared;
+    _site = site;
     _fingerprint = fp;
     _pairedBaseUrl = normalizeBaseUrl(baseUrl);
   }
@@ -265,7 +307,7 @@ class ServerIdentity {
     await prefs.remove(prefKeyIdentity);
     await prefs.remove(prefKeyFingerprint);
     await prefs.remove(prefKeyBaseUrl);
-    _shared = null;
+    _site = null;
     _fingerprint = '';
     _pairedBaseUrl = '';
   }
@@ -303,8 +345,25 @@ class ServerIdentity {
   static Uint8List deriveShared(String code) => hkdfSha256(
       ascii.encode(code.trim().toUpperCase()), _hkdfSalt, _hkdfInfo);
 
-  static String fingerprintOf(Uint8List shared) =>
-      _hmac(shared, _fpLabel).sublist(0, 6).map(_hex2).join();
+  /// 包裹用密钥流（后端 `derive_keystream`：与 pair-mac 密钥不同标签，互不挪用）
+  static Uint8List deriveKeystream(String code) => hkdfSha256(
+      ascii.encode(code.trim().toUpperCase()), _hkdfSalt, _hkdfKsInfo);
+
+  /// 身份密钥还原：site = wrapped_key XOR ks（与后端 `unwrap_identity` 同法）。
+  /// 十六进制长度/字符合法性不符时返回 null（旧服务器不下发 wrapped_key 等异常形态）。
+  static Uint8List? unwrapIdentity(String wrappedHex, Uint8List keystream) {
+    final hex = wrappedHex.trim().toLowerCase();
+    if (hex.length != keystream.length * 2) return null;
+    // 解析失败先哨兵 -1 判掉：不能塞进 Uint8List（-1 会截断成 255，脏值就混过去了）
+    final raw = List<int>.generate(keystream.length,
+        (i) => int.tryParse(hex.substring(i * 2, i * 2 + 2), radix: 16) ?? -1);
+    if (raw.any((b) => b < 0 || b > 255)) return null;
+    return Uint8List.fromList(
+        List<int>.generate(keystream.length, (i) => raw[i] ^ keystream[i]));
+  }
+
+  static String fingerprintOf(Uint8List key) =>
+      _hmac(key, _fpLabel).sublist(0, 6).map(_hex2).join();
 
   static String _hex2(int b) => b.toRadixString(16).padLeft(2, '0');
 
@@ -333,10 +392,12 @@ class ServerIdentity {
     return signPaths.contains(Uri.tryParse(path)?.path ?? path);
   }
 
-  /// 响应签名 mac（与后端 `proof_for` 的第三段同值）；[bodyText] 必须是原文
-  static String proofMac(Uint8List shared, String nonce, int status,
+  /// 响应签名 mac（与后端 `proof_for` 的第三段同值）；[bodyText] 必须是原文，
+  /// [identityKey] 是配对时解包得到的 site（**不是**配对码派生的 shared）
+  static String proofMac(Uint8List identityKey, String nonce, int status,
           String bodyText, int ts) =>
-      _hmac(shared, utf8.encode(canonicalOf(nonce, status, utf8.encode(bodyText), ts)))
+      _hmac(identityKey,
+              utf8.encode(canonicalOf(nonce, status, utf8.encode(bodyText), ts)))
           .map(_hex2)
           .join();
 
@@ -348,8 +409,8 @@ class ServerIdentity {
     required String bodyText,
     required String? proof,
   }) {
-    final shared = _shared;
-    if (shared == null || shared.isEmpty) return VerifyOutcome.unsigned;
+    final site = _site;
+    if (site == null || site.isEmpty) return VerifyOutcome.unsigned;
     final header = (proof ?? '').trim();
     if (header.isEmpty) {
       unsignedCount++;
@@ -365,7 +426,7 @@ class ServerIdentity {
       mismatchCount++;
       return VerifyOutcome.malformed;
     }
-    final expect = proofMac(shared, nonce, status, bodyText, ts);
+    final expect = proofMac(site, nonce, status, bodyText, ts);
     // 长度不等直接判负（hex 定长，比对本身也不泄露密钥）
     if (expect.length != parts[2].length ||
         expect.toLowerCase() != parts[2].toLowerCase()) {
@@ -388,12 +449,15 @@ class ServerIdentity {
   // ── 配对流程（配对码只在本机派生，网络上只跑 challenge/response）────────────
 
   /// 用桌面控制台显示的 12 位配对码与 [baseUrl] 对应的服务器完成一次配对。
+  ///
+  /// 网络上只跑 challenge / mac / wrapped_key：**配对码不出网**，身份密钥以码派生密钥流
+  /// 包裹后下发，本机解包得到 site 并用它做后续验签（方案 §4.3 / §6-R5）。
   Future<PairResult> pair(String code, String baseUrl) async {
     if (!isPairingCodeValid(code)) return const PairResult.failed('rejected');
     final url = baseUrl.trim();
     if (url.isEmpty) return const PairResult.failed('network');
     final shared = deriveShared(code);
-    final dio = Dio(BaseOptions(
+    final dio = _newDio(BaseOptions(
         baseUrl: url.replaceAll(RegExp(r'/+$'), ''),
         connectTimeout: const Duration(seconds: 5),
         receiveTimeout: const Duration(seconds: 10)));
@@ -410,9 +474,16 @@ class ServerIdentity {
         'mac': pairMac(shared, challenge),
       });
       final data = done.data is Map ? done.data as Map : const {};
-      final fp = (data['fp'] as String?) ?? fingerprintOf(shared);
-      if (fp.isEmpty) return const PairResult.failed('rejected');
-      await _persist(shared, fp, url);
+      final site = unwrapIdentity(
+          (data['wrapped_key'] as String?) ?? '', deriveKeystream(code));
+      if (site == null) return const PairResult.failed('unsupported');
+      final fp = (data['fp'] as String?) ?? '';
+      // 双源自洽：本地解包出的密钥算出的指纹必须等于服务器回带的 fp，
+      // 不等说明下发内容被换过（或码/密钥流派生错位），此时绝不能落盘
+      if (fp.isEmpty || fingerprintOf(site) != fp) {
+        return const PairResult.failed('fp_mismatch');
+      }
+      await _persist(site, fp, url);
       return PairResult.success((data['server_name'] as String?) ?? '', fp);
     } on DioException catch (e) {
       final code409 = e.response?.statusCode;

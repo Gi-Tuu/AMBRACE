@@ -8,6 +8,7 @@ import '../../providers/chat_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
 import '../../services/fcm_push_service.dart';
+import '../../services/server_identity.dart';
 import '../../theme/skins/aegean/aegean_motifs.dart';
 import '../../theme/skins/aegean/aegean_architects.dart';
 import '../../theme/skins/aegean/aegean_geometry.dart';
@@ -69,6 +70,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   void initState() {
     super.initState();
     _serverUrlCtrl.text = context.read<SettingsProvider>().serverUrl;
+    // 批 0-3 M0-b：后台读一次服务器身份状态，读不到就按「未配对」不显示提示（零行为变化）
+    ServerIdentity.instance
+        .ensureLoaded()
+        .catchError((Object _) {})
+        .then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -634,6 +642,36 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
+  /// 批 0-3 M0-b：服务器身份「未配对」提示与入口（方案 §4.3.4）。
+  /// 只做提示与跳转，不在引导页做任何信任判定；状态读不到 / 已配对时不显示。
+  Widget _identityHint(AppLocalizations l10n) {
+    final identity = ServerIdentity.instance;
+    if (!identity.isLoaded || identity.isPaired) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: Row(
+        children: [
+          Icon(Icons.shield_outlined, size: 16, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              // 本机存有旧指纹 ⇒ 是「换过服务器」，不是首次未配对
+              identity.fingerprint.isNotEmpty
+                  ? l10n.serverIdentityReconnectNeeded
+                  : l10n.serverIdentityEntryHint,
+              style: TextStyle(fontSize: AppTypography.helperSize),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pushNamed('/pair-server'),
+            child: Text(l10n.serverIdentityEntryPair),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _stepServer(AppLocalizations l10n) {
     return _scroll(children: [
       _title(l10n, l10n.onboardingServerTitle, l10n.onboardingServerDesc),
@@ -651,6 +689,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         ),
       ),
       const SizedBox(height: AppSpacing.sm),
+      _identityHint(l10n),
       _outlineButton(
         text: l10n.testConnection,
         onPressed: _testingServer ? null : _testServer,

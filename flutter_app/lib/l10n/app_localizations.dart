@@ -14493,6 +14493,24 @@ abstract class AppLocalizations {
   /// **'解除配对'**
   String get serverIdentityUnpair;
 
+  /// No description provided for @serverIdentityStatusUnprotected.
+  ///
+  /// In zh, this message translates to:
+  /// **'已配对（指纹 {fp}），但当前是「不校验」档，一条都没验'**
+  String serverIdentityStatusUnprotected(Object fp);
+
+  /// No description provided for @serverIdentityStatusPartial.
+  ///
+  /// In zh, this message translates to:
+  /// **'部分受保护（指纹 {fp}）'**
+  String serverIdentityStatusPartial(Object fp);
+
+  /// No description provided for @serverIdentityStatusGuarded.
+  ///
+  /// In zh, this message translates to:
+  /// **'受保护（指纹 {fp}）：白名单端点逐条验签通过'**
+  String serverIdentityStatusGuarded(Object fp);
+
   /// No description provided for @serverIdentityModeLabel.
   ///
   /// In zh, this message translates to:
@@ -14547,6 +14565,24 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'尚未与该服务器配对'**
   String get serverIdentityEntryHint;
+
+  /// No description provided for @serverIdentityEntryPair.
+  ///
+  /// In zh, this message translates to:
+  /// **'去配对'**
+  String get serverIdentityEntryPair;
+
+  /// No description provided for @serverIdentityUnsupported.
+  ///
+  /// In zh, this message translates to:
+  /// **'该服务器不下发身份密钥，请确认后端已升级到支持配对的版本后重试'**
+  String get serverIdentityUnsupported;
+
+  /// No description provided for @serverIdentityFpMismatch.
+  ///
+  /// In zh, this message translates to:
+  /// **'配对自检不通过：本机解出的密钥与服务器回带的指纹不一致，已放弃'**
+  String get serverIdentityFpMismatch;
 
   /// No description provided for @contextBudgetTitle.
   ///

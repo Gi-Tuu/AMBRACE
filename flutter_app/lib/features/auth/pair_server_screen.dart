@@ -47,6 +47,10 @@ class _PairServerScreenState extends State<PairServerScreen> {
         return l10n.serverIdentityNoCode;
       case 'network':
         return l10n.serverIdentityNetworkFail;
+      case 'unsupported':
+        return l10n.serverIdentityUnsupported;
+      case 'fp_mismatch':
+        return l10n.serverIdentityFpMismatch;
       default:
         return l10n.serverIdentityFailedBody;
     }
@@ -119,6 +123,22 @@ class _PairServerScreenState extends State<PairServerScreen> {
     setState(() {});
   }
 
+  /// 三态显示（方案 §4.5：不许制造全绿错觉）。已配对但没开校验时说「未开启校验」，
+  /// 「受保护」也限定在「白名单端点」，图片/音频直链等未覆盖通道由下面的说明文案点明。
+  String _stateText(AppLocalizations l10n, ServerIdentity identity) {
+    final fp = identity.fingerprintDisplay;
+    switch (identity.protectionState) {
+      case ProtectionState.unpaired:
+        return l10n.serverIdentityStatusUnpaired;
+      case ProtectionState.unprotected:
+        return l10n.serverIdentityStatusUnprotected(fp);
+      case ProtectionState.guarded:
+        return l10n.serverIdentityStatusGuarded(fp);
+      case ProtectionState.partial:
+        return l10n.serverIdentityStatusPartial(fp);
+    }
+  }
+
   Widget _statusCard(AppLocalizations l10n, ServerIdentity identity) {
     final paired = identity.isPaired;
     final counters = identity.verifiedCount + identity.mismatchCount + identity.unsignedCount;
@@ -128,9 +148,7 @@ class _PairServerScreenState extends State<PairServerScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(paired
-                ? l10n.serverIdentityStatusPaired(identity.fingerprintDisplay)
-                : l10n.serverIdentityStatusUnpaired),
+            Text(_stateText(l10n, identity)),
             if (paired && counters > 0)
               Padding(
                 padding: const EdgeInsets.only(top: 6),

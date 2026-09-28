@@ -7801,6 +7801,21 @@ class AppLocalizationsZh extends AppLocalizations {
   String get serverIdentityUnpair => '解除配对';
 
   @override
+  String serverIdentityStatusUnprotected(Object fp) {
+    return '已配对（指纹 $fp），但当前是「不校验」档，一条都没验';
+  }
+
+  @override
+  String serverIdentityStatusPartial(Object fp) {
+    return '部分受保护（指纹 $fp）';
+  }
+
+  @override
+  String serverIdentityStatusGuarded(Object fp) {
+    return '受保护（指纹 $fp）：白名单端点逐条验签通过';
+  }
+
+  @override
   String get serverIdentityModeLabel => '验签模式';
 
   @override
@@ -7829,6 +7844,15 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get serverIdentityEntryHint => '尚未与该服务器配对';
+
+  @override
+  String get serverIdentityEntryPair => '去配对';
+
+  @override
+  String get serverIdentityUnsupported => '该服务器不下发身份密钥，请确认后端已升级到支持配对的版本后重试';
+
+  @override
+  String get serverIdentityFpMismatch => '配对自检不通过：本机解出的密钥与服务器回带的指纹不一致，已放弃';
 
   @override
   String get contextBudgetTitle => '上下文注入长度';

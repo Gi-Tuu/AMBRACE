@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     vlm_garbage_restart_threshold: int = 2  # 本地连续垃圾输出达到该次数后重启本地 VLM（占位）
 
     # ---- 服务器 ----
+    # 批 0-3「0 步」：默认 0.0.0.0 刻意不变（改默认会断手机 App 直连），要收窄（只绑 127.0.0.1 /
+    # 某网卡）请显式设环境变量 SERVER_HOST。实际 --host 由 scripts/platform_util.resolve_bind_host
+    # 解析（SERVER_HOST → data/server_config.json 的 server_host → 0.0.0.0）；本字段是后端侧同名
+    # 读数（额外支持 .env），供管理面板回显。收窄请用环境变量：只写 .env 时拉起脚本读不到仍绑 0.0.0.0。
     server_host: str = "0.0.0.0"
     server_port: int = 8000
 

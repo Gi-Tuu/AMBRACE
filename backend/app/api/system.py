@@ -73,6 +73,17 @@ async def identity_pair(request: Request, body: dict):
     return result
 
 
+@router.get("/identity/info")
+async def identity_info():
+    """已配对设备自查：返回 ``server_name`` + ``fp`` 短码。
+
+    **不是信任根**（方案 §3.1）：明文信道下这个响应本身就能被伪造者替换，所以它只用于
+    「设备侧拿本地密钥算出的指纹来对照」，绝不允许拿它当首次连接的信任依据——首连的信任依据
+    是控制台屏幕带外显示、用户亲手确认的那个指纹。匿名可达、不在响应签名白名单内（§7-Q3 最小集）。
+    """
+    return server_identity.identity_info()
+
+
 @router.get("/ready")
 async def ready_check():
     """就绪检查（AMBRACE 3.5）：启动期组件就绪登记快照，据此 200/503。

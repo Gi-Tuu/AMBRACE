@@ -2758,7 +2758,25 @@
   "serverIdentityNoCode": "No pairing code has been issued. Click Generate pairing code in the console first",
   "serverIdentityNetworkFail": "Cannot reach that server address. Check the address and your network",
   "serverIdentityRevoked": "Unpaired. This device no longer verifies that server's identity",
-  "serverIdentityUnpair": "Unpair",
+    "serverIdentityUnpair": "Unpair",
+  "serverIdentityStatusUnprotected": "Paired (fingerprint {fp}), but verification is off \u2014 nothing is checked",
+  "@serverIdentityStatusUnprotected": {
+    "placeholders": {
+      "fp": {}
+    }
+  },
+  "serverIdentityStatusPartial": "Partially protected (fingerprint {fp})",
+  "@serverIdentityStatusPartial": {
+    "placeholders": {
+      "fp": {}
+    }
+  },
+  "serverIdentityStatusGuarded": "Protected (fingerprint {fp}): every whitelisted endpoint verified",
+  "@serverIdentityStatusGuarded": {
+    "placeholders": {
+      "fp": {}
+    }
+  },
   "serverIdentityModeLabel": "Verification mode",
   "serverIdentityModeOff": "Off",
   "serverIdentityModeShadow": "Log only",
@@ -2774,7 +2792,10 @@
   },
   "serverIdentityNote": "The pairing code is only used locally to derive a key and is never sent; only a challenge and its answer go over the network.",
   "serverIdentityReconnectNeeded": "The server address changed; pairing is required again",
-"serverIdentityEntryHint": "This server is not paired yet",
+  "serverIdentityEntryHint": "This server is not paired yet",
+  "serverIdentityEntryPair": "Pair now",
+  "serverIdentityUnsupported": "This server does not provide an identity key; update the backend to a pairing-capable version",
+  "serverIdentityFpMismatch": "Pairing self-check failed: the key decoded locally does not match the fingerprint returned",
   "contextBudgetTitle": "Context length",
   "contextBudgetDrawerHint": "Tune how much background is injected each turn",
   "contextBudgetTierSection": "Injection tier",

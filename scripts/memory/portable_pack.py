@@ -8,6 +8,14 @@
 - 冲突一律走 ``memory_id + version`` 合并规则，**禁止简单覆盖（last-write-wins）**；
 - 导入遵循 Knowledge Scope（user/character 不串线），且**不把 superseded/stale 复活成 active**。
 
+导出骨架＝通用骨架（批 0-13 对齐，只加字段、不改语义）：每条记忆一个可读单元，
+frontmatter 按 ``FRONTMATTER_ORDER`` **恒定顺序、恒定键集**书写（缺值写 null），字段分三档——
+``FIELD_MUST_KEEP`` 必须保留（类型/来源/时间/归属/版本/状态，丢了会错）、
+``FIELD_FIDELITY_KEEP`` 尽量携带（丢了只降往返保真度）、``FIELD_DROPPABLE`` 可丢（seq、pack_schema
+属自描述与排序冗余，导入端不依赖）；正文与向量分离，向量可离线重建（``--reembed``）。
+``PACK_VERSION`` 维持 1：新包只多带 ``manifest.skeleton`` 与若干 frontmatter 字段，
+旧读端忽略未知键即可；旧包（无 skeleton）由导入/校验按向后兼容兜底，一律照常可读。
+
 用法：
   # 导出活记忆（可检索集 = active/stale）
   python -m scripts.memory.portable_pack export --user 1 --char 3 --out sam.mempak
@@ -54,6 +62,7 @@ PACK_FORMAT = "ambrace-mempak"
 PACK_VERSION = 1
 PACK_SCHEMA = "ambrace-mempak/v1"
 PAGE_BUDGET = 8 * 1024  # 单页不超过 ~8KB（编码后字节）
+PAGE_NAME_MIN_PAD = 4  # 页面序号最小零填充宽度（同包内等宽 ⇒ 文件名字典序＝序号数值序）
 # 可检索集 = {active, stale}（与 #70 `_retrievable_status_clause` 口径一致，但导出不受运行时
 # supersede flag 影响——确定性、可离线复现；superseded 走 cold archive，不在此列）
 RETRIEVABLE_STATUSES = ("active", "stale")
@@ -62,6 +71,8 @@ EMBED_MODEL = "bge-m3"
 EMBED_DIM = 1024
 
 # frontmatter 必填字段（§10.2 一一对应，保证可还原）
+# 口径说明：这组是**校验口径**（可还原性字段全集，缺任一 ⇒ validate 判 issue），
+# 与下面 FIELD_POLICY 的**语义分档**（哪些真的不能丢）正交，两者都保留以便旧包照常校验。
 FRONTMATTER_REQUIRED = (
     "memory_id",
     "memory_type",
@@ -88,7 +99,89 @@ FRONTMATTER_EXTRA = (
     "valid_from",
     "valid_to",
 )
-FRONTMATTER_FIELDS = FRONTMATTER_REQUIRED + FRONTMATTER_EXTRA
+
+# ── 通用骨架（批 0-13 对齐；**只加字段、不改语义**）────────────────────────
+# 三件事：
+#   1) 固定书写顺序 FRONTMATTER_ORDER —— 每条记忆的 frontmatter 键集与顺序恒定，
+#      便于 grep/对账/diff，也让「导出→导入→再导出」逐字节可复现；
+#   2) 补齐关键字段 —— 归属（user_id/character_id）与包内稳定序号（seq）、
+#      单条自描述（pack_schema），原先只有 manifest 持有归属，页面单独拿出来读不出归属；
+#   3) 明确取舍 —— 见 FIELD_POLICY 三档。
+# 版本策略：PACK_VERSION 维持 1（骨架是增量，旧读端忽略未知键即可读新包）；
+# 新包在 manifest 里带 skeleton 标注，无该标注即视为「旧包」，导入/校验一律向后兼容。
+PACK_SKELETON = "ambrace-mempak-skeleton/v1"
+
+# 语义必需：丢了会造成条目无法定位、或记忆类型/来源/时间/生命周期/版本失真
+FIELD_MUST_KEEP = (
+    "memory_id",
+    "memory_type",
+    "source",
+    "created_at",
+    "status",
+    "version",
+)
+# 冗余可丢：自描述与排序辅助信息，导入端完全不依赖，瘦手工/人工裁剪时可丢
+FIELD_DROPPABLE = (
+    "seq",
+    "pack_schema",
+)
+# 保真字段：丢了不致错，但会降低往返保真度（排序权重、链关系、归属提示等），导出恒写
+FIELD_FIDELITY_KEEP = (
+    "user_id",
+    "character_id",
+    "sub_type",
+    "title",
+    "speaker",
+    "speaker_id",
+    "valid_from",
+    "valid_to",
+    "chain_id",
+    "parent_id",
+    "importance",
+    "strength",
+    "epistemic",
+    "reliability",
+    "is_core",
+    "is_pinned",
+    "why_it_matters",
+)
+# 固定书写顺序：标识与归属 → 类型 → 来源 → 时间 → 版本与状态 → 链路 → 权重可靠度 → 备注
+FRONTMATTER_ORDER = (
+    "seq",
+    "pack_schema",
+    "memory_id",
+    "user_id",
+    "character_id",
+    "memory_type",
+    "sub_type",
+    "title",
+    "source",
+    "speaker",
+    "speaker_id",
+    "created_at",
+    "valid_from",
+    "valid_to",
+    "version",
+    "status",
+    "chain_id",
+    "parent_id",
+    "importance",
+    "strength",
+    "epistemic",
+    "reliability",
+    "is_core",
+    "is_pinned",
+    "why_it_matters",
+)
+# 字段策略表（写进 manifest，使包自带「哪些必须保留、哪些可丢」的机器可读契约）
+FIELD_POLICY = {
+    **{k: "must_keep" for k in FIELD_MUST_KEEP},
+    **{k: "fidelity_keep" for k in FIELD_FIDELITY_KEEP},
+    **{k: "droppable" for k in FIELD_DROPPABLE},
+}
+# 骨架新增字段：旧包没有它们，校验侧只降级为警告（向后兼容），不得判失败
+FRONTMATTER_SKELETON_ADDED = ("seq", "pack_schema", "user_id", "character_id")
+FRONTMATTER_FIELDS = FRONTMATTER_ORDER
 
 # ── 脱敏红线（§10.4 #4）：导出前对可见文本做密钥/内部敏感模式替换 ──
 _SECRET_PATTERNS = (
@@ -193,16 +286,20 @@ def _redact_record(record: dict) -> tuple[dict, int]:
 
 
 def _record_to_meta(record: dict) -> dict:
-    """从导出记录（宽字段）抽出 frontmatter 字段（不含 content——content 是正文）。"""
+    """从导出记录（宽字段）抽出 frontmatter 字段（不含 content——content 是正文）。
+
+    通用骨架口径：按 FRONTMATTER_ORDER **恒定写出全部骨架字段**（记录里没有的写 null），
+    这样 ① 键集与顺序恒定（可 grep / 可 diff / 往返逐字节可复现）② 单条页面自带归属与
+    自描述，脱离 zip 也能读出「谁的、哪一条、第几版」。正文与非骨架字段不进 frontmatter。
+    """
     meta: dict = {}
-    # 先用必填顺序，再补扩展，保证 yaml 输出稳定、可读
-    for k in FRONTMATTER_REQUIRED + FRONTMATTER_EXTRA:
-        if k in record:
-            # 时间字段统一 ISO 字符串；数值转 float
-            if k in ("created_at", "valid_from", "valid_to"):
-                meta[k] = record[k]
-            else:
-                meta[k] = record[k]
+    for k in FRONTMATTER_ORDER:
+        v = record.get(k)
+        if k == "pack_schema" and not v:
+            v = PACK_SCHEMA  # 单条自描述：缺省时补当前 schema 标识
+        if k == "seq" and v is not None:
+            v = _int_or_none(v)
+        meta[k] = v
     return meta
 
 
@@ -215,6 +312,12 @@ def build_frontmatter(record: dict) -> str:
 def build_block(record: dict) -> str:
     """单条记忆的完整页块 = frontmatter + 正文。"""
     return build_frontmatter(record) + (record.get("content") or "") + "\n"
+
+
+def _page_name(idx: int, page_count: int) -> str:
+    """页面文件名：同包内等宽零填充，保证字典序＝序号数值序（页数超 4 位时自动加宽）。"""
+    pad = max(PAGE_NAME_MIN_PAD, len(str(max(page_count - 1, 0))))
+    return f"pages/{idx:0{pad}d}.md"
 
 
 def chunk_records(records: list[dict], page_budget: int = PAGE_BUDGET) -> tuple[list[str], int]:
@@ -299,12 +402,22 @@ def build_manifest(
     embed_model: str = EMBED_MODEL,
     embed_dim: int = EMBED_DIM,
 ) -> dict:
-    """构造 manifest.json（§10.2：版本/导出时间/作用域/计数/嵌入模型名与维度/bge 版本）。"""
+    """构造 manifest.json（§10.2：版本/导出时间/作用域/计数/嵌入模型名与维度/bge 版本）。
+
+    骨架标注（批 0-13，只加不改）：``skeleton`` / ``frontmatter_order`` / ``field_policy``
+    让包自带「字段顺序 + 哪些必须保留、哪些可丢」的机器可读契约；``PACK_VERSION`` 维持 1，
+    旧读端忽略未知键即可读新包，新读端见到无 ``skeleton`` 的包按旧包向后兼容处理。
+    """
     now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     return {
         "format": PACK_FORMAT,
         "version": PACK_VERSION,
         "schema": PACK_SCHEMA,
+        "skeleton": PACK_SKELETON,
+        "frontmatter_order": list(FRONTMATTER_ORDER),
+        "field_policy": dict(FIELD_POLICY),
+        "fields_must_keep": list(FIELD_MUST_KEEP),
+        "fields_droppable": list(FIELD_DROPPABLE),
         "user_id": user_id,
         "character_id": character_id,
         "scope": scope,
@@ -323,15 +436,22 @@ def build_manifest(
 
 def _readme_text(manifest: dict) -> str:
     return (
-        f"AMBRACE 可移植记忆包（{PACK_FORMAT} v{PACK_VERSION}）\n"
+        f"AMBRACE 可移植记忆包（{PACK_FORMAT} v{PACK_VERSION}，骨架 {manifest.get('skeleton') or PACK_SCHEMA}）\n"
         f"导出时间：{manifest.get('exported_at')}\n"
         f"作用域：user={manifest.get('user_id')} / character={manifest.get('character_id')} / scope={manifest.get('scope')}\n"
         f"记忆条数：{manifest.get('count')} | 页面：{manifest.get('page_count')}\n"
         f"嵌入模型：{manifest.get('embed_model')}（dim={manifest.get('embed_dim')}）| 含向量：{manifest.get('vectors_included')}\n"
         f"\n"
+        f"字段口径（哪些必须保留、哪些可丢，机器可读版见 manifest.field_policy）：\n"
+        f"  必须保留（丢了会错）：{'、'.join(FIELD_MUST_KEEP)}\n"
+        f"  尽量携带（丢了只降保真度）：{'、'.join(FIELD_FIDELITY_KEEP)}\n"
+        f"  可丢（纯冗余，导入不依赖）：{'、'.join(FIELD_DROPPABLE)}\n"
+        f"  frontmatter 书写顺序恒定：{'、'.join(manifest.get('frontmatter_order') or FRONTMATTER_ORDER)}\n"
+        f"\n"
         f"⚠️ 本包包含用户与角色的敏感对话记忆，请妥善保管（复用本地存储加密约定，勿外发）。\n"
         f"此文件仅用于 导出/冷归档/迁移，不用于运行时热路径；导入遵循 Knowledge Scope，\n"
         f"不会把 superseded/stale 记忆复活成 active，冲突按 memory_id+version 合并而非覆盖。\n"
+        f"旧包（无 skeleton 标注）照常可读：缺 seq/pack_schema/user_id/character_id 时按 manifest 作用域与字段兜底导入。\n"
     )
 
 
@@ -421,6 +541,16 @@ def validate_pack(
         seen_page.add(pg["file"])
         if pg.get("size", 0) > PAGE_BUDGET:
             warnings.append(f"WARN {pg['file']}: 页面 {pg['size']}B 超预算 {PAGE_BUDGET}B（超预算单条合法，记录于 manifest.oversized_pages）")
+    # ── 骨架对账（批 0-13）：一律降级为警告，旧包必须照常通过校验 ──
+    if not manifest.get("skeleton"):
+        warnings.append(f"WARN 旧包骨架：manifest 无 skeleton 标注（读作 {PACK_SCHEMA}）；导入按向后兼容兜底")
+    else:
+        order = manifest.get("frontmatter_order")
+        if order and list(order) != list(FRONTMATTER_ORDER):
+            warnings.append("WARN manifest.frontmatter_order 与本地骨架书写顺序不一致（读取不受影响，再导出以本地顺序为准）")
+        absent = [k for k in FRONTMATTER_SKELETON_ADDED if not any(k in pg["meta"] for pg in pages)]
+        if absent:
+            warnings.append(f"WARN 骨架字段全包缺失：{absent}（新导出应恒带；缺失只降保真度，不阻断导入）")
     if issues:
         return False, issues, manifest
     return True, warnings, manifest
@@ -456,6 +586,8 @@ def _memory_to_record(m) -> dict:
     """ORM Memory → 导出记录（宽字段）。"""
     return {
         "memory_id": m.id,
+        "user_id": m.user_id,            # 归属（骨架补齐：页面脱离 manifest 也能自证归属）
+        "character_id": m.character_id,  # 归属
         "memory_type": m.memory_type,
         "sub_type": m.sub_type,
         "title": m.title,
@@ -490,6 +622,9 @@ def _archive_to_record(row) -> dict:
         payload = {}
     return {
         "memory_id": row.memory_id or payload.get("id"),
+        # 归属：优先取归档行的列（memory_archive 自带 user_id/character_id），回落 payload
+        "user_id": getattr(row, "user_id", None) or payload.get("user_id"),
+        "character_id": getattr(row, "character_id", None) or payload.get("character_id"),
         "memory_type": payload.get("memory_type") or "event",
         "sub_type": payload.get("sub_type"),
         "title": payload.get("title"),
@@ -570,6 +705,10 @@ async def export_pack(
         r, n = _redact_record(rec)
         redactions += n
         cleaned.append(r)
+    # 通用骨架：包内稳定序号（1 起，随导出顺序＝memory_id 升序单调递增）。
+    # 只用于定位/对账/断言顺序，导入端不消费它 ⇒ 旧包没有 seq 也照常导入。
+    for i, r in enumerate(cleaned, start=1):
+        r["seq"] = i
     pages, oversized = chunk_records(cleaned, page_budget)
     # 本实现不携带向量快照（--with-vectors 仅作意图标记；跨嵌入模型/维度可移植），
     # 目标端可用 --reembed 由本地 bge 重嵌，故 manifest.vectors_included 恒为 False。
@@ -588,12 +727,13 @@ async def export_pack(
     with zipfile.ZipFile(out_abs, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
         for i, page in enumerate(pages):
-            z.writestr(f"pages/{i:04d}.md", page)
+            z.writestr(_page_name(i, len(pages)), page)
         z.writestr("README.txt", _readme_text(manifest))
     return {
         "status": "ok",
         "out": out_abs,
         "scope": scope,
+        "skeleton": PACK_SKELETON,
         "user_id": user_id,
         "character_id": character_id,
         "count": len(cleaned),
@@ -696,6 +836,8 @@ def _incoming_to_record(incoming) -> dict:
     """Memory ORM → 宽记录（用于冷归档 payload 还原）。"""
     return {
         "memory_id": incoming.id,
+        "user_id": incoming.user_id,            # 归属随 payload 一起留档，二次导出可自证
+        "character_id": incoming.character_id,  # 归属
         "memory_type": incoming.memory_type,
         "sub_type": incoming.sub_type,
         "title": incoming.title,
@@ -775,6 +917,21 @@ async def _reembed_imported(memory_ids: list[int], character_id: int) -> int:
     return n
 
 
+def _hint_scope_from_pages(pages: list[dict], key: str) -> int | None:
+    """从页面 frontmatter 推断归属（骨架新增字段）：全体一致且非空才采纳，否则 None。
+
+    仅作**补位**用（manifest 没给 user_id/character_id 时兜一手），不改变
+    「manifest 有值即以 manifest 为准」的既有语义；旧包没有该字段时返回 None，行为同现状。
+    """
+    vals: set[int] = set()
+    for pg in pages:
+        v = _int_or_none(pg["meta"].get(key))
+        if v is None:
+            return None
+        vals.add(v)
+    return vals.pop() if len(vals) == 1 else None
+
+
 async def import_pack(
     pack_path: str,
     *,
@@ -783,13 +940,32 @@ async def import_pack(
     with_vectors: bool = False,
     reembed: bool = False,
 ) -> dict:
-    """导入 .mempak；返回报告 dict。默认不重嵌（见模块说明），--reembed 显式触发。"""
+    """导入 .mempak；返回报告 dict。默认不重嵌（见模块说明），--reembed 显式触发。
+
+    向后兼容（批 0-13 只加不改）：骨架新增字段（seq / pack_schema / user_id / character_id）
+    在旧包里一概没有，导入端一律走原口径（作用域取 manifest 或 CLI，字段取兜底默认值）；
+    新包多出来的归属信息只用于**计数与提示**，不参与冲突判定、不改合并动作。
+    """
     manifest, pages = read_pack(pack_path)
     scope = manifest.get("scope") if manifest.get("scope") in ("all", "archived") else "all"
-    if target_user is None:
+
+    scope_from: dict[str, str] = {}
+    if target_user is not None:
+        scope_from["user_id"] = "cli"
+    elif manifest.get("user_id") is not None:
         target_user = manifest.get("user_id")
-    if target_char is None:
+        scope_from["user_id"] = "manifest"
+    else:
+        target_user = _hint_scope_from_pages(pages, "user_id")
+        scope_from["user_id"] = "frontmatter"
+    if target_char is not None:
+        scope_from["character_id"] = "cli"
+    elif manifest.get("character_id") is not None:
         target_char = manifest.get("character_id")
+        scope_from["character_id"] = "manifest"
+    else:
+        target_char = _hint_scope_from_pages(pages, "character_id")
+        scope_from["character_id"] = "frontmatter"
     if target_user is None or target_char is None:
         raise PackError("导入需确定目标作用域（manifest 缺失或 --user/--char 未给）")
     target_user, target_char = int(target_user), int(target_char)
@@ -799,6 +975,10 @@ async def import_pack(
         "scope": scope,
         "manifest_scope": manifest.get("scope"),
         "target": {"user_id": target_user, "character_id": target_char},
+        "scope_from": scope_from,
+        "skeleton": manifest.get("skeleton"),
+        # 无 skeleton 标注＝旧包（v1 原始骨架），按向后兼容读取
+        "legacy_pack": not manifest.get("skeleton"),
         "total": len(pages),
         "insert": 0,
         "update": 0,
@@ -806,6 +986,8 @@ async def import_pack(
         "skipped": 0,
         "archived": 0,
         "reembedded": 0,
+        # 包内 frontmatter 归属与本次目标作用域不一致的条数（仅提示，不改变动作）
+        "scope_hint_mismatch": 0,
     }
 
     from app.db.database import async_session_factory
@@ -825,6 +1007,10 @@ async def import_pack(
                 report["skipped"] += 1
                 continue
             incoming = _meta_to_incoming(meta, pg["content"], target_user, target_char, mid)
+            # 归属提示对账（只计数、不改动作：落库作用域仍按本次目标，Knowledge Scope 口径不变）
+            hint = (_int_or_none(meta.get("user_id")), _int_or_none(meta.get("character_id")))
+            if None not in hint and hint != (target_user, target_char):
+                report["scope_hint_mismatch"] += 1
             if scope == "archived":
                 act = await _import_archive_row(db, incoming)
                 report[act] = report.get(act, 0) + 1
@@ -861,7 +1047,7 @@ def _cmd_export(args) -> int:
         include_vectors=args.with_vectors,
     ))
     print(f"导出完成 → {report['out']}")
-    print(f"  作用域={report['scope']} user={report['user_id']} char={report['character_id']}")
+    print(f"  骨架={report['skeleton']} 作用域={report['scope']} user={report['user_id']} char={report['character_id']}")
     print(f"  记忆 {report['count']} 条 | 页面 {report['page_count']} | 脱敏 {report['redactions']} | "
           f"超预算页 {report['oversized_pages']}")
     print(f"  嵌入模型={report['embed_model']} (dim={report['embed_dim']}) | 含向量={report['vectors_included']}")
@@ -881,25 +1067,32 @@ def _cmd_import(args) -> int:
         reembed=args.reembed,
     ))
     print(f"导入完成：{args.file}")
+    print(f"  骨架={report['skeleton'] or '（旧包，无 skeleton 标注）'} 作用域来源={report['scope_from']}")
     print(f"  包作用域={report['scope']}（manifest={report['manifest_scope']}）目标 user={report['target']['user_id']} "
           f"char={report['target']['character_id']}")
     print(f"  总计 {report['total']} | 新增 {report['insert']} | 更新 {report['update']} | "
           f"冲突 {report['conflict']} | 跳过 {report['skipped']} | 冷归档 {report['archived']}")
+    if report["scope_hint_mismatch"]:
+        print(f"  ⚠️ 包内 frontmatter 归属与本次目标作用域不一致 {report['scope_hint_mismatch']} 条"
+              f"（仅提示：落库仍按目标作用域，未改写数据）。")
     print(f"  重嵌入 {report['reembedded']} 条（--reembed 才执行；默认为关）")
     return 0
 
 
 def _cmd_validate(args) -> int:
-    ok, issues, manifest = validate_pack(args.file)
+    ok, msgs, manifest = validate_pack(args.file)
     if manifest is not None:
-        print(f"包信息：{manifest.get('format')} v{manifest.get('version')} scope={manifest.get('scope')} "
-              f"user={manifest.get('user_id')} char={manifest.get('character_id')} count={manifest.get('count')} "
-              f"embed={manifest.get('embed_model')}@{manifest.get('embed_dim')}")
+        print(f"包信息：{manifest.get('format')} v{manifest.get('version')} "
+              f"骨架={manifest.get('skeleton') or '（旧包，无 skeleton 标注）'} "
+              f"scope={manifest.get('scope')} user={manifest.get('user_id')} char={manifest.get('character_id')} "
+              f"count={manifest.get('count')} embed={manifest.get('embed_model')}@{manifest.get('embed_dim')}")
     if ok:
         print("校验通过：包结构 / manifest / 分页 / frontmatter 均合法。")
+        for w in msgs:  # ok=True 时该槽返回的是警告（含旧包骨架提示）
+            print(f"  - {w}")
         return 0
     print("校验未通过：")
-    for iss in issues:
+    for iss in msgs:
         print(f"  - {iss}")
     return 1
 

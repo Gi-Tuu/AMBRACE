@@ -19,6 +19,9 @@ enum ChannelCode {
   deadObject,
   networkError,
   empty,
+
+  /// 服务器身份验签不符（批 0-3 M0-b：响应签名与已配对身份密钥对不上）
+  identityMismatch,
   unknown,
 }
 
@@ -170,6 +173,8 @@ class ChannelStatusTracker {
         return ChannelCode.timeout;
       case "ok":
         return ChannelCode.ok;
+      case "identityMismatch":
+        return ChannelCode.identityMismatch;
       default:
         return ChannelCode.unknown;
     }

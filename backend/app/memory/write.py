@@ -103,6 +103,196 @@ def _matched_snapshot_channel(corpus: list[tuple[str | None, str]], content: str
     return corpus[0][0] if corpus else None
 
 
+# ── 批 0-8 写入来源链条（provenance）标注（2026-09-28，雷达 13 ＋ 簇5）──────────────
+# 目标：把「这条记忆是**怎么来的**」标全，为后续治理与评测留证据。硬约束＝**不建表、不加列、
+#       不改任何判据与阈值**——既有判据一个字不动，产物只进 `memory_write_receipts.detail_json`。
+#
+# 为什么不能复用既有列承载（派单要求「能承载就复用」的核对结论）：
+#   - ``sub_type``：值空间是「槽位 / 画像子类型」，且被 ``core._core_category`` 当作**晋升 is_core
+#     的判据**（identity/preference/commitment 低门槛那条路）；往里塞生产者类别会直接改变晋升结果。
+#   - ``source``：检索/注入/隔离都在读它（``perception_tier.is_quarantined``），改写同样伤语义。
+#   - ``node_type`` / ``chain_id`` / ``why_it_matters``：各有既有含义（链结构 / 意义提炼）。
+#   ⇒ 结论：走「纯回执增强」——在**已有的那条 create 回执**上加一个 ``provenance`` 键
+#     （不新增行、不新增列；merge 回执同理补记——否则「并进来的是什么」手上只有 kind/sim）。
+#
+# 为什么不新增 flag（派单允许「零语义变化可不加，需写明理由」）：
+#   1) 只加 JSON 键 ⇒ ``memories`` 行一字未动，检索 / 注入 / 查重 / 晋升判据与阈值零变化；
+#   2) 发射口 ``emit_memory_receipt`` 首行即受既有 flag ``memory_write_receipt``（**默认关**）闸控，
+#      关＝零写入 ⇒ 默认已是逐字节旧行为，再加一层闸只会多出「两个开关」的口径漂移；
+#   3) 本单文件隔离不允许改 ``app/agent/loop.py`` / ``application/flag_catalog.py``，
+#      新键登记不进默认表与目录、运行期也热切不了（与 M4 准入闸门的处置同一口径）。
+#
+# 取值空间**以生产库实测为准**（2026-09-28 只读 ``select source, sub_type, count(*) … group by``，
+# 前几名：chat/extracted 4183、chat/relationship 1707、life/life_event 1232、moment/moment 806、
+# chat/status 778、game/game_summary 726、chat/(空) 375、diary/diary 279、pet/(空) 253、
+# system/(空) 84、group/group 78、summary/summary 48、global_sync、privacy_request、reflection…）。
+#
+# 只读查询口径（留证怎么用，全部 ``mode=ro``，不写库）：
+#   -- 某条记忆的来路（route / 生产者 / 证据锚点 / 本轮生效的改写）
+#   SELECT r.action, r.reason, r.detail_json
+#     FROM memory_write_receipts r WHERE r.memory_id = ? ORDER BY r.id;
+#   -- 按来源链条聚合看占比（SQLite json_extract，detail 里那条键就叫 provenance）
+#   SELECT json_extract(r.detail_json, '$.provenance.route') AS route, count(*)
+#     FROM memory_write_receipts r WHERE r.action = 'create' GROUP BY route ORDER BY 2 DESC;
+#   -- 晋升审计（哪条记忆、什么时候、因为什么进了核心）见 memory/core.py 同名说明块
+_PROVENANCE_VERSION = 1
+_PROVENANCE_ROUTE_KEYS = (
+    "perception", "extracted", "model_marked", "self_narrative",
+    "digest", "system_event", "cross_role_sync", "unregistered",
+)
+# AI 自述族：角色自己产出的内容（日记 / 自述 / 生活引擎 / 复盘 / 朋友圈 / 状态与状态触发）
+_SELF_NARRATIVE_SOURCES = frozenset({
+    "diary", "bio", "life", "reflection", "moment", "status", "state_eval", "state_trigger",
+})
+# 摘要族：对既有记忆 / 对局的二次概括（置顶摘要、游戏小结）
+_DIGEST_SOURCES = frozenset({"summary", "game"})
+# 离散系统事件族：一次一件事、不参与语义合并（宠物、群聊流水、隐私审批回执）
+_SYSTEM_EVENT_SOURCES = frozenset({"pet", "group", "system", "privacy_request"})
+# 跨角色事实同步（memory/cross_char_sync.py：用户级事实镜像到各角色）
+_CROSS_SYNC_SOURCES = frozenset({"global_sync"})
+
+
+def _extractor_slot_names() -> frozenset:
+    """提取器可能写进 ``sub_type`` 的槽名——单一事实源取 ``user_facts.MUTABLE_SLOTS``（防两处漂移）。
+
+    读不到就返回空集：归类面缺槽名时，这些行只会落到 ``extracted``（chat 有子类型 ⇒ 仍算提取器），
+    不会误判成别的生产者，属可接受的粗化。
+    """
+    try:
+        from app.memory.user_facts import MUTABLE_SLOTS
+        return frozenset(MUTABLE_SLOTS)
+    except Exception:
+        return frozenset()
+
+
+def _provenance_route(source, sub_type) -> str:
+    """「怎么来的」＝生产者类别（纯判定，只读入参，不碰库、不改任何写入取值）。
+
+    ``chat`` 一支按 ``sub_type`` 有无劈开：**有子类型**＝提取器（``extractor.extract_single`` 的
+    槽位 / 画像子类型 / RELATIONSHIP / meta_guard 都会写子类型）；**空**＝【记忆：】标记路径与
+    关键词规则 ``extract_info_from_message``（两者在今天**无法区分**，同一落点：source=chat 且
+    sub_type 为空——如实并成 ``model_marked``，不硬造第三个桶）。
+    """
+    s = (source or "").strip().lower()
+    if s == PERCEPTION_SOURCE:
+        return "perception"
+    if s in _SELF_NARRATIVE_SOURCES:
+        return "self_narrative"
+    if s in _DIGEST_SOURCES:
+        return "digest"
+    if s in _SYSTEM_EVENT_SOURCES:
+        return "system_event"
+    if s in _CROSS_SYNC_SOURCES:
+        return "cross_role_sync"
+    if s == "chat":
+        return "extracted" if (sub_type or "").strip() else "model_marked"
+    # 其余（含 source 为空）＝**未登记**：新增写入方自动暴露在这里，而不是被塞进某个既有桶蒙混过去
+    return "unregistered"
+
+
+def _provenance_evidence_kind(source, source_id, derived_from_ids) -> str:
+    """证据锚点类型：这条凭什么落库（可回溯到哪个对象上）。"""
+    s = (source or "").strip().lower()
+    if s == PERCEPTION_SOURCE:
+        return "phone_snapshot"
+    if source_id is not None:
+        return "chat_message" if s == "chat" else "record"
+    if derived_from_ids:
+        return "derived_memory"
+    return "none"
+
+
+def _derive_provenance(*, source, sub_type, memory_type, actor, source_id,
+                       epistemic_status, derived_from_ids=None, node_type=None,
+                       gates=None, stored_sub_type=None) -> dict:
+    """组装来源链条（纯函数，零 IO）。
+
+    只新增键、不解释键：``route``（怎么来的）＋ ``actor``（谁产生的）＋ ``evidence``（凭什么）＋
+    ``gates``（本轮真实生效的改写）＋ ``stored``（落库时那几列的原值，便于一条回执看全链条）。
+    ``actor`` 取**准入闸门判定后**的归属（与 ``memories.speaker_type`` 可以不同——闸门解析出的
+    归属今天不落任何列，这里顺带留一份）。``stored_sub_type`` 传入行内存的 sub_type，
+    以便看出 L4 计划回忆化把 ``extracted`` 改名成 ``plan`` 这类改写。
+    """
+    _slots = _extractor_slot_names()
+    _st = (sub_type or "").strip()
+    return {
+        "v": _PROVENANCE_VERSION,
+        "route": _provenance_route(source, sub_type),
+        "slot": _st if _st in _slots else None,
+        "actor": (actor or "unset"),
+        "evidence": {
+            "kind": _provenance_evidence_kind(source, source_id, derived_from_ids),
+            "source_id": source_id,
+            "derived_from_ids": list(derived_from_ids or []),
+            "node_type": node_type,
+        },
+        "gates": list(gates or []),
+        "stored": {
+            "source": source,
+            "sub_type": stored_sub_type if stored_sub_type is not None else sub_type,
+            "memory_type": memory_type,
+            "epistemic_status": epistemic_status,
+        },
+    }
+
+
+def _write_provenance(*, source, sub_type, memory_type, actor, source_id,
+                      epistemic_status, derived_from_ids=None, node_type=None,
+                      gates=None, stored_sub_type=None) -> dict | None:
+    """来源链条留痕的**失败隔离**外壳：推导万一出错 ⇒ 返回 None（照旧不带该键）。
+
+    留痕永远不得改变写入结果——判据、取值、返回值一律不动。
+    """
+    try:
+        return _derive_provenance(
+            source=source, sub_type=sub_type, memory_type=memory_type, actor=actor,
+            source_id=source_id, epistemic_status=epistemic_status,
+            derived_from_ids=derived_from_ids, node_type=node_type,
+            gates=gates, stored_sub_type=stored_sub_type,
+        )
+    except Exception as _e:
+        _logger.warning("provenance derive failed (fail-open): src=%s err=%s", source, _e)
+        return None
+
+
+def _merge_receipt_detail(kind, target, *, source, sub_type, memory_type, source_id,
+                          speaker_type, epistemic_status, derived_from_ids, node_type,
+                          content, extra: dict | None = None) -> dict:
+    """并入（merge）回执的补记（批 0-8）。
+
+    旧回执只带 ``kind`` / ``sim``：看不出「并进来的是哪句话、由谁经哪条路写的、并进了哪一条」——
+    并入是新内容**唯一**的留痕现场（不产生新行，落库后那句话就消失了）。这里补三段，既有键一字不动：
+    ``incoming``＝未落库那句话的写法参数；``into``＝被并到的旧行的来源三列（跨来源并条的证据面）；
+    ``provenance``＝那句话自己的来源链条（``stored`` 即 incoming，因为本路没有新行可存）。
+    """
+    _det = {"kind": kind}
+    if extra:
+        _det.update(extra)
+    _det["incoming"] = {
+        "content_excerpt": (content or "")[:60],
+        "memory_type": memory_type,
+        "source": source,
+        "sub_type": sub_type,
+        "speaker_type": speaker_type,
+        "epistemic_status": epistemic_status,
+    }
+    if target is not None:
+        _det["into"] = {
+            "memory_id": target.id,
+            "source": target.source,
+            "sub_type": target.sub_type,
+            "memory_type": target.memory_type,
+        }
+    _prov = _write_provenance(
+        source=source, sub_type=sub_type, memory_type=memory_type,
+        actor=speaker_type, source_id=source_id, epistemic_status=epistemic_status,
+        derived_from_ids=derived_from_ids, node_type=node_type,
+    )
+    if _prov:
+        _det["provenance"] = _prov
+    return _det
+
+
 # ── M4 写入准入闸门（flag `memory_admission_gate`，默认 False；开=确定性裁决，不新增 LLM）──
 # 注意：本 flag 未登记进 app/agent/loop.py 的 AGENT_FLAGS 硬编码默认表（本批文件隔离只允许
 # 改 write.py / events/facts.py），故运行时 flag_service 无法热切它；读取一律走
@@ -385,7 +575,13 @@ async def save_memory(
                               {"hit_id": mem_id, "sim": round(float(sim), 3)}, kind="vector_dedup")
                     emit_memory_receipt(
                         character_id, m.id, ACTION_MERGE, reason="write-time vector dedup",
-                        detail={"kind": "vector_dedup", "sim": round(float(sim), 3)},
+                        detail=_merge_receipt_detail(
+                            "vector_dedup", m, source=source, sub_type=sub_type,
+                            memory_type=memory_type, source_id=source_id,
+                            speaker_type=speaker_type, epistemic_status=epistemic_status,
+                            derived_from_ids=derived_from_ids, node_type=node_type,
+                            content=content, extra={"sim": round(float(sim), 3)},
+                        ),
                     )
                     return m
 
@@ -426,7 +622,13 @@ async def save_memory(
                     obs_event(character_id, "dual_write_dup_merge", {"hit_id": m.id}, kind="text_dedup")
                     emit_memory_receipt(
                         character_id, m.id, ACTION_MERGE, reason="write-time text dedup",
-                        detail={"kind": "text_dedup"},
+                        detail=_merge_receipt_detail(
+                            "text_dedup", m, source=source, sub_type=sub_type,
+                            memory_type=memory_type, source_id=source_id,
+                            speaker_type=speaker_type, epistemic_status=epistemic_status,
+                            derived_from_ids=derived_from_ids, node_type=node_type,
+                            content=content,
+                        ),
                     )
                     return m
 
@@ -469,7 +671,14 @@ async def save_memory(
                               kind="merge")
                     emit_memory_receipt(
                         character_id, _m.id, ACTION_MERGE, reason="write-time topic merge 24h",
-                        detail={"kind": "merge", "sim": round(SequenceMatcher(None, _a, b).ratio(), 3)},
+                        detail=_merge_receipt_detail(
+                            "merge", _m, source=source, sub_type=sub_type,
+                            memory_type=memory_type, source_id=source_id,
+                            speaker_type=speaker_type, epistemic_status=epistemic_status,
+                            derived_from_ids=derived_from_ids, node_type=node_type,
+                            content=content,
+                            extra={"sim": round(SequenceMatcher(None, _a, b).ratio(), 3)},
+                        ),
                     )
                     return _m
 
@@ -531,6 +740,7 @@ async def save_memory(
         # flag review_plan_validity_extract 灰度默认关；关=零行为（不写不标，逐字节旧路径）。
         # 提取器（extractor.extract_single / 【记忆】标记路径）所有写入都经 save_memory，故在此单点收口；
         # 显式 sub_type（slot/status/relationship 等）不覆盖，只收敛默认/extracted 路径。
+        _sub_type_before_plan = sub_type  # 批 0-8：留痕要能看出「被 L4 改名成 plan」这一步（不改判据）
         try:
             from app.agent.loop import AGENT_FLAGS
             if AGENT_FLAGS.get("review_plan_validity_extract", False):
@@ -572,16 +782,36 @@ async def save_memory(
                 pass
 
         # #70 M3 写入回执：新记忆落库成功（flag 开=异步写一条 create；关=零行为）
+        # 批 0-8：同一条回执里补 `provenance`（来源链条）——既有四个键的语义与取值一字未动。
+        # `gates` 只登记**本轮真实生效**的改写，供治理面复盘「这条为什么长成这样」：
+        #   perception_tagged＝批 0-2 打标改了来源归属；admission_pending_review＝M4 待核降级；
+        #   plan_renamed＝L4 把 sub_type 收敛成 plan（判定用的是改名前的 sub_type，故 route 不受影响）。
         try:
+            _gates = []
+            if _perception_tagged:
+                _gates.append("perception_tagged")
+            if _pending:
+                _gates.append("admission_pending_review")
+            if memory.sub_type != _sub_type_before_plan:
+                _gates.append("plan_renamed")
+            _prov = _write_provenance(
+                source=source, sub_type=sub_type, memory_type=memory.memory_type,
+                actor=_spk, source_id=source_id, epistemic_status=_epi,
+                derived_from_ids=derived_from_ids, node_type=node_type,
+                gates=_gates, stored_sub_type=memory.sub_type,
+            )
+            _detail = {
+                "memory_type": memory.memory_type,
+                "sub_type": memory.sub_type,
+                "source": memory.source,
+                "importance": float(memory.importance or 0),
+            }
+            if _prov:
+                _detail["provenance"] = _prov
             emit_memory_receipt(
                 character_id, memory.id, ACTION_CREATE,
                 reason="new memory written",
-                detail={
-                    "memory_type": memory.memory_type,
-                    "sub_type": memory.sub_type,
-                    "source": memory.source,
-                    "importance": float(memory.importance or 0),
-                },
+                detail=_detail,
             )
         except Exception:
             pass

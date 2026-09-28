@@ -8,7 +8,7 @@ app.memory.service，调用时解析；其余稳定名字模块级 import）。�
 import json
 import time
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.models.memory import Memory
 from app.memory.embedding_cache import get_cached_embedding
@@ -66,10 +66,226 @@ def _quarantine_penalty(source, epistemic_status) -> float:
         return 0.0
 
 
+# ── 批 0-7 任务①（2026-09-28，雷达 08）：召回排序的「显式 recency」项 ──
+# 既有加分里只有两处带时间，且都按 sub_type/source 触发（关系/情绪近 7 天 +15、状态/剧情近 3 天 +10）：
+# 一条昨天写下的普通 event 与一条三年前写下的同分 event 在时效上**没有任何差别**，只能靠 importance 硬拼。
+# 这里补一个对所有记忆都生效的显式档位，取值刻意与既有档位同量级（+20/+15/+10）：足以让「新」与
+# 「为什么重要」(+20)、「多路命中」(+5/路) 正面对撞，又盖不过 importance（0~120 量级）与置顶（+500）。
+# 分档**不叠加**：每条只取自己所在那一档，30 天以上为 0（与旧行为完全一致，也不与 days>60 的 x0.8 相互纠缠）。
+RECENCY_TIERS: tuple[tuple[float, float], ...] = (
+    (24.0, 20.0),         # 24 小时内：今天/刚才发生的事最该先看到
+    (24.0 * 7, 15.0),     # 7 天内：本周
+    (24.0 * 30, 10.0),    # 30 天内：近期
+)
+
+
+def _recency_bonus_on() -> bool:
+    """批 0-7 任务①：显式 recency 是否生效（flag 默认关＝排序逐字节旧行为）；异常回落 False（R8：退得干净）。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("recall_recency_bonus", False))
+    except Exception:
+        return False
+
+
+def _recency_bonus_hours(age_hours: float) -> float:
+    """纯函数：记忆年龄（小时）→ 显式时效加分。越新分越高，只取所在档位、不叠加。
+
+    超出所有档位 ⇒ 0.0（旧行为）；未来时间戳（时钟回拨/脏数据）按最新档处理。
+    """
+    for limit, bonus in RECENCY_TIERS:
+        if age_hours <= limit:
+            return bonus
+    return 0.0
+
+
+# ── 批 0-7 任务②（2026-09-28，雷达 08）：命中记忆的「相邻块」 ──
+# 先核对过现有三条通道，都**不覆盖**这个需求：二跳（memory_recall_second_hop）要模型主动打 [RECALL]
+# 标记才会再查一次；时序召回（memory_temporal_recall）的时间窗来自用户原话解析，不是「命中条目的邻域」；
+# 沿链补充（memory_chain_expand）在注入层按 chain_id/parent_id 找邻居，没挂上链的条根本没有邻居可带。
+# 本单补的缺口＝同角色（群记忆则同群）+ created_at 紧邻的时间邻域：memories 表没有会话外键，
+# 同一轮对话产出的几条记忆在写入时间上天然相邻，用 ±30 分钟窗口近似「同一段对话的邻居」。
+# 只补本轮空缺槽位（见 _expand_neighbor_blocks），不新增条数上限、不挤占任何一条已有结果。
+NEIGHBOR_WINDOW_MINUTES = 30      # 邻域半宽（±30 分钟）
+NEIGHBOR_ANCHOR_MAX = 2           # 只给排序最前的 2 条命中找邻居（与沿链补充同口径，防 SQL 放大）
+NEIGHBOR_PER_ANCHOR_MAX = 2       # 每个锚点最多带出 2 条
+NEIGHBOR_QUERY_LIMIT = 12         # 单锚点窗口内取回上限（邻居异常密集时的体积钳制）
+
+
+def _neighbor_block_on() -> bool:
+    """批 0-7 任务②：相邻块是否生效（flag 默认关＝不额外发任何查询、逐字节旧行为）；异常回落 False。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("recall_neighbor_block", False))
+    except Exception:
+        return False
+
+
+def _pick_nearest(rows: list[dict], anchor_created, cap: int) -> list[dict]:
+    """纯函数：窗口内候选按「与锚点的时间距离」最近优先取 cap 条（同距离按 id 升序，稳定可测）。"""
+    if anchor_created is None or cap <= 0 or not rows:
+        return []
+
+    def _gap(r: dict) -> float:
+        c = r.get("created_at")
+        if c is None:
+            return float("inf")
+        c = c.replace(tzinfo=None) if c.tzinfo else c
+        return abs((c - anchor_created).total_seconds())
+
+    return sorted(rows, key=lambda r: (_gap(r), r.get("id") or 0))[:cap]
+
+
+async def _neighbor_rows_for_anchor(character_id: int, anchor: dict, have: set[int]) -> list[dict]:
+    """单个锚点的时间邻域查询（只读；异常静默 []，绝不影响主链路）。
+
+    have 为「已出现过的 id」集合：本函数会把新候选登记进去，跨锚点共用即可去重。
+    """
+    from datetime import timedelta
+
+    from app.memory.service import async_session_factory
+
+    created = anchor.get("created_at")
+    if created is None:
+        return []
+    created = created.replace(tzinfo=None) if created.tzinfo else created
+    win = timedelta(minutes=NEIGHBOR_WINDOW_MINUTES)
+    cond = [
+        Memory.character_id == character_id,
+        Memory.is_archived == False,   # noqa: E712
+        Memory.memory_type != "working_state",   # M3-a 同口径：工作记忆不进召回
+        Memory.created_at >= created - win,
+        Memory.created_at <= created + win,
+        _retrievable_status_clause(),   # #70-C 双通道过滤（flag 关=永真）
+    ]
+    gid = anchor.get("group_id")
+    if gid is not None:
+        cond.append(Memory.group_id == gid)   # 群记忆只带同群邻居，别把别的群的流水拖进来
+    async with async_session_factory() as db:
+        rows = (await db.execute(
+            select(Memory).where(*cond).order_by(Memory.created_at.asc()).limit(NEIGHBOR_QUERY_LIMIT)
+        )).scalars().all()
+    out: list[dict] = []
+    for m in rows:
+        if m.id == anchor.get("id") or m.id in have:
+            continue
+        have.add(m.id)
+        out.append({
+            "id": m.id,
+            "content": m.content,
+            "type": m.memory_type,
+            "importance": float(m.importance or 0),
+            "created_at": m.created_at,
+        })
+    return out
+
+
+async def _expand_neighbor_blocks(character_id: int, ranked: list[dict], slots: int) -> list[dict]:
+    """给本轮最靠前的命中条带出「±窗口」邻居，最多 slots 条（最近优先）。
+
+    - ranked 须是已过 _rerank 的行（带 created_at/group_id）；
+    - 邻居同样过一次 _rerank 回填字段（输出形状与普通命中逐字节一致，不另开一套字段），
+      但**不参与**本轮排序竞争——调用处只把它塞进「本轮不足 limit 的空缺槽位」。
+    """
+    if slots <= 0 or not ranked:
+        return []
+    try:
+        have = {r["id"] for r in ranked if r.get("id") is not None}
+        picked: list[dict] = []
+        for anchor in ranked[:NEIGHBOR_ANCHOR_MAX]:
+            cand = await _neighbor_rows_for_anchor(character_id, anchor, have)
+            for row in _pick_nearest(cand, anchor.get("created_at"), NEIGHBOR_PER_ANCHOR_MAX):
+                if len(picked) >= slots:
+                    break
+                picked.append(row)
+            if len(picked) >= slots:
+                break
+        if not picked:
+            return []
+        scored = await _rerank(picked, character_id)
+        by_id = {r["id"]: r for r in scored}
+        return [by_id[p["id"]] for p in picked if p["id"] in by_id]
+    except Exception as _e:
+        _logger.warning("neighbor block expand failed char=%s: %s", character_id, _e)
+        return []
+
+
+# ── 批 0-11（2026-09-28，雷达 44）：专名确定性匹配「第三路」 ──
+# 现网召回＝向量（bge-m3）+ 关键词（BM25）两路 RRF 融合，两路都吃「词形」；专名（人名/昵称/
+# 关系称谓）最容易字面错开：问「我妈」而记忆写「母亲」、问「mike」而记忆写「MIKE」、
+# 问「阿明」而记忆写「小明」。本路只做**确定性**匹配（词面抽取与判定见 memory/entity_match.py，
+# 纯字符串/正则/字典，零模型、零外网、零新依赖），命中的 id 并入既有 RRF 与 _rerank——
+# 不另开一套排序、不插队、不剔除任何已有候选，条数上限与 token 预算一律不变。
+# 与批 0-7 的相互作用见 §docs/feature-flags.md 十三（recency 只改次序、邻居只补空缺槽）。
+ENTITY_ROUTE_LIMIT = 8    # 单轮实体路最多带回几条候选（与 limit 解耦，防 LIKE 把候选池灌满）
+ENTITY_REASON_TRACE_MAX = 5   # trace 里最多记几条命中理由（体积钳制）
+
+
+def _entity_match_on() -> bool:
+    """批 0-11：专名第三路是否生效（flag 默认关＝不发那条 LIKE 查询、逐字节旧行为）；异常回落 False。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("recall_entity_match", False))
+    except Exception:
+        return False
+
+
+async def _entity_route(character_id: int, query: str) -> tuple[list[dict], dict]:
+    """专名路（只读）：抽词面 → 一条 LIKE 粗筛 → 内存逐条判定，返回 (命中行, 观测元数据)。
+
+    SQL 只负责「粗筛」，是否命中一律以 `hit_reasons` 的归一化比对为准（捞进来但对不上的行
+    一条都不留）；抽不出词面 ⇒ 连查询都不发。任何异常静默退化为空，绝不影响主链路。
+    """
+    from app.memory.entity_match import extract_terms, hit_reasons, pull_literals
+
+    from app.memory.service import async_session_factory
+
+    try:
+        terms = extract_terms(query)
+        if not terms:
+            return [], {"terms": [], "reasons": []}
+        literals = pull_literals(terms)
+        if not literals:
+            return [], {"terms": terms, "reasons": []}
+        conds = [
+            Memory.character_id == character_id,
+            Memory.is_archived == False,   # noqa: E712
+            Memory.memory_type != "working_state",   # M3-a 同口径：工作记忆不进召回
+            or_(*[Memory.content.like(f"%{_like_escape(s)}%", escape="\\") for s in literals]),
+            _retrievable_status_clause(),   # #70-C 双通道过滤（flag 关=永真）
+        ]
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(Memory).where(*conds)
+                .order_by(Memory.importance.desc(), Memory.created_at.desc())
+                .limit(ENTITY_ROUTE_LIMIT)
+            )).scalars().all()
+        out: list[dict] = []
+        reasons: list[dict] = []
+        for m in rows:
+            hit = hit_reasons(m.content or "", terms)
+            if not hit:
+                continue
+            out.append({
+                "id": m.id,
+                "content": m.content,
+                "type": m.memory_type,
+                "importance": float(m.importance or 0),
+                "created_at": m.created_at,
+            })
+            _r = hit[0]
+            reasons.append({"id": m.id, "term": _r["term"], "via": _r["via"],
+                            "literal": _r["literal"], "folded": _r["folded"]})
+        return out, {"terms": terms, "reasons": reasons[:ENTITY_REASON_TRACE_MAX]}
+    except Exception as _e:
+        _logger.warning("entity route failed char=%s: %s", character_id, _e)
+        return [], {"terms": [], "reasons": []}
+
+
 async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, int] | None = None, relevance_bonus: dict[int, float] | None = None, return_debug: bool = False, _keep_score: bool = False):
     """B2 检索加权（向量路径与 keyword 兜底共用，M-P2-3）：以 DB 为准补全元数据
     （向量 meta 的 importance 可能过期），加分项：置顶恒在前、关系/情绪类近 7 天 +15、
-    状态/剧情来源近 3 天 +10；60 天以上旧记忆 x0.8 抑制，避免旧记忆重要性虚高盖过
+    状态/剧情来源近 3 天 +10、显式 recency 档位（批 0-7 任务①，flag 门控）；60 天以上旧记忆 x0.8 抑制，避免旧记忆重要性虚高盖过
     近期关系温度。v2.1 加成：被多路查询召回（多路命中）说明与当前话题/情绪更相关，
     每多一路 +5。回填查询过滤 is_archived（向量残留的已软删记忆直接剔除，不参与注入）。
 
@@ -81,6 +297,7 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
     if not results:
         return ([], {"db_pool": 0, "rerank_top": []}) if return_debug else []
     now = _now_naive()
+    _recency_on = _recency_bonus_on()   # 批 0-7 任务①：关 ⇒ 下面那一行加分恒为 0，排序逐字节旧行为
     async with async_session_factory() as db:
         rows = (await db.execute(
             select(Memory).where(
@@ -136,6 +353,11 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
                 score += 15
             if m.source in ("state_trigger", "storyline") and days <= 3:
                 score += 10
+            if _recency_on:
+                # 批 0-7 任务①：显式 recency（对全部记忆生效，与上面两条按 sub_type/source 触发的
+                # 时效加分正交叠加）；flag 关 ⇒ 一行都不执行，逐字节旧排序
+                _age_h = (now - created).total_seconds() / 3600.0 if created else float("inf")
+                score += _recency_bonus_hours(_age_h)
             if m.why_it_matters:
                 score += 20  # 意义记忆（v2.1）：已提炼"为什么重要"的里程碑记忆优先
             if (m.contradiction_count or 0) > 0:
@@ -336,6 +558,8 @@ async def search_memories(
 
     多路查询（原 query + 感知派生查询，最多 4 路）各召回后按 id 合并；
     加权排序（importance + 关系/情绪时效 + 置顶 + 多路命中加成）取 top limit。
+    批 0-11 起在向量 + 关键词之外还有**第三路专名匹配**（flag `recall_entity_match` 默认关＝
+    连查询都不发）：命中的 id 同样并进 RRF 融合与 _rerank，不插队、不改条数（见 _entity_route）。
     """
 
     from app.memory.service import (
@@ -396,16 +620,31 @@ async def search_memories(
         except Exception:
             return []
 
+    # 批 0-11 专名第三路：与向量/BM25 并行；flag 关 ⇒ 立刻返回空，一条查询都不发
+    async def _entity_one() -> tuple[list[dict], dict]:
+        if not _entity_match_on():
+            return [], {"terms": [], "reasons": []}
+        return await _entity_route(character_id, query)
+
     import asyncio as _asyncio
-    # 双路并行：每路对多路查询各自召回（原向量路与新增 BM25 路）
-    dense_hits, sparse_hits = await _asyncio.gather(
+    # 三路并行：向量路与 BM25 路各自对多路查询召回，专名路只发一条 LIKE 查询（批 0-11）
+    dense_hits, sparse_hits, (entity_rows, entity_meta) = await _asyncio.gather(
         _asyncio.gather(*[_dense_one(i) for i in range(len(query_list))]),
         _asyncio.gather(*[_sparse_one(i) for i in range(len(query_list))]),
+        _entity_one(),
     )
 
     # #70-B：稠密/稀疏两路命中 id（每路 ≤5，体积上限）
     debug["dense_hits"] = [d["id"] for _hits in dense_hits for d in (_hits or [])][:5]
     debug["sparse_hits"] = [mid for _hits in sparse_hits for mid, _sc in (_hits or [])][:5]
+    # 批 0-11：专名路命中 + 命中理由（**只在真有命中时多写键** ⇒ flag 关时 trace 逐字节不变）
+    _entity_ids = [r["id"] for r in entity_rows]
+    if _entity_ids:
+        debug["entity_hits"] = _entity_ids[:5]
+        debug["entity_route"] = {
+            "terms": (entity_meta.get("terms") or [])[:4],
+            "reasons": (entity_meta.get("reasons") or [])[:ENTITY_REASON_TRACE_MAX],
+        }
 
     # RRF 融合（2026-08-23 深化）：dense/sparse 各按相关性 rank 归一化，融合分作 relevance_bonus
     # 注入 _rerank；RRF 计算异常时静默退化为纯合并（relevance_bonus 空），不影响主链路。
@@ -417,6 +656,10 @@ async def search_memories(
             _ranked.append([_r["id"] for _r in _hits])
         for _hits in sparse_hits:
             _ranked.append([_mid for _mid, _sc in _hits])
+        if _entity_ids:
+            # 批 0-11：专名路作为**第三路**进同一套 RRF（路序 dense→sparse→entity），
+            # 只贡献一路 rank 证据，不给任何插队特权；旧的两路取值逐字节不变。
+            _ranked.append(_entity_ids)
         _rrf_scores = _rrf.reciprocal_rank_fusion(_ranked, k=_rrf._BRRF_DEFAULT_K)
         relevance_bonus = _rrf.normalized_bonus(_rrf_scores, weight=_rrf._RRF_WEIGHT)
         # #70-B：RRF 融合后按分数降序的 Top10 id（体积上限）
@@ -464,6 +707,16 @@ async def search_memories(
                 })
         except Exception as _e:
             _logger.warning("BM25 sparse hit enrich failed: %s", _e)
+
+    # 合并专名路（批 0-11，flag recall_entity_match 默认关 ⇒ entity_rows 恒空、整段不执行）：
+    # 与前两路完全同构——按 id 去重并入候选池，重叠即多一路命中（_rerank 每多一路 +5），
+    # 不插队、不剔除、不加字段；行已带 content/type/importance，无需再补一次 DB 查询。
+    for _r in entity_rows:
+        _rid = _r["id"]
+        hit_count[_rid] = hit_count.get(_rid, 0) + 1
+        if _rid not in _seen_ids:
+            _seen_ids.add(_rid)
+            results.append(_r)
 
     # P2-4 召回候选命中数（2026-08-23）：多路（向量/BM25）合并去重后的候选池大小（截断/插件追加前），
     # 供「召回 N / 返回 M」展示；行为不变（只改指标）。
@@ -572,6 +825,17 @@ async def search_memories(
         else:
             results = _diversify_by_type(_ranked, limit) if _diversify else _ranked[:limit]
 
+        # 批 0-7 任务②：命中记忆的相邻块（flag recall_neighbor_block 默认关＝不发这条查询）。
+        # 只填「本轮不足 limit 的空缺槽位」：条数上限不变、已有结果一条都不被挤掉，邻居排在直接命中之后。
+        # peak_cutoff 开时跳过——那条 flag 的语义就是「弱相关就少注入/弃权」，拿邻居补空缺会与之相冲。
+        if _neighbor_block_on() and not _peak_on and results and len(results) < limit:
+            _anchors = [r["id"] for r in results[:NEIGHBOR_ANCHOR_MAX]]
+            _nbrs = await _expand_neighbor_blocks(character_id, results, limit - len(results))
+            if _nbrs:
+                results = results + _nbrs
+                if _trace_debug:
+                    debug["neighbor_block"] = {"anchors": _anchors, "added": len(_nbrs)}
+
     # 插件 Hook：memory_search（调整/追加召回记忆；插件返回的 dict 列表追加到结果，原结果让位给插件追加；异常隔离）
     try:
         from app.plugins.registry import run_hook_collect
@@ -659,8 +923,12 @@ async def search_memories(
             route = "hybrid"
         elif _sparse_has:
             route = "sparse"
-        else:
+        elif _dense_has:
             route = "dense"
+        else:
+            # 批 0-11：双路皆无候选、只有专名路出候选（旧逻辑只会落到 "keyword"，
+            # 该分支在 flag 关时到不了 ⇒ 既有 route 取值一个都没变）
+            route = "entity"
         if _trace_debug:
             # #70-B：把汇总 debug 写透（只多写 trace，防膨胀：steps_json 硬上限 8000 字符）
             debug["route"] = route

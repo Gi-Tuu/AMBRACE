@@ -9,6 +9,12 @@
 - 校验：异常包（坏 zip / 缺 manifest / count 不一致 / 缺 frontmatter 字段）报 issue；
 - 脱敏红线：导出文本命中密钥/敏感模式被替换，敏感键名被剔除。
 
+批 0-13（通用骨架对齐，只加不改语义）另覆盖：
+- 旧包样本（v1 原始 frontmatter／无 skeleton 标注）导入与校验照常通过（向后兼容 ≥6 例）；
+- 新包骨架：frontmatter 键集与书写顺序恒定、包内稳定序号 seq、归属字段补齐；
+- 字段契约三档自洽（必须保留 / 尽量携带 / 可丢）；
+- 导出→导入→再导出逐字节相同、重复导入状态不变（往返幂等 1 例）。
+
 项目未装 pytest-asyncio，统一 asyncio.run 同步执行；临时 SQLite 文件库，不触碰 backend/data。
 """
 import asyncio
@@ -19,6 +25,7 @@ import zipfile
 from datetime import datetime
 
 import pytest
+import yaml
 
 from _dbclone import clone_engine, make_session_factory
 
@@ -138,6 +145,72 @@ def _write_pak(path, manifest, pages, *, extra_files=None, include_readme=True):
             z.writestr(name, blob)
         if include_readme:
             z.writestr("README.txt", pp._readme_text(manifest))
+
+
+# ── 批 0-13：旧包（v1 原始骨架）样本工具 ─────────────────────────────────
+
+# 骨架标注项（新导出才有；旧包一律没有 ⇒ 用于构造向后兼容样本）
+_SKELETON_MANIFEST_KEYS = ("skeleton", "frontmatter_order", "field_policy",
+                           "fields_must_keep", "fields_droppable")
+# 旧包 frontmatter 字段集（0-13 之前的原始 21 键，无 seq/pack_schema/user_id/character_id）
+_LEGACY_META = {
+    "memory_id": 11,
+    "memory_type": "event",
+    "created_at": "2026-07-15T00:00:00",
+    "importance": 60.0,
+    "strength": 8.0,
+    "epistemic": "FACT",
+    "reliability": 0.9,
+    "chain_id": "c-1",
+    "parent_id": None,
+    "speaker": "user",
+    "source": "app_chat",
+    "status": "active",
+    "sub_type": None,
+    "title": None,
+    "speaker_id": 7,
+    "version": 2,
+    "is_core": False,
+    "is_pinned": True,
+    "why_it_matters": None,
+    "valid_from": None,
+    "valid_to": None,
+}
+
+
+def _legacy_manifest(count, page_count, *, scope="all"):
+    """旧包 manifest：剥掉骨架标注，等价于 0-13 之前导出的包。"""
+    man = pp.build_manifest(user_id=_PACK_USER_ID, character_id=_PACK_CHAR_ID,
+                            scope=scope, count=count, page_count=page_count)
+    for k in _SKELETON_MANIFEST_KEYS:
+        man.pop(k, None)
+    return man
+
+
+def _legacy_block(meta: dict, content: str) -> str:
+    """旧包页面样本：frontmatter 只写 v1 原始字段（新骨架字段一概不出现）。"""
+    fm = yaml.safe_dump(dict(meta), allow_unicode=True, sort_keys=False)
+    return f"---\n{fm}---\n{content}\n"
+
+
+def _page_bytes(pak: str) -> dict:
+    """包内页面原文字节（页面名 → 内容），用于逐字节比对往返结果。"""
+    with zipfile.ZipFile(pak) as z:
+        return {nm: z.read(nm) for nm in sorted(z.namelist()) if nm.startswith("pages/")}
+
+
+_SNAP_FIELDS = (
+    "id", "user_id", "character_id", "memory_type", "sub_type", "title", "content",
+    "importance", "strength_days", "epistemic_status", "reliability_score",
+    "chain_id", "parent_id", "speaker_type", "speaker_id", "source", "status",
+    "version", "is_core", "is_pinned", "why_it_matters", "valid_from", "valid_to",
+    "created_at",
+)
+
+
+def _snap(m) -> tuple:
+    """记忆行的可携带字段快照（幂等性比对用）。"""
+    return tuple(getattr(m, f) for f in _SNAP_FIELDS)
 
 
 # ── 导出：manifest / frontmatter / 分页 / 默认不含向量 ───────────────
@@ -425,3 +498,232 @@ def test_decide_import_action_纯函数():
     assert pp.decide_import_action(
         {"user_id": 1, "character_id": 3, "status": "active", "version": 0},
         {"user_id": 9, "character_id": 4, "status": "active", "version": 1})[0] == "conflict"
+
+
+# ── 批 0-13：通用骨架（新包恒定键集/顺序/序号 + 归属补齐）────────────────
+
+def test_新包骨架_键集与书写顺序恒定_序号连续_归属补齐(monkeypatch, tmp_path):
+    engine, fac = _build_db(str(tmp_path / "src"))
+    _patch_factory(monkeypatch, fac)
+    _seed(fac, memory_type="event", user_id=1, character_id=3, content="骨架第一条",
+          importance=60.0, strength_days=8.0, epistemic_status="FACT", reliability_score=0.9,
+          chain_id="c-1", speaker_type="user", speaker_id=7, source="app_chat",
+          status="active", version=2, created_at=datetime(2026, 7, 15))
+    _seed(fac, memory_type="preference", user_id=1, character_id=3, content="骨架第二条",
+          importance=70.0, strength_days=12.0, epistemic_status="FACT", reliability_score=0.8,
+          chain_id=None, speaker_type="user", source="app_chat", status="active",
+          version=0, is_core=True, created_at=datetime(2026, 7, 2))
+    _seed(fac, memory_type="insight", user_id=1, character_id=3, content="骨架第三条",
+          importance=40.0, epistemic_status="INFERRED", status="stale", version=3,
+          source="reflection", created_at=datetime(2026, 6, 1), valid_to=datetime(2026, 6, 30))
+
+    pak = str(tmp_path / "skel.mempak")
+    _run(pp.export_pack(1, 3, pak, scope="all"))
+    man, pages = pp.read_pack(pak)
+    assert len(pages) == 3
+    # manifest 自带机器可读契约
+    assert man["skeleton"] == pp.PACK_SKELETON
+    assert man["frontmatter_order"] == list(pp.FRONTMATTER_ORDER)
+    assert man["field_policy"] == pp.FIELD_POLICY
+    assert man["fields_must_keep"] == list(pp.FIELD_MUST_KEEP)
+    assert man["fields_droppable"] == list(pp.FIELD_DROPPABLE)
+    # 每条页面：键集与顺序恒定（缺值写 null，不省略键）＋ 归属与自描述补齐
+    seqs = []
+    for pg in pages:
+        meta = pg["meta"]
+        assert list(meta.keys()) == list(pp.FRONTMATTER_ORDER)
+        assert meta["user_id"] == 1 and meta["character_id"] == 3
+        assert meta["pack_schema"] == pp.PACK_SCHEMA
+        seqs.append(meta["seq"])
+    assert seqs == [1, 2, 3]  # 包内稳定序号连续递增（＝导出顺序 memory_id 升序）
+    # 页面文件名等宽零填充 ⇒ 字典序＝序号数值序（同包内宽度一致）
+    names = sorted({pg["file"] for pg in pages})
+    assert len({len(n) for n in names}) == 1, names
+    assert all(n.startswith("pages/") and n.endswith(".md") for n in names)
+    # 新包校验通过，且不再出现「旧包骨架」警告
+    ok, msgs, _ = pp.validate_pack(pak)
+    assert ok is True, msgs
+    assert not any("旧包骨架" in m for m in msgs)
+    engine.sync_engine.dispose()
+
+
+def test_字段契约三档划分自洽():
+    tiers = (pp.FIELD_MUST_KEEP, pp.FIELD_FIDELITY_KEEP, pp.FIELD_DROPPABLE)
+    # 三档无重叠
+    assert sum(len(t) for t in tiers) == len(set().union(*tiers))
+    # 全覆盖骨架字段，且策略表取值只有三档
+    assert set(pp.FRONTMATTER_ORDER) == set(pp.FIELD_POLICY)
+    assert set(pp.FIELD_POLICY.values()) == {"must_keep", "fidelity_keep", "droppable"}
+    # 派生兼容：必填（校验口径）+ 扩展（旧 Extra）＝骨架全集去掉新增键
+    assert set(pp.FRONTMATTER_REQUIRED) | set(pp.FRONTMATTER_EXTRA) | set(pp.FRONTMATTER_SKELETON_ADDED) \
+        == set(pp.FRONTMATTER_ORDER)
+    # 语义必需字段都在旧校验严格集内（version 例外：它在旧 Extra 里，旧导出也总带）
+    assert set(pp.FIELD_MUST_KEEP) <= set(pp.FRONTMATTER_REQUIRED) | set(pp.FRONTMATTER_EXTRA)
+    # 派单点名的关键字段都在骨架里：类型/来源/时间/版本＝必需，归属＝新增可缺
+    assert {"memory_type", "source", "created_at", "version", "status"} <= set(pp.FIELD_MUST_KEEP)
+    assert {"user_id", "character_id"} <= set(pp.FRONTMATTER_SKELETON_ADDED) & set(pp.FIELD_FIDELITY_KEEP)
+    # 可丢档必须真的无人依赖：导入端构造 ORM 时不读这些键
+    import inspect
+    src = inspect.getsource(pp._meta_to_incoming)
+    for k in pp.FIELD_DROPPABLE:
+        assert f'"{k}"' not in src, f"可丢字段 {k} 不应被导入端消费"
+
+
+# ── 批 0-13：向后兼容（旧包样本必须照常读 / 导 / 校验）──────────────────
+
+def test_旧包样本_无骨架字段仍可导入(monkeypatch, tmp_path):
+    engine, dst = _build_db(str(tmp_path / "dst"))
+    _patch_factory(monkeypatch, dst)
+    pak = str(tmp_path / "legacy.mempak")
+    pages = [
+        _legacy_block(_LEGACY_META, "旧包里的第一条记忆"),
+        _legacy_block({**_LEGACY_META, "memory_id": 12, "memory_type": "preference",
+                       "is_core": True, "version": 0, "chain_id": None}, "旧包里的第二条记忆"),
+    ]
+    _write_pak(pak, _legacy_manifest(2, 2), pages)
+    rep = _run(pp.import_pack(pak))
+    assert rep["insert"] == 2 and rep["conflict"] == 0 and rep["skipped"] == 0
+    assert rep["legacy_pack"] is True and rep["skeleton"] is None
+    assert rep["scope_from"] == {"user_id": "manifest", "character_id": "manifest"}
+    a = _run(_get(dst, 11))
+    b = _run(_get(dst, 12))
+    assert (a.user_id, a.character_id) == (1, 3)          # 归属回落 manifest（旧包页面里没有）
+    assert a.content == "旧包里的第一条记忆" and a.version == 2 and a.status == "active"
+    assert a.created_at.replace(tzinfo=None) == datetime(2026, 7, 15)
+    assert a.reliability_score == 0.9 and a.strength_days == 8.0 and a.speaker_id == 7
+    assert b.memory_type == "preference" and b.is_core is True and int(b.version) == 0
+    engine.sync_engine.dispose()
+
+
+def test_旧包样本_缺可选字段走兜底默认(monkeypatch, tmp_path):
+    engine, dst = _build_db(str(tmp_path / "dst"))
+    _patch_factory(monkeypatch, dst)
+    pak = str(tmp_path / "legacy_partial.mempak")
+    # 只给最早期必填键（连 status/version 都缺）
+    pages = [_legacy_block({"memory_id": 21, "memory_type": "event",
+                            "created_at": "2026-08-01T00:00:00"}, "缺一半字段的旧包记忆")]
+    _write_pak(pak, _legacy_manifest(1, 1), pages)
+    rep = _run(pp.import_pack(pak))
+    assert rep["insert"] == 1 and rep["skipped"] == 0
+    m = _run(_get(dst, 21))
+    assert m.status == "active" and int(m.version) == 0 and m.source is None
+    assert m.is_core is False and m.memory_type == "event"
+    assert m.created_at.replace(tzinfo=None) == datetime(2026, 8, 1)
+    engine.sync_engine.dispose()
+
+
+def test_旧包样本_validate通过且仅给骨架警告(tmp_path):
+    pak = str(tmp_path / "legacy_valid.mempak")
+    _write_pak(pak, _legacy_manifest(1, 1), [_legacy_block(_LEGACY_META, "旧包校验样本")])
+    ok, msgs, man = pp.validate_pack(pak)
+    assert ok is True, msgs
+    assert man.get("skeleton") is None
+    assert any("旧包骨架" in m for m in msgs), msgs
+    # 旧包若缺可还原字段，仍按原口径判 issue（校验严格度未因骨架对齐而放宽）
+    bad = str(tmp_path / "legacy_bad.mempak")
+    _write_pak(bad, _legacy_manifest(1, 1),
+               [_legacy_block({"memory_id": 31, "memory_type": "event"}, "旧包缺必填字段")])
+    ok2, msgs2, _ = pp.validate_pack(bad)
+    assert ok2 is False and any("created_at" in m for m in msgs2), msgs2
+
+
+def test_旧包样本_冷归档无归属字段仍可导入(monkeypatch, tmp_path):
+    engine, dst = _build_db(str(tmp_path / "dst"))
+    _patch_factory(monkeypatch, dst)
+    pak = str(tmp_path / "legacy_arc.mempak")
+    meta = {**_LEGACY_META, "memory_id": 41, "status": "superseded",
+            "valid_to": "2026-06-01T00:00:00", "created_at": "2026-05-01T00:00:00"}
+    _write_pak(pak, _legacy_manifest(1, 1, scope="archived"), [_legacy_block(meta, "旧包里的冷归档记忆")])
+    rep = _run(pp.import_pack(pak))
+    assert rep["archived"] == 1 and rep["insert"] == 0
+    hot = _run(_rows(dst, Memory))
+    assert all(m.id != 41 for m in hot), "旧包冷归档导入不得写热表"
+    arc = _run(_rows(dst, MemoryArchive))
+    assert any(a.memory_id == 41 and (a.user_id, a.character_id) == (1, 3) for a in arc)
+    engine.sync_engine.dispose()
+
+
+def test_旧包样本_归属补位与缺值补齐纯函数():
+    pages = [{"meta": {"user_id": 5, "character_id": 9}}, {"meta": {"user_id": 5, "character_id": 9}}]
+    assert pp._hint_scope_from_pages(pages, "user_id") == 5
+    assert pp._hint_scope_from_pages(pages, "character_id") == 9
+    assert pp._hint_scope_from_pages([{"meta": {"user_id": 5}}, {"meta": {}}], "user_id") is None
+    assert pp._hint_scope_from_pages([{"meta": {"user_id": 5}}, {"meta": {"user_id": 6}}], "user_id") is None
+    # 旧记录（缺新骨架字段）→ 恒定键集，缺值写 null，不报错
+    meta = pp._record_to_meta({"memory_id": 1, "memory_type": "event"})
+    assert list(meta.keys()) == list(pp.FRONTMATTER_ORDER)
+    assert meta["user_id"] is None and meta["seq"] is None
+    assert meta["pack_schema"] == pp.PACK_SCHEMA  # 单条自描述总带上
+    # 旧包页面照常解析，不会因为多了骨架字段而失败
+    m2, c2 = pp.parse_page(_legacy_block(_LEGACY_META, "旧包正文"), filename="p.md")
+    assert c2 == "旧包正文" and m2["memory_id"] == 11 and "seq" not in m2
+
+
+def test_新包归属提示与目标不一致_只计数不改动作(monkeypatch, tmp_path):
+    engine, dst = _build_db(str(tmp_path / "dst"))
+    _patch_factory(monkeypatch, dst)
+    man = pp.build_manifest(user_id=_PACK_USER_ID, character_id=_PACK_CHAR_ID,
+                            scope="all", count=1, page_count=1)
+    pak = str(tmp_path / "hint.mempak")
+    # 页面自带归属 99/98，但 manifest 与本次目标是 1/3
+    _write_pak(pak, man, [pp.build_block(_default_record(31, user_id=99, character_id=98))])
+    rep = _run(pp.import_pack(pak))
+    assert rep["insert"] == 1 and rep["conflict"] == 0
+    assert rep["scope_hint_mismatch"] == 1
+    m = _run(_get(dst, 31))
+    # Knowledge Scope 口径不变：仍按本次目标作用域落库，提示只记账、不改数据
+    assert (m.user_id, m.character_id) == (_PACK_USER_ID, _PACK_CHAR_ID)
+    engine.sync_engine.dispose()
+
+
+# ── 批 0-13：导出/导入往返幂等 ─────────────────────────────────────────
+
+def test_往返幂等_再导出逐字节相同且重复导入状态不变(monkeypatch, tmp_path):
+    src_engine, src = _build_db(str(tmp_path / "src"))
+    _patch_factory(monkeypatch, src)
+    first = _seed(src, memory_type="event", user_id=1, character_id=3, content="幂等第一条",
+                  importance=60.0, strength_days=8.0, epistemic_status="FACT", reliability_score=0.9,
+                  chain_id="c-1", speaker_type="user", speaker_id=7, source="app_chat",
+                  status="active", version=2, title="标题一", created_at=datetime(2026, 7, 15))
+    _seed(src, memory_type="preference", user_id=1, character_id=3, content="幂等第二条",
+          importance=72.0, strength_days=12.0, epistemic_status="FACT", reliability_score=0.82,
+          chain_id=None, parent_id=first.id, speaker_type="user", speaker_id=7,
+          source="app_chat", status="active", version=0, is_core=True,
+          why_it_matters="用户明确说过", created_at=datetime(2026, 7, 2))
+    _seed(src, memory_type="insight", user_id=1, character_id=3, content="幂等第三条",
+          importance=40.0, epistemic_status="INFERRED", reliability_score=0.5,
+          chain_id="c-2", speaker_type="character", speaker_id=3, source="reflection",
+          status="stale", version=3, valid_from=datetime(2026, 6, 1),
+          valid_to=datetime(2026, 6, 30), created_at=datetime(2026, 6, 1))
+
+    pak_a = str(tmp_path / "a.mempak")
+    rep_a = _run(pp.export_pack(1, 3, pak_a, scope="all"))
+    assert rep_a["count"] == 3
+
+    dst_engine, dst = _build_db(str(tmp_path / "dst"))
+    _patch_factory(monkeypatch, dst)
+    rep_imp = _run(pp.import_pack(pak_a))
+    assert rep_imp["insert"] == 3 and rep_imp["conflict"] == 0
+
+    # 目标库再导出 ⇒ 页面逐字节与源包相同（骨架恒定顺序 + 值域归一 ⇒ 幂等）
+    pak_b = str(tmp_path / "b.mempak")
+    _run(pp.export_pack(1, 3, pak_b, scope="all"))
+    assert _page_bytes(pak_a) == _page_bytes(pak_b)
+    man_a, _ = pp.read_pack(pak_a)
+    man_b, _ = pp.read_pack(pak_b)
+    for k in set(man_a) - {"exported_at"}:
+        assert man_a[k] == man_b[k], k
+
+    # 重复导入同一包：不新增、不冲突，可携带字段快照逐条不变
+    ids = sorted(m.id for m in _run(_rows(dst, Memory)))
+    before = {mid: _snap(_run(_get(dst, mid))) for mid in ids}
+    rep_again = _run(pp.import_pack(pak_a))
+    assert rep_again["insert"] == 0 and rep_again["conflict"] == 0 and rep_again["update"] == 3
+    after = {mid: _snap(_run(_get(dst, mid))) for mid in ids}
+    assert after == before
+    # 第三次导出仍逐字节相同
+    pak_c = str(tmp_path / "c.mempak")
+    _run(pp.export_pack(1, 3, pak_c, scope="all"))
+    assert _page_bytes(pak_a) == _page_bytes(pak_c)
+    src_engine.sync_engine.dispose()
+    dst_engine.sync_engine.dispose()
