@@ -189,12 +189,77 @@ async def send_to_session(
         _logger.warning("Push proactive msg to user failed user=%d: %s", user_id, e)
 
 
+# ── 断点 #8′ E14（2026-09-29）：纪念日通道补最小组内核闸 ──────────────────────────
+# 原先 _check_anniversaries_today 的发送循环零道闸，且 anniversary_recall 在主题熔断
+# 豁免白名单里 ⇒ 全链路无任何频控。只补「最小组」三道闸，口径全部复用内核现成函数，
+# 不自创阈值；命中只减不发（不发送 + rejected 留痕）。
+_ANNIVERSARY_TRIGGER_TYPE = "anniversary_recall"
+# 与内核采集层节庆同类同档（sources/special.py 的 birthday/holiday/anniversary priority=3）
+_ANNIVERSARY_LOG_PRIORITY = 3
+
+
+async def _log_anniversary_rejected(character_id, user_id, reason: str, gate: str = "") -> None:
+    """被拦留痕：复用内核 ``arbiter.log_trigger_candidate``（同款字段、同款 rejected 5 分钟节流）。
+
+    留痕失败绝不阻塞主链路（吞掉异常降级为告警）。
+    """
+    try:
+        from app.scheduling import arbiter
+        await arbiter.log_trigger_candidate({
+            "type": _ANNIVERSARY_TRIGGER_TYPE,
+            "priority": _ANNIVERSARY_LOG_PRIORITY,
+            "candidate": {
+                "character_id": character_id, "user_id": user_id,
+                "trigger_reason": str(reason)[:200],
+            },
+            "_gate": gate or None,
+        }, executed=False)
+    except Exception as e:
+        _logger.warning("anniversary_recall rejected 留痕失败 char=%s: %s", character_id, e)
+
+
+async def _anniversary_gate_reason(character_id, cn_now: datetime) -> str | None:
+    """纪念日直发前的最小组内核闸，返回命中的闸名（None = 全通过）。
+
+    三道闸口径全部复用内核现成函数：
+    ⑥ 资格 ``arbiter.get_active_characters``（is_active + enable_proactive）—— 此前从未查过
+       ``enable_proactive``，给「已关主动交流」的角色也发过纪念日
+    ② 每小时上限 ``arbiter.get_hourly_active_count`` >= ``MAX_PER_HOUR``
+    ④ 免打扰 ``arbiter.is_dnd_now``（读角色级免打扰配置，未配置沿用内核深夜 0-7 点）
+
+    任一步取数失败 / 抛异常 → 判为拦截（宁可不发，也不绕过内核频控）。
+    """
+    from app.domain.proactivity.decision import MAX_PER_HOUR
+    from app.scheduling import arbiter
+
+    try:
+        cid = int(character_id or 0)
+    except (TypeError, ValueError):
+        return "bad_identity"
+    if not cid:
+        return "bad_identity"
+    try:
+        active = {int(c["character_id"]) for c in await arbiter.get_active_characters()}
+        if cid not in active:
+            return "not_eligible"
+        if await arbiter.get_hourly_active_count(cid) >= MAX_PER_HOUR:
+            return "hourly_cap"
+        if await arbiter.is_dnd_now(cid, cn_now):
+            return "dnd"
+        return None
+    except Exception as e:
+        _logger.warning("anniversary_recall 内核闸判定失败 char=%s: %s", cid, e)
+        return "kernel_gate_error"
+
+
 async def _check_anniversaries_today() -> None:
     """Shared Memory 纪念日（Phase C）：检查满月/周年 → 生成回忆消息（失败静默）"""
     try:
         from app.memory.shared_events import anniversary_text, check_anniversaries
         async with async_session_factory() as db:
             due = await check_anniversaries(db)
+        # 闸门口径用北京时间（与 arbiter.is_dnd_now 各调用点一致）；整轮取一次，勿逐条重取
+        _cn_now = datetime.now(timezone(timedelta(hours=8)))
         for e in due:
             try:
                 from sqlalchemy import select as _s
@@ -203,6 +268,15 @@ async def _check_anniversaries_today() -> None:
                 async with async_session_factory() as _db2:
                     _c = (await _db2.execute(_s(AICharacter).where(AICharacter.id == e.character_id))).scalar_one_or_none()
                 if _c is None:
+                    continue
+                # E14：最小组内核闸（资格 / 每小时上限 / 免打扰），命中即不发 + rejected 留痕
+                _gate = await _anniversary_gate_reason(e.character_id, _cn_now)
+                if _gate:
+                    await _log_anniversary_rejected(
+                        e.character_id, e.user_id,
+                        f"纪念日 [gate={_gate}] event={e.id}", gate=_gate)
+                    _logger.info("Anniversary recall suppressed char=%d event=%d [gate=%s]",
+                                 e.character_id, e.id, _gate)
                     continue
                 _sid = await get_latest_session_id(e.user_id, e.character_id)
                 if _sid:

@@ -7,6 +7,9 @@
   开启主动交流 → 概率（30s tick 下低概率）产出候选，绑定一个发言人
 - run_group_active：LLM 生成 1 句话（结合最近群消息 + 发言人性格），落库为群消息
   （带 sender_name/sender_avatar，前端轮询拉到即显示）
+- 「已发送」口径（E15，2026-09-29）：本通道按设计不受主动频控（arbiter 对 group_active
+  早退、跳过每小时/最小间隔计数），发送时补写 ProactiveMessageLog 只为让其它通道的
+  计数「看得见」它——不改任何闸门行为。
 """
 import json
 import random
@@ -16,7 +19,7 @@ from sqlalchemy import select, func
 
 from app.db.database import async_session_factory
 from app.models.chat import ChatGroup, ChatGroupMember, ChatGroupMessage
-from app.models.character import AICharacter
+from app.models.character import AICharacter, ProactiveMessageLog
 from app.utils.logger import get_logger
 from app.utils.timeutil import now_naive_utc, to_naive_utc
 
@@ -172,6 +175,16 @@ async def run_group_active(char_id: int, group_id: int, user_id: int,
                 db.add(ChatGroupMessage(
                     group_id=group_id, sender_type="ai", character_id=char_id, content=text[:MAX_CHARS],
                 ))
+                meta = {"group_id": group_id}
+                if with_id is not None:
+                    meta["with_id"] = with_id
+                db.add(ProactiveMessageLog(
+                    character_id=char_id,
+                    session_id=None,
+                    message_type=GROUP_ACTIVE_TYPE,
+                    content=text[:500],
+                    extra_meta=json.dumps(meta, ensure_ascii=False),
+                ))
                 await db.commit()
                 _logger.info("Group active sent char=%d group=%d", char_id, group_id)
                 return True
@@ -223,6 +236,14 @@ async def run_group_active(char_id: int, group_id: int, user_id: int,
             for cid, content in valid:
                 db.add(ChatGroupMessage(
                     group_id=group_id, sender_type="ai", character_id=cid, content=content,
+                ))
+                db.add(ProactiveMessageLog(
+                    character_id=cid,
+                    session_id=None,
+                    message_type=GROUP_ACTIVE_TYPE,
+                    content=content[:500],
+                    extra_meta=json.dumps({"group_id": group_id, "with_id": with_id},
+                                          ensure_ascii=False),
                 ))
             await db.commit()
             _logger.info("Group multi-chat sent char=%d group=%d rounds=%d", char_id, group_id, len(valid))

@@ -4,6 +4,8 @@
 - 通过概率：P3 八维/关系标量/事件加权（信任 >= 阈值时自动同意并自动关闭"隐私上锁"）
 - 解锁有效期：由 AI 决定（0.5h~24h，LLM 输出，钳制）
 - 记忆：只写概要行（申请详情不写记忆/日记）
+- 私聊直发回应（断点 #8′E13，2026-09-29）：发送前补两道最小防线（内核资格 / 读端点同款冷却·锁屏
+  复检），命中只减不发；**不加频控**（间隔/每小时/每日上限一律不补，频控会伤「回应」语义）
 """
 import json
 import random
@@ -119,43 +121,104 @@ async def _get_settings(db: AsyncSession, character_id: int) -> ProactiveSetting
 
 
 async def _active_unlock(
-    db: AsyncSession, character_id: int, user_id: int, target: str, now: datetime
+    db: AsyncSession, character_id: int, user_id: int, target: str, now: datetime,
+    exclude_id: int | None = None,
 ) -> datetime | None:
-    result = await db.execute(
-        select(PrivacyRequest)
-        .where(
-            PrivacyRequest.character_id == character_id,
-            PrivacyRequest.user_id == user_id,
-            PrivacyRequest.target_type == target,
-            PrivacyRequest.status == "approved",
-            PrivacyRequest.unlock_until.is_not(None),
-            PrivacyRequest.unlock_until > now,
-        )
-        .order_by(PrivacyRequest.created_at.desc())
-        .limit(1)
-    )
-    req = result.scalar_one_or_none()
+    stmt = select(PrivacyRequest).where(
+        PrivacyRequest.character_id == character_id,
+        PrivacyRequest.user_id == user_id,
+        PrivacyRequest.target_type == target,
+        PrivacyRequest.status == "approved",
+        PrivacyRequest.unlock_until.is_not(None),
+        PrivacyRequest.unlock_until > now,
+    ).order_by(PrivacyRequest.created_at.desc()).limit(1)
+    if exclude_id is not None:
+        # 发送侧复检：本次申请自己写下的解锁窗口不算「本就开着」
+        stmt = stmt.where(PrivacyRequest.id != exclude_id)
+    req = (await db.execute(stmt)).scalar_one_or_none()
     return req.unlock_until if req is not None else None
 
 
 async def _cooldown_remaining(
-    db: AsyncSession, character_id: int, user_id: int, target: str, now: datetime
+    db: AsyncSession, character_id: int, user_id: int, target: str, now: datetime,
+    exclude_id: int | None = None,
 ) -> int:
-    result = await db.execute(
-        select(PrivacyRequest)
-        .where(
-            PrivacyRequest.character_id == character_id,
-            PrivacyRequest.user_id == user_id,
-            PrivacyRequest.target_type == target,
-        )
-        .order_by(PrivacyRequest.created_at.desc())
-        .limit(1)
-    )
-    req = result.scalar_one_or_none()
+    stmt = select(PrivacyRequest).where(
+        PrivacyRequest.character_id == character_id,
+        PrivacyRequest.user_id == user_id,
+        PrivacyRequest.target_type == target,
+    ).order_by(PrivacyRequest.created_at.desc()).limit(1)
+    if exclude_id is not None:
+        # 发送侧复检：排除刚落库的本次申请，只看它之前的那次（并发重复提交才会命中）
+        stmt = stmt.where(PrivacyRequest.id != exclude_id)
+    req = (await db.execute(stmt)).scalar_one_or_none()
     if req is None:
         return 0
     elapsed = (now - req.created_at.replace(tzinfo=None)).total_seconds()
     return max(0, int(COOLDOWN_SECONDS - elapsed))
+
+
+async def _lock_view(
+    db: AsyncSession, character_id: int, user_id: int, target: str, now: datetime,
+    exclude_request_id: int | None = None,
+) -> dict:
+    """「锁屏 / 解锁窗口 / 冷却」唯一口径（断点 #8′E13）：读端点与发送侧复检共用。
+
+    阈值只有 ``COOLDOWN_SECONDS`` 一处，发送侧不得另立一套。
+    """
+    settings = await _get_settings(db, character_id)
+    enabled = bool(getattr(settings, "privacy_lock_enabled", True))
+    unlock_until = await _active_unlock(
+        db, character_id, user_id, target, now, exclude_id=exclude_request_id
+    )
+    cooldown = await _cooldown_remaining(
+        db, character_id, user_id, target, now, exclude_id=exclude_request_id
+    )
+    return {
+        "enabled": enabled,
+        "locked": bool(enabled) and unlock_until is None,
+        "unlock_until": unlock_until,
+        "cooldown": cooldown,
+    }
+
+
+async def _send_gate_reason(
+    db: AsyncSession, character_id: int, user_id: int, target: str,
+    request_id: int | None = None,
+) -> str | None:
+    """直发私信（privacy_reply）前的最小防线，返回命中的闸名（None = 放行）。
+
+    语义上这是对用户主动申请的「回应」，**本单不补频控**（间隔/每小时/每日上限一律不加），
+    只补两道最小防线，命中一律「只减不发」：
+    ① 资格 ``arbiter.get_active_characters``（is_active + enable_proactive，复用内核名单，不自创 SQL）
+    ② 发送侧复检读端点同款冷却判据 ``_lock_view``（按本次申请 id 排除自己）
+    —— **只判冷却，不判「锁屏/已解锁」**：高信任用户走「自动同意并自动关闭隐私上锁」时必然是 locked=False，    据此拦截会静默掐掉这条回应（Codex 2026-09-29 拍板收窄为只判冷却）。（按本次申请 id 排除自己）
+
+    任一步取数失败 / 抛异常 → 判为降级（宁可不发寒暄，也不绕过内核判定）。
+    """
+    try:
+        cid = int(character_id or 0)
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        return "bad_identity"
+    if not cid or not uid:
+        return "bad_identity"
+    try:
+        from app.scheduling import arbiter
+        active = {int(c["character_id"]) for c in await arbiter.get_active_characters()}
+        if cid not in active:
+            return "not_eligible"
+    except Exception as e:
+        _logger.warning("Privacy gate eligibility failed char=%d: %s", cid, e)
+        return "kernel_gate_error"
+    try:
+        view = await _lock_view(db, cid, uid, target, _now_naive(), exclude_request_id=request_id)
+        if view["cooldown"] > 0:
+            return "cooldown"
+        return None
+    except Exception as e:
+        _logger.warning("Privacy gate lock view failed char=%d: %s", cid, e)
+        return "kernel_gate_error"
 
 
 async def _gen_reply(
@@ -226,10 +289,22 @@ async def _write_summary_memory(
 
 
 async def _send_chat_followup(
-    character_id: int, user_id: int, name: str, nickname: str,
-    target_cn: str, approved: bool,
+    db: AsyncSession, character_id: int, user_id: int, name: str, nickname: str,
+    target_cn: str, approved: bool, target: str = "diary", request_id: int | None = None,
 ) -> None:
-    """P2：申请结果落库后，角色在最近会话里自然回应 1 条（口语化，不出现'申请''系统'字眼）"""
+    """P2：申请结果落库后，角色在最近会话里自然回应 1 条（口语化，不出现'申请''系统'字眼）
+
+    断点 #8′E13（2026-09-29）：发送前补两道最小防线（资格 / 冷却·锁屏复检），命中即降级为
+    「最小回应」＝这条寒暄私信不发（申请结果照旧由接口返回并写概要记忆），并打 INFO 痕迹。
+    """
+    gate = await _send_gate_reason(db, character_id, user_id, target, request_id)
+    if gate:
+        _logger.info(
+            "Privacy followup 降级 char=%d user=%d target=%s gate=%s request_id=%s"
+            "（只减不发：申请结果仍随接口返回，不补这条私聊寒暄）",
+            character_id, user_id, target, gate, request_id,
+        )
+        return
     from app.application.chat_service import get_latest_session_id
     from app.scheduling.scheduler import send_to_session
     try:
@@ -294,16 +369,14 @@ async def get_privacy_status(
                 "character_id": 0, "enabled": False, "locked": False,
                 "cooldown_remaining": 0, "unlock_until": None,
             }
-    settings = await _get_settings(db, character_id)
-    enabled = bool(getattr(settings, "privacy_lock_enabled", True))
     now = _now_naive()
-    unlock_until = await _active_unlock(db, character_id, user_id, target, now)
-    cooldown = await _cooldown_remaining(db, character_id, user_id, target, now)
+    view = await _lock_view(db, character_id, user_id, target, now)
+    unlock_until = view["unlock_until"]
     return {
         "character_id": character_id,
-        "enabled": enabled,
-        "locked": bool(enabled) and unlock_until is None,
-        "cooldown_remaining": cooldown,
+        "enabled": view["enabled"],
+        "locked": view["locked"],
+        "cooldown_remaining": view["cooldown"],
         "unlock_until": unlock_until.isoformat() if unlock_until is not None else None,
     }
 
@@ -380,6 +453,8 @@ async def request_privacy_access(
         unlock_until=unlock_until,
     )
     db.add(req)
+    await db.flush()  # 先取本次申请行 id（发送侧复检按 id 排除自己，否则必然命中冷却）
+    request_id = req.id
     await db.commit()
 
     try:
@@ -391,7 +466,10 @@ async def request_privacy_access(
 
     # P2：角色在私聊里自然回应（1 条；失败静默，不阻塞申请结果）
     try:
-        await _send_chat_followup(character_id, user_id, name, nickname, target_cn, approved)
+        await _send_chat_followup(
+            db, character_id, user_id, name, nickname, target_cn, approved,
+            target=target, request_id=request_id,
+        )
     except Exception as e:
         _logger.warning("Privacy chat followup failed char=%d: %s", character_id, e)
 

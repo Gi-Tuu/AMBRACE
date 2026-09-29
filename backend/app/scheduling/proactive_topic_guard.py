@@ -23,8 +23,15 @@ from app.utils.logger import get_logger
 _logger = get_logger("scheduler.topic_guard")
 
 # 节庆/纪念日等必须送达、不参与主题熔断的消息类型
+# 断点 #8′ E14（2026-09-29）：把 "anniversary_recall" 摘出白名单（选「摘出」而非「豁免但受频控」）。
+# 理由：①本白名单的历史依据是「必须送达」，而纪念日走的是**每日批量追赶**通道，被主题熔断拦下
+#   只是错过今天这一条，不存在时效损失（birthday/holiday/anniversary 三条内核通道仍保留豁免）；
+# ②摘出后它与其它通道共用同一套出口频控，不必为它单开一条「豁免但受频控」的分支（那需要改
+#   should_suppress 的语义与调用点，属越界改动）；
+# ③只减不发：纪念日文案命中主题桶才可能被拦（如标题含"吃饭/睡觉"），无主题词时 topic_bucket=None
+#   直接放行，闸门自身异常也一律 fail-open，风险面可控。
 GUARD_EXEMPT_TYPES = frozenset({
-    "birthday", "holiday", "anniversary", "anniversary_recall",
+    "birthday", "holiday", "anniversary",
 })
 
 # 主题桶：关键词 → 桶名。按表顺序优先，命中任一关键词即归入该桶（一条消息只归一个桶）。
