@@ -1,13 +1,19 @@
-"""状态情绪记忆时间线服务：三源（情绪记忆/状态触发日志/剧情线事件）合并只读，纯查询零 LLM"""
+"""状态情绪记忆时间线服务：三源（情绪记忆/状态触发日志/剧情线事件）合并只读，纯查询零 LLM
+
+架构地图断点 #1 · domain 去 IO 铺开（2026-09-29）：本模块只做解析、标签映射、排序与概览统计，
+不再直接 import DB / ORM 实体；三源查询经 EmotionTimelinePorts
+（app/domain/emotion/timeline_ports.py）由上层注入，生产实现 =
+app/application/emotion_timeline_ports.production_emotion_timeline_ports。
+接线：application/characters.py（get_emotion_timeline → API 情绪时间线）。
+未注入时抛 TimelinePortsNotInjected，既不 fail-open 也不 fail-closed，问题当场暴露。
+"""
 import re
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
-
-from app.db.database import async_session_factory
-from app.models.memory import Memory
-from app.models.character import StateTriggerLog
-from app.models.character import StorylineEvent
+from app.domain.emotion.timeline_ports import (
+    EmotionTimelinePorts,
+    TimelinePortsNotInjected,
+)
 from app.utils.logger import get_logger
 
 _logger = get_logger("services.emotion_timeline")
@@ -104,25 +110,28 @@ def _beijing_period(at: datetime) -> str:
     return "深夜"
 
 
-async def get_emotion_timeline(character_id: int, days: int = 7, dimension: str | None = None) -> dict:
+def _resolve_ports(ports: EmotionTimelinePorts | None) -> EmotionTimelinePorts:
+    """取端口实现：显式注入优先，否则清晰报错（本模块没有遗留钩子，调用方必须注入）。"""
+    if ports is not None:
+        return ports
+    raise TimelinePortsNotInjected(
+        "emotion timeline IO 端口未注入：请显式传入 EmotionTimelinePorts（生产实现 "
+        "app.application.emotion_timeline_ports.production_emotion_timeline_ports）"
+        "——架构地图断点 #1"
+    )
+
+
+async def get_emotion_timeline(character_id: int, days: int = 7, dimension: str | None = None,
+                               ports: EmotionTimelinePorts | None = None) -> dict:
     """三来源合并时间线 + 纯程序化概览（零 LLM）。dimension=维度 key（mood/anger/...）按事件含该维度过滤"""
+    ports = _resolve_ports(ports)
     days = max(1, min(int(days or 7), 90))
     start = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
     events = []
 
     # 来源 1：情绪事件记忆（sub_type=emotion）
     try:
-        async with async_session_factory() as db:
-            from app.memory.service import _active_status_clause  # #70-C：仅 active（flag 关=永真）
-            mems = (await db.execute(
-                select(Memory).where(
-                    Memory.character_id == character_id,
-                    Memory.sub_type == "emotion",
-                    Memory.is_archived == False,
-                    Memory.created_at >= start,
-                    _active_status_clause(),
-                ).order_by(Memory.created_at.desc())
-            )).scalars().all()
+        mems = await ports.recent_emotion_memories(character_id, start)
         for m in mems:
             changes = _parse_emotion_changes(m.content or "")
             events.append({
@@ -135,13 +144,7 @@ async def get_emotion_timeline(character_id: int, days: int = 7, dimension: str 
 
     # 来源 2：状态触发日志（含恢复状态）
     try:
-        async with async_session_factory() as db:
-            logs = (await db.execute(
-                select(StateTriggerLog).where(
-                    StateTriggerLog.character_id == character_id,
-                    StateTriggerLog.created_at >= start,
-                ).order_by(StateTriggerLog.created_at.desc())
-            )).scalars().all()
+        logs = await ports.recent_state_trigger_logs(character_id, start)
         for lg in logs:
             label = _TRIGGER_LABELS.get(lg.trigger_key, lg.trigger_key)
             if lg.recovered:
@@ -157,13 +160,7 @@ async def get_emotion_timeline(character_id: int, days: int = 7, dimension: str 
 
     # 来源 3：剧情线事件
     try:
-        async with async_session_factory() as db:
-            st_events = (await db.execute(
-                select(StorylineEvent).where(
-                    StorylineEvent.character_id == character_id,
-                    StorylineEvent.created_at >= start,
-                ).order_by(StorylineEvent.created_at.desc())
-            )).scalars().all()
+        st_events = await ports.recent_storyline_events(character_id, start)
         for se in st_events:
             skey = se.storyline_key or "storyline"
             label = f"剧情 · {_STORYLINE_LABELS.get(skey, skey)}（{_storyline_node_name(skey, se.node_index or 0)}）"
@@ -223,3 +220,23 @@ async def get_emotion_timeline(character_id: int, days: int = 7, dimension: str 
         "events": [{**e, "at": e["at"].isoformat()} for e in events],
         "summary": summary,
     }
+
+
+# ── 本文件已去 IO（架构地图断点 #1 · domain 去 IO 铺开，2026-09-29）────────────
+# 1. 新增纯类型层 app/domain/emotion/timeline_ports.py：EmotionTimelinePorts 协议
+#    （typing.Protocol，无框架）+ EmotionMemoryView / StateTriggerLogView / StorylineEventView
+#    三个只读快照 + TimelinePortsNotInjected；只依赖 dataclasses / datetime / typing。
+# 2. 本模块去掉全部顶层 IO import：原 app.db.database.async_session_factory、
+#    sqlalchemy.select、app.models.memory.Memory、app.models.character.{StateTriggerLog,
+#    StorylineEvent}，以及来源 1 查询里的 app.memory.service._active_status_clause 惰性 import
+#    ——全部搬到 app/application/emotion_timeline_ports.py（SQL 语句、where 条件、排序逐字保留）。
+# 3. 三源合并的解析函数、标签映射、正则、阈值（前 3 维 / 偏离 50 / <=35 / >=60 / <=40）、
+#    dimension 过滤、倒序、概览统计与文案拼接顺序、返回结构、逐源 try/except 与三条
+#    warning 文案，全部逐字未动。
+# 4. 与 care 样板的差异：本模块**没有**保留迁移期兼容钩子（没有遗留调用方 monkeypatch 本模块
+#    内部名，唯一调用方 application/characters.py 已在白名单内并完成注入接线），
+#    因此 _resolve_ports 只有「显式注入 / 抛错」两态，直接达到 domain 零 IO import 终态。
+#
+# 同类待做 domain 文件清单（只列文件名，本批未改）：
+# - app/domain/decision/layer.py（函数内 import app.db.database，1 处开会话）
+# - app/domain/proactivity/pacing.py（函数内 import app.agent.loop.AGENT_FLAGS，跨层取开关）

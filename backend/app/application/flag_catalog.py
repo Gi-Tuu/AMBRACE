@@ -275,6 +275,14 @@ _FLAG_ROWS: list[tuple] = [
      'basis leave a note behind so the judgement can be cross-checked later. How things are recorded stays '
      'exactly as it is now — nothing is changed or removed because of it; turning this off simply stops '
      'leaving the note.'),
+    ('actor_semantics_shadow', 'memory', 730, False, '谁说的话记在谁名下（先只留痕）',
+     '新记录入库前会另外核一遍「按统一口径该记在谁名下」，跟当前实际记法不一致时只在后台留一条痕迹，'
+     '便于事后核对得准不准；不改动任何记录，也不影响它说什么、记什么，关掉则不核这一遍。',
+     'Whose words get filed under whom (trace only)',
+     'Before a new note is stored it also works out who that note should be filed under if one unified rule '
+     'were applied, and leaves a background trace whenever the answer differs from how it is filed today, so '
+     'the gap can be reviewed later. No record is changed and nothing it says or remembers is affected; '
+     'turning this off skips the extra check.'),
     # ── 编纂知识与前瞻意图 ──
     ('curated_knowledge', 'curated', 801, False, '长期知识层',
      '角色设定、你的硬档案等长期知识始终在场，不随记忆淡忘。',

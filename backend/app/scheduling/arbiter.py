@@ -60,6 +60,8 @@ from app.domain.proactivity.pacing import (  # noqa: E402,F401
     session_rate_allows,
     type_mix_allows,
 )
+# 架构地图断点 #1 · V2b（2026-09-29）：pacing 读开关走端口，本处只做注入接线（判定逻辑不变）
+from app.application.proactivity_pacing_ports import production_pacing_ports as _pacing_ports
 
 # 审计 P1-06：rejected 触发日志节流（同角色同类型最小间隔秒，approved 必记）
 REJECTED_LOG_THROTTLE_SECONDS = 300
@@ -828,9 +830,9 @@ async def _pacing_gate(
     """
     try:
         session_id = candidate.get("session_id")
-        on_hour = gate_active(char_id, session_id, FLAG_HOUR_WINDOW)
-        on_mix = gate_active(char_id, session_id, FLAG_TYPE_MIX)
-        on_rate = gate_active(char_id, session_id, FLAG_SESSION_RATE)
+        on_hour = gate_active(char_id, session_id, FLAG_HOUR_WINDOW, ports=_pacing_ports)
+        on_mix = gate_active(char_id, session_id, FLAG_TYPE_MIX, ports=_pacing_ports)
+        on_rate = gate_active(char_id, session_id, FLAG_SESSION_RATE, ports=_pacing_ports)
         if not (on_hour or on_mix or on_rate):
             return None
         if cn_hour is None:
@@ -860,7 +862,8 @@ async def _pacing_gate(
                     session_id = await get_latest_session_id(_uid, char_id)
                 # 兜底解出会话后按会话维度重算灰度桶（比例 <1 时同一角色不同会话可不同命中）
                 if session_id is not None:
-                    on_rate = gate_active(char_id, session_id, FLAG_SESSION_RATE)
+                    on_rate = gate_active(char_id, session_id, FLAG_SESSION_RATE,
+                                          ports=_pacing_ports)
             if on_rate and session_id is not None:
                 _sent = await get_session_daily_sent_count(char_id, session_id)
                 _last = await get_session_last_sent_at(char_id, session_id)
@@ -882,8 +885,9 @@ async def run_tick() -> list[str]:
 
     # 认知循环 v2.1：关系标量每日衰减（长期不互动 trust/attachment 下降；失败静默）
     try:
+        from app.application.relationship_decay_ports import production_relationship_decay_ports
         from app.domain.relationship.decay import run_relationship_decay
-        await run_relationship_decay()
+        await run_relationship_decay(ports=production_relationship_decay_ports)
     except Exception:
         pass
 

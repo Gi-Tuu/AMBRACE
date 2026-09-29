@@ -509,8 +509,10 @@ async def get_emotion_timeline(
 ):
     """状态情绪记忆时间线（只读，零 LLM）：情绪记忆 + 状态触发日志 + 剧情线事件三源合并，按时间倒序"""
     await _get_owned_character(db, character_id, user_id, lang)
+    from app.application.emotion_timeline_ports import production_emotion_timeline_ports
     from app.domain.emotion.timeline import get_emotion_timeline as _get_timeline
-    return await _get_timeline(character_id, days=days, dimension=dimension)
+    return await _get_timeline(character_id, days=days, dimension=dimension,
+                               ports=production_emotion_timeline_ports)
 
 
 # R2（2026-09-09，工具轨迹治理 §4.2.2）：「工具轨迹」取数窗口（取大后内存分区，

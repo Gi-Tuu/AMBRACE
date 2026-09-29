@@ -300,6 +300,17 @@ def _merge_receipt_detail(kind, target, *, source, sub_type, memory_type, source
     )
     if _prov:
         _det["provenance"] = _prov
+    # ── P0 语义统一·第 1 步 影子埋点②（同一把闸，默认关＝零行为）──
+    # 并入是新内容唯一的消失现场：留痕比对「进来那句按统一语义该归为谁」vs「被并进去那行现在记的是谁」。
+    # 位置刻意排在 _det 组装完成之后：回执的既有键与取值一字不动，也不新增 DB 调用（只读已加载的列）。
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        if AGENT_FLAGS.get("actor_semantics_shadow", False):
+            from app.memory.actor_shadow import trace_actor_merge
+            trace_actor_merge(target=target, source=source, speaker_type=speaker_type,
+                              source_id=source_id, content=content)
+    except Exception:
+        pass
     return _det
 
 
@@ -744,6 +755,21 @@ async def save_memory(
                 _logger.warning("admission gate verdict failed: %s", e)
         if _epi is None:
             _epi = "FACT" if source in ("chat", "moment", "diary", "life", "bio") else "UNVERIFIED"
+        # ── P0 语义统一·第 1 步 影子埋点①（flag actor_semantics_shadow，默认关＝零行为）──
+        # 只判定 + 只打一条 INFO：「按统一语义该记在谁名下」vs「本轮实际会落成什么」。
+        # 不查库、不写库、不改 _spk/_spk_type/_epi 任何取值，也不得插到任何判定之前。
+        try:
+            from app.flags.agent_flags import AGENT_FLAGS
+            if AGENT_FLAGS.get("actor_semantics_shadow", False):
+                from app.memory.actor_shadow import trace_actor_write
+                trace_actor_write(
+                    character_id=character_id, user_id=user_id, source=source,
+                    speaker_type=speaker_type, source_message_sender=_src_msg_sender,
+                    source_id=source_id, actual_speaker_type=_spk_type,
+                    actual_speaker_id=_spk_id, admission_actor=_spk,
+                )
+        except Exception:
+            pass
         memory = Memory(
             user_id=user_id,
             character_id=character_id,

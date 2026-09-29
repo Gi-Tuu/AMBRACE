@@ -17,12 +17,16 @@ memory_review 20.0%）；时段效应（晚 18–23 点 52.1% 最高）；单会
 角色在白名单 / 命中比例桶才生效。当前白名单只有 char13、比例 1.0。
 约定：白名单置为空集 = 全量（扩量终点）；比例 1.0 = 白名单内全量。
 
-边界（同 decision.py / outreach.py 的强约束）：本模块零 IO、不感知 DB/FastAPI、
-不 import 任何调度/模型模块。
+边界（同 decision.py / outreach.py 的强约束）：本模块不感知 DB/FastAPI、
+不 import 任何调度/模型模块；唯一的外部依赖「读运行时开关」经 PacingPorts
+（app/domain/proactivity/ports.py）由上层注入，生产实现 =
+app/application/proactivity_pacing_ports.production_pacing_ports（见文末「已去 IO」）。
 """
 from __future__ import annotations
 
 import hashlib
+
+from app.domain.proactivity.ports import PacingPorts, PacingPortsNotInjected
 
 # ── 开关名（必须与 app/agent/loop.py 的 AGENT_FLAGS 键一致；runtime_flags 只支持 bool 覆盖）──
 FLAG_HOUR_WINDOW = "outreach_hour_window_v1"
@@ -74,6 +78,48 @@ SESSION_RATE_TYPES = frozenset({
 SESSION_RATE_EXEMPT_TYPES = frozenset({"plugin", "state_trigger", "prospective_intent"})
 
 
+# ── IO 端口（断点 #1 · V2b）：只有「取运行时开关表」这一项外部依赖 ──────────────
+_DEFAULT_PORTS: PacingPorts | None = None
+
+
+def set_default_pacing_ports(ports: PacingPorts | None) -> None:
+    """注册默认端口实现（传 None 清空＝恢复「未注入」状态，供测试与排查使用）。"""
+    global _DEFAULT_PORTS
+    _DEFAULT_PORTS = ports
+
+
+def _bind_production_ports() -> PacingPorts:
+    """迁移期兼容钩子：无人注入时惰性绑定 application 侧生产实现（读的还是同一张 AGENT_FLAGS）。
+
+    存在的理由：本模块的判定结果直接决定主动消息发不发，闸门里任何异常都会被 arbiter._pacing_gate
+    的 fail-open 吞掉（表现为「开关悄悄失效」）。留着这条兜底，未注入调用点（如
+    memory_review.replyable_question_enabled 的 flags=None 分支、既有测试直接调
+    pacing.flag_on/gate_active）行为与改动前逐字一致；生产主路径由 scheduling/arbiter.py 显式注入。
+    """
+    from app.application.proactivity_pacing_ports import production_pacing_ports
+    return production_pacing_ports
+
+
+def _resolve_ports(ports: PacingPorts | None = None) -> PacingPorts:
+    """取端口实现：显式注入优先 → 默认端口 → 惰性绑定生产实现 → 清晰报错（不静默降级）。"""
+    global _DEFAULT_PORTS
+    if ports is not None:
+        return ports
+    if _DEFAULT_PORTS is not None:
+        return _DEFAULT_PORTS
+    try:
+        bound = _bind_production_ports()
+    except PacingPortsNotInjected:
+        raise
+    except Exception as e:
+        raise PacingPortsNotInjected(
+            "pacing 开关端口未注入且生产实现绑定失败：请显式传入 PacingPorts（生产实现 "
+            "app.application.proactivity_pacing_ports.production_pacing_ports）——架构地图断点 #1"
+        ) from e
+    _DEFAULT_PORTS = bound
+    return bound
+
+
 def _bucket_0_999(key: str) -> int:
     """稳定分桶：同一 key 恒定落在同一 0-999 桶（md5，跨进程/重启一致）。"""
     return int(hashlib.md5(str(key).encode("utf-8")).hexdigest()[:8], 16) % 1000
@@ -115,12 +161,17 @@ def pacing_gray_hit(
     return traffic_hit(f"pacing:{cid}:{session_id if session_id is not None else 0}", ratio)
 
 
-def flag_on(key: str, *, flags=None) -> bool:
-    """读 ``AGENT_FLAGS``（失败 fail-safe 返回 False = 走旧路径，与项目既有 flag 读法一致）。"""
+def flag_on(key: str, *, flags=None, ports: PacingPorts | None = None) -> bool:
+    """读 ``AGENT_FLAGS``（经端口取；失败 fail-safe 返回 False = 走旧路径，与项目既有 flag 读法一致）。
+
+    显式传 ``flags`` 时完全不碰端口（纯判定路径，零 IO）；端口自身取表失败按旧口径返回 False，
+    只有「一个端口都拿不到」才抛 PacingPortsNotInjected（不静默降级成「开关恒关」）。
+    """
     if flags is None:
         try:
-            from app.agent.loop import AGENT_FLAGS
-            flags = AGENT_FLAGS
+            flags = _resolve_ports(ports).flags()
+        except PacingPortsNotInjected:
+            raise
         except Exception:
             return False
     try:
@@ -137,9 +188,10 @@ def gate_active(
     flags=None,
     chars: frozenset = OUTREACH_PACING_GRAY_CHARS,
     ratio: float = OUTREACH_PACING_RATIO,
+    ports: PacingPorts | None = None,
 ) -> bool:
     """单个闸门是否对本次投放生效：开关开 **且** 角色命中灰度（默认关 = 恒 False）。"""
-    if not flag_on(key, flags=flags):
+    if not flag_on(key, flags=flags, ports=ports):
         return False
     return pacing_gray_hit(character_id, session_id, chars=chars, ratio=ratio)
 
@@ -208,3 +260,29 @@ def session_rate_allows(
     if minutes_since_last is not None and float(minutes_since_last) < float(min_interval_minutes):
         return False
     return True
+
+
+# ── 本文件已去 IO（架构地图断点 #1 · domain 去 IO 铺开 V2b，2026-09-29）──────────
+# 1. 新增纯类型层 app/domain/proactivity/ports.py：PacingPorts 协议（typing.Protocol，
+#    无框架，**1 个方法** = flags()）+ PacingPortsNotInjected；只依赖 typing。
+# 2. 本模块去掉唯一一处跨层 IO import：原 flag_on 函数体内的
+#    ``from app.agent.loop import AGENT_FLAGS`` 改为 ports.flags()；生产实现
+#    app/application/proactivity_pacing_ports.production_pacing_ports 里仍是函数级惰性
+#    import（与旧版同一位置、同一张表），故既有测试对 AGENT_FLAGS 的 setitem/setattr
+#    打桩照旧生效。显式传 flags 的纯判定路径完全不碰端口。
+# 3. 零行为核对：三个开关名、灰度白名单 frozenset({13}) 与比例 1.0、LOW_YIELD_TYPES /
+#    TYPE_DAILY_LIMITS({"memory_review":6,"ai_care":4}) / TYPE_MIX_COUNTED_TYPES /
+#    HOUR_WINDOW_START=12 / HOUR_WINDOW_END=23 / SESSION_DAILY_LIMIT=8 /
+#    SESSION_MIN_INTERVAL_MINUTES=45 / SESSION_RATE_TYPES / SESSION_RATE_EXEMPT_TYPES
+#    全部未动；hour_window_allows → _hour_in_ranges、type_mix_allows、session_rate_allows、
+#    pacing_gray_hit（None/非法 id → False；空白名单=全量；ratio<=0 恒 False、>=1 恒 True）
+#    四个纯函数的判定顺序与边界（含「恰好 45 分钟放行」）逐字未动；
+#    flag_on 的两层 fail-safe（取表失败 → False、flags.get 异常 → False）逐字未动。
+# 4. 接线：scheduling/arbiter.py `_pacing_gate` 四处 gate_active 显式传 ports（只加接线）；
+#    scheduling/memory_review.py 与既有测试未改（靠第 5 条兜底，行为逐字一致）。
+# 5. 遗留（下一批删）：`_DEFAULT_PORTS` + `_bind_production_ports` 这条迁移期兼容钩子。
+#    它存在的唯一理由是「未注入调用点一旦抛错，会被 arbiter._pacing_gate 的 fail-open
+#    吞成『开关悄悄失效』」；等所有调用点显式注入后整体删除，本文件即达 domain 零 IO 终态。
+#
+# 同类待做 domain 文件清单（只列名字，本批未改）：
+# - app/domain/emotion/care.py（四个迁移期兼容钩子 + _LegacyCarePorts 段待删）
