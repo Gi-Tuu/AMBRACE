@@ -123,8 +123,22 @@ class NotificationService extends ChangeNotifier {
       if (_suppressedCounts.containsKey(e.key)) continue;
       cleaned[e.key] = e.value;
     }
+    final prev = _unreadCounts;
     _unreadCounts = cleaned;
-    notifyListeners();
+    // 这个快照是每 5 秒读一次 SharedPreferences 的轮询喂进来的（:78）。
+    // 不加这句比较就是"每 5 秒无条件 notifyListeners"，而好友列表的监听回调
+    // 是一句裸 setState ⇒ 未读没变也整页重建（列表一长就变成周期性掉帧）。
+    // 已核：标已读/清除那两条路径各自都带 notify（:222 / :236），不靠这里兜底。
+    var changed = prev.length != cleaned.length;
+    if (!changed) {
+      for (final e in cleaned.entries) {
+        if (prev[e.key] != e.value) {
+          changed = true;
+          break;
+        }
+      }
+    }
+    if (changed) notifyListeners();
   }
 
   /// 前台兜底单次网络轮询（复用共享引擎，逻辑与后台 isolate 一致）

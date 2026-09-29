@@ -96,6 +96,31 @@ Size _worldSize(Map<String, dynamic> world) {
   return Size(maxX * _kCell, maxY * _kCell);
 }
 
+/// 镜头钳制：世界（乘上缩放后）比视口大的方向上，画面边缘不许离开视口对应边；
+/// 比视口小的方向上改成居中。
+///
+/// 为什么必须有这一步：后端把出口放在 `{room: living, side: west, x: 0}`，而
+/// `room_origins.living` 就是 `(0,0)` ⇒ 角色「出门」时正好站在**世界最左边缘**，
+/// 旧写法无条件把镜头居中到角色，左半屏于是整块露出世界外的深色底板，
+/// 在浅色皮肤下读起来就是"画面坏了"。旧的单房间视图是有钳制的，世界分支漏写。
+Offset clampHomeViewOffset({
+  required Offset target,
+  required Size worldSize,
+  required Size viewSize,
+  required double scale,
+}) {
+  if (viewSize.isEmpty || worldSize.isEmpty) return target;
+  double axis(double want, double span, double content) {
+    if (content <= span) return (span - content) / 2;
+    return want.clamp(span - content, 0.0);
+  }
+
+  return Offset(
+    axis(target.dx, viewSize.width, worldSize.width * scale),
+    axis(target.dy, viewSize.height, worldSize.height * scale),
+  );
+}
+
 class LifeHomeWorldMapState extends State<LifeHomeWorldMap>
     with SingleTickerProviderStateMixin {
   // ── 视图变换（镜头） ──
@@ -182,13 +207,23 @@ class LifeHomeWorldMapState extends State<LifeHomeWorldMap>
     }
   }
 
-  // ── 镜头：进入时/移动时以角色为中心 ──
+  // ── 镜头：进入时/移动时以角色为中心（钳制到世界边界，见 [clampHomeViewOffset]）──
+  Offset _clamped(Offset target, double scale) => clampHomeViewOffset(
+        target: target,
+        worldSize: _worldSize(widget.world),
+        viewSize: _viewSize,
+        scale: scale,
+      );
+
   void centerOnCharacter() {
     if (mounted && _viewSize != Size.zero) {
       setState(() {
-        _viewOffset = Offset(
-          _viewSize.width / 2 - _charWorld.dx * _viewScale,
-          _viewSize.height / 2 - _charWorld.dy * _viewScale,
+        _viewOffset = _clamped(
+          Offset(
+            _viewSize.width / 2 - _charWorld.dx * _viewScale,
+            _viewSize.height / 2 - _charWorld.dy * _viewScale,
+          ),
+          _viewScale,
         );
       });
     }
@@ -197,9 +232,12 @@ class LifeHomeWorldMapState extends State<LifeHomeWorldMap>
   /// 镜头跟随：角色始终保持在视口中心（不再有手动平移手势，故无需暂停逻辑）。
   void _followUser() {
     if (_viewSize == Size.zero) return;
-    final target = Offset(
-      _viewSize.width / 2 - _charWorld.dx * _viewScale,
-      _viewSize.height / 2 - _charWorld.dy * _viewScale,
+    final target = _clamped(
+      Offset(
+        _viewSize.width / 2 - _charWorld.dx * _viewScale,
+        _viewSize.height / 2 - _charWorld.dy * _viewScale,
+      ),
+      _viewScale,
     );
     if ((target - _viewOffset).distance > 0.5) {
       _viewOffset = target;
@@ -433,9 +471,12 @@ class LifeHomeWorldMapState extends State<LifeHomeWorldMap>
     );
     setState(() {
       _viewScale = newScale;
-      _viewOffset = Offset(
-        anchor.dx - _charWorld.dx * newScale,
-        anchor.dy - _charWorld.dy * newScale,
+      _viewOffset = _clamped(
+        Offset(
+          anchor.dx - _charWorld.dx * newScale,
+          anchor.dy - _charWorld.dy * newScale,
+        ),
+        newScale,
       );
     });
   }
@@ -450,9 +491,12 @@ class LifeHomeWorldMapState extends State<LifeHomeWorldMap>
   void resetView() {
     setState(() {
       _viewScale = 1.0;
-      _viewOffset = Offset(
-        _viewSize.width / 2 - _charWorld.dx,
-        _viewSize.height / 2 - _charWorld.dy,
+      _viewOffset = _clamped(
+        Offset(
+          _viewSize.width / 2 - _charWorld.dx,
+          _viewSize.height / 2 - _charWorld.dy,
+        ),
+        1.0,
       );
     });
   }
@@ -473,9 +517,14 @@ class LifeHomeWorldMapState extends State<LifeHomeWorldMap>
                 return Stack(
                   clipBehavior: Clip.hardEdge,
                   children: [
-                    // 世界背景：铺满视口（低倍率下避免地图四周露出透明缝隙）
+                    // 世界背景：铺满视口（低倍率下避免地图四周露出透明缝隙）。
+                    // 颜色必须跟皮肤：写死的 `#2C3A3E` 在暖米纸皮肤下是一块深色石板，
+                    // 一旦镜头露出世界外（旧版「出门」必露，见 [clampHomeViewOffset]）
+                    // 整块读起来就是"渲染坏了"。
                     Positioned.fill(
-                      child: const ColoredBox(color: Color(0xFF2C3A3E)),
+                      child: ColoredBox(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      ),
                     ),
                     _gestureCanvas(),
                   ],
@@ -520,6 +569,7 @@ class LifeHomeWorldMapState extends State<LifeHomeWorldMap>
               images: widget.images,
               characterWorld: _charWorld,
               outside: _outside,
+              background: Theme.of(context).colorScheme.surfaceContainerHighest,
               editingRoom: widget.editingRoom,
               editingKey: widget.editingKey,
               selected: widget.selected,
@@ -575,6 +625,9 @@ class _WorldMapPainter extends CustomPainter {
   final String? draggingRoom;
   final String? draggingKey;
 
+  /// 房间缝隙底色（与视口那块底板同色）；CustomPainter 拿不到 context，由调用方传入。
+  final Color background;
+
   _WorldMapPainter({
     required this.world,
     required this.l10n,
@@ -583,6 +636,7 @@ class _WorldMapPainter extends CustomPainter {
     required this.images,
     required this.characterWorld,
     required this.outside,
+    required this.background,
     this.editingRoom,
     this.editingKey,
     this.selected,
@@ -600,7 +654,7 @@ class _WorldMapPainter extends CustomPainter {
 
     canvas.drawRect(
       Rect.fromLTWH(0, 0, size.width, size.height),
-      Paint()..color = const Color(0xFF2C3A3E),
+      Paint()..color = background,
     );
 
     final roomById = {for (final r in rooms) (r['id'] as String? ?? ''): r};
@@ -843,5 +897,6 @@ class _WorldMapPainter extends CustomPainter {
       old.selected != selected ||
       old.selectedRoom != selectedRoom ||
       old.draggingRoom != draggingRoom ||
-      old.draggingKey != draggingKey;
+      old.draggingKey != draggingKey ||
+      old.background != background;
 }

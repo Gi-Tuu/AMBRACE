@@ -25,9 +25,18 @@ def labels_with_text(root, needle: str) -> list:
 
 # ── 构造期：每一页都真的建出来 ──────────────────────────────────────
 
-def test_all_ten_pages_built_offscreen(app):
-    assert len(app._pages) == 10
-    assert set(app._pages) == set(app._nav_widgets)
+def test_every_page_is_built_and_reachable(app):
+    """页数从 `_build_*_page` 推导，不写死数字。
+
+    写死的 10 在「服务器身份」页落地后红了一整轮没人发现——控制台测试既不在
+    `scripts/verify.py` 也不在 CI 里（要真起 Tk），红点只能靠本机跑得出来。
+    """
+    builders = {n[len("_build_"):-len("_page")]
+                for n in dir(sc.ControllerApp)
+                if n.startswith("_build_") and n.endswith("_page")}
+    assert builders, "没扫到任何页面构造方法，用例失效"
+    assert set(app._pages) == builders, "有页面建出来了却没挂进 _pages（或反之）"
+    assert set(app._pages) == set(app._nav_widgets), "页面没进导航"
     for key, page in app._pages.items():
         assert page.winfo_children(), "%s 页是空的" % key
         app._select_page(key)                 # 切页不许抛
@@ -282,3 +291,22 @@ def test_mousewheel_leaves_log_text_alone(app):
     texts = [w for w in walk(app._pages["log"]) if isinstance(w, tk.Text)]
     assert texts, "运行日志页没有找到 Text 控件，用例失效"
     assert app._wheel_target(texts[0]) is None
+
+
+def test_photo_frame_inherits_its_container_colour(tk_root):
+    """亮色主题：没显式给 `bg` 时画框底色要取父容器（圆角外透出的正是它）。
+
+    深色主题保持原口径：不传 bg 就用 `photo_bg(t)`，与烘焙面板之前的渲染一致。
+    """
+    import tkinter as tk
+
+    light = sc.THEMES["light"]
+    holder = tk.Frame(tk_root, bg="#F0F0F5")
+    lab = sc.CUI.photo_label(holder, light, "photo_empty_log.jpg", 120, 120)
+    assert lab is not None, "assets/photo 里的素材没了（这条锁随包素材生效）"
+    assert lab.cget("bg") == "#F0F0F5", "圆角外透出容器色，才会读作圆角面板"
+
+    dark = sc.THEMES["dark"]
+    plain = sc.CUI.photo_label(tk.Frame(tk_root, bg=dark.bg), dark,
+                               "photo_empty_log.jpg", 120, 120)
+    assert plain.cget("bg") == sc.CUI.photo_bg(dark)

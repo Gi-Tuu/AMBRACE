@@ -261,6 +261,14 @@ _FLAG_ROWS: list[tuple] = [
     ("recall_neighbor_block", "memory", 727, False, "想起一件，顺带想起前后的事", "找到某段记忆时，如果这一轮还留着空位，会顺带带上它前后半小时内记下的事；不占用已经找到的位置。默认关闭。", "Bring along what was noted just before and after", "When a memory turns up and this round still has spare room, notes from the half hour around it come along too — they never take a spot an actual match already earned. Off by default."),
     ("recall_entity_match", "memory", 728, False, "按人名和称呼想起事", "你话里提到某个人（名字、小名、「我妈」这类称呼）时，除了意思相近的内容，也会把原文写着这个称呼或它等价说法的事一起找出来，跟其他线索一起排，不单独插队。默认关闭。", "Recall by names and how you refer to someone", "When you mention a person — a name, a nickname, a term like “my mom” — notes whose wording literally matches that name or its equivalent are pulled in as well, ranked together with the other clues rather than jumping the queue. Off by default."),
 
+    ('marker_requires_user_evidence', 'memory', 729, False, '它自己记的先核对一遍',
+     '它自己写下的记录会先对照你本轮说过的话核一遍，找不到依据的在后台留一条记录，便于事后核对得准不准；'
+     '记录方式与现在完全一样，不会因此改动或删除任何内容，关掉则不留这条记录。',
+     'Cross-check its own notes against your words',
+     'Notes it writes on its own are first compared with what you actually said this round, and ones with no '
+     'basis leave a note behind so the judgement can be cross-checked later. How things are recorded stays '
+     'exactly as it is now — nothing is changed or removed because of it; turning this off simply stops '
+     'leaving the note.'),
     # ── 编纂知识与前瞻意图 ──
     ('curated_knowledge', 'curated', 801, False, '长期知识层',
      '角色设定、你的硬档案等长期知识始终在场，不随记忆淡忘。',

@@ -63,6 +63,17 @@ def beijing_day_start_utc() -> datetime:
     return start_bj.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def app_day_start_utc() -> datetime:
+    """应用本地时区今天 00:00 对应的 UTC 时间（naive）
+
+    与 beijing_day_start_utc 同构，但偏移取 APP_TZ_OFFSET_HOURS（默认 +8 时两者
+    完全一致）。供「按应用时区过一天」的防重复判断使用；返回值只用于比较
+    UTC-naive 存储列，不写库。
+    """
+    start_local = app_local_now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return start_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def shift_utc_naive(dt: datetime, offset_hours: int) -> datetime:
     """UTC naive 时间按偏移小时换算，返回 naive（跨日/月/年自动进位）。
 

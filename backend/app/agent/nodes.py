@@ -450,6 +450,18 @@ async def generate_response(state: AgentState) -> AgentState:
     if state["new_memories"] and not state.get("skip_memory_save"):
         from app.memory import save_memory
         _logger.info("Saving %d new memories", len(state["new_memories"]))
+        # 影子档（flag `marker_requires_user_evidence`，2026-09-29，默认关＝逐字节旧行为）：
+        # 模型自写的【记忆】标记常因「无主语」被 speaker 规则 5 判成 user/FACT。本段只判定 + 只留痕
+        # （本轮用户消息里找不到依据 ⇒ 一条回执 + 一条 INFO 日志），**不改 _epi、不改 speaker、
+        # 不拒收、不删条**；强约束档（降级 character/INFERRED）是下一批。判据 import 失败也按旧行为
+        # 落库（fail-open）。可见性：回执另受 memory_write_receipt 闸控，那闸关时以本文件 INFO 日志为准。
+        _ev_flag_on = False
+        try:
+            from app.agent.loop import AGENT_FLAGS
+            _ev_flag_on = bool(AGENT_FLAGS.get("marker_requires_user_evidence", False))
+        except Exception:
+            _ev_flag_on = False
+        _ev_absent = 0
         for mem in state["new_memories"]:
             try:
                 # P2-02：标记路径补 speaker/epistemic（用户陈述→FACT/user；含推断词→INFERRED/character）
@@ -461,7 +473,16 @@ async def generate_response(state: AgentState) -> AgentState:
                     state["user_id"],
                     state["character_id"],
                 )
-                await save_memory(
+                _ev_no_basis = False
+                if _ev_flag_on:
+                    try:
+                        from app.memory.marker_evidence import user_evidence_absent
+                        _ev_no_basis = bool(user_evidence_absent(
+                            mem.get("content") or "", state.get("user_message") or ""))
+                    except Exception as _ev_e:
+                        _ev_no_basis = False  # fail-open：判据出错＝按旧行为，绝不因此丢写入
+                        _logger.warning("marker_evidence 判据异常（fail-open）: %s", _ev_e)
+                _saved = await save_memory(
                     user_id=state["user_id"],
                     character_id=state["character_id"],
                     memory_type=mem["type"],
@@ -475,6 +496,24 @@ async def generate_response(state: AgentState) -> AgentState:
                     speaker_id=_spk_id,
                     epistemic_status=_epi,
                 )
+                if _ev_no_basis:
+                    _ev_absent += 1
+                    try:
+                        from app.memory.receipt import ACTION_UPDATE, emit_memory_receipt
+                        emit_memory_receipt(
+                            state["character_id"], getattr(_saved, "id", None), ACTION_UPDATE,
+                            reason="marker_evidence=absent (shadow: no state change)",
+                            detail={"sub_type": mem.get("sub_type"),
+                                    "speaker_type": _spk_type,
+                                    "epistemic_status": _epi,
+                                    "content_preview": (mem.get("content") or "")[:60]},
+                        )
+                    except Exception as _rc_e:
+                        _logger.warning("marker_evidence 回执留痕失败: %s", _rc_e)
+                    _logger.info(
+                        "marker_evidence shadow: char=%d sub_type=%s absent=%d/%d: %.60s",
+                        state["character_id"], mem.get("sub_type"),
+                        _ev_absent, len(state["new_memories"]), mem.get("content") or "")
             except Exception as e:
                 _logger.warning("\u4fdd\u5b58\u8bb0\u5fc6\u5931\u8d25: %s", e)
 

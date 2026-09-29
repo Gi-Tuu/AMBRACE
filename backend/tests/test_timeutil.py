@@ -1,7 +1,10 @@
-"""timeutil 纯函数测试：UTC naive 约定、北京时间日界、作者时区换算、应用时区偏移。"""
+"""timeutil 纯函数测试：UTC naive 约定、北京时间日界、作者时区换算、应用时区偏移/日界。"""
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.utils.timeutil import (
+    app_day_start_utc,
     app_local_hour,
     app_local_now,
     app_tz_offset_hours,
@@ -107,3 +110,63 @@ def test_to_naive_utc_aware_别时区归一():
     out = to_naive_utc(dt)
     assert out.tzinfo is None
     assert out == datetime(2026, 8, 12, 4, 20, 0)
+
+
+# ---------------- app_day_start_utc（应用时区日界，P3-2 新增）----------------
+
+def test_app_day_start_utc_default偏移与北京日界一致():
+    """默认 APP_TZ_OFFSET_HOURS=8：与 beijing_day_start_utc 同值（行为不变的钉）"""
+    assert abs(app_day_start_utc() - beijing_day_start_utc()) < timedelta(seconds=1)
+
+
+def test_app_day_start_utc_返回naive且不晚于当前时刻():
+    start = app_day_start_utc()
+    assert start.tzinfo is None
+    now = now_naive_utc()
+    assert start <= now < start + timedelta(days=1)
+
+
+@pytest.mark.parametrize(
+    "offset, now_utc, expected",
+    [
+        (8, datetime(2026, 5, 19, 17, 0), datetime(2026, 5, 19, 16, 0)),   # 本地 05-20 01:00
+        (8, datetime(2026, 5, 19, 16, 0), datetime(2026, 5, 19, 16, 0)),   # 恰好本地午夜整点
+        (9, datetime(2026, 1, 1, 15, 30), datetime(2026, 1, 1, 15, 0)),    # 本地 01-02 00:30
+        (-5, datetime(2026, 1, 7, 22, 0), datetime(2026, 1, 7, 5, 0)),     # 本地 01-07 17:00
+        (0, datetime(2026, 1, 7, 3, 0), datetime(2026, 1, 7, 0, 0)),       # 与 UTC 重合
+        (14, datetime(2026, 1, 1, 23, 0), datetime(2026, 1, 1, 10, 0)),    # 本地次日 13:00
+    ],
+)
+def test_app_day_start_utc_按应用偏移取日界(monkeypatch, offset, now_utc, expected):
+    """日界 = 应用本地当天 00:00 对应的 UTC naive（跨日/跨月自动进位）"""
+    import app.config as cfg
+    import app.utils.timeutil as tu
+
+    tz = timezone(timedelta(hours=offset))
+    monkeypatch.setattr(cfg.settings, "app_tz_offset_hours", offset)
+    monkeypatch.setattr(tu, "app_local_now", lambda: now_utc.replace(tzinfo=timezone.utc).astimezone(tz))
+    got = tu.app_day_start_utc()
+    assert got.tzinfo is None
+    assert got == expected
+
+
+def test_app_day_start_utc_偏移9与北京日界分道(monkeypatch):
+    """非 +8 时口径必须真的跟着应用时区走：本地(+9) 01-02 00:30 时北京日界仍是前一天 16:00"""
+    import app.config as cfg
+    import app.utils.timeutil as tu
+
+    now_utc = datetime(2026, 1, 1, 15, 30)
+    tz9 = timezone(timedelta(hours=9))
+    monkeypatch.setattr(cfg.settings, "app_tz_offset_hours", 9)
+    monkeypatch.setattr(tu, "app_local_now",
+                        lambda: now_utc.replace(tzinfo=timezone.utc).astimezone(tz9))
+    got = tu.app_day_start_utc()
+    assert got == datetime(2026, 1, 1, 15, 0)
+    # 同一瞬间按北京口径的日界参照值（beijing_day_start_utc 读真实时钟，这里按算式给参照）
+    bj = now_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=8)))
+    bj_start = datetime(bj.year, bj.month, bj.day, tzinfo=timezone(timedelta(hours=8)))
+    bj_start = bj_start.astimezone(timezone.utc).replace(tzinfo=None)
+    assert got != bj_start
+
+
+

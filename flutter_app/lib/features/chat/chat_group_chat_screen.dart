@@ -10,6 +10,7 @@ import '../../utils/beijing_time.dart';
 import '../../providers/settings_provider.dart';
 import '../../widgets/ai_avatar.dart';
 import '../../widgets/entrance_fade.dart';
+import '../../widgets/shimmer.dart';
 
 /// 家庭群聊聊天页：消息列表 + 输入框；用户发言后单次生成多角色回应
 class ChatGroupChatScreen extends StatefulWidget {
@@ -186,7 +187,7 @@ class _ChatGroupChatScreenState extends State<ChatGroupChatScreen> {
         children: [
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator())
+                ? const ChatSkeleton()
                 : _messages.isEmpty
                     ? Center(child: Text(l10n.groupChatEmpty, style: const TextStyle(color: Colors.grey)))
 

@@ -16,8 +16,12 @@ import 'package:ai_companion/features/character/character_edit_screen.dart';
 import 'package:ai_companion/features/chat/chat_screen.dart';
 import 'package:ai_companion/features/home/character_list_screen.dart';
 import 'package:ai_companion/services/api_client.dart';
+import 'package:ai_companion/theme/app_theme.dart';
+import 'package:ai_companion/theme/skins/aegean/aegean_architects.dart';
+import 'package:ai_companion/widgets/ai_avatar.dart';
 import 'package:ai_companion/widgets/character_list_card.dart';
 import 'package:ai_companion/widgets/empty_state.dart';
+import 'package:ai_companion/widgets/group_list_card.dart';
 
 /// Aurora Phase 2 B2 AI 好友列表测试：
 /// GlassBar 顶栏、搜索过滤、Aurora 卡片 + 未读红点、FAB 创建、
@@ -183,6 +187,88 @@ void main() {
       await tester.longPress(find.text('Alpha'));
       expect(tapped, isTrue);
       expect(longPressed, isTrue);
+    });
+  });
+
+  group('好友列表卡片语言与未读角标（几何断言，代替真机肉眼）', () {
+    AICharacter cardChar(String name, {int id = 1}) =>
+        AICharacter(id: id, name: name, personality: 'kind and curious');
+
+    CharacterListCard oneCard({int? unread}) => CharacterListCard(
+          character: cardChar('Alpha'),
+          unread: unread,
+          onTap: () {},
+          onLongPress: () {},
+        );
+
+    GroupListCard groupCard() => GroupListCard(
+          name: 'ai一家',
+          subtitle: 'Alpha、Beta',
+          onTap: () {},
+          onLongPress: () {},
+        );
+
+    /// 指定皮肤起一张卡列表。
+    ///
+    /// ⚠ theme 与 `SettingsProvider.skinId` **必须同时给**：卡片里的 `isAegean`
+    /// 判定读的是 provider（`character_list_card.dart:46`），只给 theme 会静默走
+    /// 非 aegean 分支 ⇒ 假绿。
+    Future<Widget> skinApp(String skinId, List<Widget> cards) async {
+      final settings = SettingsProvider();
+      await settings.setSkinId(skinId);
+      return MultiProvider(
+        providers: [
+          ChangeNotifierProvider<SettingsProvider>.value(value: settings),
+        ],
+        child: MaterialApp(
+          theme: AppTheme.light(0, skinId: skinId),
+          locale: const Locale('zh'),
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+            ...AppLocalizations.localizationsDelegates,
+          ],
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: SizedBox(width: 360, child: Column(children: cards)),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('未读角标压在头像右上角（旧版它挤在正文与箭头之间）', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: SizedBox(width: 360, child: oneCard(unread: 3))),
+      ));
+      await tester.pumpAndSettle();
+      final avatar = tester.getRect(find.byType(AIAvatar));
+      final badge = tester.getRect(find.byKey(const Key('characterUnreadBadge')));
+      // 落在头像的右上角象限，并且不越出头像右缘
+      expect(badge.center.dx, greaterThan(avatar.center.dx));
+      expect(badge.center.dy, lessThan(avatar.center.dy));
+      expect(badge.right, lessThanOrEqualTo(avatar.right + 0.5));
+      // 角标必须在箭头左边：旧版它挂在正文之后、贴着箭头，读起来像正文的一部分
+      final chevron = tester.getRect(find.byIcon(Icons.chevron_right));
+      expect(badge.right, lessThan(chevron.left));
+    });
+
+    testWidgets('aegean：群卡与角色卡共用同一套卡片语言，且行高不再差 6.4px',
+        (tester) async {
+      await tester.pumpWidget(await skinApp('aegean', [oneCard(), groupCard()]));
+      await tester.pumpAndSettle();
+      // 旧版只有角色卡包金角框（1 个）⇒ 同一个列表两套语言
+      expect(find.byType(AegeanCardFrame), findsNWidgets(2));
+      expect(tester.getSize(find.byType(CharacterListCard)).height,
+          closeTo(tester.getSize(find.byType(GroupListCard)).height, 0.5));
+    });
+
+    testWidgets('其它皮肤零变化：不加金角框，两类卡仍等高', (tester) async {
+      await tester.pumpWidget(await skinApp('paper', [oneCard(), groupCard()]));
+      await tester.pumpAndSettle();
+      expect(find.byType(AegeanCardFrame), findsNothing);
+      expect(tester.getSize(find.byType(CharacterListCard)).height,
+          closeTo(tester.getSize(find.byType(GroupListCard)).height, 0.5));
     });
   });
 

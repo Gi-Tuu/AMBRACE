@@ -25,6 +25,9 @@ class MomentAvatar extends StatelessWidget {
           ApiClient().resolveUrl(avatarUrl!),
           width: radius * 2,
           height: radius * 2,
+          // 按显示尺寸解码：不给这一行，头像原图（常见 1000×1000 以上）会整张进 GPU 纹理
+          cacheWidth:
+              (radius * 2 * MediaQuery.devicePixelRatioOf(context)).round(),
           fit: BoxFit.cover,
           errorBuilder: (context, error, stack) => CircleAvatar(radius: radius, child: Text(name.isNotEmpty ? name[0] : "?", style: TextStyle(fontSize: radius * 0.8))),
         ),
@@ -51,6 +54,12 @@ class MomentImageView extends StatelessWidget {
             child: Image.network(
               ApiClient().resolveUrl(imageUrl),
               fit: BoxFit.contain,
+              // 全屏看原图：按「两屏宽」解码（够放大 2 倍不糊），
+              // 而不是按手机拍的 3000×4000 原分辨率整张进 GPU 纹理（单张 ≈48MB）
+              cacheWidth: (MediaQuery.sizeOf(ctx).width *
+                      MediaQuery.devicePixelRatioOf(ctx) *
+                      2)
+                  .round(),
               errorBuilder: (context, error, stack) => const Center(child: Icon(Icons.broken_image_outlined, color: Colors.white, size: 48)),
             ),
           ),
@@ -72,6 +81,9 @@ class MomentImageView extends StatelessWidget {
           child: Image.network(
             ApiClient().resolveUrl(imageUrl),
             width: imgWidth,
+            // 列表里一屏可能同时挂 3–9 张：只按缩略图宽度解码
+            cacheWidth:
+                (imgWidth * MediaQuery.devicePixelRatioOf(context)).round(),
             fit: BoxFit.cover,
             loadingBuilder: (context, child, progress) {
               if (progress == null) return child;

@@ -45,7 +45,14 @@ class AegeanPaperPainter extends CustomPainter {
     }
 
     // 1.3 金粉星点（少量亮金 + 个别十字微光）；夜阑版更密更亮
-    final speckN = dark ? 90 : 56;
+    //
+    // 亮色纸面改成**按面积给量**＋**每颗透明度浮动**：旧版是"固定 56 颗、恒定 0.32 不透明、
+    // 全屏均匀散布"，在好友列表那种下半屏大片空白的页面上，等高等亮的圆点读作**脏点**
+    // 而不是纸纹（空白越大越明显，见审美审查 §2②④）。
+    // 夜阑版维持原样——它要的就是密星，且没有"米纸空白"这个前提。
+    final speckN = dark
+        ? 90
+        : (size.width * size.height / 12000).clamp(22.0, 56.0).toInt();
     final goldSpeck = Paint()
       ..color = (dark ? AegeanPalette.goldPale : AegeanPalette.goldLight)
           .withValues(alpha: dark ? 0.5 : 0.32);
@@ -53,13 +60,20 @@ class AegeanPaperPainter extends CustomPainter {
       final x = rnd.nextDouble() * size.width;
       final y = rnd.nextDouble() * size.height;
       final r = rnd.nextDouble() * (dark ? 1.3 : 1.0) + 0.3;
+      if (!dark) {
+        goldSpeck.color = AegeanPalette.goldLight
+            .withValues(alpha: 0.14 + rnd.nextDouble() * 0.18);
+      }
       canvas.drawCircle(Offset(x, y), r, goldSpeck);
     }
     final cross = Paint()
       ..color = (dark ? AegeanPalette.goldPale : AegeanPalette.goldDeepLight)
-          .withValues(alpha: 0.5)
+          .withValues(alpha: dark ? 0.5 : 0.34)
       ..strokeWidth = 0.7;
-    for (var i = 0; i < (dark ? 14 : 8); i++) {
+    final crossN = dark
+        ? 14
+        : (size.width * size.height / 60000).clamp(3.0, 8.0).toInt();
+    for (var i = 0; i < crossN; i++) {
       final x = rnd.nextDouble() * size.width;
       final y = rnd.nextDouble() * size.height;
       const s = 3.2;

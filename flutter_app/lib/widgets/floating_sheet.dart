@@ -61,9 +61,15 @@ class _FloatingSheetState extends State<FloatingSheet> {
     final scheme = Theme.of(context).colorScheme;
 
     final sigma = AppGlass.effectiveBlur(AppGlass.blurHeavy, reduceBlur: reduceBlur);
+    // AppGlass 的设计契约是「全 App 只有 glass 皮肤做高斯模糊，其余皮肤一律不做」
+    // （aurora_tokens.dart:44）。本组件此前无条件模糊 ⇒ 它是唯一没被门禁短路的
+    // 重量级模糊（sigma=32、半屏面积、展开收起的 300ms 里每帧重算 saveLayer）。
+    // 非 glass 皮肤改成不透明 surface，与聊天输入栏同一口径，也不再透出下层内容。
+    final isGlass = AppGlass.isGlassSkin(context);
     final tint = isDark
         ? Colors.black.withValues(alpha: 0.60)
         : Colors.white.withValues(alpha: 0.72);
+    final sheetBg = isGlass ? tint : scheme.surface;
     final dragBarColor = scheme.onSurface.withValues(alpha: 0.35);
 
     return LayoutBuilder(
@@ -79,10 +85,11 @@ class _FloatingSheetState extends State<FloatingSheet> {
           alignment: Alignment.bottomCenter,
           child: ClipRRect(
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+            child: _BlurIfGlass(
+              glass: isGlass,
+              sigma: sigma,
               child: Container(
-                color: tint,
+                color: sheetBg,
                 child: SafeArea(
                   top: false,
                   child: Column(
@@ -133,6 +140,32 @@ class _FloatingSheetState extends State<FloatingSheet> {
       },
     );
   }
+}
+
+/// glass 皮肤才下发 `BackdropFilter`；其余皮肤直接返回子树（一层模糊都不建）。
+///
+/// 包一层 `RepaintBoundary` 是给保留模糊的那条路：让模糊自成一层，
+/// 面板内容重绘时不必连带把半屏高斯再跑一遍。
+class _BlurIfGlass extends StatelessWidget {
+  const _BlurIfGlass({
+    required this.glass,
+    required this.sigma,
+    required this.child,
+  });
+
+  final bool glass;
+  final double sigma;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => glass
+      ? RepaintBoundary(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+            child: child,
+          ),
+        )
+      : child;
 }
 
 /// 弹出 `FloatingSheet` 的便捷入口（返回关闭时携带的结果）。

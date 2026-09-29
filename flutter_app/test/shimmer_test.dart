@@ -43,4 +43,22 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.byType(SkeletonBox), findsWidgets);
   });
+
+  testWidgets('聊天页骨架：气泡左右交替、对方侧带头像圆，不再整屏只有一根转圈',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(wrap(const ChatSkeleton(itemCount: 4)));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(Shimmer), findsNWidgets(4)); // 按行包，不整块包（见 ChatSkeleton 注释）
+    // 偶数行＝对方 ⇒ 4 行里只有 2 个头像圆
+    expect(find.byType(SkeletonCircle), findsNWidgets(2));
+    // 骨架不许抖：宽度取定值表，重绘后位置不变
+    final before = tester.getTopLeft(find.byType(SkeletonBox).at(0));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(tester.getTopLeft(find.byType(SkeletonBox).at(0)), before);
+    // 左右交替（用几何判定，不靠索引猜）：第 0 行的气泡在第 1 行左边
+    expect(tester.getTopLeft(find.byType(SkeletonBox).at(0)).dx,
+        lessThan(tester.getTopLeft(find.byType(SkeletonBox).at(1)).dx));
+  });
 }

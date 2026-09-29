@@ -195,3 +195,49 @@ def test_scroll_page_never_pins_the_content_height():
     assert "width=vw, height=0" in src, "pad 必须走内容自然高"
     assert "if need <= vh else 0" not in src, "不得再按视口高钉 pad"
     assert "max(need, vh)" in src, "视口铺满要改由 scrollregion 兜底"
+
+
+# ── V4-1 亮色主题照片面板：圆角深色面板 + 描边，深色主题逐像素不变 ────
+
+def test_photo_panel_is_baked_only_on_light_theme():
+    """照片装进圆角面板这件事只允许发生在亮色主题。
+
+    深色主题下照片四边本来就贴近卡片色，边缘渐隐直接融进卡片（那是量过的"内凹画框"），
+    烘焙面板会把用户天天用的那一套渲染改掉；亮色主题下不烘焙则等于
+    「方角纯黑矩形贴在白卡上」，读起来像渲染故障。
+    """
+    cui = sc.CUI
+    for name in ("dark", "aurora"):
+        t = sc.THEMES[name]
+        st = cui.photo_panel_style(t)
+        assert st["fill"] == "" and st["ring"] == "", \
+            "%s 主题不得烘焙面板" % name
+        assert st["bg"] == cui.photo_bg(t), "深色主题画框底色口径要保持原样"
+    t = sc.THEMES["light"]
+    st = cui.photo_panel_style(t)
+    panel = cui.photo_bg(t)
+    assert st["bg"] is None, "亮色主题圆角外要透出容器色，不能自己填一块深色方角底"
+    assert st["fill"] == panel
+    assert sum(cui.hex_rgb(st["ring"])) > sum(cui.hex_rgb(panel)), "描边必须比面板亮，否则在白底上看不见边界"
+
+
+def test_photo_plate_rounds_the_frame_without_growing_the_box():
+    """`_plate` 的几何口径：圆角外全透明、边界有描边、照片仍从面板里透出来。
+
+    尺寸**不许变大**——画框的宽高是布局算出来的（横幅高度、侧栏宽度），
+    多一圈投影边距就会把版面顶歪。
+    """
+    from PIL import Image
+    cui = sc.CUI
+    src = Image.new("RGBA", (60, 40), (255, 0, 0, 255))
+    out = cui.PhotoStore._plate(src, 60, 40, 8, "#101010", "#808080")
+    assert out.size == (60, 40)
+    assert out.getpixel((0, 0))[3] == 0, "圆角外必须透明，让容器色从四角透出来"
+    assert out.getpixel((30, 0))[:3] == (128, 128, 128), "顶边中点应是描边色"
+    assert out.getpixel((30, 20))[:3] == (255, 0, 0), "照片要压在面板之上"
+
+
+def test_photo_cache_key_separates_baked_and_plain_frames():
+    """缓存键必须含 fill/ring：同一素材在亮/暗主题之间切换不得命中对方的图。"""
+    src = inspect.getsource(sc.CUI.PhotoStore.get)
+    assert "fill, ring)" in src, "取图缓存键漏了 fill/ring"

@@ -1,5 +1,4 @@
 """主动交流触发器 — 闲置/生日/节日条件检查"""
-from datetime import timedelta
 from sqlalchemy import select, func
 from app.db.database import async_session_factory
 from app.models.chat import ChatSession
@@ -11,7 +10,15 @@ from app.models.character import (
 )
 from app.scheduling.holiday_calendar import get_holidays
 from app.utils.logger import get_logger
-from app.utils.timeutil import beijing_day_start_utc as _beijing_day_start_utc, app_local_now
+from app.utils.timeutil import (
+    app_day_start_utc,
+    app_local_now,
+    app_tz_offset_hours,
+    shift_utc_naive,
+)
+
+# 「过一天」的日界在本文件统一取应用时区（app_day_start_utc），与同文件
+# app_local_now().date() 的「今天」同源；APP_TZ_OFFSET_HOURS 默认 +8 时与旧北京口径同值。
 
 _logger = get_logger("scheduler.triggers")
 
@@ -112,7 +119,7 @@ async def get_daily_count(character_id: int) -> int:
     节律事件落库 message_type 已改为 storyline/proactive_chat 等，旧口径只数
     "proactive" 永远为 0 → 每日上限失效；现按节律产出类型统计。
     """
-    start = _beijing_day_start_utc()
+    start = app_day_start_utc()
     async with async_session_factory() as db:
         stmt = (
             select(func.count())
@@ -128,7 +135,7 @@ async def get_daily_count(character_id: int) -> int:
 
 async def was_birthday_sent_today(character_id: int) -> bool:
     """今天是否已送出生日祝福"""
-    start = _beijing_day_start_utc()
+    start = app_day_start_utc()
     async with async_session_factory() as db:
         stmt = (
             select(ProactiveMessageLog)
@@ -144,7 +151,7 @@ async def was_birthday_sent_today(character_id: int) -> bool:
 
 async def was_holiday_sent_today(character_id: int) -> bool:
     """该角色今天是否已发送过节日祝福（每个角色每天最多一条节日祝福）"""
-    start = _beijing_day_start_utc()
+    start = app_day_start_utc()
     async with async_session_factory() as db:
         stmt = (
             select(ProactiveMessageLog)
@@ -233,12 +240,13 @@ async def get_anniversary_candidates() -> list[dict]:
             )
             if not session or not session["created_at"]:
                 continue
-            first_bj = (session["created_at"] + timedelta(hours=8)).date()
-            days = (app_local_now().date() - first_bj).days + 1
+            # 首日/今天/防重复日界同取应用时区（默认 +8 与旧「北京 +8」口径逐字节一致）
+            first_local = shift_utc_naive(session["created_at"], app_tz_offset_hours()).date()
+            days = (app_local_now().date() - first_local).days + 1
             if days not in _ANNIVERSARY_MILESTONES:
                 continue
             # 防重复：今天已发过 anniversary
-            start = _beijing_day_start_utc()
+            start = app_day_start_utc()
             async with async_session_factory() as db:
                 stmt = (
                     select(ProactiveMessageLog)

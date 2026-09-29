@@ -282,6 +282,57 @@ class AiInteractionSkeleton extends StatelessWidget {
   }
 }
 
+/// 聊天页骨架：左右交替的气泡行，对方侧带头像圆，匹配 MessageBubble 的排布。
+///
+/// 旧加载态是整屏一根 `CircularProgressIndicator`——消息区完全空白，读起来像
+/// 「没连上」而不是「正在取历史」（全项目骨架屏此前只有 4 处，转圈 103 处）。
+/// 与 [AiInteractionSkeleton] 一样**按行**包 [Shimmer]：整块包会被 ShaderMask
+/// 刷成一片统一灰（见本文件顶部注意）。
+class ChatSkeleton extends StatelessWidget {
+  const ChatSkeleton({super.key, this.itemCount = 5});
+
+  final int itemCount;
+
+  /// 行宽用定值表而不是随机：骨架在重绘时不许抖。
+  static const List<double> _bubbleW = [196, 148, 214, 132, 176];
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm, vertical: AppSpacing.md),
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        final mine = index.isOdd; // 偶数行＝对方（靠左、带头像圆）
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Shimmer(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (!mine) ...[
+                  const SkeletonCircle(size: 36),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: Align(
+                    alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+                    child: SkeletonBox(
+                        width: _bubbleW[index % _bubbleW.length],
+                        height: 38,
+                        radius: 14),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// 小家可视化页面骨架：顶部三条状态进度条 + 房间 tab 行 + 房间主体大卡片。
 class HomeVisualSkeleton extends StatelessWidget {
   const HomeVisualSkeleton({super.key});

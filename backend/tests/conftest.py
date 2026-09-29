@@ -49,6 +49,76 @@ import app.memory.bm25_index as bm25
 from app.events.bus import event_bus
 
 
+# ── P3-4：asyncio.run 收尾时序接管（2026-09-29，治理 aiosqlite「Event loop is closed」）──
+# 现象：全量 pytest 收尾出现 8~16 条 PytestUnhandledThreadExceptionWarning，全部是
+#       aiosqlite `_connection_worker_thread` 在 `future.get_loop().call_soon_threadsafe(...)`
+#       上抛 RuntimeError('Event loop is closed')。
+# 根因（不是「连接没释放」那么笼统，精确到时序）：
+#   本仓库测试统一用 `asyncio.run(...)` 跑「一次性 loop」（未装 pytest-asyncio）。业务里
+#   `app/utils/async_tasks.spawn_background` / `app/events/bus.py::publish` 是 fire-and-forget，
+#   会在 loop 里留下**在途 Task**。`asyncio.run` 收尾时 `_cancel_all_tasks` 取消它们，
+#   但「取消」只作用于 await 侧：那条 SQL 早已塞进 aiosqlite worker 线程的 SimpleQueue 并开始执行，
+#   线程取消不掉。loop 一 close，线程执行完再回灌 future ⇒ 线程里未捕获异常 ⇒ pytest 记警告。
+# 为什么这样算真修：aiosqlite 的 `set_result`/`set_exception` 都带 `if not fut.done()` 守卫，
+#   所以**只要回灌发生在 loop 关闭之前**，落到已取消的 future 上就是一次无害 no-op。
+#   故在关 loop 前：①取消并 await 净在途 Task；②在 loop 仍打开时给 worker 线程一个 settle 窗口，
+#   把它们 `call_soon_threadsafe` 排入的回调真正泵掉一轮。连接/回调是被**放干净**，不是被静音
+#   （禁止 filterwarnings 那类屏蔽手段）。
+# 代价：只有「收尾时确实有在途 Task」的 loop 才付第 ② 步的 settle 时间，其余零开销。
+_DRAIN_SETTLE_SECONDS = 0.05
+
+
+async def _cancel_and_await_pending() -> bool:
+    """取消并等净本 loop 的在途 Task；返回「是否曾有在途」（决定要不要额外 settle）。"""
+    current = asyncio.current_task()
+    pending = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+    for t in pending:
+        t.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    return bool(pending)
+
+
+def _draining_run(coro):
+    """`asyncio.run` 的等价替身：语义不变，只在「关 loop」前多一道排空。"""
+    # 保留原语的一条硬约束：运行中的 loop 里不允许再 run（否则会退化成「嵌套跑 loop」，
+    # 报错口径也与标准库不同；调用点靠这个异常判定「当前没有可用 loop」的路径不能被改变）。
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("asyncio.run() cannot be called from a running event loop")
+    # 注：不接 `debug=` —— 全仓库无一处使用，接了却忽略反而静默改变语义（真有人传会 TypeError 显式失败）。
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            had_pending = False
+            try:
+                had_pending = loop.run_until_complete(_cancel_and_await_pending())
+            except Exception:  # 收尾排空不得掩盖用例本身的异常
+                pass
+            if had_pending:
+                # 第 1 个 sleep：给 worker 线程跑完手上那条语句的时间
+                # 第 2 个 sleep(0)：把它们刚排入的 call_soon_threadsafe 回调泵掉
+                loop.run_until_complete(asyncio.sleep(_DRAIN_SETTLE_SECONDS))
+                loop.run_until_complete(asyncio.sleep(0))
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.run_until_complete(loop.shutdown_default_executor())
+            except Exception:  # 同上，收尾尽力而为
+                pass
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
+asyncio.run = _draining_run  # 安装点必须在任何用例/fixture 调用之前（conftest 导入期）
+
+
 def _rmtree_retry(path: Path, attempts: int = 12, delay: float = 0.5) -> None:
     """Windows 下 aiosqlite/chroma 句柄可能稍有延迟才被真正释放，rmtree 首次常因句柄占用失败；
     这里带重试（幂等），最终仍以 ignore_errors 兜底，确保不向 pytest 抛错、也不留下积累源。

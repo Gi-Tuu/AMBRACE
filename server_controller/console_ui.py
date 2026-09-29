@@ -184,13 +184,14 @@ class PhotoStore:
 
     def get(self, name: str, w: int, h: int | None = None, radius: int = 0,
             feather: int = 0, mode: str = "cover",
-            gamma: float = 0.72) -> ImageTk.PhotoImage | None:
+            gamma: float = 0.72, fill: str = "", ring: str = "") -> ImageTk.PhotoImage | None:
         """→ PhotoImage；素材缺失/损坏返回 None（调用方走无图回退，不留空框）。
 
         mode：`cover` 等比放大后居中裁满目标框；`contain` 等比缩进框内居中留边；
         `panel` 按高等比缩放贴左、右侧空出的部分交给画框底色（横幅槽位用，见 `_to_panel`）。
+        `fill` / `ring`：把结果装进一块圆角面板（见 `_plate`），默认空＝不改变原样。
         """
-        key = (name, w, h, radius, feather, mode, gamma)
+        key = (name, w, h, radius, feather, mode, gamma, fill, ring)
         hit = self._cache.get(key)
         if hit is not None:
             return hit
@@ -213,9 +214,41 @@ class PhotoStore:
             base = out.getchannel("A")
             out.putalpha(Image.composite(base, Image.new("L", (w, h), 0),
                                          self._mask(w, h, radius, feather)))
+        if fill or ring:
+            out = self._plate(out, w, h, radius, fill, ring)
         ph = ImageTk.PhotoImage(out)
         self._cache[key] = ph
         return ph
+
+    @staticmethod
+    def _plate(im: Image.Image, w: int, h: int, radius: int,
+               fill: str, ring: str) -> Image.Image:
+        """把照片装进**圆角面板**：面板内不透明、圆角外全透明。
+
+        为什么必须烘焙进图而不是靠 Tk 的底色填角——Tk 的 Frame/Label 只能画方角矩形，
+        亮色主题下「方角深底 + 圆角照片」的结果就是一块没有边界的纯黑矩形贴在白卡上，
+        读起来像渲染故障。圆角外面留透明，让容器色从四角透出来，才读作一块深色媒体面板。
+
+        裁剪在这里自己做（不依赖调用方先套 `_mask`）：半径与描边必须共用同一块圆角，
+        否则调用方哪天不传 feather，四角就会漏出方角照片。
+        """
+        from PIL import ImageDraw
+        box = [0, 0, w - 1, h - 1]
+        r = radius or 12
+        mask = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(mask).rounded_rectangle(box, radius=r, fill=255)
+        out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        if fill:
+            out.paste(Image.new("RGBA", (w, h), hex_rgb(fill) + (255,)), (0, 0), mask)
+        photo = im.convert("RGBA").copy()
+        photo.putalpha(Image.composite(photo.getchannel("A"),
+                                       Image.new("L", (w, h), 0), mask))
+        out.alpha_composite(photo)
+        if ring:
+            # 描边必须在照片之上：照片四边接近面板色，压在下面等于看不见
+            ImageDraw.Draw(out).rounded_rectangle(
+                box, radius=r, outline=hex_rgb(ring), width=max(1, px(1)))
+        return out
 
     @staticmethod
     def _lift(im: Image.Image, gamma: float) -> Image.Image:
@@ -498,18 +531,33 @@ def photo_fg(t) -> str:
     return t.text if t.dark else mix(t.text, "#FFFFFF", 0.86)
 
 
+def photo_panel_style(t) -> dict:
+    """照片画框的面板口径（唯一真源，`photo_label` / `PhotoBanner` 都走它）。
+
+    - 深色主题：不烘焙面板。照片四边本来就接近卡片色，边缘渐隐直接融进卡片，
+      形成量过的「内凹画框」感；`bg` 沿用 `photo_bg(t)`，渲染与未加此函数时逐像素一致。
+    - 亮色主题：照片装进圆角深色面板（`fill`）并描一圈浅边（`ring`），`bg` 返回
+      None ＝ 让控件底色跟随所在容器，圆角外透出的是页面/侧栏色而不是黑。
+    """
+    if t.dark:
+        return {"bg": photo_bg(t), "fill": "", "ring": ""}
+    panel = photo_bg(t)
+    return {"bg": None, "fill": panel, "ring": mix(panel, "#FFFFFF", 0.30)}
+
+
 def photo_label(parent, t, name: str, w: int, h: int, radius: int = 0,
                 feather: int = 0, bg: str | None = None) -> tk.Label | None:
     """固定尺寸的照片画框；素材缺失时返回 None（调用方走无图版式）。
 
     `bg` 只在画框要贴进非卡片色容器时才给（例如侧栏底部品牌牌），圆角外那圈会用该色，
-    否则默认 `photo_bg(t)`。
+    否则默认取父容器的底色（亮色主题下圆角外要透出的正是它）。
     """
+    st = photo_panel_style(t)
     ph = PHOTOS.get(name, w, h, radius=radius or px(10), feather=feather or px(5),
-                    mode="cover")
+                    mode="cover", fill=st["fill"], ring=st["ring"])
     if ph is None:
         return None
-    lab = tk.Label(parent, image=ph, bg=bg or photo_bg(t), bd=0)
+    lab = tk.Label(parent, image=ph, bg=bg or st["bg"] or parent.cget("bg"), bd=0)
     lab.image = ph          # 保引用：PhotoImage 被 GC 掉的话画框会变空白
     return lab
 
@@ -536,9 +584,11 @@ class PhotoBanner(tk.Frame):
         self._mode = mode
         self._last_w = 0
         self._job = None
-        super().__init__(parent, bg=photo_bg(t), height=self._box_h)
+        self._style = photo_panel_style(t)
+        self._frame_bg = self._style["bg"] or parent.cget("bg")
+        super().__init__(parent, bg=self._frame_bg, height=self._box_h)
         self.pack_propagate(False)      # 子件不得反向决定我的高度（否则换图 → 重排 → 再换图）
-        self._label = tk.Label(self, bg=photo_bg(t), bd=0)
+        self._label = tk.Label(self, bg=self._frame_bg, bd=0)
         self._label.pack(fill="both", expand=True)
         self.bind("<Configure>", self._on_cfg)
 
@@ -556,7 +606,8 @@ class PhotoBanner(tk.Frame):
         if not self.winfo_exists():
             return
         ph = PHOTOS.get(self._asset, w, self._box_h, radius=self._radius,
-                        feather=self._feather, mode=self._mode)
+                        feather=self._feather, mode=self._mode,
+                        fill=self._style["fill"], ring=self._style["ring"])
         if ph is None:
             self.config(height=0)       # 素材缺失/解码失败：整块塌掉，不留空条
             return

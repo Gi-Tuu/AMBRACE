@@ -20,6 +20,7 @@ import '../../widgets/app_page_route.dart';
 import '../../widgets/glass_bar.dart';
 import '../../widgets/message_bubble.dart';
 import '../../widgets/chat_time_separator.dart';
+import '../../widgets/shimmer.dart';
 import '../character/character_detail_screen.dart';
 import 'chat_message_media_actions.dart';
 import 'chat_phone_actions.dart';
@@ -503,7 +504,10 @@ class _ChatScreenState extends State<ChatScreen>
                 // 消息列表：铺满整个 body（从顶栏后 / 输入栏后穿过，供真玻璃糊化）
                 Positioned.fill(
                   child: (chat.isLoading && chat.messages.isEmpty)
-                      ? const Center(child: CircularProgressIndicator())
+                      ? Padding(
+                          padding: EdgeInsets.only(top: topBarInset),
+                          child: const ChatSkeleton(),
+                        )
                       : Stack(
                           children: [
                             // 点空白处退出输入态/关面板（不拦截气泡自身手势）

@@ -426,6 +426,19 @@ AGENT_FLAGS = {
     #   ③召回降权：被隔离感知条仍召回、不剔除，仅在既有 rerank 加分体系里吃一个负向偏置（见 retrieve.py）。
     # 用户点「这是真的」认可后（epistemic_status=FACT）自动脱隔，三条禁令一并解除，不引入第二套晋升机制。
     "perception_isolate": False,
+    # ── 模型自写记忆「依据校验」影子档（2026-09-29，方案《小方案_模型自写记忆FACT口径_v1》方案 B）──
+    # 背景：标记路径（模型自写【记忆：…】）的归属由 memory/speaker.py 按措辞推断，「无主语 + 本轮有用户
+    #   消息」判 user/FACT ⇒ 模型自己的推断、复述感知甚至编造都会以「用户说过的事实」进长期记忆（可竞争
+    #   核心晋升、进置顶摘要与身份画像、参与跨角色同步）。这不是 memory_admission_gate 没开：闸门按
+    #   sender_type 裁决，误判在它之前完成，拨开它也堵不住（本键不动它、也不动 speaker 的 5 条规则）。
+    # ON ＝ **影子**：agent/nodes.py 标记写入循环里对每条 mem 跑一次纯字面判据
+    #   （memory/marker_evidence.py，零 LLM 零 IO）；「本轮用户消息里找不到依据」时只写一条回执
+    #   （reason 带 marker_evidence=absent）+ 一条 INFO 日志——**不改 epistemic_status、不改 speaker、
+    #   不拒收、不删条**；回执另受 memory_write_receipt 闸控，那闸关时以 INFO 日志为准。判据异常 fail-open。
+    # OFF（默认）＝逐字节旧行为：不 import 判据、不做一次字符串比对、不留痕。
+    # 强约束档（无依据降级为 character/INFERRED）是**下一批**——届时另键或同键升级并另行公告；
+    #   影子期先取「标记路径总量 / absent 占比 / 人工抽查误降率」三个指标再定。
+    "marker_requires_user_evidence": False,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

@@ -118,7 +118,7 @@ def snapshot_overlap(text: object, snapshot_texts: object, *,
                      min_len: int = _MIN_TOKEN_LEN, min_overlap: int = _MIN_OVERLAP) -> bool:
     """待写正文与「本轮感知语料」是否长词重合（打标主判据，纯函数）。
 
-    判命中：存在**某一条**快照，其与 ``text`` 的不重合长词数 ``>= min_overlap``
+    判命中：存在**某一条**快照，其与 ``text`` 的重合长词数 ``>= min_overlap``
     （默认 ⇔ 连续重合 ≥6 字）。**不跨快照累加** —— 两条快照各撞几个词不算命中，
     否则常见词面会互相凑数、把用户真说过的话误标成感知。
 

@@ -194,6 +194,13 @@ class _AlbumScreenState extends State<AlbumScreen> {
                         child: Image.network(
                           ApiClient().resolveUrl(url),
                           fit: BoxFit.cover,
+                          // 九宫格一屏最多 9 张：按格子宽解码（padding 10×2 ＋ 间距 8×2），
+                          // 不给这一行就是 9 张原图分辨率同时进 GPU 纹理
+                          cacheWidth:
+                              ((MediaQuery.sizeOf(context).width - 20 - 16) /
+                                      3 *
+                                      MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
                           frameBuilder: (_, child, frame, wasSyncLoaded) =>
                               frame == null
                                   ? ColoredBox(
@@ -292,6 +299,12 @@ class _PhotoPreviewPageState extends State<_PhotoPreviewPage> {
                 child: Image.network(
                   ApiClient().resolveUrl(widget.photos[i]),
                   fit: BoxFit.contain,
+                  // 一次只显示一张，给「两屏宽」解码余量（放大 2 倍不糊），
+                  // 仍远小于原图整张进纹理的开销
+                  cacheWidth: (MediaQuery.sizeOf(context).width *
+                          MediaQuery.devicePixelRatioOf(context) *
+                          2)
+                      .round(),
                   errorBuilder: (_, __, ___) =>
                       const Icon(Icons.broken_image, color: Colors.white54, size: 56),
                 ),

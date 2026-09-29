@@ -47,6 +47,45 @@ class CharacterListCard extends StatelessWidget {
     final b = Theme.of(context).brightness;
     final nameColor = isAegean ? scheme.primary : scheme.onSurface;
 
+    Widget avatar = isAegean
+        ? Container(
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: AegeanPalette.goldPale, width: 1.2),
+            ),
+            child: AIAvatar(name: character.name, size: 56, imageUrl: character.avatarUrl),
+          )
+        : AIAvatar(name: character.name, size: 56, imageUrl: character.avatarUrl);
+
+    if (unread != null) {
+      // 未读角标压在头像右上角（iOS 惯例）。旧版它排在正文 Row 里、贴着箭头，
+      // 看起来像正文的一部分而不是"这个头像有新消息"。
+      avatar = Stack(
+        clipBehavior: Clip.none,
+        children: [
+          avatar,
+          Positioned(
+            right: 0,
+            top: 0,
+            child: Container(
+              key: const Key('characterUnreadBadge'),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppColors.error,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$unread',
+                style: const TextStyle(
+                    color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
     Widget card = GestureDetector(
       onLongPress: onLongPress,
       child: AuroraCard(
@@ -54,16 +93,7 @@ class CharacterListCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(
           children: [
-            isAegean
-                ? Container(
-                    padding: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: AegeanPalette.goldPale, width: 1.2),
-                    ),
-                    child: AIAvatar(name: character.name, size: 56, imageUrl: character.avatarUrl),
-                  )
-                : AIAvatar(name: character.name, size: 56, imageUrl: character.avatarUrl),
+            avatar,
             const SizedBox(width: 14),
             Expanded(
               child: Column(
@@ -95,22 +125,7 @@ class CharacterListCard extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 8),
-            if (unread != null)
-              Container(
-                key: const Key('characterUnreadBadge'),
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: AppColors.error,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '$unread',
-                  style: const TextStyle(
-                      color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                ),
-              ),
-            const SizedBox(width: 4),
+            const SizedBox(width: 12),
             Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
           ],
         ),
