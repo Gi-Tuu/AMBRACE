@@ -115,6 +115,7 @@ def settle_level(
     drive_key: str,
     last_settled_at: datetime | None,
     now: datetime,
+    emotion_snapshot=None,
 ) -> tuple[float, datetime]:
     """懒结算：把 [last_settled_at, now) 的静默时长折算成增量，返回 (新水位, 新游标)。
 
@@ -125,6 +126,13 @@ def settle_level(
     - ``now <= last_settled_at``（时钟回拨/脏数据）⇒ 原值返回、游标**不前进**；
     - 未知 ``drive_key`` ⇒ 增速按 0（水位不变，游标照常推进，避免每次重算同一段）；
     - 幂等：同一 (游标, now) 反复调用，第二次起游标已＝now ⇒ 增量为 0。
+
+    ``emotion_snapshot``（A4 批 7 M0 新增，**可选、缺省 None**）：一份整点量级的 ``valence``/
+    ``arousal`` 快照（形态见 ``emotion_modulation.read_axes``），只乘在**增速**上，不碰游标语义。
+    - **缺省 None ⇒ 乘子恒 1.0 ⇒ 与本函数改造前逐字节等价**（M0 阶段调用方一处都不传）；
+    - 段内乘子取**那份快照、整段恒定**（不做段内插值）：幂等性靠「增量只由游标 + 那份快照决定」，
+      快照若逐分钟变化会破坏写回语义，故口径定死为整点量级（设计 §3.1 硬约束）；
+    - 带快照时额外走一次 ``shadow_trace_modulation``（只留痕，不改返回值，异常自吞）。
 
     入参为 naive UTC（库内约定）；带 tzinfo 的先归一为 naive UTC，两种口径都不会算错段。
     """
@@ -139,6 +147,15 @@ def settle_level(
     night_mult = DRIVE_NIGHT_MULTIPLIER.get(drive_key, 1.0)
     one_hour = timedelta(hours=1)
 
+    # 缺省 1.0（浮点乘 1.0 是精确运算，不引入任何舍入差异）；带快照才去取乘子——
+    # 延迟 import：无快照时本函数连 emotion_modulation 都不碰，保持批 3 的零 IO 口径与调用顺序不变。
+    modulation = 1.0
+    modulation_module = None
+    if emotion_snapshot is not None:
+        from app.domain.relational import emotion_modulation as modulation_module
+
+        modulation = modulation_module.combined_multiplier(drive_key, emotion_snapshot)
+
     increment = 0.0
     cur = cursor
     while cur < moment:
@@ -149,10 +166,16 @@ def settle_level(
         seg_end = moment if moment < boundary_utc else boundary_utc
         hours = (seg_end - cur).total_seconds() / 3600.0
         factor = night_mult if is_night_hour(cur_bj.hour) else 1.0
-        increment += hours * growth * factor
+        increment += hours * growth * factor * modulation
         cur = seg_end
 
-    return (min(LEVEL_MAX, _to_float(level) + increment), moment)
+    new_level = min(LEVEL_MAX, _to_float(level) + increment)
+    if emotion_snapshot is not None:
+        # 影子档：只留痕（INFO／obs_event），不改返回值、不写库、异常自吞
+        modulation_module.shadow_trace_modulation(
+            drive_key, emotion_snapshot, new_level=new_level
+        )
+    return (new_level, moment)
 
 
 def release_open(level: float, drive_key: str) -> float:
