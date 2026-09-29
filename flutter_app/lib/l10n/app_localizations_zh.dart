@@ -2800,6 +2800,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get memorySourceCharacter => '角色';
 
   @override
+  String get memorySourcePerception => '感知';
+
+  @override
+  String get memorySourceSystem => '系统';
+
+  @override
+  String get memorySourceUnknown => '来源未标注';
+
+  @override
   String get memorySourceUser => '用户';
 
   @override

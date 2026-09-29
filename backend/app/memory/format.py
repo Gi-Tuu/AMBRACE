@@ -14,6 +14,10 @@ T3/C1（2026-09-10，v3.4.6 第三轮）：在 [记录于] 之后、认知前缀
 （曾为 flag `memory_line_tense_tag`，2026-09-17 固化常开；plan 未过期=［计划］、已过期=［旧安排·已过期］、
 episodic=［往事］、transient=［当时状态］、enduring 不加）——四处注入点自动继承，防旧记忆
 （如「去长沙」计划）被当现状续写。
+
+P0 第 4 步（2026-09-29）：说话人标注改为**表驱动 + 未知值兜底**（:func:`speaker_tag`）——
+``speaker_type`` 值空间新增 ``perception``（感知条自本步起真落库），已知值才画标签，
+未登记值既不抛错也不把原始枚举显示进提示词。user/character/system 三档的既有输出逐字节不变。
 """
 from __future__ import annotations
 
@@ -33,6 +37,35 @@ _TENSE_TAG = {
     "episodic": "［往事］",
     "transient": "［当时状态］",
 }
+
+# ── 说话人标注表（P0 第 4 步读侧容错，2026-09-29：散落的 if/elif 收成一张登记表）──
+# 键＝已知值空间（含本步起真落库的 ``perception``）；值＝注入行前缀。
+# 未登记值（历史脏值 ``ai``/``bot``、未来新增枚举、非字符串）⇒ :data:`SPEAKER_TAG_FALLBACK`：
+# **既不抛错，也不把原始枚举显示进提示词**（陌生值冒充某种归属，比不标更糟）。
+# ``perception`` 故意为空串：感知是「屏幕看到的」，不是「谁说的」，画成说话人反而误导
+# （来源证据在 [INFERRED] 认知前缀与 memories.source 列上）。
+SPEAKER_TAG_PERCEPTION = "perception"
+SPEAKER_TAGS = {
+    "user": "[你说的] ",
+    "character": "[TA说的] ",
+    "system": "[系统说的] ",
+    SPEAKER_TAG_PERCEPTION: "",
+}
+SPEAKER_TAG_FALLBACK = ""
+
+
+def normalize_speaker_type(value) -> str | None:
+    """读侧安全归一（纯函数、脏输入不抛）：已知值返回小写规范形，未知/空/非字符串 ⇒ ``None``。"""
+    if not isinstance(value, str):
+        return None
+    v = value.strip().lower()
+    return v if v in SPEAKER_TAGS else None
+
+
+def speaker_tag(value) -> str:
+    """说话人标注前缀：查表 + 兜底（未知值一律不显示原始枚举）。"""
+    v = normalize_speaker_type(value)
+    return SPEAKER_TAGS.get(v, SPEAKER_TAG_FALLBACK) if v else SPEAKER_TAG_FALLBACK
 
 
 def format_memory_line(m: dict, max_len: int = 150, prefix: str = "- ", include_speaker: bool = False,
@@ -63,13 +96,8 @@ def format_memory_line(m: dict, max_len: int = 150, prefix: str = "- ", include_
     _rec_tag = f"[记录于 {_rec}] " if _rec else ""
     _sp_tag = ""
     if include_speaker:
-        _sp = str(m.get("speaker_type") or "").strip()
-        if _sp == "user":
-            _sp_tag = "[你说的] "
-        elif _sp == "character":
-            _sp_tag = "[TA说的] "
-        elif _sp == "system":
-            _sp_tag = "[系统说的] "
+        # 表驱动 + 兜底：未知值不抛错、不显示原始枚举（P0 第 4 步读侧容错）
+        _sp_tag = speaker_tag(m.get("speaker_type"))
     _cc = m.get("contradiction_count") or 0
     _cc_tag = "（你后来纠正过，以你最新说法为准）" if _cc > 0 else ""
 

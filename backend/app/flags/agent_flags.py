@@ -206,12 +206,27 @@ AGENT_FLAGS = {
     "review_reminisce_framework": True,
     "review_plan_expire_stale": False,
     "review_plan_validity_extract": False,
-    # ── A4 批 1 / T3：事实生命周期策略表（2026-09-26；P0–P2 ＝ 零行为观测）──
-    # fact_lifecycle_policy 开=按 app/memory/lifecycle_policy.py 的统一策略表，随 6 小时维护拍子抽样统计
-    #   每类事实的分布与「按 TTL / valid_to 判定已失效」的条数，打一条 INFO；**纯只读、只记日志**：
-    #   不筛选、不改状态、不写库、不影响任何链路（P1+P2 干跑）。
-    #   关（默认）= 连扫描都不跑，逐字节旧行为。真正执行「同槽取代」的开关属 P3，需单独拍板后再登记。
-    "fact_lifecycle_policy": False,
+    # ── A4 批 1 / T3：事实生命周期策略表（2026-09-26 落 P0–P2；2026-09-29 B9 判读后进 P4）──
+    # 本键是**档位**（归一口径唯一真源＝app/memory/lifecycle_policy.py::gear_of），三档：
+    #   False（默认）＝ off      ：连扫描都不跑，逐字节旧行为；
+    #   True          ＝ dry_run ：随 6 小时维护拍子抽样统计每类事实分布与「按 TTL / valid_to 判失效」条数，
+    #                              打一条 INFO「Lifecycle policy dry-run: …」；**只读、不改状态、不写库**
+    #                              （＝本批之前的全部行为，线上 DB 行 enabled=1 就落在这一档）；
+    #   "apply_plan"  ＝ 生效档  ：观测照打，并**只让 plan 一类的 TTL 落地**——把已过期计划交给
+    #                              memory/maintain_plan_expiry.expire_stale_plans 置 stale（现状面退出、
+    #                              检索/复习面保留、不物理删除）。其它 fact_kind 与用户属性槽层**继续干跑**。
+    # 为什么用字符串档而不是再登记一把 bool（原占位名 fact_lifecycle_policy_apply 已作废）：
+    #   复用既有开关于单一真源；新增第二把闸会让「观测/作用」两处判断漂移。
+    # 拨档方式（重要）：runtime_flags 只覆盖 bool 键（flag_service 有类型防护），所以
+    #   ① 保持本行默认 False 时，DB 行 enabled=1 会把键合并成 True＝干跑档（现状，不变）；
+    #   ② 要进生效档：把本行默认值改成 "apply_plan" 后重启（此时该键非 bool ⇒ DB 行不再覆盖），
+    #      或进程内热改 AGENT_FLAGS["fact_lifecycle_policy"] = "apply_plan"（重启即失效）。
+    # 回退：把本键置回 True（干跑档）或 False（关）⇒ 从下一拍起不再动作，逐字节恢复本批之前行为；
+    #   失效动作的另一条授权通道（L4 的 review_plan_expire_stale，日终维护）不受本键影响、语义不变。
+    # 2026-09-29 深夜：用户拍板「B9 进 P4」⇒ 默认值由 False 改为 "apply_plan"（生效档，只让 plan 的 TTL 落地）。
+    #   注意：本键因此从 bool 变成 str，启动加载器对非 bool 键**跳过 DB 覆盖**（旧行 fact_lifecycle_policy=1 不再生效），
+    #   所以这一行就是「开/关/档位」的唯一开关；回退＝把本行改回 True（干跑）或 False（关）后重启。
+    "fact_lifecycle_policy": "apply_plan",
     # ── 记忆注入行时态标注（2026-09-10，第三轮 T3/C1）──
     # memory_line_tense_tag（已固化常开）：format_memory_line 在 [记录于] 之后插时态标签：plan 未过期=［计划］、
     #   已过期=［旧安排·已过期］、episodic=［往事］、transient=［当时状态］、enduring 不加；

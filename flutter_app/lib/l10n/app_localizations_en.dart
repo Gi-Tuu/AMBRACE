@@ -2916,6 +2916,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get memorySourceCharacter => 'Character';
 
   @override
+  String get memorySourcePerception => 'Perception';
+
+  @override
+  String get memorySourceSystem => 'System';
+
+  @override
+  String get memorySourceUnknown => 'Source not labeled';
+
+  @override
   String get memorySourceUser => 'User';
 
   @override

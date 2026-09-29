@@ -51,14 +51,29 @@ def _perception_tag_on() -> bool:
         return False
 
 
-# 断点 #5（2026-09-29）：感知派生条的**准入归属**标记。
-# 这个取值只用于准入判定与回执留痕，**不写进 memories.speaker_type**——该列刻意留空（见下）。
+# 断点 #5（2026-09-29）→ P0 第 4 步（2026-09-29）：感知派生条的归属**落库列也写这个值**。
+# 第 1~3 步它只用于准入判定与回执留痕（该列刻意留空），结果「perception」从未真正可 SQL 查询；
+# 本步起感知条把判定结果写进 memories.speaker_type（列宽 String(10)，恰好容纳 10 字符）。
 PERCEPTION_SENDER = "perception"
 
 
 def _is_perception_source(source) -> bool:
     """来源是否感知派生（纯判定）：归一比较，脏输入（非字符串 / None / 空白）一律 False。"""
     return isinstance(source, str) and source.strip().lower() == PERCEPTION_SOURCE
+
+
+def perception_actor_column(spk_type, source):
+    """P0 第 4 步·写入侧归一（纯函数、零 IO）：感知条把判定结果写进 ``speaker_type`` 列。
+
+    只填「判定为空」的那一档（``None → perception``）：
+    - 调用方显式给的归属（``user`` / ``character`` / ``system`` / ``tool``）原样返回；
+    - 非感知条（``source`` 不是 perception）逐字节原样返回——本函数对它们恒等。
+
+    为什么只在 ``None`` 时补：判据链里感知排在显式归属之前（``_resolve_admission_sender``），
+    但落库列若覆盖显式入参会让「调用方说的话」凭空消失，且双跑判据要求差异**只能是**
+    ``NULL→perception``（越界的差异一律视为回归）。
+    """
+    return PERCEPTION_SENDER if spk_type is None and _is_perception_source(source) else spk_type
 
 
 def _cross_source_merge_blocked(incoming_source, candidate_source) -> bool:
@@ -556,10 +571,10 @@ async def save_memory(
                     source = PERCEPTION_SOURCE
                     epistemic_status = "INFERRED"  # 感知＝推断，未经用户认可绝不是事实（方案 §2.3）
                     _perception_tagged = True
-                    # 断点 #5：speaker 两列**显式留空**（连调用方给的 user/角色 id 一起撤掉）。
-                    # 「这条来自感知」的证据由 memories.source=perception ＋ 下方打标回执承载，
-                    # 不写进 speaker_type：该列值空间是 user/character/system（前端据此画标签），
-                    # 造新值会被当成「TA说的」，填 user 就是本断点本身——留空才是诚实的「未知归属」。
+                    # 断点 #5：调用方给的 speaker 两列**显式撤掉**（连 user id 一起清空）——
+                    # 「这条来自屏幕」不等于「用户亲口说的」，也不该伪造 character。
+                    # P0 第 4 步起：清空之后由下方 `perception_actor_column` 把判定结果落成
+                    # ``speaker_type='perception'``（可 SQL 查询），speaker_id 仍留空（感知没有说话人 id）。
                     speaker_type = None
                     speaker_id = None
                     # M2「sub_type 记通道」：把命中的那条快照的来源通道写进 sub_type
@@ -727,15 +742,14 @@ async def save_memory(
         # P0：记忆归属与认知状态（默认按来源推断；调用方可显式覆盖）
         _spk_type = speaker_type
         _spk_id = speaker_id
-        # 断点 #5：感知派生条**不套用「默认＝用户陈述」**（与打标同闸，flag 关＝逐字节旧行为）。
-        # 打标命中时上面已把两列清空；调用方直接写 source=perception（未走打标）时这里也不兜底成 user。
-        _perception_row = _perception_tag_on() and _is_perception_source(source)
-        if _spk_type is None and _spk_id is None and not _perception_row:
+        # 断点 #5 → P0 第 4 步：感知派生条**不套用「默认＝用户陈述」**，且判定结果直接落进列。
+        # 本判定**常开**（不再受 perception_source_tag 门控）：生产该闸已开，打标命中时两列被
+        # 清空、调用方直接写 source=perception 时也在此收口；其它来源的兜底路径一字未动。
+        if _spk_type is None and _spk_id is None and not _is_perception_source(source):
             _spk_type = "user"  # 默认归属用户（多数记忆来自用户陈述）
             _spk_id = user_id
+        _spk_type = perception_actor_column(_spk_type, source)
         _spk = _spk_type  # 准入闸门留痕用（角色推断时更新为实际归属）
-        if _spk is None and _perception_row:
-            _spk = PERCEPTION_SENDER  # 回执/provenance 留痕：感知条的归属显式记为 perception
         _epi = epistemic_status
         _pending = False
         if _admission_gate_on():
@@ -829,8 +843,8 @@ async def save_memory(
 
         # 批 0-2 M1a：感知打标留痕（复用 M3 回执表与发射口，不新造机制）。
         # 记下「原本要写成什么来源」，误标时可据此人工复核/一键纠正（方案 §四「纠」）。
-        # 断点 #5：同时记归属改写（speaker 落成显式 perception，库里两列为空），否则
-        # 「这条为什么没有 speaker」在回执面上查不到依据。
+        # 断点 #5：同时记归属改写；P0 第 4 步起「改写结果」与「落库列值」是同一个值
+        # （speaker_type 列真写成 perception），故两键都取实际落库值，不留「说一套写一套」的痕。
         if _perception_tagged:
             try:
                 emit_memory_receipt(
@@ -839,7 +853,7 @@ async def save_memory(
                     detail={"from_source": _source_before_tag, "to_source": PERCEPTION_SOURCE,
                             "epistemic_status": _epi, "memory_type": memory_type,
                             "sub_type": sub_type,
-                            "speaker": PERCEPTION_SENDER, "speaker_type": None,
+                            "speaker": PERCEPTION_SENDER, "speaker_type": _spk_type,
                             "from_speaker_type": _speaker_type_before_tag},
                 )
             except Exception:
@@ -975,3 +989,83 @@ async def save_memory(
         # 检索增强（2026-08-23）：记忆已写入该角色 → 使 BM25 索引失效（下次检索懒重建）
         bm25_invalidate(character_id)
         return memory
+
+
+# ── P0 第 4 步：只读追溯（按来源消息反查 actor 归一结果）────────────────────────
+# 跨表最小链：``chat_messages.id`` →（``domain_events.entity_id`` 的发起方）→（``memories.source_id`` 的落库列）。
+# 三处**只 SELECT**，不写、不刷强度、不发事件。本函数存在的意义＝给「库里那条到底记成谁的」一个
+# 可复核的答案；判据不另立一套，沿用 ``actor_shadow.judge_actor`` 的统一语义（第 1 步的事实源）。
+TRACE_MAX_EVENT_ROWS = 20
+TRACE_MAX_MEMORY_ROWS = 50
+
+
+async def trace_actor_for_message(message_id, db=None) -> dict:
+    """只读追溯：给定来源消息 id，返回「按统一语义该归给谁」＋库里三张表实际记了什么。
+
+    返回（永不抛异常；出错时 ``error`` 记原因，其余字段按已取到的部分给）::
+
+        {"message_id", "found", "message_sender_type", "event_actors",
+         "memory_rows", "memory_speaker_types", "actor", "basis", "consistent", "error"}
+
+    - ``actor`` / ``basis``：``judge_actor`` 的统一判定与依据档（纯判定拿不准时 ``actor=None``）；
+    - ``consistent``：判定值是否与**全部**落库 ``speaker_type`` 相符（判定为 None 时不参与比对，置 None）；
+    - ``db`` 传入则复用调用方会话（只读、不 commit、不替调用方关闭），否则自开会话、用完即关。
+    """
+    out = {"message_id": message_id, "found": False, "message_sender_type": None,
+           "event_actors": [], "memory_rows": 0, "memory_speaker_types": [],
+           "actor": None, "basis": "", "consistent": None, "error": None}
+    if message_id is None:
+        out["error"] = "message_id is None"
+        return out
+    try:
+        from app.memory.actor_shadow import judge_actor
+
+        owns = db is None
+        if owns:
+            from app.memory.service import async_session_factory
+            db = async_session_factory()
+        try:
+            from app.models.chat import ChatMessage
+            from app.models.domain_event import DomainEvent
+
+            msg = await db.get(ChatMessage, message_id)
+            if msg is not None:
+                out["found"] = True
+                out["message_sender_type"] = msg.sender_type
+
+            out["event_actors"] = [
+                r[0] for r in (await db.execute(
+                    select(DomainEvent.actor_type)
+                    .where(DomainEvent.entity_type == "chat_message",
+                           DomainEvent.entity_id == message_id)
+                    .order_by(DomainEvent.id.asc())
+                    .limit(TRACE_MAX_EVENT_ROWS)
+                )).all()
+            ]
+
+            mem_rows = (await db.execute(
+                select(Memory.source, Memory.speaker_type)
+                .where(Memory.source_id == message_id)
+                .order_by(Memory.id.asc())
+                .limit(TRACE_MAX_MEMORY_ROWS)
+            )).all()
+            out["memory_rows"] = len(mem_rows)
+            out["memory_speaker_types"] = [r[1] for r in mem_rows]
+            mem_source = mem_rows[0][0] if mem_rows else None
+        finally:
+            if owns:
+                await db.close()
+
+        j = judge_actor(source=mem_source, source_message_sender=out["message_sender_type"],
+                        source_id=message_id if mem_rows else None)
+        out["actor"], out["basis"] = j.actor, j.basis
+        if not out["found"] and not out["memory_rows"]:
+            # 两头都没有证据：如实说「查不到」，绝不臆造成 user（臆造等于把丢失点伪装成结论）
+            out["actor"], out["basis"] = None, "not_found"
+            return out
+        if j.actor is not None and out["memory_speaker_types"]:
+            out["consistent"] = all(v == j.actor for v in out["memory_speaker_types"])
+        return out
+    except Exception as e:
+        out["error"] = f"{e.__class__.__name__}: {e}"
+        return out

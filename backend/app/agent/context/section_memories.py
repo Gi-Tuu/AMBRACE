@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from app.agent.context.sections import ContextSection, register_section, TARGET_APPEND, TARGET_TEMPLATE
-from app.memory.format import format_memory_line
+from app.memory.format import format_memory_line, normalize_speaker_type
 
 _logger = logging.getLogger("agent.context.section_memories")
 
@@ -76,6 +76,17 @@ def _bump_memory_round(character_id: int) -> int:
     return _memory_char_rounds[character_id]
 
 
+def _observe_unknown_speaker(m) -> None:
+    """读侧容错观测（P0 第 4 步，2026-09-29）：未登记的 ``speaker_type`` 记一条 INFO。
+
+    只观测、不改判据：标注兜底本身在 ``memory.format.speaker_tag``（表驱动，未知值既不抛错、
+    也不把原始枚举显示进提示词）。本函数把「库里出现了新枚举」这件事变得在日志里可见。
+    """
+    st = m.get("speaker_type") if isinstance(m, dict) else getattr(m, "speaker_type", None)
+    if st not in (None, "") and normalize_speaker_type(st) is None:
+        _logger.info("unknown speaker_type mem=%s value=%r", _memory_id_of(m), st)
+
+
 async def _user_tz_offset_min(state: dict, ctx: dict) -> int | None:
     """F-3（2026-09-04）：取用户本地时区分钟偏移（如 480=UTC+8），失败/未设返回 None。
 
@@ -117,7 +128,13 @@ def _build_retrieved_memory_lines(character_id: int, retrieved: list) -> list[st
         for m in _filter_recently_injected(character_id, retrieved):
             # X-2（2026-08-18）：说话人标注（[你说的]/[TA说的]，speaker_type 无值不加），
             # 让 LLM 区分「用户亲口说的（FACT）」与「AI 自己推测的（INFERRED）」；认知前缀（epistemic）之后、内容之前
-            _line = format_memory_line(m, include_speaker=True)
+            _observe_unknown_speaker(m)  # P0 第 4 步：未知 speaker_type 只观测，标注兜底在 format 里
+            try:
+                _line = format_memory_line(m, include_speaker=True)
+            except Exception as _e:
+                # 单行异常只丢这一行（P0 第 4 步读侧异常隔离），不拖垮整个检索区
+                _logger.warning("memory line format failed mem=%s: %s", _memory_id_of(m), _e)
+                _line = ""
             if _line:
                 lines.append(_line)
                 injected.append(m)

@@ -250,10 +250,12 @@ _FLAG_ROWS: list[tuple] = [
      'arrangement, also leave a note so the judgement can be cross-checked later. The outcomes stay exactly '
      'as they are now; turning this off simply stops leaving the note.'),
     ('fact_lifecycle_policy', 'memory', 720, False, '事实过期口径留痕',
-     '按一张统一的策略表统计每类记忆的留存与过期情况，只在后台记录、不改动任何内容。',
+     '按一张统一的策略表统计每类记忆的留存与过期情况，默认只在后台记录、不改动任何内容；'
+     '拨到最高档时，只把已过期的安排标为过时——不再当作此刻的情况，也不删除任何记录。',
      'Fact lifetime policy (observation)',
-     'Counts how each kind of memory ages against one shared policy table. '
-     'Observation only — nothing is changed and no content is filtered.'),
+     'Counts how each kind of memory ages against one shared policy table. By default this only '
+     'records in the background and changes nothing; at the highest level it marks past-due '
+     'arrangements as outdated, so they no longer pass as the present, and nothing is deleted.'),
     ('recall_gate_shadow', 'memory', 721, False, '检索时机判断留痕',
      '每一轮回复前额外记一条「这一轮要不要翻记忆」的判断过程，便于事后核对该判断准不准；'
      '是否会翻记忆与现在完全一样，不会因此改任何东西，关掉则不留这条记录。',

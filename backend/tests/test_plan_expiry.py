@@ -118,10 +118,15 @@ def _expired_plan_kw(**kw):
 # ────────────────────────── expire_stale_plans ──────────────────────────
 
 def test_expire_flag_off_零行为(expiry_db, monkeypatch):
-    """flag review_plan_expire_stale 默认关：不扫不改，返回 0（灰度安全）。"""
+    """两条授权通道全关：不扫不改，返回 0（灰度安全）。
+
+    2026-09-29（B9 进 P4）：失效动作有两处授权口 —— ① L4 灰度 review_plan_expire_stale；
+    ② 策略表生效档 fact_lifecycle_policy（默认 apply_plan）。测「全关＝零行为」必须两条一起关。
+    """
     import app.memory.maintain_plan_expiry as mpe
     factory, calls = expiry_db
     _set_flag(monkeypatch, "review_plan_expire_stale", False)
+    _set_flag(monkeypatch, "fact_lifecycle_policy", False)
 
     async def _main():
         mid = (await _seed(factory, **_expired_plan_kw())).id

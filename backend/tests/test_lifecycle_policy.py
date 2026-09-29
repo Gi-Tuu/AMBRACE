@@ -144,8 +144,13 @@ def test_table_snapshot_is_read_only_copy():
 # ── 开关与目录 ──
 
 
-def test_flag_default_off_and_catalog_entry_present():
-    assert loop.AGENT_FLAGS.get(pol.FLAG_KEY) is False, "新开关必须默认关"
+def test_flag_default_apply_plan_and_catalog_entry_present():
+    """2026-09-29 用户拍板「B9 进 P4」：本键从 bool 升为三档，默认值＝生效档 apply_plan。
+
+    注：键变成 str 后，启动加载器对非 bool 键跳过 DB 覆盖（旧 runtime_flags 行不再生效），
+    因此「这一行的默认值」就是唯一档位开关；回退＝改回 True（干跑）/ False（关）。
+    """
+    assert loop.AGENT_FLAGS.get(pol.FLAG_KEY) == pol.GEAR_APPLY_PLAN, "B9 进 P4 后默认应为生效档"
     from app.application.flag_catalog import FLAG_CATALOG
 
     entry = FLAG_CATALOG.get(pol.FLAG_KEY)

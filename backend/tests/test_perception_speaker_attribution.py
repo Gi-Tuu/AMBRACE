@@ -163,11 +163,11 @@ def test_打标命中_speaker不落成user也不伪造character(env):
     assert m is not None
     assert m.source == PERCEPTION_SOURCE
     assert m.speaker_type not in ("user", "character"), m.speaker_type
-    assert m.speaker_type is None
+    assert m.speaker_type == "perception"  # P0 第 4 步（2026-09-29）：判定结果写进列，可 SQL 查
     assert m.speaker_id is None
     assert m.epistemic_status == "INFERRED"
     row = _rows(env["factory"])[-1]
-    assert (row.speaker_type, row.speaker_id) == (None, None)
+    assert (row.speaker_type, row.speaker_id) == ("perception", None)
 
 
 def test_打标命中_调用方显式user归属也被撤掉(env):
@@ -176,7 +176,7 @@ def test_打标命中_调用方显式user归属也被撤掉(env):
     _flag(True)
     _add_snapshot(env["factory"], SNAP)
     m = _save(content=MEM_HIT, speaker_type="user", speaker_id=1)
-    assert (m.speaker_type, m.speaker_id) == (None, None)
+    assert (m.speaker_type, m.speaker_id) == ("perception", None)
     assert m.source == PERCEPTION_SOURCE
 
 
@@ -218,14 +218,17 @@ def test_直接写perception来源_不兜底成user(env):
     """未走打标（调用方直接给 source=perception）时同样不兜底 user：判据看来源列，不看命中过程。"""
     _flag(True)
     m = _save(content=MEM_MISS, source=PERCEPTION_SOURCE, epistemic_status="INFERRED")
-    assert (m.speaker_type, m.speaker_id) == (None, None)
+    assert (m.speaker_type, m.speaker_id) == ("perception", None)
     assert m.source == PERCEPTION_SOURCE
 
 
-def test_flag关_直接写perception来源仍按旧兜底(env):
-    """同上一条对照：flag 关 ⇒ 兜底逻辑逐字节旧行为（哪怕来源已是 perception）。"""
+def test_来源perception时开关不影响归属(env):
+    """P0 第 4 步：归属判定看来源列、不再受开关门控（旧版这条断言「flag 关 ⇒ 仍兜底 user」）。
+
+    门控升级为常开的行为变更系用户 2026-09-29 拍板；回退＝revert memory/write.py 的 4 处 hunk。
+    """
     m = _save(content=MEM_MISS, source=PERCEPTION_SOURCE, epistemic_status="INFERRED")
-    assert (m.speaker_type, m.speaker_id) == ("user", 1)
+    assert (m.speaker_type, m.speaker_id) == ("perception", None)
 
 
 def test_打标回执与create回执都记下perception归属(env):
@@ -237,7 +240,7 @@ def test_打标回执与create回执都记下perception归属(env):
     assert len(upd) == 1
     assert upd[0]["memory_id"] == m.id
     assert upd[0]["detail"]["speaker"] == "perception"
-    assert upd[0]["detail"]["speaker_type"] is None
+    assert upd[0]["detail"]["speaker_type"] == "perception"  # P0 第 4 步：回执随列值同步（旧版此处置 None）
     assert upd[0]["detail"]["from_speaker_type"] == "user"
     assert upd[0]["detail"]["to_source"] == PERCEPTION_SOURCE  # 既有键不被动
     cre = [r for r in env["receipts"] if r["action"] == "create"]
@@ -252,7 +255,7 @@ def test_准入闸门开_感知条裁决与降级不变(env):
     m = _save(content=MEM_HIT, speaker_type="user", speaker_id=1)
     assert m.source == PERCEPTION_SOURCE
     assert m.epistemic_status == "INFERRED"
-    assert (m.speaker_type, m.speaker_id) == (None, None)
+    assert (m.speaker_type, m.speaker_id) == ("perception", None)
     assert not [r for r in env["receipts"] if "pending review" in (r["reason"] or "")]
 
 

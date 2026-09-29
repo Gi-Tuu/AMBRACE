@@ -258,23 +258,53 @@ async def _scan_slot_layer(*, session_factory=None, now: datetime | None = None,
         return empty
 
 
+async def _apply_plan_expiry(gear: str) -> int:
+    """A4 批 1 / P4（2026-09-29）生效档的**唯一动作**：把已过期计划记忆置 stale。
+
+    - 落点复用既有 `memory/maintain_plan_expiry.expire_stale_plans`（判定＝`tense.classify_tense`
+      + `is_plan_expired` + `plan_valid_until`，与策略表 `is_expired` 同源，**不新造数学**）；
+    - **只作用 plan**：该函数的扫描窗只含计划载体（event+计划词 / sub_type='plan' /
+      user_info+extracted+计划词），精判再要求 `classify_tense == "plan"` ⇒ 其它 kind 一律不动；
+      槽层（`_scan_slot_layer`）继续只 SELECT ⇒ **保持干跑**；
+    - 动作面＝既有三字段（status→stale、valid_to→实际有效期、next_review_at→None 停复习轮转），
+      **无物理删除**、不动 is_archived/正文/来源；置 stale 后现状面（current_facts_active_only）
+      不再把它当现状取用，检索/复习面仍可见（rerank 降权）；
+    - 回退：把 `fact_lifecycle_policy` 置回干跑档（`True` / `"dry_run"` / `False`）⇒ 本拍子起不再动作，
+      逐字节回到本批之前（已被置 stale 的行不自动回滚，与 L4 既有语义一致）；
+    - 异常隔离：失败只 WARNING + 返回 0，不影响观测、不计入本拍维护成败与退避。
+    """
+    try:
+        from app.memory import lifecycle_policy as pol
+        from app.memory.maintain_plan_expiry import expire_stale_plans
+        if gear != pol.GEAR_APPLY_PLAN:      # 非生效档：零动作、零 import 副作用
+            return 0
+        return int(await expire_stale_plans() or 0)
+    except Exception as e:
+        _logger.warning("Lifecycle policy plan-apply failed (observation kept): %s", e)
+        return 0
+
+
 async def scan_lifecycle_policy(*, session_factory=None, now: datetime | None = None,
                                 limit: int = _LIFECYCLE_SCAN_LIMIT) -> dict | None:
-    """A4 批 1（T3）P1+P2：事实生命周期策略的**干跑观测**（只读 + 只记一条 INFO）。
+    """A4 批 1（T3）P1+P2 干跑观测 ＋ **P4 按档位分流**（关 / 干跑 / plan 生效）。
 
-    - flag `fact_lifecycle_policy` 关（默认）→ 直接返回 None（这一拍不打这段，逐字节旧行为）；
-    - 开 → 抽样最近 `limit` 条 active 记忆，按 `memory.lifecycle_policy` 的策略表算 fact_kind 分布
-      与「按 TTL / valid_to 判失效」条数，返回 {sampled, by_kind, expired, line}；
-    - **纯只读**：不写库、不改状态、不改变任何筛选与排序；异常一律隔离（WARNING + 返回 None），
-      不影响本拍维护的成败与退避。session_factory / now 仅供测试注入。
+    - 档位由 `lifecycle_policy.gear_of` 从开关 `fact_lifecycle_policy` 归一：
+      关（默认）→ 直接返回 None（这一拍不打这段，逐字节旧行为）；
+      干跑（bool 拨开＝线上现状）→ 抽样统计 fact_kind 分布与「按 TTL / valid_to 判失效」条数 + 一条 INFO，
+      **不筛选、不改状态、不写库**；
+      `apply_plan` → 在干跑观测**之后**追加唯一动作（`_apply_plan_expiry`：只把已过期 plan 置 stale），
+      观测与 INFO 照打，其余 kind 与槽层仍只统计；
+    - 观测部分**纯只读**（select）；异常一律隔离（WARNING + 返回 None），不影响本拍维护的成败与退避。
+      session_factory / now 仅供测试注入。
     """
     try:
         from app.flags.agent_flags import AGENT_FLAGS
-        if not AGENT_FLAGS.get("fact_lifecycle_policy", False):
+        from app.memory import lifecycle_policy as pol
+        gear = pol.gear_of(AGENT_FLAGS.get(pol.FLAG_KEY, False))
+        if gear == pol.GEAR_OFF:
             return None
         from sqlalchemy import select
 
-        from app.memory import lifecycle_policy as pol
         from app.models.memory import Memory
 
         if session_factory is None:
@@ -300,12 +330,17 @@ async def scan_lifecycle_policy(*, session_factory=None, now: datetime | None = 
             if pol.is_expired(kind, created_at=created_at, valid_to=valid_to, now=now_utc):
                 expired[kind] = expired.get(kind, 0) + 1
         line = pol.observation_line(sampled=len(rows), by_kind=by_kind, expired=expired)
+        # P4：生效档才动作，且动作只针对 plan（异常隔离，观测不受影响）
+        applied = await _apply_plan_expiry(gear)
+        line = line + " | " + pol.apply_observation_line(gear, applied)
         # A4 批 1 / P3 配套（2026-09-27）：槽层只读观测（user_facts 现状 + 旧值镜像候选）
+        # —— P4 明确**不扩到槽层**：这一层继续保持只 SELECT。
         slots = await _scan_slot_layer(session_factory=session_factory, now=now_utc)
         line = line + " | " + slots["line"]
         _logger.info("Lifecycle policy dry-run: %s", line)
         return {"sampled": len(rows), "by_kind": by_kind, "expired": expired,
-                "line": line, "slots": slots}
+                "line": line, "slots": slots,
+                "gear": gear, "plan_expired_applied": applied}
     except Exception as e:
         _logger.warning("Lifecycle policy scan failed: %s", e)
         return None
@@ -352,8 +387,9 @@ async def run_if_due(*, reason: str = "tick", interval: timedelta = INTERVAL) ->
         # 不计入本拍成败（不许因为扫描失败触发退避）。
         stale = await scan_stale_future_memories()
         detail.append("stale_future_candidates=%d" % sum(len(v) for v in stale.values()))
-        # A4 批 1（T3）P1+P2（2026-09-26）：事实生命周期策略的**干跑观测** —— 只读 + 只记 INFO，
-        # 不筛选、不改状态、不写库；flag 关时返回 None（这一拍不打这段）；失败不计入本拍成败。
+        # A4 批 1（T3）P1+P2（2026-09-26）：事实生命周期策略的**干跑观测**；P4（2026-09-29）起按档位分流
+        # —— 干跑档＝只读 + 只记 INFO；生效档＝观测之后追加唯一动作（只把已过期 plan 置 stale）。
+        # flag 关时返回 None（这一拍不打这段）；失败不计入本拍成败。
         lifecycle = await scan_lifecycle_policy()
         if lifecycle:
             detail.append("lifecycle_policy[%s]" % lifecycle.get("line", "n/a"))

@@ -37,6 +37,43 @@ from app.agent.context.section_memories import _bump_memory_round  # P3-5：注�
 
 _logger = logging.getLogger("agent.context")
 
+# B10 埋点小活（2026-09-29，Z1）：section_budget 补「空段 key 名单」的体积阈值。
+# obs_event 落库时把 steps_json 硬截到 1600 字符（见 memory/observability.py），既有 sections
+# 段已按 top-16 截断；名单再不加阈值就会顶穿上限、把留痕截成坏 JSON。三段阈值任一超限即
+# 截断并标 truncated=True（只影响观测载荷，注入行为/配额/裁剪一字未动）。
+# 阈值取意：整轮 46 段全空（现实最坏形态）时 detail 序列化仍 <1600——按真注册表 key 实测，
+# sections(top-16)+计数字段约 1000 字符，留给名单 ≤320 字符 / ≤24 个（现实每轮约 7 段空，余量充足）。
+_EMPTY_KEYS_MAX = 24
+_EMPTY_KEYS_CHAR_BUDGET = 320
+_EMPTY_KEY_MAX_CHARS = 60  # 与读端 _aggregate_section_breakdown 的 key[:60] 同一口径
+
+
+def _empty_keys_payload(loads: list[dict]) -> tuple[list[str], bool]:
+    """从逐段累计结果里取「空段 key 名单」：去重、保持声明序，超阈值截断并回报是否被截。
+
+    纯函数、只读 ``loads``，不碰注入结果。重复 key 不算截断（先判重再判阈值）。
+    """
+    keys: list[str] = []
+    seen: set[str] = set()
+    used = 0
+    for item in loads:
+        if not item.get("empty"):
+            continue
+        key = str(item.get("key") or "")[:_EMPTY_KEY_MAX_CHARS]
+        if not key or key in seen:
+            continue
+        if len(keys) >= _EMPTY_KEYS_MAX or used + len(key) > _EMPTY_KEYS_CHAR_BUDGET:
+            return keys, True
+        seen.add(key)
+        keys.append(key)
+        used += len(key)
+    return keys, False
+
+
+def _declared_keys_n(loads: list[dict]) -> int:
+    """本轮**去重后**的声明段 key 数（含空段）——空段名单的分母，与 total（按执行次数计）区分。"""
+    return len({str(x.get("key") or "") for x in loads if x.get("key")})
+
 
 def _load_ctx_builder():
     """惰性导入 context_builder（含 build_context_legacy / _EST_CHARS_PER_TOKEN 等）。"""
@@ -78,6 +115,9 @@ async def _run_sections(state: dict, ctx: dict) -> dict:
     # 返回值；复用既有观测通道与既有门控 memory_trace_debug（obs_event 内部已按它开关，不新造开关）；
     # 异常一律吞掉。detail 里的 sections 取 chars 最大的前 16 段（obs_event 落库截到 1600 字符，
     # 全量 40+ 段会截断成坏 JSON），总数/空段数/总字符数恒按全部段计。
+    # B10（2026-09-29，Z1）：追加 empty_keys/declared_keys_n/truncated 三项观测载荷——空段 key
+    # 名单此前只有 n_empty 计数没有名字，无法判断「哪些段长期为空」；阈值见 _EMPTY_KEYS_* 常量。
+    # 仍是每轮一条、仍只读累计结果，不改任何注入行为。
     _loads: list[dict] = []
     for sec in get_sections():
         if not sec.enabled:
@@ -115,11 +155,17 @@ async def _run_sections(state: dict, ctx: dict) -> dict:
         from app.memory.observability import obs_event
 
         _top = sorted(_loads, key=lambda x: -x["chars"])[:16]
+        # B10（Z1）：既有四个字段名与取值一字未动（读端 Y2 按它们取值），只新增名单三项。
+        # 空段 key 名单此前只有计数没有名字 ⇒ 无法判断「哪些段长期为空」。
+        _empty_keys, _keys_truncated = _empty_keys_payload(_loads)
         obs_event(state.get("character_id"), "section_budget", {
             "sections": _top,
             "total": len(_loads),
             "n_empty": sum(1 for x in _loads if x["empty"]),
             "chars_total": sum(x["chars"] for x in _loads),
+            "empty_keys": _empty_keys,
+            "declared_keys_n": _declared_keys_n(_loads),
+            "truncated": _keys_truncated,
         })
     except Exception as e:
         _logger.warning("section budget obs failed: %s", e)

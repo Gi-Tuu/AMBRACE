@@ -17,6 +17,11 @@
      （classify_tense 本就把「user_info+extracted」交给将来时规则判定，非 enduring）。
 刻意不纳入 `preference`（多为长期偏好，仅顺带提及计划词）与 `insight`（日记/朋友圈是既成记录），
 避免把持久偏好与往事记录误当计划清掉——即「不放宽安全边界」。
+
+2026-09-29（A4 批 1 / P4，B9 十三拍干跑判读后拍板）：本函数是**策略表生效档唯一的失效落点**（不新造第二套
+失效机制）——授权闸扩为「L4 的 review_plan_expire_stale **或** lifecycle_policy 生效档」任一即放行，
+日终维护通道语义逐字节不变。生效范围**只有 plan 一类**（扫描窗 + `classify_tense=='plan'` 精判双重限定），
+其它 fact_kind 与用户属性槽层继续干跑（只统计、不动作）。
 """
 from __future__ import annotations
 
@@ -91,10 +96,17 @@ async def expire_stale_plans(limit: int = EXPIRE_BATCH_LIMIT) -> int:
     SQL 侧先用扫描窗（``_plan_scan_window``：PLAN_MARKERS LIKE 预筛 + 显式 plan 标注）收窄，
     Python 侧再以 ``_is_expired_plan``（classify_tense + is_plan_expired，tense 规则是唯一权威）精判。
     幂等：只动 status='active' 的行，重复跑不会重复计数（已 stale 的不再入窗）。
+
+    授权闸（``lifecycle_policy.plan_apply_allowed``，任一即放行）：
+      ① L4 既有灰度 ``review_plan_expire_stale``（日终维护通道，语义逐字节不变）；
+      ② A4 批 1 / P4 策略表生效档 ``fact_lifecycle_policy == "apply_plan"``（2026-09-29 新增，
+         只授权 plan TTL 这一件事 —— 本函数只处理 classify_tense=='plan' 的行，其它 kind 与槽层不受波及）。
+    回退：把 ``fact_lifecycle_policy`` 置回干跑档（True / "dry_run" / False）⇒ 只剩 ①；
+    ①②都关时首行即返回 0，连一次 SELECT 都不发。
     """
     try:
-        from app.flags.agent_flags import AGENT_FLAGS
-        if not AGENT_FLAGS.get("review_plan_expire_stale", False):
+        from app.memory.lifecycle_policy import plan_apply_allowed
+        if not plan_apply_allowed():
             return 0
     except Exception:
         return 0

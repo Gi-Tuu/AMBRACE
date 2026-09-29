@@ -6,7 +6,11 @@
 - P0：策略表（`POLICY`）＋ `is_expired` 确定性判定 ＋ 同槽取代候选判定（纯函数）；
 - P1/P2：`resolve_fact_kind` / `observation_line` 供维护拍子做**干跑观测**（`maintenance_schedule.scan_lifecycle_policy`）
   —— 只计算 + 只记一条 INFO，**不筛选、不改状态、不写库**；
-- **P3（真正执行同槽取代）不在本批**：需单独拍板，届时用独立开关 `APPLY_FLAG_KEY`（本文件先占位，未接线、未登记）。
+- **P4（2026-09-29，B9 十三拍干跑判读后拍板）＝生效范围只放开 `plan` 一类**：维护拍子按 `current_gear()`
+  分流，生效档把「按既有口径已过期的计划记忆」交给 `memory/maintain_plan_expiry.expire_stale_plans`
+  置 stale（现状面退出、检索/复习面保留、不物理删除）；**其它 kind 与槽层继续干跑**（只统计、不动作）。
+  三档由**既有两个开关**承载（`FLAG_KEY` 观测 + `APPLY_FLAG_KEY` 作用），**不新造第二套开关**。
+- **P3（同槽取代）不需要新机制**：三层承接者早已实现，本模块只登记口径（见下方承接者清单）与槽层观测。
 
 纪律（与《批 1 设计草案 v1》一致）：
 
@@ -20,10 +24,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Mapping, Sequence
 
-# 观测/干跑开关（P0–P2：只计算 + 只记 INFO，零行为）；**默认关**（登记在 agent/loop.py::AGENT_FLAGS）
+# 观测/干跑开关（P1–P2）；**默认关**（登记在 flags/agent_flags.py::AGENT_FLAGS）
 FLAG_KEY = "fact_lifecycle_policy"
-# P3（真正执行同槽取代）的开关名：**本批只占位**，不进 AGENT_FLAGS、不进目录、无任何调用点。
-APPLY_FLAG_KEY = "fact_lifecycle_policy_apply"
+# 失效动作授权开关：**复用 L4 既有灰度**（2026-09-09 起它就在 maintain_plan_expiry 里 gate 同一个动作），
+# 原 P3 占位名 `fact_lifecycle_policy_apply` 作废——从未登记、从未有调用点，且另起一把闸＝新造第二套。
+APPLY_FLAG_KEY = "review_plan_expire_stale"
+
+# 三档（单一事实源）：关 / 干跑（只统计）/ plan 生效（只放开 plan 一类，其余保持干跑）
+GEAR_OFF = "off"
+GEAR_DRY_RUN = "dry_run"
+GEAR_APPLY_PLAN = "apply_plan"
+GEARS: tuple[str, ...] = (GEAR_OFF, GEAR_DRY_RUN, GEAR_APPLY_PLAN)
 
 ROUTE_CURRENT_ONLY = "current_only"   # 只在现状面（受 current_facts_active_only 约束）
 ROUTE_RECALL_OK = "recall_ok"         # 复习/怀旧面可见 stale
@@ -76,7 +87,7 @@ def _slot_policies() -> dict[str, Policy]:
 POLICY: dict[str, Policy] = {
     **_slot_policies(),
     "plan": Policy(None, None, "event", ROUTE_RECALL_OK,
-                   "计划/约定：过期由 valid_to 单独判，不写死天数"),
+                   "计划/约定：过期由 valid_to 单独判，不写死天数（P4 唯一落地生效的类）"),
     "event": Policy(None, None, "event", ROUTE_RECALL_OK,
                     "已发生事件：靠衰减曲线，不按 TTL 失效"),
     "preference": Policy(None, None, "preference", ROUTE_BOTH, "长期偏好"),
@@ -162,6 +173,52 @@ def is_expired(kind: str, *, created_at: datetime | None = None,
     return (now - created_at).days >= int(pol.ttl_days)
 
 
+# ── P4 档位（生效范围的选择器）──────────────────────────────────────────────
+# 只读进程内的 AGENT_FLAGS 字典（app/flags/agent_flags.py 是纯 dict、不碰 DB），
+# 本模块仍然「零 IO、不读写任何表」。
+
+
+def gear_of(value) -> str:
+    """把开关值归一成档位（纯函数）：关 / 干跑 / plan 生效。
+
+    - falsy（False / None / 0 / 空串）⇒ `off`：连扫描都不跑，逐字节旧行为；
+    - `True` ⇒ `dry_run`：**向后兼容**——runtime_flags 只能写 bool，线上现有的「拨开」＝干跑，
+      本批不把它升级成生效（否则上线即改行为）；
+    - `"dry_run"` ⇒ `dry_run`；`"apply_plan"` ⇒ `apply_plan`（只让 plan 一类落地）；
+    - **其它任何值（含拼错的字符串）⇒ `dry_run`**：认不出就只统计，绝不擅自生效。
+    """
+    if not value:
+        return GEAR_OFF
+    if isinstance(value, str):
+        return GEAR_APPLY_PLAN if value.strip().lower() == GEAR_APPLY_PLAN else GEAR_DRY_RUN
+    return GEAR_DRY_RUN
+
+
+def current_gear() -> str:
+    """当前档位（读 AGENT_FLAGS[FLAG_KEY]；读不到/异常一律 `off`＝最保守的一侧）。"""
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        return gear_of(AGENT_FLAGS.get(FLAG_KEY, False))
+    except Exception:
+        return GEAR_OFF
+
+
+def plan_apply_allowed() -> bool:
+    """是否允许「把已过期计划置 stale」这一动作发生（单一授权口，供两处调用点共用）。
+
+    任一即放行：① L4 既有灰度 `review_plan_expire_stale`（日终维护通道，语义逐字节不变）；
+    ② 策略表生效档 `current_gear() == apply_plan`（P4 新增，只授权 plan TTL 这一件事）。
+    读不到开关一律 False（关）。
+    """
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        if bool(AGENT_FLAGS.get(APPLY_FLAG_KEY, False)):
+            return True
+    except Exception:
+        return False
+    return current_gear() == GEAR_APPLY_PLAN
+
+
 _VALUE_NOISE = " \t\r\n，。；;,.!！?？、·“”\"'（）()【】[]"
 
 
@@ -217,6 +274,11 @@ def observation_line(*, sampled: int, by_kind: Mapping[str, int],
     kinds = " ".join(f"{k}={int(by_kind[k])}" for k in sorted(by_kind) if by_kind[k])
     exp = " ".join(f"{k}={int(expired[k])}" for k in sorted(expired) if expired[k])
     return f"sampled={int(sampled)} kinds[{kinds or '-'}] expired[{exp or '-'}]"
+
+
+def apply_observation_line(gear: str, applied: int) -> str:
+    """档位与动作量摘要（并入同一条 INFO；干跑档恒 `plan_expired_applied=0`，便于核对档位）。"""
+    return f"gear={gear} plan_expired_applied={int(applied)}"
 
 
 # ── 槽类事实「旧值记忆失效」的承接者登记（A4 批 1 / P3，2026-09-27）─────────────

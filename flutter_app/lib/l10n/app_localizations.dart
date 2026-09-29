@@ -5271,6 +5271,24 @@ abstract class AppLocalizations {
   /// **'角色'**
   String get memorySourceCharacter;
 
+  /// No description provided for @memorySourcePerception.
+  ///
+  /// In zh, this message translates to:
+  /// **'感知'**
+  String get memorySourcePerception;
+
+  /// No description provided for @memorySourceSystem.
+  ///
+  /// In zh, this message translates to:
+  /// **'系统'**
+  String get memorySourceSystem;
+
+  /// No description provided for @memorySourceUnknown.
+  ///
+  /// In zh, this message translates to:
+  /// **'来源未标注'**
+  String get memorySourceUnknown;
+
   /// No description provided for @memorySourceUser.
   ///
   /// In zh, this message translates to:

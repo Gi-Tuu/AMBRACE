@@ -451,6 +451,22 @@ class _SummaryCard extends StatelessWidget {
 }
 
 
+/// 记忆归属（speaker_type）标签：表驱动，未登记值兜底中性标签，绝不回显原始枚举。
+/// 返回 null＝不显示标签（空值/纯空白）。
+String? memorySpeakerLabel(AppLocalizations l10n, String? speakerType) {
+  final key = speakerType?.trim().toLowerCase();
+  if (key == null || key.isEmpty) return null;
+  return {
+    "user": l10n.memorySourceUser,
+    "character": l10n.memorySourceCharacter,
+    "system": l10n.memorySourceSystem,
+    "perception": l10n.memorySourcePerception,
+  }[key] ?? l10n.memorySourceUnknown;
+}
+
+bool _speakerIsUser(String? speakerType) =>
+    speakerType?.trim().toLowerCase() == "user";
+
 class _MemoryCard extends StatelessWidget {
   final Memory memory;
   final String typeLabel;
@@ -473,6 +489,8 @@ class _MemoryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final speakerLabel = memorySpeakerLabel(l10n, memory.speakerType);
+    final speakerIsUser = _speakerIsUser(memory.speakerType);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: AuroraCard(
@@ -518,24 +536,22 @@ class _MemoryCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (memory.speakerType != null) ...[
+                if (speakerLabel != null) ...[
                   const SizedBox(width: 6),
                   Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: (memory.speakerType == 'user'
+                      color: (speakerIsUser
                           ? Colors.blue.withValues(alpha: 0.12)
                           : Colors.orange.withValues(alpha: 0.12)),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
-                      memory.speakerType == 'user'
-                          ? l10n.memorySourceUser
-                          : l10n.memorySourceCharacter,
+                      speakerLabel,
                       style: TextStyle(
                         fontSize: 10,
-                        color: memory.speakerType == 'user'
+                        color: speakerIsUser
                             ? Colors.blue.shade700
                             : Colors.orange.shade800,
                       ),
