@@ -21,6 +21,9 @@ from app.memory.service import (
     _retrievable_status_clause,
 )
 
+# 断点 #9 收口（2026-09-29）：状态派生记忆条统一到 12h 的开关键名（默认值登记在 flags/agent_flags.py）
+STATUS_MEMORY_TTL_FLAG = "status_memory_ttl"
+
 
 def _perception_tag_on() -> bool:
     """批 0-2 M1a：召回输出是否补 source/sub_type 字段（flag 默认关＝逐字节旧输出）；异常回落 False。
@@ -282,6 +285,38 @@ async def _entity_route(character_id: int, query: str) -> tuple[list[dict], dict
         return [], {"terms": [], "reasons": []}
 
 
+def _status_ttl_on() -> bool:
+    """断点 #9 收口（2026-09-29 用户拍板）：状态派生记忆条是否按统一 12h 窗口剔除。
+
+    默认开（＝新口径生效）；置 False 即恢复旧行为（召回照旧带出过期状态条）。
+    读不到开关时回落 False＝不误删（宁可多留一条过期状态，也不因新逻辑影响其它记忆）。
+    """
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get(STATUS_MEMORY_TTL_FLAG, False))
+    except Exception:
+        return False
+
+
+def _drop_expired_status_memories(meta: dict, now) -> dict:
+    """剔除超出统一 12h 窗口的「状态更新」派生记忆条（其它 sub_type/来源逐例不动）。
+
+    窗口数值唯一来源＝app/events/facts.py::STATUS_FRESH_HOURS（这里只引用判据函数，不写数值）。
+    召回出口（_rerank 的 DB 回填池）是本口径**唯一**生效点：所有召回路（向量/BM25/专名/
+    关键词兜底/时间路）都汇到这里补元数据，故只需这一处过滤。
+    判定或导入异常 ⇒ 原样返回（fail-open，不阻塞主链路）。
+    """
+    if not meta or not _status_ttl_on():
+        return meta
+    try:
+        from app.events.facts import status_memory_expired
+        return {mid: m for mid, m in meta.items()
+                if not status_memory_expired(m.sub_type, m.source, m.valid_to, m.created_at, now)}
+    except Exception as e:
+        _logger.warning("status ttl filter failed (keep all): %s", e)
+        return meta
+
+
 async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, int] | None = None, relevance_bonus: dict[int, float] | None = None, return_debug: bool = False, _keep_score: bool = False):
     """B2 检索加权（向量路径与 keyword 兜底共用，M-P2-3）：以 DB 为准补全元数据
     （向量 meta 的 importance 可能过期），加分项：置顶恒在前、关系/情绪类近 7 天 +15、
@@ -307,6 +342,9 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
             )
         )).scalars().all()
     meta = {m.id: m for m in rows}
+    # 断点 #9 收口（flag status_memory_ttl 默认开，关＝一行都不执行）：
+    # 剔除超窗的「状态更新」派生记忆条——所有召回路都汇到这个回填池，故为口径唯一生效点。
+    meta = _drop_expired_status_memories(meta, now)
     results = [r for r in results if r["id"] in meta]
     if not results:
         return ([], {"db_pool": 0, "rerank_top": []}) if return_debug else []

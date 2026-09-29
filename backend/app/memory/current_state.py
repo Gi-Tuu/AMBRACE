@@ -55,6 +55,17 @@ async def _char_world_user_facts(char_id: int, user_id: int) -> dict[str, str]:
         if hours is not None and not _predicate_fresh(asserted_at, now, hours):
             continue  # C2：过期现状不注入（与 facts.get_active_facts 同口径）
         latest[p] = v
+    # 死读路径埋点（P0 语义统一 · 第 2 步，2026-09-29；**零行为**）：方案 §1.4 判定本源
+    # 「subject_type=user 全仓零写入 ⇒ 恒空」，7 天计数恒 0 即证伪「预留」，供步骤 5 / 断点 #9
+    # 决定删除本查询或补写入。只计数：obs_event 内部 flag 门控 + fire-and-forget + 自带吞异常，
+    # 再包一层 try 保证埋点任何情况都不影响返回值。
+    try:
+        from app.memory.observability import obs_event
+        obs_event(char_id, "user_subject_world_fact_rows",
+                  {"user_id": user_id, "rows": len(rows), "kept": len(latest),
+                   "predicates": sorted(latest)})
+    except Exception:
+        pass
     return latest
 
 

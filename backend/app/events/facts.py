@@ -47,22 +47,55 @@ _TRANSIENT_FRESH_HOURS = {
 #     保留率低于 app/memory/constants.py:3 DECAY_THRESHOLD_PCT = 20.0 才进删除倒计时，
 #     倒计时长度 app/memory/constants.py:5 DECAY_COUNTDOWN_DAYS = 3 天 ⇒ 实际 ≈12.6 天量级（7·ln6）。
 # ⇒ 两侧数值**不一致**（12 小时 vs ≈12.6 天），地图判定成立：会出现「记忆还说有、事实已过期」。
-#   **数值统一属后续批次，需用户拍板**（改数值＝改行为，本批禁止）。
-# 本批做法（收敛口径、不改数值）：Memory 侧写入时带上与本文件同源的过期标记——
-#   valid_to 取 status_valid_to(now) 的同一时刻，来源面登记为 STATUS_MEMORY_DERIVED_FROM。
-#   谁是权威面：**WorldFact 管「现状」（12h 新鲜窗，注入对话用），Memory 管「长期」**（衰减曲线，检索用）；
-#   两者是同一句话的两个视角，现状过期以 WorldFact 的窗口为准，Memory 条上那份 valid_to 只是派生标记。
+#   **数值已统一（2026-09-29 用户拍板，断点 #9 收口批）**：Memory 侧「状态派生记忆条」的有效期
+#   同样取本文件 :29 的 12 小时，数值不得在 memory 侧另写一份（见 status_memory_expired）。
+#   生效点在读侧：memory/retrieve.py::_rerank 召回出口剔除超窗条（flag status_memory_ttl，
+#   默认开；置 False 即恢复旧口径）。之所以必须补读侧一步：valid_to 此前无任何读侧消费者
+#   （lifecycle_policy.is_expired 只在维护干跑统计里被调用），只改写入侧不会让 12h 真的生效。
+#   通用衰减档 S_BY_TYPE["insight"]=7.0 天**刻意不动**——改它牵连全部 insight。
 STATUS_MEMORY_DERIVED_FROM = "world_fact"
+# 状态派生记忆条的身份标记：写侧唯一来源 application/chat_service.py::_save_status_update。
+# 必须两个条件同时成立才算「状态派生条」——只按 sub_type 会误伤 778 条 source='chat' 的抽取条
+# （生产库实测：sub_type='status' 共 873 行，其中 source='status' 只有 95 行）。
+STATUS_MEMORY_SUB_TYPE = "status"
+STATUS_MEMORY_SOURCE = "status"
 
 
 def status_valid_to(now: datetime | None = None) -> datetime:
     """状态更新的统一过期时刻（单一来源）：now + STATUS_FRESH_HOURS 小时。
 
-    WorldFact 的 TTL（STATUS_FRESH_HOURS*60 分钟）与 Memory 侧的派生标记都出自同一个常量，
-    两侧不得各自硬编码小时数（测试 test_status_single_source.py 以源码棘轮钉住这一点）。
+    WorldFact 的 TTL（STATUS_FRESH_HOURS*60 分钟）、Memory 侧的派生标记、以及 Memory 侧的
+    召回剔除都出自同一个常量，两侧不得各自硬编码小时数
+    （测试 test_status_single_source.py / test_status_ttl_unified.py 以源码棘轮钉住这一点）。
     """
     base = now if now is not None else _now_naive()
     return base + timedelta(hours=STATUS_FRESH_HOURS)
+
+
+def is_status_derived_memory(sub_type: str | None, source: str | None) -> bool:
+    """是否「状态更新」派生记忆条（纯函数）；其它记忆类型一律 False ⇒ 永不被本口径影响。"""
+    return (sub_type or "") == STATUS_MEMORY_SUB_TYPE and (source or "") == STATUS_MEMORY_SOURCE
+
+
+def status_memory_expiry(valid_to: datetime | None, created_at: datetime | None) -> datetime | None:
+    """状态派生记忆条的失效时刻：行上有 valid_to 就用它（与 WorldFact.expires_at 同一瞬间）；
+    存量行没有（打标链路 2026-09-29 才接上，生产库 95/95 为空）⇒ 按 created_at + 同一窗口补算。
+    两者都缺 ⇒ None（无从判断，调用方按「不剔除」处理）。
+    """
+    if valid_to is not None:
+        return _naive_utc(valid_to)
+    if created_at is not None:
+        return status_valid_to(_naive_utc(created_at))
+    return None
+
+
+def status_memory_expired(sub_type: str | None, source: str | None, valid_to: datetime | None,
+                          created_at: datetime | None, now: datetime) -> bool:
+    """该记忆条是否已超出统一的 12h 窗口（纯函数、零 IO）；非状态派生条恒 False。"""
+    if not is_status_derived_memory(sub_type, source):
+        return False
+    exp = status_memory_expiry(valid_to, created_at)
+    return exp is not None and exp <= _naive_utc(now)
 
 # ── Ariadne 模块F：Curated Knowledge（2026-09-04）──
 KIND_STATUS = "status"                 # 瞬时状态事实（既有语义，默认）

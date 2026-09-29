@@ -191,17 +191,19 @@ async def _save_status_update(character_id: int, status_text: str, user_id: int)
         只按艾宾浩斯保留率衰减 —— 初始强度 S 取 app/memory/constants.py:9 S_BY_TYPE["insight"]=**7.0 天**，
         保留率低于 app/memory/constants.py:3 DECAY_THRESHOLD_PCT=20.0 才进删除倒计时
         （长度 app/memory/constants.py:5 DECAY_COUNTDOWN_DAYS=3 天）⇒ **≈12.6 天**（7·ln6）。
-      ⇒ 地图判定成立（会出现「记忆说有、事实已过期」）。**数值统一属后续批次、需用户拍板**：
-        改 12/7 任一侧都是改行为，本批禁止，故本批只收敛「口径来源」不动「数值」。
-      本批做法（第 3 条路线）：Memory 侧带上与 WorldFact 同源的过期标记 —— valid_to 取
+      ⇒ 地图判定成立（会出现「记忆说有、事实已过期」）。**数值已于 2026-09-29 用户拍板统一到 12 小时**
+        （断点 #9 收口批）：通用衰减档 S_BY_TYPE["insight"]=7.0 天**刻意不动**（改它牵连全部 insight），
+        统一只作用在「状态派生条」这一个身份上（sub_type='status' 且 source='status'）。
+      写入侧做法：Memory 侧带上与 WorldFact 同源的过期标记 —— valid_to 取
         facts.status_valid_to(now) 与事实行 expires_at 的**同一瞬间**，来源面登记 derived_from=world_fact。
         谁是权威面：WorldFact 管「现状」（新鲜窗，注入对话），Memory 管「长期」（衰减曲线，检索）。
-      零行为依据（只读核实）：记忆读侧不消费 Memory.valid_to —— 该列只被
+      生效点（为何必须补读侧一步）：valid_to 本身**没有**读侧消费者 —— 该列只被
         memory/supersede.py::archive_cold_superseded（要求 status=superseded）、
         memory/maintain_plan_expiry.py::_plan_scan_window（扫描窗只含 event 命中计划词 /
         sub_type=plan / user_info+extracted，insight+status 不在窗内）以及只读治理统计
         memory/maintenance_schedule.py（flag fact_lifecycle_policy 默认关）读取；
-        memory/retrieve.py 检索/注入路径无引用 ⇒ 打标不改变现有行为。
+        ⇒ 真正让 12h 生效的是 memory/retrieve.py::_rerank 出口剔除（flag status_memory_ttl 默认开，
+        判据与数值单一来源 events/facts.status_memory_expired；关＝本函数改动前逐字节旧行为）。
     """
     if not status_text:
         return

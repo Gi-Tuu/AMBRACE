@@ -421,4 +421,19 @@ AGENT_FLAGS = {
     # 第 2 步（把归一化接进 write/speaker/events 各落法）需另批拍板；本键留作观测期开关，
     #   攒够「unified vs actual 不一致占比」三个指标后再决定是否升级成生效语义。
     "actor_semantics_shadow": False,
+    # ── 断点 #9 收口（2026-09-29 用户拍板：两处「状态更新」过期口径统一到 12 小时）──
+    # 背景：同一条现状更新双写两个面，改动前数值不一致 —— WorldFact 侧 = events/facts.py
+    #   STATUS_FRESH_HOURS（12 小时，写入 TTL 与读取新鲜窗同源）；Memory 侧 = 通用艾宾浩斯衰减
+    #   （constants.S_BY_TYPE["insight"]=7 天 × DECAY_THRESHOLD_PCT=20 ⇒ ≈2.6 天才落下去），
+    #   于是「记忆还在说这个状态、世界事实早已过期」。
+    # ON（默认）＝memory/retrieve.py::_rerank 召回出口剔除超窗的「状态派生记忆条」
+    #   （判据与数值单一来源 events/facts.status_memory_expired，12h 只在 facts.py 定义一处）；
+    #   行上已有同源 valid_to 用它（与 WorldFact.expires_at 同一瞬间），存量行按 created_at 补算。
+    # OFF＝逐字节旧行为（过期状态条照旧可被召回注入）。
+    # 严格限定身份：sub_type='status' **且** source='status'（写侧唯一来源 chat_service
+    #   ::_save_status_update）；生产库实测 sub_type='status' 共 873 行，其中 778 行来自抽取
+    #   （source='chat'）——只看 sub_type 会误伤抽取条，故必须两条同时成立。
+    # 不动通用衰减档 S_BY_TYPE["insight"]（改它牵连全部 insight），也不动 top-k/阈值/排序。
+    # 回退：置回 False（runtime_flags 热切，无需重启）。
+    "status_memory_ttl": True,
 }

@@ -283,6 +283,13 @@ _FLAG_ROWS: list[tuple] = [
      'were applied, and leaves a background trace whenever the answer differs from how it is filed today, so '
      'the gap can be reviewed later. No record is changed and nothing it says or remembers is affected; '
      'turning this off skips the extra check.'),
+    ("status_memory_ttl", "memory", 731, False, "当前状态只认 12 小时内的",
+     "它记下的「自己正在做什么」只在 12 小时内还算近况，超时后不再被当成此刻；"
+     "关掉则恢复原来的做法（很旧的近况也照样会被提起）。",
+     "Current status only counts within 12 hours",
+     'What it noted about "what I\'m doing right now" stays current for 12 hours and is no longer '
+     'presented as happening after that; turning this off returns to the old behaviour, where very '
+     'old status can still come up.'),
     # ── 编纂知识与前瞻意图 ──
     ('curated_knowledge', 'curated', 801, False, '长期知识层',
      '角色设定、你的硬档案等长期知识始终在场，不随记忆淡忘。',
