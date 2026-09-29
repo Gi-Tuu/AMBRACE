@@ -1309,11 +1309,154 @@ _CLIP_WINDOW_HOURS = 24
 # T5 M0 项2（2026-09-27）装配尾部留痕：每轮真装配写一条「system 总字符 + 本次生效预算」，
 # 不依赖 provider usage ⇒ 它就是 S2 读数端「最近一轮实际占用」的样本源。
 _USAGE_ROUTE = "system_total_chars"
+# Y2（2026-09-29，S2 尾巴）：每段注入体量留痕（agent/context/__init__.py 的 obs_event），
+# 每轮装配一条，detail.sections 只带 chars 最大的前 16 段（埋点侧截断，见该文件注释）。
+_SECTION_ROUTE = "section_budget"
+
+BREAKDOWN_DEFAULT_SAMPLES = 20
+BREAKDOWN_MAX_SAMPLES = 50
+# 每轮埋点里最多带 16 段（超出被截断），响应条数也按这个上限收口
+_BREAKDOWN_TURN_SECTIONS = 16
+
+# 单价区间表：键 = model 名 → provider 名 → "default"，值 = 每百万 input token 的（低, 高）价。
+# **刻意留空**：项目内目前没有任何价目来源（llm_usage 只记 token 不记价、user_llm_configs 无价目列、
+# 配置文件也没有）⇒ 硬编码一个数字＝编造价目，读数端宁可不报。接价目时只改这张表，
+# 估算算式与 unavailable 状态机不动（见 _cost_estimate 的 reason 三态）。
+_TOKEN_PRICE_RANGES: dict[str, tuple[float, float]] = {}
+_PRICE_CURRENCY = "CNY"
+_PER_MILLION_TOKENS = 1_000_000
 
 
 def _unknown_usage(reason: str = "no_sample") -> dict:
     """无样本时的占用口径：只报「未知」+ 为什么未知，绝不拿预算值倒推一个占用数。"""
     return {"status": "unknown", "reason": reason, "system_chars": None, "est_tokens": None}
+
+
+def _empty_breakdown(samples: int) -> dict:
+    """无样本的体量段：samples=0 + items 空，App 侧据此显示「暂无样本」而不是 0。"""
+    return {
+        "status": "no_sample",
+        "samples": 0,
+        "samples_limit": samples,
+        "sections_scope": "top%d_per_turn" % _BREAKDOWN_TURN_SECTIONS,
+        "keys_total": 0,
+        "items": [],
+    }
+
+
+def _clamp_breakdown_samples(raw: object) -> int:
+    """请求样本数 → 合法值：脏输入/越界一律夹到 [1, MAX]（与档位夹紧同一口径，不报错）。"""
+    try:
+        n = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return BREAKDOWN_DEFAULT_SAMPLES
+    return max(1, min(n, BREAKDOWN_MAX_SAMPLES))
+
+
+def _aggregate_section_breakdown(details: list[dict], samples_limit: int) -> dict:
+    """把 N 条 section_budget 埋点聚成「按 key 的均值/最大/空次数/样本数」。
+
+    纯函数（不碰库），口径与埋点侧对齐：一条埋点 = 一轮装配；某 key 在该轮没出现就不计入
+    它的 samples（「出现过几次」与「其中几次是空」分开报，混成一个分母会让人误读空率）。
+    """
+    acc: dict[str, dict] = {}
+    for detail in details:
+        for sec in (detail.get("sections") or []):
+            if not isinstance(sec, dict):
+                continue
+            key = str(sec.get("key") or "")[:60]
+            if not key:
+                continue
+            try:
+                chars = int(sec.get("chars"))
+            except (TypeError, ValueError):
+                continue
+            chars = max(0, chars)
+            slot = acc.setdefault(
+                key, {"samples": 0, "chars_sum": 0, "chars_max": 0, "empty_count": 0})
+            slot["samples"] += 1
+            slot["chars_sum"] += chars
+            slot["chars_max"] = max(slot["chars_max"], chars)
+            if chars <= 0 or sec.get("empty") is True:
+                slot["empty_count"] += 1
+    if not acc:
+        return _empty_breakdown(samples_limit)
+    items = [
+        {
+            "key": key,
+            "samples": slot["samples"],
+            "avg_chars": int(round(slot["chars_sum"] / slot["samples"])),
+            "max_chars": slot["chars_max"],
+            "empty_count": slot["empty_count"],
+        }
+        for key, slot in acc.items()
+    ]
+    items.sort(key=lambda x: (-x["avg_chars"], x["key"]))
+    top = items[:_BREAKDOWN_TURN_SECTIONS]
+    peak = top[0]["avg_chars"] if top else 0
+    # 条形长度也交给服务端：前端自己按最大值算比例会和「均值/最大并存」这套数打架
+    for item in top:
+        item["share"] = round(item["avg_chars"] / peak, 3) if peak > 0 else 0.0
+    return {
+        "status": "ok",
+        "samples": len(details),
+        "samples_limit": samples_limit,
+        "sections_scope": "top%d_per_turn" % _BREAKDOWN_TURN_SECTIONS,
+        "keys_total": len(items),
+        "items": top,
+    }
+
+
+def _price_range_for(model: str | None, provider: str | None):
+    """查单价区间：model → provider → default，命中返回 (区间, 命中的键)；都没命中返回 None。"""
+    if not _TOKEN_PRICE_RANGES:
+        return None
+    for name in (model, provider, "default"):
+        if not name:
+            continue
+        rng = _TOKEN_PRICE_RANGES.get(str(name))
+        if isinstance(rng, (tuple, list)) and len(rng) == 2:
+            return (float(rng[0]), float(rng[1])), str(name)
+    return None
+
+
+def _cost_estimate(budget_tokens: int, model: str | None, provider: str | None) -> dict:
+    """按当前生效预算估「一轮输入侧」的费用区间（区间＝价目低/高两界，不给单点承诺）。
+
+    口径写进响应（basis/assumptions）：按本档预算**用满**、**只算输入**、不含输出与工具调用；
+    缺价目时 status=unavailable + reason，任何金额字段都是 None——不编数字。
+    """
+    payload = {
+        "status": "unavailable",
+        "reason": "no_price_table",
+        "currency": _PRICE_CURRENCY,
+        "basis": "full_effective_budget_input_only",
+        "budget_tokens": budget_tokens,
+        "model": model,
+        "price_source": None,
+        "per_million_low": None,
+        "per_million_high": None,
+        "per_turn_low": None,
+        "per_turn_high": None,
+    }
+    hit = _price_range_for(model, provider)
+    if hit is None:
+        payload["reason"] = (
+            "no_price_table" if not _TOKEN_PRICE_RANGES else "model_unpriced")
+        return payload
+    (low, high), source = hit
+    low, high = min(low, high), max(low, high)
+    factor = budget_tokens / _PER_MILLION_TOKENS
+    payload.update(
+        status="ok",
+        reason="",
+        price_source=source,
+        per_million_low=round(low, 6),
+        per_million_high=round(high, 6),
+        per_turn_low=round(low * factor, 6),
+        per_turn_high=round(high * factor, 6),
+    )
+    return payload
 
 
 async def read_account_context_budget_tier(user_id: int, db: AsyncSession | None = None) -> str | None:
@@ -1378,6 +1521,7 @@ async def set_context_budget_tier(
 async def get_context_budget(
     user_id: int,
     db: AsyncSession,
+    breakdown_samples: object = BREAKDOWN_DEFAULT_SAMPLES,
 ) -> dict:
     """上下文预算读数：档位 + P2a 预留口径 + 本账号最近一轮实际占用/最近一次被裁记录（纯读）。
 
@@ -1390,12 +1534,17 @@ async def get_context_budget(
     占用段读 agent_task_logs 里 trigger='memory_obs' + route='system_total_chars' 的每轮留痕
     （T5 M0 项2），**只看当前用户自己的行**；无样本时 status='unknown'，不拿预算值冒充占用。
     裁剪段同理读 route='quota_clipped_sections'（P2a 要求 C：真发生裁剪才写）。
+    Y2（2026-09-29）再加两块同样**纯读**的段：section_breakdown＝本账号最近 N 轮
+    route='section_budget' 埋点按段聚合（N 越界夹到 [1, 50]，脏输入不报错）；
+    cost_estimate＝按本档生效预算 × 单价区间估「一轮输入侧」费用，**价目表为空时如实
+    unavailable**（见 _TOKEN_PRICE_RANGES 注释），不编数字。
     整段查库 fail-open：任何异常（含 steps_json 是坏 JSON）都退化为「预算段照出 + 无记录 + error
     文案」，绝不抛 500——一次诊断导出不该因为读不到观测流水而失败。
     """
     from app.agent import context_builder as _cb
 
     flag_enabled = _cb.context_budget_reserve_enabled()
+    samples_limit = _clamp_breakdown_samples(breakdown_samples)
     stored_tier: str | None = None
     tier_error = ""
     try:
@@ -1437,8 +1586,14 @@ async def get_context_budget(
         "last_usage": _unknown_usage(),
         "last_clip": None,
         "clip_count_24h": 0,
+        # Y2 两段的兜底值：查库失败/无样本时照这个返回（估算段先按「无价目 + 生效预算」，
+        # 命中本账号最近一次调用的 model 后在 try 里重算）
+        "section_breakdown": _empty_breakdown(samples_limit),
+        "cost_estimate": None,
         "error": "",
     }
+    # 兜底＝按「生效预算 + 未知 model」算（无价目表时就是 unavailable）；try 里读到 model 后重算
+    payload["cost_estimate"] = _cost_estimate(payload["effective_budget_tokens"], None, None)
     try:
         import json
 
@@ -1502,6 +1657,36 @@ async def get_context_budget(
                 "budget_tokens_at_turn": usage_detail.get("budget_tokens"),
                 "reserve_on": usage_detail.get("reserve_on"),
             }
+
+        # ── Y2 ①每层体量：最近 N 轮 section_budget 埋点按段聚合（只看自己的行）──
+        load_rows = (await db.execute(
+            select(AgentTaskLog).where(*conds, AgentTaskLog.route == _SECTION_ROUTE)
+            .order_by(AgentTaskLog.id.desc()).limit(samples_limit)
+        )).scalars().all()
+        details: list[dict] = []
+        for row in load_rows:
+            if not row.steps_json:
+                continue
+            try:
+                parsed = json.loads(row.steps_json)
+            except Exception:
+                continue  # 单条坏留痕跳过（不让一行坏 JSON 拖垮整段聚合）
+            if isinstance(parsed, dict) and isinstance(parsed.get("sections"), list):
+                details.append(parsed)
+        payload["section_breakdown"] = _aggregate_section_breakdown(details, samples_limit)
+
+        # ── Y2 ②费用估算：本账号最近一次调用的 model/provider 进价目表查区间 ──
+        from app.models.agent import LlmUsage
+
+        used = (await db.execute(
+            select(LlmUsage).where(LlmUsage.user_id == user_id)
+            .order_by(LlmUsage.id.desc()).limit(1)
+        )).scalars().first()
+        payload["cost_estimate"] = _cost_estimate(
+            payload["effective_budget_tokens"],
+            used.model if used else None,
+            used.provider if used else None,
+        )
     except Exception as e:
         payload["error"] = ((payload["error"] + "; ") if payload["error"] else "") + (
             "clip_query_failed: " + repr(e))[:200]

@@ -14752,6 +14752,60 @@ abstract class AppLocalizations {
   /// **'档位已保存'**
   String get contextBudgetSaved;
 
+  /// No description provided for @contextBudgetBreakdownSection.
+  ///
+  /// In zh, this message translates to:
+  /// **'每层注入体量'**
+  String get contextBudgetBreakdownSection;
+
+  /// No description provided for @contextBudgetBreakdownSamples.
+  ///
+  /// In zh, this message translates to:
+  /// **'最近 {samples} 轮样本'**
+  String contextBudgetBreakdownSamples(Object samples);
+
+  /// No description provided for @contextBudgetBreakdownChars.
+  ///
+  /// In zh, this message translates to:
+  /// **'均 {avg} 字 · 峰 {max} 字'**
+  String contextBudgetBreakdownChars(Object avg, Object max);
+
+  /// No description provided for @contextBudgetBreakdownEmptyTimes.
+  ///
+  /// In zh, this message translates to:
+  /// **'{times} 轮为空'**
+  String contextBudgetBreakdownEmptyTimes(Object times);
+
+  /// No description provided for @contextBudgetCostEstimateRow.
+  ///
+  /// In zh, this message translates to:
+  /// **'费用估算（每轮 · 区间）'**
+  String get contextBudgetCostEstimateRow;
+
+  /// No description provided for @contextBudgetCostRange.
+  ///
+  /// In zh, this message translates to:
+  /// **'{from} ~ {to} {unit}'**
+  String contextBudgetCostRange(Object from, Object to, Object unit);
+
+  /// No description provided for @contextBudgetCostBasis.
+  ///
+  /// In zh, this message translates to:
+  /// **'口径：按本档生效预算用满、只算输入侧，不含输出与工具调用'**
+  String get contextBudgetCostBasis;
+
+  /// No description provided for @contextBudgetCostNoPrice.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无法估算：服务端未配置单价'**
+  String get contextBudgetCostNoPrice;
+
+  /// No description provided for @contextBudgetCostNoModelPrice.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无法估算：当前模型未收录单价'**
+  String get contextBudgetCostNoModelPrice;
+
   /// No description provided for @contextBudgetSaveFailed.
   ///
   /// In zh, this message translates to:

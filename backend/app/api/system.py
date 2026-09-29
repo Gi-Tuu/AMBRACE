@@ -6,7 +6,7 @@
 """
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, WebSocket
 from fastapi.responses import JSONResponse
 
 from app import server_identity
@@ -401,9 +401,16 @@ async def update_feature_flag(key: str, data: dict, user_id: int = Depends(get_c
 # ── 上下文预算读数（P2b，2026-09-24：App「导出诊断信息」的预算节；登录用户只读自己的数据）──
 
 @router.get("/context-budget")
-async def get_context_budget(db: AsyncSession = Depends(get_db), user_id: int = Depends(get_current_user_id)):
-    """上下文预算快照（纯读）：S2 账号档位 + P2a 预留口径 + 本账号最近一轮实际占用/最近一次被裁的埋点。"""
-    return await _svc.get_context_budget(user_id, db)
+async def get_context_budget(
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    breakdown_samples: int = Query(
+        default=_svc.BREAKDOWN_DEFAULT_SAMPLES,
+        description="每层体量聚合的样本轮数（越界由服务端夹到 [1, %d]）" % _svc.BREAKDOWN_MAX_SAMPLES),
+):
+    """上下文预算快照（纯读）：S2 账号档位 + P2a 预留口径 + 本账号最近一轮实际占用/最近一次被裁的埋点
+    + 每层注入体量聚合 + 一轮输入侧费用区间估算。"""
+    return await _svc.get_context_budget(user_id, db, breakdown_samples=breakdown_samples)
 
 
 # ── S2 上下文预算档位（M0，2026-09-27：账号级「上下文注入长度」偏好，只写本账号）──

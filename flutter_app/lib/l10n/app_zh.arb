@@ -2824,5 +2824,14 @@
   "contextBudgetLoadFailed": "读取上下文预算失败",
   "contextBudgetRetry": "重试",
   "contextBudgetSaved": "档位已保存",
+  "contextBudgetBreakdownSection": "每层注入体量",
+  "contextBudgetBreakdownSamples": "最近 {samples} 轮样本",
+  "contextBudgetBreakdownChars": "均 {avg} 字 · 峰 {max} 字",
+  "contextBudgetBreakdownEmptyTimes": "{times} 轮为空",
+  "contextBudgetCostEstimateRow": "费用估算（每轮 · 区间）",
+  "contextBudgetCostRange": "{from} ~ {to} {unit}",
+  "contextBudgetCostBasis": "口径：按本档生效预算用满、只算输入侧，不含输出与工具调用",
+  "contextBudgetCostNoPrice": "暂无法估算：服务端未配置单价",
+  "contextBudgetCostNoModelPrice": "暂无法估算：当前模型未收录单价",
   "contextBudgetSaveFailed": "档位保存失败，请重试"
 }

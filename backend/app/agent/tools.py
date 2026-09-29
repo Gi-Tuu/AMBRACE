@@ -7,7 +7,21 @@ AMBRACE 重构步骤 8：5 个内置工具（search/image_gen/note_calendar/note
 由 tool_runner 统一执行。
 """
 from dataclasses import dataclass
+import re
 from typing import Any, Callable
+
+from app.actors import (
+    EPISTEMIC_UNVERIFIED,
+    OBS_PROVENANCE_EMOTION_CARE,
+    OBS_PROVENANCE_MEMORY_EXTRACT,
+    OBS_PROVENANCE_MEMORY_FACT_CHECK,
+    OBS_PROVENANCE_MEMORY_SUMMARY,
+    OBS_PROVENANCE_TOOL,
+    OBS_PROVENANCE_WEAVE_CARD,
+)
+from app.utils.logger import get_logger
+
+_logger = get_logger("agent.tools")
 
 # 风险等级 / 权限档（Phase C 使用；本期仅登记）
 RISK_LOW = "low"
@@ -36,7 +50,7 @@ class ToolSpec:
     enabled: bool = True  # 独立开关（与权限配置并存；默认开）
     ask_auto_allow: bool = False  # 只读低风险工具：权限 ask 时不挂起询问，直接放行（如 AI 自主搜索）
     epistemic_status: str = "FACT"  # Observation 标注（Phase G）：FACT / INFERRED / UNVERIFIED（对齐世界认知）
-    provenance: str = "tool"  # Observation 来源标识（如 web_search / image_gen / note）
+    provenance: str = OBS_PROVENANCE_TOOL  # Observation 来源标识（取值见 app/actors.py OBS_PROVENANCE_*）
     input_schema: dict | None = None  # MCP 工具入参 schema（工具声明/校验用；本地工具为 None）
     server_id: int | None = None  # MCP Server 归属（mcp.{server}.{tool} 命名空间工具的反查）
     max_observation_chars: int = 120  # P2-B（2026-08-29）：Observation summary 截断上限（MCP 工具设为 4000）
@@ -92,6 +106,88 @@ def list_tools() -> list[ToolSpec]:
     都不动，既有调用点要么取集合（tests/test_agent_actions.py:84）要么逐项过滤，不依赖注册顺序。
     """
     return sorted(_REGISTRY.values(), key=lambda spec: spec.name)
+
+
+# ═══════════════ Observation 认知标注贯通（P0 语义统一 · 第 3 步）═══════════════
+# 背景（S2 地图 §1.2 丢失点 5 / 差距表 G6）：``tool_runner._make_observation`` 早就产出了
+# ``{epistemic_status, provenance, summary}`` 三元组，但注入上下文那一跳**只取 summary**，
+# 「这条观察是什么身份、来自哪里」整体蒸发。本段提供两件事：
+#   ① :func:`observation_tag` —— 注入行的「·认知态·来源」片段，受 flag
+#      ``observation_label_v1`` 门控，**关＝返回空串＝拼接结果逐字节等于旧文本**；
+#   ② :func:`note_observation_injection` —— 进程内计数（标注丢弃比例），只加不改文本、
+#      不写库，读端在 ``api/scheduler.py`` 的影子段。
+OBSERVATION_LABEL_FLAG = "observation_label_v1"
+
+# 标注片段的安全上限与清洗（禁掉会破坏 ``【…】`` 框架 / 分隔符的字符，防外部 MCP 服务器名注入控制符）
+_LABEL_MAX_CHARS = 40
+_LABEL_UNSAFE = re.compile(r"[\[\]【】·\s]+")
+
+_OBS_COUNTER_KEYS = (
+    "injection_total",             # 走到「工具结果」注入这一行的次数
+    "injection_labeled",           # 其中带上了认知标注的（flag 开）
+    "injection_label_dropped",     # 其中标注被丢弃的（flag 关＝现状丢失点）
+    "injection_label_unavailable", # 其中 observation 压根没带 epistemic_status 的
+)
+_OBS_COUNTERS: dict[str, int] = dict.fromkeys(_OBS_COUNTER_KEYS, 0)
+
+
+def observation_label_enabled() -> bool:
+    """flag 读法与 ``events/store.domain_events_enabled`` 同款：任何异常一律按「关」（旧文本）。"""
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get(OBSERVATION_LABEL_FLAG, False))
+    except Exception:
+        return False
+
+
+def _label_piece(value: Any, fallback: str) -> tuple[str, bool]:
+    """单个标注片段：非字符串/空白 → 兜底值；清洗控制字符并截断。返回 (片段, 原值是否可用)。"""
+    raw = value.strip() if isinstance(value, str) else ""
+    if not raw:
+        return fallback, False
+    return _LABEL_UNSAFE.sub("_", raw)[:_LABEL_MAX_CHARS], True
+
+
+def observation_label(observation: Any) -> tuple[str, str]:
+    """取观察里的 (认知态, 来源)；缺失/脏值落兜底（``UNVERIFIED`` / ``tool``）。纯函数、不读 flag。"""
+    obs = observation if isinstance(observation, dict) else {}
+    epi, _ = _label_piece(obs.get("epistemic_status"), EPISTEMIC_UNVERIFIED)
+    prov, _ = _label_piece(obs.get("provenance"), OBS_PROVENANCE_TOOL)
+    return epi, prov
+
+
+def observation_tag(observation: Any) -> str:
+    """注入行前缀里「·认知态·来源」这一段；flag 关 → 空串（拼接后逐字节等于旧文本）。"""
+    if not observation_label_enabled():
+        return ""
+    epi, prov = observation_label(observation)
+    return f"·{epi}·{prov}"
+
+
+def note_observation_injection(observation: Any, tag: str) -> None:
+    """登记一次「工具结果进上下文」的标注去向（丢弃 or 生效）。永不抛，异常只打日志。"""
+    try:
+        _OBS_COUNTERS["injection_total"] += 1
+        obs = observation if isinstance(observation, dict) else {}
+        if not isinstance(obs.get("epistemic_status"), str) or not obs["epistemic_status"].strip():
+            _OBS_COUNTERS["injection_label_unavailable"] += 1
+        if tag:
+            _OBS_COUNTERS["injection_labeled"] += 1
+        else:
+            _OBS_COUNTERS["injection_label_dropped"] += 1
+    except Exception as e:  # noqa: BLE001 - 计数不得影响注入
+        _logger.warning("observation injection counter failed (fail-open): %s", e)
+
+
+def observation_semantics_counters() -> dict[str, int]:
+    """只读快照（副本）：进程内累计，重启归零；不落库、不查库。"""
+    return dict(_OBS_COUNTERS)
+
+
+def reset_observation_semantics_counters() -> None:
+    """计数清零（测试/观测窗口对账用）。"""
+    for k in _OBS_COUNTER_KEYS:
+        _OBS_COUNTERS[k] = 0
 
 
 def _plugin_risk_level(plugin_name: str) -> str:
@@ -197,35 +293,35 @@ def _register_builtin_tools() -> None:
         risk_level=RISK_LOW,
         rate_limit="30min/batch per char",
         idempotent=True,
-        provenance="memory_extract",
+        provenance=OBS_PROVENANCE_MEMORY_EXTRACT,
     ))
     register_tool(ToolSpec(
         name="memory_fact_check",
         description="记忆一致性核查：AI 回复与已知记忆矛盾检测并降级",
         risk_level=RISK_LOW,
         idempotent=True,
-        provenance="memory_fact_check",
+        provenance=OBS_PROVENANCE_MEMORY_FACT_CHECK,
     ))
     register_tool(ToolSpec(
         name="emotion_care",
         description="情绪关怀：检测用户低落后生成延迟关心消息",
         risk_level=RISK_LOW,
         idempotent=False,
-        provenance="emotion_care",
+        provenance=OBS_PROVENANCE_EMOTION_CARE,
     ))
     register_tool(ToolSpec(
         name="weave_card",
         description="织库卡片生成：记忆聚类生成全景卡片（content_hash 幂等）",
         risk_level=RISK_LOW,
         idempotent=True,
-        provenance="weave_card",
+        provenance=OBS_PROVENANCE_WEAVE_CARD,
     ))
     register_tool(ToolSpec(
         name="memory_summary",
         description="记忆总结/复习摘要生成",
         risk_level=RISK_LOW,
         idempotent=True,
-        provenance="memory_summary",
+        provenance=OBS_PROVENANCE_MEMORY_SUMMARY,
     ))
 
 

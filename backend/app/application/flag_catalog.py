@@ -79,6 +79,14 @@ _FLAG_ROWS: list[tuple] = [
      '避免要紧的部分被悄悄丢掉却查不到。',
      'Reserve headroom in long conversations', 'In very long conversations it first sets aside room for the reply '
      'and for tools, then trims the overflow and records what was trimmed, so nothing goes missing untraceably.'),
+    ('observation_label_v1', 'agent', 106, False, '工具结果标注出处',
+     '它用完搜索、备忘录这类工具后，给自己留的那条结果会额外标上「这条有多确定、出自哪个工具」，'
+     '方便它分辨信息可靠程度；只影响它自己怎么看这条结果，不影响它说什么、也不影响你看到的回复。'
+     '默认关闭，关闭时与现在完全一样。',
+     'Tag tool results with certainty and origin', 'After it uses a tool such as search or notes, the result it '
+     'keeps for itself also says how certain it is and which tool it came from, so it can weigh it properly. '
+     'This shapes only how it reads its own note, not what it says to you. Off by default, and turning it off '
+     'keeps things exactly as they are now.'),
 
     # ── 主动消息 ──
     ('proactive_naturalness_score', 'proactive', 201, False, '主动消息自然度评分',

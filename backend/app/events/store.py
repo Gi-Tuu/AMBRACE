@@ -17,7 +17,9 @@ from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 
+from app.actors import normalize_sender
 from app.db.database import async_session_factory
+from app.events.schema import VALID_ORIGINS, require_actor
 from app.models.domain_event import DomainEvent
 from app.utils.logger import get_logger
 
@@ -25,6 +27,59 @@ _logger = get_logger("events.store")
 
 _MAX_SUMMARY = 200          # 文本摘要上限，对齐既有 moment 事件 content[:200]
 _SUMMARY_FIELDS = ("content", "text", "summary_preview")
+
+# ── P0 语义统一 · 第 3 步：actor / origin 软校验计数（只判定 + 只计数，**不改落库值**）──
+# 背景（差距表 G3/G9）：``domain_events.actor_type`` 与 ``origin`` 两边词表分裂且写入侧零校验
+# （origin 恰好都落在白名单里属巧合）。本段先量出「归一后值 vs 落库值」「非法值」的占比，
+# 为第 4 步（写入侧归一）提供判据；本轮**一个字节都不改** payload。计数为进程内内存计数，
+# 重启归零，不写库不查库，读端在 api/scheduler.py 的影子段。
+_SEM_COUNTER_KEYS = (
+    "append_total",          # 真正走到落库这一支的事件条数（domain_events_enabled 关时不计）
+    "actor_total",           # 其中带 actor_type 的条数
+    "actor_missing",         # 其中 actor_type 为空（「谁做的」整列缺失）
+    "actor_no_speaker",      # 其中按 schema 判不出说话人的（require_actor False；含只有一半 id 的）
+    "actor_diff",            # 归一后值 ≠ 落库值（如 ai → character，存量列口径仍写 ai）
+    "actor_unnormalized",    # 归一结果为 None（值不在任何别名表里，现状原样落库）
+    "origin_invalid",        # origin 不在 events.schema.PROVENANCE_META 白名单里
+)
+_SEM_COUNTERS: dict[str, int] = dict.fromkeys(_SEM_COUNTER_KEYS, 0)
+
+
+def _note_event_semantics(actor_type: str | None, actor_id: int | None, origin: str) -> None:
+    """写点前的一次纯判定 + 计数：永不抛，异常只打日志（观测不得影响事件旁路）。
+
+    ``require_actor``（events/schema.py 的新纯判定）在这里用上——落库行有 actor_type 却没
+    actor_id（或反之）时按标准 schema 组不出 speaker，正是 G9 要量的那一维。
+    """
+    try:
+        c = _SEM_COUNTERS
+        c["append_total"] += 1
+        if origin not in VALID_ORIGINS:
+            c["origin_invalid"] += 1
+        if not actor_type:
+            c["actor_missing"] += 1
+        else:
+            c["actor_total"] += 1
+            normalized = normalize_sender(actor_type)
+            if normalized is None:
+                c["actor_unnormalized"] += 1
+            elif normalized != actor_type:
+                c["actor_diff"] += 1
+        if not require_actor({"type": "domain_event", "speaker": {"type": actor_type, "id": actor_id}}):
+            c["actor_no_speaker"] += 1
+    except Exception as e:  # noqa: BLE001 - 计数 fail-open
+        _logger.warning("domain event semantics counter failed (fail-open): %s", e)
+
+
+def domain_event_semantics_counters() -> dict[str, int]:
+    """只读快照（副本）：进程内累计，重启归零；不落库、不查库。"""
+    return dict(_SEM_COUNTERS)
+
+
+def reset_domain_event_semantics_counters() -> None:
+    """计数清零（测试/观测窗口对账用）。"""
+    for k in _SEM_COUNTER_KEYS:
+        _SEM_COUNTERS[k] = 0
 
 
 def domain_events_enabled() -> bool:
@@ -119,6 +174,8 @@ async def append_domain_event(
         key = idempotency_key or _default_key(
             event_type, entity_type, entity_id, aggregate_type, aggregate_id
         )
+        # 软校验只计数（actor 归一差异 / origin 非法），actor_type、origin 落库值逐字不变
+        _note_event_semantics(actor_type, actor_id, origin)
         async with async_session_factory() as db:
             db.add(DomainEvent(
                 aggregate_type=aggregate_type,

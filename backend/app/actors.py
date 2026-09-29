@@ -79,6 +79,29 @@ EPISTEMIC_VALUES: tuple[str, ...] = (
 )
 
 
+# ───────────────── Observation 来源（provenance）词表 ─────────────────
+# P0 语义统一 · 第 3 步：「这条观察来自哪个工具面」的取值原先散落在各注册点自由书写
+# （``agent/tools.py`` 的默认值与 5 个内部工具、``mcp/tool_adapter.py`` 的 ``mcp:{server}``）。
+# 这里收成单一命名空间，**值逐字照现状**（改名＝行为变更，本步不做）。
+OBS_PROVENANCE_TOOL = "tool"                              # agent/tools.py:39 ToolSpec.provenance 默认值
+OBS_PROVENANCE_WEB_SEARCH = "web_search"                  # tools/builtin/search_tool.py:37
+OBS_PROVENANCE_IMAGE_GEN = "image_gen"                    # tools/builtin/image_tool.py:48
+OBS_PROVENANCE_NOTE = "note"                              # tools/builtin/{calendar,memo,note_done}_tool.py
+OBS_PROVENANCE_MEMORY_EXTRACT = "memory_extract"          # agent/tools.py:200
+OBS_PROVENANCE_MEMORY_FACT_CHECK = "memory_fact_check"    # agent/tools.py:207
+OBS_PROVENANCE_EMOTION_CARE = "emotion_care"              # agent/tools.py:214
+OBS_PROVENANCE_WEAVE_CARD = "weave_card"                  # agent/tools.py:221
+OBS_PROVENANCE_MEMORY_SUMMARY = "memory_summary"          # agent/tools.py:228
+# MCP 工具按服务器命名空间（值＝前缀 + 服务器名，如 ``mcp:ambrace``）；动态拼接、不入全集。
+OBS_PROVENANCE_MCP_PREFIX = "mcp:"                        # mcp/tool_adapter.py:97
+
+OBS_PROVENANCE_VALUES: tuple[str, ...] = (
+    OBS_PROVENANCE_TOOL, OBS_PROVENANCE_WEB_SEARCH, OBS_PROVENANCE_IMAGE_GEN, OBS_PROVENANCE_NOTE,
+    OBS_PROVENANCE_MEMORY_EXTRACT, OBS_PROVENANCE_MEMORY_FACT_CHECK, OBS_PROVENANCE_EMOTION_CARE,
+    OBS_PROVENANCE_WEAVE_CARD, OBS_PROVENANCE_MEMORY_SUMMARY,
+)
+
+
 def normalize_sender(value) -> str | None:
     """sender_type 归一：ai/character/bot → character；tool/mcp/search/external → tool；其余 user/system。
 
@@ -109,5 +132,9 @@ __all__ = [
     "CHAT_SOURCE", "PERCEPTION_SOURCE", "SELF_NARRATIVE_SOURCES", "TOOL_SOURCE_PREFIXES",
     "EPISTEMIC_FACT", "EPISTEMIC_INFERRED", "EPISTEMIC_PLANNED", "EPISTEMIC_FICTIONAL",
     "EPISTEMIC_UNVERIFIED", "EPISTEMIC_VALUES",
+    "OBS_PROVENANCE_TOOL", "OBS_PROVENANCE_WEB_SEARCH", "OBS_PROVENANCE_IMAGE_GEN", "OBS_PROVENANCE_NOTE",
+    "OBS_PROVENANCE_MEMORY_EXTRACT", "OBS_PROVENANCE_MEMORY_FACT_CHECK", "OBS_PROVENANCE_EMOTION_CARE",
+    "OBS_PROVENANCE_WEAVE_CARD", "OBS_PROVENANCE_MEMORY_SUMMARY", "OBS_PROVENANCE_MCP_PREFIX",
+    "OBS_PROVENANCE_VALUES",
     "normalize_sender",
 ]

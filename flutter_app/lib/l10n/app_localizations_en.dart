@@ -8269,5 +8269,43 @@ class AppLocalizationsEn extends AppLocalizations {
   String get contextBudgetSaved => 'Tier saved';
 
   @override
+  String get contextBudgetBreakdownSection => 'Per-layer injection size';
+
+  @override
+  String contextBudgetBreakdownSamples(Object samples) {
+    return 'Last $samples turns of samples';
+  }
+
+  @override
+  String contextBudgetBreakdownChars(Object avg, Object max) {
+    return 'avg $avg chars · peak $max chars';
+  }
+
+  @override
+  String contextBudgetBreakdownEmptyTimes(Object times) {
+    return 'empty in $times turns';
+  }
+
+  @override
+  String get contextBudgetCostEstimateRow => 'Estimated cost (per turn, range)';
+
+  @override
+  String contextBudgetCostRange(Object from, Object to, Object unit) {
+    return '$from ~ $to $unit';
+  }
+
+  @override
+  String get contextBudgetCostBasis =>
+      'Basis: full effective budget for this tier, input side only; output and tool calls excluded';
+
+  @override
+  String get contextBudgetCostNoPrice =>
+      'Not estimable yet: no price table configured on the server';
+
+  @override
+  String get contextBudgetCostNoModelPrice =>
+      'Not estimable yet: no price recorded for this model';
+
+  @override
   String get contextBudgetSaveFailed => 'Failed to save tier, please retry';
 }

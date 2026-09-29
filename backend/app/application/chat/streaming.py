@@ -384,7 +384,8 @@ async def send_and_receive_stream(
     # 独立流尾事件 tool_result 推给前端（前端观察区可折叠展示）。不做二次 LLM 再决策——
     # 流式再决策会再次走流式导致 delta 二次推送/stream_blocks 被覆盖，且 tts 的 block_sink
     # 流水线在首条回复时已消费完毕（评估见 chat_service._run_agent_core 注释）。工具的
-    # observation 已注入 final_state.context_messages，供下一轮引用。
+    # observation 已注入 final_state.context_messages，供下一轮引用。注入行的「·认知态·来源」标注
+    # 由 agent/tools.observation_tag 生成（P0 语义统一第 3 步，flag observation_label_v1，默认关＝旧文本）。
     if core.get("streamed") and sink is not None:
         try:
             from app.agent import actions as _mcp_actions

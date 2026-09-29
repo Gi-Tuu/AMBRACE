@@ -10,6 +10,7 @@
 """
 from typing import Any
 
+from app.actors import OBS_PROVENANCE_MCP_PREFIX
 from app.agent.tools import RISK_HIGH, RISK_LOW, RISK_MEDIUM, ToolSpec
 
 _HIGH_KEYWORDS = ("write", "create", "update", "delete", "remove", "execute", "send", "post")
@@ -94,7 +95,7 @@ def mcp_tool_to_spec(server_name: str, mcp_tool: dict, server_id: int) -> ToolSp
         scope=f"mcp_{server_name}",
         execute=_make_mcp_execute(server_id, tool_name, server_name),
         epistemic_status="UNVERIFIED",  # 外部 MCP 工具结果默认未证实
-        provenance=f"mcp:{server_name}",
+        provenance=f"{OBS_PROVENANCE_MCP_PREFIX}{server_name}",
         input_schema=input_schema,
         server_id=server_id,
         max_observation_chars=4000,  # P2-B（2026-08-29）：MCP 返回文本不可控，放宽截断上限

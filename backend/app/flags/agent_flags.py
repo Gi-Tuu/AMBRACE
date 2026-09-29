@@ -436,4 +436,16 @@ AGENT_FLAGS = {
     # 不动通用衰减档 S_BY_TYPE["insight"]（改它牵连全部 insight），也不动 top-k/阈值/排序。
     # 回退：置回 False（runtime_flags 热切，无需重启）。
     "status_memory_ttl": True,
+    # ── P0 语义统一 · 第 3 步：工具结果注入行补认知标注（2026-09-29；默认关＝逐字节旧文本）──
+    # 背景（S2 地图 §1.2 丢失点 5 / 差距表 G6）：tool_runner 早已产出 {epistemic_status, provenance,
+    #   summary} 三元组，但注入上下文那一跳只取 summary——「这条观察是什么身份、来自哪里」在进
+    #   上下文的瞬间蒸发，模型只看到「工具 X 已执行完成：<摘要>」。
+    # ON ＝ 注入行前缀补上认知标签：【工具结果·FACT·web_search】工具 search 已执行完成：…
+    #   （三处注入点：agent/runtime.py 的工具分支与小手机分支、agent/mcp_tools.py 的 MCP 分支；
+    #    MCP 的来源形如 mcp:{服务器名}；标注值缺失时兜底 UNVERIFIED / tool）。
+    # OFF（默认）＝**逐字节旧文本**：拼接片段为空串，注入内容与改前完全一致（仅多一次进程内计数）。
+    # 同批附带（与本键无关、不受本键门控）：provenance 词表收口进 app/actors.py OBS_PROVENANCE_*
+    #   （纯机械替换、值逐字不变）；events/store.py 的 actor/origin 只判定+只计数（不改落库值）。
+    # 回退：置回 False（runtime_flags 热切，无需重启）；风险面＝注入文本变长，牵动前端块切分展示。
+    "observation_label_v1": False,
 }

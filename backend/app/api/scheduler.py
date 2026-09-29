@@ -450,6 +450,56 @@ async def get_outreach_stats(
     return await collect_outreach_effect_stats(db, since=since, log_cond=cond_log, days=days)
 
 
+@router.get("/stats/semantics")
+async def get_semantics_stats(
+    user_id: int = Depends(get_current_user_id),
+):
+    """P0 语义统一 · 第 3 步：Observation / Event 语义影子计数（**只读内存计数，零查询零写库**）。
+
+    与 GET /stats/outreach 的 ``shadow_agreement`` 同一形态：只把「判定结果」摆出来给人看，
+    不参与任何生效判定。三段：
+    - ``tool_injection``：工具结果进上下文那一跳的标注去向（agent/tools.py 进程内计数）。
+      ``label_drop_rate`` = 标注被丢弃比例（flag observation_label_v1 关时恒 1.0，开时恒 0.0），
+      分母 = ``injection_total``；``unavailable_rate`` = observation 压根没带认知态的比例。
+    - ``domain_event``：领域事件写点前的 actor / origin 软校验（events/store.py 进程内计数）。
+      落库值**未被这些判定改动过**，这里只量「归一后值 vs 落库值」的差异与非法占比。
+      ``actor_diff_rate`` 分母 = ``actor_total``，``origin_invalid_rate`` 分母 = ``append_total``。
+    - ``flags``：本轮相关开关的当前值，便于对照读数的解释口径。
+
+    两个计数面都是**进程内累计、重启归零**（刻意不建表：第 3 步的硬约束是零写库），
+    所以数字只代表本进程启动以来的窗口。
+    """
+    from app.agent.tools import observation_semantics_counters
+    from app.events.store import domain_event_semantics_counters
+    from app.flags.agent_flags import AGENT_FLAGS
+
+    def _rate(num: int, den: int) -> float:
+        return round(num / den, 4) if den else 0.0
+
+    ti = observation_semantics_counters()
+    de = domain_event_semantics_counters()
+    return {
+        "window": "process_uptime（内存计数，重启归零）",
+        "flags": {
+            "observation_label_v1": bool(AGENT_FLAGS.get("observation_label_v1", False)),
+            "actor_semantics_shadow": bool(AGENT_FLAGS.get("actor_semantics_shadow", False)),
+            "domain_event_log_enabled": bool(AGENT_FLAGS.get("domain_event_log_enabled", False)),
+        },
+        "tool_injection": {
+            **ti,
+            "label_drop_rate": _rate(ti["injection_label_dropped"], ti["injection_total"]),
+            "unavailable_rate": _rate(ti["injection_label_unavailable"], ti["injection_total"]),
+        },
+        "domain_event": {
+            **de,
+            "actor_diff_rate": _rate(de["actor_diff"], de["actor_total"]),
+            "actor_unnormalized_rate": _rate(de["actor_unnormalized"], de["actor_total"]),
+            "actor_no_speaker_rate": _rate(de["actor_no_speaker"], de["append_total"]),
+            "origin_invalid_rate": _rate(de["origin_invalid"], de["append_total"]),
+        },
+    }
+
+
 # ── 手动触发测试（#28 ③，2026-08-24） ──
 
 

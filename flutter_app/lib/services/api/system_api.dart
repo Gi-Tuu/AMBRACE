@@ -221,6 +221,104 @@ class ContextBudgetClip {
       );
 }
 
+/// 单段（每层）注入体量；avg/max/share 全部由服务端聚合，前端不自己算。
+class ContextBudgetSectionLoad {
+  const ContextBudgetSectionLoad({
+    required this.key,
+    required this.samples,
+    required this.avgChars,
+    required this.maxChars,
+    required this.emptyCount,
+    required this.share,
+  });
+
+  final String key;
+  final int samples;
+  final int avgChars;
+  final int maxChars;
+  final int emptyCount;
+
+  /// 条形长度比例（0~1，服务端按峰值算好）
+  final double share;
+
+  factory ContextBudgetSectionLoad.fromMap(Map<dynamic, dynamic> m) =>
+      ContextBudgetSectionLoad(
+        key: (m['key'] ?? '').toString(),
+        samples: (m['samples'] as num?)?.toInt() ?? 0,
+        avgChars: (m['avg_chars'] as num?)?.toInt() ?? 0,
+        maxChars: (m['max_chars'] as num?)?.toInt() ?? 0,
+        emptyCount: (m['empty_count'] as num?)?.toInt() ?? 0,
+        share: ((m['share'] as num?)?.toDouble() ?? 0).clamp(0.0, 1.0),
+      );
+}
+
+/// 每层体量聚合段（Y2）；status != ok 表示无样本 ⇒ 展示「暂无样本」，不是 0。
+class ContextBudgetBreakdown {
+  const ContextBudgetBreakdown({
+    required this.status,
+    required this.samples,
+    required this.items,
+  });
+
+  final String status;
+  final int samples;
+  final List<ContextBudgetSectionLoad> items;
+
+  bool get hasSample => status == 'ok' && items.isNotEmpty;
+
+  factory ContextBudgetBreakdown.fromMap(Object? raw) {
+    if (raw is! Map) {
+      return const ContextBudgetBreakdown(status: 'no_sample', samples: 0, items: []);
+    }
+    final m = Map<dynamic, dynamic>.from(raw);
+    return ContextBudgetBreakdown(
+      status: (m['status'] ?? 'no_sample').toString(),
+      samples: (m['samples'] as num?)?.toInt() ?? 0,
+      items: (m['items'] as List<dynamic>? ?? [])
+          .whereType<Map>()
+          .map(ContextBudgetSectionLoad.fromMap)
+          .toList(),
+    );
+  }
+}
+
+/// 费用估算（Y2）：区间与口径一律服务端给；无价目时 status=unavailable，前端不补零。
+class ContextBudgetCostEstimate {
+  const ContextBudgetCostEstimate({
+    required this.status,
+    required this.reason,
+    required this.currency,
+    this.perTurnLow,
+    this.perTurnHigh,
+  });
+
+  final String status;
+
+  /// no_price_table / model_unpriced（unavailable 时才有意义）
+  final String reason;
+  final String currency;
+  final double? perTurnLow;
+  final double? perTurnHigh;
+
+  bool get hasEstimate =>
+      status == 'ok' && perTurnLow != null && perTurnHigh != null;
+
+  factory ContextBudgetCostEstimate.fromMap(Object? raw) {
+    if (raw is! Map) {
+      return const ContextBudgetCostEstimate(
+          status: 'unavailable', reason: 'no_price_table', currency: '');
+    }
+    final m = Map<dynamic, dynamic>.from(raw);
+    return ContextBudgetCostEstimate(
+      status: (m['status'] ?? 'unavailable').toString(),
+      reason: (m['reason'] ?? '').toString(),
+      currency: (m['currency'] ?? '').toString(),
+      perTurnLow: (m['per_turn_low'] as num?)?.toDouble(),
+      perTurnHigh: (m['per_turn_high'] as num?)?.toDouble(),
+    );
+  }
+}
+
 /// GET /api/v1/system/context-budget 的解析结果。
 class ContextBudgetInfo {
   const ContextBudgetInfo({
@@ -237,6 +335,10 @@ class ContextBudgetInfo {
     required this.clipCount24h,
     this.lastClip,
     this.error = '',
+    this.sectionBreakdown = const ContextBudgetBreakdown(
+        status: 'no_sample', samples: 0, items: []),
+    this.costEstimate = const ContextBudgetCostEstimate(
+        status: 'unavailable', reason: 'no_price_table', currency: ''),
   });
 
   final String tier;
@@ -254,6 +356,12 @@ class ContextBudgetInfo {
   final int clipCount24h;
   final ContextBudgetClip? lastClip;
   final String error;
+
+  /// 每层注入体量（Y2，服务端聚合）
+  final ContextBudgetBreakdown sectionBreakdown;
+
+  /// 一轮输入侧费用区间（Y2，缺价目时 unavailable，前端不补数）
+  final ContextBudgetCostEstimate costEstimate;
 
   bool get isUserChosen => tierSource == 'user';
 
@@ -277,6 +385,8 @@ class ContextBudgetInfo {
       clipCount24h: (m['clip_count_24h'] as num?)?.toInt() ?? 0,
       lastClip: clip is Map ? ContextBudgetClip.fromMap(clip) : null,
       error: (m['error'] ?? '').toString(),
+      sectionBreakdown: ContextBudgetBreakdown.fromMap(m['section_breakdown']),
+      costEstimate: ContextBudgetCostEstimate.fromMap(m['cost_estimate']),
     );
   }
 }

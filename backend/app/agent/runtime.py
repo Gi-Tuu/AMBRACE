@@ -92,7 +92,12 @@ async def _run_tool_stage(state: dict, steps: list[dict], *, character_id: int, 
     - 未登记/插件绑定/占位登记（无执行入口）→ 跳过该动作（不编造成功），剥离由调用方兜底。
     """
     from app.agent import actions as _actions
-    from app.agent.tools import get_tool, get_tool_by_action
+    from app.agent.tools import (
+        get_tool,
+        get_tool_by_action,
+        note_observation_injection,
+        observation_tag,
+    )
 
     text = state.get("ai_response") or ""
     parsed = _actions.parse_actions(text)
@@ -130,9 +135,13 @@ async def _run_tool_stage(state: dict, steps: list[dict], *, character_id: int, 
             except Exception:
                 pass
             state["context_messages"] = state.get("context_messages") or []
+            # P0 第 3 步：小手机分支原先完全不读 observation（硬编码文案），这里补齐认知标注；
+            # flag observation_label_v1 关时 _tag 为空串 ⇒ 逐字节旧文本。
+            _tag = observation_tag(res.get("observation"))
+            note_observation_injection(res.get("observation"), _tag)
             state["context_messages"] = state["context_messages"] + [{
                 "role": "system",
-                "content": f"【工具结果】已记录到小手机（{spec.name}）。基于真实结果继续回复，不要说'我去执行了'。",
+                "content": f"【工具结果{_tag}】已记录到小手机（{spec.name}）。基于真实结果继续回复，不要说'我去执行了'。",
             }]
             continue
         # 未登记 / 插件绑定工具（社交短回复不应触发跨平台 action）/ 占位登记（无执行入口）→ 跳过
@@ -159,11 +168,15 @@ async def _run_tool_stage(state: dict, steps: list[dict], *, character_id: int, 
                 record_ability_used(state, spec=spec)
             except Exception:
                 pass
-            _obs = (res.get("observation") or {}).get("summary") or ""
+            _observation = res.get("observation") or {}
+            _obs = _observation.get("summary") or ""
+            # P0 第 3 步：把 observation 自带的认知态/来源带进注入行（G6）；flag 关＝逐字节旧文本
+            _tag = observation_tag(_observation)
+            note_observation_injection(_observation, _tag)
             state["context_messages"] = state.get("context_messages") or []
             state["context_messages"] = state["context_messages"] + [{
                 "role": "system",
-                "content": f"【工具结果】工具 {spec.name} 已执行完成：{_obs}（基于真实结果继续回复，不要说'我去执行了'）。",
+                "content": f"【工具结果{_tag}】工具 {spec.name} 已执行完成：{_obs}（基于真实结果继续回复，不要说'我去执行了'）。",
             }]
     return executed_any
 

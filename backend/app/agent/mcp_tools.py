@@ -37,7 +37,7 @@ async def _execute_mcp_actions(
     无 mcp.* 标记 → ``(False, [])``。
     """
     from app.agent import actions as _actions
-    from app.agent.tools import get_tool
+    from app.agent.tools import get_tool, note_observation_injection, observation_tag
     from app.agent.tool_runner import execute_tool
 
     mcp_actions = [a for a in _actions.parse_actions(text) if a.action_type.startswith("mcp.")]
@@ -99,17 +99,22 @@ async def _execute_mcp_actions(
                 record_ability_used(state, spec=spec)
             except Exception:
                 pass
-        obs = (res.get("observation") or {}).get("summary") or ""
+        _observation = res.get("observation") or {}
+        obs = _observation.get("summary") or ""
         _promise.update({
             "ok": ok,
             "summary": (obs or ("执行成功" if ok else "执行失败")),
             "error": None,
         })
         results.append(_promise)
+        # P0 第 3 步：MCP 注入行同样补认知态/来源标注（provenance 形如 ``mcp:{server}``）；
+        # flag observation_label_v1 关 ⇒ _tag 空串 ⇒ 逐字节旧文本。
+        _tag = observation_tag(_observation)
+        note_observation_injection(_observation, _tag)
         state["context_messages"] = state.get("context_messages") or []
         state["context_messages"] = state["context_messages"] + [{
             "role": "system",
-            "content": f"【工具结果】MCP 工具 {act.action_type} 已执行完成：{obs}"
+            "content": f"【工具结果{_tag}】MCP 工具 {act.action_type} 已执行完成：{obs}"
                        "（基于真实结果继续回复，不要说'我去执行了'）。",
         }]
         if ok:

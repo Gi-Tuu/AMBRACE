@@ -2824,5 +2824,14 @@
   "contextBudgetLoadFailed": "Failed to load context budget",
   "contextBudgetRetry": "Retry",
   "contextBudgetSaved": "Tier saved",
+  "contextBudgetBreakdownSection": "Per-layer injection size",
+  "contextBudgetBreakdownSamples": "Last {samples} turns of samples",
+  "contextBudgetBreakdownChars": "avg {avg} chars · peak {max} chars",
+  "contextBudgetBreakdownEmptyTimes": "empty in {times} turns",
+  "contextBudgetCostEstimateRow": "Estimated cost (per turn, range)",
+  "contextBudgetCostRange": "{from} ~ {to} {unit}",
+  "contextBudgetCostBasis": "Basis: full effective budget for this tier, input side only; output and tool calls excluded",
+  "contextBudgetCostNoPrice": "Not estimable yet: no price table configured on the server",
+  "contextBudgetCostNoModelPrice": "Not estimable yet: no price recorded for this model",
   "contextBudgetSaveFailed": "Failed to save tier, please retry"
 }

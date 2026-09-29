@@ -99,6 +99,53 @@ class _ContextBudgetScreenState extends State<ContextBudgetScreen> {
         ),
       );
 
+  /// 每层体量一条：段名 + 条形（宽度 = 服务端算好的 share）+ 均值/峰值/空次数。
+  /// 条形比例与数字都来自服务端，前端不参与聚合。
+  Widget _loadRow(AppLocalizations l10n, ContextBudgetSectionLoad load) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(load.key, style: const TextStyle(fontSize: 13)),
+            const SizedBox(height: 4),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: load.share,
+                minHeight: 6,
+                backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              l10n.contextBudgetBreakdownChars(load.avgChars, load.maxChars),
+              style: TextStyle(
+                  fontSize: 12, color: Theme.of(context).hintColor),
+            ),
+            if (load.emptyCount > 0)
+              Text(
+                l10n.contextBudgetBreakdownEmptyTimes(load.emptyCount),
+                style: TextStyle(
+                    fontSize: 12, color: Theme.of(context).hintColor),
+              ),
+          ],
+        ),
+      );
+
+  /// 费用估算行：有价目才给区间；缺价目如实说「暂无法估算」，不显示 0。
+  String _costValue(AppLocalizations l10n, ContextBudgetCostEstimate cost) {
+    if (cost.hasEstimate) {
+      return l10n.contextBudgetCostRange(
+        cost.perTurnLow!.toStringAsFixed(4),
+        cost.perTurnHigh!.toStringAsFixed(4),
+        cost.currency,
+      );
+    }
+    return cost.reason == 'model_unpriced'
+        ? l10n.contextBudgetCostNoModelPrice
+        : l10n.contextBudgetCostNoPrice;
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -220,8 +267,42 @@ class _ContextBudgetScreenState extends State<ContextBudgetScreen> {
             ],
           ),
           IosCardGroup(
+            // 每层体量（Y2）：段名是装配侧的 key，展示原值不翻译；无样本时明确写「暂无样本」
+            title: l10n.contextBudgetBreakdownSection,
+            children: [
+              if (!info.sectionBreakdown.hasSample)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
+                  child: Text(l10n.contextBudgetNoSample,
+                      style: TextStyle(
+                          fontSize: 13, color: Theme.of(context).hintColor)),
+                )
+              else ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                  child: Text(
+                    l10n.contextBudgetBreakdownSamples(
+                        info.sectionBreakdown.samples),
+                    style: TextStyle(
+                        fontSize: 12, color: Theme.of(context).hintColor),
+                  ),
+                ),
+                for (final load in info.sectionBreakdown.items)
+                  _loadRow(l10n, load),
+              ],
+            ],
+          ),
+          IosCardGroup(
             title: l10n.contextBudgetCostTitle,
             children: [
+              _row(l10n, l10n.contextBudgetCostEstimateRow,
+                  _costValue(l10n, info.costEstimate)),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                child: Text(l10n.contextBudgetCostBasis,
+                    style: TextStyle(
+                        fontSize: 12, color: Theme.of(context).hintColor)),
+              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
                 child: Text(l10n.contextBudgetCostNotice,

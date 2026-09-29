@@ -92,6 +92,23 @@ def require_speaker(event: dict[str, Any]) -> None:
         raise ValueError(f"event missing speaker: {event.get('type')}")
 
 
+def require_actor(event: dict[str, Any]) -> bool:
+    """「这条事件带没带说话人」的**纯判定**（P0 语义统一 · 第 3 步）。
+
+    判据与 :func:`require_speaker` 逐字相同，只是不抛——抛出版全仓零调用（差距表 G9），
+    接线它去拒收会直接改变现有事件流水覆盖面；本步只把它用在**计数**上
+    （``events/store.py`` 统计「 actor 缺失/非法」比例），不改落库值、不改任何调用方。
+
+    脏输入（event 非 dict / speaker 是字符串等）一律判 ``False``：计数面不能让脏数据抛断主链路，
+    而抛出版的行为**完全不动**（调用方语义不变）。
+    """
+    try:
+        require_speaker(event)
+        return True
+    except Exception:
+        return False
+
+
 def speaker_of(sender_type: str, sender_id: int | None) -> dict[str, Any] | None:
     """由消息 sender 快速构造 speaker 字段；sender_id 为空返回 None。"""
     if not sender_id:

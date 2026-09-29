@@ -7942,5 +7942,40 @@ class AppLocalizationsZh extends AppLocalizations {
   String get contextBudgetSaved => '档位已保存';
 
   @override
+  String get contextBudgetBreakdownSection => '每层注入体量';
+
+  @override
+  String contextBudgetBreakdownSamples(Object samples) {
+    return '最近 $samples 轮样本';
+  }
+
+  @override
+  String contextBudgetBreakdownChars(Object avg, Object max) {
+    return '均 $avg 字 · 峰 $max 字';
+  }
+
+  @override
+  String contextBudgetBreakdownEmptyTimes(Object times) {
+    return '$times 轮为空';
+  }
+
+  @override
+  String get contextBudgetCostEstimateRow => '费用估算（每轮 · 区间）';
+
+  @override
+  String contextBudgetCostRange(Object from, Object to, Object unit) {
+    return '$from ~ $to $unit';
+  }
+
+  @override
+  String get contextBudgetCostBasis => '口径：按本档生效预算用满、只算输入侧，不含输出与工具调用';
+
+  @override
+  String get contextBudgetCostNoPrice => '暂无法估算：服务端未配置单价';
+
+  @override
+  String get contextBudgetCostNoModelPrice => '暂无法估算：当前模型未收录单价';
+
+  @override
   String get contextBudgetSaveFailed => '档位保存失败，请重试';
 }
