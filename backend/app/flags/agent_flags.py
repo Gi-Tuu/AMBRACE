@@ -389,7 +389,10 @@ AGENT_FLAGS = {
     # ── A4 批 7 M1（2026-09-30）：情绪→驱力单向调制的**三态**档位 ──
     # off=不取快照（逐字节旧行为）/ shadow=算乘子只留痕、落库与 off 相同 / on=真生效（白名单∧稳定桶）。
     # ⚠️ 非 bool 键 ⇒ 启动加载器**跳过 DB 覆盖**（先例 fact_lifecycle_policy），档位＝代码默认值，改档后重启生效。
-    "emotion_drive_modulation": "off",
+    # 2026-09-30 凌晨用户拍板：拨到 shadow 档开始攒影子数据（照算乘子与偏置、只写 trace；
+    #   settle_level 仍不传快照 ⇒ 落库与 off 逐字节相同）。判效窗 7 天（约 10-07）：看乘子分布、
+    #   性格偏置是否触顶、异常次数；再决定是否升 on（白名单 ∧ 稳定比例桶才真生效）。
+    "emotion_drive_modulation": "shadow",
     # P1-2（2026-09-28）：写路径查重只认现行（active）——关＝逐字节旧行为（默认关）。
     "write_dedup_active_only": False,
     # 批 0-2 M1a（2026-09-28）：感知来源打标 —— 关＝逐字节旧行为（默认关）。
