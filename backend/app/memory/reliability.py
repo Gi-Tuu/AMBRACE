@@ -128,7 +128,7 @@ async def apply_correction(memory_id: int, *, source: str = "user") -> None:
         # #70-C：仅「用户明确改口」才取代（AI 自判只降级）；失败静默，不阻塞降级主链路。
         if source == "user":
             try:
-                from app.agent.loop import AGENT_FLAGS
+                from app.flags.agent_flags import AGENT_FLAGS
                 if AGENT_FLAGS.get("memory_supersede", False):
                     from app.memory.supersede import supersede_memory
                     await supersede_memory(memory_id, new_id=None, reason="user_correction")

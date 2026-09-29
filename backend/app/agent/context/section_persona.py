@@ -81,7 +81,7 @@ async def cognitive_plan_section(state: dict, ctx: dict) -> str:
     cognitive_plan = ""
     if state.get("cognitive_loop_enabled") and state.get("perception"):
         try:
-            from app.agent.perception import build_perception_section
+            from app.agent.message_classifier import build_perception_section
             _sec = build_perception_section(state.get("perception"))
             _hint = (state.get("perception") or {}).get("length_hint") or "medium"
             _len_cn = {"long": "较长", "short": "简短", "medium": "适中"}.get(_hint, "适中")

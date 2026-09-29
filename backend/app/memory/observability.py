@@ -26,7 +26,7 @@ _logger = get_logger("memory.obs")
 
 def _flag_on() -> bool:
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("memory_trace_debug", True))
     except Exception:
         return False

@@ -269,7 +269,7 @@ async def scan_lifecycle_policy(*, session_factory=None, now: datetime | None = 
       不影响本拍维护的成败与退避。session_factory / now 仅供测试注入。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         if not AGENT_FLAGS.get("fact_lifecycle_policy", False):
             return None
         from sqlalchemy import select

@@ -15,7 +15,7 @@ _logger = get_logger("memory.summary")
 def _perception_isolate_on() -> bool:
     """批 0-2 M2（2026-09-28）：隔离禁令总闸，默认关（关＝逐字节旧查询）。异常回落 False（R8：退得干净）。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("perception_isolate", False))
     except Exception:
         return False

@@ -181,7 +181,28 @@ async def _generate_initial_bio(character_id: int, user_id: int) -> None:
 
 
 async def _save_status_update(character_id: int, status_text: str, user_id: int):
-    """保存当前状态更新到角色表，同时存入记忆库"""
+    """保存当前状态更新到角色表，同时存入记忆库
+
+    架构地图断点 #9（2026-09-29）——「状态更新双写」口径核实与收敛（只读核实结论，勿凭猜测改动）：
+      同一条现状更新在本函数落两个面，改动前两侧过期口径**数值不一致**：
+      - WorldFact（现状权威面，本函数下方 fold_status_update）：写入时刻 + STATUS_FRESH_HOURS，
+        常量在 app/events/facts.py:29 STATUS_FRESH_HOURS，数值 **12 小时**；
+      - Memory（长期面，本函数下方 save_memory）：memory_type="insight"，改动前无 valid_to/TTL 列，
+        只按艾宾浩斯保留率衰减 —— 初始强度 S 取 app/memory/constants.py:9 S_BY_TYPE["insight"]=**7.0 天**，
+        保留率低于 app/memory/constants.py:3 DECAY_THRESHOLD_PCT=20.0 才进删除倒计时
+        （长度 app/memory/constants.py:5 DECAY_COUNTDOWN_DAYS=3 天）⇒ **≈12.6 天**（7·ln6）。
+      ⇒ 地图判定成立（会出现「记忆说有、事实已过期」）。**数值统一属后续批次、需用户拍板**：
+        改 12/7 任一侧都是改行为，本批禁止，故本批只收敛「口径来源」不动「数值」。
+      本批做法（第 3 条路线）：Memory 侧带上与 WorldFact 同源的过期标记 —— valid_to 取
+        facts.status_valid_to(now) 与事实行 expires_at 的**同一瞬间**，来源面登记 derived_from=world_fact。
+        谁是权威面：WorldFact 管「现状」（新鲜窗，注入对话），Memory 管「长期」（衰减曲线，检索）。
+      零行为依据（只读核实）：记忆读侧不消费 Memory.valid_to —— 该列只被
+        memory/supersede.py::archive_cold_superseded（要求 status=superseded）、
+        memory/maintain_plan_expiry.py::_plan_scan_window（扫描窗只含 event 命中计划词 /
+        sub_type=plan / user_info+extracted，insight+status 不在窗内）以及只读治理统计
+        memory/maintenance_schedule.py（flag fact_lifecycle_policy 默认关）读取；
+        memory/retrieve.py 检索/注入路径无引用 ⇒ 打标不改变现有行为。
+    """
     if not status_text:
         return
     try:
@@ -193,10 +214,14 @@ async def _save_status_update(character_id: int, status_text: str, user_id: int)
                 await db.flush()
                 await db.commit()
                 _logger.info("Status updated for character %d: %.60s", character_id, status_text)
+        # 断点 #9：本轮基准时刻（WorldFact 的 expires_at 与 Memory 的 valid_to 取同一瞬间）
+        from app.utils.timeutil import now_naive_utc
+        _status_now = now_naive_utc()
         # 同时存入记忆
+        _status_mem_id = None
         try:
             from app.memory import save_memory
-            await save_memory(
+            _status_mem = await save_memory(
                 user_id=user_id,
                 character_id=character_id,
                 memory_type="insight",
@@ -207,12 +232,31 @@ async def _save_status_update(character_id: int, status_text: str, user_id: int)
                 speaker_type="character", speaker_id=character_id,
                 epistemic_status="FACT",
             )
+            _status_mem_id = getattr(_status_mem, "id", None)
         except Exception as e:
             _logger.warning("Failed to save status as memory: %s", e)
+        # 断点 #9：把同源过期标记挂到 Memory 派生条上（只补 valid_to 一列；
+        # 已有 valid_to 的行（如计划条被并入）不覆盖，内容/来源/衰减参数一律不动）
+        if _status_mem_id is not None:
+            try:
+                from app.events.facts import STATUS_MEMORY_DERIVED_FROM, status_valid_to
+                from app.models.memory import Memory
+                _status_valid_to = status_valid_to(_status_now)
+                async with async_session_factory() as db:
+                    row = await db.get(Memory, _status_mem_id)
+                    if row is not None and row.valid_to is None:
+                        row.valid_to = _status_valid_to
+                        await db.commit()
+                        _logger.info(
+                            "Status memory %d derived_from=%s valid_to=%s",
+                            _status_mem_id, STATUS_MEMORY_DERIVED_FROM, _status_valid_to,
+                        )
+            except Exception as e:
+                _logger.warning("Failed to stamp status memory expiry: %s", e)
         # 世界状态折叠（P4）：状态更新 → 当前世界事实（失败静默）
         try:
             from app.events.facts import fold_status_update
-            await fold_status_update(character_id, user_id, status_text)
+            await fold_status_update(character_id, user_id, status_text, now=_status_now)
         except Exception as e:
             _logger.warning("World fact fold status failed: %s", e)
     except Exception as e:
@@ -552,8 +596,10 @@ async def _run_agent_core(
     try:
         from app.domain.emotion.model import detect_user_emotion
         if "低落" in detect_user_emotion(content):
+            from app.application.emotion_care_ports import production_care_ports
             from app.domain.emotion.care import register_care_task
-            spawn_background(register_care_task(user_id, character_id, content))
+            spawn_background(register_care_task(user_id, character_id, content,
+                                                ports=production_care_ports))
     except Exception:
         pass
 

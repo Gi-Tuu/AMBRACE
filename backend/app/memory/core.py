@@ -48,7 +48,7 @@ def _perception_isolate_on() -> bool:
     任何异常回落 False——读不到开关就等于没接线（方案风险 R8：回退必须退得干净）。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("perception_isolate", False))
     except Exception:
         return False
@@ -62,7 +62,7 @@ def _perception_isolate_on() -> bool:
 #   与既有 action="utility_feedback" 同一先例（借表存证、不新增列/约束；action 列 String(20) 装得下）。
 # 闸控：``emit_memory_receipt`` 首行受既有 flag ``memory_write_receipt``（**默认关**）⇒ 关=零写入、
 #   晋升路径逐字节旧行为，故本批**不新增 flag**（再加一层闸只会多出两个开关的口径漂移；
-#   且本单文件隔离不允许改 app/agent/loop.py 与 application/flag_catalog.py，新键也无法热切）。
+#   且本单文件隔离不允许改 AGENT_FLAGS 硬编码默认表与 application/flag_catalog.py，新键也无法热切）。
 # 纪律：沿用本模块「失败静默」——留痕任何异常都不许影响晋升结果（与既有 except 包裹同口径）。
 #
 # 只读查询口径（全部 sqlite3 ``mode=ro``；现成端点只到「事实修正历史」，晋升审计取 SQL）：

@@ -33,7 +33,7 @@ from app.memory.service import (
 def _write_dedup_active_only_on() -> bool:
     """P1-2（2026-09-28）：写路径查重只认现行（active）——新 flag，默认关（关＝逐字节旧行为）。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("write_dedup_active_only", False))
     except Exception:
         return False
@@ -45,7 +45,7 @@ def _perception_tag_on() -> bool:
     任何异常回落 False——开关读不到就等于没接线，绝不因为读开关而改变写入结果。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("perception_source_tag", False))
     except Exception:
         return False
@@ -129,7 +129,7 @@ def _matched_snapshot_channel(corpus: list[tuple[str | None, str]], content: str
 #   1) 只加 JSON 键 ⇒ ``memories`` 行一字未动，检索 / 注入 / 查重 / 晋升判据与阈值零变化；
 #   2) 发射口 ``emit_memory_receipt`` 首行即受既有 flag ``memory_write_receipt``（**默认关**）闸控，
 #      关＝零写入 ⇒ 默认已是逐字节旧行为，再加一层闸只会多出「两个开关」的口径漂移；
-#   3) 本单文件隔离不允许改 ``app/agent/loop.py`` / ``application/flag_catalog.py``，
+#   3) 本单文件隔离不允许改 ``AGENT_FLAGS`` 硬编码默认表 / ``application/flag_catalog.py``，
 #      新键登记不进默认表与目录、运行期也热切不了（与 M4 准入闸门的处置同一口径）。
 #
 # 取值空间**以生产库实测为准**（2026-09-28 只读 ``select source, sub_type, count(*) … group by``，
@@ -304,7 +304,7 @@ def _merge_receipt_detail(kind, target, *, source, sub_type, memory_type, source
 
 
 # ── M4 写入准入闸门（flag `memory_admission_gate`，默认 False；开=确定性裁决，不新增 LLM）──
-# 注意：本 flag 未登记进 app/agent/loop.py 的 AGENT_FLAGS 硬编码默认表（本批文件隔离只允许
+# 注意：本 flag 未登记进 AGENT_FLAGS 硬编码默认表（app/flags/agent_flags.py；本批文件隔离只允许
 # 改 write.py / events/facts.py），故运行时 flag_service 无法热切它；读取一律走
 # `.get(key, False)`，缺键 = 关 = 逐字节旧行为。测试用 monkeypatch.setitem 直接开。
 _FACT_SOURCES = ("chat", "moment", "diary", "life", "bio")
@@ -314,7 +314,7 @@ _PENDING_RELIABILITY = 0.4  # reliability < 0.4 → 待核（与 memory/tiering.
 def _admission_gate_on() -> bool:
     """读 feature flag；任何异常回落 False（关=逐字节旧行为）。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("memory_admission_gate", False))
     except Exception:
         return False
@@ -776,7 +776,7 @@ async def save_memory(
         # 显式 sub_type（slot/status/relationship 等）不覆盖，只收敛默认/extracted 路径。
         _sub_type_before_plan = sub_type  # 批 0-8：留痕要能看出「被 L4 改名成 plan」这一步（不改判据）
         try:
-            from app.agent.loop import AGENT_FLAGS
+            from app.flags.agent_flags import AGENT_FLAGS
             if AGENT_FLAGS.get("review_plan_validity_extract", False):
                 from app.memory.tense import classify_tense, plan_valid_until
                 if classify_tense(memory) == "plan" and sub_type in (None, "extracted", "plan"):

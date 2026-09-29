@@ -154,7 +154,7 @@ for i, (t, intent, strat, length, topic) in enumerate(_DEEP, 81):
 
 
 def run_evaluation(dump_cases: bool = False) -> int:
-    from app.agent.perception import perceive  # 本地零 LLM
+    from app.agent.message_classifier import perceive  # 本地零 LLM
     total = len(CASES)
     intent_hit = 0
     length_hit = 0

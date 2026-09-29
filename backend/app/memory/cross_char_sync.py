@@ -73,7 +73,7 @@ async def _maybe_project_user_fact(
     - skip_dedup=True，失败静默。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         if not AGENT_FLAGS.get("cross_char_fact_projection", False):
             return
         async with async_session_factory() as db:

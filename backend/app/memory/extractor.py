@@ -312,7 +312,7 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
     saved = 0
 
     # Ariadne 模块F/G（2026-09-04）：flag 预取（关=零行为变化）+ curated 提前解析（供 PREFERENCES 互斥）。
-    from app.agent.loop import AGENT_FLAGS as _flags
+    from app.flags.agent_flags import AGENT_FLAGS as _flags
     _curated_enabled = bool(_flags.get("curated_knowledge", False))
     _intent_enabled = bool(_flags.get("prospective_intent_enabled", False))
     _curated_added: set[str] = set()   # 已被 assert_curated 收录的 content（PREFERENCES 互斥用）

@@ -131,7 +131,7 @@ _STEPS_MAX = 1200
 def shadow_enabled() -> bool:
     """影子留痕总闸（缺省关；连导入都失败也按关处理——观测层不得把业务拖下水）。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get(SHADOW_FLAG_KEY, False))
     except Exception:
         return False

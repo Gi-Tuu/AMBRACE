@@ -1,8 +1,15 @@
-"""本地感知层（零 LLM）：用户意图/情绪/话题粗分类，认知循环 v2.1 Perception 模块。
+"""消息内分类（in-message classification，零 LLM）：用户意图/情绪/话题粗分类，认知循环 v2.1 分类模块。
 
-规则优先、零 LLM 调用，输出结构化感知结果：
+规则优先、零 LLM 调用，输出结构化分类结果：
 {intent, emotion, emotion_label, topic, length_hint}
 供 context_builder 注入与 planning/reflection 使用。
+
+命名辨析（易走错的另一条链）：本模块只做「当前这条用户消息文本」的分类，
+与手机/设备感知（device perception）**无关**。设备感知链路是指 Android 无障碍
+采集的手机画面快照一路注入上下文的链路，分布在：
+  - backend/app/device/port.py            （快照采集入口 / 新鲜度与字数上限）
+  - backend/app/memory/perception_tier.py （感知来源分层谓句：隔离/标签残留/长词重合）
+  - backend/app/agent/context/section_phone.py（把快照写入上下文的分区）
 """
 import re
 

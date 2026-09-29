@@ -55,7 +55,7 @@ def _flag_on(character_id=None) -> bool:
     角色为空 / 非法 / 非白名单 → False（保守，零行为变化）。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         if not AGENT_FLAGS.get("memory_utility_feedback", False):
             return False
     except Exception:

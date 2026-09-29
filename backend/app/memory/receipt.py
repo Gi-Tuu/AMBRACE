@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 
-from app.agent.loop import AGENT_FLAGS
+from app.flags.agent_flags import AGENT_FLAGS
 from app.utils.logger import get_logger
 
 _logger = get_logger("memory.receipt")

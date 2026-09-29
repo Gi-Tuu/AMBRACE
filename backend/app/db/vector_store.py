@@ -94,7 +94,7 @@ async def add_memory(
 def _supersede_flag_on() -> bool:
     """#70-C：读 memory_supersede flag。延迟 import（避免 vector_store 顶层依赖 loop 造成环）。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("memory_supersede", False))
     except Exception:
         return False
@@ -106,7 +106,7 @@ def _current_facts_flag_on() -> bool:
     延迟 import（避免 vector_store 顶层依赖 loop 造成环），与 service._current_facts_flag_on 同口径。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("current_facts_active_only", True))
     except Exception:
         return True
@@ -115,7 +115,7 @@ def _current_facts_flag_on() -> bool:
 def _vector_user_scope_flag_on() -> bool:
     """A1（2026-09-19）：读 vector_user_scope flag。延迟 import（照抄 _supersede_flag_on 风格）。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("vector_user_scope", False))
     except Exception:
         return False

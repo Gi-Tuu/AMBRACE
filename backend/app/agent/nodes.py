@@ -89,7 +89,7 @@ async def retrieve_memories(state: AgentState) -> AgentState:
     _perception = state.get("perception") or {}
     try:
         if _perception:
-            from app.agent.perception import topic_cn
+            from app.agent.message_classifier import topic_cn
             extra = []
             _topic = _perception.get("topic") or ""
             if _topic and _topic != "other":
@@ -572,7 +572,7 @@ async def perceive(state: AgentState) -> AgentState:
     if not state["cognitive_loop_enabled"]:
         return state
     try:
-        from app.agent.perception import perceive as _perceive
+        from app.agent.message_classifier import perceive as _perceive
         state["perception"] = _perceive(state.get("user_message") or "")
     except Exception as e:
         _logger.warning("Perception failed: %s", e)

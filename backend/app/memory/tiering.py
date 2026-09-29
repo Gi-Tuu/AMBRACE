@@ -18,7 +18,7 @@ _TIER_FLAG = "memory_tiered_decay"
 
 def tiered_decay_on() -> bool:
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get(_TIER_FLAG, False))
     except Exception:
         return False

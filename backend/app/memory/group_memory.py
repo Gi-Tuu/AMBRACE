@@ -40,7 +40,7 @@ _COMPACT_SUMMARY_MAX = 600      # 摘要行 content 最大长度（宁可丢尾�
 def group_cognition_on() -> bool:
     """总开关：默认关。读 AGENT_FLAGS 真值源，异常一律 False（零行为变化）。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("group_cognition_v2", False))
     except Exception:
         return False
@@ -49,7 +49,7 @@ def group_cognition_on() -> bool:
 def group_memory_compact_on() -> bool:
     """#72 PR-C P5 日终合并总闸：默认关。读 AGENT_FLAGS 真值源，异常一律 False（零行为变化）。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("group_memory_compact", False))
     except Exception:
         return False

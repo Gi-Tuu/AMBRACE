@@ -102,6 +102,13 @@ _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     # 该列由迁移 f4a5b6c7d8e9 add_column 引入；老库（有表无版本号）缺此列时必须判「落后」走
     # upgrade head 补列，否则会被 stamp 到 head 却永久缺列（select PhoneSnapshot 直接报错）。
     ("phone_snapshots", "payload_json"),
+    # ── 断点 #4 快照归属三列（2026-09-29）：actor / character_id / confidence ──
+    # 三列【只由迁移 d7e8f9a0b1c2 add_column 引入】（init_db 幂等层不补，同 payload_json 先例）。
+    # 老库（有表无版本号）缺列时若不判「落后」，会被 stamp 到 head 却永久缺列——写入侧带 actor
+    # 直接报错（快照整条写失败），且 select(PhoneSnapshot) 也会炸。
+    ("phone_snapshots", "actor"),
+    ("phone_snapshots", "character_id"),
+    ("phone_snapshots", "confidence"),
     # ── X7-M4c-3 行动名单落库（2026-09-23，派单 P19）：两张【只由迁移链 create_table 引入】的表 ──
     # device_action_targets 是闸门④（目标白名单）的权威来源、device_action_plugins 是闸门③a
     # （逐插件灰度）的权威来源。老库缺表时若不判「落后」，会被 stamp 到 head 却永久缺表——

@@ -93,7 +93,7 @@ async def expire_stale_plans(limit: int = EXPIRE_BATCH_LIMIT) -> int:
     幂等：只动 status='active' 的行，重复跑不会重复计数（已 stale 的不再入窗）。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         if not AGENT_FLAGS.get("review_plan_expire_stale", False):
             return 0
     except Exception:

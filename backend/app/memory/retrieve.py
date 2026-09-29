@@ -29,7 +29,7 @@ def _perception_tag_on() -> bool:
     不剔除任何条目（剔除属 M2）。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("perception_source_tag", False))
     except Exception:
         return False
@@ -49,7 +49,7 @@ def _perception_isolate_on() -> bool:
     禁止把它当 exclude 用——用户问「刚才屏幕上那个」必须还能命中，条数不得因本偏置而减少。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("perception_isolate", False))
     except Exception:
         return False
@@ -82,7 +82,7 @@ RECENCY_TIERS: tuple[tuple[float, float], ...] = (
 def _recency_bonus_on() -> bool:
     """批 0-7 任务①：显式 recency 是否生效（flag 默认关＝排序逐字节旧行为）；异常回落 False（R8：退得干净）。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("recall_recency_bonus", False))
     except Exception:
         return False
@@ -115,7 +115,7 @@ NEIGHBOR_QUERY_LIMIT = 12         # 单锚点窗口内取回上限（邻居异�
 def _neighbor_block_on() -> bool:
     """批 0-7 任务②：相邻块是否生效（flag 默认关＝不额外发任何查询、逐字节旧行为）；异常回落 False。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("recall_neighbor_block", False))
     except Exception:
         return False
@@ -224,7 +224,7 @@ ENTITY_REASON_TRACE_MAX = 5   # trace 里最多记几条命中理由（体积钳
 def _entity_match_on() -> bool:
     """批 0-11：专名第三路是否生效（flag 默认关＝不发那条 LIKE 查询、逐字节旧行为）；异常回落 False。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("recall_entity_match", False))
     except Exception:
         return False
@@ -572,7 +572,7 @@ async def search_memories(
     _t0 = time.monotonic()
     # #70 方案B（memory-trace 可观察）：读 feature flag，默认开；flag 关时检索/排序/trace 与现状一致。
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         _trace_debug = bool(AGENT_FLAGS.get("memory_trace_debug", True))
     except Exception:
         _trace_debug = False
@@ -603,7 +603,7 @@ async def search_memories(
             # 模块 D：稠密相似度地板（flag memory_peak_cutoff 开）——弱相关候选在源头剔除，
             # 「时间对/语义弱」与本地板正交（时间路由 SQL 时间窗独立召回）。
             try:
-                from app.agent.loop import AGENT_FLAGS as _af
+                from app.flags.agent_flags import AGENT_FLAGS as _af
                 if _af.get("memory_peak_cutoff", False):
                     hits = [h for h in hits if float(h.get("distance") or 0) <= PEAK_DENSE_MAX_DISTANCE]
             except Exception:
@@ -764,7 +764,7 @@ async def search_memories(
     # 保证「时间对、语义弱」的记忆不被向量路漏掉。
     if time_range is not None:
         try:
-            from app.agent.loop import AGENT_FLAGS as _af
+            from app.flags.agent_flags import AGENT_FLAGS as _af
             _temporal_on = bool(_af.get("memory_temporal_recall", False))
         except Exception:
             _temporal_on = False
@@ -804,7 +804,7 @@ async def search_memories(
     if results:
         # 模块 D：peak_cutoff 需要 _score（flag memory_peak_cutoff 开时强制走 debug 路径并保留分数）
         try:
-            from app.agent.loop import AGENT_FLAGS as _af
+            from app.flags.agent_flags import AGENT_FLAGS as _af
             _peak_on = bool(_af.get("memory_peak_cutoff", False))
         except Exception:
             _peak_on = False

@@ -147,7 +147,11 @@ async def read_perception_records(
                         PhoneSnapshot.payload_json,
                         PhoneSnapshot.created_at,
                     )
-                    .where(PhoneSnapshot.user_id == user_id)
+                    .where(
+                        PhoneSnapshot.user_id == user_id
+                        # 断点 #4 只补了数据面（actor / character_id / confidence）：读侧**刻意仍按 user
+                        # 过滤、不加任何新条件**（零行为）。「按角色收窄可见性」是后续批次的事，本批不做。
+                    )
                     .order_by(PhoneSnapshot.created_at.desc(), PhoneSnapshot.id.desc())
                     .limit(limit)
                 )

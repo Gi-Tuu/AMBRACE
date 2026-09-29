@@ -8,7 +8,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -78,6 +78,12 @@ class PhoneSnapshot(Base):
     # X7-M1 结构化承载：客户端字段级 JSON 对象文本（api.phone 只收合法对象且 ≤4000，非法即存 NULL）
     payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # ── 断点 #4 归属三列（2026-09-29）：只记录、不参与任何过滤（NULL＝本列上线前的历史行，不回填）──
+    actor: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)  # user / character / system
+    character_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("ai_characters.id", ondelete="SET NULL"), nullable=True, default=None
+    )
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
 class CheckInRequest(Base):
     """查岗请求（2026-08-15）：角色想感知用户手机时登记，前端轮询发现后立即采集上报"""
     __tablename__ = "check_in_requests"

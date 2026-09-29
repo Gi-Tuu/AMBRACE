@@ -81,7 +81,7 @@ def user_fact_slot_enabled(slot: str) -> bool:
     回退＝把 user_fact_relationship / user_fact_health 置 False。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         flag = USER_FACT_SLOT_FLAGS.get(slot)
         if flag and bool(AGENT_FLAGS.get(flag, False)):
             return True
@@ -119,7 +119,7 @@ def user_current_location_shared() -> bool:
     延迟读取 AGENT_FLAGS（热更即时生效、避免循环 import）；读取异常按关处理（保守）。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get(_SHARED_SLOTS_BY_FLAG["location"], True))
     except Exception:
         return False
@@ -167,7 +167,7 @@ async def _resolve_user_fact_flags(keys, user_id) -> dict:
     for k in ks:
         if k not in values:
             try:
-                from app.agent.loop import AGENT_FLAGS
+                from app.flags.agent_flags import AGENT_FLAGS
                 values[k] = bool(AGENT_FLAGS.get(k, False))
             except Exception:
                 values[k] = False

@@ -37,6 +37,33 @@ _TRANSIENT_FRESH_HOURS = {
     "location": LOCATION_FRESH_HOURS,
 }
 
+# ── 架构地图断点 #9（2026-09-29）：状态更新「双写」的过期口径单一来源 ──
+# 只读核实结论（写入侧见 application/chat_service.py::_save_status_update，同一条现状更新落两个面）：
+#   - WorldFact 侧（现状权威面）：过期 = 写入时刻 + STATUS_FRESH_HOURS —— 本文件 :29，数值 **12 小时**；
+#     写入 TTL 见 fold_status_update（ttl_minutes=STATUS_FRESH_HOURS*60），
+#     读取新鲜窗见 _predicate_fresh / get_active_facts（同一常量）。
+#   - Memory 侧（长期面）：写的是 memory_type="insight"，改动前**没有任何过期列**，只靠艾宾浩斯保留率：
+#     初始强度 S = app/memory/constants.py:9 S_BY_TYPE["insight"] = **7.0 天**，
+#     保留率低于 app/memory/constants.py:3 DECAY_THRESHOLD_PCT = 20.0 才进删除倒计时，
+#     倒计时长度 app/memory/constants.py:5 DECAY_COUNTDOWN_DAYS = 3 天 ⇒ 实际 ≈12.6 天量级（7·ln6）。
+# ⇒ 两侧数值**不一致**（12 小时 vs ≈12.6 天），地图判定成立：会出现「记忆还说有、事实已过期」。
+#   **数值统一属后续批次，需用户拍板**（改数值＝改行为，本批禁止）。
+# 本批做法（收敛口径、不改数值）：Memory 侧写入时带上与本文件同源的过期标记——
+#   valid_to 取 status_valid_to(now) 的同一时刻，来源面登记为 STATUS_MEMORY_DERIVED_FROM。
+#   谁是权威面：**WorldFact 管「现状」（12h 新鲜窗，注入对话用），Memory 管「长期」**（衰减曲线，检索用）；
+#   两者是同一句话的两个视角，现状过期以 WorldFact 的窗口为准，Memory 条上那份 valid_to 只是派生标记。
+STATUS_MEMORY_DERIVED_FROM = "world_fact"
+
+
+def status_valid_to(now: datetime | None = None) -> datetime:
+    """状态更新的统一过期时刻（单一来源）：now + STATUS_FRESH_HOURS 小时。
+
+    WorldFact 的 TTL（STATUS_FRESH_HOURS*60 分钟）与 Memory 侧的派生标记都出自同一个常量，
+    两侧不得各自硬编码小时数（测试 test_status_single_source.py 以源码棘轮钉住这一点）。
+    """
+    base = now if now is not None else _now_naive()
+    return base + timedelta(hours=STATUS_FRESH_HOURS)
+
 # ── Ariadne 模块F：Curated Knowledge（2026-09-04）──
 KIND_STATUS = "status"                 # 瞬时状态事实（既有语义，默认）
 KIND_FACT = "fact"                     # 稳定事实（用户硬档案/世界设定）
@@ -383,14 +410,17 @@ async def assert_fact(
     author: str = "system",
     is_authoritative: bool = False,
     kind: str = KIND_STATUS,
+    now: datetime | None = None,
 ) -> int | None:
     """断言世界事实：旧 active 同键事实 supersede → 插入新事实 → 活跃上限淘汰。失败静默返回 None。
 
     kind 默认 KIND_STATUS（瞬时状态语义，调用方无需改）；Ariadne 模块F 的 curated 走
     assert_curated，不经过本函数（不受 12 条上限与 12h 新鲜窗影响）。
+    now（断点 #9，默认 None=取当前时刻＝逐字节旧行为）：由调用方给基准时刻，用于让
+    「WorldFact 的 expires_at」与「Memory 侧派生标记 valid_to」落在**同一瞬间**而非各自取时钟。
     """
     try:
-        now = _now_naive()
+        now = now if now is not None else _now_naive()
         gate = _admission_gate_on()
         stale_after = None
         async with async_session_factory() as db:
@@ -763,8 +793,16 @@ async def get_fact_history(
     return {"current": current, "versions": versions, "truncated": truncated}
 
 
-async def fold_status_update(character_id: int, user_id: int, status_text: str) -> None:
-    """聊天【状态更新】标记 → 角色当前状态事实（FACT，audience=[用户,角色]，TTL 12h）。"""
+async def fold_status_update(
+    character_id: int, user_id: int, status_text: str,
+    *, now: datetime | None = None,
+) -> None:
+    """聊天【状态更新】标记 → 角色当前状态事实（FACT，audience=[用户,角色]，TTL 12h）。
+
+    断点 #9：本函数写的是「现状」权威面；Memory 侧同一条现状更新的过期标记出自 status_valid_to
+    （同一常量 STATUS_FRESH_HOURS），两侧口径同源，见模块头部「断点 #9」注释块。
+    now 透传给 assert_fact（默认 None=旧行为），使 expires_at 与 Memory 侧 valid_to 同一瞬间。
+    """
     text = (status_text or "").strip()
     if not text:
         return
@@ -774,6 +812,7 @@ async def fold_status_update(character_id: int, user_id: int, status_text: str) 
         audience=[("user", user_id), ("char", character_id)],
         epistemic_status=EPISTEMIC_FACT, confidence=0.9, source="chat_status",
         ttl_minutes=STATUS_FRESH_HOURS * 60,  # 瞬时状态 12h 自动过期（2026-08-16）
+        now=now,
     )
 
 

@@ -52,7 +52,7 @@ CHAIN_EXPAND_DOWNWEIGHT = 0.9
 def memory_chain_builder_enabled() -> bool:
     """公开 flag 门控：读 ``memory_chain_builder``（默认关）。供 write.py 调用点判断是否挂链。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("memory_chain_builder", False))
     except Exception:
         return False
@@ -228,7 +228,7 @@ async def maybe_expand_chain(character_id: int, picked: list[dict], budget_extra
         return m.get("id") if isinstance(m, dict) else getattr(m, "id", None)
 
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         if not AGENT_FLAGS.get("memory_chain_expand", False):
             return list(picked)
         have = {i for i in (_id_of(m) for m in picked) if i is not None}

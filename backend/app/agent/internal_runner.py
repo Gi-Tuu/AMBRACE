@@ -74,11 +74,13 @@ def _dispatch(tool_name: str, payload: dict):
         return _run
     if tool_name == "emotion_care":
         async def _run(p: dict):
+            from app.application.emotion_care_ports import production_care_ports
             from app.domain.emotion.care import run_emotion_care
             ok = await run_emotion_care(
                 char_id=int(p.get("character_id") or 0),
                 user_id=int(p.get("user_id") or 0),
                 task_id=int(p.get("task_id") or 0),
+                ports=production_care_ports,
             )
             return {"ok": bool(ok)}
         return _run

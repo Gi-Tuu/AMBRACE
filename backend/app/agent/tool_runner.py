@@ -5,11 +5,16 @@
 - 权限三档裁决（Operit 式，与现有 permission_service 统一）：allow=执行 / forbid=拒绝 / ask=挂起待确认
 - 插件 action 工具：按 plugin+plugin_action 调 registry.run_plugin_action（与现有调用行为一致）
 - 幂等/频率门禁：idempotent 工具失败自动重试 1 次；rate_limit 登记（执行由调用方节流，如搜索 60s）
+
+安全向改动（U1，2026-09-29）：权限校验异常兜底由「一律放行」改为**分级 fail-closed**——
+高风险工具（risk_level=high / MCP scope / 插件-设备行动类 scope）在 permission_service 抛异常时
+返回 forbid，低风险仍返回 allow（避免权限表抖动掐断本地能力）。基线两档（无 user_id、无 scope）
+语义不变，只是抽成显式函数（理由见 _baseline_decision docstring）。
 """
 import inspect
 import time
 
-from app.agent.tools import ToolSpec
+from app.agent.tools import RISK_HIGH, ToolSpec
 from app.utils.logger import get_logger
 
 _logger = get_logger("agent.tool_runner")
@@ -86,18 +91,56 @@ def _resolve_scope(spec: ToolSpec) -> str | None:
     return None
 
 
+def _baseline_decision(spec: ToolSpec, user_id: int | None, scope: str | None) -> str:
+    """权限分级第 0 档（基线放行档）：以下两种场景直接 allow，不进权限系统。
+
+    这两条**不是漏洞**，理由与「异常兜底放行」有本质区别：
+    - ``user_id is None``＝后台/系统场景（定时任务、主动消息、系统链路内部调用）。此时按
+      user_id 在 ToolPermission 表里根本查不到行，走 permission_service 只会落到
+      DEFAULT_GLOBAL_LEVEL（allow）——多一次无谓查询、结果相同；且系统链路不该被某个用户的
+      个人档位掐断。真正对外的副作用（发消息/落库）在下游仍按 user_id 复核。
+    - ``scope is None``＝本地能力（日历/备忘/timer/记忆提炼等），不在 permission 的能力清单
+      （permission_service.SCOPES）里，用户既看不到也无法为它配置档位。对它执行「全局默认档」
+      等于「拿不到配置就当 allow」，那是假门禁；显式放行才是诚实的设计声明。
+    也就是说：这两档是**语义上必须 allow**（可审计、有判据），而异常兜底是**未知状态**——
+    未知状态才需要 fail-closed 分级（见 check_tool_permission 的 except 分支）。
+    """
+    return "allow"
+
+
+def _is_high_risk_for_failopen(spec: ToolSpec, scope: str | None) -> bool:
+    """异常兜底用的高风险判据（满足其一即高风险 → 异常时拒绝，不返回放行）：
+
+    ① ``spec.risk_level == "high"``；
+    ② scope 以 ``mcp_`` 开头（跨进程的外部 MCP server 能力，行为不可控）；
+    ③ scope 属插件/设备行动类（复用 permission_service 现成常量 SCOPE_EXTENSION / SCOPE_BROWSER，
+       不新造清单）。
+    """
+    if getattr(spec, "risk_level", "") == RISK_HIGH:
+        return True
+    if scope and scope.startswith("mcp_"):
+        return True
+    try:
+        from app.application import permission_service
+        return scope in {permission_service.SCOPE_EXTENSION, permission_service.SCOPE_BROWSER}
+    except Exception:
+        return False
+
+
 async def check_tool_permission(spec: ToolSpec, user_id: int | None) -> str:
     """工具权限三档裁决：allow / forbid / ask（与现有 permission_service 统一）。
 
-    - user_id 为空 → allow（后台/系统场景）；
-    - 无 scope 的本地能力（日历/备忘/timer 等）→ allow；
-    - 其余 → 能力例外优先、无例外跟随全局默认（permission_service 现有语义）。
+    分级顺序：
+    - 第 0 档 基线放行：user_id 为空（后台/系统场景）或无 scope 的本地能力（日历/备忘/timer 等）→ allow；
+    - 第 1 档 权限系统：MCP 工具先做归属校验（非本人 → forbid），再按能力例外/全局默认裁决；
+    - 第 2 档 异常兜底：权限系统异常时**分级 fail-closed**——高风险工具 → forbid，
+      其余（低风险本地/媒体类）→ allow（保持现有体验，与 run_plugin_action 的 except 一致）。
     """
     if user_id is None:
-        return "allow"
+        return _baseline_decision(spec, user_id, None)
     scope = _resolve_scope(spec)
     if scope is None:
-        return "allow"
+        return _baseline_decision(spec, user_id, scope)
     try:
         from app.application import permission_service
         # MCP 工具（scope=mcp_{server}）：显式配置优先，否则高风险默认 ask、低风险默认 allow。
@@ -115,8 +158,13 @@ async def check_tool_permission(spec: ToolSpec, user_id: int | None) -> str:
             )
         return await permission_service.check_mode(user_id, scope)
     except Exception as e:
-        _logger.warning("tool permission check failed name=%s: %s", spec.name, e)
-        return "allow"  # 权限系统异常时放行（与现有 run_plugin_action 的 except 放行一致）
+        fail_closed = _is_high_risk_for_failopen(spec, scope)
+        _logger.warning(
+            "tool permission check failed name=%s user=%s scope=%s high_risk=%s decision=%s err=%r",
+            spec.name, user_id, scope, fail_closed, "forbid" if fail_closed else "allow", e,
+        )
+        # 安全向（U1）：高风险工具异常时拒绝（fail-closed），低风险仍放行
+        return "forbid" if fail_closed else "allow"
 
 
 async def execute_tool(

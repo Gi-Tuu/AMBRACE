@@ -56,6 +56,7 @@ SPECS_EXCEPTIONS: dict[str, str] = {
     "ai_moments": "二级级联：先按 moment_id 清赞/评论子树再删本体（级联第 1 步），不能按 character_id 直删",
     "moment_ai_likes": "二级级联：既随 TA 自己动态清，也按 character_id 清其在他人动态下的 AI 赞（级联第 1 步）",
     "weave_cards": "二级级联：多角色共享卡转移归属给另一角色、独占卡才删本体（级联第 2 步），按 character_id 直删会误删共享卡",
+    "phone_snapshots": "列可空、物理外键为 ON DELETE SET NULL（非 CASCADE）；快照是**用户手机**产生的感知记录（actor=\"user\"、character_id 当前恒 NULL 属预留）⇒ 删角色按设计保留用户数据，故不进 SPECS 直删（断点 #4，2026-09-29）",
 }
 
 # ── 例外清单 B：不在 SPECS，仅靠物理外键 ON DELETE CASCADE 兜底 ──────────────────

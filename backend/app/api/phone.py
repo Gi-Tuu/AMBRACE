@@ -135,6 +135,8 @@ async def create_perception(
             content=text,
             image_desc=image_desc,
             payload_json=payload,
+            # 断点 #4：本入口的快照一律出自用户手机 → actor=user；角色归属与置信度无来源，留 NULL（不臆造）
+            actor="user",
         )
         db.add(snap)
         # 每用户只保留最近 MAX_KEEP 条

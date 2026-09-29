@@ -17,9 +17,11 @@ class CareSource:
     name = "emotion_care"
 
     async def collect(self, ctx: SourceContext) -> Iterable[TriggerItem]:
+        from app.application.emotion_care_ports import production_care_ports
         from app.domain.emotion.care import collect_care_events
 
-        return [TriggerItem.from_dict(d) for d in await collect_care_events()]
+        return [TriggerItem.from_dict(d)
+                for d in await collect_care_events(ports=production_care_ports)]
 
     def quota(self, ctx: SourceContext) -> int:
         return 100

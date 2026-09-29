@@ -59,7 +59,7 @@ async def get_chain_index_for_hits(hit_ids: list) -> dict[int, list[dict]]:
     if not ids:
         return {}
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         if not AGENT_FLAGS.get("memory_chain_builder", False):
             return {}
         from sqlalchemy import select

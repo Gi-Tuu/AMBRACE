@@ -564,7 +564,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     cognitive_plan = ""
     if "cognitive_plan" not in _registry_done and state.get("cognitive_loop_enabled") and state.get("perception"):
         try:
-            from app.agent.perception import build_perception_section
+            from app.agent.message_classifier import build_perception_section
             _sec = build_perception_section(state.get("perception"))
             _hint = (state.get("perception") or {}).get("length_hint") or "medium"
             _len_cn = {"long": "较长", "short": "简短", "medium": "适中"}.get(_hint, "适中")

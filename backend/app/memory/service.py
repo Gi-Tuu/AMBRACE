@@ -41,7 +41,7 @@ _STALE = "stale"
 def _supersede_flag_on() -> bool:
     """#70-C 门控：读 memory_supersede flag（延迟 import，避免顶层循环依赖 loop）。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("memory_supersede", False))
     except Exception:
         return False
@@ -54,7 +54,7 @@ def _current_facts_flag_on() -> bool:
     （与硬编码默认一致）。置 False = 一键回退旧行为（status 子句退回 memory_supersede 门控）。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("current_facts_active_only", True))
     except Exception:
         return True
@@ -140,7 +140,7 @@ def _review_caps_for(m, now=None) -> tuple[float | None, int | None]:
     墙钟给纯对象/回放用例做过期判定（2026-09-17 修复：该处曾随日历翻车）。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
+        from app.flags.agent_flags import AGENT_FLAGS
         if not AGENT_FLAGS.get("review_reinforce_event_cap", True):
             return None, None
     except Exception:
