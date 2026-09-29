@@ -7,6 +7,9 @@ M0 的唯一产出物是**读数**，不新增语义：不改权限名、不改�
 四块各一段：
   B-2  文档承诺 vs 代码事实 —— ``docs/extension-contract.md`` §3 的权限名 与
        ``app/plugins/manifest.py`` 的 ``VALID_PERMISSIONS`` 双向漂移对账（只登记）
+       **N3（2026-09-30）增**：§3 每条权限「一行一句 + 一个实现状态标记」，本块读出该标记并把
+       结果分成三类——**实现漂移**（文档说已落地而代码无）／**计划项**（仅预告或未实现）／
+       **待办**（状态未标注、或代码与前端仍残留引用）。**权限名字面值一个字都不动**。
   B-3  ``app/plugins/registry.py`` 的 ``verify_plugin_signature`` 恒 True 占位如实登记（含调用点）
   C-1  「桌面气泡 / 锁屏卡片」在本仓不存在 ⇒ 判据改写为通知正文长度分布：
        本单只给「能否测 / 怎么测 / 现有可测口径」
@@ -321,9 +324,53 @@ def collect_sql_literals(path: Path) -> list[str]:
 # ────────────────────────── B-2：文档承诺 vs 代码事实 ──────────────────────────
 
 _PERM_TOKEN_RE = re.compile(r"^[a-z][a-z0-9_]*(?::[a-z0-9_*]+)+$|^[a-z]+(?:_[a-z0-9]+)+$")
-_PREVIEW_RE = re.compile(r"仅预告|目标.{0,6}枚举|规划中|待落地|预留")
 _BACKTICK_RE = re.compile(r"`([^`]+)`")
 _HOOK_COUNT_RE = re.compile(r"VALID_HOOKS.{0,40}?共\s*(\d+)\s*个")
+
+# ── N3：实现状态标记（文档 §3 的「一行一句」约定） ──────────────────────────
+# 顺序即扫描顺序；同一行出现两个不同标记 ⇒ 判为冲突（按未标注处理，不猜）。
+STATUS_MARKERS: dict[str, str] = {
+    "已实现": "implemented",
+    "仅预告": "preview",
+    "未实现": "planned",
+    "规划中": "planned",        # 与「未实现」同义写法
+}
+STATUS_UNKNOWN = "unknown"
+STATUS_UNKNOWN_LABEL = "未标注"
+# 状态 → 对账分类桶。implemented 是唯一的「文档承诺已落地」，其余都不算实现漂移。
+STATUS_BUCKET: dict[str, str] = {
+    "implemented": "implementation_drift",
+    "preview": "planned_items",
+    "planned": "planned_items",
+    STATUS_UNKNOWN: "todo_items",
+}
+STATUS_SEVERITY: dict[str, str] = {
+    "implemented": "high",     # 真缺陷：文档承诺了代码没有的权限
+    "preview": "info",         # 计划项：文档已明示预告
+    "planned": "info",         # 计划项：文档已明示未实现
+    STATUS_UNKNOWN: "medium",   # 待办：文档没说清实现状态
+}
+STATUS_LEGEND: dict[str, str] = {
+    "implemented": "文档声称已落地（代码应有）",
+    "preview": "文档明示仅预告（代码无属预期）",
+    "planned": "文档明示未实现/规划中（代码无属预期）",
+    STATUS_UNKNOWN: "文档未标注实现状态（计入待办，不猜）",
+}
+DRIFT_BUCKETS = ("implementation_drift", "planned_items", "todo_items")
+
+
+def _line_status(line: str) -> tuple[str, str | None, list[str]]:
+    """读一行的实现状态标记 → ``(状态, 标记原文, 冲突标记列表)``。
+
+    无标记 ⇒ ``unknown``（**不按「没写就是已实现」兜底**——那正是本块要抓的漂移）；
+    多个不同标记 ⇒ 同样落 ``unknown``，并把冲突标记带回给报告。
+    """
+    markers = [m for m in STATUS_MARKERS if f"`{m}`" in line]
+    if not markers:
+        return STATUS_UNKNOWN, None, []
+    if len(markers) > 1:
+        return STATUS_UNKNOWN, None, list(markers)
+    return STATUS_MARKERS[markers[0]], markers[0], []
 
 
 def doc_section_lines(doc_text: str, heading_prefix: str) -> list[tuple[int, str]]:
@@ -342,17 +389,15 @@ def doc_section_lines(doc_text: str, heading_prefix: str) -> list[tuple[int, str
 
 
 def extract_doc_permission_entries(section_lines: list[tuple[int, str]]) -> list[dict]:
-    """从「权限模型」一节抽出反引号里的权限名，并区分「声称已落地」与「明示仅预告」。
+    """从「权限模型」一节抽出反引号里的权限名，并**读出行内实现状态标记**（N3）。
 
-    分段口径：``- **写**：现有 3 个`` 这类无 token 行不改变状态；空行复位 preview 块。
+    口径：``docs/extension-contract.md`` §3「每条权限一行一句、一行一个标记」。同一行的所有
+    权限名共享该行状态；**没有标记的行 ⇒ ``unknown``**（对账时进待办，而不是当成已落地）。
+    通配名（``device:*``）标 ``is_pattern``，不参与「文档有代码无」判定，只进 wildcard_notes。
     """
     entries: list[dict] = []
-    preview_block = False
     for n, line in section_lines:
-        if not line.strip():
-            preview_block = False
-        if _PREVIEW_RE.search(line):
-            preview_block = True
+        status, marker, conflict = _line_status(line)
         for token in _BACKTICK_RE.findall(line):
             token = token.strip()
             if not _PERM_TOKEN_RE.match(token):
@@ -360,17 +405,26 @@ def extract_doc_permission_entries(section_lines: list[tuple[int, str]]) -> list
             entries.append({
                 "permission": token,
                 "doc_line": n,
-                "kind": "pattern" if "*" in token or "?" in token else ("preview" if preview_block else "asserted"),
+                "status": status,
+                "status_label": marker or STATUS_UNKNOWN_LABEL,
+                "status_conflict": conflict,
+                "is_pattern": bool({"*", "?"} & set(token)),
             })
     return entries
 
 
 def diff_permission_drift(doc_entries: list[dict], code_permissions) -> dict:
-    """双向漂移对账（纯函数，可测）。通配条目（``device:*``）覆盖的名字不算漂移。"""
+    """双向漂移对账（纯函数，可测）。
+
+    「文档有、代码无」按**文档自己声明的实现状态**分桶，而不是一律算漂移：
+    ``implemented`` ⇒ :data:`implementation_drift`（真缺陷）；``preview`` / ``planned``
+    ⇒ :data:`planned_items`（计划项）；状态未标注 ⇒ :data:`todo_items`。
+    通配条目（``device:*``）覆盖的名字不算漂移。
+    """
     code = sorted({str(p) for p in code_permissions})
     code_set = set(code)
-    doc_named = {e["permission"] for e in doc_entries if e["kind"] != "pattern"}
-    patterns = [e for e in doc_entries if e["kind"] == "pattern"]
+    doc_named = {e["permission"] for e in doc_entries if not e.get("is_pattern")}
+    patterns = [e for e in doc_entries if e.get("is_pattern")]
 
     def covered_by_pattern(name: str) -> str | None:
         for entry in patterns:
@@ -379,26 +433,47 @@ def diff_permission_drift(doc_entries: list[dict], code_permissions) -> dict:
                 return entry["permission"]
         return None
 
-    doc_only = []
-    for entry in sorted({(e["permission"], e["kind"], e["doc_line"]) for e in doc_entries if e["kind"] != "pattern"}):
-        name, kind, line = entry
-        if name not in code_set:
-            doc_only.append({
-                "permission": name, "doc_kind": kind, "doc_line": line,
-                "severity": "high" if kind == "asserted" else "medium",
-            })
+    buckets: dict[str, list[dict]] = {name: [] for name in DRIFT_BUCKETS}
+    status_conflicts: list[dict] = []
+    seen: set[tuple[str, str, int]] = set()
+    name_status: dict[str, set[str]] = {}
+    for entry in doc_entries:
+        if entry.get("is_pattern"):
+            continue
+        name = entry["permission"]
+        name_status.setdefault(name, set()).add(entry.get("status", STATUS_UNKNOWN))
+        key = (name, entry.get("status", STATUS_UNKNOWN), entry["doc_line"])
+        if key in seen or name in code_set:
+            continue
+        seen.add(key)
+        status = entry.get("status", STATUS_UNKNOWN)
+        row = {
+            "permission": name,
+            "doc_status": status,
+            "doc_status_label": entry.get("status_label", STATUS_UNKNOWN_LABEL),
+            "doc_line": entry["doc_line"],
+            "severity": STATUS_SEVERITY.get(status, "medium"),
+        }
+        if entry.get("status_conflict"):
+            row["note"] = ("同行出现多个状态标记（" + "、".join(entry["status_conflict"])
+                           + "）⇒ 按未标注处理，不猜")
+        buckets[STATUS_BUCKET.get(status, "todo_items")].append(row)
+    for name, statuses in sorted(name_status.items()):
+        if len(statuses) > 1:
+            status_conflicts.append({"permission": name, "statuses": sorted(statuses),
+                                     "handling": "按最保守的一档计入（unknown → 待办）"})
+
     code_only = []
     for name in code:
         if name in doc_named:
             continue
-        pattern = covered_by_pattern(name)
-        if pattern:
+        if covered_by_pattern(name):
             continue
         code_only.append({"permission": name})
     pattern_notes = [{
         "pattern": entry["permission"],
         "doc_line": entry["doc_line"],
-        "doc_kind": entry["kind"],
+        "doc_status": entry.get("status", STATUS_UNKNOWN),
         "covers_code_names": sum(
             1 for name in code if name.startswith(entry["permission"].split("*", 1)[0])
         ),
@@ -406,14 +481,20 @@ def diff_permission_drift(doc_entries: list[dict], code_permissions) -> dict:
     return {
         "doc_entry_count": len(doc_entries),
         "code_permission_count": len(code),
+        "status_legend": dict(STATUS_LEGEND),
+        "status_markers": dict(STATUS_MARKERS),
         "counts": {
-            "doc_has_code_lacks": len(doc_only),
-            "doc_has_code_lacks_asserted": sum(1 for d in doc_only if d["doc_kind"] == "asserted"),
-            "doc_has_code_lacks_preview": sum(1 for d in doc_only if d["doc_kind"] == "preview"),
+            "doc_entry_count": len(doc_entries),
+            "implementation_drift": len(buckets["implementation_drift"]),
+            "planned_items": len(buckets["planned_items"]),
+            "todo_items": len(buckets["todo_items"]),
             "code_has_doc_lacks": len(code_only),
-            "both_ok": len([n for n in code if n in doc_named]),
+            "doc_and_code_match": len([n for n in code if n in doc_named]),
+            "status_unknown_entries": sum(
+                1 for e in doc_entries if e.get("status", STATUS_UNKNOWN) == STATUS_UNKNOWN),
         },
-        "drift_doc_has_code_lacks": doc_only,
+        **buckets,
+        "status_conflicts": status_conflicts,
         "drift_code_has_doc_lacks": code_only,
         "wildcard_notes": pattern_notes,
     }
@@ -454,13 +535,26 @@ def audit_doc_code_drift(repo_root: Path, index: dict, code_perms: dict) -> dict
         return {"ok": False, "error": doc_err}
     entries = extract_doc_permission_entries(doc_section_lines(doc_text, "## 3"))
     drift = diff_permission_drift(entries, code_perms["permissions"])
-    # 「文档有代码无」的每条补**运行时代码**残留读数（防止把它当纯笔误删掉；
+    # 三个桶的每一条都补**运行时代码**残留读数（防止把它当纯笔误删掉；
     # 口径只数 backend/app 与 flutter_app/lib —— 测试/脚本/文档里的字面量不构成「有人在用这个权限」）
-    for item in drift["drift_doc_has_code_lacks"]:
-        hits = grep_index(index, item["permission"], include_prefixes=RUNTIME_CODE_PREFIXES)
-        item["code_reference_hits"] = len(hits)
-        item["code_reference_scope"] = "只数运行时代码（" + ", ".join(RUNTIME_CODE_PREFIXES) + "）"
-        item["code_reference_evidence"] = evidence(hits, 2)
+    residual_todo: list[dict] = []
+    for bucket in DRIFT_BUCKETS:
+        for item in drift[bucket]:
+            hits = grep_index(index, item["permission"], include_prefixes=RUNTIME_CODE_PREFIXES)
+            item["code_reference_hits"] = len(hits)
+            item["code_reference_scope"] = "只数运行时代码（" + ", ".join(RUNTIME_CODE_PREFIXES) + "）"
+            item["code_reference_evidence"] = evidence(hits, 2)
+            if hits:
+                residual_todo.append({
+                    "permission": item["permission"],
+                    "bucket": bucket,
+                    "doc_status": item["doc_status"],
+                    "doc_status_label": item["doc_status_label"],
+                    "doc_line": item["doc_line"],
+                    "code_reference_hits": len(hits),
+                    "code_reference_evidence": evidence(hits, 2),
+                    "todo": "代码/前端仍在引用文档里未实现的权限名 ⇒ 产品口径待拍板（补实现 or 下架引用）",
+                })
     hook_claim = _HOOK_COUNT_RE.search(doc_text)
     doc_hook_count = int(hook_claim.group(1)) if hook_claim else None
     consent_strict = grep_index(index, "def consent_matches", include_prefixes=("backend/app/",))
@@ -477,6 +571,7 @@ def audit_doc_code_drift(repo_root: Path, index: dict, code_perms: dict) -> dict
             "method_limit": "只做到「条数对账」；文档正文反引号 token 大量是字段名/表名，逐条名对账噪声不可信 ⇒ 不做",
         },
         **drift,
+        "residual_reference_todo": residual_todo,
     }
 
 
@@ -852,6 +947,8 @@ def self_check(repo_root: Path, index: dict, sections: dict) -> dict:
         negative.append({"assertion": f"本仓不存在「{item['token']}」渲染路径", "grep_hits": item["hit_count"],
                          "roots": list(GREP_ROOTS)})
     b2 = sections.get("B2_doc_code_drift") or {}
+    b2_rows = [r for bucket in DRIFT_BUCKETS for r in (b2.get(bucket) or [])]
+    planned_preview = sum(1 for r in (b2.get("planned_items") or []) if r.get("doc_status") == "preview")
     negative.append({
         "assertion": "通知 body 不落库（无 preview 列）⇒ body 分布退化",
         "grep_hits": ((sections.get("C1_form_surface") or {}).get("notify_body_persisted") or {}).get("model_hits"),
@@ -876,19 +973,30 @@ def self_check(repo_root: Path, index: dict, sections: dict) -> dict:
         "sections_ok": ok_flags,
         "failed_sections": [n for n, v in ok_flags.items() if not v],
         "evidence_coverage": {
-            "B2_drift_rows_with_evidence": sum(
-                1 for d in b2.get("drift_doc_has_code_lacks", []) if d.get("code_reference_evidence")
-            ),
-            "B2_drift_rows": len(b2.get("drift_doc_has_code_lacks", []) or []),
+            "B2_rows_with_evidence": sum(1 for r in b2_rows if r.get("code_reference_evidence")),
+            "B2_rows": len(b2_rows),
+            "B2_implementation_drift": len(b2.get("implementation_drift") or []),
+            "B2_planned_items": len(b2.get("planned_items") or []),
+            "B2_todo_items": len(b2.get("todo_items") or []),
+            "B2_residual_reference_todo": len(b2.get("residual_reference_todo") or []),
+            "B2_status_unknown_entries": (b2.get("counts") or {}).get("status_unknown_entries"),
         },
         "corrections_to_design_doc": [
             "设计 §1.4 D4/§2.4 称 usage_report 走「SQL 聚合」——实测为窗口内列投影 SELECT + 内存分桶，无 GROUP BY（见 D 段 usage_report_path）",
-            "设计 §1.2 B-2 记「漂移 3 条」（douyin_publish / net:outbound / fs:limited）——实测 5 条（另 channel:read / channel:publish），其中「文档声称已落地」的只有 douyin_publish 1 条",
+            "设计 §1.2 B-2 记「漂移 3 条」（douyin_publish / net:outbound / fs:limited）——M0 实测 5 条"
+            "（另 channel:read / channel:publish）；M0 时「文档声称已落地」的只有 douyin_publish 1 条，"
+            "已在 N3 订正为「未实现」并登记残留引用待办",
             "设计 §5 块 C 拟测「通知 body 长度分布」——body 不落库，该分布退化（恒 ≤ 51）；可测口径是原始 content 长度分布",
+            "N3 后现状（本次实读）：实现漂移 " + str(len(b2.get("implementation_drift") or []))
+            + " 条 / 计划项 " + str(len(b2.get("planned_items") or [])) + " 条（其中仅预告 " + str(planned_preview)
+            + " 条）/ 状态未标注 " + str(len(b2.get("todo_items") or [])) + " 条 / 残留引用待办 "
+            + str(len(b2.get("residual_reference_todo") or [])) + " 条；状态取自文档 §3 的行内标记",
         ],
         "out_of_scope": [
             "used_30d（权限 × 实际调用次数）：现状无 obs_event 点位，M0 不测（需 B-M0 落码后建档）",
             "按角色调用集中度（块 A R2 基线）：属块 A 的 M0 单，不在本单四块内",
+            "docs/plugin-development.md 仍把 douyin_publish 写成合法权限类别与风险表一行（§3 之外的白名单外文档）"
+            "⇒ 登记为待办，未擅改；本单只订正 docs/extension-contract.md §3",
         ],
     }
 
@@ -926,7 +1034,8 @@ def render_report(data: dict) -> str:
     add("")
     add(f"- 生成时间：{meta['generated_at']}（脚本自动生成，勿手改；重跑即覆盖）")
     add(f"- 脚本：`{meta['script']}`")
-    add(f"- 模式：**{meta['mode']}**（零行为：不改权限名、不改文档、不动业务代码；"
+    add("- 口径版本：**N3**（实现状态标记版，2026-09-30）——文档 §3「每条权限一行一句 + 一个状态标记」")
+    add(f"- 模式：**{meta['mode']}**（零行为：不改权限名、不动业务代码；"
         f"仓库内写入 {meta['files_written_in_repo']} 个文件，git 写命令 {meta['git_write_commands_executed']} 次）")
     add(f"- 是否连库：{'**已连（只读）** ' + str(meta['db_path']) if meta['db_connected'] else '否（默认 dry-run，库侧基线留空待测，不编数）'}")
     add("- 设计依据：`output/AMBRACE_批8_接口面与形态护栏_详细设计_v1_20260929.md` §7 M0")
@@ -935,10 +1044,16 @@ def render_report(data: dict) -> str:
     add("")
     counts = b2.get("counts", {})
     lines.extend(_table([
-        ["B-2 权限名漂移（文档有 / 代码无）", str(counts.get("doc_has_code_lacks", "?")),
-         f"其中「声称已落地」{counts.get('doc_has_code_lacks_asserted', '?')} 条 ⇒ 只登记，不改名"],
+        ["B-2 实现漂移（文档说已落地 / 代码无）", str(counts.get("implementation_drift", "?")),
+         "真缺陷；订正后应为 0（文档不得承诺代码没有的权限）"],
+        ["B-2 计划项（文档明示仅预告/未实现 / 代码无）", str(counts.get("planned_items", "?")),
+         "预期内，不算漂移；落地以 X4 批次为准"],
+        ["B-2 状态未标注（待办）", str(counts.get("todo_items", "?")),
+         f"文档缺状态标记的条目共 {counts.get('status_unknown_entries', '?')} 条，一律计入待办（不猜）"],
+        ["B-2 残留引用待办", str(len(b2.get("residual_reference_todo", []) or [])),
+         "代码/前端仍在引用文档里未实现的权限名"],
         ["B-2 权限名漂移（代码有 / 文档无）", str(counts.get("code_has_doc_lacks", "?")),
-         "device:* 通配覆盖的 11 条不计入（wildcard_notes）"],
+         "device:* 通配覆盖的动态权限名不计入（wildcard_notes）"],
         ["B-3 签名校验", str(b3.get("returns_constant_true", "?")),
          f"恒 True ⇒ {b3.get('dead_guard_count', 0)} 处 `if not verify(...)` 死闸"],
         ["C-1 通知长度判据", "可测（代理口径）" if c1.get("verdict", {}).get("measurable") else "不可测",
@@ -949,54 +1064,74 @@ def render_report(data: dict) -> str:
     ], ["读数", "值", "结论"]))
     add("")
 
-    add("## 1 B-2 文档承诺 vs 代码事实（权限名漂移对账，只登记）")
+    add("## 1 B-2 文档承诺 vs 代码事实（按文档自己声明的实现状态分桶，只登记）")
     add("")
     if not b2.get("ok", False):
         add(f"> 本块读数失败：`{b2.get('error')}`")
     else:
-        add(f"- 文档侧：`{b2['doc_source']}` 反引号权限名 {b2['doc_entry_count']} 条")
-        add(f"- 代码侧：合法权限名 {b2['code_permission_count']} 条，取源 `{b2['permission_source']}`"
+        add(f"- 文档侧：`{b2['doc_source']}` 反引号权限名 {b2['doc_entry_count']} 条"
+            f"（其中状态未标注 {counts.get('status_unknown_entries', '?')} 条）")
+        add("- 状态标记图例：" + "；".join(
+            f"**{label}**={desc}" for label, desc in (b2.get("status_legend") or {}).items()))
+        add("- 代码侧：合法权限名 " + str(b2['code_permission_count']) + " 条，取源 `" + b2['permission_source'] + "`"
             + ("（动态 device 权限名未经 import 解析 ⇒ 见 wildcard_notes 说明）" if b2.get("permission_dynamic_unresolved") else ""))
         add(f"- Hook 条数对账：文档声称 {b2['hooks']['doc_claim_count']} / 代码 {b2['hooks']['code_count']} "
             f"⇒ 漂移={b2['hooks']['drift']}；口径限制：{b2['hooks']['method_limit']}")
         add("")
-        add("### 1.1 文档有、代码无（漂移）")
+        buckets_meta = (
+            ("1.1 实现漂移（文档说已落地、代码无）", "implementation_drift", "权限名", "文档状态", "严重度", "文档证据", "代码/前端残留命中", "残留位置"),
+            ("1.2 计划项（仅预告 / 未实现，代码无属预期）", "planned_items", "权限名", "文档状态", "严重度", "文档证据", "代码/前端残留命中", "残留位置"),
+            ("1.3 状态未标注（缺状态标记，计入待办）", "todo_items", "权限名", "文档状态", "严重度", "文档证据", "代码/前端残留命中", "残留位置"),
+        )
+        for heading, bucket, *header in buckets_meta:
+            add(f"### {heading}")
+            add("")
+            rows = [[
+                f"`{item['permission']}`",
+                item["doc_status_label"],
+                item["severity"],
+                f"`{CONTRACT_DOC}:{item['doc_line']}`",
+                str(item.get("code_reference_hits", 0)),
+                item.get("code_reference_evidence", "—"),
+            ] for item in b2.get(bucket, [])]
+            lines.extend(_table(rows, header) if rows else ["（无）"])
+            add("")
+        add("### 1.4 残留引用待办（代码/前端仍在引用文档里未实现的权限名）")
         add("")
         rows = [[
-            f"`{item['permission']}`",
-            item["doc_kind"],
-            item["severity"],
-            f"`{CONTRACT_DOC}:{item['doc_line']}`",
-            str(item.get("code_reference_hits", 0)),
-            item.get("code_reference_evidence", "—"),
-        ] for item in b2.get("drift_doc_has_code_lacks", [])]
-        lines.extend(_table(rows, ["权限名", "文档口径", "严重度", "文档证据", "代码/前端残留命中", "残留位置"]) if rows
-                     else ["（无漂移）"])
+            f"`{item['permission']}`", item["bucket"], item["doc_status_label"],
+            f"`{CONTRACT_DOC}:{item['doc_line']}`", str(item["code_reference_hits"]),
+            item["code_reference_evidence"], item["todo"],
+        ] for item in b2.get("residual_reference_todo", [])]
+        lines.extend(_table(rows, ["权限名", "所属桶", "文档状态", "文档证据", "残留命中", "残留位置", "待办口径"])
+                     if rows else ["（无）"])
         add("")
-        add("### 1.2 代码有、文档未逐条列出（漂移）")
+        add("### 1.5 代码有、文档未逐条列出（漂移）")
         add("")
         rows = [[f"`{item['permission']}`"] for item in b2.get("drift_code_has_doc_lacks", [])]
         add(f"- 计数：**{b2['counts']['code_has_doc_lacks']}**"
-            + ("（0 ⇒ 代码未越出文档承诺面；device:* 通配已覆盖的动态权限名见 1.3）" if not rows else ""))
+            + ("（0 ⇒ 代码未越出文档承诺面；device:* 通配已覆盖的动态权限名见 1.6）" if not rows else ""))
         if rows:
             lines.extend(_table(rows, ["权限名"]))
         add("")
-        add("### 1.3 通配覆盖说明（不算漂移，但文档口径需补）")
+        add("### 1.6 通配覆盖说明（不算漂移，但文档口径需补）")
         add("")
-        lines.extend(_table([[n["pattern"], str(n["doc_line"]), n["doc_kind"], str(n["covers_code_names"])]
-                             for n in b2.get("wildcard_notes", [])], ["文档通配", "行号", "口径", "覆盖的代码权限名条数"]))
+        lines.extend(_table([[n["pattern"], str(n["doc_line"]), n["doc_status"], str(n["covers_code_names"])]
+                             for n in b2.get("wildcard_notes", [])], ["文档通配", "行号", "文档状态", "覆盖的代码权限名条数"]))
         add("")
-        add("### 1.4 处置登记（M0 不动语义）")
+        add("### 1.7 处置登记（N3 已订正文档事实，仍不动语义）")
         add("")
         add("- 改名/删除权限名会让已装插件的 consent 记录整体失配（`consent_matches` 严格比较，"
             f"`{b2.get('consent_strict_match_evidence', 'backend/app/plugins/registry.py')}`）"
             "⇒ **本批禁止改名**，漂移按「先改文档，再改代码」处置（设计 §3.6）。")
-        add(f"- 「文档声称已落地、代码无」共 {b2['counts']['doc_has_code_lacks_asserted']} 条"
-            "（`douyin_publish`）：前端市场页仍在渲染它 ⇒ 不能当笔误删，"
-            "需产品口径决定（回补权限名 or 文档改注「已移除」）。")
-        add(f"- 「文档明示仅预告、代码无」共 {b2['counts']['doc_has_code_lacks_preview']} 条"
-            "（`net:outbound` / `fs:limited` / `channel:read` / `channel:publish`）"
-            "⇒ 落地以 X4 批次为准，M0 只登记。")
+        add(f"- **实现漂移 {b2['counts']['implementation_drift']} 条**：文档声称已落地而代码没有的权限——"
+            "N3 已把 `douyin_publish` 的口径订正为「未实现」，故本类应为空；非空即说明文档又承诺了代码没有的权限。")
+        add(f"- **计划项 {b2['counts']['planned_items']} 条**（`net:outbound` / `fs:limited` / `channel:read` / "
+            "`channel:publish` / `douyin_publish`）：文档已明示预告或未实现，代码无属预期 ⇒ 落地以 X4 批次为准。")
+        add(f"- **残留引用待办 {len(b2.get('residual_reference_todo', []) or [])} 条**：`douyin_publish` 在 Flutter 市场页"
+            "仍有一条权限风险文案分支（合法 manifest 走不到）⇒ 补实现 or 前端下架需产品口径拍板。")
+        add(f"- **状态未标注 {b2['counts']['todo_items']} 条**（文档 §3 缺状态标记的条目共 "
+            f"{b2['counts'].get('status_unknown_entries', '?')} 条）：按待办处理，不默认按已实现算。")
     add("")
 
     add("## 2 B-3 签名校验占位如实登记")
@@ -1127,9 +1262,13 @@ def render_report(data: dict) -> str:
         add("")
         add("### 5.3 各块读数健康度")
         add("")
+        cov = selfc["evidence_coverage"]
         add("- 失败块：" + (", ".join(f"`{n}`" for n in selfc["failed_sections"]) if selfc["failed_sections"] else "无（四块 + 自检全部 ok）"))
-        add(f"- 证据覆盖：B-2 漂移 {selfc['evidence_coverage']['B2_drift_rows_with_evidence']}"
-            f"/{selfc['evidence_coverage']['B2_drift_rows']} 条带「代码残留位置」证据（每条漂移都要求可溯源）")
+        add(f"- 证据覆盖：B-2 三桶合计 {cov['B2_rows']} 条，其中 {cov['B2_rows_with_evidence']}"
+            " 条带「代码残留位置」证据（每条都要可溯源）")
+        add(f"- 分桶读数：实现漂移 {cov['B2_implementation_drift']} / 计划项 {cov['B2_planned_items']} / "
+            f"状态未标注 {cov['B2_todo_items']} / 残留引用待办 {cov['B2_residual_reference_todo']}；"
+            f"文档条目里状态未标注共 {cov['B2_status_unknown_entries']} 条")
         add("")
         add("### 5.4 对上游设计文档的订正（M0 实测 ≠ 设计登记）")
         add("")
@@ -1144,7 +1283,10 @@ def render_report(data: dict) -> str:
     add("---")
     add("")
     add("**M0 验收姿态**：本文件所有数字都是**磁盘/库实读**，未连库时对应基线写「留空待测」；"
-        "四块无一条语义变更，权限名一字未改，`docs/extension-contract.md` 一字未改。")
+        "四块无一条语义变更。**N3 订正的只有 `docs/extension-contract.md` §3 的实现状态措辞**"
+        "（`douyin_publish` 由「声称已落地」改为「未实现」并登记待办、四条预告统一句式、"
+        "每条权限加状态标记）——**权限名字面值一字未改，`app/plugins/manifest.py` 的"
+        "`VALID_PERMISSIONS` 一字未改，本脚本也不写任何仓库文件**。")
     add("")
     return "\n".join(ln for ln in lines if ln is not None)
 

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import contextlib
 import json
 import math
 import os
@@ -657,7 +658,7 @@ def render_report(rp: Replay, pressure: dict, b1: dict, b2: dict, b3: dict,
       "属**高估**（真实入池量只会更少）。M1 挂 event handler 时能当场判定，不受此限。")
     a("2. **F3 的 7 天互动窗回溯失败**：`memories(m_type=insight,sub_type=moment).source_id` 全为 NULL，"
       "只能按正文「发了一条朋友圈: <原文>」去 `ai_moments.content` 归一匹配；匹配失败者已计入"
-      f"`moment_link_missing`（第 3 节），**不入池也不判冷场**。")
+      "`moment_link_missing`（第 3 节），**不入池也不判冷场**。")
     a("3. **F6「强度上升」不可判**：`life_interests` 无历史快照，只有当前 `level`，故 M0 只按"
       "「窗口内新增」出数（`extract_interest` 的 `prev_level` 分支已实现并单测，等 M1 有漂移前值即可用）。")
     a("4. **F1/F6 无 user 维度**：`life_activity_logs`、`life_interests` 只有 `character_id`，"
@@ -705,6 +706,93 @@ def render_report(rp: Replay, pressure: dict, b1: dict, b2: dict, b3: dict,
     return "\n".join(L) + "\n"
 
 
+# ───────────────────────── 参数覆盖（N1 新增 · 只读模拟入口）─────────────────────────
+# M1 标定前需要「不落盘地试参数」，故加一个**仅本进程内**覆盖 domain/thought 模块常量的入口，
+# 只服务离线回放的假设检验：不改源码默认值、不写库、不接线、退出即自动还原。
+# 例：--params "CAP_SPARK=24,NOVELTY_HALFLIFE_DAYS=3.5,W:activity=0.4"
+_OVERRIDE_WHITELIST = frozenset({
+    "NOVELTY_HALFLIFE_DAYS", "SALT_OBSSESSION_THRESHOLD", "MIN_DISTINCT_HIT_SOURCES",
+    "TTL_DAYS", "CAP_SPARK", "CAP_OBSESSION", "CAP_TOLD_FLAT",
+    "SALT_TOLD_FLAT_RATIO", "MAX_TELL_COUNT", "SALT_BUMP_WEIGHT",
+})
+
+# Python 默认参数在 def 时求值 ⇒ 只 setattr 模块属性到不了「早绑定」的默认值，必须连同
+# ``__defaults__`` 一起刷新（否则 novelty()/evict() 仍用旧值，模拟会静默失效）。
+_BOUND_DEFAULTS = {
+    "NOVELTY_HALFLIFE_DAYS": ("novelty", 0),
+    "CAP_SPARK": ("evict", 0),
+    "CAP_OBSESSION": ("evict", 1),
+    "CAP_TOLD_FLAT": ("evict", 2),
+}
+
+
+def parse_params_spec(spec: str | None) -> dict[str, float]:
+    """解析 ``--params`` 串 ``k=v,...``；来源权重用 ``W:activity=0.4``。空串/None → {}。"""
+    out: dict[str, float] = {}
+    for tok in (spec or "").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if "=" not in tok:
+            raise ValueError(f"非法参数段（缺 '='）：{tok!r}")
+        k, v = (s.strip() for s in tok.split("=", 1))
+        if not k:
+            raise ValueError(f"非法参数段（缺键名）：{tok!r}")
+        try:
+            out[k] = float(v) if ("." in v or "e" in v.lower()) else int(v)
+        except ValueError:
+            raise ValueError(f"参数 {k} 的值不是数字：{v!r}") from None
+    return out
+
+
+@contextlib.contextmanager
+def param_overrides(overrides: dict[str, float]):
+    """进程内临时覆盖 domain/thought 参数（只读模拟，退出自动还原）。
+
+    ⚠️ 关键点：``novelty(halflife_days=NOVELTY_HALFLIFE_DAYS)`` 与
+    ``evict(cap_spark=CAP_SPARK, ...)`` 的默认参数是 **def 期求值**（早绑定），
+    仅替换模块属性对这两处**无效**，故此处连同 ``__defaults__`` 一起刷新、退出一起还原。
+    """
+    if not overrides:
+        yield {}
+        return
+
+    unknown = [k for k in overrides if not k.startswith("W:") and k not in _OVERRIDE_WHITELIST]
+    if unknown:
+        raise ValueError(f"不允许覆盖的参数（非白名单）：{unknown}；白名单＝{sorted(_OVERRIDE_WHITELIST)}")
+
+    saved_attrs: dict[str, object] = {}
+    saved_defaults: dict[str, tuple] = {}
+    try:
+        for k, v in overrides.items():
+            if k.startswith("W:"):
+                face = k[2:]
+                if face not in dyn.SALT_WEIGHT_BY_SOURCE:
+                    raise ValueError(
+                        f"未知来源面：{face}；已知＝{sorted(dyn.SALT_WEIGHT_BY_SOURCE)}")
+                # 换新 dict，避免就地修改污染 extract 模块的字典对象
+                saved_attrs.setdefault("SALT_WEIGHT_BY_SOURCE", dyn.SALT_WEIGHT_BY_SOURCE)
+                dyn.SALT_WEIGHT_BY_SOURCE = dict(dyn.SALT_WEIGHT_BY_SOURCE)
+                dyn.SALT_WEIGHT_BY_SOURCE[face] = v
+                continue
+            # 白名单 ⊆ dyn 属性 的一致性，由 tests/test_thought_replay_params.py 的一致性用例守住
+            saved_attrs.setdefault(k, getattr(dyn, k))
+            setattr(dyn, k, v)
+            if k in _BOUND_DEFAULTS:
+                fname, idx = _BOUND_DEFAULTS[k]
+                fn = getattr(dyn, fname)
+                saved_defaults.setdefault(fname, fn.__defaults__)
+                d = list(fn.__defaults__ or ())
+                d[idx] = v
+                fn.__defaults__ = tuple(d)
+        yield dict(overrides)
+    finally:
+        for k, v in saved_attrs.items():
+            setattr(dyn, k, v)
+        for fname, d in saved_defaults.items():
+            getattr(dyn, fname).__defaults__ = d
+
+
 # ────────────────────────────── CLI ──────────────────────────────
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="念头池 T2 · M0 离线回放（只读，零行为）")
@@ -714,6 +802,9 @@ def parse_args(argv=None):
     p.add_argument("--out", default=default_report_path(), help="报告输出路径")
     p.add_argument("--dry-run", action="store_true", help="显式声明 dry-run（本就是唯一行为）")
     p.add_argument("--no-report", action="store_true", help="只打印摘要，不落报告文件")
+    p.add_argument("--params", default=None,
+                   help="只读模拟：本进程内覆盖 domain/thought 参数，格式 k=v,..."
+                        "（来源权重用 W:activity=0.4）。不影响任何磁盘默认值")
     return p.parse_args(argv)
 
 
@@ -729,13 +820,14 @@ def main(argv=None) -> int:
         con.close()
 
     shared_refs: set[str] = set()  # 见报告第 6 节第 1 条：现网 life_share 留痕不可回溯
-    rp = replay_faces(data, now, args.days, shared_refs)
-    pressure = pool_pressure(rp, now, args.days)
-    b1 = baseline_pool(rp, pressure, args.days)
-    b2 = baseline_effect(data, now, args.days)
-    b3 = baseline_collision(rp, data)
-
-    report = render_report(rp, pressure, b1, b2, b3, args.days, args.db, now)
+    overrides = parse_params_spec(args.params)
+    with param_overrides(overrides):
+        rp = replay_faces(data, now, args.days, shared_refs)
+        pressure = pool_pressure(rp, now, args.days)
+        b1 = baseline_pool(rp, pressure, args.days)
+        b2 = baseline_effect(data, now, args.days)
+        b3 = baseline_collision(rp, data)
+        report = render_report(rp, pressure, b1, b2, b3, args.days, args.db, now)
     if not args.no_report:
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
         with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
@@ -750,6 +842,15 @@ def main(argv=None) -> int:
           f"养熟组数={pressure['promotable_obsession']}  挤出={pressure['evicted']}")
     print(f"[M0 分布] novelty p50={_quantiles([d['novelty'] for d in rp.drafts]).get('p50')}  "
           f"salt p50={_quantiles([d['salt'] for d in rp.drafts]).get('p50')}")
+    if overrides:
+        _kept = max(1, len(rp.drafts))
+        _ev = int(pressure['evicted'])
+        print(f"[参数覆盖-指标] 可入池={_kept}  挤出={_ev}"
+              f"（{_ev * 100.0 / _kept:.2f}%）  "
+              f"池量每(角色×用户)日均={b1['per_pair_per_day']}  "
+              f"撞句={b3['overlap_rate_of_judged']}%(可判)/{b3['overlap_rate_of_all']}%(全体)  "
+              f"养熟组={pressure['promotable_obsession']}  "
+              f"novelty p50={_quantiles([d['novelty'] for d in rp.drafts]).get('p50')}")
     print(f"[M0 落盘] 报告 → {('未写（--no-report）' if args.no_report else args.out)}")
     return 0
 

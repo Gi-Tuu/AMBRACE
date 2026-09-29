@@ -386,6 +386,10 @@ AGENT_FLAGS = {
     #   首行即返回，连一次 SELECT 都不发。默认关＝零行为、零开销，一键回退。
     # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
     "relational_drive_shadow": False,
+    # ── A4 批 7 M1（2026-09-30）：情绪→驱力单向调制的**三态**档位 ──
+    # off=不取快照（逐字节旧行为）/ shadow=算乘子只留痕、落库与 off 相同 / on=真生效（白名单∧稳定桶）。
+    # ⚠️ 非 bool 键 ⇒ 启动加载器**跳过 DB 覆盖**（先例 fact_lifecycle_policy），档位＝代码默认值，改档后重启生效。
+    "emotion_drive_modulation": "off",
     # P1-2（2026-09-28）：写路径查重只认现行（active）——关＝逐字节旧行为（默认关）。
     "write_dedup_active_only": False,
     # 批 0-2 M1a（2026-09-28）：感知来源打标 —— 关＝逐字节旧行为（默认关）。

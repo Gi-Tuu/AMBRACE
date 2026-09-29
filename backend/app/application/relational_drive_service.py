@@ -18,11 +18,89 @@ from datetime import datetime
 from sqlalchemy import select
 
 from app.domain.relational import drives
+from app.domain.proactivity import pacing
 from app.models.character import RelationalDrive
 from app.utils.timeutil import now_naive_utc
 
 # 影子态总闸键（登记在 app/agent/loop.py:AGENT_FLAGS）
 FLAG_KEY = "relational_drive_shadow"
+
+# ── A4 批 7 M1（2026-09-30）：情绪→驱力**单向**调制的三态档位 ──────────────────
+# 登记在 app/flags/agent_flags.py；取值 off / shadow / on，**默认 off**。
+# ⚠️ 非 bool 键 ⇒ 启动加载器跳过 DB 覆盖（先例 fact_lifecycle_policy），档位＝代码默认值，
+#    改档需改默认值后重启；回退＝改回 "off" 重启。
+MODULATION_FLAG_KEY = "emotion_drive_modulation"
+MODULATION_OFF = "off"
+MODULATION_SHADOW = "shadow"
+MODULATION_ON = "on"
+_MODULATION_MODES = (MODULATION_OFF, MODULATION_SHADOW, MODULATION_ON)
+
+# 灰度判据**复用** domain/proactivity/pacing.py 的现成件（白名单词典 + 稳定分桶），
+# 不发明第二套分桶、不改 pacing 任何常量。
+_MODULATION_GRAY_CHARS = pacing.OUTREACH_PACING_GRAY_CHARS   # frozenset({13})
+
+
+def modulation_mode() -> str:
+    """读三态档位。**认不出的值（含脏值/空串/大小写异常）一律落 off（最保守）**；
+    连读 flag 都失败也按 off——观测/调制层出错绝不能改变水位行为。"""
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        raw = AGENT_FLAGS.get(MODULATION_FLAG_KEY, MODULATION_OFF)
+    except Exception:
+        return MODULATION_OFF
+    value = str(raw).strip().lower()
+    return value if value in _MODULATION_MODES else MODULATION_OFF
+
+
+def _gray_hit(character_id, user_id) -> bool:
+    """白名单角色 ∧ 稳定比例桶（复用 pacing.pacing_gray_hit，fail-closed 到不生效）。"""
+    try:
+        return bool(pacing.pacing_gray_hit(character_id, None, chars=_MODULATION_GRAY_CHARS))
+    except Exception:
+        return False
+
+
+async def _fetch_emotion_snapshot(db, character_id):
+    """**只读**取八维情绪快照（用调用方传入的 session，不自开）。
+
+    任何异常一律吞掉 ⇒ 返回 None ⇒ **本次不调制**：绝不「失败即生效」或「失败即清零」。
+    """
+    try:
+        from app.models.character import CharacterState
+        row = (await db.execute(
+            select(CharacterState).where(CharacterState.character_id == int(character_id))
+        )).scalar_one_or_none()
+        return row  # 八维 ORM 行可直接交给 emotion_modulation.read_axes 派生 valence/arousal
+    except Exception:
+        return None
+
+
+async def _fetch_bias_vector(db, character_id):
+    """只读取性格偏置向量（personality / chat_style → 偏置，硬封顶 ±10% 由域层保证）。异常 ⇒ None。"""
+    try:
+        from app.models.character import AICharacter
+        row = (await db.execute(
+            select(AICharacter).where(AICharacter.id == int(character_id))
+        )).scalar_one_or_none()
+        if row is None:
+            return None
+        from app.domain.relational import emotion_modulation as emod
+        return emod.personality_bias_vector(
+            getattr(row, "personality", None), getattr(row, "chat_style", None))
+    except Exception:
+        return None
+
+
+def _trace_shadow(drive_key, snapshot, character_id, new_level, bias_vector=None) -> None:
+    """shadow 档的只留痕出口（不写业务表、不改返回值）。异常自吞。"""
+    try:
+        from app.domain.relational import emotion_modulation as emod
+        emod.shadow_trace_modulation(
+            drive_key, snapshot, bias_vector=bias_vector,
+            character_id=character_id, new_level=new_level,
+        )
+    except Exception:
+        return
 
 # 首次 settle 才建的「最小集合」：只建能进主动候选的 5 个驱力。intimacy 永不参与定调
 # （口径见 drives.DRIVE_CANDIDATE_KEYS），给它建行＝给没人读的键留垃圾行；缺行的键由
@@ -105,14 +183,43 @@ async def settle(db, character_id: int, user_id: int, now=None) -> dict[str, flo
             db.add(fresh)
             by_key[key] = fresh
         await db.flush()
+    # ── 批 7 M1：三档取数（off 档到此为止，连 emotion_modulation 都不碰）──
+    mode = modulation_mode()
+    snapshot = None
+    bias_vec = None
+    if mode != MODULATION_OFF:
+        try:
+            snapshot = await _fetch_emotion_snapshot(db, character_id)
+            # on 档只对「白名单角色 ∧ 稳定比例桶」生效；桶外 ⇒ 退回不调制（与 off 同）
+            if mode == MODULATION_ON and not _gray_hit(character_id, user_id):
+                snapshot = None
+            elif snapshot is not None:
+                bias_vec = await _fetch_bias_vector(db, character_id)
+        except Exception:
+            # 纵深防御（2026-09-30 Codex 复核补）：取数助手内部已吞错，这里再兜一层 ——
+            # 调制层任何异常都不得改变水位行为（既不报错、也不清零）。
+            snapshot = None
+            bias_vec = None
+
     settled: dict[str, float] = {}
     for key, row in by_key.items():
-        new_level, new_cursor = drives.settle_level(
-            _level_of(row.level), key, row.last_settled_at, moment
-        )
+        if mode == MODULATION_ON and snapshot is not None:
+            new_level, new_cursor = drives.settle_level(
+                _level_of(row.level), key, row.last_settled_at, moment, snapshot
+            )
+        else:
+            # off 与 shadow 档：不传快照 ⇒ 乘子恒 1.0 ⇒ 落库与改动前逐字节相同
+            new_level, new_cursor = drives.settle_level(
+                _level_of(row.level), key, row.last_settled_at, moment
+            )
         row.level = new_level
         row.last_settled_at = new_cursor
         settled[key] = new_level
+        if mode == MODULATION_SHADOW and snapshot is not None:
+            try:
+                _trace_shadow(key, snapshot, character_id, new_level, bias_vec)
+            except Exception:
+                pass  # 留痕绝不阻塞结算（纵深防御）
     await db.flush()
     return _as_six(settled)
 

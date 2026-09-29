@@ -2,7 +2,8 @@
 """A4 批 8 M0 · ``backend/scripts/extension_audit.py`` 定向用例（只读对账读数）。
 
 覆盖任务单要求的四类：
-  ①权限名漂移检测（「文档有代码无」与「代码有文档无」两种样本）
+  ①权限名漂移检测：按文档**行内实现状态标记**分桶（「实现漂移 / 计划项 / 状态未标注待办」），
+    另含真实文档的契约守卫（每条权限都带标记、权限名字面值零改动）
   ②只读性（一写就抛的假连接 + SQL 文本闸门 + 标识符注入）
   ③报告字段齐备（四块 + 自检，每条结论带文件:行号）
   ④异常隔离（单块炸不影响其余块，且失败被如实登记而非静默填 0）
@@ -33,67 +34,148 @@ ea = _load()
 
 # ────────────────────────── ① 漂移检测（合成样本） ──────────────────────────
 
-def test_drift_doc_has_code_lacks_asserted_and_preview():
-    """「文档有、代码无」两条都要检出，且区分严重度（声称已落地 > 仅预告）。"""
+def test_drift_splits_implementation_drift_from_planned_items():
+    """「文档有、代码无」按文档自己声明的状态分桶：说已落地=真漂移(high)，说预告/未实现=计划项(info)。"""
     entries = [
-        {"permission": "write_memory", "doc_line": 82, "kind": "asserted"},
-        {"permission": "douyin_publish", "doc_line": 82, "kind": "asserted"},
-        {"permission": "net:outbound", "doc_line": 89, "kind": "preview"},
+        {"permission": "write_memory", "doc_line": 98, "status": "implemented", "status_label": "已实现", "is_pattern": False},
+        {"permission": "douyin_publish", "doc_line": 111, "status": "implemented", "status_label": "已实现", "is_pattern": False},
+        {"permission": "net:outbound", "doc_line": 120, "status": "preview", "status_label": "仅预告", "is_pattern": False},
+        {"permission": "legacy_perm", "doc_line": 112, "status": "planned", "status_label": "未实现", "is_pattern": False},
     ]
     out = ea.diff_permission_drift(entries, ["write_memory"])
-    names = {d["permission"]: d for d in out["drift_doc_has_code_lacks"]}
-    assert set(names) == {"douyin_publish", "net:outbound"}
-    assert names["douyin_publish"]["severity"] == "high"
-    assert names["net:outbound"]["severity"] == "medium"
-    assert out["counts"]["doc_has_code_lacks"] == 2
-    assert out["counts"]["doc_has_code_lacks_asserted"] == 1
-    assert out["counts"]["doc_has_code_lacks_preview"] == 1
-    assert out["counts"]["both_ok"] == 1  # write_memory 两边都有
+    drift = {d["permission"]: d for d in out["implementation_drift"]}
+    planned = {d["permission"]: d for d in out["planned_items"]}
+    assert set(drift) == {"douyin_publish"}
+    assert set(planned) == {"net:outbound", "legacy_perm"}
+    assert drift["douyin_publish"]["severity"] == "high"
+    assert planned["net:outbound"]["severity"] == "info"
+    assert out["todo_items"] == []
+    assert out["counts"]["implementation_drift"] == 1
+    assert out["counts"]["planned_items"] == 2
+    assert out["counts"]["todo_items"] == 0
+    assert out["counts"]["doc_and_code_match"] == 1  # write_memory 两边都有
+    # 三桶互斥且合计＝全部「文档有代码无」行
+    assert (out["counts"]["implementation_drift"] + out["counts"]["planned_items"]
+            + out["counts"]["todo_items"]) == 3
 
 
 def test_drift_code_has_doc_lacks_detected():
-    """「代码有、文档无」必须单独成列（不能被 doc_only 吸收）。"""
-    entries = [{"permission": "write_memory", "doc_line": 82, "kind": "asserted"}]
+    """「代码有、文档无」必须单独成列（不能被三个桶吸收）。"""
+    entries = [{"permission": "write_memory", "doc_line": 98, "status": "implemented",
+                "status_label": "已实现", "is_pattern": False}]
     out = ea.diff_permission_drift(entries, ["write_memory", "zed:read", "aaa_write"])
     assert [d["permission"] for d in out["drift_code_has_doc_lacks"]] == ["aaa_write", "zed:read"]
     assert out["counts"]["code_has_doc_lacks"] == 2
-    assert out["counts"]["doc_has_code_lacks"] == 0
+    assert out["counts"]["implementation_drift"] == 0
 
 
 def test_drift_wildcard_covers_dynamic_permission_names():
-    """文档写 ``device:*`` ⇒ 动态 device 权限名不计为漂移，但要在 wildcard_notes 里露出覆盖数。"""
+    """文档写 ``device:*`` ⇒ 动态 device 权限名不计为漂移，但要在 wildcard_notes 里露出覆盖数与状态。"""
     entries = [
-        {"permission": "device:*", "doc_line": 89, "kind": "pattern"},
-        {"permission": "send_message", "doc_line": 82, "kind": "asserted"},
+        {"permission": "device:*", "doc_line": 122, "status": "preview", "status_label": "仅预告", "is_pattern": True},
+        {"permission": "send_message", "doc_line": 99, "status": "implemented",
+         "status_label": "已实现", "is_pattern": False},
     ]
     code = ["send_message", "device:battery:read", "device:action_tap:write"]
     out = ea.diff_permission_drift(entries, code)
     assert out["drift_code_has_doc_lacks"] == []
     assert out["wildcard_notes"][0]["pattern"] == "device:*"
     assert out["wildcard_notes"][0]["covers_code_names"] == 2
+    assert out["wildcard_notes"][0]["doc_status"] == "preview"
+    # 通配条目本身不占「文档有代码无」的任何一桶
+    assert out["counts"]["implementation_drift"] + out["counts"]["planned_items"] + out["counts"]["todo_items"] == 0
 
 
-def test_extract_doc_entries_splits_asserted_from_preview_block():
-    """预告块的判定：命中「仅预告/目标枚举」后的行算 preview，空行复位。"""
+def test_extract_doc_entries_reads_per_line_status_markers():
+    """N3 口径：状态是**行内标记**（已实现/仅预告/未实现），不再靠「预告块」上下文推断。"""
     doc = "\n".join([
         "## 3. 权限模型",
-        "**X4 已落地**：写权限 `write_memory` / `ghost_perm`",
-        "",
-        "X4 目标三类枚举（此处仅预告）：",
-        "- **外部动作**：`net:outbound` `device:*`",
+        "- `write_memory` — `已实现`：插件写记忆的唯一窄口。",
+        "- `ghost_perm` — `已实现`：文档说已落地但代码没有。",
+        "- `net:outbound` — `仅预告`：外部动作类权限，落地以 X4 批次为准。",
+        "- `fs:limited` — `仅预告`：外部动作类权限，落地以 X4 批次为准。",
+        "- `douyin_publish` — `未实现`：X4 之前的历史写法。",
+        "- `device:*` — `仅预告`：设备动作面的通配写法。",
         "",
         "## 4. SDK 面",
-        "`not_in_section_perm`",
+        "- `not_in_section_perm` — `已实现`：§4 不进口径。",
     ])
     entries = ea.extract_doc_permission_entries(ea.doc_section_lines(doc, "## 3"))
     by_name = {e["permission"]: e for e in entries}
-    assert by_name["write_memory"]["kind"] == "asserted"
-    assert by_name["ghost_perm"]["kind"] == "asserted"
-    assert by_name["net:outbound"]["kind"] == "preview"
-    assert by_name["device:*"]["kind"] == "pattern"
+    assert set(by_name) == {"write_memory", "ghost_perm", "net:outbound", "fs:limited",
+                            "douyin_publish", "device:*"}
+    assert by_name["write_memory"]["status"] == "implemented"
+    assert by_name["net:outbound"]["status"] == "preview"
+    assert by_name["douyin_publish"]["status"] == "planned"
+    assert by_name["device:*"]["is_pattern"] is True
+    assert by_name["write_memory"]["is_pattern"] is False
+    assert by_name["net:outbound"]["status_label"] == "仅预告"
     assert "not_in_section_perm" not in by_name  # §4 不进口径
     # 行号必须是文档内的真实行号（供报告逐条溯源）
-    assert by_name["net:outbound"]["doc_line"] == 5
+    assert by_name["net:outbound"]["doc_line"] == 4
+
+
+def test_missing_status_marker_falls_back_to_unknown_and_lands_in_todo_items():
+    """**缺标记不按「没写就是已实现」兜底**：落 unknown ⇒ 计入待办（这正是本单要抓的漂移）。"""
+    doc = "\n".join([
+        "## 3. 权限模型",
+        "- `write_memory`：这一行忘了写状态标记。",
+        "- `ghost_perm` — `已实现`：文档说已落地但代码没有。",
+        "",
+        "## 4. SDK 面",
+    ])
+    entries = ea.extract_doc_permission_entries(ea.doc_section_lines(doc, "## 3"))
+    by_name = {e["permission"]: e for e in entries}
+    assert by_name["write_memory"]["status"] == ea.STATUS_UNKNOWN
+    assert by_name["write_memory"]["status_label"] == ea.STATUS_UNKNOWN_LABEL
+    out = ea.diff_permission_drift(entries, [])
+    assert [d["permission"] for d in out["todo_items"]] == ["write_memory"]
+    assert out["todo_items"][0]["severity"] == "medium"
+    # 未标注 ≠ 实现漂移：它是「文档没说清」，要单独待办；同文档里真·说已落地而代码没有的另计
+    assert [d["permission"] for d in out["implementation_drift"]] == ["ghost_perm"]
+    assert out["counts"]["implementation_drift"] == 1
+    assert out["counts"]["todo_items"] == 1
+    assert out["counts"]["status_unknown_entries"] == 1
+
+
+def test_conflicting_markers_on_one_line_are_flagged_not_guessed():
+    """同一行出现两个不同状态标记 ⇒ 判冲突、按未标注处理，并把冲突标记带回报告。"""
+    doc = "\n".join([
+        "## 3. 权限模型",
+        "- `weird_perm` — `已实现`：这里又补了句 `仅预告`，到底哪个算数？",
+        "",
+        "## 4. SDK 面",
+    ])
+    entries = ea.extract_doc_permission_entries(ea.doc_section_lines(doc, "## 3"))
+    assert entries[0]["status"] == ea.STATUS_UNKNOWN
+    assert sorted(entries[0]["status_conflict"]) == ["仅预告", "已实现"]
+    out = ea.diff_permission_drift(entries, [])
+    assert [d["permission"] for d in out["todo_items"]] == ["weird_perm"]
+    assert "已实现" in out["todo_items"][0]["note"] and "仅预告" in out["todo_items"][0]["note"]
+
+
+def test_same_permission_with_two_statuses_is_reported_as_conflict():
+    """同一权限名在文档里出现两种状态 ⇒ 名单级冲突登记（不静默取一个）。"""
+    entries = [
+        {"permission": "write_memory", "doc_line": 98, "status": "implemented", "is_pattern": False},
+        {"permission": "write_memory", "doc_line": 120, "status": "preview", "is_pattern": False},
+    ]
+    out = ea.diff_permission_drift(entries, [])
+    assert out["status_conflicts"] == [{
+        "permission": "write_memory",
+        "statuses": ["implemented", "preview"],
+        "handling": "按最保守的一档计入（unknown → 待办）",
+    }]
+
+
+def test_status_legend_and_markers_exposed_for_consumers():
+    """状态图例与标记词要随读数一起给出（报告/JSON 消费方不必各自硬编码）。"""
+    entries = [{"permission": "net:outbound", "doc_line": 120, "status": "preview", "is_pattern": False}]
+    out = ea.diff_permission_drift(entries, [])
+    assert out["status_markers"] == {"已实现": "implemented", "仅预告": "preview",
+                                     "未实现": "planned", "规划中": "planned"}
+    assert set(out["status_legend"]) == {"implemented", "preview", "planned", "unknown"}
+    assert out["status_legend"]["implemented"] != out["status_legend"]["preview"]
 
 
 # ────────────────────────── ② 只读性 ──────────────────────────
@@ -233,26 +315,91 @@ def audit_data():
     return ea.run_audit()
 
 
+def test_real_doc_section3_every_permission_line_carries_a_status_marker():
+    """**契约守卫**：文档 §3 每条权限都得带实现状态标记。
+
+    这条同时兜住两类回潮：①有人加了权限却忘了写标记（会落 unknown、被脚本当待办）；
+    ②有人在散文里误用反引号包了非权限的下划线标识符（会被当权限条目 ⇒ 同样是 unknown）。
+    """
+    text = (REPO_ROOT / ea.CONTRACT_DOC).read_text(encoding="utf-8")
+    entries = ea.extract_doc_permission_entries(ea.doc_section_lines(text, "## 3"))
+    assert entries, "§3 一条权限都没解析出来＝解析口径坏了"
+    unknown = [e for e in entries if e["status"] == ea.STATUS_UNKNOWN]
+    assert unknown == [], f"§3 存在未标注实现状态的条目：{[(e['permission'], e['doc_line']) for e in unknown]}"
+    assert all(e["status_label"] in ea.STATUS_MARKERS for e in entries)
+    assert not [e for e in entries if e["status_conflict"]], "§3 存在一行多个状态标记的冲突行"
+
+
+def test_real_doc_permission_names_are_unchanged_by_the_marker_convention():
+    """**权限名字面值一个都不许动**（改名会让已装插件的 consent 记录整体失配）。"""
+    text = (REPO_ROOT / ea.CONTRACT_DOC).read_text(encoding="utf-8")
+    entries = ea.extract_doc_permission_entries(ea.doc_section_lines(text, "## 3"))
+    named = {e["permission"] for e in entries if not e["is_pattern"]}
+    patterns = {e["permission"] for e in entries if e["is_pattern"]}
+    assert named == {
+        "write_memory", "send_message",
+        "persona:read", "memory:read", "life:read", "relationship:read", "proactive:read",
+        "douyin_publish",
+        "channel:read", "channel:publish", "net:outbound", "fs:limited",
+    }
+    assert patterns == {"device:*"}
+
+
 def test_real_repo_drift_readings_are_self_consistent(audit_data):
     b2 = audit_data["sections"]["B2_doc_code_drift"]
     assert b2["ok"] is True
-    assert b2["counts"]["doc_has_code_lacks"] == len(b2["drift_doc_has_code_lacks"])
-    assert b2["counts"]["doc_has_code_lacks"] == (
-        b2["counts"]["doc_has_code_lacks_asserted"] + b2["counts"]["doc_has_code_lacks_preview"])
-    # 「文档声称已落地、代码无」只允许 douyin_publish 这一条（其余都是文档明示的预告）
-    asserted = {d["permission"] for d in b2["drift_doc_has_code_lacks"] if d["doc_kind"] == "asserted"}
-    assert asserted <= {"douyin_publish"}
-    for item in b2["drift_doc_has_code_lacks"]:
-        assert ":" in item["code_reference_evidence"] or item["code_reference_evidence"] == "（0 命中）"
+    counts = b2["counts"]
+    assert counts["doc_entry_count"] == b2["doc_entry_count"]
+    assert counts["implementation_drift"] == len(b2["implementation_drift"])
+    assert counts["planned_items"] == len(b2["planned_items"])
+    assert counts["todo_items"] == len(b2["todo_items"])
+    # 三桶互斥：合计＝全部「文档有代码无」行
+    assert (counts["implementation_drift"] + counts["planned_items"] + counts["todo_items"]
+            == len(b2["implementation_drift"]) + len(b2["planned_items"]) + len(b2["todo_items"]))
+    # §3 已按 N3 标注完毕 ⇒ 没有任何条目处于「状态未标注」
+    assert counts["status_unknown_entries"] == 0 and b2["todo_items"] == []
+    assert b2["status_conflicts"] == []
+    rows = [r for bucket in ea.DRIFT_BUCKETS for r in b2[bucket]]
+    for item in rows:
         assert item["doc_line"] > 0
+        assert ":" in item["code_reference_evidence"] or item["code_reference_evidence"] == "（0 命中）"
         # 残留读数只认运行时代码，且不得被本审计自身污染（脚本/用例里都有这些名字的字面量）
         assert "extension_audit" not in item["code_reference_evidence"]
         assert item["code_reference_hits"] == 0 or item["code_reference_evidence"].startswith(
             ("backend/app/", "flutter_app/lib/"))
-    # douyin_publish 的真相：文档说已落地，代码枚举里没有，但 Flutter 市场页仍在渲染它
-    douyin = next((d for d in b2["drift_doc_has_code_lacks"] if d["permission"] == "douyin_publish"), None)
-    if douyin is not None:
-        assert douyin["doc_kind"] == "asserted" and douyin["code_reference_hits"] >= 1
+
+
+def test_real_repo_has_zero_implementation_drift_after_n3(audit_data):
+    """N3 订正后「文档说已落地、代码无」必须为空——文档不再承诺代码没有的权限。"""
+    b2 = audit_data["sections"]["B2_doc_code_drift"]
+    assert b2["implementation_drift"] == []
+    assert b2["counts"]["implementation_drift"] == 0
+    # 但代码也没有越出文档承诺面（device:* 通配覆盖 11 条动态权限名）
+    assert b2["counts"]["code_has_doc_lacks"] == 0
+    assert b2["wildcard_notes"][0]["pattern"] == "device:*"
+    assert b2["wildcard_notes"][0]["covers_code_names"] == 11
+
+
+def test_douyin_publish_is_a_planned_item_with_residual_reference_todo(audit_data):
+    """douyin_publish 的真相：文档已订正为「未实现」，但 Flutter 市场页仍渲染它 ⇒ 进残留待办。"""
+    b2 = audit_data["sections"]["B2_doc_code_drift"]
+    row = next(d for d in b2["planned_items"] if d["permission"] == "douyin_publish")
+    assert row["doc_status"] == "planned" and row["doc_status_label"] == "未实现"
+    assert row["code_reference_hits"] >= 1
+    assert row["code_reference_evidence"].startswith("flutter_app/lib/")
+    todo = next(t for t in b2["residual_reference_todo"] if t["permission"] == "douyin_publish")
+    assert todo["bucket"] == "planned_items" and todo["todo"]
+
+
+def test_real_repo_preview_items_keep_unified_wording(audit_data):
+    """四条「仅预告」：同一句式、状态一致、代码无属预期。"""
+    b2 = audit_data["sections"]["B2_doc_code_drift"]
+    preview = {d["permission"]: d for d in b2["planned_items"] if d["doc_status"] == "preview"}
+    assert set(preview) == {"channel:read", "channel:publish", "net:outbound", "fs:limited"}
+    for item in preview.values():
+        assert item["doc_status_label"] == "仅预告"
+        assert item["severity"] == "info"
+        assert item["code_reference_hits"] == 0
 
 
 def test_real_repo_negative_assertions_carry_hit_counts(audit_data):
@@ -286,6 +433,27 @@ def test_report_contains_four_sections_and_self_check(audit_data):
     assert "未连库" in text                      # 默认模式必须写明没连库
     assert "（每条结论带" not in text            # 不留模板占位
     assert "M0 验收姿态" in text                 # 收尾的零行为声明必须在
+
+
+def test_report_separates_implementation_drift_from_planned_items(audit_data):
+    """报告必须把「实现漂移 / 计划项 / 状态未标注 / 残留待办」分栏写，而不是混成一句「有漂移」。"""
+    text = ea.render_report(audit_data)
+    for heading in ("1.1 实现漂移", "1.2 计划项", "1.3 状态未标注", "1.4 残留引用待办", "1.7 处置登记"):
+        assert heading in text
+    assert "口径版本：**N3**" in text
+    # 收尾声明必须写清：改的是文档措辞，权限名与 VALID_PERMISSIONS 一字未改
+    assert "权限名字面值一字未改" in text
+    assert "VALID_PERMISSIONS` 一字未改" in text
+
+
+def test_self_check_reports_bucket_evidence_coverage(audit_data):
+    cov = audit_data["sections"]["SELF_check"]["evidence_coverage"]
+    b2 = audit_data["sections"]["B2_doc_code_drift"]
+    assert cov["B2_rows"] == sum(len(b2[bucket]) for bucket in ea.DRIFT_BUCKETS)
+    assert cov["B2_rows_with_evidence"] == cov["B2_rows"]
+    assert cov["B2_implementation_drift"] == 0
+    assert cov["B2_residual_reference_todo"] == len(b2["residual_reference_todo"])
+    assert cov["B2_status_unknown_entries"] == 0
 
 
 def test_report_lines_carry_traceable_evidence(audit_data):

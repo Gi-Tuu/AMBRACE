@@ -575,8 +575,9 @@ def test_module_does_not_touch_flag_layer():
     assert "AGENT_FLAGS" not in src and "agent_flags" not in src and "flag_catalog" not in src
 
 
-def test_production_callers_still_pass_no_snapshot():
-    """M0 的「调用方一处都不传」：全仓（app/ 与 scripts/）除本次三个文件外无人提及新参数。"""
+def test_only_relational_drive_service_mentions_snapshot():
+    """M1 口径（2026-09-30 起）：取快照点收敛为一处 —— 只有 application/relational_drive_service.py
+    提及 emotion_snapshot；三个外部钩子（arbiter / chat_service / character_state_service）一律不许出现。"""
     backend = Path(d.__file__).resolve().parents[3]
     hits = []
     for path in list(backend.glob("app/**/*.py")) + list(backend.glob("scripts/**/*.py")):
@@ -584,4 +585,6 @@ def test_production_callers_still_pass_no_snapshot():
             continue
         if "emotion_snapshot" in path.read_text(encoding="utf-8", errors="replace"):
             hits.append(path.name)
-    assert hits == []
+    assert hits == ["relational_drive_service.py"], hits
+    for name in ("arbiter.py", "chat_service.py", "character_state_service.py"):
+        assert name not in hits, name
