@@ -6,6 +6,8 @@ AI 做完一件事（创作/浏览/学习/反思）后按概率 + 亲密度自�
 - 概率：create 0.3 / browse 0.15 / learn 0.12 / reflect 0.05；rest/organize/social_prepare 0；
 - 亲密度 `(trust+attachment)/200` → 0.7x~1.3x 调整；fatigue>75 不发；
 - 必须复用 arbiter 门控（is_dnd_now / is_user_active / unreplied_cooldown_active）；
+- 断点 #7 方案 A（2026-09-29）：另补齐内核闸 ``_kernel_gate_reason``（资格 / 久未互动 / 计时器与
+  剧情线互斥 / 每小时 / 90 分钟最小间隔 / 角色每日总上限 / 夜间说过睡觉），被拦一律写 rejected 留痕；
 - ProactiveTriggerLog(trigger_type="life_share") 配额：每角色每 6h ≤1、每日 ≤1；
 - 生成后按自然度评分做一次低分重试/跳过（复用 message_generator.score_naturalness）。
 失败静默，不阻塞活动主链路。
@@ -22,7 +24,7 @@ from app.models.character import CharacterState
 from app.models.character import ProactiveTriggerLog
 from app.scheduling import state_guard
 from app.utils.logger import get_logger
-from app.utils.timeutil import now_naive_utc
+from app.utils.timeutil import now_naive_utc, to_naive_utc
 
 _logger = get_logger("scheduler.life_share")
 
@@ -95,6 +97,82 @@ async def _log_approved(db, *, character_id: int, user_id: int, reason: str = ""
         trigger_type=_TRIGGER_TYPE, trigger_reason=str(reason)[:200] or None,
         priority=5, decision="approved",
     ))
+
+
+async def _log_rejected(character_id, user_id, reason: str, gate: str = "") -> None:
+    """被拦留痕：复用内核 ``arbiter.log_trigger_candidate``（同款字段、同款 rejected 节流）。
+
+    内核口径（arbiter.py:960-1013）：rejected 同角色同类型 5 分钟内只记一条，防表膨胀。
+    留痕失败绝不阻塞主链路（此处吞掉异常，只降级为告警）。
+    """
+    try:
+        from app.scheduling import arbiter
+        await arbiter.log_trigger_candidate({
+            "type": _TRIGGER_TYPE,
+            "priority": 5,  # 与 _log_approved 同值
+            "candidate": {
+                "character_id": character_id, "user_id": user_id,
+                "trigger_reason": str(reason)[:200],
+            },
+            "_gate": gate or None,
+        }, executed=False)
+    except Exception as e:
+        _logger.warning("life_share rejected 留痕失败 char=%s: %s", character_id, e)
+
+
+async def _kernel_gate_reason(character_id, user_id) -> str | None:
+    """断点 #7 方案 A：直发路径补齐内核闸，返回命中的闸名（None = 全通过）。
+
+    口径**全部复用内核现成函数**（照 ``sources/strategy.py:376-432`` 的「闸当函数用」成例，
+    不自创阈值、不复制 SQL）：
+    ① 资格 ``arbiter.get_active_characters``（is_active + enable_proactive，顺带取 max_daily_proactive）
+    ② 久未互动停发 ``arbiter.inactive_char_skip``（flag 在其内部生效）
+    ③ pending 计时器 / 未发完剧情切片互斥 ``has_pending_timer`` / ``has_pending_storyline``
+    ④ 每小时上限 ``arbiter.get_hourly_active_count`` >= ``MAX_PER_HOUR``
+    ⑤ 最小间隔 ``arbiter.get_last_proactive_time`` + ``MIN_PROACTIVE_INTERVAL_MINUTES``
+    ⑥ 角色每日总上限：内核 ``get_daily_count`` 只数 ``_RHYTHM_MESSAGE_TYPES``（life_share 不在其中），
+       故「节律类当日已发 + 本通道当日已发」合并后再比 ``max_daily_proactive``
+    ⑦ 夜间说过睡觉 ``arbiter.has_user_said_sleep``
+
+    任一步取数失败 / 抛异常 → 判为拦截（宁可不发，也不绕过内核频控）。
+    """
+    from app.domain.proactivity.decision import MAX_PER_HOUR, MIN_PROACTIVE_INTERVAL_MINUTES
+    from app.scheduling import arbiter
+    from app.scheduling.triggers import get_daily_count
+
+    try:
+        cid = int(character_id or 0)
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        return "bad_identity"
+    if not cid or not uid:
+        return "bad_identity"
+    try:
+        active = {int(c["character_id"]): c for c in await arbiter.get_active_characters()}
+        if cid not in active:
+            return "not_eligible"
+        if await arbiter.inactive_char_skip(cid):
+            return "inactive_char"
+        if await arbiter.has_pending_timer(cid):
+            return "pending_timer"
+        if await arbiter.has_pending_storyline(cid):
+            return "pending_storyline"
+        if await arbiter.get_hourly_active_count(cid) >= MAX_PER_HOUR:
+            return "hourly_cap"
+        last = await arbiter.get_last_proactive_time(cid)
+        if last is not None:
+            if now_naive_utc() - to_naive_utc(last) < timedelta(minutes=MIN_PROACTIVE_INTERVAL_MINUTES):
+                return "min_interval"
+        own_today = await arbiter.get_daily_sent_count(cid, _TRIGGER_TYPE)
+        max_daily = int(active[cid].get("max_daily_proactive") or 5)
+        if await get_daily_count(cid) + own_today >= max_daily:
+            return "daily_cap"
+        if await arbiter.has_user_said_sleep(cid, uid):
+            return "night_said_sleep"
+        return None
+    except Exception as e:
+        _logger.warning("life_share 内核闸判定失败 char=%s: %s", cid, e)
+        return "kernel_gate_error"
 
 
 def _naturalness_flag() -> bool:
@@ -175,6 +253,7 @@ async def on_activity_completed(payload: dict) -> None:
             fatigue = float(getattr(st, "fatigue", 50) or 50) if st else 50.0
             if not await _quota_ok(db, character_id):
                 _logger.info("life_share skip char=%d quota", character_id)
+                await _log_rejected(character_id, user_id, f"{activity_type}:quota", "quota")
                 return
 
         intimacy = intimacy_multiplier(trust, attachment)
@@ -187,17 +266,28 @@ async def on_activity_completed(payload: dict) -> None:
         cn_now = datetime.now(timezone(timedelta(hours=8)))
         if await is_dnd_now(character_id, cn_now):
             _logger.info("life_share skip char=%d dnd", character_id)
+            await _log_rejected(character_id, user_id, f"{activity_type}:dnd", "dnd")
             return
         if await is_user_active(character_id, user_id):
             _logger.info("life_share skip char=%d user active", character_id)
+            await _log_rejected(character_id, user_id, f"{activity_type}:user_active", "user_active")
             return
         if await unreplied_cooldown_active(character_id, user_id):
             _logger.info("life_share skip char=%d unreplied cooldown", character_id)
+            await _log_rejected(character_id, user_id, f"{activity_type}:unreplied", "unreplied")
+            return
+
+        # 断点 #7 方案 A（2026-09-29）：补齐此前缺失的内核闸（频控/资格/互斥/静默），只减不发
+        gate = await _kernel_gate_reason(character_id, user_id)
+        if gate:
+            _logger.info("life_share skip char=%d gate=%s", character_id, gate)
+            await _log_rejected(character_id, user_id, f"{activity_type}:[gate={gate}]", gate)
             return
 
         # 生成 + 自然度低分重试/跳过
         text = await _generate_share(character_id, user_id, activity_type, summary)
         if not text:
+            await _log_rejected(character_id, user_id, f"{activity_type}:empty_generation", "empty")
             return
         if _naturalness_flag():
             from app.scheduling.message_generator import score_naturalness
@@ -207,6 +297,7 @@ async def on_activity_completed(payload: dict) -> None:
                     text = text2
             if score_naturalness(text) < _SKIP_THRESHOLD:
                 _logger.info("life_share skip char=%d low naturalness", character_id)
+                await _log_rejected(character_id, user_id, f"{activity_type}:low_naturalness", "naturalness")
                 return
 
         # 发送（state_triggers 成熟做法）
@@ -214,6 +305,7 @@ async def on_activity_completed(payload: dict) -> None:
         from app.scheduling.scheduler import send_to_session
         session_id = await get_latest_session_id(user_id, character_id)
         if session_id is None:
+            await _log_rejected(character_id, user_id, f"{activity_type}:no_session", "no_session")
             return
         # 配额落库 + 发送（原子提交失败静默不阻塞）
         async with async_session_factory() as db:

@@ -29,7 +29,6 @@ from app.life.life_state import (
     apply_tick, get_life_state, phase_of, beijing_hour, default_needs, clamp,
 )
 from app.life.decision import decide, StateSnapshot, Decision, ACTIONS, INTENT_ACTION_MAP
-from app.life.followup import add_followup
 from app.life import space as _space          # 批次三(2026-09-16) 空间模型
 from app.life import relations as _relations   # 批次三(2026-09-16) 亲属守卫
 from app.utils.logger import get_logger
@@ -470,12 +469,6 @@ class LifeLoopTask:
                 log.output_json = json.dumps(
                     {"game": game.get("name", "") if game else ""}, ensure_ascii=False)
                 log.completed_at = _now()
-                if game:
-                    await add_followup(
-                        db, char.id, char.user_id,
-                        f"{char.name}和伙伴们玩了一局{game['name']}，战绩已记入游乐手札。",
-                        "play_game", None, "next_online",
-                    )
                 await db.commit()
                 self._publish_event(char, decision, act, None)
                 return
@@ -551,13 +544,6 @@ class LifeLoopTask:
                         )
                         memory_id = mem.id if mem else None
                         memory_failed = mem is None
-
-                        # 回聊缓冲
-                        if act.followup_window and act.visible:
-                            await add_followup(
-                                db, char.id, char.user_id, summary,
-                                decision.action, memory_id, act.followup_window,
-                            )
                     # 配额已满：summary_out 已记录真实摘要，仅不写记忆
                 else:
                     if summary and summary.strip():

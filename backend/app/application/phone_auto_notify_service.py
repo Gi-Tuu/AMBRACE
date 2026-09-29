@@ -1,6 +1,9 @@
 """AI 主动提通知：手机后台服务定时上报通知缓存 → 服务器对比新增 → 节流触发 AI 主动消息
 - 首次上报只建立基线（不打扰），之后有"新通知"且距上次提及 >=30 分钟才触发
-- 北京时间 23:00-08:00 免打扰时段跳过；用户说过睡觉跳过
+- 断点 #8′E12（2026-09-29）：发送前补齐内核闸（资格 / pending 互斥 / 每小时 / 90 分钟间隔 /
+  免打扰 / 夜间说过睡觉），被拦一律写 rejected 留痕。原硬编码 23:00-08:00 时段判断由
+  ``arbiter.is_dnd_now`` 取代（读角色级免打扰配置，未配置时沿用内核深夜 0-7 点口径）
+- 通道开关 ``phone_auto_notify_mention``（默认开＝保持现状，只提供整体关闭能力）
 """
 import hashlib
 import json
@@ -17,9 +20,10 @@ from app.utils.timeutil import now_naive_utc, to_naive_utc
 _logger = get_logger("services.phone_auto_notify_service")
 
 MIN_TRIGGER_INTERVAL_MINUTES = 30
-QUIET_START_HOUR = 23
-QUIET_END_HOUR = 8
 MAX_MENTION_ITEMS = 3
+# 通道名：既是 message_type，也是 proactive_trigger_logs.trigger_type 与 flag 目录登记口径
+TRIGGER_TYPE = "notification_mention"
+FLAG_KEY = "phone_auto_notify_mention"
 
 
 def _fingerprint(item: dict) -> str:
@@ -31,9 +35,80 @@ def _fingerprint(item: dict) -> str:
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
-def _in_quiet_hours() -> bool:
-    now_cn = datetime.now(timezone(timedelta(hours=8)))
-    return now_cn.hour >= QUIET_START_HOUR or now_cn.hour < QUIET_END_HOUR
+def _mention_enabled() -> bool:
+    """通道总开关（断点 #8′E12）：缺键按「开」处理——现状即已在上线，默认关会静默停功能。"""
+    try:
+        from app.agent.loop import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get(FLAG_KEY, True))
+    except Exception:
+        return True
+
+
+async def _log_rejected(character_id, user_id, reason: str, gate: str = "") -> None:
+    """被拦留痕：复用内核 ``arbiter.log_trigger_candidate``（同款字段、同款 rejected 节流）。
+
+    留痕失败绝不阻塞主链路（吞掉异常，只降级为告警）。
+    """
+    try:
+        from app.scheduling import arbiter
+        await arbiter.log_trigger_candidate({
+            "type": TRIGGER_TYPE,
+            "priority": 5,
+            "candidate": {
+                "character_id": character_id, "user_id": user_id,
+                "trigger_reason": str(reason)[:200],
+            },
+            "_gate": gate or None,
+        }, executed=False)
+    except Exception as e:
+        _logger.warning("notification_mention rejected 留痕失败 char=%s: %s", character_id, e)
+
+
+async def _kernel_gate_reason(character_id, user_id) -> str | None:
+    """断点 #8′E12：直发路径补齐内核闸，返回命中的闸名（None = 全通过）。
+
+    口径**全部复用内核现成函数**（照 ``life_share._kernel_gate_reason`` 的成例，不自创阈值）：
+    ① 资格 ``arbiter.get_active_characters``（is_active + enable_proactive）
+    ② pending 计时器 / 未发完剧情切片互斥 ``has_pending_timer`` / ``has_pending_storyline``
+    ③ 每小时上限 ``arbiter.get_hourly_active_count`` >= ``MAX_PER_HOUR``
+    ④ 最小间隔 ``arbiter.get_last_proactive_time`` + ``MIN_PROACTIVE_INTERVAL_MINUTES``
+    ⑤ 免打扰 ``arbiter.is_dnd_now``（取代原硬编码 23:00-08:00）
+    ⑥ 夜间说过睡觉 ``arbiter.has_user_said_sleep``
+
+    任一步取数失败 / 抛异常 → 判为拦截（宁可不发，也不绕过内核频控）。
+    """
+    from app.domain.proactivity.decision import MAX_PER_HOUR, MIN_PROACTIVE_INTERVAL_MINUTES
+    from app.scheduling import arbiter
+
+    try:
+        cid = int(character_id or 0)
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        return "bad_identity"
+    if not cid or not uid:
+        return "bad_identity"
+    try:
+        active = {int(c["character_id"]) for c in await arbiter.get_active_characters()}
+        if cid not in active:
+            return "not_eligible"
+        if await arbiter.has_pending_timer(cid):
+            return "pending_timer"
+        if await arbiter.has_pending_storyline(cid):
+            return "pending_storyline"
+        if await arbiter.get_hourly_active_count(cid) >= MAX_PER_HOUR:
+            return "hourly_cap"
+        last = await arbiter.get_last_proactive_time(cid)
+        if last is not None:
+            if now_naive_utc() - to_naive_utc(last) < timedelta(minutes=MIN_PROACTIVE_INTERVAL_MINUTES):
+                return "min_interval"
+        if await arbiter.is_dnd_now(cid, datetime.now(timezone(timedelta(hours=8)))):
+            return "dnd"
+        if await arbiter.has_user_said_sleep(cid, uid):
+            return "night_said_sleep"
+        return None
+    except Exception as e:
+        _logger.warning("notification_mention 内核闸判定失败 char=%s: %s", cid, e)
+        return "kernel_gate_error"
 
 
 async def _load_or_create_state(user_id: int) -> tuple[PhoneAutoState | None, bool]:
@@ -149,18 +224,15 @@ async def handle_auto_report(user_id: int, notifications: list[dict]) -> dict:
         _logger.info("Phone auto notify no new user=%d", user_id)
     triggered = False
     if prev and new_fps:
-        # 节流 + 时段 + 睡眠检查
-        if _in_quiet_hours():
-            _logger.info("Phone auto notify skipped: quiet hours user=%d", user_id)
-        else:
-            if state and state.last_trigger_at:
-                last = to_naive_utc(state.last_trigger_at)
-                if now_naive_utc() - last < timedelta(minutes=MIN_TRIGGER_INTERVAL_MINUTES):
-                    _logger.info("Phone auto notify throttled user=%d", user_id)
-                else:
-                    triggered = True
+        # 每用户 30 分钟节流（时段/内核闸统一由 _trigger_mention 判定，此处不再硬编码时段）
+        if state and state.last_trigger_at:
+            last = to_naive_utc(state.last_trigger_at)
+            if now_naive_utc() - last < timedelta(minutes=MIN_TRIGGER_INTERVAL_MINUTES):
+                _logger.info("Phone auto notify throttled user=%d", user_id)
             else:
                 triggered = True
+        else:
+            triggered = True
 
     if triggered:
         try:
@@ -168,7 +240,8 @@ async def handle_auto_report(user_id: int, notifications: list[dict]) -> dict:
         except Exception as e:
             _logger.warning("Phone auto notify snapshot persist failed: %s", e)
         try:
-            await _trigger_mention(user_id, items[:MAX_MENTION_ITEMS])
+            # 被闸拦下 / 生成为空 → False：不回写 last_trigger_at，也不给客户端报「已打扰」
+            triggered = await _trigger_mention(user_id, items[:MAX_MENTION_ITEMS])
         except Exception as e:
             _logger.warning("Phone auto notify trigger failed: %s", e)
             triggered = False
@@ -206,28 +279,34 @@ async def _persist_notification_snapshots(user_id: int, items: list[dict]):
             await db.execute(sa_delete(PhoneSnapshot).where(PhoneSnapshot.id.in_(old_ids)))
         await db.commit()
 
-async def _trigger_mention(user_id: int, items: list[dict]):
+async def _trigger_mention(user_id: int, items: list[dict]) -> bool:
+    """唯一发送点：先过闸、再生成、最后直发。返回是否真的发出（被拦一律 False，只减不发）。"""
+    if not _mention_enabled():
+        _logger.info("Phone auto notify skipped: flag off user=%d", user_id)
+        return False
     picked = await _select_character(user_id)
     if picked is None:
-        return
+        # 该用户没有活跃角色 / 没有活跃会话：无角色身份可记留痕，静默跳过
+        _logger.info("Phone auto notify skipped: no character/session user=%d", user_id)
+        return False
     char, session, session_id = picked
 
-    # 用户说过睡觉 → 不打扰
-    try:
-        from app.scheduling.arbiter import has_user_said_sleep
-        if await has_user_said_sleep(char.id, user_id):
-            _logger.info("Phone auto notify skipped: user sleep char=%d", char.id)
-            return
-    except Exception:
-        pass
+    # 断点 #8′E12（2026-09-29）：补齐内核闸（含原「用户说过睡觉」判定），命中即留痕不发
+    gate = await _kernel_gate_reason(char.id, user_id)
+    if gate:
+        _logger.info("Phone auto notify skipped: gate=%s char=%d user=%d", gate, char.id, user_id)
+        await _log_rejected(char.id, user_id, f"notification_mention:[gate={gate}]", gate)
+        return False
 
     # C16 批次C（2026-09-25）：把真实 user_id 传进去，供护栏取现状锚
     content = await _generate_mention(char, items, user_id=user_id)
     if not content:
-        return
+        await _log_rejected(char.id, user_id, "notification_mention:empty_generation", "empty")
+        return False
 
     from app.scheduling import scheduler as engine
     await engine.send_to_session(
-        session_id, char.id, user_id, content, message_type="notification_mention",
+        session_id, char.id, user_id, content, message_type=TRIGGER_TYPE,
     )
     _logger.info("Phone auto notify triggered: char=%d session=%d user=%d", char.id, session_id, user_id)
+    return True

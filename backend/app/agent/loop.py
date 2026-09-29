@@ -439,6 +439,14 @@ AGENT_FLAGS = {
     # 强约束档（无依据降级为 character/INFERRED）是**下一批**——届时另键或同键升级并另行公告；
     #   影子期先取「标记路径总量 / absent 占比 / 人工抽查误降率」三个指标再定。
     "marker_requires_user_evidence": False,
+    # ── 断点 #8′E12（2026-09-29）：手机通知提及通道可关（默认开＝保持现状）──
+    # 背景：application/phone_auto_notify_service.py 的 notification_mention 是 HTTP 驱动的
+    #   直发点（手机后台上报 → 服务器判定 → 直接 send_to_session 并弹推送），此前无任何总开关
+    #   可停（runtime_flags 表里没有该通道相关键）；本批补闸的同时把通道登记进开关体系。
+    # ON（默认）＝逐字节保持现状：合格角色 + 过完内核闸才发。
+    # OFF＝整条通道不发（基线维护与快照采集照常，零 LLM 调用）；提供的是「能关掉」的能力，
+    #   不是行为变更 ⇒ 缺键也按开处理（默认关会静默停掉一个已上线功能，属行为回归）。
+    "phone_auto_notify_mention": True,
 }
 
 # 搜索结果注入模板（与旧文案唯一差异：第 3 点允许结果不足时补查 1 次）

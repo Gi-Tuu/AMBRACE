@@ -51,6 +51,16 @@ def _perception_tag_on() -> bool:
         return False
 
 
+# 断点 #5（2026-09-29）：感知派生条的**准入归属**标记。
+# 这个取值只用于准入判定与回执留痕，**不写进 memories.speaker_type**——该列刻意留空（见下）。
+PERCEPTION_SENDER = "perception"
+
+
+def _is_perception_source(source) -> bool:
+    """来源是否感知派生（纯判定）：归一比较，脏输入（非字符串 / None / 空白）一律 False。"""
+    return isinstance(source, str) and source.strip().lower() == PERCEPTION_SOURCE
+
+
 def _cross_source_merge_blocked(incoming_source, candidate_source) -> bool:
     """跨来源禁合并（批 0-2 方案 §2.2 禁令 3 的收窄版，纯判定 + flag 门控）。
 
@@ -350,11 +360,20 @@ def _normalize_sender(value) -> str | None:
 
 
 async def _resolve_admission_sender(source, source_id, speaker_type, source_message_sender, db) -> str:
-    """确定性归属判定：user / character / system / tool。
+    """确定性归属判定：user / character / system / tool / perception。
 
-    优先级：调用方显式 speaker_type > 来源消息 sender_type（复用 dialogue_filter 已查到的同一次
-    ChatMessage 查询，避免重复查库）> 来源类型默认（diary/life/bio 无用户来源消息 → 模型自述）。
+    优先级：感知来源（断点 #5）> 调用方显式 speaker_type > 来源消息 sender_type（复用
+    dialogue_filter 已查到的同一次 ChatMessage 查询，避免重复查库）> 来源类型默认
+    （diary/life/bio 无用户来源消息 → 模型自述）。
+
+    断点 #5 为什么必须排在最前：屏幕内容不是用户亲口陈述，也绝不是角色自述。打标只改
+    ``source``，调用方传进来的 ``speaker_type`` 与来源消息的 ``sender_type`` 都还可能是
+    ``user``——判据放在后面就永远回落成「用户陈述」（且打标后 source 已不是 chat，
+    连 diary/life/tool 那几档都命中不了，直接掉到兜底 ``return "user"``）。
+    flag ``perception_source_tag`` 关 ⇒ 本分支整体不生效＝逐字节旧行为。
     """
+    if _perception_tag_on() and _is_perception_source(source):
+        return PERCEPTION_SENDER
     st = _normalize_sender(speaker_type)
     if st:
         return st
@@ -385,7 +404,7 @@ def admit_memory(source, sender_type, epistemic_status, reliability, memory_type
     - 角色说的（character/ai）/ 无来源模型推断（日记、生活自述）→ 非 FACT（缺省 INFERRED）+ 待核；
     - 外部工具（MCP/搜索）→ UNVERIFIED（现状）；
     - 系统事件 → 保留抽取器标注，缺省按来源推断（不额外降级）；
-    - 用户陈述（或未知归属）→ 照旧（FACT），仅当 reliability < 0.4 时进待核。
+    - 用户陈述（或未知归属，含感知派生 perception）→ 照旧（FACT），仅当 reliability < 0.4 时进待核。
 
     只降不升：已是更细的标注（PLANNED/FICTIONAL/INFERRED/UNVERIFIED）时保留不覆盖。
     待核语义复用既有 UNVERIFIED/INFERRED（不新增 status 枚举），差异只体现在「检索权重」与
@@ -515,6 +534,8 @@ async def save_memory(
         _perception_tagged = False
         _source_before_tag = source
         _sub_type_before_tag = sub_type
+        _speaker_type_before_tag = speaker_type
+        _speaker_id_before_tag = speaker_id
         if _perception_tag_on():
             try:
                 _corpus = await _recent_snapshots(db, user_id)
@@ -524,6 +545,12 @@ async def save_memory(
                     source = PERCEPTION_SOURCE
                     epistemic_status = "INFERRED"  # 感知＝推断，未经用户认可绝不是事实（方案 §2.3）
                     _perception_tagged = True
+                    # 断点 #5：speaker 两列**显式留空**（连调用方给的 user/角色 id 一起撤掉）。
+                    # 「这条来自感知」的证据由 memories.source=perception ＋ 下方打标回执承载，
+                    # 不写进 speaker_type：该列值空间是 user/character/system（前端据此画标签），
+                    # 造新值会被当成「TA说的」，填 user 就是本断点本身——留空才是诚实的「未知归属」。
+                    speaker_type = None
+                    speaker_id = None
                     # M2「sub_type 记通道」：把命中的那条快照的来源通道写进 sub_type
                     # （accessibility / clipboard / media）。只在打标这一刻写，flag 关不写。
                     _channel = _matched_snapshot_channel(_corpus, content)
@@ -534,6 +561,8 @@ async def save_memory(
             except Exception as _e:
                 source = _source_before_tag  # fail-open：打标本身不出错，只降级为旧行为
                 sub_type = _sub_type_before_tag  # 通道也只回退到打标前的值（同一次改写，一起撤）
+                speaker_type = _speaker_type_before_tag  # 断点 #5：归属改写与来源改写同批撤销
+                speaker_id = _speaker_id_before_tag
                 _logger.warning("perception tagging failed (fail-open): char=%d user=%d err=%s",
                                 character_id, user_id, _e)
         # 写入前查重：优先向量语义查重（cosine >= 0.86，见 memory/constants.py::VECTOR_DEDUP_THRESHOLD），未命中再字符级兜底（最近 30 条 >= 0.72）
@@ -687,10 +716,15 @@ async def save_memory(
         # P0：记忆归属与认知状态（默认按来源推断；调用方可显式覆盖）
         _spk_type = speaker_type
         _spk_id = speaker_id
-        if _spk_type is None and _spk_id is None:
+        # 断点 #5：感知派生条**不套用「默认＝用户陈述」**（与打标同闸，flag 关＝逐字节旧行为）。
+        # 打标命中时上面已把两列清空；调用方直接写 source=perception（未走打标）时这里也不兜底成 user。
+        _perception_row = _perception_tag_on() and _is_perception_source(source)
+        if _spk_type is None and _spk_id is None and not _perception_row:
             _spk_type = "user"  # 默认归属用户（多数记忆来自用户陈述）
             _spk_id = user_id
         _spk = _spk_type  # 准入闸门留痕用（角色推断时更新为实际归属）
+        if _spk is None and _perception_row:
+            _spk = PERCEPTION_SENDER  # 回执/provenance 留痕：感知条的归属显式记为 perception
         _epi = epistemic_status
         _pending = False
         if _admission_gate_on():
@@ -769,6 +803,8 @@ async def save_memory(
 
         # 批 0-2 M1a：感知打标留痕（复用 M3 回执表与发射口，不新造机制）。
         # 记下「原本要写成什么来源」，误标时可据此人工复核/一键纠正（方案 §四「纠」）。
+        # 断点 #5：同时记归属改写（speaker 落成显式 perception，库里两列为空），否则
+        # 「这条为什么没有 speaker」在回执面上查不到依据。
         if _perception_tagged:
             try:
                 emit_memory_receipt(
@@ -776,7 +812,9 @@ async def save_memory(
                     reason="perception source tagged (screen-derived)",
                     detail={"from_source": _source_before_tag, "to_source": PERCEPTION_SOURCE,
                             "epistemic_status": _epi, "memory_type": memory_type,
-                            "sub_type": sub_type},
+                            "sub_type": sub_type,
+                            "speaker": PERCEPTION_SENDER, "speaker_type": None,
+                            "from_speaker_type": _speaker_type_before_tag},
                 )
             except Exception:
                 pass

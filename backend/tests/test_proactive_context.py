@@ -133,6 +133,9 @@ def test_state_trigger_prompt_injects_recent_context(monkeypatch):
         captured["messages"] = kw.get("messages")
         return "嗯，是挺适合出去走走的。"
 
+    async def _gate_pass(*_a, **_k):
+        return None
+
     monkeypatch.setattr(state_triggers, "async_session_factory", _boom_factory)
     monkeypatch.setattr(state_triggers, "_post_trigger_notes", _no_post)
     monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _fake_sid)
@@ -140,6 +143,8 @@ def test_state_trigger_prompt_injects_recent_context(monkeypatch):
     monkeypatch.setattr("app.agent.persona.build_active_channel_persona", _fake_persona)
     monkeypatch.setattr("app.agent.llm_client.chat_completion", _fake_chat)
     monkeypatch.setattr("app.scheduling.arbiter.get_hourly_active_count", _fake_count)
+    # 断点 #8′ E10 后发送前多了一道内核闸；本用例只验 prompt 注入，闸由 tests/test_state_trigger_gates.py 覆盖
+    monkeypatch.setattr(state_triggers, "_kernel_gate_reason", _gate_pass)
     monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _no_post)
 
     rule = state_triggers._RULE_BY_KEY["fatigue_high"]  # moment=False → 走私聊消息分支

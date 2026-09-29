@@ -113,6 +113,12 @@ _FLAG_ROWS: list[tuple] = [
      'Look things up before reaching out', 'When it messages you on its own, it can first check anything it is unsure about; '
      'it brings up a finding only if it is genuinely useful, and may simply not mention it. Off by default, and turning it '
      'off keeps things exactly as they are now.'),
+    ('phone_auto_notify_mention', 'proactive', 210, False, '主动提起手机通知',
+     '它主动跟你聊手机上刚收到的消息前，会先看这个角色是否还主动找你、以及免打扰和频控限制。'
+     '默认开启；关掉后它不再主动提起这些内容，手机上的信息照常只在你问起时使用。',
+     'Brings up phone notifications', 'Before mentioning something new from your phone, it checks that this character '
+     'still reaches out to you and that quiet hours and message limits allow it. On by default; turning it off stops '
+     'these messages, and what it sees on your phone is only used when you ask.'),
 
     # ── 群聊小游戏 ──
     ('group_chat_games', 'games', 301, False, '小游戏总开关',

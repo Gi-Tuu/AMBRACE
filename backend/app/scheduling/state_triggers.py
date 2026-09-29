@@ -106,7 +106,7 @@ RULES = [
 _RULE_BY_KEY = {r.key: r for r in RULES}
 
 
-from app.utils.timeutil import now_naive_utc as _now_naive
+from app.utils.timeutil import now_naive_utc as _now_naive, to_naive_utc
 from app.utils.dnd import user_in_dnd_period as _user_in_dnd_period
 
 
@@ -478,6 +478,80 @@ async def _try_publish_moment(character_id: int, state_lines: str, rule: Rule) -
     return True
 
 
+# ── 断点 #8′ E10（2026-09-29）：私聊直发分支补齐内核闸（写法照同批次的 life_share._kernel_gate_reason）
+_TRIGGER_TYPE = "state_trigger"
+# 与内核采集层同值（sources/state_trigger.py:38 priority=2），留痕才能按同一条通道聚合
+_LOG_PRIORITY = 2
+
+
+async def _log_rejected(character_id, user_id, reason: str, gate: str = "") -> None:
+    """被拦留痕：复用内核 ``arbiter.log_trigger_candidate``（同款字段、同款 rejected 5 分钟节流）。
+
+    留痕失败绝不阻塞主链路（此处吞掉异常，只降级为告警）。
+    """
+    try:
+        from app.scheduling import arbiter
+        await arbiter.log_trigger_candidate({
+            "type": _TRIGGER_TYPE,
+            "priority": _LOG_PRIORITY,
+            "candidate": {
+                "character_id": character_id, "user_id": user_id,
+                "trigger_reason": str(reason)[:200],
+            },
+            "_gate": gate or None,
+        }, executed=False)
+    except Exception as e:
+        _logger.warning("state_trigger rejected 留痕失败 char=%s: %s", character_id, e)
+
+
+async def _kernel_gate_reason(character_id, user_id) -> str | None:
+    """直发分支的内核闸判定，返回命中的闸名（None = 全通过）。
+
+    口径**全部复用内核现成函数**（不自创阈值、不复制 SQL）：
+    ① 资格 ``arbiter.get_active_characters``（is_active + enable_proactive，顺带取 max_daily_proactive）
+       —— 本分支此前从未查过 ``enable_proactive``，给「已关主动交流」的角色也发过
+    ② pending 计时器 / 未发完剧情切片互斥 ``has_pending_timer`` / ``has_pending_storyline``
+    ③ 最小间隔 ``arbiter.get_last_proactive_time`` + ``MIN_PROACTIVE_INTERVAL_MINUTES``（90 分钟）
+    ④ 角色每日总上限：内核 ``get_daily_count`` 只数 ``_RHYTHM_MESSAGE_TYPES``（state_trigger 不在其中），
+       故「节律类当日已发 + 本通道当日已发」合并后再比 ``max_daily_proactive``；
+       日界一律 ``app_day_start_utc`` 口径（``get_daily_count`` / ``get_daily_sent_count`` 各自内部取）
+
+    每小时上限不在此重复（调用点既有 ``get_hourly_active_count`` 已判）。
+    任一步取数失败 / 抛异常 → 判为拦截（宁可不发，也不绕过内核频控）。
+    """
+    from app.domain.proactivity.decision import MIN_PROACTIVE_INTERVAL_MINUTES
+    from app.scheduling import arbiter
+    from app.scheduling.triggers import get_daily_count
+
+    try:
+        cid = int(character_id or 0)
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        return "bad_identity"
+    if not cid or not uid:
+        return "bad_identity"
+    try:
+        active = {int(c["character_id"]): c for c in await arbiter.get_active_characters()}
+        if cid not in active:
+            return "not_eligible"
+        if await arbiter.has_pending_timer(cid):
+            return "pending_timer"
+        if await arbiter.has_pending_storyline(cid):
+            return "pending_storyline"
+        last = await arbiter.get_last_proactive_time(cid)
+        if last is not None:
+            if _now_naive() - to_naive_utc(last) < timedelta(minutes=MIN_PROACTIVE_INTERVAL_MINUTES):
+                return "min_interval"
+        own_today = await arbiter.get_daily_sent_count(cid, _TRIGGER_TYPE)
+        max_daily = int(active[cid].get("max_daily_proactive") or 5)
+        if await get_daily_count(cid) + own_today >= max_daily:
+            return "daily_cap"
+        return None
+    except Exception as e:
+        _logger.warning("state_trigger 内核闸判定失败 char=%s: %s", cid, e)
+        return "kernel_gate_error"
+
+
 async def _execute_rule_behavior(
     character_id: int, user_id: int, rule: Rule, state_lines: str, delay_minutes: float | None = None,
 ) -> bool:
@@ -582,6 +656,13 @@ async def _execute_rule_behavior(
     from app.scheduling.arbiter import get_hourly_active_count
     if await get_hourly_active_count(character_id) >= MAX_PER_HOUR:
         _logger.info("State trigger char=%d skipped: hourly limit", character_id)
+        return False
+    # 断点 #8′ E10（2026-09-29）：发送前补齐内核闸（资格 / pending 互斥 / 90 分钟间隔 / 每日总上限）
+    # 只做「加判定 + rejected 留痕」，不改发送内容与生成逻辑；只减不发
+    gate = await _kernel_gate_reason(character_id, user_id)
+    if gate:
+        _logger.info("State trigger char=%d skipped: gate=%s", character_id, gate)
+        await _log_rejected(character_id, user_id, f"{rule.key}:[gate={gate}]", gate)
         return False
     from app.scheduling.scheduler import send_to_session
     await send_to_session(session_id, character_id, user_id, content, message_type="state_trigger")

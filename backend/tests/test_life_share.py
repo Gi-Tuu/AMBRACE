@@ -123,6 +123,11 @@ def test_on_activity_completed_gate_and_send(share_db, monkeypatch):
     monkeypatch.setattr(life_share, "_generate_share", _fake_gen)
     monkeypatch.setattr(life_share, "_naturalness_flag", lambda: False)
     monkeypatch.setattr(life_share, "should_share", lambda *a, **k: (True, 0.3))
+    # 断点 #7：新增的内核闸走真实 arbiter（本用例只验「门控组→发送」链路，闸本身在
+    # tests/test_life_share_gates.py 逐闸覆盖），此处统一放行
+    async def _gate_pass(*a, **k):
+        return None
+    monkeypatch.setattr(life_share, "_kernel_gate_reason", _gate_pass)
     monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _fake_send)
     monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _fake_sid)
 

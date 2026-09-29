@@ -17,7 +17,7 @@ from app.scheduling.life_regression import run_life_regression
 from app.scheduling.prospective_intent import run_prospective_due  # Ariadne 模块G（2026-09-04）
 from app.utils.logger import get_logger
 from app.utils.async_tasks import spawn_background
-from app.utils.timeutil import beijing_day_start_utc, now_naive_utc, to_naive_utc
+from app.utils.timeutil import app_day_start_utc, now_naive_utc, to_naive_utc
 
 # AMBRACE 3.10：arbiter 事件源 TriggerSource 化——导入 sources 包即触发各源注册
 from app.scheduling.sources import SourceContext, all_sources, get_source, to_item_dict
@@ -165,16 +165,17 @@ def _cn_hour_now() -> int:
 
 
 async def get_daily_sent_count(character_id: int, message_type: str) -> int:
-    """该角色**北京时间当日已发送**的某类型主动消息数（类型配比闸 ②）。
+    """该角色**应用时区当日已发送**的某类型主动消息数（类型配比闸 ②）。
 
     统计口径（交接 §②③，与项目既有「已发送」口径一致，勿改成候选口径）：
     - 只算 ``proactive_message_logs``（``send_to_session`` 落库的「已发送」行，log_proactive=True），
       **不统计候选/审批流水**（``proactive_trigger_logs`` 的 approved/rejected 都不算）；
     - 同一 storyline 事件的后续切片不重复计数（``send_to_session`` 不再落 log），
       与 ``get_hourly_active_count`` / ``MAX_PER_HOUR`` 同源同口径；
-    - 日期边界 = 北京时间当天 00:00（复用 ``utils.timeutil.beijing_day_start_utc``）。
+    - 日期边界 = 应用时区当天 00:00（复用 ``utils.timeutil.app_day_start_utc``，
+      与 ``triggers.get_daily_count`` 同源；默认 +8 时与旧北京口径同值）。
     """
-    since = beijing_day_start_utc()
+    since = app_day_start_utc()
     async with async_session_factory() as db:
         result = await db.execute(
             select(func.count()).where(
@@ -188,7 +189,7 @@ async def get_daily_sent_count(character_id: int, message_type: str) -> int:
 
 async def get_session_daily_sent_count(character_id: int, session_id: int) -> int:
     """同一 (character_id, session_id) 当日**已发送**主动消息数（单会话限频闸 ③，口径同 ②）。"""
-    since = beijing_day_start_utc()
+    since = app_day_start_utc()
     async with async_session_factory() as db:
         result = await db.execute(
             select(func.count()).where(
@@ -1630,8 +1631,7 @@ async def _execute(item: dict) -> bool:
             if await get_motivation_approved_count(char_id, _now_u - timedelta(hours=6)) >= MOTIVATION_MAX_PER_6H:
                 _logger.info("Proactive msg char=%d skipped: motivation 6h limit", char_id)
                 return False
-            from app.utils.timeutil import beijing_day_start_utc as _bj_start
-            if await get_motivation_approved_count(char_id, _bj_start()) >= MOTIVATION_MAX_PER_DAY:
+            if await get_motivation_approved_count(char_id, app_day_start_utc()) >= MOTIVATION_MAX_PER_DAY:
                 _logger.info("Proactive msg char=%d skipped: motivation daily limit", char_id)
                 return False
         else:

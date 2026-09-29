@@ -601,6 +601,8 @@ def test_state_trigger_prompt_guard_missing_xfail(monkeypatch):
     monkeypatch.setattr("app.agent.persona.build_active_channel_persona", _persona)
     monkeypatch.setattr("app.agent.llm_client.chat_completion", cap)
     monkeypatch.setattr("app.scheduling.arbiter.get_hourly_active_count", _zero)
+    # 断点 #8′ E10 后发送前多了一道内核闸；本用例只验 prompt 构建，闸本身由 tests/test_state_trigger_gates.py 覆盖
+    monkeypatch.setattr(state_triggers, "_kernel_gate_reason", _noop_async)
     monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _noop_async)
     _patch_anchor(monkeypatch)
 
