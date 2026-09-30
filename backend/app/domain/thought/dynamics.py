@@ -8,7 +8,7 @@
 边界：**零 IO、零 ORM、零 DB、零 flag、零网络、零业务 import**，纯函数。
 
 ⚠️ 下面所有阈值均为**初值，必须实测回标定**（设计 §2.2 只给了 S_OBS/TTL/容量与六个 w，
-``NOVELTY_HALFLIFE_DAYS`` 与 ``SALT_BUMP_WEIGHT`` 设计未给值，由本单定为初值并在回放报告
+``NOVELTY_E_FOLDING_DAYS`` 与 ``SALT_BUMP_WEIGHT`` 设计未给值，由本单定为初值并在回放报告
 第 6 节如实标注）。
 """
 from __future__ import annotations
@@ -18,8 +18,17 @@ from datetime import datetime, timedelta, timezone
 
 from app.domain.thought.extract import SALT_WEIGHT_BY_SOURCE
 
-# ── 新鲜度：半衰期（天）。设计 §2.2 只写了公式没给值 ⇒ 本单初值，待标定 ──
-NOVELTY_HALFLIFE_DAYS = 7.0
+# ── 新鲜度：e 折叠时间 τ（天）。设计 §2.2 只写了公式没给值 ⇒ 本单初值，待标定 ──
+# 公式 ``novelty = exp(-age/τ)`` 里的 τ 是 **e 折叠时间**（掉到 1/e 的天数），不是半衰期：
+#     真半衰期 = τ · ln2   （τ=7.0 ⇒ 约 4.85 天掉到 0.5）
+#     τ = 真半衰期 / ln2 = 真半衰期 × 1.4427   （想要「真半衰期 7 天」须取 τ=10.1）
+# M1 订正（方案 F §5.1）：**只改名、公式不动 ⇒ 零行为变更**，M0 全部已测读数（novelty
+# p50=0.3679、挤出 90.14%）继续有效。等 M1 真要给 novelty 设阈值时再一次性切到
+# ``0.5 ** (age/HALFLIFE)`` 写法并重跑标定。
+NOVELTY_E_FOLDING_DAYS = 7.0
+# 旧名别名：M0 单测（tests/test_thought_m0.py）与回放 ``--params`` 的既有口径按此名引用，
+# 二者不在本批白名单内；两处读数与 ``novelty`` 的默认值实参一律走上面的新名。
+NOVELTY_HALFLIFE_DAYS = NOVELTY_E_FOLDING_DAYS
 
 # ── 升级判据（设计 §2.2 迁移表第 1 行）──
 SALT_OBSSESSION_THRESHOLD = 2.0   # S_OBS，设计默认值 2.0
@@ -82,15 +91,16 @@ def age_days(created_at_utc: datetime | None, now_utc: datetime | None = None) -
     return float(max(0, (b - a).days))
 
 
-def novelty(age: float | int, halflife_days: float = NOVELTY_HALFLIFE_DAYS) -> float:
-    """``novelty = exp(-age_days / NOVELTY_HALFLIFE_DAYS)``（设计 §2.2，公式照抄不改）。
+def novelty(age: float | int, halflife_days: float = NOVELTY_E_FOLDING_DAYS) -> float:
+    """``novelty = exp(-age_days / NOVELTY_E_FOLDING_DAYS)``（设计 §2.2，公式照抄不改）。
 
     值域 (0, 1]：age=0 ⇒ 1.0，随时间**单调衰减**，与咸度正交。
 
-    ⚠️ 数学口径提醒（标定前必须知道）：``exp(-t/τ)`` 里的 ``τ`` 是 **e 折叠时间**，不是半衰期——
-    真实减半点是 ``τ·ln2``（τ=7 ⇒ 约 4.85 天就掉到 0.5）。设计 §2.2 把常量名叫
-    ``NOVELTY_HALFLIFE_DAYS`` 却配了这个公式，属**命名与公式不一致**。M0 照公式实现（零行为、
-    不擅自改判据），把该不一致记入回放报告第 6 节与 M1 标定清单。
+    ⚠️ 数学口径（M1 已按方案 F §5.1 改名订正）：``exp(-t/τ)`` 里的 ``τ`` 是 **e 折叠时间**，
+    真实减半点在 ``τ·ln2``——τ=7.0 天时 novelty≈0.368，要到约 4.85 天才掉到 0.5。旧常量名
+    ``NOVELTY_HALFLIFE_DAYS`` 与公式不一致，现改名 ``NOVELTY_E_FOLDING_DAYS``；**公式与取值
+    一字未动 ⇒ 零行为变更**，M0 的分布读数继续可比。入参名 ``halflife_days`` 保持不变
+    （调用方与回放 ``--params`` 的早绑定刷默认值机制按此位置生效，改名只会增加风险）。
     """
     if halflife_days <= 0:
         return 0.0

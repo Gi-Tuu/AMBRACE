@@ -470,4 +470,14 @@ AGENT_FLAGS = {
     #   （纯机械替换、值逐字不变）；events/store.py 的 actor/origin 只判定+只计数（不改落库值）。
     # 回退：置回 False（runtime_flags 热切，无需重启）；风险面＝注入文本变长，牵动前端块切分展示。
     "observation_label_v1": False,
+    # ── A4 批 4 / T2 M1（2026-09-30）：念头池影子供给总闸（默认关＝逐字节旧行为）──
+    # 开＝抽取 → 源侧配额（按面每日硬闸 + 入池准入门槛，app/domain/thought/quota.py）→ 幂等
+    #   去重 → 写 thought_pool 表 + 一条 trace（route=thought_pool_shadow），只攒料不使用；
+    #   判效窗内看「日均可落池条数、各闸丢弃数」，验证配额把入流压到 ≤420 条/30 天的目标。
+    # 关＝**逐字节旧行为**：读写口 app/application/thought_pool_service.py 每个入口首行即返回，
+    #   连一次 SELECT 都不发。默认关＝零行为、零开销，一键回退。
+    # 本批**没有发送权**：不开 prompt 注入、不碰 arbiter / message_generator / 任何发送链路，
+    #   念头进上下文属 M2-a（前置＝本表已攒到料 + thought_id 归因位）。
+    # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
+    "thought_pool_shadow": False,
 }

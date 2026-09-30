@@ -49,6 +49,7 @@ if _BACKEND_ROOT not in sys.path:
 from app.domain.thought import dynamics as dyn  # noqa: E402
 from app.domain.thought import extract as ex  # noqa: E402
 from app.domain.thought import filters as fl  # noqa: E402
+from app.domain.thought import quota as qt  # noqa: E402
 
 DEFAULT_DB = os.path.join(_BACKEND_ROOT, "data", "sqlite", "ai_companion.db")
 REPORT_NAME = "AMBRACE_批4_M0_离线回放报告_20260929.md"
@@ -62,6 +63,8 @@ def default_report_path() -> str:
     return os.path.join(os.environ.get("AMBRACE_OUTPUT_DIR") or "output", REPORT_NAME)
 DEFAULT_DAYS = 30
 DEFAULT_LIMIT = 4000
+# 方案 F §3.1 第一行的目标入流量：≤420 条/30 天（每（角色×用户）日均 ≤0.5）
+QUOTA_TARGET_30D = 420
 
 _BJ = timezone(timedelta(hours=8))
 # 撞句基线（§5 第 3 条）的三个对手通道：念头不得与它们抢同一句话
@@ -285,7 +288,8 @@ def replay_faces(data: dict, now: datetime, days: int, shared_refs: set[str]) ->
         emit(ex.extract_reflection(row), _ts(row.get("created_at")), row.get("character_id"))
 
     # F3 朋友圈沉淀（互动数经归一文本回溯；回溯不到＝互动未知，不判冷场也不入池）
-    blocked = {ex.text_hash(m["content"]) for m in data["ai_moments"]}
+    # M1 订正（方案 F §5.2）：F3 不再按「朋友圈原文哈希」拦——那样每条 F3 都会被自己那条
+    # 原文封锁（自我封锁）。同源重复供给改由**结构化键**在 apply_quota 里拦。
     for row in data["moment"]:
         row = dict(row)
         body = str(row.get("content") or "")
@@ -300,7 +304,7 @@ def replay_faces(data: dict, now: datetime, days: int, shared_refs: set[str]) ->
             rp.face_raw[ex.SRC_MOMENT] += 1
             rp.reject_reasons["moment_link_missing"] += 1
             continue
-        out = ex.extract_moment(row, blocked_text_hashes=blocked)
+        out = ex.extract_moment(row)
         for d in out:
             d["moment_id"] = mid
         emit(out, ts, row.get("character_id"))
@@ -383,6 +387,58 @@ def baseline_pool(rp: Replay, pressure: dict, days: int) -> dict:
         "rejected_total": sum(rp.reject_reasons[r] for r in fl.INTAKE_REASONS),
         "per_day": pressure["daily_total"],
         "per_pair_per_day": pressure["daily_per_pair"],
+    }
+
+
+def apply_quota(rp: Replay, now: datetime, days: int,
+                caps: dict[str, int] | None = None,
+                min_novelty: float | None = None) -> dict:
+    """M1 源侧配额复演（纯内存）：可入池 → 实际落池多少、各闸各丢多少。
+
+    判据与影子供给共用同一个 ``app.domain.thought.quota``（准入 → 每日硬闸 → 结构化键去重），
+    差别只在回放不落库。``caps`` / ``min_novelty`` 传 None 即用 quota 的模块级默认值，
+    传入即试另一套配额（**只在本次调用内生效，不改磁盘默认值**）。
+
+    ⚠️ 口径差异必须写明：这里的 novelty 按「报告时刻」折算，而生产是每条信号在它**产生的那一刻**
+    判定（当天≈1.0）。因此回放看到的准入闸拦截量＝「一次性补抽 30 天历史」时的**保守上界**，
+    影子期真实运行的入流只会更少（配额闸不受此影响，按北京日分桶与生产一致）。
+    """
+    used: dict[tuple, int] = {}
+    seen: set[str] = set()
+    dropped: Counter[str] = Counter()
+    kept_face: Counter[str] = Counter()
+    pairs: set[tuple] = set()
+    for d in sorted(rp.drafts, key=lambda x: x.get("created_at") or now):
+        face = str(d.get("source_type") or "")
+        char_id, user_id = d.get("character_id"), d.get("user_id")
+        ts = d.get("created_at") or now
+        key = qt.dedup_key(char_id, user_id, face, d.get("source_ref"))
+        if key in seen:
+            dropped[qt.DROP_DUP_KEY] += 1
+            continue
+        pk = qt.pair_day_key(char_id, user_id, face, ts)
+        reason = qt.admit_reject_reason(
+            source_type=face, novelty_value=dyn.novelty(dyn.age_days(ts, now)),
+            used_today=used.get(pk, 0), caps=caps, min_novelty=min_novelty)
+        if reason:
+            dropped[reason] += 1
+            continue
+        seen.add(key)
+        used[pk] = used.get(pk, 0) + 1
+        kept_face[face] += 1
+        pairs.add((char_id, user_id))
+    kept = sum(kept_face.values())
+    n_pairs = len(pairs) or 1
+    return {
+        "kept": kept,
+        "kept_per_day": round(kept / max(1, days), 2),
+        "kept_per_pair_per_day": round(kept / n_pairs / max(1, days), 3),
+        "pairs": len(pairs),
+        "dropped": dict(dropped),
+        "dropped_total": sum(dropped.values()),
+        "by_face": dict(kept_face),
+        "target": QUOTA_TARGET_30D,
+        "meets_target": kept <= QUOTA_TARGET_30D,
     }
 
 
@@ -596,12 +652,14 @@ def render_report(rp: Replay, pressure: dict, b1: dict, b2: dict, b3: dict,
         a(f"| {label} | {qv['n']} | {qv['min']} | {qv['p10']} | {qv['p25']} | {qv['p50']} "
           f"| {qv['p75']} | {qv['p90']} | {qv['max']} |")
     a("")
-    a(f"- 参数（全部模块级常量，待标定）：`NOVELTY_HALFLIFE_DAYS={dyn.NOVELTY_HALFLIFE_DAYS}`、"
+    a(f"- 参数（全部模块级常量，待标定）：`NOVELTY_E_FOLDING_DAYS={dyn.NOVELTY_E_FOLDING_DAYS}`、"
       f"`SALT_OBSSESSION_THRESHOLD={dyn.SALT_OBSSESSION_THRESHOLD}`、"
       f"`MIN_DISTINCT_HIT_SOURCES={dyn.MIN_DISTINCT_HIT_SOURCES}`、`TTL_DAYS={dyn.TTL_DAYS}`、"
       f"`CAP_SPARK={dyn.CAP_SPARK}` / `CAP_OBSESSION={dyn.CAP_OBSESSION}` / "
       f"`CAP_TOLD_FLAT={dyn.CAP_TOLD_FLAT}`、`SALT_TOLD_FLAT_RATIO={dyn.SALT_TOLD_FLAT_RATIO}`、"
-      f"`MAX_TELL_COUNT={dyn.MAX_TELL_COUNT}`、`SALT_BUMP_WEIGHT={dyn.SALT_BUMP_WEIGHT}`。")
+      f"`MAX_TELL_COUNT={dyn.MAX_TELL_COUNT}`、`SALT_BUMP_WEIGHT={dyn.SALT_BUMP_WEIGHT}`。"
+      f" 源侧配额（M1 新增）：`FACE_DAY_CAP={qt.FACE_DAY_CAP}`、"
+      f"`FACE_DAY_CAP_DEFAULT={qt.FACE_DAY_CAP_DEFAULT}`、`ADMIT_MIN_NOVELTY={qt.ADMIT_MIN_NOVELTY}`。")
     face_nov: dict[str, list[float]] = defaultdict(list)
     for d in rp.drafts:
         face_nov[d["source_type"]].append(d["novelty"])
@@ -617,6 +675,13 @@ def render_report(rp: Replay, pressure: dict, b1: dict, b2: dict, b3: dict,
     a(f"- 极端假设（全部候选同刻入池）下需挤出 {pressure['evicted']} 条；"
       f"按 {dyn.CAP_SPARK} 的顶，单一组合约 {dyn.CAP_SPARK / max(b1['per_pair_per_day'], 0.001):.0f} "
       f"天触顶（未计 TTL 与挤出后的自然衰减）。")
+    q = apply_quota(rp, now, days)
+    a(f"- **M1 源侧配额后**：落池 **{q['kept']}** 条 / {days} 天（日均 {q['kept_per_day']}，"
+      f"每（角色×用户）日均 **{q['kept_per_pair_per_day']}**），丢弃 {q['dropped_total']} 条"
+      f"＝准入 {q['dropped'].get(qt.DROP_ADMIT, 0)} / 每日硬闸 {q['dropped'].get(qt.DROP_QUOTA, 0)}"
+      f" / 同源重复 {q['dropped'].get(qt.DROP_DUP_KEY, 0)}；"
+      f"目标 ≤{q['target']} 条 ⇒ **{'达标' if q['meets_target'] else '未达标'}**。"
+      f"按面留存＝{sorted(q['by_face'].items(), key=lambda kv: -kv[1])}。")
     a("")
     a("### 5.2 基线 2 · 效果（N3 回复率 / N4 日均条数）")
     a("")
@@ -681,7 +746,8 @@ def render_report(rp: Replay, pressure: dict, b1: dict, b2: dict, b3: dict,
       "结论：M1 若要接 F5 的 `Memory.epistemic_status` 一路，必须换成「短标题/短 object 值」来源，"
       "不能靠截断。")
     a("9. **设计 §2.2 的 novelty 公式与常量名不一致（本单照公式实现，未擅自改）**："
-      f"`novelty = exp(-age_days / NOVELTY_HALFLIFE_DAYS)` 里的 τ 是 **e 折叠时间**，"
+      f"`novelty = exp(-age_days / NOVELTY_E_FOLDING_DAYS)`（M1 已按方案 F §5.1 **只改名、"
+      f"公式不动**，零行为变更）里的 τ 是 **e 折叠时间**，"
       f"真实减半点在 `τ·ln2`——τ={dyn.NOVELTY_HALFLIFE_DAYS} 天时 novelty≈"
       f"{dyn.novelty(dyn.NOVELTY_HALFLIFE_DAYS):.3f}，要到约 "
       f"{dyn.NOVELTY_HALFLIFE_DAYS * math.log(2):.2f} 天才掉到 0.5。"
@@ -711,7 +777,9 @@ def render_report(rp: Replay, pressure: dict, b1: dict, b2: dict, b3: dict,
 # 只服务离线回放的假设检验：不改源码默认值、不写库、不接线、退出即自动还原。
 # 例：--params "CAP_SPARK=24,NOVELTY_HALFLIFE_DAYS=3.5,W:activity=0.4"
 _OVERRIDE_WHITELIST = frozenset({
-    "NOVELTY_HALFLIFE_DAYS", "SALT_OBSSESSION_THRESHOLD", "MIN_DISTINCT_HIT_SOURCES",
+    # τ 的新名（M1 订正①）；旧名 NOVELTY_HALFLIFE_DAYS 仍保留可用——两者都指向 novelty 的
+    # 同一个早绑定默认值槽位，回放历史报告里的 --params 串照旧能复跑。
+    "NOVELTY_E_FOLDING_DAYS", "NOVELTY_HALFLIFE_DAYS", "SALT_OBSSESSION_THRESHOLD", "MIN_DISTINCT_HIT_SOURCES",
     "TTL_DAYS", "CAP_SPARK", "CAP_OBSESSION", "CAP_TOLD_FLAT",
     "SALT_TOLD_FLAT_RATIO", "MAX_TELL_COUNT", "SALT_BUMP_WEIGHT",
 })
@@ -719,6 +787,7 @@ _OVERRIDE_WHITELIST = frozenset({
 # Python 默认参数在 def 时求值 ⇒ 只 setattr 模块属性到不了「早绑定」的默认值，必须连同
 # ``__defaults__`` 一起刷新（否则 novelty()/evict() 仍用旧值，模拟会静默失效）。
 _BOUND_DEFAULTS = {
+    "NOVELTY_E_FOLDING_DAYS": ("novelty", 0),
     "NOVELTY_HALFLIFE_DAYS": ("novelty", 0),
     "CAP_SPARK": ("evict", 0),
     "CAP_OBSESSION": ("evict", 1),
@@ -827,6 +896,7 @@ def main(argv=None) -> int:
         b1 = baseline_pool(rp, pressure, args.days)
         b2 = baseline_effect(data, now, args.days)
         b3 = baseline_collision(rp, data)
+        quota = apply_quota(rp, now, args.days)
         report = render_report(rp, pressure, b1, b2, b3, args.days, args.db, now)
     if not args.no_report:
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
@@ -840,12 +910,17 @@ def main(argv=None) -> int:
     print(f"[M0 基线] N3={b2['reply_rate_60min']}%  N4每角色日均={b2['n4_per_char_day']}  "
           f"撞句重叠率={b3['overlap_rate_of_judged']}%(可判)/{b3['overlap_rate_of_all']}%(全体)  "
           f"养熟组数={pressure['promotable_obsession']}  挤出={pressure['evicted']}")
+    print(f"[M1 配额] 可入池 {b1['kept_total']} → 落池 {quota['kept']}（丢弃 {quota['dropped_total']}："
+          f"准入 {quota['dropped'].get(qt.DROP_ADMIT, 0)}／每日硬闸 {quota['dropped'].get(qt.DROP_QUOTA, 0)}"
+          f"／同源重复 {quota['dropped'].get(qt.DROP_DUP_KEY, 0)}）"
+          f"｜日均 {quota['kept_per_day']} 条｜每(角色×用户)日均 {quota['kept_per_pair_per_day']}"
+          f"｜目标 ≤{quota['target']} 条/30 天 ⇒ {'达标' if quota['meets_target'] else '未达标'}")
     print(f"[M0 分布] novelty p50={_quantiles([d['novelty'] for d in rp.drafts]).get('p50')}  "
           f"salt p50={_quantiles([d['salt'] for d in rp.drafts]).get('p50')}")
     if overrides:
         _kept = max(1, len(rp.drafts))
         _ev = int(pressure['evicted'])
-        print(f"[参数覆盖-指标] 可入池={_kept}  挤出={_ev}"
+        print(f"[参数覆盖-指标] 可入池={_kept}  落池(配额后)={quota['kept']}  丢弃={quota['dropped_total']}  挤出={_ev}"
               f"（{_ev * 100.0 / _kept:.2f}%）  "
               f"池量每(角色×用户)日均={b1['per_pair_per_day']}  "
               f"撞句={b3['overlap_rate_of_judged']}%(可判)/{b3['overlap_rate_of_all']}%(全体)  "

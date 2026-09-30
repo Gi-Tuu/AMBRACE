@@ -49,6 +49,7 @@ from app.models.character import (
     RelationshipEvent,
     StateTriggerLog,
     StorylineEvent,
+    ThoughtPool,
 )
 from app.models.chat import (
     AIChat,
@@ -159,6 +160,8 @@ CHARACTER_DELETE_SPECS = [
     # ── 情绪关怀 / 隐私申请 ──
     (EmotionCareTask, "character_id"),
     (PrivacyRequest, "character_id"),
+    # ── A4 批 4 M1（2026-09-30）：念头池 —— 角色私有谈资，删角色随行物理删 ──
+    (ThoughtPool, "character_id"),
 ]
 
 

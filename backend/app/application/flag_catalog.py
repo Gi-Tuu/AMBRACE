@@ -188,6 +188,15 @@ _FLAG_ROWS: list[tuple] = [
      'Quietly keeps a record of how feelings like missing you, worrying about you and wanting to share '
      'drift over time, purely to check how they behave; it changes no replies, no proactive messages '
      'and no timing. Off by default.'),
+    ('thought_pool_shadow', 'outreach_natural', 13, False, '聊天话题储备后台观察',
+     '在后台把角色日常里冒出来的小事（做完的一件事、新听到的说法、没人接的一句话）按每天限量'
+     '整理成一份话题储备，只用于核对整理得合不合适；不改变任何回复、主动消息、发送时机和措辞。'
+     '默认关闭。',
+     'Topic reserves observed in the background',
+     'Quietly sorts the little things that come up in the character day (something finished, something '
+     'newly heard, something said that got no reply) into a limited daily reserve of topics, purely to '
+     'check whether the sorting looks right; it changes no replies, no proactive messages, no timing '
+     'and no wording. Off by default.'),
 
     # ── 记忆检索与注入（实验灰度）──
     ('memory_temporal_recall', 'memory', 701, False, '时间线索记忆检索',

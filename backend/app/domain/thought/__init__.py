@@ -1,15 +1,21 @@
 # -*- coding: utf-8 -*-
-"""念头池 T2 纯函数域（A4 批 4 M0，2026-09-29）：抽取规则 / 入池三道过滤 / 双量动力学。
+"""念头池 T2 纯函数域（A4 批 4 M0 抽取/过滤/动力学，M1 加源侧配额，2026-09-30）。
 
-边界（强约束）：**零 IO、零 ORM、零 DB、零 flag、零网络、零域外业务 import**——三个子模块
+四个子模块：``extract``（六个来源面 F1–F6 的成念规则）/ ``filters``（入池三道确定性过滤）/
+``dynamics``（novelty·salt 双量与升级·挤出·三档释放）/ ``quota``（**M1 新增**：按面每日硬闸 +
+入池准入门槛 + 结构化幂等键——M0 回放证明调参削不掉入流量，配额只能做在源头）。
+
+边界（强约束）：**零 IO、零 ORM、零 DB、零 flag、零网络、零域外业务 import**——各子模块
 只用 stdlib（``math``/``re``/``hashlib``/``datetime``）与本包内互相引用，只接受基础类型入参、
-只返回基础类型。落库（表 ``thought_pool``）、三处抽取挂点、供给 prompt 与释放结算全部属于
-M1/M2（设计 §7），本包一行都不碰；M0 唯一的消费者是离线回放脚本
-``backend/scripts/thought_replay.py``。
+只返回基础类型（配额计数、已落键等**状态一律由调用方持有并注入**）。落库（表
+``thought_pool``，读写口 ``app/application/thought_pool_service.py``）、三处抽取挂点、供给
+prompt 与释放结算都在本包之外；M0 的消费者是离线回放脚本 ``backend/scripts/thought_replay.py``，
+M1 起再加影子供给服务与回放里的配额对照闸。
 
 口径来源：``AMBRACE_批4_念头池T2_详细设计_v1_20260929.md`` §2.1（六个来源面 F1–F6）、
 §2.2（novelty/salt 公式、状态迁移表、挤出、三道过滤）、§2.3（三档释放）、
-§3.2（与 life_share / unfinished_topic / 朋友圈原文的排他边界）。
+§3.2（与 life_share / unfinished_topic / 朋友圈原文的排他边界）；
+配额取值来源 ``AMBRACE_批4_反灌爆与配比方案_v1_20260929.md``（方案 F）。
 
 与 ``domain/relational/drives.py``（批 3 T1 M1a）同级同风格。
 """
@@ -22,6 +28,7 @@ from app.domain.thought.dynamics import (
     CAP_TOLD_FLAT,
     MAX_TELL_COUNT,
     MIN_DISTINCT_HIT_SOURCES,
+    NOVELTY_E_FOLDING_DAYS,
     NOVELTY_HALFLIFE_DAYS,
     REPLY_WINDOW_MINUTES,
     SALT_BUMP_WEIGHT,
@@ -90,6 +97,21 @@ from app.domain.thought.filters import (
     intake_reject_reason,
     topic_bucket,
 )
+from app.domain.thought.quota import (
+    ADMIT_MIN_NOVELTY,
+    DROP_ADMIT,
+    DROP_DUP_KEY,
+    DROP_QUOTA,
+    DROP_REASONS,
+    FACE_DAY_CAP,
+    FACE_DAY_CAP_DEFAULT,
+    admit_reject_reason,
+    dedup_key,
+    face_day_cap,
+    idempotency_key,
+    pair_day_key,
+    source_key,
+)
 
 __all__ = [
     # 来源面
@@ -108,7 +130,8 @@ __all__ = [
     "REASON_FICTIONAL", "topic_bucket", "filter_length", "filter_recent_overlap",
     "filter_epistemic", "intake_reject_reason",
     # 动力学
-    "NOVELTY_HALFLIFE_DAYS", "SALT_BUMP_WEIGHT", "SALT_OBSSESSION_THRESHOLD",
+    "NOVELTY_E_FOLDING_DAYS", "NOVELTY_HALFLIFE_DAYS", "SALT_BUMP_WEIGHT",
+    "SALT_OBSSESSION_THRESHOLD",
     "MIN_DISTINCT_HIT_SOURCES", "TTL_DAYS", "CAP_SPARK", "CAP_OBSESSION",
     "CAP_TOLD_FLAT", "MAX_TELL_COUNT", "SALT_TOLD_FLAT_RATIO", "REPLY_WINDOW_MINUTES",
     "ACTIVE_STATUSES", "STATUS_SPARK", "STATUS_OBSESSION", "STATUS_TOLD_FLAT",
@@ -116,4 +139,9 @@ __all__ = [
     "age_days", "novelty", "salt_of", "should_promote", "should_fade",
     "is_expired_told_flat", "apply_told_flat", "classify_release", "strength", "evict",
     "now_utc",
+    # 源侧配额 / 准入 / 结构化键（M1）
+    "FACE_DAY_CAP", "FACE_DAY_CAP_DEFAULT", "ADMIT_MIN_NOVELTY",
+    "DROP_ADMIT", "DROP_QUOTA", "DROP_DUP_KEY", "DROP_REASONS",
+    "face_day_cap", "pair_day_key", "source_key", "dedup_key", "idempotency_key",
+    "admit_reject_reason",
 ]

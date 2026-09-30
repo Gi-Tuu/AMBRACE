@@ -317,6 +317,54 @@ class RelationalDrive(Base):
     )
 
 
+class ThoughtPool(Base):
+    """念头池 T2（A4 批 4 / M1，2026-09-30）：行粒度＝一条念头（角色 × 用户 × 来源信号）。
+
+    与 ``RelationalDrive`` 同级同款治理，但**语义正交**：T1 存「想说哪一类」的水位，本表存
+    「这一类里具体说哪一件」的谈资。设计 §2.4 第 3 条硬规则——本表不挂 ``character_states``
+    （八维唯一维护方是 ``character_state_service``）、不反写任何水位，念头池是自己的唯一真相源。
+
+    ``user_id`` 用 ``0`` 而非 NULL 表示「角色级、无用户维度」（F1 活动 / F6 兴趣的生产表只有
+    character_id）：SQLite 的唯一约束里 NULL 互不相等，用 NULL 会让「同一件事重复抽取」绕过
+    幂等键重复落库，故取哨兵值 0，也因此**不给 user_id 挂外键**（0 在 users 里不存在）。
+
+    状态机（``status``，设计 §2.2/§2.3）：``spark`` → ``obsession`` → ``spent`` / ``told_flat``
+    / ``faded``；``never_told`` 不是状态而是「从未被选中」的释放档（§2.3），故库里不出现。
+    本批（M1）只写 ``spark`` 与留痕用的 ``spent``，升级/挤出/释放结算属 M2。
+    """
+    __tablename__ = "thought_pool"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")  # 0＝角色级
+    thought_kind: Mapped[str] = mapped_column(String(20), nullable=False, default="", server_default="")  # intent 同族词表（M2 绑定）
+    text: Mapped[str] = mapped_column(String(120), nullable=False)  # 成念文本（设计 §2.5 列宽 120）
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False)  # F1–F6：activity/reflect/moment/user_hook/fact/interest
+    source_ref: Mapped[str] = mapped_column(String(64), nullable=False)  # 来源主键（结构化幂等键的一部位）
+    text_hash: Mapped[str] = mapped_column(String(16), nullable=False)  # 归一文本 sha256 前 16 位
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="spark", server_default="spark")
+    salt: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
+    novelty: Mapped[float] = mapped_column(Float, nullable=False, default=1.0, server_default="1")  # 入池时刻快照（观测用）
+    hit_sources: Mapped[str] = mapped_column(Text, nullable=False, default="[]", server_default="[]")  # JSON list：命中过的来源面
+    tell_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")  # 半释放重提次数（§2.3）
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    last_hit_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    spent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)  # 非空＝已全额释放，结算幂等位
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        # 幂等入池（设计 §2.5）：同一（角色,用户,来源面,来源主键,文本哈希）只一行
+        UniqueConstraint(
+            "character_id", "user_id", "source_type", "source_ref", "text_hash",
+            name="uq_thought_pool_char_user_src_ref_hash",
+        ),
+        # 唯一热路径：取「该角色对该用户当前可用的一条念头」（按咸度降序扫 status）
+        Index("ix_thought_pool_char_user_status_salt", "character_id", "user_id", "status", "salt"),
+    )
+
+
 __all__ = [
     "AICharacter",
     "CharacterState",
@@ -330,4 +378,5 @@ __all__ = [
     "ProactiveMessageLog",
     "ProactiveTriggerLog",
     "RelationalDrive",
+    "ThoughtPool",
 ]

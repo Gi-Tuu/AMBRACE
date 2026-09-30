@@ -4,7 +4,7 @@
 # Alembic / metadata registration: import EVERY model so Base.metadata is complete.
 from app.models.base import Base
 from app.models.user import User, UserState, UserDndSettings, PrivacyRequest, BrowserSnapshot, AccountInvite, GlobalUserFact, AccountPurgeJob
-from app.models.character import AICharacter, CharacterState, CharacterStateHistory, RelationshipEvent, StateTriggerLog, StorylineEvent, ProactiveStorylineItem, ProactiveSettings, HolidayPreference, ProactiveMessageLog, ProactiveTriggerLog, RelationalDrive
+from app.models.character import AICharacter, CharacterState, CharacterStateHistory, RelationshipEvent, StateTriggerLog, StorylineEvent, ProactiveStorylineItem, ProactiveSettings, HolidayPreference, ProactiveMessageLog, ProactiveTriggerLog, RelationalDrive, ThoughtPool
 from app.models.chat import ChatSession, ChatMessage, ChatGroup, ChatGroupMember, ChatGroupMessage, GroupMemory, GroupCharCognition, AIChat
 from app.models.memory import Memory, DailySummary, ConversationTopic, StageMemory, ReflectionLog, ProcessedExtraction, SharedEvent, WeaveCard, WeaveCardMemory, WeaveCardCharacter, LorebookEntry, WorldFact, MemoryArchive, MemoryWriteReceipt, ProspectiveIntent
 from app.models.life import LifeState, LifeActivityLog, LifeArtifact, LifeInterest, LifeGoal, LifeSchedule, LifeFollowup, LifeChatIntent, AIDiary, UserDiary, UserMemo, AIMoment, MomentLike, MomentAILike, MomentComment, MomentReadMark, ScheduledEvent, TimelineEvent, ImageGenTask, ImageGenConfig, UserRhythm, UserWorkflow, UserEmojiPack, UserCustomEmoji
@@ -101,6 +101,7 @@ __all__ = [
     "ProcessedExtraction",
     "ReflectionLog",
     "RelationalDrive",
+    "ThoughtPool",
     "RelationshipEvent",
     "RuntimeFlag",
     "UserRuntimeFlag",

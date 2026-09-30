@@ -232,10 +232,16 @@ def test_回退后再upgrade列补回值为NULL(mig_db):
 
 
 def test_版本链单头且新修订在链上():
+    """链必须**单头**；本批的迁移必须仍在链上。
+
+    2026-09-30 订正：原先钉「head == NEW_REV」——后续批次每加一条迁移都会把它打红（本批 M1 加 
+    `b2d4f6a8c0e1` 时就红了）。改为「单头 ＋ 本批迁移在链上 ＋ 它的父仍是 PREV_REV」，
+    这样新迁移只会在**确实改动了历史**（分叉/改名/重挂父）时才红。"""
     cfg = _alembic_cfg()
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_heads() == [NEW_REV], script.get_heads()
-    revs = [r.revision for r in script.walk_revisions(base="base", head=NEW_REV)]
+    heads = script.get_heads()
+    assert len(heads) == 1, heads
+    revs = [r.revision for r in script.walk_revisions()]
     assert NEW_REV in revs and PREV_REV in revs
     assert script.get_revision(NEW_REV).down_revision == PREV_REV
 

@@ -146,6 +146,12 @@ _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     # user_runtime_flags 的先例）。老库（有表但无版本号）缺此表时若不判「落后」，会被 stamp
     # 到 head 却永久缺表——将来 M1b 的 settle/释放读写直接 select 报错，水位整条链静默失效。
     ("relational_drives", "level"),
+    # ── A4 批4 T2 M1 念头池（2026-09-30）：thought_pool 表 ──
+    # 该表【只由迁移 b2d4f6a8c0e1 create_table 引入】（表级哨兵，同 relational_drives /
+    # device_action_targets 的先例）。老库（有表但无版本号）缺此表时若不判「落后」，会被 stamp
+    # 到 head 却永久缺表——影子供给（thought_pool_service）一旦拨开 flag 就直接 INSERT 报错，
+    # 且「取一条可用的」热路径 SELECT 也炸，念头池整条链静默失效。
+    ("thought_pool", "salt"),
 ]
 
 
