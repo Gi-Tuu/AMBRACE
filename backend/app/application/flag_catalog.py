@@ -404,6 +404,13 @@ _FLAG_ROWS: list[tuple] = [
      'Per-account plugin runtime',
      'Plugins installed by other families no longer take part in your chats, tools or pages, '
      'and plugins cannot touch another account\'s character data.'),
+    ('openai_compat_endpoint', 'provider', 1106, False, '通用对话接口（内部验证）',
+     '开放一个标准格式的对话接口，让第三方工具用你自己的角色对话；每次调用都独立，'
+     '服务端不留存对话、不写记忆。默认关闭。',
+     'Standard chat endpoint (internal validation)',
+     'Exposes a standard-format chat endpoint so third-party tools can talk to your own character; '
+     'every call is independent and the server keeps no conversation and writes no memory. '
+     'Off by default.'),
 
     # ── 主动投放节制（B1）──
     ('outreach_hour_window_v1', 'pacing', 1201, False, '主动消息投放时段',

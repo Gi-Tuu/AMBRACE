@@ -114,6 +114,14 @@ def test_ai_chat_越权他人角色403(monkeypatch):
     assert ei.value.status_code == 403
     assert "BYOK" not in ei.value.detail
 
+def test_ai_chat_非激活角色404(monkeypatch):
+    """批 8 块 A / M1 口径定案（2026-10-01 拍板 B）：不可见即不可用 —— is_active=False
+    的角色在 /api/v1/ai/list 里不出现，故对话入口一律按「不存在」处理（404）。"""
+    _patch_chat_deps(monkeypatch, char=_char(is_active=False))
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(chat_with_character(ai_id=1, user_id=1, input_text="hi", lang="zh"))
+    assert ei.value.status_code == 404
+
 
 def test_ai_chat_输入为空400(monkeypatch):
     monkeypatch.setattr(character_chat_api, "_load_character", _async_ret(_char()))

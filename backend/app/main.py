@@ -39,6 +39,7 @@ from app.api import (
 from app.api.channel_login import router as channel_login_router  # 本地渠道登录页（P2，2026-09-12）
 from app.api.device_actions import router as device_actions_router  # X7-M4a 行动裁决 API（零真实执行）
 from app.api.ai_api import router as ai_api_router
+from app.api.openai_compat import router as openai_compat_router  # 批 8 块 A M1：角色级 OpenAI 兼容端点（flag 关=404）
 from app.auth.router import router as auth_router
 from app.db.database import init_db
 from app.db.migrate import ensure_alembic_revision, is_migration_available
@@ -412,7 +413,7 @@ ROUTERS = [
     life_router, life_home_router, voice_router, weave_router, permissions_router,
     phone_workflows_router, ai_api_router, mcp_router, games_router, llm_configs_router,
     account_router, device_router, channel_bindings_router, device_actions_router,
-    channel_login_router,
+    channel_login_router, openai_compat_router,
 ]
 for _r in ROUTERS:
     app.include_router(_r)

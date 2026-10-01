@@ -23,6 +23,9 @@ _logger = get_logger("llm_channel")
 CHANNEL_APP = "app"
 CHANNEL_WECHAT_ILINK = "wechat_ilink"
 CHANNEL_SERVER = "server"
+# 批 8 块 A / M1（2026-10-01）：角色级 OpenAI 兼容端点（/v1/chat/completions）的第三方流量。
+# 与 task=plugin_ai 配合，使块 D 面板能按 channel=openai_compat 单独切出该流量（设计 §2.1(1) 归因）。
+CHANNEL_OPENAI_COMPAT = "openai_compat"
 # 读端哨兵：迁移上线前的历史行（NULL）与「入口漏设」的行都归这里
 CHANNEL_UNKNOWN = "(unknown)"
 

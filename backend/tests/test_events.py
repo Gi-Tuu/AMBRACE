@@ -72,6 +72,7 @@ def test_register_builtin_handlers_idempotent():
     after1 = counts()
     register_builtin_handlers()
     after2 = counts()
-    # #63 机制4：life.activity_completed 有 2 个订阅者（朋友圈联动 _on_activity_completed + 自然分享 _on_life_share）
-    assert after1 == {"memory.written": 1, "life.activity_completed": 2}
+    # #63 机制4：life.activity_completed 原有 2 个订阅者（朋友圈联动 _on_activity_completed + 自然分享 _on_life_share）
+    # 批 4 M1-挂点（2026-10-01）新增第 3 个订阅者：F1 活动面抽念头入池 _on_thought_pool_activity
+    assert after1 == {"memory.written": 1, "life.activity_completed": 3}
     assert after2 == after1  # 幂等：重复注册不累积

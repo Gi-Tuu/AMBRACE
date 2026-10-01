@@ -730,10 +730,15 @@ async def _shadow_drive_note(item: dict, char_id: int, user_id: int, plan) -> No
         trace["level_at_send"] = level
 
 
-async def _annotate_outreach_plan(item: dict, char_id: int, mats_cache: dict, recent_cache: dict) -> None:
+async def _annotate_outreach_plan(item: dict, char_id: int, mats_cache: dict, recent_cache: dict,
+                                  char_has_unfinished: bool = False) -> None:
     """run_tick 汇总层统一"意图选择"：分级 + 素材前提 + 避开最近意图 → 写回 candidate。
 
     flag 关时不调用本函数（candidate 不动 → 零变化）。任一步失败均静默回退（intent=None，走旧链路）。
+
+    ``char_has_unfinished``（批 4 M2-b2 防线 2②）：本 tick 该角色是否已有 ``unfinished_topic``
+    候选。为 True 时念头池**本 tick 不供给**（让位给 unfinished_topic，避免两个通道在
+    「用户上次说了一半的事」上各开口一次）——只影响 thought 素材，不影响意图选择与发送。
     """
     cand = item.get("candidate") or {}
     _uid = cand.get("user_id")
@@ -779,14 +784,26 @@ async def _annotate_outreach_plan(item: dict, char_id: int, mats_cache: dict, re
         # 只在 outreach 管辖类型内供给（本函数仅由 PROACTIVE_OUTREACH_TYPES 候选调用，见 run_tick :939）；
         # 产出物只是 cand["thought"]（文本）+ cand["thought_id"]（供发送留痕绑定/后续释放结算），
         # **不改 intent、不改 plan、不碰任何 §3.1 频控闸**（念头池无发送权，设计 §3.3 红线 1/2）。
+        # 批 4 M2-b2（2026-10-01）补两条供给防线（设计 §3.2）：
+        #   防线 4（state_trigger 类型白名单）：仅在 PROACTIVE_OUTREACH_TYPES 内供给，其余类型
+        #     （timer/special/state_trigger/memory_review/pet_*/unfinished_topic/life_regression/
+        #     prospective_intent/plugin）一律不供给——照本函数 :739-741 的早退写法显式再判一道
+        #     （run_tick 已按类型门控调用，这里是纵深防御，防未来新增调用点漏判）；
+        #   防线 2②（与 unfinished_topic 双向排除·供给侧）：本 tick 该角色已有 unfinished_topic
+        #     候选 ⇒ 念头池本 tick 不供给（让位，照 sources/rhythm.py 让位写法），避免两通道抢同一句话。
         try:
-            from app.application.thought_pool_service import thought_pool_v1_allowed, fetch_one_thought
-            if thought_pool_v1_allowed(char_id):
-                async with async_session_factory() as _tdb:
-                    _th = await fetch_one_thought(_tdb, char_id, _uid, intent=_plan.intent)
-                if _th and _th.get("text"):
-                    cand["thought"] = _th["text"]
-                    cand["thought_id"] = _th.get("id")
+            if item.get("type") not in PROACTIVE_OUTREACH_TYPES:
+                pass                      # 防线 4：非 outreach 类型不供给（早退，不查库）
+            elif char_has_unfinished:
+                pass                      # 防线 2②：本 tick 已有 unfinished_topic 候选 ⇒ 让位不供给
+            else:
+                from app.application.thought_pool_service import thought_pool_v1_allowed, fetch_one_thought
+                if thought_pool_v1_allowed(char_id):
+                    async with async_session_factory() as _tdb:
+                        _th = await fetch_one_thought(_tdb, char_id, _uid, intent=_plan.intent)
+                    if _th and _th.get("text"):
+                        cand["thought"] = _th["text"]
+                        cand["thought_id"] = _th.get("id")
         except Exception as e:
             _logger.debug("thought pool supply skipped char=%d: %s", char_id, e)
     except Exception as e:
@@ -938,6 +955,9 @@ async def run_tick() -> list[str]:
         motivation = await _compute_motivation(char_id)
         for it in items:
             it["motivation"] = max(it.get("motivation", 0.0), motivation)
+        # 批 4 M2-b2 防线 2②：本 tick 该角色是否已有 unfinished_topic 候选（供念头池供给侧让位）。
+        # 只读已汇总的 items（零额外查询）；让位只作用于 thought 素材，不影响任何频控闸与发送。
+        _char_has_unfinished = any(it.get("type") == "unfinished_topic" for it in items)
         items.sort(
             key=lambda it: (
                 it["priority"],
@@ -952,7 +972,7 @@ async def run_tick() -> list[str]:
             try:
                 # B1-③：flag 开 + 主动搭话类型 → 选意图并写回 candidate（flag 关=不动，零变化）
                 if await _outreach_enabled((item.get("candidate") or {}).get("user_id")) and item.get("type") in PROACTIVE_OUTREACH_TYPES:
-                    await _annotate_outreach_plan(item, char_id, _mats_cache, _recent_cache)
+                    await _annotate_outreach_plan(item, char_id, _mats_cache, _recent_cache, _char_has_unfinished)
                 ok = await _execute(item)
             except Exception as e:
                 _logger.error("execute %s failed char=%d: %s", item["type"], char_id, e)

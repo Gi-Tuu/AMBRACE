@@ -164,12 +164,17 @@ def intake_thoughts_core(
     now: datetime | None = None,
     caps: dict[str, int] | None = None,
     min_novelty: float | None = None,
+    faded_refs: frozenset[str] = frozenset(),
 ) -> tuple[list[ThoughtPool], dict]:
     """纯判定段（不落库、不查库，便于单测直接喂候选）：三道过滤 → 准入 → 配额 → 幂等键。
 
     ``used`` / ``seen_source_keys`` 由调用方持有并在放行时就地自增——这样同一批里第二条同面
     候选能看到第一条，不需要每建一行就回查一次库。返回 ``(待 add 的行, 读数)``；
     **超额丢弃、不延后**（延后＝把今天的洪峰挪到明天，配额就退化成排队）。
+
+    ``faded_refs``（批 4 M2-b2 防线 5）：与 ``life_regression`` 同源去重——来源主键落在此集合
+    的候选，说明该活动近 24h 已被生活回灌通道讲过/将讲，**直接标 ``faded`` 留痕**（不删行、
+    不占额度、永不参与选择），避免「我最近做了什么」被两个通道各讲一遍。
     """
     moment = _resolve_now(now)
     by_recent = recent_texts or {}
@@ -177,6 +182,7 @@ def intake_thoughts_core(
     dropped: dict[str, int] = {}
     by_face: dict[str, int] = {}
     spent_logged = 0
+    faded_logged = 0
 
     for draft in drafts:
         face = str(draft.get("source_type") or "")
@@ -200,6 +206,13 @@ def intake_thoughts_core(
             rows.append(_new_row(draft, status=dyn.STATUS_SPENT, salt=salt, nov=nov, moment=moment))
             spent_logged += 1
             continue
+        # 批 4 M2-b2 防线 5：同源已被 life_regression 回灌讲过 ⇒ 只记一行 faded（不删行、不占额度、
+        # 永不参与选择）。与 spent 留痕行同形，区别仅终态（spent＝被接住讲完，faded＝让位回灌通道）。
+        if str(draft.get("source_ref") or "") in faded_refs:
+            seen_source_keys.add(key)
+            rows.append(_new_row(draft, status=dyn.STATUS_FADED, salt=salt, nov=nov, moment=moment))
+            faded_logged += 1
+            continue
         gate = qt.admit_reject_reason(
             source_type=face, novelty_value=nov,
             used_today=used.get(qt.pair_day_key(char_id, user_id, face, moment), 0),
@@ -217,8 +230,9 @@ def intake_thoughts_core(
 
     stats = {
         "seen": len(drafts),
-        "intake": len(rows) - spent_logged,
+        "intake": len(rows) - spent_logged - faded_logged,
         "spent_logged": spent_logged,
+        "faded_logged": faded_logged,
         "dropped": dropped,
         "dropped_total": sum(dropped.values()),
         "by_face": by_face,
@@ -232,6 +246,7 @@ async def supply_thought_pool(
     *,
     now: datetime | None = None,
     shared_refs: frozenset[str] = frozenset(),
+    faded_refs: frozenset[str] = frozenset(),
     recent_texts: dict[int, tuple[str, ...]] | None = None,
     caps: dict[str, int] | None = None,
     min_novelty: float | None = None,
@@ -240,6 +255,8 @@ async def supply_thought_pool(
 
     ``rows_by_face`` ＝ ``{来源面: [原始行 dict]}``（行形状见 ``app/domain/thought/extract``
     各抽取器；取数由调用方负责，本层不新建查询——设计 §3.1「一条内核闸都不新建、读法复用现成」）。
+    ``shared_refs``（防线 1）：已被 ``life_share`` 当场讲掉的来源主键 ⇒ 只写 spent 留痕行；
+    ``faded_refs``（防线 5）：已被 ``life_regression`` 回灌讲过的来源主键 ⇒ 只写 faded 留痕行。
     返回读数 dict（供判效聚合）；**flag 关 ⇒ 返回 ``{}`` 且不查库不写库**。
     """
     if not shadow_enabled():
@@ -260,7 +277,7 @@ async def supply_thought_pool(
         used, seen = await _seed_state(db, chars, moment)
         rows, stats = intake_thoughts_core(
             drafts, used=used, seen_source_keys=seen, recent_texts=recent_texts,
-            now=moment, caps=caps, min_novelty=min_novelty,
+            now=moment, caps=caps, min_novelty=min_novelty, faded_refs=faded_refs,
         )
         for row in rows:
             db.add(row)
@@ -273,6 +290,44 @@ async def supply_thought_pool(
     except Exception as e:
         _logger.warning("thought pool shadow supply failed (isolated): %s", e)
         return {"error": str(e), "flag": FLAG_KEY, "intake": 0, "dropped": {}, "dropped_total": 0}
+
+
+# ── 批 4 M2-b2（2026-10-01）防线 1：与 life_share 同源二选一的「分享是否成功」判据 ──
+# life_share 成功路径在发送前写一条 ProactiveTriggerLog(trigger_type='life_share',
+# decision='approved') 并 commit（scheduling/life_share.py:312-314）；事件总线**顺序**执行
+# 订阅者（events/bus.py:32-36），且念头挂点订阅在 life_share 之后（handlers.py 注册序），
+# 故本挂点运行时该 approved 行已落库。只读这条既有留痕判定成败，**不碰 life_share 任何发送逻辑**。
+# 识别窗口取 10 分钟：life_share 每角色 6h≤1（life_share._quota_ok），同 tick 的 approved 行
+# created_at≈now，10 分钟窗既能覆盖本次、又能避开 6h 内更早的其它活动。
+_LIFE_SHARE_RECENT_MINUTES = 10
+_LIFE_SHARE_TRIGGER_TYPE = "life_share"
+
+
+async def life_share_succeeded(db, character_id, *, now: datetime | None = None) -> bool:
+    """防线 1：本次「活动完成」是否已被 ``life_share`` 当场分享成功（读其既有 approved 留痕）。
+
+    成功 ⇒ 该活动只写一条 ``spent`` 留痕行（永不参与选择）；未成功 ⇒ 才以 ``spark`` 入池
+    （设计 §3.2 第 1 行「同源归属二选一」）。异常一律按 False（未成功）处理——宁可多入一条
+    spark，也不把没讲过的活动误判成已讲掉而丢料；判定失败绝不外抛。
+    """
+    if not character_id:
+        return False
+    try:
+        from app.models.character import ProactiveTriggerLog
+        moment = _resolve_now(now)
+        since = moment - timedelta(minutes=_LIFE_SHARE_RECENT_MINUTES)
+        row = (await db.execute(
+            select(ProactiveTriggerLog.id).where(
+                ProactiveTriggerLog.character_id == int(character_id),
+                ProactiveTriggerLog.trigger_type == _LIFE_SHARE_TRIGGER_TYPE,
+                ProactiveTriggerLog.decision == "approved",
+                ProactiveTriggerLog.created_at >= since,
+            ).limit(1)
+        )).first()
+        return row is not None
+    except Exception as e:
+        _logger.warning("life_share_succeeded check failed char=%s: %s", character_id, e)
+        return False
 
 
 # ══════════════════════════════════════════════════════════════════════════

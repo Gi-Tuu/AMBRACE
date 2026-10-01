@@ -201,18 +201,23 @@ async def chat_with_character(
     temperature: float = 0.8,
     lang: str = "zh",
 ) -> dict:
-    """核心流程：归属校验（不存在 404/非本人 403）→ 输入校验 → 限额 429 → BYOK 400 →
+    """核心流程：归属校验（不存在 404/非本人 403/非激活 404）→ 输入校验 → 限额 429 → BYOK 400 →
     记忆检索 → 人格组装 → LLM（task=plugin_ai 记账归因）→ 回复清理 strip_actions 兜底。
 
     返回 {"reply", "truncated", "character": {"id", "name", "avatar_url"}}；
     不落库/不建会话/不写记忆/不触发 hook 分发。
     """
-    # 1. 归属校验：不存在 404 / 非本人 403
+    # 1. 归属校验：不存在 404 / 非本人 403 / 非激活 404（不可见即不可用，与 list_characters 同口径）
     char = await _load_character(ai_id)
     if char is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "ai_character_not_found"))
     if char.user_id != user_id:
         raise HTTPException(status_code=403, detail=tr_lang(lang, "ai_character_forbidden"))
+    if not char.is_active:
+        # 批 8 块 A / M1 口径定案（2026-10-01 用户拍板 B）：list_characters 只列 is_active 角色
+        # （GET /v1/models 同谓词），故非激活角色在对话入口一律按「不存在」处理（404，不可见即
+        # 不可用），免得出现「models 为空、completions 却仍能调」的口径分叉。
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "ai_character_not_found"))
     # 2. 输入校验（必填 ≤4000 字符）
     input_text = (input_text or "").strip()
     if not input_text:

@@ -508,4 +508,15 @@ AGENT_FLAGS = {
     # 上限数值须由 GET /api/v1/scheduler/stats/notify-shape 的读数＋真机复核后再调，不照抄设计稿。
     # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
     "message_shape_notify_limit": False,
+    # ── A4 批 8 块 A / M1（2026-10-01）：角色级 OpenAI 兼容端点总闸（默认关＝两个路由 404）──
+    # 开＝注册并放行 POST /v1/chat/completions + GET /v1/models（标准 OpenAI 形状出入参，
+    #   内核复用 application/character_chat_api.chat_with_character 旁路：不落库/不建会话/
+    #   不写记忆/不触发 hook）；归属口径＝A 严格 owner（与 /api/v1/ai/* 同：角色不存在 404、
+    #   非本人 403），models 与 completions 必须同口径。凭据本阶段仍用 JWT（API key 属 M2）。
+    # 关＝**两个路由一律 404**（端点入口首行判 flag，未开即 raise 404，不查库、不进内核）。
+    # 显式拒绝（400，复用 M0 domain/compat_shape.validate_compat_request 文案）：stream=true /
+    #   tools / response_format / n>1 / messages[role=system]——静默忽略会让接错的人以为成功。
+    # 渠道归因：入口 set_channel(openai_compat)（utils/llm_channel.py 词表），task 沿用 plugin_ai。
+    # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
+    "openai_compat_endpoint": False,
 }

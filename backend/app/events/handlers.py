@@ -185,9 +185,14 @@ async def _on_thought_pool_activity(payload: dict) -> None:
       - **不改发送链**：不碰消息生成、不碰 arbiter、不给念头池发送权；
       - 幂等键沿用既有（角色,用户,来源类型,来源主键,规范化文本哈希）——重复事件不增行。
 
-    归属说明：F1 与 ``life_share`` 是同一信号的两个去向（设计 §3.2「同源归属二选一」）。
-    本挂点按**未分享**口径以 spark 入池（``shared_refs`` 传空）；「已被 life_share 讲掉 ⇒
-    只留 spent 痕迹」的协同属 §3.2 精修，需读 life_share 本次成败，不在本单（M1-挂点）范围。
+    批 4 M2-b2（2026-10-01）补两条同源去重（设计 §3.2，判据确定性、不靠模型）：
+      - **防线 1（与 life_share 同源二选一）**：读 life_share 既有 approved 留痕判定本次是否
+        分享成功——成功 ⇒ ``shared_refs={ref}``，该活动只写一条 ``spent`` 留痕行（永不参与选择）；
+        未成功 ⇒ 才以 ``spark`` 入池。**只读留痕，不碰 life_share 任何发送逻辑**；
+      - **防线 5（与 life_regression 去重）**：F1 入池前比对近 24h 生活回灌候选集
+        （``scheduling/life_regression.py`` 既有读法：``Memory.source='life'`` ∧ importance 达标
+        ∧ 近 24h），该活动记忆已在回灌候选集 ⇒ ``faded_refs={ref}``，spark 直接标 ``faded``
+        （不删行、永不参与选择），避免「我最近做了什么」被两个通道各讲一遍。
     """
     try:
         from app.application import thought_pool_service as _tps
@@ -200,6 +205,7 @@ async def _on_thought_pool_activity(payload: dict) -> None:
         from app.domain.thought import extract as _ex
         # 稳定来源主键：优先 artifact_id（create 类有产物），退化 memory_id（两个发布点都带）
         ref = _d.get("artifact_id") or _d.get("memory_id") or _d.get("id")
+        mem_id = _d.get("memory_id")
         row = {
             "id": ref,
             "character_id": character_id,
@@ -210,10 +216,52 @@ async def _on_thought_pool_activity(payload: dict) -> None:
             "epistemic_status": None,
         }
         async with async_session_factory() as db:
-            await _tps.supply_thought_pool(db, {_ex.SRC_ACTIVITY: [row]})
+            # 防线 1：本次是否已被 life_share 当场讲掉（读既有 approved 留痕；异常按未成功）
+            shared = await _tps.life_share_succeeded(db, character_id)
+            shared_refs = frozenset({str(ref)}) if (shared and ref is not None) else frozenset()
+            # 防线 5：未被分享时，再比对近 24h 生活回灌候选集（已被回灌讲过 ⇒ faded）
+            faded_refs: frozenset[str] = frozenset()
+            if not shared and ref is not None and mem_id is not None:
+                if await _in_life_regression_window(db, character_id, _d.get("user_id"), mem_id):
+                    faded_refs = frozenset({str(ref)})
+            await _tps.supply_thought_pool(
+                db, {_ex.SRC_ACTIVITY: [row]},
+                shared_refs=shared_refs, faded_refs=faded_refs,
+            )
             await db.commit()           # 钩子自开 session ⇒ 自己 commit（与 T1 settle 钩子同口径）
     except Exception as e:
         _logger.warning("events on_thought_pool_activity failed: %s", e)
+
+
+async def _in_life_regression_window(db, character_id, user_id, memory_id) -> bool:
+    """防线 5 判据：该活动记忆是否落在 ``life_regression`` 近 24h 生活回灌候选集里。
+
+    复用 ``scheduling/life_regression.collect_life_regression_events`` 的**既有读法**
+    （``Memory.source='life'`` ∧ ``importance >= MIN_IMPORTANCE`` ∧ ``created_at >= now-24h``
+    ∧ 未删），不新建查询口径、不改 life_regression 任何逻辑。命中 ⇒ 回灌通道owns这件事，
+    念头侧让位（标 faded）。异常按 False（不让位、正常 spark）——宁可多一条 spark 也不误丢。
+    """
+    try:
+        from datetime import timedelta
+        from app.models.memory import Memory
+        from app.scheduling.life_regression import LOOKBACK_HOURS, MIN_IMPORTANCE
+        from app.utils.timeutil import now_naive_utc
+        since = now_naive_utc() - timedelta(hours=LOOKBACK_HOURS)
+        conds = [
+            Memory.character_id == int(character_id),
+            Memory.source == "life",
+            Memory.importance >= MIN_IMPORTANCE,
+            Memory.delete_at.is_(None),
+            Memory.created_at >= since,
+            Memory.id == int(memory_id),
+        ]
+        if user_id:
+            conds.append(Memory.user_id == int(user_id))
+        row = (await db.execute(_sel(Memory.id).where(*conds).limit(1))).first()
+        return row is not None
+    except Exception as e:
+        _logger.warning("life_regression window check failed char=%s: %s", character_id, e)
+        return False
 
 
 def register_builtin_handlers() -> None:
