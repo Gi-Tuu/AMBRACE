@@ -568,6 +568,36 @@ async def has_capability_permission(plugin_name: str, tenant_id: int | None,
             _allowed = _spec.permission in _perms
     _logger.info("plugin=%s tenant=%s capability=%s allowed=%s",
                  plugin_name, tenant_id, capability_id, "true" if _allowed else "false")
+    # 批 8 块 B（2026-10-01）：**只记不判** —— 留痕不得改变返回值（异常一律吞掉）。
+    # 拒绝原因分级与上面 INFO 同口径，供 capability-audit 做「声明 vs 事实」对账。
+    # 用 obs_event_now（本轮内写完）而不是 obs_event（fire-and-forget）：本函数会被裸 TestClient /
+    # 一次性 asyncio.run 调用，后台写会在 loop 关闭后回灌成 PytestUnhandledThreadExceptionWarning。
+    try:
+        from app.memory.observability import obs_event_now
+
+        if _allowed:
+            _reason = "consented"
+        elif _spec is None:
+            _reason = "unknown_capability"
+        elif _tid is None:
+            _reason = "no_tenant"
+        else:
+            _row_ref = locals().get("_row")
+            if _row_ref is None:
+                _reason = "not_installed"
+            elif not bool(getattr(_row_ref, "enabled", False)):
+                _reason = "disabled"
+            else:
+                _reason = "not_consented"
+        await obs_event_now(None, "plugin_capability", {
+            "plugin": plugin_name,
+            "permission": (_spec.permission if _spec is not None else str(capability_id)),
+            "capability": str(capability_id),
+            "decision": "allow" if _allowed else "deny",
+            "reason": _reason,
+        })
+    except Exception:
+        pass
     return _allowed
 
 

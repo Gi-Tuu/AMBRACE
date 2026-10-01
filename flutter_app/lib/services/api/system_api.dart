@@ -319,6 +319,86 @@ class ContextBudgetCostEstimate {
   }
 }
 
+/// 批8 块 D：一条「按用途 / 按渠道」用量桶。
+///
+/// 名称、token 数与条形宽度（share）都由服务端算好（app/application/system.py 的 usage_panel），
+/// 前端只回显：本地再算一次占比/最大值，就会与服务端口径分叉（第二个真相）。
+class UsagePanelBucket {
+  const UsagePanelBucket({
+    required this.key,
+    required this.totalTokens,
+    required this.share,
+  });
+
+  final String key;
+  final int totalTokens;
+
+  /// 0..1，服务端算；无数据时 0.0
+  final double share;
+
+  factory UsagePanelBucket.fromMap(Map m) => UsagePanelBucket(
+        key: (m['key'] ?? m['task'] ?? m['channel'] ?? '').toString(),
+        totalTokens: (m['total_tokens'] as num?)?.toInt() ?? 0,
+        share: (m['share'] as num?)?.toDouble() ?? 0.0,
+      );
+}
+
+/// GET …/usage_panel 段（近 N 天窗口用量构成，纯读数）。
+///
+/// [estimatedUnavailable] 对应服务端 estimated 段：账本里没有估算标记列 ⇒ 行级「实测/估算」
+/// 如实不可区分，App 侧只显示这句说明，不得自行推断或补数。
+/// 金额段同样维持 unavailable（无价目表）：本类**不带**任何金额字段，
+/// 既有的一轮费用投影在 [ContextBudgetInfo.costEstimate]（basis 不同，勿混用）。
+class UsagePanel {
+  const UsagePanel({
+    required this.days,
+    required this.totalTokens,
+    required this.byTask,
+    required this.byChannel,
+    required this.estimatedUnavailable,
+  });
+
+  final int days;
+  final int totalTokens;
+  final List<UsagePanelBucket> byTask;
+  final List<UsagePanelBucket> byChannel;
+  final bool estimatedUnavailable;
+
+  bool get isEmpty =>
+      totalTokens <= 0 && byTask.isEmpty && byChannel.isEmpty;
+
+  static const UsagePanel empty = UsagePanel(
+    days: 0,
+    totalTokens: 0,
+    byTask: [],
+    byChannel: [],
+    estimatedUnavailable: true,
+  );
+
+  factory UsagePanel.fromMap(Object? raw) {
+    if (raw is! Map) return UsagePanel.empty;
+    final m = Map<dynamic, dynamic>.from(raw);
+    final window = m['window'] is Map ? m['window'] as Map : const {};
+    final total = m['total'] is Map ? m['total'] as Map : const {};
+    return UsagePanel(
+      days: (window['days'] as num?)?.toInt() ?? 0,
+      totalTokens: (total['total_tokens'] as num?)?.toInt() ?? 0,
+      byTask: (m['by_task'] as List? ?? [])
+          .whereType<Map>()
+          .map(UsagePanelBucket.fromMap)
+          .toList(),
+      byChannel: (m['by_channel'] as List? ?? [])
+          .whereType<Map>()
+          .map(UsagePanelBucket.fromMap)
+          .toList(),
+      estimatedUnavailable:
+          (m['estimated'] is Map ? (m['estimated'] as Map)['status'] : null)
+                  .toString() ==
+              'unavailable',
+    );
+  }
+}
+
 /// GET /api/v1/system/context-budget 的解析结果。
 class ContextBudgetInfo {
   const ContextBudgetInfo({
@@ -339,6 +419,7 @@ class ContextBudgetInfo {
         status: 'no_sample', samples: 0, items: []),
     this.costEstimate = const ContextBudgetCostEstimate(
         status: 'unavailable', reason: 'no_price_table', currency: ''),
+    this.usagePanel = UsagePanel.empty,
   });
 
   final String tier;
@@ -362,6 +443,9 @@ class ContextBudgetInfo {
 
   /// 一轮输入侧费用区间（Y2，缺价目时 unavailable，前端不补数）
   final ContextBudgetCostEstimate costEstimate;
+
+  /// 近 N 天用量构成（批8 块 D，服务端聚合；桶名/数字/占比都不在本地算）
+  final UsagePanel usagePanel;
 
   bool get isUserChosen => tierSource == 'user';
 
@@ -387,6 +471,7 @@ class ContextBudgetInfo {
       error: (m['error'] ?? '').toString(),
       sectionBreakdown: ContextBudgetBreakdown.fromMap(m['section_breakdown']),
       costEstimate: ContextBudgetCostEstimate.fromMap(m['cost_estimate']),
+      usagePanel: UsagePanel.fromMap(m['usage_panel']),
     );
   }
 }

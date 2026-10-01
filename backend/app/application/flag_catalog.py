@@ -2,7 +2,7 @@
 """开关目录元数据（A4，2026-09-20）：把 App 侧硬编码的「高级开关目录」改由后端下发。
 
 设计要点：
-- 键的唯一真源仍是 ``app/agent/loop.py`` 的 AGENT_FLAGS；本模块**只**提供展示元数据
+- 键的唯一真源是 ``app/flags/agent_flags.py`` 的 AGENT_FLAGS（断点 #8 起从 ``app/agent/loop.py`` 下沉，``loop.py`` 仅 re-export）；本模块**只**提供展示元数据
   （标题/说明/分组/顺序/是否常用），不参与开关的读写与生效判定；
 - 文案面向用户（一句话，可读），不出现 flag/DB/prompt 等实现术语；zh / en 成对提供；
 - ``visible=True`` = App「常用开关」直显（与 App 侧 _visibleKeys 的 10 键一致），
@@ -197,6 +197,19 @@ _FLAG_ROWS: list[tuple] = [
      'newly heard, something said that got no reply) into a limited daily reserve of topics, purely to '
      'check whether the sorting looks right; it changes no replies, no proactive messages, no timing '
      'and no wording. Off by default.'),
+    ('message_shape_notify_limit', 'outreach_natural', 14, False, '通知里的话收成一句',
+     '对方不在线时，提醒角色把要说的收成一句短的，通知里也能看全；聊天记录仍保留完整内容。'
+     '默认关闭。',
+     'Keep offline messages to one line',
+     'When the other person is offline, the character is nudged to say what it means in one short line '
+     'so the notification shows it in full; the chat history still keeps everything. Off by default.'),
+    ('thought_pool_v1', 'outreach_natural', 15, False, '聊天话题储备真正派上用场',
+     '把后台整理好的话题储备，在角色主动开口或聊天时真正用作谈资（只换「聊哪件事」，'
+     '不改变何时发、发几条和任何发送时机）。默认关闭。',
+     'Put the topic reserve to actual use',
+     'Lets the character actually draw on the background topic reserve when it reaches out or chats '
+     '(it only changes which thing to talk about, never when or how many messages are sent). '
+     'Off by default.'),
 
     # ── 记忆检索与注入（实验灰度）──
     ('memory_temporal_recall', 'memory', 701, False, '时间线索记忆检索',
@@ -372,6 +385,16 @@ _FLAG_ROWS: list[tuple] = [
      '插件被停用后，它的接口与页面也一并停止响应（默认保持关闭，仅在需要严格停用插件时开启）。',
      'Stopped plugins fully unreachable',
      'When a plugin is stopped, its endpoints and pages stop responding as well.'),
+    ('plugin_capability_notes', 'provider', 1105, False, '插件能力说明校验',
+     '校验插件 manifest 的可选字段 capability_notes（每条权限声明的 why / risk / data），默认开启。'
+     '开启后，插件自述为高风险的能力，在权限校验临时出错时会被拒绝（宁可拦下不误放）。'
+     '关＝整段不解析、也不据此收紧，旧插件不受影响。声明只是说明，授权仍是门禁。',
+     'Plugin capability notes',
+     'Validate the optional capability_notes field of a plugin manifest '
+     '(why / risk / data for each declared permission); on by default. When on, capabilities a '
+     'plugin describes as high risk are refused if the permission check itself fails. When off, '
+     'the section is not parsed and nothing is tightened, so existing plugins are unaffected. '
+     'Notes are documentation; consent remains the gate.'),
     ('plugin_user_scope', 'provider', 1103, False, '插件列表按账号收敛',
      '插件列表只看得到内置插件与自己家庭安装的插件，别的家庭装的插件不再出现。',
      'Per-account plugin list',

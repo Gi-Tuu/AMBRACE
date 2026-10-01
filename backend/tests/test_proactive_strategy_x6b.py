@@ -628,6 +628,10 @@ def _hook_ctx_with_roster() -> dict:
     return {"strategy_categories": ["rhythm"], "roster": [_roster_entry()]}
 
 
+# 2026-10-01：概率采样型用例（B/C 两组各跑最多 60 次 _collect_once = 120 次 asyncio.run），
+# 单跑 2.65s，但全量负载下会被 pyproject 的全局 timeout=180 直接终止（10-01 11:15 那轮 67% 处）。
+# 单独放宽到 600s，不动采样次数与断言（见 docs/plans.md「测试卫生小活」登记）。
+@pytest.mark.timeout(600)
 def test_time_ctx是闸_roster键桩空无效(monkeypatch, clean_registry):
     """批 5 机制核实（2026-09-28）：`_CONTEXT_BUILDERS` 全键桩空之所以能让空库用例零候选，
     真正的闸是 **time_ctx**，不是 roster 键。

@@ -23,6 +23,20 @@ WECHAT_CHANNEL_HINT = (
     "不要向对方提及“这条提示”“渠道”“App”或“微信”这些元信息。"
 )
 
+# 通知面形态提示（A4 批 8 块 C M1，2026-09-30）：本轮消息将以通知面送达（离线 ⇒ 走通知）时
+# 拼进上下文的一句形态约束。与 WECHAT_CHANNEL_HINT 同纪律：仅进 LLM 上下文（不落库/不进记忆/
+# 不改 content/user_message）；集中一处常量，供测试断言；拼装口径见
+# domain/message_shape.py::compose_notify_shape_messages。
+# flag message_shape_notify_limit 默认关 ⇒ 逐字节旧 prompt。
+NOTIFY_SHAPE_HINT = (
+    "（提醒）这条会以通知形式提醒对方，对方在通知里只看得到开头一小段，"
+    "请把要说的压缩成一句（不超过 {limit} 字），先说最要紧的那件事。"
+    "不要向对方提及“通知”“提醒”这类元信息。"
+    # R7：与微信渠道 hint（整段 ≤400 字、不拆条）同轮时两条都会注入，
+    #     短句提示在后；冲突时以本条为准（通知首屏只露一小段，比整段字数更硬）。
+    "若与其它长度要求冲突，以本条为准。"
+)
+
 
 def _has_after_generate_hook() -> bool:
     """是否存在启用中的插件注册了 after_generate 改写钩子。

@@ -534,17 +534,32 @@ async def device_action_dispatch(plugin_name: str, params: dict, user_id: int,
     body = {k: v for k, v in params.items() if k != "plugin"}
     dry_run = bool(body.get("dry_run") or False)
 
-    def _denied(reason: str) -> dict:
+    async def _denied(reason: str) -> dict:
+        # 批 8 块 B（2026-10-01）：**只记不判** —— 拒绝处留痕，判定与返回值一字不改。
+        # 与 registry.has_capability_permission 的留痕同 route，供 capability-audit 聚合。
+        # 用 obs_event_now（本轮写完）：本函数在裸 TestClient / 一次性 asyncio.run 下被调用，
+        # fire-and-forget 的后台写会在 loop 关闭后回灌成 PytestUnhandledThreadExceptionWarning。
+        try:
+            from app.memory.observability import obs_event_now
+
+            await obs_event_now(None, "plugin_capability", {
+                "plugin": plugin_name,
+                "permission": str(body.get("capability") or ""),
+                "decision": "deny",
+                "reason": str(reason),
+            })
+        except Exception:
+            pass
         return {"ok": True, "data": {"allowed": False, "reason": reason, "dry_run": dry_run,
                                      "status": device_actions.STATUS_DENIED}}
 
     if str(params.get("plugin") or "").strip():
-        return _denied(f"{device_actions.REASON_INVALID_INTENT}"
+        return await _denied(f"{device_actions.REASON_INVALID_INTENT}"
                        f":{device_actions.REASON_PLUGIN_NOT_ALLOWED}")
     try:
         intent = device_actions.ActionIntent.model_validate(body)
     except ValidationError as e:
-        return _denied(device_actions.invalid_intent_reason(e))
+        return await _denied(device_actions.invalid_intent_reason(e))
 
     tenant_id = await _action_tenant_id(user_id)
     decision = await device_actions.decide_action(user_id=user_id, tenant_id=tenant_id,

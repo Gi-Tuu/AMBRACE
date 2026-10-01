@@ -52,6 +52,36 @@ def obs_event(character_id: int | None, metric: str, detail: dict, kind: str | N
         _logger.warning("memory obs event failed: %s", e)
 
 
+async def obs_event_now(character_id: int | None, metric: str, detail: dict,
+                      kind: str | None = None) -> None:
+    """与 :func:`obs_event` 同口径，但**在本轮 await 内写完**（不 spawn 后台任务）。
+
+    为什么需要它（2026-10-01 批 8 块 B 暴露）：请求路径上的 fire-and-forget 写库，在「一次性 loop」
+    环境里（裸 `TestClient`、一次性 `asyncio.run`）会在 loop 关闭之后才由 aiosqlite worker 线程
+    回灌结果，报 `RuntimeError: Event loop is closed`（pytest 记 `PytestUnhandledThreadExceptionWarning`）。
+    凡「留痕必须落上、且调用点处在可能被立即关闭的 loop 里」的场合用本函数；
+    长生命周期 loop（调度器 / 常驻服务）里不介意后台完成的，继续用 :func:`obs_event`。
+    失败静默（只记 WARNING），绝不改变调用方的返回语义。
+    """
+    if not _flag_on():
+        return
+    try:
+        if kind:
+            detail = {**detail, "kind": kind}
+        from app.agent.trace import new_task_id, write_task_log
+
+        await write_task_log(
+            task_id=new_task_id(),
+            character_id=character_id,
+            trigger="memory_obs",
+            route=(metric or "unknown")[:30],
+            steps_json=json.dumps(detail, ensure_ascii=False, default=str)[:1600],
+            status="ok",
+        )
+    except Exception as e:
+        _logger.warning("memory obs event (awaited) failed: %s", e)
+
+
 def note_marker_truncation(response: str, character_id: int | None) -> bool:
     """S11 marker_truncated：回复尾部存在未闭合的【/[ 标记 → 疑似被 max_tokens 截断，登记丢失的标记片段。
 

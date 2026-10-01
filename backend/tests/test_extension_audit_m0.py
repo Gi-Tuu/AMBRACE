@@ -406,10 +406,14 @@ def test_real_repo_negative_assertions_carry_hit_counts(audit_data):
     c1 = audit_data["sections"]["C1_form_surface"]
     assert c1["ok"] is True and c1["all_absent"] is True
     assert all(a["hit_count"] == 0 for a in c1["upstream_wording_absent"])
-    # 「两处逐字重复」必须恰好 2，且正好落在这两个收敛点上
+    # 块 C（2026-09-30）已把两份逐字拷贝收口成单一真源 ⇒ 字面重复必须为 0；
+    # 同时两个收敛点都必须改调同一入口（防止有人偷偷写回第二份拷贝）。
     copies = c1["existing_length_gates"]["notify_preview_50_copies"]
-    assert copies["count"] == 2
-    assert {h["file"] for h in copies["hits"]} == set(ea.NOTIFY_CONVERGENCE_FILES)
+    assert copies["count"] == 0
+    single = c1["existing_length_gates"]["notify_preview_single_source"]
+    assert single["ok"] is True
+    assert single["definition_count"] == 1
+    assert {h["file"] for h in single["call_sites"]} == set(ea.NOTIFY_CONVERGENCE_FILES)
 
 
 def test_real_repo_cost_constraints_present(audit_data):

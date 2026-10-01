@@ -292,6 +292,13 @@ class _ContextBudgetScreenState extends State<ContextBudgetScreen> {
               ],
             ],
           ),
+          // 批8 块 D：近 N 天用量构成（天数来自服务端窗口，不在本地写死 7）。
+          // 老服务端没有 usage_panel 时 days=0，整卡不渲染，不出「近 0 天」假窗口。
+          if (info.usagePanel.days > 0)
+            IosCardGroup(
+              title: l10n.usagePanelSectionTitle(info.usagePanel.days),
+              children: [UsagePanelBars(panel: info.usagePanel)],
+            ),
           IosCardGroup(
             title: l10n.contextBudgetCostTitle,
             children: [
@@ -312,6 +319,103 @@ class _ContextBudgetScreenState extends State<ContextBudgetScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 批8 块 D「费用面板」：近 N 天的「按用途 / 按渠道」两组条形行（档位页与用量页共用）。
+///
+/// 硬口径：桶名、token 数、条形宽度（share）**全部来自服务端**
+/// （app/application/system.py 的 usage_panel）；这里不做聚合、不排最大值、不算占比——
+/// 前端再算一遍就是第二套真相。金额段刻意不出现在本组件里：服务端无价目表时金额是
+/// unavailable，既有的一轮费用投影另有 basis（单轮预算，不是历史花费），两者不得混读。
+class UsagePanelBars extends StatelessWidget {
+  const UsagePanelBars({super.key, required this.panel});
+
+  final UsagePanel panel;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    if (panel.isEmpty) {
+      // 空态明确写「暂无用量记录」，不铺一排 0（0 会被读成「用过但没消耗」）
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
+        child: Text(l10n.usagePanelEmpty,
+            style: TextStyle(fontSize: 13, color: theme.hintColor)),
+      );
+    }
+
+    Widget group(String title, List<UsagePanelBucket> buckets) {
+      if (buckets.isEmpty) return const SizedBox.shrink();
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title,
+                style: TextStyle(fontSize: 12, color: theme.hintColor)),
+            for (final b in buckets)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        b.key,
+                        style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurface),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 88,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(3),
+                        child: LinearProgressIndicator(
+                          value: b.share,
+                          minHeight: 6,
+                          backgroundColor:
+                              theme.colorScheme.surfaceContainerHighest,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      l10n.contextBudgetTokensValue(b.totalTokens),
+                      style: const TextStyle(
+                          fontSize: 12, color: IosCardColors.subtitle),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+          // 估算说明只留一句、贴在合计数旁边（§8 待拍板 4 定案 A：不逐行区分，
+          // 面板只报 token 与占比）；金额段不上屏，故不写「不折算金额」。
+          child: Wrap(
+            spacing: 8,
+            children: [
+              Text(l10n.usagePanelWindowTotal(panel.totalTokens),
+                  style: TextStyle(fontSize: 12, color: theme.hintColor)),
+              if (panel.estimatedUnavailable)
+                Text(l10n.usagePanelEstimatedNote,
+                    style: TextStyle(fontSize: 12, color: theme.hintColor)),
+            ],
+          ),
+        ),
+        group(l10n.usagePanelByTask, panel.byTask),
+        group(l10n.usagePanelByChannel, panel.byChannel),
+      ],
     );
   }
 }

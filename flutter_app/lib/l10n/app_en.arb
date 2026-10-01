@@ -2836,5 +2836,11 @@
   "contextBudgetCostBasis": "Basis: full effective budget for this tier, input side only; output and tool calls excluded",
   "contextBudgetCostNoPrice": "Not estimable yet: no price table configured on the server",
   "contextBudgetCostNoModelPrice": "Not estimable yet: no price recorded for this model",
-  "contextBudgetSaveFailed": "Failed to save tier, please retry"
+  "contextBudgetSaveFailed": "Failed to save tier, please retry",
+  "usagePanelSectionTitle": "Usage mix over the last {days} days",
+  "usagePanelByTask": "By purpose",
+  "usagePanelByChannel": "By channel",
+  "usagePanelEmpty": "No usage recorded in this window",
+  "usagePanelWindowTotal": "Window total {tokens} tokens",
+  "usagePanelEstimatedNote": "includes estimated rows, not split per row"
 }

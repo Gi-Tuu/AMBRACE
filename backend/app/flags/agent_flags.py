@@ -386,6 +386,11 @@ AGENT_FLAGS = {
     #   首行即返回，连一次 SELECT 都不发。默认关＝零行为、零开销，一键回退。
     # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
     "relational_drive_shadow": False,
+    # ── A4 批 8 块 B（2026-10-01 M0 → M1）：插件能力自描述（capability_notes）校验总闸 ──
+    # 关 ⇒ 整段不解析、不报错（旧 manifest 判定逐字节等价）；开 ⇒ 校验可选字段 capability_notes。
+    # M1（默认开）：本闸同时是 fail-open 分级第 ④ 条的闸（tool_runner：插件自述 risk=high ⇒ 权限
+    #   校验异常时 fail-closed，只收紧）。关 ⇒ 校验与收紧一并不生效＝回 M0 行为。
+    "plugin_capability_notes": True,
     # ── A4 批 7 M1（2026-09-30）：情绪→驱力单向调制的**三态**档位 ──
     # off=不取快照（逐字节旧行为）/ shadow=算乘子只留痕、落库与 off 相同 / on=真生效（白名单∧稳定桶）。
     # ⚠️ 非 bool 键 ⇒ 启动加载器**跳过 DB 覆盖**（先例 fact_lifecycle_policy），档位＝代码默认值，改档后重启生效。
@@ -480,4 +485,27 @@ AGENT_FLAGS = {
     #   念头进上下文属 M2-a（前置＝本表已攒到料 + thought_id 归因位）。
     # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
     "thought_pool_shadow": False,
+    # ── A4 批 4 / T2 M2-b1（2026-10-01）：念头池素材真进 prompt 总闸（默认关＝逐字节旧行为）──
+    # 开＝①主动侧：arbiter._annotate_outreach_plan 内按 outreach 类型从池取一条（白名单 2 角色），
+    #   经 generate_proactive_event 的新入参 thought 作为**素材**拼进 prompt（与 outreach_intent/plan
+    #   同性质，不是规则）；②聊天侧：新增 append 分区 thought_pool 注入一条；③三档释放结算
+    #   （spent/told_flat/never_told，用 M2-a 的 domain/thought/settle.apply_release 写回）。
+    # 关＝**逐字节旧行为**：取一条/释放/注入每个入口首行即返回，连一次 SELECT 都不发
+    #   （照 arbiter._pacing_gate 与 thought_pool_service.shadow_enabled 的早退写法）。
+    # 开它时**隐含 thought_pool_shadow 语义在跑**（不抽池就没有念头可取，设计 §4 两键关系）；
+    #   本键只控制「取用 + 释放 + 注入」，抽池落库仍由 thought_pool_shadow 控制，别自造第三态。
+    # 灰度＝白名单 2 角色（THOUGHT_POOL_GRAY_CHARS，thought_pool_service.py）∧ 比例桶。
+    # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
+    "thought_pool_v1": False,
+    # ── A4 批 8 块 C / M1（2026-09-30）：短句形态约束（通知载体）总闸（默认关＝逐字节旧行为）──
+    # 开＝①通知正文按「notify 载体」上限下发（domain/message_shape.py::fit_to_form：先取首句，
+    #   首句仍超限才硬截加省略号）；②本轮判定将以通知面送达（沿用 send_to_session 已有的
+    #   pushed 判定，离线即通知面）时，往 LLM 上下文拼一句「这条会以通知形式提醒对方，
+    #   请压缩成一句（≤N 字）」——照 WECHAT_CHANNEL_HINT 三条纪律：只进上下文、不落库不进记忆、
+    #   常量集中一处（agent/nodes.py::NOTIFY_SHAPE_HINT）。
+    # 关＝**逐字节旧行为**：通知正文仍是原 [:50]+"…" 预览（收口前后等价），prompt 一字不多。
+    # 私聊气泡正文与 WS 原文一律不裁（点开永远能看到完整消息），落库/记忆不受本键影响。
+    # 上限数值须由 GET /api/v1/scheduler/stats/notify-shape 的读数＋真机复核后再调，不照抄设计稿。
+    # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
+    "message_shape_notify_limit": False,
 }

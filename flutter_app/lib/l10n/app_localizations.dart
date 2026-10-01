@@ -14829,6 +14829,42 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'档位保存失败，请重试'**
   String get contextBudgetSaveFailed;
+
+  /// No description provided for @usagePanelSectionTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'近 {days} 天用量构成'**
+  String usagePanelSectionTitle(Object days);
+
+  /// No description provided for @usagePanelByTask.
+  ///
+  /// In zh, this message translates to:
+  /// **'按用途'**
+  String get usagePanelByTask;
+
+  /// No description provided for @usagePanelByChannel.
+  ///
+  /// In zh, this message translates to:
+  /// **'按渠道'**
+  String get usagePanelByChannel;
+
+  /// No description provided for @usagePanelEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'窗口内暂无用量记录'**
+  String get usagePanelEmpty;
+
+  /// No description provided for @usagePanelWindowTotal.
+  ///
+  /// In zh, this message translates to:
+  /// **'窗口合计 {tokens} tokens'**
+  String usagePanelWindowTotal(Object tokens);
+
+  /// No description provided for @usagePanelEstimatedNote.
+  ///
+  /// In zh, this message translates to:
+  /// **'含估算行，不逐行区分'**
+  String get usagePanelEstimatedNote;
 }
 
 class _AppLocalizationsDelegate

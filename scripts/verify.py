@@ -28,9 +28,15 @@ def step(name: str, cmd: list[str], cwd: Path) -> None:
 
 
 def main() -> None:
+    """按 ruff → py_compile → pytest → flutter → smoke 顺序跑一遍。
+
+    pytest 段必须带 `--basetemp=.pytest_tmp`：不带时 pytest 用系统 `%TEMP%\\pytest-of-<user>`，
+    该目录权限坏掉时整段用例直接全灭（实测不带 8 errors / 带 8 passed），与代码本身无关；
+    指向仓库内 basetemp 后每轮自行清空重建，也是 AGENTS.md 规定的本机统一口径。
+    """
     step("ruff 静态检查（backend/app）", [PY, "-m", "ruff", "check", "backend/app"], ROOT)
     step("py_compile 全量语法校验", [PY, "-m", "compileall", "-q", "-f", "backend/app"], ROOT)
-    step("pytest 后端测试", [PY, "-m", "pytest", "tests", "-q"], ROOT / "backend")
+    step("pytest 后端测试", [PY, "-m", "pytest", "tests", "-q", "--basetemp=.pytest_tmp"], ROOT / "backend")
     step("flutter analyze", [FLUTTER, "analyze"], ROOT / "flutter_app")
     step("flutter test", [FLUTTER, "test"], ROOT / "flutter_app")
 

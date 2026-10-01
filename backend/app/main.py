@@ -330,6 +330,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("MCP shutdown failed: %s", e)
 
+    # 2026-10-01（批 8 块 B 暴露）：关停前**有界排空**在途后台任务。
+    # 新增的插件能力留痕走 spawn_background；TestClient 驱动的用例在 lifespan 收尾时 loop 立刻关闭，
+    # 在途写库 Task 的 aiosqlite worker 线程回灌时报 Event loop is closed（同一文件从 0 warning → 4 warning）。
+    # 口径：有界（默认 2s）——绝不让收尾被一个卡住的 Task 拖住；生产侧同样受益（优雅关停不丢留痕）。
+    try:
+        from app.utils.async_tasks import await_all
+        await await_all(timeout=2.0)
+        logger.info("Background tasks drained")
+    except Exception as e:
+        logger.warning("Background task drain failed: %s", e)
+
 
 app = FastAPI(
     title="AMBRACE Server",

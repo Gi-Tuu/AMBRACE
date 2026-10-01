@@ -322,6 +322,71 @@ async def _settle_relational_drive(character_id: int, user_id: int) -> None:
         _logger.debug("Relational drive settle skipped char=%d: %s", character_id, e)
 
 
+async def _settle_thought_pool_turn(character_id: int, user_id: int, session_id: int | None = None) -> None:
+    """批 4 M1-挂点（2026-10-01）：回合末扫本会话新增行 → F4/F5 抽念头入池（搭 T1 settle 挂点族）。
+
+    设计 §2.1「抽取挂点·回合侧」：F4 进行中话题（``conversation_topics.status='进行中'`` 且
+    ``last_touched_at`` 距今 ≥3 天）+ F5 新写且 ``epistemic_status ∈ {INFERRED, UNVERIFIED}`` 的事实。
+    抽取判据复用既有纯函数（``domain/thought/extract.py``），本钩子只负责取数 + 调
+    ``supply_thought_pool``，不重写任何规则。
+
+    硬约束（派单）：
+      - **先判 flag 再干活**：``thought_pool_shadow`` 关 ⇒ 首行返回，连 session 都不建（零 SQL）；
+      - **异常隔离**：任何失败只记 DEBUG，绝不影响聊天回合主链路；
+      - **不改发送链 / 不碰频控闸 / 不给念头池发送权**；
+      - commit 口径与 ``_settle_relational_drive`` 同：钩子自开 session ⇒ 自己 commit；
+      - 幂等键沿用既有 ⇒ 同话题/同事实重复扫不增行。
+    """
+    try:
+        from app.application import thought_pool_service as _tps
+        if not _tps.shadow_enabled():
+            return                      # flag 关：首行返回，零 SQL（照 _settle_relational_drive 早退写法）
+        from datetime import timedelta
+        from app.domain.thought import extract as _ex
+        from app.models.memory import ConversationTopic, Memory
+        from app.utils.timeutil import now_naive_utc
+        now = now_naive_utc()
+        rows_by_face: dict[str, list[dict]] = {}
+        async with async_session_factory() as db:
+            # F4 用户钩子：进行中话题且 ≥3 天未动（idle_days 由 last_touched_at 现算）
+            cutoff = now - timedelta(days=int(_ex.F4_IDLE_DAYS))
+            topics = (await db.execute(
+                select(ConversationTopic).where(
+                    ConversationTopic.character_id == character_id,
+                    ConversationTopic.user_id == user_id,
+                    ConversationTopic.status == _ex.F4_ACTIVE_STATUS,
+                    ConversationTopic.last_touched_at <= cutoff,
+                ).order_by(ConversationTopic.last_touched_at.asc()).limit(20)
+            )).scalars().all()
+            f4 = [{
+                "id": t.id, "topic": t.topic, "status": t.status,
+                "idle_days": (now - t.last_touched_at).total_seconds() / 86400.0,
+                "character_id": character_id, "user_id": user_id,
+            } for t in topics if t.last_touched_at is not None]
+            # F5 新事实余波：近 24h 新写且 epistemic_status ∈ {INFERRED, UNVERIFIED}
+            facts = (await db.execute(
+                select(Memory).where(
+                    Memory.character_id == character_id,
+                    Memory.user_id == user_id,
+                    Memory.epistemic_status.in_(tuple(_ex.F5_EPISTEMIC_ACCEPT)),
+                    Memory.created_at >= now - timedelta(hours=24),
+                ).order_by(Memory.created_at.desc()).limit(20)
+            )).scalars().all()
+            f5 = [{
+                "id": m.id, "value": m.content, "epistemic_status": m.epistemic_status,
+                "character_id": character_id, "user_id": user_id,
+            } for m in facts]
+            if f4:
+                rows_by_face[_ex.SRC_USER_HOOK] = f4
+            if f5:
+                rows_by_face[_ex.SRC_FACT] = f5
+            if rows_by_face:
+                await _tps.supply_thought_pool(db, rows_by_face, now=now)
+                await db.commit()
+    except Exception as e:
+        _logger.debug("Thought pool turn supply skipped char=%s: %s", character_id, e)
+
+
 async def _load_reasoning_level(character_id: int) -> int:
     """读取角色「思考过程」挡位：0=关闭 / 1=简单思考 / 2=深度思考"""
     try:
@@ -1072,6 +1137,9 @@ async def _run_post_processing(
 
     # A4 批3 M1b2（影子态）：回合末结算一次关系驱力水位（只记账，不改回复；失败静默）
     spawn_background(_settle_relational_drive(character_id, user_id))
+
+    # 批 4 M1-挂点（2026-10-01）：回合末扫本会话 F4/F5 抽念头入池（flag 关＝零调用零查询；失败静默）
+    spawn_background(_settle_thought_pool_turn(character_id, user_id, session_id))
 
     # 认知循环 v2.1：话题完成/搁置自动切换（本地零 LLM，失败静默）
     try:

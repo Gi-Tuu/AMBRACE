@@ -28,6 +28,7 @@ from app.domain.thought import filters as fl
 from app.domain.thought import quota as qt
 from app.domain.thought import dynamics as dyn
 from app.domain.thought import extract as ex
+from app.domain.thought import settle as st
 from app.models.character import ThoughtPool
 from app.utils.timeutil import now_naive_utc
 
@@ -35,6 +36,14 @@ _logger = logging.getLogger(__name__)
 
 # 影子总闸键（登记在 app/flags/agent_flags.py；默认关）
 FLAG_KEY = "thought_pool_shadow"
+# 生效总闸键（M2-b1，登记在 app/flags/agent_flags.py；默认关）。开它隐含 shadow 语义在跑
+# （不抽池就没有念头可取，设计 §4 两键关系）；本键只控制「取用 + 释放 + 注入」。
+V1_FLAG_KEY = "thought_pool_v1"
+# ── M2-b1 灰度：角色白名单 ∧ 稳定比例桶（照 scheduling/pacing.py 既有范式，设计 §4）──
+# 白名单 2 角色：含 char 13（与既有节律/驱力/存活清单灰度同角色，便于三批对照观测），
+# 另取 14 凑满设计要求的「2 个角色」。扩量终点＝清空集（约定：空白名单＝全量，仍受 ratio 约束）。
+THOUGHT_POOL_GRAY_CHARS = frozenset({13, 14})
+THOUGHT_POOL_GRAY_RATIO = 1.0
 # 留痕位：agent_task_logs.route（String(30)，本值 19 字符）。选 trace 队列表而不是
 # proactive_trigger_logs——后者 7 天被清（scripts/backup.py TRIGGER_LOG_KEEP_DAYS），配额读数
 # 要留到判效窗之后。
@@ -264,3 +273,176 @@ async def supply_thought_pool(
     except Exception as e:
         _logger.warning("thought pool shadow supply failed (isolated): %s", e)
         return {"error": str(e), "flag": FLAG_KEY, "intake": 0, "dropped": {}, "dropped_total": 0}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# M2-b1（2026-10-01）：生效侧——「取一条」+「三档释放结算」+「聊天侧注入文本」
+#
+# 纪律（设计 §4「关＝逐字节旧行为」四条硬保证 + 派单硬约束）：
+#   - 每个入口**先判 flag／灰度再查库**：v1 关或角色未命中白名单 ⇒ 首行即返回，一次 SQL 都不发
+#     （照 arbiter._pacing_gate 与上面 shadow_enabled 的早退写法）；
+#   - 本层**没有发送权**：不碰生成/发送链路、不写 proactive_message_logs、不改 intent；
+#   - 释放结算幂等：spent_at 非空的行不再改（设计 §2.3 / §6 R7）；
+#   - 任何异常一律不外抛（生效层出错绝不能把主动消息/聊天主链路拖下水），只返回空/原值。
+# ══════════════════════════════════════════════════════════════════════════
+
+def v1_enabled() -> bool:
+    """生效总闸（缺省关；连读 flag 都失败也按关——生效层不得把业务拖下水）。"""
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get(V1_FLAG_KEY, False))
+    except Exception:
+        return False
+
+
+def thought_pool_gray_hit(character_id, session_id=None) -> bool:
+    """角色是否命中念头池灰度（白名单 ∧ 比例桶，设计 §4）。
+
+    character_id 为空/非法 ⇒ False（fail-closed 到不生效）。
+
+    口径与 ``scheduling/pacing.py`` 既有范式同构（白名单 ∧ 稳定比例桶）；本批
+    ``THOUGHT_POOL_GRAY_RATIO = 1.0`` ⇒ 比例桶恒命中，故灰度判定退化为**纯白名单成员**
+    （不引 pacing、不查库，保持服务层 import 边界与 M1 一致）。将来若把 ratio 调到 <1，
+    再接 ``pacing.traffic_hit`` 补比例桶（届时属行为变更，需另开单）。
+    """
+    if character_id is None:
+        return False
+    try:
+        cid = int(character_id)
+    except (TypeError, ValueError):
+        return False
+    if THOUGHT_POOL_GRAY_CHARS and cid not in THOUGHT_POOL_GRAY_CHARS:
+        return False
+    # ratio>=1 ⇒ 全量命中（与 pacing.traffic_hit 的 ratio>=1 短路同口径）
+    return THOUGHT_POOL_GRAY_RATIO >= 1.0
+
+
+def thought_pool_v1_allowed(character_id, session_id=None) -> bool:
+    """生效侧统一准入：flag 开 ∧ 角色命中灰度。**不查库**，供各入口首行早退用。"""
+    return v1_enabled() and thought_pool_gray_hit(character_id, session_id)
+
+
+async def fetch_one_thought(db, character_id, user_id, *, intent: str | None = None) -> dict | None:
+    """「取一条」：从池里取该角色对该用户当前**最咸**的一条活跃念头（设计 §2.6 / §7 M2 行）。
+
+    - **先判 flag／灰度再查库**：v1 关或角色未命中白名单 ⇒ 立即返回 None，一次 SQL 都不发；
+    - 只在 ``ACTIVE_STATUSES``（spark/obsession/told_flat）里取，按 ``salt`` 降序、``id`` 升序兜底，
+      取 1 条（命中索引 ``ix_thought_pool_char_user_status_salt``）；
+    - ``intent`` 仅用于留痕/未来 thought_kind 同族绑定（本批不做词表绑定，传了也不改选择）；
+    - 返回 dict（id/text/status/salt/tell_count/novelty），无可用念头 ⇒ None；异常 ⇒ None（不外抛）。
+
+    本函数**只读**，不写库、不改状态（释放结算另走 ``settle_release``，由发送结果驱动）。
+    """
+    if not thought_pool_v1_allowed(character_id):
+        return None
+    try:
+        cid = int(character_id)
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        return None
+    try:
+        active = tuple(dyn.ACTIVE_STATUSES)
+        row = (await db.execute(
+            select(ThoughtPool)
+            .where(
+                ThoughtPool.character_id == cid,
+                ThoughtPool.user_id == uid,
+                ThoughtPool.status.in_(active),
+            )
+            .order_by(ThoughtPool.salt.desc(), ThoughtPool.id.asc())
+            .limit(1)
+        )).scalars().first()
+        if row is None:
+            return None
+        return {
+            "id": int(row.id),
+            "text": str(row.text or ""),
+            "status": str(row.status or ""),
+            "salt": float(row.salt or 0.0),
+            "tell_count": int(row.tell_count or 0),
+            "novelty": float(row.novelty or 0.0),
+            "intent": str(intent or ""),
+        }
+    except Exception as e:
+        _logger.warning("thought pool fetch_one failed char=%s (isolated): %s", character_id, e)
+        return None
+
+
+async def settle_release(
+    db,
+    thought_id: int | None,
+    *,
+    sent_ok: bool,
+    replied_within_window: bool,
+    now: datetime | None = None,
+) -> dict:
+    """三档释放结算（设计 §2.3）：按发送结果把被引用的那条念头写回 ``thought_pool``。
+
+    用 M2-a 的纯函数 ``settle.apply_release`` 算出写回字段（status/salt/tell_count/spent_at），
+    本函数只负责**落库 + 幂等守卫**：
+      - **先判 flag**：v1 关 ⇒ 立即返回 ``{}``，一次 SQL 都不发；
+      - thought_id 为空 ⇒ ``{}``（没绑定念头就无从结算）；
+      - 行不存在 ⇒ ``{}``；``spent_at`` 非空（已全额释放）⇒ 原样跳过（幂等，设计 §6 R7）；
+      - ``never_told``（没发出去）⇒ 不惩罚、不写库（apply_release 原样返回，本函数据此跳过 update）；
+      - 是否 commit 由调用方决定（本层不持 session 故不 commit，与 M1 供给口同纪律）。
+    返回读数 dict（含 release 档位），异常 ⇒ ``{"error": ...}``（不外抛）。
+    """
+    if not v1_enabled():
+        return {}
+    if not thought_id:
+        return {}
+    moment = _resolve_now(now)
+    try:
+        row = (await db.execute(
+            select(ThoughtPool).where(ThoughtPool.id == int(thought_id))
+        )).scalars().first()
+        if row is None:
+            return {"thought_id": int(thought_id), "release": "row_missing"}
+        if row.spent_at is not None:
+            # 幂等位：已全额释放的行不再改（设计 §2.3「spent_at IS NOT NULL 的行不再改」）
+            return {"thought_id": int(thought_id), "release": dyn.STATUS_SPENT, "idempotent": True}
+        before = {
+            "status": str(row.status or dyn.STATUS_SPARK),
+            "salt": float(row.salt or 0.0),
+            "tell_count": int(row.tell_count or 0),
+        }
+        out = st.apply_release(
+            before,
+            sent_ok=bool(sent_ok),
+            replied_within_window=bool(replied_within_window),
+            spent_at=moment,
+        )
+        release = str(out.get("release") or "")
+        if release == "never_told":
+            # 没发出去 ⇒ 不惩罚、不写库（设计 §2.3：未用的东西不该被惩罚）
+            return {"thought_id": int(thought_id), "release": "never_told", "written": False}
+        row.status = str(out.get("status") or before["status"])
+        row.salt = float(out.get("salt") or 0.0)
+        row.tell_count = int(out.get("tell_count") or 0)
+        if out.get("spent_at") is not None:
+            row.spent_at = out["spent_at"]
+        row.last_hit_at = moment
+        await db.flush()
+        return {
+            "thought_id": int(thought_id), "release": release, "written": True,
+            "status": row.status, "salt": row.salt, "tell_count": row.tell_count,
+        }
+    except Exception as e:
+        _logger.warning("thought pool settle_release failed id=%s (isolated): %s", thought_id, e)
+        return {"error": str(e), "thought_id": thought_id}
+
+
+def build_injection_text(thought: dict | None) -> str:
+    """把取到的那条念头拼成**注入文本**（聊天侧 append 分区与主动侧素材共用同一口径）。
+
+    硬约束（派单 + 设计 §8 不做清单第 7 条）：**不写元叙述**——不得出现「你有 N 条念头」
+    「念头池」「执念」这类实现概念，只写那一件事本身。空/无效 ⇒ 空串（调用方据此跳过注入）。
+    """
+    if not thought:
+        return ""
+    text = str(thought.get("text") or "").strip()
+    if not text:
+        return ""
+    # 只呈现「这件事」本身，作为可自然提起的谈资；不带计数、不带状态、不带来源面术语。
+    return f"【可自然提起的一件事】{text}（如与当下语境相称，可自然聊起；不相称就放着，别硬提。）"
+

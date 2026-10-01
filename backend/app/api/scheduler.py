@@ -500,6 +500,65 @@ async def get_semantics_stats(
     }
 
 
+# ── A4 批 8 块 C / M0 只读读数：通知正文长度分布（2026-09-30） ──
+
+
+@router.get("/stats/notify-shape")
+async def get_notify_shape_stats(
+    days: int = 30,
+    character_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """通知正文长度分布（**只读、零写库**）：把上游「小窗溢出投诉数」这条不可测判据换成可测口径。
+
+    取数＝``proactive_message_logs.content`` 的**字符长度**（主动消息唯一发送出口的留痕，
+    即通知正文的原始上游）。通知面真正寄出的 body 恒 ≤50 字（服务端预览截断），量它没有信息量，
+    有意义的读数是「原始正文超预览上限的占比」——见 ``over_preview_limit``。
+
+    ⚠️ 天花板：该列写入前已被 ``send_to_session`` 的 ``content[:500]`` 截过一次，所以
+    ``gt_500`` 恒为 0、``p99`` 不可信；判读以 ``ceiling_hit``（落在 500 上的条数占比，＝截顶证据）
+    与 ``over_preview_limit`` 为准。分桶口径（≤50 / 51–100 / 101–200 / 201–500 / >500）
+    与百分比都在 ``domain/message_shape.summarize_lengths`` 一处定义。
+
+    租户归属与 GET /stats/outreach 同口径：带 character_id 先过归属校验，不带则收敛到本账号租户。
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import func as sa_func
+
+    from app.domain.message_shape import summarize_lengths
+    from app.flags.agent_flags import AGENT_FLAGS
+    from app.models.character import ProactiveMessageLog
+
+    days = max(1, min(days, 365))
+    since = now_naive_utc() - timedelta(days=days)
+    cond = [ProactiveMessageLog.created_at >= since, ProactiveMessageLog.content.isnot(None)]
+    if character_id is not None:
+        await _check_char_owned(db, character_id, user_id)
+        cond.append(ProactiveMessageLog.character_id == character_id)
+    else:
+        scope_ids = await tenant_scope_ids(db, user_id)
+        char_ids_subq = select(AICharacter.id).where(AICharacter.user_id.in_(scope_ids))
+        cond.append(ProactiveMessageLog.character_id.in_(char_ids_subq))
+
+    rows = (await db.execute(
+        select(sa_func.length(ProactiveMessageLog.content)).where(*cond)
+    )).scalars().all()
+    lengths = [int(r) for r in rows if r is not None]
+
+    return {
+        "window_days": days,
+        "source": "proactive_message_logs.content（通知正文的原始上游，写入前已被 content[:500] 截过）",
+        **summarize_lengths(lengths),
+        "flags": {
+            "message_shape_notify_limit": bool(
+                AGENT_FLAGS.get("message_shape_notify_limit", False)
+            ),
+        },
+    }
+
+
 # ── 手动触发测试（#28 ③，2026-08-24） ──
 
 

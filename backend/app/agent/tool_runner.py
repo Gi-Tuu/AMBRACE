@@ -108,17 +108,60 @@ def _baseline_decision(spec: ToolSpec, user_id: int | None, scope: str | None) -
     return "allow"
 
 
+def _plugin_self_declares_high_risk(plugin: str | None) -> bool:
+    """fail-open 分级判据④的实现：插件已加载 manifest 的 capability_notes 里是否有任一 risk=high。
+
+    取「插件名 → manifest」走 registry 既有内存视图（``get_plugin`` 给出的 info["path"]）
+    ＋ manifest 既有读取函数 ``load_manifest``，不新造缓存。
+
+    一律**向下**（返回 False＝改动前行为）：flag 关 / 插件未加载 / 目录或 manifest 读不到 /
+    字段缺失 / 读取过程中任何异常 ⇒ False。本函数只可能把「未知」留在原样，绝不因拿不到
+    自述信息而新增拒绝。
+    """
+    if not plugin:
+        return False
+    try:
+        from app.plugins.manifest import capability_notes_enabled, load_manifest
+        if not capability_notes_enabled():
+            return False
+        from app.plugins import registry
+        path = str((registry.get_plugin(plugin) or {}).get("path") or "")
+        if not path:
+            return False
+        manifest = load_manifest(f"{path}/manifest.json") or {}
+        notes = manifest.get("capability_notes") or {}
+        if not isinstance(notes, dict):
+            return False
+        return any(isinstance(n, dict) and n.get("risk") == "high" for n in notes.values())
+    except Exception as e:
+        _logger.warning("capability_notes 读取失败 plugin=%s（按旧行为）: %s", plugin, e)
+        return False
+
+
 def _is_high_risk_for_failopen(spec: ToolSpec, scope: str | None) -> bool:
     """异常兜底用的高风险判据（满足其一即高风险 → 异常时拒绝，不返回放行）：
 
     ① ``spec.risk_level == "high"``；
     ② scope 以 ``mcp_`` 开头（跨进程的外部 MCP server 能力，行为不可控）；
     ③ scope 属插件/设备行动类（复用 permission_service 现成常量 SCOPE_EXTENSION / SCOPE_BROWSER，
-       不新造清单）。
+       不新造清单）；
+    ④ 插件自述高风险（批 8 块 B M1，**只收紧**）：``spec.plugin`` 非空，且该插件已加载的
+       manifest 里 ``capability_notes`` 存在任一 ``risk == "high"``。
+
+    ④ 的边界：
+    - **插件粒度**判定，不建「动作 → 权限名」对照表（插件 action 目前没有统一映射，只有设备
+      能力有 ``device:<cap>:read``）——只要该插件任一条自述为 high，其全部工具按高风险处理；
+      逐动作精确映射留 M2。
+    - 只作用于「权限系统抛异常」这一条兜底路径，正常裁决（allow/ask/forbid）不受影响。
+    - flag 关 / 读不到 manifest / 字段缺失 ⇒ 一律不生效（等价改动前）。
+    - 实现上排在 ③ 之前短路：③ 的 try/except（读 permission_service 常量失败即按低风险）
+      一字不动，避免新判据改变既有兜底方向。
     """
     if getattr(spec, "risk_level", "") == RISK_HIGH:
         return True
     if scope and scope.startswith("mcp_"):
+        return True
+    if _plugin_self_declares_high_risk(getattr(spec, "plugin", None)):
         return True
     try:
         from app.application import permission_service

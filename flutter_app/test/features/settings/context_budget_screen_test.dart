@@ -27,6 +27,7 @@ Map<String, dynamic> _payload({
   Map<String, dynamic>? lastClip,
   Map<String, dynamic>? sectionBreakdown,
   Map<String, dynamic>? costEstimate,
+  Map<String, dynamic>? usagePanel,
   int clipCount24h = 0,
   int effective = 6400,
 }) {
@@ -71,8 +72,44 @@ Map<String, dynamic> _payload({
           'per_turn_high': null
         },
     'error': '',
+    // 批8 块 D：不带就是老服务端（null）——页面整卡不渲染，不许自己补一个窗口
+    'usage_panel': usagePanel,
   };
 }
+
+/// 后端 usage_panel 段：窗口/合计/两桶/估算说明/金额段，数值一律服务端给。
+Map<String, dynamic> _panel({
+  int days = 7,
+  int totalTokens = 0,
+  List<Map<String, dynamic>> byTask = const [],
+  List<Map<String, dynamic>> byChannel = const [],
+}) =>
+    {
+      'window': {
+        'days': days,
+        'start_date': '2026-09-23',
+        'end_date': '2026-09-30',
+      },
+      'total': {'calls': 6, 'total_tokens': totalTokens},
+      'by_task': byTask,
+      'by_channel': byChannel,
+      'estimated': {
+        'status': 'unavailable',
+        'reason': 'no_estimated_column',
+        'per_row': 'unavailable',
+        'note': '账本里没有估算标记列，行级不区分',
+      },
+      'money': {
+        'status': 'unavailable',
+        'reason': 'no_price_table',
+        'currency': 'CNY',
+        'amount_low': null,
+        'amount_high': null,
+        'basis': null,
+        'is_historical_spend': false,
+      },
+      'error': '',
+    };
 
 /// 后端 section_breakdown 的有样本形态（share 由服务端按峰值算好）。
 Map<String, dynamic> _breakdownWithItems() => {
@@ -350,5 +387,65 @@ void main() {
     await open(tester);
     expect(find.text('暂无法估算：当前模型未收录单价'), findsOneWidget);
     expect(find.text('0.0000 ~ 0.0000 CNY'), findsNothing);
+  });
+
+  // ── 批8 块 D：近 N 天用量构成（按用途 / 按渠道；数值零本地计算）──
+
+  testWidgets('面板：服务端不带 usage_panel ⇒ 整卡不渲染，不自己编一个窗口',
+      (tester) async {
+    await open(tester);
+    expect(find.textContaining('用量构成'), findsNothing);
+    expect(find.text('按用途'), findsNothing);
+    expect(find.text('按渠道'), findsNothing);
+    expect(find.text('窗口内暂无用量记录'), findsNothing);
+  });
+
+  testWidgets('面板：空态只写「窗口内暂无用量记录」，不铺 0、不画条',
+      (tester) async {
+    current = _payload(usagePanel: _panel(days: 7));
+    await open(tester);
+    expect(find.text('近 7 天用量构成'), findsOneWidget);
+    expect(find.text('窗口内暂无用量记录'), findsOneWidget);
+    expect(find.text('窗口合计 0 tokens'), findsNothing);
+    expect(find.text('按用途'), findsNothing);
+    expect(
+        tester
+            .widgetList<LinearProgressIndicator>(
+                find.byType(LinearProgressIndicator))
+            .where((w) => w.value != null),
+        isEmpty);
+  });
+
+  testWidgets('面板：两桶按服务端 share 画条、回显服务端 token 数，估算只留一句短说明',
+      (tester) async {
+    current = _payload(usagePanel: _panel(
+      days: 30,
+      totalTokens: 232,
+      byTask: [
+        {'key': 'chat', 'total_tokens': 190, 'share': 0.819},
+        {'key': 'memory', 'total_tokens': 35, 'share': 0.151},
+        {'key': '(untagged)', 'total_tokens': 7, 'share': 0.03},
+      ],
+      byChannel: [
+        {'key': 'app', 'total_tokens': 232, 'share': 1.0},
+      ],
+    ));
+    await open(tester);
+    expect(find.text('近 30 天用量构成'), findsOneWidget);
+    expect(find.text('窗口合计 232 tokens'), findsOneWidget);
+    expect(find.text('chat'), findsOneWidget);
+    expect(find.text('(untagged)'), findsOneWidget);
+    expect(find.text('190 tokens'), findsOneWidget);
+    expect(find.text('35 tokens'), findsOneWidget);
+    expect(find.text('7 tokens'), findsOneWidget);
+    final bars = tester
+        .widgetList<LinearProgressIndicator>(find.byType(LinearProgressIndicator))
+        .where((w) => w.value != null)
+        .toList();
+    expect(bars.map((w) => w.value), containsAllInOrder([0.819, 0.151, 0.03, 1.0]));
+    // 面板不上金额：短说明一句到位，长句（含「不折算金额」半句）不再上屏
+    expect(find.text('含估算行，不逐行区分'), findsOneWidget);
+    expect(find.textContaining('也不折算金额'), findsNothing);
+    expect(find.textContaining('CNY'), findsNothing);
   });
 }

@@ -74,6 +74,12 @@ MAX_CHAT_NAME_CHARS = 50          # chat.name ≤50
 MAX_PERSONA_CHARS = 8000          # chat.persona ≤8000 字符
 MAX_GREETING_CHARS = 500          # chat.greeting ≤500 字符
 MAX_DESC_CHARS = 200              # description ≤200（prompt/chat/workflow 通用）
+
+# ── 批 8 块 B（2026-10-01）：可选字段 capability_notes 的上限 ──
+MAX_CAPABILITY_NOTES = 32           # 说明条数上限（一个插件不该声明几十条能力）
+MAX_CAPABILITY_WHY_CHARS = 200      # 每条 why ≤200 字符
+MAX_CAPABILITY_DATA_CHARS = 200     # 每条 data ≤200 字符
+VALID_RISK_LEVELS = ("low", "medium", "high")
 MAX_WF_TEMPLATES = 10             # workflow.templates 1-10 个
 MAX_WF_NODES = 50                 # 模板 nodes ≤50
 MAX_WF_EDGES = 100                # 模板 edges ≤100
@@ -287,6 +293,71 @@ def validate_context_keys_field(keys) -> str | None:
     return None
 
 
+def capability_notes_enabled() -> bool:
+    """块 B 总闸：``plugin_capability_notes``（缺省关 ⇒ 整段不解析、不报错）。
+
+    读 flag 失败也按关——校验层出错绝不能把旧 manifest 打成拒装。
+    """
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("plugin_capability_notes", False))
+    except Exception:
+        return False
+
+
+def validate_capability_notes(data: dict) -> str | None:
+    """校验**可选**字段 ``capability_notes``：返回错误文案；``None`` ＝ 合法。
+
+    形状::
+
+        "capability_notes": {
+            "device:contacts:read": {"why": "...", "risk": "low|medium|high", "data": "..."}
+        }
+
+    为什么**不做**「少写也拒」（不要求 permissions 每一项都必须在 notes 里出现）：
+    本字段是**可选**字段，而设计 §2.2 的硬要求是「已装插件不会因为升级而失效」。
+    一旦要求双向严格相等，任何存量插件升级都会因缺几条说明而被拒装——这与「声明只是
+    说明、授权才是门禁」的定位冲突（授权由 permissions + 同意记录决定，说明缺失只影响
+    可解释性，不影响安全）。因此本函数**只约束「写了就必须写对」**：写了的键必须是本
+    manifest 自己声明过的权限（防多写 / 防凭空声明），但不要求「声明了的都必须写说明」。
+
+    校验分支（4 + 1）：未知权限名 / risk 值非法 / 字段类型错 / 文案超长
+    ＋ 「键必须是本 manifest 自身 permissions 的子集」。
+    """
+    notes = data.get("capability_notes")
+    if notes is None:
+        return None  # 字段缺省＝旧 manifest，完全合法
+    if not isinstance(notes, dict):
+        return "capability_notes 必须是对象（键＝权限名，值＝{why, risk, data}）"
+    if len(notes) > MAX_CAPABILITY_NOTES:
+        return f"capability_notes 条数不得超过 {MAX_CAPABILITY_NOTES}（当前 {len(notes)}）"
+    declared = data.get("permissions", [])
+    declared = declared if isinstance(declared, list) else []
+    for perm, note in notes.items():
+        if perm not in VALID_PERMISSIONS:
+            return f"capability_notes 含未知权限名: {perm}"
+        if perm not in declared:
+            return (f"capability_notes 的 {perm} 未在本 manifest 的 permissions 里声明"
+                    f"（写了说明就必须先声明该权限）")
+        if not isinstance(note, dict):
+            return f"capability_notes[{perm}] 必须是对象"
+        risk = note.get("risk")
+        if risk not in VALID_RISK_LEVELS:
+            return (f"capability_notes[{perm}].risk 必须是 "
+                    f"{VALID_RISK_LEVELS} 之一，收到 {risk!r}")
+        why = note.get("why")
+        if not isinstance(why, str) or not why.strip():
+            return f"capability_notes[{perm}].why 必须是非空字符串"
+        if len(why) > MAX_CAPABILITY_WHY_CHARS:
+            return f"capability_notes[{perm}].why 不得超过 {MAX_CAPABILITY_WHY_CHARS} 字符"
+        note_data = note.get("data")
+        if not isinstance(note_data, str):
+            return f"capability_notes[{perm}].data 必须是字符串"
+        if len(note_data) > MAX_CAPABILITY_DATA_CHARS:
+            return f"capability_notes[{perm}].data 不得超过 {MAX_CAPABILITY_DATA_CHARS} 字符"
+    return None
+
+
 def validate_manifest(data: dict) -> str | None:
     """返回错误信息；None 表示合法"""
     if not isinstance(data, dict):
@@ -352,6 +423,13 @@ def validate_manifest(data: dict) -> str | None:
     icon_err = validate_icon_field(data.get("icon"))
     if icon_err:
         return icon_err
+    # ── 批 8 块 B（2026-10-01）：可选字段 capability_notes ──
+    # **flag 关 ⇒ 整段跳过**（不解析、不报错）⇒ 旧 manifest 的判定逐字节不变。
+    # 刻意放在最后：保证既有字段的错误优先级一字不改。
+    if capability_notes_enabled():
+        notes_err = validate_capability_notes(data)
+        if notes_err:
+            return notes_err
     return None
 
 

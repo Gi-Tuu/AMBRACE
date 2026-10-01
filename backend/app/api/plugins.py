@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, H
 from fastapi.responses import Response
 
 from app.api.plugin_bridge import _plugin_disabled_gate
-from app.auth.deps import get_current_user_id
+from app.auth.deps import get_current_user_id, require_server_admin
 from app.i18n import tr_lang
 from app.plugins import registry
 from app.plugins.manifest import (
@@ -556,6 +556,97 @@ async def plugin_page(
     if len(data) > MAX_PAGE_FILE_BYTES:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_page_too_large"))
     return Response(content=data, media_type=_PAGE_CONTENT_TYPES.get(ext, "application/octet-stream"))
+
+
+@router.get("/capability-audit")
+async def capability_audit(user_id: int = Depends(require_server_admin)):
+    """批 8 块 B（2026-10-01）：**只读**的插件能力「声明 vs 事实」对账。
+
+    每插件每权限给出 ``declared / calls_30d / last_called_at / drift``；
+    drift 两类：**unused**（声明了但 30 天 0 调用）与 **undeclared**（有调用却未声明）。
+
+    数据源＝``agent_task_logs`` 里 ``route='plugin_capability'`` 的 ``steps_json`` 聚合
+    （块 B 新增的两个「只记不判」点位写入）。**本端点零写库**，只读 SELECT。
+
+    诚实标注 ``signature=not_enforced``：插件签名校验当前是恒 True 的桩
+    （``registry.py:833``），不得据此宣称「签名校验通过」。
+    """
+    from sqlalchemy import select
+
+    from app.db.database import async_session_factory
+    from app.models.agent import AgentTaskLog
+    from app.utils.logger import get_logger as _get_logger
+
+    _log = _get_logger(__name__)
+    items = registry.list_plugins()
+
+    # ① 事实：聚合最近 30 天的 capability 调用（只读 SELECT）
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
+    calls: dict[tuple[str, str], int] = {}
+    last_at: dict[tuple[str, str], str] = {}
+    try:
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(AgentTaskLog.steps_json, AgentTaskLog.created_at).where(
+                    AgentTaskLog.route == "plugin_capability",
+                    AgentTaskLog.created_at >= since,
+                )
+            )).all()
+    except Exception as e:  # 只读聚合失败 ⇒ 退化为空事实，绝不 500
+        _log.warning("capability-audit 只读聚合失败: %s", e)
+        rows = []
+    for raw, created in rows:
+        try:
+            detail = json.loads(raw) if raw else {}
+        except Exception:
+            continue
+        key = (str(detail.get("plugin") or ""), str(detail.get("permission") or ""))
+        if not key[0] or not key[1]:
+            continue
+        calls[key] = calls.get(key, 0) + 1
+        stamp = created.strftime("%Y-%m-%d %H:%M:%S") if created else None
+        if stamp and stamp > last_at.get(key, ""):
+            last_at[key] = stamp
+
+    # ② 对账：声明 vs 事实
+    report = []
+    for item in items:
+        name = str(item.get("name") or "")
+        declared = item.get("permissions") or []
+        declared = [str(p) for p in declared] if isinstance(declared, list) else []
+        perms = []
+        for perm in declared:
+            n = calls.get((name, perm), 0)
+            perms.append({
+                "permission": perm,
+                "declared": True,
+                "calls_30d": n,
+                "last_called_at": last_at.get((name, perm)),
+                "drift": "unused" if n == 0 else None,
+            })
+        for (pname, perm), n in calls.items():
+            if pname == name and perm not in declared:
+                perms.append({
+                    "permission": perm,
+                    "declared": False,
+                    "calls_30d": n,
+                    "last_called_at": last_at.get((name, perm)),
+                    "drift": "undeclared",
+                })
+        report.append({
+            "plugin": name,
+            "enabled": bool(item.get("enabled")),
+            "signature": "not_enforced",
+            "permissions": perms,
+        })
+    return {
+        "items": report,
+        "total": len(report),
+        "signature": "not_enforced",
+        "window_days": 30,
+        "note": ("签名校验当前为恒 True 桩（registry.py:833），不得据此宣称已验签；"
+                 "calls_30d 来自 route='plugin_capability' 的只读聚合"),
+    }
 
 
 @router.delete("/{name}")

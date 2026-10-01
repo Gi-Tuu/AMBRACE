@@ -36,10 +36,13 @@ _BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
 _ALEMBIC_INI = _BACKEND_ROOT / "alembic.ini"
 _ALEMBIC_DIR = _BACKEND_ROOT / "alembic"
 
-# 「当前 schema」判别哨兵：『只由版本链引入、init_db 从不添加』的表/列。
-# 全新/当前库（current create_all）含全部这些表/列；远古库（pre-alembic 旧库）缺其中若干。
+# 「当前 schema」判别哨兵：『只由版本链引入、init_db 从不添加』的表/列/索引。
+# 全新/当前库（current create_all）含全部这些表/列/索引；远古库（pre-alembic 旧库）缺其中若干。
 # 命中全部 → 判定为当前 schema → stamp（不重放）；缺任一 → 判定为落后 → upgrade head。
-# 注：create_all 路径会建出的表用「表级哨兵」（如 A5 的 user_runtime_flags），其余为列级哨兵。
+# 注：create_all 路径会建出的表用「表级哨兵」（如 A5 的 user_runtime_flags），其余为列级哨兵；
+#     索引迁移既不建表也不加列，用 idx: 前缀挂在同一张表里（同一条判别、同一个接缝，见
+#     tests/test_admin_llm_quota.py 靠 patch 这张表来隔离语义的用法）。
+_INDEX_SENTINEL_PREFIX = "idx:"
 _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     ("users", "parent_id"),
     ("memories", "group_id"),
@@ -152,6 +155,14 @@ _CURRENT_SCHEMA_SENTINELS: list[tuple[str, str]] = [
     # 到 head 却永久缺表——影子供给（thought_pool_service）一旦拨开 flag 就直接 INSERT 报错，
     # 且「取一条可用的」热路径 SELECT 也炸，念头池整条链静默失效。
     ("thought_pool", "salt"),
+    # ── A4 批 8 块 D 费用面板 M1（2026-09-30）：llm_usage 两条复合索引（索引用 idx: 前缀）──
+    # 由迁移 c3d5e7f9a1b2 create_index 引入（模型侧同步声明在 models/agent/__init__.py
+    # LlmUsage.__table_args__）。索引迁移不新增列也不建表，普通哨兵看不见它——老库若不判
+    # 「落后」会被 stamp 到 head 却永久缺索引，面板按（账号 × 窗口）过滤仍走全表扫，而
+    # schema 检查看起来是「当前」的。create_all 直建路径按 __table_args__ 会建出这两条，
+    # 故全新库判「当前」不受影响。
+    ("llm_usage", _INDEX_SENTINEL_PREFIX + "ix_llm_usage_user_created"),
+    ("llm_usage", _INDEX_SENTINEL_PREFIX + "ix_llm_usage_task_created"),
 ]
 
 
@@ -238,21 +249,27 @@ def _has_any_table(sync_url: str) -> bool:
 
 
 def _schema_is_current(sync_url: str) -> bool:
-    """判别库是否已是当前 schema（链上新增的哨兵列全部存在）。
+    """判别库是否已是当前 schema（链上新增的哨兵表/列/索引全部存在）。
 
-    仅当「每一张相关表都存在且含对应列」才返回 True；任一表缺失/列缺失 → False（判为落后库）。
+    仅当「每一张相关表都存在且含对应列（idx: 前缀则含对应索引）」才返回 True；任一缺失 → False
+    （判为落后库）。
     保守取向：宁可判为「落后」去 upgrade head（正确且幂等），不误判为「当前」去 stamp。
     """
     engine = create_engine(sync_url, poolclass=NullPool)
     try:
         insp = sa_inspect(engine)
-        for table, column in _CURRENT_SCHEMA_SENTINELS:
+        for table, probe in _CURRENT_SCHEMA_SENTINELS:
             try:
                 if not insp.has_table(table):
                     return False
-                col_names = {c["name"] for c in insp.get_columns(table)}
-                if column not in col_names:
-                    return False
+                if probe.startswith(_INDEX_SENTINEL_PREFIX):
+                    names = {i["name"] for i in insp.get_indexes(table)}
+                    if probe[len(_INDEX_SENTINEL_PREFIX):] not in names:
+                        return False
+                else:
+                    names = {c["name"] for c in insp.get_columns(table)}
+                    if probe not in names:
+                        return False
             except Exception:
                 # 表被锁 / 无法反射 → 安全取向：判为未确认当前 → 走 upgrade（保守）。
                 return False

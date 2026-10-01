@@ -811,11 +811,33 @@ def test_服务层import白名单():
 
 
 def test_本批零调用方_挂点属M2():
-    """M1 只落表与写口，不接线：``app/`` 里除服务模块自身外，**代码本体**不得引用它。
+    """念头池接线收敛断言：调用方**只允许**是「抽取侧三挂点 + 生效侧三挂点」，第四处即红。
+
+    演进（三个阶段，本条随接线落地逐步收紧/放宽，但始终钉「收敛到白名单」这一不变式）：
+      - M1（落表 + 写口）：``app/`` 里除服务模块自身外代码本体**零引用**（"本批零调用方"）；
+      - M2-b1（2026-10-01，生效侧）：``arbiter`` / ``sections`` / ``context_builder`` 三处接线
+        （取一条 + 三档释放 + 注入）；
+      - M1-挂点（2026-10-01，抽取侧）：``events/handlers`` / ``chat_service`` /
+        ``character_state_service`` 三处搭车挂点调 ``supply_thought_pool``（F1–F6 抽取入池）。
+
+    不变式：引用方**只允许**这六处（设计 §2.1「抽取挂点唯一三处」+ §2.6 生效侧）。任何
+    **第七处**引用即红——防止念头池被到处捞，重蹈 ``Memory.scope``「到处都有人读」的覆辙。
 
     只比注释之外的代码（AST 去 docstring、注释天然不落 unparse）——migrate/agent_flags/包
     文档里都有「thought_pool_service」这句话，那是说明而非调用。
     """
+    # 抽取侧三挂点（M1-挂点，调 supply_thought_pool）+ 生效侧三挂点（M2-b1，取用/释放/注入）
+    extract_hooks = {
+        os.path.join("events", "handlers.py"),
+        os.path.join("application", "chat_service.py"),
+        os.path.join("application", "character_state_service.py"),
+    }
+    effect_hooks = {
+        os.path.join("scheduling", "arbiter.py"),
+        os.path.join("agent", "context", "sections.py"),
+        os.path.join("agent", "context_builder.py"),
+    }
+    allowed_callers = extract_hooks | effect_hooks
     root = os.path.dirname(os.path.dirname(os.path.abspath(svc.__file__)))  # backend/app
     self_path = os.path.abspath(svc.__file__)
     hits: list[str] = []
@@ -832,4 +854,26 @@ def test_本批零调用方_挂点属M2():
                 continue                      # 先粗筛，省掉绝大多数文件的解析
             if "thought_pool_service" in _code_only(path) or                     "supply_thought_pool" in _code_only(path):
                 hits.append(os.path.relpath(path, root))
-    assert hits == [], hits
+    unexpected = [h for h in hits if h not in allowed_callers]
+    assert unexpected == [], (
+        f"thought_pool_service 出现了白名单外的调用方：{unexpected}"
+        "（只允许抽取侧 handlers/chat_service/character_state_service + 生效侧 arbiter/sections/context_builder）"
+    )
+    # 抽取侧钉死：supply_thought_pool 的调用方**恰好**是三个抽取挂点（生效侧不碰供给口——
+    # 取用/释放走 fetch_one_thought/settle_release，抽池走 supply_thought_pool，两条线不混）。
+    supply_callers = []
+    for dirpath, _dirs, files in os.walk(root):
+        for fn in files:
+            if not fn.endswith(".py"):
+                continue
+            path = os.path.join(dirpath, fn)
+            if os.path.abspath(path) == self_path:
+                continue
+            with open(path, encoding="utf-8", errors="replace") as f:
+                if "supply_thought_pool" not in f.read():
+                    continue
+            if "supply_thought_pool" in _code_only(path):
+                supply_callers.append(os.path.relpath(path, root))
+    assert set(supply_callers) == extract_hooks, (
+        f"supply_thought_pool 的调用方应恰好是三个抽取挂点，实际：{supply_callers}"
+    )

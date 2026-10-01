@@ -661,6 +661,32 @@ def _note_state_trace_gate(character_id, state: str, *, trace_len: int = 0,
         _logger.warning("Proactive two-pass gate trace failed char=%s: %s", character_id, e)
 
 
+def _predict_notify_surface(session_id: int | None) -> tuple[bool, str]:
+    """生成前判定本轮是否走**通知面**（只读探针，不改发送链、不落库）。
+
+    返回 ``(notify_surface, source)``，``source`` ∈ ``ws_probe / no_session /
+    probe_error / flag_off``：
+    - **flag 关 ⇒ 不调探针**，返回 ``(False, 'flag_off')`` ⇒ 调用方保持逐字节旧 prompt；
+    - ``session_id`` 为空（旧调用点没传） ⇒ **视为通知面 True**；
+    - 探针抛错 ⇒ **视为通知面 True**。
+
+    兜底一律取 True 的理由（设计 §1）：主动链的主要落点本就是「用户不在前台」，
+    探针坏掉时「多给一句短句提示」的代价（消息变短）远小于「通知里被截断」。
+    """
+    from app.domain.message_shape import notify_shape_flag_on
+
+    if not notify_shape_flag_on():
+        return False, "flag_off"
+    if session_id is None:
+        return True, "no_session"
+    try:
+        from app.ws.connection_manager import is_session_online
+
+        return (not is_session_online(session_id)), "ws_probe"
+    except Exception:
+        return True, "probe_error"
+
+
 async def generate_proactive_event(
     character_name: str,
     character_bio: str,
@@ -677,6 +703,8 @@ async def generate_proactive_event(
     return_reasoning: bool = False,
     outreach_intent: str | None = None,   # B1-③：本次接触意图（None=旧链路，flag 关零行为）
     outreach_plan: dict | None = None,    # B1-③：OutreachPlan 序列化（素材开关/检索 query/必须抛回）
+    session_id: int | None = None,        # 块 C M1：本轮目标会话（供生成前的通知面探针；None＝旧调用点）
+    thought: str | None = None,           # 批 4 M2-b1：念头池取来的一条谈资（素材，None/空＝逐字节旧 prompt）
 ) -> list[str] | tuple[list[str], str]:
     """生成"一次事件"的消息文本，并按自然语句切成多段（按顺序逐条发送）。
 
@@ -976,6 +1004,15 @@ async def generate_proactive_event(
             "注意：『最近聊了什么』里可能包含你刚回复过的话——承接话题时用自己的话重新说，"
             "绝不逐字重复你上一条消息的任何句子。\n"
         )
+    # 批 4 M2-b1（2026-10-01）：念头池素材注入（flag thought_pool_v1 关 ⇒ thought 恒 None ⇒ 本块不执行，
+    # prompt 逐字节旧行为）。与 outreach_intent/outreach_plan 同性质——是**素材**不是规则：
+    # 只给「另外可自然聊起的一件事」，不改判定、不改条数、不改时机；不写元叙述（无「N 条念头」类实现概念）。
+    if thought:
+        prompt += (
+            f"\n另外，你心里还惦记着一件可以自然聊起的事：{str(thought).strip()[:120]}\n"
+            "如果它与当下语境相称，就把它当作这条消息的谈资自然说出来；不相称就放着，别硬提，"
+            "也别解释这件事是从哪来的。\n"
+        )
     prompt += (
         "请把这一件事写成一条连贯的消息（总共 3~5 句话），描述这件事的经过和你的感受，"
         "像真人发消息一样自然分成几小段，每段 1~2 句话。\n\n"
@@ -1020,6 +1057,15 @@ async def generate_proactive_event(
         {"role": "system", "content": "你是一个真实的朋友，正在给好友发消息。按格式输出，每段一行。"},
         {"role": "user", "content": prompt},
     ]
+    # ── 批 8 块 C M1（2026-10-01）：生成前的在线探针 ⇒ 本轮是否走通知面 ──
+    # 只影响**生成时的 messages**；不改发送链、不落库、不进记忆。
+    # flag 关 ⇒ _predict_notify_surface 不调探针、返回 False ⇒ compose 原样返回 ⇒ 逐字节旧 prompt。
+    _notify_surface, _probe_source = _predict_notify_surface(session_id)
+    _logger.info("notify_shape predicted=%s source=%s char=%s session=%s",
+                 _notify_surface, _probe_source, character_id, session_id)
+    from app.domain.message_shape import compose_notify_shape_messages
+
+    messages = compose_notify_shape_messages(messages, notify_surface=_notify_surface)
     # two-pass POC（2026-09-23）：生成前拼一块确定性「现状 trace」并**前置**到系统块/长历史之前。
     # 双条件灰度（开关开 + 角色命中白名单）；trace 为空或构造异常 → 原样 messages（逐字旧行为）。
     # 判定点三态留痕（2026-09-26 派单 Part B）：注入留痕只在「命中且有 trace」时才有，缺它分不清

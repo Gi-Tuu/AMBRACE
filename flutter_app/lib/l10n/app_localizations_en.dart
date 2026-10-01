@@ -8317,4 +8317,27 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get contextBudgetSaveFailed => 'Failed to save tier, please retry';
+
+  @override
+  String usagePanelSectionTitle(Object days) {
+    return 'Usage mix over the last $days days';
+  }
+
+  @override
+  String get usagePanelByTask => 'By purpose';
+
+  @override
+  String get usagePanelByChannel => 'By channel';
+
+  @override
+  String get usagePanelEmpty => 'No usage recorded in this window';
+
+  @override
+  String usagePanelWindowTotal(Object tokens) {
+    return 'Window total $tokens tokens';
+  }
+
+  @override
+  String get usagePanelEstimatedNote =>
+      'includes estimated rows, not split per row';
 }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../services/api_client.dart';
 import '../../widgets/ios_card_group.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
+import 'context_budget_screen.dart'; // 批8 块 D：UsagePanelBars 两组条形行（两页共用，避免第二套渲染）
 class LlmUsageSheet extends StatefulWidget {
   const LlmUsageSheet({super.key});
 
@@ -148,6 +149,9 @@ class LlmUsageSheetState extends State<LlmUsageSheet> {
     final byUser =
         (_data?['by_user'] as List? ?? []).cast<Map<String, dynamic>>();
     final canEdit = _data?['can_edit_limit'] == true;
+    // 批8 块 D：面板段（服务端已聚合，这里只解析一次供渲染；不做任何本地计算）
+    final panel = UsagePanel.fromMap(_data?['usage_panel']);
+    final hasPanel = _data?['usage_panel'] is Map;
     final cardColor = scheme.surfaceContainerHighest.withValues(alpha: 0.5);
 
     Widget statCard(String label, int value) => Expanded(
@@ -288,6 +292,27 @@ class LlmUsageSheetState extends State<LlmUsageSheet> {
                         style: const TextStyle(
                             fontSize: 11, color: IosCardColors.subtitle)),
                   ),
+              ],
+            ),
+          ),
+        ],
+        // 批8 块 D：近 N 天用量构成（按用途 / 按渠道）。服务端未返回该段时整段不出
+        // （旧服务端没有 usage_panel ⇒ 不能用「近 0 天」冒充一个窗口）。
+        if (hasPanel) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(l10n.usagePanelSectionTitle(panel.days),
+                    style: TextStyle(
+                        fontSize: 12, color: IosCardColors.subtitle)),
+                UsagePanelBars(panel: panel),
               ],
             ),
           ),

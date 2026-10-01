@@ -626,6 +626,78 @@ async def _inject_survival_checklist(state: dict) -> None:
                                       len(messages), elapsed_ms)
 
 
+# ── 批 4 M2-b1（2026-10-01）：念头池聊天侧注入（装配尾部，插到 continue_payload 之前）──
+# 红线②（docs/context-order-convention.md §4）：诉求/指令恒最后——本块是**素材**，
+# 必须插在 continue_payload（【系统指令】）之前；找不到该锚点才退化到宿主 user 之前。
+# flag thought_pool_v1 关或角色未命中灰度 ⇒ 首行即返回（不查库、不改消息结构，逐字旧行为）。
+_THOUGHT_BLOCK_ANCHOR = "【系统指令】"
+
+
+def _insert_thought_block(messages: list[dict], state: dict, text: str) -> dict:
+    """把念头块插到 continue_payload（【系统指令】）之前；无该锚点则插到宿主 user 之前。
+
+    与 ``_insert_survival_block`` 同形（原地改 messages、同步修正宿主 user 下标），
+    区别仅在锚点：素材块必须落在诉求/指令之前（红线②），存活清单是高优先块故贴 user。
+    """
+    block = {"role": "system", "content": text}
+    at = None
+    # ① 优先插在 continue_payload（最后一条以【系统指令】开头的 system 块）之前
+    for i in range(len(messages) - 1, -1, -1):
+        m = messages[i] or {}
+        if m.get("role") == "system" and str(m.get("content") or "").startswith(_THOUGHT_BLOCK_ANCHOR):
+            at = i
+            break
+    # ② 退化：插到宿主 user 之前（复用 _insert_survival_block 的锚点口径）
+    if at is None:
+        idx = state.get("_host_user_msg_index")
+        if isinstance(idx, int) and 0 <= idx < len(messages) and (messages[idx] or {}).get("role") == "user":
+            at = idx
+        else:
+            for i in range(len(messages) - 1, -1, -1):
+                if (messages[i] or {}).get("role") == "user":
+                    at = i
+                    break
+    if at is None:
+        at = len(messages)
+    messages.insert(at, block)
+    idx = state.get("_host_user_msg_index")
+    if isinstance(idx, int) and idx >= at:
+        state["_host_user_msg_index"] = idx + 1
+    return block
+
+
+async def _inject_thought_pool_block(state: dict) -> None:
+    """装配尾部注入念头池素材块（原地改 ``state["context_messages"]``）。
+
+    flag 关 / 角色未命中灰度 → **直接返回**（不多一次查询、不改消息结构，逐字旧行为）。
+    取数复用注册表 section 已缓存进 state 的结果（``_thought_pool_block``）；纯 legacy 路径
+    （注册表 flag 关）该缓存缺失时才现取一次——两条路径都只查一次库。
+    """
+    from app.application.thought_pool_service import thought_pool_v1_allowed
+    char_id = state.get("character_id")
+    if not thought_pool_v1_allowed(char_id):
+        return
+    messages = state.get("context_messages")
+    if not isinstance(messages, list) or not messages:
+        return
+    text = state.get("_thought_pool_block")
+    if text is None:
+        # 纯 legacy 路径：注册表未跑 section ⇒ 现取一次（同一 builder，缓存回 state）
+        try:
+            from app.agent.context.sections import thought_pool_section
+            text = await thought_pool_section(state, {})
+        except Exception as e:
+            _logger.warning("thought pool fetch skipped: %s", e)
+            return
+    if not text:
+        return
+    _insert_thought_block(messages, state, str(text))
+    try:
+        _apply_system_total_quota(messages, character_id=char_id)
+    except Exception as e:
+        _logger.warning("thought pool quota re-pass failed char=%s: %s", char_id, e)
+
+
 def _summary_dedup_note(prev_summaries: list[str]) -> str:
     """历史摘要防重复提示（纯函数）：最近已有摘要拼接为提示，无则空串（B 延伸，2026-08-16）"""
     if not prev_summaries:
@@ -949,6 +1021,12 @@ async def build_context(state: dict, *, stream: bool | None = None) -> dict:
             await _inject_survival_checklist(result if isinstance(result, dict) else state)
         except Exception as e:
             _logger.warning("Survival checklist inject skipped: %s", e)
+        # 批 4 M2-b1：念头池素材块注入（flag thought_pool_v1 关/未命中灰度 → 直接返回，
+        # 不查库、消息结构逐字不变）。插在 continue_payload 之前（红线②），异常自吞不阻塞。
+        try:
+            await _inject_thought_pool_block(result if isinstance(result, dict) else state)
+        except Exception as e:
+            _logger.warning("Thought pool block inject skipped: %s", e)
     finally:
         reset_turn_context_budget_tier(_tier_token)
     return result

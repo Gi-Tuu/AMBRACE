@@ -173,6 +173,49 @@ async def _on_life_share(payload: dict) -> None:
         _logger.warning("events on_life_share failed: %s", e)
 
 
+async def _on_thought_pool_activity(payload: dict) -> None:
+    """批 4 M1-挂点（2026-10-01）：``life.activity_completed`` → F1 活动面抽念头入池。
+
+    与 ``_on_life_share`` **同一个**订阅位（设计 §2.1「抽取挂点·事件侧」）：只读 payload、
+    只写 ``thought_pool`` 行，复用既有纯函数 ``supply_thought_pool``（不重写抽取逻辑）。
+
+    硬约束（派单）：
+      - **先判 flag 再干活**：``thought_pool_shadow`` 关 ⇒ 首行返回，一次 SQL 都不发；
+      - **异常隔离**：任何失败只记 WARNING，绝不影响活动分享 / 朋友圈联动主链路；
+      - **不改发送链**：不碰消息生成、不碰 arbiter、不给念头池发送权；
+      - 幂等键沿用既有（角色,用户,来源类型,来源主键,规范化文本哈希）——重复事件不增行。
+
+    归属说明：F1 与 ``life_share`` 是同一信号的两个去向（设计 §3.2「同源归属二选一」）。
+    本挂点按**未分享**口径以 spark 入池（``shared_refs`` 传空）；「已被 life_share 讲掉 ⇒
+    只留 spent 痕迹」的协同属 §3.2 精修，需读 life_share 本次成败，不在本单（M1-挂点）范围。
+    """
+    try:
+        from app.application import thought_pool_service as _tps
+        if not _tps.shadow_enabled():
+            return                      # flag 关：首行返回，零 SQL（照 arbiter._pacing_gate 早退写法）
+        _d = payload.get("data") or payload
+        character_id = _d.get("character_id")
+        if not character_id:
+            return
+        from app.domain.thought import extract as _ex
+        # 稳定来源主键：优先 artifact_id（create 类有产物），退化 memory_id（两个发布点都带）
+        ref = _d.get("artifact_id") or _d.get("memory_id") or _d.get("id")
+        row = {
+            "id": ref,
+            "character_id": character_id,
+            "user_id": _d.get("user_id"),
+            "activity_type": _d.get("activity_type"),
+            "status": "completed",       # 事件即「活动完成」
+            "summary": _d.get("summary") or "",
+            "epistemic_status": None,
+        }
+        async with async_session_factory() as db:
+            await _tps.supply_thought_pool(db, {_ex.SRC_ACTIVITY: [row]})
+            await db.commit()           # 钩子自开 session ⇒ 自己 commit（与 T1 settle 钩子同口径）
+    except Exception as e:
+        _logger.warning("events on_thought_pool_activity failed: %s", e)
+
+
 def register_builtin_handlers() -> None:
     """注册内置订阅者（幂等：重复注册会去重）"""
     from app.events.bus import event_bus
@@ -180,6 +223,7 @@ def register_builtin_handlers() -> None:
         ("memory.written", _on_memory_written),
         ("life.activity_completed", _on_activity_completed),
         ("life.activity_completed", _on_life_share),
+        ("life.activity_completed", _on_thought_pool_activity),  # 批 4 M1-挂点：F1 活动面入池
         ("tool.executed", _on_tool_executed),
         ("interest.updated", _on_interest_updated),
         ("life.moment_published", _on_moment_published),

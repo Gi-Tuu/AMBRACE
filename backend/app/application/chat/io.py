@@ -71,8 +71,10 @@ async def _push_user_notify(user_id: int, session_id: int, character_id: int, co
     """#55 App 后台保活 + FCM 离线推送：WS 在线实时推送，不在线走 FCM。"""
     try:
         from app.application.push_service import notify_user
+        from app.domain.message_shape import notify_body
         # 通知正文只放预览，不含完整聊天内容（FCM 经 Google 服务器，隐私保护）
-        preview = content[:50] + ("…" if len(content) > 50 else "")
+        # 预览口径收口到 domain/message_shape.py（批 8 块 C M0：与 scheduler 共用同一真源）
+        preview = notify_body(content)
         await notify_user(
             user_id,
             title="新消息",

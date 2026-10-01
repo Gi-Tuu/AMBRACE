@@ -7987,4 +7987,26 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get contextBudgetSaveFailed => '档位保存失败，请重试';
+
+  @override
+  String usagePanelSectionTitle(Object days) {
+    return '近 $days 天用量构成';
+  }
+
+  @override
+  String get usagePanelByTask => '按用途';
+
+  @override
+  String get usagePanelByChannel => '按渠道';
+
+  @override
+  String get usagePanelEmpty => '窗口内暂无用量记录';
+
+  @override
+  String usagePanelWindowTotal(Object tokens) {
+    return '窗口合计 $tokens tokens';
+  }
+
+  @override
+  String get usagePanelEstimatedNote => '含估算行，不逐行区分';
 }

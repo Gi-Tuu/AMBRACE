@@ -172,7 +172,10 @@ async def send_to_session(
     # #55 App 后台保活 + FCM 离线推送：WS 在线实时推送，不在线走 FCM
     try:
         from app.application.push_service import notify_user
-        preview = content[:50] + ("…" if len(content) > 50 else "")
+        from app.domain.message_shape import notify_body
+        # 通知体预览收口到 domain/message_shape.py（批 8 块 C M0：与 chat/io.py 同一真源）；
+        # flag message_shape_notify_limit 开时按「notify 载体」下发上限（关＝逐字节旧 [:50]）。
+        preview = notify_body(content)
         await notify_user(
             user_id,
             title="新消息",

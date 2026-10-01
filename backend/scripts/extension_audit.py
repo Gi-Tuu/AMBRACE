@@ -617,6 +617,8 @@ def audit_signature_stub(repo_root: Path, index: dict, registry_py: str = REGIST
 FORM_ABSENT_TOKENS = ("桌面气泡", "锁屏卡片", "display_form", "msg_form")
 # 通知 body 的两个收敛点（离线主动 + 私聊）——「两份拷贝」的口径只数这两处
 NOTIFY_CONVERGENCE_FILES = ("backend/app/scheduling/scheduler.py", "backend/app/application/chat/io.py")
+# 块 C（2026-09-30）收口后的「通知预览唯一真源」文件 —— 两个收敛点都必须调它的 notify_body()
+NOTIFY_SINGLE_SOURCE_FILE = ("backend/app/domain/message_shape.py",)
 
 
 def audit_form_surface(repo_root: Path, index: dict) -> dict:
@@ -628,6 +630,11 @@ def audit_form_surface(repo_root: Path, index: dict) -> dict:
     existing_gates = {
         "notify_preview_two_copies": grep_index(
             index, r"content\[:50\] \+ \(\"…\"", regex=True, include_prefixes=NOTIFY_CONVERGENCE_FILES),
+        # 块 C 收口后：逐字重复必须为 0、两个收敛点都必须调单一真源（收口不代表可以再写第二份）
+        "notify_preview_single_source_def": grep_index(
+            index, "def notify_preview(", include_prefixes=NOTIFY_SINGLE_SOURCE_FILE),
+        "notify_preview_single_source_calls": grep_index(
+            index, "notify_body(", include_prefixes=NOTIFY_CONVERGENCE_FILES),
         "segment_max": grep_index(index, "_MAX_SEGMENT_LEN", exclude_prefixes=("backend/tests/",)),
         "proactive_log_ceiling": grep_index(index, "content[:500]", include_prefixes=("backend/app/scheduling/scheduler.py",)),
         "wechat_hint": grep_index(index, "WECHAT_CHANNEL_HINT", exclude_prefixes=("backend/tests/", "docs/")),
@@ -646,7 +653,21 @@ def audit_form_surface(repo_root: Path, index: dict) -> dict:
                 "hits": existing_gates["notify_preview_two_copies"],
                 "scope": f"只数两个收敛点（{', '.join(NOTIFY_CONVERGENCE_FILES)}）；"
                          f"全仓另有 {extra_content_50} 处 ``content[:50]`` 字样（多数与通知无关，不计入）",
-                "finding": "两处逐字重复的 ``content[:50] + (\"…\" if len>50)``（同一逻辑两份拷贝，无单一事实源）",
+                "finding": "块 C（2026-09-30）已把这两处收口成单一真源 ⇒ 逐字重复拷贝 0 处（M0 建账时为 2 处，收口后仍会随代码漂移重新计到正数）；「不许再各写一份」的守卫见下方 notify_preview_single_source",
+            },
+            "notify_preview_single_source": {
+                "ok": (len(existing_gates["notify_preview_single_source_def"]) == 1
+                       and len(existing_gates["notify_preview_single_source_calls"]) == 2
+                       and {h["file"] for h in existing_gates["notify_preview_single_source_calls"]}
+                       == set(NOTIFY_CONVERGENCE_FILES)),
+                # 报表渲染按「命中数」列展示 ⇒ 这里给调用点个数（两个收敛点各一次）
+                "count": len(existing_gates["notify_preview_single_source_calls"]),
+                "evidence": (f"定义 {evidence(existing_gates['notify_preview_single_source_def'])}；调用 {evidence(existing_gates['notify_preview_single_source_calls'])}"),
+                "definition_count": len(existing_gates["notify_preview_single_source_def"]),
+                "definition_evidence": evidence(existing_gates["notify_preview_single_source_def"]),
+                "call_site_count": len(existing_gates["notify_preview_single_source_calls"]),
+                "call_sites": existing_gates["notify_preview_single_source_calls"],
+                "finding": "通知预览唯一真源＝ backend/app/domain/message_shape.py 的 notify_preview / notify_body；两个收敛点都必须调 notify_body(...)，任一处写回字面 [:50] 表达式都会让上一行计数重新变正",
             },
             "segment_max_80": {
                 "count": len(existing_gates["segment_max"]),

@@ -2836,5 +2836,11 @@
   "contextBudgetCostBasis": "口径：按本档生效预算用满、只算输入侧，不含输出与工具调用",
   "contextBudgetCostNoPrice": "暂无法估算：服务端未配置单价",
   "contextBudgetCostNoModelPrice": "暂无法估算：当前模型未收录单价",
-  "contextBudgetSaveFailed": "档位保存失败，请重试"
+  "contextBudgetSaveFailed": "档位保存失败，请重试",
+  "usagePanelSectionTitle": "近 {days} 天用量构成",
+  "usagePanelByTask": "按用途",
+  "usagePanelByChannel": "按渠道",
+  "usagePanelEmpty": "窗口内暂无用量记录",
+  "usagePanelWindowTotal": "窗口合计 {tokens} tokens",
+  "usagePanelEstimatedNote": "含估算行，不逐行区分"
 }

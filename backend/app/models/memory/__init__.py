@@ -34,7 +34,7 @@ class Memory(Base):
     related_memory_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 关联记忆ID
     title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    scope: Mapped[str] = mapped_column(String(10), default="private")  # global=公开安全 / private=角色私密（默认）
+    scope: Mapped[str] = mapped_column(String(10), default="private")  # global=公开安全 / private=角色私密（默认）；**预留：当前无任何读方 / 无执行语义**（2026-10-01 决策：保留列 ＋ 文档改口径，见 docs/memory-scope-review.md R5）
     importance: Mapped[float] = mapped_column(Float, default=40.0)  # 百分比 0-120，显示星级=round(pct/20)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)  # 置顶摘要，不参与衰减与删除

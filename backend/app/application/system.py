@@ -997,6 +997,8 @@ async def get_llm_usage(
             _b["total"] += r.total_tokens or 0
             _b["prompt"] += r.prompt_tokens or 0
             _b["completion"] += r.completion_tokens or 0
+        # 批8 块 D：桶形状**一字未动**（既有测试钉死精确相等，且只增不减是本接口口径）；
+        # 面板要用的窗口聚合另走 usage_panel（下方返回键），不在这条全表载入上扩窗口（D-2）。
         by_task = [
             {"task": k, **v}
             for k, v in sorted(_task_acc.items(), key=lambda kv: (-kv[1]["total"], kv[0]))
@@ -1035,6 +1037,15 @@ async def get_llm_usage(
     _quota = await llm_quota.resolve_limit(user_id)
     limit = int(_quota.get("total_limit") or 0)
     remaining = (limit - total) if (limit and limit > 0) else None
+    # 批8 块 D M0：窗口用量面板（近 N 天，按用途/按渠道 + 服务端占比 + estimated/money 说明）。
+    # 走 usage_panel 的「窗口一次 SELECT」这条读法，**不是**在上面 rows 全表载入上扩窗口（D-2）；
+    # 失败只让本段退回空结构，既有字段照常返回（观测不得让读数端 500）。
+    try:
+        panel = await usage_panel(user_id, _PANEL_DEFAULT_DAYS)
+    except Exception as e:
+        _logger.warning("llm usage panel failed user_id=%s: %s", user_id, e)
+        panel = _blank_usage_panel(_PANEL_DEFAULT_DAYS)
+        panel["error"] = "usage_panel_unavailable"
     return {
         "total_limit": limit,
         "limit_source": _quota.get("source"),
@@ -1050,6 +1061,8 @@ async def get_llm_usage(
         "by_task": by_task,
         # T6-M2 项 2：同样只增不减（by_channel 与 by_task 同构，NULL 归 (unknown)）
         "by_channel": by_channel,
+        # 批8 块 D M0：窗口面板（口径/失败处理见上方注释；只增键，既有字段一字未动）
+        "usage_panel": panel,
         "can_edit_limit": await is_admin_user(user_id),
     }
 
@@ -1060,6 +1073,115 @@ async def get_llm_usage(
 # 流式估算占了多大比例」。纯读端聚合：不加列、不建表、不写迁移。
 _USAGE_UNTAGGED = "(untagged)"   # 与 M0 项 3 同哨兵：task 为空单独成桶，不混进真实用途
 _USAGE_UNKNOWN = "(unknown)"     # provider / model / 日期缺失的行归这里（与「无归因」同一思路）
+
+
+def _usage_metrics_blank() -> dict:
+    """四件套 + calls 的空桶（报表与面板共用同一形状，避免两处各写一份键名）。"""
+    return {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
+            "total_tokens": 0, "reasoning_tokens": 0}
+
+
+def _usage_window_bounds(days: int) -> dict:
+    """days → 窗口四界（本地日界 + UTC naive），口径与 usage_report 建立时一字未变。
+
+    库内 created_at 是 UTC naive，窗口按 ``app_local_now()`` 的应用本地日历切
+    （days=N 含今天，向前推 N-1 个本地日界），自然日也按同一 offset 归桶。
+    """
+    from app.utils.timeutil import app_tz_offset_hours, now_naive_utc
+
+    offset = app_tz_offset_hours()
+    now_local = app_local_now()
+    start_local = datetime(
+        now_local.year, now_local.month, now_local.day, tzinfo=now_local.tzinfo
+    ) - timedelta(days=days - 1)
+    return {
+        "days": days,
+        "offset": offset,
+        "now_local": now_local,
+        "start_local": start_local,
+        "start_utc": start_local.astimezone(timezone.utc).replace(tzinfo=None),
+        "end_utc": now_naive_utc(),
+    }
+
+
+def _usage_window_descriptor(w: dict) -> dict:
+    """窗口四界 → 对外可读形状（键名/精度与原 usage_report.window 完全一致）。"""
+    return {
+        "days": w["days"],
+        "tz_offset_hours": w["offset"],
+        "start_local": w["start_local"].isoformat(timespec="seconds"),
+        "end_local": w["now_local"].isoformat(timespec="seconds"),
+        "start_utc": w["start_utc"].isoformat(timespec="seconds"),
+        "end_utc": w["end_utc"].isoformat(timespec="seconds"),
+    }
+
+
+async def _read_usage_window(db, start_utc: datetime, end_utc: datetime,
+                             scope_cond=None) -> list:
+    """窗口内用量行的一次 SELECT（只取聚合所需列）；``scope_cond=None`` ＝全局（控制台口径）。
+
+    这是块 D 唯一的技术债防线：面板/报表一律走「窗口 + 指定列」这条读法，
+    **不得**沿用 get_llm_usage 的 ``select(LlmUsage)`` 全表载入（设计 §1.4 D-2）。
+    """
+    from app.models.agent import LlmUsage
+
+    stmt = select(
+        LlmUsage.task, LlmUsage.channel, LlmUsage.provider, LlmUsage.model, LlmUsage.created_at,
+        LlmUsage.prompt_tokens, LlmUsage.completion_tokens,
+        LlmUsage.total_tokens, LlmUsage.reasoning_tokens,
+    ).where(LlmUsage.created_at >= start_utc, LlmUsage.created_at <= end_utc)
+    if scope_cond is not None:
+        stmt = stmt.where(scope_cond)
+    return (await db.execute(stmt)).all()
+
+
+def _aggregate_usage_rows(rows: list, offset: int) -> tuple[dict, dict, dict, dict, dict]:
+    """窗口行 → (task_acc, chan_acc, day_acc, model_acc, total)；纯函数、不碰库。
+
+    分桶哨兵：task 空 → (untagged)、channel/provider/model/日期缺失 → (unknown)，
+    「无归因」不与真实取值混读（channel 历史行不回填，见迁移 b4c5d6e7f8a9）。
+    """
+    from app.utils.timeutil import shift_utc_naive
+
+    def _split(r) -> tuple:
+        metrics = {
+            "prompt_tokens": r.prompt_tokens or 0,
+            "completion_tokens": r.completion_tokens or 0,
+            "total_tokens": r.total_tokens or 0,
+            "reasoning_tokens": r.reasoning_tokens or 0,
+        }
+        day = (shift_utc_naive(r.created_at, offset).date().isoformat()
+               if r.created_at else _USAGE_UNKNOWN)
+        key_model = ((r.provider or "")[:30] or _USAGE_UNKNOWN,
+                     (r.model or "")[:50] or _USAGE_UNKNOWN)
+        return metrics, day, key_model
+
+    task_acc: dict[str, dict] = {}
+    chan_acc: dict[str, dict] = {}
+    day_acc: dict[str, dict] = {}
+    model_acc: dict[tuple[str, str], dict] = {}
+    total_b = _usage_metrics_blank()
+    for r in rows:
+        metrics, day, key_model = _split(r)
+        for acc, key in ((task_acc, (r.task or "")[:30] or _USAGE_UNTAGGED),
+                         (chan_acc, (getattr(r, "channel", None) or "")[:30] or _USAGE_UNKNOWN),
+                         (day_acc, day), (model_acc, key_model)):
+            b = acc.setdefault(key, _usage_metrics_blank())
+            b["calls"] += 1
+            for f, v in metrics.items():
+                b[f] += v
+        total_b["calls"] += 1
+        for f, v in metrics.items():
+            total_b[f] += v
+    return task_acc, chan_acc, day_acc, model_acc, total_b
+
+
+def _usage_emit(acc: dict, naming) -> list[dict]:
+    """桶 → 列表：total_tokens 降序，同额按名称升序（输出稳定，便于回归比对）。"""
+    return [
+        {**naming(k), **b}
+        for k, b in sorted(acc.items(), key=lambda kv: (-kv[1]["total_tokens"], str(kv[0])))
+    ]
 
 
 async def usage_report(days: int = 7) -> dict:
@@ -1077,31 +1199,13 @@ async def usage_report(days: int = 7) -> dict:
     from sqlalchemy import func
 
     from app.db.database import async_session_factory
-    from app.models.agent import AgentTaskLog, LlmUsage
-    from app.utils.timeutil import app_tz_offset_hours, now_naive_utc, shift_utc_naive
+    from app.models.agent import AgentTaskLog
 
-    offset = app_tz_offset_hours()
-    now_local = app_local_now()
-    start_local = datetime(
-        now_local.year, now_local.month, now_local.day, tzinfo=now_local.tzinfo
-    ) - timedelta(days=days - 1)
-    start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
-    end_utc = now_naive_utc()
-
-    def _blank() -> dict:
-        return {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
-                "total_tokens": 0, "reasoning_tokens": 0}
+    w = _usage_window_bounds(days)
 
     result = {
-        "window": {
-            "days": days,
-            "tz_offset_hours": offset,
-            "start_local": start_local.isoformat(timespec="seconds"),
-            "end_local": now_local.isoformat(timespec="seconds"),
-            "start_utc": start_utc.isoformat(timespec="seconds"),
-            "end_utc": end_utc.isoformat(timespec="seconds"),
-        },
-        "total": _blank(),
+        "window": _usage_window_descriptor(w),
+        "total": _usage_metrics_blank(),
         "by_task": [],
         "by_channel": [],   # T6-M2：空结构也要带这个键（fail-open 返回体口径一致）
         "by_day": [],
@@ -1111,64 +1215,163 @@ async def usage_report(days: int = 7) -> dict:
 
     try:
         async with async_session_factory() as db:
-            rows = (await db.execute(
-                select(
-                    LlmUsage.task, LlmUsage.channel, LlmUsage.provider, LlmUsage.model, LlmUsage.created_at,
-                    LlmUsage.prompt_tokens, LlmUsage.completion_tokens,
-                    LlmUsage.total_tokens, LlmUsage.reasoning_tokens,
-                ).where(LlmUsage.created_at >= start_utc, LlmUsage.created_at <= end_utc)
-            )).all()
+            rows = await _read_usage_window(db, w["start_utc"], w["end_utc"])
             result["estimated_calls"] = int((await db.execute(
                 select(func.count()).select_from(AgentTaskLog).where(
                     AgentTaskLog.route == "usage_estimated",
-                    AgentTaskLog.created_at >= start_utc,
-                    AgentTaskLog.created_at <= end_utc,
+                    AgentTaskLog.created_at >= w["start_utc"],
+                    AgentTaskLog.created_at <= w["end_utc"],
                 )
             )).scalar_one() or 0)
     except Exception as e:
         _logger.warning("usage report read failed days=%s: %s", days, e)
         return result
 
-    def _emit(acc: dict, naming) -> list[dict]:
-        """桶 → 列表：total_tokens 降序，同额按名称升序（输出稳定，便于回归比对）。"""
-        return [
-            {**naming(k), **b}
-            for k, b in sorted(acc.items(), key=lambda kv: (-kv[1]["total_tokens"], str(kv[0])))
-        ]
-
-    task_acc: dict[str, dict] = {}
-    chan_acc: dict[str, dict] = {}
-    day_acc: dict[str, dict] = {}
-    model_acc: dict[tuple[str, str], dict] = {}
-    total_b = result["total"]
-    for r in rows:
-        metrics = {
-            "prompt_tokens": r.prompt_tokens or 0,
-            "completion_tokens": r.completion_tokens or 0,
-            "total_tokens": r.total_tokens or 0,
-            "reasoning_tokens": r.reasoning_tokens or 0,
-        }
-        day = (shift_utc_naive(r.created_at, offset).date().isoformat()
-               if r.created_at else _USAGE_UNKNOWN)
-        key_model = ((r.provider or "")[:30] or _USAGE_UNKNOWN,
-                     (r.model or "")[:50] or _USAGE_UNKNOWN)
-        for acc, key in ((task_acc, (r.task or "")[:30] or _USAGE_UNTAGGED),
-                         (chan_acc, (getattr(r, "channel", None) or "")[:30] or _USAGE_UNKNOWN),
-                         (day_acc, day), (model_acc, key_model)):
-            b = acc.setdefault(key, _blank())
-            b["calls"] += 1
-            for f, v in metrics.items():
-                b[f] += v
-        total_b["calls"] += 1
-        for f, v in metrics.items():
-            total_b[f] += v
-
-    result["by_task"] = _emit(task_acc, lambda k: {"task": k})
+    task_acc, chan_acc, day_acc, model_acc, total_b = _aggregate_usage_rows(rows, w["offset"])
+    result["total"] = total_b
+    result["by_task"] = _usage_emit(task_acc, lambda k: {"task": k})
     # T6-M2 项 2：chan_acc 已在上面分桶，这里必须吐出（与 by_task 同排序口径：用量降序）
-    result["by_channel"] = _emit(chan_acc, lambda k: {"channel": k})
+    result["by_channel"] = _usage_emit(chan_acc, lambda k: {"channel": k})
     # by_day 不跟随「用量降序」：时间序列按日期升序才是可读的报表形态（其余三桶仍按用量降序）
     result["by_day"] = [{"date": k, **day_acc[k]} for k in sorted(day_acc)]
-    result["by_model"] = _emit(model_acc, lambda k: {"provider": k[0], "model": k[1]})
+    result["by_model"] = _usage_emit(model_acc, lambda k: {"provider": k[0], "model": k[1]})
+    return result
+
+
+# ── A4 批 8 / 块 D「费用面板」M0（2026-09-30）：按账号的窗口用量读数（纯读、零新 schema 依赖）──
+# 与 usage_report 的关系：**同一套聚合内核**（_read_usage_window + _aggregate_usage_rows +
+# _usage_emit），差别只在这一处——面板按账号范围过滤（设计 §2.4「安全口径」）。
+# 面板绝不沿 get_llm_usage 的全表载入扩窗口（D-2），也绝不重写 SQL 口径（D4）。
+_PANEL_DEFAULT_DAYS = 7
+_PANEL_MIN_DAYS = 1
+_PANEL_MAX_DAYS = 90   # 与 admin.py:1152 控制台报表同一上限，两处窗口不各说各话
+
+
+def _panel_days_or_raise(raw: object) -> int:
+    """days 校验：脏输入/越界 → ValueError（API 层映射 400），**不静默夹取**。
+
+    照控制台报表的口径（app/api/admin.py 对 days 1..90 越界返回 400 而不是夹到边界）：
+    静默夹取会让「我要看 365 天」变成「看到 90 天」却毫无提示。
+    """
+    try:
+        days = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise ValueError("days 必须是 1-%d 的整数" % _PANEL_MAX_DAYS)
+    if days < _PANEL_MIN_DAYS or days > _PANEL_MAX_DAYS:
+        raise ValueError("days 必须在 %d-%d 之间" % (_PANEL_MIN_DAYS, _PANEL_MAX_DAYS))
+    return days
+
+
+def _panel_estimated_segment() -> dict:
+    """估算可区分性说明：行级「实测 / 估算」**如实 unavailable**，不编数字。
+
+    已知断点 D-1：流式上游不回 usage 时 llm_client 记的是估算行（``estimated=True``），
+    但 ``llm_usage`` 没有估算标记列（models/agent/__init__.py LlmUsage），标记只落在
+    ``agent_task_logs`` route="usage_estimated" 的观测明细里（obs_event 的第一参是
+    character_id、不带 user_id）⇒ 既无法按账号过滤，也没有可 join 的行级外键。
+    补列属 M1 之后的独立决策（设计 §8 待拍板 4），本轮面板只做**诚实声明**。
+    """
+    return {
+        "status": "unavailable",
+        "reason": "no_estimated_column",
+        "per_row": "unavailable",
+        "join_key": None,
+        "note": ("估算行与实测行在 llm_usage 里同形（无估算列）；留痕在 agent_task_logs"
+                 " route=usage_estimated 但不带账号与行级外键 ⇒ 本面板不按账号给估算数"),
+    }
+
+
+def _panel_money_segment() -> dict:
+    """金额段：维持 unavailable（无价目表），且**绝不把单轮预算投影说成历史花费**。
+
+    单一事实源是 _cost_estimate / _price_range_for / _TOKEN_PRICE_RANGES（刻意留空，见其注释）。
+    本轮「费用估算」的 basis 是 ``full_effective_budget_input_only``＝一轮、输入侧、预算用满的
+    **投影**，与本面板的「窗口历史用量」是两套语义 ⇒ 这里不复用那个字符串（设计 §2.4：
+    混在一个字段名里就是第二套真相），金额字段一律 None。
+    """
+    return {
+        "status": "unavailable",
+        "reason": ("no_price_table" if not _TOKEN_PRICE_RANGES else "priced_history_basis_undefined"),
+        "currency": _PRICE_CURRENCY,
+        "amount_low": None,
+        "amount_high": None,
+        "basis": None,
+        "is_historical_spend": False,
+        "note": "无价目表 ⇒ 金额段不出数；既有 cost_estimate 段是单轮预算投影，不是历史花费",
+    }
+
+
+def _blank_usage_panel(days: int) -> dict:
+    """面板空结构（窗口照出、桶为空）：读库失败与「本就没数据」共用同一形状，App 端一套渲染。"""
+    w = _usage_window_bounds(days)
+    return {
+        "window": _usage_window_descriptor(w),
+        "scope": {"account_only": False, "includes_server_rows": True},
+        "total": _usage_metrics_blank(),
+        "by_task": [],
+        "by_channel": [],
+        "estimated": _panel_estimated_segment(),
+        "money": _panel_money_segment(),
+        "error": "",
+    }
+
+
+async def usage_panel(user_id: int, days: int = _PANEL_DEFAULT_DAYS) -> dict:
+    """本账号窗口内用量面板读数：total + by_task + by_channel（含占比）+ estimated + money（纯读）。
+
+    - **数据源**＝llm_usage 唯一事实源，聚合复用 usage_report 的「窗口一次 SELECT + 分桶」内核；
+      禁止沿 get_llm_usage 的全表载入扩窗口（设计 §1.4 D-2，本块唯一技术债防线）。
+    - **账号范围**＝与 get_llm_usage 一致：主账号＝自己 + 直属子账号 + user_id IS NULL 的
+      服务器级行；子账号＝仅自己。家庭共享（group_owner_id）口径本轮**不出**（§8 待拍板 5）。
+    - **占比 share**＝该桶 total_tokens ÷ 窗口 total_tokens（服务端算，前端零本地计算）；
+      窗口总额为 0 时 share 给 0.0，不做除零兜底数字。
+    - **estimated / money** 见两个段函数：不编数字、不冒充实测/历史花费。
+    - fail-open：读库/聚合异常返回空结构 + WARNING，不让读数端 500（观测不得让调用失败）。
+    """
+    from sqlalchemy import or_
+
+    from app.application.family_service import get_family_member_ids, is_sub_account
+    from app.db.database import async_session_factory
+    from app.models.agent import LlmUsage
+
+    result = _blank_usage_panel(days)
+    w = _usage_window_bounds(days)
+    try:
+        async with async_session_factory() as db:
+            is_sub = await is_sub_account(db, user_id)
+            if is_sub:
+                scope_ids = [user_id]
+                include_server = False
+            else:
+                scope_ids = await get_family_member_ids(db, user_id)
+                include_server = True
+            cond = LlmUsage.user_id.in_(scope_ids)
+            if include_server:
+                cond = or_(cond, LlmUsage.user_id.is_(None))
+            rows = await _read_usage_window(db, w["start_utc"], w["end_utc"], cond)
+    except Exception as e:
+        _logger.warning("usage panel read failed user_id=%s days=%s: %s", user_id, days, e)
+        result["error"] = "usage_panel_read_failed"
+        return result
+
+    result["scope"] = {"account_only": bool(is_sub), "includes_server_rows": bool(include_server)}
+    task_acc, chan_acc, _day_acc, _model_acc, total_b = _aggregate_usage_rows(rows, w["offset"])
+    result["total"] = total_b
+    denom = total_b["total_tokens"]
+
+    def _with_share(buckets: list[dict]) -> list[dict]:
+        for b in buckets:
+            b["share"] = round(b["total_tokens"] / denom, 3) if denom > 0 else 0.0
+        return buckets
+
+    result["by_task"] = _with_share([
+        {**{"task": k, "key": k}, **b} for k, b in
+        sorted(task_acc.items(), key=lambda kv: (-kv[1]["total_tokens"], str(kv[0])))
+    ])
+    result["by_channel"] = _with_share([
+        {**{"channel": k, "key": k}, **b} for k, b in
+        sorted(chan_acc.items(), key=lambda kv: (-kv[1]["total_tokens"], str(kv[0])))
+    ])
     return result
 
 
@@ -1590,6 +1793,9 @@ async def get_context_budget(
         # 命中本账号最近一次调用的 model 后在 try 里重算）
         "section_breakdown": _empty_breakdown(samples_limit),
         "cost_estimate": None,
+        # 批8 块 D M0：本账号窗口用量面板（按用途/按渠道 + 占比，金额段照旧 unavailable）。
+        # 兜底＝空结构（读数端不得因为面板取不到数而少一段），口径见 usage_panel docstring。
+        "usage_panel": _blank_usage_panel(_PANEL_DEFAULT_DAYS),
         "error": "",
     }
     # 兜底＝按「生效预算 + 未知 model」算（无价目表时就是 unavailable）；try 里读到 model 后重算
@@ -1687,6 +1893,16 @@ async def get_context_budget(
             used.model if used else None,
             used.provider if used else None,
         )
+
+        # ── 批8 块 D M0 ③本账号窗口面板（按用途/按渠道 + 占比）──
+        # 单独 try：面板读数失败只让这一段退回空结构，不污染上面已经取到的预算/占用/裁剪/估算段
+        # （整段读数的 fail-open 取向同 Y2：一次诊断读数不该因为某段取不到而整体失败）。
+        try:
+            payload["usage_panel"] = await usage_panel(user_id, _PANEL_DEFAULT_DAYS)
+        except Exception as e:
+            _logger.warning("context budget panel failed user_id=%s: %s", user_id, e)
+            payload["usage_panel"] = _blank_usage_panel(_PANEL_DEFAULT_DAYS)
+            payload["usage_panel"]["error"] = "usage_panel_unavailable"
     except Exception as e:
         payload["error"] = ((payload["error"] + "; ") if payload["error"] else "") + (
             "clip_query_failed: " + repr(e))[:200]

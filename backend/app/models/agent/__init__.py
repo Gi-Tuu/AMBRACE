@@ -8,7 +8,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -63,6 +63,13 @@ class AgentTaskLog(Base):
 class LlmUsage(Base):
     """单次 LLM 调用用量（llm_client 落库，后台异步写入不阻塞主流程）"""
     __tablename__ = "llm_usage"
+
+    # 批8 块 D M1（唯一 schema 动作）：面板按（账号 × 窗口）与（用途 × 窗口）过滤聚合，
+    # 原表只有 created_at 单列索引 ⇒ 补两条复合索引（列一字未动）。迁移 c3d5e7f9a1b2 同源引入。
+    __table_args__ = (
+        Index("ix_llm_usage_user_created", "user_id", "created_at"),
+        Index("ix_llm_usage_task_created", "task", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # None=服务器级/未知

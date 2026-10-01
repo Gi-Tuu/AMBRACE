@@ -48,6 +48,13 @@ MOUNTED_KEYS = (
 # 等特殊逻辑），因此不出现在 ``if _sv and "<key>" in _sv`` 链里。
 EXEMPT_APPEND_KEYS = {"mcp_tools", "mcp_resources"}
 
+# 批 4 M2-b1（2026-10-01）：经 **context_builder 装配尾部**注入的 append 分区（非 legacy.py if 链）。
+# 这类分区的 builder 仍由注册表 ``_run_sections`` 执行并把结果缓存进 ``state``，但**落位**由
+# ``context_builder._inject_thought_pool_block`` 在装配尾部插到 continue_payload（【系统指令】）
+# 之前（红线②：诉求/指令恒最后）——故它不在 legacy.py 的 ``_sv`` 消费点里，但**确实被消费**
+# （不是"算了就丢"）。配套复核见 ``test_context_builder_mounted_keys_really_consumed``。
+CONTEXT_BUILDER_MOUNTED_KEYS = {"thought_pool"}
+
 
 # ────────────────────────────────────────────────────────────── 结构性护栏用的源码解析
 
@@ -284,6 +291,7 @@ def test_every_enabled_append_section_is_mounted_or_exempt():
         s.key for s in get_sections()
         if s.target == TARGET_APPEND and s.enabled
         and s.key not in mounts and s.key not in EXEMPT_APPEND_KEYS
+        and s.key not in CONTEXT_BUILDER_MOUNTED_KEYS
     ]
     assert not missing, (
         f"以下 append 分区注册了但 legacy.py 从不消费（算了就丢），请在 legacy.py 挂载或加入豁免清单: {missing}"
@@ -304,6 +312,22 @@ def test_exempt_keys_really_consumed_by_legacy():
     for key in EXEMPT_APPEND_KEYS:
         assert f'_section_values.get("{key}"' in src, f"{key} 已不在 legacy 取值点（豁免需复核）"
         assert f"for _mcp_b in {key}_blocks:" in src, f"{key} 未走 _blocks 通道 append（豁免需复核）"
+
+
+def test_context_builder_mounted_keys_really_consumed():
+    """批 4 M2-b1 复核：context_builder 挂载的 append 分区确实被装配尾部消费（不是漏挂）。
+
+    ``thought_pool`` 的 builder 由注册表执行并缓存进 state，落位由 context_builder 的
+    ``_inject_thought_pool_block`` 在装配尾部完成——本条钉死该注入函数存在、被 build_context
+    调用、且读的就是 section 缓存键（防止"注册了却没人注入"的真空豁免）。
+    """
+    src = CONTEXT_BUILDER_PY.read_text(encoding="utf-8")
+    assert "async def _inject_thought_pool_block" in src, "context_builder 缺少念头块注入函数"
+    assert "_inject_thought_pool_block(" in src, "build_context 未调用念头块注入（注册了却不消费）"
+    # 注入函数读的缓存键须与 section 写入口径一致（_thought_pool_block）
+    assert "_thought_pool_block" in src, "context_builder 未读 section 的念头缓存键（双查/漏接风险）"
+    # 落位红线②：素材块插在 continue_payload（【系统指令】）之前
+    assert "【系统指令】" in src, "context_builder 念头块未按红线②锚定 continue_payload"
 
 
 # ────────────────────────────────────────────────────────────── 4. world_facts 位置

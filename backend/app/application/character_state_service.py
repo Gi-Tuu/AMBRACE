@@ -293,6 +293,99 @@ async def settle_recent_relational_drives(char_ids: list[int], now: datetime) ->
     return settled
 
 
+async def _supply_thought_pool_periodic(char_ids: list[int], now: datetime) -> None:
+    """批 4 M1-挂点（2026-10-01）：搭 ``settle_recent_relational_drives`` 近 24h 兜底，补 F2/F3/F6。
+
+    设计 §2.1「抽取挂点·周期侧」：F2 反思/复盘（``memory_type='ai_reflection'``）、F3 朋友圈冷场
+    （发布 ≥7 天且零评论零点赞）、F6 兴趣演化（近 24h 新增兴趣）。抽取判据复用既有纯函数
+    （``domain/thought/extract.py``），本钩子只取数 + 调 ``supply_thought_pool``，不重写规则、
+    不新建周期任务（搭 scheduler 约 2h 一次的漂移任务便车）。
+
+    硬约束（派单）：
+      - **先判 flag 再干活**：``thought_pool_shadow`` 关 ⇒ 首行返回，一次 SQL 都不发；
+      - **不在热路径全量扫**：三面都按 ``char_ids`` + 时间窗 + limit 收口，不做无界扫描；
+      - **异常隔离**：任何失败只记 DEBUG，绝不影响漂移/驱力兜底主链路；
+      - 幂等键沿用既有 ⇒ 重复扫不增行；commit 自开 session 自己提交（与 T1 兜底同口径）。
+    """
+    try:
+        from app.application import thought_pool_service as _tps
+        if not char_ids or not _tps.shadow_enabled():
+            return                      # flag 关 / 无候选角色：首行返回，零 SQL
+        from datetime import timedelta
+        from sqlalchemy import func as _func
+        from app.domain.thought import extract as _ex
+        from app.models.memory import Memory
+        from app.models.life import AIMoment, MomentComment, MomentLike, LifeInterest
+        cids = [int(c) for c in char_ids]
+        since_24h = now - timedelta(hours=24)
+        rows_by_face: dict[str, list[dict]] = {}
+        async with async_session_factory() as db:
+            # F2 反思/复盘：近 24h 的 ai_reflection 记忆（周频天然低频，limit 收口）
+            refl = (await db.execute(
+                select(Memory).where(
+                    Memory.character_id.in_(cids),
+                    Memory.memory_type == "ai_reflection",
+                    Memory.created_at >= since_24h,
+                ).order_by(Memory.created_at.desc()).limit(30)
+            )).scalars().all()
+            f2 = [{
+                "id": m.id, "content": m.content, "sub_type": m.sub_type,
+                "character_id": m.character_id, "user_id": m.user_id,
+                "epistemic_status": m.epistemic_status,
+            } for m in refl]
+            # F3 朋友圈冷场：发布满 7 天（且落在 7–14 天窗口内，避免全表扫）零互动
+            win_lo = now - timedelta(days=2 * int(_ex.F3_ENGAGEMENT_WINDOW_DAYS))
+            win_hi = now - timedelta(days=int(_ex.F3_ENGAGEMENT_WINDOW_DAYS))
+            moments = (await db.execute(
+                select(AIMoment).where(
+                    AIMoment.character_id.in_(cids),
+                    AIMoment.is_active == True,   # noqa: E712
+                    AIMoment.created_at >= win_lo,
+                    AIMoment.created_at <= win_hi,
+                ).order_by(AIMoment.created_at.desc()).limit(30)
+            )).scalars().all()
+            f3: list[dict] = []
+            if moments:
+                mids = [m.id for m in moments]
+                cmt = dict((await db.execute(
+                    select(MomentComment.moment_id, _func.count(MomentComment.id))
+                    .where(MomentComment.moment_id.in_(mids)).group_by(MomentComment.moment_id)
+                )).all())
+                likes = dict((await db.execute(
+                    select(MomentLike.moment_id, _func.count(MomentLike.id))
+                    .where(MomentLike.moment_id.in_(mids)).group_by(MomentLike.moment_id)
+                )).all())
+                for m in moments:
+                    age = (now - m.created_at).total_seconds() / 86400.0 if m.created_at else 0.0
+                    f3.append({
+                        "id": m.id, "content": m.content, "age_days": age,
+                        "engagement_count": int(cmt.get(m.id, 0)) + int(likes.get(m.id, 0)),
+                        "character_id": m.character_id, "user_id": m.user_id,
+                    })
+            # F6 兴趣演化：近 24h 新增兴趣（无历史快照 ⇒ 按「窗口内新建」视同新增，prev_level 缺省）
+            interests = (await db.execute(
+                select(LifeInterest).where(
+                    LifeInterest.character_id.in_(cids),
+                    LifeInterest.created_at >= since_24h,
+                ).order_by(LifeInterest.created_at.desc()).limit(30)
+            )).scalars().all()
+            f6 = [{
+                "id": i.id, "name": i.name, "level": i.level, "prev_level": None,
+                "character_id": i.character_id, "user_id": 0,   # 兴趣是角色级 ⇒ user_id=0 哨兵
+            } for i in interests]
+            if f2:
+                rows_by_face[_ex.SRC_REFLECT] = f2
+            if f3:
+                rows_by_face[_ex.SRC_MOMENT] = f3
+            if f6:
+                rows_by_face[_ex.SRC_INTEREST] = f6
+            if rows_by_face:
+                await _tps.supply_thought_pool(db, rows_by_face, now=now)
+                await db.commit()
+    except Exception as e:
+        _logger.debug("Thought pool periodic supply skipped: %s", e)
+
+
 async def drift_all_character_states() -> None:
     """scheduler 兜底（约 2h 一次）：全库结算一次状态漂移"""
     now = _now_naive()
@@ -324,6 +417,11 @@ async def drift_all_character_states() -> None:
                 await settle_recent_relational_drives(drive_due, now)
             except Exception as e:
                 _logger.debug("Drive settle fallback skipped: %s", e)
+            # 批 4 M1-挂点（2026-10-01）：搭同一兜底扫描补 F2/F3/F6 念头入池（flag 关＝零调用零查询；异常静默）
+            try:
+                await _supply_thought_pool_periodic(drive_due, now)
+            except Exception as e:
+                _logger.debug("Thought pool periodic fallback skipped: %s", e)
     except Exception as e:
         _logger.warning("State drift all failed: %s", e)
 

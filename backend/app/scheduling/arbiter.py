@@ -774,6 +774,21 @@ async def _annotate_outreach_plan(item: dict, char_id: int, mats_cache: dict, re
             await _shadow_drive_note(item, char_id, _uid, _plan)
         except Exception as e:
             _logger.debug("drive shadow skipped char=%d: %s", char_id, e)
+        # ── 批 4 M2-b1（2026-10-01）：念头池供料（素材层，设计 §3.1「供给发生在 _annotate_outreach_plan 之内」）──
+        # 先判 flag／灰度再查库：v1 关或角色未命中白名单 ⇒ 一次 SQL 都不发（thought_pool_v1_allowed 不查库）。
+        # 只在 outreach 管辖类型内供给（本函数仅由 PROACTIVE_OUTREACH_TYPES 候选调用，见 run_tick :939）；
+        # 产出物只是 cand["thought"]（文本）+ cand["thought_id"]（供发送留痕绑定/后续释放结算），
+        # **不改 intent、不改 plan、不碰任何 §3.1 频控闸**（念头池无发送权，设计 §3.3 红线 1/2）。
+        try:
+            from app.application.thought_pool_service import thought_pool_v1_allowed, fetch_one_thought
+            if thought_pool_v1_allowed(char_id):
+                async with async_session_factory() as _tdb:
+                    _th = await fetch_one_thought(_tdb, char_id, _uid, intent=_plan.intent)
+                if _th and _th.get("text"):
+                    cand["thought"] = _th["text"]
+                    cand["thought_id"] = _th.get("id")
+        except Exception as e:
+            _logger.debug("thought pool supply skipped char=%d: %s", char_id, e)
     except Exception as e:
         _logger.warning("outreach annotate failed char=%d: %s", char_id, e)
 
@@ -1674,6 +1689,8 @@ async def _execute(item: dict) -> bool:
             return_reasoning=True,
             outreach_intent=outreach_intent,
             outreach_plan=outreach_plan,
+            session_id=candidate["session_id"],
+            thought=candidate.get("thought"),  # 批 4 M2-b1：念头池素材（flag 关 ⇒ 恒 None ⇒ 逐字节旧 prompt）
         )
         if not segments:
             return False
