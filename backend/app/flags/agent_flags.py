@@ -368,6 +368,13 @@ AGENT_FLAGS = {
     #   关=**逐字节旧行为**（调用点不 import、不计算，连一次判定都不做）。
     # 判错默认放行：判定/导入异常一律按旧行为继续检索（宁多不漏）。回退＝置回 False（热切）。
     "recall_gate": False,
+    # ── A4 批 3 / T1「M2a 两档释放」：**拆两把键**（2026-10-01；默认关；用户当日拍板 P5）──
+    # 开口档：主动消息**发送确认**（seq==0 且有 intent）后按比例做部分释放（只写水位，不参与投放决策）；
+    # 全额档：用户发言后按「最近一条未接住的主动消息」把该驱力清零。
+    # 两把键都要叠加 relational_drive_shadow（release_* 在影子关时会静默早退；只开本键会打 WARNING）。
+    # 关＝**逐字节旧行为**（不 settle、不释放、一次 SELECT 都不发）。回退＝置回 False（热切）。
+    "relational_drive_open_v1": False,
+    "relational_drive_full_v1": False,
     # ── A4 批 6 / T5 M0 项1：注入视图分离·现状面子句（2026-09-27；默认关）──
     # 开=注册表版「AI 生活」注入（agent/context/section_overlay.py life_share）补上现状面状态子句
     #   current_facts_status_clause()，与 legacy 版（context/legacy.py:871）口径对齐；

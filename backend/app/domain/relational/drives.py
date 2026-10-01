@@ -178,13 +178,20 @@ def settle_level(
     return (new_level, moment)
 
 
-def release_open(level: float, drive_key: str) -> float:
+def release_open(level: float, drive_key: str, ratio: float | None = None) -> float:
     """开口部分释放：返回**释放后剩下的水位**（``level × (1 − 可释放比例)``，下限 0）。
 
     即「没聊开就继续惦记」：余量留下、下次开口自然回到那件事。未知 ``drive_key`` ⇒ 比例按 0
     （不释放，水位原样保留），宁可不释放也不把未知键的水位抹平。
     """
-    ratio = DRIVE_OPEN_RELEASE_RATIO.get(drive_key, 0.0)
+    # A4 批 3 M2a（2026-10-01，P1「比例可配」）：显式 ratio 优先于常量表；脏值/越界夹到 [0, 1]；
+    # 不传（None）⇒ 取值路径与返回值与改动前逐字节一致。
+    if ratio is None:
+        ratio = DRIVE_OPEN_RELEASE_RATIO.get(drive_key, 0.0)
+    try:
+        ratio = min(max(float(ratio), 0.0), 1.0)
+    except Exception:
+        ratio = DRIVE_OPEN_RELEASE_RATIO.get(drive_key, 0.0)
     return max(0.0, _to_float(level) * (1.0 - ratio))
 
 

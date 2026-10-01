@@ -8,6 +8,9 @@ from pydantic_settings import NoDecode, BaseSettings
 class Settings(BaseSettings):
     # ---- DeepSeek / LLM（通用 OpenAI 兼容；LLM_* 缺省回退 deepseek_*，兼容现有 .env）----
     deepseek_api_key: str = ""
+    # A4 批 3 M2a（2026-10-01）：开口释放比例的**可配覆盖**（JSON，按驱力名给值；缺省空＝沿用域层常量）。
+    # 例：RELATIONAL_DRIVE_OPEN_RELEASE_RATIOS='{"longing": 0.5}'
+    relational_drive_open_release_ratios: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     llm_model: str = "deepseek-v4-pro"
     llm_base_url: str = ""

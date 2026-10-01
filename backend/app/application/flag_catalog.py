@@ -296,6 +296,16 @@ _FLAG_ROWS: list[tuple] = [
      'Skips looking through memories only on clearly contentless short phrases such as greetings; '
      'anything with substance, or anything that sounds like it is asking about the past, still looks '
      'them up as before. Off by default; when off everything stays exactly as it is now.'),
+    ('relational_drive_open_v1', 'outreach_natural', 16, False, '开口只消一部分惦记',
+     '角色主动开口之后，这份惦记只消掉一部分，剩下的留到下次再说；不改变发什么、发几条、什么时候发。默认关闭。',
+     'Partial release after reaching out',
+     'After the character reaches out, that particular pang is only partly eased and the rest stays for next time; '
+     'it changes nothing about what, how many, or when messages are sent. Off by default.'),
+    ('relational_drive_full_v1', 'outreach_natural', 17, False, '被回应后这一桩就翻篇',
+     '你在它刚主动开口之后回话，这一桩惦记就清掉；隔得太久（超过一天）或没回就不清。默认关闭。',
+     'Cleared once you reply',
+     'If you reply shortly after it reached out, that particular pang is cleared; if too much time has passed '
+     '(over a day) or you never reply, it stays. Off by default.'),
     ('current_view_filter', 'memory', 722, False, '生活分享只认当下有效的记录',
      '它跟你提自己的近况时，只用仍然有效的条目，已经被取代、收起来的旧近况不再冒充此刻；'
      '默认关闭，关掉时与现在完全一样。',

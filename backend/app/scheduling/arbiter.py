@@ -524,6 +524,19 @@ async def flush_storyline_items() -> int:
             log_proactive=(item_obj.seq == 0),
             extra_meta=_extra,
         )
+        if item_obj.seq == 0 and (_meta or {}).get("intent"):
+            # A4 批 3 / T1 M2a（2026-10-01）：开口**部分释放**（只写水位、不参与投放决策；
+            # flag 关 ⇒ 零 SQL；异常静默，绝不影响发送链路）
+            try:
+                from app.application import relational_drive_service as _rds
+                if _rds.release_enabled("open", item_obj.character_id):
+                    async with async_session_factory() as _rdb:
+                        await _rds.apply_open_release(
+                            _rdb, item_obj.character_id, item_obj.user_id, _meta.get("intent")
+                        )
+                        await _rdb.commit()
+            except Exception as _e:
+                _logger.debug("Drive open release skipped item=%s: %s", item_obj.id, _e)
         async with async_session_factory() as db:
             db_item = await db.get(ProactiveStorylineItem, item_obj.id)
             if db_item:

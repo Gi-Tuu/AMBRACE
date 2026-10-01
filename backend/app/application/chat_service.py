@@ -322,6 +322,24 @@ async def _settle_relational_drive(character_id: int, user_id: int) -> None:
         _logger.debug("Relational drive settle skipped char=%d: %s", character_id, e)
 
 
+async def _release_drive_on_reply(character_id: int, user_id: int, session_id: int | None = None) -> None:
+    """A4 批 3 / T1 M2a（2026-10-01）：用户发言后做一次**全额释放**（只写水位，不改本轮回复）。
+
+    设计 §3.2：判据全部在仓储层（最近一条已发送的主动消息 + 归属窗 24h + 幂等闸
+    last_released_at）；本钩子只负责「自开 session、调一次、commit、异常静默」。
+    flag 关 ⇒ 先读内存闸直接返回，连 session 都不建立（零额外查询，逐字节旧行为）。
+    """
+    try:
+        from app.application import relational_drive_service
+        if not relational_drive_service.release_enabled("full", character_id):
+            return
+        async with async_session_factory() as db:
+            await relational_drive_service.apply_reply_release(db, character_id, user_id, session_id)
+            await db.commit()
+    except Exception as e:
+        _logger.debug("Relational drive reply release skipped char=%d: %s", character_id, e)
+
+
 async def _settle_thought_pool_turn(character_id: int, user_id: int, session_id: int | None = None) -> None:
     """批 4 M1-挂点（2026-10-01）：回合末扫本会话新增行 → F4/F5 抽念头入池（搭 T1 settle 挂点族）。
 
@@ -1137,6 +1155,8 @@ async def _run_post_processing(
 
     # A4 批3 M1b2（影子态）：回合末结算一次关系驱力水位（只记账，不改回复；失败静默）
     spawn_background(_settle_relational_drive(character_id, user_id))
+    # A4 批 3 / T1 M2a（2026-10-01）：回合末按「最近一条未接住的主动消息」全额释放（flag 关 ⇒ 零 SQL、失败静默）
+    spawn_background(_release_drive_on_reply(character_id, user_id, session_id))
 
     # 批 4 M1-挂点（2026-10-01）：回合末扫本会话 F4/F5 抽念头入池（flag 关＝零调用零查询；失败静默）
     spawn_background(_settle_thought_pool_turn(character_id, user_id, session_id))
