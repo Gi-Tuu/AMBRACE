@@ -21,6 +21,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "backend" / "scripts" / "extension_audit.py"
 
 
+# 公开仓快照（origin/main）刻意**不含 `docs/`**（只留 `docs/changelog.md`）⇒ 依赖内部契约文档的
+# 「真实仓库读数」类用例在公开 CI 上必然失败（脚本读不到 `docs/extension-contract.md`）。统一用这一个判据：
+# 内部仓库（docs 齐备）照常真跑，公开快照自动 skip（CI 不红）。
+_INTERNAL_DOCS = REPO_ROOT / "docs"
+requires_internal_docs = pytest.mark.skipif(
+    not _INTERNAL_DOCS.is_dir(),
+    reason="内部文档不在公开快照内（公开仓 CI 自动跳过）",
+)
+
+
+
 def _load(name: str = "extension_audit_m0"):
     spec = importlib.util.spec_from_file_location(name, str(SCRIPT))
     module = importlib.util.module_from_spec(spec)
@@ -312,9 +323,12 @@ def test_measure_missing_table_reports_error_not_crash():
 
 @pytest.fixture(scope="module")
 def audit_data():
+    if not _INTERNAL_DOCS.is_dir():
+        pytest.skip("内部文档不在公开快照内（公开仓 CI 自动跳过）")
     return ea.run_audit()
 
 
+@requires_internal_docs
 def test_real_doc_section3_every_permission_line_carries_a_status_marker():
     """**契约守卫**：文档 §3 每条权限都得带实现状态标记。
 
@@ -330,6 +344,7 @@ def test_real_doc_section3_every_permission_line_carries_a_status_marker():
     assert not [e for e in entries if e["status_conflict"]], "§3 存在一行多个状态标记的冲突行"
 
 
+@requires_internal_docs
 def test_real_doc_permission_names_are_unchanged_by_the_marker_convention():
     """**权限名字面值一个都不许动**（改名会让已装插件的 consent 记录整体失配）。"""
     text = (REPO_ROOT / ea.CONTRACT_DOC).read_text(encoding="utf-8")
@@ -483,6 +498,7 @@ def test_script_self_audit_has_no_write_sql_literals():
 
 # ────────────────────────── ④ 异常隔离 / 落盘 ──────────────────────────
 
+@requires_internal_docs
 def test_section_failure_is_isolated_and_reported(monkeypatch):
     """单块抛异常 ⇒ 该块登记为不可用，其余三块照常出读数（M0 绝不静默编数）。"""
     def boom(*_a, **_kw):
@@ -508,6 +524,7 @@ def test_run_audit_does_not_touch_db_by_default(audit_data):
     assert db["status"] == "skipped" and "不编数" in ea.render_report(audit_data)
 
 
+@requires_internal_docs
 def test_main_writes_report_only_to_given_path(tmp_path, capsys):
     """``--report`` 指到临时目录：报告落盘、内容齐备，且不返回失败码。"""
     target = tmp_path / "sub" / "m0.md"
