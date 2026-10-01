@@ -362,6 +362,12 @@ AGENT_FLAGS = {
     #   攒够留痕才谈 P2 生效（新开关 recall_gate）与判效（漏召回率 / 无效检索率）。
     #   关=零行为零开销：调用点首行即返回，不算判定、不建记录、不碰 IO。
     "recall_gate_shadow": False,
+    # ── A4 批 2 / T4 P2：召回门**生效**（2026-10-01；默认关；用户 10-01 拍板后拨开）──
+    # 开=在检索前先做一次纯规则判定（memory/recall_gate.decide_retrieval）；判为「纯寒暄 / 纯符号」
+    #   的轮次**跳过检索与记忆注入**（当作检索为空、不写记忆），其余一律照旧检索；
+    #   关=**逐字节旧行为**（调用点不 import、不计算，连一次判定都不做）。
+    # 判错默认放行：判定/导入异常一律按旧行为继续检索（宁多不漏）。回退＝置回 False（热切）。
+    "recall_gate": False,
     # ── A4 批 6 / T5 M0 项1：注入视图分离·现状面子句（2026-09-27；默认关）──
     # 开=注册表版「AI 生活」注入（agent/context/section_overlay.py life_share）补上现状面状态子句
     #   current_facts_status_clause()，与 legacy 版（context/legacy.py:871）口径对齐；

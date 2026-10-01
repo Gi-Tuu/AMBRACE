@@ -115,6 +115,8 @@ def test_fail_open_留痕失败不影响主链路(flag_on, monkeypatch):
 _BASE_KEYS = {"retrieve", "reason", "confidence", "hit_count", "would_lose", "wasted",
               "msg", "has_time_phrase", "has_extra_queries", "is_continue"}
 _STRICT_KEYS = {"retrieve_strict", "reason_strict", "confidence_strict", "would_skip_strict"}
+# 2026-10-01（A4 批 2 / T4 P2）：影子记录**新增**的字段（值独立成一路；默认 False）
+_NEW_KEYS = {"skipped_by_gate"}
 
 # 覆盖主判定的每一条判据分支（含短路顺序），严格口径在这些用例上必须与既有值分毫不差
 _STRICT_CASES = [
@@ -144,7 +146,7 @@ def test_严格口径就是同一套判定去掉派生查询(text, kw):
                                   "我们上次说的那件事怎么样了", "今天我去了一个新的地方感觉还挺不错的"])
 @pytest.mark.parametrize("kw", _STRICT_CASES)
 def test_主判定一字不改_只增字段(text, kw, hit_count):
-    """钉住零行为：既有 10 个字段的值＝改动前那套算法的逐字结果（新字段完全独立成一路）。"""
+    """钉住零行为：既有 10 个字段的值＝改动前那套算法的逐字结果（P2 新增的 skipped_by_gate 独立成一路、常态 False）。"""
     d = rg.decide_retrieval(text, **kw)
     rec = rg.plan_shadow_record(text, hit_count=hit_count, **kw)
     assert {k: rec[k] for k in _BASE_KEYS} == {
@@ -159,7 +161,8 @@ def test_主判定一字不改_只增字段(text, kw, hit_count):
         "has_extra_queries": bool(kw.get("has_extra_queries", False)),
         "is_continue": bool(kw.get("is_continue", False)),
     }
-    assert set(rec) == _BASE_KEYS | _STRICT_KEYS   # 只增不减，也没顺手加别的
+    assert set(rec) == _BASE_KEYS | _STRICT_KEYS | _NEW_KEYS   # 只增不减，也没顺手加别的
+    assert rec["skipped_by_gate"] is False                      # P2 新增字段：影子常态为 False
 
 
 def test_严格口径才有区分度():

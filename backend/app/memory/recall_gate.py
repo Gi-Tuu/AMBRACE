@@ -9,7 +9,7 @@
 
 本模块只提供判定本身；接线分两步（P1 已于 2026-09-27 落地）：
 - P1＝影子（只算 + 写一条 trace，不改变是否检索；开关 recall_gate_shadow 默认关）；
-- P2＝生效（新开关【recall_gate】默认关；关=逐字节旧行为）。
+- P2＝生效（2026-10-01 落地；开关【recall_gate】默认关，关=逐字节旧行为）。
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from app.utils.logger import get_logger
 
 _logger = get_logger("memory.recall_gate")
 
-# P2 生效开关名（**本批只登记字符串**，不进 AGENT_FLAGS、不进目录、无调用点）
+# P2 生效开关名（2026-10-01 起已登记进 AGENT_FLAGS 与目录；调用点见 agent/nodes.py::retrieve_memories）
 GATE_FLAG_KEY = "recall_gate"
 
 REASON_CONTINUE = "continue"
@@ -137,8 +137,17 @@ def shadow_enabled() -> bool:
         return False
 
 
+def gate_enabled() -> bool:
+    """P2 生效总闸（缺省关；读不到也按关处理）。"""
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get(GATE_FLAG_KEY, False))
+    except Exception:
+        return False
+
+
 def plan_shadow_record(user_message, *, has_time_phrase=False, has_extra_queries=False,
-                       is_continue=False, hit_count=0) -> dict:
+                       is_continue=False, hit_count=0, skipped_by_gate=False) -> dict:
     """影子记录体（纯函数、零 IO）：门的判定 ＋ 与实际检索结果的对照，供事后判效。
 
     - would_lose：门说「不用检索」但实际检索**命中了内容** ⇒ 门若生效会漏（越低越好）；
@@ -177,12 +186,13 @@ def plan_shadow_record(user_message, *, has_time_phrase=False, has_extra_queries
         "has_time_phrase": bool(has_time_phrase),
         "has_extra_queries": bool(has_extra_queries),
         "is_continue": bool(is_continue),
+        "skipped_by_gate": bool(skipped_by_gate),
     }
 
 
 def observe_retrieval_decision(user_message, *, has_time_phrase=False, has_extra_queries=False,
-                               is_continue=False, hit_count=0, character_id=None,
-                               user_id=None, task_id=None) -> None:
+                               is_continue=False, hit_count=0, skipped_by_gate=False,
+                               character_id=None, user_id=None, task_id=None) -> None:
     """P1 影子挂点：**只留痕、不改变是否检索**（调用方照旧照常检索；本函数无返回值）。
 
     - 关：首行即返回 ⇒ 不算判定、不建记录、不碰 IO，与「根本没接这层」逐字一致；
@@ -201,6 +211,7 @@ def observe_retrieval_decision(user_message, *, has_time_phrase=False, has_extra
             has_extra_queries=has_extra_queries,
             is_continue=is_continue,
             hit_count=hit_count,
+            skipped_by_gate=skipped_by_gate,
         )
         enqueue_task_log(
             task_id=task_id or new_task_id(),

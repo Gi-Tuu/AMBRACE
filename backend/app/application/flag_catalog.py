@@ -289,6 +289,13 @@ _FLAG_ROWS: list[tuple] = [
      'A short note of the before-reply call on whether to look through memories, so it can be '
      'cross-checked later. Whether memories are looked up stays exactly as it is now; turning this '
      'off simply stops leaving the note.'),
+    ('recall_gate', 'memory', 723, False, '寒暄轮次不翻记忆',
+     '只在明显是打招呼、道晚安这类没有内容的短话上跳过翻记忆这一步；只要有实质内容、'
+     '或像在问以前的事，照旧会去翻。默认关闭，关掉时与现在完全一样。',
+     'Skip memory lookup on small talk',
+     'Skips looking through memories only on clearly contentless short phrases such as greetings; '
+     'anything with substance, or anything that sounds like it is asking about the past, still looks '
+     'them up as before. Off by default; when off everything stays exactly as it is now.'),
     ('current_view_filter', 'memory', 722, False, '生活分享只认当下有效的记录',
      '它跟你提自己的近况时，只用仍然有效的条目，已经被取代、收起来的旧近况不再冒充此刻；'
      '默认关闭，关掉时与现在完全一样。',

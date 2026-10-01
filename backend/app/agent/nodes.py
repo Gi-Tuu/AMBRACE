@@ -150,19 +150,40 @@ async def retrieve_memories(state: AgentState) -> AgentState:
                     _time_range = parse_time_range(_raw_msg, tz_offset_min=_uoff)
     except Exception:
         _time_range = None
-    memories = await search_memories(
-        character_id=state["character_id"],
-        query=_query,
-        limit=_recall_limit,
-        queries=queries,
-        user_id=state.get("user_id"),  # A2 M0-4：透传调用者（memory_search hook ctx）
-        trace_meta={
-            "user_id": state.get("user_id"),
-            "session_id": state.get("session_id"),
-            "task_id": state.get("task_id"),
-        },
-        time_range=_time_range,
-    )
+    # A4 批 2 / T4 P2（2026-10-01）：召回门**生效** —— 开关 recall_gate 开时先做一次纯函数判定；判为
+    # 「纯寒暄 / 纯符号」的轮次跳过检索与记忆注入（当作检索为空）；关＝**不 import 判定模块、不计算**（逐字节旧行为）；
+    # 判定 / 导入异常一律 fail-open（照旧检索，宁多不漏）。
+    _gate_skip = False
+    try:
+        from app.agent.loop import AGENT_FLAGS as _rg_flags
+        if bool(_rg_flags.get("recall_gate", False)):
+            from app.memory.recall_gate import decide_retrieval as _rg_decide
+            _rg_decision = _rg_decide(
+                state.get("user_message") or "",
+                has_time_phrase=_time_range is not None,
+                has_extra_queries=bool(queries),
+                is_continue=bool(_cont),
+            )
+            _gate_skip = not _rg_decision.retrieve
+    except Exception as _e:
+        _gate_skip = False
+        _logger.debug("Recall gate decide failed (fail-open): %s", _e)
+    if _gate_skip:
+        memories = []
+    else:
+        memories = await search_memories(
+            character_id=state["character_id"],
+            query=_query,
+            limit=_recall_limit,
+            queries=queries,
+            user_id=state.get("user_id"),  # A2 M0-4：透传调用者（memory_search hook ctx）
+            trace_meta={
+                "user_id": state.get("user_id"),
+                "session_id": state.get("session_id"),
+                "task_id": state.get("task_id"),
+            },
+            time_range=_time_range,
+        )
     state["retrieved_memories"] = memories
     # A4 批 2 / T4 P1（2026-09-27）：召回门**影子**留痕 —— 只算一次判定并写一条 trace，
     # **不改变是否检索**（本轮照旧全量检索）；开关 recall_gate_shadow 默认关，关时零行为、零开销。
@@ -174,6 +195,7 @@ async def retrieve_memories(state: AgentState) -> AgentState:
             has_extra_queries=bool(queries),
             is_continue=bool(_cont),
             hit_count=len(memories or []),
+            skipped_by_gate=_gate_skip,
             character_id=state.get("character_id"),
             user_id=state.get("user_id"),
             task_id=state.get("task_id"),
