@@ -922,6 +922,8 @@
   "memoryChainTitle": "Memory chain",
   "memoryChainChildren": "Related memories",
   "memoryChainEmpty": "No related memories",
+  "memoryChainRootNoBranch": "This is the start of a thread; no related developments yet.",
+  "memoryChainUnlinked": "This memory is not linked to a thread yet.",
   "memoryEditContent": "Edit content",
   "memoryEditContentHint": "Enter new memory content",
   "memorySaveEdit": "Save",

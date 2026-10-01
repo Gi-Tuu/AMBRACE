@@ -449,8 +449,15 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
     }
   }
 
+  // 关联记忆为空时的三态提示：未挂链 / 链条起点 / 兜底，避免三种情况共用一句「暂无关联记忆」
+  String _chainEmptyHint(AppLocalizations l10n) {
+    if (_memory.chainId == null) return l10n.memoryChainUnlinked;
+    if (_memory.nodeType == 'root') return l10n.memoryChainRootNoBranch;
+    return l10n.memoryChainEmpty;
+  }
+
   Widget _buildChainCard(AppLocalizations l10n) {
-    // 全链时间线（含自身，服务端按 created_at 升序）：只有自身一条时才是「暂无关联记忆」
+    // 全链时间线（含自身，服务端按 created_at 升序）：只有自身一条时按挂链状态区分提示
     final related = _chain.where((n) => n.id != _memory.id).length;
     return IosCardGroup(children: [
       ExpansionTile(
@@ -461,7 +468,7 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
           if (_loadingChain)
             const Padding(padding: EdgeInsets.all(16), child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))))
           else if (related == 0)
-            Padding(padding: const EdgeInsets.all(16), child: Text(l10n.memoryChainEmpty, style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)))
+            Padding(padding: const EdgeInsets.all(16), child: Text(_chainEmptyHint(l10n), style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)))
           else
             ..._chain.map((c) => _buildChainNode(c, isCurrent: c.id == _memory.id)),
           Padding(

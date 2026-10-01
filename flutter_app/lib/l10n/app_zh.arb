@@ -922,6 +922,8 @@
   "memoryChainTitle": "记忆链条",
   "memoryChainChildren": "关联记忆",
   "memoryChainEmpty": "暂无关联记忆",
+  "memoryChainRootNoBranch": "这是一段事情的起点，暂时还没有新的相关进展",
+  "memoryChainUnlinked": "这条记忆暂未编入记忆链",
   "memoryEditContent": "修改内容",
   "memoryEditContentHint": "输入新的记忆内容",
   "memorySaveEdit": "保存",

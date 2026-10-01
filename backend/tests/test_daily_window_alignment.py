@@ -118,7 +118,11 @@ def test_默认偏移8_arbiter当日日界与旧北京算式逐小时同值(monk
 def test_默认偏移8_真实时钟下与北京日界同值(monkeypatch):
     """不打桩时钟：默认 +8 时 arbiter 取的日界 == beijing_day_start_utc()（现网行为不变）"""
     monkeypatch.setattr(cfg.settings, "app_tz_offset_hours", 8)
-    sink = _wire(monkeypatch, records=(tu.now_naive_utc() - timedelta(minutes=5),))
+    # 2026-10-02 修：原用「现在 - 5 分钟」造记录，跑在北京 00:00–00:05 之间时那条会落到
+    # 前一天日界之前 ⇒ 当日已发计数变 0，用例假红（10-01 23:57 起的全量跑正好跨零点被抓到）。
+    # 改成「当日日界 + 1 分钟」，仍然锚在真实时钟上，但不依赖「现在是几点几分」。
+    _day_start = tu.beijing_day_start_utc()
+    sink = _wire(monkeypatch, records=(_day_start + timedelta(minutes=1),))
     assert asyncio.run(arbiter.get_daily_sent_count(1, "ai_care")) == 1
     assert abs(sink[0] - tu.beijing_day_start_utc()) < timedelta(seconds=5)
 

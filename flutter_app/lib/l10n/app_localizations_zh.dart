@@ -2767,6 +2767,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get memoryChainEmpty => '暂无关联记忆';
 
   @override
+  String get memoryChainRootNoBranch => '这是一段事情的起点，暂时还没有新的相关进展';
+
+  @override
+  String get memoryChainUnlinked => '这条记忆暂未编入记忆链';
+
+  @override
   String get memoryEditContent => '修改内容';
 
   @override

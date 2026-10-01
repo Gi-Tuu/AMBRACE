@@ -44,7 +44,7 @@ from app.domain.proactivity.decision import (  # noqa: E402,F401
     _motivation_score,
     scheduler_gray_character,
 )
-from app.domain.proactivity.sleep import SLEEP_KEYWORDS, SLEEP_HOUR  # noqa: E402,F401
+from app.domain.proactivity.sleep import SLEEP_KEYWORDS, SLEEP_HOUR, SLEEP_SILENCED_TYPES  # noqa: E402,F401
 # B1-③（2026-09-04，方案 §5.4）：主动接触意图层纯函数（闲置分级 + 意图选择）
 from app.domain.proactivity import outreach as _oc  # noqa: E402
 # 2026-09-13（Codex 交接 §二）：outreach 投放口径三闸纯决策层（时段窗口 / 类型配比 / 单会话限频）
@@ -1420,7 +1420,7 @@ async def _execute(item: dict) -> bool:
             return False
 
     # 夜晚（21 点后至次日 8 点）用户说过"睡觉" → 主动消息类提前关闭（定时承诺除外）
-    if etype in ("birthday", "holiday", "greeting", "proactive_chat", "goodnight", "status_update", "state_trigger", "memory_review", "emotion_care", "pet_remind", "ai_care", "ai_adopt", "plugin", "motivation", "prospective_intent"):
+    if etype in SLEEP_SILENCED_TYPES:
         _cand = item.get("candidate")
         if _cand:
             try:

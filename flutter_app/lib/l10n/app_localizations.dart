@@ -5205,6 +5205,18 @@ abstract class AppLocalizations {
   /// **'暂无关联记忆'**
   String get memoryChainEmpty;
 
+  /// No description provided for @memoryChainRootNoBranch.
+  ///
+  /// In zh, this message translates to:
+  /// **'这是一段事情的起点，暂时还没有新的相关进展'**
+  String get memoryChainRootNoBranch;
+
+  /// No description provided for @memoryChainUnlinked.
+  ///
+  /// In zh, this message translates to:
+  /// **'这条记忆暂未编入记忆链'**
+  String get memoryChainUnlinked;
+
   /// No description provided for @memoryEditContent.
   ///
   /// In zh, this message translates to:

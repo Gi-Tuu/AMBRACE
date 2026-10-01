@@ -298,7 +298,7 @@ class RelationalDrive(Base):
     __tablename__ = "relational_drives"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     drive_key: Mapped[str] = mapped_column(String(20), nullable=False)  # longing/concern/affection/sharing/curiosity/intimacy
     level: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 0–100 水位（与八维同量纲）
@@ -335,7 +335,7 @@ class ThoughtPool(Base):
     __tablename__ = "thought_pool"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")  # 0＝角色级
     thought_kind: Mapped[str] = mapped_column(String(20), nullable=False, default="", server_default="")  # intent 同族词表（M2 绑定）
     text: Mapped[str] = mapped_column(String(120), nullable=False)  # 成念文本（设计 §2.5 列宽 120）

@@ -164,7 +164,7 @@ class AccountInvite(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     code: Mapped[str] = mapped_column(String(8), unique=True, nullable=False)  # 8 位大写 hex
-    creator_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    creator_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # 5 分钟有效
     used_by: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 兑换者 user_id；NULL=未使用
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -645,8 +645,8 @@ class _ChatScreenState extends State<ChatScreen>
                   bottom: 0,
                   child: AnimatedBuilder(
                     animation: _kbLive,
-                    builder: (context, dockChild) => Padding(
-                      padding: EdgeInsets.only(bottom: _kbLive.value),
+                    builder: (context, dockChild) => Transform.translate(
+                      offset: Offset(0, -_kbLive.value),
                       child: dockChild,
                     ),
                     child: MeasureSize(

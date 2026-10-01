@@ -2882,6 +2882,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get memoryChainEmpty => 'No related memories';
 
   @override
+  String get memoryChainRootNoBranch =>
+      'This is the start of a thread; no related developments yet.';
+
+  @override
+  String get memoryChainUnlinked =>
+      'This memory is not linked to a thread yet.';
+
+  @override
   String get memoryEditContent => 'Edit content';
 
   @override
