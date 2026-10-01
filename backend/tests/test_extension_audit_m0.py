@@ -21,12 +21,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "backend" / "scripts" / "extension_audit.py"
 
 
-# 公开仓快照（origin/main）刻意**不含 `docs/`**（只留 `docs/changelog.md`）⇒ 依赖内部契约文档的
+# 公开仓快照（origin/main）只留 `docs/changelog.md`、其余 docs 一律不入仓 ⇒ 依赖内部契约文档的
 # 「真实仓库读数」类用例在公开 CI 上必然失败（脚本读不到 `docs/extension-contract.md`）。统一用这一个判据：
 # 内部仓库（docs 齐备）照常真跑，公开快照自动 skip（CI 不红）。
-_INTERNAL_DOCS = REPO_ROOT / "docs"
+_CONTRACT_DOC_FILE = REPO_ROOT / "docs" / "extension-contract.md"
 requires_internal_docs = pytest.mark.skipif(
-    not _INTERNAL_DOCS.is_dir(),
+    not _CONTRACT_DOC_FILE.is_file(),
     reason="内部文档不在公开快照内（公开仓 CI 自动跳过）",
 )
 
@@ -323,7 +323,7 @@ def test_measure_missing_table_reports_error_not_crash():
 
 @pytest.fixture(scope="module")
 def audit_data():
-    if not _INTERNAL_DOCS.is_dir():
+    if not _CONTRACT_DOC_FILE.is_file():
         pytest.skip("内部文档不在公开快照内（公开仓 CI 自动跳过）")
     return ea.run_audit()
 
