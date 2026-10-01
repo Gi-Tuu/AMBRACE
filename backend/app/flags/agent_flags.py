@@ -375,6 +375,11 @@ AGENT_FLAGS = {
     # 关＝**逐字节旧行为**（不 settle、不释放、一次 SELECT 都不发）。回退＝置回 False（热切）。
     "relational_drive_open_v1": False,
     "relational_drive_full_v1": False,
+    # ── A14（2026-10-01）：AI 评星「多轮共识写回」· **M0 干跑**（默认关）──
+    # 开＝只对灰度角色（char13）**多跑 N-1 轮评星并把各轮星分 + 共识写进留痕**，
+    #   **写回仍用第 1 轮值** ⇒ 零行为、可与现行口径直接对照（判效见小方案 §5）。
+    # 关＝**逐字节旧行为**（一次都不多调）。回退＝置回 False（热切）。
+    "ai_rating_vote3": False,
     # ── A4 批 6 / T5 M0 项1：注入视图分离·现状面子句（2026-09-27；默认关）──
     # 开=注册表版「AI 生活」注入（agent/context/section_overlay.py life_share）补上现状面状态子句
     #   current_facts_status_clause()，与 legacy 版（context/legacy.py:871）口径对齐；

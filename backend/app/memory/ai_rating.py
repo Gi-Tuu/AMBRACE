@@ -231,6 +231,45 @@ class RatingPartialFailure(RuntimeError):
     """本次评星中至少一个角色「有候选但整批失败」（LLM 非 JSON / 解析失败 / 调用异常）；由 maintenance 捕获后按退避重试。"""
 
 
+# ── A14（2026-10-01）：多轮共识写回 · M0 干跑（只多算轮次 + 留痕，写回仍用第 1 轮）──
+VOTE3_FLAG_KEY = "ai_rating_vote3"
+VOTE3_ROUNDS = 3
+
+
+def _vote3_enabled(character_id) -> bool:
+    """M0 干跑闸：flag 开 ∧ 角色命中既有灰度白名单；读不到一律按关（fail-closed）。"""
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        if not bool(AGENT_FLAGS.get(VOTE3_FLAG_KEY, False)):
+            return False
+        from app.domain.proactivity import pacing
+        return bool(pacing.pacing_gray_hit(character_id, None, chars=pacing.OUTREACH_PACING_GRAY_CHARS))
+    except Exception:
+        return False
+
+
+def _consensus_stars(rounds: list) -> dict:
+    """多轮共识（纯函数）：多数星（严格过半）；无多数 ⇒ 中位数四舍五入。返回 {memory_id: star}。"""
+    agg: dict = {}
+    for rd in rounds or []:
+        for r in rd or []:
+            try:
+                agg.setdefault(int(r["id"]), []).append(float(r["star"]))
+            except Exception:
+                continue
+    out: dict = {}
+    for mid, vals in agg.items():
+        if not vals:
+            continue
+        counts = {v: vals.count(v) for v in set(vals)}
+        best = max(counts.values())
+        if best * 2 > len(vals):
+            out[mid] = sorted(v for v, c in counts.items() if c == best)[0]
+        else:
+            out[mid] = float(round(sorted(vals)[len(vals) // 2]))
+    return out
+
+
 async def run_ai_rating() -> int:
     """扫描各角色未评记忆 → 批量 LLM 评星（每日限额）→ 更新。返回评星条数。
 
@@ -287,6 +326,20 @@ async def run_ai_rating() -> int:
                     outcome = obs.get("fail_reason", "parse_failed")
                     failed.append(char.id)
                     continue
+                # A14 M0（2026-10-01）：多轮共识**干跑** —— flag 开且角色在白名单时多跑 N-1 轮，
+                # 把各轮星分与共识写进留痕；**写回仍用第 1 轮 results**（零行为、可对照）。
+                if _vote3_enabled(char.id):
+                    try:
+                        _rounds = [results]
+                        for _ in range(max(1, VOTE3_ROUNDS) - 1):
+                            _extra = await _rate_batch(char, items)
+                            if _extra:
+                                _rounds.append(_extra)
+                        obs["rounds"] = [{str(r["id"]): r["star"] for r in rd} for rd in _rounds]
+                        obs["consensus"] = {str(k): v for k, v in _consensus_stars(_rounds).items()}
+                        obs["vote3_rounds_used"] = len(_rounds)
+                    except Exception as e:
+                        _logger.warning("vote3 dry-run failed char=%d: %s", char.id, e)
                 by_id = {r["id"]: r["star"] for r in results}
                 stage = "apply"
                 n = 0

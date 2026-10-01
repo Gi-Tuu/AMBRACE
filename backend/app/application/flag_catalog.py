@@ -296,6 +296,10 @@ _FLAG_ROWS: list[tuple] = [
      'Skips looking through memories only on clearly contentless short phrases such as greetings; '
      'anything with substance, or anything that sounds like it is asking about the past, still looks '
      'them up as before. Off by default; when off everything stays exactly as it is now.'),
+    ('ai_rating_vote3', 'memory', 724, False, '评星多看几轮再决定',
+     '它给自己记的东西打分时，会多打几轮再看多数意见（只先记下，不改打分结果）；默认关闭。',
+     'Rate a few times before deciding',
+     'When scoring what it has noted down, it scores a few times and looks at the majority; the score actually used stays the same as now. Off by default.'),
     ('relational_drive_open_v1', 'outreach_natural', 16, False, '开口只消一部分惦记',
      '角色主动开口之后，这份惦记只消掉一部分，剩下的留到下次再说；不改变发什么、发几条、什么时候发。默认关闭。',
      'Partial release after reaching out',
