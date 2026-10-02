@@ -23,7 +23,7 @@ import pytest
 from _dbclone import clone_engine, make_session_factory
 
 from app.domain.proactivity import pacing
-from app.scheduling import arbiter
+from app.scheduling import arbiter, gates, outreach_gates
 
 pytestmark = pytest.mark.slow
 
@@ -87,6 +87,12 @@ def _patch_gate_io(monkeypatch, *, type_sent=0, session_sent=0, last=None, activ
     monkeypatch.setattr(arbiter, "get_session_daily_sent_count", _sess_count)
     monkeypatch.setattr(arbiter, "get_session_last_sent_at", _sess_last)
     monkeypatch.setattr(arbiter, "_user_active_hours", _hours)
+    # A20 批 2 R4：_pacing_gate 已搬到 outreach_gates，函数体的裸名在 outreach_gates 命名空间解析
+    # ⇒ 只打 arbiter 会被静默绕过（真查库）。两侧同打同一个 stub。
+    monkeypatch.setattr(outreach_gates, "get_daily_sent_count", _type_count)
+    monkeypatch.setattr(outreach_gates, "get_session_daily_sent_count", _sess_count)
+    monkeypatch.setattr(outreach_gates, "get_session_last_sent_at", _sess_last)
+    monkeypatch.setattr(outreach_gates, "_user_active_hours", _hours)
     monkeypatch.setattr(chat_svc, "get_latest_session_id", _latest)
 
 
@@ -216,6 +222,10 @@ def test_闸门_三开关全关_不拦且不查库(flag_env, monkeypatch):
     monkeypatch.setattr(arbiter, "get_session_daily_sent_count", _boom)
     monkeypatch.setattr(arbiter, "get_session_last_sent_at", _boom)
     monkeypatch.setattr(arbiter, "_user_active_hours", _boom)
+    # A20 批 2 R4：判定函数已搬到 outreach_gates，「不查库」必须由本模块里的裸名来保证
+    for _n in ("get_daily_sent_count", "get_session_daily_sent_count",
+               "get_session_last_sent_at", "_user_active_hours"):
+        monkeypatch.setattr(outreach_gates, _n, _boom)
     for etype in ("ai_care", "life_regression", "memory_review", "plugin", "state_trigger"):
         assert _gate(_item(etype), cn_hour=3) is None
 
@@ -346,7 +356,13 @@ def pacing_db(monkeypatch, tmp_path):
     import app.db.database as db_mod
     import app.scheduling.memory_review as mr
     monkeypatch.setattr(db_mod, "async_session_factory", factory)
+    # A20 批 1b：②③ 三处只读查询（get_daily_sent_count / get_session_daily_sent_count /
+    # get_session_last_sent_at）函数体已搬到 gates，在 gates 命名空间解析
+    # async_session_factory；arbiter 侧只剩具名重导出，只打 arbiter 会被绕过 ⇒ 真查库。
     monkeypatch.setattr(arbiter, "async_session_factory", factory)
+    monkeypatch.setattr(gates, "async_session_factory", factory)
+    # A20 批 2：_pacing_gate / _annotate 一族搬到 outreach_gates，本模块同样解析裸名 async_session_factory
+    monkeypatch.setattr(outreach_gates, "async_session_factory", factory)
     monkeypatch.setattr(mr, "async_session_factory", factory)
     yield factory
     asyncio.run(engine.dispose())
@@ -450,6 +466,8 @@ def test_execute_窗口外拦下低效类型并留痕(pacing_db, all_on, monkeyp
     monkeypatch.setattr(arbiter, "is_dnd_now", _no_dnd)
     monkeypatch.setattr(arbiter, "is_user_active", _not_active)
     monkeypatch.setattr(arbiter, "_cn_hour_now", lambda: 3)  # 锁定时段（北京凌晨，窗口外）
+    # A20 批 2 R4：_cn_hour_now 现由 outreach_gates._pacing_gate 解析（三处命名空间都可能，谁解析打谁）
+    monkeypatch.setattr(outreach_gates, "_cn_hour_now", lambda: 3)
 
     item = _item("memory_review", memory_id=1)
     ok = asyncio.run(arbiter._execute(item))

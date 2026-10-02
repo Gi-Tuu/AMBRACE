@@ -15,7 +15,7 @@ import pytest
 
 from app.agent.loop import AGENT_FLAGS
 from app.application import phone_auto_notify_service as svc
-from app.scheduling import arbiter
+from app.scheduling import arbiter, gates
 from app.utils.timeutil import now_naive_utc
 
 CID, UID, SID = 101, 7, 9
@@ -207,7 +207,11 @@ def test_dnd_follows_kernel_not_hardcoded_window(env):
     """北京 23:30：旧硬编码会静默，内核默认口径（未配置免打扰＝只挡 0–7 点）放行；
     凌晨 03:00：内核拦 ⇒ 行为与 arbiter.is_dnd_now 一致，而非与 23–8 点一致。"""
     env.monkeypatch.setattr(arbiter, "is_dnd_now", _REAL_IS_DND)
-    env.monkeypatch.setattr(arbiter, "get_dnd_window", _const(None))
+    # A20 批 1b：is_dnd_now 函数体已搬到 gates，块内互调 get_dnd_window 在 gates
+    # 命名空间解析；arbiter 侧只剩具名重导出，只打 arbiter 桩看不见。两边同打同一个桩。
+    window_none = _const(None)
+    env.monkeypatch.setattr(arbiter, "get_dnd_window", window_none)
+    env.monkeypatch.setattr(gates, "get_dnd_window", window_none)
 
     _freeze_cn_now(env, 23, 30)
     assert _run(env) is True, "23:30 内核不拦，不该再被硬编码 23–8 点挡掉"
@@ -222,7 +226,10 @@ def test_dnd_follows_kernel_not_hardcoded_window(env):
 def test_dnd_reads_character_config_window(env):
     """角色配了免打扰 13:00–14:00：14:30 放行 / 13:30 拦（原硬编码时段完全看不到这份配置）。"""
     env.monkeypatch.setattr(arbiter, "is_dnd_now", _REAL_IS_DND)
-    env.monkeypatch.setattr(arbiter, "get_dnd_window", _const((13 * 60, 14 * 60)))
+    # A20 批 1b：同上——get_dnd_window 由 gates 里的 is_dnd_now 函数体解析，两边同打同一个桩。
+    window_13_14 = _const((13 * 60, 14 * 60))
+    env.monkeypatch.setattr(arbiter, "get_dnd_window", window_13_14)
+    env.monkeypatch.setattr(gates, "get_dnd_window", window_13_14)
 
     _freeze_cn_now(env, 23, 30)   # 落在旧硬编码窗口内，但角色没配这个时段
     assert _run(env) is True

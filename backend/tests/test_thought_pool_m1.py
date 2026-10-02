@@ -816,9 +816,12 @@ def test_本批零调用方_挂点属M2():
     演进（三个阶段，本条随接线落地逐步收紧/放宽，但始终钉「收敛到白名单」这一不变式）：
       - M1（落表 + 写口）：``app/`` 里除服务模块自身外代码本体**零引用**（"本批零调用方"）；
       - M2-b1（2026-10-01，生效侧）：``arbiter`` / ``sections`` / ``context_builder`` 三处接线
-        （取一条 + 三档释放 + 注入）；
+        （取一条 + 三档释放 + 注入）；A20 批 2（2026-10-02）``_annotate_outreach_plan`` 整体下沉
+        ``scheduling/outreach_gates.py`` ⇒ 取用点随之内移，生效侧仍只有三处（挂点数量不变）；
       - M1-挂点（2026-10-01，抽取侧）：``events/handlers`` / ``chat_service`` /
         ``character_state_service`` 三处搭车挂点调 ``supply_thought_pool``（F1–F6 抽取入池）。
+        A20 批 5 第二刀（2026-10-02）``_settle_thought_pool_turn`` 逐字节下沉
+        ``application/chat_settlement.py`` ⇒ 挂点随之内移，抽取侧仍只有三处（挂点数量不变）。
 
     不变式：引用方**只允许**这六处（设计 §2.1「抽取挂点唯一三处」+ §2.6 生效侧）。任何
     **第七处**引用即红——防止念头池被到处捞，重蹈 ``Memory.scope``「到处都有人读」的覆辙。
@@ -829,11 +832,12 @@ def test_本批零调用方_挂点属M2():
     # 抽取侧三挂点（M1-挂点，调 supply_thought_pool）+ 生效侧三挂点（M2-b1，取用/释放/注入）
     extract_hooks = {
         os.path.join("events", "handlers.py"),
-        os.path.join("application", "chat_service.py"),
+        os.path.join("application", "chat_settlement.py"),
         os.path.join("application", "character_state_service.py"),
     }
     effect_hooks = {
-        os.path.join("scheduling", "arbiter.py"),
+        # A20 批 2：生效侧 arbiter 挂点随 _annotate_outreach_plan 一起搬到 outreach_gates
+        os.path.join("scheduling", "outreach_gates.py"),
         os.path.join("agent", "context", "sections.py"),
         os.path.join("agent", "context_builder.py"),
     }
@@ -857,7 +861,7 @@ def test_本批零调用方_挂点属M2():
     unexpected = [h for h in hits if h not in allowed_callers]
     assert unexpected == [], (
         f"thought_pool_service 出现了白名单外的调用方：{unexpected}"
-        "（只允许抽取侧 handlers/chat_service/character_state_service + 生效侧 arbiter/sections/context_builder）"
+        "（只允许抽取侧 handlers/chat_service/character_state_service + 生效侧 outreach_gates/sections/context_builder）"
     )
     # 抽取侧钉死：supply_thought_pool 的调用方**恰好**是三个抽取挂点（生效侧不碰供给口——
     # 取用/释放走 fetch_one_thought/settle_release，抽池走 supply_thought_pool，两条线不混）。

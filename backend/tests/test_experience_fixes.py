@@ -85,10 +85,14 @@ def test_self_statement_len_上限():
 
 def test_self_statement_写入点统一用上限():
     import inspect
-    from app.application import chat_service
-    src = inspect.getsource(chat_service)
-    assert "bio_text[:SELF_STATEMENT_MAX_LEN]" in src
-    assert "text[:SELF_STATEMENT_MAX_LEN]" in src
+    from app.application import chat_service, chat_settlement
+    # A20 批 5 第二刀（2026-10-02）：两处自述写入点随 _save_bio_update / _generate_initial_bio
+    # 逐字节下沉 chat_settlement，常量按「模块属性回指」写成 _cs.SELF_STATEMENT_MAX_LEN
+    # —— 取值仍来自 chat_service 命名空间（见下方宿主断言），上限口径没有变。
+    src = inspect.getsource(chat_settlement)
+    assert "bio_text[:_cs.SELF_STATEMENT_MAX_LEN]" in src
+    assert "text[:_cs.SELF_STATEMENT_MAX_LEN]" in src
+    assert hasattr(chat_service, "SELF_STATEMENT_MAX_LEN"), "_cs 回指的宿主被剪 ⇒ 写入点会 AttributeError"
     from app.memory import extractor
     esrc = inspect.getsource(extractor)
     assert "_merge_profile_text(c.self_statement, bio_val, SELF_STATEMENT_MAX_LEN)" in esrc

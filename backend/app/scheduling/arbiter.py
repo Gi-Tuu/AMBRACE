@@ -1,22 +1,19 @@
 """仲裁器 — 统一决策：收集事件源 → 按优先级裁定 → 限额保护 → 执行"""
 import json
 import time as _time
-import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, func
 
 from app.db.database import async_session_factory
 from app.models.chat import ChatMessage
-from app.models.character import ProactiveMessageLog, ProactiveSettings
+from app.models.character import ProactiveMessageLog, ProactiveSettings  # noqa: F401  # A20 批 1：ProactiveSettings 已随 get_dnd_window 下沉，命名空间保留
 from app.models.character import ProactiveStorylineItem
 from app.models.character import ProactiveTriggerLog
-from app.models.character import AICharacter
-from app.scheduling.unfinished_topic import run_unfinished_topic
-from app.scheduling.life_regression import run_life_regression
-from app.scheduling.prospective_intent import run_prospective_due  # Ariadne 模块G（2026-09-04）
+from app.scheduling.unfinished_topic import run_unfinished_topic  # noqa: F401  # A20 批 4a：分支已下沉 executors/story，命名空间保留
+from app.scheduling.life_regression import run_life_regression  # noqa: F401  # 同上
+from app.scheduling.prospective_intent import run_prospective_due  # noqa: F401  # Ariadne 模块G（2026-09-04）；批 4a 分支已下沉 executors/story
 from app.utils.logger import get_logger
-from app.utils.async_tasks import spawn_background
 from app.utils.timeutil import app_day_start_utc, now_naive_utc, to_naive_utc
 
 # AMBRACE 3.10：arbiter 事件源 TriggerSource 化——导入 sources 包即触发各源注册
@@ -61,7 +58,7 @@ from app.domain.proactivity.pacing import (  # noqa: E402,F401
     type_mix_allows,
 )
 # 架构地图断点 #1 · V2b（2026-09-29）：pacing 读开关走端口，本处只做注入接线（判定逻辑不变）
-from app.application.proactivity_pacing_ports import production_pacing_ports as _pacing_ports
+from app.application.proactivity_pacing_ports import production_pacing_ports as _pacing_ports  # noqa: F401  # A20 批 2：_pacing_gate 已随本端口下沉 outreach_gates，命名空间保留
 
 # 审计 P1-06：rejected 触发日志节流（同角色同类型最小间隔秒，approved 必记）
 REJECTED_LOG_THROTTLE_SECONDS = 300
@@ -80,369 +77,47 @@ _OUTREACH_SEND_TRACE: dict[int, dict] = {}
 
 
 
-# ── 统计辅助 ──
+# A20 批 1（2026-10-02）：节流闸与只读查询下沉到 scheduling/gates，此处具名重导出。
+# ⚠ 这些名字必须留在本模块命名空间：tests/ 里 197 处 monkeypatch.setattr(arbiter, …)
+#   靠的就是「调用方在 arbiter 全局里解析裸名」。删任何一行都会让对应测试退化成真查库（静默变绿）。
+from app.scheduling.gates import (  # noqa: F401
+    has_user_said_sleep,
+    get_hourly_active_count,
+    get_last_proactive_time,
+    get_motivation_approved_count,
+    _cn_hour_now,
+    get_daily_sent_count,
+    get_session_daily_sent_count,
+    get_session_last_sent_at,
+    get_recent_proactive_messages,
+    unreplied_cooldown_active,
+    get_dnd_window,
+    is_dnd_now,
+    is_user_active,
+    get_hours_since_last_user_message,
+    inactive_char_skip,
+    has_pending_timer,
+    has_pending_storyline,
+    get_active_characters,
+)
 
+# A20 批 2（2026-10-02）：outreach 投放闸与标注下沉 outreach_gates，此处具名重导出。
+# ⚠ 理由同批 1：tests/ 的 monkeypatch.setattr(arbiter, …) 靠「调用方在 arbiter 命名空间解析裸名」。
+from app.scheduling.outreach_gates import (  # noqa: F401
+    _annotate_outreach_plan,
+    _collect_outreach_materials,
+    _get_recent_outreach_intents,
+    _mark_gate,
+    _outreach_enabled,
+    _pacing_gate,
+    _shadow_drive_note,
+    _user_active_hours,
+)
 
-
-async def has_user_said_sleep(character_id: int, user_id: int) -> bool:
-    """夜晚时段（北京时间 21:00-次日 8:00）内，用户最近一条消息是否说"睡觉"。
-    夜晚起算点为"最近一个 21:00"（凌晨跨天也生效）；若之后又发了消息（如"睡不着/又起来了"），自动恢复。"""
-    cn_tz = timezone(timedelta(hours=8))
-    now_cn = datetime.now(cn_tz)
-    # 白天（8:00-21:00）不静默
-    if 8 <= now_cn.hour < SLEEP_HOUR:
-        return False
-    # 夜晚起算点：>=21 点 → 今天 21:00；凌晨（<8 点） → 昨天 21:00
-    ref = now_cn.replace(hour=SLEEP_HOUR, minute=0, second=0, microsecond=0)
-    if now_cn.hour < SLEEP_HOUR:
-        ref -= timedelta(days=1)
-    since_utc = ref.astimezone(timezone.utc).replace(tzinfo=None)
-    async with async_session_factory() as db:
-        from app.application.chat_service import get_latest_session_id
-        session_id = await get_latest_session_id(user_id, character_id)
-        if not session_id:
-            return False
-        msg_result = await db.execute(
-            select(ChatMessage.content)
-            .where(
-                ChatMessage.session_id == session_id,
-                ChatMessage.sender_type == "user",
-                ChatMessage.created_at >= since_utc,
-            )
-            .order_by(ChatMessage.created_at.desc())
-            .limit(1)
-        )
-        last_content = msg_result.scalar_one_or_none()
-    return bool(last_content and any(kw in last_content for kw in SLEEP_KEYWORDS))
-
-
-async def get_hourly_active_count(character_id: int) -> int:
-    """最近 1 小时该角色发出的主动消息数"""
-    since = now_naive_utc() - timedelta(hours=1)
-    async with async_session_factory() as db:
-        result = await db.execute(
-            select(func.count()).where(
-                ProactiveMessageLog.character_id == character_id,
-                ProactiveMessageLog.created_at >= since,
-            )
-        )
-        return result.scalar() or 0
-
-
-async def get_last_proactive_time(character_id: int) -> datetime | None:
-    """该角色最近一条主动消息的发送时间（用于最小间隔保护）"""
-    async with async_session_factory() as db:
-        result = await db.execute(
-            select(ProactiveMessageLog.created_at)
-            .where(ProactiveMessageLog.character_id == character_id)
-            .order_by(ProactiveMessageLog.created_at.desc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
-
-
-async def get_motivation_approved_count(character_id: int, since) -> int:
-    """独立想念通道计数：motivation 成功执行的次数。
-
-    用 ProactiveTriggerLog(trigger_type=motivation, decision=approved) 统计——
-    storyline 落库 message_type 统一为 storyline，无法区分 motivation 类型。"""
-    async with async_session_factory() as db:
-        result = await db.execute(
-            select(func.count()).where(
-                ProactiveTriggerLog.character_id == character_id,
-                ProactiveTriggerLog.trigger_type == "motivation",
-                ProactiveTriggerLog.decision == "approved",
-                ProactiveTriggerLog.created_at >= since,
-            )
-        )
-        return result.scalar() or 0
-
-
-# ── outreach 投放口径三闸（2026-09-13 交接 §②③）——「已发送」计数 IO ──
-
-
-def _cn_hour_now() -> int:
-    """当前北京时间小时（时段窗口闸用；单独成函数便于测试注入，锁定时段）。"""
-    return datetime.now(timezone(timedelta(hours=8))).hour
-
-
-async def get_daily_sent_count(character_id: int, message_type: str) -> int:
-    """该角色**应用时区当日已发送**的某类型主动消息数（类型配比闸 ②）。
-
-    统计口径（交接 §②③，与项目既有「已发送」口径一致，勿改成候选口径）：
-    - 只算 ``proactive_message_logs``（``send_to_session`` 落库的「已发送」行，log_proactive=True），
-      **不统计候选/审批流水**（``proactive_trigger_logs`` 的 approved/rejected 都不算）；
-    - 同一 storyline 事件的后续切片不重复计数（``send_to_session`` 不再落 log），
-      与 ``get_hourly_active_count`` / ``MAX_PER_HOUR`` 同源同口径；
-    - 日期边界 = 应用时区当天 00:00（复用 ``utils.timeutil.app_day_start_utc``，
-      与 ``triggers.get_daily_count`` 同源；默认 +8 时与旧北京口径同值）。
-    """
-    since = app_day_start_utc()
-    async with async_session_factory() as db:
-        result = await db.execute(
-            select(func.count()).where(
-                ProactiveMessageLog.character_id == character_id,
-                ProactiveMessageLog.message_type == message_type,
-                ProactiveMessageLog.created_at >= since,
-            )
-        )
-        return result.scalar() or 0
-
-
-async def get_session_daily_sent_count(character_id: int, session_id: int) -> int:
-    """同一 (character_id, session_id) 当日**已发送**主动消息数（单会话限频闸 ③，口径同 ②）。"""
-    since = app_day_start_utc()
-    async with async_session_factory() as db:
-        result = await db.execute(
-            select(func.count()).where(
-                ProactiveMessageLog.character_id == character_id,
-                ProactiveMessageLog.session_id == session_id,
-                ProactiveMessageLog.created_at >= since,
-            )
-        )
-        return result.scalar() or 0
-
-
-async def get_session_last_sent_at(character_id: int, session_id: int) -> datetime | None:
-    """同一 (character_id, session_id) 最近一条**已发送**主动消息时间（最小间隔闸 ③，口径同上）。"""
-    async with async_session_factory() as db:
-        result = await db.execute(
-            select(ProactiveMessageLog.created_at)
-            .where(
-                ProactiveMessageLog.character_id == character_id,
-                ProactiveMessageLog.session_id == session_id,
-            )
-            .order_by(ProactiveMessageLog.created_at.desc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
-
-
-async def get_recent_proactive_messages(character_id: int, limit: int = 2) -> str:
-    """该角色最近主动消息 + 最近 AI 对话回复（用于生成时防重复）。
-
-    A（2026-09-01）：并入该角色最近 24h 的 3 条 AI 对话回复——此前 previous_messages 只取
-    ProactiveMessageLog（主动消息日志），普通对话里 AI 自己刚回复过的话不在防重复范围，
-    导致生成主动消息时 LLM 逐句照抄上一条对话回复（真机 sam 案）；对话回复失败仅记日志
-    （fail-open，不影响主动链路）。合并去重、按时间倒序、整体截断约 400 字。
-    """
-    from datetime import datetime as _dt
-    from app.utils.timeutil import now_naive_utc
-    items: list[tuple[object, str]] = []  # (created_at, content)
-    async with async_session_factory() as db:
-        result = await db.execute(
-            select(ProactiveMessageLog.created_at, ProactiveMessageLog.content)
-            .where(ProactiveMessageLog.character_id == character_id)
-            .order_by(ProactiveMessageLog.created_at.desc())
-            .limit(limit)
-        )
-        for _ts, _text in result.all():
-            if _text:
-                items.append((_ts, _text))
-    try:
-        from datetime import timedelta as _timedelta
-        from app.models.chat import ChatMessage, ChatSession
-        _since = now_naive_utc() - _timedelta(hours=24)
-        async with async_session_factory() as db:
-            rows = (await db.execute(
-                select(ChatMessage.created_at, ChatMessage.content)
-                .join(ChatSession, ChatMessage.session_id == ChatSession.id)
-                .where(
-                    ChatSession.character_id == character_id,
-                    ChatMessage.sender_type == "ai",
-                    ChatMessage.created_at >= _since,
-                )
-                .order_by(ChatMessage.id.desc())
-                .limit(3)
-            )).all()
-            for _ts, _text in rows:
-                if _text:
-                    items.append((_ts, _text))
-    except Exception as e:
-        _logger.warning("recent AI chat replies load failed char=%s: %s", character_id, e)
-    seen: set[str] = set()
-    uniq: list[str] = []
-    for _ts, _text in sorted(items, key=lambda x: (x[0] is not None, x[0] or _dt.min), reverse=True):
-        if _text not in seen:
-            seen.add(_text)
-            uniq.append(_text)
-    return "\n".join(uniq)[:400]
-
-
-# 免打扰窗口缓存：{character_id: (expire_ts, (start_min, end_min) | None)}（60s 过期）
-_dnd_cache: dict[int, tuple[float, tuple[int, int] | None]] = {}
-
-
-async def unreplied_cooldown_active(character_id: int, user_id: int) -> bool:
-    """连续 UNREPLIED_COOLDOWN_LIMIT 条主动消息用户均未回复，且最近一条在冷却时长内 → 冷却中"""
-    async with async_session_factory() as db:
-        logs = (
-            await db.execute(
-                select(ProactiveMessageLog)
-                .where(
-                    ProactiveMessageLog.character_id == character_id,
-                    ProactiveMessageLog.session_id.is_not(None),
-                )
-                .order_by(ProactiveMessageLog.created_at.desc())
-                .limit(UNREPLIED_COOLDOWN_LIMIT)
-            )
-        ).scalars().all()
-    if len(logs) < UNREPLIED_COOLDOWN_LIMIT:
-        return False
-    for log in logs:
-        async with async_session_factory() as db:
-            replied = (
-                await db.execute(
-                    select(func.count()).where(
-                        ChatMessage.session_id == log.session_id,
-                        ChatMessage.sender_type == "user",
-                        ChatMessage.created_at > log.created_at,
-                    )
-                )
-            ).scalar() or 0
-        if replied > 0:
-            return False  # 最近这些消息里有用户回复 → 不冷却
-    return now_naive_utc() - to_naive_utc(logs[0].created_at) < timedelta(hours=UNREPLIED_COOLDOWN_HOURS)
-
-
-async def get_dnd_window(character_id: int) -> tuple[int, int] | None:
-    """该角色免打扰窗口（分钟制起止）。dnd_enabled=False → None（沿用硬编码 0-7 点）。
-    结果缓存 60 秒，避免每 tick 查库。"""
-    import time as _time
-    now_ts = _time.time()
-    cached = _dnd_cache.get(character_id)
-    if cached and now_ts - cached[0] < 60:
-        return cached[1]
-    window: tuple[int, int] | None = None
-    try:
-        async with async_session_factory() as db:
-            st = (
-                await db.execute(
-                    select(ProactiveSettings).where(ProactiveSettings.character_id == character_id)
-                )
-            ).scalar_one_or_none()
-        if st and st.dnd_enabled:
-            def _parse(t: str) -> int:
-                try:
-                    h, m = (t or "00:00").split(":")
-                    return int(h) * 60 + int(m)
-                except Exception:
-                    return 0
-            window = (_parse(st.dnd_start), _parse(st.dnd_end))
-    except Exception:
-        window = None
-    _dnd_cache[character_id] = (now_ts, window)
-    return window
-
-
-async def is_dnd_now(character_id: int, cn_now: datetime) -> bool:
-    """是否处于免打扰：dnd_enabled 开启用配置时段；未开启沿用硬编码深夜 0-7 点"""
-    window = await get_dnd_window(character_id)
-    cn_minute = cn_now.hour * 60 + cn_now.minute
-    if window is not None:
-        return _in_dnd_window(cn_minute, window)
-    return cn_now.hour < 7
-
-
-async def is_user_active(character_id: int, user_id: int) -> bool:
-    """用户最近是否在活跃聊天（有用户消息）"""
-    since = now_naive_utc() - timedelta(minutes=USER_ACTIVE_MINUTES)
-    async with async_session_factory() as db:
-        from app.application.chat_service import get_latest_session_id
-        session_id = await get_latest_session_id(user_id, character_id)
-        if not session_id:
-            return False
-        msg_result = await db.execute(
-            select(func.count()).where(
-                ChatMessage.session_id == session_id,
-                ChatMessage.sender_type == "user",
-                ChatMessage.created_at >= since,
-            )
-        )
-        return (msg_result.scalar() or 0) > 0
-
-
-async def get_hours_since_last_user_message(character_id: int) -> float | None:
-    """该角色最近一条用户消息距今小时数；一条都没有 → None。
-
-    跨该角色**全部会话**统计（不按 user 细分）：outreach 是角色维度行为，任一用户近期
-    说过话即视为该角色活跃；从未对话的角色 → None（按停发处理）。
-    F-6（v3.4.6 审查）：查询失败直接上抛（由调用方 inactive_char_skip 的 fail-open 捕获），
-    不再与「无消息」的 None 混淆——否则查询失败轮活跃角色被误停发。
-    """
-    try:
-        from app.models.chat import ChatSession
-
-        async with async_session_factory() as db:
-            row = (
-                await db.execute(
-                    select(ChatMessage.created_at)
-                    .join(ChatSession, ChatMessage.session_id == ChatSession.id)
-                    .where(
-                        ChatSession.character_id == character_id,
-                        ChatMessage.sender_type == "user",
-                    )
-                    .order_by(ChatMessage.created_at.desc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-    except Exception as e:
-        _logger.warning("last user message load failed char=%s: %s", character_id, e)
-        raise
-    if row is None:
-        return None
-    return (now_naive_utc() - to_naive_utc(row)).total_seconds() / 3600.0
-
-
-async def inactive_char_skip(character_id: int) -> bool:
-    """非活跃角色停发门控（B1-③ 配额让位，2026-09-08）：应停发 → True。
-
-    flag ``proactive_inactive_char_skip`` 关 → 恒 False（零行为变化）；判据为纯函数
-    ``outreach.skip_inactive_char``（近 INACTIVE_CHAR_WINDOW_HOURS 无用户消息 → 停发）。
-    异常静默 False（fail-open：门控异常不误伤活跃角色；含 F-6 查询失败上抛，此处兜住）。
-    """
-    try:
-        from app.agent.loop import AGENT_FLAGS as _af
-
-        if not _af.get("proactive_inactive_char_skip", False):
-            return False
-        return _oc.skip_inactive_char(await get_hours_since_last_user_message(character_id))
-    except Exception as e:
-        _logger.warning("inactive char skip check failed char=%s: %s", character_id, e)
-        return False
-
-
-async def has_pending_timer(character_id: int) -> bool:
-    """该角色是否有未到期的定时承诺（有则跳过随机节律，避免穿帮）"""
-    from app.models.life import ScheduledEvent
-    async with async_session_factory() as db:
-        result = await db.execute(
-            select(func.count()).where(
-                ScheduledEvent.character_id == character_id,
-                ScheduledEvent.status == "pending",
-                ScheduledEvent.trigger_at > now_naive_utc(),
-            )
-        )
-        return (result.scalar() or 0) > 0
-
-
-async def has_pending_storyline(character_id: int) -> bool:
-    """该角色是否还有未发送完的主动剧情切片（有则跳过随机节律，避免剧情重叠）"""
-    async with async_session_factory() as db:
-        result = await db.execute(
-            select(func.count()).where(
-                ProactiveStorylineItem.character_id == character_id,
-                ProactiveStorylineItem.status == "pending",
-            )
-        )
-        return (result.scalar() or 0) > 0
-
-
-async def get_active_characters() -> list[dict]:
-    """获取所有启用了主动行为的活跃角色（复用 triggers 逻辑）"""
-    from app.scheduling.triggers import get_active_characters as _get
-    return await _get()
-
+# A20 批 3a（2026-10-02）：跨类型前置闸下沉 executors/guards，本模块只负责现取注入。
+# ⚠ guards 不得直接 import 闸函数：tests/ 的 monkeypatch.setattr(arbiter, …) 靠「调用方在
+#   arbiter 命名空间解析裸名」，解析点搬走就会静默绕过打桩去查真库。
+from app.scheduling.executors import GateBundle, pre_gates
 
 # ── 事件源采集 ──
 
@@ -633,295 +308,7 @@ async def collect_plugin_events() -> list[dict]:
     return [ti.to_dict() for ti in await get_source("plugin").collect(_DEFAULT_CTX)]
 
 
-# ── B1-③（方案 §5.4）：主动接触意图层接线辅助（纯函数决策 + IO 素材采集）──
-
-async def _outreach_enabled(user_id=None) -> bool:
-    """Feature Flag：proactive_outreach_v2（默认关）。关=intent 不参与、走旧链路零行为。
-
-    batch G：按账号解析（缺 user_id 回落全局值，fail-open）；判据语义不变（默认关→
-    不走 intent 路径），仅取值从全局 AGENT_FLAGS 改为按 user_id 的 resolve_flag 解析链。
-    """
-    try:
-        from app.application.flag_service import resolve_flag
-        return await resolve_flag("proactive_outreach_v2", user_id)
-    except Exception:
-        return False
-
-
-async def _collect_outreach_materials(candidate: dict) -> "_oc.OutreachMaterials":
-    """收集本次接触的真实素材（只判断有没有，不拼大段文本；任一失败降级为无）。
-
-    方案 §5.4：open_loop≈有新鲜进行中话题/目标；shared≈有共同经历记忆；
-    interest≈有用户兴趣记忆；life≈AI 此刻有生活小事（current_status）。全部 fail-open。
-    """
-    char_id = candidate.get("character_id")
-    user_id = candidate.get("user_id")
-    has_open_loop = has_shared = has_interest = has_life = False
-    if char_id and user_id:
-        try:
-            from app.agent.topic_tracker import load_fresh_active_topics_text
-            has_open_loop = bool(await load_fresh_active_topics_text(char_id, user_id))
-        except Exception:
-            pass
-        try:
-            from app.memory import search_memories
-            has_shared = bool(await search_memories(char_id, query="和用户一起经历的事 用户说过的重要的事 用户的近况", limit=2,
-                                                    user_id=user_id))  # A2 M0-4：透传调用者（hook ctx）
-            has_interest = bool(await search_memories(char_id, query="用户的兴趣爱好偏好和喜欢的东西", limit=2,
-                                                      user_id=user_id))  # A2 M0-4：透传调用者（hook ctx）
-        except Exception:
-            pass
-    try:
-        has_life = bool(candidate.get("current_status"))
-    except Exception:
-        pass
-    return _oc.OutreachMaterials(has_open_loop, has_shared, has_interest, has_life)
-
-
-async def _get_recent_outreach_intents(character_id: int, limit: int = 2) -> list[str]:
-    """从最近主动触发日志的 trigger_reason 反查历史意图（零 schema 变更）；失败返回空。
-
-    只统计 decision='approved' 的行（已实际通过并执行的主动消息），避免把被限额拒的
-    候选重复计入；格式为 trigger_reason 内 `outreach=<intent>`（见 log_trigger_candidate）。
-    """
-    out: list[str] = []
-    try:
-        import re as _re
-        async with async_session_factory() as _db:
-            rows = (await _db.execute(
-                select(ProactiveTriggerLog.trigger_reason)
-                .where(
-                    ProactiveTriggerLog.character_id == character_id,
-                    ProactiveTriggerLog.decision == "approved",
-                    ProactiveTriggerLog.trigger_reason.is_not(None),
-                    ProactiveTriggerLog.trigger_reason.like("%outreach=%"),
-                )
-                .order_by(ProactiveTriggerLog.created_at.desc())
-                .limit(8)
-            )).scalars().all()
-        for raw in rows:
-            _m = _re.search(r"outreach=([a-z_]+)", raw or "")
-            if _m and _m.group(1) in _oc.ALL_INTENTS:
-                out.append(_m.group(1))
-            if len(out) >= limit:
-                break
-    except Exception:
-        pass
-    return out
-
-
-async def _shadow_drive_note(item: dict, char_id: int, user_id: int, plan) -> None:
-    """A4 批3 M1b2（影子改判，**不改发送**）：懒结算水位 → 算「若按驱力定调会选哪个」→ 只写留痕。
-
-    口径：
-    - settle 时机遵守设计 §R8 懒结算——只结算「本次要处理的（角色, 用户）」，不做全量刷屏；
-    - commit：本钩子自开 session ⇒ 自己 commit（M1b1 把仓储层钉成只 add/flush，提交责任在
-      持 session 的一方；钩子不提交＝影子水位静默丢失）；
-    - flag 关 ⇒ 在开 session 之前先读一次内存闸，连连接都不建立（零额外查询，逐字节旧行为）；
-    - candidate 字段 / prompt / 发送条数一律不动：结果只进 item 的日志标记与 M0 观测暂存。
-    """
-    from app.application import relational_drive_service as _drive
-    from app.domain.relational import drives as _dv
-
-    if not _drive.shadow_enabled():
-        return
-    async with async_session_factory() as db:
-        levels = await _drive.settle(db, char_id, user_id)
-        await db.commit()
-    drive = _dv.top_candidate_drive(levels)
-    would = _dv.DRIVE_TO_INTENT.get(drive) if drive else None
-    level = float(levels.get(drive) or 0.0) if drive else 0.0
-    item["_drive_note"] = (
-        f"[drive={drive}:{level:.1f}→would={would or 'none'}|did={plan.intent or 'none'}]"
-        if drive else "[drive=none]"
-    )
-    trace = _OUTREACH_SEND_TRACE.get(char_id)
-    if trace is not None:
-        # 与 M0 三键同一个 dict（有暂存才写）。影子期口径＝「按驱力会选的」，M2 生效期换成「实际参与的」
-        trace["shadow_drive"] = drive or ""
-        trace["shadow_intent"] = would or ""
-        trace["level_at_send"] = level
-
-
-async def _annotate_outreach_plan(item: dict, char_id: int, mats_cache: dict, recent_cache: dict,
-                                  char_has_unfinished: bool = False) -> None:
-    """run_tick 汇总层统一"意图选择"：分级 + 素材前提 + 避开最近意图 → 写回 candidate。
-
-    flag 关时不调用本函数（candidate 不动 → 零变化）。任一步失败均静默回退（intent=None，走旧链路）。
-
-    ``char_has_unfinished``（批 4 M2-b2 防线 2②）：本 tick 该角色是否已有 ``unfinished_topic``
-    候选。为 True 时念头池**本 tick 不供给**（让位给 unfinished_topic，避免两个通道在
-    「用户上次说了一半的事」上各开口一次）——只影响 thought 素材，不影响意图选择与发送。
-    """
-    cand = item.get("candidate") or {}
-    _uid = cand.get("user_id")
-    if not _uid:
-        return
-    try:
-        if char_id not in mats_cache:
-            mats_cache[char_id] = await _collect_outreach_materials(cand)
-        if char_id not in recent_cache:
-            recent_cache[char_id] = await _get_recent_outreach_intents(char_id, limit=2)
-        _tier = _oc.staleness_tier(cand.get("idle_minutes"))
-        _plan = _oc.select_outreach(_tier, mats_cache[char_id], recent_cache[char_id])
-        cand["outreach_intent"] = _plan.intent
-        cand["outreach_plan"] = {
-            "tier": _plan.tier,
-            "allow_active_topics": _plan.allow_active_topics,
-            "allow_storyline": _plan.allow_storyline,
-            "allow_recall": _plan.allow_recall,
-            "memory_query": _plan.memory_query,
-            "must_return_question": _plan.must_return_question,
-        }
-        # A4 批3 M0：把本次实际使用的意图 / 档位 / 素材短标识暂存，供发送留痕点取走（只观测）
-        _mats = mats_cache[char_id]
-        _OUTREACH_SEND_TRACE[char_id] = {
-            "intent": str(_plan.intent or ""),
-            "tier": str(_plan.tier or ""),
-            "materials": [
-                k for k, has in (
-                    ("open_loop", _mats.has_open_loop),
-                    ("shared", _mats.has_shared_memory),
-                    ("interest", _mats.has_user_interest),
-                    ("life", _mats.has_life_now),
-                ) if has
-            ],
-        }
-        # A4 批3 M1b2：影子改判留痕（旁路观测；单独吞异常——绝不影响上面的意图选择结果与后续发送）
-        try:
-            await _shadow_drive_note(item, char_id, _uid, _plan)
-        except Exception as e:
-            _logger.debug("drive shadow skipped char=%d: %s", char_id, e)
-        # ── 批 4 M2-b1（2026-10-01）：念头池供料（素材层，设计 §3.1「供给发生在 _annotate_outreach_plan 之内」）──
-        # 先判 flag／灰度再查库：v1 关或角色未命中白名单 ⇒ 一次 SQL 都不发（thought_pool_v1_allowed 不查库）。
-        # 只在 outreach 管辖类型内供给（本函数仅由 PROACTIVE_OUTREACH_TYPES 候选调用，见 run_tick :939）；
-        # 产出物只是 cand["thought"]（文本）+ cand["thought_id"]（供发送留痕绑定/后续释放结算），
-        # **不改 intent、不改 plan、不碰任何 §3.1 频控闸**（念头池无发送权，设计 §3.3 红线 1/2）。
-        # 批 4 M2-b2（2026-10-01）补两条供给防线（设计 §3.2）：
-        #   防线 4（state_trigger 类型白名单）：仅在 PROACTIVE_OUTREACH_TYPES 内供给，其余类型
-        #     （timer/special/state_trigger/memory_review/pet_*/unfinished_topic/life_regression/
-        #     prospective_intent/plugin）一律不供给——照本函数 :739-741 的早退写法显式再判一道
-        #     （run_tick 已按类型门控调用，这里是纵深防御，防未来新增调用点漏判）；
-        #   防线 2②（与 unfinished_topic 双向排除·供给侧）：本 tick 该角色已有 unfinished_topic
-        #     候选 ⇒ 念头池本 tick 不供给（让位，照 sources/rhythm.py 让位写法），避免两通道抢同一句话。
-        try:
-            if item.get("type") not in PROACTIVE_OUTREACH_TYPES:
-                pass                      # 防线 4：非 outreach 类型不供给（早退，不查库）
-            elif char_has_unfinished:
-                pass                      # 防线 2②：本 tick 已有 unfinished_topic 候选 ⇒ 让位不供给
-            else:
-                from app.application.thought_pool_service import thought_pool_v1_allowed, fetch_one_thought
-                if thought_pool_v1_allowed(char_id):
-                    async with async_session_factory() as _tdb:
-                        _th = await fetch_one_thought(_tdb, char_id, _uid, intent=_plan.intent)
-                    if _th and _th.get("text"):
-                        cand["thought"] = _th["text"]
-                        cand["thought_id"] = _th.get("id")
-        except Exception as e:
-            _logger.debug("thought pool supply skipped char=%d: %s", char_id, e)
-    except Exception as e:
-        _logger.warning("outreach annotate failed char=%d: %s", char_id, e)
-
-
 # ── 仲裁 ──
-
-def _mark_gate(item: dict, gate: str) -> None:
-    """闸门命中留痕：写 ``candidate.trigger_reason`` 追加 ``[gate=...]``（交接 §三观测口径）。
-
-    run_tick 随后调 ``log_trigger_candidate(item, False)`` → ``proactive_trigger_logs``
-    的 trigger_reason 带 ``[gate=hour|type|session_rate]``、reject_reason =
-    ``rejected / [gate=...]``，可按天统计各闸拦截量（rejected 行本身受既有 5 分钟节流，
-    见 ``log_trigger_candidate``）。
-    """
-    item["_gate"] = gate
-    cand = item.get("candidate")
-    if isinstance(cand, dict):
-        reason = str(cand.get("trigger_reason") or "")
-        marker = f"[gate={gate}]"
-        if marker not in reason:
-            cand["trigger_reason"] = f"{reason} {marker}".strip()
-    _logger.info("Proactive %s skipped: [gate=%s]", item.get("type"), gate)
-
-
-async def _user_active_hours(user_id) -> list:
-    """读用户已学到的活跃时段（user_rhythm **只读**，不触发重学/写库）；无数据/失败 → []。"""
-    if not user_id:
-        return []
-    try:
-        from app.scheduling.user_rhythm import get_active_hours
-        return await get_active_hours(user_id)
-    except Exception:
-        return []
-
-
-async def _pacing_gate(
-    item: dict,
-    etype: str,
-    char_id: int,
-    candidate: dict,
-    *,
-    cn_hour: int | None = None,
-    now: datetime | None = None,
-) -> str | None:
-    """outreach 投放口径三闸（2026-09-13 交接 §二）：返回命中的闸门名（hour/type/session_rate）或 None。
-
-    - 三个开关全关（默认）或角色不在灰度白名单 → 立即 None：**不查库、不拦截、零行为变化**；
-    - ① hour：低效类型（ai_care/life_regression/memory_review[/_contextual]）仅 12:00–23:00 投放；
-    - ② type：memory_review ≤6/日、ai_care ≤4/日（按已发送计数）；
-    - ③ session_rate：同 (character_id, session_id) ≤8/日 且最小间隔 ≥45 分钟（按已发送计数，
-      与 ``MAX_PER_HOUR`` 叠加不替换）；候选不带 session_id 时按最新会话兜底；
-    - 命中由调用方 ``_mark_gate`` + ``return False`` 走原 rejected 日志链路；
-    - 任一步异常 fail-open（返回 None 照常投放），绝不阻塞主动链路。
-    """
-    try:
-        session_id = candidate.get("session_id")
-        on_hour = gate_active(char_id, session_id, FLAG_HOUR_WINDOW, ports=_pacing_ports)
-        on_mix = gate_active(char_id, session_id, FLAG_TYPE_MIX, ports=_pacing_ports)
-        on_rate = gate_active(char_id, session_id, FLAG_SESSION_RATE, ports=_pacing_ports)
-        if not (on_hour or on_mix or on_rate):
-            return None
-        if cn_hour is None:
-            cn_hour = _cn_hour_now()
-
-        # ① 时段窗口闸：低效类型窗口外跳过（个性化活跃时段只扩不缩）
-        if on_hour and etype in LOW_YIELD_TYPES:
-            if not hour_window_allows(etype, cn_hour):
-                _hours = await _user_active_hours(candidate.get("user_id"))
-                if not hour_window_allows(etype, cn_hour, active_hours=_hours):
-                    return "hour"
-
-        # ② 类型配比闸：每角色每日上限（按「已发送」计数）
-        if on_mix:
-            _counted = TYPE_MIX_COUNTED_TYPES.get(etype)
-            if _counted is not None:
-                _sent = await get_daily_sent_count(char_id, _counted)
-                if not type_mix_allows(etype, _sent):
-                    return "type"
-
-        # ③ 单会话限频闸：日上限 + 最小间隔（按「已发送」计数；与 MAX_PER_HOUR 叠加）
-        if on_rate and etype in SESSION_RATE_TYPES:
-            if session_id is None:
-                _uid = candidate.get("user_id")
-                if _uid:
-                    from app.application.chat_service import get_latest_session_id
-                    session_id = await get_latest_session_id(_uid, char_id)
-                # 兜底解出会话后按会话维度重算灰度桶（比例 <1 时同一角色不同会话可不同命中）
-                if session_id is not None:
-                    on_rate = gate_active(char_id, session_id, FLAG_SESSION_RATE,
-                                          ports=_pacing_ports)
-            if on_rate and session_id is not None:
-                _sent = await get_session_daily_sent_count(char_id, session_id)
-                _last = await get_session_last_sent_at(char_id, session_id)
-                _minutes = None
-                if _last is not None:
-                    _last_naive = _last.replace(tzinfo=None) if _last.tzinfo else _last
-                    _minutes = ((now or now_naive_utc()) - _last_naive).total_seconds() / 60.0
-                if not session_rate_allows(_sent, _minutes):
-                    return "session_rate"
-        return None
-    except Exception as e:
-        _logger.warning("outreach pacing gate fail-open: %s", e)
-        return None
 
 
 async def run_tick() -> list[str]:
@@ -986,7 +373,7 @@ async def run_tick() -> list[str]:
                 # B1-③：flag 开 + 主动搭话类型 → 选意图并写回 candidate（flag 关=不动，零变化）
                 if await _outreach_enabled((item.get("candidate") or {}).get("user_id")) and item.get("type") in PROACTIVE_OUTREACH_TYPES:
                     await _annotate_outreach_plan(item, char_id, _mats_cache, _recent_cache, _char_has_unfinished)
-                ok = await _execute(item)
+                ok = await _execute(item, _gates())
             except Exception as e:
                 _logger.error("execute %s failed char=%d: %s", item["type"], char_id, e)
                 ok = False
@@ -1140,692 +527,67 @@ async def _trace_scheduler_task(item: dict, ok: bool, latency_ms: int, *, exec_e
         _logger.warning("Scheduler task trace failed: %s", e)
 
 
-def _agent_flag_on(key: str) -> bool:
-    """读 AGENT_FLAGS（失败 fail-safe 返回 False=走旧路径）。"""
-    try:
-        from app.agent.loop import AGENT_FLAGS
-        return bool(AGENT_FLAGS.get(key, False))
-    except Exception:
-        return False
+# A20 批 3b（2026-10-02）：timer 执行器与 agent 开关读取下沉 executors，此处具名重导出。
+# ⚠ 理由同批 1/2/3a：tests/ 的 monkeypatch.setattr(arbiter, …) 靠「调用方在 arbiter 命名空间
+#   解析裸名」；另外 tests/ 有按 arbiter._build_timer_hint / _build_timer_hint_legacy 直接调用
+#   话术纯函数的用例——删任何一行都会让引用方拿不到名字（_agent_flag_on 实测零打桩，仍按名保留）。
+from app.scheduling.executors.context import agent_flag_on as _agent_flag_on  # noqa: F401
+from app.scheduling.executors.timer import (  # noqa: F401
+    _build_timer_hint, _build_timer_hint_legacy, _timer_current_anchor,
+)
 
 
-def _build_timer_hint(char_name: str, owner: str, event_kind: str, hint_text: str) -> str:
-    """L2（2026-09-09）：定时承诺到期话术，按 (owner, event_type) 三套。
+# A20 批 4b（2026-10-02）：outreach 五类与 plugin 分支下沉 executors/，此处具名重导出 plugin 的
+# Runtime 薄封装：tests/{test_phase_e,test_d2_df,test_proactive_strategy_pack} 按名
+#   arbiter._plugin_proactive_runtime 直接调用；outreach 侧的闸函数也**按 arbiter.<name> 模块属性**
+#   解析（桩在 arbiter 命名空间，解析点搬走会静默绕过打桩去查真库，理由同批 1/2/3a）。
+from app.scheduling.executors.plugin import _plugin_proactive_runtime  # noqa: F401
 
-    核心纠偏：AI 自己去做的事（吃饭/洗澡/开会/睡觉）到点是**自述回来**，绝不招呼用户；
-    owner=ai 且 ready 只用于「为用户做、好了叫 TA」的场景，且必须用 hint 里的真实事物，
-    **不再写死'粥好了'这个 few-shot 例子**（原模板把所有 ready 都往粥上带）。
+
+def _gates() -> GateBundle:
+    """A20 批 3a/3b/4b：**调用时刻现取** arbiter 命名空间里的闸函数与被桩依赖（见方案 §1 R2/R3）。
+
+    裸名解析走 arbiter 全局 ⇒ ``monkeypatch.setattr(arbiter, "is_dnd_now", stub)`` 与
+    ``setattr(arbiter, "async_session_factory", fake)``、``setattr(arbiter, "app_day_start_utc",
+    sentinel)`` 都仍然生效；执行器（guards / timer / outreach）一律经本 bundle 取依赖，
+    **不得自己 import 这些名字**。
+    **不要在 import 期把函数对象存起来**（那样桩会被焊死在旧实现上，测试静默变绿）。
     """
-    ht = (hint_text or "").strip()
-    if event_kind == "ready":
-        if owner == "user":
-            return (
-                f"你是{char_name}。之前用户对你说过"
-                + (f"「{ht}」" if ht else "要去做某件事")
-                + "，并承诺了大概的时间，现在时间到了。请自然地关心地问一句：TA 是不是弄好了/好了吗"
-                  "（1句话，像朋友一样）。不要替用户说'好了'。"
-            )
-        # owner=ai 且 ready：只用于「你为用户准备的东西好了」
-        return (
-            f"你是{char_name}，之前你为用户准备"
-            + (f"「{ht}」" if ht else "某件事")
-            + "，并说好到点告诉 TA，现在时间到了。请用 1 句话自然地告诉用户这件事完成了"
-              "（像朋友一样）。必须只描述你为 TA 准备的这件事本身、用上面提到的真实事物，"
-              "不要凭空换成粥/饭/其他食物；不要催促、不要连用'快来/趁热/别凉了'；只说一次。"
-        )
-    if owner == "user":
-        return (
-            f"你是{char_name}。之前用户对你说过"
-            + (f"「{ht}」" if ht else "要去做某件事")
-            + "，并承诺了大概的时间，现在时间到了。请自然地关心地问一句：TA 是不是回来了/做完了"
-              "（1句话，像朋友一样）。不要替用户说'你回来了'。"
-        )
-    # owner=ai + back：AI 自己去做自己的事，到点自述回来——不招呼用户
-    return (
-        f"你是{char_name}，之前你说要去做自己的事"
-        + (f"「{ht}」" if ht else "（去忙一下）")
-        + "，说好之后回来，现在时间到了。请用第一人称、1 句话自然地告诉用户你回来了/这件事做完了"
-          "（例如'我吃完回来了''我忙完了，回来啦'）。"
-          "这件事是你自己去做的、不是给用户做的：禁止招呼用户去做什么，"
-          "禁止出现'好了快来吃/快来/趁热/给你留了'这类把用户当受益方的措辞。"
+    return GateBundle(
+        is_dnd_now=is_dnd_now, has_user_said_sleep=has_user_said_sleep,
+        is_user_active=is_user_active, hourly_active=get_hourly_active_count,
+        pacing_gate=_pacing_gate, mark_gate=_mark_gate,
+        session_factory=async_session_factory,
+        app_day_start=app_day_start_utc,
     )
 
 
-def _build_timer_hint_legacy(char_name: str, owner: str, event_kind: str, hint_text: str) -> str:
-    """旧话术（flag timer_render_subject_fix 关时使用，保持上线前行为，零变化）。"""
-    ht = (hint_text or "").strip()
-    if event_kind == "ready":
-        if owner == "user":
-            return (
-                f"你是{char_name}。之前用户对你说过"
-                + (f"「{ht}」" if ht else "要去做某件事")
-                + "，并承诺了大概的时间，现在时间到了。请自然地关心地问一句：他/她是不是弄好了/好了吗（1句话，像朋友一样）。不要替用户说'好了'。"
-            )
-        return (
-            f"你是{char_name}，之前你和用户说"
-            + (f"「{ht}」" if ht else "要弄好某件事")
-            + "，现在时间到了。请自然地告诉用户你答应弄好的事完成了（比如'粥好了'，1句话，像朋友一样）。"
-        )
-    if owner == "user":
-        return (
-            f"你是{char_name}。之前用户对你说过"
-            + (f"「{ht}」" if ht else "要去做某件事")
-            + "，并承诺了大概的时间，现在时间到了。请自然地关心地问一句：他/她是不是回来了/做完了（1句话，像朋友一样）。不要替他/她说'你回来了'。"
-        )
-    return (
-        f"你是{char_name}，之前你和用户说"
-        + (f"「{ht}」" if ht else "要去办点事")
-        + "，现在时间到了。请自然地告诉用户你回来了/做完了（1句话，像朋友一样）。"
-    )
-
-
-async def _timer_current_anchor(event) -> str:
-    """L2：零 LLM 组装「当下现状」锚点——当前北京时间 + 最近几句对话 + AI 生活相位/位置。
-
-    任一段读不到就跳过该行（不报错、不阻塞）；整体异常由调用方 fail-open。
-    """
-    from datetime import timedelta as _td
-    from datetime import timezone as _tz
-
-    bj = datetime.now(_tz(_td(hours=8))).strftime("%Y-%m-%d %H:%M")
-    lines = [f"现在是北京时间 {bj}。"]
-    try:
-        async with async_session_factory() as db:
-            rows = (await db.execute(
-                select(ChatMessage.content, ChatMessage.sender_type)
-                .where(ChatMessage.session_id == event.session_id)
-                .order_by(ChatMessage.id.desc()).limit(6)
-            )).all()
-        recent = [f"{'用户' if r[1] == 'user' else '你'}：{r[0]}" for r in reversed(rows) if r[0]]
-        if recent:
-            lines.append("最近几句对话（判断用户是否已吃过/已在上课/已离场）：\n" + "\n".join(recent[-3:]))
-    except Exception:
-        pass
-    try:
-        from app.life.life_state import get_life_state
-        async with async_session_factory() as db:
-            st = await get_life_state(db, event.character_id)
-        if st is not None:
-            lines.append(f"你当前的生活状态：phase={getattr(st, 'phase', '')}，位置={getattr(st, 'location', '')}"
-                         f"/{getattr(st, 'current_room', '') or ''}。")
-    except Exception:
-        pass
-    # 2026-09-17 批次二任务2.2：并列组装「用户权威现状」（共享 location + 已启用低敏槽 +
-    # User 已授权城市），与 AI 自己的 life_states 同处一个 section——低活跃朋友角色不再只靠
-    # 各自记忆里的旧位置碎片（用户 8 月底已回湛江，AI 仍在 9 月反复「你在长沙」）。
-    try:
-        async with async_session_factory() as db:
-            _ch = await db.get(AICharacter, event.character_id)
-        _uid = getattr(_ch, "user_id", None)
-        if _uid:
-            from app.memory.current_state import current_user_state_anchor
-            _user_anchor = await current_user_state_anchor(
-                character_id=event.character_id, user_id=_uid, include_profile_location=True)
-            if _user_anchor:
-                lines.append(_user_anchor.strip())
-    except Exception:
-        pass
-    return "\n".join(lines)
-
-
-async def _execute(item: dict) -> bool:
+async def _execute(item: dict, g: GateBundle | None = None) -> bool:
     """执行单个行为。返回是否真正执行（False=被限额/条件拦截）"""
-    from app.scheduling import scheduler as engine
+    _g = g or _gates()
     etype = item["type"]
 
     # 定时承诺：必须兑现，不受每日上限约束
     if etype == "timer":
-        event = item["event"]
-        char_id = event.character_id
-        # 每小时保护
-        if await get_hourly_active_count(char_id) >= MAX_PER_HOUR:
-            _logger.info("Timer event char=%d skipped: hourly limit", char_id)
-            # P1 修复（2026-08-16）：限额命中不移除事件，保留 pending 待下轮兑现（原逻辑先 mark_fired 导致承诺被静默吞掉）
-            return False
+        from app.scheduling.executors.timer import run_timer
+        return await run_timer(item, _g)
 
-        # 生成兑现消息
-        async with async_session_factory() as db:
-            char = await db.get(AICharacter, char_id)
-        char_name = char.name if char else "我"
-        from app.agent.llm_client import chat_completion
-        owner = getattr(event, "owner", "ai") or "ai"
-        hint_text = (event.content_hint or "").strip()
-        event_kind = getattr(event, "event_type", "back") or "back"
-        # 陪伴主动线（2026-08-30）：ready 承诺到点且 owner=user 时，若用户在承诺之后
-        # 已主动说了结果（如"开完了/吃完了"），不再重复询问，直接标记兑现。
-        # fail-open：本段任何异常只打日志并继续走原生成消息流程，绝不让承诺丢失。
-        # L2/L3（2026-09-09 主体归属治理）：两个 flag 均默认关；关=逐字节走旧路径。
-        _topic_guard_on = _agent_flag_on("proactive_topic_guard")
-        _render_fix_on = _agent_flag_on("timer_render_subject_fix")
-        _settled_check = (
-            event_kind == "ready" and (owner == "user" or _topic_guard_on)
-            and event.session_id and event.source_message_id
-        )
-        if _settled_check:
-            try:
-                from app.scheduling.promise_parser import ready_result_seen
-                async with async_session_factory() as _db:
-                    _rows = (await _db.execute(
-                        select(ChatMessage.content)
-                        .where(
-                            ChatMessage.session_id == event.session_id,
-                            ChatMessage.sender_type == "user",
-                            ChatMessage.id > event.source_message_id,
-                        )
-                        .order_by(ChatMessage.id.desc()).limit(5)
-                    )).all()
-                _texts = [r[0] for r in reversed(_rows) if r[0]]
-                if _texts and ready_result_seen(_texts, hint_text):
-                    from app.scheduling.promise_service import mark_fired
-                    await mark_fired(event.id)
-                    _logger.info("Timer ready event %d skipped: user already reported result", event.id)
-                    return True
-                # L2：闭环检查扩到 owner=ai，并纳入「离场/婉拒」词（吃过面了/去上课了/不用了…）——
-                # 用户已对该主题收口，到点就不再催（owner=ai 的 ready 此前完全不查）。
-                if _topic_guard_on and _texts:
-                    try:
-                        from app.scheduling.proactive_topic_guard import (
-                            topic_bucket as _topic_bucket, topic_closed_by_user as _topic_closed,
-                        )
-                        if _topic_closed(_texts, _topic_bucket(hint_text)):
-                            from app.scheduling.promise_service import mark_fired
-                            await mark_fired(event.id)
-                            _logger.info(
-                                "Timer ready event %d settled without message (topic closed by user)", event.id,
-                            )
-                            return True
-                    except Exception as _close_err:
-                        _logger.warning("Timer topic-closed check failed (fail-open): %s", _close_err)
-            except Exception as e:
-                _logger.warning("Ready result skip check failed (fail-open): %s", e)
-
-        # L3：timer 主题熔断——近窗同主题主动消息已达上限 → 兑现（mark_fired）但不补发，承诺不丢
-        if _topic_guard_on:
-            try:
-                from app.scheduling.proactive_topic_guard import should_suppress
-                _sup, _reason = await should_suppress(char_id, hint_text or event_kind)
-                if _sup:
-                    from app.scheduling.promise_service import mark_fired
-                    await mark_fired(event.id)
-                    _logger.info("Timer %d suppressed by topic guard: %s", event.id, _reason)
-                    return True
-            except Exception as _guard_err:
-                _logger.warning("Timer topic guard fail-open %d: %s", event.id, _guard_err)
-        # L2：按 (owner, event_type, 自理/为用户) 三套话术；flag 关时走 legacy（逐字节等价）
-        if _render_fix_on:
-            hint = _build_timer_hint(char_name, owner, event_kind, hint_text)
-        else:
-            hint = _build_timer_hint_legacy(char_name, owner, event_kind, hint_text)
-        # L2：最小现状锚点（零 LLM 组装；flag 开才附加，常态不多查库）
-        anchor = ""
-        if _render_fix_on:
-            try:
-                anchor = await _timer_current_anchor(event)
-            except Exception as _anchor_err:
-                _logger.warning("Timer anchor fail-open %d: %s", event.id, _anchor_err)
-                anchor = ""
-        from app.agent.llm_client import load_character_reasoning_level
-        _timer_reasoning = ""  # D2-B（2026-08-18）：定时承诺关闭深度思考，恒为空串（extra_meta 不再带 reasoning）
-        try:
-            _rl = await load_character_reasoning_level(char_id)
-            # D2-B（2026-08-18）：定时承诺关闭深度思考——统一走挡位 1/0 的 prompt 引导分支
-            # （挡位 1 保留「先在心里简短想一下」引导；_timer_reasoning 恒为空串，extra_meta 不再带 reasoning）
-            _msgs = [{"role": "system", "content": "直接输出内容，不要加引号和标注。"},
-                     {"role": "user", "content": hint}]
-            if _rl == 1:
-                _msgs[0] = {"role": "system", "content": "先在心里简短想一下，然后直接输出内容，不要加引号和标注。"}
-            # L2：把当下现状（时间/最近对话/生活相位）拼进 system，给模型判断是否该打扰
-            if _render_fix_on and anchor:
-                _msgs[0] = {
-                    "role": "system",
-                    "content": (_msgs[0]["content"] + "\n" + anchor
-                                + "\n若结合现状判断此刻不该打扰用户（用户已吃过/已在上课/已离场/已婉拒），只输出 __SKIP__。"),
-                }
-            content = await chat_completion(messages=_msgs, temperature=0.8, max_tokens=256, task="message")
-            content = (content or "").strip().strip('"').strip("'")
-        except Exception as e:
-            _logger.warning("Timer message generation failed: %s", e)
-            content = "我回来啦！"
-        # L2 零 LLM 输出闸门：模型判断不该打扰 → 兑现不发
-        if _render_fix_on and content.upper().startswith("__SKIP__"):
-            from app.scheduling.promise_service import mark_fired
-            await mark_fired(event.id)
-            _logger.info("Timer %d skipped via __SKIP__", event.id)
-            return True
-        if not content or len(content) < 2:
-            content = "我回来啦！"
-
-        _timer_extra = None
-        if _timer_reasoning:
-            import json as _json
-            _timer_extra = _json.dumps({"reasoning": _timer_reasoning}, ensure_ascii=False)
-        await engine.send_to_session(
-            event.session_id, event.character_id, event.user_id,
-            content, message_type="timer",
-            extra_meta=_timer_extra,
-        )
-        from app.scheduling.promise_service import mark_fired
-        await mark_fired(event.id)
-        return True
-
-    # 免打扰静默：默认北京时间 0:00-6:59；dnd_enabled 开启时按配置时段（定时承诺除外）
-    if etype != "timer":
-        cn_now = datetime.now(timezone(timedelta(hours=8)))
-        _c0 = item.get("candidate") or {}
-        _cid = _c0.get("character_id")
-        if _cid is None and item.get("event") is not None:
-            _cid = item["event"].character_id
-        if _cid and await is_dnd_now(_cid, cn_now):
-            _logger.info("Proactive %s char=%s skipped: dnd", etype, _cid)
-            return False
-
-    # 夜晚（21 点后至次日 8 点）用户说过"睡觉" → 主动消息类提前关闭（定时承诺除外）
-    if etype in SLEEP_SILENCED_TYPES:
-        _cand = item.get("candidate")
-        if _cand:
-            try:
-                if await has_user_said_sleep(_cand["character_id"], _cand["user_id"]):
-                    _logger.info("Proactive %s char=%d skipped: user said sleep after 21:00",
-                                 etype, _cand["character_id"])
-                    return False
-            except Exception as e:
-                _logger.warning("Sleep flag check failed: %s", e)
-
+    # ── 跨类型前置闸（A20 批 3a 下沉 executors/guards，闸函数经 _gates() 现取注入）──
+    # 免打扰静默 / 夜晚睡眠静默 / 用户活跃 / 每小时限额 / outreach 三闸（timer 已在上面返回）
+    blocked = await pre_gates(item, etype, _g)
+    if blocked is not None:
+        return blocked
 
     candidate = item["candidate"]
     char_id = candidate["character_id"]
 
-    # AI 间私聊：后台行为（不推送），不受用户活跃/主动消息限额影响（自身限额在 ai_social 内部）
-    if etype == "ai_social":
-        from app.scheduling.ai_social import run_ai_social
-        return await run_ai_social(
-            candidate["character_id"], candidate["character_b_id"], candidate["user_id"],
-        )
-
-    # 家庭群聊·角色主动冒泡：后台行为（落库群消息，群页轮询拉到即显示）
-    if etype == "group_active":
-        from app.scheduling.group_active import run_group_active
-        return await run_group_active(
-            char_id, candidate["group_id"], candidate["user_id"],
-            with_id=candidate.get("with_id"),
-        )
-
-    # AI 宠物来访：后台行为（只写互动记录+记忆，不推送消息）
-    if etype == "pet_visit":
-        from app.scheduling.pet_care import run_pet_visit
-        return await run_pet_visit(
-            char_id, candidate["user_id"], candidate["ai_pet_id"],
-        )
-
-    # 用户正在活跃聊天 → 暂停所有随机行为
-    if await is_user_active(char_id, candidate["user_id"]):
-        return False
-
-    # 每小时保护（特殊事件同样计入）
-    if await get_hourly_active_count(char_id) >= MAX_PER_HOUR:
-        return False
-
-    # ── outreach 投放口径三闸（2026-09-13 交接 §二；三个开关默认关 = 逐字节现状）──
-    # 命中即留痕 [gate=...] 并 return False（跳过审批/生成，不占额度；日志走 log_trigger_candidate）
-    _pacing_hit = await _pacing_gate(item, etype, char_id, candidate)
-    if _pacing_hit:
-        _mark_gate(item, _pacing_hit)
-        return False
-
-    # 主动到期复习（P1）：到期记忆自然提及；限额/免打扰在 memory_review 内部处理
-    if etype == "memory_review":
-        from app.scheduling.memory_review import run_memory_review
-        return await run_memory_review(
-            char_id, candidate["user_id"], candidate["memory_id"],
-        )
-
-    # 情境驱动复习（v2.1 Phase 4b）：感知 deep/emotion 或命中进行中目标 → 自然提及；限额复用 run_memory_review
-    if etype == "memory_review_contextual":
-        from app.scheduling.memory_review import run_memory_review
-        return await run_memory_review(
-            char_id, candidate["user_id"], candidate["memory_id"],
-        )
-
-    # AI 情绪关怀：用户低落 → 延迟主动关心（限额/免打扰在 emotion_care 内部处理；P0-1b 经内部统一入口）
-    if etype == "emotion_care":
-        from app.agent.internal_runner import run_internal
-        _res = await run_internal(
-            "emotion_care",
-            {"character_id": char_id, "user_id": candidate["user_id"], "task_id": candidate["task_id"]},
-            character_id=char_id, user_id=candidate.get("user_id"),
-        )
-        _ok = (_res.get("result") or {}).get("ok") if _res.get("status") == "ok" else False
-        return bool(_ok)
-
-    # 宠物关怀：宠物饿了/脏了 → 角色主动提醒（限额/免打扰/间隔在 pet_care 内部处理）
-    if etype == "pet_remind":
-        from app.scheduling.pet_care import run_pet_remind
-        return await run_pet_remind(
-            char_id, candidate["user_id"], candidate["pet_id"],
-        )
-
-    # 插件主动候选（Phase 3：如渠道新动态提及）：hint 由插件提供，LLM 生成自然消息后发送；限额在插件内部
-    if etype == "plugin":
-        # 插件自定义 action（社交交互层 v2：渠道评论回复走插件内部执行，保留额度/违禁词/确认流）
-        _action = candidate.get("action")
-        if _action:
-            from app.plugins.registry import run_plugin_action
-            _ok = await run_plugin_action(
-                candidate.get("plugin", ""), _action, candidate,
-                user_id=candidate.get("user_id"),
-            )
-            if _ok:
-                _logger.info("Plugin action executed plugin=%s action=%s", candidate.get("plugin", ""), _action)
-            return _ok
-        from app.scheduling import scheduler as engine2
-        hint = str(candidate.get("hint") or "")
-        session_id = candidate.get("session_id")
-        if not session_id or not hint:
-            return False
-        # Phase E（2026-08-18）：渠道/插件主动候选走统一 Runtime（Feature Flag agent_loop_social，X5 按渠道语义改名）。
-        # 开=经 app/agent/runtime.py 薄封装：build_context 注入世界认知（知识不串线），hint 不落记忆；
-        # 生成失败返回 False（与旧链路失败语义一致），各平台可独立回退。
-        # batch G：按账号解析（缺 user_id 回落全局值，fail-open）
-        from app.application.flag_service import resolve_flag
-        if await resolve_flag("agent_loop_social", candidate.get("user_id")):
-            return await _plugin_proactive_runtime(char_id, candidate, session_id, hint)
-        async with async_session_factory() as db:
-            char = await db.get(AICharacter, char_id)
-        char_name = char.name if char else "我"
-        from app.agent.llm_client import chat_completion
-        # C16 批次B：旧裸生成分支接「现状锚 + 时空纪律」共享护栏（前置到 user prompt，
-        # 原话术逐字保留；state_guard 内部 fail-open，取锚失败也只降级为纯纪律段，不抛断）
-        from app.scheduling import state_guard
-        _guard_block = state_guard.guard_block(
-            await state_guard.current_state_anchor(character_id=char_id, user_id=candidate.get("user_id")))
-        try:
-            content = await chat_completion(
-                messages=[
-                    {"role": "system", "content": "直接输出内容，不要加引号和标注。"},
-                    {"role": "user", "content": (
-                        f"{_guard_block}"
-                        f"你是{char_name}，{hint}，"
-                        "请像朋友一样自然地用 1-2 句话提起这件事（不要提平台名、不要提'AI'、不要加话题标签）。"
-                    )},
-                ],
-                temperature=0.85, max_tokens=256, task="message",
-            )
-            content = (content or "").strip().strip('"').strip("'")
-        except Exception as e:
-            _logger.warning("Plugin proactive generation failed: %s", e)
-            return False
-        if len(content) < 2:
-            return False
-        # X6（2026-09-16）：策略候选声明的落库口径（内核白名单校验过）→ 供内核去重/统计；
-        #   普通插件候选无该键 → message_type 仍为 "plugin"（逐字节旧行为）。
-        await engine2.send_to_session(
-            session_id, char_id, candidate["user_id"], content,
-            message_type=candidate.get("message_type") or "plugin",
-            holiday_name=candidate.get("holiday_name"),
-        )
-        _logger.info("Plugin proactive sent char=%d plugin=%s", char_id, candidate.get("plugin", ""))
-        return True
-
-    # AI 照顾自己的宠物：属性/活动/记忆 + 照顾消息（独立限额 <=1 在 pet_care 内部）
-    if etype == "ai_care":
-        from app.scheduling.pet_care import run_ai_care
-        return await run_ai_care(
-            char_id, candidate["user_id"], candidate["pet_id"],
-        )
-
-    # AI 自主领养：创建 AI 宠物 + 告知消息（限额/概率在 pet_care 内部）
-    if etype == "ai_adopt":
-        from app.scheduling.pet_care import run_ai_adopt
-        return await run_ai_adopt(char_id, candidate["user_id"])
-
-    # 生活回归摘要（Phase 2）：近 24h 生活记忆自然提及（每日 <=1 次在 collect 内处理；受统一限额/免打扰约束）
-    if etype == "life_regression":
-        return await run_life_regression(candidate)
-
-    # 状态触发兜底（v2）：查错过的触发；防抖/冷却/概率/免打扰在 state_triggers 内部处理
-    if etype == "state_trigger":
-        from app.scheduling.state_triggers import check_state_triggers
-        return await check_state_triggers(char_id, candidate["user_id"], probability_multiplier=1.0)
-
-    # 对话未收尾跟进：用户抛了话头（下次/改天/有空）→ 自然捡起话题（每日 1 次/角色，collect 内去重）
-    if etype == "unfinished_topic":
-        return await run_unfinished_topic(candidate)
-
-    # Ariadne 模块G（2026-09-04）：到期承诺自然提起（一次性，兑现即焚；复用主动消息生成与免打扰/额度闸门）
-    if etype == "prospective_intent":
-        return await run_prospective_due(candidate)
-
-    # 生日 / 节日 / 认识纪念日
-    if etype in ("birthday", "holiday", "anniversary"):
-        try:
-            from app.scheduling.message_generator import (
-                generate_birthday_message, generate_holiday_message, generate_anniversary_message,
-            )
-            if etype == "birthday":
-                content = await generate_birthday_message(
-                    character_name=candidate["character_name"],
-                    character_personality=candidate["character_personality"],
-                    user_name=candidate["nickname"] or candidate["username"],
-                    character_id=char_id,
-                    user_id=candidate["user_id"],
-                )
-                msg_type = "birthday"
-            elif etype == "anniversary":
-                content = await generate_anniversary_message(
-                    character_name=candidate["character_name"],
-                    character_personality=candidate["character_personality"],
-                    user_name=candidate["nickname"] or candidate["username"],
-                    days=int(candidate.get("anniversary_days") or 0),
-                    character_id=char_id,
-                    user_id=candidate["user_id"],
-                )
-                msg_type = "anniversary"
-            else:
-                content = await generate_holiday_message(
-                    character_name=candidate["character_name"],
-                    character_personality=candidate["character_personality"],
-                    user_name=candidate["nickname"] or candidate["username"],
-                    holiday_name=candidate.get("holiday_name", ""),
-                    character_id=char_id,
-                    user_id=candidate["user_id"],
-                )
-                msg_type = "holiday"
-            await engine.send_to_session(
-                candidate["session_id"], char_id, candidate["user_id"],
-                content, message_type=msg_type,
-                holiday_name=candidate.get("holiday_name"),
-            )
-            return True
-
-        except Exception as e:
-            # 2026-08-20 七夕死循环修复：生成/发送失败也标记当日已处理，防每 30 秒无限重试
-            _logger.warning('Festival msg failed char=%d type=%s: %s', char_id, etype, e)
-            try:
-                async with async_session_factory() as db:
-                    db.add(ProactiveMessageLog(
-                        character_id=char_id,
-                        session_id=candidate.get('session_id'),
-                        message_type=('holiday' if etype == 'holiday' else etype),
-                        holiday_name=candidate.get('holiday_name'),
-                        content='[send_failed] ' + str(e)[:200],
-                    ))
-                    await db.commit()
-            except Exception as _le:
-                _logger.warning('Festival fail-log failed: %s', _le)
-            return False
-    # 主动搭话类：greeting / proactive_chat / goodnight / status_update
-    # 改为"剧情线"模式：一次生成完整剧情 → 切片 → 按时间逐条发送
-    if etype in ("greeting", "proactive_chat", "goodnight", "status_update", "motivation"):
-        # B1-③ 配额让位（2026-09-08）：近 24h 无任何用户消息的角色直接停发——不生成候选、
-        # 不消耗每日配额（approved 计数不增）、不发起 LLM 生成；额度留给有互动的角色。
-        if await inactive_char_skip(char_id):
-            _logger.info(
-                "Proactive msg char=%d skipped: inactive char (no user msg within %sh)",
-                char_id, _oc.INACTIVE_CHAR_WINDOW_HOURS,
-            )
-            return False
-        from app.scheduling.message_generator import generate_proactive_event
-        # #28 ②：用户作息学习——低优先级主动消息在学到的活跃时段外降优先级/推迟（arbiter 时段权重）
-        try:
-            _uid = candidate.get("user_id")
-            if _uid:
-                from app.scheduling.user_rhythm import get_rhythm_weight
-                _cn_hour = datetime.now(timezone(timedelta(hours=8))).hour
-                if await get_rhythm_weight(_uid, _cn_hour) <= 0.0:
-                    _logger.info("Proactive msg char=%d skipped: user rhythm off-peak", char_id)
-                    return False
-        except Exception as _e:
-            _logger.warning("user_rhythm check failed: %s", _e)
-        # 独立想念通道（#33，2026-08-17）：motivation 走独立配额（每 6h 1 条 + 每日 ≤2 条，
-        # 不占普通每小时 2 条额度、跳过 90 分钟最小间隔）；其余类型保留最小间隔保护
-        if etype == "motivation":
-            _now_u = datetime.now(timezone.utc).replace(tzinfo=None)
-            if await get_motivation_approved_count(char_id, _now_u - timedelta(hours=6)) >= MOTIVATION_MAX_PER_6H:
-                _logger.info("Proactive msg char=%d skipped: motivation 6h limit", char_id)
-                return False
-            if await get_motivation_approved_count(char_id, app_day_start_utc()) >= MOTIVATION_MAX_PER_DAY:
-                _logger.info("Proactive msg char=%d skipped: motivation daily limit", char_id)
-                return False
-        else:
-            # 最小间隔保护：避免同一角色短时间内连发（内容也容易重复）
-            last_proactive = await get_last_proactive_time(char_id)
-            if last_proactive is not None:
-                if now_naive_utc() - to_naive_utc(last_proactive) < timedelta(minutes=MIN_PROACTIVE_INTERVAL_MINUTES):
-                    _logger.info("Proactive msg char=%d skipped: min interval", char_id)
-                    return False
-
-        # 连续不回复冷却：最近几条主动消息用户均未回复 → 暂停主动搭话 24h（防骚扰）
-        if await unreplied_cooldown_active(char_id, candidate["user_id"]):
-            _logger.info("Proactive msg char=%d skipped: unreplied cooldown", char_id)
-            return False
-        context = candidate.get("last_context", "")
-        previous_messages = await get_recent_proactive_messages(char_id, 2)
-        # B1-③：读 run_tick 汇总层选好的接触意图（flag 关/未标注 → None，走旧链路零变化）
-        outreach_intent = candidate.get("outreach_intent")
-        outreach_plan = candidate.get("outreach_plan")
-        if not outreach_intent:
-            # A4 批3 M0：本次未走接触意图链路 → 丢弃可能残留的观测暂存（宁可少留痕，也不给旧链路发送错标 intent/tier）
-            _OUTREACH_SEND_TRACE.pop(char_id, None)
-        segments, event_reasoning = await generate_proactive_event(
-            character_name=candidate["character_name"],
-            character_bio=candidate["character_bio"],
-            character_personality=candidate["character_personality"],
-            character_id=char_id,
-            user_id=candidate["user_id"],
-            current_status=candidate.get("current_status", ""),
-            relationship_summary=candidate.get("relationship_summary", ""),
-            user_name=candidate["nickname"] or candidate["username"],
-            last_context=context,
-            previous_messages=previous_messages,
-            idle_minutes=candidate.get("idle_minutes"),
-            behavior=etype,
-            return_reasoning=True,
-            outreach_intent=outreach_intent,
-            outreach_plan=outreach_plan,
-            session_id=candidate["session_id"],
-            thought=candidate.get("thought"),  # 批 4 M2-b1：念头池素材（flag 关 ⇒ 恒 None ⇒ 逐字节旧 prompt）
-        )
-        if not segments:
-            return False
-        # 落库排队：第一段立即发送，其余每 3 秒发一段（同一次事件，按顺序切开）
-        group_id = uuid.uuid4().hex
-        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
-        async with async_session_factory() as db:
-            for seq, content in enumerate(segments):
-                db.add(ProactiveStorylineItem(
-                    character_id=char_id,
-                    session_id=candidate["session_id"],
-                    user_id=candidate["user_id"],
-                    group_id=group_id,
-                    seq=seq,
-                    content=content[:500],
-                    reasoning=(event_reasoning if seq == 0 else None),
-                    send_at=now_naive + timedelta(seconds=seq * 3),
-                    status="pending",
-                ))
-            await db.commit()
-        _logger.info("Proactive event queued for char=%d (%d segments)", char_id, len(segments))
-
-        # 认知循环 v2.1：主动消息也参与话题追踪（让话题状态随主动/被动共同演进；失败静默）
-        try:
-            from app.agent.topic_tracker import maybe_extract_topics
-            spawn_background(
-                maybe_extract_topics(
-                    char_id, candidate["user_id"], "", " ".join(segments),
-                ),
-                name=f"topics-{char_id}",
-            )
-        except Exception:
-            pass
-        return True
-
-    elif etype == "moment_publish":
-        from app.scheduling.moment_publisher import publish_moment
-        result = await publish_moment(char_id, skip_interval=False)
-        if result is not None:
-            from app.application.moment_service import generate_comments_for_moment
-            try:
-                await generate_comments_for_moment(result["id"])
-            except Exception as e:
-                _logger.warning("comments after publish failed: %s", e)
-            return True
-        return False
-
-    elif etype == "moment_comment":
-        from app.application.moment_service import generate_pending_comments
-        await generate_pending_comments()
-        return True
-
+    # ── A20 批 4a/4b：已下沉 executors/ 的 etype 走分派表（未注册 ⇒ None ⇒ 兜底 False）──
+    from app.scheduling.executors.dispatch import dispatch as _dispatch_exec
+    _handled = await _dispatch_exec(item, etype, candidate, char_id, _g)
+    if _handled is not None:
+        return _handled
+    # ── A20 批 4b：outreach 五类 / plugin 也已下沉 ⇒ 未注册 etype 只剩下面这一条兜底 ──
     return False
-
-
-async def _plugin_proactive_runtime(char_id: int, candidate: dict, session_id: int, hint: str) -> bool:
-    """插件主动候选 → 统一 Runtime（Phase E，Feature Flag agent_loop_social，X5 按渠道语义改名）。
-
-    - 经 app/agent/runtime.py 薄封装：build_context 注入世界认知（角色自己的记忆/状态，知识不串线）；
-    - hint（渠道新动态等）作为平台公开上下文注入；save_memory=False 防机器生成文本污染记忆；
-    - 生成自然消息 → 剥离动作标记 → send_to_session（与旧链路同一发送接口，message_type=plugin）。
-    """
-    from app.agent import runtime as _runtime
-    from app.scheduling import scheduler as engine2
-    # F2（2026-08-18）：渠道/插件 hint 短回复同样复用轻量上下文 Flag（默认关=全量 build_context 零变化）
-    # batch G：按账号解析（缺 user_id 回落全局值，fail-open）
-    from app.application.flag_service import resolve_flag
-    light_context = await resolve_flag("agent_social_light_context", candidate.get("user_id"))
-    # X6（2026-09-16）：策略候选（节日/生日/纪念日等）用中性提示语，不当作「外部平台动态」；
-    #   普通插件候选不带 strategy 键 → 文案逐字节不变。
-    _is_strategy = bool(candidate.get("strategy"))
-    _lead = "【今日提醒】" if _is_strategy else "【外部动态】你在外部平台看到一条新动态："
-    res = await _runtime.run_social_reply(
-        character_id=char_id,
-        user_id=candidate.get("user_id"),
-        session_id=session_id,
-        user_message=str(hint)[:500],
-        extra_system=[{
-            "role": "system",
-            "content": (
-                f"{_lead}{hint}。"
-                "请像朋友一样自然地用 1-2 句话提起这件事（不要提平台名、不要提'AI'、不要加话题标签、"
-                "不要输出任何动作标记）。"
-            ),
-        }],
-        lang="zh",
-        max_text=256,
-        save_memory=False,
-        light_context=light_context,  # F2（2026-08-18）：Flag 控制渠道/插件轻量上下文
-    )
-    content = (res.get("text") or "").strip()
-    if res.get("status") != "ok" or len(content) < 2:
-        _logger.warning("Plugin proactive runtime failed char=%d plugin=%s", char_id, candidate.get("plugin", ""))
-        return False
-    await engine2.send_to_session(
-        session_id, char_id, candidate["user_id"], content,
-        # X6（2026-09-16）：策略候选按声明口径落库（供内核去重/统计）；普通候选仍是 plugin。
-        message_type=candidate.get("message_type") or "plugin",
-        holiday_name=candidate.get("holiday_name"),
-    )
-    _logger.info("Plugin proactive sent (runtime) char=%d plugin=%s", char_id, candidate.get("plugin", ""))
-    return True
 
 
 # ── 启动时恢复 ──

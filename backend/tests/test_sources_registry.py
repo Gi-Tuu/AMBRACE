@@ -192,7 +192,8 @@ def test_run_tick_single_source_failure_does_not_crash(monkeypatch):
     async def _motivation(cid):
         return 0.0
 
-    async def _execute(item):
+    # A20 批 3a R4：run_tick 改传 bundle（`_execute(item, _gates())`）⇒ 桩签名跟到位
+    async def _execute(item, _g=None):
         return True
 
     async def _log(item, ok):

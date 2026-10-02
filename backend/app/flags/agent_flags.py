@@ -23,8 +23,8 @@ AGENT_FLAGS = {
     "group_chat_games": True,        # 游戏总开关（关=游戏入口/API 不展示，可回退）
     # ── M1 记忆 P0（2026-08-31，docs/archive/architecture/执行方案_记忆与生成_20260831.md S1）──
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：recall_top5（主路召回出口 5 条）
-    "memory_temporal_recall": False,  # Ariadne 模块 A（2026-09-03）：时间维度确定性检索路（默认关=零行为变化；开=用户原话解析出时间区间时补一条确定性时间路召回，与语义路合并重排）
-    "memory_recall_second_hop": False,  # Ariadne 模块 B（2026-09-04）：按需二跳联想检索（默认关=只剥离 [RECALL] 标记零行为变化；开=非流式路径镜像 run_search_loop：首轮输出 [RECALL]查询词[/RECALL] → 本地检索 → 注入【补充记忆】→ 再生成 1 次；流式只剥离不中途二跳）
+    "memory_temporal_recall": True,  # 已转正（2026-10-02）：生产自 2026-09-03 起已开、非灰度；默认改为开（行为与现网一致），回退＝置 False
+    "memory_recall_second_hop": True,  # 已转正（2026-10-02）：生产自 2026-09-05 起已开、非灰度；默认改为开（行为与现网一致），回退＝置 False
     "memory_story_assemble": False,  # Ariadne 模块 C（2026-09-04）：沿链半故事化组装（默认关；链建链器另案——空 index 时即使开 flag 也走原路径逐字节等价；建链器落地后开=成链小块注入）
     # ── B1-② 记忆链条建链器（2026-09-04，方案 §10-§18，阶段 C0-C5）──
     # memory_chain_builder 开=写入后异步挂链（chain_id/parent_id/node_type，零额外 LLM，
@@ -69,7 +69,7 @@ AGENT_FLAGS = {
     "outreach_hour_window_v1": False,
     "outreach_type_mix_v1": False,
     "outreach_session_rate_v1": False,
-    "memory_peak_cutoff": False,  # Ariadne 模块 D（2026-09-04）：自然收敛替代硬截断（默认关；开=按 rerank 分数断档/地板收敛，弃权/弱相关场景条数自然减少；阈值经模块 E v2 标定）
+    "memory_peak_cutoff": False,  # 默认关（用例钉死：test_memory_lookup_endpoint::test_条数硬顶_limit超20夹到20）；生产已由 runtime_flags 拨开（2026-09-05）
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：recall_diversify（按类型多样性重排）
     # ── Life Loop v1.1（2026-08-26；2026-08-27 用户拍板全量开启）──
     "life_loop_enabled": True,            # 主开关：30min 行为决策循环
@@ -115,13 +115,14 @@ AGENT_FLAGS = {
     #   且 stale 在 rerank 恒降权 0.5（降权不再受 memory_supersede 门控）。
     # 关 = 一键回退旧行为（status 子句退回 memory_supersede 门控，关=永真）。
     "current_facts_active_only": True,
-    "vector_user_scope": False,  # A1（2026-09-19）向量账号归属：开=读取按 metadata.user_id/角色 owner 过滤（写入始终带）；关=逐字节旧行为。本键必须登记，否则 DB 里开了也不生效
+    # A1（2026-09-19）向量账号归属：开=读取按 metadata.user_id/角色 owner 过滤（写入始终带）；关=逐字节旧行为。本键必须登记，否则 DB 里开了也不生效
+    "vector_user_scope": True,  # 已转正（2026-10-02）：生产自 2026-09-19 起已开、非灰度；默认改为开（行为与现网一致），回退＝置 False
     # ── #70 附录 C 可选 M3：记忆写入回执（memory_write_receipt，2026-09-15 落地；默认关=零写入、零行为变化）──
     # memory_write_receipt 开=save_memory 写分支 / supersede_memory 异步写 memory_write_receipts
     #   （终态追踪「这条记忆为什么在/不在」）；关=完全跳过（不写不读，逐字节旧链路）。
     "memory_write_receipt": False,
     # Ariadne 模块F（2026-09-04）：Curated Knowledge 编纂知识层（world_facts 加 kind 分治 + 确定性注入）
-    "curated_knowledge": False,
+    "curated_knowledge": True,  # 已转正（2026-10-02）：生产自 2026-09-05 起已开、非灰度；默认改为开（行为与现网一致），回退＝置 False
     # Ariadne 模块G（2026-09-04）：前瞻意图。enabled=写入（extractor 便车落表）；
     # trigger=触发（时间型 Scheduler 提起 + 线索型 context 注入）。两段灰度：先开 enabled 攒数据，再开 trigger。
     "prospective_intent_enabled": False,
@@ -129,7 +130,7 @@ AGENT_FLAGS = {
     # ── §20 跨角色用户事实（2026-09-04，默认关=零行为变化；bool 可 runtime 热更）──
     # global_user_facts：用户级可变事实层总开关——开=GPS/跨角色事实写入 + [USER NOW] 注入分区；
     #   关=不写/不读 user_facts（抽取出原路径、注入空）。
-    "global_user_facts": False,
+    "global_user_facts": True,  # 已转正（2026-10-02）：生产自 2026-09-03 起已开、非灰度；默认改为开（行为与现网一致），回退＝置 False
     # ── 细粒度槽开关（2026-09-10，用户拍板；先只搭框架，【全部默认关，含 location】；
     #    真机观察 C2 新鲜窗 / 回家识别 / C3 锚点稳定后，再经 runtime flag 手动只开 location）──
     # 语义：总闸开=全槽启用；总闸关时按各槽 flag 独立决定（user_fact_slot_enabled）。
@@ -138,7 +139,7 @@ AGENT_FLAGS = {
     "user_fact_relationship": False,  # 感情状态（隐私，默认关）
     "user_fact_living": False,        # 居住状况（独居/和谁住）
     "user_fact_goal_state": False,    # 近期目标/状态
-    "user_fact_health": False,        # 健康（隐私，默认关）
+    "user_fact_health": False,        # 健康（隐私，默认关）—— 2026-10-02 复核：属隐私槽，且块注释记「09-10 用户拍板：细粒度槽全部默认关」，故不转正（生产用 runtime_flags 单独开）
     # ── 2026-09-17 批次二（任务2）：位置类不吃细槽总闸（跨角色共享用户权威现状）──
     # user_current_location_share 开（默认）= 读取/注入侧独立放行 location 槽（共享读路径
     #   get_shared_user_facts / get_authoritative_user_location / 现状锚点 / 定时兑现锚点 /
@@ -165,7 +166,7 @@ AGENT_FLAGS = {
     #   关=append_domain_event 首行即 return，全链路零写入、零行为变化（一键回退，无需回滚代码/迁移）。
     #   默认关（灰度）；开法：本 key 已登记进 AGENT_FLAGS，重启服务加载新代码后即可经
     #   flag_service.set_runtime_flag（写 runtime_flags 行 + 热更新内存）API 热切，无需再重启。
-    "domain_event_log_enabled": False,
+    "domain_event_log_enabled": False,  # 默认关（设计硬要求 + 用例钉死：新装不得默认写放大）；生产已由 runtime_flags 拨开（2026-09-08）
     # domain_event_retention_days：事件流水保留天数（P1，方案 §8.5）。0=永久保留（本地优先默认）；
     #   >0 时由定时清理任务（每 6h）删除超期 domain_events 行。runtime_flags 只支持 bool 覆盖，
     #   本项为硬编码默认值；误配非法值按 0 处理（宁可多留不误删）。
@@ -186,12 +187,12 @@ AGENT_FLAGS = {
     # mcp_stream_declarations 开=流式会话也注入 MCP 工具声明（前提：#59 流尾 tool_result 通道已上线，
     # 见 application/chat/streaming.py run_stream_mcp_tool_stage + sink("tool_result", …)）；
     # 关=流式不注入（旧行为，零变化）。默认关（灰度验证后再全量）。
-    "mcp_stream_declarations": False,
+    "mcp_stream_declarations": False,  # 默认关（用例钉死：test_mcp_phase2::test_mcp_declarations_stream_empty）；生产已由 runtime_flags 拨开（2026-09-08）
     # ── 工具轨迹治理 R5（2026-09-09，方案 §4.5）──
     # agent_tool_exec_trace 开=插件/内置工具每次执行（tool.executed 事件）落一条 agent_task_logs
     # （trigger=tool），让「工具轨迹」能看到真实工具成败；关=不写（默认，零写放大）。
     # MCP 工具不落（已有 mcp_call_logs，前端 MCP 分区读取，避免双记）。
-    "agent_tool_exec_trace": False,
+    "agent_tool_exec_trace": True,  # 已转正（2026-10-02）：生产自 2026-09-08 起已开、非灰度；默认改为开（行为与现网一致），回退＝置 False
     # ── 主动复习「回忆化」+ 过期计划记忆治理（2026-09-09，L0-L4）──
     # 设计意图（用户定调）：复习=回忆/怀旧，把旧记忆当往事回味，不当"当前仍成立/即将发生"续写叮嘱。
     # review_exclude_expired_plan 开=复习选片/情境复习排除过期计划与瞬时状态（L1，默认开；关=旧选片）；
@@ -258,10 +259,10 @@ AGENT_FLAGS = {
     #   app/memory/group_memory.group_cognition_on() 已读该键、异常即 False——关=零行为变化
     #   （PR-B 双轨均未接线状态原样保留）；开 + 群级 chat_groups.cognition_enabled 才走双轨。
     "group_cognition_v2": False,
-    # ── #72 PR-C P5 群记忆日终合并收敛（2026-09-16，默认关=零行为变化）──
+    # ── #72 PR-C P5 群记忆日终合并收敛（2026-09-16 落地）──
     # group_memory_compact 开=每日 23:00 后把 >7 天的群记忆按群合并成 1 条 system 摘要、
     #   旧行软删（is_archived=1，留痕不物理删）；关=完全跳过、逐字节现状。
-    "group_memory_compact": False,
+    "group_memory_compact": True,  # 已转正（2026-10-02）：生产自 2026-09-16 起已开、非灰度；默认改为开（行为与现网一致），回退＝置 False
     # ── 批次二（2026-09-16）：M4 world_facts 写入准入闸门（补登记，2026-09-17 Codex 复核发现）──
     # 开＝world_facts 写入前做元信息拦截 / 同义查重合并 / 矛盾冲突改走裁决（app/events/facts.py）；
     #   关＝逐字节旧行为。**此前只在 facts.py 读取、未登记进本表**，导致 runtime_flags 写 1 也不生效
@@ -273,14 +274,14 @@ AGENT_FLAGS = {
     # ── 小增量（2026-09-16）：召回后效用反馈（Slowave 式），用于调 salience/衰减 ──
     # 开＝召回后异步写轻量反馈并据此微调；关＝零行为变化。
     "memory_utility_feedback": False,
-    # ── X6 主动内容策略包外放（2026-09-16，默认关=逐字节旧行为）──
+    # ── X6 主动内容策略包外放（2026-09-16 落地）──
     # proactive_strategy_plugins 开＝「内容策略」交给策略包：内核向 proactive_candidate hook
     #   下发 roster（选人结果），被接管的策略源（本轮仅 special）整体让位；关=内核各策略源
     #   照旧产出、hook ctx 不带 roster（策略包返回空），与现状逐字节一致。
     #   防双发两道闸：①让位（同一类别只留一个生产者）②内核按 (角色, message_type, 北京日界)
     #   去重（策略候选落库口径由内核校验，见 scheduling/sources/strategy.py）。
     #   回退：置回 False 即可（runtime_flags 热切，无需重启）。
-    "proactive_strategy_plugins": False,
+    "proactive_strategy_plugins": True,  # 已转正（2026-10-02）：生产自 2026-09-16 起已开、非灰度；默认改为开（行为与现网一致），回退＝置 False
     # ── A2 M0-3（2026-09-20）：内核「已禁用插件」路由闸（插件归户批次）──
     # 开＝插件 bridge / chat / 页面托管端点在插件 enabled=False 时一律 404（判定口径统一取
     #   registry.get_plugin(name)["enabled"]，即 DB plugins.enabled 的内存缓存）；

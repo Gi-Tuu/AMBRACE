@@ -15,7 +15,8 @@ from datetime import datetime, timedelta, timezone
 
 import app.config as cfg
 import app.utils.timeutil as tu
-from app.scheduling import arbiter, triggers
+from app.scheduling import arbiter, gates, triggers
+from app.scheduling.executors import outreach as exec_outreach
 
 _BJ = timezone(timedelta(hours=8))
 _SENTINEL = datetime(2001, 7, 4, 9, 8, 7)
@@ -89,7 +90,11 @@ def _wire(monkeypatch, records=()):
     """只打桩 DB（不碰时钟）：返回日界捕获列表。"""
     sink = []
     session = lambda: _FakeSession(sink, list(records))  # noqa: E731
+    # A20 批 1b：get_daily_sent_count / get_session_daily_sent_count 已下沉到 gates，
+    # 函数体在 gates 命名空间解析 async_session_factory；arbiter 侧只剩具名重导出，
+    # 只打 arbiter 会被绕过（桩失效 ⇒ 真查库）。两边同打同一个桩对象。
     monkeypatch.setattr(arbiter, "async_session_factory", session)
+    monkeypatch.setattr(gates, "async_session_factory", session)
     monkeypatch.setattr(triggers, "async_session_factory", session)
     return sink
 
@@ -214,7 +219,10 @@ def test_脏入参不抛且仍绑定日界(monkeypatch):
 
 def test_三处当日已发只从app_day_start_utc取(monkeypatch):
     """把 arbiter/triggers 的 app_day_start_utc 换成哨兵：绑定值必须原样等于哨兵 ⇒ 同源、未手搓偏移"""
+    # A20 批 1b：两处「当日已发」函数体已搬到 gates，在 gates 命名空间解析
+    # app_day_start_utc；arbiter 侧只是重导出，只打 arbiter 桩会被绕过。两边同打。
     monkeypatch.setattr(arbiter, "app_day_start_utc", lambda: _SENTINEL)
+    monkeypatch.setattr(gates, "app_day_start_utc", lambda: _SENTINEL)
     monkeypatch.setattr(triggers, "app_day_start_utc", lambda: _SENTINEL)
     sink = _wire(monkeypatch, records=(datetime(2026, 8, 12, 0, 30),))
     assert asyncio.run(arbiter.get_daily_sent_count(1, "storyline")) == 1
@@ -225,8 +233,16 @@ def test_三处当日已发只从app_day_start_utc取(monkeypatch):
 
 def test_arbiter源码_当日已发用应用日界_北京日界只剩反思回溯():
     src = open(arbiter.__file__, encoding="utf-8").read()
-    assert src.count("since = app_day_start_utc()") == 2       # ② 类型配比 / ③ 单会话限频
-    assert "app_day_start_utc()) >= MOTIVATION_MAX_PER_DAY" in src  # 想念每日配额
+    # A20 批 1b：②③ 两处「当日已发」函数体已搬到 gates（arbiter 侧只剩具名重导出，
+    # 源码里不再出现这两行），所以锚定改读 gates 源码。
+    # A20 批 4b：想念每日配额那行随 outreach 分支搬到 executors/outreach，改经 GateBundle 现取
+    # （g.app_day_start()）⇒ 锚点改读该模块源码；arbiter 侧仍留裸名 app_day_start=app_day_start_utc，
+    # 所以 setattr(arbiter, "app_day_start_utc", 哨兵) 这条桩依旧穿透（上方 ⑤ 已验）。
+    gsrc = open(gates.__file__, encoding="utf-8").read()
+    osrc = open(exec_outreach.__file__, encoding="utf-8").read()
+    assert gsrc.count("since = app_day_start_utc()") == 2      # ② 类型配比 / ③ 单会话限频
+    assert "g.app_day_start()) >= MOTIVATION_MAX_PER_DAY" in osrc   # 想念每日配额
+    assert "app_day_start=app_day_start_utc," in src               # arbiter 现取注入（桩仍在 arbiter）
     bj_lines = [ln for ln in src.splitlines() if "beijing_day_start_utc" in ln]
     assert len(bj_lines) == 2, bj_lines                        # 仅剩局部 import + 回溯查询
     assert all(("import" in ln) or ("Memory.created_at" in ln) for ln in bj_lines), bj_lines

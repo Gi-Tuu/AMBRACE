@@ -230,8 +230,12 @@ def test_generate_proactive_event_accepts_optional_session_id():
 
 
 def test_arbiter_call_site_passes_session_id():
-    """arbiter 调用点必须补传 session_id（该字段本就在 candidate 上）。"""
-    src = inspect.getsource(__import__("app.scheduling.arbiter", fromlist=["x"]))
+    """调用点必须补传 session_id（该字段本就在 candidate 上）。
+
+    A20 批 4b（2026-10-02）：outreach 分支体从 arbiter 下沉到 executors/outreach.py，
+    调用点跟着搬走 ⇒ 源码锚改读 outreach 模块（原意不变：漏传 session_id 仍是回归）。
+    """
+    src = inspect.getsource(__import__("app.scheduling.executors.outreach", fromlist=["x"]))
     assert 'session_id=candidate["session_id"]' in src
 
 

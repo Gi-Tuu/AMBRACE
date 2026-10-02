@@ -255,6 +255,7 @@ def _stub_annotate(monkeypatch, *, fetch_spy):
     """把 _annotate_outreach_plan 的重活桩掉，只留念头供给判定可测。"""
     from app.domain.proactivity import outreach as _oc
     from app.scheduling import arbiter
+    from app.scheduling import outreach_gates as og
 
     async def _fake_mats(cand):
         return _oc.OutreachMaterials(False, False, False, False)
@@ -271,6 +272,12 @@ def _stub_annotate(monkeypatch, *, fetch_spy):
     monkeypatch.setattr(arbiter._oc, "staleness_tier", lambda x: "recent")
     monkeypatch.setattr(arbiter._oc, "select_outreach", lambda *a, **k: _StubPlan())
     monkeypatch.setattr(arbiter, "async_session_factory", lambda: _DummyCtx())
+    # A20 批 2 R4：本用例测的 _annotate_outreach_plan 已搬到 outreach_gates，函数体的这四个裸名
+    # 全在 outreach_gates 命名空间解析 ⇒ 只打 arbiter 等于没打（念头供给会真查库）。两侧同打。
+    monkeypatch.setattr(og, "_collect_outreach_materials", _fake_mats)
+    monkeypatch.setattr(og, "_get_recent_outreach_intents", _fake_recent)
+    monkeypatch.setattr(og, "_shadow_drive_note", _fake_shadow)
+    monkeypatch.setattr(og, "async_session_factory", lambda: _DummyCtx())
     monkeypatch.setattr(svc, "thought_pool_v1_allowed", lambda cid, sid=None: True)
 
     async def _fake_fetch(db, cid, uid, *, intent=None):

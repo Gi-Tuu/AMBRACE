@@ -62,6 +62,8 @@ LIFE_INTERVAL = timedelta(seconds=3600)                         # 1 小时
 LIFE_LOOP_INTERVAL = timedelta(seconds=1800)                    # 30 分钟
 GAME_STUCK_INTERVAL = timedelta(seconds=300)                    # 5 分钟
 PURGE_INTERVAL = timedelta(seconds=ACCOUNT_PURGE_CHECK_INTERVAL)  # 10 分钟（沿用原常量）
+# 向量对账（2026-10-02）：每 24 小时只读量一次「未归档记忆 vs 向量行」的漂移，结论进日志
+VECTOR_DRIFT_INTERVAL = timedelta(days=1)
 # 日记/复盘/日终记忆维护/群记忆收敛/纪念日走 run_daily_if_due（每天最多成功一次 + 本地小时
 # 窗口），没有 interval 概念，故此处不定义对应常量。
 
@@ -527,6 +529,21 @@ async def _credential_probe_tick():
         _logger.warning("Credential key probe error: %s", e)
 
 
+async def _vector_drift_tick():
+    """向量对账（2026-10-02）：每天一次，只读量「未归档记忆 vs 向量行」的漂移并把结论打进日志。
+
+    写向量失败历史上只在 write.py 留一条 warning（不重试、不记账），且没人定期对账 ⇒
+    2026-10-02 实测缺 2178 条、孤儿 1305 条才被偶然发现。本 tick 只负责「定期量出来 + 让它可见」，
+    不做 outbox、不改写入语义。取数全程 mode=ro，异常一律 fail-open（见该模块）。
+    """
+    try:
+        from app.application.vector_sync_watch import tick as _drift_tick
+
+        await _drift_tick()
+    except Exception as e:
+        _logger.warning("Vector drift check tick error: %s", e)
+
+
 async def scheduler_loop():
     """主调度循环 — 统一仲裁：定时承诺 / 生日节日 / 随机节律
 
@@ -720,6 +737,10 @@ async def periodic_loop():
 
             # 凭据主密钥健康复探（P3-7，2026-09-26）：每日一次，结论进 /liveness 的 credentials 节
             await run_daily_if_due("credential_probe", _credential_probe_tick, reason="tick")
+
+            # 向量对账（2026-10-02）：每 24 小时只读量一次向量漂移，结论进日志
+            # （vector drift check: / vector drift exceeded:）；不新增 flag、不写任何库
+            await run_if_due("vector_drift", VECTOR_DRIFT_INTERVAL, _vector_drift_tick, reason="tick")
 
     except asyncio.CancelledError:
         _logger.info("Periodic loop cancelled")

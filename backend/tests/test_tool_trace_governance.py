@@ -137,7 +137,9 @@ def test_R1_run_tick_执行抛错传exec_error(monkeypatch):
             return [{"type": "greeting", "priority": 1,
                      "candidate": {"character_id": 7, "user_id": 1, "session_id": 3}}]
 
-    async def _boom(item):
+    # A20 批 3a R4：run_tick 改传 bundle（`_execute(item, _gates())`）⇒ 桩签名跟到位，
+    # 否则桩根本进不去（TypeError 被 run_tick 吞掉），exec_error 就成了假绿
+    async def _boom(item, _g=None):
         raise RuntimeError("llm down")
 
     async def _noop_decay():
@@ -180,7 +182,8 @@ def test_R1_run_tick_未触发不传exec_error(monkeypatch):
             return [{"type": "greeting", "priority": 1,
                      "candidate": {"character_id": 7, "user_id": 1, "session_id": 3}}]
 
-    async def _noop(item):
+    # A20 批 3a R4：同上，桩签名跟到位
+    async def _noop(item, _g=None):
         return False
 
     async def _noop_decay():

@@ -20,7 +20,7 @@ import pytest
 from _dbclone import clone_engine, make_session_factory
 
 from app.domain.proactivity import outreach as oc
-from app.scheduling import arbiter
+from app.scheduling import arbiter, gates
 
 
 # ── 纯函数边界 ──
@@ -56,6 +56,8 @@ def test_默认窗口为24小时():
 
 
 # ── arbiter 门控（flag + 判据接线）──
+# A20 批 1b：inactive_char_skip 函数体在 gates 里，块内互调
+# get_hours_since_last_user_message 也在 gates 命名空间解析 ⇒ 桩必须 arbiter/gates 两边同打。
 
 @pytest.fixture()
 def _flag():
@@ -76,6 +78,7 @@ def test_门控_非活跃角色停发(_flag, monkeypatch):
         return None
 
     monkeypatch.setattr(arbiter, "get_hours_since_last_user_message", _no_msg)
+    monkeypatch.setattr(gates, "get_hours_since_last_user_message", _no_msg)
     assert asyncio.run(arbiter.inactive_char_skip(18)) is True
 
 
@@ -86,6 +89,7 @@ def test_门控_活跃角色照常(_flag, monkeypatch):
         return 1.0
 
     monkeypatch.setattr(arbiter, "get_hours_since_last_user_message", _recent)
+    monkeypatch.setattr(gates, "get_hours_since_last_user_message", _recent)
     assert asyncio.run(arbiter.inactive_char_skip(13)) is False
 
 
@@ -96,6 +100,7 @@ def test_门控_开关可回退(_flag, monkeypatch):
         return None
 
     monkeypatch.setattr(arbiter, "get_hours_since_last_user_message", _no_msg)
+    monkeypatch.setattr(gates, "get_hours_since_last_user_message", _no_msg)
     assert asyncio.run(arbiter.inactive_char_skip(18)) is False
 
 
@@ -106,6 +111,7 @@ def test_门控_查询异常_fail_open不停发(_flag, monkeypatch):
         raise RuntimeError("db down")
 
     monkeypatch.setattr(arbiter, "get_hours_since_last_user_message", _boom)
+    monkeypatch.setattr(gates, "get_hours_since_last_user_message", _boom)
     assert asyncio.run(arbiter.inactive_char_skip(13)) is False
 
 
@@ -135,7 +141,11 @@ def tmp_db(monkeypatch, tmp_path):
             await db.commit()
 
     asyncio.run(_seed())
+    # A20 批 1b：get_hours_since_last_user_message / inactive_char_skip 函数体已搬到
+    # gates，在 gates 命名空间解析 async_session_factory；arbiter 侧只剩具名重导出，
+    # 只打 arbiter 会被绕过（桩失效 ⇒ 真查沙箱库）。两边同打同一个桩对象。
     monkeypatch.setattr(arbiter, "async_session_factory", factory)
+    monkeypatch.setattr(gates, "async_session_factory", factory)
     yield factory
     engine.sync_engine.dispose()
 
@@ -208,6 +218,7 @@ def test_查询层异常上抛_不伪装成无消息(_flag, monkeypatch):
         raise RuntimeError("db down")
 
     monkeypatch.setattr(arbiter, "async_session_factory", _boom)
+    monkeypatch.setattr(gates, "async_session_factory", _boom)  # 同上：函数体在 gates 解析
     with pytest.raises(RuntimeError):
         asyncio.run(arbiter.get_hours_since_last_user_message(13))
     # 门控 fail-open 兜住上抛：查询失败不误伤活跃角色

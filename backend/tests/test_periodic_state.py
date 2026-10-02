@@ -528,6 +528,8 @@ def test_周期段已挪进独立循环且顺序参数一字未改():
         "life", "life_loop", "game_stuck", "diary", "reflection", "memory_maintenance",
         "group_compact", "pis_stale", "purge", "anniversary", "invite_cleanup",
         "credential_probe",
+        # 2026-10-02 新增（向量对账）：追加在末尾，前面 18 个的集合与顺序仍与搬走前一致
+        "vector_drift",
     ], "周期任务的集合或顺序被动过（应为原主循环顺序）"
 
     flat = _flat(per)

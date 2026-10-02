@@ -271,7 +271,16 @@ def test_六处省略号占位兜底未被改动():
     # 6 处「内容为省略号」的 segments 占位兜底（5 处直接赋值 + 1 处 or 兜底）
     assert src.count('["……"]') == 6, '省略号占位兜底处数变了（应恒为 6，本批不得增删/改写）'
     # 本批新增的自主搜索接线里绝不出现省略号占位，也不得返回空串消息
-    seg = src[src.index("async def _proactive_self_search"):src.index("# 行为类型 → 场景描述")]
+    # 2026-10-02 A22 ③b 锚点迁移：_proactive_self_search 已搬入 message_llm.py ⇒ 该切片改读新模块；
+    # 断言原意不变（仍是「这个函数体内不得出现省略号占位」）；上面 mg 侧 6 处计数断言未动。
+    import app.scheduling.message_llm as _llm_mod
+    llm_src = io.open(_llm_mod.__file__, encoding="utf-8").read()
+    _seg_at = llm_src.index("async def _proactive_self_search")
+    import ast as _ast
+    _fn = next(n for n in _ast.parse(llm_src).body
+               if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+               and n.name == "_proactive_self_search")
+    seg = chr(10).join(llm_src.splitlines()[_fn.lineno - 1:_fn.end_lineno])
     assert "……" not in seg
     wiring = src[src.index("if _self_search_on and attempt == 0:"):]
     wiring = wiring[:wiring.index("if _guard_on:")]

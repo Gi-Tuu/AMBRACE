@@ -64,6 +64,7 @@ MANIFEST_PY = "backend/app/plugins/manifest.py"
 REGISTRY_PY = "backend/app/plugins/registry.py"
 MODELS_AGENT_PY = "backend/app/models/agent/__init__.py"
 APPLICATION_SYSTEM_PY = "backend/app/application/system.py"
+APPLICATION_USAGE_SERVICE_PY = "backend/app/application/usage_service.py"
 CAPABILITIES_PY = "backend/app/device/capabilities.py"
 
 # grep 口径：只扫源码/文档，且一次性读进内存后复用（避免每个断言重扫全仓）
@@ -753,11 +754,13 @@ def _percentile(ordered: list[int], p: int) -> int:
 # ────────────────────────── D：费用面板（可执行约束） ──────────────────────────
 
 def audit_cost_panel(repo_root: Path, index: dict,
-                     models_py: str = MODELS_AGENT_PY, system_py: str = APPLICATION_SYSTEM_PY) -> dict:
+                     models_py: str = MODELS_AGENT_PY, system_py: str = APPLICATION_SYSTEM_PY,
+                     usage_py: str = APPLICATION_USAGE_SERVICE_PY) -> dict:
     models_text, models_err = read_text(repo_root, models_py)
     system_text, system_err = read_text(repo_root, system_py)
     if models_text is None or system_text is None:
         return {"ok": False, "error": models_err or system_err}
+    usage_text, _ = read_text(repo_root, usage_py)
     columns = ast_class_columns(ast_tree(models_text), "LlmUsage")
     names = [c["name"] for c in columns]
     indexed = [c["name"] for c in columns if c["indexed"]]
@@ -765,14 +768,27 @@ def audit_cost_panel(repo_root: Path, index: dict,
     est_kwarg = grep_index(index, "estimated=True", exclude_prefixes=("backend/tests/",))
 
     sys_tree = ast_tree(system_text)
-    get_usage = ast_find_func(sys_tree, "get_llm_usage")
-    usage_report = ast_find_func(sys_tree, "usage_report")
+    usage_tree = ast_tree(usage_text) if usage_text is not None else sys_tree
+
+    def _find_func(name: str):
+        node = ast_find_func(sys_tree, name)
+        if node is not None:
+            return node, system_py
+        node = ast_find_func(usage_tree, name)
+        return node, (usage_py if node is not None else system_py)
+
+    get_usage, get_usage_py = _find_func("get_llm_usage")
+    usage_report, usage_report_py = _find_func("usage_report")
     full_load_lines = [
         s["lineno"] for s in ast_select_shapes(get_usage)
         if s["orm_entity"] and s["args"] == ["LlmUsage"]
     ] if get_usage else []
     report_shapes = ast_select_shapes(usage_report) if usage_report else []
     report_orm_selects = [s["lineno"] for s in report_shapes if s["orm_entity"]]
+    system_anchor_line = next((
+        i for i, line in enumerate(system_text.splitlines(), start=1)
+        if "from app.application.usage_service import" in line
+    ), None)
 
     def _assign_of(tree: ast.Module, name: str):
         """取模块级赋值（``x = {}`` 与 ``x: dict = {}`` 两种写法都要认——后者是 AnnAssign）。"""
@@ -787,10 +803,22 @@ def audit_cost_panel(repo_root: Path, index: dict,
         return None
 
     price_assign = _assign_of(sys_tree, "_TOKEN_PRICE_RANGES")
+    price_py = system_py
+    if price_assign is None:
+        price_assign = _assign_of(usage_tree, "_TOKEN_PRICE_RANGES")
+        price_py = usage_py if price_assign is not None else system_py
     price_empty = isinstance(getattr(price_assign, "value", None), ast.Dict) and not price_assign.value.keys
     basis_hits = grep_index(index, "full_effective_budget_input_only", exclude_prefixes=("backend/tests/",))
     cost_hits = grep_index(index, "no_price_table", exclude_prefixes=("backend/tests/",))
-    callers = [h for h in grep_index(index, "get_llm_usage(", exclude_prefixes=("backend/tests/",)) if h["file"] != system_py]
+    service_files = {system_py, usage_py}
+    callers = [h for h in grep_index(index, "get_llm_usage(", exclude_prefixes=("backend/tests/",))
+               if h["file"] not in service_files]
+
+    full_load_hits = [{"file": get_usage_py, "line": line} for line in full_load_lines]
+    if not full_load_hits:
+        full_load_hits = [{"file": get_usage_py, "line": getattr(get_usage, "lineno", 0)}]
+    if system_anchor_line:
+        full_load_hits.append({"file": system_py, "line": system_anchor_line})
 
     return {
         "ok": True,
@@ -801,6 +829,8 @@ def audit_cost_panel(repo_root: Path, index: dict,
         "estimated_call_sites": {"count": len(est_kwarg), "evidence": evidence(est_kwarg, 3)},
         "get_llm_usage_full_load": {
             "function_line": getattr(get_usage, "lineno", None),
+            "definition_file": get_usage_py,
+            "system_anchor_line": system_anchor_line,
             "select_full_orm_lines": full_load_lines,
             "finding": "``select(LlmUsage)`` 整行 ORM 载入后在 Python 里循环聚合 ⇒ 窗口越大越线性恶化",
             "caller_count": len(callers),
@@ -808,6 +838,8 @@ def audit_cost_panel(repo_root: Path, index: dict,
         },
         "usage_report_path": {
             "function_line": getattr(usage_report, "lineno", None),
+            "definition_file": usage_report_py,
+            "system_anchor_line": system_anchor_line,
             "select_shapes": report_shapes,
             "group_by_present": bool(usage_report) and ast_has_call_attr(usage_report, "group_by"),
             "full_orm_row_select": bool(report_orm_selects),
@@ -819,6 +851,8 @@ def audit_cost_panel(repo_root: Path, index: dict,
         },
         "price_table": {
             "line": getattr(price_assign, "lineno", None),
+            "definition_file": price_py,
+            "system_anchor_line": system_anchor_line,
             "empty": bool(price_empty),
             "entry_count": 0 if price_empty else None,
             "unavailable_reason_sites": {"count": len(cost_hits), "evidence": evidence(cost_hits, 3)},
@@ -831,8 +865,7 @@ def audit_cost_panel(repo_root: Path, index: dict,
                 "status": "checkable",
                 "current_value": {"get_llm_usage_callers_outside_service": len(callers)},
                 "verify_by": "落码时加守卫测试：断言 cost-panel 调用链里不出现 get_llm_usage；本脚本可作回归读数基线",
-                "evidence": evidence(([{"file": system_py, "line": l} for l in full_load_lines] or
-                                      [{"file": system_py, "line": getattr(get_usage, "lineno", 0)}]), 3),
+                "evidence": evidence(full_load_hits, 3),
             },
             {
                 "id": "D-C2",
@@ -858,7 +891,11 @@ def audit_cost_panel(repo_root: Path, index: dict,
                 "statement": "价目表保持为空 dict；缺价 ⇒ status=unavailable + reason=no_price_table，禁止为凑数写默认价",
                 "status": "verified",
                 "current_value": {"price_table_empty": bool(price_empty), "no_price_table_sites": len(cost_hits)},
-                "verify_by": f"AST 断言 _TOKEN_PRICE_RANGES 为空 dict（{system_py}:{getattr(price_assign, 'lineno', 0)}）",
+                "verify_by": (
+                    f"AST 断言 _TOKEN_PRICE_RANGES 为空 dict（{price_py}:{getattr(price_assign, 'lineno', 0)}"
+                    + (f"；system.py 门面 {system_py}:{system_anchor_line}" if system_anchor_line else "")
+                    + "）"
+                ),
                 "evidence": evidence(cost_hits, 3),
             },
             {
@@ -1037,6 +1074,18 @@ def _shapes_summary(shapes: list[dict]) -> str:
         kind = "整行 ORM" if s.get("orm_entity") else (f"{s['argc']} 列投影" if s["argc"] > 1 else "单参")
         parts.append(f"select@{s['lineno']}={kind}")
     return "; ".join(parts)
+
+
+def _cost_panel_location(entry: dict) -> str:
+    primary = entry.get("definition_file") or APPLICATION_SYSTEM_PY
+    line = entry.get("function_line")
+    if line is None:
+        line = entry.get("line")
+    text = f"`{primary}:{line}`"
+    anchor = entry.get("system_anchor_line")
+    if anchor:
+        text += f"（系统门面 `{APPLICATION_SYSTEM_PY}:{anchor}`）"
+    return text
 
 
 def render_report(data: dict) -> str:
@@ -1237,13 +1286,13 @@ def render_report(data: dict) -> str:
             ["estimated 列存在", str(d["estimated_column_present"])],
             ["估算标记唯一落点", f"`{d['estimated_marker_only_in']}`（另有 "
                                   f"{d['estimated_call_sites']['count']} 处 `estimated=True` 调用）"],
-            ["get_llm_usage 整行载入", f"`{APPLICATION_SYSTEM_PY}:{d['get_llm_usage_full_load']['function_line']}` → "
+            ["get_llm_usage 整行载入", f"{_cost_panel_location(d['get_llm_usage_full_load'])} → "
                                         f"select(LlmUsage) @ {d['get_llm_usage_full_load']['select_full_orm_lines']}"],
-            ["usage_report 路径", f"`{APPLICATION_SYSTEM_PY}:{d['usage_report_path']['function_line']}`，"
+            ["usage_report 路径", f"{_cost_panel_location(d['usage_report_path'])}，"
                                   f"{_shapes_summary(d['usage_report_path']['select_shapes'])}，"
                                   f"GROUP BY={d['usage_report_path']['group_by_present']}，"
                                   f"整行载入={d['usage_report_path']['full_orm_row_select']}"],
-            ["价目表", f"`{APPLICATION_SYSTEM_PY}:{d['price_table']['line']}` 空 dict={d['price_table']['empty']}；"
+            ["价目表", f"{_cost_panel_location(d['price_table'])} 空 dict={d['price_table']['empty']}；"
                        f"unavailable 口径 {d['price_table']['unavailable_reason_sites']['count']} 处（{d['price_table']['unavailable_reason_sites']['evidence']}）"],
         ], ["项", "读数"]))
         add("")

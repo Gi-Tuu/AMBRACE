@@ -374,8 +374,15 @@ def read_coverage(vector_db: Path, app_db: Path, memory_table: str | None = None
         if "embeddings" not in _tables(vconn):
             out["note"] = "向量库无 embeddings 表"
             return out
+        # 2026-10-02 修：新版 chromadb 的 embeddings 表列是
+        #   (id INTEGER PRIMARY KEY, segment_id, embedding_id TEXT, seq_id, created_at)
+        # —— **真正的向量 id 在 embedding_id**；旧口径读 id 拿到的是行号，
+        # 会把覆盖率算成天量假漂移（实测：94 条真缺口被报成 2178 条；
+        # --rebuild 的目标清单同步受污染）。
+        _ecols = {_r[1] for _r in vconn.execute("PRAGMA table_info(embeddings)").fetchall()}
+        _idcol = "embedding_id" if "embedding_id" in _ecols else "id"
         vector_ids = set()
-        for (raw,) in vconn.execute("SELECT DISTINCT id FROM embeddings").fetchall():
+        for (raw,) in vconn.execute(f"SELECT DISTINCT {_idcol} FROM embeddings").fetchall():
             try:
                 vector_ids.add(int(raw))
             except (TypeError, ValueError):

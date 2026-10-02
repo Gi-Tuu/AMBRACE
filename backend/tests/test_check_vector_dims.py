@@ -66,10 +66,17 @@ def _make_chroma(db: Path, *, dimension: int | None, doc_ids: list[int]) -> None
     con.execute("INSERT INTO collections VALUES (?,?,?,?,?,?)",
                 ("0140f2ed-62eb-463a-9b10-cdefa4c11a6b", "character_memories", dimension,
                  "00000000-0000-0000-0000-000000000000", "{}", "{}"))
-    con.execute("CREATE TABLE embeddings (id TEXT, segment_id TEXT, embedding_id INTEGER,"
-                " seq_id INTEGER, created_at TEXT)")
-    con.executemany("INSERT INTO embeddings VALUES (?,?,?,?,?)",
-                    [(str(i), "81ca0406", n, n, "2026-09-01 00:00:00") for n, i in enumerate(doc_ids)])
+    # 2026-10-02 修：夹具改成**真库形态** —— 新版 chromadb 的 embeddings 是
+    #   (id INTEGER PRIMARY KEY, segment_id TEXT, embedding_id TEXT, seq_id, created_at)，
+    #   其中 id 是行号、**真正的向量 id（＝ memory_id）在 embedding_id**。
+    #   旧夹具把记忆 id 塞进 id 列，掩盖了「读错列 ⇒ 覆盖率报天量假漂移」这个真 bug（94→2178）。
+    #   这里刻意让行号 +1000 与记忆 id 错开：谁再读 id 列，本用例立刻红。
+    con.execute("CREATE TABLE embeddings (id INTEGER PRIMARY KEY, segment_id TEXT,"
+                " embedding_id TEXT, seq_id INTEGER, created_at TEXT)")
+    con.executemany("INSERT INTO embeddings (id, segment_id, embedding_id, seq_id, created_at)"
+                    " VALUES (?,?,?,?,?)",
+                    [(1000 + n, "81ca0406", str(i), n, "2026-09-01 00:00:00")
+                     for n, i in enumerate(doc_ids)])
     con.commit()
     con.close()
 

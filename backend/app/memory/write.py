@@ -907,7 +907,7 @@ async def save_memory(
                 importance=importance,
             )
         except Exception as e:
-            _logger.warning("向量存储失败: %s", e)
+            _logger.warning("向量存储失败（待对账）: memory_id=%s %s", memory.id, e)
 
         # P1：核心记忆自动晋升（高重要+多次确认 / 高价值类型 → is_core；失败静默）
         try:

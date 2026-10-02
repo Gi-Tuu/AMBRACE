@@ -16,7 +16,7 @@ import pytest
 
 from app.agent.loop import AGENT_FLAGS
 from app.domain.proactivity.decision import MAX_PER_HOUR
-from app.scheduling import arbiter
+from app.scheduling import arbiter, gates
 from app.scheduling import proactive_topic_guard as guard
 from app.scheduling import scheduler as sched
 
@@ -206,7 +206,11 @@ def test_dnd_blocks(env):
 def test_dnd_follows_kernel_window(env):
     """真 ``arbiter.is_dnd_now``：未配免打扰时只挡内核深夜 0–7 点，23:30 放行。"""
     env.monkeypatch.setattr(arbiter, "is_dnd_now", _REAL_IS_DND)
-    env.monkeypatch.setattr(arbiter, "get_dnd_window", _const(None))
+    # A20 批 1b：is_dnd_now 函数体已搬到 gates，块内互调 get_dnd_window 在 gates
+    # 命名空间解析；arbiter 侧只剩具名重导出，只打 arbiter 桩看不见。两边同打同一个桩。
+    window_none = _const(None)
+    env.monkeypatch.setattr(arbiter, "get_dnd_window", window_none)
+    env.monkeypatch.setattr(gates, "get_dnd_window", window_none)
     assert asyncio.run(sched._anniversary_gate_reason(CID, _cn(23, 30))) is None
     assert asyncio.run(sched._anniversary_gate_reason(CID, _cn(3, 0))) == "dnd"
 
@@ -214,7 +218,10 @@ def test_dnd_follows_kernel_window(env):
 def test_dnd_reads_character_config_window(env):
     """角色配了免打扰 13:00–14:00：13:30 拦、23:30 放（原通道压根读不到这份配置）。"""
     env.monkeypatch.setattr(arbiter, "is_dnd_now", _REAL_IS_DND)
-    env.monkeypatch.setattr(arbiter, "get_dnd_window", _const((13 * 60, 14 * 60)))
+    # A20 批 1b：同上——get_dnd_window 由 gates 里的 is_dnd_now 函数体解析，两边同打同一个桩。
+    window_13_14 = _const((13 * 60, 14 * 60))
+    env.monkeypatch.setattr(arbiter, "get_dnd_window", window_13_14)
+    env.monkeypatch.setattr(gates, "get_dnd_window", window_13_14)
     assert asyncio.run(sched._anniversary_gate_reason(CID, _cn(13, 30))) == "dnd"
     assert asyncio.run(sched._anniversary_gate_reason(CID, _cn(23, 30))) is None
 

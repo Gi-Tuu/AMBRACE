@@ -104,8 +104,11 @@ def proac_db(monkeypatch, tmp_path):
     import app.db.database as db_mod
     monkeypatch.setattr(db_mod, "async_session_factory", factory)
     # arbiter 顶部 from-import 捕获了绑定——须同时 patch 其自身引用（否则依赖测试导入顺序）
-    from app.scheduling import arbiter as _arb
+    # A20 批 1b：get_recent_proactive_messages 函数体已搬到 gates，在 gates 命名空间
+    # 解析 async_session_factory；arbiter 侧只剩具名重导出，只打 arbiter 会被绕过。
+    from app.scheduling import arbiter as _arb, gates as _gates
     monkeypatch.setattr(_arb, "async_session_factory", factory)
+    monkeypatch.setattr(_gates, "async_session_factory", factory)
     yield factory
     engine.sync_engine.dispose()
 

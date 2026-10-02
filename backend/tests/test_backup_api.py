@@ -123,8 +123,10 @@ def test_backup_day_key_单一来源(tmp_path, monkeypatch):
     assert os.path.isfile(os.path.join(str(tmp_path), mod.backup_day_key() + '.zip'))
 
     # 棘轮：三处消费端不得再自行拼日期（改了就会在跨时区部署下与生产端失配）
+    # A22 第四刀（2026-10-02）：trigger_backup / download_backup 已下沉 system_backup_service，
+    # 消费端锚点随之改指定义模块（system.py 只剩门面重导出，不再含日期键调用点）。
     backend_root = Path(system_svc.__file__).resolve().parents[2]
-    for rel in ('app/application/system.py', 'app/application/account_purge.py'):
+    for rel in ('app/application/system_backup_service.py', 'app/application/account_purge.py'):
         src = (backend_root / rel).read_text(encoding='utf-8')
         assert 'backup_day_key()' in src, f'{rel} 未走 backup_day_key()'
         assert '.strftime("%Y%m%d")' not in src, f'{rel} 又出现消费端自算备份日期'

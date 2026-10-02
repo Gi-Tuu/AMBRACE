@@ -22,7 +22,7 @@ from _dbclone import clone_engine, make_session_factory
 from app.utils.timeutil import now_naive_utc
 
 from app.domain.proactivity import outreach as oc
-from app.scheduling import arbiter
+from app.scheduling import arbiter, outreach_gates
 
 
 # ═══════════════════ outreach 纯函数（零 IO） ═══════════════════
@@ -227,13 +227,18 @@ def _patch_run_tick(monkeypatch, execute_impl):
     monkeypatch.setattr(arbiter, "_trace_scheduler_task", _trace)
     monkeypatch.setattr(arbiter, "_collect_outreach_materials", _mats)
     monkeypatch.setattr(arbiter, "_get_recent_outreach_intents", _recent)
+    # A20 批 2 R4：调用方 _annotate_outreach_plan 已搬到 outreach_gates，其函数体在 outreach_gates
+    # 命名空间解析这两个裸名 ⇒ 只打 arbiter 会静默绕过（真查库、且用例仍绿）。两侧同打。
+    monkeypatch.setattr(outreach_gates, "_collect_outreach_materials", _mats)
+    monkeypatch.setattr(outreach_gates, "_get_recent_outreach_intents", _recent)
 
 
 def test_run_tick_flag_off_zero_change(monkeypatch):
     """flag 关（默认）：candidate 不带 outreach_intent/outreach_plan → 走旧链路零变化。"""
     captured = {}
 
-    async def _execute(item):
+    # A20 批 3a R4：run_tick 改传 bundle（`_execute(item, _gates())`）⇒ 桩签名跟到位，断言不变
+    async def _execute(item, _g=None):
         captured["candidate"] = item["candidate"]
         return True
 
@@ -253,7 +258,8 @@ def test_run_tick_flag_on_intent_effective(monkeypatch):
     try:
         captured = {}
 
-        async def _execute(item):
+        # A20 批 3a R4：同上，桩签名跟到位
+        async def _execute(item, _g=None):
             captured["candidate"] = item["candidate"]
             return True
 
@@ -332,6 +338,8 @@ def test_get_recent_outreach_intents_parses_approved(monkeypatch):
         return _Sess()
 
     monkeypatch.setattr(arbiter, "async_session_factory", lambda: _Sess())
+    # A20 批 2 R4：函数体已搬到 outreach_gates ⇒ 裸名 async_session_factory 在那里解析，两侧同打
+    monkeypatch.setattr(outreach_gates, "async_session_factory", lambda: _Sess())
     out = asyncio.run(arbiter._get_recent_outreach_intents(1, limit=2))
     assert out == ["check_in", "follow_up"]
 

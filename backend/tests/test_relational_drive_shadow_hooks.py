@@ -40,7 +40,7 @@ from app.auth.deps import get_current_user_id
 from app.db.database import get_db
 from app.domain.proactivity import outreach as oc
 from app.domain.relational import drives as d
-from app.scheduling import arbiter
+from app.scheduling import arbiter, outreach_gates
 from app.utils.timeutil import now_naive_utc
 
 OWNER = 1
@@ -131,8 +131,13 @@ def _seed_rows(factory, rows) -> None:
 
 
 def _patch_all_sessions(monkeypatch, factory) -> None:
-    """三处钩子各自的 session 出口全部指向临时库（绝不误连生产库）。"""
+    """各钩子自身的 session 出口全部指向临时库（绝不误连生产库）。
+
+    A20 批 2 R4：_shadow_drive_note / _annotate_outreach_plan 已搬到 outreach_gates，其函数体的
+    裸名 async_session_factory 在 outreach_gates 命名空间解析 ⇒ 只打 arbiter 会绕过桩去查真库。
+    """
     monkeypatch.setattr(arbiter, "async_session_factory", factory)
+    monkeypatch.setattr(outreach_gates, "async_session_factory", factory)
     monkeypatch.setattr(chat_service, "async_session_factory", factory)
     monkeypatch.setattr(css, "async_session_factory", factory)
 

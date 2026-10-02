@@ -10,6 +10,7 @@ import pytest
 from app.domain.proactivity.pacing import SESSION_RATE_TYPES
 from app.domain.proactivity.sleep import SLEEP_SILENCED_TYPES
 from app.scheduling import arbiter
+from app.scheduling.executors import guards
 
 # arbiter 原有 15 项 + 本次新增 4 项（anniversary / life_regression /
 # unfinished_topic / memory_review_contextual）
@@ -55,9 +56,13 @@ def test_background_types_excluded(etype):
 
 
 def test_arbiter_wired_to_constant():
-    """源码锚定（防回退）：arbiter._execute 的 sleep 闸门用常量，不再是内联元组。"""
-    text = pathlib.Path(arbiter.__file__).read_text(encoding="utf-8-sig")
-    body = text[text.index("async def _execute"):]
+    """源码锚定（防回退）：sleep 闸门用常量，不再是内联元组。
+
+    A20 批 3a（2026-10-02）：闸门本体自 ``arbiter._execute`` 搬到 ``executors/guards.pre_gates``，
+    锚点随之改读 guards 源码（逻辑一行未动）。arbiter 侧仍保留常量重导出，最后一行照旧钉住。
+    """
+    text = pathlib.Path(guards.__file__).read_text(encoding="utf-8-sig")
+    body = text[text.index("async def pre_gates"):]
     anchor = body.index("sleep after 21:00")
     window = body[max(0, anchor - 600):anchor + 120]
     assert "SLEEP_SILENCED_TYPES" in window, "sleep 闸门没有引用 SLEEP_SILENCED_TYPES"
