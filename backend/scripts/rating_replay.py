@@ -23,7 +23,9 @@ import sqlite3
 from types import SimpleNamespace
 _sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))  # 让 app.* 可导入
 
-DB = "file:D:/AMBRACE/backend/data/sqlite/ai_companion.db?mode=ro"
+_DB_PATH = pathlib.Path(os.environ.get("AMBRACE_DB", str(
+    pathlib.Path(__file__).resolve().parents[1] / "data" / "sqlite" / "ai_companion.db")))
+DB = "file:" + _DB_PATH.as_posix() + "?mode=ro"
 _OUT_DIR = pathlib.Path(os.environ.get("AMBRACE_A3_RATING_OUT",
                                 str(pathlib.Path(__file__).resolve().parents[2].parent / "a3_rating_output")))  # 仓库外默认
 OUT = _OUT_DIR / "A3评星侧首轮样本.jsonl"

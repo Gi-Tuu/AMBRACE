@@ -37,7 +37,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent      # 仓库根 D:\AMBRACE
+ROOT = Path(__file__).resolve().parent.parent      # 仓库根
 BACKEND = ROOT / "backend"
 sys.path.insert(0, str(BACKEND))
 

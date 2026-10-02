@@ -2225,8 +2225,15 @@ A22C1_CONST_NAMES = (
     "_PER_MILLION_TOKENS",
 )
 
-A22C1_SYSTEM_PY = Path(r"D:\AMBRACE\backend\app\application\system.py").resolve()
-A22C1_USAGE_PY = Path(r"D:\AMBRACE\backend\app\application\usage_service.py").resolve()
+def _seam_src_path(module_name: str):
+    """接缝守卫专用：按模块名解析源文件，禁止写死本机绝对路径（CI 上无 D 盘）。"""
+    import importlib
+    from pathlib import Path
+    return Path(importlib.import_module(module_name).__file__).resolve()
+
+
+A22C1_SYSTEM_PY = _seam_src_path("app.application.system")
+A22C1_USAGE_PY = _seam_src_path("app.application.usage_service")
 
 
 def _a22c1_system_src():
@@ -2338,9 +2345,8 @@ A22C2_STAY_NAMES = (
     "download_backup",
 )
 
-A22C2_SYSTEM_PY = Path(r"D:\AMBRACE\backend\app\application\system.py").resolve()
-A22C2_CFG_PY = Path(
-    r"D:\AMBRACE\backend\app\application\system_config_service.py").resolve()
+A22C2_SYSTEM_PY = _seam_src_path("app.application.system")
+A22C2_CFG_PY = _seam_src_path("app.application.system_config_service")
 
 
 def _a22c2_system_src():
@@ -2416,9 +2422,9 @@ A22C3_FF_NAMES = ("get_feature_flags", "update_feature_flag")
 A22C3_CB_NAMES = ("read_account_context_budget_tier", "set_context_budget_tier",
                   "get_context_budget")
 
-A22C3_SYSTEM_PY = Path(r"D:\AMBRACE\backend\app\application\system.py").resolve()
-A22C3_FF_PY = Path(r"D:\AMBRACE\backend\app\application\feature_flag_service.py").resolve()
-A22C3_CB_PY = Path(r"D:\AMBRACE\backend\app\application\context_budget_service.py").resolve()
+A22C3_SYSTEM_PY = _seam_src_path("app.application.system")
+A22C3_FF_PY = _seam_src_path("app.application.feature_flag_service")
+A22C3_CB_PY = _seam_src_path("app.application.context_budget_service")
 
 
 def _a22c3_src(path: Path) -> str:
@@ -2535,11 +2541,9 @@ A22C4_BACKUP_NAMES = (
 # 刻意**留在** system.py 的四个共享辅助（薄壳后本文件只应有这四个 def）
 A22C4_HELPER_NAMES = ("_require_admin", "_require_server_admin", "_cfg_snapshot", "_audit")
 
-A22C4_SYSTEM_PY = Path(r"D:\AMBRACE\backend\app\application\system.py").resolve()
-A22C4_STATUS_PY = Path(
-    r"D:\AMBRACE\backend\app\application\system_status_service.py").resolve()
-A22C4_BACKUP_PY = Path(
-    r"D:\AMBRACE\backend\app\application\system_backup_service.py").resolve()
+A22C4_SYSTEM_PY = _seam_src_path("app.application.system")
+A22C4_STATUS_PY = _seam_src_path("app.application.system_status_service")
+A22C4_BACKUP_PY = _seam_src_path("app.application.system_backup_service")
 
 
 def _a22c4_src(path: Path) -> str:
@@ -2699,8 +2703,8 @@ A22C5_ROUTE_NAMES = (
     "resume_stuck_games", "_resume_ai_turns", "_guard_stop", "_broadcast_game_event",
 )
 
-A22C5_GAMES_PY = Path(r"D:\AMBRACE\backend\app\api\games.py").resolve()
-A22C5_SVC_PY = Path(r"D:\AMBRACE\backend\app\application\game_service.py").resolve()
+A22C5_GAMES_PY = _seam_src_path("app.api.games")
+A22C5_SVC_PY = _seam_src_path("app.application.game_service")
 
 
 def _a22c5_src(path: Path) -> str:
@@ -2951,8 +2955,8 @@ A22C6_STAY_DEFS = (
     "generate_proactive_event",
 )
 
-A22C6_MG_PY = Path(r"D:\AMBRACE\backend\app\scheduling\message_generator.py").resolve()
-A22C6_MT_PY = Path(r"D:\AMBRACE\backend\app\scheduling\message_text.py").resolve()
+A22C6_MG_PY = _seam_src_path("app.scheduling.message_generator")
+A22C6_MT_PY = _seam_src_path("app.scheduling.message_text")
 
 
 def _a22c6_src(path: Path) -> str:
@@ -3325,8 +3329,8 @@ A22C8_STAY_REFS = {
                         "load_plugin_dir"},
     "record_install_provenance": {"_logger", "_db_prov", "_parse_perms", "_upsert_plugin_consent"},
 }
-A22C8_REGISTRY_PY = Path(r"D:\AMBRACE\backend\app\plugins\registry.py").resolve()
-A22C8_STORE_PY = Path(r"D:\AMBRACE\backend\app\plugins\plugin_store.py").resolve()
+A22C8_REGISTRY_PY = _seam_src_path("app.plugins.registry")
+A22C8_STORE_PY = _seam_src_path("app.plugins.plugin_store")
 
 
 def _a22c8_src(path) -> str:
