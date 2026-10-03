@@ -63,7 +63,6 @@ def test_文档串写明与设备感知无关并指出链路文件():
 
 @pytest.mark.parametrize("consumer", [
     "app.agent.nodes",
-    "app.agent.context.legacy",
     "app.agent.context.section_persona",
 ])
 def test_调用方已改用新路径(consumer):
@@ -71,6 +70,21 @@ def test_调用方已改用新路径(consumer):
     text = Path(mod.__file__).read_text(encoding="utf-8")
     assert OLD_MODULE not in text
     assert NEW_MODULE in text
+
+
+def test_legacy_已不再自己做分类_A22第五刀c随迁():
+    """R4 随迁（A22 ⑤-c，2026-10-03）：``app.agent.context.legacy`` 从「必须引用新路径」改为「两边都不许引用」。
+
+    原参数化把 legacy 与 nodes/section_persona 并列，断言它引用新分类器模块——但那个调用点位于
+    legacy 的 13 段内联兜底之一，⑤-c 已整段删除（前置观测 A/B 双 0 命中，见本文件同目录台账）。
+    分类现在**只有**注册表侧一个实现点（``section_persona.py:84`` 调 ``build_perception_section``）。
+    断言原意一字未变（**绝不允许有人把旧路径 import 捡回来**）；这里额外钉死「legacy 也不再引用新路径」，
+    防止有人往回退化的方向补一份重复分类实现。
+    """
+    text = Path(importlib.import_module("app.agent.context.legacy").__file__).read_text(encoding="utf-8")
+    assert OLD_MODULE not in text, "旧感知模块被捡回来了"
+    assert NEW_MODULE not in text, (
+        "legacy 又出现分类器调用 ⇒ 与 section_persona 形成双实现（⑤-c 消灭的正是这类漂移）")
 
 
 def test_perceive_返回结构逐字五键():

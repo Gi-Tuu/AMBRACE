@@ -21,13 +21,15 @@
 13. ``section_mcp:213`` 工具声明（按派单授权退化为 ``owned_server_ids``）→ 14. ``:225`` 资源摘要
 15. ``section_current_state:18`` 现状锚点 → 16. ``section_working_state:109`` 工作记忆。
 
-覆盖第三批（B3，用例编号 17–22，``context/legacy.py`` 内联装配 12 处）：
-17/18 是**装配级**对照（直跑 ``build_context_legacy`` 的注册表内联分支），一次覆盖 :120 用户行 /
-:268 世界事实 / :307 用户朋友圈 / :389 手动八维 / :407 手机感知 / :433 时间承诺 / :474 距上次互动 /
-:550 用户画像 / :556 备忘录+日记 / :867 AI 生活记忆（信任概率门打桩强开）。:664 工具声明与 :673
-资源摘要只在 ``_section_values=None`` 的纯 legacy 分支执行，该分支会连带走排除项 :143 → 19/20 用
-装配级对照覆盖这两行（:143 打桩成九槽全空，只中和未改动的它），21/22 再直调 ``_build_mcp_*_text``
-钉死下游 None 语义。排除项 :105/:143/:284/:333 本批未改。
+覆盖第三批（B3，用例编号 19–22；原 17/18 已随 A22 ⑤-c 删除，理由见文件末尾）：
+17/18 曾是**装配级**对照（直跑 ``build_context_legacy`` 的注册表内联分支），一次覆盖 legacy 的
+用户行 / 世界事实 / 用户朋友圈 / 手动八维 / 手机感知 / 时间承诺 / 距上次互动 / 用户画像 /
+备忘录+日记 / AI 生活记忆（信任概率门打桩强开）共 10 处内联查询点——这些内联实现已随 ⑤-c 删除，
+用例一并删除。19/20 覆盖 ``_build_mcp_tools_text``（工具声明）与 ``_build_mcp_resources_text``
+（资源摘要）两处调用点，它们只在 ``_section_values=None`` 的自算分支执行，该分支会连带走 persona
+组装 → 19/20 把 persona 打桩成「九槽全空」（只中和未改动的它），两处照常真实执行；21/22 再直调
+``_build_mcp_*_text`` 钉死下游 None 语义。legacy 侧当时的排除项（trim 自算 / persona 组装 /
+核心记忆三槽 / 日摘要补生成）本批未改。
 
 覆盖第四批（B4，用例编号 23–26，B 家族纯查询型收尾 4 处）：23. ``section_overlay:133``「AI 生活」
 注入（信任概率门打桩强开，复用 B3 的 CharacterState(trust=70) + Memory(source="life") 种子）
@@ -46,8 +48,9 @@
 
 覆盖第六批（B6，用例编号 36–40，B 家族收尾 4 处「混合语义」）：36 直调 ``_inject_core_anchors_loops``
 钉行为（同一函数里「账号那半边」锚点/计时 fail-closed、「角色那半边」核心记忆/生活目标**必须仍在**）；
-37/38/40 是**调用点连线**（:284 / :172 / :333——B5 教训：只测下游变异不红）；39 走 ``pets_section``
-section 入口，40 走 legacy 内联真实查询，两侧口径必须一致。本批做完，B 家族累计 43 处，
+37/38 是**调用点连线**（legacy 的三槽注入调用点 / section_memories 的对应行——B5 教训：只测下游变异不红）；
+39 走 ``pets_section`` section 入口。原 40（legacy 内联宠物真实查询，与 39 两侧口径对照）已随
+A22 ⑤-c 删除。本批做完，B 家族累计 43 处，
 ``app/agent/**`` 活代码里的 ``state.get("user_id", 1)`` 归零。
 
 防假绿：每例「先正跑（带 caller → 必见哨兵）再反跑（缺 caller → 必不见哨兵且**不抛异常**）」。
@@ -83,7 +86,7 @@ def fc_db(tmp_path_factory):
     / MCPServer（#7 归属正证）。
 
     contextB3 追加种子：CharacterState(character 13, trust=70) 抬开「AI 生活」注入的信任门槛；
-    Memory(source="life")=SENTINEL_LIFE 供 legacy:867（概率门在用例内打桩强开）。
+    Memory(source="life")=SENTINEL_LIFE 供 legacy 的 AI 生活注入概率门（在用例内打桩强开）。
 
     contextB4 追加种子（三条，均为**新增行**，不动 B1–B3 依赖的哨兵）：
     GlobalUserFact(slot="relationship")=SENTINEL_USERNOW —— 刻意选敏感槽（relationship/health
@@ -634,62 +637,12 @@ def _guard_assembled(out: dict) -> str:
     return text
 
 
-def _run_legacy_assembly(monkeypatch, factory, user_id) -> dict:
-    """直跑 build_context_legacy 的内联装配路径，返回装配后的 state。
-
-    ``_section_values={"relationship": ""}``：只把 persona 组（含本批排除项 :143）标记为
-    「注册表已执行」→ 其余分区全部走 legacy 内联分支，本批 :120/:268/:307/:389/:407/:433/:474/
-    :550/:556/:867 十处正是这些内联分支。``_trim`` 显式注入 → 不走排除项 :105。
-    ``random.random`` 打桩 0.0 → :867 生活记忆的 trust 概率门（≥70 → 0.6）必开，否则正向对照 flaky。
-    """
-    import random
-
-    from app.agent.context import legacy as lg
-
-    _patch_session(monkeypatch, factory)
-    monkeypatch.setattr(random, "random", lambda: 0.0)
-    out = asyncio.run(lg.build_context_legacy(
-        _assembly_state(user_id), _section_values={"relationship": ""}, _trim=lg._trim_limits(True),
-    ))
-    _guard_assembled(out)
-    return out
+# ───────────────────────── 17/18.（A22 ⑤-c 已删除：装配层内联兜底的正/反对照，理由见文件末尾）
 
 
-# ───────────────────────── 17/18. 装配层：:120/:268/:307/:389/:407/:433/:474/:550/:556/:867 正/反对照
-
-
-def test_legacy_assembly_with_caller_injects(fc_db, monkeypatch):
-    """正向（带 caller=1）：1 号的十份数据全部进 system 文本（否则 18 的反证会是空断言）。
-
-    「上次互动」用注入串特有的 ``｜距上次互动``（固定模板文案里也有「距上次互动的时长」，裸串恒定命中）；
-    「八维」用 ``心情80``；:120 的用户行另由 ``state["user_name"]`` 钉住（昵称不进本轮 system 文本）。
-    """
-    out = _run_legacy_assembly(monkeypatch, fc_db, 1)
-    text = _all_system_text(out)
-    for marker in (
-        "SENTINEL_USER", "SENTINEL_FACT", "SENTINEL_MOMENT", "心情80", "SENTINEL_SNAP",
-        "SENTINEL_PROMISE", "｜距上次互动", "SENTINEL_MEMO", "SENTINEL_DIARY", "SENTINEL_LIFE",
-    ):
-        assert marker in text, f"正向未命中 {marker} → 该行的反向断言会是空断言"
-    assert out["user_name"] == "SENTINEL_USER", "正向 :120 未取到 1 号用户行"
-
-
-def test_legacy_assembly_without_caller_failclosed(fc_db, monkeypatch):
-    """反向（state 无 user_id 键）：不抛异常，且任何 1 号哨兵/账号特征都不进 system 文本。"""
-    out = _run_legacy_assembly(monkeypatch, fc_db, _NO_CALLER)
-    text = _all_system_text(out)
-    for marker in (
-        "SENTINEL_USER", "SENTINEL_FACT", "SENTINEL_MOMENT", "心情80", "SENTINEL_SNAP",
-        "SENTINEL_PROMISE", "｜距上次互动", "SENTINEL_MEMO", "SENTINEL_DIARY", "SENTINEL_LIFE",
-    ):
-        assert marker not in text, f"缺 caller 时把 1 号账号的 {marker} 冒充进来了"
-    assert "SENTINEL_" not in text, "缺 caller 时 system 文本出现任何 1 号哨兵 → 未 fail-closed"
-    assert out["user_name"] == "用户", "缺 caller 时 :120 仍把用户名冒充成了 1 号账号"
-
-
-# ───────────────────────── 19/20. 纯 legacy 分支（_section_values=None）：:664/:673 调用点
-# ───────────────────────── 这两行只在注册表未接管 MCP 时执行；该分支会连带走排除项 :143，
-# ───────────────────────── 故把 :143 打桩成「九槽全空」——只中和未改动的它，两行照常真实执行。
+# ───────────────────────── 19/20. 自算分支（_section_values=None）：MCP 工具声明 / 资源摘要调用点
+# ───────────────────────── 这两处只在注册表未接管 MCP 时执行；该分支会连带走 persona 组装，
+# ───────────────────────── 故把 persona 打桩成「九槽全空」——只中和未改动的它，两处照常真实执行。
 
 
 def _seed_mcp_declarations(monkeypatch, factory) -> int:
@@ -715,7 +668,7 @@ def _seed_mcp_declarations(monkeypatch, factory) -> int:
 
 
 def _run_legacy_pure(monkeypatch, factory, user_id) -> str:
-    """``_section_values=None`` 的纯 legacy 装配（:664 工具声明 / :673 资源摘要仅此分支执行）。"""
+    """``_section_values=None`` 的自算装配（MCP 工具声明 / 资源摘要仅此分支执行）。"""
     import random
 
     import app.agent.persona as persona
@@ -873,7 +826,7 @@ def test_light_social_context_failclosed(fc_db, monkeypatch):
 # ══════════════════════════ contextB5 第五批（剩余 7 处「无下游风险」调用点，2026-09-21）══════════════════════════
 
 
-# ───────────────────────────────────── 27. legacy :143 assemble_persona_context（no-op 等值）
+# ───────────────────────── 27. legacy 的 assemble_persona_context 调用点（no-op 等值）
 
 def test_persona_assemble_noop_for_missing_caller(fc_db, monkeypatch):
     """#1：``assemble_persona_context`` 的 user_id 只喂三处下游，而三处的 SQL 只按 character_id 过滤。
@@ -993,7 +946,7 @@ def test_memory_task_llm_config_not_borrowed(fc_db, monkeypatch):
     assert neg["base_url"] != "http://127.0.0.1:9/v1", "缺 caller 时借用了 1 号账号的 BYOK 端点"
 
 
-# ───────────────────────────────────── 32. legacy :105 热度裁剪（None → 低频保守档）
+# ───────────────────────── 32. legacy 的 trim 自算分支 热度裁剪（None → 低频保守档）
 
 
 def test_is_hot_character_failclosed_uses_lowfreq_trim(fc_db, monkeypatch):
@@ -1019,7 +972,7 @@ def test_is_hot_character_failclosed_uses_lowfreq_trim(fc_db, monkeypatch):
 
 
 def test_registry_resolve_trim_failclosed(fc_db, monkeypatch):
-    """#7：注册表侧 ``_resolve_trim`` 与 legacy 内联共用 ``_is_hot_character``，两侧口径必须一致。
+    """#7：注册表侧 ``_resolve_trim`` 与 legacy 自算分支共用 ``_is_hot_character``，口径必须一致。
 
     ``_is_hot_character`` 自身吞异常回 True ⇒ 若取库不完整（patch 漏了）两跑都会得到高频档，
     反向断言会直接红，不会静默假绿。裁剪总闸关闭时两跑也都会是高频档 → 先钉住闸门是开的。
@@ -1082,9 +1035,9 @@ def test_older_summaries_llm_user_id_call_site(fc_db, monkeypatch):
 def test_legacy_trim_call_site_user_id(fc_db, monkeypatch):
     """#6 调用点连线：纯 legacy 装配自算 trim 时（``_trim=None``）把缺 caller 传成 None。
 
-    本批 32 号用例只测了下游 ``_is_hot_character``，变异反证抓不住 `legacy.py:105` 调用点
+    本批 32 号用例只测了下游 ``_is_hot_character``，变异反证抓不住 legacy 的 trim 自算调用点
     （改回 ``, 1`` 后本文件仍 33 passed），故补这条：spy 掉 ``legacy._is_hot_character``，
-    直跑内联装配（``_trim=None`` 才会走 :105），断言收到的 user_id 就是宿主 state 里的值。
+    直跑自算装配（``_trim=None`` 才会走该分支），断言收到的 user_id 就是宿主 state 里的值。
     """
     import random
 
@@ -1117,10 +1070,10 @@ def test_legacy_trim_call_site_user_id(fc_db, monkeypatch):
 
 
 def _run_legacy_pure_bare(monkeypatch, factory, user_id) -> str:
-    """``_section_values=None`` 的纯 legacy 装配（:284 仅此分支执行），本批只用于连线用例。
+    """``_section_values=None`` 的自算装配（核心记忆三槽仅此分支执行），本批只用于连线用例。
 
     与 ``_run_legacy_pure`` 的差别只有「不造 MCP 事实」：本批断言的是传给下游的 uid，不关心 MCP。
-    persona 仍打桩（该分支会连带走 :143），``random`` 仍钉死 :867 概率门，保持与既有跑法一致。
+    persona 仍打桩（该分支会连带走它），``random`` 仍钉死 AI 生活概率门，保持与既有跑法一致。
     """
     import random
 
@@ -1171,13 +1124,13 @@ def test_core_anchors_loops_failclosed(fc_db, monkeypatch):
     assert "ANCHORB6" not in neg_core + neg_anchors + neg_loops, "缺 caller 时任何账号锚点漏进了三槽"
 
 
-# ───────────────────────────────────── 37. ① 调用点连线：legacy.py:284
+# ───────────────────────── 37. ① 调用点连线：legacy 的 ``_inject_core_anchors_loops``
 
 
 def test_legacy_core_anchors_loops_call_site(fc_db, monkeypatch):
-    """①连线：spy ``legacy`` 模块里绑定的 ``_inject_core_anchors_loops``，钉住 :284 传下去的 uid。
+    """①连线：spy ``legacy`` 模块里绑定的 ``_inject_core_anchors_loops``，钉住调用点传下去的 uid。
 
-    36 号直调下游函数**抓不住调用点**（B5 的 :385/legacy:105 就是这么漏的），故本例只验连线：
+    36 号直调下游函数**抓不住调用点**（B5 的日摘要补生成 / trim 自算就是这么漏的），故本例只验连线：
     纯 legacy 装配（``_section_values=None``，否则该分支被注册表值取代）里收到的 (cid, uid)。
     """
     from app.agent.context import legacy as lg
@@ -1193,11 +1146,11 @@ def test_legacy_core_anchors_loops_call_site(fc_db, monkeypatch):
     def _run(user_id):
         seen.clear()
         _run_legacy_pure_bare(monkeypatch, fc_db, user_id)
-        assert seen, "纯 legacy 分支未走到 :284 → 断言会失真"
+        assert seen, "自算分支未走到三槽调用点 → 断言会失真"
         return seen[0]
 
-    assert _run(1) == (13, 1), "带 caller 时 :284 没把该账号 id 传给三槽下游"
-    assert _run(_NO_CALLER)[1] is None, "缺 caller 时 :284 仍把这一轮冒充成 1 号账号"
+    assert _run(1) == (13, 1), "带 caller 时三槽调用点没把该账号 id 传给下游"
+    assert _run(_NO_CALLER)[1] is None, "缺 caller 时三槽调用点仍把这一轮冒充成 1 号账号"
 
 
 # ───────────────────────────────────── 38. ② 调用点连线：section_memories.py:172
@@ -1257,22 +1210,51 @@ def test_pets_section_failclosed(fc_db, monkeypatch):
     assert "旺财" not in neg and "咪咪" not in neg, "用户宠物行整条漏出（含名字）→ 分支未 fail-closed"
 
 
-# ───────────────────────────────────── 40. ④ 调用点：legacy.py:333 内联 pets 分支
+# ───────────────────────────────────── 40. ④ 调用点：legacy 内联 pets 分支（已随 ⑤-c 删除）
+
+# ──────────────── ⑤-c（2026-10-03）：3 例「装配级内联对照」已删除，原因记录在此 ────────────────
+# 被删用例（见 git 历史）：装配级正证 1 例、装配级反证 1 例、内联宠物查询点 1 例。
+# 原因：它们的验证对象是 legacy.py 那 13 段「注册表未执行则在此重算一遍」的内联兜底
+#   （该夹具只把 1 个 key 标记为「注册表已执行」，其余分区全走内联分支），而那段兜底已随 ⑤-c 删除
+#   ——判据是为「删 legacy」而埋的前置观测 A/B 在 4.5 周内双 0 命中（观测通道本身活跃）。
+# 为什么连反证一起删：正证消失后，「缺 caller 时哨兵不出现」会因为各段落恒落默认值而**恒真**，
+#   留下就是一条失去鉴别力的空断言（比没有更糟）。
+# 覆盖没有缺口：生产路径的 caller 隔离仍由本文件其余用例**逐个查询点直接打 section builder**钉住；
+#   宠物那处另有 section 级孪生用例（走 pets_section）。
+# 补位：41 号用例（test_assembled_section_absent_falls_to_default_a22c5）在装配层钉住**新契约**：
+#   注册表没产出某段 → 该段落默认值且不由这里重算；配一对「喂进注册表值 → 哨兵必须出现」的反证，
+#   免得「文本里没有哨兵」退化成恒真。
+# 保留：_guard_assembled / _run_legacy_pure / _run_legacy_pure_bare —— MCP 与 trim 那批用例仍在用。
 
 
-def test_legacy_inline_pets_call_site(fc_db, monkeypatch):
-    """④连线（真实执行内联分支）：``_section_values={"relationship": ""}`` 时 ``pets`` 不在注册表已执行
-    集合 ⇒ 走 legacy 自己的 :333 查询，口径必须与 39 号（注册表 section 入口）一致。
+# ═══════════════════ 41. ⑤-c 新契约（装配级）：段未产出 → 落默认值，且不再由这里重算 ═══════════════════
 
-    这里不打桩下游——变异 :333 回到 ``…, 1)`` 时缺 caller 那跑会重新注入 1 号宠物，本例即红。
+
+def test_assembled_section_absent_falls_to_default_a22c5(fc_db, monkeypatch):
+    """⑤-c 删掉内联兜底后，装配层的**新**契约：注册表没产出某段 ⇒ 该段落默认值，不重算。
+
+    反证成对（B 家族统一口径）：同一 state 把该段的注册表值喂进去 → 哨兵必须出现。
+    少了这一半，「文本里没有哨兵」可能只是夹具根本没这条数据，断言会失去鉴别力。
     """
-    pos_text = _all_system_text(_run_legacy_assembly(monkeypatch, fc_db, 1))
-    assert "PETB6_咪咪" in pos_text, "带 caller 时内联分支没注入 1 号宠物 → 反证会是空断言"
-    assert "AIPETB6_团子" in pos_text, "带 caller 时内联分支没注入角色自养 AI 宠物 → 正证不完整"
-    assert "PET2B6_旺财" not in pos_text, "1 号那轮把 2 号账号的宠物也捞进来了"
+    import random
 
-    neg_text = _all_system_text(_run_legacy_assembly(monkeypatch, fc_db, _NO_CALLER))  # 不抛异常
-    assert "AIPETB6_团子" in neg_text, "缺 caller 时把角色自养的 AI 宠物也掐了（超出 fail-closed 射程）"
-    assert "PETB6_咪咪" not in neg_text, "缺 caller 时 :333 仍把这一轮的宠物冒充成 1 号账号"
-    assert "PETB6_无归属" not in neg_text, "缺 caller 时 :333 把 1 号的无归属旧数据宠物冒充进来了"
-    assert "PET2B6_旺财" not in neg_text, "缺 caller 时 :333 把 2 号账号的宠物冒充进来了"
+    from app.agent.context import legacy as lg
+
+    _patch_session(monkeypatch, fc_db)
+    monkeypatch.setattr(random, "random", lambda: 0.0)
+
+    def _assemble(extra: dict) -> str:
+        out = asyncio.run(lg.build_context_legacy(
+            _assembly_state(1),
+            _section_values={"relationship": "", **extra},
+            _trim=lg._trim_limits(True),
+        ))
+        return _guard_assembled(out)
+
+    pos = _assemble({"pets": "PETB6_咪咪 AIPETB6_团子"})
+    assert "PETB6_咪咪" in pos, "覆盖块没把注册表的 pets 填进装配 → 下面的「缺席」断言会是空断言"
+
+    neg = _assemble({})
+    assert "咪咪" not in neg and "旺财" not in neg, (
+        "legacy 又自己重算了宠物段 ⇒ ⑤-c 删掉的「按 caller 过滤的查询」出现第二份实现")
+    assert "PETB6_无归属" not in neg and "AIPETB6_团子" not in neg, "同上：AI 宠物/无归属行也不该由这里重算"

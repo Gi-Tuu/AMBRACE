@@ -438,20 +438,27 @@ def test_构造抛异常时注入fail_open不冒泡(cl_db, monkeypatch):
 
 
 def test_build_context装配出口接线_双向(monkeypatch, cl_db):
-    """build_context 出口接线：关 → 消息结构逐字旧行为；开 → 多一块清单且在宿主 user 之前。"""
+    """build_context 出口接线：关 → 消息结构逐字旧行为；开 → 多一块清单且在宿主 user 之前。
+
+    A22 ⑤-a（2026-10-03）：原先靠 `agent_context_registry=False` 把执行逼进 flag-off 分支，
+    再 patch `cb.build_context_legacy` 当注入缝——**这条测试要验的是 build_context 的出口接线，
+    不是注册表本体**。该 flag 已转正（分支被删），故改成直接 patch 注册表入口
+    `app.agent.context.build_context`：`cb.build_context` 内部是 `from app.agent import context as _ctx`
+    后调用 `_ctx.build_context(...)`，属调用时刻解析 ⇒ 桩照样打得上，且不再依赖任何已删分支。
+    """
     from app.agent.loop import AGENT_FLAGS
-    monkeypatch.setitem(AGENT_FLAGS, "agent_context_registry", False)
+    import app.agent.context as _ctx_mod
     monkeypatch.setitem(AGENT_FLAGS, "cross_char_fact_sync", False)
     _seeds_all(cl_db)
 
-    async def _fake_legacy(state, **_kw):
+    async def _fake_assembly(state, *, stream=None, **_kw):
         state["context_messages"] = [
             {"role": "system", "content": "主模板块"},
             {"role": "user", "content": "在忙吗"},
         ]
         state["_host_user_msg_index"] = 1
         return state
-    monkeypatch.setattr(cb, "build_context_legacy", _fake_legacy)
+    monkeypatch.setattr(_ctx_mod, "build_context", _fake_assembly)
 
     calls: list = []
     monkeypatch.setitem(AGENT_FLAGS, "survival_checklist", False)

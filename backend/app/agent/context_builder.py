@@ -962,10 +962,11 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
 async def build_context(state: dict, *, stream: bool | None = None) -> dict:
     """构建完整的上下文 prompt（公开入口）。
 
-    Feature Flag ``agent_context_registry``（默认开）：
-    - 开：走 ``app.agent.context.build_context``（注册表驱动，MCP/记忆两 section 经注册表计算，
-      其余委托 ``build_context_legacy``，行为零变化）。
-    - 关：直接回退旧实现 ``build_context_legacy``。
+    装配一律走注册表入口 ``app.agent.context.build_context``（MCP/记忆等 section 经注册表计算，
+    最终组装仍委托 ``build_context_legacy``，行为零变化）。
+    原 ``agent_context_registry`` flag 与其 flag-off 分支已于 **A22 ⑤-b（2026-10-03）转正删除**：
+    判据＝生产库 ``runtime_flags`` 无该键覆盖行 ＋ 回退观测点 ``context_legacy_flag_off``
+    自接入起 7 周（2026-08-15→10-03，954,765 行留痕）**0 命中**。
 
     `stream`（P2-A）：显式标记流式模式；None 时从 state 推断（state["stream_sink"] 非空 = 流式）。
     流式模式下 MCP 工具声明/资源摘要不注入（见 section_mcp）。
@@ -980,12 +981,6 @@ async def build_context(state: dict, *, stream: bool | None = None) -> dict:
             await _ensure_reasoning_names(state)
     except (TypeError, ValueError):
         pass
-
-    try:
-        from app.agent.loop import AGENT_FLAGS
-        use_registry = AGENT_FLAGS.get("agent_context_registry", True)
-    except Exception:
-        use_registry = True
 
     # §20（2026-09-04）：cross_char_fact_sync 开 → 本角色构建上下文前先做惰性对齐：
     # 把它同槽旧值 per-char 记忆标 stale（复用 #70，不删可追溯，失败静默不阻塞）。
@@ -1003,17 +998,9 @@ async def build_context(state: dict, *, stream: bool | None = None) -> dict:
     # 每轮入口必 set（含 None），故即使本轮异常退出没走到 finally，下一轮也会先覆盖成自己的值。
     _tier_token = set_turn_context_budget_tier(await _resolve_account_budget_tier(state.get("user_id")))
     try:
-        if use_registry:
-            from app.agent import context as _ctx
-            result = await _ctx.build_context(state, stream=stream)
-        else:
-            # F8 回退观测：flag 关=旧实现直入（观测一版本零命中后可移除 flag-off 分支，F8-2 前置 A）
-            try:
-                from app.memory.observability import obs_event
-                obs_event(state.get("character_id"), "context_legacy_flag_off", {})
-            except Exception:
-                pass
-            result = await build_context_legacy(state, stream=stream)
+        # ⑤-b 转正：注册表是唯一入口，flag-off 分支与 context_legacy_flag_off 观测点已删除
+        from app.agent import context as _ctx
+        result = await _ctx.build_context(state, stream=stream)
 
         # P1 压缩存活项清单（要求 B②）：装配完成后作为高优先 system 块注入（灰度双条件，
         # 关/未命中 → 直接返回，不多查库、消息结构逐字不变）。

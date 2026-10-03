@@ -1,22 +1,19 @@
-"""build_context_legacy —— 旧实现单独安置（F3，2026-08-31 自 context_builder.py 迁入）。
+"""build_context_legacy —— 上下文最终组装器（F3，2026-08-31 自 context_builder.py 迁入）。
 
-- flag `use_legacy_context` 关闭（默认）后此函数仍作为注册表路径的委托后端；
-  稳定一版本、trace 无回退命中后整体删除（预计净删约 1100 行）。
+- 现状（A22 ⑤-b/⑤-c，2026-10-03）：注册表是唯一装配入口，本函数接收它算好的分区值做最终组装；
+  `agent_context_registry` flag 与「注册表未产出则在此重算一遍」的 13 段内联兜底均已删除（判据与
+  语义变化见 build_context_legacy 函数体注释）。`_section_values=None` 时仍走自算路径
+  （tests 的 `_run_legacy_pure*` 夹具这样调用）。
 - 接缝已摘除（2026-09-02）：本模块改为显式 import 依赖（见下方），不再经 _sync_seams
   把 context_builder 命名空间同步进 globals；裸名字静态可解析，可被 ruff 检查。
-- 稳定后删除本文件时，同步删除 context_builder 的薄壳委托与 use_legacy_context 开关。
+- 整体退场（本文件 + context_builder 的薄壳委托）尚未拍板，勿据此删除。
 """
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.utils.logger import get_logger
-from app.utils.timeutil import now_naive_utc, to_naive_utc
 from app.agent.context_builder import (
     AICharacter,
-    AIMoment,
-    ChatMessage,
-    ChatSession,
-    MAX_RECENT_MESSAGES,
     ProactiveSettings,
     SYSTEM_PROMPT_TEMPLATE,
     _EST_CHARS_PER_TOKEN,
@@ -24,10 +21,8 @@ from app.agent.context_builder import (
     _apply_system_total_quota,
     _build_mcp_resources_text,
     _build_mcp_tools_text,
-    _build_older_summaries,
     _build_retrieved_memory_lines,
     _build_user_info,
-    _build_user_manual_state_text,
     _bump_memory_round,
     _clip_text_to_quota,
     _enforce_user_message_last,
@@ -56,31 +51,43 @@ def _warn_context_inject_no_caller_once() -> None:
 
 
 async def build_context_legacy(state: dict, *, stream: bool | None = None, _section_values: dict | None = None, _trim: dict | None = None) -> dict:
-    """旧实现（回退函数）：构建完整的上下文 prompt（近1天完整消息 + 更早日概要 + 朋友圈）。
+    """上下文最终组装器：构建完整的上下文 prompt（近1天完整消息 + 更早日概要 + 朋友圈）。
 
     `stream`（P2-A）：显式标记流式模式；None 时从 state 推断（state["stream_sink"] 非空 = 流式）。
     流式模式下 MCP 工具声明不注入（见 _build_mcp_tool_declarations）。
 
     `_section_values`（注册表内部）：由 context.build_context 走注册表算出的分区值（template 槽 /
     append 块），含**所有已执行** section 的键（结果为空的键也写入，可能为空串/空列表）。提供时
-    对已执行键跳过对应内联计算（含 DB 查询），用注册表值覆盖；section 抛异常未执行的键不写入，
-    照常内联计算兜底。记忆轮次 +1 已在入口由注册表路径执行。
+    这些键的值由下方「步骤5」覆盖块填充；未执行的键（section 抛异常/被关闭）不写入，落各段的默认值
+    （⑤-c 起不再由这里重算）。记忆轮次 +1 已在入口由注册表路径执行。
 
     `_trim`（注册表内部）：热度裁剪参数（含 _is_hot_character 近 7 天消息数查询）。注册表路径
-    已通过 `_resolve_trim` 算好并注入，此处直接复用，避免注册表与 legacy 各查一次；缺省（None）
-    时照常自算——Feature Flag 关闭（纯 legacy）路径零行为变化。
+    已通过 `_resolve_trim` 算好并注入，此处直接复用，避免注册表与组装器各查一次；缺省（None，
+    即 `_section_values` 也没传的自算调用）时照常自算。
 
-    本函数为聚合组装：占位符语义（moments 无内容仍「暂无」、pets 仍「无」、world_facts 仍「无」等）
-    与内联一致，输出与现状逐字节一致。
+    本函数为聚合组装：占位符语义保持（moments 无内容仍「暂无」、pets 仍「无」、world_facts 仍「无」），
+    注册表正常产出时装配结果与 ⑤-c 之前逐字节一致；某段未产出时该段落默认值，缺口由 WARNING
+    日志与 `context_section_failed` 留痕（fail-visible）。
     """
     # 接缝已摘除（2026-09-02）：依赖名字已显式 import，无需 _sync_seams 自同步。
     # P2-A：流式模式判定（LangGraph 只传 state，从 state["stream_sink"] 推断；可显式覆盖）
     _is_stream_ctx = bool(state.get("stream_sink")) if stream is None else bool(stream)
-    # P3-1（2026-08-31）：注册表已执行的 section 键集合（含结果为空的键）。已执行键在下方跳过
-    # 对应内联计算（含 DB 查询），值由覆盖块用注册表值填充；未执行键（section 抛异常/关闭）不写入，
-    # 照常内联计算兜底。_sv 提前计算，供各处「key in _sv」判断（template/append 一致）。
+    # P3-1（2026-08-31）：注册表已执行的 section 键集合（含结果为空的键）。已执行键的值由下方覆盖块
+    # 用注册表结果填充；未执行键（section 抛异常/被关闭）不写入，落各段的默认值。
+    # _sv 提前计算，供各处「key in _sv」判断（template/append 一致）。
     _sv = _section_values or {}
     _registry_done = set(_sv.keys())
+    # ⑤-c（2026-10-03）：本函数原有 13 段「〔key〕未被注册表执行则在此重算一遍」的内联兜底已删除。
+    # 判据＝为「删 legacy」而埋的前置观测（提交 61ad71de，2026-09-01）在 4.5 周内 A/B 双 0 命中，
+    #   而观测通道本身活跃（memory_obs 59,005 行 / 最近 7 天 52,988 行）⇒ 兜底从未被触发。
+    # 语义变化（**有意为之，fail-visible**）：某个 section 抛异常时，该段不再由这里重算，
+    #   而是落到下面的**默认值**（"无" / "暂无" / 空串），缺哪一段从日志与 context_section_failed
+    #   留痕里能看出来；代价是少了一层纵深，收益是「按 caller 过滤的查询」从此只有一份实现
+    #   （B 家族 43 处审计当初就是为了抓这份重复实现里漏传 caller）。
+    # 上面各段的默认值赋值行**全部保留**——B 类覆盖块与尾部装配仍会读这些名字。
+    # 已随之删除的测试：test_context_no_caller_failclosed.py 的 3 例装配级内联对照
+    #   （它们是这 10 处内联实现的唯一覆盖；生产路径的 caller 隔离由该文件里逐个查询点的
+    #   section 级用例继续钉，装配层则新增一例钉「段未产出 → 落默认值且不重算」的新契约）。
     async with async_session_factory() as db:
         result = await db.execute(
             select(AICharacter).where(AICharacter.id == state["character_id"])
@@ -96,7 +103,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
 
     # 热度裁剪（2026-08-16，方案 B）：低频角色缩小日摘要/织库注入（Feature Flag agent_context_trim 默认开）
     # P3-1：注册表路径已用 _resolve_trim 算好同一 trim（含 _is_hot_character 近 7 天消息数查询）并注入，
-    # 此处直接复用，避免注册表与 legacy 各查一次；未注入（flag-off 纯 legacy）照常自算，零行为变化。
+    # 此处直接复用，避免注册表与组装器各查一次；未注入（自算调用）时照常自算。
     if _trim is None:
         hot = True
         try:
@@ -144,132 +151,13 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     relationship = _persona["relationship"]
     current_status = _persona["current_status"]
 
+    # ⑤-c 起本函数不再自算下面这些段：值只有「默认值」与「步骤5 覆盖块填入的注册表值」两种来源，
+    # 段未产出（抛异常/被关闭）就保持默认值。
     # 最近1天完整消息
-    # P3-1：注册表已执行 chat_history 时跳过内联（含最近/更早消息 DB 查询 + 日摘要补生成），
-    # 值由覆盖块用注册表值填充；未执行（section 抛异常）时照常内联兜底。
     chat_history = ""
-    if "chat_history" not in _registry_done:
-        one_day_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
-
-        async with async_session_factory() as db:
-            recent_result = await db.execute(
-                select(ChatMessage)
-                .where(
-                    ChatMessage.session_id == state["session_id"],
-                    ChatMessage.created_at >= one_day_ago,
-                )
-                .order_by(ChatMessage.created_at.asc())
-            )
-            recent_msgs = list(recent_result.scalars().all())
-
-        # 限制注入条数：最近的 MAX_RECENT_MESSAGES 条完整注入，更早部分并入日摘要
-        older_extra = []
-        if len(recent_msgs) > MAX_RECENT_MESSAGES:
-            older_extra = recent_msgs[:-MAX_RECENT_MESSAGES]
-            recent_msgs = recent_msgs[-MAX_RECENT_MESSAGES:]
-
-        import json as _json
-        # 代词锚（P1-2）：历史行标注"用户(昵称/他)"与"你(角色名)"，长上下文指代不漂移
-        _gender_cn_user = "他" if (user and (user.gender or "").strip().lower() in ("male", "男")) else ("她" if (user and (user.gender or "").strip().lower() in ("female", "女")) else "TA")
-        chat_history_lines = []
-        _bj_today = datetime.now(timezone(timedelta(hours=8))).date()
-        for msg in recent_msgs:
-            sender = f"用户({user_name}/{_gender_cn_user})" if msg.sender_type == "user" else f"你({char_name})"
-            # 历史行时间戳（P2，2026-08-17）：同天标 [HH:MM]，跨天标 [MM-DD HH:MM]，防相对时间词漂移
-            _ts = ""
-            try:
-                if msg.created_at is not None:
-                    from app.utils.timeutil import shift_utc_naive
-                    _mt_bj = shift_utc_naive(msg.created_at, 8)
-                    _hhmm = f"{_mt_bj.hour:02d}:{_mt_bj.minute:02d}"
-                    _ts = f"[{_hhmm}] " if _mt_bj.date() == _bj_today else f"[{_mt_bj.month:02d}-{_mt_bj.day:02d} {_hhmm}] "
-            except Exception:
-                _ts = ""
-            content = msg.content[:200] if len(msg.content) > 200 else msg.content
-            # 图片消息：用 extra_meta 里的图片描述 + 配文组装（用户端只显示图片+配文，描述仅 AI 可见）
-            if msg.image_url:
-                desc_text = ""
-                try:
-                    meta = _json.loads(msg.extra_meta or "{}")
-                    desc_text = (meta.get("image_desc") or {}).get("text", "") or ""
-                except Exception:
-                    desc_text = ""
-                if desc_text:
-                    line = f"[\u56fe\u7247\uff0c\u5185\u5bb9\uff1a{desc_text[:120]}]"
-                    if content:
-                        line += f"\uff08\u7528\u6237\u8bf4\uff1a{content[:80]}\uff09"
-                    content = line
-                else:
-                    content = f"[\u56fe\u7247] {content}" if content else "[\u56fe\u7247]"
-            else:
-                # 文件/语音消息：extra_meta 摘要/转写文本进 AI 上下文（用户端显示卡片/音频）
-                try:
-                    meta = _json.loads(msg.extra_meta or "{}")
-                except Exception:
-                    meta = {}
-                if meta.get("file"):
-                    f_meta = meta["file"]
-                    summary = (f_meta.get("summary") or "").strip()
-                    fname = f_meta.get("name") or ""
-                    if summary:
-                        content = f"[\u6587\u4ef6\u300a{fname}\u300b\uff0c\u5185\u5bb9\u6458\u8981\uff1a{summary[:2000]}]"
-                    else:
-                        fsize = f_meta.get("size") or ""
-                        ftype = f_meta.get("type") or ""
-                        content = f"[\u6587\u4ef6\u300a{fname}\u300b\uff08{ftype}{fsize}\uff09]"
-                elif meta.get("voice"):
-                    v_meta = meta["voice"]
-                    tr = (v_meta.get("transcript") or "").strip()
-                    if tr:
-                        content = f"[\u8bed\u97f3\u6d88\u606f\uff0c\u7528\u6237\u8bf4\uff1a{tr[:200]}]"
-                    else:
-                        content = "[\u8bed\u97f3\u6d88\u606f\uff08\u6682\u65e0\u6cd5\u8f6c\u5199\uff09]"
-            # 完整引用消息 v2.0.0：用户消息若带引用，附加被引用内容供 AI 理解
-            try:
-                _qmeta = _json.loads(msg.extra_meta or "{}").get("quote")
-            except Exception:
-                _qmeta = None
-            if isinstance(_qmeta, dict) and _qmeta.get("content"):
-                _q_sender = _qmeta.get("sender")
-                _q_label = user_name if _q_sender == "user" else char_name
-                _q_text = str(_qmeta.get("content"))[:100]
-                _q_line = f"（引用了{_q_label}的消息：{_q_text}）"
-                content = f"{content} {_q_line}" if content else _q_line
-            chat_history_lines.append(f"{_ts}{sender}: {content}")
-        chat_history = "\n".join(chat_history_lines) or ""
-
-        # 更早消息概要（G-P1-1，2026-08-18：补生成逻辑已抽至 _build_older_summaries，单次最多补 1 天）
-        async with async_session_factory() as db:
-            older_result = await db.execute(
-                select(ChatMessage)
-                .where(
-                    ChatMessage.session_id == state["session_id"],
-                    ChatMessage.created_at < one_day_ago,
-                )
-                .order_by(ChatMessage.created_at.asc())
-                .limit(5000)  # P1 性能（2026-08-16）：防极端历史全量加载
-            )
-            older_msgs = list(older_result.scalars().all()) + older_extra
-
-        if older_msgs:
-            older_summary = await _build_older_summaries(state, older_msgs, char_name, _trim)
-            if older_summary:
-                if chat_history:
-                    chat_history = older_summary + "\n\n---\n\n" + chat_history
-                else:
-                    chat_history = older_summary
 
     # P4：世界状态（当前事实折叠，失败静默缺省"无"）
-    # P3-1：注册表已执行 world_facts 时跳过内联（含 DB 查询），值由覆盖块用注册表值填充。
     world_facts_text = "无"
-    if "world_facts" not in _registry_done:
-        try:
-            from app.events.facts import get_character_view
-            _wv = await get_character_view(state.get("character_id"), state.get("user_id"))
-            if _wv:
-                world_facts_text = _wv
-        except Exception as e:
-            _logger.warning("World facts inject failed: %s", e)
 
     # P1：核心记忆 + 关系锚点 + 开放循环（World & Cognition；失败静默，缺省"无"；
     # X-4：核心/锚点注入上限按热度裁剪，复用 _trim_limits）
@@ -287,73 +175,11 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
         memories_text = "\n".join(memory_lines) if memory_lines else "\u6682\u65e0"
 
     # 朋友圈：角色自己最近 1 条 + 用户最近 3 条（近 7 天），让角色记得用户发过的内容（零额外 LLM）
-    # P3-1：注册表已执行 moments 时跳过内联（含 DB 查询），值由覆盖块用注册表值填充。
     moments_text = "\u6682\u65e0"
-    if "moments" not in _registry_done:
-        try:
-            moments_lines = []
-            async with async_session_factory() as db:
-                own_result = await db.execute(
-                    select(AIMoment)
-                    .where(AIMoment.character_id == state["character_id"], AIMoment.is_active == True)
-                    .order_by(AIMoment.created_at.desc())
-                    .limit(1)
-                )
-                own = own_result.scalars().all()
-                user_result = await db.execute(
-                    select(AIMoment)
-                    .where(
-                        AIMoment.sender_type == "user",
-                        AIMoment.user_id == state.get("user_id"),
-                        AIMoment.is_active == True,
-                        AIMoment.created_at >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7),
-                    )
-                    .order_by(AIMoment.created_at.desc())
-                    .limit(3)
-                )
-                user_moments = user_result.scalars().all()
-            if own:
-                moments_lines.append(f"[\u4f60\u53d1\u7684 {str(own[0].created_at)[:10]}] {own[0].content[:100]}")
-            for m in user_moments:
-                moments_lines.append(f"[\u7528\u6237\u53d1\u7684 {str(m.created_at)[:10]}] {m.content[:100]}")
-            if moments_lines:
-                moments_text = "\n".join(moments_lines)
-        except Exception as e:
-            _logger.warning("Failed to query moments: %s", e)
 
     # 宠物信息（只注入：用户养的宠物 + 当前角色自己养的 AI 宠物；
     # 其他角色养的 AI 宠物不注入，防止"别人的宠物被算作自己/用户养的"；只读注入不落库）
-    # P3-1：注册表已执行 pets 时跳过内联（含 DB 查询 + 衰减），值由覆盖块用注册表值填充。
     pets_text = "无"
-    if "pets" not in _registry_done:
-        try:
-            from app.models.pet import Pet as PetModel
-            from app.application.pet_service import apply_decay as pet_apply_decay, species_label as pet_species_label, species_fact as pet_species_fact
-            from sqlalchemy import or_ as _or_
-            _uid = state.get("user_id")
-            _cid = state.get("character_id")
-            async with async_session_factory() as db:
-                pets_result = await db.execute(
-                    select(PetModel).where(_or_(
-                        (PetModel.user_id == _uid) & (PetModel.owner_type.is_(None)),   # 旧数据（无归属）视为用户宠物
-                        (PetModel.user_id == _uid) & (PetModel.owner_type == "user"),   # 用户宠物
-                        (PetModel.owner_type == "ai") & (PetModel.owner_id == _cid),    # 当前角色自己养的 AI 宠物
-                    )).order_by(PetModel.created_at.asc())
-                )
-                user_pets = pets_result.scalars().all()
-            if user_pets:
-                pet_lines = []
-                for p in user_pets:
-                    pet_apply_decay(p)
-                    owner_prefix = "你养的" if (p.owner_type == "ai" and p.owner_id == _cid) else "用户家的"
-                    pet_lines.append(
-                        f"- {owner_prefix}{p.name}（{pet_species_label(p.species)}）：{p.status_text}，"
-                        f"饱食度 {p.hunger}%、心情 {p.mood}%、精力 {p.energy}%、清洁度 {p.cleanliness}%"
-                        + (f"；习性：{pet_species_fact(p.species)}" if pet_species_fact(p.species) else "")
-                    )
-                pets_text = "\n".join(pet_lines)
-        except Exception as e:
-            _logger.warning("Failed to load pets: %s", e)
 
     storyline_recall = _persona["storyline_recall"]
 
@@ -362,226 +188,42 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
     storyline_status = _persona["storyline_status"]
 
     # 用户情绪感知（P2-1）：轻量规则器，零 token；认知循环开启时优先用感知层结果（等价回退）
-    # P3-1：注册表已执行 user_emotion 时跳过内联（规则器检测），值由覆盖块用注册表值填充。
     user_emotion = "无"
-    if "user_emotion" not in _registry_done:
-        _perception = state.get("perception") or {}
-        try:
-            emo = _perception.get("emotion") or ""
-            if not emo:
-                from app.domain.emotion.model import detect_user_emotion
-                emo = detect_user_emotion(state.get("user_message", ""))
-            if emo:
-                user_emotion = emo
-        except Exception as e:
-            _logger.warning("Failed to detect user emotion: %s", e)
 
     recent_emotion = _persona["recent_emotion"]
 
     # 用户八维可视化状态（用户手动设置）：全 50=未设置则跳过；有非默认值才注入（控 token）。
     # G-P2-4（2026-08-18）：独立分区（不再混入「用户情绪」区），与规则器情绪提示分离、各自独立配额
-    # P3-1：注册表已执行 user_manual_state 时跳过内联（含 DB 查询），值由覆盖块用注册表值填充。
     user_manual_state = ""
-    if "user_manual_state" not in _registry_done:
-        try:
-            from app.models.user import UserState
-            async with async_session_factory() as db:
-                _ur = await db.execute(select(UserState).where(UserState.user_id == state.get("user_id")))
-                _u = _ur.scalar_one_or_none()
-            if _u is not None:
-                _cn = {"mood": "心情", "body_temp": "体温", "desire": "性欲", "possessiveness": "占有欲",
-                       "fatigue": "疲惫感", "sensitivity": "敏感度", "comfort": "舒适感", "anger": "怒气值"}
-                _vals = {k: getattr(_u, k) for k in _cn}
-                if any(v != 50 for v in _vals.values()):
-                    _parts = [f"{_cn[k]}{v}" for k, v in _vals.items() if v != 50]
-                    user_manual_state = _build_user_manual_state_text(_parts)
-        except Exception as e:
-            _logger.warning("Failed to load user states: %s", e)
 
     # 手机感知（用户授权采集的屏幕/剪贴板/相册快照，仅注入文本）
-    # P3-1：注册表已执行 phone_perception 时跳过内联（含 DB 查询），值由覆盖块用注册表值填充。
     phone_perception = "无"
-    if "phone_perception" not in _registry_done:
-        try:
-            from app.application.phone_service import get_recent_perception_text
-            phone_text = await get_recent_perception_text(state.get("user_id"))
-            if phone_text:
-                phone_perception = phone_text
-        except Exception as e:
-            _logger.warning("Failed to load phone perception: %s", e)
 
     # 小手机（2026-08-11）：角色日历备注 + 浏览器搜索历史（仅文本注入）
-    # P3-1：注册表已执行 phone_desktop 时跳过内联（含 DB 查询），值由覆盖块用注册表值填充。
     phone_desktop = "无"
-    if "phone_desktop" not in _registry_done:
-        try:
-            from app.application.phone_desktop_service import get_phone_desktop_inject_text
-            _cid = state.get("character_id")
-            if _cid:
-                _pdt = await get_phone_desktop_inject_text(int(_cid))
-                if _pdt:
-                    phone_desktop = _pdt
-        except Exception as e:
-            _logger.warning("Phone desktop inject failed: %s", e)
 
     # 进行中的时间承诺（防剧情穿帮：AI 承诺未到期时不得提前演"回来了"；2026-08-14 修复）
-    # P3-1：注册表已执行 pending_timer 时跳过内联（含 DB 查询），值由覆盖块用注册表值填充。
     pending_timer_text = "无"
-    if "pending_timer" not in _registry_done:
-        try:
-            from app.scheduling.promise_service import get_pending_timer_text
-            _pt = await get_pending_timer_text(state.get("character_id"), state.get("user_id"))
-            if _pt:
-                pending_timer_text = _pt
-        except Exception as e:
-            _logger.warning("Pending timer inject failed: %s", e)
 
     # 时间感知（2026-08-08）：北京时间兜底 + 用户本地时区（若上报）+ 距上次互动时长
-    # P3-1：注册表已执行 current_time 时跳过内联（含距上次互动 ChatSession 查询），值由覆盖块用注册表值填充。
     current_time_str = ""
-    if "current_time" not in _registry_done:
-        beijing_tz = timezone(timedelta(hours=8))
-        now = datetime.now(beijing_tz)
-        weekday_cn = ["\u661f\u671f\u4e00", "\u661f\u671f\u4e8c", "\u661f\u671f\u4e09", "\u661f\u671f\u56db", "\u661f\u671f\u4e94", "\u661f\u671f\u516d", "\u661f\u671f\u65e5"]
-        wd = weekday_cn[now.weekday()]
-        current_time_str = f"{now.year}\u5e74{now.month}\u6708{now.day}\u65e5 {wd} {now.hour}:{now.minute:02d}\uff08\u5317\u4eac\u65f6\u95f4\uff09"
-        try:
-            _tz_min = getattr(user, "timezone_offset_minutes", None)
-            if _tz_min is not None:
-                _local = now + timedelta(minutes=int(_tz_min) - 8 * 60)
-                current_time_str += f"\uff5c\u4f60\u90a3\u8fb9 {_local.year}\u5e74{_local.month}\u6708{_local.day}\u65e5 {weekday_cn[_local.weekday()]} {_local.hour}:{_local.minute:02d}"
-        except Exception as e:
-            _logger.warning("Timezone inject failed: %s", e)
-        # S-1 季节/节日注入（2026-08-16）：时间感知补季节与节日，角色言行随节气/节日变化（失败静默）
-        try:
-            from app.scheduling.holiday_calendar import get_holidays
-            _hols = get_holidays(now.date())
-            if _hols:
-                _hnames = "、".join(h["name"] for h in _hols if h.get("lang") == "zh") or "、".join(h["name"] for h in _hols)
-                current_time_str += f"｜今天节日：{_hnames}"
-            _mon = now.month
-            _season = ("春季" if _mon in (3, 4, 5) else "夏季" if _mon in (6, 7, 8)
-                       else "秋季" if _mon in (9, 10, 11) else "冬季")
-            current_time_str += f"｜{_season}"
-        except Exception as e:
-            _logger.warning("Season/holiday inject failed: %s", e)
-        # 距上次互动（该用户+角色的最近会话更新时间，主动消息同样覆盖）
-        try:
-            async with async_session_factory() as db:
-                _sr = await db.execute(
-                    select(ChatSession)
-                    .where(
-                        ChatSession.user_id == state.get("user_id"),
-                        ChatSession.character_id == state["character_id"],
-                    )
-                    .order_by(ChatSession.updated_at.desc())
-                    .limit(1)
-                )
-                _last_session = _sr.scalar_one_or_none()
-            if _last_session is not None and _last_session.updated_at is not None:
-                _last_dt = to_naive_utc(_last_session.updated_at)
-                _delta = now_naive_utc() - _last_dt
-                _secs = max(0, int(_delta.total_seconds()))
-                if _secs < 60:
-                    _ago = "\u521a\u521a"
-                elif _secs < 3600:
-                    _ago = f"{_secs // 60} \u5206\u949f\u524d"
-                elif _secs < 86400:
-                    _h, _m = divmod(_secs // 60, 60)
-                    _ago = f"{_h} \u5c0f\u65f6 {_m} \u5206\u949f\u524d"
-                elif _secs < 172800:
-                    _ago = "\u6628\u5929"
-                elif _secs < 604800:
-                    _ago = f"{_secs // 86400} \u5929\u524d"
-                elif _secs < 2592000:
-                    _ago = f"{_secs // 604800} \u5468\u524d"
-                elif _secs < 31536000:
-                    _ago = f"{_secs // 2592000} \u4e2a\u6708\u524d"
-                else:
-                    _ago = "\u5f88\u4e45"
-                current_time_str += f"\uff5c\u8ddd\u4e0a\u6b21\u4e92\u52a8 {_ago}"
-        except Exception as e:
-            _logger.warning("Last interaction inject failed: %s", e)
 
     # 位置感知 + 天气（2026-08-08）：用户开启位置信息后注入城市（GPS 反查优先）+ 当前天气（Open-Meteo，30 分钟缓存，失败静默）
-    # P3-1：注册表已执行 location（append 块）时跳过内联（含天气服务查询），追加块用 _sv["location"]；
-    # 未执行（section 抛异常）时照常内联兜底。
     location_text = ""
-    if "location" not in _registry_done:
-        try:
-            if getattr(user, "location_enabled", False):
-                _uloc = getattr(user, "location_city", None) or getattr(user, "user_location", None)
-                _aloc = getattr(user, "ai_location", None)
-                if getattr(user, "location_follow", False):
-                    _aloc = _uloc
-                _parts = []
-                if _uloc:
-                    _parts.append(f"\u7528\u6237\u6240\u5728\u57ce\u5e02\uff1a{_uloc}")
-                if _aloc:
-                    _parts.append(f"\u4f60\u7684\u4f4d\u7f6e\uff1a{_aloc}")
-                if _parts:
-                    location_text = (
-                        "\u300c\u4f4d\u7f6e\u611f\u77e5\u300d" + "\uff1b".join(_parts)
-                        + "\u3002\u53ef\u5728\u804a\u5929\u4e2d\u81ea\u7136\u63d0\u53ca\uff0c\u4f46\u4e0d\u8981\u523b\u610f\u5ff5\u6570\u636e\u3002"
-                    )
-                # 天气注入：坐标优先，其次城市名；仅注入一句话天气（带缓存，失败静默）
-                try:
-                    from app.application.weather_service import get_weather_text
-                    _wtext = await get_weather_text(
-                        getattr(user, "location_lat", None),
-                        getattr(user, "location_lng", None),
-                        _uloc or "",
-                    )
-                    if _wtext:
-                        location_text += f"\u300c\u5929\u6c14\u300d\u4f60\u90a3\u8fb9\u5f53\u524d\uff1a{_wtext}\u3002\u53ef\u5728\u804a\u5929\u4e2d\u81ea\u7136\u63d0\u53ca\u5929\u6c14\uff0c\u4f46\u4e0d\u8981\u523b\u610f\u5ff5\u6570\u636e\u3002"
-                except Exception as _we:
-                    _logger.warning("Weather inject failed: %s", _we)
-        except Exception as e:
-            _logger.warning("Location inject failed: %s", e)
 
     # 组装 context_messages（注入用户画像：性别/对象/关系，消除刻板印象）
-    # P3-1：注册表已执行 user_info 时跳过内联（含用户画像/笔记 DB 查询），最终值用 _sv["user_info"]；
-    # 未执行（section 抛异常）时照常内联兜底。
     user_profile_text = ""
     user_notes_text = ""
-    if "user_info" not in _registry_done:
-        try:
-            from app.agent.user_profile import build_user_profile_text
-            user_profile_text = await build_user_profile_text(state.get("user_id"))
-        except Exception:
-            user_profile_text = f"用户昵称: {user_name}"
-        # 用户备忘录 + 最近日记（用户自己写、供角色阅读；注入失败静默降级）
-        try:
-            from app.agent.user_profile import build_user_notes_text
-            user_notes_text = await build_user_notes_text(state.get("user_id"))
-        except Exception as e:
-            _logger.warning("Load user notes failed: %s", e)
-            user_notes_text = ""
     relationship_state = _persona["relationship_state"]
 
     # 认知循环 v2.1：感知注入 + 规划指令（开关关闭时为空，走旧 prompt）
-    # P3-1：注册表已执行 cognitive_plan 时跳过内联（感知/规划指令），值由覆盖块用注册表值填充。
     cognitive_plan = ""
-    if "cognitive_plan" not in _registry_done and state.get("cognitive_loop_enabled") and state.get("perception"):
-        try:
-            from app.agent.message_classifier import build_perception_section
-            _sec = build_perception_section(state.get("perception"))
-            _hint = (state.get("perception") or {}).get("length_hint") or "medium"
-            _len_cn = {"long": "较长", "short": "简短", "medium": "适中"}.get(_hint, "适中")
-            cognitive_plan = (
-                (_sec + "\n" if _sec else "") +
-                "- 开始回复前先在内心判断这次对话的类型与用户情绪，再决定策略（共情陪伴/直接回答/简短回应/认真接住）与篇幅（建议" + _len_cn + "）。\n"
-                "- 规划完成后，先单独输出一行策略标记：【策略：<策略名>；长度：<短/中/长>】，再输出正文；每回合只输出一行策略标记。"
-            )
-        except Exception as e:
-            _logger.warning("Cognitive plan build failed: %s", e)
-            cognitive_plan = ""
 
     active_topics_text = _persona["active_topics"]
     identity_profile = _persona.get("identity_profile") or ""
 
-    # 步骤5（注册表）：flag-on 主路径下，分区值已由注册表 section 计算；此处用注册表值覆盖内联计算值
-    # （内联值保留，作为 flag-off 回退；两路径必须逐字节一致）。值为未裁剪原始值，后续裁剪块统一处理。
+    # 步骤5（注册表）：分区值已由注册表 section 算出，此处把对应名字填成注册表值；未产出的段保持上面的默认值
+    # （⑤-c 起不再重算）。值为未裁剪原始值，后续裁剪块统一处理。
     _sv = _section_values or {}
     if _sv:
         if "chat_history" in _sv: chat_history = _sv["chat_history"]

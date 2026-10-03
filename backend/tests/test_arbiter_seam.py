@@ -4216,3 +4216,95 @@ def test_A22第九刀c3_8_两轮循环的提前返回语义回传不丢():
     caller = ast.get_source_segment(_a22c11_src(A22C11_MG_PY),
                                     _a22c11_find_fn(_a22c11_src(A22C11_MG_PY), "generate_proactive_event"))
     assert "if _aborted:" in caller and "return [] if not return_reasoning else ([], last_reasoning)" in caller
+
+
+# ── A22 第九刀（⑤-c，2026-10-03）：legacy 的 13 段内联重算兜底已删除，本块钉住"不许复活" ──
+# 背景：`build_context_legacy` 原有 13 段 `if 〔key〕 not in _registry_done:` —— 注册表某段抛异常时
+# 由这里再算一遍。删除判据是**代码自己指定的前置观测**（提交 61ad71de，2026-09-01，原话
+# 「为 legacy.py 删除前置观测 A/B……观测一版本无命中后再清」）：A＝context_legacy_flag_off、
+# B＝context_section_failed，4.5 周内**双 0 命中**，而观测通道本身活跃（memory_obs 59,005 行 /
+# 最近 7 天 52,988 行）⇒ 0 是真没触发，不是没在观测。
+# 语义变化（有意为之）：section 抛异常时该段不再重算，而是落到默认值（"无"/"暂无"/空串），
+# 缺哪一段从日志与 context_section_failed 留痕可见＝fail-visible；收益是「按 caller 过滤的查询」
+# 从此只有一份实现（B 家族 43 处审计当初就是为了抓这份重复实现漏传 caller）。
+A22C12_DROPPED_KEYS = ("chat_history", "world_facts", "moments", "pets", "user_emotion",
+                       "user_manual_state", "phone_perception", "phone_desktop", "pending_timer",
+                       "current_time", "location", "user_info", "cognitive_plan")
+# 13 段的**默认值行**（兜底删了，名字必须还在——B 类覆盖块与尾部装配仍读它们）
+A22C12_DEFAULTS = {
+    "chat_history": 'chat_history = ""',
+    "world_facts": 'world_facts_text = "无"',
+    "moments": 'moments_text = "\\u6682\\u65e0"',
+    "pets": 'pets_text = "无"',
+    "user_emotion": 'user_emotion = "无"',
+    "user_manual_state": 'user_manual_state = ""',
+    "phone_desktop": 'phone_desktop = "无"',
+    "current_time": 'current_time_str = ""',
+    "location": 'location_text = ""',
+    "user_info": 'user_notes_text = ""',
+    "cognitive_plan": 'cognitive_plan = ""',
+}
+A22C12_LEGACY_PY = _seam_src_path("app.agent.context.legacy")
+
+
+def _a22c12_src() -> str:
+    return Path(str(A22C12_LEGACY_PY)).read_text(encoding="utf-8")
+
+
+def test_A22第九刀e_1_十三段内联兜底不许复活():
+    src = _a22c12_src()
+    for k in A22C12_DROPPED_KEYS:
+        assert ('"%s" not in _registry_done' % k) not in src, (
+            k + " 的内联重算兜底又回来了 ⇒ 按 caller 过滤的查询重新变成两份实现")
+        assert ('\'%s\' not in _registry_done' % k) not in src, k
+    assert src.count("not in _registry_done") == 0, "兜底以别的形式复活了"
+
+
+def test_A22第九刀e_2_默认值行一个都不许跟着删():
+    src = _a22c12_src()
+    for k, line in A22C12_DEFAULTS.items():
+        assert line in src, k + " 的默认值赋值行被连带删掉了 ⇒ 尾部装配 NameError"
+
+
+def test_A22第九刀e_3_注册表必须仍覆盖这十三个键():
+    """核心防回归：将来谁新加/恢复一段 legacy 内联、而注册表没接管，本例立刻红。"""
+    from app.agent.context.sections import get_sections
+
+    keys = {s.key for s in get_sections()}
+    missing = [k for k in A22C12_DROPPED_KEYS if k not in keys]
+    assert missing == [], "这些键注册表没接管：%s（那就不该删 legacy 兜底）" % missing
+    assert len(keys) >= 47, "注册表段数意外变少：%d" % len(keys)
+
+
+def test_A22第九刀e_4_fail_visible出口必须还在():
+    """删兜底后，「哪一段没产出」唯一的可见途径就是这条观测 + 一行 WARNING。"""
+    src = Path(str(_seam_src_path("app.agent.context"))).read_text(encoding="utf-8")
+    assert '"context_section_failed"' in src, (
+        "context_section_failed 观测点消失 ⇒ section 异常变成完全静默，兜底已删、告警也没了")
+    assert "context section %s failed" in src, "section 异常的 WARNING 日志被删"
+
+
+def test_A22第九刀e_5_装配级内联对照已随兜底移除():
+    """那 3 例的验证对象已不存在；反证在正证消失后会变成恒真空断言，所以必须一起删。"""
+    # legacy.py 在 backend/app/agent/context/ ⇒ parents[3] 就是 backend
+    failclosed = Path(str(A22C12_LEGACY_PY)).parents[3] / "tests" / "test_context_no_caller_failclosed.py"
+    src = failclosed.read_text(encoding="utf-8")
+    for gone in ("_run_legacy_assembly", "test_legacy_assembly_with_caller_injects",
+                 "test_legacy_assembly_without_caller_failclosed",
+                 "test_legacy_inline_pets_call_site"):
+        assert gone not in src, gone + " 还在，但它验的代码已删 ⇒ 空断言"
+    # 生产路径的 caller 隔离仍由 section 级用例钉住（不是删了就没人管）
+    assert "def test_pets_section_failclosed" in src, "宠物那处的 section 级孪生用例必须仍在"
+    assert "def _guard_assembled" in src, "纯 legacy 分支（MCP/trim）用例还在用这个夹具，不许一起清"
+
+
+def test_A22第九刀e_6_legacy只剩一份分类实现():
+    """⑤-c 顺带消灭的重复实现：消息分类只允许注册表侧一个调用点。"""
+    from app.agent.context import section_persona
+    import app.agent.context.legacy as lg
+
+    assert "app.agent.message_classifier" not in _a22c12_src(), (
+        "legacy 又引用分类器 ⇒ 与 section_persona 形成双实现")
+    ps = Path(str(section_persona.__file__)).read_text(encoding="utf-8")
+    assert "build_perception_section" in ps, "注册表侧的分类调用点消失了（唯一实现没了）"
+    assert lg.build_context_legacy is not None

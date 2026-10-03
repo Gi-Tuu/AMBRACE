@@ -326,7 +326,10 @@ def test_build_context入口先解析档位并收尾复原():
     """源码级接线断言：set 必须早于装配分派，reset 必须在 finally（防跨回合残留）"""
     src = inspect.getsource(cb.build_context)
     set_at = src.index("set_turn_context_budget_tier(await _resolve_account_budget_tier")
-    dispatch_at = src.index("if use_registry:")
+    # R4 随迁（A22 ⑤-b，2026-10-03）：`agent_context_registry` 转正后 `if use_registry:` 这行已不存在，
+    # 装配分派变成唯一一句 `_ctx.build_context(...)`。断言原意一字未变（解析档位要早于装配分派、
+    # 复原要在 finally），只把「分派」的锚点跟着代码搬家换成注册表调用本身。
+    dispatch_at = src.index("result = await _ctx.build_context(state, stream=stream)")
     reset_at = src.index("finally:")
     assert set_at < dispatch_at < reset_at, "解析档位要早于装配，复原要在 finally"
     assert "return result" in src[reset_at:], "复原之后才返回结果"

@@ -59,10 +59,31 @@ def _lines(rel: str) -> list[str]:
     return _read(rel).splitlines()
 
 
-def _slice(rel: str, start: int, end: int) -> str:
-    """取 ``[start, end]`` 闭区间（1-indexed，与设计稿行号一致）的源码片段。"""
+def _slice(rel: str, start: int, end: int, anchor: str | None = None, pad: int = 0) -> str:
+    """取源码片段。给了 ``anchor`` 就**按内容定位**，``start``/``end`` 只当行号提示。
+
+    为什么必须这样：绝对行号是 R4 类隐患，一次拆刀就能挪几百行。A22 ⑤（2026-10-03）实测
+    删 legacy.py 351 行后，本文件三处切片集体误红而内容一字未动；更要紧的是 B1/B2 那 13 处
+    是**否定式**断言（窗口里不许出现 ``scope`` 谓词）——行号一漂，窗口滑到无关代码上，
+    否定断言就**空转通过**（静默假绿，比误红危险得多）。
+
+    口径：全文搜 ``anchor``、取**离提示行最近**的那一处作窗口起点（高度沿用 end-start+1，
+    ``pad`` 再上下各扩若干行）——这样既扛得住任意幅度的漂移，又能在文件里有多处相似代码时
+    靠行号提示消歧。**找不到直接判失败**：那正是「这段代码被挪走/删掉了」的信号，
+    绝不退回"随便取一段继续断言"。不给 anchor 时保持历史行为（纯行号）。
+    """
     ls = _lines(rel)
-    return "\n".join(ls[start - 1:end])
+    if anchor is None:
+        return "\n".join(ls[max(0, start - 1 - pad):end + pad])
+    height = max(1, end - start + 1)
+    hits = [i for i, line in enumerate(ls) if anchor in line]
+    if hits:
+        i = min(hits, key=lambda k: abs(k - (start - 1)))
+        return "\n".join(ls[max(0, i - pad):i + height + pad])
+    raise AssertionError(
+        "锚点消失：%r —— %s 全文已找不到它（行号提示 %d–%d），说明这段代码被挪走或删掉了。"
+        "若确属有意改动，请同步更新本用例的 anchor 与行号提示（不要只把行号改了交差）。"
+        % (anchor, rel, start, end))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -114,18 +135,19 @@ def test_b0_memory_has_dual_ownership_keys_not_null():
 
 # 设计稿 §2.5 表格 B1 行钉死的七处（行号 = 2026-09-29 磁盘实况，允许 ±5 行漂移）
 B1_RETRIEVE_WHERE_SITES = [
-    ("memory/retrieve.py", 157, 166, "邻居"),
-    ("memory/retrieve.py", 254, 258, "专名 LIKE"),
-    ("memory/retrieve.py", 772, 777, "关键词 LIKE"),
-    ("memory/retrieve.py", 813, 820, "时间路"),
-    ("memory/retrieve.py", 636, 640, "向量"),
-    ("memory/retrieve.py", 654, 657, "BM25"),
-    ("memory/retrieve.py", 338, 342, "回填"),
+    # (文件, 行号提示起, 行号提示止, 标签, 内容锚点)  —— 行号只是提示，实际按锚点定位
+    ("memory/retrieve.py", 157, 166, "邻居", "Memory.created_at >= created - win,"),
+    ("memory/retrieve.py", 254, 258, "专名 LIKE", "for s in literals]),"),
+    ("memory/retrieve.py", 772, 777, "关键词 LIKE", "# P3-E"),
+    ("memory/retrieve.py", 813, 820, "时间路", "Memory.created_at >= t_start,"),
+    ("memory/retrieve.py", 636, 640, "向量", "hits = await vector_search("),
+    ("memory/retrieve.py", 654, 657, "BM25", "return await bm25_search(character_id, q"),
+    ("memory/retrieve.py", 338, 342, "回填", 'Memory.id.in_([r["id"] for r in results]),'),
 ]
 
 
-@pytest.mark.parametrize("rel,start,end,label", B1_RETRIEVE_WHERE_SITES)
-def test_b1_retrieve_where_sites_have_no_scope_predicate(rel, start, end, label):
+@pytest.mark.parametrize("rel,start,end,label,anchor", B1_RETRIEVE_WHERE_SITES)
+def test_b1_retrieve_where_sites_have_no_scope_predicate(rel, start, end, label, anchor):
     """B1：``retrieve.py`` 七处 WHERE / 入口**当前**不含 ``Memory.scope`` 谓词。
 
     这是「scope 无执行语义」（R5）的**源码事实**。本断言**描述当前代码**，
@@ -136,9 +158,9 @@ def test_b1_retrieve_where_sites_have_no_scope_predicate(rel, start, end, label)
     设计稿 §2.5 B1 行原文：「若复用 ``Memory`` 表则**必须写进既有 WHERE**
     （七处一处不能漏）」——本用例钉的是「现在一处都没写」这个事实。
     """
-    snippet = _slice(rel, start, end)
-    # 允许 ±5 行漂移：扩窗再扫一次，防止行号漂导致假阳性
-    widened = _slice(rel, max(1, start - 5), end + 5)
+    snippet = _slice(rel, start, end, anchor)
+    # 扩窗也按同一锚点定位（±5 行）：行号漂时两个窗口不会各自滑到别处
+    widened = _slice(rel, start, end, anchor, pad=5)
     assert "Memory.scope" not in snippet and ".scope" not in snippet, (
         f"B1 通道「{label}」（{rel}:{start}-{end}）出现了 scope 谓词——"
         "这是「补执行」分支的改动，需走设计稿 §⑨ 问题 5 的显式决策，不允许静默改。"
@@ -175,17 +197,17 @@ def test_b1_search_memories_signature_has_no_scope_parameter():
 # ─────────────────────────────────────────────────────────────────────────────
 
 B2_SECONDARY_SITES = [
-    ("memory/summary.py", 96, 103, "摘要取料"),
-    ("memory/summary.py", 196, 206, "身份画像取料"),
-    ("memory/extractor.py", 413, 413, "提取器写记忆 1"),
-    ("memory/extractor.py", 417, 417, "提取器写记忆 2"),
-    ("memory/extractor.py", 450, 450, "提取器写记忆 3"),
-    ("memory/core.py", 242, 247, "核心晋升取料"),
+    ("memory/summary.py", 96, 103, "摘要取料", "被隔离条不进摘要原料"),
+    ("memory/summary.py", 196, 206, "身份画像取料", "身份画像取料同样排除被隔离条"),
+    ("memory/extractor.py", 413, 413, "提取器写记忆 1", 'source="chat",sub_type=slot,source_id=source_id'),
+    ("memory/extractor.py", 417, 417, "提取器写记忆 2", 'sub_type=("meta_guard" if _meta_downgrade'),
+    ("memory/extractor.py", 450, 450, "提取器写记忆 3", 'content="关系: "+rel[:100]'),
+    ("memory/core.py", 242, 247, "核心晋升取料", "Memory.is_core == True,"),
 ]
 
 
-@pytest.mark.parametrize("rel,start,end,label", B2_SECONDARY_SITES)
-def test_b2_secondary_processing_sites_have_no_scope_predicate(rel, start, end, label):
+@pytest.mark.parametrize("rel,start,end,label,anchor", B2_SECONDARY_SITES)
+def test_b2_secondary_processing_sites_have_no_scope_predicate(rel, start, end, label, anchor):
     """B2：摘要 / 身份画像 / 提取器 / 核心晋升的取料处**当前**不含 ``scope`` 谓词。
 
     设计稿 §2.5 B2 行原文：「摘要 ``summary.py:96-103``、身份画像 ``:196-206``、
@@ -194,8 +216,9 @@ def test_b2_secondary_processing_sites_have_no_scope_predicate(rel, start, end, 
 
     当前事实：这四处**都没有** scope 谓词（R5 的二次加工面）。本断言钉死这个事实。
     """
-    snippet = _slice(rel, start, end)
-    widened = _slice(rel, max(1, start - 5), end + 5)
+    snippet = _slice(rel, start, end, anchor)
+    # 扩窗同样按锚点定位，避免行号漂时窗口落到无关代码上（否定式断言会空转通过）
+    widened = _slice(rel, start, end, anchor, pad=5)
     # extractor.py 的三处是 save_memory 调用，不是 WHERE——断言它们不传 scope 参数
     if "extractor" in rel:
         assert "scope=" not in snippet, (
@@ -292,17 +315,19 @@ def test_b4_legacy_fallback_points_exist():
     ``:858-876``（life）、``:899``（shared_events）」。本断言钉死这三处存在。
     """
     # :286 附近——retrieved_memories 兜底
-    s1 = _slice("agent/context/legacy.py", 280, 295)
+    s1 = _slice("agent/context/legacy.py", 280, 295,
+                anchor="memory_lines = _build_retrieved_memory_lines(")
     assert "retrieved_memories" in s1 or "_build_retrieved_memory_lines" in s1, (
         "legacy.py:286 附近的 retrieved_memories 兜底消失（设计稿 §2.5 #4 前提被破坏）"
     )
     # :858-876 附近——life 注入
-    s2 = _slice("agent/context/legacy.py", 850, 885)
+    s2 = _slice("agent/context/legacy.py", 850, 885, anchor="if _share and _trust >= 60:")
     assert "life" in s2.lower() or "source == \"life\"" in s2 or "source=='life'" in s2, (
         "legacy.py:858-876 附近的 life 注入消失（设计稿 §2.5 #4 前提被破坏）"
     )
     # :899 附近——shared_events 注入
-    s3 = _slice("agent/context/legacy.py", 893, 910)
+    s3 = _slice("agent/context/legacy.py", 893, 910,
+                anchor="recall_text as _shared_recall")
     assert "shared" in s3.lower() or "recall_text" in s3, (
         "legacy.py:899 附近的 shared_events 注入消失（设计稿 §2.5 #4 前提被破坏）"
     )
@@ -514,3 +539,25 @@ def test_report_current_gaps():
         assert ":" in v or "行号" in v or ".py" in v, (
             f"B1–B6 gap 清单的 {k} 条缺少证据行号（派单要求③：逐条给 file:line 证据）"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 元守卫 · 本文件自己的取窗机制不许退回去（A22 ⑤ 之后的加固）
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_slice_anchors_are_mandatory_and_self_verifying():
+    """B1/B2 每一处都必须带内容锚点；锚点消失必须响亮失败。
+
+    为什么钉这条：这两批是**否定式**断言（窗口里不许出现 scope 谓词）。纯行号取窗时，
+    一次拆刀把行号挪掉，窗口就落到无关代码上——否定断言**空转通过**（实测：提示行漂 +350
+    后窗口里连那条 WHERE 判据都没有了，用例仍绿）。静默假绿比误红危险，所以从今往后
+    这两批的站点必须声明 anchor，且 `_slice` 找不到 anchor 时要报错而不是随便取一段。
+    """
+    assert len(B1_RETRIEVE_WHERE_SITES) == 7 and len(B2_SECONDARY_SITES) == 6
+    for row in B1_RETRIEVE_WHERE_SITES + B2_SECONDARY_SITES:
+        rel, start, end, label, anchor = row
+        assert anchor and anchor.strip(), "%s/%s 缺内容锚点（不许退回纯行号取窗）" % (rel, label)
+        snippet = _slice(rel, start, end, anchor)
+        assert anchor in snippet, "%s/%s 的锚点没落在自己取出的窗口里" % (rel, label)
+    with pytest.raises(AssertionError, match="锚点消失"):
+        _slice("memory/retrieve.py", 157, 166, "这段代码不可能存在_zzz(")

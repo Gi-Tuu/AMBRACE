@@ -4,8 +4,10 @@
 ``_section_values`` 后委托 ``context_builder.build_context_legacy`` 完成最终组装
 （模板 .format + 追加块 + 系统总量裁剪）。
 
-Feature Flag：``agent_context_registry``（默认开）——开=走本模块（注册表驱动）；关=回退旧实现
-``context_builder.build_context_legacy``（见 context_builder.build_context 包装层）。
+入口口径（A22 ⑤-b，2026-10-03 转正）：``agent_context_registry`` flag 与其 flag-off 回退分支**已删除**，
+本模块的 ``build_context`` 是 ``context_builder.build_context`` 的唯一装配入口（判据＝生产库无该键覆盖行
+＋回退观测 ``context_legacy_flag_off`` 接入后 7 周 0 命中）。旧实现 ``build_context_legacy`` 仍在
+``context_builder`` 里，但只作为**最终组装器**被本模块调用（模板 .format + 追加块 + 总量裁剪）。
 
 每个 section 异常仅记 ``_logger.warning`` 跳过（不拖垮整体，维持现状）。
 单 section 抛异常不影响其他 section 的注入。
