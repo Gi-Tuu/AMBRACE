@@ -136,6 +136,92 @@ class PhonePerceptionService {
     return en ? "$h h $m min" : "$h小时$m分钟";
   }
 
+  /// A24（X7-M1 客户端半边）：服务端 `MAX_PAYLOAD_JSON` 上限，超长就整体丢载荷。
+  static const int maxPayloadChars = 4000;
+  /// 单个字符串值上限：服务端渲染每值还会再截 200，这里只是防止一条长文把整个载荷挤爆。
+  static const int maxPayloadValueChars = 300;
+  /// 列表条目上限（通知/相册/文件/使用时长都取前 N 条，与正文展示条数一致）
+  static const int maxPayloadItems = 8;
+
+  /// 把「这一轮采集里已经展示过的同源事实」编成字段级载荷（服务端 `payload_json`）。
+  ///
+  /// 口径（四条都是硬约束，改动请同步 `test/perception_payload_test.dart`）：
+  /// - **不新增采集、不猜值**：只允许传该采集点本来就拿到的字段；拿不到的键直接不放进 map
+  ///   （宁缺勿假造，服务端读侧 `confidence` 一类的键因此宁可不发）。
+  /// - **空值一律剔除**：null / 空串 / 空列表不进对象；全空则返回 null（＝不发该字段，
+  ///   与 A24 之前的请求逐字节一致）。
+  /// - **键按字母序**：同一份数据必得同一个串 ⇒ `clientKey` 稳定、服务端 5 分钟去重不被键序抖动打穿。
+  /// - **超长就丢**：序列化后 > [maxPayloadChars]（服务端上限）返回 null，
+  ///   正文照常上传——脏数据绝不该让一次采集整体失败（与服务端 `_clean_payload_json` 同口径）。
+  static String? buildPayload(Map<String, Object?> fields) {
+    final clean = <String, Object?>{};
+    fields.forEach((key, value) {
+      if (value == null) return;
+      if (value is String) {
+        final t = value.trim();
+        if (t.isEmpty) return;
+        clean[key] = t.length > maxPayloadValueChars
+            ? t.substring(0, maxPayloadValueChars)
+            : t;
+        return;
+      }
+      if (value is bool || value is num) {
+        clean[key] = value;
+        return;
+      }
+      if (value is List) {
+        final items = <Object?>[];
+        for (final e in value.take(maxPayloadItems)) {
+          if (e == null) continue;
+          if (e is Map) {
+            final m = <String, Object?>{};
+            e.forEach((k, v) {
+              final sv = v?.toString().trim() ?? "";
+              if (sv.isEmpty) return;
+              m["$k"] = sv.length > maxPayloadValueChars ? sv.substring(0, maxPayloadValueChars) : sv;
+            });
+            if (m.isEmpty) return;
+            items.add(m);
+          } else {
+            final sv = e.toString().trim();
+            if (sv.isNotEmpty) items.add(sv);
+          }
+        }
+        if (items.isEmpty) return;
+        clean[key] = items;
+        return;
+      }
+      final s = value.toString().trim();
+      if (s.isNotEmpty) clean[key] = s;
+    });
+    if (clean.isEmpty) return null;
+    final ordered = <String, Object?>{
+      for (final k in (clean.keys.toList()..sort())) k: clean[k],
+    };
+    final text = dart_convert.jsonEncode(ordered);
+    return text.length > maxPayloadChars ? null : text;
+  }
+
+  /// 查岗快照的字段级载荷：与 `ShizukuService.formatSnapshot` **同一批字段、同一套缺值口径**
+  /// （正文渲染成「屏幕熄灭/勿扰：关闭」的 false 要留着，因为正文写了它；
+  ///   正文在缺值时整段不写的 `screen_on_minutes / battery_percent / battery_charging /
+  ///   foreground_app / network / device / android_version` 载荷里也不出现）。
+  static String? buildShizukuPayload(Map<String, dynamic> d) {
+    final onMs = d["screenOnMs"];
+    final level = d["batteryLevel"];
+    return buildPayload({
+      "screen_on": d["screenOn"] == true,
+      "screen_on_minutes": (onMs is num && onMs > 0) ? (onMs / 60000).round() : null,
+      "foreground_app": d["foregroundApp"],
+      "battery_percent": level is num ? level.toInt() : null,
+      "battery_charging": d["batteryCharging"] == true ? true : null,
+      "network": d["network"],
+      "dnd": d["dnd"] == true,
+      "device": d["device"],
+      "android_version": d["androidVersion"],
+    });
+  }
+
   /// 查询并上报使用时长快照到服务器（source=usage_stats）
   static Future<String?> uploadUsageStats({int top = 8}) async {
     if (!Platform.isAndroid) return null;
@@ -148,33 +234,42 @@ class PhonePerceptionService {
     final content = en
         ? "Last 24h usage: ${parts.join(sepListOf(en))}"
         : "最近24小时使用：${parts.join(sepListOf(en))}";
-    try {
-      final form = FormData.fromMap({
-        "source": "usage_stats",
-        "content": content,
-      });
-      await ApiClient().dio.post("/api/v1/phone/perception", data: form);
-      return content;
-    } catch (_) {
-      return null;
-    }
+    // A24：改为走 uploadSnapshot —— 顺带补上此前缺的两件事：本地队列补传（断网不丢）与
+    // client_key 幂等（同内容 5 分钟内不再重复占位），并随带字段级载荷。
+    final ok = await uploadSnapshot(
+      content,
+      "usage_stats",
+      payload: buildPayload({
+        "window_hours": 24,
+        "items": items
+            .map((e) => {
+                  "app": e["app_name"],
+                  "minutes": ((e["total_ms"] as num?)?.toInt() ?? 0) ~/ 60000,
+                })
+            .toList(),
+      }),
+    );
+    return ok ? content : null;
   }
 
   /// 上传任意文本快照到服务器（source 需在服务端白名单内）
   ///
   /// P2（盘点 S3）：先落本地队列再直传——断网/弱网时数据留在队列，下一轮 `flush()` 补传；
   /// 直传成功后 `markSent` 摘掉该条。返回值语义不变（成功 true / 失败 false）。
-  static Future<bool> uploadSnapshot(String content, String source) async {
+  /// [payload] 为 A24 的字段级载荷（[buildPayload] 产出，null＝不发该字段，请求与旧版逐字一致）。
+  static Future<bool> uploadSnapshot(String content, String source, {String? payload}) async {
     if (content.trim().isEmpty) return false;
-    final clientKey = PerceptionOutbox.clientKeyOf(source, content);
-    await PerceptionOutbox.enqueue(source: source, content: content);
+    final p = (payload ?? "").trim();
+    final clientKey = PerceptionOutbox.clientKeyOf(source, content, p.isEmpty ? null : p);
+    await PerceptionOutbox.enqueue(source: source, content: content, payload: p.isEmpty ? null : p);
     try {
-      final form = FormData.fromMap({
+      final form = <String, dynamic>{
         "source": source,
         "content": content,
         "client_key": clientKey,
-      });
-      await ApiClient().dio.post("/api/v1/phone/perception", data: form);
+      };
+      if (p.isNotEmpty) form["payload_json"] = p;
+      await ApiClient().dio.post("/api/v1/phone/perception", data: FormData.fromMap(form));
       await PerceptionOutbox.markSent(clientKey);
       await ChannelStatusTracker.recordOk(ChannelStatusTracker.kPerceptionUpload);
       return true;
@@ -201,7 +296,7 @@ class PhonePerceptionService {
       final data = Map<String, dynamic>.from(r["data"] as Map? ?? {});
       final text = ShizukuService.formatSnapshot(data, isEn: await appLang() == "en");
       if (text.isEmpty) return false;
-      return await uploadSnapshot(text, "shizuku_system");
+      return await uploadSnapshot(text, "shizuku_system", payload: buildShizukuPayload(data));
     } catch (_) {
       return false;
     }
@@ -250,7 +345,6 @@ class PhonePerceptionService {
   /// 把操作结果作为快照上传（source=action_result），供聊天上下文引用与动作日志落库
   static Future<bool> uploadActionResult(String action, String target, bool ok, String message) async {
     try {
-      final dio = ApiClient().dio;
       final en = await appLang() == "en";
       final label = switch (action) {
         "click" => en ? "tap" : "点击",
@@ -260,16 +354,21 @@ class PhonePerceptionService {
         _ => action,
       };
       final status = ok ? (en ? "succeeded" : "成功") : (en ? "failed" : "失败");
-      await dio.post(
-        "/api/v1/phone/perception",
-        data: FormData.fromMap({
-          "source": "action_result",
-          "content": en
-              ? "Action [$label] “$target” -> $status${ok ? "" : " ($message)"}"
-              : "操作[$label]“$target”→$status${ok ? "" : "（$message）"}",
+      final content = en
+          ? "Action [$label] “$target” -> $status${ok ? "" : " ($message)"}"
+          : "操作[$label]“$target”→$status${ok ? "" : "（$message）"}";
+      // A24：与其余采集点同一出口——带字段级载荷，并顺带补齐此前缺的两件事
+      // （本地队列补传：断网不再直接丢；client_key 幂等：服务端 5 分钟窗口此前拿不到键）。
+      return await uploadSnapshot(
+        content,
+        "action_result",
+        payload: buildPayload({
+          "action": label,
+          "target": target,
+          "ok": ok,
+          "message": ok ? null : message,
         }),
       );
-      return true;
     } catch (_) {
       return false;
     }
@@ -584,16 +683,27 @@ class PhonePerceptionService {
     }
 
     final en = await appLang() == "en";
+    // A24：每条采集除了给人看的正文，再带一份字段级载荷（服务端有它就按字段渲染）。
+    // 载荷为空串＝这一轮没有可结构化的同源事实 ⇒ 与 A24 之前的请求逐字一致。
+    //
+    // **屏幕（accessibility）与剪贴板刻意不带载荷**：这两路的正文就是全部事实，没有字段可拆；
+    // 而服务端按字段渲染时每值截 200（`section_phone._MAX_FIELD_VALUE`），真机实测正文最长
+    // 982 字（剪贴板 726）——一旦带载荷，长文会被截成 200 而**丢信息**；无载荷才走
+    // 「逐字回落旧文本行」那条不截断的路径。
     final uploads = <Map<String, String>>[];
     if (screenOn) {
       final s = await getScreenStatus();
       final text = (s["text"] as String? ?? "").trim();
-      if (text.isNotEmpty) uploads.add({"source": "accessibility", "content": text});
+      if (text.isNotEmpty) {
+        uploads.add({"source": "accessibility", "content": text});
+      }
     }
     if (clipOn) {
       final clip = await Clipboard.getData(Clipboard.kTextPlain);
       final t = clip?.text?.trim() ?? "";
-      if (t.isNotEmpty) uploads.add({"source": "clipboard", "content": t});
+      if (t.isNotEmpty) {
+        uploads.add({"source": "clipboard", "content": t});
+      }
     }
     if (mediaOn) {
       final photos = await getRecentPhotos(limit: 8);
@@ -601,7 +711,17 @@ class PhonePerceptionService {
         final lines = photos
             .map((p) => "${p["name"]}${wrapParenOf(en, '${p["date"]}')}")
             .join(sepListOf(en));
-        uploads.add({"source": "media", "content": en ? "Recent photos${sepColonOf(en)}$lines" : "最近相册：$lines"});
+        uploads.add({
+          "source": "media",
+          "content": en ? "Recent photos${sepColonOf(en)}$lines" : "最近相册：$lines",
+          "payload": buildPayload({
+                "count": photos.length,
+                "items": photos
+                    .map((p) => {"name": p["name"], "date": p["date"]})
+                    .toList(),
+              }) ??
+              "",
+        });
       }
     }
     if (mediaFilesOn) {
@@ -616,20 +736,42 @@ class PhonePerceptionService {
           final lines = files
               .map((f) => "${f["name"]}${wrapParenOf(en, '${f["date"]}')}")
               .join(sepListOf(en));
-          uploads.add({"source": "media_$t", "content": "$label${sepColonOf(en)}$lines"});
+          uploads.add({
+            "source": "media_$t",
+            "content": "$label${sepColonOf(en)}$lines",
+            "payload": buildPayload({
+                  "count": files.length,
+                  "items": files
+                      .map((f) => {"name": f["name"], "date": f["date"]})
+                      .toList(),
+                }) ??
+                "",
+          });
         }
       }
     }
     if (notifOn) {
       final notifs = await getNotifications();
       if (notifs.isNotEmpty) {
-        final lines = notifs.take(5).map((n) {
+        final shown = notifs.take(5).toList();
+        final lines = shown.map((n) {
           final t = (n["title"] ?? "").trim();
           final x = (n["text"] ?? "").trim();
           final body = [t, x].where((e) => e.isNotEmpty).join(sepColonOf(en));
           return "${n["app"] ?? (en ? "notification" : "通知")}${sepColonOf(en)}$body";
         }).join(sepSemicolonOf(en));
-        uploads.add({"source": "notification", "content": en ? "Recent notifications${sepColonOf(en)}$lines" : "最近通知：$lines"});
+        uploads.add({
+          "source": "notification",
+          "content": en ? "Recent notifications${sepColonOf(en)}$lines" : "最近通知：$lines",
+          // 载荷只放正文里已经出现的那几条（不是"另采一遍"），与 content 同源同序
+          "payload": buildPayload({
+                "count": notifs.length,
+                "items": shown
+                    .map((n) => {"app": n["app"], "title": n["title"], "text": n["text"]})
+                    .toList(),
+              }) ??
+              "",
+        });
       }
     }
     if (uploads.isEmpty) return {"status": "empty"};
@@ -640,17 +782,22 @@ class PhonePerceptionService {
     for (final u in uploads) {
       final source = u["source"] ?? "";
       final content = u["content"] ?? "";
-      final clientKey = PerceptionOutbox.clientKeyOf(source, content);
+      final payload = (u["payload"] ?? "").trim();
+      final clientKey = PerceptionOutbox.clientKeyOf(
+          source, content, payload.isEmpty ? null : payload);
       // P2：每条也「先落地再发送」，失败保留在队列里等下一轮 flush（同内容按 clientKey 去重）
-      await PerceptionOutbox.enqueue(source: source, content: content);
+      await PerceptionOutbox.enqueue(
+          source: source, content: content, payload: payload.isEmpty ? null : payload);
       try {
+        final form = <String, dynamic>{
+          "source": source,
+          "content": content,
+          "client_key": clientKey,
+        };
+        if (payload.isNotEmpty) form["payload_json"] = payload;
         await dio.post(
           "/api/v1/phone/perception",
-          data: FormData.fromMap({
-            "source": source,
-            "content": content,
-            "client_key": clientKey,
-          }),
+          data: FormData.fromMap(form),
         );
         await PerceptionOutbox.markSent(clientKey);
         okCount++;

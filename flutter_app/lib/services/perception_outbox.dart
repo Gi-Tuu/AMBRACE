@@ -52,10 +52,18 @@ class PerceptionOutbox {
   static int _seq = 0;
   static int _nextSeq() => ++_seq;
 
-  /// 确定性指纹：`"<source>|<长度>|<hashCode 绝对值>"`（先 trim，保证入队/直传两条路径同 key）
-  static String clientKeyOf(String source, String content) {
+  /// 确定性指纹：`"<source>|<长度>|<hashCode 绝对值>"`（先 trim，保证入队/直传两条路径同 key）。
+  ///
+  /// A24（X7-M1 客户端半边）：可选带上字段级载荷的指纹段 `|p<长度>x<hashCode>`——服务端把
+  /// `payload_json` 也纳入了 5 分钟去重条件（P9 第 3 条：同正文不同载荷属两次不同采集），
+  /// 客户端必须同样区分，否则同一段文字配不同载荷会被本地队列吞掉一条。
+  /// **无载荷时逐字保持旧格式**（老队列里已有的记录、以及不带载荷的调用方，key 不变）。
+  static String clientKeyOf(String source, String content, [String? payload]) {
     final t = content.trim();
-    return "$source|${t.length}|${t.hashCode.abs()}";
+    final base = "$source|${t.length}|${t.hashCode.abs()}";
+    final p = (payload ?? "").trim();
+    if (p.isEmpty) return base;
+    return "$base|p${p.length}x${p.hashCode.abs()}";
   }
 
   // === 目录 / 文件命名 ===
@@ -193,19 +201,25 @@ class PerceptionOutbox {
     );
   }
 
-  // === 对外 API（P2b：签名逐字不变，只换内部存储结构）===
+  // === 对外 API（P2b：签名逐字不变，只换内部存储结构。A24 例外：[enqueue] / [clientKeyOf]
+  //      新增**可选**载荷参数——不带载荷时行为与旧版逐字一致，老队列文件不受影响）===
 
   /// 入队：空内容不入队；同 clientKey 不重复入队（文件已在即视为已入队，不覆盖内容）；
   /// 无 user_id 不入队（账号隔离）
+  ///
+  /// [payload]（A24）＝字段级载荷原文，非空时随记录一起落盘，[flush] 补传时原样带上；
+  /// 载荷参与 [clientKeyOf] ⇒ 「同正文不同载荷」是两条，不会被互相吞掉。
   static Future<void> enqueue({
     required String source,
     required String content,
+    String? payload,
   }) async {
     final text = content.trim();
     if (text.isEmpty) return;
     final dir = await _queueDir();
     if (dir == null) return;
-    final key = clientKeyOf(source, text);
+    final key = clientKeyOf(source, text, payload);
+    final p = (payload ?? "").trim();
     if (!await _recordFile(dir, key).exists()) {
       await _writeRecord(dir, {
         "source": source,
@@ -214,6 +228,7 @@ class PerceptionOutbox {
         "createdAtMs": nowProvider().millisecondsSinceEpoch,
         "attempts": 0,
         "seq": _nextSeq(),
+        if (p.isNotEmpty) "payload": p,
       });
     }
     await _crop(dir);
@@ -243,15 +258,16 @@ class PerceptionOutbox {
     for (final r in batch) {
       final item = r.item;
       final key = item["clientKey"].toString();
+      final form = <String, dynamic>{
+        "source": item["source"],
+        "content": item["content"],
+        "client_key": key,
+      };
+      // A24：载荷随记录一起补传（老队列文件没有该字段 ⇒ 不带，逐字旧行为）
+      final payload = item["payload"]?.toString() ?? "";
+      if (payload.isNotEmpty) form["payload_json"] = payload;
       try {
-        await dio.post(
-          endpoint,
-          data: FormData.fromMap({
-            "source": item["source"],
-            "content": item["content"],
-            "client_key": key,
-          }),
-        );
+        await dio.post(endpoint, data: FormData.fromMap(form));
       } catch (_) {
         // 本条失败：attempts+1 回写它的文件（覆盖式原子写），然后停本轮
         item["attempts"] = ((item["attempts"] as num?)?.toInt() ?? 0) + 1;

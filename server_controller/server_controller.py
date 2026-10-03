@@ -2599,7 +2599,9 @@ class ControllerApp:
         - empty/warn/error 各给一枚「刷新 / 重试」按钮（loader 已在 meta 里，页面不必自写）；
         - illo 给素材名时走「照片画框 + 说明」版式，素材缺失或解码失败自动退回纯文字，
           不会留一个空框；
-        - clear=False 时保留 body 已有内容（如额度卡），只追加提示块。
+        - clear=False 时保留 body 已有内容（如额度卡），只追加提示块；**用这条路的前提是本次渲染
+          已经清过 body**（调用方自己 `_clear_frame`，或本就只画了一张卡），否则同一次渲染里连着
+          走两条 clear=False 分支会把提示行**叠加**下去。
         """
         meta = self._admin_meta.get(key)
         if not meta:
@@ -2852,8 +2854,10 @@ class ControllerApp:
             tk.Label(head, text="%s（%s）" % (r.get("label") or key, key),
                      fg=t.text, bg=t.card, font=CUI.f("title", True)
                      ).pack(side="left", padx=(SP_XS, 0))
+            # 日限额 0 是合法读数，判空必须 `is None`（同 architecture.md 的 SERVER_CONFIG_UID=0 口径）
+            _dl = r.get("daily_limit")
             tk.Label(head, text="provider %s · 日限额 %s" % (r.get("provider") or "—",
-                                                             r.get("daily_limit") or "—"),
+                                                             "—" if _dl is None else _dl),
                      fg=t.text_muted, bg=t.card, font=CUI.f(FS_CAPTION)).pack(side="right")
 
             form = tk.Frame(card, bg=t.card)

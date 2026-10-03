@@ -310,3 +310,22 @@ def test_photo_frame_inherits_its_container_colour(tk_root):
     plain = sc.CUI.photo_label(tk.Frame(tk_root, bg=dark.bg), dark,
                                "photo_empty_log.jpg", 120, 120)
     assert plain.cget("bg") == sc.CUI.photo_bg(dark)
+
+
+def test_modality_daily_limit_zero_is_not_rendered_as_dash(app):
+    """日限额 **0 是合法读数**，不许被 falsy 判空吞成「—」（同 architecture.md 的 `UID=0` 纪律）。
+
+    只有 `None`（没设过）才该显示破折号；这条断言同时钉住两半，缺任一半都会假绿。
+    """
+    rows = [
+        {"key": "image", "label": "生图", "provider": "dashscope", "enabled": True,
+         "model": "qwen-img", "base_url": "https://x/y", "daily_limit": 0, "has_api_key": True},
+        {"key": "llm", "label": "语言", "provider": "dashscope", "enabled": True,
+         "model": "qwen-llm", "base_url": "https://x/z", "daily_limit": None, "has_api_key": True},
+    ]
+    app._render_modalities(rows)
+    caps = [str(w.cget("text")) for w in walk(app._admin_meta["models"]["body"])
+            if isinstance(w, tk.Label) and str(w.cget("text")).startswith("provider ")]
+    assert len(caps) == 2, caps
+    assert any("日限额 0" in c for c in caps), "0 被 falsy 判空吞掉了：%s" % caps
+    assert any("日限额 —" in c for c in caps), "None 应该显示破折号：%s" % caps

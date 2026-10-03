@@ -176,7 +176,11 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
     }
     final data = Map<String, dynamic>.from(r["data"] as Map? ?? {});
     final text = ShizukuService.formatSnapshot(data, isEn: await appLang() == "en");
-    final ok = await PhonePerceptionService.uploadSnapshot(text, "shizuku_system");
+    final ok = await PhonePerceptionService.uploadSnapshot(
+      text,
+      "shizuku_system",
+      payload: PhonePerceptionService.buildShizukuPayload(data),
+    );
     if (!mounted) return;
     setState(() {
       _shizukuBusy = false;
