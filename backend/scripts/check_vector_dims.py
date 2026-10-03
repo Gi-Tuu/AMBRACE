@@ -9,7 +9,8 @@
     1 集合声明维度    chroma.sqlite3 collections.dimension（file:...?mode=ro）
     2 HNSW 头维度     段目录 header.bin + data_level0.bin 反推（打印候选偏移取值，不硬猜）
     3 模型实际维度    项目现成嵌入函数编一句探针文本，打印 len(vec)（权威）
-    4 覆盖率          embeddings 行数 vs 记忆主表行数（表名从 sqlite_master 定位）
+    4 覆盖率          embeddings 行数 vs 记忆主表行数（表名从 sqlite_master 定位）；
+                      向量侧分两桶——**真孤儿**（记忆行不存在）与**归档仍留向量**（合法、但白占召回名额）
     5 活体检索探针    稠密路 + 记忆检索链入口，看是否「静默为空」
 
 用法（一律用项目 venv 的 python）::
@@ -23,9 +24,13 @@
     ... check_vector_dims.py --rebuild
     # ③ 真写（维护者手跑）：先备份 chroma.sqlite3 与整个 HNSW 段目录，备份失败即中止
     ... check_vector_dims.py --rebuild --apply [--limit 500]
+    # ④ 清真孤儿：同样默认 dry-run；只删「记忆行不存在」的那些，归档向量永不进清单
+    ... check_vector_dims.py --prune-orphans
+    ... check_vector_dims.py --prune-orphans --apply [--limit 200]
 
-退出码：0=PASS；1=WARN（三层对不上 / 有记忆缺向量 / 检索零命中）；
-2=--apply 前置检查或备份失败（fail-closed）；3=向量库与段目录都不存在（无从核对）。
+退出码：0=PASS；1=WARN（三层对不上 / 有记忆缺向量 / 有真孤儿向量 / 检索零命中；
+**归档仍留向量不判 WARN、只报占召回名额的比例**）；
+2=--apply 前置检查或备份失败、或删后复查仍有残留（fail-closed）；3=向量库与段目录都不存在（无从核对）。
 
 HNSW 维度是怎么定的（不是猜某个偏移）
 ------------------------------------
@@ -351,11 +356,49 @@ def locate_memory_table(conn: sqlite3.Connection) -> str | None:
     return hits[0] if hits else None
 
 
+def read_vector_ids(vector_db: Path) -> set[int]:
+    """向量库里的记忆 id 集合（**取 `embedding_id`，不是行号 `id`**）。
+
+    2026-10-02 实测教训：新版 chromadb 的 `embeddings` 表里真正的向量 id 在 `embedding_id`，
+    读 `id` 拿到的是自增行号 ⇒ 覆盖率会算成天量假漂移（94 条真缺口曾被报成 2178 条）。
+    取不到表/库时返回空集（调用方按「无向量」处理，不抛）。
+    """
+    ids: set[int] = set()
+    if not vector_db.is_file():
+        return ids
+    conn = _connect_ro(vector_db)
+    try:
+        if "embeddings" not in _tables(conn):
+            return ids
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(embeddings)").fetchall()}
+        idcol = "embedding_id" if "embedding_id" in cols else "id"
+        for (raw,) in conn.execute(f"SELECT DISTINCT {idcol} FROM embeddings").fetchall():
+            try:
+                ids.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+    finally:
+        conn.close()
+    return ids
+
+
+def embeddings_table_exists(vector_db: Path) -> bool:
+    """向量库里是否已有 `embeddings` 表（建库前与建好库但还没写向量，是两回事）。"""
+    if not vector_db.is_file():
+        return False
+    conn = _connect_ro(vector_db)
+    try:
+        return "embeddings" in _tables(conn)
+    finally:
+        conn.close()
+
+
 def read_coverage(vector_db: Path, app_db: Path, memory_table: str | None = None) -> dict:
     """embeddings 行数 vs 记忆主表行数；给出「有记忆但无向量」的 id 清单。"""
     out: dict = {
         "ok": False, "vector_rows": None, "memory_rows": None, "memory_active_rows": None,
-        "missing_ids": [], "orphan_vector_ids": [], "all_memory_ids": [],
+        "missing_ids": [], "orphan_vector_ids": [], "archived_vector_ids": [],
+        "all_memory_ids": [], "vectors_by_character": {}, "recall_pool_polluted": 0,
         "table": memory_table, "note": "",
         "probe": None,
     }
@@ -365,31 +408,13 @@ def read_coverage(vector_db: Path, app_db: Path, memory_table: str | None = None
     if not app_db.is_file():
         out["note"] = f"应用库不存在: {app_db}"
         return out
-    try:
-        vconn = _connect_ro(vector_db)
-    except Exception as e:
-        out["note"] = f"向量库只读打开失败: {e.__class__.__name__}: {e}"
+    vector_ids = read_vector_ids(vector_db)
+    out["vector_rows"] = len(vector_ids)
+    if not vector_ids and not embeddings_table_exists(vector_db):
+        # `embeddings` 表还不存在（首次建库前）：沿用旧口径直接返回，
+        # 否则「空向量集」会被算成「全部记忆都缺向量」，报出一屏假缺口。
+        out["note"] = "向量库无 embeddings 表"
         return out
-    try:
-        if "embeddings" not in _tables(vconn):
-            out["note"] = "向量库无 embeddings 表"
-            return out
-        # 2026-10-02 修：新版 chromadb 的 embeddings 表列是
-        #   (id INTEGER PRIMARY KEY, segment_id, embedding_id TEXT, seq_id, created_at)
-        # —— **真正的向量 id 在 embedding_id**；旧口径读 id 拿到的是行号，
-        # 会把覆盖率算成天量假漂移（实测：94 条真缺口被报成 2178 条；
-        # --rebuild 的目标清单同步受污染）。
-        _ecols = {_r[1] for _r in vconn.execute("PRAGMA table_info(embeddings)").fetchall()}
-        _idcol = "embedding_id" if "embedding_id" in _ecols else "id"
-        vector_ids = set()
-        for (raw,) in vconn.execute(f"SELECT DISTINCT {_idcol} FROM embeddings").fetchall():
-            try:
-                vector_ids.add(int(raw))
-            except (TypeError, ValueError):
-                continue
-        out["vector_rows"] = len(vector_ids)
-    finally:
-        vconn.close()
     try:
         aconn = _connect_ro(app_db)
     except Exception as e:
@@ -402,16 +427,42 @@ def read_coverage(vector_db: Path, app_db: Path, memory_table: str | None = None
             return out
         out["table"] = table
         cols = set(_columns(aconn, table))
-        archived = " AND is_archived=0" if "is_archived" in cols else ""
+        has_arch = "is_archived" in cols
+        archived = " AND is_archived=0" if has_arch else ""
         out["memory_rows"] = aconn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
         out["memory_active_rows"] = aconn.execute(
             f'SELECT COUNT(*) FROM "{table}" WHERE 1=1{archived}').fetchone()[0]
-        rows = aconn.execute(
-            f'SELECT id FROM "{table}" WHERE 1=1{archived} ORDER BY id').fetchall()
-        alive = {r[0] for r in rows}
+        # 一次取全量 id（含归档）：孤儿与归档必须分桶，不能都塞进「记忆已删」
+        sel = "id, character_id" + (", is_archived" if has_arch else "")
+        meta: dict[int, tuple] = {}
+        for row in aconn.execute(f'SELECT {sel} FROM "{table}"').fetchall():
+            if row[0] is None:
+                continue
+            meta[int(row[0])] = (row[1], bool(row[2]) if has_arch else False)
+        alive = {mid for mid, (_ch, arch) in meta.items() if not arch}
+        archived_ids = {mid for mid, (_ch, arch) in meta.items() if arch}
         out["all_memory_ids"] = sorted(alive)
         out["missing_ids"] = sorted(alive - vector_ids)
-        out["orphan_vector_ids"] = sorted(vector_ids - alive)
+        # **真孤儿**＝记忆行根本不存在（删除级联没清向量）；
+        # **归档仍留向量**＝记忆行在、只是 `is_archived=1`，取消归档还要用 ⇒ 合法，但白占召回名额。
+        # 2026-10-03 拆桶前两者混算成一桶，把 2297 条归档向量报成「记忆已删」并判 WARN。
+        out["orphan_vector_ids"] = sorted(vector_ids - set(meta))
+        out["archived_vector_ids"] = sorted(vector_ids & archived_ids)
+        by_char: dict[str, dict] = {}
+        for vid in vector_ids:
+            if vid in meta:
+                ch, arch = meta[vid]
+                key = str(ch)
+            else:
+                ch, arch, key = None, False, "(记忆行不存在)"
+            slot = by_char.setdefault(key, {"vectors": 0, "archived_vectors": 0, "orphan_vectors": 0})
+            slot["vectors"] += 1
+            if arch:
+                slot["archived_vectors"] += 1
+            if vid not in meta:
+                slot["orphan_vectors"] += 1
+        out["vectors_by_character"] = by_char
+        out["recall_pool_polluted"] = len(out["orphan_vector_ids"]) + len(out["archived_vector_ids"])
         probe_cols = [c for c in ("character_id", "content") if c in cols]
         if len(probe_cols) == 2:
             why = ", why_it_matters" if "why_it_matters" in cols else ", ''"
@@ -574,6 +625,56 @@ def apply_rebuild(targets: list[dict], app_db: Path, table: str) -> dict:
     return stats
 
 
+# ── 清理真孤儿（默认 dry-run，绝不写）──
+def collect_prune_targets(coverage: dict, *, limit: int | None = None) -> list[int]:
+    """要清的只有**真孤儿**：向量还在、记忆行已经不存在（删除级联没清向量）。
+
+    归档记忆的向量**绝不进这个桶**（它们是 `archived_vector_ids`）——记忆行还在、取消归档还要用，
+    删掉就是真丢数据。2026-10-03 拆桶前这两类混成一桶，谁跑一次清理就会把归档向量全删了。
+    """
+    ids = sorted(coverage.get("orphan_vector_ids") or [])
+    if limit and limit > 0:
+        ids = ids[:limit]
+    return ids
+
+
+def guard_target_store(vector_dir: Path) -> None:
+    """删除只能作用在应用真正连着的那棵向量库上，路径不一致就直接拒。
+
+    `delete_memory_vector` 走 app 的配置（`settings.chroma_persist_dir`）、不吃 `--vector-dir`
+    ⇒ 「拿 `--vector-dir` 指着一份副本报数、却删到生产库」是会发生的事故，宁可在入口拦死。
+    """
+    from app.config import settings
+
+    configured = Path(settings.chroma_persist_dir).resolve()
+    target = Path(vector_dir).resolve()
+    if configured != target:
+        raise RuntimeError(
+            f"--vector-dir={target} 与应用配置的向量库 {configured} 不一致，拒绝在另一棵库上删")
+
+
+def apply_prune(ids: list[int], vector_db: Path) -> dict:
+    """按 id 删向量，**删完复查**（`delete_memory_vector` 自己吞异常 ⇒ 必须由调用方验货）。"""
+    stats = {"requested": len(ids), "deleted": 0, "left": len(ids)}
+    if not ids:
+        stats["left"] = 0
+        return stats
+    from app.db.vector_store import delete_memory_vector
+
+    async def _loop():
+        for vid in ids:
+            await delete_memory_vector(vid)
+
+    asyncio.run(_loop())
+    after = read_vector_ids(vector_db)
+    still = [vid for vid in ids if vid in after]
+    stats["left"] = len(still)
+    stats["deleted"] = len(ids) - len(still)
+    if still:
+        print(f"  [残留] 删后复查仍在向量库里={still[:20]}" + ("…" if len(still) > 20 else ""))
+    return stats
+
+
 # ── 汇总与结论 ──
 def collect_dims(collections: dict, segments: list[dict], model: dict) -> dict:
     """把三层维度摆成一张表（None/不可用的层留 None，不参与比较）。"""
@@ -611,7 +712,9 @@ def build_verdict(collections: dict, segments: list[dict], model: dict,
             reasons.append(f"有记忆但无向量 {missing} 条")
         orphans = len(coverage.get("orphan_vector_ids") or [])
         if orphans:
-            reasons.append(f"向量残留但记忆已删 {orphans} 条")
+            reasons.append(f"真孤儿向量 {orphans} 条（记忆行已不存在，可用 --prune-orphans 清）")
+        # 归档记忆的向量**不判 WARN**：记忆行还在，取消归档还要用，是有意保留的存量。
+        # 它只占召回名额（retrieve._rerank 会用库内 is_archived 把它剔掉），所以只报数、不算异常。
     else:
         reasons.append(f"覆盖率未取到: {coverage.get('note')}")
     if live is not None:
@@ -658,8 +761,22 @@ def print_report(collections: dict, segments: list[dict], model: dict, coverage:
     print(f"    记忆主表={coverage.get('table')} 记忆行={coverage.get('memory_rows')}"
           f"（未归档 {coverage.get('memory_active_rows')}） / 向量行={coverage.get('vector_rows')}")
     print(f"    有记忆但无向量={len(coverage.get('missing_ids') or [])} 条"
-          f" / 有向量但记忆已删={len(coverage.get('orphan_vector_ids') or [])} 条"
+          f" / 真孤儿向量={len(coverage.get('orphan_vector_ids') or [])} 条（记忆行不存在）"
+          f" / 归档仍留向量={len(coverage.get('archived_vector_ids') or [])} 条（记忆行还在，合法保留）"
           + (f"（{coverage['note']}）" if coverage.get("note") else ""))
+    vrows = coverage.get("vector_rows") or 0
+    polluted = coverage.get("recall_pool_polluted") or 0
+    if vrows:
+        # 这两类向量都不会被召回（读侧 `_rerank` 以库内 is_archived 为准剔除），
+        # 但它们在向量库里照样占 limit 的名额 ⇒ 报出来，别只报「一致」
+        print(f"    白占召回名额={polluted}/{vrows} = {polluted / vrows:.1%}")
+        shares = []
+        for key, slot in (coverage.get("vectors_by_character") or {}).items():
+            dead = (slot.get("archived_vectors") or 0) + (slot.get("orphan_vectors") or 0)
+            if dead and slot.get("vectors"):
+                shares.append((dead / slot["vectors"], key, dead, slot["vectors"]))
+        for share, key, dead, total in sorted(shares, reverse=True)[:8]:
+            print(f"      角色 {key}：{dead}/{total} = {share:.1%} 白占额")
 
     print("\n[5] 活体检索探针")
     if live is None:
@@ -729,6 +846,43 @@ def run_check(args: argparse.Namespace) -> tuple[str, int]:
         print(f"[rebuild APPLY] 完成={stats['done']} 失败={stats['failed']} 跳过={stats['skipped']}")
         if stats["failed"]:
             return verdict, 2
+
+    if args.prune_orphans:
+        if args.rebuild:
+            print("\n[abort] --rebuild 与 --prune-orphans 请分两次跑（各自都要先备份再写）")
+            return verdict, 2
+        targets = collect_prune_targets(coverage, limit=args.limit)
+        if not targets:
+            print("\n[prune] 真孤儿向量 0 条 ⇒ 无事可做（归档向量本来就不在清理范围）")
+            return verdict, 0
+        if not args.apply:
+            print(f"\n[prune DRY-RUN] 将删除 {len(targets)} 条真孤儿向量，"
+                  f"采样 id={targets[:20]}" + ("…" if len(targets) > 20 else ""))
+            print(f"[prune DRY-RUN] 归档仍留向量 {len(coverage.get('archived_vector_ids') or [])} 条"
+                  "不在此删除清单里；未写任何文件，确认无误后加 --apply（先备份再删）")
+            return verdict, 0
+        try:
+            guard_target_store(vector_dir)
+            made = backup_vector_store(vector_dir, find_hnsw_segments(vector_dir),
+                                       Path(args.backup_dir))
+        except Exception as e:
+            print(f"[abort] 备份/前置检查失败，拒绝删除: {e.__class__.__name__}: {e}")
+            return verdict, 2
+        print("[prune APPLY] 备份完成：")
+        for path in made:
+            print(f"    {path}")
+        stats = apply_prune(targets, vector_db)
+        print(f"[prune APPLY] 请求={stats['requested']} 已删={stats['deleted']} 残留={stats['left']}")
+        if stats["left"]:
+            return verdict, 2
+        after = read_coverage(vector_db, app_db, coverage.get("table"))
+        if not after.get("ok"):
+            print(f"[prune APPLY] 复查覆盖率取数失败：{after.get('note')}（无法确认清干净，按失败处理）")
+            return verdict, 2
+        left_orphan = len(after.get("orphan_vector_ids") or [])
+        print(f"[prune APPLY] 复查：真孤儿={left_orphan} 条 / 归档仍留向量="
+              f"{len(after.get('archived_vector_ids') or [])} 条（归档不该动）")
+        return verdict, (0 if left_orphan == 0 else 2)
     return verdict, (0 if verdict == "PASS" else 1)
 
 
@@ -748,8 +902,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-live", action="store_true", help="跳过活体检索探针（不开向量库）")
     parser.add_argument("--rebuild", action="store_true",
                         help="重建摘要（默认 dry-run，不写任何文件）")
+    parser.add_argument("--prune-orphans", action="store_true",
+                        help="清理**真孤儿**向量（记忆行不存在）。默认 dry-run；"
+                             "与 --apply 同用才删，删前先备份 chroma.sqlite3 与 HNSW 段目录。"
+                             "归档记忆的向量不在此列，绝不删")
     parser.add_argument("--apply", action="store_true",
-                        help="与 --rebuild 同用才真写：先备份 chroma.sqlite3 与 HNSW 段目录")
+                        help="与 --rebuild 或 --prune-orphans 同用才真写：先备份再动")
     parser.add_argument("--limit", type=int, default=None, help="本次最多重建多少条")
     parser.add_argument("--backup-dir", type=Path, default=DEFAULT_BACKUP_DIR,
                         help=f"--apply 前置备份目录（默认 {DEFAULT_BACKUP_DIR}）")

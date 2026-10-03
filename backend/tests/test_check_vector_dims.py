@@ -81,17 +81,26 @@ def _make_chroma(db: Path, *, dimension: int | None, doc_ids: list[int]) -> None
     con.close()
 
 
-def _make_app_db(db: Path, memory_ids: list[int], *, character_id: int = 7) -> None:
+def _make_app_db(db: Path, memory_ids: list[int], *, character_id: int = 7,
+                 archived: list[int] | None = None,
+                 rows: list[tuple[int, int, int]] | None = None) -> None:
+    """建记忆表。
+
+    - `archived`：在 `memory_ids` 里把这些 id 标成已归档（仍留向量＝合法存量）。
+    - `rows`：直接给 (id, character_id, is_archived) 三元组，用来造跨角色分布。
+    """
     db.parent.mkdir(parents=True, exist_ok=True)
+    spec = rows if rows is not None else [
+        (i, character_id, 1 if archived and i in archived else 0) for i in memory_ids]
     con = sqlite3.connect(db)
     con.execute(
         "CREATE TABLE memories (id INTEGER PRIMARY KEY, character_id INTEGER, user_id INTEGER,"
         " memory_type TEXT, content TEXT, importance REAL, is_archived INTEGER DEFAULT 0,"
         " why_it_matters TEXT, status TEXT DEFAULT 'active', created_at TEXT)")
     con.executemany(
-        "INSERT INTO memories VALUES (?,?,?,?,?,?,0,?, 'active', '2026-09-20 10:00:00')",
-        [(i, character_id, 3, "event", f"记忆内容 {i}：用户提到的一些具体事情", 60.0, None)
-         for i in memory_ids])
+        "INSERT INTO memories VALUES (?,?,?,?,?,?,?,NULL,'active','2026-09-20 10:00:00')",
+        [(i, ch, 3, "event", f"记忆内容 {i}：用户提到的一些具体事情", 60.0, arch)
+         for (i, ch, arch) in spec])
     con.commit()
     con.close()
 
@@ -233,6 +242,162 @@ def test_missing_store_is_graceful(cvd, tmp_path, capsys):
     assert code == 3
 
 
+# ────────────────────── ⑥ 拆桶：归档向量不是孤儿（2026-10-03 批 0-1 后半的契约）──────────────────────
+def _split_env(tmp_path):
+    """现场：向量 1..5；记忆 1/2 未归档、3（角色7）与 4（角色9）已归档、**5 没有记忆行**＝真孤儿。"""
+    vector_dir = tmp_path / "vs"
+    _make_chroma(vector_dir / "chroma.sqlite3", dimension=_DIM, doc_ids=[1, 2, 3, 4, 5])
+    _make_segment(vector_dir / "seg", dim=_DIM, count=5)
+    app_db = tmp_path / "app.db"
+    _make_app_db(app_db, [], rows=[(1, 7, 0), (2, 7, 0), (3, 7, 1), (4, 9, 1)])
+    return vector_dir, app_db
+
+
+def test_coverage_splits_archived_from_orphans(cvd, tmp_path):
+    """核心契约：只有「记忆行不存在」才进孤儿桶；归档仍留向量单独成桶。
+
+    拆桶前 `alive` 取的是 `is_archived=0`，于是 2297 条归档向量被报成「记忆已删」并判 WARN；
+    谁在这种口径上加一句清理，就会把取消归档还要用的向量全删掉。
+    """
+    vector_dir, app_db = _split_env(tmp_path)
+    cov = cvd.read_coverage(vector_dir / "chroma.sqlite3", app_db)
+    assert cov["ok"] and cov["table"] == "memories"
+    assert cov["orphan_vector_ids"] == [5], "真孤儿＝记忆行根本不存在的那些"
+    assert cov["archived_vector_ids"] == [3, 4], "归档向量是合法存量，不许混进孤儿桶"
+    assert cov["missing_ids"] == []
+    assert cov["recall_pool_polluted"] == 3, "占召回名额＝真孤儿＋归档仍留向量"
+    per = cov["vectors_by_character"]
+    assert per["7"] == {"vectors": 3, "archived_vectors": 1, "orphan_vectors": 0}
+    assert per["9"] == {"vectors": 1, "archived_vectors": 1, "orphan_vectors": 0}
+    assert per["(记忆行不存在)"]["orphan_vectors"] == 1
+
+
+def test_archived_vectors_alone_do_not_warn(cvd, tmp_path, capsys):
+    """只有归档向量时结论仍 PASS，但要把「白占召回名额」的比例与分角色数报出来。"""
+    vector_dir = tmp_path / "vs"
+    _make_chroma(vector_dir / "chroma.sqlite3", dimension=_DIM, doc_ids=[1, 2])
+    _make_segment(vector_dir / "seg", dim=_DIM, count=2)
+    app_db = tmp_path / "app.db"
+    _make_app_db(app_db, [1, 2], archived=[2])
+    code = cvd.main(["--vector-dir", str(vector_dir), "--app-db", str(app_db)] + BASE_ARGS)
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "结论: PASS" in out
+    assert "归档仍留向量=1 条" in out
+    assert "白占召回名额=1/2 = 50.0%" in out
+    assert "角色 7：1/2 = 50.0% 白占额" in out
+
+
+def test_true_orphan_still_warns(cvd, tmp_path, capsys):
+    """真孤儿必须继续判 WARN，并把「可用 --prune-orphans」这条路指出来。"""
+    vector_dir, app_db = _split_env(tmp_path)
+    code = cvd.main(["--vector-dir", str(vector_dir), "--app-db", str(app_db)] + BASE_ARGS)
+    out = capsys.readouterr().out
+    assert code == 1, out
+    assert "结论: WARN" in out and "真孤儿向量 1 条" in out
+    assert "--prune-orphans" in out
+
+
+def test_prune_targets_exclude_archived(cvd, tmp_path):
+    vector_dir, app_db = _split_env(tmp_path)
+    cov = cvd.read_coverage(vector_dir / "chroma.sqlite3", app_db)
+    targets = cvd.collect_prune_targets(cov)
+    assert targets == [5]
+    assert 3 not in targets and 4 not in targets, "删归档向量＝真丢数据"
+    assert cvd.collect_prune_targets(cov, limit=1) == [5]
+    assert cvd.collect_prune_targets(cov, limit=0) == [5], "limit=0 不是「一条都不动」也不是「全清」"
+
+
+def test_prune_default_is_dry_run_and_writes_nothing(cvd, tmp_path, capsys):
+    vector_dir, app_db = _split_env(tmp_path)
+    before = _snapshot(tmp_path)
+    code = cvd.main(["--vector-dir", str(vector_dir), "--app-db", str(app_db)]
+                    + BASE_ARGS + ["--prune-orphans"])
+    out = capsys.readouterr().out
+    assert "prune DRY-RUN" in out and "将删除 1 条真孤儿向量" in out
+    assert "归档仍留向量 2 条不在此删除清单里" in out
+    assert _snapshot(tmp_path) == before, "dry-run 不得改动任何文件（含 mtime）"
+    assert code in (0, 1)
+
+
+def test_prune_apply_refuses_another_store(cvd, tmp_path, capsys, monkeypatch):
+    """删除只能落在应用真正连着的那棵库上：路径不一致就拒，且一个字节都不动。"""
+    def boom(_path):
+        raise RuntimeError("--vector-dir 与应用配置的向量库不一致")
+
+    monkeypatch.setattr(cvd, "guard_target_store", boom)
+    vector_dir, app_db = _split_env(tmp_path)
+    before = _snapshot(tmp_path)
+    code = cvd.main(["--vector-dir", str(vector_dir), "--app-db", str(app_db)]
+                    + BASE_ARGS + ["--prune-orphans", "--apply",
+                                   "--backup-dir", str(tmp_path / "bk")])
+    out = capsys.readouterr().out
+    assert code == 2, out
+    assert "拒绝删除" in out and "Traceback" not in out
+    assert _snapshot(tmp_path) == before, "前置检查没过就不许碰向量库，也不该留下备份目录"
+
+
+def test_prune_apply_backup_failure_is_fail_closed(cvd, tmp_path, capsys, monkeypatch):
+    vector_dir, app_db = _split_env(tmp_path)
+    monkeypatch.setattr(cvd, "guard_target_store", lambda _p: None)
+    blocker = tmp_path / "blocker.txt"
+    blocker.write_text("not a directory", encoding="utf-8")
+    before = _snapshot(tmp_path)
+    code = cvd.main(["--vector-dir", str(vector_dir), "--app-db", str(app_db)]
+                    + BASE_ARGS + ["--prune-orphans", "--apply", "--backup-dir", str(blocker)])
+    out = capsys.readouterr().out
+    assert code == 2, out
+    assert "备份/前置检查失败" in out
+    assert _snapshot(tmp_path) == before, "备份失败必须停在写之前"
+
+
+def test_prune_apply_deletes_then_rechecks(cvd, tmp_path, capsys, monkeypatch):
+    """删完必须复查：报告「已删／残留」，并确认归档那条一条没少。"""
+    import app.db.vector_store as vs
+
+    chroma = tmp_path / "vs" / "chroma.sqlite3"
+    vector_dir, app_db = _split_env(tmp_path)
+
+    async def fake_delete(memory_id: int):
+        con = sqlite3.connect(chroma)
+        con.execute("DELETE FROM embeddings WHERE embedding_id=?", (str(memory_id),))
+        con.commit()
+        con.close()
+
+    monkeypatch.setattr(cvd, "guard_target_store", lambda _p: None)
+    monkeypatch.setattr(vs, "delete_memory_vector", fake_delete)
+    backup_dir = tmp_path / "bk"
+    code = cvd.main(["--vector-dir", str(vector_dir), "--app-db", str(app_db)]
+                    + BASE_ARGS + ["--prune-orphans", "--apply", "--backup-dir", str(backup_dir)])
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "已删=1 残留=0" in out
+    assert "复查：真孤儿=0 条 / 归档仍留向量=2 条" in out
+    made = list(backup_dir.glob("vector_store.pre-b01-*"))
+    assert made, "删除之前必须先备份"
+    assert (made[0] / "chroma.sqlite3").is_file()
+
+
+def test_prune_apply_reports_leftovers(cvd, tmp_path, capsys, monkeypatch):
+    """`delete_memory_vector` 自己吞异常 ⇒ 残留必须由脚本查出来并判失败。"""
+    import app.db.vector_store as vs
+
+    vector_dir, app_db = _split_env(tmp_path)
+
+    async def no_op_delete(memory_id: int):
+        return None
+
+    monkeypatch.setattr(cvd, "guard_target_store", lambda _p: None)
+    monkeypatch.setattr(vs, "delete_memory_vector", no_op_delete)
+    code = cvd.main(["--vector-dir", str(vector_dir), "--app-db", str(app_db)]
+                    + BASE_ARGS + ["--prune-orphans", "--apply",
+                                   "--backup-dir", str(tmp_path / "bk")])
+    out = capsys.readouterr().out
+    assert code == 2, out
+    assert "残留=1" in out and "[残留] 删后复查仍在向量库里=[5]" in out
+
+
+# ────────────────────── ⑦ --apply 前置失败 ──────────────────────
 def test_apply_without_backup_dir_parent_is_graceful(cvd, tmp_path, capsys):
     """备份目标不可用时 fail-closed（返回 2），且现场一个字节都没动。
 
