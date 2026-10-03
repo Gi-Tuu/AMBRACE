@@ -277,7 +277,6 @@ def test_group_memory_entries_speaker_attribution():
 
 def test_daily_reflection_carries_annotations(monkeypatch):
     """周复盘记忆落库带 speaker_type + epistemic_status（不落空标注）。"""
-    from app.agent import loop as _loop
     from app.scheduling import daily_reflection as dr
 
     async def _f_false(*a, **k):

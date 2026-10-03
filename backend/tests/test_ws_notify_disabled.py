@@ -7,7 +7,6 @@
 import asyncio
 from datetime import datetime, timezone
 
-import pytest
 
 from app.api.system import notifications_ws
 from app.auth.config import create_token

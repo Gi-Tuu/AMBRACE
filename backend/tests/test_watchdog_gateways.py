@@ -9,6 +9,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 _REPO = Path(__file__).resolve().parents[2]
 _WATCHDOG_PATH = _REPO / "scripts" / "watchdog.py"
@@ -22,6 +24,20 @@ def _load_watchdog():
 
 
 watchdog = _load_watchdog()
+# 模块一加载就把「真日志路径」记下来：下面那条 autouse 夹具会把 LOG 改到临时目录，
+# 这个常量则是「测试一行都不许写进去」的那条生产路径，供不变式用例引用。
+_PROD_LOG = watchdog.LOG
+
+
+@pytest.fixture(autouse=True)
+def _logs_stay_out_of_production(tmp_path, monkeypatch):
+    """本文件的每个用例都把 watchdog 的日志写进自己的 tmp 目录。
+
+    2026-10-04 实测：以前每跑一次这个文件，就往 `backend/data/logs/watchdog.log` 追加
+    3 行**假故障**（「Gateway [OpenClaw] down detected, restarting...」等），
+    而真端口 18789 一直在监听 ⇒ 排障时会被这些行骗。日志是运维现场，不是测试的草稿纸。
+    """
+    monkeypatch.setattr(watchdog, "LOG", str(tmp_path / "watchdog.log"))
 
 
 def _write_config(tmp_path, cfg):
@@ -116,3 +132,17 @@ def test_start_gateway_respects_paused(monkeypatch):
         "probe": {"kind": "tcp", "port": 18789},
     })
     assert popped == []
+
+
+def test_logs_never_reach_the_real_watchdog_log(tmp_path):
+    """不变式：调用 `watchdog.log()` 只许写进本例 tmp，生产 `watchdog.log` 一个字节都不许涨。
+
+    把上面那条 autouse 夹具拿掉，这条用例立刻红——它就是为这件事存在的
+    （2026-10-04 之前没有这条，本文件每跑一次就往生产日志追加 3 行假故障）。
+    """
+    prod = Path(_PROD_LOG)
+    before = prod.stat().st_size if prod.is_file() else 0
+    watchdog.log("探针：这一行必须落在 tmp，不许进生产日志")
+    after = prod.stat().st_size if prod.is_file() else 0
+    assert after == before, "测试写进了生产 watchdog.log（autouse 夹具被拿掉了？）"
+    assert "探针：这一行必须落在 tmp" in (tmp_path / "watchdog.log").read_text(encoding="utf-8")

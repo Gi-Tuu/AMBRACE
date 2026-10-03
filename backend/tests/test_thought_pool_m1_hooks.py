@@ -352,7 +352,6 @@ def test_event_hook_subscribed_to_activity_completed():
 def test_service_layer_still_has_no_send_chain_reference():
     """不改发送链：服务层代码本体仍零引用 arbiter/生成器/调度器/发送口（M1 红线，挂点没把它带偏）。"""
     import ast
-    import os
 
     def _code_only(path: str) -> str:
         with open(path, encoding="utf-8") as f:

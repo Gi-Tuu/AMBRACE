@@ -2,7 +2,6 @@
 """P1 测试：反思驱动（ai_reflection 注入主动消息，flag 控制）"""
 import asyncio
 
-from app.agent import loop
 from app.scheduling import message_generator as mg
 
 

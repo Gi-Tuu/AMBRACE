@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import re
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import pytest

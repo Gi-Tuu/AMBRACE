@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """A4 批0-1：scripts/check_vector_dims.py 单测（临时目录造小库，绝不碰生产向量库）。
 
-纪律：全部用 tmp_path；``--apply`` 一条都不跑（真写只由维护者手跑）。
+纪律：全部用 tmp_path，**绝不碰生产向量库**。``--apply`` 只验「前置闸门／备份失败／删后复查」这三条
+fail-closed 分支——写与删本身一律被拒或桩掉（``guard_target_store``／``delete_memory_vector``），
+所以本文件里没有任何一条用例会真的往库里写东西（真写仍只由维护者手跑）。
 覆盖派单要求的五项：①维度一致 PASS ②header 与集合声明不一致 WARN ③缺向量的覆盖率
 ④--rebuild 默认 dry-run 不落任何写入 ⑤向量库缺失时优雅报错（不抛栈）。
 """
@@ -398,12 +400,15 @@ def test_prune_apply_reports_leftovers(cvd, tmp_path, capsys, monkeypatch):
 
 
 # ────────────────────── ⑦ --apply 前置失败 ──────────────────────
-def test_apply_without_backup_dir_parent_is_graceful(cvd, tmp_path, capsys):
+def test_apply_without_backup_dir_parent_is_graceful(cvd, tmp_path, capsys, monkeypatch):
     """备份目标不可用时 fail-closed（返回 2），且现场一个字节都没动。
 
     把 --backup-dir 指到一个**已存在的文件**：mkdir 必抛 → 备份失败即中止，
     绝不能走到 apply_rebuild（那会加载 ONNX 并按 settings 里的向量库路径真写）。
+    路径闸门这里**刻意桩成空操作**——本例要验的是「备份失败」这一环，
+    「路径不一致」另有专测（下面两个用例），别让两条前置互相顶掉。
     """
+    monkeypatch.setattr(cvd, "guard_target_store", lambda _p: None)
     vector_dir = tmp_path / "vs"
     _make_chroma(vector_dir / "chroma.sqlite3", dimension=_DIM, doc_ids=[])
     _make_segment(vector_dir / "seg", dim=_DIM, count=1)
@@ -418,3 +423,39 @@ def test_apply_without_backup_dir_parent_is_graceful(cvd, tmp_path, capsys):
     assert code == 2, out
     assert "备份失败" in out and "Traceback" not in out
     assert _snapshot(tmp_path) == before, "fail-closed 前不得触碰向量库"
+
+
+def test_rebuild_apply_refuses_another_store(cvd, tmp_path, capsys, monkeypatch):
+    """`--rebuild --apply` 写的是应用配置里那棵库、**不吃 `--vector-dir`** ⇒ 路径不一致必须拒。
+
+    2026-10-03 实测：`upsert_memory_vector` 走 `settings.chroma_persist_dir`，
+    所以「拿 `--vector-dir` 指着副本报数、`--apply` 却写进生产库」完全可能发生。
+    """
+    calls = []
+
+    def spy(_p):
+        calls.append(1)
+        raise RuntimeError("--vector-dir 与应用配置的向量库不一致")
+
+    monkeypatch.setattr(cvd, "guard_target_store", spy)
+    vector_dir, app_db = _split_env(tmp_path)
+    before = _snapshot(tmp_path)
+    code = cvd.main(["--vector-dir", str(vector_dir), "--app-db", str(app_db)] + BASE_ARGS
+                    + ["--rebuild", "--apply", "--backup-dir", str(tmp_path / "bk")])
+    out = capsys.readouterr().out
+    assert code == 2, out
+    assert "前置检查/备份失败" in out and "拒绝写入" in out
+    assert calls, "重建路径也必须先过闸门（此前只有删除路径过）"
+    assert _snapshot(tmp_path) == before, "闸门没过就不该备份、更不该写"
+
+
+def test_guard_rejects_a_different_store_for_real(cvd, tmp_path):
+    """不桩假的：拿 tmp 目录去比应用配置里的真库，闸门必须抛。"""
+    from app.config import settings
+
+    vector_dir = tmp_path / "vs"
+    vector_dir.mkdir()
+    configured = Path(settings.chroma_persist_dir).resolve()
+    assert vector_dir.resolve() != configured, "测试现场本就不该等于配置里的库"
+    with pytest.raises(RuntimeError, match="不一致"):
+        cvd.guard_target_store(vector_dir)

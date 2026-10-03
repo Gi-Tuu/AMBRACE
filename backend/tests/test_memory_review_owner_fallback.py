@@ -8,7 +8,6 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-import pytest
 
 from app.db.database import async_session_factory
 from app.models.character import AICharacter

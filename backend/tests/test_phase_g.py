@@ -2,7 +2,6 @@
 """Phase G 测试：Observation 结构化 + tool.executed 事件 + 联动订阅（flag 灰度）"""
 import asyncio
 
-from app.agent import loop
 from app.agent import tools
 from app.agent import tool_runner
 from app.events.bus import event_bus

@@ -2,7 +2,6 @@
 """Phase J 测试：周复盘（flag 灰度/LLM 生成/记忆沉淀/每 REFLECT_INTERVAL_DAYS 天一次）"""
 import asyncio
 
-from app.agent import loop
 from app.scheduling import daily_reflection
 
 

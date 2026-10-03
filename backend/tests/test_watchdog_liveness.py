@@ -13,6 +13,8 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 
 _REPO = Path(__file__).resolve().parents[2]
 _WATCHDOG_PATH = _REPO / "scripts" / "watchdog.py"
@@ -26,6 +28,19 @@ def _load_watchdog():
 
 
 watchdog = _load_watchdog()
+# 模块一加载就记下「真日志路径」：autouse 夹具会把 LOG 挪进 tmp，这个常量给不变式用例用。
+_PROD_LOG = watchdog.LOG
+
+
+@pytest.fixture(autouse=True)
+def _logs_stay_out_of_production(tmp_path, monkeypatch):
+    """本文件的每个用例都把 watchdog 的日志写进自己的 tmp 目录。
+
+    2026-10-04 实测：以前每跑一次就往 `backend/data/logs/watchdog.log` 追加
+    「Paused flag exists, skip hang restart」——而当时**并不存在** paused.flag，
+    是用例把 `is_paused` 桩成了 True。运维日志里出现测试编造的因果，比没日志更坏。
+    """
+    monkeypatch.setattr(watchdog, "LOG", str(tmp_path / "watchdog.log"))
 
 
 class _Resp(io.BytesIO):
@@ -195,3 +210,17 @@ def test_restart_hung_server_without_listener_defers(monkeypatch):
     monkeypatch.setattr(watchdog, "start_server", lambda: started.append(1))
     watchdog.restart_hung_server()
     assert started == []
+
+
+def test_logs_never_reach_the_real_watchdog_log(tmp_path):
+    """不变式：`watchdog.log()` 只许写进本例 tmp，生产 `watchdog.log` 一个字节都不许涨。
+
+    拿掉上面的 autouse 夹具，这条立刻红。（与 test_watchdog_gateways.py 里同名用例是一对，
+    两个文件都曾经往生产日志写假故障。）
+    """
+    prod = Path(_PROD_LOG)
+    before = prod.stat().st_size if prod.is_file() else 0
+    watchdog.log("探针：这一行必须落在 tmp，不许进生产日志")
+    after = prod.stat().st_size if prod.is_file() else 0
+    assert after == before, "测试写进了生产 watchdog.log（autouse 夹具被拿掉了？）"
+    assert "探针：这一行必须落在 tmp" in (tmp_path / "watchdog.log").read_text(encoding="utf-8")

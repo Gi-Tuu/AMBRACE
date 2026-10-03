@@ -639,10 +639,11 @@ def collect_prune_targets(coverage: dict, *, limit: int | None = None) -> list[i
 
 
 def guard_target_store(vector_dir: Path) -> None:
-    """删除只能作用在应用真正连着的那棵向量库上，路径不一致就直接拒。
+    """两条写路径（`--rebuild --apply`／`--prune-orphans --apply`）都只能落在应用真正连着的那棵库上。
 
-    `delete_memory_vector` 走 app 的配置（`settings.chroma_persist_dir`）、不吃 `--vector-dir`
-    ⇒ 「拿 `--vector-dir` 指着一份副本报数、却删到生产库」是会发生的事故，宁可在入口拦死。
+    `upsert_memory_vector` 与 `delete_memory_vector` 用的都是 `settings.chroma_persist_dir`、**不吃脚本的
+    `--vector-dir`** ⇒ 「拿 `--vector-dir` 指着一份副本报数、`--apply` 却写进生产库」是会发生的事故。
+    路径对不上就在备份之前拒掉。（2026-10-03 先给删除路径加，次批补上重建路径，两边对称。）
     """
     from app.config import settings
 
@@ -650,7 +651,7 @@ def guard_target_store(vector_dir: Path) -> None:
     target = Path(vector_dir).resolve()
     if configured != target:
         raise RuntimeError(
-            f"--vector-dir={target} 与应用配置的向量库 {configured} 不一致，拒绝在另一棵库上删")
+            f"--vector-dir={target} 与应用配置的向量库 {configured} 不一致，拒绝在另一棵库上写")
 
 
 def apply_prune(ids: list[int], vector_db: Path) -> dict:
@@ -834,10 +835,11 @@ def run_check(args: argparse.Namespace) -> tuple[str, int]:
             print("[rebuild DRY-RUN] 未写任何文件；确认无误后加 --apply（会先备份再写）")
             return verdict, 0
         try:
+            guard_target_store(vector_dir)
             made = backup_vector_store(vector_dir, find_hnsw_segments(vector_dir),
                                        Path(args.backup_dir))
         except Exception as e:
-            print(f"[abort] 备份失败，拒绝写入: {e.__class__.__name__}: {e}")
+            print(f"[abort] 前置检查/备份失败，拒绝写入: {e.__class__.__name__}: {e}")
             return verdict, 2
         print("[rebuild APPLY] 备份完成：")
         for path in made:

@@ -220,6 +220,7 @@ def test_不带epistemic_status时旧行为不变(env):
     mid = _seed(env["factory"])
     before = _row(env["factory"], mid)
     pinned, conf, epi = before.is_pinned, before.confirmation_count, before.epistemic_status
+    assert pinned is False, "种子行必须未钉住（模型 default=False）；否则下面「改成 True」这一步是空转"
     _patch(env, mid, {"is_pinned": True})
     row = _row(env["factory"], mid)
     assert (row.is_pinned, row.confirmation_count, row.epistemic_status) == (True, conf, epi)
