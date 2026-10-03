@@ -478,7 +478,10 @@ def test_self_check_reports_bucket_evidence_coverage(audit_data):
 def test_report_lines_carry_traceable_evidence(audit_data):
     """报告里出现的具体位置必须是「文件:行号」形态（可点进去核）。"""
     text = ea.render_report(audit_data)
-    assert "backend/app/plugins/registry.py:" in text
+    # R4 随迁（A22 第九刀 · ④b，2026-10-03）：verify_plugin_signature 已从 registry.py 搬到
+    # plugin_consent.py；断言原意不变（报告必须给出「文件:行号」形态的可核证据），
+    # 只把期望文件跟着搬家更新。下方 docs/extension-contract.md 与 system.py 两条断言不动。
+    assert "backend/app/plugins/plugin_consent.py:" in text
     assert "docs/extension-contract.md:" in text
     assert "backend/app/application/system.py:" in text
 

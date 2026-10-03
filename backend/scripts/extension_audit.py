@@ -10,7 +10,8 @@ M0 的唯一产出物是**读数**，不新增语义：不改权限名、不改�
        **N3（2026-09-30）增**：§3 每条权限「一行一句 + 一个实现状态标记」，本块读出该标记并把
        结果分成三类——**实现漂移**（文档说已落地而代码无）／**计划项**（仅预告或未实现）／
        **待办**（状态未标注、或代码与前端仍残留引用）。**权限名字面值一个字都不动**。
-  B-3  ``app/plugins/registry.py`` 的 ``verify_plugin_signature`` 恒 True 占位如实登记（含调用点）
+  B-3  ``verify_plugin_signature`` 恒 True 占位如实登记（含调用点）；自 A22 ④b 起**按定义处解析**
+       （当前定义在 ``backend/app/plugins/plugin_consent.py``，registry 侧只留具名重导出）
   C-1  「桌面气泡 / 锁屏卡片」在本仓不存在 ⇒ 判据改写为通知正文长度分布：
        本单只给「能否测 / 怎么测 / 现有可测口径」
   D    ``llm_usage`` 无 ``estimated`` 列 + ``get_llm_usage`` 全表载入 ⇒ 落成**可执行约束**
@@ -62,6 +63,10 @@ def default_report_path() -> Path:
 CONTRACT_DOC = "docs/extension-contract.md"
 MANIFEST_PY = "backend/app/plugins/manifest.py"
 REGISTRY_PY = "backend/app/plugins/registry.py"
+# A22 ④b（2026-10-03）：verify_plugin_signature 已从 registry.py 搬进 plugin_consent.py，
+# B-3 块改成「按定义处解析」——下面这个元组的顺序就是优先级。
+PLUGIN_CONSENT_PY = "backend/app/plugins/plugin_consent.py"
+SIGNATURE_STUB_CANDIDATES = (PLUGIN_CONSENT_PY, REGISTRY_PY)   # 按「定义处」解析；顺序即优先级
 MODELS_AGENT_PY = "backend/app/models/agent/__init__.py"
 APPLICATION_SYSTEM_PY = "backend/app/application/system.py"
 APPLICATION_USAGE_SERVICE_PY = "backend/app/application/usage_service.py"
@@ -578,13 +583,32 @@ def audit_doc_code_drift(repo_root: Path, index: dict, code_perms: dict) -> dict
 
 # ────────────────────────── B-3：签名校验桩 ──────────────────────────
 
-def audit_signature_stub(repo_root: Path, index: dict, registry_py: str = REGISTRY_PY) -> dict:
-    text, err = read_text(repo_root, registry_py)
-    if text is None:
-        return {"ok": False, "error": err}
-    func = ast_find_func(ast_tree(text), "verify_plugin_signature")
-    if func is None:
-        return {"ok": False, "error": f"{registry_py} 未找到 verify_plugin_signature"}
+def audit_signature_stub(repo_root: Path, index: dict, registry_py: str | None = None) -> dict:
+    """B-3 签名占位读数。
+
+    R4 随迁（A22 第九刀 · ④b，2026-10-03）：``verify_plugin_signature`` 已从
+    ``backend/app/plugins/registry.py`` 整体搬到 ``backend/app/plugins/plugin_consent.py``
+    （registry 侧只留具名重导出）。所以本块的锚点从「写死 registry.py」改成
+    **「按定义处解析」**——在候选文件里找到真正定义该函数的那个。
+    **断言原意一字未变**：仍是「函数体只有一条 ``return True`` ⇒ 三处 ``if not verify_plugin_signature(...)``
+    是死闸」，只是把「代码在哪」跟着搬家更新；调用点统计照旧排除定义所在文件。
+    """
+    candidates = [registry_py] if registry_py else list(SIGNATURE_STUB_CANDIDATES)
+    text = func = None
+    tried = []
+    for path in candidates:
+        t, e = read_text(repo_root, path)
+        if t is None:
+            tried.append(f"{path}: {e}")
+            continue
+        f = ast_find_func(ast_tree(t), "verify_plugin_signature")
+        if f is None:
+            tried.append(f"{path}: 未找到 verify_plugin_signature")
+            continue
+        registry_py, text, func = path, t, f
+        break
+    if text is None or func is None:
+        return {"ok": False, "error": "verify_plugin_signature 定义处解析失败 ⇒ " + "；".join(tried)}
     body = [s for s in func.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
     always_true = (
         len(body) == 1
@@ -1192,7 +1216,7 @@ def render_report(data: dict) -> str:
         add("### 1.7 处置登记（N3 已订正文档事实，仍不动语义）")
         add("")
         add("- 改名/删除权限名会让已装插件的 consent 记录整体失配（`consent_matches` 严格比较，"
-            f"`{b2.get('consent_strict_match_evidence', 'backend/app/plugins/registry.py')}`）"
+            f"`{b2.get('consent_strict_match_evidence', PLUGIN_CONSENT_PY)}`）"
             "⇒ **本批禁止改名**，漂移按「先改文档，再改代码」处置（设计 §3.6）。")
         add(f"- **实现漂移 {b2['counts']['implementation_drift']} 条**：文档声称已落地而代码没有的权限——"
             "N3 已把 `douyin_publish` 的口径订正为「未实现」，故本类应为空；非空即说明文档又承诺了代码没有的权限。")

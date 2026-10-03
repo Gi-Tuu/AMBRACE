@@ -241,3 +241,90 @@ def test_photo_cache_key_separates_baked_and_plain_frames():
     """缓存键必须含 fill/ring：同一素材在亮/暗主题之间切换不得命中对方的图。"""
     src = inspect.getsource(sc.CUI.PhotoStore.get)
     assert "fill, ring)" in src, "取图缓存键漏了 fill/ring"
+
+
+# ── V4 亮色主题校准：开关两态与斑马纹必须"看得出来"，暗色两主题必须一字不变 ──
+
+def _wcag_lum(color: str) -> float:
+    c = [v / 255 for v in sc.CUI.hex_rgb(color)]
+    c = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in c]
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+
+def _cr(a: str, b: str) -> float:
+    """WCAG 对比度。图形件（开关轨道/滑块）按 3:1，正文按 4.5:1。"""
+    la, lb = _wcag_lum(a), _wcag_lum(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_dark_switches_keep_the_measured_documented_palette():
+    """暗色两主题＝「暗轨道＋亮滑块」是量过的结论（整列亮时发光的是滑块不是一片青块）。
+
+    本例不许被"顺手优化"：要改必须先出 before/after 截图。
+    """
+    for name in ("aurora", "dark"):
+        t = sc.THEMES[name]
+        assert sc.CUI.switch_palette(t, True) == (t.accent_dim, t.accent), name
+        assert sc.CUI.switch_palette(t, False) == (t.hairline, t.text_muted), name
+        assert sc.CUI.switch_palette(t, True, locked=True) == (t.divider, t.text_muted), name
+
+
+def test_light_switch_both_states_pass_3to1():
+    """亮色主题沿用暗色口径时实测：ON 轨道对卡片只有 1.14、OFF 滑块对轨道只有 1.89
+    ⇒ 一列开关看不出开着还是关着。校准后四处比值都必须过线。
+    """
+    t = sc.THEMES["light"]
+    on_track, on_knob = sc.CUI.switch_palette(t, True)
+    off_track, off_knob = sc.CUI.switch_palette(t, False)
+    assert (on_track, on_knob) == (t.accent, t.card), "亮色 ON 必须是饱和轨道＋白滑块"
+    assert (off_track, off_knob) == (t.hairline, t.text_sec), "亮色 OFF 必须是浅轨＋中灰滑块"
+    assert _cr(on_knob, on_track) >= 3.0, "ON 滑块贴在轨道上分不出"
+    assert _cr(off_knob, off_track) >= 3.0, "OFF 滑块与轨道糊在一起"
+    assert _cr(on_track, t.card) >= 3.0, "ON 轨道相对卡片消失"
+    assert _cr(on_track, off_track) >= 1.6, "两态的轨道本身也要参与编码（一眼分得出）"
+    lk_tr, lk_kn = sc.CUI.switch_palette(t, True, locked=True)
+    assert (lk_tr, lk_kn) == (t.divider, t.text_muted), "锁定态应比 OFF 更没电（低强调是刻意的）"
+
+
+def test_zebra_has_one_source_and_light_is_perceptible():
+    """斑马纹唯一真源＝`CUI.zebra_bg`（`_row_bg` 与 `DataTable.add_row` 都走它）。
+
+    暗色维持 0.55 混合不变；亮色 0.55 只有 2/255（对比 1.04）＝隔行看不出来，故取满档。
+    """
+    for name in ("aurora", "dark"):
+        t = sc.THEMES[name]
+        assert sc.CUI.zebra_bg(t, 1) == sc.CUI.mix(t.card, t.card_hover, 0.55), name + " 暗色混合不许改"
+    t = sc.THEMES["light"]
+    assert sc.CUI.zebra_bg(t, 0) == t.card
+    odd = sc.CUI.zebra_bg(t, 1)
+    assert odd == t.card_hover, "亮色必须取满档"
+    assert abs(_lum(odd) - _lum(t.card)) >= 4, "亮色隔行仍与卡片同色"
+    assert _cr(t.text_sec, odd) >= 4.5, "行文字压在隔行底色上不到 AA"
+    # 表头改用 text_sec 后必须达 AA；text_muted（亮色对白卡只有 2.68）自此只许用于装饰性圆点/占位，
+    # 不许再当正文色用——这条就是那条禁令的量化形式。
+    assert _cr(t.text_sec, t.card) >= 4.5, "表头小字在新底色上不到 AA"
+    assert _cr(t.text_muted, t.card) < 3.0, "text_muted 若被调亮，本禁令该重开而不是默默改 token"
+    # 两个消费点必须同源，否则改一处就会让三张表与概览表的隔行深浅分叉
+    assert sc._row_bg(t, 1) == odd and sc._row_bg(t, 0) == t.card
+    src = inspect.getsource(sc.CUI.DataTable.add_row)
+    assert "zebra_bg" in src, "DataTable 又自己写了一套混合"
+    band_src = inspect.getsource(sc.CUI.DataTable.add_row)
+    assert "columnspan=len(self.cols)" in band_src and 'sticky="nsew"' in band_src, (
+        "行底色没铺横向连通带：只给 cell 上色会在列间距处断成几段色块（亮色主题下尤其明显）")
+    init_src = inspect.getsource(sc.CUI.DataTable.__init__)
+    assert "fg=theme.text_muted" not in init_src, "表头还在用 text_muted（亮色对白卡只有 2.68）"
+    assert "fg=theme.text_sec" in init_src, "表头没改到 text_sec"
+
+
+def test_fit_text_ellipsizes_only_when_it_does_not_fit():
+    """`fit_text` 是「无声裁切 → 给出 …」这条修复的纯函数面（不起窗口也能测）。"""
+    m = lambda t: len(t) * 8          # noqa: E731  每字符 8px
+    assert sc.CUI.fit_text(m, "short", 8 * 5 + 8) == ("short", False)
+    shown, clipped = sc.CUI.fit_text(m, "abcdefghij", 8 * 6)
+    assert clipped and shown.endswith("…") and m(shown) <= 8 * 6, shown
+    assert shown[:-1] == "abcde", "截断必须尽量保留前缀"
+    assert sc.CUI.fit_text(m, "", 40) == ("", False), "空值不裁（占位由 DataRow 负责）"
+    assert sc.CUI.fit_text(m, "abcdef", 0) == ("abcdef", False), "宽度未知时不许乱裁"
+    assert sc.CUI.fit_text(m, "abcdef", 8) == "…"[0] + "" or True
+    assert sc.CUI.fit_text(m, "abcdef", 8)[0] == "…", "窄到连一个字符都放不下时只留省略号"

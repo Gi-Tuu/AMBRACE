@@ -569,7 +569,8 @@ async def capability_audit(user_id: int = Depends(require_server_admin)):
     （块 B 新增的两个「只记不判」点位写入）。**本端点零写库**，只读 SELECT。
 
     诚实标注 ``signature=not_enforced``：插件签名校验当前是恒 True 的桩
-    （``registry.py:833``），不得据此宣称「签名校验通过」。
+    （``plugins/plugin_consent.py`` 的 ``verify_plugin_signature``；A22 ④b 起从 registry 搬入），
+    不得据此宣称「签名校验通过」。
     """
     from sqlalchemy import select
 
@@ -644,7 +645,7 @@ async def capability_audit(user_id: int = Depends(require_server_admin)):
         "total": len(report),
         "signature": "not_enforced",
         "window_days": 30,
-        "note": ("签名校验当前为恒 True 桩（registry.py:833），不得据此宣称已验签；"
+        "note": ("签名校验当前为恒 True 桩（plugin_consent.verify_plugin_signature），不得据此宣称已验签；"
                  "calls_30d 来自 route='plugin_capability' 的只读聚合"),
     }
 

@@ -3315,8 +3315,11 @@ A22C8_ANCHORS = (
     "PROJECT_ROOT", "_logger", "_RUNTIME_SCOPE_TTL",
 )
 # 仍在 registry 原地定义的（hook 分发与 API 面，一个都不许搬走）
+# R4 随迁（A22 第九刀 · ④c，2026-10-03）：``plugin_disabled_route_gate_enabled`` 已进 ④c 搬家清单
+# （现定义在 plugins/plugin_scope.py，registry 侧具名重导出）。断言原意一字未变——「本名单里的名字必须
+# 仍在 registry 原地定义」，只把随代码搬家的名字跟着搬走；它的接缝由 ④c 守卫第 6 条接管。
 A22C8_STAY_DEFS = ("run_hook", "run_hook_collect", "list_plugins", "get_plugin",
-                   "set_plugin_state", "run_plugin_action", "plugin_disabled_route_gate_enabled",
+                   "set_plugin_state", "run_plugin_action",
                    "mount_plugin_routers", "preload_channels")
 # 每个搬走的函数里「必须以 _reg.<name> 出现、禁止裸名」的名字（变异守卫用；还原任一处 _reg. 立即变红）
 A22C8_STAY_REFS = {
@@ -3527,5 +3530,689 @@ def test_A22第八刀a_8_源码锚定原定义消失且留在原地的一个没�
         assert re.search(pattern, reg_src, re.M), name + " 必须仍在 registry 原地定义"
     assert "from app.plugins.plugin_store import" in reg_src, "registry 侧必须有具名重导出块"
     defs = _a22c8_top_defs(reg_src)
-    assert len(defs) == 42 and set(defs).isdisjoint(A22C8_MOVED_NAMES), (
-        "registry 顶层函数应为搬家后剩下的 42 个（54 - 12），一个不多一个不少")
+    # R4 随迁（A22 第九刀 ④b，2026-10-03）：④b 又从 registry 搬走 12 个顶层 def，
+    # 故本锚点由「54 - 12 = 42」改为「42 - ④b 的 12 = 30」；断言原意未变（一个不多一个不少），
+    # 只把写死的数换成对下一刀也成立的表达式。
+    # R4 再随迁（A22 第九刀 ④c，2026-10-03）：④c 再搬走 15 个顶层 def ⇒ 30 - 15 = 15。本行按
+    # 「42 - ④b 名单 - ④c 名单」写成表达式，④d 若继续搬家同样不必改本行（名单在文件末尾定义，
+    # 断言在运行期取全局名，故此处前向引用成立）。
+    assert (len(defs) == 42 - len(A22C9_MOVED_NAMES) - len(A22C10_MOVED_NAMES)
+            and set(defs).isdisjoint(set(A22C8_MOVED_NAMES) | set(A22C10_MOVED_NAMES))), (
+        "registry 顶层函数应为搬家后剩下的 %d 个（54 - ④a 12 - ④b 12 - ④c 15），一个不多一个不少"
+        % (42 - len(A22C9_MOVED_NAMES) - len(A22C10_MOVED_NAMES)))
+
+
+# ── A22 第九刀（④b，2026-10-03）：registry 插件同意/能力块 ↔ plugins/plugin_consent ──
+# ④b 把 registry 的 12 个 consent/能力函数整体搬到 ``app/plugins/plugin_consent.py``，
+# registry 侧具名重导出。预扫用 AST 实测（不是人眼扫）：**只有 3 个名字需要 `_reg.` 回指**
+# ——``_logger``（4 个函数引用；tests 2 处打桩）/ ``_db_prov``（1 个函数引用；tests 5 处打桩）/
+# ``get_plugin_provenance``（2 个函数引用；④a 从 registry 重导出而来）。``json`` 是标准库，
+# 新模块直接 import，不走回指。
+# ⚠ 本刀特有的**跨刀耦合**：④a 的守卫把 ``_parse_perms`` / ``_upsert_plugin_consent`` /
+#   ``backfill_plugin_consents_once`` 写进了 ``A22C8_STAY_REFS``（要求 plugin_store 以 ``_reg.<name>``
+#   调用它们），而这三个名字 ④b 又搬走了 ⇒ 它们必须仍能经 registry 的重导出解析到实现，
+#   否则 ④a 的穿透例会「守卫变绿却扫真库」。下面第 7 条专门钉这件事。
+A22C9_MOVED_NAMES = (
+    "_parse_perms", "_upsert_plugin_consent", "backfill_plugin_consents_once",
+    "consent_state", "consent_matches", "get_plugin_consented_permissions",
+    "get_tenant_consented_permissions", "grant_plugin_consent", "has_capability_permission",
+    "require_plugin_consent", "resolve_tenant_for_user", "verify_plugin_signature",
+)
+# 仍留在 registry、必须靠 _reg. 现取的名字（tests 在其上打桩 ⇒ 不许在 plugin_consent 另立副本）
+A22C9_STAY_REFS = {
+    "_upsert_plugin_consent": {"_parse_perms"},
+    "backfill_plugin_consents_once": {"_logger", "_parse_perms", "_upsert_plugin_consent"},
+    "get_plugin_consented_permissions": {"get_plugin_provenance", "get_tenant_consented_permissions"},
+    "get_tenant_consented_permissions": {"_logger", "_parse_perms"},
+    "grant_plugin_consent": {"_db_prov", "_upsert_plugin_consent", "get_plugin_provenance"},
+    "has_capability_permission": {"_logger", "get_tenant_consented_permissions"},
+    "require_plugin_consent": {"consent_matches", "consent_state", "get_tenant_consented_permissions", "grant_plugin_consent"},
+    "resolve_tenant_for_user": {"_logger"},
+}
+# 明确留在 registry 原地的，一个都不许被 ④b 顺手带走
+# R4 随迁（A22 第九刀 · ④c，2026-10-03）：本名单原先含「④c 预留的 6 个可见性/作用域函数」
+# （plugin_user_scope_enabled / plugin_visible_to_tenant / plugin_is_builtin /
+#  clear_runtime_scope_caches / resolve_caller_tenant_cached / plugin_disabled_route_gate_enabled），
+#  ④c 已把它们搬进 plugins/plugin_scope.py ⇒ 跟着搬家移除。断言原意一字未变（列出的名字必须仍在
+#  registry 原地定义）；这 6 个名字的接缝改由 ④c 守卫（本文件末尾 A22C10_*）与 registry 的重导出块接管。
+A22C9_STAY_DEFS = ("run_hook", "run_hook_collect", "list_plugins", "get_plugin",
+                   "mount_plugin_routers", "preload_channels")
+A22C9_REGISTRY_PY = _seam_src_path("app.plugins.registry")
+A22C9_CONSENT_PY = _seam_src_path("app.plugins.plugin_consent")
+
+
+def _a22c9_src(path) -> str:
+    return Path(str(path)).read_text(encoding="utf-8")
+
+
+def _a22c9_top_defs(src: str) -> list:
+    return [n.name for n in ast.parse(src).body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def _a22c9_find_fn(path, name):
+    for n in ast.walk(ast.parse(_a22c9_src(path))):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name:
+            return n
+
+
+def test_A22第九刀b_1_重导出12函数两侧同一对象():
+    import app.plugins.plugin_consent as consent
+    import app.plugins.registry as reg
+
+    assert len(A22C9_MOVED_NAMES) == 12
+    for name in A22C9_MOVED_NAMES:
+        assert hasattr(reg, name) and hasattr(consent, name), name
+        assert getattr(reg, name) is getattr(consent, name), name + " 两侧必须同一对象（具名重导出）"
+        assert getattr(reg, name).__module__ == "app.plugins.plugin_consent", (
+            name + " 的 __module__ 只能是 plugin_consent（registry 侧不许复制一份实现）")
+
+
+def test_A22第九刀b_2_打桩锚点仍在registry且没在plugin_consent另立副本():
+    import app.plugins.plugin_consent as consent
+    import app.plugins.registry as reg
+
+    for name in ("_logger", "_db_prov", "get_plugin_provenance"):
+        assert hasattr(reg, name), name + " 必须仍挂在 registry 上（tests 在 registry 打桩）"
+        assert not hasattr(consent, name), (
+            name + " 不得在 plugin_consent 里另立一份 —— 有副本则 setattr(registry, ...) 的桩静默失效")
+    assert isinstance(getattr(reg, "_db_prov"), dict), "_db_prov 必须是同一个 dict 本体"
+
+
+def test_A22第九刀b_3_plugin_consent顶层函数恰好等于搬家清单():
+    assert sorted(_a22c9_top_defs(_a22c9_src(A22C9_CONSENT_PY))) == sorted(A22C9_MOVED_NAMES), (
+        "新文件顶层 def 必须恰好是 ④b 的 12 个：既没漏搬，也没顺手多搬")
+
+
+def test_A22第九刀b_4_reg现取静态锚定_变异守卫():
+    """把某处 `_reg._logger` 改回裸名，本例必须立即变红（§5.3 变异自测的可复核形式）。"""
+    for fn_name, stubbed in A22C9_STAY_REFS.items():
+        fn = _a22c9_find_fn(A22C9_CONSENT_PY, fn_name)
+        assert fn is not None, fn_name
+        bare = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+        reg_attrs = {a.attr for a in ast.walk(fn)
+                     if isinstance(a, ast.Attribute) and isinstance(a.value, ast.Name)
+                     and a.value.id == "_reg"}
+        assert bare & stubbed == set(), "%s 出现裸桩名 %s（应改回 _reg.）" % (fn_name, bare & stubbed)
+        assert stubbed <= reg_attrs, "%s 缺 _reg. 现取 %s" % (fn_name, stubbed - reg_attrs)
+        has_reg = any(isinstance(n, ast.ImportFrom) and n.module == "app.plugins"
+                      and any(a.name == "registry" and a.asname == "_reg" for a in n.names)
+                      for n in ast.walk(fn))
+        assert has_reg, "%s 缺函数内 registry as _reg 现取 import" % fn_name
+
+
+def test_A22第九刀b_5_穿透_patch_registry_logger后异常分支必须命中桩(monkeypatch):
+    """打桩 ``registry._logger`` 后驱动 ``resolve_tenant_for_user`` 的失败分支：桩必须被命中。
+
+    写成裸名或 import 期绑定时会拿到 plugin_consent 自己那份 logger ⇒ registry 上 2 处
+    ``setattr(registry, "_logger", ...)`` 静默失效，正是「测试变绿却用真实现」。
+    零 DB：把 ``async_session_factory`` 换成一个直接抛的假工厂，异常在 try 内被吃掉。
+    """
+    import app.db.database as dbmod
+    import app.plugins.plugin_consent as consent
+    import app.plugins.registry as reg
+
+    hits = []
+
+    class _RecLogger:
+        def warning(self, *a):
+            hits.append(a)
+
+        def info(self, *a):
+            hits.append(a)
+
+    def _boom():
+        raise RuntimeError("a22c9 sentinel")
+
+    monkeypatch.setattr(reg, "_logger", _RecLogger())
+    monkeypatch.setattr(dbmod, "async_session_factory", _boom)
+    assert asyncio.run(consent.resolve_tenant_for_user(7)) is None
+    assert hits, ("_logger 桩没被命中 ⇒ plugin_consent 里是裸名或 import 期绑定"
+                  " ⇒ registry._logger 的 2 处桩静默失效")
+
+
+def test_A22第九刀b_6_顶层不成环():
+    tree = ast.parse(_a22c9_src(A22C9_CONSENT_PY))
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom):
+            assert not (node.module == "app.plugins"
+                        and any(a.name == "registry" for a in node.names)), (
+                "顶层不得 import app.plugins.registry（会与 registry→plugin_consent 成环）")
+        if isinstance(node, ast.Import):
+            assert not any(a.name == "app.plugins.registry" for a in node.names)
+    import app.plugins.plugin_consent as consent
+    assert "registry" not in vars(consent), "registry 不得出现在 plugin_consent 的模块命名空间里"
+
+
+def test_A22第九刀b_7_跨刀耦合_plugin_store的回指在搬家后仍解析得到实现():
+    """④a 的 plugin_store 用 ``_reg._parse_perms`` / ``_reg._upsert_plugin_consent`` /
+    ``_reg.backfill_plugin_consents_once``；这三个名字 ④b 搬走了 ⇒ 必须仍能经 registry
+    重导出解析到 plugin_consent 的实现，否则 ④a 的穿透例会静默走真库。
+    """
+    import app.plugins.registry as reg
+
+    for name in ("_parse_perms", "_upsert_plugin_consent", "backfill_plugin_consents_once"):
+        target = getattr(reg, name, None)
+        assert callable(target), name + " 必须仍能从 registry 取到（④a 的 _reg.<name> 靠它）"
+        assert target.__module__ == "app.plugins.plugin_consent", (
+            name + " 应解析到 plugin_consent 的实现，而不是被 registry 另立一份")
+
+
+def test_A22第九刀b_8_源码锚定原定义消失且留在原地的一个没搬():
+    reg_src = _a22c9_src(A22C9_REGISTRY_PY)
+    for name in A22C9_MOVED_NAMES:
+        assert re.search("^(?:async )?def " + re.escape(name) + chr(92) + "b", reg_src, re.M) is None, (
+            name + " 的原定义应已从 registry 消失")
+    for name in A22C9_STAY_DEFS:
+        assert re.search("^(?:async )?def " + re.escape(name) + chr(92) + "b", reg_src, re.M), (
+            name + " 必须仍在 registry 原地定义（属 ④c 或 hook 分发面）")
+    assert "from app.plugins.plugin_consent import" in reg_src, "registry 侧必须有具名重导出块"
+    defs = _a22c9_top_defs(reg_src)
+    assert set(defs).isdisjoint(A22C9_MOVED_NAMES), "④b 搬走的名字不得仍在 registry 顶层定义"
+
+
+# ── A22 第九刀（④c，2026-10-03）：registry 租户可见性/运行时作用域块 ↔ plugins/plugin_scope ──
+# ④c 把 registry 的 15 个「可见性与作用域」函数整体搬到 ``app/plugins/plugin_scope.py``，registry 侧
+# 具名重导出。本刀与 ④a/④b 的结构性差别是：**状态本体一个都不许搬**——``_RUNTIME_SCOPE_TTL`` 与三个
+# 缓存（``_visible_names_cache`` / ``_caller_tenant_cache`` / ``_warned_no_caller``）必须仍是 registry
+# 的那一份，因为 tests 直接读 ``registry._warned_no_caller``（test_plugin_runtime_scope_m4.py:240）、
+# 并把 ``clear_runtime_scope_caches`` 当打桩目标（本文件 ④a 的 test_A22第八刀a_5_*，行号会随追加漂移故不写死）。plugin_scope 只经
+# ``_reg.`` **就地**读写它们；一旦在新模块另立副本，哨兵注入与桩会同时静默失效（守卫第 2、7 条钉死）。
+# 预扫三口径实测（不是人眼扫）：对象式打桩 2 处——``clear_runtime_scope_caches``（1）与
+# ``plugin_disabled_route_gate_enabled``（test_mount_plugin_routers_enabled_gate.py:44）；
+# 字符串路径 ``app.plugins.registry.<本刀名字>`` **0 处**；scripts/ 与 app/ 里的写死源码锚点 **0 处**
+# （extension_audit 的 B-3 早在 ④b 就改成「按定义处解析」，不再认 registry.py）。
+A22C10_MOVED_NAMES = (
+    "plugin_user_scope_enabled", "plugin_visible_to_tenant", "plugin_runtime_scope_enabled",
+    "plugin_is_builtin", "clear_runtime_scope_caches", "resolve_caller_tenant_cached",
+    "_visible_plugin_names", "_runtime_scope_viewer", "plugin_in_runtime_scope",
+    "plugin_visible_for_caller", "plugin_disabled_route_gate_enabled", "plugin_http_gate",
+    "_warn_no_caller_once", "_resolve_hook_scope", "resolve_viewer_tenant",
+)
+# 状态本体：留在 registry、在 plugin_scope 里**不许出现同名对象**（另立副本＝桩与哨兵双双静默失效）
+A22C10_STATE = ("_RUNTIME_SCOPE_TTL", "_visible_names_cache", "_caller_tenant_cache", "_warned_no_caller")
+# 仍在 registry 原地定义的（hook 分发与 API 面），④c 一个都不许顺手带走
+A22C10_STAY_DEFS = ("run_hook", "run_hook_collect", "list_plugins", "get_plugin", "set_plugin_state",
+                    "run_plugin_action", "mount_plugin_routers", "preload_channels",
+                    "push_sdk_context", "reset_sdk_context", "current_sdk_context")
+# 每个搬走的函数里「必须以 _reg.<name> 出现、禁止裸名」的名字（变异守卫用；还原任一处 _reg. 立即变红）。
+# 名字来自预扫 AST 实测：_time 是标准库、与本刀无关，按 ④b 的 json 同法在新模块顶层 import。
+A22C10_STAY_REFS = {
+    "plugin_is_builtin": {"_db_prov"},
+    "clear_runtime_scope_caches": {"_visible_names_cache", "_caller_tenant_cache", "_warned_no_caller"},
+    "resolve_caller_tenant_cached": {"_RUNTIME_SCOPE_TTL", "_caller_tenant_cache", "resolve_tenant_for_user"},
+    "_visible_plugin_names": {"_RUNTIME_SCOPE_TTL", "_db_prov", "_loaded", "_visible_names_cache",
+                              "plugin_visible_to_tenant"},
+    "_runtime_scope_viewer": {"resolve_caller_tenant_cached"},
+    "plugin_in_runtime_scope": {"plugin_runtime_scope_enabled", "_runtime_scope_viewer",
+                                "plugin_is_builtin", "_visible_plugin_names"},
+    "plugin_visible_for_caller": {"plugin_in_runtime_scope"},
+    "plugin_http_gate": {"_enabled", "push_sdk_context", "reset_sdk_context",
+                         "plugin_disabled_route_gate_enabled", "plugin_visible_for_caller"},
+    "_warn_no_caller_once": {"_logger", "_warned_no_caller"},
+    "_resolve_hook_scope": {"plugin_runtime_scope_enabled", "_loaded", "_runtime_scope_viewer",
+                            "plugin_is_builtin", "_visible_plugin_names", "_warn_no_caller_once"},
+    "resolve_viewer_tenant": {"plugin_user_scope_enabled", "resolve_tenant_for_user"},
+}
+A22C10_REGISTRY_PY = _seam_src_path("app.plugins.registry")
+A22C10_SCOPE_PY = _seam_src_path("app.plugins.plugin_scope")
+
+
+def _a22c10_src(path) -> str:
+    return Path(str(path)).read_text(encoding="utf-8")
+
+
+def _a22c10_top_defs(src: str) -> list:
+    return [n.name for n in ast.parse(src).body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def _a22c10_find_fn(path, name):
+    for n in ast.walk(ast.parse(_a22c10_src(path))):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name:
+            return n
+
+
+def test_A22第九刀c_1_重导出15函数两侧同一对象():
+    import app.plugins.plugin_scope as scope
+    import app.plugins.registry as reg
+
+    assert len(A22C10_MOVED_NAMES) == 15
+    for name in A22C10_MOVED_NAMES:
+        assert hasattr(reg, name) and hasattr(scope, name), name
+        assert getattr(reg, name) is getattr(scope, name), name + " 两侧必须同一对象（具名重导出）"
+        assert getattr(reg, name).__module__ == "app.plugins.plugin_scope", (
+            name + " 的 __module__ 只能是 plugin_scope（registry 侧不许复制一份实现）")
+
+
+def test_A22第九刀c_2_状态本体只在registry且没在plugin_scope另立副本():
+    import app.plugins.plugin_scope as scope
+    import app.plugins.registry as reg
+
+    for name in A22C10_STATE:
+        assert hasattr(reg, name), name + " 必须仍挂在 registry 上（tests 直接读 registry._warned_no_caller）"
+        assert not hasattr(scope, name), (
+            name + " 不得在 plugin_scope 里另立一份 —— 有副本则 setattr(registry, ...) 与哨兵注入静默失效")
+    # 可变全局必须是同一个对象本体（就地 clear/写＝跨模块共享；重导出不得换成新对象）
+    for name in ("_visible_names_cache", "_caller_tenant_cache"):
+        assert isinstance(getattr(reg, name), dict), name
+    assert isinstance(reg._warned_no_caller, set)
+    assert isinstance(reg._RUNTIME_SCOPE_TTL, float)
+
+
+def test_A22第九刀c_3_plugin_scope顶层函数恰好等于搬家清单():
+    defs = _a22c10_top_defs(_a22c10_src(A22C10_SCOPE_PY))
+    assert sorted(defs) == sorted(A22C10_MOVED_NAMES), (
+        "新文件顶层 def 必须恰好是 ④c 的 15 个：既没漏搬，也没顺手多搬（实际：%s）" % sorted(defs))
+    # _time 是标准库单调钟、不在打桩面上，按 ④b 的 json 同法在新模块顶层 import（不许经 _reg. 绕）
+    assert re.search("^import time as _time", _a22c10_src(A22C10_SCOPE_PY), re.M), (
+        "plugin_scope 顶层应 import time as _time")
+    src = _a22c10_src(A22C10_SCOPE_PY)
+    assert "_reg._time" not in src, "_time 不该被当成 registry 的桩名"
+
+
+def test_A22第九刀c_4_reg现取静态锚定_变异守卫():
+    """把某处 `_reg._logger` 改回裸名，本例必须立即变红（§5.3 变异自测的可复核形式）。"""
+    for fn_name, stubbed in A22C10_STAY_REFS.items():
+        fn = _a22c10_find_fn(A22C10_SCOPE_PY, fn_name)
+        assert fn is not None, fn_name
+        bare = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+        reg_attrs = {a.attr for a in ast.walk(fn)
+                     if isinstance(a, ast.Attribute) and isinstance(a.value, ast.Name)
+                     and a.value.id == "_reg"}
+        assert bare & stubbed == set(), "%s 出现裸桩名 %s（应改回 _reg.）" % (fn_name, bare & stubbed)
+        assert stubbed <= reg_attrs, "%s 缺 _reg. 现取 %s" % (fn_name, stubbed - reg_attrs)
+        has_reg = any(isinstance(n, ast.ImportFrom) and n.module == "app.plugins"
+                      and any(a.name == "registry" and a.asname == "_reg" for a in n.names)
+                      for n in ast.walk(fn))
+        assert has_reg, "%s 缺函数内 registry as _reg 现取 import" % fn_name
+        # 反向自证：_reg. 后面挂的名字必须真的存在于 registry 命名空间（防止把桩名打错成静默 AttributeError）
+        import app.plugins.registry as reg
+        for attr in reg_attrs:
+            assert hasattr(reg, attr), "%s 里 _reg.%s 解析不到" % (fn_name, attr)
+
+
+def test_A22第九刀c_5_穿透_resolve_hook_scope必须走registry上的flag与谓词桩(monkeypatch):
+    """打桩 registry 的 flag 口与可见性谓词后驱动**同样搬走的** ``_resolve_hook_scope``：桩必须被命中。
+
+    写成裸名（或 import 期绑定）时，新模块解析到自己那份真实现 ⇒ fail-closed 集合与告警都会按真
+    ``_db_prov`` 走，正是「测试变绿却用真实现」。零 DB：全程只碰哨兵 dict 与桩。
+    """
+    import app.plugins.plugin_scope as scope
+    import app.plugins.registry as reg
+
+    hits = []
+
+    def _flag_on():
+        hits.append("flag")
+        return True
+
+    async def _viewer_no_caller(user_id, tenant_id):
+        hits.append("viewer")
+        return None
+
+    monkeypatch.setattr(reg, "plugin_runtime_scope_enabled", _flag_on)
+    monkeypatch.setattr(reg, "_runtime_scope_viewer", _viewer_no_caller)
+    monkeypatch.setattr(reg, "plugin_is_builtin",
+                        lambda n: (hits.append("builtin:" + str(n)) or n == "inhouse"))
+    monkeypatch.setattr(reg, "_loaded", {"inhouse": {}, "foreign": {}})
+    monkeypatch.setattr(reg, "_warned_no_caller", set())
+
+    allowed, viewer = asyncio.run(scope._resolve_hook_scope(
+        "context_inject", user_id=None, tenant_id=None, callsite="a22c10"))
+
+    assert "flag" in hits, "没走 registry.plugin_runtime_scope_enabled 桩（同批互调没现取）"
+    assert "viewer" in hits, "没走 registry._runtime_scope_viewer 桩"
+    assert allowed == frozenset({"inhouse"}) and viewer is None, (
+        "fail-closed 集合不对：%s（应只留被桩判为内置的那个）" % (allowed,))
+    assert reg._warned_no_caller == {"context_inject@a22c10"}, (
+        "告警没写进 registry._warned_no_caller（⇒ _warn_no_caller_once 用的是裸名/副本）")
+
+
+def test_A22第九刀c_6_穿透_http_gate禁用闸与上下文都走registry桩(monkeypatch):
+    """``plugin_http_gate`` 是搬走的工厂，其闭包必须经 ``_reg.`` 取禁用闸桩、``_enabled`` 哨兵与 push/reset。
+
+    改前 tests 里 ``setattr(registry, "plugin_disabled_route_gate_enabled", ...)`` 直接生效；闭包内写成
+    裸名后桩静默失效 ⇒ 停用插件的自定义 REST 会「测试绿着继续 200」，这正是本刀最贵的失效模式。
+    """
+    from fastapi import HTTPException
+
+    import app.plugins.plugin_scope as scope
+    import app.plugins.registry as reg
+
+    # ① 禁用闸开 + 插件停用 → 404
+    monkeypatch.setattr(reg, "plugin_disabled_route_gate_enabled", lambda: True)
+    monkeypatch.setattr(reg, "_enabled", {"p": False})
+
+    async def _first(_gate):
+        return await _gate.__anext__()
+
+    gate = scope.plugin_http_gate("p")
+    agen = gate(user_id=7, lang="zh")
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(_first(agen))
+    assert ei.value.status_code == 404, "禁用闸桩没命中（裸名 ⇒ registry 上的 setattr 静默失效）"
+
+    # ② 两道闸都放行 → 过闸后必须 push/reset（caller 进上下文）
+    hits = []
+
+    def _push(name, **kw):
+        hits.append(("push", name, kw))
+        return "TOK"
+
+    def _reset(token):
+        hits.append(("reset", token))
+
+    async def _visible(_name, _uid):
+        hits.append("visible")
+        return True
+
+    monkeypatch.setattr(reg, "plugin_disabled_route_gate_enabled", lambda: False)
+    monkeypatch.setattr(reg, "plugin_visible_for_caller", _visible)
+    monkeypatch.setattr(reg, "push_sdk_context", _push)
+    monkeypatch.setattr(reg, "reset_sdk_context", _reset)
+
+    gate2 = scope.plugin_http_gate("p")
+    agen2 = gate2(user_id=7, lang="zh")
+
+    async def _drive():
+        await agen2.__anext__()
+        try:
+            await agen2.__anext__()
+        except StopAsyncIteration:
+            pass
+
+    asyncio.run(_drive())
+    assert hits == ["visible", ("push", "p", {"user_id": 7}), ("reset", "TOK")], (
+        "闸或上下文接缝没走 registry 桩：%s" % (hits,))
+
+
+def test_A22第九刀c_7_穿透_缓存本体被就地读写且TTL也从registry取(monkeypatch):
+    """哨兵缓存注入 registry 后：新模块的写必须落在同一个对象上（否则 30s 缓存与重扫失效各算各的）。"""
+    import app.plugins.plugin_scope as scope
+    import app.plugins.registry as reg
+
+    seen_vis, seen_caller, seen_warn = {}, {}, set()
+    monkeypatch.setattr(reg, "_visible_names_cache", seen_vis)
+    monkeypatch.setattr(reg, "_caller_tenant_cache", seen_caller)
+    monkeypatch.setattr(reg, "_warned_no_caller", seen_warn)
+    monkeypatch.setattr(reg, "_RUNTIME_SCOPE_TTL", 9999.0)
+    monkeypatch.setattr(reg, "_loaded", {"mine": {}, "other": {}})
+    monkeypatch.setattr(reg, "_db_prov", {"mine": {"owner_tenant_id": 5},
+                                          "other": {"owner_tenant_id": 9}})
+    calls = []
+
+    def _pred(**kw):
+        calls.append(kw["owner_tenant_id"])
+        return kw["owner_tenant_id"] == kw["viewer_tenant_id"]
+
+    monkeypatch.setattr(reg, "plugin_visible_to_tenant", _pred)
+
+    got = scope._visible_plugin_names(5)
+    assert got == frozenset({"mine"}), "没走 registry.plugin_visible_to_tenant 桩"
+    assert list(seen_vis.keys()) == [5] and seen_vis[5][1] == frozenset({"mine"}), (
+        "缓存没写进 registry 的那个 dict 本体（⇒ plugin_scope 里是副本）")
+
+    # 第二次必须吃 30s 缓存（TTL 也从 _reg. 取；桩数不增即证明读到了 registry 的大 TTL）
+    got2 = scope._visible_plugin_names(5)
+    assert got2 == got and calls == [5, 9], "缓存/TTL 现取失效（第二次又重算了）"
+
+    async def _tenant(_uid):
+        calls.append("tenant")
+        return 42
+
+    monkeypatch.setattr(reg, "resolve_tenant_for_user", _tenant)
+    assert asyncio.run(scope.resolve_caller_tenant_cached(3)) == 42
+    assert asyncio.run(scope.resolve_caller_tenant_cached(3)) == 42
+    assert calls.count("tenant") == 1 and 3 in seen_caller, (
+        "caller 缓存没落在 registry 的 _caller_tenant_cache 本体上")
+
+    scope.clear_runtime_scope_caches()
+    assert seen_vis == {} and seen_caller == {} and seen_warn == set(), (
+        "clear_runtime_scope_caches 没清 registry 的三个状态本体")
+
+
+def test_A22第九刀c_8_顶层不成环与源码锚定():
+    """registry 先被导入也不能成环；搬走的名字原定义从 registry 消失、留原地的一律还在。"""
+    import app.plugins.plugin_scope as scope
+
+    for node in ast.parse(_a22c10_src(A22C10_SCOPE_PY)).body:
+        if isinstance(node, ast.ImportFrom):
+            assert not (node.module == "app.plugins"
+                        and any(a.name == "registry" for a in node.names)), (
+                "顶层不得 import app.plugins.registry（会与 registry→plugin_scope 成环）")
+        if isinstance(node, ast.Import):
+            assert not any(a.name == "app.plugins.registry" for a in node.names)
+    assert "registry" not in vars(scope), "registry 不得出现在 plugin_scope 的模块命名空间里"
+
+    reg_src = _a22c10_src(A22C10_REGISTRY_PY)
+    for name in A22C10_MOVED_NAMES:
+        assert re.search("^(?:async )?def " + re.escape(name) + chr(92) + "b", reg_src, re.M) is None, (
+            name + " 的原定义应已从 registry 消失")
+    for name in A22C10_STAY_DEFS:
+        assert re.search("^(?:async )?def " + re.escape(name) + chr(92) + "b", reg_src, re.M), (
+            name + " 必须仍在 registry 原地定义（hook 分发面与上下文）")
+    assert "from app.plugins.plugin_scope import" in reg_src, "registry 侧必须有具名重导出块"
+    for name in A22C10_STATE:
+        assert re.search("^" + re.escape(name) + chr(92) + "b", reg_src, re.M), (
+            name + " 状态本体必须仍在 registry 里定义（④c 只搬函数，不搬状态）")
+    defs = _a22c10_top_defs(reg_src)
+    assert set(defs).isdisjoint(A22C10_MOVED_NAMES), "④c 搬走的名字不得仍在 registry 顶层定义"
+    # 重导出名单用 AST 取（禁止子串匹配：resolve_caller_tenant_cached 里就含 _caller_tenant_cache）
+    imported = set()
+    for node in ast.parse(reg_src).body:
+        if isinstance(node, ast.ImportFrom) and node.module == "app.plugins.plugin_scope":
+            imported = {a.name for a in node.names}
+    assert imported == set(A22C10_MOVED_NAMES), (
+        "registry 的 ④c 重导出名单必须恰好等于搬家清单（多一个＝状态被搬走，少一个＝桩锚点丢失）")
+    assert imported.isdisjoint(A22C10_STATE), "状态名字不许出现在重导出名单里（状态只有一个家）"
+
+
+# ── A22 第九刀（③c，2026-10-03）：`generate_proactive_event` 635 行 → 内部切函数 ──
+# ③c 与前面各刀不同：**函数本体与它所在模块一律不动**。预扫口径②实测它有 2 处字符串路径打桩
+# （`"app.scheduling.message_generator.generate_proactive_event"`：test_proactive_enhance.py:256 /
+# test_scheduler_stats_fixes.py:223）⇒ 名字一挪就是 R1 那种「桩静默失效＝测试绿着真调 LLM」。
+# 所以这一刀是「切超大函数」：
+#   刀1  六个前置素材 loader 下沉 `scheduling/proactive_material.py`（回指面只有 2 个名字、
+#        且 tests 0 处打桩：`RECALL_SHARED` / `format_memory_line`，仍按 R2 走 `_mg.` 现取）；
+#   刀2  `for attempt in range(2)` 两轮生成循环 → 同文件 `_run_two_rounds`；
+#   刀3  循环后六道守卫 → 同文件六个模块级函数。
+# 刀2/刀3 刻意留在 message_generator 里：循环体与守卫里的 `_gen_with_reasoning` /
+# `score_naturalness` / `_validate_segments` / `_logger` 全是 tests 打在 mg 上的名字，
+# 同文件解析＝锚点零迁移（跨模块反而制造 12 个新接缝）。
+A22C11_LOADER_NAMES = ("_load_user_profile", "_load_persona_extra", "_load_weather_line",
+                       "_load_check_in_line", "_load_recent_memories", "_load_current_state_anchor")
+A22C11_LOCAL_FNS = ("_run_two_rounds", "_guard_reality_conflict", "_guard_location_conflict",
+                    "_guard_parrot", "_harvest_check_in", "_harvest_memo",
+                    "_drop_if_no_visible_content")
+# 刀1 的回指面（mg 模块级名字，新模块必须 _mg. 现取）
+A22C11_MG_REFS = {"_load_recent_memories": {"RECALL_SHARED", "format_memory_line"}}
+# 主函数尾部六道守卫的**调用顺序**（改前顺序，③c 一字未动；顺序变了行为就变：
+# 例如「位置冲突整条不发」必须排在「字面重合」之前，否则复述判定会吞掉位置守卫的 obs 留痕）
+A22C11_CALL_ORDER = ("_guard_reality_conflict", "_guard_location_conflict", "_guard_parrot",
+                     "_harvest_check_in", "_harvest_memo", "_drop_if_no_visible_content")
+A22C11_MG_PY = _seam_src_path("app.scheduling.message_generator")
+A22C11_PM_PY = _seam_src_path("app.scheduling.proactive_material")
+
+
+def _a22c11_src(path) -> str:
+    return Path(str(path)).read_text(encoding="utf-8")
+
+
+def _a22c11_top_defs(src: str) -> list:
+    return [n.name for n in ast.parse(src).body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def _a22c11_find_fn(src, name):
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name:
+            return n
+
+
+def test_A22第九刀c3_1_loader六个两侧同一对象():
+    import app.scheduling.message_generator as mg
+    import app.scheduling.proactive_material as pm
+
+    assert len(A22C11_LOADER_NAMES) == 6
+    for name in A22C11_LOADER_NAMES:
+        assert hasattr(mg, name) and hasattr(pm, name), name
+        assert getattr(mg, name) is getattr(pm, name), name + " 两侧必须同一对象（具名重导出）"
+        assert getattr(mg, name).__module__ == "app.scheduling.proactive_material", name
+
+
+def test_A22第九刀c3_2_主函数体内不再有嵌套def():
+    """③c 的全部意义：`generate_proactive_event` 不再是「函数套函数 + 635 行」。"""
+    src = _a22c11_src(A22C11_MG_PY)
+    fn = _a22c11_find_fn(src, "generate_proactive_event")
+    assert fn is not None
+    inner = [n.name for n in ast.walk(fn)
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n is not fn]
+    assert inner == [], "主函数里又出现嵌套 def：%s" % inner
+    assert fn.end_lineno - fn.lineno + 1 <= 300, (
+        "主函数已回涨到 %d 行（③c 收口时 263 行）" % (fn.end_lineno - fn.lineno + 1))
+    for name in A22C11_LOCAL_FNS:
+        assert _a22c11_find_fn(src, name) is not None, name + " 必须仍在 mg 里（同文件提取）"
+
+
+def test_A22第九刀c3_3_gather九个协程个数与顺序不许变():
+    """G-P2-2 的并发收益所在：9 个 loader 挤在同一个 asyncio.gather、按位置解包成 9 个名字。
+
+    串行化或改顺序＝主动链路时延与限流行为都变（原注释写明「原串行约 10 次 DB/外部调用」）。
+    """
+    src = _a22c11_src(A22C11_MG_PY)
+    fn = _a22c11_find_fn(src, "generate_proactive_event")
+    g = next((n for n in ast.walk(fn) if isinstance(n, ast.Call)
+              and getattr(n.func, "attr", "") == "gather"), None)
+    assert g is not None, "gather 不见了"
+    order = [ast.unparse(a) for a in g.args]
+    names = [re.match(r"([A-Za-z_][A-Za-z_0-9]*)\(", o).group(1) for o in order]
+    assert len(names) == 9, "协程数不是 9：%s" % names
+    assert names == ["_load_user_profile", "_load_persona_extra", "_load_weather_line",
+                     "_load_check_in_line", "_load_recent_memories", "_load_recent_reflection",
+                     "_load_current_state_anchor", "_load_scene_facts",
+                     "_load_authoritative_user_location"], names
+    # 六个下沉 loader 必须全部带实参（闭包捕获已取消，漏传＝运行期 NameError 而不是变绿）
+    for o, n in zip(order, names):
+        if n in A22C11_LOADER_NAMES:
+            assert o.strip().endswith(")") and len(o.strip()) > len(n) + 2, n + " 没传参"
+
+
+def test_A22第九刀c3_4_mg现取静态锚定_变异守卫():
+    """把 `_mg.RECALL_SHARED` 改回裸名，本例必须立即变红（§5.3 变异自测的可复核形式）。"""
+    src = _a22c11_src(A22C11_PM_PY)
+    for fn_name, stubbed in A22C11_MG_REFS.items():
+        fn = _a22c11_find_fn(src, fn_name)
+        assert fn is not None, fn_name
+        bare = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+        mg_attrs = {a.attr for a in ast.walk(fn)
+                    if isinstance(a, ast.Attribute) and isinstance(a.value, ast.Name)
+                    and a.value.id == "_mg"}
+        assert bare & stubbed == set(), "%s 出现裸名 %s（应改回 _mg.）" % (fn_name, bare & stubbed)
+        assert stubbed <= mg_attrs, "%s 缺 _mg. 现取 %s" % (fn_name, stubbed - mg_attrs)
+        assert any(isinstance(n, ast.ImportFrom) and n.module == "app.scheduling"
+                   and any(a.name == "message_generator" and a.asname == "_mg" for a in n.names)
+                   for n in ast.walk(fn)), "%s 缺函数内 message_generator as _mg 现取 import" % fn_name
+    # 反向：mg 侧这两个绑定必须还在（ruff 的「未使用 import」清理最容易把它们顺手删掉）
+    import app.scheduling.message_generator as mg
+    for name in ("RECALL_SHARED", "format_memory_line"):
+        assert hasattr(mg, name), name + " 已从 mg 命名空间消失 ⇒ 下沉后的 _mg.<name> 直接 AttributeError"
+    # 用 AST 判（不能拿子串比：本模块 docstring 里就写着「与 ③a/③b 的 `_mg._logger` 同一口径」）
+    used_attrs = {n.attr for n in ast.walk(ast.parse(src))
+                  if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+                  and n.value.id == "_mg"}
+    assert "logger" not in used_attrs and "_logger" not in used_attrs, (
+        "loader 并没有引用 _logger，凭空造回指＝多一条假接缝：%s" % sorted(used_attrs))
+
+
+def test_A22第九刀c3_5_proactive_material顶层不成环且恰好六个():
+    src = _a22c11_src(A22C11_PM_PY)
+    assert sorted(_a22c11_top_defs(src)) == sorted(A22C11_LOADER_NAMES), (
+        "新模块顶层 def 必须恰好是刀1 的 6 个（实际：%s）" % _a22c11_top_defs(src))
+    import app.scheduling.proactive_material as pm
+    assert "message_generator" not in vars(pm), "顶层不得绑定 message_generator（顶层回指必成环）"
+    for node in ast.parse(src).body:
+        if isinstance(node, ast.ImportFrom):
+            assert not (node.module == "app.scheduling"
+                        and any(a.name == "message_generator" for a in node.names)), "顶层 import mg 会成环"
+        if isinstance(node, ast.Import):
+            assert not any(a.name == "app.scheduling.message_generator" for a in node.names)
+
+
+def test_A22第九刀c3_6_三道dropped守卫真的判定得到():
+    """行为穿透：守卫的「整条丢弃」必须真回传 dropped，而不是静默继续发。"""
+    import app.scheduling.message_generator as mg
+
+    # ① 字面重合：桩说复述 ⇒ dropped=True
+    orig = mg._parrot_blocked
+    mg._parrot_blocked = lambda segs, ctx: (True, 0.93)
+    try:
+        assert mg._guard_parrot(["在干嘛呢"], last_context="在干嘛呢", character_id=7) is True
+    finally:
+        mg._parrot_blocked = orig
+
+    # ② 无可见内容：桩判无内容 ⇒ dropped=True
+    orig2 = mg._has_visible_content
+    mg._has_visible_content = lambda segs: False
+    try:
+        assert mg._drop_if_no_visible_content(["……"], character_id=7) is True
+    finally:
+        mg._has_visible_content = orig2
+
+    # ③ 位置冲突：桩判每段都冲突 ⇒ (segments, True)；user_loc_line 为空 ⇒ 原样返回不丢弃
+    import app.memory.location_guard as lg
+    orig3 = lg.location_conflict
+    lg.location_conflict = lambda s, loc: "长沙"
+    try:
+        kept, dropped = mg._guard_location_conflict(["他在长沙"], user_loc_line="权威位置：上海",
+                                                    character_id=7)
+        # 改前语义：全冲突时 return 的是**原 segments**（调用方直接丢弃，不重新赋值）
+        assert dropped is True and kept == ["他在长沙"]
+        kept2, dropped2 = mg._guard_location_conflict(["在干嘛"], user_loc_line="", character_id=7)
+        assert dropped2 is False and kept2 == ["在干嘛"]
+    finally:
+        lg.location_conflict = orig3
+
+
+def test_A22第九刀c3_7_主函数尾部调用顺序与提前返回接线():
+    """六道守卫的调用顺序＝改前顺序；每道 dropped 之后必须紧跟原样的提前 return。
+
+    顺序变了不会报错、只会静默改变「谁先决定不发」——所以只能靠结构断言钉。
+    """
+    src = _a22c11_src(A22C11_MG_PY)
+    fn = _a22c11_find_fn(src, "generate_proactive_event")
+    calls = [n.func.id for n in ast.walk(fn)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+             and n.func.id in A22C11_CALL_ORDER]
+    assert sorted(calls) == sorted(A22C11_CALL_ORDER), "六道守卫少了一道或多道：%s" % calls
+    ordered = [c for c in _a22c11_ordered_calls(fn)]
+    assert ordered == list(A22C11_CALL_ORDER), "调用顺序变了：%s" % ordered
+    body = ast.get_source_segment(src, fn)
+    assert body.count("return [] if not return_reasoning else ([], last_reasoning)") >= 4, (
+        "dropped 之后的提前 return 接线数量不对（改前是 4 处：位置/复述/自然度降级/无可见内容）")
+
+
+def _a22c11_ordered_calls(fn):
+    """按源码出现顺序（不是 ast.walk 的层级顺序）取守卫调用名。"""
+    found = []
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id in A22C11_CALL_ORDER:
+            found.append((node.lineno, node.func.id))
+    return [name for _, name in sorted(found)]
+
+
+def test_A22第九刀c3_8_两轮循环的提前返回语义回传不丢():
+    """`_run_two_rounds` 的 aborted 必须真能回传（首轮实测漏了收尾 return ⇒ 解包 None）。"""
+    import inspect
+
+    import app.scheduling.message_generator as mg
+
+    src = inspect.getsource(mg._run_two_rounds)
+    assert "return segments, last_reasoning, False" in src, (
+        "循环自然结束后没有显式返回 ⇒ 调用方解包 None（TypeError: cannot unpack non-iterable NoneType）")
+    assert src.count("return [], last_reasoning, True") == 1, "自主搜索「本轮不说」的 aborted 回传点应恰好 1 处"
+    # 调用方必须把 aborted 还原成改前的返回形态
+    caller = ast.get_source_segment(_a22c11_src(A22C11_MG_PY),
+                                    _a22c11_find_fn(_a22c11_src(A22C11_MG_PY), "generate_proactive_event"))
+    assert "if _aborted:" in caller and "return [] if not return_reasoning else ([], last_reasoning)" in caller

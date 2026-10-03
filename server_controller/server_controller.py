@@ -482,13 +482,36 @@ class LabeledSwitch(tk.Frame):
 
 
 def _row_bg(theme: Theme, idx: int, tint: str = "", tint_ratio: float = 0.18) -> str:
-    """表格行底色：斑马纹（偶数行＝卡片原色，奇数行＝卡片→card_hover 0.55）+ 可选状态染色。
+    """表格行底色：斑马纹 + 可选状态染色（锁定=warning、禁用=error 只作为 tint 叠上去）。
 
     三张表（开关 / 账号 / 审计）原先各自手写同一套 `card→card_hover` 混合，
-    深浅偶有不一致；统一走这里，状态色（锁定=warning、禁用=error）只作为 tint 叠上去。
+    深浅偶有不一致；统一走这里。混合比例本身已收进 `CUI.zebra_bg`（唯一真源，
+    `DataTable.add_row` 也用它），因为亮色主题下 0.55 只有 2/255 的差、必须取满档。
     """
-    base = theme.card if idx % 2 == 0 else CUI.mix(theme.card, theme.card_hover, 0.55)
+    base = CUI.zebra_bg(theme, idx)
     return CUI.mix(base, tint, tint_ratio) if tint else base
+
+
+def _cell_reserve(cell, lab) -> int:
+    """同一格内除 `lab` 之外已占用的像素宽（含 pack 间距，`lab` 自己的间距也计入）。
+
+    `DataTable` 的裁字默认按整格宽度算；一格只放一个 label 时这里是 0，
+    一格并排多个控件（开关页的「键名＋中文标题＋说明＋徽标」）时必须扣掉，
+    否则裁出来的「…」会一直顶到徽标上（徽标被挤出格界＝实测少扣了说明自己的左间距）。
+
+    Tcl 的 `-padx`：单值＝左右各加那么多；两值＝分别加。少算一种就会漏出 1–2 个汉字的宽度。
+    """
+    total = 0
+    import re as _re
+    for c in cell.winfo_children():
+        # pack_info 的 padx 可能是 int、"12"、"18 0" 或 "(18, 0)"：一律抠出数字来，
+        # 只按 int() 解会把带括号/逗号的形态整条吞掉（实测少扣 48px＝徽标被挤出格界）
+        raw = c.pack_info().get("padx", 0)
+        nums = [int(x) for x in _re.findall(r"-?\d+", str(raw))]
+        total += (nums[0] * 2 if len(nums) == 1 else sum(nums[:2])) if nums else 0
+        if c is not lab:
+            total += c.winfo_reqwidth()
+    return total
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2874,10 +2897,39 @@ class ControllerApp:
                                        uniform="field" if wt else "")
 
     def _field_entry(self, parent, var, row, column):
-        """按列拉伸的输入框：值完整可读（超长走 tooltip），不再用固定字符宽裁字。"""
+        """按列拉伸的输入框：值完整可读（超长走 tooltip），不再用固定字符宽裁字。
+
+        ttk.Entry 对超长值是**静默裁切**（Base URL 那种 60+ 字符的尤其坑：看上去就是全部），
+        所以再叠一枚只在溢出时出现的 `…` 角标——它只是线索，完整值仍由 tooltip 给出。
+        角标是 parent 的 place 子件（ttk.Entry 不容纳子窗口），跟着输入框的右边缘定位。
+        """
         e = ttk.Entry(parent, textvariable=var, width=6)
         e.grid(row=row, column=column, sticky="we", pady=2)
         CUI.Tooltip(e, lambda v=var: str(v.get() or ""))
+        tip = tk.Label(parent, text="…", bg=self.theme.entry_bg, fg=self.theme.text_muted,
+                       font=CUI.f(FS_CAPTION, True), bd=0)
+
+        def _sync(_ev=None):
+            def _do():
+                try:
+                    if not (e.winfo_exists() and tip.winfo_exists()):
+                        return
+                    import tkinter.font as tkfont
+                    fnt = tkfont.nametofont(str(e.cget("font")))
+                    need = fnt.measure(str(var.get() or "")) + CUI.px(20)
+                    over = need > e.winfo_width() and e.focus_get() is not e
+                    if over:
+                        tip.place(x=e.winfo_x() + e.winfo_width() - CUI.px(4),
+                                  y=e.winfo_y() + max(1, e.winfo_height() // 2), anchor="e")
+                    else:
+                        tip.place_forget()
+                except Exception:
+                    pass
+            parent.after_idle(_do)
+
+        for seq in ("<KeyRelease>", "<Configure>", "<FocusIn>", "<FocusOut>"):
+            e.bind(seq, _sync, add="+")
+        _sync()
         return e
 
     def _save_modality(self, key: str, fields: dict, en_var) -> None:
@@ -3830,10 +3882,13 @@ class ControllerApp:
                      font=CUI.f(FS_CAPTION)).pack(side="left", padx=(CUI.sp("sm"), 0))
         desc = str(r.get("desc") or "").strip()
         if desc:
-            lb = tk.Label(cell, text=desc if len(desc) <= 30 else desc[:29] + "…",
-                          anchor="w", bg=row_bg, fg=t.text_muted, font=CUI.f(FS_CAPTION))
+            lb = tk.Label(cell, text=desc, anchor="w", bg=row_bg,
+                          fg=t.text_muted, font=CUI.f(FS_CAPTION))
             lb.pack(side="left", padx=(CUI.sp("sm"), 0))
             CUI.Tooltip(lb, lambda d=desc: d)
+            # 原先按「30 个字符」裁——中文一字约两个拉丁字宽，30 字照样撑破列且**没有省略号**。
+            # 改交给表格按实宽裁（扣掉同一格里键名/中文标题/徽标已占的宽度）。
+            table.register(lb, desc, reserve=_cell_reserve)
         for badge, on in (("DB覆盖", str(r.get("source") or "") == "db"),
                           ("按账号", str(r.get("scope") or "") == "user")):
             if not on:
@@ -3941,15 +3996,19 @@ class ControllerApp:
                               illo="photo_empty_audit.jpg")
             return
         cols = (
-            {"label": "时间", "weight": 0, "min": 150},
-            {"label": "操作者", "weight": 2, "min": 110},
-            {"label": "动作", "weight": 3, "min": 170},
-            {"label": "目标", "weight": 2, "min": 130},
-            {"label": "前值", "weight": 3, "min": 150},
-            {"label": "后值", "weight": 3, "min": 150},
+            # 时间列 weight=0（不参与拉伸），所以 min 必须容得下完整时间戳；
+            # 量窄了会裁成「10-02 03…」——审计表里最不该裁的就是这一列。
+            {"label": "时间", "weight": 0, "min": 148},
+            {"label": "操作者", "weight": 2, "min": 72},
+            {"label": "动作", "weight": 3, "min": 132},
+            {"label": "目标", "weight": 2, "min": 104},
+            {"label": "前值", "weight": 3, "min": 96},
+            {"label": "后值", "weight": 3, "min": 96},
         )
         _, card = self._admin_card(body, fill="x")
-        table = CUI.DataTable(card, t, cols)
+        # 六列宽表：列间距收到 xs／首列缩进收到 md，否则「最小宽之和＋间距」会超出卡片宽，
+        # 最后一列被卡片右缘整列切掉（1400 宽窗口实测溢出 ~300 物理像素）。
+        table = CUI.DataTable(card, t, cols, pad_role="xs", pad_edge="md")
         for r in rows:
             row = table.add_row()
             row.text(0, _fmt_dt(r.get("created_at")), num=True, fg=t.text)

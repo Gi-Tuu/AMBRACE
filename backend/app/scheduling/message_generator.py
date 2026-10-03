@@ -5,7 +5,8 @@ from app.utils.logger import get_logger
 # A22 ③b：chat_completion / load_character_reasoning_level 定义在 _gen_with_reasoning（已下沉 message_llm）里
 # 经 _mg 现取，tests 另有 10 处在 message_generator 上打这两个名字——绑定必须留在此命名空间（锚点，勿删）。
 from app.agent.llm_client import chat_completion, load_character_reasoning_level  # noqa: F401
-from app.memory.format import format_memory_line  # X-1（2026-08-18）：记忆注入行公共格式化
+from app.memory.format import format_memory_line  # noqa: F401  X-1（2026-08-18）：记忆注入行公共格式化；
+#   ③c 刀1 后本文件唯一读者是已下沉的 `_load_recent_memories`（它经 `_mg.` 现取），故绑定必须留在此命名空间。
 # B1-③（2026-09-04，方案 §5.3）：主动接触意图层常量——分级/意图/转场句库，纯常量不入库
 from app.domain.proactivity.outreach import (
     TIER_RECENT,
@@ -104,6 +105,290 @@ _OPENER_BANK = {
     SHARE_SELF:    ["我刚…", "跟你说个小事", "我这边刚刚…", ""],
 }
 
+# A22 ③c 刀1（2026-10-03）：六个前置素材 loader 下沉 proactive_material，此处**具名重导出**。
+# 名字一个都不许删：调用点（本文件 generate_proactive_event 的 gather）与 tests 一律按
+# message_generator.<name> 取用；proactive_material 内部反过来经 _mg.<name> 现取本模块名字。
+from app.scheduling.proactive_material import (  # noqa: F401
+    _load_user_profile,
+    _load_persona_extra,
+    _load_weather_line,
+    _load_check_in_line,
+    _load_recent_memories,
+    _load_current_state_anchor,
+)
+
+
+
+def _guard_reality_conflict(segments: list[str], *, scene_text: str, character_id: int | None,
+                            _guard_on: bool) -> list[str]:
+    """批次四（flag 开）：重试后仍与现实场景冲突 → 丢弃冲突段（绝不把穿帮内容发出去）。③c 刀3 提出。"""
+
+    if _guard_on:
+        segments, _conf_left = _apply_segment_guard(segments, scene_text, drop_conflicts=True)
+        if _conf_left:
+            _logger.info("Proactive segment guard: %d segment(s) dropped (reality conflict) char=%d",
+                         len(_conf_left), character_id or 0)
+        if not segments:
+            segments = ["……"]
+    return segments
+
+
+def _guard_location_conflict(segments: list[str], *, user_loc_line: str,
+                               character_id: int | None) -> tuple[list[str], bool]:
+    """批次二任务2.3（发送前现状一致性校验）：两轮后仍把用户写到权威位置以外 → 丢弃冲突段。
+
+    全冲突则整条不发（宁可少发一条，也绝不把错误现状当此刻事实发出去）。「整条不发」用
+    dropped=True 回传，由调用方按 return_reasoning 决定返回形态（③c 刀3 提出，语义一字未变）。
+    """
+
+    if user_loc_line:
+        try:
+            from app.memory.location_guard import location_conflict as _loc_conflict_final
+            _kept_segs = [s for s in segments if not _loc_conflict_final(s, user_loc_line)]
+            if len(_kept_segs) != len(segments):
+                _logger.info("Proactive location guard: %d segment(s) dropped char=%s",
+                             len(segments) - len(_kept_segs), character_id)
+            if not _kept_segs:
+                try:
+                    from app.memory.observability import obs_event
+                    obs_event(character_id, "proactive_location_conflict_dropped",
+                              {"authoritative": user_loc_line[:60]})
+                except Exception:
+                    pass
+                return segments, True   # 全冲突 → 整条不发（dropped 回传给调用方）
+            segments = _kept_segs
+        except Exception:
+            pass
+    return segments, False
+
+
+def _guard_parrot(segments: list[str], *, last_context: str, character_id: int | None) -> bool:
+    """A-C（2026-09-01）：字面重合守卫——判定复述上一条则丢弃本次生成。
+
+    fail-open：不发送不重试；守卫自身异常不阻塞主动链路（返回 False 继续发）。
+    """
+
+    try:
+        _blocked, _ratio = _parrot_blocked(segments, last_context)
+        if _blocked:
+            _logger.info(
+                "Proactive event dropped: %.0f%% overlap with last context char=%d",
+                _ratio * 100, character_id or 0,
+            )
+            try:
+                from app.memory.observability import obs_event
+                obs_event(character_id, "proactive_parrot_blocked",
+                          {"ratio": round(_ratio, 2), "chars": len("\n".join(segments))})
+            except Exception:
+                pass
+            return True   # 判定复述上一条 → 丢弃本次生成（dropped 回传）
+    except Exception as _ov_e:
+        _logger.warning("Proactive overlap guard failed (fail-open): %s", _ov_e)
+    return False
+
+
+async def _harvest_check_in(segments: list[str], *, user_id: int | None,
+                            character_id: int | None) -> list[str]:
+    """查岗自主触发（2026-08-15）：LLM 输出 [CHECK_IN] → 登记请求（前端采集新快照），剥离标记。"""
+
+    try:
+        if any("[CHECK_IN]" in s for s in segments):
+            from app.application.phone_service import request_check_in
+            if not user_id:
+                # 多账号隔离（D 家族）：无归属时不登记查岗——check_in_requests.user_id 是 NOT NULL，
+                # 旧写法 or 1 会把请求登记到 1 号账号的手机队列（1 号客户端会去采集快照）
+                _logger.info("Proactive check-in skipped: no owner char=%d", character_id)
+            else:
+                await request_check_in(user_id, character_id)
+                _logger.info("Proactive check-in fired char=%d", character_id)
+            segments = [s.replace("[CHECK_IN]", "").strip() for s in segments]
+            segments = [s for s in segments if s]
+            if not segments:
+                segments = ["……"]
+    except Exception as e:
+        _logger.warning("Proactive check-in trigger failed: %s", e)
+
+    return segments
+
+
+async def _harvest_memo(segments: list[str], *, character_id: int | None,
+                        character_name: str) -> list[str]:
+    """主动备忘（2026-08-25）：LLM 输出 [MEMO]内容[/MEMO] → 落小手机备忘录并剥离标记。
+
+    与主链路 context_builder 的 [MEMO] 口径对齐（记下值得记住的事/要点，不发给好友）；失败静默。
+    """
+
+    try:
+        from app.agent.actions import extract_memo as _extract_memo
+        _joined = "\n".join(segments)
+        _memo_text = _extract_memo(_joined)
+        if _memo_text:
+            from app.application.chat.tools import _execute_note_tool
+            await _execute_note_tool("note_memo", {
+                "character_id": character_id,
+                "text": _memo_text,
+                "author": character_name or "",
+            }, character_id)
+            _logger.info("Proactive memo saved char=%d text=%.30s", character_id, _memo_text)
+            from app.agent.actions import strip_actions as _strip_actions
+            _seg_stripped = [_strip_actions(s).strip() for s in segments]
+            _seg_stripped = [s for s in _seg_stripped if s]
+            if _seg_stripped:
+                segments = _seg_stripped
+    except Exception as e:
+        _logger.warning("Proactive memo save failed: %s", e)
+
+    return segments
+
+
+def _drop_if_no_visible_content(segments: list[str], *, character_id: int | None) -> bool:
+    """2026-09-13 真机反馈：正文只剩标点/省略号（如「……」）时不要发出去。
+
+    主动搭话没有「等待中的用户」，发一条空话只会变成噪音和未读红点。
+    （交互回复仍保留「……」+ 灰字提示，走 degraded_reply 标记。）
+    """
+
+    _joined_seg = "".join(segments)
+    if not _has_visible_content(segments):
+        _logger.info("Proactive event dropped: no visible content char=%d", character_id or 0)
+        try:
+            from app.memory.observability import obs_event
+            obs_event(character_id, "proactive_empty_dropped", {"chars": len(_joined_seg)})
+        except Exception:
+            pass
+        return True   # dropped 回传：正文只剩标点/省略号，不发
+    return False
+
+
+async def _run_two_rounds(messages: list, character_id: int | None, user_id: int | None, *,
+                          scene_text: str, user_loc_line: str, outreach_plan: dict | None,
+                          _self_search_on: bool, _guard_on: bool) -> tuple[list[str], str, bool]:
+    """生成 + 规则校验：不通过则追加修正要求重试一次（2026-08-12）。③c 刀2 自 `generate_proactive_event` 逐字节提出。
+
+    返回 `(segments, last_reasoning, aborted)`。`aborted=True` 是原循环里那处
+    「自主搜索后角色选择本轮不说」的**提前 return**——提出去之后不能直接 return 外层函数，
+    故用标志回传由调用方原样返回，语义与改前逐字一致（走 segments 为空不发送那条路，
+    不填占位、不发空串/省略号）。
+
+    ⚠ 本函数**刻意留在 message_generator 里**（不下沉新模块）：循环体里的
+    `_gen_with_reasoning` / `score_naturalness` / `_validate_segments` / `_logger` 等全是
+    tests 在 message_generator 模块对象上的打桩名，同文件解析＝锚点零迁移。
+    """
+    segments: list[str] = []
+    ok = False
+    last_reasoning = ""
+    _reality_conflict = False
+    for attempt in range(2):
+        response, last_reasoning = await _gen_with_reasoning(
+            messages, character_id, user_id, temperature=0.9, max_tokens=512)
+        response = (response or "").strip().strip('"').strip("'")
+
+        # S1 第二步：首轮生成后若含 [SEARCH]，走一次角色自主搜索（regen 走 _gen_with_reasoning）。
+        # 开关关 ⇒ 整段跳过（逐字节旧行为）；「本轮不产出消息」⇒ 直接 return []（走 segments 为空不发送那条路，
+        # 不填占位、不发空串/省略号）；搜索失败/被节流 ⇒ _proactive_self_search 已回原候选，继续往下发原候选。
+        if _self_search_on and attempt == 0:
+            response, _self_no_msg = await _proactive_self_search(
+                response, messages=messages, character_id=character_id, user_id=user_id)
+            if _self_no_msg:
+                _logger.info("Proactive self search: 角色选择不说，本轮不发消息 char=%s", character_id)
+                return [], last_reasoning, True   # aborted＝提前返回，由调用方按 return_reasoning 决定返回形态
+
+        if _guard_on:
+            # 开：未闭合括号/引号不落刀（后续行并入当前段）
+            segments = _split_response_lines(response)
+        else:
+            segments = [ln.strip().strip('"').strip("'") for ln in response.splitlines()]
+            segments = [s for s in segments if s]
+
+        # 兜底：模型没分行时按句子切（单段超 50 字触发；每段约 1~2 句，25 字左右）
+        if len(segments) == 1 and len(segments[0]) > 50:
+            parts = [x for x in _SENT_SPLIT.split(segments[0]) if x and x.strip()]
+            merged: list[str] = []
+            cur = ""
+            for part in parts:
+                if cur and len(cur) + len(part) > 25:
+                    if _guard_on and _has_unclosed_delimiter(cur):
+                        cur += part  # 批次四：切点在未闭合括号/引号里 → 不落刀
+                        continue
+                    merged.append(cur.strip())
+                    cur = part
+                else:
+                    cur += part
+            if cur.strip():
+                merged.append(cur.strip())
+            if len(merged) >= 2:
+                segments = merged
+
+        # 上限 4 段：超出部分合并进最后一段
+        if len(segments) > 4:
+            head, tail = segments[:3], segments[3:]
+            segments = head + ["".join(tail)[:300]]
+        if not segments:
+            segments = ["……"]
+        segments = [s[:200] for s in segments]
+
+        # 批次四（flag 开）：残句/空块过滤 + 现实约束校验（住校场景命中家庭场景词 → 拦截重试）
+        _reality_conflict = False
+        if _guard_on:
+            segments, _conf = _apply_segment_guard(segments, scene_text)
+            _reality_conflict = bool(_conf)
+            if len(segments) > _SEGMENT_MAX:  # 段数上限保持 4
+                segments = segments[:_SEGMENT_MAX - 1] + ["".join(segments[_SEGMENT_MAX - 1:])[:300]]
+            if not segments:
+                segments = ["……"]
+
+        ok, cleaned = _validate_segments(segments)
+        # #28 ①：低优先级主动消息自然度评分——Flag 开时低于重试阈值 → 追加修正要求重试一次
+        nat_low = _naturalness_flag() and score_naturalness(segments) < NATURALNESS_RETRY_THRESHOLD
+        # B1-③（方案 §5.3d）：计划要求抛回问题但生成结果没有 → 与自然度低分相同的"追加修正重试一次"
+        need_question = bool((outreach_plan or {}).get("must_return_question"))
+        no_question = need_question and not _has_invitation("".join(segments))
+        # 批次二任务2.3（现状一致性校验）：把用户写到权威位置以外的城市 → 同分数不足一样重试一次
+        _loc_conflict = None
+        if user_loc_line:
+            try:
+                from app.memory.location_guard import location_conflict as _loc_conflict_fn
+                _loc_conflict = _loc_conflict_fn("".join(segments), user_loc_line)
+            except Exception:
+                _loc_conflict = None
+        if ok and not nat_low and not no_question and not _reality_conflict and not _loc_conflict:
+            break
+        segments = cleaned or segments
+        if attempt == 0:
+            if _loc_conflict:
+                _auth_city = ""
+                try:
+                    from app.memory.location_guard import authoritative_city
+                    _auth_city = authoritative_city(user_loc_line) or ""
+                except Exception:
+                    _auth_city = ""
+                _hint = (
+                    f"上一条输出与用户的真实位置冲突（用户现在在{_auth_city or 'TA 的常住地'}，"
+                    f"不要写他在{_loc_conflict}）。请按权威位置重新生成，直接输出最终内容，不要解释。"
+                )
+            elif _reality_conflict:
+                _hint = (
+                    "上一条输出与 TA 当前的真实场景冲突（如 TA 住校、宿舍没有厨房，"
+                    "就不要写「锅里给你留着」「回家吃饭」这类家庭场景）。请按 TA 的真实场景重新生成，"
+                    "直接输出最终内容，不要解释。"
+                )
+            elif no_question:
+                _hint = (
+                    "结尾请自然地留一个让好友容易接的话头/一个轻松问题（只问一个），不要自顾自说完，"
+                    "直接输出最终内容。"
+                )
+            elif nat_low:
+                _hint = (
+                    "上一条输出自然度偏低。请重新生成一条更自然、更像真人随口说的话："
+                    "避免复读堆砌语气词、避免模板化客套开头、长度适中（30~150字），"
+                    "直接输出最终内容，不要解释。"
+                )
+            else:
+                _hint = "上一条输出未通过校验（出现与AI身份相关的词或单条过长）。请重新生成：每条不超过80字，不要出现任何暴露AI身份的词。"
+            messages = messages + [{"role": "user", "content": _hint}]
+
+    return segments, last_reasoning, False
+
 
 async def generate_proactive_event(
     character_name: str,
@@ -149,203 +434,19 @@ async def generate_proactive_event(
     # 任一项失败不影响其他项）；输出顺序与语义保持不变（天气/查岗仍走既有开关与缓存）。
     import asyncio as _asyncio
 
-    async def _load_user_profile() -> str:
-        try:
-            from app.agent.user_profile import build_user_profile_text
-            return await build_user_profile_text(user_id)
-        except Exception:
-            return ""
-
-    async def _load_persona_extra() -> str:
-        if not character_id:
-            return ""
-        if not outreach_intent:
-            # ── 旧链路：保持原样 ──
-            try:
-                from app.agent.persona import assemble_persona_context
-                _p = await assemble_persona_context(character_id, user_id)
-                if not _p.get("cognitive"):
-                    return ""
-                _parts = []
-                if _p.get("relationship_state"):
-                    _parts.append(_p["relationship_state"])
-                if _p.get("active_topics"):
-                    _parts.append("你们进行中的话题（优先承接进行中的话题，别生硬）：\n" + _p["active_topics"])
-                if _p.get("storyline_status") and _p["storyline_status"] != "无":
-                    _parts.append(_p["storyline_status"])
-                return "\n".join(_parts) if _parts else ""
-            except Exception:
-                return ""
-        # ── B1-③ 新链路：按意图收敛素材（不再无差别注入剧情/进行中话题）──
-        try:
-            from app.agent.persona import assemble_persona_context
-            _p = await assemble_persona_context(character_id, user_id)
-            if not _p:
-                return ""
-            _allow_topics = bool((outreach_plan or {}).get("allow_active_topics"))
-            _allow_storyline = bool((outreach_plan or {}).get("allow_storyline"))
-            _parts = []
-            if _p.get("relationship_state"):
-                _parts.append(_p["relationship_state"])
-            # 仅 FOLLOW_UP 且话题新鲜才注入"进行中话题"，措辞从"优先承接"改为"可自然问进展"
-            if _allow_topics:
-                from app.agent.topic_tracker import load_fresh_active_topics_text
-                _t = await load_fresh_active_topics_text(character_id, user_id)
-                if _t:
-                    _parts.append("用户之前提过、且仍在时效内的事（可自然问一句进展，别生硬）：\n" + _t)
-            # 仅"分享自己 + 刚分开"才带 AI 剧情状态；其余主动接触不背剧情
-            if _allow_storyline and _p.get("storyline_status") and _p["storyline_status"] != "无":
-                _parts.append(_p["storyline_status"])
-            return "\n".join(_parts) if _parts else ""
-        except Exception:
-            return ""
-
-    async def _load_weather_line() -> str:
-        if not character_id:
-            return ""
-        try:
-            from app.application.weather_service import get_user_weather_line
-            return await get_user_weather_line(user_id)
-        except Exception:
-            return ""
-
-    async def _load_check_in_line() -> str:
-        if not character_id:
-            return ""
-        try:
-            from app.models.character import ProactiveSettings
-            from sqlalchemy import select as _sa_select
-            from app.db.database import async_session_factory as _asf
-            async with _asf() as _db:
-                _r = await _db.execute(
-                    _sa_select(ProactiveSettings).where(ProactiveSettings.character_id == character_id)
-                )
-                _ps = _r.scalar_one_or_none()
-            if _ps is not None and getattr(_ps, "check_in_enabled", False):
-                from app.application.phone_service import get_check_in_foreground_app
-                _app = await get_check_in_foreground_app(user_id)
-                if _app:
-                    return (
-                        f"你开启了「查岗」：好友现在正在用{_app}，可以像朋友一样自然关心他此刻在做什么"
-                        "（不要像监控一样生硬，随口提一句就好）。"
-                    )
-                # 无新鲜快照：注入「查岗能力」标记说明，由 LLM 自主决定是否查岗（不强制）
-                return (
-                    "你有一个「查岗」能力：如果你此刻确实好奇好友在用手机做什么，可以在消息末尾单独一行输出 "
-                    "[CHECK_IN] 标记（系统会去获取他的最新使用情况）；如果只是随口寒暄就不需要输出。\n"
-                    "注意：你现在并不知道他在做什么，禁止编造；决定查岗时消息要自然（比如随口问一句「你在干嘛呢」），"
-                    "不要提「查岗/标记/系统」；[CHECK_IN] 是唯一允许输出的标注。"
-                )
-            return ""
-        except Exception:
-            return ""
-
-    async def _load_recent_memories() -> str:
-        if not character_id:
-            return ""
-        if not outreach_intent:
-            # ── 旧链路：保持原样 ──
-            try:
-                # B1-② C5（方案 §15）：RECALL_SHARED 改"捞一条链"——依赖第一部分 proactive_outreach_v2
-                # + 建链器 memory_chain_builder 都已就绪时，优先用 pick_recall_chain 的链时间线作为回忆
-                # 素材（时间锚点天然清晰、有起承）；两 flag 默认关 → 走原语义检索，行为与现状逐字节一致。
-                from app.agent.loop import AGENT_FLAGS as _af
-                from app.application.flag_service import resolve_flag
-                # batch G：proactive_outreach_v2 按账号解析（缺 user_id 回落全局，fail-open）；
-                # memory_chain_builder 非本批键，保持全局口径不变
-                if (await resolve_flag("proactive_outreach_v2", user_id)) and _af.get("memory_chain_builder", False):
-                    from app.memory.chain_builder import pick_recall_chain
-                    _chain = await pick_recall_chain(character_id)
-                    if _chain:
-                        return _chain
-                from app.memory import search_memories
-                mems = await search_memories(character_id, query=current_status or "最近发生的事情", limit=4,
-                                            user_id=user_id)  # A2 M0-4：透传调用者（hook ctx）
-                _mem_lines = []
-                for _m in mems:
-                    # X-1（2026-08-18）：与主链路共用公共格式化函数（max_len=80）；
-                    # 不传 reliability_score/contradiction_count（避免引入主链路才有的 UNVERIFIED/纠正后缀）。
-                    # 2026-09-17 批次一（任务2/3）：补 status/type/sub_type——主动消息是最易「用旧现状续写」的
-                    # 通道，必须让 stale 行带［往事/已过时］前缀、天然已发生来源带［往事］。
-                    _line = format_memory_line(
-                        {
-                            "content": _m.get("content") or "",
-                            "created_at": _m.get("created_at"),
-                            "epistemic_status": _m.get("epistemic_status"),
-                            "status": _m.get("status"),
-                            "memory_type": _m.get("type"),
-                            "sub_type": _m.get("sub_type"),
-                        },
-                        max_len=80,
-                    )
-                    if _line:
-                        _mem_lines.append(_line)
-                return "\n".join(_mem_lines) if _mem_lines else ""
-            except Exception:
-                return ""
-        # ── B1-③ 新链路：按意图检索 query（用户导向，而非 AI 状态）──
-        try:
-            _mem_query = (outreach_plan or {}).get("memory_query") or ""
-            if not _mem_query:  # SHARE_SELF 等不需要检索用户记忆
-                return ""
-            # RECALL_SHARED 捞链衔接：链存在时用链（时间锚点清晰）、无链回退语义检索
-            if outreach_intent == RECALL_SHARED:
-                from app.agent.loop import AGENT_FLAGS as _af
-                if _af.get("memory_chain_builder", False):
-                    from app.memory.chain_builder import pick_recall_chain
-                    _chain = await pick_recall_chain(character_id)
-                    if _chain:
-                        return _chain
-            from app.memory import search_memories
-            mems = await search_memories(character_id, query=_mem_query, limit=3,
-                                        user_id=user_id)  # A2 M0-4：透传调用者（hook ctx）
-            _mem_lines = []
-            for _m in mems:
-                # format_memory_line 已带 [记录于 YYYY-MM-DD]，确保远期记忆带真实日期，不再谎称"近期"。
-                # 2026-09-17 批次一（任务2/3）：补 status/type/sub_type，让 stale 行带［往事/已过时］、
-                # 天然已发生来源带［往事］（主动消息不得把旧现状当现行事实续写）。
-                _line = format_memory_line(
-                    {
-                        "content": _m.get("content") or "",
-                        "created_at": _m.get("created_at"),
-                        "epistemic_status": _m.get("epistemic_status"),
-                        "status": _m.get("status"),
-                        "memory_type": _m.get("type"),
-                        "sub_type": _m.get("sub_type"),
-                    },
-                    max_len=80,
-                )
-                if _line:
-                    _mem_lines.append(_line)
-            return "\n".join(_mem_lines) if _mem_lines else ""
-        except Exception:
-            return ""
-
-    # C3（2026-09-10）：用户当前现状权威锚点（三源聚合，默认无授权数据=空串、零行为变化）。
-    # 主动消息通道没有 section_world.location，这里【带】User 城市（include_profile_location=True）。
-    async def _load_current_state_anchor() -> str:
-        if not character_id or not user_id:
-            return ""
-        try:
-            from app.memory.current_state import current_user_state_anchor
-            return await current_user_state_anchor(
-                character_id=character_id, user_id=user_id, include_profile_location=True)
-        except Exception:
-            return ""
-
     # 批次四（2026-09-16）：当前场景事实（flag proactive_segment_guard 开才取；关=直接空串零开销）。
     # 现状锚点已在别处注入，这里补 user_facts.slot='location' 与用户作息（活跃时段），
     # 一并用于生成后的住校/家庭场景轻量校验。
     (user_profile, persona_extra, weather_line, check_in_line, recent_memories, reflection_line,
      state_anchor, scene_facts, user_loc_line) = (
         await _asyncio.gather(
-            _load_user_profile(),
-            _load_persona_extra(),
-            _load_weather_line(),
-            _load_check_in_line(),
-            _load_recent_memories(),
+            _load_user_profile(user_id),
+            _load_persona_extra(character_id, user_id, outreach_intent=outreach_intent, outreach_plan=outreach_plan),
+            _load_weather_line(character_id, user_id),
+            _load_check_in_line(character_id, user_id),
+            _load_recent_memories(character_id, user_id, current_status, outreach_intent=outreach_intent, outreach_plan=outreach_plan),
             _load_recent_reflection(character_id),
-            _load_current_state_anchor(),
+            _load_current_state_anchor(character_id, user_id),
             _load_scene_facts(user_id),
             # 批次二任务2.3/2.4：权威用户现状无条件前置拉取（低活跃角色同样覆盖，不依赖
             # 该角色自己的旧记忆/相似检索），供 prompt 与生成后一致性校验共用。
@@ -504,147 +605,20 @@ async def generate_proactive_event(
         else:
             _note_state_trace_gate(character_id, GATE_EMPTY_TRACE)
     # 生成 + 规则校验：不通过则追加修正要求重试一次（2026-08-12）
-    segments: list[str] = []
-    ok = False
-    last_reasoning = ""
     _guard_on = _segment_guard_on()   # 批次四：分块护栏（默认关=逐字节现状）
-    _reality_conflict = False
-    for attempt in range(2):
-        response, last_reasoning = await _gen_with_reasoning(
-            messages, character_id, user_id, temperature=0.9, max_tokens=512)
-        response = (response or "").strip().strip('"').strip("'")
+    segments, last_reasoning, _aborted = await _run_two_rounds(
+        messages, character_id, user_id, scene_text=scene_text, user_loc_line=user_loc_line,
+        outreach_plan=outreach_plan, _self_search_on=_self_search_on, _guard_on=_guard_on)
+    if _aborted:
+        return [] if not return_reasoning else ([], last_reasoning)
 
-        # S1 第二步：首轮生成后若含 [SEARCH]，走一次角色自主搜索（regen 走 _gen_with_reasoning）。
-        # 开关关 ⇒ 整段跳过（逐字节旧行为）；「本轮不产出消息」⇒ 直接 return []（走 segments 为空不发送那条路，
-        # 不填占位、不发空串/省略号）；搜索失败/被节流 ⇒ _proactive_self_search 已回原候选，继续往下发原候选。
-        if _self_search_on and attempt == 0:
-            response, _self_no_msg = await _proactive_self_search(
-                response, messages=messages, character_id=character_id, user_id=user_id)
-            if _self_no_msg:
-                _logger.info("Proactive self search: 角色选择不说，本轮不发消息 char=%s", character_id)
-                return [] if not return_reasoning else ([], last_reasoning)
+    segments = _guard_reality_conflict(segments, scene_text=scene_text,
+                                       character_id=character_id, _guard_on=_guard_on)
+    segments, _dropped = _guard_location_conflict(segments, user_loc_line=user_loc_line,
+                                                  character_id=character_id)
+    if _dropped:
+        return [] if not return_reasoning else ([], last_reasoning)
 
-        if _guard_on:
-            # 开：未闭合括号/引号不落刀（后续行并入当前段）
-            segments = _split_response_lines(response)
-        else:
-            segments = [ln.strip().strip('"').strip("'") for ln in response.splitlines()]
-            segments = [s for s in segments if s]
-
-        # 兜底：模型没分行时按句子切（单段超 50 字触发；每段约 1~2 句，25 字左右）
-        if len(segments) == 1 and len(segments[0]) > 50:
-            parts = [x for x in _SENT_SPLIT.split(segments[0]) if x and x.strip()]
-            merged: list[str] = []
-            cur = ""
-            for part in parts:
-                if cur and len(cur) + len(part) > 25:
-                    if _guard_on and _has_unclosed_delimiter(cur):
-                        cur += part  # 批次四：切点在未闭合括号/引号里 → 不落刀
-                        continue
-                    merged.append(cur.strip())
-                    cur = part
-                else:
-                    cur += part
-            if cur.strip():
-                merged.append(cur.strip())
-            if len(merged) >= 2:
-                segments = merged
-
-        # 上限 4 段：超出部分合并进最后一段
-        if len(segments) > 4:
-            head, tail = segments[:3], segments[3:]
-            segments = head + ["".join(tail)[:300]]
-        if not segments:
-            segments = ["……"]
-        segments = [s[:200] for s in segments]
-
-        # 批次四（flag 开）：残句/空块过滤 + 现实约束校验（住校场景命中家庭场景词 → 拦截重试）
-        _reality_conflict = False
-        if _guard_on:
-            segments, _conf = _apply_segment_guard(segments, scene_text)
-            _reality_conflict = bool(_conf)
-            if len(segments) > _SEGMENT_MAX:  # 段数上限保持 4
-                segments = segments[:_SEGMENT_MAX - 1] + ["".join(segments[_SEGMENT_MAX - 1:])[:300]]
-            if not segments:
-                segments = ["……"]
-
-        ok, cleaned = _validate_segments(segments)
-        # #28 ①：低优先级主动消息自然度评分——Flag 开时低于重试阈值 → 追加修正要求重试一次
-        nat_low = _naturalness_flag() and score_naturalness(segments) < NATURALNESS_RETRY_THRESHOLD
-        # B1-③（方案 §5.3d）：计划要求抛回问题但生成结果没有 → 与自然度低分相同的"追加修正重试一次"
-        need_question = bool((outreach_plan or {}).get("must_return_question"))
-        no_question = need_question and not _has_invitation("".join(segments))
-        # 批次二任务2.3（现状一致性校验）：把用户写到权威位置以外的城市 → 同分数不足一样重试一次
-        _loc_conflict = None
-        if user_loc_line:
-            try:
-                from app.memory.location_guard import location_conflict as _loc_conflict_fn
-                _loc_conflict = _loc_conflict_fn("".join(segments), user_loc_line)
-            except Exception:
-                _loc_conflict = None
-        if ok and not nat_low and not no_question and not _reality_conflict and not _loc_conflict:
-            break
-        segments = cleaned or segments
-        if attempt == 0:
-            if _loc_conflict:
-                _auth_city = ""
-                try:
-                    from app.memory.location_guard import authoritative_city
-                    _auth_city = authoritative_city(user_loc_line) or ""
-                except Exception:
-                    _auth_city = ""
-                _hint = (
-                    f"上一条输出与用户的真实位置冲突（用户现在在{_auth_city or 'TA 的常住地'}，"
-                    f"不要写他在{_loc_conflict}）。请按权威位置重新生成，直接输出最终内容，不要解释。"
-                )
-            elif _reality_conflict:
-                _hint = (
-                    "上一条输出与 TA 当前的真实场景冲突（如 TA 住校、宿舍没有厨房，"
-                    "就不要写「锅里给你留着」「回家吃饭」这类家庭场景）。请按 TA 的真实场景重新生成，"
-                    "直接输出最终内容，不要解释。"
-                )
-            elif no_question:
-                _hint = (
-                    "结尾请自然地留一个让好友容易接的话头/一个轻松问题（只问一个），不要自顾自说完，"
-                    "直接输出最终内容。"
-                )
-            elif nat_low:
-                _hint = (
-                    "上一条输出自然度偏低。请重新生成一条更自然、更像真人随口说的话："
-                    "避免复读堆砌语气词、避免模板化客套开头、长度适中（30~150字），"
-                    "直接输出最终内容，不要解释。"
-                )
-            else:
-                _hint = "上一条输出未通过校验（出现与AI身份相关的词或单条过长）。请重新生成：每条不超过80字，不要出现任何暴露AI身份的词。"
-            messages = messages + [{"role": "user", "content": _hint}]
-    # 批次四（flag 开）：重试后仍冲突 → 丢弃冲突段（绝不把穿帮内容发出去）
-    if _guard_on:
-        segments, _conf_left = _apply_segment_guard(segments, scene_text, drop_conflicts=True)
-        if _conf_left:
-            _logger.info("Proactive segment guard: %d segment(s) dropped (reality conflict) char=%d",
-                         len(_conf_left), character_id or 0)
-        if not segments:
-            segments = ["……"]
-    # 批次二任务2.3（发送前现状一致性校验）：两轮后仍把用户写到别的城市 → 丢弃冲突段；
-    # 全冲突则整条不发（宁可少发一条，也绝不把错误现状当此刻事实发出去）。
-    if user_loc_line:
-        try:
-            from app.memory.location_guard import location_conflict as _loc_conflict_final
-            _kept_segs = [s for s in segments if not _loc_conflict_final(s, user_loc_line)]
-            if len(_kept_segs) != len(segments):
-                _logger.info("Proactive location guard: %d segment(s) dropped char=%s",
-                             len(segments) - len(_kept_segs), character_id)
-            if not _kept_segs:
-                try:
-                    from app.memory.observability import obs_event
-                    obs_event(character_id, "proactive_location_conflict_dropped",
-                              {"authoritative": user_loc_line[:60]})
-                except Exception:
-                    pass
-                return [] if not return_reasoning else ([], last_reasoning)
-            segments = _kept_segs
-        except Exception:
-            pass
     # 批次四任务 3（2026-09-16，P1-5）：思考口径统一——主动链路 reasoning 与普通聊天
     # （nodes 挡位 2 / response_parser 挡位 1）走同一条上屏归一管线：第一人称内心独白，
     # 元话语黑名单（策略/长度/我决定加图/本轮提醒/规则说…）与提示词回声整句剔除。
@@ -660,81 +634,20 @@ async def generate_proactive_event(
         segments = [s for s in _final if s] or ["……"]
     if not segments:
         segments = ["……"]
-    # A-C（2026-09-01）：字面重合守卫——判定复述上一条则丢弃本次生成（fail-open：不发送不重试），
-    # 记日志+obs_event；守卫自身异常不阻塞主动链路。
-    try:
-        _blocked, _ratio = _parrot_blocked(segments, last_context)
-        if _blocked:
-            _logger.info(
-                "Proactive event dropped: %.0f%% overlap with last context char=%d",
-                _ratio * 100, character_id or 0,
-            )
-            try:
-                from app.memory.observability import obs_event
-                obs_event(character_id, "proactive_parrot_blocked",
-                          {"ratio": round(_ratio, 2), "chars": len("\n".join(segments))})
-            except Exception:
-                pass
-            return [] if not return_reasoning else ([], last_reasoning)
-    except Exception as _ov_e:
-        _logger.warning("Proactive overlap guard failed (fail-open): %s", _ov_e)
+    if _guard_parrot(segments, last_context=last_context, character_id=character_id):
+        return [] if not return_reasoning else ([], last_reasoning)
+
     # #28 ①：自然度仍低于跳过阈值 → 降级（跳过本次发送；Flag 开时）
     if _naturalness_flag() and score_naturalness(segments) < NATURALNESS_SKIP_THRESHOLD:
         _logger.info("Proactive event degraded (low naturalness) char=%d", character_id)
         return [] if not return_reasoning else ([], last_reasoning)
 
-    # 查岗自主触发（2026-08-15）：LLM 决定查岗输出 [CHECK_IN] → 登记请求（前端采集新快照），剥离标记
-    try:
-        if any("[CHECK_IN]" in s for s in segments):
-            from app.application.phone_service import request_check_in
-            if not user_id:
-                # 多账号隔离（D 家族）：无归属时不登记查岗——check_in_requests.user_id 是 NOT NULL，
-                # 旧写法 or 1 会把请求登记到 1 号账号的手机队列（1 号客户端会去采集快照）
-                _logger.info("Proactive check-in skipped: no owner char=%d", character_id)
-            else:
-                await request_check_in(user_id, character_id)
-                _logger.info("Proactive check-in fired char=%d", character_id)
-            segments = [s.replace("[CHECK_IN]", "").strip() for s in segments]
-            segments = [s for s in segments if s]
-            if not segments:
-                segments = ["……"]
-    except Exception as e:
-        _logger.warning("Proactive check-in trigger failed: %s", e)
 
-    # 主动备忘（2026-08-25）：LLM 在主动消息里输出 [MEMO]内容[/MEMO] → 落小手机备忘录并剥离标记。
-    # 与主链路 context_builder 的 [MEMO] 口径对齐（记下值得记住的事/要点，不发给好友）；失败静默。
-    try:
-        from app.agent.actions import extract_memo as _extract_memo
-        _joined = "\n".join(segments)
-        _memo_text = _extract_memo(_joined)
-        if _memo_text:
-            from app.application.chat.tools import _execute_note_tool
-            await _execute_note_tool("note_memo", {
-                "character_id": character_id,
-                "text": _memo_text,
-                "author": character_name or "",
-            }, character_id)
-            _logger.info("Proactive memo saved char=%d text=%.30s", character_id, _memo_text)
-            from app.agent.actions import strip_actions as _strip_actions
-            _seg_stripped = [_strip_actions(s).strip() for s in segments]
-            _seg_stripped = [s for s in _seg_stripped if s]
-            if _seg_stripped:
-                segments = _seg_stripped
-    except Exception as e:
-        _logger.warning("Proactive memo save failed: %s", e)
-
-    # 2026-09-13 真机反馈：正文只剩标点/省略号（如「……」）时不要发出去——
-    # 主动搭话没有"等待中的用户"，发一条空话只会变成噪音和未读红点。
-    # （交互回复仍保留「……」+ 灰字提示，走 degraded_reply 标记。）
-    _joined_seg = "".join(segments)
-    if not _has_visible_content(segments):
-        _logger.info("Proactive event dropped: no visible content char=%d", character_id or 0)
-        try:
-            from app.memory.observability import obs_event
-            obs_event(character_id, "proactive_empty_dropped", {"chars": len(_joined_seg)})
-        except Exception:
-            pass
+    segments = await _harvest_check_in(segments, user_id=user_id, character_id=character_id)
+    segments = await _harvest_memo(segments, character_id=character_id, character_name=character_name)
+    if _drop_if_no_visible_content(segments, character_id=character_id):
         return [] if not return_reasoning else ([], last_reasoning)
+
 
     _logger.info("Proactive event segments for '%s': %d", character_name, len(segments))
     if return_reasoning:

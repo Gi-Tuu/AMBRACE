@@ -233,7 +233,9 @@ async def set_flag_policy(key: str, *, self_service=None, server_locked=None, db
 # 注：flag_settings 策略判定（server_locked / self_service）与既有写路径完全一致，本段不放松权限。
 # 10 个键（隐私细槽族 5 个 + 社交/群聊/主动接触族 5 个）均按账号生效；
 # 后 5 个的读取点已全部接 user_id 解析（batch G：chat_groups.py:395/517、arbiter.py:866/1403/1656、
-# message_generator.py:625），缺 user_id 时回落全局值（fail-open，与既有口径一致）。
+# message_generator 的自然度/形状判定族），缺 user_id 时回落全局值（fail-open，与既有口径一致）。
+# 注：原此处写死 `message_generator.py:625`，A22 ③c 拆刀后行号彻底失效（且拆刀前就已指向无关日志行）
+#     ⇒ 改成按符号族指认。**行号型锚点一律不许再往注释里写**（同 R4：拆刀/插删一次就漂一次）。
 USER_SCOPED_FLAG_KEYS: frozenset[str] = frozenset({
     'global_user_facts',
     'user_fact_location',

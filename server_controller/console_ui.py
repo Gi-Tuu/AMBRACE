@@ -358,6 +358,48 @@ GROUP_LABELS = {
 }
 
 
+def fit_text(measure, text: str, avail: int, marker: str = "…") -> tuple[str, bool]:
+    """按可用宽度裁字：装得下原样返回，装不下截到「…」。
+
+    `measure` 是「文本 → 像素宽」的函数（真机传 `tkfont.nametofont(...).measure`），
+    这样裁字逻辑可以不起窗口就被测到。Tk 的 Label 只会**无声裁切**，不给线索。
+    """
+    if avail <= 0 or not text or measure(text) <= avail:
+        return text, False
+    cut = text
+    while cut and measure(cut + marker) > avail:
+        cut = cut[:-1]
+    return (cut + marker) if cut else marker, True
+
+
+def zebra_bg(t, idx: int) -> str:
+    """斑马纹行底色（唯一真源：`server_controller._row_bg` 与 `DataTable.add_row` 都走这里）。
+
+    暗色主题 `card→card_hover` 取 0.55 已够（两档本身差 5–7 级亮度）；亮色主题同一比例
+    实测只有 2/255（#FAFAFC 对白色卡片对比 1.04，肉眼分不出「隔行」与「没画」），
+    所以亮色取满 1.0＝直接用 `card_hover`（1.09，且行文字在其上仍有 4.54 ≥ AA 的 4.5）。
+    """
+    if idx % 2 == 0:
+        return t.card
+    return mix(t.card, t.card_hover, 0.55 if t.dark else 1.0)
+
+
+def switch_palette(t, on: bool, locked: bool = False) -> tuple[str, str]:
+    """开关的（轨道, 滑块）双色——唯一真源。
+
+    暗色两主题＝「暗轨道 + 亮滑块」：整列开关同时亮时发光的是滑块而不是一片青块
+    （亮青实心轨道版在 30 个成列时过响，是量过的结论，勿改回）。
+    亮色主题必须反过来＝「饱和轨道 + 白滑块」：沿用暗色口径时实测 ON 轨道 `accent_dim`
+    对卡片只有 1.14（轨道几乎看不见），OFF 滑块 `text_muted` 对轨道 1.89，
+    两者都低于图形件的 3:1 可辨线 —— 表现为「看不出这排开关是开着还是关着」。
+    """
+    if locked:
+        return t.divider, t.text_muted
+    if t.dark:
+        return (t.accent_dim, t.accent) if on else (t.hairline, t.text_muted)
+    return (t.accent, t.card) if on else (t.hairline, t.text_sec)
+
+
 # ── 自绘控件 ────────────────────────────────────────────────────────
 class Switch(tk.Canvas):
     """圆角滑块开关，替代原生 ttk.Checkbutton（黑底方框与自绘卡片质感冲突）。
@@ -411,18 +453,9 @@ class Switch(tk.Canvas):
             on = False
         w, h = self._pw, self._ph
         r = max(1, h // 2)
-        # ON 态＝暗青轨道 + 亮青滑块：整列开关同时亮时，发光的是滑块而不是一片青块，
-        # 视觉噪音低一档，且"开在哪"反而更醒目（亮青实心轨道版在 30 个成列时过响）。
-        track_on = getattr(t, "accent_dim", "#0E2B29")
-        track_off = getattr(t, "hairline", "#1C2739")
-        knob_on = getattr(t, "accent", "#5EEAD4")
-        knob_off = getattr(t, "text_muted", "#5F6B82")
-        if self._locked:
-            track_on = getattr(t, "divider", "#111A2A")
-            track_off = getattr(t, "divider", "#111A2A")
-            knob_on = getattr(t, "text_muted", "#5F6B82")
-        track = track_on if on else track_off
-        knob = knob_on if on else knob_off
+        # 轨道/滑块配色走唯一真源：暗色＝暗轨道＋亮滑块，亮色＝饱和轨道＋白滑块
+        # （亮色沿用暗色口径时实测 OFF 滑块对轨道只有 1.89、ON 轨道对卡片只有 1.14）
+        track, knob = switch_palette(t, on, self._locked)
         # 轨道：圆角矩形（smooth 多边形近似，与 RoundedCard 同一手法）
         self.create_polygon(_rr(w - 1, h - 1, r), smooth=True, splinesteps=10,
                             fill=track, outline="")
@@ -641,10 +674,13 @@ class DataRow:
     def text(self, col: int, value: str, role: str = "body", fg: str | None = None,
              bold: bool = False, num: bool = False, side: str = "left",
              tip: str | None = None) -> tk.Label:
-        lab = tk.Label(self.cell(col), text=value if value else "—", bg=self.bg,
+        cell = self.cell(col)
+        lab = tk.Label(cell, text=value if value else "—", bg=self.bg,
                        fg=fg or self._table.t.text_sec, font=f(role, bold, num),
                        anchor="w", justify="left")
         lab.pack(side=side)
+        if value:
+            self._table.register(lab, value)   # 装不下时由表格统一换成「…＋悬停看全文」
         if tip:
             Tooltip(lab, lambda d=tip: d)
         return lab
@@ -654,24 +690,29 @@ class DataTable(tk.Frame):
     """列权重表格：宽度按 weight 铺满整卡。
 
     旧版用 `tk.Label(width=字符数)` 拼列，两个后果：列一多就挤爆、宽屏时表格只占
-    左侧一小块而右边全空。这里改成 grid weight 分配，行底色由 cell 容器自带，
-    所以斑马纹是连续的（不会出现一格一色）。
+    左侧一小块而右边全空。这里改成 grid weight 分配；每行先铺一条 columnspan 连通的
+    底色带再摞 cell，所以斑马纹是**横向连续**的（只给 cell 上色会在列间距处断口）。
     """
 
-    def __init__(self, parent, theme, columns, **kw):
+    def __init__(self, parent, theme, columns, pad_role: str = "sm",
+                 pad_edge: str = "lg", **kw):
         self.t = theme
         self.cols = columns
         # 列间距用 sm 而不是 md：9 列表格里每列左右各吃 md(16) 会在 150% DPI 下
         # 共吃掉 ~200 物理像素，直接把「主账号/控制台」这类短列的表头挤断
-        self.pad = sp("sm")
-        self.pad_l = sp("lg")
+        # 六列以上的宽表要给更窄的档（xs/md），否则「列最小宽＋列间距」之和会超过卡片宽，
+        # 最后一列被卡片右缘整列切掉（省略号也救不了——那一列根本没参与布局）。
+        self.pad = sp(pad_role)
+        self.pad_l = sp(pad_edge)
         super().__init__(parent, bg=theme.card, **kw)
         self.pack(fill="x")
         for i, c in enumerate(columns):
             self.grid_columnconfigure(i, weight=int(c.get("weight", 1)),
                                       minsize=px(int(c.get("min", 0))))
         for i, c in enumerate(columns):
-            tk.Label(self, text=c["label"], bg=theme.card, fg=theme.text_muted,
+            # 表头用 text_sec 而不是 text_muted：亮色主题下 text_muted 对白卡片只有 2.68，
+            # 10pt 粗体小字仍属正文（AA 线 4.5）；层级差别交给字重＋下方分隔线表达。
+            tk.Label(self, text=c["label"], bg=theme.card, fg=theme.text_sec,
                      font=f("caption", True), anchor=c.get("align", "w")
                      ).grid(row=0, column=i, sticky="we",
                             padx=(self.pad_l if i == 0 else self.pad, self.pad),
@@ -680,10 +721,61 @@ class DataTable(tk.Frame):
             row=1, column=0, columnspan=len(columns), sticky="we")
         self._row = 2
         self._n = 0
+        self._fit_items = []          # [(label, 全文)]：装不下时统一换成「…」（Tk 的 Label 只会无声裁切）
+        self._tip_shown = set()
+        self._fonts = {}              # 字体元组 → Font 对象（每次 Configure 都要量字，不能反复建）
+        self.bind("<Configure>", self._schedule_fit, add="+")
+
+    # ── 溢出省略号 ────────────────────────────────────────────────
+    def register(self, lab: tk.Label, full: str, reserve=None) -> None:
+        """登记一条要在布局后按宽裁字的 label。
+
+        `reserve(cell, lab)` 返回同一 cell 里**已被别的控件占掉**的像素宽（一格只放一个 label
+        时为 0）；开关页那一格是「键名 + 中文标题 + 说明 + 徽标」并排，不扣掉就会算多。
+        """
+        self._fit_items.append((lab, full, reserve))
+
+    def _schedule_fit(self, _ev=None) -> None:
+        self.after_idle(self._fit)
+
+    def _fit(self) -> None:
+        """按 cell 实宽裁字：装得下就还原文，装不下就截到「…」、并补一枚悬停看全文的 tooltip。
+
+        为什么要等 `<Configure>`：列宽要等栅格铺完才知道（`min` 只是下限），
+        建表期量不到；窗口拖动时这里会重跑，所以窄屏不会把「后值」整列切成看不见的半截。
+        """
+        import tkinter.font as tkfont
+
+        for lab, full, reserve in self._fit_items:
+            try:
+                if not lab.winfo_exists():
+                    continue
+                cell = lab.master
+                # 再让 8px 给 Label 自身的边框/内衬：measure 只量字面宽度，不留余量会顶到下一件
+                avail = cell.winfo_width() - (reserve(cell, lab) if reserve else 0) - 8
+                if avail <= 1:                      # 还没布局（离屏/未映射）：本轮跳过，下次 Configure 再裁
+                    continue
+                spec = repr(lab.cget("font"))
+                fnt = self._fonts.get(spec)
+                if fnt is None:
+                    # 注意：Label 的 font 是**元组**，nametofont 只认字体名 ⇒ 必须走 Font(font=...)
+                    fnt = self._fonts[spec] = tkfont.Font(font=lab.cget("font"))
+                shown, clipped = fit_text(fnt.measure, full, avail)
+                if str(lab.cget("text")) != shown:
+                    lab.config(text=shown)
+                if clipped and id(lab) not in self._tip_shown:
+                    self._tip_shown.add(id(lab))
+                    Tooltip(lab, lambda d=full: d)
+            except Exception:
+                pass
 
     def add_row(self, bg: str | None = None) -> DataRow:
         if bg is None:
-            bg = self.t.card if self._n % 2 == 0 else mix(self.t.card, self.t.card_hover, 0.55)
+            bg = zebra_bg(self.t, self._n)
+        # 行底色先铺一条横向连通的带，再往上摞 cell：cell 容器之间有列间距，只给 cell 上色的话
+        # 隔行会断成几段色块（暗色两档差得太小，断口一直隐形；亮色校准到满档后才暴露）。
+        tk.Frame(self, bg=bg).grid(row=self._row, column=0,
+                                   columnspan=len(self.cols), sticky="nsew")
         self._n += 1
         row = DataRow(self, self._row, bg)
         self._row += 1
@@ -692,5 +784,6 @@ class DataTable(tk.Frame):
 
 __all__ = ["ASSETS", "FONT_UI", "FONT_NUM", "TYPE", "f", "sp", "px", "set_scale",
            "resolve_num_font", "init_fonts", "IconStore", "PhotoStore", "ICONS", "PHOTOS",
-           "photo_bg", "photo_fg", "photo_label", "PhotoBanner",
+           "photo_bg", "photo_fg", "photo_label", "PhotoBanner", "photo_panel_style",
+           "zebra_bg", "switch_palette", "fit_text",
            "ICON_MAP", "GROUP_LABELS", "Switch", "Tooltip", "DataTable", "DataRow", "mix"]
