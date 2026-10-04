@@ -7,6 +7,8 @@
 - 删除配置时把引用该配置的角色 ai_characters.user_llm_config_id 自动置 NULL。
 - 解析链辅助（供 app.agent.llm_client 使用）：角色绑定 / 用户默认 / 主账号共享默认。
 """
+from contextlib import asynccontextmanager
+
 from fastapi import HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,7 +100,12 @@ async def ensure_bindable(db: AsyncSession, user_id: int | None, config_id: int 
 
 # ── 解析链辅助（供 llm_client._resolve_llm_config 调用；无 db 时自开会话）──
 
+@asynccontextmanager
 async def _with_db(db: AsyncSession | None):
+    """会话上下文：传入 db 原样复用（不提交不关闭）；db=None 时自开、退出即归还。
+
+    必须是上下文管理器而非异步生成器：写成 `async for` 时调用体提前 return 会弃养生成器，自开的会话等 GC 才归还（A21-b 定案）。
+    """
     from app.db.database import async_session_factory
     if db is not None:
         yield db
@@ -115,7 +122,7 @@ async def resolve_character_llm_config(character_id: int | None, user_id: int | 
     """
     if not character_id:
         return None
-    async for session in _with_db(db):
+    async with _with_db(db) as session:
         char = (await session.execute(
             select(AICharacter).where(AICharacter.id == character_id)
         )).scalar_one_or_none()
@@ -141,7 +148,7 @@ async def resolve_user_default_config(user_id: int | None, db: AsyncSession | No
     """用户默认配置：user_id 的 is_default=True 且 enabled 配置。"""
     if not user_id:
         return None
-    async for session in _with_db(db):
+    async with _with_db(db) as session:
         cfg = (await session.execute(
             select(UserLlmConfig).where(
                 UserLlmConfig.user_id == user_id,
@@ -162,7 +169,7 @@ async def resolve_family_default_config(user_id: int | None, db: AsyncSession | 
     """主账号共享默认（仅子账号）：子账号的根主账号 is_default+enabled 且 shared_with_subs 的配置。"""
     if not user_id:
         return None
-    async for session in _with_db(db):
+    async with _with_db(db) as session:
         root = await get_family_root_id(session, user_id)
         if root is None or root == int(user_id):  # 独立主账号：用户默认即家庭默认，已由上层处理
             return None
@@ -321,7 +328,7 @@ async def resolve_modality_config(
     - ``db=None``：自开会话（后台任务/无请求上下文调用方）。
     """
     m = normalize_modality(modality)
-    async for session in _with_db(db):
+    async with _with_db(db) as session:
         # ── 账号门禁（账号独立 P2）：本函数是四模态唯一出口，门禁在此唯一生效（契约 §4）──
         # blocked → 该账号的模型调用被服务器管理员拒绝；own → 不回落服务器默认；
         # default_allowed（默认）→ 现状行为。user_id 缺失/0（服务器级哨兵、后台自调用）不设限。
@@ -381,7 +388,6 @@ async def resolve_modality_config(
                 detail=tr_lang(lang, "config_not_configured", modality=modality_label(m)),
             )
         return None
-    return None
 
 
 # ── CRUD（API 用；接受显式 db 会话）──

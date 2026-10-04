@@ -3,6 +3,8 @@
 # - 启动时 load_runtime_flags() 把 runtime_flags 表中 enabled 覆盖进 AGENT_FLAGS 内存；
 # - set_runtime_flag() 写表 + 热更新内存（立即生效，无需重启）；
 # - 回退：改回硬编码默认，或删除 DB 行后重启恢复默认。
+from contextlib import asynccontextmanager
+
 from app.utils.logger import get_logger
 
 _logger = get_logger('services.flag_service')
@@ -148,8 +150,13 @@ def _policy_default(key: str) -> dict:
             'title': None, 'desc': None, 'exists': False}
 
 
+@asynccontextmanager
 async def _policy_session(db):
-    '''策略读写会话：传入 db 用调用方事务（不 commit）；否则自开会话。'''
+    '''策略读写会话：传入 db 用调用方事务（不 commit）；否则自开会话、退出即归还。
+
+    与 :func:`app.application.llm_config_service._with_db` 同族：必须是上下文管理器，
+    写成 `async for` 时调用体提前 return 会弃养生成器，自开的会话等 GC 才归还（A21-b 定案）。
+    '''
     if db is not None:
         yield db
         return
@@ -168,7 +175,7 @@ async def get_flag_policies(keys, db=None) -> dict:
     try:
         from sqlalchemy import select
         from app.models.config import FlagSetting
-        async for session in _policy_session(db):
+        async with _policy_session(db) as session:
             rows = (await session.execute(
                 select(FlagSetting).where(FlagSetting.key.in_(list(out.keys())))
             )).scalars().all()
@@ -191,7 +198,7 @@ async def set_flag_policy(key: str, *, self_service=None, server_locked=None, db
     '''写开关策略（缺行新建）；返回最新策略。key 是否合法由调用方校验（本函数只管策略行）。'''
     from sqlalchemy import select
     from app.models.config import FlagSetting
-    async for session in _policy_session(db):
+    async with _policy_session(db) as session:
         row = (await session.execute(
             select(FlagSetting).where(FlagSetting.key == key)
         )).scalar_one_or_none()
@@ -211,7 +218,6 @@ async def set_flag_policy(key: str, *, self_service=None, server_locked=None, db
         if db is None:
             await session.commit()
         return result
-    return _policy_default(key)
 
 
 # ── 用户级开关覆盖（A5，2026-09-19）────────────────────────────────────────────

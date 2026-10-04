@@ -21,16 +21,24 @@
 
 每例把 ``busy_timeout`` 压到 300 ms：修复在位时用不到它；修复被摘掉时快速失败，
 不会让守卫用例白等 10 s。
+
+A21-b（2026-10-04）追加：本用例的**道具**就是一条「不还」的连接，它被 GC 掐掉时必然产生
+``non-checked-in`` SAWarning。该警告在 :func:`_holder_warning` 里**就地捕获并断言确实发生**
+（局部 ``catch_warnings``，出块即还原），这样 ``-W error::sqlalchemy.exc.SAWarning`` 才能只
+惩罚真实例行泄漏。禁止用 ``filterwarnings`` 全局静音——那会把真泄漏一起藏掉。
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gc
 import sqlite3
+import warnings
 from pathlib import Path
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import SAWarning
 
 import _dbclone
 from _dbclone import BusyReclaimSession, clone_engine, make_session_factory
@@ -40,8 +48,31 @@ _INSERT = text("INSERT INTO server_settings(key,value) VALUES(:k,:v)")
 _DELETE = text("DELETE FROM server_settings WHERE key=:k")
 
 
+def _non_checked_in(caught) -> list[str]:
+    return [str(w.message) for w in caught
+            if issubclass(w.category, SAWarning) and "non-checked-in" in str(w.message)]
+
+
+@contextlib.contextmanager
+def _holder_warning():
+    """局部捕获本用例道具连接的 ``non-checked-in`` SAWarning，出块时断言它确实出现过。
+
+    出现 = 道具连接真的进了引用环、只能靠分代回收掐掉（= A21 现场形态复现成功）；
+    没出现 = 道具被正常归还，机理没复现，守卫就成了空断言。
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")        # 只在本块内生效；块外照常受 -W error 约束
+        yield caught
+    assert _non_checked_in(caught), \
+        "道具连接未被 GC 掐掉（无 non-checked-in）⇒ A21 现场形态没复现，守卫失去意义"
+
+
 def _abandon_a_writer(factory, key: str) -> None:
-    """造出现场那条连接：发一条写、不提交也不关闭，再把它塞进引用环（只能等分代 GC）。"""
+    """造出现场那条连接：发一条写、不提交也不关闭，再把它塞进引用环（只能等分代 GC）。
+
+    刻意**不在这里** ``gc.collect()``：道具的价值就是「一直持锁直到受害者被 BUSY 卡住」，
+    提前回收会把锁放掉，机理就复现不出来了（警告交由 :func:`_holder_warning` 的用例级窗口接住）。
+    """
     async def _go():
         session = factory()
         await session.execute(_INSERT, {"k": key, "v": "1"})
@@ -67,24 +98,25 @@ def _cleanup(*engines) -> None:
 @pytest.mark.slow
 def test_gc_held_write_lock_is_broken_by_reclaim(tmp_path: Path, monkeypatch) -> None:
     engine = clone_engine(tmp_path / "t.db")
-    try:
-        factory = make_session_factory(engine)
+    with _holder_warning():                   # 道具连接的 non-checked-in 在块内断言（见 _holder_warning）
+        try:
+            factory = make_session_factory(engine)
 
-        _abandon_a_writer(factory, "holder-1")
-        before = _dbclone.BUSY_RECLAIMS
-        asyncio.run(_victim(factory, "nothing-1"))          # 修复在位 ⇒ 这条写必须成功
-        assert _dbclone.BUSY_RECLAIMS > before, \
-            "写成功了但没走「回收」路径 ⇒ 机理没被真正复现（守卫失去意义）"
+            _abandon_a_writer(factory, "holder-1")
+            before = _dbclone.BUSY_RECLAIMS
+            asyncio.run(_victim(factory, "nothing-1"))          # 修复在位 ⇒ 这条写必须成功
+            assert _dbclone.BUSY_RECLAIMS > before, \
+                "写成功了但没走「回收」路径 ⇒ 机理没被真正复现（守卫失去意义）"
 
-        # 变异自测：只摘掉「逼一次分代回收」，重试次数与退避原样保留
-        monkeypatch.setattr(_dbclone, "_reclaim", lambda: 0)
-        _abandon_a_writer(factory, "holder-2")
-        with pytest.raises(Exception) as excinfo:
-            asyncio.run(_victim(factory, "nothing-2"))
-        assert "database is locked" in str(excinfo.value), \
-            f"摘掉回收后仍通过 ⇒ 这条守卫没有钉在回收上（{type(excinfo.value).__name__}）"
-    finally:
-        _cleanup(engine)
+            # 变异自测：只摘掉「逼一次分代回收」，重试次数与退避原样保留
+            monkeypatch.setattr(_dbclone, "_reclaim", lambda: 0)
+            _abandon_a_writer(factory, "holder-2")
+            with pytest.raises(Exception) as excinfo:
+                asyncio.run(_victim(factory, "nothing-2"))
+            assert "database is locked" in str(excinfo.value), \
+                f"摘掉回收后仍通过 ⇒ 这条守卫没有钉在回收上（{type(excinfo.value).__name__}）"
+        finally:
+            _cleanup(engine)
 
 
 @pytest.mark.slow
