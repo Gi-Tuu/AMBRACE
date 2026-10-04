@@ -40,20 +40,15 @@ async def _run_hook(stage: str, ctx: dict) -> None:
 
 
 def _make_observation(spec: ToolSpec, result, status: str) -> dict:
-    """生成 Observation（Phase G）：epistemic_status/provenance/summary（对齐世界认知标注）"""
-    summary = ""
-    if isinstance(result, dict):
-        summary = str(result.get("summary") or result.get("message") or result.get("result") or result.get("text") or "")  # text 兜底：MCP 工具返回 {ok,text,raw}
-    elif isinstance(result, str):
-        summary = result
-    # P2-B（2026-08-29）：截断上限按工具配置（ToolSpec.max_observation_chars），默认 120；
-    # MCP 工具（mcp_tool_to_spec 设为 4000）返回文本不可控，120 字符会严重砍掉内容。
-    max_chars = int(getattr(spec, "max_observation_chars", 120) or 120)
-    return {
-        "epistemic_status": getattr(spec, "epistemic_status", "FACT"),
-        "provenance": getattr(spec, "provenance", "tool"),
-        "summary": str(summary)[:max_chars],
-    }
+    """生成 Observation（Phase G）：epistemic_status/provenance/summary（对齐世界认知标注）。
+
+    A28-S1（2026-10-05）：语义承载搬到 `app.agent.observation`，本函数**只做一件事**＝拿统一对象的
+    `to_core_dict()`，产物与历史实现**同形同值**（三键、同一取法、同一截断上限）。
+    完整记录（source/tool_name/归属 ids）留给 Workspace，**不塞进本函数返回值**——多一个键就是行为变化。
+    """
+    from app.agent.observation import from_spec
+
+    return from_spec(spec, result, status).to_core_dict()
 
 
 def _publish_tool_event(spec: ToolSpec, status: str, observation: dict, *, user_id, character_id, session_id, latency_ms: int, error=None) -> None:

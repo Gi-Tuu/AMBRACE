@@ -164,25 +164,24 @@ async def _run_agent_core(
     except Exception:
         _cs_snapshot = None
 
-    initial_state = {
-        "user_message": content, "character_id": character_id,
-        "user_id": user_id, "session_id": session_id, "intent": "",
-        "retrieved_memories": [], "context_messages": [],
-        "character_info": {}, "ai_response": "",
-        "should_update_memory": False, "new_memories": [], "emotional_state": "",
-        "bio_update": None, "status_update": None,
-        "source_id": user_msg_id,
-        "lang": lang,
-        "reasoning_level": await _load_reasoning_level(character_id),
-        "tools_used": [],
-        "stream_sink": stream_sink,
-        "tts": tts,
-        "voice_params": (stream_tts_ctx or {}).get("voice_params", {}) if stream_tts_ctx else {},
-        "tts_subdir": (stream_tts_ctx or {}).get("tts_subdir") if stream_tts_ctx else None,
-        "block_sink": (stream_tts_ctx or {}).get("block_sink") if stream_tts_ctx else None,
-        "character_states_snapshot": _cs_snapshot,
-        "channel_hint": channel_hint,
-    }
+    # A28-S4：本链不再自己拼 initial_state——统一走 Runtime 的唯一构造器。
+    # 函数内现取（搬家四律 R2）：打桩 `app.agent.runtime._build_initial_state` 仍能生效。
+    from app.agent.runtime import _build_initial_state as _mk_state
+
+    initial_state = _mk_state(
+        character_id=character_id, user_id=user_id, session_id=session_id,
+        user_message=content, lang=lang,
+        reasoning_level=await _load_reasoning_level(character_id),
+        save_memory=True,                      # 主聊天轮：照常落记忆（旧字面量里没有 skip_memory_save 键）
+        source_id=user_msg_id,
+        channel_hint=channel_hint,
+        stream_sink=stream_sink,
+        tts=tts,
+        voice_params=(stream_tts_ctx or {}).get("voice_params", {}) if stream_tts_ctx else {},
+        tts_subdir=(stream_tts_ctx or {}).get("tts_subdir") if stream_tts_ctx else None,
+        block_sink=(stream_tts_ctx or {}).get("block_sink") if stream_tts_ctx else None,
+        character_states_snapshot=_cs_snapshot,
+    )
 
     _t0 = time.monotonic()
     # #63 机制2：用户主动消息的动态回复延迟（flag 开才生效；voice/tts 跳过；冷战已在上层拦截）
@@ -820,30 +819,19 @@ async def continue_chat(
     except Exception as _e:
         _logger.warning("Continue load last ai message failed: %s", _e)
 
-    initial_state = {
+    # A28-S4：继续指令也走同一个构造器（原先这里自己拼了第三套 state，
+    # 与主聊天那套的差异全靠"恰好没用到"维持）
+    from app.agent.runtime import _build_initial_state as _mk_state
+
+    initial_state = _mk_state(
+        character_id=character_id, user_id=user_id, session_id=session_id,
         # 用户位只放占位（无新输入）；真正的继续指令由 context_builder 注入 system 区
-        "user_message": "（用户没有说话，等你继续）",
-        "continue_payload": {
-            "last_ai_content": last_ai_content,
-        },
-        "character_id": character_id,
-        "user_id": user_id,
-        "session_id": session_id,
-        "intent": "",
-        "retrieved_memories": [],
-        "context_messages": [],
-        "character_info": {},
-        "ai_response": "",
-        "should_update_memory": False,
-        "new_memories": [],
-        "emotional_state": "",
-        "bio_update": None,
-        "status_update": None,
-        "source_id": None,
-        "lang": lang,
-        "reasoning_level": await _load_reasoning_level(character_id),
-        "tools_used": [],
-    }
+        user_message="（用户没有说话，等你继续）",
+        continue_payload={"last_ai_content": last_ai_content},
+        lang=lang,
+        reasoning_level=await _load_reasoning_level(character_id),
+        save_memory=True,
+    )
     final_state = await agent.ainvoke(initial_state)
     full_text = (final_state.get("ai_response") or "").strip()
     if not full_text:

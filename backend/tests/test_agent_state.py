@@ -248,33 +248,47 @@ def test_agent_ainvoke_channel_hint_none_does_not_insert(monkeypatch):
     assert msgs and msgs[0]["role"] == "user"  # 首条仍是用户消息，未插 system 提示
 
 
-# ── §九 4：AgentState 完整性检查（chat_service 两处 initial_state key ⊆ __annotations__）──
+# ── §九 4：AgentState 完整性检查（A28-S4 后改锚「唯一 State 构造器」）──
+
+def _dict_keys_assigned_to(name: str, source_path) -> list[set[str]]:
+    """AST 提取「`name = {…}` 字面量」的键集合（不硬编码，避免测试自身漂移）。"""
+    tree = ast.parse(Path(source_path).read_text(encoding="utf-8"))
+    out: list[set[str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
+            if any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+                out.append({
+                    k.value for k in node.value.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                })
+    return out
+
 
 def test_agentstate_annotations_cover_chat_service_initial_state():
-    """防未来遗漏：chat_service 注入 initial_state 的任何 key 必须在 AgentState TypedDict 中声明。
+    """防未来遗漏：注入 LangGraph 的任何 initial_state key 必须在 AgentState TypedDict 中声明。
 
-    用 ast 解析源码实际提取两处 initial_state 字面量的 key，而非硬编码，避免测试自身漂移。
+    A28-S4（2026-10-05）判据随迁：三条路（chat / social / continue）统一走
+    `app.agent.runtime._build_initial_state`，所以锚点从「chat_service 的两处字面量」换成
+    「构造器里的 state 字面量」——**原意未变**（任何键都必须先在 TypedDict 声明，
+    否则 LangGraph 1.x 静默丢弃 = 当年 SSE 打字机失效的根因）。
+    同时钉住「chat_service 不再自己拼 state」：它一旦长出 `initial_state = {…}` 字面量就红。
     """
+    from app.agent import runtime as runtime_mod
     from app.application import chat_service
 
-    tree = ast.parse(Path(chat_service.__file__).read_text(encoding="utf-8"))
-    dict_sets: list[set[str]] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for tgt in node.targets:
-                if isinstance(tgt, ast.Name) and tgt.id == "initial_state" and isinstance(node.value, ast.Dict):
-                    keys = {
-                        k.value for k in node.value.keys
-                        if isinstance(k, ast.Constant) and isinstance(k.value, str)
-                    }
-                    dict_sets.append(keys)
-
-    assert dict_sets, "未在 chat_service.py 中找到 initial_state 字面量"
+    ctor_sets = _dict_keys_assigned_to("state", runtime_mod.__file__)
+    assert ctor_sets, "未在 runtime._build_initial_state 里找到 state 字面量（构造器被改形了？）"
     annotations = set(AgentState.__annotations__.keys())
-    missing = set().union(*dict_sets) - annotations
+    missing = set().union(*ctor_sets) - annotations
     assert not missing, (
-        f"chat_service initial_state 的 key 有 {len(missing)} 个未在 AgentState.__annotations__ 中声明："
+        f"初始 state 的 key 有 {len(missing)} 个未在 AgentState.__annotations__ 中声明："
         f"{sorted(missing)}（LangGraph 1.x 会静默丢弃，导致功能失效）"
+    )
+
+    stray = _dict_keys_assigned_to("initial_state", chat_service.__file__)
+    assert not stray, (
+        f"chat_service 又自己拼了 {len(stray)} 套 initial_state 字面量："
+        "A28-S4 已统一走 runtime._build_initial_state（三条路共用一套，见 plans 的 A28 行）"
     )
 
 

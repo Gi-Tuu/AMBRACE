@@ -47,6 +47,21 @@ class AgentState(TypedDict):
     reflection_result: dict | None    # 反思结果（触发/自查/是否通过）
     active_topics: list[dict]         # 进行中的话题（conversation_topics）
 
+    # ---- 群聊上下文（#72 PR-C P3/P4）----
+    # A28-S4 补声明：这两键一直只由 `runtime._build_initial_state`（社交/群聊链**直调节点**、不经编译图）
+    # 写入，所以过去没暴露问题；但按本文件下方真流式字段同一条坑——**没在 TypedDict 声明的 key，
+    # 一旦走编译图就被 LangGraph 1.x 静默丢弃**——声明补齐，取值口径不变（非群聊仍为 None/False）。
+    group_id: int | None
+    group_shared_fact: bool
+
+    # ---- 认知工作台（A28-S3，2026-10-05）----
+    # 必须在此声明，否则 LangGraph 1.x 静默丢弃（与下方真流式字段同一个坑）。
+    # 第一阶段**只写不读**：节点往里挂 Observation / focus / decision，没有任何 prompt 段消费它
+    # ⇒ 回复内容逐字节不变；等第二／三阶段再把它投影进上下文。
+    workspace: object          # CognitiveWorkspace 实例（app/agent/workspace.py；纯运行时对象，不落库）
+    observations: list[dict]   # 扁平观测列表（与 workspace.observations 同一批记录的引用口径）
+    decision: dict | None      # 本轮决定（含 reason），第一阶段由 reflect 等就地写入
+
     # ---- 真流式（SSE）运行时注入（2026-08-19）----
     # 以下字段由服务层在 agent.ainvoke() 前注入 initial_state，
     # 必须在 TypedDict 中声明，否则 LangGraph 1.x 会静默丢弃未声明 key，

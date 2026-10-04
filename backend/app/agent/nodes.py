@@ -212,6 +212,29 @@ async def retrieve_memories(state: AgentState) -> AgentState:
             )
         except Exception as e:
             _logger.warning("Memory reinforce failed: %s", e)
+    # A28-S3（2026-10-05）：把本轮召回挂进认知工作台。**只写不读**——第一阶段没有任何 prompt 段
+    # 消费 workspace，所以这段不改变任何输出（守卫：同输入下 context_messages 文本逐字节相同）。
+    # 只登记真有的字段：内容、id、库里的认知态（缺则 None，不替记忆编造 epistemic 标注）。
+    try:
+        from app.agent.observation import SOURCE_MEMORY, Observation
+        from app.agent.workspace import add_observation
+
+        _ws = state.get("workspace")
+        for m in (memories or []):
+            add_observation(_ws, Observation(
+                source=SOURCE_MEMORY,
+                status="retrieved",
+                summary=str(m.get("content") or ""),
+                epistemic_status=m.get("epistemic_status"),
+                provenance=None,        # 记忆召回不是「工具面」产出的，不占 OBS_PROVENANCE 闭集、不新增散落字面量
+                tool_name=None,
+                user_id=state.get("user_id"),
+                character_id=state.get("character_id"),
+                session_id=state.get("session_id"),
+                extra={"memory_id": m.get("id")},
+            ).to_dict())
+    except Exception as e:
+        _logger.debug("Workspace recall observation failed: %s", e)
     return state
 
 
@@ -612,6 +635,14 @@ async def perceive(state: AgentState) -> AgentState:
         state["perception"] = _perceive(state.get("user_message") or "")
     except Exception as e:
         _logger.warning("Perception failed: %s", e)
+    # A28-S3：把感知给出的"当前关注"挂进工作台（只写不读）。取不到就是 None，不替角色编造关注点。
+    try:
+        from app.agent.workspace import set_focus as _ws_set_focus
+
+        _p = state.get("perception") or {}
+        _ws_set_focus(state.get("workspace"), (_p.get("topic") or None))
+    except Exception as e:
+        _logger.debug("Workspace focus sync failed: %s", e)
     return state
 
 
@@ -629,4 +660,10 @@ async def reflect(state: AgentState) -> AgentState:
         state["reflection_result"] = await evaluate_reflection(state)
     except Exception as e:
         _logger.warning("Reflection evaluate failed: %s", e)
+    # A28-S3：反思结论就地记进工作台的 last_decision（只写不读；异常也不影响主链路）。
+    try:
+        from app.agent.workspace import add_decision
+        add_decision(state.get("workspace"), {"kind": "reflection", "result": state.get("reflection_result")})
+    except Exception as e:
+        _logger.debug("Workspace reflection decision failed: %s", e)
     return state

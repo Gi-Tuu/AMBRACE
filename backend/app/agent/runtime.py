@@ -20,6 +20,7 @@ import time
 
 from app.utils.logger import get_logger
 from app.utils.timeutil import now_naive_utc, to_naive_utc
+from app.agent.workspace import create_workspace
 
 _logger = get_logger("agent.runtime")
 
@@ -46,19 +47,45 @@ def _build_initial_state(
     user_message: str,
     lang: str,
     reasoning_level: int,
-    save_memory: bool,
+    save_memory: bool = True,
     group_id: int | None = None,
     group_shared_fact: bool = False,
+    source_id: int | None = None,
+    continue_payload: dict | None = None,
+    channel_hint: str | None = None,
+    stream_sink=None,
+    tts: bool = False,
+    voice_params: dict | None = None,
+    tts_subdir: str | None = None,
+    block_sink=None,
+    character_states_snapshot: dict | None = None,
 ) -> dict:
-    """构建初始 state（与主链路 chat_service._run_agent_core 同构的最小集合）"""
+    """**唯一**的 Agent 初始状态构造器（A28-S4，2026-10-05）：chat / social / continue 三条路共用。
+
+    过去三条路各拼一套 dict（`chat_service.py` 两处 ＋ 本文件一处），漏一个键就是一条只有真跑起来
+    才暴露的静默差异——SSE 真流式那次就是这么坏的（TypedDict 没声明 ⇒ LangGraph 1.x 丢键）。
+
+    新增键一律带默认值，且默认值＝「这条路径本来没这个键时各处读到的东西」（None / False / {} / []），
+    所以是**零行为变化**；守卫＝三条路径的 state 与各自旧字面量逐键相同（含值），
+    外加「只有一处字面量」的源码锚点（防止又长出第二套）。
+    """
     state = {
         "user_message": user_message or "",
+        "continue_payload": continue_payload,
         "character_id": character_id,
         # 派单 F（A2-M0 收尾）：不再 `or 1` 臆造 1 号账号。缺 caller 时键存在=None，
         # 下游 section 的 state.get("user_id", 1) 读到 None（键在，默认不触发）→ 查询退化为
         # IS NULL 空结果 = 不注入该用户数据（fail-closed）。本链仅群聊/主动/插件，外层 try 兜底崩不到主聊天。
         "user_id": user_id,
         "session_id": session_id,
+        "source_id": source_id,
+        "lang": lang,
+        "reasoning_level": reasoning_level,
+        "channel_hint": channel_hint,
+        # A28-S3：本轮认知工作台（纯运行时对象，第一阶段只写不读 ⇒ 零行为变化）
+        "workspace": create_workspace(character_id=character_id, user_id=user_id, session_id=session_id),
+        "observations": [],
+        "decision": None,
         "intent": "",
         "retrieved_memories": [],
         "context_messages": [],
@@ -69,17 +96,45 @@ def _build_initial_state(
         "emotional_state": "",
         "bio_update": None,
         "status_update": None,
-        "source_id": None,
-        "lang": lang,
-        "reasoning_level": reasoning_level,
         "tools_used": [],
-        "group_id": group_id,            # #72 PR-C P3：群聊上下文标记（非群聊为 None → 私有认知 section 不注入）
+        "group_id": group_id,                   # #72 PR-C P3：群聊上下文标记（非群聊为 None → 私有认知 section 不注入）
         "group_shared_fact": group_shared_fact,  # #72 PR-C P4：注入观测 has_shared
+        # ── 真流式／TTS 运行时注入（非流式路径为 None/False，与"本来没这个键"读数一致）──
+        "stream_sink": stream_sink,
+        "tts": tts,
+        "voice_params": voice_params or {},
+        "tts_subdir": tts_subdir,
+        "block_sink": block_sink,
+        "character_states_snapshot": character_states_snapshot,  # M1-S10：八维+trust 快照（复用免重复查库）
     }
     if not save_memory:
         # 机器生成内容（如渠道 hint）不落记忆：parse_response 仍解析，但 generate_response 跳过落库
         state["skip_memory_save"] = True
     return state
+
+
+def _record_tool_observation(state: dict, spec, res: dict, *, user_id, character_id, session_id) -> None:
+    """把一次工具观察挂进本轮 Workspace（A28-S3）。
+
+    **只写不读**：不改注入文案、不改返回值、不改 `steps`——第一阶段 Workspace 没有任何消费者，
+    所以这段的存在与否都不可能影响回复内容（守卫：context 文本逐字节相同）。
+    """
+    try:
+        from app.agent.observation import SOURCE_TOOL, Observation
+        from app.agent.workspace import add_observation
+
+        core = res.get("observation") or {}
+        add_observation(state.get("workspace"), Observation(
+            source=SOURCE_TOOL,
+            status=str(res.get("status") or "ok"),
+            summary=str(core.get("summary") or ""),
+            epistemic_status=core.get("epistemic_status") or "FACT",
+            provenance=core.get("provenance") or "tool",
+            tool_name=getattr(spec, "name", None),
+            user_id=user_id, character_id=character_id, session_id=session_id,
+        ).to_dict())
+    except Exception:
+        pass
 
 
 async def _run_tool_stage(state: dict, steps: list[dict], *, character_id: int, user_id: int | None, session_id: int | None) -> bool:
@@ -139,6 +194,8 @@ async def _run_tool_stage(state: dict, steps: list[dict], *, character_id: int, 
             # flag observation_label_v1 关时 _tag 为空串 ⇒ 逐字节旧文本。
             _tag = observation_tag(res.get("observation"))
             note_observation_injection(res.get("observation"), _tag)
+            _record_tool_observation(state, spec, res, user_id=user_id,
+                                     character_id=character_id, session_id=session_id)
             state["context_messages"] = state["context_messages"] + [{
                 "role": "system",
                 "content": f"【工具结果{_tag}】已记录到小手机（{spec.name}）。基于真实结果继续回复，不要说'我去执行了'。",
@@ -173,6 +230,8 @@ async def _run_tool_stage(state: dict, steps: list[dict], *, character_id: int, 
             # P0 第 3 步：把 observation 自带的认知态/来源带进注入行（G6）；flag 关＝逐字节旧文本
             _tag = observation_tag(_observation)
             note_observation_injection(_observation, _tag)
+            _record_tool_observation(state, spec, res, user_id=user_id,
+                                     character_id=character_id, session_id=session_id)
             state["context_messages"] = state.get("context_messages") or []
             state["context_messages"] = state["context_messages"] + [{
                 "role": "system",

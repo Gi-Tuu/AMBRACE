@@ -17,6 +17,9 @@ _ANCHOR_HEADER = "TA 当前已知现状（以此为准，旧记忆不得与此�
 _PREDICATE_LABELS = {"location": "位置", "status": "状态", "mood": "心情", "activity": "近况"}
 _SLOT_LABELS = {"location": "位置", "job": "工作", "relationship": "感情",
                 "living": "居住", "goal_state": "近期目标", "health": "健康"}
+# per-char 现状的取值顺序（位置优先——它最容易与旧记忆矛盾）。A28-S2：把顺序从函数体里提出来当常量，
+# 结构化读取与文本 renderer 共用同一份，避免两处各写一遍而分叉。
+_ANCHOR_PREDICATE_ORDER = ("location", "status", "mood", "activity")
 
 
 async def _char_world_user_facts(char_id: int, user_id: int) -> dict[str, str]:
@@ -98,29 +101,63 @@ async def _global_slot_facts(user_id: int) -> dict[str, str]:
         return {}
 
 
+async def get_current_user_state(*, character_id: int, user_id: int,
+                                 include_profile_location: bool = True) -> dict:
+    """结构化读取三源现状（A28-S2，2026-10-05）：`{"entries": [{key,label,value,source}], "empty": bool}`。
+
+    与 `current_user_state_anchor()` 的关系＝**读取与渲染分开**（原文方案 §六）：
+    Workspace / Reflection / Proactivity 将来读结构化结果，prompt 继续用文本 renderer，两者共用同一份取数与同一套优先级。
+
+    口径与历史逐字节一致：per-char 现状按 `_ANCHOR_PREDICATE_ORDER` 优先，其次 User 表城市，再次共享槽；
+    **同标签去重不覆盖**（位置已有就不替换）。任何异常 → 空 entries（失败静默、绝不抛给主链路）。
+
+    只装**三源真给得出**的字段：库里没有 mood 的写入点就是没有，不在此虚构 `fresh_until`/`authority` 之类。
+    """
+    entries: list[dict] = []
+    seen_labels: set[str] = set()
+
+    def _push(key: str, label: str, value, source: str) -> None:
+        if not value or label in seen_labels:
+            return
+        seen_labels.add(label)
+        entries.append({"key": key, "label": label, "value": str(value), "source": source})
+
+    try:
+        char_facts = await _char_world_user_facts(character_id, user_id)
+        for p in _ANCHOR_PREDICATE_ORDER:
+            _push(p, _PREDICATE_LABELS[p], char_facts.get(p), "world_fact")
+        if include_profile_location:
+            _push("location", "位置", await _profile_location(user_id), "profile_location")
+        for slot, val in (await _global_slot_facts(user_id)).items():
+            _push(slot, _SLOT_LABELS.get(slot, slot), val, "global_slot")
+    except Exception:
+        return {"entries": [], "empty": True}
+    return {"entries": entries, "empty": not entries}
+
+
+def render_current_state_anchor(entries, max_chars: int = 200) -> str:
+    """把结构化现状渲染成权威锚点文本——**输出与拆分前逐字节相同**（含顺序、`…` 截断与首尾换行）。"""
+    items = list(entries or [])
+    if not items:
+        return ""
+    body = "；".join(f"{e['label']}：{e['value']}" for e in items)
+    if len(body) > max_chars:
+        body = body[:max_chars].rstrip("，；,;") + "…"
+    return f"\n{_ANCHOR_HEADER}：{body}。\n"
+
+
 async def current_user_state_anchor(*, character_id: int, user_id: int,
                                     include_profile_location: bool = True,
                                     max_chars: int = 200) -> str:
-    """聚合三源 → 一段权威现状文本；无现状返回 ""。绝不抛错阻断主回复。"""
+    """聚合三源 → 一段权威现状文本；无现状返回 ""。绝不抛错阻断主回复。
+
+    A28-S2 后本函数＝`get_current_user_state()` → `render_current_state_anchor()` 的薄封装。
+    **入口名与签名保持不变**：它是 4 处生产调用点（section_current_state / reflection / runtime / world_state）
+    与 42 处测试打桩共同钉住的接缝——改名或换参数形态会让打桩静默失效（搬家四律 R1）。
+    """
     try:
-        parts: dict[str, str] = {}
-        char_facts = await _char_world_user_facts(character_id, user_id)
-        for p in ("location", "status", "mood", "activity"):  # 位置优先（最易与旧记忆矛盾）
-            if char_facts.get(p):
-                parts[_PREDICATE_LABELS[p]] = char_facts[p]
-        if include_profile_location:
-            prof_loc = await _profile_location(user_id)
-            if prof_loc and "位置" not in parts:  # 不覆盖 per-char 现状、去重
-                parts["位置"] = prof_loc
-        for slot, val in (await _global_slot_facts(user_id)).items():
-            label = _SLOT_LABELS.get(slot, slot)
-            if val and label not in parts:  # 同标签去重，位置以 per-char/profile 优先
-                parts[label] = val
-        if not parts:
-            return ""
-        body = "；".join(f"{k}：{v}" for k, v in parts.items())
-        if len(body) > max_chars:
-            body = body[:max_chars].rstrip("，；,;") + "…"
-        return f"\n{_ANCHOR_HEADER}：{body}。\n"
+        state = await get_current_user_state(character_id=character_id, user_id=user_id,
+                                             include_profile_location=include_profile_location)
+        return render_current_state_anchor(state["entries"], max_chars=max_chars)
     except Exception:
         return ""
