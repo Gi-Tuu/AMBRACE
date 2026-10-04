@@ -9,9 +9,11 @@
 端到端那一例走**子进程**（不在本 pytest 进程里改 `DATABASE_URL`）：脚本自己会重新绑定临时库，
 在测试进程内直接调它会写进 conftest 的会话沙箱——那是另一种「测试污染」。
 """
+import ast
 import collections
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -317,6 +319,21 @@ def test_基线定义必须等于生产实配():
 
 
 # ─────────────────────────── ③ 端到端（子进程，确定性路） ───────────────────────────
+# Windows CI 坑（2026-10-04 实测，红在第 99 棒的 py3.13-Windows 档）：`text=True` 是按**本地编码**
+# （CI 上是 cp1252）解码子进程输出的，而跑分器打的是中文 UTF-8 ⇒ 解码异常被 subprocess 内部吞掉，
+# `p.stdout/p.stderr` 直接变成 None，测试于是报 `'NoneType' object has no attribute 'split'`——
+# 看着像跑分器坏了，其实是测试自己的编码假设。两头都要锁：父进程按 utf-8 解，子进程按 utf-8 写。
+CHILD_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+
+def _communicate(p):
+    """把「输出没解码出来」变成一条精确的失败信息，而不是留个 None 让下一个人猜。"""
+    assert p.stdout is not None and p.stderr is not None, (
+        "子进程输出没被解码（rc=%s）＝测试自己的编码假设坏了，不是跑分器坏了；见 CHILD_ENV 注释"
+        % p.returncode)
+    return p.stdout, p.stderr
+
+
 def _run_cli(tmp_path, *extra):
     """子进程跑分器：报告一律写进 pytest 的 `tmp_path`。
 
@@ -331,8 +348,10 @@ def _run_cli(tmp_path, *extra):
     cmd = [py, str(SCRIPT), "--dataset", str(DATASET), "--judges", "J3",
            "--configs", "baseline", "--mode", "score", "--sparse-only", "--limit", "3",
            "--print-metrics", "--out", str(out_path)]
-    p = subprocess.run(cmd + list(extra), capture_output=True, text=True, timeout=900)
-    return p.returncode, p.stdout, p.stderr
+    p = subprocess.run(cmd + list(extra), capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", env=CHILD_ENV, timeout=900)
+    out, err = _communicate(p)
+    return p.returncode, out, err
 
 
 def test_评测不许往生产缓存目录写东西(tmp_path):
@@ -377,5 +396,29 @@ def test_lint_不过时端到端拒绝跑(tmp_path):
     (tmp_path / "neg.md").parent.mkdir(parents=True, exist_ok=True)
     p = subprocess.run([sys.executable, str(SCRIPT), "--dataset", str(DRAFT), "--judges", "J3",
                         "--sparse-only", "--out", str(tmp_path / "neg.md")],
-                       capture_output=True, text=True, timeout=600)
-    assert p.returncode == 3, "草稿池不合法却开跑了：%s" % p.stdout[-300:]
+                       capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", env=CHILD_ENV, timeout=600)
+    out, err = _communicate(p)
+    assert p.returncode == 3, "草稿池不合法却开跑了：%s" % out[-300:]
+
+
+def test_子进程调用必须显式锁编码():
+    """第 99 棒 CI 红在 Windows 档的真实原因（2026-10-04）：`text=True` 按**本地编码**（CI 上是 cp1252）
+    解码，跑分器打的是中文 UTF-8 ⇒ 解码异常被 subprocess 内部吞掉、`p.stdout` 变成 None，
+    报出来的却是 `'NoneType' object has no attribute 'split'`——看着像跑分器坏了，其实是测试的编码假设。
+
+    口径：每一次 `subprocess.run` 都必须带 `encoding`/`errors`（父进程按 utf-8 解）和 `env`
+    （子进程侧按 `PYTHONIOENCODING=utf-8` 写，否则 Windows 下它自己就 UnicodeEncodeError）。
+    用 AST 找真调用，不按文本数——文本数会把这条守卫自己的文案也数进去（第一版就自咬了一次）。
+    """
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr == "run" and isinstance(n.func.value, ast.Name)
+             and n.func.value.id == "subprocess"]
+    assert len(calls) >= 2, "本文件已经没有端到端子进程调用了？那这条守卫要跟着删掉"
+    for c in calls:
+        kw = {k.arg for k in c.keywords}
+        assert {"encoding", "errors", "env"} <= kw, (
+            "第 %s 行的 subprocess.run 没锁编码：缺 %s" % (c.lineno,
+                                                       sorted({"encoding", "errors", "env"} - kw)))
