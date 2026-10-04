@@ -6,14 +6,17 @@ flag ``memory_utility_feedback`` 已预注册（默认关）；本模块全部�
 目标：补上「这条召回到底有没有用上」的缺失信号，用来微调记忆 salience/衰减——
 我们已有艾宾浩斯强化、reliability（矛盾纠正）、tiering（低置信加速退化），缺的正是这一环。
 
-信号（确定性规则，不引入 LLM）：
-- negative：本轮文本（用户消息 + AI 回复）命中**纠正词**（在 reliability.CORRECT_WORDS 基础上扩量，
-  ``_UTILITY_EXTRA_CORRECT_WORDS``）→ 用户改口/否认，单命中即整轮降权（不再要求记忆片段共现）；
-- positive：文本命中**明确表态词**（认同/赞许/被说中，``_UTILITY_ATTITUDE_WORDS``），**或**记忆关键片段
-  出现在回复文本（被用上）→ 微上调；
+信号（确定性规则，不引入 LLM；**用户侧措辞只看用户消息，「用没用上」只看 AI 回复**）：
+- negative：**用户消息**命中**纠正词**（在 reliability.CORRECT_WORDS 基础上扩量，
+  ``_UTILITY_EXTRA_CORRECT_WORDS``）→ 用户改口/否认，单命中即整轮降权（不要求记忆片段共现）；
+- positive：**用户消息**命中**明确表态词**（认同/赞许/被说中，``_UTILITY_ATTITUDE_WORDS``），**或**记忆关键片段
+  出现在**AI 回复**（被用上）→ 微上调；
 - neutral：以上皆无 → 不调整（无关闲聊不误记）。
   （放宽点 2026-09-21 L2 任务2：原「纠正词 + 记忆被引用」双命中口径在 char13 灰度 29h 仅 1 positive /
-  0 negative，几近抓不到信号；改为任一强信号即记，并扩大纠正词表。）
+  0 negative，几近抓不到信号；改为任一强信号即记，并扩大纠正词表。
+  收口点 2026-10-04 A25 方案 a：放宽时把两段拼成一串扫，于是**角色自己说「记错了」也被当成用户改口**
+  ——实测 32 条 negative 全部命中在 AI 回复侧、用户侧 0 条，24 条记忆被误降权 ⇒ 改回两段各扫各的。
+  判效详见 docs/dev-changelog.md 2026-10-04 B3 条目。）
 
 作用（最小可用、幅度极小、常量可配）：
 - positive → ``Memory.importance`` 微上调；negative → 微下调（复用既有 salient 权重通道，
@@ -133,25 +136,30 @@ def _contains_key_fragment(snippet: str, resp: str, min_len: int = UTILITY_POSIT
 def classify_utility_signal(memory_content: str, ai_response: str, user_message: str = "") -> str:
     """确定性效用判定（纯函数，可单测）：'negative' / 'positive' / 'neutral'。
 
-    放宽判据（2026-09-21 L2 任务2）：命中任一强信号即记正/负，不再要求「纠正词 + 记忆被引用」
-    双命中——char13 灰度 29h 仅 1 positive / 0 negative，原双命中口径几乎抓不到信号：
-    - ① 纠正词命中（含扩量后的 ``_UTILITY_EXTRA_CORRECT_WORDS``）→ negative（用户改口/否认，单命中即可）；
-    - ③ 明确表态词命中（认同/赞许/被说中，``_UTILITY_ATTITUDE_WORDS``）→ positive；
-    - ② 记忆关键片段被引用（话题共现）→ positive（记忆被用上）；
+    **两段各扫各的**（2026-10-04 A25 方案 a 收口，见下方历史注）：
+    - ① 纠正词（含扩量后的 ``_UTILITY_EXTRA_CORRECT_WORDS``）只扫 **user_message** → negative；
+    - ③ 明确表态词（认同/赞许/被说中，``_UTILITY_ATTITUDE_WORDS``）只扫 **user_message** → positive；
+    - ② 记忆关键片段被引用只扫 **ai_response** → positive（记忆被用上）；
     - 其余 → neutral（无关闲聊不误记）。
 
-    ``user_message`` 默认空：纠正词/表态词多为用户侧措辞，跨两段联合判定更准；缺省时退回只看 AI 回复。
+    ``user_message`` 缺省为空 ⇒ ①③ 一律不触发，只有 ② 可能成立（此时没有任何「用户改口」的证据）。
+
+    为什么不再把两段拼起来扫（实测证据，生产库只读）：拼扫时**角色自己的措辞**会被当成用户改口——
+    char13 的 32 条 negative 回执逐条回放到 session 11，命中词全部来自 AI 回复
+    （原文「……行，记错了，练背就练背。」含「错了」），用户侧一条都没有；
+    而 17 个表态词在 215 条真实用户消息上命中 0。指标当时声称的是「用户改口/否认」，扫的却是两段文本，
+    于是 24 条记忆被 −0.8 误降权。② 保留扫回复是对的：那条通道问的就是「AI 用没用这条记忆」。
     """
-    resp = f"{(user_message or '')}\n{(ai_response or '')}"
-    snippet = _core_snippet(memory_content)
-    # ① 纠正词（扩量后）→ negative：弱化「需与记忆片段共现」要求，单命中即记负（提高负样本命中率）
-    if any(w in resp for w in _correction_words()):
+    u = user_message or ""
+    resp = ai_response or ""
+    # ① 纠正词（用户侧）→ negative：仍不要求与记忆片段共现（09-21 的放宽点保留）
+    if any(w in u for w in _correction_words()):
         return "negative"
-    # ③ 对召回内容明确表态（认同/赞许/被说中）→ positive
-    if any(w in resp for w in _UTILITY_ATTITUDE_WORDS):
+    # ③ 用户对召回内容明确表态（认同/赞许/被说中）→ positive
+    if any(w in u for w in _UTILITY_ATTITUDE_WORDS):
         return "positive"
-    # ② 记忆关键片段被引用（话题共现）→ positive（记忆被用上）
-    if _contains_key_fragment(snippet, resp):
+    # ② 记忆关键片段被**回复**引用 → positive（只看 AI 文本，用户自己复述不算「被用上」）
+    if _contains_key_fragment(_core_snippet(memory_content), resp):
         return "positive"
     return "neutral"
 
@@ -256,7 +264,8 @@ def schedule_utility_feedback(
 ) -> None:
     """fire-and-forget 入口（不阻塞回复）。``recalled`` = state['retrieved_memories']（含 id/content）。
 
-    ``user_message``：本轮用户原始消息，用于收窄 negative 判据（纠正词多为用户措辞，且需与该条记忆指代共现）。
+    ``user_message``：本轮用户原始消息——纠正词／表态词**只在这一段里找**（用户改口才算改口，
+    角色自己的措辞不算，A25 方案 a）；缺省时 ①③ 不触发，只有「记忆被回复引用」②可能成立。
     flag 关 → 直接返回（零行为变化）。异步失败不影响主流程。
     """
     if not _flag_on(character_id):
