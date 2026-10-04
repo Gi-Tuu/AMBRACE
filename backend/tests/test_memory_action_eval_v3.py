@@ -44,7 +44,10 @@ OFFICIAL = _read(DATASET)
 # ─────────────────────────── ① 数据集 lint ───────────────────────────
 def test_正式集_lint_必须零违规():
     assert OFFICIAL, "正式集读不出用例（文件被挪动或编码变了）"
-    assert len(OFFICIAL) == 62, "M0-b 的正式集应为 62 条（7 类 × 8 ＋ 弃权 6）；实际 %d 条" % len(OFFICIAL)
+    # 62＝M0-b（7 类 × 8 ＋ 弃权 6）；＋15＝A26(a) 补题（relationship 7、temporal 8，**只增不减**）
+    assert len(OFFICIAL) == 77, "正式集应为 77 条（M0-b 62 ＋ A26 补 15）；实际 %d 条" % len(OFFICIAL)
+    assert "ar09" not in {c["cid"] for c in OFFICIAL}, (
+        "候选 ar09 未过认证却进了正式集 ⇒ 违反 §2.3（掉出认证的候选题不入集，补题不是把坏题塞进来）")
     assert ev.lint_dataset(OFFICIAL) == [], "正式集 lint 违规：%s" % ev.lint_dataset(OFFICIAL)[:6]
 
 
@@ -133,18 +136,20 @@ def test_认证状态必须逐条可追溯_且未认证数只许降():
                                if (c.get("solvability") or {}).get("certified"))
     for cat, n in left.items():
         assert n >= 3, "认证子集里 %s 类只剩 %d 条，该类已无法读任何趋势" % (cat, n)
-    thin = {k: v for k, v in left.items() if v < 6}
-    assert set(thin) == {"relationship", "temporal"}, (
-        "认证不足 6 条的类集合变了（M1 实测＝这两类）：%s" % thin)
-    # abstention 是 J4 豁免类（本就不进 J3 认证），另两类是 M1 真实量出来的产品缺陷：
-    # 无提示题面在 54 行库里 full_pass3=0，且填充行更旧、权重更低 ⇒ 不是填充设计偏心，是检索做不到
+    # A26(a) 补题之后：任何类都不许再出现「认证不足 6 条」（此前 relationship/temporal 各只剩 3 条）
+    thin = {k: v for k, v in left.items() if v < 6 and k != "abstention"}
+    assert not thin, "这些类认证不足 6 条，分类统计读不动：%s" % thin
+    # 指代型轮次必须被归到「指代无锚・J3 不测」，**不许当检索栈缺陷的证据**（A26 的实测结论：
+    # 16 道带情境线索的候选题 15 道直接过认证、且 gold3=3，说明掉出的老题是题面没锚，不是召不回）
     for c in OFFICIAL:
+        s = c.get("solvability") or {}
         if c["category"] == "abstention":
-            assert (c.get("solvability") or {}).get("exempt_reason"), "%s 弃权类必须带豁免理由" % c["cid"]
-        elif c["category"] in ("relationship", "temporal") and not (c.get("solvability") or {}).get("certified"):
-            s = c["solvability"]
+            assert s.get("exempt_reason"), "%s 弃权类必须带豁免理由" % c["cid"]
+        elif not s.get("certified") and c["category"] in ("relationship", "temporal"):
+            assert s.get("blocked_class") == "指代无锚", (
+                "%s 掉出认证却没归类 ⇒ 会被后人当成「检索做不到」去改召回" % c["cid"])
             assert s.get("full_pass3") == 0 and s.get("no_mem_fail") is True, (
-                "%s 掉出认证的理由必须是「满库也召不出」，别把别的故障混进来" % c["cid"])
+                "%s 的「指代无锚」必须是「满库召不出＋空库不泄题」，别把别的故障混进来" % c["cid"])
 
 
 def test_分类表必须带认证列并在不足时报警():

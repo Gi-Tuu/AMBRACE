@@ -15,8 +15,8 @@
 
 判据用 Codex 定的那条：**同一测试路径连跑两次，第二次不得再出现 non-checked-in**。
 
-六条断言（前两条钉克隆库层、三四条钉会话沙箱库层、五六条钉生产侧提前 `return` 路径，
-每层都是「正确写法必须干净 ＋ 泄漏写法必须被检出」一对）：
+八条断言（前两条钉克隆库层、三四条钉会话沙箱库层、五六条钉生产侧提前 `return` 路径，
+七八条钉**写路径的归还时机**——A21-e 补的盲点；每层都是「正确写法必须干净 ＋ 泄漏写法必须被检出」一对）：
 1. :func:`test_hygienic_usage_is_clean_across_two_rounds`——正确写法（``async with`` + commit）
    连跑两遍，每遍「本引擎建了几条连接 vs 归还几条」差额必须为 0，且捕到的 non-checked-in
    里**没有一条属于本引擎**；
@@ -26,9 +26,14 @@
    ``test_ws_notify_disabled`` 所在层）也必须 0 差额；
 4. :func:`test_sandbox_leaked_usage_is_detected`——该层的变异自测，同上成对；
 5. :func:`test_prod_early_return_paths_are_hygienic`——生产侧 ``_with_db`` / ``_policy_session``
-   全部「提前 ``return``」路径（``db=None`` 自开会话）连跑两轮，每轮零差额、零 non-checked-in；
+   全部「提前 ``return``」路径（``db=None`` 自开会话）逐次调用后立刻记账，每轮零差额、零 non-checked-in；
 6. :func:`test_prod_abandoned_generator_form_is_detected`——第 5 条的变异自测：就地复刻修复前
-   的「异步生成器 + ``async for`` 提前 return」形态，探测器必须命中 ⇒ 第 5 条不是空断言。
+   的「异步生成器 + ``async for`` 提前 return」形态，探测器必须命中 ⇒ 第 5 条不是空断言；
+7. :func:`test_prod_write_path_closes_session_at_return`（**A21-e**）——写路径（先 ``commit()`` 再
+   ``return``）在**池账本上恒为 0 差额**（NullPool 提交时即归还），所以改按**会话有没有当场 close** 判；
+8. :func:`test_prod_write_path_abandon_form_is_detected`——第 7 条的变异自测 ⇒ 证明第 7 条不是空断言
+   （第 2 轮还暴露了一件事：**不能数「关了几个」**，上一轮弃养的会话会在下一轮 await 点被顺手收掉，
+   必须数「还剩几个没关」）。
 
 为什么警告要「按地址归属」：SAWarning 的文案带的是 aiosqlite 连接对象地址
 （``<AdaptedConnection <aiosqlite.core.Connection object at 0x…>>``）。全量里同一时刻可能存在
@@ -53,6 +58,8 @@ from _dbclone import clone_engine, make_session_factory
 _ADDR = re.compile(r"at 0x([0-9a-fA-F]+)")
 _INSERT = text("INSERT INTO server_settings(key,value) VALUES(:k,:v)")
 _DELETE = text("DELETE FROM server_settings WHERE key=:k")
+# 变异道具专用：判据要连跑两轮，同 key 的纯 INSERT 第二轮会撞 UNIQUE（那是道具自己的错，不是被测对象）
+_UPSERT = text("INSERT OR REPLACE INTO server_settings(key,value) VALUES(:k,:v)")
 
 
 class _PoolLedger:
@@ -348,3 +355,118 @@ def test_prod_abandoned_generator_form_is_detected() -> None:
         f"弃养写法后差额={ledger.leaked(before, after)}（应为 1）⇒ 台账数不到这条，上一条绿灯失真")
     assert ledger.ours(caught), "弃养写法生成的连接未被命中 ⇒ 生产侧守卫失效"
     _delete_hygienic(async_session_factory, "a21d-form-mutation")
+
+
+# ── A21-e：写路径的「归还时刻」（补 A21-d 留下的观测盲点）───────────────────────
+
+@contextlib.contextmanager
+def _session_close_ledger(monkeypatch, tmp_path: Path):
+    """按 **会话的 close() 调用次数** 记账：开了几个会话、当场关了几个；会话全绑到一份临时库。
+
+    为什么池账本在这条路上看不见（A21-d 原文承认的边界）：NullPool 在 ``commit()`` 当时就把 DBAPI
+    连接交回 ⇒ 「正确写法」与「commit 完就弃养生成器」两种写法的 connect/close 差额**都是 0**，
+    变异钉不住。会话级分得开：``async with`` 退出会 ``close()``；弃养要等 GC／事件循环收尾。
+
+    为什么另开临时库而不蹭会话沙箱库：实测「commit 完弃养生成器」的道具会在沙箱库上留出写锁窗口，
+    把同文件后面的清理语句堵到 ``database is locked``（一次跑 60 秒）。本层守卫只关心**归还时机**，
+    用克隆出来的临时库既没有跨用例干扰，也不需要在共享库里留道具行。
+
+    挂钩方式＝monkeypatch ``AsyncSession.close``（实测它是普通协程方法，可直接替）＋
+    替换 ``app.db.database.async_session_factory``（生产代码是**函数内现取**，换属性即生效）。
+    只计数、不改行为（计数后原样调用 ``orig_close``）。
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.db import database
+
+    rec = {"opened": 0, "live": set()}
+    engine = clone_engine(tmp_path / "a21e.db")
+    temp_factory = make_session_factory(engine)
+    orig_close = AsyncSession.close
+
+    def _counting_factory(*a, **kw):
+        session = temp_factory(*a, **kw)
+        rec["opened"] += 1
+        rec["live"].add(id(session))
+        return session
+
+    async def _counting_close(self, *a, **kw):
+        rec["live"].discard(id(self))
+        return await orig_close(self, *a, **kw)
+
+    monkeypatch.setattr(database, "async_session_factory", _counting_factory)
+    monkeypatch.setattr(AsyncSession, "close", _counting_close)
+    try:
+        yield rec
+    finally:
+        _dispose(engine)
+
+
+def _drive_each_round(rec, calls):
+    """**逐次调用后立刻**取账：(开了几个会话, 此刻还剩几个没关)。
+
+    为什么取账时机与口径都要挑：
+    1. ``asyncio.run`` 的 ``shutdown_asyncgens`` 会替弃养的生成器补上 close ⇒ 整轮跑完再量就放过变异
+       （A21-d 的同一条教训，换成会话级账本也必须守）；
+    2. **不能数「关了几个」**：上一轮弃养的会话会在下一轮的 await 点被顺手收掉，计数会跨轮串味
+       （实测第 2 轮因此报 closed=1，看着像已归还）。数「还剩几个没关」与轮次无关。
+    """
+    seen = []
+
+    async def _go():
+        for rnd in (1, 2):
+            for name, call in calls:
+                opened0 = rec["opened"]
+                await call()
+                seen.append((rnd, name, rec["opened"] - opened0, len(rec["live"])))
+
+    asyncio.run(_go())
+    return seen
+
+
+@pytest.mark.slow
+def test_prod_write_path_closes_session_at_return(monkeypatch, tmp_path: Path) -> None:
+    """A21-e：写路径（``set_flag_policy``＝先 commit 再 ``return``）必须**当场 close 会话**。
+
+    补的正是 A21-d 留的盲点：那条路径提交时连接已回池，池账本差额恒为 0 ⇒
+    「退回弃养写法」不会被上一条抓到，这里改看会话有没有当场归还。
+    """
+    from app.application.flag_service import set_flag_policy
+
+    calls = [("set_flag_policy", lambda: set_flag_policy("a21e-guard", self_service=True))]
+    with _session_close_ledger(monkeypatch, tmp_path) as rec:
+        seen = _drive_each_round(rec, calls)
+    for rnd, name, opened, still_open in seen:
+        assert opened == 1 and still_open == 0, (
+            f"第 {rnd} 轮 {name}() 开了 {opened} 个会话、返回时还有 {still_open} 个没关"
+            "⇒ 写路径又退回弃养（会话等 GC／loop 收尾才归还，持锁窗口被拉长）；"
+            "opened=0 则是账本没接上工厂（＝假断言）")
+
+
+def test_prod_write_path_abandon_form_is_detected(monkeypatch, tmp_path: Path) -> None:
+    """上一条的变异自测：就地复刻「commit 完在 ``async for`` 体里提前 ``return``」的旧形态 ⇒ 必须报红。
+
+    没有这一条，上一条就是空断言——池账本在这条路上本来就量不到（见 :func:`_session_close_ledger`），
+    只能让会话级账本自己证明自己有效。
+    """
+    from app.db import database
+
+    async def _policy_session_like():
+        # **运行时现取**：必须走 `_session_close_ledger` 换上去的计数工厂，否则 opened 恒 0＝假断言
+        async with database.async_session_factory() as own:
+            yield own
+
+    async def _old_style(key: str):
+        async for session in _policy_session_like():          # 修复前的形态
+            # 用 upsert：本判据要跑两轮，同 key 纯 INSERT 第二轮会撞 UNIQUE（那是道具自己的错，不是被测对象）
+            await session.execute(_UPSERT, {"k": key, "v": "1"})
+            await session.commit()                             # 提交＝连接已回池
+            return                                             # 弃养生成器＝会话没 close
+
+    calls = [("旧形态写路径", lambda: _old_style("a21e-mutation"))]
+    with _session_close_ledger(monkeypatch, tmp_path) as rec:
+        seen = _drive_each_round(rec, calls)
+    for rnd, name, opened, still_open in seen:
+        assert opened == 1 and still_open >= 1, (
+            f"第 {rnd} 轮弃养形态没被会话级账本抓到（opened={opened} 未关={still_open}）"
+            "⇒ 上一条的判据是空断言")
