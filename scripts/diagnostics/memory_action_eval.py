@@ -18,9 +18,12 @@
     .venv/Scripts/python.exe ../scripts/diagnostics/memory_action_eval.py \
         --dataset ../scripts/diagnostics/memory_action_cases_zh.jsonl \
         --judges J3 --configs baseline,no_temporal,no_peak --mode certify --out memory_action_report.md
-门禁用法（M2 才接进 CI）：加 `--fail-below <AR_gold 基线−2pp>` 才有非零退出，默认保持"报告型"。
-门禁**锚 AR_gold**（不是 AR_cert）：10-04 实测名次口径在已认证子集上饱和（97.9～100.0、关旗标反而更高），
-饱和的列当门禁＝挂一条永远绿的线。守卫见 `test_门禁必须锚在有分辨力的列上`。
+门禁用法（M2 才接进 CI）：加 `--fail-below <基线−2pp>` 才有非零退出，默认保持"报告型"。
+门禁**锚「认证子集 × AR_gold」**（不是名次口径）：10-04 实测名次口径在**语义路＋10 行小库**上饱和
+（97.9～100.0、关旗标反而更高），而同样的库在**确定性路**上只有 40.4 ⇒ 饱和是「语义路×小库」的产物。
+因此 M1 的加难＝**抬库规模**（`--fillers`，默认 44 条/例），认证口径**不动**（见 `certify_verdict`：
+把门禁要量的 `pass_gold` 当认证门槛会造成自我循环，该列恒≈100，比饱和更糟）。
+守卫见 `test_门禁必须锚在有分辨力的列上`、`test_认证门槛不得用门禁要量的那列`。
 """
 from __future__ import annotations
 
@@ -304,6 +307,101 @@ async def _recall(cid, user_id, turn, k, *, sparse_only, flags):
             AGENT_FLAGS[kk] = v
 
 
+# ─────────────────────────── 库规模填充（M1 加难，2026-10-04） ───────────────────────────
+# 为什么要填充（实测证据）：M0 每例只有 2 seeds ＋ 8 干扰项＝10 行，k=5 占了库的一半，
+# 「gold 全挤进前排」在这个规模下是**结构巧合**而非检索能力 ⇒ 名次口径在**语义路的**已认证子集上饱和
+# （AR_cert 97.9～100.0，关旗标反而满分；同一个库走确定性路只有 40.4，所以饱和是「语义路×小库」的产物）。
+# 真实陪伴库里一个角色是几十到几百条，不抬规模就量不到东西。默认把每例抬到 ~FILLER_TARGET_DEFAULT 行。
+#
+# 硬约束：**填充句不许夹带答案**。判据不是「字符串不等」，而是复用②通道同一个滑窗——
+# 填充句里不得出现任何 gold 正文的 ≥6 字连续片段（否则它就成了换了个 id 的 gold）。
+FILLER_TARGET_DEFAULT = 44
+# 注意写法：曾经用过 `tuple("甲" "乙" ...)`——那是**逐字符**成元组（相邻字面量先拼接），
+# 池子当场变成几十个单字，守卫 `test_填充池必须是整句` 就是钉这个的。
+FILLER_POOL = (
+    "今早出门晚了十分钟，地铁上挤得全靠门",
+    "楼下那家面馆换老板了，味道跟以前不一样",
+    "周末把阳台的衣服收了，预报说有雨",
+    "昨天把耳机落在工位抽屉里了",
+    "最近追一部讲深海科考的纪录片，一集二十来分钟",
+    "晚上十一点还在改方案，眼睛发干",
+    "把冬天的大衣送进干洗店了",
+    "通勤路上听完了一本讲桥的建造史",
+    "午休趴着睡，醒来手麻了半边",
+    "超市促销，顺手买了两袋米，拎上六楼很累",
+    "楼道感应灯坏了两天，报修还没来",
+    "上周开始学着把咖啡改成少糖",
+    "周五晚上约了朋友打羽毛球，场地费 aa",
+    "半夜饿了煮了包泡面，加个蛋",
+    "手机存储满了，删了一堆截图",
+    "把书桌上的绿植挪到窗边，叶子朝着光长",
+    "早高峰打车排队四十分钟，最后还是坐了地铁",
+    "看了个讲老式录像带的展览，视频里说收藏者上万",
+    "连续三天熬夜，第四天睡了十四个小时",
+    "把旧衣服装了两大袋，准备捐掉",
+    "楼下新开了一家裁缝铺，换拉链五块钱",
+    "雨天路滑，骑车摔了一跤，膝盖破皮",
+    "晚上加班到十点，回家只洗了脸就躺下",
+    "预约了周六上午洗牙，提前一小时到",
+    "把客厅的射灯换成暖光的，看着不那么刺眼",
+    "朋友寄来一箱橙子，一个人吃不完",
+    "早上跑步摔了个趔趄，旁边全是遛狗的",
+    "看了两集讲深海热泉生态的科普片",
+    "换季把被子晒了，晚上有太阳味道",
+    "电脑风扇响得厉害，清了灰还是响",
+    "中午吃得太油，下午一直犯困",
+    "把书架上倒下来的那排书重新码齐",
+    "高铁上信号断断续续，剧没看完",
+    "夜里三点被楼上的装修声吵醒一次",
+    "买了个带刻度的水杯，提醒自己多喝水",
+    "周会改到上午十点，早高峰得提前出门",
+    "把不用的会员卡注销了两个",
+    "阳台上那盆多肉开始抽条，长得歪",
+    "冬天手套忘在公交上了",
+    "路边摊的烤红薯十块钱两个，买了俩",
+    "整理手机相册，删掉三百多张重复截图",
+    "下午困得趴在桌上，脸颊压出印子",
+    "把厨房的纸巾架换了个位置，够着顺手",
+    "夜里降温，加了床薄毯",
+    "骑共享单车上学，比公交快六分钟",
+    "看了一部讲极地科考船过冬的纪录片，片长九十分钟",
+    "把换季鞋收进箱子里，箱子塞不进床底",
+    "食堂今天排骨做得偏咸，喝了不少水",
+)
+
+
+def _gold_texts_of(case):
+    gold_idx = case["expect"].get("gold_seed_idx") or []
+    return [case["seeds"][i]["content"] for i in gold_idx]
+
+
+def fillers_for(case, idx, target):
+    """按用例序号**确定性**取填充句（不用 hash／随机源 ⇒ 两次跑逐字节一致）。
+
+    返回 (填充行, 因夹带答案被剔除的条数)。剔除判据复用②通道同一个滑窗：
+    填充句里不得出现任何 gold 正文的 ≥6 字连续片段——否则它就是「换了个 id 的 gold」。
+    """
+    if target <= 0:
+        return [], 0
+    from app.memory.utility_feedback import _contains_key_fragment, _core_snippet
+    n = len(FILLER_POOL)
+    dis_texts = {d.get("content") for d in (case.get("distractors") or [])}
+    gold_frags = [_core_snippet(g) for g in _gold_texts_of(case)]
+    out, skip = [], 0
+    for off in range(n):
+        if len(out) >= target:
+            break
+        text = FILLER_POOL[(idx * 7 + off) % n]
+        if text in dis_texts:
+            continue                                   # 别把本题干扰项当填充（会双计）
+        if any(_contains_key_fragment(f, _norm(text)) for f in gold_frags):
+            skip += 1
+            continue                                   # 夹带答案 ⇒ 剔除
+        out.append({"content": text, "memory_type": "event", "importance": 35,
+                    "date": "2026-07-20", "source": "chat"})
+    return out, skip
+
+
 # ─────────────────────────── 角色号段（配置之间必须隔离） ───────────────────────────
 CID_BASE_DEFAULT = 9000
 CID_SLOT_PER_CASE = 4          # 每例占 4 个槽：full / no_mem / distractor ／备用
@@ -323,23 +421,46 @@ def case_cids(cid_base, idx):
 
 
 # ─────────────────────────── 三跑认证（§2.3） ───────────────────────────
-async def certify_case(case, idx, *, user_id, k, sparse_only, flags, cid_base=CID_BASE_DEFAULT):
+def certify_verdict(no_mem_fail, full_rank3, full_gold3, no_gold):
+    """认证＝**题目合法性**，不是「当前系统做得好不好」。
+
+    门槛用**名次口径** `full_rank3 ≥ 2`（方案 §2.3 的字面口径），`full_gold3` 只记录不作门槛。
+    为什么不能用 gold 口径当门槛（10-04 我先这么改了，随即实测否掉）：`certified` 一旦由
+    `pass_gold` 决定，「认证子集上的 AR_gold」就变成**自我循环**——选子集的条件就是门禁要量的那个数，
+    该列恒 ≈100（本轮 certify 跑：47→35 条认证，认证子集 AR_gold 直接 100.0），
+    headroom 归零，比原来的饱和更糟。正确的加难方向是**抬库规模**（`--fillers`）＋
+    门禁读 AR_gold，让「合法题」与「做得对不对」两件事分开。
+    旧名次计数与新 gold 计数都留痕（改尺子必须能对账，方案 §4.5）。
+    """
+    return {"no_mem_fail": bool(no_mem_fail),
+            "full_pass3": int(full_rank3),
+            "full_gold3": int(full_gold3),
+            "distractor_no_gold": bool(no_gold),
+            "certified": bool(no_mem_fail and full_rank3 >= 2 and no_gold)}
+
+
+async def certify_case(case, idx, *, user_id, k, sparse_only, flags, cid_base=CID_BASE_DEFAULT,
+                       filler_target=FILLER_TARGET_DEFAULT):
     """no_mem / full / distractor 三跑；角色 id 由（配置，用例）两级号段确定性分配。"""
     cid_full, cid_nomem, cid_dis = case_cids(cid_base, idx)
     gold_idx = case["expect"].get("gold_seed_idx") or []
+    fil, filler_skipped = fillers_for(case, idx, filler_target)
 
     seed_ids, f1 = await _insert(cid_full, user_id, case["seeds"], dense=not sparse_only)
     dis_ids, f2 = await _insert(cid_full, user_id, case.get("distractors") or [], dense=not sparse_only)
+    _fil_ids, f3 = await _insert(cid_full, user_id, fil, dense=not sparse_only)
     gold_ids = [seed_ids[i] for i in gold_idx]
 
     full_runs = [j3_verdict(gold_ids, dis_ids, await _recall(cid_full, user_id, case["turn"], k,
                    sparse_only=sparse_only, flags=flags)) for _ in range(3)]
-    full_pass = sum(1 for r in full_runs if r["pass"])
+    full_rank3 = sum(1 for r in full_runs if r["pass"])
+    full_gold3 = sum(1 for r in full_runs if r["pass_gold"])
 
     got_nomem = await _recall(cid_nomem, user_id, case["turn"], k, sparse_only=sparse_only, flags=flags)
     no_mem_fail = (len(got_nomem) == 0)          # 空库必须召不出；召得出来＝题面泄料
 
-    _dis_ids_cert, _nd = await _insert(cid_dis, user_id, case.get("distractors") or [], dense=not sparse_only)
+    _dis_ids_cert, _nd = await _insert(cid_dis, user_id,
+                                       (case.get("distractors") or []) + fil, dense=not sparse_only)
     got_dis = await _recall(cid_dis, user_id, case["turn"], k, sparse_only=sparse_only, flags=flags)
     gold_texts = [case["seeds"][i]["content"] for i in gold_idx]
     dis_blob = _norm(" ".join(d["content"] for d in (case.get("distractors") or [])))
@@ -349,35 +470,41 @@ async def certify_case(case, idx, *, user_id, k, sparse_only, flags, cid_base=CI
     # （原来这里写的 `distractor_fail = len(got_dis)==0 or not full_pass` 没有意义：
     #   干扰项库里本就没有 gold 行，「判据不过」是结构必然，恒真＝空齿。）
     no_gold = not distractor_leaks_gold
-    solv = {
-        "no_mem_fail": bool(no_mem_fail),
-        "full_pass3": int(full_pass),
-        "distractor_no_gold": bool(no_gold),
-        "certified": bool(no_mem_fail and full_pass >= 2 and no_gold),
+    solv = certify_verdict(no_mem_fail, full_rank3, full_gold3, no_gold)
+    solv.update({
         "distractor_recalled_n": len(got_dis),
         "distractor_leaks_gold": bool(distractor_leaks_gold),
         "no_mem_recalled_n": len(got_nomem),
-        "dense_fail": int(f1 + f2),
-    }
+        "dense_fail": int(f1 + f2 + f3),
+        "library_rows": int(len(case["seeds"]) + len(case.get("distractors") or []) + len(fil)),
+        "filler_rows": len(fil),
+        "filler_skipped": int(filler_skipped),
+    })
     return {"solvability": solv,
             "row": {"cid": case["cid"], "category": case["category"], "judge": case["judge"],
                     "certified": bool(solv["certified"]),
-                    "pass": bool(full_pass >= 2),
+                    "pass": bool(full_rank3 >= 2),
+                    "pass_gold_majority": bool(full_gold3 >= 2),
                     "pass_strict": bool(full_runs[-1]["pass_strict"]),
                     "pass_gold": bool(full_runs[-1]["pass_gold"]),
+                    "n_rows": solv["library_rows"],
                     "missing": full_runs[-1]["missing"],
                     "polluted": full_runs[-1]["polluted"]}}
 
 
-async def score_case(case, idx, *, user_id, k, sparse_only, flags, cid_base=CID_BASE_DEFAULT):
+async def score_case(case, idx, *, user_id, k, sparse_only, flags, cid_base=CID_BASE_DEFAULT,
+                     filler_target=FILLER_TARGET_DEFAULT):
     cid = cid_base + idx * CID_SLOT_PER_CASE
+    fil, _skip = fillers_for(case, idx, filler_target)
     seed_ids, _n1 = await _insert(cid, user_id, case["seeds"], dense=not sparse_only)
     dis_ids, _n2 = await _insert(cid, user_id, case.get("distractors") or [], dense=not sparse_only)
+    _fid, _n3 = await _insert(cid, user_id, fil, dense=not sparse_only)
     gold_ids = [seed_ids[i] for i in (case["expect"].get("gold_seed_idx") or [])]
     got = await _recall(cid, user_id, case["turn"], k, sparse_only=sparse_only, flags=flags)
     v = abstain_verdict(gold_ids, got) if case["expect"].get("abstain") else j3_verdict(gold_ids, dis_ids, got)
     return {"cid": case["cid"], "category": case["category"], "judge": case["judge"],
             "certified": bool((case.get("solvability") or {}).get("certified")),
+            "n_rows": len(case["seeds"]) + len(case.get("distractors") or []) + len(fil),
             "pass": bool(v["pass"]), "pass_strict": bool(v.get("pass_strict", v["pass"])),
             "pass_gold": bool(v.get("pass_gold", v["pass"])),
             "missing": v.get("missing", []),
@@ -400,34 +527,46 @@ def summarize(rows):
     uncert = [r for r in rows if r.get("certified") is False]
     by = {}
     for r in rows:
-        # 累加器必须是**固定四格**（n/pass/pass_strict/pass_gold）。历史缺陷：这里用 append 追加第 4 格，
+        # 累加器必须是**固定五格**（n/pass/pass_strict/pass_gold/认证数）。历史缺陷：这里用 append 追加第 4 格，
         # 读数却按固定下标 v[3] ⇒ 每类的 AR_gold 只反映该类**第一条**用例（8 条的类读出 12.5% 或 0），
         # 与总体 ar_gold 67.9% 自相矛盾。守卫见 test_分类汇总必须与总体对得上。
-        b = by.setdefault(r["category"], [0, 0, 0, 0])
+        b = by.setdefault(r["category"], [0, 0, 0, 0, 0])
         b[0] += 1
         b[1] += 1 if r["pass"] else 0
         b[2] += 1 if r.get("pass_strict", r["pass"]) else 0
         b[3] += 1 if r.get("pass_gold", r["pass"]) else 0
+        b[4] += 1 if r.get("certified") else 0
     return {"n": n, "pass": p, "ar": round(100.0 * p / n, 1) if n else 0.0,
             "ar_strict": round(100.0 * ps / n, 1) if n else 0.0,
             "ar_gold": round(100.0 * pg / n, 1) if n else 0.0,
+            # 认证率是**尺子自身的健康度**：加难之后分母会缩，缩了必须喊出来，
+            # 否则「认证子集 AR 很高」是用「把做不到的题踢出分母」换来的。
+            "cert_rate": round(100.0 * len(cert) / n, 1) if n else 0.0,
+            # 库规模必须跟着读数一起出来，否则「AR 掉了」无法区分是尺子紧了还是检索坏了
+            "rows_mean": round(sum(int(r.get("n_rows") or 0) for r in rows) / n, 1) if n else 0.0,
             "n_certified": len(cert),
+            # 门禁锚的是 AR_gold ⇒ 必须给出「认证子集上的 AR_gold」，否则门禁读的和报表显示的不是一个数
+            "ar_gold_certified": (round(100.0 * sum(1 for r in cert
+                                                    if r.get("pass_gold", r["pass"])) / len(cert), 1)
+                                  if cert else None),
             "ar_certified": round(100.0 * sum(1 for r in cert if r["pass"]) / len(cert), 1) if cert else None,
             "n_uncertified": len(uncert),
             "ar_uncertified": round(100.0 * sum(1 for r in uncert if r["pass"]) / len(uncert), 1) if uncert else None,
             "by_category": {c: {"n": v[0], "ar": round(100.0 * v[1] / v[0], 1),
                                 "ar_strict": round(100.0 * v[2] / v[0], 1),
-                                "ar_gold": round(100.0 * (v[3] if len(v) > 3 else 0) / v[0], 1)}
+                                "n_certified": v[4],
+                                "ar_gold": round(100.0 * v[3] / v[0], 1)}
                             for c, v in sorted(by.items())}}
 
 
-async def run_eval(cases, *, judges, configs, k, mode, sparse_only, limit):
+async def run_eval(cases, *, judges, configs, k, mode, sparse_only, limit,
+                   filler_target=FILLER_TARGET_DEFAULT):
     todo = [c for c in cases if c.get("judge") in judges]
     if limit:
         todo = todo[:limit]
     rep = {"cases_run": len(todo), "cases_total": len(cases), "semantic": not sparse_only,
            "skipped_judges": sorted({c.get("judge") for c in cases} - set(judges)),
-           "mode": mode, "k": k, "configs": {}}
+           "mode": mode, "k": k, "filler_target": int(filler_target), "configs": {}}
     if not todo:
         return rep
     tmp = tempfile.mkdtemp(prefix="ambrace_memact_eval_")
@@ -443,13 +582,13 @@ async def run_eval(cases, *, judges, configs, k, mode, sparse_only, limit):
             for i, c in enumerate(todo):
                 if mode == "certify":
                     out = await certify_case(c, i, user_id=user_id, k=k, sparse_only=sparse_only,
-                                         flags=flags, cid_base=cid_base)
+                                         flags=flags, cid_base=cid_base, filler_target=filler_target)
                     c["solvability"] = {**c.get("solvability", {}), **out["solvability"]}
                     out["row"]["err"] = classify_error(out["row"])
                     rows.append(out["row"])
                 else:
                     rows.append(await score_case(c, i, user_id=user_id, k=k, sparse_only=sparse_only,
-                                     flags=flags, cid_base=cid_base))
+                                     flags=flags, cid_base=cid_base, filler_target=filler_target))
             s = summarize(rows)
             s["rows"] = rows
             rep["configs"][cfgname] = s
@@ -467,24 +606,31 @@ def render(rep, *, dataset, judges, configs, mode):
     L.append("- 零计费保证：LLM 入口被打桩 %s" % (rep.get("llm_guard") or "（未启用）"))
     if rep.get("skipped_judges"):
         L.append("- 本轮**未跑**判据：%s（J1/J2 属 M1：需生成＝计费端点＋用户授权）" % ",".join(rep["skipped_judges"]))
-    L += ["", "AR＝gold 进 top-k 且排在任何干扰项之前（主口径）；**AR_strict**＝方案 §二 字面契约（固定 k 内零干扰项，窄库上近乎恒假，仅对账用）；**AR_gold**＝top-|gold| 全是 gold（连中性行挤占也判失败，最严）。三口径**可证不等价**（含反例），见测试 `test_三种口径的强弱关系与反例`。",
+    L += ["", "AR＝gold 进 top-k 且排在任何干扰项之前（对账口径）；**AR_strict**＝方案 §二 字面契约（固定 k 内零干扰项，窄库上近乎恒假）；**AR_gold**＝top-|gold| 全是 gold（连中性行挤占也判失败，**门禁锚这列**）。三口径**可证不等价**（含反例），见测试 `test_三种口径的强弱关系与反例`。",
           "- **主分母＝已认证子集**（§2.3 认证三跑过的题）；未认证的题留在集里只跟踪趋势，不参与基线定义。AR_cert 与 AR(全量) 并列输出，不合并。"
-          "**但 AR_cert 不得当门禁用**：10-04 实测认证子集已饱和（名次口径 97.9～100.0，且关旗标反而更高），门禁锚 AR_gold。",
-          "", "| 配置 | 条数 | 已认证 | AR_cert(%)(主) | AR(%) | AR_strict(%) | AR_gold(%) | E1 没召回 | E2 被干扰污染 | 泄题嫌疑 |",
-          "|---|---|---|---|---|---|---|---|---|---|"]
+          "**门禁一律读「认证子集 × AR_gold」**：名次口径在 M0 的小库上实测**语义路饱和**（97.9～100.0、关旗标反而满分），"
+          "而同一个库在**确定性路**只有 40.4 ⇒ 饱和是「语义路 × 10 行小库」的产物，不是名次口径本身可用。",
+          "- 库规模：每例均 **%s 行**（M1 加难＝把 10 行小库抬到真实量级，填充目标 %s 条/例）。"
+          "认证门槛仍用**名次口径**（题目合法性），`full_gold3` 只记录不作门槛——把它当门槛会让「认证子集 × AR_gold」自我循环。" % (
+              (next(iter(rep["configs"].values()))["rows_mean"] if rep["configs"] else "—"),
+              rep.get("filler_target")),
+          "", "| 配置 | 条数 | 库行数 | 已认证 | 认证率％ | AR_gold(认证)％·门禁 | AR_cert名次％ | AR(全量)％ | AR_strict％ | AR_gold％ | E1 | E2 | 泄题嫌疑 |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for cn, d in sorted(rep["configs"].items()):
         e1 = sum(1 for r in d["rows"] if r["missing"])
         e2 = sum(1 for r in d["rows"] if r["polluted"])
         leak = sum(1 for r in d["rows"] if r.get("solvability", {}).get("no_mem_fail") is False)
-        L.append("| %s | %d | %d | %s | %s | %s | %s | %d | %d | %d |" % (
-            cn, d["n"], d["n_certified"], d["ar_certified"], d["ar"], d["ar_strict"],
-            d["ar_gold"], e1, e2, leak))
+        L.append("| %s | %d | %s | %d | %s | %s | %s | %s | %s | %s | %d | %d | %d |" % (
+            cn, d["n"], d["rows_mean"], d["n_certified"], d["cert_rate"], d["ar_gold_certified"],
+            d["ar_certified"], d["ar"], d["ar_strict"], d["ar_gold"], e1, e2, leak))
     for cn, d in sorted(rep["configs"].items()):
-        L += ["", "## 配置 %s · 分类" % cn, "| 类别 | 条数 | AR(%) | AR_strict(%) | AR_gold(%) |",
-              "|---|---|---|---|---|"]
+        L += ["", "## 配置 %s · 分类" % cn,
+              "| 类别 | 条数 | 认证 | AR(%) | AR_strict(%) | AR_gold(%) | 备注 |",
+              "|---|---|---|---|---|---|---|"]
         for cat, v in sorted(d["by_category"].items()):
-            L.append("| %s | %d | %s | %s | %s |" % (cat, v["n"], v["ar"], v["ar_strict"],
-                                             v["ar_gold"]))
+            note = "" if v["n_certified"] >= 6 else "⚠ 认证子集仅 %d 条，该类分类型读数只能当趋势看" % v["n_certified"]
+            L.append("| %s | %d | %d | %s | %s | %s | %s |" % (
+                cat, v["n"], v["n_certified"], v["ar"], v["ar_strict"], v["ar_gold"], note))
         L += ["", "## 配置 %s · 逐用例" % cn,
               "| cid | 类别 | 判据 | PASS | 未命中 | 污染 | 召回数 |", "|---|---|---|---|---|---|---|"]
         for r in d["rows"]:
@@ -499,13 +645,16 @@ def metrics_json(rep):
     """机器可读：排序＋无时间戳 ⇒ 同一提交连跑两次必须逐字节一致（§4.5 第一半）。"""
     slim = {"cases_run": rep["cases_run"], "cases_total": rep["cases_total"],
             "semantic": rep["semantic"], "mode": rep["mode"], "k": rep["k"],
+            "filler_target": rep.get("filler_target"),
             "skipped_judges": rep.get("skipped_judges", []),
-            "configs": {cn: {"n": d["n"], "ar": d["ar"],
+            "configs": {cn: {"n": d["n"], "ar": d["ar"], "rows_mean": d["rows_mean"],
+                             "cert_rate": d["cert_rate"],
                              "n_certified": d["n_certified"], "ar_certified": d["ar_certified"],
+                             "ar_gold_certified": d["ar_gold_certified"],
                              "n_uncertified": d["n_uncertified"], "ar_uncertified": d["ar_uncertified"],
                              "by_category": d["by_category"],
                              "rows": [{kk: r.get(kk) for kk in ("cid", "category", "judge", "certified",
-                                                                "pass", "pass_strict", "pass_gold",
+                                                                "n_rows", "pass", "pass_strict", "pass_gold",
                                                                 "missing", "polluted")}
                                       for r in d["rows"]]}
                        for cn, d in sorted(rep["configs"].items())}}
@@ -520,6 +669,8 @@ async def main():
     ap.add_argument("--mode", choices=["score", "certify"], default="certify")
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--fillers", type=int, default=FILLER_TARGET_DEFAULT,
+                    help="每例库规模填充到多少行（0＝退回 M0 的 10 行库，仅用于 A/B 对照饱和是不是规模造成的）")
     ap.add_argument("--sparse-only", action="store_true", help="只走确定性路（CI／假向量环境）")
     ap.add_argument("--allow-llm", action="store_true", help="放行 J1/J2（计费端点，须用户授权）")
     ap.add_argument("--out", default="memory_action_report.md")
@@ -544,7 +695,7 @@ async def main():
     print("[lint] 合法：%d 条，违规 0" % len(cases))
     configs = [x.strip() for x in a.configs.split(",") if x.strip()]
     rep = await run_eval(cases, judges=judges, configs=configs, k=a.k, mode=a.mode,
-                         sparse_only=a.sparse_only, limit=a.limit)
+                         sparse_only=a.sparse_only, limit=a.limit, filler_target=a.fillers)
     text = render(rep, dataset=os.path.basename(a.dataset), judges=judges, configs=configs, mode=a.mode)
     with open(a.out, "w", encoding="utf-8") as f:
         f.write(text + "\n")
@@ -559,14 +710,15 @@ async def main():
         print(metrics_json(rep))
         print("METRICS_JSON_END")
     if a.fail_below is not None:
-        # 门禁锚在 **AR_gold**（2026-10-04 实测后改的，不是凭口味）：认证子集上的名次口径已**饱和**
-        # （baseline 97.9／flags_off 100.0／no_peak 100.0，且方向反了——关旗标分更高），
-        # 拿它当门禁等于挂一条永远绿的线。AR_gold 有 32pp 余量（总体 67.9、分类 50–100），才配当棘轮。
-        vals = [d["ar_gold"] for d in rep["configs"].values()]
+        # 门禁＝**主分母 × 有分辨力的判据**：认证子集上的 AR_gold（10-04 实测名次口径在认证子集饱和
+        # 97.9～100.0、关旗标反而满分；AR_gold 才有 32pp 余量）。没有认证标记时退回全量 AR_gold。
+        vals = [d["ar_gold_certified"] if d["ar_gold_certified"] is not None else d["ar_gold"]
+                for d in rep["configs"].values()]
         worst = min(vals, default=0.0)
         if worst < a.fail_below:
-            print("[门禁] AR_gold %s < --fail-below %s（configs=%s）" % (
-                worst, a.fail_below, sorted(rep["configs"])), file=sys.stderr)
+            print("[门禁] 认证子集 AR_gold %s < --fail-below %s（n_cert=%s，configs=%s）" % (
+                worst, a.fail_below, [d["n_certified"] for d in rep["configs"].values()],
+                sorted(rep["configs"])), file=sys.stderr)
             return 4
     return 0
 

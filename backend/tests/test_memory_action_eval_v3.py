@@ -109,20 +109,58 @@ def test_认证状态必须逐条可追溯_且未认证数只许降():
     """方案 §2.3「未认证不入正式集」在 M0 只能落成"逐条标状态"：
 
     实测发现硬要求①（题面不许提示检索）与 J3「gold 必须进 top-k」天然对冲——不提示的题，gold 在
-    向量／关键词空间里本来就可能很远，本轮 9/56 条因此过不了认证（`full_pass3=0` 而 `no_mem_fail=True`，
-    即"空库召不出＝没泄题，但满库也召不出＝检索层做不到"）。**删题会把 relationship 类打到 4 条、
-    击穿「每类 ≥6」的分类统计基础**，所以改成保留＋标记，并把未认证条数做成只许降不许升的棘轮。
+    向量／关键词空间里本来就可能很远，M0 那轮 9/56 条因此过不了认证。**删题会把 relationship 类打到
+    4 条、击穿「每类 ≥6」的分类统计基础**，所以改成保留＋标记，并把未认证条数做成只许降不许升的棘轮。
+
+    M1（10-04）把库规模从 10 行抬到 54 行后重认证：47→43 条过，未认证 15→19（J3 13 ＋ J4 豁免 6）。
+    上限跟着实测抬一次，**这是唯一一次允许抬高**——之后只许降；抬的理由是"题更难了"而不是"题坏了"，
+    逐条 `blocked_reason` 里写着当时的 full_pass3/no_mem_fail/gold3 与库行数，可对账。
     """
-    UNCERTIFIED_CAP = 15   # 2026-10-04 实测 15 条（J3 未通过 9 ＋ J4 豁免 6）；M1 复判后应下降
+    UNCERTIFIED_CAP = 19   # 2026-10-04 M1 重认证实测；此前 15（M0 小库）
     un = [c["cid"] for c in OFFICIAL if not (c.get("solvability") or {}).get("certified")]
     assert len(un) <= UNCERTIFIED_CAP, "未认证题数 %d 超过棘轮上限 %d：%s" % (len(un), UNCERTIFIED_CAP, un)
     for c in OFFICIAL:
         s = c.get("solvability") or {}
         if s.get("certified"):
             assert s.get("certified_at"), "%s 标了已认证但没有 certified_at" % c["cid"]
+            assert s.get("certified_by"), "%s 的认证没写是哪一轮/哪个口径做的（标记不能无出处）" % c["cid"]
         else:
             assert (s.get("blocked_reason") or s.get("exempt_reason")), (
                 "%s 既未认证又没写原因＝静默放过，尺子上多了一个空齿" % c["cid"])
+    # 抬难度**不许把某类打出分母**（低于 3 条就失去任何分类型意义），也不许悄悄缩：
+    # 认证不足 6 条的类必须在报表里显式带 ⚠，读的人不会被「总体 AR 挺高」糊过去。
+    left = collections.Counter(c["category"] for c in OFFICIAL
+                               if (c.get("solvability") or {}).get("certified"))
+    for cat, n in left.items():
+        assert n >= 3, "认证子集里 %s 类只剩 %d 条，该类已无法读任何趋势" % (cat, n)
+    thin = {k: v for k, v in left.items() if v < 6}
+    assert set(thin) == {"relationship", "temporal"}, (
+        "认证不足 6 条的类集合变了（M1 实测＝这两类）：%s" % thin)
+    # abstention 是 J4 豁免类（本就不进 J3 认证），另两类是 M1 真实量出来的产品缺陷：
+    # 无提示题面在 54 行库里 full_pass3=0，且填充行更旧、权重更低 ⇒ 不是填充设计偏心，是检索做不到
+    for c in OFFICIAL:
+        if c["category"] == "abstention":
+            assert (c.get("solvability") or {}).get("exempt_reason"), "%s 弃权类必须带豁免理由" % c["cid"]
+        elif c["category"] in ("relationship", "temporal") and not (c.get("solvability") or {}).get("certified"):
+            s = c["solvability"]
+            assert s.get("full_pass3") == 0 and s.get("no_mem_fail") is True, (
+                "%s 掉出认证的理由必须是「满库也召不出」，别把别的故障混进来" % c["cid"])
+
+
+def test_分类表必须带认证列并在不足时报警():
+    """缩分母必须可见：分类表要有「认证」列，不足 6 条的类要带 ⚠。"""
+    rows = [{"cid": "a1", "category": "temporal", "judge": "J3", "certified": True, "pass": True,
+             "pass_strict": False, "pass_gold": True, "n_rows": 54, "missing": [], "polluted": []},
+            {"cid": "a2", "category": "temporal", "judge": "J3", "certified": False, "pass": False,
+             "pass_strict": False, "pass_gold": False, "n_rows": 54, "missing": [1], "polluted": []}]
+    s = ev.summarize(rows)
+    assert s["by_category"]["temporal"]["n_certified"] == 1, s["by_category"]
+    rep = {"k": 5, "semantic": False, "llm_guard": "stub", "skipped_judges": [],
+           "cases_run": 2, "cases_total": 2, "mode": "score", "filler_target": 44,
+           "configs": {"baseline": {**s, "rows": rows}}}
+    txt = ev.render(rep, dataset="d.jsonl", judges=["J3"], configs=["baseline"], mode="score")
+    assert "| 类别 | 条数 | 认证 |" in txt, "分类表没有认证列"
+    assert "⚠ 认证子集仅 1 条" in txt, "认证不足的类没报警"
 
 
 def test_认证子集必须单独出数_缺标记的行两边都不算():
@@ -197,16 +235,108 @@ def test_门禁必须锚在有分辨力的列上():
     src = SCRIPT.read_text(encoding="utf-8")
     i = src.index("if a.fail_below is not None:")
     block = src[i:src.index("return 4", i)]
-    assert "ar_gold" in block, "门禁没锚在分辨力列上：%s" % block
-    assert "ar_certified" not in block and '"ar"' not in block, "门禁读回了饱和列／全量列"
-    assert "AR_cert 不得当门禁用" in src, "报表没写明 AR_cert 不能当门禁"
+    assert "ar_gold_certified" in block, "门禁没读「认证子集 × AR_gold」这列：%s" % block
+    assert "ar_certified" not in block and '"ar"' not in block, "门禁读回了饱和列／全量名次列"
+    assert "门禁一律读「认证子集 × AR_gold」" in src, "报表没写清门禁读哪列"
+    assert "自我循环" in src, "报表没留下「为什么不能用 gold 口径当认证门槛」的证据"
     # 反证：饱和的认证子集在名次口径下满分，同一行集在 pass_gold 下必须掉下来
     rows = [{"cid": "s1", "category": "fact", "judge": "J3", "certified": True, "pass": True,
-             "pass_gold": False, "missing": [], "polluted": [7]},
+             "pass_gold": False, "n_rows": 54, "missing": [], "polluted": [7]},
             {"cid": "s2", "category": "fact", "judge": "J3", "certified": True, "pass": True,
-             "pass_gold": True, "missing": [], "polluted": []}]
+             "pass_gold": True, "n_rows": 54, "missing": [], "polluted": []}]
     s = ev.summarize(rows)
-    assert s["ar_certified"] == 100.0 and s["ar_gold"] == 50.0, s
+    assert s["ar_certified"] == 100.0 and s["ar_gold_certified"] == 50.0, s
+
+
+def test_填充池必须是整句而不是单字():
+    """M1 加难靠填充抬库规模。真实踩过的坑：`tuple("甲" "乙" ...)` 里相邻字面量**先拼接**再逐字符成元组，
+    池子当场变成几十个单字——填充行数照样凑满，但每行只有一个字，规模是假的、跑分照样绿。
+    """
+    pool = ev.FILLER_POOL
+    assert len(pool) >= ev.FILLER_TARGET_DEFAULT + 4, "池子太小，凑不满目标行数就要出重复"
+    assert len(set(pool)) == len(pool), "填充句有重复"
+    for x in pool:
+        assert isinstance(x, str) and len(x) >= 10, "填充句不是整句：%r" % (x,)
+    # 填充句不许含任何题面词，否则等于给检索递线索
+    for c in OFFICIAL:
+        for x in pool:
+            assert x != c["turn"], "填充句与某题题面相同：%s" % c["cid"]
+
+
+def test_填充句不得夹带答案_且规模真的抬起来():
+    """硬不变式：填充行里不得出现任何 gold 正文的 ≥6 字连续片段（复用②通道同一个滑窗）——
+    否则它就是「换了个 id 的 gold」，AR 会被自己造的数据抬高，尺子白紧一遍。"""
+    from app.memory.utility_feedback import _contains_key_fragment, _core_snippet
+    target = ev.FILLER_TARGET_DEFAULT
+    for i, c in enumerate(OFFICIAL):
+        fil, skipped = ev.fillers_for(c, i, target)
+        assert len(fil) == target, (c["cid"], len(fil))
+        assert len({r["content"] for r in fil}) == target, "%s 填充行内部重复" % c["cid"]
+        dis_texts = {d.get("content") for d in (c.get("distractors") or [])}
+        for r in fil:
+            assert r["content"] not in dis_texts, "%s 把本题干扰项当填充（会双计）" % c["cid"]
+            for g in ev._gold_texts_of(c):
+                assert not _contains_key_fragment(_core_snippet(g), ev._norm(r["content"])), (
+                    "%s 的填充句夹带答案：%s ⇄ %s" % (c["cid"], g, r["content"]))
+        assert skipped == 0, "剔除了 %d 条说明池子跟题面撞了，池子要重写（不是放宽判据）" % skipped
+        rows = len(c["seeds"]) + len(c.get("distractors") or []) + len(fil)
+        assert rows >= 40, "%s 库规模只有 %d 行，没到真实量级" % (c["cid"], rows)
+    # 确定性：同一 (case, idx) 两次取必须一致；不同 case 必须错开（否则所有题面对同一批竞争行）
+    assert ev.fillers_for(OFFICIAL[3], 3, 20)[0] == ev.fillers_for(OFFICIAL[3], 3, 20)[0]
+    assert ev.fillers_for(OFFICIAL[0], 0, 5)[0] != ev.fillers_for(OFFICIAL[1], 1, 5)[0]
+    assert ev.fillers_for(OFFICIAL[0], 0, 0)[0] == [], "target=0 应关闭填充（A/B 对照要用）"
+    # **正例控制**（防空齿）：往池子里塞一条真含 gold 的句子，剔除判据必须咬住它。
+    # 只靠「现有池子恰好不含答案」是验不出这颗粒子的——池子改了、判据被删，测试照样绿。
+    gold0 = ev._gold_texts_of(OFFICIAL[0])[0]
+    saved_pool = ev.FILLER_POOL
+    try:
+        ev.FILLER_POOL = (gold0, "别的无关句子一", "别的无关句子二")
+        got, skipped = ev.fillers_for(OFFICIAL[0], 0, 3)
+        assert skipped >= 1 and all(r["content"] != gold0 for r in got), (
+            "夹带答案的填充句没被剔除 ⇒ 守卫是空齿")
+    finally:
+        ev.FILLER_POOL = saved_pool
+    assert ev.FILLER_POOL == saved_pool, "池子没还原干净"
+
+
+def test_认证门槛不得用门禁要量的那列():
+    """认证＝**题目合法性**，与「当前检索做得对不对」必须是两件事。
+
+    10-04 我自己先犯过一次：把认证门槛从名次口径改成 `pass_gold ≥ 2/3`，理由是「名次口径饱和」。
+    跑完立刻循环了——选子集的条件就是门禁要量的那个数，于是「认证子集 × AR_gold」恒 ≈100
+    （那一轮：认证 47→35 条，认证子集 AR_gold 直接 100.0），headroom 归零，比饱和更糟。
+    现在加难只加在**库规模**上，认证口径钉回名次；真值表逐格钉住，任何一格回退都红。
+    """
+    v = ev.certify_verdict
+    assert v(True, 3, 0, True)["certified"] is True, "合法但当前做不好＝正是门禁要抓的东西，必须留在分母里"
+    assert v(True, 1, 3, True)["certified"] is False, "名次不过 2/3 不得认证"
+    assert v(True, 3, 3, True)["certified"] is True
+    assert v(False, 3, 3, True)["certified"] is False, "空库也召得出＝泄题，不得认证"
+    assert v(True, 3, 3, False)["certified"] is False, "干扰项里含 gold＝题不合法"
+    got = v(True, 3, 1, True)
+    assert got["full_pass3"] == 3 and got["full_gold3"] == 1, "gold 计数必须记录（不作门槛，但要能对账）"
+    # 源码锚点：认证表达式里不许出现 pass_gold／full_gold3 当条件
+    src = SCRIPT.read_text(encoding="utf-8")
+    i = src.index('"certified": bool(')
+    line = src[i:src.index("\n", i)]
+    assert "full_rank3" in line and "full_gold3" not in line, "认证门槛又回退成门禁要量的那列：%s" % line
+
+
+def test_报表必须把库规模与门禁列一起出来():
+    """门禁读的是「认证子集 × AR_gold」，报表必须同一列可见；库规模不写出来，读数就没法解释。"""
+    rows = [{"cid": "x1", "category": "fact", "judge": "J3", "certified": True, "pass": True,
+             "pass_gold": False, "n_rows": 54, "missing": [], "polluted": []},
+            {"cid": "x2", "category": "fact", "judge": "J3", "certified": True, "pass": True,
+             "pass_gold": True, "n_rows": 54, "missing": [], "polluted": []}]
+    s = ev.summarize(rows)
+    assert s["rows_mean"] == 54.0 and s["ar_gold_certified"] == 50.0, s
+    assert s["cert_rate"] == 100.0, s        # 认证率＝尺子自身健康度，加难后分母缩了必须可见
+    rep = {"k": 5, "semantic": False, "llm_guard": "stub", "skipped_judges": [],
+           "cases_run": 2, "cases_total": 2, "mode": "score", "filler_target": 44,
+           "configs": {"baseline": {**s, "rows": rows}}}
+    txt = ev.render(rep, dataset="d.jsonl", judges=["J3"], configs=["baseline"], mode="score")
+    assert "库规模" in txt and "AR_gold(认证)" in txt and "认证率" in txt, "报表没写库规模／门禁列／认证率"
+    assert '"cert_rate": 100.0' in ev.metrics_json(rep), "机器口径没带认证率"
 
 
 def test_lint_逐项都能咬():
