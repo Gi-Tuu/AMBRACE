@@ -375,3 +375,19 @@ _PREIMPORT_OK, _PREIMPORT_FAILED = _preimport_app_modules()
 if _PREIMPORT_FAILED:
     print(f"[conftest] preimport 有 {len(_PREIMPORT_FAILED)} 个模块导入失败（不阻断）："
           + "; ".join(_PREIMPORT_FAILED[:5]))
+
+
+# ── A21 锁族（2026-10-04）：把「BUSY ⇒ 先回收再有限重试」也覆盖会话沙箱库这一层 ──
+# 探针现场（10-04 带探针的全量）抓到 ``test_ws_notify_disabled.py`` 两例红，报的正是
+# ``sqlite3.OperationalError: database is locked``，而**失败库是会话共享沙箱库**
+# （不是每例克隆库）：现场该库写锁 LOCKED 持续 300 ms 未解锁，受害者等满
+# ``busy_timeout=10000`` 才抛。克隆库那一层的处置在 ``_dbclone.make_session_factory`` 里，
+# 管不到这一层 ⇒ 同一处置按同一形态套上：改**工厂对象**的 ``class_``，93 个在 import 期
+# 就早绑定 ``from app.db.database import async_session_factory`` 的 app.* 模块引用的
+# 是同一个对象，因此一处生效、全覆盖（这也正是上面 preimport 防泄漏要先把模块过一遍的原因）。
+# 语义仍不掩盖真抢写：重试上界 3 次（20/50/120 ms），到点原样抛，见
+# ``tests/test_sqlite_busy_reclaim.py`` 的 :func:`test_live_writer_still_raises`。
+from _dbclone import BusyReclaimSession as _BusyReclaimSession  # noqa: E402
+from app.db.session import async_session_factory as _sess_factory  # noqa: E402
+
+_sess_factory.class_ = _BusyReclaimSession

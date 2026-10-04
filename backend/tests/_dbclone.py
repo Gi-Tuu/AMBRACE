@@ -49,7 +49,9 @@
 """
 from __future__ import annotations
 
+import asyncio
 import atexit
+import gc
 import shutil
 import sqlite3
 import sys
@@ -243,6 +245,72 @@ def clone_engine(dst_path, with_plugins=False, pragmas: bool = True):
     return engine
 
 
+# ── A21 锁族（2026-10-04，先诊断后修）───────────────────────────────────────
+# 诊断结论（现场三证记在 docs/plans.md 的 A21 行）：失败的是**每例克隆库**（探针现场
+# 另抓到会话共享沙箱库同形态，那一层在 ``conftest.py`` 末尾接同一个会话类），
+# busy_timeout=10000 确实生效（探针逐连接读过 PRAGMA），却仍等满 10 s 报
+# ``database is locked`` ⇒ 持锁者不是「慢写」，而是一条**已发出写、既不提交也不归还**
+# 的连接：它进了引用环，只能等分代 GC 才被 ``_finalize_fairy`` 终止。这一形态**每轮
+# 全量都在**：绿跑里每轮 3–5 条 “non-checked-in connection … will be terminated”
+# SAWarning（``test_prospective_intent.py::test_state_machine_collect_discharge_expire_cancel``
+# ／``test_domain_care_purity.py::test_生产实现_生成失败回退与旧行为一致`` 等），
+# 出生栈是 ORM flush 路径（``session.connection → bind.connect()``）；差别只在
+# 那条被放弃的连接**当时是否正挂着未提交的写**——挂着才锁住别人。
+# 关键时序：受害者这一侧此时**阻塞在 aiosqlite 工作线程里**，Python 侧不再分配对象
+# ⇒ 分代回收根本没机会被阈值触发 ⇒ 10 s 到点报错。所以「只加重试」是无效的
+# （重试发生在同一场 10 s 之后，环还挂着）；**先逼一次 gc 再重试**才打断得住。
+# 只在测试会话层做，不改生产事务语义；重试仍有界（3 次、20/50/120 ms），
+# 真·抢写（对手是活连接）时照样原样抛错，不掩盖。
+_BUSY_BACKOFF = (0.02, 0.05, 0.12)
+BUSY_RECLAIMS = 0          # 守卫断言用：本进程内「靠 gc 打断锁」的次数
+
+
+def _reclaim() -> int:
+    """分代回收那一步单独抽出来，供守卫用 monkeypatch 摘掉它做变异自测。"""
+    return gc.collect()
+
+
+def _is_sqlite_busy(exc: BaseException) -> bool:
+    orig = getattr(exc, "orig", None)
+    msg = str(orig if orig is not None else exc)
+    return "database is locked" in msg or "database is write locked" in msg
+
+
+async def _retry_after_reclaim(fn, *args, **kwargs):
+    """跑一个 awaitable 会话方法；仅在 SQLite BUSY 时「逼一次 GC ⇒ 退避重试」。"""
+    global BUSY_RECLAIMS
+    for attempt in range(len(_BUSY_BACKOFF) + 1):
+        try:
+            return await fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - 只挑 BUSY，其余原样抛
+            if attempt >= len(_BUSY_BACKOFF) or not _is_sqlite_busy(exc):
+                raise
+            _reclaim()
+            BUSY_RECLAIMS += 1
+            await asyncio.sleep(_BUSY_BACKOFF[attempt])
+
+
+class BusyReclaimSession(AsyncSession):
+    """带「BUSY ⇒ 先回收再重试」的测试会话（A21 锁族处置，机制见上方注释）。
+
+    SQLITE_BUSY 的语义保证语句是**整体未执行**的（拿不到写锁就返回，不改任何行），
+    所以重放同一条语句不会重复生效，ORM 状态也不会因此错乱。
+    """
+
+    async def execute(self, *args, **kwargs):
+        return await _retry_after_reclaim(super().execute, *args, **kwargs)
+
+    async def commit(self):
+        return await _retry_after_reclaim(super().commit)
+
+    async def flush(self, *args, **kwargs):
+        return await _retry_after_reclaim(super().flush, *args, **kwargs)
+
+
 def make_session_factory(engine):
-    """与各测试文件原写法一致的会话工厂（``expire_on_commit=False``）。"""
-    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    """各测试文件原写法一致的会话工厂（``expire_on_commit=False``）。
+
+    唯一差别（A21，2026-10-04）：会话类是 :class:`BusyReclaimSession`——遇
+    ``database is locked`` 先 ``gc.collect()`` 再有限重试，见该类上方注释。
+    """
+    return async_sessionmaker(engine, class_=BusyReclaimSession, expire_on_commit=False)
