@@ -44,16 +44,13 @@ if _PLUGIN_DIR not in _sys.path:
 
 import douyin_models  # noqa: F401,E402  # T5：渠道自有 ORM 模型（加载期注册进插件独立 plugin_metadata，registry 加载后幂等建表）
 from music import (  # noqa: E402
-    MUSIC_MOODS,
     normalize_music_mood,
     parse_music_mood,
-    pick_music_mood,
     _select_music as _select_music,
 )
 from content import (  # noqa: E402
     _de_ai,
     humanize_post_text,
-    content_type_hint,
     humanize_image_prompt,
     humanize_reply_prompt,
     pick_content_type,
@@ -61,7 +58,6 @@ from content import (  # noqa: E402
 from publish import _sync_publish_video  # noqa: E402
 from comments import (  # noqa: E402
     _sync_reply_comment_v2,
-    _sync_reply_comment_dom,
     _get_cached_comment_ids,
 )
 
@@ -1109,7 +1105,6 @@ async def _get_account(tenant_id: int | None = None) -> dict:
         return {}
     from app.db.database import async_session_factory
     from sqlalchemy import select
-    from app.db.database import async_session_factory
     from douyin_models import DouyinAccount
     async with async_session_factory() as db:
         row = (await db.execute(
@@ -1127,7 +1122,6 @@ async def _upsert_account(state: dict, tenant_id: int | None = None) -> None:
     """落账号状态；A2 M0-2：传 tenant_id 时只写/更新**该租户**的行（None=旧口径全表第一行）。"""
     from app.db.database import async_session_factory
     from sqlalchemy import select
-    from app.db.database import async_session_factory
     from douyin_models import DouyinAccount
     async with async_session_factory() as db:
         q = select(DouyinAccount)
@@ -1209,7 +1203,6 @@ async def _upsert_posts(posts: list[dict]) -> int:
     """发布列表按 post_key 幂等 upsert，返回新增数"""
     from app.db.database import async_session_factory
     from sqlalchemy import select
-    from app.db.database import async_session_factory
     from douyin_models import DouyinPost
     if not posts:
         return 0
@@ -1327,7 +1320,6 @@ async def _upsert_comments(posts: list[dict]) -> int:
 async def _recent_posts(limit: int = 2) -> list[dict]:
     from app.db.database import async_session_factory
     from sqlalchemy import select
-    from app.db.database import async_session_factory
     from douyin_models import DouyinPost
     async with async_session_factory() as db:
         rows = (await db.execute(
@@ -1347,7 +1339,6 @@ async def _recent_posts(limit: int = 2) -> list[dict]:
 async def _recent_unreplied_comments(limit: int = 5, exclude_mentioned: bool = False) -> list[dict]:
     from app.db.database import async_session_factory
     from sqlalchemy import select
-    from app.db.database import async_session_factory
     from douyin_models import DouyinComment
     async with async_session_factory() as db:
         _q = select(DouyinComment).where(
@@ -2584,7 +2575,6 @@ async def pending_list(user_id: int = Depends(get_current_user_id)):
         return {"items": []}  # 无租户=无数据
     from app.db.database import async_session_factory
     from sqlalchemy import select
-    from app.db.database import async_session_factory
     from douyin_models import DouyinPending
     async with async_session_factory() as db:
         rows = (await db.execute(

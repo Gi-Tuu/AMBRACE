@@ -1,12 +1,12 @@
-"""build_context_legacy —— 上下文最终组装器（F3，2026-08-31 自 context_builder.py 迁入）。
+"""assemble_context —— 上下文最终组装器（F3 2026-08-31 自 context_builder.py 迁入；A23 归位改名）。
 
 - 现状（A22 ⑤-b/⑤-c，2026-10-03）：注册表是唯一装配入口，本函数接收它算好的分区值做最终组装；
   `agent_context_registry` flag 与「注册表未产出则在此重算一遍」的 13 段内联兜底均已删除（判据与
-  语义变化见 build_context_legacy 函数体注释）。`_section_values=None` 时仍走自算路径
+  语义变化见 assemble_context 函数体注释）。`_section_values=None` 时仍走自算路径
   （tests 的 `_run_legacy_pure*` 夹具这样调用）。
 - 接缝已摘除（2026-09-02）：本模块改为显式 import 依赖（见下方），不再经 _sync_seams
   把 context_builder 命名空间同步进 globals；裸名字静态可解析，可被 ruff 检查。
-- 整体退场（本文件 + context_builder 的薄壳委托）尚未拍板，勿据此删除。
+- 名字沿革（A23，2026-10-04）：本文件旧名 `context/legacy.py`、入口旧名 `build_context_legacy`（context_builder 里那层薄壳一并删除）。各 section_*.py 抬头「从 context_builder.build_context_legacy 迁出」说的是 08-31 那次迁移，属**历史出处**，故意不改。
 """
 from datetime import datetime, timezone
 from sqlalchemy import select
@@ -33,7 +33,7 @@ from app.agent.context_builder import (
     gender_cn,
 )
 
-_logger = get_logger("context.legacy")
+_logger = get_logger("context.assembly")
 
 # 宿主 context_inject 拿不到 caller 的告警去重（与 registry._warned_no_caller 同法，防 hot path 刷屏）
 _warned_inject_no_caller: set[str] = set()
@@ -50,7 +50,7 @@ def _warn_context_inject_no_caller_once() -> None:
     )
 
 
-async def build_context_legacy(state: dict, *, stream: bool | None = None, _section_values: dict | None = None, _trim: dict | None = None) -> dict:
+async def assemble_context(state: dict, *, stream: bool | None = None, _section_values: dict | None = None, _trim: dict | None = None) -> dict:
     """上下文最终组装器：构建完整的上下文 prompt（近1天完整消息 + 更早日概要 + 朋友圈）。
 
     `stream`（P2-A）：显式标记流式模式；None 时从 state 推断（state["stream_sink"] 非空 = 流式）。
@@ -833,7 +833,7 @@ async def build_context_legacy(state: dict, *, stream: bool | None = None, _sect
             },
                 # A2 M4：显式带调用者（ctx 已有 user_id）→ flag 开时只分发给本账号可见插件
                 user_id=_plugin_uid,
-                callsite="agent/context/legacy.py:context_inject",
+                callsite="agent/context/assembly.py:context_inject",
             )
     except Exception:
         pass

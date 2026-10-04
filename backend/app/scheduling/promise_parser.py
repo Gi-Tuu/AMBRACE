@@ -87,7 +87,7 @@ MAX_MINUTES = 24 * 60
 # 背景：AI 说「我去吃饭了」是**自己离开**，到点应自述「我回来了」（back，新主动消息源）；
 # 只有「我给你煮粥，好了叫你」这类**为用户做**的承诺，到点才该招呼用户（ready）。
 # 旧行为（F1a）是把 AI 纯动作句直接跳过不建事件，AI 自理完全静默；本分流把它演进为
-# 「AI 自理 → back，到点自述回来」，属**新增主动消息源**，由 flag 包裹、默认关、逐角色灰度。
+# 「AI 自理 → back，到点自述回来」，属**新增主动消息源**，由 flag `promise_self_side_split` 包裹（字典默认已转 True，提交 `2b77fadc` 2026-09-28；无逐角色白名单，写 False 才逐字节回退 F1a）。
 
 # AI 自己去做自己的事（自理离开，到点应"我回来了"，不该招呼用户）
 _SELF_ACTION_HINTS = (
@@ -119,7 +119,7 @@ def classify_ai_promise_side(text: str) -> str:
 
 
 def _self_side_split_on() -> bool:
-    """L1 flag：promise_self_side_split（默认关；关=完全沿用 F1a 现状的正则结果）。"""
+    """L1 flag：promise_self_side_split（字典默认 True；关=完全沿用 F1a 现状的正则结果）。"""
     try:
         from app.agent.loop import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("promise_self_side_split", False))
@@ -189,7 +189,7 @@ def extract_timer(
 
     minutes = int(min(max(minutes, 1), MAX_MINUTES))
 
-    # L1（2026-09-09）：AI 侧承诺按受益方分流（flag promise_self_side_split，默认关）。
+    # L1（2026-09-09 上线；`2b77fadc` 2026-09-28 起字典默认 True）：AI 侧承诺按受益方分流（flag promise_self_side_split）。
     #   self（AI 自理离开，如"我去吃饭"）→ back（到点自述"我回来了"），绝不建 ready；
     #   for_user（AI 为用户做、好了叫 TA）→ 保留解析出的 ready/meal 等。
     # 该分流在**最终 return 前统一纠偏**，因此无论命中 _PATTERNS 还是 _VAGUE_PATTERNS 的

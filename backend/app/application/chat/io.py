@@ -16,7 +16,7 @@ _logger = get_logger("services.chat")
 
 async def _append_ai_image_message(session_id: int, image_url: str, prompt: str, content: str | None = None) -> None:
     # 配文（IMG_TEXT）允许为空：为空时前端不渲染配文，不再强制兜底「给你画好啦～」
-    # （提示词已要求不要用该通用口吻，见 agent/context/legacy.py）。
+    # （提示词已要求不要用该通用口吻，见 agent/context/assembly.py）。
     caption = (content or "").strip()[:60]
     meta = {
         "gen_image": True,       # 兼容既有判断

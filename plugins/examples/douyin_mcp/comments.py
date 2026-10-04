@@ -14,7 +14,6 @@ P0/P3 核心：评论回复从「纯 DOM 操作」升级为「双轨制 —— �
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 
@@ -26,9 +25,7 @@ from browser import (
     _COMMENT_MANAGE_URL,
     _close_ctx,
     _has_login_cookie,
-    _human_wait,
     _launch,
-    _shot,
 )
 
 # ------------------------------------------------------------------ 抓包确认常量（TODO）

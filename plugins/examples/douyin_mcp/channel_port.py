@@ -8,7 +8,6 @@
 由 main.py 末尾调 sdk.register_channel("douyin", port, meta=...) 完成注册。
 """
 import io
-import json
 import os
 
 from starlette.datastructures import UploadFile

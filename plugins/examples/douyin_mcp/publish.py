@@ -14,7 +14,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import random
 import sys
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -25,13 +24,11 @@ import subprocess
 from pathlib import Path
 
 from browser import (
-    _COMMENT_MANAGE_URL,
     _CONTENT_MANAGE_URL,
     _close_ctx,
     _has_login_cookie,
     _human_tap,
     _human_typing,
-    _human_wait,
     _launch,
     _shot,
 )

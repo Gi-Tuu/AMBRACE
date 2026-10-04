@@ -309,27 +309,29 @@ def test_b4_section_memories_registration_point_exists():
 
 
 def test_b4_legacy_fallback_points_exist():
-    """B4：``agent/context/legacy.py`` 的三处兜底注入点存在（:286 / :858-876 / :899）。
+    """B4：``agent/context/assembly.py``（原 legacy.py）的三处注入点存在（:174 / :494-513 / :541）。
 
     设计稿 §2.5 #4 行：「legacy 内联兜底 ``agent/context/legacy.py:286``（retrieved）、
-    ``:858-876``（life）、``:899``（shared_events）」。本断言钉死这三处存在。
+    ``:858-876``（life）、``:899``（shared_events）」——**行号是 09-21 当时的 legacy.py 坐标**，
+    A22 ⑤-c 删掉 351 行兜底后实际落位＝assembly.py :174 / :494-513 / :541（本用例按内容锚点定位）。
+    本断言钉死这三处存在。
     """
     # :286 附近——retrieved_memories 兜底
-    s1 = _slice("agent/context/legacy.py", 280, 295,
+    s1 = _slice("agent/context/assembly.py", 168, 183,
                 anchor="memory_lines = _build_retrieved_memory_lines(")
     assert "retrieved_memories" in s1 or "_build_retrieved_memory_lines" in s1, (
-        "legacy.py:286 附近的 retrieved_memories 兜底消失（设计稿 §2.5 #4 前提被破坏）"
+        "retrieved_memories 注入点消失（设计稿 §2.5 #4 前提被破坏）"
     )
     # :858-876 附近——life 注入
-    s2 = _slice("agent/context/legacy.py", 850, 885, anchor="if _share and _trust >= 60:")
+    s2 = _slice("agent/context/assembly.py", 494, 513, anchor="if _share and _trust >= 60:")
     assert "life" in s2.lower() or "source == \"life\"" in s2 or "source=='life'" in s2, (
-        "legacy.py:858-876 附近的 life 注入消失（设计稿 §2.5 #4 前提被破坏）"
+        "life 注入消失（设计稿 §2.5 #4 前提被破坏）"
     )
     # :899 附近——shared_events 注入
-    s3 = _slice("agent/context/legacy.py", 893, 910,
+    s3 = _slice("agent/context/assembly.py", 538, 548,
                 anchor="recall_text as _shared_recall")
     assert "shared" in s3.lower() or "recall_text" in s3, (
-        "legacy.py:899 附近的 shared_events 注入消失（设计稿 §2.5 #4 前提被破坏）"
+        "shared_events 注入消失（设计稿 §2.5 #4 前提被破坏）"
     )
 
 
@@ -337,14 +339,14 @@ def test_b4_whitelist_outside_zero_injection_grep():
     """B4：白名单外零注入——全仓 ``agent/context/`` 下只有设计稿点名的文件读 ``retrieved_memories``。
 
     设计稿 §2.5 B4 行：「AI 自己要读时，经**唯一一个** append 型 section 注入；
-    legacy 兜底路径同步（``legacy.py:286 / :858-876 / :899``）；**断言「白名单外零注入」**」。
+    装配器内同步（``assembly.py:174 / :494-513 / :541``；A22 ⑤-c 删兜底后原 legacy.py 坐标已漂）；**断言「白名单外零注入」**」。
 
     设计稿 §2.5 #4 行钉死的**全部** 8 条注入通道（白名单）：
       - ``section_memories.py:283``（读 ``state["retrieved_memories"]``）
       - ``section_core.py`` → ``memory/core.py:235 get_core_memories`` / ``:255 get_relationship_anchors``
       - ``section_overlay.py:544 life_share`` → select ``:152-159``（仅 ``source=="life"``）
       - ``section_working_state.py:148``
-      - ``legacy.py:286``（retrieved）/ ``:858-876``（life）/ ``:899``（shared_events）
+      - ``legacy.py:286``（retrieved）/ ``:858-876``（life）/ ``:899``（shared_events）——**09-21 当时的 legacy.py 坐标**
 
     本断言用 grep 形制：扫 ``agent/context/`` 下所有 .py，统计读 ``retrieved_memories``
     或 ``Memory`` 表的文件，断言只有白名单内的文件命中。
@@ -356,7 +358,7 @@ def test_b4_whitelist_outside_zero_injection_grep():
         "section_core.py",
         "section_overlay.py",
         "section_working_state.py",
-        "legacy.py",
+        "assembly.py",   # A23：原 legacy.py，同一个文件改名
     }
     hits: set[str] = set()
     for py in ctx_dir.glob("*.py"):

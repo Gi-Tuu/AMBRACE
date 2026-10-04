@@ -157,7 +157,7 @@ async def time_prompt_section(state: dict, ctx: dict) -> list[str]:
 async def location_section(state: dict, ctx: dict) -> list[str]:
     """location 分区：位置感知 + 天气（追加块；条件注入，无则空列表）。
 
-    与 build_context_legacy 一致按 location 配额裁剪（配额内零行为变化）。
+    与装配器 assemble_context 一致按 location 配额裁剪（配额内零行为变化）。
     """
     from app.agent.context_builder import _clip_text_to_quota, _SECTION_QUOTA_TOKENS
 

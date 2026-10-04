@@ -1,13 +1,13 @@
 """context 注册表：build_context 主函数（步骤5：全 section 注册表驱动）。
 
 ``build_context`` 运行所有已注册 section（template 槽 + append 块），把各分区值收集进
-``_section_values`` 后委托 ``context_builder.build_context_legacy`` 完成最终组装
+``_section_values`` 后委托 ``context.assembly.assemble_context`` 完成最终组装
 （模板 .format + 追加块 + 系统总量裁剪）。
 
 入口口径（A22 ⑤-b，2026-10-03 转正）：``agent_context_registry`` flag 与其 flag-off 回退分支**已删除**，
 本模块的 ``build_context`` 是 ``context_builder.build_context`` 的唯一装配入口（判据＝生产库无该键覆盖行
-＋回退观测 ``context_legacy_flag_off`` 接入后 7 周 0 命中）。旧实现 ``build_context_legacy`` 仍在
-``context_builder`` 里，但只作为**最终组装器**被本模块调用（模板 .format + 追加块 + 总量裁剪）。
+＋回退观测 ``context_legacy_flag_off`` 接入后 7 周 0 命中）。最终组装器 ``assemble_context`` 现居 ``context/assembly.py``（A23 归位，2026-10-04：旧文件
+``legacy.py``、旧入口名 ``build_context_legacy`` 与 ``context_builder`` 里的薄壳委托一并退场）。
 
 每个 section 异常仅记 ``_logger.warning`` 跳过（不拖垮整体，维持现状）。
 单 section 抛异常不影响其他 section 的注入。
@@ -78,13 +78,13 @@ def _declared_keys_n(loads: list[dict]) -> int:
 
 
 def _load_ctx_builder():
-    """惰性导入 context_builder（含 build_context_legacy / _EST_CHARS_PER_TOKEN 等）。"""
+    """惰性导入 context_builder（含 _EST_CHARS_PER_TOKEN 等裁剪常量）。"""
     from app.agent import context_builder as _cb
     return _cb
 
 
 async def _resolve_trim(state: dict) -> dict:
-    """热度裁剪参数（与 build_context_legacy 口径一致）：core/anchors 注入上限需要。"""
+    """热度裁剪参数（与 assemble_context 口径一致）：core/anchors 注入上限需要。"""
     _cb = _load_ctx_builder()
     hot = True
     try:
@@ -99,14 +99,14 @@ async def _resolve_trim(state: dict) -> dict:
 async def _run_sections(state: dict, ctx: dict) -> dict:
     """注册表驱动：调用已注册 section 的 builder，收集各分区值。
 
-    - template 槽：``values[key] = text``（str，未裁剪原始值，由 build_context_legacy 统一裁剪）；
+    - template 槽：``values[key] = text``（str，未裁剪原始值，由 assemble_context 统一裁剪）；
       key 采用 ``sec.key``（legacy 覆盖块按 key 读取；pets 的 slot 为 ``pets_info``、key 为 ``pets``，
       以 key 记录才能被 legacy 覆盖块识别并跳过内联）；
     - append 块：``values[key] = list[str]``（每条即一条追加 system 消息内容）。
     单个 section 抛异常仅记 warning 跳过（不拖垮整体，维持现状）。
 
     P3-1（2026-08-31）：记录**所有已执行** section 的键——包括结果为空的键（template 空串 /
-    append 空列表）——一并写入 ``values``，供 ``build_context_legacy`` 用「key in _sv」判断并
+    append 空列表）——一并写入 ``values``，供 ``assemble_context`` 用「key in _sv」判断并
     跳过对应内联计算（消除注册表 + legacy 双重 DB 查询）。空值亦写入，使 legacy 占位符语义
     （如 moments 无内容仍「暂无」、pets 仍「无」）与内联一致；section 抛异常未执行时不写入，
     legacy 照常内联计算兜底（行为与现状一致）。
@@ -178,12 +178,12 @@ async def build_context(state: dict, *, stream: bool | None = None) -> dict:
     """组装 state["context_messages"]（注册表驱动版，行为与旧版 build_context 零变化）。
 
     - `stream`（P2-A）：显式标记流式模式；None 时从 state 推断（state["stream_sink"] 非空 = 流式）。
-    - 检索区轮次 +1 在 build_context_legacy 的角色存在检查后执行（与旧版位置一致，
+    - 检索区轮次 +1 在 assemble_context 的角色存在检查后执行（与旧版位置一致，
       保证 N 轮去重语义不变）。
     """
     _cb = _load_ctx_builder()
 
-    build_context_legacy = _cb.build_context_legacy
+    from app.agent.context.assembly import assemble_context
     est_chars_per_token = _cb._EST_CHARS_PER_TOKEN
     is_stream = bool(state.get("stream_sink")) if stream is None else bool(stream)
 
@@ -196,11 +196,11 @@ async def build_context(state: dict, *, stream: bool | None = None) -> dict:
     }
     # P3-5（2026-08-25）：检索区轮次 +1 移到 sections 之前——注册表路径与纯 legacy 路径都先 bump
     # 再算记忆/检索区/Lorebook（sticky/cooldown），保证两条路径轮次一致（消除 off-by-one）。
-    # legacy（build_context_legacy）在 _section_values 非空（注册表路径）时不再重复 bump。
+    # assemble_context 在 _section_values 非空（注册表路径）时不再重复 bump。
     _bump_memory_round(state["character_id"])
 
     values = await _run_sections(state, ctx)
 
     # 委托旧实现完成最终组装：所有分区值来自注册表 section，其余（角色存在检查/温度/字符基础信息等）
     # 与旧版完全一致（零行为变化）。_trim 复用注册表路径算好的热度裁剪参数（避免 _is_hot_character 二次查询）。
-    return await build_context_legacy(state, stream=stream, _section_values=values, _trim=trim)
+    return await assemble_context(state, stream=stream, _section_values=values, _trim=trim)

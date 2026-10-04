@@ -22,7 +22,7 @@
 15. ``section_current_state:18`` 现状锚点 → 16. ``section_working_state:109`` 工作记忆。
 
 覆盖第三批（B3，用例编号 19–22；原 17/18 已随 A22 ⑤-c 删除，理由见文件末尾）：
-17/18 曾是**装配级**对照（直跑 ``build_context_legacy`` 的注册表内联分支），一次覆盖 legacy 的
+17/18 曾是**装配级**对照（直跑 ``assemble_context`` 的注册表内联分支），一次覆盖 legacy 的
 用户行 / 世界事实 / 用户朋友圈 / 手动八维 / 手机感知 / 时间承诺 / 距上次互动 / 用户画像 /
 备忘录+日记 / AI 生活记忆（信任概率门打桩强开）共 10 处内联查询点——这些内联实现已随 ⑤-c 删除，
 用例一并删除。19/20 覆盖 ``_build_mcp_tools_text``（工具声明）与 ``_build_mcp_resources_text``
@@ -273,7 +273,7 @@ def _patch_session(monkeypatch, factory) -> None:
     for path in (
         "app.db.database.async_session_factory",
         "app.agent.context_builder.async_session_factory",
-        "app.agent.context.legacy.async_session_factory",
+        "app.agent.context.assembly.async_session_factory",
         "app.agent.user_profile.async_session_factory",
         "app.events.facts.async_session_factory",
         "app.scheduling.promise_service.async_session_factory",
@@ -605,7 +605,7 @@ def test_working_state_failclosed(fc_db, monkeypatch):
     asyncio.run(_run())
 
 
-# ══════════════════════════ contextB3 第三批（legacy.py 12 处，2026-09-21）══════════════════════════
+# ══════════════════════════ contextB3 第三批（现 assembly.py／原 legacy.py 12 处，2026-09-21）══════════════════════════
 
 
 
@@ -672,7 +672,7 @@ def _run_legacy_pure(monkeypatch, factory, user_id) -> str:
     import random
 
     import app.agent.persona as persona
-    from app.agent.context import legacy as lg
+    from app.agent.context import assembly as asm
 
     async def _persona_stub(*_a, **_k):
         return dict.fromkeys(_PERSONA_KEYS, "")
@@ -680,8 +680,8 @@ def _run_legacy_pure(monkeypatch, factory, user_id) -> str:
     _seed_mcp_declarations(monkeypatch, factory)
     monkeypatch.setattr(random, "random", lambda: 0.0)
     monkeypatch.setattr(persona, "assemble_persona_context", _persona_stub)
-    out = asyncio.run(lg.build_context_legacy(
-        _assembly_state(user_id), _section_values=None, _trim=lg._trim_limits(True),
+    out = asyncio.run(asm.assemble_context(
+        _assembly_state(user_id), _section_values=None, _trim=asm._trim_limits(True),
     ))
     return _guard_assembled(out)
 
@@ -705,23 +705,23 @@ def test_legacy_pure_assembly_without_caller_failclosed(fc_db, monkeypatch):
 
 def test_legacy_mcp_tools_text_failclosed(fc_db, monkeypatch):
     """legacy 绑定的 ``_build_mcp_tools_text``：带 caller → 声明含哨兵工具；缺 caller → 归属空集 → 空串。"""
-    from app.agent.context import legacy as lg
+    from app.agent.context import assembly as asm
 
     sid = _seed_mcp_declarations(monkeypatch, fc_db)
-    pos = asyncio.run(lg._build_mcp_tools_text(1))
+    pos = asyncio.run(asm._build_mcp_tools_text(1))
     assert "mcp.sentinel_tool" in pos, "带 caller 时未产出工具声明 → 反证会是空断言"
-    neg = asyncio.run(lg._build_mcp_tools_text(None))  # 不抛异常
+    neg = asyncio.run(asm._build_mcp_tools_text(None))  # 不抛异常
     assert neg == "", f"user_id=None 时仍产出 1 号 server（sid={sid}）的 MCP 工具声明 → 未 fail-closed"
 
 
 def test_legacy_mcp_resources_text_failclosed(fc_db, monkeypatch):
     """legacy 绑定的 ``_build_mcp_resources_text``：带 caller → 含 1 号资源；缺 caller → 空串（不注入）。"""
-    from app.agent.context import legacy as lg
+    from app.agent.context import assembly as asm
 
     _seed_mcp_declarations(monkeypatch, fc_db)
-    pos = asyncio.run(lg._build_mcp_resources_text(1, stream=False))
+    pos = asyncio.run(asm._build_mcp_resources_text(1, stream=False))
     assert "SENTINEL_RES" in pos, "带 caller 时未产出资源摘要 → 反证会是空断言"
-    neg = asyncio.run(lg._build_mcp_resources_text(None, stream=False))  # 不抛异常
+    neg = asyncio.run(asm._build_mcp_resources_text(None, stream=False))  # 不抛异常
     assert neg == "", "user_id=None 时把 1 号账号的 MCP 资源摘要冒充进来了 → 未 fail-closed"
 
 
@@ -1041,7 +1041,7 @@ def test_legacy_trim_call_site_user_id(fc_db, monkeypatch):
     """
     import random
 
-    from app.agent.context import legacy as lg
+    from app.agent.context import assembly as asm
 
     seen: list = []
 
@@ -1049,13 +1049,13 @@ def test_legacy_trim_call_site_user_id(fc_db, monkeypatch):
         seen.append((character_id, user_id))
         return False
 
-    monkeypatch.setattr(lg, "_is_hot_character", _spy)
+    monkeypatch.setattr(asm, "_is_hot_character", _spy)
     _patch_session(monkeypatch, fc_db)
     monkeypatch.setattr(random, "random", lambda: 0.0)
 
     def _run(user_id):
         seen.clear()
-        out = asyncio.run(lg.build_context_legacy(
+        out = asyncio.run(asm.assemble_context(
             _assembly_state(user_id), _section_values={"relationship": ""}, _trim=None,
         ))
         _guard_assembled(out)
@@ -1078,7 +1078,7 @@ def _run_legacy_pure_bare(monkeypatch, factory, user_id) -> str:
     import random
 
     import app.agent.persona as persona
-    from app.agent.context import legacy as lg
+    from app.agent.context import assembly as asm
 
     async def _persona_stub(*_a, **_k):
         return dict.fromkeys(_PERSONA_KEYS, "")
@@ -1086,8 +1086,8 @@ def _run_legacy_pure_bare(monkeypatch, factory, user_id) -> str:
     _patch_session(monkeypatch, factory)
     monkeypatch.setattr(random, "random", lambda: 0.0)
     monkeypatch.setattr(persona, "assemble_persona_context", _persona_stub)
-    out = asyncio.run(lg.build_context_legacy(
-        _assembly_state(user_id), _section_values=None, _trim=lg._trim_limits(True),
+    out = asyncio.run(asm.assemble_context(
+        _assembly_state(user_id), _section_values=None, _trim=asm._trim_limits(True),
     ))
     return _guard_assembled(out)
 
@@ -1133,7 +1133,7 @@ def test_legacy_core_anchors_loops_call_site(fc_db, monkeypatch):
     36 号直调下游函数**抓不住调用点**（B5 的日摘要补生成 / trim 自算就是这么漏的），故本例只验连线：
     纯 legacy 装配（``_section_values=None``，否则该分支被注册表值取代）里收到的 (cid, uid)。
     """
-    from app.agent.context import legacy as lg
+    from app.agent.context import assembly as asm
 
     seen: list = []
 
@@ -1141,7 +1141,7 @@ def test_legacy_core_anchors_loops_call_site(fc_db, monkeypatch):
         seen.append((character_id, user_id))
         return "无", "无", "无"
 
-    monkeypatch.setattr(lg, "_inject_core_anchors_loops", _spy)
+    monkeypatch.setattr(asm, "_inject_core_anchors_loops", _spy)
 
     def _run(user_id):
         seen.clear()
@@ -1214,7 +1214,7 @@ def test_pets_section_failclosed(fc_db, monkeypatch):
 
 # ──────────────── ⑤-c（2026-10-03）：3 例「装配级内联对照」已删除，原因记录在此 ────────────────
 # 被删用例（见 git 历史）：装配级正证 1 例、装配级反证 1 例、内联宠物查询点 1 例。
-# 原因：它们的验证对象是 legacy.py 那 13 段「注册表未执行则在此重算一遍」的内联兜底
+# 原因：它们的验证对象是 assembly.py（原 legacy.py）那 13 段「注册表未执行则在此重算一遍」的内联兜底
 #   （该夹具只把 1 个 key 标记为「注册表已执行」，其余分区全走内联分支），而那段兜底已随 ⑤-c 删除
 #   ——判据是为「删 legacy」而埋的前置观测 A/B 在 4.5 周内双 0 命中（观测通道本身活跃）。
 # 为什么连反证一起删：正证消失后，「缺 caller 时哨兵不出现」会因为各段落恒落默认值而**恒真**，
@@ -1238,16 +1238,16 @@ def test_assembled_section_absent_falls_to_default_a22c5(fc_db, monkeypatch):
     """
     import random
 
-    from app.agent.context import legacy as lg
+    from app.agent.context import assembly as asm
 
     _patch_session(monkeypatch, fc_db)
     monkeypatch.setattr(random, "random", lambda: 0.0)
 
     def _assemble(extra: dict) -> str:
-        out = asyncio.run(lg.build_context_legacy(
+        out = asyncio.run(asm.assemble_context(
             _assembly_state(1),
             _section_values={"relationship": "", **extra},
-            _trim=lg._trim_limits(True),
+            _trim=asm._trim_limits(True),
         ))
         return _guard_assembled(out)
 

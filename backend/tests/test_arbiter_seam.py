@@ -4244,11 +4244,11 @@ A22C12_DEFAULTS = {
     "user_info": 'user_notes_text = ""',
     "cognitive_plan": 'cognitive_plan = ""',
 }
-A22C12_LEGACY_PY = _seam_src_path("app.agent.context.legacy")
+A22C12_ASSEMBLY_PY = _seam_src_path("app.agent.context.assembly")
 
 
 def _a22c12_src() -> str:
-    return Path(str(A22C12_LEGACY_PY)).read_text(encoding="utf-8")
+    return Path(str(A22C12_ASSEMBLY_PY)).read_text(encoding="utf-8")
 
 
 def test_A22第九刀e_1_十三段内联兜底不许复活():
@@ -4287,7 +4287,7 @@ def test_A22第九刀e_4_fail_visible出口必须还在():
 def test_A22第九刀e_5_装配级内联对照已随兜底移除():
     """那 3 例的验证对象已不存在；反证在正证消失后会变成恒真空断言，所以必须一起删。"""
     # legacy.py 在 backend/app/agent/context/ ⇒ parents[3] 就是 backend
-    failclosed = Path(str(A22C12_LEGACY_PY)).parents[3] / "tests" / "test_context_no_caller_failclosed.py"
+    failclosed = Path(str(A22C12_ASSEMBLY_PY)).parents[3] / "tests" / "test_context_no_caller_failclosed.py"
     src = failclosed.read_text(encoding="utf-8")
     for gone in ("_run_legacy_assembly", "test_legacy_assembly_with_caller_injects",
                  "test_legacy_assembly_without_caller_failclosed",
@@ -4301,10 +4301,57 @@ def test_A22第九刀e_5_装配级内联对照已随兜底移除():
 def test_A22第九刀e_6_legacy只剩一份分类实现():
     """⑤-c 顺带消灭的重复实现：消息分类只允许注册表侧一个调用点。"""
     from app.agent.context import section_persona
-    import app.agent.context.legacy as lg
+    import app.agent.context.assembly as lg
 
     assert "app.agent.message_classifier" not in _a22c12_src(), (
         "legacy 又引用分类器 ⇒ 与 section_persona 形成双实现")
     ps = Path(str(section_persona.__file__)).read_text(encoding="utf-8")
     assert "build_perception_section" in ps, "注册表侧的分类调用点消失了（唯一实现没了）"
-    assert lg.build_context_legacy is not None
+    assert lg.assemble_context is not None
+
+
+# ── A23（2026-10-04）：`context/legacy.py` 归位为 `context/assembly.py`，入口改名 `assemble_context`
+# 这一刀改的正是「名字骗人」：注册表转正后 legacy 已是**唯一**装配器，却还叫 legacy／build_context_legacy，
+# 且 context_builder 里留着一层薄壳委托。本块钉住退场结果，防止按旧名 import 的写法在运行期才炸。
+def test_A23_旧模块路径与旧入口名都不许回来():
+    import importlib
+
+    import pytest
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("app.agent.context.legacy")
+    from app.agent import context_builder as cb
+    from app.agent.context import assembly
+
+    assert not hasattr(cb, "build_context_legacy"), (
+        "context_builder 的薄壳委托又加回来了 ⇒ 装配入口重新变成两条")
+    assert not hasattr(cb, "assemble_context"), "薄壳换了个名字回来（一样是多余的一跳）"
+    assert not hasattr(assembly, "build_context_legacy"), (
+        "旧入口名以别名形式复活 ⇒ A23 要的『真改名』没做到")
+    assert callable(assembly.assemble_context)
+
+
+def test_A23_唯一调用点必须直连assembly():
+    """生产只有一个装配调用点（context/__init__.py 的 build_context）——它必须指向新模块。"""
+    init_src = Path(str(_seam_src_path("app.agent.context"))).read_text(encoding="utf-8")
+    assert "from app.agent.context.assembly import assemble_context" in init_src, (
+        "装配入口没有直连 assembly ⇒ A23 归位白做")
+    assert "context.legacy" not in init_src, "__init__ 又把旧模块路径捡回来了"
+    assert "assemble_context(state, stream=stream" in init_src, (
+        "调用点的实参形状变了（_section_values/_trim 必须照传，否则注册表算好的分区值会被重算）")
+
+
+def test_A23_assembly行号坐标与注释一致():
+    """A23 的刀法是「整文件改名＋内容零位移」，所以仓内那些按行号定位的注释必须继续为真。
+
+    这条同时钉住 ⑤-c 漏随迁的两处旧坐标（life_share 曾标 legacy.py:866-876，实际 :497-513）。
+    """
+    src = _a22c12_src()
+    ls = src.split("\n")
+    assert "if _share and _trust >= 60:" in ls[496], "life_share 起点已不在 :497"
+    assert "current_facts_status_clause()" in ls[512], "现状面子句已不在 :513"
+    assert "memory_lines = _build_retrieved_memory_lines(" in ls[173], "retrieved 注入点已不在 :174"
+    ov = Path(str(_seam_src_path("app.agent.context.section_overlay"))).read_text(encoding="utf-8")
+    assert "context/assembly.py:497-513" in ov, "section_overlay 的行号注释没随迁"
+    fl = Path(str(_seam_src_path("app.flags.agent_flags"))).read_text(encoding="utf-8")
+    assert "context/assembly.py:513" in fl, "agent_flags 的行号注释没随迁"

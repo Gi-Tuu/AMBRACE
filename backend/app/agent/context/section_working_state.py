@@ -25,7 +25,7 @@ _WS_QUOTA_TOKENS = 300  # 设计 §4.1：≤300 token，超限按桶优先级裁
 
 # 小流量灰度角色白名单（2026-09-07：仅 char13——当前唯一有 working_state 行的活跃角色）
 WORKING_STATE_INJECT_GRAY_CHARS = frozenset({13})
-# 小流量比例（10–20% 区间取中）
+# 注入比例（2026-09-07 起步时取小流量 10–20% 区间中值；09-11 扩量后＝白名单内全量，见下一行）
 WORKING_STATE_INJECT_RATIO = 1.0  # 2026-09-11 扩量：白名单内（当前仅 char13）全量注入，先拿到注入证据；其余角色仍恒不注入
 
 # 桶渲染顺序 = 桶优先级（ongoing > open_questions > relationship_notes，设计 §4.1）

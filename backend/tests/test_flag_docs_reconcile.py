@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """开关文档对账棘轮（2026-10-03 立，起因＝台账 §二 整节漂了十几天没人发现）。
 
-钉四件事，全部只依赖**代码字典**与**仓内文档**（不碰生产库，测试沙箱里也成立）：
+钉五件事，全部只依赖**代码字典**与**仓内文档**（不碰生产库，测试沙箱里也成立）；第 5 条 2026-10-04 随 A19 收口加入，见文件末 `_a19_marks`：
 
 1. `docs/feature-flags.md` §二 表内的键集合与 `AGENT_FLAGS` 字典**双向一致**（漏登＝热切能改但清单看不到；
    多登＝文档写了个不存在的键，下次照它操作会踩空）。
@@ -121,3 +121,61 @@ def test_台账二节声明了唯一真源与棘轮自身():
         "§二 标题必须写明逐键明细的唯一真源＝feature-flags.md（两处各列一遍必漂）")
     assert "feature-flags.md" in sec2, "正文里也要指向 feature-flags.md"
     assert "test_flag_docs_reconcile" in sec2, "§二 必须声明本棘轮的存在，否则后人不知道改文档会让测试红"
+
+
+# ── 第 5 条（2026-10-04，A19 收口）：拍过的处置不许只活在台账里 ──
+# 病根：10-02 把 16 个「默认 False 且生产库无覆盖行」的键逐条拍了（预留／候选不删），
+# 但代码注册行一个字都没写 ⇒ 下次来人还是从头重查一遍。这次连「预留 11」里混进了非布尔档
+# `domain_event_retention_days`、而布尔名单里的 `working_state_inject` 压根没人处置都看不出来。
+# 本条把名单钉成代码可见的三档，并让「改默认值却不同步处置」直接红灯。
+A19_RESERVED = {
+    "context_budget_reserve", "cross_char_fact_projection", "device_actions_plugin_enabled",
+    "memory_story_assemble", "memory_tiered_decay", "observation_label_v1", "perception_isolate",
+    "user_fact_goal_state", "user_fact_job", "user_fact_living",
+}
+A19_CANDIDATE = {
+    "decision_layer_shadow", "outreach_session_rate_v1", "recall_entity_match",
+    "recall_neighbor_block", "recall_recency_bonus",
+}
+A19_GRAYSCALE = {"working_state_inject"}
+A19_DISPOSITION = (
+    {k: "预留" for k in A19_RESERVED}
+    | {k: "候选不删" for k in A19_CANDIDATE}
+    | {k: "灰度中" for k in A19_GRAYSCALE}
+)
+
+
+def _a19_marks():
+    """返回 {键名: 处置档}——只认写在 AGENT_FLAGS 注册行上的「A19处置·X」。"""
+    import re
+    path = Path(__file__).resolve().parents[1] / "app" / "flags" / "agent_flags.py"
+    pat = re.compile(
+        r'^    "([a-z0-9_]+)": (?:False|True),.*A19处置·(预留|候选不删|灰度中)')
+    marks = {}
+    for line in path.read_text(encoding="utf-8").split("\n"):
+        m = pat.match(line)
+        if m:
+            marks[m.group(1)] = m.group(2)
+    return marks
+
+
+def test_A19处置必须标注在注册行上():
+    marks = _a19_marks()
+    missing = sorted(set(A19_DISPOSITION) - set(marks))
+    assert not missing, (
+        "这些键台账拍过处置、注册行却没标注：%s——处置只写在 docs/plans.md 里＝下次还得从头重查"
+        "（A19 的病根，10-04 立此条）" % missing)
+    extra = sorted(set(marks) - set(A19_DISPOSITION))
+    assert not extra, "注册行标了 A19处置、但不在本棘轮名单里：%s——新增处置请连本名单一起改" % extra
+    wrong = {k: (A19_DISPOSITION[k], marks[k]) for k in A19_DISPOSITION
+             if marks.get(k) != A19_DISPOSITION[k]}
+    assert not wrong, "处置档位与 10-02 拍板不一致（左＝本名单，右＝代码注册行）：%s" % wrong
+    assert len(A19_DISPOSITION) == 16, (
+        "A19 名单应恰为 16 个布尔键（三个非布尔档不归它管）")
+
+
+def test_A19十六键默认值仍是False():
+    flipped = sorted(k for k in A19_DISPOSITION if AGENT_FLAGS.get(k) is not False)
+    assert not flipped, (
+        "这些键被转正了：%s——转正＝把注册行处置从「预留/候选不删/灰度中」改写成"
+        "「已转正（日期）」，并同步 docs/plans.md §〇 A19 行与本名单，别只改默认值" % flipped)

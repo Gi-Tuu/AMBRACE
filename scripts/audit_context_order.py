@@ -3,7 +3,7 @@
 
 背景（2026-09-18 交接：上下文分区顺序审计）：本脚本**不改任何代码、不写库**，只做三件事——
 1)  import 注册表后调用 get_sections()，打印 order/key/target/slot/quota_tokens/enabled 真值表；
-2)  静态解析 context/legacy.py 的 ``if _sv and "<key>" in _sv`` 链，得到 append 块的**真实注入位置**
+2)  静态解析 context/assembly.py 的 ``if _sv and "<key>" in _sv`` 链，得到 append 块的**真实注入位置**
     （registry order 只决定 builder 执行顺序，不决定落位——这点必须靠代码枚举确认）；
 3)  静态解析 SYSTEM_PROMPT_TEMPLATE 的 ``{slot}`` 出现顺序 + 末段 user 消息位置，核对四段装配先后。
 
@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BACKEND = ROOT / "backend"
 sys.path.insert(0, str(BACKEND))
 
-LEGACY_PY = BACKEND / "app" / "agent" / "context" / "legacy.py"
+ASSEMBLY_PY = BACKEND / "app" / "agent" / "context" / "assembly.py"
 CB_PY = BACKEND / "app" / "agent" / "context_builder.py"
 
 # 内联（未注册）key 的落位分界：``state["context_messages"] = [`` 之前=填模板变量，之后=追加 system 块
@@ -49,7 +49,7 @@ def legacy_consumption(reg_target: dict[str, str] | None = None) -> tuple[list[t
     硬切，会把主模板填充段尾部（legacy.py 600~610 的 ``if "key" in _sv`` 赋值）误报成 append，
     B 表因此混进 template 分区。未注册的内联 key 仍按主模板块锚点前后的行号判定。
     """
-    src = _read(LEGACY_PY)
+    src = _read(ASSEMBLY_PY)
     lines = src.splitlines()
     anchor = next((i for i, ln in enumerate(lines, 1) if MAIN_TEMPLATE_ANCHOR in ln), 600)
     pat_in = re.compile(r'"([a-z_]+)"\s+in\s+_sv')
@@ -159,7 +159,7 @@ def main() -> int:
         print(f"{i:>3} slot={k:<22} <- key={key!s:<24} order={sec.order if sec else '-'}")
 
     # 尾部锚点行号实时解析（旧版硬编码 1191/1204 已随代码漂移，改为按源码搜索）
-    _lsrc = _read(LEGACY_PY).splitlines()
+    _lsrc = _read(ASSEMBLY_PY).splitlines()
 
     def _at(sub: str, frm: int = 0) -> int | None:
         return next((i for i, ln in enumerate(_lsrc[frm:], frm + 1) if sub in ln), None)
@@ -176,7 +176,7 @@ def main() -> int:
     print("1) system 主模板块 #1：SYSTEM_PROMPT_TEMPLATE.format(...)（含 chat_history 槽，见 C 表位置）")
     print("2) 追加 system 块：按 B 表顺序（顺序由 legacy.py if 链决定，非 registry order）")
     print(f"3) user 最新消息：legacy.py:{_user_ln} role=user（宿主写入，恒为最后一条）")
-    print(f"4) 插件 context_inject / inject_prompt_skill：legacy.py:{_hook_ln} 起，由宿主位移到 user **之前**（方案 C，2026-09-18）")
+    print(f"4) 插件 context_inject / inject_prompt_skill：assembly.py:{_hook_ln} 起，由宿主位移到 user **之前**（方案 C，2026-09-18）")
     print(f"   + 宿主不变式 _enforce_user_message_last：legacy.py:{_enf_ln}（配额裁剪 legacy.py:{_quota_ln} 之前）；nodes.py 同护栏")
 
     # E. Markdown 表格（2026-09-28 新增：可直接粘进 docs/context-injection-order.md，免手抄）

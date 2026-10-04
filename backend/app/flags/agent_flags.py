@@ -15,17 +15,21 @@ AGENT_FLAGS = {
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：agent_daily_memory_maintenance（日终记忆维护）
     "agent_loop_group_chat": True,  # Phase E（2026-08-18）：群聊回应走统一 Runtime（2026-08-18 用户拍板全量体验；回退改 False 重启即恢复旧链路）
     "agent_loop_social": True,  # Phase E（2026-08-18）：渠道/插件主动候选走统一 Runtime（X5 渠道化改名；回退改 False 重启即恢复旧链路）
+    # F1/F2（2026-08-18 用户拍板全量开启）：群聊/渠道社交短回复走轻量上下文（单次 prompt ≈-64%；
+    #   回退改 False 重启即恢复全量 build_context）。与 agent_loop_group_chat/agent_loop_social 正交：
+    #   前者管走不走 Runtime，后者管 Runtime 内是否用轻量上下文
     "agent_social_light_context": True,
-    "weave_3d": True,  # 织网 3D（P2 转默认开；仅客户端画布读它选 2D/3D 视图；低端机客户端自动降级 2.5D）  # F1/F2（2026-08-18 用户拍板全量开启）：群聊/渠道社交短回复走轻量上下文（单次 prompt ≈-64%；回退改 False 重启即恢复全量 build_context）。与 agent_loop_group_chat/agent_loop_social 正交：前者管走不走 Runtime，后者管 Runtime 内是否用轻量上下文
+    "weave_3d": True,  # 织网 3D（P2 转默认开；仅客户端画布读它选 2D/3D 视图；低端机客户端自动降级 2.5D）
     "proactive_naturalness_score": True,  # #28 ①（2026-08-24）：低优先主动消息自然度评分——生成后按规则评分，低于阈值重试 1 次/仍低则降级跳过；关=纯现状
     "proactive_user_rhythm": True,  # #28 ②（2026-08-24）：用户作息学习——从聊天/主动日志推断活跃时段，低优先主动消息在时段外降优先级/推迟；关=纯现状
-    # 群聊游戏 Phase 1（2026-08-26）：总开关=群聊游戏（各游戏/记忆指针/AI 自动回合开关已于 2026-09-17 删除，功能常驻，不再下放修改按钮）
+    # 群聊游戏 Phase 1（2026-08-26）：总开关=群聊游戏（各游戏/记忆指针/AI 自动回合开关已于 2026-09-17 从字典删除，功能常驻）。
+    #   读侧仍留着 `api/games.py` 的 AGENT_FLAGS.get(f"game_{类型}", True) 两处按类型查询——键不在字典 ⇒ **恒回落 True**，要真按类型关必须先把键加回字典
     "group_chat_games": True,        # 游戏总开关（关=游戏入口/API 不展示，可回退）
     # ── M1 记忆 P0（2026-08-31，docs/archive/architecture/执行方案_记忆与生成_20260831.md S1）──
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：recall_top5（主路召回出口 5 条）
     "memory_temporal_recall": True,  # 已转正（2026-10-02）：生产自 2026-09-03 起已开、非灰度；默认改为开（行为与现网一致），回退＝置 False
     "memory_recall_second_hop": True,  # 已转正（2026-10-02）：生产自 2026-09-05 起已开、非灰度；默认改为开（行为与现网一致），回退＝置 False
-    "memory_story_assemble": False,  # Ariadne 模块 C（2026-09-04）：沿链半故事化组装（默认关；链建链器另案——空 index 时即使开 flag 也走原路径逐字节等价；建链器落地后开=成链小块注入）
+    "memory_story_assemble": False,  # Ariadne 模块 C（2026-09-04）：沿链半故事化组装（默认关；链建链器另案——空 index 时即使开 flag 也走原路径逐字节等价；建链器落地后开=成链小块注入）  〔A19处置·预留（10-02 拍）＝链建链器另案未落地，开也无料可组装；键留着，别当死键删〕
     # ── B1-② 记忆链条建链器（2026-09-04，方案 §10-§18，阶段 C0-C5）──
     # memory_chain_builder 开=写入后异步挂链（chain_id/parent_id/node_type，零额外 LLM，
     #   复用 save_memory 已算 embedding，只对 event/insight）；关=不挂链（回归保护）。
@@ -40,14 +44,14 @@ AGENT_FLAGS = {
     # 为什么不用既有 flag 承载：memory_temporal_recall / memory_recall_second_hop / memory_peak_cutoff /
     #   memory_chain_expand 生产 runtime_flags **已拨开**，复用任一把闸＝上线即改行为，违背「默认关」硬要求；
     #   且四条语义各不相干（用户点时间才补路 / 模型主动补查 / 弱相关弃权 / 沿链而非时间邻域）。
-    "recall_recency_bonus": False,  # ①rerank 加显式时效档位（≤24h +20 / ≤7d +15 / ≤30d +10，分档不叠加，与既有 +20/+15/+10 同量级）；开=新条更易靠前（截断场景可挤掉低分旧条），条数/预算不变
-    "recall_neighbor_block": False,  # ②命中条带出同角色（群记忆同群）±30 分钟邻居——**只补本轮不足 limit 的空缺槽位**，不挤占已有结果、不新增条数；memory_peak_cutoff 开时不生效（不破坏弃权语义）
+    "recall_recency_bonus": False,  # ①rerank 加显式时效档位（≤24h +20 / ≤7d +15 / ≤30d +10，分档不叠加，与既有 +20/+15/+10 同量级）；开=新条更易靠前（截断场景可挤掉低分旧条），条数/预算不变  〔A19处置·候选不删（10-02 拍）＝已实现有覆盖，专门测试 test_recall_recency_and_neighbors.py〕
+    "recall_neighbor_block": False,  # ②命中条带出同角色（群记忆同群）±30 分钟邻居——**只补本轮不足 limit 的空缺槽位**，不挤占已有结果、不新增条数；memory_peak_cutoff 开时不生效（不破坏弃权语义）  〔A19处置·候选不删（10-02 拍）＝已实现有覆盖，专门测试 test_recall_recency_and_neighbors.py〕
     # ── 批 0-11（2026-09-28，雷达 44）专名匹配「第三路」──
     # 默认 False＝那条 LIKE 粗筛查询一次都不发、RRF 仍是两路、排序与 trace 逐字节旧行为。
     # 开＝在向量（bge-m3）+ 关键词（BM25）之外补一路**确定性**专名匹配（人名/昵称/关系称谓，
     #   纯字符串+正则+字典，零模型零外网零新依赖，见 memory/entity_match.py），命中的 id 并入
     #   既有 RRF 与 _rerank：只多一路证据（重叠即 +5），不插队、不剔除、条数与预算不变。
-    "recall_entity_match": False,
+    "recall_entity_match": False,  # 〔A19处置·候选不删（10-02 拍）＝已实现有覆盖，专门测试 test_entity_match_third_route.py；要删得连第三路实现一起回收〕
     "proactive_outreach_v2": False,
     # B1-③ 配额让位（2026-09-08，用户拍板）：proactive_inactive_char_skip 开=近 24h 内无任何用户
     #   消息的角色直接停发主动搭话（greeting/proactive_chat/goodnight/status_update/motivation）——
@@ -68,7 +72,7 @@ AGENT_FLAGS = {
     # 命中留痕：proactive_trigger_logs.trigger_reason 带 [gate=hour|type|session_rate]。
     "outreach_hour_window_v1": False,
     "outreach_type_mix_v1": False,
-    "outreach_session_rate_v1": False,
+    "outreach_session_rate_v1": False,  # 〔A19处置·候选不删（10-02 拍）＝投放三闸之一，专门测试 test_domain_decision_pacing_purity.py〕
     "memory_peak_cutoff": False,  # 默认关（用例钉死：test_memory_lookup_endpoint::test_条数硬顶_limit超20夹到20）；生产已由 runtime_flags 拨开（2026-09-05）
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：recall_diversify（按类型多样性重排）
     # ── Life Loop v1.1（2026-08-26；2026-08-27 用户拍板全量开启）──
@@ -76,7 +80,7 @@ AGENT_FLAGS = {
     "life_loop_llm": True,                # 允许 LLM 生成生活文案（每角色每日≤2次）
     "life_chat_driven_enabled": True,     # 聊天→生活意图链路
     "review_daily_plus": True,            # M1-S7（2026-08-31）：主动复习日额度 3→4（关=回退 3；90min 间隔不变）
-    "memory_tiered_decay": False,         # M2-S2（2026-08-31）：分层衰减——高置信持久/低置信加速/跌破阈值冷归档。默认关（灰度开关，开启前先跑 scripts/diagnostics/memory_tiering_snapshot.py 快照）；关=逐字节现状
+    "memory_tiered_decay": False,         # M2-S2（2026-08-31）：分层衰减——高置信持久/低置信加速/跌破阈值冷归档。默认关（灰度开关，开启前先跑 scripts/diagnostics/memory_tiering_snapshot.py 快照）；关=逐字节现状  〔A19处置·预留（10-02 拍）＝开启前须先跑 memory_tiering_snapshot.py 快照，属有前置条件的留键〕
     "marker_recovery": True,              # M2-S5（2026-08-31）：标记截断保底——A 通道标记被截断时本条源消息立即走通道 B 提取（写侧查重防重复）；关=仅批量补提
     # ── X3 Provider 端口（2026-08-31，docs/archive/architecture/执行方案_扩展化_20260831.md 批次 X3）──
     # provider_registry 开=LLM/TTS 经 app/providers 注册口解析实现（内置 openai_compatible/dashscope 为默认实现，
@@ -89,7 +93,7 @@ AGENT_FLAGS = {
     # M3-b（2026-09-07）：工作记忆注入**全量**开关。关=只按角色小流量灰度（见 section_working_state.py
     # 的 WORKING_STATE_INJECT_GRAY_CHARS / WORKING_STATE_INJECT_RATIO，当前仅 char13 全量会话）；
     # 开=所有角色注入。用于后续扩量与热回滚（回退=置回 False）。
-    "working_state_inject": False,
+    "working_state_inject": False,  # 〔A19处置·灰度中（10-04 补账）＝走代码级白名单而非库覆盖，RATIO 自 09-11 已＝1.0（白名单仅 char13）；10-04 定＝维持白名单、不放开到所有角色（只读实测：生产只有 char13 有 81 行、char6 有 3 行 working_state 行 ⇒ 当下拨 True 几乎不产生新证据；而默认值一改就是「以后凡是攒出行的角色都默认进上下文」的永久语义变更，且批 0-1 判效评测集主体还没做）。键保留当热回滚闸〕
     "life_home_worldmap_enabled": True,   # 小家大地图（§11）
     # ── 生命感增强 v1（#63，2026-08-27；全部默认关，可独立回退）──
     "reply_delay_enabled": True,         # 机制2：动态回复延迟（用户主动消息才生效）
@@ -135,10 +139,10 @@ AGENT_FLAGS = {
     #    真机观察 C2 新鲜窗 / 回家识别 / C3 锚点稳定后，再经 runtime flag 手动只开 location）──
     # 语义：总闸开=全槽启用；总闸关时按各槽 flag 独立决定（user_fact_slot_enabled）。
     "user_fact_location": False,      # 位置：最不敏感、最易过时；GPS/城市/聊天归槽写 location
-    "user_fact_job": False,           # 工作/学业
+    "user_fact_job": False,           # 工作/学业  〔A19处置·预留（10-02 拍）＝细粒度槽按 09-10 拍板全默认关，生产要开走 runtime_flags 单拨〕
     "user_fact_relationship": False,  # 感情状态（隐私，默认关）
-    "user_fact_living": False,        # 居住状况（独居/和谁住）
-    "user_fact_goal_state": False,    # 近期目标/状态
+    "user_fact_living": False,        # 居住状况（独居/和谁住）  〔A19处置·预留（10-02 拍）＝同上（细粒度槽不转正）〕
+    "user_fact_goal_state": False,    # 近期目标/状态  〔A19处置·预留（10-02 拍）＝同上（细粒度槽不转正）〕
     "user_fact_health": False,        # 健康（隐私，默认关）—— 2026-10-02 复核：属隐私槽，且块注释记「09-10 用户拍板：细粒度槽全部默认关」，故不转正（生产用 runtime_flags 单独开）
     # ── 2026-09-17 批次二（任务2）：位置类不吃细槽总闸（跨角色共享用户权威现状）──
     # user_current_location_share 开（默认）= 读取/注入侧独立放行 location 槽（共享读路径
@@ -154,7 +158,7 @@ AGENT_FLAGS = {
     "cross_char_fact_sync": False,
     # cross_char_fact_projection：变化投影——开=对齐时按模板投影一条 global_sync 记忆进记忆本
     #   （零 LLM，skip_dedup）；关=只标 stale + 靠 [USER NOW] 注入（默认推荐关）。
-    "cross_char_fact_projection": False,
+    "cross_char_fact_projection": False,  # 〔A19处置·预留（10-02 拍）＝依赖 cross_char_fact_sync 先开，投影形态未定版〕
     # ── 一机多主 / 渠道绑定 per-账号化（2026-09-05，交接拍板，2026-09-17 落地默认开；关=回落旧路径）──
     # channel_binding_v2 开=渠道绑定读 channel_bindings 新表（租户隔离，读写走 ChannelBindingService）；
     #   关=渠道插件/读取层回落旧全局 config allowed_character_ids 串（单主部署语义等价，零行为变化）。
@@ -198,8 +202,8 @@ AGENT_FLAGS = {
     # review_exclude_expired_plan 开=复习选片/情境复习排除过期计划与瞬时状态（L1，默认开；关=旧选片）；
     # review_reinforce_event_cap 开=一次性事件经"主动复习成功"强化按 tense 分流收口（L2：过期计划
     #   S≤10/次数≤3，往事适度 S≤30/次数≤6，达上限退出复习轮转；检索/写入通道不受影响；默认开）；
-    # review_reminisce_framework 开=复习 hint 改「回忆框架」+ 时态口吻 + 现状锚点 + 输出本地闸门
-    #   （L3，默认开；关=逐字节回旧 hint）；
+    # review_reminisce_framework 开=复习 hint 改「回忆框架」+ 时态口吻 + 现状锚点（L3，默认开；关=逐字节回旧 hint）；
+    #   注：输出本地闸门（memory_review.py 的 _is_wrong_tense_directive，拦"当下叮嘱式回忆"）**不受本键门控**，一直生效；
     # review_plan_expire_stale 开=每日维护把过期计划自动置 stale（L4，默认关灰度）；
     # review_plan_validity_extract 开=提取/写入侧给计划写 valid_to（L4，默认关灰度）。
     "review_exclude_expired_plan": True,
@@ -335,7 +339,7 @@ AGENT_FLAGS = {
     # 关=**逐字旧行为**（有效预算仍是 9000，埋点字段与旧版一致；没裁剪就一条都不写）。
     # 回退：置回 False（runtime_flags 热切，无需重启）。默认关=零行为变化；
     #   开前沿用既有安全阀口径：确认 quota_clipped_sections 仍为 0，否则=预留挤掉了真实内容，回滚。
-    "context_budget_reserve": False,
+    "context_budget_reserve": False,  # 〔A19处置·预留（10-02 拍）＝开前沿用 quota_clipped_sections 仍为 0 的安全阀口径，未满足前先挂〕
     # ── 控制台删号·回收站到期自动清除（第二期第二批，2026-09-24；高危默认关）──
     # 开=后台调度器在低峰窗口（默认北京时间 02:00–06:00）扫「宽限期已到」的回收站账号，
     #   逐个交给 account_purge.purge_account 物理清除（进程内串行、每轮限量、最小间隔节流）。
@@ -349,14 +353,14 @@ AGENT_FLAGS = {
     #   下发可执行凭据）。三条键默认由服务器锁定（flag_service.SERVER_LOCKED_DEFAULT_KEYS）：
     #   App 开关页可见但不可自助改，改写入口仍是服务器控制台（PUT /admin/server/device-actions/switches）。
     "device_actions_enabled": False,
-    "device_actions_plugin_enabled": False,
+    "device_actions_plugin_enabled": False,  # 〔A19处置·预留（10-02 拍）＝安全门，刻意保持默认关，永不转正〕
     "device_actions_force_dry_run": True,
     # ── 决策层阶段 0：影子留痕（A3，2026-09-25；默认关）──
     # 开=在已接线的决策点（当前＝记忆评星、记忆时态）把「输入/输出/耗时/来源=legacy」记进
     #   agent_task_logs（route=decision_layer_shadow），**判定结果仍由原算法给出、逐字不变**；
     #   攒够这些留痕才谈阶段 1 的候选后端与校准（docs/decision-layer-research.md §8.6、§10）。
     #   关=零行为：三原语只做一次透传调用，不建记录、不起计时器、不碰 IO，与没接这层完全一致。
-    "decision_layer_shadow": False,
+    "decision_layer_shadow": False,  # 〔A19处置·候选不删（10-02 拍）＝阶段 0 已在接线，专门测试 test_decision_layer.py；攒够留痕才谈阶段 1〕
     # ── A4 批 2 / T4 P1：召回门影子留痕（2026-09-27；默认关）──
     # 开=每轮检索后多算一次「这轮该不该检索」的纯规则判定，并把判定与实际命中数一起记进
     #   agent_task_logs（route=recall_gate_shadow），**是否检索仍完全按原逻辑执行、逐字不变**；
@@ -383,7 +387,7 @@ AGENT_FLAGS = {
     "ai_rating_vote3": False,
     # ── A4 批 6 / T5 M0 项1：注入视图分离·现状面子句（2026-09-27；默认关）──
     # 开=注册表版「AI 生活」注入（agent/context/section_overlay.py life_share）补上现状面状态子句
-    #   current_facts_status_clause()，与 legacy 版（context/legacy.py:871）口径对齐；
+    #   current_facts_status_clause()，与装配器版（context/assembly.py:513）口径对齐；
     #   关=**逐字节旧行为**（该 select 的 where 不附加任何子句，SQL 与改动前一致）。默认关=零行为变化。
     # 注意：现状面开关 current_facts_active_only（线上默认 True）开时子句才是「恒 active」，
     #   本键单独开、current_facts_active_only 关时子句退化为旧口径（memory_supersede 门控）。
@@ -433,7 +437,7 @@ AGENT_FLAGS = {
     #   ②摘要原料：置顶摘要 / 身份画像的取料查询排除被隔离条（专治「污染记忆再凝成画像注回 prompt」的二阶放大）；
     #   ③召回降权：被隔离感知条仍召回、不剔除，仅在既有 rerank 加分体系里吃一个负向偏置（见 retrieve.py）。
     # 用户点「这是真的」认可后（epistemic_status=FACT）自动脱隔，三条禁令一并解除，不引入第二套晋升机制。
-    "perception_isolate": False,
+    "perception_isolate": False,  # 〔A19处置·预留（10-02 拍）＝感知转异常驱动时要拨这把闸，留键〕
     # ── 模型自写记忆「依据校验」影子档（2026-09-29，方案《小方案_模型自写记忆FACT口径_v1》方案 B）──
     # 背景：标记路径（模型自写【记忆：…】）的归属由 memory/speaker.py 按措辞推断，「无主语 + 本轮有用户
     #   消息」判 user/FACT ⇒ 模型自己的推断、复述感知甚至编造都会以「用户说过的事实」进长期记忆（可竞争
@@ -493,7 +497,7 @@ AGENT_FLAGS = {
     # 同批附带（与本键无关、不受本键门控）：provenance 词表收口进 app/actors.py OBS_PROVENANCE_*
     #   （纯机械替换、值逐字不变）；events/store.py 的 actor/origin 只判定+只计数（不改落库值）。
     # 回退：置回 False（runtime_flags 热切，无需重启）；风险面＝注入文本变长，牵动前端块切分展示。
-    "observation_label_v1": False,
+    "observation_label_v1": False,  # 〔A19处置·预留（10-02 拍）＝风险面＝注入文本变长牵动前端块切分，未清完前先挂〕
     # ── A4 批 4 / T2 M1（2026-09-30）：念头池影子供给总闸（默认关＝逐字节旧行为）──
     # 开＝抽取 → 源侧配额（按面每日硬闸 + 入池准入门槛，app/domain/thought/quota.py）→ 幂等
     #   去重 → 写 thought_pool 表 + 一条 trace（route=thought_pool_shadow），只攒料不使用；

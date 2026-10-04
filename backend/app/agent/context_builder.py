@@ -23,7 +23,7 @@ _logger = get_logger("agent.context_builder")
 
 # Step 4（注册表试水）：MCP / 记忆两 section 逻辑已迁至 app.agent.context。
 # 此处重新导出同名符号（同一对象/共享进程内状态），保证既有调用点与测试（context_builder.* 引用）
-# 以及 build_context_legacy 内联计算均使用同一份实现与同一次去重轮次状态。
+# 以及装配器（context/assembly.py）内联计算均使用同一份实现与同一次去重轮次状态。
 from app.agent.context.section_memories import (
     MEMORY_DEDUP_WINDOW_ROUNDS,
     MEMORY_DEDUP_MAX_PER_CHAR,
@@ -47,7 +47,6 @@ from app.agent.context.section_mcp import (
 # 对外再导出（供既有调用点 / 测试用 context_builder.* 引用；同一对象/共享进程内状态）。
 __all__ = [
     "build_context",
-    "build_context_legacy",
     "SYSTEM_PROMPT_TEMPLATE",
     "format_memory_line",
     "epistemic_prefix",
@@ -831,7 +830,7 @@ _epistemic_prefix = epistemic_prefix
 
 # 注：_build_mcp_tool_declarations / _format_mcp_declarations / _build_mcp_tools_text /
 #     _format_mcp_resources / _build_mcp_resources_text 已迁至
-#     app.agent.context.section_mcp（上方重新导出，供既有测试与 build_context_legacy 使用）。
+#     app.agent.context.section_mcp（上方重新导出，供既有测试与装配器 assemble_context 使用）。
 
 SYSTEM_PROMPT_TEMPLATE = """你是一个名叫"{name}"的朋友。
 {gender_info}
@@ -948,22 +947,11 @@ SYSTEM_PROMPT_TEMPLATE = """你是一个名叫"{name}"的朋友。
 气氛合适时可单独发一行 `emoji 名称` 作为一条消息；一次最多一行、放文字后；普通对话别发（约每 10 条最多 1 次）。"""
 
 
-async def build_context_legacy(state: dict, *, stream: bool | None = None, _section_values: dict | None = None, _trim: dict | None = None) -> dict:
-    """旧实现（薄壳委托，F3 2026-08-31）：实现已迁至 app.agent.context.legacy.legacy_body。
-
-    - 本壳保留原签名与文档语义；外部 import/monkeypatch 本模块名字的行为不变
-      （legacy 内部已改为显式 import 本模块名字，见 legacy.py）。
-    - 稳定一版本、trace 无回退命中后，连本壳与 legacy.py 一起删除（净删约 1100 行）。
-    """
-    from app.agent.context.legacy import build_context_legacy as _impl
-    return await _impl(state, stream=stream, _section_values=_section_values, _trim=_trim)
-
-
 async def build_context(state: dict, *, stream: bool | None = None) -> dict:
     """构建完整的上下文 prompt（公开入口）。
 
     装配一律走注册表入口 ``app.agent.context.build_context``（MCP/记忆等 section 经注册表计算，
-    最终组装仍委托 ``build_context_legacy``，行为零变化）。
+    最终组装仍委托 ``assemble_context``，行为零变化）。
     原 ``agent_context_registry`` flag 与其 flag-off 分支已于 **A22 ⑤-b（2026-10-03）转正删除**：
     判据＝生产库 ``runtime_flags`` 无该键覆盖行 ＋ 回退观测点 ``context_legacy_flag_off``
     自接入起 7 周（2026-08-15→10-03，954,765 行留痕）**0 命中**。

@@ -25,7 +25,7 @@ from sqlalchemy import select
 from _dbclone import clone_engine, make_session_factory
 
 import app.agent.context as _ctx  # noqa: F401  触发所有 section_*.py 注册
-from app.agent.context import legacy as legacy_mod
+from app.agent.context import assembly as assembly_mod
 from app.agent.context.sections import ContextSection, TARGET_APPEND, TARGET_TEMPLATE
 from app.agent.context import section_overlay as _overlay
 from app.agent.loop import AGENT_FLAGS
@@ -176,10 +176,10 @@ def asm_db(tmp_path_factory):
             await db.commit()
 
     asyncio.run(_seed())
-    old = legacy_mod.async_session_factory
-    legacy_mod.async_session_factory = factory
+    old = assembly_mod.async_session_factory
+    assembly_mod.async_session_factory = factory
     yield factory
-    legacy_mod.async_session_factory = old
+    assembly_mod.async_session_factory = old
     asyncio.run(engine.dispose())
 
 
@@ -214,7 +214,7 @@ def _assemble() -> dict:
         "status_update": None,
         "lang": "zh",
     }
-    return asyncio.run(legacy_mod.build_context_legacy(
+    return asyncio.run(assembly_mod.assemble_context(
         state, _section_values={"relationship": ""}, _trim=_trim_limits(True),
     ))
 

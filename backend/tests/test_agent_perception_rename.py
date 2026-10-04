@@ -72,7 +72,7 @@ def test_调用方已改用新路径(consumer):
     assert NEW_MODULE in text
 
 
-def test_legacy_已不再自己做分类_A22第五刀c随迁():
+def test_assembly_已不再自己做分类_A22第五刀c随迁():
     """R4 随迁（A22 ⑤-c，2026-10-03）：``app.agent.context.legacy`` 从「必须引用新路径」改为「两边都不许引用」。
 
     原参数化把 legacy 与 nodes/section_persona 并列，断言它引用新分类器模块——但那个调用点位于
@@ -81,7 +81,7 @@ def test_legacy_已不再自己做分类_A22第五刀c随迁():
     断言原意一字未变（**绝不允许有人把旧路径 import 捡回来**）；这里额外钉死「legacy 也不再引用新路径」，
     防止有人往回退化的方向补一份重复分类实现。
     """
-    text = Path(importlib.import_module("app.agent.context.legacy").__file__).read_text(encoding="utf-8")
+    text = Path(importlib.import_module("app.agent.context.assembly").__file__).read_text(encoding="utf-8")
     assert OLD_MODULE not in text, "旧感知模块被捡回来了"
     assert NEW_MODULE not in text, (
         "legacy 又出现分类器调用 ⇒ 与 section_persona 形成双实现（⑤-c 消灭的正是这类漂移）")

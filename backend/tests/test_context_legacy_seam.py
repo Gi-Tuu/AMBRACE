@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""legacy 接缝自同步回归测试（2026-08-31 真机暴露）。
+"""装配器接缝自同步回归测试（2026-08-31 真机暴露；A23 起模块名＝assembly.py）。
 
 事故：F3 迁移时 legacy.py 的 _sync_seams() 定义了但从未被调用——裸名
 async_session_factory/AICharacter/select 等在真实运行（非打桩单测）时 NameError，
 聊天流式与 chunked 双路径全灭（气泡生成完即消失）。
-断言：build_context_legacy 在真实内存库上执行不再抛 NameError（业务异常可接受）。
+断言：assemble_context 在真实内存库上执行不再抛 NameError（业务异常可接受）。
 """
 import asyncio
 
@@ -12,7 +12,6 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.agent import context_builder
 from app.db import database as db_mod
 
 
@@ -33,7 +32,7 @@ def memory_db(monkeypatch):
     asyncio.run(engine.dispose())
 
 
-def test_build_context_legacy_no_name_error(memory_db):
+def test_assemble_context_no_name_error(memory_db):
     """真实内存库 + 未打桩 context_builder：legacy 完整执行不得抛 NameError（接缝自同步生效）。"""
     state = {
         "user_message": "在吗",
@@ -54,7 +53,8 @@ def test_build_context_legacy_no_name_error(memory_db):
     }
 
     async def _run():
-        return await context_builder.build_context_legacy(state)
+        from app.agent.context.assembly import assemble_context
+        return await assemble_context(state)
 
     try:
         asyncio.run(_run())
@@ -67,7 +67,7 @@ def test_build_context_legacy_no_name_error(memory_db):
 
 def test_legacy_globals_contain_seam_names():
     """调用一次后，legacy globals 里必须存在接缝名字（自同步生效的直接证据）。"""
-    from app.agent.context import legacy as legacy_mod
+    from app.agent.context import assembly as assembly_mod
 
     state = {"user_message": "x", "character_id": 999999, "user_id": 1,
              "session_id": 1, "lang": "zh", "context_messages": [],
@@ -75,8 +75,8 @@ def test_legacy_globals_contain_seam_names():
              "ai_response": "", "should_update_memory": False, "new_memories": [],
              "emotional_state": "", "bio_update": None, "status_update": None}
     try:
-        asyncio.run(legacy_mod.build_context_legacy(state))
+        asyncio.run(assembly_mod.assemble_context(state))
     except Exception:
         pass
     for name in ("async_session_factory", "AICharacter", "select"):
-        assert hasattr(legacy_mod, name), f"legacy globals 缺 {name}（_sync_seams 未生效）"
+        assert hasattr(assembly_mod, name), f"legacy globals 缺 {name}（_sync_seams 未生效）"

@@ -4,8 +4,8 @@
 背景：5 个 append 分区（``current_state_anchor`` / ``user_now`` / ``working_state`` /
 ``recall_capability`` / ``group_char_cognition``）此前「注册了但从未挂载」——builder 每轮
 都跑、结果无人消费，等于永不注入（见 docs/context-order-convention.md §2.4）。本文件用
-**真正的装配函数** ``build_context_legacy`` 断言这些块的文本确实出现在 ``context_messages``
-里，并加一条**结构性护栏**：任何新增的 append 分区若忘了在 ``legacy.py`` 挂载，本文件直接变红。
+**真正的装配函数** ``assemble_context`` 断言这些块的文本确实出现在 ``context_messages``
+里，并加一条**结构性护栏**：任何新增的 append 分区若忘了在 ``assembly.py`` 挂载，本文件直接变红。
 
 覆盖：
 1. 5 个分区的挂载点断言（块文本真的进了 system 消息）+ 闸门关/无数据时的零行为断言；
@@ -27,13 +27,13 @@ from sqlalchemy import select
 from _dbclone import clone_engine, make_session_factory
 
 import app.agent.context as _ctx  # noqa: F401  触发所有 section_*.py 注册
-from app.agent.context import legacy as legacy_mod
+from app.agent.context import assembly as assembly_mod
 from app.agent.context.sections import TARGET_APPEND, TARGET_TEMPLATE, get_sections
 
-LEGACY_PY = Path(__file__).resolve().parents[1] / "app" / "agent" / "context" / "legacy.py"
+ASSEMBLY_PY = Path(__file__).resolve().parents[1] / "app" / "agent" / "context" / "assembly.py"
 CONTEXT_BUILDER_PY = Path(__file__).resolve().parents[1] / "app" / "agent" / "context_builder.py"
 
-# 本批挂载的 5 个分区（顺序 = legacy.py 挂载链中的先后，用于相对顺序断言）
+# 本批挂载的 5 个分区（顺序 = assembly.py 挂载链中的先后，用于相对顺序断言）
 MOUNTED_KEYS = (
     "current_state_anchor",
     "user_now",
@@ -43,15 +43,15 @@ MOUNTED_KEYS = (
 )
 
 # 显式豁免清单（走「工具/资源声明」专用通道，不是 ``_sv[key]`` 直挂，属"已挂载"）：
-# mcp_tools / mcp_resources 由 legacy.py 用 ``_section_values.get("mcp_*")`` 取出后经
+# mcp_tools / mcp_resources 由 assembly.py 用 ``_section_values.get("mcp_*")`` 取出后经
 # ``mcp_*_blocks`` 变量在主模板块之后统一 append（承载流式不注入 / 配额 / flag-off 内联兜底
 # 等特殊逻辑），因此不出现在 ``if _sv and "<key>" in _sv`` 链里。
 EXEMPT_APPEND_KEYS = {"mcp_tools", "mcp_resources"}
 
-# 批 4 M2-b1（2026-10-01）：经 **context_builder 装配尾部**注入的 append 分区（非 legacy.py if 链）。
+# 批 4 M2-b1（2026-10-01）：经 **context_builder 装配尾部**注入的 append 分区（非 assembly.py if 链）。
 # 这类分区的 builder 仍由注册表 ``_run_sections`` 执行并把结果缓存进 ``state``，但**落位**由
 # ``context_builder._inject_thought_pool_block`` 在装配尾部插到 continue_payload（【系统指令】）
-# 之前（红线②：诉求/指令恒最后）——故它不在 legacy.py 的 ``_sv`` 消费点里，但**确实被消费**
+# 之前（红线②：诉求/指令恒最后）——故它不在 assembly.py 的 ``_sv`` 消费点里，但**确实被消费**
 # （不是"算了就丢"）。配套复核见 ``test_context_builder_mounted_keys_really_consumed``。
 CONTEXT_BUILDER_MOUNTED_KEYS = {"thought_pool"}
 
@@ -60,12 +60,12 @@ CONTEXT_BUILDER_MOUNTED_KEYS = {"thought_pool"}
 
 
 def _append_mount_keys() -> set[str]:
-    """从 legacy.py 源码抽取「主模板块之后」被消费的分区 key（= 真实 append 挂载点）。
+    """从 assembly.py 源码抽取「主模板块之后」被消费的分区 key（= 真实 append 挂载点）。
 
-    与 scripts/audit_context_order.py 的口径一致（落位由 legacy.py 源码先后决定，
+    与 scripts/audit_context_order.py 的口径一致（落位由 assembly.py 源码先后决定，
     registry order 不算），但更严格：只认主模板块之后的消费点。
     """
-    lines = LEGACY_PY.read_text(encoding="utf-8").splitlines()
+    lines = ASSEMBLY_PY.read_text(encoding="utf-8").splitlines()
     start = next(i for i, ln in enumerate(lines) if 'state["context_messages"] = [' in ln)
     pats = (
         re.compile(r'"([a-z_]+)"\s+in\s+_sv'),
@@ -105,10 +105,10 @@ def asm_db(tmp_path_factory):
             await db.commit()
 
     asyncio.run(_seed())
-    old = legacy_mod.async_session_factory
-    legacy_mod.async_session_factory = factory
+    old = assembly_mod.async_session_factory
+    assembly_mod.async_session_factory = factory
     yield factory
-    legacy_mod.async_session_factory = old
+    assembly_mod.async_session_factory = old
     asyncio.run(engine.dispose())
 
 
@@ -146,7 +146,7 @@ def _assemble(sv: dict, *, user_id=1) -> list[dict]:
         state.pop("user_id")
     else:
         state["user_id"] = user_id
-    out = asyncio.run(legacy_mod.build_context_legacy(
+    out = asyncio.run(assembly_mod.assemble_context(
         state, _section_values={"relationship": "", **sv}, _trim=_trim_limits(True),
     ))
     return out["context_messages"]
@@ -169,7 +169,7 @@ def test_mounted_append_block_reaches_prompt(asm_db, key):
 
 @pytest.mark.parametrize("key", MOUNTED_KEYS)
 def test_append_block_absent_when_empty_or_missing(asm_db, key):
-    """闸门关/无数据（空列表）或键缺失（纯 legacy 路径）→ 不追加任何块（零行为变化）。"""
+    """闸门关/无数据（空列表）或键缺失（纯自算路径 _section_values=None）→ 不追加任何块（零行为变化）。"""
     baseline = len(_system_texts(_assemble({})))
     assert len(_system_texts(_assemble({key: []}))) == baseline, f"{key} 空列表仍追加了块"
     assert len(_system_texts(_assemble({}))) == baseline
@@ -281,10 +281,10 @@ def test_working_state_real_builder_injected(asm_db, monkeypatch):
 
 
 def test_every_enabled_append_section_is_mounted_or_exempt():
-    """护栏：新增 append 分区却忘了在 legacy.py 挂载 → 本条直接变红。
+    """护栏：新增 append 分区却忘了在 assembly.py 挂载 → 本条直接变红。
 
     判定 = ``get_sections()`` 里 target=append 且 enabled 的 key，必须落在
-    legacy.py 主模板块之后的消费点里，或在显式豁免清单里（见 EXEMPT_APPEND_KEYS）。
+    assembly.py 主模板块之后的消费点里，或在显式豁免清单里（见 EXEMPT_APPEND_KEYS）。
     """
     mounts = _append_mount_keys()
     missing = [
@@ -294,21 +294,21 @@ def test_every_enabled_append_section_is_mounted_or_exempt():
         and s.key not in CONTEXT_BUILDER_MOUNTED_KEYS
     ]
     assert not missing, (
-        f"以下 append 分区注册了但 legacy.py 从不消费（算了就丢），请在 legacy.py 挂载或加入豁免清单: {missing}"
+        f"以下 append 分区注册了但 assembly.py 从不消费（算了就丢），请在 assembly.py 挂载或加入豁免清单: {missing}"
     )
 
 
 def test_guardrail_is_not_vacuous():
     """护栏自检：本批 5 个 key 必须来自真实挂载点（防止靠"全豁免"把护栏架空）。"""
     mounts = _append_mount_keys()
-    assert mounts, "legacy.py 挂载点解析为空（解析逻辑失效）"
+    assert mounts, "assembly.py 挂载点解析为空（解析逻辑失效）"
     for key in MOUNTED_KEYS:
-        assert key in mounts, f"{key} 不在 legacy.py 挂载点里"
+        assert key in mounts, f"{key} 不在 assembly.py 挂载点里"
 
 
-def test_exempt_keys_really_consumed_by_legacy():
+def test_exempt_keys_really_consumed_by_assembler():
     """豁免清单复核：mcp_tools / mcp_resources 确实走工具通道被消费（不是漏挂）。"""
-    src = LEGACY_PY.read_text(encoding="utf-8")
+    src = ASSEMBLY_PY.read_text(encoding="utf-8")
     for key in EXEMPT_APPEND_KEYS:
         assert f'_section_values.get("{key}"' in src, f"{key} 已不在 legacy 取值点（豁免需复核）"
         assert f"for _mcp_b in {key}_blocks:" in src, f"{key} 未走 _blocks 通道 append（豁免需复核）"
@@ -434,17 +434,17 @@ def test_host_context_inject_requires_caller_fail_closed(asm_db):
         assert any("@@NOID@@" in t for t in _system_texts(msgs))
 
         calls.clear()
-        legacy_mod._warned_inject_no_caller.clear()
+        assembly_mod._warned_inject_no_caller.clear()
         msgs2 = _assemble({"continue_payload": ["@@CONTINUE@@"]}, user_id=_NO_CALLER)
         assert calls == [], "缺 caller 仍分发 hook（user_id 被兜底成了 1 号账号）"
         assert not any("@@NOID@@" in t for t in _system_texts(msgs2)), "缺 caller 时插件块仍进了上下文"
-        assert legacy_mod._warned_inject_no_caller, "无 caller 应告警一次（不静默丢注入）"
+        assert assembly_mod._warned_inject_no_caller, "无 caller 应告警一次（不静默丢注入）"
         # 不注入 ≠ 装配失败：宿主 user 仍是最后一条、继续指令仍在
         assert msgs2[-1]["role"] == "user"
         assert any("@@CONTINUE@@" in t for t in _system_texts(msgs2))
     finally:
         _drop_plugin("_ctx_nocall")
-        legacy_mod._warned_inject_no_caller.clear()
+        assembly_mod._warned_inject_no_caller.clear()
 
 
 def test_enforce_user_message_last_moves_strays(asm_db):
@@ -491,7 +491,7 @@ def test_enforce_user_message_last_noop_cases(asm_db):
 
 def test_source_order_hooks_before_user_guard_after():
     """源码级回归护栏：hook 调用必须在 user append **之前**；护栏在 user 之后、配额之前。"""
-    lines = LEGACY_PY.read_text(encoding="utf-8").splitlines()
+    lines = ASSEMBLY_PY.read_text(encoding="utf-8").splitlines()
 
     def _first(pred):
         for _i, _ln in enumerate(lines, 1):
@@ -516,7 +516,7 @@ def test_source_order_hooks_before_user_guard_after():
 
 # 棘轮清单（只减不增）：注册为 template 槽但模板无占位。当前已清空——
 # 2026-09-19 storyline_status 已落位（模板「你们最近的剧情」段新增 {storyline_status}，
-# legacy.py 同步做哨兵「无」归一），清单清空；此后新增 template 槽缺占位直接判红。
+# assembly.py 同步做哨兵「无」归一），清单清空；此后新增 template 槽缺占位直接判红。
 EXEMPT_TEMPLATE_SLOTS = set()
 
 

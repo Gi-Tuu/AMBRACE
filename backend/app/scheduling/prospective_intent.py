@@ -598,7 +598,7 @@ async def match_cue_intents(character_id: int, user_text: str) -> list[Prospecti
 
 # ───────────────────────── 时间型：到期承诺自然提起（arbiter._execute 调用）─────────────────────────
 def _side_split_on() -> bool:
-    """① 渲染分流开关：沿用既有 promise_self_side_split（默认关＝逐字节回退当前口径）。"""
+    """① 渲染分流开关：沿用既有 promise_self_side_split（字典默认 True；写 False 才逐字节回退当前口径）。"""
     try:
         from app.agent.loop import AGENT_FLAGS
         return bool(AGENT_FLAGS.get("promise_self_side_split", False))

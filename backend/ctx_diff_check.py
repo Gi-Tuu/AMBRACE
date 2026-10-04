@@ -35,7 +35,6 @@ def _reset_memory_state():
 
 
 async def _seed(factory):
-    from sqlalchemy import select
 
     from app.models.user import User
     from app.models.character import AICharacter
