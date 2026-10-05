@@ -62,6 +62,13 @@ class AgentState(TypedDict):
     observations: list[dict]   # 扁平观测列表（与 workspace.observations 同一批记录的引用口径）
     decision: dict | None      # 本轮决定（含 reason），第一阶段由 reflect 等就地写入
 
+    # ---- 跨节点必声明（A29，2026-10-05 普查后补）----
+    # LangGraph 1.x 只把这里声明过的键带出节点：没声明＝节点内改了也白改，下游静默读到 None。
+    # 下面两条都是「早就有写有读、但因为没声明而一直没生效」的历史遗漏（普查见 plans 的 A29 行），
+    # 补声明＝让它们在各自注释里描述的行为真正发生，故各配一条"能穿过图"的守卫。
+    marker_truncated: bool              # parse_response 置位 → 服务层据此走证据B兜底／通道B优先补提
+    _host_user_msg_index: int | None    # build_context 记宿主 user 下标 → 红线②按真锚点判越位
+
     # ---- 真流式（SSE）运行时注入（2026-08-19）----
     # 以下字段由服务层在 agent.ainvoke() 前注入 initial_state，
     # 必须在 TypedDict 中声明，否则 LangGraph 1.x 会静默丢弃未声明 key，

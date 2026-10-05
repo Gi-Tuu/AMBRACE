@@ -9,15 +9,19 @@ flag ``memory_utility_feedback`` 已预注册（默认关）；本模块全部�
 信号（确定性规则，不引入 LLM；**用户侧措辞只看用户消息，「用没用上」只看 AI 回复**）：
 - negative：**用户消息**命中**纠正词**（在 reliability.CORRECT_WORDS 基础上扩量，
   ``_UTILITY_EXTRA_CORRECT_WORDS``）→ 用户改口/否认，单命中即整轮降权（不要求记忆片段共现）；
-- positive：**用户消息**命中**明确表态词**（认同/赞许/被说中，``_UTILITY_ATTITUDE_WORDS``），**或**记忆关键片段
-  出现在**AI 回复**（被用上）→ 微上调；
+- positive：记忆关键片段出现在**AI 回复**（被用上）→ 微上调；
 - neutral：以上皆无 → 不调整（无关闲聊不误记）。
   （放宽点 2026-09-21 L2 任务2：原「纠正词 + 记忆被引用」双命中口径在 char13 灰度 29h 仅 1 positive /
   0 negative，几近抓不到信号；改为任一强信号即记，并扩大纠正词表。
   收口点 2026-10-04 A25 方案 a：放宽时把两段拼成一串扫，于是**角色自己说「记错了」也被当成用户改口**。
   按回执逐条回放的账（39 条，2026-10-05 生产库只读复核，修复前判据可复现 34/39）：32 条 negative 里
   23 条命中词只在角色侧、4 条用户侧确有改口措辞、5 条因判定文本未落库而无法归因 ⇒ 误降权 20 条记忆
-  ⇒ 改回两段各扫各的。判效详见 docs/dev-changelog.md 2026-10-04 B3 条目。）
+  ⇒ 改回两段各扫各的（历史误降权已于 10-05 按账逐条回滚，见 dev-changelog 的 A25 条目）。
+  再收口点 2026-10-05 A25②：**撤掉「用户明确表态词」这条 positive 通道**。实测依据＝25 个表态词在
+  session 11 的 2612 条真实用户消息里只命中 **1 次**（「你记得」；09-20 起的 245 条里 0 次），
+  而回放出的 5 条误升权回执正是表态词命中在**角色自己**的话上（拼扫时代）
+  ⇒ 它几乎不产出真信号、却是假 positive 的来源；positive 从此只认「回复引用了记忆片段」这条
+  问得对、也还在响的通道。判效详见 docs/dev-changelog.md 2026-10-04／10-05 的 A25 条目。）
 
 作用（最小可用、幅度极小、常量可配）：
 - positive → ``Memory.importance`` 微上调；negative → 微下调（复用既有 salient 权重通道，
@@ -41,6 +45,9 @@ UTILITY_POSITIVE_CONTAINS_MIN = 6
 
 # 记忆正文用于命中检测的连续核心片段最小长度（短于此不参与 positive 命中）
 UTILITY_MIN_SNIPPET_LEN = 6
+# A27甲（2026-10-05）：判定文本随回执留底的截断长度（两段各计）。留底是为了事后能归因，
+# 不是把聊天记录再存一份 ⇒ 取够判定的长度即可，别把回执撑成日志表。
+UTILITY_EVIDENCE_MAX_CHARS = 400
 # ── 灰度白名单（2026-09-18 用户拍板：先只在 char13 观察）─────────────────────────
 # 口径与 section_working_state.WORKING_STATE_INJECT_GRAY_CHARS / domain/proactivity/pacing.py
 # 的 OUTREACH_PACING_GRAY_CHARS 一致：**总开关开 且 角色命中白名单** 才生效，其余角色零行为变化。
@@ -103,15 +110,8 @@ _UTILITY_EXTRA_CORRECT_WORDS = (
     "记差了", "理解错了", "你理解反了", "正好相反",
 )
 
-# 效用反馈专用「明确表态」词（认同/赞许/被说中）：与纠正词并列的强正信号（任务2 放宽③）。
-# 选取偏具体的口语，降低无关闲聊误命中（纯闲聊如「今天天气不错」仍判 neutral）。
-_UTILITY_ATTITUDE_WORDS = (
-    "说得对", "没错", "对对对", "对呀对呀", "就是这样的", "你记得", "你记住了",
-    "记得很清楚", "你记性真好", "你竟然记得", "你还记得", "居然还记得",
-    "被你说中了", "一语中的", "说得真准", "正合我意", "正中下怀",
-    "正是我想说的", "你太懂我了", "就是嘛", "没错没错", "说中了", "还真被你说中了",
-    "被你猜中了", "料事如神",
-)
+# 注：2026-10-05 A25② 撤掉了原 ``_UTILITY_ATTITUDE_WORDS``（25 个「明确表态词」）通道，
+# 词表一并删除而非留着当摆设——它在 2612 条真实用户消息里只命中 1 次，却是 5 条误升权的来源。
 
 
 def _core_snippet(content: str) -> str:
@@ -137,35 +137,33 @@ def _contains_key_fragment(snippet: str, resp: str, min_len: int = UTILITY_POSIT
 def classify_utility_signal(memory_content: str, ai_response: str, user_message: str = "") -> str:
     """确定性效用判定（纯函数，可单测）：'negative' / 'positive' / 'neutral'。
 
-    **两段各扫各的**（2026-10-04 A25 方案 a 收口，见下方历史注）：
+    **两条通道各扫各的**（2026-10-04 A25 方案 a 定形，2026-10-05 A25② 收口为两条）：
     - ① 纠正词（含扩量后的 ``_UTILITY_EXTRA_CORRECT_WORDS``）只扫 **user_message** → negative；
-    - ③ 明确表态词（认同/赞许/被说中，``_UTILITY_ATTITUDE_WORDS``）只扫 **user_message** → positive；
     - ② 记忆关键片段被引用只扫 **ai_response** → positive（记忆被用上）；
     - 其余 → neutral（无关闲聊不误记）。
 
-    ``user_message`` 缺省为空 ⇒ ①③ 一律不触发，只有 ② 可能成立（此时没有任何「用户改口」的证据）。
+    ``user_message`` 缺省为空 ⇒ 只有 ② 可能成立（此时没有任何「用户改口」的证据）。
 
     为什么不再把两段拼起来扫（实测证据，生产库只读，session 11 全量 2612 条用户消息／4868 条回复）：
     拼扫把**角色自己的措辞**当成用户改口——39 条效用回执逐条回放（修复前判据可复现 34/39）：32 条 negative 里
     23 条命中词只在角色侧（如「那我记岔了」「行，记错了，练背就练背」），4 条用户侧确有改口措辞，
     5 条无法归因（判定文本没落库，见下方观测边界）⇒ 20 条记忆属误降权。
-    表态词（25 个）在 2612 条用户消息里只命中 1 次（09-20 起的 245 条里 0 次）⇒ ③ 通道几乎不响。
-    ② 保留扫回复是对的：那条通道问的就是「AI 用没用这条记忆」。
 
-    观测边界（2026-10-05 只读复核发现，**未修**）：本判定发生在 ``generate_response`` 末尾，
+    为什么撤掉「③ 明确表态词」通道（A25②，2026-10-05）：25 个表态词在 2612 条真实用户消息里**只命中 1 次**
+    （「你记得」；09-20 起的 245 条里 0 次），而回放出的 5 条误升权回执正是它命中在**角色自己**的话上
+    ——几乎不产出真信号、稳定产出假 positive，故删除词表，positive 只认 ②。
+
+    观测边界（2026-10-05 只读复核发现，判据侧**已知未解**）：本判定发生在 ``generate_response`` 末尾，
     而开头的括号内心活动、成对动作标记要到 ``split_response``／落库清洗才剥离
     （图 ``perceive→retrieve→build_context→generate→reflect``，切分在服务层）⇒ ② 可能读到
-    用户从未看到的角色独白，且这段判定文本不落库、事后不可审计（上面 5 条无法归因即出自这个取证缺口，
-    属高度可疑而非铁证——独白原文不在库里）。
+    用户从未看到的角色独白（上面 5 条无法归因即出自这个取证缺口，属高度可疑而非铁证）。
+    同日的 A27甲 已把**判定文本随回执落库** ⇒ 这条边界从此可审计（下次再出现"归不了因"能直接看到当时读了什么）。
     """
     u = user_message or ""
     resp = ai_response or ""
     # ① 纠正词（用户侧）→ negative：仍不要求与记忆片段共现（09-21 的放宽点保留）
     if any(w in u for w in _correction_words()):
         return "negative"
-    # ③ 用户对召回内容明确表态（认同/赞许/被说中）→ positive
-    if any(w in u for w in _UTILITY_ATTITUDE_WORDS):
-        return "positive"
     # ② 记忆关键片段被**回复**引用 → positive（只看 AI 文本，用户自己复述不算「被用上」）
     if _contains_key_fragment(_core_snippet(memory_content), resp):
         return "positive"
@@ -177,11 +175,15 @@ async def apply_utility_feedback(
     user_id: int,
     items: list[tuple[int, str]],
     round_id: int | None = None,
+    evidence: dict | None = None,
 ) -> None:
     """把效用信号落到记忆（写 M3 回执 + importance 微调）。失败静默、不抛。
 
     ``items``：[(memory_id, signal), ...]，signal ∈ {positive, negative, neutral}；
     neutral 跳过（不写不调）。
+    ``evidence``（A27甲，2026-10-05）：判定时真正读到的两段文本（已截断），随回执落库。
+    加它的唯一理由＝**事后可归因**——10-05 逐条回放 39 条回执时有 5 条再也对不上文本，
+    因为判定文本从来没留过底。只多写两个键，权重与信号判定一字不变。
     """
     if not items:
         return
@@ -208,6 +210,7 @@ async def apply_utility_feedback(
                         detail_json=_detail_json(
                             mid, sig, round_id, user_id=user_id,
                             skipped=bool(m is None or m.is_archived or m.is_locked),
+                            evidence=evidence,
                         ),
                     ))
                     continue
@@ -222,7 +225,7 @@ async def apply_utility_feedback(
                     memory_id=mid,
                     action="utility_feedback",
                     reason=sig,
-                    detail_json=_detail_json(mid, sig, round_id, user_id=user_id),
+                    detail_json=_detail_json(mid, sig, round_id, user_id=user_id, evidence=evidence),
                 ))
             await db.commit()
     except Exception as e:
@@ -232,19 +235,24 @@ async def apply_utility_feedback(
 def _detail_json(
     memory_id: int, signal: str, round_id: int | None,
     skipped: bool = False, user_id: int | None = None,
+    evidence: dict | None = None,
 ) -> str:
-    """回执 detail：谁（user_id）/哪条记忆/信号/回合/是否跳过（时间由 receipt.created_at 记）。"""
+    """回执 detail：谁（user_id）/哪条记忆/信号/回合/是否跳过（时间由 receipt.created_at 记）。
+
+    ``evidence`` 存在时再多两个键（``evidence.user_message``／``evidence.ai_response``），
+    缺省时**一个键都不加**——旧调用方与历史回执的 JSON 形态逐字节不变。
+    """
     import json as _json
-    return _json.dumps(
-        {
-            "memory_id": memory_id,
-            "signal": signal,
-            "round_id": round_id,
-            "user_id": user_id,
-            "skipped": skipped,
-        },
-        ensure_ascii=False,
-    )
+    payload = {
+        "memory_id": memory_id,
+        "signal": signal,
+        "round_id": round_id,
+        "user_id": user_id,
+        "skipped": skipped,
+    }
+    if evidence:
+        payload["evidence"] = dict(evidence)
+    return _json.dumps(payload, ensure_ascii=False)
 
 
 def _note(character_id, kind: str, n: int) -> None:
@@ -272,9 +280,12 @@ def schedule_utility_feedback(
 ) -> None:
     """fire-and-forget 入口（不阻塞回复）。``recalled`` = state['retrieved_memories']（含 id/content）。
 
-    ``user_message``：本轮用户原始消息——纠正词／表态词**只在这一段里找**（用户改口才算改口，
-    角色自己的措辞不算，A25 方案 a）；缺省时 ①③ 不触发，只有「记忆被回复引用」②可能成立。
+    ``user_message``：本轮用户原始消息——纠正词**只在这一段里找**（用户改口才算改口，角色自己的措辞不算，
+    A25 方案 a）；缺省时 ① 不触发，只有「记忆被回复引用」②可能成立。
     flag 关 → 直接返回（零行为变化）。异步失败不影响主流程。
+
+    A27甲：这里顺手把**判定时真正用到的两段文本**（各截断 ``UTILITY_EVIDENCE_MAX_CHARS`` 字）交给
+    ``apply_utility_feedback`` 随回执落库 ⇒ 以后任何一条回执都能回答「当时到底读了什么才判成这样的」。
     """
     if not _flag_on(character_id):
         return
@@ -294,7 +305,11 @@ def schedule_utility_feedback(
             _note(character_id, "neutral", len(recalled))
             return
         _note(character_id, "scheduled", len(items))
+        evidence = {
+            "user_message": (user_message or "")[:UTILITY_EVIDENCE_MAX_CHARS],
+            "ai_response": (ai_response or "")[:UTILITY_EVIDENCE_MAX_CHARS],
+        }
         from app.utils.async_tasks import spawn_background
-        spawn_background(apply_utility_feedback(character_id, user_id, items, round_id))
+        spawn_background(apply_utility_feedback(character_id, user_id, items, round_id, evidence=evidence))
     except Exception as e:
         _logger.warning("schedule_utility_feedback failed: %s", e)

@@ -111,10 +111,9 @@ def test_classify_neutral_when_unrelated():
 # ─────────────────────────── 放宽判据（2026-09-21 任务2）───────────────────────────
 
 def test_relaxed_each_single_signal_records():
-    """放宽后：①纠正词 ②引用 ③明确表态 任一强信号即记反馈（sig != neutral）。
+    """两条通道的分工（A25② 收口后的口径，2026-10-05）：①纠正词只看用户消息、②引用只看 AI 回复。
 
-    口径（A25 方案 a，2026-10-04）：①③ 是**用户侧**措辞 ⇒ 传进 `user_message`；
-    ② 问的是「AI 用没用这条记忆」⇒ 只看 `ai_response`。两段不再拼起来扫。
+    旧口径里的第 ③ 条（用户明确表态词）已撤：见 `test_表态词通道已撤_不再单独产生positive`。
     """
     mem = "用户喜欢喝美式咖啡"
     # ① 纠正词单命中（用户侧，无记忆片段共现）→ negative
@@ -123,9 +122,77 @@ def test_relaxed_each_single_signal_records():
     # ② 记忆关键片段被**回复**引用 → positive
     sig_ref = uf.classify_utility_signal(mem, "你上次说喜欢喝美式咖啡，今天要不要再点一杯")
     assert sig_ref == "positive"
-    # ③ 明确表态（认同/被说中，用户侧）→ positive
+    # 旧 ③ 的样例（用户表态、回复没引用记忆）现在必须是 neutral：positive 只能来自"真的被用上"
     sig_att = uf.classify_utility_signal(mem, "好的，要不要再来一杯", user_message="说得对，你竟然还记得我喜欢喝美式")
-    assert sig_att == "positive"
+    assert sig_att == "neutral"
+    # 但"用户表态 + 回复确实引用了片段"仍走 ② 记 positive（不因撤③ 把该记的漏掉）
+    sig_att_ref = uf.classify_utility_signal(mem, "你之前说喜欢喝美式咖啡来着", user_message="嗯，说得对")
+    assert sig_att_ref == "positive"
+
+
+def test_表态词通道已撤_不再单独产生positive():
+    """A25②（2026-10-05）：25 个表态词在 2612 条真实用户消息里只命中 1 次，却贡献了 5 条误升权
+    ⇒ 通道删除，词表也删（不留"定义了但没人用"的摆设）。"""
+    mem = "用户喜欢喝美式咖啡"
+    for u in ("被你说中了，我就爱喝美式", "你记性真好，居然还记得", "正合我意，你太懂我了", "没错没错"):
+        assert uf.classify_utility_signal(mem, "嗯嗯", user_message=u) == "neutral", u
+    assert not hasattr(uf, "_UTILITY_ATTITUDE_WORDS"), "词表应随之删除，别留在模块里当死代码"
+
+
+def test_判定文本随回执落库_A27甲(mem_db):
+    """A27甲：回执要能回答「当时到底读了什么才判成这样」。
+
+    这条同时钉两面：① 带 evidence 时多两个键、且文本原样；② **不带 evidence 时 JSON 形态逐字节不变**
+    （旧调用方与历史回执不受影响）。
+    """
+    import json as _json
+
+    mid = asyncio.run(_seed_memory(mem_db, 40.0))
+    ev = {"user_message": "你记错了，我喝拿铁", "ai_response": "那我改一下：你喜欢喝美式咖啡"}
+
+    async def _go():
+        await uf.apply_utility_feedback(1, 7, [(mid, "negative")], round_id=11, evidence=ev)
+
+    asyncio.run(_go())
+    details = asyncio.run(_read_receipt_details(mem_db, mid))
+    assert details, "没写回执"
+    d = details[0]
+    assert d["evidence"] == ev, f"判定文本没原样落库：{d.get('evidence')}"
+    assert d["signal"] == "negative" and d["round_id"] == 11 and d["user_id"] == 7 and d["skipped"] is False
+
+    # 缺省不带 evidence ⇒ 一个键都不加（历史形态）
+    async def _go2():
+        await uf.apply_utility_feedback(1, 7, [(mid, "negative")])
+
+    asyncio.run(_go2())
+    d2 = asyncio.run(_read_receipt_details(mem_db, mid))[-1]
+    assert set(d2) == {"memory_id", "signal", "round_id", "user_id", "skipped"}, f"多出键：{sorted(d2)}"
+    assert _json.loads(uf._detail_json(mid, "negative", None, user_id=7)) == d2, "helper 与落库形态必须一致"
+
+
+def test_判定文本按上限截断_不把回执撑成日志表(mem_db, monkeypatch):
+    """截断发生在**入口**（schedule），序列化器只负责原样落库：所以这条走真路径，别只测 helper。
+
+    上限的意义：留底是为了"事后能归因"，不是为了把聊天记录再存一份。
+    """
+    import app.utils.async_tasks as at
+
+    mid = asyncio.run(_seed_memory(mem_db, 40.0))
+    monkeypatch.setattr(uf, "_flag_on", lambda *a, **k: True)
+    captured = {}
+    monkeypatch.setattr(at, "spawn_background", lambda coro: captured.__setitem__("c", coro))
+
+    uf.schedule_utility_feedback(
+        1, 7, [{"id": mid, "content": "用户喜欢喝美式咖啡" + "内" * 900}],
+        "你上次说喜欢喝美式咖啡" + "外" * 900,
+        user_message="你记错了" + "话" * 900,
+    )
+    asyncio.run(captured["c"])
+    d = asyncio.run(_read_receipt_details(mem_db, mid))[-1]
+    assert set(d["evidence"]) == {"user_message", "ai_response"}
+    assert len(d["evidence"]["user_message"]) == uf.UTILITY_EVIDENCE_MAX_CHARS, "用户侧文本没截断"
+    assert len(d["evidence"]["ai_response"]) == uf.UTILITY_EVIDENCE_MAX_CHARS, "AI 侧文本没截断"
+    assert d["evidence"]["user_message"].startswith("你记错了")
 
 
 def test_relaxed_expanded_correction_words_fire():
@@ -133,13 +200,6 @@ def test_relaxed_expanded_correction_words_fire():
     mem = "用户喜欢喝美式咖啡"
     for u in ("不对，我说的是别的", "搞反了，顺序不是这样的", "和我说的恰恰相反"):
         assert uf.classify_utility_signal(mem, "好，我改", user_message=u) == "negative", u
-
-
-def test_relaxed_attitude_words_fire():
-    """明确表态词（_UTILITY_ATTITUDE_WORDS）任一命中 → positive（即便未引用记忆片段）。"""
-    mem = "用户喜欢喝美式咖啡"
-    for u in ("被你说中了，我就爱喝美式", "你记性真好，居然还记得", "正合我意，你太懂我了"):
-        assert uf.classify_utility_signal(mem, "嗯嗯", user_message=u) == "positive", u
 
 
 def test_relaxed_noise_chatter_stays_neutral():
@@ -185,12 +245,12 @@ def test_用户自己复述记忆片段_不算被用上():
 
 
 def test_缺省user_message时只可能走引用通道():
-    """老调用方／主动消息轮没有用户消息：①③ 一律不触发，只有 ②（回复引用记忆）能成立。
+    """老调用方／主动消息轮没有用户消息：① 一律不触发，只有 ②（回复引用记忆）能成立。
 
-    三条样例是刻意挑来**区分通道**的：
+    样例是刻意挑来**区分通道**的（A25② 撤 ③ 后口径不变，只是"表态"那条已经不存在）：
     - AI 侧既有纠正词、又逐字引用了记忆 → positive（若 ① 还在扫 AI 侧就会翻成 negative）；
     - AI 侧有纠正词但没引用记忆 → neutral（旧口径这里是 negative，属误伤）；
-    - AI 侧有表态词但没引用记忆 → neutral（旧口径这里是 positive，属凭空加分）。
+    - AI 侧有原表态词但没引用记忆 → neutral（旧口径这里是 positive，属凭空加分——已随 ③ 一起消失）。
     """
     mem = "用户喜欢喝美式咖啡"
     assert uf.classify_utility_signal(mem, "你记错了，其实你说过喜欢喝美式咖啡") == "positive"

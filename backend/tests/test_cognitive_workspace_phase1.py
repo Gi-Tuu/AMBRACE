@@ -516,12 +516,10 @@ _GRAPH_SURFACE = (
     "agent/reflection.py",
 )
 
-# 历史遗漏（普查当日实测＝图内 40 多个键里只有这 2 个没声明）。**修好后必须从这张表里删名**，
-# 下面的"名单不许腐烂"断言会替我盯着。挂账去向：docs/plans.md 的 A29。
-_KNOWN_UNDECLARED = {
-    "marker_truncated",      # 节点内写、图外读 ⇒ chat 主链的「通道 B 优先补提」在图路径上从未拿到信号
-    "_host_user_msg_index",  # build_context 写、generate_response 读 ⇒ 红线②锚点退化为"最后一条 role=user"
-}
+# 历史遗漏挂账名单（普查当日为 2 处）。**修好一个就删一个名字**——下面的"名单不许腐烂"断言会盯着。
+# 10-05 A29-a/b：`marker_truncated` 与 `_host_user_msg_index` 已补进 AgentState 声明，
+# 且各配了一条"能穿过图边界"的守卫（`tests/test_state_key_boundary.py`）⇒ 名单清空。
+_KNOWN_UNDECLARED: set[str] = set()
 
 
 def _undeclared_state_writes() -> dict[str, list[str]]:
