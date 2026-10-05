@@ -501,3 +501,60 @@ def test_没有工作台时节点照旧跑_不因为新键缺失而炸(monkeypat
     out = asyncio.run(nodes.retrieve_memories(state))
     assert out["retrieved_memories"] == [{"id": 9, "content": "明天要面试"}]
     assert "workspace" not in out, "旧路径不许被顺手塞进新键（零行为变化）"
+
+
+# ── 普查棘轮（A28 ⑦ 的产出）：编译图里写的 state 键必须先在 AgentState 声明 ────────────────
+#
+# 为什么钉这条：LangGraph 1.x 只保留 TypedDict 声明过的键，未声明的**在节点返回后被静默丢弃**
+# ——本仓已栽两次（SSE 打字机、A28-S4 照出的 group_id）。这条不是理论：2026-10-05 实测最小图
+# （`declared` 键穿过 ainvoke 存活、`undeclared` 键消失）确认了该行为。
+# 图内文件清单＝编译图真会执行的那批（节点本体＋节点调用的装配/解析/反思层）。
+_GRAPH_SURFACE = (
+    "agent/nodes.py",
+    "agent/response_parser.py",
+    "agent/context_builder.py",
+    "agent/reflection.py",
+)
+
+# 历史遗漏（普查当日实测＝图内 40 多个键里只有这 2 个没声明）。**修好后必须从这张表里删名**，
+# 下面的"名单不许腐烂"断言会替我盯着。挂账去向：docs/plans.md 的 A29。
+_KNOWN_UNDECLARED = {
+    "marker_truncated",      # 节点内写、图外读 ⇒ chat 主链的「通道 B 优先补提」在图路径上从未拿到信号
+    "_host_user_msg_index",  # build_context 写、generate_response 读 ⇒ 红线②锚点退化为"最后一条 role=user"
+}
+
+
+def _undeclared_state_writes() -> dict[str, list[str]]:
+    from app.agent import state as state_mod
+
+    declared = set(state_mod.AgentState.__annotations__.keys())
+    app_dir = Path(state_mod.__file__).resolve().parent.parent        # backend/app
+    found: dict[str, list[str]] = {}
+    for rel in _GRAPH_SURFACE + tuple(
+            f"agent/context/{p.name}" for p in sorted((app_dir / "agent" / "context").glob("*.py"))):
+        py = app_dir / rel
+        if not py.is_file():
+            continue
+        for node in ast.walk(ast.parse(py.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Assign):
+                continue
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Subscript) and isinstance(tgt.value, ast.Name) \
+                        and tgt.value.id in ("state", "final_state") \
+                        and isinstance(tgt.slice, ast.Constant) and isinstance(tgt.slice.value, str):
+                    key = tgt.slice.value
+                    if key not in declared:
+                        found.setdefault(key, []).append(f"{rel}:{node.lineno}")
+    return found
+
+
+def test_图内写入的state键必须声明_历史两处遗漏挂账在A29():
+    """新增未声明键＝当场红；已知两处必须逐名挂账，且**修好就从名单删**（防名单腐烂成摆设）。"""
+    found = _undeclared_state_writes()
+    fresh = {k: v for k, v in found.items() if k not in _KNOWN_UNDECLARED}
+    assert not fresh, (
+        f"图内文件往 state 写了未声明的键 {fresh} ⇒ LangGraph 会在节点返回后静默丢弃，"
+        "下游永远读不到（同 SSE 打字机失效那条坑）。要么在 AgentState 里声明，"
+        "要么改成不跨节点传递；别让它静默生效不了。")
+    stale = _KNOWN_UNDECLARED - set(found)
+    assert not stale, f"挂账的键已经不在了 {sorted(stale)}：请从 _KNOWN_UNDECLARED 删除名单项（A29 已修）"
