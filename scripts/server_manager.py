@@ -35,6 +35,11 @@ r"""
    查看 backend\data\logs\server_stderr.log 尾部；常见原因：
    paused.flag 存在（先 repair）或 8766 锁被占（已有实例）。
 
+6. 服务停过一段时间，事后要查「是谁停的 / 什么时候停的」
+   看 backend\data\logs\server_ops.log（status 也会带尾部）。stop/restart/repair 每次
+   都追加一行「时间 | 子命令 | 杀掉的 PID」，清除暂停标记前还会把标记原文记进去；
+   没有这条链时只能靠 app.log 空档反推（2026-10-05 那次 54.5 分钟停摆就是这么查的）。
+
 【架构说明】
   启动链：server_manager -> pythonw uvicorn（监听 8000）+ pythonw watchdog.py（守护）
   锁：
@@ -79,6 +84,9 @@ LOGS_DIR = os.path.join(BACKEND_DIR, "data", "logs")
 STDERR_LOG = os.path.join(LOGS_DIR, "server_stderr.log")
 STDOUT_LOG = os.path.join(LOGS_DIR, "server_stdout.log")
 WATCHDOG_LOG = os.path.join(LOGS_DIR, "watchdog.log")
+# 停摆事后归因：log() 只 print 到当前窗口，没人看就全丢；「谁在什么时候停了服务」必须落盘。
+# 2026-10-05 02:25 那次 54.5 分钟停摆就是因为没有这条链，只能靠日志空档反推。
+OPS_LOG = os.path.join(LOGS_DIR, "server_ops.log")
 PAUSE_FLAG = os.path.join(BACKEND_DIR, "data", "paused.flag")
 LOCKS_DIR = os.path.join(BACKEND_DIR, "data", "locks")
 WATCHDOG_PID_FILE = os.path.join(LOCKS_DIR, "watchdog.pid")
@@ -99,6 +107,24 @@ def _now() -> str:
 
 def log(msg: str):
     print(f"[{_now()}] {msg}")
+
+
+def _cmd_label() -> str:
+    """本次动作来自哪条子命令（stop / restart / repair…），用于事后归因。"""
+    return sys.argv[1] if len(sys.argv) > 1 else "?"
+
+
+def ops_log(msg: str) -> None:
+    """追加一行「谁动了服务器」到 ``server_ops.log``（停摆事后归因）。
+
+    只追加、绝不影响启停流程：任何写盘异常都吞掉（运维日志丢了不如服务停错要紧）。
+    """
+    try:
+        os.makedirs(LOGS_DIR, exist_ok=True)
+        with open(OPS_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{_now()} | {_cmd_label()} | {msg}\n")
+    except Exception:
+        pass
 
 
 def _ps(cmd: str) -> str:
@@ -243,6 +269,9 @@ def clean_lock_files() -> None:
 
 def stop_all() -> None:
     """停止所有相关进程：先杀 watchdog（防拉起），再杀 uvicorn（含 launcher shim），最后清锁"""
+    # 只为事后归因拍快照（多两次只读查询，不改杀进程的顺序）
+    _snap_wd = sorted(set(get_port_pids(LOCK_PORT_WATCHDOG) + get_cmdline_pids("watchdog.py")))
+    _snap_uv = sorted(set(get_port_pids(PORT) + get_port_pids(LOCK_PORT_UVICORN)))
     log("停止 watchdog（8765 锁 + watchdog.py 进程）...")
     kill_pids(get_port_pids(LOCK_PORT_WATCHDOG))
     kill_pids(get_cmdline_pids("watchdog.py"))
@@ -270,11 +299,15 @@ def stop_all() -> None:
             kill_pids(sorted(set(get_port_pids(PORT) + get_port_pids(LOCK_PORT_UVICORN)
                                  + get_port_pids(LOCK_PORT_WATCHDOG))), force=True)
         time.sleep(0.5)
+    ops_log("杀进程 watchdog={0} uvicorn={1}".format(_snap_wd or "无", _snap_uv or "无"))
 
 
 def clear_pause() -> None:
     try:
         if os.path.exists(PAUSE_FLAG):
+            # 标记一删就再也分不清「人为停」与「被杀」，先把内容落到运维日志再删
+            with open(PAUSE_FLAG, encoding="utf-8", errors="replace") as f:
+                ops_log("清除暂停标记，原内容: " + (f.read().strip() or "(空)"))
             os.remove(PAUSE_FLAG)
     except Exception:
         pass
@@ -316,6 +349,8 @@ def cmd_status() -> int:
     print(read_tail(STDERR_LOG))
     print("\n-- watchdog.log 尾部 --")
     print(read_tail(WATCHDOG_LOG))
+    print("\n-- server_ops.log 尾部（谁在什么时候动过服务器）--")
+    print(read_tail(OPS_LOG, 6))
 
     print("\n-- 结论 --")
     if len(uvicorn_pids) > 1:
@@ -345,6 +380,7 @@ def _ensure_started() -> None:
     u6 = get_port_pids(LOCK_PORT_UVICORN)
     wd = get_port_pids(LOCK_PORT_WATCHDOG)
     log("实例确认：uvicorn 锁(8766)={0}  watchdog 锁(8765)={1}".format(u6 or "无", wd or "无"))
+    ops_log("拉起完成 uvicorn 锁(8766)={0} watchdog 锁(8765)={1}".format(u6 or "无", wd or "无"))
     if len(u6) > 1 or len(wd) > 1:
         log("警告：检测到多重实例锁，请运行 repair 复查")
 

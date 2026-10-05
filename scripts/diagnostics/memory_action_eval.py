@@ -7,6 +7,8 @@
 
 四条硬纪律（改它们＝改尺子本身，需另行拍板）：
 1. **零计费**：J1/J2 要生成 ⇒ 属 M1，默认**拒绝运行**（须显式 `--allow-llm`）；
+   2026-10-05 起判分函数 `j1_verdict`/`j2_verdict` 已落地并被单测钉住，但**生成侧未接线**，
+   所以带 `--allow-llm` 也照样拒绝（否则 J1/J2 的题会静默走 J3 检索尺子＝拿错尺子还有分）；
    评测期把统一 LLM 入口 `app.agent.llm_client.chat_completion` 打成抛异常——用运行时断言证明没花钱。
 2. **确定性**：角色 id／内存 id 全部按用例序号分配，**不用 `hash()`**（PYTHONHASHSEED 会让两次跑不一样），
    报告里不写时间戳 ⇒ 同一提交连跑两次的 `--print-metrics` 必须逐字节一致（§4.5 可信度门槛）。
@@ -32,10 +34,11 @@ import asyncio
 import importlib.util
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -65,6 +68,13 @@ CATEGORIES = ("fact", "preference", "relationship", "temporal", "group", "percep
               "supersede", "abstention")
 ALLOWED_JUDGES = ("J1", "J2", "J3", "J4")
 J4_ONLY_CATEGORIES = ("abstention",)
+# J1 期望的动作类型。**在这里复制一份而不是 import**：lint 跑在灌库之前，不该把 app 拉起来。
+# 与 `app/agent/actions.py:ACTION_TYPES` 的一致性由 backend/tests/test_memory_action_eval_j1j2.py
+# 的漂移守卫钉住（新增动作类型忘了同步 ⇒ 那条题会被 lint 判不合法，而不是静默判不了）。
+KNOWN_ACTION_TYPES = frozenset({
+    "SEARCH", "RECALL", "GEN_IMAGE", "IMG_TEXT", "CAL_NOTE", "MEMO",
+    "NOTE_DONE", "TIMER", "STATUS_UPDATE",
+})
 
 # 配置轴（§4.4）——**基线＝生产实配，不是"四键全关"**。
 # 2026-10-04 实测依据（只读 `runtime_flags` ＋ 读 `app/flags/agent_flags.py` 注册值）：
@@ -121,6 +131,25 @@ def lint_dataset(cases) -> list[str]:
             out.append("%s: gold_seed_idx 越界 %s（seeds 共 %d 条）" % (cid, gi, len(c.get("seeds") or [])))
         if not (c.get("distractors") or []):
             out.append("%s: 缺干扰项 ⇒ run_distractor 无法认证（§2.3）" % cid)
+        # J1/J2 的标注完整性：判据函数已实现，但「一条声明了 J1/J2 却没出完标注的题」
+        # 一旦被拿去跑，就会静默走 J3 的检索尺子（＝用错尺子还看着有分）。lint 必须当场拦。
+        if c.get("judge") == "J1":
+            j1 = exp.get("j1") or {}
+            acts = [str(x).strip().upper() for x in (j1.get("actions") or []) if str(x).strip()]
+            if not acts:
+                out.append("%s: judge=J1 但 expect.j1.actions 缺失/为空 ⇒ 这条题没出完" % cid)
+            elif acts == ["NONE"] and not j1.get("of"):
+                out.append("%s: J1 的 NONE 期望必须写 of=[不该产出的动作类型]，否则恒真" % cid)
+            elif acts != ["NONE"] and not (j1.get("text_has") or j1.get("date")):
+                out.append("%s: judge=J1 只标了动作类型、没标 text_has/date ⇒ 「产出了但参数全错」判不出来" % cid)
+            unknown = [a for a in acts if a != "NONE" and a not in KNOWN_ACTION_TYPES]
+            if unknown:
+                out.append("%s: expect.j1.actions 里的 %s 不是已知动作类型"
+                           "（与 app/agent/actions.py 的 ACTION_TYPES 对不上＝这条题永远判不过）" % (cid, unknown))
+        if c.get("judge") == "J2":
+            j2 = exp.get("j2") or {}
+            if not (j2.get("slots") or j2.get("slots_none")):
+                out.append("%s: judge=J2 但 expect.j2 没标 slots/slots_none ⇒ 这条题没出完" % cid)
     return out
 
 
@@ -162,6 +191,82 @@ def abstain_verdict(gold_ids, recalled_ids):
     """弃权类：库里本就无 gold ⇒ 任何「像 gold 的召回」都算不该有；此处只报召回条数供 ADR。"""
     return {"pass": not (set(gold_ids or []) & set(recalled_ids or [])),
             "n_recalled": len(recalled_ids or [])}
+
+
+# ─────────────────────── J1 / J2 判据（§2.2 优先级 J1 > J2 > J3 > J4）───────────────────────
+# 用例标注形态（挂在 ``expect.j1`` / ``expect.j2`` 下；**没挂就是这条题没出完**，lint 会拦）::
+#
+#   "expect": {"gold_seed_idx": [0],
+#     "j1": {"actions": ["MEMO"],              # 期望产出的动作类型（app/agent/actions.py ACTION_TYPES）
+#            "text_has": ["朵朵"],             # 命中动作的载荷里必须出现的片段
+#            "text_has_none": ["儿子"],        # 载荷里禁止出现（用错了事实）
+#            "date": "2026-03-15"},           # CAL_NOTE 专用：相对时间必须落成的绝对日期
+#     "j2": {"slots": {"user_fact_health": "腰伤"},   # 语义槽 key → 落库正文必须含的片段
+#            "slots_none": ["user_fact_relationship"]}}  # 这些槽不该被写（写了＝越权落库）
+#
+# 判分是**纯函数**：给它动作列表／槽位字典就能判，所以能先于生成侧接线完成自测
+# （方案 §五「判分器必须先被测，否则尺子不可信」）。要「跑」才需要计费端点。
+_J1_PAYLOAD_KEYS = ("query", "text", "prompt", "match")   # parse_actions 里各动作的载荷字段
+# 判别用字段（NOTE_DONE 的 calendar/memo、TIMER 的原始标记串）：**不进内容比对**，
+# 否则「text_has: 接孩子」会被类型词污染。某条题真要判它们（如「必须完成的是日历项而不是备忘项」），
+# 得显式加判据键，而不是把判别词混进内容里——漂移守卫见 backend/tests/test_memory_action_eval_j1j2.py。
+_J1_META_KEYS = frozenset({"type", "tag"})
+
+
+def _payload_text(payload) -> str:
+    """把动作载荷摊成一段可比对文本（MEMO/CAL_NOTE/SEARCH/NOTE_DONE 的字段名不同，判据只看内容）。"""
+    if isinstance(payload, str):
+        return payload
+    if not isinstance(payload, dict):
+        return ""
+    return " ".join(str(payload.get(k) or "") for k in _J1_PAYLOAD_KEYS)
+
+
+def j1_verdict(j1: dict, actions: list) -> dict:
+    """J1 动作参数判定。``actions`` ＝ ``app.agent.actions.parse_actions(模型输出)`` 的结果。
+
+    两种错因分开（§4.2）：**没产出期望动作**＝E3（没用记忆去做事）；
+    **产出了但参数不对**＝E4（拿错事实去做事——比 E3 危险，因为它会真的落库）。
+    """
+    want = [str(x).strip().upper() for x in (j1.get("actions") or []) if str(x).strip()]
+    if not want:
+        return {"pass": False, "err": "E_unannotated", "why": "expect.j1.actions 为空 ⇒ 这条题没出完"}
+    if want == ["NONE"]:                       # 期望**不要**产出动作（常识可推的事不该记成备忘）
+        extra = [a for a in (actions or []) if getattr(a, "action_type", None) in
+                 {str(x).strip().upper() for x in (j1.get("of") or [])}]
+        return {"pass": not extra,
+                "err": "" if not extra else "E4",
+                "why": "" if not extra else "不该产出动作却产出了：%s" % ",".join(
+                    sorted(getattr(a, "action_type", '?') for a in extra))}
+    got = [a for a in (actions or []) if getattr(a, "action_type", None) in want]
+    if not got:
+        seen = sorted({getattr(a, "action_type", '?') for a in (actions or [])})
+        return {"pass": False, "err": "E3",
+                "why": "未产出期望动作 %s（实际产出：%s）" % ("/".join(want), ",".join(seen) or "无")}
+    bad = [f for f in (j1.get("text_has") or [])
+           if not any(_norm(str(f)) in _norm(_payload_text(a.payload)) for a in got)]
+    bad += ["禁用片段命中:" + f for f in (j1.get("text_has_none") or [])
+            if any(_norm(str(f)) in _norm(_payload_text(a.payload)) for a in got)]
+    if j1.get("date"):
+        # 相对时间（下周三/三个月前）必须落成绝对日期。CAL_NOTE 的载荷 date 已由生产函数换算过，
+        # 但换算基准是**本机时钟**而非题面 ``time_anchor`` ⇒ 生成侧接线时必须传锚点，见 A30 任务书。
+        if not any(str((a.payload or {}).get("date") or "")[:10] == j1["date"] for a in got):
+            bad.append("date≠" + str(j1["date"]))
+    if bad:
+        return {"pass": False, "err": "E4", "why": "；".join(str(b) for b in bad)}
+    return {"pass": True, "err": "", "why": ""}
+
+
+def j2_verdict(j2: dict, written_slots: dict) -> dict:
+    """J2 槽位落库判定。``written_slots`` ＝ {user_fact 槽 key: 落库正文}。"""
+    slots, none_keys = (j2.get("slots") or {}), [str(x) for x in (j2.get("slots_none") or [])]
+    if not slots and not none_keys:
+        return {"pass": False, "err": "E_unannotated", "why": "expect.j2 没标 slots/slots_none ⇒ 这条题没出完"}
+    got = written_slots or {}
+    bad = [("缺槽 %s（应为 %s）" % (k, v)) for k, v in slots.items()
+           if _norm(str(v)) not in _norm(str(got.get(k) or ""))]
+    bad += ["不该写却写了 %s" % k for k in none_keys if str(got.get(k) or "").strip()]
+    return {"pass": not bad, "err": "" if not bad else "E4", "why": "；".join(bad)}
 
 
 def classify_error(row):
@@ -605,7 +710,8 @@ def render(rep, *, dataset, judges, configs, mode):
                                    else "确定性路（BM25/关键词/时间）——**不得**当作语义通过"))
     L.append("- 零计费保证：LLM 入口被打桩 %s" % (rep.get("llm_guard") or "（未启用）"))
     if rep.get("skipped_judges"):
-        L.append("- 本轮**未跑**判据：%s（J1/J2 属 M1：需生成＝计费端点＋用户授权）" % ",".join(rep["skipped_judges"]))
+        L.append("- 本轮**未跑**判据：%s（J1/J2＝生成层：判分器已实现并被自测，缺按生产口径拼 prompt 的生成侧接线＋出题）"
+                 % ",".join(rep["skipped_judges"]))
     L += ["", "AR＝gold 进 top-k 且排在任何干扰项之前（对账口径）；**AR_strict**＝方案 §二 字面契约（固定 k 内零干扰项，窄库上近乎恒假）；**AR_gold**＝top-|gold| 全是 gold（连中性行挤占也判失败，**门禁锚这列**）。三口径**可证不等价**（含反例），见测试 `test_三种口径的强弱关系与反例`。",
           "- **主分母＝已认证子集**（§2.3 认证三跑过的题）；未认证的题留在集里只跟踪趋势，不参与基线定义。AR_cert 与 AR(全量) 并列输出，不合并。"
           "**门禁一律读「认证子集 × AR_gold」**：名次口径在 M0 的小库上实测**语义路饱和**（97.9～100.0、关旗标反而满分），"
@@ -683,6 +789,13 @@ async def main():
     if {"J1", "J2"} & set(judges) and not a.allow_llm:
         print("[拒绝] J1/J2 需要生成 ⇒ 云端计费端点。方案把它们排在 M1；确要跑请显式 --allow-llm。",
               file=sys.stderr)
+        return 2
+    if {"J1", "J2"} & set(judges):
+        # 关掉「授权了就照跑」这条静默错路：判分函数已就位，但生成侧没接线 ⇒
+        # 声明为 J1/J2 的用例会走下面的 J3 检索档，**分数看着有、尺子其实是错的**。
+        print("[拒绝] J1/J2 的判分器已实现（j1_verdict/j2_verdict ＋ lint 拦没出完的题），"
+              "但生成侧未接线（需要按生产口径拼 prompt 再调模型）。"
+              "剩余步骤与代价见 docs/plans.md 的 A30。", file=sys.stderr)
         return 2
     with open(a.dataset, encoding="utf-8-sig") as f:
         cases = [c for c in (parse_case(ln) for ln in f) if c]
