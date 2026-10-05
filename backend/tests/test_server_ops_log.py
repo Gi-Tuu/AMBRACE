@@ -15,9 +15,12 @@ watchdog 与 uvicorn 同时消失，与 `server_manager stop`/控制台停止按
 """
 import ast
 import importlib.util
+import os
 import re
 import sys
 from pathlib import Path
+
+import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
 _SCRIPTS = _REPO / "scripts"
@@ -165,28 +168,44 @@ def test_运维日志常量仍落在_logs_目录():
     assert sm.OPS_LOG.startswith(sm.LOGS_DIR), "路径挪出 logs/ 会绕开备份与轮转口径"
 
 
-def test_stop_all把杀掉的进程号记进运维日志(tmp_path, monkeypatch):
+@pytest.mark.parametrize("fake_osname", [None, "posix"], ids=["本机", "POSIX 分支"])
+def test_stop_all把杀掉的进程号记进运维日志(tmp_path, monkeypatch, fake_osname):
     """全打桩跑 stop_all（不真杀进程、不打 PowerShell）：留痕必须点名 PID。
 
     为什么单独测这条：生产里没人会把 stop_all 真跑一遍来验证日志，
     而「谁停了服务」这个问句要的恰好就是 PID 与时刻。
+
+    ⚠ 断言用**集合**不用列表：`stop_all` 尾部有一段「端口没释放就升级补杀」的循环
+    （`os.name != "nt"` 且第 5 轮起 force 补杀）。这里的假 `get_port_pids` 恒返回同一批 PID
+    ＝模拟「端口永远不空」，所以 Linux 上会多杀几轮、Windows 上走不到那条分支——
+    第一版按列表断言，本机全绿、CI 三档 Linux 当场红（111 棒）。留痕核的是**入口快照**，
+    与实际杀了几轮无关，所以按集合断言「这四个 PID 都被杀到」即可。
     """
     sm = _load_sm()
     _redirect_paths(sm, tmp_path)
     killed: list = []
+    forces: list = []
     monkeypatch.setattr(sm, "log", lambda msg: None)
-    monkeypatch.setattr(sm, "kill_pids", lambda pids, force=False: killed.extend(pids))
-    # 端口/命令行查询：watchdog 侧 111/112，uvicorn 侧 222；停止后一律「端口已空」让等待循环立刻退出
+    monkeypatch.setattr(sm, "kill_pids", lambda pids, force=False: (
+        killed.extend(pids), forces.append(force) if pids else None))
+    # 端口/命令行查询：watchdog 侧 111/112，uvicorn 侧 222；假端口永不释放（见上方说明）
     table = {sm.LOCK_PORT_WATCHDOG: [111], sm.PORT: [222], sm.LOCK_PORT_UVICORN: []}
     monkeypatch.setattr(sm, "get_port_pids", lambda port: list(table.get(port, [])))
     monkeypatch.setattr(sm, "get_cmdline_pids",
                         lambda kw: [112] if "watchdog" in kw else ([223] if "uvicorn" in kw else []))
     monkeypatch.setattr(sm.time, "sleep", lambda s: None)
+    if fake_osname:
+        # 让「端口未释放→升级补杀」那条 POSIX 分支在本机也走一遍（CI 三档 Linux 红的就是它）
+        monkeypatch.setattr(sm.os, "name", fake_osname)
 
     sm.stop_all()
 
     ops = _read_ops(sm)
     assert "watchdog=[111, 112]" in ops, f"留痕没记全 watchdog PID：{ops!r}"
     assert "uvicorn=[222]" in ops, f"留痕没记 uvicorn PID：{ops!r}"
-    assert sorted(killed) == [111, 112, 222, 223], killed
+    assert sorted(set(killed)) == [111, 112, 222, 223], sorted(set(killed))
+    assert forces[:4] == [False, False, False, False], \
+        f"入口那一轮不该用强杀（force 只属于端口未释放时的升级补杀）：{forces}"
     assert Path(sm.PAUSE_FLAG).exists(), "stop 之后必须留暂停标记，否则 watchdog 会立刻拉起"
+    if fake_osname == "posix":
+        assert True in forces, "POSIX 分支没走到＝这条参数化白设了（假端口永不释放，必须升级补杀）"
