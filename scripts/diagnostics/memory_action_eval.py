@@ -131,25 +131,22 @@ def lint_dataset(cases) -> list[str]:
             out.append("%s: gold_seed_idx 越界 %s（seeds 共 %d 条）" % (cid, gi, len(c.get("seeds") or [])))
         if not (c.get("distractors") or []):
             out.append("%s: 缺干扰项 ⇒ run_distractor 无法认证（§2.3）" % cid)
-        # J1/J2 的标注完整性：判据函数已实现，但「一条声明了 J1/J2 却没出完标注的题」
-        # 一旦被拿去跑，就会静默走 J3 的检索尺子（＝用错尺子还看着有分）。lint 必须当场拦。
+        # J1/J2 的标注完整性：判分函数已实现（吃的是数据集既有字段名），但「声明了 J1/J2
+        # 却没出完标注」的题一旦被拿去跑，就会静默走 J3 的检索尺子（＝用错尺子还看着有分）。
         if c.get("judge") == "J1":
-            j1 = exp.get("j1") or {}
-            acts = [str(x).strip().upper() for x in (j1.get("actions") or []) if str(x).strip()]
-            if not acts:
-                out.append("%s: judge=J1 但 expect.j1.actions 缺失/为空 ⇒ 这条题没出完" % cid)
-            elif acts == ["NONE"] and not j1.get("of"):
-                out.append("%s: J1 的 NONE 期望必须写 of=[不该产出的动作类型]，否则恒真" % cid)
-            elif acts != ["NONE"] and not (j1.get("text_has") or j1.get("date")):
-                out.append("%s: judge=J1 只标了动作类型、没标 text_has/date ⇒ 「产出了但参数全错」判不出来" % cid)
-            unknown = [a for a in acts if a != "NONE" and a not in KNOWN_ACTION_TYPES]
-            if unknown:
-                out.append("%s: expect.j1.actions 里的 %s 不是已知动作类型"
-                           "（与 app/agent/actions.py 的 ACTION_TYPES 对不上＝这条题永远判不过）" % (cid, unknown))
+            at = str(exp.get("action_type") or "").strip().upper()
+            if not at:
+                out.append("%s: judge=J1 但 expect.action_type 缺失 ⇒ 这条题没出完" % cid)
+            elif at != "NONE" and at not in KNOWN_ACTION_TYPES:
+                out.append("%s: expect.action_type=%s 不是已知动作类型"
+                           "（与 app/agent/actions.py 的 ACTION_TYPES 对不上＝这条题永远判不过）" % (cid, at))
+            elif at != "NONE" and not (exp.get("field_match") or exp.get("forbidden")
+                                       or resolve_expect_date(c.get("time_anchor"))):
+                out.append("%s: J1 只标了动作类型、没标 field_match/forbidden、题面也没锚点日期"
+                           " ⇒ 「产出了但参数全错」判不出来" % cid)
         if c.get("judge") == "J2":
-            j2 = exp.get("j2") or {}
-            if not (j2.get("slots") or j2.get("slots_none")):
-                out.append("%s: judge=J2 但 expect.j2 没标 slots/slots_none ⇒ 这条题没出完" % cid)
+            if not (exp.get("slots") or exp.get("slots_none")):
+                out.append("%s: judge=J2 但 expect.slots/slots_none 都没标 ⇒ 这条题没出完" % cid)
     return out
 
 
@@ -194,23 +191,17 @@ def abstain_verdict(gold_ids, recalled_ids):
 
 
 # ─────────────────────── J1 / J2 判据（§2.2 优先级 J1 > J2 > J3 > J4）───────────────────────
-# 用例标注形态（挂在 ``expect.j1`` / ``expect.j2`` 下；**没挂就是这条题没出完**，lint 会拦）::
-#
-#   "expect": {"gold_seed_idx": [0],
-#     "j1": {"actions": ["MEMO"],              # 期望产出的动作类型（app/agent/actions.py ACTION_TYPES）
-#            "text_has": ["朵朵"],             # 命中动作的载荷里必须出现的片段
-#            "text_has_none": ["儿子"],        # 载荷里禁止出现（用错了事实）
-#            "date": "2026-03-15"},           # CAL_NOTE 专用：相对时间必须落成的绝对日期
-#     "j2": {"slots": {"user_fact_health": "腰伤"},   # 语义槽 key → 落库正文必须含的片段
-#            "slots_none": ["user_fact_relationship"]}}  # 这些槽不该被写（写了＝越权落库）
-#
+# **字段名沿用数据集既有词汇**，不另造平行 schema：77 条正式集早就带
+# `expect.action_type / expect.field_match / expect.forbidden`（其中 `forbidden` 有 32 条填了值
+# 却从来没有消费者），日期则由 `time_anchor.expect_date / expect_offset_days` 权威给出。
 # 判分是**纯函数**：给它动作列表／槽位字典就能判，所以能先于生成侧接线完成自测
 # （方案 §五「判分器必须先被测，否则尺子不可信」）。要「跑」才需要计费端点。
-_J1_PAYLOAD_KEYS = ("query", "text", "prompt", "match")   # parse_actions 里各动作的载荷字段
+_J1_PAYLOAD_KEYS = ("query", "text", "prompt", "match")   # parse_actions 里各动作的载荷内容字段
 # 判别用字段（NOTE_DONE 的 calendar/memo、TIMER 的原始标记串）：**不进内容比对**，
-# 否则「text_has: 接孩子」会被类型词污染。某条题真要判它们（如「必须完成的是日历项而不是备忘项」），
-# 得显式加判据键，而不是把判别词混进内容里——漂移守卫见 backend/tests/test_memory_action_eval_j1j2.py。
+# 否则 `field_match:{"*": "接孩子"}` 会被类型词污染。某条题真要判它们，得显式加判据键，
+# 而不是把判别词混进内容里——漂移守卫见 backend/tests/test_memory_action_eval_j1j2.py。
 _J1_META_KEYS = frozenset({"type", "tag"})
+_J1_DATE_FIELD = "date"          # CAL_NOTE 载荷里由 parse_actions(base_date=锚点) 换算出的绝对日期
 
 
 def _payload_text(payload) -> str:
@@ -222,46 +213,79 @@ def _payload_text(payload) -> str:
     return " ".join(str(payload.get(k) or "") for k in _J1_PAYLOAD_KEYS)
 
 
-def j1_verdict(j1: dict, actions: list) -> dict:
-    """J1 动作参数判定。``actions`` ＝ ``app.agent.actions.parse_actions(模型输出)`` 的结果。
+def resolve_expect_date(time_anchor) -> str:
+    """题面锚点 → 期望绝对日期。`expect_date` 优先；否则 `as_of + expect_offset_days`；都没有 ⇒ ""。
+
+    日期**不写进 expect**：同一个事实的日期期望本来就等于题面锚点，写两处迟早自相矛盾
+    （10-05  unify 之前我的 j1.date 就是这种重复）。
+    """
+    if not isinstance(time_anchor, dict):
+        return ""
+    ed = str(time_anchor.get("expect_date") or "").strip()
+    if ed:
+        return ed[:10]
+    off = time_anchor.get("expect_offset_days")
+    as_of = str(time_anchor.get("as_of") or "").strip()
+    if off is None or not as_of:
+        return ""
+    try:
+        base = datetime.strptime(as_of[:10], "%Y-%m-%d")
+        return (base + timedelta(days=int(off))).strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        return ""
+
+
+def j1_verdict(expect: dict, actions: list, *, expect_date: str = "") -> dict:
+    """J1 动作参数判定。``actions`` ＝ ``parse_actions(模型输出, base_date=题面锚点)`` 的结果。
+
+    读 `expect` 的三个既有键：
+      `action_type`  期望动作类型（`app/agent/actions.py` 的 ACTION_TYPES）；``"NONE"``＝**任何动作都不该出**
+      `field_match`  {载荷字段: 片段}；伪字段 ``"*"``＝片段出现在任一内容字段即可
+      `forbidden`    [片段]——出现在命中动作的载荷里即失败（用错事实／已被作废的旧值复发）
+    外加 `expect_date`（由 `resolve_expect_date(time_anchor)` 得到）：CAL_NOTE 必须落成这个绝对日期。
 
     两种错因分开（§4.2）：**没产出期望动作**＝E3（没用记忆去做事）；
     **产出了但参数不对**＝E4（拿错事实去做事——比 E3 危险，因为它会真的落库）。
     """
-    want = [str(x).strip().upper() for x in (j1.get("actions") or []) if str(x).strip()]
+    exp = expect or {}
+    want = str(exp.get("action_type") or "").strip().upper()
     if not want:
-        return {"pass": False, "err": "E_unannotated", "why": "expect.j1.actions 为空 ⇒ 这条题没出完"}
-    if want == ["NONE"]:                       # 期望**不要**产出动作（常识可推的事不该记成备忘）
-        extra = [a for a in (actions or []) if getattr(a, "action_type", None) in
-                 {str(x).strip().upper() for x in (j1.get("of") or [])}]
-        return {"pass": not extra,
-                "err": "" if not extra else "E4",
-                "why": "" if not extra else "不该产出动作却产出了：%s" % ",".join(
-                    sorted(getattr(a, "action_type", '?') for a in extra))}
-    got = [a for a in (actions or []) if getattr(a, "action_type", None) in want]
+        return {"pass": False, "err": "E_unannotated", "why": "expect.action_type 为空 ⇒ 这条题没出完"}
+    got_all = actions or []
+    if want == "NONE":                       # 期望**不要**产出动作（常识可推的事不该记成备忘）
+        return {"pass": not got_all, "err": "" if not got_all else "E4",
+                "why": "" if not got_all else "不该产出动作却产出了：%s" % ",".join(
+                    sorted(getattr(a, "action_type", '?') for a in got_all))}
+    got = [a for a in got_all if getattr(a, "action_type", None) == want]
     if not got:
-        seen = sorted({getattr(a, "action_type", '?') for a in (actions or [])})
+        seen = sorted({getattr(a, "action_type", '?') for a in got_all})
         return {"pass": False, "err": "E3",
-                "why": "未产出期望动作 %s（实际产出：%s）" % ("/".join(want), ",".join(seen) or "无")}
-    bad = [f for f in (j1.get("text_has") or [])
-           if not any(_norm(str(f)) in _norm(_payload_text(a.payload)) for a in got)]
-    bad += ["禁用片段命中:" + f for f in (j1.get("text_has_none") or [])
+                "why": "未产出期望动作 %s（实际产出：%s）" % (want, ",".join(seen) or "无")}
+    bad = []
+    for field, frag in (exp.get("field_match") or {}).items():
+        if field == "*":
+            if not any(_norm(str(frag)) in _norm(_payload_text(a.payload)) for a in got):
+                bad.append("缺片段:" + str(frag))
+        elif not any(_norm(str(frag)) in _norm(str((a.payload or {}).get(field) or "")) for a in got):
+            bad.append("%s 应含 %s" % (field, frag))
+    bad += ["禁用片段命中:" + f for f in (exp.get("forbidden") or [])
             if any(_norm(str(f)) in _norm(_payload_text(a.payload)) for a in got)]
-    if j1.get("date"):
-        # 相对时间（下周三/三个月前）必须落成绝对日期。CAL_NOTE 的载荷 date 已由生产函数换算过，
-        # 但换算基准是**本机时钟**而非题面 ``time_anchor`` ⇒ 生成侧接线时必须传锚点，见 A30 任务书。
-        if not any(str((a.payload or {}).get("date") or "")[:10] == j1["date"] for a in got):
-            bad.append("date≠" + str(j1["date"]))
+    if expect_date:
+        # 相对时间（下周三/三个月前）必须落成绝对日期。换算由生成侧调 parse_actions(base_date=锚点)
+        # 完成——**判据只比结果**，这样尺子不会跟着本机日历走（A30-② 立这条入参的原因）。
+        if not any(str((a.payload or {}).get(_J1_DATE_FIELD) or "")[:10] == expect_date for a in got):
+            bad.append("%s≠%s" % (_J1_DATE_FIELD, expect_date))
     if bad:
         return {"pass": False, "err": "E4", "why": "；".join(str(b) for b in bad)}
     return {"pass": True, "err": "", "why": ""}
 
 
-def j2_verdict(j2: dict, written_slots: dict) -> dict:
-    """J2 槽位落库判定。``written_slots`` ＝ {user_fact 槽 key: 落库正文}。"""
-    slots, none_keys = (j2.get("slots") or {}), [str(x) for x in (j2.get("slots_none") or [])]
+def j2_verdict(expect: dict, written_slots: dict) -> dict:
+    """J2 语义槽落库判定。读 `expect.slots`（{槽 key: 必须命中的片段}）与 `expect.slots_none`（不得写的槽）。"""
+    exp = expect or {}
+    slots, none_keys = (exp.get("slots") or {}), [str(x) for x in (exp.get("slots_none") or [])]
     if not slots and not none_keys:
-        return {"pass": False, "err": "E_unannotated", "why": "expect.j2 没标 slots/slots_none ⇒ 这条题没出完"}
+        return {"pass": False, "err": "E_unannotated", "why": "expect.slots/slots_none 都没标 ⇒ 这条题没出完"}
     got = written_slots or {}
     bad = [("缺槽 %s（应为 %s）" % (k, v)) for k, v in slots.items()
            if _norm(str(v)) not in _norm(str(got.get(k) or ""))]

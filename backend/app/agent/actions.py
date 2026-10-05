@@ -255,8 +255,27 @@ def extract_gen_image(text: str) -> tuple[str, str | None, str | None]:
     return clean, prompt or None, img_text
 
 
-def extract_cal_note(text: str) -> tuple[str, str] | None:
-    """提取日历备注标记，返回 (YYYY-MM-DD, 内容)；无标记返回 None。日期省略=今天（北京时间）；与旧一致"""
+def _base_date_or_today(base_date: str | None):
+    """A30（2026-10-05）：评测基准日解析。``None`` ＝本机北京日期（与历史行为逐字节相同）。
+
+    畸形值**直接抛**：评测传了个坏锚点却静默退回本机时钟，量出来的分数会看着正常、
+    实则跟着日历漂移（同一道题今天绿后天红），这种错必须当场炸。
+    """
+    if base_date is None:
+        return datetime.now(timezone(timedelta(hours=8))).date()
+    try:
+        # 不截断再解析：`2026-03-10x` 这类尾巴带脏字符的串必须炸，不能被 [:10] 悄悄洗成合法值
+        return datetime.strptime(str(base_date), "%Y-%m-%d").date()
+    except ValueError as e:
+        raise ValueError(f"base_date 必须是 'YYYY-MM-DD'，收到 {base_date!r}") from e
+
+
+def extract_cal_note(text: str, *, base_date: str | None = None) -> tuple[str, str] | None:
+    """提取日历备注标记，返回 (YYYY-MM-DD, 内容)；无标记返回 None。日期省略=今天（北京时间）；与旧一致
+
+    `base_date`（A30）：相对词（今天/明天/后天）与省略日期的**换算基准日**。
+    缺省 None 维持原行为；带 `time_anchor` 的评测题必须显式传入，否则尺子跟着日历走。
+    """
     if not text:
         return None
     m = _CAL_NOTE_RE.search(text)
@@ -265,7 +284,7 @@ def extract_cal_note(text: str) -> tuple[str, str] | None:
     raw = m.group(1).strip()
     if not raw:
         return None
-    today = datetime.now(timezone(timedelta(hours=8))).date()
+    today = _base_date_or_today(base_date)
     head = raw[:10]
     if len(head) == 10 and head[4] == "-" and head[7] == "-":
         note_date = head
@@ -357,11 +376,12 @@ def parse_mcp_actions(text: str) -> list[AgentAction]:
     return out
 
 
-def parse_actions(text: str) -> list[AgentAction]:
+def parse_actions(text: str, *, base_date: str | None = None) -> list[AgentAction]:
     """统一解析：把文本里所有已知动作标记解析为 AgentAction 列表（LLM 输出标记=声明动作）。
 
     - 同一标记出现多次时逐条记录；执行仍走旧提取函数（取首条），本函数用于 trace / 后续 Agent Loop；
-    - 不剥离正文，剥离请用 strip_actions。
+    - 不剥离正文，剥离请用 strip_actions；
+    - `base_date`（A30）只影响 CAL_NOTE 的相对日期换算，缺省 None＝原行为（评测锚点用）。
     """
     if not text:
         return []
@@ -394,7 +414,7 @@ def parse_actions(text: str) -> list[AgentAction]:
             if _kw:
                 actions.append(AgentAction(NOTE_DONE, {"type": _done_kind, "match": _kw[:60]}, m.group(0)))
     for m in _CAL_NOTE_RE.finditer(text):
-        cal = extract_cal_note(m.group(0))
+        cal = extract_cal_note(m.group(0), base_date=base_date)
         if cal:
             actions.append(AgentAction(CAL_NOTE, {"date": cal[0], "text": cal[1]}, m.group(0)))
     for m in _MEMO_RE.finditer(text):

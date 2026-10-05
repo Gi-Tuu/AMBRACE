@@ -189,10 +189,94 @@ def test_判定文本按上限截断_不把回执撑成日志表(mem_db, monkeyp
     )
     asyncio.run(captured["c"])
     d = asyncio.run(_read_receipt_details(mem_db, mid))[-1]
-    assert set(d["evidence"]) == {"user_message", "ai_response"}
+    assert set(d["evidence"]) == {"user_message", "ai_response", "ai_response_visible"}, \
+        "A27乙 之后 evidence 必须同时留「剥前原文」与「判据实际读到的可见正文」，差值才能离线复算"
     assert len(d["evidence"]["user_message"]) == uf.UTILITY_EVIDENCE_MAX_CHARS, "用户侧文本没截断"
     assert len(d["evidence"]["ai_response"]) == uf.UTILITY_EVIDENCE_MAX_CHARS, "AI 侧文本没截断"
+    assert len(d["evidence"]["ai_response_visible"]) <= uf.UTILITY_EVIDENCE_MAX_CHARS
     assert d["evidence"]["user_message"].startswith("你记错了")
+
+
+def test_判定输入是剥掉独白后的可见正文_A27乙(mem_db, monkeypatch):
+    """A27乙（轻）：记忆片段只出现在角色括号独白里时，**不再**判 positive。
+
+    实测暴露面：近 7 天 348 条 AI 回复里 92 条（26.4%）带被落库清洗剥掉的独白
+    （原文在 `chat_messages.extra_meta.reasoning`）——判定跑在剥离之前，所以这 26.4% 里
+    任何一次「独白引用了记忆」都会给用户没看见的话加权。
+    """
+    import app.utils.async_tasks as at
+
+    mid = asyncio.run(_seed_memory(mem_db, 40.0))          # 内容是「用户喜欢喝美式咖啡」
+    monkeypatch.setattr(uf, "_flag_on", lambda *a, **k: True)
+    captured = {}
+    monkeypatch.setattr(at, "spawn_background", lambda coro: captured.__setitem__("c", coro))
+    notes = []
+    monkeypatch.setattr(uf, "_note", lambda cid, kind, n: notes.append((kind, n)))
+
+    uf.schedule_utility_feedback(
+        1, 7, [{"id": mid, "content": "用户喜欢喝美式咖啡"}],
+        "（他最爱的那杯美式，我提一句就好，别啰嗦。）今天累不累？",
+        user_message="今天好累",
+    )
+    assert not captured, f"独白里的引用不该产生回执：{captured}"
+    assert notes == [("neutral", 1)], notes
+
+
+def test_可见正文引用记忆仍判positive_A27乙不能把真信号也掐掉(mem_db, monkeypatch):
+    """阳性对照的反面：剥壳不能把**用户真看见的**引用也剥没。"""
+    import app.utils.async_tasks as at
+
+    mid = asyncio.run(_seed_memory(mem_db, 40.0))
+    monkeypatch.setattr(uf, "_flag_on", lambda *a, **k: True)
+    captured = {}
+    monkeypatch.setattr(at, "spawn_background", lambda coro: captured.__setitem__("c", coro))
+
+    raw = "（他最爱的那杯美式，我提一句就好，别啰嗦。）你上次说喜欢喝美式咖啡，下班去买？"
+    uf.schedule_utility_feedback(
+        1, 7, [{"id": mid, "content": "用户喜欢喝美式咖啡"}], raw, user_message="今天好累",
+    )
+    assert captured, "可见正文里引用了记忆却没判 positive ⇒ 剥壳剥过头了"
+    asyncio.run(captured["c"])
+    d = asyncio.run(_read_receipt_details(mem_db, mid))[-1]
+    assert d["signal"] == "positive", d
+    assert d["evidence"]["ai_response"] == raw, "evidence 要留剥前原文，差值才能离线复算"
+    assert d["evidence"]["ai_response_visible"] == "你上次说喜欢喝美式咖啡，下班去买？", \
+        "visible 段必须正好是括号之后的可见正文"
+
+
+def test_剥壳函数恒等时判定必须退回旧行为而不是崩(monkeypatch):
+    """`visible_reply_text` 的兜底：生产剥壳一旦被改成恒等/抛异常，判据只是回到 10-05 前的旧行为，
+    不能整条判定被掐掉——观测补丁不该有这种杀伤半径。"""
+    import app.agent.context.reasoning_prompt as rp
+
+    monkeypatch.setattr(uf, "_flag_on", lambda *a, **k: True)
+    seen = []
+    monkeypatch.setattr(uf, "_note", lambda cid, kind, n: seen.append((kind, n)))
+    boom = RuntimeError("剥壳函数被人改坏了")
+    monkeypatch.setattr(rp, "extract_leading_bracket_reasoning", lambda t: (_ for _ in ()).throw(boom))
+    got = uf.visible_reply_text("（独白）可见正文")
+    assert got == "（独白）可见正文", got
+
+
+def test_判据读的确实是剥后文本(monkeypatch):
+    """直接钉住「传进 classify 的是剥后正文」——上游若忘记调 visible，这条先红。
+
+    ⚠ 探针长度有讲究：生产剥壳要求括号内 **≥15 字且含分析标记**（他/我/先/别…），
+    短括号（如「（他喜欢美式）」）按规则**不算独白**、原样保留。第一版我用短句，
+    测出来「没剥」像是 bug，实际是我的探针不符合生产判定条件。
+    """
+    import app.utils.async_tasks as at
+
+    monkeypatch.setattr(uf, "_flag_on", lambda *a, **k: True)
+    monkeypatch.setattr(at, "spawn_background", lambda coro: coro.close())
+    read = []
+    monkeypatch.setattr(uf, "classify_utility_signal",
+                        lambda mem, resp, user_message="": read.append(resp) or "neutral")
+    uf.schedule_utility_feedback(
+        1, 7, [{"id": 1, "content": "x"}],
+        "（他喜欢那杯美式，我别提太久，先让他缓缓）今天累不累？", user_message="累",
+    )
+    assert read and read[0] == "今天累不累？", read
 
 
 def test_relaxed_expanded_correction_words_fire():

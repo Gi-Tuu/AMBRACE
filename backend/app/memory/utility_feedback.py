@@ -270,6 +270,32 @@ def _note(character_id, kind: str, n: int) -> None:
         pass
 
 
+def visible_reply_text(text: str) -> str:
+    """A27乙（2026-10-05）：把「用户真看到的正文」算出来给判据用——**与落库清洗同一个函数**。
+
+    为什么判据要过这一道：本判定跑在 `generate_response` 末尾，此刻开头的括号内心活动还没剥
+    （要到 `split_response`／落库清洗才剥），所以 ②「记忆被回复引用」可能只命中在角色独白里
+    ——用户从没看见过的文本也能给记忆加权。10-05 只读实测：近 7 天 348 条 AI 回复里
+    **92 条（26.4%）带被剥掉的独白**（独白原文在 `chat_messages.extra_meta.reasoning`），
+    这就是判定读到独白的概率上限。
+
+    刻意复用 `agent.context.reasoning_prompt.extract_leading_bracket_reasoning`（生产清洗就是它），
+    **不在这里另写一套剥离规则**——两把尺子迟早会漂。函数内 import 是为了不把 memory→agent 的
+    依赖提到模块导入期（循环导入的历史坑）。任何异常都退回原文：那只是回到 10-05 之前的旧行为，
+    不会因为观测补丁把判定整个掐掉，且会留一条 WARNING 让人看得见它发生了。
+    """
+    if not text:
+        return text or ""
+    try:
+        from app.agent.context.reasoning_prompt import extract_leading_bracket_reasoning
+
+        visible, _inner = extract_leading_bracket_reasoning(text)
+        return visible if visible is not None else text
+    except Exception as e:
+        _logger.warning("visible_reply_text fallback to raw text: %s", e)
+        return text
+
+
 def schedule_utility_feedback(
     character_id: int,
     user_id: int,
@@ -286,18 +312,24 @@ def schedule_utility_feedback(
 
     A27甲：这里顺手把**判定时真正用到的两段文本**（各截断 ``UTILITY_EVIDENCE_MAX_CHARS`` 字）交给
     ``apply_utility_feedback`` 随回执落库 ⇒ 以后任何一条回执都能回答「当时到底读了什么才判成这样的」。
+
+    A27乙（2026-10-05）：② 的输入从「原始 ai_response」换成**剥掉角色独白后的可见正文**
+    （`visible_reply_text`），这样「记忆被回复引用」只在用户真看见的话上成立。
+    evidence 里**两段都留**（`ai_response`＝剥前原文、`ai_response_visible`＝判据实际读的），
+    差值随时可离线复算——要不要再把判定挪到服务层（乙-重）就靠这些数决定，不靠争论。
     """
     if not _flag_on(character_id):
         return
     if not recalled or not (ai_response or "").strip():
         return
     try:
+        judged_response = visible_reply_text(ai_response)
         items: list[tuple[int, str]] = []
         for r in recalled:
             mid = r.get("id")
             if mid is None:
                 continue
-            sig = classify_utility_signal(r.get("content") or "", ai_response, user_message=user_message)
+            sig = classify_utility_signal(r.get("content") or "", judged_response, user_message=user_message)
             if sig != "neutral":
                 items.append((int(mid), sig))
         if not items:
@@ -308,6 +340,7 @@ def schedule_utility_feedback(
         evidence = {
             "user_message": (user_message or "")[:UTILITY_EVIDENCE_MAX_CHARS],
             "ai_response": (ai_response or "")[:UTILITY_EVIDENCE_MAX_CHARS],
+            "ai_response_visible": judged_response[:UTILITY_EVIDENCE_MAX_CHARS],
         }
         from app.utils.async_tasks import spawn_background
         spawn_background(apply_utility_feedback(character_id, user_id, items, round_id, evidence=evidence))
