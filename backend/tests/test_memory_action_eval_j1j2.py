@@ -22,6 +22,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "diagnostics" / "memory_action_eval.py"
 
@@ -285,10 +287,190 @@ def test_A30草稿的日期锚点覆盖两种写法():
     assert ev.resolve_expect_date(by_o[0]["time_anchor"]) != ""
 
 
-def test_跑分器即使给了allow_llm也拒绝跑J1J2(monkeypatch):
-    """关掉「授权了就照跑」这条静默错路：生成侧没接线时，J1/J2 的题会走 J3 检索尺子＝拿错尺子还有分。"""
+def test_跑分器在没有generate模式时拒绝跑J1J2(monkeypatch):
+    """闸的其中一道：`--allow-llm` 只解决"要不要花钱"，不解决"尺子对不对"。
+
+    10-05 生成侧接线之后，这道闸的措辞从"未接线"改成"只有 `--mode generate` 才接"——
+    `score`/`certify` 是 J3 检索档，拿它们跑 J1/J2 依然是拿错尺子还有分。
+    """
     import asyncio
     for argv_judges in ("J1", "J1,J2", "J2"):
         monkeypatch.setattr(ev.sys, "argv", ["memory_action_eval.py", "--dataset", "x.jsonl",
                                              "--judges", argv_judges, "--allow-llm"])
         assert asyncio.run(ev.main()) == 2, f"--allow-llm 下 {argv_judges} 竟然被放行了"
+
+
+# ─────────────── J1 第二条通道：【记忆：…】（10-05 拍板 B＋A 各半后新增）───────────────
+# 生产里"把用户交代的事记下来"走的是 `parse_response` 的 `【记忆：…】`→`save_memory`，
+# 而 `[MEMO]` 只是小手机备忘录。试点第一轮只喂 `parse_actions`，于是 j1f01 明明写了
+# `【记忆：用户女儿叫朵朵，2021年出生】` 却被记成 E3"没用记忆去做事"。
+def _chan(text):
+    return ev.extract_memory_channel(text)
+
+
+def test_记忆通道命中_判过_且只有MEMO被接受时判不过():
+    exp = {"action_type": ["MEMO", "MEMORY"], "field_match": {"*": "朵朵"}}
+    v = ev.j1_verdict(exp, _acts("记着呢。【记忆：用户女儿叫朵朵，2021年出生】"),
+                      memory_texts=_chan("记着呢。【记忆：用户女儿叫朵朵，2021年出生】"))
+    assert v["pass"] is True, v
+    # 同一句回复，判据只接受 [MEMO] ⇒ 必须还是 E3（这条就是"通道没被接受"的原样复现）
+    v2 = ev.j1_verdict({"action_type": "MEMO", "field_match": {"*": "朵朵"}},
+                       _acts("记着呢。【记忆：用户女儿叫朵朵，2021年出生】"),
+                       memory_texts=_chan("记着呢。【记忆：用户女儿叫朵朵，2021年出生】"))
+    assert v2["pass"] is False and v2["err"] == "E3", v2
+
+
+def test_通道载荷带旧值_判E4而不是E3():
+    """错因分类不能糊：**落库了但落错内容**比"什么都没落"危险（它会真的写进库）。
+
+    样本用**旧值当现值**的写法（不含作废词），否则 10-05 加了反豁免词之后这句会变成
+    "缺片段"而不是"禁用片段命中"，这条守卫要盯的维度就丢了。
+    """
+    txt = "【记忆：用户无辣不欢】"
+    v = ev.j1_verdict({"action_type": ["MEMO", "MEMORY"], "field_match": {"*": "忌口"},
+                       "forbidden": ["无辣不欢"]}, _acts(txt), memory_texts=_chan(txt))
+    assert v["pass"] is False and v["err"] == "E4", v
+    assert "禁用片段命中" in v["why"], v
+
+
+def test_期望MEMORY却没给通道文本_判没出完而不是判失败():
+    """生成侧漏喂通道文本＝**我的管道断了**，不该记在模型头上（也不该静默当"没产出"）。"""
+    v = ev.j1_verdict({"action_type": ["MEMORY"], "field_match": {"*": "朵朵"}},
+                      _acts("好的"), expect_date="")
+    assert v["err"] == "E_unannotated" and "memory_texts" in v["why"], v
+
+
+def test_NONE题把记忆通道也算作产出():
+    """常识可推的事不该记：模型若真写了【记忆：…】，就是"不该产出却产出了"。"""
+    txt = "【记忆：用户喜欢喝美式】"
+    v = ev.j1_verdict({"action_type": "NONE"}, _acts("喝水有利于代谢"), memory_texts=_chan(txt))
+    assert v["pass"] is False and v["err"] == "E4" and "MEMORY" in v["why"], v
+    assert ev.j1_verdict({"action_type": "NONE"}, _acts("喝水有利于代谢"), memory_texts=[])["pass"] is True
+
+
+@pytest.mark.parametrize("text,want", [
+    ("【记忆：用户女儿叫朵朵】", ["用户女儿叫朵朵"]),
+    ("[记忆:用户养了一只橘猫]", ["用户养了一只橘猫"]),          # 半角方括号也要吃（模型两种都写）
+    ("正文里出现『记忆』二字但没有标记", []),                      # 不误吞
+    ("", []),
+], ids=["全角", "半角", "无标记", "空文本"])
+def test_通道抽取两种括号都吃且不误吞(text, want):
+    assert _chan(text) == want
+
+
+# ─────────────── forbidden 的「作废语境豁免」（10-05 深夜拍板）───────────────
+_FRAG = "城北老小区"
+
+
+def _fv(text, forbidden=(_FRAG,), field=None):
+    """用**生产解析器**产动作再判分（判据与生产共用一套标记语法）。"""
+    exp = {"action_type": "MEMO", "forbidden": list(forbidden)}
+    if field:
+        exp["field_match"] = {"*": field}
+    return ev.j1_verdict(exp, _acts(text), memory_texts=_chan(text))
+
+
+def test_声明旧值已作废不算复发_且必须留痕():
+    """supersede 的正确写法就是「已搬离城北老小区，现居城西」——旧值在"作废声明"那半句里。"""
+    v = _fv("[MEMO]已搬离城北老小区，现居城西[/MEMO]", field="城西")
+    assert v["pass"] is True, v
+    assert v["exempted"], "豁免生效却没留痕＝判据网开一面却数不出来（这条纪律要的正是「可数」）"
+
+
+def test_旧值当现值复发_仍然判E4():
+    v = _fv("[MEMO]用户住在城北老小区，记得带钥匙[/MEMO]", field="钥匙")
+    assert v["pass"] is False and v["err"] == "E4", v
+    assert "禁用片段命中" in v["why"], v
+    assert v["exempted"] == [], v
+
+
+def test_豁免不跨短句():
+    """豁免只在**同一短句**内生效：别的短句里有作废词，救不了这一句。
+
+    两个样本各管一种错法：
+    - 带反豁免词的（"仍住在"）＝两重保险，去掉任何一重都还判得出；
+    - **不带**反豁免词的（"用户住在"）＝只有"跨短句不豁免"这一条在拦。
+      第二例是变异电池补给我的：第一版只写了前者，于是"把整段当一个短句找作废词"这种变异
+      照样绿——测试通过了却是靠另一条规则蹭过去的，等于这条断言没牙。
+    """
+    v = _fv("[MEMO]已搬离老地址。用户仍住在城北老小区[/MEMO]")
+    assert v["pass"] is False and v["err"] == "E4", v
+    v2 = _fv("[MEMO]已搬离老地址。用户住在城北老小区[/MEMO]")
+    assert v2["pass"] is False and v2["err"] == "E4", (v2, "跨短句豁免把另一句的作废词当成了本句的豁免")
+    assert v2["exempted"] == [], v2
+
+
+def test_豁免在记忆通道载荷上同样生效():
+    txt = "【记忆：已搬离城北老小区，现在住城西】"
+    exp = {"action_type": ["MEMO", "MEMORY"], "forbidden": [_FRAG], "field_match": {"*": "城西"}}
+    v = ev.j1_verdict(exp, _acts(txt), memory_texts=_chan(txt))
+    assert v["pass"] is True and v["exempted"], v
+
+
+@pytest.mark.parametrize("word", sorted(ev.FORBIDDEN_RETIRE_WORDS))
+def test_每个作废词都真的能豁免(word):
+    """逐个词打假：词表里任何一项若在判据里没生效（写错字／被 norm 掉），这里当场红。"""
+    v = _fv("[MEMO]%s%s那条不算了，现在住城西[/MEMO]" % (word, _FRAG), field="城西")
+    assert v["pass"] is True, (word, v)
+
+
+@pytest.mark.parametrize("word", sorted(ev.FORBIDDEN_KEEP_WORDS))
+def test_每个反豁免词都能压过作废词(word):
+    """豁免不能变成"只要句子里有个过去时词就全算数"——旧值被说成**仍在生效**时必须照判 E4。
+
+    这条是被旧守卫打红之后补的：样本「腰伤已好转，还像**以前**一样忌久站」含"以前"，
+    只有豁免词表的话会被放成 pass＝把尺子从太严直接改成太松。
+    """
+    v = _fv("[MEMO]以前那条%s其实%s算数[/MEMO]" % (_FRAG, word))
+    assert v["pass"] is False and v["err"] == "E4", (word, v)
+    assert "禁用片段命中" in v["why"], (word, v)
+    assert v["exempted"] == [], (word, v)
+
+
+def test_两张词表不许互相吞掉():
+    """若同一个词既在豁免表又在反豁免表＝豁免永远不生效（静默变回"太严"），必须当场喊。"""
+    both = set(ev.FORBIDDEN_RETIRE_WORDS) & set(ev.FORBIDDEN_KEEP_WORDS)
+    assert not both, "两张表交集非空：%s ⇒ 作废语境豁免形同虚设" % sorted(both)
+
+
+def test_作废词表非空且不含空串():
+    """豁免是"网开一面"，词表一旦被清空＝豁免永真？不——清空后**任何复发都判得出**＝豁免消失；
+    含空串则是相反的死 bug：`"" in 任何句子`＝恒真 ⇒ 所有禁用片段全被豁免（这才是真正要拦的）。"""
+    assert ev.FORBIDDEN_RETIRE_WORDS, "词表被清空＝这次拍板的口径没了"
+    assert ev.FORBIDDEN_KEEP_WORDS, "反豁免表被清空＝豁免压过一切（太松）"
+    assert all(str(w).strip() for w in ev.FORBIDDEN_RETIRE_WORDS + ev.FORBIDDEN_KEEP_WORDS), \
+        "词表里有空串＝豁免恒真"
+
+
+def test_记忆通道正则必须与生产parse_response逐字同源():
+    """判据吃的通道与生产落库的通道**必须是同一条正则**，否则"评测里算达成的东西"生产根本不会落库。
+
+    做法＝去生产源码里把那条字面量抠出来逐字比，而不是抄一份自认为对的。
+    """
+    import re
+
+    src = (REPO / "backend" / "app" / "agent" / "response_parser.py").read_text(encoding="utf-8")
+    m = re.search(r'memory_pattern = r"([^"]+)"', src)
+    assert m, "生产里 memory_pattern 的字面量没扫到＝它搬家/改名了，判据这边必须跟着重新对（守卫不许空跑）"
+    assert m.group(1) == ev.MEMORY_CHANNEL_RE, (
+        "判据通道正则 %r ≠ 生产 %r ⇒ 两边解析出的【记忆：】载荷会不一致" % (
+            ev.MEMORY_CHANNEL_RE, m.group(1)))
+
+
+def test_lint拦下MEMORY与日期判据并放的题():
+    """`【记忆：…】` 载荷没有日期字段 ⇒ MEMORY＋绝对日期＝永远判不过的题。"""
+    base = {"cid": "x1", "judge": "J1", "category": "temporal", "turn": "记一下",
+            "seeds": [{"content": "用户周三带课"}], "distractors": [{"content": "干扰项"}],
+            "context_before": [], "provenance": "synthetic", "persona": {}, "time_anchor": {},
+            "solvability": {}, "config_matrix": [], "flags_required": {}, "tokens_budget": 320}
+    bad_date = {**base, "time_anchor": {"as_of": "2026-09-25", "expect_date": "2026-09-30"},
+                "expect": {"action_type": ["MEMORY"], "field_match": {"*": "带课"}}}
+    assert any("MEMORY 通道没有日期字段" in b for b in ev.lint_dataset([bad_date])), ev.lint_dataset([bad_date])
+    ok = {**base, "expect": {"action_type": ["MEMO", "MEMORY"], "field_match": {"*": "带课"}}}
+    assert not any("MEMORY" in b for b in ev.lint_dataset([ok])), ev.lint_dataset([ok])
+    # 值域检查照样要咬住乱写的通道名（拼错一个字母就是一条永不命中的题）
+    typo = {**base, "expect": {"action_type": ["MEMORYY"], "field_match": {"*": "带课"}}}
+    assert any("不是已知动作类型" in b for b in ev.lint_dataset([typo])), ev.lint_dataset([typo])
+    # NONE 不许和别的值混在一格里（判据自相矛盾）
+    mixed = {**base, "expect": {"action_type": ["NONE", "MEMO"], "field_match": {"*": "带课"}}}
+    assert any("自相矛盾" in b for b in ev.lint_dataset([mixed])), ev.lint_dataset([mixed])

@@ -133,11 +133,55 @@ def test_断言6_不许出判据看不见的动作类型():
     for c in CASES:
         e = c["expect"]
         at = e.get("action_type")
-        if c["judge"] != "J1" or not at or at == "NONE":
+        if c["judge"] != "J1" or not at:
             continue
-        assert at in VISIBLE_ACTIONS, (
-            f"{c['cid']} 期望 {at}，但 parse_actions 给它的载荷只有判别键（无内容、无 date）⇒ 这条题永远判不过；"
-            "要出这类题得先扩判据键（见 memory_action_eval._J1_META_KEYS 注释）")
+        vals = at if isinstance(at, (list, tuple)) else [at]
+        for v in vals:
+            if str(v).strip().upper() == "NONE":
+                continue
+            assert str(v).strip().upper() in (VISIBLE_ACTIONS | ev.J1_CHANNEL_TYPES), (
+                f"{c['cid']} 期望 {v}，但 parse_actions 给它的载荷只有判别键（无内容、无 date）⇒ 这条题永远判不过；"
+                "要出这类题得先扩判据键（见 memory_action_eval._J1_META_KEYS 注释）")
+
+
+def test_断言8_题面要求落库的题必须两条通道都接受():
+    """10-05 试点拍板（B＋A 各半）的机械版，也是那 8 条假 E3 的根治断言。
+
+    生产里"把用户交代的事记下来"的主通道是 `parse_response` 的 `【记忆：…】`（→`save_memory`），
+    `[MEMO]` 只是小手机备忘录。题面一旦要求"记／存／写进备忘"，两条通道都是正当产物；
+    判据却只写 `"MEMO"`，模型走另一条通道就被记成 E3"没用记忆去做事"——试点第一轮正是这样。
+    范围用**题面里的落库动词**切（不是类别名，也不是"片段在不在种子里"：作废型的新值就在题面上），
+    并要求日程型继续只收 CAL_NOTE——写了记忆也不会提醒人。
+    """
+    write_words = ("记", "存", "备忘")
+    hit = 0
+    for c in CASES:
+        if c["judge"] != "J1":
+            continue
+        e = c["expect"]
+        at = e.get("action_type")
+        vals = {str(v).strip().upper() for v in (at if isinstance(at, (list, tuple)) else [at])}
+        wants_write = any(w in c["turn"] for w in write_words)
+        if wants_write and c["category"] != "temporal":
+            assert {"MEMO", "MEMORY"} <= vals, (
+                f"{c['cid']} 题面要求落库（含「{[w for w in write_words if w in c['turn']]}」），"
+                f"判据却只接受 {sorted(vals)} ⇒ 模型走【记忆：】通道会被误判成 E3")
+            hit += 1
+        if c["category"] == "temporal":
+            assert "MEMORY" not in vals, f"{c['cid']} 是日程型，收了 MEMORY 通道就没有日期判据了"
+    assert hit >= 6, f"这条规则只命中 {hit} 题（应≥6＝事实 4＋作废 2）⇒ 断言接近空转，样本或动词表变了"
+    assert any(c["category"] == "temporal" for c in CASES), "样本里没有日程型＝上面那条'不收 MEMORY'是空跑"
+
+
+def test_断言9_MEMORY通道与日期判据互斥():
+    """通道值没有日期字段（`parse_response` 只给正文）⇒ MEMORY 与日期判据同时出现＝永远判不过。"""
+    for c in CASES:
+        e = c["expect"]
+        at = e.get("action_type")
+        vals = {str(v).strip().upper() for v in (at if isinstance(at, (list, tuple)) else [at])} if at else set()
+        if "MEMORY" in vals:
+            assert not ev.resolve_expect_date(c.get("time_anchor")), \
+                f"{c['cid']} 同时给了 MEMORY 与锚点日期 ⇒ lint 与判据会互相打脸"
 
 
 def test_断言7_未认证题必须带blocked_reason():
