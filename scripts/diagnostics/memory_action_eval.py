@@ -832,12 +832,18 @@ LLM_CONFIG_TABLES = ("api_configs", "user_llm_configs", "task_llm_configs")
 
 
 def _sqlite_file(url: str) -> str:
-    """从 `sqlite+aiosqlite:///路径` 里取出文件路径（绝对/相对、正斜杠反斜杠都得认）。"""
+    """从 `sqlite+aiosqlite:///路径` 里取出文件路径（绝对/相对、正斜杠反斜杠都得认）。
+
+    `://` 之后的**第一个** `/` 是「空 host」的分隔符，只能去掉这一个：Windows 的绝对路径写三斜杠
+    （`sqlite:///C:/x.db`），POSIX 的绝对路径要写四斜杠（`sqlite:////tmp/x.db`，与 SQLAlchemy 同口径，
+    也是本文件 `_init_temp_env` 自己拼的形态）。见到几个斜杠就剥几个会把 POSIX 的**根斜杠**吃掉，
+    路径退化成相对路径 ⇒ 库文件"不存在"（10-06 CI 的 Linux 档就是这么红的）。
+    """
     s = (url or "").strip()
     if "://" in s:
-        s = s.split("://", 1)[1]
-    while s.startswith("/"):
-        s = s[1:]
+        s = s.split("://", 1)[1].removeprefix("/")
+    if re.match(r"^/[A-Za-z]:", s):
+        s = s[1:]              # 容错：Windows 上多写一个斜杠（sqlite:////C:/x.db）
     return s.replace("/", os.sep)
 
 

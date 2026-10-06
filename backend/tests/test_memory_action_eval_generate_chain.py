@@ -366,17 +366,22 @@ def test_入口计数会委托给原函数并精确还原():
         lc.chat_completion = monkey
 
 
-@pytest.mark.parametrize("url,want", [
+@pytest.mark.parametrize("url,want_posix", [
     # 夹具用**合成路径**，不要写本项目的真机绝对路径：这个文件会随脱敏快照进公开仓，
     # 而公开仓树里"本机项目路径／个人目录"一类命中至今为 0（规程第 5 步要扫的就是这三条）。
-    ("sqlite+aiosqlite:///E:/demo/backend/data/sqlite/demo.db",
-     r"E:\demo\backend\data\sqlite\demo.db"),
-    ("sqlite+aiosqlite:///data/sqlite/demo.db",
-     r"data\sqlite\demo.db"),
-    ("sqlite:///x.db", r"x.db"),
-], ids=["绝对路径", "相对路径", "旧式前缀"])
-def test_sqlite路径解析认绝对也认相对(url, want):
-    assert ev._sqlite_file(url) == want
+    # 期望值一律写**正斜杠形态**，由 os.sep 换算 ⇒ 同一条用例在 Windows 与 Linux 档都该绿
+    # （10-06 教训：把 `E:\...` 硬写进表里＝只在 Windows 成立，这文件第一次进 CI 就红了）。
+    ("sqlite+aiosqlite:///C:/demo/backend/data/sqlite/demo.db",
+     "C:/demo/backend/data/sqlite/demo.db"),
+    ("sqlite+aiosqlite:////C:/demo/backend/data/sqlite/demo.db",
+     "C:/demo/backend/data/sqlite/demo.db"),
+    ("sqlite+aiosqlite:////demo/backend/data/sqlite/demo.db",
+     "/demo/backend/data/sqlite/demo.db"),
+    ("sqlite+aiosqlite:///data/sqlite/demo.db", "data/sqlite/demo.db"),
+    ("sqlite:///x.db", "x.db"),
+], ids=["Win绝对三斜杠", "Win绝对四斜杠", "POSIX绝对四斜杠", "相对路径", "旧式前缀"])
+def test_sqlite路径解析认绝对也认相对(url, want_posix):
+    assert ev._sqlite_file(url) == want_posix.replace("/", os.sep)
 
 
 def test_生产库路径取不到就要抛而不是退回无key配置(tmp_path, monkeypatch):
