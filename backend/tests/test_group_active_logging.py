@@ -4,8 +4,9 @@
 钉住三件事（只补口径、不改闸）：
 ① 单句冒泡分支：落 1 条群消息的同时补写 1 条 message_type="group_active" 的日志
    （character_id=发起角色、session_id=None、content=正文、extra_meta 含 group_id）；
-② 双角色互聊分支：每条落库的群消息各补 1 条日志（发起者与搭档按各自 cid 记账），
-   extra_meta 含 group_id 与 with_id；
+② 双角色互聊分支：每条**落库**的群消息各补 1 条日志，extra_meta 含 group_id 与 with_id；
+   A34 批3（2026-10-07，B.3.5）起每 tick 每群只落 1 条（发起者开口那一句），其余轮次 INFO 留痕后
+   丢弃 —— 所以本例是「1 条群消息 + 1 条日志」，且 E15 的「落库即记账」契约不变；
 ③ 只在消息真正加入 session 后写：校验失败整批不落库时，日志也必须为 0 条
    （与群消息同一批 commit，不提前写）。
 
@@ -13,6 +14,7 @@
 """
 import asyncio
 import json
+import logging
 import os
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -102,8 +104,12 @@ def test_single_bubble_writes_one_log(tmp_path, monkeypatch):
     assert "with_id" not in meta  # 单句冒泡分支无搭档，不硬塞
 
 
-def test_multi_chat_writes_log_per_message(tmp_path, monkeypatch):
-    """② 双角色互聊：每条群消息各补 1 条日志，搭档的发言记在搭档名下。"""
+def test_multi_chat_lands_only_one_per_group_tick(tmp_path, monkeypatch, caplog):
+    """②＋A34 批3：互聊生成 3 轮，但每 tick 每群只落 1 条（发起者开口那一句），落库即记账。
+
+    现场（chat_group_messages 2041/2043、2023/2025 同秒两条）根因就是这里逐条落库；
+    其余轮次必须 INFO 留痕后丢弃（不顺延到下个 tick）。
+    """
     factory = _factory(tmp_path)
     _seed(factory)
     reply = json.dumps({"messages": [
@@ -113,19 +119,33 @@ def test_multi_chat_writes_log_per_message(tmp_path, monkeypatch):
     ]}, ensure_ascii=False)
     ga = _patch(monkeypatch, factory, reply)
 
-    assert asyncio.run(ga.run_group_active(1, GROUP, OWNER, 2)) is True
+    with caplog.at_level(logging.INFO):
+        assert asyncio.run(ga.run_group_active(1, GROUP, OWNER, 2)) is True
 
     msgs = _dump(factory, ChatGroupMessage)
     logs = _dump(factory, ProactiveMessageLog)
-    assert len(msgs) == 3 and len(logs) == 3
-    assert [m.character_id for m in msgs] == [1, 2, 1]
-    assert [l.character_id for l in logs] == [1, 2, 1]
-    for msg, log in zip(msgs, logs):
-        assert log.message_type == "group_active"
-        assert log.session_id is None
-        assert log.content == msg.content
-        meta = json.loads(log.extra_meta)
-        assert meta == {"group_id": GROUP, "with_id": 2}
+    assert len(msgs) == 1 and len(logs) == 1          # 每 tick 每群最多落地 1 条
+    assert msgs[0].character_id == 1 and logs[0].character_id == 1
+    assert logs[0].message_type == "group_active"
+    assert logs[0].session_id is None
+    assert logs[0].content == msgs[0].content         # E15 契约：落库即记账
+    assert json.loads(logs[0].extra_meta) == {"group_id": GROUP, "with_id": 2}
+    assert any("multi-chat trimmed" in r.message and "drop=2" in r.message
+               for r in caplog.records), "丢弃的轮次没留 INFO 痕迹"
+
+
+def test_multi_chat_single_round_still_lands(tmp_path, monkeypatch):
+    """②' 搭档先不落、发起者只有一句时不受截断影响（1 条消息 + 1 条日志）。"""
+    factory = _factory(tmp_path)
+    _seed(factory)
+    reply = json.dumps({"messages": [
+        {"character_id": 1, "content": "早上好，都吃早饭了吗"},
+    ]}, ensure_ascii=False)
+    ga = _patch(monkeypatch, factory, reply)
+
+    assert asyncio.run(ga.run_group_active(1, GROUP, OWNER, 2)) is True
+    assert len(_dump(factory, ChatGroupMessage)) == 1
+    assert len(_dump(factory, ProactiveMessageLog)) == 1
 
 
 def test_content_truncated_to_500(tmp_path, monkeypatch):

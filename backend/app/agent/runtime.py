@@ -469,6 +469,12 @@ async def run_social_reply(
             from app.agent.context_builder import build_context
             state = await build_context(state)
 
+        # A28-②a：把已有系统的结构化认知投进本轮工作台（**全仓唯一投影调用点**）。
+        # 只写不读：上下文装配不消费 workspace（守卫 test_第一阶段没有任何上下文装配环节消费workspace），
+        # 且额外取数与影子落痕都在默认关的闸后面 ⇒ 关着时零额外查询、输出逐字节不变。
+        from app.agent.workspace_projection import project_into_workspace
+        await project_into_workspace(state)
+
         # 4. 平台公开上下文：插入到 build_context 末尾 user 消息之前（系统指令在前更稳）
         if extra_system:
             for m in extra_system:
@@ -494,6 +500,11 @@ async def run_social_reply(
                 steps.append(a.to_step())
         # 兜底剥离残留动作标记：未执行/未注册/失败均不编造成功，也不让标记泄漏到回复正文
         text = _actions.strip_actions(text)
+
+        # A28-②b：把"这一轮实际做了什么、为什么、受哪些约束"登记成决定契约（**全仓唯一接线点，
+        # 且在生成与工具都跑完之后**——它复盘结果，不参与任何决定；默认关的影子里才有额外一次读）。
+        from app.agent.decision_contract import record_decision_contract
+        record_decision_contract(state, allow_tools=allow_tools)
 
         # 收尾：timer 标签 + 状态更新残留 + 截断（parse_response 已剥离记忆/自述/状态更新正文）
         try:

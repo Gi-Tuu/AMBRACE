@@ -741,4 +741,4 @@ def test_memory_review_复读昨晚哄睡句不发送(monkeypatch):
     ok = asyncio.run(review_mod.run_memory_review(3, 4, 9))
     assert ok is False
     assert not sent                                   # 复读句被拦截
-    assert mem.next_review_at is not None             # 占位重排已生效（3 天后才再试）
+    assert mem.next_review_at is not None             # A37 批 1：内容闸走 6 小时档（不再冒充"3 天=发过"，也不会每 30 分钟烧 LLM）

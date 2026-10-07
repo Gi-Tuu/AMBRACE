@@ -32,6 +32,20 @@ def _legacy_day_start(utc_naive: datetime) -> datetime:
     ).replace(tzinfo=None)
 
 
+class _FakeScalars:
+    """A37 批 1 之后谓词走 `.scalars().all()`（要按行内容分「真发过／失败留痕」）。
+
+    本夹具考的是**日界**，不是失败前缀 ⇒ 给的那一行始终算"真发出去了"。
+    """
+
+    def __init__(self, hit: bool):
+        self._hit = hit
+
+    def all(self):
+        from types import SimpleNamespace
+        return [SimpleNamespace(id=1, content="生日快乐")] if self._hit else []
+
+
 class _FakeResult:
     def __init__(self, hit: bool):
         self._hit = hit
@@ -41,6 +55,9 @@ class _FakeResult:
 
     def scalar(self):
         return 1 if self._hit else 0
+
+    def scalars(self):
+        return _FakeScalars(self._hit)
 
 
 class _FakeSession:
@@ -227,4 +244,5 @@ def test_模块不再引用北京日界():
     src = open(triggers.__file__, encoding="utf-8").read()
     assert "beijing_day_start" not in src
     assert "timedelta(hours=8)" not in src
-    assert src.count("start = app_day_start_utc()") == 4  # 每日上限/生日/节日/纪念日四处同源
+    assert src.count("start = app_day_start_utc()") == 3  # 每日上限／节庆（生日＋节日共用一次查询）／纪念日，三处同源
+    # A37 批 1：原来生日与节日各自取一次日界（两次 SQL），现合并成 `festival_today_state` 一次查完 ⇒ 4 → 3

@@ -265,7 +265,8 @@ def test_run_prospective_due_success_discharges(pi_db, monkeypatch):
 
     sent = {}
     async def _fake_llm(**kw):
-        return "我记得你之前说过下周带你去吃火锅，要不这周末安排上？"
+        # A34 批3 ⑨：回忆式开场（「我记得你之前说过…」）会被无条件拦回，这里用非回忆式措辞
+        return "下周说好带你去吃火锅的，要不这周末安排上？"
     async def _fake_send(session_id, character_id, user_id, content, message_type="prospective_intent", **kw):
         sent["content"] = content
         sent["type"] = message_type

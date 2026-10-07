@@ -528,19 +528,27 @@ async def run_ai_care(char_id: int, user_id: int, pet_id: int) -> bool:
         _logger.warning("AI care interact failed char=%d pet=%d: %s", char_id, pet_id, e)
         return False
     # 照顾消息：独立限额每日 <=1（不占 pet_remind 的 2 条）
+    # A37 批 1（审计 §1.4 V6）：这两条"这条没发出去"的路径原来 `return True`，
+    # 而 arbiter 是 `if ok: break` ⇒ 白占本 tick 的唯一名额、把别的通道挤掉。
+    # 改成 False：名额让给下一个候选，本通道下一 tick 还会再来。
     if await _daily_msg_count(char_id, AI_CARE_TYPE) >= AI_CARE_DAILY_LIMIT:
-        return True
+        return False
     session_id = await get_latest_session_id(user_id, char_id)
     if session_id is None:
-        return True
+        return False
     text, care_reasoning = await _gen_care_message(char, pet) if char else ("", "")
     if text:
         _care_extra = None
         if care_reasoning:
             import json as _json
             _care_extra = _json.dumps({"reasoning": care_reasoning}, ensure_ascii=False)
-        await send_to_session(session_id, char_id, user_id, text[:500], message_type=AI_CARE_TYPE,
-                              extra_meta=_care_extra)
+        _res = await send_to_session(session_id, char_id, user_id, text[:500], message_type=AI_CARE_TYPE,
+                                     extra_meta=_care_extra)
+        if getattr(_res, "ok", None) is False:
+            # A37 批 1：被闸拦下就不是"已发送"，别把 sent 日志写下去，也不占名额
+            _logger.info("AI care not sent char=%d pet=%d (reason=%s)",
+                         char_id, pet_id, getattr(_res, "reason", ""))
+            return False
     _logger.info("AI care sent char=%d pet=%d", char_id, pet_id)
     return True
 

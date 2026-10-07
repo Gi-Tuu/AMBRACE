@@ -1,6 +1,7 @@
 """主动交流调度引擎 — 后台异步循环"""
 import asyncio
 from datetime import datetime, timezone
+from typing import NamedTuple
 from sqlalchemy import select
 from app.db.database import async_session_factory
 from app.models.chat import ChatMessage
@@ -84,6 +85,21 @@ PERIODIC_STALL_SEC = 1800
 
 
 
+class SendResult(NamedTuple):
+    """`send_to_session` 的结局（A37 批 1 第 1 项：抑制分支不再静默 `return`）。
+
+    为什么要它：主题熔断命中时这里既不发 FCM 也不写库，**也不告诉调用方任何事**，
+    于是上层照旧把剧情切片标成 `sent`、把复习的 3 天窗口烧掉、把当日配额记上——
+    一条从没到过用户面前的消息在数据上长得和发成功一模一样（审计 §1.4 V1/V3/V7/V8 的共同根）。
+
+    ⚠ `NamedTuple` 是**非空元组＝恒真**，消费方必须读 `.ok`，写 `if res:` 等于没读
+    （守卫 `test_send_result_not_swallowed_a37.py` 逐点钉住）。
+    """
+
+    ok: bool
+    reason: str = ""
+
+
 async def send_to_session(
     session_id: int,
     character_id: int,
@@ -93,8 +109,8 @@ async def send_to_session(
     holiday_name: str | None = None,
     log_proactive: bool = True,
     extra_meta: str | None = None,
-):
-    """将主动消息保存到数据库并通过 WS 推送（如果用户在线）"""
+) -> "SendResult":
+    """将主动消息保存到数据库并通过 WS 推送（如果用户在线）；返回**发出去没有、没发是哪个闸**。"""
     # L3（2026-09-09 主体归属治理）：主题熔断统一兜底——state_trigger / memory_review /
     # life_regression / storyline / pet_care / life_share 等所有经本出口的主动通道都覆盖
     # （timer 已在 arbiter 内自行判并 mark_fired，保证承诺状态正确流转，此处不重复判）。
@@ -112,7 +128,8 @@ async def send_to_session(
                     if _sup:
                         _logger.info("Proactive msg suppressed char=%d type=%s: %s",
                                      character_id, message_type, _reason)
-                        return  # 不写库、不推送、不发 FCM
+                        # A37 批 1：不写库、不推送、不发 FCM，但**必须把"没发"告诉调用方**
+                        return SendResult(False, "topic_guard")
         except Exception as e:
             _logger.warning("send_to_session topic guard fail-open: %s", e)
     msg_id = None
@@ -192,6 +209,10 @@ async def send_to_session(
         )
     except Exception as e:
         _logger.warning("Push proactive msg to user failed user=%d: %s", user_id, e)
+
+    # 走到这里＝已写 ChatMessage（＋按需记主动日志）；FCM 只是离线补通知，
+    # 它失败不改变"这条已经进了会话记录"的事实，所以仍算 ok（调用方据此才允许写消费标记）。
+    return SendResult(True, "sent")
 
 
 # ── 断点 #8′ E14（2026-09-29）：纪念日通道补最小组内核闸 ──────────────────────────

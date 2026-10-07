@@ -66,7 +66,7 @@ import asyncio
 
 import pytest
 
-from _dbclone import clone_engine, make_session_factory
+from _dbclone import clone_engine, make_session_factory, run_unit_of_work
 
 import app.agent.context as _ctx  # noqa: F401  触发所有 section_*.py 注册（与同族测试一致）
 
@@ -118,7 +118,7 @@ def fc_db(tmp_path_factory):
     engine = clone_engine(db_file)
     factory = make_session_factory(engine)
 
-    async def _seed():
+    async def _seed(db):
         from datetime import timedelta
 
         from app.models.agent import TaskLlmConfig
@@ -133,132 +133,134 @@ def fc_db(tmp_path_factory):
         from app.utils.timeutil import now_naive_utc
 
         now = now_naive_utc()
-        async with factory() as db:
-            db.add(User(id=1, username="u1", nickname="SENTINEL_USER"))
-            # B6 的第二账号（跨账号反向哨兵）：与 User(1) 一起放进第一次 flush，让所有
-            # user_id=2 的子行不依赖同一次 flush 内的父/子插入顺序（曾触发 FK 约束失败）。
-            db.add(User(id=2, username="u2", nickname="U2B6_二号账号"))
-            db.add(AICharacter(
-                id=13, user_id=1, name="酱", personality="温柔",
-                chat_style="口语化", relation_type="朋友", is_active=True,
-            ))
-            db.add(AIMoment(
-                user_id=1, character_id=None, sender_type="user",
-                content="SENTINEL_MOMENT", is_active=True,
-            ))
-            sess = ChatSession(user_id=1, character_id=13)
-            db.add(sess)
-            await db.flush()  # 取 sess.id 供 ScheduledEvent 的非空 session_id 外键使用
+        db.add(User(id=1, username="u1", nickname="SENTINEL_USER"))
+        # B6 的第二账号（跨账号反向哨兵）：与 User(1) 一起放进第一次 flush，让所有
+        # user_id=2 的子行不依赖同一次 flush 内的父/子插入顺序（曾触发 FK 约束失败）。
+        db.add(User(id=2, username="u2", nickname="U2B6_二号账号"))
+        db.add(AICharacter(
+            id=13, user_id=1, name="酱", personality="温柔",
+            chat_style="口语化", relation_type="朋友", is_active=True,
+        ))
+        db.add(AIMoment(
+            user_id=1, character_id=None, sender_type="user",
+            content="SENTINEL_MOMENT", is_active=True,
+        ))
+        sess = ChatSession(user_id=1, character_id=13)
+        db.add(sess)
+        await db.flush()  # 取 sess.id 供 ScheduledEvent 的非空 session_id 外键使用
 
-            # ── contextB2 追加（下面每一项只服务一个用例的哨兵）──
-            db.add(UserState(user_id=1, mood=80))  # 八维里一项 ≠ 50
-            db.add(UserMemo(user_id=1, title="备忘", content="SENTINEL_MEMO"))
-            db.add(UserDiary(
-                user_id=1, diary_date=now.strftime("%Y-%m-%d"), content="SENTINEL_DIARY",
-            ))
-            db.add(WorldFact(  # world_facts 用（character 主语 + 非瞬时谓词，免新鲜窗干扰）
-                user_id=1, character_id=13, subject_type="character", subject_id=13,
-                predicate="setting", object_value="SENTINEL_FACT", status="active",
-                audience='["public"]', asserted_at=now,
-            ))
-            db.add(WorldFact(  # current_state 锚点用（subject=user；audience 不含 char → 不漏进 world_facts）
-                user_id=1, character_id=13, subject_type="user", subject_id=1,
-                predicate="status", object_value="SENTINEL_NOW", status="active",
-                audience='["user:1"]', asserted_at=now,
-            ))
-            db.add(ScheduledEvent(
-                user_id=1, character_id=13, session_id=sess.id,
-                trigger_at=now + timedelta(hours=2), status="pending",
-                content_hint="SENTINEL_PROMISE", owner="ai",
-            ))
-            db.add(PhoneSnapshot(
-                user_id=1, source="clipboard", content="SENTINEL_SNAP", created_at=now,
-            ))
-            db.add(Memory(
-                user_id=1, character_id=13, memory_type="working_state", title="ws",
-                content='{"ongoing": [{"topic": "SENTINEL_WS", "detail": "赶派单"}]}',
-            ))
-            db.add(MCPServer(user_id=1, name="sentinel", transport="stdio", command="echo"))
+        # ── contextB2 追加（下面每一项只服务一个用例的哨兵）──
+        db.add(UserState(user_id=1, mood=80))  # 八维里一项 ≠ 50
+        db.add(UserMemo(user_id=1, title="备忘", content="SENTINEL_MEMO"))
+        db.add(UserDiary(
+            user_id=1, diary_date=now.strftime("%Y-%m-%d"), content="SENTINEL_DIARY",
+        ))
+        db.add(WorldFact(  # world_facts 用（character 主语 + 非瞬时谓词，免新鲜窗干扰）
+            user_id=1, character_id=13, subject_type="character", subject_id=13,
+            predicate="setting", object_value="SENTINEL_FACT", status="active",
+            audience='["public"]', asserted_at=now,
+        ))
+        db.add(WorldFact(  # current_state 锚点用（subject=user；audience 不含 char → 不漏进 world_facts）
+            user_id=1, character_id=13, subject_type="user", subject_id=1,
+            predicate="status", object_value="SENTINEL_NOW", status="active",
+            audience='["user:1"]', asserted_at=now,
+        ))
+        db.add(ScheduledEvent(
+            user_id=1, character_id=13, session_id=sess.id,
+            trigger_at=now + timedelta(hours=2), status="pending",
+            content_hint="SENTINEL_PROMISE", owner="ai",
+        ))
+        db.add(PhoneSnapshot(
+            user_id=1, source="clipboard", content="SENTINEL_SNAP", created_at=now,
+        ))
+        db.add(Memory(
+            user_id=1, character_id=13, memory_type="working_state", title="ws",
+            content='{"ongoing": [{"topic": "SENTINEL_WS", "detail": "赶派单"}]}',
+        ))
+        db.add(MCPServer(user_id=1, name="sentinel", transport="stdio", command="echo"))
 
-            # ── contextB3 追加 ──
-            db.add(CharacterState(character_id=13, trust=70))  # AI 生活注入：trust≥70 → 概率 0.6
-            db.add(Memory(
-                user_id=1, character_id=13, memory_type="event", source="life",
-                title="life", content="SENTINEL_LIFE", status="active",
+        # ── contextB3 追加 ──
+        db.add(CharacterState(character_id=13, trust=70))  # AI 生活注入：trust≥70 → 概率 0.6
+        db.add(Memory(
+            user_id=1, character_id=13, memory_type="event", source="life",
+            title="life", content="SENTINEL_LIFE", status="active",
+        ))
+
+        # ── contextB4 追加 ──
+        db.add(GlobalUserFact(  # 敏感槽：默认关 → 只有本批用例显式开 flag 才读得到
+            user_id=1, slot="relationship", value="SENTINEL_USERNOW",
+            source="chat", confidence=1.0, valid_from=now,
+        ))
+        db.add(ConversationTopic(  # nodes:106 目标/未完成路
+            character_id=13, user_id=1, topic="GOALTGT_B4", status="进行中",
+        ))
+        db.add(Memory(  # runtime:190 关系锚点：importance≥80 + memory_type∈(event, insight)
+            user_id=1, character_id=13, memory_type="event", title="anchor",
+            content="ANCHORTGT_B4", importance=88.0, status="active", is_archived=False,
+        ))
+
+        # ── contextB5 追加（本批 7 处调用点的数据源；标记一律含 B5、不含 SENTINEL_）──
+        from app.agent.context_builder import HOT_THRESHOLD_7D_MSGS
+
+        db.add(WorldFact(  # 用例 29：curated 层按 kind 取，查询里根本没有 user_id
+            user_id=1, character_id=13, subject_type="character", subject_id=13,
+            predicate="setting", object_value="CURATEDB5_不许夸大", status="active",
+            kind="constraint", audience='["public"]', asserted_at=now,
+        ))
+        db.add(GlobalUserFact(  # 用例 30：previous_value 非空是进对齐报表的唯一判据
+            user_id=1, slot="job", value="JOBB5_新工作", previous_value="JOBB5_旧工作",
+            source="chat", confidence=1.0, valid_from=now,
+        ))
+        db.add(TaskLlmConfig(  # 用例 31：1 号为 memory 任务配的 BYOK（缺 caller 时不得借用）
+            user_id=1, task="memory", base_url="http://127.0.0.1:9/v1",
+            api_key="sk-user-b5", model="USERB5_MODEL", enabled=True,
+        ))
+        hot_sess = ChatSession(user_id=1, character_id=13)  # 用例 32/33：高频证据放独立会话
+        db.add(hot_sess)
+        await db.flush()
+        for i in range(HOT_THRESHOLD_7D_MSGS):
+            db.add(ChatMessage(
+                session_id=hot_sess.id, sender_type="user",
+                content=f"HOTMSG_B5_{i}", created_at=now,
             ))
 
-            # ── contextB4 追加 ──
-            db.add(GlobalUserFact(  # 敏感槽：默认关 → 只有本批用例显式开 flag 才读得到
-                user_id=1, slot="relationship", value="SENTINEL_USERNOW",
-                source="chat", confidence=1.0, valid_from=now,
-            ))
-            db.add(ConversationTopic(  # nodes:106 目标/未完成路
-                character_id=13, user_id=1, topic="GOALTGT_B4", status="进行中",
-            ))
-            db.add(Memory(  # runtime:190 关系锚点：importance≥80 + memory_type∈(event, insight)
-                user_id=1, character_id=13, memory_type="event", title="anchor",
-                content="ANCHORTGT_B4", importance=88.0, status="active", is_archived=False,
-            ))
+        # ── contextB6 追加（core/anchors/loops + pets 四处调用点；标记含 B6、不含 SENTINEL_）──
+        db.add(Memory(  # 核心记忆：get_core_memories 只按 character_id → 缺 caller 也必须保住
+            user_id=1, character_id=13, memory_type="user_info", sub_type="hobby",
+            title="core", content="COREB6_核心记忆", importance=100.0,
+            is_core=True, core_category="preference", status="active", is_archived=False,
+        ))
+        db.add(Memory(  # 关系锚点（1 号）：importance≥80 且 memory_type∈(event, insight)
+            user_id=1, character_id=13, memory_type="event", title="anchor_u1",
+            content="ANCHORB6_一号锚点", importance=85.0, status="active", is_archived=False,
+        ))
+        db.add(Memory(  # 关系锚点（2 号、同角色）：任何一侧都不得注入 → 证明过滤本身没坏
+            user_id=2, character_id=13, memory_type="event", title="anchor_u2",
+            content="ANCHORB6_二号锚点", importance=84.0, status="active", is_archived=False,
+        ))
+        db.add(LifeGoal(  # 开放循环「角色自身」半边：只按 character_id + status
+            character_id=13, type="growth", title="GOALB6_目标", status="active", priority=3,
+        ))
+        db.add(ScheduledEvent(  # 开放循环「账号」半边：未到期计时承诺（1 号）
+            user_id=1, character_id=13, session_id=sess.id,
+            trigger_at=now + timedelta(hours=3), status="pending",
+            content_hint="TIMERB6_一号计时", owner="ai",
+        ))
+        db.add(ScheduledEvent(  # 同上（2 号）
+            user_id=2, character_id=13, session_id=sess.id,
+            trigger_at=now + timedelta(hours=4), status="pending",
+            content_hint="TIMERB6_二号计时", owner="ai",
+        ))
+        db.add(Pet(user_id=1, name="PETB6_咪咪", species="cat", owner_type="user"))
+        db.add(Pet(user_id=1, name="PETB6_无归属", species="rabbit", owner_type=None))  # 分支1 旧数据
+        db.add(Pet(user_id=2, name="PET2B6_旺财", species="dog", owner_type="user"))  # 跨账号反向哨兵
+        db.add(Pet(user_id=1, name="AIPETB6_团子", species="gecko", owner_type="ai", owner_id=13))
+        await db.commit()
 
-            # ── contextB5 追加（本批 7 处调用点的数据源；标记一律含 B5、不含 SENTINEL_）──
-            from app.agent.context_builder import HOT_THRESHOLD_7D_MSGS
-
-            db.add(WorldFact(  # 用例 29：curated 层按 kind 取，查询里根本没有 user_id
-                user_id=1, character_id=13, subject_type="character", subject_id=13,
-                predicate="setting", object_value="CURATEDB5_不许夸大", status="active",
-                kind="constraint", audience='["public"]', asserted_at=now,
-            ))
-            db.add(GlobalUserFact(  # 用例 30：previous_value 非空是进对齐报表的唯一判据
-                user_id=1, slot="job", value="JOBB5_新工作", previous_value="JOBB5_旧工作",
-                source="chat", confidence=1.0, valid_from=now,
-            ))
-            db.add(TaskLlmConfig(  # 用例 31：1 号为 memory 任务配的 BYOK（缺 caller 时不得借用）
-                user_id=1, task="memory", base_url="http://127.0.0.1:9/v1",
-                api_key="sk-user-b5", model="USERB5_MODEL", enabled=True,
-            ))
-            hot_sess = ChatSession(user_id=1, character_id=13)  # 用例 32/33：高频证据放独立会话
-            db.add(hot_sess)
-            await db.flush()
-            for i in range(HOT_THRESHOLD_7D_MSGS):
-                db.add(ChatMessage(
-                    session_id=hot_sess.id, sender_type="user",
-                    content=f"HOTMSG_B5_{i}", created_at=now,
-                ))
-
-            # ── contextB6 追加（core/anchors/loops + pets 四处调用点；标记含 B6、不含 SENTINEL_）──
-            db.add(Memory(  # 核心记忆：get_core_memories 只按 character_id → 缺 caller 也必须保住
-                user_id=1, character_id=13, memory_type="user_info", sub_type="hobby",
-                title="core", content="COREB6_核心记忆", importance=100.0,
-                is_core=True, core_category="preference", status="active", is_archived=False,
-            ))
-            db.add(Memory(  # 关系锚点（1 号）：importance≥80 且 memory_type∈(event, insight)
-                user_id=1, character_id=13, memory_type="event", title="anchor_u1",
-                content="ANCHORB6_一号锚点", importance=85.0, status="active", is_archived=False,
-            ))
-            db.add(Memory(  # 关系锚点（2 号、同角色）：任何一侧都不得注入 → 证明过滤本身没坏
-                user_id=2, character_id=13, memory_type="event", title="anchor_u2",
-                content="ANCHORB6_二号锚点", importance=84.0, status="active", is_archived=False,
-            ))
-            db.add(LifeGoal(  # 开放循环「角色自身」半边：只按 character_id + status
-                character_id=13, type="growth", title="GOALB6_目标", status="active", priority=3,
-            ))
-            db.add(ScheduledEvent(  # 开放循环「账号」半边：未到期计时承诺（1 号）
-                user_id=1, character_id=13, session_id=sess.id,
-                trigger_at=now + timedelta(hours=3), status="pending",
-                content_hint="TIMERB6_一号计时", owner="ai",
-            ))
-            db.add(ScheduledEvent(  # 同上（2 号）
-                user_id=2, character_id=13, session_id=sess.id,
-                trigger_at=now + timedelta(hours=4), status="pending",
-                content_hint="TIMERB6_二号计时", owner="ai",
-            ))
-            db.add(Pet(user_id=1, name="PETB6_咪咪", species="cat", owner_type="user"))
-            db.add(Pet(user_id=1, name="PETB6_无归属", species="rabbit", owner_type=None))  # 分支1 旧数据
-            db.add(Pet(user_id=2, name="PET2B6_旺财", species="dog", owner_type="user"))  # 跨账号反向哨兵
-            db.add(Pet(user_id=1, name="AIPETB6_团子", species="gecko", owner_type="ai", owner_id=13))
-            await db.commit()
-
-    asyncio.run(_seed())
+    # A36（2026-10-07）：种子写整体走 run_unit_of_work —— 本单元只有一个事务、一次 commit，
+    # 撞锁那次已被整体回滚 ⇒ 换干净会话重放即可；不再让 commit 期的 database is locked
+    # 被伪装成 PendingRollbackError（A21 台账里本文件那一层就红在会话共享沙箱库上）。
+    asyncio.run(run_unit_of_work(factory, _seed))
     yield factory
     asyncio.run(engine.dispose())
 

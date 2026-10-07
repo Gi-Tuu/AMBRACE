@@ -69,6 +69,10 @@ class EmotionCarePorts(Protocol):
 
     async def latest_session_id(self, user_id: int, character_id: int) -> int | None: ...
 
+    # A32（2026-10-07）：到期执行前重取现状用——该会话最近 limit 条**用户**正文（按时间正序）。
+    # 只看用户侧，避免角色自己上一句关怀里的「到家了吗」被当成剧情已推进。
+    async def recent_messages(self, session_id: int, limit: int = 6) -> list[str]: ...
+
     # ── 生成素材（人设块 / 主动通道 persona / 天气 / 现状锚护栏块）──
     async def build_identity_prompt(self, character_id: int, user_id: int) -> str: ...
 
@@ -86,4 +90,10 @@ class EmotionCarePorts(Protocol):
 
     async def send_care_message(self, *, session_id: int, character_id: int, user_id: int,
                                 content: str, message_type: str,
-                                extra_meta: str | None = None) -> None: ...
+                                extra_meta: str | None = None) -> object | None:
+        """A37 批 1：返回发送结局（生产实现转发 `scheduler.SendResult`）。
+
+        返回 None ＝"替身/旧实现没表态"，调用侧按已发处理（逐字节保持改前行为）；
+        返回 `SendResult(ok=False, ...)` ＝被闸拦下，调用侧**不得**写 done。
+        """
+        ...

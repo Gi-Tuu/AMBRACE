@@ -27,6 +27,14 @@ from app.utils.dnd import user_in_dnd_period as _user_in_dnd_period
 _logger = get_logger("scheduler.memory_review")
 
 REVIEW_TYPE = "memory_review"
+# A37 批 1（审计 §1.4 V1）：占位顺延拆两类——**没发出去的只短退避 30 分钟**，
+# 真发出去了才占满 REVIEW_RETRY_DAYS（3 天）。原实现是一律 3 天，于是
+# 「限流 / 文案闸命中 / 发送被熔断」和「真发过」在数据上不可区分，一次跳过烧掉 3 天窗口。
+# 30 分钟这个档同时保住原实现的初衷：绝不每 30 秒重试一次烧 LLM。
+REVIEW_SKIP_BACKOFF_MINUTES = 30
+# 内容闸（空文本/复读/错时态）单独一档：这些是"生成了但判定不该发"，重试有意义，
+# 但不该 30 分钟一回（≈48 次/天 LLM）。取 6 小时＝一条卡住的记忆一天最多再试 4 回。
+REVIEW_CONTENT_BACKOFF_HOURS = 6
 _TYPE_LABEL = {"user_info": "关于你的事", "preference": "你的喜好", "event": "发生过的事", "insight": "我的一些想法"}
 
 # ── ② outreach 投放口径：memory_review「可回复化」（2026-09-13 交接 §②）──
@@ -420,6 +428,23 @@ def apply_replyable_question_rule(hint: str) -> str:
     return f"{text}{REPLYABLE_QUESTION_RULE}"
 
 
+
+async def _reschedule_review(memory_id: int, after: timedelta, why: str) -> None:
+    """把这条记忆的下次复习时间改成"现在 + after"（A37 批 1：谁决定重排，就说清为什么）。
+
+    只写 `next_review_at` 一个字段，失败静默（排程抖动不该影响主链路）；
+    `why` 进日志，供"跳过即烧"回归时区分三档。
+    """
+    try:
+        async with async_session_factory() as db:
+            m = await db.get(Memory, memory_id)
+            if m is not None:
+                m.next_review_at = datetime.now(timezone.utc).replace(tzinfo=None) + after
+                await db.commit()
+    except Exception as e:
+        _logger.warning("Memory review reschedule failed mem=%d why=%s: %s", memory_id, why, e)
+
+
 async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
     """执行一次主动复习：限额/免打扰/会话检查 → 先占位重排（防失败重试烧 token）→ LLM 生成 → 发送 → 记录。"""
     from app.scheduling.scheduler import send_to_session
@@ -457,8 +482,10 @@ async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
         char = await db.get(AICharacter, char_id)
         content_src = mem.content
         mem_type = mem.memory_type
-        # 先占位：无论后续 LLM/发送是否成功，3 天后才再试（防止无会话/限流导致每 30s 烧一次 LLM）
-        mem.next_review_at = now_naive + timedelta(days=REVIEW_RETRY_DAYS)
+        # 先占位（防每 30 秒重试一次烧 LLM），但**只占短退避 30 分钟**：
+        # A37 批 1——原实现这里直接顺延 3 天，等于"没发出去也把 3 天窗口烧掉"，
+        # 与真发站在数据上完全一样。真发成功后面再由 `_mark_review_sent` 扩到 REVIEW_RETRY_DAYS。
+        mem.next_review_at = now_naive + timedelta(minutes=REVIEW_SKIP_BACKOFF_MINUTES)
         await db.commit()
 
     char_name = char.name if char else "我"
@@ -553,18 +580,21 @@ async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
                                      task="review", user_id=user_id)
         text = (text or "").strip().strip('"').strip("'")
         if not text or len(text) < 2:
+            await _reschedule_review(memory_id, timedelta(hours=REVIEW_CONTENT_BACKOFF_HOURS), "empty_text")
             return False
         # F5-b：与最近聊天高度复读且与记忆内容无主题重合 → 不发送
-        #（next_review_at 已在占位阶段顺延 3 天，不会烧钱重试）
+        #（A37 批 1：内容闸走 6 小时档，不再冒充"发过"、也不每 30 分钟烧一次 LLM）
         if _is_replay_of_recent(text, recent_context, content_src):
             _logger.info("Memory review char=%d mem=%d blocked: replay of recent chat",
                          char_id, memory_id)
+            await _reschedule_review(memory_id, timedelta(hours=REVIEW_CONTENT_BACKOFF_HOURS), "replay")
             return False
         # L3：输出本地闸门（零 LLM）——怀旧记忆却生成"当下叮嘱式回忆"（如"电脑记得带"）→ 拦截不发送
-        #（next_review_at 已在占位阶段顺延 3 天，不会重试烧 token）
+        #（A37 批 1：同上，内容闸 6 小时档）
         if _is_wrong_tense_directive(text, is_nostalgia):
             _logger.info("Memory review char=%d mem=%d blocked: wrong-tense directive",
                          char_id, memory_id)
+            await _reschedule_review(memory_id, timedelta(hours=REVIEW_CONTENT_BACKOFF_HOURS), "wrong_tense")
             return False
     except Exception as e:
         _logger.warning("Memory review LLM failed char=%d: %s", char_id, e)
@@ -578,11 +608,19 @@ async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
         _review_extra["tense"] = tense_kind
     if _review_reasoning:
         _review_extra["reasoning"] = _review_reasoning
-    await send_to_session(
+    _res = await send_to_session(
         session_id=session_id, character_id=char_id, user_id=user_id,
         content=text[:500], message_type=REVIEW_TYPE,
         extra_meta=json.dumps(_review_extra, ensure_ascii=False),
     )
+    if getattr(_res, "ok", None) is False:
+        # A37 批 1：被闸拦下（主题熔断等）＝这条没进会话。占位保持 30 分钟短退避，
+        # 不写「已发送」日志（写了就等于在数据里谎报），下一轮还会再来。
+        _logger.info("Memory review char=%d mem=%d not sent (reason=%s)，30 分钟后再试",
+                     char_id, memory_id, getattr(_res, "reason", ""))
+        return False
+    # 真发出去了才占满 3 天窗口（等待用户回应的窗口，口径与 maybe_review_success 一致）
+    await _reschedule_review(memory_id, timedelta(days=REVIEW_RETRY_DAYS), "sent")
     _logger.info("Memory review sent char=%d mem=%d", char_id, memory_id)
     return True
 

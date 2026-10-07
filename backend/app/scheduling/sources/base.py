@@ -6,6 +6,7 @@ TriggerItem 承载 arbiter 现有「候选事件 dict」所需的全部字段，
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Iterable, Protocol, runtime_checkable
 
 
@@ -35,6 +36,14 @@ class TriggerItem:
     candidate: dict | None = None
     event: Any | None = None
     motivation: float | None = None
+    # ── A37 批 1 第 7 项：闸①「快照随行」的地基（审计 §3.1 闸①）──────────────────
+    # 两个字段**默认 None＝逐字节旧行为**：不塞就不进 to_dict、不动任何既有候选语义。
+    # snapshot_at：这条候选是**什么时候**看着"现状成立"才排队的（naive UTC，与库口径一致）；
+    # expects：它在等什么/依据什么才该发（arrival|medication|clock|topic_open|memory_alive|
+    #           state_holds|none），供批 2 的 `refresh_if_stale()` 判 keep/cancel/regenerate。
+    # 本批只提供承载与透传，**不上任何闸**（闸②③属批 2/批 3）。
+    snapshot_at: datetime | None = None
+    expects: str | None = None
 
     def to_dict(self) -> dict:
         """还原为 arbiter 合并/排序/_execute 所用的候选 dict（与旧采集函数输出逐字节等价）。"""
@@ -45,6 +54,11 @@ class TriggerItem:
             d["candidate"] = self.candidate
         if self.motivation is not None:
             d["motivation"] = self.motivation
+        # A37 批 1：没塞就不出场（保住"与重构前逐字节等价"那条棘轮）
+        if self.snapshot_at is not None:
+            d["snapshot_at"] = self.snapshot_at
+        if self.expects is not None:
+            d["expects"] = self.expects
         return d
 
     @classmethod
@@ -56,6 +70,10 @@ class TriggerItem:
             candidate=d.get("candidate"),
             event=d.get("event"),
             motivation=d.get("motivation"),
+            # 原样透传，不做类型纠正也不臆造默认值：本批不新增序列化路径，
+            # 采集侧塞的是 datetime，读回来就是什么（缺键＝None＝旧行为）。
+            snapshot_at=d.get("snapshot_at"),
+            expects=d.get("expects"),
         )
 
 

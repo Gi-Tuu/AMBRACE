@@ -24,6 +24,37 @@ class MemoryBookScreen extends StatefulWidget {
   State<MemoryBookScreen> createState() => _MemoryBookScreenState();
 }
 
+/// 置顶条排序键：后端 created_at/updated_at 是 UTC naive 字符串（`2026-08-04 12:47:29.123`
+/// 或带 T），与 beijing_time.dart 同口径截前 19 位解析；脏值/缺失记 0，绝不抛。
+/// 全部按同一方式解析，比较只关乎先后，不受时区后缀影响。
+int _pinnedTimeKey(Memory m) =>
+    _pinnedSeconds(m.updatedAt) ?? _pinnedSeconds(m.createdAt) ?? 0;
+
+int? _pinnedSeconds(String? s) {
+  if (s == null || s.length < 19) return null;
+  return DateTime.tryParse(s.substring(0, 19))?.millisecondsSinceEpoch;
+}
+
+bool _pinnedNewerThan(Memory a, Memory b) {
+  final ka = _pinnedTimeKey(a), kb = _pinnedTimeKey(b);
+  return ka != kb ? ka > kb : a.id > b.id; // 同时间取 id 更大者（与后端 A31 _newest_pinned 同口径）
+}
+
+/// 从一组置顶条里确定性地选出「该展示的一条」（A33/A.3.2，纯函数便于单测）：
+/// 1) 普通摘要（subType != identity）优先——身份画像不占记忆本「印象」位；
+/// 2) 同组内取 updatedAt/createdAt 最新者，不依赖接口返回顺序，也不依赖 List.sort 的稳定性。
+Memory? pickPinnedSummary(List<Memory> list) {
+  final pinned = list.where((m) => m.isPinned).toList();
+  if (pinned.isEmpty) return null;
+  final normal = pinned.where((m) => m.subType != "identity").toList();
+  final pool = normal.isNotEmpty ? normal : pinned;
+  Memory? best;
+  for (final m in pool) {
+    if (best == null || _pinnedNewerThan(m, best)) best = m;
+  }
+  return best;
+}
+
 class _MemoryBookScreenState extends State<MemoryBookScreen> {
   final _api = ApiClient();
   List<Memory> _allMemories = [];
@@ -64,6 +95,20 @@ class _MemoryBookScreenState extends State<MemoryBookScreen> {
     _loadMemories();
   }
 
+  /// 置顶条选取唯一入口（A33/A.3.2）：按 memoryType 分组后统一走 [pickPinnedSummary]，
+  /// 不再依赖接口返回顺序隐式保留最后一条。
+  void _rebuildPinned(List<Memory> memories) {
+    _pinned.clear();
+    final byType = <String, List<Memory>>{};
+    for (final m in memories) {
+      if (m.isPinned) byType.putIfAbsent(m.memoryType, () => <Memory>[]).add(m);
+    }
+    byType.forEach((type, group) {
+      final picked = pickPinnedSummary(group);
+      if (picked != null) _pinned[type] = picked;
+    });
+  }
+
   Future<void> _loadMemories() async {
     setState(() { _loading = true; _error = null; });
     try {
@@ -72,10 +117,7 @@ class _MemoryBookScreenState extends State<MemoryBookScreen> {
       setState(() {
         _allMemories = result.memories;
         _totalCount = result.total;
-        _pinned.clear();
-        for (final m in result.memories) {
-          if (m.isPinned) _pinned[m.memoryType] = m;
-        }
+        _rebuildPinned(result.memories);
         _loading = false;
       });
       _ensureSummary(_selectedType);
@@ -96,10 +138,7 @@ class _MemoryBookScreenState extends State<MemoryBookScreen> {
         setState(() {
           _allMemories = result.memories;
           _totalCount = result.total;
-          _pinned.clear();
-          for (final m in result.memories) {
-            if (m.isPinned) _pinned[m.memoryType] = m;
-          }
+          _rebuildPinned(result.memories);
         });
       }
     } catch (e) {

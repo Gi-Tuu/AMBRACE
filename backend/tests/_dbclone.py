@@ -261,6 +261,10 @@ def clone_engine(dst_path, with_plugins=False, pragmas: bool = True):
 # （重试发生在同一场 10 s 之后，环还挂着）；**先逼一次 gc 再重试**才打断得住。
 # 只在测试会话层做，不改生产事务语义；重试仍有界（3 次、20/50/120 ms），
 # 真·抢写（对手是活连接）时照样原样抛错，不掩盖。
+# A36（2026-10-07）订正一条口径：上面「先逼 gc 再重试」只对**语句级**成立。commit/flush 撞 BUSY
+# 时会话已不可续用，重放只会得到 PendingRollbackError（把 locked 掩盖成另一个错，10-07 实测链条：
+# ``test_ws_notify_disabled._seed`` 的 ``db.commit()`` → ``_retry_after_reclaim`` → PendingRollbackError）
+# ⇒ 见 :meth:`BusyReclaimSession.commit` 与 :func:`run_unit_of_work` 的分工。
 _BUSY_BACKOFF = (0.02, 0.05, 0.12)
 BUSY_RECLAIMS = 0          # 守卫断言用：本进程内「靠 gc 打断锁」的次数
 
@@ -270,9 +274,31 @@ def _reclaim() -> int:
     return gc.collect()
 
 
+async def _reset_after_busy(session) -> None:
+    """把会话从「必须先 rollback」状态复位。单独抽出供守卫做变异自测（A36，2026-10-07）。
+
+    flush/commit 撞 BUSY 时 SQLAlchemy 就把事务置为 DEACTIVE 并记下 ``_rollback_exception``
+    （10-07 探针实测：不 rollback 就重放 ⇒ 立刻 ``PendingRollbackError``，原始 locked 被吞），
+    所以「复位」是错误诚实的前提，也是 :func:`run_unit_of_work` 不必复位的前提。
+    """
+    await session.rollback()
+
+
 def _is_sqlite_busy(exc: BaseException) -> bool:
+    """只有 **DBAPI 层的 OperationalError** 才算 BUSY。
+    A36（2026-10-07）订正：``PendingRollbackError`` 的 message 里会内嵌
+    ``Original exception was: (sqlite3.OperationalError) database is locked``（10-07 实测），
+    早先「直接 str(exc) 找关键字」会把它也判成 BUSY ⇒ 重试逻辑去追一个不可重试的错
+    （变异自测实测跑了 3 次而不是 2 次）。现在要求：要么带 ``.orig``（SQLAlchemy 包装类），
+    要么本身就是 :class:`sqlite3.OperationalError`。
+    """
     orig = getattr(exc, "orig", None)
-    msg = str(orig if orig is not None else exc)
+    if orig is not None:
+        msg = str(orig)
+    elif isinstance(exc, sqlite3.OperationalError):
+        msg = str(exc)
+    else:
+        return False
     return "database is locked" in msg or "database is write locked" in msg
 
 
@@ -293,18 +319,67 @@ async def _retry_after_reclaim(fn, *args, **kwargs):
 class BusyReclaimSession(AsyncSession):
     """带「BUSY ⇒ 先回收再重试」的测试会话（A21 锁族处置，机制见上方注释）。
 
-    SQLITE_BUSY 的语义保证语句是**整体未执行**的（拿不到写锁就返回，不改任何行），
-    所以重放同一条语句不会重复生效，ORM 状态也不会因此错乱。
+    两条路径语义**不同**，分开对待（A36，2026-10-07）：
+
+    - :meth:`execute`：``SQLITE_BUSY`` 的语义保证语句是**整体未执行**的（拿不到写锁就返回，
+      不改任何行），所以原地重放同一条语句不会重复生效 ⇒ 保持「逼一次回收 + 有限重试」；
+    - :meth:`commit` / :meth:`flush`：撞 BUSY 时会话已进入「必须先 rollback」状态（DEACTIVE +
+      ``_rollback_exception``），原地重放 ``super().commit()`` **必然**抛 ``PendingRollbackError``
+      ——既救不回来，又把原始 ``database is locked`` 掩盖掉（10-04 起排查被这条误导过）。
+      所以这里不重试：逼一次回收 → 当场复位 → 把原始 locked 错误**原样抛出**。
+      想重试整个工作单元请改用 :func:`run_unit_of_work`（单元级、每次换干净会话）。
     """
 
     async def execute(self, *args, **kwargs):
         return await _retry_after_reclaim(super().execute, *args, **kwargs)
 
     async def commit(self):
-        return await _retry_after_reclaim(super().commit)
+        return await self._raise_busy_honestly(super().commit)
 
     async def flush(self, *args, **kwargs):
-        return await _retry_after_reclaim(super().flush, *args, **kwargs)
+        return await self._raise_busy_honestly(super().flush, *args, **kwargs)
+
+    async def _raise_busy_honestly(self, fn, *args, **kwargs):
+        """commit/flush 专用：BUSY 时复位会话后原样抛，绝不让它变成 PendingRollbackError。"""
+        global BUSY_RECLAIMS
+        try:
+            return await fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - 只挑 BUSY，其余原样抛
+            if not _is_sqlite_busy(exc):
+                raise
+            _reclaim()
+            BUSY_RECLAIMS += 1
+            await _reset_after_busy(self)
+            raise
+
+
+async def run_unit_of_work(factory, work, attempts: int = 3, backoff=_BUSY_BACKOFF):
+    """跑完一整个工作单元（``async with factory() as session: await work(session)``）。
+
+    与 :meth:`BusyReclaimSession.commit` 的分工（A36，2026-10-07）：会话层只保证「错误诚实」，
+    因为它已经救不回来（原会话在 flush 失败后不可续用）；**可重试的单位是工作单元**——
+    每次尝试**重建一个会话**、把整个 ``work`` 再跑一遍，遇 BUSY 时先逼一次分代回收（同 A21 的
+    机理：持锁者是一条等 GC 的连接，不逼回收的话重试仍会撞在同一把锁上）、再退避。
+
+    ``work`` 必须**幂等**（先查后写、或 upsert）：撞锁的那次尝试已被 SQLAlchemy 整体回滚，
+    重放不会写两遍，但固定主键的裸 INSERT 在其它场景（如同库并发补种）仍可能自己撞自己。
+
+    重试上界仍有界（默认 3 次，退避 20/50/120 ms），到点把**最后一次原始 BUSY 错误**原样抛出；
+    非 BUSY 异常一律立刻原样抛，不做任何掩盖。
+    """
+    global BUSY_RECLAIMS
+    tries = max(1, attempts)
+    for attempt in range(tries):
+        try:
+            async with factory() as session:      # 每次尝试重建会话（原会话不可续用）
+                return await work(session)
+        except Exception as exc:  # noqa: BLE001 - 只挑 BUSY，其余原样抛
+            if not _is_sqlite_busy(exc) or attempt + 1 >= tries:
+                raise
+            _reclaim()
+            BUSY_RECLAIMS += 1
+            await asyncio.sleep(backoff[min(attempt, len(backoff) - 1)])
+    raise AssertionError("unreachable")  # pragma: no cover - 循环内必 return 或 raise
 
 
 def make_session_factory(engine):

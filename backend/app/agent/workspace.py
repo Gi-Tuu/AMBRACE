@@ -45,6 +45,13 @@ class CognitiveWorkspace:
     last_decision: dict | None = None                       # 上一步决定（含理由，供审计）
     confidence: float | None = None                         # 当前置信度（0-1；没量出来就是 None）
     pending_commitments: list = field(default_factory=list)  # 答应过但还没做的事（timer/约定）
+    # ── A28-②a 投影面（只加字段，既有字段语义一字未动）──
+    # 这四个键由 `app/agent/workspace_projection.py` 写入，本文件继续不伸手拿任何数据。
+    current_state: dict = field(default_factory=dict)       # 用户现状结构化 entries（不拼成文本）
+    world: dict = field(default_factory=dict)               # World State 必要子集（逐路带权威/as_of 口径）
+    working_state: dict = field(default_factory=dict)       # 滚动工作记忆的**投影副本**（不与持久层合并）
+    projection: dict = field(default_factory=dict)          # 本次投影报告：填了什么、来源、覆盖率
+    decision_contract: dict = field(default_factory=dict)   # A28-②b 决定契约（**只登记，不接决策链**）
 
     # ── 写入（全部原地生效；节点通过 state["workspace"] 持有同一对象）──
 
@@ -98,6 +105,12 @@ class CognitiveWorkspace:
             "last_decision": dict(self.last_decision) if self.last_decision else None,
             "confidence": self.confidence,
             "pending_commitments": list(self.pending_commitments),
+            # A28-②a：投影面进快照，读数才看得见（仍是只写不读——没有任何 prompt 段消费它）
+            "current_state": dict(self.current_state),
+            "world": dict(self.world),
+            "working_state": dict(self.working_state),
+            "projection": dict(self.projection),
+            "decision_contract": dict(self.decision_contract),
         }
 
 

@@ -106,9 +106,10 @@ def test_parse_intent_line_invalid_confidence_falls_back_to_medium():
 
 
 def test_upsert_intent_confidence_written_in_dict(pi_db):
-    """confidence 写入 cue_terms_json 的 dict 包装（`{confidence, terms, side}`）。
+    """confidence 写入 cue_terms_json 的 dict 包装（`{confidence, terms, side, trigger}`）。
 
     2026-09-13 主体口径治理：新增元数据字段 side（self|user），只加标记不改语义。
+    2026-10-07 A33 ⑥事件/时钟分类：promise 再多一个 trigger 元数据（同样只加标记，terms 不变）。
     """
     from app.scheduling.prospective_intent import upsert_intent
 
@@ -123,7 +124,8 @@ def test_upsert_intent_confidence_written_in_dict(pi_db):
     assert len(rows) == 1
     cid, content, kind, status, cue_json = rows[0]
     payload = json.loads(cue_json)
-    assert payload == {"confidence": "high", "terms": ["火锅", "周末"], "side": "user"}
+    assert payload == {"confidence": "high", "terms": ["火锅", "周末"],
+                       "side": "user", "trigger": "clock"}
 
 
 def test_upsert_intent_invalid_confidence_falls_back_to_medium(pi_db):
@@ -280,4 +282,5 @@ def test_extractor_old_4_fields_still_parses_with_default_medium(pi_db, monkeypa
     rows = _rows_of(pi_db)
     assert len(rows) == 1
     payload = json.loads(rows[0][4])
-    assert payload == {"confidence": "medium", "terms": ["火锅", "周末"], "side": "user"}
+    assert payload == {"confidence": "medium", "terms": ["火锅", "周末"],
+                       "side": "user", "trigger": "clock"}   # A33 ⑥：promise 元数据再多一个标签

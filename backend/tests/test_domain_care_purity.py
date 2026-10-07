@@ -44,6 +44,8 @@ class _FakePorts:
         self.dnd = False
         self.char = CareCharacterView(id=3, name="小阳", personality="活泼")
         self.session_id = 99
+        self.recent: list = []
+        self.recent_limit = None
         self.identity = "你是小阳，性格活泼。"
         self.persona = ""
         self.weather = ""
@@ -110,6 +112,11 @@ class _FakePorts:
     async def latest_session_id(self, user_id, character_id):
         self._hit("latest_session_id")
         return self.session_id
+
+    async def recent_messages(self, session_id, limit=6):
+        self._hit("recent_messages")
+        self.recent_limit = limit
+        return list(self.recent)
 
     async def build_identity_prompt(self, character_id, user_id):
         self._hit("build_identity_prompt")
@@ -318,7 +325,7 @@ def test_关怀_免打扰直接返回不查限额():
 def test_关怀_当日满2条取消任务并停止():
     ports = _FakePorts(daily=care_mod.MAX_PER_DAY)
     assert asyncio.run(care_mod.run_emotion_care(3, 4, 5, ports=ports)) is False
-    assert ports.finished == [(5, "cancelled")]
+    assert ports.finished == [(5, "cancelled_quota")]
     assert "chat_completion" not in ports.calls and ports.sent == []
 
 
@@ -347,7 +354,7 @@ def test_关怀_任务缺失或非pending直接返回():
 def test_关怀_无活跃会话取消任务():
     ports = _FakePorts(session_id=None)
     assert asyncio.run(care_mod.run_emotion_care(3, 4, 5, ports=ports)) is False
-    assert ports.finished == [(5, "cancelled")]
+    assert ports.finished == [(5, "cancelled_quota")]
     assert "chat_completion" not in ports.calls
 
 
@@ -373,10 +380,14 @@ def test_关怀_判定顺序与旧实现一致():
     asyncio.run(care_mod.run_emotion_care(3, 4, 5, ports=ports))
     assert ports.calls == [
         "user_in_dnd", "daily_care_count", "last_care_at", "load_care_task", "load_character",
-        "latest_session_id", "build_identity_prompt", "build_active_persona", "weather_line",
+        "latest_session_id",
+        # A32（2026-10-07）：会话确定后、拼提示词前先重取现状（剧情推进即取消）
+        "recent_messages",
+        "build_identity_prompt", "build_active_persona", "weather_line",
         "state_guard_block", "reasoning_level", "chat_completion", "send_care_message",
         "finish_care_task",
     ]
+    assert ports.recent_limit == care_mod.CARE_RECENT_LIMIT
 
 
 def test_关怀_挡位1换system引导且不回传reasoning():
@@ -396,10 +407,10 @@ def test_关怀_生成异常回退False且不动任务态():
 def test_关怀_生成空或过短文本取消任务不发送():
     ports = _FakePorts(reply="  ")
     assert asyncio.run(care_mod.run_emotion_care(3, 4, 5, ports=ports)) is False
-    assert ports.finished == [(5, "cancelled")] and ports.sent == []
+    assert ports.finished == [(5, "cancelled_quota")] and ports.sent == []
     ports2 = _FakePorts(reply="好")
     assert asyncio.run(care_mod.run_emotion_care(3, 4, 5, ports=ports2)) is False
-    assert ports2.finished == [(5, "cancelled")] and ports2.sent == []
+    assert ports2.finished == [(5, "cancelled_quota")] and ports2.sent == []
 
 
 def test_关怀_护栏块异常按旧行为整体回退False():
@@ -634,7 +645,7 @@ def test_生产实现_成功链路置done并写主动消息日志(care_db, monke
 
 @pytest.mark.slow
 def test_生产实现_满限额走取消分支(care_db, monkeypatch):
-    """真端口：当日已发 2 条 → 新任务直接 cancelled，不调用 LLM、不发消息。"""
+    """真端口：当日已发 2 条 → 新任务直接 cancelled_quota，不调用 LLM、不发消息。"""
     from app.application.emotion_care_ports import production_care_ports as ports
     from app.models.agent import EmotionCareTask
 
@@ -666,7 +677,7 @@ def test_生产实现_满限额走取消分支(care_db, monkeypatch):
             t = await db.get(EmotionCareTask, third_id)
             return t.status
 
-    assert asyncio.run(_check()) == "cancelled"
+    assert asyncio.run(_check()) == "cancelled_quota"   # A37 批 1：满限额属环境类取消，与"剧情已推进"分开
 
 
 @pytest.mark.slow

@@ -133,36 +133,44 @@ async def get_daily_count(character_id: int) -> int:
         return (await db.execute(stmt)).scalar() or 0
 
 
-async def was_birthday_sent_today(character_id: int) -> bool:
-    """今天是否已送出生日祝福"""
+_SEND_FAILED_PREFIX = "[send_failed]"
+# 审计 §1.4 V7：失败留痕过去也算「当日已发」⇒ 一次生成失败整天静默。
+# 现在「已发」只看真发出去的行，失败改由有限重试兜（每天同一类型最多再试这么多回，
+# 超过就今天不再试——既保留 2026-08-20 七夕死循环修复的初衷，又不让"没发"装作"发过"）。
+FESTIVAL_FAIL_ATTEMPTS_PER_DAY = 3
+
+
+def _is_send_failed(row) -> bool:
+    """这条主动日志是「失败留痕」还是「真发出去了」（纯函数，可单测；A37 批 1 第 6 项的判据）。"""
+    return str(getattr(row, "content", "") or "").startswith(_SEND_FAILED_PREFIX)
+
+
+async def festival_today_state(character_id: int, message_type: str) -> dict:
+    """今日该类型的「真发过几条／失败几回」——**一次查询算两件事**。
+
+    刻意不拆成两个谓词各查一次：`test_trigger_birthday_tz.py` 钉的是"每个候选只算一次日界"
+    （多算一次就可能多读一次配置，日界偏移的回归会看不出来），而且白多一次 SQL。
+    """
     start = app_day_start_utc()
     async with async_session_factory() as db:
-        stmt = (
-            select(ProactiveMessageLog)
-            .where(
-                ProactiveMessageLog.character_id == character_id,
-                ProactiveMessageLog.created_at >= start,
-                ProactiveMessageLog.message_type == "birthday",
-            )
+        stmt = select(ProactiveMessageLog).where(
+            ProactiveMessageLog.character_id == character_id,
+            ProactiveMessageLog.created_at >= start,
+            ProactiveMessageLog.message_type == message_type,
         )
-        result = await db.execute(stmt)
-        return result.first() is not None
+        rows = (await db.execute(stmt)).scalars().all()
+    failed = [r for r in rows if _is_send_failed(r)]
+    return {"day_start": start, "sent": len(rows) - len(failed), "failed": len(failed)}
+
+
+async def was_birthday_sent_today(character_id: int) -> bool:
+    """今天是否真的**送出**过生日祝福（A37 批 1：`[send_failed]` 留痕不算已发）。"""
+    return (await festival_today_state(character_id, "birthday"))["sent"] > 0
 
 
 async def was_holiday_sent_today(character_id: int) -> bool:
-    """该角色今天是否已发送过节日祝福（每个角色每天最多一条节日祝福）"""
-    start = app_day_start_utc()
-    async with async_session_factory() as db:
-        stmt = (
-            select(ProactiveMessageLog)
-            .where(
-                ProactiveMessageLog.character_id == character_id,
-                ProactiveMessageLog.created_at >= start,
-                ProactiveMessageLog.message_type == "holiday",
-            )
-        )
-        result = await db.execute(stmt)
-        return result.first() is not None
+    """今天是否真的**送出**过节日祝福（A37 批 1：`[send_failed]` 留痕不算已发）。"""
+    return (await festival_today_state(character_id, "holiday"))["sent"] > 0
 
 
 async def is_holiday_blocked(user_id: int, holiday_name: str) -> bool:
@@ -194,8 +202,12 @@ async def get_birthday_candidates() -> list[dict]:
                 continue
             if char_info["birthday"] != today_mmdd:
                 continue
-            if await was_birthday_sent_today(char_info["character_id"]):
+            # A37 批 1：一次查询同时拿「真发过几条」与「失败几回」（日界只算一次，不多读一遍配置）
+            _fest = await festival_today_state(char_info["character_id"], "birthday")
+            if _fest["sent"] > 0:
                 continue
+            if _fest["failed"] >= FESTIVAL_FAIL_ATTEMPTS_PER_DAY:
+                continue   # 今天已经失败够多回就不再折腾（保住 08-20 死循环防线，又不谎报已发）
 
             session = await get_latest_session(
                 char_info["character_id"], char_info["user_id"]
@@ -284,8 +296,12 @@ async def get_holiday_candidates() -> list[dict]:
             if not session:
                 continue
             # 每角色每天最多一条节日祝福
-            if await was_holiday_sent_today(char_info["character_id"]):
+            # A37 批 1：一次查询同时拿「真发过几条」与「失败几回」（日界只算一次，不多读一遍配置）
+            _fest = await festival_today_state(char_info["character_id"], "holiday")
+            if _fest["sent"] > 0:
                 continue
+            if _fest["failed"] >= FESTIVAL_FAIL_ATTEMPTS_PER_DAY:
+                continue   # 失败留痕不再冒充「已发」，改由有限重试兜住
 
             # 合并当天所有未被屏蔽的节日名（如 "国庆节、中秋节"）
             names = []

@@ -5,6 +5,9 @@
 - collect_care_events：arbiter tick 扫描到期 pending 任务（每角色 1 条候选，priority=1）
 - run_emotion_care：限额/免打扰/会话检查 → LLM 生成关怀消息 → send_to_session 发送 → 任务置 done
 - 护栏：每角色每日 <=2 条、同角色最小间隔 3h、免打扰不发、无活跃会话取消、超 24h 自动作废
+- A32 护栏（2026-10-07，零 LLM 字面匹配）：到期执行前重取该会话最近用户消息，剧情已推进
+  （报警/在医院/到家/处理完）则取消；取证阶段（脏/被侵犯/证据）在提示词加硬纪律，输出命中
+  呵斥或清洗类建议按 persona 重生成一次，仍违规则取消不发
 
 架构地图断点 #1 样板（2026-09-29）：本模块只做判定与 prompt 组装，不再直接 import
 DB / ORM 实体 / LLM / 发送出口；这些 IO 经 EmotionCarePorts（app/domain/emotion/ports.py）
@@ -14,6 +17,7 @@ scheduling/sources/emotion_care.py。未注入且没有兼容钩子时抛 CarePo
 既不 fail-open 也不 fail-closed，问题当场暴露。
 """
 import random
+import re
 from datetime import datetime, timedelta, timezone
 
 from app.domain.emotion.ports import (
@@ -32,6 +36,82 @@ MIN_INTERVAL_HOURS = 3
 DELAY_MIN_MINUTES = 15
 DELAY_MAX_MINUTES = 45
 TASK_TTL_HOURS = 24
+
+# ── A32（2026-10-07）到期执行前的「现状同步」＋ 危机 / 人设硬约束 ──
+# 真机现场（char=13，2026-10-06）：11:39 用户说「我脏了」→ 登记关怀；11:43~12:54 之间剧情已推进到
+# 上锁 / 报案 / 去医院，12:15 到期执行仍拿登记时刻的旧 trigger 生成 ⇒「洗干净就行了，别嚎了」
+# ——既与「别洗、留证据」的处置直接矛盾（有害），又与人设割裂。以下判定全部零 LLM 字面匹配。
+CARE_RECENT_LIMIT = 6          # 到期执行前重取的最近正文条数
+
+# ── A37 批 1（审计 §1.4 V5）：取消原因拆成两个终态 ──────────────────────────────
+# 原来限额/无会话/空文本/剧情已推进**全写同一个 "cancelled"**，与 A32 的"剧情已推进"共用一个终态字
+# ⇒ 取消原因不可分，也无法回答"这条关怀是被闸挡了还是没必要了"。
+# 拆法用 status 取值扩展（**不加列、不迁移**，符合项目零迁移偏好），新取值写进 dev-changelog 与台账：
+#   cancelled_quota ＝环境类：当日限额已满 / 没有可发送的会话 / 模型给不出可用文本
+#   cancelled_story ＝判定类：剧情已明显推进（A32）/ 人设·危机一致性闸重生后仍违规
+# "超 24h 未发送作废"仍由端口写 "cancelled"（那是另一件事，语义不变，不并进这两类）。
+STATUS_CANCELLED_QUOTA = "cancelled_quota"
+STATUS_CANCELLED_STORY = "cancelled_story"
+# 剧情「已推进」标志（这些出现在 **trigger 之后** 的消息里才算现状前进了一格）
+_ADVANCED_PAT = re.compile(
+    r"(报警|报了警|打110|打了110|拨110|在医院|去医院|到医院|急诊|验伤|处理完|办完|弄完|到家|回到家)")
+# 受侵害后取证阶段标志（trigger 或最近消息命中即可，方向是「加护栏」不是「取消」）
+_EVIDENCE_PAT = re.compile(r"(脏了|我脏|被侵犯|被猥亵|被摸|被袭击|性侵|强奸|证据)")
+CRISIS_EVIDENCE_GUARD = (
+    "\n【危机纪律】当前可能处于受侵害后的取证阶段：严禁建议清洗身体、漱口、更换或清洗衣物、"
+    "丢弃任何物品；应优先陪伴、确认安全、提醒保留证据并寻求正规帮助。"
+)
+# 冷漠 / 呵斥标记（与人设割裂，真机原话「别嚎了」就在这一档）
+_COLD_TONE_MARKERS = (
+    "别嚎了", "嚎什么", "哭什么", "叫什么叫", "烦不烦", "闭嘴", "有病吧",
+    "真没用", "没用", "自己解决", "别矫情", "矫情",
+)
+# 取证阶段禁止出现在**输出**里的动作建议（与 CRISIS_EVIDENCE_GUARD 同一条禁令，落到闸门上）
+_CRISIS_FORBIDDEN_PAT = re.compile(
+    r"(洗干净|清洗|洗个澡|洗澡|冲个澡|冲一下|漱|换衣|换衣服|换了衣|衣服换|换一身|换件"
+    r"|扔掉|丢掉|丢了吧)")
+# 违规后按 persona 重生成的追加约束（只重生成一次，仍违规即取消不发）
+_PERSONA_RETRY_SUFFIX = (
+    "\n【重写要求】上一句不符合你的性格：禁止呵斥 / 冷漠 / 贬低（如「别嚎了」「哭什么」「没用」），"
+    "要温柔、第一人称、像真的在意他，只说陪伴与确认安全的话。"
+)
+
+
+def _messages_after_trigger(recent: list[str], trigger_msg: str) -> list[str]:
+    """trigger **之后**的消息＝真正的「现状」。trigger 已不在窗口内说明它之后至少推进了整窗，
+    此时整窗都算现状（宁可少发一条过时关怀，也不拿 15~45 分钟前的旧话头去说）。纯函数、零 IO。
+    """
+    rows = list(recent or [])
+    t = (trigger_msg or "").strip()
+    if not rows:
+        return []
+    if not t:
+        return rows
+    key = t[:20]
+    idx = None
+    for i, m in enumerate(rows):
+        mt = (m or "").strip()
+        if mt == t or (key and key in mt):
+            idx = i
+    return rows[idx + 1:] if idx is not None else rows
+
+
+def _story_advanced(recent: list[str], trigger_msg: str) -> bool:
+    """剧情是否已明显推进（报警 / 在医院 / 到家 / 处理完…）——推进了就不该再用旧 trigger 生成关怀。"""
+    return any(_ADVANCED_PAT.search(m or "") for m in _messages_after_trigger(recent, trigger_msg))
+
+
+def _evidence_stage(*texts: str | None) -> bool:
+    """是否处于受侵害后的取证场景（脏 / 被侵犯 / 证据…）。"""
+    return any(_EVIDENCE_PAT.search(t or "") for t in texts)
+
+
+def _care_text_violated(text: str, crisis: bool) -> bool:
+    """关怀正文是否违规：冷漠 / 呵斥标记（始终判）＋ 取证阶段的清洗类建议（仅危机场景判）。"""
+    t = text or ""
+    if any(m in t for m in _COLD_TONE_MARKERS):
+        return True
+    return bool(crisis and _CRISIS_FORBIDDEN_PAT.search(t))
 
 
 # ── 迁移期兼容钩子（断点 #1 兜底，生产调用方请勿依赖）────────────────────────
@@ -165,7 +245,7 @@ async def run_emotion_care(char_id: int, user_id: int, task_id: int,
         return False
     if await ports.daily_care_count(char_id) >= MAX_PER_DAY:
         _logger.info("Emotion care char=%d skipped: daily limit", char_id)
-        await ports.finish_care_task(task_id, "cancelled")
+        await ports.finish_care_task(task_id, STATUS_CANCELLED_QUOTA)
         return False
     last = await ports.last_care_at(char_id)
     if last is not None:
@@ -179,8 +259,23 @@ async def run_emotion_care(char_id: int, user_id: int, task_id: int,
     trigger_msg = task.trigger_msg
     session_id = await ports.latest_session_id(user_id, char_id)
     if session_id is None:
-        await ports.finish_care_task(task_id, "cancelled")
+        await ports.finish_care_task(task_id, STATUS_CANCELLED_QUOTA)
         return False
+
+    # A32（2026-10-07）① 到期执行前重取现状：不用 15~45 分钟前的旧 trigger 硬说。
+    # 剧情已明显推进（报警 / 在医院 / 到家 / 处理完…）⇒ 直接取消，不生成、不发送。
+    # 取不到最近消息时 fail-open（recent=[] ⇒ 判不出推进，照旧发），宁可多发一条也不因 IO 抖动漏关怀。
+    try:
+        recent = list(await ports.recent_messages(session_id, limit=CARE_RECENT_LIMIT) or [])
+    except Exception as e:
+        _logger.warning("Emotion care recent messages failed sess=%s: %s", session_id, e)
+        recent = []
+    if _story_advanced(recent, trigger_msg):
+        _logger.info("Emotion care cancelled (story advanced) char=%d task=%d", char_id, task_id)
+        await ports.finish_care_task(task_id, STATUS_CANCELLED_STORY)
+        return False
+    # ② 危机场景判定（trigger 或最近消息命中取证标志）：只往提示词加一条硬纪律，非危机时 hint 逐字不变
+    crisis = _evidence_stage(trigger_msg, *recent)
 
     char_name = char.name if char else "我"
     personality = (char.personality or "友善")[:100] if char else "友善"
@@ -217,6 +312,7 @@ async def run_emotion_care(char_id: int, user_id: int, task_id: int,
             + f"用户刚才跟你说：「{trigger_msg}」——听起来心情不太好。\n"
             "过了一阵子，你主动关心他一句：1-2 句话，口语化，像真的在意他。\n"
             "多共情、少讲道理；不要出现'检测情绪''系统通知'这类字眼。"
+            + (CRISIS_EVIDENCE_GUARD if crisis else "")
         )
         _rl = await ports.reasoning_level(char_id)
         _msgs = [
@@ -232,8 +328,22 @@ async def run_emotion_care(char_id: int, user_id: int, task_id: int,
                                           task="emotion", user_id=user_id)
         text = (text or "").strip().strip('"').strip("'")
         if not text or len(text) < 2:
-            await ports.finish_care_task(task_id, "cancelled")
+            await ports.finish_care_task(task_id, STATUS_CANCELLED_QUOTA)
             return False
+        # ③ 人设 / 危机一致性闸门（A32）：命中呵斥（「别嚎了 / 哭什么 / 没用」）或危机场景下的
+        # 清洗类建议 ⇒ 按 persona 只重生成一次；仍违规 ⇒ 取消不发（宁可不发，也不发有害/割裂人设的话）。
+        if _care_text_violated(text, crisis):
+            _logger.info("Emotion care output violated persona/crisis rule char=%d, regenerating once", char_id)
+            _retry = _msgs + [{"role": "assistant", "content": text},
+                              {"role": "user", "content": hint + _PERSONA_RETRY_SUFFIX}]
+            text2 = await ports.chat_completion(messages=_retry, temperature=0.7, max_tokens=256,
+                                                task="emotion", user_id=user_id)
+            text2 = (text2 or "").strip().strip('"').strip("'")
+            if not text2 or len(text2) < 2 or _care_text_violated(text2, crisis):
+                _logger.info("Emotion care cancelled (still violating) char=%d task=%d", char_id, task_id)
+                await ports.finish_care_task(task_id, STATUS_CANCELLED_STORY)
+                return False
+            text = text2
     except Exception as e:
         _logger.warning("Emotion care LLM failed char=%d: %s", char_id, e)
         return False
@@ -242,11 +352,18 @@ async def run_emotion_care(char_id: int, user_id: int, task_id: int,
     if _emotion_reasoning:
         import json as _json
         _emotion_extra = _json.dumps({"reasoning": _emotion_reasoning}, ensure_ascii=False)
-    await ports.send_care_message(
+    _res = await ports.send_care_message(
         session_id=session_id, character_id=char_id, user_id=user_id,
         content=text[:500], message_type=CARE_TYPE,
         extra_meta=_emotion_extra,
     )
+    if getattr(_res, "ok", None) is False:
+        # A37 批 1：被闸拦下（主题熔断等）就不是"已关怀"——不写 done、不写 sent 日志，
+        # 归到"非剧情原因取消"这一类（quota 家族），与"剧情已推进"的 cancelled_story 分开。
+        _logger.info("Emotion care not sent char=%d (reason=%s)，置 cancelled_quota",
+                     char_id, getattr(_res, "reason", ""))
+        await ports.finish_care_task(task_id, STATUS_CANCELLED_QUOTA)
+        return False
     await ports.finish_care_task(task_id, "done")
     _logger.info("Emotion care sent char=%d", char_id)
     return True

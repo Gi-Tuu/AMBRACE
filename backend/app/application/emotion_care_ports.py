@@ -17,6 +17,7 @@ from app.db.database import async_session_factory
 from app.domain.emotion.care import CARE_TYPE
 from app.domain.emotion.ports import CareCharacterView, CareTaskView
 from app.models.agent import EmotionCareTask
+from app.models.chat import ChatMessage
 from app.models.character import AICharacter, ProactiveMessageLog
 
 
@@ -145,6 +146,20 @@ class ProductionCarePorts:
         from app.application.chat_service import get_latest_session_id
         return await get_latest_session_id(user_id, character_id)
 
+    async def recent_messages(self, session_id: int, limit: int = 6) -> list[str]:
+        """A32（2026-10-07）：该会话最近 limit 条**用户**正文，按时间正序返回（供 domain 判现状）。"""
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(ChatMessage.content)
+                .where(
+                    ChatMessage.session_id == session_id,
+                    ChatMessage.sender_type == "user",
+                )
+                .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                .limit(max(1, int(limit)))
+            )).scalars().all()
+        return [r or "" for r in reversed(list(rows))]
+
     # ── 生成素材 ──
 
     async def build_identity_prompt(self, character_id: int, user_id: int) -> str:
@@ -180,9 +195,10 @@ class ProductionCarePorts:
 
     async def send_care_message(self, *, session_id: int, character_id: int, user_id: int,
                                 content: str, message_type: str,
-                                extra_meta: str | None = None) -> None:
+                                extra_meta: str | None = None) -> object | None:
         from app.scheduling.scheduler import send_to_session
-        await send_to_session(
+        # A37 批 1：把结局透回调用侧（被主题熔断拦下时这里不能装作发出去了）
+        return await send_to_session(
             session_id=session_id, character_id=character_id, user_id=user_id,
             content=content, message_type=message_type,
             extra_meta=extra_meta,

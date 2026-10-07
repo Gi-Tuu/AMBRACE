@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select, update
 
-from _dbclone import clone_engine, make_session_factory
+from _dbclone import clone_engine, make_session_factory, run_unit_of_work
 
 from app.models.memory import ProspectiveIntent
 
@@ -67,7 +67,10 @@ def test_hint_side_split_and_legacy_equivalence():
     assert "禁止" in self_hint and "不要替用户做决定" in self_hint
     user_hint = _build_prospective_hint("sam", "用户答应喂团子", "user")
     assert "用户之前提过/答应过" in user_hint
-    assert "我记得你之前说过" in user_hint
+    # A34 批3 ⑨：回忆式开场只留给回忆通道 ⇒ 承诺提示词不再「邀请」它，改为当下询问 + 明确禁令
+    assert "可以说'我记得你之前说过…'" not in user_hint
+    assert "当下询问" in user_hint
+    assert "回忆式开场" in user_hint and "留给回忆" in user_hint
     # flag 关 → 旧话术逐字节等价（可回退）
     assert _build_prospective_hint_legacy("sam", "X") == (
         "你是sam。你和用户之前有过一个约定/用户曾提到过：「X」。"
@@ -92,13 +95,20 @@ def test_hint_cross_day_anchor_and_present_tense_ban():
 
 def test_opening_and_present_tense_helpers():
     from app.scheduling.prospective_intent import (
-        has_forbidden_present_tense, has_proactive_opening,
+        has_forbidden_present_tense, has_proactive_opening, starts_with_recall_opener,
     )
     assert has_proactive_opening("嘿，我记得你之前说过晚饭你来做的") is True
     assert has_proactive_opening("哎，你之前不是说晚上回来说一声嘛") is True
     assert has_proactive_opening("粥好了，快来吃") is False
     assert has_forbidden_present_tense("现在时间也差不多了，你打算做点什么？") is True
     assert has_forbidden_present_tense("昨天你说过要做晚饭的") is False
+    # ⑨ 回忆式「开场」只看句首（含一个起头词的容错），句中引用不算
+    assert starts_with_recall_opener("我记得你之前说过晚饭你来做的") is True
+    assert starts_with_recall_opener("嘿，我记得你之前说过晚饭你来做的") is True
+    assert starts_with_recall_opener("你之前不是说晚上回来说一声嘛") is True
+    assert starts_with_recall_opener("晚饭我做好啦，你之前说想吃的那家先不去了") is False
+    assert starts_with_recall_opener("粥好了，快来吃") is False
+    assert starts_with_recall_opener("") is False
 
 
 def test_similar_intent_text_threshold():
@@ -163,17 +173,28 @@ def pi_db(monkeypatch, tmp_path):
     factory = make_session_factory(engine)
 
     async def _seed():
+        """种子写单元（A36，2026-10-07：走 ``run_unit_of_work``）。
+
+        为什么每段前先查一次：本单元有**两次 commit**，若第一次已落盘、第二次撞锁，
+        「整体回滚后重放」的前提就不成立了（重放会撞自己的 UNIQUE）⇒ 单元按 ``run_unit_of_work``
+        的要求写成幂等（缺才补）。每例库是新建的克隆库，正常路径两次查都是 None，行为与改前一致。
+        """
         from app.models.character import AICharacter
         from app.models.user import User
-        async with factory() as db:
-            db.add(User(id=1, username="u1", nickname="用户"))
-            db.add(AICharacter(id=11, user_id=1, name="sam", personality="温柔",
-                               chat_style="口语化", relation_type="朋友", is_active=True))
-            await db.commit()            # 2026-09-26（审查 P2-1 防御回归）：真实链路必有一条私聊会话行，
-            # 此前夹具只种角色、用例却传 session_id=7；护栏加上后暴露了这份失真。
+
+        async def _unit(db):
+            if (await db.get(User, 1)) is None:
+                db.add(User(id=1, username="u1", nickname="用户"))
+                db.add(AICharacter(id=11, user_id=1, name="sam", personality="温柔",
+                                   chat_style="口语化", relation_type="朋友", is_active=True))
+                await db.commit()        # 2026-09-26（审查 P2-1 防御回归）：真实链路必有一条私聊会话行，
+                # 此前夹具只种角色、用例却传 session_id=7；护栏加上后暴露了这份失真。
             from app.models.chat import ChatSession
-            db.add(ChatSession(id=7, user_id=1, character_id=11))
-            await db.commit()
+            if (await db.get(ChatSession, 7)) is None:
+                db.add(ChatSession(id=7, user_id=1, character_id=11))
+                await db.commit()
+
+        await run_unit_of_work(factory, _unit)
 
     asyncio.run(_seed())
     import app.db.database as db_mod
@@ -363,11 +384,14 @@ def test_opening_cooldown_blocks_templated_opener(pi_db, monkeypatch):
     now = _now_naive()
 
     async def _seed(content, age_hours):
-        async with pi_db() as db:
+        # A36（2026-10-07）：种子写走 run_unit_of_work（本用例＝A21 台账 10-02 记下的偶发锁现场）
+        async def _unit(db):
             db.add(ProactiveMessageLog(character_id=11, session_id=None,
                                        message_type="prospective_intent", content=content,
                                        created_at=now - timedelta(hours=age_hours)))
             await db.commit()
+
+        await run_unit_of_work(pi_db, _unit)
 
     # 一小时冷却：10 分钟前已发过同款开场 → 命中
     asyncio.run(_seed("嘿，我记得你之前说过晚饭你来做的", 1 / 6))
@@ -392,9 +416,12 @@ def test_opening_cooldown_blocks_templated_opener(pi_db, monkeypatch):
 
     # 冷却窗口外（2 小时前）：同款开场放行一次
     async def _clear_logs():
-        async with pi_db() as db:
+        async def _unit(db):        # A36：DELETE ... 全清天然幂等 ⇒ 单元级可重试
             await db.execute(ProactiveMessageLog.__table__.delete())
             await db.commit()
+
+        await run_unit_of_work(pi_db, _unit)
+
     asyncio.run(_clear_logs())
     asyncio.run(_seed("嘿，我记得你之前说过喂团子", 2))
     assert asyncio.run(recent_opener_exists(11)) is False
@@ -419,12 +446,15 @@ def test_opening_cooldown_works_with_side_flag_off(pi_db, monkeypatch):
     now = _now_naive()
 
     async def _seed():
-        async with pi_db() as db:
+        # A36（2026-10-07）：与上一条同族的种子写，同样走 run_unit_of_work
+        async def _unit(db):
             db.add(ProactiveMessageLog(character_id=11, session_id=None,
                                        message_type="prospective_intent",
                                        content="嘿，我记得你之前说过晚饭你来做的",
                                        created_at=now - timedelta(minutes=10)))
             await db.commit()
+
+        await run_unit_of_work(pi_db, _unit)
 
     asyncio.run(_seed())
     assert asyncio.run(recent_opener_exists(11)) is True
@@ -447,12 +477,18 @@ def test_opening_cooldown_works_with_side_flag_off(pi_db, monkeypatch):
 
 
 async def _age_created_at(factory, pis_id: int, created: datetime) -> None:
-    """把某行 created_at 回拨（server_default 是 UTC，回拨值也按 UTC 给）。"""
-    async with factory() as db:
+    """把某行 created_at 回拨（server_default 是 UTC，回拨值也按 UTC 给）。
+
+    A36（2026-10-07）：写走 ``run_unit_of_work``——``UPDATE ... WHERE id=?`` 天然幂等，撞锁后换
+    干净会话重放即可，不再让 commit 期的 ``database is locked`` 被包装成 PendingRollbackError。
+    """
+    async def _unit(db):
         await db.execute(
             update(ProspectiveIntent).where(ProspectiveIntent.id == pis_id).values(created_at=created)
         )
         await db.commit()
+
+    await run_unit_of_work(factory, _unit)
 
 
 @pytest.mark.slow

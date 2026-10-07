@@ -43,6 +43,31 @@ def _not_quarantined_clause():
 _OVERRIDE_NOW = None
 
 
+def _newest_pinned(rows):
+    """同组多条置顶时确定性选出「该更新的那条」：时间最新，时间相同取 id 最大者。
+
+    A31 根因 2 的落点：原先「节流看 max 时间、重写写 existing[0]」，而 existing 查询无 order_by
+    ⇒ SQLite 按 rowid 升序返回 ⇒ 写入的是**最旧**那条（前端不显示的条）。选条与写条必须同一条。
+    id 最大作同时间 tie-break，与前端「遍历后写覆盖」最终留下的那条同向。
+    """
+    if not rows:
+        return None
+    return max(rows, key=lambda m: (to_naive_utc(m.updated_at or m.created_at) or datetime.min, m.id))
+
+
+def _demote_other_pins(existing, keep_id: int) -> int:
+    """收口：同组其余旧置顶降级（保留行、不物理删，可追溯）。返回降级条数。
+
+    对象由调用方的 session 载入，改属性即被跟踪，随该 session 的 commit 一起落库。
+    """
+    demoted = 0
+    for r in existing:
+        if r.id != keep_id and r.is_pinned:
+            r.is_pinned = False
+            demoted += 1
+    return demoted
+
+
 def _rel_time(dt, now=None) -> str:
     """相对时间中文描述（今天/昨天/N天前/周前/月前/很久以前）"""
     if dt is None:
@@ -73,22 +98,23 @@ async def summarize_memories(character_id: int, memory_type: str, force: bool = 
     from app.memory.service import _active_status_clause  # #70-C：失效记忆不进摘要（flag 关=永真）
     async with async_session_factory() as db:
         # 已有置顶摘要 → 节流判断
-        existing_result = await db.execute(
-            select(Memory).where(
-                Memory.character_id == character_id,
-                Memory.memory_type == memory_type,
-                Memory.is_pinned == True,
-                Memory.is_archived == False,
-                _active_status_clause(),
-            )
+        q = select(Memory).where(
+            Memory.character_id == character_id,
+            Memory.memory_type == memory_type,
+            Memory.is_pinned == True,  # noqa: E712
+            Memory.is_archived == False,  # noqa: E712
+            _active_status_clause(),
         )
-        existing = existing_result.scalars().all()
-        if existing and not force:
-            newest = max(existing, key=lambda m: m.updated_at or m.created_at)
-            last = newest.updated_at or newest.created_at
-            if isinstance(last, datetime):
-                if now_naive_utc() - to_naive_utc(last) < timedelta(hours=SUMMARY_TTL_HOURS):
-                    return {"generated": False, "memory_id": newest.id, "reason": "throttled"}
+        if memory_type == "user_info":
+            # A31 根因 4：普通「印象」摘要与 identity 身份画像分桶，互不污染
+            # （画像由 summarize_identity 独立管理；混在一个桶会让画像顶掉印象位、并互相误降级）
+            q = q.where(or_(Memory.sub_type == "summary", Memory.sub_type.is_(None)))
+        existing = (await db.execute(q)).scalars().all()
+        newest = _newest_pinned(existing)
+        if newest is not None and not force:
+            last = to_naive_utc(newest.updated_at or newest.created_at)
+            if isinstance(last, datetime) and now_naive_utc() - last < timedelta(hours=SUMMARY_TTL_HOURS):
+                return {"generated": False, "memory_id": newest.id, "reason": "throttled"}
 
         # 最近 20 条该类型非摘要记忆
         result = await db.execute(
@@ -131,13 +157,17 @@ async def summarize_memories(character_id: int, memory_type: str, force: bool = 
 
         now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         owner_user_id = char.user_id if char else 0
-        if existing:
-            target = existing[0]
+        if newest is not None:
+            target = newest
             target.content = summary
             target.importance = 100.0
             target.user_id = owner_user_id
             target.updated_at = now_naive
+            demoted = _demote_other_pins(existing, target.id)  # A31 根因 1：同组旧置顶收口
             await db.commit()
+            if demoted:
+                _logger.info("Pinned summary for char=%d type=%s: demoted %d stale pins",
+                             character_id, memory_type, demoted)
             return {"generated": True, "memory_id": target.id}
         mem = Memory(
             user_id=owner_user_id, character_id=character_id, memory_type=memory_type,
@@ -184,12 +214,11 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
             )
         )
         existing = existing_result.scalars().all()
-        if existing and not force:
-            newest = max(existing, key=lambda m: m.updated_at or m.created_at)
-            last = newest.updated_at or newest.created_at
-            if isinstance(last, datetime):
-                if now_naive_utc() - to_naive_utc(last) < timedelta(hours=IDENTITY_TTL_HOURS):
-                    return {"generated": False, "memory_id": newest.id, "reason": "throttled"}
+        newest = _newest_pinned(existing)
+        if newest is not None and not force:
+            last = to_naive_utc(newest.updated_at or newest.created_at)
+            if isinstance(last, datetime) and now_naive_utc() - last < timedelta(hours=IDENTITY_TTL_HOURS):
+                return {"generated": False, "memory_id": newest.id, "reason": "throttled"}
 
         rows = (await db.execute(
             select(Memory)
@@ -242,13 +271,16 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
 
         now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         owner_user_id = char.user_id if char else 0
-        if existing:
-            target = existing[0]
+        if newest is not None:
+            target = newest
             target.content = summary
             target.importance = 100.0
             target.user_id = owner_user_id
             target.updated_at = now_naive
+            demoted = _demote_other_pins(existing, target.id)  # 只收 identity 桶，不碰普通摘要
             await db.commit()
+            if demoted:
+                _logger.info("Identity summary for char=%d: demoted %d stale pins", character_id, demoted)
             return {"generated": True, "memory_id": target.id}
         mem = Memory(
             user_id=owner_user_id, character_id=character_id, memory_type="user_info",

@@ -12,6 +12,7 @@ from app.api.system import notifications_ws
 from app.auth.config import create_token
 from app.db.database import async_session_factory
 from app.models.user import User
+from _dbclone import run_unit_of_work
 
 ACTIVE_ID = 991
 DISABLED_ID = 992
@@ -39,8 +40,13 @@ class FakeWS:
 
 
 async def _seed(uid, disabled):
+    """种账号。A36（2026-10-07）：写单元走 ``run_unit_of_work``——本函数正是 A21 锁族
+    10-07 的实测现场（``db.commit()`` 撞锁被包装成 PendingRollbackError）；单元先查后写＝幂等，
+    撞锁那次已被整体回滚，换干净会话重放不会写两遍。
+    """
     from sqlalchemy import select
-    async with async_session_factory() as db:
+
+    async def _unit(db):
         row = (await db.execute(select(User).where(User.id == uid))).scalar_one_or_none()
         dt = datetime.now(timezone.utc).replace(tzinfo=None) if disabled else None
         if row is None:
@@ -49,6 +55,8 @@ async def _seed(uid, disabled):
         else:
             row.disabled_at = dt
         await db.commit()
+
+    await run_unit_of_work(async_session_factory, _unit)
 
 
 def test_禁用账号被拒且不建连():

@@ -87,6 +87,21 @@ _FLAG_ROWS: list[tuple] = [
      'keeps for itself also says how certain it is and which tool it came from, so it can weigh it properly. '
      'This shapes only how it reads its own note, not what it says to you. Off by default, and turning it off '
      'keeps things exactly as they are now.'),
+    ('cognitive_projection_shadow', 'agent', 107, False, '认知笔记留痕（实验）',
+     '开启后，角色会在后台把自己的「这一刻知道什么、正在关注什么、手头在办什么」记一笔实验笔记，'
+     '用来核对它的判断有没有跑偏；这些笔记不会说给你听，也不会改变它回复你的内容。'
+     '默认关闭，关闭时它不会为这件事多做任何查询。',
+     'Cognitive notes trail (experimental)', 'When on, the character quietly records what it knows, is focused on '
+     'and is handling right now, so we can check whether its judgement has drifted. These notes are never shown to '
+     'you and do not change how it replies. Off by default; while off it does no extra lookups for this.'),
+    ('decision_contract_shadow', 'agent', 108, False,
+     '决定过程留痕（实验）',
+     '开启后，角色每说完一句话，会在后台记一条笔记：这一步它做了什么、为什么这么做、当时受哪些限制。'
+     '这些笔记只用来核对它的判断有没有跑偏，不会改变它说什么，也不会给你看到任何额外内容。默认关闭。',
+     'Log the decision trace (experimental)',
+     'When on, after each reply the character records a private note about what it did, why, and which '
+     'constraints applied. The notes only exist to check whether its judgement has drifted; they change '
+     'nothing about what it says. Off by default.'),
 
     # ── 主动消息 ──
     ('proactive_naturalness_score', 'proactive', 201, False, '主动消息自然度评分',

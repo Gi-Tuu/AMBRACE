@@ -436,8 +436,10 @@ def test_send_to_session_now_applies_topic_guard(monkeypatch):
         raise AssertionError("被拦后不应写库/推送")
     monkeypatch.setattr(sched, "async_session_factory", _no_db)
 
-    assert asyncio.run(sched.send_to_session(
-        SID, CID, UID, _TEXT, message_type="anniversary_recall")) is None
+    # A37 批 1：抑制分支不再返回 None（裸 return＝静默蒸发），改返回 SendResult(False, "topic_guard")
+    _res = asyncio.run(sched.send_to_session(
+        SID, CID, UID, _TEXT, message_type="anniversary_recall"))
+    assert _res.ok is False and _res.reason == "topic_guard"
     assert called == [_TEXT]
 
 

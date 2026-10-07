@@ -193,12 +193,22 @@ async def flush_storyline_items() -> int:
             _meta.update(_OUTREACH_SEND_TRACE.pop(item_obj.character_id, None) or {})
             if _meta:
                 _extra = _json.dumps(_meta, ensure_ascii=False)
-        await engine.send_to_session(
+        _res = await engine.send_to_session(
             item_obj.session_id, item_obj.character_id, item_obj.user_id,
             item_obj.content, message_type="storyline",
             log_proactive=(item_obj.seq == 0),
             extra_meta=_extra,
         )
+        _sent = getattr(_res, "ok", None)
+        if _sent is False:
+            # A37 批 1（审计 §1.4 V3）：主题熔断命中时 send_to_session 既不写库也不推送，
+            # 而这里过去**照旧把切片标成 sent** ⇒ 一条从没到过用户面前的消息在数据上等于发成功，
+            # 且 `proactive_message_logs` 里查不到任何痕迹（静默蒸发）。
+            # 现在按返回值定终态：保持 pending 等下一轮（超 2h 由上面的过期保护作废），
+            # 不计 sent、不做"开口释放"——没开口就不该释放驱力水位。
+            _logger.info("Storyline flush item=%d not sent (reason=%s)，保持 pending",
+                         item_obj.id, getattr(_res, "reason", ""))
+            continue
         if item_obj.seq == 0 and (_meta or {}).get("intent"):
             # A4 批 3 / T1 M2a（2026-10-01）：开口**部分释放**（只写水位、不参与投放决策；
             # flag 关 ⇒ 零 SQL；异常静默，绝不影响发送链路）

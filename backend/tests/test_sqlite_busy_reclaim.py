@@ -37,8 +37,10 @@ import warnings
 from pathlib import Path
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.exc import SAWarning
+from sqlalchemy import select, text
+from sqlalchemy.exc import OperationalError, PendingRollbackError, SAWarning
+from sqlalchemy.orm import unitofwork
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import _dbclone
 from _dbclone import BusyReclaimSession, clone_engine, make_session_factory
@@ -46,6 +48,7 @@ from _dbclone import BusyReclaimSession, clone_engine, make_session_factory
 SHORT_BUSY_MS = 300
 _INSERT = text("INSERT INTO server_settings(key,value) VALUES(:k,:v)")
 _DELETE = text("DELETE FROM server_settings WHERE key=:k")
+_LOCKED = "database is locked"
 
 
 def _non_checked_in(caught) -> list[str]:
@@ -155,3 +158,175 @@ def test_sandbox_factory_wired() -> None:
 
     assert async_session_factory.class_ is BusyReclaimSession, (
         "沙箱库会话工厂退回普通 AsyncSession ⇒ A21 锁族在这一层没有处置（conftest 接线被移走）")
+
+
+# ── A36（2026-10-07）：flush/commit 撞锁的「错误诚实化」＋ 单元级可重试 ────────────────
+# 上面 :func:`test_live_writer_still_raises` 的读数只覆盖**语句级**（``execute``）；本段钉的是
+# 事务级：``commit()`` / ``flush()`` 撞 BUSY 时会话已进入「必须先 rollback」状态，旧实现原地重放
+# ``super().commit()`` 立刻抛 ``PendingRollbackError`` —— 既救不回来，又把原始 locked 掩盖成
+# 另一个错（10-07 现场：``test_ws_notify_disabled._seed`` 报的是 PendingRollbackError，
+# 排查的人不会想到是锁）。四例成对：两条守卫 ＋ 各自一条变异自测。
+
+def _arm_busy_in_flush(monkeypatch, fail_times: int = 1) -> list:
+    """把 ``database is locked`` 钉进 flush 的**执行体内**（返回命中清单供守卫自证）。
+
+    为什么打在 :class:`sqlalchemy.orm.unitofwork.UOWTransaction` 的 ``execute`` 上，而不是整个
+    换掉 ``Session.flush``：SQLAlchemy 只有在 flush **体内**报错时才会把事务置为 DEACTIVE 并记下
+    ``_rollback_exception``。10-07 探针实测：替换 ``Session.flush`` 不触发该状态，重放 commit 反而
+    「成功」⇒ 那样写出来的守卫与变异自测都是空断言。
+    """
+    hits: list = []
+    real = unitofwork.UOWTransaction.execute
+
+    def _fake(self):
+        if len(hits) < fail_times:
+            hits.append(1)
+            raise OperationalError("INSERT INTO users", {}, sqlite3.OperationalError(_LOCKED))
+        return real(self)
+
+    monkeypatch.setattr(unitofwork.UOWTransaction, "execute", _fake)
+    return hits
+
+
+def _a36_user(uid: int):
+    from app.models.user import User
+
+    return User(id=uid, username="a36_%d" % uid, nickname="a36_%d" % uid, password_hash="x")
+
+
+@pytest.mark.slow
+def test_commit_busy_raises_locked_not_pending_rollback(tmp_path: Path, monkeypatch) -> None:
+    """A36 守卫①：commit 撞 BUSY ⇒ 原样抛 locked（不许变成 PendingRollbackError）＋ 会话当场可续用。"""
+    from app.models.user import User
+
+    engine = clone_engine(tmp_path / "honest.db")
+    hits = _arm_busy_in_flush(monkeypatch, 1)
+    try:
+        factory = make_session_factory(engine)
+        before = _dbclone.BUSY_RECLAIMS
+
+        async def _go():
+            async with factory() as db:
+                db.add(_a36_user(990001))
+                with pytest.raises(OperationalError) as excinfo:
+                    await db.commit()
+                assert _LOCKED in str(excinfo.value), \
+                    f"抛出的不是 locked 文本：{str(excinfo.value)[:120]}"
+                assert not isinstance(excinfo.value, PendingRollbackError), \
+                    "原始 BUSY 又被包装成 PendingRollbackError ⇒ 锁问题会被排查成别的东西"
+                # 抛出前已当场复位 ⇒ 同一会话还能接着用（旧实现做不到这一步）
+                db.add(_a36_user(990002))
+                await db.commit()
+                got = (await db.execute(select(User).where(User.id == 990002))).scalar_one_or_none()
+                assert got is not None, "复位后写进去的行读不到 ⇒ 会话状态没真的干净"
+
+        asyncio.run(_go())
+        assert hits, "BUSY 道具没被触发（flush 体内一次都没进）⇒ 上面全是空断言"
+        assert _dbclone.BUSY_RECLAIMS > before, "错误抛出前没逼回收 ⇒ A21 那条打断锁的链路又断了"
+    finally:
+        _cleanup(engine)
+
+
+@pytest.mark.slow
+def test_mutation_without_reset_reintroduces_pending_rollback(tmp_path: Path, monkeypatch) -> None:
+    """上一条的变异自测：摘掉「当场复位」⇒ 会话立刻不可续用（守卫①的第二半必须变红）。
+
+    摘掉后 commit 仍原样抛 locked（那半不受影响），所以红点落在「同一会话还能不能用」上——
+    正是 :func:`_dbclone._reset_after_busy` 起作用的地方。
+    """
+    from app.models.user import User
+
+    monkeypatch.setattr(_dbclone, "_reset_after_busy", lambda sess: asyncio.sleep(0))
+    engine = clone_engine(tmp_path / "nomutate.db")
+    _arm_busy_in_flush(monkeypatch, 1)
+    try:
+        factory = make_session_factory(engine)
+
+        async def _go():
+            async with factory() as db:
+                db.add(_a36_user(990003))
+                with pytest.raises(OperationalError) as excinfo:
+                    await db.commit()
+                assert _LOCKED in str(excinfo.value)
+                db.add(_a36_user(990004))
+                with pytest.raises(PendingRollbackError):
+                    await db.commit()
+                await db.rollback()          # 收尾复位，别让 async with 的 close 再叠一条警告
+                assert (await db.execute(select(User).where(User.id == 990004))).scalar_one_or_none() is None
+
+        asyncio.run(_go())
+    finally:
+        _cleanup(engine)
+
+
+@pytest.mark.slow
+def test_run_unit_of_work_retries_with_a_fresh_session(tmp_path: Path, monkeypatch) -> None:
+    """A36 守卫②：单元级重试 —— 第一次被 locked 打掉后**重建会话**再跑一遍，最终落库成功。"""
+    from app.models.user import User
+
+    engine = clone_engine(tmp_path / "uow.db")
+    hits = _arm_busy_in_flush(monkeypatch, 1)
+    try:
+        factory = make_session_factory(engine)
+        runs: list = []
+
+        async def _unit(db):
+            runs.append(1)
+            db.add(_a36_user(990005))
+            await db.commit()
+
+        before = _dbclone.BUSY_RECLAIMS
+        asyncio.run(_dbclone.run_unit_of_work(factory, _unit))
+        assert len(runs) == 2, f"单元跑了 {len(runs)} 次（应为 2）⇒ 要么没重试，要么根本没撞锁"
+        assert hits, "BUSY 道具没被触发 ⇒ 上面是空断言"
+        assert _dbclone.BUSY_RECLAIMS > before, "单元级重试没逼回收 ⇒ 持锁者还挂在 GC 上，重试等于白跑"
+
+        async def _read():
+            async with factory() as db:
+                return (await db.execute(select(User).where(User.id == 990005))).scalar_one_or_none()
+
+        assert asyncio.run(_read()) is not None, "重试报成功但行没落库"
+    finally:
+        _cleanup(engine)
+
+
+@pytest.mark.slow
+def test_mutation_replaying_on_same_session_is_detected(tmp_path: Path, monkeypatch) -> None:
+    """上一条的变异道具：就地复刻「重试不重建会话」（＝旧代码对 ``super().commit()`` 原地重试的语义）⇒ 必须报红。
+
+    刻意按旧代码的真实形态写：同一会话、不复位、原样重放。10-07 探针实测**只 close 不重建是分不清的**
+    （``Session.close()`` 顺手把会话复位了，重放反而成功）⇒ 道具若写成「每轮 close 再复用」就成了空断言。
+    """
+    engine = clone_engine(tmp_path / "uowmut.db")
+    _arm_busy_in_flush(monkeypatch, 1)
+    try:
+        # A36（Codex 收尾）：变异必须走**普通 AsyncSession** —— BusyReclaimSession 的 commit() 撞 BUSY
+        # 会自动复位会话，旧写法「不换会话原地重放」就复现不出来（本条最初因此假绿，故改此）。
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        runs: list = []
+
+        async def _unit(db):
+            runs.append(1)
+            db.add(_a36_user(990006))
+            await db.commit()
+
+        async def _old_shape():
+            session = factory()                # 旧语义：一个会话吃下所有重试
+            try:
+                for attempt in range(3):
+                    try:
+                        await _unit(session)
+                        return "不该走到这里"
+                    except Exception as exc:
+                        if not _dbclone._is_sqlite_busy(exc) or attempt + 1 >= 3:
+                            raise
+                        await asyncio.sleep(0)  # 旧实现也退避，但**不换会话**
+            finally:
+                await session.rollback()
+                await session.close()
+
+        with pytest.raises(PendingRollbackError):
+            asyncio.run(_old_shape())
+        assert len(runs) == 2, f"旧形态跑了 {len(runs)} 次（应为 2：一次撞锁一次被 PendingRollback 挡回）"
+    finally:
+        _cleanup(engine)

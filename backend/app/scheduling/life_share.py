@@ -307,11 +307,19 @@ async def on_activity_completed(payload: dict) -> None:
         if session_id is None:
             await _log_rejected(character_id, user_id, f"{activity_type}:no_session", "no_session")
             return
+        # A37 批 1 第 8 项（审计 §1.4 V8）：原来 approved **先提交、后发送** ⇒ 配额按"排队"计，
+        # 被闸拦下或发送失败也算用掉了一次，这条分享从此不会再有机会。
+        # 现在改成：先发，确认发出去了才记 approved（配额按"送达"计）。
+        _res = await send_to_session(session_id, character_id, user_id, text, message_type="life_share")
+        if getattr(_res, "ok", None) is False:
+            await _log_rejected(character_id, user_id, f"{activity_type}:{getattr(_res, 'reason', 'not_sent')}", "send_gate")
+            _logger.info("life_share not sent char=%d act=%s (reason=%s)，不记 approved、下一轮还能再来",
+                         character_id, activity_type, getattr(_res, "reason", ""))
+            return
         # 配额落库 + 发送（原子提交失败静默不阻塞）
         async with async_session_factory() as db:
             await _log_approved(db, character_id=character_id, user_id=user_id, reason=f"{activity_type}:{summary[:60]}")
             await db.commit()
-        await send_to_session(session_id, character_id, user_id, text, message_type="life_share")
         _logger.info("life_share sent char=%d act=%s prob=%.2f", character_id, activity_type, prob)
     except Exception as e:
         _logger.warning("life_share on_activity_completed failed: %s", e)

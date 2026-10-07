@@ -10,6 +10,11 @@
 - 「已发送」口径（E15，2026-09-29）：本通道按设计不受主动频控（arbiter 对 group_active
   早退、跳过每小时/最小间隔计数），发送时补写 ProactiveMessageLog 只为让其它通道的
   计数「看得见」它——不改任何闸门行为。
+- 「每 tick 每群最多落地 1 条」（A34 批3，2026-10-07，B.3.5）：群内同秒出现 2 条 AI 冒泡
+  （现场 chat_group_messages 2041/2043、2023/2025）。同秒多落的唯一来源是**双角色互聊**：
+  采集侧每群每 tick 只产 1 个候选、arbiter 每角色每 tick 只成一条，所以只在落库侧收口——
+  按 MAX_LANDS_PER_GROUP_TICK 截断（只落发起者第一句，其余轮次 INFO 留痕后丢弃，不排队顺延，
+  避免跨 tick 补偿式刷屏）。只收紧落地条数，不改概率、不改空闲判定、不改双角色互聊的生成。
 """
 import json
 import random
@@ -30,6 +35,9 @@ GROUP_ACTIVE_TYPE = "group_active"
 IDLE_HOURS = 6
 PROBABILITY = 0.05
 MAX_CHARS = 200
+# A34 批3（2026-10-07，B.3.5）：每 tick 每群最多落地几条 AI 冒泡。
+# 1 = 现场口径「一次冒泡只发一句」；互聊其余轮次 INFO 留痕后丢弃（不排队顺延，避免跨 tick 补偿式刷屏）。
+MAX_LANDS_PER_GROUP_TICK = 1
 
 
 async def collect_group_events() -> list[dict]:
@@ -114,7 +122,11 @@ async def collect_group_events() -> list[dict]:
 
 async def run_group_active(char_id: int, group_id: int, user_id: int,
                            with_id: int | None = None) -> bool:
-    """生成 2-4 轮双角色互聊并逐条落库（发起者 + 搭档交替发言；无搭档时退化为单句冒泡）。"""
+    """生成 2-4 轮双角色互聊并落库（发起者 + 搭档交替发言；无搭档时退化为单句冒泡）。
+
+    A34 批3（2026-10-07，B.3.5）：生成仍是多轮，但**每 tick 每群只落 1 条**（`MAX_LANDS_PER_GROUP_TICK`），
+    其余轮次 INFO 留痕后丢弃；日志口径从 rounds 改为 lands，让「生成了几轮」与「落地了几条」不再混在一起。
+    """
     try:
         from app.agent.llm_client import chat_completion
         async with async_session_factory() as db:
@@ -233,6 +245,16 @@ async def run_group_active(char_id: int, group_id: int, user_id: int,
             if not valid:
                 _logger.warning("Group multi-chat: no valid messages, raw=%.120s", raw)
                 return False
+            # A34 批3（B.3.5）：每 tick 每群最多落地 MAX_LANDS_PER_GROUP_TICK 条——
+            # 互聊生成 2-4 轮，但只落发起者开口那一句，其余轮次 INFO 留痕后丢弃（不顺延到下个 tick）。
+            if len(valid) > MAX_LANDS_PER_GROUP_TICK:
+                dropped = valid[MAX_LANDS_PER_GROUP_TICK:]
+                _logger.info(
+                    "Group multi-chat trimmed char=%d group=%d keep=%d drop=%d dropped=[%s]",
+                    char_id, group_id, MAX_LANDS_PER_GROUP_TICK, len(dropped),
+                    " | ".join(f"{cid}:{c[:30]}" for cid, c in dropped),
+                )
+                valid = valid[:MAX_LANDS_PER_GROUP_TICK]
             for cid, content in valid:
                 db.add(ChatGroupMessage(
                     group_id=group_id, sender_type="ai", character_id=cid, content=content,
@@ -246,7 +268,7 @@ async def run_group_active(char_id: int, group_id: int, user_id: int,
                                           ensure_ascii=False),
                 ))
             await db.commit()
-            _logger.info("Group multi-chat sent char=%d group=%d rounds=%d", char_id, group_id, len(valid))
+            _logger.info("Group multi-chat sent char=%d group=%d lands=%d", char_id, group_id, len(valid))
             return True
     except Exception as e:
         _logger.warning("run_group_active failed char=%d: %s", char_id, e)

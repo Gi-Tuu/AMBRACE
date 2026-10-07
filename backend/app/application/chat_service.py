@@ -109,6 +109,16 @@ async def _run_agent_core(
     if await _cold_war_block(character_id, user_id, content):
         return None
 
+    # A32（2026-10-07）：用户消息落库后、生成 AI 回复前——先做「事件已兑现 → 承诺静默关闭」的
+    # 确定性结算（到家 / 吃药类信号命中则置 discharged，不发消息、不调模型、不写主动消息日志）。
+    # 与 run_prospective_due 的 fire 前闸门同口径，本处是「事件发生当时」的第一道，闸门是双保险。
+    # 失败静默：结算不了不影响本轮回复（宁可漏关，不可误关）。
+    try:
+        from app.scheduling.prospective_intent import settle_promises_on_user_message
+        await settle_promises_on_user_message(character_id, session_id, content)
+    except Exception as e:
+        _logger.warning("prospective settle on user message failed: %s", e)
+
     # #63 机制5：用户安慰词 → 最高权重心事减重（flag 开才生效，失败静默）
     try:
         from app.life.preoccupations import has_comfort_word
