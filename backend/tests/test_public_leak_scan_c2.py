@@ -12,6 +12,8 @@ import importlib.util
 import re
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "check_public_leak.py"
 DOC = REPO / "docs" / "release-public-snapshot.md"
@@ -78,15 +80,32 @@ def test_公开面判定与排除清单():
     assert scan.is_public("flutter.bat") is False
 
 
-def test_排除清单与脱敏规程文档逐字一致():
-    text = DOC.read_text(encoding="utf-8")
+def _read_doc_exclusions(doc: Path):
+    """从脱敏规程文档里抠出排除清单；**文档不存在返回 None**（CI 上 docs 不发布，见第 117 棒教训）。"""
+    if not doc.exists():
+        return None
+    text = doc.read_text(encoding="utf-8")
     m = re.search(r"EXCL_TOP = \((.*?)\)", text, re.S)
     assert m, "规程文档里找不到 EXCL_TOP——文档改了口径就要同步这里"
-    doc_top = tuple(x.strip().strip("\"'") for x in m.group(1).split(",") if x.strip())
-    assert set(doc_top) == set(scan.EXCL_TOP), (doc_top, scan.EXCL_TOP)
+    doc_top = {x.strip().strip("\"'") for x in m.group(1).split(",") if x.strip()}
     m2 = re.search(r"EXCL_EXACT = \((.*?)\)", text, re.S)
-    doc_exact = tuple(x.strip().strip("\"'") for x in m2.group(1).split(",") if x.strip())
-    assert set(doc_exact) == set(scan.EXCL_EXACT)
+    doc_exact = {x.strip().strip("\"'") for x in m2.group(1).split(",") if x.strip()}
+    return doc_top, doc_exact
+
+
+def test_排除清单与脱敏规程文档逐字一致():
+    got = _read_doc_exclusions(DOC)
+    if got is None:
+        pytest.skip("脱敏快照不含 docs/release-public-snapshot.md（docs 不进公开仓）⇒ 清单一致性只在本地核")
+    doc_top, doc_exact = got
+    assert doc_top == set(scan.EXCL_TOP), (sorted(doc_top), scan.EXCL_TOP)
+    assert doc_exact == set(scan.EXCL_EXACT), (sorted(doc_exact), scan.EXCL_EXACT)
+
+
+def test_文档缺席时这条守卫跳过而不是红():
+    """第 117 棒的教训：CI 跑的是**裁剪后的树**，`docs/` 根本不存在。
+    本地全绿 6841 例、一推上去四个档同时红 1 例——就是这条没做缺席处理。"""
+    assert _read_doc_exclusions(REPO / "docs" / "no-such-file-abc.md") is None
 
 
 # ── 四、扫描器不许自己就是泄漏（模式必须分片拼） ──
