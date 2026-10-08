@@ -3,7 +3,7 @@
 
 定位：``app/domain/relational`` 是纯算法（零 IO），本模块负责把它的结果落库——「取行 →
 调纯函数 → 写回列」。三处钩子（settle 时机、开口释放、回复全额释放）与影子改判留痕属
-下一单 M1b2，**本文件当前零调用方**。
+下一单 M1b2（**已落**：三处钩子接在 `scheduling/arbiter.py` 的开口释放与 `application/chat_settlement.py` 的回复释放）。
 
 硬约束（派单 §2.2）：
 - flag ``relational_drive_shadow`` 关 ⇒ 每个入口首行即返回：不查库、不写库（逐字节旧行为）；
@@ -349,6 +349,32 @@ def _intent_of(row) -> str | None:
         return None
 
 
+# ── B15 可测性（2026-10-08）：释放那一瞬间的水位必须留痕，否则这条观察窗口永远量不到 ──
+# 为什么事后从库里读不出来：`relational_drives.level` 是**懒结算的连续值**，释放之后任何一次
+# settle 都会把增量重新加回去 ⇒ 「回复后清零」与「压根没释放」在事后是同一个数。
+# 现网实测（只读）：app.log 里 "release" 命中 **0 条**，全表只有 2 行留着 `last_released_at`
+# （比例 1.0）＋1 行留着 `last_released_ratio=0.45` 却没有时刻（部分释放刻意不写时刻，见 release_open 文档）。
+# ⇒ 补一条 trace。**纯留痕**：不改水位、不改判定、不新增 flag（释放闸照旧），失败一律吞掉。
+RELEASE_TRACE_ROUTE = "relational_drive_release"          # 列宽 30，本串 24 字
+
+
+def _trace_release(trigger: str, character_id: int, user_id: int, result: dict | None) -> None:
+    """把 `apply_*_release` 已经算好的 before/after/ratio 落一条 trace；没有释放 ⇒ 不落。"""
+    if not result:
+        return
+    try:
+        import json as _json
+
+        from app.agent.trace import enqueue_task_log
+        enqueue_task_log(
+            character_id=character_id, user_id=user_id, session_id=None,
+            trigger=trigger, route=RELEASE_TRACE_ROUTE,
+            steps_json=_json.dumps([dict(result)], ensure_ascii=False), status="ok",
+        )
+    except Exception:
+        pass    # 留痕失败绝不能影响主链路（与 _trace_shadow 同口径）
+
+
 async def apply_open_release(db, character_id: int, user_id: int, intent, *, now=None) -> dict | None:
     """开口释放编排（设计 §3.1）：闸关 ⇒ 返回 None 且一次 SELECT 都不发；闸开 ⇒ settle → intent 反查 → release_open。
 
@@ -368,7 +394,10 @@ async def apply_open_release(db, character_id: int, user_id: int, intent, *, now
     row.level = drives.release_open(level_before, drive_key, ratio=ratio)
     row.last_released_ratio = ratio
     await db.flush()
-    return {"drive": drive_key, "level_before": level_before, "level_after": _level_of(row.level), "ratio": ratio}
+    result = {"kind": "open", "drive": drive_key, "level_before": level_before,
+              "level_after": _level_of(row.level), "ratio": ratio}
+    _trace_release("outreach_open", character_id, user_id, result)
+    return result
 
 
 async def apply_reply_release(db, character_id: int, user_id: int, session_id, *, now=None) -> dict | None:
@@ -404,4 +433,8 @@ async def apply_reply_release(db, character_id: int, user_id: int, session_id, *
     await settle(db, character_id, user_id, now=now)
     level_before = _level_of(row.level)
     await release_full(db, character_id, user_id, drive_key, now=now)
-    return {"drive": drive_key, "level_before": level_before, "level_after": 0.0, "ratio": 1.0}
+    result = {"kind": "full", "drive": drive_key, "level_before": level_before,
+              "level_after": 0.0, "ratio": 1.0,
+              "attributed_msg_id": getattr(msg, "id", None)}
+    _trace_release("outreach_full", character_id, user_id, result)
+    return result
