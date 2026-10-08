@@ -187,8 +187,11 @@ def test_闸关时不取数不落痕(monkeypatch):
     import app.memory.current_state as cs_mod
     import app.agent.trace as trace_mod
 
-    def _boom(*a, **k):
-        raise AssertionError("闸关着却去取数了")
+    hits = []
+
+    def _boom(*a, **k):              # 计数桩：抛异常会被投影的 fail-open 吞掉，测不出"到底调没调"
+        hits.append(a)
+        return None
 
     monkeypatch.setattr(cs_mod, "get_current_user_state", _boom)
     monkeypatch.setattr(ws_mod, "world_state_snapshot", _boom)
@@ -198,6 +201,7 @@ def test_闸关时不取数不落痕(monkeypatch):
     state = {"workspace": ws, "character_id": 13, "user_id": 3, "session_id": 9,
              "character_name": "小阳", "user_name": "阿明", "perception": {"topic": "实习"}}
     rep = asyncio.run(wp.project_into_workspace(state))
+    assert hits == [], "闸关着却取了数／落了痕：%s" % hits
     assert rep["shadow_flag"] is False
     assert rep["filled"].get("identity") and rep["filled"].get("focus")
     assert "current_state" not in rep["filled"] and "world" not in rep["filled"]
@@ -223,8 +227,15 @@ def test_闸开时取既有接口并落一条影子留痕(monkeypatch):
     def _enqueue(**kw):
         traced.append(kw)
 
+    import app.agent.topic_tracker as tt_mod
+
+    async def _rows(cid, uid, **k):
+        calls.append("active_topics")
+        return [{"topic": "答辩 PPT"}]
+
     monkeypatch.setattr(cs_mod, "get_current_user_state", _cs)
     monkeypatch.setattr(ws_mod, "world_state_snapshot", _world)
+    monkeypatch.setattr(tt_mod, "load_active_topics_rows", _rows)
     monkeypatch.setattr(trace_mod, "enqueue_task_log", _enqueue)
     from app.flags.agent_flags import AGENT_FLAGS
     monkeypatch.setitem(AGENT_FLAGS, wp.SHADOW_FLAG, True)
@@ -232,7 +243,7 @@ def test_闸开时取既有接口并落一条影子留痕(monkeypatch):
     ws = create_workspace(character_id=13, user_id=3)
     state = {"workspace": ws, "character_id": 13, "user_id": 3, "session_id": 9}
     rep = asyncio.run(wp.project_into_workspace(state))
-    assert calls == ["current_state", "world"]
+    assert calls == ["current_state", "world", "active_topics"]
     assert rep["shadow_flag"] is True
     assert "current_state" in rep["filled"] and "world" in rep["filled"] and "working_state" in rep["filled"]
     assert len(traced) == 1

@@ -2,7 +2,7 @@
 
 - 只对高重要度话题建档（importance >= TOPIC_MIN_IMPORTANCE=0.6）
 - 本地规则提取候选话题（零 LLM），节流防重复（同角色 5 分钟最多 1 次）
-- load_active_topics_text 供 context_builder 注入进行中话题
+- load_active_topics_text 供 context_builder 注入进行中话题；load_active_topics_rows 给认知 Workspace 结构化出口（A43）
 """
 import re
 import time
@@ -20,6 +20,10 @@ TOPIC_MIN_IMPORTANCE = 0.6
 THROTTLE_SECONDS = 300          # 同角色 5 分钟最多提取一次
 MAX_TOPICS_PER_CHAR = 20        # 每角色最多保留话题数（超出按重要度裁剪）
 MAX_INJECT_TOPICS = 3           # 注入上下文最多条数
+
+# A43（2026-10-08）：进行中话题的**唯一排序口径**——两个文本出口与结构化出口共用一份，
+# 免得哪天一边加排序另一边没加，投影拿到的"前三"和模型看到的"前三"不是同一批话题。
+_ACTIVE_TOPICS_ORDER = (ConversationTopic.importance.desc(), ConversationTopic.last_touched_at.desc())
 
 # B1-③（2026-09-04，方案 §5.2）：主动接触专用「时效」边界——过期话题不再当承接对象
 PROACTIVE_FRESH_TOPIC_HOURS = 72      # 普通话题 72h 后不再主动承接（修复远期话题被反复续）
@@ -323,7 +327,7 @@ async def load_active_goal_queries(character_id: int, user_id: int, limit: int =
                     ConversationTopic.user_id == user_id,
                     ConversationTopic.status == "进行中",
                 )
-                .order_by(ConversationTopic.importance.desc(), ConversationTopic.last_touched_at.desc())
+                .order_by(*_ACTIVE_TOPICS_ORDER)
                 .limit(limit)
             )).scalars().all()
         return [r.topic for r in rows if r and r.topic]
@@ -343,7 +347,7 @@ async def load_active_topics_text(character_id: int, user_id: int, now: datetime
                     ConversationTopic.character_id == character_id,
                     ConversationTopic.status == "进行中",
                 )
-                .order_by(ConversationTopic.importance.desc(), ConversationTopic.last_touched_at.desc())
+                .order_by(*_ACTIVE_TOPICS_ORDER)
                 .limit(MAX_INJECT_TOPICS)
             )).scalars().all()
         if not rows:
@@ -369,6 +373,51 @@ async def load_active_topics_text(character_id: int, user_id: int, now: datetime
         return ""
 
 
+async def load_active_topics_rows(character_id: int, user_id: int | None) -> list[dict]:
+    """A43（2026-10-08）：进行中话题的**结构化出口**，供认知 Workspace 的 `active_topics` 那一格取数。
+
+    与 `load_active_topics_text` 同表、同状态口径、同排序（共用 `_ACTIVE_TOPICS_ORDER`），
+    差别只有两处、且都是**刻意的**：
+
+    ① 带 `user_id` 过滤——话题表 `user_id NOT NULL`，而 Workspace 是「角色×用户」一格，
+       不能把另一个账号的进行中话题投进当前用户的认知面。（注入文本那条腿**没带**这个过滤，
+       属现网 0 多用户角色下未暴露的口径不一致，登记为 A46 待拍板，本函数不替它做决定。）
+    ② 返回字段而非渲染文本——不拼「🎯」「（今天）」这类展示串（渲染是上下文的事）。
+
+    缺 character_id / user_id ⇒ **一次查询都不发**直接返回空列表；任何异常静默返回空列表。
+    """
+    if not character_id or not user_id:
+        return []
+    try:
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(ConversationTopic)
+                .where(
+                    ConversationTopic.character_id == int(character_id),
+                    ConversationTopic.user_id == int(user_id),
+                    ConversationTopic.status == "进行中",
+                )
+                .order_by(*_ACTIVE_TOPICS_ORDER)
+                .limit(MAX_INJECT_TOPICS)
+            )).scalars().all()
+    except Exception as e:
+        _logger.warning("Active topics rows load failed: %s", e)
+        return []
+
+    out = []
+    for r in rows:
+        last = r.last_touched_at
+        last = last.replace(tzinfo=None) if last and last.tzinfo else last
+        out.append({
+            "topic": r.topic,
+            "goal": bool(r.goal),
+            "follow_up": bool(r.follow_up),
+            "importance": float(r.importance) if r.importance is not None else None,
+            "last_touched_at": last.isoformat() if last else None,
+        })
+    return out
+
+
 async def load_fresh_active_topics_text(character_id: int, user_id: int, now: datetime | None = None) -> str:
     """B1-③（2026-09-04，方案 §5.2）主动接触专用：仅返回时效内的进行中话题。
 
@@ -387,8 +436,7 @@ async def load_fresh_active_topics_text(character_id: int, user_id: int, now: da
                     ConversationTopic.character_id == character_id,
                     ConversationTopic.status == "进行中",
                 )
-                .order_by(ConversationTopic.importance.desc(),
-                          ConversationTopic.last_touched_at.desc())
+                .order_by(*_ACTIVE_TOPICS_ORDER)
             )).scalars().all()
         now = now or datetime.now(timezone.utc).replace(tzinfo=None)
         lines = []

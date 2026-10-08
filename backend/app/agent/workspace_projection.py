@@ -35,7 +35,6 @@ PROJECTED_FIELDS = (
 # 本单刻意留空的字段与原因——读数以这个形式自证"是边界不是遗漏"
 DEFER_REASONS = {
     "goal": "长期 topics/goals ≠ 本轮选中的目标（派单红线）⇒ ②a 不设置",
-    "active_topics": "Topic Tracker 只给文本出口（app/agent/topic_tracker.py:335/:372），改它被本单禁止 ⇒ 等结构化出口",
     "open_loops": "没有可复用的既有只读结构化接口，本单不新查库 ⇒ 留空",
     "active_need": "同上（情绪/信息缺口没有统一只读出口）",
     "constraints": "约束散在各闸门（state_guard 等），②a 不新建口径",
@@ -202,7 +201,8 @@ def project_working_state(ws, world) -> bool:
 
 
 def project_topics(ws, topics) -> bool:
-    """Topic Tracker → `active_topics`：只接受**调用方注入的结构化列表**，本模块绝不自己查话题表。
+    """Topic Tracker → `active_topics`：只接受**结构化列表**（A43 起由 `topic_tracker.load_active_topics_rows`
+    提供，与 Current State／World 同一取数纪律＝只在影子闸开时调既有只读接口），本模块自己不写 SQL。
 
     同时守住红线：不把长期 topics/goals 等同于 `ws.goal`（`goal` 本单恒空，原因见 DEFER_REASONS）。
     """
@@ -310,6 +310,7 @@ async def project_into_workspace(state: dict) -> dict | None:
 
     current_state = None
     world = None
+    topic_rows = None
     if shadow_on:
         character_id = state.get("character_id")
         user_id = state.get("user_id")
@@ -324,6 +325,11 @@ async def project_into_workspace(state: dict) -> dict | None:
                 world = await world_state_snapshot(user_id=user_id, character_id=character_id)
             except Exception as e:
                 _logger.debug("Projection world_state failed char=%s: %s", character_id, e)
+        try:
+            from app.agent.topic_tracker import load_active_topics_rows
+            topic_rows = await load_active_topics_rows(state.get("character_id"), user_id)
+        except Exception as e:  # 取数失败＝该字段覆盖 0，不影响主链路
+            _logger.debug("Projection active_topics failed char=%s: %s", character_id, e)
 
     # identity 的取键口径（10-08 核实后改）：**只读装配阶段真写进 state 的那些键**——
     # `context/assembly.py` 写 `user_name`／`character_name`，`character_info` 带上 `self_statement`／`bio`
@@ -341,7 +347,8 @@ async def project_into_workspace(state: dict) -> dict | None:
         ws,
         current_state=current_state,
         world=world,
-        topics=(state.get("active_topics") if isinstance(state.get("active_topics"), (list, tuple)) else None),
+        topics=(topic_rows if topic_rows is not None
+                else (state.get("active_topics") if isinstance(state.get("active_topics"), (list, tuple)) else None)),
         identity=identity,
         perception=state.get("perception"),
     )
