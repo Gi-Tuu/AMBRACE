@@ -68,14 +68,69 @@ def test_判定路径零模型调用():
     assert calls == [], "判定路径里调了模型＝违反 A37 批 2 边界（判定只读现状，不生成）"
 
 
+# 三个既有判据的**唯一合法来源**（读数层只许复用，不许自带第四套）
+CANONICAL_DETECTORS = {
+    "_signal_seen": "app.scheduling.prospective_intent",
+    "ready_result_seen": "app.scheduling.promise_parser",
+    "_story_advanced": "app.domain.emotion.care",
+}
+
+
+def _code_names(tree) -> set[str]:
+    """AST 里真被引用的名字（Name／Attribute）——**docstring 里提一笔不算**。"""
+    out = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            out.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            out.add(node.attr)
+    return out
+
+
+def _detector_offenses(src: str) -> list[str]:
+    """读数层越界形态清单：本地重定义判据／用了判据却不是从规定模块 import。"""
+    tree = ast.parse(src)
+    defined = {n.name for n in ast.walk(tree)
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+    imported = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            for a in node.names:
+                imported[a.asname or a.name] = node.module
+    used = _code_names(tree)
+    bad = []
+    for name, whence in CANONICAL_DETECTORS.items():
+        if name in defined:
+            bad.append("%s 在本模块里被重新定义了" % name)
+        if name in used and imported.get(name) != whence:
+            bad.append("%s 被代码用到但不是从 %s import 的（实际来源＝%r）" % (name, whence, imported.get(name)))
+    return bad
+
+
 def test_调度层包装不新写正则():
-    """`scheduling/freshness.py` 只许 import 既有判据与两张字面表，不许自带第四套 pattern。"""
+    """`scheduling/freshness.py` 只许**复用**既有判据：不许 `re.compile`、不许本地重定义、不许换来源。
+
+    老写法是 `assert "_signal_seen" in src`——那种断言我在同一批里只靠**文档字符串提了这三个名字**
+    就通过了（假绿）。现在按 AST 判"代码里是否真引用"，并配两条自证：桩里本地 def 必须被报，
+    只在 docstring 里提名字必须不被报。
+    """
     if not SCHED_FILE.exists():
         pytest.skip("scheduling/freshness.py 尚未落地（本批分步提交）")
     src = SCHED_FILE.read_text(encoding="utf-8")
     assert re.search(r"re\.compile", src) is None, "调度层包装里出现了新的正则字面表"
-    for must in ("_signal_seen", "ready_result_seen", "_story_advanced"):
-        assert must in src, f"没复用既有判据：{must}"
+    assert _detector_offenses(src) == [], _detector_offenses(src)
+    # 自证有牙①：本地重定义判据必须被报出来
+    stub = ('"""这里提到 _signal_seen。"""\n'
+            'def _signal_seen(kind, *t):\n    return True\n')
+    assert any("重新定义" in o for o in _detector_offenses(stub)), "桩没被报出来＝这条守卫没牙"
+    # 自证有牙②：真从规定模块 import 并使用＝干净
+    ok = ('from app.scheduling.prospective_intent import _signal_seen\n\n'
+          'def f(x):\n    return _signal_seen("a", x)\n')
+    assert _detector_offenses(ok) == []
+    # 自证有牙③：只在 docstring 里提名字，既不算使用、也不算重定义
+    prose = '"""提到 _signal_seen／ready_result_seen／_story_advanced 三个判据的说明。"""\n'
+    assert _detector_offenses(prose) == []
+
 
 
 def test_通道白名单与实现一致():

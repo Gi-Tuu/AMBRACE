@@ -143,6 +143,12 @@ async def run_unfinished_topic(candidate: dict) -> bool:
             "请自然地捡起这个话题（例如'对了，你上次说的那个……'），1-2 句话，"
             "按你的性格和聊天风格来说，不要太刻意，不要提'AI'，不要加引号标注。"
         )
+        # A39 批 2b 通道 1（10-09）：闸②＝生成前重取现状。两个闸都关时这块一次查询都不发、直接放行，
+        # 行为与改动前逐字节一致；判到 cancel 且实闸开 ⇒ 不调模型、不发（省钱的那一半在 gate，不在 shadow）。
+        from app.scheduling import freshness as _frs
+        if await _frs.pre_send_check("unfinished_topic", candidate) is None:
+            _logger.info("Unfinished topic cancelled by 闸② char=%d（现状已过期）", char_id)
+            return False
         msg = await chat_completion(
             messages=[
                 {"role": "system", "content": "直接输出内容，不要加引号和标注。"},

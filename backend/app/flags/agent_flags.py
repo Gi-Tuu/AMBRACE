@@ -134,6 +134,10 @@ AGENT_FLAGS = {
     # A39 批 2a（10-09）：开＝提取侧允许写精确时刻（YYYY-MM-DD HH:MM），clock 承诺不再被压成「当天全天」（现网 id=160 提前 55′29″ 那类）；关＝提示词与解析结果逐字节旧行为。
     # 解析两种格式都收，所以本闸只门控「提示词是否要求写时刻」——模型不写，行为就不变。
     "proactive_clock_precise": False,
+    # A39 批 2b（10-09）：闸②「生成前重取现状」的两段式开关。shadow＝只读数＋打一条 [fresh=…] 留痕，
+    # 发不发照旧；gate＝判定为 cancel 时真的不调模型、不发。两个都关＝一条额外查询都不发（守卫按计数桩钉住）。
+    "proactive_freshness_shadow": False,
+    "proactive_freshness_gate": False,
     # ── §20 跨角色用户事实（2026-09-04，默认关=零行为变化；bool 可 runtime 热更）──
     # global_user_facts：用户级可变事实层总开关——开=GPS/跨角色事实写入 + [USER NOW] 注入分区；
     #   关=不写/不读 user_facts（抽取出原路径、注入空）。
