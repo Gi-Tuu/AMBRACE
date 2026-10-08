@@ -188,6 +188,60 @@ def _parse_curated_line(response: str):
     return content, kind, imp
 
 
+def _parse_due(raw: str, *, end: bool):
+    """A39 批 2a：收 `YYYY-MM-DD[ T HH:MM[:SS]]`，返回 naive-北京时刻。
+
+    只有日期时**保持旧口径**（起 00:00／止 23:59）⇒ 模型不写时刻就逐字节等于改动前；
+    写了时刻就如实入库，`_is_date_scoped()`（认 23:59）因此不会再把时刻型承诺当成"当天全天"。
+    解析失败按异常上抛，由调用侧一起置空（与旧行为一致）。
+    """
+    s = (raw or "").strip().replace("T", " ")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    d = datetime.strptime(s, "%Y-%m-%d")
+    return d.replace(hour=23, minute=59) if end else d
+
+
+def _intent_time_window_spec(precise: bool) -> str:
+    """INTENT 行的时间窗规格——**从提示词现取**，不另抄一份（抄一份就会漂）。
+
+    关＝返回模板里原样那行；开＝把日期区间换成允许带 `HH:MM` 的写法，并明确要求
+    "用户给了具体时刻才写时刻"，免得把"周末"这类模糊范围硬编成时刻。
+    """
+    line = next(l for l in EXTRACT_PROMPT.split("\n") if l.startswith("INTENT:"))
+    if not precise:
+        return line
+    return line.replace(
+        "时间窗(YYYY-MM-DD~YYYY-MM-DD，不确定写无)",
+        "时间窗(YYYY-MM-DD~YYYY-MM-DD；用户给了具体时刻就写成 "
+        "YYYY-MM-DD HH:MM~YYYY-MM-DD HH:MM，不确定写无)",
+    )
+
+
+def _apply_clock_precise(prompt: str, *, flags: dict | None = None) -> str:
+    """A39 批 2a：默认关＝原样返回（逐字节旧行为）；开＝只换 INTENT 那一行的时间窗规格。
+
+    抽成函数是为了**能被测**：内联版待在会调模型的函数里，测试碰不到＝这条闸没法验
+    （"那段逻辑 pytest 根本跑不到"是本项目反复栽过的形态）。
+    规格与提示词失配时不静默——记一条 WARNING，否则"闸开了但没生效"只会表现为"承诺还是提前发"。
+    """
+    try:
+        if flags is None:
+            from app.flags.agent_flags import AGENT_FLAGS as flags  # type: ignore[no-redef]
+        if not flags.get("proactive_clock_precise", False):
+            return prompt
+    except Exception:
+        return prompt                       # 取闸失败按"关"处理：宁可少要时刻信息
+    old, new = _intent_time_window_spec(False), _intent_time_window_spec(True)
+    if old not in prompt:
+        _logger.warning("A39 clock 精确时刻闸已开，但 INTENT 行没匹配上 ⇒ 本次提取仍按日期档出")
+        return prompt
+    return prompt.replace(old, new)
+
+
 def _parse_intent_line(response: str):
     """INTENT: 内容 | 类型 | 时间窗 | 线索 | 置信(可选) → dict / None。时间窗解析失败返回 None 时间。
 
@@ -212,8 +266,8 @@ def _parse_intent_line(response: str):
     if win and win != "无" and "~" in win:
         try:
             a, b = [x.strip() for x in win.split("~", 1)]
-            due_start = datetime.strptime(a, "%Y-%m-%d")
-            due_end = datetime.strptime(b, "%Y-%m-%d").replace(hour=23, minute=59)
+            due_start = _parse_due(a, end=False)
+            due_end = _parse_due(b, end=True)
         except Exception:
             due_start = due_end = None
     cues = []
@@ -283,6 +337,7 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
     _bj = datetime.now(timezone(timedelta(hours=8)))
     _today_str = f"{_bj.year}年{_bj.month}月{_bj.day}日"
     prompt = EXTRACT_PROMPT.format(conversation=conv, today=_today_str)
+    prompt = _apply_clock_precise(prompt)
     # §20（2026-09-04）：开 global_user_facts 时，借用同一次提取让 LLM 多吐一个 SLOT 归槽字段
     # （不新增 LLM 调用）；关=原 prompt 逐字节一致（零行为变化）。
     # 细粒度（2026-09-10）：只提示【已启用槽】，全关则整段不追加（零行为）。

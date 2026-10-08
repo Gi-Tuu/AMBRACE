@@ -143,6 +143,11 @@ _FLAG_ROWS: list[tuple] = [
      'still reaches out to you and that quiet hours and message limits allow it. On by default; turning it off stops '
      'these messages, and what it sees on your phone is only used when you ask.'),
 
+    # A39 批 2a（10-09）：实验闸，默认关＝记约定的方式与现在逐字节一致
+    ('proactive_clock_precise', 'proactive', 211, False, '按你给的钟点提醒（实验）',
+     '开启后，它记录你说的未来约定时会把具体钟点也记下来（例如「明早八点叫我」记成 08:00，而不是「明天某一天」），于是只在到点前后提起，不会提前大半天就念叨。默认关闭。',
+     'Reminds at the agreed clock time (experiment)', 'When on, future promises keep the exact clock time (e.g. "call me at 8 tomorrow" is stored as 08:00 rather than "somewhere tomorrow"), so it brings them up only around that time. Off by default, and while off promises are recorded exactly as before.'),
+
     # ── 群聊小游戏 ──
     ('group_chat_games', 'games', 301, False, '小游戏总开关',
      '小游戏功能的总开关：关闭后玩法列表清空、也不能从面板开局，卡住的对局不再自动推进；已经开始的对局仍可查看。',

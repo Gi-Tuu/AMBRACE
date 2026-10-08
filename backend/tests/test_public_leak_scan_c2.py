@@ -9,7 +9,9 @@
 将来谁把本机路径写进会公开的文件，这条先红，不用等到推快照那一刻。
 """
 import importlib.util
+import os
 import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -167,9 +169,75 @@ def test_排除清单文档与扫描器都写着这条隐私排除():
 
 
 def test_现在的_HEAD_公开面是干净的():
-    n, hits = scan.scan("HEAD")
-    assert n > 1000, f"公开面文件数异常（{n}）——排除清单或 ls-tree 口径坏了"
+    n_files, n_parsed, hits = scan.scan("HEAD")
+    assert n_files > 1000, f"公开面文件数异常（{n_files}）——排除清单或 ls-tree 口径坏了"
+    # 分母必须来自"真解析到的文件数"。第五节那两条只喂了合成的 --batch 输出，测的是解析器；
+    # 2026-10-09 那次空扫（请求 1802、解析 0、命中 0、报"干净"）正是从这条缝里过去的。
+    assert n_parsed == n_files, f"公开面请求 {n_files} 个只解析到 {n_parsed} 个 ⇒ 这条'干净'是空的"
     assert hits == [], f"HEAD 里有会外泄的内容：{hits[:5]}"
+
+
+# ── 七、端到端：正对照必须走真命令＋真 git，不许再拿合成输出测（2026-10-09 空扫的教训） ──
+def _tmp_repo(tmp_path: Path, files: dict[str, str]) -> Path:
+    """在 pytest 的 tmp_path 里建一棵真 git 仓并提交，返回仓根。"""
+    import subprocess
+
+    for rel, text in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t.t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t.t", "LC_ALL": "C",
+           "PYTHONIOENCODING": "utf-8"}
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "seed"]):
+        r = subprocess.run(["git", "-C", str(tmp_path)] + args, capture_output=True,
+                           text=True, encoding="utf-8", errors="replace",
+                           env={**os.environ, **env})
+        assert r.returncode == 0, r.stderr
+    return tmp_path
+
+
+def _run_cli(repo: Path):
+    """把扫描脚本原样复制进那棵临时仓再跑：ROOT 由 `__file__` 推出 ⇒ 落点就是临时仓。"""
+    import subprocess
+    import sys
+
+    dst = repo / "scripts" / "check_public_leak.py"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(str(SCRIPT), str(dst))
+    return subprocess.run([sys.executable, str(dst), "--rev", "HEAD"], capture_output=True,
+                          text=True, encoding="utf-8", errors="replace",
+                          env={**os.environ, "PYTHONIOENCODING": "utf-8"}, cwd=str(repo))
+
+
+def test_端到端正对照_真带泄漏的仓必须报红(tmp_path):
+    # 夹具本身分片拼（本文件在公开面上，写整串就成了它自己要拦的那次泄漏）
+    leak = "x = r'D:" + chr(0x5C) + _AMBRACE.decode() + chr(0x5C) + "backend'"
+    p = _run_cli(_tmp_repo(tmp_path, {"backend/app/a.py": leak,
+                                      "backend/app/b.py": "y = 1\n"}))
+    out = (p.stdout or "") + (p.stderr or "")
+    assert p.returncode == 1, f"种了泄漏却 exit={p.returncode}：{out}"
+    assert "author_repo_path" in out, out
+    assert "已解析 2 个" in out, f"解析数没如实报出来：{out}"
+
+
+def test_端到端反向钉_同一棵干净仓必须报绿且解析数不为零(tmp_path):
+    p = _run_cli(_tmp_repo(tmp_path, {"backend/app/a.py": "y = 1\n",
+                                      "docs/private.md": "D:/随便写不外泄"}))
+    out = (p.stdout or "") + (p.stderr or "")
+    assert p.returncode == 0, f"干净仓却红了：{out}"
+    assert "公开面文件 1 个；已解析 1 个；命中 0 处" in out, \
+        f"要么没按排除清单裁，要么又空扫了：{out}"
+
+
+def test_解析数不等于请求数时必须判扫描无效而不是干净(monkeypatch):
+    """新加的 exit=2 分支的牙：分母不齐＝这次什么都没量到，不能算通过。"""
+    import sys as _s
+
+    monkeypatch.setattr(scan, "scan", lambda rev: (1802, 0, []))
+    monkeypatch.setattr(_s, "argv", ["check_public_leak.py"])
+    assert scan.main() == 2, "分母不齐仍被判成干净 ⇒ 空扫又会绿"
+
 
 
 # ───────────────────────── C4：裁剪树预跑工具的清单必须只有一份 ─────────────────────────

@@ -80,7 +80,9 @@ jobs:
 
   # 公开仓卫生扫描（C2，2026-10-08）：origin/main 是公开的「脱敏快照」，同类泄漏两个月内靠手工拦下两次
   # （10-06 测试夹具里的真机路径、10-08 模块 docstring 里报告文件的绝对路径）⇒ 从「人记得扫」改成自动拦。
-  # 只读 git 对象、不装依赖、本机实测 0.4 秒扫完 1789 个公开面文件，所以任何事件都跑（不挂 changes 守卫）。
+  # 只读 git 对象、不装依赖、本机实测 1.6 秒扫完全部公开面文件，所以任何事件都跑（不挂 changes 守卫）。
+  # 10-09 起它会打印「已解析 K／N」，K≠N 直接 exit=2 判本次扫描无效——在此之前这条档把裸路径喂给
+  # `cat-file --batch`（batch 只认对象名）⇒ 解析 0／命中 0 却报干净，等于空扫了 11 根棒。读日志时看 K。
   public-hygiene:
     name: Public hygiene (author-path & credential scan)
     runs-on: ubuntu-latest

@@ -21,6 +21,10 @@
 - **只用字节**：`git ls-tree`/`git show` 拿 bytes，正则也在 bytes 上做 ⇒ 不受本机码页影响
   （Windows 机曾因 `subprocess(text=True)` 的解码假设被 CI 打红，见 AGENTS.md 与 dev-changelog）。
 - **模式一律分片拼接**：本文件自身绝不能被自己的模式命中，否则「扫描器自己算不算泄漏」会永远说不清。
+- **打印的"已解析"必须等于"公开面文件数"，不等就退出码 2 判本次扫描无效**：2026-10-09 发现本工具
+  的 `--rev` 分支把裸路径喂给 `cat-file --batch`，`--batch` 只认对象名、裸路径一律回 `missing`
+  ⇒ 解析数恒为 0、命中恒为 0，而文件数按请求清单打印，看起来像在认真扫 1800 个文件。
+  「0 命中」的分母只能来自**真解析成功的文件数**，不能来自请求清单。
 - 任何命中 ⇒ 退出码 1，并打印 `文件:行号`＋脱敏片段（片段里的敏感串本身只打前 24 字，避免日志二次外泄）。
 """
 from __future__ import annotations
@@ -100,14 +104,20 @@ def parse_batch(paths: list[str], raw: bytes) -> list[tuple[str, bytes]]:
 
 
 def read_blobs(rev: str | None, paths: list[str]) -> list[tuple[str, bytes]]:
-    """一次 `cat-file --batch` 取回全部 blob（逐文件起子进程要 1800 次，太慢）。"""
+    """一次 `cat-file --batch` 取回全部 blob（逐文件起子进程要 1800 次，太慢）。
+
+    **输入必须是 `<rev>:<path>` 形态**：`--batch` 模式下 stdin 只当对象名解析，裸路径一律回
+    `<path> missing`（2026-10-09 实测），于是解析数恒为 0、扫描恒"干净"——而文件数是按请求清单
+    打印的，看上去像在扫 1802 个文件。用 `rev:path` 同时更正确：扫的是那个版本的内容，不是工作区。
+    """
     if rev is None:
         out = []
         for path in paths:
             p = ROOT / path
             out.append((path, p.read_bytes() if p.is_file() else b""))
         return out
-    inp = b"".join(pp.encode("utf-8", "surrogatepass") + b"\n" for pp in paths)
+    specs = [f"{rev}:{p}" for p in paths]
+    inp = b"".join(sp.encode("utf-8", "surrogatepass") + b"\n" for sp in specs)
     return parse_batch(paths, git("cat-file", "--batch", inp=inp))
 
 
@@ -122,16 +132,18 @@ def scan_blob(path: str, data: bytes) -> list[tuple[str, int, str]]:
     return hits
 
 
-def scan(rev: str | None) -> tuple[int, list[tuple[str, str, int, str]]]:
-    """返回（公开面文件数，命中清单）。二进制跳过。"""
+def scan(rev: str | None) -> tuple[int, int, list[tuple[str, str, int, str]]]:
+    """返回（请求的公开面文件数，真解析到的文件数，命中清单）。二进制跳过（算已解析）。"""
     files = list_public_files(rev)
+    blobs = read_blobs(rev, files)
     hits = []
-    for path, data in read_blobs(rev, files):
+    for path, data in blobs:
         if b"\x00" in data[:4096]:
             continue
         for name, line, frag in scan_blob(path, data):
             hits.append((name, path, line, frag))
-    return len(files), hits
+    return len(files), len(blobs), hits
+
 
 
 def main() -> int:
@@ -145,13 +157,18 @@ def main() -> int:
         data = (ROOT / args.files).read_bytes()
         found = [(name, args.files, line, frag) for name, line, frag in scan_blob(args.files, data)]
         rev = None
-        n_files = 1
+        n_files, n_parsed = 1, 1
     else:
         rev = None if args.worktree else (args.rev or "HEAD")
-        n_files, found = scan(rev)
+        n_files, n_parsed, found = scan(rev)
 
     scope = "工作区" if rev is None and not args.rev else (args.rev or "HEAD")
-    print(f"[check_public_leak] 扫描范围＝{scope}；公开面文件 {n_files} 个；命中 {len(found)} 处")
+    print(f"[check_public_leak] 扫描范围＝{scope}；公开面文件 {n_files} 个；已解析 {n_parsed} 个；命中 {len(found)} 处")
+    # 分母对账放在命中判定之前：解析数掉下去时"0 命中"是假的，绝不能当成通过（2026-10-09 那次就是这么绿的）
+    if n_parsed != n_files:
+        print(f"[check_public_leak] 结论：本次扫描**无效**——请求 {n_files} 个文件只解析到 {n_parsed} 个。"
+              f"按未通过处理（别推），先查 `cat-file --batch` 的输入形态与排除清单。")
+        return 2
     for name, path, line, frag in found:
         print(f"  [{name}] {path}:{line}  →  {frag}")
     if found:
