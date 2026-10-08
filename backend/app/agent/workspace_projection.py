@@ -325,11 +325,17 @@ async def project_into_workspace(state: dict) -> dict | None:
             except Exception as e:
                 _logger.debug("Projection world_state failed char=%s: %s", character_id, e)
 
+    # identity 的取键口径（10-08 核实后改）：**只读装配阶段真写进 state 的那些键**——
+    # `context/assembly.py` 会写 `user_name`／`character_name`（:130-134）与 `character_info["self_statement"]`（:102），
+    # 而旧写法找的 `persona_summary`／`personality`／`bio` 在 agent state 里根本没有人写 ⇒ 人设那一格永远空。
+    # 刻意不为此多查一次库：self_statement 已经是「我是谁」的现成摘要。
+    cinfo = state.get("character_info") if isinstance(state.get("character_info"), dict) else {}
     identity = {
         "character_name": state.get("character_name"),
         "user_name": state.get("user_name"),
-        "persona_summary": state.get("persona_summary") or state.get("personality"),
-        "bio": state.get("bio"),
+        "persona_summary": (state.get("persona_summary") or state.get("personality")
+                            or cinfo.get("self_statement")),
+        "bio": state.get("bio") or cinfo.get("bio"),
     }
     report = project_workspace(
         ws,

@@ -315,3 +315,46 @@ def test_workspace本体依旧不伸手拿数据():
     assert imported <= {"__future__", "dataclasses", "typing"}, sorted(imported)
     for banned in ("async_session_factory", "AGENT_FLAGS", "get_current_user_state", "world_state_snapshot"):
         assert banned not in src
+
+
+# ══════════ 10-08 补：identity 的取键必须等于装配阶段真写进 state 的那些 ══════════
+# 来历：`context/assembly.py` 写 `user_name`／`character_name`（:130-134）与
+# `character_info={"self_statement":…}`（:102）；而投影旧写法找的 `persona_summary`／`personality`／`bio`
+# 全仓没有任何一处往 agent state 写 ⇒ 人设那一格永远空。
+# 反证实测（10-08，把取键改回旧写法跑一遍）：**三条里只有第一条红**（`persona_summary` 拿不到），
+# 另两条是回归锁（旧写法下也过，防以后有人把 identity 又改回单键／让坏形状炸主链路）——别把这三条都当成"改前必红"。
+def _live_shape_state(ws):
+    """照 assembly 真写出来的形状造一份 state（不查库、不调模型）。"""
+    return {
+        "workspace": ws,
+        "character_id": 13, "user_id": 3, "session_id": 11,
+        "character_name": "萨姆",
+        "user_name": "小美",
+        "character_info": {"self_statement": "我叫萨姆，话少，不腻歪。"},
+        "ai_response": "嗯。",
+    }
+
+
+def test_identity_吃到装配阶段真有的三个键():
+    ws = create_workspace(character_id=13, user_id=3, session_id=11)
+    asyncio.run(wp.project_into_workspace(_live_shape_state(ws)))
+    assert ws.identity.get("character_name") == "萨姆"
+    assert ws.identity.get("user_name") == "小美"
+    assert ws.identity.get("persona_summary") == "我叫萨姆，话少，不腻歪。", "人设要从 character_info.self_statement 兜底"
+
+
+def test_identity_填上后覆盖率不再报它为零():
+    ws = create_workspace(character_id=13, user_id=3, session_id=11)
+    rep = asyncio.run(wp.project_into_workspace(_live_shape_state(ws)))
+    assert "identity" in rep["filled"], rep["filled"]
+    assert "identity" not in [z["field"] for z in rep["zero_coverage"]]
+
+
+def test_character_info_形状不对也只是少填一格不抛():
+    ws = create_workspace(character_id=13, user_id=3, session_id=11)
+    st = _live_shape_state(ws)
+    st["character_info"] = "坏值"                       # 装配阶段理论上不会给，但投影不许因此炸
+    rep = asyncio.run(wp.project_into_workspace(st))
+    assert ws.identity.get("character_name") == "萨姆"   # 其余照填
+    assert "persona_summary" not in ws.identity
+    assert rep["shadow_flag"] is False                   # 闸仍关着：没顺便去查库
