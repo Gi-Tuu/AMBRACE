@@ -214,9 +214,16 @@ def test_双写后两侧过期时刻同一瞬间(status_db):
     assert len(mems) == 1 and len(facts) == 1
     assert mems[0].valid_to is not None
     assert mems[0].valid_to == facts[0].expires_at
-    # 事实行的写入基准（asserted_at 由库侧 CURRENT_TIMESTAMP 记，秒级）＋窗口 == 过期时刻
-    assert abs((mems[0].valid_to - facts[0].asserted_at) - timedelta(hours=STATUS_FRESH_HOURS)) \
-        < timedelta(seconds=1)
+    # 基准＝本轮写入时刻、窗口＝12h。容差必须给到分钟级：valid_to 用 Python 侧 now_naive_utc，
+    # asserted_at 由库侧 CURRENT_TIMESTAMP 在插行那一刻整秒截断 ⇒ 两者之差＝时钟粒度＋前面 flush/
+    # commit/插行的延迟，不是正确性属性（10-08 全量 -n 8 实测 skew 2.705s，原 `< 1 秒` 等于把
+    # 「机器不忙」写进判据，负载一高就红）。真缺陷是窗口用错／基准取错，那是小时～年量级。
+    _base_gap = mems[0].valid_to - facts[0].asserted_at
+    assert abs(_base_gap - timedelta(hours=STATUS_FRESH_HOURS)) < timedelta(minutes=1)
+    # 反向钉：放宽不等于没牙——把窗口错当成 24h（同常量倍取）时这条必须算不出来
+    assert abs(_base_gap - timedelta(hours=STATUS_FRESH_HOURS * 2)) > timedelta(minutes=1)
+    # 两侧同源已经由上面「valid_to == expires_at」逐微秒钉死；这里再核基准不是历史脏值
+    assert mems[0].valid_to > _now()
 
 
 def test_新鲜窗内两侧都判有效(status_db):
