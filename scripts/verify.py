@@ -1,9 +1,12 @@
 """一键验证脚本：ruff → 公开仓卫生扫描 → py_compile → pytest → flutter analyze/test → 接口冒烟。
 
 用法：
-  backend\\.venv\\Scripts\\python.exe scripts\\verify.py [--smoke]
+  backend\\.venv\\Scripts\\python.exe scripts\\verify.py [--smoke] [--pruned]
 
 --smoke：额外跑接口冒烟（登录 + 角色 + 朋友圈 + 归档，test/test123 账号）。
+--pruned：额外在**裁剪树**（＝CI 实际检出的那份文件集合）上跑一遍后端测试。
+  必要性有两次前科：第 117 棒守卫读 `docs/`、第 124 棒守卫读被隐私清单挡掉的题库——
+  两次都是本地全量六千多例全绿、推上去四条档同时红。
 """
 import subprocess
 import sys
@@ -40,6 +43,10 @@ def main() -> None:
     step("pytest 后端测试", [PY, "-m", "pytest", "tests", "-q", "--basetemp=.pytest_tmp"], ROOT / "backend")
     step("flutter analyze", [FLUTTER, "analyze"], ROOT / "flutter_app")
     step("flutter test", [FLUTTER, "test"], ROOT / "flutter_app")
+
+    if "--pruned" in sys.argv:
+        step("裁剪树复跑（CI 那份文件集合，读不到 docs 的债在这里先红）",
+             [PY, "scripts/check_pruned_tree.py"], ROOT)
 
     if "--smoke" in sys.argv:
         step("接口冒烟（登录/角色/朋友圈/归档）", [PY, "scripts/smoke_test.py"], ROOT)
