@@ -73,6 +73,16 @@ def stop_beat_on_error(code: str) -> bool:
     return (code or "") in STOP_BEAT
 
 
+def site_block_until(now: float, code: str, backoff_sec: int) -> float:
+    """站点级故障 ⇒ 返回「在此之前一次都别再探」的时刻；其它故障 ⇒ 0（那类由 per-char 退避管）。
+
+    为什么单独立一条：`stop_beat_on_error` 的含义只是"本轮别再试别的角色"，**失败那个角色的 `next_at` 没被推走** ⇒
+    内核每 30 秒调一次 tick，论坛挂着时就会每 30 秒撞一次并刷一行日志（10-08 实测 404 行／天、间隔中位数 32 秒）。
+    单次故障已有 `RETRY_POSTPONE_SEC`（10 分钟）兜着，这条补的是"整站不通"那一面。
+    """
+    return float(now) + max(60, int(backoff_sec)) if stop_beat_on_error(code) else 0.0
+
+
 def binding_broken(code: str) -> bool:
     return (code or "") in BROKEN_BINDING
 

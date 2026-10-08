@@ -45,6 +45,7 @@ STATE_LIMIT = 10              # 每次向论坛要多少条现状
 DND_POSTPONE_SEC = 600        # 免打扰时段：10 分钟后再判一次，不空转也不越窗说话
 BROKEN_POSTPONE_SEC = 6 * 3600    # key 失效（多半是 hard 注销过）：绑着也没用，6 小时后再试
 RETRY_POSTPONE_SEC = 600          # 其它单次故障：10 分钟后再试，避免每 30 秒撞一次
+SITE_BACKOFF_SEC = 900            # 整站不通：15 分钟内一次都不探（论坛挂着时每 30 秒撞一次＝纯噪音＋占心跳预算）
 
 _lock = asyncio.Lock()
 _reconciled = False
@@ -99,6 +100,10 @@ async def _beat(cfg: dict) -> None:
             store.save(doc)
             return
 
+    # 整站故障退避期内：一次 HTTP 都不发、也不再刷「站点级故障」那一行日志
+    if time.time() < float(doc.get("site_block_until") or 0):
+        return
+
     interval = 60 * beat.clamp_minutes(cfg.get("garden_forum_tmin", 15))
     # chars_per_beat 夹到 ≥1：配成 0 会被下面当成"不限量"，那就成了"面板上填 0＝每拍把所有角色跑一遍"
     per_beat = max(1, beat.read_limit(cfg, "chars_per_beat", 3))
@@ -119,6 +124,8 @@ async def _beat(cfg: dict) -> None:
             continue
         stop = await _one_character(base, doc, cid, cfg, now, interval)
         served += 1
+        if not stop:
+            doc["site_block_until"] = 0.0     # 有角色被正常服务＝站点活着 ⇒ 解除退避
         if stop or (per_beat and served >= per_beat):
             break
     doc["last_beat"] = int(now)
@@ -331,7 +338,8 @@ async def _ask_llm(cid: str, rec: dict, kind: str, target: dict, cfg: dict) -> s
 def _fail_note(doc: dict, cid: str, rec: dict, e: GardenError, now: float) -> bool:
     """按故障类型决定「停整轮」还是「推迟这个角色」，日志里只出现 code，不出现凭据。"""
     if beat.stop_beat_on_error(e.code):
-        sdk.log("garden_forum 站点级故障（%s），本轮结束：后面的角色下一拍再看", e.code)
+        doc["site_block_until"] = beat.site_block_until(now, e.code, SITE_BACKOFF_SEC)
+        sdk.log("garden_forum 站点级故障（%s），本轮结束；%d 分钟内不再探测论坛", e.code, SITE_BACKOFF_SEC // 60)
         return True
     gap = BROKEN_POSTPONE_SEC if beat.binding_broken(e.code) else RETRY_POSTPONE_SEC
     store.set_next_at(doc, cid, now + gap)

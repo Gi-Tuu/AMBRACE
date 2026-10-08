@@ -66,6 +66,16 @@ def t_due_and_clamp():
     check("clamp_minutes：None 回默认", beat.clamp_minutes(None) == 15)
     check("clamp_minutes：字符串数字照收", beat.clamp_minutes("20") == 20)
 
+    # 站点级故障退避（10-08 补：论坛挂着时每 32 秒撞一次、一天刷 404 行）
+    check("site_block_until：unreachable ⇒ 退避 900 秒",
+          beat.site_block_until(1000.0, "unreachable", 900) == 1900.0,
+          beat.site_block_until(1000.0, "unreachable", 900))
+    check("site_block_until：非站点级故障 ⇒ 0（交 per-char 退避）",
+          beat.site_block_until(1000.0, "timeout", 900) == 0.0)
+    check("site_block_until：退避值荒谬地小 ⇒ 兜底 60 秒（不许退化成每 30 秒撞一次）",
+          beat.site_block_until(1000.0, "unreachable", 5) == 1060.0,
+          beat.site_block_until(1000.0, "unreachable", 5))
+
 
 def t_picks():
     posts = [{"id": 7}, {"id": 8}, {"id": 9}, {"title": "没有 id"}]
@@ -246,6 +256,20 @@ def _saves_are_conditional(src: str) -> bool:
     return True
 
 
+def _site_backoff_wired(src: str) -> list[str]:
+    """main.py 里「整站退避」的三个锚点：写块、读块、解除。少一个就是只改了一半。"""
+    bad = []
+    if 'doc["site_block_until"] = beat.site_block_until(' not in src:
+        bad.append("故障侧没写退避时刻")
+    if 'doc.get("site_block_until")' not in src:
+        bad.append("tick 开头没读退避（还会每 30 秒撞）")
+    if 'doc["site_block_until"] = 0.0' not in src:
+        bad.append("站点恢复后没解除（会永久不再探测）")
+    if "SITE_BACKOFF_SEC = 900" not in src:
+        bad.append("退避常量没定义或被改小")
+    return bad
+
+
 def _digest_write_unconditional(src: str) -> bool:
     """存论坛摘要那一句必须**无条件**：上游把 `digest_zh` 收回（变空）时，本地要能跟着变空。
 
@@ -399,6 +423,7 @@ def t_main_wiring():
     check("接线：重入锁（上一轮没跑完不叠第二遍）", "_lock.locked()" in src)
     check("接线：写盘必须挂在条件里（不每 30 秒重写一次装着凭据的文件）", _saves_are_conditional(src))
     check("接线：论坛摘要变空要能清掉本地那份（不是「非空才存」）", _digest_write_unconditional(src))
+    check("接线：整站故障要退避（写块/读块/解除/常量四处缺一即红）", _site_backoff_wired(src) == [], _site_backoff_wired(src))
     check("接线：chars_per_beat 填 0 不能变成「每拍跑完所有角色」",
           'max(1, beat.read_limit(cfg, "chars_per_beat", 3))' in src)
     check("接线：整轮有截止（慢站点不能拖住调度循环）", "BEAT_DEADLINE_SEC" in src)
