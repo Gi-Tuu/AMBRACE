@@ -78,6 +78,24 @@ jobs:
             echo "heavy=false" >> "$GITHUB_OUTPUT"
           fi
 
+  # 公开仓卫生扫描（C2，2026-10-08）：origin/main 是公开的「脱敏快照」，同类泄漏两个月内靠手工拦下两次
+  # （10-06 测试夹具里的真机路径、10-08 模块 docstring 里报告文件的绝对路径）⇒ 从「人记得扫」改成自动拦。
+  # 只读 git 对象、不装依赖、本机实测 0.4 秒扫完 1789 个公开面文件，所以任何事件都跑（不挂 changes 守卫）。
+  public-hygiene:
+    name: Public hygiene (author-path & credential scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Scan published surface for author-machine paths and secrets
+        env:
+          PYTHONIOENCODING: "utf-8"
+        run: python scripts/check_public_leak.py
+
   backend:
     needs: changes
     if: needs.changes.outputs.heavy == 'true'

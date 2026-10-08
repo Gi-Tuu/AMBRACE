@@ -36,6 +36,7 @@ import ast
 import asyncio
 import dataclasses
 import inspect
+import os
 import re
 import subprocess
 import sys
@@ -45,6 +46,9 @@ from pathlib import Path
 import pytest
 
 from app.scheduling import arbiter, gates, outreach_gates
+
+# C1：子进程必须显式钉死 UTF-8——只写 text=True 时父进程按本机 ANSI 码页解码（10-04 CI 就这样红过）
+_UTF8_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 from app.scheduling.executors import GateBundle, guards
 
 # 本批搬家的 18 个名字（与任务书逐字一致，一个不多一个不少）
@@ -288,7 +292,7 @@ def test_outreach_gates对arbiter的导入必须排在全部函数定义之后()
         [sys.executable, "-c",
          "import app.scheduling.outreach_gates as g, app.scheduling.arbiter as a; "
          "assert g._pacing_gate is a._pacing_gate and g._OUTREACH_SEND_TRACE is a._OUTREACH_SEND_TRACE"],
-        cwd=str(_ARBITER_PY.parents[2]), capture_output=True, text=True,
+        cwd=str(_ARBITER_PY.parents[2]), capture_output=True, text=True, encoding="utf-8", errors="replace", env=_UTF8_ENV,
     )
     assert probe.returncode == 0, f"先导入 outreach_gates 这条路炸了：{probe.stderr[-400:]}"
 
@@ -599,7 +603,7 @@ def test_批3_先导入executors再导入arbiter不炸():
         [sys.executable, "-c",
          "import app.scheduling.executors as e, app.scheduling.arbiter as a; "
          "assert e.pre_gates is a.pre_gates and e.GateBundle is a.GateBundle"],
-        cwd=str(_ARBITER_PY.parents[2]), capture_output=True, text=True,
+        cwd=str(_ARBITER_PY.parents[2]), capture_output=True, text=True, encoding="utf-8", errors="replace", env=_UTF8_ENV,
     )
     assert probe.returncode == 0, f"先导入 executors 这条路炸了：{probe.stderr[-400:]}"
 
@@ -823,7 +827,7 @@ def test_批3b_先导入executors再导入arbiter不炸():
          "import app.scheduling.executors.timer as t; "
          "assert e.run_timer is t.run_timer and a._build_timer_hint is t._build_timer_hint "
          "and a._agent_flag_on is e.agent_flag_on"],
-        cwd=str(_ARBITER_PY.parents[2]), capture_output=True, text=True,
+        cwd=str(_ARBITER_PY.parents[2]), capture_output=True, text=True, encoding="utf-8", errors="replace", env=_UTF8_ENV,
     )
     assert probe.returncode == 0, f"先导入 executors 这条路炸了：{probe.stderr[-400:]}"
 
@@ -1517,7 +1521,7 @@ def test_批5一_六个外部调用方仍能import这些名字():
     for first in ("chat_service", "chat_store"):
         probe = subprocess.run(
             [sys.executable, "-c", snippet % (first, list(CS_STORE_NAMES))],
-            cwd=str(_BACKEND_PY), capture_output=True, text=True,
+            cwd=str(_BACKEND_PY), capture_output=True, text=True, encoding="utf-8", errors="replace", env=_UTF8_ENV,
         )
         assert probe.returncode == 0, f"先导入 {first} 这条路炸了：{probe.stderr[-500:]}"
 
@@ -1786,7 +1790,7 @@ def test_批5二_结算组名字仍能按chat_service路径import且两种顺序
     for first in ("chat_service", "chat_settlement"):
         probe = subprocess.run(
             [sys.executable, "-c", snippet % (first, list(CS_SETTLE_NAMES))],
-            cwd=str(_BACKEND_PY), capture_output=True, text=True,
+            cwd=str(_BACKEND_PY), capture_output=True, text=True, encoding="utf-8", errors="replace", env=_UTF8_ENV,
         )
         assert probe.returncode == 0, f"先导入 {first} 这条路炸了：{probe.stderr[-500:]}"
 
@@ -2178,7 +2182,7 @@ def test_批5三_工具组名字仍能按chat_service路径import且两种顺序
     for first in ("chat_service", "chat_tooling"):
         probe = subprocess.run(
             [sys.executable, "-c", snippet % (first, list(CS_TOOLING_NAMES))],
-            cwd=str(_BACKEND_PY), capture_output=True, text=True,
+            cwd=str(_BACKEND_PY), capture_output=True, text=True, encoding="utf-8", errors="replace", env=_UTF8_ENV,
         )
         assert probe.returncode == 0, f"先导入 {first} 这条路炸了：{probe.stderr[-500:]}"
 

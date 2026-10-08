@@ -18,6 +18,9 @@ from datetime import datetime, timedelta
 
 import pytest
 
+# C1：子进程必须显式钉死 UTF-8——只写 text=True 时父进程按本机 ANSI 码页解码（10-04 CI 就这样红过）
+_UTF8_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
 from app.domain.thought import dynamics as dyn
 from app.domain.thought import extract as ex
 from app.domain.thought import filters as fl
@@ -476,7 +479,7 @@ def test_domain_package_is_io_free():
         "import sys, json; import app.domain.thought as t; "
         "print(json.dumps(sorted(m for m in sys.modules if m.startswith('app.'))))"
     )
-    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8", errors="replace", env=_UTF8_ENV,
                        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     assert r.returncode == 0, r.stderr[-800:]
     loaded = json.loads(r.stdout.strip().splitlines()[-1])

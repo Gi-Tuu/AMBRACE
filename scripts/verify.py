@@ -1,4 +1,4 @@
-"""一键验证脚本：ruff → py_compile → pytest → flutter analyze/test → 接口冒烟。
+"""一键验证脚本：ruff → 公开仓卫生扫描 → py_compile → pytest → flutter analyze/test → 接口冒烟。
 
 用法：
   backend\\.venv\\Scripts\\python.exe scripts\\verify.py [--smoke]
@@ -35,6 +35,7 @@ def main() -> None:
     指向仓库内 basetemp 后每轮自行清空重建，也是 AGENTS.md 规定的本机统一口径。
     """
     step("ruff 静态检查（backend/app）", [PY, "-m", "ruff", "check", "backend/app"], ROOT)
+    step("公开仓卫生扫描（C2：作者机器路径＋凭据形态）", [PY, "scripts/check_public_leak.py"], ROOT)
     step("py_compile 全量语法校验", [PY, "-m", "compileall", "-q", "-f", "backend/app"], ROOT)
     step("pytest 后端测试", [PY, "-m", "pytest", "tests", "-q", "--basetemp=.pytest_tmp"], ROOT / "backend")
     step("flutter analyze", [FLUTTER, "analyze"], ROOT / "flutter_app")
