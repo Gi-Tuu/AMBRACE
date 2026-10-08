@@ -16,6 +16,8 @@ import json
 import os
 import subprocess
 import sys
+
+import pytest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -371,6 +373,7 @@ def test_真实脱敏草稿集_lint_零违规且来源标注正确():
     """A44 的题面来自生产库真语料（只借语言形状），所以两条必须常驻钉住：
     ① lint 零违规；② 每题 `provenance == "real_desensitized"`，且 cid 不与正式集撞号。
     不合并进正式集是刻意的：正式集有「每类 ≥6」与认证棘轮，本集只有 12 题、5 个类。"""
+    _require_real_or_skip()
     cases = _read(REAL)
     assert cases, "真实草稿集读不出来（文件被挪动或编码变了）"
     assert len(cases) >= 10, "真实草稿集应 ≥10 题，实际 %d" % len(cases)
@@ -385,6 +388,7 @@ def test_真实草稿集的认证状态不许装():
     """认证回填后的状态必须「说到做到」：
     J3（检索层可认证）⇒ `solvability.certified is True`；J4（弃权类）⇒ `certified=False` 且带豁免原因，
     绝不允许留 None 冒充「已认证」——正式集 aa01–aa06 就是这个口径（M0 检索层看不了产出，等 M1）。"""
+    _require_real_or_skip()
     cases = _read(REAL)
     for c in cases:
         s = c.get("solvability") or {}
@@ -398,10 +402,29 @@ def test_真实草稿集的认证状态不许装():
                 "%s 认证四条不齐（空库召不出／只灌干扰项不得出 gold）" % c["cid"])
 
 
+def _require_real_or_skip(path=None):
+    """**隐私排除掉的文件，在 CI 的裁剪树里根本不存在**——第 124 棒就是栽在这：
+    A44 题库按用户隐私硬原则被 `EXCL_EXACT` 挡在公开仓外（原则是对的），于是读它的三条守卫
+    在 CI 上 `FileNotFoundError`、四条后端档全红（与第 117 棒「守卫去读 docs/」同一类，
+    这次是我自己前一批刚把文件排除掉）。⇒ 凡读「不进公开仓的文件」的测试，一律缺席即 skip。"""
+    p = path or REAL
+    if not p.exists():
+        pytest.skip("裁剪树里没有真实语料草稿集（它按隐私硬原则不进公开仓）⇒ 只在本地跑")
+
+
+def test_草稿集缺席时这三条守卫是跳过而不是红(tmp_path):
+    """给 skip 路径配自证（第 117 棒的教训：skip 本身没牙＝下次照样红）。"""
+    missing = tmp_path / "no_such_real_draft.jsonl"
+    with pytest.raises(pytest.skip.Exception):
+        _require_real_or_skip(missing)
+    _require_real_or_skip(REAL) if REAL.exists() else None      # 本地在位时不得抛
+
+
 def test_真实草稿集里不许出现生产库真实专名():
     """结构级脱敏守卫：真名／昵称／宠物名不可能写死进测试（那是又一次泄漏），
     所以改钉**形态**——手机号／身份证／连续 6 位以上数字／门牌（…号…室）一律不许出现。
     逐条比对生产专名池的动作放在生成脚本侧（`output/a44_author.py`，只读生产库），那里才有名字。"""
+    _require_real_or_skip()
     text = REAL.read_text(encoding="utf-8")
     for pat, why in ((r"\d{6,}", "连续 6 位以上数字（手机号／证件号形态）"),
                      (r"\d+号\d+室", "门牌号形态"),
