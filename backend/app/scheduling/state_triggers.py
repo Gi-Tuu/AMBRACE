@@ -56,6 +56,15 @@ SOOTHE_DISMISSIVE = (
 _CN = {k: cn for k, cn, _ in DIMENSIONS}
 _DIM_KEYS = [k for k, _, _ in DIMENSIONS]
 
+
+def _lines_of(st) -> str:
+    """八维状态的中文口径串。**唯一构造点**：当场与延迟睡醒后必须同一个算法。
+
+    A39 批 2b 通道 3（10-09）：延迟触发原本把当场烘好的快照串一路带到几分钟后说出口，
+    正文与刚复查到的状态不一致；这个函数存在的理由就是让「重取现状」不可能写成两份格式。
+    """
+    return "；".join(f"{_CN[d]}={getattr(st, d)}" for d in _DIM_KEYS)
+
 # 趋势增强：复合规则在维度同步移动（如怒气升+心情降）时放宽的阈值（(维度, 比较, 阈值)）
 TREND_BOOST = {
     "anger_mood_low": [("anger", "gte", 60), ("mood", "lte", 40)],      # 怒气↑且心情↓ 时 75/30 → 60/40
@@ -692,6 +701,14 @@ async def _delayed_rule_behavior(
             if ps is not None and not getattr(ps, "state_trigger_enabled", True):
                 await _drop_trigger_log(character_id, rule.key)
                 return
+            # A39 批 2b 通道 3：规则仍命中 ⇒ 该说，但要说**刚复查到的那份**现状，不是几分钟前的快照。
+            # 不额外查库（用的就是上面已经取回的 st），所以这条不归影子闸门控——
+            # 闸②在这个通道的正确形态是「用新鲜现状重写」，不是「取消发送」。
+            fresh_lines = _lines_of(st)
+            if fresh_lines != state_lines:
+                _logger.info("Delayed trigger state refreshed char=%d rule=%s 旧=%s 新=%s",
+                             character_id, rule.key, state_lines[:60], fresh_lines[:60])
+                state_lines = fresh_lines
         ok = await _execute_rule_behavior(character_id, user_id, rule, state_lines, delay_minutes=delay_minutes)
         if not ok:
             await _drop_trigger_log(character_id, rule.key)
@@ -800,7 +817,7 @@ async def check_state_triggers(
                 _logger.info("State trigger char=%d skipped: hourly limit", character_id)
                 return []
 
-            state_lines = "；".join(f"{_CN[d]}={getattr(st, d)}" for d in _DIM_KEYS)
+            state_lines = _lines_of(st)
 
         # 触发即锁定防抖（延迟场景必须提前锁定，避免双通道重复触发）
         await _record_trigger(character_id, rule.key, state_lines, anger=int(getattr(st, "anger", 50) or 50))
