@@ -272,7 +272,7 @@ async def build_light_social_context(state: dict) -> dict:
     except Exception as e:
         _logger.warning("Light context char load failed char=%s: %s", character_id, e)
     if char is not None:
-        state["character_info"] = {"self_statement": char.self_statement or ""}
+        state["character_info"] = {"self_statement": char.self_statement or "", "bio": char.bio or ""}
         # 思考第一人称化（2026-09-10）：角色名写入 state（light 路径无对方昵称，归一时兜底为「你」）
         state["character_name"] = char.name or ""
         _rows = []

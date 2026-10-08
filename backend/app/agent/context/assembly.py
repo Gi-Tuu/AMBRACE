@@ -98,8 +98,8 @@ async def assemble_context(state: dict, *, stream: bool | None = None, _section_
         state["ai_response"] = "\u89d2\u8272\u4e0d\u5b58\u5728"
         return state
 
-    # P1 修复（2026-08-16）：填充角色自述供 response_parser 自述删除分支使用（此前恒空导致功能永不生效）
-    state["character_info"] = {"self_statement": char.self_statement or ""}
+    # P1 修复（2026-08-16）：填自述供 response_parser 自述删除分支用；bio 随 A28-②a identity 带上（10-08，零额外查询）
+    state["character_info"] = {"self_statement": char.self_statement or "", "bio": char.bio or ""}
 
     # 热度裁剪（2026-08-16，方案 B）：低频角色缩小日摘要/织库注入（Feature Flag agent_context_trim 默认开）
     # P3-1：注册表路径已用 _resolve_trim 算好同一 trim（含 _is_hot_character 近 7 天消息数查询）并注入，

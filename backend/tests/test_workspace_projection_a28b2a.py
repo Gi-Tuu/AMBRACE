@@ -330,17 +330,18 @@ def _live_shape_state(ws):
         "character_id": 13, "user_id": 3, "session_id": 11,
         "character_name": "萨姆",
         "user_name": "小美",
-        "character_info": {"self_statement": "我叫萨姆，话少，不腻歪。"},
+        "character_info": {"self_statement": "我叫萨姆，话少，不腻歪。", "bio": "你哥，商场上冷了点。"},
         "ai_response": "嗯。",
     }
 
 
-def test_identity_吃到装配阶段真有的三个键():
+def test_identity_吃到装配阶段真有的四个键():
     ws = create_workspace(character_id=13, user_id=3, session_id=11)
     asyncio.run(wp.project_into_workspace(_live_shape_state(ws)))
     assert ws.identity.get("character_name") == "萨姆"
     assert ws.identity.get("user_name") == "小美"
     assert ws.identity.get("persona_summary") == "我叫萨姆，话少，不腻歪。", "人设要从 character_info.self_statement 兜底"
+    assert ws.identity.get("bio") == "你哥，商场上冷了点。", "bio 要从 character_info.bio 拿（装配阶段真写的那个）"
 
 
 def test_identity_填上后覆盖率不再报它为零():
@@ -357,4 +358,32 @@ def test_character_info_形状不对也只是少填一格不抛():
     rep = asyncio.run(wp.project_into_workspace(st))
     assert ws.identity.get("character_name") == "萨姆"   # 其余照填
     assert "persona_summary" not in ws.identity
+    assert "bio" not in ws.identity
     assert rep["shadow_flag"] is False                   # 闸仍关着：没顺便去查库
+
+
+# ══════════ 10-08 补：identity 不许留「全仓没人写」的死键，且写入点必须真的存在 ══════════
+# 来历：v1 离线读数（11.1%）压根没往 identity 里喂东西，于是「identity 覆盖 0」既像缺陷又像事实；
+# 核对代码后确认：`persona_summary`／`personality`／`bio` 三个顶层键全仓零写入点，
+# 而 `character_info` 两处装配点只写了 self_statement ⇒ bio 当时是「补了取键、没补来源」。
+DEAD_TOP_KEYS = ('state.get("persona_summary")', 'state.get("personality")', 'state.get("bio")')
+CHAR_INFO_WRITERS = ("agent/context/assembly.py", "agent/runtime.py")
+
+
+def test_identity取值链里没有死键():
+    src = inspect.getsource(wp)
+    for dead in DEAD_TOP_KEYS:
+        assert dead not in src, "死键又回来了：" + dead
+
+
+def test_character_info_两处装配点真的都带上self_statement和bio():
+    app_root = Path(__file__).resolve().parents[1] / "app"
+    hits = []
+    for rel in CHAR_INFO_WRITERS:
+        text = (app_root / rel).read_text(encoding="utf-8-sig")
+        for line in text.splitlines():
+            if 'state["character_info"]' in line and "=" in line and "==" not in line:
+                assert "self_statement" in line, rel + " 的 character_info 丢了 self_statement"
+                assert "bio" in line, rel + " 的 character_info 丢了 bio（identity 那格又要永远空）"
+                hits.append(rel)
+    assert len(hits) >= 2, "写入点没扫到 2 处（实测 %s）⇒ 装配形状被改了，这条守卫要看住" % hits

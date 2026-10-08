@@ -99,6 +99,7 @@ def _char(cid, name):
         relationship_summary="恋人", current_status="正在聊天",
         gender="male", relation_type="", is_active=True, user_id=4,
         cognitive_loop_enabled=False, memory_v2_enabled=False, self_statement="我的自述",
+        bio="阿明的高中同学，话多。",
     )
 
 

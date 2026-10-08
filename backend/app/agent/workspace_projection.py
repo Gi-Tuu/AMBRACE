@@ -326,16 +326,16 @@ async def project_into_workspace(state: dict) -> dict | None:
                 _logger.debug("Projection world_state failed char=%s: %s", character_id, e)
 
     # identity 的取键口径（10-08 核实后改）：**只读装配阶段真写进 state 的那些键**——
-    # `context/assembly.py` 会写 `user_name`／`character_name`（:130-134）与 `character_info["self_statement"]`（:102），
-    # 而旧写法找的 `persona_summary`／`personality`／`bio` 在 agent state 里根本没有人写 ⇒ 人设那一格永远空。
-    # 刻意不为此多查一次库：self_statement 已经是「我是谁」的现成摘要。
+    # `context/assembly.py` 写 `user_name`／`character_name`，`character_info` 带上 `self_statement`／`bio`
+    # 两处装配点（registry 路径与 runtime 的 light 路径）形状一致 ⇒ 两条通道都能吃到。
+    # 旧写法找的顶层键 `persona_summary`／`personality`／`bio` 全仓没有任何一处往 agent state 写，
+    # 已从取值链删掉（留着＝「看着有兜底、实际永远空」）。刻意不为此多查一次库。
     cinfo = state.get("character_info") if isinstance(state.get("character_info"), dict) else {}
     identity = {
         "character_name": state.get("character_name"),
         "user_name": state.get("user_name"),
-        "persona_summary": (state.get("persona_summary") or state.get("personality")
-                            or cinfo.get("self_statement")),
-        "bio": state.get("bio") or cinfo.get("bio"),
+        "persona_summary": cinfo.get("self_statement"),
+        "bio": cinfo.get("bio"),
     }
     report = project_workspace(
         ws,
