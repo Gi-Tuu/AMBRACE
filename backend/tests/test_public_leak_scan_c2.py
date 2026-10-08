@@ -170,3 +170,41 @@ def test_现在的_HEAD_公开面是干净的():
     n, hits = scan.scan("HEAD")
     assert n > 1000, f"公开面文件数异常（{n}）——排除清单或 ls-tree 口径坏了"
     assert hits == [], f"HEAD 里有会外泄的内容：{hits[:5]}"
+
+
+# ───────────────────────── C4：裁剪树预跑工具的清单必须只有一份 ─────────────────────────
+
+PRUNED = REPO / "scripts" / "check_pruned_tree.py"
+
+
+def _load_pruned():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_pruned_under_test", str(PRUNED))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_裁剪树工具不许有第二份排除清单():
+    """这工具裁的是「CI 那份树」，口径一旦与扫描器分叉，它会**跑出另一个世界的绿**。
+
+    判据看源码形态：不许自己再列一份 EXCL_PREFIX／不许把 docs/AGENTS 这些名字写死成清单，
+    且必须真的委托 check_public_leak.is_public。
+    """
+    src = PRUNED.read_text(encoding="utf-8")
+    assert "is_public(" in src, "本例锚点失效：工具里连 is_public 都没有，改法要重看"
+    assert "check_public_leak" in src, "没引用唯一真源 check_public_leak"
+    assert "EXCL_PREFIX = " not in src, "工具里又列了一份前缀清单 ⇒ 两处会各改各的，口径分叉"
+    for name in ("AGENTS.md", "HANDOFF.md"):
+        assert '"%s"' % name not in src, "排除名单被抄进了工具源码（%s）" % name
+
+
+def test_裁剪树工具与扫描器对同一路径判据一致():
+    pr = _load_pruned()
+    samples = ["backend/app/main.py", "docs/changelog.md", "docs/plans.md", ".agents/skills/x/SKILL.md",
+               "AGENTS.md", "HANDOFF.md", "flutter.bat", "README.md",
+               "scripts/diagnostics/memory_action_cases_real_draft.jsonl", "flutter_app/.metadata"]
+    assert any(scan.is_public(s) is False for s in samples), "样本里一个该排除的都没有 ⇒ 本例没牙"
+    for s in samples:
+        assert pr.is_public(s) == scan.is_public(s), "路径 %s 两边判据不一致" % s

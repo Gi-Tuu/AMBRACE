@@ -23,8 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent   # 不写死盘符：本文件自身进公开面，
 # 把作者机的绝对路径写进注释或 docstring，就是 C2 扫描器要拦的那一次泄漏（第 116 棒前科）
 PY = str(ROOT / "backend" / ".venv" / "Scripts" / "python.exe")
-EXCL_PREFIX = (".agents", "docs", "AGENTS.md", "HANDOFF.md",
-               "flutter.bat", "start_server.bat", "restart_server.bat")
+# 排除清单**只有一份**：scripts/check_public_leak.py（守卫 test_裁剪树工具不许有第二份排除清单 钉住）
 
 
 def git(*a):
@@ -34,24 +33,19 @@ def git(*a):
     return p.stdout
 
 
-def is_public(rel: str, excl_exact) -> bool:
-    """与快照构建同口径：docs/ 只留 changelog.md，其余按前缀与精确清单排除。"""
-    if rel in excl_exact:
-        return False
-    top = rel.split("/")[0]
-    if top in EXCL_PREFIX and rel != "docs/changelog.md":
-        return False
-    if rel in EXCL_PREFIX:
-        return False
-    return True
+def _cpl():
+    """延迟取扫描器模块（同目录、非包），保证公开面口径来自唯一真源。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import check_public_leak as cpl
+    return cpl
+
+
+def is_public(rel: str) -> bool:
+    return _cpl().is_public(rel)
 
 
 def build_tree(rev: str) -> Path:
     """从 git 对象导出 rev 的工作树，按公开面口径裁剪，返回临时目录。"""
-    sys.path.insert(0, str(ROOT / "scripts"))
-    import check_public_leak as cpl  # 排除清单的唯一真源
-    excl_exact = tuple(str(x) for x in getattr(cpl, "EXCL_EXACT", ()))
-
     t = Path(tempfile.mkdtemp(prefix="ambrace_pruned_"))
     tar = tarfile.open(fileobj=io.BytesIO(git("archive", "--format=tar", rev)))
     try:
@@ -65,7 +59,7 @@ def build_tree(rev: str) -> Path:
         for fn in filenames:
             full = Path(dirpath) / fn
             rel = str(full.relative_to(t)).replace("\\", "/")
-            if not is_public(rel, excl_exact):
+            if not is_public(rel):
                 full.unlink()
                 removed += 1
         if not os.listdir(dirpath) and dirpath != str(t):
