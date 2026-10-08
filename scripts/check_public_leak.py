@@ -15,7 +15,7 @@
 排除口径与 [docs/release-public-snapshot.md] 第 2 步**刻意保持一致**（改了那边要同步这里，守卫
 `backend/tests/test_public_leak_scan_c2.py` 会比对两边清单）：`.agents/`、`docs/`（只留
 `docs/changelog.md`，它是 App 更新公告数据源）、`AGENTS.md`、`HANDOFF.md`、`flutter.bat`、
-`start_server.bat`、`restart_server.bat`、`flutter_app/.metadata`。
+`start_server.bat`、`restart_server.bat`、`flutter_app/.metadata`，以及**从真实用户数据改写而来的派生内容**（如 `scripts/diagnostics/memory_action_cases_real_draft.jsonl`；换掉名字仍属用户数据，按 AGENTS.md 的隐私硬原则一并排除）。
 
 实现约束（都是踩过的坑）：
 - **只用字节**：`git ls-tree`/`git show` 拿 bytes，正则也在 bytes 上做 ⇒ 不受本机码页影响
@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # 与脱敏快照构建脚本同口径的排除清单
 EXCL_TOP = (".agents", "docs", "AGENTS.md", "HANDOFF.md", "flutter.bat", "start_server.bat", "restart_server.bat")
-EXCL_EXACT = ("flutter_app/.metadata",)
+EXCL_EXACT = ("flutter_app/.metadata", "scripts/diagnostics/memory_action_cases_real_draft.jsonl")   # 真实语料派生题集（脱敏后仍属用户数据）
 KEEP_IN_EXCLUDED = ("docs/changelog.md",)
 
 # 分片拼接：本文件里不出现任何完整模式字面量

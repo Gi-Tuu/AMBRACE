@@ -355,10 +355,58 @@ def test_lint_逐项都能咬():
         ("gold 下标越界", {**base, "expect": {**base["expect"], "gold_seed_idx": [99]}}),
         ("非弃权类没有 gold", {**base, "expect": {**base["expect"], "gold_seed_idx": [], "abstain": False}}),
         ("缺干扰项无法认证", {**base, "distractors": []}),
+        ("干扰项写成裸字符串", {**base, "distractors": ["用户周末去爬山"]}),
+        ("种子缺 content 字段", {**base, "seeds": [{"memory_type": "fact"}]}),
     ]
     for name, case in checks:
         out = ev.lint_dataset([case])
         assert out, "lint 漏判：%s" % name
+
+
+# ─────────── ①b 真实脱敏草稿集（A44）：形状与来源都要钉住 ───────────
+REAL = REPO / "scripts" / "diagnostics" / "memory_action_cases_real_draft.jsonl"
+
+
+def test_真实脱敏草稿集_lint_零违规且来源标注正确():
+    """A44 的题面来自生产库真语料（只借语言形状），所以两条必须常驻钉住：
+    ① lint 零违规；② 每题 `provenance == "real_desensitized"`，且 cid 不与正式集撞号。
+    不合并进正式集是刻意的：正式集有「每类 ≥6」与认证棘轮，本集只有 12 题、5 个类。"""
+    cases = _read(REAL)
+    assert cases, "真实草稿集读不出来（文件被挪动或编码变了）"
+    assert len(cases) >= 10, "真实草稿集应 ≥10 题，实际 %d" % len(cases)
+    assert ev.lint_dataset(cases) == [], "真实草稿集 lint 违规：%s" % ev.lint_dataset(cases)[:6]
+    assert all(c.get("provenance") == "real_desensitized" for c in cases), \
+        "每题都必须标 real_desensitized，别和 synthetic 混读"
+    both = {c["cid"] for c in cases} & {c["cid"] for c in OFFICIAL}
+    assert not both, "cid 与正式集撞号：%s" % sorted(both)
+
+
+def test_真实草稿集的认证状态不许装():
+    """认证回填后的状态必须「说到做到」：
+    J3（检索层可认证）⇒ `solvability.certified is True`；J4（弃权类）⇒ `certified=False` 且带豁免原因，
+    绝不允许留 None 冒充「已认证」——正式集 aa01–aa06 就是这个口径（M0 检索层看不了产出，等 M1）。"""
+    cases = _read(REAL)
+    for c in cases:
+        s = c.get("solvability") or {}
+        if c["judge"] == "J4":
+            assert s.get("certified") is False, "%s J4 却标了已认证" % c["cid"]
+            assert str(s.get("exempt_reason") or "").startswith("J4 弃权类"), (
+                "%s J4 没写豁免原因 ⇒ 空着会被读成「忘了跑」" % c["cid"])
+        else:
+            assert s.get("certified") is True, "%s 检索侧可认证却没通过/没回填" % c["cid"]
+            assert s.get("no_mem_fail") is True and s.get("distractor_no_gold") is True, (
+                "%s 认证四条不齐（空库召不出／只灌干扰项不得出 gold）" % c["cid"])
+
+
+def test_真实草稿集里不许出现生产库真实专名():
+    """结构级脱敏守卫：真名／昵称／宠物名不可能写死进测试（那是又一次泄漏），
+    所以改钉**形态**——手机号／身份证／连续 6 位以上数字／门牌（…号…室）一律不许出现。
+    逐条比对生产专名池的动作放在生成脚本侧（`output/a44_author.py`，只读生产库），那里才有名字。"""
+    text = REAL.read_text(encoding="utf-8")
+    for pat, why in ((r"\d{6,}", "连续 6 位以上数字（手机号／证件号形态）"),
+                     (r"\d+号\d+室", "门牌号形态"),
+                     (r"1[3-9]\d{9}", "手机号形态")):
+        assert not __import__("re").search(pat, text), "真实草稿集出现%s" % why
 
 
 def test_重复_cid_会被抓到():

@@ -235,10 +235,121 @@ def report_b14(conn: sqlite3.Connection, since: str) -> dict:
     return s
 
 
+# ═══════════════════════ B15：M2a 两档释放的留痕判效（10-08 加） ═══════════════════════
+RELEASE_ROUTE = "relational_drive_release"
+RELEASE_MIN_SAMPLES = 20          # 与台账 B15 行一致的阈值：攒到这么多条才判有效性
+
+
+def summarize_b15(rows: list[dict], *, min_samples: int = RELEASE_MIN_SAMPLES) -> dict:
+    """**纯函数**：吃已解析好的释放留痕行，出判效读数与「现在能不能判」。
+
+    不碰库、不调模型、不读时钟（⑨：评测算术必须是纯函数，否则守卫只能测渲染）。
+    判据都可反例化：开口释放必须让水位**下降**，全额释放必须**清零且带被回应那条消息的 id**；
+    任何一行不满足就被点名，不是"比例够高就算过"。
+    """
+    out = {"n": len(rows), "n_open": 0, "n_full": 0, "bad_rows": 0,
+           "open_ok": 0, "open_bad": [], "full_ok": 0, "full_bad": [], "full_missing_attr": 0,
+           "open_drop_sum": 0.0, "by_drive": {}, "enough": False, "verdict": "样本不足"}
+    for i, r in enumerate(rows):
+        kind = str(r.get("kind") or "")
+        try:
+            lb = float(r.get("level_before"))
+            la = float(r.get("level_after"))
+        except (TypeError, ValueError):
+            out["bad_rows"] += 1
+            continue
+        drive = str(r.get("drive") or "?")
+        out["by_drive"][drive] = out["by_drive"].get(drive, 0) + 1
+        if kind == "open":
+            out["n_open"] += 1
+            if la < lb:
+                out["open_ok"] += 1
+                out["open_drop_sum"] += (lb - la)
+            else:
+                out["open_bad"].append({"idx": i, "drive": drive, "before": lb, "after": la,
+                                        "ratio": r.get("ratio")})
+        elif kind == "full":
+            out["n_full"] += 1
+            if abs(la) < 1e-9 and r.get("attributed_msg_id"):
+                out["full_ok"] += 1
+            else:
+                out["full_bad"].append({"idx": i, "drive": drive, "after": la,
+                                        "attributed_msg_id": r.get("attributed_msg_id")})
+                if not r.get("attributed_msg_id"):
+                    out["full_missing_attr"] += 1
+        else:
+            out["bad_rows"] += 1
+    out["enough"] = out["n"] >= min_samples
+    if not out["enough"]:
+        out["verdict"] = "样本不足（%d／%d）⇒ 不判两档有效性，等留痕或到点收口" % (out["n"], min_samples)
+    elif out["open_bad"] or out["full_bad"]:
+        out["verdict"] = "有缺陷：开口未降 %d 条、全额未清零或缺归属 %d 条 ⇒ 先修释放本身，别调阈值" % (
+            len(out["open_bad"]), len(out["full_bad"]))
+    elif out["n_open"] == 0 or out["n_full"] == 0:
+        out["verdict"] = "只攒到一档（open=%d／full=%d）⇒ 另一档仍未观察，不给两档整体结论" % (
+            out["n_open"], out["n_full"])
+    else:
+        out["verdict"] = "方向成立：开口全部降、全额全部清零且可归属 ⇒ 两档机制按设计工作"
+    return out
+
+
+def collect_b15(conn: sqlite3.Connection, since: str) -> dict:
+    """只读取 `agent_task_logs` 里 route=relational_drive_release 的行并解出 payload。"""
+    rows = conn.execute(
+        "select created_at, trigger, character_id, user_id, steps_json from agent_task_logs "
+        "where route=? and created_at>=? order by created_at", (RELEASE_ROUTE, since)).fetchall()
+    parsed, unparsable = [], 0
+    for created_at, trigger, cid, uid, steps in rows:
+        try:
+            data = json.loads(steps or "[]")
+            item = data[0] if isinstance(data, list) and data else None
+        except (ValueError, TypeError):
+            item = None
+        if not isinstance(item, dict):
+            unparsable += 1
+            continue
+        item = dict(item)
+        item.update({"_created_at": created_at, "_trigger": trigger, "_cid": cid, "_uid": uid})
+        parsed.append(item)
+    s = summarize_b15(parsed)
+    s["unparsable"] = unparsable
+    s["triggers"] = {}
+    for p in parsed:
+        s["triggers"][p["_trigger"]] = s["triggers"].get(p["_trigger"], 0) + 1
+    s["first_at"] = parsed[0]["_created_at"] if parsed else None
+    s["last_at"] = parsed[-1]["_created_at"] if parsed else None
+    return s
+
+
+def report_b15(conn: sqlite3.Connection, since: str) -> dict:
+    print(f"\n=== B15 M2a 两档释放留痕（{since} UTC 起）===")
+    s = collect_b15(conn, since)
+    if not s["n"]:
+        print("  0 条留痕 ⇒ 窗口内没发生过释放（没有带 intent 的主动消息，或没有用户回复）；"
+              "c13 用户发言为 0 时本就该是 0，不是通道坏了")
+        print("  判读：等留痕（阈值 %d 条）或到 10-12 收口；到点仍 0 条才回头查接线" % RELEASE_MIN_SAMPLES)
+        return s
+    print(f"  留痕 {s['n']} 条 ｜ 开口 {s['n_open']} ／ 全额 {s['n_full']} ｜ 解析失败 {s['unparsable']} 条")
+    print(f"  时间跨度：{s['first_at']} → {s['last_at']} ｜ 触发点：{s['triggers']}")
+    print(f"  按 drive：{' ｜ '.join('%s×%s' % kv for kv in sorted(s['by_drive'].items()))}")
+    if s["n_open"]:
+        avg = s["open_drop_sum"] / s["open_ok"] if s["open_ok"] else 0.0
+        print(f"  开口释放：方向成立 {s['open_ok']}/{s['n_open']}，平均降幅 {avg:.3f} 水位；"
+              f"反例 {len(s['open_bad'])} 条{('：' + str(s['open_bad'][:3])) if s['open_bad'] else ''}")
+    if s["n_full"]:
+        print(f"  全额释放：清零且可归属 {s['full_ok']}/{s['n_full']}；反例 {len(s['full_bad'])} 条"
+              f"（缺 attributed_msg_id {s['full_missing_attr']}）"
+              f"{('：' + str(s['full_bad'][:3])) if s['full_bad'] else ''}")
+    print(f"  结论：{s['verdict']}")
+    print("  ⚠ 边界：留痕只证明『释放那一瞬间的水位变化』，不证明释放之后用户可见行为变了——"
+          "后者要另做对照（把 ratio/档位与随后主动消息实际发出情况对上）")
+    return s
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=7, help="统计窗口（天，按 trace created_at，naive UTC）")
-    ap.add_argument("--only", choices=("b13", "b14"), help="只跑其中一项")
+    ap.add_argument("--only", choices=("b13", "b14", "b15"), help="只跑其中一项")
     args = ap.parse_args()
 
     db = _resolve_db()
@@ -254,6 +365,8 @@ def main() -> None:
         report_b13(conn, since)
     if args.only in (None, "b14"):
         report_b14(conn, since)
+    if args.only in (None, "b15"):
+        report_b15(conn, since)
     conn.close()
 
 

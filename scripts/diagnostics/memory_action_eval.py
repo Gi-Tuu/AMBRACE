@@ -152,6 +152,15 @@ def lint_dataset(cases) -> list[str]:
             out.append("%s: gold_seed_idx 越界 %s（seeds 共 %d 条）" % (cid, gi, len(c.get("seeds") or [])))
         if not (c.get("distractors") or []):
             out.append("%s: 缺干扰项 ⇒ run_distractor 无法认证（§2.3）" % cid)
+        # 形状检查（10-08 补，来历＝真实语料草稿集）：干扰项写成**裸字符串**时旧 lint 会放行，
+        # 一路跑到 certify 的 `fillers_for` 才炸 `'str' object has no attribute 'get'`——
+        # 尺子的规则应当在使用点之前就把人拦住，而不是让跑半小时向量的作业半途崩。
+        for key in ("seeds", "distractors"):
+            for j, item in enumerate(c.get(key) or []):
+                if not isinstance(item, dict) or not str(item.get("content") or "").strip():
+                    out.append("%s: %s[%d] 必须是含非空 content 的字典（裸字符串缺字段都会让 certify 半途崩）"
+                               % (cid, key, j))
+                    break
         # J1/J2 的标注完整性：判分函数已实现（吃的是数据集既有字段名），但「声明了 J1/J2
         # 却没出完标注」的题一旦被拿去跑，就会静默走 J3 的检索尺子（＝用错尺子还看着有分）。
         if c.get("judge") == "J1":

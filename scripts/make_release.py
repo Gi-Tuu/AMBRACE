@@ -32,6 +32,9 @@ EXCLUDE_PREFIX = (".agents/", "flutter.bat",  # 内部工具/技能目录与本�
                   # 开发文档与内部规划（含真实用户名/角色名等隐私）不进开源包
                   "docs/")
 
+# 精确路径排除：从真实用户数据改写而来的派生内容（即使已脱敏也不进开源包，AGENTS.md 隐私硬原则）
+EXCLUDE_EXACT = ("scripts/diagnostics/memory_action_cases_real_draft.jsonl",)
+
 # 副本内脱敏替换（相对路径 → [(old, new), ...]）
 # 仓库代码/脚本已不含作者本机路径，按需在此追加规则。
 DESENS = {}
@@ -59,8 +62,8 @@ def copy_with_desens(src_root, rel):
 
 def main():
     files = tracked_files()
-    picked = [f for f in files if not f.startswith(EXCLUDE_PREFIX)]
-    skipped = [f for f in files if f.startswith(EXCLUDE_PREFIX)]
+    picked = [f for f in files if not f.startswith(EXCLUDE_PREFIX) and f not in EXCLUDE_EXACT]
+    skipped = [f for f in files if f.startswith(EXCLUDE_PREFIX) or f in EXCLUDE_EXACT]
 
     if os.path.exists(OUT_DIR):
         shutil.rmtree(OUT_DIR)

@@ -139,6 +139,33 @@ def test_batch_解析容忍缺失对象():
 
 
 # ── 六、回归锁：现在真的没有泄漏 ──
+# ── 五、用户隐私硬原则：真实语料派生内容不得出现在公开面（2026-10-08 用户拍板） ──
+REAL_DERIVED = ["scripts/diagnostics/memory_action_cases_real_draft.jsonl"]
+
+
+@pytest.mark.parametrize("path", REAL_DERIVED)
+def test_真实语料派生题集不在公开面(path):
+    """源头是真实用户对话/记忆的内容，**换了名字也还是用户数据** ⇒ 一律不进公开仓。
+
+    有牙证明：把这条从排除清单里摘掉，`is_public()` 立刻返回 True（下面这行就是那个反证）。"""
+    assert scan.is_public(path) is False, "%s 会进公开仓 ⇒ 违反用户隐私硬原则" % path
+    saved = scan.EXCL_EXACT
+    try:
+        scan.EXCL_EXACT = tuple(x for x in saved if x != path)
+        assert scan.is_public(path) is True, "这条断言本身没牙：摘掉排除它却仍不在公开面"
+    finally:
+        scan.EXCL_EXACT = saved
+
+
+def test_排除清单文档与扫描器都写着这条隐私排除():
+    doc = _read_doc_exclusions(DOC)
+    if doc is None:                       # 裁剪树没有 docs/ ⇒ 跳过（第 117 棒口径）
+        pytest.skip("脱敏快照无 docs/release-public-snapshot.md")
+    for path in REAL_DERIVED:
+        assert path in doc[1], "脱敏规程文档的 EXCL_EXACT 里没有这条隐私排除"
+        assert path in scan.EXCL_EXACT, "扫描器清单没同步（守卫只比对两边是否一致，这里保证两边都真的有）"
+
+
 def test_现在的_HEAD_公开面是干净的():
     n, hits = scan.scan("HEAD")
     assert n > 1000, f"公开面文件数异常（{n}）——排除清单或 ls-tree 口径坏了"
