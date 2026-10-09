@@ -27,12 +27,16 @@ _logger = get_logger("scheduler.freshness")
 
 __all__ = [
     "FreshFacts", "decide", "shadow_mark", "verdict_for",
-    "read_unfinished_topic_facts", "pre_send_check",
-    "CANCEL", "KEEP", "REGENERATE",
+    "read_unfinished_topic_facts", "read_life_regression_facts", "refresh_life_items",
+    "read_timer_facts", "check_timer_event", "timer_channel",
+    "items_for_prompt", "pre_send_check", "CANCEL", "KEEP", "REGENERATE",
 ]
 
 # 话题行仍处于这两个状态之一才算「还该提起」（与 sources/unfinished_topic 的内核复核同口径）
 _ACTIVE_TOPIC_STATUS = "进行中"
+
+# 通道 2 重取结果的缓存键（放在 candidate 里，避免实闸开时第二次查库）
+_LIFE_CACHE_KEY = "_a39_fresh_life_items"
 
 
 def verdict_for(channel: str, facts: FreshFacts, **extra) -> tuple[str, str, str]:
@@ -93,10 +97,222 @@ async def read_unfinished_topic_facts(candidate: dict) -> FreshFacts:
                       underlying_gone=underlying_gone)
 
 
+async def refresh_life_items(items: list[dict]) -> list[dict]:
+    """通道 2 的结构修法：按 id 回读**同几条**生活记忆，用当前正文，行没了就剔掉。
+
+    collect 与 run 之间隔着 arbiter 排队与免打扰窗口，这几条记忆可能被归档／删除／改写；
+    原实现直接把 collect 时的字符串带到 prompt 里，于是"我最近去爬了山"可能说的是一条已经不存在的记忆。
+
+    读失败＝原样返回（本函数的失败口径与 `pre_send_check` 一致：绝不把"我读不到"变成"这条没了"）。
+    """
+    ids = [int(it["id"]) for it in items if str(it.get("id") or "").strip().isdigit()]
+    if not ids or len(ids) != len(items):
+        return items                    # 有缺 id 的项＝不是本通道形态，整体不动（不猜）
+    try:
+        from sqlalchemy import select
+
+        from app.db.database import async_session_factory
+        from app.models.memory import Memory
+
+        async with async_session_factory() as db:
+            rows = (
+                await db.execute(
+                    select(Memory.id, Memory.content, Memory.delete_at).where(Memory.id.in_(ids))
+                )
+            ).all()
+        alive = {int(r[0]): str(r[1] or "") for r in rows if r[2] is None}
+        out = []
+        for it in items:
+            fresh = alive.get(int(it["id"]))
+            if fresh is None:
+                continue
+            keep = dict(it)
+            keep["content"] = fresh[:200]
+            out.append(keep)
+        return out
+    except Exception as e:
+        _logger.warning("freshness life refresh failed ids=%s: %s", ids, e)
+        return items
+
+
+async def read_life_regression_facts(candidate: dict) -> FreshFacts:
+    """通道 2 的生成前重取：`underlying_gone`＝列出的生活记忆**一条都不在了**。
+
+    只剩"全没了"这一档是安全的 cancel：部分消失由 `items_for_prompt` 就地修好，不该升级为整条不发。
+    重取的**内容**顺手缓存进 `candidate`（私有键），这样实闸开的时候不必再查第二次库。
+    """
+    items = candidate.get("life_items") or []
+    if not items:
+        return FreshFacts(underlying_gone=False)
+    alive = await refresh_life_items(items)
+    if len(alive) != len(items):
+        candidate[_LIFE_CACHE_KEY] = alive
+    return FreshFacts(underlying_gone=(len(alive) == 0))
+
+
+def items_for_prompt(channel: str, candidate: dict, items: list[dict]) -> list[dict]:
+    """影子档＝**一个字都不改**；实闸开＝用刚回读到的新鲜正文。
+
+    分档的理由：影子窗口的职责是"量现状有多旧"，它一旦顺手改了 prompt，
+    下次读数量的就不再是"旧现状"而是"我已经修过的现状"，这个窗口自会把自己的存在抹掉。
+    """
+    if channel != "life_regression":
+        return items
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+
+        if not AGENT_FLAGS.get("proactive_freshness_gate", False):
+            return items
+    except Exception:
+        return items
+    fresh = candidate.get(_LIFE_CACHE_KEY)
+    return fresh if isinstance(fresh, list) and fresh else items
+
+
+def _flags() -> tuple[bool, bool]:
+    from app.flags.agent_flags import AGENT_FLAGS
+
+    return (bool(AGENT_FLAGS.get("proactive_freshness_shadow", False)),
+            bool(AGENT_FLAGS.get("proactive_freshness_gate", False)))
+
+
+async def read_moment_facts(moment_id: int, snapshot_comments: list) -> tuple[FreshFacts, list]:
+    """通道 4（朋友圈评论）的重读：动态还在不在、评论列表比快照新几条。
+
+    旧口径是**进函数时读一次**评论列表，然后在角色循环里一路用到底——前一个角色刚发的评论
+    不在列表里，于是后面的角色会重复同一句、或去回复一条已经有人回过的评论；而这段时间里
+    动态也可能已被作者删掉。
+    返回 ``(事实, 重读到的评论行)``；**读失败返回 ``(None, snapshot_comments)``**——
+    None 表示"这条闸今天没参与"，比给出一个 `[fresh=keep]` 诚实：没读到不等于没变。
+    """
+    try:
+        from sqlalchemy import select
+
+        from app.db.database import async_session_factory
+        from app.models.life import AIMoment, MomentComment
+
+        async with async_session_factory() as db:
+            alive = (await db.execute(
+                select(AIMoment.id).where(AIMoment.id == moment_id)
+            )).first()
+            rows = list((await db.execute(
+                select(MomentComment).where(MomentComment.moment_id == moment_id)
+                .order_by(MomentComment.created_at.asc())
+            )).scalars().all())
+        return (FreshFacts(underlying_gone=alive is None), rows)
+    except Exception as e:
+        _logger.warning("freshness moment read failed moment=%s: %s", moment_id, e)
+        return None, snapshot_comments
+
+
+async def moment_pre_send(moment_id: int, snapshot_comments: list) -> tuple[str | None, list]:
+    """通道 4 入口：**返回 ``(cancel 标记, 该用的评论列表)``**。
+
+    ``(None, …)``＝动态已不在，调用方必须停下这批评论；
+    影子档只读数**一个字都不改**（列表原样退回），只有实闸开才把列表换成重读到的那份；
+    读不到＝``("", 原列表)``，不冒充量过。
+    """
+    try:
+        shadow, gate = _flags()
+        if not (shadow or gate):
+            return "", snapshot_comments
+        facts, fresh = await read_moment_facts(moment_id, snapshot_comments)
+        if facts is None:
+            return "", snapshot_comments
+        verdict, reason, mark = verdict_for("moment_comment", facts)
+        _logger.info("A39 闸② channel=moment_comment%s %s 快照=%d 现状=%d",
+                     "" if gate else "（影子）", mark, len(snapshot_comments), len(fresh))
+        if gate and verdict == CANCEL:
+            return None, snapshot_comments
+        if gate:
+            return mark, fresh
+        return mark, snapshot_comments
+    except Exception as e:
+        _logger.warning("A39 闸② moment failed moment=%s: %s", moment_id, e)
+        return "", snapshot_comments
+
+
 # 通道 → 读数函数（没登记的通道＝本闸不看它，pre_send_check 直接放行）
 _READERS: dict[str, object] = {
     "unfinished_topic": read_unfinished_topic_facts,
+    "life_regression": read_life_regression_facts,
 }
+
+
+# 通道 6：只有这两类事件带"到达／吃药"信号表，其余 event_type 不猜（`_signal_seen` 内部
+# 对未知类别会退化成用药表，拿来判"回家"这类事件就是把不相干的字面表拖进判据）。
+_SIGNAL_KINDS = frozenset({"arrival", "medication"})
+
+
+async def read_timer_facts(event, session_factory=None) -> FreshFacts:
+    """通道 6（timer）的兑现前重取：用户在这条承诺**之后**是否已经把结果说了。
+
+    旧口径只有 `event_type == "ready"` 才做这件事，`back` 这类到点照问，于是"我已经到家了"
+    之后还会被问一遍到家没。这里把同一条判据扩到非 ready：
+      - `result_ready` ← `promise_parser.ready_result_seen`（既有探测器，不复制字面表）
+      - `signal_seen` ← `prospective_intent._signal_seen`，只在 arrival／medication 两类上调用
+    会话工厂由调用点显式传入（`timer.py` 的命门规矩：本模块不许 import `async_session_factory`，
+    否则 tests/ 那 13 处打桩会静默绕过桩去查真库）。
+    """
+    from app.scheduling.prospective_intent import _signal_seen
+    from app.scheduling.promise_parser import ready_result_seen
+
+    session_id = getattr(event, "session_id", None)
+    src_id = getattr(event, "source_message_id", None)
+    kind = str(getattr(event, "event_type", "") or "")
+    hint = str(getattr(event, "content_hint", "") or "").strip()
+    if not session_id or not src_id:
+        return FreshFacts()                 # 反查锚缺失＝未知，按"没变"处理
+    try:
+        from sqlalchemy import select
+
+        from app.models.chat import ChatMessage
+
+        factory = session_factory
+        if factory is None:
+            from app.db.database import async_session_factory as factory  # type: ignore[misc]
+        async with factory() as db:
+            rows = (
+                await db.execute(
+                    select(ChatMessage.content)
+                    .where(
+                        ChatMessage.session_id == session_id,
+                        ChatMessage.sender_type == "user",
+                        ChatMessage.id > src_id,
+                    )
+                    .order_by(ChatMessage.id.desc())
+                    .limit(5)
+                )
+            ).all()
+    except Exception as e:
+        _logger.warning("freshness timer read failed event=%s: %s", getattr(event, "id", "?"), e)
+        return FreshFacts()
+    texts = [r[0] for r in reversed(rows) if r[0]]
+    if not texts:
+        return FreshFacts()
+    return FreshFacts(result_ready=ready_result_seen(texts, hint),
+                      signal_seen=bool(kind in _SIGNAL_KINDS and _signal_seen(kind, *texts)))
+
+
+def timer_channel(event) -> str:
+    return "timer_ready" if str(getattr(event, "event_type", "") or "") == "ready" else "timer_general"
+
+
+async def check_timer_event(event, session_factory=None) -> str | None:
+    """timer 专用入口：语义与 `pre_send_check` 一致（""＝没参与，None＝cancel）。"""
+    try:
+        shadow, gate = _flags()
+        if not (shadow or gate):
+            return ""
+        channel = timer_channel(event)
+        verdict, reason, mark = verdict_for(channel, await read_timer_facts(event, session_factory))
+        _logger.info("A39 闸② channel=%s%s %s", channel, "" if gate else "（影子）", mark)
+        if gate and verdict == CANCEL:
+            return None
+        return mark
+    except Exception as e:
+        _logger.warning("A39 闸② timer failed event=%s: %s", getattr(event, "id", "?"), e)
+        return ""
 
 
 async def pre_send_check(channel: str, candidate: dict) -> str | None:

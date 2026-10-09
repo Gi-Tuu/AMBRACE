@@ -280,6 +280,14 @@ async def run_life_regression(candidate: dict) -> bool:
                 identity = await build_role_prompt_block(char, user_id) + "\n"
             except Exception:
                 identity = f"你是{char_name}，性格{char.personality or '友善'}。\n"
+        # A39 批 2b 通道 2（10-09）：闸②＝生成前重取现状。两把闸都关时这块一次查询都不发、
+        # `lines` 与改动前逐字节一致；判到 cancel 且实闸开 ⇒ 不调模型、不发；
+        # 只有实闸开才把正文换成刚回读到的内容（影子档一个字都不改，否则窗口会把自己的存在抹掉）。
+        from app.scheduling import freshness as _frs
+        if await _frs.pre_send_check("life_regression", candidate) is None:
+            _logger.info("Life regression cancelled by 闸② char=%d（依据的记忆已不在）", char_id)
+            return False
+        items = _frs.items_for_prompt("life_regression", candidate, items)
         lines = "\n".join(f"- {it['content']}" for it in items)
         guard = "\n".join(_state_guard_segments(await _current_anchor(char_id, user_id)))
         hint = (

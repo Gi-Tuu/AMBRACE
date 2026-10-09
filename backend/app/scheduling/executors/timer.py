@@ -102,6 +102,18 @@ async def run_timer(item: dict, g: GateBundle) -> bool:
         except Exception as e:
             _logger.warning("Ready result skip check failed (fail-open): %s", e)
 
+    # A39 批 2b 通道 6（10-09）：闸②＝兑现前重取现状，把「用户是否已经把结果说了」这条判据
+    # 从 ready 扩到非 ready（back 这类此前到点照问，于是"我已经到家了"之后还被问一遍）。
+    # 判据一律复用既有探测器（ready_result_seen／_signal_seen），本模块不写新正则；
+    # 影子＝只读数留痕不拦；实闸开且判到 cancel ⇒ 与上面 settled 分支同处理（mark_fired，承诺不丢）。
+    if event_kind != "ready":
+        from app.scheduling import freshness as _frs
+        if await _frs.check_timer_event(event, g.session_factory) is None:
+            from app.scheduling.promise_service import mark_fired
+            await mark_fired(event.id)
+            _logger.info("Timer %d settled by 闸② kind=%s（用户已把结果说过）", event.id, event_kind)
+            return True
+
     # L3：timer 主题熔断——近窗同主题主动消息已达上限 → 兑现（mark_fired）但不补发，承诺不丢
     if _topic_guard_on:
         try:

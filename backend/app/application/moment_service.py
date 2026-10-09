@@ -396,14 +396,15 @@ async def generate_comments_for_moment(moment_id: int):
     allowed_ai_ids = set(ai_chars.keys())
     if moment.character_id:
         allowed_ai_ids.add(moment.character_id)
-    existing_top_comments = [
-        c for c in existing_comments if c.parent_id is None
-        and (c.sender_type != "ai" or c.sender_id in allowed_ai_ids)
-    ]
-    existing_user_comments = [
-        c for c in existing_comments
-        if c.sender_type == "user" and c.user_id == owner_user_id
-    ]  # 含用户回复 AI 的子评论（回复评论功能）
+    def _split_comments(comments):
+        """顶级评论与用户评论两个视图。通道 4 重读列表后必须按同一口径一起重算，不能只换列表
+        （用户评论那一路含"用户回复 AI 的子评论"，口径就这一处）。
+        """
+        return ([c for c in comments if c.parent_id is None
+                 and (c.sender_type != "ai" or c.sender_id in allowed_ai_ids)],
+                [c for c in comments if c.sender_type == "user" and c.user_id == owner_user_id])
+
+    existing_top_comments, existing_user_comments = _split_comments(existing_comments)
 
     daily_limit = await _get_daily_comment_limit(owner_user_id)
     image_desc = (moment.image_desc or "").strip()[:200]
@@ -426,9 +427,22 @@ async def generate_comments_for_moment(moment_id: int):
     except Exception as e:
         _logger.warning("AI likes failed moment=%d: %s", moment_id, e)
 
+    # A39 批 2b 通道 4（10-09）：闸②＝生成前重取现状。`existing_comments` 原本是进函数时读一次的
+    # 快照，而循环里前一个角色刚发的评论不在里面 ⇒ 后面的角色会重复同一句、或去回复一条已经有人
+    # 回过的评论；这期间动态也可能被作者删掉。影子档只量「快照比现状旧几条」并把留痕打进日志，
+    # **列表原样不动**；只有实闸开才换成重读到的那份，动态已不在则停下这批（承诺不丢，但这条不发）。
+    from app.scheduling import freshness as _frs
+
     for char_id, char in ai_chars.items():
         try:
             daily_count = await _get_today_ai_comment_count_for_char(char_id)
+            _gate, _fresh = await _frs.moment_pre_send(moment_id, existing_comments)
+            if _gate is None:
+                _logger.info("Moments comments stopped by 闸② moment=%d（动态已不在）", moment_id)
+                break
+            if _fresh is not existing_comments:
+                existing_comments = _fresh
+                existing_top_comments, existing_user_comments = _split_comments(existing_comments)
             await _generate_top_and_reply_comments(
                 char_id, char, moment_id, existing_top_comments,
                 existing_comments, daily_limit, daily_count, image_desc,
