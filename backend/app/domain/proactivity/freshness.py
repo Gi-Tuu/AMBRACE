@@ -44,6 +44,7 @@ class FreshFacts:
     user_replied: bool = False         # 该会话里是否已有新的用户发言（覆盖旧快照）
     state_changed: bool = False        # 判定所需的现状数值是否真的变了（八维／情绪这类会自己漂的）
     underlying_gone: bool = False      # 依据的那条事实本身已失效（记忆归档／话题收尾／动态被删）
+    items_delta: int = 0               # A48：被取材列表的条数变化（现状-快照）——只把留痕说清楚，不参与发不发
     snapshot_age_seconds: float = 0.0  # collect→run 的跨度
     now: datetime | None = None
     due_start: datetime | None = None
@@ -108,6 +109,14 @@ def decide(channel: str, f: FreshFacts) -> tuple[str, str]:
         return CANCEL, "依据的事实已失效"
     if is_stale(f) and (f.user_replied or f.state_changed):
         return REGENERATE, "快照过期且现状已变"
+    if channel == "moment_comment" and f.items_delta:
+        # A48（10-09 批 35 现场：[fresh=keep|现状未变|快照=2|现状=3] 话与数互相否定）：条数变化
+        # 不参与「发不发」，档位仍是 keep；但原因必须如实。根因＝本通道白名单只吃
+        # underlying_gone／snapshot_age_seconds，条数差进不了判定，而 快照=／现状= 是 IO 层
+        # 当附加字段打进来的，两层各说各话。N 与留痕里的数同源（见 scheduling/freshness.py）。
+        if f.items_delta > 0:
+            return KEEP, f"评论列表新增 {f.items_delta} 条（不改发不发，只影响取材）"
+        return KEEP, f"评论列表减少 {-f.items_delta} 条（不改发不发，只影响取材）"
     return KEEP, "现状未变"
 
 # 通道 → 该通道允许读哪些事实（防"某个通道偷偷多读一张表"，守卫按这张表核范围）
@@ -122,7 +131,7 @@ CHANNEL_ALLOWED_FIELDS: dict[str, frozenset[str]] = {
     "state_trigger_delayed": frozenset({"user_replied", "state_changed", "story_advanced",
                                    "snapshot_age_seconds"}),
     "life_regression": frozenset({"user_replied", "underlying_gone", "snapshot_age_seconds"}),
-    "moment_comment": frozenset({"snapshot_age_seconds", "underlying_gone"}),
+    "moment_comment": frozenset({"snapshot_age_seconds", "underlying_gone", "items_delta"}),
 }
 
 

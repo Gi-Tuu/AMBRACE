@@ -230,3 +230,46 @@ class _MomentSess:
 
     async def __aexit__(self, *exc):
         return False
+
+# ───────────────────────── A48：留痕里的「话」与「数」必须同源 ─────────────────────────
+def test_a48_评论新增时留痕不自相矛盾(flags, monkeypatch):
+    # 批 35 现场 [fresh=keep|现状未变|快照=2|现状=3]：一句话与数字互相否定。
+    # 新口径＝档位仍是 keep（不碰发不发），原因改成「评论列表新增 N 条…」，
+    # 且这个 N 与方括号里的 快照=／现状= 是同一份 len。
+    mp = flags
+    _on(mp, shadow=True)
+    monkeypatch.setattr('app.db.database.async_session_factory',
+                        lambda *a, **k: _MomentSess([], ['评论A', '前一个角色刚发的评论']))
+    mark, lst = asyncio.run(frs.moment_pre_send(7777, SNAP))
+    assert mark.startswith('[fresh=keep|'), mark
+    assert '现状未变' not in mark, '话与数还在互相否定：' + mark
+    assert '新增 1 条' in mark and '快照=1' in mark and '现状=2' in mark, mark
+    assert '不改发不发' in mark, '原因串没写明它不参与判定：' + mark
+    assert lst is SNAP, '影子档把列表换了＝改了行为'
+
+
+def test_a48_评论减少与不变的措辞(flags, monkeypatch):
+    # 减少也要说清；真没变时才允许说「现状未变」。
+    mp = flags
+    _on(mp, shadow=True)
+    monkeypatch.setattr('app.db.database.async_session_factory',
+                        lambda *a, **k: _MomentSess([], ['评论A']))
+    mark, _ = asyncio.run(frs.moment_pre_send(7777, ['评论A', '已被作者删掉的评论']))
+    assert '减少 1 条' in mark and '快照=2' in mark and '现状=1' in mark, mark
+    monkeypatch.setattr('app.db.database.async_session_factory',
+                        lambda *a, **k: _MomentSess([], ['评论A']))
+    mark2, _ = asyncio.run(frs.moment_pre_send(7777, SNAP))
+    assert '现状未变' in mark2, mark2
+
+
+def test_a48_条数差只在朋友圈评论通道生效():
+    # 白名单守卫：别的通道塞进来 items_delta 也不许改判定/措辞（防跨通道串扰）。
+    # 反向钉：条数差不得把档位从 keep 抬成 cancel／regenerate——它只影响取材。
+    from app.domain.proactivity import freshness as dom
+    v_other, why_other = dom.decide('life_regression', dom.FreshFacts(items_delta=5))
+    assert v_other == dom.KEEP and why_other == '现状未变', (v_other, why_other)
+    v, why = dom.decide('moment_comment', dom.FreshFacts(items_delta=5))
+    assert v == dom.KEEP and '新增 5 条' in why, (v, why)
+    v2, _ = dom.decide('moment_comment', dom.FreshFacts(items_delta=-3))
+    assert v2 == dom.KEEP, '条数差把档位抬出了 keep＝违反了本单边界'
+

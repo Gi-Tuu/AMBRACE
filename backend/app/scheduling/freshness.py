@@ -199,7 +199,9 @@ async def read_moment_facts(moment_id: int, snapshot_comments: list) -> tuple[Fr
                 select(MomentComment).where(MomentComment.moment_id == moment_id)
                 .order_by(MomentComment.created_at.asc())
             )).scalars().all())
-        return (FreshFacts(underlying_gone=alive is None), rows)
+        # A48：条数差在这里算——两个列表都在手里，与调用方随后打出的 快照=／现状= 同源
+        return (FreshFacts(underlying_gone=alive is None,
+                           items_delta=len(rows) - len(snapshot_comments)), rows)
     except Exception as e:
         _logger.warning("freshness moment read failed moment=%s: %s", moment_id, e)
         return None, snapshot_comments
@@ -219,8 +221,11 @@ async def moment_pre_send(moment_id: int, snapshot_comments: list) -> tuple[str 
         facts, fresh = await read_moment_facts(moment_id, snapshot_comments)
         if facts is None:
             return "", snapshot_comments
+        # A48：留痕里的两个数与判定用的 items_delta 必须同源（都来自这两次 len）；
+        # 别在别处再数一遍列表长度，否则又会「话与数各说各话」。
+        snapshot_n, fresh_n = len(snapshot_comments), len(fresh)
         verdict, reason, mark = verdict_for("moment_comment", facts,
-                                            快照=len(snapshot_comments), 现状=len(fresh))
+                                            快照=snapshot_n, 现状=fresh_n)
         _logger.info("A39 闸② channel=%s%s %s", "moment_comment", "" if gate else "（影子）", mark)
         if gate and verdict == CANCEL:
             return None, snapshot_comments
