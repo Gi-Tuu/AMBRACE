@@ -68,6 +68,37 @@ def _demote_other_pins(existing, keep_id: int) -> int:
     return demoted
 
 
+def _bucket_of(sub_type) -> str:
+    # 与 DB 部分唯一索引 ux_memories_pinned_active 同口径的桶名（迁移 d1a2b3c4e5f6）：
+    # sub_type 为 NULL／空／summary 一律折成空串（普通摘要桶），其余按自身值分桶。
+    return "" if sub_type in (None, "", "summary") else sub_type
+
+
+async def _release_bucket_pins(db, character_id: int, memory_type: str, sub_type) -> int:
+    # 插入新置顶前，把同桶仍挂着的置顶一律放开（只看 is_pinned／is_archived，不看 status）。
+    # 2026-10-09 现场（用户报「印象重新生成失败」）：existing 查询带 status == active
+    # （current_facts_active_only 默认开），而 DB 的部分唯一索引只认 is_pinned=1 AND is_archived=0
+    # ⇒ 一条 status=stale 的旧置顶对代码不可见、对索引可见 ⇒ 看不见就走 INSERT ⇒ 撞唯一索引
+    # （sqlite3.IntegrityError: UNIQUE constraint failed: index ux_memories_pinned_active），
+    # 该桶的印象／画像重生成永久失败（生产实测 char 6 的 user_info 两桶、char 13 的 summary 桶都红）。
+    # 本函数按索引口径放开它们，让代码与约束不再打架；只改 is_pinned，不物理删行、不动内容。
+    want = _bucket_of(sub_type)
+    rows = (await db.execute(
+        select(Memory).where(
+            Memory.character_id == character_id,
+            Memory.memory_type == memory_type,
+            Memory.is_pinned == True,  # noqa: E712
+            Memory.is_archived == False,  # noqa: E712
+        )
+    )).scalars().all()
+    released = 0
+    for r in rows:
+        if r.is_pinned and _bucket_of(r.sub_type) == want:
+            r.is_pinned = False
+            released += 1
+    return released
+
+
 def _rel_time(dt, now=None) -> str:
     """相对时间中文描述（今天/昨天/N天前/周前/月前/很久以前）"""
     if dt is None:
@@ -169,6 +200,12 @@ async def summarize_memories(character_id: int, memory_type: str, force: bool = 
                 _logger.info("Pinned summary for char=%d type=%s: demoted %d stale pins",
                              character_id, memory_type, demoted)
             return {"generated": True, "memory_id": target.id}
+        # A49：插入前按索引口径放开同桶旧置顶——被 status 过滤掉的 stale 置顶也在内，
+        # 否则会撞 ux_memories_pinned_active（用户 10-09 报的「印象重新生成失败」）。
+        released = await _release_bucket_pins(db, character_id, memory_type, "summary")
+        if released:
+            _logger.info("Pinned summary char=%d type=%s: released %d stale/invisible pins",
+                         character_id, memory_type, released)
         mem = Memory(
             user_id=owner_user_id, character_id=character_id, memory_type=memory_type,
             sub_type="summary", source="summary", content=summary,
@@ -282,6 +319,10 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
             if demoted:
                 _logger.info("Identity summary for char=%d: demoted %d stale pins", character_id, demoted)
             return {"generated": True, "memory_id": target.id}
+        # A49：身份画像同款——插入前按索引口径放开 identity 桶的旧置顶。
+        released = await _release_bucket_pins(db, character_id, "user_info", IDENTITY_SUB_TYPE)
+        if released:
+            _logger.info("Identity summary char=%d: released %d stale/invisible pins", character_id, released)
         mem = Memory(
             user_id=owner_user_id, character_id=character_id, memory_type="user_info",
             sub_type=IDENTITY_SUB_TYPE, source="summary", content=summary,

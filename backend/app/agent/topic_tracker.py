@@ -271,12 +271,20 @@ async def update_topic_resolution(character_id: int, user_id: int, user_msg: str
         if not kind:
             return
         async with async_session_factory() as db:
+            cond = [
+                ConversationTopic.character_id == character_id,
+                ConversationTopic.status == "进行中",
+            ]
+            # A46①（2026-10-10 用户拍板「按建议」）：写侧也带 user 过滤。
+            # 读侧（chat_settlement）早就是 (character_id, user_id, status)，写侧原来只按 character_id
+            # ⇒ 一个角色服务多账号时，B 账号说句「弄好了」会把 A 账号的进行中话题关掉。
+            # 现网 blast radius 为 0（chat_sessions 里没有一角色多用户），这是形状修正。
+            # user_id 为 None 时**保持旧行为**（不加过滤）：无 caller 的路径不能被静默收紧成「一条都不关」。
+            if user_id is not None:
+                cond.append(ConversationTopic.user_id == user_id)
             rows = (await db.execute(
                 select(ConversationTopic)
-                .where(
-                    ConversationTopic.character_id == character_id,
-                    ConversationTopic.status == "进行中",
-                )
+                .where(*cond)
                 .order_by(ConversationTopic.last_touched_at.desc())
             )).scalars().all()
             if not rows:
