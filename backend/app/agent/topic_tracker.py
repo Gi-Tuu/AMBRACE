@@ -344,17 +344,28 @@ async def load_active_goal_queries(character_id: int, user_id: int, limit: int =
         return []
 
 
-async def load_active_topics_text(character_id: int, user_id: int, now: datetime | None = None) -> str:
-    """注入文本：进行中话题 top3（带最后提及时间相对描述；now 仅供测试注入，UTC naive）"""
+async def load_active_topics_text(character_id: int, user_id: int | None,
+                                  now: datetime | None = None) -> str:
+    """注入文本：进行中话题 top3（带最后提及时间相对描述；now 仅供测试注入，UTC naive）
+
+    A46②（2026-10-10）：带 `user_id` 过滤，与写侧 `update_topic_resolution`（A46①）、结构化
+    出口 `load_active_topics_rows`（A43）同口径——只按 character_id 过滤时，一个角色服务多账号
+    会把别的账号的进行中话题注入当前上下文。
+    **`user_id is None` 时保持旧行为（不加过滤）**，这是刻意的 fail 方向（fail-open）：无 caller
+    的路径不该被静默收紧成「一条都拿不到」（注入块整块消失＝行为变化，且比串号更难被发现）。
+    """
     try:
         from datetime import datetime, timezone
+        cond = [
+            ConversationTopic.character_id == character_id,
+            ConversationTopic.status == "进行中",
+        ]
+        if user_id is not None:
+            cond.append(ConversationTopic.user_id == user_id)
         async with async_session_factory() as db:
             rows = (await db.execute(
                 select(ConversationTopic)
-                .where(
-                    ConversationTopic.character_id == character_id,
-                    ConversationTopic.status == "进行中",
-                )
+                .where(*cond)
                 .order_by(*_ACTIVE_TOPICS_ORDER)
                 .limit(MAX_INJECT_TOPICS)
             )).scalars().all()
@@ -388,8 +399,8 @@ async def load_active_topics_rows(character_id: int, user_id: int | None) -> lis
     差别只有两处、且都是**刻意的**：
 
     ① 带 `user_id` 过滤——话题表 `user_id NOT NULL`，而 Workspace 是「角色×用户」一格，
-       不能把另一个账号的进行中话题投进当前用户的认知面。（注入文本那条腿**没带**这个过滤，
-       属现网 0 多用户角色下未暴露的口径不一致，登记为 A46 待拍板，本函数不替它做决定。）
+       不能把另一个账号的进行中话题投进当前用户的认知面。（两条注入文本出口自 A46② 起也带
+       同一个口径，但它们在 `user_id is None` 时保持旧行为；本函数仍坚持缺任一 id 一次查询都不发。）
     ② 返回字段而非渲染文本——不拼「🎯」「（今天）」这类展示串（渲染是上下文的事）。
 
     缺 character_id / user_id ⇒ **一次查询都不发**直接返回空列表；任何异常静默返回空列表。
@@ -426,7 +437,8 @@ async def load_active_topics_rows(character_id: int, user_id: int | None) -> lis
     return out
 
 
-async def load_fresh_active_topics_text(character_id: int, user_id: int, now: datetime | None = None) -> str:
+async def load_fresh_active_topics_text(character_id: int, user_id: int | None,
+                                        now: datetime | None = None) -> str:
     """B1-③（2026-09-04，方案 §5.2）主动接触专用：仅返回时效内的进行中话题。
 
     与主聊天 ``load_active_topics_text`` 不同，本函数给进行中话题加时效治理：
@@ -434,16 +446,22 @@ async def load_fresh_active_topics_text(character_id: int, user_id: int, now: da
     - 目标类（goal）放宽到 ``PROACTIVE_GOAL_MAX_DAYS``（14 天），仍显式标注为「目标」。
     过期的不当作承接对象（修复远期话题被反复续的根因）；主聊天原函数不动。
     仅供主动接触链路调用；任何异常失败静默返回空串。
+
+    A46②（2026-10-10）：`user_id` 与主聊天那条同口径进 SQL（此前形参不参与查询）；
+    同样在 `user_id is None` 时保持旧行为（不加过滤，fail-open）。
     """
     try:
         from datetime import datetime, timezone
+        cond = [
+            ConversationTopic.character_id == character_id,
+            ConversationTopic.status == "进行中",
+        ]
+        if user_id is not None:
+            cond.append(ConversationTopic.user_id == user_id)
         async with async_session_factory() as db:
             rows = (await db.execute(
                 select(ConversationTopic)
-                .where(
-                    ConversationTopic.character_id == character_id,
-                    ConversationTopic.status == "进行中",
-                )
+                .where(*cond)
                 .order_by(*_ACTIVE_TOPICS_ORDER)
             )).scalars().all()
         now = now or datetime.now(timezone.utc).replace(tzinfo=None)

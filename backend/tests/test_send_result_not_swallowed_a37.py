@@ -33,7 +33,7 @@ CONSUMED = {
 # 明确不在批 1 范围（审计 §4 批 2/批 3 的口径），逐条写清"为什么现在可以不消费"
 DEFERRED = {
     "app/api/privacy.py": "隐私导出回执，非主动投放通道，不写消费标记",
-    "app/application/phone_auto_notify_service.py": "批 3（非 arbiter 发送口上闸③）",
+    "app/application/phone_auto_notify_service.py": "A40（10-10）已消费其返回值：发送前二次校验；此条保留作历史留档",
     "app/scheduling/executors/plugin.py": "批 3；插件通道另有自己的失败留痕",
     "app/scheduling/executors/special.py": "批 1 只改「失败算不算当日已发」（见 triggers 谓词），发送口本身留批 3",
     "app/scheduling/executors/timer.py": "审计 V4：闹钟类先 mark_fired 保证承诺状态流转；主题熔断那一档属 A35/A38 已判可接受",

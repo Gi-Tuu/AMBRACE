@@ -174,6 +174,73 @@ async def _last_first_round(user_id: int, a_id: int, b_id: int) -> str | None:
         return r.scalar_one_or_none()
 
 
+async def _user_last_msg_id(user_id: int) -> int:
+    """该用户全部会话里最后一条消息的 id（一条都没有＝0）——本次生成的**现状锚**。
+
+    用 id 而不是时间戳：避开 ``created_at`` 的秒级精度，也不依赖跨连接时钟一致。
+    取不到（异常）由调用方按 fail-open 处理（锚＝None 时整道闸不参与），见 :func:`_pre_land_conflict`。
+    """
+    from app.models.chat import ChatMessage, ChatSession
+    async with async_session_factory() as db:
+        return int((await db.execute(
+            select(func.max(ChatMessage.id))
+            .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+            .where(ChatSession.user_id == user_id)
+        )).scalar() or 0)
+
+
+async def _human_spoke_since(user_id: int, anchor_id: int) -> bool:
+    """``anchor_id`` 之后该用户是否又说了话（任一会话，真人发言）。"""
+    from app.models.chat import ChatMessage, ChatSession
+    async with async_session_factory() as db:
+        hit = (await db.execute(
+            select(ChatMessage.id)
+            .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+            .where(
+                ChatMessage.sender_type == "user",
+                ChatMessage.id > anchor_id,
+                ChatSession.user_id == user_id,
+            )
+            .limit(1)
+        )).scalars().first()
+    return hit is not None
+
+
+async def _pre_land_conflict(user_id: int, anchor_id: int | None, pair: tuple) -> str:
+    """A40（A37 批 3，审计 §4 批 3 · C18 / I11）：落库前复检「这段时间里真人是否又说话了」。
+
+    AI-AI 私聊不推送、用户也不在场，速率闸按后台型豁免；但**豁免只到速率为止**（I11）：
+    这段对话的内容有一部分是按 ``_user_recent_news`` 与角色记忆快照写的（``:129-147``），
+    生成 2-4 轮要连着调 2-4 次模型，这期间用户如果在任一会话里又说了话，那条"近况"就已经旧了，
+    再按它编排对话等于把过时的用户近况固化进 ai_chats（后续还会被注入回聊天上下文）。
+    判据只有一个单调量：**现状锚之后是否又落了 ``sender_type='user'`` 的消息**。
+
+    两档 flag 默认关＝一次查询都不发（逐字节旧行为）；影子档只打 INFO、照常落库；
+    实拦档命中返回原因串，调用方**直接 return False 且 ``rows`` 一条都不写**（不变量 I3：
+    没落库就没有任何"已生成/已消费"的痕迹，下一 tick 概率门控仍可重来）。
+    读失败＝照落（fail-open）并把读失败写进 INFO（不变量 I5）。
+    """
+    from app.scheduling import scheduler as engine
+
+    shadow, enforce = engine.gate3_flags()
+    if not (shadow or enforce):
+        return ""
+    if anchor_id is None:  # 锚没取到＝这一眼没看成，照落并留痕（不许把"读不到"变成"不落库"）
+        _logger.info("AI social 闸③现状锚未知，照落 user=%d pair=%s", user_id, pair)
+        return ""
+    try:
+        hit = await _human_spoke_since(user_id, anchor_id)
+    except Exception as e:
+        _logger.info("AI social 闸③复检读失败照落 user=%s: %s", user_id, e)
+        return ""
+    if not hit:
+        return ""
+    _logger.info("AI social 闸③%s reason=human_spoke pair=(%d,%d) anchor=%d%s",
+                 "命中" if enforce else "（影子）", pair[0], pair[1], anchor_id,
+                 "" if enforce else "·照落")
+    return "human_spoke" if enforce else ""
+
+
 async def run_ai_social(char_a_id: int, char_b_id: int, user_id: int) -> bool:
     """生成一次 AI-AI 私下对话（2-4 轮）并落库。返回是否生成。"""
     from app.agent.llm_client import chat_completion
@@ -233,6 +300,13 @@ async def run_ai_social(char_a_id: int, char_b_id: int, user_id: int) -> bool:
     def other_of(seq: int) -> AICharacter:
         return b if seq % 2 == 0 else a
 
+    # A40 闸③现状锚：2-4 轮 LLM 开始前先记下"此刻说到哪条消息了"；读失败＝None
+    # （＝这一眼没看成），下游按 fail-open 照落，绝不退化成"把全部历史当成新发言"的假锚
+    try:
+        _anchor_id = await _user_last_msg_id(user_id)
+    except Exception as e:
+        _logger.info("AI social 闸③现状锚读失败照落 user=%s: %s", user_id, e)
+        _anchor_id = None
     rounds = random.randint(2, 4)
     history: list[str] = []
     rows = []
@@ -306,6 +380,8 @@ async def run_ai_social(char_a_id: int, char_b_id: int, user_id: int) -> bool:
         ))
 
     if not rows:
+        return False
+    if await _pre_land_conflict(user_id, _anchor_id, (char_a_id, char_b_id)):
         return False
     async with async_session_factory() as db:
         db.add_all(rows)

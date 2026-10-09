@@ -133,6 +133,29 @@ async def collect_special_events() -> list[dict]:
     return [ti.to_dict() for ti in await get_source("special").collect(_DEFAULT_CTX)]
 
 
+# ── A40（A37 批 3，审计 §4 批 3 · C28）：切片 flush 侧的发送前复检 ──────────────────
+# 生成侧查过 `is_user_active` / `MAX_PER_HOUR`（`executors/guards.pre_gates`），但切片从生成到真正
+# 发出最长可跨 **2 小时**（下面的过期保护窗），期间用户可能已经醒来聊起来、这一小时的额度也可能
+# 已被别的通道用掉——而 flush 侧过去一栏都不重读（审计 §2 C28 的「闸③」列写着「无」）。
+# 本函数补的就是这"最后一眼"：**阈值全部复用生成侧同一批常量与闸函数**（不自创第二套口径），
+# 也**只碰速率/活跃**这两件生成侧已在查的事——新鲜度判定在出口 `send_to_session` 的闸③里做，
+# 两边不许互相塞（守卫 tests/test_gates_semantics_split_a37.py 钉这条）。
+# 档位（两档默认关，读不到按关）：影子＝只留痕照发；实拦＝命中即不发送，切片**保持 pending**
+# 等下一轮重试（超 2h 由上面的过期保护作废），既不计 sent 也不做任何消费标记。
+# 读失败＝照发（fail-open），但把读失败写进 INFO：绝不把"我读不到"变成"不发"。
+async def _flush_recheck_reason(item_obj) -> str:
+    """返回命中的复检原因（``""``＝放行）。读失败一律 ``""``（照发）并 INFO 留痕。"""
+    try:
+        if await is_user_active(item_obj.character_id, item_obj.user_id):
+            return "user_active"
+        if await get_hourly_active_count(item_obj.character_id) >= MAX_PER_HOUR:
+            return "hourly_cap"
+    except Exception as e:
+        _logger.info("Storyline flush 复检读失败照发 item=%s: %s", getattr(item_obj, "id", "?"), e)
+        return ""
+    return ""
+
+
 async def flush_storyline_items() -> int:
     """快速发送到期的主动事件切片（独立 3 秒循环调用，不走 30 秒仲裁 tick）。
 
@@ -183,6 +206,16 @@ async def flush_storyline_items() -> int:
                 continue
         except Exception as e:
             _logger.warning("Storyline sleep check failed: %s", e)
+        # A40 闸③·发送侧复检（两档默认关＝下面整段不执行，零额外查询）
+        _g3_shadow, _g3_enforce = engine.gate3_flags()
+        if _g3_shadow or _g3_enforce:
+            _g3 = await _flush_recheck_reason(item_obj)
+            if _g3:
+                _logger.info("Storyline flush item=%d 闸③%s reason=%s%s",
+                             item_obj.id, "命中" if _g3_enforce else "（影子）", _g3,
+                             "" if _g3_enforce else "·照发")
+                if _g3_enforce:
+                    continue
         _reasoning = (item_obj.reasoning or "").strip() if getattr(item_obj, "reasoning", None) else ""
         _extra = None
         if item_obj.seq == 0:
@@ -198,6 +231,9 @@ async def flush_storyline_items() -> int:
             item_obj.content, message_type="storyline",
             log_proactive=(item_obj.seq == 0),
             extra_meta=_extra,
+            # A40 闸③快照锚：审计 §3.2 明示 `send_at` 就是天然快照时刻（不加列）。
+            # 下面 `_res.ok is False` 分支已经保证"被拦⇒保持 pending"，这里只是把锚交出去。
+            snapshot_at=item_obj.send_at,
         )
         _sent = getattr(_res, "ok", None)
         if _sent is False:

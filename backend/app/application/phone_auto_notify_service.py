@@ -279,6 +279,38 @@ async def _persist_notification_snapshots(user_id: int, items: list[dict]):
             await db.execute(sa_delete(PhoneSnapshot).where(PhoneSnapshot.id.in_(old_ids)))
         await db.commit()
 
+async def _pre_send_recheck_reason(character_id: int, user_id: int, session_id: int,
+                                   snapshot_at) -> str:
+    """A40（A37 批 3，审计 §4 批 3 · C39）：**生成之后、发送之前**再查一遍会话现状。
+
+    本通道原有的闸只在**开始生成之前**查一次（``_trigger_mention`` 里的 ``_kernel_gate_reason``），
+    而中间那次 LLM 要跑数秒到数十秒；这段时间里用户可能已经在同一个会话里接着说了别的，
+    于是"通知提及"会插进一段早就翻篇的对话。这里补的就是发送前这一眼：
+      ① 会话行还在不在（选角到发送之间用户可能删了会话——没有出口就不该往下写）；
+      ② 用户此刻是否正在活跃聊天（复用内核 ``arbiter.is_user_active``，不另立阈值）；
+      ③ 出口闸③的同一份判据（自 ``snapshot_at`` 起会话里是否又落了真人发言，
+         复用 ``scheduler.gate3_conflict_reason``，不在本模块另写一套）。
+    ⚠ 与 ``_kernel_gate_reason`` 的失败方向**刻意不同**：那把在生成前，读失败判为拦截是"别白花一次调用"；
+    本把在内容已经生成好之后，**读失败一律照发**（fail-open，不变量 I5）——绝不把"我读不到"变成"不发"，
+    但要把读失败写进 INFO 留痕。
+    """
+    from app.models.chat import ChatSession
+    from app.scheduling import arbiter, scheduler as engine
+    try:
+        async with async_session_factory() as db:
+            alive = (await db.execute(
+                select(ChatSession.id).where(ChatSession.id == session_id)
+            )).first()
+        if alive is None:
+            return "session_gone"
+        if await arbiter.is_user_active(character_id, user_id):
+            return "user_active"
+        return await engine.gate3_conflict_reason(session_id, snapshot_at)
+    except Exception as e:
+        _logger.info("Phone auto notify 闸③复检读失败照发 user=%s: %s", user_id, e)
+        return ""
+
+
 async def _trigger_mention(user_id: int, items: list[dict]) -> bool:
     """唯一发送点：先过闸、再生成、最后直发。返回是否真的发出（被拦一律 False，只减不发）。"""
     if not _mention_enabled():
@@ -299,14 +331,37 @@ async def _trigger_mention(user_id: int, items: list[dict]) -> bool:
         return False
 
     # C16 批次C（2026-09-25）：把真实 user_id 传进去，供护栏取现状锚
+    # A40：这条时间戳＝本条正文所依据的「现状快照」（闸③的锚），必须在调模型之前取，
+    # 否则判不出"生成这段时间里用户又说了什么"。
+    _snap_at = now_naive_utc()
     content = await _generate_mention(char, items, user_id=user_id)
     if not content:
         await _log_rejected(char.id, user_id, "notification_mention:empty_generation", "empty")
         return False
 
     from app.scheduling import scheduler as engine
-    await engine.send_to_session(
+    # A40 闸③（两档默认关＝这一段一行都不执行，逐字节旧行为）：内容已经生成好，发送前再看一眼现状。
+    # 实拦命中＝不发，并写一条带闸名的 rejected 留痕；返回 False 让上层跳过 last_trigger_at 回写
+    # （``_save_state`` 只在 triggered=True 才写），于是**不烧 30 分钟节流**，下一轮上报仍可重试。
+    _g3_shadow, _g3_enforce = engine.gate3_flags()
+    if _g3_shadow or _g3_enforce:
+        _g3 = await _pre_send_recheck_reason(char.id, user_id, session_id, _snap_at)
+        if _g3:
+            _logger.info("Phone auto notify 闸③%s reason=%s char=%d session=%d user=%d%s",
+                         "命中" if _g3_enforce else "（影子）", _g3, char.id, session_id, user_id,
+                         "" if _g3_enforce else "·照发")
+            if _g3_enforce:
+                await _log_rejected(char.id, user_id, f"notification_mention:[gate3={_g3}]", _g3)
+                return False
+
+    _res = await engine.send_to_session(
         session_id, char.id, user_id, content, message_type=TRIGGER_TYPE,
     )
+    # A40（不变量 I3）：出口说"没发"（主题熔断／闸③命中）就不许再往下写任何"已经打扰"的痕迹。
+    # 老替身返回 None（没有 .ok）按已发处理，不改变既有测试与旧调用方的语义。
+    if getattr(_res, "ok", None) is False:
+        _logger.info("Phone auto notify not sent: reason=%s char=%d user=%d",
+                     getattr(_res, "reason", ""), char.id, user_id)
+        return False
     _logger.info("Phone auto notify triggered: char=%d session=%d user=%d", char.id, session_id, user_id)
     return True

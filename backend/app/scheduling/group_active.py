@@ -120,6 +120,49 @@ async def collect_group_events() -> list[dict]:
         return []
 
 
+async def _pre_land_conflict(group_id: int, char_id: int, last_seen_id: int) -> str:
+    """A40（A37 批 3，审计 §4 批 3 · C19 / I11）：落库前复检「这段时间里群里是否已有真人发言」。
+
+    本通道是后台型（``BACKGROUND_TYPES``），按设计**豁免速率闸**（每小时上限/最小间隔/日配额，
+    见模块头 E12/E15 口径）；但豁免只许豁免速率，**不许豁免新事件冲突**（不变量 I11）：
+    群历史是在 ``run_group_active`` 开头读的（``:149-156``），中间还要跑一次 LLM，
+    这期间用户如果在群里说了话，这条 AI 冒泡就变成"插不进用户那句话的自言自语"。
+    判据只用一个单调量：**本次读到的群历史末尾那条 id 之后，是否又落了 ``sender_type='user'`` 的消息**
+    （用 id 不用时间戳，避开 created_at 的秒级精度与跨连接时钟差）。
+
+    两档 flag 默认关＝一次查询都不发（逐字节旧行为）。影子档命中只打 INFO、照常落地；
+    实拦档命中返回原因串，调用方**直接 return False 且不写任何行**——没落地就没有 ProactiveMessageLog，
+    也就不存在"跳过却标记已发送"（不变量 I3；本通道的"消费标记"就是那两条 add 的行）。
+    读失败＝照落（fail-open）并把读失败写进 INFO（不变量 I5，发送侧不收紧）。
+    """
+    from app.scheduling import scheduler as engine
+
+    shadow, enforce = engine.gate3_flags()
+    if not (shadow or enforce):
+        return ""
+    try:
+        # 另开一个会话读：外层 db 事务在 LLM 期间一直挂着，同一连接再查会读到自己的旧快照（WAL 下看不到别人新提交）
+        async with async_session_factory() as _db:
+            hit = (await _db.execute(
+                select(ChatGroupMessage.id)
+                .where(
+                    ChatGroupMessage.group_id == group_id,
+                    ChatGroupMessage.sender_type == "user",
+                    ChatGroupMessage.id > last_seen_id,
+                )
+                .limit(1)
+            )).scalars().first()
+    except Exception as e:
+        _logger.info("Group active 闸③复检读失败照落 group=%s: %s", group_id, e)
+        return ""
+    if hit is None:
+        return ""
+    _logger.info("Group active 闸③%s reason=human_spoke group=%d char=%d last_seen=%d%s",
+                 "命中" if enforce else "（影子）", group_id, char_id, last_seen_id,
+                 "" if enforce else "·照落")
+    return "human_spoke" if enforce else ""
+
+
 async def run_group_active(char_id: int, group_id: int, user_id: int,
                            with_id: int | None = None) -> bool:
     """生成 2-4 轮双角色互聊并落库（发起者 + 搭档交替发言；无搭档时退化为单句冒泡）。
@@ -161,6 +204,8 @@ async def run_group_active(char_id: int, group_id: int, user_id: int,
                 elif m.character_id in char_map:
                     recent_lines.append(f"[{char_map[m.character_id].name}] {m.content[:60]}")
             context = "\n".join(recent_lines) or "（群聊刚开始）"
+            # A40 闸③现状锚：本次生成所依据的群历史末尾 id（recent 按 id 倒序取，[0] 即最新）
+            _last_seen = recent[0].id if recent else 0
 
             if partner is None:
                 # 退化为单句冒泡（无搭档）
@@ -183,6 +228,8 @@ async def run_group_active(char_id: int, group_id: int, user_id: int,
                 )
                 text = (text or "").strip().strip('"').strip("'")
                 if len(text) < 2:
+                    return False
+                if await _pre_land_conflict(group_id, char_id, _last_seen):
                     return False
                 db.add(ChatGroupMessage(
                     group_id=group_id, sender_type="ai", character_id=char_id, content=text[:MAX_CHARS],
@@ -255,6 +302,8 @@ async def run_group_active(char_id: int, group_id: int, user_id: int,
                     " | ".join(f"{cid}:{c[:30]}" for cid, c in dropped),
                 )
                 valid = valid[:MAX_LANDS_PER_GROUP_TICK]
+            if await _pre_land_conflict(group_id, char_id, _last_seen):
+                return False
             for cid, content in valid:
                 db.add(ChatGroupMessage(
                     group_id=group_id, sender_type="ai", character_id=cid, content=content,

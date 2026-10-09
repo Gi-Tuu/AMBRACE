@@ -156,6 +156,19 @@ _FLAG_ROWS: list[tuple] = [
      '开启后，上一步的判断真的会生效：如果那件事已经不用提了（你已经接着说过、或话题早已收尾），这条主动消息就不生成、不花这次调用。需要同时打开上一项才有效果。默认关闭。',
      'Skip stale proactive messages', 'When on, the re-check above takes effect: if the matter no longer needs raising (you already moved on, or the thread closed), that proactive message is not generated and not billed. Requires the log-only switch above. Off by default.'),
 
+    # A40（A37 批 3，10-10）：闸③两档（发送前最后一眼），默认两个都关＝一条额外复查都不发
+    ('proactive_gate3_shadow', 'proactive', 214, False, '发出去前再看一眼（只记录，实验）',
+     '开启后，它在把主动消息发出去之前会再回头看一眼当下的情况（你在那之后有没有又说了话、这一小时的额度是否已经用完），'
+     '并把看到的结论记进开发日志；**这一步不改变它发不发消息**，只攒读数。默认关闭，关闭时不会多查任何东西。',
+     'Re-check before it hits send (log only, experiment)', 'When on, just before a proactive message goes out it takes one more look at the current situation '
+     '(did you say something after that, is this hour already used up) and logs what it found. This step does not change what gets sent; off by default, '
+     'and while off no extra lookups happen at all.'),
+    ('proactive_gate3_enforce', 'proactive', 215, False, '发出去前再看一眼，情况变了就不发',
+     '开启后，上一步的结论真的会生效：如果那段时间里你已经接着说了别的、或这一小时该说的已经说够了，这条就先不发，'
+     '也不会被记成已经发过——排着的后续内容仍会在合适的时候继续。需要同时打开上一项才有效果。默认关闭。',
+     'Hold a proactive message if things changed', 'When on, the re-check above takes effect: if you have said something since, or this hour is already used up, '
+     'that message is held back and is not counted as sent, so anything still queued can go out later. Requires the log-only switch above. Off by default.'),
+
     # ── 群聊小游戏 ──
     ('group_chat_games', 'games', 301, False, '小游戏总开关',
      '小游戏功能的总开关：关闭后玩法列表清空、也不能从面板开局，卡住的对局不再自动推进；已经开始的对局仍可查看。',

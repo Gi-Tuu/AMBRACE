@@ -100,6 +100,60 @@ class SendResult(NamedTuple):
     reason: str = ""
 
 
+# ── A40（A37 批 3，审计 §3.1/§3.3/§4 批 3）：闸③「发送前最后一眼」统一实现 ──────────
+# 为什么收在这一处：现网私信发送全汇聚到 `send_to_session`，在这一处复检，所有走出口的通道
+# （含**不走 run_tick 的 C28 切片 flush**、以及直发的 C39 通知提及）一起拿到发送前最后一眼，
+# 比逐通道各写一份更省事，也不会各写各的口径。
+# 与闸②（`scheduling/freshness.py`，生成前重取现状）**刻意分开**：本闸只判"这段时间里真人是否又说话了"，
+# 不判速率；速率闸（每小时上限/间隔/日配额）一律留在 arbiter 与 `executors/guards.pre_gates`
+# （守卫 tests/test_gates_semantics_split_a37.py 钉住两个口径不许互相塞）。
+GATE3_SHADOW_FLAG = "proactive_gate3_shadow"
+GATE3_ENFORCE_FLAG = "proactive_gate3_enforce"
+# 只留痕、永不拦的档位：没带快照时刻＝"这一眼没看成"，按 fail-open 照发（I5 发送类方向显式）
+GATE3_UNKNOWN = "unknown_snapshot"
+
+
+def gate3_flags() -> tuple[bool, bool]:
+    """``(影子, 实拦)``。读不到开关一律按**关**＝零额外查询、逐字节旧行为（I10 默认关 + 影子先行）。"""
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        return (bool(AGENT_FLAGS.get(GATE3_SHADOW_FLAG, False)),
+                bool(AGENT_FLAGS.get(GATE3_ENFORCE_FLAG, False)))
+    except Exception as e:  # 开关层自己坏了也不把发送链路带走
+        _logger.info("A40 闸③ 开关读取失败按关处理: %s", e)
+        return (False, False)
+
+
+async def gate3_conflict_reason(session_id: int, snapshot_at) -> str:
+    """发送前复检：返回命中的原因（``""``＝放行／本闸没参与）。
+
+    判据只有一条时间线——**自 ``snapshot_at``（本条正文所依据的快照时刻）起，会话里是否又落了
+    真人发言**。有 ⇒ 用户已经接着说了别的，照发旧正文等于答非所问（不变量 I2），命中。
+    ⚠ 出口**只判真人侧**，不判"这段时间里有没有 AI 消息"：剧情切片是同一事件按 3 秒节奏连发的，
+    后一片必然看见前一片那条 AI 消息，在出口加这一半会把同事件的正常节奏判成双发（＝隐性收紧）。
+    "同会话 20 秒内已有 AI 消息 ⇒ 不抢发"这一半留在它本来的位置（``prospective_intent.recent_ai_message_id``，
+    只有单发通道用），审计 §3.1 的 (b) 因此**不在本出口重复实现**。
+    读失败 ⇒ 返回 ``""``（照发）并把读失败写进 INFO；没带快照 ⇒ 返回 :data:`GATE3_UNKNOWN`（只留痕）。
+    """
+    if snapshot_at is None:
+        return GATE3_UNKNOWN
+    try:
+        async with async_session_factory() as db:
+            hit = (await db.execute(
+                select(ChatMessage.id)
+                .where(
+                    ChatMessage.session_id == session_id,
+                    ChatMessage.sender_type == "user",
+                    ChatMessage.created_at > snapshot_at,
+                )
+                .limit(1)
+            )).scalars().first()
+    except Exception as e:  # fail-open：读不到不等于不能发
+        _logger.info("A40 闸③ 复检读失败照发 session=%s: %s", session_id, e)
+        return ""
+    return "new_user_msg" if hit is not None else ""
+
+
 async def send_to_session(
     session_id: int,
     character_id: int,
@@ -109,8 +163,13 @@ async def send_to_session(
     holiday_name: str | None = None,
     log_proactive: bool = True,
     extra_meta: str | None = None,
+    snapshot_at: "datetime | None" = None,
 ) -> "SendResult":
-    """将主动消息保存到数据库并通过 WS 推送（如果用户在线）；返回**发出去没有、没发是哪个闸**。"""
+    """将主动消息保存到数据库并通过 WS 推送（如果用户在线）；返回**发出去没有、没发是哪个闸**。
+
+    ``snapshot_at``＝本条正文所依据的现状快照（naive UTC，A40 闸③用）；不传＝该通道还没接进闸③，
+    两档 flag 开着也只留一条 ``[gate3=unknown_snapshot]``，不改行为。
+    """
     # L3（2026-09-09 主体归属治理）：主题熔断统一兜底——state_trigger / memory_review /
     # life_regression / storyline / pet_care / life_share 等所有经本出口的主动通道都覆盖
     # （timer 已在 arbiter 内自行判并 mark_fired，保证承诺状态正确流转，此处不重复判）。
@@ -132,6 +191,17 @@ async def send_to_session(
                         return SendResult(False, "topic_guard")
         except Exception as e:
             _logger.warning("send_to_session topic guard fail-open: %s", e)
+    # A40 闸③（flag 门控，两档默认关＝下面一行都不执行）：命中即**不写库、不推送**，
+    # 直接把"没发"交回调用方（调用方据此回滚消费标记，见 arbiter.flush_storyline_items）。
+    _g3_shadow, _g3_enforce = gate3_flags()
+    if _g3_shadow or _g3_enforce:
+        _r3 = await gate3_conflict_reason(session_id, snapshot_at)
+        if _r3:
+            _logger.info("A40 闸③ channel=%s reason=%s%s session=%d char=%d",
+                         message_type, _r3, "" if _g3_enforce else "（影子·照发）",
+                         session_id, character_id)
+            if _g3_enforce and _r3 != GATE3_UNKNOWN:
+                return SendResult(False, f"gate3_{_r3}")
     msg_id = None
     # 保存到数据库
     async with async_session_factory() as db:

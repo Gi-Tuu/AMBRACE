@@ -138,6 +138,14 @@ AGENT_FLAGS = {
     # 发不发照旧；gate＝判定为 cancel 时真的不调模型、不发。两个都关＝一条额外查询都不发（守卫按计数桩钉住）。
     "proactive_freshness_shadow": False,
     "proactive_freshness_gate": False,
+    # A40（A37 批 3，10-10）：闸③「发送前最后一眼」的两档开关，只管**非 arbiter 的发送口**
+    # （C28 剧情切片 flush / C39 通知提及 / C18·C19 后台型落库前）。
+    # shadow＝只读数打一条 [gate3=…] INFO 留痕，发不发照旧；enforce＝命中即不发送并**回滚消费标记**
+    # （切片保持 pending 等下一轮、通知不烧 30 分钟节流、群/社交不落地），绝不出现「日志说拦了、
+    # 库里写成已发」。两个都关＝零额外复查、逐字节旧行为。
+    # 与 proactive_freshness_* 分工不重叠：那两把是闸②（生成前重取现状），本两把是闸③（发送前复检）。
+    "proactive_gate3_shadow": False,
+    "proactive_gate3_enforce": False,
     # ── §20 跨角色用户事实（2026-09-04，默认关=零行为变化；bool 可 runtime 热更）──
     # global_user_facts：用户级可变事实层总开关——开=GPS/跨角色事实写入 + [USER NOW] 注入分区；
     #   关=不写/不读 user_facts（抽取出原路径、注入空）。
