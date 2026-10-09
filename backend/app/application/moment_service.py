@@ -726,10 +726,14 @@ async def _first_round_ai_replies(moment_id: int, ai_chars: dict, daily_limit: i
     if len(existing_comments) < 2:
         return
 
-    ai_top = [
-        c for c in existing_comments if c.parent_id is None and c.sender_type == "ai"
-        and (owner_char_ids is None or c.sender_id in owner_char_ids)
-    ]
+    from app.scheduling import freshness as _frs
+
+    def _ai_tops(comments):
+        """AI 顶级评论视图。闸②把列表换成重读到的那份后必须按同一口径重算，不能只换列表。"""
+        return [c for c in comments if c.parent_id is None and c.sender_type == "ai"
+                and (owner_char_ids is None or c.sender_id in owner_char_ids)]
+
+    ai_top = _ai_tops(existing_comments)
     if len(ai_top) < 2:
         return
 
@@ -758,6 +762,15 @@ async def _first_round_ai_replies(moment_id: int, ai_chars: dict, daily_limit: i
             )
             if today_cnt.scalar_one() >= daily_limit:
                 continue
+        # A39 批 2b 通道 4 后续轮（10-09）：互评吃的也是进函数时的快照——上一个角色刚回过
+        # 的那条不在列表里 ⇒ 同一个目标被两个角色各回一句。影子档只量新旧差，实闸才换列表。
+        _gate, _fresh = await _frs.moment_pre_send(moment_id, existing_comments)
+        if _gate is None:
+            _logger.info("AI first-round replies stopped by 闸② moment=%d（动态已不在）", moment_id)
+            break
+        if _fresh is not existing_comments:
+            existing_comments = _fresh
+            ai_top = _ai_tops(existing_comments)
         # 该角色已回复过的 AI 顶级评论
         replied_ids = set()
         my_top_ids = set()
@@ -823,16 +836,22 @@ async def _second_round_ai_replies(moment_id: int, ai_chars: dict, daily_limit: 
     if len(existing_comments) < 2:
         return
 
-    # 收集第一轮互评：(回复, 被回复的顶级评论)
-    first_round: list[tuple] = []
-    for c in existing_comments:
-        if c.parent_id is None or c.sender_type != "ai":
-            continue
-        p = next((ec for ec in existing_comments if ec.id == c.parent_id), None)
-        if p and p.sender_type == "ai" and p.parent_id is None:
-            if owner_char_ids is not None and (c.sender_id not in owner_char_ids or p.sender_id not in owner_char_ids):
+    from app.scheduling import freshness as _frs
+
+    def _first_round_pairs(comments):
+        """第一轮互评配对 (回复, 被回复的顶级评论)。闸②换列表后按同一口径重算。"""
+        pairs: list[tuple] = []
+        for c in comments:
+            if c.parent_id is None or c.sender_type != "ai":
                 continue
-            first_round.append((c, p))
+            p = next((ec for ec in comments if ec.id == c.parent_id), None)
+            if p and p.sender_type == "ai" and p.parent_id is None:
+                if owner_char_ids is not None and (c.sender_id not in owner_char_ids or p.sender_id not in owner_char_ids):
+                    continue
+                pairs.append((c, p))
+        return pairs
+
+    first_round = _first_round_pairs(existing_comments)
     if not first_round:
         return
 
@@ -853,6 +872,14 @@ async def _second_round_ai_replies(moment_id: int, ai_chars: dict, daily_limit: 
         replied_id = top_c.sender_id     # 被回复者 A
         if replied_id not in ai_chars:
             continue
+        # A39 批 2b 通道 4 后续轮：重读只换判据用的 existing_comments，不换 first_round——
+        # for 已绑在旧配对列表上，换它也不会影响本轮要走的目标。
+        _gate, _fresh = await _frs.moment_pre_send(moment_id, existing_comments)
+        if _gate is None:
+            _logger.info("AI second-round replies stopped by 闸② moment=%d（动态已不在）", moment_id)
+            break
+        if _fresh is not existing_comments:
+            existing_comments = _fresh
         # A 已回过 B 的这条回复 → 不重复
         if any(ec.sender_id == replied_id and ec.parent_id == reply_c.id for ec in existing_comments):
             continue

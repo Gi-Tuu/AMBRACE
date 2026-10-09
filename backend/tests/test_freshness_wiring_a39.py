@@ -168,3 +168,159 @@ def test_timer_cancel必须mark_fired且不调模型(monkeypatch):
     assert calls["send"] == 0
     assert calls["fired"] == [9101], "cancel 没 mark_fired＝下个 tick 会再问一遍（承诺被反复催）"
     assert ok is True
+
+
+# ─────────────── moment 互评后续两轮（第一/第二轮互评）：闸②必须挡在生成前 ───────────────
+# 为什么单独测：通道 4 的读数层守卫测的是 `moment_pre_send` 本身，它全绿也证不了后续两轮
+# **把返回值用上了**。这里钉两条：①cancel ⇒ 零模型调用、零写入；②实闸换回来的现状真的进了
+# 去重判据（不是拿在手里丢掉）——同一条用例里跑"吃快照"与"吃现状"两种口径，差值就是牙。
+class _CM:
+    """假的 MomentComment 行，只带判据用到的字段。"""
+
+    def __init__(self, cid, parent_id=None, sender_id=1, sender_type="ai", name="小爱", content="我也去"):
+        self.id = cid
+        self.parent_id = parent_id
+        self.sender_id = sender_id
+        self.sender_type = sender_type
+        self.sender_name = name
+        self.content = content
+
+
+class _Char:
+    def __init__(self, cid, name):
+        self.id, self.name, self.personality, self.user_id = cid, name, "友善", 8102
+
+
+class _MRows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self._rows)
+
+    def scalar_one(self):        # 每日上限那条 count 查询：恒 0＝没触顶
+        return 0
+
+
+class _MSess:
+    def __init__(self, rows, sink, written):
+        self.rows, self.sink, self.written = rows, sink, written
+
+    async def execute(self, stmt, *a, **k):
+        self.sink.append(str(stmt).split("\n")[0][:60])
+        return _MRows(self.rows)
+
+    def add(self, obj):
+        self.written.append(obj)
+
+    async def commit(self):
+        return None
+
+    async def refresh(self, obj):
+        obj.id = 900000 + len(self.written)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+TOPS = [_CM(1, sender_id=1, name="小爱"), _CM(2, sender_id=2, name="阿泽")]
+CHARS = {1: _Char(1, "小爱"), 2: _Char(2, "阿泽")}
+
+
+def _wire_moment(monkeypatch, rows, gate):
+    from app.application import moment_service as ms
+
+    calls = {"llm": [], "sess": 0, "written": []}
+
+    async def _gen(char_name, personality, prompt, max_tok=400):
+        calls["llm"].append(char_name)
+        return f"{char_name}的回复"
+
+    async def _pre(moment_id, snap):
+        calls["sess"] += 1
+        return gate(moment_id, snap)
+
+    async def _ident(char):
+        return ""
+
+    async def _rec(*a, **k):
+        return None
+
+    monkeypatch.setattr(ms, "_generate_comment_text", _gen)
+    monkeypatch.setattr(ms, "_identity_block", _ident)
+    monkeypatch.setattr(ms, "_record_moment_comment_event", _rec)
+    monkeypatch.setattr(ms, "async_session_factory",
+                        lambda *a, **k: _MSess(rows, [], calls["written"]))
+    monkeypatch.setattr(frs, "moment_pre_send", _pre)
+    # 目标选择与 50% 概率都定下来：断言要钉"谁回了/谁没回"，不能靠随机数运气
+    monkeypatch.setattr(ms.random, "choice", lambda seq: seq[0])
+    monkeypatch.setattr(ms.random, "random", lambda: 0.1)
+    return ms, calls
+
+
+def test_moment互评第一轮_cancel时一次模型都不调(monkeypatch):
+    ms, calls = _wire_moment(monkeypatch, TOPS, lambda mid, snap: (None, snap))
+    asyncio.run(ms._first_round_ai_replies(7777, dict(CHARS), 5, owner_char_ids={1, 2}))
+    assert calls["llm"] == [] and calls["written"] == [], "闸判 cancel 还在互评"
+    assert calls["sess"] == 1, "已经停了还逐个角色问一遍闸"
+
+
+def test_moment互评第一轮_闸放行时照常各回一句(monkeypatch):
+    ms, calls = _wire_moment(monkeypatch, TOPS,
+                             lambda mid, snap: ("[fresh=keep|现状未变|快照=2|现状=2]", snap))
+    asyncio.run(ms._first_round_ai_replies(7777, dict(CHARS), 5, owner_char_ids={1, 2}))
+    assert calls["llm"] == ["小爱", "阿泽"], calls["llm"]
+
+
+def test_moment互评第一轮_实闸换回的现状要进得去去重判据(monkeypatch):
+    """同一条动态跑两遍：吃快照⇒小爱把已经回过的那条再回一遍；吃现状⇒跳过。"""
+    ms, stale = _wire_moment(monkeypatch, TOPS,
+                             lambda mid, snap: ("[fresh=keep|现状未变|快照=2|现状=2]", snap))
+    asyncio.run(ms._first_round_ai_replies(7777, dict(CHARS), 5, owner_char_ids={1, 2}))
+    assert stale["llm"] == ["小爱", "阿泽"], stale["llm"]
+
+    fresh = TOPS + [_CM(3, parent_id=2, sender_id=1, name="小爱")]   # 现状：小爱已回过阿泽那条
+    ms2, got = _wire_moment(monkeypatch, TOPS,
+                            lambda mid, snap: ("[fresh=keep|新增1条|快照=2|现状=3]", fresh))
+    asyncio.run(ms2._first_round_ai_replies(7777, dict(CHARS), 5, owner_char_ids={1, 2}))
+    assert got["llm"] == ["阿泽"], "换回来的现状没进判据＝同一条评论被回了两遍"
+
+
+def test_moment互评第二轮_cancel不调模型且现状进得去判据(monkeypatch):
+    tops = [_CM(1, sender_id=1, name="小爱"), _CM(2, parent_id=1, sender_id=2, name="阿泽")]
+
+    ms, calls = _wire_moment(monkeypatch, tops, lambda mid, snap: (None, snap))
+    asyncio.run(ms._second_round_ai_replies(7777, dict(CHARS), 5, owner_char_ids={1, 2}))
+    assert calls["llm"] == [] and calls["written"] == [], "闸判 cancel 还在互评"
+
+    ms2, keep = _wire_moment(monkeypatch, tops,
+                             lambda mid, snap: ("[fresh=keep|现状未变|快照=2|现状=2]", snap))
+    asyncio.run(ms2._second_round_ai_replies(7777, dict(CHARS), 5, owner_char_ids={1, 2}))
+    assert keep["llm"] == ["小爱"], keep["llm"]
+
+    fresh = tops + [_CM(3, parent_id=2, sender_id=1, name="小爱")]   # 现状：小爱已回过这一条
+    ms3, got = _wire_moment(monkeypatch, tops,
+                            lambda mid, snap: ("[fresh=keep|新增1条|快照=2|现状=3]", fresh))
+    asyncio.run(ms3._second_round_ai_replies(7777, dict(CHARS), 5, owner_char_ids={1, 2}))
+    assert got["llm"] == [], "第二轮没看见刚写下的那条＝同一层楼再回一遍"
+
+
+def test_moment互评两轮_源码顺序闸在生成前():
+    """位置判据（不看注释）：`moment_pre_send` 在 `_generate_comment_text` 之前，
+    且 cancel 走 break 而不是 continue——continue 等于"这条跳过、下条照发"。"""
+    from app.application import moment_service as ms
+
+    src = Path(ms.__file__).read_text(encoding="utf-8")
+    for name in ("_first_round_ai_replies", "_second_round_ai_replies"):
+        start = src.index(f"async def {name}")
+        nxt = src.find("async def ", start + 10)
+        body = src[start:nxt if nxt > 0 else len(src)]
+        assert "moment_pre_send" in body, f"{name} 没接闸"
+        assert body.index("moment_pre_send") < body.index("_generate_comment_text("), f"{name} 闸在模型之后"
+        assert "if _gate is None:" in body and "break" in body, f"{name} 的 cancel 没停这批"
