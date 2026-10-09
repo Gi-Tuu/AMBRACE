@@ -125,3 +125,6 @@ backend/.pytest_tmp*/
 .migrate-drill/
 backend/data/periodic_state.json
 backend/data/periodic_state.json.tmp
+# A41（2026-10-10）：批量记忆提取的落盘队列（含对话原文，绝不入库、不入公开仓）
+backend/data/extract_queue.json
+backend/data/extract_queue.json.tmp

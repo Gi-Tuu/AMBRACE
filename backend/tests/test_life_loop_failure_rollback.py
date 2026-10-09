@@ -6,7 +6,8 @@
 早已固化，只标 failed 会留下「活动失败但状态按活动进行过落库」的脏状态。
 修复：进入状态回流前做快照，except 分支用独立短事务按快照回写 life_states。
 
-§4.4B：``_llm_copy_counts`` 的 key 已带北京日期；补每日首轮清理非今日 key，防长跑累积。
+§4.4B：LLM 文案日配额按北京日期分 key（限额语义跨天重置）。A41（2026-10-10）把这份计数
+从进程内 ``_llm_copy_counts`` 迁到持久台账 ``periodic_state``，重启不再归零补发。
 """
 import asyncio
 import json
@@ -164,22 +165,46 @@ def test_成功路径不回写(monkeypatch):
     assert called["n"] == 0
 
 
-def test_llm_copy_counts_非今日key被清理():
-    """§4.4B：取 key 时顺手清理非今日的过期 key（key 已带北京日期，限额语义跨天重置）。"""
-    from app.life.life_loop import _llm_copy_counts
+def test_llm_copy_日配额迁台账_跨天重置与当日限不变(tmp_path, monkeypatch):
+    """§4.4B → A41：日配额计数从进程内 dict 迁到持久台账（key 自带北京日期 ⇒ 跨天重置）。
 
-    _llm_copy_counts.clear()
-    try:
-        today = life_loop._beijing_date_str()
-        _llm_copy_counts[(1, today)] = 2
-        _llm_copy_counts[(2, "2020-01-01")] = 1
-        assert LifeLoopTask()._llm_copy_key(1) == (1, today)
-        assert _llm_copy_counts == {(1, today): 2}
-        # 当日限额语义不变：已达上限的角色仍判定不可再用 LLM 文案
-        assert LifeLoopTask()._llm_copy_allowed(1) is False
-        assert LifeLoopTask()._llm_copy_allowed(3) is True
-    finally:
-        _llm_copy_counts.clear()
+    对照（同一输入同一输出）：
+    - 迁移前 ``_llm_copy_counts[(char, 北京日期)]``：未记过 ⇒ 可用；当日累计 2 次 ⇒ 不可用；
+      换到另一天的 key ⇒ 重新可用。
+    - 迁移后同一角色同一日走台账 key ``life_loop_llm_copy:{char}:{日期}``，判据逐字相同。
+    """
+    from app.scheduling import periodic_state as pst
+
+    monkeypatch.setattr(pst, "_STATE_FILE", tmp_path / "periodic_state.json")
+    monkeypatch.setattr(pst, "_LOCAL_COUNTERS", {})
+    task = LifeLoopTask()
+    today = life_loop._beijing_date_str()
+
+    assert task._llm_copy_key(1) == f"life_loop_llm_copy:1:{today}"
+    assert task._llm_copy_allowed(1) is True          # 从未记过 ⇒ 0 < 2
+    task._bump_llm_copy(1)
+    task._bump_llm_copy(1)
+    assert task._llm_copy_allowed(1) is False         # 当日限额语义不变
+    assert task._llm_copy_allowed(3) is True          # 不牵连其它角色
+    monkeypatch.setattr(life_loop, "_beijing_date_str", lambda: "2020-01-01")
+    assert task._llm_copy_allowed(1) is True          # 跨天 key 变 ⇒ 自然重置（旧剪枝的用途）
+
+
+def test_llm_copy_重启不丢计数(tmp_path, monkeypatch):
+    """A41 硬口径「重启不突发」：台账文件里已有 2 次 ⇒ 换新进程（清掉内存兜底）后仍判不可用。"""
+    from app.scheduling import periodic_state as pst
+
+    state_file = tmp_path / "periodic_state.json"
+    monkeypatch.setattr(pst, "_STATE_FILE", state_file)
+    monkeypatch.setattr(pst, "_LOCAL_COUNTERS", {})
+    task = LifeLoopTask()
+    task._bump_llm_copy(7)
+    task._bump_llm_copy(7)
+    assert state_file.exists(), "计数必须落盘，否则重启即归零"
+
+    # 模拟进程重启：内存兜底清空，只剩磁盘上那份台账
+    monkeypatch.setattr(pst, "_LOCAL_COUNTERS", {})
+    assert task._llm_copy_allowed(7) is False
 
 
 def test_动作表study落记忆_保证用例命中失败段():

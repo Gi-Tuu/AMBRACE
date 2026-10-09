@@ -74,7 +74,11 @@ from app.utils.timeutil import now_naive_utc
 _logger = logging.getLogger("events.world_state")
 
 # 入口版本（结构变更时递增，供调用方判别快照形状）
-SNAPSHOT_VERSION = "v1"
+# v2（A41，2026-10-10）：路 2/3/4/5 的 ``fresh_until`` / ``fresh_at_as_of`` 从恒 (None, True) 改为
+# 按 facts 同名谓词的窗口计算 ⇒ 读侧第一次能区分「刚写」与「早就过期」。形状本身没删字段，
+# 但**语义变了**，按「结构变更时递增」的原文口径递增一位，让调用方（Workspace 投影、现状锚点）
+# 能判别自己拿到的是哪一版口径。
+SNAPSHOT_VERSION = "v2"
 
 # 方案 §1.4 的八路：六存储 + 两派生视图（顺序即 §1.4 表序，稳定，勿随意重排）
 STORE_ROUTES: tuple[str, ...] = (
@@ -94,7 +98,7 @@ ALL_ROUTES: tuple[str, ...] = STORE_ROUTES + DERIVED_ROUTES
 # 各路的**权威事实源**标签（调用方据此判断「同一谓词该信谁」；方案断点 #9 的判效基准）
 AUTHORITATIVE_SOURCE: dict[str, str] = {
     "world_facts": "WorldFact 管「现状」（新鲜窗，注入对话）",
-    "character_current_status": "角色当下状态的第二份权威（无 TTL、无 supersede）",
+    "character_current_status": "角色当下状态的第二份权威（列上无 TTL、无 supersede；新鲜度是读侧口径，见 AS_OF_BASIS）",
     "character_states": "角色八维情绪/生理态（随漂移连续变化）",
     "life_states": "AI 生活链自有状态（8 需求 + 位置/房间）",
     "working_state": "会话滚动工作记忆（三桶 diff）",
@@ -106,10 +110,12 @@ AUTHORITATIVE_SOURCE: dict[str, str] = {
 # 各路的 as_of 口径说明（**逐路如实登记**：谁真的吃 as_of、谁只是打标）
 AS_OF_BASIS: dict[str, str] = {
     "world_facts": "新鲜窗判据用 as_of；行集与 audience 过滤沿用 get_active_facts 原口径",
-    "character_current_status": "列上无 TTL/无时间戳 ⇒ as_of 仅为本快照口径，该行不随 as_of 变化",
-    "character_states": "读的是**库内存量值**（裸 SELECT，不回放漂移、不惰性建行）⇒ 与走 get_character_states 的注入侧可能差一次漂移结算的量；as_of 只给时龄",
-    "life_states": "as_of 仅决定 needs 距上次 tick 的小时数；需求值不回放",
-    "working_state": "行集＝该 (user,char) 最新一条（id 降序）；as_of 仅算滚动时龄",
+    "character_current_status": "列上无该状态自己的时间戳（行级 updated_at 被任意列改写刷新 ⇒ 只是粗粒度「最近碰过」）；"
+                                "as_of 与 facts 的 status 窗一起判 fresh_at_as_of，行值本身不随 as_of 变化",
+    "character_states": "读的是**库内存量值**（裸 SELECT，不回放漂移、不惰性建行）⇒ 与走 get_character_states 的注入侧可能差一次漂移结算的量；"
+                        "as_of 除时龄外还按 facts 的 mood 窗判 fresh_at_as_of",
+    "life_states": "as_of 决定 needs 距上次 tick 的小时数，并按 facts 的 location 窗判 fresh_at_as_of；需求值不回放",
+    "working_state": "行集＝该 (user,char) 最新一条（id 降序）；as_of 除滚动时龄外，按 facts 的 status 窗判 fresh_at_as_of",
     "user_facts": "行集沿用 get_active_user_facts（内含 valid_to 过期剔除）；as_of 另逐路给 fresh_at_as_of",
     "current_state_anchor": "锚点函数内部自取 now ⇒ 文本对应当前时刻；as_of 为快照口径",
     "status_memories": "判据 status_memory_expired 的 now 形参**显式用 as_of**",
@@ -133,6 +139,33 @@ ROUTE_READERS: dict[str, tuple[str, str]] = {
 _STATUS_MEM_TYPE = "insight"   # 写入侧 memory_type（chat_service.py:229）
 # status_memories 取多少条（与注入侧「近若干条」量级对齐；纯上限，不影响判据）
 _STATUS_MEMORIES_LIMIT = 12
+
+# ── A41（2026-10-10，A37 批 4）：四张瞬时视图补上新鲜度边界（不变量 I9 的推广）──
+# 原先只有路 1（world_facts，走 facts 的新鲜窗）与路 6（user_facts，带 valid_to）自带失效时刻，
+# 路 2/3/4/5 的 ``fresh_until`` 恒 ``None``（旧注释直说「永不自动失效」）⇒ 消费侧（Workspace 投影、
+# 现状锚点判效）看不出「一条十分钟前的状态」和「一条一周前的状态」有何区别。
+# **窗口数值一律取自 events/facts.py**（``_TRANSIENT_FRESH_HOURS`` 与三个 ``*_FRESH_HOURS`` 常量），
+# 本文件不新写小时数字面量——断点 #9 的「单一来源」口径同样适用于快照面。
+# 映射依据（逐路如实）：路 2 写的是 ``current_status``（与 status 谓词同语义）；路 3 是情绪/生理
+# 八维（与 mood 同寿命）；路 4 带位置/房间（与 location 同窗）；路 5 是会话滚动记忆（一次会话尺度，
+# 与 status 同窗）。补齐只**新增标注**，不删行、不改任何存量值。
+_VIEW_FRESH_PREDICATE: dict[str, str] = {
+    "character_current_status": "status",
+    "character_states": "mood",
+    "life_states": "location",
+    "working_state": "status",
+}
+
+
+def _view_freshness(route: str, asserted, as_of) -> tuple[str | None, bool]:
+    """该视图的 (fresh_until, fresh_at_as_of)：断言时刻 + facts 的同一窗口。
+
+    断言时刻缺失 ⇒ ``(None, False)``：既给不出失效时刻，也不当作今天的事实（保守，不虚构）。
+    """
+    from app.events import facts as _facts
+    window = _facts._TRANSIENT_FRESH_HOURS[_VIEW_FRESH_PREDICATE[route]]
+    until = (asserted + timedelta(hours=window)) if asserted is not None else None
+    return _iso(until), bool(_facts._predicate_fresh(asserted, as_of, window))
 
 
 def _iso(dt) -> str | None:
@@ -217,11 +250,17 @@ async def _read_world_facts(db, *, user_id: int, character_id: int, as_of) -> li
 
 
 async def _read_character_current_status(db, *, user_id: int, character_id: int, as_of) -> list[dict]:
-    """路 2 ``character_current_status``：角色当下状态的第二份权威（无 TTL、无 supersede）。"""
+    """路 2 ``character_current_status``：角色当下状态的第二份权威（列上无 TTL、无 supersede）。
+
+    A41：写侧确实没有失效时刻，但**读侧不能因此当作永不过期**（不变量 I9）——按行级
+    ``updated_at`` + facts 的 status 窗给出边界，并在 ``AS_OF_BASIS`` 如实登记「这是读侧口径」。
+    """
     from app.models.character import AICharacter
     row = await db.get(AICharacter, character_id)
     if row is None:
         return []
+    asserted = _naive_utc(getattr(row, "updated_at", None))
+    until, fresh = _view_freshness("character_current_status", asserted, as_of)
     return [{
         "source_store": "character_current_status",
         "source_table": "ai_characters",
@@ -232,10 +271,11 @@ async def _read_character_current_status(db, *, user_id: int, character_id: int,
         "predicate": "status",
         "kind": "status",
         "value": row.current_status,
-        "asserted_at": _iso(_naive_utc(getattr(row, "updated_at", None))),
-        "fresh_until": None,          # 列上无 TTL：永不自动失效（方案 §1.4 关键差异）
+        "asserted_at": _iso(asserted),
+        # A41：列本身没有 TTL，但**读侧必须有一条新鲜度边界**（I9）；窗口取自 facts 的 status 窗
+        "fresh_until": until,
         "is_authoritative": False,
-        "fresh_at_as_of": True,
+        "fresh_at_as_of": fresh,
         "line": f"角色当下状态: {row.current_status}",
     }]
 
@@ -260,6 +300,7 @@ async def _read_character_states(db, *, user_id: int, character_id: int, as_of) 
     updated = _naive_utc(getattr(row, "updated_at", None))
     values = {k: getattr(row, k, None) for k in dims}
     values["trust"] = getattr(row, "trust", None)
+    until, fresh = _view_freshness("character_states", updated, as_of)
     return [{
         "source_store": "character_states",
         "source_table": "character_states",
@@ -272,9 +313,10 @@ async def _read_character_states(db, *, user_id: int, character_id: int, as_of) 
         "value": values,                              # 八维 + trust（库内存量，未回放漂移）
         "labels": cn,
         "asserted_at": _iso(updated),
-        "fresh_until": None,                          # 无失效列：随漂移连续变化，无 TTL 语义
+        # A41：八维随漂移连续变化、列上无失效时刻 ⇒ 用 facts 的 mood 窗作读侧边界（I9）
+        "fresh_until": until,
         "is_authoritative": False,
-        "fresh_at_as_of": True,
+        "fresh_at_as_of": fresh,
         "age_hours_at_as_of": (round((as_of - updated).total_seconds() / 3600.0, 2)
                                if updated else None),
         "line": "；".join(f"{cn[k]}{values.get(k)}" for k in dims),
@@ -294,6 +336,7 @@ async def _read_life_states(db, *, user_id: int, character_id: int, as_of) -> li
     needs = needs if isinstance(needs, dict) else {}
     last_tick = _naive_utc(row.last_tick_at)
     age_h = round((as_of - last_tick).total_seconds() / 3600.0, 2) if last_tick else None
+    until, fresh = _view_freshness("life_states", last_tick, as_of)
     return [{
         "source_store": "life_states",
         "source_table": "life_states",
@@ -306,9 +349,10 @@ async def _read_life_states(db, *, user_id: int, character_id: int, as_of) -> li
         "value": needs,
         "extra": {"location": row.location, "current_room": row.current_room, "phase": row.phase},
         "asserted_at": _iso(last_tick),
-        "fresh_until": None,          # 无失效列：由 life_loop 逐 tick 覆写
+        # A41：needs/位置由 life_loop 逐 tick 覆写、列上无失效时刻 ⇒ 用 facts 的 location 窗（I9）
+        "fresh_until": until,
         "is_authoritative": False,
-        "fresh_at_as_of": True,
+        "fresh_at_as_of": fresh,
         "age_hours_at_as_of": age_h,
         "line": "需求 " + " ".join(f"{k}={v}" for k, v in sorted(needs.items())),
     }]
@@ -322,6 +366,7 @@ async def _read_working_state(db, *, user_id: int, character_id: int, as_of) -> 
         return []
     created = _naive_utc(getattr(row, "created_at", None) or getattr(row, "updated_at", None))
     age_h = round((as_of - created).total_seconds() / 3600.0, 2) if created else None
+    until, fresh = _view_freshness("working_state", created, as_of)
     return [{
         "source_store": "working_state",
         "source_table": "memories",
@@ -334,9 +379,10 @@ async def _read_working_state(db, *, user_id: int, character_id: int, as_of) -> 
         "value": _safe_json(row.content),       # 三桶（parsed 失败 ⇒ {}）
         "memory_id": row.id,
         "asserted_at": _iso(created),
-        "fresh_until": None,                    # 无 TTL：下一条滚动覆盖（id 降序取最新）
+        # A41：本行只被「下一条滚动」覆盖，长期不聊就一直挂着 ⇒ 补一条会话尺度的边界（I9）
+        "fresh_until": until,
         "is_authoritative": False,
-        "fresh_at_as_of": True,
+        "fresh_at_as_of": fresh,
         "age_hours_at_as_of": age_h,
         "line": f"working_state#{row.id}",
     }]

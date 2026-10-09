@@ -55,10 +55,13 @@ def test_crud():
         assert s.query(UserDeviceToken).count() == 2
 
 
-def test_push_rate_limit():
-    from app.application.push_service import _consume_rate_slot, _check_rate_limit, _rate_buckets
+def test_push_rate_limit(tmp_path, monkeypatch):
+    """频控判据 A41 起落在持久台账（原先是进程内 ``_rate_buckets``）⇒ 用例指向临时台账文件。"""
+    from app.application.push_service import _consume_rate_slot, _check_rate_limit
+    from app.scheduling import periodic_state as pst
 
-    _rate_buckets.clear()
+    monkeypatch.setattr(pst, "_STATE_FILE", tmp_path / "periodic_state.json")
+    monkeypatch.setattr(pst, "_LOCAL_MARKS", {})
     # 用 _consume_rate_slot 填充配额（模拟已发送的 FCM），替代原来 _check_rate_limit 计数
     for _ in range(5):
         _consume_rate_slot(999)

@@ -1,5 +1,5 @@
-"""记忆置顶摘要：按类型 LLM 概括最近记忆（6 小时节流）"""
-from datetime import datetime, timezone
+"""记忆置顶摘要：按类型 LLM 概括最近记忆（6 小时节流 + A41「有新事实即失效」）"""
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, or_, select, true
 
@@ -119,8 +119,51 @@ def _rel_time(dt, now=None) -> str:
     return "很久以前"
 
 
+# ── A41（2026-10-10，A37 批 4）：摘要「按事实淘汰」（审计 C30/C32/C34 的正修法）──
+# 旧口径只按时间淘汰：置顶摘要写完就要等满 6h（身份画像 24h），期间哪怕又落了一批新记忆也不会重写
+# ⇒ 陈旧快照被 `source="summary"` 的名义长期回注 prompt（二阶放大，比单条记忆影响面大）。
+# 新增失效路径：**原料里已有比本摘要更新的事实 ⇒ 判过期**，不必等满 TTL。
+# 成本护栏（无 flag，改数值即改常量）：
+#   · 条数门槛 STALE_NEW_MATERIAL_MIN——零碎写一条就重写等于把 LLM 当轮询打；
+#   · 重写地板 *_REWRITE_FLOOR——两次重写之间的最小间隔，最坏情况成本有上界
+#     （身份画像每 5 分钟被 scheduler 问一次，没有地板就会退化成「每 5 分钟一次 LLM」）。
+# 无新原料时逐字走旧判据（`_pin_still_usable` 的 `return age < ttl` 分支）。
+STALE_NEW_MATERIAL_MIN = 3
+SUMMARY_REWRITE_FLOOR = timedelta(hours=1)     # 置顶摘要：6h TTL ⇒ 最快 1h 一次
+IDENTITY_REWRITE_FLOOR = timedelta(hours=6)    # 身份画像：24h TTL ⇒ 最快 6h 一次
+
+
+def _pin_still_usable(last: datetime, *, now: datetime, ttl: timedelta,
+                      new_material: int, floor: timedelta) -> bool:
+    """这条置顶是否可以沿用（True＝不重写）。
+
+    迁移前语义在 ``new_material == 0`` 时逐字保留：``now - last < ttl`` 就沿用。
+    迁移后多一条按事实淘汰：新原料够数且已过地板 ⇒ 即便 TTL 没走完也判过期。
+    """
+    age = now - last
+    if new_material >= STALE_NEW_MATERIAL_MIN and age >= floor:
+        return False
+    return age < ttl
+
+
+async def _new_material_count(db, clauses, since) -> int:
+    """``since`` 之后新写入的原料条数（只数不取内容，WHERE 由调用方按自家取料条件传进来）。
+
+    与生成侧的取料查询**同口径**（含 ``_active_status_clause`` / ``_not_quarantined_clause``）——
+    数错了方向必须偏向「少数 ⇒ 不重写」，否则成本护栏会被绕过。
+    """
+    row = await db.execute(
+        select(func.count()).select_from(Memory).where(Memory.created_at > since, *clauses)
+    )
+    return int(row.scalar() or 0)
+
+
 async def summarize_memories(character_id: int, memory_type: str, force: bool = False) -> dict:
-    """生成/更新某类型的置顶摘要记忆（is_pinned=1）。默认 6 小时内不重复生成；force=True 强制重新生成。"""
+    """生成/更新某类型的置顶摘要记忆（is_pinned=1）。默认 6 小时内不重复生成；force=True 强制重新生成。
+
+    A41：6h 之内若同类型原料又落了 ≥ ``STALE_NEW_MATERIAL_MIN`` 条比本摘要更新的记忆，则**按事实
+    淘汰**、最早隔 ``SUMMARY_REWRITE_FLOOR`` 重写一次（不再必须等满 6h）。
+    """
     from datetime import datetime, timezone, timedelta
     from app.agent.llm_client import chat_completion
     from app.models.character import AICharacter
@@ -144,8 +187,21 @@ async def summarize_memories(character_id: int, memory_type: str, force: bool = 
         newest = _newest_pinned(existing)
         if newest is not None and not force:
             last = to_naive_utc(newest.updated_at or newest.created_at)
-            if isinstance(last, datetime) and now_naive_utc() - last < timedelta(hours=SUMMARY_TTL_HOURS):
-                return {"generated": False, "memory_id": newest.id, "reason": "throttled"}
+            if isinstance(last, datetime):
+                # A41：先数「比这条摘要更新的原料」，够数且过了重写地板 ⇒ 按事实淘汰（不等满 6h）
+                material = [
+                    Memory.character_id == character_id,
+                    Memory.memory_type == memory_type,
+                    Memory.is_pinned == False,  # noqa: E712
+                    Memory.is_archived == False,  # noqa: E712
+                    _active_status_clause(),
+                    _not_quarantined_clause(),
+                ]
+                if _pin_still_usable(last, now=now_naive_utc(),
+                                     ttl=timedelta(hours=SUMMARY_TTL_HOURS),
+                                     new_material=await _new_material_count(db, material, last),
+                                     floor=SUMMARY_REWRITE_FLOOR):
+                    return {"generated": False, "memory_id": newest.id, "reason": "throttled"}
 
         # 最近 20 条该类型非摘要记忆
         result = await db.execute(
@@ -228,6 +284,9 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
 
     输入：user_info 类记忆 + 意义记忆（why_it_matters 非空）最近 20 条；
     输出：1-2 句 AI 第一人称的长期用户画像（价值/动机/性格模式），24 小时节流。
+
+    A41：同样带「新事实即失效」——两路原料合起来 ≥ ``STALE_NEW_MATERIAL_MIN`` 条比本画像更新时，
+    最早隔 ``IDENTITY_REWRITE_FLOOR`` 重写（scheduler 每 5 分钟问一次，靠地板挡住高频重写）。
     """
     from datetime import datetime, timezone, timedelta
     from app.agent.llm_client import chat_completion
@@ -254,8 +313,20 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
         newest = _newest_pinned(existing)
         if newest is not None and not force:
             last = to_naive_utc(newest.updated_at or newest.created_at)
-            if isinstance(last, datetime) and now_naive_utc() - last < timedelta(hours=IDENTITY_TTL_HOURS):
-                return {"generated": False, "memory_id": newest.id, "reason": "throttled"}
+            if isinstance(last, datetime):
+                # A41：画像原料＝user_info 条 + 意义记忆条，两路各自数「比这条更新的事实」
+                base = [Memory.character_id == character_id,
+                        Memory.is_archived == False,  # noqa: E712
+                        _active_status_clause(),
+                        _not_quarantined_clause()]
+                new_material = await _new_material_count(
+                    db, [*base, Memory.is_pinned == False, Memory.memory_type == "user_info"], last)  # noqa: E712
+                new_material += await _new_material_count(
+                    db, [*base, Memory.why_it_matters.is_not(None)], last)
+                if _pin_still_usable(last, now=now_naive_utc(),
+                                     ttl=timedelta(hours=IDENTITY_TTL_HOURS),
+                                     new_material=new_material, floor=IDENTITY_REWRITE_FLOOR):
+                    return {"generated": False, "memory_id": newest.id, "reason": "throttled"}
 
         rows = (await db.execute(
             select(Memory)

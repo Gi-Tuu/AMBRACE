@@ -18,13 +18,39 @@ from app.memory.meta_guard import is_meta_without_anchor  # 批次二任务1：�
 _logger = get_logger("memory.extractor")
 BATCH_SIZE = 4  # C1（2026-08-18 降本）：2->4 条/批，调用次数 -30~50%，30min 节流不变
 EXTRACT_MAX_TOKENS = 512  # v4-flash 是推理模型：200 会被 reasoning 全部吃掉导致空输出
-_pending = {}
 _catchup_lock = asyncio.Lock()
-_pending_ids: set[int] = set()  # 队列中待提取的源消息 id（catchup 跳过防重复）
 EXTRACT_THROTTLE_SECONDS = 1800  # 2026-08-08：同角色 30 分钟最多提取一批
 MAX_PENDING_PAIRS = 10         # 队列上限：达到强制提取（防节流期间无限累积）
 MAX_PENDING_AGE = 600          # 队列滞留超时（秒）：凑不满批次时超时强制提取（2026-08-16 审计，防 source_id 永久占位）
-_last_batch_at: dict[int, float] = {}  # character_id -> 上次批量提取时间
+# A41（2026-10-10，A37 批 4）：原先这里的两份进程内态都已迁出——
+#   - ``_pending`` / ``_pending_ids`` → app/memory/extract_queue.py（对话配对落盘，重启不丢）
+#   - ``_last_batch_at``（同角色批量提取节流）→ 持久化台账 periodic_state（见 _throttle_open）
+# 「跨重启不丢」为什么是结构性的：队列的**唯一副本**在磁盘上（extract_queue 内部不缓存），
+# 节流判据的唯一副本也在台账文件里；单测直接断言文件存在 + 换新进程后判据不变。
+_THROTTLE_KEY = "extract_throttle:char:{character_id}"
+
+
+def _throttle_key(character_id) -> str:
+    return _THROTTLE_KEY.format(character_id=character_id)
+
+
+def _throttle_open(character_id) -> bool:
+    """距该角色上次批量提取是否已超出节流窗（True＝可以提取）。
+
+    与旧式 ``time.time() - _last_batch_at.get(cid, 0) < EXTRACT_THROTTLE_SECONDS`` 取反逐字同判：
+    台账里没有该 key（从未提取过）⇒ True，等价旧 ``.get(cid, 0)`` 用 0 造成的「不被节流」。
+    失败方向说明：台账读不出时 ``is_due`` 判「从未跑过」⇒ True。这一步管的是**内部批处理**
+    而非外发动作，最坏是多一次 LLM 调用；重复提取由 ``ProcessedExtraction`` 幂等表与
+    「取出即出队」挡住，不会落两条相同记忆。反过来若判「不许提取」，落盘队列会永久积压。
+    """
+    return _ledger.is_due(_throttle_key(character_id),
+                          timedelta(seconds=EXTRACT_THROTTLE_SECONDS))
+
+
+def _mark_batch_taken(character_id) -> None:
+    """记一次「本角色刚提取过一批」（节流起点），等价旧 ``_last_batch_at[cid] = time.time()``。"""
+    _ledger.mark_done(_throttle_key(character_id))
+
 SELF_STATEMENT_MAX_LEN = 200  # 自述（self_statement）正文长度上限（2026-08-23：控制篇幅，正文 ≤200 字，分段保留）
 
 EXTRACT_PROMPT = """今天是{today}。从以下对话中提取值得记住的信息。描述视角：角色自己的内容用「我」第一人称，关于用户的信息必须用「用户」作主语（主语规则见末段）。
@@ -59,6 +85,8 @@ CURATED 只收「长期稳定/可编纂」的信息，一次性情绪、临时�
 INTENT 只在用户明确表达了"未来要兑现的承诺/约定"或"某线索出现时提醒/做某事"时写一条；没有写"无"。拿不准时间就把时间窗写"无"、并给出≥2个线索词；既无时间又无线索、或只是随口一说的，不要写。置信：明确承诺/约定=high，明显线索命中=medium，随口一提/模糊意愿=low（低置信也建议写出，便于评估 G 写入质量；不愿判断时省略=medium 向后兼容）。"""
 
 from app.memory.dialogue_filter import looks_like_raw_dialogue
+from app.memory import extract_queue as _queue          # A41：待提取队列落盘（原进程内 _pending）
+from app.scheduling import periodic_state as _ledger    # A41：批量提取节流判据（原 _last_batch_at）
 
 def _get_val(response, key):
     for line in response.split("\n"):
@@ -565,26 +593,26 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
     return saved
 
 def _pending_remove_uid(session_id: int, uid: int) -> None:
-    """从主链路队列移除已提取的源消息（catchup 提取后调用，防主链路重复提取）"""
-    if session_id in _pending:
-        _pending[session_id] = [p for p in _pending[session_id] if p.get("source_id") != uid]
+    """从主链路队列移除已提取的源消息（catchup／截断保底提取后调用，防主链路重复提取）。
+
+    A41：队列本体迁到 app/memory/extract_queue.py（落盘）；**函数名保持不动**——
+    chat_tooling.py 按名导入、test_arbiter_seam.py 按名钉住这条接缝。
+    """
+    _queue.remove_source(session_id, uid)
 
 
 async def add_chat_memory_extraction(session_id, character_id, user_id, user_msg, ai_msg, source_id=None):
-    if session_id not in _pending: _pending[session_id] = []
     _now = time.time()
-    _pending[session_id].append({"user_message":user_msg,"ai_response":ai_msg,"source_id":source_id, "ts": _now})
-    if source_id is not None:
-        _pending_ids.add(source_id)
-    _q = _pending[session_id]
+    _q = _queue.add(session_id, {"user_message": user_msg, "ai_response": ai_msg,
+                                 "source_id": source_id, "ts": _now})
     _stale = any(_now - float(p.get("ts") or _now) > MAX_PENDING_AGE for p in _q)  # 2026-08-16 审计：滞留超时强制提取
     if len(_q) < BATCH_SIZE and not _stale:
         return
     # 2026-08-08 节流：同角色 30 分钟最多提取一批；节流中继续累积，达到上限/滞留超时强制提取
-    if _now - _last_batch_at.get(character_id, 0) < EXTRACT_THROTTLE_SECONDS and len(_q) < MAX_PENDING_PAIRS and not _stale:
+    if not _throttle_open(character_id) and len(_q) < MAX_PENDING_PAIRS and not _stale:
         return
-    pairs = _pending.pop(session_id)
-    _last_batch_at[character_id] = time.time()
+    pairs = _queue.take(session_id)
+    _mark_batch_taken(character_id)
     _logger.info("Batch: session=%d count=%d", session_id, len(pairs))
     for p in pairs:
         try:
@@ -596,8 +624,7 @@ async def add_chat_memory_extraction(session_id, character_id, user_id, user_msg
                 "source_id": p.get("source_id"),
             }, character_id=character_id, user_id=user_id)
         finally:
-            if p.get("source_id") is not None:
-                _pending_ids.discard(p["source_id"])
+            _queue.release_source(p.get("source_id"))   # 旧 _pending_ids.discard：提完才放开占位
         await asyncio.sleep(0.3)
 
 async def _mark_processed(source_id: int):
@@ -649,15 +676,15 @@ async def catchup_extract_all():
             )).scalars().all()
         for s in sessions:
             try:
-                # 2026-08-08 节流：与主链路同节奏，同角色 30 分钟最多补采一批
-                if time.time() - _last_batch_at.get(s.character_id, 0) < EXTRACT_THROTTLE_SECONDS:
+                # 2026-08-08 节流：与主链路同节奏，同角色 30 分钟最多补采一批（A41：同一把台账锁）
+                if not _throttle_open(s.character_id):
                     continue
                 async with async_session_factory() as db:
                     msgs = (await db.execute(select(ChatMessage).where(ChatMessage.session_id == s.id, ChatMessage.created_at >= cutoff).order_by(ChatMessage.created_at.asc()))).scalars().all()
                 new_pairs = 0
                 for um, am in _pair_user_ai(msgs):
                     uid = um.id
-                    if uid in processed or uid in _pending_ids:
+                    if uid in processed or uid in _queue.pending_source_ids():
                         continue
                     await extract_single(s.id, s.character_id, s.user_id, um.content, am.content, source_id=uid)
                     processed.add(uid)
@@ -665,7 +692,7 @@ async def catchup_extract_all():
                     _pending_remove_uid(s.id, uid)
                     await asyncio.sleep(0.3)
                 if new_pairs:
-                    _last_batch_at[s.character_id] = time.time()
+                    _mark_batch_taken(s.character_id)
                     _logger.info("Catchup session=%d new_pairs=%d", s.id, new_pairs)
             except Exception as e:
                 _logger.warning("Catchup s=%d: %s", s.id, e)

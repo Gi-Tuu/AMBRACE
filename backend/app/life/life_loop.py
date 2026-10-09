@@ -32,6 +32,7 @@ from app.life.decision import decide, StateSnapshot, Decision, ACTIONS, INTENT_A
 from app.life import space as _space          # 批次三(2026-09-16) 空间模型
 from app.life import relations as _relations   # 批次三(2026-09-16) 亲属守卫
 from app.utils.logger import get_logger
+from app.scheduling import periodic_state as _ledger  # A41：LLM 文案日配额迁持久台账
 
 _logger = get_logger("life.loop")
 
@@ -41,7 +42,19 @@ NIGHT_TICK_SECONDS = 3600 # 夜间 60 分钟
 # 记忆节流（修正 2026-08-26）：每角色每天 life_loop 记忆 ≤5 条；LLM 文案 ≤2 次
 _DAILY_MEMORY_LIMIT = 5
 _DAILY_LLM_COPY_LIMIT = 2
-_llm_copy_counts: dict[tuple[int, str], int] = {}
+# A41（2026-10-10，A37 批 4）：LLM 文案日配额从进程内 dict 迁到持久化台账（periodic_state）。
+# key 自带北京日期 ⇒ 限额跨天自然重置，原先「每日首轮清理非今日 key」的剪枝不再需要。
+# 旧写法重启即清零：当天已用过 2 次的角色重启后又能用 2 次（多花两次 LLM，审计 I8）。
+
+
+def _llm_copy_key(character_id: int) -> str:
+    """LLM 文案日配额的台账 key（北京日期在 key 里，跨天即换 key）。"""
+    return f"life_loop_llm_copy:{character_id}:{_beijing_date_str()}"
+
+
+def _llm_copy_used(character_id: int) -> int | None:
+    """今日已用次数；台账读不出 ⇒ ``None``（调用方按最保守＝视为已用满）。"""
+    return _ledger.counter(_llm_copy_key(character_id))
 
 
 def _now() -> datetime:
@@ -50,19 +63,6 @@ def _now() -> datetime:
 
 def _beijing_date_str() -> str:
     return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
-
-
-def _prune_llm_copy_counts() -> None:
-    """§4.4B（2026-09-09）：清理 _llm_copy_counts 里非今日的 key。
-
-    key 本身已带北京日期（``(character_id, 'YYYY-MM-DD')``），限额语义天然跨天重置；
-    但进程长跑时旧日期 key 会缓慢累积（每角色每天一个）。每次取 key 前顺手按当日清理一次，
-    成本 O(角色数)，无需额外调度。
-    """
-    today = _beijing_date_str()
-    stale = [k for k in _llm_copy_counts if k[1] != today]
-    for k in stale:
-        _llm_copy_counts.pop(k, None)
 
 
 # F5（2026-09-08）：写库遇 database is locked 的有限退避重试（0.3s/0.6s，共 2 次重试后放弃）
@@ -762,16 +762,18 @@ class LifeLoopTask:
         }
         return templates.get(decision.action, f"{char.name}做了「{act.label}」。")
 
-    def _llm_copy_key(self, character_id: int):
-        _prune_llm_copy_counts()
-        return (character_id, _beijing_date_str())
+    def _llm_copy_key(self, character_id: int) -> str:
+        return _llm_copy_key(character_id)
 
     def _llm_copy_allowed(self, character_id: int) -> bool:
-        return _llm_copy_counts.get(self._llm_copy_key(character_id), 0) < _DAILY_LLM_COPY_LIMIT
+        used = _llm_copy_used(character_id)
+        if used is None:
+            _logger.info("life loop LLM 配额台账读不出 char=%d ⇒ 回落模板文案(A41)", character_id)
+            return False
+        return used < _DAILY_LLM_COPY_LIMIT
 
     def _bump_llm_copy(self, character_id: int) -> None:
-        k = self._llm_copy_key(character_id)
-        _llm_copy_counts[k] = _llm_copy_counts.get(k, 0) + 1
+        _ledger.bump_counter(_llm_copy_key(character_id))
 
     def _publish_event(self, char, decision, act, memory_id, summary: str | None = None):
         try:

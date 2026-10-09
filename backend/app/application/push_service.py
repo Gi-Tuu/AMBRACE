@@ -17,6 +17,7 @@ from sqlalchemy import delete, select
 
 from app.db.database import async_session_factory
 from app.models.device import UserDeviceToken
+from app.scheduling import periodic_state as _ledger
 from app.utils.logger import get_logger
 
 _logger = get_logger("push_service")
@@ -24,7 +25,14 @@ _logger = get_logger("push_service")
 # 频控：30 分钟窗口最多 5 条/用户（高优先级 channel=alert 豁免）
 _RATE_WINDOW = 1800
 _RATE_MAX = 5
-_rate_buckets: dict[int, list[float]] = {}  # user_id -> [timestamps]
+# A41（2026-10-10，A37 批 4）：滑窗时间戳从进程内 dict 迁到持久化台账。
+# 旧写法 `_rate_buckets: dict[int, list[float]] = {}` 重启即空 ⇒ 离线时刚重启能一口气补发 5 条
+# （审计 §4 批 4 验收第一条「重启后不突发」）。台账口径见 app/scheduling/periodic_state.py。
+_RATE_KEY_PREFIX = "push_rate"
+
+
+def _rate_key(user_id: int) -> str:
+    return f"{_RATE_KEY_PREFIX}:{user_id}"
 
 
 @dataclass
@@ -45,23 +53,17 @@ def _check_rate_limit(user_id: int, priority: str) -> bool:
     """返回 True 表示允许发送，False 表示被频控。高优先级（alert）豁免。只检查不计数。"""
     if priority == "high":
         return True
-    now = time.time()
-    bucket = _rate_buckets.setdefault(user_id, [])
-    # 清理过期时间戳
-    cutoff = now - _RATE_WINDOW
-    bucket[:] = [t for t in bucket if t > cutoff]
-    if len(bucket) >= _RATE_MAX:
+    used = _ledger.window_count(_rate_key(user_id), _RATE_WINDOW, now=time.time())
+    if used is None:
+        # 台账读不出 ⇒ 按最保守（宁可不发）；只留痕，不把它记成「已发送」
+        _logger.info("Push rate state unreadable user=%d ⇒ 保守跳过本次推送(A41)", user_id)
         return False
-    return True
+    return used < _RATE_MAX
 
 
 def _consume_rate_slot(user_id: int) -> None:
     """FCM 实际发送时消耗一个频控配额。"""
-    now = time.time()
-    bucket = _rate_buckets.setdefault(user_id, [])
-    cutoff = now - _RATE_WINDOW
-    bucket[:] = [t for t in bucket if t > cutoff]
-    bucket.append(now)
+    _ledger.window_add(_rate_key(user_id), _RATE_WINDOW, at=time.time())
 
 
 async def notify_user(

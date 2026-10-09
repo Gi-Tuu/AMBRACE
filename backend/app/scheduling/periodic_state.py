@@ -19,6 +19,7 @@ M2（同日第二批）追加「每日一次」口径 ``run_daily_if_due``：判
 import asyncio
 import json
 import os
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -43,6 +44,11 @@ _LOCKS: dict[str, asyncio.Lock] = {}
 _LOCAL_STAMPS: dict[str, datetime] = {}
 # 「每日一次」失败退避闸门（next_retry_at）的内存兜底，同上
 _LOCAL_RETRY_AT: dict[str, datetime] = {}
+# A41：计数/滑窗的写盘失败兜底，与上面两个同款（主判据在台账文件，这里只防「没记成 ⇒ 重跑」）
+_LOCAL_COUNTERS: dict[str, int] = {}
+_LOCAL_MARKS: dict[str, list[float]] = {}
+# _patch_entry 的「删除该字段」哨兵（None 是合法值：last_success 就允许写成 null）
+_DROP = object()
 
 
 def _lock_for(key: str) -> asyncio.Lock:
@@ -59,26 +65,37 @@ def _parse_ts(value) -> datetime | None:
         return None
 
 
-def _read_all() -> dict:
-    """读整份台账；文件缺失/坏内容/非对象一律当「从未跑过」，不影响主循环。"""
+def _read_raw() -> tuple[dict, bool]:
+    """读整份台账，返回 ``(数据, 是否可读)``。
+
+    **两种「读不到」必须分开**（A41 硬口径）：
+    - 文件不存在 ⇒ ``({}, True)``：正常的「从未记过」状态，调用方按 0/空解释是准确的；
+    - 空文件/坏 JSON/非对象/权限异常 ⇒ ``({}, False)``：判据不明，调用方必须走**最保守**方向
+      （宁可不发／不重复发），不许当成「没发过」。
+    """
     try:
         raw = _STATE_FILE.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
-        return {}
+        return {}, True
     except Exception as e:  # 权限/编码等
         _logger.warning("Read periodic state failed: %s", e)
-        return {}
+        return {}, False
     if not raw:
-        return {}
+        return {}, False
     try:
         data = json.loads(raw)
     except Exception as e:
         _logger.warning("Unparsable periodic state: %s", e)
-        return {}
+        return {}, False
     if not isinstance(data, dict):
         _logger.warning("Unparsable periodic state: %r", raw[:64])
-        return {}
-    return data
+        return {}, False
+    return data, True
+
+
+def _read_all() -> dict:
+    """读整份台账；文件缺失/坏内容/非对象一律当「从未跑过」，不影响主循环。"""
+    return _read_raw()[0]
 
 
 def _entry(key: str) -> tuple[datetime | None, int]:
@@ -111,31 +128,51 @@ def fail_streak(key: str) -> int:
     return _entry(key)[1]
 
 
-def _write_entry(key: str, last_success: datetime | None, streak: int,
-                 next_retry: datetime | None = None) -> None:
-    """整表读改写 + 临时文件原子替换（避免半截内容被读到）。
+def _patch_entry(key: str, fields: dict) -> bool:
+    """把 ``fields`` 合并进该 key 的台账条目（**其余字段原样保留**），整表读改写 + 临时文件原子替换。
 
-    写失败不静默：记 ERROR 并把这一拍的判据落到内存兜底，否则时间戳不前进会导致每拍重跑。
-    ``next_retry`` 只由「每日一次」的失败记账写入（见 mark_failed_daily）；成功记账不带这个
-    字段，等于顺清掉退避闸门。
+    值为 :data:`_DROP` 表示删除该字段。返回是否写盘成功；失败只记 ERROR、不向调用方抛。
+    保留未知字段是 A41 的前提：同一个条目既要能存 ``last_success``（到期判据）也要能存
+    ``count``/``marks``（计数/滑窗判据），两边互相不得把对方的字段抹掉。
     """
-    data = _read_all()
-    entry = {"last_success": last_success.strftime(_STATE_FMT) if last_success else None,
-             "fail_streak": int(streak)}
-    if next_retry is not None:
-        entry["next_retry_at"] = next_retry.strftime(_STATE_FMT)
+    data, _ok = _read_raw()
+    item = data.get(key)
+    entry = dict(item) if isinstance(item, dict) else {}
+    for name, value in fields.items():
+        if value is _DROP:
+            entry.pop(name, None)
+        else:
+            entry[name] = value
     data[key] = entry
     try:
         _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = _STATE_FILE.with_name(_STATE_FILE.name + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, _STATE_FILE)
+        return True
     except Exception as e:
-        _logger.error("Write periodic state failed for %s, fallback to in-memory stamp: %s", key, e)
-        if last_success is not None:
-            _LOCAL_STAMPS[key] = last_success
-        if next_retry is not None:
-            _LOCAL_RETRY_AT[key] = next_retry
+        _logger.error("Write periodic state failed for %s: %s", key, e)
+        return False
+
+
+def _write_entry(key: str, last_success: datetime | None, streak: int,
+                 next_retry: datetime | None = None) -> None:
+    """记一次到期判据（last_success / fail_streak），委托 :func:`_patch_entry` 原子落盘。
+
+    写失败不静默：记 ERROR 并把这一拍的判据落到内存兜底，否则时间戳不前进会导致每拍重跑。
+    ``next_retry`` 只由「每日一次」的失败记账写入（见 mark_failed_daily）；成功记账不带这个
+    字段，等于顺清掉退避闸门。
+    """
+    entry = {"last_success": last_success.strftime(_STATE_FMT) if last_success else None,
+             "fail_streak": int(streak)}
+    entry["next_retry_at"] = (next_retry.strftime(_STATE_FMT)
+                              if next_retry is not None else _DROP)
+    if _patch_entry(key, entry):
+        return
+    if last_success is not None:
+        _LOCAL_STAMPS[key] = last_success
+    if next_retry is not None:
+        _LOCAL_RETRY_AT[key] = next_retry
 
 
 def is_due(key: str, interval: timedelta, now: datetime | None = None) -> bool:
@@ -295,3 +332,117 @@ async def run_daily_if_due(key: str, coro_factory: Callable[[], Awaitable[object
         _logger.info("Daily task done (key=%s, reason=%s, localDate=%s)",
                      key, reason, local_now(finished).date())
         return True
+
+
+# ──────────────── A41（2026-10-10，A37 批 4）：持久计数与滑窗 ────────────────
+#
+# 「节流判据不得只放进程内」（审计 I8）补齐的两种口径。run_if_due 只管「距上次成功多久」；
+# 现网另外三类节流根本不是「间隔」语义：
+#   - 每角色每天 N 次（生活环 LLM 文案每日 ≤2 次）⇒ 需要计数；
+#   - 每角色每 N 拍一次（离线生活按强度 1/2/3 拍尝试一次活动）⇒ 需要计数；
+#   - 同一窗口内 ≤N 条（离线推送 30 分钟 ≤5 条）⇒ 需要滑窗时间戳。
+# 三类都写进**同一份台账文件、同一条原子写路径**（_patch_entry），不另起一套机制；条目里新增的
+# count / marks 字段与 last_success 互不覆盖（_patch_entry 合并写）。
+# 失败方向（任务书硬口径）：读不出 ⇒ 返回 None，调用方按**最保守**解释（宁可不发／不重复发）；
+# 「文件不存在」是正常的「从未记过」⇒ 返回 0／空列表，不是 None。
+
+
+def _stored_int(item, field: str) -> int | None:
+    """从台账条目里取整数字段；缺行/坏值 ⇒ None（区分「没记过」与「记不清」）。"""
+    if not isinstance(item, dict) or field not in item:
+        return None
+    try:
+        return max(0, int(item[field]))
+    except (TypeError, ValueError):
+        return None
+
+
+def counter(key: str) -> int | None:
+    """台账里的持久计数。
+
+    - 无该 key／从未记过 ⇒ ``0``（与旧进程内 ``dict.get(k, 0)`` 同判）；
+    - 台账读不出（坏 JSON／权限／非对象）⇒ ``None``：调用方必须按**最保守**解释
+      （限额类 ⇒ 视为已用满，宁可用兜底模板也不要重复外发／重复计费）。
+    写盘失败时的内存兜底（:data:`_LOCAL_COUNTERS`）取较大者，避免「没记成 ⇒ 又发一次」。
+    """
+    data, ok = _read_raw()
+    if not ok:
+        return None
+    stored = _stored_int(data.get(key), "count")
+    if stored is None:
+        stored = 0
+    local = _LOCAL_COUNTERS.get(key)
+    return max(stored, local) if local is not None else stored
+
+
+def bump_counter(key: str) -> int | None:
+    """计数 +1 并落盘，返回新值；台账读不出／写不进 ⇒ ``None``（调用方按最保守解释）。"""
+    cur = counter(key)
+    if cur is None:
+        return None
+    nxt = cur + 1
+    if _patch_entry(key, {"count": nxt}):
+        _LOCAL_COUNTERS.pop(key, None)
+    else:
+        _LOCAL_COUNTERS[key] = nxt
+    return nxt
+
+
+def _stored_marks(item) -> list[float] | None:
+    if not isinstance(item, dict) or "marks" not in item:
+        return None
+    raw = item["marks"]
+    if not isinstance(raw, list):
+        return None
+    out: list[float] = []
+    for v in raw:
+        try:
+            out.append(float(v))
+        except (TypeError, ValueError):
+            return None          # 有一个坏值就判「记不清」，不做部分信任
+    return out
+
+
+def _window_marks_raw(key: str, window_sec: float, now: float) -> list[float] | None:
+    """滑窗内的时间戳（升序）；无记录 ⇒ ``[]``；读不出 ⇒ ``None``。"""
+    data, ok = _read_raw()
+    if not ok:
+        return None
+    marks = _stored_marks(data.get(key))
+    if marks is None:
+        marks = []
+    local = _LOCAL_MARKS.get(key)
+    if local:
+        marks = sorted(marks + local)
+    return sorted(t for t in marks if now - t < window_sec)
+
+
+def window_count(key: str, window_sec: float, *, now: float | None = None) -> int | None:
+    """窗口内已发生次数；``None`` ⇒ 台账读不出，调用方按最保守方向处理（宁可不发）。"""
+    marks = _window_marks_raw(key, window_sec, now if now is not None else time.time())
+    return None if marks is None else len(marks)
+
+
+def window_add(key: str, window_sec: float, *, at: float | None = None) -> bool:
+    """记一次「实际发生」（写侧只在真发出去之后调用），并按窗口裁剪旧戳。
+
+    返回是否落盘成功；失败时落内存兜底（:data:`_LOCAL_MARKS`），否则这一发不被记账 ⇒
+    下次检查会多放行一条。
+    """
+    now = at if at is not None else time.time()
+    data, ok = _read_raw()
+    marks = _stored_marks(data.get(key)) if ok else None
+    if marks is None:
+        marks = []
+    # 上一次写盘失败留下的内存戳（从未落过盘）必须一起带上，否则那一发就漏记 ⇒ 多放行一条
+    local = _LOCAL_MARKS.get(key)
+    if local:
+        marks = sorted(marks + [t for t in local if now - t < window_sec])
+    # 不去重：同一时间戳的两次「实际发出」就是两条（旧进程内桶同样直接 append）
+    merged = sorted([t for t in marks if now - t < window_sec] + [now])
+    if ok:
+        if _patch_entry(key, {"marks": merged}):
+            _LOCAL_MARKS.pop(key, None)
+            return True
+    _LOCAL_MARKS[key] = merged
+    return False

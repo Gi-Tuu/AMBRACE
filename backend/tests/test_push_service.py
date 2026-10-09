@@ -63,10 +63,20 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+@pytest.fixture(autouse=True)
+def rate_ledger(tmp_path, monkeypatch):
+    """A41：频控桶从进程内 ``_rate_buckets`` 迁到持久台账 ⇒ 每例指向临时台账文件，例间不串桶。"""
+    from app.scheduling import periodic_state as pst
+    monkeypatch.setattr(pst, "_STATE_FILE", tmp_path / "periodic_state.json")
+    monkeypatch.setattr(pst, "_LOCAL_MARKS", {})
+    monkeypatch.setattr(pst, "_LOCAL_COUNTERS", {})
+    yield
+
+
 # ── 频控 ──
 
 def test_rate_limit_normal(push_db):
-    push_service._rate_buckets.clear()
+    # 桶隔离见 autouse fixture rate_ledger（A41 起频控落在临时台账文件）
     # 用 _consume_rate_slot 填充配额（模拟已发送的 FCM），替代原来 _check_rate_limit 计数
     for _ in range(5):
         push_service._consume_rate_slot(999)
@@ -77,7 +87,7 @@ def test_rate_limit_normal(push_db):
 
 def test_rate_limited_notify_no_fcm(push_db, monkeypatch):
     """频控命中：notify_user 直接返回 rate_limited，不触发 WS/FCM。"""
-    push_service._rate_buckets.clear()
+    # 桶隔离见 autouse fixture rate_ledger（A41 起频控落在临时台账文件）
     ws_called = []
 
     async def _ws(u, p):
@@ -98,7 +108,7 @@ def test_rate_limited_notify_no_fcm(push_db, monkeypatch):
 
 def test_ws_delivered_skips_fcm(push_db, monkeypatch):
     """WS 在线送达：不查 token、不发 FCM。"""
-    push_service._rate_buckets.clear()
+    # 桶隔离见 autouse fixture rate_ledger（A41 起频控落在临时台账文件）
 
     async def _ws(u, p):
         return True
@@ -118,7 +128,7 @@ def test_ws_delivered_skips_fcm(push_db, monkeypatch):
 # ── FCM fallback ──
 
 def test_fcm_fallback_when_ws_offline(push_db, monkeypatch):
-    push_service._rate_buckets.clear()
+    # 桶隔离见 autouse fixture rate_ledger（A41 起频控落在临时台账文件）
 
     async def _ws(u, p):
         return False
@@ -145,7 +155,7 @@ def test_fcm_fallback_when_ws_offline(push_db, monkeypatch):
 # ── 无 token → offline ──
 
 def test_no_token_offline(push_db, monkeypatch):
-    push_service._rate_buckets.clear()
+    # 桶隔离见 autouse fixture rate_ledger（A41 起频控落在临时台账文件）
 
     async def _ws(u, p):
         return False
@@ -160,7 +170,7 @@ def test_no_token_offline(push_db, monkeypatch):
 
 def test_invalid_token_removed(push_db, monkeypatch):
     """FCM 返回 invalid_token → 该 token 记录被删除。"""
-    push_service._rate_buckets.clear()
+    # 桶隔离见 autouse fixture rate_ledger（A41 起频控落在临时台账文件）
 
     async def _ws(u, p):
         return False
@@ -181,7 +191,7 @@ def test_invalid_token_removed(push_db, monkeypatch):
 # ── FCM 未配置 → error + offline ──
 
 def test_fcm_not_configured(push_db, monkeypatch):
-    push_service._rate_buckets.clear()
+    # 桶隔离见 autouse fixture rate_ledger（A41 起频控落在临时台账文件）
 
     async def _ws(u, p):
         return False
@@ -201,7 +211,7 @@ def test_fcm_not_configured(push_db, monkeypatch):
 # ── alert 渠道 ──
 
 def test_fcm_alert_channel_and_high_priority(push_db, monkeypatch):
-    push_service._rate_buckets.clear()
+    # 桶隔离见 autouse fixture rate_ledger（A41 起频控落在临时台账文件）
 
     async def _ws(u, p):
         return False
@@ -228,7 +238,7 @@ def test_fcm_alert_channel_and_high_priority(push_db, monkeypatch):
 
 def test_ws_delivered_does_not_consume_rate_limit(push_db, monkeypatch):
     """WS 在线送达 5 次后，第 6 次 normal 级 notify_user 仍不被频控（WS 不消耗配额）。"""
-    push_service._rate_buckets.clear()
+    # 桶隔离见 autouse fixture rate_ledger（A41 起频控落在临时台账文件）
 
     async def _ws(u, p):
         return True
@@ -251,7 +261,7 @@ def test_ws_delivered_does_not_consume_rate_limit(push_db, monkeypatch):
 
 def test_high_priority_fcm_does_not_consume_rate_limit(push_db, monkeypatch):
     """高优先级 FCM 发送不消耗频控配额。"""
-    push_service._rate_buckets.clear()
+    # 桶隔离见 autouse fixture rate_ledger（A41 起频控落在临时台账文件）
 
     async def _ws(u, p):
         return False

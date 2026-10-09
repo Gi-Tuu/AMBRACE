@@ -250,7 +250,12 @@ def test_等价_character_current_status与直接查列相等(snap_db):
             row = await db.get(AICharacter, CID)
             return row.current_status
     assert _values(snap, "character_current_status") == [_run(_direct())]
-    assert _items(snap, "character_current_status")[0]["fresh_until"] is None, "该列无 TTL"
+    # A41：列上没有写侧 TTL，但读侧必须自带一条新鲜度边界（不变量 I9），窗口取 facts 的 status 窗
+    item = _items(snap, "character_current_status")[0]
+    window = facts_mod._TRANSIENT_FRESH_HOURS["status"]
+    assert item["fresh_until"] == (
+        datetime.fromisoformat(item["asserted_at"]) + timedelta(hours=window)
+    ).isoformat(sep=" ", timespec="seconds")
 
 
 def test_等价_character_states与直接查同表逐字段相等(snap_db):
@@ -376,6 +381,68 @@ def test_as_of真的驱动新鲜判定而非只是打标(snap_db):
                     if i["value"] == _STATUS_MEM_VALUE)
     assert _flag(fresh) is True
     assert _flag(stale) is False
+
+
+# ─────────────── ③b A41（批 4）：四张瞬时视图的新鲜度边界（不变量 I9 的推广）───────────────
+
+# 路 → 读侧窗口所借的 facts 谓词（与 world_state._VIEW_FRESH_PREDICATE 同表，抄一份防实现自证）
+_A41_VIEW_WINDOW_SOURCE = {
+    "character_current_status": "status",
+    "character_states": "mood",
+    "life_states": "location",
+    "working_state": "status",
+}
+
+
+def test_A41四视图_fresh_until等于asserted加facts同名窗(snap_db):
+    """窗口数值必须逐路等于 ``facts._TRANSIENT_FRESH_HOURS``，本入口不新写小时数字面量。"""
+    snap = _run(ws.world_state_snapshot(UID, CID))
+    now = datetime.fromisoformat(snap["as_of"])
+    for route, pred in _A41_VIEW_WINDOW_SOURCE.items():
+        window = facts_mod._TRANSIENT_FRESH_HOURS[pred]
+        assert window in (12, 72), f"{pred} 的窗口不是 facts 登记的那三个值之一"
+        for it in _items(snap, route):
+            asserted = datetime.fromisoformat(it["asserted_at"])
+            assert it["fresh_until"] == (
+                asserted + timedelta(hours=window)).isoformat(sep=" ", timespec="seconds"), route
+            # 判据本身也走 facts 的同一个函数口径（不在快照侧另写一份比较逻辑）
+            assert it["fresh_at_as_of"] == facts_mod._predicate_fresh(asserted, now, window), route
+
+
+def test_A41四视图_迁移前后同输入对照_只加标注不删行(snap_db):
+    """迁移前语义：``fresh_until`` 恒 None（旧注释直说「永不自动失效」）⇒ 消费侧无法判过期。
+
+    迁移后：同一份种子，在 ``as_of=now`` 时四路都仍判新鲜（行为等价，存量注入不变），把 as_of
+    推到 90 天后则逐路掉窗（改进点）。两拍的**行值与条数一字不差** ⇒ 补齐只新增标注。
+    """
+    at_now = _run(ws.world_state_snapshot(UID, CID))
+    stale = _run(ws.world_state_snapshot(UID, CID, as_of=now_naive_utc() + timedelta(days=90)))
+    for route in _A41_VIEW_WINDOW_SOURCE:
+        old_items, new_items = _items(at_now, route), _items(stale, route)
+        assert old_items, f"{route} 种子没读到东西，对照就是假的"
+        assert [i["value"] for i in new_items] == [i["value"] for i in old_items], route
+        assert [i["asserted_at"] for i in new_items] == [i["asserted_at"] for i in old_items], route
+        for it in old_items:
+            assert it["fresh_at_as_of"] is True, "刚写的存量值不该被判成过期（否则本步就改了行为）"
+        for it in new_items:
+            assert it["fresh_at_as_of"] is False, f"{route} 90 天后仍说新鲜 ⇒ 边界没生效"
+
+
+def test_A41视图缺断言时刻_fresh为False且不虚构时刻(snap_db):
+    """把源行的时间戳清空（构造「读不到断言时刻」），验保守方向。"""
+    from sqlalchemy import update
+    async def _clear():
+        async with snap_db() as db:
+            await db.execute(update(LifeState).values(last_tick_at=None))
+            await db.commit()
+    _run(_clear())
+    snap = _run(ws.world_state_snapshot(UID, CID))
+    items = _items(snap, "life_states")
+    assert items, "清空时间戳不该让该行消失"
+    for it in items:
+        assert it["asserted_at"] is None
+        assert it["fresh_until"] is None, "给不出失效时刻时不虚构一个"
+        assert it["fresh_at_as_of"] is False, "读不到时刻 ⇒ 保守判不新鲜"
 
 
 # ─────────────── ④ 异常隔离 ───────────────

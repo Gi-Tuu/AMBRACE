@@ -50,7 +50,7 @@ def test_run_internal_异常隔离(monkeypatch):
     assert "内部失败" in out["error"]
 
 
-def test_extractor_批量经内部入口(monkeypatch):
+def test_extractor_批量经内部入口(monkeypatch, tmp_path):
     from app.memory import extractor
     calls = []
 
@@ -60,8 +60,12 @@ def test_extractor_批量经内部入口(monkeypatch):
 
     monkeypatch.setattr("app.agent.internal_runner.run_internal", _fake_internal)
     # 构造批量条件：同一 session 累积 BATCH_SIZE(4) 条（2026-08-18 C1 批次 2->4），且节流通过
-    extractor._pending.clear()
-    extractor._last_batch_at.clear()
+    # A41：队列与节流判据都已落盘（原 extractor._pending / _last_batch_at）⇒ 用例指向临时文件
+    from app.memory import extract_queue
+    from app.scheduling import periodic_state as pst
+    monkeypatch.setattr(extract_queue, "_QUEUE_FILE", tmp_path / "extract_queue.json")
+    monkeypatch.setattr(pst, "_STATE_FILE", tmp_path / "periodic_state.json")
+    monkeypatch.setattr(pst, "_LOCAL_STAMPS", {})
     sid = 999901
     asyncio.run(extractor.add_chat_memory_extraction(sid, 11, 4, "m1", "r1", source_id=1))
     asyncio.run(extractor.add_chat_memory_extraction(sid, 11, 4, "m2", "r2", source_id=2))

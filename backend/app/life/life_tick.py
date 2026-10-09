@@ -14,7 +14,23 @@ from app.scheduling.registry import BaseTask
 _logger = get_logger("life.tick")
 
 _STEP = {"low": 3, "medium": 2, "high": 1}
-_tick_count: dict[int, int] = {}
+
+
+def _tick_key(character_id: int) -> str:
+    """拍数计数的台账 key（A41：进程内 ``_tick_count`` 重启归零 ⇒ 强度 high 的角色重启当拍就活动）。"""
+    return f"life_tick:char:{character_id}"
+
+
+def _next_tick_ordinal(character_id: int) -> int | None:
+    """本拍是该角色的第几拍（持久计数 +1）；台账读不出 ⇒ ``None``，调用方按最保守不尝试活动。"""
+    from app.scheduling import periodic_state as _ledger
+
+    return _ledger.bump_counter(_tick_key(character_id))
+
+
+def _activity_due(n: int | None, step: int) -> bool:
+    """第 n 拍该不该尝试活动（判据与迁移前逐字一致：``n % step == 0``；n 缺失＝记不清 ⇒ 不尝试）。"""
+    return n is not None and n % step == 0
 
 
 class LifeTickTask(BaseTask):
@@ -57,10 +73,8 @@ class LifeTickTask(BaseTask):
                             await apply_tick(db, c.id, "sleep")
                             await _phase3_hook(db, c.id, c.user_id)
                             continue
-                        # 白天：计数 + 每 step 次尝试一次活动
-                        n = _tick_count.get(c.id, 0) + 1
-                        _tick_count[c.id] = n
-                        if n % _STEP.get(intensity, 3) != 0:
+                        # 白天：计数 +1（持久台账）+ 每 step 次尝试一次活动
+                        if not _activity_due(_next_tick_ordinal(c.id), _STEP.get(intensity, 3)):
                             await apply_tick(db, c.id, phase)
                             continue
                         needs = json.loads(st.needs_json or "{}") or default_needs()
