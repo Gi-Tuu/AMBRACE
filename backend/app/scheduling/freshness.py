@@ -219,9 +219,9 @@ async def moment_pre_send(moment_id: int, snapshot_comments: list) -> tuple[str 
         facts, fresh = await read_moment_facts(moment_id, snapshot_comments)
         if facts is None:
             return "", snapshot_comments
-        verdict, reason, mark = verdict_for("moment_comment", facts)
-        _logger.info("A39 闸② channel=moment_comment%s %s 快照=%d 现状=%d",
-                     "" if gate else "（影子）", mark, len(snapshot_comments), len(fresh))
+        verdict, reason, mark = verdict_for("moment_comment", facts,
+                                            快照=len(snapshot_comments), 现状=len(fresh))
+        _logger.info("A39 闸② channel=%s%s %s", "moment_comment", "" if gate else "（影子）", mark)
         if gate and verdict == CANCEL:
             return None, snapshot_comments
         if gate:
