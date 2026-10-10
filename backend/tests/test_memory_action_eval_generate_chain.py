@@ -554,6 +554,8 @@ def test_报表的多跑行只在真多跑时才出现且带着明细():
     assert "「每一跑都过」1／2" in out and "AR 读后者" in out, \
         "没说清 AR 读哪一列 ⇒ 两列并存时下一个人随便挑一个"
     assert "第 2、3 跑分别产出了什么" in out, "一致率只有分子没有底 ⇒ 没法复核"
+    assert out.count("起头：") == 4, \
+        "第 2、3 跑的回复起头没进报表＝后两跑的 E3 还是只能判「没产出」（2 题 × 2 跑＝4 行）"
     assert out.count("指纹 `") == 6, "留底条数≠题数×3 跑（应 6 条）"
     assert "首跑 指纹" in out, "首跑没留底＝离线复算永远比尺子少一维（10-06 实测差 1 题）"
     assert "无动作" in out and "无通道" in out, "指纹里缺维度 ⇒ 复算不出来"
@@ -725,12 +727,63 @@ def test_每跑都要留gold进prompt的底():
     assert "gold 进 prompt=" in out, "报表没逐跑打 gold 可见性"
 
 
+def test_计数器真按task分开数而不是折叠侧自己塞的():
+    """批 46 的教训原样复发过一次：折叠侧的桩自己把字段喂进去＝取料侧没被证明。
+    这里真装一次计数器，看**入口那半条链**有没有把账按 task 分开。"""
+    import app.agent.llm_client as lc
+
+    async def _fake(messages, **kw):
+        return "ok"
+    mp = pytest.MonkeyPatch()
+    mp.setattr(lc, "chat_completion", _fake)
+    box = ev.install_llm_call_counter()
+    try:
+        async def _drive():
+            await lc.chat_completion([{"role": "system", "content": "x"}], task="memory")
+            await lc.chat_completion([{"role": "system", "content": "y"}], task="chat")
+            await lc.chat_completion([{"role": "system", "content": "z"}], task="chat")
+        asyncio.run(_drive())
+        assert box["n"] == 3, box
+        assert box["by_task"] == {"memory": 1, "chat": 2}, \
+            "入口没按 task 分账＝报表那个拆分是编出来的：%s" % box.get("by_task")
+    finally:
+        ev.uninstall_llm_call_counter(box)
+        assert lc.chat_completion is _fake, "还原没落地＝下一段测试会打在桩上"
+        mp.undo()
+
+
+def test_计数器的分账真的接到了报表那行数():
+    """`run_generate_eval` 在 pytest 里跑不了（engine 按进程缓存），这一维只能用源码锚点钉住：
+    接线一断＝报表永远是 `{}`，而下一个人会把空拆分读成"没有装配侧调用"。"""
+    src = (REPO / "scripts" / "diagnostics" / "memory_action_eval.py").read_text(encoding="utf-8")
+    assert 'usage["by_task"] = dict(counter.get("by_task") or {})' in src, \
+        "计数器与报表之间的接线断了（报表会装作没有 task 拆分）"
+
+
+def test_报表把请求按task拆开并明说请求数不等于跑次数():
+    """10-10 的账就是这么错的：题×跑＝30，实际 60 发（装配里补生成日摘要那一发也计费）。"""
+    rep = _fake_rep()
+    rep["usage"]["by_task"] = {"memory": 5, "chat": 5}
+    out = ev.render_generate(rep)
+    assert "按 task 拆分" in out, "报表只给一个总数＝下一个人还会把跑次数当钱数"
+    assert '"memory": 5' in out and '"chat": 5' in out, "task 拆分没落到报表上"
+    assert "请求数≠跑次数" in out, "拆了却没说清为什么拆＝数字还在但结论照样读错"
+    assert "请求数≠跑次数" in out, "拆了却没说清为什么拆＝数字有了但结论照样读错"
+    # 反向钉：桩里没有 by_task 时必须看得见"没这个数"，不许凭空造一个好看的拆分
+    plain = _fake_rep()
+    assert "by_task" not in json.dumps(plain["usage"])
+    assert '按 task 拆分**={}' in ev.render_generate(plain), "读不到拆分却要装作读到了"
+
+
 def test_计费预告必须在第一发请求之前打出来():
     """这条路上每次请求都计费：跑完才发现"其实是 30 次"来不及撤，所以先把账摆在前面。"""
     src = inspect.getsource(ev.main)
     assert "计费预告" in src and src.index("计费预告") < src.index("await run_generate_eval"), \
         "预告被打在了跑完之后（或根本没打）"
     assert "×" in src[src.index("计费预告"):src.index("计费预告") + 400], "预告只给题数不给乘法"
+    _seg = src[src.index("计费预告"):src.index("await run_generate_eval")]
+    assert "发准备" in _seg and "别把跑次数当请求数" in _seg, \
+        "预告只报「题×跑＝请求」＝钱数会少报一倍（10-10 两轮各 60 发被记成 30 次）"
 
 
 def test_重复跑的圈数必须引用repeat参数且缺省是3():
@@ -834,6 +887,11 @@ def test_逐跑输入指纹必须留底并且分得清抖动与污染():
     assert f["prompt_fp"] == "a" * 12 and f["input_identical"] is True, f
     assert f["other_runs"][0]["prompt_fp"] == "a" * 12, "第 2 跑的输入没留底＝这一维又看不见"
     assert f["other_runs"][0]["ctx_chars"] == 3338, "逐跑的 prompt 体量没留底＝污染与抖动还是没法分"
+    # 逐跑的**回复起头**也必须进留底（10-10 批 49）：E3 有 14/20 出在第 2、3 跑
+    g = _stub_run(prompt_fp="g" * 12, reply_head="【策略：简短回应】 好，记下了")
+    h = ev.fold_runs([dict(g), dict(g), dict(g)])
+    assert h["other_runs"][0]["reply_head"].startswith("【策略：简短回应】"), \
+        "第 2/3 跑没存起头＝那两跑的 E3 只能判「没产出」，判不出「它当时写了什么」"
     g = ev.fold_runs([dict(a), dict(b), dict(a)])
     assert g["input_identical"] is False and g["fp_spread"] == ["a" * 12, "b" * 12], g
     # 反向钉：没留 fp（旧行／单跑档）时不许凭空喊污染

@@ -1179,10 +1179,14 @@ def install_llm_call_counter():
     import app.agent.llm_client as lc
 
     orig = lc.chat_completion
-    box = {"n": 0, "orig": orig, "last_messages": None}
+    box = {"n": 0, "by_task": {}, "orig": orig, "last_messages": None}
 
     async def counted(messages, **kw):
         box["n"] += 1
+        # 按 task 分开数：装配链里那一发（task=memory 的日摘要补生成）也是真计费，
+        # 只报总数就会让人把"题×跑"当钱数（10-10 两轮各 60 发就是这么读成 30 的）。
+        _t = str(kw.get("task") or "?")
+        box["by_task"][_t] = box["by_task"].get(_t, 0) + 1
         box["last_messages"] = messages      # 模型真正看到的那段 prompt（取证用，别只信装配返回值）
         return await orig(messages, **kw)
     lc.chat_completion = counted
@@ -1310,7 +1314,11 @@ def fold_runs(runs: list) -> dict:
                             "n_ctx_msgs": x.get("n_ctx_msgs"),
                             "prompt_fp": x.get("prompt_fp"),
                             "prompt_fp_stable": x.get("prompt_fp_stable"),
-                            "payloads": " ‖ ".join(x["payloads"])[:60]}
+                            "payloads": " ‖ ".join(x["payloads"])[:60],
+                            # 逐跑起头（10-10 批 49 加）：两轮 20 条 E3 里有 14 条发生在第 2/3 跑，
+                            # 而全文只存了首跑 ⇒ 那 14 条判得出"没产出"、判不出"它当时写了什么"。
+                            # 起头 120 字够回答这一问（正文里到底有没有那句口语确认）。
+                            "reply_head": str(x.get("reply_head") or "")[:120]}
                            for x in runs[1:]]
     first["sig"] = run_sig_text(runs[0])
     # 输入逐跑是否同一份＝漂移的**第一归因**，必须从留底里离线判得出来（不靠再跑一次花钱）。
@@ -1479,6 +1487,7 @@ async def run_generate_eval(cases, *, user_id=GENERATE_USER_ID, limit=0, k=5,
         await asyncio.sleep(1.5)              # 给 fire-and-forget 的用量落库一点时间（仍可能少于请求数）
         usage = await _llm_usage_totals()
         usage["requests_sent"] = counter["n"]
+        usage["by_task"] = dict(counter.get("by_task") or {})
         n = len(rows)
         # 分母口径交给纯函数（可单测）：**剔除锚点过期没跑的题**，没跑≠没过
         return {"rows": rows, **generate_summary(rows),
@@ -1609,9 +1618,13 @@ def render_generate(rep) -> str:
         "- 配置表复制（生产库只读 → 临时库）：%s" % json.dumps(rep.get("borrowed") or {}, ensure_ascii=False),
         "- **计费自证**：入口计数（真发出去的请求）=%s ｜ 临时库 `llm_usage` 落库行数=%s"
         "（用量走 fire-and-forget，**落库行数可能少于请求数**，10-05 试点实测 10/9 ⇒ 只报行号会把基础设施的时序缺陷读成被测行为）"
-        "｜ prompt=%s completion=%s models=%s" % (
+        "｜ prompt=%s completion=%s models=%s\n"
+        "- **请求按 task 拆分**=%s ⇒ **请求数≠跑次数**：装配链里那一发（`task=memory` 的日摘要补生成）"
+        "也是真计费，10-10 实测每跑 2 发。报账报**发数**，别拿「N 题×M 跑」当钱数读"
+        "（台账里写「30 次计费」的那两轮，留底自证都是 60 发）。" % (
             u.get("requests_sent"), u.get("rows"), u.get("prompt_tokens"),
-            u.get("completion_tokens"), u.get("models")),
+            u.get("completion_tokens"), u.get("models"),
+            json.dumps(u.get("by_task") or {}, ensure_ascii=False)),
         "- 偏离生产处（记账）：reasoning_level=%s；temperature 逐题见表；"
         "旗标＝生产实配 %s" % (EVAL_REASONING_LEVEL, json.dumps(rep.get("flags") or {}, ensure_ascii=False)),
         "- **装配里的「现在」＝本机时钟**（`section_world._compute_current_time_str` 用 `datetime.now(beijing_tz)`，"
@@ -1654,7 +1667,9 @@ def render_generate(rep) -> str:
     extra = [(r["cid"], o) for r in rep["rows"] for o in (r.get("other_runs") or [])]
     if extra:
         L += ["", "## 第 2、3 跑分别产出了什么（一致率必须可复核）", "",
-              "- 每题先打**首跑指纹**，再打第 2、3 跑；**指纹＝参与判一致的全部维度**"
+              "- 每题先打**首跑指纹**，再打第 2、3 跑，逐跑另附**回复起头 120 字**"
+              "（10-10 批 49 补：E3 有 14/20 出在第 2、3 跑，只存首跑全文时那 14 条只能判「没产出」，"
+              "判不出「它当时写了什么」）；**指纹＝参与判一致的全部维度**"
               "（过没过｜动作｜日期｜豁免｜载荷｜通道，文本已 `_norm`）。"
               "三跑指纹全等 ⇔ `consistent=True` ⇒ 这一列可以**从报表离线复算**，不需要信代码"
               "（10-06 第一次三跑时豁免没留底，离线复算比尺子多数 1 题，就是这么发现的）。",
@@ -1674,6 +1689,8 @@ def render_generate(rep) -> str:
                 L.append("    - 第 %d 跑 指纹 `%s`（err=%s‖gold 进 prompt=%s‖输入 %s／%s 字）" % (
                     i, o.get("sig") or "—", o["err"] or "—", o.get("gold_ctx"),
                     o.get("prompt_fp") or "没留fp", o.get("ctx_chars")))
+                if o.get("reply_head"):
+                    L.append("        起头：%s" % str(o["reply_head"]).replace("|", "／"))
             if r.get("clock_only_drift"):
                 L.append("    - （三跑只差墙上时钟，剥掉钟点后输入同一份＝不算污染）")
             if r.get("input_identical") and not r.get("pass_all"):
@@ -1833,9 +1850,12 @@ async def main():
         n_j1 = sum(1 for c in cases if c.get("judge") == "J1"
                    and (not a.only_cid or c.get("cid") == a.only_cid))
         n_bill = min(n_j1, a.limit) if a.limit else n_j1
-        print("[计费预告] %d 题 × %d 跑 ＝ **最多** %d 次请求"
+        n_runs = n_bill * max(1, a.repeat)
+        print("[计费预告] %d 题 × %d 跑 ＝ **最多** %d 跑；但一跑在装配链里可能发两发"
+              "（`task=memory` 日摘要补生成＋`task=chat` 回复，10-10 实测每跑 2 发）"
+              "⇒ **预算请按 %d 发准备，别把跑次数当请求数报账**"
               "（锚点过期的题在发之前就被跳过、不计费，所以实际可能更少）%s" % (
-                  n_bill, max(1, a.repeat), n_bill * max(1, a.repeat),
+                  n_bill, max(1, a.repeat), n_runs, n_runs * 2,
                   "｜本轮只跑 %s" % a.only_cid if a.only_cid else ""), file=sys.stderr)
         rep = await run_generate_eval(cases, limit=a.limit, k=a.k, temperature=a.temperature,
                                       filler_target=a.fillers, repeat=a.repeat,

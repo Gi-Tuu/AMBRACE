@@ -77,23 +77,53 @@ def test_断言2_J2槽名必须是真实存在的槽():
             assert k in real, f"{c['cid']} 用了不存在的槽 {k}（真实槽全集：{sorted(real)}）"
 
 
-def test_断言3_期望片段必须真的在种子内容里():
+def test_断言3_期望片段必须在判据看得见的那一侧():
+    """两条路（10-10 批 49 随迁，来历＝j1s01/j1s02 的「库里已答完」缺陷）。
+
+    - 非 supersede：待记事实**只能来自库**（题面故意不点名），片段必须在 seeds 里；
+    - supersede：**新值只能来自用户这一句话**，库里只许留被作废的旧值。
+      旧口径把新值也写成种子，于是「现居城西」早就在库里，模型按提示词「同一内容别重复记」
+      不产出是**对的**，判据却要它再写一遍 ⇒ 这道题永远量不到东西
+      （10-10 两轮 20 条 E3 里 17 条是「整条没产出」，这两题各占一次）。
+    """
+    from_turn, from_seeds = 0, 0
     for c in CASES:
         e = c["expect"]
         if c["judge"] != "J1":
             continue
         blob = " ".join(s["content"] for s in c["seeds"])
         for frag in (e.get("field_match") or {}).values():
-            assert frag in blob, f"{c['cid']} 要求动作含「{frag}」，但种子里没有 ⇒ 模型做对也判不过"
+            if c["category"] == "supersede":
+                assert frag in c["turn"], f"{c['cid']} supersede 的新值片段「{frag}」得由用户这句话给出"
+                assert frag not in blob, \
+                    f"{c['cid']} 的新值「{frag}」已经在库里 ⇒ 模型不产出才是对的，这道题量不到东西"
+                from_turn += 1
+            else:
+                assert frag in blob, f"{c['cid']} 要求动作含「{frag}」，但种子里没有 ⇒ 模型做对也判不过"
+                from_seeds += 1
+    assert from_turn >= 2 and from_seeds >= 4, \
+        f"两条分支只命中 起自话轮={from_turn}／起自库={from_seeds} ⇒ 这条断言接近空转，样本没覆盖到"
 
 
-def test_断言4_禁用片段不许出现在该被引用的种子里():
-    """supersede 类：旧值可以存在于库里，但**不能同时是新值句子里的词**，否则自相矛盾。"""
+def test_断言4_禁用片段必须在库里且不在用户这句话里():
+    """10-10 批 49 反转口径（旧约定「seeds[0]＝新值」随 j1s01/j1s02 改题面一起作废）。
+
+    - 禁用片段（被作废的旧值）**必须真的在库里**——不在库里就没有可复发的对象，题面空转；
+    - 又**不得出现在用户这句话里**——用户自己说了旧值，正确产出反而必被判错；
+    - 非 supersede 类保持原意：禁用片段不许写进种子（那是"用错事实"的对照项，不是现状）。
+    """
+    checked = 0
     for c in CASES:
         e = c["expect"]
-        new_val = c["seeds"][0]["content"]          # 约定：第 0 条＝作废后的新值
+        blob = " ".join(s["content"] for s in c["seeds"])
         for frag in (e.get("forbidden") or []):
-            assert frag not in new_val, f"{c['cid']} 的禁用片段「{frag}」出现在新值句子里 ⇒ 正确动作必被判错"
+            if c["category"] != "supersede":
+                assert frag not in blob, f"{c['cid']} 非作废类却把禁用片段写进了种子 ⇒ 判据自相矛盾"
+                continue
+            assert frag in blob, f"{c['cid']} 的旧值「{frag}」不在库里 ⇒ 没有可复发的东西，这道题量不到"
+            assert frag not in c["turn"], f"{c['cid']} 用户这句话就带了旧值「{frag}」⇒ 正确动作必被判错"
+            checked += 1
+    assert checked >= 2, f"supersede 的旧值规则只命中 {checked} 处 ⇒ 这条断言接近空转"
 
 
 def test_断言5_星期换算必须对得上():
