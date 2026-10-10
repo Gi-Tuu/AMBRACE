@@ -284,15 +284,27 @@ def test_投影调用点全仓只有一处():
     assert hits == [str(Path("agent/runtime.py"))], f"接线点扩散了：{hits}"
 
 
-def test_上下文装配仍然没人读workspace_投影不许顺手进prompt():
+def test_上下文里读workspace的只有注入档那一处():
+    """②c 前置（10-10）把第一阶段的「装配没人读 workspace」正式改成**受闸单点读**。
+
+    与 `test_cognitive_workspace_phase1.py` 里同族那条一起改（这条守卫原本在两处各写了一份——
+    本身就是"约束存在多份＝迟早分叉"的实例），主判据在那边；这里补一条它没覆盖的：**渲染点只有一处**。
+    """
     from app.agent import context_builder as cb
+
+    root = Path(__file__).resolve().parents[1] / "app"
+    render_hits = [str(p.relative_to(root)) for p in root.rglob("*.py")
+                   if "render_projection_block" in p.read_text(encoding="utf-8")
+                   and p.name != "workspace_projection.py"]      # 定义处本身不算调用点
+    assert render_hits == [str(Path("agent/context/section_projection.py"))], \
+        f"渲染点扩散了（多一处渲染＝多一处不受这把闸管）：{render_hits}"
 
     targets = [Path(cb.__file__)]
     ctx_dir = Path(cb.__file__).parent / "context"
     if ctx_dir.is_dir():
         targets += sorted(ctx_dir.glob("*.py"))
-    reading = [p.name for p in targets if "workspace" in p.read_text(encoding="utf-8")]
-    assert not reading, f"投影被接进上下文装配了：{reading}"
+    reading = {p.name for p in targets if "workspace" in p.read_text(encoding="utf-8")}
+    assert reading <= {"section_projection.py", "assembly.py"}, f"白名单外的读取点：{sorted(reading)}"
 
 
 @pytest.mark.parametrize("bad", [None, "", 0, {}, [], {"empty": True}, {"entries": []}])

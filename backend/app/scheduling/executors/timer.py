@@ -64,20 +64,14 @@ async def run_timer(item: dict, g: GateBundle) -> bool:
         event_kind == "ready" and (owner == "user" or _topic_guard_on)
         and event.session_id and event.source_message_id
     )
+    _settled_texts = None
     if _settled_check:
         try:
+            from app.scheduling import freshness as _frs
             from app.scheduling.promise_parser import ready_result_seen
-            async with g.session_factory() as _db:
-                _rows = (await _db.execute(
-                    select(ChatMessage.content)
-                    .where(
-                        ChatMessage.session_id == event.session_id,
-                        ChatMessage.sender_type == "user",
-                        ChatMessage.id > event.source_message_id,
-                    )
-                    .order_by(ChatMessage.id.desc()).limit(5)
-                )).all()
-            _texts = [r[0] for r in reversed(_rows) if r[0]]
+            # 取料单点＝freshness.recent_user_texts；下面闸②要的是同一批正文，一次查询两处用
+            _texts = await _frs.recent_user_texts(event, g.session_factory)
+            _settled_texts = _texts
             if _texts and ready_result_seen(_texts, hint_text):
                 from app.scheduling.promise_service import mark_fired
                 await mark_fired(event.id)
@@ -106,9 +100,17 @@ async def run_timer(item: dict, g: GateBundle) -> bool:
     # 从 ready 扩到非 ready（back 这类此前到点照问，于是"我已经到家了"之后还被问一遍）。
     # 判据一律复用既有探测器（ready_result_seen／_signal_seen），本模块不写新正则；
     # 影子＝只读数留痕不拦；实闸开且判到 cancel ⇒ 与上面 settled 分支同处理（mark_fired，承诺不丢）。
-    if event_kind != "ready":
+    # 10-10 批 44：ready 也进闸②——此前 `timer_ready` 在域内白名单里注册了却永远产不出读数
+    # （闸只在非 ready 上调用＝测了一条走不到的路）。两条硬约束：①只扩到上面 settled 判据**跑过**
+    # 那批（owner=user 或 topic_guard 开）；owner=ai 的 ready 是"煮好了叫你"，用户说了自己的结果
+    # 不构成它过期。②复用那一次取料 ⇒ 一条事件一条 SELECT。cancel 在这里实际够不到（同一判据、
+    # 同一批正文刚查过），所以三档（全关／影子／实闸）下行为逐字不变，变的只有读数面。
+    _gate_ready = event_kind == "ready" and _settled_texts is not None
+    if event_kind != "ready" or _gate_ready:
         from app.scheduling import freshness as _frs
-        if await _frs.check_timer_event(event, g.session_factory) is None:
+        if await _frs.check_timer_event(
+                event, g.session_factory,
+                texts=_settled_texts if _gate_ready else None) is None:
             from app.scheduling.promise_service import mark_fired
             await mark_fired(event.id)
             _logger.info("Timer %d settled by 闸② kind=%s（用户已把结果说过）", event.id, event_kind)

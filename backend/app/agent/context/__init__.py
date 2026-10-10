@@ -35,6 +35,9 @@ from app.agent.context import section_prospective_cue as _section_prospective_cu
 from app.agent.context import section_working_state as _section_working_state  # noqa: F401  # M3-b（2026-09-07）：触发工作记忆注入分区注册
 from app.agent.context import section_user_now as _section_user_now  # noqa: F401  # §20（2026-09-04）：触发用户最新状态分区注册
 from app.agent.context import section_current_state as _section_current_state  # noqa: F401  # C3（2026-09-10）：触发用户现状锚点分区注册
+# A42 ②c 注入档（2026-10-10）：触发投影 append 分区注册。**必须在这里 import**——注册靠 import 时登记，
+# 而本包顶层不能引 assembly（会撞 context_builder 的 import 循环，见本文件 §注）。
+from app.agent.context import section_projection as _section_projection  # noqa: F401
 from app.agent.context.section_memories import _bump_memory_round  # P3-5：注册表路径先 bump 再跑 sections
 
 _logger = logging.getLogger("agent.context")

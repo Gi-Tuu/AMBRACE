@@ -372,6 +372,118 @@ async def project_into_workspace(state: dict) -> dict | None:
     return report
 
 
+# ── ②c 注入档（A42 前置，2026-10-10）：把**已投影好**的结构化字段渲染成一条 append 块 ──
+# 键名待注册说明（诚实边界）：`AGENT_FLAGS`／`FLAG_CATALOG`／`docs/feature-flags.md`／`plans`
+# 注册键行是**四处耦合面**（守卫 `test_flag_docs_reconcile` 双向核），而本单白名单只有两个生产文件，
+# 所以这里先用 `AGENT_FLAGS.get(INJECT_FLAG, False)` 读——读不到＝关 ⇒ 注册之前这一档永远关着，
+# 也就是默认零行为变化；补注册那一步交复核方按四处口径一起做。
+INJECT_FLAG = "projection_inject_v1"
+# 独立新分区的配额（token 口径）：五格值体量实测 ≈357 字符，而既有最小 append 段
+# `current_state_anchor` 只有 220 tokens 且**不许被挤占** ⇒ 另开一区，200 tokens＝400 字符上限
+INJECT_QUOTA_TOKENS = 200
+_INJECT_CHARS_PER_TOKEN = 2        # 与 context/sections._EST_CHARS_PER_TOKEN 同口径（2 字符≈1 token）
+INJECT_HEADER = "## 本轮结构化状态（系统整理，仅作校准参考；与上文冲突时以上文为准）"
+INJECT_MAX_LINES_PER_FIELD = 3
+INJECT_MAX_LINE_CHARS = 60
+
+
+def _inject_scalar(v) -> str:
+    """单值取一行：压掉换行、限长；空值返回 ""。"""
+    return str(v or "").strip().replace("\n", " ")[:INJECT_MAX_LINE_CHARS]
+
+
+def _inject_lines(ws) -> list[str]:
+    """五格 → 若干行「格名：值」。缺的格整行不出现，每格限量（宁可少说不编）。"""
+    out: list[str] = []
+
+    ident = getattr(ws, "identity", None) or {}
+    names = [f"{lab}={_inject_scalar(ident.get(key))}"
+             for key, lab in (("character_name", "我"), ("user_name", "对方"))
+             if _inject_scalar(ident.get(key))]
+    if names:
+        out.append("- 身份：" + "、".join(names))
+
+    entries = (getattr(ws, "current_state", None) or {}).get("entries") or []
+    rows = []
+    for e in entries[:INJECT_MAX_LINES_PER_FIELD]:
+        if not isinstance(e, dict):
+            continue
+        label = _inject_scalar(e.get("label") or e.get("key"))
+        value = _inject_scalar(e.get("value"))
+        if label and value:
+            rows.append(f"{label}={value}")
+    if rows:
+        out.append("- 用户现状：" + "；".join(rows))
+
+    routes = (getattr(ws, "world", None) or {}).get("routes") or {}
+    rows = []
+    for name in sorted(routes):
+        if name == "working_state":            # 单独渲染成下面那一格，避免同一事实出现两次
+            continue
+        items = (routes.get(name) or {}).get("items") or []
+        for it in items[:1]:
+            if not isinstance(it, dict):
+                continue
+            value = _inject_scalar(it.get("value") or it.get("label") or it.get("predicate"))
+            if value:
+                rows.append(f"{_inject_scalar(name)}={value}")
+    if rows:
+        out.append("- 世界事实：" + "；".join(rows[:INJECT_MAX_LINES_PER_FIELD]))
+
+    items = (getattr(ws, "working_state", None) or {}).get("items") or []
+    rows = [_inject_scalar(it.get("value") or it.get("label") or it.get("predicate"))
+            for it in items[:INJECT_MAX_LINES_PER_FIELD] if isinstance(it, dict)]
+    rows = [r for r in rows if r]
+    if rows:
+        out.append("- 工作记忆：" + "；".join(rows))
+
+    topics = getattr(ws, "active_topics", None) or []
+    rows = []
+    for t in topics[:INJECT_MAX_LINES_PER_FIELD]:
+        name = _inject_scalar((t.get("topic") or t.get("name")) if isinstance(t, dict) else t)
+        if name:
+            rows.append(name)
+    if rows:
+        out.append("- 进行中话题：" + "；".join(rows))
+
+    return out
+
+
+def render_projection_block(ws, *, quota_tokens: int = INJECT_QUOTA_TOKENS) -> str:
+    """**纯函数**：只读 ws 上已投影好的字段，渲染成一段注入文本；没内容就返回 ""。
+
+    三条硬边界（守卫逐条钉）：①不查库、不调模型、不改投影语义（函数体里没有任何 IO／await）；
+    ②体量不超本区配额，且**按整行取舍**——装不下就整行不留，绝不把一行截成半句；
+    ③五格全空 ⇒ 返回 ""，调用方因此零追加。
+    """
+    if ws is None:
+        return ""
+    lines = _inject_lines(ws)
+    if not lines:
+        return ""
+    budget = max(0, int(quota_tokens)) * _INJECT_CHARS_PER_TOKEN
+    used = len(INJECT_HEADER) + 1
+    kept: list[str] = []
+    for ln in lines:
+        cost = len(ln) + 1
+        if used + cost > budget:
+            continue
+        kept.append(ln)
+        used += cost
+    if not kept:
+        return ""
+    return INJECT_HEADER + "\n" + "\n".join(kept)
+
+
+def inject_flag_on() -> bool:
+    """注入档是否打开。**默认关**：键没注册／flags 读不到都算关（关＝逐字节旧行为）。"""
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get(INJECT_FLAG, False))
+    except Exception:
+        return False
+
+
 __all__ = [
     "DEFER_REASONS",
     "KEEP_ITEM_KEYS",
@@ -380,7 +492,11 @@ __all__ = [
     "PROJECTED_FIELDS",
     "SHADOW_FLAG",
     "SHADOW_ROUTE",
+    "INJECT_FLAG",
+    "INJECT_HEADER",
+    "INJECT_QUOTA_TOKENS",
     "coverage_report",
+    "inject_flag_on",
     "project_current_state",
     "project_focus",
     "project_identity",
@@ -388,5 +504,6 @@ __all__ = [
     "project_topics",
     "project_working_state",
     "project_workspace",
+    "render_projection_block",
     "project_world",
 ]

@@ -397,7 +397,13 @@ def test_真实草稿集的认证状态不许装():
             assert str(s.get("exempt_reason") or "").startswith("J4 弃权类"), (
                 "%s J4 没写豁免原因 ⇒ 空着会被读成「忘了跑」" % c["cid"])
         else:
-            assert s.get("certified") is True, "%s 检索侧可认证却没通过/没回填" % c["cid"]
+            if s.get("certified") is not True:
+                # §2.3 的口径＝没过检索认证的题**留在集里并写清理由**，不参与分母。
+                # 这条分支是 10-10 加的：夹具修好后 real09 掉出认证（两条"绕一跳"的干扰项压住 gold），
+                # 老守卫那时写死了"J3 必须 True"，等于逼人把难题删掉或把状态装回去。
+                assert str(s.get("blocked_reason") or "").strip(), (
+                    "%s 未认证却没写 blocked_reason＝读起来像忘了跑" % c["cid"])
+                assert str(s.get("certified_at") or ""), "%s 未认证也要记实测日期" % c["cid"]
             assert s.get("no_mem_fail") is True and s.get("distractor_no_gold") is True, (
                 "%s 认证四条不齐（空库召不出／只灌干扰项不得出 gold）" % c["cid"])
 
@@ -430,6 +436,25 @@ def test_真实草稿集里不许出现生产库真实专名():
                      (r"\d+号\d+室", "门牌号形态"),
                      (r"1[3-9]\d{9}", "手机号形态")):
         assert not __import__("re").search(pat, text), "真实草稿集出现%s" % why
+
+
+def test_真实草稿集每条语料必须是一句干净的话():
+    """夹具损伤守卫（2026-10-10 实测：12 题的 distractors[2]/[4]/[5] 全带字面量 `",`＋换行＋`"`，
+    一条干扰项里塞了两句话、末条还挂着裸引号＝**36 处，题题中招**）。
+    这类坏字节不改变"过没过"，但**干扰项条数与库行数对不上**——而认证表、AR_strict、
+    「每类 ≥6」和 `rows_mean` 全按条数算；等于我拿一份自己写坏的题面在量题目难度。"""
+    _require_real_or_skip()
+    bad = []
+    for line in REAL.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        c = json.loads(line)
+        for key in ("seeds", "distractors"):
+            for s in c.get(key) or []:
+                t = str((s or {}).get("content") or "")
+                if '"' in t or "\\" in t or "\n" in t:
+                    bad.append("%s.%s %r" % (c["cid"], key, t[:36]))
+    assert not bad, "语料里还有夹具杂字符（一条塞两句／结尾裸引号）：" + "；".join(bad[:4])
 
 
 def test_重复_cid_会被抓到():

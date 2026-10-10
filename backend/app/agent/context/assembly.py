@@ -383,6 +383,13 @@ async def assemble_context(state: dict, *, stream: bool | None = None, _section_
         for _b in _sv["working_state"]:
             state["context_messages"].append({"role": "system", "content": _b})
 
+    # A42 ②c 注入档（2026-10-10）：认知投影结果的 append 块，紧随现状三连（同类状态、且在素材块之前）。
+    # 注入闸 `projection_inject_v1` 关（含"键还没注册"）⇒ builder 返回空列表 ⇒ 这里追加零条＝逐字节旧行为；
+    # 它与 cognitive_projection_shadow **各自独立**（开影子只攒读数，不动 prompt）。
+    if _sv and "workspace_projection" in _sv:
+        for _b in _sv["workspace_projection"]:
+            state["context_messages"].append({"role": "system", "content": _b})
+
     # location（2026-09-19 顺序审计）：location 属状态类，从 append 链尾上移并入现状组
     # （current_state_anchor / user_now / working_state 之后、织库等素材块之前）；
     # 零 token，纯位移，不改文本/配额/闸门（见 docs/context-order-convention.md §2.2）。

@@ -28,7 +28,7 @@ _logger = get_logger("scheduler.freshness")
 __all__ = [
     "FreshFacts", "decide", "shadow_mark", "verdict_for",
     "read_unfinished_topic_facts", "read_life_regression_facts", "refresh_life_items",
-    "read_timer_facts", "check_timer_event", "timer_channel",
+    "read_timer_facts", "check_timer_event", "timer_channel", "recent_user_texts",
     "items_for_prompt", "pre_send_check", "CANCEL", "KEEP", "REGENERATE",
 ]
 
@@ -249,25 +249,19 @@ _READERS: dict[str, object] = {
 _SIGNAL_KINDS = frozenset({"arrival", "medication"})
 
 
-async def read_timer_facts(event, session_factory=None) -> FreshFacts:
-    """通道 6（timer）的兑现前重取：用户在这条承诺**之后**是否已经把结果说了。
+async def recent_user_texts(event, session_factory=None) -> list[str]:
+    """这条承诺**之后**该会话里的用户正文（旧→新，最多 5 条）＝通道 6 唯一的取料口径。
 
-    旧口径只有 `event_type == "ready"` 才做这件事，`back` 这类到点照问，于是"我已经到家了"
-    之后还会被问一遍到家没。这里把同一条判据扩到非 ready：
-      - `result_ready` ← `promise_parser.ready_result_seen`（既有探测器，不复制字面表）
-      - `signal_seen` ← `prospective_intent._signal_seen`，只在 arrival／medication 两类上调用
+    抽成单点有两个理由：①`executors/timer.py` 的 settled 判据读的是**同一条查询**（同 WHERE、
+    同 limit），两处各写一遍＝ready 事件一拍发两条一样的 SELECT，且谓词会各自漂移；②闸②要能
+    在 ready 上也拿到读数，又必须复用那一次取料（见 `check_timer_event(texts=...)`）。
     会话工厂由调用点显式传入（`timer.py` 的命门规矩：本模块不许 import `async_session_factory`，
-    否则 tests/ 那 13 处打桩会静默绕过桩去查真库）。
+    否则 tests/ 那 13 处打桩会静默绕过桩去查真库）。锚缺失／读不到 ⇒ 空列表（调用方按"没变"处理）。
     """
-    from app.scheduling.prospective_intent import _signal_seen
-    from app.scheduling.promise_parser import ready_result_seen
-
     session_id = getattr(event, "session_id", None)
     src_id = getattr(event, "source_message_id", None)
-    kind = str(getattr(event, "event_type", "") or "")
-    hint = str(getattr(event, "content_hint", "") or "").strip()
     if not session_id or not src_id:
-        return FreshFacts()                 # 反查锚缺失＝未知，按"没变"处理
+        return []                           # 反查锚缺失＝未知，不猜
     try:
         from sqlalchemy import select
 
@@ -291,8 +285,27 @@ async def read_timer_facts(event, session_factory=None) -> FreshFacts:
             ).all()
     except Exception as e:
         _logger.warning("freshness timer read failed event=%s: %s", getattr(event, "id", "?"), e)
-        return FreshFacts()
-    texts = [r[0] for r in reversed(rows) if r[0]]
+        return []
+    return [r[0] for r in reversed(rows) if r[0]]
+
+
+async def read_timer_facts(event, session_factory=None, texts=None) -> FreshFacts:
+    """通道 6（timer）的兑现前重取：用户在这条承诺**之后**是否已经把结果说了。
+
+    旧口径只有 `event_type == "ready"` 才做这件事，`back` 这类到点照问，于是"我已经到家了"
+    之后还会被问一遍到家没。这里把同一条判据扩到非 ready：
+      - `result_ready` ← `promise_parser.ready_result_seen`（既有探测器，不复制字面表）
+      - `signal_seen` ← `prospective_intent._signal_seen`，只在 arrival／medication 两类上调用
+
+    `texts` 传入时**不再查库**：调用点（`timer.py` 的 settled 判据）已经取过同一批正文。
+    """
+    from app.scheduling.prospective_intent import _signal_seen
+    from app.scheduling.promise_parser import ready_result_seen
+
+    kind = str(getattr(event, "event_type", "") or "")
+    hint = str(getattr(event, "content_hint", "") or "").strip()
+    if texts is None:
+        texts = await recent_user_texts(event, session_factory)
     if not texts:
         return FreshFacts()
     return FreshFacts(result_ready=ready_result_seen(texts, hint),
@@ -303,14 +316,18 @@ def timer_channel(event) -> str:
     return "timer_ready" if str(getattr(event, "event_type", "") or "") == "ready" else "timer_general"
 
 
-async def check_timer_event(event, session_factory=None) -> str | None:
-    """timer 专用入口：语义与 `pre_send_check` 一致（""＝没参与，None＝cancel）。"""
+async def check_timer_event(event, session_factory=None, texts=None) -> str | None:
+    """timer 专用入口：语义与 `pre_send_check` 一致（""＝没参与，None＝cancel）。
+
+    `texts`＝调用点已取好的用户正文，传了就复用、本闸一次查询都不发；两闸全关时连 `texts` 都不看。
+    """
     try:
         shadow, gate = _flags()
         if not (shadow or gate):
             return ""
         channel = timer_channel(event)
-        verdict, reason, mark = verdict_for(channel, await read_timer_facts(event, session_factory))
+        verdict, reason, mark = verdict_for(
+            channel, await read_timer_facts(event, session_factory, texts=texts))
         _logger.info("A39 闸② channel=%s%s %s", channel, "" if gate else "（影子）", mark)
         if gate and verdict == CANCEL:
             return None

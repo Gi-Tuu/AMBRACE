@@ -723,7 +723,11 @@ def test_批3b_timer不得import闸函数与会话工厂只能经bundle取():
         assert hit == [], f"timer 直接 import 了 {name}（arbiter 桩会静默失效）：{hit}"
     # 正向锚定：两处依赖确实以 g.<field>(…) 形式调用
     assert "await g.hourly_active(char_id)" in src
-    assert src.count("g.session_factory()") == 2, "timer 分支的取库点没全部走 bundle"
+
+    # 10-10 批 45 随迁：settled 那条取料下沉成 freshness.recent_user_texts（ready 事件上一拍要
+    # 两处共用同一批正文），所以直开会话的点只剩角色读取那一处；工厂仍从 bundle 取＝纪律没松。
+    assert src.count("g.session_factory()") == 1, "timer 分支的取库点没全部走 bundle"
+    assert "await _frs.recent_user_texts(event, g.session_factory)" in src, "settled 取料没经 bundle 拿工厂"
     assert "await _timer_current_anchor(event, g.session_factory)" in src, "锚 helper 没经 bundle 拿工厂"
     assert "async_session_factory" not in _helper_src(src)
 
@@ -4352,10 +4356,11 @@ def test_A23_assembly行号坐标与注释一致():
     """
     src = _a22c12_src()
     ls = src.split("\n")
-    assert "if _share and _trust >= 60:" in ls[496], "life_share 起点已不在 :497"
-    assert "current_facts_status_clause()" in ls[512], "现状面子句已不在 :513"
+    # 坐标随迁（2026-10-10，A42 ②c 注入档在现状三连之后插入 7 行落位块 ⇒ 497/513 → 504/520）
+    assert "if _share and _trust >= 60:" in ls[503], "life_share 起点已不在 :504"
+    assert "current_facts_status_clause()" in ls[519], "现状面子句已不在 :520"
     assert "memory_lines = _build_retrieved_memory_lines(" in ls[173], "retrieved 注入点已不在 :174"
     ov = Path(str(_seam_src_path("app.agent.context.section_overlay"))).read_text(encoding="utf-8")
-    assert "context/assembly.py:497-513" in ov, "section_overlay 的行号注释没随迁"
+    assert "context/assembly.py:504-520" in ov, "section_overlay 的行号注释没随迁"
     fl = Path(str(_seam_src_path("app.flags.agent_flags"))).read_text(encoding="utf-8")
-    assert "context/assembly.py:513" in fl, "agent_flags 的行号注释没随迁"
+    assert "context/assembly.py:520" in fl, "agent_flags 的行号注释没随迁"

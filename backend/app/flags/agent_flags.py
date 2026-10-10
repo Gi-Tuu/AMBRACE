@@ -402,7 +402,7 @@ AGENT_FLAGS = {
     "ai_rating_vote3": False,
     # ── A4 批 6 / T5 M0 项1：注入视图分离·现状面子句（2026-09-27；默认关）──
     # 开=注册表版「AI 生活」注入（agent/context/section_overlay.py life_share）补上现状面状态子句
-    #   current_facts_status_clause()，与装配器版（context/assembly.py:513）口径对齐；
+    #   current_facts_status_clause()，与装配器版（context/assembly.py:520）口径对齐；
     #   关=**逐字节旧行为**（该 select 的 where 不附加任何子句，SQL 与改动前一致）。默认关=零行为变化。
     # 注意：现状面开关 current_facts_active_only（线上默认 True）开时子句才是「恒 active」，
     #   本键单独开、current_facts_active_only 关时子句退化为旧口径（memory_supersede 门控）。

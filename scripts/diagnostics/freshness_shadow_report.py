@@ -13,11 +13,15 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import glob
 import io
 import os
 import re
 from collections import Counter, defaultdict
+from pathlib import Path
+
+REPO_ROOT = str(Path(__file__).resolve().parents[2])
 
 # 生产侧格式串（`app/scheduling/freshness.py` 的 `_logger.info("A39 闸② channel=%s%s %s", ...)`）
 # ——这两处一旦分叉，日志里就再没有一条能读的东西，所以守卫拿真格式串反解本脚本的正则。
@@ -27,6 +31,37 @@ DELAY_RE = re.compile(r"Delayed trigger state refreshed char=(?P<char>\d+) rule=
 VERDICTS = ("cancel", "regenerate", "keep")
 # 每通道样本数下限：低于这个数只报"没量到"，不许给出"该不该拨实闸"的方向。
 MIN_SAMPLES_DEFAULT = 8
+# 在册通道闭集的唯一出处＝domain 侧这条白名单（它决定"哪个字段真参与判定"，也就决定
+# "哪些通道本该有读数"）。抄一份进脚本＝第二个口径：以后注册了新腿而脚本不知道，就会把
+# 「这条腿没接上」读成「接上了但没变化」——2026-10-10 的 timer_ready 正是这种情况。
+CHANNELS_FILE_REL = os.path.join("backend", "app", "domain", "proactivity", "freshness.py")
+CHANNELS_VAR = "CHANNEL_ALLOWED_FIELDS"
+
+
+def expected_channels(repo_root: str):
+    """从 `CHANNEL_ALLOWED_FIELDS` 的 AST 里取通道名（不 import、不 eval 任何东西）。
+
+    解析不出来 ⇒ 返回 None，调用方**必须**显式声明"闭集没读到"——把"读不到"当成"没有缺口"
+    就是空扫那一型（分母没过关却报干净）。
+    """
+    try:
+        tree = ast.parse(io.open(os.path.join(repo_root, CHANNELS_FILE_REL),
+                                 encoding="utf-8").read())
+    except (OSError, SyntaxError, ValueError):
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            names, val = [getattr(t, "id", "") for t in node.targets], node.value
+        elif isinstance(node, ast.AnnAssign):
+            names, val = [getattr(node.target, "id", "")], node.value
+        else:
+            continue
+        if CHANNELS_VAR in names and isinstance(val, ast.Dict):
+            try:
+                return tuple(sorted(ast.literal_eval(k) for k in val.keys))
+            except (ValueError, TypeError, SyntaxError):
+                return None
+    return None
 
 
 def parse_lines(lines) -> list[dict]:
@@ -49,8 +84,9 @@ def parse_lines(lines) -> list[dict]:
     return out
 
 
-def summarize(rows: list[dict], days: int, min_samples: int) -> dict:
-    """纯函数：分档汇总。**不读库、不读时钟**（守卫按这条钉），窗口由调用方算好传进来。"""
+def summarize(rows: list[dict], days: int, min_samples: int,
+              expected: tuple[str, ...] | None = None) -> dict:
+    """纯函数：分档汇总。**不读库、不读时钟**（守卫按这条钉），窗口与在册通道由调用方传进来。"""
     by_channel = defaultdict(Counter)
     by_reason = defaultdict(Counter)
     by_mode = defaultdict(Counter)
@@ -73,8 +109,12 @@ def summarize(rows: list[dict], days: int, min_samples: int) -> dict:
             "keep_reasons": dict(by_reason.get((ch, "keep"), {})),
             "shadow": by_mode[ch].get("影子", 0), "gate": by_mode[ch].get("实拦", 0),
         }
+    seen = set(by_channel)
     return {"window_days": days, "total": total, "min_samples": min_samples,
             "by_day": dict(sorted(by_day.items())), "channels": channels,
+            "expected_parsed": bool(expected),
+            "missing_channels": sorted(set(expected) - seen) if expected else [],
+            "off_list_channels": sorted(seen - set(expected)) if expected else [],
             "unknown_verdicts": sorted({r["verdict"] for r in rows if r["verdict"] not in VERDICTS})}
 
 
@@ -118,6 +158,16 @@ def report(s: dict, delay_rows: list[dict]) -> str:
     else:
         out.append("  通道 3（延迟触发）：0 次——注意它**不归影子闸管**（结构性修法），"
                    "所以 0 次只说明「延迟期间状态没变过或没触发过」，不说明闸的状态。")
+    if not s.get("expected_parsed"):
+        out.append("  ⚠ 在册通道闭集没读到（`CHANNEL_ALLOWED_FIELDS` 解析失败）＝下面这份缺口判不了，"
+                   "先修白名单口径再看读数——「没列出来的通道」和「没读数的通道」是两回事。")
+    else:
+        if s["missing_channels"]:
+            out.append("  在册但窗口内**一条读数都没有**：" + "、".join(s["missing_channels"]))
+            out.append("      ⚠ 这只说明「这段代码在窗口里没被走到」（入口条件没过／被更早的闸拦下／"
+                       "近期无样本），**不等于**「走到了但现状没变」；要判后者得先量这条腿的可达性。")
+        if s["off_list_channels"]:
+            out.append(f"  ⚠ 日志里出现闭集外的通道 {s['off_list_channels']}＝生产侧注册或格式分叉了。")
     if s["unknown_verdicts"]:
         out.append(f"  ⚠ 出现表外档位 {s['unknown_verdicts']}＝格式或判据分叉了，先修尺子再读数。")
     return "\n".join(out)
@@ -136,7 +186,8 @@ def main() -> int:
     rows = parse_lines(lines)
     delay = [{"rule": m.group("rule"), "char": m.group("char")}
              for ln in lines if (m := DELAY_RE.search(ln))]
-    print(report(summarize(rows, a.days, a.min_samples), delay))
+    print(report(summarize(rows, a.days, a.min_samples,
+                           expected=expected_channels(REPO_ROOT)), delay))
     return 0
 
 

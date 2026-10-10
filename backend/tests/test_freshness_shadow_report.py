@@ -125,6 +125,65 @@ def test_延迟触发留痕单独一档且不归影子闸():
 
 def test_表外档位必须冒出来():
     rows = rpt.parse_lines([_prod_line("moment_comment", "sideways", "有人新加了一档", gate=False)])
-    s = rpt.summarize(rows, 5, 1)
+    s = rpt.summarize(rows, 5, 1, expected=("moment_comment",))
     assert s["unknown_verdicts"] == ["sideways"], s
     assert "先修尺子" in rpt.report(s, [])
+
+
+# ───────── 在册通道闭集（批 46）：0 读数要分得清「没走到」与「走到了但没变化」 ─────────
+_COVERED = ("moment_comment", "life_regression")
+
+
+def _whitelist_keys():
+    """同源核对用：直接从 domain 的 AST 取键，不在测试里重打一份名单。"""
+    src = (REPO / "backend" / "app" / "domain" / "proactivity" / "freshness.py").read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Assign):
+            names, val = [getattr(t, "id", "") for t in node.targets], node.value
+        elif isinstance(node, ast.AnnAssign):
+            names, val = [getattr(node.target, "id", "")], node.value
+        else:
+            continue
+        if "CHANNEL_ALLOWED_FIELDS" in names and isinstance(val, ast.Dict):
+            return sorted(ast.literal_eval(k) for k in val.keys)
+    raise AssertionError("domain 侧白名单没解析到＝这条通道闭集本身没出处")
+
+
+def test_闭集必须来自domain白名单并且包含刚接上路的timer两条腿():
+    got = rpt.expected_channels(str(REPO))
+    assert got, "闭集解析失败＝缺口判读整块变成空的"
+    assert list(got) == _whitelist_keys(), "脚本的闭集与白名单不一致＝两处口径分叉"
+    assert {"timer_ready", "timer_general"} <= set(got), (
+        "白名单里注册了这两条腿而尺子不知道 ⇒ 会把「没接上」读成「接上了但没变化」")
+
+
+def test_零读数通道必须被点名而且不许被读成没变化():
+    rows = rpt.parse_lines([_prod_line("moment_comment", "keep", "现状未变", gate=False)])
+    s = rpt.summarize(rows, 5, 1, expected=("moment_comment", "timer_ready"))
+    assert s["missing_channels"] == ["timer_ready"], s
+    text = rpt.report(s, [])
+    assert "一条读数都没有" in text and "timer_ready" in text
+    assert "不等于" in text, "缺口行必须自带解释：没走到 ≠ 走到了但没变化"
+
+
+def test_全部在册通道都有读数时不出现缺口行():
+    rows = rpt.parse_lines([_prod_line(c, "keep", "现状未变", gate=False) for c in _COVERED])
+    s = rpt.summarize(rows, 5, 1, expected=_COVERED)
+    assert s["missing_channels"] == [] and s["off_list_channels"] == []
+    assert "一条读数都没有" not in rpt.report(s, []), "反向钉：没缺口时不许凭空喊缺口"
+
+
+def test_闭集读不到时必须明说而不是当成没有缺口():
+    s = rpt.summarize([], 5, 1)                      # 不传 expected＝闭集没读到
+    assert s["expected_parsed"] is False
+    text = rpt.report(s, [])
+    assert "闭集没读到" in text, "把「读不到名单」当成「没有缺口」＝空扫那一型"
+    assert "白名单口径" in text, "这条措辞不许复用「先修尺子」，否则会把表外档位那条断言喂饱"
+    assert rpt.expected_channels(str(REPO / "no_such_dir")) is None
+
+
+def test_日志出现闭集外通道要报分叉():
+    rows = rpt.parse_lines([_prod_line("ghost_channel", "keep", "现状未变", gate=False)])
+    s = rpt.summarize(rows, 5, 1, expected=("moment_comment",))
+    assert s["off_list_channels"] == ["ghost_channel"], s
+    assert "闭集外的通道" in rpt.report(s, [])

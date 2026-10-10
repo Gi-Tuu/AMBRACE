@@ -13,6 +13,9 @@
 ④ **变异**——撤掉同源那一步（把生产规范化打桩成恒等函数）⇒ 评测侧退回原始措辞；若评测侧自带一份
    规范化冒充同源，这条同样会红（钉的是「用生产那一份」，不是「输出恰好等于期望」）。
 ⑤ **零泄题**（方案 §六-7 红线）——收窄后的模板里不许出现评测题的专有名词，必须写成通用形状规则。
+⑥ **日期限制的作用域**（10-10 任务 1 补）——「不写日期」只约束【记忆：】这一条，作用域声明必须紧跟其后；
+   `[CAL_NOTE]` 要写日期、`[timer:]` 要写时长这两条要求不许被它带跑（认证读数从 6/10 掉到 4/10 的嫌疑点之一，
+   今天 `j1t04` 报 E4 就是这个形状）。
 
 批 1（`test_memory_normalize_a30.py`）钉的是规范化函数本体与三个落库写点；本文件只钉批 2 的两条：
 提示词形状与评测通道取文来源。判据／阈值／gold／指纹维度本批零改动。
@@ -36,6 +39,8 @@ REAL_DRAFT = REPO / "scripts" / "diagnostics" / "memory_action_cases_real_draft.
 
 # 收窄后那段形状的「指纹短语」：改这段文案时若换掉它，①的计数守卫要跟着换（守卫不许空跑）
 _SHAPE_MARK = "只认这一种形状"
+# 「不写日期」的作用域声明（任务 1 补）：这句一旦删掉，日期限制会溢出到 [CAL_NOTE]/[timer:]
+_SCOPE_MARK = "这条日期限制只管【记忆：】本身"
 # 旧写法（要求正文自带日期）——批 2 之后任何地方都不该再出现
 _OLD_MARK = "写记忆用具体日期"
 # 评测题专有名词黑名单（方案 §六-7）：出现在提示词里就是「为过题污染提示词」
@@ -91,6 +96,32 @@ def test_收窄后的形状是写死的一种而非多种可选():
     for piece in ("一条只写一个事实", "≤25 字", "别换成近义说法", "不写日期"):
         assert piece in line, "收窄文案缺约束项 %r：%s" % (piece, line)
     assert "或" not in line.split(_SHAPE_MARK, 1)[1], "形状里出现「或」＝又给模型留了第二种写法"
+
+
+def test_不写日期那条把作用域钉死在记忆通道内():
+    """10-10 认证读数掉到 4/10 的嫌疑点：这句「不写日期」写在同一个标记清单里，会溢出到
+    [CAL_NOTE]（那条**要求**写日期）与 [timer:]。所以作用域必须紧跟其后、且落在同一条目内。"""
+    line = next(ln for ln in SYSTEM_PROMPT_TEMPLATE.splitlines() if ln.startswith("【记忆：内容】"))
+    assert "不写日期" in line, line
+    assert _SCOPE_MARK in line, "作用域没写＝这句日期限制会漂到别的标记上：%s" % line
+    # 顺序守卫：声明必须在「不写日期」之后、且在示例之前——挪出本条目就等于没约束
+    i_date, i_scope, i_eg = line.index("不写日期"), line.index(_SCOPE_MARK), line.index("例：")
+    assert i_date < i_scope < i_eg, (i_date, i_scope, i_eg)
+
+
+def test_别的标记的日期与时长要求没被这句改掉():
+    """反向钉：删掉 [CAL_NOTE] 的日期要求、或把「不写日期」复制进别的条目，这条必须红。"""
+    zone = SYSTEM_PROMPT_TEMPLATE.split("## 输出标记", 1)[1].split("## 当前世界状态", 1)[0]
+    lines = zone.splitlines()
+    cal = next(ln for ln in lines if ln.startswith("[CAL_NOTE]"))
+    tmr = next(ln for ln in lines if ln.startswith("[timer:"))
+    assert "日期 内容" in cal and "日期可省" in cal, cal
+    assert "m=分钟/h=小时" in tmr, tmr
+    for mark in ("【记忆：内容】", "【自述更新：内容】", "【状态更新：内容】",
+                 "[timer:", "[SEARCH]", "[CAL_NOTE]", "[MEMO]", "[CAL_DONE]"):
+        assert mark in zone, "输出标记区少了 %s" % mark
+    assert zone.count("不写日期") == 1, "「不写日期」在标记区出现多次＝作用域又糊了"
+    assert zone.count(_SCOPE_MARK) == 1, "作用域声明写了两份＝迟早两边各改一半"
 
 
 # ─────────────── ② 评测通道与生产落库同源 ───────────────

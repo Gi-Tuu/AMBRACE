@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import importlib.util
 import json
 import os
@@ -835,7 +836,7 @@ EVAL_CHAT_TASK = "chat"
 GENERATE_REPEAT_DEFAULT = 3
 # 10-06 用户拍板：J1 的分数与认证**只认「每一跑都过」**（不是"三跑里最好的一跑"，也不是"取二"——
 # 同一批 30 次实测"取二"与"每跑都过"读数相同（没有一题恰好两跑过），中间档买不到东西，所以口径就是这一条）
-CERT_J1_RULE = "检索侧四条认证 ∧ 每一跑都过(pass_all) ∧ 三跑结果一致"
+CERT_J1_RULE = "检索侧四条认证 ∧ 每一跑都过(pass_all) ∧ 三跑结果一致（剥掉钟点后逐字一致，10-10 拍板）"
 GENERATE_USER_ID = 7100               # 与 J3 档同一个评测账号（临时库里的假用户，不碰生产）
 
 # 生成侧要复制的 LLM 配置表＝`_resolve_llm_config` 解析链**真正读**的那几张
@@ -1097,6 +1098,13 @@ async def generate_case(case: dict, cid: int, user_id: int, *,
             "mem_channel": chan,
             "n_ctx_msgs": len(state["context_messages"]),
             "ctx_chars": sum(len(str(m.get("content") or "")) for m in state["context_messages"]),
+            # 逐跑的**输入指纹**（装配后整段 prompt 的 sha1 前 12 位）。没有它，"第 2、3 跑没过"
+            # 就永远分不清是**输入变了**（污染）还是**模型输出抖了**（不稳）——10-10 那轮 15 条失败
+            # 里 6 条是「首跑过、后两跑不过」，当时答不出这一问，30 次计费没换来结论。
+            "prompt_fp": hashlib.sha1("\n".join(
+                str(m.get("content") or "") for m in state["context_messages"]
+            ).encode("utf-8")).hexdigest()[:12],
+            "prompt_fp_stable": stable_fp(state["context_messages"]),
             "n_recalled": len(state.get("retrieved_memories") or []),
             "gold_in_recall": sum(1 for g in gold if _norm(g) in blob),
             "temperature": temp,
@@ -1220,6 +1228,18 @@ def _run_signature(row: dict) -> tuple:
             tuple(_norm(str(x)) for x in (row.get("mem_channel") or ())))
 
 
+def sig_key(row: dict) -> tuple:
+    """参与「三跑一致」比对的键＝指纹各维**先剥掉钟点**（10-10 拍板的口径）。
+
+    为什么（用户当轮同意）：装配里那段 `## 当前时间` 是活时钟，三跑各隔几秒，模型就可能把
+    "17:12／17:13"这类时间写进载荷或通道文本里——那是**时间流过了**，不是模型不稳。
+    用原始文本比，一致率量的就是"跑了多久"。
+    仍然安全的地方：`过／不过` 这一维**不剥**，日期算错会让那一跑直接不过（判据按题面锚点算），
+    所以"剥钟点"不会把答错的三跑洗成一致。
+    """
+    return tuple(mask_clock(str(v)) for v in _run_signature(row))
+
+
 def run_sig_text(row: dict) -> str:
     """把 `_run_signature` **逐字渲染成一行文本**（报表里留的就是这个串）。
 
@@ -1242,6 +1262,29 @@ def run_sig_text(row: dict) -> str:
     ]])
 
 
+def mask_clock(text: str) -> str:
+    """把 prompt 里**随墙上时钟变**的片段换成占位符，用来算"同一份输入"。
+
+    为什么必须剥（10-10 用 sha1 实测）：装配里那段 `## 当前时间`（context_builder.py:840）
+    写的是本机活时钟，三跑各隔几秒 ⇒ **每题三跑的 prompt 全都不一样**（10/10 题、每题 3 种 fp）。
+    不剥就直接比，"三跑一致"量的就不是模型稳不稳，而是"过了几秒钟"。
+    """
+    t = str(text or "")
+    t = re.sub(r"\d{4}年\d{1,2}月\d{1,2}日(\s*星期[一二三四五六日天])?", "<日>", t)
+    t = re.sub(r"\d{4}-\d{2}-\d{2}", "<日>", t)
+    t = re.sub(r"\d{1,2}月\d{1,2}日", "<日>", t)
+    t = re.sub(r"\d{1,2}:\d{2}(:\d{2})?", "<钟>", t)
+    t = re.sub(r"\d+\s*(分钟|小时|天前|前)", "<距>前", t)
+    return t
+
+
+def stable_fp(context_messages) -> str:
+    """剥钟点后的整段 prompt 指纹＝判"这三跑吃的到底是不是同一份料"的那一维。"""
+    return hashlib.sha1(mask_clock("\n".join(
+        str(m.get("content") or "") for m in (context_messages or [])
+    )).encode("utf-8")).hexdigest()[:12]
+
+
 def fold_runs(runs: list) -> dict:
     """把同一题的多跑折成一行：AR 读「每一跑都过」，一致读「结果指纹全等」，第 2、3 跑**留底可复核**。
 
@@ -1250,7 +1293,7 @@ def fold_runs(runs: list) -> dict:
     把 `consistent` 硬写成 True、把 `other_runs` 折成空表，**两条守卫都照样绿**（10-06 实测 2 条没牙）。
     挪成纯函数之后它们才第一次真的被测到。
     """
-    sigs = [_run_signature(x) for x in runs]
+    sigs = [sig_key(x) for x in runs]
     first = runs[0]
     first["n_runs"] = len(runs)
     first["pass_all"] = all(bool(x["pass"]) for x in runs)
@@ -1263,9 +1306,24 @@ def fold_runs(runs: list) -> dict:
                             "chan": " ‖ ".join(x.get("mem_channel") or []) or "无",
                             "sig": run_sig_text(x),
                             "gold_ctx": x.get("gold_in_ctx"),
+                            "ctx_chars": x.get("ctx_chars"),
+                            "n_ctx_msgs": x.get("n_ctx_msgs"),
+                            "prompt_fp": x.get("prompt_fp"),
+                            "prompt_fp_stable": x.get("prompt_fp_stable"),
                             "payloads": " ‖ ".join(x["payloads"])[:60]}
                            for x in runs[1:]]
     first["sig"] = run_sig_text(runs[0])
+    # 输入逐跑是否同一份＝漂移的**第一归因**，必须从留底里离线判得出来（不靠再跑一次花钱）。
+    # 比的是**剥掉钟点后的稳定指纹**：装配里那段 `## 当前时间` 每次都不同，拿原始 fp 比会
+    # 把"过了 3 秒"报成"污染"（10-10 实测 10/10 题三跑原始 fp 全不同，就是这么撞出来的）。
+    fps = [str(x.get("prompt_fp_stable") or x.get("prompt_fp") or "") for x in runs]
+    first["prompt_fp"] = str(runs[0].get("prompt_fp") or "")
+    first["prompt_fp_stable"] = fps[0]
+    first["fp_spread"] = sorted({f for f in fps if f})
+    first["input_identical"] = all(fps) and len(set(fps)) == 1
+    # 墙上时钟那一维单独留底：它不同**不是**污染，只是时间流过
+    raw_fps = [str(x.get("prompt_fp") or "") for x in runs]
+    first["clock_only_drift"] = (len({f for f in raw_fps if f}) > 1 and len({f for f in fps if f}) == 1)
     return first
 
 
@@ -1278,7 +1336,8 @@ def sig_recompute(row: dict):
     extra = row.get("other_runs") or []
     if not extra or not row.get("sig"):
         return None
-    sigs = [row["sig"]] + [o.get("sig") for o in extra]
+    # 与 `fold_runs` 同一口径：比对前剥钟点（留底本身仍是原文，可审计）
+    sigs = [mask_clock(str(row["sig"]))] + [mask_clock(str(o.get("sig") or "")) for o in extra]
     if any(not s for s in sigs):
         return None
     return len(set(sigs)) == 1
@@ -1608,11 +1667,21 @@ def render_generate(rep) -> str:
             r = by_cid[cid]
             L.append("- **%s**（%s／一致=%s／每跑都过=%s）" % (
                 cid, r["category"], r.get("consistent"), r.get("pass_all")))
-            L.append("    - 首跑 指纹 `%s`（gold 进 prompt=%s）" % (
-                r.get("sig") or "—", r.get("gold_in_ctx")))
+            L.append("    - 首跑 指纹 `%s`（gold 进 prompt=%s‖输入 %s／%s 字）" % (
+                r.get("sig") or "—", r.get("gold_in_ctx"),
+                r.get("prompt_fp") or "没留fp", r.get("ctx_chars")))
             for i, o in enumerate(r["other_runs"], start=2):
-                L.append("    - 第 %d 跑 指纹 `%s`（err=%s‖gold 进 prompt=%s）" % (
-                    i, o.get("sig") or "—", o["err"] or "—", o.get("gold_ctx")))
+                L.append("    - 第 %d 跑 指纹 `%s`（err=%s‖gold 进 prompt=%s‖输入 %s／%s 字）" % (
+                    i, o.get("sig") or "—", o["err"] or "—", o.get("gold_ctx"),
+                    o.get("prompt_fp") or "没留fp", o.get("ctx_chars")))
+            if r.get("clock_only_drift"):
+                L.append("    - （三跑只差墙上时钟，剥掉钟点后输入同一份＝不算污染）")
+            if r.get("input_identical") and not r.get("pass_all"):
+                L.append("    - ⇒ 三跑输入**同一份**（sha1 相同）却没每跑都过＝**输出抖动**，"
+                         "不是检索/装配退化；该改题面或改提示词，重跑只是再花一次钱。")
+            elif r.get("fp_spread") and not r.get("input_identical", True):
+                L.append("    - ⇒ 三跑输入**不是同一份**（fp=%s）＝污染，"
+                         "这一题的过/不过都不能当模型结论读。" % ",".join(r["fp_spread"]))
     L += ["", "## `forbidden` 作废语境豁免（可数、不静默放行）",
           "- 本轮豁免 **%d 处**。口径＝禁用片段只出现在**含作废词的同一短句**内才豁免"
           "（跨短句不豁免，见 `_forbidden_check`）；作废词表＝%s" % (

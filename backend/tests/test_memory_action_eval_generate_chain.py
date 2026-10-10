@@ -626,6 +626,16 @@ def test_多跑折叠必须如实给出一致率与每一跑留底():
     # 只漂**内容**不漂结果（三跑都判过、载荷却不同）也必须算不一致——否则一致率退化成"过没过"
     subtle = ev.fold_runs([_stub_run(), _stub_run(payloads=["煤球"]), _stub_run()])
     assert subtle["pass_all"] is True and subtle["consistent"] is False, subtle
+    # 10-10 拍板的新口径：只差钟点＝时间流过了，算一致；但「过／不过」那一维不剥
+    clock = [dict(p="接送牌要填她的名字，17:12 说"), dict(p="接送牌要填她的名字，17:13 说"),
+             dict(p="接送牌要填她的名字，17:12 说")]
+    ck = ev.fold_runs([_stub_run(payloads=[x["p"]]) for x in clock])
+    assert ck["consistent"] is True, "只差钟点还判不一致＝一致率量的还是跑了多久"
+    ck2 = ev.fold_runs([_stub_run(payloads=["接送牌填朵朵"]), _stub_run(payloads=["接送牌填煤球"]),
+                        _stub_run(payloads=["接送牌填朵朵"])])
+    assert ck2["consistent"] is False, "正文字不同不能被判成一致"
+    ck3 = ev.fold_runs([_stub_run(), _stub_run(**{"pass": False, "err": "E4"}), _stub_run()])
+    assert ck3["consistent"] is False, "有一跑没过不能因为剥了钟点就洗成一致"
     # 指纹必须逐跑留底（报表的可复核性就建在这串文本上）
     assert f["sig"] == ev.run_sig_text(f), "首跑指纹没写回行里"
     assert f["sig"] != f["other_runs"][0]["sig"], "两条指纹相同却判不一致＝一致率与留底脱钩"
@@ -815,6 +825,66 @@ def test_一致判定必须能从留底重跑并与存值对账():
         "留底缺一条就该回答『算不出来』，而不是替它判过（没底也算过＝这一列又变成信代码）"
 
 
+def test_逐跑输入指纹必须留底并且分得清抖动与污染():
+    """10-10 认证读数里 15 条失败有 6 条是「首跑过、第 2/3 跑不过」，当时的留底答不出
+    「输入变了还是模型抖了」⇒ 那 30 次计费换不到结论。这条守卫钉住缺的那一维。"""
+    a = _stub_run(prompt_fp="a" * 12, ctx_chars=3338, n_ctx_msgs=5)
+    b = _stub_run(prompt_fp="b" * 12, ctx_chars=2810, n_ctx_msgs=4)
+    f = ev.fold_runs([dict(a), dict(a), dict(a)])
+    assert f["prompt_fp"] == "a" * 12 and f["input_identical"] is True, f
+    assert f["other_runs"][0]["prompt_fp"] == "a" * 12, "第 2 跑的输入没留底＝这一维又看不见"
+    assert f["other_runs"][0]["ctx_chars"] == 3338, "逐跑的 prompt 体量没留底＝污染与抖动还是没法分"
+    g = ev.fold_runs([dict(a), dict(b), dict(a)])
+    assert g["input_identical"] is False and g["fp_spread"] == ["a" * 12, "b" * 12], g
+    # 反向钉：没留 fp（旧行／单跑档）时不许凭空喊污染
+    h = ev.fold_runs([_stub_run(), _stub_run()])
+    assert h["input_identical"] is False and h["fp_spread"] == [], h
+
+
+def test_剥掉钟点才算同一份输入():
+    """`## 当前时间` 是活时钟 ⇒ 原始 fp 必然逐跑不同。判"污染"要用**稳定指纹**，不然每一题
+    都会被误判成污染（10-10 实测：10/10 题三跑原始 fp 全不同，就是这个坑）。"""
+    a = _stub_run(prompt_fp="r1", prompt_fp_stable="s1")
+    b = _stub_run(prompt_fp="r2", prompt_fp_stable="s1")     # 只差钟点
+    f = ev.fold_runs([dict(a), dict(b), dict(a)])
+    assert f["input_identical"] is True, "只差钟点必须算同一份输入"
+    assert f["clock_only_drift"] is True and f["fp_spread"] == ["s1"], f
+    g = ev.fold_runs([dict(a), _stub_run(prompt_fp="r3", prompt_fp_stable="s9"), dict(a)])
+    assert g["input_identical"] is False, "稳定指纹不同＝真的换了料，必须报污染"
+
+
+def test_mask_clock只剥时间不吞正文():
+    s = ev.mask_clock("当前 2026-10-10 17:12:03，用户 3 天前说过现居城西；朵朵 2021年出生")
+    assert "<日>" in s and "<钟>" in s, s
+    assert "现居城西" in s and "朵朵" in s, "剥钟点不许顺手吞掉正文"
+    assert ev.mask_clock("用户女儿叫朵朵") == "用户女儿叫朵朵", "无时间的正文必须逐字不动"
+    # 零计费探针实测到的缺口：装配里那段是**中文日期＋星期**，只剥 ISO 形式会漏
+    # ⚠ 断言要盯「年字有没有」：只盯整串会被 10月10日 那条规则先满足——
+    #    变异电池 M3（删掉中文日期那条掩码）当时就是这样没牙的（10-10 实测）。
+    s2 = ev.mask_clock("2026年10月10日 星期六 17:12（北京时间）｜秋季｜距上次互动 4 天前")
+    assert "年" not in s2, "中文年份没剥掉＝还会把每次装配都判成污染：%r" % s2
+    assert "17:12" not in s2 and "星期" not in s2, s2
+    assert "秋季" in s2 and "北京时间" in s2, "只该剥时间，不该剥季节/时区这些正文"
+    assert ev.mask_clock("2026年10月10日 星期六 17:13（北京时间）｜秋季｜距上次互动 4 天前") == s2, \
+        "只差一分钟必须归一成一个指纹"
+    assert ev.stable_fp([{"content": "现在 08:00"}, {"content": "现在 08:03"}]) == \
+        ev.stable_fp([{"content": "现在 08:00"}, {"content": "现在 09:11"}]), "同一份时间只差钟点要同指纹"
+
+
+def test_报表对漂移必须给出定性而不是只报数():
+    rep = _fake_rep()
+    r0, r1 = rep["rows"]
+    jitter = [dict(r0, prompt_fp="f" * 12, exemptions=[]),
+              dict(r0, prompt_fp="f" * 12, exemptions=[], **{"pass": False, "err": "E3"}),
+              dict(r0, prompt_fp="f" * 12, exemptions=[])]
+    poison = [dict(r1, prompt_fp="a" * 12), dict(r1, prompt_fp="b" * 12)]
+    rep["rows"] = [ev.fold_runs(jitter), ev.fold_runs(poison)]
+    rep.update(ev.generate_summary(rep["rows"]))
+    out = ev.render_generate(rep)
+    assert "输出抖动" in out, "输入同一份却不每跑都过＝必须点明是抖动而非检索退化"
+    assert "污染" in out, "三跑输入不同一份必须点名污染"
+
+
 def test_认证口径只认每一跑都过():
     """10-06 拍板：J1 分数与认证读「每一跑都过」，不是"三跑里最好的一跑"。"""
     ok = {"pass_all": True, "consistent": True}
@@ -824,3 +894,33 @@ def test_认证口径只认每一跑都过():
     assert "pass_all" in ev.CERT_J1_RULE and "一致" in ev.CERT_J1_RULE, "口径常量得写清读哪两列"
     out = ev.render_generate(_fake_rep_multi())
     assert "每一跑都过 ∧ 三跑一致" in out and "生成侧认证 **1／2**" in out, out[:400]
+
+
+def test_跑一题必须把真实装配的输入指纹写进行(tmp_path, monkeypatch):
+    """`generate_case` 那一行必须由**真 prompt 文本**算出 `prompt_fp`，不是折叠侧自己造的。
+
+    来历：变异电池 M4（把 `hashlib.sha1(...)` 那三行删掉）当时 103 例全绿——折叠守卫拿
+    `_stub_run(prompt_fp=...)` 自己把指纹喂进去，于是**取料那半条链**没人证过（同族前科：
+    打桩测调用≠测落库）。这条把桩打在装配上，算的是 sha1 的真值。
+    """
+    import hashlib as _hl
+
+    msgs = [{"content": "你是小爱，正在陪用户"}, {"content": "用户女儿叫朵朵，2021年出生"}]
+
+    async def _state(case, cid, user_id, flags=None):
+        return {"context_messages": msgs, "retrieved_memories": [], "temperature": 0.0}
+
+    async def _llm(messages=None, **kw):
+        return "【MEMO】用户女儿叫朵朵[/MEMO]"
+
+    import app.agent.llm_client as llm_mod
+
+    monkeypatch.setattr(ev, "gen_state", _state)
+    monkeypatch.setattr(llm_mod, "chat_completion", _llm)
+    case = {"cid": "jfp01", "category": "fact", "judge": "J1",
+            "seeds": [{"content": "用户女儿叫朵朵，2021年出生"}],
+            "expect": {"action": "MEMO", "gold_seed_idx": [0]}}
+    row = asyncio.run(ev.generate_case(case, 9001, 9002))
+    want = _hl.sha1("\n".join(m["content"] for m in msgs).encode("utf-8")).hexdigest()[:12]
+    assert row["prompt_fp"] == want, "输入指纹不是从装配正文算出来的＝这一维又是装饰"
+    assert row["ctx_chars"] == sum(len(m["content"]) for m in msgs), row["ctx_chars"]

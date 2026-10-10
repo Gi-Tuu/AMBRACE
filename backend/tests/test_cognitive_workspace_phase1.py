@@ -331,20 +331,38 @@ def test_to_dict_是快照_改返回值不污染工作台():
     assert ws.character_id == 1
 
 
-def test_第一阶段没有任何上下文装配环节消费workspace():
-    """「只写不读」的机械证明：上下文装配扫到 workspace 字样就说明有人开始读它了。
+def test_上下文里只有注入档那一处消费workspace():
+    """「只写不读」的第一阶段红线，10-10 由 ②c 前置正式改为**受闸的单点读**。
 
-    真要投影（第二阶段）时这条会红——那是**故意的**：届时必须连提示词回归一起评审，而不是顺手加一段。
+    这条守卫的原文说过：真要投影时它会红，那是故意的——届时必须连提示词回归一起评审，而不是顺手加一段。
+    本次评审＝交接文档 §四-2（A42 ②c 前置，默认关＋独立配额）。所以这里不再禁止"出现 workspace 字样"，
+    而是把**谁能读**钉成一份显式白名单，并核"读必须在这把闸后面"：
+      · `section_projection.py`＝唯一取数点，builder 首行必须短路在 `inject_flag_on()` 之后；
+      · `assembly.py`＝只有 append 落位（消费注册表算好的 `_sv`，自己不碰 ws 对象）；
+      · 其它任何装配文件（含 `context_builder.py` 与其余 `section_*.py`）出现 workspace ⇒ 当场红。
+    默认关时产出逐字节不变由 `test_projection_inject_budget_a42c.py` 的主断言钉（本条只证"没有第二处"）。
     """
     from app.agent import context_builder as cb
 
+    gated = {"section_projection.py", "assembly.py"}
     targets = [Path(cb.__file__)]
     ctx_dir = Path(cb.__file__).parent / "context"
     if ctx_dir.is_dir():
         targets += sorted(ctx_dir.glob("*.py"))
-    hits = {str(p.name): "workspace" in p.read_text(encoding="utf-8") for p in targets}
-    reading = [n for n, v in hits.items() if v]
-    assert not reading, f"上下文装配开始读 workspace 了：{reading}（第一阶段红线＝只写不读）"
+    hits = {p.name: "workspace" in p.read_text(encoding="utf-8") for p in targets}
+    reading = sorted(n for n, v in hits.items() if v)
+    assert set(reading) <= gated, f"出现了白名单外的 workspace 读取点：{reading}"
+
+    # 反向钉（缺了它，"删掉闸门把这一档常开"这条变异就不会红）：
+    # ① 读点必须显式在注入闸后面；② 装配主文件不许自己拿 ws 对象渲染。
+    sec = (ctx_dir / "section_projection.py").read_text(encoding="utf-8")
+    body = sec[sec.index("async def workspace_projection_section"):sec.index("register_section(")]
+    assert "inject_flag_on()" in body, "section_projection 的读点没在闸门后面＝常开"
+    assert body.index("inject_flag_on()") < body.index("render_projection_block"), \
+        "先渲染后查闸＝闸关着也照样取数"
+    asm = (ctx_dir / "assembly.py").read_text(encoding="utf-8")
+    assert "render_projection_block" not in asm and "state.get(\"workspace\")" not in asm, \
+        "assembly 里出现了第二个渲染/取点＝读取面又散了，白名单失效"
 
 
 # ── S4：chat / social / continue 三条路统一走一个构造器，且**逐键取值不变**────────────────

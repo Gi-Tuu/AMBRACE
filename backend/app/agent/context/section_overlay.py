@@ -102,7 +102,7 @@ async def lorebook_section(state: dict, ctx: dict) -> list[str]:
 # 信任机制与隐私上锁同源——trust≥60 有概率提及、≥70 高概率、<60 不提及（角色有权交流自己的私生活）
 
 # T5 M0 项1（2026-09-27，A4 批 6）：现状面子句口径对齐——装配器版 life_share
-# （context/assembly.py:497-513，第 513 行；A22 ⑤-c 删兜底后从 legacy.py:866-876 挪到这里）
+# （context/assembly.py:504-520，第 520 行；A22 ⑤-c 删兜底后从 legacy.py:866-876 挪到这里）
 # 一直带 current_facts_status_clause()，注册表版
 # （agent_context_registry 默认 True 的活路径）漏了这个子句，两份实现口径漂移。
 # 用新开关 current_view_filter 包住：**关=返回空列表 → where 里不附加任何子句，与改动前逐字节一致**；

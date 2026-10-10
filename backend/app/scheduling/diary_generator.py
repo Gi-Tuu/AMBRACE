@@ -1,6 +1,6 @@
 """日记生成器 — 每天定时用 LLM 生成 AI 日记"""
 from datetime import date, datetime, timezone, timedelta
-from sqlalchemy import select
+from sqlalchemy import func, select
 from app.db.database import async_session_factory
 from app.models.life import AIDiary
 from app.models.character import AICharacter
@@ -14,16 +14,46 @@ from app.utils.timeutil import app_local_now
 _logger = get_logger("scheduler.diary")
 
 
+def _day_window(target_date: date, beijing_window: bool = True) -> tuple[datetime, datetime]:
+    """某一「北京日记日」对应的 UTC 时刻区间（**同一谓词只有一份出处**）。
+
+    日记日期按北京日算：北京 0 点 = UTC 前一天 16 点。聊天正文取数与「日记是否过期」的
+    新消息判定都必须走这一个函数——两边各写一遍减法，改天时区口径时只会红一边。
+    """
+    day_start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc)
+    if beijing_window:
+        day_start = day_start - timedelta(hours=8)
+    return day_start, day_start + timedelta(days=1)
+
+
+def _as_naive_utc(value) -> datetime | None:
+    """库里两个时间列都按 naive UTC 存；万一读到带 tz 的值，先换 UTC 再去 tzinfo（不拿它比大小会 TypeError）。"""
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _diary_is_stale(diary_created_at, latest_msg_at, *, now_unused=None) -> bool:
+    """「该日之后是否又有新对话」的判据：日记写完**之后**当天又出现消息 ⇒ 这份日记该重写。
+
+    两个时刻都取自库（同一时钟），本函数不碰进程时钟。任一时刻取不到 ⇒ 判**不**过期：
+    宁可少重写一次，也不要因为读不出就每拍重跑一遍 LLM（那会把「每天一篇」变成「每小时一篇」）。
+    """
+    created = _as_naive_utc(diary_created_at)
+    latest = _as_naive_utc(latest_msg_at)
+    if created is None or latest is None:
+        return False
+    return latest > created
+
+
 async def get_today_chat_context(
     character_id: int, target_date: date, beijing_window: bool = True, user_label: str = "用户",
     user_id: int | None = None,
 ) -> str:
     """获取某天该角色的聊天内容摘要（默认按北京时间窗口；修复旧数据时可用 UTC 窗口）"""
-    # 日记日期是北京日期：北京 0 点 = UTC 前一天 16 点
-    day_start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc)
-    if beijing_window:
-        day_start = day_start - timedelta(hours=8)
-    day_end = day_start + timedelta(days=1)
+    day_start, day_end = _day_window(target_date, beijing_window)
 
     async with async_session_factory() as db:
         # 找该角色当天的活跃会话（按最新消息时间，避免 updated_at 污染选错）
@@ -65,7 +95,7 @@ async def generate_diary_for_character(
         target_date = app_local_now().date()
     date_str = target_date.strftime("%Y-%m-%d")
 
-    # 检查是否已有日记
+    # 检查是否已有日记（A41 补 C30：旧口径「有日记就跳过」会把"写完日记之后又聊的那截"永久丢掉）
     async with async_session_factory() as db:
         result = await db.execute(
             select(AIDiary).where(
@@ -74,9 +104,6 @@ async def generate_diary_for_character(
             )
         )
         existing = result.scalar_one_or_none()
-        if existing and not force:
-            _logger.debug("Diary already exists for char=%d date=%s", character_id, date_str)
-            return None
 
         # 获取角色信息
         char_result = await db.execute(select(AICharacter).where(AICharacter.id == character_id))
@@ -88,6 +115,26 @@ async def generate_diary_for_character(
         if not char.user_id:
             _logger.warning("Diary skipped: character has no owner char=%d", character_id)
             return None
+
+        if existing and not force:
+            day_start, day_end = _day_window(target_date, beijing_window)
+            from app.application.chat_service import get_latest_session_id
+            sid = await get_latest_session_id(char.user_id, character_id)
+            latest = None
+            if sid:
+                latest = (await db.execute(
+                    select(func.max(ChatMessage.created_at)).where(
+                        ChatMessage.session_id == sid,
+                        ChatMessage.created_at >= day_start,
+                        ChatMessage.created_at < day_end,
+                    )
+                )).scalar()
+            if not _diary_is_stale(existing.created_at, latest):
+                _logger.debug("Diary already exists for char=%d date=%s", character_id, date_str)
+                return None
+            # 过期 ⇒ 不提前返回，往下走正常生成流程（保存分支会在同一行上 update，不新增第二条）
+            _logger.info("Diary stale for char=%d date=%s（日记写于 %s，该日 %s 又有新消息）⇒ 重写",
+                         character_id, date_str, existing.created_at, latest)
 
     try:
         from app.agent.user_profile import build_user_profile_text, build_relation_line, get_user_nickname
@@ -190,20 +237,37 @@ async def generate_diary_for_character(
     return {"id": entry.id, "diary_date": date_str, "content": diary_content}
 
 
-async def generate_missing_diaries():
-    """服务器启动时补生成最近缺失的日记"""
+async def generate_missing_diaries() -> dict:
+    """补生成最近缺失的日记（昨天及以前 3 天）。返回 counts；**只要有一天失败就抛**。
+
+    A41 补（C30 的后半）：旧写法把每个日期的异常就地吞掉 ⇒ `run_daily_if_due("diary", …)` 看到的是
+    "这一拍顺利跑完" ⇒ 记 done、当天不再跑；而补生成窗口只有 3 天，LLM 抖动 40 分钟就足以让某天
+    永久出局（用户可见效果＝**日记少一天，且永远不会自己补回来**）。
+    现在改成「每个角色每天都照样尝试完，最后汇总抛错」⇒ 台账按失败退避（15/30/60 分钟）当天再试，
+    而"该日没有新对话"（skip）不算失败 ⇒ 0 篇仍会正常记 done，不会变成每拍空转。
+    """
     async with async_session_factory() as db:
         result = await db.execute(
             select(ProactiveSettings).where(ProactiveSettings.diary_enabled == True)
         )
         settings_list = result.scalars().all()
 
+    counts = {"attempted": 0, "written": 0, "skipped": 0, "failed": 0}
     today = app_local_now().date()
     for settings in settings_list:
         for days_ago in range(1, 4):  # 补最近 3 天（昨天及以前）
             target_date = today - timedelta(days=days_ago)
+            counts["attempted"] += 1
             try:
-                await generate_diary_for_character(settings.character_id, target_date)
+                made = await generate_diary_for_character(settings.character_id, target_date)
             except Exception as e:
+                counts["failed"] += 1
                 _logger.warning("Missing diary gen failed char=%d date=%s: %s",
                                 settings.character_id, target_date, e)
+                continue
+            counts["written" if made else "skipped"] += 1
+    if counts["failed"]:
+        # 抛的是普通异常（不带敏感数据）：让 run_daily_if_due 走 mark_failed_daily 退避重试
+        raise RuntimeError(f"diary catchup incomplete: {counts}")
+    _logger.info("Diary catchup: %s", counts)
+    return counts
