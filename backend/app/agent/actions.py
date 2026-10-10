@@ -302,13 +302,17 @@ def extract_cal_note(text: str, *, base_date: str | None = None) -> tuple[str, s
 
 
 def extract_memo(text: str) -> str | None:
-    """提取备忘录标记，返回内容（≤80 字）；无标记返回 None；与旧 _extract_memo 一致"""
+    """提取备忘录标记，返回内容（≤80 字）；无标记返回 None；与旧 _extract_memo 一致
+
+    A30 批 1：正文过写侧定形（app/memory/normalize.py），载荷形状与 parse_actions 同源。
+    """
+    from app.memory.normalize import normalize_memory_text
     if not text:
         return None
     m = _MEMO_RE.search(text)
     if not m:
         return None
-    content = m.group(1).strip()
+    content = normalize_memory_text(m.group(1).strip())
     if not content:
         return None
     return content[:80]
@@ -417,8 +421,10 @@ def parse_actions(text: str, *, base_date: str | None = None) -> list[AgentActio
         cal = extract_cal_note(m.group(0), base_date=base_date)
         if cal:
             actions.append(AgentAction(CAL_NOTE, {"date": cal[0], "text": cal[1]}, m.group(0)))
+    # A30 批 1：[MEMO] 载荷落库前过写侧定形（与 extract_memo 同源，三跑逐字一致）
+    from app.memory.normalize import normalize_memory_text
     for m in _MEMO_RE.finditer(text):
-        content = m.group(1).strip()
+        content = normalize_memory_text(m.group(1).strip())
         if content:
             actions.append(AgentAction(MEMO, {"text": content[:80]}, m.group(0)))
     for m in _TIMER_RE.finditer(text):

@@ -512,9 +512,13 @@ def parse_response(response: str, state: dict) -> dict:
     # 2. 收集新记忆
     new_memories = []
 
+    # A30 批 1：【记忆：】通道要落库的正文过写侧定形（只改正文形状，不改通道名判定口径）
+    from app.memory.normalize import normalize_memory_text
+
     for mem_content in memory_matches:
         new_memories.append({
-            "type": "user_info", "title": "", "content": mem_content.strip(), "importance": 2,
+            "type": "user_info", "title": "",
+            "content": normalize_memory_text(mem_content.strip()), "importance": 2,
         })
 
     # 用户信息只从"用户消息"中提取；AI 回复文本含台词（如"爱上我了吧"），
