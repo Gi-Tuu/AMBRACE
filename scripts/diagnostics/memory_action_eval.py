@@ -94,8 +94,18 @@ MEMORY_CHANNEL_RE = r"[\[【]\s*记忆\s*[：:]\s*(.*?)[\]】]"
 
 
 def extract_memory_channel(text: str) -> list[str]:
-    """取出回复里的 `【记忆：…】` 载荷文本（判分用；生产落库走同一个模式）。"""
-    return [s.strip() for s in re.findall(MEMORY_CHANNEL_RE, text or "") if s.strip()]
+    """取出回复里的 `【记忆：…】` 载荷文本（判分用；生产落库走同一个模式）。
+
+    A30 批 2（2026-10-10，方案 §四①）：取出的那段文本**过生产那个规范化函数**再交给判据，
+    与 `app/agent/response_parser.py` 落库时那次调用同一份实现（正则→strip→normalize 同序）。
+    为什么必须同源：规范化落在生产落库点，而这条读的是**模型原始输出**；不同源的话，落库
+    早已定形、指纹里的「通道」两题（j1s01/j1s02）却照旧量原始措辞 ⇒ 严格一致读数永不动。
+    边界：只换"判据吃的那份文本从哪来"；判据、阈值、gold、指纹维度、这条正则一律没动。
+    """
+    from app.memory.normalize import normalize_memory_text
+
+    return [normalize_memory_text(s.strip())
+            for s in re.findall(MEMORY_CHANNEL_RE, text or "") if s.strip()]
 
 # 配置轴（§4.4）——**基线＝生产实配，不是"四键全关"**。
 # 2026-10-04 实测依据（只读 `runtime_flags` ＋ 读 `app/flags/agent_flags.py` 注册值）：
