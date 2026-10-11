@@ -91,7 +91,7 @@ docs/             开发文档（架构 / 规划 / 全景，除 changelog.md（A
 
 脚本会自动创建虚拟环境、安装依赖、生成 `.env`（全部留空即可用默认）并自检模型目录。
 
-> ⚠️ **模型说明**：发布包内 `backend/models/` 含向量模型 `bge-m3`（记忆系统必需，本地 ONNX 1024d，约 542MB）与语音转写模型 `whisper-small`（可选功能，缺失时语音转写自动降级）。请使用 Release 完整包部署，或运行 `python scripts/download_models.py` 下载向量模型。
+> ⚠️ **模型说明**：向量模型 `bge-m3`（记忆系统必需，本地 ONNX 1024d，约 542MB）未纳入 git；语音转写模型 `whisper-small` 属可选功能，缺失时语音转写自动降级。获取方式：运行 `python scripts/download_models.py` 下载向量模型（离线环境可自行放置到 `backend/models/bge-m3`）；需要在多台机器间分发含模型的完整包，可用 `python scripts/make_release.py --zip` 在本机自行生成（官方 Release 目前只提供 APK，见第 5 节）。
 >
 > 🎤 **语音（可选）**：语音消息与实时语音需要额外安装 `pip install -r backend/requirements-voice.txt`（faster-whisper，懒加载，未安装时语音消息仅存音频不转写，日志会提示安装命令）；语音回复的 TTS 需自行配置语音服务，否则自动降级。
 
@@ -271,10 +271,10 @@ flutter build apk --release
 - 在应用内「手机感知」页打开对应开关（读屏 / 剪贴板 / 相册 / 通知 / 位置 / AI 主动提通知）
 - 需要「电池优化白名单」与「允许后台启动」以保证连接与弹窗稳定
 
-### 5. 从 GitHub 源码部署（不使用 Release 完整包）
-源码仓库与发布包有两点差异，补齐后与发布包完全一致：
+### 5. 从 GitHub 源码部署（不使用打包产物）
+源码仓库与"带模型的完整包"有两点差异，补齐后功能完全一致：
 
-1. **向量模型（必需）**：`backend/models/bge-m3`（约 542MB）未纳入 git。请从本仓库 **Release 附件**下载 `ai_companion_public.zip`，解压后把 `backend/models/` 整个目录复制到项目根（或直接解压整个包使用）。缺少该目录时后端会因记忆系统无法启动而报错（`setup.bat/sh` 自检也会提示）。
+1. **向量模型（必需）**：`backend/models/bge-m3`（约 542MB）未纳入 git。请运行 `python scripts/download_models.py` 下载（首次启动若缺失，后端会报错、`setup.bat/sh` 自检也会提示）。需要在机器之间分发含模型的完整包，可在本机执行 `python scripts/make_release.py --zip` 生成（输出目录由环境变量 `AMBRACE_RELEASE_OUT` 指定，缺省为项目根同级的 `release_output/`）——**官方 Release 附件目前只提供 `app-release.apk`，不提供该 zip**。
 2. **APK（推荐最省事）**：直接下载 Release 附件的 APK 安装即可，无需安装 Flutter/Android SDK、无需任何配置。想自己编译：运行 `scripts\build_apk.bat`（Windows）或 `bash scripts/build_apk.sh`（Linux/macOS）一键出 release 包（加 `--debug` 可打 debug 包），或按第 3 节手动编译。
 
 > **签名说明**：未配置密钥时编译自动使用调试签名，可正常安装使用（仅无法上架应用商店）。
@@ -295,11 +295,11 @@ backend/.venv/Scripts/python.exe scripts/server_manager.py restart   # Windows
 - 数据库结构变更由启动时经 Alembic 版本链自动迁移（跨版本平滑升级、不丢数据），无需手动执行迁移命令
 - 依赖有变化时重跑 `setup.bat` / `bash setup.sh` 即可
 
-**从 Release 发布包更新**
-1. 下载最新 `ai_companion_public.zip` 解压（可覆盖旧目录，或解压到新目录）
+**从完整发布包更新**（包由 `scripts/make_release.py --zip` 在本机生成，或沿用你之前的包）
+1. 解压完整包到新目录（或覆盖旧目录）
 2. 保留数据：把旧目录的 `.env`、`backend/data/`、`backend/models/` 复制到新目录（直接覆盖解压则无需处理）
 3. 启动：`backend\.venv\Scripts\python.exe scripts\server_manager.py start`（Linux/macOS 用 `backend/.venv/bin/python`）
-4. APK：直接安装新 APK 覆盖即可（登录态与数据保留在服务器，不受影响；build 号单调递增，可覆盖安装）
+4. APK：直接安装 Release 附件里的新 APK 覆盖即可（登录态与数据保留在服务器，不受影响；build 号单调递增，可覆盖安装）
 
 **卸载**
 - Windows：`scripts\uninstall.bat`（默认保留数据与配置；追加 `--purge` 彻底清除）
