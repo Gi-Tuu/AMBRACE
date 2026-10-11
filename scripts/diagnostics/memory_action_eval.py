@@ -132,6 +132,32 @@ CONFIG_MATRIX = {
 
 
 # ─────────────────────────── 数据集 lint（§2.1／§三） ───────────────────────────
+# 周期词——**只扫用户这句话，不扫种子**（10-10 批 51）：j1t02 的种子写着「每月 28 号结项目款」，
+# 题面却是「下个月 28 号提醒我」＝单次请求，扫种子会把好题误拦。
+def _load_periodic_words() -> tuple:
+    """周期词表**唯一真源**＝`app/memory/fallback.py::PERIODIC_WORDS`。
+
+    lint（周期题不许配单日日期）与写侧兜底（周期约定不塞日期）必须共用一套词——抄第二份迟早自相矛盾
+    （10-10 批 51 的口径）。读不到就当场报错，**不许退回硬编码**：硬编码＝假同源，正是第 ⑧ 类判据同义反复。
+    """
+    from app.memory.fallback import PERIODIC_WORDS
+    return tuple(PERIODIC_WORDS)
+
+
+# **不许在模块加载期取词表**（10-10 批 57 实测踩到）：`app.memory` 的包 `__init__` 会一路拽起
+# service→db engine→BM25，而尺子的隔离是在 `_init_temp_env` 里**先设 DATABASE_URL 再 import app**；
+# 顶部 import 等于让单例绑到外部环境（pytest 会话沙箱＝多个跑次共享的库），于是第二次跑看得见第一次写进去的东西，
+# 端到端确定性测试当场红。所以这里只在第一次用到时取，取到就缓存。
+_PERIODIC_CACHE = None
+
+
+def _periodic_words() -> tuple:
+    global _PERIODIC_CACHE
+    if _PERIODIC_CACHE is None:
+        _PERIODIC_CACHE = _load_periodic_words()
+    return _PERIODIC_CACHE
+
+
 def lint_dataset(cases) -> list[str]:
     """返回违规描述列表（空＝合法）。判分器先要被测，否则尺子不可信（R6）。"""
     out, seen = [], set()
@@ -195,6 +221,13 @@ def lint_dataset(cases) -> list[str]:
                                                  or resolve_expect_date(c.get("time_anchor"))):
                     out.append("%s: J1 只标了动作类型、没标 field_match/forbidden、题面也没锚点日期"
                                " ⇒ 「产出了但参数全错」判不出来" % cid)
+                # 周期题不许配单日日期（10-10 批 51，来历＝j1t03）：用户说的是「每到…那天」，
+                # 判据却要一个绝对日期 ⇒ 模型把 recurrence 写进载荷反而判 E4，那是**口径没定**不是模型错。
+                _per = [w for w in _periodic_words() if w in (c.get("turn") or "")]
+                if _per and resolve_expect_date(c.get("time_anchor")):
+                    out.append("%s: 题面含周期词 %s 却给了单日日期判据 ⇒ 周期约定本来就没有『那一个日期』"
+                               "（要么改成单次事件，要么只考『走没走该通道＋载荷认得出周期』）"
+                               % (cid, "/".join(_per)))
         if c.get("judge") == "J2":
             if not (exp.get("slots") or exp.get("slots_none")):
                 out.append("%s: judge=J2 但 expect.slots/slots_none 都没标 ⇒ 这条题没出完" % cid)
@@ -1587,6 +1620,179 @@ def render(rep, *, dataset, judges, configs, mode):
     return "\n".join(L)
 
 
+# ════════════════ 批 53：外部模型这条腿（export 出题 / judge 打分），全程零计费 ════════════════
+EXTERNAL_NOTE = (
+    "- ⚠ **这一档读的是外部模型在导出 prompt 上的行为，不是生产认证**："
+    "export 时 LLM 入口是打桩的 ⇒ 装配里那段日摘要走「共N条消息」占位分支，与生产逐字不同；"
+    "把 prompt 交给 opencode／别的 harness 跑，它还会在自己那边再垫一层 agent system prompt。"
+    "⇒ 这一档够用来问「同一份上下文里，别的模型会不会产出标记」（归因），**不够用来报认证率**。")
+
+EXTERNAL_NO_REPLY = "没收到这一跑的外部回复"
+# 对账失败＝这一发吃的不是这份 prompt（10-10 踩过：npm 的 .cmd 壳会把多行参数按换行截断，
+# 模型只收到首行，回了一句"your message came through as just 【system】"，而判据把这 30 发全记成 E3）
+EXTERNAL_MISMATCH = "sent_fp 与导出 prompt 对不上"
+
+
+def render_prompt_text(messages) -> str:
+    """外部腿发出去的那段文本＝**唯一真源**（`--emit-tasks`、驱动器、judge 对账三处都走这里）。"""
+    return "\n\n".join("【%s】\n%s" % (m.get("role"), m.get("content")) for m in (messages or []))
+
+
+def sent_fp_of(messages) -> str:
+    """驱动器该带回来的指纹＝渲染文本的 sha1 前 12 位（不是 messages 的，两者算法不同）。"""
+    return hashlib.sha1(render_prompt_text(messages).encode("utf-8")).hexdigest()[:12]
+
+
+def _prompt_fp(messages) -> str:
+    """整段装配 prompt 的 sha1（与 `generate_case` 同一算法，两边必须能互相对账）。"""
+    return hashlib.sha1("\n".join(str(m.get("content") or "") for m in (messages or [])
+                                   ).encode("utf-8")).hexdigest()[:12]
+
+
+def judge_external_row(prow: dict, text: str) -> dict:
+    """纯函数：拿导出行自带的题面判据，吃**外部模型的回复**打分（不碰 DB、不调模型）。
+
+    字段与 `generate_case` 逐字同名 ⇒ `sig_key`／`fold_runs`／`render_generate`／`--mode recount`
+    全部直接复用；另加 `external: True`，报表靠它决定要不要顶出 EXTERNAL_NOTE 那行。
+    """
+    from app.agent.actions import parse_actions
+    anchor = str(prow.get("anchor") or "").strip() or None
+    actions = parse_actions(text or "", base_date=anchor)
+    chan = extract_memory_channel(text)
+    v = j1_verdict(prow.get("expect") or {}, actions,
+                   expect_date=resolve_expect_date(prow.get("time_anchor")), memory_texts=chan)
+    return {"cid": prow["cid"], "run": prow.get("run"), "category": prow.get("category"),
+            "judge": "J1", "pass": bool(v["pass"]), "err": v.get("err", ""), "why": v.get("why", ""),
+            "exemptions": list(v.get("exempted") or []),
+            "actions_seen": [getattr(a, "action_type", "?") for a in actions],
+            "payloads": [_payload_text(a.payload).strip()[:70] for a in actions],
+            "mem_channel": chan, "external": True,
+            "dates_seen": sorted({str((a.payload or {}).get("date") or "")[:10] for a in actions
+                                  if isinstance(a.payload, dict) and (a.payload or {}).get("date")}),
+            "n_ctx_msgs": prow.get("n_ctx_msgs"), "ctx_chars": prow.get("ctx_chars"),
+            "prompt_fp": prow.get("prompt_fp"), "prompt_fp_stable": prow.get("prompt_fp_stable"),
+            "n_recalled": prow.get("n_recalled"), "gold_in_recall": prow.get("gold_in_recall"),
+            "gold_in_ctx": prow.get("gold_in_ctx"), "library_rows": prow.get("library_rows"),
+            "temperature": prow.get("temperature"), "reasoning_level": EVAL_REASONING_LEVEL,
+            "reply_head": (text or "").replace("\n", " ")[:120],
+            "reply_text": (text or "").strip()[:900]}
+
+
+def load_external_replies(path: str) -> dict:
+    """外部跑回来的结果：jsonl，每行 {"cid","run","text"}（run 从 1 起）。"""
+    out = {}
+    with open(path, encoding="utf-8-sig") as f:
+        for ln in f:
+            ln = ln.strip()
+            if not ln:
+                continue
+            d = json.loads(ln)
+            out[(str(d.get("cid")), int(d.get("run") or 1))] = {
+                "text": str(d.get("text") or ""), "sent_fp": d.get("sent_fp")}
+    return out
+
+
+def judge_replies(prompt_rows: list, replies: dict) -> dict:
+    """把导出行与外部回复配成对再打分。三件事必须**分开报**，不许混成一个分母：
+
+    判了几跑／哪几跑没回复（＝没量到，不是没过）／哪几条回复没有对应 prompt（＝题面改过还用旧回复）。
+    """
+    by = {}
+    for prow in prompt_rows:
+        by.setdefault(str(prow.get("cid")), []).append(prow)
+    rows, missing, extra, bad_pair = [], [], [], []
+    for cid, prows in sorted(by.items()):
+        runs = []
+        for prow in sorted(prows, key=lambda x: int(x.get("run") or 1)):
+            key = (cid, int(prow.get("run") or 1))
+            if key not in replies:
+                missing.append("%s#%d" % (key[0], key[1]))
+                continue
+            got = replies[key]
+            want_fp = sent_fp_of(prow.get("ctx_messages") or [])
+            if got.get("sent_fp") != want_fp:
+                # 对不上＝发出去的不是这份 prompt ⇒ 这一发**没量到**，不进分母、必须点名
+                # （把它判成「模型没产出」就是拿尺子的缺陷记被测对象的账——同族：⑲「0 读数要分得清」）。
+                bad_pair.append("%s#%d（sent_fp=%s，应为 %s）" % (
+                    key[0], key[1], got.get("sent_fp") or "没留", want_fp))
+                continue
+            runs.append(judge_external_row(prow, got.get("text") or ""))
+        if not runs:
+            continue
+        if len(runs) > 1:
+            first = fold_runs(runs)
+            first["n_runs_real"] = len(runs)
+        else:
+            first = dict(runs[0], n_runs_real=1)
+        first["missing_runs"] = [m for m in missing if m.startswith(cid + "#")]
+        rows.append(first)
+    for key in sorted(replies):
+        if not any(p == key[0] for p in by):
+            extra.append("%s#%s" % (key[0], key[1]))
+    rep = {"rows": rows, "external": True, "missing_runs": missing,
+           "orphan_replies": extra, "mismatch_runs": bad_pair}
+    rep.update(generate_summary(rows))
+    rep["n_skipped_no_reply"] = len(missing)
+    return rep
+
+
+async def run_export_eval(cases, *, user_id=GENERATE_USER_ID, flags=None, filler_target=FILLER_TARGET_DEFAULT,
+                          repeat=GENERATE_REPEAT_DEFAULT, only_cid="", limit=0):
+    """导出**生产装配出来的那段 prompt**（零计费）：外部模型跑它，回来用 `--mode judge` 打分。"""
+    tmp = tempfile.mkdtemp(prefix="ambrace_memact_export_")
+    rows = []
+    try:
+        await _init_temp_env(tmp)
+        hits = _guard_no_llm()        # 这一档一次都不许调模型；装配里的日摘要因此走占位分支
+        todo = [c for c in cases if c.get("judge") == "J1"]
+        if only_cid:
+            todo = [c for c in todo if c.get("cid") == only_cid]
+        if limit:
+            todo = todo[:limit]
+        n_rep = max(1, int(repeat))
+        for i, c in enumerate(todo):
+            for rep_i in range(n_rep):
+                # 每一跑独占号段与库（与 run_generate_eval 同一条纪律：共用会把上一跑的持久状态带进这一跑）
+                cid, _s, _d, n_fil, _sk = await seed_library(
+                    c, i * n_rep + rep_i, user_id, filler_target=filler_target)
+                state = await gen_state(c, cid, user_id, flags=flags or {})
+                msgs = state["context_messages"]
+                blob = _norm(" ".join(str(m.get("content") or "") for m in msgs))
+                gold = [c["seeds"][j]["content"] for j in (c["expect"].get("gold_seed_idx") or [])]
+                rows.append({"cid": c["cid"], "run": rep_i + 1, "category": c.get("category"),
+                             "expect": c["expect"], "time_anchor": c.get("time_anchor"),
+                             "anchor": str((c.get("time_anchor") or {}).get("as_of") or "").strip(),
+                             "ctx_messages": msgs,
+                             "prompt_fp": _prompt_fp(msgs),
+                             "prompt_fp_stable": stable_fp(msgs),
+                             "n_ctx_msgs": len(msgs),
+                             "ctx_chars": sum(len(str(m.get("content") or "")) for m in msgs),
+                             "n_recalled": len(state.get("retrieved_memories") or []),
+                             "gold_in_recall": sum(1 for g in gold if _norm(g) in blob),
+                             "gold_in_ctx": sum(1 for g in gold if _norm(g) in blob),
+                             "library_rows": len(c["seeds"]) + len(c.get("distractors") or []) + n_fil,
+                             "temperature": EVAL_TEMPERATURE, "llm_guard": hits})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return {"rows": rows, "n": len(rows)}
+
+
+def write_prompts(rows, path: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def render_external_tasks(rows, path: str) -> int:
+    """把导出行同时写成**人能直接粘**的 txt（一问一答一段），外部腿不靠脚本也能跑。"""
+    with open(path, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write("===TASK cid=%s run=%s===\n" % (r["cid"], r["run"]))
+            f.write(render_prompt_text(r["ctx_messages"]))
+            f.write("\n\n")
+    return len(rows)
+
+
 def render_generate(rep) -> str:
     """生成侧报表：**打了多少次、烧了多少 token、装配有多长**必须和分数并排出来。
 
@@ -1597,6 +1803,19 @@ def render_generate(rep) -> str:
     n_consistent = sum(1 for r in rep["rows"] if r.get("consistent", True))
     n_cert = sum(1 for r in rep["rows"] if certified_j1(r))
     L = ["# 动作式记忆评测 · 生成侧试点（A30 S1）", ""]
+    if rep.get("external") or any(r.get("external") for r in rep["rows"]):
+        L.insert(1, EXTERNAL_NOTE)
+        L.insert(2, "- 外部腿的配对账：判了 **%d** 跑／缺回复 **%d** 跑（%s）／"
+                   "有回复但没对应 prompt **%d** 条（%s）⇒ 缺的算**没量到**，不算没过" % (
+                       rep.get("n_runs_judged") or sum(int(r.get("n_runs_real") or 1) for r in rep["rows"]),
+                       len(rep.get("missing_runs") or []),
+                       "、".join(rep.get("missing_runs") or []) or "无",
+                       len(rep.get("orphan_replies") or []),
+                       "、".join(rep.get("orphan_replies") or []) or "无"))
+        if rep.get("mismatch_runs"):
+            L.insert(3, "- ⚠ **对不上账的外部腿跑次已剔除、不进分母（%d 跑）**：%s"
+                        "　⇒ 这些发出去的不是这份 prompt（多半是驱动通道截断了多行参数）" % (
+                            len(rep["mismatch_runs"]), "、".join(rep["mismatch_runs"][:6])))
     L += ["- 题数 **%d**（只跑 judge=J1；本轮**未跑**判据 %s＝J2 要过写侧抽取，是另一次计费）%s" % (
         rep["n"], ",".join(rep.get("skipped_judges") or []) or "无",
         "；另有 **%d 题因锚点过期没跑、也没计费**（分母已剔除，别把它读成「没过」）" % rep["n_skipped_stale"]
@@ -1731,7 +1950,7 @@ def metrics_json(rep):
 
 
 def refusal(judges, mode: str, allow_llm: bool, cert_j12: bool = False,
-            emit_solvability: str = "", fail_below=None, rows_path: str = "") -> str:
+            emit_solvability: str = "", fail_below=None, rows_path: str = "", **kwargs) -> str:
     """三道闸（返回 ''＝放行）。抽成纯函数是为了**能被逐条打假**：授权与否、尺子对否、计费范围对否。
 
     顺序不能换：先问「有没有授权」，再问「模式对不对」，最后问「授权范围够不够」。
@@ -1750,6 +1969,24 @@ def refusal(judges, mode: str, allow_llm: bool, cert_j12: bool = False,
             return "--mode recount 必须配 --rows <jsonl>（它只重算 --emit-rows 落下来的行，零计费、不碰模型）。"
         if js != {"J1"}:
             return "--mode recount 只重算生成侧 J1 的落盘行（--judges J1）；检索侧四条认证请走 --certify-j12。"
+        return ""
+    if mode == "export":
+        # 只导 prompt、一次都不调模型 ⇒ 不需要 --allow-llm；但反过来，**给了 --allow-llm 也不许花钱**
+        if js != {"J1"}:
+            return "--mode export 只导生成侧 J1 的题面（--judges J1）；别的判据的装配路径不在这条腿上。"
+        if allow_llm:
+            return ("--mode export 是零计费档（LLM 入口打桩），不许带 --allow-llm："
+                    "带了说明有人想把导出当付费跑的入口用，那要显式走 --mode generate。")
+        return ""
+    if mode == "judge":
+        if js != {"J1"}:
+            return "--mode judge 只判外部腿跑回来的 J1 回复（--judges J1）。"
+        if not (kwargs.get("prompts_path") or ""):
+            return "--mode judge 必须配 --prompts <jsonl>（--emit-prompts 写出来的那种）：没有题面就没有判据。"
+        if not (kwargs.get("replies_path") or ""):
+            return "--mode judge 必须配 --replies <jsonl>（每行 {\"cid\",\"run\",\"text\"}）。"
+        if allow_llm:
+            return "--mode judge 不碰模型，带 --allow-llm 只会让人误以为这里在花钱；去掉它。"
         return ""
     wants_gen = bool({"J1", "J2"} & js)
     if wants_gen and cert_j12:
@@ -1781,8 +2018,15 @@ async def main():
     ap.add_argument("--dataset", default="", help="题面 jsonl（--mode recount 不需要，它只读 --rows）")
     ap.add_argument("--judges", default="J3")
     ap.add_argument("--configs", default="baseline")
-    ap.add_argument("--mode", choices=["score", "certify", "generate", "recount"], default="certify",
-                    help="recount＝只重算 --emit-rows 落盘的行（零计费，也是按题分块跑完后的合并步）")
+    ap.add_argument("--mode", choices=["score", "certify", "generate", "recount", "export", "judge"],
+                    default="certify",
+                    help="recount＝只重算 --emit-rows 落盘的行（零计费，也是按题分块跑完后的合并步）；"
+                         "export＝只导生产装配 prompt（零计费，给外部模型跑）；"
+                         "judge＝拿外部回复用同一套判据打分（不碰 DB、不调模型）")
+    ap.add_argument("--emit-prompts", default="", help="--mode export 的落盘路径（jsonl，供外部腿跑）")
+    ap.add_argument("--emit-tasks", default="", help="--mode export 另写一份人可直接粘的 txt 任务包")
+    ap.add_argument("--prompts", default="", help="--mode judge 的输入：--emit-prompts 写出来的那种 jsonl")
+    ap.add_argument("--replies", default="", help="--mode judge 的输入：每行 {\"cid\",\"run\",\"text\"}")
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--only-cid", default="",
@@ -1809,16 +2053,51 @@ async def main():
 
     judges = [x.strip().upper() for x in a.judges.split(",") if x.strip()]
     why = refusal(judges, a.mode, a.allow_llm, cert_j12=a.certify_j12,
-                  emit_solvability=a.emit_solvability, fail_below=a.fail_below, rows_path=a.rows)
+                  emit_solvability=a.emit_solvability, fail_below=a.fail_below, rows_path=a.rows,
+                  prompts_path=a.prompts, replies_path=a.replies)
     if why:
         print("[拒绝] " + why, file=sys.stderr)
         return 2
-    if a.mode != "recount" and not a.dataset:
+    if a.mode not in ("recount", "judge") and not a.dataset:
         # `--dataset` 原来是 argparse 的 required，为了让 `--mode recount` 能只读落盘行才放开，
         # 所以这里必须把它顶回来——否则缺题面会一路走到 `open("")` 报一个看不懂的错。
         print("[拒绝] --dataset 必填（只有 --mode recount 不吃题面，它只读 --emit-rows 落下来的行）",
               file=sys.stderr)
         return 2
+    if a.mode == "judge":
+        with open(a.prompts, encoding="utf-8-sig") as f:
+            prows = [json.loads(l) for l in f if l.strip()]
+        rep = judge_replies(prows, load_external_replies(a.replies))
+        rep.update({"usage": {}, "llm": {}, "flags": BASELINE_FLAGS, "k": a.k,
+                    "borrowed": {}, "skipped_judges": []})
+        text = render_generate(rep)
+        with open(a.out, "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+        print(text)
+        if a.emit_rows:
+            ctx = {"flags": rep.get("flags"), "k": rep.get("k"), "external": True}
+            with open(a.emit_rows, "a", encoding="utf-8") as f:
+                for r in rep["rows"]:
+                    f.write(json.dumps(dict(r, **ctx), ensure_ascii=False) + "\n")
+        return 0
+    if a.mode == "export":
+        with open(a.dataset, encoding="utf-8-sig") as f:
+            ecases = [c for c in (parse_case(ln) for ln in f) if c]
+        ebad = lint_dataset(ecases)
+        if ebad:
+            print("[数据集不合法] lint 违规 %d 处（导出去也是废题）：%s" % (len(ebad), ebad[:3]),
+                  file=sys.stderr)
+            return 3
+        exp = await run_export_eval(ecases, filler_target=a.fillers, repeat=a.repeat,
+                                    only_cid=a.only_cid, limit=a.limit)
+        if a.emit_prompts:
+            write_prompts(exp["rows"], a.emit_prompts)
+        n_task = render_external_tasks(exp["rows"], a.emit_tasks) if a.emit_tasks else 0
+        print("[export] 导出 %d 跑（题×跑，零计费：LLM 入口打桩，装配里的日摘要走占位分支）"
+              "→ %s%s" % (exp["n"], a.emit_prompts or "（没给 --emit-prompts＝只打印）",
+                          "；任务包 %d 段 → %s" % (n_task, a.emit_tasks) if a.emit_tasks else ""),
+              file=sys.stderr)
+        return 0
     if a.mode == "recount":
         # 复算档排在读题面**之前**：它既不建临时库、也不装配、也不碰模型——整条路上一次计费都没有，
         # 这就是分块跑完之后"把 30 次的结果再看一遍而不再花钱"的那一步。

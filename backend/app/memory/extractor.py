@@ -82,6 +82,10 @@ STAGE（舞台）专用于记录“非真实/临时性”内容，仅两类：
 额外要求（2026-08-08 收紧）：同一信息在对话中出现多次时只提取一次；只提取用户明确说出或明确发生的事实，禁止推测、脑补或把AI猜测当事实（AI回复中提到的内容不代表用户喜欢/拥有它）；信息不明确时写"无"。
 主语规则（2026-08-18 强化）：USER_INFO/EVENTS/PREFERENCES 条目中，关于用户的信息必须以「用户」开头或明确写出主语（如「用户喜欢喝美式咖啡」「用户说下周出差」「用户上周去了海边」），禁止用裸「我」开头描述用户的事（如「我注意到用户…」「我发现你…」应改写为「用户…」）；角色自己的设定与偏好用「我」开头（如「我喜欢吃辣」）；「我们一起/我们」类共同事件（如「我们一起看了海」）按对话归属：对话中有用户发言 → 归用户（写「用户」主语），仅 AI 单方内容 → 归角色。禁止无主语。
 CURATED 只收「长期稳定/可编纂」的信息，一次性情绪、临时状态、短期事件不要写 CURATED；没有写"无"。
+CURATED 修辞与高风险护栏（2026-10-11 加）：
+1) 比喻、夸张、借代、调侃里的**喻体/字眼不是事实**——例如用户说"你像闹钟一样天天催我"，是在形容你提醒得勤，绝不能据此推断用户失眠、生病或在吃药；
+2) 健康、身体状况、疾病、受伤、用药就医、财务、法律、人身安全等**高风险信息**，只有当用户**字面、明确、就事论事**地说过（例如原话"我最近贫血，医生让我补铁"）才允许写 CURATED；仅凭比喻、玩笑、猜测、间接字眼或你的联想，一律不写；
+3) 每一条 CURATED 都要能在用户或你本轮的原话里找到**字面依据**；找不到依据的推断、脑补、合理化解释，一律丢弃。
 INTENT 只在用户明确表达了"未来要兑现的承诺/约定"或"某线索出现时提醒/做某事"时写一条；没有写"无"。拿不准时间就把时间窗写"无"、并给出≥2个线索词；既无时间又无线索、或只是随口一说的，不要写。置信：明确承诺/约定=high，明显线索命中=medium，随口一提/模糊意愿=low（低置信也建议写出，便于评估 G 写入质量；不愿判断时省略=medium 向后兼容）。"""
 
 from app.memory.dialogue_filter import looks_like_raw_dialogue
@@ -333,6 +337,31 @@ def _merge_profile_text(current: str | None, new: str, max_len: int) -> str:
     return (cur + "\n\n" + new)[:max_len]
 
 
+async def _write_curated_item(character_id, user_id, content, kind, imp, source_id) -> None:
+    """把一条「长期编纂知识」落库（Ariadne 模块F 便车）。
+
+    LLM 抽取＝推断，所以**显式**钉三件：未核实、非权威认知状态、置信度随重要度但封顶 0.6。
+    不能只靠 `assert_curated` 的签名默认值——`merge_curated_evidence` 的 verify_state **只升不降**，
+    默认值一旦哪天被改回 machine，同一条错误被第二次抽到时就会自动「转正」成机器确认。
+    """
+    from app.events.facts import (
+        assert_curated,
+        EPISTEMIC_UNVERIFIED,
+        VERIFY_UNVERIFIED,
+    )
+    async with async_session_factory() as db:
+        await assert_curated(
+            db, character_id=character_id, user_id=user_id, kind=kind,
+            object_value=content, predicate="curated",
+            source="extractor", source_event_id=str(source_id) if source_id else None,
+            sources=[{"src": "chat_extract", "message_id": source_id, "imp": imp}],
+            verify_state=VERIFY_UNVERIFIED,
+            epistemic=EPISTEMIC_UNVERIFIED,
+            confidence=max(0.3, min(0.6, float(imp or 2) / 5.0)),
+        )
+        await db.commit()
+
+
 async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, source_id=None):
     conv = f"用户: {_truncate_sample(user_msg)}\nAI: {_truncate_sample(ai_msg)}"
     try:
@@ -545,15 +574,7 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
     if _curated_enabled and _curated_item is not None:
         try:
             content, kind, imp = _curated_item
-            from app.events.facts import assert_curated
-            async with async_session_factory() as db:
-                await assert_curated(
-                    db, character_id=character_id, user_id=user_id, kind=kind,
-                    object_value=content, predicate="curated",
-                    source="extractor", source_event_id=str(source_id) if source_id else None,
-                    sources=[{"src": "chat_extract", "message_id": source_id, "imp": imp}],
-                )
-                await db.commit()
+            await _write_curated_item(character_id, user_id, content, kind, imp, source_id)
             saved += 1
         except Exception as e:
             _logger.warning("Curated extract failed char=%d: %s", character_id, e)

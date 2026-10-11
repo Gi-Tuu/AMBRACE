@@ -248,3 +248,29 @@ def test_create_world_fact_supersedes_similar(wf_db):
     assert new_f.status == "active"
     assert new_f.author == "user"
     assert new_f.object_value == "用户腰不好，需要注意别逞能加量"
+
+
+# ---------------- 采纳入口（2026-10-11 批 61 A4 的闭环） ----------------
+
+def test_改一下保存就是采纳_高风险域恢复注入(wf_db):
+    """注入侧把 machine-confirmed 的高风险域条目拦下后，用户在世界设定页**改一下保存**＝人工复核通过
+    （verify_state→human-reviewed），下一轮恢复注入。没有这一格，P0 会把用户真实的身体事实永久锁死。"""
+    from app.events.facts import KIND_CONSTRAINT, VERIFY_HUMAN, VERIFY_MACHINE, get_curated_facts
+
+    val_old = "用户腰不好，需避免久站"
+    fid = _seed_fact(wf_db, object_value=val_old, predicate="curated", kind=KIND_CONSTRAINT,
+                     verify_state=VERIFY_MACHINE, audience='["public"]')
+
+    def _injected():
+        grouped = asyncio.run(get_curated_facts(character_id=_CHAR_ID, user_id=_USER_ID))
+        return [x.object_value for x in grouped.get(KIND_CONSTRAINT, [])]
+
+    assert val_old not in _injected()          # 拦在注入之外（对存量脏数据当场生效）
+
+    r = _make_client(wf_db).put(
+        f"/api/v1/characters/{_CHAR_ID}/world-facts/{fid}",
+        json={"content": "用户腰有旧伤，避免久站"},
+    )
+    assert r.status_code == 200, r.text
+    assert _get_fact(wf_db, fid).verify_state == VERIFY_HUMAN
+    assert "用户腰有旧伤，避免久站" in _injected()   # 采纳后回到每轮前提

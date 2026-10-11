@@ -3453,6 +3453,72 @@ abstract class AppLocalizations {
   /// **'历史加载失败'**
   String get worldFactHistoryLoadFailed;
 
+  /// No description provided for @worldFactsGroupMine.
+  ///
+  /// In zh, this message translates to:
+  /// **'我的设定'**
+  String get worldFactsGroupMine;
+
+  /// No description provided for @worldFactsGroupPending.
+  ///
+  /// In zh, this message translates to:
+  /// **'TA 记下的·待你确认'**
+  String get worldFactsGroupPending;
+
+  /// No description provided for @worldFactsPendingHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'点开改一下再保存，就等于你确认了这条，它会移到「我的设定」。'**
+  String get worldFactsPendingHint;
+
+  /// No description provided for @worldFactSelect.
+  ///
+  /// In zh, this message translates to:
+  /// **'多选'**
+  String get worldFactSelect;
+
+  /// No description provided for @worldFactSelectAll.
+  ///
+  /// In zh, this message translates to:
+  /// **'全选'**
+  String get worldFactSelectAll;
+
+  /// No description provided for @worldFactDeselectAll.
+  ///
+  /// In zh, this message translates to:
+  /// **'取消全选'**
+  String get worldFactDeselectAll;
+
+  /// No description provided for @worldFactSelectedCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'已选 {n} 项'**
+  String worldFactSelectedCount(int n);
+
+  /// No description provided for @worldFactDeleteSelected.
+  ///
+  /// In zh, this message translates to:
+  /// **'删除所选'**
+  String get worldFactDeleteSelected;
+
+  /// No description provided for @worldFactDeleteSelectedTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'确定删除这 {n} 条设定？'**
+  String worldFactDeleteSelectedTitle(int n);
+
+  /// No description provided for @worldFactDeleteSelectedBody.
+  ///
+  /// In zh, this message translates to:
+  /// **'删除后它们不再出现在设定里，也不会再被 TA 提起。'**
+  String get worldFactDeleteSelectedBody;
+
+  /// No description provided for @worldFactDeleteFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'有 {n} 条没删掉，下拉刷新后重试'**
+  String worldFactDeleteFailed(int n);
+
   /// No description provided for @cancel.
   ///
   /// In zh, this message translates to:

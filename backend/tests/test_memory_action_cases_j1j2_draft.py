@@ -9,7 +9,8 @@
 2. J2 槽名必须在 `MUTABLE_SLOTS` 派生出的真实槽全集里（不存在的槽＝永不命中的空齿）；
 3. J1 的 `field_match` 片段必须真的出现在某条 seed 里（否则模型做对了也判不过）；
 4. `forbidden` 片段不许出现在"该被引用的那条 seed"里（否则正确动作必然带禁用词，题自相矛盾）；
-5. 题面说"周X"时，`expect_date`／`as_of+offset` 落出来的星期必须真是周X（星期换算最容易凭感觉错）；
+5. 题面说"周X"时，`expect_date`／`as_of+offset` 落出来的星期必须真是周X；**周期句（每到／每逢…）
+   不许配单日判据**（10-10 批 51 撤掉 j1t03 的日期），且撤完仍须有 ≥2 道单次题在考绝对日期换算；
 6. 期望动作必须在"判据看得见载荷"的类型里——**TIMER 被明令禁止**：它的载荷只有原始标记串 `tag`，
    属判别键不参与内容比对，也没有 date 字段 ⇒ 任何"TIMER＋绝对日期/片段"的题永远判不过；
 7. 每条未认证题必须带 `blocked_reason`（认证棘轮要求，合入前就该备好，而不是合入时才发现）。
@@ -133,12 +134,25 @@ def test_断言5_星期换算必须对得上():
     变异电池 M1 就是这样把它照出来的。现在两处都扫，并额外断言这条规则真的命中过题，
     防止它退化成永真。
     """
-    checked = 0
+    checked, dated, periodic = 0, 0, 0
     for c in CASES:
         if c["category"] != "temporal":
             continue
         got = _resolved_date(c)
-        assert got, f"{c['cid']} 时间题算不出期望日期（expect_date 与 offset 都没给）"
+        if not got:
+            # 周期题（j1t03 那型）没有"那一个日期"：它考的是走没走 CAL_NOTE＋**载荷认得出星期**。
+            # 10-10 批 51 撤掉它的单日判据，口径守门挪到 lint 的周期词反向钉。
+            assert any(w in c["turn"] for w in ev._periodic_words()), \
+                f"{c['cid']} 时间题既算不出日期、题面又没有周期词 ⇒ 这是漏标不是周期题"
+            frags = {str(v) for v in (c["expect"].get("field_match") or {}).values()}
+            wd = {w for w in WEEKDAY_WORDS if w in frags}
+            assert len(wd) == 1, f"{c['cid']} 周期题靠『载荷里那一个星期词』被认出，片段={frags}"
+            named = wd.pop()
+            assert named in " ".join(s["content"] for s in c["seeds"]), \
+                f"{c['cid']} 周期题的星期「{named}」不在种子里 ⇒ 判据看不见它，模型做对也判不过"
+            periodic += 1
+            continue
+        dated += 1
         text = c["turn"] + " " + " ".join(s["content"] for s in c["seeds"])
         days = {wd for word, wd in WEEKDAY_WORDS.items() if word in text}
         if len(days) == 1:
@@ -148,10 +162,13 @@ def test_断言5_星期换算必须对得上():
             checked += 1
         elif len(days) > 1:
             raise AssertionError(f"{c['cid']} 同时出现多个星期词 {days}，锚点无法判定，题面要改")
-    assert checked >= 2, f"星期规则只命中 {checked} 题 ⇒ 这条断言接近空转，样本要覆盖到"
-    # 至少有一题走 offset 分支（否则断言 5 只覆盖了 expect_date 一条路）
-    assert any((c["time_anchor"] or {}).get("expect_offset_days") is not None
-               for c in CASES if c["category"] == "temporal")
+    # 星期规则有两条被消费的路：(a) 单次题算出的日期必须真是周X（j1t01），
+    # (b) 周期题的载荷片段必须就是种子里那个星期词（j1t03，批 51 从 (a) 挪到 (b)）。
+    # 两条都得有样本，否则这条断言退化成空转。
+    assert checked >= 1 and periodic >= 1, f"星期规则命中 算日期={checked}／周期载荷={periodic} ⇒ 接近空转"
+    # **撤日期只撤周期题那一道**：绝对日期换算这个测点不许跟着一起丢
+    assert dated >= 2, f"只剩 {dated} 道单次题在考绝对日期换算 ⇒ 测点丢了"
+    assert periodic == 1, f"周期题样本={periodic}（预期 1 道 j1t03）⇒ 口径挪动没被钉住"
 
 
 def test_断言5b_offset与as_of的换算和expect_date互斥一致():

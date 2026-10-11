@@ -1,5 +1,6 @@
 
 import 'package:flutter/material.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
@@ -48,6 +49,8 @@ Future<void> _bootstrapServices() async {
   } catch (e) {
     debugPrint('Background service configure failed: $e');
   }
+  // A53（fail-closed 的另一半）：configure 之后 UI 侧事件总线才活着，这里才注册探测器应答。
+  _registerForegroundProbe();
   // FCM 离线推送（ENABLE_FCM=true 时才初始化，否则直接 return）—— init 内部自给自足读取 server_url/token
   try {
     await FcmPushService.instance.init();
@@ -57,11 +60,31 @@ Future<void> _bootstrapServices() async {
 }
 
 /// 监听 app 前后台：写 app_in_foreground 标志，供前台服务与 Flutter 层双源去重
+///
+/// 外部稿提过「这个 listener 没被持有」——核实为**非问题**：`AppLifecycleListener` 构造时
+/// 会 `WidgetsBinding.instance.addObserver(this)`，绑定对象持有它，不会被回收；
+/// 再存一份全局变量只是给分析器多一个「未被引用」的警告（10-11 实测 flutter analyze 会喊）。
 void _setupLifecycleObserver() {
   AppLifecycleListener(
     onShow: () => NotificationService().setAppInForeground(true),
     onHide: () => NotificationService().setAppInForeground(false),
   );
+}
+
+/// A53（2026-10-11，fail-closed 的另一半）：应答后台 isolate 的「你在前台吗」探测。
+///
+/// 旧形状＝后台只等主 isolate 在 `onHide` 里发的那**一条** invoke；`onHide` 触发时主 isolate 已被
+/// 系统冻结，消息可能没送到 ⇒ 后台标志永久停在 `true`，三条通知路径全不弹，而主 isolate 自己不弹
+/// ＝「一退后台就不弹，要重新进 App 才恢复」。现在改成**问**：后台每 5s 探一次，这里回它当时刻的
+/// `lifecycleState`；主 isolate 被冻结就没人回答，后台据此判「在后台」并照常弹通知（判定规则与
+/// 单元测试见 lib/services/foreground_state.dart）。生命周期事件保留，仍负责回前台 0 延迟停止。
+void _registerForegroundProbe() {
+  FlutterBackgroundService().on("fgProbe").listen((_) {
+    final state = WidgetsBinding.instance.lifecycleState?.name ?? "";
+    try {
+      FlutterBackgroundService().invoke("fgAck", {"state": state});
+    } catch (_) {}
+  });
 }
 
 // ---- 批 0-3 M0-b 收尾：服务器身份配对入口（方案 §4.3.4）----

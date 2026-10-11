@@ -93,7 +93,7 @@ def test_收窄后的形状是写死的一种而非多种可选():
     line = next(ln for ln in SYSTEM_PROMPT_TEMPLATE.splitlines() if ln.startswith("【记忆：内容】"))
     assert _SHAPE_MARK in line, line
     # 一条只写一个事实＋长度预算＋不许改写＋不写日期：四件事必须在同一段里说死
-    for piece in ("一条只写一个事实", "≤25 字", "别换成近义说法", "不写日期"):
+    for piece in ("一条只写一个事实", "≤25 字", "别换成近义说法", "同一件事只写一条", "不写日期"):
         assert piece in line, "收窄文案缺约束项 %r：%s" % (piece, line)
     assert "或" not in line.split(_SHAPE_MARK, 1)[1], "形状里出现「或」＝又给模型留了第二种写法"
 

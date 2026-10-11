@@ -276,8 +276,58 @@ async def _execute_note_tool(tool_name: str, payload: dict, character_id: int) -
     await execute_tool(_spec, payload, user_id=None, character_id=character_id)
 
 
-async def _save_phone_desktop_notes(character_id: int, full_text: str) -> None:
-    """小手机日历/备忘录标记落库（[CAL_NOTE]/[MEMO]）。
+def _fallback_flags() -> tuple:
+    """两档闸：shadow＝只打留痕不落库；gate＝真补一条。**都关＝一次额外调用都不发生**。"""
+    from app.agent import loop as _loop
+    _fl = _loop.AGENT_FLAGS or {}
+    return (bool(_fl.get("memory_fallback_shadow", False)),
+            bool(_fl.get("memory_fallback_gate", False)))
+
+
+async def _maybe_fallback_notes(character_id: int, user_text: str,
+                                cal_present: bool, memo_present: bool, author: str = "") -> str:
+    """A30 批 C：模型这一轮**既没落日历也没落备忘**时，由确定性规则补记（零 LLM）。
+
+    三条硬规矩（都写在 `app/memory/fallback.py`，这里只负责接线）：
+    - 只在用户亲口下令（记/备忘／提醒＋日期）时动，认不出就不补；
+    - 正文**逐字**取本轮用户原话的子串，系统不造句；
+    - 周期约定没有那一个日期 ⇒ 补不出绝对日期的条目**一律不写库**（写不出日子就等于没这条）。
+    返回一个状态串给测试与留痕用：off／shadow／written／periodic_skipped／error。
+    """
+    shadow, gate = _fallback_flags()
+    if not (shadow or gate):
+        return "off"
+    from app.memory.fallback import CHANNEL_CAL, fallback_actions
+    have = set()
+    if cal_present:
+        have.add(CHANNEL_CAL)
+    if memo_present:
+        have.add("MEMO")
+    got = fallback_actions(user_text or "", recall_texts=(), model_channels=have)
+    made = [(a.action_type, dict(a.payload or {})) for a in got["actions"]]
+    _logger.info(
+        "A30 兜底 route=memory_fallback char=%d made=%s skipped=%s",
+        character_id,
+        " ‖ ".join("%s:%s" % (t, p.get("text") or p.get("date") or "") for t, p in made) or "无",
+        "; ".join("%s=%s" % kv for kv in (got.get("skipped") or {}).items()) or "无")
+    if not gate:
+        return "shadow"
+    if not made:
+        return "skipped"
+    written = 0
+    for _t, _p in made:
+        if not (_p.get("date") or "").strip():
+            continue          # 周期条目没有那个日期 ⇒ 小手机日历写不出日子，宁缺
+        await _execute_note_tool("note_calendar", {
+            "character_id": character_id, "date": _p.get("date") or "",
+            "text": _p.get("text") or "", "author": author}, character_id)
+        written += 1
+    return "written" if written else "no_date"
+
+
+async def _save_phone_desktop_notes(character_id: int, full_text: str,
+                                   user_text: str = "") -> None:
+    """小手机日历/备忘录标记落库（[CAL_NOTE]/[MEMO]）；A30 批 C：两者都没落时按确定性规则补记。
 
     主聊天 /send 统一接入（Phase F：默认经统一执行入口 execute_tool；
     Feature Flag agent_loop_chat 关闭时直接落库=旧链路，可回退对比）；失败静默。
@@ -295,6 +345,7 @@ async def _save_phone_desktop_notes(character_id: int, full_text: str) -> None:
     from app.agent import loop as _loop
     _use_runtime = _loop.AGENT_FLAGS.get("agent_loop_chat", True)
     # 日历备注 [CAL_NOTE]...[/CAL_NOTE]
+    _cal = None
     try:
         _cal = _extract_cal_note(full_text or "")
         if _cal:
@@ -308,6 +359,7 @@ async def _save_phone_desktop_notes(character_id: int, full_text: str) -> None:
     except Exception as e:
         _logger.warning("Calendar note save failed: %s", e)
     # 备忘录 [MEMO]...[/MEMO]
+    _memo_text = None
     try:
         _memo_text = _extract_memo(full_text or "")
         if _memo_text:
@@ -319,6 +371,12 @@ async def _save_phone_desktop_notes(character_id: int, full_text: str) -> None:
                 await _save_memo_note(character_id, _memo_text, _note_author)
     except Exception as e:
         _logger.warning("Memo save failed: %s", e)
+    # A30 批 C（2026-10-11）：这一轮既没落日历也没落备忘 ⇒ 由系统按确定性规则补记（两档闸默认关）。
+    # 兜底自己出错绝不许阻塞主链路，所以这里再兜一层 except。
+    try:
+        await _maybe_fallback_notes(character_id, user_text, bool(_cal), bool(_memo_text), _note_author)
+    except Exception as e:
+        _logger.warning("memory fallback skipped: %s", e)
     # 备注标记完成 [CAL_DONE]/[MEMO_DONE]（批 G4，2026-09-26）：模型读小手机清单时把已结束的条目标掉；
     # 执行侧按关键词 LIKE 匹配本角色行、命中多条取最新、命中不到明确失败（绝不静默成功）。
     try:

@@ -4,7 +4,11 @@ import "../../services/api_client.dart";
 import "../../widgets/ios_card_group.dart";
 import "package:ai_companion/theme/tokens.dart";
 
-/// 世界设定管理（P1-3）：用户定义的不可动摇事实（AI 推断不能覆盖）
+/// 世界设定管理（P1-3）：分「我的设定」与「TA 记下的·待你确认」两组，支持多选批量删除。
+///
+/// 分组只认 `author`：用户亲手写或亲手改过的（含采纳 AI 记下的那条）算「我的设定」，
+/// 其余是角色自己编纂、等你确认的。「改一下保存」＝确认，该条会当场移到「我的设定」——
+/// 这是批 61 采纳闭环 + 批 67（A55）「编辑不改层归属」在页面上的可见反馈。
 class WorldSettingsScreen extends StatefulWidget {
   const WorldSettingsScreen({super.key, required this.characterId});
 
@@ -22,6 +26,12 @@ class _WorldSettingsScreenState extends State<WorldSettingsScreen> {
   final Map<int, Map<String, dynamic>> _historyById = {};
   final Set<int> _historyLoading = {};
 
+  // 多选删除：进入多选后行首换成勾选框、顶栏改成「已选 N 项／全选／删除」。
+  // 删除仍逐条调既有接口（实测单条 0.01–0.05 秒），不为此新增后端批量端点。
+  bool _selectMode = false;
+  final Set<int> _selectedIds = {};
+  bool _deleting = false;
+
   @override
   void initState() {
     super.initState();
@@ -38,6 +48,87 @@ class _WorldSettingsScreenState extends State<WorldSettingsScreen> {
       if (!mounted) return;
       setState(() { _error = "$e"; _loading = false; });
     }
+  }
+
+  bool _isMine(Map<String, dynamic> item) => item['author'] == 'user';
+
+  List<Map<String, dynamic>> get _mine => _items.where(_isMine).toList();
+
+  List<Map<String, dynamic>> get _pending => _items.where((e) => !_isMine(e)).toList();
+
+  bool get _allSelected => _items.isNotEmpty && _selectedIds.length == _items.length;
+
+  void _enterSelect() {
+    setState(() {
+      _selectMode = true;
+      _selectedIds.clear();
+    });
+  }
+
+  void _exitSelect() {
+    setState(() {
+      _selectMode = false;
+      _selectedIds.clear();
+    });
+  }
+
+  void _toggleItem(Map<String, dynamic> item) {
+    final id = item['id'] as int;
+    setState(() {
+      if (!_selectedIds.remove(id)) _selectedIds.add(id);
+    });
+  }
+
+  void _toggleSelectAll() {
+    setState(() {
+      if (_allSelected) {
+        _selectedIds.clear();
+      } else {
+        _selectedIds.addAll(_items.map((e) => e['id'] as int));
+      }
+    });
+  }
+
+  /// 批量删除：确认后逐条删；单条失败不中断整批，末尾如实报「有 N 条没删掉」。
+  Future<void> _deleteSelected() async {
+    final ids = _selectedIds.toList();
+    if (ids.isEmpty || _deleting) return;
+    final l10n = AppLocalizations.of(context)!;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.worldFactDeleteSelectedTitle(ids.length)),
+        content: Text(l10n.worldFactDeleteSelectedBody),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l10n.cancel)),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l10n.delete, style: const TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (!mounted) return;
+    setState(() => _deleting = true);
+    var failed = 0;
+    for (final id in ids) {
+      try {
+        await ApiClient().deleteWorldFact(widget.characterId, id);
+        _forgetHistory(id);
+      } catch (_) {
+        failed++;
+      }
+    }
+    if (!mounted) return;
+    setState(() => _deleting = false);
+    _exitSelect();
+    if (failed > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(AppLocalizations.of(context)!.worldFactDeleteFailed(failed))),
+      );
+    }
+    _load();
   }
 
   /// 新增/编辑共用的输入弹窗（复用新增对话框样式）：返回输入的文本，取消返回 null。
@@ -167,7 +258,7 @@ class _WorldSettingsScreenState extends State<WorldSettingsScreen> {
     }
   }
 
-  /// 单条事实行：标题 + 编辑/删除/历史三按钮；展开时下方显示「修正历史」版本链。
+  /// 单条事实行：多选模式下行首是勾选框（点整行即勾选），否则显示 历史/编辑/删除 三个按钮。
   Widget _buildFactRow(
     Map<String, dynamic> item,
     AppLocalizations l10n,
@@ -179,6 +270,13 @@ class _WorldSettingsScreenState extends State<WorldSettingsScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ListTile(
+          onTap: _selectMode ? () => _toggleItem(item) : null,
+          leading: _selectMode
+              ? Checkbox(
+                  value: _selectedIds.contains(id),
+                  onChanged: (_) => _toggleItem(item),
+                )
+              : null,
           title: Text(
             "${item['object_value'] ?? ''}",
             style: TextStyle(
@@ -188,38 +286,41 @@ class _WorldSettingsScreenState extends State<WorldSettingsScreen> {
                   : scheme.onSurface.withValues(alpha: 0.7),
             ),
           ),
+          // 来源已经由分组标题说明，这里只留生效日期（原来那行 "author: system · curated" 是内部字段名）
           subtitle: Text(
-            "author: ${item['author'] ?? ''} · ${item['predicate'] ?? ''}",
+            "${l10n.worldFactHistoryAsserted} · ${_day(item['asserted_at'])}",
             style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle),
           ),
           // 编辑 / 删除（含策展层写入的 system 事实，删前二次确认）+ 历史（只读展开）
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: Icon(
-                  Icons.history,
-                  size: 20,
-                  color: expanded ? scheme.primary : IosCardColors.subtitle,
+          trailing: _selectMode
+              ? null
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        Icons.history,
+                        size: 20,
+                        color: expanded ? scheme.primary : IosCardColors.subtitle,
+                      ),
+                      tooltip: l10n.worldFactHistory,
+                      onPressed: () => _toggleHistory(item),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined,
+                          size: 20, color: IosCardColors.subtitle),
+                      tooltip: l10n.edit,
+                      onPressed: () => _edit(item),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline,
+                          size: 20, color: AppColors.error),
+                      onPressed: () => _delete(item),
+                    ),
+                  ],
                 ),
-                tooltip: l10n.worldFactHistory,
-                onPressed: () => _toggleHistory(item),
-              ),
-              IconButton(
-                icon: const Icon(Icons.edit_outlined,
-                    size: 20, color: IosCardColors.subtitle),
-                tooltip: l10n.edit,
-                onPressed: () => _edit(item),
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline,
-                    size: 20, color: AppColors.error),
-                onPressed: () => _delete(item),
-              ),
-            ],
-          ),
         ),
-        if (expanded)
+        if (expanded && !_selectMode)
           Container(
             color: scheme.surface.withValues(alpha: 0.5),
             padding: const EdgeInsets.symmetric(vertical: 4),
@@ -230,6 +331,25 @@ class _WorldSettingsScreenState extends State<WorldSettingsScreen> {
                   )
                 : _buildHistoryPanel(id, l10n),
           ),
+      ],
+    );
+  }
+
+  /// 一组设定（空组整组不渲染，免得页面上挂着两个空标题）。
+  Widget _buildGroup(
+    String title,
+    List<Map<String, dynamic>> items,
+    AppLocalizations l10n,
+    ColorScheme scheme,
+  ) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    return IosCardGroup(
+      title: title,
+      children: [
+        for (int i = 0; i < items.length; i++) ...[
+          if (i > 0) const IosCardDivider(),
+          _buildFactRow(items[i], l10n, scheme),
+        ],
       ],
     );
   }
@@ -329,56 +449,100 @@ class _WorldSettingsScreenState extends State<WorldSettingsScreen> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(l10n.worldFactsTitle),
-        centerTitle: false,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: l10n.worldFactAdd,
-            onPressed: _add,
-          ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(l10n.loadFailed, style: const TextStyle(color: IosCardColors.subtitle)),
-                      const SizedBox(height: 12),
-                      OutlinedButton(onPressed: _load, child: Text(l10n.retry)),
-                    ],
-                  ),
+    return PopScope(
+      // 多选模式下返回键先退出多选，不直接离开这一页
+      canPop: !_selectMode,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _exitSelect();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(_selectMode
+              ? l10n.worldFactSelectedCount(_selectedIds.length)
+              : l10n.worldFactsTitle),
+          centerTitle: false,
+          leading: _selectMode
+              ? IconButton(
+                  icon: const Icon(Icons.close),
+                  tooltip: l10n.cancel,
+                  onPressed: _exitSelect,
                 )
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView(
-                    padding: const EdgeInsets.only(top: 8, bottom: 24),
-                    children: [
-                      if (_items.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(l10n.worldFactsEmpty,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)),
-                        )
-                      else
-                        IosCardGroup(
-                          title: l10n.worldFactsTitle,
-                          children: [
-                            for (int i = 0; i < _items.length; i++) ...[
-                              if (i > 0) const IosCardDivider(),
-                              _buildFactRow(_items[i], l10n, scheme),
-                            ],
-                          ],
-                        ),
-                    ],
+              : null,
+          bottom: _deleting
+              ? const PreferredSize(
+                  preferredSize: Size.fromHeight(2),
+                  child: LinearProgressIndicator(minHeight: 2),
+                )
+              : null,
+          actions: _selectMode
+              ? [
+                  TextButton(
+                    onPressed: _toggleSelectAll,
+                    child: Text(_allSelected
+                        ? l10n.worldFactDeselectAll
+                        : l10n.worldFactSelectAll),
                   ),
-                ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    color: AppColors.error,
+                    tooltip: l10n.worldFactDeleteSelected,
+                    onPressed: (_selectedIds.isEmpty || _deleting) ? null : _deleteSelected,
+                  ),
+                ]
+              : [
+                  IconButton(
+                    icon: const Icon(Icons.checklist),
+                    tooltip: l10n.worldFactSelect,
+                    onPressed: _items.isEmpty ? null : _enterSelect,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    tooltip: l10n.worldFactAdd,
+                    onPressed: _add,
+                  ),
+                ],
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(l10n.loadFailed, style: const TextStyle(color: IosCardColors.subtitle)),
+                        const SizedBox(height: 12),
+                        OutlinedButton(onPressed: _load, child: Text(l10n.retry)),
+                      ],
+                    ),
+                  )
+                : RefreshIndicator(
+                    onRefresh: _load,
+                    child: ListView(
+                      padding: const EdgeInsets.only(top: 8, bottom: 24),
+                      children: [
+                        if (_items.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(l10n.worldFactsEmpty,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)),
+                          )
+                        else ...[
+                          _buildGroup(l10n.worldFactsGroupMine, _mine, l10n, scheme),
+                          if (_pending.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                              child: Text(l10n.worldFactsPendingHint,
+                                  style: const TextStyle(
+                                      fontSize: 12, color: IosCardColors.subtitle)),
+                            ),
+                          _buildGroup(
+                              l10n.worldFactsGroupPending, _pending, l10n, scheme),
+                        ],
+                      ],
+                    ),
+                  ),
+      ),
     );
   }
 }

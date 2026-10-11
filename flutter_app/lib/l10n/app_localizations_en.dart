@@ -1910,6 +1910,47 @@ class AppLocalizationsEn extends AppLocalizations {
   String get worldFactHistoryLoadFailed => 'Failed to load history';
 
   @override
+  String get worldFactsGroupMine => 'My settings';
+
+  @override
+  String get worldFactsGroupPending => 'Noted by them · needs your review';
+
+  @override
+  String get worldFactsPendingHint =>
+      'Open one, edit it and save to confirm it — it then moves to My settings.';
+
+  @override
+  String get worldFactSelect => 'Select';
+
+  @override
+  String get worldFactSelectAll => 'Select all';
+
+  @override
+  String get worldFactDeselectAll => 'Deselect all';
+
+  @override
+  String worldFactSelectedCount(int n) {
+    return '$n selected';
+  }
+
+  @override
+  String get worldFactDeleteSelected => 'Delete selected';
+
+  @override
+  String worldFactDeleteSelectedTitle(int n) {
+    return 'Delete these $n settings?';
+  }
+
+  @override
+  String get worldFactDeleteSelectedBody =>
+      'After deletion they leave the settings and won\'t be brought up again.';
+
+  @override
+  String worldFactDeleteFailed(int n) {
+    return '$n couldn\'t be deleted — pull to refresh and retry';
+  }
+
+  @override
   String get cancel => 'Cancel';
 
   @override

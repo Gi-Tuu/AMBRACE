@@ -19,6 +19,12 @@ import 'fake_api_adapter.dart';
 /// 玻璃顶栏/心情 emoji、TypingIndicator 三点（reduceMotion 静态）、
 /// 发送链路（本地消息出现）、用户气泡渐变、时间胶囊、回底按钮、表情面板、
 /// 以及 build 期隐患治理（无 setState during build 由全部用例通过隐式保证）。
+/// §10 修订用：取当前挂在界面上、带闪烁光标的气泡（生成期间列表末尾那一行）。
+/// 它是**纯视图行**（不进 `ChatProvider.messages`），所以只能从 widget 树里数。
+Iterable<MessageBubble> _streamingBubbles(WidgetTester tester) => tester
+    .widgetList<MessageBubble>(find.byType(MessageBubble))
+    .where((b) => b.isStreaming);
+
 void main() {
   late FakeApiAdapter api;
   late ChatProvider chat;
@@ -146,6 +152,56 @@ void main() {
     });
   });
 
+  group('生成期间的落点光标（§10 修订，10-11 用户指出）', () {
+    testWidgets('isTyping=true → 列表末尾出现一条带闪烁光标的 AI 气泡，顶栏不再挂三点',
+        (tester) async {
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+
+      // 普通态：既没有光标行，也没有顶栏三点
+      expect(find.byType(TypingIndicator), findsNothing,
+          reason: '顶栏那三个点按用户要求删掉了（生成中的反馈挪到落点）');
+      expect(_streamingBubbles(tester), isEmpty);
+
+      // 发送 → 进入生成态。⚠ 这里起不能用 pumpAndSettle：光标是 600ms 往复的常驻动画，
+      // "settle"永远等不到（生成结束、光标收起之后才可以继续用 settle）。
+      await tester.enterText(find.byType(TextField), '在吗');
+      await tester.pump();
+      await tester.tap(find
+          .ancestor(of: find.byIcon(Icons.send), matching: find.byType(IconButton))
+          .first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+
+      expect(chat.isTyping, isTrue, reason: '前提：发送后进入生成态');
+      final cursor = _streamingBubbles(tester);
+      expect(cursor, hasLength(1), reason: '生成期间必须在落点处看到闪烁光标');
+      expect(cursor.single.isUser, isFalse);
+      expect(find.byType(TypingIndicator), findsNothing);
+
+      // 生成结束（首块落地会发 typing=false）→ 光标必须收掉
+      chat.handleStreamEvent({'type': 'typing', 'is_typing': false});
+      await tester.pumpAndSettle();
+      expect(_streamingBubbles(tester), isEmpty, reason: '结束了还挂着光标＝旧光标没收');
+    });
+
+    testWidgets('SSE 的 typing 事件必须重绘界面（这条腿此前只改状态不 notify）',
+        (tester) async {
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+
+      chat.handleStreamEvent({'type': 'typing', 'is_typing': true});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+
+      expect(_streamingBubbles(tester), hasLength(1),
+          reason: '改了 isTyping 却不 notify＝界面永远不动；WS 那条腿一直是 _setTyping 后紧跟 notify，两条腿不该不一致');
+
+      chat.handleStreamEvent({'type': 'typing', 'is_typing': false});
+      await tester.pumpAndSettle();
+    });
+  });
+
   group('Send message', () {
     testWidgets('send button disabled when empty, enabled with text; send shows bubble',
         (tester) async {
@@ -172,7 +228,10 @@ void main() {
       );
 
       await tester.tap(sendBtn.first);
-      await tester.pumpAndSettle();
+      // §10 修订后：发送即进入生成态，列表末尾那条光标行是**常驻动画** ⇒ 这里不能再用
+      // pumpAndSettle（等不到静止）。本地气泡是同步插入的，两次定长 pump 足够。
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
       expect(find.text('你好呀'), findsOneWidget);
     });
   });

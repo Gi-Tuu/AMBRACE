@@ -12,10 +12,16 @@ import "../utils/app_lang.dart";
 enum ActiveScreen { other, characterList, chat }
 
 /// 消息通知服务：前台展示通道（红点 + 顶部横幅 + 前台系统通知）。
-/// 【通知双轨收敛 2026-08-05】不再自行网络轮询：
-/// 网络轮询统一由后台前台服务（BackgroundPollingService）执行，结果写入 SharedPreferences，
-/// 本服务每 5 秒读快照刷新红点、消费新增未读事件弹横幅；
-/// 兜底：后台服务心跳超时（150s）时前台自行单次轮询，防止服务被杀后通知失效。
+/// 【通知双轨收敛 2026-08-05】网络轮询以后台前台服务（BackgroundPollingService）为主源。
+/// 【订正 2026-10-11 A54】此前这段注释写的是「每 5 秒读快照刷新红点＋心跳超时 150s 兜底」，
+/// 而实现里 150s 那条判定**从来不存在**，且本文件 :73-74 自己写着「SharedPreferences 跨 isolate
+/// 单例缓存读不到后台 isolate 写入的值」⇒ **前台红点的真实数据源是每 30 秒那次自轮询（_fallbackPoll），
+/// 5 秒那个定时器基本空转**。这就是「红点要过很久／重进一次才消失」的量化解释，本次按此修：
+/// ① 读快照前 `reload()`，让 5s 通道真的能看见后台写的值；
+/// ② AI 回复落地那一刻由聊天链路主动标记已读（不等 30s，见 ChatProvider._noteAiReplyVisible）；
+/// ③ 标记后立即做一次**网络权威**校正（_fallbackPoll），不再只刷本地快照；
+/// ④ 顺序改为「先吸收、后应用快照」，消掉红点亮一下又灭；
+/// ⑤ 抑制改带 TTL 的纯状态机（ReadSuppressor），不再无限期压住红点。
 class NotificationService extends ChangeNotifier {
   static final NotificationService _instance = NotificationService._internal();
   factory NotificationService() => _instance;
@@ -30,9 +36,13 @@ class NotificationService extends ChangeNotifier {
   Timer? _prefsTimer;
   Timer? _fallbackTimer;
 
-  /// 本地已读抑制：markRead/聊天页吸收时记录 (charId -> 当时的 count)，
-  /// 快照读到相同 count 时过滤（红点不回弹）；count 增大或归零后解除。
-  final Map<int, int> _suppressedCounts = {};
+  /// 本地已读抑制（A54 起为纯状态机，规则与 TTL 见 unread_engine.ReadSuppressor，可单测）。
+  final ReadSuppressor _suppressor = ReadSuppressor();
+  /// 最近一次「用户正看着这个角色的聊天页」的会话/角色，用于离开页面与切后台时补一次已读。
+  int? _visibleSessionId;
+  int? _visibleCharacterId;
+  /// 可见期标记已读的节流戳（AI 连发多条时不必每条都打一次 /read）
+  int _lastVisibleMarkMs = 0;
 
   /// 已消费的事件时间戳（持久化，重启不重复弹）
   int _lastEventAt = 0;
@@ -47,8 +57,15 @@ class NotificationService extends ChangeNotifier {
 
   /// 页面主动上报当前所在页面（聊天页/好友列表页用于抑制弹窗）
   void setActiveScreen(ActiveScreen screen, {int? characterId}) {
+    final wasChat = _activeScreen == ActiveScreen.chat;
     _activeScreen = screen;
-    if (screen == ActiveScreen.chat) _chatCharacterId = characterId;
+    if (screen == ActiveScreen.chat) {
+      _chatCharacterId = characterId;
+    } else if (wasChat) {
+      // 离开聊天页（被别的页面盖住／返回上层）⇒ 刚才看着的那条会话补标一次已读。
+      // 不补就会退化成「红点等到下次 30s 轮询或重进会话才消失」。
+      _flushVisibleRead();
+    }
     notifyListeners();
   }
 
@@ -56,6 +73,10 @@ class NotificationService extends ChangeNotifier {
   /// 写 SharedPreferences（兼容旧逻辑）+ invoke 可靠通道通知后台 isolate
   /// （prefs 跨 isolate 单例缓存读不到对方写入值，后台标志必须走 invoke）
   Future<void> setAppInForeground(bool value) async {
+    if (!value && _activeScreen == ActiveScreen.chat) {
+      // 退后台/息屏前补一次已读：用户刚才就在看这个会话
+      _flushVisibleRead();
+    }
     _isAppInForeground = value;
     try {
       FlutterBackgroundService().invoke("setAppForeground", {"value": value});
@@ -92,14 +113,14 @@ class NotificationService extends ChangeNotifier {
   Future<void> _refreshFromPrefs() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      // A54：后台 isolate 写的是同一份原生 SharedPreferences，但 Dart 侧每个 isolate 有自己的
+      // 单例缓存——不 reload 就读到旧值（这正是 :73-74 那句注释承认「读不到」的原因）。
+      try {
+        await prefs.reload();
+      } catch (_) {}
       if (_lastEventAt == 0) _lastEventAt = prefs.getInt("unread_last_event_at") ?? 0;
 
-      // 1) 快照 → 红点（应用本地已读抑制）
-      final snapshot =
-          NotifyPrefs.decodeSnapshot(prefs.getString(NotifyPrefs.snapshotKey));
-      _applySnapshot(snapshot);
-
-      // 2) 新增未读事件 → 弹横幅/系统通知（仅处理比上次新的）
+      // 1) 先消费新增未读事件：正在看的角色会被吸收（并登记抑制）
       final eventAt = prefs.getInt(NotifyPrefs.newEventAtKey) ?? 0;
       if (eventAt > _lastEventAt) {
         final events = await NotifyPrefs.decodeEvent(prefs.getString(NotifyPrefs.newEventKey));
@@ -109,20 +130,18 @@ class NotificationService extends ChangeNotifier {
           await _handleNewUnread(event);
         }
       }
+
+      // 2) 再应用快照 → 红点。顺序反过来就会「先亮后灭」（用户体感的红点闪一下）：
+      //    旧顺序是先用未过滤的快照点亮，之后才吸收，观感上就是回弹。
+      final snapshot =
+          NotifyPrefs.decodeSnapshot(prefs.getString(NotifyPrefs.snapshotKey));
+      _applySnapshot(snapshot);
     } catch (_) {}
   }
 
-  /// 应用快照（过滤本地已读抑制；count 增大/归零后解除抑制）
+  /// 应用快照（抑制规则集中在 ReadSuppressor：TTL／归零／计数变化都会解除）
   void _applySnapshot(Map<int, int> snapshot) {
-    final cleaned = <int, int>{};
-    _suppressedCounts.removeWhere((charId, count) {
-      final cur = snapshot[charId] ?? 0;
-      return cur == 0 || cur != count; // 服务器已清零或又有新增 → 解除
-    });
-    for (final e in snapshot.entries) {
-      if (_suppressedCounts.containsKey(e.key)) continue;
-      cleaned[e.key] = e.value;
-    }
+    final cleaned = _suppressor.filter(snapshot);
     final prev = _unreadCounts;
     _unreadCounts = cleaned;
     // 这个快照是每 5 秒读一次 SharedPreferences 的轮询喂进来的（:78）。
@@ -153,7 +172,9 @@ class NotificationService extends ChangeNotifier {
       _fallbackLastCounts = newCounts;
       _fallbackBaselineSet = true;
 
-      _applySnapshot(newCounts);
+      // A54：先把「正在看的角色」吸收掉，再应用快照（否则红点先亮后灭）；
+      // 其余角色的事件排在 _applySnapshot 之后处理，保证角标与横幅同时序。
+      final deferred = <UnreadEvent>[];
       for (final diff in diffs) {
         final sessionId = _findSessionIdByList(list, diff.characterId);
         if (sessionId == null) continue;
@@ -168,13 +189,17 @@ class NotificationService extends ChangeNotifier {
         final msg = msgs.last;
         if (msg.senderType != 'ai') continue;
         final title = await _fetchCharacterName(diff.characterId);
-        await _handleNewUnread(UnreadEvent(
+        deferred.add(UnreadEvent(
           characterId: diff.characterId,
           sessionId: sessionId,
           count: diff.count,
           title: title,
           content: msg.content,
         ));
+      }
+      _applySnapshot(newCounts);
+      for (final e in deferred) {
+        await _handleNewUnread(e);
       }
     } catch (_) {}
   }
@@ -225,18 +250,53 @@ class NotificationService extends ChangeNotifier {
     }
   }
 
-  Future<void> markRead(int sessionId) async {
+  /// 标记某会话已读。
+  ///
+  /// ⚠ A54 修掉一条**恒不生效的死路径**：原来本地清红点靠 `_sessionCharMap.remove(sessionId)`，
+  /// 而这张表只有 `_absorbUnread` 会写 ⇒ 进会话那唯一一次 markRead 永远拿到 null，红点只能等
+  /// 后面的刷新兜。所以 `characterId` 现在由调用方（聊天页知道自己在看谁）传进来。
+  Future<void> markRead(int sessionId, {int? characterId}) async {
     try {
       await _api.markSessionRead(sessionId);
-      final charId = _sessionCharMap.remove(sessionId);
+      final charId = characterId ?? _sessionCharMap.remove(sessionId);
+      _rememberVisible(sessionId, charId);
       if (charId != null) {
-        final cur = _unreadCounts[charId] ?? 0;
-        _suppressedCounts[charId] = cur;
+        _suppressor.note(charId, _unreadCounts[charId] ?? 0);
         _unreadCounts.remove(charId);
         notifyListeners();
       }
+      // 权威校正走网络（本地快照可能还是旧的），失败退回刷快照
+      await _fallbackPoll();
+    } catch (_) {
       _refreshFromPrefs();
-    } catch (_) {}
+    }
+  }
+
+  /// 记住「用户此刻在看哪个会话／角色」，供离开页面与切后台时补标一次。
+  void _rememberVisible(int? sessionId, int? charId) {
+    if (sessionId != null) _visibleSessionId = sessionId;
+    if (charId != null) _visibleCharacterId = charId;
+  }
+
+  /// 补一次已读（离开聊天页／切后台前）。静默失败：这只是兜底，不打断 UI。
+  void _flushVisibleRead() {
+    final sid = _visibleSessionId;
+    if (sid == null) return;
+    unawaited(markRead(sid, characterId: _visibleCharacterId));
+  }
+
+  /// AI 回复落地那一刻由聊天链路调用（**不等 30 秒轮询**）：
+  /// 只有确实停在该角色的聊天页才标已读，并按 2 秒节流避免连发多条时反复打 /read。
+  Future<void> onVisibleReply(int? sessionId, int? charId) async {
+    if (sessionId == null || charId == null) return;
+    if (_activeScreen != ActiveScreen.chat || _chatCharacterId != charId) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastVisibleMarkMs < 2000) {
+      _rememberVisible(sessionId, charId);
+      return;
+    }
+    _lastVisibleMarkMs = now;
+    await markRead(sessionId, characterId: charId);
   }
 
   /// 聊天页内消息已实时可见：吸收未读并调用后端标记已读（联动同角色会话）
@@ -244,8 +304,8 @@ class NotificationService extends ChangeNotifier {
     try {
       await _api.markSessionRead(sessionId);
       _sessionCharMap[sessionId] = charId;
-      final cur = _unreadCounts[charId] ?? 0;
-      _suppressedCounts[charId] = cur;
+      _rememberVisible(sessionId, charId);
+      _suppressor.note(charId, _unreadCounts[charId] ?? 0);
       _unreadCounts.remove(charId);
       notifyListeners();
     } catch (_) {}

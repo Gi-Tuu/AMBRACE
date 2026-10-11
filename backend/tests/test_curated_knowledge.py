@@ -19,6 +19,7 @@ import pytest
 from _dbclone import clone_engine, make_session_factory
 
 from app.models.memory import WorldFact
+from app.events.facts import VERIFY_MACHINE
 
 
 # 快测档（2026-09-12）：本文件是重量级/集成型用例（每例起一次临时库，约 3s/例），打 slow 标记。
@@ -43,7 +44,7 @@ def cf_db(monkeypatch, tmp_path):
 
 def _add_fact(factory, *, character_id, user_id=1, kind, object_value,
               predicate="curated", audience="[\"public\"]", status="active",
-              verify_state="unverified", sources_json="[]", links_json="[]",
+              verify_state="machine-confirmed", sources_json="[]", links_json="[]",
               stale_after=None, expires_at=None, confidence=1.0, asserted_at=None):
     from datetime import datetime, timezone
     now = (asserted_at or datetime.now(timezone.utc).replace(tzinfo=None))
@@ -53,7 +54,7 @@ def _add_fact(factory, *, character_id, user_id=1, kind, object_value,
                 user_id=user_id, character_id=character_id, subject_type="character",
                 subject_id=character_id, predicate=predicate, object_value=object_value,
                 status=status, confidence=confidence, epistemic_status="FACT",
-                audience=audience, author="system", is_authoritative=True,
+                audience=audience, author="system", is_authoritative=False,
                 kind=kind, verify_state=verify_state,
                 sources_json=sources_json, links_json=links_json,
                 stale_after=stale_after, expires_at=expires_at, asserted_at=now,
@@ -73,9 +74,9 @@ def test_assert_curated_bypasses_12_cap(cf_db):
         async with factory() as db:
             for i in range(10):
                 await assert_curated(db, character_id=11, user_id=1, kind=KIND_CONSTRAINT,
-                                     object_value=f"铁律{i}")
+                                     object_value=f"铁律{i}", verify_state=VERIFY_MACHINE)
                 await assert_curated(db, character_id=11, user_id=1, kind=KIND_FACT,
-                                     object_value=f"事实{i}")
+                                     object_value=f"事实{i}", verify_state=VERIFY_MACHINE)
             await db.commit()
     asyncio.run(_seed())
 
@@ -93,7 +94,8 @@ def test_assert_fact_eviction_only_touches_status(cf_db):
     async def _seed_curated():
         async with factory() as db:
             await assert_curated(db, character_id=11, user_id=1, kind=KIND_FACT,
-                                 object_value="用户住在杭州", predicate="curated")
+                                 object_value="用户住在杭州", predicate="curated",
+                                 verify_state=VERIFY_MACHINE)
             await db.commit()
     asyncio.run(_seed_curated())
 

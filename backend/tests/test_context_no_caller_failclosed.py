@@ -206,6 +206,9 @@ def fc_db(tmp_path_factory):
             user_id=1, character_id=13, subject_type="character", subject_id=13,
             predicate="setting", object_value="CURATEDB5_不许夸大", status="active",
             kind="constraint", audience='["public"]', asserted_at=now,
+            # 批 61 A4 起注入侧只认 machine/human：种子要给「本该被取到」的档，
+            # 否则这条等值断言退化成两边都空（本用例测的是 user_id 不参与过滤，不是核实状态）。
+            verify_state="machine-confirmed",
         ))
         db.add(GlobalUserFact(  # 用例 30：previous_value 非空是进对齐报表的唯一判据
             user_id=1, slot="job", value="JOBB5_新工作", previous_value="JOBB5_旧工作",

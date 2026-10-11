@@ -9,7 +9,7 @@
 - 元信息黑名单：开发运维元信息 / 代理发言不进 world_facts（用户显式设定除外）。
 - kind/status 约束：preference/setting 类不得标 status；kind='status' 必须有 TTL。
 - 禁止裸 expired：停用一律走 supersede 链（superseded_by + superseded_at）。
-- flag 关 → 逐字节旧行为。
+- flag 关 → 查重/矛盾/窗口全部短路（但 curated 一律非权威，见批 61）。
 
 纪律：临时库走 tmp_path（禁止 tempfile.mkdtemp 裸建）；不碰生产库；纯确定性、零 LLM。
 （项目未装 pytest-asyncio，统一 asyncio.run 同步执行。）
@@ -63,6 +63,12 @@ def cf_db(monkeypatch, tmp_path):
 
 
 def _curate(factory, *, kind, value, **kw):
+    """写一条 curated。**默认显式声明 machine-confirmed**：本文件的用例测的是查重/矛盾/复核窗口，
+    不是写入默认值——10-11 批 61 起默认值本身变成 unverified（LLM 抽取形状），
+    需要 machine 的用例必须自己说，否则测的就不是它原本要测的东西。
+    （默认值与非权威本身由 tests/test_world_facts_governance_b61.py 钉。）"""
+    kw.setdefault("verify_state", VERIFY_MACHINE)
+
     async def _run():
         async with factory() as db:
             row = await assert_curated(db, character_id=CHAR, user_id=USER, kind=kind,
@@ -125,8 +131,9 @@ def test_同义与矛盾判定():
 
 # ───────────────────────────── curated 写入 ─────────────────────────────
 
-def test_flag关_curated逐字节旧行为(cf_db):
-    """flag 关：同义不同文各写一行（旧行为）、machine-confirmed、无 review 窗口。"""
+def test_flag关_curated不查重无窗口(cf_db):
+    """flag 关：查重/矛盾/复核窗口全部短路（同义不同文各写一行），**但权威归位不受闸门控制**——
+    10-11 批 61 后 curated 行永远不是「不可动摇的权威设定」，闸门只管去重与窗口。"""
     _flag_prev = _loop.AGENT_FLAGS.get("memory_admission_gate", False)
     _loop.AGENT_FLAGS["memory_admission_gate"] = False
     try:
@@ -134,8 +141,8 @@ def test_flag关_curated逐字节旧行为(cf_db):
         _curate(cf_db, kind=KIND_FACT, value="用户是设计师，从事设计工作")
         rows = _active(cf_db)
         assert len(rows) == 2
-        assert all(r.verify_state == VERIFY_MACHINE for r in rows)
-        assert all(r.is_authoritative for r in rows)
+        assert all(r.verify_state == VERIFY_MACHINE for r in rows)   # 本例显式声明了 machine
+        assert all(not r.is_authoritative for r in rows)             # A1：system 写入不产权威
         assert all(r.stale_after is None for r in rows)
     finally:
         _loop.AGENT_FLAGS["memory_admission_gate"] = _flag_prev
@@ -193,11 +200,12 @@ def test_flag开_身份矛盾进UNVERIFIED(cf_db, monkeypatch):
 
 
 def test_flag开_非矛盾身份给复核窗口(cf_db, monkeypatch):
-    """无冲突的身份类事实仍 machine-confirmed，但统一 review 窗口（不永不过期）。"""
+    """无冲突的身份类事实（本例显式 machine）仍 machine-confirmed，但统一 review 窗口（不永不过期）；
+    权威位归零＝A1，与闸门无关。"""
     monkeypatch.setitem(_loop.AGENT_FLAGS, "memory_admission_gate", True)
     row = _curate(cf_db, kind=KIND_FACT, value="用户是设计师")
     assert row.verify_state == VERIFY_MACHINE
-    assert row.is_authoritative is True
+    assert row.is_authoritative is False        # A1：编纂行不是权威设定
     assert row.stale_after is not None
 
 

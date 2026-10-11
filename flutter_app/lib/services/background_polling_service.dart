@@ -8,6 +8,7 @@ import "package:flutter_local_notifications/flutter_local_notifications.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "phone_perception_service.dart";
 import "unread_engine.dart";
+import "foreground_state.dart";
 import "background_ws_client.dart";
 import "bg_poll_guard.dart";
 import "secure_token_store.dart";
@@ -94,15 +95,54 @@ void onStart(ServiceInstance service) async {
     ),
   );
 
-  // 可靠通道：主 isolate 前后台切换时 invoke 通知本 isolate
+  // A53：后台 isolate 自己补建聊天通道。该服务 autoStartOnBoot=true，开机自启／数据被清时
+  // 本 isolate 可能**先于**主 isolate 跑起来，而 Android 8+ 对未注册通道发通知会被系统静默丢弃
+  // （发送处又都 catch(_) => 表现为「毫无报错地不弹」）；主 isolate 那句「同源补建，双保险」
+  // （notification_displayer.dart:37）此前并没有真的兑现在这里。
+  try {
+    final l10n = ServiceL10n(await appLang());
+    await plugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(
+          AndroidNotificationChannel(
+            "ai_companion_chat",
+            l10n.notifChannelMessages,
+            description: l10n.notifChannelMessagesDesc,
+            importance: Importance.high,
+            playSound: true,
+          ),
+        );
+  } catch (e) {
+    debugPrint("bg chat channel create failed: $e");
+  }
+
+  // 可靠通道：主 isolate 前后台切换时 invoke 通知本 isolate（保留＝0 延迟立刻切换）
   // （SharedPreferences 跨 isolate 单例缓存读不到对方写入值，不能作为标志传递）
   service.on("setAppForeground").listen((data) {
     _appInForeground = data?["value"] as bool? ?? false;
   });
 
+  // A53 fail-closed：**问**而不是**听**。每 5s 探测一次，主 isolate 回答它当时刻的 lifecycleState；
+  // 答不上来（＝被冻结的真后台）就不更新回答时刻，判定自动落到「后台」，该弹就弹。
+  service.on("fgAck").listen((data) {
+    if (data?["state"] == "AppLifecycleState.resumed") {
+      _lastResumedAckMs = DateTime.now().millisecondsSinceEpoch;
+    }
+  });
+  void probeForeground() {
+    try {
+      service.invoke("fgProbe");
+    } catch (_) {}
+  }
+  probeForeground(); // 先问一次，别让首轮（建基线那一轮）误判
+  _fgProbeTimer?.cancel();
+  _fgProbeTimer = Timer.periodic(const Duration(seconds: 5), (_) => probeForeground());
+
   Timer? timer;
   if (service is AndroidServiceInstance) {
     service.on("stopService").listen((_) {
+      _fgProbeTimer?.cancel();
       timer?.cancel();
       _wsClient?.dispose();
       _wsClient = null;
@@ -128,7 +168,21 @@ void onStart(ServiceInstance service) async {
 
 // ---- 后台 isolate 内部状态 ----
 /// app 是否在前台（主 isolate 通过 invoke("setAppForeground") 维护；登录启动时在前台）
+/// ⚠ A53（2026-10-11）：这个标志**不再单独决定弹不弹**，它只出「生命周期」这一票；
+/// 真正判定走下面的 `_inForeground`。原因：一次性 invoke 会在主 isolate 被系统冻结时丢失，
+/// 旧形状下标志永久停在 true ⇒ 前台不弹、后台也不弹（用户报的「一退后台就不弹」）。
 bool _appInForeground = true;
+/// 最近一次主 isolate 回答「我现在确实是 resumed」的时刻（毫秒）；0＝从没回答过＝判后台。
+int _lastResumedAckMs = 0;
+/// 前后台探测心跳：每 5s 问一次（问不到就算后台，fail-closed）
+Timer? _fgProbeTimer;
+
+/// 本 isolate 的前后台判定＝生命周期那一票 ∧ 最近真的拿到过回答（规则本体见 foreground_state.dart）。
+bool get _inForeground => foregroundFromSignals(
+      lifecycleSaysForeground: _appInForeground,
+      nowMs: DateTime.now().millisecondsSinceEpoch,
+      lastResumedAckMs: _lastResumedAckMs,
+    );
 /// S5 轮询重入保护：true 表示上一轮 _pollOnce 尚未结束
 bool _pollInFlight = false;
 Map<int, int> _lastCounts = {};
@@ -194,8 +248,11 @@ Future<void> _pollOnce(FlutterLocalNotificationsPlugin plugin) async {
     if (baseUrl.isEmpty || token.isEmpty) return;
     _bgServerUrl = baseUrl;
     _bgToken = token;
-    // 用可靠通道维护的内存标志（prefs 跨 isolate 读不到，不能依赖）
-    final inForeground = _appInForeground;
+    // A53：判定＝生命周期票 ∧ 心跳回答（prefs 跨 isolate 读不到，不能依赖）
+    final inForeground = _inForeground;
+    // 回归留痕：logcat 里能直接看到这一轮到底判成了什么、回答多久没来了
+    debugPrint("[fg] inForeground=$inForeground lifecycle=$_appInForeground "
+        "ackAgeMs=${_lastResumedAckMs == 0 ? -1 : DateTime.now().millisecondsSinceEpoch - _lastResumedAckMs}");
     final notificationsEnabled = prefs.getBool("notifications_enabled") ?? true;
     final dnd = {
       "enabled": prefs.getBool("dnd_enabled") ?? false,
@@ -484,7 +541,7 @@ Future<void> _handleNotifyEvent(
     FlutterLocalNotificationsPlugin plugin, NotifyEvent event) async {
   try {
     // 仅当 app 在后台/息屏时由本 isolate 弹系统通知；前台由 Flutter 层红点/横幅负责
-    if (_appInForeground) return;
+    if (_inForeground) return;
     if (event.content.trim().isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     if (!(prefs.getBool("notifications_enabled") ?? true)) return;

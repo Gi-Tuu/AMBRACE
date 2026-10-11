@@ -86,6 +86,25 @@ def test_新增的两句不含评测题词():
     assert not hit, "提示词写了评测题的场景＝为过题污染提示词：%s" % hit
 
 
+COUNT_MARK = "同一件事只写一条，旧值作废不算另一条，别为它单独再写一条"
+
+
+def _has_count_clause(line: str) -> bool:
+    """条数那条到位＝有这句、且**不是**数量上限闸（上限会误伤一句话讲两件事的正当场景）。"""
+    return COUNT_MARK in line and "最多" not in line
+
+
+def test_条数那条在记忆条目里且不是数量闸():
+    """来历＝j1s02 第 2 跑多写一条【记忆：用户已搬离城北老小区】：同一事实两条近似记忆，
+    以后检索必然重复。形状约束了"一条一个事实"，却没约束"同一件事别写两条"。"""
+    line = next(ln for ln in marker_zone(SYSTEM_PROMPT_TEMPLATE).splitlines()
+                if ln.startswith(_FIRST_MARKER))
+    assert _has_count_clause(line), "条数那条没写进【记忆：】这一条：%s" % line[:80]
+    assert not _has_count_clause(line.replace(COUNT_MARK, "")), "撤掉这句守卫还说不缺东西＝没牙"
+    assert not _has_count_clause(line + "（最多 2 条）"), "写成数量上限也算到位＝把误伤当合规"
+    assert marker_zone(SYSTEM_PROMPT_TEMPLATE).count(COUNT_MARK) == 1, "这句写了两份＝迟早各改一半"
+
+
 def _drop_duty(z):
     return "\n".join(ln for ln in z.splitlines() if DUTY_MARK not in ln)
 

@@ -431,7 +431,7 @@ async def _run_agent_core(
     except Exception:
         _memo_text = None
     try:
-        spawn_background(_save_phone_desktop_notes(character_id, _marker_src2))
+        spawn_background(_save_phone_desktop_notes(character_id, _marker_src2, content))
     except Exception:
         pass
 

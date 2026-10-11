@@ -90,10 +90,18 @@ WHITELIST: dict[str, dict[str, str]] = {
     "app/events/facts.py": {
         "_TRANSIENT_FRESH_HOURS": "瞬时谓词新鲜窗（**单一来源**常量表，world_state 与 bus 都从这里取值）",
         "CURATED_KINDS": "策展 kind 集合（只读判定表，运行期不改写）",
+        "CURATED_ACTIVE_CAP": "批 66 编纂层每角色每 kind 的 active 软上限（只读阈值表，数值上限而非状态）。"
+                              "它不是节流/去重判据：淘汰谁读的是库里那批 active 行的权威·核实·置信·新近，"
+                              "本表只提供一个数；不参与是否发送、不参与配额，重启前后取值一致。",
         "TRANSIENT_PREDICATES": "瞬时谓词集合（只读判定表，新鲜窗判据的输入而非状态）",
         "_DURABLE_STATUS_PREDICATES": "长期状态谓词集合（只读分类表，不记任何时刻）",
         "_IDENTITY_PREDICATES": "身份谓词集合（只读分类表，不记任何时刻）",
         "_CLAUSE_BOUNDARY_CHARS": "子句切分标点集合（纯文本处理常量，与发送/节流无关）",
+        "_VEC_CACHE": "批 61 编纂层语义查重的 bge-m3 向量 LRU 缓存（键＝(行 id, 正文)，上限 512）。"
+                      "**它不是节流/去重判据本身**：判据读的是库里那批 active 行，缓存只省推理——"
+                      "重启丢了最多多算几次 ONNX，不会把「该并的判成不并」或反过来"
+                      "（键里带着正文本身，同键必同文本 ⇒ 同向量，结构上拿不到过期结果）。"
+                      "不参与是否发送、不参与配额。",
     },
     "app/events/world_state.py": {
         "AUTHORITATIVE_SOURCE": "八路权威源标签表（自述元数据，快照里回读给调用方，只读）",

@@ -184,7 +184,10 @@ class _LorebookUpsert(BaseModel):
 
 class _WorldFactCreate(BaseModel):
     content: str
-    predicate: str = "setting"
+    # 默认必须是 None 而不是 "setting"：编辑请求不带 predicate 时要尊重这一条**原来的**层归属（A55），
+    # 而 schema 给默认值的话服务端就分不出「客户端没填」与「客户端就是要 setting」。
+    # 创建路径自己兜底 `(data.predicate or "setting")`，行为逐字不变。
+    predicate: str | None = None
 
 
 # 世界事实写入去重阈值（2026-09-15）：同角色 + 同 predicate 下，与既有活跃事实文本
@@ -901,18 +904,24 @@ async def update_world_fact(
 ):
     """编辑世界事实（2026-09-15）：本角色本用户的活跃事实均可改（含策展层写入的 system 事实）。
 
-    - 改完把该行 author 置 user / is_authoritative=1 / epistemic_status=FACT（用户改动即权威）；
-    - 改前把同 subject-predicate 的其它活跃旧值置 superseded（留痕不删），避免改出矛盾双份；
+    - 改完把该行 author 置 user / is_authoritative=1 / epistemic_status=FACT / verify_state=human-reviewed
+      （用户改动即权威，同时视为人工复核通过——高风险域条目的「采纳」入口），并清掉 stale_after
+      （人已经确认过＝不再让复核窗把它自动停用，否则采纳会在几天后被悄悄撤回）；
+    - **分类归属（A55 方案①，2026-10-11 用户拍板）**：编辑只改内容，**不改这一条属于哪一层**；
+      curated 行一律钉住 `predicate='curated'`（调用方显式传别的值也不接受），其余行尊重自己的原谓词
+      （`data.predicate or f.predicate`，不再无脑落到 setting）；
+    - 改前把同 subject-predicate 的其它活跃旧值置 superseded（留痕不删），避免改出矛盾双份
+      ——**curated 行除外**：同一角色同一谓词天然几十条并存，跟着这条跑会把「编辑一条」变成「清掉整层」；
     - 目标行不存在 / 非本角色 / 非本人 / 非活跃 → 404。
     """
     await _get_owned_character(db, character_id, user_id, lang)
+    from app.events.facts import CURATED_PREDICATE, VERIFY_HUMAN
     from app.models.memory import WorldFact
     from app.utils.timeutil import now_naive_utc
 
     text = (data.content or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "character_not_found"))
-    predicate = (data.predicate or "setting").strip()[:20] or "setting"
     now = now_naive_utc()
     async with async_session_factory() as db2:
         f = await db2.get(WorldFact, fact_id)
@@ -920,17 +929,29 @@ async def update_world_fact(
                 or f.user_id not in await tenant_scope_ids(db2, user_id)
                 or f.status != "active"):
             raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
-        olds = (await db2.execute(
-            select(WorldFact).where(
-                WorldFact.character_id == character_id,
-                WorldFact.user_id.in_(await tenant_scope_ids(db2, user_id)),
-                WorldFact.id != fact_id,
-                WorldFact.subject_type == f.subject_type,
-                WorldFact.subject_id == f.subject_id,
-                WorldFact.predicate == predicate,
-                WorldFact.status == "active",
-            )
-        )).scalars().all()
+        # 层归属由服务端定，不靠调用方自觉：旧写法 `data.predicate or "setting"` 把 curated 行改成了 setting，
+        # 后果＝`assert_curated` 的「同键 active 行」查找（按 predicate 过滤）再也命中不到它，
+        # 下一次同样内容的抽取会新建重复行而不是更新这条已人工确认过的（线上实证：#133 编辑后与 #21 并存），
+        # 且 state_trace 按 predicate 归组，条目在诊断轨迹里换了类。
+        if f.predicate == CURATED_PREDICATE:
+            predicate = CURATED_PREDICATE
+        else:
+            predicate = (data.predicate or f.predicate or "setting").strip()[:20] or "setting"
+        # 「同 subject+predicate 只留一个现值」只对瞬时/单值类成立；curated 层同谓词几十条并存，
+        # 跟着它跑＝编辑一条清掉整层。（10-11 那次编辑已经误伤过一条无关的 setting 行＝#73 被 #133 顶掉。）
+        olds = []
+        if predicate != CURATED_PREDICATE:
+            olds = (await db2.execute(
+                select(WorldFact).where(
+                    WorldFact.character_id == character_id,
+                    WorldFact.user_id.in_(await tenant_scope_ids(db2, user_id)),
+                    WorldFact.id != fact_id,
+                    WorldFact.subject_type == f.subject_type,
+                    WorldFact.subject_id == f.subject_id,
+                    WorldFact.predicate == predicate,
+                    WorldFact.status == "active",
+                )
+            )).scalars().all()
         for o in olds:
             o.status = "superseded"
             o.superseded_by = fact_id
@@ -942,6 +963,12 @@ async def update_world_fact(
         f.epistemic_status = "FACT"
         f.source = "user_setting"
         f.confidence = 1.0
+        # 用户亲手改过＝人工复核通过（批 61 A4 的闭环）：高风险域的行被注入侧拦下后，
+        # 「在世界设定页改一下再保存」就是唯一的采纳入口——不置 human 就永远回不到每轮前提。
+        f.verify_state = VERIFY_HUMAN
+        # 人工确认过＝复核窗到此为止：不清 stale_after 的话，刚采纳的条目会在几天后被到期机制自动停用，
+        # 用户看到的＝「我确认了，它却又不见了」。
+        f.stale_after = None
         f.asserted_at = now
         await db2.commit()
     return {"ok": True, "id": fact_id}

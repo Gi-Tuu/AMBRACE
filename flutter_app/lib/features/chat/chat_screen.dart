@@ -19,7 +19,6 @@ import '../../widgets/ai_avatar.dart';
 import '../../widgets/app_page_route.dart';
 import '../../widgets/glass_bar.dart';
 import '../../widgets/message_bubble.dart';
-import '../../widgets/chat_time_separator.dart';
 import '../../widgets/shimmer.dart';
 import '../character/character_detail_screen.dart';
 import 'chat_message_media_actions.dart';
@@ -472,18 +471,10 @@ class _ChatScreenState extends State<ChatScreen>
                     Text(_moodEmoji, style: const TextStyle(fontSize: 16)),
                   ],
                 ]),
-                if (chat.isTyping)
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('${char?.name ?? ''} ${l10n.typing}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                      const SizedBox(width: 3),
-                      const TypingIndicator(),
-                    ],
-                  ),
+                // §10 修订（10-11 用户指出）：生成期间的反馈**不在顶栏**了——那三个点删掉，
+                // 改成消息列表末尾一条带闪烁竖条光标的空 AI 气泡（见下面 ListView 的尾部行）。
+                // 为什么反过来：整块上屏后正文里没有"正在打的字"，光标只能挂在占位行上；
+                // 顶栏离落点太远，看起来就像"生成中什么也没变"。
               ],
             ),
           ],
@@ -546,8 +537,28 @@ class _ChatScreenState extends State<ChatScreen>
                                                 top: topBarInset,
                                                 bottom: dockH + kb + AppSpacing.sm,
                                               ),
-                                          itemCount: chat.messages.length,
+                                          // §10 修订（10-11 用户指出）：生成期间的可见反馈改到**落点**上——
+                                          // 列表末尾多挂一行带闪烁竖条的光标气泡。它是**纯视图行**
+                                          // （不进 `chat.messages`），所以没有"空气泡要不要清、会不会被当内容"
+                                          // 这类状态问题，且 SSE／WS 两条腿共用同一套 `isTyping`。
+                                          itemCount: chat.messages.length + (chat.isTyping ? 1 : 0),
                                           itemBuilder: (context, index) {
+                                            if (index >= chat.messages.length) {
+                                              // 连续 AI 只在组首显示头像：上一条是 AI 就不重复显示
+                                              final lastIsAI = chat.messages.isNotEmpty &&
+                                                  chat.messages.last.isAI;
+                                              return MessageBubble(
+                                                message: '',
+                                                isUser: false,
+                                                isStreaming: true,
+                                                showTime: false,
+                                                showAiAvatar: !lastIsAI,
+                                                aiAvatarUrl: char.avatarUrl,
+                                                userAvatarUrl:
+                                                    context.read<SettingsProvider>().avatarUrl,
+                                                serverUrl: ApiClient().baseUrl,
+                                              );
+                                            }
                                             final msg = chat.messages[index];
                                             // 系统提示（如冷战"对方没有回应"）：居中灰色小字，不走气泡
                                             if (msg.senderType == 'system') {

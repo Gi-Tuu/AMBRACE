@@ -1821,6 +1821,45 @@ class AppLocalizationsZh extends AppLocalizations {
   String get worldFactHistoryLoadFailed => '历史加载失败';
 
   @override
+  String get worldFactsGroupMine => '我的设定';
+
+  @override
+  String get worldFactsGroupPending => 'TA 记下的·待你确认';
+
+  @override
+  String get worldFactsPendingHint => '点开改一下再保存，就等于你确认了这条，它会移到「我的设定」。';
+
+  @override
+  String get worldFactSelect => '多选';
+
+  @override
+  String get worldFactSelectAll => '全选';
+
+  @override
+  String get worldFactDeselectAll => '取消全选';
+
+  @override
+  String worldFactSelectedCount(int n) {
+    return '已选 $n 项';
+  }
+
+  @override
+  String get worldFactDeleteSelected => '删除所选';
+
+  @override
+  String worldFactDeleteSelectedTitle(int n) {
+    return '确定删除这 $n 条设定？';
+  }
+
+  @override
+  String get worldFactDeleteSelectedBody => '删除后它们不再出现在设定里，也不会再被 TA 提起。';
+
+  @override
+  String worldFactDeleteFailed(int n) {
+    return '有 $n 条没删掉，下拉刷新后重试';
+  }
+
+  @override
   String get cancel => '取消';
 
   @override

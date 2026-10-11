@@ -6,13 +6,25 @@ import 'package:ai_companion/models/message.dart';
 
 void main() {
   group('typing delay (#63 机制2 前端)', () {
-    test('SSE typing 事件置 typing，首块 delta 到达清除', () {
+    test('SSE typing 置位；§10 起要等**第一个 block**才清除（delta 不算上屏）', () {
       final chat = ChatProvider();
       chat.handleStreamEvent({'type': 'typing', 'is_typing': true, 'delay': 2.5});
       expect(chat.isTyping, isTrue);
 
-      // 首块内容到达 → 清除输入中
+      // delta 只是"服务端在写字"的过程量，屏幕上还没有内容 ⇒ 光标不能提前收
       chat.handleStreamEvent({'type': 'delta', 'text': '你好'});
+      expect(chat.isTyping, isTrue,
+          reason: '提前收＝出现"没字也没光标"的空窗');
+
+      chat.handleStreamEvent({
+        'type': 'block',
+        'id': 10,
+        'session_id': 1,
+        'sender_type': 'ai',
+        'content': '你好',
+        'created_at': '2026-08-24T00:00:00Z',
+        'extra_meta': null,
+      });
       expect(chat.isTyping, isFalse);
     });
 

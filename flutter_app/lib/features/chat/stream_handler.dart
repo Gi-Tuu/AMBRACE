@@ -1,7 +1,6 @@
 
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart';
 
 import '../../models/message.dart';
 import 'message_appender.dart';
@@ -24,7 +23,9 @@ class StreamHandler {
     required void Function(String url) enqueueTts,
     required void Function(String?) setError,
     required void Function(bool) setTyping,
-  })  : _onChanged = onChanged,
+    void Function()? onReplySettled,
+  })  : _onReplySettled = onReplySettled,
+        _onChanged = onChanged,
         _getMessages = getMessages,
         _sessionId = sessionId,
         _serverNow = serverNow,
@@ -34,6 +35,9 @@ class StreamHandler {
         _setTyping = setTyping;
 
   final void Function() _onChanged;
+  /// A54（2026-10-11）：一轮 AI 回复落地时回调 ⇒ 聊天页可见期间立刻标记已读，
+  /// 不再等前台 30 秒自轮询（红点滞后的主因之一）。
+  final void Function()? _onReplySettled;
   final List<ChatMessage> Function() _getMessages;
   final int? Function() _sessionId;
   final DateTime Function() _serverNow;
@@ -47,7 +51,11 @@ class StreamHandler {
   final Set<int> _streamingBlockIds = {};
 
   /// 当前正在流式追加的 AI 气泡（isLocal，content 随 delta 增长）。
-  ChatMessage? _streamingMessage;
+  /// §10（2026-10-11 用户拍板）：**不再有"流式气泡"这个载体**——生成期间不逐字上屏，
+  /// 整块由 `block`（已落库）一次性上屏；所以原来的 `_streamingMessage`／`_appendDelta`／
+  /// `splitStreamLeftover`（处理"delta 领先于块边界"的尾段搬运）一起摘掉。
+  /// ⚠ 保留的是 SSE 管线本身，不是打字机：它还承载逐句 TTS、MCP 工具结果、冷场与错误事件，
+  /// 整条切成"非流式一次性返回"会把这些一起砍掉（后端零改动，前端只不再渲染 delta 文本）。
 
   /// A1（#59）：本轮流式收集的 MCP 工具结果（tool_result 事件），随 block 确认附到正式块
   /// 的 extra_meta.tool_results 上，供气泡观察区可折叠展示。
@@ -58,24 +66,14 @@ class StreamHandler {
 
   List<ChatMessage> get _messages => _getMessages();
 
-  ChatMessage _buildLocalAiBubble(String content) {
-    return ChatMessage(
-      id: -DateTime.now().millisecondsSinceEpoch,
-      sessionId: _sessionId() ?? 0,
-      senderType: 'ai',
-      isLocal: true,
-      content: content,
-      createdAt: _serverNow().toIso8601String(),
-    );
-  }
-
-  /// 开始新一轮：清空 `_streamingBlockIds`，建立流式占位气泡。调用方随后 setTyping + notify。
+  /// 开始新一轮：清空本轮跟踪集合。调用方随后 setTyping + notify。
+  ///
+  /// §10：这里**不再插入空占位气泡**——以前靠它承接 delta 文本；现在生成期间只显示头像下
+  /// 那三点闪烁光标（`isTyping` 驱动），整块内容等 `block` 到达才上屏。
   void startStream() {
     _streamingBlockIds.clear();
     _streamToolResults.clear();
     _isStreaming = true;
-    _streamingMessage = _buildLocalAiBubble('');
-    _messages.add(_streamingMessage!);
   }
 
   /// 结束本轮：清空 `_streamingBlockIds`，收尾流式气泡。
@@ -86,17 +84,16 @@ class StreamHandler {
     _streamToolResults.clear();
     if (!_isStreaming) return;
     _isStreaming = false;
-    // 移除空的流式占位气泡（若无 delta 即被打断，如 cold_war/异常）；有内容则保留为本地消息。
+    // 移除空的流式占位气泡（历史遗留兜底：现在已不创建占位，留着是为了别的路径不残留空泡）
     MessageAppender.removeEmptyLocalBubbles(_messages);
-    _streamingMessage = null;
     _setTyping(false);
     _onChanged();
+    _onReplySettled?.call();
   }
 
   /// SSE 传输层异常回退时调用：关闭流式、清空流式气泡与占位（不触发 notify，由调用方收尾）。
   void abortStreaming() {
     _isStreaming = false;
-    _streamingMessage = null;
     _streamToolResults.clear();
     // B3 修复（2026-09-01 审查）：传输层失败要整体回退到 WS 重新生成，必须把本轮
     // 已经确认上屏的正式块一并移除，否则半截正式回复 + WS 整份新回复 = 同一轮两条 AI 回答。
@@ -134,13 +131,17 @@ class StreamHandler {
         // #63 机制2：回复延迟信号——服务端在生成前推送 typing（可带 delay 秒），
         // 前端保持"输入中..."直到首块内容（delta/block/done）到达再清除，不按固定时长。
         _setTyping(event['is_typing'] as bool? ?? false);
+        // §10 修订（10-11 用户指出）：必须 notify。以前顶栏三点顺带掩盖了这个缺口——
+        // 现在生成中的可见反馈**只**由 isTyping 驱动（列表末尾的光标行），不 notify 就是一片静止。
+        // WS 那条腿本来就是 `_setTyping` 后紧跟 `_onChanged`（ws_handler.dart 的 typing 分支），
+        // 两条腿这里本来就不该不一致。
+        _onChanged();
       case 'delta':
-        final text = event['text'] as String? ?? '';
-        if (text.isNotEmpty) {
-          _appendDelta(text);
-          // #63 机制2：首块内容到达即清除"输入中..."（保持"输入中..."直到首块内容）
-          _setTyping(false);
-        }
+        // §10：delta 文本**不再上屏**（人发消息本来就是一整块，弱网下逐字吐字一顿一顿）。
+        // 这里连 _setTyping(false) 都不做——生成中的可见反馈交给**列表末尾那条光标行**（chat_screen 依 `isTyping` 渲染），
+        // 光标要留到**第一个 block 落地**才熄灭（下面 block 分支），否则中间会出现
+        // "既没有字、也没有光标"的一段空窗。事件本身仍被消费（不 return，继续走 switch）。
+        break;
       case 'reset_blocks':
         // P2-NEW（2026-08-29）：TTS consumer 中途死亡回退批量路径会先删旧块再全量新建，新块 ID 与
         // 旧块不同，前端按块 id 去重（_confirmStreamBlock）永远不命中 → 先清除本轮已确认的 AI 正式块
@@ -150,7 +151,6 @@ class StreamHandler {
         // V2-4（2026-08-29）：同时打断并清空 TTS 队列，避免旧块音频与新块音频交错播放。
         _messages.removeWhere((m) => _streamingBlockIds.contains(m.id));
         _streamingBlockIds.clear();
-        _streamingMessage = null;
         _interruptVoicePlayback();
         _onChanged();
       case 'block':
@@ -158,6 +158,8 @@ class StreamHandler {
         final msg = ChatMessage.fromJson(event);
         _confirmBlock(msg);
         _enqueueTtsPlayback(msg);
+        // §10：整块上屏的那一刻才收掉"生成中"光标（对应 delta 分支不再清它）
+        _setTyping(false);
       case 'tool_result':
         // A1（#59）流式路径 MCP 工具循环：独立流尾事件，工具结果文本随块确认附到正式块，
         // 前端在气泡观察区可折叠展示（成功/失败各一块）。
@@ -185,43 +187,10 @@ class StreamHandler {
     }
   }
 
-  void _appendDelta(String text) {
-    var sm = _streamingMessage;
-    if (sm == null) {
-      sm = _buildLocalAiBubble(text);
-      _streamingMessage = sm;
-      _messages.add(sm);
-      _onChanged();
-      return;
-    }
-    final updated = sm.copyWith(content: sm.content + text);
-    final idx = _messages.lastIndexWhere((m) => identical(m, sm));
-    if (idx >= 0) {
-      _messages[idx] = updated;
-    } else {
-      _messages.add(updated);
-    }
-    _streamingMessage = updated;
-    _onChanged();
-  }
-
-  /// A1（#59）：把流式收集的 MCP 工具结果写到当前流式气泡的 extra_meta.tool_results 上。
+  /// A1（#59）＋§10：MCP 工具结果**先攒在本轮集合里**，等 `block` 确认时附到正式块的
+  /// extra_meta.tool_results（见 `_confirmBlock` 开头）。§10 之前是"附到当前流式气泡"，
+  /// 现在没有流式气泡可附，工具结果因此**不会在块确认前凭空造一个气泡**。
   void _attachToolResults() {
-    final sm = _streamingMessage;
-    if (sm != null) {
-      // 流式气泡默认 extra_meta 为 const {}（不可变），通过 copyWith 换成含 tool_results 的可变 Map。
-      final updated = sm.copyWith(extraMeta: {
-        ...sm.extraMeta,
-        'tool_results': List<Map<String, dynamic>>.from(_streamToolResults),
-      });
-      final idx = _messages.lastIndexWhere((m) => identical(m, sm));
-      if (idx >= 0) {
-        _messages[idx] = updated;
-      } else {
-        _messages.add(updated);
-      }
-      _streamingMessage = updated;
-    }
     _onChanged();
   }
 
@@ -243,38 +212,8 @@ class StreamHandler {
         return;
       }
     }
-    final sm = _streamingMessage;
-    if (sm != null) {
-      final idx = _messages.lastIndexWhere((m) => identical(m, sm));
-      if (idx >= 0) {
-        _messages[idx] = msg;
-      } else {
-        _messages.add(msg);
-      }
-      // 语音逐句 TTS 边流式边推 block（delta 打字机可能领先于块确认）。
-      // 若流式气泡已有超出本句的内容（块边界被 delta 抢先），保留其尾段为新流式气泡，
-      // 避免块确认时闪退已打字的后续文本；否则清空流式气泡等待下一句。
-      final leftover = splitStreamLeftover(sm.content, msg.content);
-      if (leftover.isEmpty) {
-        _streamingMessage = null;
-      } else {
-        final next = sm.copyWith(content: leftover);
-        _streamingMessage = next;
-        _messages.add(next);
-      }
-    } else {
-      _messages.add(msg);
-      _streamingMessage = null;
-    }
+    _messages.add(msg);
     _onChanged();
-  }
-
-  /// 若流式气泡正文以块正文为前缀，返回其剩余尾段；否则返回 ''（不拆分，回退旧行为）。
-  @visibleForTesting
-  String splitStreamLeftover(String accumulated, String blockContent) {
-    if (accumulated.isEmpty || blockContent.isEmpty) return '';
-    if (!accumulated.startsWith(blockContent)) return '';
-    return accumulated.substring(blockContent.length);
   }
 
   /// 把带 tts_url 的句块音频入队，供逐句顺序播放。

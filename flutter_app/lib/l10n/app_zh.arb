@@ -581,6 +581,38 @@
   "worldFactHistorySupersededAt": "取代于",
   "worldFactHistoryEmpty": "这个设定还没有被修改过",
   "worldFactHistoryLoadFailed": "历史加载失败",
+  "worldFactsGroupMine": "我的设定",
+  "worldFactsGroupPending": "TA 记下的·待你确认",
+  "worldFactsPendingHint": "点开改一下再保存，就等于你确认了这条，它会移到「我的设定」。",
+  "worldFactSelect": "多选",
+  "worldFactSelectAll": "全选",
+  "worldFactDeselectAll": "取消全选",
+  "worldFactSelectedCount": "已选 {n} 项",
+  "@worldFactSelectedCount": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "worldFactDeleteSelected": "删除所选",
+  "worldFactDeleteSelectedTitle": "确定删除这 {n} 条设定？",
+  "@worldFactDeleteSelectedTitle": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "worldFactDeleteSelectedBody": "删除后它们不再出现在设定里，也不会再被 TA 提起。",
+  "worldFactDeleteFailed": "有 {n} 条没删掉，下拉刷新后重试",
+  "@worldFactDeleteFailed": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "cancel": "取消",
   "cancelled": "已取消",
   "changeFailed": "修改失败",

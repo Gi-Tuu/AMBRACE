@@ -33,7 +33,8 @@ HOT_RATCHET = [
     ("application/chat/streaming.py", "send_and_receive_stream", 332, 44),
     ("scheduling/message_generator.py", "generate_proactive_event", 263, 45),
     ("main.py", "lifespan", 260, 31),
-    ("memory/extractor.py", "extract_single", 258, 74),
+    # 2026-10-11 批 61：编纂落库那一腿摘成模块级 `_write_curated_item`（热点只许变短），实测 250/74。
+    ("memory/extractor.py", "extract_single", 250, 74),
     ("api/games.py", "_resume_ai_turns", 243, 55),
     ("agent/nodes.py", "generate_response", 222, 51),
     ("api/chat.py", "websocket_chat", 212, 40),

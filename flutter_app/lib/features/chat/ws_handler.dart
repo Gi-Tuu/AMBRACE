@@ -42,7 +42,9 @@ class WsHandler {
     required void Function(String?) setError,
     required void Function(PendingPermissionRequest?) setPendingPermission,
     required void Function(Map<String, dynamic>) rawSend,
-  })  : _onChanged = onChanged,
+    void Function()? onReplySettled,
+  })  : _onReplySettled = onReplySettled,
+        _onChanged = onChanged,
         _getMessages = getMessages,
         _sessionId = sessionId,
         _serverNow = serverNow,
@@ -55,6 +57,8 @@ class WsHandler {
         _rawSend = rawSend;
 
   final void Function() _onChanged;
+  /// A54（2026-10-11）：收到一条已落库的 AI 回复时回调（聊天页可见 ⇒ 立刻标记已读）。
+  final void Function()? _onReplySettled;
   final List<ChatMessage> Function() _getMessages;
   final int? Function() _sessionId;
   final DateTime Function() _serverNow;
@@ -85,6 +89,7 @@ class WsHandler {
         _messages.add(ChatMessage.fromJson(msgData));
         _setTyping(false);
         _onChanged();
+        _onReplySettled?.call();
       case 'cold_war':
         // 冷战拦截（v3）：角色生气冷战期不回复，本地显示系统提示
         final cwL10n = ServiceL10n(ui.PlatformDispatcher.instance.locale.languageCode.toLowerCase().startsWith('en') ? 'en' : 'zh');

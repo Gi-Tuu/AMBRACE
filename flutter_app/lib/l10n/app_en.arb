@@ -581,6 +581,38 @@
   "worldFactHistorySupersededAt": "Superseded at",
   "worldFactHistoryEmpty": "This setting has not been changed yet",
   "worldFactHistoryLoadFailed": "Failed to load history",
+  "worldFactsGroupMine": "My settings",
+  "worldFactsGroupPending": "Noted by them · needs your review",
+  "worldFactsPendingHint": "Open one, edit it and save to confirm it — it then moves to My settings.",
+  "worldFactSelect": "Select",
+  "worldFactSelectAll": "Select all",
+  "worldFactDeselectAll": "Deselect all",
+  "worldFactSelectedCount": "{n} selected",
+  "@worldFactSelectedCount": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "worldFactDeleteSelected": "Delete selected",
+  "worldFactDeleteSelectedTitle": "Delete these {n} settings?",
+  "@worldFactDeleteSelectedTitle": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "worldFactDeleteSelectedBody": "After deletion they leave the settings and won't be brought up again.",
+  "worldFactDeleteFailed": "{n} couldn't be deleted — pull to refresh and retry",
+  "@worldFactDeleteFailed": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
   "cancel": "Cancel",
   "cancelled": "Cancelled",
   "changeFailed": "Update failed",

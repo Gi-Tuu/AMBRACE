@@ -381,6 +381,12 @@ _FLAG_ROWS: list[tuple] = [
      'were applied, and leaves a background trace whenever the answer differs from how it is filed today, so '
      'the gap can be reviewed later. No record is changed and nothing it says or remembers is affected; '
      'turning this off skips the extra check.'),
+    ('memory_fallback_shadow', 'memory', 731, False, '它没记下的事，系统代记（先只留痕）',
+     '开启后，如果这一轮对话里它既没写日历也没写备忘，而**你亲口说了「记一下／提醒我＋日期」**，系统会按固定规则补一条，并只在开发日志里留下"本来会补什么"。这一步**一个字都不写进你的日历或记忆本**，只攒读数，用来先看清"代记会不会记错"。默认关闭，关闭时这条链路什么都不多做。',
+     'Log-only fallback notes (experiment)', 'When on, if a reply wrote neither a calendar note nor a memo but you clearly asked to record something (with a date), the system computes what it would save and only logs it. Nothing reaches your calendar or memory book at this step. Off by default; while off this path does no extra work at all.'),
+    ('memory_fallback_gate', 'memory', 732, False, '它没记下的事，系统真的补上',
+     '开启后，上一步算出来的东西才会真的出现在你的小手机日历里：只在你说「记一下／提醒我＋日子」而它没落标记时补，正文用你的原话不重写，认不出日期或只是"每到某天"这种周期约定就**一律不补**。需要上一项先打开？不需要——这一项单独可用，但建议先开上一项看一批留痕再开本项。默认关闭，回退＝关掉本项并删掉补出来的那几条。',
+     'Actually write fallback calendar notes', 'When on, what the log-only step computed really gets written: only when you asked to record/remind with a date and the reply dropped no marker; the text reuses your own words, and recurring arrangements or undated requests are never written. Recommended to enable after reviewing a batch of log-only traces. Off by default; rollback = switch off plus delete the few added entries.'),
     ("status_memory_ttl", "memory", 731, False, "当前状态只认 12 小时内的",
      "它记下的「自己正在做什么」只在 12 小时内还算近况，超时后不再被当成此刻；"
      "关掉则恢复原来的做法（很旧的近况也照样会被提起）。",

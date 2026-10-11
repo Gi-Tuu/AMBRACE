@@ -50,6 +50,7 @@ class ChatProvider extends ChangeNotifier {
       enqueueTts: (url) => _voicePlayback.enqueue(url),
       setError: (e) => _error = e,
       setTyping: (b) => _isTyping = b,
+      onReplySettled: _noteAiReplyVisible,
     );
     _wsHandler = WsHandler(
       onChanged: () => notifyListeners(),
@@ -63,7 +64,16 @@ class ChatProvider extends ChangeNotifier {
       setError: (e) => _error = e,
       setPendingPermission: (p) => _pendingPermission = p,
       rawSend: (p) => _ws.send(p),
+      onReplySettled: _noteAiReplyVisible,
     );
+  }
+
+  /// A54（2026-10-11）：AI 回复落地 ⇒ 若用户正看着这个角色的聊天页，立刻标已读（服务内 2s 节流）。
+  /// 不等前台 30 秒自轮询，是「红点要过很久／重进一次才消失」的直接对症；
+  /// 「用户是否正看着这个会话」的判据只有 NotificationService 知道（聊天页用 setActiveScreen 报过），
+  /// 所以这里只把 (会话, 角色) 交过去，不自己猜可见性。
+  void _noteAiReplyVisible() {
+    NotificationService().onVisibleReply(_sessionId, _currentCharacter?.id);
   }
 
   List<ChatMessage> get messages => MessageAppender.sorted(_messages);
@@ -144,7 +154,8 @@ class ChatProvider extends ChangeNotifier {
 
       // 加载已有消息
       try {
-        await NotificationService().markRead(_sessionId!);
+        await NotificationService().markRead(_sessionId!,
+            characterId: _currentCharacter?.id);
       } catch (_) {}
 
       _isLoading = false;

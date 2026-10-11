@@ -235,6 +235,9 @@ async def _run_anchor(*, apply: bool, user_id: int, character_id: int | None) ->
                     object_value=payload["object_value"], predicate=payload["predicate"],
                     audience=["public"], source="batch1_anchor", confidence=1.0,
                     links=payload["links"],
+                    # 运维确定性补种（非 LLM 推断）＝machine-confirmed 的合法使用者；
+                    # 批 61 起必须显式写，否则吃到新默认 unverified ⇒ 锚点根本不进注入。
+                    verify_state="machine-confirmed",
                 )
                 await db.commit()
                 seeded.append(row.id)

@@ -88,6 +88,56 @@ class UnreadEvent {
 }
 
 /// 同角色弹窗防抖（10 秒内不重复），前后台共用
+/// 已读抑制的纯状态机（A54，2026-10-11；前台 NotificationService 持有）。
+///
+/// 为什么要抽出来：规则原来散在 `_suppressedCounts` 的三处读写里，解除条件写成
+/// `cur == 0 || cur != count`——**没有过期时间**（服务器计数长期停在同一个数时，这个角色的红点
+/// 会被永久压住），而且「精确相等」意味着服务器涨 1 就立刻露出来（＝用户体感的「红点回弹」）。
+/// 抽成纯函数才能真测：这块状态机原先在 `flutter test` 里零覆盖。
+class ReadSuppressor {
+  ReadSuppressor({this.ttl = const Duration(minutes: 2), int Function()? nowMs})
+      : _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
+
+  /// 抑制最长生效时间：到期就交回服务器事实，不拿一次本地已读无限期压住红点。
+  final Duration ttl;
+  final int Function() _nowMs;
+  final Map<int, _Suppression> _by = {};
+
+  /// 记一次「我刚把这个角色读到 count 这个数」（markRead／聊天页吸收都走这里）。
+  void note(int charId, int count) => _by[charId] = _Suppression(count, _nowMs());
+
+  /// 这条抑制还成立吗？三种情况立即失效：TTL 到期／服务器已归零／服务器计数变了（＝真有新消息）。
+  bool isSuppressed(int charId, int serverCount) {
+    final s = _by[charId];
+    if (s == null) return false;
+    if (_nowMs() - s.atMs > ttl.inMilliseconds) {
+      _by.remove(charId);
+      return false;
+    }
+    if (serverCount == 0 || serverCount != s.count) {
+      _by.remove(charId);
+      return false;
+    }
+    return true;
+  }
+
+  /// 把服务端快照过滤成「该显示的红点」：被抑制的角色整条剔掉（红点不回弹）。
+  Map<int, int> filter(Map<int, int> snapshot) {
+    final out = <int, int>{};
+    for (final e in snapshot.entries) {
+      if (isSuppressed(e.key, e.value)) continue;
+      out[e.key] = e.value;
+    }
+    return out;
+  }
+}
+
+class _Suppression {
+  _Suppression(this.count, this.atMs);
+  final int count;
+  final int atMs;
+}
+
 class NotifyDebouncer {
   final Duration _interval;
   final Map<int, DateTime> _lastNotifiedAt = {};

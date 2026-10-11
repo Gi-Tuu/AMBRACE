@@ -1,23 +1,36 @@
 # 拥爱（AMBRACE）
 
-自托管的 AI 伙伴陪伴应用：多个可配置的 AI 角色与你聊天、记记忆、发朋友圈、写日记、养宠物；支持实时语音通话，可选开启手机感知（读屏 / 剪贴板 / 相册 / 通知），还能把角色接到外部聊天机器人上随时聊。
+自托管的 AI 伙伴陪伴应用：多个可配置的 AI 角色与你聊天、记记忆、发朋友圈、写日记、养宠物；支持实时语音通话，可选开启手机感知（读屏 / 剪贴板 / 相册 / 通知），还能把角色接到外部聊天机器人上随时聊。所有数据留在你自己的服务器上。
+
+**当前版本**：v3.5.3 ｜ 逐版更新说明见 [`docs/changelog.md`](docs/changelog.md)（App 内「更新公告」也读这份）与 [Releases 页](https://github.com/Gi-Tuu/AMBRACE/releases)。
 
 ## 功能特性
 
 ### 聊天与语音
-- **流式回复**：SSE 真流式逐字上屏（打字机效果），弱网看门狗兜底、发送防重、断线重连不重复、SSE 心跳保活
-- **实时语音通话**：按住说话 / 自动聆听；服务端 VAD 过滤静音与极短帧；流式 / 整段 ASR 可切换；逐句情感 TTS 边生成边播；打断即时生效（turn_id 防抖），语音回复不念「名字（神态）：」这类前缀
-- **图片理解**：默认本地 OCR 识文，可选云端视觉 API 或本地 VLM；图片二进制不进聊天 LLM
+- **整句上屏**：AI 回复按**完整语义块**出现（不再一个字一个字往外蹦，弱网下不会一顿一顿）；生成期间在**消息即将出现的位置**显示闪烁光标，首句落地即收；弱网看门狗兜底、发送防重、断线重连不重复、SSE 心跳保活
+- **逐句语音**：语音按句合成、按句顺序播放，边生成边播；随时可打断，打断即时生效（turn_id 防抖），语音回复不念「名字（神态）：」这类前缀
+- **实时语音通话**：按住说话 / 自动聆听；服务端 VAD 过滤静音与极短帧；流式 / 整段 ASR 可切换
+- **图片理解**：默认本地 OCR 识文，可选云端视觉 API 或本地 VLM；**图片二进制不会进入聊天 LLM**
 - **AI 生图**：聊天中可让 AI 生成图片（需自行配置生图服务，可设为「每次询问」）
 - **连续发送**：连续模式先收集、再一键批量提交；多条消息按段落合并进上下文
+- **已读与红点**：正在聊的时候回复到达即算已读（不等下一轮轮询、也不会闪一下又回来）；离开聊天页或退到后台前补记一次
 
 ### 角色与陪伴
 - **多角色**：自定义 AI 角色（性格 / 头像 / 关系网：朋友、对象等），可逐角色配置模型与权限
 - **记忆系统**：bge-m3 向量 + BM25 混合召回；记忆链条（往事按时间串链）、分层检索、记忆衰减曲线（艾宾浩斯）、织库 / 记忆本可视化
-- **记忆按需检索**：时间检索、二跳联想、稳定知识沉淀、前瞻意图（你说过的约定与心愿会被记住并按时提起）、记忆包（`.mempak`）导出 / 导入
-- **主动消息**：思念 / 状态触发主动搭话，带自然度评分与作息学习；「去开会」「洗个澡」「等下试」这类约定会自动登记回访，到点自然关心，你已经说了结果就不再追问
-- **日记 / 朋友圈**：每天为角色生成第一人称日记；角色发动态、互相评论（多用户隔离）
+- **记得准比记得多重要**：同一件事不会记成两条（新的说法会并到旧条上，可追溯谁改的）；被更正的旧内容自动收起，不再被当成现状反复提
+- **世界设定（长期知识）**：角色长期记住的事实 / 约束 / 偏好画像 / 关系基线，页面分成**「我的设定」与「TA 记下的·待你确认」两组**，每一条都能改、能删，也可**勾选多条一次删**
+  - 只有你亲手写的才算「不可动摇」；角色自己编纂的内容一律标成**等你确认**，不会每轮当成前提
+  - 高风险领域（身体、用药、财务、法律、人身安全）必须你明确说过或确认过才会被引用——避免把一句比喻当成健康事实，再顺着往下演绎
+  - 重复条目会合并（换了说法也认得出来，用本机向量模型判定，不上传、不计费），每类还有条数上限（超限只是让出位置，不删数据）
+  - 你在页面上**改一下保存**就等于「这条我确认」：条目立刻生效、层归属不变，之后再遇到同样说法也不会被重复记一遍
 - **世界书 / Lorebook**：关键词 / 正则 / 概率 / 分组互斥 / 粘性 / 冷却的触发式设定注入
+- **记忆按需检索**：时间检索、二跳联想、稳定知识沉淀、前瞻意图（你说过的约定与心愿会被记住并按时提起）、记忆包（`.mempak`）导出 / 导入
+- **交代的事会真办**：说「帮我记一下」「那几天别安排事」会落到备忘录 / 日程，而不是只在回复里答应一句
+- **主动消息**：思念 / 状态触发主动搭话，带自然度评分与作息学习；「去开会」「洗个澡」「等下试」这类约定会自动登记回访，到点自然关心，你已经说了结果就不再追问
+  - **没送到不算「已经发过」**：被拦下或生成失败的主动消息会稍后再试（祝福类一天最多再试 3 回），不会因为你没见到就永久吞掉
+  - **夜里与打扰节制**：静默时段、纪念日、生活汇报、群内自动冒泡等都纳入节制，不会半夜连环提醒
+- **日记 / 朋友圈**：每天为角色生成第一人称日记，**夜里结算时会把当天后来发生的事补进去**；角色发动态、**彼此评论接话**（一条动态下可有多位朋友的说法，回复还会继续），多用户数据隔离
 - **小家与宠物**：像素家居（多房间、家具自由摆放与编辑）；折纸风宠物领养 / 喂食 / 玩耍 / 清洁
 
 ### 群聊与游戏
@@ -28,33 +41,37 @@
 ### 外观
 - **7 款皮肤**：极光毛玻璃 / 原生态 / 温柔陪伴 / Material You / 纸艺手账 / 暗夜霓虹 / 爱琴海典藏（羊皮纸 · 星夜双版）
 - **深色与主题色**：明暗模式 + 多主题色 + 字体变体，设计令牌（Design Token）统一，外观设置一键切换
+- **加载与动效**：长列表骨架屏、消息入场动画、可访问性降级（减少动效时不闪不跳）
 
 ### 扩展与集成
-- **插件系统**：页面型 / 零代码插件，本地目录扫描 + 远程市场索引（内置官方仓库，可用 PLUGIN_MARKET_URL 换成自建市场或关闭）
+- **插件系统**：页面型 / 零代码插件，本地目录扫描 + 远程市场索引（内置官方仓库，可用 `PLUGIN_MARKET_URL` 换成自建市场或关闭）
+- **示例：论坛插件**——角色在不聊天时也能自主上论坛（读帖、回自己帖子下的留言、回私信，也可主动发帖）；**默认关闭**，需要自建论坛站点与宿主凭据
 - **插件安全闸**：仅安装可信插件、安装前权限确认、来源与校验和可追溯
 - **MCP 接入**：标准 Model Context Protocol（stdio / SSE / streamable-http），资源与提示词发现、调用日志可查
 - **外部聊天渠道**：通过网关把聊天机器人（ClawBot）绑定到角色，机器人收到的私聊直达该角色；支持一机多主与多个机器人各绑不同角色，消息与记忆可区分来源
-- **手机感知（Android）**：无障碍读屏、剪贴板、相册最近图片、通知监听、位置信息、AI 主动提通知
-- **消息通知**：前台服务保活 + WebSocket 实时推送 + 系统通知（断线自动重连），可选系统级离线推送
+- **手机感知（Android）**：无障碍读屏、剪贴板、相册最近图片、通知监听、位置信息、AI 主动提通知；上报时**逐项拆字段**（应用 / 时间 / 电量 / 文件名），不挤成一句被截断
+- **消息通知（Android）**：前台服务保活 + WebSocket 实时推送 + 系统通知；**退到后台或息屏也能收到**——前后台判定采用「问得到才算在前台」的保守策略，问不到就按后台处理，该弹就弹；开机自启或清数据后，后台服务会自行补建通知通道
 
 ### 管理与运维
 - **权限与账号**：三合一标签页（AI 能力权限 / 主账号管理 / 服务器功能开关），主账号可管理子账号与用量
+- **用量报表**：按用途 / 模型 / 按天摊开 token 与调用数，并给出按用途、按渠道的占比分布；估算用量单独计数，不与实测混读
 - **功能开关**：开关页按分组折叠并附中文说明，重要能力可灰度与热切，便于逐项试新
-- **稳定运行**：Alembic 版本链迁移（跨版本升级不丢数据）、启动就绪检查（`/ready`）、常驻任务自检与外部网关守护自愈
+- **桌面控制台**：跨平台（tkinter）启停 / 重启 / 看日志；服务器管理统一走 `scripts/server_manager.py`（`status` 体检、`repair` 一键修复双实例、`start/stop/restart`）
+- **稳定运行**：Alembic 版本链迁移（跨版本升级不丢数据）、启动就绪检查（`/ready`）与活性端点（`/liveness`）、常驻任务自检、外部网关守护自愈、后台整理失败自动退避重试
 
 ## 技术栈
 - 后端：FastAPI + SQLAlchemy(async) + SQLite + ChromaDB + bge-m3（本地向量）+ BM25 混合检索（jieba + rank-bm25）
 - 前端：Flutter（**仅支持 Android 构建**，手机感知依赖 Android 原生服务），Provider + Dio + WebSocket + flutter_local_notifications + flutter_background_service（后台保活）
 - LLM：任意 OpenAI 兼容端点（默认 DeepSeek，可用户级 BYOK 覆盖）；图片理解默认本地 OCR，可选云端视觉 API 或本地 VLM
 - 语音：本地 faster-whisper 转写（可切换流式 ASR 端点）；TTS 走自配语音服务（情感化合成），失败自动降级备用链路
-- 部署：一键脚本（setup.bat / setup.sh）与 Docker 容器（多架构 amd64 / arm64，镜像 ghcr.io/gi-tuu/ambrace，首次启动自动下载模型）
+- 部署：一键脚本（`setup.bat` / `setup.sh`）与 Docker 容器（多架构 amd64 / arm64，镜像 `ghcr.io/gi-tuu/ambrace`，首次启动自动下载模型）
 
 ## 目录结构
 ```
 backend/          FastAPI 服务（app/ 业务代码）
 flutter_app/      Flutter 客户端（lib/ 业务代码）
 plugins/          内置示例插件与远程市场索引（examples/ 示例、marketplace/ 索引）
-scripts/          运维脚本（server_manager.py 启停/体检/修复，watchdog.py 守护，backup.py 备份，setup.bat/setup.sh 一键部署，uninstall.bat/uninstall.sh 卸载，build_apk.bat/build_apk.sh 一键打包 APK，get_server_info.py 获取服务器地址，init_db.py 手动重建表，download_models.py 下载向量模型，setup_local_vlm.py 可选下载本地识图模型）
+scripts/          运维脚本（server_manager.py 启停/体检/修复，watchdog.py 守护，backup.py 备份，setup.bat/setup.sh 一键部署，uninstall.bat/uninstall.sh 卸载，build_apk.bat/build_apk.sh 一键打包 APK，get_server_info.py 获取服务器地址，init_db.py 手动重建表，download_models.py 下载向量模型，setup_local_vlm.py 可选下载本地识图模型，verify.py 一键验证）
 server_controller/ 桌面控制台（跨平台 tkinter：Windows 双击 start_controller.vbs / Linux·macOS 执行 bash start_controller.sh）
 docs/             开发文档（架构 / 规划 / 全景，除 changelog.md（App 更新公告数据源）外不随开源包分发）
 ```
@@ -89,6 +106,7 @@ cp ../.env.example .env                         # 可全部留空（推荐）
 数据库无需手动建：首次启动服务时自动建库（`backend/data/sqlite/`）。
 
 LLM Key 推荐落库（代码/.env 零密钥）：启动后用主账号登录，进入「设置 → API 配置」填写；
+落库的密钥为**加密存储**（主密钥另存于本机，不随备份包以外途径外泄）。
 或直接调用管理接口（仅主账号 user_id=1）：
 - `PUT /api/v1/system/api-config/server`        服务器级 LLM（聊天必需，推荐）
 - `PUT /api/v1/system/image-gen-config/server`  生图（可选）
@@ -130,6 +148,7 @@ cd backend
 默认已可用：本地 OCR 识文（随依赖安装，无需额外下载）。自然语言识图可选两种方式：
 - **云端视觉（推荐）**：在 `.env` 填 `VLM_API_KEY` + `VLM_BASE_URL`（OpenAI 兼容端点，如阿里云百炼 `https://xxx/compatible-mode/v1`）+ `VLM_MODEL`（如 `qwen-vl-max`），填写后自动优先生效。
 - **本地离线**：运行 `python scripts/setup_local_vlm.py` 一键安装 Ollama 并下载 `qwen2.5vl:3b`（约 3.2GB），再把 `.env` 的 `VLM_ENABLED` 改为 `true` 并填 `VLM_OLLAMA_EXE` / `VLM_OLLAMA_MODELS_DIR`。
+
 图片二进制始终只发给本地 OCR 或你指定的视觉端点，**不会**进入聊天 LLM。
 
 ### 2.1.5 Windows 防火墙（可选）
@@ -182,7 +201,7 @@ cd backend
 首次启动会自动建库（`backend/data/sqlite/`）与加载向量模型（约 30 秒）。浏览器访问 `http://127.0.0.1:8000/api/v1/system/status` 看到 JSON 即成功。
 
 **3. 后台守护（推荐 systemd，Linux）**
-新建 `/etc/systemd/system/ai-companion.service`（把 `/path/to/ai_companion_public` 换成你的解压目录）：
+新建 `/etc/systemd/system/ai-companion.service`（把 `/path/to/ambrace` 换成你的解压目录）：
 ```ini
 [Unit]
 Description=AMBRACE Server
@@ -190,8 +209,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/path/to/ai_companion_public/backend
-ExecStart=/path/to/ai_companion_public/backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+WorkingDirectory=/path/to/ambrace/backend
+ExecStart=/path/to/ambrace/backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
 
@@ -222,7 +241,7 @@ sudo firewall-cmd --permanent --add-port=8000/tcp && sudo firewall-cmd --reload
 
 **6. 日志与备份**
 - 服务日志：systemd 场景用 `journalctl -u ai-companion`；其余场景 stdout 重定向到文件即可
-- 每日备份：`backend/.venv/bin/python scripts/backup.py`（可配合 cron：`0 3 * * * cd /path/to/ai_companion_public && backend/.venv/bin/python scripts/backup.py`）
+- 每日备份：`backend/.venv/bin/python scripts/backup.py`（可配合 cron：`0 3 * * * cd /path/to/ambrace && backend/.venv/bin/python scripts/backup.py`）
 
 **7. 局域网/Tailscale 连接**
 与 Windows 一致：运行 `backend/.venv/bin/python scripts/get_server_info.py` 获取地址；跨网络用 Tailscale（见 2.3 节，电脑端安装步骤同样适用于 Linux/macOS）。
@@ -240,16 +259,16 @@ flutter build apk --release
 安装 APK 后，在设置页填入服务器地址（手机与服务器同一局域网，或经 Tailscale 等组网）。
 
 ### 3.1 安卓兼容性
-- **最低系统**：Android 7.0（minSdk 24，Shizuku 要求）；完整体验（手机感知/媒体读取）推荐 Android 10 及以上；targetSdk 随 Flutter SDK（35+），编译产物覆盖 arm64-v8a / armeabi-v7a / x86 / x86_64 四种架构（骁龙/天玑/麒麟/展锐等主流芯片均可安装）
+- **最低系统**：Android 7.0（`minSdk` 取 Flutter 默认与 24 的较大者，Shizuku 与录音插件要求）；完整体验（手机感知/媒体读取）推荐 Android 10 及以上；`targetSdk` 随 Flutter SDK，编译产物覆盖 arm64-v8a / armeabi-v7a / x86 / x86_64 四种架构（骁龙/天玑/麒麟/展锐等主流芯片均可安装）
 - **通知权限**：Android 13+ 首次打开需在系统弹窗中允许「通知」权限，否则收不到横幅/系统通知
 - **定位权限（位置信息）**：在「手机感知 → 位置信息」开启「获取地理位置」时，系统会弹出定位授权（建议选「仅使用期间允许」）；若提示失败，请检查系统「定位服务」已开启、且应用定位权限未被厂商默认拦截（部分国产 ROM 需到 设置→应用→权限 手动允许）
 - **手机感知权限**：需在系统设置中手动开启本应用的无障碍服务与「通知使用权」（各厂商路径不同，常见为：小米/红米 设置→更多设置→无障碍；华为/荣耀 设置→辅助功能→无障碍；OPPO/vivo/iQOO 设置→其他设置→无障碍 / 更多设置→无障碍）
-- **后台稳定**：将本应用加入「电池优化白名单」并允许自启动/后台活动，否则息屏后连接与通知可能被系统杀掉（厂商 ROM 差异较大）
-- **免编译安装**：不想自己编译时，可直接安装 Release 附件中的 APK（与源码同版本）；自己编译需 Flutter SDK 3.27+、Android SDK 与 **JDK 17+**（AGP 8.3/Gradle 8.7 要求，首次构建会自动下载 Gradle 与依赖）
+- **后台稳定**：将本应用加入「电池优化白名单」并允许自启动/后台活动，否则息屏后连接与通知可能被系统杀掉（厂商 ROM 差异较大；新版通知链路已改为「拿不到确认就按后台处理」，但仍建议放行后台活动）
+- **免编译安装**：不想自己编译时，可直接安装 Release 附件中的 APK（与源码同版本）；自己编译需 Flutter SDK 与 Dart SDK ≥ 3.6、Android SDK 及 **JDK 17+**（AGP 8.3 / Gradle 8.7 要求，首次构建会自动下载 Gradle 与依赖）
 
 ### 4. 手机感知（可选，Android）
 - 在系统设置中开启本应用的无障碍服务、通知使用权（不同 ROM 名称不同，如 iQOO/OriginOS 需手动放行后台）
-- 在应用内「手机感知」页打开对应开关（读屏 / 剪贴板 / 相册 / 通知 / AI 主动提通知）
+- 在应用内「手机感知」页打开对应开关（读屏 / 剪贴板 / 相册 / 通知 / 位置 / AI 主动提通知）
 - 需要「电池优化白名单」与「允许后台启动」以保证连接与弹窗稳定
 
 ### 5. 从 GitHub 源码部署（不使用 Release 完整包）
@@ -280,7 +299,7 @@ backend/.venv/Scripts/python.exe scripts/server_manager.py restart   # Windows
 1. 下载最新 `ai_companion_public.zip` 解压（可覆盖旧目录，或解压到新目录）
 2. 保留数据：把旧目录的 `.env`、`backend/data/`、`backend/models/` 复制到新目录（直接覆盖解压则无需处理）
 3. 启动：`backend\.venv\Scripts\python.exe scripts\server_manager.py start`（Linux/macOS 用 `backend/.venv/bin/python`）
-4. APK：直接安装新 APK 覆盖即可（登录态与数据保留在服务器，不受影响）
+4. APK：直接安装新 APK 覆盖即可（登录态与数据保留在服务器，不受影响；build 号单调递增，可覆盖安装）
 
 **卸载**
 - Windows：`scripts\uninstall.bat`（默认保留数据与配置；追加 `--purge` 彻底清除）
@@ -288,13 +307,41 @@ backend/.venv/Scripts/python.exe scripts/server_manager.py restart   # Windows
 
 ## 备份与恢复
 - **App 一键导出**：设置 → 系统 → 数据备份，点击「导出备份」即可把 SQLite 数据库 + 配置 + 源码快照打包成 zip 保存到手机，并附恢复指引。
-- **服务器端自动备份**：`scripts/backup.py` 每日自动备份到 `backups/` 目录（保留最近 14 天），也可手动执行。
+- **服务器端自动备份**：`scripts/backup.py` 每日自动备份到 `backups/` 目录（保留最近 14 天），也可手动执行；同时清理 7 天前的轮转日志。
+- ⚠️ **备份包内含明文凭据**：备份包会带上数据库与 `server_config.json`，其中的模型 / 语音 / 多模态密钥当前是**明文**（展示界面已脱敏，库里不是）。包内附有 `README-BACKUP.txt` 提示：**不要外发、不要上传网盘、不要提交进仓库**。加密存储的改造在排期中。
 - **恢复**：停止服务 → 解压备份 zip 覆盖 `backend/data` → 重新启动服务。
+
+## 开发与测试
+改完想自检，按影响面挑一条：
+
+```bash
+# 后端（在 backend 目录下）
+.venv/Scripts/python.exe -m pytest tests -q --basetemp=.pytest_tmp      # Windows
+.venv/bin/python -m pytest tests -q                                     # Linux / macOS
+.venv/Scripts/python.exe -m ruff check app                              # 静态检查
+
+# 前端（在 flutter_app 目录下）
+flutter analyze
+flutter test
+
+# 一键验证（ruff + 语法编译 + 后端测试 + 前端 analyze/test；加 --smoke 顺带跑接口冒烟）
+backend/.venv/Scripts/python.exe scripts/verify.py
+
+# 接口冒烟（需要服务已启动）
+backend/.venv/Scripts/python.exe scripts/smoke_test.py
+```
+
+- **CI**：`main` 分支每次推送都会跑 `.github/workflows/ci.yml` —— 常开档为 Flutter（analyze + test）与后端 Linux Python 3.12 / 3.13 / 3.14；后端 Windows 与 Docker 构建档由变更面判定（只动前端与文档时跳过）。
+- **本机绿不等于 CI 绿**：CI 检出的是**去掉内部文档与隐私排除文件**的那份文件集，会读仓库文件的测试要在这份树上跑过才算数；`scripts/check_pruned_tree.py` 可在推送前先在裁剪树上预跑一次。
+- **公开面自查**：`scripts/check_public_leak.py` 按同一份排除清单扫描「作者机器路径 + 凭据形态」，命中即非零退出；`public-hygiene` 档每次推送都会跑。
+- **隐私硬原则**：真实用户数据（对话、记忆、昵称、宠物名等及其派生改写内容）不得进入公开仓库，相关题集与文档一律走排除清单，并由守卫断言「不在公开面」。
 
 ## 隐私说明
 - 图片默认仅本地 OCR 识文；开启识图后，图片二进制只发给本地 VLM 或你自填的视觉 API 端点，**不会**进入聊天 LLM
 - 数据默认全部存在你自己的服务器（SQLite + 本地向量库）
 - 手机感知数据仅用于注入 AI 上下文，本仓库不包含任何收集上报
+- 语义去重与向量检索都用**本机模型**，不会因为"查重"而调用外部服务
+- 服务器保存的模型 / 语音密钥为加密存储（主密钥另存于本机）；但**每日备份包内仍是明文**，见上方「备份与恢复」的提示
 
 ## 开源与许可
 - 代码许可：[MIT](LICENSE)

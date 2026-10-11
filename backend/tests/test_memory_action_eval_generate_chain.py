@@ -760,6 +760,76 @@ def test_计数器的分账真的接到了报表那行数():
         "计数器与报表之间的接线断了（报表会装作没有 task 拆分）"
 
 
+def _prow(cid, run=1, text_ok=True):
+    """造一条 `--mode export` 该写出来的行（含 ctx_messages，好让 judge 能自己对账）。"""
+    msgs = [{"role": "system", "content": "S"}, {"role": "user", "content": "U"}]
+    return {"cid": cid, "run": run, "category": "fact", "judge": "J1",
+            "expect": {"gold_seed_idx": [0], "abstain": False,
+                       "action_type": ["MEMO", "MEMORY"], "field_match": {"*": "朵朵"},
+                       "forbidden": []},
+            "time_anchor": {"as_of": "2026-09-25"}, "anchor": "2026-09-25",
+            "ctx_messages": msgs, "prompt_fp": "a" * 12, "prompt_fp_stable": "b" * 12,
+            "n_ctx_msgs": 2, "ctx_chars": 20, "n_recalled": 1, "gold_in_recall": 1,
+            "gold_in_ctx": 1, "library_rows": 9, "temperature": 0.8,
+            "_fp": ev.sent_fp_of(msgs)}
+
+
+def test_外部腿对不上账的跑次必须剔除并点名而不是记成模型没过():
+    """来历＝10-10 第一次驱动：npm 的 .cmd 壳把多行 prompt 按换行截断，模型只收到首行，
+    30 发被判成全 E3＝"模型不产出"。那种读数会直接把人引去改提示词／换模型——所以
+    **判据之前先对账**，对不上的算没量到。"""
+    prows = [_prow("j1a"), _prow("j1b"), _prow("j1c"), _prow("j1d")]
+    good = lambda p: {"text": "好。【记忆：用户女儿叫朵朵】", "sent_fp": p["_fp"]}
+    replies = {("j1a", 1): good(prows[0]),
+               ("j1b", 1): {"text": "好。【记忆：用户女儿叫朵朵】", "sent_fp": "dead" + "0" * 8},
+               ("j1c", 1): {"text": "好。【记忆：用户女儿叫朵朵】"},
+               ("j1d", 1): {"text": "行，记下了。", "sent_fp": prows[3]["_fp"]}}
+    rep = ev.judge_replies(prows, replies)
+    assert [r["cid"] for r in rep["rows"]] == ["j1a", "j1d"], rep["rows"]
+    assert rep["n"] == 2 and rep["pass"] == 1, (rep["n"], rep["pass"])
+    assert len(rep["mismatch_runs"]) == 2, rep["mismatch_runs"]
+    assert rep["missing_runs"] == [], rep["missing_runs"]
+    assert rep["orphan_replies"] == [], rep["orphan_replies"]
+    # 剔除的理由要看得见：错的那两发是"没量到"，不是"没过"
+    assert any("sent_fp=dead" in m for m in rep["mismatch_runs"]), rep["mismatch_runs"]
+    assert any("没留" in m for m in rep["mismatch_runs"]), rep["mismatch_runs"]
+
+
+def test_外部腿报表必须自报家门并说出对账结果():
+    prows = [_prow("j1a"), _prow("j1b")]
+    replies = {("j1a", 1): {"text": "【记忆：用户女儿叫朵朵】", "sent_fp": prows[0]["_fp"]},
+               ("j1b", 1): {"text": "【记忆：用户女儿叫朵朵】", "sent_fp": "0" * 12}}
+    rep = ev.judge_replies(prows, replies)
+    rep.update({"usage": _fake_rep()["usage"], "llm": _fake_rep()["llm"],
+                "flags": {"memory_temporal_recall": True}, "k": 5, "borrowed": {},
+                "skipped_judges": []})
+    out = ev.render_generate(rep)
+    assert "不是生产认证" in out, "外部腿没自报家门＝下一个人会把它当认证读数读"
+    assert "共N条消息" in out, "没说清导出的 prompt 与生产逐字不同在哪"
+    assert "对不上账的外部腿跑次已剔除" in out and "不进分母" in out, "剔除动作没进报表"
+
+
+def test_外部腿入口的三道拒绝():
+    assert "零计费档" in ev.refusal(["J1"], "export", True), "export 带 --allow-llm 必须拒"
+    assert ev.refusal(["J1"], "export", False) == ""
+    assert "--judges J1" in ev.refusal(["J3"], "export", False), "export 只导 J1 装配路径"
+    assert "--prompts" in ev.refusal(["J1"], "judge", False, prompts_path="", replies_path="r"), \
+        "没有题面就没有判据，必须拒"
+    assert "--replies" in ev.refusal(["J1"], "judge", False, prompts_path="p", replies_path=""), \
+        "没有回复的 judge 会产出一份空报表被当成「零通过」"
+    assert ev.refusal(["J1"], "judge", False, prompts_path="p", replies_path="r") == ""
+    assert "不碰模型" in ev.refusal(["J1"], "judge", True, prompts_path="p", replies_path="r"), \
+        "judge 带 --allow-llm 会让人以为这一档在花钱"
+
+
+def test_外部腿的渲染只有一处真源():
+    """任务包、驱动器、judge 对账必须渲染出**同一份文本**——两份渲染就会一份对账一份跑偏。"""
+    src = (REPO / "scripts" / "diagnostics" / "memory_action_eval.py").read_text(encoding="utf-8")
+    i = src.index("def render_external_tasks")
+    seg = src[i:i + 700]
+    assert "render_prompt_text(" in seg, "任务包又自己拼一份渲染＝对账指纹与实际发出的不是一份"
+
+
 def test_报表把请求按task拆开并明说请求数不等于跑次数():
     """10-10 的账就是这么错的：题×跑＝30，实际 60 发（装配里补生成日摘要那一发也计费）。"""
     rep = _fake_rep()

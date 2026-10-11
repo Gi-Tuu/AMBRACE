@@ -198,6 +198,36 @@ def test_lint_未知动作类型必须拦_拼错的动作名不能让题永远�
     assert any("不是已知动作类型" in b for b in bad), bad
 
 
+def test_lint_周期题不许配单日日期判据():
+    """10-10 批 51 的反向钉（来历＝j1t03 三跑写出「每周三…」却被判 E4：周期约定没有那一个日期）。"""
+    periodic = _case(judge="J1", category="temporal",
+                     turn="以后每逢那几天下午，都别给我安排事",
+                     expect=_expect(action_type="CAL_NOTE", field_match={"*": "下午"}))
+    with_date = dict(periodic, time_anchor={"as_of": "2026-09-25", "expect_date": "2026-09-30"})
+    assert any("周期词" in b for b in ev.lint_dataset([with_date])), \
+        "周期句配了单日判据却没拦住 ⇒ 模型写对也判不过"
+    no_date = dict(periodic, time_anchor={"as_of": "2026-09-25"})
+    assert not [b for b in ev.lint_dataset([no_date]) if b.startswith("T-1")], \
+        "周期题按新口径（只考通道＋载荷）应当合法"
+    # 反向：题面没有周期词、只有种子里写着「每月」的单次请求，不许被带跑（j1t02 型）
+    single = _case(judge="J1", category="temporal", turn="下个月 28 号提醒我对一下账",
+                   seeds=[{"content": "用户每月 28 号结项目款", "memory_type": "fact",
+                           "importance": 70, "date": "2026-08-11", "source": "chat",
+                           "epistemic_status": "USER_STATED"}],
+                   expect=_expect(action_type="CAL_NOTE"),
+                   time_anchor={"as_of": "2026-09-25", "expect_date": "2026-10-28"})
+    assert not [b for b in ev.lint_dataset([single]) if b.startswith("T-1")], \
+        "单次题被种子里的『每月』误伤"
+    # 正向锚：草稿里真的有一道带周期词的时间题，且它已经不再配单日判据
+    import json
+    real = [json.loads(l) for l in DRAFT.read_text(encoding="utf-8").splitlines() if l.strip()]
+    j1t03 = [c for c in real if c["cid"] == "j1t03"]
+    assert j1t03 and any(w in j1t03[0]["turn"] for w in ev._periodic_words()), \
+        "草稿里没有带周期词的时间题 ⇒ 这条守卫在量一个不存在的形状"
+    assert not ev.resolve_expect_date(j1t03[0].get("time_anchor")), \
+        "j1t03 还在配单日判据 ⇒ 本批要撤的那条没撤掉"
+
+
 def test_lint_不许误伤既有的J3题():
     """77 条正式集里 6 条早就标了 action_type，但 judge 仍是 J3 ⇒ lint 不能因此报违规。"""
     import json
@@ -269,11 +299,17 @@ def test_A30出题草稿必须lint零违规_且判据分布如登记():
             assert e.get("slots") or e.get("slots_none"), c["cid"]
         assert c["solvability"]["certified"] is False, \
             f"{c['cid']} 不能提前打认证勾——三跑认证要等生成侧接线"
-    # 时间题必须能从题面锚点算出绝对日期（否则 date 判据永远不生效）
+    # 时间题两条路（10-10 批 51 随迁）：要么算得出绝对日期，要么是**周期句**——
+    # 周期约定本来就没有"那一个日期"，它考的是走没走 CAL_NOTE＋载荷认得出星期。
+    # 两种都得有样本：只剩一种就说明口径被单边挪走，而那时没人喊。
     temporal = [c for c in cases if c["category"] == "temporal"]
     assert len(temporal) == 4
-    for c in temporal:
-        assert ev.resolve_expect_date(c["time_anchor"]), c["cid"]
+    dated = [c for c in temporal if ev.resolve_expect_date(c["time_anchor"])]
+    periodic = [c for c in temporal if not ev.resolve_expect_date(c["time_anchor"])]
+    assert len(dated) >= 2 and len(periodic) == 1, (len(dated), len(periodic))
+    for c in periodic:
+        assert any(w in c["turn"] for w in ev._periodic_words()), \
+            f"{c['cid']} 没日期也没周期词 ⇒ 这是漏标不是周期题"
 
 
 def test_A30草稿的日期锚点覆盖两种写法():

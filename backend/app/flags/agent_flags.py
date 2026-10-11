@@ -572,4 +572,11 @@ AGENT_FLAGS = {
     #   契约**只登记这一轮实际做了什么**，全仓没有任何决策路径读它（守卫 test_没有任何执行路径读契约 钉住）。
     # 关＝不建契约、不落痕（工作台的 decision_contract / candidate_actions 保持空＝逐字节旧行为）；转 on 需读数（runtime_flags 热切，无需重启）。
     "decision_contract_shadow": False,
+    # A30 批 C（10-11）：小手机日历/备忘的**写侧兜底**两档（模型这一轮既没落 [CAL_NOTE] 也没落 [MEMO] 时，
+    # 由确定性规则补记；规则本体在 app/memory/fallback.py，纯函数、零 LLM、正文只取用户原话）。
+    # shadow＝只打一条 `A30 兜底 route=memory_fallback` 留痕，**一个字都不写库**；
+    # gate＝真经统一工具入口补一条日历条目（周期条目没有绝对日期 ⇒ 一律不写）。
+    # 两把都关＝这条链路一次额外调用都不发生（守卫按调用计数桩钉住）。
+    "memory_fallback_shadow": False,
+    "memory_fallback_gate": False,
 }

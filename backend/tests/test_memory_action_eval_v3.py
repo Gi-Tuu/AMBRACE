@@ -653,3 +653,18 @@ def test_子进程调用必须显式锁编码():
         assert {"encoding", "errors", "env"} <= kw, (
             "第 %s 行的 subprocess.run 没锁编码：缺 %s" % (c.lineno,
                                                        sorted({"encoding", "errors", "env"} - kw)))
+
+
+def test_尺子对app的import必须全部延迟到临时环境建好之后():
+    """隔离靠的是**顺序**：`_init_temp_env` 先设 `DATABASE_URL`/`CHROMA_PERSIST_DIR` 才 import app。
+
+    模块顶部 import app（哪怕只是取一个常量）＝在隔离生效前就把 engine/BM25 单例绑到外部环境；
+    在 pytest 里外部环境就是**会话沙箱那个共享库**，于是"第二次跑看得见第一次写的东西"，
+    上面那条端到端逐字节一致的守卫当场红（10-10 批 57 实测：把周期词表改成顶部 import 就打破）。
+    """
+    src = Path(SCRIPT).read_text(encoding="utf-8-sig")
+    head = src.split("async def _init_temp_env")[0]
+    assert head != src, "尺子里找不到 `_init_temp_env` ⇒ 这条守卫的锚点要跟着改，别让它变成恒真"
+    bad = [ln for ln in head.splitlines()
+           if ln.startswith("from app") or ln.startswith("import app")]
+    assert not bad, "尺子在 _init_temp_env 之前就 import 了 app：%s" % bad

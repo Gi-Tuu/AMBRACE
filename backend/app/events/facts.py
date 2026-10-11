@@ -12,9 +12,10 @@
 """
 import json
 import re
+from collections import OrderedDict
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 
 from app.db.database import async_session_factory
 from app.events.schema import EPISTEMIC_FACT, EPISTEMIC_UNVERIFIED
@@ -104,6 +105,7 @@ KIND_CONSTRAINT = "constraint"         # 人格铁律/硬约束（无条件注�
 KIND_PREFERENCE = "preference_profile" # 长期偏好画像
 KIND_RELATION_BASE = "relationship_baseline"  # 关系基线
 CURATED_KINDS = {KIND_FACT, KIND_CONSTRAINT, KIND_PREFERENCE, KIND_RELATION_BASE}
+CURATED_PREDICATE = "curated"  # 编纂层的谓词标签＝这一行的层归属；编辑保存不许把它改写走（A55）
 TRANSIENT_PREDICATES = {"status", "activity", "location", "mood"}  # 既有瞬时谓词
 
 VERIFY_UNVERIFIED = "unverified"
@@ -136,6 +138,26 @@ _IDENTITY_PREDICATES = {
     "role", "identity", "job", "occupation", "title", "profession",
     "position", "work", "school", "major", "relationship",
 }
+
+# 高风险域（健康/身体/医疗/用药＋财务/法律/人身安全）：**LLM 推断一律不构成这类事实**。
+# 起因（10-10 用户报障、10-11 复核）：修辞里的**喻体被字面化**成一条健康事实，随后自我繁殖出
+# 几十条同类约束并每轮确定性注入。真实原句与逐条证据只记在内部台账，不进这份代码。
+# 一期用关键词表（够用且零额外调用）；后续可升级为"谓词＋实体"判定。
+_SENSITIVE_REVIEW_DAYS = 7   # 高风险域草稿的短复核窗（到期未采纳自然淡出，不像普通 curated 永不过期）
+_SENSITIVE_DOMAIN_KEYWORDS = (
+    "腰", "颈", "脊椎", "关节", "胃", "肠", "肝", "肾", "心脏", "血压", "血糖", "糖尿病",
+    "过敏", "哮喘", "孕", "月经", "伤", "痛", "疼", "病", "炎", "骨折", "手术", "医院",
+    "医生", "诊断", "复诊", "药", "膏药", "吃药", "服药", "剂量", "忌口", "康复", "理疗",
+    "针灸", "按摩", "转账", "汇款", "密码", "验证码", "银行卡", "身份证", "合同", "起诉", "报警",
+)
+
+
+def _touches_sensitive_domain(text: str) -> bool:
+    """是否触碰高风险域（子串命中即可，宁可多判：多判只让它进"待确认"，漏判会让推断当权威）。"""
+    t = (text or "").lower()
+    return any(k in t for k in _SENSITIVE_DOMAIN_KEYWORDS)
+
+
 # 语义查重阈值（依据见 _same_fact_text docstring）
 _WORLD_FACT_SIMILARITY = 0.9
 _MIN_CORE_LEN = 6           # 通用文本「前缀包含」合并的最短核心长度
@@ -567,23 +589,183 @@ def merge_curated_evidence(
     return rep_row
 
 
+# ── 编纂层语义查重（批 61 A6 durable 档）──
+# 为什么字面判据不够（10-11 实测，output/b61_semantic_measure.py／b61_novel_plan.txt）：
+# 72 条 active curated 里，字符二元组 Jaccard 两两最高只有 **0.56**，「除对方没有新信息」的
+# 严格二值判据（≤0.20）只并得出 1 条；而 #109/#115/#128/#137/#142/#147/#190 这些
+# 「用户与 sam 是伴侣」的换写法有 13 条 ⇒ 任何字面线都够不到，这就是页面越堆越多的根因。
+CURATED_SEMANTIC_THRESHOLD = 0.85   # 量出来的线：调之前重跑上面那份分布
+# 关系称谓同义组：判「覆盖」时把同义折成同一个词，否则「是伴侣」与「是老公」永远互判为有新信息。
+# **只用于判等，不改写任何正文。**
+_CURATED_SYNONYMS = (("伴侣", "老公"), ("情侣", "老公"), ("夫夫", "老公"), ("丈夫", "老公"),
+                     ("对象", "老公"), ("爱人", "老公"), ("老婆", "老公"))
+# 虚词/功能字：不算信息量（留着会把「两人是」「用户有」这类纯措辞差异当成新事实）。
+_CURATED_STOP_CHARS = frozenset("的是有两人我你他她它们和与在一个人了也不这那叫为对小")
+_VEC_CACHE: "OrderedDict[tuple[int, str], list[float]]" = OrderedDict()
+_VEC_CACHE_MAX = 512
+
+
+_CURATED_NONWORD_RE = re.compile(r"[^\w]+")
+
+
+def curated_content_chars(text: str) -> set:
+    """一条正文的**实义字符集**（同义归一＋剥标点＋去虚词）。纯函数、无 IO。"""
+    n = re.sub(r"[（(]?sam[）)]?", "我", (text or "").strip(), flags=re.I).lower()
+    for a, b in _CURATED_SYNONYMS:
+        n = n.replace(a, b)
+    n = _CURATED_NONWORD_RE.sub("", n)
+    return {c for c in n if c not in _CURATED_STOP_CHARS}
+
+
+def curated_is_covered(new_text: str, old_text: str) -> bool:
+    """新条的实义内容是否**完全被旧条说过**（＝零新增信息）。空集一律判否（宁可不并）。"""
+    nc = curated_content_chars(new_text)
+    if not nc:
+        return False
+    return nc <= curated_content_chars(old_text)
+
+
+async def _curated_vec(row_id: int, text: str) -> list:
+    """本地 bge-m3 向量（零计费），按 (id, 正文) 缓存——池子里那些行每轮重推一遍会白白吃 CPU。"""
+    key = (row_id, text)
+    v = _VEC_CACHE.get(key)
+    if v is not None:
+        _VEC_CACHE.move_to_end(key)
+        return v
+    from app.memory.embedding import text_embedding   # 延迟 import：模型缺失时由调用侧 fail-open
+    v = await text_embedding(text)
+    _VEC_CACHE[key] = v
+    while len(_VEC_CACHE) > _VEC_CACHE_MAX:
+        _VEC_CACHE.popitem(last=False)
+    return v
+
+
+def _cosine(a: list, b: list) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(x * x for x in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+# 每角色每 kind 的 **active 软上限**（A52 剩②，2026-10-11）。
+# 为什么要有：注入侧本来就只取 TopN（constraint 8／其余每类 4），但**表侧以前没有任何上限**，
+# 于是每轮编纂一直往里加行——「世界设定页堆到翻不完」就是这个（实测 char13 曾到 88 条）。
+# 超限不是删除，是把尾部置 `superseded`（留痕可回溯），且**下一次写入时自动收敛**，
+# 不需要专门跑一次清库：正常聊天就会把存量压回上限内。
+CURATED_ACTIVE_CAP = {
+    KIND_CONSTRAINT: 30,          # 铁律是人格必须在场的那一类，给得最宽
+    KIND_FACT: 20,
+    KIND_PREFERENCE: 20,
+    KIND_RELATION_BASE: 20,
+}
+
+
+def _curated_keep_order():
+    """保留优先级排序键：用户权威 ＞ 已核实程度 ＞ 置信度 ＞ 新近。
+
+    ⚠ `verify_state` **不能用字符串字典序**排（'machine-confirmed' < 'unverified' 是字母序，
+    语义正好反），必须映射成 rank；用 case() 把它下推到 SQL，避免先捞全表再在 Python 里排。
+    """
+    rank = case(
+        (WorldFact.verify_state == VERIFY_HUMAN, 2),
+        (WorldFact.verify_state == VERIFY_MACHINE, 1),
+        else_=0,
+    )
+    return [
+        WorldFact.is_authoritative.desc(),
+        rank.desc(),
+        WorldFact.confidence.desc(),
+        WorldFact.asserted_at.desc(),
+        WorldFact.id.desc(),
+    ]
+
+
+async def enforce_curated_cap(db, *, character_id: int, kind: str,
+                              protect=None) -> int:
+    """把该角色该 kind 超出软上限的 active 行置 superseded，返回淘汰条数。
+
+    不填 `superseded_by`——容量淘汰不是「被某条新值取代」，没有唯一的替代行；要恢复就把它改回 active。
+
+    `protect`＝本次刚写入的那条，**不参与淘汰**：编纂腿的新行按 A1 一律是 unverified（rank 0），
+    而存量多是 machine-confirmed（rank 1），不保护就会让「记下了」静默变成「记了但被自己挤掉」，
+    满员后「TA 记下的·待你确认」永久冻结。代价是明写的：新条目会挤掉一条最旧的低优先存量
+    （status 改写、正文与留痕都在，不是删除）——质量把关归准入闸门与查重，不归容量。
+    """
+    cap = CURATED_ACTIVE_CAP.get(kind)
+    if not cap:
+        return 0
+    rows = (await db.execute(
+        select(WorldFact).where(
+            WorldFact.character_id == character_id,
+            WorldFact.status == "active",
+            WorldFact.kind == kind,
+        ).order_by(*_curated_keep_order())
+    )).scalars().all()
+    pool = list(rows)
+    if protect is not None:
+        rest = [r for r in pool if r is not protect]
+        if len(rest) < len(pool):
+            pool = [protect] + rest
+    if len(pool) <= cap:
+        return 0
+    now = _now_naive()
+    dropped = 0
+    for r in pool[cap:]:
+        r.status = "superseded"
+        r.superseded_at = now
+        dropped += 1
+    return dropped
+
+
+async def _semantic_curated_match(obj: str, kind: str, pool, source, *,
+                                  threshold: float = CURATED_SEMANTIC_THRESHOLD):
+    """语义查重：找一条「同 kind ＋ 实义内容完全覆盖新条 ＋ 向量余弦≥阈值」的既有 active 行。
+
+    两道守护缺一不可，顺序也固定：
+    ① **先查实义覆盖**（纯字符串，零推理）——带新信息的句子在这里就放过去，绝不做推理，
+       也绝不并（例：库里已有「关系亲密稳定」，新条说「我们住在一起」⇒ 住/起 是新信息 ⇒ 保留新增）；
+    ② 再比向量（≥0.85），排除同义但实为两件事的巧合覆盖。
+    任何异常（模型缺失/推理失败）一律 **fail-open＝不并**，宁可多一条也不能把写入卡死。
+    """
+    try:
+        cands = [r for r in pool
+                 if r.kind == kind and r.object_value
+                 and not _cross_source_merge_blocked(source, r.source)
+                 and curated_is_covered(obj, r.object_value)]
+        if not cands:
+            return None
+        nv = await _curated_vec(-1, obj)
+        best, best_sim = None, 0.0
+        for r in cands:
+            sim = _cosine(nv, await _curated_vec(r.id, r.object_value))
+            if sim > best_sim:
+                best, best_sim = r, sim
+        return best if best_sim >= threshold else None
+    except Exception as e:      # fail-open：语义档坏了就退回旧行为（只按字面判据去重）
+        _logger.info("curated semantic dedup skipped char=%d kind=%s: %s",
+                     getattr(pool[0], "character_id", 0) if pool else 0, kind, e)
+        return None
+
+
 async def assert_curated(
     db, *, character_id: int, user_id: int, kind: str,
-    object_value: str, predicate: str = "curated",
+    object_value: str, predicate: str = CURATED_PREDICATE,
     subject_type: str = "character", subject_id: int | None = None,
     audience: list[str] | None = None, source: str | None = None,
-    source_event_id: str | None = None, confidence: float = 1.0,
-    verify_state: str = VERIFY_MACHINE, sources: list[dict] | None = None,
+    source_event_id: str | None = None, confidence: float = 0.5,
+    verify_state: str = VERIFY_UNVERIFIED, sources: list[dict] | None = None,
     links: list[str] | None = None, stale_after: datetime | None = None,
-    epistemic: str = EPISTEMIC_FACT,
+    epistemic: str = EPISTEMIC_UNVERIFIED,
 ) -> WorldFact | None:
     """写入/更新一条 curated 长期知识（独立于 12 条上限与 12h 新鲜窗）。
 
     同 (character_id, kind, predicate, object_value) 已存在 active 行 → 更新（不新增重复）。
     调用方负责 commit（与 assert_fact 一致，不内部提交）。
     M4 闸门开时（flag `memory_admission_gate`）额外做：元信息拦截（命中返回 None）、语义查重
-    （同义 → 合并到既有权威记录、不新增行）、身份/职业矛盾 → UNVERIFIED 进裁决、身份类统一
-    review 窗口（不永不过期）。闸门关 = 以上全部短路，逐字节旧行为。
+    （**两档**：字面同义 `_same_curated_value`；字面没命中再走「实义零新增＋bge-m3 余弦≥0.85」
+    的 `_semantic_curated_match`——同义 → 合并到既有记录、不新增行）、身份/职业矛盾 → UNVERIFIED
+    进裁决、身份类统一 review 窗口（不永不过期）；system 写入一律不是权威（批 61 A1）。
+    闸门关 = 以上全部短路，逐字节旧行为。
     """
     if kind not in CURATED_KINDS:
         raise ValueError(f"assert_curated: bad kind {kind!r}")
@@ -624,6 +806,10 @@ async def assert_curated(
         same = next((r for r in pool
                      if _same_curated_value(r.object_value, obj)
                      and not _cross_source_merge_blocked(source, r.source)), None)
+        if same is None:
+            # 字面判据只管「同一句话换了个后缀」；换措辞的同一件事（实测有 13 条伴侣称谓）
+            # 只有语义档能认出来——这一档就是「堆很多、反复提」不再长回来的地方。
+            same = await _semantic_curated_match(obj, kind, pool, source)
     else:
         same = next((r for r in existing
                      if (r.object_value or "").strip() == obj
@@ -638,8 +824,16 @@ async def assert_curated(
 
     row_verify = verify_state
     row_epistemic = epistemic
-    row_authoritative = True
+    # 「不可动摇的权威设定」只有一种来源：用户亲手写（create/update_world_fact 走 assert_fact，
+    # author='user'、is_authoritative=True）。本函数的唯一调用者是 LLM 抽取便车 ⇒ 永远不是权威。
+    row_authoritative = False
     row_stale = stale_after
+    if row_verify == VERIFY_MACHINE and _touches_sensitive_domain(obj):
+        # 高风险域即便被上层标了 machine，也按"待确认"处理；只有人工确认（human）才放行注入。
+        row_verify = VERIFY_UNVERIFIED
+        row_epistemic = EPISTEMIC_UNVERIFIED
+    if _touches_sensitive_domain(obj) and row_stale is None:
+        row_stale = _now_naive() + timedelta(days=_SENSITIVE_REVIEW_DAYS)
     if gate:
         conflict = next((r for r in pool if _conflicting_user_identity(r.object_value, obj)), None)
         if conflict is not None:
@@ -667,6 +861,15 @@ async def assert_curated(
         stale_after=row_stale,
     )
     db.add(row)
+    # 容量收敛（A52 剩②）。整段包 try：这一档只是卫生动作，坏了也不能把编纂写入带崩。
+    try:
+        dropped = await enforce_curated_cap(db, character_id=character_id, kind=kind,
+                                            protect=row)
+        if dropped:
+            _logger.info("assert_curated cap trimmed char=%d kind=%s dropped=%d cap=%s",
+                         character_id, kind, dropped, CURATED_ACTIVE_CAP.get(kind))
+    except Exception as e:
+        _logger.warning("assert_curated cap skipped char=%d kind=%s: %s", character_id, kind, e)
     return row
 
 
@@ -688,6 +891,8 @@ async def get_curated_facts(
                 WorldFact.character_id == character_id,
                 WorldFact.status == "active",
                 WorldFact.kind.in_(tuple(CURATED_KINDS)),
+                # 未核实的编纂草稿不进"每轮确定性注入"（它只该在世界设定页的待确认区等着）。
+                WorldFact.verify_state.in_((VERIFY_MACHINE, VERIFY_HUMAN)),
             ).order_by(WorldFact.kind.asc(), WorldFact.confidence.desc(), WorldFact.asserted_at.desc())
         )).scalars().all()
 
@@ -696,6 +901,10 @@ async def get_curated_facts(
     v_id = viewer_id if viewer_id is not None else character_id
     for r in rows:
         if not audience_visible(r.audience, viewer_type, v_id):  # 复用既有可见性判定（与 get_active_facts 同口径）
+            continue
+        if r.verify_state != VERIFY_HUMAN and _touches_sensitive_domain(r.object_value or ""):
+            # 高风险域即便 machine-confirmed 也必须是**人工确认过**才当每轮前提——
+            # 这一条同时切断"错误健康事实 → 模型继续演绎 → 越滚越多"的放大器。
             continue
         out.setdefault(r.kind, []).append(r)
 
