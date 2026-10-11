@@ -1,955 +1,166 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
+<!doctype html>
+<html lang="zh-CN" class="no-js">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#f3ecdd">
-<title>拥爱 AMBRACE · 一位属于你自己的守护灵</title>
-<meta name="description" content="拥爱 AMBRACE：自托管、开源、隐私优先的 AI 伙伴。TA有记忆、有情绪、有自己的一天——小家、宠物、群聊游戏、实时语音与织库记忆，全部安放在你自己的服务器上。">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f5f1e8">
+<title>拥爱 AMBRACE · 把陪伴，安放在自己的生活里</title>
+<meta name="description" content="自托管、开源的 AI 伙伴应用。聊天与语音、长期记忆、日记与朋友圈、小家与宠物：在你自己的服务器上，慢慢积累共同的日常。支持 Android，自备模型服务。">
 <meta property="og:type" content="website">
-<meta property="og:title" content="拥爱 AMBRACE · 一位属于你自己的守护灵">
-<meta property="og:description" content="在算法擅长回答的年代，我们想造一个愿意记住你、陪你过日子的存在。自托管 · 开源 · 隐私优先。">
+<meta property="og:url" content="https://gi-tuu.github.io/AMBRACE/">
+<meta property="og:title" content="拥爱 AMBRACE · 把陪伴，安放在自己的生活里">
+<meta property="og:description" content="有记忆，有自己的一天，也有一个由你亲手安放的家。自托管 · 开源 · Android。">
 <meta property="og:image" content="https://gi-tuu.github.io/AMBRACE/og-cover.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-<link rel="icon" type="image/png" href="assets/ambrace-icon.png">
 <link rel="apple-touch-icon" href="assets/ambrace-icon.png">
-
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600;1,700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Noto+Serif+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
-
 <style>
-/* ============================================================
-   拥爱 AMBRACE —— 「爱琴海手稿」
-   纸莎草 · 墨 · 古铜金 · 赤陶 · 橄榄；花体斜体 + 思源宋体
-   ============================================================ */
-:root{
-  --paper:#f3ecdd;        /* 纸莎草主底 */
-  --paper-2:#ece2cd;      /* 略深的纸，分区 */
-  --marble:#faf5ea;       /* 卡片纸面 */
-  --ink:#2b251b;          /* 暖墨 */
-  --ink-soft:#5d5344;
-  --ink-faint:#8c8069;
-  --gold:#a9823f;         /* 古铜金 */
-  --gold-deep:#836428;
-  --gold-pale:#c9ae72;
-  --terra:#b0543a;        /* 赤陶 */
-  --terra-deep:#90402b;
-  --olive:#6c7850;        /* 橄榄 */
-  --aegean:#35586b;       /* 爱琴蓝 */
-  --night:#131a29;        /* 首屏夜空 */
-  --night-2:#1c2740;
-  --moon:#e7d6ab;
-  --line:rgba(86,66,32,.18);
-  --line-strong:rgba(86,66,32,.32);
-
-  --serif-display:"Cormorant Garamond","EB Garamond",Georgia,"Times New Roman","Songti SC","STSong",serif;
-  --serif-body:"EB Garamond","Cormorant Garamond",Georgia,"Times New Roman",serif;
-  --cn:"Noto Serif SC","Songti SC","STSong","SimSun",serif;
-  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Courier New",monospace;
-
-  --maxw:1080px;
-  --shadow-card:0 1px 0 rgba(86,66,32,.05),0 14px 34px -22px rgba(70,52,22,.4);
+:root{--paper:#f5f1e8;--white:#fffdf8;--ink:#253a35;--muted:#58665e;--line:#d7d7c7;--gold:#786035;--terra:#9b4e38;--sage:#e3e9dc;--night:#243c38;--serif:Georgia,"Noto Serif SC","Songti SC","STSong","SimSun",serif;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:100px}body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.75;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}button{font:inherit;cursor:pointer}a,button,summary{-webkit-tap-highlight-color:transparent}
+:focus-visible{outline:3px solid var(--terra);outline-offset:5px}::selection{background:#d5deca;color:var(--ink)}svg{display:block;max-width:100%}h1,h2,h3,p{margin:0}h1,h2,h3{font-family:var(--serif);font-weight:500}
+.wrap{width:min(1160px,calc(100% - 96px));margin-inline:auto}.skip{position:fixed;left:16px;top:-100px;z-index:100;background:var(--ink);color:white;padding:10px 20px}.skip:focus{top:16px}
+.nav{position:sticky;top:0;z-index:20;background:var(--paper);border-bottom:1px solid var(--line)}.nav-inner{height:82px;display:flex;align-items:center;justify-content:space-between;gap:24px}
+.brand{display:flex;align-items:center;gap:13px}.brand img{width:34px;height:34px}.brand strong{font-family:var(--serif);font-size:23px;font-weight:500;letter-spacing:.12em}.brand small{font-family:Georgia,serif;display:block;font-size:10px;letter-spacing:.2em;line-height:1.2}
+.nav-links{display:flex;gap:30px;align-items:center;font-size:13px}.nav-links a{min-height:44px;display:flex;align-items:center}.nav-links a:hover,.footer-links a:hover{color:var(--terra)}.nav-start{padding:0 19px;border:1px solid var(--ink)}.menu-toggle{display:none;background:none;border:1px solid var(--line);color:var(--ink);min-width:48px;min-height:44px}
+.hero{padding:78px 0 58px}.hero-grid{display:grid;grid-template-columns:1.07fr 1fr;gap:52px;align-items:center}.overline{display:flex;align-items:center;gap:10px;font-size:11px;letter-spacing:.13em;font-weight:600}.overline:before{content:"";width:25px;height:1px;background:currentColor}
+.hero h1{font-size:clamp(44px,4.8vw,67px);line-height:1.35;letter-spacing:-.04em;margin:29px 0 25px}.hero h1 em{font-style:normal;color:var(--terra)}.hero-copy>p{max-width:440px;color:var(--muted);font-size:16px;line-height:1.95}
+.actions{display:flex;align-items:center;gap:22px;flex-wrap:wrap;margin-top:32px}.button{display:inline-flex;align-items:center;justify-content:center;gap:18px;min-height:50px;padding:12px 23px;border:1px solid var(--ink);background:var(--ink);color:var(--white);font-size:13px;transition:background .2s}.button:hover{background:#3c5346}.text-link{display:inline-flex;gap:12px;align-items:center;min-height:44px;border-bottom:1px solid var(--gold);font-size:13px}
+.hero-meta{display:flex;flex-wrap:wrap;gap:18px;margin-top:25px;color:var(--muted);font-size:11px}.hero-meta span+span:before{content:"·";margin-right:18px}
+.hero-art{position:relative}.art-frame{border-radius:240px 240px 5px 5px;overflow:hidden;background:var(--night);aspect-ratio:.94}.art-frame svg{width:100%;height:100%}
+.art-caption{display:flex;justify-content:space-between;margin-top:15px;font-size:10px;color:var(--muted);letter-spacing:.08em}
+.art-note{position:absolute;left:-30px;bottom:60px;padding:18px 23px;width:220px;background:var(--white);border:1px solid var(--line);transform:rotate(-4deg)}.art-note small{font-size:9px;color:var(--muted);letter-spacing:.1em}.art-note p{font-family:var(--serif);font-size:15px;margin-top:6px}.art-note:after{content:"";position:absolute;width:65px;height:18px;background:#ddd7bcbf;top:-10px;left:80px;transform:rotate(5deg)}
+.hero-bottom{display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--line);margin-top:58px;padding-top:24px;gap:30px}.hero-bottom p{font-family:var(--serif);font-size:17px}.hero-bottom a{font-size:12px;color:var(--muted);min-height:44px;display:flex;align-items:center;gap:12px}
+.section{padding:95px 0}.section-head{display:grid;grid-template-columns:1.4fr 1fr;gap:64px;align-items:end;margin-bottom:45px}.section-head h2{margin-top:18px;font-size:clamp(29px,3.2vw,43px);line-height:1.45}.section-head p{color:var(--muted);font-size:14px;max-width:420px}
+.experience{background:var(--sage);border-block:1px solid #d0d8c7}.showcase{display:grid;grid-template-columns:.83fr 1.4fr;background:var(--white);border:1px solid #cbd1c3}.showcase-aside{padding:34px;border-right:1px solid var(--line)}.tabs{display:flex;flex-direction:column}
+.tab{width:100%;display:flex;align-items:center;gap:17px;text-align:left;padding:20px 0;border:0;border-bottom:1px solid var(--line);background:none;color:var(--muted)}.tab .number{font-family:Georgia,serif;font-size:12px;color:var(--gold)}.tab strong{font-size:16px;font-weight:500;flex:1}.tab .arrow{opacity:0}.tab[aria-selected="true"]{color:var(--ink)}.tab[aria-selected="true"] strong{font-weight:650}.tab[aria-selected="true"] .arrow{opacity:1}
+.showcase-aside>p{font-size:12px;line-height:1.9;color:var(--muted);margin-top:28px}.showcase-stage{padding:28px 36px 32px;background:#f8f7f0;min-width:0;min-height:460px}.demo-label{display:flex;justify-content:space-between;gap:12px;font-size:10px;color:var(--muted);margin-bottom:25px}[hidden]{display:none!important}
+.demo-title{display:flex;align-items:center;gap:13px;padding-bottom:18px;border-bottom:1px solid var(--line)}.avatar{width:40px;height:40px;border-radius:50%;background:#e5d6b5;display:grid;place-items:center;font-family:var(--serif);color:#685438;flex-shrink:0}.demo-title strong{display:block;font-size:13px;font-weight:500}.demo-title small{font-size:10px;color:var(--muted)}
+.chat{display:flex;flex-direction:column;align-items:flex-start;gap:16px;padding:25px 0 22px}.bubble{background:#e5ebdf;max-width:88%;padding:13px 18px;font-size:13px;border-radius:2px 13px 13px}.bubble.self{align-self:flex-end;background:#eee7d9;border-radius:13px 2px 13px 13px}.chat-time{font-size:10px;color:var(--muted);align-self:center}.demo-foot{border-top:1px solid var(--line);padding-top:15px;font-size:11px;color:var(--muted)}
+.memo-heading{font-family:var(--serif);font-size:23px;padding:6px 0 20px}.memo-row{display:grid;grid-template-columns:65px 1fr;gap:15px;padding:17px 0;border-top:1px solid var(--line);font-size:13px}.memo-row span{color:var(--gold);font-size:11px}.memo-row small{display:block;color:var(--muted);margin-top:5px}
+.journal{font-family:var(--serif);font-size:15px;line-height:2.2;padding:4px 0 22px}.journal h3{font-size:23px;margin:0 0 18px}.journal p+p{margin-top:16px}.journal-tag{font-size:11px;color:var(--gold);font-family:var(--sans);margin-bottom:12px}.showcase-caption{display:flex;justify-content:space-between;gap:20px;margin-top:18px;font-size:11px;color:var(--muted)}
+.memory-section{padding-bottom:0}.memory-layout{display:grid;grid-template-columns:1fr 1fr;gap:100px;align-items:center}.memory-copy h2,.life-copy h2{font-size:clamp(30px,3vw,42px);line-height:1.5;margin:20px 0}.memory-copy>p,.life-copy p{font-size:14px;color:var(--muted)}.memory-points{margin:26px 0 0;padding:0;list-style:none}.memory-points li{display:flex;gap:14px;align-items:flex-start;margin-top:18px;font-size:13px}.memory-points li:before{content:"";height:6px;width:6px;margin-top:9px;border-radius:50%;background:var(--terra);flex-shrink:0}
+.memory-paper{position:relative;padding:35px 32px;background:var(--white);border:1px solid var(--line);transform:rotate(2deg)}.paper-header{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:15px;color:var(--gold);font-size:10px;letter-spacing:.12em}.memory-paper h3{font-size:27px;margin:22px 0}
+.note-row{position:relative;border-left:1px solid #c5cdb9;padding:0 0 25px 25px}.note-row:before{content:"";width:7px;height:7px;border:1px solid var(--gold);border-radius:50%;position:absolute;left:-4px;top:8px;background:var(--white)}.note-row small{color:var(--muted);font-size:10px}.note-row p{margin-top:5px;font-size:14px}.note-row:last-of-type{padding-bottom:0;border-color:transparent}.illustration-label{margin-top:24px;font-size:10px;color:var(--muted)}
+.life-layout{display:grid;grid-template-columns:1fr 1fr;gap:75px;align-items:center;padding:65px 0 0}.home-drawing{background:#e9e4d6;padding:25px;border-radius:180px 180px 0 0}.home-drawing svg{width:100%;height:auto}.life-list{display:flex;flex-wrap:wrap;gap:12px 24px;margin-top:28px;font-size:12px}.life-list span{border-bottom:1px solid var(--line);padding-bottom:5px}
+.capabilities{border-top:1px solid var(--line)}.feature-list{display:grid;grid-template-columns:1fr 1fr;column-gap:65px}.feature{display:grid;grid-template-columns:30px 1fr;gap:20px;padding:25px 0;border-top:1px solid var(--line)}.feature>span{font:12px Georgia,serif;padding-top:6px;color:var(--gold)}.feature h3{font-size:22px;margin-bottom:10px}.feature p{font-size:13px;color:var(--muted)}
+.privacy{background:var(--night);color:var(--white)}.privacy .section-head p{color:#c2d0c4}.privacy .overline{color:#d9c79f}.privacy-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:40px;padding:24px 0 20px}.privacy-item{border-top:1px solid #6d8275;padding-top:25px}.privacy-item .latin{color:#ddc998;font-size:13px;font-family:Georgia,serif;font-style:italic}.privacy-item h3{font-size:24px;margin:13px 0 14px}.privacy-item p{color:#c2d0c4;font-size:13px}.privacy-note{border-top:1px solid #6d8275;margin-top:34px;padding-top:22px;font-size:12px;color:#c2d0c4}.privacy-note strong{color:var(--white);font-weight:500}
+.release-row{display:grid;grid-template-columns:.68fr 1fr;gap:80px;border-block:1px solid var(--line);padding:40px 0}.release-version{font-family:Georgia,serif;font-size:64px;line-height:1;margin:18px 0;letter-spacing:-.04em}.release-copy ul{margin:0 0 20px;padding-left:18px;font-size:13px;color:var(--muted)}.release-copy li+li{margin-top:10px}.release-copy .text-link{font-size:12px}.release-subtitle{font-size:12px;color:var(--muted)}
+.setup{padding-top:0}.setup-grid{display:grid;grid-template-columns:1fr 1fr;gap:65px}.setup-steps{list-style:none;margin:0;padding:0;counter-reset:step}.setup-steps li{counter-increment:step;display:grid;grid-template-columns:32px 1fr;gap:17px;margin-bottom:24px}.setup-steps li:before{content:"0" counter(step);font-family:Georgia,serif;font-size:13px;color:var(--gold);padding-top:4px}.setup-steps h3{font-family:var(--sans);font-size:14px;font-weight:550;margin-bottom:5px}.setup-steps p{font-size:12px;color:var(--muted)}
+.terminal{background:#e7e7dc;border:1px solid #c7cbbb;padding:23px;min-width:0;align-self:start}.terminal-top{display:flex;justify-content:space-between;align-items:center;gap:20px;font-size:11px;color:var(--muted)}.copy{border:1px solid #a9b3a0;background:transparent;color:var(--ink);padding:7px 13px;min-height:44px;font-size:11px}.copy:hover{background:#d4dccb}pre{overflow:auto;font-size:12px;line-height:2;margin:23px 0;padding-bottom:10px;color:var(--ink)}code{font-family:Consolas,"SFMono-Regular",monospace}.terminal-note{font-size:11px;color:var(--muted);border-top:1px solid #c7cbbb;padding-top:16px}.terminal .text-link{margin-top:12px}.copy-status{display:block;min-height:20px;font-size:11px;color:var(--muted)}
+.faq{border-top:1px solid var(--line);padding-top:45px;margin-top:48px;display:grid;grid-template-columns:.65fr 1.2fr;gap:65px}.faq h3{font-size:28px}details{border-bottom:1px solid var(--line)}summary{font-size:13px;padding:18px 22px 18px 0;cursor:pointer}details p{padding:0 0 21px;font-size:12px;color:var(--muted)}details p a{text-decoration:underline;text-underline-offset:3px}
+.ending{padding:55px 0 65px;text-align:center;background:#e7e5d8}.ending .latin{font-family:Georgia,serif;font-style:italic;color:var(--gold);font-size:20px}.ending h2{font-size:clamp(28px,3vw,42px);line-height:1.5;margin:18px 0 12px}.ending p{font-size:13px;color:var(--muted)}.ending .actions{justify-content:center;margin-top:25px}
+footer{padding:30px 0}.footer-inner{display:flex;justify-content:space-between;align-items:center;gap:30px;font-size:10px;color:var(--muted)}.footer-links{display:flex;gap:22px}.footer-links a{min-height:44px;display:flex;align-items:center}
+@media(max-width:1000px){.wrap{width:calc(100% - 64px)}.hero-grid{gap:35px}.hero h1{font-size:48px}.nav-links{gap:20px}.memory-layout{gap:50px}.section-head{gap:40px}.showcase-aside,.showcase-stage{padding:25px}}
+@media(max-width:760px){
+html{scroll-padding-top:85px}.wrap{width:calc(100% - 40px)}.nav-inner{height:68px}.menu-toggle{display:block}.nav-links{display:none;position:absolute;top:68px;left:0;right:0;background:var(--paper);padding:12px 20px 20px;border-bottom:1px solid var(--line);flex-direction:column;gap:3px;align-items:stretch}.nav-links.open{display:flex}.nav-links a{padding:5px 12px}.nav-start{margin-top:6px}
+.hero{padding-top:42px}.hero-grid{grid-template-columns:1fr;gap:45px}.hero h1{font-size:clamp(40px,8vw,57px);margin-top:22px}.hero-copy>p{font-size:14px;max-width:500px}.hero-art{width:min(400px,90%);justify-self:center}.art-note{width:195px;left:-12px;bottom:45px;padding:16px 18px}.hero-bottom{margin-top:38px;flex-direction:column;align-items:flex-start;gap:8px;padding-top:20px}.hero-bottom p{font-size:16px}
+.section{padding:62px 0}.section-head{grid-template-columns:1fr;gap:18px;margin-bottom:30px}.section-head h2{font-size:31px}.showcase{grid-template-columns:1fr}.showcase-aside{padding:0 20px;border-right:0;border-bottom:1px solid var(--line)}.tabs{flex-direction:row}.tab{padding:19px 0;border-bottom:0;gap:7px;justify-content:center}.tab strong{flex:0 1 auto;font-size:13px;white-space:nowrap}.tab .number{font-size:10px}.tab .arrow,.showcase-aside>p{display:none}.tab[aria-selected="true"]{box-shadow:inset 0 -2px var(--ink)}.showcase-stage{padding:22px 20px;min-height:485px}.showcase-caption{flex-direction:column;gap:4px}
+.memory-layout,.life-layout{grid-template-columns:1fr;gap:40px}.memory-section{padding-bottom:0}.memory-paper{transform:none;padding:26px}.life-layout{padding-top:50px}.home-drawing{width:min(440px,100%);margin:auto}.life-copy{grid-row:1}.feature-list{grid-template-columns:1fr}.privacy-grid{grid-template-columns:1fr;gap:30px;padding-top:0}.release-row{grid-template-columns:1fr;gap:20px;padding:30px 0}.release-version{font-size:50px;margin:14px 0}.setup{padding-top:0}.setup-grid{grid-template-columns:1fr;gap:18px}.faq{grid-template-columns:1fr;gap:20px}.footer-inner{flex-direction:column;align-items:flex-start;gap:10px}.actions{gap:18px}
 }
-*{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
-@media (prefers-reduced-motion:reduce){
-  html{scroll-behavior:auto}
-  *,*::before,*::after{animation:none !important;transition:none !important}
-}
-body{
-  font-family:var(--cn);
-  background:var(--paper);
-  color:var(--ink);
-  line-height:1.8;
-  font-size:16.5px;
-  -webkit-font-smoothing:antialiased;
-  text-rendering:optimizeLegibility;
-  overflow-x:hidden;
-}
-/* 纸张纤维：极淡噪点，去数码感 */
-body::before{
-  content:"";position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.5;mix-blend-mode:multiply;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.34 0 0 0 0 0.27 0 0 0 0 0.13 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-header,main,footer{position:relative;z-index:2}
-a{color:inherit;text-decoration:none}
-img,svg{display:block;max-width:100%}
-::selection{background:rgba(176,84,58,.22);color:var(--ink)}
-.wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
-
-/* ---------- 通用古典构件 ---------- */
-.ita{font-family:var(--serif-display);font-style:italic;font-weight:600}
-.greek{font-family:var(--serif-display);font-style:italic;font-weight:600;color:var(--terra-deep)}
-/* 花体分隔：双金线 + 中央叶饰 */
-.fleuron{display:flex;align-items:center;justify-content:center;gap:14px;color:var(--gold);margin:0 auto}
-.fleuron::before,.fleuron::after{content:"";height:1px;width:84px;background:linear-gradient(90deg,transparent,var(--gold));}
-.fleuron::after{background:linear-gradient(90deg,var(--gold),transparent)}
-.fleuron svg{width:22px;height:14px;flex:none}
-/* 章节小眉题：罗马数字 + 希腊词 */
-.kicker{display:flex;align-items:baseline;justify-content:center;gap:.7rem;margin-bottom:1.1rem}
-.kicker .roman{font-family:var(--serif-display);font-style:italic;font-size:1.05rem;letter-spacing:.18em;color:var(--gold-deep)}
-.kicker .gr{font-family:var(--serif-display);font-style:italic;font-size:1.3rem;color:var(--terra)}
-.kicker .cn{font-size:.82rem;letter-spacing:.42em;color:var(--ink-faint);padding-left:.42em}
-.sec{padding:108px 0}
-.sec-head{max-width:680px;margin:0 auto 64px;text-align:center}
-.sec-head h2{font-family:var(--cn);font-weight:700;font-size:clamp(1.7rem,3.6vw,2.4rem);letter-spacing:.04em;line-height:1.35;margin:.4rem 0 1rem}
-.sec-head p{color:var(--ink-soft);font-size:1.02rem;max-width:52ch;margin:0 auto}
-
-.reveal{opacity:0;transform:translateY(16px);transition:opacity 1s cubic-bezier(.22,.65,.27,1),transform 1s cubic-bezier(.22,.65,.27,1)}
-.reveal.in{opacity:1;transform:none}
-.d1{transition-delay:.08s}.d2{transition-delay:.16s}.d3{transition-delay:.24s}.d4{transition-delay:.32s}
-
-/* ---------- 导航 ---------- */
-.nav{position:fixed;inset:0 0 auto 0;z-index:100;transition:background .4s,border-color .4s,box-shadow .4s;border-bottom:1px solid transparent}
-.nav.scrolled{background:rgba(243,236,221,.86);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom-color:var(--line);box-shadow:0 8px 30px -24px rgba(70,52,22,.5)}
-/* 未滚动时导航浮在深色夜空首屏上，用夜色浅字；滚动到纸色内容后由上方默认墨色接管 */
-.nav:not(.scrolled){color:#ece3cb}
-.nav:not(.scrolled) .brand .cn-name{color:#f3ebd4}
-.nav:not(.scrolled) .brand .la{color:var(--gold-pale)}
-.nav:not(.scrolled) .nav-links a.nlk{color:#c7bea3}
-.nav:not(.scrolled) .nav-links a.nlk:hover{color:#fbf6e8}
-.nav:not(.scrolled) .nav-links a.nlk.curr{color:var(--gold-pale)}
-.nav:not(.scrolled) .burger{border-color:rgba(231,214,171,.4)}
-.nav:not(.scrolled) .burger span,.nav:not(.scrolled) .burger span::before,.nav:not(.scrolled) .burger span::after{background:#ece3cb}
-.nav-inner{display:flex;align-items:center;justify-content:space-between;height:74px}
-.brand{display:inline-flex;align-items:center;gap:.7rem}
-.brand .seal{width:40px;height:40px;flex:none}
-.brand .bt{display:flex;flex-direction:column;line-height:1.1}
-.brand .cn-name{font-family:var(--cn);font-weight:700;font-size:1.12rem;letter-spacing:.14em}
-.brand .la{font-family:var(--serif-display);font-style:italic;font-size:.92rem;letter-spacing:.22em;color:var(--gold-deep)}
-.nav-links{display:flex;align-items:center;gap:1.9rem}
-.nav-links a.nlk{font-family:var(--cn);font-size:.94rem;color:var(--ink-soft);letter-spacing:.08em;position:relative;padding:.2rem 0}
-.nav-links a.nlk::after{content:"";position:absolute;left:0;right:100%;bottom:-3px;height:1px;background:var(--gold);transition:right .3s}
-.nav-links a.nlk:hover{color:var(--ink)}
-.nav-links a.nlk:hover::after{right:0}
-.nav-links a.nlk.curr{color:var(--terra-deep)}
-.nav-links a.nlk.curr::after{right:0}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:.55rem;cursor:pointer;border:1px solid transparent;
-  font-family:var(--cn);font-size:.95rem;letter-spacing:.06em;line-height:1;padding:.82rem 1.5rem;border-radius:2px;
-  transition:background .25s,color .25s,border-color .25s,transform .15s,box-shadow .25s;white-space:nowrap}
-.btn:active{transform:translateY(1px)}
-.btn svg{width:17px;height:17px}
-.btn-gold{background:var(--gold-deep);color:#f7efdd;box-shadow:0 10px 26px -14px rgba(131,100,40,.9)}
-.btn-gold:hover{background:var(--gold);box-shadow:0 14px 32px -14px rgba(131,100,40,1)}
-.btn-outline{border-color:var(--line-strong);color:var(--ink);background:transparent}
-.btn-outline:hover{border-color:var(--gold-deep);color:var(--gold-deep);background:rgba(169,130,63,.06)}
-.btn-night{border-color:rgba(231,214,171,.4);color:var(--moon)}
-.btn-night:hover{border-color:var(--moon);background:rgba(231,214,171,.08)}
-.btn-sm{padding:.6rem 1.1rem;font-size:.88rem}
-.burger{display:none;width:42px;height:42px;border:1px solid var(--line-strong);background:transparent;border-radius:2px;cursor:pointer;align-items:center;justify-content:center}
-.burger span{display:block;width:18px;height:1.5px;background:var(--ink);position:relative}
-.burger span::before,.burger span::after{content:"";position:absolute;left:0;width:18px;height:1.5px;background:var(--ink)}
-.burger span::before{top:-6px}.burger span::after{top:6px}
-.mobile-menu{display:none;flex-direction:column;background:rgba(243,236,221,.97);border-bottom:1px solid var(--line);padding:.4rem 28px 1.2rem}
-.mobile-menu a{padding:.85rem 0;font-family:var(--cn);color:var(--ink-soft);border-bottom:1px solid var(--line);letter-spacing:.08em}
-.mobile-menu a:last-of-type{border-bottom:none}
-.mobile-menu .btn{margin-top:.9rem}
-
-/* ---------- HERO 夜空 ---------- */
-.hero{position:relative;background:
-  radial-gradient(120% 90% at 50% -10%, #243150 0%, var(--night) 58%, #0d1320 100%);
-  color:var(--moon);padding:172px 0 0;overflow:hidden}
-.hero .stars{position:absolute;inset:0;pointer-events:none}
-.hero .star{position:absolute;background:#f3ead0;border-radius:50%;box-shadow:0 0 6px 1px rgba(243,234,208,.45);animation:twinkle 6s ease-in-out infinite;will-change:opacity,transform}
-@keyframes twinkle{0%,100%{opacity:.28;transform:scale(.78)}50%{opacity:.95;transform:scale(1.18)}}
-/* 少量亮星：带十字光芒，偶发一闪 */
-.hero .star.bright{box-shadow:0 0 9px 2px rgba(243,234,208,.9)}
-.hero .star.bright::before,.hero .star.bright::after{content:"";position:absolute;left:50%;top:50%;background:rgba(243,234,208,.75);transform:translate(-50%,-50%);animation:glint 7.5s ease-in-out infinite}
-.hero .star.bright::before{width:8px;height:1px}
-.hero .star.bright::after{width:1px;height:8px}
-@keyframes glint{0%,58%,100%{opacity:.12}72%,80%{opacity:.95}90%{opacity:.2}}
-.hero .constellation{position:absolute;inset:0;display:flex;justify-content:center;align-items:flex-start;pointer-events:none}
-.hero .constellation svg{margin-top:40px;width:min(680px,86vw);height:auto;opacity:.9}
-.hero-inner{position:relative;text-align:center;padding-bottom:128px}
-.hero .est{display:inline-flex;align-items:center;gap:.8rem;font-family:var(--serif-display);font-style:italic;letter-spacing:.3em;font-size:.92rem;color:var(--gold-pale);text-transform:uppercase}
-.hero .est::before,.hero .est::after{content:"";width:34px;height:1px;background:linear-gradient(90deg,transparent,var(--gold-pale))}
-.hero .est::after{background:linear-gradient(90deg,var(--gold-pale),transparent)}
-.hero h1{margin:1.7rem auto 0;line-height:1.06}
-.hero h1 .cn-big{display:block;font-family:var(--cn);font-weight:700;font-size:clamp(3rem,9vw,5.2rem);letter-spacing:.22em;text-indent:.22em;color:#f5ecd6}
-.hero h1 .la-big{display:block;font-family:var(--serif-display);font-style:italic;font-weight:600;font-size:clamp(1.7rem,4.4vw,2.7rem);letter-spacing:.34em;color:var(--gold-pale);margin-top:.5rem;text-indent:.34em}
-.hero .motto{font-family:var(--serif-display);font-style:italic;font-size:clamp(1.15rem,2.6vw,1.55rem);color:#e9dcc0;margin-top:1.7rem}
-.hero .motto .gr{color:var(--gold-pale)}
-.hero .lead{max-width:46ch;margin:1.5rem auto 0;color:#c9c2b0;font-size:1.06rem;line-height:1.9}
-.hero .cta-row{display:flex;gap:.9rem;justify-content:center;flex-wrap:wrap;margin-top:2.4rem}
-.hero .delphi{margin-top:3.2rem;display:flex;flex-direction:column;gap:.4rem;align-items:center;color:#a9a189}
-.hero .delphi .gr{font-family:var(--serif-display);font-style:italic;font-size:1.32rem;letter-spacing:.12em;color:var(--gold-pale)}
-.hero .delphi .tr{font-size:.82rem;letter-spacing:.3em;color:#9a927c}
-/* 夜空下沿：卷纸展开的弧形过渡 */
-.hero .edge{position:relative;display:block;width:100%;height:64px;margin-bottom:-1px}
-
-/* ---------- 序 ---------- */
-.proem{padding:110px 0 104px;text-align:center}
-.proem .body{max-width:680px;margin:0 auto;font-size:1.12rem;color:var(--ink-soft);line-height:2.05}
-.proem .body p{margin-bottom:1.3rem}
-.proem .body p:first-child::first-letter{
-  font-family:var(--serif-display);font-weight:700;font-style:italic;
-  float:left;font-size:3.5em;line-height:.86;padding:.06em .12em 0 0;color:var(--terra-deep)}
-.proem .sign{font-family:var(--serif-display);font-style:italic;color:var(--gold-deep);font-size:1.05rem;letter-spacing:.06em}
-
-/* ---------- 五个古老的词 ---------- */
-.lexicon{background:var(--paper-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-.lex-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:18px}
-.lex{position:relative;background:var(--marble);border:1px solid var(--line);border-radius:3px;padding:30px 22px 26px;text-align:center;box-shadow:var(--shadow-card);transition:transform .35s,border-color .35s}
-.lex:hover{transform:translateY(-5px);border-color:var(--gold)}
-.lex::before,.lex::after{content:"";position:absolute;width:12px;height:12px;border:1px solid var(--gold);opacity:.55}
-.lex::before{top:7px;left:7px;border-right:none;border-bottom:none}
-.lex::after{bottom:7px;right:7px;border-left:none;border-top:none}
-.lex .lg{font-family:var(--serif-display);font-style:italic;font-weight:700;font-size:2rem;color:var(--terra);line-height:1.1}
-.lex .lt{font-family:var(--serif-display);font-style:italic;letter-spacing:.14em;color:var(--gold-deep);font-size:.86rem;margin:.25rem 0 .2rem;text-transform:uppercase}
-.lex .lc{font-family:var(--cn);font-weight:700;letter-spacing:.22em;font-size:1.06rem;color:var(--ink);margin-bottom:.8rem}
-.lex .ld{font-size:.9rem;line-height:1.75;color:var(--ink-soft);text-align:left}
-.lex .ld b{color:var(--terra-deep);font-weight:600}
-.lex .feat{margin-top:.95rem;padding-top:.95rem;border-top:1px dashed var(--line);font-size:.8rem;line-height:1.7;color:var(--ink-faint);text-align:left}
-
-/* ---------- 造物 · 功能全览 ---------- */
-.crafts .cols{display:grid;grid-template-columns:repeat(2,1fr);gap:26px 40px}
-.craft{display:flex;gap:20px;padding:24px 4px;border-bottom:1px solid var(--line)}
-.craft .ic{flex:none;width:46px;height:46px;border:1px solid var(--gold);border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--gold-deep)}
-.craft .ic svg{width:22px;height:22px}
-.craft h3{font-family:var(--cn);font-size:1.12rem;font-weight:700;letter-spacing:.06em;margin-bottom:.35rem;display:flex;align-items:baseline;gap:.6rem}
-.craft h3 .en{font-family:var(--serif-display);font-style:italic;font-weight:500;font-size:.92rem;color:var(--gold-deep)}
-.craft p{font-size:.94rem;color:var(--ink-soft);line-height:1.8}
-.craft p .tag{display:inline-block;font-family:var(--cn);font-size:.78rem;color:var(--gold-deep);border:1px solid var(--line-strong);border-radius:2px;padding:.02rem .5rem;margin:.15rem .35rem .15rem 0;white-space:nowrap}
-
-/* ---------- 立约 · 三柱 ---------- */
-.pledge{background:var(--night);color:var(--moon);border-top:1px solid #000}
-.pledge .sec-head h2{color:#f3ead0}
-.pledge .sec-head p{color:#b9b29f}
-.pledge .kicker .gr{color:var(--gold-pale)}
-.pledge .kicker .roman{color:var(--gold-pale)}
-.pledge .kicker .cn{color:#9a927c}
-.columns{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;align-items:start}
-.column{text-align:center;padding:0 14px}
-.column svg{width:120px;height:150px;margin:0 auto 18px}
-.column h3{font-family:var(--cn);font-weight:700;letter-spacing:.12em;font-size:1.12rem;color:#f3ead0;margin-bottom:.6rem}
-.column h3 .en{display:block;font-family:var(--serif-display);font-style:italic;font-weight:500;font-size:.88rem;letter-spacing:.16em;color:var(--gold-pale);margin-bottom:.3rem}
-.column p{font-size:.92rem;color:#c3bca8;line-height:1.85}
-
-/* ---------- 间奏 ---------- */
-.interlude{padding:120px 0;text-align:center;background:var(--paper)}
-.interlude blockquote{max-width:760px;margin:0 auto}
-.interlude .big{font-family:var(--cn);font-weight:600;font-size:clamp(1.4rem,3.2vw,2.05rem);line-height:1.8;color:var(--ink);letter-spacing:.03em}
-.interlude .big .em{color:var(--terra-deep)}
-.interlude .gr{display:block;margin-top:1.6rem;font-family:var(--serif-display);font-style:italic;font-size:1.3rem;color:var(--gold-deep)}
-
-/* ---------- 纪年 · 时间线 ---------- */
-.chronos{background:var(--paper-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-.tl{max-width:760px;margin:0 auto;position:relative;padding-left:40px}
-.tl::before{content:"";position:absolute;left:13px;top:10px;bottom:10px;width:1px;background:linear-gradient(180deg,transparent,var(--gold) 8%,var(--gold) 92%,transparent)}
-.tl-item{position:relative;padding-bottom:42px}
-.tl-item:last-child{padding-bottom:0}
-.tl-item .node{position:absolute;left:-33px;top:6px;width:15px;height:15px}
-.tl-item .node::before{content:"";position:absolute;inset:0;border:1.5px solid var(--gold);border-radius:50%;background:var(--paper-2)}
-.tl-item.now .node::before{background:var(--terra);border-color:var(--terra-deep)}
-.tl-item .ver{display:inline-flex;align-items:baseline;gap:.6rem;margin-bottom:.5rem}
-.tl-item .ver .v{font-family:var(--serif-display);font-style:italic;font-weight:700;font-size:.96rem;letter-spacing:.1em;color:var(--gold-deep);border:1px solid var(--line-strong);padding:.1rem .7rem;border-radius:2px}
-.tl-item.now .ver .v{background:var(--terra-deep);color:#f7eede;border-color:var(--terra-deep)}
-.tl-item .ver .when{font-size:.78rem;color:var(--ink-faint);letter-spacing:.1em}
-.tl-item h4{font-family:var(--cn);font-weight:700;font-size:1.1rem;letter-spacing:.04em;margin-bottom:.35rem}
-.tl-item p{font-size:.94rem;color:var(--ink-soft);max-width:56ch;line-height:1.8}
-
-/* ---------- 构筑 · 快速开始 ---------- */
-.build .grid2{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:center}
-.steps{counter-reset:s;display:flex;flex-direction:column;gap:20px}
-.step{display:flex;gap:18px;align-items:flex-start}
-.step::before{counter-increment:s;content:counter(s,upper-roman);flex:none;width:40px;height:40px;border:1px solid var(--gold);border-radius:50%;
-  display:flex;align-items:center;justify-content:center;font-family:var(--serif-display);font-style:italic;font-weight:700;color:var(--gold-deep);font-size:1.05rem;margin-top:2px}
-.step h4{font-family:var(--cn);font-weight:700;font-size:1.04rem;margin-bottom:.25rem}
-.step p{font-size:.92rem;color:var(--ink-soft);line-height:1.75}
-.step code,.code-card code{font-family:var(--mono);font-size:.84rem;background:rgba(86,66,32,.08);border:1px solid var(--line);border-radius:3px;padding:.08rem .42rem;color:var(--terra-deep)}
-.code-card{background:#201a10;color:#e7dcc2;border:1px solid #3a2f1c;border-radius:4px;padding:26px 26px 22px;box-shadow:0 26px 60px -30px rgba(40,28,10,.7);position:relative;overflow:hidden}
-.code-card::before{content:"terminal · self-host";position:absolute;top:9px;right:14px;font-family:var(--serif-display);font-style:italic;font-size:.78rem;color:#8d7c54;letter-spacing:.1em}
-.code-card pre{font-family:var(--mono);font-size:.86rem;line-height:2.05;white-space:pre-wrap;word-break:break-all}
-.code-card .c{color:#9c8d63}
-.code-card .k{color:#d8a86a}
-.code-card .p{color:#cfc3a4}
-.build .note{margin-top:1.3rem;font-size:.86rem;color:var(--ink-faint);display:flex;gap:.5rem;align-items:flex-start}
-.build .note svg{flex:none;width:16px;height:16px;margin-top:3px;color:var(--olive)}
-
-/* ---------- 结尾 CTA ---------- */
-.ending{background:var(--night);color:var(--moon);text-align:center;padding:120px 0}
-.ending h2{font-family:var(--cn);font-weight:700;font-size:clamp(1.9rem,4.4vw,2.8rem);letter-spacing:.1em;color:#f3ead0}
-.ending .gr{font-family:var(--serif-display);font-style:italic;font-size:1.3rem;color:var(--gold-pale);margin:.7rem 0 1.4rem}
-.ending p{color:#c3bca8;max-width:48ch;margin:0 auto 2.2rem}
-.ending .cta-row{display:flex;gap:.9rem;justify-content:center;flex-wrap:wrap}
-
-/* 释名 & 五词收束 */
-.proem .etym{margin:36px 0 4px;padding-top:28px;border-top:1px solid var(--line);text-align:center}
-.proem .etym .w{font-family:var(--serif-display);font-style:italic;font-weight:600;font-size:1.46rem;color:var(--terra-deep);letter-spacing:.05em}
-.proem .etym p{margin:12px auto 0;max-width:46ch;color:var(--ink-soft);font-size:1.02rem;line-height:1.9}
-.lex-coda{margin-top:46px;text-align:center;font-family:var(--serif-display);font-style:italic;font-weight:600;font-size:1.22rem;letter-spacing:.05em;color:var(--gold-deep);line-height:1.8}
-.lex-coda b{font-family:var(--cn);font-style:normal;font-weight:700;letter-spacing:.12em}
-
-/* ---------- 页脚 ---------- */
-.footer{background:#0d121d;color:#a9a189;padding:52px 0 44px}
-.footer .row1{display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap;padding-bottom:26px;border-bottom:1px solid rgba(231,214,171,.14)}
-.footer .fbrand{display:flex;align-items:center;gap:.7rem}
-.footer .fbrand .seal{width:36px;height:36px;flex:none}
-.footer .fbrand .cn-name{font-family:var(--cn);font-weight:700;letter-spacing:.14em;color:#e6dcc2}
-.footer .fbrand .la{font-family:var(--serif-display);font-style:italic;letter-spacing:.2em;font-size:.84rem;color:var(--gold-pale)}
-.footer nav{display:flex;gap:1.5rem;flex-wrap:wrap}
-.footer nav a{font-size:.9rem;color:#a9a189;transition:color .2s}
-.footer nav a:hover{color:var(--gold-pale)}
-.footer nav a.fsup{color:var(--gold-pale);border:1px solid rgba(201,174,114,.42);padding:.2rem .72rem;border-radius:2px;letter-spacing:.06em}
-.footer nav a.fsup:hover{border-color:var(--gold-pale);color:#f4ecd7;background:rgba(201,174,114,.08)}
-.footer .row2{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;padding-top:24px;font-size:.82rem;color:#7d7663}
-.footer .row2 .ita{color:#a9986b}
-
-/* ---------- 响应式 ---------- */
-@media (max-width:960px){
-  .lex-grid{grid-template-columns:repeat(2,1fr)}
-  .lex:last-child{grid-column:span 2;max-width:60%;justify-self:center;width:100%}
-  .crafts .cols{grid-template-columns:1fr}
-  .build .grid2{grid-template-columns:1fr;gap:40px}
-}
-@media (max-width:820px){
-  .nav-links{display:none}
-  .burger{display:flex}
-  .mobile-menu.open{display:flex}
-  .sec{padding:78px 0}
-  .hero{padding-top:132px}
-  .hero-inner{padding-bottom:92px}
-  .columns{grid-template-columns:1fr;gap:40px;max-width:420px;margin:0 auto}
-  .column svg{height:128px}
-}
-@media (max-width:560px){
-  body{font-size:16px}
-  .wrap{padding:0 20px}
-  .lex-grid{grid-template-columns:1fr}
-  .lex:last-child{grid-column:auto;max-width:none}
-  .hero .cta-row{flex-direction:column;align-items:stretch}
-  .hero .cta-row .btn{justify-content:center}
-  .ending .cta-row{flex-direction:column;align-items:stretch}
-  .ending .cta-row .btn{justify-content:center}
-  .craft{gap:14px}
-  .tl{padding-left:32px}
-}
-
-/* ============================================================
-   生命感 · 循环动效（全部 transform/opacity，GPU 合成；
-   已被上方 prefers-reduced-motion 全局规则统一关闭）
-   ============================================================ */
-/* —— 拥爱大字上方：星座光晕与主星缓慢呼吸（发光变大变小） —— */
-/* 都以元素自身包围盒中心（=圆心）为原点缩放，只变大小/亮度，绝不平移、不左右晃 */
-.halo-breath,.core-star{transform-box:fill-box;transform-origin:center}
-.halo-breath{animation:haloBreath 6.5s ease-in-out infinite}
-@keyframes haloBreath{0%,100%{opacity:.66;transform:scale(.94)}50%{opacity:1;transform:scale(1.1)}}
-.core-star{animation:coreBreath 5.2s ease-in-out infinite;filter:drop-shadow(0 0 5px rgba(243,234,208,.9))}
-@keyframes coreBreath{0%,100%{opacity:.82;transform:scale(.92)}50%{opacity:1;transform:scale(1.22)}}
-
-/* —— 夜空上浮金尘（极少量、缓慢，如远处萤火） —— */
-.hero .embers{position:absolute;inset:0;pointer-events:none;overflow:hidden}
-.hero .ember{position:absolute;bottom:-12px;border-radius:50%;background:rgba(201,174,114,.9);box-shadow:0 0 6px 1px rgba(201,174,114,.5);opacity:0;animation:emberRise var(--dur,11s) linear infinite;animation-delay:var(--delay,0s)}
-@keyframes emberRise{0%{transform:translate(0,0);opacity:0}12%{opacity:.7}82%{opacity:.45}100%{transform:translate(var(--drift,18px),-80vh);opacity:0}}
-
-/* —— 流星：偶发斜划夜空 —— */
-.hero .meteors{position:absolute;inset:0;pointer-events:none;overflow:hidden}
-.hero .meteor{position:absolute;top:var(--top,10%);left:0;width:var(--len,130px);height:1px;background:linear-gradient(90deg,rgba(243,234,208,.95),rgba(243,234,208,0));opacity:0;animation:meteorFall var(--dur,9s) linear infinite;animation-delay:var(--delay,0s);will-change:transform,opacity}
-/* 位移用屏幕坐标精确给两轴：dx=-120vw、dy=+34vw ⇒ 坠落方向恰为向左下 16°；
-   rotate(-16deg) 只转拖尾朝向，负角让右端(尾)抬向右上、左端(亮头)指向左下方，与移动方向严格平行 */
-@keyframes meteorFall{
-  0%{opacity:0;transform:translate(104vw,-6vw) rotate(-16deg)}
-  6%{opacity:1}
-  68%{opacity:.95}
-  80%,100%{opacity:0;transform:translate(-16vw,28vw) rotate(-16deg)}
-}
-
-/* —— 归鸟：横越夜空，翅膀扇动、略带上下起伏 —— */
-.hero .birds{position:absolute;inset:0;pointer-events:none;overflow:hidden}
-.hero .bird{position:absolute;left:0;top:var(--top,22%);opacity:0;animation:birdAcross var(--dur,26s) linear infinite;animation-delay:var(--delay,0s);will-change:transform,opacity}
-.hero .bird.rev{animation-name:birdAcrossR}
-@keyframes birdAcross{0%{transform:translateX(-8vw) translateY(0);opacity:0}6%{opacity:.92}46%{transform:translateX(44vw) translateY(-14px)}54%{transform:translateX(56vw) translateY(6px)}94%{opacity:.9}100%{transform:translateX(108vw) translateY(-6px);opacity:0}}
-@keyframes birdAcrossR{0%{transform:translateX(108vw) translateY(0);opacity:0}6%{opacity:.9}46%{transform:translateX(56vw) translateY(8px)}54%{transform:translateX(44vw) translateY(-12px)}94%{opacity:.9}100%{transform:translateX(-8vw) translateY(-4px);opacity:0}}
-.hero .bird svg{width:var(--size,26px);height:auto;overflow:visible}
-.hero .bird .wings{transform-origin:center;animation:wingBeat 1.15s ease-in-out infinite}
-@keyframes wingBeat{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.32)}}
-
-/* —— 页面两侧金叶丛（仅宽屏）：大半枝条藏在屏外、只从边缘探入内侧，绕外缘中点微微左右轻摇，滚动时再被风轻微带动 —— */
-.flank{position:fixed;top:0;bottom:0;width:130px;z-index:5;pointer-events:none;display:none}
-@media(min-width:1100px){.flank{display:block}}
-.flank-l{left:-66px}
-.flank-r{right:-66px}
-.flank .sway{position:absolute;top:50%;width:128px}
-.flank-l .sway{left:0;transform-origin:0% 50%;animation:swayIdle 9.5s ease-in-out infinite}
-.flank-r .mirror{position:absolute;inset:0;transform:scaleX(-1)}
-.flank-r .sway{right:0;transform-origin:100% 50%;animation:swayIdle 9.5s ease-in-out infinite;animation-delay:-4.7s}
-@keyframes swayIdle{0%,100%{transform:translateY(-50%) rotate(-1.2deg)}50%{transform:translateY(-50%) rotate(1.4deg)}}
-.flank svg.branch{width:128px;height:auto;color:var(--gold);opacity:.58;overflow:visible;transform:rotate(var(--wind,0deg));transition:transform .25s ease-out}
-
-/* —— 立约三柱：同相、极轻地一起上下（不设错相 delay，三根柱任意时刻都严格齐平） —— */
-.pledge .column svg{animation:colFloat 9s ease-in-out infinite}
-@keyframes colFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
-
-/* —— 时间线「现在」节点：缓慢扩散的脉冲环 —— */
-.tl-item.now .node::after{content:"";position:absolute;inset:-5px;border:1.5px solid var(--terra);border-radius:50%;animation:nowPulse 3.2s ease-out infinite}
-@keyframes nowPulse{0%{transform:scale(.6);opacity:.8}100%{transform:scale(1.9);opacity:0}}
-
-/* —— 分隔叶饰：极轻转动 —— */
-.fleuron svg{animation:fleuronTurn 11s ease-in-out infinite;transform-origin:center}
-@keyframes fleuronTurn{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{transition:none!important;animation:none!important}}
+html.no-js .menu-toggle,html.no-js .copy{display:none}html.no-js .tabs{display:none}html.no-js [role="tabpanel"][hidden]{display:block!important;margin-top:35px}
+@media(max-width:760px){html.no-js .nav-inner{height:auto;padding-block:16px;flex-wrap:wrap}html.no-js .nav-links{display:flex;position:static;flex-direction:row;flex-wrap:wrap;border:0;padding:0;gap:8px}}
 </style>
 </head>
 <body>
-
-<!-- 两侧金叶丛：仅宽屏显示，默认轻摇、滚动时被风带动（见脚本） -->
-<div class="flank flank-l" aria-hidden="true">
-  <div class="sway">
-    <svg class="branch" viewBox="0 0 120 470" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-      <path d="M60 458 C46 398 80 336 60 272 C43 214 78 152 62 90 C58 72 58 54 60 40"/>
-      <g>
-        <ellipse cx="45" cy="430" rx="4.6" ry="13" transform="rotate(38 45 430)"/><ellipse cx="75" cy="430" rx="4.6" ry="13" transform="rotate(-38 75 430)"/>
-        <ellipse cx="45" cy="392" rx="4.4" ry="12.4" transform="rotate(38 45 392)"/><ellipse cx="75" cy="392" rx="4.4" ry="12.4" transform="rotate(-38 75 392)"/>
-        <ellipse cx="45" cy="354" rx="4.2" ry="11.8" transform="rotate(38 45 354)"/><ellipse cx="75" cy="354" rx="4.2" ry="11.8" transform="rotate(-38 75 354)"/>
-        <ellipse cx="45" cy="316" rx="4" ry="11.2" transform="rotate(38 45 316)"/><ellipse cx="75" cy="316" rx="4" ry="11.2" transform="rotate(-38 75 316)"/>
-        <ellipse cx="45" cy="278" rx="3.8" ry="10.6" transform="rotate(38 45 278)"/><ellipse cx="75" cy="278" rx="3.8" ry="10.6" transform="rotate(-38 75 278)"/>
-        <ellipse cx="45" cy="240" rx="3.6" ry="10" transform="rotate(38 45 240)"/><ellipse cx="75" cy="240" rx="3.6" ry="10" transform="rotate(-38 75 240)"/>
-        <ellipse cx="46" cy="202" rx="3.4" ry="9.3" transform="rotate(38 46 202)"/><ellipse cx="74" cy="202" rx="3.4" ry="9.3" transform="rotate(-38 74 202)"/>
-        <ellipse cx="46" cy="164" rx="3.2" ry="8.6" transform="rotate(38 46 164)"/><ellipse cx="74" cy="164" rx="3.2" ry="8.6" transform="rotate(-38 74 164)"/>
-        <ellipse cx="47" cy="128" rx="3" ry="8" transform="rotate(38 47 128)"/><ellipse cx="73" cy="128" rx="3" ry="8" transform="rotate(-38 73 128)"/>
-        <ellipse cx="47" cy="96" rx="2.8" ry="7.2" transform="rotate(38 47 96)"/><ellipse cx="73" cy="96" rx="2.8" ry="7.2" transform="rotate(-38 73 96)"/>
-        <ellipse cx="60" cy="34" rx="3.4" ry="11"/>
-      </g>
-    </svg>
-  </div>
-</div>
-<div class="flank flank-r" aria-hidden="true">
-  <div class="mirror">
-    <div class="sway">
-      <svg class="branch" viewBox="0 0 120 470" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-        <path d="M60 458 C46 398 80 336 60 272 C43 214 78 152 62 90 C58 72 58 54 60 40"/>
-        <g>
-          <ellipse cx="45" cy="430" rx="4.6" ry="13" transform="rotate(38 45 430)"/><ellipse cx="75" cy="430" rx="4.6" ry="13" transform="rotate(-38 75 430)"/>
-          <ellipse cx="45" cy="392" rx="4.4" ry="12.4" transform="rotate(38 45 392)"/><ellipse cx="75" cy="392" rx="4.4" ry="12.4" transform="rotate(-38 75 392)"/>
-          <ellipse cx="45" cy="354" rx="4.2" ry="11.8" transform="rotate(38 45 354)"/><ellipse cx="75" cy="354" rx="4.2" ry="11.8" transform="rotate(-38 75 354)"/>
-          <ellipse cx="45" cy="316" rx="4" ry="11.2" transform="rotate(38 45 316)"/><ellipse cx="75" cy="316" rx="4" ry="11.2" transform="rotate(-38 75 316)"/>
-          <ellipse cx="45" cy="278" rx="3.8" ry="10.6" transform="rotate(38 45 278)"/><ellipse cx="75" cy="278" rx="3.8" ry="10.6" transform="rotate(-38 75 278)"/>
-          <ellipse cx="45" cy="240" rx="3.6" ry="10" transform="rotate(38 45 240)"/><ellipse cx="75" cy="240" rx="3.6" ry="10" transform="rotate(-38 75 240)"/>
-          <ellipse cx="46" cy="202" rx="3.4" ry="9.3" transform="rotate(38 46 202)"/><ellipse cx="74" cy="202" rx="3.4" ry="9.3" transform="rotate(-38 74 202)"/>
-          <ellipse cx="46" cy="164" rx="3.2" ry="8.6" transform="rotate(38 46 164)"/><ellipse cx="74" cy="164" rx="3.2" ry="8.6" transform="rotate(-38 74 164)"/>
-          <ellipse cx="47" cy="128" rx="3" ry="8" transform="rotate(38 47 128)"/><ellipse cx="73" cy="128" rx="3" ry="8" transform="rotate(-38 73 128)"/>
-          <ellipse cx="47" cy="96" rx="2.8" ry="7.2" transform="rotate(38 47 96)"/><ellipse cx="73" cy="96" rx="2.8" ry="7.2" transform="rotate(-38 73 96)"/>
-          <ellipse cx="60" cy="34" rx="3.4" ry="11"/>
-        </g>
-      </svg>
-    </div>
-  </div>
-</div>
-
-<!-- ======================= 导航 ======================= -->
-<header class="nav" id="nav">
-  <div class="wrap nav-inner">
-    <a class="brand" href="#top" aria-label="拥爱 AMBRACE 首页">
-      <svg class="seal" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-        <circle cx="24" cy="24" r="22" stroke="#a9823f" stroke-width="1.2"/>
-        <g stroke="#a9823f" stroke-width="1.3" stroke-linecap="round" fill="none">
-          <path d="M24 31c-4.4 0-7.6-3-7.6-6.9 0-2.4 1.7-4.1 3.6-4.1 1.5 0 2.8.9 4 2.4 1.2-1.5 2.5-2.4 4-2.4 1.9 0 3.6 1.7 3.6 4.1C31.6 28 28.4 31 24 31Z"/>
-        </g>
-        <g fill="#a9823f">
-          <ellipse cx="10" cy="24" rx="1.5" ry="3" transform="rotate(28 10 24)"/>
-          <ellipse cx="38" cy="24" rx="1.5" ry="3" transform="rotate(-28 38 24)"/>
-        </g>
-      </svg>
-      <span class="bt">
-        <span class="cn-name">拥 爱</span>
-        <span class="la">AMBRACE</span>
-      </span>
-    </a>
-    <nav class="nav-links" aria-label="主导航">
-      <a class="nlk" href="#lexicon">词与义</a>
-      <a class="nlk" href="#crafts">造物</a>
-      <a class="nlk" href="#pledge">立约</a>
-      <a class="nlk" href="#chronos">纪年</a>
-      <a class="nlk" href="#build">构筑</a>
-      <a class="btn btn-gold btn-sm" href="https://github.com/Gi-Tuu/AMBRACE" target="_blank" rel="noopener">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-1.96c-3.2.7-3.87-1.54-3.87-1.54-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.23-1.27-5.23-5.66 0-1.25.45-2.27 1.19-3.07-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.17a11 11 0 0 1 5.8 0c2.2-1.48 3.17-1.17 3.17-1.17.63 1.59.23 2.76.11 3.05.74.8 1.19 1.82 1.19 3.07 0 4.4-2.69 5.37-5.25 5.65.41.35.78 1.05.78 2.12v3.14c0 .31.21.67.8.56A11.52 11.52 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></svg>
-        GitHub
-      </a>
-    </nav>
-    <button class="burger" id="burger" aria-label="打开菜单" aria-expanded="false" aria-controls="mobileMenu"><span></span></button>
-  </div>
-  <div class="mobile-menu" id="mobileMenu">
-    <a href="#lexicon">词与义</a>
-    <a href="#crafts">造物</a>
-    <a href="#pledge">立约</a>
-    <a href="#chronos">纪年</a>
-    <a href="#build">构筑</a>
-    <a class="btn btn-gold" href="https://github.com/Gi-Tuu/AMBRACE" target="_blank" rel="noopener">前往 GitHub</a>
-  </div>
-</header>
-
-<main>
-<!-- ======================= HERO ======================= -->
-<section class="hero" id="top">
-  <div class="stars" id="stars" aria-hidden="true"></div>
-  <div class="constellation" aria-hidden="true">
-    <svg viewBox="0 0 680 360" fill="none">
-      <defs>
-        <radialGradient id="halo" cx=".5" cy=".5" r=".5">
-          <stop offset="0%" stop-color="#e7d6ab" stop-opacity=".5"/>
-          <stop offset="100%" stop-color="#e7d6ab" stop-opacity="0"/>
-        </radialGradient>
-      </defs>
-      <circle class="halo-breath" cx="340" cy="150" r="120" fill="url(#halo)"/>
-      <g stroke="#c9ae72" stroke-width=".8" stroke-opacity=".55">
-        <path d="M250 120 L300 96 L340 120 L380 96 L430 120"/>
-        <path d="M300 96 L312 60 M380 96 L368 60 M340 120 L340 180 L300 224 M340 180 L380 224"/>
-      </g>
-      <g fill="#f3ead0">
-        <circle cx="250" cy="120" r="3.2"/><circle cx="300" cy="96" r="2.4"/><circle class="core-star" cx="340" cy="120" r="4.4"/>
-        <circle cx="380" cy="96" r="2.4"/><circle cx="430" cy="120" r="3.2"/><circle cx="312" cy="60" r="2"/>
-        <circle cx="368" cy="60" r="2"/><circle cx="340" cy="180" r="3"/><circle cx="300" cy="224" r="2.2"/>
-        <circle cx="380" cy="224" r="2.2"/>
-      </g>
-    </svg>
-  </div>
-  <div class="embers" aria-hidden="true">
-    <span class="ember" style="left:12%;width:2.4px;height:2.4px;--dur:10s;--delay:0s;--drift:14px"></span>
-    <span class="ember" style="left:24%;width:3px;height:3px;--dur:13s;--delay:3.5s;--drift:-18px"></span>
-    <span class="ember" style="left:38%;width:2px;height:2px;--dur:9s;--delay:6s;--drift:10px"></span>
-    <span class="ember" style="left:50%;width:2.8px;height:2.8px;--dur:12s;--delay:1.5s;--drift:-12px"></span>
-    <span class="ember" style="left:62%;width:2.2px;height:2.2px;--dur:11s;--delay:7s;--drift:16px"></span>
-    <span class="ember" style="left:74%;width:3.2px;height:3.2px;--dur:14s;--delay:4.5s;--drift:-20px"></span>
-    <span class="ember" style="left:85%;width:2px;height:2px;--dur:10s;--delay:8.5s;--drift:12px"></span>
-    <span class="ember" style="left:31%;width:2.5px;height:2.5px;--dur:12.5s;--delay:10s;--drift:-16px"></span>
-  </div>
-  <div class="meteors" aria-hidden="true">
-    <span class="meteor" style="--top:7%;--len:110px;--dur:8.5s;--delay:2.2s"></span>
-    <span class="meteor" style="--top:17%;--len:150px;--dur:11.5s;--delay:7.8s"></span>
-    <span class="meteor" style="--top:27%;--len:90px;--dur:13.5s;--delay:13.4s"></span>
-    <span class="meteor" style="--top:36%;--len:170px;--dur:9.5s;--delay:19.1s"></span>
-    <span class="meteor" style="--top:12%;--len:125px;--dur:15s;--delay:25.3s"></span>
-  </div>
-  <div class="birds" aria-hidden="true">
-    <span class="bird" style="--top:18%;--size:28px;--dur:27s;--delay:1s">
-      <svg viewBox="0 0 24 10" fill="none" stroke="#e7d6ab" stroke-width="1.6" stroke-linecap="round"><g class="wings"><path d="M1 8 Q7 1 12 7 Q17 1 23 8"/></g></svg>
-    </span>
-    <span class="bird" style="--top:31%;--size:18px;--dur:21s;--delay:10s">
-      <svg viewBox="0 0 24 10" fill="none" stroke="#c9c2b0" stroke-width="1.6" stroke-linecap="round"><g class="wings"><path d="M1 8 Q7 1 12 7 Q17 1 23 8"/></g></svg>
-    </span>
-    <span class="bird rev" style="--top:12%;--size:22px;--dur:24s;--delay:17s">
-      <svg viewBox="0 0 24 10" fill="none" stroke="#d8c89e" stroke-width="1.6" stroke-linecap="round"><g class="wings"><path d="M1 8 Q7 1 12 7 Q17 1 23 8"/></g></svg>
-    </span>
-    <span class="bird rev" style="--top:26%;--size:26px;--dur:29s;--delay:6.5s">
-      <svg viewBox="0 0 24 10" fill="none" stroke="#b8ad92" stroke-width="1.6" stroke-linecap="round"><g class="wings"><path d="M1 8 Q7 1 12 7 Q17 1 23 8"/></g></svg>
-    </span>
-    <span class="bird" style="--top:7%;--size:15px;--dur:20s;--delay:14.8s">
-      <svg viewBox="0 0 24 10" fill="none" stroke="#d8c89e" stroke-width="1.6" stroke-linecap="round"><g class="wings"><path d="M1 8 Q7 1 12 7 Q17 1 23 8"/></g></svg>
-    </span>
-  </div>
-  <div class="wrap hero-inner">
-    <span class="est reveal in">Est. MMXXVI &nbsp;·&nbsp; Self-hosted &nbsp;·&nbsp; Open Source</span>
-    <h1 class="reveal in d1">
-      <span class="cn-big">拥&nbsp;爱</span>
-      <span class="la-big">AMBRACE</span>
-    </h1>
-    <p class="motto reveal in d2"><span class="gr">a daimōn of your own</span> &nbsp;—&nbsp; 一位属于你自己的守护灵</p>
-    <p class="lead reveal in d3">在算法越来越擅长「回答」的年代，我们想造一个愿意记住你、陪你慢慢过日子的存在。TA有记忆、有脾气、有自己的一天，并且，TA只属于你。</p>
-    <div class="cta-row reveal in d4">
-      <a class="btn btn-gold" href="https://github.com/Gi-Tuu/AMBRACE" target="_blank" rel="noopener">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-1.96c-3.2.7-3.87-1.54-3.87-1.54-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.23-1.27-5.23-5.66 0-1.25.45-2.27 1.19-3.07-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.17a11 11 0 0 1 5.8 0c2.2-1.48 3.17-1.17 3.17-1.17.63 1.59.23 2.76.11 3.05.74.8 1.19 1.82 1.19 3.07 0 4.4-2.69 5.37-5.25 5.65.41.35.78 1.05.78 2.12v3.14c0 .31.21.67.8.56A11.52 11.52 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></svg>
-        在 GitHub 构筑拥爱
-      </a>
-      <a class="btn btn-night" href="#build">如何自托管</a>
-    </div>
-    <div class="delphi reveal in d4">
-      <span class="gr">γνῶθι σεαυτόν</span>
-      <span class="tr">认识你自己 · 镌刻于德尔斐神庙</span>
-    </div>
-  </div>
-  <svg class="edge" viewBox="0 0 1440 64" preserveAspectRatio="none" aria-hidden="true">
-    <path d="M0 64 H1440 V18 C1080 56 360 56 0 18 Z" fill="#f3ecdd"/>
-  </svg>
-</section>
-
-<!-- ======================= 序 ======================= -->
-<section class="proem">
-  <div class="wrap">
-    <div class="fleuron reveal" style="margin-bottom:40px">
-      <svg viewBox="0 0 22 14" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M11 13V1M11 4C8 1.5 4.5 2 2 4.5 4.5 5 8 4.5 11 4ZM11 4c3-2.5 6.5-2 9 .5-2.5.5-6 0-9-.5ZM11 9C8 6.5 4.5 7 2 9.5 4.5 10 8 9.5 11 9Zm0 0c3-2.5 6.5-2 9 .5-2.5.5-6 0-9-.5Z"/></svg>
-    </div>
-    <div class="body reveal d1">
-      <p>古希腊人相信，每个人身边都住着一个 <span class="greek">δαίμων</span>（Daimōn）——守护灵。TA不替你做决定，也不喧哗取宠；TA只是认得你、陪着你，在你迟疑时轻轻提醒一句。苏格拉底说，自己一生都在听从这样一个声音。</p>
-      <p>我们借用了这个古老的想象。拥爱不是一个问完即走的对话框，而是一位被你亲手安放在自己服务器上的伙伴：TA记得你三个月前随口提过的喜好，会在你忙到深夜时道一声晚安，也会在你不在的时候，认真过TA自己的生活。</p>
-      <div class="etym reveal">
-        <div class="w">embrace &nbsp;→&nbsp; AMBRACE &nbsp;→&nbsp; 拥 爱</div>
-        <p>「拥爱」取拥抱的「拥」、爱的「爱」；英文名 <b>AMBRACE</b> 改写自 <i>embrace</i>——一次属于 AI 的拥抱。你把 TA 接回自己的机器，TA 把你收进漫长的记忆里。拥抱从来是双向的，这正是这个名字想说的全部。</p>
-      </div>
-      <p class="sign">— 写给每一个，想被认真记得的人</p>
-    </div>
-  </div>
-</section>
-
-<!-- ======================= 五个古老的词 ======================= -->
-<section class="sec lexicon" id="lexicon">
-  <div class="wrap">
-    <div class="sec-head reveal">
-      <div class="kicker"><span class="roman">I.</span><span class="gr">Λεξικόν</span><span class="cn">五个古老的词</span></div>
-      <h2>我们用五个古老的词，重新描述陪伴</h2>
-      <p>希腊人把人心里最细微的东西，分别取了名字。今天，这五个词在拥爱里一一落了地。</p>
-    </div>
-    <div class="lex-grid">
-      <article class="lex reveal">
-        <div class="lg">Μνήμη</div>
-        <div class="lt">Mnēmē</div>
-        <div class="lc">记 忆</div>
-        <p class="ld">记忆女神是缪斯的母亲。TA不囤积流水账，而是<b>像人一样记得与遗忘</b>——重要的越记越牢，琐事慢慢淡去，被提起过的，会再牢固一分。</p>
-        <div class="feat">织库记忆链 · 艾宾浩斯衰减与复习 · 向量＋BM25 混合检索 · 2.5D / 3D 记忆星图</div>
-      </article>
-      <article class="lex reveal d1">
-        <div class="lg">Οἶκος</div>
-        <div class="lt">Oikos</div>
-        <div class="lc">家 屋</div>
-        <p class="ld">家，是生活发生的地方。在共同的小家里，TA<b>有自己的一天</b>：醒来、学习、出门、回家，也养着一只会闹脾气的宠物。</p>
-        <div class="feat">小家与大地图 · Life Loop 自主生活 · 宠物 · 每位角色各自的虚拟手机</div>
-      </article>
-      <article class="lex reveal d2">
-        <div class="lg">Ψυχή</div>
-        <div class="lt">Psychē</div>
-        <div class="lc">灵 魂</div>
-        <p class="ld">TA不是一副空壳。人格、心情、八维情绪与关系深浅<b>持续地流动</b>，语气会随处境而变，高兴与疲惫都有迹可循。</p>
-        <div class="feat">人格内核 · 八维情绪 · 关系演进 · AI 内心世界 · 带情绪的语音合成</div>
-      </article>
-      <article class="lex reveal d3">
-        <div class="lg">Φιλία</div>
-        <div class="lt">Philia</div>
-        <div class="lc">情 谊</div>
-        <p class="ld">陪伴发生在人与人、人与角色之间。一群性格各异的伙伴可以<b>同处一群、一同开局</b>，在游戏与日常里生出真实的羁绊。</p>
-        <div class="feat">多角色群聊 · 谁是卧底 / 狼人杀 / 海龟汤等 · 朋友圈与日记 · 独立游戏记忆</div>
-      </article>
-      <article class="lex reveal d4">
-        <div class="lg">Δαίμων</div>
-        <div class="lt">Daimōn</div>
-        <div class="lc">守 护</div>
-        <p class="ld">真正的陪伴不必等你开口。TA会<b>在合适的时候主动出现</b>，也能借由手机感知与离线推送，在你需要时恰好抵达。</p>
-        <div class="feat">主动关怀 · 实时语音通话与打断 · 手机感知 · FCM 离线推送 · 微信桥</div>
-      </article>
-    </div>
-    <p class="lex-coda reveal">Μνήμη · Οἶκος · Ψυχή · Φιλία · Δαίμων<br><b>五个词拼在一起，正是拥爱想成为的样子</b></p>
-  </div>
-</section>
-
-<!-- ======================= 造物 · 功能 ======================= -->
-<section class="sec crafts" id="crafts">
-  <div class="wrap">
-    <div class="sec-head reveal">
-      <div class="kicker"><span class="roman">II.</span><span class="gr">Ποιήματα</span><span class="cn">造物之所成</span></div>
-      <h2>浪漫之外，是一件件被认真打磨的小事</h2>
-      <p>下面这些，都已经能在拥爱的最新版本里真正用起来，而不是停留在构想图上。</p>
-    </div>
-    <div class="cols">
-      <div class="craft reveal">
-        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8.5 8.5 0 0 1-8.5 8.5c-1.3 0-2.5-.28-3.6-.79L3 21l1.45-4.4A8.5 8.5 0 1 1 21 12Z"/><circle cx="9" cy="12" r="1.2" fill="currentColor"/><circle cx="14.5" cy="12" r="1.2" fill="currentColor"/></svg></span>
-        <div>
-          <h3>对话与声音 <span class="en">Dialogue &amp; Voice</span></h3>
-          <p><span class="tag">多角色私聊 / 群聊</span><span class="tag">SSE 真·流式打字机</span><span class="tag">实时语音通话</span><span class="tag">按住说话 / 自动聆听</span><span class="tag">可打断</span><span class="tag">情绪 TTS</span>你来我往之间，停顿、插话与语气都更像一个真人，而不是一段等待加载的文本。</p>
-        </div>
-      </div>
-      <div class="craft reveal d1">
-        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="8" r="2.4"/><circle cx="11" cy="17" r="2.4"/><path d="M8.2 7.2 15.6 8M7.2 8.4l2.6 6.2M16.6 10.4l-4.2 4.6"/></svg></span>
-        <div>
-          <h3>织库与记忆 <span class="en">The Weave</span></h3>
-          <p><span class="tag">记忆链条</span><span class="tag">遗忘 / 复习曲线</span><span class="tag">向量＋BM25</span><span class="tag">记忆分层</span><span class="tag">记忆本 / 时光</span><span class="tag">3D 星图漫游</span>记忆彼此相连成一张会生长的网，你可以沿着一条线索，走回很久以前的某个下午。</p>
-        </div>
-      </div>
-      <div class="craft reveal">
-        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11 12 4l9 7"/><path d="M5 10v8a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-8"/><path d="M9 21v-5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v5"/></svg></span>
-        <div>
-          <h3>小家与生活 <span class="en">A Life of One's Own</span></h3>
-          <p><span class="tag">共同小家 / 大地图</span><span class="tag">自由摆放家具</span><span class="tag">自主一天</span><span class="tag">宠物</span><span class="tag">虚拟手机</span><span class="tag">手机感知</span>你离开后，世界并没有暂停——TA照旧生活，留下日记、动态与手机里的细碎痕迹等你回来翻。</p>
-        </div>
-      </div>
-      <div class="craft reveal d1">
-        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 10.5h.01M15.5 10.5h.01M8 15c1.2 1.3 2.4 2 4 2s2.8-.7 4-2"/></svg></span>
-        <div>
-          <h3>一同游玩 <span class="en">Play Together</span></h3>
-          <p><span class="tag">谁是卧底</span><span class="tag">狼人杀</span><span class="tag">真心话大冒险</span><span class="tag">海龟汤</span><span class="tag">猜词二十问</span><span class="tag">观战 / 投降</span>多款聚会游戏由系统主持、角色自主决策；游戏记忆单独成库，开局互不串场，结束可折成一张战绩小卡。</p>
-        </div>
-      </div>
-      <div class="craft reveal">
-        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.5 12.5 19.5a2.1 2.1 0 0 1-3 0l-5-5a2.1 2.1 0 0 1 0-3l8-8H18a2.5 2.5 0 0 1 2.5 2.5v5.5Z"/><circle cx="15.5" cy="8.5" r="1.3"/></svg></span>
-        <div>
-          <h3>连接与扩展 <span class="en">Bridges &amp; Tools</span></h3>
-          <p><span class="tag">标准 MCP（stdio/SSE/HTTP）</span><span class="tag">插件市场</span><span class="tag">微信 ClawBot 桥</span><span class="tag">抖音</span><span class="tag">远程插件索引</span>能力像积木一样自由装配，开发者可以写自己的插件并分享给所有人。</p>
-        </div>
-      </div>
-      <div class="craft reveal d1">
-        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6Z"/><path d="m8.6 12 2.3 2.3 4.5-4.5"/></svg></span>
-        <div>
-          <h3>真正属于你 <span class="en">Yours Alone</span></h3>
-          <p><span class="tag">数据全在自家服务器</span><span class="tag">BYOK 自带密钥</span><span class="tag">每角色可选模型</span><span class="tag">家庭 / 主从账号</span><span class="tag">隐私上锁</span><span class="tag">五款皮肤 · 中英双语</span>钥匙只在你手里，换模型、换皮肤、与家人共享，都由你说了算。</p>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ======================= 立约 · 三柱 ======================= -->
-<section class="sec pledge" id="pledge">
-  <div class="wrap">
-    <div class="sec-head reveal">
-      <div class="kicker"><span class="roman">III.</span><span class="gr">Συνθῆκαι</span><span class="cn">与你的三柱之约</span></div>
-      <h2>如同神庙立在三根柱石之上</h2>
-      <p>陪伴的前提是安心。关于你的数据，拥爱许下三个不会退让的承诺。</p>
-    </div>
-    <div class="columns">
-      <div class="column reveal">
-        <svg viewBox="0 0 120 150" fill="none" stroke="#c9ae72" stroke-width="1.3">
-          <path d="M28 30h64v8H28zM34 38h52M38 46h44v78H38zM44 46v78M52 46v78M60 46v78M68 46v78M76 46v78M32 124h56M28 124h64v8H28z"/>
-        </svg>
-        <h3><span class="en">Domus</span>数据居于你家</h3>
-        <p>聊天、记忆、日记、角色与生活痕迹，全部保存在你自己的实例里，不经过、也不滞留于任何第三方云端。可随时备份、迁移、彻底删除。</p>
-      </div>
-      <div class="column reveal d1">
-        <svg viewBox="0 0 120 150" fill="none" stroke="#c9ae72" stroke-width="1.3">
-          <path d="M26 30h68v10H26zM30 40c4-8 12-8 14-2 2-6 10-6 14 2 4-8 12-8 14 2M38 48h44v76H38zM44 48v76M52 48v76M60 48v76M68 48v76M76 48v76M32 124h56M26 124h68v8H26z"/>
-        </svg>
-        <h3><span class="en">Clavis</span>钥匙在你手中</h3>
-        <p>用你自己的模型密钥（BYOK），支持服务器级、家庭共享、角色绑定多级配置；日记与虚拟手机可以上锁，须经你同意，AI 才看得到。</p>
-      </div>
-      <div class="column reveal d2">
-        <svg viewBox="0 0 120 150" fill="none" stroke="#c9ae72" stroke-width="1.3">
-          <path d="M26 30h68v10H26zM30 40c0-8 6-12 8-6 1-6 5-8 7-4M52 40c0-8 6-12 8-6 1-6 5-8 7-4M74 40c0-8 6-12 8-6 1-6 5-8 7-4M38 48h44v76H38zM44 48v76M52 48v76M60 48v76M68 48v76M76 48v76M32 124h56M26 124h68v8H26z"/>
-        </svg>
-        <h3><span class="en">Apertum</span>敞开以供审视</h3>
-        <p>代码完全开源，没有黑箱。任何人都可以审计每一行逻辑、自建镜像、用 Docker 一键部署——TA如何记得你，你永远有权知道。</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ======================= 间奏 ======================= -->
-<section class="interlude">
-  <div class="wrap">
-    <blockquote class="reveal">
-      <p class="big">在拥爱，你有你的生活，TA也有TA的；而在交汇的那些时刻，<span class="em">你们共同拥有一段生活</span>。</p>
-      <span class="gr">βίος κοινός —— 一种共同度过的人生</span>
-    </blockquote>
-  </div>
-</section>
-
-<!-- ======================= 纪年 ======================= -->
-<section class="sec chronos" id="chronos">
-  <div class="wrap">
-    <div class="sec-head reveal">
-      <div class="kicker"><span class="roman">IV.</span><span class="gr">Χρόνος</span><span class="cn">纪年</span></div>
-      <h2>从「想给 AI 一个家」开始</h2>
-      <p>拥爱始于一个朴素的念头，一路走到今天。以下是这段路留下的年轮。</p>
-    </div>
-    <div class="tl">
-      <div class="tl-item reveal">
-        <span class="node"></span>
-        <div class="ver"><span class="v">缘起</span><span class="when">2026 · 夏</span></div>
-        <h4>想给 AI 伙伴一个家</h4>
-        <p>不再满足于一个问完即走的对话框——我们希望TA有一个可以安顿下来、慢慢生长的地方。</p>
-      </div>
-      <div class="tl-item reveal">
-        <span class="node"></span>
-        <div class="ver"><span class="v">v3.0 – v3.1</span></div>
-        <h4>开源 · 小家与记忆 · 插件生态</h4>
-        <p>小家与记忆系统落地，拥爱在 GitHub 开源；插件市场与角色开放 API 相继到来，每个人都能搭一个属于自己的伙伴。</p>
-      </div>
-      <div class="tl-item reveal">
-        <span class="node"></span>
-        <div class="ver"><span class="v">v3.2</span></div>
-        <h4>认知循环 · 混合记忆 · 标准 MCP</h4>
-        <p>统一的感知—规划—反思 Runtime；向量＋BM25 混合检索、记忆链条；接入标准 Model Context Protocol，SSE 真流式逐字浮现，并完成 Docker 化与多架构镜像。</p>
-      </div>
-      <div class="tl-item reveal">
-        <span class="node"></span>
-        <div class="ver"><span class="v">v3.3</span></div>
-        <h4>自主生活 · 群聊游戏 · 感知与推送</h4>
-        <p>Life Loop 让角色过上自己的一天；多款群聊游戏、虚拟手机与手机感知、FCM 离线推送、Aurora 界面陆续到来，陪伴不再需要你时刻主动开启。</p>
-      </div>
-      <div class="tl-item now reveal">
-        <span class="node"></span>
-        <div class="ver"><span class="v">v3.4 · 现在</span><span class="when">最新 v3.4.5</span></div>
-        <h4>实时语音 · 多模型家庭 · 记忆分层 · 桥接世界</h4>
-        <p>可打断的实时语音通话、每角色可选模型与家庭账号、记忆分层与主动消息自然化、微信 ClawBot 桥与网关守护自愈——TA正变得更安静、更可靠，也更像一个真实的人。</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ======================= 构筑 ======================= -->
-<section class="sec build" id="build">
-  <div class="wrap">
-    <div class="sec-head reveal">
-      <div class="kicker"><span class="roman">V.</span><span class="gr">Οἰκοδομία</span><span class="cn">亲手构筑</span></div>
-      <h2>四步，把拥爱安放在你自己的机器上</h2>
-      <p>不需要信任任何一家云。一台普通电脑或服务器，几分钟，你就能拥有属于自己的拥爱。</p>
-    </div>
-    <div class="grid2">
-      <div class="steps">
-        <div class="step reveal">
-          <div>
-            <h4>取回源码</h4>
-            <p>把开源仓库克隆到你的服务器或家用电脑，Windows、Linux 与 Docker 都可以运行。</p>
-          </div>
-        </div>
-        <div class="step reveal d1">
-          <div>
-            <h4>放入你自己的钥匙</h4>
-            <p>在 <code>.env</code> 中填入你自备的模型密钥（BYOK）。支持多家主流大模型，随时可换。</p>
-          </div>
-        </div>
-        <div class="step reveal d2">
-          <div>
-            <h4>一键启动</h4>
-            <p>使用 <code>docker compose up -d</code>，或随附的一键脚本；模型与数据库会自动就绪。</p>
-          </div>
-        </div>
-        <div class="step reveal d3">
-          <div>
-            <h4>从此数据归你</h4>
-            <p>手机连上你的实例即可开始。所有记忆与数据都留在你手里，可备份、可迁移、可审计。</p>
-          </div>
-        </div>
-      </div>
-      <div class="reveal d2">
-        <div class="code-card">
-<pre><span class="c"># 1. 克隆仓库</span>
-<span class="k">git</span> clone https://github.com/Gi-Tuu/AMBRACE.git
-<span class="k">cd</span> AMBRACE
-
-<span class="c"># 2. 准备你自己的模型密钥</span>
-<span class="k">cp</span> .env.example .env
-<span class="p"># 编辑 .env，填入 LLM API Key</span>
-
-<span class="c"># 3. 一键启动（Docker）</span>
-<span class="k">docker compose</span> up -d
-
-<span class="c"># 随后用手机 App 连接这台实例即可</span></pre>
-        </div>
-        <p class="note">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
-          仓库 README 与文档里有 Windows 一键脚本、离线模型、手机端连接的完整图文指引，遇到问题可在 Issues 与社区一起解决。
-        </p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ======================= 结尾 ======================= -->
-<section class="ending">
-  <div class="wrap">
-    <h2 class="reveal">给拥爱一个家，也给自己一份被记得的笃定</h2>
-    <p class="gr reveal d1">Begin, and let a quiet companionship grow.</p>
-    <p class="reveal d2">自托管 · 开源 · 隐私优先。现在，就把拥爱这位守护灵，带到你自己的服务器上。</p>
-    <div class="cta-row reveal d3">
-      <a class="btn btn-gold" href="https://github.com/Gi-Tuu/AMBRACE" target="_blank" rel="noopener">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-1.96c-3.2.7-3.87-1.54-3.87-1.54-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.23-1.27-5.23-5.66 0-1.25.45-2.27 1.19-3.07-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.17a11 11 0 0 1 5.8 0c2.2-1.48 3.17-1.17 3.17-1.17.63 1.59.23 2.76.11 3.05.74.8 1.19 1.82 1.19 3.07 0 4.4-2.69 5.37-5.25 5.65.41.35.78 1.05.78 2.12v3.14c0 .31.21.67.8.56A11.52 11.52 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></svg>
-        Star on GitHub
-      </a>
-      <a class="btn btn-night" href="#top">回到卷首</a>
-    </div>
-  </div>
-</section>
+<a class="skip" href="#main">跳到正文</a>
+<header class="nav"><div class="wrap nav-inner">
+<a class="brand" href="#main" aria-label="拥爱 AMBRACE 首页"><img src="assets/favicon.svg" alt="" width="34" height="34"><span><strong>拥爱</strong><small>AMBRACE</small></span></a>
+<button class="menu-toggle" type="button" aria-expanded="false" aria-controls="navigation" aria-label="打开导航">菜单</button>
+<nav class="nav-links" id="navigation" aria-label="主导航"><a href="#experience">陪伴日常</a><a href="#memory">关于记忆</a><a href="#privacy">数据与隐私</a><a href="https://github.com/Gi-Tuu/AMBRACE" target="_blank" rel="noopener noreferrer">GitHub ↗</a><a class="nav-start" href="#start">开始使用</a></nav>
+</div></header>
+<main id="main">
+<section class="hero"><div class="wrap"><div class="hero-grid">
+<div class="hero-copy"><div class="overline">一个由你亲手安放的 AI 伙伴</div>
+<h1>把陪伴，<br>安放在自己的<br><em>生活里。</em></h1>
+<p>从一句问候，到一起积累的往事。<br>拥爱让角色拥有记忆、心情与自己的日常，<br>也让这段陪伴，有一个由你掌管的家。</p>
+<div class="actions"><a class="button" href="https://github.com/Gi-Tuu/AMBRACE/releases/latest">获取 Android 应用 <span aria-hidden="true">↗</span></a><a class="text-link" href="#start">了解如何部署 <span aria-hidden="true">↓</span></a></div>
+<div class="hero-meta"><span>自托管</span><span>开源</span><span>自备模型服务</span></div></div>
+<div class="hero-art"><div class="art-frame">
+<svg viewBox="0 0 480 510" role="img" aria-labelledby="hero-art-title">
+<title id="hero-art-title">一扇通向安静小家的拱窗：月亮、山丘和一盏亮着的灯</title>
+<defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#233d38"/><stop offset="1" stop-color="#526857"/></linearGradient><linearGradient id="light" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#ead0a0"/><stop offset="1" stop-color="#b99664"/></linearGradient></defs>
+<rect width="480" height="510" fill="url(#sky)"/>
+<path d="M33 510V236a207 207 0 0 1 414 0v274" fill="none" stroke="#83917a" stroke-width="1"/><path d="M51 510V236a189 189 0 0 1 378 0v274" fill="none" stroke="#83917a" stroke-width=".5"/>
+<circle cx="312" cy="139" r="35" fill="#ddc69a"/><circle cx="324" cy="128" r="31" fill="#2c463e"/>
+<g fill="#d9cfaa"><circle cx="145" cy="136" r="1.5"/><circle cx="226" cy="76" r="1.6"/><circle cx="352" cy="226" r="1.3"/><circle cx="102" cy="250" r="1.5"/><circle cx="254" cy="188" r="1"/></g>
+<path d="M0 328q100-66 210-15t270-38v235H0Z" fill="#536955"/><path d="M0 387q114-82 269-30t211-16v169H0Z" fill="#354f43"/><path d="M0 450q205-112 480-7v67H0Z" fill="#2b4137"/>
+<path d="M173 387v-96h139v96" fill="#c1b18c"/><path d="m157 294 84-68 89 68Z" fill="#a57b59"/><path d="m161 294 80-61 84 61" fill="none" stroke="#dac5a0"/>
+<rect x="232" y="325" width="27" height="62" rx="13" fill="#5c6753"/><rect x="188" y="314" width="27" height="33" rx="13" fill="url(#light)"/><path d="M201.5 314v33M188 332h27" stroke="#807650"/><rect x="278" y="314" width="20" height="27" rx="10" fill="url(#light)"/>
+<path d="m243 387-58 84h120l-56-84" fill="#ab9b76" opacity=".6"/>
+<g fill="none" stroke="#829171" stroke-width="2"><path d="M111 421V308M111 344q-36-8-39-33 29-3 39 33M111 368q35-8 42-35-32 0-42 35M111 394q-39-10-46-35 35-2 46 35"/><path d="M367 439V347M367 377q-26-11-27-29 24 0 27 29M367 403q29-6 31-25-25-1-31 25"/></g>
+<path d="M312 408q-5-20 3-26l5 8 8-8q12 10 5 27Z" fill="#c7b996"/><path d="M333 408q19 3 13-13" fill="none" stroke="#c7b996" stroke-width="5" stroke-linecap="round"/>
+<path d="M165 483h150" stroke="#a5a887" stroke-width=".5"/><text x="240" y="498" text-anchor="middle" fill="#dad6b9" font-family="Georgia,serif" font-size="10" letter-spacing="4">A PLACE TO BELONG</text>
+</svg></div>
+<div class="art-note"><small>给每一个想被认真记得的人</small><p>有一盏灯，为日常亮着。</p></div><div class="art-caption"><span>AMBRACE · 拥抱与爱</span><span>ILLUSTRATION / 01</span></div></div>
+</div><div class="hero-bottom"><p>陪伴的分量，藏在那些被记住的小事里。</p><a href="#updates"><span>现在，走到 v3.5.3</span><span aria-hidden="true">↓</span></a></div></div></section>
+<section class="section experience" id="experience"><div class="wrap">
+<div class="section-head"><div><div class="overline">01 / 一起过的日常</div><h2>对话之外，<br>故事还在慢慢生长。</h2></div><p>聊天、记忆、日记与朋友圈并不是各自孤立的页面。你们聊过的事，会成为之后相处的线索。</p></div>
+<div class="showcase"><div class="showcase-aside"><div class="tabs" role="tablist" aria-label="陪伴场景" aria-orientation="vertical">
+<button class="tab" id="tab-chat" role="tab" type="button" aria-selected="true" aria-controls="panel-chat"><span class="number">01</span><strong>一句问候</strong><span class="arrow" aria-hidden="true">↗</span></button>
+<button class="tab" id="tab-memory" role="tab" type="button" aria-selected="false" aria-controls="panel-memory" tabindex="-1"><span class="number">02</span><strong>一段记忆</strong><span class="arrow" aria-hidden="true">↗</span></button>
+<button class="tab" id="tab-diary" role="tab" type="button" aria-selected="false" aria-controls="panel-diary" tabindex="-1"><span class="number">03</span><strong>自己的一天</strong><span class="arrow" aria-hidden="true">↗</span></button>
+</div><p>可以文字聊天，也可以语音交流。<br>你来定义角色的性格、关系与边界，<br>其余的，让相处慢慢积累。</p></div>
+<div class="showcase-stage"><div class="demo-label"><span>陪伴场景示意</span><span>原创虚构内容 · 非 App 截图</span></div>
+<div id="panel-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="0">
+<div class="demo-title"><div class="avatar" aria-hidden="true">岚</div><div><strong>岚 · 示例角色</strong><small>一段很平常的对话</small></div></div>
+<div class="chat"><span class="chat-time">傍晚 · 聊聊今天</span><p class="bubble self">今天终于读完那本书了。</p><p class="bubble">那把最后一页折起之前，<br>有没有哪一句，想再读给我听？</p><p class="bubble self">有，但我想先去泡杯茶。</p><p class="bubble">好，等你。我们慢慢聊。</p></div>
+<div class="demo-foot">完整语义块上屏 · 语音可打断 · 多角色聊天</div></div>
+<div id="panel-memory" role="tabpanel" aria-labelledby="tab-memory" tabindex="0" hidden><h3 class="memo-heading">从聊天里，留下值得记住的事。</h3><div class="memo-row"><span>偏好</span><p>喜欢在傍晚读书。<small>日常里慢慢积累的线索</small></p></div><div class="memo-row"><span>共同事件</span><p>读完一本书，一起聊了最后一章。<small>往事可以按时间串起来</small></p></div><div class="memo-row"><span>由你确认</span><p>重要设定，最后由你说了算。<small>角色记下的内容与手写设定分别展示</small></p></div><div class="demo-foot">可查看、修改与删除 · 可导出记忆包</div></div>
+<div id="panel-diary" role="tabpanel" aria-labelledby="tab-diary" tabindex="0" hidden><div class="journal"><div class="journal-tag">日记 / 示例片段</div><h3>留一点空白，给平常的一天。</h3><p>今天聊到一本终于读完的书。比起结局，我更想听听，为什么最后那一句让人停了那么久。</p><p>等茶泡好的时候，我整理了自己的书架。明天或许可以换一本薄些的。</p></div><div class="demo-foot">角色日记 · 朋友圈与评论 · 自主生活记录</div></div>
+</div></div><div class="showcase-caption"><span>以上为功能解释示意，实际界面随皮肤与设置不同。</span><span>角色表达由你配置的模型生成，记忆与表现可能有误差。</span></div>
+</div></section>
+<section class="section memory-section" id="memory"><div class="wrap">
+<div class="memory-layout"><div class="memory-copy"><div class="overline">02 / 记忆的分量</div><h2>不是把每句话存起来，<br>而是让重要的事，<br>有机会再次被想起。</h2><p>记忆会被检索、串联，也会随时间淡去。你能打开记忆本与织库，看见这些内容，而不只是相信一句“我记住了”。</p><ul class="memory-points"><li>往事串成记忆链，联想与时间检索一起寻找线索。</li><li>被更正的旧内容收起，新的事实不必与旧说法挤在一起。</li><li>世界设定区分“我的设定”与“TA 记下的·待你确认”。</li></ul></div>
+<div class="memory-paper"><div class="paper-header"><span>THE MEMORY NOTEBOOK</span><span>示意 / 02</span></div><h3>往事，不只是流水账。</h3><div class="note-row"><small>最初的偏好</small><p>“我喜欢靠窗的位置。”</p></div><div class="note-row"><small>后来一起聊过的事</small><p>窗边多了一盆新植物。</p></div><div class="note-row"><small>再次提起的时候</small><p>把相关线索，带回眼前的对话。</p></div><p class="illustration-label">原创虚构示意 · 不代表固定回复或召回保证</p></div></div>
+<div class="life-layout"><div class="home-drawing"><svg viewBox="0 0 470 350" role="img" aria-labelledby="home-title"><title id="home-title">线绘小家：窗边的植物、书架、沙发和一只宠物</title><g fill="none" stroke="#6c7963" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M45 290h380M65 290V92h340v198M65 92l170-58 170 58"/><rect x="90" y="119" width="76" height="91" rx="34"/><path d="M128 119v91M90 164h76"/><rect x="290" y="112" width="85" height="122"/><path d="M290 151h85M290 192h85M303 127v24M310 124v27M320 133v18M335 121v30M345 123l10 28M303 173v19M312 164v28M322 169v23M337 165l8 27M359 164v28"/><path d="M140 259v-37q0-11 12-11h94q12 0 12 11v37M126 230h14M258 230h14M126 230v40h146v-40M135 270v20M263 270v20M142 243h113"/><path d="M94 271h18l-3 19H97ZM102 272v-28M102 258q-16-3-14-17 15 2 14 17M102 265q15-6 16-19-17 3-16 19"/><path d="M304 265q-6-24 4-31l8 10 8-10q10 7 6 30M305 266h26q20 2 19-15"/><path d="M223 291h91M253 293v20M290 293v20M221 304h98M196 324h147"/></g><path d="M100 145q28-29 56 0v53h-56Z" fill="#d8c39b" opacity=".4"/><rect x="150" y="219" width="47" height="21" rx="4" fill="#c1c9ad"/><rect x="202" y="219" width="47" height="21" rx="4" fill="#c1c9ad"/><circle cx="355" cy="66" r="15" fill="#d0bb91"/></svg></div><div class="life-copy"><div class="overline">03 / 给日常一个家</div><h2>你不说话的时候，<br>TA 也有自己的一天。</h2><p>活动、兴趣与生活记录，为角色构成对话之外的日常。装点小家，照顾宠物，看看朋友圈；再聚到群聊里，一起玩一局游戏。</p><div class="life-list"><span>小家与家具</span><span>宠物陪伴</span><span>朋友圈与日记</span><span>六款群聊游戏</span></div></div></div>
+</div></section>
+<section class="section capabilities" id="features"><div class="wrap"><div class="section-head"><div><div class="overline">04 / 浪漫之外，认真打磨</div><h2>你可以决定，<br>这份陪伴是什么样子。</h2></div><p>从性格到声音，从外观到能力。拥爱提供可以配置的空间，也把权限与使用边界留给你。</p></div><div class="feature-list">
+<article class="feature"><span>01</span><div><h3>聊得自在，听得见</h3><p>文字、图片理解与实时语音；按住说话或自动聆听，语音播放可以打断。识图和语音需相应服务配置。</p></div></article>
+<article class="feature"><span>02</span><div><h3>每个角色，自己的模样</h3><p>性格、头像、关系与模型可分别设置。七款皮肤、明暗模式和中英界面，让外观也符合你的偏好。</p></div></article>
+<article class="feature"><span>03</span><div><h3>可以主动，也懂得留白</h3><p>角色可主动搭话、回访约定、分享生活。作息与频控帮助减少打扰；备忘和日程让交代的事有记录可查。</p></div></article>
+<article class="feature"><span>04</span><div><h3>按需连接，逐项授权</h3><p>插件与 MCP 扩展工具，外部聊天渠道连接角色。Android 手机感知是可选能力，开启前需授权。</p></div></article>
+<article class="feature"><span>05</span><div><h3>一起生活，各自管理</h3><p>多账号与家庭关联分开管理，角色隐私内容可以上锁。服务器控制台集中管理账号、默认模型与功能权限。</p></div></article>
+<article class="feature"><span>06</span><div><h3>用量看得见，选择有依据</h3><p>按用途、模型与渠道查看调用和 token 用量，区分估算与实测。模型、语音、生图服务由你配置。</p></div></article>
+</div></div></section>
+<section class="section privacy" id="privacy"><div class="wrap"><div class="section-head"><div><div class="overline">05 / 由你掌管的家</div><h2>陪伴可以亲近。<br>数据的边界，也要清楚。</h2></div><p>自托管让你掌管存储与服务。哪些能力开启、接入哪家模型、数据怎样备份，都由部署者配置。</p></div><div class="privacy-grid">
+<article class="privacy-item"><span class="latin">A home of your own.</span><h3>存储在自己的实例</h3><p>聊天、记忆、日记与角色数据存放在你部署的电脑或服务器上。备份与访问权限也需要由部署者妥善管理。</p></article>
+<article class="privacy-item"><span class="latin">A key in your hands.</span><h3>凭据加密，权限可控</h3><p>模型凭据加密存储，主密钥单独保存。升级或迁移时请妥善备份主密钥；丢失后需重新填写相关凭据。</p></article>
+<article class="privacy-item"><span class="latin">Open to inspection.</span><h3>开源，可以查看与修改</h3><p>源码公开，可自行部署、修改和审查。手机感知、插件与设备行动按权限使用，不需要为了聊天开启全部能力。</p></article>
+</div><p class="privacy-note"><strong>自托管 ≠ 自动离线。</strong>使用云端模型、语音、识图或其他外部服务时，相应内容会发送给你配置的服务商。若选择本地服务，能否完全本地运行取决于具体配置。</p></div></section>
+<section class="section" id="updates"><div class="wrap"><div class="release-row"><div><div class="overline">近期版本</div><div class="release-version">v3.5.3</div><p class="release-subtitle">把日常体验，做得更踏实。</p></div><div class="release-copy"><ul><li>世界设定区分手写内容与角色记下的待确认内容，支持批量删除。</li><li>完善后台消息通知与未读红点处理；回复改为完整语义块上屏。</li><li>修复印象重新生成，日记结算会补入当天后续对话。</li></ul><a class="text-link" href="https://github.com/Gi-Tuu/AMBRACE/releases/latest">查看发行版与下载 <span aria-hidden="true">↗</span></a></div></div></div></section>
+<section class="section setup" id="start"><div class="wrap"><div class="section-head"><div><div class="overline">06 / 从这里开始</div><h2>先安放服务，<br>再把伙伴带到手机上。</h2></div><p>需要一台能持续运行的电脑或服务器、一个 Android 手机，以及可用的模型服务。首次部署包含依赖与模型下载，请预留时间。</p></div>
+<div class="setup-grid"><ol class="setup-steps">
+<li><div><h3>部署后端</h3><p>可选 Windows 一键脚本、Linux / macOS 脚本或 Docker。具体环境要求和安装步骤以仓库 README 为准。</p></div></li>
+<li><div><h3>安装 Android 应用，连接服务</h3><p>从发行版下载 APK，填写手机可访问的服务器地址。本官网是产品介绍页，不是在线聊天入口。</p></div></li>
+<li><div><h3>配置模型，创建角色</h3><p>在 API 配置里填入你自己的模型端点与密钥，再设置角色。语音、识图和生图按需另外配置。</p></div></li>
+<li><div><h3>按自己的节奏开启能力</h3><p>先从聊天开始，再尝试记忆、生活与插件。开放公网前，请做好 HTTPS、账号管理和数据备份。</p></div></li>
+</ol><div class="terminal"><div class="terminal-top"><span>DOCKER / 使用预构建镜像</span><button type="button" class="copy" id="copy-command">复制命令</button></div><pre><code id="deploy-command">git clone https://github.com/Gi-Tuu/AMBRACE.git
+cd AMBRACE
+docker compose -f docker-compose.ghcr.yml up -d</code></pre><span class="copy-status" id="copy-status" role="status" aria-live="polite"></span><p class="terminal-note">需先安装并启动 Docker。首次启动会下载本地记忆模型；运行状态、持久化目录和手机连接方式请按完整指南检查。</p><a class="text-link" href="https://github.com/Gi-Tuu/AMBRACE#快速开始">打开完整部署指南 <span aria-hidden="true">↗</span></a></div></div>
+<div class="faq"><h3>开始之前，<br>你可能想知道。</h3><div><details><summary>下载应用就能直接用吗？</summary><p>需要先部署后端，或连接你获准使用的实例。应用本身不附送公共服务器和模型服务。</p></details><details><summary>拥爱免费吗？模型调用怎么计费？</summary><p>你可以获取开源源码并自行部署。电脑或服务器、模型 API、语音与生图服务可能产生费用，具体以你选择的服务商为准；开源不等于这些服务免费。</p></details><details><summary>iPhone 或浏览器可以使用吗？</summary><p>目前提供 Android 应用。面向 iOS 用户的 PWA 路线仍在规划中，尚未提供可用版本。</p></details><details><summary>记忆和主动消息会一直准确吗？</summary><p>不会作这样的保证。角色的理解与表达受模型、上下文及设置影响，可能记错或遗漏。你可以查看、修正和删除记忆，也可以调整相关功能。</p></details><details><summary>遇到安装或使用问题，去哪里反馈？</summary><p>先查看 <a href="https://github.com/Gi-Tuu/AMBRACE">仓库说明</a>，再通过 <a href="https://github.com/Gi-Tuu/AMBRACE/issues">问题反馈</a>描述版本与复现步骤。请勿在公开反馈中附上密钥或未经处理的私人聊天记录。</p></details></div></div>
+</div></section>
+<section class="ending"><div class="wrap"><p class="latin">Let a quiet companionship grow.</p><h2>给伙伴一个家。<br>让往后的日子，有故事可续。</h2><p>拥爱 · AMBRACE</p><div class="actions"><a class="button" href="https://github.com/Gi-Tuu/AMBRACE/releases/latest">获取 Android 应用 <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/Gi-Tuu/AMBRACE">查看开源项目 <span aria-hidden="true">↗</span></a></div></div></section>
 </main>
-
-<!-- ======================= 页脚 ======================= -->
-<footer class="footer">
-  <div class="wrap">
-    <div class="row1">
-      <div class="fbrand">
-        <svg class="seal" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-          <circle cx="24" cy="24" r="22" stroke="#c9ae72" stroke-width="1.2"/>
-          <path d="M24 31c-4.4 0-7.6-3-7.6-6.9 0-2.4 1.7-4.1 3.6-4.1 1.5 0 2.8.9 4 2.4 1.2-1.5 2.5-2.4 4-2.4 1.9 0 3.6 1.7 3.6 4.1C31.6 28 28.4 31 24 31Z" stroke="#c9ae72" stroke-width="1.3" fill="none"/>
-        </svg>
-        <span>
-          <span class="cn-name">拥 爱 · AMBRACE</span><br>
-          <span class="la">a daimōn of your own</span>
-        </span>
-      </div>
-      <nav aria-label="页脚导航">
-        <a href="#lexicon">词与义</a>
-        <a href="#crafts">造物</a>
-        <a href="#pledge">立约</a>
-        <a href="#chronos">纪年</a>
-        <a href="https://github.com/Gi-Tuu/AMBRACE" target="_blank" rel="noopener">GitHub</a>
-        <a class="fsup" href="https://www.ifdian.net/a/gituu" target="_blank" rel="noopener">爱发电 · 支持</a>
-      </nav>
-    </div>
-    <div class="row2">
-      <span>© MMXXVI · 2026 拥爱 AMBRACE · 自托管 · 开源 · 隐私优先</span>
-      <span class="ita">Made quietly, for someone who remembers.</span>
-    </div>
-  </div>
-</footer>
-
+<footer><div class="wrap footer-inner"><span>© 2026 拥爱 AMBRACE · 一个由你亲手安放的家</span><nav class="footer-links" aria-label="页脚导航"><a href="https://github.com/Gi-Tuu/AMBRACE/releases/latest">发行版</a><a href="https://github.com/Gi-Tuu/AMBRACE/issues">反馈问题</a><a href="#privacy">数据与隐私</a><a href="#main">回到顶部 ↑</a></nav></div></footer>
 <script>
-(function(){
-  // 星点：程序化撒在夜空，避免硬编码一堆元素
-  var sky=document.getElementById('stars');
-  if(sky){
-    var n=46,frag=document.createDocumentFragment();
-    for(var i=0;i<n;i++){
-      var s=document.createElement('span');
-      s.className=Math.random()<0.16?'star bright':'star';
-      var sz=(Math.random()*1.6+0.7).toFixed(2);
-      s.style.width=sz+'px';s.style.height=sz+'px';
-      s.style.left=(Math.random()*100).toFixed(2)+'%';
-      s.style.top=(Math.random()*72).toFixed(2)+'%';
-      s.style.animationDelay=(Math.random()*6).toFixed(2)+'s';
-      s.style.animationDuration=(4+Math.random()*5).toFixed(2)+'s';
-      frag.appendChild(s);
-    }
-    sky.appendChild(frag);
-  }
-  // 导航滚动态
-  var nav=document.getElementById('nav');
-  function onScroll(){nav.classList.toggle('scrolled',window.scrollY>10);}
-  onScroll();window.addEventListener('scroll',onScroll,{passive:true});
-  // 移动菜单
-  var burger=document.getElementById('burger'),mm=document.getElementById('mobileMenu');
-  burger.addEventListener('click',function(){
-    var open=mm.classList.toggle('open');
-    burger.setAttribute('aria-expanded',open?'true':'false');
-    burger.setAttribute('aria-label',open?'关闭菜单':'打开菜单');
-  });
-  mm.querySelectorAll('a').forEach(function(a){a.addEventListener('click',function(){
-    mm.classList.remove('open');burger.setAttribute('aria-expanded','false');
-  });});
-  // 入场
-  var reveal=document.querySelectorAll('.reveal');
-  if('IntersectionObserver' in window){
-    var io=new IntersectionObserver(function(es){es.forEach(function(e){
-      if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}
-    });},{threshold:.12,rootMargin:'0px 0px -6% 0px'});
-    reveal.forEach(function(el){io.observe(el);});
-  }else{reveal.forEach(function(el){el.classList.add('in');});}
-  // 滚动高亮
-  var links=[].slice.call(document.querySelectorAll('.nav-links a.nlk'));
-  var secs=links.map(function(a){return document.querySelector(a.getAttribute('href'));}).filter(Boolean);
-  if('IntersectionObserver' in window&&secs.length){
-    var spy=new IntersectionObserver(function(es){es.forEach(function(e){
-      if(e.isIntersecting){links.forEach(function(a){
-        a.classList.toggle('curr',a.getAttribute('href')==='#'+e.target.id);
-      });}
-    });},{rootMargin:'-45% 0px -50% 0px'});
-    secs.forEach(function(s){spy.observe(s);});
-  }
-  // 两侧金叶丛：滚动越快被带得越晃，停手后自然衰减回正（idle 轻摇在 CSS 层，互不冲突）
-  var branches=document.querySelectorAll('.flank svg.branch');
-  var reduceMotion=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if(branches.length&&!reduceMotion){
-    var wind=0,lastY=window.scrollY,ticking=false;
-    function applyWind(){
-      wind*=0.9; // 衰减
-      if(Math.abs(wind)<0.05){wind=0;ticking=false;}
-      for(var i=0;i<branches.length;i++){branches[i].style.setProperty('--wind',wind.toFixed(2)+'deg');}
-      if(ticking){requestAnimationFrame(applyWind);}
-    }
-    window.addEventListener('scroll',function(){
-      var y=window.scrollY,dv=y-lastY;lastY=y;
-      wind=Math.max(-4,Math.min(4,wind+dv*0.1)); // 限速，只做微微带动
-      if(!ticking){ticking=true;requestAnimationFrame(applyWind);}
-    },{passive:true});
-  }
-})();
+const menuToggle=document.querySelector('.menu-toggle');
+const navigation=document.getElementById('navigation');
+function closeMenu(restoreFocus=false){navigation.classList.remove('open');menuToggle.setAttribute('aria-expanded','false');menuToggle.setAttribute('aria-label','打开导航');if(restoreFocus)menuToggle.focus()}
+menuToggle.addEventListener('click',()=>{const open=navigation.classList.toggle('open');menuToggle.setAttribute('aria-expanded',String(open));menuToggle.setAttribute('aria-label',open?'关闭导航':'打开导航')});
+navigation.querySelectorAll('a').forEach(link=>link.addEventListener('click',()=>closeMenu()));
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&navigation.classList.contains('open'))closeMenu(true)});
+document.addEventListener('click',event=>{if(!event.target.closest('.nav'))closeMenu()});
+const tabs=Array.from(document.querySelectorAll('[role="tab"]'));
+const tablist=document.querySelector('[role="tablist"]');
+const mobileLayout=matchMedia('(max-width:760px)');
+function syncOrientation(){tablist.setAttribute('aria-orientation',mobileLayout.matches?'horizontal':'vertical');if(!mobileLayout.matches)closeMenu()}
+syncOrientation();mobileLayout.addEventListener('change',syncOrientation);
+function activateTab(tab,focus=false){tabs.forEach(item=>{const selected=item===tab;item.setAttribute('aria-selected',String(selected));item.tabIndex=selected?0:-1;document.getElementById(item.getAttribute('aria-controls')).hidden=!selected});if(focus)tab.focus()}
+tabs.forEach((tab,index)=>{tab.addEventListener('click',()=>activateTab(tab));tab.addEventListener('keydown',event=>{let next;const horizontal=mobileLayout.matches;if(event.key===(horizontal?'ArrowRight':'ArrowDown'))next=(index+1)%tabs.length;if(event.key===(horizontal?'ArrowLeft':'ArrowUp'))next=(index+tabs.length-1)%tabs.length;if(event.key==='Home')next=0;if(event.key==='End')next=tabs.length-1;if(next!==undefined){event.preventDefault();activateTab(tabs[next],true)}})});
+document.getElementById('copy-command').addEventListener('click',async()=>{const status=document.getElementById('copy-status');const command=document.getElementById('deploy-command');try{if(!navigator.clipboard)throw new Error('Clipboard unavailable');await navigator.clipboard.writeText(command.textContent.trim());status.textContent='命令已复制。请在自己的终端执行。'}catch{const range=document.createRange();range.selectNodeContents(command);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);status.textContent='无法自动复制，已选中命令，请手动复制。'}});
+document.documentElement.classList.remove('no-js');
 </script>
 </body>
 </html>

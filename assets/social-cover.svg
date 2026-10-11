@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#f5f1e8"/>
+  <path d="M65 86h26M65 548h610" stroke="#856c3d"/>
+  <g fill="#253a35" font-family="Microsoft YaHei,PingFang SC,sans-serif">
+    <text x="110" y="95" font-size="24">拥爱</text>
+    <text x="65" y="240" font-size="65">把陪伴，</text>
+    <text x="65" y="326" font-size="65">安放在自己的</text>
+    <text x="65" y="412" font-size="65" fill="#9b4e38">生活里。</text>
+    <text x="65" y="485" font-size="21" fill="#58665e">自托管 · 开源 · Android · 自备模型服务</text>
+  </g>
+  <text x="195" y="94" fill="#856c3d" font-family="Georgia,serif" font-size="24" letter-spacing="4">AMBRACE</text>
+  <text x="65" y="579" fill="#58665e" font-family="Georgia,serif" font-size="18">A place to belong.</text>
+  <path d="M745 550V258a177 177 0 0 1 354 0v292Z" fill="#243c38"/>
+  <path d="M765 550V258a157 157 0 0 1 314 0v292" fill="none" stroke="#7f8c73"/>
+  <circle cx="977" cy="219" r="30" fill="#ddc69a"/><circle cx="988" cy="211" r="27" fill="#243c38"/>
+  <g fill="#d9cfaa"><circle cx="853" cy="217" r="2"/><circle cx="924" cy="145" r="2"/><circle cx="1027" cy="313" r="1.5"/></g>
+  <path d="M745 414q100-71 181-24t173-23v183H745Z" fill="#536955"/>
+  <path d="M745 469q158-71 354 6v75H745Z" fill="#354f43"/>
+  <rect x="868" y="370" width="113" height="85" fill="#c1b18c"/>
+  <path d="m853 372 70-56 73 56Z" fill="#a57b59"/>
+  <rect x="916" y="405" width="23" height="50" rx="11" fill="#5c6753"/>
+  <rect x="882" y="391" width="23" height="28" rx="11" fill="#ead0a0"/>
+  <path d="M893.5 391v28M882 405h23" stroke="#807650"/>
+  <path d="m927 455-48 66h94Z" fill="#ab9b76" opacity=".7"/>
+</svg>
