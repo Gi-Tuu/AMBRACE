@@ -1,23 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="AMBRACE">
-  <!-- 古金桂冠 + 中心心形，线形；古金 #a9823f，透明底以适配深浅标签栏 -->
-  <g fill="none" stroke="#a9823f" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
-    <!-- 左右枝茎 -->
-    <path d="M20 49 C14 39 16 27 26 18"/>
-    <path d="M44 49 C50 39 48 27 38 18"/>
-    <!-- 中心心形 -->
-    <path d="M32 36.5 C26.5 31 23.4 28.2 24.8 25.3 C25.9 23 28.6 23 32 26.6 C35.4 23 38.1 23 39.2 25.3 C40.6 28.2 37.5 31 32 36.5 Z"/>
-    <!-- 底部结 -->
-    <path d="M26.5 49 H37.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-labelledby="title desc">
+  <title id="title">拥爱 AMBRACE</title>
+  <desc id="desc">蓝色对话轮廓与字母 A 相连，两只圆润的眼睛面向你；中间的弧形留白像一条拥抱的手臂。</desc>
+  <rect width="128" height="128" rx="28" fill="#fffdf8"/>
+  <defs>
+    <mask id="embrace" maskUnits="userSpaceOnUse" x="0" y="0" width="128" height="128">
+      <rect width="128" height="128" fill="white"/>
+      <path d="M84 7C80 36 66 68 55 84C50 91 44 96 35 99" fill="none" stroke="black" stroke-width="13" stroke-linecap="round"/>
+    </mask>
+  </defs>
+  <g fill="#1675cf" mask="url(#embrace)">
+    <path fill-rule="evenodd" d="M58 18C32 18 12 36 12 60C12 71 16 81 23 88L17 100C16 103 18 105 21 104L35 98C42 102 50 104 58 104C83 104 103 85 103 60C103 36 84 18 58 18ZM58 32C76 32 89 44 89 60C89 77 75 90 58 90C40 90 26 77 26 60C26 44 40 32 58 32Z"/>
+    <path d="M76 23C78 17 85 17 88 23L117 98C118 102 116 104 112 104H103C99 104 97 102 96 99L73 37Z"/>
   </g>
-  <!-- 叶片（实心梭形，小尺寸更清晰） -->
-  <g fill="#a9823f">
-    <path d="M21 43.2 C16.6 41.6 13.4 38.6 12.6 34.4 C17.2 35.2 20.4 38.4 21 43.2 Z"/>
-    <path d="M18.4 34.6 C14.4 32.4 12.2 28.8 12.2 24.6 C16.6 26 19 29.8 18.4 34.6 Z"/>
-    <path d="M19.6 26.4 C16.6 23.6 15.6 20 16.4 16 C20.2 18 21.8 21.8 19.6 26.4 Z"/>
-    <path d="M24.2 20 C22.4 16.8 22.6 13.4 24.4 10.6 C27.2 13 28 16.6 24.2 20 Z"/>
-    <path d="M43 43.2 C47.4 41.6 50.6 38.6 51.4 34.4 C46.8 35.2 43.6 38.4 43 43.2 Z"/>
-    <path d="M45.6 34.6 C49.6 32.4 51.8 28.8 51.8 24.6 C47.4 26 45 29.8 45.6 34.6 Z"/>
-    <path d="M44.4 26.4 C47.4 23.6 48.4 20 47.6 16 C43.8 18 42.2 21.8 44.4 26.4 Z"/>
-    <path d="M39.8 20 C41.6 16.8 41.4 13.4 39.6 10.6 C36.8 13 36 16.6 39.8 20 Z"/>
+  <g fill="#1675cf">
+    <rect x="42" y="51" width="8" height="16" rx="4"/>
+    <rect x="61" y="51" width="8" height="16" rx="4"/>
   </g>
 </svg>
