@@ -85,7 +85,7 @@ def ws_db(ws_plugin, tmp_path, monkeypatch):
         async with factory() as db:
             db.add(User(id=1, username="main", nickname="m", is_admin=True))
             db.add(User(id=2, username="main2", nickname="m2", is_admin=True))
-            db.add(AICharacter(id=101, user_id=1, name="小慧"))
+            db.add(AICharacter(id=101, user_id=1, name="阿澜"))
             db.add(AICharacter(id=103, user_id=1, name="小橙"))
             await db.commit()
 

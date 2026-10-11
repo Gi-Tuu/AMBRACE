@@ -41,7 +41,7 @@ void main() {
     });
     api.json('GET', '/api/v1/characters', {
       'characters': [
-        {'id': 101, 'name': '小慧'},
+        {'id': 101, 'name': '阿澜'},
         {'id': 102, 'name': '小橙'},
       ],
     });
@@ -96,7 +96,7 @@ void main() {
     });
     api.json('GET', '/api/v1/characters', {
       'characters': [
-        {'id': 101, 'name': '小慧'},
+        {'id': 101, 'name': '阿澜'},
       ],
     });
 

@@ -19,7 +19,7 @@ def _state(**over):
         "channel_hint": "wechat_ilink",
         "channel_hint_injected": False,
         "context_messages": [
-            {"role": "system", "content": "你是小慧"},
+            {"role": "system", "content": "你是阿澜"},
             {"role": "user", "content": "你好"},
         ],
         "reasoning_level": 0,

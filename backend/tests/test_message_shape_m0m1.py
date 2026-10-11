@@ -268,7 +268,7 @@ def test_flag_registered_in_user_facing_catalog():
 # ── ⑦ prompt 侧：关＝逐字节旧 prompt，开＝只多那一句 ──
 
 BASE_MSGS = [
-    {"role": "system", "content": "你是小慧"},
+    {"role": "system", "content": "你是阿澜"},
     {"role": "system", "content": "【本轮提醒】今天北京有雨"},
     {"role": "user", "content": "在干嘛"},
 ]

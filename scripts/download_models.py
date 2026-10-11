@@ -11,8 +11,9 @@ r"""一键下载本地向量模型 bge-m3（记忆系统必需）。
   加 --force  强制重新下载覆盖；默认已存在则跳过。
 
 下载来源（依次尝试）：
-  ① GitHub Release v3.2.0 附件 ai_companion_public.zip（内含 backend/models/bge-m3）
-     https://github.com/Gi-Tuu/AMBRACE/releases/tag/v3.2.0
+  ① 当前 latest Release 的完整包附件 ai_companion_public.zip（内含 backend/models/bge-m3）
+     ——**该附件只在每个版本首次发布时上传**（2026-10-11 拍板），同版本后续修订不重挂，
+     所以这里按「附件存在才用它，不存在就直接走②」处理，不猜直链。
   ② HuggingFace Xenova/bge-m3 的 tokenizer.json + onnx/model_int8.onnx
      https://huggingface.co/Xenova/bge-m3
 
@@ -32,8 +33,9 @@ MODEL_DIR = ROOT / "backend" / "models" / "bge-m3"
 TOKENIZER = "tokenizer.json"
 ONNX = os.path.join("onnx", "model_int8.onnx")
 
-# 2026-08-24：不再硬编码版本号——动态取 GitHub latest release 的 ai_companion_public.zip 附件，
-# 每次发版上传 zip 后自动生效；API 失败时回退 HuggingFace 直链（②）。
+# 2026-08-24：不再硬编码版本号——动态取 GitHub latest release 的 ai_companion_public.zip 附件。
+# 2026-10-11：完整包改为「只在每个版本首次发布时上传」⇒ latest 上没有该附件是**预期状态**，
+# 此时直接回退 HuggingFace 直链（②），不许按 tag 拼造一个不存在的下载直链去空跑。
 RELEASE_API = "https://api.github.com/repos/Gi-Tuu/AMBRACE/releases/latest"
 HF_BASE = "https://huggingface.co/Xenova/bge-m3/resolve/main"
 # 2026-08-24（新机部署报告 P1-5）：国内网络 HuggingFace 常不可达，增加 hf-mirror.com 镜像
@@ -51,18 +53,19 @@ def log(msg: str) -> None:
 
 
 def _latest_release_zip_url() -> str:
-    """从 GitHub latest release 解析 ai_companion_public.zip 附件直链（动态，免维护版本号）。"""
+    """从 GitHub latest release 解析 ai_companion_public.zip 附件直链；附件不存在则返回空串。
+
+    反证：2026-09-07 起各 Release 只挂 APK，而这里曾按 tag 拼造标准直链，于是方式①每次
+    都拿着一个必然 404 的 URL 去下载 542MB，白等一轮超时才回退②（latest 无 zip 已成惯例）。
+    """
     try:
         req = urllib.request.Request(RELEASE_API, headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=20) as r:
             data = json.loads(r.read().decode("utf-8"))
-        tag = data.get("tag_name", "")
-        assets = data.get("assets", [])
-        for a in assets:
+        for a in data.get("assets", []):
             if (a.get("name") or "").lower() == "ai_companion_public.zip":
                 return a.get("browser_download_url") or ""
-        # 无附件时按 tag 拼标准直链（发布流程默认命名）
-        return f"https://github.com/Gi-Tuu/AMBRACE/releases/download/{tag}/ai_companion_public.zip"
+        return ""
     except Exception:
         return ""
 
@@ -111,11 +114,11 @@ def _extract_zip_models(zip_path: Path) -> bool:
 
 def _download_from_release() -> bool:
     url = _latest_release_zip_url()
+    if not url:
+        log("方式① 跳过：latest release 未附完整包（每个版本只有首次发布挂 zip，属预期）。")
+        return False
     log("方式① 从 GitHub latest release 下载发布包...")
     log(f"  URL: {url}")
-    if not url:
-        log("  [失败] 无法解析 latest release 附件（可能尚未上传 zip），改用 HuggingFace。")
-        return False
     with tempfile.TemporaryDirectory() as td:
         zip_path = Path(td) / "ai_companion_public.zip"
         try:

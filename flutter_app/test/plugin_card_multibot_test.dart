@@ -36,7 +36,7 @@ const _twoBots = {
 
 const _chars = {
   'characters': [
-    {'id': 101, 'name': '小慧'},
+    {'id': 101, 'name': '阿澜'},
     {'id': 102, 'name': '小橙'},
   ],
 };
@@ -97,7 +97,7 @@ void main() {
     api.json('GET', '/api/v1/channels/wechat/bindings', _twoBots); // botA→101, botB→102
     api.json('GET', '/api/v1/characters', {
       'characters': [
-        {'id': 101, 'name': '小慧'},
+        {'id': 101, 'name': '阿澜'},
         {'id': 102, 'name': '小橙'},
         {'id': 103, 'name': '小黄'},
       ],
@@ -166,7 +166,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(DropdownButton<int>), findsNothing);
-    expect(find.text('小慧'), findsOneWidget);
+    expect(find.text('阿澜'), findsOneWidget);
     expect(find.text('小橙'), findsOneWidget);
     expect(find.text('刷新 bot 列表'), findsNothing); // 子账号无写入口
     expect(find.text('仅主账号可配置渠道绑定'), findsOneWidget);

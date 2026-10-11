@@ -38,7 +38,7 @@ def chat_db(monkeypatch, tmp_path):
 
         async with factory() as db:
             db.add(User(id=13, username="channel_origin_u13", nickname="渠道来源用例用户"))
-            db.add(AICharacter(id=101, user_id=13, name="小慧"))
+            db.add(AICharacter(id=101, user_id=13, name="阿澜"))
             db.add(ChatSession(id=999, user_id=13, character_id=101))
             db.add(ChatSession(id=998, user_id=13, character_id=101))
             await db.commit()

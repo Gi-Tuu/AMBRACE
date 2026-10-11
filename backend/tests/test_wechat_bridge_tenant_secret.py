@@ -64,7 +64,7 @@ def wc_db(wc_plugin, tmp_path, monkeypatch):
             db.add(User(id=1, username="A", nickname="A", is_admin=True))
             db.add(User(id=2, username="B", nickname="B", is_admin=True))
             db.add(User(id=3, username="A_sub", nickname="sub", parent_id=1, is_admin=False))
-            db.add(AICharacter(id=101, user_id=1, name="小慧"))
+            db.add(AICharacter(id=101, user_id=1, name="阿澜"))
             db.add(AICharacter(id=102, user_id=2, name="小蓝"))
             db.add(ChannelBinding(channel="wechat", tenant_id=1, owner_user_id=1,
                                   bot_account_id="default", character_id=101))

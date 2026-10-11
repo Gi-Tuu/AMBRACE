@@ -1959,7 +1959,7 @@ def test_批5三_降级续写的超时与纯标点判据现取chat_service常量
     """三个常量留在 chat_service（_run_agent_core 也在用），搬家后仍旧「改一处两侧同时生效」。"""
     import app.agent.llm_client as llm_mod
 
-    char = types.SimpleNamespace(name="小慧", personality="温柔", chat_style="口语")
+    char = types.SimpleNamespace(name="阿澜", personality="温柔", chat_style="口语")
     monkeypatch.setattr(chat_service, "async_session_factory", lambda: _B5C3DB(char))
 
     async def _slow(*_a, **_k):

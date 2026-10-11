@@ -7,10 +7,15 @@
     backend\\.venv\\Scripts\\python.exe scripts\\check_public_leak.py --rev <sha> # 扫快照树（脱敏快照构建后、推送前）
     backend\\.venv\\Scripts\\python.exe scripts\\check_public_leak.py --worktree  # 扫工作区已跟踪文件（提交前）
 
-检查两类东西：
+检查三类东西：
 1. **作者机器信息**——本机路径／外部工作区路径／用户名（这三条此前靠手工 `git grep` 拦下过两次：
    10-06 是测试夹具里的真机路径，10-08 是模块 **docstring** 里报告文件的绝对路径）；
 2. **凭据形态**——私钥块、`sk-`／`ghp_`／`xox`／AWS AKIA 等长串。
+3. **隐私词名单**（2026-10-11 补）——`scripts/.privacy_names` 里的真实人名／角色名。补这条是因为
+   前两类都拦不住它：发布包自检脚本报出公开面测试夹具里有名单上的词，而这里 1843/1843/0 那几次读数
+   **是真扫过、但类别没覆盖**（名单文件不入库，CI 上也不存在，所以 CI 档永远扫不到这一类）。
+   名单不可用时会在结论里明写「这一类未覆盖」，`--require-names` 直接判本次扫描无效——
+   延续「没量到 ≠ 干净」的口径（见下面实现约束最后一条）。
 
 排除口径与 [docs/release-public-snapshot.md] 第 2 步**刻意保持一致**（改了那边要同步这里，守卫
 `backend/tests/test_public_leak_scan_c2.py` 会比对两边清单）：`.agents/`、`docs/`（只留
@@ -41,6 +46,22 @@ ROOT = Path(__file__).resolve().parents[1]
 EXCL_TOP = (".agents", "docs", "AGENTS.md", "HANDOFF.md", "flutter.bat", "start_server.bat", "restart_server.bat")
 EXCL_EXACT = ("flutter_app/.metadata", "scripts/diagnostics/memory_action_cases_real_draft.jsonl")   # 真实语料派生题集（脱敏后仍属用户数据）
 KEEP_IN_EXCLUDED = ("docs/changelog.md",)
+
+# 隐私词名单只在本机（.gitignore 已挡，守卫 test_public_leak_names_b72 会钉住它不许入库）
+PRIVACY_NAMES_FILE = "scripts/.privacy_names"
+
+
+def load_privacy_names() -> list[bytes]:
+    """读本机维护的真实人名／角色名名单；文件或为空则返回空表（＝这一类本次没量到）。"""
+    path = ROOT / PRIVACY_NAMES_FILE
+    if not path.is_file():
+        return []
+    out = []
+    for line in path.read_bytes().decode("utf-8", "replace").splitlines():
+        word = line.strip()
+        if word and not word.startswith("#"):
+            out.append(word.encode("utf-8"))
+    return out
 
 # 分片拼接：本文件里不出现任何完整模式字面量
 _PATTERNS = [
@@ -121,7 +142,7 @@ def read_blobs(rev: str | None, paths: list[str]) -> list[tuple[str, bytes]]:
     return parse_batch(paths, git("cat-file", "--batch", inp=inp))
 
 
-def scan_blob(path: str, data: bytes) -> list[tuple[str, int, str]]:
+def scan_blob(path: str, data: bytes, names: list[bytes] = ()) -> list[tuple[str, int, str]]:
     hits = []
     for lineno, line in enumerate(data.split(b"\n"), start=1):
         for name, rx in COMPILED:
@@ -129,10 +150,15 @@ def scan_blob(path: str, data: bytes) -> list[tuple[str, int, str]]:
             if m:
                 frag = m.group(0)[:24]
                 hits.append((name, lineno, frag.decode("utf-8", "replace")))
+        for idx, word in enumerate(names, start=1):
+            if word and word in line:
+                # 只报「第几号词＋长度」：把词本身打进日志（尤其 CI 那份）就是第二次外泄
+                shown = len(word.decode("utf-8", "replace"))
+                hits.append(("privacy_name", lineno, f"名单第{idx}号词（{shown}字）"))
     return hits
 
 
-def scan(rev: str | None) -> tuple[int, int, list[tuple[str, str, int, str]]]:
+def scan(rev: str | None, names: list[bytes] = ()) -> tuple[int, int, list[tuple[str, str, int, str]]]:
     """返回（请求的公开面文件数，真解析到的文件数，命中清单）。二进制跳过（算已解析）。"""
     files = list_public_files(rev)
     blobs = read_blobs(rev, files)
@@ -140,7 +166,7 @@ def scan(rev: str | None) -> tuple[int, int, list[tuple[str, str, int, str]]]:
     for path, data in blobs:
         if b"\x00" in data[:4096]:
             continue
-        for name, line, frag in scan_blob(path, data):
+        for name, line, frag in scan_blob(path, data, names):
             hits.append((name, path, line, frag))
     return len(files), len(blobs), hits
 
@@ -151,19 +177,28 @@ def main() -> int:
     ap.add_argument("--rev", default=None, help="扫描某个 git 版本/树的快照（默认 HEAD）")
     ap.add_argument("--worktree", action="store_true", help="扫描工作区已跟踪文件（提交前用）")
     ap.add_argument("--files", default=None, help="只扫给定文件（相对仓库根，调试用）")
+    ap.add_argument("--require-names", action="store_true",
+                    help="隐私词名单不可用即判本次扫描无效（推前本机预扫用；CI 没有名单，别加这条）")
     args = ap.parse_args()
 
+    names = load_privacy_names()
     if args.files:
         data = (ROOT / args.files).read_bytes()
-        found = [(name, args.files, line, frag) for name, line, frag in scan_blob(args.files, data)]
+        found = [(name, args.files, line, frag) for name, line, frag in scan_blob(args.files, data, names)]
         rev = None
         n_files, n_parsed = 1, 1
     else:
         rev = None if args.worktree else (args.rev or "HEAD")
-        n_files, n_parsed, found = scan(rev)
+        n_files, n_parsed, found = scan(rev, names)
 
     scope = "工作区" if rev is None and not args.rev else (args.rev or "HEAD")
-    print(f"[check_public_leak] 扫描范围＝{scope}；公开面文件 {n_files} 个；已解析 {n_parsed} 个；命中 {len(found)} 处")
+    leg = f"已扫 {len(names)} 词" if names else "不可用（名单不在本机）"
+    print(f"[check_public_leak] 扫描范围＝{scope}；公开面文件 {n_files} 个；已解析 {n_parsed} 个；"
+          f"命中 {len(found)} 处；隐私词名单腿＝{leg}")
+    if args.require_names and not names:
+        print("[check_public_leak] 结论：本次扫描**无效**——要求隐私词名单，但名单不可用，"
+              "「真实人名／角色名」这一类根本没量到。按未通过处理（别推）。")
+        return 2
     # 分母对账放在命中判定之前：解析数掉下去时"0 命中"是假的，绝不能当成通过（2026-10-09 那次就是这么绿的）
     if n_parsed != n_files:
         print(f"[check_public_leak] 结论：本次扫描**无效**——请求 {n_files} 个文件只解析到 {n_parsed} 个。"
@@ -174,7 +209,8 @@ def main() -> int:
     if found:
         print("[check_public_leak] 结论：有内容会随公开仓外泄——按 docs/release-public-snapshot.md 第 3 步改源码后重扫，别推。")
         return 1
-    print("[check_public_leak] 结论：干净（0 命中）。")
+    tail = "" if names else "（⚠ 隐私词名单腿未运行：「真实人名／角色名」这一类本次**未覆盖**，别把这句读成全类干净）"
+    print(f"[check_public_leak] 结论：干净（0 命中）。{tail}")
     return 0
 
 

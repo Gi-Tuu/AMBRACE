@@ -234,7 +234,7 @@ def test_解析数不等于请求数时必须判扫描无效而不是干净(monk
     """新加的 exit=2 分支的牙：分母不齐＝这次什么都没量到，不能算通过。"""
     import sys as _s
 
-    monkeypatch.setattr(scan, "scan", lambda rev: (1802, 0, []))
+    monkeypatch.setattr(scan, "scan", lambda rev, names=(): (1802, 0, []))
     monkeypatch.setattr(_s, "argv", ["check_public_leak.py"])
     assert scan.main() == 2, "分母不齐仍被判成干净 ⇒ 空扫又会绿"
 

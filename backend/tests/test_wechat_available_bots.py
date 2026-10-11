@@ -64,7 +64,7 @@ def ab_db(ab_plugin, tmp_path, monkeypatch):
         async with factory() as db:
             db.add(User(id=1, username="main", nickname="m", is_admin=True))
             db.add(User(id=3, username="sub", nickname="s", parent_id=1, is_admin=False))
-            db.add(AICharacter(id=101, user_id=1, name="小慧"))
+            db.add(AICharacter(id=101, user_id=1, name="阿澜"))
             await db.commit()
 
     asyncio.run(_seed())

@@ -64,7 +64,7 @@ def mb_db(mb_plugin, tmp_path, monkeypatch):
 
         async with factory() as db:
             db.add(User(id=1, username="main", nickname="m", is_admin=True))
-            db.add(AICharacter(id=101, user_id=1, name="小慧"))
+            db.add(AICharacter(id=101, user_id=1, name="阿澜"))
             db.add(AICharacter(id=102, user_id=1, name="小橙"))
             await db.commit()
 

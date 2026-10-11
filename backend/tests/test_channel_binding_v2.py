@@ -75,7 +75,7 @@ async def _seed_family(factory):
         db.add(User(id=1, username="main1", nickname="m1", is_admin=True))
         db.add(User(id=2, username="main2", nickname="m2", is_admin=True))
         db.add(User(id=3, username="sub1", nickname="s1", parent_id=1))
-        db.add(AICharacter(id=101, user_id=1, name="小慧"))
+        db.add(AICharacter(id=101, user_id=1, name="阿澜"))
         db.add(AICharacter(id=103, user_id=1, name="小橙"))
         db.add(AICharacter(id=102, user_id=2, name="小蓝"))
         await db.commit()

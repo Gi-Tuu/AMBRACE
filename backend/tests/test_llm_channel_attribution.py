@@ -354,7 +354,7 @@ def test_微信桥运行期把渠道透传进上下文并清回父上下文(m2_d
 
         async with m2_db() as db:
             db.add(User(id=13, username="m2_u13", nickname="微信桥用例用户"))
-            db.add(AICharacter(id=101, user_id=13, name="小慧"))
+            db.add(AICharacter(id=101, user_id=13, name="阿澜"))
             db.add(ChatSession(id=999, user_id=13, character_id=101))
             await db.commit()
 

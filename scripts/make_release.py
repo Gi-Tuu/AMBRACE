@@ -35,6 +35,12 @@ EXCLUDE_PREFIX = (".agents/", "flutter.bat",  # 内部工具/技能目录与本�
 # 精确路径排除：从真实用户数据改写而来的派生内容（即使已脱敏也不进开源包，AGENTS.md 隐私硬原则）
 EXCLUDE_EXACT = ("scripts/diagnostics/memory_action_cases_real_draft.jsonl",)
 
+# 随包模型里要排掉的目录：2026-08-23 记忆向量升级到 bge-m3 后，bge-small-zh-v1.5（512d）
+# 全仓已无消费者（embedding.py 硬编码 bge-m3、download_models.py 只下发 bge-m3），但本机
+# backend/models/ 里一直留着它——整目录 copytree 会把 332MB 死模型一起发给用户。
+# 同条口径见 docs/archive/audits/release-compat-audit.md P2-3。
+MODELS_EXCLUDE = ("bge-small-zh-v1.5",)
+
 # 副本内脱敏替换（相对路径 → [(old, new), ...]）
 # 仓库代码/脚本已不含作者本机路径，按需在此追加规则。
 DESENS = {}
@@ -60,6 +66,33 @@ def copy_with_desens(src_root, rel):
     return len(data)
 
 
+def bundle_models(models_src, models_dst):
+    """随包复制本地模型目录，返回 (实际落包字节数, 落包的一级目录清单)。
+
+    读数只从**已落包的文件**累加：源目录里混着死模型与 LFS 缓存，按源目录累加会报出一个
+    包里根本不存在的体积（发布包体积是要上传 GitHub 的数，报大报小都会误导决策）。
+    """
+    shutil.copytree(
+        models_src,
+        models_dst,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", *MODELS_EXCLUDE),
+    )
+    total = 0
+    landed = []
+    for entry in sorted(os.listdir(models_dst)):
+        path = os.path.join(models_dst, entry)
+        size = 0
+        if os.path.isdir(path):
+            for root2, _, names in os.walk(path):
+                for n in names:
+                    size += os.path.getsize(os.path.join(root2, n))
+        else:
+            size = os.path.getsize(path)
+        total += size
+        landed.append(f"{entry}({size / 1048576:.1f}MB)")
+    return total, landed
+
+
 def main():
     files = tracked_files()
     picked = [f for f in files if not f.startswith(EXCLUDE_PREFIX) and f not in EXCLUDE_EXACT]
@@ -77,17 +110,10 @@ def main():
     models_src = os.path.join(PROJECT_ROOT, "backend", "models")
     if os.path.isdir(models_src):
         models_dst = os.path.join(OUT_DIR, "backend", "models")
-        shutil.copytree(models_src, models_dst, ignore=shutil.ignore_patterns(".git"))  # 排除 HuggingFace 仓库自带的 .git LFS 缓存
-        model_mb = 0
-        for root2, _, names in os.walk(models_src):
-            if os.sep + ".git" in root2:
-                continue
-            for n in names:
-                try:
-                    model_mb += os.path.getsize(os.path.join(root2, n))
-                except OSError:
-                    pass
-        print(f"[release] bundled backend/models ({model_mb / 1024 / 1024:.1f} MB)")
+        model_bytes, landed = bundle_models(models_src, models_dst)
+        print(f"[release] bundled backend/models ({model_bytes / 1048576:.1f} MB) -> {', '.join(landed) or '（空）'}")
+        if MODELS_EXCLUDE:
+            print(f"[release] 未随包（本机残留但代码不加载）：{', '.join(MODELS_EXCLUDE)}")
 
     # App 更新公告数据源：docs/changelog.md 是唯一随包分发的 docs 文件（其余内部文档仍排除）
     changelog_src = os.path.join(PROJECT_ROOT, "docs", "changelog.md")
@@ -159,7 +185,7 @@ def main():
                 for n in names:
                     full = os.path.join(root, n)
                     zf.write(full, os.path.relpath(full, OUT_ROOT))
-        print(f"[release] zip: {zpath}")
+        print(f"[release] zip: {zpath} ({os.path.getsize(zpath) / 1048576:.1f} MB)")
 
 
 if __name__ == "__main__":

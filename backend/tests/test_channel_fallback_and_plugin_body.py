@@ -80,7 +80,7 @@ async def _seed_families(factory) -> None:
         await db.commit()
     async with factory() as db:
         db.add_all([
-            AICharacter(id=101, user_id=1, name="小慧"),
+            AICharacter(id=101, user_id=1, name="阿澜"),
             AICharacter(id=103, user_id=1, name="小橙"),
             AICharacter(id=102, user_id=2, name="小蓝"),
         ])

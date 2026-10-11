@@ -70,7 +70,7 @@ async def _seed(factory, *, wx_uid="wxuid-1", out_count=0):
     M = _plugin_models()
     async with factory() as db:
         db.add(User(id=1, username="main", nickname="main", is_admin=True))
-        db.add(AICharacter(id=101, user_id=1, name="小慧"))
+        db.add(AICharacter(id=101, user_id=1, name="阿澜"))
         db.add(M.WeChatILinkBinding(
             user_id=1, character_id=101, ilink_user_id=wx_uid, ilink_bot_id="",
             bot_token_enc="x", baseurl="https://ilinkai.weixin.qq.com",
@@ -125,13 +125,13 @@ def test_400_missing_fields(wc_db):
 
 def test_ok_flow_reply_quota_and_dedupe(wc_db, monkeypatch):
     asyncio.run(_seed(wc_db))
-    _patch_reply(monkeypatch, "小慧回复你")
+    _patch_reply(monkeypatch, "阿澜回复你")
     client = _client()
     body = {"ilink_user_id": "wxuid-1", "text": "你好", "msg_id": "m-1"}
     r = client.post(RELAY_URL, json=body, headers={"X-AMBRACE-Bridge-Secret": _SECRET})
     assert r.status_code == 200, r.text
     data = r.json()
-    assert data["ok"] is True and data["reply"] == "小慧回复你"
+    assert data["ok"] is True and data["reply"] == "阿澜回复你"
     assert data["sendable"] is True and data["quota"]["charged"] is True
     assert data["quota"]["remaining"] == 9
 
@@ -219,7 +219,7 @@ def test_relay_429_rate_limited(wc_db, monkeypatch):
 def test_relay_response_includes_out_row_id(wc_db, monkeypatch):
     """P3-1 回执通道：成功下发的桥响应带出 out 流水行 id（刚落的 out 行）。"""
     asyncio.run(_seed(wc_db))
-    _patch_reply(monkeypatch, "小慧回复你")
+    _patch_reply(monkeypatch, "阿澜回复你")
     r = _client().post(RELAY_URL, json={"ilink_user_id": "wxuid-1", "text": "你好", "msg_id": "m-outid"},
                        headers={"X-AMBRACE-Bridge-Secret": _SECRET})
     assert r.status_code == 200, r.text

@@ -39,7 +39,7 @@ void _stubBackend(FakeApiAdapter api) {
   });
   api.json('GET', '/api/v1/characters', {
     'characters': [
-      {'id': 101, 'name': '小慧'},
+      {'id': 101, 'name': '阿澜'},
       {'id': 102, 'name': '小橙'},
     ],
   });
@@ -65,8 +65,8 @@ void main() {
     )));
     await tester.pumpAndSettle();
 
-    // 只读角色名可见（cid=101 → 小慧）
-    expect(find.text('小慧'), findsOneWidget);
+    // 只读角色名可见（cid=101 → 阿澜）
+    expect(find.text('阿澜'), findsOneWidget);
     // 不渲染 Dropdown（C4：彻底避开 value 不在 items 断言）
     expect(find.byType(DropdownButton<int>), findsNothing);
     // 不渲染写按钮

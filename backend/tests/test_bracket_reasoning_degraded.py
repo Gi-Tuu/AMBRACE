@@ -129,7 +129,7 @@ def test_degraded_continuation_success(monkeypatch):
     """补写成功：返回剥净后的正文。"""
     _patch_degraded_env(
         monkeypatch,
-        char=types.SimpleNamespace(name="小慧", personality="温柔", chat_style="口语"),
+        char=types.SimpleNamespace(name="阿澜", personality="温柔", chat_style="口语"),
         recent=[types.SimpleNamespace(sender_type="user", content="先去走两步吧")],
         llm_result="这就起身，你盯着我点。",
     )
@@ -141,7 +141,7 @@ def test_degraded_continuation_llm_failure_returns_empty(monkeypatch):
     """LLM 异常：返回空串（调用方落 degraded_reply）。"""
     _patch_degraded_env(
         monkeypatch,
-        char=types.SimpleNamespace(name="小慧", personality="", chat_style=""),
+        char=types.SimpleNamespace(name="阿澜", personality="", chat_style=""),
         recent=[],
         llm_result=None,
     )
@@ -158,7 +158,7 @@ def test_degraded_continuation_punct_result_rejected(monkeypatch):
     """补写结果仍是纯标点/空 → 视为失败。"""
     _patch_degraded_env(
         monkeypatch,
-        char=types.SimpleNamespace(name="小慧", personality="", chat_style=""),
+        char=types.SimpleNamespace(name="阿澜", personality="", chat_style=""),
         recent=[],
         llm_result="……",
     )
