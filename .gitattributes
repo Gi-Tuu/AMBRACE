@@ -1,0 +1,11 @@
+# 法务文本逐字节保真（2026-10-13，发版 CI run 38405243473）
+# GitHub 托管的 Windows runner 全局 core.autocrlf=true：没有任何属性依据时，检出会把
+# 文本文件的 LF 改成 CRLF。根 LICENSE（34523 字节、661 个裸 LF）因此被检出成 35184，
+# THIRD_PARTY_LICENSES/MANIFEST.json 记录的 sha/bytes 逐条对不上。
+# 这里只对法务文本双向关闭行尾转换（-text = 既不 normalize 也不 eol，原样字节进出）。
+# 不用 eol=lf：THIRD_PARTY_LICENSES 里 numpy/Pillow 两份原文本身是混合行尾，归一会改它们。
+# 不全仓归一：只列出必须逐字节保真的路径，其余文件维持各平台既有行为。
+/LICENSE -text
+/NOTICE -text
+/THIRD_PARTY_LICENSES/** -text
+/flutter_app/assets/legal/** -text

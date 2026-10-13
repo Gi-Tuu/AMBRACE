@@ -125,6 +125,72 @@ def _run_projection(state, *, shadow: bool):
         _restore(proj_mod.SHADOW_FLAG, old)
 
 
+# ───────────────── 动态插件通道固定（2026-10-13，CI run 38405243473）─────────────────
+#
+# 红的是本文件第①条，差异内容 `【你的抖音账号】…尚未绑定登录…` 与投影无关：
+#   · `app/agent/context/assembly.py:828-844` 在**调用时**才 `from app.plugins.registry import
+#     run_hook`，随后 `await run_hook("context_inject", {...}, user_id=..., callsite=...)`；
+#   · `app/plugins/registry.py:317-333` 按进程级 `_loaded` / `_enabled` 分发——本会话更早的插件
+#     测试把 douyin_mcp 装进内存并置为启用，本文件才会吃到真插件（本机/快测档绿、全量档红的顺序依赖）；
+#   · `plugins/examples/douyin_mcp/main.py:2788` 的 `context_inject` → `_build_section(tenant)`，
+#     而 `main.py:2002-2011` 带着进程级时间节流 `_last_inject_ts`（:110）：返回提示的同一条分支里
+#     `_last_inject_ts = time.time()`，此后 `inject_minutes`（默认 120 分钟）内的调用一律 `return ""`。
+# ⇒ 第一次装配（off）拿到提示、第二次（on）被插件自己写的时间戳判空，逐字节比较吃的是插件缓存的差。
+# 影子闸没有改业务插件状态（`project_into_workspace` 不碰 registry / 插件配置），所以这里按挂点固定，
+# 不桩 `assemble_context`、不关投影链、不删逐字节比较、不忽略那条差异。
+import app.plugins.registry as registry_mod  # noqa: E402  在打桩前拿到生产分发函数本体
+
+_RUN_HOOK_ORIGIN = registry_mod.run_hook
+
+# 人工合成的注入内容：不含任何真实用户／角色正文，只用来证明插件通道两次都被消费
+PLUGIN_INJECT_PIN = "【测试插件注入】合成提示（固定动态插件输出用，非真实账号数据）"
+
+
+@pytest.fixture(autouse=True)
+def pinned_plugin_inject(monkeypatch):
+    """在生产读取的那一处分发点（`registry.run_hook` 的 `context_inject`）返回同一条**非空**提示。
+
+    返回调用次数列表：主断言用它证「两次装配各走了一次插件注入」，缺一次就说明比较面是空的。
+    """
+    calls = []
+
+    async def _pinned(hook_name, ctx, *a, **kw):
+        if hook_name != "context_inject":
+            return await _RUN_HOOK_ORIGIN(hook_name, ctx, *a, **kw)
+        calls.append(kw.get("callsite") or "context_inject")
+        ctx["context_messages"].append({"role": "system", "content": PLUGIN_INJECT_PIN})
+        return None
+
+    monkeypatch.setattr(registry_mod, "run_hook", _pinned)
+    return calls
+
+
+def _has_plugin_block(messages) -> bool:
+    return any(m.get("content") == PLUGIN_INJECT_PIN for m in messages)
+
+
+def test_固定插件时分钟跨越不改变本夹具提示(ctx_db, monkeypatch, pinned_plugin_inject):
+    """This fixture omits the current-time section; advancing its assembly clock is neutral."""
+    from datetime import datetime, timedelta, timezone
+
+    class AssemblyClock(datetime):
+        instant = datetime(2026, 10, 13, 10, 0, tzinfo=timezone.utc)
+
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return cls.instant.replace(tzinfo=None)
+            return cls.instant.astimezone(tz)
+
+    monkeypatch.setattr(assembly_mod, "datetime", AssemblyClock)
+    before = _assemble(_base_state())
+    AssemblyClock.instant += timedelta(minutes=1)
+    after = _assemble(_base_state())
+    assert len(pinned_plugin_inject) == 2
+    assert _has_plugin_block(before) and _has_plugin_block(after)
+    assert _fingerprint(before) == _fingerprint(after)
+
+
 def _five_field_workspace():
     """用**真投影入口**填五格（自己拼字段形状＝只测到渲染器对假数据的适应）。"""
     ws = CognitiveWorkspace()
@@ -148,14 +214,49 @@ def _five_field_workspace():
 
 # ───────────────────────── ① 默认关＝逐字节不变 ─────────────────────────
 
-def test_影子闸开注入闸关时装配产出逐字节相同(ctx_db):
+def test_影子闸开注入闸关时装配产出逐字节相同(ctx_db, pinned_plugin_inject):
     msgs_off = _assemble(_base_state())
     state = _base_state()
     report = _run_projection(state, shadow=True)
     msgs_on = _assemble(state)
     assert report is not None, "投影没跑起来（state 里没 workspace？）⇒ 本例前提失效"
+    assert len(pinned_plugin_inject) == 2, (
+        f"两次装配只走到插件分发 {len(pinned_plugin_inject)} 次 ⇒ 装配链没消费 context_inject 挂点，"
+        "下面的『相等』是空对空"
+    )
+    assert _has_plugin_block(msgs_off) and _has_plugin_block(msgs_on), (
+        "固定的插件提示没进 prompt ⇒ 逐字节比较看不到插件注入通道，本例的相等没有意义"
+    )
     assert _fingerprint(msgs_on) == _fingerprint(msgs_off), (
         "只开影子闸就改了 prompt ⇒ 两把闸并不独立，②c 的前置门禁不成立"
+    )
+
+
+def test_插件时间节流会让逐字节比较变红_反向钉(ctx_db, monkeypatch):
+    """把挂点换回 douyin_mcp 的真实形状（`_last_inject_ts`：第一次非空、第二次空），本例必须红。
+
+    没有这一条，上面『固定成同一条提示』就可能是把比较面糊掉了；这一条证的是：
+    ① 逐字节比较**看得见**插件注入通道（插件差能把它拉开）；② 主断言之所以绿，靠的是
+    通道输出被钉住，而不是投影链被关掉。autouse 夹具先打的桩在这里被覆盖。
+    """
+    seen = []
+
+    async def _throttled(hook_name, ctx, *a, **kw):
+        if hook_name != "context_inject":
+            return await _RUN_HOOK_ORIGIN(hook_name, ctx, *a, **kw)
+        if not seen:                      # 复刻 main.py:2006-2011 的节流形状
+            seen.append(1)
+            ctx["context_messages"].append({"role": "system", "content": PLUGIN_INJECT_PIN})
+        return None
+
+    monkeypatch.setattr(registry_mod, "run_hook", _throttled)
+    msgs_off = _assemble(_base_state())
+    state = _base_state()
+    _run_projection(state, shadow=True)
+    msgs_on = _assemble(state)
+    assert _has_plugin_block(msgs_off) and not _has_plugin_block(msgs_on), seen
+    assert _fingerprint(msgs_on) != _fingerprint(msgs_off), (
+        "插件注入有『一条 vs 没有』的差，逐字节比较却没变红 ⇒ 本文件的比较看不到 prompt 通道"
     )
 
 

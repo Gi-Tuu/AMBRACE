@@ -130,9 +130,48 @@ def _run_projection(state, *, shadow: bool):
         agent_flags.AGENT_FLAGS[proj_mod.SHADOW_FLAG] = old
 
 
+# ───────────────── 动态插件通道固定（2026-10-13，CI run 38405243473）─────────────────
+#
+# 与 test_projection_inject_budget_a42c.py 同根因，只是那次没轮到本文件红：
+# `assembly.py:828-844` 调用时才 `from app.plugins.registry import run_hook` 并分发
+# `context_inject`；`registry.py:317-333` 按**进程级** `_loaded`/`_enabled` 分发，本会话更早的插件
+# 测试把 douyin_mcp 装进内存并启用后，本文件的两次装配就会吃到真插件；而
+# `plugins/examples/douyin_mcp/main.py:2002-2011` 的 `_build_section` 带进程级时间节流
+# `_last_inject_ts`（返回提示那一条顺手 `_last_inject_ts = time.time()`，此后
+# `inject_minutes`＝默认 120 分钟内的调用直接 `return ""`）⇒ 第一次装配拿到提示、第二次为空。
+# 差的是插件自己的时间缓存，不是影子闸。这里只把那一处分发固定成同一条非空合成提示：
+# 不桩 `assemble_context`、不关投影链、不删逐字节比较、不忽略那条差异。
+import app.plugins.registry as registry_mod  # noqa: E402  在打桩前拿到生产分发函数本体
+
+_RUN_HOOK_ORIGIN = registry_mod.run_hook
+
+# 人工合成的注入内容：不含任何真实用户／角色正文，只用来证明插件通道两次都被消费
+PLUGIN_INJECT_PIN = "【测试插件注入】合成提示（固定动态插件输出用，非真实账号数据）"
+
+
+@pytest.fixture(autouse=True)
+def pinned_plugin_inject(monkeypatch):
+    """在生产读取的那一处分发点（`registry.run_hook` 的 `context_inject`）返回同一条**非空**提示。"""
+    calls = []
+
+    async def _pinned(hook_name, ctx, *a, **kw):
+        if hook_name != "context_inject":
+            return await _RUN_HOOK_ORIGIN(hook_name, ctx, *a, **kw)
+        calls.append(kw.get("callsite") or "context_inject")
+        ctx["context_messages"].append({"role": "system", "content": PLUGIN_INJECT_PIN})
+        return None
+
+    monkeypatch.setattr(registry_mod, "run_hook", _pinned)
+    return calls
+
+
+def _has_plugin_block(messages) -> bool:
+    return any(m.get("content") == PLUGIN_INJECT_PIN for m in messages)
+
+
 # ───────────────────────────────────── 1. 主断言：开闸不改产出
 
-def test_投影开闸后装配产出逐字节相同(ctx_db):
+def test_投影开闸后装配产出逐字节相同(ctx_db, pinned_plugin_inject):
     off_state, on_state = _base_state(), _base_state()
     msgs_off = _assemble(off_state)
 
@@ -140,10 +179,43 @@ def test_投影开闸后装配产出逐字节相同(ctx_db):
     msgs_on = _assemble(on_state)
 
     assert report is not None, "投影没跑起来（state 里没 workspace？）⇒ 本例前提失效"
+    assert len(pinned_plugin_inject) == 2, (
+        f"两次装配只走到插件分发 {len(pinned_plugin_inject)} 次 ⇒ 装配链没消费 context_inject 挂点，"
+        "下面的『相等』是空对空"
+    )
+    assert _has_plugin_block(msgs_off) and _has_plugin_block(msgs_on), (
+        "固定的插件提示没进 prompt ⇒ 逐字节比较看不到插件注入通道"
+    )
     fp_off, fp_on = _fingerprint(msgs_off), _fingerprint(msgs_on)
     assert fp_on == fp_off, (
         "②a 影子上开就改了 prompt ⇒ ②c 的前置门禁不成立，必须停下来重审，"
         "不要直接把它接进对话链｜差异＝" + _first_diff(msgs_off, msgs_on)
+    )
+
+
+def test_插件时间节流会让逐字节比较变红_反向钉(ctx_db, monkeypatch):
+    """挂点换成 `_last_inject_ts` 的真实节流形状（第一次非空、第二次空）时比较必须拉开。
+
+    证两件事：①逐字节比较看得见插件注入通道；②主断言绿是靠输出被钉住，不是靠关掉投影链。
+    """
+    seen = []
+
+    async def _throttled(hook_name, ctx, *a, **kw):
+        if hook_name != "context_inject":
+            return await _RUN_HOOK_ORIGIN(hook_name, ctx, *a, **kw)
+        if not seen:                      # 复刻 main.py:2006-2011 的节流形状
+            seen.append(1)
+            ctx["context_messages"].append({"role": "system", "content": PLUGIN_INJECT_PIN})
+        return None
+
+    monkeypatch.setattr(registry_mod, "run_hook", _throttled)
+    msgs_off = _assemble(_base_state())
+    state = _base_state()
+    _run_projection(state, shadow=True)
+    msgs_on = _assemble(state)
+    assert _has_plugin_block(msgs_off) and not _has_plugin_block(msgs_on), seen
+    assert _fingerprint(msgs_on) != _fingerprint(msgs_off), (
+        "插件注入有『一条 vs 没有』的差，逐字节比较却没变红 ⇒ 本文件的比较看不到 prompt 通道"
     )
 
 
