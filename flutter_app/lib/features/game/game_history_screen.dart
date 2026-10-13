@@ -145,7 +145,8 @@ class _GameHistoryScreenState extends State<GameHistoryScreen> {
         title: Text(_gameName(item),
             style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text(
-          '$playerCount 人 · ${_timeStr((item['created_at'] as String?) ?? '')}'
+          '${l10n.gameHistoryPlayerCount(playerCount)} · '
+          '${_timeStr((item['created_at'] as String?) ?? '')}'
           '${winnerSide.isNotEmpty ? ' · 🏆 $winnerSide' : ''}',
           style: const TextStyle(fontSize: 12),
         ),

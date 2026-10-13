@@ -1080,6 +1080,26 @@ def _fmt_short_date(date_str: str) -> str:
         return str(date_str)
 
 
+def _bj_day_of(value, tz) -> str:
+    """把库里的时间串落到**北京日界**（库里是 naive UTC，也可能带时区）。失败返回空串。
+
+    单独一个函数是因为 KPI 卡的记忆趋势与 token 趋势必须用同一把尺——两处的日界换算
+    各写一遍，早晚有一边漏掉 8 小时偏移（这条口径在 memory 里翻过好几次）。
+    """
+    if not value:
+        return ""
+    try:
+        s = str(value).strip().replace("Z", "+00:00")
+        if "T" not in s and " " in s:
+            s = s.replace(" ", "T", 1)
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(tz).date().isoformat()
+    except Exception:
+        return ""
+
+
 def _aggregate_token_trend(rows, days=7, tz_name="Asia/Shanghai", today=None) -> list:
     try:
         tz = ZoneInfo(tz_name)
@@ -1092,20 +1112,9 @@ def _aggregate_token_trend(rows, days=7, tz_name="Asia/Shanghai", today=None) ->
     for i in range(days):
         buckets[(start + timedelta(days=i)).isoformat()] = 0
     for created_at, tokens in rows:
-        if not created_at:
-            continue
-        try:
-            s = str(created_at).strip().replace("Z", "+00:00")
-            if "T" not in s and " " in s:
-                s = s.replace(" ", "T", 1)
-            dt = datetime.fromisoformat(s)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            day = dt.astimezone(tz).date().isoformat()
-            if day in buckets:
-                buckets[day] += int(tokens or 0)
-        except Exception:
-            continue
+        day = _bj_day_of(created_at, tz)
+        if day in buckets:
+            buckets[day] += int(tokens or 0)
     return [{"date": d, "tokens": buckets[d]} for d in sorted(buckets)]
 
 
@@ -1135,6 +1144,7 @@ def _read_token_trend(days=7, db=None, today=None) -> list:
 # Token 热力图 / 任务占比（近 26 周；HEATMAP_WEEKS=26，与标题一致）
 # ═══════════════════════════════════════════════════════════════
 HEATMAP_WEEKS = 26
+KPI_SPARK_DAYS = 14        # KPI 卡右半那条迷你趋势线的窗口
 WEEK_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 TASK_LABELS = {
     "message": "主对话", "chat": "智能体思考", "memory": "记忆处理",
@@ -1194,6 +1204,79 @@ def _read_token_heatmap(weeks=HEATMAP_WEEKS, db=None, today=None):
     return [{"date": d.isoformat(), "tokens": buckets[d.isoformat()],
              "tasks": tasks_by_day.get(d.isoformat(), {}),
              "future": d > today_date} for d in day_list]
+
+
+def _spark_from_heat(heat, days=KPI_SPARK_DAYS):
+    """从已经算好的热力图数据里切最近 N 个**已发生**的日用量（未来占位日不算数）。
+
+    刻意复用 `stats["heat"]`：KPI 卡画趋势不再多打一次库，刷新周期里那条线零成本。
+    """
+    done = [h for h in (heat or []) if not h.get("future")]
+    return [int(h.get("tokens") or 0) for h in done[-days:]]
+
+
+def _spark_points(values, w, h, pad=3):
+    """一串数值 → 折线坐标（Canvas 物理像素，调用方已按 DPI 换算）。
+
+    少于 2 点不画；全程为 0 不画（画一条贴底的线＝"看起来有内容"的假读数）；
+    非零但全平 ⇒ 画在正中高度，读作「这段时间一直是这个量」。
+    """
+    vals = [float(v) for v in (values or []) if v is not None]
+    if len(vals) < 2:
+        return []
+    lo, hi = min(vals), max(vals)
+    if hi - lo < 1e-9:
+        if hi <= 0:
+            return []
+        return [(pad + i * (w - 2 * pad) / (len(vals) - 1), h / 2.0)
+                for i in range(len(vals))]
+    span = hi - lo
+    step = (w - 2 * pad) / (len(vals) - 1)
+    return [(pad + i * step, h - pad - (v - lo) / span * (h - 2 * pad))
+            for i, v in enumerate(vals)]
+
+
+def _read_mem_daily_new(days=KPI_SPARK_DAYS, db=None, today=None):
+    """近 N 天**每日新增**记忆条数（北京日界，与 token 趋势同一把尺）。远程模式返回 []。
+
+    只取窗口内的行：库是 naive UTC，所以起点往前多推 8 小时，
+    否则北京 00:00–08:00 那段会被整块漏掉（当日新增看着像少了一半）。
+    """
+    if _is_remote():
+        return []
+    if db is None:
+        db = os.path.join(SERVER_DIR, "data", "sqlite", "ai_companion.db")
+    if not os.path.isfile(db):
+        return []
+    try:
+        tz = ZoneInfo("Asia/Shanghai")
+    except Exception:
+        tz = timezone(timedelta(hours=8))
+    ref = (today or datetime.now(tz)).astimezone(tz)
+    start = ref.date() - timedelta(days=days - 1)
+    win_from = (datetime.combine(start, datetime.min.time()) - timedelta(hours=8))
+    try:
+        con = sqlite3.connect("file:" + db + "?mode=ro", uri=True, timeout=2)
+    except Exception:
+        return []
+    try:
+        rows = con.execute(
+            "SELECT created_at FROM memories "
+            "WHERE created_at IS NOT NULL AND created_at >= ?",
+            (win_from.strftime("%Y-%m-%d %H:%M:%S"),)).fetchall()
+    except Exception:
+        return []
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    buckets = {(start + timedelta(days=i)).isoformat(): 0 for i in range(days)}
+    for (created_at,) in rows:
+        day = _bj_day_of(created_at, tz)
+        if day in buckets:
+            buckets[day] += 1
+    return [buckets[d] for d in sorted(buckets)]
 
 
 def _fold_topn(items, n=6):
@@ -2041,7 +2124,15 @@ class ControllerApp:
 
     # ── 卡片工厂 ──
 
-    def _make_card(self, parent, row, col, title, caption="", height=None):
+    def _make_card(self, parent, row, col, title, caption="", height=None,
+                   icon=None, spark=None):
+        """KPI 卡：左侧「标题＋大数值＋说明」，右半是淡色水印图标，可选再叠一条迷你趋势线。
+
+        右半以前整块空着（六张卡都空半块，10-03 挂账等版式取向；10-11 用户拍板＝水印打底
+        ＋「记忆数／累计 Token」两张叠近 `KPI_SPARK_DAYS` 天趋势线）。
+        `spark` 只是这条线的**登记名**——控件在这里建、数据到 `_apply_refresh` 才有，
+        所以此处把画布记进 `self._kpi_sparks`，刷新时按名画。
+        """
         t = self.theme
         # KPI 卡默认随内容自适应：标题+22号数值+说明在高 DPI 下自然高度约 140px，
         # 钉死 72px 会让 Tk packer 把数值/说明判为装不下而取消映射（界面只剩标题）
@@ -2061,6 +2152,29 @@ class ControllerApp:
         cap = tk.Label(inner, text=caption, fg=t.text_muted, bg=t.card, font=CUI.f("caption"))
         cap.pack(anchor="w")
         tk.Frame(inner, bg=t.card).pack(fill="both", expand=True)
+
+        # 右半用 place 而不是 pack：卡片高度是"随内容自适应"的，插一个 pack 子控件
+        # 会把六张卡一起拉高，行内就不再齐平了。
+        # 槽位一律**两行固定**（row0 水印 / row1 趋势线），有没有数据都占位——
+        # 第一版让有趋势线的两张卡把水印顶上去，六张卡的水印不在同一条基线上，
+        # 看着比原来那块空白还乱（真机截图核对时抓到）。
+        if icon:
+            right = tk.Frame(inner, bg=t.card)
+            right.place(relx=1.0, rely=0.5, anchor="e", x=-SP_LG)
+            # 水印不是文字，不参与对比度门槛：取 card→accent 的一档淡染色，
+            # 亮色主题要更浅一档才不会压过左边的数值
+            ph = CUI.ICONS.get(icon, 44, CUI.mix(t.card, t.accent,
+                                                 0.36 if t.dark else 0.20))
+            if ph is not None:
+                tk.Label(right, image=ph, bg=t.card, bd=0).grid(row=0, column=0, sticky="e")
+            cv = tk.Canvas(right, width=CUI.px(96), height=CUI.px(26),
+                           bg=t.card, highlightthickness=0, bd=0)
+            cv.grid(row=1, column=0, sticky="e", pady=(2, 0))
+            self._kpi_slots.append(cv)      # 六张卡都要登记槽位：对齐靠这条测得住
+            if spark:
+                self._kpi_sparks[spark] = cv
+                cv.bind("<Motion>", lambda e, nm=spark: self._show_spark_tip(nm, e.x_root, e.y_root))
+                cv.bind("<Leave>", lambda e: self._hide_heat_tip())
         return card, value, cap
 
     def _wrap_card(self, parent, height=None, fit=False, **pack_kw):
@@ -2224,12 +2338,16 @@ class ControllerApp:
             grid.columnconfigure(c, weight=1, uniform="kpi")
         grid.rowconfigure(2, weight=1, minsize=CUI.px(330))
 
-        _, self.v_server, self.c_server = self._make_card(grid, 0, 0, "服务器状态")
-        _, self.v_health, self.c_health = self._make_card(grid, 0, 1, "服务健康", "HTTP 探活")
-        _, self.v_ollama, self.c_ollama = self._make_card(grid, 0, 2, OLLAMA_LABEL)
-        _, self.v_chars, self.c_chars = self._make_card(grid, 1, 0, "角色数", "个角色")
-        _, self.v_mems, self.c_mems = self._make_card(grid, 1, 1, "记忆数", "条记忆")
-        _, self.v_tokens, self.c_tokens = self._make_card(grid, 1, 2, "累计 Token", "Token 累计")
+        self._kpi_sparks = {}      # 主题切换会重建整页，这里每次重建都重新登记
+        self._kpi_slots = []       # 六张卡的右半槽位（水印＋趋势线占位）
+        _, self.v_server, self.c_server = self._make_card(grid, 0, 0, "服务器状态", icon="server")
+        _, self.v_health, self.c_health = self._make_card(grid, 0, 1, "服务健康", "HTTP 探活", icon="gauge")
+        _, self.v_ollama, self.c_ollama = self._make_card(grid, 0, 2, OLLAMA_LABEL, icon="toggle-right")
+        _, self.v_chars, self.c_chars = self._make_card(grid, 1, 0, "角色数", "个角色", icon="users")
+        _, self.v_mems, self.c_mems = self._make_card(grid, 1, 1, "记忆数", "条记忆",
+                                                      icon="brain", spark="mems")
+        _, self.v_tokens, self.c_tokens = self._make_card(grid, 1, 2, "累计 Token", "Token 累计",
+                                                          icon="ticket", spark="tokens")
 
         # Token 活动卡：近 26 周热力图（每日/每周/累计），hover 查看当天用量与占比
         heat_card = RoundedCard(grid, t, pad=3, height=CUI.px(330))
@@ -5063,6 +5181,7 @@ class ControllerApp:
                 health = _safe(_fetch_health, "—")
                 stats = _safe(_read_db_stats, {"characters": None, "memories": None, "tokens": None})
                 stats["heat"] = _safe(lambda: _read_token_heatmap(HEATMAP_WEEKS), [])
+                stats["mem_new"] = _safe(lambda: _read_mem_daily_new(KPI_SPARK_DAYS), [])
                 # C3（2026-09-06）：健康卡副标题接运行期活性（/liveness）；后台线程容错，
                 # 端点不可用返回默认 dict，_apply_refresh 回落现状（不改健康卡语义）。
                 stats["liveness"] = _safe(_fetch_liveness, {"ok": False, "stalled": False, "summary": "", "level": 0})
@@ -5336,8 +5455,46 @@ class ControllerApp:
                 lines.append(seg)
         return "\n".join(lines)
 
+    def _paint_spark(self, name, values) -> None:
+        """在登记过的画布上重画一条趋势线（主题切换后整页重建，这里只认当前画布）。"""
+        cv = (getattr(self, "_kpi_sparks", None) or {}).get(name)
+        if cv is None:
+            return
+        cv.delete("all")
+        cv._kpi_values = list(values or [])
+        w, h = cv.winfo_reqwidth(), cv.winfo_reqheight()
+        pts = _spark_points(values, w, h)
+        if len(pts) < 2:
+            return
+        t = self.theme
+        # 1px 的折线在 2× DPI 下读起来像噪点：线加粗、末端点加大，
+        # 颜色走 accent→glow 两档，保证它在卡片底色上"是一条线"而不是一团灰
+        cv.create_line([c for p in pts for c in p], smooth=True, splinesteps=12,
+                       fill=t.accent, width=max(2, CUI.px(1) + 1))
+        lx, ly = pts[-1]
+        r = max(2.0, CUI.px(2))
+        cv.create_oval(lx - r, ly - r, lx + r, ly + r, fill=t.accent_glow, outline="")
+
+    def _spark_tip_text(self, name, values) -> str:
+        vals = [int(v) for v in (values or []) if v is not None]
+        label = "每日新增记忆" if name == "mems" else "每日 Token 用量"
+        unit = " 条/天" if name == "mems" else " token/天"
+        if len(vals) < 2:
+            return "%s：窗口内没有可用数据\n（远程监控模式不读本地库）" % label
+        return ("%s（近 %d 天）\n峰值 %s%s｜日均 %s｜最低 %s"
+                % (label, len(vals), _fmt_int(max(vals)), unit,
+                   _fmt_int(sum(vals) // len(vals)), _fmt_int(min(vals)))) + unit
+
+    def _show_spark_tip(self, name, x_root, y_root) -> None:
+        cv = (getattr(self, "_kpi_sparks", None) or {}).get(name)
+        if cv is None:
+            return
+        self._show_tip(self._spark_tip_text(name, getattr(cv, "_kpi_values", [])), x_root, y_root)
+
     def _show_heat_tip(self, idx, x_root, y_root) -> None:
-        text = self._heat_tip_text(idx)
+        self._show_tip(self._heat_tip_text(idx), x_root, y_root)
+
+    def _show_tip(self, text, x_root, y_root) -> None:
         if self._heat_tip is None:
             tip = tk.Toplevel(self.root)
             tip.overrideredirect(True)
@@ -5439,6 +5596,11 @@ class ControllerApp:
             self.c_chars.config(text="个角色")
             self.c_mems.config(text="条记忆")
             self.c_tokens.config(text="Token 累计")
+
+        # KPI 右半的趋势线：tokens 复用热力图那份逐日数（零额外查询），mems 用窗口内计数。
+        # 远程模式两条都是空 ⇒ 只留水印，不画"看起来有内容"的假线。
+        self._paint_spark("tokens", _spark_from_heat(stats.get("heat") or []))
+        self._paint_spark("mems", stats.get("mem_new") or [])
 
         self._set_msg("守护已暂停（watchdog 不自动拉起）" if paused else "就绪")
 

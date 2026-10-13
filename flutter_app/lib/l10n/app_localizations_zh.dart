@@ -5384,7 +5384,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get agreeSection1Body =>
-      '本项目为开源、自托管软件（MIT License），由使用者自行下载、部署并运行在自己的设备或服务器上。作者以个人身份无偿维护本开源项目，不对任何使用者提供商业化服务承诺。';
+      '本项目为开源、自托管软件，自 3.5.4 起以 GNU Affero 通用公共许可证第 3 版（AGPL-3.0-only）授权（3.5.3 及更早版本为 MIT，那些版本不改）。由使用者自行下载、部署并运行在自己的设备或服务器上。作者以个人身份无偿维护本开源项目，不对任何使用者提供商业化服务承诺。';
 
   @override
   String get agreeSection2Title => '二、自担风险';
@@ -5432,7 +5432,13 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get agreeSection8Body =>
-      '本项目开源仅供学习与研究使用；未经作者书面许可，严禁将本项目或其任何派生版本用于商业用途。';
+      '本项目自有代码以 AGPL-3.0-only 授权。该许可不禁止商业使用，也不禁止收费：你可以商用，也可以因此收费；需要遵守的是许可本身——对外分发（无论改没改过）须遵守第4–6条的适用要求；分发目标代码时应采用第6条允许且适用于该分发形式的源码提供方式，不能一律以书面要约代替；把修改过的版本开放给其他人通过网络交互时，须向这些使用者提供修改版的对应源码；自己运行、或只自用托管未修改的副本，不触发该项义务。联系作者属自愿倡议，不是许可条件；本许可不授予商标权，请勿把修改版或重新打包的版本当作官方版本发布，或以可能造成来源混淆的方式呈现。点击下方按钮可阅读完整许可条文与授权说明。';
+
+  @override
+  String get agreeViewLicense => '查看开源许可';
+
+  @override
+  String get agreeViewLicenseHint => '完整 AGPL-3.0 条文、授权说明与第三方组件清单';
 
   @override
   String get backupTitle => '数据备份';
@@ -6349,6 +6355,16 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String archivePlayerCount(Object count) {
     return '$count 人';
+  }
+
+  @override
+  String gameHistoryPlayerCount(num count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count 人',
+    );
+    return '$_temp0';
   }
 
   @override

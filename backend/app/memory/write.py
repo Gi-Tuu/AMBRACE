@@ -490,69 +490,21 @@ async def save_memory(
     )
     from app.memory.receipt import (
         emit_memory_receipt,
-        ACTION_CREATE,
         ACTION_MERGE,
         ACTION_REJECT,
-        ACTION_DOWNGRADE,
-        ACTION_UPDATE,
     )
     async with async_session_factory() as db:
-        # ── M4 准入闸门：开发运维元信息 / 代理发言拦截（flag 关=零行为）──
-        if _admission_gate_on() and _is_meta_noise(content):
-            _logger.info("Memory dropped: meta-noise/agent-speak (char=%d type=%s): %.40s",
-                         character_id, memory_type, content)
-            emit_memory_receipt(
-                character_id, None, ACTION_REJECT, reason="meta-noise/agent-speak blocked",
-                detail={"memory_type": memory_type, "sub_type": sub_type, "source": source},
-            )
+        # 写入前过滤（2026-10-12 A50 批 6：机械抽出到同文件私有协程 `_prefilter_memory_write`）。
+        # 元信息拦截／台词原文／逐字 AI 台词三条拒收的判据、reason 与 payload、日志行、异常边界逐字不变；
+        # 调用点仍在 `async_session_factory` 的会话里、感知打标之前，await 点仍是本段唯一挂起点；
+        # 拒收一律不写库、不 commit，直接退出本 async with（靠上下文退出回滚）。
+        keep, _src_msg_sender = await _prefilter_memory_write(
+            db=db, content=content, character_id=character_id, memory_type=memory_type,
+            sub_type=sub_type, source=source, source_id=source_id,
+            emit_memory_receipt=emit_memory_receipt, ACTION_REJECT=ACTION_REJECT,
+        )
+        if not keep:
             return None
-        # 聊天来源记忆拦截"台词原文"（提取器/【记忆】标记路径都可能在来源消息为 AI 台词时误抄）：
-        # 命中对话特征，或与源消息（AI 回复）逐字一致 → 直接丢弃，不落库。
-        _src_msg_sender = None  # M4：缓存来源消息的 sender_type，供准入闸门复用同一次查询
-        if source == "chat":
-            from app.memory.dialogue_filter import looks_like_raw_dialogue
-            if looks_like_raw_dialogue(content):
-                _logger.info("Memory dropped: raw dialogue (char=%d type=%s sub=%s): %.40s",
-                             character_id, memory_type, sub_type, content)
-                emit_memory_receipt(
-                    character_id, None, ACTION_REJECT, reason="raw dialogue dropped",
-                    detail={"memory_type": memory_type, "sub_type": sub_type, "source": source},
-                )
-                return None
-            if source_id is not None and len(content) <= 60:
-                try:
-                    from app.models.chat import ChatMessage
-                    msg = await db.get(ChatMessage, source_id)
-                    if msg is not None:
-                        _src_msg_sender = msg.sender_type  # M4：复用，勿再查一次
-                        cands = []
-                        if msg.sender_type == "ai":
-                            cands.append(msg)
-                        elif sub_type is None:
-                            # 标记路径（【记忆：...】）的 source_id 指向用户消息：
-                            # 再取同会话紧随的 AI 回复，防止把 AI 台词/自我介绍当用户信息落库
-                            nxt = (await db.execute(
-                                select(ChatMessage).where(
-                                    ChatMessage.session_id == msg.session_id,
-                                    ChatMessage.id > msg.id,
-                                    ChatMessage.sender_type == "ai",
-                                ).order_by(ChatMessage.id.asc()).limit(1)
-                            )).scalar_one_or_none()
-                            if nxt is not None:
-                                cands.append(nxt)
-                        for cand in cands:
-                            raw = (cand.content or "").strip().strip("“”「」『』...")
-                            c = content.strip().strip("“”「」『』...")
-                            if raw and c and (raw == c or raw.startswith(c) or raw.endswith(c)):
-                                _logger.info("Memory dropped: verbatim AI line (char=%d type=%s): %.40s",
-                                             character_id, memory_type, content)
-                                emit_memory_receipt(
-                                    character_id, None, ACTION_REJECT, reason="verbatim AI line dropped",
-                                    detail={"memory_type": memory_type, "sub_type": sub_type, "source": source},
-                                )
-                                return None
-                except Exception:
-                    pass
         # ── 批 0-2 M1a：感知来源打标（flag `perception_source_tag`，默认关＝逐字节旧行为）──
         # 位置刻意排在「台词过滤 / 逐字拦截」之后：打标只改写来源归属，不得抢在既有拦截分支前面
         # 改变它们的生效条件。判据**只标注、不拒收**——误标的代价（用户真说过的话被隔离）不可接受，
@@ -562,337 +514,101 @@ async def save_memory(
         _sub_type_before_tag = sub_type
         _speaker_type_before_tag = speaker_type
         _speaker_id_before_tag = speaker_id
-        if _perception_tag_on():
-            try:
-                _corpus = await _recent_snapshots(db, user_id)
-                _texts = [t for _s, t in _corpus]
-                # 语料为空 ⇒ 不启用判据（本轮没有感知注入，保持旧行为、不报错）
-                if _texts and (has_snapshot_tag(content) or snapshot_overlap(content, _texts)):
-                    source = PERCEPTION_SOURCE
-                    epistemic_status = "INFERRED"  # 感知＝推断，未经用户认可绝不是事实（方案 §2.3）
-                    _perception_tagged = True
-                    # 断点 #5：调用方给的 speaker 两列**显式撤掉**（连 user id 一起清空）——
-                    # 「这条来自屏幕」不等于「用户亲口说的」，也不该伪造 character。
-                    # P0 第 4 步起：清空之后由下方 `perception_actor_column` 把判定结果落成
-                    # ``speaker_type='perception'``（可 SQL 查询），speaker_id 仍留空（感知没有说话人 id）。
-                    speaker_type = None
-                    speaker_id = None
-                    # M2「sub_type 记通道」：把命中的那条快照的来源通道写进 sub_type
-                    # （accessibility / clipboard / media）。只在打标这一刻写，flag 关不写。
-                    _channel = _matched_snapshot_channel(_corpus, content)
-                    if _channel:
-                        sub_type = _channel
-                    _logger.info("Memory tagged perception: char=%d user=%d from=%s channel=%s: %.40s",
-                                 character_id, user_id, _source_before_tag, sub_type, content)
-            except Exception as _e:
-                source = _source_before_tag  # fail-open：打标本身不出错，只降级为旧行为
-                sub_type = _sub_type_before_tag  # 通道也只回退到打标前的值（同一次改写，一起撤）
-                speaker_type = _speaker_type_before_tag  # 断点 #5：归属改写与来源改写同批撤销
-                speaker_id = _speaker_id_before_tag
-                _logger.warning("perception tagging failed (fail-open): char=%d user=%d err=%s",
-                                character_id, user_id, _e)
+        # 感知来源标注阶段（2026-10-12 A50 批 3：机械抽出到同文件私有协程
+        # `_tag_perception_source`）。整段判据／改写字段／fail-open 回退／日志边界逐字不变；
+        # 调用点仍在「台词过滤 + 逐字拦截」之后、写入前查重之前，await 点仍是本段唯一挂起点。
+        source, epistemic_status, _perception_tagged, sub_type, speaker_type, speaker_id = (
+            await _tag_perception_source(
+                db=db, user_id=user_id, character_id=character_id, content=content,
+                source=source, epistemic_status=epistemic_status, sub_type=sub_type,
+                speaker_type=speaker_type, speaker_id=speaker_id,
+                _perception_tagged=_perception_tagged,
+                _source_before_tag=_source_before_tag, _sub_type_before_tag=_sub_type_before_tag,
+                _speaker_type_before_tag=_speaker_type_before_tag,
+                _speaker_id_before_tag=_speaker_id_before_tag,
+            )
+        )
         # 写入前查重：优先向量语义查重（cosine >= 0.86，见 memory/constants.py::VECTOR_DEDUP_THRESHOLD），未命中再字符级兜底（最近 30 条 >= 0.72）
         embedding = None
         if content and content.strip() and not skip_dedup:
             # 1) 向量语义查重：先算嵌入，命中高度相似则更新原记忆而非新增
-            try:
-                embedding = await text_embedding(content)
-                similar = await find_similar_memory(
-                    character_id, embedding, limit=20, min_similarity=VECTOR_DEDUP_THRESHOLD
-                )
-            except Exception:
-                embedding = None
-                similar = None
-            if similar:
-                mem_id, sim = similar
-                m = await db.get(Memory, mem_id)
-                if m is not None and _cross_source_merge_blocked(source, m.source):
-                    # 禁令 3：感知 ↔ 非感知不互并（并进去＝感知条以 chat 名义拿到长期身份）
-                    _logger.info("Memory dedup skip cross-source: char=%d vector-hit id=%d src=%s/%s",
-                                 character_id, mem_id, source, m.source)
-                    m = None  # 跳过该候选，继续走后续字符级 / 同主题查重（宁可多一条，不可并错条）
-            if similar and m:
-                if not m.is_archived and not m.is_pinned and not m.is_locked:
-                    # 艾宾浩斯强化：写入查重命中 = 一次复习，S ×2 并刷新遗忘起点
-                    new_pct = _normalize_importance(importance)
-                    if new_pct > float(m.importance or 40.0):
-                        m.importance = min(DECAY_MAX_PCT, new_pct)
-                    _apply_reinforce(m, REINFORCE_FACTOR_WRITE, _now_naive(), channel="write")
-                    # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，
-                    # 不含自身 id（去掉「∪ 自身 id」自环噪声）。
-                    m.derived_from_ids = _merge_derived(m.derived_from_ids, derived_from_ids or [])
-                    await db.commit()
-                    _logger.info("Memory dedup on write: char=%d vector-hit id=%d sim=%.3f S=%.1f",
-                                 character_id, mem_id, sim, m.strength_days or 0)
-                    # M1-S11：dual_write_dup_merge（kind=vector_dedup）
-                    from app.memory.observability import obs_event
-                    obs_event(character_id, "dual_write_dup_merge",
-                              {"hit_id": mem_id, "sim": round(float(sim), 3)}, kind="vector_dedup")
-                    emit_memory_receipt(
-                        character_id, m.id, ACTION_MERGE, reason="write-time vector dedup",
-                        detail=_merge_receipt_detail(
-                            "vector_dedup", m, source=source, sub_type=sub_type,
-                            memory_type=memory_type, source_id=source_id,
-                            speaker_type=speaker_type, epistemic_status=epistemic_status,
-                            derived_from_ids=derived_from_ids, node_type=node_type,
-                            content=content, extra={"sim": round(float(sim), 3)},
-                        ),
-                    )
-                    return m
-
-            # 2) 字符级查重兜底（嵌入失败或旧记忆无向量时仍能命中）
-            # P1-2（2026-09-28，用户拍板方案 B）：本处查重若开 write_dedup_active_only，则只与现行（active）行比对；
-            # 关＝沿用 _retrievable_status_clause()（怀旧面语义、当前永真）＝逐字节旧行为。
-            _dedup_clause = current_facts_status_clause() if _write_dedup_active_only_on() else _retrievable_status_clause()
-            from difflib import SequenceMatcher
-            recent_result = await db.execute(
-                select(Memory)
-                .where(Memory.character_id == character_id, Memory.is_archived == False, _dedup_clause)
-                .order_by(Memory.created_at.desc())
-                .limit(30)
+            # （2026-10-12 A50 批 7：整段机械抽出到同文件私有协程 `_vector_dedup_on_write`。
+            # 判据／三重保护／强化与 importance 上限／derived 合并／跨源禁令，以及
+            # commit→命中日志→obs_event→回执→return 的顺序与原 try/except 边界逐字不变；
+            # 唯一改写是返回值的运输契约：命中返回 `(m, embedding)`、未命中返回
+            # `(None, embedding)`——未命中时已算出的 embedding 必须带回给后面的写向量／hooks，
+            # 不许在这里丢掉也不许重算；调用点用 `is not None` 早退。
+            # 外层 `embedding = None` 初值与 content/strip/skip_dedup 三闸仍留在调用方。）
+            _vector_hit, embedding = await _vector_dedup_on_write(
+                db=db, content=content, character_id=character_id, source=source,
+                importance=importance, sub_type=sub_type, memory_type=memory_type,
+                source_id=source_id, speaker_type=speaker_type,
+                epistemic_status=epistemic_status, derived_from_ids=derived_from_ids,
+                node_type=node_type, text_embedding=text_embedding,
+                find_similar_memory=find_similar_memory,
+                emit_memory_receipt=emit_memory_receipt, ACTION_MERGE=ACTION_MERGE,
             )
-            recent = recent_result.scalars().all()
-            b = content.strip()[:80]
-            for m in recent:
-                if _cross_source_merge_blocked(source, m.source):
-                    continue  # 禁令 3：感知 ↔ 非感知不互并
-                a = (m.content or "").strip()[:80]
-                if len(a) < 4 or len(b) < 4:
-                    continue
-                if SequenceMatcher(None, a, b).ratio() >= 0.72:
-                    # 艾宾浩斯强化：写入查重命中 = 一次复习，S ×2 并刷新遗忘起点
-                    if m.is_pinned or m.is_locked:
-                        continue
-                    new_pct = _normalize_importance(importance)
-                    if new_pct > float(m.importance or 40.0):
-                        m.importance = min(DECAY_MAX_PCT, new_pct)
-                    _apply_reinforce(m, REINFORCE_FACTOR_WRITE, _now_naive(), channel="write")
-                    # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，不含自身 id。
-                    m.derived_from_ids = _merge_derived(m.derived_from_ids, derived_from_ids or [])
-                    await db.commit()
-                    _logger.info("Memory dedup on write: char=%d text-hit id=%d S=%.1f",
-                                 character_id, m.id, m.strength_days or 0)
-                    # M1-S11：dual_write_dup_merge（kind=text_dedup）
-                    from app.memory.observability import obs_event
-                    obs_event(character_id, "dual_write_dup_merge", {"hit_id": m.id}, kind="text_dedup")
-                    emit_memory_receipt(
-                        character_id, m.id, ACTION_MERGE, reason="write-time text dedup",
-                        detail=_merge_receipt_detail(
-                            "text_dedup", m, source=source, sub_type=sub_type,
-                            memory_type=memory_type, source_id=source_id,
-                            speaker_type=speaker_type, epistemic_status=epistemic_status,
-                            derived_from_ids=derived_from_ids, node_type=node_type,
-                            content=content,
-                        ),
-                    )
-                    return m
+            if _vector_hit is not None:
+                return _vector_hit
 
-            # 3) 24h 同主题合并（2026-08-08）：同角色同类型 24h 内、字符相似 >0.6 → 更新原记忆而非新增。
-            #    覆盖"同一信息换了说法反复写入"（向量 0.86/字符 0.72 拦不住的近义表述）。
-            merge_rows = (await db.execute(
-                select(Memory)
-                .where(
-                    Memory.character_id == character_id,
-                    Memory.is_archived == False,
-                    Memory.memory_type == memory_type,
-                    Memory.created_at >= _now_naive() - timedelta(hours=24),
-                    _retrievable_status_clause(),   # #70-C
-                )
-                .order_by(Memory.created_at.desc())
-                .limit(50)
-            )).scalars().all()
-            for _m in merge_rows:
-                if _m.is_pinned or _m.is_locked:
-                    continue
-                if _cross_source_merge_blocked(source, _m.source):
-                    continue  # 禁令 3：感知 ↔ 非感知不互并
-                _a = (_m.content or "").strip()[:80]
-                if len(_a) < 4 or len(b) < 4:
-                    continue
-                if SequenceMatcher(None, _a, b).ratio() > 0.6:
-                    new_pct = _normalize_importance(importance)
-                    if new_pct > float(_m.importance or 40.0):
-                        _m.importance = min(DECAY_MAX_PCT, new_pct)
-                    _apply_reinforce(_m, REINFORCE_FACTOR_WRITE, _now_naive(), channel="write")
-                    # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，不含自身 id。
-                    _m.derived_from_ids = _merge_derived(_m.derived_from_ids, derived_from_ids or [])
-                    await db.commit()
-                    _logger.info("Memory merge on write: char=%d topic-hit id=%d sim=%.2f",
-                                 character_id, _m.id, SequenceMatcher(None, _a, b).ratio())
-                    # M1-S11：dual_write_dup_merge（kind=merge）
-                    from app.memory.observability import obs_event
-                    obs_event(character_id, "dual_write_dup_merge",
-                              {"hit_id": _m.id, "sim": round(SequenceMatcher(None, _a, b).ratio(), 3)},
-                              kind="merge")
-                    emit_memory_receipt(
-                        character_id, _m.id, ACTION_MERGE, reason="write-time topic merge 24h",
-                        detail=_merge_receipt_detail(
-                            "merge", _m, source=source, sub_type=sub_type,
-                            memory_type=memory_type, source_id=source_id,
-                            speaker_type=speaker_type, epistemic_status=epistemic_status,
-                            derived_from_ids=derived_from_ids, node_type=node_type,
-                            content=content,
-                            extra={"sim": round(SequenceMatcher(None, _a, b).ratio(), 3)},
-                        ),
-                    )
-                    return _m
+            # 2) 字符级查重兜底 ＋ 3) 24h 同主题合并（2026-10-12 A50 批 8：两段连续语句整体机械抽出到
+            # 同文件私有协程 `_text_topic_dedup_on_write`——它们共享同一份 `b`（`content.strip()[:80]`）
+            # 与同一个 `from difflib import SequenceMatcher`，合抽避免多运两个临时量）。
+            # 两段查询（30 条 / 50 条，均 `order_by(created_at.desc())`）、字符档现行闸 vs 主题档怀旧面
+            # 子句的差异、阈值（>=0.72 与严格 >0.6、80 字与 4 字、24h 边界）、置顶/锁/归档/跨源保护、
+            # importance/strength/derived 合并，以及 commit→日志→obs→回执→return 的先后逐字不变；
+            # 段内没有 try，异常照旧向上抛（这里也不新增 catch）。
+            # 唯一改写是返回值运输契约：命中返回被并那条原 `Memory`、未命中返回 `None`，调用点
+            # `is not None` 早退；这两段既不读也不改 embedding，故**不运输它**。
+            # 向量段、`embedding = None` 初值与外层 content/strip/skip_dedup 三闸仍留调用方。
+            _text_hit = await _text_topic_dedup_on_write(
+                db=db, content=content, character_id=character_id, memory_type=memory_type,
+                source=source, importance=importance, sub_type=sub_type, source_id=source_id,
+                speaker_type=speaker_type, epistemic_status=epistemic_status,
+                derived_from_ids=derived_from_ids, node_type=node_type,
+                timedelta=timedelta,
+                emit_memory_receipt=emit_memory_receipt, ACTION_MERGE=ACTION_MERGE,
+            )
+            if _text_hit is not None:
+                return _text_hit
 
 
-        pct = _normalize_importance(importance)
-        # P0：记忆归属与认知状态（默认按来源推断；调用方可显式覆盖）
-        _spk_type = speaker_type
-        _spk_id = speaker_id
-        # 断点 #5 → P0 第 4 步：感知派生条**不套用「默认＝用户陈述」**，且判定结果直接落进列。
-        # 本判定**常开**（不再受 perception_source_tag 门控）：生产该闸已开，打标命中时两列被
-        # 清空、调用方直接写 source=perception 时也在此收口；其它来源的兜底路径一字未动。
-        if _spk_type is None and _spk_id is None and not _is_perception_source(source):
-            _spk_type = "user"  # 默认归属用户（多数记忆来自用户陈述）
-            _spk_id = user_id
-        _spk_type = perception_actor_column(_spk_type, source)
-        _spk = _spk_type  # 准入闸门留痕用（角色推断时更新为实际归属）
-        _epi = epistemic_status
-        _pending = False
-        if _admission_gate_on():
-            # M4 准入闸门：确定性裁决（不新增 LLM）。显式 epistemic 也只降不升——抽取器给的
-            # FACT 来自内容启发式（memory/speaker.py），不等于「来源消息是用户说的」。
-            try:
-                _spk = await _resolve_admission_sender(
-                    source, source_id, speaker_type, _src_msg_sender, db)
-            except Exception as e:
-                _spk = "user"
-                _logger.warning("admission gate sender resolve failed: %s", e)
-            try:
-                _epi, _pending = admit_memory(source, _spk, _epi, reliability, memory_type)
-            except Exception as e:
-                _epi = epistemic_status  # 任何异常回落现状
-                _pending = False
-                _logger.warning("admission gate verdict failed: %s", e)
-        if _epi is None:
-            _epi = "FACT" if source in ("chat", "moment", "diary", "life", "bio") else "UNVERIFIED"
-        # ── P0 语义统一·第 1 步 影子埋点①（flag actor_semantics_shadow，默认关＝零行为）──
-        # 只判定 + 只打一条 INFO：「按统一语义该记在谁名下」vs「本轮实际会落成什么」。
-        # 不查库、不写库、不改 _spk/_spk_type/_epi 任何取值，也不得插到任何判定之前。
-        try:
-            from app.flags.agent_flags import AGENT_FLAGS
-            if AGENT_FLAGS.get("actor_semantics_shadow", False):
-                from app.memory.actor_shadow import trace_actor_write
-                trace_actor_write(
-                    character_id=character_id, user_id=user_id, source=source,
-                    speaker_type=speaker_type, source_message_sender=_src_msg_sender,
-                    source_id=source_id, actual_speaker_type=_spk_type,
-                    actual_speaker_id=_spk_id, admission_actor=_spk,
-                )
-        except Exception:
-            pass
-        memory = Memory(
-            user_id=user_id,
-            character_id=character_id,
-            memory_type=memory_type,
-            title=title or None,
-            content=content,
-            scope=scope,
-            importance=pct,
-            reliability_score=reliability,  # M4：可靠度（<0.4 已被闸门降级为待核）
-            sub_type=sub_type,
-            source=source,
-            related_memory_id=related_memory_id,
-            source_id=source_id,
-            group_id=group_id,
-            chain_id=chain_id,
-            parent_id=parent_id,
-            node_type=node_type,
-            speaker_id=_spk_id,
-            speaker_type=_spk_type,
-            epistemic_status=_epi,
-            decay_base_at=_now_naive(),
-            strength_days=_initial_strength(memory_type),
-            last_reinforce_at=_now_naive(),
-            next_review_at=_now_naive() + timedelta(days=_initial_strength(memory_type)),
-            derived_from_ids=json.dumps(list(derived_from_ids or []), ensure_ascii=False, default=str),
+        # 新建记忆的准备阶段（2026-10-12 A50 批 4：机械抽出到同文件私有协程
+        # `_prepare_created_memory`）。归属收口／准入闸门／影子埋点／Memory 构造／plan 标注
+        # 逐字不变；调用点仍在写入前查重之后、`db.add(memory)` 之前，await 点仍是本段唯一挂起点，
+        # `db.add`/flush/commit/refresh 与两把已验收 helper 在调用方不动。
+        memory, pct, _spk_type, _spk, _epi, _pending, _sub_type_before_plan = (
+            await _prepare_created_memory(
+                db=db, timedelta=timedelta, user_id=user_id, character_id=character_id,
+                memory_type=memory_type, content=content, title=title, importance=importance,
+                sub_type=sub_type, source=source, related_memory_id=related_memory_id,
+                source_id=source_id, group_id=group_id, scope=scope, speaker_id=speaker_id,
+                speaker_type=speaker_type, epistemic_status=epistemic_status,
+                reliability=reliability, chain_id=chain_id, parent_id=parent_id,
+                node_type=node_type, derived_from_ids=derived_from_ids,
+                _src_msg_sender=_src_msg_sender,
+            )
         )
-        # L4 提取侧（2026-09-09 主动复习回忆化）：计划类记忆落库时写 valid_to + 标 sub_type=plan。
-        # flag review_plan_validity_extract 灰度默认关；关=零行为（不写不标，逐字节旧路径）。
-        # 提取器（extractor.extract_single / 【记忆】标记路径）所有写入都经 save_memory，故在此单点收口；
-        # 显式 sub_type（slot/status/relationship 等）不覆盖，只收敛默认/extracted 路径。
-        _sub_type_before_plan = sub_type  # 批 0-8：留痕要能看出「被 L4 改名成 plan」这一步（不改判据）
-        try:
-            from app.flags.agent_flags import AGENT_FLAGS
-            if AGENT_FLAGS.get("review_plan_validity_extract", False):
-                from app.memory.tense import classify_tense, plan_valid_until
-                if classify_tense(memory) == "plan" and sub_type in (None, "extracted", "plan"):
-                    memory.sub_type = "plan"
-                    memory.valid_to = plan_valid_until(memory, _now_naive())
-        except Exception:
-            pass
         db.add(memory)
         await db.flush()
         await db.commit()
         await db.refresh(memory)
 
-        # M4 准入闸门：待核留痕（复用 M3 回执；flag 关时 admit_memory 不触发，_pending=False）。
-        # 不新增表：与 M3 共用 memory_write_receipts；该回执本身受 memory_write_receipt flag 闸控。
-        if _pending:
-            try:
-                emit_memory_receipt(
-                    character_id, memory.id, ACTION_DOWNGRADE,
-                    reason="admission gate: pending review",
-                    detail={"epistemic_status": _epi, "source": source, "sender_type": _spk},
-                )
-            except Exception:
-                pass
-
-        # 批 0-2 M1a：感知打标留痕（复用 M3 回执表与发射口，不新造机制）。
-        # 记下「原本要写成什么来源」，误标时可据此人工复核/一键纠正（方案 §四「纠」）。
-        # 断点 #5：同时记归属改写；P0 第 4 步起「改写结果」与「落库列值」是同一个值
-        # （speaker_type 列真写成 perception），故两键都取实际落库值，不留「说一套写一套」的痕。
-        if _perception_tagged:
-            try:
-                emit_memory_receipt(
-                    character_id, memory.id, ACTION_UPDATE,
-                    reason="perception source tagged (screen-derived)",
-                    detail={"from_source": _source_before_tag, "to_source": PERCEPTION_SOURCE,
-                            "epistemic_status": _epi, "memory_type": memory_type,
-                            "sub_type": sub_type,
-                            "speaker": PERCEPTION_SENDER, "speaker_type": _spk_type,
-                            "from_speaker_type": _speaker_type_before_tag},
-                )
-            except Exception:
-                pass
-
-        # #70 M3 写入回执：新记忆落库成功（flag 开=异步写一条 create；关=零行为）
-        # 批 0-8：同一条回执里补 `provenance`（来源链条）——既有四个键的语义与取值一字未动。
-        # `gates` 只登记**本轮真实生效**的改写，供治理面复盘「这条为什么长成这样」：
-        #   perception_tagged＝批 0-2 打标改了来源归属；admission_pending_review＝M4 待核降级；
-        #   plan_renamed＝L4 把 sub_type 收敛成 plan（判定用的是改名前的 sub_type，故 route 不受影响）。
-        try:
-            _gates = []
-            if _perception_tagged:
-                _gates.append("perception_tagged")
-            if _pending:
-                _gates.append("admission_pending_review")
-            if memory.sub_type != _sub_type_before_plan:
-                _gates.append("plan_renamed")
-            _prov = _write_provenance(
-                source=source, sub_type=sub_type, memory_type=memory.memory_type,
-                actor=_spk, source_id=source_id, epistemic_status=_epi,
-                derived_from_ids=derived_from_ids, node_type=node_type,
-                gates=_gates, stored_sub_type=memory.sub_type,
-            )
-            _detail = {
-                "memory_type": memory.memory_type,
-                "sub_type": memory.sub_type,
-                "source": memory.source,
-                "importance": float(memory.importance or 0),
-            }
-            if _prov:
-                _detail["provenance"] = _prov
-            emit_memory_receipt(
-                character_id, memory.id, ACTION_CREATE,
-                reason="new memory written",
-                detail=_detail,
-            )
-        except Exception:
-            pass
+        # 新建记忆的回执尾段（2026-10-12 A50 批 2：机械抽出到同文件私有函数
+        # `_emit_created_memory_receipts`）。三个原独立 try/except、pending→perception→create
+        # 的顺序、来源链字段与取值逐字不变；调用点仍在 flush/commit/refresh 之后、Chroma
+        # 写入之前，同步调用，不新增 await、不改事务边界与返回语义。
+        _emit_created_memory_receipts(
+            memory=memory, character_id=character_id, memory_type=memory_type,
+            sub_type=sub_type, source=source, source_id=source_id,
+            derived_from_ids=derived_from_ids, node_type=node_type,
+            emit_memory_receipt=emit_memory_receipt,
+            _epi=_epi, _spk=_spk, _spk_type=_spk_type, _pending=_pending,
+            _perception_tagged=_perception_tagged,
+            _source_before_tag=_source_before_tag,
+            _speaker_type_before_tag=_speaker_type_before_tag,
+            _sub_type_before_plan=_sub_type_before_plan,
+        )
 
         # 生成向量并存入 ChromaDB（复用查重阶段算好的嵌入，避免重复推理）
         try:
@@ -917,78 +633,705 @@ async def save_memory(
         except Exception:
             pass
 
-        # auto dedup：节流 + 防重入（避免每次写记忆都触发全量 O(n^2) 比较，导致 CPU 打满）
-        from app.memory.dedup import _schedule_dedup
-        from app.utils.async_tasks import spawn_background as _spawn_bg
-        _spawn_bg(_schedule_dedup(character_id), name=f"dedup-{character_id}")
+        # 写后副动作（2026-10-12 A50 批 1：机械抽出到同文件私有协程 `_run_created_memory_hooks`）。
+        # 六件事的顺序、try/except 作用域、参数取值、局部 import 与后台任务名逐字不变；
+        # 调用点仍在 `async_session_factory` 的上下文里，返回的仍是原 memory 对象。
+        await _run_created_memory_hooks(
+            memory=memory, user_id=user_id, character_id=character_id,
+            source=source, embedding=embedding, bm25_invalidate=bm25_invalidate,
+        )
+        return memory
 
-        # B1-② 记忆链建链器（方案 §13.4，flag memory_chain_builder 默认关 = 零行为）：
-        # _schedule_dedup 之后追加链节点，复用 save_memory 已算好的 embedding（避免重复 ONNX 推理）。
-        try:
-            from app.memory.chain_builder import link_new_memory, memory_chain_builder_enabled
-            if memory_chain_builder_enabled():
-                _spawn_bg(link_new_memory(memory.id, embedding), name=f"chain-{memory.id}")
-        except Exception:
-            pass
 
-        # 记忆架构 v2.1：里程碑记忆（event/relationship 且重要度达标）→ 异步低频意义提炼（开关控制，失败静默）
+async def _prefilter_memory_write(*, db, content, character_id, memory_type, sub_type,
+                                  source, source_id, emit_memory_receipt,
+                                  ACTION_REJECT) -> tuple[bool, str | None]:
+    """写入前的**过滤**阶段（2026-10-12 A50 批 6，自 ``save_memory`` 开头段机械抽出）。
+
+    做的事照旧：① M4 准入闸门拦开发运维元信息／代理发言 ② 聊天来源拦「台词原文」③ 与来源消息
+    （或同会话紧随的 AI 回复）逐字一致时拦掉。纯搬运、零行为变化——三条拒收的 reason 文案与 payload、
+    日志行、异常边界一个都没动。
+
+    **运输契约**（本切口唯一不是 AST 逐字照搬的部分，且是修正后的写法）：
+    - 返回 ``(keep, _src_msg_sender)``：``keep`` 是**明确布尔**——``True`` 放行、``False`` 三条拒收之一，
+      调用点立刻 ``return None``。不得用 sender 的 ``None`` 同时表达放行与拒收：放行时 sender
+      也可能为空，调用方仍继续新建并返回 Memory，必须用明确的 keep 布尔区分；
+    - 元信息那条早退发生在 ``_src_msg_sender = None`` **之前**（初始化位置照旧、不擅自提前），所以它
+      返回 ``(False, None)`` 而**不是**引用未绑定名——否则 UnboundLocalError；
+    - 后两条拒收与末尾放行都带上 ``_src_msg_sender``：它是唯一的跨段变量（供批 4 的
+      ``_prepare_created_memory`` 复用同一次查询），必须显式运输，不得重查。
+
+    为什么能机械抽（成立条件也是以后不许乱改的约束）：
+    - 整段是 ``save_memory`` 里紧跟 ``async with`` 的**连续三条语句**（If／Assign／If），块内**零**
+      commit／零 ``db.add``／零 ORM 写，事务时点与落库时机一个都没动；
+    - ``emit_memory_receipt``／``ACTION_REJECT`` **必须由调用点传入**：二者在 ``save_memory`` 顶从
+      ``app.memory.receipt`` 延迟 import，测试 monkeypatch 的正是那个模块的属性；helper 里重新 import
+      会改变依赖解析时点，故保留调用方原来取得的对象，不改成模块级 import 或默认参数；
+    - ``looks_like_raw_dialogue``／``ChatMessage`` 两条**块内局部 import 随块**（测试 patch 的正是
+      ``app.memory.dialogue_filter`` 与 ``app.models.chat``），不得上提到模块级；
+    - ``_admission_gate_on``／``_is_meta_noise``／``select``／``_logger`` **继续按模块全局晚绑定**
+      （不得提成形参、不得在模块顶层缓存）；
+    - 异常边界照旧且**不得顺手修**：``except Exception: pass`` 仍只包住逐字比对那一段（查消息失败
+      ⇒ fail-open 放行，且**已取到的 sender 保留**）；元信息与台词原文两条的 logger／回执异常原本就在
+      try 之外、会照旧上抛，逐字那条的 logger／回执异常原被这个 try 吞掉后**继续放行**——三处既有行为
+      抽出后原样保留，不许「顺手」补 try；
+    - 长度 60 上限、``source_id is None`` 短路、``sub_type is None`` 才取下一条、同会话＋``id >``＋
+      升序＋limit 1、首尾逐字比较三条判据一个都不许改。
+    """
+    # ── M4 准入闸门：开发运维元信息 / 代理发言拦截（flag 关=零行为）──
+    if _admission_gate_on() and _is_meta_noise(content):
+        _logger.info("Memory dropped: meta-noise/agent-speak (char=%d type=%s): %.40s",
+                     character_id, memory_type, content)
+        emit_memory_receipt(
+            character_id, None, ACTION_REJECT, reason="meta-noise/agent-speak blocked",
+            detail={"memory_type": memory_type, "sub_type": sub_type, "source": source},
+        )
+        return (False, None)
+    # 聊天来源记忆拦截"台词原文"（提取器/【记忆】标记路径都可能在来源消息为 AI 台词时误抄）：
+    # 命中对话特征，或与源消息（AI 回复）逐字一致 → 直接丢弃，不落库。
+    _src_msg_sender = None  # M4：缓存来源消息的 sender_type，供准入闸门复用同一次查询
+    if source == "chat":
+        from app.memory.dialogue_filter import looks_like_raw_dialogue
+        if looks_like_raw_dialogue(content):
+            _logger.info("Memory dropped: raw dialogue (char=%d type=%s sub=%s): %.40s",
+                         character_id, memory_type, sub_type, content)
+            emit_memory_receipt(
+                character_id, None, ACTION_REJECT, reason="raw dialogue dropped",
+                detail={"memory_type": memory_type, "sub_type": sub_type, "source": source},
+            )
+            return (False, _src_msg_sender)
+        if source_id is not None and len(content) <= 60:
+            try:
+                from app.models.chat import ChatMessage
+                msg = await db.get(ChatMessage, source_id)
+                if msg is not None:
+                    _src_msg_sender = msg.sender_type  # M4：复用，勿再查一次
+                    cands = []
+                    if msg.sender_type == "ai":
+                        cands.append(msg)
+                    elif sub_type is None:
+                        # 标记路径（【记忆：...】）的 source_id 指向用户消息：
+                        # 再取同会话紧随的 AI 回复，防止把 AI 台词/自我介绍当用户信息落库
+                        nxt = (await db.execute(
+                            select(ChatMessage).where(
+                                ChatMessage.session_id == msg.session_id,
+                                ChatMessage.id > msg.id,
+                                ChatMessage.sender_type == "ai",
+                            ).order_by(ChatMessage.id.asc()).limit(1)
+                        )).scalar_one_or_none()
+                        if nxt is not None:
+                            cands.append(nxt)
+                    for cand in cands:
+                        raw = (cand.content or "").strip().strip("“”「」『』...")
+                        c = content.strip().strip("“”「」『』...")
+                        if raw and c and (raw == c or raw.startswith(c) or raw.endswith(c)):
+                            _logger.info("Memory dropped: verbatim AI line (char=%d type=%s): %.40s",
+                                         character_id, memory_type, content)
+                            emit_memory_receipt(
+                                character_id, None, ACTION_REJECT, reason="verbatim AI line dropped",
+                                detail={"memory_type": memory_type, "sub_type": sub_type, "source": source},
+                            )
+                            return (False, _src_msg_sender)
+            except Exception:
+                pass
+    return (True, _src_msg_sender)
+
+
+async def _tag_perception_source(*, db, user_id, character_id, content, source,
+                                 epistemic_status, sub_type, speaker_type, speaker_id,
+                                 _perception_tagged, _source_before_tag,
+                                 _sub_type_before_tag, _speaker_type_before_tag,
+                                 _speaker_id_before_tag):
+    """感知来源**标注**阶段（2026-10-12 A50 批 3，自 ``save_memory`` 中段机械抽出）。
+
+    做的事照旧：flag ``perception_source_tag`` 开着且本轮感知语料非空时，用「快照时间标签残留
+    ＋ 长词重合」两路判据把这条记忆改写成感知来源（``source=perception``、``epistemic_status=
+    INFERRED``），显式撤掉调用方给的 speaker 两列，把命中那条快照的来源通道写进 ``sub_type``，
+    并按原有级别与文案打日志。纯搬运、零行为变化——判据、改写字段、日志、fail-open 一个都没动。
+
+    为什么能机械抽（成立条件也是以后不许乱改的约束）：
+    - 整段只**读**调用点的十四个值（``db``／``user_id``／``character_id``／``content``／``source``／
+      ``epistemic_status``／``sub_type``／``speaker_type``／``speaker_id``／``_perception_tagged``
+      ＋四个 ``*_before_tag``）；``_corpus``／``_texts``／``_channel`` 是段内临时值（段外无人读），
+      故只需把六个被改写的量按原序返回、由调用点解包回去；
+    - ``_perception_tagged`` 与四个 ``*_before_tag`` 的**初始化留在调用点**（位置刻意排在台词
+      过滤之后）：fail-open 回退要撤的就是它们，helper 只拿快照、不得自己重算；
+    - ``_perception_tag_on``／``_recent_snapshots``／``has_snapshot_tag``／``snapshot_overlap``／
+      ``_matched_snapshot_channel``／``PERCEPTION_SOURCE``／``_logger`` **必须继续按模块全局解析**
+      （不得提成默认参数、不得模块级缓存）：既有测试 monkeypatch 的正是 ``app.memory.write`` 上
+      这些属性，提前绑定会绕开接缝，让「patch 快照查询／patch 判据」那批用例失真；
+    - 异常边界照旧且**不得顺手修**：``except`` 只撤 ``source``／``sub_type``／``speaker_type``／
+      ``speaker_id`` 四列，不撤 ``epistemic_status`` 与 ``_perception_tagged``（改写途中抛错时后者
+      会停在 True）——既有行为，抽出也不改；
+    - 不新增查询／不新增开关／不改事务边界：``db`` 由调用点传入，复用已开的会话。
+    """
+    if _perception_tag_on():
         try:
-            from app.memory.meaning import maybe_extract_meaning
-            _spawn_bg(
-                maybe_extract_meaning(
-                    character_id, user_id, memory.id, memory.memory_type, memory.sub_type,
-                    memory.content, float(memory.importance or 0),
+            _corpus = await _recent_snapshots(db, user_id)
+            _texts = [t for _s, t in _corpus]
+            # 语料为空 ⇒ 不启用判据（本轮没有感知注入，保持旧行为、不报错）
+            if _texts and (has_snapshot_tag(content) or snapshot_overlap(content, _texts)):
+                source = PERCEPTION_SOURCE
+                epistemic_status = "INFERRED"  # 感知＝推断，未经用户认可绝不是事实（方案 §2.3）
+                _perception_tagged = True
+                # 断点 #5：调用方给的 speaker 两列**显式撤掉**（连 user id 一起清空）——
+                # 「这条来自屏幕」不等于「用户亲口说的」，也不该伪造 character。
+                # P0 第 4 步起：清空之后由下方 `perception_actor_column` 把判定结果落成
+                # ``speaker_type='perception'``（可 SQL 查询），speaker_id 仍留空（感知没有说话人 id）。
+                speaker_type = None
+                speaker_id = None
+                # M2「sub_type 记通道」：把命中的那条快照的来源通道写进 sub_type
+                # （accessibility / clipboard / media）。只在打标这一刻写，flag 关不写。
+                _channel = _matched_snapshot_channel(_corpus, content)
+                if _channel:
+                    sub_type = _channel
+                _logger.info("Memory tagged perception: char=%d user=%d from=%s channel=%s: %.40s",
+                             character_id, user_id, _source_before_tag, sub_type, content)
+        except Exception as _e:
+            source = _source_before_tag  # fail-open：打标本身不出错，只降级为旧行为
+            sub_type = _sub_type_before_tag  # 通道也只回退到打标前的值（同一次改写，一起撤）
+            speaker_type = _speaker_type_before_tag  # 断点 #5：归属改写与来源改写同批撤销
+            speaker_id = _speaker_id_before_tag
+            _logger.warning("perception tagging failed (fail-open): char=%d user=%d err=%s",
+                            character_id, user_id, _e)
+    return source, epistemic_status, _perception_tagged, sub_type, speaker_type, speaker_id
+
+
+async def _vector_dedup_on_write(*, db, content, character_id, source,
+                                 importance, sub_type, memory_type, source_id,
+                                 speaker_type, epistemic_status, derived_from_ids,
+                                 node_type, text_embedding, find_similar_memory,
+                                 emit_memory_receipt, ACTION_MERGE
+                                 ) -> tuple[Memory | None, list[float] | None]:
+    """写入前的**向量语义查重**段（2026-10-12 A50 批 7，自 ``save_memory`` 中段机械抽出）。
+
+    做的事照旧：先算 ``content`` 的嵌入，再按 ``VECTOR_DEDUP_THRESHOLD``（0.86，取最近 20 条）
+    找相似行；命中且那条**没被归档／置顶／锁定**、来源也不互斥时，走艾宾浩斯强化（复习 S×2）、
+    抬 importance（封顶 ``DECAY_MAX_PCT``）、并入调用方声明的 ``derived_from_ids``，commit 后
+    依次打命中日志 → ``obs_event(kind="vector_dedup")`` → ``emit_memory_receipt(ACTION_MERGE)``，
+    最后把那条记忆交还调用方当返回值。纯搬运、零行为变化。
+
+    为什么能机械抽（成立条件也是以后不许乱改的约束）：
+    - 整段只**读**调用点的十六个值（``db``／``content``／``character_id``／``source``／
+      ``importance``／``sub_type``／``memory_type``／``source_id``／``speaker_type``／
+      ``epistemic_status``／``derived_from_ids``／``node_type`` ＋四个局部导入），段内
+      ``similar``／``mem_id``／``sim``／``m`` 是段内临时值（段外无人读）；唯一必须运回去的
+      是**算好的 embedding**（见下）与「有没有命中」；
+    - **返回值是二选一的运输契约**：命中 → ``(m, embedding)``；未命中（相似度不够、跨源禁令、
+      归档／置顶／锁定保护）→ ``(None, embedding)``；尝试阶段抛异常 → 照旧把 ``embedding``
+      清成 ``None`` 再返回 ``(None, None)``。调用点用 ``is not None`` 早退；
+    - **embedding 必须原样带回**：未命中时它已经被算出来了，后面的 2) 字符级／3) 同主题查重与
+      写向量／hooks 要复用它；在这里丢掉会让它被重算一次（多一次模型调用），把 ``None`` 塞回去
+      会触发后续重新求嵌入；若重算失败才可能不带向量——不许"顺手"改变；
+    - ``text_embedding``／``find_similar_memory``（``app.memory.service`` 上）与
+      ``emit_memory_receipt``／``ACTION_MERGE``（``app.memory.receipt`` 上）**必须由调用点显式
+      传入**：既有测试 monkeypatch 的正是这两个模块上的属性，helper 自己 import 会绕开接缝；
+    - ``Memory``／``VECTOR_DEDUP_THRESHOLD``／``DECAY_MAX_PCT``／``REINFORCE_FACTOR_WRITE``／
+      ``_apply_reinforce``／``_normalize_importance``／``_merge_derived``／``_merge_receipt_detail``／
+      ``_cross_source_merge_blocked``／``_now_naive``／``_logger`` **继续按模块全局解析**
+      （不得提成默认参数、不得模块级缓存）；块内那行 ``from app.memory.observability import
+      obs_event`` 是原样跟着搬过来的（它本来就只在命中分支里用）；
+    - 异常边界照旧且**不得顺手修**：``except Exception`` 依旧把 ``embedding`` 与 ``similar`` 双双
+      清成 ``None``（含「``find_similar_memory`` 抛了但嵌入已算出来」这一半——旧行为就是丢弃它，
+      抽出也不改）；0.86/20、跨源禁令（禁令 3）、三重保护一个都没动；
+    - 不新增查询／不新增开关／不改事务边界：``db`` 由调用点传入，复用已开的会话。
+    """
+    try:
+        embedding = await text_embedding(content)
+        similar = await find_similar_memory(
+            character_id, embedding, limit=20, min_similarity=VECTOR_DEDUP_THRESHOLD
+        )
+    except Exception:
+        embedding = None
+        similar = None
+    if similar:
+        mem_id, sim = similar
+        m = await db.get(Memory, mem_id)
+        if m is not None and _cross_source_merge_blocked(source, m.source):
+            # 禁令 3：感知 ↔ 非感知不互并（并进去＝感知条以 chat 名义拿到长期身份）
+            _logger.info("Memory dedup skip cross-source: char=%d vector-hit id=%d src=%s/%s",
+                         character_id, mem_id, source, m.source)
+            m = None  # 跳过该候选，继续走后续字符级 / 同主题查重（宁可多一条，不可并错条）
+    if similar and m:
+        if not m.is_archived and not m.is_pinned and not m.is_locked:
+            # 艾宾浩斯强化：写入查重命中 = 一次复习，S ×2 并刷新遗忘起点
+            new_pct = _normalize_importance(importance)
+            if new_pct > float(m.importance or 40.0):
+                m.importance = min(DECAY_MAX_PCT, new_pct)
+            _apply_reinforce(m, REINFORCE_FACTOR_WRITE, _now_naive(), channel="write")
+            # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，
+            # 不含自身 id（去掉「∪ 自身 id」自环噪声）。
+            m.derived_from_ids = _merge_derived(m.derived_from_ids, derived_from_ids or [])
+            await db.commit()
+            _logger.info("Memory dedup on write: char=%d vector-hit id=%d sim=%.3f S=%.1f",
+                         character_id, mem_id, sim, m.strength_days or 0)
+            # M1-S11：dual_write_dup_merge（kind=vector_dedup）
+            from app.memory.observability import obs_event
+            obs_event(character_id, "dual_write_dup_merge",
+                      {"hit_id": mem_id, "sim": round(float(sim), 3)}, kind="vector_dedup")
+            emit_memory_receipt(
+                character_id, m.id, ACTION_MERGE, reason="write-time vector dedup",
+                detail=_merge_receipt_detail(
+                    "vector_dedup", m, source=source, sub_type=sub_type,
+                    memory_type=memory_type, source_id=source_id,
+                    speaker_type=speaker_type, epistemic_status=epistemic_status,
+                    derived_from_ids=derived_from_ids, node_type=node_type,
+                    content=content, extra={"sim": round(float(sim), 3)},
                 ),
-                name=f"meaning-{memory.id}",
+            )
+            return m, embedding
+    return None, embedding
+
+
+async def _text_topic_dedup_on_write(*, db, content, character_id, memory_type, source,
+                                   importance, sub_type, source_id, speaker_type,
+                                   epistemic_status, derived_from_ids, node_type,
+                                   timedelta, emit_memory_receipt, ACTION_MERGE
+                                   ) -> Memory | None:
+    """写入前的**字符级查重 ＋ 24h 同主题合并**两段（2026-10-12 A50 批 8，自 ``save_memory`` 中段机械抽出）。
+
+做的事照旧，两段一次搬完：
+- **2) 字符级查重兜底**：取同角色最近 30 条（``created_at`` 倒序）现行行，逐条比 ``SequenceMatcher``
+  比例 ``>= 0.72``；命中且那条没被置顶／锁定、来源也不互斥时，走艾宾浩斯强化（复习 S×2）、抬
+  importance（封顶 ``DECAY_MAX_PCT``）、并入调用方声明的 ``derived_from_ids``，commit 后依次打命中
+  日志 → ``obs_event(kind="text_dedup")`` → ``emit_memory_receipt(ACTION_MERGE)``，最后把那条记忆
+  交还调用方当返回值；
+- **3) 24h 同主题合并**（2026-08-08）：同角色**同 memory_type**、24h 内最多 50 条，比例**严格 >0.6**
+  即判"同一信息换了说法反复写入"（向量 0.86／字符 0.72 拦不住的近义表述），走同一套强化／抬升／
+  合并／commit／日志 → ``obs_event(kind="merge")``（带 ``sim``）→ 回执（带 ``extra.sim``）→ 返回。
+
+为什么两段合抽（成立条件也是以后不许乱改的约束）：
+- 两段**共享**同一份 ``b = content.strip()[:80]`` 与同一个 ``from difflib import SequenceMatcher``
+  局部导入；分开抽就得把这两个临时量当运输参数来回倒腾，合抽后它们与 ``_dedup_clause``／``recent``
+  ／``merge_rows`` 一样全变段内临时值（段外无人读），运输面只剩返回的那一条；
+- **返回值是二选一的运输契约**：命中 → 原 ``Memory``（``return m`` / ``return _m`` 两条原样保留，
+  连 ``_m`` 这个带下划线的旧名也不改）；未命中（两段都没命中）→ ``None``。调用点用 ``is not None`` 早退；
+- **不运输 ``embedding``**：这两段既不读也不改它，批 7 的运输契约只服务于向量段——既不传入也不带回，
+  更不许"顺手"改成重算或清 ``None``；
+- ``timedelta``／``emit_memory_receipt``／``ACTION_MERGE`` 三个**顶部局部导入**由调用点显式 kwarg
+  传入（既有测试 monkeypatch 的正是 ``app.memory.receipt`` 上的属性，helper 自己 import 会绕开接缝）；
+  ``select``／``Memory``／``current_facts_status_clause``／``_write_dedup_active_only_on``／
+  ``_retrievable_status_clause``／``_cross_source_merge_blocked``／``_normalize_importance``／
+  ``DECAY_MAX_PCT``／``REINFORCE_FACTOR_WRITE``／``_apply_reinforce``／``_merge_derived``／
+  ``_merge_receipt_detail``／``_now_naive``／``_logger`` **继续按模块全局晚绑定**（不得提成默认参数、
+  不得模块级缓存）；块内那两行 ``from app.memory.observability import obs_event`` 是随块原样搬过来的
+  （本来就只在各自命中分支里用，不合并、不上提）；
+- **两处状态子句的差异照旧保留**：字符档在 ``write_dedup_active_only`` 开着时用
+  ``current_facts_status_clause()``（P1-2 方案 B：只与现行行比对），关＝沿用
+  ``_retrievable_status_clause()``（怀旧面语义、当前永真）；主题档**恒用**
+  ``_retrievable_status_clause()``（行内 ``#70-C`` 注释随块）。不许"顺手统一"；
+- 阈值、切片与边界全部不动：``>= 0.72`` 与严格 ``> 0.6``、两侧都取 ``[:80]``、``len < 4`` 跳过、
+  ``limit(30)``／``limit(50)``、``created_at >= _now_naive() - timedelta(hours=24)``、两处
+  ``order_by(Memory.created_at.desc())``；
+- **异常边界照旧且不得顺手修**：两段里**没有** try，``db.execute``／``commit``／回执抛了就照旧向上抛
+  （调用点与 ``save_memory`` 都不新增 catch，不许在这里加"更稳"的包装）；
+- 不新增查询／不新增开关／不改事务边界：``db`` 由调用点传入，复用已开的会话；两处 commit 各在自己
+  的命中分支内、且都排在「日志 → obs_event → 回执」之前。
+"""
+    _dedup_clause = current_facts_status_clause() if _write_dedup_active_only_on() else _retrievable_status_clause()
+    from difflib import SequenceMatcher
+    recent_result = await db.execute(
+        select(Memory)
+        .where(Memory.character_id == character_id, Memory.is_archived == False, _dedup_clause)
+        .order_by(Memory.created_at.desc())
+        .limit(30)
+    )
+    recent = recent_result.scalars().all()
+    b = content.strip()[:80]
+    for m in recent:
+        if _cross_source_merge_blocked(source, m.source):
+            continue  # 禁令 3：感知 ↔ 非感知不互并
+        a = (m.content or "").strip()[:80]
+        if len(a) < 4 or len(b) < 4:
+            continue
+        if SequenceMatcher(None, a, b).ratio() >= 0.72:
+            # 艾宾浩斯强化：写入查重命中 = 一次复习，S ×2 并刷新遗忘起点
+            if m.is_pinned or m.is_locked:
+                continue
+            new_pct = _normalize_importance(importance)
+            if new_pct > float(m.importance or 40.0):
+                m.importance = min(DECAY_MAX_PCT, new_pct)
+            _apply_reinforce(m, REINFORCE_FACTOR_WRITE, _now_naive(), channel="write")
+            # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，不含自身 id。
+            m.derived_from_ids = _merge_derived(m.derived_from_ids, derived_from_ids or [])
+            await db.commit()
+            _logger.info("Memory dedup on write: char=%d text-hit id=%d S=%.1f",
+                         character_id, m.id, m.strength_days or 0)
+            # M1-S11：dual_write_dup_merge（kind=text_dedup）
+            from app.memory.observability import obs_event
+            obs_event(character_id, "dual_write_dup_merge", {"hit_id": m.id}, kind="text_dedup")
+            emit_memory_receipt(
+                character_id, m.id, ACTION_MERGE, reason="write-time text dedup",
+                detail=_merge_receipt_detail(
+                    "text_dedup", m, source=source, sub_type=sub_type,
+                    memory_type=memory_type, source_id=source_id,
+                    speaker_type=speaker_type, epistemic_status=epistemic_status,
+                    derived_from_ids=derived_from_ids, node_type=node_type,
+                    content=content,
+                ),
+            )
+            return m
+
+    # 3) 24h 同主题合并（2026-08-08）：同角色同类型 24h 内、字符相似 >0.6 → 更新原记忆而非新增。
+    #    覆盖"同一信息换了说法反复写入"（向量 0.86/字符 0.72 拦不住的近义表述）。
+    merge_rows = (await db.execute(
+        select(Memory)
+        .where(
+            Memory.character_id == character_id,
+            Memory.is_archived == False,
+            Memory.memory_type == memory_type,
+            Memory.created_at >= _now_naive() - timedelta(hours=24),
+            _retrievable_status_clause(),   # #70-C
+        )
+        .order_by(Memory.created_at.desc())
+        .limit(50)
+    )).scalars().all()
+    for _m in merge_rows:
+        if _m.is_pinned or _m.is_locked:
+            continue
+        if _cross_source_merge_blocked(source, _m.source):
+            continue  # 禁令 3：感知 ↔ 非感知不互并
+        _a = (_m.content or "").strip()[:80]
+        if len(_a) < 4 or len(b) < 4:
+            continue
+        if SequenceMatcher(None, _a, b).ratio() > 0.6:
+            new_pct = _normalize_importance(importance)
+            if new_pct > float(_m.importance or 40.0):
+                _m.importance = min(DECAY_MAX_PCT, new_pct)
+            _apply_reinforce(_m, REINFORCE_FACTOR_WRITE, _now_naive(), channel="write")
+            # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，不含自身 id。
+            _m.derived_from_ids = _merge_derived(_m.derived_from_ids, derived_from_ids or [])
+            await db.commit()
+            _logger.info("Memory merge on write: char=%d topic-hit id=%d sim=%.2f",
+                         character_id, _m.id, SequenceMatcher(None, _a, b).ratio())
+            # M1-S11：dual_write_dup_merge（kind=merge）
+            from app.memory.observability import obs_event
+            obs_event(character_id, "dual_write_dup_merge",
+                      {"hit_id": _m.id, "sim": round(SequenceMatcher(None, _a, b).ratio(), 3)},
+                      kind="merge")
+            emit_memory_receipt(
+                character_id, _m.id, ACTION_MERGE, reason="write-time topic merge 24h",
+                detail=_merge_receipt_detail(
+                    "merge", _m, source=source, sub_type=sub_type,
+                    memory_type=memory_type, source_id=source_id,
+                    speaker_type=speaker_type, epistemic_status=epistemic_status,
+                    derived_from_ids=derived_from_ids, node_type=node_type,
+                    content=content,
+                    extra={"sim": round(SequenceMatcher(None, _a, b).ratio(), 3)},
+                ),
+            )
+            return _m
+    return None
+
+
+def _emit_created_memory_receipts(
+        *, memory, character_id, memory_type, sub_type, source, source_id,
+        derived_from_ids, node_type, emit_memory_receipt, _epi, _spk, _spk_type,
+        _pending, _perception_tagged, _source_before_tag, _speaker_type_before_tag,
+        _sub_type_before_plan
+):
+    """新建记忆的**回执尾段**（2026-10-12 A50 批 2，自 ``save_memory`` 尾段机械抽出）。
+
+    三件事顺序照旧：① M4 待核降级（``_pending``）② 批 0-2 感知打标留痕（``_perception_tagged``）
+    ③ #70 M3 的 create 回执＋批 0-8 的 ``provenance`` 来源链。纯搬运，零行为变化——三段各自
+    ``try/except`` 静默、字段与取值、``reason`` 文案、``_gates`` 的判定顺序一个都没动。
+
+    为什么能机械抽（成立条件也是以后不许乱改的约束）：
+    - 整段只依赖调用点的十七个值（``memory``／``character_id``／``memory_type``／``sub_type``／
+      ``source``／``source_id``／``derived_from_ids``／``node_type``／``emit_memory_receipt``
+      ＋ ``_epi``／``_spk``／``_spk_type``／``_pending``／``_perception_tagged``／
+      ``_source_before_tag``／``_speaker_type_before_tag``／``_sub_type_before_plan``），
+      不读写 ``db``、不新增查询、不产生返回值，所以 ``save_memory`` 的其余部分一字未变；
+    - ``emit_memory_receipt`` **必须由调用点传入**：它在 ``save_memory`` 函数顶从
+      ``app.memory.receipt`` 延迟 import，测试 monkeypatch 的正是那个模块属性；helper 里
+      重新 import 会绕开这层接缝，让「patch 发射口」的那批用例失真；
+    - 三个 ``ACTION_*`` 常量**继续留在本函数顶延迟 import**（与原口径一致：每次调用时从模块
+      属性解析），只是 ``save_memory`` 自己不再用它们、故那边同批删掉；
+    - 本函数**不读任何 flag**、不自己判定 pending／打标／plan 改名——那些判定结果一律由调用点
+      算好后传入（原样如此，不得「顺手」搬进来）。
+    """
+    from app.memory.receipt import (
+        ACTION_CREATE,
+        ACTION_DOWNGRADE,
+        ACTION_UPDATE,
+    )
+    # M4 准入闸门：待核留痕（复用 M3 回执；flag 关时 admit_memory 不触发，_pending=False）。
+    # 不新增表：与 M3 共用 memory_write_receipts；该回执本身受 memory_write_receipt flag 闸控。
+    if _pending:
+        try:
+            emit_memory_receipt(
+                character_id, memory.id, ACTION_DOWNGRADE,
+                reason="admission gate: pending review",
+                detail={"epistemic_status": _epi, "source": source, "sender_type": _spk},
             )
         except Exception:
             pass
 
-        # 织库增量补卡（2026-08-12 → 2026-08-14 改走事件总线）：发布 memory.written 事件，
-        # 由 events/handlers 订阅者执行（importance≥60 才整理，source=life 进私·织库）
+    # 批 0-2 M1a：感知打标留痕（复用 M3 回执表与发射口，不新造机制）。
+    # 记下「原本要写成什么来源」，误标时可据此人工复核/一键纠正（方案 §四「纠」）。
+    # 断点 #5：同时记归属改写；P0 第 4 步起「改写结果」与「落库列值」是同一个值
+    # （speaker_type 列真写成 perception），故两键都取实际落库值，不留「说一套写一套」的痕。
+    if _perception_tagged:
         try:
-            from app.events import publish
-            from app.events.schema import make_event
-            _evt = make_event(
-                "memory.written",
-                speaker={"type": "system", "id": "memory_pipeline"},
-                target={"type": "character", "id": character_id},
-                audience=[character_id, user_id],
-                provenance={"origin": "system_event"},
-                data={
-                    "user_id": user_id,
-                    "character_id": character_id,
-                    "memory_id": memory.id,
-                    "memory_type": memory.memory_type,
-                    "sub_type": memory.sub_type,
-                    "source": source or "",
-                    "importance": float(memory.importance or 0),
-                },
+            emit_memory_receipt(
+                character_id, memory.id, ACTION_UPDATE,
+                reason="perception source tagged (screen-derived)",
+                detail={"from_source": _source_before_tag, "to_source": PERCEPTION_SOURCE,
+                        "epistemic_status": _epi, "memory_type": memory_type,
+                        "sub_type": sub_type,
+                        "speaker": PERCEPTION_SENDER, "speaker_type": _spk_type,
+                        "from_speaker_type": _speaker_type_before_tag},
             )
-            publish("memory.written", _evt)
         except Exception:
             pass
 
+    # #70 M3 写入回执：新记忆落库成功（flag 开=异步写一条 create；关=零行为）
+    # 批 0-8：同一条回执里补 `provenance`（来源链条）——既有四个键的语义与取值一字未动。
+    # `gates` 只登记**本轮真实生效**的改写，供治理面复盘「这条为什么长成这样」：
+    #   perception_tagged＝批 0-2 打标改了来源归属；admission_pending_review＝M4 待核降级；
+    #   plan_renamed＝L4 把 sub_type 收敛成 plan（判定用的是改名前的 sub_type，故 route 不受影响）。
+    try:
+        _gates = []
+        if _perception_tagged:
+            _gates.append("perception_tagged")
+        if _pending:
+            _gates.append("admission_pending_review")
+        if memory.sub_type != _sub_type_before_plan:
+            _gates.append("plan_renamed")
+        _prov = _write_provenance(
+            source=source, sub_type=sub_type, memory_type=memory.memory_type,
+            actor=_spk, source_id=source_id, epistemic_status=_epi,
+            derived_from_ids=derived_from_ids, node_type=node_type,
+            gates=_gates, stored_sub_type=memory.sub_type,
+        )
+        _detail = {
+            "memory_type": memory.memory_type,
+            "sub_type": memory.sub_type,
+            "source": memory.source,
+            "importance": float(memory.importance or 0),
+        }
+        if _prov:
+            _detail["provenance"] = _prov
+        emit_memory_receipt(
+            character_id, memory.id, ACTION_CREATE,
+            reason="new memory written",
+            detail=_detail,
+        )
+    except Exception:
+        pass
 
-        # 插件 Hook：memory_written（记忆写入成功 → 插件副动作；异常隔离，不阻断主链路）
+async def _prepare_created_memory(*, db, timedelta, user_id, character_id, memory_type,
+                                   content, title, importance, sub_type, source,
+                                   related_memory_id, source_id, group_id, scope,
+                                   speaker_id, speaker_type, epistemic_status,
+                                   reliability, chain_id, parent_id, node_type,
+                                   derived_from_ids, _src_msg_sender):
+    """新建记忆的**准备阶段**（2026-10-12 A50 批 4，自 ``save_memory`` 中后段机械抽出）。
+
+    做的事照旧：① P0 归属与认知状态（默认按来源推断 + 感知派生条不套默认 + 落成
+    ``speaker_type`` 列）② M4 准入闸门（``admit_memory`` 确定性裁决，只降不升）
+    ③ P0 影子埋点（只判定 + 只打一条 INFO，不改任何取值）④ 构造那条尚未落库的 ``Memory``
+    （含衰减起点／强度／下次复习时间／派生列表 JSON）⑤ L4 计划类记忆落库时写 ``valid_to``
+    并标 ``sub_type=plan``。纯搬运、零行为变化——判据、取值、日志级别、异常边界一个都没动。
+
+    为什么能机械抽（成立条件也是以后不许乱改的约束）：
+    - 整段是 ``save_memory`` 内的一段**连续**语句，**零** ``return``（没有要搬的早退分支），
+      也**不写任何形参**（8 个新局部全是段内新建），所以只需把七个跨段变量按原序返回解包回去；
+    - ``db`` 由调用点传入（复用已开会话）、``timedelta`` 也由调用点传入——它在
+      ``save_memory`` 顶部做局部 import，**不得**为了好看提成模块级 import（那会把
+      「调用时解析」的时点前移到导入期）；
+    - ``Memory``／``json``／``_admission_gate_on``／``_is_perception_source``／
+      ``perception_actor_column``／``_resolve_admission_sender``／``admit_memory``／
+      ``_normalize_importance``／``_initial_strength``／``_now_naive``／``_logger``
+      **必须继续按模块全局晚绑定**（不得提成默认参数或模块级缓存）：既有测试 monkeypatch 与
+      直接取用的正是 ``app.memory.write`` 上这些属性，提前绑定会绕开接缝；
+    - 四段异常语义照旧且**不得顺手修**：准入两段各自回落 + warning，影子与 plan 两段
+      完全静默；**此处不得再加一层总包围 try**（那会把原本该冒的错吞掉、改变异常边界）；
+    - 不新增查询／不新增开关／不改事务边界：``db.add`` 及 flush/commit/refresh 仍在调用方，
+      临时 ``Memory`` 对象仍在本事务内构造、仍未 ``db.add``。
+    """
+    pct = _normalize_importance(importance)
+    # P0：记忆归属与认知状态（默认按来源推断；调用方可显式覆盖）
+    _spk_type = speaker_type
+    _spk_id = speaker_id
+    # 断点 #5 → P0 第 4 步：感知派生条**不套用「默认＝用户陈述」**，且判定结果直接落进列。
+    # 本判定**常开**（不再受 perception_source_tag 门控）：生产该闸已开，打标命中时两列被
+    # 清空、调用方直接写 source=perception 时也在此收口；其它来源的兜底路径一字未动。
+    if _spk_type is None and _spk_id is None and not _is_perception_source(source):
+        _spk_type = "user"  # 默认归属用户（多数记忆来自用户陈述）
+        _spk_id = user_id
+    _spk_type = perception_actor_column(_spk_type, source)
+    _spk = _spk_type  # 准入闸门留痕用（角色推断时更新为实际归属）
+    _epi = epistemic_status
+    _pending = False
+    if _admission_gate_on():
+        # M4 准入闸门：确定性裁决（不新增 LLM）。显式 epistemic 也只降不升——抽取器给的
+        # FACT 来自内容启发式（memory/speaker.py），不等于「来源消息是用户说的」。
         try:
-            from app.plugins.registry import run_hook
-            await run_hook("memory_written", {
+            _spk = await _resolve_admission_sender(
+                source, source_id, speaker_type, _src_msg_sender, db)
+        except Exception as e:
+            _spk = "user"
+            _logger.warning("admission gate sender resolve failed: %s", e)
+        try:
+            _epi, _pending = admit_memory(source, _spk, _epi, reliability, memory_type)
+        except Exception as e:
+            _epi = epistemic_status  # 任何异常回落现状
+            _pending = False
+            _logger.warning("admission gate verdict failed: %s", e)
+    if _epi is None:
+        _epi = "FACT" if source in ("chat", "moment", "diary", "life", "bio") else "UNVERIFIED"
+    # ── P0 语义统一·第 1 步 影子埋点①（flag actor_semantics_shadow，默认关＝零行为）──
+    # 只判定 + 只打一条 INFO：「按统一语义该记在谁名下」vs「本轮实际会落成什么」。
+    # 不查库、不写库、不改 _spk/_spk_type/_epi 任何取值，也不得插到任何判定之前。
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        if AGENT_FLAGS.get("actor_semantics_shadow", False):
+            from app.memory.actor_shadow import trace_actor_write
+            trace_actor_write(
+                character_id=character_id, user_id=user_id, source=source,
+                speaker_type=speaker_type, source_message_sender=_src_msg_sender,
+                source_id=source_id, actual_speaker_type=_spk_type,
+                actual_speaker_id=_spk_id, admission_actor=_spk,
+            )
+    except Exception:
+        pass
+    memory = Memory(
+        user_id=user_id,
+        character_id=character_id,
+        memory_type=memory_type,
+        title=title or None,
+        content=content,
+        scope=scope,
+        importance=pct,
+        reliability_score=reliability,  # M4：可靠度（<0.4 已被闸门降级为待核）
+        sub_type=sub_type,
+        source=source,
+        related_memory_id=related_memory_id,
+        source_id=source_id,
+        group_id=group_id,
+        chain_id=chain_id,
+        parent_id=parent_id,
+        node_type=node_type,
+        speaker_id=_spk_id,
+        speaker_type=_spk_type,
+        epistemic_status=_epi,
+        decay_base_at=_now_naive(),
+        strength_days=_initial_strength(memory_type),
+        last_reinforce_at=_now_naive(),
+        next_review_at=_now_naive() + timedelta(days=_initial_strength(memory_type)),
+        derived_from_ids=json.dumps(list(derived_from_ids or []), ensure_ascii=False, default=str),
+    )
+    # L4 提取侧（2026-09-09 主动复习回忆化）：计划类记忆落库时写 valid_to + 标 sub_type=plan。
+    # flag review_plan_validity_extract 灰度默认关；关=零行为（不写不标，逐字节旧路径）。
+    # 提取器（extractor.extract_single / 【记忆】标记路径）所有写入都经 save_memory，故在此单点收口；
+    # 显式 sub_type（slot/status/relationship 等）不覆盖，只收敛默认/extracted 路径。
+    _sub_type_before_plan = sub_type  # 批 0-8：留痕要能看出「被 L4 改名成 plan」这一步（不改判据）
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        if AGENT_FLAGS.get("review_plan_validity_extract", False):
+            from app.memory.tense import classify_tense, plan_valid_until
+            if classify_tense(memory) == "plan" and sub_type in (None, "extracted", "plan"):
+                memory.sub_type = "plan"
+                memory.valid_to = plan_valid_until(memory, _now_naive())
+    except Exception:
+        pass
+    return memory, pct, _spk_type, _spk, _epi, _pending, _sub_type_before_plan
+
+
+async def _run_created_memory_hooks(*, memory, user_id, character_id, source,
+                                    embedding, bm25_invalidate):
+    """新建记忆的**写后副动作**（2026-10-12 A50 批 1，自 ``save_memory`` 尾段机械抽出）。
+
+    六件事顺序照旧：① auto dedup（节流 + 防重入）② 记忆链建链器 ③ 异步意义提炼
+    ④ ``memory.written`` 事件总线 ⑤ 插件 ``memory_written`` hook ⑥ BM25 索引失效。
+    纯搬运，零行为变化——判据、取值、任务名、事件与插件 payload 的字段一个都没动。
+
+    为什么能机械抽（成立条件也是以后不许乱改的约束）：
+    - 整段只依赖调用点的六个值（``memory``／``user_id``／``character_id``／``source``／
+      ``embedding``／``bm25_invalidate``），不读写 ``db``、不改 save_memory 的其它局部状态、
+      不产生返回值，所以抽出去后 save_memory 的其余部分与返回值一字未变；
+    - ``bm25_invalidate`` **必须由调用点传入**：它在 save_memory 函数顶从 ``app.memory.service``
+      延迟 import，测试 monkeypatch 的正是 service 上的那个属性；helper 里重新 import 会绕开
+      这层接缝，让「patch 服务层」的那批测试（bm25 失效断言）失真。
+    - 其余依赖（``_schedule_dedup``／``spawn_background``／``link_new_memory``／
+      ``maybe_extract_meaning``／``publish``／``make_event``／``run_hook``）**继续留在函数内**
+      做延迟 import：它们的 monkeypatch 接缝是「模块属性」，函数内解析才接得住，也不得为了
+      好看提到模块顶层（有副作用的模块不许提前 import）。
+    - 失败边界逐字保持：只有 ``_spawn_bg(_schedule_dedup(...))`` 是**裸调用**（异常照旧上抛），
+      其余每段各自 try/except 静默；**此处不得再加一层总包围 try**——那会把原本该冒的错吞掉。
+    """
+    # auto dedup：节流 + 防重入（避免每次写记忆都触发全量 O(n^2) 比较，导致 CPU 打满）
+    from app.memory.dedup import _schedule_dedup
+    from app.utils.async_tasks import spawn_background as _spawn_bg
+    _spawn_bg(_schedule_dedup(character_id), name=f"dedup-{character_id}")
+
+    # B1-② 记忆链建链器（方案 §13.4，flag memory_chain_builder 默认关 = 零行为）：
+    # _schedule_dedup 之后追加链节点，复用 save_memory 已算好的 embedding（避免重复 ONNX 推理）。
+    try:
+        from app.memory.chain_builder import link_new_memory, memory_chain_builder_enabled
+        if memory_chain_builder_enabled():
+            _spawn_bg(link_new_memory(memory.id, embedding), name=f"chain-{memory.id}")
+    except Exception:
+        pass
+
+    # 记忆架构 v2.1：里程碑记忆（event/relationship 且重要度达标）→ 异步低频意义提炼（开关控制，失败静默）
+    try:
+        from app.memory.meaning import maybe_extract_meaning
+        _spawn_bg(
+            maybe_extract_meaning(
+                character_id, user_id, memory.id, memory.memory_type, memory.sub_type,
+                memory.content, float(memory.importance or 0),
+            ),
+            name=f"meaning-{memory.id}",
+        )
+    except Exception:
+        pass
+
+    # 织库增量补卡（2026-08-12 → 2026-08-14 改走事件总线）：发布 memory.written 事件，
+    # 由 events/handlers 订阅者执行（importance≥60 才整理，source=life 进私·织库）
+    try:
+        from app.events import publish
+        from app.events.schema import make_event
+        _evt = make_event(
+            "memory.written",
+            speaker={"type": "system", "id": "memory_pipeline"},
+            target={"type": "character", "id": character_id},
+            audience=[character_id, user_id],
+            provenance={"origin": "system_event"},
+            data={
                 "user_id": user_id,
                 "character_id": character_id,
                 "memory_id": memory.id,
                 "memory_type": memory.memory_type,
                 "sub_type": memory.sub_type,
-                "content": memory.content,
+                "source": source or "",
                 "importance": float(memory.importance or 0),
-                "source": memory.source,
-            })
-        except Exception:
-            pass
+            },
+        )
+        publish("memory.written", _evt)
+    except Exception:
+        pass
 
-        # 检索增强（2026-08-23）：记忆已写入该角色 → 使 BM25 索引失效（下次检索懒重建）
-        bm25_invalidate(character_id)
-        return memory
+
+    # 插件 Hook：memory_written（记忆写入成功 → 插件副动作；异常隔离，不阻断主链路）
+    try:
+        from app.plugins.registry import run_hook
+        await run_hook("memory_written", {
+            "user_id": user_id,
+            "character_id": character_id,
+            "memory_id": memory.id,
+            "memory_type": memory.memory_type,
+            "sub_type": memory.sub_type,
+            "content": memory.content,
+            "importance": float(memory.importance or 0),
+            "source": memory.source,
+        })
+    except Exception:
+        pass
+
+    # 检索增强（2026-08-23）：记忆已写入该角色 → 使 BM25 索引失效（下次检索懒重建）
+    bm25_invalidate(character_id)
 
 
 # ── P0 第 4 步：只读追溯（按来源消息反查 actor 归一结果）────────────────────────

@@ -109,62 +109,14 @@ async def _run_agent_core(
     if await _cold_war_block(character_id, user_id, content):
         return None
 
-    # A32（2026-10-07）：用户消息落库后、生成 AI 回复前——先做「事件已兑现 → 承诺静默关闭」的
-    # 确定性结算（到家 / 吃药类信号命中则置 discharged，不发消息、不调模型、不写主动消息日志）。
-    # 与 run_prospective_due 的 fire 前闸门同口径，本处是「事件发生当时」的第一道，闸门是双保险。
-    # 失败静默：结算不了不影响本轮回复（宁可漏关，不可误关）。
-    try:
-        from app.scheduling.prospective_intent import settle_promises_on_user_message
-        await settle_promises_on_user_message(character_id, session_id, content)
-    except Exception as e:
-        _logger.warning("prospective settle on user message failed: %s", e)
-
-    # #63 机制5：用户安慰词 → 最高权重心事减重（flag 开才生效，失败静默）
-    try:
-        from app.life.preoccupations import has_comfort_word
-        if has_comfort_word(content):
-            from app.agent.loop import AGENT_FLAGS
-            if AGENT_FLAGS.get("preoccupation_enabled", False):
-                from app.life.preoccupations import soften_by_comfort_words
-                async with async_session_factory() as _pdb:
-                    await soften_by_comfort_words(
-                        _pdb, user_id=user_id, character_id=character_id, content=content,
-                    )
-                    await _pdb.commit()
-    except Exception:
-        pass
-
-    # 主动到期复习成功判定（P1）：用户回复与 24h 内复习消息弱相关 → 强化（异步不阻塞）
-    try:
-        from app.scheduling.memory_review import maybe_review_success
-        spawn_background(maybe_review_success(user_id, character_id, content))
-    except Exception:
-        pass
-
-    # AI 情绪关怀：检测用户低落情绪 → 登记延迟主动关心任务（异步不阻塞）
-    try:
-        from app.domain.emotion.model import detect_user_emotion
-        if "低落" in detect_user_emotion(content):
-            from app.application.emotion_care_ports import production_care_ports
-            from app.domain.emotion.care import register_care_task
-            spawn_background(register_care_task(user_id, character_id, content,
-                                                ports=production_care_ports))
-    except Exception:
-        pass
-
-    # 用户时间承诺解析（用户说"我去洗澡20分钟回来"等 → 创建定时事件，到点 AI 主动问；2026-08-14 修复）
-    if user_timer:
-        try:
-            from app.scheduling.promise_parser import extract_timer
-            from app.scheduling.promise_service import create_event
-            user_timer_info = extract_timer(
-                content, user_id=user_id, character_id=character_id,
-                session_id=session_id, source_message_id=user_msg_id, sender="user",
-            )
-            if user_timer_info:
-                await create_event(user_timer_info)
-        except Exception as e:
-            _logger.warning("User timer parse failed: %s", e)
+    # 用户轮次确定性信号五块（承诺兑现结算 / 安慰词减重 / 复习成功判定 / 情绪关怀登记 /
+    # 用户时间承诺解析）于 2026-10-13 A50 批 16 机械抽成同文件私有协程 _run_user_turn_signals
+    #（块内语句逐字未变）；位置一字不动——仍在冷战拦截之后、_cs_snapshot 与 state 构造、
+    # agent.ainvoke 之前（顺序即语义）。
+    await _run_user_turn_signals(
+        session_id=session_id, user_id=user_id, character_id=character_id,
+        content=content, user_msg_id=user_msg_id, user_timer=user_timer,
+    )
 
     # M1-S10（2026-08-31）：一轮只查一次八维状态——回复延迟/情感标签/上下文 life_share 复用同一快照
     # （原路径每轮最多 3 次查询：延迟 1 + 情感 1 + life_share trust 1；失败 None 走各处兜底）
@@ -233,46 +185,200 @@ async def _run_agent_core(
     full_text = final_state.get("ai_response") or ""
     _loop_steps: list[dict] = []
 
+    if not _is_stream:
+        final_state, _trace_llm_calls = await _run_recall_second_hop(
+            final_state=final_state, _trace_llm_calls=_trace_llm_calls,
+            user_id=user_id, character_id=character_id,
+        )
+        full_text = final_state.get("ai_response") or ""
+
+    (final_state, full_text, _loop_steps,
+     _trace_searched, _trace_llm_calls) = await _run_search_stage(
+        final_state=final_state, full_text=full_text, _loop_steps=_loop_steps,
+        _trace_searched=_trace_searched, _trace_llm_calls=_trace_llm_calls,
+        user_id=user_id, character_id=character_id, search_loop=search_loop,
+    )
+
+    if not _is_stream:
+        final_state, full_text = await _run_mcp_stage(
+            final_state=final_state, full_text=full_text, _loop_steps=_loop_steps,
+            user_id=user_id, character_id=character_id, session_id=session_id,
+        )
+
+    # 收尾五阶段（2026-10-13 A50 批 18 机械抽成同文件私有协程，块内语句逐字未变）：生图标记提取 →
+    # Task Trace 留痕 → Phase H 任务化 → 日历/备忘提取＋AI 承诺标记 → 可见文本清洗与降级。
+    # 五个调用点位置一字不动——仍在受控工具三阶段之后、final_state["ai_response"] 回写与九键返回
+    # 之前（顺序即语义：兜底清洗放在 CAL_NOTE/MEMO/timer 提取之后，提取源不受影响）。
+    full_text, gen_prompt, img_text = _extract_gen_image_stage(
+        full_text=full_text, _source_text=_source_text, _is_stream=_is_stream,
+    )
+
+    await _emit_chat_trace(
+        _t0=_t0, _trace_actions=_trace_actions, _loop_steps=_loop_steps,
+        _trace_llm_calls=_trace_llm_calls, _trace_searched=_trace_searched,
+        search_loop=search_loop, trace_route=trace_route,
+        character_id=character_id, user_id=user_id, session_id=session_id,
+    )
+
+    await _schedule_chat_task(
+        run_chat_task=run_chat_task, _trace_actions=_trace_actions, _loop_steps=_loop_steps,
+        character_id=character_id, user_id=user_id, session_id=session_id,
+        content=content, full_text=full_text,
+    )
+
+    full_text, _cal_note_text, _memo_text = await _run_note_and_timer_stage(
+        _source_text=_source_text, full_text=full_text, _is_stream=_is_stream,
+        search_loop=search_loop, user_id=user_id, character_id=character_id,
+        session_id=session_id, content=content,
+    )
+
+    full_text, final_state = await _finalize_visible_text(
+        final_state=final_state, full_text=full_text,
+        session_id=session_id, user_id=user_id, character_id=character_id,
+    )
+    final_state["ai_response"] = full_text
+
+    return {
+        "final_state": final_state,
+        "final_text": full_text,
+        "gen_prompt": gen_prompt,
+        "img_text": img_text,
+        "cal_note_text": _cal_note_text,
+        "memo_text": _memo_text,
+        "streamed": _is_stream,
+        "stream_blocks": final_state.get("stream_blocks") or [],
+        "stream_saved": final_state.get("stream_saved") or [],
+    }
+
+
+# ---- 用户轮次确定性信号（2026-10-13 A50 批 16 自 _run_agent_core 机械抽出）----
+# 五块整段搬出、块内语句逐字未变（含函数内 import / flags 现取 / async session / commit /
+# 异常 warn 与静默 pass）：承诺兑现结算 → 安慰词减重 → 复习成功判定 → 情绪关怀登记 →
+# 用户时间承诺解析。调用点仍在冷战早退之后、_cs_snapshot 与 agent.ainvoke 之前；
+# async_session_factory / spawn_background / _logger 仍是 chat_service 裸全局晚绑定
+#（不传绑定副本），故既有打桩面零迁移；六个入参全部 keyword-only、无默认值、不缓存。
+async def _run_user_turn_signals(
+    *,
+    session_id: int, user_id: int, character_id: int, content: str,
+    user_msg_id: int | None, user_timer: bool,
+) -> None:
+    """用户这一轮在生成 AI 回复之前要落的确定性副作用（顺序即语义，改动须回看 A32 接线位）。
+
+    调用方只有 _run_agent_core（冷战拦截之后、构造 state 与 agent.ainvoke 之前）。
+    """
+    # A32（2026-10-07）：用户消息落库后、生成 AI 回复前——先做「事件已兑现 → 承诺静默关闭」的
+    # 确定性结算（到家 / 吃药类信号命中则置 discharged，不发消息、不调模型、不写主动消息日志）。
+    # 与 run_prospective_due 的 fire 前闸门同口径，本处是「事件发生当时」的第一道，闸门是双保险。
+    # 失败静默：结算不了不影响本轮回复（宁可漏关，不可误关）。
+    try:
+        from app.scheduling.prospective_intent import settle_promises_on_user_message
+        await settle_promises_on_user_message(character_id, session_id, content)
+    except Exception as e:
+        _logger.warning("prospective settle on user message failed: %s", e)
+
+    # #63 机制5：用户安慰词 → 最高权重心事减重（flag 开才生效，失败静默）
+    try:
+        from app.life.preoccupations import has_comfort_word
+        if has_comfort_word(content):
+            from app.agent.loop import AGENT_FLAGS
+            if AGENT_FLAGS.get("preoccupation_enabled", False):
+                from app.life.preoccupations import soften_by_comfort_words
+                async with async_session_factory() as _pdb:
+                    await soften_by_comfort_words(
+                        _pdb, user_id=user_id, character_id=character_id, content=content,
+                    )
+                    await _pdb.commit()
+    except Exception:
+        pass
+
+    # 主动到期复习成功判定（P1）：用户回复与 24h 内复习消息弱相关 → 强化（异步不阻塞）
+    try:
+        from app.scheduling.memory_review import maybe_review_success
+        spawn_background(maybe_review_success(user_id, character_id, content))
+    except Exception:
+        pass
+
+    # AI 情绪关怀：检测用户低落情绪 → 登记延迟主动关心任务（异步不阻塞）
+    try:
+        from app.domain.emotion.model import detect_user_emotion
+        if "低落" in detect_user_emotion(content):
+            from app.application.emotion_care_ports import production_care_ports
+            from app.domain.emotion.care import register_care_task
+            spawn_background(register_care_task(user_id, character_id, content,
+                                                ports=production_care_ports))
+    except Exception:
+        pass
+
+    # 用户时间承诺解析（用户说"我去洗澡20分钟回来"等 → 创建定时事件，到点 AI 主动问；2026-08-14 修复）
+    if user_timer:
+        try:
+            from app.scheduling.promise_parser import extract_timer
+            from app.scheduling.promise_service import create_event
+            user_timer_info = extract_timer(
+                content, user_id=user_id, character_id=character_id,
+                session_id=session_id, source_message_id=user_msg_id, sender="user",
+            )
+            if user_timer_info:
+                await create_event(user_timer_info)
+        except Exception as e:
+            _logger.warning("User timer parse failed: %s", e)
+
+# ---- 记忆二跳阶段（2026-10-13 A50 批 17 自 _run_agent_core 机械抽出）----
+# 非流式才进（守卫留在 caller，顺序即语义）。整段搬出、块内语句逐字未变（含函数内 import、
+# AGENT_FLAGS 现取、async_session_factory 会话、异常 warn 与静默 pass）；唯一改写是入参运输与
+# 返回值运输：final_state 与 _trace_llm_calls 原样进出，其余裸全局仍 chat_service 晚绑定。
+async def _run_recall_second_hop(
+    *, final_state: dict, _trace_llm_calls: int, user_id: int, character_id: int,
+) -> tuple[dict, int]:
+    """记忆二跳：Ariadne 模块 B。调用方只有 _run_agent_core（且只在非流式档）。"""
     # Ariadne 模块 B（2026-09-04）：记忆二跳（非流式；记忆是内生信息，优先于外网搜索）。
     # flag memory_recall_second_hop 默认关=循环内只剥离 [RECALL] 标记（零行为变化）；流式路径只剥离不中途二跳
     #（与 SEARCH/MCP 同策略：流式输出已定型，再决策需额外推送通道，沿用既有延期结论）。
-    if not _is_stream:
+    try:
+        from app.agent import loop as _agent_loop
+
+        async def _recall_gate() -> bool:
+            """角色关了记忆 v2 则不开放二跳（只在出现 [RECALL] 标记后才查询，常态零开销）"""
+            async with async_session_factory() as _gdb:
+                _gchar = (await _gdb.execute(
+                    select(AICharacter.memory_v2_enabled).where(AICharacter.id == character_id)
+                )).scalar_one_or_none()
+            return bool(_gchar)
+
+        # F-3（2026-09-04）：透传用户时区分钟偏移给二跳解析（「时间=YYYY-MM」绝对自然月
+        # 不受影响）。仅当二跳 flag 开才取偏移（默认关=零额外查询，避免常态下多一次 DB 读）。
+        _recall_tz = None
+        if bool(_agent_loop.AGENT_FLAGS.get("memory_recall_second_hop", False)):
+            from app.utils.usertz import get_user_tz_offset_min
+            _recall_tz = await get_user_tz_offset_min(user_id)
+        final_state, _recall_steps = await _agent_loop.run_recall_loop(
+            final_state,
+            user_id=user_id,
+            character_id=character_id,
+            gate=_recall_gate,
+            tz_offset_min=_recall_tz,
+        )
+        if _recall_steps:
+            # 二跳固定至多 1 次再生成（有 RECALL 步骤即 +1 次 LLM 调用，与 SEARCH 计数口径一致）
+            _trace_llm_calls = (_trace_llm_calls or 1) + 1
+    except Exception as e:
+        _logger.warning("AI recall second-hop failed: %s", e)
         try:
-            from app.agent import loop as _agent_loop
+            from app.agent.actions import extract_recall as _extract_recall_ns
+            final_state["ai_response"] = _extract_recall_ns(final_state.get("ai_response") or "")[0]
+        except Exception:
+            pass
+    return final_state, _trace_llm_calls
 
-            async def _recall_gate() -> bool:
-                """角色关了记忆 v2 则不开放二跳（只在出现 [RECALL] 标记后才查询，常态零开销）"""
-                async with async_session_factory() as _gdb:
-                    _gchar = (await _gdb.execute(
-                        select(AICharacter.memory_v2_enabled).where(AICharacter.id == character_id)
-                    )).scalar_one_or_none()
-                return bool(_gchar)
 
-            # F-3（2026-09-04）：透传用户时区分钟偏移给二跳解析（「时间=YYYY-MM」绝对自然月
-            # 不受影响）。仅当二跳 flag 开才取偏移（默认关=零额外查询，避免常态下多一次 DB 读）。
-            _recall_tz = None
-            if bool(_agent_loop.AGENT_FLAGS.get("memory_recall_second_hop", False)):
-                from app.utils.usertz import get_user_tz_offset_min
-                _recall_tz = await get_user_tz_offset_min(user_id)
-            final_state, _recall_steps = await _agent_loop.run_recall_loop(
-                final_state,
-                user_id=user_id,
-                character_id=character_id,
-                gate=_recall_gate,
-                tz_offset_min=_recall_tz,
-            )
-            if _recall_steps:
-                # 二跳固定至多 1 次再生成（有 RECALL 步骤即 +1 次 LLM 调用，与 SEARCH 计数口径一致）
-                _trace_llm_calls = (_trace_llm_calls or 1) + 1
-        except Exception as e:
-            _logger.warning("AI recall second-hop failed: %s", e)
-            try:
-                from app.agent.actions import extract_recall as _extract_recall_ns
-                final_state["ai_response"] = _extract_recall_ns(final_state.get("ai_response") or "")[0]
-            except Exception:
-                pass
-        full_text = final_state.get("ai_response") or ""
-
+# ---- 自主搜索环阶段（2026-10-13 A50 批 17 自 _run_agent_core 机械抽出）----
+# if/else 两支同段搬出（search_loop 入参与守卫同形，守卫不再留在 caller）；块内语句逐字未变，
+# 唯一改写＝五元组运输契约（final_state/full_text/_loop_steps/_trace_searched/_trace_llm_calls）。
+async def _run_search_stage(
+    *, final_state: dict, full_text: str, _loop_steps: list, _trace_searched: bool,
+    _trace_llm_calls: int, user_id: int, character_id: int, search_loop: bool,
+) -> tuple[dict, str, list, bool, int]:
+    """AI 自主搜索受控 Loop（decide→execute→observe→条件再决策）；关档只剥标记。"""
     if search_loop:
         # AI 自主搜索（Phase B，2026-08-16）：受控 Loop（decide→execute→observe→条件再决策；最多 2 次搜索/3 次 LLM）
         try:
@@ -327,7 +433,17 @@ async def _run_agent_core(
             full_text = _extract_recall_s(full_text)[0]
         except Exception:
             pass
+    return final_state, full_text, _loop_steps, _trace_searched, _trace_llm_calls
 
+
+# ---- MCP 工具阶段（2026-10-13 A50 批 17 自 _run_agent_core 机械抽出）----
+# 非流式才进（守卫留在 caller）。再决策 _regen2 的一次 LLM 时点不动；块内语句逐字未变，
+# 唯一改写＝入参运输与返回值运输（final_state/full_text）；_agent_actions/_logger 仍裸全局晚绑定。
+async def _run_mcp_stage(
+    *, final_state: dict, full_text: str, _loop_steps: list, user_id: int,
+    character_id: int, session_id: int,
+) -> tuple[dict, str]:
+    """mcp.* 标记 → ToolRunner 执行 + 再决策；失败降级为剥标记兜底。"""
     # MCP 工具执行（Phase 2）：LLM 输出 mcp.* 标记 → ToolRunner.execute + 再决策。
     # 仅在 context_builder 注入过 MCP 工具声明后才可能触发（默认无 mcp.* 标记 → 零行为变化）。
     # Phase 3（2026-08-27）评估：SSE 真流式路径仍不触发 run_mcp_tool_stage（与搜索一致），
@@ -344,32 +460,41 @@ async def _run_agent_core(
     #   从 raw_response 解析 mcp.* 标记并用 run_stream_mcp_tool_stage 执行，工具结果经独立流尾
     #   事件 tool_result 推给前端；为避免再决策的流式冲突（delta 二次推送/stream_blocks 覆盖/
     #   TTS 流水线已消费），流式路径不做二次 LLM 再决策（非流式保留原再决策行为）。
-    if not _is_stream:
+    try:
+        from app.agent.mcp_tools import run_mcp_tool_stage
+        _mcp_src = full_text or (final_state.get("ai_response") or "")
+        _has_mcp = any(
+            a.action_type.startswith("mcp.")
+            for a in _agent_actions.parse_actions(_mcp_src)
+        )
+        if _has_mcp and await run_mcp_tool_stage(
+            final_state, _loop_steps,
+            user_id=user_id, character_id=character_id, session_id=session_id,
+        ):
+            from app.agent.nodes import generate_response as _regen2
+            final_state = await _regen2(final_state)
+            full_text = final_state.get("ai_response") or ""
+            # 再决策输出如仍含 mcp.* 标记（内部调用标签）则剥离，避免泄漏到展示正文
+            from app.agent.actions import _MCP_TOOL_RE as _mcp_re
+            full_text = _mcp_re.sub("", full_text).strip()
+    except Exception as e:
+        _logger.warning("MCP tool stage failed: %s", e)
         try:
-            from app.agent.mcp_tools import run_mcp_tool_stage
-            _mcp_src = full_text or (final_state.get("ai_response") or "")
-            _has_mcp = any(
-                a.action_type.startswith("mcp.")
-                for a in _agent_actions.parse_actions(_mcp_src)
-            )
-            if _has_mcp and await run_mcp_tool_stage(
-                final_state, _loop_steps,
-                user_id=user_id, character_id=character_id, session_id=session_id,
-            ):
-                from app.agent.nodes import generate_response as _regen2
-                final_state = await _regen2(final_state)
-                full_text = final_state.get("ai_response") or ""
-                # 再决策输出如仍含 mcp.* 标记（内部调用标签）则剥离，避免泄漏到展示正文
-                from app.agent.actions import _MCP_TOOL_RE as _mcp_re
-                full_text = _mcp_re.sub("", full_text).strip()
-        except Exception as e:
-            _logger.warning("MCP tool stage failed: %s", e)
-            try:
-                from app.agent.actions import strip_actions as _strip_mcp
-                full_text = _strip_mcp(full_text or "")
-            except Exception:
-                pass
+            from app.agent.actions import strip_actions as _strip_mcp
+            full_text = _strip_mcp(full_text or "")
+        except Exception:
+            pass
+    return final_state, full_text
 
+
+# ---- 生图标记提取阶段（2026-10-13 A50 批 18 自 _run_agent_core 机械抽出）----
+# 纯字符串加工（零 IO、零 await）⇒ 同步 def；提取源规则（流式取 _source_text、非流式取
+# full_text）与「仅非流式回写展示文本」守卫逐字保留；唯一改写＝入参运输与返回值运输
+# （full_text 原样进出，clean_text 只在本段内用、不外传）。
+def _extract_gen_image_stage(
+    *, full_text: str, _source_text: str, _is_stream: bool,
+) -> tuple[str, str | None, str | None]:
+    """聊天内 AI 发图标记提取；返回 (full_text, gen_prompt, img_text)。"""
     # 生图标记提取（聊天内AI发图）：清理标记后落库，异步生图
     # 提取源：流式用原始响应（展示文本已剥全标记）/ 非流式沿用 full_text（与旧行为一致），
     # 仅非流式回写 full_text，且从「已处理展示文本」剥离（避免经源文本回写时把已剥离的 SEARCH 等
@@ -382,7 +507,19 @@ async def _run_agent_core(
     # 统一兜底清洗在本函数末尾（CAL_NOTE/MEMO 提取之后，避免影响提取源）。
     if not _is_stream and (gen_prompt or img_text):
         full_text = clean_text
+    return full_text, gen_prompt, img_text
 
+
+# ---- Task Trace 留痕阶段（2026-10-13 A50 批 18 自 _run_agent_core 机械抽出）----
+# 计时起点仍是 caller 的 _t0（口径＝不含 state 构造、含生成与其后一切）；enqueue_task_log
+# 的十个 kwarg、route 三档表达式、llm/tool 计数与 steps_json 顺序逐字保留；块内语句一字
+# 未改，唯一改写＝入参运输；json / time / _agent_actions / _logger 仍是裸全局晚绑定。
+async def _emit_chat_trace(
+    *, _t0: float, _trace_actions: list, _loop_steps: list, _trace_llm_calls: int,
+    _trace_searched: bool, search_loop: bool, trace_route: str,
+    character_id: int, user_id: int, session_id: int,
+) -> None:
+    """Task Trace（Phase A）写库：先只写不读；失败静默。"""
     # Task Trace（Phase A）：写 trace（先只写不读；失败静默）
     try:
         from app.agent import trace as _trace
@@ -402,6 +539,15 @@ async def _run_agent_core(
     except Exception as _te:
         _logger.warning("Task trace failed: %s", _te)
 
+
+# ---- Phase H 任务化阶段（2026-10-13 A50 批 18 自 _run_agent_core 机械抽出）----
+# run_chat_task 闸、len(_all_steps) >= 1 字面量、spawn 不 await、末位 True 与静默 except
+# 逐字保留；test_experience_fixes 的模块级源码锚（len(_all_steps) >= 1）仍在本文件内。
+async def _schedule_chat_task(
+    *, run_chat_task: bool, _trace_actions: list, _loop_steps: list,
+    character_id: int, user_id: int, session_id: int, content: str, full_text: str,
+) -> None:
+    """工具轮次任务化：≥1 个明确动作才建任务；只记不改行为，失败静默。"""
     # Phase H：工具轮次任务化（≥1 个明确工具/备忘动作 → agent_tasks 任务记录；只记不改行为，失败静默；仅 HTTP 路径）
     if run_chat_task:
         try:
@@ -415,6 +561,16 @@ async def _run_agent_core(
         except Exception:
             pass
 
+
+# ---- 备注与定时承诺阶段（2026-10-13 A50 批 18 自 _run_agent_core 机械抽出）----
+# 日历/备忘提取 → 手机桌面落库 → AI 侧定时承诺解析与标记剥离，三段先后与各自 except
+# 逐字保留；取源规则仍是流式取 _source_text、非流式取当时 full_text（不吃已剥标的文本
+# 当新源）；返回 (full_text, cal_note_text, memo_text)。
+async def _run_note_and_timer_stage(
+    *, _source_text: str, full_text: str, _is_stream: bool, search_loop: bool,
+    user_id: int, character_id: int, session_id: int, content: str,
+) -> tuple[str, str | None, str | None]:
+    """日历/备忘标记提取＋落库＋AI 侧承诺解析与剥标；返回 (full_text, cal_note, memo)。"""
     # 日历/备忘录标记提取（Phase F 收口，2026-08-16）：提取结果供 chunked extra_meta 前端小字展示；
     # 落库统一走 _save_phone_desktop_notes（→ execute_tool，去重/署名），文本用原始含标记版本
     _cal_note_text = None
@@ -456,7 +612,17 @@ async def _run_agent_core(
             await create_event(timer_info)
     except Exception as e:
         _logger.warning("AI tag strip failed: %s", e)
+    return full_text, _cal_note_text, _memo_text
 
+
+# ---- 可见文本收尾阶段（2026-10-13 A50 批 18 自 _run_agent_core 机械抽出）----
+# 清洗次序与降级判据逐字保留（先剥净标记、再判思考过载空壳）；final_state 按原对象进出
+# （不复制），final_state["ai_response"] 回写与九键返回仍留 caller（出口契约不许进 helper）。
+async def _finalize_visible_text(
+    *, final_state: dict, full_text: str, session_id: int, user_id: int,
+    character_id: int,
+) -> tuple[str, dict]:
+    """展示/落库文本零标记兜底清洗＋思考过载降级续写；返回 (full_text, final_state)。"""
     # P0'（2026-09-10）：展示/落库文本零标记兜底——放在 CAL_NOTE/MEMO/timer 提取之后，
     # 提取源不受影响；此后 full_text 进落库（HTTP 单条 / chunked 分块 / SSE done）与推送，
     # 任何漏网标记（含模型漏写闭合标签的 [GEN_IMAGE]/[IMG_TEXT]）在此统一剥净。
@@ -489,19 +655,7 @@ async def _run_agent_core(
                 final_state["degraded_reply"] = True
                 _logger.info("reply_degraded reason=%s reasoning_len=%s",
                              _degraded_reason, len(_reasoning_now))
-    final_state["ai_response"] = full_text
-
-    return {
-        "final_state": final_state,
-        "final_text": full_text,
-        "gen_prompt": gen_prompt,
-        "img_text": img_text,
-        "cal_note_text": _cal_note_text,
-        "memo_text": _memo_text,
-        "streamed": _is_stream,
-        "stream_blocks": final_state.get("stream_blocks") or [],
-        "stream_saved": final_state.get("stream_saved") or [],
-    }
+    return full_text, final_state
 
 
 async def send_and_receive(

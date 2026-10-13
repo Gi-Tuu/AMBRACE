@@ -12,6 +12,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# AGPL-3.0-only：许可文本必须随镜像一起分发（落到 /app 下，缺一件都不该出这个镜像）。
+# 对应源码入口见 org.opencontainers.image.source。
+COPY LICENSE LICENSE
+COPY NOTICE NOTICE
+COPY THIRD_PARTY_NOTICES.md THIRD_PARTY_NOTICES.md
+COPY THIRD_PARTY_LICENSES THIRD_PARTY_LICENSES
+LABEL org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.title="AMBRACE backend"
+
 # 先装依赖（利用层缓存）：requirements.txt 是由 pip-compile 生成的「钉版锁文件」（== 版本），
 # 保证每次构建依赖一致可复现。注：未启用 --require-hashes（requirements.in 头部已说明多平台
 # wheel + 多架构 buildx 构建会使单平台哈希失效），此处以版本钉版实现可复现安装，未引入假安全。

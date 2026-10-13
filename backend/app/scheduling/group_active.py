@@ -14,7 +14,8 @@
   （现场 chat_group_messages 2041/2043、2023/2025）。同秒多落的唯一来源是**双角色互聊**：
   采集侧每群每 tick 只产 1 个候选、arbiter 每角色每 tick 只成一条，所以只在落库侧收口——
   按 MAX_LANDS_PER_GROUP_TICK 截断（只落发起者第一句，其余轮次 INFO 留痕后丢弃，不排队顺延，
-  避免跨 tick 补偿式刷屏）。只收紧落地条数，不改概率、不改空闲判定、不改双角色互聊的生成。
+  避免跨 tick 补偿式刷屏）。只收紧落地条数，不改概率、不改空闲判定；生成侧只在 A34 尾
+  （2026-10-13）改为「只请求发起者 1 条、预算 192」，协议（JSON schema / 解析 / 落库 / 闸③）不变。
 """
 import json
 import random
@@ -165,10 +166,13 @@ async def _pre_land_conflict(group_id: int, char_id: int, last_seen_id: int) -> 
 
 async def run_group_active(char_id: int, group_id: int, user_id: int,
                            with_id: int | None = None) -> bool:
-    """生成 2-4 轮双角色互聊并落库（发起者 + 搭档交替发言；无搭档时退化为单句冒泡）。
+    """请求发起者 1 条发言并落库（有搭档走 JSON 分支；无搭档退化为纯文本单句冒泡）。
 
-    A34 批3（2026-10-07，B.3.5）：生成仍是多轮，但**每 tick 每群只落 1 条**（`MAX_LANDS_PER_GROUP_TICK`），
+    A34 批3（2026-10-07，B.3.5）：**每 tick 每群只落 1 条**（`MAX_LANDS_PER_GROUP_TICK`），
     其余轮次 INFO 留痕后丢弃；日志口径从 rounds 改为 lands，让「生成了几轮」与「落地了几条」不再混在一起。
+    A34 尾（2026-10-13）：原先生成 2-4 轮、预算 512，落库只用第一句 ⇒ 生成侧改为**只请求发起者 1 条**
+    （搭档只作背景、不要求代答），预算 512 → 192；JSON schema / 解析 / valid 遍历 / allowed / 截断日志 /
+    闸③ 逐字不动，旧模型返回多条时仍照旧「只落 1 条 + INFO 留痕」＝兼容路径。
     """
     try:
         from app.agent.llm_client import chat_completion
@@ -248,19 +252,18 @@ async def run_group_active(char_id: int, group_id: int, user_id: int,
                 _logger.info("Group active sent char=%d group=%d", char_id, group_id)
                 return True
 
-            # 双角色互聊：单次 LLM 输出 2-4 轮 JSON，交替发言，逐条落库
+            # 双角色分支：单次 LLM 输出 JSON，只请求发起者 1 条（旧多条 JSON 仍按原样解析，见下方截断）
             prompt = (
                 f"你在一个家庭群聊里，成员有：{'、'.join(c.name for c in char_map.values())}。\n"
                 f"最近群聊记录：\n{context}\n\n"
                 f"你是{char.name}（性格：{char.personality or '友善'}，聊天风格：{char.chat_style or '自然'}）。\n"
                 f"{partner.name}（性格：{partner.personality or '友善'}，聊天风格：{partner.chat_style or '自然'}）也在群里。\n"
-                "你有点想大家了，主动在群里和" + partner.name + "聊几句家常（2-4 轮来回，像家人闲聊一样自然；"
+                "你有点想大家了，主动在群里冒个泡，只说一句话（像家人闲聊一样自然；"
                 "不要说'AI''群聊'，不要@别人，不要生硬复述记录）。\n"
                 "只输出 JSON：{\"messages\": [{\"character_id\": 1, \"content\": \"...\"}]}。要求：\n"
-                "1. 第一条必须是你（发起者）先开口，之后两人交替发言（对方接话，你可再回，最多 4 条）；\n"
-                f"2. character_id 只能是 {char_id}（你）或 {with_id}（{partner.name}）；\n"
-                "3. 每条 15-40 字，口语化、符合各自性格，内容自然承接上一条；\n"
-                "4. 不要互相矛盾，不要两人同时做同一件事。"
+                f"1. messages 里只放 1 条，就是你（发起者）开口那一句，不要替对方说话；\n"
+                f"2. character_id 填 {char_id}（你）；\n"
+                "3. 这一条 15-40 字，口语化、符合你的性格，自然承接上面的记录。"
             )
             text = await chat_completion(
                 messages=[
@@ -268,7 +271,7 @@ async def run_group_active(char_id: int, group_id: int, user_id: int,
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.9,
-                max_tokens=512,
+                max_tokens=192,
                 task="message",
                 user_id=user_id,
             )
@@ -293,7 +296,8 @@ async def run_group_active(char_id: int, group_id: int, user_id: int,
                 _logger.warning("Group multi-chat: no valid messages, raw=%.120s", raw)
                 return False
             # A34 批3（B.3.5）：每 tick 每群最多落地 MAX_LANDS_PER_GROUP_TICK 条——
-            # 互聊生成 2-4 轮，但只落发起者开口那一句，其余轮次 INFO 留痕后丢弃（不顺延到下个 tick）。
+            # 生成侧已只请求发起者 1 条；截断保留作旧多条 JSON 的兼容闸（只落第一句，其余 INFO 留痕
+            # 后丢弃，不顺延到下个 tick）。
             if len(valid) > MAX_LANDS_PER_GROUP_TICK:
                 dropped = valid[MAX_LANDS_PER_GROUP_TICK:]
                 _logger.info(

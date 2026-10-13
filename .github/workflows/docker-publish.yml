@@ -55,3 +55,4 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.description=AMBRACE self-hosted AI companion backend
+            org.opencontainers.image.licenses=AGPL-3.0-only

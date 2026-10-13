@@ -9,6 +9,7 @@ import "package:shared_preferences/shared_preferences.dart";
 import "phone_perception_service.dart";
 import "unread_engine.dart";
 import "foreground_state.dart";
+import "foreground_ack.dart";
 import "background_ws_client.dart";
 import "bg_poll_guard.dart";
 import "secure_token_store.dart";
@@ -123,16 +124,17 @@ void onStart(ServiceInstance service) async {
     _appInForeground = data?["value"] as bool? ?? false;
   });
 
-  // A53 fail-closed：**问**而不是**听**。每 5s 探测一次，主 isolate 回答它当时刻的 lifecycleState；
+  // A53 fail-closed：**问**而不是**听**。每 5s 探测一次，主 isolate 回答它当时刻是否 resumed（契约见 foreground_ack.dart）；
   // 答不上来（＝被冻结的真后台）就不更新回答时刻，判定自动落到「后台」，该弹就弹。
-  service.on("fgAck").listen((data) {
-    if (data?["state"] == "AppLifecycleState.resumed") {
+  service.on(kForegroundAckEvent).listen((data) {
+    // 契约＝{'resumed': bool}，只有 bool true 才刷新心跳；false/null/字符串/数字/非 Map 一律不刷新（fail-closed）
+    if (isResumedAck(data)) {
       _lastResumedAckMs = DateTime.now().millisecondsSinceEpoch;
     }
   });
   void probeForeground() {
     try {
-      service.invoke("fgProbe");
+      service.invoke(kForegroundProbeEvent);
     } catch (_) {}
   }
   probeForeground(); // 先问一次，别让首轮（建基线那一轮）误判

@@ -577,50 +577,27 @@ def _like_escape(q: str) -> str:
     return q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-async def search_memories(
+async def _recall_three_routes(
+    *,
     character_id: int,
     query: str,
-    limit: int = 5,
-    queries: list[str] | None = None,
-    trace_meta: dict | None = None,
-    time_range: tuple | None = None,
-    # ↓↓ #72 新增：全部默认 None/空 = 与现状完全一致 ↓↓
-    scene: str | None = None,              # "dm" | "group" | None(不过滤)
-    exclude_sources: set[str] | None = None,
-    group_id: int | None = None,
-    # A2 M0-4（2026-09-20）：调用者账号，仅透传给 memory_search 插件 hook ctx（默认 None，
-    # 放末尾保证既有调用不破；检索/排序/hook 返回语义零变化）。
-    user_id: int | None = None,
-) -> list[dict]:
-    """检索记忆（认知循环 v2.1 多路召回）：向量优先，兜底关键词。
+    query_list: list[str],
+    limit: int,
+    debug: dict,
+    text_embedding,
+    vector_search,
+    bm25_search,
+) -> tuple[list[list[dict]], list[list[tuple[int, float]]], list[dict], dict, list[int]]:
+    """三路并发召回（稠密／稀疏／专名）＋命中打戳（A50 批10 自 search_memories 机械抽取）。
 
-    多路查询（原 query + 感知派生查询，最多 4 路）各召回后按 id 合并；
-    加权排序（importance + 关系/情绪时效 + 置顶 + 多路命中加成）取 top limit。
-    批 0-11 起在向量 + 关键词之外还有**第三路专名匹配**（flag `recall_entity_match` 默认关＝
-    连查询都不发）：命中的 id 同样并进 RRF 融合与 _rerank，不插队、不改条数（见 _entity_route）。
+    块内语句自 search_memories 原 S1-S4 逐字搬运，唯一改写＝返回值运输契约。
+    `debug` 按引用传入并**原地**打戳（不打散成 patch dict）⇒ 键插入顺序不变，
+    专名路那两条键仍只在真有命中时写，flag 关时 trace 逐字节不变。
+    `text_embedding/vector_search/bm25_search` 由 caller **显式**传入（即原 S0 局部导入的
+    那三个符号）——它们被大量测试在 service 模块上打桩，helper 自己 import 或模块级缓存
+    都会打断那个面；`get_cached_embedding`/`_entity_match_on`/`_entity_route`/
+    `PEAK_DENSE_MAX_DISTANCE`/`ENTITY_REASON_TRACE_MAX` 继续按**裸全局名晚绑定**。
     """
-
-    from app.memory.service import (
-        async_session_factory,
-        bm25_search,
-        _rrf,
-        text_embedding,
-        vector_search,
-    )
-    _t0 = time.monotonic()
-    # #70 方案B（memory-trace 可观察）：读 feature flag，默认开；flag 关时检索/排序/trace 与现状一致。
-    try:
-        from app.flags.agent_flags import AGENT_FLAGS
-        _trace_debug = bool(AGENT_FLAGS.get("memory_trace_debug", True))
-    except Exception:
-        _trace_debug = False
-    # 检索轨迹 debug（只多写 trace，不影响返回结果）：体积硬上限（每路 id≤5、rrf/rerank_top≤10、
-    # preview≤60 字、steps_json≤8000 字符）在组装处逐一钳制。
-    debug: dict = {"query": (query or "")[:60], "derived_queries": list(queries or [])[:3]}
-    query_list = [query] + (list(queries or [])[:3])
-    results: list[dict] = []
-    hit_count: dict[int, int] = {}
-
     # P1 性能（2026-08-16）：多路召回并发执行（原串行最多 4 倍延迟放大）
     # X-3（2026-08-18）：主查询（用户原话）不缓存；感知派生查询（话题/情绪词）走进程内 LRU
     # 缓存（key=character_id+query，TTL 5 分钟，命中免 ONNX 推理——派生查询在相近消息间高度
@@ -684,28 +661,29 @@ async def search_memories(
             "reasons": (entity_meta.get("reasons") or [])[:ENTITY_REASON_TRACE_MAX],
         }
 
-    # RRF 融合（2026-08-23 深化）：dense/sparse 各按相关性 rank 归一化，融合分作 relevance_bonus
-    # 注入 _rerank；RRF 计算异常时静默退化为纯合并（relevance_bonus 空），不影响主链路。
-    relevance_bonus: dict[int, float] = {}
-    debug["rrf_top"] = []
-    try:
-        _ranked: list[list] = []
-        for _hits in dense_hits:
-            _ranked.append([_r["id"] for _r in _hits])
-        for _hits in sparse_hits:
-            _ranked.append([_mid for _mid, _sc in _hits])
-        if _entity_ids:
-            # 批 0-11：专名路作为**第三路**进同一套 RRF（路序 dense→sparse→entity），
-            # 只贡献一路 rank 证据，不给任何插队特权；旧的两路取值逐字节不变。
-            _ranked.append(_entity_ids)
-        _rrf_scores = _rrf.reciprocal_rank_fusion(_ranked, k=_rrf._BRRF_DEFAULT_K)
-        relevance_bonus = _rrf.normalized_bonus(_rrf_scores, weight=_rrf._RRF_WEIGHT)
-        # #70-B：RRF 融合后按分数降序的 Top10 id（体积上限）
-        debug["rrf_top"] = sorted(_rrf_scores, key=lambda x: _rrf_scores[x], reverse=True)[:10]
-    except Exception as _e:
-        _logger.warning("RRF fusion failed, degrade to pure merge: %s", _e)
-        relevance_bonus = {}
+    return dense_hits, sparse_hits, entity_rows, entity_meta, _entity_ids
 
+
+async def _merge_route_candidates(
+    *,
+    dense_hits: list[list[dict]],
+    sparse_hits: list[list[tuple[int, float]]],
+    entity_rows: list[dict],
+    results: list[dict],
+    hit_count: dict[int, int],
+    async_session_factory,
+) -> tuple[list[dict], dict[int, int], int, bool, bool, bool]:
+    """三路候选合并＋稀疏回填＋计数（A50 批11 自 search_memories 机械抽取）。
+
+    块内语句自 search_memories 原 S6-S9 逐字搬运，唯一改写＝返回值运输契约。
+    `results`/`hit_count` 由 caller **初始化并按原对象**传入（helper 原地 append／原地
+    累加，不另造第二份集合）⇒ 返回的仍是同两个对象，不是拷贝。
+    `async_session_factory` 由 caller 显式传入（即原 S0 局部导入的那个符号，它被大量测试在
+    service 模块上打桩，搬家会断那个面）；`select`/`Memory`/`_retrievable_status_clause`/
+    `_logger` 继续按**裸全局名晚绑定**。回填段那处 `async with` 会话作用域、try/except 边界
+    与 warning 文案逐字留在块内原位（会话持有期不挪、不跨会话持有、不加包裹异常）。
+    `_no_candidates` 在本函数末尾、caller 的关键词兜底**之前**取样，之后 results 重绑也改不动它。
+    """
     # 合并 vector（dense）：按 id 去重并入 hit_count（多路查询命中同样计入多路命中加成）
     _seen_ids: set[int] = set()
     for hits in dense_hits:
@@ -764,116 +742,192 @@ async def search_memories(
     _sparse_has = any(hs for hs in sparse_hits)
 
     _no_candidates = not results
-    if not results:
-        # 向量+BM25 双路皆空：LIKE 关键词兜底（仍走统一 _rerank：置顶/时效/意义/话题加分 + reliability 透传，M-P2-3）
-        async with async_session_factory() as db:
-            result = await db.execute(
+
+    return results, hit_count, candidate_count, _dense_has, _sparse_has, _no_candidates
+
+
+async def _keyword_fallback(
+    *,
+    character_id: int,
+    query: str,
+    limit: int,
+    async_session_factory,
+) -> tuple[list[dict], int]:
+    """LIKE 关键词兜底（A50 批12 自 search_memories 机械抽取）。
+
+    块内语句自 caller 的 ``if not results:`` 分支原样搬运，唯一改写＝返回值运输契约
+    （返回 ``(results, candidate_count)``）。
+    `async_session_factory` 由 caller **显式**传入（即原局部导入的那个符号，它被大量测试在
+    service 模块上打桩，helper 自己 import 会打断那个面）；`select`/`Memory`/`_like_escape`/
+    `_retrievable_status_clause` 继续按**裸全局名晚绑定**。
+    「无候选才兜底」的判定留在 caller（`if not results:`）——本函数只负责兜底本身，
+    所以**未走兜底时 caller 的 results 不会被重绑**；兜底走完即使一条没捞到也是返回空列表
+    （与旧路径「重绑成空 list」同语义）。原段**没有** try，DB 异常照旧冒泡（不新加包裹）。
+    """
+    # 向量+BM25 双路皆空：LIKE 关键词兜底（仍走统一 _rerank：置顶/时效/意义/话题加分 + reliability 透传，M-P2-3）
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(Memory)
+            .where(
+                Memory.character_id == character_id,
+                Memory.is_archived == False,
+                Memory.memory_type != "working_state",  # M3-a：工作记忆不进召回（注入走专用分区）
+                Memory.content.like(f"%{_like_escape(query)}%", escape="\\"),   # P3-E：% / _ 不再当通配符
+                _retrievable_status_clause(),   # #70-C：双通道过滤（flag 关=永真）
+            )
+            .order_by(Memory.importance.desc(), Memory.created_at.desc())
+            .limit(limit * 2)
+        )
+        memories = result.scalars().all()
+        results = [
+            {
+                "id": m.id,
+                "content": m.content,
+                "type": m.memory_type,
+                "importance": m.importance,
+                "created_at": m.created_at,
+                "epistemic_status": m.epistemic_status,
+                "speaker_id": m.speaker_id,
+                "speaker_type": m.speaker_type,
+            }
+            for m in memories
+        ]
+    # 关键词兜底路径：双路无命中，候选池即当前关键词结果集合
+    candidate_count = len(results)
+    return results, candidate_count
+
+
+async def _append_temporal_hits(
+    *,
+    results: list[dict],
+    debug: dict,
+    character_id: int,
+    time_range: tuple,
+    limit: int,
+    _trace_debug: bool,
+    async_session_factory,
+) -> list[dict]:
+    """时间维度确定性召回路的追加段（A50 批12 自 search_memories 机械抽取）。
+
+    块内语句自 caller 的 ``if time_range is not None:`` 分支原样搬运（原 flag 的 try/except
+    与 `if _temporal_on:` 整段一并搬来，仍在**同一逻辑位置**），唯一改写＝返回值运输契约
+    （原样返回 caller 传进来的那个 `results` 对象：追加在原候选之后，`debug` 按引用打戳）。
+    `async_session_factory` 由 caller 显式传入；`select`/`Memory`/`_retrievable_status_clause`
+    继续按**裸全局名晚绑定**。flag 关（读不到也按关）⇒ 一条查询都不发、原样返回。
+    区间 `[t_start, t_end)` 半开、候选计数不随本路增加（`candidate_count` 不在本函数内）。
+    原段**没有** try，查询异常照旧冒泡（不新加包裹）。
+    """
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS as _af
+        _temporal_on = bool(_af.get("memory_temporal_recall", False))
+    except Exception:
+        _temporal_on = False
+    if _temporal_on:
+        t_start, t_end = time_range
+        async with async_session_factory() as _tdb:
+            _trows = (await _tdb.execute(
                 select(Memory)
                 .where(
                     Memory.character_id == character_id,
-                    Memory.is_archived == False,
-                    Memory.memory_type != "working_state",  # M3-a：工作记忆不进召回（注入走专用分区）
-                    Memory.content.like(f"%{_like_escape(query)}%", escape="\\"),   # P3-E：% / _ 不再当通配符
-                    _retrievable_status_clause(),   # #70-C：双通道过滤（flag 关=永真）
+                    Memory.is_archived == False,  # noqa: E712
+                    Memory.memory_type != "working_state",
+                    Memory.created_at >= t_start,
+                    Memory.created_at < t_end,
+                    _retrievable_status_clause(),
                 )
                 .order_by(Memory.importance.desc(), Memory.created_at.desc())
-                .limit(limit * 2)
-            )
-            memories = result.scalars().all()
-            results = [
-                {
-                    "id": m.id,
-                    "content": m.content,
-                    "type": m.memory_type,
-                    "importance": m.importance,
-                    "created_at": m.created_at,
-                    "epistemic_status": m.epistemic_status,
-                    "speaker_id": m.speaker_id,
-                    "speaker_type": m.speaker_type,
-                }
-                for m in memories
-            ]
-        # 关键词兜底路径：双路无命中，候选池即当前关键词结果集合
-        candidate_count = len(results)
+                .limit(limit)
+            )).scalars().all()
+        _have = {r["id"] for r in results}
+        _added = 0
+        for _m in _trows:
+            if _m.id in _have:
+                continue
+            _have.add(_m.id)
+            _added += 1
+            results.append({
+                "id": _m.id,
+                "content": _m.content,
+                "type": _m.memory_type,
+                "importance": _m.importance,
+                "created_at": _m.created_at,
+            })
+        if _trace_debug and _added:
+            debug["time_route"] = {"range": [str(t_start), str(t_end)], "added": _added}
+    return results
 
-    # Ariadne 模块 A（2026-09-03）：时间维度确定性检索路（flag memory_temporal_recall 默认关=零行为变化）。
-    # 仅当调用方解析出时间区间（app/memory/time_query.parse_time_range）且 flag 开：
-    # 区间内按重要度补一条确定性 SQL 召回，合并去重后参与同一套 rerank/截断（不享有特权插队），
-    # 保证「时间对、语义弱」的记忆不被向量路漏掉。
-    if time_range is not None:
-        try:
-            from app.flags.agent_flags import AGENT_FLAGS as _af
-            _temporal_on = bool(_af.get("memory_temporal_recall", False))
-        except Exception:
-            _temporal_on = False
-        if _temporal_on:
-            t_start, t_end = time_range
-            async with async_session_factory() as _tdb:
-                _trows = (await _tdb.execute(
-                    select(Memory)
-                    .where(
-                        Memory.character_id == character_id,
-                        Memory.is_archived == False,  # noqa: E712
-                        Memory.memory_type != "working_state",
-                        Memory.created_at >= t_start,
-                        Memory.created_at < t_end,
-                        _retrievable_status_clause(),
-                    )
-                    .order_by(Memory.importance.desc(), Memory.created_at.desc())
-                    .limit(limit)
-                )).scalars().all()
-            _have = {r["id"] for r in results}
-            _added = 0
-            for _m in _trows:
-                if _m.id in _have:
-                    continue
-                _have.add(_m.id)
-                _added += 1
-                results.append({
-                    "id": _m.id,
-                    "content": _m.content,
-                    "type": _m.memory_type,
-                    "importance": _m.importance,
-                    "created_at": _m.created_at,
-                })
-            if _trace_debug and _added:
-                debug["time_route"] = {"range": [str(t_start), str(t_end)], "added": _added}
 
-    if results:
-        # 模块 D：peak_cutoff 需要 _score（flag memory_peak_cutoff 开时强制走 debug 路径并保留分数）
-        try:
-            from app.flags.agent_flags import AGENT_FLAGS as _af
-            _peak_on = bool(_af.get("memory_peak_cutoff", False))
-        except Exception:
-            _peak_on = False
-        # #70-B：flag 开走 _rerank(return_debug=True) 取 debug 并入 trace；关走原非 debug 路径（零行为变化）。
-        if _trace_debug or _peak_on:
-            _ranked, _rk_debug = await _rerank(results, character_id, hit_count, relevance_bonus=relevance_bonus, return_debug=True, _keep_score=_peak_on)
-            debug.update(_rk_debug)
-        else:
-            _ranked = await _rerank(results, character_id, hit_count, relevance_bonus=relevance_bonus)
-        # M1-S1（2026-08-31）：类型多样性重排（曾为 flag recall_diversify，2026-09-17 固化常开）——防单一类型占满出口
-        _diversify = True
-        if _peak_on:
-            # 模块 D：先自然收敛（断档/地板截断）再类型均衡；条数可少于 limit（弃权/弱相关场景）
-            _kept = peak_cutoff(_ranked)
-            results = _diversify_by_type(_kept, limit) if _diversify else _kept[:limit]
-            for r in results:
-                r.pop("_score", None)  # 对外形状与旧路径一致
-        else:
-            results = _diversify_by_type(_ranked, limit) if _diversify else _ranked[:limit]
+async def _rank_and_shape(
+    *,
+    results: list[dict],
+    character_id: int,
+    hit_count: dict[int, int],
+    relevance_bonus: dict[int, float],
+    limit: int,
+    debug: dict,
+    _trace_debug: bool,
+) -> list[dict]:
+    """排序成形阶段（A50 批13 自 search_memories 的 ``if results:`` 分支原样搬运）。
 
-        # 批 0-7 任务②：命中记忆的相邻块（flag recall_neighbor_block 默认关＝不发这条查询）。
-        # 只填「本轮不足 limit 的空缺槽位」：条数上限不变、已有结果一条都不被挤掉，邻居排在直接命中之后。
-        # peak_cutoff 开时跳过——那条 flag 的语义就是「弱相关就少注入/弃权」，拿邻居补空缺会与之相冲。
-        if _neighbor_block_on() and not _peak_on and results and len(results) < limit:
-            _anchors = [r["id"] for r in results[:NEIGHBOR_ANCHOR_MAX]]
-            _nbrs = await _expand_neighbor_blocks(character_id, results, limit - len(results))
-            if _nbrs:
-                results = results + _nbrs
-                if _trace_debug:
-                    debug["neighbor_block"] = {"anchors": _anchors, "added": len(_nbrs)}
+    块内语句自 caller 的 ``if results:`` 分支**逐字**搬运（peak flag 的局部 try/except、
+    debug/非 debug 两条 _rerank 路径、peak_cutoff→类型均衡→去 _score、邻居补空缺槽与
+    neighbor_block 打戳），唯一改写＝返回值运输契约：原样返回 caller 传进来的 results，
+    `debug` 按引用原地 update/打戳（键插入顺序不变）。``if results:`` 判定仍留在 caller。
+    `peak_cutoff`/`_diversify_by_type`/`_expand_neighbor_blocks`/`_rerank`/
+    `_neighbor_block_on`/`NEIGHBOR_ANCHOR_MAX` 继续按**裸全局名晚绑定**（不缓存进默认参数）。
+    """
+    # 模块 D：peak_cutoff 需要 _score（flag memory_peak_cutoff 开时强制走 debug 路径并保留分数）
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS as _af
+        _peak_on = bool(_af.get("memory_peak_cutoff", False))
+    except Exception:
+        _peak_on = False
+    # #70-B：flag 开走 _rerank(return_debug=True) 取 debug 并入 trace；关走原非 debug 路径（零行为变化）。
+    if _trace_debug or _peak_on:
+        _ranked, _rk_debug = await _rerank(results, character_id, hit_count, relevance_bonus=relevance_bonus, return_debug=True, _keep_score=_peak_on)
+        debug.update(_rk_debug)
+    else:
+        _ranked = await _rerank(results, character_id, hit_count, relevance_bonus=relevance_bonus)
+    # M1-S1（2026-08-31）：类型多样性重排（曾为 flag recall_diversify，2026-09-17 固化常开）——防单一类型占满出口
+    _diversify = True
+    if _peak_on:
+        # 模块 D：先自然收敛（断档/地板截断）再类型均衡；条数可少于 limit（弃权/弱相关场景）
+        _kept = peak_cutoff(_ranked)
+        results = _diversify_by_type(_kept, limit) if _diversify else _kept[:limit]
+        for r in results:
+            r.pop("_score", None)  # 对外形状与旧路径一致
+    else:
+        results = _diversify_by_type(_ranked, limit) if _diversify else _ranked[:limit]
 
+    # 批 0-7 任务②：命中记忆的相邻块（flag recall_neighbor_block 默认关＝不发这条查询）。
+    # 只填「本轮不足 limit 的空缺槽位」：条数上限不变、已有结果一条都不被挤掉，邻居排在直接命中之后。
+    # peak_cutoff 开时跳过——那条 flag 的语义就是「弱相关就少注入/弃权」，拿邻居补空缺会与之相冲。
+    if _neighbor_block_on() and not _peak_on and results and len(results) < limit:
+        _anchors = [r["id"] for r in results[:NEIGHBOR_ANCHOR_MAX]]
+        _nbrs = await _expand_neighbor_blocks(character_id, results, limit - len(results))
+        if _nbrs:
+            results = results + _nbrs
+            if _trace_debug:
+                debug["neighbor_block"] = {"anchors": _anchors, "added": len(_nbrs)}
+    return results
+
+
+async def _apply_search_plugins(
+    *,
+    results: list[dict],
+    character_id: int,
+    query: str,
+    limit: int,
+    user_id: int | None,
+) -> list[dict]:
+    """插件 Hook 扩展阶段（A50 批13 自 search_memories 的整段 try 原样搬运）。
+
+    块内语句**逐字**搬运：`run_hook_collect` 的局部 import 仍在 try 内、ctx 与显式 kwarg
+    两处都带 user_id、ctx 里 `list(results)` 是拷贝、净化/去重/类型转换、**原候选切片在前
+    extra 在后**的拼接与 `max(0, limit - len(_extra))` 截尾、末尾 `except Exception: pass`
+    吞异常后返回当时的 results——全部保持原位原样，唯一改写＝末尾补一条 `return results`。
+    调用点顺序仍是 rank → plugin → scene → 投影（插件看到的是排序后、scene 过滤前的集合）。
+    """
     # 插件 Hook：memory_search（调整/追加召回记忆；插件返回的 dict 列表追加到结果，原结果让位给插件追加；异常隔离）
     try:
         from app.plugins.registry import run_hook_collect
@@ -912,35 +966,77 @@ async def search_memories(
                 results = results[:max(0, limit - len(_extra))] + _extra
     except Exception:
         pass
+    return results
 
-    # #72：场景可见性过滤（scene/exclude_sources/group_id 默认 None/空 = 与现状逐字节一致）
-    if scene is not None or exclude_sources or group_id is not None:
-        results = _scene_filter(results, scene, exclude_sources, group_id)
 
-    # 批 0-2 M1a：flag `perception_source_tag` 开时输出补「来源/子类」两字段（观测与前端标注用）。
-    # 只加字段：排序、条数、预算、阈值、是否剔除一律不变（键追加在末尾，旧键顺序逐字节保持）。
-    _with_source = _perception_tag_on()
-    _final = [
-        {
-            "id": r["id"],
-            "content": r["content"],
-            "type": r["type"],
-            "importance": float(r["importance"] or 0),
-            "created_at": r.get("created_at"),
-            "epistemic_status": r.get("epistemic_status"),
-            "speaker_id": r.get("speaker_id"),
-            "speaker_type": r.get("speaker_type"),
-            "reliability_score": r.get("reliability_score"),
-            "contradiction_count": r.get("contradiction_count"),
-            "why_it_matters": r.get("why_it_matters"),
-            "status": r.get("status", "active"),
-            **({"source": r.get("source"), "sub_type": r.get("sub_type")} if _with_source else {}),
-        }
-        for r in results
-    ]
+def _fuse_route_relevance(
+    *,
+    dense_hits: list,
+    sparse_hits: list,
+    _entity_ids: list[int] | None,
+    debug: dict,
+    _rrf,
+) -> dict[int, float]:
+    """RRF 融合阶段（A50 批14 自 search_memories 原样搬运）。
 
-    # #70-B：汇总 debug 的候选数 / 最终注入（preview≤60）/ 延迟；并保留 hit_count 供旧读端（agent-mind/既有测试）。
-    _latency_ms = int((time.monotonic() - _t0) * 1000)
+    块内语句自 caller **逐字**搬运（relevance_bonus 初始化、`debug["rrf_top"]` 初始化、整段 try：
+    dense→sparse→entity 路序装配、`_BRRF_DEFAULT_K`/`_RRF_WEIGHT` 两个常量、融合后 Top10 打戳、
+    异常 warning 后退化为空 dict），唯一改写＝返回值运输契约——把 relevance_bonus 交回 caller。
+    路序与「专名路只贡献一路 rank 证据、不给插队特权」逐字保持。`_rrf` 由 caller 的局部 import
+    按 kwarg 显式传入（import 时点不搬家），`_logger` 仍按**裸全局名晚绑定**（不缓存进默认参数）。
+    同步函数：无 await、无 IO，异常仍只吞这一段（主链路不受影响）。
+    """
+    # RRF 融合（2026-08-23 深化）：dense/sparse 各按相关性 rank 归一化，融合分作 relevance_bonus
+    # 注入 _rerank；RRF 计算异常时静默退化为纯合并（relevance_bonus 空），不影响主链路。
+    relevance_bonus: dict[int, float] = {}
+    debug["rrf_top"] = []
+    try:
+        _ranked: list[list] = []
+        for _hits in dense_hits:
+            _ranked.append([_r["id"] for _r in _hits])
+        for _hits in sparse_hits:
+            _ranked.append([_mid for _mid, _sc in _hits])
+        if _entity_ids:
+            # 批 0-11：专名路作为**第三路**进同一套 RRF（路序 dense→sparse→entity），
+            # 只贡献一路 rank 证据，不给任何插队特权；旧的两路取值逐字节不变。
+            _ranked.append(_entity_ids)
+        _rrf_scores = _rrf.reciprocal_rank_fusion(_ranked, k=_rrf._BRRF_DEFAULT_K)
+        relevance_bonus = _rrf.normalized_bonus(_rrf_scores, weight=_rrf._RRF_WEIGHT)
+        # #70-B：RRF 融合后按分数降序的 Top10 id（体积上限）
+        debug["rrf_top"] = sorted(_rrf_scores, key=lambda x: _rrf_scores[x], reverse=True)[:10]
+    except Exception as _e:
+        _logger.warning("RRF fusion failed, degrade to pure merge: %s", _e)
+        relevance_bonus = {}
+    return relevance_bonus
+
+
+def _emit_search_trace(
+    *,
+    character_id: int,
+    query: str,
+    query_list: list[str],
+    results: list[dict],
+    _final: list[dict],
+    debug: dict,
+    candidate_count: int,
+    limit: int,
+    _trace_debug: bool,
+    _no_candidates: bool,
+    _dense_has: bool,
+    _sparse_has: bool,
+    trace_meta: dict | None,
+    _latency_ms: int,
+) -> None:
+    """检索 trace 落库阶段（A50 批14 自 search_memories 原样搬运）。
+
+    块内两条连续语句**逐字**搬运：`if _trace_debug:` 的 debug 汇总，以及整段 trace `try`
+    （五 route 判定、debug 透传／精简两条 steps_json 分支与 8000 字符硬上限、enqueue_task_log 的
+    局部 import 与调用、异常 warning）。`_latency_ms` 仍在 caller 原行取（时间起点 `_t0` 与取值
+    时点都不动），`_final` 投影与 `return _final` 留在 caller；`debug`/`results`/`_final` 一律按
+    原对象传入（`debug` 原地 update，键插入顺序不变），`trace_meta` 三个 id 透传口径逐字保持。
+    同步函数：不加 await、不塞后台任务、不改提交时机；`json`/`_logger` 仍按**裸全局名晚绑定**。
+    显式返回 None（异常仍只 warning 一次，检索主链路照常返回 _final）。
+    """
     if _trace_debug:
         debug.update({
             "candidate_count": candidate_count,
@@ -995,5 +1091,202 @@ async def search_memories(
         )
     except Exception as _e:
         _logger.warning("Memory search trace failed: %s", _e)
+
+
+async def search_memories(
+    character_id: int,
+    query: str,
+    limit: int = 5,
+    queries: list[str] | None = None,
+    trace_meta: dict | None = None,
+    time_range: tuple | None = None,
+    # ↓↓ #72 新增：全部默认 None/空 = 与现状完全一致 ↓↓
+    scene: str | None = None,              # "dm" | "group" | None(不过滤)
+    exclude_sources: set[str] | None = None,
+    group_id: int | None = None,
+    # A2 M0-4（2026-09-20）：调用者账号，仅透传给 memory_search 插件 hook ctx（默认 None，
+    # 放末尾保证既有调用不破；检索/排序/hook 返回语义零变化）。
+    user_id: int | None = None,
+) -> list[dict]:
+    """检索记忆（认知循环 v2.1 多路召回）：向量优先，兜底关键词。
+
+    多路查询（原 query + 感知派生查询，最多 4 路）各召回后按 id 合并；
+    加权排序（importance + 关系/情绪时效 + 置顶 + 多路命中加成）取 top limit。
+    批 0-11 起在向量 + 关键词之外还有**第三路专名匹配**（flag `recall_entity_match` 默认关＝
+    连查询都不发）：命中的 id 同样并进 RRF 融合与 _rerank，不插队、不改条数（见 _entity_route）。
+    """
+
+    from app.memory.service import (
+        async_session_factory,
+        bm25_search,
+        _rrf,
+        text_embedding,
+        vector_search,
+    )
+    _t0 = time.monotonic()
+    # #70 方案B（memory-trace 可观察）：读 feature flag，默认开；flag 关时检索/排序/trace 与现状一致。
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        _trace_debug = bool(AGENT_FLAGS.get("memory_trace_debug", True))
+    except Exception:
+        _trace_debug = False
+    # 检索轨迹 debug（只多写 trace，不影响返回结果）：体积硬上限（每路 id≤5、rrf/rerank_top≤10、
+    # preview≤60 字、steps_json≤8000 字符）在组装处逐一钳制。
+    debug: dict = {"query": (query or "")[:60], "derived_queries": list(queries or [])[:3]}
+    query_list = [query] + (list(queries or [])[:3])
+    results: list[dict] = []
+    hit_count: dict[int, int] = {}
+
+    # A50 批10：三路召回并发＋命中打戳整段机械抽成同文件私有协程 _recall_three_routes
+    # （块内语句逐字搬运；唯一改写＝返回 (dense_hits, sparse_hits, entity_rows, entity_meta,
+    # _entity_ids)，debug 仍按引用原地打戳保键序）。三个 service 符号由 caller 显式传入，
+    # 其余模块级名在 helper 内仍按裸全局名晚绑定。
+    dense_hits, sparse_hits, entity_rows, entity_meta, _entity_ids = await _recall_three_routes(
+        character_id=character_id,
+        query=query,
+        query_list=query_list,
+        limit=limit,
+        debug=debug,
+        text_embedding=text_embedding,
+        vector_search=vector_search,
+        bm25_search=bm25_search,
+    )
+
+    # A50 批14：RRF 融合段（relevance_bonus 初始化 → debug["rrf_top"] 初始化 → 整段 try）三连续节点
+    # 机械抽成同文件私有函数 _fuse_route_relevance（块内语句逐字搬运；唯一改写＝返回值运输契约：
+    # 把 relevance_bonus 交回 caller）。_rrf 是函数顶部的局部 import，由 caller 按 kwarg 显式传入
+    # （import 时点不搬家），_logger 仍按裸全局名晚绑定；debug 按引用原地打戳，键序不变。
+    relevance_bonus = _fuse_route_relevance(
+        dense_hits=dense_hits,
+        sparse_hits=sparse_hits,
+        _entity_ids=_entity_ids,
+        debug=debug,
+        _rrf=_rrf,
+    )
+
+    # A50 批11：三路候选合并＋稀疏回填＋计数整段机械抽成同文件私有协程 _merge_route_candidates
+    # （块内语句逐字搬运；唯一改写＝返回值运输契约）。results/hit_count 仍由 caller 初始化并
+    # **按原对象**传入（helper 原地追加/累加，不另造第二份集合），返回的还是这两个对象；
+    # async_session_factory 由 caller 显式传入（打桩面不搬家），select/Memory/
+    # _retrievable_status_clause/_logger 仍按裸全局名晚绑定。_no_candidates 在 helper 内
+    # 于关键词兜底**之前**取样，caller 后面重绑 results 也改不动它。
+    results, hit_count, candidate_count, _dense_has, _sparse_has, _no_candidates = (
+        await _merge_route_candidates(
+            dense_hits=dense_hits,
+            sparse_hits=sparse_hits,
+            entity_rows=entity_rows,
+            results=results,
+            hit_count=hit_count,
+            async_session_factory=async_session_factory,
+        )
+    )
+
+    if not results:
+        # A50 批12：LIKE 关键词兜底整段（SQL/session/list 构造/candidate_count 改写）机械抽成同文件
+        # 私有协程 _keyword_fallback（块内语句逐字搬运；唯一改写＝返回 (results, candidate_count)）。
+        # 「无候选才兜底」的判定留在本行；async_session_factory 由 caller 显式传入（打桩面不搬家），
+        # select/Memory/_like_escape/_retrievable_status_clause 仍按裸全局名晚绑定；
+        # _no_candidates 快照取在更早的合并 helper 里，不受这里重绑 results 影响。
+        results, candidate_count = await _keyword_fallback(
+            character_id=character_id,
+            query=query,
+            limit=limit,
+            async_session_factory=async_session_factory,
+        )
+
+    # Ariadne 模块 A（2026-09-03）：时间维度确定性检索路（flag memory_temporal_recall 默认关=零行为变化）。
+    # 仅当调用方解析出时间区间（app/memory/time_query.parse_time_range）且 flag 开：
+    # 区间内按重要度补一条确定性 SQL 召回，合并去重后参与同一套 rerank/截断（不享有特权插队），
+    # 保证「时间对、语义弱」的记忆不被向量路漏掉。
+    if time_range is not None:
+        # A50 批12：时间路整段（flag try/except → 区间查询 → id 去重追加 → trace 打戳）机械抽成同文件
+        # 私有协程 _append_temporal_hits（块内语句逐字搬运；唯一改写＝原样返回传进去的 results
+        # 对象、debug 仍按引用打戳保键序）。flag 关时零查询；async_session_factory 由 caller 显式传入，
+        # select/Memory/_retrievable_status_clause 仍按裸全局名晚绑定。
+        results = await _append_temporal_hits(
+            results=results,
+            debug=debug,
+            character_id=character_id,
+            time_range=time_range,
+            limit=limit,
+            _trace_debug=_trace_debug,
+            async_session_factory=async_session_factory,
+        )
+
+    if results:
+        # A50 批13：排序成形段（peak flag 局部 try/except → debug/非 debug 两条 _rerank 路径 →
+        # peak_cutoff＋类型均衡＋去 _score → 邻居补空缺槽与 neighbor_block 打戳）整段机械抽成同文件
+        # 私有协程 _rank_and_shape（块内语句逐字搬运；唯一改写＝原样返回传进去的 results，debug
+        # 仍按引用原地更新）。判定 `if results:` 留在本行；_rerank/peak_cutoff/_diversify_by_type/
+        # _expand_neighbor_blocks 等继续按裸全局名晚绑定。
+        results = await _rank_and_shape(
+            results=results,
+            character_id=character_id,
+            hit_count=hit_count,
+            relevance_bonus=relevance_bonus,
+            limit=limit,
+            debug=debug,
+            _trace_debug=_trace_debug,
+        )
+
+    # A50 批13：插件 Hook 扩展段整段机械抽成同文件私有协程 _apply_search_plugins（块内语句逐字搬运，
+    # 唯一改写＝末尾补 return results）。插件看到的仍是**排序后、scene 过滤前**的候选集合。
+    results = await _apply_search_plugins(
+        results=results,
+        character_id=character_id,
+        query=query,
+        limit=limit,
+        user_id=user_id,
+    )
+
+    # #72：场景可见性过滤（scene/exclude_sources/group_id 默认 None/空 = 与现状逐字节一致）
+    if scene is not None or exclude_sources or group_id is not None:
+        results = _scene_filter(results, scene, exclude_sources, group_id)
+
+    # 批 0-2 M1a：flag `perception_source_tag` 开时输出补「来源/子类」两字段（观测与前端标注用）。
+    # 只加字段：排序、条数、预算、阈值、是否剔除一律不变（键追加在末尾，旧键顺序逐字节保持）。
+    _with_source = _perception_tag_on()
+    _final = [
+        {
+            "id": r["id"],
+            "content": r["content"],
+            "type": r["type"],
+            "importance": float(r["importance"] or 0),
+            "created_at": r.get("created_at"),
+            "epistemic_status": r.get("epistemic_status"),
+            "speaker_id": r.get("speaker_id"),
+            "speaker_type": r.get("speaker_type"),
+            "reliability_score": r.get("reliability_score"),
+            "contradiction_count": r.get("contradiction_count"),
+            "why_it_matters": r.get("why_it_matters"),
+            "status": r.get("status", "active"),
+            **({"source": r.get("source"), "sub_type": r.get("sub_type")} if _with_source else {}),
+        }
+        for r in results
+    ]
+
+    # #70-B：汇总 debug 的候选数 / 最终注入（preview≤60）/ 延迟；并保留 hit_count 供旧读端（agent-mind/既有测试）。
+    _latency_ms = int((time.monotonic() - _t0) * 1000)
+    # A50 批14：紧随其后的 debug 汇总 `if` 与整段 trace `try` 两连续节点机械抽成同文件私有函数
+    # _emit_search_trace（块内语句逐字搬运；显式返回 None）。_latency_ms 仍留在上一行原位取
+    # （时间起点 _t0 与取值时点都不动），_final 投影与 return _final 留在本函数尾部；
+    # enqueue_task_log 的局部 import 仍在 try 内，异常 warning 仍只吞 trace 段、不扩大到 debug 汇总；
+    # debug/results/_final 一律按原对象传入。同步函数：不加 await、不塞后台任务、不改提交时机。
+    _emit_search_trace(
+        character_id=character_id,
+        query=query,
+        query_list=query_list,
+        results=results,
+        _final=_final,
+        debug=debug,
+        candidate_count=candidate_count,
+        limit=limit,
+        _trace_debug=_trace_debug,
+        _no_candidates=_no_candidates,
+        _dense_has=_dense_has,
+        _sparse_has=_sparse_has,
+        trace_meta=trace_meta,
+        _latency_ms=_latency_ms,
+    )
 
     return _final

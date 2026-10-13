@@ -101,6 +101,25 @@ def _fingerprint(messages) -> str:
     return json.dumps(messages, ensure_ascii=False, sort_keys=True)
 
 
+def _first_diff(before, after) -> str:
+    """两条 context_messages 的第一处不同。
+
+    为什么要这个：断言只比两份长 JSON，红了以后 pytest 会把两边都截成
+    `[{"content":...le": "user"}]`——看不出差在哪，下次还得重跑一遍才知道。
+    2026-10-11 公开仓第 146 棒的 tag 档就红过一次（同树的主推送档绿、本机串行绿），
+    当场拿不到差异位置，只能靠重跑收场。分钟级时钟那条假说已被本文件的反向自测否掉
+    （把钉住的时钟拨晚一分钟，`context_messages` 逐字节不变＝时间行不在这条比对面上）。
+    """
+    for i, (b, a) in enumerate(zip(before, after)):
+        if b != a:
+            return "第 %d 条不同｜关侧=%s｜开侧=%s" % (i, str(b)[:200], str(a)[:200])
+    if len(before) != len(after):
+        extra = after[len(before):] or before[len(after):]
+        return "条数不同｜关侧 %d 条｜开侧 %d 条｜多出来的一条=%s" % (
+            len(before), len(after), str(extra[0])[:200])
+    return "两份逐字节相同（不该走到这里）"
+
+
 def _run_projection(state, *, shadow: bool):
     """按 runtime 的真入口跑一次投影，只切 `AGENT_FLAGS` 那一个开关。"""
     old = agent_flags.AGENT_FLAGS.get(proj_mod.SHADOW_FLAG, False)
@@ -121,9 +140,10 @@ def test_投影开闸后装配产出逐字节相同(ctx_db):
     msgs_on = _assemble(on_state)
 
     assert report is not None, "投影没跑起来（state 里没 workspace？）⇒ 本例前提失效"
-    assert _fingerprint(msgs_on) == _fingerprint(msgs_off), (
+    fp_off, fp_on = _fingerprint(msgs_off), _fingerprint(msgs_on)
+    assert fp_on == fp_off, (
         "②a 影子上开就改了 prompt ⇒ ②c 的前置门禁不成立，必须停下来重审，"
-        "不要直接把它接进对话链"
+        "不要直接把它接进对话链｜差异＝" + _first_diff(msgs_off, msgs_on)
     )
 
 

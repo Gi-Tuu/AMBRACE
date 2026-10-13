@@ -1,7 +1,7 @@
 name: ai_companion
 description: AMBRACE（拥爱）- 自托管的 AI 伙伴陪伴应用
 publish_to: none
-version: 3.5.3+30506
+version: 3.5.4+30507
 
 environment:
   sdk: ^3.6.0
@@ -56,3 +56,5 @@ flutter:
     - assets/life_visual/
     - assets/reward_qrcode.png
     - assets/ic_launcher.png
+    # AGPL-3.0-only：App 内「查看开源许可」要读的完整条文与授权说明（与仓库根同名文件逐字节一致）
+    - assets/legal/

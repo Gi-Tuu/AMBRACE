@@ -1921,12 +1921,78 @@ def test_批5三_收口后chat_service只剩run_agent_core与三个对外端点(
     src = _CHAT_SERVICE_PY.read_text(encoding="utf-8")
     top = [n.name for n in ast.parse(src).body
            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    assert top == ["_run_agent_core", "send_and_receive", "send_and_receive_chunked", "continue_chat"], (
+    # A50 批16（2026-10-13）：_run_agent_core 里的用户轮次信号五块机械抽成同文件私有协程
+    # _run_user_turn_signals（仍在 chat_service、仍紧跟主干），故模块级函数面精确多这一个名字。
+    # A50 批17（2026-10-13）：受控工具三阶段（记忆二跳 / 自主搜索环＋else 剥标 / MCP 工具）
+    # 各整段抽成同文件私有协程 _run_recall_second_hop / _run_search_stage / _run_mcp_stage，
+    # 按源码顺序紧跟 _run_user_turn_signals；仍是同文件私有协程 ⇒ 28 个裸全局的桩解析点零迁移。
+    # A50 批18（2026-10-13）：收尾五阶段（生图标记提取 / Task Trace 留痕 / Phase H 任务化 /
+    # 日历备忘＋AI 承诺标记 / 可见文本清洗与降级）整段抽成 _extract_gen_image_stage（纯同步函数，
+    # 该段零 IO 零 await）/ _emit_chat_trace / _schedule_chat_task / _run_note_and_timer_stage /
+    # _finalize_visible_text，源码顺序紧跟 _run_mcp_stage ⇒ 模块面精确多这五个名字。
+    # 白名单按名字逐个列，不许用「全部下划线开头都算」豁免——那样新私有不受约束、删了也不红。
+    assert top == ["_run_agent_core", "_run_user_turn_signals",
+                   "_run_recall_second_hop", "_run_search_stage", "_run_mcp_stage",
+                   "_extract_gen_image_stage", "_emit_chat_trace", "_schedule_chat_task",
+                   "_run_note_and_timer_stage", "_finalize_visible_text",
+                   "send_and_receive", "send_and_receive_chunked", "continue_chat"], (
         f"chat_service 的模块级函数面与本刀收口预期不符：{top}")
     for name in CS_TOOLING_NAMES:
         assert not re.search(r"^(?:async )?def %s\b" % re.escape(name), src, re.M), name
     for name in ("_run_agent_core", "send_and_receive", "send_and_receive_chunked", "continue_chat"):
         assert re.search(r"^async def %s\b" % re.escape(name), src, re.M), f"{name} 的定义丢了"
+    # A50 批16：helper 是 async 协程、六个入参全部 keyword-only 且无默认值（调用点不许漏传/串位）
+    helper = next(n for n in ast.parse(src).body
+                  if isinstance(n, ast.AsyncFunctionDef) and n.name == "_run_user_turn_signals")
+    assert [a.arg for a in helper.args.args] == [], "helper 不许有位置参数"
+    assert [a.arg for a in helper.args.kwonlyargs] == [
+        "session_id", "user_id", "character_id", "content", "user_msg_id", "user_timer"]
+    assert [d for d in helper.args.kw_defaults if d is None] == helper.args.kw_defaults, (
+        "helper 入参不许带默认值")
+    # A50 批17：三个阶段 helper 同款纪律（keyword-only、无默认值、async），逐个按名字钉死，
+    # 且必须排在 _run_agent_core 之后、三个对外端点之前（薄编排在主干里）。
+    stage_helpers = {
+        "_run_recall_second_hop": ["final_state", "_trace_llm_calls", "user_id", "character_id"],
+        "_run_search_stage": ["final_state", "full_text", "_loop_steps", "_trace_searched",
+                              "_trace_llm_calls", "user_id", "character_id", "search_loop"],
+        "_run_mcp_stage": ["final_state", "full_text", "_loop_steps", "user_id",
+                           "character_id", "session_id"],
+    }
+    for name, kwargs in stage_helpers.items():
+        node = next(n for n in ast.parse(src).body
+                    if isinstance(n, ast.AsyncFunctionDef) and n.name == name)
+        assert [a.arg for a in node.args.args] == [], f"{name} 不许有位置参数"
+        assert [a.arg for a in node.args.kwonlyargs] == kwargs, f"{name} 入参面变了"
+        assert [d for d in node.args.kw_defaults if d is None] == node.args.kw_defaults, (
+            f"{name} 入参不许带默认值")
+        assert src.index("await %s(" % name) < src.index("async def send_and_receive("), (
+            "%s 的调用点必须留在主干里（跑到端点之后就成隐式新债了）" % name)
+    # A50 批18：收尾五阶段同款纪律，但**形态逐个钉死**——生图提取是纯同步函数（那一段零 IO 零
+    # await，async 化只会白造一个协程），其余四段含 await 必须是协程；入参一律 keyword-only、
+    # 无默认值；调用点仍留在主干里且早于三个对外端点。
+    closing_helpers = {
+        "_extract_gen_image_stage": (["full_text", "_source_text", "_is_stream"], False),
+        "_emit_chat_trace": (["_t0", "_trace_actions", "_loop_steps", "_trace_llm_calls",
+                              "_trace_searched", "search_loop", "trace_route", "character_id",
+                              "user_id", "session_id"], True),
+        "_schedule_chat_task": (["run_chat_task", "_trace_actions", "_loop_steps", "character_id",
+                                 "user_id", "session_id", "content", "full_text"], True),
+        "_run_note_and_timer_stage": (["_source_text", "full_text", "_is_stream", "search_loop",
+                                       "user_id", "character_id", "session_id", "content"], True),
+        "_finalize_visible_text": (["final_state", "full_text", "session_id", "user_id",
+                                    "character_id"], True),
+    }
+    for name, (kwargs, want_async) in closing_helpers.items():
+        node = next(n for n in ast.parse(src).body
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name)
+        assert isinstance(node, ast.AsyncFunctionDef) == want_async, (
+            "%s 的 async/同步形态变了（纯函数不许被 await 化，协程不许退化成同步）" % name)
+        assert [a.arg for a in node.args.args] == [], f"{name} 不许有位置参数"
+        assert [a.arg for a in node.args.kwonlyargs] == kwargs, f"{name} 入参面变了"
+        assert [d for d in node.args.kw_defaults if d is None] == node.args.kw_defaults, (
+            f"{name} 入参不许带默认值")
+        assert src.index("%s(" % name) < src.index("async def send_and_receive("), (
+            "%s 的调用点必须留在主干里（跑到端点之后就成隐式新债了）" % name)
 
 
 # ───────── ⑬-3 会话工厂：18 处桩一个都不许迁（两个取库点各一条） ─────────

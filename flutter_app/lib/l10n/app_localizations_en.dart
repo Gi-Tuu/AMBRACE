@@ -5577,7 +5577,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get agreeSection1Body =>
-      'This project is open-source, self-hosted software (MIT License). Users download, deploy, and run it on their own devices or servers. The author maintains this open-source project individually and for free and makes no commercial service commitments to any user.';
+      'This project is open-source, self-hosted software, licensed under the GNU Affero General Public License v3 (AGPL-3.0-only) since 3.5.4 (releases 3.5.3 and earlier were MIT and are not changed). Users download, deploy, and run it on their own devices or servers. The author maintains this open-source project individually and for free and makes no commercial service commitments to any user.';
 
   @override
   String get agreeSection2Title => 'II. Use at Your Own Risk';
@@ -5622,11 +5622,18 @@ class AppLocalizationsEn extends AppLocalizations {
       'The content of this agreement may be adjusted with version updates. Continued use of this software is deemed acceptance of the latest version of the agreement.';
 
   @override
-  String get agreeSection8Title => '8. License & Use';
+  String get agreeSection8Title => 'VIII. License & Use';
 
   @override
   String get agreeSection8Body =>
-      'This open-source project is provided for learning and research only. Any commercial use of this project or its derivatives is strictly prohibited without the author\'s written permission.';
+      'This project\'s own code is licensed under AGPL-3.0-only. That license does not prohibit commercial use and does not prohibit charging for it: you may run this software commercially and you may charge for it. What you must comply with is the license itself — if you distribute the software (modified or not), comply with the applicable requirements of sections 4–6; when conveying object code, use a Corresponding Source method permitted by section 6 for that form of distribution, rather than treating a written offer as sufficient in every case, and if you let other users interact with a modified version over a network you must offer those users the corresponding source code of that modified version. Running it yourself, or hosting an unmodified copy for your own use, does not by itself trigger that obligation. Contacting the author is a voluntary courtesy, not a condition of the license. No trademark rights are granted; please do not present a modified or repackaged build as an official build, or in a way that would cause confusion about its source. Use the button below to read the full license text and licensing notices.';
+
+  @override
+  String get agreeViewLicense => 'View Open Source Licenses';
+
+  @override
+  String get agreeViewLicenseHint =>
+      'Full AGPL-3.0 text, notices and third-party component list';
 
   @override
   String get backupTitle => 'Data Backup';
@@ -6581,6 +6588,17 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String archivePlayerCount(Object count) {
     return '$count players';
+  }
+
+  @override
+  String gameHistoryPlayerCount(num count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count players',
+      one: '$count player',
+    );
+    return '$_temp0';
   }
 
   @override

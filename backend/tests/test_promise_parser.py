@@ -218,9 +218,17 @@ def test_f1_extract_ai_timer_source_not_user_message():
 
 
 def test_f1_chat_service_ai_call_site_uses_extract_ai_timer():
-    """F1b：chat_service AI 侧承诺提取走 extract_ai_timer（签名上不可能再接用户消息 id）"""
+    """F1b：chat_service AI 侧承诺提取走 extract_ai_timer（签名上不可能再接用户消息 id）
+
+    A50 批18（2026-10-13）：AI 侧承诺那一段随「日历/备忘＋AI 承诺标记」阶段整段抽成同文件私有协程
+    _run_note_and_timer_stage（块内语句逐字未变），源码锚随之改指该 helper——原判据一字未改，
+    并补一条「caller 必须显式调那个 helper」，否则锚点会随重构悄悄失去约束面
+    （同 A50 批14 检索 trace 锚的随迁写法，见 test_experience_fixes.py:25-26）。
+    """
     import inspect
     from app.application import chat_service
-    src = inspect.getsource(chat_service._run_agent_core)
+    src = inspect.getsource(chat_service._run_note_and_timer_stage)
     assert "extract_ai_timer(" in src
+    caller = inspect.getsource(chat_service._run_agent_core)
+    assert "_run_note_and_timer_stage(" in caller   # caller 必须显式调该阶段 helper
 

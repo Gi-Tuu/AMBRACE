@@ -211,6 +211,8 @@ def test_open_transport_streamable_http(monkeypatch):
 
     monkeypatch.setattr("mcp.client.streamable_http.streamable_http_client", fake_shc)
     monkeypatch.setattr("httpx.AsyncClient", _Client)
+    # This integration test supplies a validated target; DNS policy is tested separately.
+    monkeypatch.setattr("app.mcp.transport._resolve_mcp_ip", lambda url, allow_loopback=False: "93.184.216.34")
 
     cfg = _TransportConfig(transport="streamable_http", url="https://mcp.example.com", headers={"X": "1"})
     cm = MCPClientManager()._open_transport(cfg)

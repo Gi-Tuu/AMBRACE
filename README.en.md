@@ -2,11 +2,11 @@
 
 English | [简体中文](README.md)
 
-> **Note:** This English translation is kept in sync with the authoritative Chinese [`README.md`](README.md) as of **v3.5.3**. If you find any discrepancy, the Chinese version prevails — please open an issue to let us know.
+> **Note:** This English translation is kept in sync with the authoritative Chinese [`README.md`](README.md) as of **v3.5.4**. If you find any discrepancy, the Chinese version prevails — please open an issue to let us know.
 
 A self-hosted AI companion app: configure multiple AI characters who chat with you, keep memories, post Moments, write diaries, and raise pets; enjoy real-time voice calls, optionally enable phone perception (screen reading / clipboard / album / notifications), and even connect characters to external chat bots so you can talk to them anywhere. **All your data stays on your own server.**
 
-**Current version**: v3.5.3 ｜ Version-by-version changes are in [`docs/changelog.md`](docs/changelog.md) (also the data source for the in-app "What's New" panel) and on the [Releases page](https://github.com/Gi-Tuu/AMBRACE/releases).
+**Current version**: v3.5.4 ｜ Version-by-version changes are in [`docs/changelog.md`](docs/changelog.md) (also the data source for the in-app "What's New" panel) and on the [Releases page](https://github.com/Gi-Tuu/AMBRACE/releases).
 
 ## Features
 
@@ -348,8 +348,15 @@ backend/.venv/Scripts/python.exe scripts/smoke_test.py
 - Model / voice keys saved on the server are encrypted at rest (the master key is kept separately on this machine); the **daily backup archives still contain plaintext**, as noted under "Backup & Restore" above.
 
 ## Open Source & License
-- Code license: [MIT](LICENSE)
-- **For learning and technical exchange only**: this project is open-sourced for study and research use; **any commercial use without the author's written permission is prohibited** (also stated in the in-app user agreement).
+- Code license: **AGPL-3.0-only** ([full text](LICENSE), GNU Affero General Public License v3), **in effect since v3.5.4**. v3.5.3 and earlier were released under MIT; those releases and their tags are historical records and are not changed.
+- [NOTICE](NOTICE): a bilingual statement of the grant and its boundaries (who is licensed to do what, how commercial use and trademarks are treated, and what is outside the grant).
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md): itemised third-party components (Python / Flutter / model weights / artwork) and their obligations; verbatim license copies are in [THIRD_PARTY_LICENSES/](THIRD_PARTY_LICENSES/) and can be checked with `scripts/collect_license_notices.py --verify`.
+- ⚠ **This license does not forbid commercial use**: you may run it commercially and you may charge for it. What you must comply with is the AGPL itself:
+  - **Distributing** the software (modified or not) → comply with the applicable requirements of sections 4–6; when conveying object code, use a Corresponding Source method permitted by section 6 for that form of distribution. A written offer is not a substitute in every case;
+  - Letting other users interact with a **modified** version over a network → offer those users the corresponding source code of your modified version, per section 13;
+  - Running it yourself, or hosting an unmodified copy for your own use, does not by itself trigger a source-offer obligation.
+- If you'd like to support maintenance you can [contact the author](#support-the-author) — this is a voluntary courtesy and **not** a condition of the license; never contacting the author is equally compliant.
+- **Trademarks**: no trademark rights are granted. Please do not present a modified or repackaged build as an official build, or in a way that would cause confusion about its source.
 - Third-party models and services (LLM / vision / voice / image generation) are applied for and paid by you; their terms follow their official statements.
 
 ## Support the Author

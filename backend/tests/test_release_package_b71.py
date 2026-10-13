@@ -86,7 +86,12 @@ def test_死模型不进发布包(make_release, tmp_path):
 
 
 def test_随包体积读数来自落包文件而非源目录(make_release, tmp_path):
-    """反向钉：按源目录累加会把死模型与 LFS 一起报出来（包里没有那些字节）。"""
+    """反向钉：按源目录累加会把死模型与 LFS 一起报出来（包里没有那些字节）。
+
+    2026-10-13 起 bundle_models 还会往每个权重子目录放一份**上游原许可**
+    （AGPL 下再分发要随附），所以期望值 = 权重字节 + 许可字节；不变式
+    「读数 == 已落包文件之和，且不含死模型/LFS」照旧。
+    """
     src = tmp_path / "models"
     _tree(src, {
         "bge-m3/onnx/model_int8.onnx": 1024,
@@ -96,8 +101,15 @@ def test_随包体积读数来自落包文件而非源目录(make_release, tmp_p
     dst = tmp_path / "out" / "backend" / "models"
     total, _ = make_release.bundle_models(src, dst)
 
-    assert total == _sum_bytes(dst) == 1024
+    landed_license = next(
+        int(p.stat().st_size)
+        for p in (dst / "bge-m3").iterdir()
+        if "LICENSE" in p.name.upper() or "COPYING" in p.name.upper()
+    )
+    assert total == _sum_bytes(dst) == 1024 + landed_license
     assert total < _sum_bytes(src), "读数按源目录累加＝发布包体积在报假数"
+    assert not (dst / "bge-small-zh-v1.5").exists(), "死模型被打包了"
+    assert not any(".git" in Path(r).parts for r, _, _ in os.walk(dst)), ".git/LFS 缓存漏进包"
 
 
 def test_latest无完整包附件时返回空串(download_models, monkeypatch):

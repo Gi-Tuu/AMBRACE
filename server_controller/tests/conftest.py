@@ -333,6 +333,7 @@ def stub(monkeypatch):
     monkeypatch.setattr(sc, "_read_db_stats",
                         lambda: {"characters": 4, "memories": 77, "tokens": 123456})
     monkeypatch.setattr(sc, "_read_token_trend", lambda *a, **k: [])
+    monkeypatch.setattr(sc, "_read_mem_daily_new", lambda *a, **k: [])
     monkeypatch.setattr(sc, "_read_token_heatmap", lambda *a, **k: heatmap_payload())
     monkeypatch.setattr(sc, "_fetch_health", lambda: "ok")
     monkeypatch.setattr(sc, "_fetch_liveness",

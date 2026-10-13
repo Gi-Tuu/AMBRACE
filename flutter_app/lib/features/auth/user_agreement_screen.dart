@@ -45,6 +45,52 @@ class UserAgreementScreen extends StatelessWidget {
             title: l10n.agreeSection8Title,
             body: l10n.agreeSection8Body,
           ),
+          _LicenseButton(
+            label: l10n.agreeViewLicense,
+            hint: l10n.agreeViewLicenseHint,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 「查看开源许可」入口：走系统 LicensePage，与 Flutter 插件默认许可并列展示。
+/// 不自己再造一个文本页——showLicensePage 里的内容全部来自 main.dart 注册的
+/// LicenseRegistry（项目自有 AGPL/NOTICE）+ Flutter 框架自带的插件许可。
+class _LicenseButton extends StatelessWidget {
+  const _LicenseButton({required this.label, required this.hint});
+
+  final String label;
+  final String hint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextButton.icon(
+            onPressed: () => showLicensePage(
+              context: context,
+              applicationName: label,
+              applicationVersion: 'AGPL-3.0-only',
+              applicationLegalese: hint,
+            ),
+            icon: const Icon(Icons.description_outlined),
+            label: Text(label),
+          ),
+          Text(
+            hint,
+            style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context)
+                  .colorScheme
+                  .onSurface
+                  .withValues(alpha: 0.6),
+            ),
+          ),
         ],
       ),
     );

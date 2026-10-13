@@ -17,9 +17,18 @@ def test_bug1_合并用段落分隔():
 def test_bug2_memory_search_trace语义():
     import inspect
     from app.memory import retrieve as retrieve_mod  # F4：search_memories 实现已迁至 retrieve.py
-    src = inspect.getsource(retrieve_mod.search_memories)
+    # A50 批14：这两行源码锚点随 trace 段整体搬进同文件私有函数 _emit_search_trace（原语义断言
+    # 一字不改），并钉住 caller 确实**显式调用**那个 helper——否则锚点会随重构悄悄失去约束面。
+    src = inspect.getsource(retrieve_mod._emit_search_trace)
     assert '"hit_count": candidate_count' in src   # 召回候选命中数（合并去重后的候选池）
     assert '"returned": len(results)' in src       # 实际返回条数
+    caller = inspect.getsource(retrieve_mod.search_memories)
+    assert "_emit_search_trace(" in caller         # caller 必须显式调 trace helper
+    import ast
+    body = ast.parse(caller).body[0].body                # 落库动作不在 caller 里裸写（注释不算）
+    assert not [n for n in ast.walk(ast.Module(body=body, type_ignores=[]))
+                if getattr(n, "id", None) == "enqueue_task_log"
+                or getattr(n, "attr", None) == "enqueue_task_log"]
 
 
 def test_bug3_建任务阈值降到1个动作():

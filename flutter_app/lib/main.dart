@@ -1,5 +1,7 @@
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
@@ -9,6 +11,7 @@ import 'services/notification_service.dart';
 import 'services/api_client.dart';
 import 'services/background_polling_service.dart';
 import 'services/fcm_push_service.dart';
+import 'services/foreground_ack.dart';
 import 'global_keys.dart';
 import 'providers/settings_provider.dart';
 import 'theme/app_theme.dart';
@@ -28,12 +31,36 @@ void main() async {
   // 显式初始化皮肤注册表（注册内置皮肤；未来插件可在此后注册自定义皮肤）
   SkinRegistry.initialize();
   _setupLifecycleObserver();
+  // AGPL-3.0-only：把完整条文与授权说明注册进系统许可页（App 内「查看开源许可」直达）。
+  // 这里**只注册回调、不读资产**——rootBundle.loadString 放在 LicensePage 真正打开时才跑，
+  // 不在 runApp 之前 await 任何 IO（2026-09-13 黑屏修复的同一纪律）。
+  _registerProjectLicenses();
   // 2026-09-13 黑屏修复：runApp 之前不再 await 任何服务初始化。
   // 原因：FcmPushService.init() 会做网络请求（device/fcm-config、register）+ 系统通知权限弹窗 + 取 token；
   // 网络慢或权限弹窗没人应答时，首帧被一直挡住，用户看到的就是「打开后长时间黑屏」。
   // 现在先渲染首帧（登录页/引导页立即可见），三个服务在首帧后异步初始化，任一失败都只降级不影响使用。
   runApp(const AICompanionApp());
   WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrapServices());
+}
+
+/// 注册本项目自有的开源许可（AGPL-3.0-only 全文 + NOTICE 授权说明）。
+///
+/// 与 Flutter 框架自带的插件许可是**并列**关系：LicensePage 会把所有 LicenseRegistry
+/// 条目都列出来，这里补的正是项目自己那一份。两份资产与仓库根的 LICENSE / NOTICE
+/// 逐字节一致（backend/tests/test_release_license_contract.py 钉住）。
+void _registerProjectLicenses() {
+  LicenseRegistry.addLicense(() async* {
+    final agpl = await rootBundle.loadString('assets/legal/AGPL-3.0.txt');
+    final notice = await rootBundle.loadString('assets/legal/NOTICE.txt');
+    yield LicenseEntryWithLineBreaks(
+      const ['AMBRACE (AGPL-3.0-only)'],
+      agpl,
+    );
+    yield LicenseEntryWithLineBreaks(
+      const ['AMBRACE - NOTICE (scope, commercial use, trademarks)'],
+      notice,
+    );
+  });
 }
 
 /// 首帧之后的后台初始化（顺序执行；每个都 try/catch 降级，任何异常不影响 App 使用）。
@@ -75,14 +102,16 @@ void _setupLifecycleObserver() {
 ///
 /// 旧形状＝后台只等主 isolate 在 `onHide` 里发的那**一条** invoke；`onHide` 触发时主 isolate 已被
 /// 系统冻结，消息可能没送到 ⇒ 后台标志永久停在 `true`，三条通知路径全不弹，而主 isolate 自己不弹
-/// ＝「一退后台就不弹，要重新进 App 才恢复」。现在改成**问**：后台每 5s 探一次，这里回它当时刻的
-/// `lifecycleState`；主 isolate 被冻结就没人回答，后台据此判「在后台」并照常弹通知（判定规则与
-/// 单元测试见 lib/services/foreground_state.dart）。生命周期事件保留，仍负责回前台 0 延迟停止。
+/// ＝「一退后台就不弹，要重新进 App 才恢复」。现在改成**问**：后台每 5s 探一次，这里回它当时刻
+/// 「是不是 resumed」这一个 bool（契约 `{'resumed': bool}`，编解码与接收端共用
+/// lib/services/foreground_ack.dart；10-13 修的就是这里发短名 `resumed`、那边比长名
+/// `AppLifecycleState.resumed`，两端永远对不上）；主 isolate 被冻结就没人回答，后台据此判「在后台」
+/// 并照常弹通知（判定规则与单元测试见 lib/services/foreground_state.dart）。生命周期事件保留，仍负责回前台 0 延迟停止。
 void _registerForegroundProbe() {
-  FlutterBackgroundService().on("fgProbe").listen((_) {
-    final state = WidgetsBinding.instance.lifecycleState?.name ?? "";
+  FlutterBackgroundService().on(kForegroundProbeEvent).listen((_) {
+    final payload = foregroundAckPayload(WidgetsBinding.instance.lifecycleState);
     try {
-      FlutterBackgroundService().invoke("fgAck", {"state": state});
+      FlutterBackgroundService().invoke(kForegroundAckEvent, payload);
     } catch (_) {}
   });
 }

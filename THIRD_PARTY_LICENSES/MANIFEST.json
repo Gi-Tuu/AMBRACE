@@ -1,0 +1,797 @@
+{
+  "schema": 1,
+  "entries": [
+    {
+      "path": "models/MIT_FlagOpen-FlagEmbedding_LICENSE.txt",
+      "sha256": "587a673933425dbc36ec61268d3b954051b2d3ef3c9b322ede357976055ffdd5",
+      "bytes": 1065
+    },
+    {
+      "path": "models/MIT_openai-whisper_LICENSE.txt",
+      "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+      "bytes": 1063
+    },
+    {
+      "path": "python/Pillow-12.3.0/LICENSE",
+      "sha256": "4f7866a74802c6326f81faff59a56546b6aec2b10b91973e0e9308de95e79857",
+      "bytes": 78016
+    },
+    {
+      "path": "python/aiohttp-3.14.3/LICENSE.txt",
+      "sha256": "ea195371abbf66a39eef56600955d1137c2c196dc144ffec46b6ea530ce70044",
+      "bytes": 11514
+    },
+    {
+      "path": "python/aiohttp-3.14.3/vendor/llhttp/LICENSE",
+      "sha256": "279012e02a10acfd59a3f2d8f13a497332535d871c2b27c89988985b06a3a438",
+      "bytes": 1091
+    },
+    {
+      "path": "python/certifi-2026.7.22/LICENSE",
+      "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7",
+      "bytes": 989
+    },
+    {
+      "path": "python/charset-normalizer-3.5.1/LICENSE",
+      "sha256": "18577485d3704f1a479ded8e573c0976cfed315fd2fd17983fa988da4c2f70d1",
+      "bytes": 1092
+    },
+    {
+      "path": "python/durationpy-0.11/LICENSE",
+      "sha256": "b6c5adfeed4ba4385ea6ab33c4e9b730fd22937350b2e17f862ae169f8d90dc9",
+      "bytes": 1050
+    },
+    {
+      "path": "python/ecdsa-0.19.2/LICENSE",
+      "sha256": "3eca9845773d2e5b8cc9d8c119d345f00a4806e4bd660d4a3d6cdf9c0e9d8bb2",
+      "bytes": 1147
+    },
+    {
+      "path": "python/edge-tts-7.2.8/LICENSE",
+      "sha256": "3613045a46a5bce847f80eadbbf013e4260ef19d728ffd061d61e792689ec3a8",
+      "bytes": 9041
+    },
+    {
+      "path": "python/frozenlist-1.8.0/LICENSE",
+      "sha256": "6fd5243e92dd7f98ec69c7ac377728e74905709ff527a5bf98d6d0263c04f5b6",
+      "bytes": 11332
+    },
+    {
+      "path": "python/google-crc32c-1.8.0/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "python/httptools-0.8.0/LICENSE",
+      "sha256": "1c028b059d7a58e14ccda38cabced698c591fe614ffbe4f721430446e86c8d69",
+      "bytes": 1114
+    },
+    {
+      "path": "python/httptools-0.8.0/vendor/http-parser/LICENSE-MIT",
+      "sha256": "5cd1b682c0ccbac0cb31b86a9a1104c3e2e7b1377a282b8169d2694b400db7c2",
+      "bytes": 1096
+    },
+    {
+      "path": "python/httptools-0.8.0/vendor/llhttp/LICENSE",
+      "sha256": "279012e02a10acfd59a3f2d8f13a497332535d871c2b27c89988985b06a3a438",
+      "bytes": 1091
+    },
+    {
+      "path": "python/idna-3.19/LICENSE.md",
+      "sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04",
+      "bytes": 1541
+    },
+    {
+      "path": "python/jsonpatch-1.33/LICENSE",
+      "sha256": "4393eb6733fa1e367f41769b382f4f1be7bf0daeb1e243ed92b3f5d8bafd236f",
+      "bytes": 1481
+    },
+    {
+      "path": "python/lunardate-0.3.0/LICENSE.txt",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "bytes": 35149
+    },
+    {
+      "path": "python/multidict-6.7.1/LICENSE",
+      "sha256": "93d11a968e2f0f36373c40811ff6d20e173f58c3cab5884cd6617bbfd795492a",
+      "bytes": 611
+    },
+    {
+      "path": "python/numpy-2.5.2/LICENSE.txt",
+      "sha256": "a804dff0ead9fadc5293456410bcbfc32bf024be9c4513459663fb7b442d2341",
+      "bytes": 45831
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/_core/include/numpy/libdivide/LICENSE.txt",
+      "sha256": "d544761558b510866c21f7e8a2d5716fca76e0b98117e3b6b86314db7244d150",
+      "bytes": 1039
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/_core/include/numpy/random/LICENSE.txt",
+      "sha256": "d544761558b510866c21f7e8a2d5716fca76e0b98117e3b6b86314db7244d150",
+      "bytes": 1039
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/_core/src/common/pythoncapi-compat/COPYING",
+      "sha256": "aea41976c720f91bd19725c16916a1ace40eb1ea42620d340e587a5de4bbcea0",
+      "bytes": 704
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/_core/src/highway/LICENSE",
+      "sha256": "d208152e2777ffd0126eacc1bd21c0320d69e4e6b622d21a2a12a47e8ef73763",
+      "bytes": 21155
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/_core/src/multiarray/dragon4_LICENSE.txt",
+      "sha256": "b0fd592d4ead563148e3977e7b589169d46a5ef2ff133c755a81af880a3fc919",
+      "bytes": 1441
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/_core/src/npysort/x86-simd-sort/LICENSE.md",
+      "sha256": "a732977853530066790c42817087f4829b518dd98d340c916acbfd227e39d3cb",
+      "bytes": 1542
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/_core/src/umath/svml/LICENSE",
+      "sha256": "585483905b13d4b42f800c55ba99e89d6e2e33ccd5f503e201c07531d148ff41",
+      "bytes": 1573
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/fft/pocketfft/LICENSE.md",
+      "sha256": "8db000e158c162e7249787852d8c69764706502ccee725c06641b31c1e95c8af",
+      "bytes": 1523
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/linalg/lapack_lite/LICENSE.txt",
+      "sha256": "19060ef465e1797d682ee0fc3081bd25ab1395e995e43d25c9d13c95d9a3cd6b",
+      "bytes": 2314
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/ma/LICENSE",
+      "sha256": "d78dbb208b80d92b4d333e41a4baae50d12444f46e53199fa7726a91de6e2da7",
+      "bytes": 1616
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/ma/LICENSE",
+      "sha256": "d78dbb208b80d92b4d333e41a4baae50d12444f46e53199fa7726a91de6e2da7",
+      "bytes": 1616
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/random/LICENSE.md",
+      "sha256": "b4bc2f4fa1c95778f1ed3dd8f14706bece399475b978f9f34b5d3cd72521b48a",
+      "bytes": 3582
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/random/LICENSE.md",
+      "sha256": "b4bc2f4fa1c95778f1ed3dd8f14706bece399475b978f9f34b5d3cd72521b48a",
+      "bytes": 3582
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/random/src/distributions/LICENSE.md",
+      "sha256": "cf5619f25b112d5ce7c896efffc8e610bcb345dfadcc19f2c1460aa48fff2c9e",
+      "bytes": 2805
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/random/src/mt19937/LICENSE.md",
+      "sha256": "92c10699884321f1c2947fe2a70ab23b0fbf1507f756d89dd08f38c61fc3d4fa",
+      "bytes": 2986
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/random/src/pcg64/LICENSE.md",
+      "sha256": "41190663b77bee5302386495a07b7eabfbfa571aa0ae2f11da6764162062fc4f",
+      "bytes": 1176
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/random/src/philox/LICENSE.md",
+      "sha256": "322ac46d870c8aeead6c53adcccc839296fb3c8e456eae155081297daf7f8013",
+      "bytes": 1540
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/random/src/sfc64/LICENSE.md",
+      "sha256": "28cad82ce1379dc529df30da78ec012d7d0d1d576b03ddcb93388aee53659f59",
+      "bytes": 1253
+    },
+    {
+      "path": "python/numpy-2.5.2/numpy/random/src/splitmix64/LICENSE.md",
+      "sha256": "454ec7350e478e037061850b67395753b425b1cb0a34bbc26290b020bf89d763",
+      "bytes": 340
+    },
+    {
+      "path": "python/oauthlib-3.3.1/LICENSE",
+      "sha256": "0028aa4763a8a0b09ca4c68d585263474cf9aaa6ec69ffbef3a31a9eccdd3b91",
+      "bytes": 1534
+    },
+    {
+      "path": "python/opencv-python-5.0.0.93/LICENSE-3RD-PARTY.txt",
+      "sha256": "c1d60169b55cee56452b227c2fd2a7b9ddda3dd3741065f1c6201072be73fadb",
+      "bytes": 183251
+    },
+    {
+      "path": "python/opencv-python-5.0.0.93/LICENSE.txt",
+      "sha256": "edef0fac1eb08d29d34563f724742e078da2513e196133a12c6ad9ff01e26107",
+      "bytes": 1090
+    },
+    {
+      "path": "python/opencv-python-5.0.0.93/cv2/LICENSE-3RD-PARTY.txt",
+      "sha256": "c1d60169b55cee56452b227c2fd2a7b9ddda3dd3741065f1c6201072be73fadb",
+      "bytes": 183251
+    },
+    {
+      "path": "python/opencv-python-5.0.0.93/cv2/LICENSE.txt",
+      "sha256": "edef0fac1eb08d29d34563f724742e078da2513e196133a12c6ad9ff01e26107",
+      "bytes": 1090
+    },
+    {
+      "path": "python/orjson-3.12.0/LICENSE-APACHE",
+      "sha256": "7cfd738c53d61c79f07e348f622bf7707c9084237054d37fbe07788a75f5881c",
+      "bytes": 11048
+    },
+    {
+      "path": "python/orjson-3.12.0/LICENSE-MIT",
+      "sha256": "36516aefdc84c5d5a1e7485425913a22dbda69eb1930c5e84d6ae4972b5194b9",
+      "bytes": 1046
+    },
+    {
+      "path": "python/orjson-3.12.0/LICENSE-MPL-2.0",
+      "sha256": "9303ea1cfbf049945652668089d753fb1a7e1f2e52c680615c3d2cea7515c118",
+      "bytes": 17100
+    },
+    {
+      "path": "python/overrides-7.7.0/LICENSE",
+      "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08",
+      "bytes": 11358
+    },
+    {
+      "path": "python/protobuf-7.36.1/LICENSE",
+      "sha256": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d",
+      "bytes": 1732
+    },
+    {
+      "path": "python/psutil-7.2.2/LICENSE",
+      "sha256": "c7adc4d5d1337a548b967421f1fbe258b93033a0417708fd6f4e38f8ecbceb80",
+      "bytes": 1577
+    },
+    {
+      "path": "python/pyasn1-0.6.4/LICENSE.rst",
+      "sha256": "2aad5fc00f705c4a1addb83eed10a6a75d286a3779f0cf8519d87e62bc4735fd",
+      "bytes": 1334
+    },
+    {
+      "path": "python/python-dotenv-1.2.3/LICENSE",
+      "sha256": "80619b7049f08c81683ad0e01f08f257a840652dd71ee83146d36658c7d2c2b9",
+      "bytes": 1556
+    },
+    {
+      "path": "python/rank-bm25-0.2.2/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357
+    },
+    {
+      "path": "python/regex-2026.9.3/LICENSE.txt",
+      "sha256": "3d220c06594b826bbabf110312f60f385f99e57e529fa4b9e536f79091f8b4c7",
+      "bytes": 11792
+    },
+    {
+      "path": "python/shapely-2.1.2/LICENSE.txt",
+      "sha256": "e8cd7d34604d2758ff589f0f34d6ed79c3f7fb14aaf5e12fb09221421391a3bf",
+      "bytes": 1612
+    },
+    {
+      "path": "python/shapely-2.1.2/LICENSE_GEOS",
+      "sha256": "91a5bb11df4d44bfddc0c68db43681705326107781599fb6c6ff821042072d64",
+      "bytes": 27295
+    },
+    {
+      "path": "python/shapely-2.1.2/LICENSE_win32",
+      "sha256": "9b30cd1a09789884dd54e5828e31d2bf8e6879034e7cf7b6e0321444cf6dd11d",
+      "bytes": 1179
+    },
+    {
+      "path": "python/sqlalchemy-2.0.52/LICENSE",
+      "sha256": "9bb754071e711cf75728b9051b170bfb8f9e3b879c08386c96a36989c42cd5f1",
+      "bytes": 1119
+    },
+    {
+      "path": "python/tiktoken-0.14.0/LICENSE",
+      "sha256": "258463fc3788f1f9b6a3f1820d8a87481ac24018d53167597e25d3e9031851ca",
+      "bytes": 1099
+    },
+    {
+      "path": "python/tqdm-4.70.0/LICENCE",
+      "sha256": "fcff87c3a47ce8028a8512aa182d4fcf0ad1c90544ee75cf9b343684cac194de",
+      "bytes": 1985
+    },
+    {
+      "path": "python/tzdata-2026.3/LICENSE",
+      "sha256": "df58f69ea88683035d720b5375bcef0cf5aeaa98a1d098d572e0992c378deb46",
+      "bytes": 625
+    },
+    {
+      "path": "python/tzdata-2026.3/licenses/LICENSE_APACHE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357
+    },
+    {
+      "path": "python/websocket-client-1.9.2/LICENSE",
+      "sha256": "14214b7bbb6952ada76afea206b6c393f2563d4e7678be0232e1a1d216716679",
+      "bytes": 11339
+    },
+    {
+      "path": "python/xxhash-4.0.1/LICENSE",
+      "sha256": "b76e99529f3e47372029e11914a8f4b95d6313463ed5a1a5c9afe96c3e015114",
+      "bytes": 1313
+    },
+    {
+      "path": "python/yarl-1.24.5/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "python/yarl-1.24.5/NOTICE",
+      "sha256": "56d6ac6c8105c0a51304c21db060e361af9a8ea0af9a75c239c28b5d13693838",
+      "bytes": 609
+    },
+    {
+      "path": "upstream/Apache-2.0_RapidAI-RapidOCR_LICENSE.txt",
+      "sha256": "3e0af25fdd06aa9586ae97adb00ea927ebe5a3805ac77d2d3a81ce5f55693333",
+      "bytes": 11422
+    },
+    {
+      "path": "upstream/MIT_OpenNMT-CTranslate2_LICENSE.txt",
+      "sha256": "54aa79d9fe3c09e67a16dcd95b9e88676405a6ec174efda31036983cf7672ecb",
+      "bytes": 1115
+    }
+  ],
+  "generated_by": "scripts/collect_license_notices.py --export --fetch-upstream",
+  "python_dists": [
+    {
+      "dist": "lunardate",
+      "version": "0.3.0",
+      "spdx": "GPL-3.0-or-later",
+      "note": "进程内 import（backend/app/scheduling/holiday_calendar.py）",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/lunardate-0.3.0/LICENSE.txt"
+      ]
+    },
+    {
+      "dist": "edge-tts",
+      "version": "7.2.8",
+      "spdx": "MIT AND LGPL-3.0-or-later",
+      "note": "按文件切分：仅 src/edge_tts/srt_composer.py 为 MIT",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/edge-tts-7.2.8/LICENSE"
+      ]
+    },
+    {
+      "dist": "shapely",
+      "version": "2.1.2",
+      "spdx": "BSD-3-Clause AND LGPL-2.1-or-later",
+      "note": "本体 BSD-3；LGPL-2.1 来自捆绑的 GEOS",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/shapely-2.1.2/LICENSE.txt",
+        "python/shapely-2.1.2/LICENSE_GEOS",
+        "python/shapely-2.1.2/LICENSE_win32"
+      ]
+    },
+    {
+      "dist": "orjson",
+      "version": "3.12.0",
+      "spdx": "MPL-2.0 AND (Apache-2.0 OR MIT)",
+      "note": "复合，不折叠",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/orjson-3.12.0/LICENSE-APACHE",
+        "python/orjson-3.12.0/LICENSE-MIT",
+        "python/orjson-3.12.0/LICENSE-MPL-2.0"
+      ]
+    },
+    {
+      "dist": "tqdm",
+      "version": "4.70.0",
+      "spdx": "MPL-2.0 AND MIT",
+      "note": "复合，不折叠",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/tqdm-4.70.0/LICENCE"
+      ]
+    },
+    {
+      "dist": "certifi",
+      "version": "2026.7.22",
+      "spdx": "MPL-2.0",
+      "note": "包内只有引用块，无 MPL 全文；全文见 orjson/MPL-2.0_orjson-*/LICENSE-MPL-2.0",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/certifi-2026.7.22/LICENSE"
+      ]
+    },
+    {
+      "dist": "opencv-python",
+      "version": "5.0.0.93",
+      "spdx": "MIT AND LicenseRef-OpenCV-Platform-Components",
+      "note": "wrapper 本体 MIT；二进制捆绑物见 LICENSE-3RD-PARTY.txt（实测含 FFmpeg/LGPL-2.1）",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/opencv-python-5.0.0.93/LICENSE-3RD-PARTY.txt",
+        "python/opencv-python-5.0.0.93/LICENSE.txt",
+        "python/opencv-python-5.0.0.93/cv2/LICENSE-3RD-PARTY.txt",
+        "python/opencv-python-5.0.0.93/cv2/LICENSE.txt"
+      ]
+    },
+    {
+      "dist": "numpy",
+      "version": "2.5.2",
+      "spdx": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 AND (Apache-2.0 OR BSD-3-Clause)",
+      "note": "实测 17 份许可文件，逐份保留",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/numpy-2.5.2/LICENSE.txt",
+        "python/numpy-2.5.2/numpy/_core/include/numpy/libdivide/LICENSE.txt",
+        "python/numpy-2.5.2/numpy/_core/include/numpy/random/LICENSE.txt",
+        "python/numpy-2.5.2/numpy/_core/src/common/pythoncapi-compat/COPYING",
+        "python/numpy-2.5.2/numpy/_core/src/highway/LICENSE",
+        "python/numpy-2.5.2/numpy/_core/src/multiarray/dragon4_LICENSE.txt",
+        "python/numpy-2.5.2/numpy/_core/src/npysort/x86-simd-sort/LICENSE.md",
+        "python/numpy-2.5.2/numpy/_core/src/umath/svml/LICENSE",
+        "python/numpy-2.5.2/numpy/fft/pocketfft/LICENSE.md",
+        "python/numpy-2.5.2/numpy/linalg/lapack_lite/LICENSE.txt",
+        "python/numpy-2.5.2/numpy/ma/LICENSE",
+        "python/numpy-2.5.2/numpy/ma/LICENSE",
+        "python/numpy-2.5.2/numpy/random/LICENSE.md",
+        "python/numpy-2.5.2/numpy/random/LICENSE.md",
+        "python/numpy-2.5.2/numpy/random/src/distributions/LICENSE.md",
+        "python/numpy-2.5.2/numpy/random/src/mt19937/LICENSE.md",
+        "python/numpy-2.5.2/numpy/random/src/pcg64/LICENSE.md",
+        "python/numpy-2.5.2/numpy/random/src/philox/LICENSE.md",
+        "python/numpy-2.5.2/numpy/random/src/sfc64/LICENSE.md",
+        "python/numpy-2.5.2/numpy/random/src/splitmix64/LICENSE.md"
+      ]
+    },
+    {
+      "dist": "regex",
+      "version": "2026.9.3",
+      "spdx": "Apache-2.0 AND CNRI-Python",
+      "note": "复合；含 CPython re 模块的 CNRI 授权",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/regex-2026.9.3/LICENSE.txt"
+      ]
+    },
+    {
+      "dist": "aiohttp",
+      "version": "3.14.3",
+      "spdx": "Apache-2.0 AND MIT",
+      "note": "复合；另捆绑 vendor llhttp(MIT)",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/aiohttp-3.14.3/LICENSE.txt",
+        "python/aiohttp-3.14.3/vendor/llhttp/LICENSE"
+      ]
+    },
+    {
+      "dist": "httptools",
+      "version": "0.8.0",
+      "spdx": "MIT",
+      "note": "捆绑 vendor http-parser(MIT) 与 llhttp(MIT)",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/httptools-0.8.0/LICENSE",
+        "python/httptools-0.8.0/vendor/http-parser/LICENSE-MIT",
+        "python/httptools-0.8.0/vendor/llhttp/LICENSE"
+      ]
+    },
+    {
+      "dist": "yarl",
+      "version": "1.24.5",
+      "spdx": "Apache-2.0",
+      "note": "上游自带 NOTICE，须随附",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/yarl-1.24.5/LICENSE",
+        "python/yarl-1.24.5/NOTICE"
+      ]
+    },
+    {
+      "dist": "tzdata",
+      "version": "2026.3",
+      "spdx": "Apache-2.0",
+      "note": "短式声明 + LICENSE_APACHE 全文，两个都要",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/tzdata-2026.3/LICENSE",
+        "python/tzdata-2026.3/licenses/LICENSE_APACHE"
+      ]
+    },
+    {
+      "dist": "multidict",
+      "version": "6.7.1",
+      "spdx": "Apache-2.0",
+      "note": "短式声明（无全文），引用或json/tzdata 的 Apache-2.0 全文",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/multidict-6.7.1/LICENSE"
+      ]
+    },
+    {
+      "dist": "Pillow",
+      "version": "12.3.0",
+      "spdx": "MIT-CMU",
+      "note": "单文件内混装 MIT/BSD/Apache/LGPL/Zlib 多段",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/Pillow-12.3.0/LICENSE"
+      ]
+    },
+    {
+      "dist": "psutil",
+      "version": "7.2.2",
+      "spdx": "BSD-3-Clause",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/psutil-7.2.2/LICENSE"
+      ]
+    },
+    {
+      "dist": "idna",
+      "version": "3.19",
+      "spdx": "BSD-3-Clause",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/idna-3.19/LICENSE.md"
+      ]
+    },
+    {
+      "dist": "protobuf",
+      "version": "7.36.1",
+      "spdx": "BSD-3-Clause",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/protobuf-7.36.1/LICENSE"
+      ]
+    },
+    {
+      "dist": "oauthlib",
+      "version": "3.3.1",
+      "spdx": "BSD-3-Clause",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/oauthlib-3.3.1/LICENSE"
+      ]
+    },
+    {
+      "dist": "python-dotenv",
+      "version": "1.2.3",
+      "spdx": "BSD-3-Clause",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/python-dotenv-1.2.3/LICENSE"
+      ]
+    },
+    {
+      "dist": "jsonpatch",
+      "version": "1.33",
+      "spdx": "BSD-3-Clause",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/jsonpatch-1.33/LICENSE"
+      ]
+    },
+    {
+      "dist": "pyasn1",
+      "version": "0.6.4",
+      "spdx": "BSD-2-Clause",
+      "note": "只两条款",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/pyasn1-0.6.4/LICENSE.rst"
+      ]
+    },
+    {
+      "dist": "xxhash",
+      "version": "4.0.1",
+      "spdx": "BSD-2-Clause",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/xxhash-4.0.1/LICENSE"
+      ]
+    },
+    {
+      "dist": "charset-normalizer",
+      "version": "3.5.1",
+      "spdx": "MIT",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/charset-normalizer-3.5.1/LICENSE"
+      ]
+    },
+    {
+      "dist": "ecdsa",
+      "version": "0.19.2",
+      "spdx": "MIT",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/ecdsa-0.19.2/LICENSE"
+      ]
+    },
+    {
+      "dist": "sqlalchemy",
+      "version": "2.0.52",
+      "spdx": "MIT",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/sqlalchemy-2.0.52/LICENSE"
+      ]
+    },
+    {
+      "dist": "tiktoken",
+      "version": "0.14.0",
+      "spdx": "MIT",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/tiktoken-0.14.0/LICENSE"
+      ]
+    },
+    {
+      "dist": "durationpy",
+      "version": "0.11",
+      "spdx": "MIT",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/durationpy-0.11/LICENSE"
+      ]
+    },
+    {
+      "dist": "rank-bm25",
+      "version": "0.2.2",
+      "spdx": "Apache-2.0",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/rank-bm25-0.2.2/LICENSE"
+      ]
+    },
+    {
+      "dist": "websocket-client",
+      "version": "1.9.2",
+      "spdx": "Apache-2.0",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/websocket-client-1.9.2/LICENSE"
+      ]
+    },
+    {
+      "dist": "frozenlist",
+      "version": "1.8.0",
+      "spdx": "Apache-2.0",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/frozenlist-1.8.0/LICENSE"
+      ]
+    },
+    {
+      "dist": "google-crc32c",
+      "version": "1.8.0",
+      "spdx": "Apache-2.0",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/google-crc32c-1.8.0/LICENSE"
+      ]
+    },
+    {
+      "dist": "overrides",
+      "version": "7.7.0",
+      "spdx": "Apache-2.0",
+      "note": "",
+      "status": "已逐字导出",
+      "source_kind": "venv-dist-info",
+      "files": [
+        "python/overrides-7.7.0/LICENSE"
+      ]
+    }
+  ],
+  "upstream": [
+    {
+      "dist": "ctranslate2",
+      "version": "4.8.2",
+      "spdx": "MIT",
+      "origin": "OpenNMT/CTranslate2",
+      "source_url": "https://raw.githubusercontent.com/OpenNMT/CTranslate2/master/LICENSE",
+      "status": "已逐字导出",
+      "files": [
+        "upstream/MIT_OpenNMT-CTranslate2_LICENSE.txt"
+      ],
+      "model_cards": []
+    },
+    {
+      "dist": "rapidocr-onnxruntime",
+      "version": "1.2.3",
+      "spdx": "Apache-2.0",
+      "origin": "RapidAI/RapidOCR",
+      "source_url": "https://raw.githubusercontent.com/RapidAI/RapidOCR/main/LICENSE",
+      "status": "已逐字导出",
+      "files": [
+        "upstream/Apache-2.0_RapidAI-RapidOCR_LICENSE.txt"
+      ],
+      "model_cards": []
+    },
+    {
+      "dist": "bge-m3",
+      "version": "(FlagEmbedding 权重)",
+      "spdx": "MIT",
+      "origin": "FlagOpen/FlagEmbedding",
+      "source_url": "https://raw.githubusercontent.com/FlagOpen/FlagEmbedding/master/LICENSE",
+      "status": "已逐字导出",
+      "files": [
+        "models/MIT_FlagOpen-FlagEmbedding_LICENSE.txt"
+      ],
+      "model_cards": [
+        "https://huggingface.co/Xenova/bge-m3",
+        "https://huggingface.co/BAAI/bge-m3"
+      ]
+    },
+    {
+      "dist": "faster-whisper-small",
+      "version": "(Systran 权重，转换自 openai/whisper)",
+      "spdx": "MIT",
+      "origin": "openai/whisper",
+      "source_url": "https://raw.githubusercontent.com/openai/whisper/main/LICENSE",
+      "status": "已逐字导出",
+      "files": [
+        "models/MIT_openai-whisper_LICENSE.txt"
+      ],
+      "model_cards": [
+        "https://huggingface.co/Systran/faster-whisper-small"
+      ]
+    }
+  ]
+}

@@ -2011,7 +2011,7 @@
   "cropDragHint": "Drag to reposition · pinch to zoom",
   "agreeTitle": "User Agreement & Disclaimer",
   "agreeSection1Title": "I. Nature of the Software",
-  "agreeSection1Body": "This project is open-source, self-hosted software (MIT License). Users download, deploy, and run it on their own devices or servers. The author maintains this open-source project individually and for free and makes no commercial service commitments to any user.",
+  "agreeSection1Body": "This project is open-source, self-hosted software, licensed under the GNU Affero General Public License v3 (AGPL-3.0-only) since 3.5.4 (releases 3.5.3 and earlier were MIT and are not changed). Users download, deploy, and run it on their own devices or servers. The author maintains this open-source project individually and for free and makes no commercial service commitments to any user.",
   "agreeSection2Title": "II. Use at Your Own Risk",
   "agreeSection2Body": "The software is provided \"AS IS\", without any express or implied warranty, including but not limited to merchantability and fitness for a particular purpose. Any data loss, damage, service interruption, or property loss arising during deployment, configuration, use, or upgrade is borne solely by the user.",
   "agreeSection3Title": "III. Content Responsibility",
@@ -2024,8 +2024,10 @@
   "agreeSection6Body": "Before exposing the server to the public internet or sharing it with others via Tailscale or similar networking, users must assess the risks and bear the corresponding responsibilities, including but not limited to consequences arising from others' improper account or permission management.",
   "agreeSection7Title": "VII. Agreement Changes",
   "agreeSection7Body": "The content of this agreement may be adjusted with version updates. Continued use of this software is deemed acceptance of the latest version of the agreement.",
-  "agreeSection8Title": "8. License & Use",
-  "agreeSection8Body": "This open-source project is provided for learning and research only. Any commercial use of this project or its derivatives is strictly prohibited without the author's written permission.",
+  "agreeSection8Title": "VIII. License & Use",
+  "agreeSection8Body": "This project's own code is licensed under AGPL-3.0-only. That license does not prohibit commercial use and does not prohibit charging for it: you may run this software commercially and you may charge for it. What you must comply with is the license itself — if you distribute the software (modified or not), comply with the applicable requirements of sections 4–6; when conveying object code, use a Corresponding Source method permitted by section 6 for that form of distribution, rather than treating a written offer as sufficient in every case, and if you let other users interact with a modified version over a network you must offer those users the corresponding source code of that modified version. Running it yourself, or hosting an unmodified copy for your own use, does not by itself trigger that obligation. Contacting the author is a voluntary courtesy, not a condition of the license. No trademark rights are granted; please do not present a modified or repackaged build as an official build, or in a way that would cause confusion about its source. Use the button below to read the full license text and licensing notices.",
+  "agreeViewLicense": "View Open Source Licenses",
+  "agreeViewLicenseHint": "Full AGPL-3.0 text, notices and third-party component list",
   "backupTitle": "Data Backup",
   "backupSubtitle": "Export the SQLite database and configuration as an archive for later restore",
   "backupExport": "Export Backup",
@@ -2317,6 +2319,14 @@
   "gameNoArchive": "No games yet",
   "gameHistoryTitle": "Archive",
   "archivePlayerCount": "{count} players",
+  "gameHistoryPlayerCount": "{count, plural, =1{{count} player} other{{count} players}}",
+  "@gameHistoryPlayerCount": {
+    "placeholders": {
+      "count": {
+        "type": "num"
+      }
+    }
+  },
   "archiveRounds": "{rounds} rounds",
   "archiveWinner": "Winner: {names}",
   "archiveDraw": "Draw",

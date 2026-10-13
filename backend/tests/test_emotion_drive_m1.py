@@ -96,11 +96,11 @@ def _enable_shadow(monkeypatch):
 
 # ───────────────────── 1. 三态解析（脏值一律落 off）─────────────────────
 
-def test_default_mode_is_shadow():
-    """默认档位＝shadow（2026-09-30 用户拍板开始攒影子）：落库与 off 相同、只多 trace。
+def test_default_mode_is_on():
+    """默认档位＝on（2026-10-12 用户授权、影子判效完成）：仅对白名单∧稳定桶真生效。
 
     回退＝把 agent_flags 里该键的默认值改回 "off" 后重启（非 bool 键，DB 覆盖不生效）。"""
-    assert rds.modulation_mode() == rds.MODULATION_SHADOW
+    assert rds.modulation_mode() == rds.MODULATION_ON
 
 
 @pytest.mark.parametrize("dirty", ["", "  ", "ONN", "1", "true", None, 0, "o"])
@@ -379,10 +379,10 @@ def test_clock_rollback_is_ignored_with_snapshot():
 
 # ───────────────── 8. 登记完整性 ─────────────────
 
-def test_flag_registered_in_agent_flags_with_shadow_default():
-    """三态键必须登记进 AGENT_FLAGS，且当前默认值为字符串 "shadow"（影子期）。"""
+def test_flag_registered_in_agent_flags_with_on_default():
+    """三态键必须登记进 AGENT_FLAGS，且当前默认值为字符串 "on"（已授权灰度生效）。"""
     from app.flags.agent_flags import AGENT_FLAGS
-    assert AGENT_FLAGS.get("emotion_drive_modulation") == "shadow"
+    assert AGENT_FLAGS.get("emotion_drive_modulation") == "on"
     assert isinstance(AGENT_FLAGS.get("emotion_drive_modulation"), str)
 
 

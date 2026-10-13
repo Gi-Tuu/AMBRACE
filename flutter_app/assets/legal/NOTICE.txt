@@ -1,0 +1,168 @@
+AMBRACE（拥爱）NOTICE
+Copyright (c) 2026 AMBRACE contributors
+
+This file is part of AMBRACE. It describes the licensing of this project's own
+work and the boundaries of that grant. It is not a legal opinion.
+
+本文件是 AMBRACE 的一部分，说明本项目自有作品的授权与该授权的边界。它不是法律意见。
+
+------------------------------------------------------------------------
+1. 本项目自有代码的许可 / License of this project's own code
+------------------------------------------------------------------------
+
+Starting with release 3.5.4, the original code in this repository that is
+controlled by the AMBRACE contributors is licensed under the GNU Affero General
+Public License, version 3, **AGPL-3.0-only** — the full text is in LICENSE.
+
+自 3.5.4 起，本仓库中由 AMBRACE 贡献者控制的原创代码以 GNU Affero 通用公共许可证
+第 3 版（AGPL-3.0-only）授权，完整条文见 LICENSE。
+
+Releases 3.5.3 and earlier were released under the MIT License. Those releases
+and their tags are historical records and are NOT changed or relicensed.
+
+3.5.3 及更早版本以 MIT License 发布。那些版本与它们的 tag 是历史记录，
+**不会被追改、也不会重新授权**。
+
+------------------------------------------------------------------------
+2. 这份许可不禁用商业用途 / The license does not forbid commercial use
+------------------------------------------------------------------------
+
+AGPL-3.0-only does not prohibit commercial use and does not prohibit charging
+for it. You may run this software commercially and you may charge for it. What
+you must do is comply with the license itself:
+
+- If you distribute the software — modified or unmodified — comply with the
+  applicable requirements of sections 4 to 6. When conveying object code,
+  provide Corresponding Source using a method permitted by section 6 for that
+  form of distribution; a written offer is not a substitute in every case.
+- If you run a **modified** version and let other users interact with it
+  remotely over a network, section 13 requires you to offer those users the
+  corresponding source code of your modified version.
+- Running an unmodified copy yourself, or hosting an unmodified copy for your
+  own use, does not by itself trigger a source-offer obligation.
+
+AGPL-3.0-only 不禁止商业使用，也不禁止因此收费。你可以商用、可以收费。
+你需要做的是遵守许可本身：对外分发（无论改没改过）须遵守第 4–6 条的适用要求；
+分发目标代码时，应采用第 6 条允许且适用于该分发形式的对应源码提供方式，不能一律
+以书面要约代替。把**修改过的**版本开放给其他人通过网络交互时，第 13 条要求你向这些
+使用者提供你修改版的对应源码。自己运行未修改的副本、或只自用托管未修改的副本，
+本身不触发源码提供义务。
+
+There is no separate "paid licence" from the author that is required in order
+to use this software commercially.
+
+商用不需要另行向作者购买"付费许可"。
+
+------------------------------------------------------------------------
+3. 联系作者是自愿的，不是许可条件 / Contacting the author is voluntary
+------------------------------------------------------------------------
+
+The author may offer hosted or commercial services in the future. Contacting
+the author through the existing public channels (this repository's issue
+tracker, or the channels listed in README.md) is welcome, but it is a courtesy
+and it is **not** a condition of the license. Nothing in the license becomes
+invalid, and no right is lost, if you never contact the author.
+
+作者未来可能提供托管或商业服务。欢迎通过既有公开渠道（仓库 Issue，或 README.md
+列出的渠道）与作者联系，但这是自愿的好意，**不是许可条件**。你从不联系作者，
+许可照样有效，也不会因此失去任何权利。
+
+------------------------------------------------------------------------
+4. 商标 / Trademarks
+------------------------------------------------------------------------
+
+The license grants no trademark rights. Nothing here grants any right to use
+another party's trademarks. This project is not affiliated with, endorsed by,
+or sponsored by any third party. Please do not present a modified or
+repackaged build as if it were an official build of AMBRACE, or in a way that
+would cause confusion about its source.
+
+本许可不授予任何商标权，也不授予他人商标的使用权。本项目与任何第三方无隶属、
+背书或赞助关系。请不要把修改版或重新打包的版本当作 AMBRACE 官方版本来发布，
+也不要以可能造成来源混淆的方式呈现。
+
+------------------------------------------------------------------------
+5. 不属于开源授权对象的个人内容 / Personal content is not licensed
+------------------------------------------------------------------------
+
+Your chats, memories, diaries, character data, configuration, API credentials
+and any other personal data you create or store are not part of this project's
+code and are **not** granted to anyone under the AGPL. Nor are personal assets
+such as the author's donation QR code.
+
+你产生的聊天、记忆、日记、角色数据、配置、API 凭据等个人内容不属于本项目代码，
+**不在 AGPL 授权范围内**。作者的赞赏码等个人资产同样不在授权范围内。
+
+------------------------------------------------------------------------
+6. 插件 / Plugins
+------------------------------------------------------------------------
+
+Whether a plugin is an independent work or a derivative of AMBRACE depends on
+how it actually combines with and reuses AMBRACE's source code — not on whether
+it is delivered over HTTP or loaded as a separate process. A plugin that reuses
+or derives from this code must comply with AGPL-3.0-only. Plugins are loaded
+with the same privileges as the backend and have no sandbox; install only
+plugins you trust. See THIRD_PARTY_NOTICES.md.
+
+插件是独立作品还是 AMBRACE 的衍生作品，取决于它**实际如何结合与复用**本项目的
+源码，而不是它是通过 HTTP 交付还是以独立进程加载。复用或衍生自本项目代码的插件
+必须遵守 AGPL-3.0-only。插件与后端同权限、无沙箱，请只安装你信任的插件。
+详见 THIRD_PARTY_NOTICES.md。
+
+------------------------------------------------------------------------
+7. 第三方组件 / Third-party components
+------------------------------------------------------------------------
+
+This project bundles or depends on third-party software, libraries, model
+weights and artwork, each of which remains under its own original license.
+Those licenses are preserved verbatim and are neither replaced nor overridden
+by this project's AGPL-3.0-only grant.
+
+See THIRD_PARTY_NOTICES.md for the itemised list and THIRD_PARTY_LICENSES/ for
+the verbatim license texts.
+
+本项目打包或依赖第三方软件、库、模型权重与美术素材，它们各自继续按其**原许可**
+使用。这些许可被逐字保留，既不被本项目的 AGPL-3.0-only 取代，也不被它覆盖。
+逐项清单见 THIRD_PARTY_NOTICES.md，原许可文本见 THIRD_PARTY_LICENSES/。
+
+------------------------------------------------------------------------
+8. Model weights and artwork shipped with the release
+------------------------------------------------------------------------
+
+The release archive redistributes two model weight sets (bge-m3 and
+faster-whisper-small). They are licensed by their upstream authors under the
+MIT License and are **not** covered by this project's AGPL grant. Their
+upstream license texts and source URLs are in THIRD_PARTY_LICENSES/models/.
+
+The bundled pixel-art and life-visual images, and the app icons, were created
+or generated by the author for this project and are distributed under this
+project's AGPL-3.0-only. The console's icon set (Lucide / Feather) keeps its own
+ISC and MIT licenses; see server_controller/assets/LICENSE-lucide.txt.
+
+The photos in the console are self-produced output of an image model run by the
+author; they carry no third-party license. The author's donation QR code is a
+personal asset and is not part of the open-source grant.
+
+发布包再分发的两套模型权重（bge-m3、faster-whisper-small）由上游作者以 MIT License
+授权，**不在**本项目的 AGPL 授权范围内；其上游许可文本与来源 URL 见
+THIRD_PARTY_LICENSES/models/。
+
+随包的像素素材与生活插画、App 图标由作者为本项目创作或生成，按本项目
+AGPL-3.0-only 分发。控制台图标集（Lucide / Feather）保留其自有的 ISC 与 MIT 许可，
+见 server_controller/assets/LICENSE-lucide.txt。控制台照片为作者自行运行生图模型
+产出的自有素材，不含第三方许可。作者赞赏码属个人资产，不在开源授权范围内。
+
+------------------------------------------------------------------------
+9. No warranty / 免责声明
+------------------------------------------------------------------------
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+软件按「现状」提供，不附带任何明示或默示的担保。在法律允许的最大范围内，
+作者与贡献者不对任何使用、修改或分发造成的损失承担责任。

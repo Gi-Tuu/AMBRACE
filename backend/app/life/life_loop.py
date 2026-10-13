@@ -46,6 +46,14 @@ _DAILY_LLM_COPY_LIMIT = 2
 # key 自带北京日期 ⇒ 限额跨天自然重置，原先「每日首轮清理非今日 key」的剪枝不再需要。
 # 旧写法重启即清零：当天已用过 2 次的角色重启后又能用 2 次（多花两次 LLM，审计 I8）。
 
+# audit13 P2-1（2026-10-13）：系统内部兜底主题——life_tick 在「保证至少 2 个进行中目标」时恒补的
+# growth 目标标题（app/life/life_tick.py:142）。它没有真实世界信息增量，却因 study 主题按
+# `priority desc, id desc` 取 active 目标而被选成「学习主题」，批量产出
+# 重复的内部整理活动总结，容易被误当作有信息增量的长期记忆。
+# 命中这里列出的主题时 study 只照常结算活动、不再沉淀长期记忆（真实主题不受影响）。
+# 判据是单一集合的精确匹配（strip 后），不做模糊匹配、不动跨角色去重与每日配额口径。
+_INTERNAL_STUDY_TOPICS = frozenset({"整理一段时间的记忆"})
+
 
 def _llm_copy_key(character_id: int) -> str:
     """LLM 文案日配额的台账 key（北京日期在 key 里，跨天即换 key）。"""
@@ -658,6 +666,11 @@ class LifeLoopTask:
         """
         if decision.action == "study":
             specific = await self._study_summary(db, char)
+            if specific is None:
+                # audit13 P2-1 补漏（2026-10-13）：哨兵 None = 主题命中系统内部兜底集合，
+                # 直接回落恒定模板句、**不进 LLM 分支**（既有 is_meaningful_summary 会拒收）。
+                # 与「没有真实主题」的 "" 区分开：后者仍沿用旧的 LLM 回落链路。
+                return self._template_summary(char, decision, act)
             if specific:
                 return specific
         from app.agent.loop import AGENT_FLAGS
@@ -699,15 +712,25 @@ class LifeLoopTask:
             pass
         return _space.home_base()[0]
 
-    async def _study_summary(self, db, char) -> str:
+    async def _study_summary(self, db, char) -> str | None:
         """study 具体总结：真实学习主题（目标/兴趣/日程）+ 一句收获（句式轮换，非恒定模板）。
 
         取不到真实主题时返回 ""（调用方回落到模板 → 模板被判无意义 → 不写记忆），
         宁可不沉淀也不写恒定模板句（任务1-B 兜底）。
+
+        audit13 P2-1（2026-10-13）：主题命中系统内部兜底集合 ``_INTERNAL_STUDY_TOPICS`` 时按
+        「没有真实主题」同样处理——复用既有的「回落模板 → 判无意义 → 不写」链路；
+        活动本身（状态回流/目标推进/完成日志）不受影响。
+
+        audit13 P2-1 补漏（2026-10-13）：内部主题返回哨兵 ``None`` 而不是 ""，与"根本没主题"
+        区分开——"" 允许既有的 LLM 回落（无真实内容时由 LLM 写一句动态），而内部主题在
+        ``life_loop_llm=True`` 档也必须不沉淀，不能把"系统自己的兜底活动"交给 LLM 编造收获。
         """
         topic = await self._study_topic(db, char.id)
         if not topic:
             return ""
+        if topic.strip() in _INTERNAL_STUDY_TOPICS:
+            return None
         takeaway = random.choice((
             "弄明白了一个之前卡住的点，顺手记了几笔。",
             "把之前模糊的地方理清了，有点收获。",

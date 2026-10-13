@@ -48,6 +48,19 @@ import pytest
 import app.memory.bm25_index as bm25
 from app.events.bus import event_bus
 
+# ── 待提取队列落盘路径重定向（A41 队列，2026-10-12）──
+# `app/memory/extract_queue.py` 的 `_QUEUE_FILE` 是 import 期算出的模块级常量，默认指向
+# `backend/data/extract_queue.json`（**生产目录**）。顶部引导只接管了 DB / 向量库 / 主密钥三项，
+# 没接管队列文件 ⇒ 任何走真实提取路径（add / peek / take / release_source）又没自行 monkeypatch
+# 的用例，都会把合成配对写进生产队列文件（2026-10-12 14:08:45 定向跑实测该文件被改动）。
+# 处置与 `AMBRACE_CREDENTIAL_KEY_FILE` 同款：**只在测试进程**把它指向会话沙箱，落点取
+# 「既有 app.memory 导入之后、任何用例 collection 与任何测试写入之前」。
+# 生产默认路径不动（`app/memory/extract_queue.py` 一行未改），也未新增任何生产 env 配置。
+if _SESS_ROOT is not None:
+    from app.memory import extract_queue as _extract_queue
+
+    _extract_queue._QUEUE_FILE = _SESS_ROOT / "data" / "extract_queue.json"
+
 
 # ── P3-4：asyncio.run 收尾时序接管（2026-09-29，治理 aiosqlite「Event loop is closed」）──
 # 现象：全量 pytest 收尾出现 8~16 条 PytestUnhandledThreadExceptionWarning，全部是

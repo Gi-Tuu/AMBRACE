@@ -199,7 +199,8 @@ class _PinnedIPNetworkBackend:
 class _PinnedIPHTTPTransport(httpx.AsyncHTTPTransport):
     """httpx 传输：注入 _PinnedIPNetworkBackend，把 MCP http 连接绑定到已校验 IP。
 
-    仅用于 streamable_http/sse 的 MCP 连接（单 URL 场景）。构造失败由 _build_pinned_http_client 回退普通 client。
+    仅用于 streamable_http/sse 的 MCP 连接（单 URL 场景）。构造失败由 _build_pinned_http_client
+    拒绝连接（fail-closed），不降级普通 client。
     """
 
     def __init__(self, pinned_ip: str) -> None:
@@ -231,11 +232,19 @@ def _to_httpx_timeout(timeout):
 def _build_pinned_http_client(url, headers=None, timeout=None, auth=None, allow_loopback=False):
     """构建连接期绑定已校验 IP 的 httpx.AsyncClient（P3-8 防 DNS rebinding）。
 
+    audit13 P3-1（2026-10-13）改为 fail-closed：安全档位下「拿不到可钉的 IP」就不再连接，
+    不再吞掉异常退回普通 client（那条路径会让域名在实际连接时被重新解析到内网，pin 归零）。
+
+    - settings.mcp_http_allow_private=True：唯一的显式授权例外（自托管内网，进程级全局语义），
+      返回普通 client（不绑定），保持既有放行行为；
     - allow_loopback（P3-4）：该 Server 的显式本地回环标记，透传给 _resolve_mcp_ip，保证连接期与
-      校验期同一放行口径；loopback 目标同样绑定到已校验 IP（缩小 rebinding 窗口）；
-    - mcp_http_allow_private=True：返回普通 client（不绑定，保持既有内网放行逻辑）；
-    - 解析/校验失败或绑定构造失败：回退普通 client（不阻断 MCP 连接，行为与现状一致）。
-    调用方（streamable_http 的 http_client / sse 的 httpx_client_factory）复用该 client。
+      校验期同一放行口径；loopback 目标同样绑定到已校验 IP（缩小 rebinding 窗口），SNI/证书/Host
+      仍按原域名校验；
+    - 其余情况解析/校验异常（DNS 失败、host 缺失、scheme 不支持、命中私网/元数据）原样上抛
+      ValueError；钉 IP 传输或 client 构造失败也抛 ValueError 拒绝连接，由外层
+      （MCPClientManager._worker_main / test_connect / _build_config）归入 STATUS_ERROR 并回报。
+    headers/timeout/auth 透传口径不变（原样进 base_kw）。调用方（streamable_http 的 http_client /
+    sse 的 httpx_client_factory）复用该 client。
     """
     base_kw: dict = {}
     if headers is not None:
@@ -245,16 +254,15 @@ def _build_pinned_http_client(url, headers=None, timeout=None, auth=None, allow_
         base_kw["timeout"] = _t
     if auth is not None:
         base_kw["auth"] = auth
-    pin_ip = ""
-    try:
-        pin_ip = _resolve_mcp_ip(url, allow_loopback=allow_loopback)
-    except Exception:
-        pin_ip = ""
-    if not pin_ip:
+    # 全局例外只认这个显式开关：空 IP 一律不再当「例外」放行走 plain client
+    if getattr(settings, "mcp_http_allow_private", False):
         return httpx.AsyncClient(**base_kw)
+    pin_ip = _resolve_mcp_ip(url, allow_loopback=allow_loopback)
+    if not pin_ip:
+        raise ValueError(f"mcp pin target ip missing (fail-closed): {url}")
     try:
         return httpx.AsyncClient(transport=_PinnedIPHTTPTransport(pin_ip), **base_kw)
     except Exception as e:
-        # P3-6（2026-09-17）：此前静默回退，pin-IP 防 DNS rebinding 失效时零观测；补告警（不阻断连接）。
-        _logger.warning("MCP pinned client failed, fallback to plain client: %s", e)
-        return httpx.AsyncClient(**base_kw)
+        # P3-6（2026-09-17）补告警；audit13 P3-1：告警之后拒绝连接而非回退普通 client
+        _logger.warning("MCP pinned client construction failed, refuse to connect (fail-closed): %s", e)
+        raise ValueError(f"mcp pinned transport unavailable (fail-closed): {e}") from e

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""生成开源发布包（脱敏）：复制 git 跟踪文件 → 排除隐私/内部文件 → 副本脱敏 → 随包复制 README/LICENSE（取自仓库）→ 可选 zip
+"""生成开源发布包（脱敏）：复制 git 跟踪文件 → 排除隐私/内部文件 → 副本脱敏 → 随包复制 README（中英）/LICENSE（取自仓库）→ 可选 zip
 
 用法：python scripts/make_release.py [--zip]
 输出：<release_output>/ai_companion_public/
@@ -41,6 +41,53 @@ EXCLUDE_EXACT = ("scripts/diagnostics/memory_action_cases_real_draft.jsonl",)
 # 同条口径见 docs/archive/audits/release-compat-audit.md P2-3。
 MODELS_EXCLUDE = ("bge-small-zh-v1.5",)
 
+# AGPL-3.0-only 的许可四件套（2026-10-13 起）：完整条文 + 授权说明 + 第三方清单 + 原许可副本。
+# 少任何一件都不允许出包——LICENSE 是主许可、NOTICE 说边界、THIRD_PARTY_NOTICES 逐条点名、
+# THIRD_PARTY_LICENSES/ 是被点名项的逐字原文。
+LICENSE_CORE = ("README.md", "README.en.md", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md")
+LICENSE_MANIFEST = "THIRD_PARTY_LICENSES/MANIFEST.json"
+
+# 两个随包再分发的模型权重：权重本身不在本仓，原许可也不在权重目录里，
+# 所以发布时把上游 MIT 原文一起塞进对应子目录（不重新下载大模型，只补文本）。
+MODEL_LICENSE_SOURCES = {
+    "bge-m3": "THIRD_PARTY_LICENSES/models/MIT_FlagOpen-FlagEmbedding_LICENSE.txt",
+    "whisper-small": "THIRD_PARTY_LICENSES/models/MIT_openai-whisper_LICENSE.txt",
+}
+
+
+def required_license_files(root=PROJECT_ROOT):
+    """出包必须存在的许可相关文件（相对 root 的正斜杠路径）。
+
+    拆成纯函数是为了让 backend/tests/test_release_license_contract.py 能在 tmp_path 上
+    直接钉这份清单，而不必真造一次 1GB 的发布包。
+    """
+    rels = list(LICENSE_CORE) + [LICENSE_MANIFEST] + sorted(set(MODEL_LICENSE_SOURCES.values()))
+    return [r for r in rels if not os.path.isfile(os.path.join(root, r.replace("/", os.sep)))]
+
+
+def verify_license_bundle(out_dir, root=PROJECT_ROOT):
+    """出包前校验：根目录许可四件套 + 第三方清单，以及两个模型目录里的上游许可文本。
+
+    返回缺失清单（空列表＝齐了）。模型目录名按实际落盘的那一层查。
+    """
+    missing = []
+    for rel in LICENSE_CORE + (LICENSE_MANIFEST,):
+        if not os.path.isfile(os.path.join(out_dir, rel.replace("/", os.sep))):
+            missing.append(rel)
+    models_root = os.path.join(out_dir, "backend", "models")
+    for sub, rel in sorted(MODEL_LICENSE_SOURCES.items()):
+        dst_dir = os.path.join(models_root, sub)
+        if not os.path.isdir(dst_dir):
+            # 权重目录整体缺失时不报（没随包就不该有它的许可），存在却没许可文本才是错
+            continue
+        has_any = any(
+            "LICENSE" in n.upper() or "COPYING" in n.upper()
+            for n in os.listdir(dst_dir)
+        )
+        if not has_any:
+            missing.append(f"backend/models/{sub}/（缺上游许可文本，源：{rel}）")
+    return missing
+
 # 副本内脱敏替换（相对路径 → [(old, new), ...]）
 # 仓库代码/脚本已不含作者本机路径，按需在此追加规则。
 DESENS = {}
@@ -66,17 +113,29 @@ def copy_with_desens(src_root, rel):
     return len(data)
 
 
-def bundle_models(models_src, models_dst):
+def bundle_models(models_src, models_dst, root=PROJECT_ROOT):
     """随包复制本地模型目录，返回 (实际落包字节数, 落包的一级目录清单)。
 
     读数只从**已落包的文件**累加：源目录里混着死模型与 LFS 缓存，按源目录累加会报出一个
     包里根本不存在的体积（发布包体积是要上传 GitHub 的数，报大报小都会误导决策）。
+    顺带把两个权重的**上游原许可**塞进对应子目录（AGPL 下再分发要随附原许可）。
     """
     shutil.copytree(
         models_src,
         models_dst,
         ignore=shutil.ignore_patterns(".git", "__pycache__", *MODELS_EXCLUDE),
     )
+    landed_licenses = []
+    for sub, rel in sorted(MODEL_LICENSE_SOURCES.items()):
+        dst_dir = os.path.join(models_dst, sub)
+        if not os.path.isdir(dst_dir):
+            continue
+        src = os.path.join(root, rel.replace("/", os.sep))
+        if not os.path.isfile(src):
+            raise SystemExit(f"[release] 缺模型上游许可：{rel}")
+        dst = os.path.join(dst_dir, os.path.basename(rel))
+        shutil.copy2(src, dst)
+        landed_licenses.append(f"{sub}/{os.path.basename(rel)}")
     total = 0
     landed = []
     for entry in sorted(os.listdir(models_dst)):
@@ -90,6 +149,8 @@ def bundle_models(models_src, models_dst):
             size = os.path.getsize(path)
         total += size
         landed.append(f"{entry}({size / 1048576:.1f}MB)")
+    if landed_licenses:
+        print(f"[release] bundled model upstream licenses: {', '.join(landed_licenses)}")
     return total, landed
 
 
@@ -121,10 +182,15 @@ def main():
         copy_with_desens(PROJECT_ROOT, "docs/changelog.md")
         print("[release] bundled docs/changelog.md")
 
-    # README / LICENSE 单一来源：直接取项目根被 git 跟踪的 README.md / LICENSE（随上面复制流程进包）
-    for _name in ("README.md", "LICENSE"):
-        if not os.path.isfile(os.path.join(OUT_DIR, _name)):
-            raise SystemExit(f"[release] 缺少 {_name}：请确认项目根存在该文件且已被 git 跟踪")
+    # README（中英）/ LICENSE / NOTICE / 第三方清单：单一来源＝项目根被 git 跟踪的文件
+    # （随上面复制流程进包）；这里做最后的出包含性校验，缺一件就不许出包。
+    missing_core = required_license_files(PROJECT_ROOT)
+    if missing_core:
+        raise SystemExit(f"[release] 缺少许可相关文件（AGPL 出包含性）：{missing_core}")
+    missing_pkg = verify_license_bundle(OUT_DIR, PROJECT_ROOT)
+    if missing_pkg:
+        raise SystemExit(f"[release] 发布包内许可包含性不合格：{missing_pkg}")
+    print(f"[release] license bundle OK: {', '.join(LICENSE_CORE)} + {LICENSE_MANIFEST}")
 
     # 微信赞赏码（作者放置于项目根目录，发布前替换；不存在则跳过，README 占位图缺失属预期）
     qr_src = os.path.join(PROJECT_ROOT, "reward-qrcode.png")

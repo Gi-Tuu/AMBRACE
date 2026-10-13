@@ -414,16 +414,50 @@ def test_latest_user_message_picks_newest_row(a32_db):
 
 def test_settle_wired_in_agent_core_before_generation():
     """接线位钉子（派单 §1(3)）：结算必须在所有用户轮次共用的 ``_run_agent_core`` 里，
-    且排在冷战拦截之后、Agent 生成（``agent.ainvoke``）之前——挂错位置＝功能死掉。"""
-    import inspect
+    且排在冷战拦截之后、Agent 生成（``agent.ainvoke``）之前——挂错位置＝功能死掉。
+
+    A50 批16（2026-10-13）：五块用户轮信号从 core 机械抽成同文件协程
+    ``_run_user_turn_signals``，故这里从「core 源码里有这句调用」加强成两级：
+    ① core 里必须是**真的 await 调用**（不是只出现名字/import），位置仍在冷战之后、state/agent 之前；
+    ② helper 里必须**真的 await 结算**，且排在另外四块（安慰减重/复习成功/情绪关怀/时间承诺）之前——
+    顺序即语义（结算失败静默但仍要先把承诺关掉），只查 import 名字撤掉真调用也判绿。
+    """
+    import ast
+    from pathlib import Path
 
     from app.application import chat_service
-    src = inspect.getsource(chat_service._run_agent_core)
-    # 用「调用表达式」而非函数名当锚：函数名在 import 行里也出现，只查名字撤掉调用也判绿
-    call = "settle_promises_on_user_message(character_id, session_id, content)"
-    assert call in src
-    assert src.index("_cold_war_block") < src.index(call)
-    assert src.index(call) < src.index("agent.ainvoke")
+
+    tree = ast.parse(Path(chat_service.__file__).read_text(encoding="utf-8"))
+    fns = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    assert "_run_user_turn_signals" in fns, "用户轮信号 helper 不见了（settle 调用点跟着丢）"
+    core, helper = fns["_run_agent_core"], fns["_run_user_turn_signals"]
+    core_src, helper_src = ast.unparse(core), ast.unparse(helper)
+
+    def _awaited(tree_):
+        return [n.value.func.id for n in ast.walk(tree_)
+                if isinstance(n, ast.Await) and isinstance(n.value, ast.Call)
+                and isinstance(n.value.func, ast.Name)]
+
+    # ① core 必须真 await helper（不是只出现名字/import）
+    assert "_run_user_turn_signals" in _awaited(core), (
+        "core 必须真 await 用户轮信号 helper（只留函数名不算数）")
+    # 位置：冷战拦截之后、_cs_snapshot/state 构造与 agent.ainvoke 之前
+    assert core_src.index("_cold_war_block") < core_src.index("await _run_user_turn_signals(")
+    assert core_src.index("await _run_user_turn_signals(") < core_src.index("_cs_snapshot = await")
+    assert core_src.index("await _run_user_turn_signals(") < core_src.index("agent.ainvoke")
+    # core 自己不再直接调结算（避免两份执行路径）
+    assert "settle_promises_on_user_message" not in core_src, (
+        "结算的调用点必须只留在 helper 一处（core 里出现即可能重复结算）")
+
+    # ② helper 里必须真 await 结算，且排在另外四块之前
+    assert _awaited(helper).count("settle_promises_on_user_message") == 1, (
+        "helper 里的结算真调用应恰好一处（撤掉即判红）")
+    settle_call = "settle_promises_on_user_message(character_id, session_id, content)"
+    assert settle_call in helper_src
+    assert helper_src.index(settle_call) < min(
+        helper_src.index(a) for a in ("has_comfort_word", "maybe_review_success",
+                                      "register_care_task", "extract_timer")
+    ), "结算必须排在另外四块之前（顺序即语义）"
 
 
 # ─────────────── §5.3 cue：到达类变体走在线匹配 ───────────────
