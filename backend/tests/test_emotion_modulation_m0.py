@@ -384,7 +384,14 @@ def test_neutral_snapshot_matches_head_byte_for_byte():
 def test_snapshot_signature_is_optional_and_back_compatible():
     sig = inspect.signature(d.settle_level)
     assert sig.parameters["emotion_snapshot"].default is None
-    assert list(sig.parameters) == ["level", "drive_key", "last_settled_at", "now", "emotion_snapshot"]
+    assert list(sig.parameters) == [
+        "level", "drive_key", "last_settled_at", "now", "emotion_snapshot",
+        "character_id", "bias_vector",
+    ]
+    assert sig.parameters["character_id"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert sig.parameters["character_id"].default is None
+    assert sig.parameters["bias_vector"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert sig.parameters["bias_vector"].default is None
     # 旧的 4 位置参数调用照旧可用
     assert d.settle_level(1.0, "longing", _bj(9), _bj(10)) == _legacy_settle_level(
         1.0, "longing", _bj(9), _bj(10)

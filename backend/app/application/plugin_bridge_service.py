@@ -216,7 +216,7 @@ _SYNC_BACKEND_PATHS = (
 
 
 def _make_sync_network_backend():
-    """按已安装 httpcore 的实际布局构造同步 NetworkBackend；不可用则抛异常（调用方回退普通路径）"""
+    """按已安装 httpcore 的实际布局构造同步 NetworkBackend；不可用则抛异常（由调用方按安全档裁决）。"""
     import importlib
     last_err: Exception | None = None
     for path in _SYNC_BACKEND_PATHS:
@@ -261,7 +261,9 @@ class _PinnedSyncNetworkBackend:
 class _PinnedSyncHTTPTransport(httpx.HTTPTransport):
     """httpx 同步传输：注入 _PinnedSyncNetworkBackend，把插件桥 http 连接绑定到已校验 IP。
 
-    构造失败由 _build_pin_transport 捕获并回退普通传输（与 MCP 的 _build_pinned_http_client 同策略）。
+    构造失败由 _build_pin_transport 捕获；默认安全档下 _http_fetch 据此**拒绝连接**（fail-closed，
+    与 MCP 的 _build_pinned_http_client 同策略），只有显式授权档 plugin_http_allow_private=True
+    才允许降级普通传输（见 _plain_fallback_authorized）。
     """
 
     def __init__(self, pinned_ips: list[str]) -> None:
@@ -278,12 +280,24 @@ class _PinnedSyncHTTPTransport(httpx.HTTPTransport):
         )
 
 
+def _plain_fallback_authorized() -> bool:
+    """``plugin_http_allow_private=True`` 是唯一的 plain（不钉 IP）例外，语义按现状保留。
+
+    为什么这一档下「连接期再解析一次 DNS」不构成绕过：该开关在 :func:`_check_url_allowed` 里
+    是**在任何解析与拦截判定之前**直接放行的（内网/自托管服务的显式授权），也就是说这一档根本
+    不存在「已校验的 IP」可以被绕——把连接钉到某个 IP 只是锦上添花，不是安全边界。默认安全档
+    （False）才有「校验那一刻解析出的公网 IP」这份契约需要 pin 来守住，故那里一律 fail-closed。
+    """
+    return bool(getattr(settings, "plugin_http_allow_private", False))
+
+
 def _resolve_pin_ips(url: str) -> tuple[list[str], bool]:
     """解析 URL host 得到连接期应钉住的 IP 列表（与 MCP 的 _resolve_mcp_ip 对称，复用同一套 SSRF 判定）。
 
     返回 (pin_ips, drifted)：
-    - pin_ips：连接层把 TCP 目标改写为这些校验通过的 IP（按解析顺序尝试）；[] = 不适用 pin
-      （协议/host 不合法、解析失败），调用方回退普通路径（与改动前行为一致）；
+    - pin_ips：连接层把 TCP 目标改写为这些校验通过的 IP（按解析顺序尝试）；[] = 拿不到可钉的 IP
+      （协议/host 不合法、解析失败、解析结果为空）——默认安全档下调用方据此**拒绝连接**
+      （fail-closed，见 _http_fetch），只有 plugin_http_allow_private=True 才允许普通路径；
     - drifted：True = 本次解析命中被拦截地址，即 _check_url_allowed() 通过之后地址发生漂移
       （DNS-rebinding / TOCTOU 窗口）。调用方必须直接拒绝，绝不能回退到会重新解析的普通路径。
     - plugin_http_allow_private=True：内网显式放行语义不变（不做拦截判定），仍尽量 pin 到解析地址。
@@ -318,13 +332,17 @@ def _resolve_pin_ips(url: str) -> tuple[list[str], bool]:
 
 
 def _build_pin_transport(pin_ips: list[str]):
-    """构造 pin 到指定 IP 的同步 httpx 传输；不可用（httpcore 内部路径变动/构造异常）返回 None 走普通路径。"""
+    """构造 pin 到指定 IP 的同步 httpx 传输；返回 None 表示「没有钉 IP 的传输」（不适用 pin 或构造异常）。
+
+    None 的含义由调用方按安全档裁决：默认档拒绝连接（fail-closed），显式授权档
+    （plugin_http_allow_private=True）才允许普通传输，见 _http_fetch。
+    """
     if not pin_ips:
         return None
     try:
         return _PinnedSyncHTTPTransport(pin_ips)
     except Exception as e:
-        _logger.warning("plugin bridge http pin transport unavailable, fallback to plain: %s", e)
+        _logger.warning("plugin bridge http pin transport construction failed: %s", e)
         return None
 
 
@@ -348,6 +366,8 @@ def _encode_request_body(data, hdrs: dict) -> bytes | None:
 
 def _http_fetch(url: str, method: str, data, headers: dict, timeout: float, max_bytes: int) -> dict:
     """同步 httpx 请求（在 to_thread 中调用）：连接层 pin 到 _check_url_allowed() 校验通过的 IP（P2-B）；
+    拿不到可钉的 IP 或钉 IP 传输构造失败时**拒绝连接**（fail-closed，不回退到会重新解析 DNS 的普通
+    传输），唯一例外是显式授权档 plugin_http_allow_private=True；
     禁重定向（follow_redirects=False，3xx 原样返回不跟随）；不转发 Cookie/Authorization；
     响应 ≤max_bytes（超限 413）；返回 {"ok": bool, "data": {status,headers,body} | "error"}"""
     hdrs = {"User-Agent": _UA}
@@ -359,7 +379,15 @@ def _http_fetch(url: str, method: str, data, headers: dict, timeout: float, max_
         # 校验后地址漂移（疑似 DNS-rebinding）：直接拒绝，不回退到会重新解析的普通路径
         _logger.warning("plugin bridge http blocked: address drifted after validation %s", url)
         return {"ok": False, "error": tr_lang("zh", "http_ssrf_blocked")}
-    transport = _build_pin_transport(pin_ips)  # 无 pin 或构造失败时返回 None → 走普通传输
+    transport = _build_pin_transport(pin_ips)
+    if transport is None and not _plain_fallback_authorized():
+        # fail-closed（与 app/mcp/transport.py::_build_pinned_http_client 同策略）：拿不到可钉的 IP
+        # （解析异常/结果为空/非法地址）或钉 IP 传输构造失败时，**绝不**回退普通传输——普通传输会在
+        # 连接期重新解析 DNS，把「校验那一刻的 IP」与「连接那一刻的 IP」解耦，pin 归零、rebinding
+        # 窗口原样打开。唯一的 plain 例外见 _plain_fallback_authorized()。
+        _logger.warning("plugin bridge http pin unavailable, plain fallback refused (fail-closed): "
+                        "url=%s pin_ips=%s", url, pin_ips)
+        return {"ok": False, "error": tr_lang("zh", "http_failed", err="pin unavailable")}
 
     try:
         with httpx.Client(timeout=timeout, follow_redirects=False, transport=transport) as cli:

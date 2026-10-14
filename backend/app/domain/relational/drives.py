@@ -116,6 +116,9 @@ def settle_level(
     last_settled_at: datetime | None,
     now: datetime,
     emotion_snapshot=None,
+    *,
+    character_id: int | None = None,
+    bias_vector: dict | None = None,
 ) -> tuple[float, datetime]:
     """懒结算：把 [last_settled_at, now) 的静默时长折算成增量，返回 (新水位, 新游标)。
 
@@ -133,6 +136,21 @@ def settle_level(
     - 段内乘子取**那份快照、整段恒定**（不做段内插值）：幂等性靠「增量只由游标 + 那份快照决定」，
       快照若逐分钟变化会破坏写回语义，故口径定死为整点量级（设计 §3.1 硬约束）；
     - 带快照时额外走一次 ``shadow_trace_modulation``（只留痕，不改返回值，异常自吞）。
+
+    ``character_id``（本单尾追，**可选 keyword-only、缺省 None**）：只用于把生效留痕**归属到角色**，
+    原样转交 ``shadow_trace_modulation`` 的出口；**不参与任何计算** ⇒ 缺省调用与本参数加入前
+    逐字节等价（水位、游标、乘子一律不变）。
+
+    ``bias_vector``（批 7 §3.1 公式第 4 项 / §3.3，**可选 keyword-only、缺省 None**）：性格偏置向量
+    （形态见 ``emotion_modulation.personality_bias_vector``）。它只经**现成纯函数**
+    ``combined_multiplier(drive_key, emotion_snapshot, bias_vector)`` 进入**增速**——单因子封顶
+    ±0.10 与总闸 [0.80, 1.25] 全部由该模块的 ``personality_multiplier`` / ``EMOTION_MULTIPLIER_BOUNDS``
+    负责，本函数**不写任何新数学**、不新增常量。同一次 ``combined_multiplier`` 结果既是 growth 用的
+    ``modulation``，也原样交给留痕出口 ⇒ **生效水位与 trace 里的 ``multiplier`` 同源同值**。
+    - ``emotion_snapshot`` 缺省（None）⇒ 本参数**完全不参与**（连 ``emotion_modulation`` 都不 import），
+      与批 3 逐字节等价；
+    - 带快照但 ``bias_vector`` 为 None ⇒ 偏置乘子恒 1.0 ⇒ 与本参数加入前逐字节等价；
+    - 未知/非法取值按现成纯函数的保守口径处理（脏值 ⇒ 0.0、越界 ⇒ 夹到 ±0.10）。
 
     入参为 naive UTC（库内约定）；带 tzinfo 的先归一为 naive UTC，两种口径都不会算错段。
     """
@@ -154,7 +172,9 @@ def settle_level(
     if emotion_snapshot is not None:
         from app.domain.relational import emotion_modulation as modulation_module
 
-        modulation = modulation_module.combined_multiplier(drive_key, emotion_snapshot)
+        modulation = modulation_module.combined_multiplier(
+            drive_key, emotion_snapshot, bias_vector
+        )
 
     increment = 0.0
     cur = cursor
@@ -173,7 +193,8 @@ def settle_level(
     if emotion_snapshot is not None:
         # 影子档：只留痕（INFO／obs_event），不改返回值、不写库、异常自吞
         modulation_module.shadow_trace_modulation(
-            drive_key, emotion_snapshot, new_level=new_level
+            drive_key, emotion_snapshot, bias_vector=bias_vector,
+            new_level=new_level, character_id=character_id,
         )
     return (new_level, moment)
 

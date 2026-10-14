@@ -205,8 +205,11 @@ async def settle(db, character_id: int, user_id: int, now=None) -> dict[str, flo
     settled: dict[str, float] = {}
     for key, row in by_key.items():
         if mode == MODULATION_ON and snapshot is not None:
+            # 生效留痕归属到角色：character_id 只进 trace 出口，不参与乘子/水位计算
+            # bias_vec 属 on 档同一把开关的§3.3 性格偏置（批 7 M1 ②），只进增速与 trace
             new_level, new_cursor = drives.settle_level(
-                _level_of(row.level), key, row.last_settled_at, moment, snapshot
+                _level_of(row.level), key, row.last_settled_at, moment, snapshot,
+                character_id=character_id, bias_vector=bias_vec,
             )
         else:
             # off 与 shadow 档：不传快照 ⇒ 乘子恒 1.0 ⇒ 落库与改动前逐字节相同

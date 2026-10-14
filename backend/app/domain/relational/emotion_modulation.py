@@ -21,6 +21,8 @@
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from app.domain.relational.drives import (
     DRIVE_AFFECTION,
     DRIVE_ALL_KEYS,
@@ -240,11 +242,29 @@ def personality_bias_vector(personality, chat_style) -> dict[str, float]:
     return {key: personality_bias(personality, chat_style, key) for key in DRIVE_ALL_KEYS}
 
 
+def _bias_of(bias_vector, drive_key: str) -> float:
+    """从偏置向量取该驱力的**原始**偏置数值（不夹、供留痕原样展示；口径与改造前一致）。
+
+    单一判别式（增速／留痕共用，避免同一份向量在两处走成两台尺）：
+    - ``Mapping``（含 ``dict`` 及其子类、``MappingProxyType``、``defaultdict``）⇒ ``.get`` 取值，
+      缺键／脏值／非数字 ⇒ 0.0（``_to_float`` 现成口径）；
+    - **非 mapping**（``str`` / ``list`` / ``tuple`` / 数字 / 任意对象 / ``None``）⇒ 0.0，
+      即「读不到偏置就等于不加偏置」，绝不抛错打断水位结算；
+    - 只做 ``isinstance`` 判别 + ``.get``，**不反射读取入参对象的任意属性**（用户对象可能带
+      副作用的 ``__getattr__``）。
+    """
+    if not isinstance(bias_vector, Mapping):
+        return 0.0
+    return _to_float(bias_vector.get(drive_key), 0.0)
+
+
 def personality_multiplier(drive_key: str, bias_vector=None) -> float:
-    """偏置转乘子 ``1 + bias`` ⇒ [0.90, 1.10]。``bias_vector`` 缺省 ⇒ 恰 1.0（M0 不接线）。"""
-    if not bias_vector:
-        return 1.0
-    bias = _clamp(_to_float(bias_vector.get(drive_key), 0.0), -BIAS_HARD_CAP, +BIAS_HARD_CAP)
+    """偏置转乘子 ``1 + bias`` ⇒ [0.90, 1.10]。``bias_vector`` 缺省 ⇒ 恰 1.0（M0 不接线）。
+
+    非 mapping 的真值偏置（字符串／序列／数字／任意对象）⇒ **中性 1.0**（容错，与 ``None``／``{}``
+    同义）；``dict`` 的合法／非法取值口径与 ±0.10 封顶一字未动。
+    """
+    bias = _clamp(_bias_of(bias_vector, drive_key), -BIAS_HARD_CAP, +BIAS_HARD_CAP)
     return _clamp(1.0 + bias, *BIAS_MULTIPLIER_BOUNDS)
 
 
@@ -271,10 +291,10 @@ def modulation_note(
     """
     valence, arousal = read_axes(emotion_snapshot)
     mult = combined_multiplier(drive_key, emotion_snapshot, bias_vector) if multiplier is None else multiplier
-    bias = bias_vector.get(drive_key, 0.0) if isinstance(bias_vector, dict) else 0.0
+    bias = _bias_of(bias_vector, drive_key)
     note = (
         f"emotion_mod drive={drive_key} mult={float(mult):.4f} "
-        f"valence={valence:.4f} arousal={arousal:.4f} bias={_to_float(bias):+.4f}"
+        f"valence={valence:.4f} arousal={arousal:.4f} bias={bias:+.4f}"
     )
     return note[:_NOTE_MAX_CHARS]
 
@@ -294,6 +314,8 @@ def shadow_trace_modulation(
     - 不落快照列、不新建表——读数只在 trace 里存一次；
     - 异常一律吞掉（连 flag 读取、连日志本身失败都不往上抛）：观测层出错绝不能拖垮水位结算；
     - 不修改入参（快照 dict / 偏置向量原样返回给调用方）。
+    - ``bias`` 字段与增速**共用** ``_bias_of``（非 mapping／脏值 ⇒ 0.0）：偏置的形态问题既不影响
+      实际结算，也不该把整条留痕（含角色归属）一起吞掉。
     """
     try:
         valence, arousal = read_axes(emotion_snapshot)
@@ -310,9 +332,7 @@ def shadow_trace_modulation(
                 "multiplier": round(multiplier, 4),
                 "valence": round(valence, 4),
                 "arousal": round(arousal, 4),
-                "bias": round(
-                    bias_vector.get(drive_key, 0.0) if isinstance(bias_vector, dict) else 0.0, 4
-                ),
+                "bias": round(_bias_of(bias_vector, drive_key), 4),
                 "new_level": None if new_level is None else round(float(new_level), 4),
             },
             kind="shadow",
