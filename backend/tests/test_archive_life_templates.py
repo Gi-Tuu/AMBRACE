@@ -85,6 +85,42 @@ def plan_of(db: Path) -> dict:
         con.close()
 
 
+class GuardedConn:
+    """确定性「读取失败」注入：只对**整句精确匹配**的目标语句抛 ``sqlite3.OperationalError``。
+
+    PRAGMA / schema / 候选计数等其余语句原样转发真连接，所以被测分支确定是
+    「表在、列在、只有这一句读失败」，不再受 SQLite 版本对 fts5 损坏
+    「在 schema 阶段还是读取阶段失败」的差异影响（py3.13/Linux 属于前者）。
+    不额外持有连接，句柄仍由真连接统一关闭。
+    """
+
+    def __init__(self, con: sqlite3.Connection, failing: dict[str, str]):
+        self._con = con
+        self._failing = dict(failing)
+        self.fired: list[str] = []
+
+    def execute(self, sql, parameters=()):
+        why = self._failing.get(sql)
+        if why is not None:
+            self.fired.append(sql)
+            raise sqlite3.OperationalError(why)
+        return self._con.execute(sql, parameters)
+
+    def __getattr__(self, name):
+        return getattr(self._con, name)
+
+
+def guarded_plan(db: Path, failing: dict[str, str]) -> tuple[dict, set[str]]:
+    """注入后跑一次干跑，返回 (plan, 实际被拦截的语句集合)。"""
+    con = alt.open_ro(db)
+    try:
+        wrap = GuardedConn(con, failing)
+        plan = alt.build_plan(wrap)
+        return plan, set(wrap.fired)
+    finally:
+        con.close()
+
+
 def digest(db: Path) -> str:
     return hashlib.sha256(Path(db).read_bytes()).hexdigest()
 
@@ -349,7 +385,61 @@ def test_legal_pointer_values_do_not_overprotect(db):
 def test_unreadable_existing_pointer_column_is_not_swallowed(db):
     """列确实存在（PRAGMA 读得出）但查询失败：不可吞成「无引用」→ 全体保留。
 
-    用 fts5 影子表缺失制造真实读取失败（本例建在 tmp_path 沙箱库，不碰生产）。
+    读取失败用 ``GuardedConn`` 确定性注入到真实存在的表上。旧夹具靠 fts5 影子表缺失
+    制造真实失败，但那只保证「读不动」，不保证失败发生在**读取**阶段：py3.13/Linux 的
+    SQLite 在 schema 阶段就失败（归因变成 ``probe_fts(schema)``），把本分支顶掉。
+    """
+    table, column = "probe_reads", "memory_ids"
+    con = sqlite3.connect(str(db))
+    a = mk(con, FRAME, chain_id="ca")
+    b = mk(con, GENERIC, chain_id="cb")
+    con.execute(f'CREATE TABLE {table} (id INTEGER PRIMARY KEY, {column} TEXT)')
+    con.execute(f'INSERT INTO {table} ({column}) VALUES (?)', ("[999999]",))
+    con.commit()
+    target = f"SELECT DISTINCT {alt._q(column)} FROM {alt._q(table)}"
+    assert column in {r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
+    assert con.execute(target).fetchall() == [("[999999]",)]   # 真连接读得动 ⇒ 失败确是注入的
+    con.close()
+    plan, fired = guarded_plan(db, {target: "夹具注入的指针列读取失败"})
+    assert fired == {target}                                   # 只拦这一句，别的一律走真连接
+    assert "probe_reads.memory_ids" in plan["pointer_columns_unknown"]   # 列被发现，不是缺席
+    assert plan["allowed_ids"] == []
+    assert plan["pointer_unresolved"] == [
+        "unresolved_reference:probe_reads.memory_ids:读取失败(OperationalError)"]
+    for rid in (a, b):
+        assert any(t.startswith("unresolved_reference:probe_reads.memory_ids") for t in reasons_for(plan, rid))
+
+
+def test_unreadable_pointer_table_schema_is_not_treated_as_absent(db):
+    """表存在但 PRAGMA 读不动：登记「排除不掉」的 schema 阶段，绝不退化成「这表没有列」。
+
+    这是 py3.13/Linux 上 fts5 损坏实际走到的那条分支，用注入固定住。
+    """
+    table, column = "probe_schema", "memory_ids"
+    con = sqlite3.connect(str(db))
+    a = mk(con, FRAME, chain_id="ca")
+    b = mk(con, GENERIC, chain_id="cb")
+    con.execute(f'CREATE TABLE {table} (id INTEGER PRIMARY KEY, {column} TEXT)')
+    con.execute(f'INSERT INTO {table} ({column}) VALUES (?)', ("[999999]",))
+    con.commit()
+    target = f"PRAGMA table_info({alt._q(table)})"
+    assert con.execute(target).fetchall()                      # 真连接 schema 读得出
+    con.close()
+    plan, fired = guarded_plan(db, {target: "夹具注入的 schema 读取失败"})
+    assert fired == {target}
+    assert "probe_schema.memory_ids" not in plan["pointer_columns_unknown"]  # schema 读不动 ⇒ 不产指针
+    assert plan["allowed_ids"] == []
+    assert plan["pointer_unresolved"] == [
+        "unresolved_reference:probe_schema(schema):schema读取失败(OperationalError)"]
+    for rid in (a, b):
+        assert any(t.startswith("unresolved_reference:probe_schema(schema)") for t in reasons_for(plan, rid))
+
+
+def test_fts_shadow_corruption_rejects_conservatively_on_every_sqlite_version(db):
+    """fts5 影子表缺失＝真损坏：无论 SQLite 在 schema 阶段还是读取阶段失败，都必须保留全体。
+
+    本例只锁「保守拒绝」这一版本无关的不变式；具体归因标签随失败阶段而变
+    （``probe_fts.memory_ids`` vs ``probe_fts(schema)``），逐值归因由上面两个注入用例分别锁定。
     """
     con = sqlite3.connect(str(db))
     a = mk(con, FRAME, chain_id="ca")
@@ -362,8 +452,9 @@ def test_unreadable_existing_pointer_column_is_not_swallowed(db):
     con.close()
     plan = plan_of(db)
     assert plan["allowed_ids"] == []
+    assert plan["pointer_unresolved"], "损坏的指针表不许被当成无引用"
     for rid in (a, b):
-        assert any(t.startswith("unresolved_reference:probe_fts.memory_ids") for t in reasons_for(plan, rid))
+        assert any(t.startswith("unresolved_reference:probe_fts") for t in reasons_for(plan, rid))
 
 
 def test_quoted_identifier_pointer_column_not_misread(db):
