@@ -538,14 +538,15 @@ def test_导入CLI不预先建生产engine_沙箱生效(tmp_path, monkeypatch):
     root = Path(tmp_path)
     env = _sandbox_env(root)
     code = (
-        "import os, sys; sys.path.insert(0, r'%s');"
+        "import os, sys; sys.path.insert(0, sys.argv[1]);"
         "import importlib.util;"
-        "spec = importlib.util.spec_from_file_location('m', r'%s');"
+        "spec = importlib.util.spec_from_file_location('m', sys.argv[2]);"
         "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m);"
         "m._sandbox_db_env();"
         "print('URL=' + os.environ.get('DATABASE_URL',''))"
-    ) % (str(REPO / "backend"), str(REPLAY))
-    p = subprocess.run([_cli_py(), "-c", code], capture_output=True, text=True,
+    )
+    p = subprocess.run([_cli_py(), "-c", code, str(REPO / "backend"), str(REPLAY)],
+                       capture_output=True, text=True,
                        encoding="utf-8", errors="replace", env=env, timeout=60)
     assert p.returncode == 0, p.stderr[-400:]
     url = [l for l in (p.stdout or "").splitlines() if l.startswith("URL=")][0]
@@ -875,9 +876,9 @@ def test_子进程跑完_沙箱目录回收干净_不留ambrace_replay_sandbox(t
 def test_沙箱收尾恢复环境变量_不把改写后的TEMP泄漏给调用方(tmp_path):
     """失败前提：REVIEW §6「不恢复环境」——_cleanup_sandbox 必须还原被改写的变量。"""
     code = (
-        "import os, sys; sys.path.insert(0, '{BACKEND}');"
+        "import os, sys; sys.path.insert(0, sys.argv[1]);"
         "import importlib.util;"
-        "spec = importlib.util.spec_from_file_location('m', '{REPLAY}');"
+        "spec = importlib.util.spec_from_file_location('m', sys.argv[2]);"
         "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m);"
         "before = os.environ.get('DATABASE_URL');"
         "m._sandbox_db_env();"
@@ -886,10 +887,11 @@ def test_沙箱收尾恢复环境变量_不把改写后的TEMP泄漏给调用方
         "after = os.environ.get('DATABASE_URL');"
         "print('MID_SANDBOX=%s' % ('ambrace_replay_sandbox_' in mid));"
         "print('RESTORED=%s' % (after == before))"
-    ).replace("{BACKEND}", str(REPO / "backend")).replace("{REPLAY}", str(REPLAY))
+    )
     env = dict(os.environ)
     env["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"      # 可移植：不指任何真实/生产库路径
-    p = subprocess.run([_cli_py(), "-c", code], capture_output=True, text=True,
+    p = subprocess.run([_cli_py(), "-c", code, str(REPO / "backend"), str(REPLAY)],
+                       capture_output=True, text=True,
                        encoding="utf-8", errors="replace", env=env, timeout=60)
     assert p.returncode == 0, p.stderr[-400:]
     assert "MID_SANDBOX=True" in p.stdout
@@ -1180,8 +1182,19 @@ def test_仓库内拒写路径错误_不回显basename():
 
 
 # ── 12 判据函数 AST 与基线比较（第二轮⑥：仓库内可移植夹具，不依赖作者机工作目录）────
+def _baseline_ast_hash(node):
+    """沿用基线的省略空列表表示，统一 Python 3.12 与 3.13+ 的 dump 默认差异。"""
+    import ast
+    normalized = copy.deepcopy(node)
+    for item in ast.walk(normalized):
+        for field, value in list(ast.iter_fields(item)):
+            if isinstance(value, list) and not value:
+                delattr(item, field)
+    return hashlib.sha256(ast.dump(normalized).encode("utf-8")).hexdigest()
+
+
 def test_原判据12函数AST与基线逐函数一致_不是只看文件名():
-    """比 `ast.dump` 哈希：判据本体一个字节都不许变（getsourcefile 只证明文件名，证不了内容）。
+    """比规范化 AST 哈希：判据结构必须不变（注释/格式不在 AST 指纹范围）。
 
     基线＝仓库内纯代码指纹夹具 `backend/tests/fixtures/ast_baseline_memory_action_eval.json`
     （仅函数名＋sha256＋源码内容指纹，无路径），任何机器缺它＝真红，不 skip。
@@ -1191,13 +1204,69 @@ def test_原判据12函数AST与基线逐函数一致_不是只看文件名():
     assert base_p.is_file(), "AST 基线夹具缺失（须随源码携带）：%s" % base_p.name
     fixture = json.loads(base_p.read_text(encoding="utf-8"))
     baseline = fixture["functions"]
+    assert len(baseline) == 12, "原判据必须逐函数守住全部 12 条基线"
     tree = ast.parse(EVAL.read_text(encoding="utf-8-sig"))
     now = {}
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            now[node.name] = hashlib.sha256(ast.dump(node).encode("utf-8")).hexdigest()
+            now[node.name] = _baseline_ast_hash(node)
     for fn, want in baseline.items():
         assert fn in now, "原判据函数 %s 不见了" % fn
         assert now[fn] == want, \
             "原判据函数 %s 的 AST 变了 ⇒ 判据本体被动过（基线 %s… / 现 %s…）" % (
                 fn, want[:16], now[fn][:16])
+
+
+
+def test_AST空列表表示归一化_保留原树且非空字段不能被抹掉():
+    import ast
+    source = "def guard(value):\n    return value + 1\n"
+    original = ast.parse(source).body[0]
+    before = ast.dump(original)
+    compact = copy.deepcopy(original)
+    for item in ast.walk(compact):
+        for field, value in list(ast.iter_fields(item)):
+            if isinstance(value, list) and not value:
+                delattr(item, field)
+    want = _baseline_ast_hash(original)
+    assert _baseline_ast_hash(compact) == want
+    assert ast.dump(original) == before, "规范化不能修改调用者的 AST"
+    for altered in (
+        "@decorator\ndef guard(value):\n    return value + 1\n",
+        "def guard(value, extra):\n    return value + 1\n",
+        "def guard(value):\n    return value + 2\n",
+        "def guard(value):\n    return value - 1\n",
+        "def guard(value):\n    pass\n    return value + 1\n",
+    ):
+        assert _baseline_ast_hash(ast.parse(altered).body[0]) != want, altered
+
+
+def test_AST十二判据逐函数受控改动仍会触发指纹差异():
+    import ast
+    fixture = json.loads((Path(__file__).resolve().parent / "fixtures" /
+                          "ast_baseline_memory_action_eval.json").read_text(encoding="utf-8"))
+    baseline = fixture["functions"]
+    tree = ast.parse(EVAL.read_text(encoding="utf-8-sig"))
+    functions = {node.name: node for node in ast.walk(tree)
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    assert len(baseline) == 12
+    for name, expected in baseline.items():
+        original = functions[name]
+        assert _baseline_ast_hash(original) == expected
+        altered = copy.deepcopy(original)
+        altered.body.append(ast.Pass())
+        assert _baseline_ast_hash(altered) != expected, name
+        assert _baseline_ast_hash(original) == expected, "变异不得污染原件"
+
+
+
+def test_子进程路径参数往返_反斜杠引号中文不作为源码转义(tmp_path):
+    # 全是合成字符串，仅经 argv 往返；不创建或读取这些路径。
+    paths = [r"D:\a\AMBRACE\scripts\diagnostics\memory_private_replay.py",
+             r"C:\new\temp\back\file.py", "D:/synthetic/含中文/with 'quote'/file.py",
+             "D:/synthetic/with \"double\"/file.py", "D:/synthetic/end" + chr(92)]
+    code = "import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=True))"
+    p = subprocess.run([_cli_py(), "-c", code, *paths], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", env=_sandbox_env(tmp_path), timeout=60)
+    assert p.returncode == 0, p.stderr[-400:]
+    assert json.loads(p.stdout) == paths
