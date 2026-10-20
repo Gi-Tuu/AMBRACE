@@ -1,7 +1,7 @@
 name: ai_companion
 description: AMBRACE（拥爱）- 自托管的 AI 伙伴陪伴应用
 publish_to: none
-version: 3.5.4+30507
+version: 3.5.5+30508
 
 environment:
   sdk: ^3.6.0
@@ -42,6 +42,10 @@ dependencies:
   qr_flutter: ^4.1.0
   # 关于行动态版本号（2026-08-29）；geolocator 传递依赖要求 ^10，故用 10.x
   package_info_plus: ^10.2.1
+  # PWA M1a-0（2026-10-15）：跨端共享核心包（本地 path 依赖）。
+  # 手机壳转发共享消息模型/错误类型并委托身份原语；Web 使用共享传输。
+  ambrace_core:
+    path: ../ambrace_core
 
 dev_dependencies:
   flutter_test:

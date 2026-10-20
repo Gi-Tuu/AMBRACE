@@ -25,15 +25,12 @@ class Settings(BaseSettings):
     image_gen_model: str = ""
     image_gen_daily_limit: int = 10
 
-    # ---- 图片理解 VLM（云端视觉 API 优先；本地为占位分支且默认关闭，图片不进 deepseek）----
-    vlm_enabled: bool = False  # 本地 VLM 占位：默认关闭；开启需 .env 设 VLM_ENABLED=true 且已部署本地 VLM
-    vlm_api_key: str = ""  # 云端视觉 API Key（OpenAI 兼容，如阿里云百炼 Qwen-VL）；非空时优先走云端（推荐）
-    vlm_base_url: str = "http://127.0.0.1:11434"  # 本地 VLM 端点（占位，默认关闭时不可达）
-    vlm_model: str = "qwen2.5vl:3b"  # 本地 VLM 模型（占位）
+    # ---- 图片理解 VLM（只走云端 OpenAI 兼容视觉 API；图片不进 deepseek）----
+    vlm_enabled: bool = False  # .env 兜底开关；DB 里配了 vlm_configs 即视为启用（本地 Ollama 分支已于 10-17 移除）
+    vlm_api_key: str = ""  # 云端视觉 API Key（OpenAI 兼容，如阿里云百炼 Qwen-VL）
+    vlm_base_url: str = ""  # 云端视觉端点（OpenAI 兼容，如 https://…/compatible-mode/v1）
+    vlm_model: str = ""  # 云端视觉模型名（如 qwen-vl-max）
     vlm_timeout_sec: float = 180.0
-    vlm_ollama_exe: str = ""  # 本地 Ollama 自愈重启入口（占位）；本机路径请在 .env 配 VLM_OLLAMA_EXE
-    vlm_ollama_models_dir: str = ""  # 自愈重启注入 OLLAMA_MODELS（占位）（.env: VLM_OLLAMA_MODELS_DIR）
-    vlm_garbage_restart_threshold: int = 2  # 本地连续垃圾输出达到该次数后重启本地 VLM（占位）
 
     # ---- 服务器 ----
     # 批 0-3「0 步」：默认 0.0.0.0 刻意不变（改默认会断手机 App 直连），要收窄（只绑 127.0.0.1 /
@@ -166,6 +163,13 @@ class Settings(BaseSettings):
     # 如需回到「仅内置 + 手动刷新」旧行为，设 PLUGIN_MARKET_URL=（空串）。
     # 注意：内置 URL 只影响列表展示，远程安装仍受 plugin_allow_remote_install=False 的安全闸拦截（默认关，须显式开启）。
     plugin_market_url: str = "https://raw.githubusercontent.com/Gi-Tuu/AMBRACE-plugin/main/index.json"
+
+    # ---- PWA 同源静态入口（M1a-1，2026-10-16）----
+    # 默认空 = **不挂载** PWA 静态入口：本机即使有 pwa/build/web 也不自动启用，避免默默影响
+    # 现有生产实例。显式指向一个已完成的 Web build 目录（相对路径按 PROJECT_ROOT 解析）后，
+    # 该目录的公开静态产物才在固定 /pwa/ 前缀可访问（.env: PWA_STATIC_DIR）。
+    # 不加 runtime_flags：这是部署接线，改配置只在独立沙箱/自建进程里做。
+    pwa_static_dir: str = ""
 
     # ---- 项目根目录 ----
     PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent

@@ -15,6 +15,7 @@
    - ``tail_probe_member_user``（归属列起名 ``member_user``：8 列口径看不见它 → 只有哨兵会红）
    - ``tail_invisible_badge``（列名 ``badge``：既不属于 8 列也不属于 4 类哨兵 → 真·未知表）
    另用一张 0 行的 ``tail_empty_note`` 验「新表当前没数据也在清除面上」。
+   异名角色外键用例另建 ``tail_role_links``，验证单列识别、双列并集去重与他人行保留。
 3. 断言全部调用**生产函数**：``user_cascade.discover_purge_plan`` /
    ``account_purge._delete_specs`` / ``account_purge._delete_order`` /
    ``account_purge._purge_table`` / ``account_purge._delete_root``，本文件不复制任何判定或拼 SQL 算法；
@@ -231,6 +232,48 @@ def test_新增角色族外键表_按角色归属删除并排在根表之前(tai
     assert order[-1] == ap.CHARACTER_ROOT, "角色根表殿后（既有设计）"
     assert _count(db_path, "SELECT COUNT(*) FROM tail_char_artifact") == 1
     assert _count(db_path, "SELECT character_id FROM tail_char_artifact") == OTH_CID
+
+
+@pytest.mark.parametrize("dual_fk", [False, True], ids=["renamed-column", "two-columns"])
+def test_异名角色外键_按并集清除且重叠只计一次(tail_db, dual_fk):
+    """靠物理外键识别异名列；双列任一命中即删除，双方都命中仍只算一行。"""
+    db_path, factory = tail_db
+    table = "tail_role_links"
+    columns = ["owner_character"] + (["peer_character"] if dual_fk else [])
+    ddl = ", ".join(
+        f"{column} INTEGER REFERENCES ai_characters(id) ON DELETE RESTRICT"
+        for column in columns
+    )
+    rows = ([(1, TGT_CID, OTH_CID), (2, OTH_CID, TGT_CID),
+             (3, TGT_CID, TGT_CID), (4, OTH_CID, OTH_CID)] if dual_fk
+            else [(1, TGT_CID), (4, OTH_CID)])
+    con = sqlite3.connect(str(db_path))
+    try:
+        con.execute("PRAGMA foreign_keys=ON")
+        con.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY, {ddl})")
+        placeholders = ", ".join("?" for _ in range(len(columns) + 1))
+        con.executemany(f"INSERT INTO {table} VALUES ({placeholders})", rows)
+        con.commit()
+    finally:
+        con.close()
+
+    plan = _plan(db_path, TGT_UID, uc.SCOPE_DELETE_FAMILY_ROOT)
+    entry = next(item for item in plan["character_family"] if item["table"] == table)
+    assert {item["column"] for item in entry["columns"]} == set(columns)
+    expected = 3 if dual_fk else 1
+    assert entry["rows"] == expected, "双列命中的同一行不可重复计入清除预览"
+    specs = _specs(plan)
+
+    async def _run():
+        async with factory() as db:
+            order, _cyclic = await ap._delete_order(db, sorted(specs))
+            assert order.index(table) < order.index(ap.CHARACTER_ROOT)
+            return await ap._purge_table(db, table, specs[table],
+                                         uid=TGT_UID, cids=plan["character_ids"])
+
+    assert asyncio.run(_run()) == expected
+    assert _count(db_path, f"SELECT COUNT(*) FROM {table}") == 1
+    assert _count(db_path, f"SELECT id FROM {table}") == 4, "仅引用他人角色的行应原样保留"
 
 
 def test_RESTRICT仍然生效_不改成CASCADE(tail_db):

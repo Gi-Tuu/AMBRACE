@@ -1,0 +1,19 @@
+{
+ "functions": {
+  "case_source_fp": "8c16c46c90ddb225e4e8baa04786f97ee40bd881cb461e3f4d29d58a18cc8f10",
+  "certified_j1": "152e777a334d29312bd0e78904fcc436f75a5736a311c580608a8c18306b867d",
+  "evaluator_source_fp": "926039a99697a95532f82ed4bff1fb62bdc0d06bf89801d43fc3c0d8f60210f7",
+  "extract_memory_channel": "68e4ee456d368d8c1c6690c4ea4a50295f8e2708978cc37fdf3c70b54d908e1f",
+  "fold_runs": "90546dfd0ab8a00da46c0edd024564f5546ccc4c4825f6b32bda979e8273f1ad",
+  "j1_verdict": "29faf419954a367fd4637b23d21cf0f51ce0ba8255e86c71a4cb0b392fc553fd",
+  "j2_verdict": "d47375d9166adf6f1792bbf947cca8af9f0fbd4ac1257d2e2876633cf21b3947",
+  "mask_clock": "cb8bb3ebd451b3eab4b8840083bd3f68f230b13df32e9197e0367c1f2f2b7018",
+  "recount_rep": "7691f47926f4b1b635032978fdcdc5645687448621ddff45bd800122d9165575",
+  "resolve_expect_date": "8a5733e26d912ffc2ce5c84191a7e775cd1ece97db4d737948f1e8ab45553bdf",
+  "sig_recompute": "3e89f570ab45941638511e2a91e28fafb17acfde0338fac3d3055d870542fcf7",
+  "stable_fp": "fad286f76ee8092c48c1b153bd32b2df32ec0f5d8f23d794422587fe55f2be78"
+ },
+ "note": "A30 判据函数 AST 基线（纯内容指纹，无路径）。原判据本体不得改动，本夹具为持续守卫。",
+ "source_file": "scripts/diagnostics/memory_action_eval.py",
+ "source_sha1_12": "ca227025abec"
+}

@@ -36,6 +36,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import asyncio
 import hashlib
 import importlib.util
@@ -134,14 +135,50 @@ CONFIG_MATRIX = {
 # ─────────────────────────── 数据集 lint（§2.1／§三） ───────────────────────────
 # 周期词——**只扫用户这句话，不扫种子**（10-10 批 51）：j1t02 的种子写着「每月 28 号结项目款」，
 # 题面却是「下个月 28 号提醒我」＝单次请求，扫种子会把好题误拦。
+_FALLBACK_FILE = BACKEND / "app" / "memory" / "fallback.py"
+
+
 def _load_periodic_words() -> tuple:
-    """周期词表**唯一真源**＝`app/memory/fallback.py::PERIODIC_WORDS`。
+    """周期词表**唯一真源**＝`app/memory/fallback.py::PERIODIC_WORDS`，但**只读文件、不 import 包**。
 
     lint（周期题不许配单日日期）与写侧兜底（周期约定不塞日期）必须共用一套词——抄第二份迟早自相矛盾
     （10-10 批 51 的口径）。读不到就当场报错，**不许退回硬编码**：硬编码＝假同源，正是第 ⑧ 类判据同义反复。
+
+    为什么禁止 `from app.memory.fallback import PERIODIC_WORDS`（10-14 事故，比指纹漂移更重的根因）：
+    `app.memory` 的包 `__init__` 会一路拽起 service→`app.db.database`，而 engine 在 **import 那一刻**就按
+    当时的 `settings.database_url` 绑死并按进程缓存。`main()` 里 lint 排在 `_init_temp_env` **之前**
+    （先验尺子再建临时库），于是这个词表读取成为整条路上最早的一次外部绑定——之后 `_init_temp_env`
+    改写 `DATABASE_URL`/`settings.database_url` 也已经晚了，单例仍指着外部环境。实测后果：
+    一次没设 `DATABASE_URL` 的 export 探针把评测号段（9004/9008）写进了**生产库**。
+    这里因此按源码取字面量（`ast.parse` ＋ `ast.literal_eval`，仿 `freshness_shadow_report.py` 读
+    `CHANNELS` 的做法），一个 `app.*` 都不 import。
     """
-    from app.memory.fallback import PERIODIC_WORDS
-    return tuple(PERIODIC_WORDS)
+    try:
+        tree = ast.parse(_FALLBACK_FILE.read_text(encoding="utf-8-sig"))
+    except (OSError, SyntaxError, ValueError) as e:
+        raise RuntimeError(
+            "周期词表唯一真源读不到 ⇒ lint 拒绝运行（不退回硬编码，硬编码＝假同源）："
+            "%s（异常类型=%s）" % (_FALLBACK_FILE, type(e).__name__)) from None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            names, val = [getattr(t, "id", "") for t in node.targets], node.value
+        elif isinstance(node, ast.AnnAssign):
+            names, val = [getattr(node.target, "id", "")], node.value
+        else:
+            continue
+        if "PERIODIC_WORDS" not in names:
+            continue
+        try:
+            words = ast.literal_eval(val)
+        except (ValueError, TypeError, SyntaxError) as e:
+            raise RuntimeError("PERIODIC_WORDS 不是字面量 ⇒ 无法在不 import 的前提下取词表（异常类型=%s）"
+                               % type(e).__name__) from None
+        if not isinstance(words, (tuple, list)) or not words \
+                or any(not isinstance(w, str) or not w for w in words):
+            raise RuntimeError("PERIODIC_WORDS 形态不符（须是非空 str 的 tuple/list）⇒ 拒用，不猜")
+        return tuple(words)
+    raise RuntimeError("在 %s 里找不到 PERIODIC_WORDS 赋值 ⇒ 唯一真源已改名/搬走，lint 拒绝运行"
+                       % _FALLBACK_FILE)
 
 
 # **不许在模块加载期取词表**（10-10 批 57 实测踩到）：`app.memory` 的包 `__init__` 会一路拽起
@@ -1095,11 +1132,15 @@ async def seed_library(case: dict, idx: int, user_id: int, *, cid_base: int = CI
 
 async def generate_case(case: dict, cid: int, user_id: int, *,
                         temperature: float | None = EVAL_TEMPERATURE,
-                        flags: dict | None = None) -> dict:
+                        flags: dict | None = None, evidence: list | None = None,
+                        run: int | None = None) -> dict:
     """一题：装配 → 生成（**这一步计费**）→ `parse_actions(base_date=锚点)` → J1 判分。
 
     `base_date` 传题面 `as_of`：这正是口径②存在的理由——模型写「明天」时，
     按锚点换算才是可复现的判据，按本机时钟判就是今天绿后天红。
+
+    `evidence`＝**显式启用**才传的私有留底收集器（None＝行为与改动前逐字一致）：
+    截断之前在这里就地取一份全料，因为折叠侧／报表侧手上已经只剩 70 字了。
     """
     from app.agent.actions import parse_actions
     from app.agent.llm_client import chat_completion
@@ -1123,7 +1164,7 @@ async def generate_case(case: dict, cid: int, user_id: int, *,
     gold = [case["seeds"][i]["content"] for i in (case["expect"].get("gold_seed_idx") or [])]
     blob = _norm(" ".join(str(x.get("content") or x.get("text") or "")
                           for x in (state.get("retrieved_memories") or []) if isinstance(x, dict)))
-    return {"cid": case["cid"], "category": case["category"], "judge": case.get("judge"),
+    row = {"cid": case["cid"], "category": case["category"], "judge": case.get("judge"),
             "pass": bool(v["pass"]), "err": v.get("err", ""), "why": v.get("why", ""),
             "exemptions": list(v.get("exempted") or []),
             "actions_seen": [getattr(a, "action_type", "?") for a in actions],
@@ -1147,7 +1188,13 @@ async def generate_case(case: dict, cid: int, user_id: int, *,
             "reply_head": (text or "").replace("\n", " ")[:120],
             # **取证要留全文**（A27甲 同一条纪律）：第一轮只存了 120 字起头，于是
             # "模型到底走了哪条通道"这个关键问题再也对不上答案（10-05 就吃了这个亏）。
+            # 这份 900 字是**公共报表**的口径；私有留底另存整段原文（见 `make_private_evidence`）。
             "reply_text": (text or "").strip()[:900]}
+    if evidence is not None:
+        evidence.append(make_private_evidence(
+            "generate", row=row, case=case, run=run,
+            messages=state["context_messages"], actions=actions, reply_text=text or ""))
+    return row
 
 
 async def _llm_usage_totals() -> dict:
@@ -1322,6 +1369,247 @@ def stable_fp(context_messages) -> str:
     )).encode("utf-8")).hexdigest()[:12]
 
 
+# ════════════════ A30 生成端私有留底（显式启用才写，完整原文只进仓库外那个文件）════════════════
+#
+# 补的是两个复算缺口（方案见 output 下 a30_private_evidence_report_20261014.md）：
+# ① 留底只有「这一跑吃了什么」的指纹，没有「这道题是什么题面、这轮用的哪份尺子」的来源指纹
+#    ⇒ 隔两周复算时，题面和判分器本身都可能已经变了，而报表看不出来；
+# ② 载荷一律 `[:70]`、回复一律 `[:900]`，第 71 字之后的正文**在留底里不存在**
+#    ⇒ supersede 那类「旧值＋现值」长句判得出"没答上"、判不出"当时写了什么"，只能再花一次计费去问。
+#
+# 三条不许越界的纪律：
+# - **钟点剥除规则只有 `mask_clock`/`stable_fp` 一份**，留底里的输入指纹必须复用它们，不另造口径；
+# - 「来源指纹」与「输入指纹」是**两种东西**（`*_source_fp` vs `prompt_fp_stable`），不许互相顶替，
+#   缺哪一维就写 `unknown`——尤其不许拿带活时钟的 `prompt_fp` 冒充 stable；
+# - 完整原文只进 `--emit-private-evidence` 指定的**仓库外**文件，公共 stdout／`--out` 报表／
+#   应用日志一律不碰；写不成就要当场报错，绝不伪称保存成功。
+UNKNOWN = "unknown"
+PRIVATE_EVIDENCE_EXIT = 7
+
+
+class PrivateEvidenceError(RuntimeError):
+    """留底写不了就把原因喊出来：宁可整轮不留，也不许静默少留或谎报「已保存」。"""
+
+
+def case_source_fp(case) -> str:
+    """**题面来源**指纹＝这道题的题面定义（seeds／distractors／expect／time_anchor…）的指纹。
+
+    与 `stable_fp` 的区别是本质性的：那一维量的是「装配出来的那段输入文本」（会随活时钟漂），
+    这一维量的是「题集里的那一行」（与跑几次、跑在哪一天无关）。规范化只用
+    `sort_keys`＋`default=str`，**不做任何时间剥除**——题面本来就不该有活时钟，
+    真出现了也说明题面写错了，该被这维指纹抓到，而不是被我剥掉。
+    """
+    try:
+        blob = json.dumps(case if case is not None else {}, ensure_ascii=False,
+                          sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        blob = repr(case)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def evaluator_source_fp() -> str:
+    """**尺子源码**指纹＝本评测器文件字节的 sha1（不含时间戳，同一份源码连跑两次必同值）。
+
+    为什么单独留这一维：一致率/AR 能不能复算，取决于**判分器是不是同一个**。留底里没这一维，
+    两周后拿旧报表复算出一堆不符，第一反应会是"模型漂了"，而实际是我改了尺子。
+    """
+    return hashlib.sha1(Path(__file__).resolve().read_bytes()).hexdigest()[:12]
+
+
+def _ev_field(src, key):
+    """留底取字段：**只有「没这个键」或「值为 None」才算 unknown**，空串/空表是真实读数，不吞。"""
+    if not isinstance(src, dict) or key not in src or src[key] is None:
+        return UNKNOWN
+    return src[key]
+
+
+# 凭据形态闸：宁可拒写整批，也不落一份「带 key 的完整原文」。命中时只报模式、不报内容。
+_SECRET_PATTERNS = (
+    re.compile(r"sk-[A-Za-z0-9]{12,}"),
+    re.compile(r"api[_-]?key[\"']?\s*[:=]", re.IGNORECASE),
+    re.compile(r"bearer\s+[A-Za-z0-9._\-]{8,}", re.IGNORECASE),
+    re.compile(r"(?:password|passwd|secret)[\"']?\s*[:=]\s*\S{6,}", re.IGNORECASE),
+)
+
+
+def assert_no_secret(record: dict, blob: str = "") -> None:
+    """留底字段不得含凭据／环境密钥——命中就抛，且**不在报错信息里回显命中内容**。"""
+    text = blob if blob else json.dumps(record, ensure_ascii=False, sort_keys=True, default=str)
+    for pat in _SECRET_PATTERNS:
+        if pat.search(text):
+            raise PrivateEvidenceError(
+                "私有留底疑似含凭据形态（匹配 %s）⇒ 整批拒写（cid=%s run=%s）" % (
+                    pat.pattern, record.get("cid"), record.get("run")))
+
+
+def repo_root_dir() -> str:
+    return os.path.normcase(os.path.realpath(str(HERE.parents[1])))
+
+
+def guard_private_evidence_path(path: str) -> str:
+    """私有留底必须落在**仓库外**：仓库内的东西会被同步/提交，而完整原文属于不该外传的那一类。
+
+    双口径判定：`abspath`（拦「就在仓库里新建」）＋ `realpath`（拦「软链接指回仓库内部」）。
+    返回真实路径＝写的时候跟着软链接走，不会把内容写进仓库。
+    """
+    p = str(path or "").strip()
+    if not p:
+        raise PrivateEvidenceError("--emit-private-evidence 给了空路径 ⇒ 留底无处可落，拒写")
+    abs_p = os.path.abspath(os.path.expanduser(p))
+    real_p = os.path.realpath(abs_p)
+    root = repo_root_dir()
+    for label, cand in (("规范化路径", os.path.normcase(abs_p)),
+                        ("真实路径（跟随软链接）", os.path.normcase(real_p))):
+        if cand == root or cand.startswith(root + os.sep):
+            raise PrivateEvidenceError(
+                "私有留底必须在仓库外（软链接落回仓库内部同样拒）：%s＝%s 落在 %s 之内" % (
+                    label, cand, root))
+    parent = os.path.dirname(real_p)
+    if not os.path.isdir(parent):
+        raise PrivateEvidenceError("私有留底的目录不存在，拒写（不创建、也不谎称已保存）：%s" % parent)
+    return real_p
+
+
+def _inherited_source_fp(key: str, *srcs) -> str:
+    """从**上游那一行**（导出行／题面行）继承一维来源指纹：没带就是 `unknown`。
+
+    绝不拿当前进程算出来的值顶上去——那等于用「现在的尺子」覆盖「当时导出用的尺子」，
+    把两条腿其实不同源这件事抹平成看起来同源（主审点名的正是这一处）。
+    """
+    for s in srcs:
+        if isinstance(s, dict) and s.get(key) is not None:
+            return str(s[key])
+    return UNKNOWN
+
+
+def _actions_full_of(actions) -> object:
+    """动作原文留底：**动作类型＋完整载荷＋原始标记串**，字段一个都不挑、长度一位都不截。
+
+    为什么不能沿用 `_payload_text`：它只拼 `query/text/prompt/match` 四个内容字段，于是
+    `CAL_NOTE.date`／`NOTE_DONE.type`／`TIMER.tag` 以及载荷里的未知合法键、JSON 嵌套字段
+    全被摊平丢掉，而留底偏偏要能复算这些（报表那 70 字是**公共**口径，留底不是）。
+    载荷在这里**原样引用、不做任何 str() 兜底**——能不能无损落盘由 `write_private_evidence`
+    那一道序列化闸判定；当场伪称「留住了」比留不住更糟。
+    `actions=None`（这一腿没产出可留）与 `[]`（真取了零个动作）仍然是两件事。
+    """
+    if actions is None:
+        return UNKNOWN
+    return [{"action": getattr(a, "action_type", UNKNOWN),
+             "payload": getattr(a, "payload", None),
+             "raw": getattr(a, "raw", "")} for a in actions]
+
+
+def make_private_evidence(stage: str, *, row=None, case=None, messages=None, actions=None,
+                          reply_text=None, case_source=None, criteria=None, run=None) -> dict:
+    """拼**一行**私有留底：完整原文（未截断）＋ 三指纹，缺的字段一律 `unknown`。
+
+    取料必须在**截断之前**的那一处（`generate_case`／`judge_external_row`／`run_export_eval` 里
+    就地传 `actions`／`reply_text`／`messages`），不留到折叠侧再猜——折叠侧手上已经只有 70 字了。
+    `actions=None` 与 `actions=[]` 是两件事：前者＝这一腿根本没产出可留（导出档、跳过题），
+    后者＝真取了零个动作，是读数不是缺字段。
+    """
+    src_crit = criteria if criteria is not None else (case if case is not None else row)
+    if case_source:
+        cs = str(case_source)
+    elif case is not None:
+        cs = case_source_fp(case)
+    else:
+        cs = str(_ev_field(row, "case_source_fp"))
+    stored_stable = _ev_field(row, "prompt_fp_stable")
+    if messages is None:
+        verified = UNKNOWN
+    elif stored_stable == UNKNOWN:
+        verified = UNKNOWN
+    else:
+        verified = bool(stable_fp(messages) == stored_stable)
+    rec = {
+        "stage": stage,
+        "cid": _ev_field(row, "cid") if row is not None else _ev_field(case, "cid"),
+        "run": (run if run is not None else _ev_field(row, "run")),
+        "category": _ev_field(row, "category"),
+        "judge": _ev_field(row, "judge") if row is not None else _ev_field(case, "judge"),
+        # ── 三种指纹分维留底：输入（stable / 原始）与来源（题集 / 尺子）互不顶替 ──
+        "prompt_fp_stable": stored_stable,
+        "prompt_fp": _ev_field(row, "prompt_fp"),
+        "case_source_fp": cs,
+        "evaluator_source_fp": evaluator_source_fp(),
+        # 导出腿**当时**用的尺子（从上游行继承，没带＝unknown）；与上面那一维分维存，
+        # 两条腿不同源时这两值必须不等——拿当前值去顶替继承值是「假称同源」，禁止。
+        "export_evaluator_source_fp": _inherited_source_fp(
+            "evaluator_source_fp", criteria, row, case),
+        "input_fp_verified": verified,
+        # ── 完整原文（报表里那些 [:70]/[:900]/[:120] 的截断口径一位都不带过来）──
+        "ctx_messages": messages if messages is not None else _ev_field(row, "ctx_messages"),
+        # `payloads_full` 是**兼容文本字段**（沿 `_payload_text`，旧读法不变）；
+        # `actions_full` 才是动作原文：类型＋完整载荷＋原始标记串。
+        "payloads_full": (UNKNOWN if actions is None
+                          else [_payload_text(a.payload).strip() for a in actions]),
+        "actions_full": _actions_full_of(actions),
+        "mem_channel_full": _ev_field(row, "mem_channel"),
+        "reply_text_full": (reply_text if reply_text is not None else _ev_field(row, "reply_text")),
+        # ── 判分侧坐标：离线复算 J1 需要「结果＋判据」两头 ──
+        "pass": _ev_field(row, "pass"),
+        "err": _ev_field(row, "err"),
+        "why": _ev_field(row, "why"),
+        "exemptions": _ev_field(row, "exemptions"),
+        "dates_seen": _ev_field(row, "dates_seen"),
+        "actions_seen": _ev_field(row, "actions_seen"),
+        "expect": _ev_field(src_crit, "expect"),
+        "time_anchor": _ev_field(src_crit, "time_anchor"),
+        "n_ctx_msgs": _ev_field(row, "n_ctx_msgs"),
+        "ctx_chars": _ev_field(row, "ctx_chars"),
+        "temperature": _ev_field(row, "temperature"),
+        "truncated": False,
+    }
+    return rec
+
+
+def write_private_evidence(records, path: str) -> int:
+    """逐行**追加**落盘（与 `--emit-rows` 同一套按题分块用法）。
+
+    先整批过凭据闸再开文件：命中就一行都不写，避免"前 5 行落了、第 6 行带 key"这种半份留底。
+    **只有「开文件之前」这两道闸（序列化＋凭据）能承诺零写入**；开文件之后抛的 OSError 只可能
+    发生在第 1 行与第 N 行之间的任意位置，因此那一支只报「可能已写部分」，不得伪称一行都没落。
+    """
+    real = guard_private_evidence_path(path)
+    lines = []
+    for i, rec in enumerate(records):
+        # **不用 `default=str`**：那一兜会把留不住的东西（tuple／set／datetime／自定义对象）
+        # 伪造成一段看着完整的字符串，`truncated:false` 当场变成假话。宁可整批拒写。
+        # `allow_nan=False`：默认的 `allow_nan=True` 会把 `Infinity`／`NaN` 原样写进去——那不是合法
+        # JSON（`json.loads` 能吞、外部严格解析器直接拒），等于让一个坏数冒充「无损留住了」。
+        try:
+            blob = json.dumps(rec, ensure_ascii=False, sort_keys=True, allow_nan=False)
+            if json.loads(blob) != rec:
+                raise ValueError("round-trip 不相等（存在非 JSON 原生值被改写）")
+        except (TypeError, ValueError) as e:
+            # 只报**异常类型**与行坐标，绝不 `repr(e)`：自定义容器在序列化阶段抛的 ValueError
+            # 完全可能把载荷原文带进异常文本（`repr` 会把它原样拼进报错，甚至打进 stderr）。
+            raise PrivateEvidenceError(
+                "私有留底第 %d 行无法无损序列化 ⇒ 整批拒写（cid=%s run=%s stage=%s，异常类型=%s；"
+                "不回显异常文本，以免带出载荷原文）" % (
+                    i + 1, rec.get("cid"), rec.get("run"), rec.get("stage"),
+                    type(e).__name__)) from None
+        assert_no_secret(rec, blob)
+        lines.append(blob)
+    if not lines:
+        return 0
+    try:
+        with open(real, "a", encoding="utf-8", newline="\n") as f:
+            for ln in lines:
+                f.write(ln + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError as e:
+        # 写在 `open()` 之后**逐行**进行：中途抛 OSError 时前面的行已经追加进去了，
+        # 所以这里不许再宣称「一行都没落」——那会诱导人把文件当旧的直接复跑，留下半份留底。
+        raise PrivateEvidenceError(
+            "私有留底写盘失败 ⇒ 本批 %d 行**可能已写入部分行（追加语义、失败点未知）**，"
+            "先核对目标文件现有行数再决定复跑，不得当作零写入：%s（异常类型=%s）" % (
+                len(lines), real, type(e).__name__)) from None
+    return len(lines)
+
+
 def fold_runs(runs: list) -> dict:
     """把同一题的多跑折成一行：AR 读「每一跑都过」，一致读「结果指纹全等」，第 2、3 跑**留底可复核**。
 
@@ -1439,7 +1727,8 @@ _GEN_ROUNDS_IN_PROC = []
 
 async def run_generate_eval(cases, *, user_id=GENERATE_USER_ID, limit=0, k=5,
                             temperature=EVAL_TEMPERATURE, filler_target=FILLER_TARGET_DEFAULT,
-                            flags=None, repeat=GENERATE_REPEAT_DEFAULT, only_cid=""):
+                            flags=None, repeat=GENERATE_REPEAT_DEFAULT, only_cid="",
+                            evidence=None):
     """只跑声明 judge=J1 的题；`repeat`＝§S3 的「生成三跑一致」（J2 要写侧抽取＝另一次计费，不在本轮）。
 
     `only_cid`＝**按题分块跑**（10-06 上午加的，不是性能优化而是**止损**）：本机一次 python 进程活不过
@@ -1491,7 +1780,8 @@ async def run_generate_eval(cases, *, user_id=GENERATE_USER_ID, limit=0, k=5,
                     # 同族错＝10-04 那条「多配置连跑时角色号段必须按配置×用例独占」，我在 repeat 上又犯了一遍。
                     cid, _seed_ids, _dis, n_fil, _skip = await seed_library(
                         c, i * n_rep + rep_i, user_id, filler_target=filler_target)
-                    r = await generate_case(c, cid, user_id, temperature=temperature, flags=flags)
+                    r = await generate_case(c, cid, user_id, temperature=temperature, flags=flags,
+                                            evidence=evidence, run=rep_i + 1)
                     r["library_rows"] = len(c["seeds"]) + len(c.get("distractors") or []) + n_fil
                     # gold 是否**真的进了那段 prompt**：从入口计数层抓到的 messages 里核，
                     # 而不是核装配返回值——两者不一致时（插件改过 messages）以模型看到的为准。
@@ -1649,11 +1939,14 @@ def _prompt_fp(messages) -> str:
                                    ).encode("utf-8")).hexdigest()[:12]
 
 
-def judge_external_row(prow: dict, text: str) -> dict:
+def judge_external_row(prow: dict, text: str, evidence: list | None = None) -> dict:
     """纯函数：拿导出行自带的题面判据，吃**外部模型的回复**打分（不碰 DB、不调模型）。
 
     字段与 `generate_case` 逐字同名 ⇒ `sig_key`／`fold_runs`／`render_generate`／`--mode recount`
     全部直接复用；另加 `external: True`，报表靠它决定要不要顶出 EXTERNAL_NOTE 那行。
+
+    `evidence`＝显式启用才传的私有留底收集器：这一腿的**完整回复原文**与**未截断载荷**就地取，
+    来源指纹从导出行**继承**（同源传递），并用同一份 `ctx_messages` 现算 `stable_fp` 自证一次。
     """
     from app.agent.actions import parse_actions
     anchor = str(prow.get("anchor") or "").strip() or None
@@ -1661,21 +1954,27 @@ def judge_external_row(prow: dict, text: str) -> dict:
     chan = extract_memory_channel(text)
     v = j1_verdict(prow.get("expect") or {}, actions,
                    expect_date=resolve_expect_date(prow.get("time_anchor")), memory_texts=chan)
-    return {"cid": prow["cid"], "run": prow.get("run"), "category": prow.get("category"),
-            "judge": "J1", "pass": bool(v["pass"]), "err": v.get("err", ""), "why": v.get("why", ""),
-            "exemptions": list(v.get("exempted") or []),
-            "actions_seen": [getattr(a, "action_type", "?") for a in actions],
-            "payloads": [_payload_text(a.payload).strip()[:70] for a in actions],
-            "mem_channel": chan, "external": True,
-            "dates_seen": sorted({str((a.payload or {}).get("date") or "")[:10] for a in actions
-                                  if isinstance(a.payload, dict) and (a.payload or {}).get("date")}),
-            "n_ctx_msgs": prow.get("n_ctx_msgs"), "ctx_chars": prow.get("ctx_chars"),
-            "prompt_fp": prow.get("prompt_fp"), "prompt_fp_stable": prow.get("prompt_fp_stable"),
-            "n_recalled": prow.get("n_recalled"), "gold_in_recall": prow.get("gold_in_recall"),
-            "gold_in_ctx": prow.get("gold_in_ctx"), "library_rows": prow.get("library_rows"),
-            "temperature": prow.get("temperature"), "reasoning_level": EVAL_REASONING_LEVEL,
-            "reply_head": (text or "").replace("\n", " ")[:120],
-            "reply_text": (text or "").strip()[:900]}
+    out = {"cid": prow["cid"], "run": prow.get("run"), "category": prow.get("category"),
+           "judge": "J1", "pass": bool(v["pass"]), "err": v.get("err", ""), "why": v.get("why", ""),
+           "exemptions": list(v.get("exempted") or []),
+           "actions_seen": [getattr(a, "action_type", "?") for a in actions],
+           "payloads": [_payload_text(a.payload).strip()[:70] for a in actions],
+           "mem_channel": chan, "external": True,
+           "dates_seen": sorted({str((a.payload or {}).get("date") or "")[:10] for a in actions
+                                 if isinstance(a.payload, dict) and (a.payload or {}).get("date")}),
+           "n_ctx_msgs": prow.get("n_ctx_msgs"), "ctx_chars": prow.get("ctx_chars"),
+           "prompt_fp": prow.get("prompt_fp"), "prompt_fp_stable": prow.get("prompt_fp_stable"),
+           "n_recalled": prow.get("n_recalled"), "gold_in_recall": prow.get("gold_in_recall"),
+           "gold_in_ctx": prow.get("gold_in_ctx"), "library_rows": prow.get("library_rows"),
+           "temperature": prow.get("temperature"), "reasoning_level": EVAL_REASONING_LEVEL,
+           "reply_head": (text or "").replace("\n", " ")[:120],
+           "reply_text": (text or "").strip()[:900]}
+    if evidence is not None:
+        evidence.append(make_private_evidence(
+            "judge", row=out, case=None, run=prow.get("run"),
+            messages=prow.get("ctx_messages"), actions=actions, reply_text=text or "",
+            case_source=prow.get("case_source_fp"), criteria=prow))
+    return out
 
 
 def load_external_replies(path: str) -> dict:
@@ -1692,7 +1991,7 @@ def load_external_replies(path: str) -> dict:
     return out
 
 
-def judge_replies(prompt_rows: list, replies: dict) -> dict:
+def judge_replies(prompt_rows: list, replies: dict, evidence: list | None = None) -> dict:
     """把导出行与外部回复配成对再打分。三件事必须**分开报**，不许混成一个分母：
 
     判了几跑／哪几跑没回复（＝没量到，不是没过）／哪几条回复没有对应 prompt（＝题面改过还用旧回复）。
@@ -1716,7 +2015,7 @@ def judge_replies(prompt_rows: list, replies: dict) -> dict:
                 bad_pair.append("%s#%d（sent_fp=%s，应为 %s）" % (
                     key[0], key[1], got.get("sent_fp") or "没留", want_fp))
                 continue
-            runs.append(judge_external_row(prow, got.get("text") or ""))
+            runs.append(judge_external_row(prow, got.get("text") or "", evidence=evidence))
         if not runs:
             continue
         if len(runs) > 1:
@@ -1737,10 +2036,16 @@ def judge_replies(prompt_rows: list, replies: dict) -> dict:
 
 
 async def run_export_eval(cases, *, user_id=GENERATE_USER_ID, flags=None, filler_target=FILLER_TARGET_DEFAULT,
-                          repeat=GENERATE_REPEAT_DEFAULT, only_cid="", limit=0):
-    """导出**生产装配出来的那段 prompt**（零计费）：外部模型跑它，回来用 `--mode judge` 打分。"""
+                          repeat=GENERATE_REPEAT_DEFAULT, only_cid="", limit=0, evidence=None):
+    """导出**生产装配出来的那段 prompt**（零计费）：外部模型跑它，回来用 `--mode judge` 打分。
+
+    导出行里额外带上**来源指纹**（`case_source_fp`／`evaluator_source_fp`，各 12 位十六进制、不含正文），
+    外部腿与 judge 腿靠它做到「同源传递」：judge 那一行留底继承的就是导出时算的那一维，
+    换了题面或换了尺子在两行对照之间当场看得出来。旧导出文件没这两维 ⇒ 留底写 `unknown`，不猜。
+    """
     tmp = tempfile.mkdtemp(prefix="ambrace_memact_export_")
     rows = []
+    esfp = evaluator_source_fp()
     try:
         await _init_temp_env(tmp)
         hits = _guard_no_llm()        # 这一档一次都不许调模型；装配里的日摘要因此走占位分支
@@ -1771,7 +2076,11 @@ async def run_export_eval(cases, *, user_id=GENERATE_USER_ID, flags=None, filler
                              "gold_in_recall": sum(1 for g in gold if _norm(g) in blob),
                              "gold_in_ctx": sum(1 for g in gold if _norm(g) in blob),
                              "library_rows": len(c["seeds"]) + len(c.get("distractors") or []) + n_fil,
-                             "temperature": EVAL_TEMPERATURE, "llm_guard": hits})
+                             "temperature": EVAL_TEMPERATURE, "llm_guard": hits,
+                             "case_source_fp": case_source_fp(c), "evaluator_source_fp": esfp})
+                if evidence is not None:
+                    evidence.append(make_private_evidence(
+                        "export", row=rows[-1], case=c, run=rep_i + 1, messages=msgs))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return {"rows": rows, "n": len(rows)}
@@ -1963,6 +2272,10 @@ def refusal(judges, mode: str, allow_llm: bool, cert_j12: bool = False,
     会被当成分数读——这正是原闸要拦的错）、③ 不许带 `--fail-below`（没有可用的分可门）。
     """
     js = {str(j).strip().upper() for j in (judges or [])}
+    if (kwargs.get("private_evidence") or "").strip() and mode not in ("generate", "export", "judge"):
+        return ("--emit-private-evidence 只在 --mode generate／export／judge 下有定义"
+                "（它留的是生成端那一跑的完整原文与来源指纹）；score／certify／recount 档"
+                "没有原文可留——recount 想吃留底请读 `--emit-rows` 那份，别拿私有文件当输入。")
     if mode == "recount":
         # 合并步：只吃 `--emit-rows` 落盘的行，**不碰模型** ⇒ 不该被计费闸拦，也不能被拿去做别的事。
         if not rows_path:
@@ -2034,6 +2347,11 @@ async def main():
     ap.add_argument("--emit-rows", default="",
                     help="生成侧把逐题行（含逐跑指纹）追加落盘成 jsonl，供 --mode recount 离线合并复算")
     ap.add_argument("--rows", default="", help="--mode recount 的输入 jsonl（--emit-rows 写出来的那种）")
+    ap.add_argument("--emit-private-evidence", default="",
+                    help="**显式启用**才写：把未截断的动作载荷／回复全文／整段输入＋来源指纹"
+                         "（题面 case、评测器源码）追加落到**仓库外**的 jsonl，供离线复算第 71 字之后的内容。"
+                         "不给＝一个字的原文都不多落；路径在仓库内／软链接落回仓库＝拒绝；"
+                         "完整原文不进 stdout／--out 报表／应用日志")
     ap.add_argument("--temperature", type=float, default=EVAL_TEMPERATURE,
                     help="生成侧钉死温度（不给＝读 state['temperature']，与生产同一行）")
     ap.add_argument("--fillers", type=int, default=FILLER_TARGET_DEFAULT,
@@ -2054,7 +2372,8 @@ async def main():
     judges = [x.strip().upper() for x in a.judges.split(",") if x.strip()]
     why = refusal(judges, a.mode, a.allow_llm, cert_j12=a.certify_j12,
                   emit_solvability=a.emit_solvability, fail_below=a.fail_below, rows_path=a.rows,
-                  prompts_path=a.prompts, replies_path=a.replies)
+                  prompts_path=a.prompts, replies_path=a.replies,
+                  private_evidence=a.emit_private_evidence)
     if why:
         print("[拒绝] " + why, file=sys.stderr)
         return 2
@@ -2064,10 +2383,39 @@ async def main():
         print("[拒绝] --dataset 必填（只有 --mode recount 不吃题面，它只读 --emit-rows 落下来的行）",
               file=sys.stderr)
         return 2
+    # 私有留底：路径在**任何活干之前**校验（generate 档尤其重要——那是"先报账再花钱"的同一条纪律：
+    # 跑到一半才发现路径落在仓库里，钱已花、留底却没留）。
+    ev_rows: list = []
+    ev_path = ""
+    if a.emit_private_evidence:
+        try:
+            ev_path = guard_private_evidence_path(a.emit_private_evidence)
+        except PrivateEvidenceError as e:
+            print("[拒绝] 私有留底路径不合法：%s" % e, file=sys.stderr)
+            return 2
+    # **没给 `--emit-private-evidence` 时收集器必须是 `None`**：留底的语义是「显式启用才新收集全文」，
+    # 只关掉落盘闸而照样把 `make_private_evidence` 接进三条腿，等于在没有落点的情况下仍把整段输入／
+    # 回复全文／完整载荷抄进内存（外部 probe 实测 judge 默认档仍调了一次）。三条腿一律传 `ev_sink`。
+    ev_sink = ev_rows if ev_path else None
+
+    def flush_private_evidence() -> int:
+        """把这一轮的留底落盘：失败就当场非零退出并说清原因，**绝不伪称已保存**。"""
+        if not ev_path:
+            return 0
+        try:
+            n = write_private_evidence(ev_rows, ev_path)
+        except PrivateEvidenceError as e:
+            print("[私有留底失败] %s" % e, file=sys.stderr)
+            return PRIVATE_EVIDENCE_EXIT
+        # 只报「几行、落在哪」：完整原文一行都不回显，也不走 stdout／应用日志
+        print("[私有留底] %d 行（未截断载荷＋回复全文＋整段输入＋来源指纹）→ %s" % (n, ev_path),
+              file=sys.stderr)
+        return 0
+
     if a.mode == "judge":
         with open(a.prompts, encoding="utf-8-sig") as f:
             prows = [json.loads(l) for l in f if l.strip()]
-        rep = judge_replies(prows, load_external_replies(a.replies))
+        rep = judge_replies(prows, load_external_replies(a.replies), evidence=ev_sink)
         rep.update({"usage": {}, "llm": {}, "flags": BASELINE_FLAGS, "k": a.k,
                     "borrowed": {}, "skipped_judges": []})
         text = render_generate(rep)
@@ -2079,7 +2427,7 @@ async def main():
             with open(a.emit_rows, "a", encoding="utf-8") as f:
                 for r in rep["rows"]:
                     f.write(json.dumps(dict(r, **ctx), ensure_ascii=False) + "\n")
-        return 0
+        return flush_private_evidence()
     if a.mode == "export":
         with open(a.dataset, encoding="utf-8-sig") as f:
             ecases = [c for c in (parse_case(ln) for ln in f) if c]
@@ -2089,7 +2437,7 @@ async def main():
                   file=sys.stderr)
             return 3
         exp = await run_export_eval(ecases, filler_target=a.fillers, repeat=a.repeat,
-                                    only_cid=a.only_cid, limit=a.limit)
+                                    only_cid=a.only_cid, limit=a.limit, evidence=ev_sink)
         if a.emit_prompts:
             write_prompts(exp["rows"], a.emit_prompts)
         n_task = render_external_tasks(exp["rows"], a.emit_tasks) if a.emit_tasks else 0
@@ -2097,7 +2445,7 @@ async def main():
               "→ %s%s" % (exp["n"], a.emit_prompts or "（没给 --emit-prompts＝只打印）",
                           "；任务包 %d 段 → %s" % (n_task, a.emit_tasks) if a.emit_tasks else ""),
               file=sys.stderr)
-        return 0
+        return flush_private_evidence()
     if a.mode == "recount":
         # 复算档排在读题面**之前**：它既不建临时库、也不装配、也不碰模型——整条路上一次计费都没有，
         # 这就是分块跑完之后"把 30 次的结果再看一遍而不再花钱"的那一步。
@@ -2138,7 +2486,7 @@ async def main():
                   "｜本轮只跑 %s" % a.only_cid if a.only_cid else ""), file=sys.stderr)
         rep = await run_generate_eval(cases, limit=a.limit, k=a.k, temperature=a.temperature,
                                       filler_target=a.fillers, repeat=a.repeat,
-                                      only_cid=a.only_cid)
+                                      only_cid=a.only_cid, evidence=ev_sink)
         text = render_generate(rep)
         with open(a.out, "w", encoding="utf-8") as f:
             f.write(text + "\n")
@@ -2150,6 +2498,10 @@ async def main():
                 for r in rep["rows"]:
                     f.write(json.dumps(dict(r, **ctx), ensure_ascii=False) + "\n")
         print(text)
+        # 钱已经花了 ⇒ 留底先落盘，再谈「这轮有没有量到」
+        ev_rc = flush_private_evidence()
+        if ev_rc:
+            return ev_rc
         if a.print_metrics:
             slim = {kk: rep.get(kk) for kk in ("n", "pass", "ar", "by_err", "borrowed", "llm",
                                                 "usage", "flags", "skipped_judges")}

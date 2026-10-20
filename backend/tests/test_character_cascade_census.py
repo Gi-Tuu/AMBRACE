@@ -45,6 +45,7 @@ _FK_TARGET, _FK_LOCAL_COL, _FK_ON_DELETE = 2, 3, 6
 
 # ── 例外清单 A：带 character_id 但**不该**由 SPECS 直删（理由见各条） ──────────────
 SPECS_EXCEPTIONS: dict[str, str] = {
+    "character_creation_requests": "创建幂等收据保留；角色FK为ON DELETE SET NULL，重放已删除目标须拒绝，不能随角色直删而再次创建",
     "agent_tasks": "无 character_id 外键；跨角色/全局任务运行态，删了丢任务留痕（级联模块 docstring 显式「不删」，留给数据治理批）",
     "agent_task_logs": "无 character_id 外键；任务执行日志同上，属审计流水",
     "channel_bindings": "无 character_id 外键；账号级渠道接入配置（角色可换绑），删角色不应断渠道",

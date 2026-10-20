@@ -339,9 +339,7 @@ def stub(monkeypatch):
     monkeypatch.setattr(sc, "_fetch_liveness",
                         lambda: {"ok": True, "stalled": False, "summary": "正常", "level": 1})
     monkeypatch.setattr(sc, "_check_alive", lambda: True)
-    monkeypatch.setattr(sc, "_ollama_alive", lambda: False)
     monkeypatch.setattr(sc, "_get_pid", lambda: 4242)
-    monkeypatch.setattr(sc, "_get_ollama_pid", lambda: 0)
     monkeypatch.setattr(sc, "_tail_log", lambda *a, **k: "line1\nline2\n")
     monkeypatch.setattr(sc, "_is_remote", lambda: False)
     monkeypatch.setattr(sc, "_local_ip_set", lambda: {"127.0.0.1"})

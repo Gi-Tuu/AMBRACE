@@ -25,6 +25,7 @@ async def list_memories(
     skip: int = 0,
     limit: int = 800,
     user_ids: list[int] | None = None,
+    read_only: bool = False,
 ) -> tuple[list[dict], int]:
     """列出记忆（按 importance 排序）；顺带惰性衰减。返回 (切片结果, 总数)。
 
@@ -35,6 +36,12 @@ async def list_memories(
 
     user_ids（账号独立 P1，2026-09-19）：租户账号白名单（tenant_scope_ids），优先于
     user_id；缺省 None 时行为与改造前逐字节一致（严格单账号过滤）。
+
+    read_only（2026-10-16，PWA M1a-2 返工）：显式**无维护读取**开关。为 True 时，
+    到期行仍从返回列表里剔除（展示口径与默认路径一致），但**不物理删除底层行、
+    不 commit 维护、不清理向量**——供只读内容面使用；查询条件/租户过滤/输出字段
+    与可见性完全不变。缺省 False 时是既有行为（到期行物理删除 + 清向量），
+    逐字节不变，移动端等既有调用不受影响。
     """
     from datetime import datetime
     from app.memory.service import async_session_factory, delete_memory_vector
@@ -92,8 +99,11 @@ async def list_memories(
             obj = row["_obj"]
             if row["delete_at"] is not None:
                 if now >= row["delete_at"]:
+                    # 到期行：返回列表一律剔除（展示口径不变）；read_only 模式下
+                    # 只剔除不落库——显式无维护读取不得物理删除底层行
                     removed_ids.add(row["id"])
-                    await db.delete(obj)
+                    if not read_only:
+                        await db.delete(obj)
                 continue
             base = row["last_reinforce_at"] or row["decay_base_at"] or row["created_at"]
             if base is None:
@@ -105,11 +115,11 @@ async def list_memories(
                 continue
             pct = retention_pct(dt_days, row["strength_days"])
             row["importance"] = pct
-        if removed_ids:
+        if removed_ids and not read_only:
             await db.commit()
 
-    # 过期删除的同步清理向量（避免孤儿向量）
-    if removed_ids:
+    # 过期删除的同步清理向量（避免孤儿向量）；read_only 模式不删行也不动向量
+    if removed_ids and not read_only:
         for mid in removed_ids:
             try:
                 await delete_memory_vector(mid)

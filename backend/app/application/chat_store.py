@@ -61,10 +61,14 @@ async def get_latest_session_id(user_id: int | None, character_id: int) -> int |
         return row[0] if row else None
 
 
-async def create_session(user_id: int, character_id: int) -> dict:
-    """获取或创建聊天会话，优先复用最新活跃会话（按最新消息时间选会话）"""
+async def create_session(user_id: int, character_id: int, force_new: bool = False) -> dict:
+    """获取或创建聊天会话，优先复用最新活跃会话（按最新消息时间选会话）。
+
+    ``force_new=True``：跳过复用查询，直接新建会话（显式「新建会话」入口用）；
+    默认 False 与既有逐行为一致（复用优先）。创建/问候语/事件逻辑不变。
+    """
     from app.application import chat_service as _cs  # 被桩依赖与兄弟调用在 chat_service 命名空间现取
-    existing_id = await _cs.get_latest_session_id(user_id, character_id)
+    existing_id = None if force_new else await _cs.get_latest_session_id(user_id, character_id)
     if existing_id:
         _logger.debug("Reusing existing session: id=%d", existing_id)
         return {"id": existing_id, "character_id": character_id, "greeting": None}

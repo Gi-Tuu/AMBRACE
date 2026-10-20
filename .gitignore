@@ -38,6 +38,18 @@ flutter_app/.flutter-plugins
 flutter_app/.flutter-plugins-dependencies
 flutter_app/.metadata
 
+# PWA M1a-0（2026-10-15）：新增包的生成物排除（**不排除源码**，不扩大公开裁剪面）
+ambrace_core/build/
+ambrace_core/.dart_tool/
+ambrace_core/.packages
+ambrace_core/.flutter-plugins
+ambrace_core/.flutter-plugins-dependencies
+pwa/build/
+pwa/.dart_tool/
+pwa/.packages
+pwa/.flutter-plugins
+pwa/.flutter-plugins-dependencies
+
 # 运行时数据（logs/uploads/锁/状态，不提交）
 backend/data/logs/
 backend/data/uploads/*

@@ -30,9 +30,16 @@ async def get_memories(
     memory_type: str | None = None,
     skip: int = 0,
     limit: int = 800,
+    read_only: bool = False,
     user_id: int = Depends(get_current_user_id),
 ):
-    """获取记忆列表（账号独立 P1：按本账号租户白名单过滤——家庭内共享、跨家庭隔离）"""
+    """获取记忆列表（账号独立 P1：按本账号租户白名单过滤——家庭内共享、跨家庭隔离）
+
+    ``read_only=true``（2026-10-16，PWA M1a-2 返工）：显式**无维护读取**——到期行仍不在
+    返回列表里（展示口径不变），但**不物理删除底层行、不 commit 维护、不清理向量**，
+    供只读内容面使用。缺省 ``false`` 时行为与改造前逐字节一致（含到期物理删除 + 清向量），
+    移动端等既有调用不受影响；认证/租户白名单/响应字段与可见性两者完全相同。
+    """
     _logger.debug("List memories: character_id=%s type=%s skip=%d limit=%d", character_id, memory_type, skip, limit)
     async with db_mod.async_session_factory() as _db:
         scope_ids = await tenant_scope_ids(_db, user_id)
@@ -41,6 +48,7 @@ async def get_memories(
         memory_type=memory_type,
         skip=skip,
         limit=limit,
+        read_only=read_only,
     )
     _logger.debug("List memories result: count=%d total=%d", len(memories), total)
     decorated = []

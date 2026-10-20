@@ -37,10 +37,18 @@ async def create_character(
     data: CharacterCreate,
     db: AsyncSession = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
-    """创建新 AI 角色"""
+    """创建新 AI 角色。
+
+    可选 ``Idempotency-Key`` 头：带上即启用**持久化幂等**（同用户+同键+同请求只建一个角色）；
+    不带则保持旧语义（每次可新建），手机端不受影响。
+    """
     _check_voice_or_400(data.voice)
-    return await _svc.create_character(db, data, user_id)
+    if idempotency_key is None:
+        return await _svc.create_character(db, data, user_id)
+    from app.application.character_creation_idempotency import create_character_once
+    return await create_character_once(db, data, user_id, idempotency_key)
 
 
 @router.post("/{character_id}/generate-greeting")

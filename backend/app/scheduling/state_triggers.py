@@ -18,6 +18,9 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
+# 每角色每小时主动消息上限与仲裁器共用领域定义。
+from app.domain.proactivity.decision import MAX_PER_HOUR
+
 from app.db.database import async_session_factory
 from app.models.character import AICharacter
 from app.models.character import CharacterState
@@ -31,8 +34,6 @@ from app.utils.async_tasks import spawn_background
 
 _logger = get_logger("scheduler.state_triggers")
 
-# 与 arbiter 保持一致：每角色每小时主动消息上限（状态触发消息计入）
-MAX_PER_HOUR = 2
 # 朋友圈行为：最近多少分钟内已发过朋友圈则降级为私聊消息（避免朋友圈刷屏）
 MOMENT_FRESH_MINUTES = 210  # 3.5 小时
 # 冷战最长持续时间（分钟）：超时即使状态未回落也自动恢复，避免用户一直被晾着

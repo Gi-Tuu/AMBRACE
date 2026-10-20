@@ -1,0 +1,23 @@
+name: ambrace_pwa
+description: AMBRACE PWA 薄壳（Flutter Web；复用 ambrace_core 共享核心）。
+publish_to: none
+version: 3.5.5+30508
+
+environment:
+  sdk: ^3.6.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ambrace_core:
+    path: ../ambrace_core
+  # 薄壳直接用到 CancelToken（真实取消在飞请求）⇒ 显式声明，避免隐式依赖 core 的传递依赖。
+  dio: ^5.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

@@ -34,8 +34,8 @@ REPO = Path(__file__).resolve().parents[2]
 AGPL3_SHA256 = "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
 AGPL3_BYTES = 34523
 
-EXPECTED_VERSION = "3.5.4"
-EXPECTED_BUILD = "30507"
+EXPECTED_VERSION = "3.5.5"
+EXPECTED_BUILD = "30508"
 EXPECTED_DATE = "2026-10-13"
 
 # 旧版（MIT 时代）写过的「禁止商用」措辞：任何一处回来都必须红

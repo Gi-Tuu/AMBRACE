@@ -106,7 +106,7 @@ def test_六张KPI卡都登记了图标(app):
     import pathlib
     src = pathlib.Path(cf.CONSOLE_DIR, "server_controller.py").read_text(encoding="utf-8")
     assert src.count('icon="') >= 6, "KPI 卡图标登记数掉了：右半又要空回去"
-    built = [name for name in ("v_server", "v_health", "v_ollama",
+    built = [name for name in ("v_server", "v_health", "v_vlm",
                                "v_chars", "v_mems", "v_tokens")
              if getattr(app, name, None) is not None]
     assert len(built) == 6

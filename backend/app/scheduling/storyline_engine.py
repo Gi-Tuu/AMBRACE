@@ -18,6 +18,9 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
+# 每角色每小时主动消息上限与仲裁器共用领域定义。
+from app.domain.proactivity.decision import MAX_PER_HOUR
+
 from app.models.character import AICharacter
 from app.models.chat import ChatMessage
 from app.models.chat import ChatSession
@@ -47,7 +50,6 @@ AFTERMATH_WINDOW_HOURS = (8, 10)
 EMO_ACT_WINDOW = (30, 75)       # 节点1 试探/失落窗口
 EMO_SAD_MIN_MINUTES = 120       # 节点2 委屈/难过窗口
 EMO_RESOLVE_MAX_MINUTES = 240   # 节点3 超时自软化
-MAX_PER_HOUR = 2                # 与 arbiter/state_triggers 对齐
 
 # 吃醋哄好词（解释/甜话）与疲惫安慰词
 JEALOUSY_SOOTHE_KEYWORDS = (

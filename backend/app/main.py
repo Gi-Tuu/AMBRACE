@@ -379,6 +379,9 @@ app.add_middleware(
         # 批 0-3 M0-a（2026-09-27）服务器身份固定：nonce 请求头 + 响应签名头。
         # 严格白名单必须逐个列出，否则浏览器预检（OPTIONS）会被拒（PWA 场景）。
         "x-ambrace-challenge", "x-ambrace-proof",
+        # 创建防重 M2（2026-10-19）：PWA 创建角色时带稳定幂等键，严格白名单必须放行该头，
+        # 否则浏览器预检（OPTIONS）会被拒、重试就无法复用同一个键。仅加这一个头，不动其它头。
+        "Idempotency-Key",
     ],
 )
 
@@ -401,6 +404,17 @@ _os.makedirs(_uploads_dir, exist_ok=True)
 # 账号独立 P1：改用带租户闸门的 StaticFiles（跨租户 404；匿名按 settings.uploads_require_auth）。
 # 闸门与目录解析见 app/uploads_gate.py 的模块 docstring（含 App 兼容口径与残余风险）。
 app.mount("/uploads", TenantStaticFiles(directory=_uploads_dir), name="uploads")
+
+# PWA 同源静态入口（M1a-1，2026-10-16）：**默认关闭**——只有显式配置 `pwa_static_dir`
+# 且必需构建入口齐备时才把该 build 目录挂到固定 `/pwa/`。诊断在 app/pwa_static.py；
+# 此处只接线：不创建目录、不扫描仓库、不托管项目根，也不碰 /api/v1 与 /uploads 的既有语义。
+from app.pwa_static import prepare_pwa_static  # noqa: E402
+_pwa_static_app, _pwa_static_detail = prepare_pwa_static(
+    _settings.pwa_static_dir, _settings.PROJECT_ROOT
+)
+if _pwa_static_app is not None:
+    app.mount("/pwa", _pwa_static_app, name="pwa")
+get_logger("app").info("PWA static entry: %s", _pwa_static_detail)
 
 # 注册路由（单一清单循环注册；顺序即路由匹配优先级，调整前须确认无前缀遮蔽）
 ROUTERS = [

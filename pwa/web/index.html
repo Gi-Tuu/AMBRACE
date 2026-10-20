@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#6C63FF">
+  <meta name="description" content="AMBRACE 网页版（PWA）">
+  <title>拥爱 · 网页版</title>
+  <!-- 标准 Flutter base 占位：构建时被替换成实际 base（未指定 --base-href 时为 "/"）。
+       指定 `--base-href=/pwa/` 时，manifest / sw.js / 资源等相对路径都落到 /pwa/ 前缀下。 -->
+  <base href="$FLUTTER_BASE_HREF">
+  <!-- 该入口是 PWA 唯一支持的 Web 构建入口；flutter_app/web 仍在但为未适配的默认模板。 -->
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="icons/ic_launcher.png">
+  <link rel="apple-touch-icon" href="icons/ic_launcher.png">
+</head>
+<body>
+  <div id="boot">正在加载…</div>
+  <script src="flutter_bootstrap.js" async></script>
+  <script>
+    // Service Worker 注册放在**首屏之后**（load 事件），失败只记录、不阻塞、不黑屏。
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function (e) {
+          console.warn('SW 注册失败（不影响首屏）:', e);
+        });
+      });
+    }
+  </script>
+</body>
+</html>

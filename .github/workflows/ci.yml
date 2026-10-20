@@ -18,7 +18,7 @@ on:
 
 jobs:
   # 变更侦测（2026-09-12）：只动 flutter_app/ 或 docs/ 的推送，跳过与前端无关的重量级任务
-  # （Windows 后端矩阵 + Docker 构建/冒烟）；其余任何情况一律全开，避免漏检。
+  # （Windows 后端矩阵）；Docker 构建/冒烟另由精确大版本 tag 守卫。
   # 2026-09-20：Linux 后端矩阵也纳入同一守卫（纯 docs/前端推送不必再跑三版本全量），
   # 并额外产出 full 供各后端 job 决定「全量档 / 快测档」。
   changes:
@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       heavy: ${{ steps.filter.outputs.heavy }}
+      docker: ${{ steps.filter.outputs.docker }}
       # 本轮是否跑全量档（供后端各 job 决定 -m 过滤与 Windows 矩阵宽度）
       full: ${{ steps.filter.outputs.full }}
     steps:
@@ -36,8 +37,17 @@ jobs:
       - id: filter
         name: Decide whether heavy jobs are needed
         shell: bash
+        env:
+          DOCKER_REF_TYPE: ${{ github.ref_type }}
+          DOCKER_REF_NAME: ${{ github.ref_name }}
         run: |
           set -u
+          # Docker 仅在精确大版本首发 tag 更新；普通提交/PR/nightly/小版本均跳过。
+          if [[ "$DOCKER_REF_TYPE" == "tag" && "$DOCKER_REF_NAME" =~ ^v[1-9][0-9]*\.0\.0$ ]]; then
+            echo "docker=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docker=false" >> "$GITHUB_OUTPUT"
+          fi
           # 全量档判定：nightly 定时、或手动派发时勾选 full -> 跑全量（含 slow、含完整 Windows 矩阵）；
           # 普通 push / pull_request -> 只跑分层快测。放在脚本最前面写，
           # 免得下面「拿不到基线就全开」的早退分支漏掉这个输出。
@@ -296,33 +306,80 @@ jobs:
         # 本档含 slow 建库用例、IO 更敏感，恢复后留意 nightly 稳定性。
         run: pytest -q -p no:cacheprovider -n 2 --durations=20 --basetemp=.pytest-tmp
 
+  # 前端三包（PWA CI/发布闭环，2026-10-16）：根 `ambrace_core/` 是共享核心，`flutter_app/`
+  # 与 `pwa/` 都以 `ambrace_core: path: ../ambrace_core` 引用它。CI 各档检出的就是**裁剪树**
+  # （＝公开仓形态），所以下列步骤同时也是公开形态的构建验证。支持的 Web 入口是独立 `pwa/`；
+  # `flutter_app/web` 只是未支持模板，不在此构建。
   frontend:
-    name: Flutter (analyze + test)
+    name: Flutter (core + mobile + PWA)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # 发布依赖契约（离线、只读源码；脚本只用标准库）：三包 pubspec 存在、两个消费者从各自
+      # 目录解析 `../ambrace_core` 确指向包内 core、core 相对/条件导入闭包完整、PWA web 入口齐备。
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Frontend release-dependency contract
+        run: python scripts/check_frontend_release.py
 
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
 
-      - name: Pub get
+      # ── 手机壳（既有检查保留）──
+      - name: Pub get (mobile)
         working-directory: flutter_app
         run: flutter pub get
 
-      - name: Analyze
+      - name: Analyze (mobile)
         working-directory: flutter_app
         run: flutter analyze
 
-      - name: Test
+      - name: Test (mobile)
         working-directory: flutter_app
         run: flutter test
+
+      # ── 共享核心包（原 job 只在 flutter_app 跑，core 自身从未被检查）──
+      - name: Pub get (core)
+        working-directory: ambrace_core
+        run: flutter pub get
+
+      - name: Analyze (core)
+        working-directory: ambrace_core
+        run: flutter analyze
+
+      - name: Test (core)
+        working-directory: ambrace_core
+        run: flutter test
+
+      # ── PWA 薄壳 ──
+      - name: Pub get (PWA)
+        working-directory: pwa
+        run: flutter pub get
+
+      - name: Analyze (PWA)
+        working-directory: pwa
+        run: flutter analyze
+
+      - name: Test (PWA)
+        working-directory: pwa
+        run: flutter test
+
+      # PWA release Web 构建必须可阻断（在 pwa 工作目录构建，不在旧 flutter_app/web 模板上）。
+      # `--pwa-strategy` 现被 Flutter 标记弃用但仍可用（仅告警不报错）；按交接口径保留，
+      # 上游正式移除时再换等价的 Service Worker 策略。
+      - name: Build web release (PWA)
+        working-directory: pwa
+        run: flutter build web --release --pwa-strategy=none
 
   smoke:
     name: Docker build + health + API smoke
     runs-on: ubuntu-latest
     needs: [backend, changes]
-    if: needs.changes.outputs.heavy == 'true'
+    if: needs.changes.outputs.docker == 'true'
     steps:
       - uses: actions/checkout@v7
 

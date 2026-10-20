@@ -17,7 +17,7 @@ _logger = get_logger("api.user_content")
 
 def _memo_json(m):
     return {
-        "id": m.id, "title": m.title, "content": m.content,
+        "id": m.id, "user_id": m.user_id, "title": m.title, "content": m.content,
         "created_at": m.created_at.isoformat() if m.created_at else None,
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
     }
@@ -25,7 +25,7 @@ def _memo_json(m):
 
 def _diary_json(d):
     return {
-        "id": d.id, "diary_date": d.diary_date, "content": d.content,
+        "id": d.id, "user_id": d.user_id, "diary_date": d.diary_date, "content": d.content,
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "updated_at": d.updated_at.isoformat() if d.updated_at else None,
     }

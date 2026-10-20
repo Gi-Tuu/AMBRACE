@@ -533,7 +533,7 @@ def _rr(w: int, h: int, r: int):
 
 # 旧 kind → Lucide 名（保持 _make_icon 调用方不改签名）。
 # 故意**不**映射 "dot" 与 "diamond"：
-#   "dot"     ＝ 5 处状态圆点（页头在线点 / Ollama / 登录条 / 管理页状态行 / 模态启用），应是实心圆；
+#   "dot"     ＝ 状态圆点（页头在线点 / 登录条 / 管理页状态行等），应是实心圆；
 #   "diamond" ＝ 页头品牌标记位。
 # 两者落到 _paint_icon_fallback 的几何兜底才是正确表现，映射成图标反而会把圆点画成开关。
 ICON_MAP = {

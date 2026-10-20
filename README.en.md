@@ -2,19 +2,23 @@
 
 English | [简体中文](README.md)
 
-> **Note:** This English translation is kept in sync with the authoritative Chinese [`README.md`](README.md) as of **v3.5.4**. If you find any discrepancy, the Chinese version prevails — please open an issue to let us know.
+> **Note:** This English translation is kept in sync with the authoritative Chinese [`README.md`](README.md) as of **v3.5.5**. If you find any discrepancy, the Chinese version prevails — please open an issue to let us know.
 
 A self-hosted AI companion app: configure multiple AI characters who chat with you, keep memories, post Moments, write diaries, and raise pets; enjoy real-time voice calls, optionally enable phone perception (screen reading / clipboard / album / notifications), and even connect characters to external chat bots so you can talk to them anywhere. **All your data stays on your own server.**
 
-**Current version**: v3.5.4 ｜ Version-by-version changes are in [`docs/changelog.md`](docs/changelog.md) (also the data source for the in-app "What's New" panel) and on the [Releases page](https://github.com/Gi-Tuu/AMBRACE/releases).
+**Current version**: v3.5.5 ｜ Version-by-version changes are in [`docs/changelog.md`](docs/changelog.md) (also the data source for the in-app "What's New" panel) and on the [Releases page](https://github.com/Gi-Tuu/AMBRACE/releases).
 
 ## Features
+
+### Clients
+- **Android app**: full feature set (background keep-alive, system notifications, phone perception)
+- **Web (PWA, basic experience verified locally)**: login / characters / chat / read-only browsing / text attachments / character creation and basic editing are all verified locally; the backend does not mount the entry by default, and public-network, iPhone and real-device use are not verified yet
 
 ### Chat & Voice
 - **Whole-sentence rendering**: AI replies appear as **complete semantic chunks** (no more character-by-character typewriter stutter on weak networks); while generating, a **blinking caret is shown exactly where the message will land**, and disappears as soon as the first sentence arrives. Backed by a weak-network watchdog, send de-duplication, no duplicates after reconnect, and SSE keepalive.
 - **Sentence-by-sentence voice**: speech is synthesized and played sentence by sentence, streaming as it generates; interruption works instantly at any time (turn_id debounce), and voice replies never read out prefixes like "Name (expression):".
 - **Real-time voice calls**: push-to-talk / auto-listening; server-side VAD filters silence and ultra-short frames; streaming vs. full-segment ASR is switchable.
-- **Image understanding**: local OCR text recognition by default, with optional cloud vision APIs or a local VLM; **image binaries never reach the chat LLM**.
+- **Image understanding**: local OCR text recognition plus a cloud vision API (OpenAI-compatible; you configure the endpoint and key); **image binaries never reach the chat LLM**.
 - **AI image generation**: ask the AI to generate images inside chat (requires your own image-generation service; can be set to "ask every time").
 - **Batch sending**: continuous mode collects your messages first, then submits them all at once; multiple messages are merged into context by paragraph.
 - **Read state & unread dots**: while you are in the conversation, an incoming reply is marked read immediately (no waiting for the next polling round, no flicker-back); read state is also recorded once when you leave the chat or the app goes to background.
@@ -66,7 +70,7 @@ A self-hosted AI companion app: configure multiple AI characters who chat with y
 ## Tech Stack
 - Backend: FastAPI + SQLAlchemy (async) + SQLite + ChromaDB + bge-m3 (local embeddings) + BM25 hybrid retrieval (jieba + rank-bm25).
 - Frontend: Flutter (**Android builds only**; phone perception depends on Android native services), Provider + Dio + WebSocket + flutter_local_notifications + flutter_background_service (background keep-alive).
-- LLM: any OpenAI-compatible endpoint (default: DeepSeek; user-level BYOK overrides supported); image understanding defaults to local OCR, with optional cloud vision APIs or a local VLM.
+- LLM: any OpenAI-compatible endpoint (default: DeepSeek; user-level BYOK overrides supported); image understanding uses local OCR plus a cloud vision API (no local model required).
 - Voice: local faster-whisper transcription (switchable to a streaming ASR endpoint); TTS goes through a self-configured voice service (emotional synthesis) and automatically falls back to a backup chain on failure.
 - Deployment: one-click scripts (`setup.bat` / `setup.sh`) and Docker images (multi-arch amd64 / arm64, image `ghcr.io/gi-tuu/ambrace`; models download automatically on first start).
 
@@ -74,8 +78,10 @@ A self-hosted AI companion app: configure multiple AI characters who chat with y
 ```
 backend/          FastAPI server (business code under app/)
 flutter_app/      Flutter client (business code under lib/)
+ambrace_core/     Shared Flutter package (message/error/identity/transport primitives for the mobile shell and the web build)
+pwa/              Web build (Flutter Web; not mounted by default — served at `/pwa/` only when `PWA_STATIC_DIR` is set)
 plugins/          Built-in example plugins and remote marketplace index (examples/ for samples, marketplace/ for the index)
-scripts/          Ops scripts (server_manager.py start/stop/health/repair, watchdog.py supervisor, backup.py backups, setup.bat/setup.sh one-click deploy, uninstall.bat/uninstall.sh removal, build_apk.bat/build_apk.sh one-click APK packaging, get_server_info.py server address, init_db.py manual table rebuild, download_models.py embedding model download, setup_local_vlm.py optional local vision model, verify.py one-click verification)
+scripts/          Ops scripts (server_manager.py start/stop/health/repair, watchdog.py supervisor, backup.py backups, setup.bat/setup.sh one-click deploy, uninstall.bat/uninstall.sh removal, build_apk.bat/build_apk.sh one-click APK packaging, get_server_info.py server address, init_db.py manual table rebuild, download_models.py embedding model download, verify.py one-click verification)
 server_controller/ Desktop console (cross-platform tkinter: on Windows double-click start_controller.vbs; on Linux/macOS run bash start_controller.sh)
 docs/             Development docs (architecture / plans / landscape; except changelog.md — the in-app "What's New" data source — these are not distributed in the open-source package)
 ```
@@ -95,7 +101,7 @@ docs/             Development docs (architecture / plans / landscape; except cha
 
 The script creates the virtual environment, installs dependencies, generates `.env` (leave everything blank for defaults), and self-checks the model directory.
 
-> ⚠️ **Models**: the `bge-m3` embedding model (required by the memory system; local ONNX, 1024d, ~542 MB) is not included in git. The `whisper-small` transcription model is optional — voice transcription degrades gracefully when it's missing. To fetch them: run `python scripts/download_models.py` for the embedding model (offline machines can place it at `backend/models/bge-m3` manually). To distribute a complete package including models across machines, generate one locally with `python scripts/make_release.py --zip` (official Releases currently ship only the APK — see section 5).
+> ⚠️ **Models**: the `bge-m3` embedding model (required by the memory system; local ONNX, 1024d, ~542 MB) is not included in git. The `whisper-small` transcription model is optional — voice transcription degrades gracefully when it's missing. To fetch them: run `python scripts/download_models.py` for the embedding model (offline machines can place it at `backend/models/bge-m3` manually). To distribute a complete package including models across machines, generate one locally with `python scripts/make_release.py --zip` (initial releases include a complete package; later revisions do not refresh it — see section 5).
 >
 > 🎤 **Voice (optional)**: voice messages and real-time voice calls additionally require `pip install -r backend/requirements-voice.txt` (faster-whisper, lazy-loaded; without it, voice messages are stored as audio without transcription and the log prints the install command). TTS for voice replies needs a self-configured voice service, otherwise it falls back automatically.
 
@@ -143,15 +149,13 @@ Key `.env` variables (see `.env.example` for details):
 | `SERVER_HOST` / `SERVER_PORT` | Listen address, default `0.0.0.0:8000` |
 | `DATABASE_URL` | SQLite path, default `./data/sqlite/ai_companion.db` |
 | `CHROMA_PERSIST_DIR` | Vector store directory |
-| `VLM_ENABLED` | Local vision model switch, default `false` (off) |
-| `VLM_API_KEY` | Cloud vision API key (OpenAI-compatible, e.g. Alibaba Cloud DashScope Qwen-VL); when set, cloud vision takes priority |
-| `VLM_BASE_URL` / `VLM_MODEL` | Vision endpoint and model name (local defaults `http://127.0.0.1:11434` / `qwen2.5vl:3b`) |
-| `VLM_OLLAMA_EXE` / `VLM_OLLAMA_MODELS_DIR` | Local Ollama paths (for self-healing restarts, optional) |
+| `VLM_ENABLED` | `.env` fallback switch for cloud vision, default `false` (treated as enabled when a vision model is configured in the database) |
+| `VLM_API_KEY` | Cloud vision API key (OpenAI-compatible, e.g. Alibaba Cloud DashScope Qwen-VL) |
+| `VLM_BASE_URL` / `VLM_MODEL` | Cloud vision endpoint and model name (e.g. `https://xxx/compatible-mode/v1` / `qwen-vl-max`) |
 
 ### 2.1 Configuring image understanding (vision / text recognition)
-Works out of the box: local OCR text recognition (installed with dependencies, no extra download). For natural-language image understanding, two options:
-- **Cloud vision (recommended)**: set `VLM_API_KEY` + `VLM_BASE_URL` in `.env` (an OpenAI-compatible endpoint, e.g. DashScope `https://xxx/compatible-mode/v1`) + `VLM_MODEL` (e.g. `qwen-vl-max`); it takes priority automatically once filled.
-- **Local offline**: run `python scripts/setup_local_vlm.py` to install Ollama and download `qwen2.5vl:3b` (~3.2 GB) in one go, then set `.env`'s `VLM_ENABLED` to `true` and fill in `VLM_OLLAMA_EXE` / `VLM_OLLAMA_MODELS_DIR`.
+Works out of the box: local OCR text recognition (installed with dependencies, no extra download). Natural-language image understanding uses a **cloud vision API** (the local Ollama branch was removed on 2026-10-17; no local model needed):
+- Set `VLM_API_KEY` + `VLM_BASE_URL` in `.env` (an OpenAI-compatible endpoint, e.g. DashScope `https://xxx/compatible-mode/v1`) + `VLM_MODEL` (e.g. `qwen-vl-max`); configuring it in the app's model settings also works and takes priority.
 
 Image binaries are always sent only to local OCR or the vision endpoint you specify — **never** to the chat LLM.
 
@@ -183,7 +187,7 @@ When the phone and PC aren't on the same Wi-Fi (4G/5G hotspot, or you're away fr
 > Note: the desktop console (`server_controller/`) is a cross-platform tkinter app that works on Windows / Linux / macOS. `scripts/server_manager.py` and `scripts/watchdog.py` rely on Windows features (pythonw/PowerShell) and are **Windows-only**; on Linux/macOS run and supervise the service as follows, with identical functionality.
 
 - Windows: double-click `server_controller/start_controller.vbs`
-- Linux / macOS: `bash server_controller/start_controller.sh` (the console can start/stop/restart the server, start/stop Ollama, and view logs)
+- Linux / macOS: `bash server_controller/start_controller.sh` (the console can start/stop/restart the server and view logs)
 
 **1. Install dependencies (requires Python 3.12+, 3.14 also works)**
 ```bash
@@ -270,6 +274,12 @@ After installing the APK, enter the server address on the settings page (phone a
 - **Background stability**: add the app to the battery-optimization whitelist and allow auto-start/background activity, otherwise the system may kill the connection and notifications after screen-off (OEM ROM behavior varies; the new notification chain already treats unconfirmed state as background, but allowing background activity is still recommended).
 - **Install without building**: skip compilation entirely by installing the APK attached to the Release (same version as the source). Building yourself requires the Flutter and Dart SDKs ≥ 3.6, the Android SDK, and **JDK 17+** (required by AGP 8.3 / Gradle 8.7; Gradle and dependencies download automatically on first build).
 
+### Web basic experience (PWA)
+
+Download `ambrace_pwa.zip` from v3.5.5 or later, extract it, set `PWA_STATIC_DIR` to the absolute path of its `pwa/` directory, and restart the backend. Open `/pwa/` on the same backend origin. The web entry is disabled by default.
+
+To build from source, run `flutter build web --release --base-href /pwa/` inside `pwa/` and point `PWA_STATIC_DIR` at `build/web`. Use HTTPS when deploying. iPhone/Safari installation and real-device behavior remain unverified. Authentication is kept in page memory; refreshing requires signing in again. Basic features include text chat, content browsing, session management, personal notes/diaries, a single text attachment, and character creation/basic editing.
+
 ### 4. Phone perception (optional, Android)
 - Enable the app's accessibility service and notification access in system settings (names differ across ROMs; e.g. iQOO/OriginOS requires manual background approval)
 - Turn on the desired switches on the in-app "Phone perception" page (screen reading / clipboard / album / notifications / location / AI-suggested notifications)
@@ -278,7 +288,7 @@ After installing the APK, enter the server address on the settings page (phone a
 ### 5. Deploying from GitHub source (without a packaged release)
 The source repository differs from the "complete package with models" in two ways; once both are covered, functionality is identical.
 
-1. **Embedding model (required)**: `backend/models/bge-m3` (~542 MB) is not in git. Run `python scripts/download_models.py` to download it (on first start without it the backend errors out, and the `setup.bat/sh` self-check also warns). To distribute a complete package with models across machines, run `python scripts/make_release.py --zip` locally (output directory is set by the `AMBRACE_RELEASE_OUT` env var, defaulting to `release_output/` next to the project root) — **official Release assets currently ship only `app-release.apk`, not this zip**.
+1. **Embedding model (required)**: `backend/models/bge-m3` (~542 MB) is not in git. Run `python scripts/download_models.py` to download it (on first start without it the backend errors out, and the `setup.bat/sh` self-check also warns). To distribute a complete package with models across machines, run `python scripts/make_release.py --zip` locally (output directory is set by the `AMBRACE_RELEASE_OUT` env var, defaulting to `release_output/` next to the project root) — **each version initially ships `ai_companion_public.zip`; later revisions of the same version update the APK without refreshing the complete ZIP**.
 2. **APK (least effort, recommended)**: just download and install the APK from the Release assets — no Flutter/Android SDK and no configuration needed. To build it yourself: run `scripts\build_apk.bat` (Windows) or `bash scripts/build_apk.sh` (Linux/macOS) for a one-click release build (`--debug` for a debug build), or follow section 3 manually.
 
 > **Signing note**: without a configured keystore, builds automatically use the debug signature, which installs and runs fine (but can't be published to app stores).
@@ -341,7 +351,7 @@ backend/.venv/Scripts/python.exe scripts/smoke_test.py
 - **Privacy hard rule**: real user data (conversations, memories, nicknames, pet names, and content derived/rewritten from them) must never enter the public repository; related fixtures and documents always go through the exclusion list, with a guard test asserting they are absent from the public surface.
 
 ## Privacy
-- Images go through local OCR text recognition by default; with vision enabled, image binaries are sent only to the local VLM or a vision API endpoint you configured — **never** to the chat LLM.
+- Images go through local OCR text recognition by default; with vision enabled, image binaries are sent only to the vision API endpoint you configured — **never** to the chat LLM.
 - All data is stored on your own server by default (SQLite + local vector store).
 - Phone perception data is used only to inject AI context; this repository contains no collection or telemetry upload.
 - Semantic de-duplication and vector retrieval both use **on-device models**; "similarity checks" never call external services.

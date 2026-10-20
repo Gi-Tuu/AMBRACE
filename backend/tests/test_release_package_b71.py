@@ -161,3 +161,42 @@ def test_规程登记了首发挂zip():
     text = doc.read_text(encoding="utf-8")
     assert "ai_companion_public.zip" in text
     assert "首次发布" in text, "zip 只在版本首发时挂的口径没写进规程"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 发布依赖闭环（2026-10-16）：三包源码与共享相对依赖必须留在发布包里
+# ──────────────────────────────────────────────────────────────────────
+
+def test_发布选择不排除三包源码与共享依赖(make_release):
+    """发布包选择式（EXCLUDE_PREFIX/EXCLUDE_EXACT）必须保留 core/手机/PWA 源码与相对依赖。
+
+    做法：复算 main() 的选择式（tracked_files() → 排除清单），**不跑真实出包**
+    （不碰 1GB 模型、不动真实 release_output）。相对依赖能否在干净 checkout 里解析，
+    由 `test_frontend_release_contract.py` 从源码树解析；这里只管「文件被选择留下」。
+    """
+    picked = {
+        f for f in make_release.tracked_files()
+        if not f.startswith(make_release.EXCLUDE_PREFIX)
+        and f not in make_release.EXCLUDE_EXACT
+    }
+    must_keep = [
+        "ambrace_core/pubspec.yaml",
+        "ambrace_core/lib/ambrace_core.dart",
+        "ambrace_core/lib/src/api/xhr_stream_adapter.dart",
+        "ambrace_core/lib/src/api/xhr_stream_adapter_stub.dart",
+        "ambrace_core/lib/src/api/xhr_stream_adapter_web.dart",
+        "pwa/pubspec.yaml",
+        "pwa/lib/main.dart",
+        "pwa/web/index.html",
+        "pwa/web/sw.js",
+        "pwa/web/manifest.json",
+        "flutter_app/pubspec.yaml",
+        "flutter_app/lib/models/message.dart",
+        "flutter_app/lib/services/api_exception.dart",
+        "flutter_app/lib/services/server_identity.dart",
+    ]
+    missing = [rel for rel in must_keep if rel not in picked]
+    assert not missing, f"发布包选择把共享依赖排除了：{missing}"
+    # 反向：三个包目录都不许被整包前缀排除（else 三包源码会静默消失）
+    for prefix in ("ambrace_core/", "pwa/", "flutter_app/"):
+        assert prefix not in make_release.EXCLUDE_PREFIX, f"{prefix} 被整包排除，发布包会缺共享依赖"

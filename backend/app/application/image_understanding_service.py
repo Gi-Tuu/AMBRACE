@@ -1,17 +1,12 @@
-"""图片理解服务（本地）：
-- VLM（Ollama Qwen2.5-VL）：自然语言描述图片内容（GPU 加速）
+"""图片理解服务：
+- VLM（云端 OpenAI 兼容视觉 API）：自然语言描述图片内容（本地 Ollama 分支已于 2026-10-17 移除）
 - OCR（RapidOCR）：提取图片中的文字
 - 约束：图片文件/二进制绝不传入 deepseek，只传文字描述（见 AGENTS.md）
 """
 import asyncio
 import base64
 from collections import OrderedDict
-import json
 import os
-import subprocess
-import time
-import urllib.parse
-import urllib.request
 from PIL import Image
 from app.config import settings
 from app.utils.logger import get_logger
@@ -40,36 +35,6 @@ def _is_garbage(text: str) -> bool:
         "\u4e00" <= c <= "\u9fff" or c.isascii() and c.isalnum() for c in t
     )
     return not has_word
-
-
-_garbage_streak = 0  # 连续垃圾输出计数（达到阈值触发 Ollama 自愈重启）
-
-
-def _restart_ollama() -> bool:
-    """重启本地 Ollama 服务（垃圾输出/卡死自愈）。仅在本机部署时启用。"""
-    exe = settings.vlm_ollama_exe
-    if not exe or not os.path.exists(exe):
-        return False
-    try:
-        port = urllib.parse.urlparse(settings.vlm_base_url).port or 11434
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             f"$p = Get-NetTCPConnection -State Listen -LocalPort {port} -ErrorAction SilentlyContinue | "
-             "Select-Object -ExpandProperty OwningProcess; if ($p) { Stop-Process -Id $p -Force }"],
-            capture_output=True, timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        time.sleep(2)
-        env = dict(os.environ)
-        env.setdefault("OLLAMA_MODELS", settings.vlm_ollama_models_dir)
-        subprocess.Popen(
-            [exe, "serve"], env=env,
-            creationflags=subprocess.CREATE_NO_WINDOW | getattr(subprocess, "DETACHED_PROCESS", 0),
-        )
-        time.sleep(4)
-        return True
-    except Exception as e:
-        _logger.warning("Ollama restart failed: %s", e)
-        return False
 
 
 def _get_ocr():
@@ -173,65 +138,16 @@ async def _describe_vlm_cloud(image_path: str, cfg: dict) -> str:
         return ""
 
 
-def _ollama_vlm_sync(image_path: str, cfg: dict) -> str:
-    """同步调用本地 Ollama VLM（含文件读取与阻塞网络）。
-
-    必须经 asyncio.to_thread 调用，避免在事件循环线程里阻塞整机 AI。
-    """
-    with open(image_path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode()
-    payload = {
-        "model": cfg["model"],
-        "messages": [{"role": "user", "content": VLM_PROMPT, "images": [b64]}],
-        "stream": False,
-        "options": {"num_predict": 120},
-    }
-    url = cfg["base_url"].rstrip("/") + "/api/chat"
-    req = urllib.request.Request(
-        url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(req, timeout=cfg["timeout_sec"]) as resp:
-        data = json.loads(resp.read().decode())
-    return (data.get("message") or {}).get("content", "").strip()
-
-
 async def describe_vlm(image_path: str, cfg: dict) -> str:
-    """生成图片自然语言描述：cfg.api_key 非空优先走云端视觉 API，否则走本地 Ollama VLM。
-    失败/垃圾输出返回空串（不影响主流程）；本地连续垃圾输出时自动重启 Ollama 并重试一次。"""
-    global _garbage_streak
-    if cfg["api_key"]:
-        return await _describe_vlm_cloud(image_path, cfg)
-    if not cfg["enabled"]:
+    """生成图片自然语言描述：只走云端视觉 API（本地 Ollama 分支已于 2026-10-17 移除）。
+    未配置 Key 或未启用时返回空串；失败/垃圾输出同样返回空串（不影响主流程）。"""
+    if not cfg["api_key"]:
         return ""
-    for attempt in range(2):
-        try:
-            text = await asyncio.to_thread(_ollama_vlm_sync, image_path, cfg)
-            if _is_garbage(text):
-                _garbage_streak += 1
-                _logger.warning(
-                    "VLM garbage (streak=%d) for %s: %r",
-                    _garbage_streak, image_path, text[:80],
-                )
-                if _garbage_streak >= settings.vlm_garbage_restart_threshold and attempt == 0:
-                    _garbage_streak = 0
-                    _logger.warning("VLM garbage threshold hit, restarting Ollama...")
-                    await asyncio.to_thread(_restart_ollama)
-                    continue
-                return ""
-            _garbage_streak = 0
-            return text
-        except Exception as e:
-            if attempt == 0:
-                _logger.warning("VLM describe failed (retrying after restart) for %s: %s", image_path, e)
-                await asyncio.to_thread(_restart_ollama)
-                continue
-            _logger.warning("VLM describe failed for %s: %s", image_path, e)
-            return ""
-    return ""
+    return await _describe_vlm_cloud(image_path, cfg)
 
 
 async def describe_image(image_path: str, user_id: int | None = None) -> str:
-    """本地图片理解（OCR + VLM）。user_id 非空时受「识图」权限约束（ask/forbid 跳过识图）"""
+    """图片理解（OCR + 云端 VLM）。user_id 非空时受「识图」权限约束（ask/forbid 跳过识图）"""
     if user_id is not None:
         try:
             from app.application import permission_service

@@ -4,15 +4,19 @@
 
 自托管的 AI 伙伴陪伴应用：多个可配置的 AI 角色与你聊天、记记忆、发朋友圈、写日记、养宠物；支持实时语音通话，可选开启手机感知（读屏 / 剪贴板 / 相册 / 通知），还能把角色接到外部聊天机器人上随时聊。所有数据留在你自己的服务器上。
 
-**当前版本**：v3.5.4 ｜ 逐版更新说明见 [`docs/changelog.md`](docs/changelog.md)（App 内「更新公告」也读这份）与 [Releases 页](https://github.com/Gi-Tuu/AMBRACE/releases)。
+**当前版本**：v3.5.5 ｜ 逐版更新说明见 [`docs/changelog.md`](docs/changelog.md)（App 内「更新公告」也读这份）与 [Releases 页](https://github.com/Gi-Tuu/AMBRACE/releases)。
 
 ## 功能特性
+
+### 客户端
+- **Android App**：完整功能（后台保活、系统通知、手机感知）
+- **网页版（PWA，基础体验版本地验收已收口）**：登录 / 角色 / 对话 / 只读浏览 / 文本附件 / 角色创建与基础编辑均已本地验收；后端默认不挂载入口，公网、iPhone 与真实设备尚未验证
 
 ### 聊天与语音
 - **整句上屏**：AI 回复按**完整语义块**出现（不再一个字一个字往外蹦，弱网下不会一顿一顿）；生成期间在**消息即将出现的位置**显示闪烁光标，首句落地即收；弱网看门狗兜底、发送防重、断线重连不重复、SSE 心跳保活
 - **逐句语音**：语音按句合成、按句顺序播放，边生成边播；随时可打断，打断即时生效（turn_id 防抖），语音回复不念「名字（神态）：」这类前缀
 - **实时语音通话**：按住说话 / 自动聆听；服务端 VAD 过滤静音与极短帧；流式 / 整段 ASR 可切换
-- **图片理解**：默认本地 OCR 识文，可选云端视觉 API 或本地 VLM；**图片二进制不会进入聊天 LLM**
+- **图片理解**：本地 OCR 识文 ＋ 云端视觉 API（OpenAI 兼容，自配端点与密钥）；**图片二进制不会进入聊天 LLM**
 - **AI 生图**：聊天中可让 AI 生成图片（需自行配置生图服务，可设为「每次询问」）
 - **连续发送**：连续模式先收集、再一键批量提交；多条消息按段落合并进上下文
 - **已读与红点**：正在聊的时候回复到达即算已读（不等下一轮轮询、也不会闪一下又回来）；离开聊天页或退到后台前补记一次
@@ -64,7 +68,7 @@
 ## 技术栈
 - 后端：FastAPI + SQLAlchemy(async) + SQLite + ChromaDB + bge-m3（本地向量）+ BM25 混合检索（jieba + rank-bm25）
 - 前端：Flutter（**仅支持 Android 构建**，手机感知依赖 Android 原生服务），Provider + Dio + WebSocket + flutter_local_notifications + flutter_background_service（后台保活）
-- LLM：任意 OpenAI 兼容端点（默认 DeepSeek，可用户级 BYOK 覆盖）；图片理解默认本地 OCR，可选云端视觉 API 或本地 VLM
+- LLM：任意 OpenAI 兼容端点（默认 DeepSeek，可用户级 BYOK 覆盖）；图片理解＝本地 OCR ＋ 云端视觉 API（不再依赖本地模型）
 - 语音：本地 faster-whisper 转写（可切换流式 ASR 端点）；TTS 走自配语音服务（情感化合成），失败自动降级备用链路
 - 部署：一键脚本（`setup.bat` / `setup.sh`）与 Docker 容器（多架构 amd64 / arm64，镜像 `ghcr.io/gi-tuu/ambrace`，首次启动自动下载模型）
 
@@ -72,8 +76,10 @@
 ```
 backend/          FastAPI 服务（app/ 业务代码）
 flutter_app/      Flutter 客户端（lib/ 业务代码）
+ambrace_core/     Flutter 共享包（消息/错误/身份/传输原语，手机壳与网页版共用）
+pwa/              网页版（Flutter Web；后端默认不挂载，`PWA_STATIC_DIR` 显式配置后才在 `/pwa/` 提供）
 plugins/          内置示例插件与远程市场索引（examples/ 示例、marketplace/ 索引）
-scripts/          运维脚本（server_manager.py 启停/体检/修复，watchdog.py 守护，backup.py 备份，setup.bat/setup.sh 一键部署，uninstall.bat/uninstall.sh 卸载，build_apk.bat/build_apk.sh 一键打包 APK，get_server_info.py 获取服务器地址，init_db.py 手动重建表，download_models.py 下载向量模型，setup_local_vlm.py 可选下载本地识图模型，verify.py 一键验证）
+scripts/          运维脚本（server_manager.py 启停/体检/修复，watchdog.py 守护，backup.py 备份，setup.bat/setup.sh 一键部署，uninstall.bat/uninstall.sh 卸载，build_apk.bat/build_apk.sh 一键打包 APK，get_server_info.py 获取服务器地址，init_db.py 手动重建表，download_models.py 下载向量模型，verify.py 一键验证）
 server_controller/ 桌面控制台（跨平台 tkinter：Windows 双击 start_controller.vbs / Linux·macOS 执行 bash start_controller.sh）
 docs/             开发文档（架构 / 规划 / 全景，除 changelog.md（App 更新公告数据源）外不随开源包分发）
 ```
@@ -81,6 +87,8 @@ docs/             开发文档（架构 / 规划 / 全景，除 changelog.md（A
 ## 快速开始
 
 ### 1. Docker 部署（推荐给已装 Docker 的用户）
+
+> 容器支持仅在大版本首发（`vN.0.0`，如 `v4.0.0`）更新并验证；小版本与补丁版本不发布新镜像。`latest` 可能落后于应用版本；需要当前代码可使用下方本机部署方式。
 - 拉取镜像：`docker pull ghcr.io/gi-tuu/ambrace:latest`；或用仓库根的 `docker-compose.ghcr.yml` 直接跑（免本地构建）：`docker compose -f docker-compose.ghcr.yml up -d`
 - 想自行构建镜像（可改代码）：`docker compose up -d`（使用默认 `docker-compose.yml`，`build: .`）
 - 首次启动会自动下载向量模型（约 542MB）；数据 / 配置经卷持久化
@@ -93,7 +101,7 @@ docs/             开发文档（架构 / 规划 / 全景，除 changelog.md（A
 
 脚本会自动创建虚拟环境、安装依赖、生成 `.env`（全部留空即可用默认）并自检模型目录。
 
-> ⚠️ **模型说明**：向量模型 `bge-m3`（记忆系统必需，本地 ONNX 1024d，约 542MB）未纳入 git；语音转写模型 `whisper-small` 属可选功能，缺失时语音转写自动降级。获取方式：运行 `python scripts/download_models.py` 下载向量模型（离线环境可自行放置到 `backend/models/bge-m3`）；需要在多台机器间分发含模型的完整包，可用 `python scripts/make_release.py --zip` 在本机自行生成（官方 Release 目前只提供 APK，见第 5 节）。
+> ⚠️ **模型说明**：向量模型 `bge-m3`（记忆系统必需，本地 ONNX 1024d，约 542MB）未纳入 git；语音转写模型 `whisper-small` 属可选功能，缺失时语音转写自动降级。获取方式：运行 `python scripts/download_models.py` 下载向量模型（离线环境可自行放置到 `backend/models/bge-m3`）；需要在多台机器间分发含模型的完整包，可用 `python scripts/make_release.py --zip` 在本机自行生成（每个版本首发提供完整包，后续修订不重复更新完整包，见第 5 节）。
 >
 > 🎤 **语音（可选）**：语音消息与实时语音需要额外安装 `pip install -r backend/requirements-voice.txt`（faster-whisper，懒加载，未安装时语音消息仅存音频不转写，日志会提示安装命令）；语音回复的 TTS 需自行配置语音服务，否则自动降级。
 
@@ -141,15 +149,13 @@ cd backend
 | `SERVER_HOST` / `SERVER_PORT` | 服务监听地址，默认 `0.0.0.0:8000` |
 | `DATABASE_URL` | SQLite 路径，默认 `./data/sqlite/ai_companion.db` |
 | `CHROMA_PERSIST_DIR` | 向量库目录 |
-| `VLM_ENABLED` | 本地识图 VLM 开关，默认 `false`（关闭） |
-| `VLM_API_KEY` | 云端视觉 API Key（OpenAI 兼容，如阿里云百炼 Qwen-VL）；非空时优先走云端 |
-| `VLM_BASE_URL` / `VLM_MODEL` | 视觉端点与模型名（本地默认 `http://127.0.0.1:11434` / `qwen2.5vl:3b`） |
-| `VLM_OLLAMA_EXE` / `VLM_OLLAMA_MODELS_DIR` | 本地 Ollama 路径（自愈重启用，可选） |
+| `VLM_ENABLED` | 云端识图的 `.env` 兜底开关，默认 `false`（数据库里配了识图模型即视为启用） |
+| `VLM_API_KEY` | 云端视觉 API Key（OpenAI 兼容，如阿里云百炼 Qwen-VL） |
+| `VLM_BASE_URL` / `VLM_MODEL` | 云端视觉端点与模型名（如 `https://xxx/compatible-mode/v1` / `qwen-vl-max`） |
 
 ### 2.1 图片理解（识图/识文）配置
-默认已可用：本地 OCR 识文（随依赖安装，无需额外下载）。自然语言识图可选两种方式：
-- **云端视觉（推荐）**：在 `.env` 填 `VLM_API_KEY` + `VLM_BASE_URL`（OpenAI 兼容端点，如阿里云百炼 `https://xxx/compatible-mode/v1`）+ `VLM_MODEL`（如 `qwen-vl-max`），填写后自动优先生效。
-- **本地离线**：运行 `python scripts/setup_local_vlm.py` 一键安装 Ollama 并下载 `qwen2.5vl:3b`（约 3.2GB），再把 `.env` 的 `VLM_ENABLED` 改为 `true` 并填 `VLM_OLLAMA_EXE` / `VLM_OLLAMA_MODELS_DIR`。
+默认已可用：本地 OCR 识文（随依赖安装，无需额外下载）。自然语言识图走**云端视觉 API**（2026-10-17 起已移除本地 Ollama 分支，不再需要本地模型）：
+- 在 `.env` 填 `VLM_API_KEY` + `VLM_BASE_URL`（OpenAI 兼容端点，如阿里云百炼 `https://xxx/compatible-mode/v1`）+ `VLM_MODEL`（如 `qwen-vl-max`）；也可在 App 的模型设置里配置，效果相同且优先级更高。
 
 图片二进制始终只发给本地 OCR 或你指定的视觉端点，**不会**进入聊天 LLM。
 
@@ -181,7 +187,7 @@ cd backend
 > 说明：桌面控制台（`server_controller/`）为跨平台 tkinter 程序，Windows / Linux / macOS 均可使用；`scripts/server_manager.py`、`scripts/watchdog.py` 依赖 Windows 特性（pythonw/PowerShell），**仅 Windows 可用**；Linux/macOS 用下方方式直接运行与守护，功能完全一致。
 
 - Windows：双击 `server_controller/start_controller.vbs`
-- Linux / macOS：`bash server_controller/start_controller.sh`（控制台可启动/停止/重启服务器、启停 Ollama、查看日志）
+- Linux / macOS：`bash server_controller/start_controller.sh`（控制台可启动/停止/重启服务器、查看日志）
 
 **1. 安装依赖（前置：Python 3.12+（3.14 亦可））**
 ```bash
@@ -268,6 +274,12 @@ flutter build apk --release
 - **后台稳定**：将本应用加入「电池优化白名单」并允许自启动/后台活动，否则息屏后连接与通知可能被系统杀掉（厂商 ROM 差异较大；新版通知链路已改为「拿不到确认就按后台处理」，但仍建议放行后台活动）
 - **免编译安装**：不想自己编译时，可直接安装 Release 附件中的 APK（与源码同版本）；自己编译需 Flutter SDK 与 Dart SDK ≥ 3.6、Android SDK 及 **JDK 17+**（AGP 8.3 / Gradle 8.7 要求，首次构建会自动下载 Gradle 与依赖）
 
+### 网页版基础体验（PWA）
+
+下载 v3.5.5 起的 `ambrace_pwa.zip`，解压后将 `PWA_STATIC_DIR` 设置为其中 `pwa/` 目录的绝对路径，随后重启后端，访问同一后端地址的 `/pwa/`。默认不挂载网页版入口；无需把登录或聊天接口放到另一域名。
+
+也可从源码构建：在 `pwa/` 中执行 `flutter build web --release --base-href /pwa/`，再将 `PWA_STATIC_DIR` 指向生成的 `build/web`。部署时请使用 HTTPS；iPhone/Safari 安装及真实设备尚未完成验证。登录只保存在当前页面内存中，刷新后需要重新登录；支持文字聊天、内容浏览、会话与本人内容编辑、单个文本附件、角色创建和基础资料编辑。
+
 ### 4. 手机感知（可选，Android）
 - 在系统设置中开启本应用的无障碍服务、通知使用权（不同 ROM 名称不同，如 iQOO/OriginOS 需手动放行后台）
 - 在应用内「手机感知」页打开对应开关（读屏 / 剪贴板 / 相册 / 通知 / 位置 / AI 主动提通知）
@@ -276,7 +288,7 @@ flutter build apk --release
 ### 5. 从 GitHub 源码部署（不使用打包产物）
 源码仓库与"带模型的完整包"有两点差异，补齐后功能完全一致：
 
-1. **向量模型（必需）**：`backend/models/bge-m3`（约 542MB）未纳入 git。请运行 `python scripts/download_models.py` 下载（首次启动若缺失，后端会报错、`setup.bat/sh` 自检也会提示）。需要在机器之间分发含模型的完整包，可在本机执行 `python scripts/make_release.py --zip` 生成（输出目录由环境变量 `AMBRACE_RELEASE_OUT` 指定，缺省为项目根同级的 `release_output/`）——**官方 Release 附件目前只提供 `app-release.apk`，不提供该 zip**。
+1. **向量模型（必需）**：`backend/models/bge-m3`（约 542MB）未纳入 git。请运行 `python scripts/download_models.py` 下载（首次启动若缺失，后端会报错、`setup.bat/sh` 自检也会提示）。需要在机器之间分发含模型的完整包，可在本机执行 `python scripts/make_release.py --zip` 生成（输出目录由环境变量 `AMBRACE_RELEASE_OUT` 指定，缺省为项目根同级的 `release_output/`）——**每个版本首次发布提供 `ai_companion_public.zip`，同版本后续修订只更新 APK，不重复更新完整包**。
 2. **APK（推荐最省事）**：直接下载 Release 附件的 APK 安装即可，无需安装 Flutter/Android SDK、无需任何配置。想自己编译：运行 `scripts\build_apk.bat`（Windows）或 `bash scripts/build_apk.sh`（Linux/macOS）一键出 release 包（加 `--debug` 可打 debug 包），或按第 3 节手动编译。
 
 > **签名说明**：未配置密钥时编译自动使用调试签名，可正常安装使用（仅无法上架应用商店）。
@@ -333,13 +345,13 @@ backend/.venv/Scripts/python.exe scripts/verify.py
 backend/.venv/Scripts/python.exe scripts/smoke_test.py
 ```
 
-- **CI**：`main` 分支每次推送都会跑 `.github/workflows/ci.yml` —— 常开档为 Flutter（analyze + test）与后端 Linux Python 3.12 / 3.13 / 3.14；后端 Windows 与 Docker 构建档由变更面判定（只动前端与文档时跳过）。
+- **CI**：`main` 分支每次推送都会跑 `.github/workflows/ci.yml` —— 常开档为 Flutter（analyze + test）与后端 Linux Python 3.12 / 3.13 / 3.14；后端 Windows 档由变更面判定（只动前端与文档时跳过）；Docker 构建/冒烟仅在精确大版本首发 tag（`vN.0.0`）运行。
 - **本机绿不等于 CI 绿**：CI 检出的是**去掉内部文档与隐私排除文件**的那份文件集，会读仓库文件的测试要在这份树上跑过才算数；`scripts/check_pruned_tree.py` 可在推送前先在裁剪树上预跑一次。
 - **公开面自查**：`scripts/check_public_leak.py` 按同一份排除清单扫描「作者机器路径 + 凭据形态」，命中即非零退出；`public-hygiene` 档每次推送都会跑。
 - **隐私硬原则**：真实用户数据（对话、记忆、昵称、宠物名等及其派生改写内容）不得进入公开仓库，相关题集与文档一律走排除清单，并由守卫断言「不在公开面」。
 
 ## 隐私说明
-- 图片默认仅本地 OCR 识文；开启识图后，图片二进制只发给本地 VLM 或你自填的视觉 API 端点，**不会**进入聊天 LLM
+- 图片默认仅本地 OCR 识文；开启识图后，图片二进制只发给你自填的视觉 API 端点，**不会**进入聊天 LLM
 - 数据默认全部存在你自己的服务器（SQLite + 本地向量库）
 - 手机感知数据仅用于注入 AI 上下文，本仓库不包含任何收集上报
 - 语义去重与向量检索都用**本机模型**，不会因为"查重"而调用外部服务

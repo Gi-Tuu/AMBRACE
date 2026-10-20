@@ -268,16 +268,21 @@ async def websocket_chat(websocket: WebSocket, session_id: int):
 @router.post("/sessions", status_code=201)
 async def create_chat_session(
     character_id: int,
+    force_new: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
     lang: str = Header(default="zh"),
 ):
-    """创建新聊天会话（归属当前登录用户）"""
+    """创建新聊天会话（归属当前登录用户）。
+
+    ``force_new=false``（默认）保持既有「复用最新活跃会话」语义；
+    ``force_new=true`` 跳过复用、真正新建（显式新建入口用），旧会话保持不变。
+    """
     from app.models.character import AICharacter as _AC
     cresult = await db.execute(select(_AC).where(_AC.id == character_id, _AC.user_id == user_id))
     if cresult.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
-    result = await create_session(user_id=user_id, character_id=character_id)
+    result = await create_session(user_id=user_id, character_id=character_id, force_new=force_new)
     return result
 
 

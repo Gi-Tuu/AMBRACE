@@ -7,7 +7,6 @@ import json
 import math
 import os
 import queue
-import shutil
 import socket
 import sqlite3
 import subprocess
@@ -87,8 +86,7 @@ CATCHUP_N = 10
 LOG_FOLLOW_MS = 3000
 POLL_MS = 200
 LOG_TAIL = 40
-OLLAMA_PORT = 11434
-OLLAMA_LABEL = "图像理解服务（Ollama）"
+CLOUD_VLM_LABEL = "图像理解（云端）"
 # 隐藏短命子进程（PowerShell）窗口；POSIX 上该属性不存在 -> 0。
 # P3-9 复核修正（2026-09-19，Codex）：保留 CREATE_NEW_PROCESS_GROUP 位，与收敛前逐位一致。
 NO_WINDOW = (getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -579,31 +577,6 @@ def _load_config() -> dict:
         return {}
 
 
-def _find_ollama() -> str:
-    for cand in (_load_config().get("ollama_exe"), os.environ.get("OLLAMA_EXE")):
-        if cand and os.path.isfile(cand):
-            return cand
-    which = shutil.which("ollama")
-    if which:
-        return which
-    if os.name == "nt":
-        local = os.environ.get("LOCALAPPDATA", "")
-        for cand in (
-                     os.path.join(local, "Programs", "Ollama", "ollama.exe") if local else "",
-                     os.path.join("C:", os.sep, "Program Files", "Ollama", "ollama.exe"),
-                     os.path.join("C:", os.sep, "Program Files (x86)", "Ollama", "ollama.exe")):
-            if cand and os.path.isfile(cand):
-                return cand
-    return ""
-
-
-def _ollama_models_dir() -> str:
-    for cand in (_load_config().get("ollama_models_dir"), os.environ.get("OLLAMA_MODELS"), ""):
-        if cand and os.path.isdir(cand):
-            return cand
-    return ""
-
-
 def _get_refresh_ms() -> int:
     try:
         with open(CONFIG, "r", encoding="utf-8") as f:
@@ -861,108 +834,6 @@ def _start_uvicorn():
                 cwd=SERVER_DIR, stdout=f, stderr=subprocess.STDOUT, **platform_util.popen_kwargs())
     except Exception as e:
         raise RuntimeError(f"启动失败: {e}")
-
-
-def _ollama_alive() -> bool:
-    # 本机模式探本机 Ollama；远程模式尝试探目标主机同端口（远程 Ollama 需绑 0.0.0.0）
-    host = TARGET_HOST if _is_remote() else "127.0.0.1"
-    try:
-        with socket.create_connection((host, OLLAMA_PORT), timeout=1):
-            return True
-    except OSError:
-        return False
-
-
-def _get_ollama_pid() -> int:
-    if _is_remote():
-        return 0
-    return _port_pid(OLLAMA_PORT)
-
-
-def _start_ollama(low_vram: bool = False) -> None:
-    exe = _find_ollama()
-    if not exe:
-        raise RuntimeError("未找到 Ollama：请在 server_config.json 配置 ollama_exe（或安装 Ollama 并加入 PATH）后重试")
-    try:
-        env = dict(os.environ)
-        models_dir = _ollama_models_dir()
-        if models_dir:
-            env["OLLAMA_MODELS"] = models_dir
-        if low_vram:
-            env["LLAMA_ARG_N_GPU_LAYERS"] = "0"
-        subprocess.Popen([exe, "serve"], env=env, **platform_util.popen_kwargs())
-    except Exception as e:
-        raise RuntimeError(f"Ollama 启动失败: {e}")
-
-
-def _load_low_vram() -> bool:
-    try:
-        with open(CONFIG, "r", encoding="utf-8") as f:
-            return bool(json.load(f).get("ollama_low_vram", False))
-    except Exception:
-        return False
-
-
-def _kill_tree(proc, killed: set) -> None:
-    try:
-        pid = proc.pid
-        if pid in killed:
-            return
-        killed.add(pid)
-        for child in proc.children(recursive=True):
-            try:
-                child.kill()
-            except Exception:
-                pass
-        proc.kill()
-    except Exception:
-        pass
-
-
-def _stop_ollama() -> None:
-    try:
-        import psutil
-        killed: set = set()
-        for conn in psutil.net_connections(kind="inet"):
-            if conn.laddr and conn.laddr.port == OLLAMA_PORT and conn.pid:
-                try:
-                    _kill_tree(psutil.Process(conn.pid), killed)
-                except Exception:
-                    pass
-        for proc in psutil.process_iter(["pid", "name"]):
-            name = (proc.info.get("name") or "").lower()
-            if name in ("llama-server", "llama-server.exe") and proc.info.get("pid") not in killed:
-                _kill_tree(proc, killed)
-        return
-    except ImportError:
-        pass
-    except Exception as e:
-        raise RuntimeError(f"Ollama 停止失败: {e}")
-    if os.name == "nt":
-        try:
-            ollama_root = os.path.dirname(_find_ollama())
-            script_parts = [
-                "$ErrorActionPreference='SilentlyContinue'; ",
-                "$p = Get-NetTCPConnection -State Listen -LocalPort %d | " % OLLAMA_PORT,
-                "Select-Object -ExpandProperty OwningProcess; ",
-                "if ($p) { taskkill /T /F /PID $p | Out-Null }; ",
-                "Get-CimInstance Win32_Process | ",
-                "Where-Object { $_.Name -eq 'llama-server.exe' -and ",
-                "$_.ExecutablePath -like '" + ollama_root + "*' } | ",
-                "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
-            ]
-            subprocess.run(["powershell", "-NoProfile", "-Command", "".join(script_parts)],
-                           capture_output=True, timeout=15, creationflags=NO_WINDOW)
-        except Exception as e:
-            raise RuntimeError(f"Ollama 停止失败: {e}")
-    else:
-        try:
-            lsof = subprocess.run(["lsof", "-t", "-i:%d" % OLLAMA_PORT], capture_output=True, text=True, timeout=5)
-            for pid in (lsof.stdout or "").split():
-                subprocess.run(["kill", "-9", pid], timeout=5)
-            subprocess.run(["pkill", "-9", "-f", "llama-server"], timeout=5)
-        except Exception as e:
-            raise RuntimeError(f"Ollama 停止失败: {e}")
 
 
 def _log_read_path(path: str) -> str:
@@ -1363,6 +1234,34 @@ def _read_db_stats() -> dict:
         except Exception:
             pass
     return stats
+
+
+def _read_vlm_status() -> dict | None:
+    """云端识图配置（服务器级 vlm_configs 行，user_id=0）。远程或读不到返回 None。"""
+    if _is_remote():
+        return None
+    db = os.path.join(SERVER_DIR, "data", "sqlite", "ai_companion.db")
+    if not os.path.isfile(db):
+        return None
+    try:
+        con = sqlite3.connect("file:" + db + "?mode=ro", uri=True, timeout=2)
+    except Exception:
+        return None
+    try:
+        row = con.execute(
+            "SELECT model, enabled, api_key FROM vlm_configs WHERE user_id=0"
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    if not row:
+        return {"configured": False, "model": ""}
+    model, enabled, key = row
+    return {"configured": bool(enabled) and bool(key), "model": model or ""}
 
 
 def _fmt_int(v) -> str:
@@ -1852,12 +1751,10 @@ class ControllerApp:
 
         self._last_log = ""
         self._last_state = None
-        self._ollama_busy = False
         self._busy = False
         self._refreshing = False
         self._nav = "dashboard"
         self._alive = False
-        self._ollama_alive = False
         self._trend = []
         self._last_refresh_ts = 0.0
         self._catchup_left = 0
@@ -2342,7 +2239,7 @@ class ControllerApp:
         self._kpi_slots = []       # 六张卡的右半槽位（水印＋趋势线占位）
         _, self.v_server, self.c_server = self._make_card(grid, 0, 0, "服务器状态", icon="server")
         _, self.v_health, self.c_health = self._make_card(grid, 0, 1, "服务健康", "HTTP 探活", icon="gauge")
-        _, self.v_ollama, self.c_ollama = self._make_card(grid, 0, 2, OLLAMA_LABEL, icon="toggle-right")
+        _, self.v_vlm, self.c_vlm = self._make_card(grid, 0, 2, CLOUD_VLM_LABEL, icon="search")
         _, self.v_chars, self.c_chars = self._make_card(grid, 1, 0, "角色数", "个角色", icon="users")
         _, self.v_mems, self.c_mems = self._make_card(grid, 1, 1, "记忆数", "条记忆",
                                                       icon="brain", spark="mems")
@@ -2491,33 +2388,6 @@ class ControllerApp:
         self.btn_restart.pack(side="left")
         self.server_pid_label = tk.Label(btn_row, text="", fg=t.text_sec, bg=t.card, font=CUI.f("title"))
         self.server_pid_label.pack(side="left", padx=SP_MD)
-
-        # 图像理解服务（Ollama）：压缩为单行，与上方开关同一密度，不再独占整块
-        _, ol = self._wrap_card(pad, fit=True, fill="x", pady=(0, SP_SM))
-        ol.config(pady=SP_XS)
-        ol_row = tk.Frame(ol, bg=t.card)
-        ol_row.pack(fill="x")
-        self.ollama_dot = _make_icon(ol_row, 14, "dot", t.text_muted, t.card)
-        self.ollama_dot.pack(side="left")
-        tk.Label(ol_row, text=OLLAMA_LABEL, fg=t.text, bg=t.card,
-                 font=CUI.f("title", True)).pack(side="left", padx=(SP_XS, 0))
-        self.ollama_pid_label = tk.Label(ol_row, text="", fg=t.text_sec, bg=t.card,
-                                         font=CUI.f("body"))
-        self.ollama_pid_label.pack(side="left", padx=(SP_SM, 0))
-        self._ollama_low_vram = _load_low_vram()
-        self.low_vram_var = tk.BooleanVar(value=self._ollama_low_vram)
-        # 自绘开关替代原生 Checkbutton（同一屏里两种控件质感会断层）
-        self.chk_low_vram = LabeledSwitch(ol_row, t, "省显存", self.low_vram_var,
-                                          command=self.toggle_low_vram, bg=t.card,
-                                          font_role=FS_CAPTION)
-        self.chk_low_vram.pack(side="right", padx=(SP_SM, SP_LG))
-        self.btn_ollama_stop = RoundedButton(ol_row, t, "停止", command=self.stop_ollama,
-                                             variant="danger", height=30, font_role=FS_CAPTION)
-        self.btn_ollama_stop.pack(side="right", padx=(SP_XS, 0))
-        self.btn_ollama_start = RoundedButton(ol_row, t, "启动", command=self.start_ollama,
-                                              variant="primary", height=30,
-                                              font_role=FS_CAPTION)
-        self.btn_ollama_start.pack(side="right")
 
         # 控制台监控目标：可指向本机或另一台远程后端（远程仅监控状态）
         _, tgt = self._wrap_card(pad, fit=True, fill="x", pady=(0, SP_SM))
@@ -4799,7 +4669,7 @@ class ControllerApp:
         self.msg.config(text=text)
 
     def _sync_button_states(self) -> None:
-        alive, ollama = self._alive, self._ollama_alive
+        alive = self._alive
         remote = _is_remote()
         start_en = not (self._busy or alive or remote)
         stop_en = not (self._busy or not alive or remote)
@@ -4810,15 +4680,9 @@ class ControllerApp:
             b.config_state(stop_en)
         for b in (self.btn_restart, self._dash_btn_restart):
             b.config_state(restart_en)
-        self.btn_ollama_start.config_state(not (self._ollama_busy or ollama or _is_remote()))
-        self.btn_ollama_stop.config_state(not (self._ollama_busy or not ollama or _is_remote()))
 
     def _set_busy(self, busy: bool):
         self._busy = busy
-        self._sync_button_states()
-
-    def _set_ollama_busy(self, busy: bool):
-        self._ollama_busy = busy
         self._sync_button_states()
 
     # ── 主线程轮询 ──
@@ -4829,9 +4693,9 @@ class ControllerApp:
                 item = self._q.get_nowait()
                 kind = item[0]
                 if kind == "state":
-                    _, alive, pid, paused, log_text, ollama_alive, ollama_pid, health, stats = item
+                    _, alive, pid, paused, log_text, health, stats = item
                     try:
-                        self._apply_refresh(alive, pid, paused, log_text, ollama_alive, ollama_pid, health, stats)
+                        self._apply_refresh(alive, pid, paused, log_text, health, stats)
                     except Exception as e:
                         _safe_traceback()
                         self._set_msg("仪表盘刷新异常: %s" % e)
@@ -4839,8 +4703,6 @@ class ControllerApp:
                     self._set_msg(item[1])
                 elif kind == "busy":
                     self._set_busy(False)
-                elif kind == "busy_ollama":
-                    self._set_ollama_busy(False)
                 elif kind == "refresh":
                     self._do_refresh()
                 elif kind == "addrs":
@@ -4937,68 +4799,6 @@ class ControllerApp:
             _start_uvicorn()
             return "已重启 uvicorn（后台）"
         self._run_action("正在重启服务器", fn, "running")
-
-    def _run_ollama_action(self, title: str, fn, catchup_target=None):
-        if self._ollama_busy:
-            return
-        self._set_ollama_busy(True)
-        self._set_msg(f"{title}…")
-
-        def job():
-            try:
-                self._q.put(("msg", fn()))
-            except Exception as e:
-                self._q.put(("msg", f"操作失败: {e}"))
-            finally:
-                self._q.put(("busy_ollama", False))
-                self._q.put(("refresh", None))
-                if catchup_target:
-                    self._q.put(("catchup", catchup_target))
-
-        threading.Thread(target=job, daemon=True).start()
-
-    def start_ollama(self):
-        if _is_remote():
-            self._set_msg("远程监控模式下不能从本机启停远程 Ollama")
-            return
-        def fn():
-            _start_ollama(self._ollama_low_vram)
-            mode = "（省显存模式）" if self._ollama_low_vram else "（全速模式）"
-            return "Ollama 启动指令已发出，模型加载约需 5-10 秒" + mode
-        self._run_ollama_action("正在启动 Ollama", fn, "ollama_running")
-
-    def toggle_low_vram(self):
-        on = self.low_vram_var.get()
-        self._ollama_low_vram = on
-        try:
-            with open(CONFIG, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        except Exception:
-            cfg = {}
-        cfg["ollama_low_vram"] = on
-        with open(CONFIG, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-        if _ollama_alive():
-            self._run_ollama_action("正在切换 Ollama 模式", self._restart_ollama_with_mode, "ollama_running")
-        else:
-            self._set_msg("已保存：下次启动 Ollama 时生效" + ("（省显存模式）" if on else "（全速模式）"))
-
-    def _restart_ollama_with_mode(self):
-        _stop_ollama()
-        time.sleep(2)
-        _start_ollama(self._ollama_low_vram)
-        if self._ollama_low_vram:
-            return "已切换省显存模式：显存占用降至约 2.4GB（图片理解略慢，可忽略）"
-        return "已恢复全速模式：显存占用约 4.4GB，图片理解最快"
-
-    def stop_ollama(self):
-        if _is_remote():
-            self._set_msg("远程监控模式下不能从本机启停远程 Ollama")
-            return
-        def fn():
-            _stop_ollama()
-            return "Ollama 已停止"
-        self._run_ollama_action("正在停止 Ollama", fn, "ollama_stopped")
 
     def open_log(self):
         # C1：当前文件刚被轮转为空时优先用系统查看器打开 .1，避免打开到空白文件
@@ -5176,8 +4976,6 @@ class ControllerApp:
                 pid = _safe(lambda: _get_pid() if alive else 0, 0)
                 paused = os.path.exists(PAUSE_FLAG)
                 log_text = _safe(_tail_log, "")
-                ollama_alive = _safe(_ollama_alive, False)
-                ollama_pid = _safe(lambda: _get_ollama_pid() if ollama_alive else 0, 0)
                 health = _safe(_fetch_health, "—")
                 stats = _safe(_read_db_stats, {"characters": None, "memories": None, "tokens": None})
                 stats["heat"] = _safe(lambda: _read_token_heatmap(HEATMAP_WEEKS), [])
@@ -5185,7 +4983,8 @@ class ControllerApp:
                 # C3（2026-09-06）：健康卡副标题接运行期活性（/liveness）；后台线程容错，
                 # 端点不可用返回默认 dict，_apply_refresh 回落现状（不改健康卡语义）。
                 stats["liveness"] = _safe(_fetch_liveness, {"ok": False, "stalled": False, "summary": "", "level": 0})
-                self._q.put(("state", alive, pid, paused, log_text, ollama_alive, ollama_pid, health, stats))
+                stats["vlm"] = _safe(_read_vlm_status, None)
+                self._q.put(("state", alive, pid, paused, log_text, health, stats))
             except Exception as e:
                 _safe_traceback()
                 errors.append(str(e))
@@ -5231,10 +5030,6 @@ class ControllerApp:
             return _check_alive()
         if t == "stopped":
             return not _check_alive()
-        if t == "ollama_running":
-            return _ollama_alive()
-        if t == "ollama_stopped":
-            return not _ollama_alive()
         return False
 
     # ── 日志跟随 ──
@@ -5530,10 +5325,9 @@ class ControllerApp:
         self._sync_log_empty(bool(log_text.strip()))
 
     def _apply_refresh(self, alive: bool, pid: int, paused: bool, log_text: str,
-                       ollama_alive: bool, ollama_pid: int, health: str, stats: dict):
+                       health: str, stats: dict):
         t = self.theme
         self._alive = alive
-        self._ollama_alive = ollama_alive
         self._sync_button_states()
         self._update_last_refresh()
         self._heat_days = stats.get("heat") or []
@@ -5541,18 +5335,16 @@ class ControllerApp:
             self._draw_heatmap()
         except Exception:
             _safe_traceback()
-        if ollama_alive:
-            self.ollama_dot._paint_icon(t.success)
-            self.ollama_pid_label.config(
-                text="运行中（远程主机）" if _is_remote() else "运行中  (PID %d)" % ollama_pid)
-            self.v_ollama.config(text="运行中", fg=t.success)
-            self.c_ollama.config(
-                text=("远程 %s" % TARGET_HOST) if _is_remote() else ("PID %d" % ollama_pid))
+        vlm = stats.get("vlm")
+        if _is_remote():
+            self.v_vlm.config(text="—", fg=t.text_sec)
+            self.c_vlm.config(text="远程不统计")
+        elif isinstance(vlm, dict) and vlm.get("configured"):
+            self.v_vlm.config(text="已配置", fg=t.success)
+            self.c_vlm.config(text=vlm.get("model") or "云端视觉 API")
         else:
-            self.ollama_dot._paint_icon(t.error)
-            self.ollama_pid_label.config(text="未运行")
-            self.v_ollama.config(text="未运行", fg=t.text_sec)
-            self.c_ollama.config(text="端口 11434")
+            self.v_vlm.config(text="未配置", fg=t.text_sec)
+            self.c_vlm.config(text="云端视觉 API")
 
         if alive:
             self.header_status_label.config(text="运行中")

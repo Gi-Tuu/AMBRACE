@@ -7,7 +7,7 @@
 - L2 `_build_timer_hint` 三套话术 + `_build_timer_hint_legacy` 旧话术（flag 关逐字节等价）；
 - L5 `life_writer` 的 locked 判定 / 重试包装 / 悬空活动收尾。
 
-全部零 LLM；涉及 DB 的用例走 pytest 全局临时库（conftest 建表），不碰生产库。
+全部零 LLM；悬空活动收尾使用 tmp_path 独立文件库，其余查询走 pytest 全局临时库，不碰生产库。
 """
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -227,54 +227,59 @@ def test_L5_flag开时写记忆失败返回None不抛出(monkeypatch, flags):
     assert len(calls) == 4  # 首次 + 3 次重试后放弃，活动仍应 completed
 
 
-def test_L5_悬空活动收尾(flags):
-    """started 超窗无 completed_at → 置 timeout（两套活动系统共用一张表，一处扫描）。"""
+def test_L5_悬空活动收尾(flags, tmp_path, monkeypatch):
+    """在独立文件库验证真实收尾事务，避免其它用例的共享库写锁干扰种子提交。"""
     from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
 
-    from app.db.database import async_session_factory
+    from app.models.character import AICharacter
     from app.models.life import LifeActivityLog
+    from app.models.user import User
+    from tests._dbclone import clone_engine
 
     flags["life_memory_write_retry"] = True
+    engine = clone_engine(tmp_path / "orphan_activities.db")
+    # 使用普通会话，锁冲突直接失败；不借助 BusyReclaimSession 的回收/重试。
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(life_writer, "async_session_factory", factory)
 
     async def _run():
-        from sqlalchemy import delete as _del
-        from sqlalchemy import select as _sel
-        from app.models.character import AICharacter
-        from app.models.user import User
-
-        # 引擎已强制外键（2026-09-09）：ai_characters.user_id 需父 users 行，先建主账号（测试后删除）
-        async with async_session_factory() as db:
-            if (await db.execute(_sel(User.id).where(User.id == 1))).scalar_one_or_none() is None:
+        try:
+            async with factory() as db:
                 db.add(User(id=1, username="promise_admin", nickname="Promise 测试", is_admin=True))
                 await db.commit()
-            db.add(AICharacter(id=999991, user_id=1, name="orphan_fk_test"))
-            await db.commit()
-        old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=2)
-        async with async_session_factory() as db:
-            orphan = LifeActivityLog(character_id=999991, activity_type="study",
-                                     status="started", started_at=old)
-            db.add(orphan)
-            await db.commit()
-            oid = orphan.id
-        try:
-            n = await life_writer.close_orphan_activities(minutes=30)
-            assert n >= 1
-            async with async_session_factory() as db:
-                row = (await db.execute(
-                    select(LifeActivityLog).where(LifeActivityLog.id == oid)
-                )).scalar_one()
-                assert row.status == "timeout"
-                assert "orphaned" in (row.output_json or "")
-        finally:
-            from app.models.character import AICharacter
-            async with async_session_factory() as db:
-                r = (await db.execute(
-                    select(LifeActivityLog).where(LifeActivityLog.id == oid)
-                )).scalar_one_or_none()
-                if r is not None:
-                    await db.delete(r)
-                await db.execute(_del(AICharacter).where(AICharacter.id == 999991))
+                db.add(AICharacter(id=999991, user_id=1, name="orphan_fk_test"))
                 await db.commit()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            old = now - timedelta(hours=2)
+            async with factory() as db:
+                orphan = LifeActivityLog(character_id=999991, activity_type="study",
+                                         status="started", started_at=old)
+                recent = LifeActivityLog(character_id=999991, activity_type="study",
+                                         status="started", started_at=now)
+                completed = LifeActivityLog(character_id=999991, activity_type="study",
+                                            status="completed", started_at=old, completed_at=old)
+                db.add_all([orphan, recent, completed])
+                await db.commit()
+                oid, rid, cid = orphan.id, recent.id, completed.id
+            assert await life_writer.close_orphan_activities(minutes=30) == 1
+            # 另开会话回读，必须是真实 commit 后的结果，不是同一 identity map 的假象。
+            async with factory() as db:
+                rows = {row.id: row for row in (await db.execute(
+                    select(LifeActivityLog)
+                )).scalars()}
+                assert set(rows) == {oid, rid, cid}
+                assert rows[oid].status == "timeout"
+                assert "orphaned" in (rows[oid].output_json or "")
+                assert rows[rid].status == "started"
+                assert rows[rid].output_json == "{}"
+                assert rows[cid].status == "completed"
+                assert rows[cid].completed_at == old
+                assert rows[cid].output_json == "{}"
+            assert await life_writer.close_orphan_activities(minutes=30) == 0
+        finally:
+            # 所有 session 先退出，再释放引擎；库由 tmp_path 管理，无全局库清理写入。
+            await engine.dispose()
 
     asyncio.run(_run())
 

@@ -1,0 +1,25 @@
+name: ambrace_core
+description: AMBRACE 跨端共享核心（模型 / 传输 / 身份契约），供手机 App 与 PWA 薄壳共用。
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.6.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.4.0
+  # 身份协议需要 HMAC-SHA256 / HKDF-SHA256：pure-dart、Dart 官方包、无原生依赖。
+  crypto: ^3.0.7
+  # Web 增量流适配器（XHR onprogress 真流式）需要 DOM 绑定；官方包、无原生依赖，
+  # 且只在 web 条件导入分支编译（VM/手机壳不引入）。
+  web: ^1.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

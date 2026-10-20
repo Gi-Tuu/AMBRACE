@@ -1,11 +1,11 @@
 name: Docker Publish (GHCR)
 
-# 触发：手动（workflow_dispatch）或推送 v* tag（如 v3.2.1）
+# 仅大版本首发维护：精确 vN.0.0 tag；手动运行也必须选同类 tag。
 on:
   workflow_dispatch:
   push:
     tags:
-      - "v*"
+      - "v[1-9]*.0.0"
 
 # 最小权限：读代码 + 写 GHCR 包
 permissions:
@@ -18,7 +18,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  major-release:
+    name: Check exact major release tag
+    runs-on: ubuntu-latest
+    outputs:
+      eligible: ${{ steps.gate.outputs.eligible }}
+    steps:
+      - id: gate
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$REF_TYPE" == "tag" && "$REF_NAME" =~ ^v[1-9][0-9]*\.0\.0$ ]]; then
+            echo "eligible=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "Docker maintenance only runs for exact vN.0.0 tags."
+          fi
+
   build:
+    needs: major-release
+    if: needs.major-release.outputs.eligible == 'true'
     name: Build & push multi-arch image
     runs-on: ubuntu-latest
     steps:

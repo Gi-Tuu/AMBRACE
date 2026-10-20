@@ -803,7 +803,7 @@ class MCPClientManager:
 
             def _sse_client_factory(headers=None, timeout=None, auth=None):
                 # P3-8：连接期把 SSE 的 httpx client 绑定到已校验 IP（防 DNS rebinding）；
-                # 仍保留 mcp 传入的 headers/timeout/auth。绑定/解析失败会自动回退普通 client。
+                # 仍保留 mcp 传入的 headers/timeout/auth。绑定/解析失败时拒绝连接，不降级为普通 client。
                 return _build_pinned_http_client(
                     url, headers, timeout=timeout, auth=auth, allow_loopback=cfg.allow_loopback,
                 )
