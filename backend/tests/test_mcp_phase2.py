@@ -41,7 +41,7 @@ TEST_PREFIX = "mcp_ph2_"
 
 # 独立测试 user_id（非主账号、无既有权限行）；多用户隔离用例另用 9201-9204。
 # 引擎已强制外键（2026-09-09）：SSE/状态用例以 user_id=ADMIN=1 落 mcp_servers，需父 users 行，
-# 故把主账号 id=1 一并纳入确保/清理集合（方向 B：仅本文件自建，不动 conftest 全局种子）。
+# id=1 可以借用，但只回收本轮创建的用户；已有管理员权限在 teardown 恢复。
 PERM_UID = 9100
 TEST_UIDS = {1, 9100, 9201, 9202, 9203, 9204}
 
@@ -52,7 +52,7 @@ def _run(coro):
 
 # ------------------------------------------------------------------ 清理
 
-async def _cleanup():
+async def _cleanup(owned=None):
     for sid in list(mcp_manager._conns.keys()):
         mcp_manager._conns.pop(sid, None)
     for name in list(_REGISTRY.keys()):
@@ -64,9 +64,16 @@ async def _cleanup():
     from app.models.user import User
     async with async_session_factory() as db:
         await db.execute(delete(MCPServer).where(MCPServer.name.like(TEST_PREFIX + "%")))
-        await db.execute(delete(ToolPermission).where(ToolPermission.user_id.in_(TEST_UIDS)))
-        # 引擎已强制外键（2026-09-09）：tool_permissions/mcp_servers 的假独立 uid 需父 users 行
-        await db.execute(delete(User).where(User.id.in_(TEST_UIDS)))
+        created = set((owned or {}).get("created_user_ids", ()))
+        permission_ids = (TEST_UIDS - {ADMIN}) | created
+        await db.execute(delete(ToolPermission).where(ToolPermission.user_id.in_(permission_ids)))
+        # 只清本轮新建父行，借用的共享账号可能仍有其它测试的 FK 子行。
+        await db.execute(delete(User).where(User.id.in_(created)))
+        flags = (owned or {}).get("borrowed_admin_flags")
+        if flags is not None:
+            admin_row = await db.get(User, ADMIN)
+            assert admin_row is not None, "借用的管理员不应被测试清理删除"
+            admin_row.is_admin, admin_row.server_admin = flags
         await db.commit()
 
 
@@ -79,22 +86,26 @@ async def _ensure_test_users():
     from sqlalchemy import select as _sel
     async with async_session_factory() as db:
         exist = set((await db.execute(_sel(User.id).where(User.id.in_(TEST_UIDS)))).scalars().all())
-        for uid in sorted(TEST_UIDS - exist):
+        created = TEST_UIDS - exist
+        original_admin_flags = None
+        for uid in sorted(created):
             db.add(User(id=uid, username=f"mcp_ph2_{uid}", nickname="MCP PH2 测试",
                         is_admin=(uid == ADMIN), server_admin=(uid == ADMIN)))
         if ADMIN in exist:
             admin_row = (await db.execute(_sel(User).where(User.id == ADMIN))).scalar_one()
+            original_admin_flags = (admin_row.is_admin, admin_row.server_admin)
             admin_row.is_admin = True
             admin_row.server_admin = True
         await db.commit()
+    return {"created_user_ids": created, "borrowed_admin_flags": original_admin_flags}
 
 
 @pytest.fixture(autouse=True)
 def _isolate():
     _run(_cleanup())
-    _run(_ensure_test_users())
+    owned = _run(_ensure_test_users())
     yield
-    _run(_cleanup())
+    _run(_cleanup(owned))
 
 
 def _make_server(user_id=ADMIN, name=None, transport="stdio", command=None, args=None, env=None,
@@ -604,3 +615,54 @@ def test_api_create_sse_with_url(monkeypatch):
     assert body["transport"] == "sse"
     assert body["url"] == "https://mcp.example.com/sse"
     assert body["headers"] == {"Authorization": "Bearer x"}
+
+
+@pytest.mark.parametrize("initial_flags", [None, (False, False), (True, False), (False, True)],
+                         ids=["created", "borrowed-with-fk", "family-admin", "server-admin"])
+def test_fixture_cleanup_preserves_borrowed_admin_and_reclaims_owned_users(tmp_path, monkeypatch, initial_flags):
+    from tests._dbclone import clone_engine, make_session_factory
+    from app.models.user import User, UserState
+
+    borrowed_admin = initial_flags is not None
+    engine = clone_engine(tmp_path / "phase2_fixture.db")
+    factory = make_session_factory(engine)
+
+    async def scenario():
+        async with factory() as db:
+            assert (await db.execute(select(User.id))).scalars().all() == []
+            if borrowed_admin:
+                db.add(User(id=ADMIN, username="unrelated_fixture_owner", nickname="Fixture owner",
+                            is_admin=initial_flags[0], server_admin=initial_flags[1]))
+                await db.commit()
+                db.add(UserState(user_id=ADMIN))
+                db.add(MCPServer(user_id=ADMIN, name="unrelated_fixture_server",
+                                 transport="sse", url="https://mcp.example.com/sse"))
+                db.add(ToolPermission(user_id=ADMIN, scope="unrelated_fixture_scope", level="forbid"))
+                await db.commit()
+        # Real setup cleanup must not delete a borrowed parent or its unrelated permissions.
+        await _cleanup()
+        owned = await _ensure_test_users()
+        async with factory() as db:
+            row = await db.get(User, ADMIN)
+            assert row.is_admin is True and row.server_admin is True
+            assert set((await db.execute(select(User.id))).scalars()) == TEST_UIDS
+        await _cleanup(owned)
+        async with factory() as db:
+            remaining = set((await db.execute(select(User.id))).scalars())
+            assert remaining == ({ADMIN} if borrowed_admin else set())
+            if borrowed_admin:
+                row = await db.get(User, ADMIN)
+                assert row.username == "unrelated_fixture_owner"
+                assert (row.is_admin, row.server_admin) == initial_flags
+                assert (await db.execute(select(UserState.user_id))).scalars().all() == [ADMIN]
+                assert (await db.execute(select(MCPServer.name))).scalars().all() == ["unrelated_fixture_server"]
+                permission = (await db.execute(select(ToolPermission))).scalar_one()
+                assert (permission.user_id, permission.scope, permission.level) == (
+                    ADMIN, "unrelated_fixture_scope", "forbid")
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(sys.modules[__name__], "async_session_factory", factory)
+            _run(scenario())
+    finally:
+        _run(engine.dispose())
