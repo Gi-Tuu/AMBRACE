@@ -106,6 +106,19 @@ async def _check_admin(user_id: int, lang: str) -> None:
         raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_manage_only"))
 
 
+_STDIO_ADMIN_ONLY_ZH = "仅服务器管理员可创建、修改、连接或试连 stdio MCP Server"
+_STDIO_ADMIN_ONLY_EN = "Only a server administrator can create, update, connect, or test stdio MCP servers"
+
+
+async def _require_stdio_server_admin(user_id: int, lang: str) -> None:
+    """stdio 的 HTTP 入口闸：新鲜读库（不用 30s 缓存/env 兜底），失败即 403。"""
+    from app.mcp.manager import is_server_admin_fresh
+
+    if not await is_server_admin_fresh(user_id):
+        detail = _STDIO_ADMIN_ONLY_EN if lang.strip().lower().startswith("en") else _STDIO_ADMIN_ONLY_ZH
+        raise HTTPException(status_code=403, detail=detail)
+
+
 def _validate_name(name: str, lang: str) -> None:
     if not NAME_RE.match(name):
         raise HTTPException(status_code=400, detail=tr_lang(lang, "mcp_name_invalid"))
@@ -351,6 +364,7 @@ async def create_server(
     _validate_name(body.name, lang)
     _validate_transport(body.transport, lang)
     if body.transport == "stdio":
+        await _require_stdio_server_admin(user_id, lang)
         _validate_command(body.command, lang)
     else:
         _validate_http_config(body.transport, body.url, lang, body.allow_loopback)
@@ -401,6 +415,9 @@ async def update_server(
         _validate_transport(data["transport"], lang)
     # 目标传输类型：以 body.transport（若提供）为准，否则沿用当前 row.transport
     _target_transport = data.get("transport", row.transport)
+    # 安全 B1：创建/更新 stdio（含从 SSE 切到 stdio、以及修改现有 stdio 行）只允许服务器管理员。
+    if _target_transport == "stdio" or row.transport == "stdio":
+        await _require_stdio_server_admin(user_id, lang)
     if _target_transport == "stdio":
         # V2-11（2026-08-29）：transport 改为 stdio 时，最终 command（body 提供则用 body，否则沿用
         # 存量的 row.command）若为空 → 400。修复从 sse/streamable_http 改 stdio 且 body 不含 command
@@ -515,7 +532,9 @@ async def connect_server(
 ):
     """手动建立连接（仅主账号）：后台已 handle 重连退避。"""
     await _check_admin(user_id, lang)
-    await _load_owned_server(user_id, server_id, lang)
+    row = await _load_owned_server(user_id, server_id, lang)
+    if row.transport == "stdio":
+        await _require_stdio_server_admin(user_id, lang)
 
     from app.mcp.manager import mcp_manager
 
@@ -552,7 +571,9 @@ async def test_server(
 ):
     """测试连接（仅主账号）：试连 + 发现工具，不保存配置/状态。"""
     await _check_admin(user_id, lang)
-    await _load_owned_server(user_id, server_id, lang)
+    row = await _load_owned_server(user_id, server_id, lang)
+    if row.transport == "stdio":
+        await _require_stdio_server_admin(user_id, lang)
 
     from app.mcp.manager import mcp_manager
 

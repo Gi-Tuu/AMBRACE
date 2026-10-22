@@ -1,4 +1,5 @@
 """Agent 状态定义"""
+from datetime import datetime
 from typing import Callable, TypedDict
 
 
@@ -19,6 +20,11 @@ class AgentState(TypedDict):
     # ---- 处理中 ----
     intent: str                # 用户意图: "chat" / "query" / "command"
     source_id: int | None       # 当前消息ID（用于记忆关联）
+    # ---- C7 聊天时间锚点（2026-10-22）----
+    # 必须在此声明，否则 LangGraph 1.x 静默丢弃（与 stream_sink 同一个坑）。
+    chat_time_source_id: int | None       # 仅时间锚点用的当前消息 id（不改变 source_id 的记忆语义）
+    chat_time_reference_at: datetime | None  # 本轮参考时刻（UTC naive；无 source 时的请求边界）
+    chat_time_anchor_snapshot: dict | None   # 无 source 请求入口捕获的最后用户发言快照（status/id/created_at）
     retrieved_memories: list[dict]   # 检索到的相关记忆
     utility_feedback_done: bool      # 召回后效用反馈已调度标记（小增量 2026-09-16；flag 关时永不写入）
     context_messages: list[dict]     # 最近聊天上下文

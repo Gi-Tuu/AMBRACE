@@ -106,3 +106,111 @@ def test_manual_sentinel_ignores_plugin_tables(tmp_path):
         assert not table.startswith(("wechat_ilink_", "douyin_")), \
             f"插件表 {table} 不应再出现在主 schema 哨兵中"
     assert migrate._schema_is_current(sync_url) is True
+
+
+# ── B2b：高水位扫描/条件引用/未知语义回归 ──────────────────────────────────
+
+def _scan_db(tmp_path, ddl_and_rows):
+    from sqlalchemy import create_engine
+    from app.db import migrate
+
+    db = tmp_path / "watermark.db"
+    eng = create_engine(f"sqlite:///{db.as_posix()}")
+    with eng.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE ai_characters (id INTEGER PRIMARY KEY)")
+        conn.exec_driver_sql("INSERT INTO ai_characters(id) VALUES(1)")
+        for sql in ddl_and_rows:
+            conn.exec_driver_sql(sql)
+    try:
+        with eng.connect() as conn:
+            return migrate.scan_character_id_watermark(conn)
+    finally:
+        eng.dispose()
+
+
+def test_b2b_watermark_counts_only_provable_character_refs(tmp_path):
+    scan = _scan_db(tmp_path, [
+        "CREATE TABLE lorebook_entries (character_id INTEGER)",
+        "INSERT INTO lorebook_entries(character_id) VALUES(2100)",
+        "CREATE TABLE world_facts (character_id INTEGER, subject_type TEXT, subject_id INTEGER)",
+        "INSERT INTO world_facts VALUES(1,'user',777)",
+        "INSERT INTO world_facts VALUES(1,'character',1900)",
+        "CREATE TABLE memories (character_id INTEGER REFERENCES ai_characters(id), speaker_type TEXT, speaker_id INTEGER)",
+        "INSERT INTO memories VALUES(1,'user',777)",
+        "INSERT INTO memories VALUES(1,'character',1600)",
+        "CREATE TABLE group_memories (speaker_type TEXT, speaker_id INTEGER)",
+        "INSERT INTO group_memories VALUES('user',777)",
+        "INSERT INTO group_memories VALUES('ai',1700)",
+        "CREATE TABLE moment_comments (sender_type TEXT, sender_id INTEGER)",
+        "INSERT INTO moment_comments VALUES('user',777)",
+        "INSERT INTO moment_comments VALUES('ai',1800)",
+        "CREATE TABLE ai_chats (speaker_id INTEGER)",
+        "INSERT INTO ai_chats(speaker_id) VALUES(1500)",
+        "CREATE TABLE pets (owner_type TEXT, owner_id INTEGER)",
+        "INSERT INTO pets VALUES('user',777)",
+        "INSERT INTO pets VALUES('ai',2000)",
+    ])
+    assert scan["high"] == 2100
+    refs = "\n".join(scan["known_refs"])
+    for needle in (
+        "world_facts.subject_id", "memories.speaker_id",
+        "group_memories.speaker_id", "moment_comments.sender_id",
+        "ai_chats.speaker_id", "pets.owner_id",
+    ):
+        assert needle in refs
+    assert scan["unknown_columns"] == []
+
+
+def test_b2b_watermark_rejects_unknown_ambiguous_and_character_columns(tmp_path):
+    import pytest
+    from app.db import migrate
+    from sqlalchemy import create_engine
+
+    for table, col, value in (("mystery", "subject_id", 5), ("mystery", "character_id", 5)):
+        db = tmp_path / f"{table}_{col}.db"
+        eng = create_engine(f"sqlite:///{db.as_posix()}")
+        with eng.begin() as conn:
+            conn.exec_driver_sql("CREATE TABLE ai_characters (id INTEGER PRIMARY KEY)")
+            conn.exec_driver_sql("INSERT INTO ai_characters(id) VALUES(1)")
+            conn.exec_driver_sql(f"CREATE TABLE {table} ({col} INTEGER)")
+            conn.exec_driver_sql(f"INSERT INTO {table}({col}) VALUES({value})")
+        try:
+            with eng.connect() as conn:
+                with pytest.raises(RuntimeError):
+                    migrate.scan_character_id_watermark(conn)
+        finally:
+            eng.dispose()
+
+
+def test_b2b_watermark_type_range_guards(tmp_path):
+    import pytest
+    from app.db import migrate
+    from sqlalchemy import create_engine
+
+    cases = [("999.75", "non-integer"), ("'abc'", "non-integer"),
+             ("-5", "negative"), (str((1 << 63) - 1), "no allocatable")]
+    for i, (literal, needle) in enumerate(cases):
+        db = tmp_path / f"bad_{i}.db"
+        eng = create_engine(f"sqlite:///{db.as_posix()}")
+        with eng.begin() as conn:
+            conn.exec_driver_sql("CREATE TABLE ai_characters (id INTEGER PRIMARY KEY)")
+            conn.exec_driver_sql("INSERT INTO ai_characters(id) VALUES(1)")
+            conn.exec_driver_sql("CREATE TABLE lorebook_entries (character_id INTEGER)")
+            conn.exec_driver_sql(f"INSERT INTO lorebook_entries(character_id) VALUES({literal})")
+        try:
+            with eng.connect() as conn:
+                with pytest.raises(RuntimeError) as exc:
+                    migrate.scan_character_id_watermark(conn)
+                assert needle in str(exc.value).lower()
+        finally:
+            eng.dispose()
+
+
+def test_b2b_candidate_is_single_head_above_formal_head():
+    from alembic.script import ScriptDirectory
+    from app.db import migrate
+
+    script = ScriptDirectory.from_config(migrate._alembic_config())
+    head = script.get_current_head()
+    assert head == "b2a0c1d2e3f4"
+    assert migrate._previous_head(script, head) == "e2f4a6b8c0d2"

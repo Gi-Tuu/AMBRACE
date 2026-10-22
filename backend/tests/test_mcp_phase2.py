@@ -71,15 +71,22 @@ async def _cleanup():
 
 
 async def _ensure_test_users():
-    """确保全部独立测试用户存在（FK 强制后插权限/服务器行需父 users 行）。"""
+    """确保全部独立测试用户存在（FK 强制后插权限/服务器行需父 users 行）。
+
+    ADMIN=1 补 server_admin：安全 B1 起 stdio 执行权只在服务器管理员（权限语义变化）。
+    """
     from app.models.user import User
     from sqlalchemy import select as _sel
     async with async_session_factory() as db:
         exist = set((await db.execute(_sel(User.id).where(User.id.in_(TEST_UIDS)))).scalars().all())
         for uid in sorted(TEST_UIDS - exist):
-            db.add(User(id=uid, username=f"mcp_ph2_{uid}", nickname="MCP PH2 测试"))
-        if TEST_UIDS - exist:
-            await db.commit()
+            db.add(User(id=uid, username=f"mcp_ph2_{uid}", nickname="MCP PH2 测试",
+                        is_admin=(uid == ADMIN), server_admin=(uid == ADMIN)))
+        if ADMIN in exist:
+            admin_row = (await db.execute(_sel(User).where(User.id == ADMIN))).scalar_one()
+            admin_row.is_admin = True
+            admin_row.server_admin = True
+        await db.commit()
 
 
 @pytest.fixture(autouse=True)

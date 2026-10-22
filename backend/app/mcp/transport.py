@@ -77,6 +77,20 @@ class _TransportConfig:
     # P3-4（2026-09-19）：该 Server 是否被显式标记允许本地回环（来自 mcp_servers.allow_loopback）；
     # 透传给 SSRF 判定与 pin-IP 客户端，保证「保存校验」「连接校验」「连接绑定」用同一放行口径。
     allow_loopback: bool = False
+    # 安全 B1（2026-10-20）：stdio 执行许可必须绑定本次 DB 行的 server/owner，
+    # 由 MCPClientManager 的异步闸在启动前注入；_open_transport 消费一次即失效。
+    server_id: int | None = None
+    owner_user_id: int | None = None
+    stdio_permit: Any | None = None
+
+
+@dataclass(frozen=True)
+class _StdioPermit:
+    """一次性 stdio 启动许可：绑定 server/owner，只能由 manager 的新鲜授权闸签发。"""
+
+    server_id: int
+    owner_user_id: int
+
 
 
 class _ManagedHttpTransport:

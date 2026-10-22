@@ -344,7 +344,7 @@ async def send_and_receive_stream(
                 reply_delay=False,
                 # F-12（v3.4.6 审查）：回退入口 route 口径——SSE 回退也标 ws_chunk 会失真，
                 # 这里如实标注 sse_fallback（幂等键不变）。
-                route="sse_fallback",
+                route="sse_fallback", chat_time_source_id=user_msg_id,  # C7：时间边界独立于记忆 source。
             )
         except Exception as e:
             # chunked 也失败：error 事件已在上面的 except 发过，这里只记日志不再向上抛，

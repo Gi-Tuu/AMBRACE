@@ -17,8 +17,13 @@
 
 显式**不删**（无 character_id 外键，不构成 FK 孤儿，属共享/日志类，留给数据治理批）：
 agent_tasks / agent_task_logs / llm_usage / image_gen_tasks / channel_bindings /
-lorebook_entries / world_facts / memory_archive 以外的归档类。其中 moment_ai_likes 虽无
-外键，但属角色在他人动态下的互动，本模块一并清。
+memory_archive 以外的归档类。其中 moment_ai_likes 虽无外键，但属角色在他人动态下的互动，本模块一并清。
+world_facts / lorebook_entries **不在此列**（B2a，2026-10-20）：两表都有 NOT NULL 的
+user_id + character_id，角色是它们的容器。lorebook 注入只按 character_id 读取
+（app/memory/lorebook.py:237），world_facts 的 curated 容量/冲突路径也只按 character_id
+（app/events/facts.py:366/698/788），普通 active/history 读取再叠加 user_id/可见性。
+subject_type=user/system、audience=public、kind=curated 描述“事实关于谁/给谁看”，
+不改变行归属；故按 character_id 随角色物理删，且不按 subject_id 扩散到其它角色。
 prospective_intents 不删行，但**未触发的（pending/matched）在此置 cancelled**（2026-09-26
 审查 P2-1）：留着会让到期触发反复「认领 → 白烧一次 LLM → 外键失败回滚重试」；已兑现/作废的
 行仍保留留痕。
@@ -88,6 +93,7 @@ from app.models.life import (
 from app.models.memory import (
     ConversationTopic,
     DailySummary,
+    LorebookEntry,
     Memory,
     MemoryArchive,
     ProcessedExtraction,
@@ -98,6 +104,7 @@ from app.models.memory import (
     WeaveCard,
     WeaveCardCharacter,
     WeaveCardMemory,
+    WorldFact,
 )
 from app.models.pet import Pet
 from app.models.user import PrivacyRequest
@@ -138,6 +145,10 @@ CHARACTER_DELETE_SPECS = [
     (ReflectionLog, "character_id"),
     (MemoryArchive, "character_id"),
     (Memory, "character_id"),
+    # B2a：两表均以 character_id 为角色容器（见模块 docstring）；WorldFact 先删，
+    # 便于失败注入证明同一事务可回滚。
+    (WorldFact, "character_id"),
+    (LorebookEntry, "character_id"),
     (SharedEvent, "character_id"),  # D-1：成对经历行随角色消失（详见模块 docstring）
     (WeaveCardCharacter, "character_id"),  # 织卡-角色关联（卡本体按共享语义单独处理）
     # ── 虚拟手机 ──

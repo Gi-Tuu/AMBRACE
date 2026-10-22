@@ -312,15 +312,15 @@ def test_版本链单头且本迁移挂在交接点头上():
 
 
 def test_老库upgrade建表列形态正确且downgrade可逆(tmp_path, monkeypatch):
-    """老库形态（停在交接点、本表压根不存在）→ upgrade head 真正走 create_table 那一条路径。"""
+    """老库形态（停在交接点、本表压根不存在）→ upgrade NEW_REV 真正走 create_table 那一条路径。"""
     db = tmp_path / "pol_old.db"
     _point_at(db, monkeypatch)
     command.upgrade(_cfg(), PREV_HEAD)
     assert not _table_exists(db), "老库基线不该已有本表"
 
-    command.upgrade(_cfg(), "head")
+    command.upgrade(_cfg(), NEW_REV)
     assert _table_exists(db)
-    assert _version(db) == _head()
+    assert _version(db) == NEW_REV
     cols = _columns(db)
     assert set(cols) == {"id", "user_id", "capability", "policy", "created_at", "updated_at"}
     for c in ("user_id", "capability", "policy", "created_at", "updated_at"):
@@ -349,7 +349,7 @@ def test_老库upgrade建表列形态正确且downgrade可逆(tmp_path, monkeypa
     command.downgrade(_cfg(), PREV_HEAD)
     assert not _table_exists(db)
     assert _version(db) == PREV_HEAD
-    command.upgrade(_cfg(), "head")
+    command.upgrade(_cfg(), NEW_REV)
     assert _table_exists(db) and _has_unique_user_cap(db)
 
 

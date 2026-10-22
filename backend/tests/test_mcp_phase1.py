@@ -159,16 +159,20 @@ async def _cleanup_mcp():
 async def _ensure_test_users():
     """确保测试依赖的用户存在（引擎已强制外键：mcp_servers.user_id 需父 users 行）。
 
-    主账号 ADMIN=1（本文件共用），提前插好父用户，避免空沙箱下 _make_server 外键失败。
+    主账号 ADMIN=1（本文件共用）同时需要 server_admin：安全 B1 起 stdio 执行权只在
+    服务器管理员；这是权限语义变化的最小夹具适配，不放宽任何安全断言。
     """
-    from sqlalchemy import select as _sel
     from app.models.user import User
 
     async with async_session_factory() as db:
-        existing = set((await db.execute(_sel(User.id).where(User.id == ADMIN))).scalars().all())
-        if ADMIN not in existing:
-            db.add(User(id=ADMIN, username="mcp_ph1_admin", nickname="MCP PH1 测试", is_admin=True))
-            await db.commit()
+        row = (await db.execute(select(User).where(User.id == ADMIN))).scalar_one_or_none()
+        if row is None:
+            db.add(User(id=ADMIN, username="mcp_ph1_admin", nickname="MCP PH1 测试",
+                        is_admin=True, server_admin=True))
+        else:
+            row.is_admin = True
+            row.server_admin = True
+        await db.commit()
 
 
 @pytest.fixture(autouse=True)
@@ -375,7 +379,8 @@ def test_worker_failure_finally_unregisters_tools(monkeypatch):
     monkeypatch.setattr(mcp_manager, "_unregister_conn_tools", fake_unregister)
     monkeypatch.setattr(mcp_manager, "_open_transport", lambda cfg: _FailTransport())
 
-    cfg = _TransportConfig(transport="stdio", command="node")
+    cfg = _TransportConfig(transport="stdio", command="node",
+                           server_id=server_id, owner_user_id=ADMIN)
 
     async def _flow():
         # _worker_main 内部 catch 异常置 error，finally 注销工具

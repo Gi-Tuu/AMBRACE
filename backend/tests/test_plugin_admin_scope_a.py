@@ -418,7 +418,7 @@ def test_migration_加两列_幂等_downgrade可逆(tmp_path):
 
 
 def test_migration_alembic_upgrade_downgrade_再upgrade(tmp_path, monkeypatch):
-    """真实 alembic 命令链自检：stamp 到前一 head → upgrade head（跑本迁移）→ downgrade → 再 upgrade。"""
+    """真实 alembic 命令链自检：stamp 到前一 head → upgrade 本修订（不跨后续不可逆迁移）→ downgrade → 再 upgrade。"""
     from alembic import command
     from alembic.config import Config
     from alembic.script import ScriptDirectory
@@ -439,11 +439,11 @@ def test_migration_alembic_upgrade_downgrade_再upgrade(tmp_path, monkeypatch):
 
     cfg = Config(str(backend / "alembic.ini"))
     cfg.set_main_option("script_location", str(backend / "alembic"))
-    # A2 M6（2026-09-20）新增迁移后 head 前移：不硬编码，跟随当前单头（同
-    # test_fk_ondelete_active_parents 口径），避免每次新增迁移都要改本用例。
-    _head = ScriptDirectory.from_config(cfg).get_current_head()
+    # 全链仍须单头；可逆演练固定到被测修订，避免跨越后续不可逆迁移。
+    assert len(ScriptDirectory.from_config(cfg).get_heads()) == 1
+    target_revision = "a8b9c0d1e2f3"
     command.stamp(cfg, "b5c6d7e8f9a0")
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, target_revision)
 
     engine = sa.create_engine(f"sqlite:///{db_file.as_posix()}")
     try:
@@ -451,19 +451,19 @@ def test_migration_alembic_upgrade_downgrade_再upgrade(tmp_path, monkeypatch):
             cols = {r[1] for r in conn.execute(sa.text("PRAGMA table_info(plugins)"))}
             ver = conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar()
         assert {"owner_user_id", "owner_tenant_id"} <= cols
-        assert ver == _head
+        assert ver == target_revision
 
         command.downgrade(cfg, "b5c6d7e8f9a0")
         with engine.connect() as conn:
             cols2 = {r[1] for r in conn.execute(sa.text("PRAGMA table_info(plugins)"))}
         assert not ({"owner_user_id", "owner_tenant_id"} & cols2)
 
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, target_revision)
         with engine.connect() as conn:
             cols3 = {r[1] for r in conn.execute(sa.text("PRAGMA table_info(plugins)"))}
             ver3 = conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar()
         assert {"owner_user_id", "owner_tenant_id"} <= cols3
-        assert ver3 == _head
+        assert ver3 == target_revision
     finally:
         engine.dispose()
 

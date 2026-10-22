@@ -8,7 +8,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -65,6 +65,16 @@ class AICharacter(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    # B2b/B2c：create_all 必须生成 SQLite AUTOINCREMENT 与客户端安全上限 CHECK；
+    # 存量 AUTOINCREMENT 表由 character_id_guard 安装 AFTER 触发器（BEFORE 时 NEW.id 不可靠）。
+    __table_args__ = (
+        CheckConstraint(
+            "id <= 9007199254740991",
+            name="ck_ai_characters_client_safe_id",
+        ),
+        {"sqlite_autoincrement": True},
     )
 
     # 关系

@@ -368,7 +368,7 @@ def test_版本链单头且本迁移挂在交接点头上():
 
 
 def test_旧库补列且数据不丢_downgrade可逆(tmp_path, monkeypatch):
-    """旧库形态：交接点存量库（本表无 payload_json）→ upgrade head 只跑本迁移一步。"""
+    """旧库形态：交接点存量库（本表无 payload_json）→ upgrade NEW_REV 只跑本迁移一步。"""
     db = tmp_path / "snap_old.db"
     _point_at(db, monkeypatch)
     command.upgrade(_cfg(), PREV_HEAD)
@@ -387,19 +387,19 @@ def test_旧库补列且数据不丢_downgrade可逆(tmp_path, monkeypatch):
 
     assert _snapshot_content(db) == "老行正文", "旧库形态（本表无该列）既有行必须读得到"
 
-    command.upgrade(_cfg(), "head")
+    command.upgrade(_cfg(), NEW_REV)
     cols = _columns(db)
-    assert "payload_json" in cols, "upgrade head 后应补上 payload_json"
+    assert "payload_json" in cols, "upgrade NEW_REV 后应补上 payload_json"
     assert cols["payload_json"]["notnull"] == 0, "必须是 nullable（老行无需回填）"
     assert cols["payload_json"]["dflt"] is None
-    assert _version(db) == _head()
+    assert _version(db) == NEW_REV
     assert _snapshot_row(db) == ("老行正文", None), "老行必须原样保留、新列为 NULL"
 
     # 可逆：退回交接点 → 列消失；再 upgrade → 又回来（重复执行安全）
     command.downgrade(_cfg(), PREV_HEAD)
     assert "payload_json" not in _columns(db)
     assert _snapshot_content(db) == "老行正文", "downgrade 只删列，不得动其它列的数据"
-    command.upgrade(_cfg(), "head")
+    command.upgrade(_cfg(), NEW_REV)
     assert _snapshot_row(db) == ("老行正文", None)
 
 

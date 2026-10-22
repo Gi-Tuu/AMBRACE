@@ -8,7 +8,7 @@
 （fail-closed，语义是「静默不注入」而非「报错」）。
 
 覆盖第一批（B1，直接调用 6 处所在的真实函数，不 mock 业务逻辑）：
-1. ``section_world._compute_current_time_str``（:66 最近会话查询）
+1. ``section_world._compute_current_time_str``（:66 用户发言锚点查询）
 2. ``section_world._load_user``（:111 取用户行）
 3. ``section_summaries._load_char_and_user``（:37 取用户行）
 4. ``section_persona.user_info_section``（:113 取用户行，强制走 except 兜底分支）
@@ -36,7 +36,7 @@
 → 24. ``section_user_now:25``（敏感槽 ``user_fact_relationship`` 显式打开；缺 caller 时早退判据仍
 回全局值，真正的 fail-closed 落在 ``get_active_user_facts`` 的 ``user_id IS NULL``）→
 25. ``nodes:106``（唯一下游 ``load_active_goal_queries``，直调钉死）→ 26. ``runtime:190``
-（直调 ``build_light_social_context``，正/反双证：关系锚点 + 「距上次互动」会话过滤）。
+（直调 ``build_light_social_context``，正/反双证：关系锚点 + 「距上次互动」用户发言锚点过滤）。
 23–26 的新增读取方（``topic_tracker`` / ``memory.core`` 是模块级 ``from … import``）走
 ``_patch_extra_readers``——只在本批用例生效，不动 ``_patch_session``，以免改变 17/18 装配用例的读库范围。
 
@@ -332,15 +332,29 @@ def _state(user_id=1) -> dict:
 
 
 def test_world_current_time_last_interaction_failclosed(fc_db, monkeypatch):
-    """带 caller → 「距上次互动」注入；缺 caller → 会话查不到（不冒充 1 号）且该串消失。"""
+    """带 caller → 用户发言锚点注入；缺 caller → 不查 1 号账号数据且该串消失。
+
+    C7（2026-10-22）：锚点从 ChatSession.updated_at 改为“本轮前最后一条用户发言”；
+    正反两跑都带同一入口锚点快照，反证只剩 caller 缺失一个变量（避免“没边界”造成的假绿）。
+    """
     from app.agent.context import section_world as w
     from app.db import database as db_mod
+    from app.utils.timeutil import now_naive_utc
+    from datetime import timedelta
 
     monkeypatch.setattr(db_mod, "async_session_factory", fc_db)
-    pos = asyncio.run(w._compute_current_time_str(_state(1), {}))
+    observed = now_naive_utc()
+    boundary = {
+        "chat_time_reference_at": observed,
+        "chat_time_anchor_snapshot": {
+            "status": "ok", "message_id": 999,
+            "created_at": observed - timedelta(days=5),
+        },
+    }
+    pos = asyncio.run(w._compute_current_time_str({**_state(1), **boundary}, {}))
     assert "距上次互动" in pos, "带 caller 时未注入「距上次互动」→ 下面的反证会是空断言"
-    neg = asyncio.run(w._compute_current_time_str(_state(_NO_CALLER), {}))  # 不抛异常
-    assert "距上次互动" not in neg, "缺 caller 时把这一轮冒充成了 1 号账号的最近会话"
+    neg = asyncio.run(w._compute_current_time_str({**_state(_NO_CALLER), **boundary}, {}))  # 不抛异常
+    assert "距上次互动" not in neg, "缺 caller 时把 1 号账号的用户发言锚点冒充进来了"
 
 
 # ───────────────────────────────────────────── 2. world :111 取用户行
@@ -804,27 +818,42 @@ def test_active_goal_queries_failclosed(fc_db, monkeypatch):
 
 
 def test_light_social_context_failclosed(fc_db, monkeypatch):
-    """build_light_social_context：:190 的 uid 只喂两处 —— get_relationship_anchors 与 ChatSession 过滤。
+    """build_light_social_context：uid 只喂关系锚点与用户发言锚点两处。
 
-    正证两件事都到位（锚点哨兵 + 「｜距上次互动」）；反证两者皆无且不抛异常。角色基础人设/时间行
-    等与 user_id 无关的块仍应产出（证明反向跑不是中途 return 造成的假绿）。
+    正证两件事都到位（锚点哨兵 + 「｜距上次互动」）；反证两者皆无且不抛异常。C7 后
+    “距上次互动”取本轮前最后一条用户发言（不再是 ChatSession.updated_at），正反两跑
+    都带同一入口锚点快照，反证只剩 caller 缺失一个变量。
     """
     from app.agent.runtime import build_light_social_context
+    from app.utils.timeutil import now_naive_utc
+    from datetime import timedelta
 
     _patch_session(monkeypatch, fc_db)
     _patch_extra_readers(monkeypatch, fc_db)
+    observed = now_naive_utc()
+    boundary = {
+        "chat_time_reference_at": observed,
+        "chat_time_anchor_snapshot": {
+            "status": "ok", "message_id": 999,
+            "created_at": observed - timedelta(days=5),
+        },
+    }
 
-    pos = asyncio.run(build_light_social_context({**_state(1), "user_message": "在吗"}))
+    pos = asyncio.run(build_light_social_context({
+        **_state(1), **boundary, "user_message": "在吗",
+    }))
     pos_text = _all_system_text(pos)
     assert "ANCHORTGT_B4" in pos_text, "带 caller 时未注入关系锚点 → 反证会是空断言"
-    assert "｜距上次互动" in pos_text, "带 caller 时未注入「距上次互动」→ 会话过滤的反证会是空断言"
+    assert "｜距上次互动" in pos_text, "带 caller 时未注入「距上次互动」→ 锚点过滤的反证会是空断言"
     assert "你是：" in pos_text, "轻量上下文未产出角色人设块 → 反向跑可能压根没走到尾部"
     assert pos["context_messages"][-1]["role"] == "user", "轻量上下文未走到尾部 user 消息"
 
-    neg = asyncio.run(build_light_social_context({**_state(_NO_CALLER), "user_message": "在吗"}))
+    neg = asyncio.run(build_light_social_context({
+        **_state(_NO_CALLER), **boundary, "user_message": "在吗",
+    }))
     neg_text = _all_system_text(neg)
     assert "ANCHORTGT_B4" not in neg_text, "缺 caller 时把 1 号账号的关系锚点冒充进来了"
-    assert "｜距上次互动" not in neg_text, "缺 caller 时把 1 号账号的会话更新时间冒充进来了"
+    assert "｜距上次互动" not in neg_text, "缺 caller 时把 1 号账号的用户发言锚点冒充进来了"
     assert "你是：" in neg_text, "缺 caller 时连角色人设块都没产出 → 前面的 not in 会是空断言"
 
 

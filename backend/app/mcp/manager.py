@@ -41,6 +41,7 @@ from app.mcp.transport import (  # noqa: F401
     STATUS_ERROR,
     SUPPORTED_TRANSPORTS,
     _ManagedHttpTransport,
+    _StdioPermit,
     _TransportConfig,
     _build_pinned_http_client,
     _call_timeout,
@@ -70,11 +71,41 @@ async def _get_server_row(server_id: int):
         return (await db.execute(select(MCPServer).where(MCPServer.id == server_id))).scalar_one_or_none()
 
 
+async def is_server_admin_fresh(user_id: int) -> bool:
+    """stdio 专用的新鲜服务器管理员判定：直接读 users，不使用 30s 缓存/env 兜底。
+
+    DB 异常、缺行、已禁用、已进回收站一律 False（fail-closed）；供 API 入口与 manager 闸共用。
+    """
+    if not user_id or int(user_id) <= 0:
+        return False
+    from sqlalchemy import select
+
+    from app.db.database import async_session_factory
+    from app.models.user import User
+
+    try:
+        async with async_session_factory() as db:
+            row = (await db.execute(
+                select(User.server_admin, User.disabled_at, User.deleted_at)
+                .where(User.id == int(user_id))
+            )).first()
+    except Exception:
+        return False
+    return bool(
+        row is not None
+        and row.server_admin
+        and row.disabled_at is None
+        and row.deleted_at is None
+    )
+
+
 class MCPClientManager:
     """管理多个 MCP Server 连接（phase 1 stdio）。"""
 
     def __init__(self) -> None:
         self._conns: dict[int, _Connection] = {}
+        # 安全 B1：已连接 worker 的传输类型（stdio 命令路径必须每次重新授权）。
+        self._conn_transports: dict[int, str] = {}
         # B7（2026-09-06）：维护循环降频追踪——server_id -> (last_attempt monotonic, fail_streak)
         self._last_attempt: dict[int, float] = {}
         self._fail_streak: dict[int, int] = {}
@@ -105,10 +136,25 @@ class MCPClientManager:
         if row.transport not in SUPPORTED_TRANSPORTS:
             raise ValueError(f"unsupported transport: {row.transport}")
 
+        # 安全 B1（SEC-P0-1）：stdio 的进程启动权只属于当前存活的服务器管理员。
+        # 每次 connect 都新鲜读库，不走 permission_service 的 30s 缓存/env 兜底。
+        if row.transport == "stdio":
+            allowed, reason, _owner_id = await self._stdio_execution_allowed(server_id)
+            if not allowed:
+                conn = self._conns.get(server_id)
+                if conn is not None:
+                    conn.status = STATUS_ERROR
+                    conn.last_error = reason
+                await self._update_db_status(server_id, STATUS_ERROR, reason)
+                _logger.warning("mcp stdio connect denied server=%d: %s", server_id, reason)
+                return {"ok": False, "status": STATUS_ERROR, "error": reason}
+
         conn = self._conns.get(server_id)
         if conn is None:
             conn = _Connection(server_id=server_id, server_name=row.name, enabled=bool(row.enabled), user_id=row.user_id)
             self._conns[server_id] = conn
+            conn.transport = row.transport
+            self._conn_transports[server_id] = row.transport
         else:
             conn.server_name = row.name
             conn.enabled = bool(row.enabled)
@@ -119,9 +165,24 @@ class MCPClientManager:
             conn.connect_lock = asyncio.Lock()
         async with conn.connect_lock:
             if conn.is_connected:
+                # 已连接的 worker 不能被 DB 传输类型变化“重贴标签”：stdio 进程若被标成 sse，
+                # 后续命令会绕过 stdio 闸。要求先 disconnect 再按新类型重连。
+                live_transport = getattr(conn, "transport", "")
+                if live_transport != row.transport:
+                    return {
+                        "ok": False,
+                        "status": conn.status,
+                        "error": "connection transport changed; disconnect before reconnecting",
+                    }
                 return {"ok": True, "status": STATUS_CONNECTED, "tools": list(conn.tools)}
             if conn.status == STATUS_CONNECTING:
                 # 并发连接已在进行中：等待其 _ready（worker 置位），避免再建 worker
+                if getattr(conn, "transport", "") != row.transport:
+                    return {
+                        "ok": False,
+                        "status": conn.status,
+                        "error": "connection transport changed during connect; disconnect first",
+                    }
                 if conn._ready is None:
                     return {"ok": False, "status": conn.status, "error": "connect in progress"}
                 try:
@@ -132,6 +193,9 @@ class MCPClientManager:
                     return {"ok": True, "status": STATUS_CONNECTED, "tools": list(conn.tools)}
                 return {"ok": False, "status": conn.status, "error": conn.last_error or "connect in progress"}
 
+            # 即将为这次连接启动新 worker：此刻才更新传输类型。
+            conn.transport = row.transport
+            self._conn_transports[server_id] = row.transport
             conn.status = STATUS_CONNECTING
             await self._update_db_status(server_id, STATUS_CONNECTING, None)
 
@@ -197,6 +261,7 @@ class MCPClientManager:
                 conn.resources = []
                 conn.prompts = []
         await self._update_db_status(server_id, STATUS_DISCONNECTED, None)
+        self._conn_transports.pop(server_id, None)
         return {"ok": True}
 
     async def reconnect_all(self, auto_connect: bool | None = None, *,
@@ -261,6 +326,7 @@ class MCPClientManager:
             except Exception as e:
                 _logger.warning("mcp shutdown disconnect server=%d failed: %s", server_id, e)
         self._conns.clear()
+        self._conn_transports.clear()
 
     # ------------------------------------------------------------- 工具发现/调用
 
@@ -269,6 +335,10 @@ class MCPClientManager:
         conn = self._conns.get(server_id)
         if conn is not None and conn.is_connected:
             if refresh:
+                allowed, reason = await self._conn_command_allowed(conn)
+                if not allowed:
+                    _logger.warning("mcp refresh tools denied server=%s: %s", server_id, reason)
+                    return list(conn.tools)
                 try:
                     await self._submit_list_tools(conn)
                 except Exception as e:
@@ -288,6 +358,10 @@ class MCPClientManager:
         conn = self._conns.get(server_id)
         if conn is not None and conn.is_connected:
             if refresh:
+                allowed, reason = await self._conn_command_allowed(conn)
+                if not allowed:
+                    _logger.warning("mcp refresh resources denied server=%s: %s", server_id, reason)
+                    return list(conn.resources)
                 try:
                     await self._submit_list_resources(conn)
                 except Exception as e:
@@ -300,6 +374,9 @@ class MCPClientManager:
         conn = self._conns.get(server_id)
         if conn is None or not conn.is_connected:
             return {"ok": False, "error": "server not connected"}
+        allowed, reason = await self._conn_command_allowed(conn)
+        if not allowed:
+            return {"ok": False, "uri": uri, "error": reason}
         fut = asyncio.get_running_loop().create_future()
         try:
             await conn._queue.put({"kind": "get_resource", "uri": uri, "future": fut})
@@ -321,6 +398,10 @@ class MCPClientManager:
         conn = self._conns.get(server_id)
         if conn is not None and conn.is_connected:
             if refresh:
+                allowed, reason = await self._conn_command_allowed(conn)
+                if not allowed:
+                    _logger.warning("mcp refresh prompts denied server=%s: %s", server_id, reason)
+                    return list(conn.prompts)
                 try:
                     await self._submit_list_prompts(conn)
                 except Exception as e:
@@ -333,6 +414,9 @@ class MCPClientManager:
         conn = self._conns.get(server_id)
         if conn is None or not conn.is_connected:
             return {"ok": False, "error": "server not connected"}
+        allowed, reason = await self._conn_command_allowed(conn)
+        if not allowed:
+            return {"ok": False, "name": name, "error": reason}
         fut = asyncio.get_running_loop().create_future()
         try:
             await conn._queue.put({
@@ -390,6 +474,11 @@ class MCPClientManager:
         if conn is None or not conn.is_connected:
             return {"content": [], "isError": True, "error": "server not connected"}
 
+        allowed, reason = await self._conn_command_allowed(conn)
+        if not allowed:
+            _logger.warning("mcp call_tool denied server=%s: %s", server_id, reason)
+            return {"content": [], "isError": True, "error": reason}
+
         fut = asyncio.get_running_loop().create_future()
         try:
             await conn._queue.put({
@@ -446,6 +535,11 @@ class MCPClientManager:
         row = await _get_server_row(server_id)
         if row is None:
             return {"ok": False, "error": "server not found"}
+        if row.transport == "stdio":
+            allowed, reason, _owner_id = await self._stdio_execution_allowed(server_id)
+            if not allowed:
+                _logger.warning("mcp stdio test_connect denied server=%d: %s", server_id, reason)
+                return {"ok": False, "error": reason}
         try:
             cfg = self._build_config(row)
         except Exception as e:
@@ -467,6 +561,8 @@ class MCPClientManager:
         transport = None
         sess = None
         try:
+            # 安全 B1：worker 启动的最后一道新鲜授权（覆盖 connect 重试/内部直接调用）。
+            await self._authorize_stdio_config(conn.server_id, cfg)
             from mcp import ClientSession
 
             transport = self._open_transport(cfg)
@@ -720,10 +816,73 @@ class MCPClientManager:
         if error is not None:
             conn.last_error = error
 
+    # ------------------------------------------------------------- 安全 B1：stdio 执行权
+
+    async def _stdio_execution_allowed(self, server_id: int) -> tuple[bool, str, int | None]:
+        """stdio 专用新鲜判定：server 仍为 stdio，且当前 owner 存活 + server_admin。
+
+        直接读库、不用 30s 缓存或 env 兜底；任何查询异常/缺行/禁用/回收站 → 拒绝。
+        返回 (allowed, reason, owner_user_id)，owner 用于把本次许可绑定到配置。
+        """
+        from sqlalchemy import select
+
+        from app.db.database import async_session_factory
+        from app.models.mcp import MCPServer
+        from app.models.user import User
+
+        try:
+            async with async_session_factory() as db:
+                srow = (await db.execute(
+                    select(MCPServer.user_id, MCPServer.transport).where(MCPServer.id == server_id)
+                )).first()
+                if srow is None:
+                    return False, "mcp server not found", None
+                if srow.transport != "stdio":
+                    return False, "server transport is no longer stdio", None
+                urow = (await db.execute(
+                    select(User.server_admin, User.disabled_at, User.deleted_at)
+                    .where(User.id == srow.user_id)
+                )).first()
+        except Exception as e:
+            return False, f"stdio authorization check failed: {e}", None
+        if urow is None:
+            return False, "stdio owner account not found", None
+        if urow.disabled_at is not None or urow.deleted_at is not None:
+            return False, "stdio owner account disabled or deleted", None
+        if not bool(urow.server_admin):
+            return False, "stdio command execution requires server administrator", None
+        return True, "", int(srow.user_id)
+
+    async def _conn_command_allowed(self, conn: _Connection) -> tuple[bool, str]:
+        """命令队列入口的统一闸：stdio 每次新鲜授权；SSE/HTTP 保持原行为；未知类型 fail-closed。"""
+        transport = getattr(conn, "transport", "") or self._conn_transports.get(conn.server_id, "")
+        if transport == "stdio":
+            allowed, reason, _owner = await self._stdio_execution_allowed(conn.server_id)
+            return allowed, reason
+        if transport in ("sse", "streamable_http"):
+            return True, ""
+        return False, "connection transport unknown; refusing command"
+
+    async def _authorize_stdio_config(self, server_id: int, cfg: _TransportConfig) -> None:
+        """在 stdio transport 真正进入前签发一次性许可：绑定 server/owner/本次新鲜判定。"""
+        if cfg.transport != "stdio":
+            return
+        if cfg.server_id is None or cfg.server_id != server_id:
+            raise RuntimeError("stdio transport config is not bound to its server")
+        if cfg.owner_user_id is None:
+            raise RuntimeError("stdio transport config is missing owner")
+        allowed, reason, owner_id = await self._stdio_execution_allowed(server_id)
+        if not allowed:
+            raise RuntimeError(reason)
+        if owner_id != cfg.owner_user_id:
+            raise RuntimeError("stdio owner changed during authorization")
+        cfg.stdio_permit = _StdioPermit(server_id=server_id, owner_user_id=owner_id)
+
     # ------------------------------------------------------------- 试连（一次性）
 
     async def _probe_connect(self, cfg: _TransportConfig) -> list[dict]:
         """一次性试连：进入并立即退出 transport（同一任务内），返回发现的工具。"""
+        await self._authorize_stdio_config(cfg.server_id, cfg)
         from mcp import ClientSession
 
         transport = self._open_transport(cfg)
@@ -757,6 +916,8 @@ class MCPClientManager:
                 args=args,
                 env=(env or None),
                 cwd=self._workdir(row),
+                server_id=row.id,
+                owner_user_id=row.user_id,
             )
         if transport in ("sse", "streamable_http"):
             url = (row.url or "").strip()
@@ -769,6 +930,8 @@ class MCPClientManager:
                 url=url,
                 headers=self._headers(row),
                 allow_loopback=allow_loopback,
+                server_id=row.id,
+                owner_user_id=row.user_id,
             )
         raise ValueError(f"unsupported transport: {transport}")
 
@@ -786,6 +949,15 @@ class MCPClientManager:
         必须与 worker 在同一任务内 enter/exit（mcp SDK transport 上下文绑定创建它的 anyio 任务）。
         """
         if cfg.transport == "stdio":
+            # 安全 B1：stdio_client 调用前的最后同步许可检查（一次性，绑定 server/owner）。
+            permit = getattr(cfg, "stdio_permit", None)
+            if permit is None:
+                raise ValueError("stdio command execution requires a fresh server-admin authorization")
+            if cfg.server_id is None or getattr(permit, "server_id", None) != cfg.server_id:
+                raise ValueError("stdio authorization server mismatch")
+            if cfg.owner_user_id is None or getattr(permit, "owner_user_id", None) != cfg.owner_user_id:
+                raise ValueError("stdio authorization owner mismatch")
+            cfg.stdio_permit = None
             from mcp.client.stdio import StdioServerParameters, stdio_client
 
             params = StdioServerParameters(

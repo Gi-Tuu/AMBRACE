@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """#72 PR-B 迁移可逆 + 单头无分叉测试（group_memories）。
 
-- upgrade head → 出现 group_memories 表与 4 个索引；脚本目录单头（无分叉）；
+- upgrade 本修订 f3a4b5c6d7e8 → 出现 group_memories 表与 4 个索引；脚本目录单头（无分叉）；
 - downgrade 回父修订 e5f6a7b8c9d0 → 表与索引干净删除。
 """
 import os
@@ -38,8 +38,8 @@ def test_migration_upgrade_downgrade(mig_db):
     db_path = mig_db
     cfg = _alembic_cfg()
 
-    # 升级到 head：group_memories 出现，脚本单头无分叉
-    command.upgrade(cfg, "head")
+    # 只升级到被测可逆修订；全链单头另验，不能跨越后续不可逆迁移。
+    command.upgrade(cfg, "f3a4b5c6d7e8")
     # 单头断言不硬编码具体 revision：新增迁移后自动跟随（同 test_fk_ondelete_active_parents 口径）。
     # 原硬编码 {"a3b4c5d6e7f8"} 在后续每批新增迁移后都会误报失败（b2c3d4e5f6a7 起已 stale）。
     heads = _heads()

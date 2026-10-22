@@ -502,7 +502,7 @@ def test_细槽族批量解析_逐键12条降到批量2条(flag_db, monkeypatch)
 # ══════════════════════════ 6. 迁移自检 ══════════════════════════
 
 def test_migration_single_head_sentinel_and_reversible(monkeypatch, tmp_path):
-    """单头 + 哨兵在位；临时库 upgrade head 建表 / downgrade 可逆 / 再 upgrade。"""
+    """单头 + 哨兵在位；临时库 upgrade 本修订建表 / downgrade 可逆 / 再 upgrade。"""
     import app.config as app_config
     from alembic import command
     from alembic.script import ScriptDirectory
@@ -526,7 +526,7 @@ def test_migration_single_head_sentinel_and_reversible(monkeypatch, tmp_path):
     db_path = os.path.join(str(tmp_path), "mig.db")
     monkeypatch.setattr(app_config.settings, "database_url", "sqlite+aiosqlite:///" + db_path)
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "a5b6c7d8e9f0")
     eng = create_engine("sqlite:///" + db_path)
     insp = inspect(eng)
     assert insp.has_table("user_runtime_flags")
@@ -541,7 +541,7 @@ def test_migration_single_head_sentinel_and_reversible(monkeypatch, tmp_path):
     assert not inspect(eng2).has_table("user_runtime_flags")
     eng2.dispose()
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "a5b6c7d8e9f0")
     eng3 = create_engine("sqlite:///" + db_path)
     assert inspect(eng3).has_table("user_runtime_flags")
     eng3.dispose()

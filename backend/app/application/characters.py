@@ -12,10 +12,12 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.status import classify as _classify_status
 from app.application.tenant_service import tenant_scope_ids
+from app.db.character_id_guard import CharacterIdCapacityExceeded, is_capacity_error
 from app.db.database import async_session_factory
 from app.i18n import tr_lang
 from app.models.channel import ChannelBinding
@@ -271,8 +273,14 @@ async def create_character(
         user_llm_config_id=data.user_llm_config_id,
     )
     db.add(character)
-    await db.flush()
-    await db.refresh(character)
+    try:
+        await db.flush()
+        await db.refresh(character)
+    except IntegrityError as exc:
+        # 只映射本守卫的明确容量错误；其它完整性错误原样抛出。
+        if is_capacity_error(exc):
+            raise CharacterIdCapacityExceeded("character_id_capacity_exhausted") from exc
+        raise
     _logger.info("Created character: id=%d name=%s", character.id, character.name)
     return character
 

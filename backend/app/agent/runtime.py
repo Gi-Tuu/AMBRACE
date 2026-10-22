@@ -17,9 +17,10 @@
 """
 import asyncio
 import time
+from datetime import datetime
 
 from app.utils.logger import get_logger
-from app.utils.timeutil import now_naive_utc, to_naive_utc
+from app.utils.timeutil import to_naive_utc
 from app.agent.workspace import create_workspace
 
 _logger = get_logger("agent.runtime")
@@ -59,6 +60,9 @@ def _build_initial_state(
     tts_subdir: str | None = None,
     block_sink=None,
     character_states_snapshot: dict | None = None,
+    chat_time_source_id: int | None = None,
+    chat_time_reference_at: datetime | None = None,
+    chat_time_anchor_snapshot: dict | None = None,
 ) -> dict:
     """**唯一**的 Agent 初始状态构造器（A28-S4，2026-10-05）：chat / social / continue 三条路共用。
 
@@ -79,6 +83,10 @@ def _build_initial_state(
         "user_id": user_id,
         "session_id": session_id,
         "source_id": source_id,
+        # C7：时间锚点边界（无 source 请求用入口捕获的真实旧锚点快照，不再按 ROWID 回查）
+        "chat_time_source_id": chat_time_source_id,
+        "chat_time_reference_at": to_naive_utc(chat_time_reference_at),
+        "chat_time_anchor_snapshot": chat_time_anchor_snapshot,
         "lang": lang,
         "reasoning_level": reasoning_level,
         "channel_hint": channel_hint,
@@ -329,35 +337,17 @@ async def build_light_social_context(state: dict) -> dict:
     except Exception as e:
         _logger.warning("Light context memories failed char=%s: %s", character_id, e)
 
-    # 4. 当前时间行（北京时间 + 距上次互动，与全量 build_context 同格式）
+    # 4. 当前时间行（北京时间 + 上次用户发言间隔，与全量 build_context 共用同一锚点判定）
     try:
         _cn_tz = timezone(timedelta(hours=8))
         _now = datetime.now(_cn_tz)
         _wd = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][_now.weekday()]
         _time_line = f"【当前时间】{_now.year}年{_now.month}月{_now.day}日 {_wd} {_now.hour}:{_now.minute:02d}（北京时间）"
         try:
-            from app.models.chat import ChatSession
-            async with async_session_factory() as db:
-                _sr = await db.execute(
-                    _select(ChatSession)
-                    .where(
-                        ChatSession.user_id == user_id,
-                        ChatSession.character_id == character_id,
-                    )
-                    .order_by(ChatSession.updated_at.desc())
-                    .limit(1)
-                )
-                _last_session = _sr.scalar_one_or_none()
-            if _last_session is not None and _last_session.updated_at is not None:
-                _last_dt = to_naive_utc(_last_session.updated_at)
-                _secs = max(0, int((now_naive_utc() - _last_dt).total_seconds()))
-                if _secs < 3600:
-                    _ago = "刚刚"
-                elif _secs < 86400:
-                    _ago = f"{_secs // 3600} 小时前"
-                else:
-                    _ago = f"{_secs // 86400} 天前"
-                _time_line += f"｜距上次互动 {_ago}"
+            from app.agent.context.chat_time import interaction_gap_text
+            _gap = await interaction_gap_text(state)
+            if _gap:
+                _time_line += f"｜距上次互动 {_gap}"
         except Exception:
             pass
         parts.append(_time_line)
@@ -439,6 +429,11 @@ async def run_social_reply(
     try:
         if not character_id:
             return {"status": "error", "text": "", "steps": []}
+        # C7：无当前 source 的社交请求在入口捕获真实旧锚点快照（先于会话解析/上下文装配）
+        _chat_time_snapshot = {}
+        if user_id is not None and character_id is not None:
+            from app.agent.context.chat_time import capture_request_anchor
+            _chat_time_snapshot = await capture_request_anchor(user_id, character_id)
         # 1. 会话解析（群聊无私有会话时按最新会话注入该角色与用户的私聊历史——属于角色自己的知识）
         if session_id is None:
             session_id = await _resolve_session_id(user_id, character_id)
@@ -456,6 +451,8 @@ async def run_social_reply(
             user_message=user_message, lang=lang,
             reasoning_level=reasoning_level, save_memory=save_memory,
             group_id=group_id, group_shared_fact=group_shared_fact,
+            chat_time_reference_at=_chat_time_snapshot.get("chat_time_reference_at"),
+            chat_time_anchor_snapshot=_chat_time_snapshot.get("chat_time_anchor_snapshot"),
         )
 
         # 3. 上下文注入（知识边界按角色隔离：只注入该角色自己的记忆 + 平台公开上下文由调用方传入）

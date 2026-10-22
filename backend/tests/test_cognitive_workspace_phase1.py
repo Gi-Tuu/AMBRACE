@@ -374,6 +374,7 @@ _ALLOWED_NEW_KEYS = {
     "continue_payload", "group_id", "group_shared_fact", "channel_hint", "source_id",
     "stream_sink", "tts", "voice_params", "tts_subdir", "block_sink",
     "character_states_snapshot", "skip_memory_save",
+    "chat_time_source_id", "chat_time_reference_at", "chat_time_anchor_snapshot",
 }
 
 
@@ -574,3 +575,22 @@ def test_图内写入的state键必须声明_历史两处遗漏挂账在A29():
         "要么改成不跨节点传递；别让它静默生效不了。")
     stale = _KNOWN_UNDECLARED - set(found)
     assert not stale, f"挂账的键已经不在了 {sorted(stale)}：请从 _KNOWN_UNDECLARED 删除名单项（A29 已修）"
+
+
+def test_C7未提供入口边界时保持空值_显式快照原样传递():
+    from datetime import datetime, timedelta, timezone
+    from app.agent import runtime as rt
+
+    kwargs = dict(character_id=13, user_id=3, session_id=11, user_message="hi",
+                  lang="zh", reasoning_level=0)
+    state = rt._build_initial_state(**kwargs)
+    for key in ("chat_time_source_id", "chat_time_reference_at", "chat_time_anchor_snapshot"):
+        assert state[key] is None, "没有入口证据时不能伪造当前时刻或锚点"
+    reference = datetime(2026, 10, 22, 8, tzinfo=timezone(timedelta(hours=8)))
+    snapshot = {"status": "ok", "message_id": 7, "created_at": datetime(2026, 10, 20)}
+    state = rt._build_initial_state(**kwargs, chat_time_source_id=9,
+                                    chat_time_reference_at=reference,
+                                    chat_time_anchor_snapshot=snapshot)
+    assert state["chat_time_source_id"] == 9
+    assert state["chat_time_reference_at"] == datetime(2026, 10, 22)
+    assert state["chat_time_anchor_snapshot"] is snapshot

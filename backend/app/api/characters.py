@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application import characters as _svc
 from app.application.characters import _LorebookUpsert, _WorldFactCreate  # 路由签名用请求模型
 from app.auth.deps import get_current_user_id
+from app.db.character_id_guard import CharacterIdCapacityExceeded
 from app.db.database import get_db
 from app.schemas.character import (
     CharacterCreate,
@@ -45,10 +46,13 @@ async def create_character(
     不带则保持旧语义（每次可新建），手机端不受影响。
     """
     _check_voice_or_400(data.voice)
-    if idempotency_key is None:
-        return await _svc.create_character(db, data, user_id)
-    from app.application.character_creation_idempotency import create_character_once
-    return await create_character_once(db, data, user_id, idempotency_key)
+    try:
+        if idempotency_key is None:
+            return await _svc.create_character(db, data, user_id)
+        from app.application.character_creation_idempotency import create_character_once
+        return await create_character_once(db, data, user_id, idempotency_key)
+    except CharacterIdCapacityExceeded as exc:
+        raise HTTPException(status_code=409, detail="character_id_capacity_exhausted") from exc
 
 
 @router.post("/{character_id}/generate-greeting")

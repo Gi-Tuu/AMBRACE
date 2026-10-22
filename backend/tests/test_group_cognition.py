@@ -157,7 +157,20 @@ def test_migration_upgrade_head_and_downgrade_single_head(tmp_path):
     assert len(head_lines) == 1, r2.stdout
     assert "f2b3c4d5e6f7 (head)" not in r2.stdout
 
-    # 3) downgrade 到父节点 → 表与列干净移除（可回退）
+    # 3) 本修订的可逆性另用独立库验证，不能跨越后续明确不可逆的B2迁移。
+    db = tmp_path / "mig_rollback.db"
+    env = dict(env, DATABASE_URL=f"sqlite:///{db.as_posix()}")
+    local = subprocess.run([sys.executable, "-m", "alembic", "upgrade", "f3c4d5e6f7a1"],
+                           cwd=str(backend), env=env, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+    assert local.returncode == 0, local.stderr
+    with sqlite3.connect(str(db)) as conn:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(chat_groups)")}
+        assert "group_char_cognitions" in tables
+        assert "cognition_enabled" in cols
+
+    # downgrade 到本修订父节点 → 表与列干净移除（可回退）
     r3 = subprocess.run([sys.executable, "-m", "alembic", "downgrade", "f2b3c4d5e6f7"],
                         cwd=str(backend), env=env, capture_output=True, text=True,
                         encoding="utf-8", errors="replace")

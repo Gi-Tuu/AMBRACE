@@ -1,8 +1,9 @@
 """world sections（步骤5）：世界状态/当前时间/进行中时间承诺/位置天气/时间提示。
 
-从 ``context_builder.build_context_legacy`` 迁出，逻辑与旧版完全一致（零行为变化）：
+从 ``context_builder.build_context_legacy`` 迁出；除 C7 的时间锚点修复外，其余逻辑与迁出时一致：
 - ``world_facts`` → 模板槽（当前事实折叠，失败静默「无」）；
-- ``current_time`` → 模板槽（北京时间 + 用户本地时区 + 节日季节 + 距上次互动）；
+- ``current_time`` → 模板槽（北京时间 + 用户本地时区 + 节日季节 + 距上次**用户发言**；
+  C7（2026-10-22）起由 ``context.chat_time`` 提供，不再读 ``ChatSession.updated_at``）；
 - ``pending_timer`` → 模板槽（进行中的时间承诺，失败静默「无」）；
 - ``time_prompt`` → 追加块（【当前时间】提示，始终注入）；
 - ``location`` → 追加块（位置感知 + 天气，条件注入）。
@@ -15,7 +16,6 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone, timedelta
 
-from app.utils.timeutil import now_naive_utc, to_naive_utc
 from app.agent.context.sections import ContextSection, register_section, TARGET_TEMPLATE, TARGET_APPEND
 
 _logger = logging.getLogger("agent.context.section_world")
@@ -56,41 +56,9 @@ async def _compute_current_time_str(state: dict, ctx: dict) -> str:
         _logger.warning("Season/holiday inject failed: %s", e)
 
     try:
-        from sqlalchemy import select
-        from app.db.database import async_session_factory
-        from app.models.chat import ChatSession
-        async with async_session_factory() as db:
-            _sr = await db.execute(
-                select(ChatSession)
-                .where(
-                    ChatSession.user_id == state.get("user_id"),
-                    ChatSession.character_id == state["character_id"],
-                )
-                .order_by(ChatSession.updated_at.desc())
-                .limit(1)
-            )
-            _last_session = _sr.scalar_one_or_none()
-        if _last_session is not None and _last_session.updated_at is not None:
-            _last_dt = to_naive_utc(_last_session.updated_at)
-            _delta = now_naive_utc() - _last_dt
-            _secs = max(0, int(_delta.total_seconds()))
-            if _secs < 60:
-                _ago = "\u521a\u521a"
-            elif _secs < 3600:
-                _ago = f"{_secs // 60} \u5206\u949f\u524d"
-            elif _secs < 86400:
-                _h, _m = divmod(_secs // 60, 60)
-                _ago = f"{_h} \u5c0f\u65f6 {_m} \u5206\u949f\u524d"
-            elif _secs < 172800:
-                _ago = "\u6628\u5929"
-            elif _secs < 604800:
-                _ago = f"{_secs // 86400} \u5929\u524d"
-            elif _secs < 2592000:
-                _ago = f"{_secs // 604800} \u5468\u524d"
-            elif _secs < 31536000:
-                _ago = f"{_secs // 2592000} \u4e2a\u6708\u524d"
-            else:
-                _ago = "\u5f88\u4e45"
+        from app.agent.context.chat_time import interaction_gap_text
+        _ago = await interaction_gap_text(state, ctx)
+        if _ago:
             current_time_str += f"\uff5c\u8ddd\u4e0a\u6b21\u4e92\u52a8 {_ago}"
     except Exception as e:
         _logger.warning("Last interaction inject failed: %s", e)

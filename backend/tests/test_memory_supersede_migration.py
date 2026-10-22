@@ -45,7 +45,7 @@ def test_migration_upgrade_downgrade(mig_db):
     cfg = Config(os.path.join(backend, "alembic.ini"))
     cfg.set_main_option("script_location", os.path.join(backend, "alembic"))
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "b1c2d3e4f5a6")
     eng = create_engine("sqlite:///" + db_path)
     insp = inspect(eng)
     cols = {c["name"] for c in insp.get_columns("memories")}

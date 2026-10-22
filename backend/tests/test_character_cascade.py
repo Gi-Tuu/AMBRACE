@@ -106,6 +106,7 @@ async def _seed(factory) -> dict:
     from app.models.memory import (
         ConversationTopic,
         DailySummary,
+        LorebookEntry,
         Memory,
         MemoryArchive,
         ProcessedExtraction,
@@ -114,6 +115,7 @@ async def _seed(factory) -> dict:
         WeaveCard,
         WeaveCardCharacter,
         WeaveCardMemory,
+        WorldFact,
     )
     from app.models.user import PrivacyRequest, User
 
@@ -164,6 +166,26 @@ async def _seed(factory) -> dict:
         db.add(ConversationTopic(character_id=CHAR_A, user_id=USER_ID, topic="旅行计划"))
         db.add(StageMemory(user_id=USER_ID, character_id=CHAR_A, content="角色扮演"))
         db.add(ReflectionLog(character_id=CHAR_A, user_id=USER_ID))
+
+        # ── B2a：角色私有设定（世界书 / 世界事实；A 删、B 留）──
+        db.add(LorebookEntry(
+            user_id=USER_ID, character_id=CHAR_A, title="A 世界书",
+            content="A 私有设定", keywords='["a暗号"]', active=True,
+        ))
+        db.add(LorebookEntry(
+            user_id=USER_ID, character_id=CHAR_B, title="B 世界书",
+            content="B 保留设定", keywords='["b暗号"]', active=True,
+        ))
+        db.add(WorldFact(
+            user_id=USER_ID, character_id=CHAR_A, subject_type="character",
+            subject_id=CHAR_A, predicate="status", object_value="A 状态",
+            status="active", kind="status", audience='["public"]',
+        ))
+        db.add(WorldFact(
+            user_id=USER_ID, character_id=CHAR_B, subject_type="character",
+            subject_id=CHAR_B, predicate="status", object_value="B 状态",
+            status="active", kind="status", audience='["public"]',
+        ))
 
         # ── AI Life ──
         db.add(LifeState(character_id=CHAR_A))
@@ -333,6 +355,7 @@ def test_delete_character_leaves_no_orphan(cascade_env):
         from app.models.memory import (
             ConversationTopic,
             DailySummary,
+            LorebookEntry,
             Memory,
             MemoryArchive,
             ProcessedExtraction,
@@ -341,6 +364,7 @@ def test_delete_character_leaves_no_orphan(cascade_env):
             WeaveCard,
             WeaveCardCharacter,
             WeaveCardMemory,
+            WorldFact,
         )
         from app.models.user import PrivacyRequest
 
@@ -355,6 +379,7 @@ def test_delete_character_leaves_no_orphan(cascade_env):
                 LifeState, LifeActivityLog, LifeArtifact, LifeInterest, LifeGoal,
                 LifeSchedule, LifeFollowup, LifeChatIntent,
                 ConversationTopic, StageMemory, ReflectionLog, Memory, MemoryArchive,
+                LorebookEntry, WorldFact,
                 WeaveCardCharacter, PhoneDesktop, PhoneLayout, CalendarNote, MemoNote,
                 BrowserHistory, CheckInRequest, ChatGroupMessage, ChatGroupMember,
                 GameMemory, GamePlayer, ChatSession, EmotionCareTask,
@@ -374,6 +399,8 @@ def test_delete_character_leaves_no_orphan(cascade_env):
             # 3) 共享数据不误删
             assert await _count(db, AICharacter, id=CHAR_B) == 1
             assert await _count(db, Memory, character_id=CHAR_B) == 1
+            assert await _count(db, LorebookEntry, character_id=CHAR_B) == 1
+            assert await _count(db, WorldFact, character_id=CHAR_B) == 1
             assert await _count(db, AIMoment, character_id=CHAR_B) == 1
             assert await _count(db, MomentComment, moment_id=ids["moment_b_id"]) == 0  # A 评论连子树
             assert await _count(db, ChatGroupMember, character_id=CHAR_B) == 1

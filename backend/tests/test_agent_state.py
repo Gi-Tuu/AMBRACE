@@ -20,6 +20,7 @@ generate_response（bug 暴露点），从而证明 LangGraph channel 对 AgentS
 """
 import asyncio
 import ast
+from datetime import datetime
 from pathlib import Path
 
 from langgraph.graph import END, StateGraph
@@ -248,8 +249,34 @@ def test_agent_ainvoke_channel_hint_none_does_not_insert(monkeypatch):
     assert msgs and msgs[0]["role"] == "user"  # 首条仍是用户消息，未插 system 提示
 
 
-# ── §九 4：AgentState 完整性检查（A28-S4 后改锚「唯一 State 构造器」）──
+# ── C7：时间锚点边界字段必须穿过 LangGraph channel ──
 
+def test_agent_ainvoke_preserves_chat_time_boundary_fields(monkeypatch):
+    """C7：chat_time_* 三键已进 AgentState 声明，能随图装配传回服务层。"""
+    async def _fake_completion(**kw):
+        return "好。"
+
+    monkeypatch.setattr(nodes, "chat_completion", _fake_completion)
+    monkeypatch.setattr(nodes, "_has_after_generate_hook", lambda: False)
+    monkeypatch.setattr("app.agent.llm_client.get_user_llm_config", _get_cfg)
+
+    reference = datetime(2026, 10, 22, 0, 0, 0)
+    snapshot = {
+        "status": "ok", "message_id": 7,
+        "created_at": datetime(2026, 10, 21, 0, 0, 0),
+    }
+    final = asyncio.run(_build_test_agent().ainvoke(_base_initial_state(
+        chat_time_source_id=42,
+        chat_time_reference_at=reference,
+        chat_time_anchor_snapshot=snapshot,
+    )))
+
+    assert final.get("chat_time_source_id") == 42
+    assert final.get("chat_time_reference_at") == reference
+    assert final.get("chat_time_anchor_snapshot") == snapshot
+
+
+# ── §九 4：AgentState 完整性检查（A28-S4 后改锚「唯一 State 构造器」）──
 def _dict_keys_assigned_to(name: str, source_path) -> list[set[str]]:
     """AST 提取「`name = {…}` 字面量」的键集合（不硬编码，避免测试自身漂移）。"""
     tree = ast.parse(Path(source_path).read_text(encoding="utf-8"))

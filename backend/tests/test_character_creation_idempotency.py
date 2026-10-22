@@ -368,7 +368,8 @@ def test_迁移_存量库升级只加收据表且唯一约束落地(tmp_path, mo
     with eng2.connect() as conn:
         assert conn.execute(text("SELECT name FROM ai_characters WHERE id=902")).scalar_one() == "MIG_OLD_CHAR"
         rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert rev == "e2f4a6b8c0d2", rev
+    # B2b（2026-10-21）：候选 AUTOINCREMENT 迁移已接到 e2f4a6b8c0d2 之上，head 前移。
+    assert rev == "b2a0c1d2e3f4", rev
     # 唯一约束真的生效
     with eng2.begin() as conn:
         conn.execute(text("INSERT INTO character_creation_requests "

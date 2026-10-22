@@ -380,7 +380,7 @@ _MUTE_REPL = "        if topic.strip() in _INTERNAL_STUDY_TOPICS:\n            r
 def _compile_mutant(path: pathlib.Path) -> types.ModuleType:
     """动态 compile 一份「撤掉内部哨兵挂点」的 life_loop 变异体（只改内存，不写磁盘）。"""
     raw = path.read_bytes()
-    src = raw.decode("utf-8")
+    src = raw.decode("utf-8").replace("\r\n", "\n")
     assert _MUTE_NEEDLE in src, "哨兵挂点形态与变异补丁不一致（改动前请同步本测试）"
     mod = types.ModuleType("app.life._audit13_mutant_life_loop")
     mod.__package__ = "app.life"
@@ -390,14 +390,19 @@ def _compile_mutant(path: pathlib.Path) -> types.ModuleType:
     return mod
 
 
-def test_变异撤除内部哨兵_真语义变红且磁盘源码字节不变(tmp_path, monkeypatch):
+@pytest.mark.parametrize("source_eol", [b"\n", b"\r\n"], ids=["LF", "CRLF"])
+def test_变异撤除内部哨兵_真语义变红且磁盘源码字节不变(tmp_path, monkeypatch, source_eol):
     """撤掉哨兵 → 内部主题在 llm=True 档又沉淀（证明断言测的是语义而非同义反复）；源码未动。"""
     import app.life.life_loop as life_loop_mod
 
     src_path = pathlib.Path(life_loop_mod.__file__).resolve()
     digest_before = hashlib.sha256(src_path.read_bytes()).hexdigest()
 
-    mutant = _compile_mutant(src_path)
+    # 用同一源码的两种检出换行运行原语义反例；不改现网源码或断言。
+    fixture_path = tmp_path / "life_loop_source.py"
+    fixture_bytes = src_path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", source_eol)
+    fixture_path.write_bytes(fixture_bytes)
+    mutant = _compile_mutant(fixture_path)
     factory, engine = _make_factory(tmp_path / "audit13_mutant.db")
     try:
         asyncio.run(_seed(factory, goals=[(INTERNAL_TOPIC, INTERNAL_TOPIC_PRIORITY)]))
@@ -432,6 +437,7 @@ def test_变异撤除内部哨兵_真语义变红且磁盘源码字节不变(tmp
         asyncio.run(engine.dispose())
 
     assert hashlib.sha256(src_path.read_bytes()).hexdigest() == digest_before  # 源字节不变
+    assert fixture_path.read_bytes() == fixture_bytes  # 变异只在内存，副本字节也不变
 
 
 def test_内部主题LLM档只验实际副作用为零(life_db, monkeypatch):

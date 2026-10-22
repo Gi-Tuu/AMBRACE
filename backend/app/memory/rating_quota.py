@@ -17,6 +17,7 @@ import os
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from time import sleep
 
 from app.utils.logger import get_logger
 
@@ -53,7 +54,15 @@ def _save(data: dict) -> None:
         _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = _STATE_FILE.with_name(_STATE_FILE.name + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, _STATE_FILE)
+        # Windows 临时占用可能拒绝原子替换；保留同一份完整 tmp，有限重试。
+        for attempt in range(3):
+            try:
+                os.replace(tmp, _STATE_FILE)
+                break
+            except PermissionError as exc:
+                if getattr(exc, "winerror", None) not in (5, 32, 33) or attempt == 2:
+                    raise
+                sleep(0.05 * (attempt + 1))
     except Exception as e:
         _logger.warning("Write rating quota failed: %s", e)
 

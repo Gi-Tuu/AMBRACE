@@ -151,7 +151,7 @@ HOT_RATCHET = [
     ("agent/nodes.py", "generate_response", 222, 51),
     ("api/chat.py", "websocket_chat", 212, 40),
     ("agent/llm_client.py", "chat_completion", 189, 48),
-    ("agent/runtime.py", "build_light_social_context", 168, 45),
+    ("agent/runtime.py", "build_light_social_context", 150, 42),
     ("memory/meaning.py", "run_meaning_extraction", 147, 51),
     ("memory/retrieve.py", "_rerank", 147, 52),
     ("scheduling/message_generator.py", "_run_two_rounds", 128, 45),

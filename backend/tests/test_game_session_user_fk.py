@@ -197,13 +197,13 @@ def test_old_db_upgrade_lands_cascade_and_twice_idempotent(tmp_path, monkeypatch
 
     _seed(db)
     command.stamp(_cfg(), PREV_HEAD)  # 存量库已追平到交接点，后续迁移不再重放
-    command.upgrade(_cfg(), "head")  # 只有 c0d1e2f3a4b5 这一步执行
+    command.upgrade(_cfg(), NEW_REV)  # 只有 c0d1e2f3a4b5 这一步执行
     _assert_state_ok(db, "老库首次补齐", CHILD_FKS_AT_OLD)
 
     # 幂等：版本退回 down_revision，让迁移体真正再跑两遍
     for n in (1, 2):
         command.stamp(_cfg(), PREV_HEAD)
-        command.upgrade(_cfg(), "head")
+        command.upgrade(_cfg(), NEW_REV)
         _assert_state_ok(db, f"第 {n} 次重跑", CHILD_FKS_AT_OLD)
 
 

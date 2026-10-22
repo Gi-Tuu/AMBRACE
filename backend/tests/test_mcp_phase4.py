@@ -47,7 +47,10 @@ async def _cleanup():
 
 
 async def _ensure_test_users():
-    """确保主账号 ADMIN=1 与独立测试用户 UID=9200 存在（外键前置：mcp_servers.user_id FK）。"""
+    """确保主账号 ADMIN=1 与独立测试用户 UID=9200 存在（外键前置：mcp_servers.user_id FK）。
+
+    ADMIN=1 补 server_admin：安全 B1 起 stdio 执行权只在服务器管理员（权限语义变化）。
+    """
     from app.models.user import User
     from sqlalchemy import select as _sel
 
@@ -55,9 +58,13 @@ async def _ensure_test_users():
         exist = set((await db.execute(_sel(User.id).where(User.id.in_((ADMIN, UID))))).scalars().all())
         for uid in (ADMIN, UID):
             if uid not in exist:
-                db.add(User(id=uid, username=f"mcp_ph4_{uid}", nickname="MCP PH4 测试", is_admin=(uid == ADMIN)))
-        if set((ADMIN, UID)) - exist:
-            await db.commit()
+                db.add(User(id=uid, username=f"mcp_ph4_{uid}", nickname="MCP PH4 测试",
+                            is_admin=(uid == ADMIN), server_admin=(uid == ADMIN)))
+        if ADMIN in exist:
+            admin_row = (await db.execute(_sel(User).where(User.id == ADMIN))).scalar_one()
+            admin_row.is_admin = True
+            admin_row.server_admin = True
+        await db.commit()
 
 
 @pytest.fixture(autouse=True)
@@ -94,6 +101,8 @@ def _conn(server_id, *, server_name="srv", user_id=ADMIN, resources=None, prompt
     """构造一个假的已连接 _Connection 并注册进 manager（同事件循环；is_connected 成立）。"""
     async def _do():
         c = _Connection(server_id=server_id, server_name=server_name, user_id=user_id)
+        # 本文件只模拟已连接的远程 server（日志/资源/提示词），不模拟 stdio 执行权。
+        c.transport = "sse"
         c.tools = tools or []
         c.resources = resources or []
         c.prompts = prompts or []

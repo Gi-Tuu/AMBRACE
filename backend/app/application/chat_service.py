@@ -97,7 +97,7 @@ async def _run_agent_core(
     tts: bool = False,
     stream_tts_ctx: dict | None = None,
     reply_delay: bool = False,
-    channel_hint: str | None = None,
+    channel_hint: str | None = None, chat_time_source_id: int | None = None,
 ) -> dict | None:
     """公共 Agent 主流程（双路径收敛 #45，以 chunked 版逻辑为基准）。
 
@@ -135,7 +135,7 @@ async def _run_agent_core(
         user_message=content, lang=lang,
         reasoning_level=await _load_reasoning_level(character_id),
         save_memory=True,                      # 主聊天轮：照常落记忆（旧字面量里没有 skip_memory_save 键）
-        source_id=user_msg_id,
+        source_id=user_msg_id, chat_time_source_id=chat_time_source_id,
         channel_hint=channel_hint,
         stream_sink=stream_sink,
         tts=tts,
@@ -786,6 +786,7 @@ async def send_and_receive_chunked(
     extra_capabilities: list[str] | None = None,
     reply_delay: bool = True,
     route: str = "ws_chunk",
+    chat_time_source_id: int | None = None,
 ) -> dict:
     """发送用户消息 -> Agent处理 -> 拆分回复 -> 保存每条块
 
@@ -804,7 +805,7 @@ async def send_and_receive_chunked(
     # 公共 Agent 主流程（流式路径：不触发搜索，仅剥离标记兜底）
     core = await _run_agent_core(
         session_id, user_id, character_id, content, lang, user_msg_id,
-        reply_delay=reply_delay,
+        reply_delay=reply_delay, chat_time_source_id=chat_time_source_id,
     )
     if core is None:
         return {"chunks": [], "memories_updated": False, "cold_war": True}
@@ -948,6 +949,13 @@ async def continue_chat(
     session_id: int, user_id: int, character_id: int, last_message_id: int,
     lang: str = "zh",
 ) -> dict:
+    # C7：继续场景没有新的用户消息；请求一进来就捕获最后一条用户发言快照
+    # （早于冷战检查/取上一条；不按可复用 ROWID 回查，边界后晚到消息不参与）。
+    from app.agent.context.chat_time import capture_request_anchor
+    _chat_time_snapshot = (
+        await capture_request_anchor(user_id, character_id) if user_id is not None else {}
+    )
+
     # 冷战拦截（v3）：继续对话也属于"发消息"，冷战期不回复
     if await _cold_war_block(character_id, user_id, ""):
         return {"chunks": [], "memories_updated": False, "cold_war": True}
@@ -995,6 +1003,8 @@ async def continue_chat(
         lang=lang,
         reasoning_level=await _load_reasoning_level(character_id),
         save_memory=True,
+        chat_time_reference_at=_chat_time_snapshot.get("chat_time_reference_at"),
+        chat_time_anchor_snapshot=_chat_time_snapshot.get("chat_time_anchor_snapshot"),
     )
     final_state = await agent.ainvoke(initial_state)
     full_text = (final_state.get("ai_response") or "").strip()

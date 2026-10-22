@@ -484,7 +484,7 @@ def test_migration_建表_幂等_downgrade可逆(tmp_path):
 
 
 def test_migration_alembic_upgrade_downgrade_再upgrade(tmp_path, monkeypatch):
-    """真实 alembic 命令链：stamp 到前一 head → upgrade head（跑本迁移）→ downgrade → 再 upgrade。"""
+    """真实 alembic 命令链：stamp 到前一 head → upgrade 本修订（不跨后续不可逆迁移）→ downgrade → 再 upgrade。"""
     from alembic import command
     from alembic.config import Config
 
@@ -497,7 +497,7 @@ def test_migration_alembic_upgrade_downgrade_再upgrade(tmp_path, monkeypatch):
     cfg = Config(str(backend / "alembic.ini"))
     cfg.set_main_option("script_location", str(backend / "alembic"))
     command.stamp(cfg, "a8b9c0d1e2f3")
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, "b9c0d1e2f3a4")
 
     engine = sa.create_engine(f"sqlite:///{db_file.as_posix()}")
     try:
@@ -506,9 +506,10 @@ def test_migration_alembic_upgrade_downgrade_再upgrade(tmp_path, monkeypatch):
                 sa.text("SELECT name FROM sqlite_master WHERE type='table'"))}
             ver = conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar()
         assert "plugin_consents" in tables
-        # 2026-09-20：链头随新迁移前移，不再硬编码 b9c0d1e2f3a4（P3-5 的 c0d1e2f3a4b5 一加就红）
+        # 全链单头独立验证；升降级固定到本修订，不跨越后续不可逆迁移。
         from alembic.script import ScriptDirectory
-        assert ver == ScriptDirectory.from_config(cfg).get_current_head()  # 单头且落在当前链头
+        assert len(ScriptDirectory.from_config(cfg).get_heads()) == 1
+        assert ver == "b9c0d1e2f3a4"  # 只验证本修订的升降级
 
         command.downgrade(cfg, "a8b9c0d1e2f3")
         with engine.connect() as conn:
@@ -516,12 +517,12 @@ def test_migration_alembic_upgrade_downgrade_再upgrade(tmp_path, monkeypatch):
                 sa.text("SELECT name FROM sqlite_master WHERE type='table'"))}
         assert "plugin_consents" not in tables2
 
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "b9c0d1e2f3a4")
         with engine.connect() as conn:
             tables3 = {r[0] for r in conn.execute(
                 sa.text("SELECT name FROM sqlite_master WHERE type='table'"))}
             ver3 = conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar()
-        assert "plugin_consents" in tables3 and ver3 == ScriptDirectory.from_config(cfg).get_current_head()
+        assert "plugin_consents" in tables3 and ver3 == "b9c0d1e2f3a4"
     finally:
         engine.dispose()
 
