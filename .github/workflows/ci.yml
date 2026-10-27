@@ -124,6 +124,8 @@ jobs:
         py: [ "3.12", "3.13", "3.14" ]
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v7
         with:
@@ -228,6 +230,8 @@ jobs:
         python-version: [ "3.13" ]
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v7
         with:
@@ -279,6 +283,8 @@ jobs:
         python-version: [ "3.12", "3.13" ]
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v7
         with:
