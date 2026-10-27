@@ -344,7 +344,7 @@ def test_上下文里只有注入档那一处消费workspace():
     """
     from app.agent import context_builder as cb
 
-    gated = {"section_projection.py", "assembly.py"}
+    gated = {"section_projection.py", "assembly.py", "projection_injection.py"}
     targets = [Path(cb.__file__)]
     ctx_dir = Path(cb.__file__).parent / "context"
     if ctx_dir.is_dir():

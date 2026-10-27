@@ -1,4 +1,6 @@
 import '../../models/memory.dart';
+import '../../models/memory_history.dart';
+import '../../models/memory_derivations.dart';
 import '../api_client.dart';
 
 /// MemoriesApi：领域 API 方法（extension 挂到 ApiClient）
@@ -62,6 +64,48 @@ extension MemoriesApi on ApiClient {
     return (data['chain'] as List)
         .map((j) => MemoryNode.fromJson(j as Map<String, dynamic>))
         .toList();
+  }
+
+  /// RC2 G1：记忆「修正历史」（只读 GET，复用后端既有接口）。
+  ///
+  /// 形状错误 / memory_id 与服务请求不一致一律抛 [FormatException]，
+  /// 由详情页呈现「加载失败」，不能伪装成「暂无修正记录」。
+  Future<MemoryHistory> getMemoryHistory(int id) async {
+    final r = await dio.get('/api/v1/memories/$id/history');
+    final raw = r.data;
+    if (raw is! Map) {
+      throw const FormatException('memory history: payload is not an object');
+    }
+    final history = MemoryHistory.fromJson(Map<String, dynamic>.from(raw));
+    if (history.memoryId != id) {
+      throw const FormatException('memory history: memory_id mismatch');
+    }
+    return history;
+  }
+
+  /// RC2 G2：记忆派生关系（只读 GET，两方向独立分页）。
+  ///
+  /// 形状错误 / memory_id 与请求不一致一律抛 [FormatException]，由 UI 走失败态。
+  Future<MemoryDerivations> getMemoryDerivations(
+    int id, {
+    int limit = 20,
+    String? parentsCursor,
+    String? childrenCursor,
+  }) async {
+    final params = <String, dynamic>{'limit': limit};
+    if (parentsCursor != null) params['parents_cursor'] = parentsCursor;
+    if (childrenCursor != null) params['children_cursor'] = childrenCursor;
+    final r = await dio.get('/api/v1/memories/$id/derivations',
+        queryParameters: params);
+    final raw = r.data;
+    if (raw is! Map) {
+      throw const FormatException('memory derivations: payload is not an object');
+    }
+    final data = MemoryDerivations.fromJson(Map<String, dynamic>.from(raw));
+    if (data.memoryId != id) {
+      throw const FormatException('memory derivations: memory_id mismatch');
+    }
+    return data;
   }
 
   Future<void> deleteMemoryCascade(int id) async {

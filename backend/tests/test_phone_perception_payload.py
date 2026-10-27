@@ -48,7 +48,16 @@ TABLE = "phone_snapshots"
 # 快测档：接口/读取层每例起临时库，迁移层每例真跑整链重放，均属重量级（docs/engineering-protocol.md 十八）
 pytestmark = pytest.mark.slow
 
-_NOW_UTC = datetime.now(timezone.utc).replace(tzinfo=None)
+
+def _now_utc() -> datetime:
+    """**运行时**当前 UTC naive 时刻。
+
+    返工：本模块曾在收集期冻结 `_NOW_UTC = datetime.now(...)`。整套后端跑 2561s，
+    这些读取层用例落到约 65% 时才执行，冻结时刻早已超过产品 30 分钟 TTL ⇒
+    当次插入的「新」快照被正确过滤，4 例假红。产品 TTL 无误，改在这里每次取当前时刻。
+    需要「同一时刻多行」的用例仍必须**单次**调用后复用同一个值，不得每行各取。
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # ── ①② 接口/读取层辅助（克隆库＝当前 schema）──
@@ -85,7 +94,9 @@ async def _add_user(factory, uid: int):
 
 
 async def _add_snap(factory, uid, source, content, *, minutes_ago=0, payload=None):
-    ts = _NOW_UTC - timedelta(minutes=minutes_ago)
+    # 在真正插入的这一刻取时：minutes_ago 是相对「现在」的偏移，
+    # 不能再用收集期冻结的常量，否则整套跑久了新鲜行也会过期。
+    ts = _now_utc() - timedelta(minutes=minutes_ago)
     async with factory() as db:
         db.add(PhoneSnapshot(
             user_id=uid, source=source, content=content, created_at=ts, payload_json=payload
@@ -268,7 +279,9 @@ def test_记录读取每来源只留最新且丢弃超时(phone_db):
 def test_同一时刻的多条按id倒序保证确定性(phone_db):
     """created_at 完全相同（同一秒批量补传）时，靠 id 倒序定序，同来源只留最后写入的那条。"""
     asyncio.run(_add_user(phone_db, 5))
-    same_ts = _NOW_UTC - timedelta(minutes=1)
+    # 单次取时刻，两行共用**完全相同**的 created_at——本例考的就是同刻按 id 倒序定序，
+    # 每行各取 now 会让时间戳不同，判据立刻失效。
+    same_ts = _now_utc() - timedelta(minutes=1)
     async def _ins():
         async with phone_db() as db:
             db.add_all([

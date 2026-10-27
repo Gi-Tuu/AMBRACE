@@ -368,8 +368,17 @@ def test_迁移_存量库升级只加收据表且唯一约束落地(tmp_path, mo
     with eng2.connect() as conn:
         assert conn.execute(text("SELECT name FROM ai_characters WHERE id=902")).scalar_one() == "MIG_OLD_CHAR"
         rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    # B2b（2026-10-21）：候选 AUTOINCREMENT 迁移已接到 e2f4a6b8c0d2 之上，head 前移。
-    assert rev == "b2a0c1d2e3f4", rev
+    # 迁移链 head 前移是常态（2026-10-21 B2b 把 AUTOINCREMENT 接到 e2f 之上；本批 2026-10-23
+    # 又把 memories.write_key c4 挂到 b2a 之后）。这里断言的是「upgrade head 后 alembic_version
+    # 收敛到当前图的唯一 head」，而不是把某个 revision 写死。
+    # 单头不变量本身用 ScriptDirectory 现读，链一断/多头都会直接暴露。
+    from alembic.script import ScriptDirectory
+    _script = ScriptDirectory(str(backend_dir / "alembic"))
+    _head = _script.get_current_head()
+    assert _head is not None, "仓库迁移图应有唯一 head"
+    assert rev == _head, (rev, _head)
+    # 约束锚点仍在那儿：receipts 迁移的下游 AUTOINCREMENT 迁移（b2a）没被删。
+    assert _script.get_revision("b2a0c1d2e3f4") is not None
     # 唯一约束真的生效
     with eng2.begin() as conn:
         conn.execute(text("INSERT INTO character_creation_requests "

@@ -138,8 +138,10 @@ async def _row(factory, pis_id):
 
 async def _add_user_message(factory, text, *, at=_FIXED_UTC):
     async with factory() as db:
-        db.add(ChatMessage(session_id=7, sender_type="user", content=text, created_at=at))
+        row = ChatMessage(session_id=7, sender_type="user", content=text, created_at=at)
+        db.add(row)
         await db.commit()
+        return row.id
 
 
 async def _add_intent(factory, **kw):
@@ -175,14 +177,19 @@ def test_settle_discharges_arrival_promise_and_writes_nothing(a32_db):
     """「我到家了」→ 在等到家的那条承诺置 discharged；主动消息日志与会话消息**一条都不新增**。"""
     from app.scheduling.prospective_intent import settle_promises_on_user_message, upsert_intent
 
+    # REWORK2（主审授权修正旧正例夹具）：假源 5001/5002 换真实源消息、结算文本先落库
+    # ——旧接口门禁要求从会话匹配到真实用户消息（业务断言不变）。
+    src1 = asyncio.run(_add_user_message(a32_db, _ARRIVAL_PROMISE, at=_FIXED_UTC - timedelta(minutes=20)))
+    src2 = asyncio.run(_add_user_message(a32_db, _NEUTRAL_PROMISE, at=_FIXED_UTC - timedelta(minutes=19)))
     pid = asyncio.run(upsert_intent(
         user_id=1, character_id=11, content=_ARRIVAL_PROMISE, kind="promise",
-        due_end=_DUE_TODAY, source_message_id=5001, chat_session_id=7,
+        due_end=_DUE_TODAY, source_message_id=src1, chat_session_id=7,
     ))
     neutral = asyncio.run(upsert_intent(
         user_id=1, character_id=11, content=_NEUTRAL_PROMISE, kind="promise",
-        due_end=_DUE_TODAY, source_message_id=5002, chat_session_id=7,
+        due_end=_DUE_TODAY, source_message_id=src2, chat_session_id=7,
     ))
+    asyncio.run(_add_user_message(a32_db, "我到家了"))
     logs0, msgs0 = asyncio.run(_counts(a32_db))
 
     settled = asyncio.run(settle_promises_on_user_message(11, 7, "我到家了"))
@@ -199,14 +206,18 @@ def test_settle_discharges_medication_signal_only_for_medication_promise(a32_db)
     """吃药信号只关吃药承诺；同一句「吃了」不得顺手关到家类（kind 分派不串）。"""
     from app.scheduling.prospective_intent import settle_promises_on_user_message, upsert_intent
 
+    # REWORK2：真实源 + 结算文本落库（同上，业务断言不变）
+    msrc = asyncio.run(_add_user_message(a32_db, _MED_PROMISE, at=_FIXED_UTC - timedelta(minutes=20)))
+    asrc = asyncio.run(_add_user_message(a32_db, _ARRIVAL_PROMISE, at=_FIXED_UTC - timedelta(minutes=19)))
     med = asyncio.run(upsert_intent(
         user_id=1, character_id=11, content=_MED_PROMISE, kind="promise",
-        due_end=_DUE_TODAY, source_message_id=5101, chat_session_id=7,
+        due_end=_DUE_TODAY, source_message_id=msrc, chat_session_id=7,
     ))
     arr = asyncio.run(upsert_intent(
         user_id=1, character_id=11, content=_ARRIVAL_PROMISE, kind="promise",
-        due_end=_DUE_TODAY, source_message_id=5102, chat_session_id=7,
+        due_end=_DUE_TODAY, source_message_id=asrc, chat_session_id=7,
     ))
+    asyncio.run(_add_user_message(a32_db, "吃了"))
     logs0, msgs0 = asyncio.run(_counts(a32_db))
 
     assert asyncio.run(settle_promises_on_user_message(11, 7, "吃了")) == [med]
@@ -230,9 +241,13 @@ def test_settle_touches_only_live_promise_rows(a32_db):
         a32_db, content="用户说到到家的事", kind="cue", cue_terms_json='["到家"]',
         due_end=_DUE_TODAY,
     ))
+    # REWORK2：live_matched 补真实源 + 结算文本落库（其余行靠各自规则不动，断言不变）
+    _live_src = asyncio.run(_add_user_message(a32_db, _ARRIVAL_PROMISE, at=_FIXED_UTC - timedelta(minutes=20)))
     live_matched = asyncio.run(_add_intent(
         a32_db, content=_ARRIVAL_PROMISE, kind="promise", due_end=_DUE_TODAY, status="matched",
+        source_message_id=_live_src, chat_session_id=7,
     ))
+    asyncio.run(_add_user_message(a32_db, "我已经到家了"))
 
     settled = asyncio.run(settle_promises_on_user_message(11, 7, "我已经到家了"))
 
@@ -286,9 +301,13 @@ def test_fire_gate_settles_silently_without_llm(a32_db, monkeypatch):
     from app.scheduling.prospective_intent import collect_due_promises, run_prospective_due, upsert_intent
 
     prompts, sends = _spy_llm_and_send(monkeypatch)
+    # REWORK2：假源 5401 换真实源消息（闸门源顺序核验需可加载源；断言不变）。
+    # 源文本用中性表述（不含到达信号词）——collect 层按「最新用户消息」判信号，计划文本
+    # 本身含「到家」会被误当完成证据（自触发），源消息只需真实存在即可承载时序。
+    _src = asyncio.run(_add_user_message(a32_db, "今晚把火锅订好这件事我来安排", at=_FIXED_UTC - timedelta(minutes=20)))
     pid = asyncio.run(upsert_intent(
         user_id=1, character_id=11, content=_ARRIVAL_PROMISE, kind="promise",
-        due_end=_DUE_TODAY, source_message_id=5401, chat_session_id=7,
+        due_end=_DUE_TODAY, source_message_id=_src, chat_session_id=7,
     ))
 
     cands = asyncio.run(collect_due_promises())
@@ -308,7 +327,12 @@ def test_fire_gate_settles_silently_without_llm(a32_db, monkeypatch):
 
 @pytest.mark.slow
 def test_fire_gate_also_reads_state_anchor(a32_db, monkeypatch):
-    """闸门第二个来源＝现状锚：会话里没信号、但锚里已写「已到家」同样静默关闭。"""
+    """C9b切口1 REWORK1 语义变更（主审必修 6 授权逐项说明）：锚不再单独关闭独立计划。
+
+    旧断言（A32 时点）：锚写「已到家」+ 会话无信号 ⇒ 闸门静默关闭（prompts/sends 全空）。
+    新安全边界：锚无时间戳/无消息身份，不单独作权威证据——闸门只认带时间的真实消息；
+    锚命中但会话最新消息无信号 ⇒ 走正常 fire 流程（真实生成/发送照常发生）。
+    有来源正例见 ``test_fire_gate_settles_with_real_message_evidence``。"""
     from app.scheduling.prospective_intent import run_prospective_due, upsert_intent
 
     prompts, sends = _spy_llm_and_send(monkeypatch)
@@ -327,6 +351,38 @@ def test_fire_gate_also_reads_state_anchor(a32_db, monkeypatch):
     assert asyncio.run(run_prospective_due({
         "pis_id": pid, "character_id": 11, "user_id": 1, "session_id": 7,
         "content": _ARRIVAL_PROMISE, "due_end": _DUE_TODAY, "side": "self",
+    })) is True
+    assert prompts != [] and sends != []   # 锚不单独关闭：到期提醒正常生成/发送
+    assert asyncio.run(_row(a32_db, pid)).status == "discharged"  # fire 成功的正常终态
+
+
+@pytest.mark.slow
+def test_fire_gate_settles_with_real_message_evidence(a32_db, monkeypatch):
+    """C9b切口1 REWORK1 补充（有来源正例）：真实到达消息（带时间）才是闸门关闭证据。
+
+    时序：计划源消息 10 分钟前 → 到达证据当前（晚于源、due 当天窗内）⇒ 静默关闭，
+    锚全程为空；prompts/sends 必须全空（静默语义保持）。"""
+    from app.scheduling.prospective_intent import run_prospective_due, upsert_intent
+
+    prompts, sends = _spy_llm_and_send(monkeypatch)
+    src = asyncio.run(_add_user_message(
+        a32_db, _ARRIVAL_PROMISE, at=_FIXED_UTC - timedelta(minutes=10)))
+    pid = asyncio.run(upsert_intent(
+        user_id=1, character_id=11, content=_ARRIVAL_PROMISE, kind="promise",
+        due_end=_DUE_TODAY, source_message_id=src, chat_session_id=7,
+    ))
+    asyncio.run(_add_user_message(a32_db, "我到家了"))    # 到达证据（_FIXED_UTC）
+
+    async def _no_anchor(*a, **kw):
+        return None
+
+    monkeypatch.setattr("app.scheduling.state_guard.current_state_anchor", _no_anchor)
+    logs0, msgs0 = asyncio.run(_counts(a32_db))
+
+    assert asyncio.run(run_prospective_due({
+        "pis_id": pid, "character_id": 11, "user_id": 1, "session_id": 7,
+        "content": _ARRIVAL_PROMISE, "due_end": _DUE_TODAY, "side": "self",
+        "source_message_id": src,
     })) is True
     assert prompts == [] and sends == []
     assert asyncio.run(_counts(a32_db)) == (logs0, msgs0)
@@ -452,7 +508,10 @@ def test_settle_wired_in_agent_core_before_generation():
     # ② helper 里必须真 await 结算，且排在另外四块之前
     assert _awaited(helper).count("settle_promises_on_user_message") == 1, (
         "helper 里的结算真调用应恰好一处（撤掉即判红）")
-    settle_call = "settle_promises_on_user_message(character_id, session_id, content)"
+    # C9b切口1（2026-10-24）：调用升级为携带真实身份证据（user_id/user_msg_id 登录态在
+    # helper 签名内）——接线钉子同步为新调用形态；「真 await + 排序」契约不变。
+    settle_call = ("settle_promises_on_user_message(character_id, session_id, content, "
+                   "user_id=user_id, source_message_id=user_msg_id)")
     assert settle_call in helper_src
     assert helper_src.index(settle_call) < min(
         helper_src.index(a) for a in ("has_comfort_word", "maybe_review_success",

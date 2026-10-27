@@ -32,6 +32,7 @@ CONTAINER_CALLS = frozenset({
 
 # 显式扫描面：发送口 / 节流口 / 台账本体 / 本批改过的模块（路径相对 backend/）
 SCAN_FILES = (
+    "app/memory/rating_quota.py",             # C8: 未落盘消费的同进程保守兜底
     "app/scheduling/periodic_state.py",       # 台账本体（持久判据的落盘处）
     "app/scheduling/scheduler.py",            # 所有定时通道的调度口
     "app/scheduling/arbiter.py",              # 30 秒 tick 的仲裁口（发送主闸）
@@ -54,11 +55,17 @@ SCAN_FILES = (
 
 # 白名单：文件 → 容器名 → 为什么可以留在进程内（I8 的逐条交代）
 WHITELIST: dict[str, dict[str, str]] = {
+    "app/memory/rating_quota.py": {
+        "_QUOTA_LOCK": "单进程账本读改写与未落盘消费共用互斥锁，防拒写并发时丢计数；不是跨进程锁",
+        "_PENDING": "仅保存按文件及北京日隔离的未落盘消费快照；成功写盘清除、跨日淘汰，拒写期间同进程不重复放量；重启丢失边界由ERROR和留痕明确报告，不冒称持久化",
+    },
     "app/scheduling/periodic_state.py": {
         "_LOCKS": "按 key 的进程内写锁，只保护同一文件的一次读-改-写；权威状态在 JSON 台账里，"
                   "重启丢锁不丢判据（锁本身不是节流状态）",
         "_LOCAL_STAMPS": "台账写盘失败时的内存兜底副本，读侧仍以文件为准（counter/window 同规则）；"
                          "它的存在方向是『多记住一点』而不是『少记住』，不会因重启复活成 0",
+        "_LOCAL_STREAKS": "写盘失败时连续失败次数的临时兜底，持久判据仍是 JSON 的 fail_streak；"
+                          "成功落盘后清除。重启会丢失未持久化的失败档位，不承诺永久写失败后的重启恢复",
         "_LOCAL_RETRY_AT": "同上：写失败时退避闸门的内存兜底，落盘成功后即弹出",
         "_LOCAL_COUNTERS": "本批新增的计数兜底（C36 生活拍 / C37 文案配额），与 _LOCAL_STAMPS 同规则；"
                            "真判据已落台账，重启后 counter() 取 max(文件, 内存) ⇒ 不复活为 0",
@@ -249,10 +256,130 @@ def test_已迁模块必须真的调用台账判据API():
             )
 
 
+def _has_import_from(src: str, module: str, name: str, asname: str | None = None, func_name: str | None = None) -> bool:
+    """源码里是否存在 `from module import name [as asname]`。
+
+    func_name 为 None 时只扫模块顶层；非 None 时只扫该函数体内的局部导入，
+    用于捕获在函数内部做的延迟/局部导入（如 extractor 里的 process_session）。
+    """
+    tree = ast.parse(src)
+    candidates = tree.body
+    if func_name is not None:
+        for node in candidates:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
+                candidates = node.body
+                break
+        else:
+            return False
+    for node in candidates:
+        if isinstance(node, ast.ImportFrom) and node.module == module:
+            for alias in node.names:
+                if alias.name == name and (asname is None or alias.asname == asname):
+                    return True
+    return False
+
+
+def _func_has_call(src: str, func_name: str, receiver: str, call_attr: str) -> bool:
+    """函数 func_name 内部是否直接以 receiver 作为接收者调用 receiver.call_attr()。
+
+    仅匹配 `receiver.call_attr(...)`，形如 `foo.take(...)` / `in_memory.take(...)` 不会误判为 `queue.take`。
+    """
+    tree = ast.parse(src)
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call):
+                    func = child.func
+                    if (
+                        isinstance(func, ast.Attribute)
+                        and isinstance(func.value, ast.Name)
+                        and func.value.id == receiver
+                        and func.attr == call_attr
+                    ):
+                        return True
+    return False
+
+
+def _func_has_await_call(src: str, func_name: str, call_name: str) -> bool:
+    """函数 func_name 内部是否直接 `await call_name(...)`。"""
+    tree = ast.parse(src)
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
+            for child in ast.walk(node):
+                if isinstance(child, ast.Await):
+                    expr = child.value
+                    if isinstance(expr, ast.Call):
+                        func = expr.func
+                        if isinstance(func, ast.Name) and func.id == call_name:
+                            return True
+    return False
+
+
 def test_落盘队列是本批唯一的配对载体():
-    """extractor 的配对队列必须是 app/memory/extract_queue.py（跨重启不丢的结构保证）。"""
-    src = (ROOT / "app/memory/extractor.py").read_text(encoding="utf-8-sig")
-    assert "from app.memory import extract_queue as _queue" in src
-    assert "_queue.add(" in src and "_queue.take(" in src
+    """extractor→worker→extract_queue 的持久链路必须完整且走同一 SQLite 队列。
+
+    正向：extractor 顶层导入 _queue，在 add_chat_memory_extraction 内局部导入 process_session，
+    通过 _queue.add 入队并 await process_session 委托主链；
+    worker 在 process_session 内以 queue 接收者调用 take/complete/retry/abandon；
+    队列本体用 SQLite 即时事务领取，并在完成前保留完整载荷。
+    负变异：同一验证函数运行在合成变异源上，移除局部导入/委托、把 queue.take 换成
+    in_memory.take、把 queue.complete 换成 wrong_queue.complete 均须使验证函数判 False；
+    不动真实源文件，不执行任何命令。
+    """
+    extractor_src = (ROOT / "app/memory/extractor.py").read_text(encoding="utf-8-sig")
+    worker_src = (ROOT / "app/memory/extraction_worker.py").read_text(encoding="utf-8-sig")
     queue_src = (ROOT / "app/memory/extract_queue.py").read_text(encoding="utf-8-sig")
+
+    # ── 正向：extractor 入队走 extract_queue，主链委托 worker ──
+    assert _has_import_from(
+        extractor_src, "app.memory", "extract_queue", "_queue"
+    ), "extractor 未在模块顶层导入 extract_queue 为 _queue"
+    assert _has_import_from(
+        extractor_src, "app.memory.extraction_worker", "process_session", func_name="add_chat_memory_extraction"
+    ), "extractor 未在 add_chat_memory_extraction 内局部导入 process_session"
+    assert _func_has_call(extractor_src, "add_chat_memory_extraction", "_queue", "add"), (
+        "extractor 未把配对交给 _queue.add 入队"
+    )
+    assert _func_has_await_call(extractor_src, "add_chat_memory_extraction", "process_session"), (
+        "extractor 主链未 await process_session 委托 worker"
+    )
+
+    # ── 正向：worker 领取/确认/重试/放弃仍走同一持久队列 ──
+    assert _has_import_from(worker_src, "app.memory", "extract_queue", "queue"), (
+        "worker 未顶层导入 extract_queue 为 queue"
+    )
+    assert _func_has_call(worker_src, "process_session", "queue", "take"), "worker 未用 queue.take 原子领取"
+    assert _func_has_call(worker_src, "process_session", "queue", "complete"), "worker 未用 queue.complete 确认"
+    assert _func_has_call(worker_src, "process_session", "queue", "retry") or _func_has_call(
+        worker_src, "process_session", "queue", "abandon"
+    ), "worker 缺少重试/放弃处置"
+
+    # ── 正向：队列本体为 SQLite 事务领取、完成时才清载荷 ──
     assert "_QUEUE_FILE" in queue_src, "队列必须落盘（进程内 list 就是旧违例本身）"
+    assert "_transaction" in queue_src, "extract_queue 缺事务上下文"
+    assert "BEGIN IMMEDIATE" in queue_src, "extract_queue 未用 SQLite 即时事务领取"
+    assert "payload='{}'" in queue_src, "完成时才清载荷，领取时须保留完整载荷"
+
+    # ── 负变异：同一验证函数运行在变异源上，均须判 False ──
+    mutant_no_local_import = extractor_src.replace(
+        "from app.memory.extraction_worker import process_session", ""
+    )
+    assert not _has_import_from(
+        mutant_no_local_import, "app.memory.extraction_worker", "process_session",
+        func_name="add_chat_memory_extraction",
+    ), "移除局部导入后导入检测仍为真"
+
+    mutant_no_await_delegate = extractor_src.replace("await process_session(", "process_session(")
+    assert not _func_has_await_call(
+        mutant_no_await_delegate, "add_chat_memory_extraction", "process_session"
+    ), "移除 await 委托后 await 检测仍为真"
+
+    mutant_in_memory_take = worker_src.replace("queue.take(", "in_memory.take(")
+    assert not _func_has_call(mutant_in_memory_take, "process_session", "queue", "take"), (
+        "把 queue.take 换成 in_memory.take 后接收者检测仍为真"
+    )
+
+    mutant_wrong_queue_complete = worker_src.replace("queue.complete(", "wrong_queue.complete(")
+    assert not _func_has_call(mutant_wrong_queue_complete, "process_session", "queue", "complete"), (
+        "把 queue.complete 换成 wrong_queue.complete 后接收者检测仍为真"
+    )

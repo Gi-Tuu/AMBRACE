@@ -10,7 +10,25 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ai_companion/services/unread_engine.dart';
 
+bool _hasActiveCharacterReadBinding(String source) {
+  return source.replaceAll('\r\n', '\n').contains(
+    'markRead(_sessionId!,\n            characterId: _currentCharacter?.id);',
+  );
+}
+
 void main() {
+  for (final eol in ['\n', '\r\n']) {
+    test('character read binding survives ${eol.length}-byte newline without losing guards', () {
+      final source = 'markRead(_sessionId!,$eol            characterId: _currentCharacter?.id);';
+      expect(_hasActiveCharacterReadBinding(source), isTrue);
+      expect(_hasActiveCharacterReadBinding(source.replaceFirst(
+        'characterId: _currentCharacter?.id', 'characterId: null')), isFalse);
+      expect(_hasActiveCharacterReadBinding(source.replaceFirst(
+        'characterId: _currentCharacter?.id', 'characterId: unrelatedId')), isFalse);
+      expect(_hasActiveCharacterReadBinding('markRead(_sessionId!);'), isFalse);
+    });
+  }
+
   group('ReadSuppressor（抑制带 TTL，不再无限期压住红点）', () {
     test('刚记下的同一 count 被压住；计数一变（真有新消息）立刻解除', () {
       var now = 1000;
@@ -73,7 +91,7 @@ void main() {
 
     test('聊天页进会话时把角色传进去（修「清红点恒不生效」那条死路径）', () {
       final prov = File('lib/providers/chat_provider.dart').readAsStringSync();
-      expect(prov.contains('markRead(_sessionId!,\n            characterId: _currentCharacter?.id);'),
+      expect(_hasActiveCharacterReadBinding(prov),
           isTrue,
           reason: '不传 characterId 就又回到「靠 _sessionCharMap 反查、而那张表只有吸收路径会写」');
     });

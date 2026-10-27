@@ -55,7 +55,7 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 
 from app.db.database import async_session_factory
 from app.models.chat import ChatMessage, ChatSession
@@ -258,10 +258,82 @@ def _promise_awaits(content: str, *, stored: str | None = None) -> str | None:
     return None
 
 
+# ── C9b切口1（2026-10-24，REWORK1 v2）：信号保守断言边界——正则命中只是必要条件，不是完成证据。
+# 否定/假设/引述/第三方转述的命中不算「当前用户明确完成了」。
+# REWORK1 修正（主审反例 3）：条件/引述/主体语境**不随逗号切分丢失**——假设与引述按
+# **全文级**判定（条件分句在前、触发词在后也要拦）；第三方主体按**子句句首主语**判定
+# （「他已经到门口」句首「他」= 主体非我）；否定仍为命中词前 4 字窗（局部语法现象）。
+_C9B_CLAUSE_SPLIT_RE = re.compile(r"[，,。；;！!？?\n]")
+_C9B_HYPOTHETICAL_RE = re.compile(r"如果|要是|若是|假如|万一|假设|倘若")
+_C9B_NEGATION_RE = re.compile(r"还没|尚未|没|未|别|不")
+# 引述：成对引用字符（含 ASCII 双/单引号）或转述标记词（REWORK1：ASCII 引号与「发回/记录」补入）
+_C9B_QUOTATION_RE = re.compile(r"[“”「」『』\"']|写着|示例|发来消息|发回|转述|说道|听说|据说|记录：|消息：")
+# 第三方主体：子句 strip 后以第三人称代词开头（主语位置＝主体非当前用户）
+_C9B_THIRD_PERSON_LEAD_RE = re.compile(r"^(他|她|TA|ta)\b|^他|^她")
+# 反问豁免（A38 既有正例「我不是早就到家了吗？」）：问句收尾的「不是/难道」＝肯定语义。
+_C9B_RHETORICAL_RE = re.compile(r"(不是|难道).{0,16}[吗么][？?]?$")
+
+
+def _assertive_clause_hit(pat, clause: str, *, whole_text: str = "") -> bool:
+    """单个子句内：命中事件词且未被否定污染；假设/引述语境按全文判定（REWORK1 v2）。"""
+    m = pat.search(clause)
+    if m is None:
+        return False
+    if _C9B_RHETORICAL_RE.search(clause):
+        pass  # 反问语气（不是…吗？）＝肯定语义，豁免否定检测（A38 正例）
+    elif _C9B_NEGATION_RE.search(clause[max(0, m.start() - 4):m.start()]):
+        return False
+    if _C9B_THIRD_PERSON_LEAD_RE.match(clause.strip()):
+        return False  # 子句主语是第三人称（他已经到门口）＝他人事件，不作我的完成证据
+    return True
+
+
 def _signal_seen(kind: str, *texts: str | None) -> bool:
-    """承诺在等的事件信号是否已出现在给定文本中（字面/正则，零 LLM）。"""
+    """承诺在等的事件信号是否已出现在给定文本中（字面/正则，零 LLM）。
+
+    C9b切口1 REWORK1 v2 口径（可解释、非整句黑名单）：
+    - **全文级语境**：文本含假设标记（如果/要是/若是/假如/万一/假设/倘若）→ 整条不作证据
+      （条件分句在前、触发词在后同样拦）；文本含成对引用字符（含 ASCII 引号）或转述标记
+      （写着/示例/发来消息/发回/转述/说道/听说/据说/记录：/消息：）→ 整条不作证据。
+    - **子句级**：命中词前 4 字否定窗（还没/尚未/没/未/别/不，反问句除外）；子句句首
+      第三人称主语（他/她/TA）＝主体非我。
+    现场负例：「如果我到了，才会启动检测流程」「我还没到门口」「文档里的示例短句写着：我到了」
+    「测试员乙发来消息：“我到了质检台。”」「检测员发回一条记录："我到了质检台"，本人尚未出发」
+    「他已经到门口，我尚未出发」「如果质检台已经开放，我到了之后才启动扫描」。
+    """
     pat = ARRIVAL_PAT if kind == "arrival" else MED_PAT
-    return any(t and pat.search(t) for t in texts)
+    for t in texts:
+        if not t:
+            continue
+        if _C9B_HYPOTHETICAL_RE.search(t):
+            continue  # 条件语境覆盖整条消息（跨分句条件不丢）
+        if _C9B_QUOTATION_RE.search(t):
+            continue  # 引述/转述语境覆盖整条消息
+        for clause in _C9B_CLAUSE_SPLIT_RE.split(t):
+            if _assertive_clause_hit(pat, clause, whole_text=t):
+                return True
+    return False
+
+
+def _signal_fresh_enough(signal_utc, due_end) -> bool:
+    """C9b切口1（2026-10-24，REWORK1 修正时刻分支）：消息证据的时间窗核验。
+
+    - 任一为空：无从核验，放行（维持旧行为）；
+    - 日期型（23:59）：信号的北京日（UTC+8 钟面）必须 ≥ due 的钟面日
+      （与 collect_due_promises 跨天硬闸同口径——昨天的到达不是明天计划的完成证据）；
+    - 精确时刻型：信号折算北京钟面后须不早于 due_end − 24h——REWORK1 修正：due 数值是
+      北京钟面（与 collect 的 local 比较同源），signal 是 UTC，先 +8h 折算再比较
+      （主审反例：signal UTC 01:55=北京 09:55，due 北京次日 09:50，窗内 5 分钟应放行）。
+    坏类型/不可比较 → False（保守拒绝，不作证据）。
+    """
+    if signal_utc is None or due_end is None:
+        return True
+    try:
+        if _is_date_scoped(due_end):
+            return (signal_utc + BEIJING_OFFSET).date() >= due_end.date()
+        return (signal_utc + BEIJING_OFFSET) >= due_end - timedelta(days=1)
+    except Exception:
+        return False
 
 
 async def _latest_user_message(session_id: int) -> str | None:
@@ -430,22 +502,45 @@ def has_forbidden_present_tense(text: str) -> bool:
 # ───────────────────────── 写入（extractor 便车调用，幂等）─────────────────────────
 async def _find_near_duplicate(
     db, *, character_id: int, content: str, due_start: datetime | None, due_end: datetime | None,
-    side: str = "user",
+    side: str = "user", user_id: int | None = None, chat_session_id: int | None = None,
 ) -> int | None:
     """③ 同角色 + 同 due 窗口 + 语义高度相近的 pending promise → 返回既有 id（合并）。
 
     ① 口径纠正：若既有行被判为 user 侧、而本次新内容明确是 self 侧，则把既有行的
     side 元数据升级为 self（只改标记，渲染即回到自述口径）。
+
+    C9b切口1（2026-10-24）：显式传 user_id 时按用户过滤——共享角色下两个账号的
+    同文任务不互相复用身份（「合并展示」不能吞掉「业务归属」）。缺省 None 保持旧行为
+    （既有调用/测试兼容）。
+
+    C9b切口1 REWORK1（主审必修 4）：显式传 chat_session_id 时加**会话边界**（与
+    ``_find_topic_duplicate`` 同口径）——同用户同文但来源会话不同的任务各自身份独立；
+    近似路径先于主题路径执行，不带边界会被用来绕过主题合并的会话检查。两侧都无会话
+    信息（NULL）维持 A34 既有聚合行为。
     """
-    rows = (await db.execute(
-        select(ProspectiveIntent).where(
-            ProspectiveIntent.character_id == character_id,
-            ProspectiveIntent.kind == "promise",
-            ProspectiveIntent.status == "pending",
-            ProspectiveIntent.due_start == due_start,
-            ProspectiveIntent.due_end == due_end,
-        )
-    )).scalars().all()
+    if user_id is None and chat_session_id is None:
+        rows = (await db.execute(
+            select(ProspectiveIntent).where(
+                ProspectiveIntent.character_id == character_id,
+                ProspectiveIntent.kind == "promise",
+                ProspectiveIntent.status == "pending",
+                ProspectiveIntent.due_start == due_start,
+                ProspectiveIntent.due_end == due_end,
+            )
+        )).scalars().all()
+    else:
+        rows = (await db.execute(
+            select(ProspectiveIntent).where(
+                ProspectiveIntent.character_id == character_id,
+                ProspectiveIntent.kind == "promise",
+                ProspectiveIntent.status == "pending",
+                ProspectiveIntent.due_start == due_start,
+                ProspectiveIntent.due_end == due_end,
+                *([] if user_id is None else [ProspectiveIntent.user_id == user_id]),
+            )
+        )).scalars().all()
+        if chat_session_id is not None:
+            rows = [r for r in rows if (r.chat_session_id or None) == chat_session_id]
     for r in rows:
         if not similar_intent_text(r.content, content):
             continue
@@ -454,7 +549,7 @@ async def _find_near_duplicate(
             meta["side"] = "self"
             r.cue_terms_json = json.dumps(meta, ensure_ascii=False)
             db.add(r)
-            await db.commit()
+            await db.flush()
         return r.id
     return None
 
@@ -542,7 +637,7 @@ def _same_raise_window(a_due: datetime | None, b_due: datetime | None, *, now_lo
 async def _find_topic_duplicate(
     db, *, user_id: int, character_id: int, content: str, cue_terms: list[str],
     due_end: datetime | None, side: str, trigger: str,
-    source_message_id: int | None = None,
+    source_message_id: int | None = None, chat_session_id: int | None = None,
 ) -> int | None:
     """⑦ 同角色 + 同 trigger（arrival/medication）+ 同提起档的 pending promise ⇒ 并进**更早创建**的那条。
 
@@ -555,7 +650,10 @@ async def _find_topic_duplicate(
     - cue（线索型不是承诺，且按设计可长期复用）；
     - 不同 user_id / 不同 side（谁答应的一致才是一条事）/ 非 pending 行；
     - 时间不同档（:func:`_same_raise_window`）；
-    - 正文并进去会丢语义（:func:`_compose_for_merge` 装不下 ⇒ 保守不并）。
+    - 正文并进去会丢语义（:func:`_compose_for_merge` 装不下 ⇒ 保守不并）；
+    - C9b切口1（2026-10-24）：**不同来源会话不自动合一**——共同 trigger 只证明「都在等到达」，
+      不证明两个独立任务是同一事件；只有会话身份一致（含两侧都无会话信息的旧行为）才并。
+      一侧有会话一侧没有 ⇒ 身份不可对齐，保守不并。
 
     合并动作：保留既有行（id、created_at、due 都不动）＋ content 无损合成 ＋ cue_terms 取并集 ＋
     trigger/side 元数据补齐；**INFO 留痕**写明 src_msg → kept id（现场一次事件挂几条全靠这行还原）。
@@ -576,6 +674,8 @@ async def _find_topic_duplicate(
             continue
         if get_intent_side(r) != side:
             continue
+        if (r.chat_session_id or None) != (chat_session_id or None):
+            continue  # C9b切口1：跨来源会话不隐式同事件；一侧 None 一侧有值也不并（身份不可对齐）
         if not _same_raise_window(r.due_end, due_end, now_local=now_local):
             continue
         merged = _compose_for_merge(r.content or "", content)
@@ -593,13 +693,27 @@ async def _find_topic_duplicate(
         r.cue_terms_json = json.dumps(meta, ensure_ascii=False)
         r.content = merged[:TOPIC_MERGE_MAX_CHARS]
         db.add(r)
-        await db.commit()
+        await db.flush()
         _logger.info(
             "Prospective same-topic merged char=%d trigger=%s src_msg=%s absorbed=%.60s -> kept id=%s (parts=%d)",
             character_id, trigger, source_message_id, content, r.id, len(_split_topic_parts(merged)),
         )
         return r.id
     return None
+
+
+async def _commit_intent_items(db, row_id, content, source_id, user_id, character_id, session_id, side):
+    from app.memory import plan_completion_adapter as completion
+    from app.memory.plan_completion import PlanScope, EvidenceConflict
+    try:
+        scope = PlanScope(user_id,character_id,session_id)
+    except EvidenceConflict:
+        scope = None  # Legacy/unverifiable reminders do not acquire business identity.
+    row = await db.get(ProspectiveIntent,row_id)
+    if row is not None and scope is not None:
+        await completion.register_for_intent(db,row,content=content,source_id=source_id,scope=scope,side=side)
+    await db.commit()
+    return row_id
 
 
 async def upsert_intent(
@@ -652,25 +766,33 @@ async def upsert_intent(
                     ProspectiveIntent.source_message_id == source_message_id,
                     ProspectiveIntent.character_id == character_id,
                     ProspectiveIntent.content == content,
+                    ProspectiveIntent.user_id == user_id,
+                    ProspectiveIntent.chat_session_id == chat_session_id,
                 )
             )).scalar_one_or_none()
             if existed is not None:
-                return existed.id
+                return await _commit_intent_items(db, existed.id, content, source_message_id,
+                    user_id, character_id, chat_session_id, side)
         if kind == "promise":
             trigger = classify_intent_trigger(content)   # ⑥ 类别标签（⑦ 同主题合并也用它）
             dup_id = await _find_near_duplicate(
                 db, character_id=character_id, content=content,
                 due_start=due_start, due_end=due_end, side=side,
+                user_id=user_id,  # C9b切口1：同文不跨账号复用任务身份
+                chat_session_id=chat_session_id,  # REWORK1：近重路径同受会话边界（防绕过主题检查）
             )
             if dup_id is not None:
-                return dup_id
+                return await _commit_intent_items(db, dup_id, content, source_message_id,
+                    user_id, character_id, chat_session_id, side)
             topic_id = await _find_topic_duplicate(
                 db, user_id=user_id, character_id=character_id, content=content,
                 cue_terms=cues, due_end=due_end, side=side, trigger=trigger,
                 source_message_id=source_message_id,
+                chat_session_id=chat_session_id,  # C9b切口1：不同来源会话不隐式同事件
             )
             if topic_id is not None:
-                return topic_id
+                return await _commit_intent_items(db, topic_id, content, source_message_id,
+                    user_id, character_id, chat_session_id, side)
         cue_payload_dict = {
             "confidence": confidence, "terms": cues, "side": side,
         }
@@ -685,8 +807,9 @@ async def upsert_intent(
             source_message_id=source_message_id, chat_session_id=chat_session_id,
         )
         db.add(row)
-        await db.commit()
-        return row.id
+        await db.flush()
+        return await _commit_intent_items(db, row.id, content, source_message_id,
+            user_id, character_id, chat_session_id, side)
 
 
 # ───────────────────────── 状态流转（纯状态，留痕不物理删）─────────────────────────
@@ -806,32 +929,174 @@ async def cancel_by_content(character_id: int, text: str) -> int:
 
 
 # ───────────────────────── 时间型：Scheduler 采集到期承诺 ─────────────────────────
+async def _plan_source_binding_ok(rsrc, row) -> bool:
+    """REWORK3（动作 1/2）：计划源消息是否**绑定到该计划的实际义务主体**。
+
+    「源 ID 可加载」不等于「该计划的可靠来源」——四重核验（任一不过即视为错绑/不可证）：
+    ① 源 sender_type 必须 user（助手消息不是用户许下的义务）；
+    ② 源真实会话可加载（加载不到＝归属不可证明）；
+    ③ 源会话 user/character 与计划行 user/character 一致（另一家庭账号的消息不是当前
+       用户的计划来源；NULL 历史会话不绕过主体核对）；
+    ④ 计划行有明确 chat_session_id 时，源必须同源会话（同账号另一会话是独立事件）。
+    合法家庭共享角色的访问不受影响（不比较 Character.owner 与 session.user，只核计划主体）。
+    """
+    try:
+        if rsrc is None or (rsrc.sender_type or "") != "user":
+            return False
+        async with async_session_factory() as db:
+            sess = await db.get(ChatSession, int(rsrc.session_id))
+        if sess is None:
+            return False
+        if int(sess.user_id) != int(row.user_id) or int(sess.character_id) != int(row.character_id):
+            return False
+        row_sess = getattr(row, "chat_session_id", None)
+        if row_sess is not None and int(rsrc.session_id) != int(row_sess):
+            return False
+        return True
+    except Exception:
+        return False
+
+
+async def _latest_user_message_utc(session_id: int) -> tuple[str | None, datetime | None]:
+    """该会话最新一条**用户**消息的 (正文, created_at)（无则 (None, None)）。
+
+    C9b切口1（2026-10-24）：消息证据需要时间身份——「最新消息」不再无条件当作完成证据，
+    须配 ``_signal_fresh_enough`` 核验信号发生在计划 due 时间窗内。fail-open 同旧函数。
+    """
+    try:
+        async with async_session_factory() as db:
+            row = (await db.execute(
+                select(ChatMessage.content, ChatMessage.created_at)
+                .where(ChatMessage.session_id == session_id, ChatMessage.sender_type == "user")
+                .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                .limit(1)
+            )).first()
+            if row is None:
+                return None, None
+            return row[0], row[1]
+    except Exception as e:
+        _logger.warning("prospective latest user message failed sess=%s: %s", session_id, e)
+        return None, None
+
+
+async def _prepare_legacy_projection(db,row):
+    from app.memory import plan_completion_adapter as completion
+    if completion.ITEM_KEYS in _loads_intent_meta(row.cue_terms_json):
+        return
+    scope = completion.scope_for(row)
+    if scope is not None:
+        await completion.register_for_intent(db,row,content=row.content,
+            source_id=row.source_message_id,scope=scope,side=get_intent_side(row))
+
+
+async def _projected_intent_candidate(candidate):
+    from app.memory.plan_projection import reminder_projection
+    intent_id = candidate.get("pis_id")
+    if intent_id is None:
+        return None
+    async with async_session_factory() as db:
+        row = await db.get(ProspectiveIntent,int(intent_id))
+        if row is None:
+            return None
+        identity = {"user_id":row.user_id,"character_id":row.character_id}
+        if any(candidate.get(key,value) != value for key,value in identity.items()):
+            return None
+        session_id = candidate.get("session_id") or candidate.get("chat_session_id")
+        if session_id is not None and session_id != row.chat_session_id:
+            return None
+        await _prepare_legacy_projection(db,row)
+        projection = await reminder_projection(db,row,persist=True)
+        await db.commit()
+        return projection
+
+
+async def _projected_fire_content(candidate):
+    projection = await _projected_intent_candidate(candidate)
+    if projection is not None and projection["remaining"]:
+        candidate["content"] = projection["remaining"]
+    return (candidate.get("content") or "").strip()
+
+
 async def _settled_event_promises(cands: list[dict]) -> list[int]:
     """A33 ⑥ 采集层现状校验：事件型（arrival/medication）承诺在等的信号是否**已经出现**。
 
     与 ``run_prospective_due`` 的 fire 前闸门同源同口径（``_promise_awaits`` + ``_signal_seen``，
-    读本会话最新一条用户消息 ＋ 现状锚），差别只在时机——提前到候选筛选层，已兑现的不再进候选、
-    不占调度。取不到文本＝判不出＝不关（fail-open，宁可漏关不误关）；现状锚按 (角色, 用户) 缓存，
-    同一次采集不重复取锚。
+    读本会话最新一条用户消息），差别只在时机——提前到候选筛选层，已兑现的不再进候选、不占调度。
+    取不到文本＝判不出＝不关（fail-open，宁可漏关不误关）。
+
+    C9b切口1（2026-10-24）：**消息证据加时间窗核验**——最新一条用户消息即便命中信号，若其
+    发生时间早于计划 due 时间窗（日期型：信号北京日 < due 日），不再作为该计划的完成证据
+    （``_signal_fresh_enough``）。
+
+    C9b切口1 REWORK1（主审必修 3/6）：
+    - **源顺序核验**：计划源可加载时，证据时间必须 ≥ 源消息时间（早于计划源事件的
+      完成不关闭之后来源的新计划）。「缺源不拒」半句已被 REWORK2 口径替代（见下）。
+    - **现状锚退出关闭证据**：锚无时间戳、无消息身份，不能单独成为关闭独立计划的权威证据
+      （A33 两项 anchor 契约按主审授权做语义变更并补有来源正例，见 CORRECTIONS）。
+
+    C9b切口1 REWORK2（动作 3/4）：**计划源三态与实际行回查**——候选 dict 缺
+    source_message_id 键时按 pis_id 回查真实 ProspectiveIntent 行（不因缺键跳过验证）；
+    行源 NULL（无源历史）或非 NULL 但加载不到（失效 ID）⇒ 一律**保留不关**（缺源不自动
+    推断完成；提醒/候选能力不变）；加载到 ⇒ 证据时间 ≥ 源时间才可关。
+
+    C9b切口1 REWORK3（动作 1/2）：**计划源绑定实际义务**——持久行是权威（候选字段不作
+    替代，统一按 pis_id 回查行）；行源除存在/时序外还须过 ``_plan_source_binding_ok``
+    （sender_type=user + 源会话 user/character 与行一致 + 行有明确会话时同源会话）。
+    错绑/非 user 来源 ⇒ 保留不关（正常提醒照常，discharged 仅在真实发送后作消费状态）。
     """
-    anchor_cache: dict[tuple, str] = {}
     settled: list[int] = []
+    src_row_cache: dict[int, object] = {}
+    bind_row_cache: dict[int, object] = {}
     for c in cands:
+        projection = await _projected_intent_candidate(c)
+        if projection is not None:
+            if projection["reminder_done"]:
+                settled.append(int(c["pis_id"]))
+            elif projection["remaining"]:
+                c["content"] = projection["remaining"]
+            continue
         awaits = _promise_awaits(c.get("content") or "", stored=c.get("trigger"))
         if awaits is None:
             continue
-        texts: list[str | None] = []
         session_id = c.get("session_id") or c.get("chat_session_id")
-        if session_id:
-            texts.append(await _latest_user_message(int(session_id)))
-        key = (c.get("character_id"), c.get("user_id"))
-        if key not in anchor_cache:
-            anchor_cache[key] = await state_guard.current_state_anchor(
-                character_id=c.get("character_id"), user_id=c.get("user_id")
-            )
-        texts.append(anchor_cache[key])
-        if _signal_seen(awaits, *texts):
-            settled.append(int(c["pis_id"]))
+        if not session_id:
+            continue  # 无会话可查 ⇒ 无带时间的消息证据 ⇒ 不关（锚不再单独作证据）
+        # REWORK3：持久行是权威——统一按 pis_id 回查行（候选字段不替代行）
+        pis_id = c.get("pis_id")
+        if pis_id is None:
+            continue
+        if int(pis_id) not in bind_row_cache:
+            try:
+                async with async_session_factory() as db:
+                    bind_row_cache[int(pis_id)] = await db.get(ProspectiveIntent, int(pis_id))
+            except Exception:
+                bind_row_cache[int(pis_id)] = None
+        prow = bind_row_cache[int(pis_id)]
+        if prow is None:
+            continue  # 行查不到（异常形态）⇒ 不自动完成
+        # REWORK2 动作 3：计划源三态（无源/缺源 ⇒ 保留，不自动完成）
+        src_id = prow.source_message_id
+        if src_id is None:
+            continue
+        if int(src_id) not in src_row_cache:
+            try:
+                async with async_session_factory() as db:
+                    src_row_cache[int(src_id)] = await db.get(ChatMessage, int(src_id))
+            except Exception:
+                src_row_cache[int(src_id)] = None
+        rsrc = src_row_cache[int(src_id)]
+        if rsrc is None:
+            continue  # 缺源/来源失效 ⇒ 保留候选（不断言完成）
+        # REWORK3 动作 1：来源必须绑定该计划的实际义务主体（错绑 ⇒ 保留）
+        if not await _plan_source_binding_ok(rsrc, prow):
+            continue
+        latest_text, latest_at = await _latest_user_message_utc(int(session_id))
+        if latest_text is None or not _signal_fresh_enough(latest_at, c.get("due_end")):
+            continue  # 无消息 / 过期信号 ⇒ 不作证据
+        if rsrc.created_at is not None and latest_at is not None and latest_at < rsrc.created_at:
+            continue  # 证据早于计划源事件 ⇒ 不关
+        if _signal_seen(awaits, latest_text):
+            settled.append(int(pis_id))
     return settled
 
 
@@ -888,6 +1153,7 @@ async def collect_due_promises() -> list[dict]:
                 "trigger": effective_intent_trigger(r),  # ⑥ 事件/时钟分类标签（arrival|medication|clock）
                 "session_id": r.chat_session_id,  # arbiter 发送/追踪统一用 session_id 键
                 "chat_session_id": r.chat_session_id,
+                "source_message_id": r.source_message_id,  # REWORK1：闸门源顺序核验用
             }
             candidates.append(cand)
             if date_scoped and cand["trigger"] in ("arrival", "medication"):
@@ -908,7 +1174,7 @@ async def collect_due_promises() -> list[dict]:
         await _set_status(stale_ids, "stale")   # 留痕不删，只是不再主动提起
         _logger.info("Prospective intents marked stale (cross-day/nodue): %d", len(stale_ids))
     # ⑥ 事件型「当天全天可提起」不再无条件成立：先确认在等的事件还没发生
-    settled_ids = await _settled_event_promises(day_event_cands)
+    settled_ids = await _settled_event_promises(candidates)
     if settled_ids:
         drop = set(settled_ids)
         candidates = [c for c in candidates if c["pis_id"] not in drop]
@@ -921,8 +1187,123 @@ async def mark_discharged_many(ids: list[int]) -> None:
     await _set_status(ids, "discharged", discharge=True)
 
 
+async def _resolve_settle_identity(
+    db, character_id: int, session_id: int | None, user_id: int | None,
+    source_message_id: int | None, text: str,
+) -> tuple[int, int | None, datetime | None] | None:
+    """结算身份与证据解析（C9b切口1 REWORK1-3 机械抽出，语义逐字不变）。
+
+    返回 (owner_user_id, 结算会话 id, 证据时间)；任一核验不过返回 None（整轮拒绝/保留）。
+    口径详见 settle_promises_on_user_message docstring：会话归属+角色匹配、自报身份矛盾拒、
+    新接口权威文本/时间（session 缺省沿 src 反推归属）、旧接口必须匹配会话内真实用户消息。
+    """
+    owner_user_id: int | None = None
+    if session_id is not None:
+        sess = await db.get(ChatSession, int(session_id))
+        if sess is None:
+            return None  # 会话不存在＝身份不可核验，保守不结算
+        if int(sess.character_id) != int(character_id):
+            return None  # 会话真实归属角色与结算角色不符（主审必修 2）
+        owner_user_id = int(sess.user_id)
+        if user_id is not None and int(user_id) != owner_user_id:
+            return None  # 自报身份与会话归属矛盾 ⇒ 放弃本轮
+    elif user_id is None:
+        return None  # 无会话又无用户身份 ⇒ 无从界定归属，保守不结算
+    else:
+        owner_user_id = int(user_id)
+    evidence_at: datetime | None = None
+    if source_message_id is not None:
+        src = await db.get(ChatMessage, int(source_message_id))
+        if src is None or src.sender_type != "user":
+            return None  # 源消息不存在/非用户消息 ⇒ 缺证据，保留待核
+        if session_id is None:
+            # REWORK2 动作 2：source 反推归属——自报 user 与任意真实消息不充分
+            src_sess = await db.get(ChatSession, int(src.session_id))
+            if src_sess is None or int(src_sess.character_id) != int(character_id):
+                return None  # 源消息会话归属不可确证/角色不符
+            if user_id is not None and int(src_sess.user_id) != int(user_id):
+                return None  # 完成证据属于别人（如家庭另一账号的会话）
+            session_id = int(src.session_id)   # 以证据真实会话为结算边界
+            owner_user_id = int(src_sess.user_id)
+        elif src.session_id != int(session_id):
+            return None  # 源消息不属于当前会话
+        src_content = (src.content or "").strip()
+        if src_content != text:
+            return None  # 传入文本与权威消息正文冲突 ⇒ 保守拒绝
+        evidence_at = src.created_at
+    else:
+        if session_id is None:
+            return None  # 旧接口无会话又无源消息 ⇒ 无从核验，保留
+        matched = (await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == int(session_id),
+                   ChatMessage.sender_type == "user")
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+        )).scalars().all()
+        evidence_msg = next(
+            (m for m in matched if (m.content or "").strip() == text), None)
+        if evidence_msg is None:
+            return None  # 会话内找不到与传入文本一致的真实用户消息 ⇒ 裸文本不作证据
+        evidence_at = evidence_msg.created_at
+    return owner_user_id, session_id, evidence_at
+
+
+def _settle_candidate_filter(
+    character_id: int, session_id: int | None, owner_user_id: int,
+):
+    """结算候选行筛选条件（C9b切口1 机械抽出）：会话/账号边界（NULL 旧行同 user 同角色兼容）。"""
+    base = [
+        ProspectiveIntent.character_id == character_id,
+        ProspectiveIntent.status.in_(["pending", "matched"]),
+        ProspectiveIntent.kind == "promise",
+    ]
+    if session_id is not None:
+        return base + [or_(
+            ProspectiveIntent.chat_session_id == int(session_id),
+            and_(
+                ProspectiveIntent.chat_session_id.is_(None),
+                ProspectiveIntent.user_id == owner_user_id,
+                ProspectiveIntent.character_id == character_id,
+            ),
+        )]
+    return base + [ProspectiveIntent.user_id == owner_user_id]
+
+
+async def _row_ready_to_settle(
+    db, r, *, text: str, evidence_at: datetime | None,
+    now_utc, now_local,
+) -> bool:
+    """单行可否静默结算（C9b切口1 REWORK1-3 机械抽出，语义逐字不变）。
+
+    stale / 未来日 / 源三态（无源、缺源）/ 来源绑定 / 证据-源时序 / 信号断言 六道门全过才 True。
+    """
+    if _intent_is_stale(r, now_utc=now_utc, now_local=now_local):
+        return False
+    if _is_date_scoped(r.due_end) and now_local.date() < r.due_end.date():
+        return False  # C9b切口1：未来日计划不吃今天的信号
+    # REWORK2 动作 3：计划源三态——所有自动完成都要求真实可加载的计划源。
+    if r.source_message_id is None:
+        return False  # 无源历史：保留提醒，不自动完成
+    rsrc = await db.get(ChatMessage, int(r.source_message_id))
+    if rsrc is None:
+        return False  # 缺源/来源失效：保留待核，不回落当前时间/写入时间
+    # REWORK3 动作 1：来源必须绑定到该计划的实际义务主体（user/character/会话/发送者）
+    if not await _plan_source_binding_ok(rsrc, r):
+        return False  # 错绑来源（他人账号/他会话/助手消息）：保留，不静默完成
+    if rsrc.created_at is not None and evidence_at is not None and evidence_at < rsrc.created_at:
+        return False  # 完成证据早于计划源事件 ⇒ 不关
+    from app.memory.plan_projection import reminder_projection
+    await _prepare_legacy_projection(db,r)
+    projection = await reminder_projection(db,r,persist=True)
+    if projection is not None:
+        return projection["reminder_done"]
+    awaits = _promise_awaits(r.content, stored=get_intent_trigger(r))
+    return awaits is not None and _signal_seen(awaits, text)
+
+
 async def settle_promises_on_user_message(
     character_id: int, session_id: int | None, user_text: str,
+    *, user_id: int | None = None, source_message_id: int | None = None,
 ) -> list[int]:
     """A32（2026-10-07）：用户消息表明某些**等待中的承诺已兑现** → 批量静默 discharged（不发消息）。
 
@@ -933,6 +1314,15 @@ async def settle_promises_on_user_message(
     保守（宁可漏关，不可误关）：只动 ``kind=promise`` 且 ``status in (pending, matched)`` 且
     **非 stale** 的行；判定零 LLM；不写 ``proactive_message_logs``、不发送任何消息。
     返回被关闭的 intent id 列表（异常由调用侧吞掉，本函数内部不 catch——保持与同模块其它函数一致）。
+
+    C9b切口1（2026-10-24，REWORK1-4）真实身份核验（详细口径见各 helper docstring）：
+    - 身份/证据解析（``_resolve_settle_identity``）：会话归属+角色匹配；新接口权威文本/时间
+      取自库内消息（session 缺省沿 src→ChatSession 反推归属）；旧接口必须从真实会话匹配到
+      与文本一致的真实用户消息（裸文本不作证据）。
+    - 候选边界（``_settle_candidate_filter``）：只动本会话行；NULL 旧行仅同 user 同角色兼容，
+      绝不关其它会话/其它账号的约定（共享角色 ≠ 共享完成）。
+    - 单行六道门（``_row_ready_to_settle``）：stale/未来日/源三态（缺源、无源保留）/
+      来源绑定（``_plan_source_binding_ok``）/证据-源时序/信号保守断言。
     """
     text = (user_text or "").strip()
     if not text:
@@ -940,28 +1330,31 @@ async def settle_promises_on_user_message(
     now_utc, now_local = _now_naive(), _now_local_naive()
     settled: list[int] = []
     async with async_session_factory() as db:
+        identity = await _resolve_settle_identity(
+            db, character_id, session_id, user_id, source_message_id, text)
+        if identity is None:
+            return []  # 身份/证据核验不过（口径见 helper）：整轮保留
+        owner_user_id, session_id, evidence_at = identity
+        from app.memory import plan_completion_adapter as completion
+        from app.memory.plan_completion import PlanScope
+        await completion.record_message(db, PlanScope(owner_user_id,character_id,session_id),
+                                        source_message_id, text)
         rows = (await db.execute(
             select(ProspectiveIntent).where(
-                ProspectiveIntent.character_id == character_id,
-                ProspectiveIntent.status.in_(["pending", "matched"]),
-                ProspectiveIntent.kind == "promise",
-            )
+                *_settle_candidate_filter(character_id, session_id, owner_user_id))
         )).scalars().all()
         for r in rows:
-            if _intent_is_stale(r, now_utc=now_utc, now_local=now_local):
-                continue
-            awaits = _promise_awaits(r.content, stored=get_intent_trigger(r))
-            if awaits is not None and _signal_seen(awaits, text):
+            if await _row_ready_to_settle(db, r, text=text, evidence_at=evidence_at,
+                                          now_utc=now_utc, now_local=now_local):
                 r.status = "discharged"
                 r.discharged_at = now_utc
                 db.add(r)
                 settled.append(r.id)
-        if settled:
-            await db.commit()
+        await db.commit()  # Unresolved evidence must survive even when no plan exists yet.
     if settled:
         _logger.info(
-            "Prospective settled silently (event fulfilled) char=%d sess=%s ids=%s",
-            character_id, session_id, settled,
+            "Prospective settled silently (event fulfilled) char=%d sess=%s owner=%s ids=%s",
+            character_id, session_id, owner_user_id, settled,
         )
     return settled
 
@@ -1171,6 +1564,52 @@ async def recent_opener_exists(character_id: int, *, now: datetime | None = None
     return any(has_proactive_opening(c) for c in rows)
 
 
+async def _prospective_fulfillment_gate(
+    candidate: dict, intent_id: int, session_id, content: str,
+) -> bool:
+    """fire 前现状校验闸门（A32 + C9b切口1 REWORK1-3，REWORK4 机械抽出，语义逐字不变）。
+
+    承诺在等的事件已真实发生 ⇒ True（调用方静默 discharged，不 fire/不写日志/不调 LLM）。
+    判据（与 collect 层 ``_settled_event_promises`` 同口径）：
+    - 消息证据＝本会话最新用户消息，过 ``_signal_fresh_enough`` 时窗（昨日信号不压次日计划）；
+    - 持久行为权威（候选字段不替代）：按 pis_id 回查行取计划源；
+    - 源三态：无源历史/缺源失效 ⇒ 不静默完成（正常 fire 提醒）；
+    - ``_plan_source_binding_ok`` 绑定核验 + 证据-源时序；
+    - 现状锚退出关闭证据（无时间戳/无消息身份）。
+    """
+    projection = await _projected_intent_candidate(candidate)
+    if projection is not None:
+        return projection["reminder_done"]
+    awaits = _promise_awaits(content, stored=candidate.get("trigger"))
+    if awaits is None:
+        return False
+    latest_user, latest_at = await _latest_user_message_utc(int(session_id))
+    evidence_ok = latest_user is not None and _signal_fresh_enough(latest_at, candidate.get("due_end"))
+    # REWORK3：持久行为权威（不读候选的 source_message_id 字段）
+    _prow = None
+    try:
+        async with async_session_factory() as _pdb:
+            _prow = await _pdb.get(ProspectiveIntent, intent_id)
+    except Exception:
+        _prow = None
+    _src_id = _prow.source_message_id if _prow is not None else None
+    if _src_id is None or _prow is None:
+        evidence_ok = False  # REWORK2 动作 3：无源历史/行不可查 不自动完成（正常 fire 提醒）
+    else:
+        try:
+            async with async_session_factory() as _sdb:
+                _psrc = await _sdb.get(ChatMessage, int(_src_id))
+        except Exception:
+            _psrc = None
+        if _psrc is None:
+            evidence_ok = False  # 缺源/来源失效 ⇒ 保留（不静默关闭）
+        elif not await _plan_source_binding_ok(_psrc, _prow):
+            evidence_ok = False  # REWORK3：来源未绑定该计划义务 ⇒ 不静默完成
+        elif _psrc.created_at is not None and latest_at is not None and latest_at < _psrc.created_at:
+            evidence_ok = False  # 证据早于计划源事件
+    return bool(evidence_ok and _signal_seen(awaits, latest_user))
+
+
 async def run_prospective_due(candidate: dict) -> bool:
     """把一条到期承诺组织成一次自然主动消息；成功发送后 discharged（一次性）。
 
@@ -1193,7 +1632,7 @@ async def run_prospective_due(candidate: dict) -> bool:
     char_id = candidate["character_id"]
     user_id = candidate["user_id"]
     session_id = candidate.get("session_id") or candidate.get("chat_session_id")
-    content = (candidate.get("content") or "").strip()
+    content = await _projected_fire_content(candidate)
     pis_id = candidate.get("pis_id")
     if pis_id is None or not session_id:
         return False
@@ -1214,18 +1653,13 @@ async def run_prospective_due(candidate: dict) -> bool:
         await _set_status([intent_id], "cancelled")
         return False
     # A32 现状校验闸门（2026-10-07）：承诺在等的事件**已经发生** → 静默关闭，绝不 fire 催办。
-    # 取「本会话最新一条用户消息」＋「现状锚」两个来源，命中即 discharged 后返回；
-    # 不发任何消息、不写 proactive_message_logs、不调 LLM。放在认领之前＝不占用幂等认领。
-    # A33 ⑥：等待类别优先用候选下发的 trigger 标签（采集层已按「落库值→内容推断」定序），
-    # 手工构造的 dict 没有该键时 stored=None，行为与 A32 一致（按内容推断）。
-    awaits = _promise_awaits(content, stored=candidate.get("trigger"))
-    if awaits is not None:
-        latest_user = await _latest_user_message(int(session_id))
-        anchor = await state_guard.current_state_anchor(character_id=char_id, user_id=user_id)
-        if _signal_seen(awaits, latest_user, anchor):
-            _logger.info("Prospective already fulfilled, settle silently pis=%s", pis_id)
-            await mark_discharged_many([intent_id])
-            return True
+    # 判定整段在 ``_prospective_fulfillment_gate``（C9b切口1 REWORK4 机械抽出，语义逐字不变：
+    # 消息证据+时窗、持久行权威回查、源三态、``_plan_source_binding_ok`` 绑定、源顺序、
+    # 现状锚退出关闭证据——错绑/缺源不静默完成，正常提醒照常，发送后 discharged＝消费）。
+    if await _prospective_fulfillment_gate(candidate, intent_id, session_id, content):
+        _logger.info("Prospective already fulfilled, settle silently pis=%s", pis_id)
+        await mark_discharged_many([intent_id])
+        return True
     # ⑧ 双发抑制（A34 批3）：同会话 N 秒内已有 AI 消息 ⇒ 本轮**不抢发**（现场：用户说「晚安」后
     # 同秒既有一条即时回复、又有一条「明早八点叫你」的承诺主动提起）。
     # 放在认领**之前**：不认领、不烧 LLM、不写日志，状态留 pending，下个 tick 自然重试。

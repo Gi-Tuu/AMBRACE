@@ -320,18 +320,15 @@ def test_只读模式不删到期行也不动向量(client, _seeded, _llm_networ
     assert _llm_network_guard["n"] == 0
 
 
-def test_默认读取仍保留既有到期物理删除政策(client, _seeded, _llm_network_guard, _vector_recorder):
-    """正对照：**不带** ``read_only`` 的默认读仍是既有政策 —— 到期行物理删除 + 清向量。
-
-    本用例保证本次返工没有把维护政策改成「默认关掉」来图省事；移动端等既有调用
-    （不传该参数）行为必须逐字节不变。
-    """
+@pytest.mark.parametrize("query_suffix", ["", "&read_only=false"])
+def test_默认读取也不删除到期数据(client, _seeded, _llm_network_guard, _vector_recorder, query_suffix):
+    """Both the default and legacy false query leave expired data untouched."""
     mid = asyncio.run(_seed_expired())
     auth_a = _login(client, USER_A)
 
-    r = client.get(f"/api/v1/memories?character_id={_seeded['ca']}", headers=auth_a)
+    r = client.get(f"/api/v1/memories?character_id={_seeded['ca']}{query_suffix}", headers=auth_a)
     assert r.status_code == 200, r.text
     assert all(m["id"] != mid for m in r.json()["memories"])
-    assert not asyncio.run(_row_exists(mid)), "默认路径必须保持既有的到期物理删除"
-    assert mid in _vector_recorder, f"默认路径必须清理被删行的向量，实际 {_vector_recorder}"
+    assert asyncio.run(_row_exists(mid)), "默认 GET 不得删除到期数据"
+    assert _vector_recorder == [], f"GET 不得清理向量：{_vector_recorder}"
     assert _llm_network_guard["n"] == 0

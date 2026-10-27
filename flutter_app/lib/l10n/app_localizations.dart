@@ -14961,6 +14961,150 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'含估算行，不逐行区分'**
   String get usagePanelEstimatedNote;
+
+  /// No description provided for @memoryHistoryTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'修正历史'**
+  String get memoryHistoryTitle;
+
+  /// No description provided for @memoryHistoryLoading.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在加载修正历史…'**
+  String get memoryHistoryLoading;
+
+  /// No description provided for @memoryHistoryEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无修正记录'**
+  String get memoryHistoryEmpty;
+
+  /// No description provided for @memoryHistoryLoadFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'修正历史加载失败'**
+  String get memoryHistoryLoadFailed;
+
+  /// No description provided for @memoryHistoryOldLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'旧值'**
+  String get memoryHistoryOldLabel;
+
+  /// No description provided for @memoryHistoryNewLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'新值'**
+  String get memoryHistoryNewLabel;
+
+  /// No description provided for @memoryHistoryUnknownTime.
+  ///
+  /// In zh, this message translates to:
+  /// **'时间未知'**
+  String get memoryHistoryUnknownTime;
+
+  /// No description provided for @memoryHistoryReasonUnknown.
+  ///
+  /// In zh, this message translates to:
+  /// **'未记录原因'**
+  String get memoryHistoryReasonUnknown;
+
+  /// No description provided for @memoryHistoryTruncated.
+  ///
+  /// In zh, this message translates to:
+  /// **'仅展示部分修正记录'**
+  String get memoryHistoryTruncated;
+
+  /// No description provided for @memoryDerivationsTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'派生关系'**
+  String get memoryDerivationsTitle;
+
+  /// No description provided for @memoryDerivationsParents.
+  ///
+  /// In zh, this message translates to:
+  /// **'据此形成的记忆'**
+  String get memoryDerivationsParents;
+
+  /// No description provided for @memoryDerivationsChildren.
+  ///
+  /// In zh, this message translates to:
+  /// **'由此派生的记忆'**
+  String get memoryDerivationsChildren;
+
+  /// No description provided for @memoryDerivationsLoading.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在加载派生关系…'**
+  String get memoryDerivationsLoading;
+
+  /// No description provided for @memoryDerivationsLoadFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'派生关系加载失败'**
+  String get memoryDerivationsLoadFailed;
+
+  /// No description provided for @memoryDerivationsEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无关联记忆'**
+  String get memoryDerivationsEmpty;
+
+  /// No description provided for @memoryDerivationsIncomplete.
+  ///
+  /// In zh, this message translates to:
+  /// **'关联可能不完整'**
+  String get memoryDerivationsIncomplete;
+
+  /// No description provided for @memoryDerivationsLoadMore.
+  ///
+  /// In zh, this message translates to:
+  /// **'继续加载'**
+  String get memoryDerivationsLoadMore;
+
+  /// No description provided for @memoryDerivationsOpenFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'打开关联记忆失败'**
+  String get memoryDerivationsOpenFailed;
+
+  /// No description provided for @memoryDerivationsRetry.
+  ///
+  /// In zh, this message translates to:
+  /// **'重新加载'**
+  String get memoryDerivationsRetry;
+
+  /// No description provided for @memoryDerivationsMore.
+  ///
+  /// In zh, this message translates to:
+  /// **'还有更多关联，请继续加载'**
+  String get memoryDerivationsMore;
+
+  /// No description provided for @memoryDerivationsStatusActive.
+  ///
+  /// In zh, this message translates to:
+  /// **'生效中'**
+  String get memoryDerivationsStatusActive;
+
+  /// No description provided for @memoryDerivationsStatusStale.
+  ///
+  /// In zh, this message translates to:
+  /// **'已过期'**
+  String get memoryDerivationsStatusStale;
+
+  /// No description provided for @memoryDerivationsStatusSuperseded.
+  ///
+  /// In zh, this message translates to:
+  /// **'已被取代'**
+  String get memoryDerivationsStatusSuperseded;
+
+  /// No description provided for @memoryDerivationsStatusUnknown.
+  ///
+  /// In zh, this message translates to:
+  /// **'状态未知'**
+  String get memoryDerivationsStatusUnknown;
 }
 
 class _AppLocalizationsDelegate

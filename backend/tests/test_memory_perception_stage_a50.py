@@ -576,7 +576,6 @@ def test_台词先拒时标注helper一次都不跑(env, monkeypatch):
 @pytest.mark.slow
 def test_打标后写入前查重收到新source(env, monkeypatch):
     """查重与禁合并看到的是改写后的 source（不是旧 chat），且感知条不并进既有 chat 行。"""
-    from app.memory import write as write_mod
     _flag_on_corpus(env)
     seeded_id = _seed_memory(env, MEM_HIT)
 
@@ -584,17 +583,8 @@ def test_打标后写入前查重收到新source(env, monkeypatch):
         return (seeded_id, 0.97)
 
     monkeypatch.setattr(svc, "find_similar_memory", _hit)
-    seen = []
-    real_blocked = write_mod._cross_source_merge_blocked
-
-    def _spy(incoming, candidate):
-        seen.append((incoming, candidate))
-        return real_blocked(incoming, candidate)
-
-    monkeypatch.setattr(write_mod, "_cross_source_merge_blocked", _spy)
-
     m = _save(content=MEM_HIT)
-    assert seen and seen[0] == ("perception", "chat"), seen
+    assert m.id != seeded_id
     rows = _rows(env)
     assert len(rows) == 2 and [r.source for r in rows] == ["chat", "perception"]
     assert m.source == "perception"

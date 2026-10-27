@@ -419,10 +419,10 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
         pass
     response = await llm_call(messages=[{"role":"user","content":prompt}], temperature=0.1, max_tokens=EXTRACT_MAX_TOKENS, task=TASK_MEMORY)
     _logger.info("Raw: %.120s", response)
-    if not response: return 0
+    if not response:
+        raise RuntimeError("memory_extraction_empty_response")
 
     saved = 0
-
     # Ariadne 模块F/G（2026-09-04）：flag 预取（关=零行为变化）+ curated 提前解析（供 PREFERENCES 互斥）。
     from app.flags.agent_flags import AGENT_FLAGS as _flags
     _curated_enabled = bool(_flags.get("curated_knowledge", False))
@@ -605,7 +605,7 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
                     confidence=pi.get("confidence", "medium"),
                 )
         except Exception as e:
-            _logger.warning("Prospective intent extract failed char=%d: %s", character_id, e)
+            raise RuntimeError("prospective_intent_not_committed") from e
 
     if saved: _logger.info("Extracted %d for char=%d", saved, character_id)
     # 无论是否有值得记的信息，只要 LLM 返回了有效文本就标记已处理（避免 catchup 重复提取）
@@ -632,21 +632,8 @@ async def add_chat_memory_extraction(session_id, character_id, user_id, user_msg
     # 2026-08-08 节流：同角色 30 分钟最多提取一批；节流中继续累积，达到上限/滞留超时强制提取
     if not _throttle_open(character_id) and len(_q) < MAX_PENDING_PAIRS and not _stale:
         return
-    pairs = _queue.take(session_id)
-    _mark_batch_taken(character_id)
-    _logger.info("Batch: session=%d count=%d", session_id, len(pairs))
-    for p in pairs:
-        try:
-            # P0-1b（2026-08-16）：记忆提炼经内部统一工具入口（生命周期/事件/异常隔离）
-            from app.agent.internal_runner import run_internal
-            await run_internal("memory_extract", {
-                "session_id": session_id, "character_id": character_id, "user_id": user_id,
-                "user_msg": p["user_message"], "ai_msg": p["ai_response"],
-                "source_id": p.get("source_id"),
-            }, character_id=character_id, user_id=user_id)
-        finally:
-            _queue.release_source(p.get("source_id"))   # 旧 _pending_ids.discard：提完才放开占位
-        await asyncio.sleep(0.3)
+    from app.memory.extraction_worker import process_session
+    await process_session(session_id, character_id, user_id)
 
 async def _mark_processed(source_id: int):
     """记录该用户消息已完成记忆提取（幂等）"""
@@ -686,6 +673,8 @@ async def catchup_extract_all():
         return
     async with _catchup_lock:
         _logger.info("Catchup")
+        from app.memory.extraction_worker import drain_due
+        await drain_due()
         cutoff = now_naive_utc() - timedelta(hours=2)
         processed = await _load_processed_ids()
         async with async_session_factory() as db:
@@ -695,8 +684,19 @@ async def catchup_extract_all():
                 .join(AICharacter, AICharacter.id == ChatSession.character_id)
                 .where(ChatSession.is_active == True, AICharacter.is_active == True)
             )).scalars().all()
+            # 账号门禁：不存在/disabled_at/deleted_at 的账号不得被补采绕过（与主链/ drain 同判）。
+            from app.models.user import User
+            users_by_id = {}
+            if sessions:
+                user_rows = (await db.execute(
+                    select(User).where(User.id.in_([s.user_id for s in sessions]))
+                )).scalars().all()
+                users_by_id = {r.id: r for r in user_rows}
         for s in sessions:
             try:
+                user = users_by_id.get(s.user_id)
+                if user is None or user.deleted_at is not None or user.disabled_at is not None:
+                    continue
                 # 2026-08-08 节流：与主链路同节奏，同角色 30 分钟最多补采一批（A41：同一把台账锁）
                 if not _throttle_open(s.character_id):
                     continue

@@ -10,7 +10,6 @@ import json
 from sqlalchemy import select
 
 from app.models.memory import Memory
-from app.memory.constants import DECAY_MAX_PCT, REINFORCE_FACTOR_WRITE, VECTOR_DEDUP_THRESHOLD
 from app.memory.perception_tier import (
     PERCEPTION_SOURCE,
     SNAPSHOT_MAX_ROWS,
@@ -19,14 +18,10 @@ from app.memory.perception_tier import (
     snapshot_overlap,
 )
 from app.memory.service import (
-    _apply_reinforce,
     _initial_strength,
     _logger,
-    _merge_derived,
     _normalize_importance,
     _now_naive,
-    _retrievable_status_clause,
-    current_facts_status_clause,
 )
 
 
@@ -476,8 +471,8 @@ async def save_memory(
     node_type: str | None = None,
     derived_from_ids: list[int] | None = None,  # #70-C M2：本记忆派生自哪些记忆 id（默认 None -> '[]'）
 ):
-    """保存一条新记忆（结构化 + 向量）；写入前做轻量查重，高度相似则更新原记忆而非新增。
-    skip_dedup=True 时跳过写入查重（离散事件类记忆如宠物遗弃，每次独立落库）。
+    """保存带证据的记忆；仅同来源事件、同内容及同归属的重放保持幂等。
+    相似、否定、不同事件和主体均独立保留。skip_dedup 显式跳过重放幂等。
     台词过滤丢弃返回 None。"""
 
     from datetime import timedelta
@@ -485,12 +480,10 @@ async def save_memory(
         add_memory,
         async_session_factory,
         bm25_invalidate,
-        find_similar_memory,
         text_embedding,
     )
     from app.memory.receipt import (
         emit_memory_receipt,
-        ACTION_MERGE,
         ACTION_REJECT,
     )
     async with async_session_factory() as db:
@@ -528,50 +521,8 @@ async def save_memory(
                 _speaker_id_before_tag=_speaker_id_before_tag,
             )
         )
-        # 写入前查重：优先向量语义查重（cosine >= 0.86，见 memory/constants.py::VECTOR_DEDUP_THRESHOLD），未命中再字符级兜底（最近 30 条 >= 0.72）
+        # Similarity is only retrieval evidence, never a reason to discard input.
         embedding = None
-        if content and content.strip() and not skip_dedup:
-            # 1) 向量语义查重：先算嵌入，命中高度相似则更新原记忆而非新增
-            # （2026-10-12 A50 批 7：整段机械抽出到同文件私有协程 `_vector_dedup_on_write`。
-            # 判据／三重保护／强化与 importance 上限／derived 合并／跨源禁令，以及
-            # commit→命中日志→obs_event→回执→return 的顺序与原 try/except 边界逐字不变；
-            # 唯一改写是返回值的运输契约：命中返回 `(m, embedding)`、未命中返回
-            # `(None, embedding)`——未命中时已算出的 embedding 必须带回给后面的写向量／hooks，
-            # 不许在这里丢掉也不许重算；调用点用 `is not None` 早退。
-            # 外层 `embedding = None` 初值与 content/strip/skip_dedup 三闸仍留在调用方。）
-            _vector_hit, embedding = await _vector_dedup_on_write(
-                db=db, content=content, character_id=character_id, source=source,
-                importance=importance, sub_type=sub_type, memory_type=memory_type,
-                source_id=source_id, speaker_type=speaker_type,
-                epistemic_status=epistemic_status, derived_from_ids=derived_from_ids,
-                node_type=node_type, text_embedding=text_embedding,
-                find_similar_memory=find_similar_memory,
-                emit_memory_receipt=emit_memory_receipt, ACTION_MERGE=ACTION_MERGE,
-            )
-            if _vector_hit is not None:
-                return _vector_hit
-
-            # 2) 字符级查重兜底 ＋ 3) 24h 同主题合并（2026-10-12 A50 批 8：两段连续语句整体机械抽出到
-            # 同文件私有协程 `_text_topic_dedup_on_write`——它们共享同一份 `b`（`content.strip()[:80]`）
-            # 与同一个 `from difflib import SequenceMatcher`，合抽避免多运两个临时量）。
-            # 两段查询（30 条 / 50 条，均 `order_by(created_at.desc())`）、字符档现行闸 vs 主题档怀旧面
-            # 子句的差异、阈值（>=0.72 与严格 >0.6、80 字与 4 字、24h 边界）、置顶/锁/归档/跨源保护、
-            # importance/strength/derived 合并，以及 commit→日志→obs→回执→return 的先后逐字不变；
-            # 段内没有 try，异常照旧向上抛（这里也不新增 catch）。
-            # 唯一改写是返回值运输契约：命中返回被并那条原 `Memory`、未命中返回 `None`，调用点
-            # `is not None` 早退；这两段既不读也不改 embedding，故**不运输它**。
-            # 向量段、`embedding = None` 初值与外层 content/strip/skip_dedup 三闸仍留调用方。
-            _text_hit = await _text_topic_dedup_on_write(
-                db=db, content=content, character_id=character_id, memory_type=memory_type,
-                source=source, importance=importance, sub_type=sub_type, source_id=source_id,
-                speaker_type=speaker_type, epistemic_status=epistemic_status,
-                derived_from_ids=derived_from_ids, node_type=node_type,
-                timedelta=timedelta,
-                emit_memory_receipt=emit_memory_receipt, ACTION_MERGE=ACTION_MERGE,
-            )
-            if _text_hit is not None:
-                return _text_hit
-
 
         # 新建记忆的准备阶段（2026-10-12 A50 批 4：机械抽出到同文件私有协程
         # `_prepare_created_memory`）。归属收口／准入闸门／影子埋点／Memory 构造／plan 标注
@@ -589,10 +540,10 @@ async def save_memory(
                 _src_msg_sender=_src_msg_sender,
             )
         )
-        db.add(memory)
-        await db.flush()
-        await db.commit()
-        await db.refresh(memory)
+        from app.memory.write_identity import persist_candidate
+        memory, created = await persist_candidate(db, memory, skip_dedup=skip_dedup)
+        if not created:
+            return memory
 
         # 新建记忆的回执尾段（2026-10-12 A50 批 2：机械抽出到同文件私有函数
         # `_emit_created_memory_receipts`）。三个原独立 try/except、pending→perception→create
@@ -795,233 +746,6 @@ async def _tag_perception_source(*, db, user_id, character_id, content, source,
             _logger.warning("perception tagging failed (fail-open): char=%d user=%d err=%s",
                             character_id, user_id, _e)
     return source, epistemic_status, _perception_tagged, sub_type, speaker_type, speaker_id
-
-
-async def _vector_dedup_on_write(*, db, content, character_id, source,
-                                 importance, sub_type, memory_type, source_id,
-                                 speaker_type, epistemic_status, derived_from_ids,
-                                 node_type, text_embedding, find_similar_memory,
-                                 emit_memory_receipt, ACTION_MERGE
-                                 ) -> tuple[Memory | None, list[float] | None]:
-    """写入前的**向量语义查重**段（2026-10-12 A50 批 7，自 ``save_memory`` 中段机械抽出）。
-
-    做的事照旧：先算 ``content`` 的嵌入，再按 ``VECTOR_DEDUP_THRESHOLD``（0.86，取最近 20 条）
-    找相似行；命中且那条**没被归档／置顶／锁定**、来源也不互斥时，走艾宾浩斯强化（复习 S×2）、
-    抬 importance（封顶 ``DECAY_MAX_PCT``）、并入调用方声明的 ``derived_from_ids``，commit 后
-    依次打命中日志 → ``obs_event(kind="vector_dedup")`` → ``emit_memory_receipt(ACTION_MERGE)``，
-    最后把那条记忆交还调用方当返回值。纯搬运、零行为变化。
-
-    为什么能机械抽（成立条件也是以后不许乱改的约束）：
-    - 整段只**读**调用点的十六个值（``db``／``content``／``character_id``／``source``／
-      ``importance``／``sub_type``／``memory_type``／``source_id``／``speaker_type``／
-      ``epistemic_status``／``derived_from_ids``／``node_type`` ＋四个局部导入），段内
-      ``similar``／``mem_id``／``sim``／``m`` 是段内临时值（段外无人读）；唯一必须运回去的
-      是**算好的 embedding**（见下）与「有没有命中」；
-    - **返回值是二选一的运输契约**：命中 → ``(m, embedding)``；未命中（相似度不够、跨源禁令、
-      归档／置顶／锁定保护）→ ``(None, embedding)``；尝试阶段抛异常 → 照旧把 ``embedding``
-      清成 ``None`` 再返回 ``(None, None)``。调用点用 ``is not None`` 早退；
-    - **embedding 必须原样带回**：未命中时它已经被算出来了，后面的 2) 字符级／3) 同主题查重与
-      写向量／hooks 要复用它；在这里丢掉会让它被重算一次（多一次模型调用），把 ``None`` 塞回去
-      会触发后续重新求嵌入；若重算失败才可能不带向量——不许"顺手"改变；
-    - ``text_embedding``／``find_similar_memory``（``app.memory.service`` 上）与
-      ``emit_memory_receipt``／``ACTION_MERGE``（``app.memory.receipt`` 上）**必须由调用点显式
-      传入**：既有测试 monkeypatch 的正是这两个模块上的属性，helper 自己 import 会绕开接缝；
-    - ``Memory``／``VECTOR_DEDUP_THRESHOLD``／``DECAY_MAX_PCT``／``REINFORCE_FACTOR_WRITE``／
-      ``_apply_reinforce``／``_normalize_importance``／``_merge_derived``／``_merge_receipt_detail``／
-      ``_cross_source_merge_blocked``／``_now_naive``／``_logger`` **继续按模块全局解析**
-      （不得提成默认参数、不得模块级缓存）；块内那行 ``from app.memory.observability import
-      obs_event`` 是原样跟着搬过来的（它本来就只在命中分支里用）；
-    - 异常边界照旧且**不得顺手修**：``except Exception`` 依旧把 ``embedding`` 与 ``similar`` 双双
-      清成 ``None``（含「``find_similar_memory`` 抛了但嵌入已算出来」这一半——旧行为就是丢弃它，
-      抽出也不改）；0.86/20、跨源禁令（禁令 3）、三重保护一个都没动；
-    - 不新增查询／不新增开关／不改事务边界：``db`` 由调用点传入，复用已开的会话。
-    """
-    try:
-        embedding = await text_embedding(content)
-        similar = await find_similar_memory(
-            character_id, embedding, limit=20, min_similarity=VECTOR_DEDUP_THRESHOLD
-        )
-    except Exception:
-        embedding = None
-        similar = None
-    if similar:
-        mem_id, sim = similar
-        m = await db.get(Memory, mem_id)
-        if m is not None and _cross_source_merge_blocked(source, m.source):
-            # 禁令 3：感知 ↔ 非感知不互并（并进去＝感知条以 chat 名义拿到长期身份）
-            _logger.info("Memory dedup skip cross-source: char=%d vector-hit id=%d src=%s/%s",
-                         character_id, mem_id, source, m.source)
-            m = None  # 跳过该候选，继续走后续字符级 / 同主题查重（宁可多一条，不可并错条）
-    if similar and m:
-        if not m.is_archived and not m.is_pinned and not m.is_locked:
-            # 艾宾浩斯强化：写入查重命中 = 一次复习，S ×2 并刷新遗忘起点
-            new_pct = _normalize_importance(importance)
-            if new_pct > float(m.importance or 40.0):
-                m.importance = min(DECAY_MAX_PCT, new_pct)
-            _apply_reinforce(m, REINFORCE_FACTOR_WRITE, _now_naive(), channel="write")
-            # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，
-            # 不含自身 id（去掉「∪ 自身 id」自环噪声）。
-            m.derived_from_ids = _merge_derived(m.derived_from_ids, derived_from_ids or [])
-            await db.commit()
-            _logger.info("Memory dedup on write: char=%d vector-hit id=%d sim=%.3f S=%.1f",
-                         character_id, mem_id, sim, m.strength_days or 0)
-            # M1-S11：dual_write_dup_merge（kind=vector_dedup）
-            from app.memory.observability import obs_event
-            obs_event(character_id, "dual_write_dup_merge",
-                      {"hit_id": mem_id, "sim": round(float(sim), 3)}, kind="vector_dedup")
-            emit_memory_receipt(
-                character_id, m.id, ACTION_MERGE, reason="write-time vector dedup",
-                detail=_merge_receipt_detail(
-                    "vector_dedup", m, source=source, sub_type=sub_type,
-                    memory_type=memory_type, source_id=source_id,
-                    speaker_type=speaker_type, epistemic_status=epistemic_status,
-                    derived_from_ids=derived_from_ids, node_type=node_type,
-                    content=content, extra={"sim": round(float(sim), 3)},
-                ),
-            )
-            return m, embedding
-    return None, embedding
-
-
-async def _text_topic_dedup_on_write(*, db, content, character_id, memory_type, source,
-                                   importance, sub_type, source_id, speaker_type,
-                                   epistemic_status, derived_from_ids, node_type,
-                                   timedelta, emit_memory_receipt, ACTION_MERGE
-                                   ) -> Memory | None:
-    """写入前的**字符级查重 ＋ 24h 同主题合并**两段（2026-10-12 A50 批 8，自 ``save_memory`` 中段机械抽出）。
-
-做的事照旧，两段一次搬完：
-- **2) 字符级查重兜底**：取同角色最近 30 条（``created_at`` 倒序）现行行，逐条比 ``SequenceMatcher``
-  比例 ``>= 0.72``；命中且那条没被置顶／锁定、来源也不互斥时，走艾宾浩斯强化（复习 S×2）、抬
-  importance（封顶 ``DECAY_MAX_PCT``）、并入调用方声明的 ``derived_from_ids``，commit 后依次打命中
-  日志 → ``obs_event(kind="text_dedup")`` → ``emit_memory_receipt(ACTION_MERGE)``，最后把那条记忆
-  交还调用方当返回值；
-- **3) 24h 同主题合并**（2026-08-08）：同角色**同 memory_type**、24h 内最多 50 条，比例**严格 >0.6**
-  即判"同一信息换了说法反复写入"（向量 0.86／字符 0.72 拦不住的近义表述），走同一套强化／抬升／
-  合并／commit／日志 → ``obs_event(kind="merge")``（带 ``sim``）→ 回执（带 ``extra.sim``）→ 返回。
-
-为什么两段合抽（成立条件也是以后不许乱改的约束）：
-- 两段**共享**同一份 ``b = content.strip()[:80]`` 与同一个 ``from difflib import SequenceMatcher``
-  局部导入；分开抽就得把这两个临时量当运输参数来回倒腾，合抽后它们与 ``_dedup_clause``／``recent``
-  ／``merge_rows`` 一样全变段内临时值（段外无人读），运输面只剩返回的那一条；
-- **返回值是二选一的运输契约**：命中 → 原 ``Memory``（``return m`` / ``return _m`` 两条原样保留，
-  连 ``_m`` 这个带下划线的旧名也不改）；未命中（两段都没命中）→ ``None``。调用点用 ``is not None`` 早退；
-- **不运输 ``embedding``**：这两段既不读也不改它，批 7 的运输契约只服务于向量段——既不传入也不带回，
-  更不许"顺手"改成重算或清 ``None``；
-- ``timedelta``／``emit_memory_receipt``／``ACTION_MERGE`` 三个**顶部局部导入**由调用点显式 kwarg
-  传入（既有测试 monkeypatch 的正是 ``app.memory.receipt`` 上的属性，helper 自己 import 会绕开接缝）；
-  ``select``／``Memory``／``current_facts_status_clause``／``_write_dedup_active_only_on``／
-  ``_retrievable_status_clause``／``_cross_source_merge_blocked``／``_normalize_importance``／
-  ``DECAY_MAX_PCT``／``REINFORCE_FACTOR_WRITE``／``_apply_reinforce``／``_merge_derived``／
-  ``_merge_receipt_detail``／``_now_naive``／``_logger`` **继续按模块全局晚绑定**（不得提成默认参数、
-  不得模块级缓存）；块内那两行 ``from app.memory.observability import obs_event`` 是随块原样搬过来的
-  （本来就只在各自命中分支里用，不合并、不上提）；
-- **两处状态子句的差异照旧保留**：字符档在 ``write_dedup_active_only`` 开着时用
-  ``current_facts_status_clause()``（P1-2 方案 B：只与现行行比对），关＝沿用
-  ``_retrievable_status_clause()``（怀旧面语义、当前永真）；主题档**恒用**
-  ``_retrievable_status_clause()``（行内 ``#70-C`` 注释随块）。不许"顺手统一"；
-- 阈值、切片与边界全部不动：``>= 0.72`` 与严格 ``> 0.6``、两侧都取 ``[:80]``、``len < 4`` 跳过、
-  ``limit(30)``／``limit(50)``、``created_at >= _now_naive() - timedelta(hours=24)``、两处
-  ``order_by(Memory.created_at.desc())``；
-- **异常边界照旧且不得顺手修**：两段里**没有** try，``db.execute``／``commit``／回执抛了就照旧向上抛
-  （调用点与 ``save_memory`` 都不新增 catch，不许在这里加"更稳"的包装）；
-- 不新增查询／不新增开关／不改事务边界：``db`` 由调用点传入，复用已开的会话；两处 commit 各在自己
-  的命中分支内、且都排在「日志 → obs_event → 回执」之前。
-"""
-    _dedup_clause = current_facts_status_clause() if _write_dedup_active_only_on() else _retrievable_status_clause()
-    from difflib import SequenceMatcher
-    recent_result = await db.execute(
-        select(Memory)
-        .where(Memory.character_id == character_id, Memory.is_archived == False, _dedup_clause)
-        .order_by(Memory.created_at.desc())
-        .limit(30)
-    )
-    recent = recent_result.scalars().all()
-    b = content.strip()[:80]
-    for m in recent:
-        if _cross_source_merge_blocked(source, m.source):
-            continue  # 禁令 3：感知 ↔ 非感知不互并
-        a = (m.content or "").strip()[:80]
-        if len(a) < 4 or len(b) < 4:
-            continue
-        if SequenceMatcher(None, a, b).ratio() >= 0.72:
-            # 艾宾浩斯强化：写入查重命中 = 一次复习，S ×2 并刷新遗忘起点
-            if m.is_pinned or m.is_locked:
-                continue
-            new_pct = _normalize_importance(importance)
-            if new_pct > float(m.importance or 40.0):
-                m.importance = min(DECAY_MAX_PCT, new_pct)
-            _apply_reinforce(m, REINFORCE_FACTOR_WRITE, _now_naive(), channel="write")
-            # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，不含自身 id。
-            m.derived_from_ids = _merge_derived(m.derived_from_ids, derived_from_ids or [])
-            await db.commit()
-            _logger.info("Memory dedup on write: char=%d text-hit id=%d S=%.1f",
-                         character_id, m.id, m.strength_days or 0)
-            # M1-S11：dual_write_dup_merge（kind=text_dedup）
-            from app.memory.observability import obs_event
-            obs_event(character_id, "dual_write_dup_merge", {"hit_id": m.id}, kind="text_dedup")
-            emit_memory_receipt(
-                character_id, m.id, ACTION_MERGE, reason="write-time text dedup",
-                detail=_merge_receipt_detail(
-                    "text_dedup", m, source=source, sub_type=sub_type,
-                    memory_type=memory_type, source_id=source_id,
-                    speaker_type=speaker_type, epistemic_status=epistemic_status,
-                    derived_from_ids=derived_from_ids, node_type=node_type,
-                    content=content,
-                ),
-            )
-            return m
-
-    # 3) 24h 同主题合并（2026-08-08）：同角色同类型 24h 内、字符相似 >0.6 → 更新原记忆而非新增。
-    #    覆盖"同一信息换了说法反复写入"（向量 0.86/字符 0.72 拦不住的近义表述）。
-    merge_rows = (await db.execute(
-        select(Memory)
-        .where(
-            Memory.character_id == character_id,
-            Memory.is_archived == False,
-            Memory.memory_type == memory_type,
-            Memory.created_at >= _now_naive() - timedelta(hours=24),
-            _retrievable_status_clause(),   # #70-C
-        )
-        .order_by(Memory.created_at.desc())
-        .limit(50)
-    )).scalars().all()
-    for _m in merge_rows:
-        if _m.is_pinned or _m.is_locked:
-            continue
-        if _cross_source_merge_blocked(source, _m.source):
-            continue  # 禁令 3：感知 ↔ 非感知不互并
-        _a = (_m.content or "").strip()[:80]
-        if len(_a) < 4 or len(b) < 4:
-            continue
-        if SequenceMatcher(None, _a, b).ratio() > 0.6:
-            new_pct = _normalize_importance(importance)
-            if new_pct > float(_m.importance or 40.0):
-                _m.importance = min(DECAY_MAX_PCT, new_pct)
-            _apply_reinforce(_m, REINFORCE_FACTOR_WRITE, _now_naive(), channel="write")
-            # #70-C M2（OBS-2 修复）：并入调用方声明的派生来源 derived_from_ids，不含自身 id。
-            _m.derived_from_ids = _merge_derived(_m.derived_from_ids, derived_from_ids or [])
-            await db.commit()
-            _logger.info("Memory merge on write: char=%d topic-hit id=%d sim=%.2f",
-                         character_id, _m.id, SequenceMatcher(None, _a, b).ratio())
-            # M1-S11：dual_write_dup_merge（kind=merge）
-            from app.memory.observability import obs_event
-            obs_event(character_id, "dual_write_dup_merge",
-                      {"hit_id": _m.id, "sim": round(SequenceMatcher(None, _a, b).ratio(), 3)},
-                      kind="merge")
-            emit_memory_receipt(
-                character_id, _m.id, ACTION_MERGE, reason="write-time topic merge 24h",
-                detail=_merge_receipt_detail(
-                    "merge", _m, source=source, sub_type=sub_type,
-                    memory_type=memory_type, source_id=source_id,
-                    speaker_type=speaker_type, epistemic_status=epistemic_status,
-                    derived_from_ids=derived_from_ids, node_type=node_type,
-                    content=content,
-                    extra={"sim": round(SequenceMatcher(None, _a, b).ratio(), 3)},
-                ),
-            )
-            return _m
-    return None
 
 
 def _emit_created_memory_receipts(

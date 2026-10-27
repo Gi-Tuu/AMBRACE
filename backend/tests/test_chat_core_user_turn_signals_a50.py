@@ -137,11 +137,17 @@ def _install_common(monkeypatch, log, *, cold_war=False, text=_OK_TEXT, agent_ex
 
 
 def _install_settle(monkeypatch, log, *, boom=None):
-    """A32 承诺兑现结算：块内函数内 import ⇒ 打桩落在 prospective_intent 模块属性上。"""
+    """A32 承诺兑现结算：块内函数内 import ⇒ 打桩落在 prospective_intent 模块属性上。
+
+    REWORK4：桩签名同步真实 helper 的身份参数（user_id/source_message_id）——原三参
+    桩在真实调用传 keyword 后 TypeError 被 helper 隔离（日志缺 settle）。桩不吞参数：
+    显式收下并记录两个 keyword，供「登录态 user 与本轮消息 id 原样传递」核验。
+    """
     import app.scheduling.prospective_intent as pi
 
-    async def _settle(character_id, session_id, content):
-        log.add("settle", character_id=character_id, session_id=session_id, content=content)
+    async def _settle(character_id, session_id, content, *, user_id=None, source_message_id=None):
+        log.add("settle", character_id=character_id, session_id=session_id, content=content,
+                user_id=user_id, source_message_id=source_message_id)
         if boom:
             raise boom
 
@@ -277,13 +283,16 @@ def test_helper排在状态构造与生成之前且会话用户角色原样传�
     st = log.kw("state")
     assert (st["character_id"], st["user_id"], st["session_id"], st["source_id"]) == (
         CHARACTER_ID, USER_ID, SESSION_ID, MSG_ID), "state 侧 id 传丢了：%r" % st
+    # REWORK4：三参升级五参原样——登录态 user_id 与本轮 user_msg_id 必须原样传到结算
+    # （真实 helper 的身份参数契约；其余三个位置参数断言语义不变）。
     assert log.kw("settle") == {"character_id": CHARACTER_ID, "session_id": SESSION_ID,
-                                 "content": "回来啦"}, "结算的三个入参必须原样"
+                                "content": "回来啦", "user_id": USER_ID,
+                                "source_message_id": MSG_ID}, "结算的五个入参必须原样"
 
 
 def test_core调的是真helper不是桩(monkeypatch):
     """反「全桩 helper 数调用次数冒充内部行为」：core 的全局解析点必须就是模块里那个真协程。"""
-    log = _install_all(monkeypatch, _Log())
+    _install_all(monkeypatch, _Log())
     helper = chat_service._run_user_turn_signals
     assert helper.__module__ == "app.application.chat_service"
     assert inspect.iscoroutinefunction(helper)

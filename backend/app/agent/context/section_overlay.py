@@ -154,6 +154,8 @@ async def life_share_section(state: dict, ctx: dict) -> list[str]:
                                 _MemL.user_id == state.get("user_id"),
                                 _MemL.character_id == state["character_id"],
                                 _MemL.source == "life",
+                                _MemL.is_archived.is_(False),
+                                _MemL.status == "active",
                                 _MemL.delete_at.is_(None),
                                 # T5 M0 项1：关=空列表（不附加，SQL 与改动前逐字节一致）；开=补现状面子句
                                 *_current_view_clauses(),

@@ -322,23 +322,23 @@ def test_flag开_既有感知条不被chat新条并入(env):
     assert [r.source for r in _rows(env["factory"])] == [PERCEPTION_SOURCE, "chat"]
 
 
-def test_flag开_两个chat条照旧合并(env):
+def test_flag开_无来源证明的chat条不合并(env):
     """收窄口径校验：两边都不是感知 ⇒ 合并行为不得改变（同来源照旧）。"""
     _flag(True)
     _seed_memory(env["factory"], SNAP)
     m = _save(content=SNAP)
     assert m is not None
-    assert len(_rows(env["factory"])) == 1
-    assert [r["action"] for r in env["receipts"]] == ["merge"]
+    assert len(_rows(env["factory"])) == 2
+    assert not [r for r in env["receipts"] if r["action"] == "merge"]
 
 
-def test_flag关_跨来源照旧合并_逐字节旧行为(env):
+def test_flag关_跨来源仍独立保存(env):
     """flag 关 ⇒ 禁令撤除：拨关一个 bool 即恢复旧行为（方案 §六 回退口径）。"""
     _seed_memory(env["factory"], SNAP, source=PERCEPTION_SOURCE)
     m = _save(content=SNAP)
     assert m is not None
-    assert len(_rows(env["factory"])) == 1
-    assert [r["action"] for r in env["receipts"]] == ["merge"]
+    assert len(_rows(env["factory"])) == 2
+    assert not [r for r in env["receipts"] if r["action"] == "merge"]
 
 
 def test_打标路径抛异常_fail_open不丢记忆(env, monkeypatch):

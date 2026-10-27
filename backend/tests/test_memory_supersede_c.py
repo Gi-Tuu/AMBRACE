@@ -325,7 +325,7 @@ def test_save_memory_derived_from_ids(c_db, monkeypatch):
         async with factory() as db:
             row0 = await db.get(Memory, m0.id)
         df0 = row0.derived_from_ids
-        # 2) merge 路径：写入与第一条高度相似 → 保留旧记忆；derived_from_ids 并入调用方
+        # 2) 不同正文不合并，派生来源只属于新候选；调用方
         #    声明来源（不含自身 id，OBS-2 修自环）。
         m1 = await memsvc.save_memory(
             user_id=1, character_id=2, memory_type="preference",
@@ -344,7 +344,7 @@ def test_save_memory_derived_from_ids(c_db, monkeypatch):
     df0, df1, m1_id, kept_id = asyncio.run(_main())
     import json
     assert json.loads(df0) == [101, 102]          # 显式 derived_from_ids 落库
-    assert m1_id == kept_id                       # 合并保留旧记忆（未新增）
+    assert m1_id != kept_id                       # 不同正文保留独立证据
     assert kept_id not in json.loads(df1)         # 不再并入自身 id（OBS-2 去自环）
     assert 999 in json.loads(df1)                 # merge 并入调用方声明来源 derived_from_ids
 

@@ -324,9 +324,7 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
     近期关系温度。v2.1 加成：被多路查询召回（多路命中）说明与当前话题/情绪更相关，
     每多一路 +5。回填查询过滤 is_archived（向量残留的已软删记忆直接剔除，不参与注入）。
 
-    #70 方案B（memory-trace 可观察）：return_debug=False 返回 list（清理临时 _score，零行为变化）；
-    return_debug=True 返回 (ordered, debug)，debug 含 db_pool + rerank_top（Top10 的
-    id/score/importance/has_why/status，体积按方案硬上限）。
+    SQLite owns text/type/scope; return_debug=True also returns bounded rerank diagnostics.
     """
     from app.memory.service import async_session_factory
     if not results:
@@ -337,13 +335,12 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
         rows = (await db.execute(
             select(Memory).where(
                 Memory.id.in_([r["id"] for r in results]),
+                Memory.character_id == character_id,
                 Memory.is_archived == False,   # noqa: E712
                 _retrievable_status_clause(),   # #70-C：双通道过滤（flag 关=永真，逐字节一致）
             )
         )).scalars().all()
     meta = {m.id: m for m in rows}
-    # 断点 #9 收口（flag status_memory_ttl 默认开，关＝一行都不执行）：
-    # 剔除超窗的「状态更新」派生记忆条——所有召回路都汇到这个回填池，故为口径唯一生效点。
     meta = _drop_expired_status_memories(meta, now)
     results = [r for r in results if r["id"] in meta]
     if not results:
@@ -405,6 +402,9 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
             score += _topic_bonus(m.content)
             if days > 60:
                 score *= 0.8
+            # Search indexes nominate IDs; SQLite owns the current text and type.
+            r["content"] = m.content
+            r["type"] = m.memory_type
             r["importance"] = base
             r["created_at"] = m.created_at
             r["epistemic_status"] = m.epistemic_status
@@ -920,14 +920,12 @@ async def _apply_search_plugins(
     limit: int,
     user_id: int | None,
 ) -> list[dict]:
-    """插件 Hook 扩展阶段（A50 批13 自 search_memories 的整段 try 原样搬运）。
+    """Append plugin candidates within the final result budget.
 
-    块内语句**逐字**搬运：`run_hook_collect` 的局部 import 仍在 try 内、ctx 与显式 kwarg
-    两处都带 user_id、ctx 里 `list(results)` 是拷贝、净化/去重/类型转换、**原候选切片在前
-    extra 在后**的拼接与 `max(0, limit - len(_extra))` 截尾、末尾 `except Exception: pass`
-    吞异常后返回当时的 results——全部保持原位原样，唯一改写＝末尾补一条 `return results`。
-    调用点顺序仍是 rank → plugin → scene → 投影（插件看到的是排序后、scene 过滤前的集合）。
+    Preserve plugin priority and stable order; extensions cannot exceed limit.
+    Hook failures remain isolated from native search results.
     """
+    limit = max(0, limit)
     # 插件 Hook：memory_search（调整/追加召回记忆；插件返回的 dict 列表追加到结果，原结果让位给插件追加；异常隔离）
     try:
         from app.plugins.registry import run_hook_collect
@@ -963,9 +961,13 @@ async def _apply_search_plugins(
                         "importance": float(_m.get("importance") or 0),
                     })
             if _extra:
+                _extra = _extra[:limit]
                 results = results[:max(0, limit - len(_extra))] + _extra
     except Exception:
         pass
+    results = results[:limit]
+    from app.memory.plan_projection import project_live_memory_results
+    results = await project_live_memory_results(results,character_id)
     return results
 
 

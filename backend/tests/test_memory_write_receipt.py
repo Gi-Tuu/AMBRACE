@@ -102,7 +102,8 @@ def test_write_points_wired():
     s = io.open(root + "supersede.py", encoding="utf-8").read()
     assert w.count("emit_memory_receipt(") >= 6
     assert "ACTION_REJECT" in w
-    assert "ACTION_MERGE" in w
+    assert "ACTION_MERGE" not in w
+    assert "persist_candidate" in w
     assert "ACTION_CREATE" in w
     assert "ACTION_SUPERSEDE" in s
     assert "ACTION_STALE" in s

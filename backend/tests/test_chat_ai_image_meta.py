@@ -9,12 +9,16 @@
 3. `_push_ws_ai_message` 的 WS payload data 带非空 extra_meta（monkeypatch
    push_to_session 捕获），保证实时上屏与 REST 历史表现一致。
 
-临时 SQLite 走 conftest 会话级沙箱库（不自建临时目录）。
+临时 SQLite：2026-10-25 起改用**每例克隆库**（`meta_db` fixture，与 `gen_image_clone` 同口径）——
+原先走 conftest 会话级沙箱库，`-n 8` 并行时会与同 worker 其它用例撞 SQLite 写锁。
 """
 import asyncio
 import json
 
+import pytest
 from sqlalchemy import select
+
+from _dbclone import clone_engine, make_session_factory
 
 from app.application.chat.io import _append_ai_image_message, _push_ws_ai_message
 from app.db.database import async_session_factory
@@ -24,6 +28,19 @@ from app.models.user import User
 
 _USER_ID = 9501
 _CHAR_ID = 9502
+
+
+@pytest.fixture()
+def meta_db(tmp_path, monkeypatch):
+    """每例独立克隆库；同时替换本模块与 `chat.io` 的 session 工厂（后者在模块级已绑定）。"""
+    import app.application.chat.io as _io
+
+    engine = clone_engine(tmp_path / "chat_ai_image_meta.db")
+    factory = make_session_factory(engine)
+    monkeypatch.setattr(_io, "async_session_factory", factory)
+    monkeypatch.setitem(globals(), "async_session_factory", factory)
+    yield factory
+    engine.sync_engine.dispose()
 
 
 async def _seed_session() -> int:
@@ -57,7 +74,7 @@ async def _cleanup(session_id: int) -> None:
         await db.commit()
 
 
-def test_append_ai_image_message_meta_and_caption():
+def test_append_ai_image_message_meta_and_caption(meta_db):
     async def _run():
         session_id = await _seed_session()
         try:
@@ -88,7 +105,7 @@ def test_append_ai_image_message_meta_and_caption():
     asyncio.run(_run())
 
 
-def test_append_ai_image_message_caption_empty_when_none():
+def test_append_ai_image_message_caption_empty_when_none(meta_db):
     async def _run():
         session_id = await _seed_session()
         try:
@@ -111,7 +128,7 @@ def test_append_ai_image_message_caption_empty_when_none():
     asyncio.run(_run())
 
 
-def test_append_ai_image_message_caption_truncated_to_60():
+def test_append_ai_image_message_caption_truncated_to_60(meta_db):
     async def _run():
         session_id = await _seed_session()
         try:

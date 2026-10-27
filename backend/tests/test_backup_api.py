@@ -132,3 +132,56 @@ def test_backup_day_key_单一来源(tmp_path, monkeypatch):
         assert '.strftime("%Y%m%d")' not in src, f'{rel} 又出现消费端自算备份日期'
     backup_src = (backend_root.parent / 'scripts' / 'backup.py').read_text(encoding='utf-8')
     assert backup_src.count('def backup_day_key()') == 1, '生产端日期键入口应唯一'
+
+
+def test_backup_includes_durable_queue_snapshot_with_uncheckpointed_wal(tmp_path, monkeypatch):
+    import sqlite3
+    import zipfile
+    from pathlib import Path
+
+    mod = _isolated_backup_module(tmp_path, monkeypatch)
+    mod.SERVER_DIR = str(tmp_path)
+    queue_dir = Path(mod.CONFIG_FILE).parent
+    queue_path = queue_dir / "extract_queue.sqlite3"
+    legacy = queue_dir / "extract_queue.json"
+    legacy.write_text('{"sessions":{},"inflight":{}}', encoding="utf-8")
+    source = sqlite3.connect(queue_path)
+    try:
+        source.execute("PRAGMA journal_mode=WAL")
+        source.execute("PRAGMA wal_autocheckpoint=0")
+        source.execute("CREATE TABLE extraction_tasks (payload TEXT)")
+        source.execute("INSERT INTO extraction_tasks VALUES ('synthetic_pending')")
+        source.commit()
+        assert queue_path.with_name(queue_path.name + "-wal").exists()
+        mod.do_backup()
+        with zipfile.ZipFile(tmp_path / (mod.backup_day_key() + ".zip")) as archive:
+            restored = tmp_path / "restored-queue.db"
+            restored.write_bytes(archive.read("extract_queue.sqlite3"))
+            assert archive.read("extract_queue.json") == legacy.read_bytes()
+        with sqlite3.connect(restored) as connection:
+            assert connection.execute("SELECT payload FROM extraction_tasks").fetchone()[0] == "synthetic_pending"
+    finally:
+        source.close()
+
+
+def test_queue_snapshot_precedes_business_snapshot_and_failure_is_not_published(tmp_path, monkeypatch):
+    import sqlite3
+    from pathlib import Path
+
+    mod = _isolated_backup_module(tmp_path, monkeypatch)
+    queue = Path(mod.CONFIG_FILE).parent / "extract_queue.sqlite3"
+    with sqlite3.connect(queue) as connection:
+        connection.execute("CREATE TABLE tasks (id INTEGER)")
+    calls = []
+
+    def failed_snapshot(archive, source_file=None):
+        calls.append(source_file or mod.DB_FILE)
+        return 0
+
+    monkeypatch.setattr(mod, "_add_sqlite_backup", failed_snapshot)
+    import pytest
+    with pytest.raises(RuntimeError, match="Extraction task database backup failed"):
+        mod.do_backup()
+    assert calls == [str(queue)]
+    assert not (tmp_path / (mod.backup_day_key() + ".zip")).exists()
+    assert not (tmp_path / (mod.backup_day_key() + ".zip.tmp")).exists()

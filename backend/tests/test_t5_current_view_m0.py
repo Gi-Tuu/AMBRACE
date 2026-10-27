@@ -139,13 +139,15 @@ def test_关时where不含现状面子句_开时含(monkeypatch):
     monkeypatch.setitem(AGENT_FLAGS, _KEY, True)
     on = _life_share_whereclause(monkeypatch)
 
-    assert "memories.status" not in off, f"开关关却带上了现状面子句：{off}"
+    assert "memories.status" in off, f"现行/归档边界必须无条件执行：{off}"
     assert "memories.status" in on, f"开关开却没带上现状面子句：{on}"
     # 关态 SQL 必须与改动前逐字节一致：与手写「四个原始条件」基线完全相等
     baseline = str(select(Memory).where(
         Memory.user_id == 1,
         Memory.character_id == 13,
         Memory.source == "life",
+        Memory.is_archived.is_(False),
+        Memory.status == "active",
         Memory.delete_at.is_(None),
     ).whereclause.compile())
     assert off == baseline, f"关态与旧 SQL 不一致：\n关={off}\n基线={baseline}"

@@ -119,14 +119,12 @@ def test_ACTION常量仍在函数内延迟import且未被提到模块顶层():
     sm_imports = {a.name for n in ast.walk(_fn(tree, "save_memory"))
                   if isinstance(n, ast.ImportFrom) and n.module == "app.memory.receipt"
                   for a in n.names}
-    assert sm_imports == {"emit_memory_receipt", "ACTION_MERGE", "ACTION_REJECT"}, sm_imports
+    assert sm_imports == {"emit_memory_receipt", "ACTION_REJECT"}, sm_imports
 
 
 def test_helper内不查库不写库():
     """它只读传入的 ``memory`` 行与标量：不得出现 execute/get/add/commit 这类 IO。"""
     helper = _fn(_write_tree(), "_emit_created_memory_receipts")
-    banned = ("db.", "session.", "await ", "async_session_factory", ".execute(", ".commit(",
-              "add(", "flush(", "refresh(")
     for node in ast.walk(helper):
         if isinstance(node, ast.Attribute):
             assert node.attr not in ("execute", "get", "add", "commit", "flush", "refresh"), \
@@ -152,7 +150,8 @@ def test_调用点在refresh之后向量之前且是同步调用():
     assert not inner.args, "十七个依赖一律 keyword 传入，不留位置参数"
     # 位置：`await db.refresh(memory)` 在前，`# 生成向量并存入 ChromaDB` 在后
     before = [ast.unparse(s) for s in block.body[:calls[0]]]
-    assert before[-3:] == ["await db.flush()", "await db.commit()", "await db.refresh(memory)"], before[-3:]
+    assert any("await persist_candidate" in line for line in before)
+    assert before[-1] == "if not created:\n    return memory"
     nxt = block.body[calls[0] + 1]
     assert isinstance(nxt, ast.Try) and "add_memory(" in ast.unparse(nxt), \
         "调用点之后必须紧接向量写入段（回执在向量之前）"
@@ -555,17 +554,14 @@ def test_拒收入口零新建回执调用(env, monkeypatch):
 
 
 @pytest.mark.slow
-def test_查重并档入口零新建回执调用(env, monkeypatch):
-    """向量查重命中走原 merge 分支：不许触发本 helper 的任何一条新建回执。"""
+def test_同证据重放零新建回执调用(env):
     e = env["env"]
-    mem_id = _seed_existing(env["factory"])
-
-    async def _hit(*_a, **_kw):
-        return (mem_id, 0.97)
-
-    monkeypatch.setattr(svc, "find_similar_memory", _hit)
-    merged = _save(content="合成样例：既有的一条记忆")
-    assert merged is not None and merged.id == mem_id
-    assert e.helper_calls == [], e.helper_calls
-    assert [r["action"] for r in e.receipts] == ["merge"], e.receipts
-    assert "vector" not in e.order, "并档路径不写向量、不进本切口"
+    first = _save(source="chat", source_id=991)
+    e.helper_calls.clear()
+    e.receipts.clear()
+    e.order.clear()
+    replay = _save(source="chat", source_id=991)
+    assert replay.id == first.id
+    assert e.helper_calls == []
+    assert e.receipts == []
+    assert "vector" not in e.order

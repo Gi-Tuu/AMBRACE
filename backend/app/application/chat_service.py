@@ -266,13 +266,13 @@ async def _run_user_turn_signals(
 
     调用方只有 _run_agent_core（冷战拦截之后、构造 state 与 agent.ainvoke 之前）。
     """
-    # A32（2026-10-07）：用户消息落库后、生成 AI 回复前——先做「事件已兑现 → 承诺静默关闭」的
-    # 确定性结算（到家 / 吃药类信号命中则置 discharged，不发消息、不调模型、不写主动消息日志）。
-    # 与 run_prospective_due 的 fire 前闸门同口径，本处是「事件发生当时」的第一道，闸门是双保险。
-    # 失败静默：结算不了不影响本轮回复（宁可漏关，不可误关）。
+    # A32（2026-10-07）：用户消息落库后、生成 AI 回复前——「事件已兑现 → 承诺静默关闭」的确定性
+    # 结算（信号命中置 discharged，不发消息不调模型）；与 run_prospective_due 闸门同口径，本处是
+    # 第一道。失败静默（宁可漏关不可误关）。C9b切口1（2026-10-24）：传真实身份证据（登录态
+    # user_id + 本轮 user_msg_id），结算侧据此核验归属与源消息（REWORK4：调用压回单行）。
     try:
         from app.scheduling.prospective_intent import settle_promises_on_user_message
-        await settle_promises_on_user_message(character_id, session_id, content)
+        await settle_promises_on_user_message(character_id, session_id, content, user_id=user_id, source_message_id=user_msg_id)
     except Exception as e:
         _logger.warning("prospective settle on user message failed: %s", e)
 

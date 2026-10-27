@@ -391,14 +391,36 @@ def _strip_check(db: Path) -> None:
 
 
 def test_startup_on_candidate_head_without_check_installs_triggers(tmp_path, monkeypatch):
+    """B2c CHECK 缺失 ⇒ startup 装触发器（``already_at_head+guard:triggers``）。
+
+    2026-10-23 Qwen 测试专批：这条拒绝分支**只有在 version==head 时才走**（否则
+    ``_ensure_alembic_revision_sync_inner`` 会先补跑迁移）。b2a 现在有后代
+    ``c4e6f8a0b2d4``（memories.write_key），真 head 已经不是 CANDIDATE——所以这里
+    版本要落 **d6**（C9持久完成证据后代），函数名里的 "candidate_head" 保留成历史叫法，含义是
+    「AUTOINCREMENT 已装、B2c CHECK 未装、启动链应识别并补 guard」。
+    `_make_full_db` 走 create_all，schema 天然带 AUTOINCREMENT + write_key；
+    `_strip_check` 只抹掉 CHECK，正对应「已到 head 但缺 B2c」这一状态。
+    """
+    from _memory_migration_fixture import read_chain
     from app.config import settings
     from app.db import migrate
+
+    _chain = read_chain(BACKEND / "alembic" / "versions")
+    _parents = {down for (_p, down) in _chain.values() if down is not None}
+    _real_head = next(rev for rev in _chain if rev not in _parents)
+    assert _real_head == "d6f8a0b2c4e6", (
+        f"仓库迁移链应为 d6→c4→b2a，实得 head={_real_head}；"
+        "若这条断了说明迁移链被截短，本用例的版本目标需要重审"
+    )
+
+    assert _chain[_real_head][1] == "c4e6f8a0b2d4"
+    assert _chain["c4e6f8a0b2d4"][1] == "b2a0c1d2e3f4"
 
     db = _make_full_db(tmp_path)
     _strip_check(db)
     con = sqlite3.connect(str(db))
     con.execute("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)")
-    con.execute("INSERT INTO alembic_version(version_num) VALUES('b2a0c1d2e3f4')")
+    con.execute("INSERT INTO alembic_version(version_num) VALUES(?)", (_real_head,))
     con.commit()
     con.close()
     monkeypatch.setattr(settings, "database_url", "sqlite+aiosqlite:///" + db.as_posix())

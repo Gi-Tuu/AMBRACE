@@ -33,6 +33,7 @@ def state_file(tmp_path, monkeypatch):
     monkeypatch.setattr(pst, "_STATE_FILE", path)
     monkeypatch.setattr(pst, "_LOCKS", {})
     monkeypatch.setattr(pst, "_LOCAL_STAMPS", {})
+    monkeypatch.setattr(pst, "_LOCAL_STREAKS", {})
     return path
 
 
@@ -224,6 +225,7 @@ def test_写盘失败记ERROR并落内存兜底不倒退(tmp_path, monkeypatch, 
     monkeypatch.setattr(pst, "_STATE_FILE", blocked / "periodic_state.json")
     monkeypatch.setattr(pst, "_LOCKS", {})
     monkeypatch.setattr(pst, "_LOCAL_STAMPS", {})
+    monkeypatch.setattr(pst, "_LOCAL_STREAKS", {})
     when = datetime(2026, 9, 26, 9, 9, 9)
 
     with caplog.at_level(logging.ERROR):
@@ -365,6 +367,7 @@ def test_每日一次_写盘失败落内存兜底不丢退避闸门(tmp_path, mo
     monkeypatch.setattr(pst, "_STATE_FILE", blocked / "periodic_state.json")
     monkeypatch.setattr(pst, "_LOCKS", {})
     monkeypatch.setattr(pst, "_LOCAL_STAMPS", {})
+    monkeypatch.setattr(pst, "_LOCAL_STREAKS", {})
     monkeypatch.setattr(pst, "_LOCAL_RETRY_AT", {})
     monkeypatch.setattr(pst, "app_tz_offset_hours", lambda: 8)
     when = datetime(2026, 9, 26, 15, 0, 0)

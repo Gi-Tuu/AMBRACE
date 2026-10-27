@@ -12,8 +12,8 @@
 - **插件扩展**：``run_hook_collect`` 的局部 import 仍在 ``try`` 内、ctx 五键与**两处** user_id
   （ctx 一个＋显式 kwarg 一个）、``callsite`` 字面量、ctx 里 ``list(results)`` 是**拷贝**、
   非 list/dict 或无 id 的候选丢弃、重复 id 不重复追加、四键净化（``str``/``str``/``float``）、
-  **原候选切片在前 extra 在后**、``max(0, limit - len(_extra))`` 截尾、``except: pass`` 吞异常
-  后返回**当时**的 results、空候选也照样走 hook。
+  **原候选切片在前 extra 在后**、extra 与最终结果均受 limit 约束、``except: pass`` 隔离异常
+  后仍执行最终上限、空候选也照样走 hook。
 - **顺序类**（AST + 端到端）：caller 仍是 rank → plugin → scene → 投影；插件看到的集合是
   **排序后、scene 过滤前**（e2e 里 group 来源的行出现在 hook ctx、但不出现在 dm 出口）。
 
@@ -384,12 +384,11 @@ def test_原候选在前extra在后且四键净化(monkeypatch):
 
 
 def test_追加超过limit时原候选被截尾(monkeypatch):
-    """``results[:max(0, limit - len(_extra))] + _extra``：extra(4) 比 limit(2) 还多 ⇒
-    max(0, 2-4)=0 ⇒ 原候选一个不剩，extra 整段照原样接在后面（不截 extra 自己）。"""
+    """插件优先级保持，但扩展结果本身也必须遵守最终条数上限。"""
     spy = _HookSpy(items=[{"result": [{"id": i} for i in range(10, 14)]}])
     monkeypatch.setattr("app.plugins.registry.run_hook_collect", spy)
     out = _plug([_row(1), _row(2), _row(3)], limit=2)
-    assert [r["id"] for r in out] == [10, 11, 12, 13], "原候选全让位，extra 保持原序原条数"
+    assert [r["id"] for r in out] == [10, 11], "插件结果按原序截到 limit"
 
 
 def test_空候选也照样走hook(monkeypatch):
@@ -636,3 +635,38 @@ def test_签名与公共出口未变():
                                     "time_range", "scene", "exclude_sources", "group_id", "user_id"]
     assert all(p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD for p in sig.parameters.values())
     assert inspect.iscoroutinefunction(_retrieve.search_memories)
+
+@pytest.mark.parametrize("hook_fails", [False, True])
+@pytest.mark.parametrize("limit", [0, 1, 3])
+def test_plugin_budget_applies_to_empty_or_failed_hooks(monkeypatch, hook_fails, limit):
+    spy = _HookSpy(items=[], raises=hook_fails)
+    monkeypatch.setattr("app.plugins.registry.run_hook_collect", spy)
+    out = _plug([_row(i) for i in range(5)], limit=limit)
+    assert [r["id"] for r in out] == list(range(limit))
+
+
+def test_rerank_uses_sql_text_type_and_character_scope(env):
+    factory = env["factory"]
+    current = _add(factory, "用户现在住在上海", mtype="user_info")
+    archived = _add(factory, "归档内容", is_archived=True)
+    foreign = _add(factory, "其他角色的内容", char=OTHER_CHAR_ID)
+    candidates = [
+        _row(current, content="用户住在北京", mtype="event"),
+        _row(archived), _row(foreign), _row(999999),
+    ]
+    out = asyncio.run(_retrieve._rerank(candidates, CHAR_ID))
+    assert [(r["id"], r["content"], r["type"]) for r in out] == [
+        (current, "用户现在住在上海", "user_info")]
+
+
+def test_search_returns_sql_text_when_vector_document_is_stale(env, monkeypatch):
+    mid = _add(env["factory"], "用户现在住在上海", mtype="user_info")
+
+    async def stale_vector(*args, **kwargs):
+        return [_row(mid, content="用户住在北京", mtype="event")]
+
+    monkeypatch.setattr(svc, "vector_search", stale_vector)
+    monkeypatch.setattr("app.plugins.registry.run_hook_collect", _HookSpy(items=[]))
+    out = asyncio.run(_retrieve.search_memories(CHAR_ID, MAIN_Q, limit=3))
+    assert [(r["id"], r["content"], r["type"]) for r in out] == [
+        (mid, "用户现在住在上海", "user_info")]

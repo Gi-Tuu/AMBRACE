@@ -25,26 +25,16 @@ async def list_memories(
     skip: int = 0,
     limit: int = 800,
     user_ids: list[int] | None = None,
-    read_only: bool = False,
+    read_only: bool = True,
 ) -> tuple[list[dict], int]:
-    """列出记忆（按 importance 排序）；顺带惰性衰减。返回 (切片结果, 总数)。
+    """Pure memory listing with computed retention for display.
 
-    重构说明（2026-08-03）：原实现逐条开 session + commit（N+1，3000 条记忆时
-    数十秒），且 _apply_decay 的 commit 使 ORM 属性过期、session 关闭后再访问
-    抛 DetachedInstanceError（GET /api/v1/memories 500）。改为：单 session 内
-    snapshot 全部字段，衰减批量落库（一次 commit），session 外只操作快照。
-
-    user_ids（账号独立 P1，2026-09-19）：租户账号白名单（tenant_scope_ids），优先于
-    user_id；缺省 None 时行为与改造前逐字节一致（严格单账号过滤）。
-
-    read_only（2026-10-16，PWA M1a-2 返工）：显式**无维护读取**开关。为 True 时，
-    到期行仍从返回列表里剔除（展示口径与默认路径一致），但**不物理删除底层行、
-    不 commit 维护、不清理向量**——供只读内容面使用；查询条件/租户过滤/输出字段
-    与可见性完全不变。缺省 False 时是既有行为（到期行物理删除 + 清向量），
-    逐字节不变，移动端等既有调用不受影响。
+    Expired rows are hidden, never deleted by reading. The read_only parameter is
+    retained for old callers; both values are pure reads. Scheduled decay owns
+    expiration through the shared delete_memory mutation path.
     """
     from datetime import datetime
-    from app.memory.service import async_session_factory, delete_memory_vector
+    from app.memory.service import async_session_factory
 
     now = _now_naive()
     async with async_session_factory() as db:
@@ -85,7 +75,6 @@ async def list_memories(
             "last_reinforce_at": m.last_reinforce_at,
             "next_review_at": m.next_review_at,
             "review_count": int(m.review_count or 0),
-            "_obj": m,
         } for m in memories]
 
         # 惰性衰减展示（艾宾浩斯）：读列表只计算实时保留率用于展示，不写库、不刷新遗忘起点
@@ -96,14 +85,10 @@ async def list_memories(
         for row in rows:
             if row["is_pinned"] or row["is_locked"]:
                 continue
-            obj = row["_obj"]
             if row["delete_at"] is not None:
                 if now >= row["delete_at"]:
-                    # 到期行：返回列表一律剔除（展示口径不变）；read_only 模式下
-                    # 只剔除不落库——显式无维护读取不得物理删除底层行
+                    # Reading hides expired rows; scheduled maintenance archives them.
                     removed_ids.add(row["id"])
-                    if not read_only:
-                        await db.delete(obj)
                 continue
             base = row["last_reinforce_at"] or row["decay_base_at"] or row["created_at"]
             if base is None:
@@ -115,17 +100,6 @@ async def list_memories(
                 continue
             pct = retention_pct(dt_days, row["strength_days"])
             row["importance"] = pct
-        if removed_ids and not read_only:
-            await db.commit()
-
-    # 过期删除的同步清理向量（避免孤儿向量）；read_only 模式不删行也不动向量
-    if removed_ids and not read_only:
-        for mid in removed_ids:
-            try:
-                await delete_memory_vector(mid)
-            except Exception:
-                pass
-
     alive = [r for r in rows if r["id"] not in removed_ids]
     alive.sort(key=lambda r: (r["is_pinned"], star_from_pct(r["importance"]), r["created_at"] or now), reverse=True)
     total = len(alive)

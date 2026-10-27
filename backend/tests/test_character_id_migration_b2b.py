@@ -11,16 +11,39 @@ import sys
 from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from sqlalchemy import create_engine
 
 from app.config import settings
 from app.db import migrate
+
+from _memory_migration_fixture import prune_excluding, read_chain
 
 BACKEND = Path(__file__).resolve().parents[1]
 OLD_HEAD = "e2f4a6b8c0d2"
 CANDIDATE = "b2a0c1d2e3f4"
 CANDIDATE_FILE = BACKEND / "alembic" / "versions" / "b2a0c1d2e3f4_ai_characters_autoincrement.py"
+
+
+def _heads_of(versions_dir: Path) -> set[str]:
+    chain = read_chain(versions_dir)
+    parents = {down for (_p, down) in chain.values() if down is not None}
+    return {rev for rev in chain if rev not in parents}
+
+
+_repo_heads = _heads_of(BACKEND / "alembic" / "versions")
+assert len(_repo_heads) == 1, f"仓库迁移图应单头，实得 {sorted(_repo_heads)}"
+REAL_HEAD = next(iter(_repo_heads))
+# CANDIDATE 仍是 AUTOINCREMENT/CHECK 的锚点；真 head 已前移到它的写侧后代 c4e6f8a0b2d4。
+assert REAL_HEAD != CANDIDATE, (
+    "本批语义假设 CANDIDATE 已不是 head；若这条断了说明迁移链被截短，"
+    "_tree / startup 断言的目标版本需要重审"
+)
+
 STAGES = [
     "AFTER_CREATE", "AFTER_COPY", "AFTER_DROP",
     "AFTER_RENAME", "AFTER_SEQUENCE", "AFTER_CHECK",
@@ -41,12 +64,15 @@ def _tree(tmp_path: Path, name: str, *, with_candidate: bool = True,
           stage: str | None = None) -> Path:
     tree = tmp_path / name
     shutil.copytree(BACKEND / "alembic", tree, ignore=shutil.ignore_patterns("__pycache__"))
+    versions = tree / "versions"
     if not with_candidate:
-        cand = tree / "versions" / CANDIDATE_FILE.name
-        if cand.exists():
-            cand.unlink()
+        # 图遍历剪除 CANDIDATE **及其全部后代**（本批=c4e6f8a0b2d4）。旧脚本只 unlink
+        # 候选文件会留下后代孤儿 → alembic 加载 ScriptDirectory 报 KeyError，
+        # 本批 43 条失败的直接成因。
+        removed = prune_excluding(versions, CANDIDATE)
+        assert CANDIDATE in removed, f"剪枝未覆盖 CANDIDATE：{removed}"
     elif stage is not None:
-        dst = tree / "versions" / CANDIDATE_FILE.name
+        dst = versions / CANDIDATE_FILE.name
         lines = dst.read_text(encoding="utf-8").splitlines()
         marker = f"# B2A_FAIL_{stage}"
         for i, line in enumerate(lines):
@@ -108,6 +134,47 @@ def _make_legacy_ai(db: Path) -> None:
     ).fetchone()[0]
     con.close()
     assert "AUTOINCREMENT" not in new_ddl.upper()
+
+
+def _apply_c4_increment(db: Path) -> None:
+    """用真实 c4 增量迁移（Operations.add_column/create_index）补 write_key + 唯一索引。
+
+    返工 §2：migrate.py 新增 ``(memories, write_key)`` 哨兵；orphan 恢复正例要求 schema
+    已确认，但**不能同时把 ai_characters 变成 AUTOINCREMENT**（否则退化为 already_at_head）。
+    所以只跑 c4 的 Operations.upgrade，不跑整链。禁止 create_all 预补、禁止 mock schema 判断。
+    """
+    engine = create_engine("sqlite:///" + Path(db).resolve().as_posix())
+    try:
+        with engine.begin() as conn:
+            ctx = MigrationContext.configure(connection=conn)
+            ops = Operations(ctx)
+            insp = sa.inspect(conn)
+            cols = {c["name"] for c in insp.get_columns("memories")}
+            if "write_key" not in cols:
+                ops.add_column(
+                    "memories", sa.Column("write_key", sa.String(64), nullable=True)
+                )
+            idxs = set(conn.execute(sa.text(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memories'"
+            )).scalars())
+            if "ix_memories_write_key" not in idxs:
+                ops.create_index(
+                    "ix_memories_write_key", "memories", ["write_key"], unique=True
+                )
+    finally:
+        engine.dispose()
+
+
+def _memories_shape(db: Path) -> tuple[list[str], list[str]]:
+    con = sqlite3.connect(str(db))
+    try:
+        cols = sorted(r[1] for r in con.execute("PRAGMA table_info(memories)").fetchall())
+        idxs = sorted(r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memories'"
+        ).fetchall())
+        return cols, idxs
+    finally:
+        con.close()
 
 
 def _seed(db: Path) -> None:
@@ -295,36 +362,123 @@ def _upgrade(tree: Path, db: Path) -> None:
     command.upgrade(_cfg(tree), "head")
 
 
+def _memories_schema_shape(db: Path) -> tuple[list[tuple], list[str]]:
+    """(PRAGMA table_info(memories) 列元组, 按名字排序的 memories 索引列表)。"""
+    con = sqlite3.connect(str(db))
+    try:
+        cols = [tuple(r) for r in con.execute("PRAGMA table_info(memories)").fetchall()]
+        idxs = sorted(r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memories'"
+        ).fetchall())
+        return cols, idxs
+    finally:
+        con.close()
+
+
 def test_old_head_upgrade_preserves_rows_and_no_reuse(tmp_path, use_db):
     db = _build_old(tmp_path, use_db, legacy=True)
     _seed(db)
     before = _snapshot(db)
+    before_mem_cols, before_mem_idx = _memories_schema_shape(db)
     assert "AUTOINCREMENT" not in before["ddl"].upper()
+    assert "write_key" not in {c[1] for c in before_mem_cols}, (
+        "本用例前提：老库 memories 尚未有 write_key 列（c4 未跑）"
+    )
     assert {(t, n) for t, n, _s in before["objects"]} == {
         ("index", "b2a_idx_ai_char_user"), ("trigger", "b2a_trg_ai_char_touch"),
     }
 
     action = migrate._ensure_alembic_revision_sync()
-    assert action.startswith(f"upgraded:{OLD_HEAD}->{CANDIDATE}"), action
+    # 从 OLD_HEAD 直接 upgrade 到 **当前图的真 head**（CANDIDATE 后代 c4 已接入）。
+    # AUTOINCREMENT/CHECK 仍由 CANDIDATE(b2a) 装；write_key 列 + ix_memories_write_key
+    # 唯一索引由 c4 装；版本落点从 CANDIDATE 改为 REAL_HEAD。
+    assert action.startswith(f"upgraded:{OLD_HEAD}->{REAL_HEAD}"), action
     assert "+guard:check" in action, action
     after = _snapshot(db)
-    assert _version(db) == CANDIDATE
+    after_mem_cols, after_mem_idx = _memories_schema_shape(db)
+    assert _version(db) == REAL_HEAD
     assert "AUTOINCREMENT" in after["ddl"].upper()
     assert "ck_ai_characters_client_safe_id" in after["ddl"]
     for key in ("chars", "states", "sessions", "receipts", "lorebook", "facts", "restrict", "audit"):
         assert after[key] == before[key], key
     assert after["fks"] == before["fks"]
     assert after["objects"] == before["objects"]
-    # ai_characters 自身 DDL 必须变化；其余 schema 对象集合逐项不变。
-    def _non_ai_objects(snapshot):
-        return [
-            obj for obj in snapshot["schema_objects"]
-            if not (obj[0] == "table" and obj[1] == "ai_characters")
-        ]
 
-    assert _non_ai_objects(after) == _non_ai_objects(before)
-    assert after["table_count"] == before["table_count"]
+    # §3 精确 delta：schema_objects 只允许三类改动——
+    #   (a) ai_characters 表 DDL：b2a 重建装 AUTOINCREMENT/CHECK；
+    #   (b) memories 表 DDL：c4 只加一列 write_key，其他列一字节都不许动；
+    #   (c) 新增 ix_memories_write_key 唯一索引及 d6 的两表/两索引。
+    # 其他所有 sqlite_master 行（现有索引 / 触发器 / 表 DDL）必须逐值不变。
+    # **不能整表过滤掉 memories**（那会连意外改动一起放过）；也不能过滤掉 ai_characters。
+    before_by_key = {(t, n): (tbl, sql) for t, n, tbl, sql in before["schema_objects"]}
+    after_by_key = {(t, n): (tbl, sql) for t, n, tbl, sql in after["schema_objects"]}
+    added = set(after_by_key) - set(before_by_key)
+    removed = set(before_by_key) - set(after_by_key)
+    changed = {k for k in set(before_by_key) & set(after_by_key)
+               if before_by_key[k] != after_by_key[k]}
+    # 新后代 d6 加两张独立账本及两个作用域索引；既有表的精确不变断言保留。
+    assert added == {
+        ("index", "ix_memories_write_key"),
+        ("table", "business_plan_items"), ("index", "idx_business_plan_scope"),
+        ("table", "plan_completion_evidence"), ("index", "idx_plan_evidence_scope"),
+    }, f"新增对象必须严格等于 c4/d6 的冻结增量，实际 added={added}"
+    assert removed == set(), f"拒绝任何 sqlite_master 对象被删除：removed={removed}"
+    assert changed == {("table", "ai_characters"), ("table", "memories")}, (
+        f"只允许 ai_characters / memories 两张表 DDL 变化，实际 changed={changed}"
+    )
+
+    # memories 列级 delta：**恰好**只多 write_key 一列，其余列元数据逐值不变。
+    before_col_names = [c[1] for c in before_mem_cols]
+    after_col_names = [c[1] for c in after_mem_cols]
+    assert set(after_col_names) - set(before_col_names) == {"write_key"}, (
+        f"memories 只允许新增 write_key 一列，实际新增 "
+        f"{sorted(set(after_col_names) - set(before_col_names))}"
+    )
+    assert set(before_col_names) - set(after_col_names) == set(), (
+        "memories 不得删除任何旧列"
+    )
+    before_col_map = {c[1]: c for c in before_mem_cols}
+    after_col_map = {c[1]: c for c in after_mem_cols}
+    for name in before_col_names:
+        assert after_col_map[name] == before_col_map[name], (
+            f"memories 既有列 {name} 元数据被改：{before_col_map[name]} -> {after_col_map[name]}"
+        )
+    wk = after_col_map["write_key"]
+    # PRAGMA table_info 元组：(cid, name, type, notnull, dflt_value, pk)
+    # write_key 必须是「可空、非 PK」——c4 迁移的定义就是 String(64) nullable=True。
+    assert wk[1] == "write_key" and wk[3] == 0 and wk[5] == 0, (
+        f"write_key 必须是可空非 PK 列：{wk}"
+    )
+    # 索引集合 delta：只多 ix_memories_write_key；且这条唯一性必须真成立。
+    assert set(after_mem_idx) - set(before_mem_idx) == {"ix_memories_write_key"}
+    assert set(before_mem_idx) - set(after_mem_idx) == set()
+    con_idx = sqlite3.connect(str(db))
+    try:
+        idx_sql = con_idx.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='ix_memories_write_key'"
+        ).fetchone()[0]
+        assert "UNIQUE" in (idx_sql or "").upper(), (
+            f"c4 建的 ix_memories_write_key 必须是唯一索引：{idx_sql!r}"
+        )
+        assert "write_key" in (idx_sql or "").lower()
+    finally:
+        con_idx.close()
+
+    # d6恰好新增两张独立账本；其余表不得丢失或新增。
+    assert after["table_count"] == before["table_count"] + 2
+
     assert _fk_check(db) == []
+    # 序列：现有 sqlite_sequence 行不得改；只允许新增 ai_characters 一条（b2a 重建装 AUTOINCREMENT）。
+    before_seq = dict(before["sequences"] or [])
+    after_seq = dict(after["sequences"] or [])
+    for name, val in before_seq.items():
+        assert after_seq.get(name) == val, (
+            f"既有 sqlite_sequence[{name}] 被改：{val} -> {after_seq.get(name)}"
+        )
+    assert set(after_seq) - set(before_seq) == {"ai_characters"}, (
+        f"只允许新增 ai_characters 序列行，实际新增 {set(after_seq) - set(before_seq)}"
+    )
+    # 高水位 999（lorebook_entries.character_id=999）必须被吸收，且首次落进 sqlite_sequence。
     assert [r for r in after["sequences"] if r[0] == "ai_characters"] == [("ai_characters", 999)]
 
     con = sqlite3.connect(str(db))
@@ -367,46 +521,111 @@ def test_old_head_upgrade_preserves_rows_and_no_reuse(tmp_path, use_db):
 
 
 def test_no_version_legacy_table_stamps_parent_then_upgrades(tmp_path, use_db):
+    """无版本 + 缺 write_key 老库：合法走整链 ``upgraded:->REAL_HEAD``。
+
+    返工 §2：migrate.py 加了 ``(memories, write_key)`` 哨兵 ⇒ _schema_is_current=False ⇒
+    _ensure_alembic_revision_sync_inner 不再走 `_stamp_then_upgrade`，直接 upgrade head。
+    断言前缀从 `upgraded:stamped-...` 改为 `upgraded:->`；AUTOINCREMENT/CHECK/guard 仍在。
+    """
     db = _build_old(tmp_path, use_db, legacy=True)
     con = sqlite3.connect(str(db))
     con.execute("DROP TABLE alembic_version")
     con.commit()
     con.close()
     before = _snapshot(db)
+    cols_before, _ = _memories_shape(db)
+    assert "write_key" not in cols_before, "本用例前提：老库缺 write_key 列"
 
     action = migrate._ensure_alembic_revision_sync()
-    assert action.startswith(f"upgraded:stamped-{OLD_HEAD}->{CANDIDATE}"), action
+    assert action.startswith(f"upgraded:->{REAL_HEAD}"), action
     assert "+guard:check" in action, action
-    assert _version(db) == CANDIDATE
+    assert _version(db) == REAL_HEAD
     after = _snapshot(db)
     assert "AUTOINCREMENT" in after["ddl"].upper()
     assert "ck_ai_characters_client_safe_id" in after["ddl"]
     assert after["schema_objects"] != before["schema_objects"]
     assert _fk_check(db) == []
+    cols_after, idxs_after = _memories_shape(db)
+    assert "write_key" in cols_after, "整链 upgrade 必须补 write_key 列（migrate.py 新哨兵）"
+    assert "ix_memories_write_key" in idxs_after, "整链 upgrade 必须补 ix_memories_write_key"
 
 
-def test_orphan_revision_legacy_table_restamps_parent_then_upgrades(tmp_path, use_db):
+def test_orphan_revision_missing_write_key_refuses(tmp_path, use_db):
+    """未知 revision + 缺 write_key：orphan 分支必须 fail-closed，DB 状态一字不改。
+
+    返工 §2：orphan 分支要求「schema 已确认」，缺 write_key ⇒ _schema_is_current=False
+    ⇒ 现有实现直接抛 "unconfirmed schema"。断言版本 / 行 / DDL / memories 列索引 /
+    序列全部与调用前一致；拒绝后不能悄悄 stamp 或 upgrade。
+    """
     db = _build_old(tmp_path, use_db, legacy=True)
     con = sqlite3.connect(str(db))
     con.execute("UPDATE alembic_version SET version_num='deadbeefdead'")
     con.commit()
     con.close()
+    cols_before, idxs_before = _memories_shape(db)
+    assert "write_key" not in cols_before, "本用例前提：老库缺 write_key 列"
+    assert "AUTOINCREMENT" not in _snapshot(db)["ddl"].upper()
+    before = _snapshot(db)
+
+    with pytest.raises(RuntimeError, match="unconfirmed schema"):
+        migrate._ensure_alembic_revision_sync()
+
+    assert _version(db) == "deadbeefdead", "拒绝后版本号不得被清或改"
+    after = _snapshot(db)
+    assert after == before, "拒绝路径不得改版本/行/DDL/序列/schema_objects"
+    cols_after, idxs_after = _memories_shape(db)
+    assert cols_after == cols_before and idxs_after == idxs_before
+
+
+def test_orphan_revision_schema_confirmed_restamps_parent_then_upgrades(tmp_path, use_db):
+    """未知 revision + schema 已确认（有 write_key）：走 re-stamped-{OLD_HEAD}->head 恢复。
+
+    返工 §2 明确要求保留这条正例——不能只把旧断言全改成 raises 就删掉恢复覆盖。
+    合成手法：用真实 c4 增量迁移（``Operations.add_column/create_index``）补 write_key
+    列与唯一索引，其余形态仍保留 legacy（ai_characters 无 AUTOINCREMENT），
+    再把版本改成 'deadbeefdead'；startup 应 purge 旧历史、stamp 到 OLD_HEAD、
+    upgrade head 到 REAL_HEAD；b2a 装 AUTOINCREMENT/CHECK、c4 幂等不重加列。
+    禁 create_all 预补、禁 mock schema 判断、禁改产品门禁。
+    """
+    db = _build_old(tmp_path, use_db, legacy=True)
+    _apply_c4_increment(db)
+    con = sqlite3.connect(str(db))
+    con.execute("UPDATE alembic_version SET version_num='deadbeefdead'")
+    con.commit()
+    con.close()
+    cols_before, idxs_before = _memories_shape(db)
+    assert "write_key" in cols_before
+    assert "ix_memories_write_key" in idxs_before
+    assert "AUTOINCREMENT" not in _snapshot(db)["ddl"].upper(), (
+        "本用例前提：ai_characters 仍无 AUTOINCREMENT（否则退化为 already_at_head 分支）"
+    )
 
     action = migrate._ensure_alembic_revision_sync()
-    assert action.startswith(f"upgraded:re-stamped-{OLD_HEAD}->{CANDIDATE}"), action
-    assert _version(db) == CANDIDATE
+    assert action.startswith(f"upgraded:re-stamped-{OLD_HEAD}->{REAL_HEAD}"), action
+    assert _version(db) == REAL_HEAD
     ddl = _snapshot(db)["ddl"]
     assert "AUTOINCREMENT" in ddl.upper()
     assert "ck_ai_characters_client_safe_id" in ddl
+    # 恢复不得删列：c4 幂等保护 + 已存在的 ix 应仍在。
+    cols_after, idxs_after = _memories_shape(db)
+    assert "write_key" in cols_after
+    assert "ix_memories_write_key" in idxs_after
+    assert _fk_check(db) == []
 
 
 def test_head_but_no_autoincrement_refuses(tmp_path, use_db):
+    """版本已到 head 但 ai_characters 仍是旧形态 ⇒ 启动链精确拒绝。
+
+    2026-10-23 Qwen 批：拒绝分支只在 ``cur == head`` 才触发；b2a 现在有后代 c4，
+    真 head = REAL_HEAD。stamp 必须落在 head（不能落在 CANDIDATE，否则 version!=head
+    会走 `_stamp_then_upgrade` 直接补跑，测试语义丢失）。
+    """
     db = _build_old(tmp_path, use_db, legacy=True)
-    command.stamp(_cfg(BACKEND / "alembic"), CANDIDATE)
+    command.stamp(_cfg(BACKEND / "alembic"), REAL_HEAD)
     before = _snapshot(db)
     with pytest.raises(RuntimeError, match="lacks AUTOINCREMENT"):
         migrate._ensure_alembic_revision_sync()
-    assert _version(db) == CANDIDATE
+    assert _version(db) == REAL_HEAD
     assert _snapshot(db) == before
     assert "AUTOINCREMENT" not in before["ddl"].upper()
 
@@ -430,7 +649,7 @@ def test_already_autoincrement_sequence_repair(tmp_path, use_db):
 
     action = migrate._ensure_alembic_revision_sync()
     assert action.startswith("upgraded:"), action
-    assert _version(db) == CANDIDATE
+    assert _version(db) == REAL_HEAD
     con = sqlite3.connect(str(db))
     try:
         assert con.execute(
@@ -459,8 +678,8 @@ def test_lagging_schema_full_upgrade(tmp_path, use_db):
     con.commit()
     con.close()
     action = migrate._ensure_alembic_revision_sync()
-    assert action.startswith(f"upgraded:->{CANDIDATE}"), action
-    assert _version(db) == CANDIDATE
+    assert action.startswith(f"upgraded:->{REAL_HEAD}"), action
+    assert _version(db) == REAL_HEAD
     assert "AUTOINCREMENT" in _snapshot(db)["ddl"].upper()
 
 
@@ -607,7 +826,7 @@ def test_known_noncharacter_large_id_ignored(tmp_path, use_db):
     con.commit()
     con.close()
     action = migrate._ensure_alembic_revision_sync()
-    assert action.startswith(f"upgraded:{OLD_HEAD}->{CANDIDATE}"), action
+    assert action.startswith(f"upgraded:{OLD_HEAD}->{REAL_HEAD}"), action
     after = _snapshot(db)
     assert "AUTOINCREMENT" in after["ddl"].upper()
     assert [r for r in after["sequences"] if r[0] == "ai_characters"] == [("ai_characters", 999)]

@@ -94,9 +94,8 @@ async def _dispatch_before_generate(state: dict) -> None:
 
 
 async def retrieve_memories(state: AgentState) -> AgentState:
-    """检索相关记忆（向量检索 + 关键词）；命中即视为一次复习（艾宾浩斯强化，24h 防抖）"""
+    """检索相关记忆（向量检索 + 关键词）；候选返回不触发强化"""
     from app.memory import search_memories
-    from app.memory.constants import REINFORCE_FACTOR_RETRIEVE, REINFORCE_DEBOUNCE_HOURS
 
     # 认知循环 v2.1：感知派生查询（话题/情绪）参与多路召回，提升相关性
     queries = None
@@ -202,16 +201,7 @@ async def retrieve_memories(state: AgentState) -> AgentState:
         )
     except Exception as _e:
         _logger.debug("Recall gate shadow failed: %s", _e)
-    if memories:
-        try:
-            from app.memory.service import reinforce_memories
-            await reinforce_memories(
-                [m["id"] for m in memories],
-                factor=REINFORCE_FACTOR_RETRIEVE,
-                debounce_hours=REINFORCE_DEBOUNCE_HOURS,
-            )
-        except Exception as e:
-            _logger.warning("Memory reinforce failed: %s", e)
+    # Retrieval candidates are not proof of actual use or user confirmation.
     # A28-S3（2026-10-05）：把本轮召回挂进认知工作台。**只写不读**——第一阶段没有任何 prompt 段
     # 消费 workspace，所以这段不改变任何输出（守卫：同输入下 context_messages 文本逐字节相同）。
     # 只登记真有的字段：内容、id、库里的认知态（缺则 None，不替记忆编造 epistemic 标注）。

@@ -235,8 +235,13 @@ def test_落库无泄漏_流式分块路径(gen_image_clone):
     asyncio.run(_run())
 
 
-def test_落库无泄漏_流式生成到落库全链路(monkeypatch):
-    """模拟真流式：LLM 分块吐出现场原文 → chunker 切块 → 落库，全链路零标记且仍能触发生图。"""
+def test_落库无泄漏_流式生成到落库全链路(monkeypatch, gen_image_clone):
+    """模拟真流式：LLM 分块吐出现场原文 → chunker 切块 → 落库，全链路零标记且仍能触发生图。
+
+    2026-10-25：补 `gen_image_clone` 隔离。此前本用例走**会话沙箱共享库**，`-n 8` 并行时
+    与同 worker 的其它用例撞 SQLite 写锁（`database is locked`，A21 持锁家族在并行时序下
+    更易触发）；改成每例克隆库后与同文件另两个用例口径一致，断言与流程一字未改。
+    """
     from app.agent import nodes
 
     async def _fake_stream(**kw):
@@ -284,8 +289,11 @@ def test_落库无泄漏_流式生成到落库全链路(monkeypatch):
     asyncio.run(_run())
 
 
-def test_落库无泄漏_全标记回复不落空消息():
-    """整条回复只有生图标记时：不落任何文本消息（图片消息由生图流程单独追加）。"""
+def test_落库无泄漏_全标记回复不落空消息(gen_image_clone):
+    """整条回复只有生图标记时：不落任何文本消息（图片消息由生图流程单独追加）。
+
+    2026-10-25：同 `test_落库无泄漏_流式生成到落库全链路`，补每例克隆库隔离（并行不再撞共享库写锁）。
+    """
     async def _run():
         session_id = await _seed_session()
         try:

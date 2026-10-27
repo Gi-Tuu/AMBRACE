@@ -140,5 +140,9 @@ backend/data/periodic_state.json.tmp
 # A41（2026-10-10）：批量记忆提取的落盘队列（含对话原文，绝不入库、不入公开仓）
 backend/data/extract_queue.json
 backend/data/extract_queue.json.tmp
+# SQLite提取队列及WAL/SHM同属私有运行数据，不进入Git。
+backend/data/extract_queue.sqlite3
+backend/data/extract_queue.sqlite3-wal
+backend/data/extract_queue.sqlite3-shm
 # A30 尺子的 --out 默认写在当前目录，跑一次就落一个报告（留底一律放仓库外 output，绝不入库）
 memory_action_report.md

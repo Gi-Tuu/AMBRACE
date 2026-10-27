@@ -44,6 +44,21 @@ def _load_replay():
 rp = _load_replay()
 
 
+@pytest.fixture(autouse=True)
+def _restore_replay_process_environment(monkeypatch):
+    """In-process replay probes must not redirect later tests' database settings."""
+    from app.config import settings
+    for key in ("DATABASE_URL", "CHROMA_PERSIST_DIR", "TEMP", "TMP", "TMPDIR"):
+        if key in os.environ:
+            monkeypatch.setenv(key, os.environ[key])
+        else:
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(settings, "database_url", settings.database_url)
+    monkeypatch.setattr(settings, "chroma_persist_dir", settings.chroma_persist_dir)
+    yield
+    rp._cleanup_sandbox()
+
+
 # ── 沙箱环境（子进程出生前就设，绝不继承裸 os.environ）────────────────────────────
 def _uri(p):
     return "sqlite+aiosqlite:///" + str(p).replace(os.sep, "/")

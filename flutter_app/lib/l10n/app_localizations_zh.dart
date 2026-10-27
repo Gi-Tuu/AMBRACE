@@ -8070,4 +8070,76 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get usagePanelEstimatedNote => '含估算行，不逐行区分';
+
+  @override
+  String get memoryHistoryTitle => '修正历史';
+
+  @override
+  String get memoryHistoryLoading => '正在加载修正历史…';
+
+  @override
+  String get memoryHistoryEmpty => '暂无修正记录';
+
+  @override
+  String get memoryHistoryLoadFailed => '修正历史加载失败';
+
+  @override
+  String get memoryHistoryOldLabel => '旧值';
+
+  @override
+  String get memoryHistoryNewLabel => '新值';
+
+  @override
+  String get memoryHistoryUnknownTime => '时间未知';
+
+  @override
+  String get memoryHistoryReasonUnknown => '未记录原因';
+
+  @override
+  String get memoryHistoryTruncated => '仅展示部分修正记录';
+
+  @override
+  String get memoryDerivationsTitle => '派生关系';
+
+  @override
+  String get memoryDerivationsParents => '据此形成的记忆';
+
+  @override
+  String get memoryDerivationsChildren => '由此派生的记忆';
+
+  @override
+  String get memoryDerivationsLoading => '正在加载派生关系…';
+
+  @override
+  String get memoryDerivationsLoadFailed => '派生关系加载失败';
+
+  @override
+  String get memoryDerivationsEmpty => '暂无关联记忆';
+
+  @override
+  String get memoryDerivationsIncomplete => '关联可能不完整';
+
+  @override
+  String get memoryDerivationsLoadMore => '继续加载';
+
+  @override
+  String get memoryDerivationsOpenFailed => '打开关联记忆失败';
+
+  @override
+  String get memoryDerivationsRetry => '重新加载';
+
+  @override
+  String get memoryDerivationsMore => '还有更多关联，请继续加载';
+
+  @override
+  String get memoryDerivationsStatusActive => '生效中';
+
+  @override
+  String get memoryDerivationsStatusStale => '已过期';
+
+  @override
+  String get memoryDerivationsStatusSuperseded => '已被取代';
+
+  @override
+  String get memoryDerivationsStatusUnknown => '状态未知';
 }

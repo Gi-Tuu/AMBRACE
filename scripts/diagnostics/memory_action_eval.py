@@ -55,6 +55,103 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 
+# ── 评测时钟冻结（2026-10-26）：`--now` 时把本进程的 `datetime`/`date` 换成冻结代理，
+# 只影响评测进程；代理构造出的对象仍是原生 datetime/date（SQLite 精确类型检查通过）。
+# 背景：装配里的「现在」取本机时钟，隔天复算同一基线会漂移（0-4 的 84.5→75.9 即由此）。
+def _parse_now_spec(spec: str) -> datetime:
+    text = (spec or "").strip().replace("T", " ").replace("Z", "")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    raise SystemExit(f"--now 无法解析：{spec!r}（支持 YYYY-MM-DD[ HH:MM[:SS]]）")
+
+
+def _freeze_datetime_module(spec: str):
+    """冻结 `datetime.now`/`date.today`，返回 (冻结时点, 原生 datetime, 原生 date)。
+
+    时区口径固定按北京时间（与装配 `section_world` 一致）；调用方负责用完恢复。
+    """
+    import datetime as _dtmod
+    real_dt, real_date = _dtmod.datetime, _dtmod.date
+    beijing = _dtmod.timezone(_dtmod.timedelta(hours=8))
+    base = _parse_now_spec(spec).replace(tzinfo=beijing)
+
+    class _DTMeta(type):
+        def __instancecheck__(cls, inst):
+            return isinstance(inst, real_dt)
+
+        def __subclasscheck__(cls, sub):
+            return issubclass(sub, real_dt)
+
+        def __getattr__(cls, name):
+            return getattr(real_dt, name)
+
+    class FrozenDT(metaclass=_DTMeta):
+        def __new__(cls, *a, **k):
+            return real_dt(*a, **k)
+
+        @classmethod
+        def now(cls, tz=None):
+            return base.astimezone(tz) if tz is not None else base.replace(tzinfo=None)
+
+        @classmethod
+        def utcnow(cls):
+            return base.astimezone(_dtmod.timezone.utc).replace(tzinfo=None)
+
+        @classmethod
+        def today(cls):
+            return base
+
+    class _DateMeta(type):
+        def __instancecheck__(cls, inst):
+            return isinstance(inst, real_date)
+
+        def __subclasscheck__(cls, sub):
+            return issubclass(sub, real_date)
+
+        def __getattr__(cls, name):
+            return getattr(real_date, name)
+
+    class FrozenDate(metaclass=_DateMeta):
+        def __new__(cls, *a, **k):
+            return real_date(*a, **k)
+
+        @classmethod
+        def today(cls):
+            return real_date(base.year, base.month, base.day)
+
+    _dtmod.datetime = FrozenDT
+    _dtmod.date = FrozenDate
+    for name, mod in list(sys.modules.items()):
+        if not (name == "app" or name.startswith("app.") or name == "memory_context_bench"):
+            continue
+        try:
+            if getattr(mod, "datetime", None) is real_dt:
+                setattr(mod, "datetime", FrozenDT)
+            if getattr(mod, "date", None) is real_date:
+                setattr(mod, "date", FrozenDate)
+        except Exception:  # noqa: BLE001 — 个别模块只读属性，跳过即可
+            continue
+    return base, real_dt, real_date
+
+
+def _restore_datetime_module(real_dt, real_date) -> None:
+    import datetime as _dtmod
+    _dtmod.datetime, _dtmod.date = real_dt, real_date
+    for name, mod in list(sys.modules.items()):
+        if not (name == "app" or name.startswith("app.") or name == "memory_context_bench"):
+            continue
+        try:
+            if isinstance(getattr(mod, "datetime", None), type) and getattr(mod, "datetime").__name__ == "FrozenDT":
+                setattr(mod, "datetime", real_dt)
+            if isinstance(getattr(mod, "date", None), type) and getattr(mod, "date").__name__ == "FrozenDate":
+                setattr(mod, "date", real_date)
+        except Exception:  # noqa: BLE001
+            continue
+
+
 def _load_bench():
     """按路径加载既有 bench：复用其 `_norm`／`parse_case`（禁止重造，方案 §五）。"""
     spec = importlib.util.spec_from_file_location("_memctx_bench_reused", str(HERE / "memory_context_bench.py"))
@@ -67,6 +164,7 @@ bench = _load_bench()
 _norm = bench._norm
 parse_case = bench.parse_case
 
+EVAL_NOW_SPEC = ""   # --now 冻结时的时点（用于报告头自证；默认为空＝本机时钟）
 CUE_BLACKLIST = ("回忆", "上次", "之前", "说过", "还记得", "记得吗", "记得我",
                  "根据记忆", "我们聊过", "你答应", "提过", "当时")
 REQUIRED_KEYS = ("cid", "category", "provenance", "persona", "seeds", "distractors", "turn",
@@ -1869,6 +1967,9 @@ def render(rep, *, dataset, judges, configs, mode):
     L.append("- 语义路：**%s**" % ("真 bge-m3（本机 backend/models/bge-m3）" if rep["semantic"]
                                    else "确定性路（BM25/关键词/时间）——**不得**当作语义通过"))
     L.append("- 零计费保证：LLM 入口被打桩 %s" % (rep.get("llm_guard") or "（未启用）"))
+    if EVAL_NOW_SPEC:
+        L.append("- **评测时钟：已冻结为 %s（北京时间）**；默认不冻结＝本机时钟（跨天对比必须显式给 `--now`）"
+                 % EVAL_NOW_SPEC)
     if rep.get("cert_j12"):
         L.append("- **本轮是 `--certify-j12`：只出 §S3 四条检索侧认证**。下面这些 AR／E1／E2 列对 J1/J2 的题"
                  "**不是分数**（它们的判据在生成侧，见 `--mode generate`）；分数请看 solvability 落盘文件与生成档报表。")
@@ -2357,6 +2458,9 @@ async def main():
     ap.add_argument("--fillers", type=int, default=FILLER_TARGET_DEFAULT,
                     help="每例库规模填充到多少行（0＝退回 M0 的 10 行库，仅用于 A/B 对照饱和是不是规模造成的）")
     ap.add_argument("--sparse-only", action="store_true", help="只走确定性路（CI／假向量环境）")
+    ap.add_argument("--now", default="",
+                    help="冻结评测时钟（YYYY-MM-DD[ HH:MM[:SS]]，按北京时间）；默认用本机时钟。"
+                         "跨天复算同一基线时必须显式给出，否则算子的「现在」会漂移")
     ap.add_argument("--allow-llm", action="store_true", help="放行 J1/J2（计费端点，须用户授权）")
     ap.add_argument("--repeat", type=int, default=GENERATE_REPEAT_DEFAULT,
                     help="生成侧每题跑几遍（§S3『生成三跑一致』＝3）；计费＝题数×遍数，先看清再跑")
@@ -2368,6 +2472,11 @@ async def main():
     ap.add_argument("--print-metrics", action="store_true")
     ap.add_argument("--fail-below", type=float, default=None)
     a = ap.parse_args()
+    global EVAL_NOW_SPEC
+    if a.now:
+        _freeze_datetime_module(a.now)
+        EVAL_NOW_SPEC = a.now
+        print(f"[时钟冻结] 评测「现在」固定为 {a.now}（北京时间；仅本进程）")
 
     judges = [x.strip().upper() for x in a.judges.split(",") if x.strip()]
     why = refusal(judges, a.mode, a.allow_llm, cert_j12=a.certify_j12,

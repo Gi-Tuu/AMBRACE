@@ -27,6 +27,7 @@ class Memory(Base):
     sub_type: Mapped[str | None] = mapped_column(String(30), nullable=True)  # 子分类: name/age/location/job/food/hobby/...
     source: Mapped[str | None] = mapped_column(String(20), nullable=True)  # 来源: chat/moment/diary/bio
     source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 来源消息ID
+    write_key: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 群聊归属（P3-3 按群节流：NULL=旧数据/非群聊，按旧行为不区分群）
     speaker_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 说话人归属（user_id 或 character_id，P0 2026-08-15）
     speaker_type: Mapped[str | None] = mapped_column(String(10), nullable=True)  # user/character/system
@@ -390,6 +391,48 @@ class ProspectiveIntent(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+
+class PlanItem(Base):
+    """Stable business obligation, independent of reminder consumption."""
+    __tablename__ = "business_plan_items"
+    __table_args__ = (
+        Index("idx_business_plan_scope", "user_id", "character_id", "chat_session_id"),
+        {"sqlite_autoincrement": True},
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    item_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    character_id: Mapped[int] = mapped_column(ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
+    chat_session_id: Mapped[int] = mapped_column(ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
+    source_message_id: Mapped[int | None] = mapped_column(ForeignKey("chat_messages.id", ondelete="SET NULL"))
+    source_event_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_text: Mapped[str] = mapped_column(Text, nullable=False)
+    cancelled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)
+
+
+class PlanCompletionEvidence(Base):
+    """Source-backed assertion retained even before its plan is extracted."""
+    __tablename__ = "plan_completion_evidence"
+    __table_args__ = (
+        Index("idx_plan_evidence_scope", "user_id", "character_id", "chat_session_id"),
+        {"sqlite_autoincrement": True},
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    evidence_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    character_id: Mapped[int] = mapped_column(ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=False)
+    chat_session_id: Mapped[int] = mapped_column(ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
+    source_message_id: Mapped[int | None] = mapped_column(ForeignKey("chat_messages.id", ondelete="SET NULL"))
+    source_event_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_text: Mapped[str] = mapped_column(Text, nullable=False)
+    claim_text: Mapped[str] = mapped_column(Text, nullable=False)
+    item_id: Mapped[int | None] = mapped_column(ForeignKey("business_plan_items.id", ondelete="SET NULL"))
+    binding_kind: Mapped[str] = mapped_column(String(16), default="unresolved", server_default="unresolved", nullable=False)
+
 __all__ = [
     "Memory",
     "DailySummary",
@@ -404,5 +447,5 @@ __all__ = [
     "LorebookEntry",
     "WorldFact",
     "MemoryArchive",
-    "ProspectiveIntent",
+    "ProspectiveIntent", "PlanItem", "PlanCompletionEvidence",
 ]

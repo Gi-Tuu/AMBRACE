@@ -74,13 +74,25 @@ def test_开关开时纯寒暄跳过检索(monkeypatch):
     assert "reinforce" not in calls, "跳过检索 ⇒ 也不该记强化"
 
 
-def test_开关开时问句照旧检索并强化(monkeypatch):
+def test_开关开时问句照旧检索_候选不强化(monkeypatch):
+    """2026-10-23 Qwen 批：召回**候选不等于强化**。
+
+    云端正确性改动把「检索命中即 `reinforce_memories`」明确废弃——`retrieve_memories`
+    只把命中结果放进 ``state["retrieved_memories"]``，不再触发强化；
+    本用例钉住两点：
+
+    1. **问句照旧检索**（记忆不丢）：命中一条时 ``retrieved_memories`` 逐值等于桩返回值；
+    2. **不强化**：桩里 ``reinforce_memories`` 一次都不许被调用（``calls`` 里连 key 都不该出现）。
+    """
     AGENT_FLAGS[_FLAG] = True
     calls = _patch(monkeypatch, hits=[{"id": 7, "content": "y"}])
     out = asyncio.run(nodes_mod.retrieve_memories(_state("你还记得我上次说的那件事吗")))
     assert "search" in calls
     assert out["retrieved_memories"] == [{"id": 7, "content": "y"}]
-    assert calls.get("reinforce") == [7]
+    assert "reinforce" not in calls, (
+        "召回候选不等于强化：retrieve_memories 已不再调 reinforce_memories；"
+        f"这里出现 {calls.get('reinforce')!r} 说明产品端把旧强化路径又接回来了"
+    )
 
 
 def test_判定异常时fail_open继续检索(monkeypatch):

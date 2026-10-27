@@ -368,17 +368,17 @@ def test_embedding对象复用不重复推理(env):
 
 
 @pytest.mark.slow
-def test_查重并档时写后副动作一次都不跑(env, monkeypatch):
-    mem_id = _seed_existing(env)
-
-    async def _hit(*_a, **_kw):
-        return (mem_id, 0.97)
-
-    monkeypatch.setattr(svc, "find_similar_memory", _hit)
-    merged = _save(content="合成样例：既有的一条记忆")
-    assert merged is not None and merged.id == mem_id, "应返回被并入的旧行"
-    assert env.order == [], env.order
+def test_同证据重放时写后副动作一次都不跑(env):
+    first = _save(source="chat", source_id=991)
+    env.order.clear()
+    env.tasknames.clear()
+    env.events.clear()
+    env.hooks.clear()
+    replay = _save(source="chat", source_id=991)
+    assert replay.id == first.id
+    assert env.order == []
     assert env.tasknames == [] and env.events == [] and env.hooks == []
+
 
 
 @pytest.mark.slow

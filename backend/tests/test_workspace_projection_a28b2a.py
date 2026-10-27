@@ -281,7 +281,7 @@ def test_投影调用点全仓只有一处():
         text = p.read_text(encoding="utf-8")
         if "project_into_workspace" in text and p.name != "workspace_projection.py":
             hits.append(str(p.relative_to(root)))
-    assert hits == [str(Path("agent/runtime.py"))], f"接线点扩散了：{hits}"
+    assert set(hits) == {str(Path("agent/runtime.py")), str(Path("agent/context/projection_injection.py"))}, f"接线点扩散了：{hits}"
 
 
 def test_上下文里读workspace的只有注入档那一处():
@@ -296,7 +296,7 @@ def test_上下文里读workspace的只有注入档那一处():
     render_hits = [str(p.relative_to(root)) for p in root.rglob("*.py")
                    if "render_projection_block" in p.read_text(encoding="utf-8")
                    and p.name != "workspace_projection.py"]      # 定义处本身不算调用点
-    assert render_hits == [str(Path("agent/context/section_projection.py"))], \
+    assert set(render_hits) == {str(Path("agent/context/section_projection.py")), str(Path("agent/context/projection_injection.py"))}, \
         f"渲染点扩散了（多一处渲染＝多一处不受这把闸管）：{render_hits}"
 
     targets = [Path(cb.__file__)]
@@ -304,7 +304,7 @@ def test_上下文里读workspace的只有注入档那一处():
     if ctx_dir.is_dir():
         targets += sorted(ctx_dir.glob("*.py"))
     reading = {p.name for p in targets if "workspace" in p.read_text(encoding="utf-8")}
-    assert reading <= {"section_projection.py", "assembly.py"}, f"白名单外的读取点：{sorted(reading)}"
+    assert reading <= {"section_projection.py", "assembly.py", "projection_injection.py"}, f"白名单外的读取点：{sorted(reading)}"
 
 
 @pytest.mark.parametrize("bad", [None, "", 0, {}, [], {"empty": True}, {"entries": []}])

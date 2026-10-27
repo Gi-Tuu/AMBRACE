@@ -189,7 +189,7 @@ def test_flag_off_byte_identical(monkeypatch):
 
     # 旧链路 N 轮去重语义保留（5 轮内不重复注入）
     section_memories._bump_memory_round(11)
-    assert section_memories._build_retrieved_memory_lines(11, mems) == []
+    assert section_memories._build_retrieved_memory_lines(11, mems) == expected
 
 
 def test_flag_on_分层注入不改变flag_off缺省(monkeypatch):
@@ -223,7 +223,7 @@ def test_flag_on_分层注入不改变flag_off缺省(monkeypatch):
     assert "还喜欢喝茶" not in on_lines[1]
     # flag 开时 N 轮去重语义同样保留（与关 flag 一致）
     section_memories._bump_memory_round(11)
-    assert section_memories._build_retrieved_memory_lines(11, mems) == []
+    assert section_memories._build_retrieved_memory_lines(11, mems) == off_lines
 
     assert on_lines != off_lines               # 开/关确实不同
     assert off_lines == [format_memory_line(m, include_speaker=True) for m in mems]  # 关=旧链路

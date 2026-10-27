@@ -1,7 +1,7 @@
-"""Memories section（试水，试点 B）：记忆检索区 N 轮去重 / 核心记忆 / 关系锚点 / 开放循环注入。
+"""Memories section：请求内去重 / 核心记忆 / 关系锚点 / 开放循环注入。
 
 从 ``context_builder`` 迁出，逻辑与旧版完全一致（零行为变化）：
-- N 轮去重：同一记忆最近 ``MEMORY_DEDUP_WINDOW_ROUNDS`` 轮内不重复注入检索区行；
+- 只消除同一请求内重复 ID；连续追问及其他会话仍可供给同一证据。
 - 长期画像不参与去重：核心记忆/关系锚点/开放循环不经过 ``_filter_recently_injected``；
 - 去重轮次为进程内状态（重启清零，与现状一致）。
 """
@@ -14,9 +14,9 @@ from app.memory.format import format_memory_line, normalize_speaker_type
 
 _logger = logging.getLogger("agent.context.section_memories")
 
-# X-4（2026-08-18）：会话内「N 轮内不重复注入」轻量去重（仅「和你相关的记忆」检索区行；
+# 兼容诊断：保留旧轮次容器，但不再用于跨轮屏蔽（请求内去重见下方 helper；
 # 核心记忆/锚点/置顶摘要等长期画像分区不受限，避免丢画像）。进程内状态，重启清零可接受。
-MEMORY_DEDUP_WINDOW_ROUNDS = 5
+MEMORY_DEDUP_WINDOW_ROUNDS = 0
 MEMORY_DEDUP_MAX_PER_CHAR = 200
 _memory_inject_rounds: dict[tuple[int, int], int] = {}  # (character_id, memory_id) -> 最近注入轮次
 _memory_char_rounds: dict[int, int] = {}  # character_id -> 轮次计数（每次 build_context 递增）
@@ -36,28 +36,25 @@ def _memory_id_of(m) -> int | None:
 
 
 def _filter_recently_injected(character_id: int, memories: list, window: int = MEMORY_DEDUP_WINDOW_ROUNDS) -> list:
-    """X-4（2026-08-18）：检索区 N 轮去重——同一记忆最近 window 轮内注入过则本轮跳过。
+    """Deduplicate within this request only; prior turns never hide evidence.
 
-    仅作用于「和你相关的记忆」检索区行（不改变检索结果本身）；
-    核心记忆/锚点/置顶摘要等长期画像分区不经本函数，避免丢画像。
-    纯逻辑函数（便于单测）：读进程内 _memory_char_rounds/_memory_inject_rounds 状态。
+    character_id/window remain accepted for callers migrating from the old helper.
+    The round maps below are legacy diagnostics, not actual citation evidence.
     """
-    cur = _memory_char_rounds.get(character_id, 0)
+    seen = set()
     out = []
-    for m in memories:
-        mid = _memory_id_of(m)
-        if mid is None:
-            out.append(m)
-            continue
-        last = _memory_inject_rounds.get((character_id, mid))
-        if last is not None and cur - last < window:
-            continue
-        out.append(m)
+    for memory in memories:
+        mid = _memory_id_of(memory)
+        if mid is not None:
+            if mid in seen:
+                continue
+            seen.add(mid)
+        out.append(memory)
     return out
 
 
 def _mark_memories_injected(character_id: int, memories: list) -> None:
-    """X-4（2026-08-18）：记录本轮实际注入检索区的记忆轮次，并按每角色容量裁剪（超限剔除最旧）。"""
+    """旧诊断计数，非最终预算后的实际注入/引用记录；不参与屏蔽或强化。"""
     cur = _memory_char_rounds.get(character_id, 0)
     for m in memories:
         mid = _memory_id_of(m)
@@ -109,19 +106,19 @@ async def _user_tz_offset_min(state: dict, ctx: dict) -> int | None:
 
 
 def _build_retrieved_memory_lines(character_id: int, retrieved: list) -> list[str]:
-    """「和你相关的记忆」检索区行（X-4：N 轮去重 + X-2 说话人标注公共格式化）。
+    """「和你相关的记忆」检索区行（X-4：请求内去重 + X-2 说话人标注公共格式化）。
 
-    同一记忆最近 MEMORY_DEDUP_WINDOW_ROUNDS 轮内注入过则本轮跳过（仅影响检索区行，
-    不改变检索结果）；核心记忆/锚点/置顶摘要等长期画像分区不经过本函数。
-    返回格式化行列表；实际注入的行同步记录轮次（供后续轮次去重）。
+    只消除本请求内重复的记忆 ID，历史轮次不能阻止连续追问再次获得证据。
+    核心记忆/锚点/置顶摘要等长期画像分区仍使用各自的格式化入口。
+    返回格式化候选行；旧轮次统计不代表最终预算后的实际引用。
 
     #70 方案A：**flag memory_tiered_inject 关时走完全旧行为**（统一 150 字的
-    format_memory_line + N 轮去重，逐字节一致）；开时 Top1→L2(240)、其余→L0 分层注入
+    format_memory_line + 请求内去重，逐字节一致）；开时 Top1→L2(240)、其余→L0 分层注入
     （复用 format_memory_line 的时间/认知/说话人/纠正标注，格式不漂移）。
     """
     from app.agent.loop import AGENT_FLAGS
 
-    # 关 flag：完全旧行为（统一 150 字 + N 轮去重 + 说话人标注）——回归保护
+    # 关 flag：完全旧行为（统一 150 字 + 请求内去重 + 说话人标注）——回归保护
     if not AGENT_FLAGS.get("memory_tiered_inject", False):
         lines = []
         injected = []
@@ -142,7 +139,7 @@ def _build_retrieved_memory_lines(character_id: int, retrieved: list) -> list[st
             _mark_memories_injected(character_id, injected)
         return lines
 
-    # 开 flag：Top1 L2 / 其余 L0（L1 桥接由 memories_section 异步补挂）；N 轮去重语义与关 flag 一致
+    # 开 flag：Top1 L2 / 其余 L0（L1 桥接由 memories_section 异步补挂）；请求内去重语义与关 flag 一致
     from app.memory.tiers import tiered_memory_lines
     candidate = list(_filter_recently_injected(character_id, retrieved))
     lines = tiered_memory_lines(candidate, include_speaker=True)
@@ -157,17 +154,20 @@ async def _inject_core_anchors_loops(cid: int | None, uid: int, trim: dict) -> t
     anchors_text = "无"
     loops_text = "无"
     try:
-        from app.memory.core import get_core_memories, get_relationship_anchors, get_open_loops
+        from app.memory.core import get_core_memories, get_relationship_anchors, get_open_loops, async_session_factory
+        from app.memory.plan_projection import projected_object_texts
         if cid:
             _cores = await get_core_memories(cid, limit=trim["core_limit"])
             if _cores:
+                _core_view = await projected_object_texts(_cores,cid,async_session_factory)
                 core_text = "\n".join(
-                    f"- [记录于 {str(m.created_at)[:10]}] {m.content[:120]}" + (f"（{m.core_category}）" if m.core_category else "")
+                    f"- [记录于 {str(m.created_at)[:10]}] {_core_view.get(getattr(m, "id", None), m.content)[:120]}" + (f"（{m.core_category}）" if m.core_category else "")
                     for m in _cores
                 )
             _anchors = await get_relationship_anchors(cid, uid, limit=trim["anchor_limit"])
             if _anchors:
-                anchors_text = "\n".join(f"- [记录于 {str(m.created_at)[:10]}] {m.content[:120]}" for m in _anchors)
+                _anchor_view = await projected_object_texts(_anchors,cid,async_session_factory)
+                anchors_text = "\n".join(f"- [记录于 {str(m.created_at)[:10]}] {_anchor_view.get(getattr(m, 'id', None), m.content)[:120]}" for m in _anchors)
             _loops = await get_open_loops(cid, uid)
             if _loops:
                 loops_text = "\n".join(f"- [PLANNED] {l}" for l in _loops)
@@ -196,7 +196,7 @@ async def memories_section(state: dict, ctx: dict) -> str:
     character_id = state["character_id"]
     retrieved = state.get("retrieved_memories", [])
     # B1-② §14 沿链反哺（flag memory_chain_expand 默认关 = 原样返回）：先扩充检索候选再进
-    # N 轮去重，使扩展节点也参与既有 5 轮去重与 token 配额；与本函数既有 N 轮去重正交。
+    # 请求内去重，使扩展节点也参与既有 5 轮去重与 token 配额；与本函数既有 请求内去重正交。
     try:
         from app.memory.chain_builder import maybe_expand_chain
         retrieved = await maybe_expand_chain(character_id, retrieved)
@@ -233,7 +233,7 @@ async def memories_section(state: dict, ctx: dict) -> str:
     else:
         lines = _build_retrieved_memory_lines(character_id, retrieved)
     # #70 方案A：flag 开时给 Top1 挂 L1 桥接（当日日摘要；「非今天」才挂，今天由 chat_history 分区覆盖；
-    # 锚定「本轮实际注入」的 Top1 = N 轮去重后的 candidate[0]（而非原始检索首位），
+    # 锚定「本轮实际注入」的 Top1 = 请求内去重后的 candidate[0]（而非原始检索首位），
     # candidate 为空则不挂 L1；失败 warning，不阻塞主链路）。
     try:
         from app.agent.loop import AGENT_FLAGS
@@ -262,13 +262,13 @@ async def memories_section(state: dict, ctx: dict) -> str:
 
 
 async def core_memories_section(state: dict, ctx: dict) -> str:
-    """core_memories 分区：核心记忆（template 槽；长期画像不参与 N 轮去重）。"""
+    """core_memories 分区：核心记忆（template 槽；长期画像不参与 请求内去重）。"""
     core, _, _ = await _get_core_anchors_loops(state, ctx)
     return core
 
 
 async def anchors_section(state: dict, ctx: dict) -> str:
-    """anchors 分区：关系锚点（template 槽；长期画像不参与 N 轮去重）。"""
+    """anchors 分区：关系锚点（template 槽；长期画像不参与 请求内去重）。"""
     _, anchors, _ = await _get_core_anchors_loops(state, ctx)
     return anchors
 

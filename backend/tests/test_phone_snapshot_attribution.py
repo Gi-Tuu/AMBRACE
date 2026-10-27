@@ -53,7 +53,17 @@ OLD_COLS = {"id", "user_id", "source", "content", "image_desc", "created_at", "p
 # 快测档：迁移层每例真跑 alembic（老库整链重放一次 + 克隆），属重量级
 pytestmark = pytest.mark.slow
 
-_NOW_UTC = datetime.now(timezone.utc).replace(tzinfo=None)
+
+def _now_utc() -> datetime:
+    """**运行时**当前 UTC naive 时刻。
+
+    返工：本模块曾在收集期冻结 `_NOW_UTC = datetime.now(...)`。整套后端跑 2561s，
+    注入层用例落到约 65% 时才执行，冻结时刻早已超过产品 30 分钟 TTL ⇒
+    `_seed_mixed` 插入的「新鲜」快照（1~5 分钟前）被正确过滤，
+    `test_注入侧_read_perception_records集合与改动前一致` 假红。
+    产品 TTL 无误，改在这里每次取当前时刻。
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # ──────────────── ① 迁移层辅助（真跑 alembic，临时文件库） ────────────────
@@ -293,10 +303,12 @@ async def _seed(factory):
 
 
 async def _add_snap(factory, *, uid=1, source="clipboard", content="c", minutes_ago=0, **kw):
+    # 在真正插入的这一刻取时：minutes_ago 是相对「现在」的偏移，
+    # 不能再用收集期冻结的常量，否则整套跑久了新鲜行也会被 30 分钟 TTL 正确过滤掉。
     async with factory() as db:
         db.add(PhoneSnapshot(
             user_id=uid, source=source, content=content,
-            created_at=_NOW_UTC - timedelta(minutes=minutes_ago), **kw
+            created_at=_now_utc() - timedelta(minutes=minutes_ago), **kw
         ))
         await db.commit()
 

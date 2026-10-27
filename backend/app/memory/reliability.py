@@ -7,8 +7,8 @@ reliability = source_weight × 矛盾惩罚 × 确认加分 × 时间衰减
 - 确认加分：平滑系数 0.7 + min(确认次数,3)*0.1（未确认不归零，确认越多越可信）
 - 时间衰减：每天 -1%，最低 0.5
 
-信号采集（$0 规则）：用户消息命中确认词 → 相关记忆 confirmation+1（复用 P1 晋升逻辑）；
-命中纠正词 → contradiction+1、reliability 重算、FACT 降级 UNVERIFIED（下次对话自然少用/求证）。
+信号采集（$0 规则）：确认/纠正仅能作用于调用者提供的唯一实际引用 ID。
+没有可验证引用时延后处理；禁止用当前反馈文本重新检索 top1 作为修改对象。
 范围（2026-08-15 用户拍板）：只做记忆可靠度增强，不做内容审查/违规重生成。
 """
 import time
@@ -31,10 +31,10 @@ CORRECT_WORDS = (
     "说错了", "不对不对", "不是的", "错啦", "弄反了", "你理解错了",
 )
 
-# 信号处理节流（秒）：每角色同一信号通道最小间隔
+# 相同对象、相同用户反馈事件的重复节流（独立对象不相互屏蔽）
 SIGNAL_THROTTLE_SECONDS = 600
 
-_last_signal_at: dict[int, float] = {}
+_last_signal_at: dict[tuple, float] = {}
 
 
 def source_weight(memory: Memory) -> float:
@@ -87,32 +87,11 @@ def detect_correction(text: str | None) -> bool:
     return any(w in t for w in CORRECT_WORDS)
 
 
-async def _top_related_memory(character_id: int, user_id: int, query: str) -> Memory | None:
-    """定位与当前消息最相关的一条记忆（向量检索 top1；失败静默）。"""
-    try:
-        from app.memory import search_memories
-        hits = await search_memories(character_id=character_id, query=query or "最近的事情", limit=1,
-                                     user_id=user_id)  # A2 M0-4：透传调用者（hook ctx）
-        if not hits:
-            return None
-        async with async_session_factory() as db:
-            return await db.get(Memory, hits[0]["id"])
-    except Exception as e:
-        _logger.warning("top_related_memory failed char=%d: %s", character_id, e)
-        return None
-
-
 async def apply_correction(memory_id: int, *, source: str = "user") -> None:
-    """记忆纠正：矛盾+1、reliability 重算、FACT 降级 UNVERIFIED。失败静默。
-
-    ``source``：
-    - ``"user"``（默认）：用户明确改口/否认 → 在 flag memory_supersede 开时追加
-      supersede_memory，把被纠正记忆标记为 superseded 并级联 stale（治「用户改口后
-      AI 仍抱旧偏好」）；
-    - ``"fact_check"``：AI 异步自判矛盾 → **只降级，不取代**（防止 LLM 自判去永久隐藏
-      一条记忆——AI 幻觉式回复与记忆冲突时错的更可能是回复而非记忆），provenance 也不
-      会误标成 user_correction。
-    """
+    """Only explicit user evidence can downgrade a memory; AI conflicts cannot."""
+    if source != "user":
+        _logger.info("Ignored model-generated correction mem=%s source=%s", memory_id, source)
+        return
     try:
         async with async_session_factory() as db:
             m = await db.get(Memory, memory_id)
@@ -139,27 +118,41 @@ async def apply_correction(memory_id: int, *, source: str = "user") -> None:
 
 
 async def process_feedback_signal(character_id: int, user_id: int, user_msg: str,
-                                  ai_response: str = "") -> None:
-    """对话后处理记忆反馈信号（确认/纠正，$0 规则 + 节流）。"""
+                                  ai_response: str = "", *, cited_memory_ids=None) -> None:
+    """Apply feedback only to one supplied actual citation, never a fresh search.
+
+    Existing callers without citation provenance defer automatic mutation. Text in
+    ai_response is not parsed as an authoritative citation list.
+    """
     try:
+        correction = detect_correction(user_msg)
+        if not correction and not detect_confirmation(user_msg):
+            return
+        ids = set(cited_memory_ids or ())
+        if len(ids) != 1:
+            _logger.info("Memory feedback unresolved char=%s citation_count=%s", character_id, len(ids))
+            return
+        mid = next(iter(ids))
+        async with async_session_factory() as db:
+            memory = await db.get(Memory, mid)
+        if (memory is None or memory.character_id != character_id or memory.user_id != user_id
+                or memory.is_archived or memory.status != "active"):
+            return
+        key = (user_id, character_id, mid, user_msg.strip())
         now = time.time()
-        last = _last_signal_at.get(character_id) or 0.0
-        if now - last < SIGNAL_THROTTLE_SECONDS:
+        if now - _last_signal_at.get(key, 0) < SIGNAL_THROTTLE_SECONDS:
             return
-        if detect_correction(user_msg):
-            _last_signal_at[character_id] = now
-            m = await _top_related_memory(character_id, user_id, user_msg)
-            if m is not None:
-                await apply_correction(m.id)
-            return
-        if detect_confirmation(user_msg):
-            _last_signal_at[character_id] = now
-            m = await _top_related_memory(character_id, user_id, user_msg)
-            if m is not None:
-                from app.memory.core import confirm_memory
-                await confirm_memory(m.id)
-    except Exception as e:
-        _logger.warning("process_feedback_signal failed char=%d: %s", character_id, e)
+        if correction:
+            await apply_correction(mid)
+        else:
+            from app.memory.core import confirm_memory
+            await confirm_memory(mid)
+        _last_signal_at[key] = now
+        for old in list(_last_signal_at):
+            if now - _last_signal_at[old] >= SIGNAL_THROTTLE_SECONDS:
+                _last_signal_at.pop(old, None)
+    except Exception as error:
+        _logger.warning("process_feedback_signal failed char=%d: %s", character_id, error)
 
 
 def schedule_feedback_processing(character_id: int, user_id: int, user_msg: str,

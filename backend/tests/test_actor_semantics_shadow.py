@@ -297,49 +297,123 @@ def test_flag开_归属一致时照旧留痕且diff为False(env, caplog):
     assert len(logs) == 1 and "unified=user" in logs[0] and "diff=False" in logs[0]
 
 
-def test_flag开_并发现场单独留痕_并入结果与状态不变(env, caplog):
-    """第二句与第一句字符重合 ⇒ 走并入；并入是新内容唯一的消失现场（丢失点 3）。"""
-    _flag(False)
-    first = _write_once(user_id=UID, character_id=101, memory_type="event",
-                        content="用户喜欢喝美式咖啡", source="diary")
-    merged = _write_once(user_id=UID, character_id=101, memory_type="event",
-                         content="用户喜欢喝美式咖啡呀", source="diary")
-    assert merged.id == first.id
-    snap_off = _snap(merged)
+def test_flag开_不同内容各自留痕_精确重放同id并入语义不复活(env, caplog):
+    """2026-10-23 Qwen 批：云端正确性改动**明确禁止**旧的相似自动并入与「候选即强化」。
 
+    钉住三条新语义 + 一条旧不变量：
+
+    1. **write_identity.replay_key 明文要求 source + source_id 都在**：
+       同正文但不同 ``source_id`` ⇒ 不同证据，各留一行（"文字相同即同一事实"是旧并入口径）；
+       同 ``source_id`` + 同正文 ⇒ write_key 相同 ⇒ 复用同一行、不新增。
+    2. **不同内容各自留痕**：``find_similar_memory`` 恒 ``None`` 打桩，"咖啡"/"咖啡呀"
+       是两行独立证据（旧版会误合并）。
+    3. **flag 开只多留痕**：影子档不改行数、不改落库取值；不再有 ``actor shadow merge``
+       日志（并入路径已废），此处按新语义断言。
+
+    合成 source 标识（``source="diary"`` + 稳定 ``source_id``）——重放两次输入完全一致，
+    代表"同一条源事件重跑"，与"另一条源事件"（不同 source_id）严格区分。
+    """
+    async def _rows_for(cid: int):
+        async with env["factory"]() as db:
+            return (await db.execute(
+                select(_write.Memory).where(_write.Memory.character_id == cid)
+            )).scalars().all()
+
+    async def _count(cid: int) -> int:
+        return len(await _rows_for(cid))
+
+    SRC_BASE = 9101        # 合成：一条固定的"来源事件 id"，重放必须一致
+    SRC_OTHER_CONTENT = 9101   # 同事件、不同正文（旧版会误并入）
+    SRC_OTHER_EVENT = 9102     # 同正文、不同事件（新语义必须各留一行）
+
+    # ── flag 关：同 source_id+同正文=重放；正文不同或 source_id 不同=独立证据 ──
+    _flag(False)
+    base_off = _write_once(user_id=UID, character_id=101, memory_type="event",
+                           content="用户喜欢喝美式咖啡", source="diary", source_id=SRC_BASE)
+    other_off = _write_once(user_id=UID, character_id=101, memory_type="event",
+                            content="用户喜欢喝美式咖啡呀", source="diary", source_id=SRC_OTHER_CONTENT)
+    assert other_off.id != base_off.id, (
+        "新语义下不同内容必须各自留痕；等价于旧的相似并入 ⇒ 该断言失败说明"
+        "产品端相似合并又复活了"
+    )
+    snap_diff = _snap(other_off)
+    other_event = _write_once(user_id=UID, character_id=101, memory_type="event",
+                              content="用户喜欢喝美式咖啡", source="diary", source_id=SRC_OTHER_EVENT)
+    assert other_event.id != base_off.id, (
+        "同正文不同 source_id 属不同事件，必须各留一行；否则 replay_key 又退化成看文字（旧并入口径）"
+    )
+    replay_off = _write_once(user_id=UID, character_id=101, memory_type="event",
+                             content="用户喜欢喝美式咖啡", source="diary", source_id=SRC_BASE)
+    assert replay_off.id == base_off.id, (
+        "字节级重放（同 source+source_id+15 字段）必须复用同一 Memory（write_key 唯一约束）"
+    )
+    assert asyncio.run(_count(101)) == 3, "重放不新增；三行=base + 不同正文 + 不同事件（同正文）"
+
+    # ── flag 开：同一序列，落库取值与行数与关时逐值一致 ──
     _flag(True)
-    base = _write_once(user_id=UID, character_id=103, memory_type="event",
-                       content="用户喜欢喝美式咖啡", source="diary")
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="memory.actor_shadow"):
-        again = _write_once(user_id=UID, character_id=103, memory_type="event",
-                            content="用户喜欢喝美式咖啡呀", source="diary")
-        logs = _shadow_logs(caplog)
-    assert again.id == base.id
-    assert _snap(again) == snap_off, "影子档改变了并入结果"
-    merge_logs = [x for x in logs if "actor shadow merge" in x]
-    assert len(merge_logs) == 1 and "target_speaker=user" in merge_logs[0], logs
+        base_on = _write_once(user_id=UID, character_id=103, memory_type="event",
+                              content="用户喜欢喝美式咖啡", source="diary", source_id=SRC_BASE)
+        other_on = _write_once(user_id=UID, character_id=103, memory_type="event",
+                               content="用户喜欢喝美式咖啡呀", source="diary", source_id=SRC_OTHER_CONTENT)
+        other_event_on = _write_once(user_id=UID, character_id=103, memory_type="event",
+                                     content="用户喜欢喝美式咖啡", source="diary", source_id=SRC_OTHER_EVENT)
+        logs_diff = _shadow_logs(caplog)
+    assert other_on.id != base_on.id, "影子档不得引入或恢复相似并入"
+    assert other_event_on.id != base_on.id, "影子档不得把不同事件视作同一行"
+    assert _snap(other_on) == snap_diff, "影子档改变了不同内容的落库取值"
+    # 三次不同证据的写各出一条 write 留痕；不再有 merge 留痕（旧语义已废弃）
+    writes = [x for x in logs_diff if "actor shadow write" in x]
+    merges = [x for x in logs_diff if "actor shadow merge" in x]
+    assert len(writes) == 3, logs_diff
+    assert merges == [], (
+        f"新语义不再有并入路径；出现 {len(merges)} 条 merge 留痕说明产品端"
+        "把相似合并又加回来了"
+    )
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="memory.actor_shadow"):
+        replay_on = _write_once(user_id=UID, character_id=103, memory_type="event",
+                                content="用户喜欢喝美式咖啡", source="diary", source_id=SRC_BASE)
+        logs_replay = _shadow_logs(caplog)
+    assert replay_on.id == base_on.id, "影子开时精确重放仍复用同一行"
+    # 一次调用至多留一条 write（若产品端把留痕移到 dedup 判定之后可能为 0 条）；
+    # 关键断言是 **没有 merge 留痕**（并入语义已废）。
+    assert len([x for x in logs_replay if "actor shadow write" in x]) <= 1, logs_replay
+    assert [x for x in logs_replay if "actor shadow merge" in x] == [], logs_replay
+    assert asyncio.run(_count(103)) == asyncio.run(_count(101)) == 3
 
 
 def test_flag开关_行数与查重结果不受影响(env):
+    """开关切换不得改行数或查重结果；新语义：
+    同 source+source_id+正文 ⇒ 重放 1 行；不同 source_id 或不同正文 ⇒ 各自独立行。"""
     async def _count(cid):
         async with env["factory"]() as db:
             return len((await db.execute(
                 select(_write.Memory).where(_write.Memory.character_id == cid))).scalars().all())
 
+    SRC_A, SRC_B = 9201, 9202
+
+    # flag 关：base(1) + 同正文异事件(1) + 精确重放(仍 1) ⇒ 2 行
     _flag(False)
     _write_once(user_id=UID, character_id=101, memory_type="event",
-                content="用户明天要出差", source="diary")
+                content="用户明天要出差", source="diary", source_id=SRC_A)
     _write_once(user_id=UID, character_id=101, memory_type="event",
-                content="用户明天要出差哦", source="diary")
+                content="用户明天要出差", source="diary", source_id=SRC_B)  # 同正文不同事件⇒新行
+    _write_once(user_id=UID, character_id=101, memory_type="event",
+                content="用户明天要出差", source="diary", source_id=SRC_A)  # 精确重放，不加行
     off_rows = asyncio.run(_count(101))
 
+    # flag 开：同样的三步，行数与关时逐值相同（影子只多留痕）
     _flag(True)
     _write_once(user_id=UID, character_id=103, memory_type="event",
-                content="用户明天要出差", source="diary")
+                content="用户明天要出差", source="diary", source_id=SRC_A)
     _write_once(user_id=UID, character_id=103, memory_type="event",
-                content="用户明天要出差哦", source="diary")
-    assert asyncio.run(_count(103)) == off_rows == 1
+                content="用户明天要出差", source="diary", source_id=SRC_B)
+    _write_once(user_id=UID, character_id=103, memory_type="event",
+                content="用户明天要出差", source="diary", source_id=SRC_A)
+    on_rows = asyncio.run(_count(103))
+    assert on_rows == off_rows == 2, (off_rows, on_rows)
 
 
 def test_flag开_判定抛错时fail_open写入照旧(env, monkeypatch):

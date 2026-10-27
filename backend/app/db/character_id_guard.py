@@ -13,7 +13,10 @@
 import re
 import sqlite3
 
-CLIENT_SAFE_MAX_ID = (1 << 53) - 1
+from app.db.character_id_references import (
+    CLIENT_SAFE_MAX_ID,
+    scan_character_id_watermark,
+)
 CHECK_NAME = "ck_ai_characters_client_safe_id"
 INSERT_TRIGGER = "ai_characters_client_safe_insert_after"
 UPDATE_TRIGGER = "ai_characters_client_safe_update_after"
@@ -168,9 +171,6 @@ def ensure_client_safe_id_guard(conn) -> dict:
     ddl = _table_ddl(conn)
     if ddl is None:
         return verify_client_safe_id_guard(conn)
-
-    # 延迟 import：migrate 在模块顶部 import 本模块的常量，避免顶层循环。
-    from app.db.migrate import scan_character_id_watermark
 
     scan = scan_character_id_watermark(conn)
     if int(scan["high"]) > CLIENT_SAFE_MAX_ID:

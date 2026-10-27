@@ -1,181 +1,189 @@
-# -*- coding: utf-8 -*-
-"""批量记忆提取的待提取队列（A41，2026-10-10）：从进程内 dict 迁到本机 JSON 落盘。
+"""Durable extraction tasks with transactional claims and renewable leases.
 
-为什么必须落盘（审计 I8 / §4 批 4「跨重启不丢」）
------------------------------------------------
-原先 `extractor._pending` 与 `extractor._pending_ids` 是进程内的 dict + set：「攒够 `BATCH_SIZE`
-条才提取」全靠它们记账。进程重启（改代码重启 / watchdog 拉起 / 崩溃）时队列里那 1~3 条对话
-**直接消失**，这批对话的记忆提炼只能等 catchup 在 2 小时窗口内偶然撞上，窗口一过就永久漏做。
-落盘后队列与占位集合是同一份磁盘数据，不存在第二副本。
-
-文件形态
---------
-`{"sessions": {"<会话 id>": [配对, ...]}, "inflight": {"<源消息 id>": 取出时刻}}`
-
-- `sessions`：排队等凑批的配对（一条 = 一问一答 + ``source_id`` + ``ts``）。
-- `inflight`：**已从队列取出、正在逐条提取**的 ``source_id`` 占位。这一步是照抄旧语义
-  （旧代码在每条提取的 ``finally`` 里才 ``_pending_ids.discard``）：占位期间 catchup 跳过它，
-  防止「主链路正在提取」与「catchup 补采同一条」同时发生。同时**取出**动作本身仍是原子的
-  （同步读改写，中间没有 ``await``），所以并发的 ``add`` 不会把同一批配对再刷一遍。
-
-为什么不是「换个 dict」，也不是建表
-----------------------------------
-- 建表要 alembic 迁移（本批禁止动 `alembic/`）；
-- 队列装的是**对话原文**这种大载荷，塞进节流台账 `periodic_state.json` 会把「节流判据」和
-  「待办工作项」两种职责混在一个文件里。所以沿用同一条落盘纪律（临时文件 + `os.replace`
-  原子替换），但独立成文件。
-- **模块内不缓存队列内容**：每次增删都读盘→改→写盘。「跨重启不丢」因此是结构性的，不靠测试技巧。
-
-失败方向
---------
-- 坏文件／非对象 ⇒ 判空（当作没排过队）：漏掉的提取由 catchup（2h 窗 + `ProcessedExtraction`
-  幂等表）自愈。宁可重做一次，也不把坏 JSON 当成「已提取」永久跳过。
-- 超过 `HARD_AGE_SEC` 的滞留配对与在途占位在读取时丢弃：它们早已出了 catchup 窗口，继续占着
-  只会**挡住** catchup（占位即跳过），丢掉反而解锁。
-- 日志纪律：只打印条数，不打印对话原文。
+The old JSON path remains the migration/test seam. Its sibling SQLite file owns
+new tasks. Pending work is never discarded because it is old or a queue is full.
+Legacy JSON is imported once, without deleting the original recovery evidence.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
-import os
-import time
 from pathlib import Path
-from typing import Any
+import sqlite3
+import time
+import uuid
 
-# backend/app/memory/<本文件> 与同目录的 extractor.py 同深度 ⇒ parents[2] = backend/
 _QUEUE_FILE = Path(__file__).resolve().parents[2] / "data" / "extract_queue.json"
+LEASE_SECONDS = 900
+MAX_ATTEMPTS = 8
+BATCH_LIMIT = 10
 
-HARD_AGE_SEC = 24 * 3600       # 滞留/在途硬上限：超龄直接丢（防文件无界增长，并解锁 catchup）
-MAX_PAIRS_PER_SESSION = 200    # 单会话配对上限（旧写法在内存里无所谓，落盘必须有界）；超出丢最旧
-MAX_INFLIGHT = 500             # 在途占位上限，超出丢最旧
+
+def database_path() -> Path:
+    return _QUEUE_FILE.with_suffix(".sqlite3")
 
 
-def _read_doc() -> dict[str, Any]:
-    """读队列文件；不存在／坏 JSON／非对象 ⇒ 空结构（判空方向见模块 docstring）。"""
+def _insert(db, session_id, pair):
+    source = pair.get("source_id")
+    key = f"message:{source}" if source is not None else f"anonymous:{uuid.uuid4().hex}"
+    db.execute(
+        "INSERT OR IGNORE INTO extraction_tasks "
+        "(event_key,session_id,source_id,payload,state,created_at,available_at) "
+        "VALUES (?,?,?,?, 'pending',?,?)",
+        (key, session_id, source, json.dumps(pair, ensure_ascii=False),
+         float(pair.get("ts", time.time())), time.time()),
+    )
+
+
+def _import_legacy(db):
+    if db.execute("SELECT 1 FROM extraction_queue_meta WHERE key='json_imported'").fetchone():
+        return
+    if _QUEUE_FILE.exists():
+        # Invalid input must remain visible; never replace a damaged file with empty work.
+        doc = json.loads(_QUEUE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(doc, dict):
+            raise ValueError("Invalid legacy extraction queue")
+        for sid, pairs in (doc.get("sessions") or {}).items():
+            for pair in pairs:
+                _insert(db, int(sid), pair)
+        for source, stamp in (doc.get("inflight") or {}).items():
+            # The old file lost these payloads. Recover the source from SQL at consumption.
+            _insert(db, 0, {"source_id": int(source), "ts": float(stamp),
+                            "legacy_source_only": True})
+    db.execute("INSERT INTO extraction_queue_meta VALUES ('json_imported','1')")
+
+
+@contextmanager
+def _transaction():
+    path = database_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path, timeout=10, isolation_level=None)
+    db.row_factory = sqlite3.Row
     try:
-        raw = _QUEUE_FILE.read_text(encoding="utf-8")
-    except Exception:
-        return {}
-    try:
-        doc = json.loads(raw or "{}")
-    except Exception:
-        return {}
-    return doc if isinstance(doc, dict) else {}
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("PRAGMA synchronous=FULL")
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("CREATE TABLE IF NOT EXISTS extraction_queue_meta (key TEXT PRIMARY KEY,value TEXT)")
+        db.execute("""CREATE TABLE IF NOT EXISTS extraction_tasks (
+            id INTEGER PRIMARY KEY, event_key TEXT NOT NULL UNIQUE,
+            session_id INTEGER NOT NULL, source_id INTEGER, payload TEXT NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('pending','leased','retry','succeeded','dead')),
+            created_at REAL NOT NULL, available_at REAL NOT NULL,
+            lease_until REAL, lease_token TEXT, attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT)""")
+        db.execute("CREATE INDEX IF NOT EXISTS ix_extraction_due ON extraction_tasks(state,available_at,session_id)")
+        _import_legacy(db)
+        yield db
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
-def _write_doc(sessions: dict[str, list[dict]], inflight: dict[str, float]) -> bool:
-    """原子写（临时文件 + ``os.replace``）；失败返回 False，不抛（提取主链路不能因记账断掉）。"""
-    payload = {"sessions": sessions, "inflight": inflight}
-    try:
-        _QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _QUEUE_FILE.with_name(_QUEUE_FILE.name + ".tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, _QUEUE_FILE)
-        return True
-    except Exception:
-        return False
-
-
-def _load() -> tuple[dict[str, list[dict]], dict[str, float]]:
-    """读盘并裁剪：超龄配对／超龄在途占位丢掉，单会话超上限的保最近若干条。"""
-    doc = _read_doc()
-    now = time.time()
-    sessions: dict[str, list[dict]] = {}
-    raw_sessions = doc.get("sessions")
-    if isinstance(raw_sessions, dict):
-        for sid, rows in raw_sessions.items():
-            if not isinstance(rows, list):
-                continue
-            keep = [p for p in rows
-                    if isinstance(p, dict) and now - float(p.get("ts") or now) < HARD_AGE_SEC]
-            if len(keep) > MAX_PAIRS_PER_SESSION:
-                keep = keep[-MAX_PAIRS_PER_SESSION:]
-            if keep:
-                sessions[str(sid)] = keep
-    inflight: dict[str, float] = {}
-    raw_inflight = doc.get("inflight")
-    if isinstance(raw_inflight, dict):
-        for uid, at in raw_inflight.items():
-            try:
-                stamp = float(at)
-            except (TypeError, ValueError):
-                continue
-            if now - stamp < HARD_AGE_SEC:
-                inflight[str(uid)] = stamp
-        if len(inflight) > MAX_INFLIGHT:
-            newest = sorted(inflight.items(), key=lambda kv: -kv[1])[:MAX_INFLIGHT]
-            inflight = dict(newest)
-    return sessions, inflight
+def _recover(db, now):
+    db.execute("""UPDATE extraction_tasks SET
+        state=CASE WHEN attempts >= ? THEN 'dead' ELSE 'retry' END,
+        available_at=?, lease_token=NULL, lease_until=NULL, last_error='lease_expired'
+        WHERE state='leased' AND lease_until <= ?""", (MAX_ATTEMPTS, now, now))
 
 
 def peek(session_id: int) -> list[dict]:
-    """该会话当前排队等凑批的配对（拷贝，调用方改不动内部）。"""
-    sessions, _ = _load()
-    return list(sessions.get(str(session_id), ()))
+    with _transaction() as db:
+        _recover(db, time.time())
+        rows = db.execute("SELECT payload FROM extraction_tasks WHERE session_id=? "
+                          "AND state IN ('pending','retry') ORDER BY id", (session_id,)).fetchall()
+        return [json.loads(row[0]) for row in rows]
 
 
 def add(session_id: int, pair: dict) -> list[dict]:
-    """入队一条配对，返回入队后的该会话队列（省掉调用方再一次读盘）。
-
-    写盘失败 ⇒ 这一条没记上：它同时也不占位 ⇒ catchup 会在 2 小时窗内把它补采。
-    """
-    key = str(session_id)
-    sessions, inflight = _load()
-    rows = sessions.setdefault(key, [])
-    rows.append(dict(pair))
-    _write_doc(sessions, inflight)
-    return rows
+    with _transaction() as db:
+        _insert(db, session_id, pair)
+    return peek(session_id)
 
 
 def take(session_id: int) -> list[dict]:
-    """整串取出并登记在途占位（与旧 ``_pending.pop`` + ``_pending_ids`` 保留占位同语义）。"""
-    key = str(session_id)
-    sessions, inflight = _load()
-    rows = sessions.pop(key, [])
-    if rows:
+    """Atomically lease eligible work; retain the complete payload until success."""
+    with _transaction() as db:
         now = time.time()
-        for p in rows:
-            uid = p.get("source_id")
-            if uid is not None:
-                inflight[str(uid)] = now
-        _write_doc(sessions, inflight)
-    return rows
+        _recover(db, now)
+        rows = db.execute("SELECT * FROM extraction_tasks WHERE session_id=? "
+                          "AND state IN ('pending','retry') AND available_at<=? "
+                          "ORDER BY id LIMIT ?", (session_id, now, BATCH_LIMIT)).fetchall()
+        result = []
+        for row in rows:
+            token = uuid.uuid4().hex
+            db.execute("UPDATE extraction_tasks SET state='leased',lease_token=?,lease_until=?,"
+                       "attempts=attempts+1 WHERE id=?", (token, now + LEASE_SECONDS, row["id"]))
+            pair = json.loads(row["payload"])
+            pair.update(_task_id=row["id"], _lease_token=token)
+            result.append(pair)
+        return result
 
 
-def release_source(uid: Any) -> None:
-    """一条配对提取完毕（成功或异常）⇒ 放开它的在途占位（旧 ``_pending_ids.discard``）。"""
-    if uid is None:
-        return
-    sessions, inflight = _load()
-    if inflight.pop(str(uid), None) is None:
-        return
-    _write_doc(sessions, inflight)
+def renew(pair: dict) -> bool:
+    with _transaction() as db:
+        return db.execute("UPDATE extraction_tasks SET lease_until=? WHERE id=? AND lease_token=? "
+                          "AND state='leased' AND lease_until>?",
+                          (time.time() + LEASE_SECONDS, pair["_task_id"], pair["_lease_token"],
+                           time.time())).rowcount == 1
 
 
-def remove_source(session_id: int, uid: Any) -> None:
-    """从排队配对里移除指定 ``source_id``（catchup／截断保底已即时提取 ⇒ 主链路不再重复提取）。"""
-    key = str(session_id)
-    sessions, inflight = _load()
-    rows = sessions.get(key)
-    if not rows:
-        return
-    kept = [p for p in rows if p.get("source_id") != uid]
-    if len(kept) == len(rows):
-        return
-    if kept:
-        sessions[key] = kept
-    else:
-        sessions.pop(key, None)
-    _write_doc(sessions, inflight)
+def complete(pair: dict) -> bool:
+    with _transaction() as db:
+        return db.execute("UPDATE extraction_tasks SET state='succeeded',payload='{}',"
+                          "lease_token=NULL,lease_until=NULL WHERE id=? AND lease_token=? "
+                          "AND state='leased' AND lease_until>?",
+                          (pair["_task_id"], pair["_lease_token"], time.time())).rowcount == 1
+
+
+def retry(pair: dict, reason: str = "extraction_failed") -> bool:
+    with _transaction() as db:
+        row = db.execute("SELECT attempts FROM extraction_tasks WHERE id=? AND lease_token=? "
+                         "AND state='leased'", (pair["_task_id"], pair["_lease_token"])).fetchone()
+        if row is None:
+            return False
+        dead = row[0] >= MAX_ATTEMPTS
+        db.execute("UPDATE extraction_tasks SET state=?,available_at=?,lease_token=NULL,lease_until=NULL,"
+                   "last_error=? WHERE id=?", ("dead" if dead else "retry",
+                   time.time() + min(3600, 30 * 2 ** min(row[0], 7)), reason[:80], pair["_task_id"]))
+        return True
+
+
+def pending_sessions(max_age: float) -> list[int]:
+    with _transaction() as db:
+        now = time.time()
+        _recover(db, now)
+        return [row[0] for row in db.execute(
+            "SELECT session_id FROM extraction_tasks WHERE state IN ('pending','retry') "
+            "AND available_at<=? AND (created_at<=? OR state='retry') "
+            "GROUP BY session_id ORDER BY MIN(id) LIMIT 50", (now, now - max_age))]
+
+
+def remove_source(session_id: int, uid) -> None:
+    with _transaction() as db:
+        db.execute("UPDATE extraction_tasks SET state='succeeded',payload='{}' "
+                   "WHERE session_id=? AND source_id=? AND state IN ('pending','retry')", (session_id, uid))
 
 
 def pending_source_ids() -> set[int]:
-    """占位中的源消息 id（排队 + 在途，catchup 据此跳过防重复）。"""
-    sessions, inflight = _load()
-    out: set[int] = {int(uid) for uid in inflight if str(uid).lstrip("-").isdigit()}
-    for rows in sessions.values():
-        for p in rows:
-            uid = p.get("source_id")
-            if uid is not None:
-                out.add(uid)
-    return out
+    with _transaction() as db:
+        _recover(db, time.time())
+        return {row[0] for row in db.execute("SELECT source_id FROM extraction_tasks "
+                                           "WHERE state!='succeeded' AND source_id IS NOT NULL")}
+
+
+def abandon(pair: dict, reason: str) -> bool:
+    with _transaction() as db:
+        return db.execute("UPDATE extraction_tasks SET state='dead',last_error=?,lease_token=NULL,"
+                          "lease_until=NULL WHERE id=? AND lease_token=? AND state='leased'",
+                          (reason, pair["_task_id"], pair["_lease_token"])).rowcount == 1
+
+
+def recover_payload(pair: dict, session_id: int, payload: dict) -> bool:
+    with _transaction() as db:
+        return db.execute("UPDATE extraction_tasks SET session_id=?,payload=?,state='pending',"
+                          "available_at=?,lease_token=NULL,lease_until=NULL WHERE id=? AND lease_token=? "
+                          "AND state='leased'", (session_id, json.dumps(payload, ensure_ascii=False),
+                          time.time(), pair["_task_id"], pair["_lease_token"])).rowcount == 1

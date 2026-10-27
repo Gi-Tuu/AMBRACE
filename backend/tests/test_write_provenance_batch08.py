@@ -390,24 +390,85 @@ def test_准入待核在回执里留gates与判定后归属(env):
     assert [r["action"] for r in _receipts(env, "downgrade")] == ["downgrade"]
 
 
-def test_并入回执补incoming与into_既有kind与sim不动(env):
-    """文本查重并条：新内容不留行 ⇒ 回执是它唯一的现场（补「并进来什么、并进了哪条」）。"""
-    first = _save(_TEXT_HIT, source="chat", sub_type="extracted", importance=2)
+def test_新证据create回执完整_精确重放同id不新增_并入路径已废(env):
+    """2026-10-23 Qwen 批：云端正确性改动**明确禁止**旧的相似自动并入。
+
+    钉住三条：
+
+    1. **新证据 create 回执完整性**：内容/sub_type/重要度都不同 ⇒ 落**新行** +
+       一条 ``action="create"`` 回执，provenance 键齐全、route 与 sub_type 对得上；
+       既有四键（memory_type/sub_type/source/importance）与 sim 语义不复活。
+    2. **精确重放同 id、零副作用**：``write_identity.replay_key`` **明文要求 source+source_id
+       都在**才算同一现场（``json`` 里 15 字段），字节级重放必须返回同一 memory_id、
+       行数不加、**create 回执也不加第二条**；无 source_id 的文字重复**不是**重放。
+    3. **``merge`` 回执不出现**：产品端已删相似并入路径；若这里出现任何
+       ``action="merge"`` 说明旧行为复活，本用例失败即报警。
+
+    合成 source 标识：SRC_HIT_A/SRC_NEAR_B/SRC_HIT_B 三个整数，覆盖
+    「不同内容」「同内容不同事件」两类"新证据"，再加一次 SRC_HIT_A 的字节级重放。
+    """
+    _loop.AGENT_FLAGS["memory_write_receipt"] = False  # recorder 不受 flag 影响，此处只作复位
+
+    SRC_HIT_A = 8801       # _TEXT_HIT 的第一次事件
+    SRC_NEAR_B = 8802      # _TEXT_NEAR 的第二件事件（内容不同）
+    SRC_HIT_B = 8803       # _TEXT_HIT 的另一件事件（内容同但 source_id 不同 ⇒ 新行）
+
+    first = _save(_TEXT_HIT, source="chat", sub_type="extracted", importance=2,
+                  speaker_type="user", speaker_id=1, source_id=SRC_HIT_A)
     assert first is not None
-    second = _save(_TEXT_NEAR, source="chat", sub_type="status", importance=3)
-    assert second is not None and second.id == first.id     # 并进了同一条（旧行为未动）
-    merges = _receipts(env, "merge")
-    assert len(merges) == 1
-    det = merges[0]["detail"]
-    assert det["kind"] == "text_dedup"                      # 既有键与取值不变
-    assert det["incoming"]["content_excerpt"] == _TEXT_NEAR
-    assert det["incoming"]["sub_type"] == "status"
-    assert det["incoming"]["memory_type"] == "event"
-    assert det["into"] == {"memory_id": first.id, "source": "chat",
-                           "sub_type": "extracted", "memory_type": "event"}
-    assert det["provenance"]["route"] == "extracted"
-    # 并入不产生新行
-    assert len(_rows(env["factory"])) == 1
+    creates_after_first = _receipts(env, "create")
+    assert len(creates_after_first) == 1, creates_after_first
+    det_first = creates_after_first[0]["detail"]
+    # 既有四键一字未动（本批红线）
+    assert det_first["memory_type"] == "event"
+    assert det_first["sub_type"] == "extracted"
+    assert det_first["source"] == "chat"
+    assert det_first["importance"] == pytest.approx(float(first.importance or 0))
+    assert det_first["provenance"]["route"] == "extracted"
+    assert det_first["provenance"]["evidence"]["kind"] == "chat_message"
+    assert det_first["provenance"]["evidence"]["source_id"] == SRC_HIT_A
+
+    # ── 新证据 1：不同 content / 不同 sub_type / 不同 importance ⇒ 独立一行 + 独立 create 回执 ──
+    second = _save(_TEXT_NEAR, source="chat", sub_type="status", importance=3,
+                   speaker_type="user", speaker_id=1, source_id=SRC_NEAR_B)
+    assert second is not None
+    assert second.id != first.id, (
+        "新语义下不同内容必须各自留行；相等说明旧的相似合并又复活了"
+    )
+
+    # ── 新证据 2：同 content、不同 source_id ⇒ 仍是独立一行（旧"看文字"并入口径已废） ──
+    same_text_other_event = _save(_TEXT_HIT, source="chat", sub_type="extracted", importance=2,
+                                    speaker_type="user", speaker_id=1, source_id=SRC_HIT_B)
+    assert same_text_other_event.id != first.id, (
+        "同正文不同 source_id 属不同现场，必须各留一行；若相等说明 replay_key 又退化成看文字"
+    )
+    rows_after_three = _rows(env["factory"])
+    assert len(rows_after_three) == 3, [r.id for r in rows_after_three]
+
+    creates = _receipts(env, "create")
+    assert len(creates) == 3, creates
+    det_second = creates[1]["detail"]
+    assert det_second["sub_type"] == "status"
+    assert det_second["importance"] == pytest.approx(float(second.importance or 0))
+    assert det_second["provenance"]["route"] == "extracted", det_second["provenance"]
+
+    # merge 路径已废：任何 action="merge" 都是回归
+    assert _receipts(env, "merge") == [], (
+        "旧「相似并入」路径已被禁用；出现 merge 回执说明产品端把相似合并又加回来了"
+    )
+
+    # ── 精确重放：source+source_id+15 字段逐值相同 ⇒ 同一 memory_id、行数不加、create 也不加第二条 ──
+    replay = _save(_TEXT_HIT, source="chat", sub_type="extracted", importance=2,
+                   speaker_type="user", speaker_id=1, source_id=SRC_HIT_A)
+    assert replay is not None
+    assert replay.id == first.id, (
+        "字节级重放（同 source+source_id+15 字段）必须复用同一 Memory（write_key 唯一约束）"
+    )
+    assert len(_rows(env["factory"])) == 3, "重放不得新增行"
+    assert len(_receipts(env, "create")) == 3, (
+        "重放不得再落一条 create 回执：新证据的唯一现场就是那条 create"
+    )
+    assert _receipts(env, "merge") == []
 
 
 # ─────────────────── ② 晋升审计 ───────────────────

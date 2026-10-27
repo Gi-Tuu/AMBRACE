@@ -87,6 +87,10 @@ _FLAG_ROWS: list[tuple] = [
      'keeps for itself also says how certain it is and which tool it came from, so it can weigh it properly. '
      'This shapes only how it reads its own note, not what it says to you. Off by default, and turning it off '
      'keeps things exactly as they are now.'),
+    ('projection_inject_v1', 'agent', 127, False, '对话状态校准',
+     '回复前参考当前身份、现状和进行中的事项。可随时关闭；不会额外生成回复。',
+     'Conversation state calibration',
+     'Use current identity, state and active topics before replying. Can be disabled at any time; no extra reply generation.'),
     ('cognitive_projection_shadow', 'agent', 107, False, '认知笔记留痕（实验）',
      '开启后，角色会在后台把自己的「这一刻知道什么、正在关注什么、手头在办什么」记一笔实验笔记，'
      '用来核对它的判断有没有跑偏；这些笔记不会说给你听，也不会改变它回复你的内容。'

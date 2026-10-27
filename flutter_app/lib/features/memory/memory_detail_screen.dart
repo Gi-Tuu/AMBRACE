@@ -1,6 +1,8 @@
 import "package:flutter/material.dart";
 import "package:ai_companion/l10n/app_localizations.dart";
 import "../../models/memory.dart";
+import "../../models/memory_history.dart";
+import "../../models/memory_derivations.dart";
 import "../../services/api_client.dart";
 import "../../widgets/ios_card_group.dart";
 import "../../utils/beijing_time.dart";
@@ -24,8 +26,41 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
   List<MemoryNode> _chain = const [];
   bool _loadingChain = true;
   String? _cachedOriginalSource;
-  // 原始内容 Future 只取一次并缓存，避免 build 内联 Future 导致每条重建重取
-  late final Future<String> _sourceFuture = _fetchOriginalSource();
+  // 原始内容 Future 只取一次并缓存，避免 build 内联 Future 导致每条重建重取；
+  // 切换记忆 ID 时置空重取（RC2 G1 的身份边界）。
+  late Future<String> _sourceFuture = _fetchOriginalSource();
+
+  // RC2 G1：修正历史（只读）。null＝加载中/未加载；失败与空态分开，不互相冒充。
+  List<MemoryCorrection>? _history;
+  bool _loadingHistory = true;
+  bool _historyFailed = false;
+  bool _historyTruncated = false;
+  int _historyGeneration = 0;
+
+  /// 页面代次：切换记忆 ID 时 +1；本页所有异步读（详情/链条/来源/历史）共用，
+  /// 晚到结果必须同时满足「页面代次未变＋widget 当前 ID 相同＋baseUrl/token 未变＋mounted」。
+  int _pageGeneration = 0;
+
+  // RC2 G2：派生关系（只读、两方向独立分页）
+  bool _derivLoading = true;
+  bool _derivFailed = false;
+  List<DerivationItem> _parentItems = const [];
+  List<DerivationItem> _childItems = const [];
+  String? _parentsCursor;
+  String? _childrenCursor;
+  bool _parentsHasMore = false;
+  bool _childrenHasMore = false;
+  bool _parentsIncomplete = false;
+  bool _childrenIncomplete = false;
+  bool _parentsMoreFailed = false;
+  bool _childrenMoreFailed = false;
+  int _derivGeneration = 0;
+  int _derivationClickGeneration = 0;
+  // R5：同方向串行/单飞锁 + 页请求代次（防重复点击与旧页乱序回退）
+  bool _parentsInflight = false;
+  bool _childrenInflight = false;
+  int _parentsPageGen = 0;
+  int _childrenPageGen = 0;
 
   Map<String, String> _typeLabels(AppLocalizations l10n) => {
         "user_info": l10n.memoryImpression,
@@ -44,19 +79,463 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
     _memory = widget.memory;
     _loadChain();
     _refreshMemory();  // P2-11：补齐调用方没带的字段（如 why_it_matters）
+    _loadHistory();
+    _loadDerivations();
   }
+
+  @override
+  void didUpdateWidget(covariant MemoryDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 同 State 切换记忆 ID：作废在途请求、重置本页局部状态，再按新 ID 重取。
+    if (oldWidget.memory.id != widget.memory.id) {
+      _memory = widget.memory;
+      _pageGeneration++;      // 在途详情/链条/来源/历史一律作废
+      _historyGeneration++;  // 在途历史结果一律作废
+      _history = null;
+      _historyFailed = false;
+      _historyTruncated = false;
+      _loadingHistory = true;
+      _chain = const [];
+      _loadingChain = true;
+      _cachedOriginalSource = null;
+      _sourceFuture = _fetchOriginalSource();
+      _derivGeneration++;      // 在途派生关系/点击一律作废
+      _derivLoading = true;
+      _derivFailed = false;
+      _parentItems = const [];
+      _childItems = const [];
+      _parentsCursor = null;
+      _childrenCursor = null;
+      _parentsHasMore = false;
+      _childrenHasMore = false;
+      _parentsIncomplete = false;
+      _childrenIncomplete = false;
+      _parentsMoreFailed = false;
+      _childrenMoreFailed = false;
+      _parentsInflight = false;
+      _childrenInflight = false;
+      _parentsPageGen++;
+      _childrenPageGen++;
+      _loadChain();
+      _refreshMemory();
+      _loadHistory();
+      _loadDerivations();
+    }
+  }
+
+  /// 本页异步读的统一有效性边界（R1）：页面代次 + widget 当前记忆 + 同源 + mounted。
+  bool _readIsValid({
+    required int memoryId,
+    required int generation,
+    required String baseUrl,
+    required String token,
+  }) =>
+      mounted &&
+      generation == _pageGeneration &&
+      widget.memory.id == memoryId &&
+      _api.baseUrl == baseUrl &&
+      _api.token == token;
 
   /// P2-11（2026-09-28）：用服务端完整记录替换传入的精简对象。
   ///
-  /// 织库详情（weave_detail_sheet._toMemory）只映射 8 个字段、没有 why_it_matters，
-  /// 于是详情页的「意义」卡片永远不显示。这里回拉一次完整记录；失败静默，保留传入值。
+  /// R1：A 的晚到详情不得覆盖已切换的 B（校验页面代次/当前 ID/返回 id）。
   Future<void> _refreshMemory() async {
+    final memoryId = widget.memory.id;
+    final generation = _pageGeneration;
+    final baseUrl = _api.baseUrl;
+    final token = _api.token;
     try {
-      final full = await _api.getMemory(widget.memory.id);
-      if (mounted) setState(() => _memory = full);
+      final full = await _api.getMemory(memoryId);
+      if (!_readIsValid(memoryId: memoryId, generation: generation, baseUrl: baseUrl, token: token)) {
+        return;
+      }
+      if (full.id != memoryId) return;
+      setState(() => _memory = full);
     } catch (_) {
       // 失败静默：维持调用方传入的对象（即改动前行为）
     }
+  }
+
+  /// RC2 G1：加载修正历史。请求绑定「widget 当前 memory.id ＋ 页面代次 ＋ 历史代次 ＋
+  /// baseUrl/token 快照」，返回后再核同源有效性；晚到结果不写入新页面/新账号。
+  /// 重试一律取 widget.memory.id，不读可能被旧详情污染的 _memory。
+  Future<void> _loadHistory() async {
+    final memoryId = widget.memory.id;
+    final generation = _pageGeneration;
+    final historyGeneration = ++_historyGeneration;
+    final baseUrl = _api.baseUrl;
+    final token = _api.token;
+    if (mounted) {
+      setState(() {
+        _loadingHistory = true;
+        _historyFailed = false;
+      });
+    }
+    bool pageCurrent() =>
+        mounted &&
+        generation == _pageGeneration &&
+        widget.memory.id == memoryId &&
+        historyGeneration == _historyGeneration;
+    bool sameOrigin() => _api.baseUrl == baseUrl && _api.token == token;
+    try {
+      final history = await _api.getMemoryHistory(memoryId);
+      if (!pageCurrent()) return;
+      if (!sameOrigin()) {
+        // 请求期间换了服务器/账号：丢弃结果并明确失败，不把旧账号历史画到新页面。
+        setState(() {
+          _loadingHistory = false;
+          _historyFailed = true;
+          _history = null;
+        });
+        return;
+      }
+      setState(() {
+        _loadingHistory = false;
+        _historyFailed = false;
+        _history = history.corrections;
+        _historyTruncated = history.truncated;
+      });
+    } catch (_) {
+      if (!pageCurrent()) return;
+      setState(() {
+        _loadingHistory = false;
+        _historyFailed = true;
+      });
+    }
+  }
+
+  /// RC2 G2：加载两方向派生关系（只读）。绑定 widget 当前 memory.id＋页面代次＋
+  /// 派生代次＋baseUrl/token 快照；晚到结果不污染新页面/新账号。
+  Future<void> _loadDerivations() async {
+    final memoryId = widget.memory.id;
+    final generation = _pageGeneration;
+    final derivGeneration = ++_derivGeneration;
+    final baseUrl = _api.baseUrl;
+    final token = _api.token;
+    if (mounted) {
+      setState(() {
+        _derivLoading = true;
+        _derivFailed = false;
+      });
+    }
+    bool current() =>
+        mounted &&
+        generation == _pageGeneration &&
+        widget.memory.id == memoryId &&
+        derivGeneration == _derivGeneration;
+    try {
+      final data = await _api.getMemoryDerivations(memoryId);
+      if (!current()) return;
+      if (_api.baseUrl != baseUrl || _api.token != token) {
+        setState(() {
+          _derivLoading = false;
+          _derivFailed = true;
+        });
+        return;
+      }
+      setState(() {
+        _parentItems = data.parents.items;
+        _childItems = data.children.items;
+        _parentsCursor = data.parents.nextCursor;
+        _childrenCursor = data.children.nextCursor;
+        _parentsHasMore = data.parents.hasMore;
+        _childrenHasMore = data.children.hasMore;
+        _parentsIncomplete = data.parents.dataIncomplete;
+        _childrenIncomplete = data.children.dataIncomplete;
+        _parentsMoreFailed = false;
+        _childrenMoreFailed = false;
+        _parentsInflight = false;
+        _childrenInflight = false;
+        _derivLoading = false;
+        _derivFailed = false;
+      });
+    } catch (_) {
+      if (!current()) return;
+      setState(() {
+        _derivLoading = false;
+        _derivFailed = true;
+      });
+    }
+  }
+
+  /// 手动「继续加载」：只取本方向下一页，按 id 去重合并；不自动无限翻页。
+  ///
+  /// R5：同方向单飞（inflight 锁，按钮在加载中禁用）、页请求代次＋游标快照；
+  /// 旧页晚到不得覆盖新游标/新条目，也不得擦掉完整性状态；另一方向不受影响。
+  Future<void> _loadMoreDerivations({required bool parents}) async {
+    if (parents ? _parentsInflight : _childrenInflight) return;
+    final memoryId = widget.memory.id;
+    final generation = _pageGeneration;
+    final derivGeneration = _derivGeneration;
+    final baseUrl = _api.baseUrl;
+    final token = _api.token;
+    final cursor = parents ? _parentsCursor : _childrenCursor;
+    if (cursor == null) return;
+    final pageGeneration = parents ? ++_parentsPageGen : ++_childrenPageGen;
+    if (parents) {
+      _parentsInflight = true;
+      _parentsMoreFailed = false;
+    } else {
+      _childrenInflight = true;
+      _childrenMoreFailed = false;
+    }
+    setState(() {});
+
+    bool pageCurrent() =>
+        mounted &&
+        generation == _pageGeneration &&
+        derivGeneration == _derivGeneration &&
+        widget.memory.id == memoryId &&
+        (parents ? pageGeneration == _parentsPageGen : pageGeneration == _childrenPageGen);
+    try {
+      final data = await _api.getMemoryDerivations(
+        memoryId,
+        parentsCursor: parents ? cursor : null,
+        childrenCursor: parents ? null : cursor,
+      );
+      if (!pageCurrent()) return;
+      if (_api.baseUrl != baseUrl || _api.token != token) {
+        setState(() {
+          if (parents) {
+            _parentsMoreFailed = true;
+            _parentsInflight = false;
+          } else {
+            _childrenMoreFailed = true;
+            _childrenInflight = false;
+          }
+        });
+        return;
+      }
+      // R2：has_more=true 时必须相对本次请求捕获的 cursor 严格前进；相等/倒退整页拒绝，
+      // 保已有条目与有效 cursor，仅本方向失败可重试（不清另一方向、不应用坏页）。
+      final target = parents ? data.parents : data.children;
+      if (target.hasMore) {
+        final prev = int.tryParse(cursor);
+        final next = int.tryParse(target.nextCursor ?? '');
+        if (prev == null || next == null || next <= prev) {
+          setState(() {
+            if (parents) {
+              _parentsMoreFailed = true;
+              _parentsInflight = false;
+            } else {
+              _childrenMoreFailed = true;
+              _childrenInflight = false;
+            }
+          });
+          return;
+        }
+      }
+      setState(() {
+        if (parents) {
+          final seen = _parentItems.map((e) => e.id).toSet();
+          _parentItems = [
+            ..._parentItems,
+            ...data.parents.items.where((e) => !seen.contains(e.id)),
+          ];
+          _parentsCursor = data.parents.nextCursor;
+          _parentsHasMore = data.parents.hasMore;
+          _parentsIncomplete = data.parents.dataIncomplete;
+          _parentsInflight = false;
+        } else {
+          final seen = _childItems.map((e) => e.id).toSet();
+          _childItems = [
+            ..._childItems,
+            ...data.children.items.where((e) => !seen.contains(e.id)),
+          ];
+          _childrenCursor = data.children.nextCursor;
+          _childrenHasMore = data.children.hasMore;
+          _childrenIncomplete = data.children.dataIncomplete;
+          _childrenInflight = false;
+        }
+      });
+    } catch (_) {
+      if (!pageCurrent()) return;
+      setState(() {
+        if (parents) {
+          _parentsMoreFailed = true;
+          _parentsInflight = false;
+        } else {
+          _childrenMoreFailed = true;
+          _childrenInflight = false;
+        }
+      });
+    }
+  }
+
+  /// 点击派生条目：先补完整记录，再仅在「页面/点击代次/同源」仍有效时导航。
+  Future<void> _openDerivation(DerivationItem item) async {
+    final memoryId = widget.memory.id;
+    final generation = _pageGeneration;
+    final clickGeneration = ++_derivationClickGeneration;
+    final baseUrl = _api.baseUrl;
+    final token = _api.token;
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      final full = await _api.getMemory(item.id);
+      if (!_readIsValid(memoryId: memoryId, generation: generation,
+          baseUrl: baseUrl, token: token)) {
+        return;
+      }
+      if (clickGeneration != _derivationClickGeneration || full.id != item.id) return;
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => MemoryDetailScreen(memory: full)),
+      );
+    } catch (_) {
+      if (!_readIsValid(memoryId: memoryId, generation: generation,
+          baseUrl: baseUrl, token: token)) {
+        return;
+      }
+      if (clickGeneration != _derivationClickGeneration) return;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.memoryDerivationsOpenFailed)),
+      );
+    }
+  }
+
+  String _derivationStatusLabel(DerivationItem item, AppLocalizations l10n) {
+    switch (item.status) {
+      case 'active':
+        return l10n.memoryDerivationsStatusActive;
+      case 'stale':
+        return l10n.memoryDerivationsStatusStale;
+      case 'superseded':
+        return l10n.memoryDerivationsStatusSuperseded;
+      default:
+        return l10n.memoryDerivationsStatusUnknown;
+    }
+  }
+
+  Widget _buildDerivationItemRow(DerivationItem item) {
+    return InkWell(
+      onTap: () => _openDerivation(item),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(item.isArchived ? Icons.archive_outlined : Icons.subdirectory_arrow_right,
+              size: 16, color: IosCardColors.subtitle),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if ((item.title ?? '').trim().isNotEmpty)
+                Text(item.title!,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              Text(item.content,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, height: 1.4)),
+            ]),
+          ),
+          const SizedBox(width: 6),
+          Text(_derivationStatusLabel(item, AppLocalizations.of(context)!),
+              style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildDerivationSection(
+    AppLocalizations l10n, {
+    required bool parents,
+  }) {
+    final items = parents ? _parentItems : _childItems;
+    final hasMore = parents ? _parentsHasMore : _childrenHasMore;
+    final incomplete = parents ? _parentsIncomplete : _childrenIncomplete;
+    final moreFailed = parents ? _parentsMoreFailed : _childrenMoreFailed;
+    final title = parents ? l10n.memoryDerivationsParents : l10n.memoryDerivationsChildren;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+      const SizedBox(height: 4),
+      if (items.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Text(
+            incomplete
+                ? l10n.memoryDerivationsIncomplete
+                : (hasMore ? l10n.memoryDerivationsMore : l10n.memoryDerivationsEmpty),
+            style: const TextStyle(fontSize: 12, color: IosCardColors.subtitle),
+          ),
+        )
+      else
+        ...items.map(_buildDerivationItemRow),
+      if (items.isNotEmpty && incomplete)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(l10n.memoryDerivationsIncomplete,
+              style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
+        ),
+      if (hasMore) ...[
+        if (parents ? _parentsInflight : _childrenInflight)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: ClipRRect(
+              borderRadius: BorderRadius.all(Radius.circular(2)),
+              child: LinearProgressIndicator(minHeight: 2),
+            ),
+          ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            icon: Icon(moreFailed ? Icons.refresh : Icons.expand_more, size: 18),
+            label: Text(moreFailed ? l10n.memoryDerivationsRetry : l10n.memoryDerivationsLoadMore),
+            onPressed: (parents ? _parentsInflight : _childrenInflight)
+                ? null
+                : () => _loadMoreDerivations(parents: parents),
+          ),
+        ),
+      ],
+    ]);
+  }
+
+  Widget _buildDerivationsCard(AppLocalizations l10n) {
+    final Widget body;
+    if (_derivLoading) {
+      // 用线性进度条而非 CircularProgressIndicator：G1 旧测试对「圆圈加载」有唯一性断言，只读不改。
+      body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const ClipRRect(
+          borderRadius: BorderRadius.all(Radius.circular(2)),
+          child: LinearProgressIndicator(minHeight: 3),
+        ),
+        const SizedBox(height: 8),
+        Text(l10n.memoryDerivationsLoading,
+            style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)),
+      ]);
+    } else if (_derivFailed) {
+      body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(l10n.memoryDerivationsLoadFailed,
+            style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            icon: const Icon(Icons.refresh, size: 18),
+            label: Text(l10n.memoryDerivationsRetry),
+            onPressed: _loadDerivations,
+          ),
+        ),
+      ]);
+    } else {
+      body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _buildDerivationSection(l10n, parents: true),
+        const Divider(height: 20),
+        _buildDerivationSection(l10n, parents: false),
+      ]);
+    }
+    return IosCardGroup(children: [
+      Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(Icons.hub_outlined, size: 18, color: IosCardColors.subtitle),
+            const SizedBox(width: 8),
+            Text(l10n.memoryDerivationsTitle,
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          ]),
+          const SizedBox(height: 10),
+          body,
+        ]),
+      ),
+    ]);
   }
 
   String _sourceLabel(String? source, AppLocalizations l10n) {
@@ -298,13 +777,25 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
 
   Future<String> _fetchOriginalSource() async {
     final l10n = AppLocalizations.of(context)!;
-    if (_memory.sourceId == null) return "";
+    final memoryId = widget.memory.id;
+    if (_memory.id != memoryId || _memory.sourceId == null) return "";
     if (_cachedOriginalSource != null) return _cachedOriginalSource!;
+    final generation = _pageGeneration;
+    final baseUrl = _api.baseUrl;
+    final token = _api.token;
     try {
       final msg = await _api.getMessage(_memory.sourceId!);
-      _cachedOriginalSource = msg["content"] as String? ?? "";
-      return _cachedOriginalSource!;
+      // R1：来源读晚到不得写缓存/返回旧来源（切换后 A 的原文不能出现在 B）。
+      if (!_readIsValid(memoryId: memoryId, generation: generation, baseUrl: baseUrl, token: token)) {
+        return "";
+      }
+      final content = msg["content"] as String? ?? "";
+      _cachedOriginalSource = content;
+      return content;
     } catch (e) {
+      if (!_readIsValid(memoryId: memoryId, generation: generation, baseUrl: baseUrl, token: token)) {
+        return "";
+      }
       return l10n.loadOriginalFailed(e.toString());
     }
   }
@@ -361,11 +852,24 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
 
 
   Future<void> _loadChain() async {
+    // R1：链条读同样受页面代次/当前 ID/同源边界约束；A 晚到的链条不得写进 B。
+    final memoryId = widget.memory.id;
+    final generation = _pageGeneration;
+    final baseUrl = _api.baseUrl;
+    final token = _api.token;
     try {
-      final nodes = await _api.getMemoryChain(_memory.id);
-      if (mounted) setState(() { _chain = nodes; _loadingChain = false; });
+      final nodes = await _api.getMemoryChain(memoryId);
+      if (!_readIsValid(memoryId: memoryId, generation: generation, baseUrl: baseUrl, token: token)) {
+        return;
+      }
+      setState(() {
+        _chain = nodes;
+        _loadingChain = false;
+      });
     } catch (_) {
-      if (mounted) setState(() => _loadingChain = false);
+      if (_readIsValid(memoryId: memoryId, generation: generation, baseUrl: baseUrl, token: token)) {
+        setState(() => _loadingChain = false);
+      }
     }
   }
 
@@ -454,6 +958,100 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
     if (_memory.chainId == null) return l10n.memoryChainUnlinked;
     if (_memory.nodeType == 'root') return l10n.memoryChainRootNoBranch;
     return l10n.memoryChainEmpty;
+  }
+
+  Widget _buildHistoryCard(AppLocalizations l10n) {
+    final items = _history ?? const <MemoryCorrection>[];
+    final Widget body;
+    if (_loadingHistory) {
+      body = Row(children: [
+        const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(l10n.memoryHistoryLoading,
+              style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)),
+        ),
+      ]);
+    } else if (_historyFailed) {
+      body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(l10n.memoryHistoryLoadFailed,
+            style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            icon: const Icon(Icons.refresh, size: 18),
+            label: Text(l10n.retry),
+            onPressed: _loadHistory,
+          ),
+        ),
+      ]);
+    } else if (items.isEmpty) {
+      // 截断时即使空也不能谎称「完整无历史」
+      body = Text(
+        _historyTruncated ? l10n.memoryHistoryTruncated : l10n.memoryHistoryEmpty,
+        style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle),
+      );
+    } else {
+      body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        for (var i = 0; i < items.length; i++) ...[
+          _buildHistoryItem(items[i], l10n),
+          if (i != items.length - 1) const Divider(height: 20),
+        ],
+        if (_historyTruncated) ...[
+          const SizedBox(height: 10),
+          Text(l10n.memoryHistoryTruncated,
+              style: const TextStyle(fontSize: 12, color: IosCardColors.subtitle)),
+        ],
+      ]);
+    }
+    return IosCardGroup(children: [
+      Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(Icons.history, size: 18, color: IosCardColors.subtitle),
+            const SizedBox(width: 8),
+            Text(l10n.memoryHistoryTitle,
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          ]),
+          const SizedBox(height: 10),
+          body,
+        ]),
+      ),
+    ]);
+  }
+
+  Widget _buildHistoryItem(MemoryCorrection item, AppLocalizations l10n) {
+    final changedAt = item.changedAt;
+    final timeText = (changedAt == null || changedAt.isEmpty)
+        ? l10n.memoryHistoryUnknownTime
+        : formatBeijingTime(changedAt);
+    final reason = item.reason;
+    final reasonText = (reason == null || reason.trim().isEmpty)
+        ? l10n.memoryHistoryReasonUnknown
+        : reason;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _buildHistoryValue(l10n.memoryHistoryOldLabel, item.oldValue),
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Icon(Icons.arrow_downward, size: 16, color: IosCardColors.subtitle),
+      ),
+      _buildHistoryValue(l10n.memoryHistoryNewLabel, item.newValue),
+      const SizedBox(height: 6),
+      // 窄屏/长文案用 Wrap 换行，不挤成 overflow；原始内容与 reason 均不翻译
+      Wrap(spacing: 12, runSpacing: 2, children: [
+        Text(timeText, style: const TextStyle(fontSize: 12, color: IosCardColors.subtitle)),
+        Text(reasonText, style: const TextStyle(fontSize: 12, color: IosCardColors.subtitle)),
+      ]),
+    ]);
+  }
+
+  Widget _buildHistoryValue(String label, String value) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
+      const SizedBox(height: 2),
+      Text(value, style: const TextStyle(fontSize: 14, height: 1.4)),
+    ]);
   }
 
   Widget _buildChainCard(AppLocalizations l10n) {
@@ -626,6 +1224,14 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
               ),
               const SizedBox(height: 24),
             ],
+
+            // 修正历史（RC2 G1：只读，复用既有 /history）
+            _buildHistoryCard(l10n),
+            const SizedBox(height: 24),
+
+            // 派生关系（RC2 G2：只读、直接边）
+            _buildDerivationsCard(l10n),
+            const SizedBox(height: 24),
 
             // 记忆链条（树状图）
             _buildChainCard(l10n),

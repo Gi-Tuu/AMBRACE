@@ -19,6 +19,7 @@ import re
 import sqlite3
 import sys
 import zipfile
+from pathlib import Path
 from datetime import datetime, timedelta
 
 SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 项目根目录
@@ -49,7 +50,7 @@ README_IN_ZIP = "README-BACKUP.txt"
 README_BACKUP_TEXT = (
     "AMBRACE 备份包说明（自动生成）\n"
     "\n"
-    "本压缩包包含 backend/data/sqlite/ai_companion.db 与 backend/data/server_config.json。\n"
+    "本压缩包包含主业务数据库、服务器配置，以及存在时的提取任务 SQLite 快照和旧 JSON 队列。\n"
     "其中的模型 / 语音 / 多模态等 API 凭据采用本地信封加密存储（AES-256-GCM，密文以 enc:v1: 开头），\n"
     "解密用的主密钥是 backend/data/secrets.key —— **它刻意不在本备份包内**（同被排除的还有\n"
     "auth_secret.key 登录签名密钥、server_identity.key 服务器身份密钥、fcm-service-account.json\n"
@@ -99,13 +100,14 @@ TRIGGER_LOG_KEEP_DAYS = 7  # 主动触发日志保留天数（proactive_trigger_
 SKIP_DIRS = {"__pycache__", "build", ".dart_tool", ".venv", "node_modules"}
 
 
-def _add_sqlite_backup(zf: zipfile.ZipFile) -> int:
+def _add_sqlite_backup(zf: zipfile.ZipFile, source_file: str | None = None) -> int:
     """用 sqlite3 backup API 安全复制运行中的数据库（避免文件复制时数据不一致）"""
-    if not os.path.isfile(DB_FILE):
+    source_file = source_file or DB_FILE
+    if not os.path.isfile(source_file):
         return 0
-    tmp = DB_FILE + ".bak.tmp"
+    tmp = source_file + ".bak.tmp"
     try:
-        src = sqlite3.connect(DB_FILE)
+        src = sqlite3.connect(Path(source_file).resolve().as_uri() + "?mode=ro", uri=True)
         try:
             dst = sqlite3.connect(tmp)
             try:
@@ -114,7 +116,7 @@ def _add_sqlite_backup(zf: zipfile.ZipFile) -> int:
                 dst.close()
         finally:
             src.close()
-        arc = os.path.relpath(DB_FILE, SERVER_DIR)
+        arc = os.path.relpath(source_file, SERVER_DIR)
         zf.write(tmp, arc)
         return 1
     except Exception as e:
@@ -186,32 +188,52 @@ def do_backup() -> str:
         return f"已存在，跳过: {zip_path}；{rotate_logs()}；{prune_trigger_logs()}"
 
     count = 0
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        # A8 方案 A（2026-09-25）：包内附醒目提示（凭据仍为明文，勿外发）
-        zf.writestr(README_IN_ZIP, README_BACKUP_TEXT)
-        for d in SRC_DIRS:
-            p = os.path.join(SERVER_DIR, d)
-            if not os.path.isdir(p):
-                continue
-            for root, dirs, files in os.walk(p):
-                dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
-                for fn in files:
-                    if fn.endswith((".pyc", ".pyo")):
-                        continue
-                    fp = os.path.join(root, fn)
-                    if is_secret_file(fp):  # A8 方案 B：密钥文件绝不进包
-                        continue
-                    zf.write(fp, os.path.relpath(fp, SERVER_DIR))
+    staged_path = zip_path + ".tmp"
+    try:
+        with zipfile.ZipFile(staged_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            # A8 方案 A（2026-09-25）：包内附醒目提示（凭据仍为明文，勿外发）
+            zf.writestr(README_IN_ZIP, README_BACKUP_TEXT)
+            for d in SRC_DIRS:
+                p = os.path.join(SERVER_DIR, d)
+                if not os.path.isdir(p):
+                    continue
+                for root, dirs, files in os.walk(p):
+                    dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
+                    for fn in files:
+                        if fn.endswith((".pyc", ".pyo")):
+                            continue
+                        fp = os.path.join(root, fn)
+                        if is_secret_file(fp):  # A8 方案 B：密钥文件绝不进包
+                            continue
+                        zf.write(fp, os.path.relpath(fp, SERVER_DIR))
+                        count += 1
+            for f in SRC_FILES:
+                fp = os.path.join(SERVER_DIR, f)
+                if os.path.isfile(fp) and not is_secret_file(fp):
+                    zf.write(fp, f)
                     count += 1
-        for f in SRC_FILES:
-            fp = os.path.join(SERVER_DIR, f)
-            if os.path.isfile(fp) and not is_secret_file(fp):
-                zf.write(fp, f)
+            if os.path.isfile(CONFIG_FILE) and not is_secret_file(CONFIG_FILE):
+                zf.write(CONFIG_FILE, os.path.relpath(CONFIG_FILE, SERVER_DIR))
                 count += 1
-        if os.path.isfile(CONFIG_FILE) and not is_secret_file(CONFIG_FILE):
-            zf.write(CONFIG_FILE, os.path.relpath(CONFIG_FILE, SERVER_DIR))
-            count += 1
-        count += _add_sqlite_backup(zf)
+            # Snapshot tasks first: a restored succeeded task must have its business commit.
+            queue_dir = os.path.dirname(CONFIG_FILE)
+            queue_file = os.path.join(queue_dir, "extract_queue.sqlite3")
+            queue_count = _add_sqlite_backup(zf, queue_file)
+            if os.path.isfile(queue_file) and queue_count != 1:
+                raise RuntimeError("Extraction task database backup failed")
+            count += queue_count
+            main_count = _add_sqlite_backup(zf)
+            if os.path.isfile(DB_FILE) and main_count != 1:
+                raise RuntimeError("Business database backup failed")
+            count += main_count
+            legacy_queue = os.path.join(queue_dir, "extract_queue.json")
+            if os.path.isfile(legacy_queue):
+                zf.write(legacy_queue, os.path.relpath(legacy_queue, SERVER_DIR))
+                count += 1
+        os.replace(staged_path, zip_path)
+    finally:
+        if os.path.exists(staged_path):
+            os.remove(staged_path)
 
     # 清理过期备份
     removed = []

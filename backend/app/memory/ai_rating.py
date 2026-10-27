@@ -17,7 +17,7 @@ from app.models.memory import Memory
 from app.models.character import AICharacter
 from app.utils.logger import get_logger
 from app.memory.rating_quota import add as _quota_add, used_today as _quota_used
-from app.memory.rating_quota import diff_observed
+from app.memory.rating_quota import diff_observed, flush_pending as _quota_flush, is_persisted as _quota_persisted
 from app.memory.constants import (
     AI_RATING_MAX_PER_CHAR, AI_RATING_BATCH, S_MAX_DAYS, S_MIN_DAYS,
     DECAY_MAX_PCT, S_DEFAULT,
@@ -297,6 +297,7 @@ async def run_ai_rating() -> int:
         chars = (await db.execute(
             select(AICharacter).where(AICharacter.is_active == True)
         )).scalars().all()
+    _quota_flush()  # Retry pending charges before quota_full can skip every character.
     rated_total = 0
     failed: list[int] = []
     for char in chars:
@@ -308,6 +309,7 @@ async def run_ai_rating() -> int:
             async with async_session_factory() as db:
                 used = await _daily_rated(db, char.id)
                 obs["quota_used_before"] = used
+                obs["quota_persisted"] = _quota_persisted()
                 obs["quota_limit"] = AI_RATING_MAX_PER_CHAR
                 if used >= AI_RATING_MAX_PER_CHAR:
                     outcome = "quota_full"
@@ -361,6 +363,7 @@ async def run_ai_rating() -> int:
                 written = n
                 if n:
                     _quota_add(char.id, n)
+                    obs["quota_persisted"] = _quota_persisted()
                     _logger.info("AI rating char=%d rated=%d", char.id, n)
                     rated_total += n
                 outcome = "rated" if n else "no_star_matched"

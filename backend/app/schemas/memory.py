@@ -42,3 +42,29 @@ class MemoryResponse(BaseModel):
 class MemoryListResponse(BaseModel):
     memories: list[MemoryResponse]
     total: int
+
+
+class DerivationItem(BaseModel):
+    """派生关系条目：只含授权行必需摘要（不放正文之外的原始派生数组/owner/计数）。"""
+    id: int
+    content: str
+    title: str | None = None
+    memory_type: str
+    status: str = "active"
+    is_archived: bool = False
+
+
+class DerivationDirection(BaseModel):
+    """单方向（parents / children）独立分页与完整性状态。"""
+    items: list[DerivationItem] = []
+    has_more: bool = False
+    next_cursor: str | None = None
+    data_incomplete: bool = False
+
+
+class MemoryDerivationsResponse(BaseModel):
+    """GET /api/v1/memories/{id}/derivations 响应（只读、一跳、直接边）。"""
+    status: str = "ok"
+    memory_id: int
+    parents: DerivationDirection
+    children: DerivationDirection

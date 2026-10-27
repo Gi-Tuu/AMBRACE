@@ -62,6 +62,8 @@ SPECS_EXCEPTIONS: dict[str, str] = {
 # 登记表而非直接放行：一旦哪天模型收紧（去掉 ondelete）或老库 DDL 本就无 CASCADE，
 # 这张清单会提醒「该进 SPECS 了」，而不是悄悄长出孤儿。
 SPECS_DB_CASCADE_ONLY: dict[str, str] = {
+    "business_plan_items": "业务计划随所属角色或会话物理级联；source消息单删仅SET NULL并令证据不可用",
+    "plan_completion_evidence": "完成证据随所属角色或会话物理级联；source消息单删保留失效证据，不重发提醒",
     "game_achievements": "成就解锁记录按 (user, character, game_type, key) 累计，character_id 可空；靠物理外键 ON DELETE CASCADE",
     "game_stats": "战绩累计行 character_id 可空（NULL=真人维度）；靠物理外键 ON DELETE CASCADE",
     "group_char_cognitions": "群内「角色↔角色」认知条目；靠物理外键 ON DELETE CASCADE",

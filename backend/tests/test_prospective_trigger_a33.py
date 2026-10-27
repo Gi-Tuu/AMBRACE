@@ -166,8 +166,10 @@ async def _add_intent(factory, **kw):
 
 async def _add_user_message(factory, text, *, at=_FIXED_UTC):
     async with factory() as db:
-        db.add(ChatMessage(session_id=7, sender_type="user", content=text, created_at=at))
+        row = ChatMessage(session_id=7, sender_type="user", content=text, created_at=at)
+        db.add(row)
         await db.commit()
+        return row.id
 
 
 def _ids(cands):
@@ -217,16 +219,23 @@ def test_settle_prefers_stored_trigger_over_content(a33_db):
     """已存标签赢过正文：正文不像到达类但标了 arrival 会关；正文像但标了 clock 的不关。"""
     from app.scheduling.prospective_intent import settle_promises_on_user_message
 
+    # REWORK2（主审授权修正旧正例夹具）：三行补真实源消息、结算文本先落库（断言不变）
+    _s1 = asyncio.run(_add_user_message(a33_db, _NO_TAG_ARRIVAL, at=_FIXED_UTC - timedelta(minutes=30)))
+    _s2 = asyncio.run(_add_user_message(a33_db, _ARRIVAL_PROMISE, at=_FIXED_UTC - timedelta(minutes=29)))
+    _s3 = asyncio.run(_add_user_message(a33_db, _ARRIVAL_PROMISE, at=_FIXED_UTC - timedelta(minutes=28)))
     tagged_arrival = asyncio.run(_add_intent(
         a33_db, content=_NO_TAG_ARRIVAL, kind="promise", due_end=_DUE_TODAY,
-        cue_terms_json='{"confidence": "medium", "terms": [], "side": "self", "trigger": "arrival"}'))
+        cue_terms_json='{"confidence": "medium", "terms": [], "side": "self", "trigger": "arrival"}',
+        source_message_id=_s1, chat_session_id=7))
     tagged_clock = asyncio.run(_add_intent(
         a33_db, content=_ARRIVAL_PROMISE, kind="promise", due_end=_DUE_TODAY,
-        cue_terms_json='{"confidence": "medium", "terms": [], "side": "self", "trigger": "clock"}'))
+        cue_terms_json='{"confidence": "medium", "terms": [], "side": "self", "trigger": "clock"}',
+        source_message_id=_s2, chat_session_id=7))
     untagged_old = asyncio.run(_add_intent(                      # 旧 list 格式 ⇒ 回退正文推断
         a33_db, content=_ARRIVAL_PROMISE, kind="promise", due_end=_DUE_TODAY,
-        cue_terms_json='["到家"]'))
+        cue_terms_json='["到家"]', source_message_id=_s3, chat_session_id=7))
 
+    asyncio.run(_add_user_message(a33_db, "我到家了"))
     settled = asyncio.run(settle_promises_on_user_message(11, 7, "我到家了"))
 
     assert set(settled) == {tagged_arrival, untagged_old}
@@ -243,9 +252,11 @@ def test_collect_drops_day_event_promise_already_fulfilled(a33_db):
     """到家信号已出现 ⇒ 日期型 arrival 承诺不进候选，并就地置 discharged（零发送、零新日志）。"""
     from app.scheduling.prospective_intent import collect_due_promises, upsert_intent
 
+    # REWORK2：7101 假源换真实源（缺源不自动完成的门禁要求可加载源；断言不变）
+    _src = asyncio.run(_add_user_message(a33_db, _ARRIVAL_PROMISE, at=_FIXED_UTC - timedelta(minutes=20)))
     pid = asyncio.run(upsert_intent(
         user_id=1, character_id=11, content=_ARRIVAL_PROMISE, kind="promise",
-        due_end=_DUE_TODAY, source_message_id=7101, chat_session_id=7))
+        due_end=_DUE_TODAY, source_message_id=_src, chat_session_id=7))
     asyncio.run(_add_user_message(a33_db, "我到家了"))
     logs0, msgs0 = asyncio.run(_counts(a33_db))
 
@@ -260,9 +271,11 @@ def test_collect_keeps_day_event_promise_until_fulfilled(a33_db):
     """未兑现 ⇒ 「到期日当天全天可提起」既有语义保持，候选照常产出并带 trigger 标签。"""
     from app.scheduling.prospective_intent import collect_due_promises, upsert_intent
 
+    # REWORK2：7111 假源换真实源（断言不变）
+    _src = asyncio.run(_add_user_message(a33_db, _ARRIVAL_PROMISE, at=_FIXED_UTC - timedelta(minutes=20)))
     pid = asyncio.run(upsert_intent(
         user_id=1, character_id=11, content=_ARRIVAL_PROMISE, kind="promise",
-        due_end=_DUE_TODAY, source_message_id=7111, chat_session_id=7))
+        due_end=_DUE_TODAY, source_message_id=_src, chat_session_id=7))
     asyncio.run(_add_user_message(a33_db, "还没呢，堵在路上"))
 
     cands = asyncio.run(collect_due_promises())
@@ -298,7 +311,13 @@ def test_collect_clock_day_and_exact_time_promises_unchanged(a33_db):
 
 @pytest.mark.slow
 def test_collect_uses_state_anchor_when_row_has_no_session(a33_db, monkeypatch):
-    """没有会话可查时仍看现状锚：锚里已写「已到家」⇒ 事件型日期承诺同样不进候选。"""
+    """C9b切口1 REWORK1 语义变更（主审必修 6 授权逐项说明）：锚不再单独关闭独立计划。
+
+    旧断言（A33 批3 时点）：无会话行 + 锚写「已到家」⇒ collect 层 discharged。
+    新安全边界：现状锚无时间戳、无消息身份，不能单独成为关闭独立计划的权威证据——
+    无会话可查 ⇒ 无带时间的消息证据 ⇒ 保留 pending 并照常进候选。
+    有来源正例见同文件 ``test_collect_settles_with_real_session_message``（真实消息证据）。
+    """
     from app.scheduling.prospective_intent import collect_due_promises
 
     pid = asyncio.run(_add_intent(
@@ -309,6 +328,31 @@ def test_collect_uses_state_anchor_when_row_has_no_session(a33_db, monkeypatch):
         return "用户已到家，正在休息"
 
     monkeypatch.setattr("app.scheduling.state_guard.current_state_anchor", _anchor)
+    assert pid in _ids(asyncio.run(collect_due_promises()))   # 锚单独不作关闭证据：照常候选
+    assert asyncio.run(_row(a33_db, pid)).status == "pending"
+
+
+@pytest.mark.slow
+def test_collect_settles_with_real_session_message(a33_db, monkeypatch):
+    """C9b切口1 REWORK1 补充（有来源正例）：真实会话内带时间的到达消息才是关闭证据。
+
+    时序真实两步：先落计划源消息（10 分钟前）→ 再落到达证据（当前）⇒ 证据晚于源、
+    在 due 当天窗内 ⇒ collect 层关闭；锚全程为空（证明关闭只依赖带时间的消息证据）。
+    """
+    from app.scheduling.prospective_intent import collect_due_promises
+
+    async def _no_anchor(*a, **kw):
+        return None
+
+    monkeypatch.setattr("app.scheduling.state_guard.current_state_anchor", _no_anchor)
+    src = asyncio.run(_add_user_message(
+        a33_db, _ARRIVAL_PROMISE, at=_FIXED_UTC - timedelta(minutes=10)))
+    pid = asyncio.run(_add_intent(
+        a33_db, content=_ARRIVAL_PROMISE, kind="promise", due_end=_DUE_TODAY,
+        cue_terms_json='{"terms": [], "trigger": "arrival"}',
+        source_message_id=src, chat_session_id=7,
+    ))
+    asyncio.run(_add_user_message(a33_db, "我到家了"))          # 到达证据（_FIXED_UTC）
     assert pid not in _ids(asyncio.run(collect_due_promises()))
     assert asyncio.run(_row(a33_db, pid)).status == "discharged"
 
@@ -331,9 +375,12 @@ def test_fire_gate_prefers_candidate_trigger_and_falls_back(a33_db, monkeypatch)
     monkeypatch.setattr("app.agent.llm_client.chat_completion", _llm)
     monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _send)
 
+    # REWORK2：两行补真实源消息（闸门源核验；断言不变）
+    _s1 = asyncio.run(_add_user_message(a33_db, _NO_TAG_ARRIVAL, at=_FIXED_UTC - timedelta(minutes=30)))
     tagged = asyncio.run(_add_intent(
         a33_db, content=_NO_TAG_ARRIVAL, kind="promise", due_end=_DUE_TODAY, chat_session_id=7,
-        cue_terms_json='{"terms": [], "side": "self", "trigger": "arrival"}'))
+        cue_terms_json='{"terms": [], "side": "self", "trigger": "arrival"}',
+        source_message_id=_s1))
     asyncio.run(_add_user_message(a33_db, "到家了，报告挺干净的"))
     logs0, msgs0 = asyncio.run(_counts(a33_db))
 
@@ -349,9 +396,10 @@ def test_fire_gate_prefers_candidate_trigger_and_falls_back(a33_db, monkeypatch)
     assert asyncio.run(_counts(a33_db)) == (logs0, msgs0)
 
     # ② 同正文但 dict 不带 trigger：回退按正文推断 ⇒ 判不出事件 ⇒ 照常 fire
+    _s2 = asyncio.run(_add_user_message(a33_db, _NO_TAG_ARRIVAL, at=_FIXED_UTC - timedelta(minutes=25)))
     untagged = asyncio.run(_add_intent(
         a33_db, content=_NO_TAG_ARRIVAL, kind="promise", due_end=_DUE_TODAY, chat_session_id=7,
-        cue_terms_json='["到家"]'))
+        cue_terms_json='["到家"]', source_message_id=_s2))
     ok2 = asyncio.run(run_prospective_due({
         "pis_id": untagged, "character_id": 11, "user_id": 1, "session_id": 7,
         "content": _NO_TAG_ARRIVAL, "due_end": _DUE_TODAY, "side": "self",

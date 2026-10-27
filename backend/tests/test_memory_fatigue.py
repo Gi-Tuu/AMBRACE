@@ -177,7 +177,7 @@ def test_核心锚点注入_失败静默缺省无(monkeypatch):
 
 # ---------------- X-4②：会话内「N 轮内不重复注入」轻量去重（仅检索区） ----------------
 
-def test_检索区同一记忆5轮内不重复第6轮恢复():
+def test_检索区同一记忆连续追问仍提供():
     cb._memory_char_rounds.clear()
     cb._memory_inject_rounds.clear()
     mems = [{"id": 1, "content": "用户喜欢喝美式咖啡", "created_at": "2026-08-18"}]
@@ -186,12 +186,12 @@ def test_检索区同一记忆5轮内不重复第6轮恢复():
     assert len(lines) == 1 and "用户喜欢喝美式咖啡" in lines[0]
     for _ in range(4):                                         # 第 2~5 轮：不重复注入
         cb._bump_memory_round(11)
-        assert cb._build_retrieved_memory_lines(11, mems) == []
+        assert len(cb._build_retrieved_memory_lines(11, mems)) == 1
     cb._bump_memory_round(11)                                  # 第 6 轮：恢复
     assert len(cb._build_retrieved_memory_lines(11, mems)) == 1
 
 
-def test_去重仅跳过注入过的记忆():
+def test_历史注入不屏蔽本轮候选():
     cb._memory_char_rounds.clear()
     cb._memory_inject_rounds.clear()
     cb._bump_memory_round(11)
@@ -201,7 +201,7 @@ def test_去重仅跳过注入过的记忆():
         {"id": 1, "content": "A", "created_at": "2026-08-18"},  # 最近注入过 → 跳过
         {"id": 2, "content": "B", "created_at": "2026-08-18"},  # 未注入过 → 保留
     ])
-    assert len(lines) == 1 and "B" in lines[0]
+    assert len(lines) == 2 and "A" in lines[0] and "B" in lines[1]
 
 
 def test_去重兼容dict与ORM对象():
@@ -210,10 +210,10 @@ def test_去重兼容dict与ORM对象():
     cb._bump_memory_round(11)
     cb._mark_memories_injected(11, [{"id": 5}])
     out1 = cb._filter_recently_injected(11, [{"id": 5}, {"id": 6}])
-    assert [m["id"] for m in out1] == [6]
+    assert [m["id"] for m in out1] == [5, 6]
     cb._bump_memory_round(11)
     out2 = cb._filter_recently_injected(11, [SimpleNamespace(id=5), SimpleNamespace(id=6)])
-    assert [m.id for m in out2] == [6]
+    assert [m.id for m in out2] == [5, 6]
 
 
 def test_无id记忆不参与去重():
@@ -222,7 +222,7 @@ def test_无id记忆不参与去重():
     cb._bump_memory_round(11)
     cb._mark_memories_injected(11, [{"id": 1}])
     out = cb._filter_recently_injected(11, [{"content": "无id"}, {"id": 1, "content": "有id"}])
-    assert [m.get("content") for m in out] == ["无id"]
+    assert [m.get("content") for m in out] == ["无id", "有id"]
 
 
 def test_去重按角色隔离():

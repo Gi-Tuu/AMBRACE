@@ -49,9 +49,9 @@ def test_fact_high_reliability_raises_cap(tier_on):
 
 
 def test_default_passthrough(tier_on):
-    """普通记忆（epistemic=NULL→FACT、reliability=NULL→1.0，与原行为一致）→ FACT+高可靠分支抬至 60"""
+    """未评估的可靠度不能触发高可靠事实分支。"""
     out = tiering.effective_strength_days(_mem())
-    assert out == pytest.approx(60.0)
+    assert out == pytest.approx(7.0)
 
 
 def test_cold_archive_gate(tier_on):
@@ -119,3 +119,15 @@ def test_decay_integration_flag_off_keeps_countdown(monkeypatch):
     assert removed is False
     assert mem.is_archived is False
     assert mem.delete_at is not None         # 现状：3 天删除倒计时
+
+
+@pytest.mark.parametrize("reliability", [0.0, None])
+def test_zero_or_missing_reliability_is_not_high_confidence(reliability):
+    mem = _mem(epistemic_status="FACT", reliability_score=reliability)
+    assert tiering.effective_strength_days(mem) == pytest.approx(7.0)
+    assert tiering.is_high_confidence(mem) is False
+
+
+def test_zero_reliability_inference_accelerates():
+    mem = _mem(epistemic_status="INFERRED", reliability_score=0.0)
+    assert tiering.effective_strength_days(mem) == pytest.approx(5.6)

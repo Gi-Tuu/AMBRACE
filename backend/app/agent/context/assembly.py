@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.utils.logger import get_logger
+from app.agent.context.message_policy import _enforce_user_message_last
 from app.agent.context_builder import (
     AICharacter,
     ProactiveSettings,
@@ -25,14 +26,13 @@ from app.agent.context_builder import (
     _build_user_info,
     _bump_memory_round,
     _clip_text_to_quota,
-    _enforce_user_message_last,
     _inject_core_anchors_loops,
     _is_hot_character,
     _trim_limits,
     async_session_factory,
     gender_cn,
 )
-
+from app.agent.context.projection_injection import projection_blocks
 _logger = get_logger("context.assembly")
 
 # 宿主 context_inject 拿不到 caller 的告警去重（与 registry._warned_no_caller 同法，防 hot path 刷屏）
@@ -387,7 +387,7 @@ async def assemble_context(state: dict, *, stream: bool | None = None, _section_
     # 注入闸 `projection_inject_v1` 关（含"键还没注册"）⇒ builder 返回空列表 ⇒ 这里追加零条＝逐字节旧行为；
     # 它与 cognitive_projection_shadow **各自独立**（开影子只攒读数，不动 prompt）。
     if _sv and "workspace_projection" in _sv:
-        for _b in _sv["workspace_projection"]:
+        for _b in await projection_blocks(state, _sv["workspace_projection"]):
             state["context_messages"].append({"role": "system", "content": _b})
 
     # location（2026-09-19 顺序审计）：location 属状态类，从 append 链尾上移并入现状组
@@ -512,7 +512,7 @@ async def assemble_context(state: dict, *, stream: bool | None = None, _section_
                         _lives = (
                             await db.execute(
                                 select(_MemL)
-                                .where(
+                                .where(_MemL.is_archived.is_(False), _MemL.status == "active",
                                     _MemL.user_id == state.get("user_id"),
                                     _MemL.character_id == state["character_id"],
                                     _MemL.source == "life",

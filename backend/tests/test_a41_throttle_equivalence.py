@@ -36,6 +36,41 @@ def _ledger_tmp(tmp_path, monkeypatch):
     yield
 
 
+@pytest.fixture()
+def throttle_db(monkeypatch, tmp_path):
+    """为 add_chat_memory_extraction 用例补合法的临时数据库身份关系，并拦截 extractor 的 DB 会话工厂。
+
+    process_session 会按真实数据库重新核验 session/char/user，因此主链路入口必须
+    能在临时库里查到 session 900001、角色 11、账号 4 及对应的 user 消息。
+    """
+    from _dbclone import clone_engine, make_session_factory
+    from app.memory import extractor as ex
+    from app.models.user import User
+    from app.models.character import AICharacter
+    from app.models.chat import ChatSession, ChatMessage
+    import asyncio
+
+    engine = clone_engine(tmp_path / "throttle.db")
+    factory = make_session_factory(engine)
+    monkeypatch.setattr(ex, "async_session_factory", factory)
+
+    async def _seed():
+        async with factory() as db:
+            db.add(User(id=4, username="throttle_u4", nickname="合成用户4"))
+            await db.flush()
+            db.add(AICharacter(id=11, user_id=4, name="合成角色11"))
+            await db.flush()
+            db.add(ChatSession(id=900001, user_id=4, character_id=11))
+            await db.flush()
+            for i in list(range(1, 19)) + [77, 78, 91]:
+                db.add(ChatMessage(id=i, session_id=900001, sender_type="user", content=f"合成消息{i}"))
+            await db.commit()
+
+    asyncio.run(_seed())
+    yield factory
+    asyncio.run(engine.dispose())
+
+
 # ── C42 推送滑窗 ──
 
 def _old_prune(bucket: list[float], now: float) -> list[float]:
@@ -162,11 +197,23 @@ def _install_runner(monkeypatch, impl=None):
         calls.append(payload)
         return {"status": "ok"}
 
-    monkeypatch.setattr("app.agent.internal_runner.run_internal", impl or _fake)
+    completed = set()
+
+    async def _run(tool, payload, **kw):
+        result = await (impl or _fake)(tool, payload, **kw)
+        if result.get("status") == "ok":
+            completed.add(payload.get("source_id"))
+        return result
+
+    async def _processed(source):
+        return source in completed
+
+    monkeypatch.setattr("app.agent.internal_runner.run_internal", _run)
+    monkeypatch.setattr("app.memory.extraction_worker._processed", _processed)
     return calls, asyncio, extractor
 
 
-def test_队列_凑批与节流刷点与迁移前逐字一致(monkeypatch):
+def test_队列_凑批与节流刷点与迁移前逐字一致(monkeypatch, throttle_db):
     """真·对照：把旧实现（进程内 dict + `_last_batch_at`）原样写成 `_old_model`，
     与迁移后的实现（落盘队列 + 台账节流）**并排喂同一串入队**，逐步比累计提取条数。
 
@@ -207,7 +254,7 @@ def test_队列_凑批与节流刷点与迁移前逐字一致(monkeypatch):
     assert per_step[-1][0] == 14
 
 
-def test_队列_跨重启不丢(monkeypatch):
+def test_队列_跨重启不丢(monkeypatch, throttle_db):
     """任务书 §1 目标 1 的硬要求：重启前攒下的配对，重启后凑满批必须照样提取（旧写法直接丢）。"""
     calls, asyncio, extractor = _install_runner(monkeypatch)
     from app.memory import extract_queue
@@ -216,7 +263,7 @@ def test_队列_跨重启不丢(monkeypatch):
         asyncio.run(extractor.add_chat_memory_extraction(
             SID, 11, 4, f"m{i}", f"r{i}", source_id=i))
     assert calls == [], "未满 BATCH_SIZE 不提取（旧新一致）"
-    assert extract_queue._QUEUE_FILE.exists(), "配对必须落盘，否则重启即丢"
+    assert extract_queue.database_path().exists(), "配对必须落盘，否则重启即丢"
     assert len(extract_queue.peek(SID)) == 3
 
     # 模拟新进程：本模块不缓存任何队列内容，读盘即全部真相
@@ -228,7 +275,7 @@ def test_队列_跨重启不丢(monkeypatch):
     assert extract_queue.pending_source_ids() == set(), "提取完放开占位"
 
 
-def test_队列_节流判据落台账_重启不复位(monkeypatch):
+def test_队列_节流判据落台账_重启不复位(monkeypatch, throttle_db):
     """旧写法 `_last_batch_at` 重启归零 ⇒ 重启后第一拍立刻又提一批；台账必须记住节流窗。"""
     calls, asyncio, extractor = _install_runner(monkeypatch)
 
@@ -247,7 +294,7 @@ def test_队列_节流判据落台账_重启不复位(monkeypatch):
         "重启后节流窗不得复位"
 
 
-def test_队列_滞留超时强刷用落盘的旧时间戳(monkeypatch):
+def test_队列_滞留超时强刷用落盘的旧时间戳(monkeypatch, throttle_db):
     """滞留判据（MAX_PENDING_AGE）读的是配对自带的 ts；ts 落盘 ⇒ 超龄判定也跨重启成立。"""
     import time
 
@@ -262,7 +309,7 @@ def test_队列_滞留超时强刷用落盘的旧时间戳(monkeypatch):
     assert sorted(c["source_id"] for c in calls) == [77, 78], "超龄即刻刷，不等凑批"
 
 
-def test_队列_提取中占位不放开(monkeypatch):
+def test_队列_提取中占位不放开(monkeypatch, throttle_db):
     """旧语义：占位在每条提取的 finally 才放开（catchup 因此在途期间也跳过同一条）。"""
     seen: list[set[int]] = []
 
@@ -283,27 +330,25 @@ def test_队列_提取中占位不放开(monkeypatch):
     assert extract_queue.pending_source_ids() == set(), "逐条提完各自放开"
 
 
-def test_队列_坏文件判空不抛():
+def test_队列_坏文件保留并明确失败():
     from app.memory import extract_queue
 
     extract_queue._QUEUE_FILE.write_text("{坏 JSON", encoding="utf-8")
-    assert extract_queue.peek(SID) == []
-    assert extract_queue.pending_source_ids() == set()
-    extract_queue.remove_source(SID, 1)      # 不炸
-    extract_queue.release_source(1)          # 不炸
+    with pytest.raises(ValueError):
+        extract_queue.peek(SID)
+    assert extract_queue._QUEUE_FILE.read_text(encoding="utf-8") == "{坏 JSON"
 
 
-def test_队列_超龄配对被丢弃以解锁catchup():
-    """超过 HARD_AGE_SEC 的配对已出 catchup 的 2h 窗，留着只会挡住补采 ⇒ 丢弃并解锁。"""
+def test_队列_超龄配对保留等待消费者():
     import time
-
     from app.memory import extract_queue
 
-    dead_ts = time.time() - extract_queue.HARD_AGE_SEC - 1
+    dead_ts = time.time() - 25 * 3600
     extract_queue.add(SID, {"user_message": "x", "ai_response": "y",
                             "source_id": 91, "ts": dead_ts})
-    assert extract_queue.pending_source_ids() == set(), "超龄不再占位"
-    assert extract_queue.peek(SID) == []
+    assert extract_queue.pending_source_ids() == {91}
+    assert len(extract_queue.peek(SID)) == 1
+    assert extract_queue.pending_sessions(600) == [SID]
 
 
 # ── C30/C32/C34 置顶摘要／身份画像：迁移前「只按时间淘汰」vs 迁移后「有新事实即失效」 ──

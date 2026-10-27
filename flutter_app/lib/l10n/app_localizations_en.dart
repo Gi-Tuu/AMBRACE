@@ -8407,4 +8407,76 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get usagePanelEstimatedNote =>
       'includes estimated rows, not split per row';
+
+  @override
+  String get memoryHistoryTitle => 'Revision history';
+
+  @override
+  String get memoryHistoryLoading => 'Loading revision history…';
+
+  @override
+  String get memoryHistoryEmpty => 'No revisions yet';
+
+  @override
+  String get memoryHistoryLoadFailed => 'Failed to load revision history';
+
+  @override
+  String get memoryHistoryOldLabel => 'Before';
+
+  @override
+  String get memoryHistoryNewLabel => 'After';
+
+  @override
+  String get memoryHistoryUnknownTime => 'Time unknown';
+
+  @override
+  String get memoryHistoryReasonUnknown => 'Reason not recorded';
+
+  @override
+  String get memoryHistoryTruncated => 'Showing partial revision history';
+
+  @override
+  String get memoryDerivationsTitle => 'Derivations';
+
+  @override
+  String get memoryDerivationsParents => 'Formed from these memories';
+
+  @override
+  String get memoryDerivationsChildren => 'Memories derived from this one';
+
+  @override
+  String get memoryDerivationsLoading => 'Loading derivations…';
+
+  @override
+  String get memoryDerivationsLoadFailed => 'Failed to load derivations';
+
+  @override
+  String get memoryDerivationsEmpty => 'No linked memories';
+
+  @override
+  String get memoryDerivationsIncomplete => 'Links may be incomplete';
+
+  @override
+  String get memoryDerivationsLoadMore => 'Load more';
+
+  @override
+  String get memoryDerivationsOpenFailed => 'Failed to open linked memory';
+
+  @override
+  String get memoryDerivationsRetry => 'Reload';
+
+  @override
+  String get memoryDerivationsMore => 'More links available';
+
+  @override
+  String get memoryDerivationsStatusActive => 'Active';
+
+  @override
+  String get memoryDerivationsStatusStale => 'Stale';
+
+  @override
+  String get memoryDerivationsStatusSuperseded => 'Superseded';
+
+  @override
+  String get memoryDerivationsStatusUnknown => 'Unknown status';
 }

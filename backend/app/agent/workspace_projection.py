@@ -292,12 +292,13 @@ def coverage_report(ws, *, extra_filled: dict | None = None) -> dict:
     }
 
 
-async def project_into_workspace(state: dict) -> dict | None:
-    """Runtime 的唯一投影入口：**整体 fail-open**，任何失败都只是"少投几个字段"，绝不冒泡到主链路。
+async def project_into_workspace(state: dict, *, for_context: bool = False) -> dict | None:
+    """本轮投影入口：取数失败留空；正式装配完成后 Runtime 不重复读取。
 
     默认关（`AGENT_FLAGS["cognitive_projection_shadow"]=False`）时：只用 state 里已有的数据
     （人设字段、感知结果、既有 observations）⇒ **零额外查询、零库写**。
-    转 on 后才走既有只读接口取 Current State / World State，并落一条影子留痕供覆盖率读数。
+    正式装配 for_context=True 且注入闸开时也读取这三类现有来源，但不自动开启影子留痕。
+    影子闸单独开启时维持原取数与留痕行为。
     """
     ws = (state or {}).get("workspace")
     if ws is None:
@@ -308,10 +309,13 @@ async def project_into_workspace(state: dict) -> dict | None:
     except Exception:
         shadow_on = False
 
+    scope = tuple(state.get(k) for k in ("user_id", "character_id", "session_id"))
+    if not for_context and state.get("_projection_context_scope") == scope:
+        return ws.projection  # 正式装配已取数，不在 Runtime 装配之后重复读取/留痕。
     current_state = None
     world = None
     topic_rows = None
-    if shadow_on:
+    if shadow_on or (for_context and inject_flag_on()):
         character_id = state.get("character_id")
         user_id = state.get("user_id")
         if character_id and user_id:
@@ -373,10 +377,7 @@ async def project_into_workspace(state: dict) -> dict | None:
 
 
 # ── ②c 注入档（A42 前置，2026-10-10）：把**已投影好**的结构化字段渲染成一条 append 块 ──
-# 键名待注册说明（诚实边界）：`AGENT_FLAGS`／`FLAG_CATALOG`／`docs/feature-flags.md`／`plans`
-# 注册键行是**四处耦合面**（守卫 `test_flag_docs_reconcile` 双向核），而本单白名单只有两个生产文件，
-# 所以这里先用 `AGENT_FLAGS.get(INJECT_FLAG, False)` 读——读不到＝关 ⇒ 注册之前这一档永远关着，
-# 也就是默认零行为变化；补注册那一步交复核方按四处口径一起做。
+# 正式开关已注册；默认关闭，生产启用后仍可通过现有开关接口热回滚。
 INJECT_FLAG = "projection_inject_v1"
 # 独立新分区的配额（token 口径）：五格值体量实测 ≈357 字符，而既有最小 append 段
 # `current_state_anchor` 只有 220 tokens 且**不许被挤占** ⇒ 另开一区，200 tokens＝400 字符上限

@@ -91,15 +91,14 @@ def test_全量去重_向量对_锁定记忆保留_非锁定重复被删(mem_db,
 
         async def _fake_vectors(cid):
             return {locked.id: [1.0, 0.0], dup.id: [1.0, 0.0]}
-        monkeypatch.setattr(memdedup, "get_all_vectors_by_character", _fake_vectors)
 
         deleted = await memdedup.deduplicate_memories(1)
         return deleted, await _get(mem_db, locked.id), await _get(mem_db, dup.id)
 
     deleted, l, d = asyncio.run(_main())
-    assert deleted == 1
-    assert l.is_archived is False  # 锁定记忆不被软删
-    assert d.is_archived is True   # 非锁定重复被删
+    assert deleted == 0
+    assert l.is_archived is False
+    assert d.is_archived is False  # 相似性不能证明是同一来源事件
 
 
 def test_全量去重_向量对_双方都锁定_都不删(mem_db, monkeypatch):
@@ -111,7 +110,6 @@ def test_全量去重_向量对_双方都锁定_都不删(mem_db, monkeypatch):
 
         async def _fake_vectors(cid):
             return {a.id: [1.0, 0.0], b.id: [1.0, 0.0]}
-        monkeypatch.setattr(memdedup, "get_all_vectors_by_character", _fake_vectors)
 
         deleted = await memdedup.deduplicate_memories(1)
         return deleted, await _get(mem_db, a.id), await _get(mem_db, b.id)
@@ -130,15 +128,14 @@ def test_全量去重_字符回退_锁定记忆保留_非锁定重复被删(mem_
 
         async def _fake_vectors(cid):
             return {}  # 无向量 → 走字符级回退
-        monkeypatch.setattr(memdedup, "get_all_vectors_by_character", _fake_vectors)
 
         deleted = await memdedup.deduplicate_memories(1)
         return deleted, await _get(mem_db, locked.id), await _get(mem_db, dup.id)
 
     deleted, l, d = asyncio.run(_main())
-    assert deleted == 1
-    assert l.is_archived is False  # 锁定记忆不被软删
-    assert d.is_archived is True   # 非锁定重复被删
+    assert deleted == 0
+    assert l.is_archived is False
+    assert d.is_archived is False  # 相似性不能证明是同一来源事件
 
 
 # ---------------- M-P0-1：写前查重（service.save_memory）----------------

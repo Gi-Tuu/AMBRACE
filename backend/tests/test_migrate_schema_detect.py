@@ -212,5 +212,7 @@ def test_b2b_candidate_is_single_head_above_formal_head():
 
     script = ScriptDirectory.from_config(migrate._alembic_config())
     head = script.get_current_head()
-    assert head == "b2a0c1d2e3f4"
-    assert migrate._previous_head(script, head) == "e2f4a6b8c0d2"
+    assert head == "d6f8a0b2c4e6"
+    assert migrate._previous_head(script, head) == "c4e6f8a0b2d4"
+    assert migrate._previous_head(script, "c4e6f8a0b2d4") == "b2a0c1d2e3f4"
+    assert migrate._previous_head(script, "b2a0c1d2e3f4") == "e2f4a6b8c0d2"

@@ -26,7 +26,9 @@ def tiered_decay_on() -> bool:
 
 def _fields(mem) -> tuple:
     epistemic = (getattr(mem, "epistemic_status", None) or "FACT").upper()
-    reliable = float(getattr(mem, "reliability_score", None) or 1.0)  # 未评（NULL）按全信处理（与原行为一致）
+    reliability = getattr(mem, "reliability_score", None)
+    # Missing evidence is not full trust; an explicit zero must stay zero.
+    reliable = float(reliability) if reliability is not None else 0.0
     is_core = bool(getattr(mem, "is_core", False))
     confirmed = int(getattr(mem, "confirmation_count", 0) or 0)
     has_meaning = bool(getattr(mem, "why_it_matters", None))

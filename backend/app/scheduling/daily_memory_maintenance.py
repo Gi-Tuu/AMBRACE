@@ -2,7 +2,7 @@ from app.utils.timeutil import beijing_day_start_utc as _beijing_day_start_utc
 """日终记忆维护 v1（P0-5，2026-08-16）：23:00 后每天一次，限额节流、失败静默
 
 1. 当日日摘要补生成：今天消息 >= DAILY_SUMMARY_MIN_MSGS 且尚无今日摘要的会话，LLM 生成摘要；
-2. 低价值记忆合并/淘汰：复用 memory/dedup.deduplicate_memories 全量向量去重（零 LLM）；
+2. 重复候选只读检查（不按相似性删除）；
 3. 置顶摘要补生成：复用 memory/summary.summarize_memories（force=False，尊重 6h 节流，缺失才生成）。
 
 Feature Flag：agent_daily_memory_maintenance（曾为灰度开关，2026-09-17 固化常开，功能常驻不下放；日终维护恒执行）
@@ -110,7 +110,7 @@ async def generate_today_summaries() -> int:
 
 
 async def run_dedup_light() -> int:
-    """低价值记忆合并/淘汰：全量向量去重（零 LLM）；返回删除条数"""
+    """只读重复候选检查；保留返回删除数的旧契约，恒为零。"""
     from app.memory.dedup import deduplicate_memories
     removed = 0
     try:

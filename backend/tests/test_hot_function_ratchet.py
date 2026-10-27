@@ -20,7 +20,7 @@ from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1] / "app"
 LEN_MAX, CC_MAX = 150, 35
-OVER_MAX = 44          # 2026-10-10 实测的超标函数总数（只降不升）
+OVER_MAX = 42          # 2026-10-23：移除危险合并后，save_memory 与全量去重退出超标集合
 FUNC_FLOOR = 3000      # 同日实测 3171 个模块级函数；掉下这个数＝扫描面塌了
 
 # 冻结基线（2026-10-10 实测；复算脚本＝仓库外 _measure_hot_ratchet.py，同口径）
@@ -60,9 +60,7 @@ HOT_RATCHET = [
     # 置顶·锁·归档·跨源保护／importance·strength·derived 合并逐字未变，唯一改写是返回值运输契约：
     # 命中返回原 Memory（两条 `return m`/`return _m` 原样）、未命中返回 None，调用点 `is not None` 早退；
     # 这两段不读也不改 embedding 故不运输它。故只把上限下调到实测值。
-    ("memory/write.py", "save_memory", 188, 11),
-    ("memory/write.py", "_vector_dedup_on_write", 84, 14),
-    ("memory/write.py", "_text_topic_dedup_on_write", 139, 24),
+    ("memory/write.py", "save_memory", 144, 7),
     # 2026-10-12 A50 批10：检索三路召回（三闭包 + 三路 gather 并发 + 命中打戳）整段机械抽成同文件
     # 私有协程 _recall_three_routes（实测 85 行/CC 21，两项都低于阈值⇒OVER_MAX 仍 44）。
     # 9 条语句 unparse 与原 S1-S4 逐字一致，caller 调用点前后 32 条顶层语句逐字未变；唯一改写是
@@ -155,7 +153,7 @@ HOT_RATCHET = [
     ("memory/meaning.py", "run_meaning_extraction", 147, 51),
     ("memory/retrieve.py", "_rerank", 147, 52),
     ("scheduling/message_generator.py", "_run_two_rounds", 128, 45),
-    ("memory/dedup.py", "deduplicate_memories", 114, 48),
+    ("memory/dedup.py", "deduplicate_memories", 6, 2),
     ("life/decision.py", "decide", 112, 49),
 ]
 
@@ -222,7 +220,7 @@ LENGTH_PINS = (
 FROZEN_VALUES = {
     # save_memory 批 8 实测 188 行/CC 11（批7 264/33、原 290/45）。钉死它：既要防"扫描面塌了/口径漂移"，
     # 也要防"有人把地板删了凑绿"——改 HOT_RATCHET 那一行不会让这一把跟着变绿。
-    ("memory/write.py", "save_memory"): (188, 11),
+    ("memory/write.py", "save_memory"): (144, 7),
     # search_memories 批 14 实测 197 行/CC 13（批13 240/34、批12 288/59、批11 331/67、批10 372/81）。同理钉死。
     ("memory/retrieve.py", "search_memories"): (197, 13),
     # _run_agent_core 批 18 实测 164 行/CC 22（批17 252/48、批16 369/72、原 417/82）。300 长度地板
@@ -289,7 +287,7 @@ def test_扫描器必须真的在扫():
 
 def test_冻结值钉对空扫和伪短函数都有牙():
     """反例必须被说红：空扫（扫不到）与「伪短 save_memory」都不许悄悄放行。"""
-    ok = {("memory/write.py", "save_memory"): (188, 11),
+    ok = {("memory/write.py", "save_memory"): (144, 7),
           ("memory/retrieve.py", "search_memories"): (197, 13),
           ("application/chat_service.py", "_run_agent_core"): (164, 22)}
     assert judge_floor(ok, LENGTH_PINS) == []
@@ -303,7 +301,7 @@ def test_冻结值钉对空扫和伪短函数都有牙():
     assert judge_floor(core_short, LENGTH_PINS), "_run_agent_core 伪短（12 行/CC1）必须红"
     core_cc = {**ok, ("application/chat_service.py", "_run_agent_core"): (164, 21)}
     assert judge_floor(core_cc, LENGTH_PINS), "_run_agent_core 的 CC 与冻结钉不符必须红"
-    cc_shifted = {**ok, ("memory/write.py", "save_memory"): (188, 10)}
+    cc_shifted = {**ok, ("memory/write.py", "save_memory"): (144, 6)}
     assert judge_floor(cc_shifted, LENGTH_PINS), "CC 与冻结值不符也必须红（不是只钉长度）"
     renamed = {k: v for k, v in ok.items() if k != ("memory/write.py", "save_memory")}
     assert judge_floor(renamed, LENGTH_PINS), "热点函数改名/消失必须红"

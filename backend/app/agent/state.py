@@ -64,6 +64,7 @@ class AgentState(TypedDict):
     # 必须在此声明，否则 LangGraph 1.x 静默丢弃（与下方真流式字段同一个坑）。
     # 第一阶段**只写不读**：节点往里挂 Observation / focus / decision，没有任何 prompt 段消费它
     # ⇒ 回复内容逐字节不变；等第二／三阶段再把它投影进上下文。
+    _projection_context_scope: tuple[int | None, int | None, int | None] | None
     workspace: object          # CognitiveWorkspace 实例（app/agent/workspace.py；纯运行时对象，不落库）
     observations: list[dict]   # 扁平观测列表（与 workspace.observations 同一批记录的引用口径）
     decision: dict | None      # 本轮决定（含 reason），第一阶段由 reflect 等就地写入

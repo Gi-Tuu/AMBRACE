@@ -568,6 +568,8 @@ AGENT_FLAGS = {
     #   内容是本次投影报告：填了哪些字段、每字段来源、覆盖率为 0 的清单＋原因。
     # 转 on 需读数（项目惯例：默认关＋影子留痕＋热切可回退，runtime_flags 无需重启）。
     "cognitive_projection_shadow": False,
+    # 正式上下文投影；独立可回滚，不同时启用影子留痕。
+    "projection_inject_v1": False,
     # ── A28-②b（2026-10-08）：决定契约（Decision Contract）的影子闸（默认关）──
     # 开＝每轮 Runtime 生成结束后装配一份 DecisionContract（intent/action/reason/confidence/constraints），并经 app/agent/trace.enqueue_task_log 落一条 route=decision_contract 的影子留痕（候选行为数、选中项、confidence 分布、constraints 命中）；
     #   契约**只登记这一轮实际做了什么**，全仓没有任何决策路径读它（守卫 test_没有任何执行路径读契约 钉住）。

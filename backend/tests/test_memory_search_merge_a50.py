@@ -545,7 +545,7 @@ def test_entity重叠只加计数不换行也不补查(env, monkeypatch):
     _loop.AGENT_FLAGS["recall_entity_match"] = True
     out = _search()
     assert _ids(out) == [mid]
-    assert out[0]["content"] == "向量原文甲", "重叠时保留先到的向量行"
+    assert out[0]["content"] == "合成实体重叠条", "重叠合并后正文必须回填 SQLite 现行值"
     assert [s for s in spy.box["stmts"] if _is_backfill(s)] == [], "无稀疏新 id ⇒ 不该发回填查询"
     assert json.loads(env["trace"][-1]["steps_json"])["candidate_count"] == 1
 

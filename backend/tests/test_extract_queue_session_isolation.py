@@ -5,7 +5,7 @@
 ----
 `app/memory/extract_queue.py` 的 `_QUEUE_FILE` 是 **import 期算出的模块级常量**，默认指向
 `backend/data/extract_queue.json`（生产目录）。`tests/conftest.py` 此前只接管了 DB / 向量库 /
-主密钥三项，没接管队列文件 ⇒ 任何走真实提取路径（`add` / `peek` / `take` / `release_source`）
+主密钥三项，没接管队列文件 ⇒ 任何走真实提取路径（`add` / `peek` / `take` / `complete`）
 又没自行 monkeypatch 的用例，都会把**合成配对**写进生产队列文件
 （2026-10-12 14:08:45 定向跑实测该文件被改动）。
 
@@ -14,9 +14,9 @@
 ① **纯读**断言：当前队列路径落在本 pytest 进程**自己的**会话沙箱根下（xdist 下每 worker 各有根），
    且与沙箱 DB / 沙箱主密钥同属一个根；生产默认位置（由模块文件位置推出，不写死本机绝对路径）
    已不再是当前路径。生产队列文件本身**只比对路径，绝不读内容、不写、不删**。
-② **写路径**上的真实流程：`add` / `take` / `release_source` 之前先过归属断言
+② **写路径**上的真实流程：`add` / `take` / `complete` 之前先过归属断言
    （`_assert_session_owned` 查基线路径、`_claim_tmp_queue` 查临时路径），归属不过就拒绝，
-   写操作根本不会发生；归属过了才跑真实 `add → peek → take → release_source →
+   写操作根本不会发生；归属过了才跑真实 `add → peek → take → complete →
    pending_source_ids`，并证明别处用例的 monkeypatch 结束后**回到会话沙箱**而非生产默认路径。
 
 口径纪律：不连生产库、不读/写/删生产队列、不删任何非本进程目录、队列样本全合成、
@@ -25,7 +25,7 @@
 from __future__ import annotations
 
 import importlib
-import json
+import sqlite3
 import os
 import time
 from pathlib import Path
@@ -163,17 +163,17 @@ def test_真实队列流程在归属路径上正常(monkeypatch, tmp_path):
         extract_queue.add(_SID, {**pair, "ts": now})
     assert [p["source_id"] for p in extract_queue.peek(_SID)] == [900000001, 900000002, 900000003]
 
-    # 落盘形态：临时文件 + os.replace 原子替换后的单文件，sessions 段存全部三对
-    doc = json.loads(target.read_text(encoding="utf-8"))
-    assert len(doc["sessions"][str(_SID)]) == 3
-    assert doc["inflight"] == {}
+    # Legacy path is redirected above; its SQLite sibling must share that sandbox.
+    assert extract_queue.database_path() == target.with_suffix(".sqlite3")
+    with sqlite3.connect(extract_queue.database_path()) as db:
+        assert db.execute("SELECT count(*) FROM extraction_tasks WHERE state='pending'").fetchone()[0] == 3
 
     rows = extract_queue.take(_SID)               # 取出 ⇒ 同时登记在途占位
     assert len(rows) == 3
     assert extract_queue.peek(_SID) == []
     assert extract_queue.pending_source_ids() == {900000001, 900000002, 900000003}
 
-    extract_queue.release_source(900000001)      # 逐条提完各自放开
+    assert extract_queue.complete(rows[0])      # 逐条提完各自放开
     assert extract_queue.pending_source_ids() == {900000002, 900000003}
 
     # remove_source（catchup／截断保底已即时提取 ⇒ 主链路不再重复提取）

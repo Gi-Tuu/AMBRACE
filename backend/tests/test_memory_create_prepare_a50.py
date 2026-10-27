@@ -162,14 +162,11 @@ def test_调用点位置不得漂移():
     tree = _tree()
     flat = _flat(_fn(tree, "save_memory"))
     idx = flat.index(_call_node(tree))
-    before = flat[idx - 1]
-    assert isinstance(before, ast.If) and "skip_dedup" in ast.unparse(before.test), \
-        "调用点之前必须仍是写入前查重整段：%s" % ast.unparse(before)[:80]
-    assert ast.unparse(flat[idx + 1]) == "db.add(memory)", ast.unparse(flat[idx + 1])
-    # add 之后 flush/commit/refresh 仍在调用方（事务时点不得搬进 helper）
-    tail = [ast.unparse(s) for s in flat[idx + 1:idx + 5]]
-    assert tail == ["db.add(memory)", "await db.flush()", "await db.commit()",
-                    "await db.refresh(memory)"], tail
+    assert ast.unparse(flat[idx - 1]) == "embedding = None"
+    assert "persist_candidate" in ast.unparse(flat[idx + 1])
+    assert "await persist_candidate" in ast.unparse(flat[idx + 2])
+    assert "if not created" in ast.unparse(flat[idx + 3])
+
 
 
 def test_十一个依赖仍是模块全局晚绑定():
@@ -577,7 +574,7 @@ def test_派生列表序列化成JSON(env):
 @pytest.mark.slow
 def test_plan标注开_改sub_type并写有效期(env):
     _loop.AGENT_FLAGS["review_plan_validity_extract"] = True
-    m = _save(content=BODY_PLAN, memory_type="event")
+    _save(content=BODY_PLAN, memory_type="event")
     row = _rows(env)[0]
     assert row.sub_type == "plan"
     assert row.valid_to is not None
@@ -598,7 +595,7 @@ def test_plan标注开_显式sub_type不被覆盖(env):
 
 @pytest.mark.slow
 def test_plan标注关零行为(env):
-    m = _save(content=BODY_PLAN)
+    _save(content=BODY_PLAN)
     row = _rows(env)[0]
     assert row.sub_type is None and row.valid_to is None
 
@@ -622,7 +619,7 @@ def test_plan标注异常静默且不改sub_type(env, monkeypatch):
 
 @pytest.mark.slow
 def test_准备完成后才db_add且落的是同一个对象(env):
-    m = _save()
+    _save()
     row = _rows(env)[0]
     assert len(env.added) == 1 and env.added[0].id == row.id
     assert env.calls[0]["out"][0].id == row.id, "db.add 的正是 helper 返回的那个 Memory"
@@ -649,16 +646,9 @@ def test_元信息拦截不进准备段(env):
 
 
 @pytest.mark.slow
-def test_查重命中走merge入口不进准备段(env, monkeypatch):
-    """向量查重命中 ⇒ 走 merge 回执返回旧行，准备段一次都不跑。"""
-    _save()
-    row = _rows(env)[0]
-
-    async def _hit(*a, **kw):
-        return (row.id, 0.99)
-
-    monkeypatch.setattr(svc, "find_similar_memory", _hit)
-    again = _save(content="阳台上的薄荷又长高了一截。", importance=5)
-    assert again is not None and again.id == row.id, "命中查重 ⇒ 返回原行不新增"
-    assert len(env.calls) == 1, "merge 入口不进准备段"
-    assert [r for r in env.receipts if r["action"] == "merge"]
+def test_同证据重放经准入准备但不触发merge(env):
+    first = _save(source="chat", source_id=991)
+    again = _save(source="chat", source_id=991, importance=5)
+    assert again.id == first.id
+    assert len(env.calls) == 2
+    assert not [r for r in env.receipts if r["action"] == "merge"]

@@ -42,6 +42,8 @@ DAILY_INTERVAL = timedelta(days=1)
 _LOCKS: dict[str, asyncio.Lock] = {}
 # 写盘失败时的内存兜底（见 _write_entry），进程重启即失效
 _LOCAL_STAMPS: dict[str, datetime] = {}
+# 连续失败次数也须兜底，否则写失败后退避阶梯会反复读取旧档位。
+_LOCAL_STREAKS: dict[str, int] = {}
 # 「每日一次」失败退避闸门（next_retry_at）的内存兜底，同上
 _LOCAL_RETRY_AT: dict[str, datetime] = {}
 # A41：计数/滑窗的写盘失败兜底，与上面两个同款（主判据在台账文件，这里只防「没记成 ⇒ 重跑」）
@@ -125,7 +127,19 @@ def last_done(key: str) -> datetime | None:
 
 def fail_streak(key: str) -> int:
     """当前连续失败次数（读不到返回 0），决定下次失败落在退避阶梯的哪一档。"""
-    return _entry(key)[1]
+    return _LOCAL_STREAKS.get(key, _entry(key)[1])
+
+
+def _replace_state_file(tmp: Path) -> None:
+    """Windows 临时共享冲突最多等 100ms；其他错误或持续失败照旧交给写失败兜底。"""
+    for delay in (0.01, 0.03, 0.06, None):
+        try:
+            os.replace(tmp, _STATE_FILE)
+            return
+        except PermissionError as exc:
+            if os.name != "nt" or getattr(exc, "winerror", None) not in (5, 32, 33) or delay is None:
+                raise
+            time.sleep(delay)
 
 
 def _patch_entry(key: str, fields: dict) -> bool:
@@ -148,7 +162,7 @@ def _patch_entry(key: str, fields: dict) -> bool:
         _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = _STATE_FILE.with_name(_STATE_FILE.name + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, _STATE_FILE)
+        _replace_state_file(tmp)
         return True
     except Exception as e:
         _logger.error("Write periodic state failed for %s: %s", key, e)
@@ -168,7 +182,11 @@ def _write_entry(key: str, last_success: datetime | None, streak: int,
     entry["next_retry_at"] = (next_retry.strftime(_STATE_FMT)
                               if next_retry is not None else _DROP)
     if _patch_entry(key, entry):
+        _LOCAL_STAMPS.pop(key, None)
+        _LOCAL_STREAKS.pop(key, None)
+        _LOCAL_RETRY_AT.pop(key, None)
         return
+    _LOCAL_STREAKS[key] = int(streak)
     if last_success is not None:
         _LOCAL_STAMPS[key] = last_success
     if next_retry is not None:

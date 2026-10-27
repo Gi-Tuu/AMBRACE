@@ -321,9 +321,10 @@ backend/.venv/Scripts/python.exe scripts/server_manager.py restart   # Windows
 
 ## 备份与恢复
 - **App 一键导出**：设置 → 系统 → 数据备份，点击「导出备份」即可把 SQLite 数据库 + 配置 + 源码快照打包成 zip 保存到手机，并附恢复指引。
-- **服务器端自动备份**：`scripts/backup.py` 每日自动备份到 `backups/` 目录（保留最近 14 天），也可手动执行；同时清理 7 天前的轮转日志。
-- ⚠️ **备份包内含明文凭据**：备份包会带上数据库与 `server_config.json`，其中的模型 / 语音 / 多模态密钥当前是**明文**（展示界面已脱敏，库里不是）。包内附有 `README-BACKUP.txt` 提示：**不要外发、不要上传网盘、不要提交进仓库**。加密存储的改造在排期中。
-- **恢复**：停止服务 → 解压备份 zip 覆盖 `backend/data` → 重新启动服务。
+- **服务器端自动备份**：`scripts/backup.py` 每日自动备份到 `backups/` 目录（保留最近 14 天），也可手动执行；同时清理 7 天前的轮转日志与 7 天前的主动触发日志。备份内容 = 源码目录（backend/app、scripts、server_controller、flutter_app/lib、docs）+ 关键文件 + 主数据库（SQLite backup API，运行中可安全复制）+ `server_config.json` + 提取任务快照（`extract_queue.sqlite3`，存在时）。
+- **凭据加密（A8 方案 B，2026-09-26 起）**：库内模型 / 语音 / 多模态密钥为**加密存储**（AES-256-GCM，密文 `enc:v1:` 前缀）；解密主密钥 `backend/data/secrets.key` 与登录签名密钥、服务器身份密钥、推送服务账号**一律不进备份包**。若库内字段仍为明文（旧库未跑过 `backend/scripts/encrypt_credentials.py --apply`），包内该部分仍是明文——包内 `README-BACKUP.txt` 有同样提示：**不要外发、不要上传网盘、不要提交进仓库**。
+- **恢复**：停止服务 → 解压备份 zip 覆盖 `backend/data`（跨机器恢复还须另拷 `backend/data/secrets.key`，主密钥丢失则凭据无法还原，只能在设置里重新填写）→ 重新启动服务。
+- **候选发版前的迁移演练与恢复自检**（隔离工作区专用，不连生产库）：`scripts/candidate_preflight.py` 做迁移单头/父链/CLI 交叉验证与三包 path 依赖边界检查；真正的迁移与恢复演练是 `backend/tests/test_candidate_migration_rehearsal.py`（pytest，真实 Alembic 子进程 + 独占临时库）。演练的恢复比较是**全行逐字 + 结构等价**（六表 `SELECT *` 全部列、DDL/索引、FK 声明、序列水位、`integrity_check`）。预检工具的目录安全门只保证「受控根由本轮独占新建、祖先无 symlink/junction 别名、探测失败即拒绝、写出口独占创建不覆盖」——**安全门就绪 ≠ 迁移演练通过**。演练手册见 `docs/migrate-drill.md` §7。
 
 ## 开发与测试
 改完想自检，按影响面挑一条：
@@ -355,7 +356,7 @@ backend/.venv/Scripts/python.exe scripts/smoke_test.py
 - 数据默认全部存在你自己的服务器（SQLite + 本地向量库）
 - 手机感知数据仅用于注入 AI 上下文，本仓库不包含任何收集上报
 - 语义去重与向量检索都用**本机模型**，不会因为"查重"而调用外部服务
-- 服务器保存的模型 / 语音密钥为加密存储（主密钥另存于本机）；但**每日备份包内仍是明文**，见上方「备份与恢复」的提示
+- 服务器保存的模型 / 语音密钥为加密存储（主密钥另存于本机且不进备份包，见上方「备份与恢复」的提示）
 
 ## 开源与许可
 - 代码许可：**AGPL-3.0-only**（[完整条文](LICENSE)，GNU Affero 通用公共许可证第 3 版），**自 v3.5.4 起生效**；v3.5.3 及更早版本为 MIT，那些版本与 tag 是历史记录，不再追改。

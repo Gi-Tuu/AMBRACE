@@ -6,6 +6,7 @@ from sqlalchemy import distinct, select
 
 from app.utils.logger import get_logger
 from app.schemas.memory import MemoryResponse, MemoryListResponse
+from app.schemas.memory import MemoryDerivationsResponse
 from app.memory import list_memories
 from app.memory.sources import memory_source_meta
 from app.auth.deps import get_current_user_id
@@ -19,6 +20,8 @@ from app.db import database as db_mod
 from app.models.memory import Memory
 from app.models.character import AICharacter
 from app.memory.supersede import purge_memory  # 原在 2 个端点内重复 import，上提
+from app.memory.derivations import (DERIVATION_PAGE_DEFAULT, DERIVATION_PAGE_MAX,
+                                     fetch_derivations, parse_cursor)
 
 router = APIRouter(prefix="/api/v1/memories", tags=["Memories"])
 _logger = get_logger("api.memories")
@@ -30,15 +33,13 @@ async def get_memories(
     memory_type: str | None = None,
     skip: int = 0,
     limit: int = 800,
-    read_only: bool = False,
+    read_only: bool = True,
     user_id: int = Depends(get_current_user_id),
 ):
-    """获取记忆列表（账号独立 P1：按本账号租户白名单过滤——家庭内共享、跨家庭隔离）
+    """List authorized memories without mutation, including read_only=false.
 
-    ``read_only=true``（2026-10-16，PWA M1a-2 返工）：显式**无维护读取**——到期行仍不在
-    返回列表里（展示口径不变），但**不物理删除底层行、不 commit 维护、不清理向量**，
-    供只读内容面使用。缺省 ``false`` 时行为与改造前逐字节一致（含到期物理删除 + 清向量），
-    移动端等既有调用不受影响；认证/租户白名单/响应字段与可见性两者完全相同。
+    The legacy query parameter remains accepted. Expired rows are hidden; shared
+    scheduled maintenance performs expiration and its index/derived side effects.
     """
     _logger.debug("List memories: character_id=%s type=%s skip=%d limit=%d", character_id, memory_type, skip, limit)
     async with db_mod.async_session_factory() as _db:
@@ -284,6 +285,47 @@ async def get_memory(
             why_it_matters=mem.why_it_matters,
             created_at=mem.created_at, updated_at=mem.updated_at,
         )
+
+
+@router.get("/{memory_id}/derivations", response_model=MemoryDerivationsResponse)
+async def get_memory_derivations(
+    memory_id: int,
+    limit: int = DERIVATION_PAGE_DEFAULT,
+    parents_cursor: str | None = None,
+    children_cursor: str | None = None,
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """RC2 G2：记忆派生关系（只读、一跳、两方向独立分页）。
+
+    - 主体不存在或跨租户 → 404（与普通不存在同形，不区分"存在但无权限"）；
+    - 不接受/不信任任何 owner/character 参数，身份只来自认证依赖；
+    - 只读：仅 select，无 commit/写回；不递归、不展开跨角色图。
+    """
+    if limit < 1 or limit > DERIVATION_PAGE_MAX:
+        raise HTTPException(status_code=400, detail="invalid_limit")
+
+    try:
+        p_cursor = parse_cursor(parents_cursor, "parents_cursor")
+        c_cursor = parse_cursor(children_cursor, "children_cursor")
+    except ValueError as exc:
+        # R3：'²'、Unicode 数字、超 int64/过长/0/负值 一律 4xx，绝不让绑定溢出变 500
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    async with db_mod.async_session_factory() as db:
+        scope_ids = await tenant_scope_ids(db, user_id)
+        memory = (await db.execute(
+            select(Memory).where(
+                Memory.id == memory_id,
+                Memory.user_id.in_(scope_ids),
+            )
+        )).scalar_one_or_none()
+        if memory is None:
+            raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
+        data = await fetch_derivations(
+            db, memory, scope_ids, limit=limit,
+            parents_cursor=p_cursor, children_cursor=c_cursor,
+        )
+    return MemoryDerivationsResponse(status="ok", memory_id=memory_id, **data)
 
 
 @router.get("/{memory_id}/chain")

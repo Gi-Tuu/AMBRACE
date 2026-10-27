@@ -4,8 +4,8 @@
 
 - 门槛：角色 memory_v2_enabled=True；每角色每日 ≤ 30 次（进程内计数，重启重置）；
   用户消息 ≥ 15 字（闲聊跳过）→ 成本可控（方案模型 ~$0.90/月/角色）
-- 流程：检索 top3 相关记忆 → LLM 判断矛盾 → 命中则 contradiction+1 + FACT→UNVERIFIED
-- 范围（2026-08-15 用户拍板）：只做可靠度纠正，不做违规重生成/内容拦截
+- 流程：检索 top3 相关记忆 → LLM 判断矛盾 → 命中只记录回复一致性冲突，不改记忆
+- 范围：只观察回复一致性，不把模型输出视为反证或改写事实
 """
 import json
 
@@ -41,7 +41,7 @@ def _check_limit(character_id: int) -> bool:
 
 async def async_fact_check(character_id: int, user_id: int, user_msg: str,
                            ai_response: str) -> None:
-    """异步事实核查：回复与已知记忆矛盾 → 标记矛盾并降级。失败静默。"""
+    """异步事实核查：回复与已知记忆矛盾 → 只记录回复冲突。失败静默。"""
     user_msg = (user_msg or "").strip()
     ai_response = (ai_response or "").strip()
     if len(user_msg) < MIN_USER_MSG_LEN or not ai_response:
@@ -52,7 +52,7 @@ async def async_fact_check(character_id: int, user_id: int, user_msg: str,
         return
     try:
         from app.memory import search_memories
-        from app.memory.reliability import apply_correction
+        from app.memory.observability import obs_event
         hits = await search_memories(character_id=character_id, query=user_msg, limit=3,
                                      user_id=user_id)  # A2 M0-4：透传调用者（hook ctx）
         if not hits:
@@ -78,8 +78,8 @@ async def async_fact_check(character_id: int, user_id: int, user_msg: str,
         for item in (data.get("contradictions") or [])[:3]:
             mid = int(item.get("memory_id") or 0)
             if mid and any(h.get("id") == mid for h in hits):
-                # #70-C BUG-4 修复：AI 异步自判矛盾 → 只降级，不取代记忆（source='fact_check'）。
-                await apply_correction(mid, source="fact_check")
+                # A model response is not counter-evidence against stored facts.
+                obs_event(character_id, "response_memory_conflict", {"memory_id": mid}, kind="fact_check")
                 _logger.info("fact check contradiction: char=%d mem=%d reason=%.40s",
                              character_id, mid, str(item.get("reason") or ""))
     except Exception as e:
