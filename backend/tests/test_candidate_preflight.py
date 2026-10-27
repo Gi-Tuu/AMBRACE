@@ -117,6 +117,7 @@ def test_gate_rejects_parent_symlink_alias(tmp_path, monkeypatch):
     assert not ok
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows 大小写别名仅 Windows 有语义")
 def test_gate_rejects_windows_case_alias(tmp_path, monkeypatch):
     """Windows 大小写别名 ⇒ 拒绝（主审反例 3 同型；resolve+normcase 真实身份判定）。"""
     mod = _load()

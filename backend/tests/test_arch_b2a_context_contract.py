@@ -159,7 +159,9 @@ def _old_policy():
     src = _sp.run(["git", "show", "512580e488005badcf717a85da65b53d4023d843:backend/app/agent/context_builder.py"],
                   cwd=repo, capture_output=True, text=True, encoding="utf-8",
                   env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
-                  check=True).stdout
+                  check=False).stdout
+    if not src.strip():
+        src = (Path(__file__).parent / "fixtures" / "arch_b2a_context_builder_512580e4.py").read_text(encoding="utf-8")
     cs = src.index("# M1-S4（2026-08-31）：system 块裁剪优先级")
     ce = src.index("_DEFAULT_BLOCK_PRIORITY = 3") + len("_DEFAULT_BLOCK_PRIORITY = 3")
     ns = {}

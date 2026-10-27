@@ -133,6 +133,7 @@ fcm-service-account*.json
 google-services.json
 # 2026-09-26：改为通配，覆盖各会话自建的 basetemp 变体（.pytest_tmp_trace / .pytest_tmp_codex 等）
 backend/.pytest_tmp*/
+backend/.pytest-tmp/
 # 老库升级演练的输出目录（2026-09-21；CI 与本地 --out .migrate-drill 用）
 .migrate-drill/
 backend/data/periodic_state.json
