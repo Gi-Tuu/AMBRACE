@@ -3,7 +3,7 @@
 
 真实 Alembic 机制（子进程 CLI，DATABASE_URL 指向本测试独占临时库）：
 旧正式头 e2f4a6b8c0d2 建历史库（**禁止 create_all/_dbclone 冒充**）→ 合成数据 →
-一致备份 → 升级候选单头 d6f8a0b2c4e6 → 幂等重放 → C9 约束行为（FK/级联/SET NULL/
+一致备份 → 升级候选单头 c5e7a9b1d3f6 → 幂等重放 → C9 约束行为（FK/级联/SET NULL/
 唯一/AUTOINCREMENT 水位）→ 从备份恢复独立库校验旧 schema 与数据 → 损坏输入拒绝。
 
 合成数据全部为设备质检场景；不连生产库、不扫真实数据；不复用其它测试的 basetemp。
@@ -21,7 +21,7 @@ import pytest
 
 BACKEND = Path(__file__).resolve().parents[1]
 OLD_HEAD = "e2f4a6b8c0d2"
-CAND_HEAD = "d6f8a0b2c4e6"
+CAND_HEAD = "c5e7a9b1d3f6"
 
 
 @pytest.fixture(scope="module")

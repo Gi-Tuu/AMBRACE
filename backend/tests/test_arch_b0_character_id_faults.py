@@ -298,9 +298,22 @@ KEY_TABLES = ("ai_characters", "lorebook_entries", "chat_messages", "chat_sessio
 
 
 def _rows_base(st: dict, base: dict) -> dict:
-    """关键表的行值快照（故障后多出的临时表属中间态，不计入）。"""
+    """关键表的行值快照（故障后多出的临时表属中间态，不计入）。
+
+    升级会新增 nullable 列（如 c5 的 chat_messages.source_event_uid）；本函数只按
+    **基线列数**投影，验证旧行值未被改绑/截断，不把“新增列”误报成数据漂移。
+    """
     keys = [t for t in KEY_TABLES if t in st["rows"] and t in base["rows"]]
-    return {t: st["rows"][t] for t in keys}
+    out = {}
+    for t in keys:
+        base_rows = base["rows"][t]
+        rows = st["rows"][t]
+        if t == "chat_messages" and base_rows:
+            width = len(__import__("json").loads(base_rows[0]))
+            rows = [__import__("json").dumps(__import__("json").loads(r)[:width],
+                                            default=str, ensure_ascii=False) for r in rows]
+        out[t] = rows
+    return out
 
 
 def _backup(src: Path, dst: Path) -> None:

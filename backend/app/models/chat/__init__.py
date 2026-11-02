@@ -51,6 +51,7 @@ class ChatMessage(Base):
         String(10), nullable=False
     )  # "user" | "ai" | "system"
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_event_uid: Mapped[str | None] = mapped_column(String(64), nullable=True)  # M2 2b：用户文本消息的权威来源事件
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)  # 图片消息：/uploads/... 相对路径
     extra_meta: Mapped[str | None] = mapped_column("extra_meta", Text, nullable=True)  # JSON
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa.text("0"))

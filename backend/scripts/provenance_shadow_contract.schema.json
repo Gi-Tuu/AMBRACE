@@ -1,0 +1,589 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AMBRACE G3/G4 provenance contract v2 (draft, synthetic only)",
+  "description": "信封/actor/executor/投影的 Draft7 Schema；语义规则由 prototype.validate_envelope 与文档定义。真实实施前需主审评审。",
+  "definitions": {
+    "actor": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "authenticated_user",
+            "system_task",
+            "model",
+            "unknown"
+          ]
+        },
+        "user_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "authenticated": {
+          "type": "boolean"
+        },
+        "task": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "executor": {
+      "type": "object",
+      "required": [
+        "kind",
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "service",
+            "model",
+            "scheduler"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "envelope": {
+      "type": "object",
+      "required": [
+        "v",
+        "record_id",
+        "character_id",
+        "memory_id",
+        "action",
+        "source",
+        "captured_at",
+        "actor",
+        "executor",
+        "content_subject",
+        "reason",
+        "evidence",
+        "derivation",
+        "idempotency_key"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "record_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "character_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "memory_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "action": {
+          "enum": [
+            "create",
+            "update",
+            "merge",
+            "supersede",
+            "stale",
+            "reject",
+            "downgrade"
+          ]
+        },
+        "source": {
+          "type": "object",
+          "required": [
+            "kind",
+            "id",
+            "version",
+            "generation"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "chat_message",
+                "diary_entry",
+                "moment",
+                "phone_snapshot",
+                "memory_derivation",
+                "unknown"
+              ]
+            },
+            "id": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "generation": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          }
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_event_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "actor": {
+          "$ref": "#/definitions/actor"
+        },
+        "executor": {
+          "$ref": "#/definitions/executor"
+        },
+        "content_subject": {
+          "type": "object",
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "user",
+                "character",
+                "system",
+                "unknown"
+              ]
+            },
+            "id": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          }
+        },
+        "reason": {
+          "type": "object",
+          "required": [
+            "code"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                "user_corrected",
+                "user_merged",
+                "user_retracted",
+                "auto_superseded",
+                "cascade_stale",
+                "reflection_downgrade",
+                "admission_pending",
+                "core_promote",
+                "merge_incoming",
+                "source_deleted",
+                "unknown"
+              ]
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 255
+            },
+            "text_visible": {
+              "type": "boolean"
+            }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "required": [
+            "retention",
+            "excerpt",
+            "excerpt_sha256",
+            "source_version"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "retention": {
+              "enum": [
+                "none",
+                "ephemeral_verified"
+              ]
+            },
+            "excerpt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 120
+            },
+            "excerpt_sha256": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "source_version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "derivation": {
+          "type": "object",
+          "required": [
+            "parent_ids"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "parent_ids": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "uniqueItems": true
+            }
+          }
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "projection": {
+      "type": "object",
+      "required": [
+        "memory_id",
+        "receipt_state",
+        "actor",
+        "source",
+        "evidence",
+        "reason",
+        "derivation",
+        "as_of"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "memory_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "receipt_state": {
+          "enum": [
+            "present",
+            "missing"
+          ]
+        },
+        "actor": {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "user",
+                "system",
+                "model",
+                "unknown"
+              ]
+            },
+            "basis": {
+              "type": "string"
+            }
+          }
+        },
+        "source": {
+          "type": "object",
+          "required": [
+            "kind",
+            "label"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "chat_message",
+                "diary_entry",
+                "moment",
+                "phone_snapshot",
+                "memory_derivation",
+                "unknown"
+              ]
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "required": [
+            "state",
+            "excerpt"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "enum": [
+                "current",
+                "source_changed",
+                "source_deleted",
+                "unverified",
+                "unavailable",
+                "none"
+              ]
+            },
+            "excerpt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 120
+            }
+          }
+        },
+        "reason": {
+          "type": "object",
+          "required": [
+            "state",
+            "code",
+            "text"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "enum": [
+                "known",
+                "unknown"
+              ]
+            },
+            "code": {
+              "type": "string"
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 255
+            }
+          }
+        },
+        "derivation": {
+          "type": "object",
+          "required": [
+            "state"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "enum": [
+                "current",
+                "none",
+                "unknown"
+              ]
+            }
+          }
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "g5_draft": {
+      "type": "object",
+      "required": [
+        "memory_id",
+        "why",
+        "evidence",
+        "source_kind",
+        "receipt_state",
+        "derivation_state"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "memory_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "why": {
+          "type": "object",
+          "required": [
+            "actor_kind",
+            "reason_code",
+            "reason_state"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "actor_kind": {
+              "enum": [
+                "user",
+                "system",
+                "model",
+                "unknown"
+              ]
+            },
+            "reason_code": {
+              "type": "string"
+            },
+            "reason_state": {
+              "enum": [
+                "known",
+                "unknown"
+              ]
+            }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "required": [
+            "state",
+            "excerpt"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "type": "string"
+            },
+            "excerpt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 120
+            }
+          }
+        },
+        "source_kind": {
+          "type": "string"
+        },
+        "receipt_state": {
+          "enum": [
+            "present",
+            "missing"
+          ]
+        },
+        "derivation_state": {
+          "type": "string"
+        }
+      }
+    },
+    "trusted_write_context": {
+      "type": "object",
+      "description": "服务端写时上下文（不是 wire 信封字段，客户端不可自报）；归属/确认/grant 的唯一来源。",
+      "required": [
+        "actor_kind",
+        "resource_owner_user_id",
+        "request_authenticated"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "actor_kind": {
+          "enum": [
+            "authenticated_user",
+            "system_task",
+            "model",
+            "unknown"
+          ]
+        },
+        "actor_user_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "task": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resource_owner_user_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "request_authenticated": {
+          "type": "boolean"
+        },
+        "reallow_grant": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "仅可信确认后由服务端签发的一次性重新允许凭证；wire 不得携带",
+          "pattern": "^grant-[0-9a-f]{32}$"
+        }
+      }
+    },
+    "source_event_proof": {
+      "type": "object",
+      "description": "来源服务（可信组件）签发的不可变原始事件证明；不是 wire 信封字段。",
+      "required": [
+        "kind",
+        "sequence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "source_service"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "issued_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_kind": {
+          "type": "string"
+        },
+        "source_id": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

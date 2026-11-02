@@ -224,3 +224,21 @@ def test_logs_never_reach_the_real_watchdog_log(tmp_path):
     after = prod.stat().st_size if prod.is_file() else 0
     assert after == before, "测试写进了生产 watchdog.log（autouse 夹具被拿掉了？）"
     assert "探针：这一行必须落在 tmp" in (tmp_path / "watchdog.log").read_text(encoding="utf-8")
+
+
+def test_probe_liveness_real_http_404_405_falls_back(monkeypatch):
+    """真实 urllib 对 404/405 抛 HTTPError（不是带 getcode 的 response）。"""
+    import urllib.error
+    for code in (404, 405):
+        exc = urllib.error.HTTPError(watchdog.LIVENESS_URL, code, "Not Found", None, None)
+        _fake_urlopen(monkeypatch, exc=exc)
+        ok, note = watchdog.probe_liveness()
+        assert ok is True and "回退 TCP" in note, (code, note)
+
+
+def test_probe_liveness_real_http_500_is_unhealthy(monkeypatch):
+    import urllib.error
+    exc = urllib.error.HTTPError(watchdog.LIVENESS_URL, 500, "Boom", None, None)
+    _fake_urlopen(monkeypatch, exc=exc)
+    ok, note = watchdog.probe_liveness()
+    assert ok is False and "HTTP 500" in note, note

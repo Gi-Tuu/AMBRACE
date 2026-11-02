@@ -72,18 +72,26 @@ def _identity_disposition(session, char, user):
     return None
 
 
-async def _source_belongs_to_session(ex, session, source_id):
-    """source_id 必为本会话的 user 消息；缺源/AI 源/异会话源皆不属。"""
+async def _load_verified_source(ex, session, source_id, expected_uid=None):
+    """flag OFF 保留旧校验；flag ON 返回已复核的数据库消息（正文/hash/代际/作用域）。"""
+    from app.memory import source_binding
     from app.models.chat import ChatMessage
 
     async with ex.async_session_factory() as db:
         msg = await db.get(ChatMessage, source_id)
-    return (
-        msg is not None
-        and getattr(msg, "sender_type", None) == "user"
-        and getattr(msg, "session_id", None) == session.id
-    )
+        if msg is None or getattr(msg, "sender_type", None) != "user" \
+                or getattr(msg, "session_id", None) != session.id:
+            return None
+        if not source_binding.enabled():
+            return msg
+        binding = await source_binding.resolve_chat_binding(
+            db, user_id=int(session.user_id), character_id=int(session.character_id),
+            source="chat", source_id=int(source_id), expected_uid=expected_uid)
+    return msg if binding is not None else None
 
+
+async def _source_belongs_to_session(ex, session, source_id, expected_uid=None):
+    return await _load_verified_source(ex, session, source_id, expected_uid) is not None
 
 async def process_session(session_id, character_id, user_id):
     from app.agent.internal_runner import run_internal
@@ -111,25 +119,48 @@ async def process_session(session_id, character_id, user_id):
             if not queue.renew(pair):
                 continue
             source_id = pair.get("source_id")
+            from app.memory import source_binding
+            if source_binding.enabled() and source_id is None:
+                queue.abandon(pair, "missing_source_identity")
+                continue
+            if source_binding.enabled() and not pair.get("source_event_uid"):
+                queue.abandon(pair, "missing_source_event_uid")
+                continue
             # 无 source_id 保留旧兼容语义，但会话身份已核验；有 source_id 时须确
             # 为本会话的 user 消息，缺源/AI 源/异会话源不得调模型或写标记。
-            if source_id is not None and not await _source_belongs_to_session(ex, session, source_id):
-                queue.abandon(pair, "invalid_source")
-                continue
+            if source_id is not None:
+                try:
+                    source_msg = await _load_verified_source(
+                        ex, session, source_id, pair.get("source_event_uid"))
+                except Exception as error:
+                    queue.retry(pair, type(error).__name__)
+                    continue
+                if source_msg is None:
+                    queue.abandon(pair, "invalid_source")
+                    continue
+                from app.memory import source_binding
+                if source_binding.enabled() and pair.get("user_message") != source_msg.content:
+                    queue.abandon(pair, "source_content_mismatch")
+                    continue
+                user_text = source_msg.content if source_binding.enabled() else pair["user_message"]
+            else:
+                user_text = pair["user_message"]
             if not await _processed(source_id):
                 result = await _with_heartbeat(pair, run_internal("memory_extract", {
                     "session_id": session.id,
                     "character_id": session.character_id,
                     "user_id": session.user_id,
-                    "user_msg": pair["user_message"],
+                    "user_msg": user_text,
                     "ai_msg": pair["ai_response"],
                     "source_id": source_id,
+                    "source_event_uid": pair.get("source_event_uid"),
                 }, character_id=session.character_id, user_id=session.user_id))
                 if not isinstance(result, dict) or result.get("status") != "ok":
                     raise RuntimeError("extraction_tool_failed")
                 if source_id is not None and not await _processed(source_id):
                     raise RuntimeError("extraction_not_committed")
-            queue.complete(pair)
+            if not queue.complete(pair):
+                queue.retry(pair, "ack_failed")
         except asyncio.CancelledError:
             # Leave the payload leased: a replacement process can reclaim it after expiry.
             raise

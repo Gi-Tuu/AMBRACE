@@ -16,11 +16,8 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
 from sqlalchemy import create_engine
 
 from app.config import settings
@@ -127,34 +124,11 @@ def _make_legacy_ai(db: Path) -> None:
 
 
 def _apply_real_c4_increment(db: Path) -> None:
-    """用真实 c4 增量迁移（Operations.add_column/create_index）补 write_key + 唯一索引。
-
-    刻意**不跑整链 upgrade**：b2a 会把 ai_characters 变成 AUTOINCREMENT，
-    那样 startup 会走 stamped 分支而不是我们要覆盖的 re-stamped。
-    本 helper 只补 migrate.py 新加的 ``(memories, write_key)`` 哨兵，
-    其余形态（含无 AUTOINCREMENT）保持 legacy。禁止 create_all 或 mock schema。
-    """
-    engine = create_engine("sqlite:///" + Path(db).resolve().as_posix())
-    try:
-        with engine.begin() as conn:
-            ctx = MigrationContext.configure(connection=conn)
-            ops = Operations(ctx)
-            insp = sa.inspect(conn)
-            cols = {c["name"] for c in insp.get_columns("memories")}
-            if "write_key" not in cols:
-                ops.add_column(
-                    "memories", sa.Column("write_key", sa.String(64), nullable=True)
-                )
-            idxs = set(conn.execute(sa.text(
-                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memories'"
-            )).scalars())
-            if "ix_memories_write_key" not in idxs:
-                ops.create_index(
-                    "ix_memories_write_key", "memories", ["write_key"], unique=True
-                )
-    finally:
-        engine.dispose()
-
+    """用真实 c4/d6/b3 增量迁移补当前 schema，保持 ai_characters 旧形态。"""
+    con = sqlite3.connect(str(db))
+    con.execute("UPDATE alembic_version SET version_num=?", (CANDIDATE,))
+    con.commit(); con.close()
+    command.upgrade(_cfg(BACKEND / "alembic"), REAL_HEAD)
 
 def _build_legacy(tmp_path: Path, monkeypatch, *, seed: bool = True) -> Path:
     old_tree = _tree(tmp_path, "old_tree", candidate=False)

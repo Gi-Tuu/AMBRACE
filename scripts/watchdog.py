@@ -160,11 +160,17 @@ def probe_liveness(url: str = LIVENESS_URL, timeout: float = LIVENESS_TIMEOUT_SE
     - 非 200 / 超时 / 连不上 / 响应不是 JSON → 判不健康（事件循环被阻塞时 TCP 握手仍会成功）。
     """
     import json
+    import urllib.error
     import urllib.request
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             status = int(resp.getcode())
             body = resp.read(4096)
+    except urllib.error.HTTPError as e:
+        # 真实 urllib 对 404/405 抛 HTTPError，必须在这里兑现“回退 TCP”契约。
+        if e.code in (404, 405):
+            return True, "liveness 路由不可用(HTTP %d)，回退 TCP 判据" % e.code
+        return False, "HTTP %d" % e.code
     except Exception as e:
         return False, "%s: %s" % (type(e).__name__, e)
     if status in (404, 405):

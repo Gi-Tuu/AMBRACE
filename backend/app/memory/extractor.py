@@ -362,7 +362,168 @@ async def _write_curated_item(character_id, user_id, content, kind, imp, source_
         await db.commit()
 
 
-async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, source_id=None):
+async def _stage_receipt_matches(db, *, receipt_key, uid, user_id, character_id,
+                                 session_id, content, stage_kind, source_id) -> bool:
+    """A failed commit is only benign when this exact generation's output is durable."""
+    import hashlib
+    import json
+
+    from app.models.memory import MemoryWriteReceipt, StageMemory
+
+    receipt = (await db.execute(
+        select(MemoryWriteReceipt).where(
+            MemoryWriteReceipt.authoritative == True,
+            MemoryWriteReceipt.idempotency_key == receipt_key,
+            MemoryWriteReceipt.source_event_uid == uid,
+            MemoryWriteReceipt.character_id == character_id,
+            MemoryWriteReceipt.owner_user_id == user_id,
+            MemoryWriteReceipt.action == "stage_create",
+        )
+    )).scalar_one_or_none()
+    if receipt is None:
+        return False
+    try:
+        detail = json.loads(receipt.detail_json or "{}")
+    except Exception:
+        return False
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    if detail.get("stage_kind") != stage_kind or detail.get("content_sha256") != digest:
+        return False
+    try:
+        stage_id = int(detail.get("stage_id"))
+    except (TypeError, ValueError):
+        return False
+    stage_created_at = detail.get("stage_created_at")
+    if not stage_created_at:
+        return False
+    stage = (await db.execute(
+        select(StageMemory).where(
+            StageMemory.id == stage_id,
+            StageMemory.user_id == user_id,
+            StageMemory.character_id == character_id,
+            StageMemory.source_id == source_id,
+            StageMemory.session_id == session_id,
+            StageMemory.stage_kind == stage_kind,
+            StageMemory.content == content,
+        ).limit(1)
+    )).scalar_one_or_none()
+    if stage is None or stage.created_at is None:
+        return False
+    return stage.created_at.isoformat() == stage_created_at
+
+
+async def _save_stage_once(*, user_id, character_id, session_id, content, stage_kind,
+                           importance, source_id) -> bool:
+    """Write one stage row exactly once per source generation.
+
+    A receipt in the existing memory_write_receipts table is committed with the
+    stage row. The receipt key contains the source UID, so two generations that
+    reuse the same numeric message id cannot suppress each other. Legacy rows
+    without a UID are not attributed to a generation; they are only used by the
+    legacy no-UID path.
+    """
+    import hashlib
+    import json
+
+    from app.models.memory import MemoryWriteReceipt, StageMemory
+    from app.memory import source_binding
+    from sqlalchemy import or_
+
+    binding = source_binding.pinned_source_binding()
+    uid = binding.event_uid if binding is not None else None
+    if binding is not None and (
+            binding.owner_user_id != user_id or binding.character_id != character_id
+            or binding.session_id != session_id):
+        raise source_binding.SourceIdentityError("extraction_stage_scope")
+    receipt_key = None
+    if uid:
+        digest = hashlib.sha256(content.encode('utf-8')).hexdigest()[:24]
+        receipt_key = f"stage:{uid}:{stage_kind}:{digest}"[:128]
+
+    async with async_session_factory() as db:
+        await source_binding.guard_extraction_write(db)
+        if receipt_key:
+            exists = (await db.execute(
+                select(MemoryWriteReceipt.id).where(
+                    MemoryWriteReceipt.authoritative == True,
+                    MemoryWriteReceipt.idempotency_key == receipt_key,
+                ).limit(1)
+            )).first()
+            if exists is not None:
+                if await _stage_receipt_matches(
+                        db, receipt_key=receipt_key, uid=uid, user_id=user_id,
+                        character_id=character_id, session_id=session_id, content=content,
+                        stage_kind=stage_kind, source_id=source_id):
+                    return False
+                raise RuntimeError("stage_receipt_inconsistent")
+        else:
+            exists = (await db.execute(
+                select(StageMemory.id).where(
+                    StageMemory.user_id == user_id,
+                    StageMemory.character_id == character_id,
+                    StageMemory.source_id == source_id,
+                    or_(StageMemory.session_id == session_id, StageMemory.session_id.is_(None)),
+                    StageMemory.stage_kind == stage_kind,
+                    StageMemory.content == content,
+                ).limit(1)
+            )).first()
+            if exists is not None:
+                return False
+        stage = StageMemory(
+            user_id=user_id, character_id=character_id, session_id=session_id,
+            content=content, stage_kind=stage_kind, importance=importance,
+            source_id=source_id,
+        )
+        db.add(stage)
+        await db.flush()
+        await db.refresh(stage)
+        if receipt_key:
+            db.add(MemoryWriteReceipt(
+                character_id=character_id, memory_id=None, action="stage_create",
+                reason="stage output", detail_json=json.dumps({
+                    "stage_kind": stage_kind,
+                    "content_sha256": hashlib.sha256(content.encode('utf-8')).hexdigest(),
+                    "stage_id": stage.id,
+                    "stage_created_at": stage.created_at.isoformat() if stage.created_at else None,
+                }, ensure_ascii=False),
+                source_event_uid=uid, owner_user_id=user_id,
+                actor_kind="character", actor_user_id=character_id,
+                authoritative=True, idempotency_key=receipt_key,
+            ))
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            valid = False
+            if receipt_key:
+                try:
+                    valid = await _stage_receipt_matches(
+                        db, receipt_key=receipt_key, uid=uid, user_id=user_id,
+                        character_id=character_id, session_id=session_id, content=content,
+                        stage_kind=stage_kind, source_id=source_id)
+                except Exception:
+                    valid = False
+            if valid:
+                return False
+            raise
+        return True
+
+
+async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, source_id=None,
+                         *, source_event_uid=None):
+    from app.memory import source_binding
+    if not source_binding.enabled() and source_event_uid is None:
+        return await _extract_single(session_id, character_id, user_id, user_msg, ai_msg, source_id)
+    async with async_session_factory() as db:
+        binding = await source_binding.validate_extraction_source(
+            db, user_id=user_id, character_id=character_id, session_id=session_id,
+            source_id=source_id, user_message=user_msg, expected_uid=source_event_uid)
+    with source_binding.pin_extraction_source(binding, source_id):
+        return await _extract_single(session_id, character_id, user_id, user_msg, ai_msg, source_id)
+
+
+async def _extract_single(session_id, character_id, user_id, user_msg, ai_msg, source_id=None):
+    from app.memory import source_binding
     conv = f"用户: {_truncate_sample(user_msg)}\nAI: {_truncate_sample(ai_msg)}"
     try:
         from sqlalchemy import select
@@ -417,10 +578,12 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
             )
     except Exception:
         pass
+    await source_binding.check_extraction_source()
     response = await llm_call(messages=[{"role":"user","content":prompt}], temperature=0.1, max_tokens=EXTRACT_MAX_TOKENS, task=TASK_MEMORY)
     _logger.info("Raw: %.120s", response)
     if not response:
         raise RuntimeError("memory_extraction_empty_response")
+    await source_binding.check_extraction_source()
 
     saved = 0
     # Ariadne 模块F/G（2026-09-04）：flag 预取（关=零行为变化）+ curated 提前解析（供 PREFERENCES 互斥）。
@@ -450,18 +613,18 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
     if stage_val and stage_val != "无" and len(stage_val) >= 2 and not looks_like_raw_dialogue(stage_val):
         stage_imp = _get_imp(response, "STAGE")
         try:
-            from app.models.memory import StageMemory
-            async with async_session_factory() as db:
-                db.add(StageMemory(
-                    user_id=user_id, character_id=character_id, session_id=session_id,
-                    content=stage_val[:200], stage_kind="roleplay",
-                    importance=stage_imp, source_id=source_id,
-                ))
-                await db.commit()
-            saved += 1
-            _logger.info("Stage saved char=%d: %.60s", character_id, stage_val)
+            created = await _save_stage_once(
+                user_id=user_id, character_id=character_id, session_id=session_id,
+                content=stage_val[:200], stage_kind="roleplay",
+                importance=stage_imp, source_id=source_id)
+            if created:
+                saved += 1
+                _logger.info("Stage saved char=%d: %.60s", character_id, stage_val)
+        except source_binding.SourceIdentityError:
+            raise
         except Exception as e:
             _logger.warning("Stage save failed char=%d: %s", character_id, e)
+            raise
 
     for key, mtype in [("USER_INFO","user_info"),("EVENTS","event"),("PREFERENCES","preference")]:
         val = _get_val(response, key)
@@ -470,18 +633,18 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
             # 游戏轮兜底：LLM 未归 STAGE 但明确是小游戏相关内容时强制转舞台
             if _game_convo and _is_game_content(val):
                 try:
-                    from app.models.memory import StageMemory
-                    async with async_session_factory() as db:
-                        db.add(StageMemory(
-                            user_id=user_id, character_id=character_id, session_id=session_id,
-                            content=val[:200], stage_kind="game",
-                            importance=imp, source_id=source_id,
-                        ))
-                        await db.commit()
-                    saved += 1
-                    _logger.info("Stage(game) saved char=%d: %.60s", character_id, val)
+                    created = await _save_stage_once(
+                        user_id=user_id, character_id=character_id, session_id=session_id,
+                        content=val[:200], stage_kind="game",
+                        importance=imp, source_id=source_id)
+                    if created:
+                        saved += 1
+                        _logger.info("Stage(game) saved char=%d: %.60s", character_id, val)
+                except source_binding.SourceIdentityError:
+                    raise
                 except Exception as e:
                     _logger.warning("Stage(game) save failed char=%d: %s", character_id, e)
+                    raise
                 continue
             # Ariadne 模块F（2026-09-04）：被升级为 curated 的长期偏好不再重复进衰减记忆
             # （一期只对 PREFERENCES 互斥，USER_INFO 保留双写观察后再收紧；flag 关时恒 False 零行为）
@@ -535,6 +698,7 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
     if bio_val and len(bio_val) >= 2 and not looks_like_raw_dialogue(bio_val):
         from app.models.character import AICharacter
         async with async_session_factory() as db:
+            await source_binding.guard_extraction_write(db)
             c = (await db.execute(select(AICharacter).where(AICharacter.id == character_id))).scalar_one_or_none()
             if c:
                 # M-P1-3：覆盖写 → 保守合并（新值长度 >= 现值时替换，否则保留现值 + 追加新值），
@@ -547,6 +711,7 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
     if status_val and len(status_val) >= 2:
         from app.models.character import AICharacter
         async with async_session_factory() as db:
+            await source_binding.guard_extraction_write(db)
             c = (await db.execute(select(AICharacter).where(AICharacter.id == character_id))).scalar_one_or_none()
             if c:
                 c.current_status = status_val[:200]
@@ -563,6 +728,7 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
                           speaker_type=_spk_type, speaker_id=_spk_id, epistemic_status=_epi)
         from app.models.character import AICharacter
         async with async_session_factory() as db:
+            await source_binding.guard_extraction_write(db)
             c = (await db.execute(select(AICharacter).where(AICharacter.id == character_id))).scalar_one_or_none()
             if c:
                 # M-P1-3：同上保守合并，防关系摘要多面信息被单行覆盖丢失。
@@ -576,6 +742,8 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
             content, kind, imp = _curated_item
             await _write_curated_item(character_id, user_id, content, kind, imp, source_id)
             saved += 1
+        except source_binding.SourceIdentityError:
+            raise
         except Exception as e:
             _logger.warning("Curated extract failed char=%d: %s", character_id, e)
 
@@ -613,19 +781,38 @@ async def extract_single(session_id, character_id, user_id, user_msg, ai_msg, so
         await _mark_processed(source_id)
     return saved
 
-def _pending_remove_uid(session_id: int, uid: int) -> None:
+def _pending_remove_uid(session_id: int, uid: int, source_event_uid=None) -> None:
     """从主链路队列移除已提取的源消息（catchup／截断保底提取后调用，防主链路重复提取）。
 
     A41：队列本体迁到 app/memory/extract_queue.py（落盘）；**函数名保持不动**——
     chat_tooling.py 按名导入、test_arbiter_seam.py 按名钉住这条接缝。
     """
-    _queue.remove_source(session_id, uid)
+    _queue.remove_source(session_id, uid, source_event_uid)
 
 
-async def add_chat_memory_extraction(session_id, character_id, user_id, user_msg, ai_msg, source_id=None):
+async def add_chat_memory_extraction(session_id, character_id, user_id, user_msg, ai_msg,
+                                     source_id=None, source_event_uid=None):
     _now = time.time()
+    _uid = None
+    if source_id is not None:
+        try:
+            from app.memory import source_binding
+            if source_binding.enabled() or source_event_uid is not None:
+                async with async_session_factory() as _sdb:
+                    binding = await source_binding.validate_extraction_source(
+                        _sdb, user_id=user_id, character_id=character_id,
+                        session_id=session_id, source_id=source_id, user_message=user_msg,
+                        expected_uid=source_event_uid)
+                    _uid = binding.event_uid
+        except Exception:
+            _uid = None
+            if source_event_uid is not None:
+                _logger.warning("Memory extraction source stale, skip enqueue session=%s source=%s",
+                                session_id, source_id)
+                return
     _q = _queue.add(session_id, {"user_message": user_msg, "ai_response": ai_msg,
-                                 "source_id": source_id, "ts": _now})
+                                 "source_id": source_id, "source_event_uid": _uid,
+                                 "ts": _now})
     _stale = any(_now - float(p.get("ts") or _now) > MAX_PENDING_AGE for p in _q)  # 2026-08-16 审计：滞留超时强制提取
     if len(_q) < BATCH_SIZE and not _stale:
         return
@@ -637,11 +824,15 @@ async def add_chat_memory_extraction(session_id, character_id, user_id, user_msg
 
 async def _mark_processed(source_id: int):
     """记录该用户消息已完成记忆提取（幂等）"""
+    from app.memory import source_binding
     try:
         async with async_session_factory() as db:
+            await source_binding.guard_extraction_write(db)
             stmt = sqlite_insert(ProcessedExtraction).values(user_message_id=source_id).prefix_with("OR IGNORE")
             await db.execute(stmt)
             await db.commit()
+    except source_binding.SourceIdentityError:
+        raise
     except Exception as e:
         _logger.warning("Mark processed failed id=%s: %s", source_id, e)
 
@@ -705,12 +896,19 @@ async def catchup_extract_all():
                 new_pairs = 0
                 for um, am in _pair_user_ai(msgs):
                     uid = um.id
-                    if uid in processed or uid in _queue.pending_source_ids():
+                    from app.memory import source_binding
+                    source_uid = getattr(um, "source_event_uid", None)
+                    if source_binding.enabled() and not source_uid:
+                        _logger.warning("Catchup source identity missing id=%s", uid)
                         continue
-                    await extract_single(s.id, s.character_id, s.user_id, um.content, am.content, source_id=uid)
+                    if uid in processed or _queue.is_pending(uid, source_uid):
+                        continue
+                    proof = {"source_event_uid": source_uid} if source_uid else {}
+                    await extract_single(s.id, s.character_id, s.user_id, um.content, am.content,
+                                         source_id=uid, **proof)
                     processed.add(uid)
                     new_pairs += 1
-                    _pending_remove_uid(s.id, uid)
+                    _pending_remove_uid(s.id, uid, source_uid)
                     await asyncio.sleep(0.3)
                 if new_pairs:
                     _mark_batch_taken(s.character_id)

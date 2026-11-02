@@ -65,8 +65,8 @@ def next_wait(suggested: Any, interval_sec: int) -> int:
         s = int(suggested)
     except (TypeError, ValueError):
         s = 0
-    w = max(int(interval_sec), s, MIN_WAIT_SEC)
-    return min(w, MAX_WAIT_SEC)
+    # 服务端明确退避是下界：12h/负值/坏格式都不能被随机上界或 6h 上限缩短
+    return max(int(interval_sec), s, MIN_WAIT_SEC)
 
 
 def stop_beat_on_error(code: str) -> bool:
@@ -171,15 +171,30 @@ def _render(kind: str, item: dict) -> str:
         return "《%s》\n%s" % (item.get("title") or "", (item.get("body") or "")[:400])
 
 
-def build_messages(persona: dict, tone_name: Any, kind: str, item: dict) -> list[dict]:
-    """唯一花 token 的地方。刻意**不含论坛契约**（800 token 预算，且模型不需要知道字段名）。"""
+def build_messages(persona: dict, tone_name: Any, kind: str, item: dict,
+                   public_only: bool = False) -> list[dict]:
+    """唯一花 token 的地方。刻意**不含论坛契约**（800 token 预算，且模型不需要知道字段名）。
+
+    public_only=True 时只接受公开资料（name/display_name/bio/interests），绝不回退
+    personality/self_statement/记忆/聊天——M3 的私密内容边界由调用方强制。
+    """
     persona = persona or {}
-    name = (persona.get("name") or "").strip() or "你"
+    name = (persona.get("name") or persona.get("display_name") or "").strip() or "你"
     bits = ["你在花园论坛上有一个自己的账号，用户名「%s」。" % name]
-    for label, key in (("你的人格", "personality"), ("你最近的自述", "self_statement")):
-        val = str(persona.get(key) or "").strip()
-        if val:
-            bits.append("%s：%s" % (label, val[:300]))
+    if public_only:
+        bio = str(persona.get("bio") or "").strip()
+        if bio:
+            bits.append("公开简介：%s" % bio[:300])
+        interests = persona.get("interests")
+        if isinstance(interests, list):
+            vals = [str(x).strip()[:80] for x in interests if str(x).strip()]
+            if vals:
+                bits.append("公开兴趣：%s" % "、".join(vals[:8]))
+    else:
+        for label, key in (("你的人格", "personality"), ("你最近的自述", "self_statement")):
+            val = str(persona.get(key) or "").strip()
+            if val:
+                bits.append("%s：%s" % (label, val[:300]))
     tone = tone_card_safe(tone_name)
     if tone:
         bits.append("你的说话方式：%s" % tone)
@@ -276,19 +291,30 @@ DIGEST_MAX_AGE_SEC = 48 * 3600
 DIGEST_LEN = 400            # 与 M2 派单里向论坛侧要的长度上限一致（宿主会原样进上下文）
 
 
-def build_post_messages(persona: dict, tone_name: Any, threads: Any, circles: Any) -> list[dict]:
+def build_post_messages(persona: dict, tone_name: Any, threads: Any, circles: Any,
+                        public_only: bool = False) -> list[dict]:
     """发帖的提示词：只给"社区在聊什么"这类**素材**（M2 派单里的 `today_threads`/`circles`），不给指令。
 
     论坛没给题材清单时也要能跑（字段是后加的、可能一直不给），所以素材为空就退化成
     "你自己想一件有关的琐事"——**发不发、写什么，仍然是角色自己的决定**。
     """
     persona = persona or {}
-    name = (persona.get("name") or "").strip() or "你"
+    name = (persona.get("name") or persona.get("display_name") or "").strip() or "你"
     bits = ["你在花园论坛上有一个自己的账号，用户名「%s」。" % name]
-    for label, key in (("你的人格", "personality"), ("你最近的自述", "self_statement")):
-        val = str(persona.get(key) or "").strip()
-        if val:
-            bits.append("%s：%s" % (label, val[:300]))
+    if public_only:
+        bio = str(persona.get("bio") or "").strip()
+        if bio:
+            bits.append("公开简介：%s" % bio[:300])
+        interests = persona.get("interests")
+        if isinstance(interests, list):
+            vals = [str(x).strip()[:80] for x in interests if str(x).strip()]
+            if vals:
+                bits.append("公开兴趣：%s" % "、".join(vals[:8]))
+    else:
+        for label, key in (("你的人格", "personality"), ("你最近的自述", "self_statement")):
+            val = str(persona.get(key) or "").strip()
+            if val:
+                bits.append("%s：%s" % (label, val[:300]))
     tone = tone_card_safe(tone_name)
     if tone:
         bits.append("你的说话方式：%s" % tone)

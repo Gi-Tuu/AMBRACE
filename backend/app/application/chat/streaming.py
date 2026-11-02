@@ -217,6 +217,18 @@ async def _persist_ai_chunks(
     return saved
 
 
+async def _persist_and_emit_user(*, persist, session_id, user_id, character_id, content,
+                                 quote, save_user_message, sink):
+    user_msg_id, user_msg_info = await persist(
+        session_id, user_id, character_id, content,
+        quote=quote, save_user_message=save_user_message, shared_memory=True,
+    )
+    source_uid = (user_msg_info or {}).pop("_source_event_uid", None)
+    if user_msg_info:
+        await sink("user_message", user_msg_info)
+    return user_msg_id, source_uid
+
+
 async def send_and_receive_stream(
     session_id: int, user_id: int, character_id: int, content: str,
     lang: str = "zh", quote: dict | None = None,
@@ -251,12 +263,10 @@ async def send_and_receive_stream(
 
     if sink is None:
         return
-    user_msg_id, user_msg_info = await _persist_user_message(
-        session_id, user_id, character_id, content,
-        quote=quote, save_user_message=save_user_message, shared_memory=True,
-    )
-    if user_msg_info:
-        await sink("user_message", user_msg_info)
+    user_msg_id, _user_source_uid = await _persist_and_emit_user(
+        persist=_persist_user_message, session_id=session_id, user_id=user_id,
+        character_id=character_id, content=content, quote=quote,
+        save_user_message=save_user_message, sink=sink)
 
     # 语音逐句 TTS：预加载角色音色参数 + 实时块落库/推送回调（供 _stream_generate 流水线消费）
     tts_ctx = None
@@ -462,6 +472,7 @@ async def send_and_receive_stream(
                 session_id, user_id, character_id, content,
                 final_state, full_text, saved[0]["id"] if saved else None, user_msg_id,
                 reliability=True, gen_prompt=gen_prompt, img_text=img_text,
+                source_event_uid=_user_source_uid,
             )
             # 3.10 事件流水（P0）：一轮清算（幂等键绑 user_msg_id；回退 chunked 同键 → 只落一条）
             try:
@@ -523,6 +534,7 @@ async def send_and_receive_stream(
         final_state, full_text, saved[0]["id"] if saved else None, user_msg_id,
         reliability=True,
         gen_prompt=gen_prompt, img_text=img_text,
+        source_event_uid=_user_source_uid,
     )
 
     # 3.10 事件流水（P0）：一轮清算（与 TTS 实时路径 / chunked 回退共用幂等键 → 一轮只一条）

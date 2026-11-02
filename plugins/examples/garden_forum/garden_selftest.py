@@ -49,7 +49,8 @@ def t_next_wait():
     check("next_wait：论坛回 0 也不能比配置更快", beat.next_wait(0, 900) == 900, beat.next_wait(0, 900))
     check("next_wait：采纳论坛建议（900s）", beat.next_wait(900, 300) == 900)
     check("next_wait：建议比配置小 ⇒ 用配置", beat.next_wait(30, 900) == 900)
-    check("next_wait：建议荒谬地大 ⇒ 夹到 6 小时", beat.next_wait(10 ** 9, 900) == 6 * 3600)
+    check("next_wait：服务端更长退避不能被截短（12h/荒谬大值均保留）",
+          beat.next_wait(12 * 3600, 900) >= 12 * 3600 and beat.next_wait(10 ** 9, 900) >= 10 ** 9)
     check("next_wait：建议是坏值 ⇒ 不炸，用配置", beat.next_wait("x", 900) == 900)
     check("next_wait：下限 60 秒", beat.next_wait(None, 1) == 60)
 
@@ -419,7 +420,7 @@ def t_main_wiring():
           '@sdk.hook("schedule_tick")' in src and "async def on_tick" in src)
     check("接线：总开关先判（没开就一条 HTTP 都不发）", 'cfg.get("garden_forum_on"' in src)
     check("接线：SDK 的同步 urllib 必须包在 to_thread 里（不能阻塞事件循环）",
-          "to_thread(gf.state" in src and "to_thread(gf.say" in src)
+          "to_thread(gf.state" in src and "to_thread(send" in src)
     check("接线：重入锁（上一轮没跑完不叠第二遍）", "_lock.locked()" in src)
     check("接线：写盘必须挂在条件里（不每 30 秒重写一次装着凭据的文件）", _saves_are_conditional(src))
     check("接线：论坛摘要变空要能清掉本地那份（不是「非空才存」）", _digest_write_unconditional(src))
@@ -433,8 +434,8 @@ def t_main_wiring():
     check("接线：不走会剥 Authorization 的插件 HTTP 桥，也不自己搓 urllib",
           "http_proxy" not in body and "urllib" not in body and "GardenForum(" in body)
     check("红线：日志语句里不引用凭据（AST 找真调用，不按文本数）", _no_secret_in_logs(src))
-    check("manifest：声明了 persona:read（拿人设要权限，否则一律 PermissionError）",
-          "persona:read" in man["permissions"])
+    check("manifest：M3 不再申请 persona:read（公开资料只来自显式配置，不读私密人设）",
+          "persona:read" not in man["permissions"])
     check("manifest：声明的钩子都是内核认识的（且只有心跳＋注入这两个）",
           set(man["hooks"]) == {"schedule_tick", "context_inject"}, man["hooks"])
     check("manifest：默认关闭", man["config"]["garden_forum_on"] is False)
@@ -466,6 +467,12 @@ def t_main_wiring():
     check("接线：一拍只问模型一次（回过话就不再发帖）", "if limit and not asked and" in src)
     check("manifest：两个钩子都声明了", man["hooks"] == ["schedule_tick", "context_inject"], man["hooks"])
     check("manifest：主动发帖默认关", man["config"]["garden_forum_daily_post"] == 0)
+    check("manifest：M3 双闸默认关",
+          man["config"].get("garden_forum_allow_llm") is False
+          and man["config"].get("garden_forum_allow_write") is False)
+    check("manifest：M3 随机节律 20–150 分钟",
+          man["config"].get("garden_forum_interval_min") == 20
+          and man["config"].get("garden_forum_interval_max") == 150)
     check("manifest：注入默认开", man["config"]["garden_forum_inject"] is True)
     import re as _re
     dl = _re.search(r"BEAT_DEADLINE_SEC\s*=\s*(\d+)", src)

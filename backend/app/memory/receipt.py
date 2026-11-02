@@ -10,6 +10,10 @@ action 取值（与迁移/模型一致）：
     create / update / merge / supersede / stale / reject / downgrade
     （另 utility_feedback=召回后效用反馈回执，2026-09-16 由 memory/utility_feedback.py 直写本表，
      不经本模块闸控——它有自己的 flag memory_utility_feedback）
+    stage_create=舞台记忆代际绑定凭据（2026-10-30，extractor._save_stage_once 直写本表，
+     与 Stage 同事务；它是正确性凭据，不是观测回执，因此不受 memory_write_receipt
+     闸控；仅在来源 UID 存在时写。该 flag 关=本模块 emit_memory_receipt 零写入，
+     不等于整张表零写入。）
 """
 from __future__ import annotations
 

@@ -169,9 +169,9 @@ async def get_image_gen_config(user_id: int | None = None) -> dict:
     return cfg
 
 
-async def get_image_provider() -> ImageGenProvider | None:
-    """按生效配置构建生图 provider；未启用/未配置返回 None"""
-    cfg = await get_image_gen_config()
+async def get_image_provider(user_id: int | None = None) -> ImageGenProvider | None:
+    """按账号生效配置构建生图 provider；未启用/未配置返回 None"""
+    cfg = await get_image_gen_config(user_id=user_id)
     if not cfg["enabled"]:
         return None
     if not cfg["base_url"] or not cfg["api_key"] or not cfg["model"]:
@@ -190,7 +190,7 @@ def _day_start_utc() -> datetime:
 
 async def check_daily_limit(user_id: int) -> bool:
     """今日生图数是否已达上限（True=已达，拒绝）"""
-    cfg = await get_image_gen_config()
+    cfg = await get_image_gen_config(user_id=user_id)
     limit = cfg.get("daily_limit") or 10
     async with async_session_factory() as db:
         cnt = await db.execute(
@@ -238,16 +238,17 @@ def _save_image_bytes(data: bytes, user_id: int) -> str:
 
 async def run_image_gen_task(task_id: int) -> str | None:
     """执行生图任务（阻塞直到完成），成功返回 image_url，失败返回 None（错误已写任务记录）"""
-    provider = await get_image_provider()
-    if provider is None:
-        await _fail_task(task_id, "未配置生图服务（IMAGE_GEN_ENABLED/BASE_URL/API_KEY/MODEL）")
-        return None
     async with async_session_factory() as db:
         task = await db.get(ImageGenTask, task_id)
         if not task:
             return None
+        owner_user_id = task.user_id
         task.status = "generating"
         await db.commit()
+    provider = await get_image_provider(owner_user_id)
+    if provider is None:
+        await _fail_task(task_id, "未配置生图服务（IMAGE_GEN_ENABLED/BASE_URL/API_KEY/MODEL）")
+        return None
     try:
         data = await provider.generate(task.prompt)
         image_url = _save_image_bytes(data, task.user_id)

@@ -15,6 +15,7 @@ import importlib.util as _ilu
 import os as _os
 
 from alembic import op
+import sqlalchemy as sa
 
 revision = "f2b3c4d5e6f7"
 down_revision = "e1b2c3d4e5f6"
@@ -57,10 +58,20 @@ def upgrade() -> None:
     for tname in REBUILD_TABLES:
         if tname not in meta.tables:
             raise RuntimeError(f"ORM metadata 缺表 {tname}——中止，防止重建丢列")
+    # 历史冻结：f2b3 当时 chat_messages 尚无 c5 的 source_event_uid。
+    # copy_from 若用当前 ORM Table 会把后来列带进历史节点，导致全新库回放
+    # INSERT INTO _alembic_tmp_chat_messages(...source_event_uid) SELECT 旧表无此列而失败。
+    # 这里只在该历史节点使用一份去后来列的副本；不改模型、不改历史语义/约束。
     op.execute("PRAGMA foreign_keys=OFF")
     try:
         for tname in REBUILD_TABLES:
             table = meta.tables[tname]
+            if tname == "chat_messages" and "source_event_uid" in table.c:
+                table = table.to_metadata(sa.MetaData())
+                table._columns.remove(table.c.source_event_uid)
+                for idx in list(table.indexes):
+                    if "source_event_uid" in {c.name for c in idx.columns}:
+                        table.indexes.remove(idx)
             with op.batch_alter_table(tname, recreate="always", copy_from=table):
                 pass
     finally:

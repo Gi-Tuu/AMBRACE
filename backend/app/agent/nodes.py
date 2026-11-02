@@ -3,7 +3,7 @@ import asyncio
 
 from app.utils.logger import get_logger
 from app.agent.state import AgentState
-from app.agent.llm_client import chat_completion, chat_completion_stream
+from app.agent.llm_client import chat_completion, chat_completion_stream, obs_final_messages
 from app.agent.context_builder import build_context
 from app.agent.response_parser import parse_response, split_response, IncrementalResponseChunker
 from app.memory.speaker import resolve_speaker_from_content  # X-2（2026-08-18）：统一归属判定公共函数
@@ -267,6 +267,7 @@ async def _stream_generate(state: AgentState, user_cfg: dict | None, stream_sink
     raw: list[str] = []
     blocks: list[str] = []
     try:
+        obs_final_messages(state["context_messages"], stream=True)
         async for piece in chat_completion_stream(
             messages=state["context_messages"],
             temperature=float(state.get("temperature") or 0.8),
@@ -317,6 +318,7 @@ async def _stream_generate_tts(state, user_cfg, stream_sink, chunker, block_sink
 
     consumer_task = asyncio.create_task(consumer())
     try:
+        obs_final_messages(state["context_messages"], stream=True)
         async for piece in chat_completion_stream(
             messages=state["context_messages"],
             temperature=float(state.get("temperature") or 0.8),
@@ -429,6 +431,7 @@ async def generate_response(state: AgentState) -> AgentState:
         state["reasoning"] = None  # 流式链路：推理走【推理】标记，由 parse_response 填充
         state["streamed"] = True
     elif reasoning_level == 2:
+        obs_final_messages(state["context_messages"], stream=False)
         response, reasoning = await chat_completion(
             messages=state["context_messages"],
             temperature=float(state.get("temperature") or 0.8),
@@ -449,6 +452,7 @@ async def generate_response(state: AgentState) -> AgentState:
             reasoning, state.get("character_name"), state.get("user_name"))
         state["streamed"] = False
     else:
+        obs_final_messages(state["context_messages"], stream=False)
         response = await chat_completion(
             messages=state["context_messages"],
             temperature=float(state.get("temperature") or 0.8),

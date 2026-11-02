@@ -6,6 +6,55 @@ import time as _time
 from openai import AsyncOpenAI
 
 from app.config import settings
+import contextvars as _contextvars
+import hashlib as _hashlib
+import os as _os
+
+# ── 花园只读链路：最终模型输入固定枚举观测（默认关）──
+_GARDEN_OBS_CTX = _contextvars.ContextVar("garden_obs", default=None)
+
+
+def set_garden_obs(corr: str) -> None:
+    """请求内短期关联：仅 corr + 固定状态；不进入 messages。"""
+    _GARDEN_OBS_CTX.set({"corr": corr, "request": 1, "business": "unknown", "injected": "unknown"})
+
+
+def update_garden_obs(**fields) -> None:
+    cur = _GARDEN_OBS_CTX.get()
+    if cur is None:
+        return
+    cur = dict(cur)
+    cur.update({k: v for k, v in fields.items() if k in ("business", "injected", "expected_text_hash")})
+    _GARDEN_OBS_CTX.set(cur)
+
+
+def clear_garden_obs() -> None:
+    _GARDEN_OBS_CTX.set(None)
+
+
+def obs_final_messages(messages: list[dict], *, stream: bool) -> None:
+    """在真正调用模型前记录固定枚举；不读/写消息内容。禁用时零日志。"""
+    if _os.environ.get("GARDEN_OBS_V1") != "1":
+        return
+    ctx = _GARDEN_OBS_CTX.get()
+    if not ctx:
+        return
+    try:
+        total = sum(len(str(m.get("content") or "")) for m in (messages or []))
+        expected = str(ctx.get("expected_text_hash") or "")
+        retained = "unknown"
+        if expected:
+            retained = "0"
+            for m in messages or []:
+                if _hashlib.sha256(str(m.get("content") or "").encode("utf-8")).hexdigest() == expected:
+                    retained = "1"
+                    break
+        _logger.info("garden_obs stage=final_input corr=%s request=%s business=%s "
+                     "injected=%s retained=%s stream=%s message_count=%d total_chars=%d",
+                     ctx.get("corr"), ctx.get("request"), ctx.get("business"),
+                     ctx.get("injected"), retained, bool(stream), len(messages or []), total)
+    except Exception:
+        pass
 from app.utils.llm_channel import CHANNEL_MAX_LEN, get_channel
 from app.utils.logger import get_logger
 

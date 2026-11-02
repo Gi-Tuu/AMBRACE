@@ -33,8 +33,11 @@ async def stale_character_slot_memory(
     anchor = (old_value or "").strip()[:6]
     if not anchor:
         return 0
+    from app.memory.source_binding import SourceIdentityError, guard_extraction_write
+
     try:
         async with async_session_factory() as db:
+            await guard_extraction_write(db)
             rows = (await db.execute(
                 select(Memory).where(
                     Memory.character_id == character_id,
@@ -56,6 +59,8 @@ async def stale_character_slot_memory(
                 except Exception:
                     pass
             return len(hit)
+    except SourceIdentityError:
+        raise
     except Exception:
         return 0
 

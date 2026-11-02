@@ -910,6 +910,12 @@ async def build_context(state: dict, *, stream: bool | None = None) -> dict:
     `stream`（P2-A）：显式标记流式模式；None 时从 state 推断（state["stream_sink"] 非空 = 流式）。
     流式模式下 MCP 工具声明/资源摘要不注入（见 section_mcp）。
     """
+    # 每个上下文构建开始时清空上一请求的花园观测关联，防同任务后续请求继承。
+    try:
+        from app.agent import llm_client as _obs_llm
+        _obs_llm.clear_garden_obs()
+    except Exception:
+        pass
     # P3-4（2026-09-11）：思考名字解析前移——注册表 section 早于 legacy 执行，原 section 内
     # _resolve_reasoning_names 每轮各开 session 查 ai_characters/users。在构建上下文前一次性
     # 解析角色名/对方昵称写入 state；reasoning_instruction_section 改只读 state（缺失则占位兜底）。

@@ -11,12 +11,8 @@ import sys
 from pathlib import Path
 
 import pytest
-import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
-from sqlalchemy import create_engine
 
 from app.config import settings
 from app.db import migrate
@@ -137,33 +133,15 @@ def _make_legacy_ai(db: Path) -> None:
 
 
 def _apply_c4_increment(db: Path) -> None:
-    """用真实 c4 增量迁移（Operations.add_column/create_index）补 write_key + 唯一索引。
+    """用真实 c4/d6/b3 增量迁移补当前 schema，保持 ai_characters 旧形态。
 
-    返工 §2：migrate.py 新增 ``(memories, write_key)`` 哨兵；orphan 恢复正例要求 schema
-    已确认，但**不能同时把 ai_characters 变成 AUTOINCREMENT**（否则退化为 already_at_head）。
-    所以只跑 c4 的 Operations.upgrade，不跑整链。禁止 create_all 预补、禁止 mock schema 判断。
+    先把版本推进到 CANDIDATE（b2a 已由旧库防重逻辑跳过），再从真实迁移树
+    upgrade 到 REAL_HEAD；不跑 b2a 重建，不用 create_all/mock。
     """
-    engine = create_engine("sqlite:///" + Path(db).resolve().as_posix())
-    try:
-        with engine.begin() as conn:
-            ctx = MigrationContext.configure(connection=conn)
-            ops = Operations(ctx)
-            insp = sa.inspect(conn)
-            cols = {c["name"] for c in insp.get_columns("memories")}
-            if "write_key" not in cols:
-                ops.add_column(
-                    "memories", sa.Column("write_key", sa.String(64), nullable=True)
-                )
-            idxs = set(conn.execute(sa.text(
-                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memories'"
-            )).scalars())
-            if "ix_memories_write_key" not in idxs:
-                ops.create_index(
-                    "ix_memories_write_key", "memories", ["write_key"], unique=True
-                )
-    finally:
-        engine.dispose()
-
+    con = sqlite3.connect(str(db))
+    con.execute("UPDATE alembic_version SET version_num=?", (CANDIDATE,))
+    con.commit(); con.close()
+    command.upgrade(_cfg(BACKEND / "alembic"), REAL_HEAD)
 
 def _memories_shape(db: Path) -> tuple[list[str], list[str]]:
     con = sqlite3.connect(str(db))
@@ -421,16 +399,25 @@ def test_old_head_upgrade_preserves_rows_and_no_reuse(tmp_path, use_db):
         ("index", "ix_memories_write_key"),
         ("table", "business_plan_items"), ("index", "idx_business_plan_scope"),
         ("table", "plan_completion_evidence"), ("index", "idx_plan_evidence_scope"),
-    }, f"新增对象必须严格等于 c4/d6 的冻结增量，实际 added={added}"
+        ("table", "source_seq"), ("table", "memory_source_events"),
+        ("table", "memory_tombstones"), ("table", "memory_reallow_grants"),
+        ("table", "memory_restore_quarantine"),
+        ("index", "idx_mse_owner_char_time"), ("index", "idx_mse_session"),
+        ("index", "idx_mt_owner_char"), ("index", "idx_mrg_memory"),
+        ("index", "idx_mem_source_event"), ("index", "idx_mwr_source_event"),
+        ("index", "uq_mwr_idem_authoritative"),
+        ("index", "idx_chat_source_event_uid"),
+    }, f"新增对象必须严格等于 c4/d6/b3/c5 的冻结增量，实际 added={added}"
     assert removed == set(), f"拒绝任何 sqlite_master 对象被删除：removed={removed}"
-    assert changed == {("table", "ai_characters"), ("table", "memories")}, (
+    assert changed == {("table", "ai_characters"), ("table", "memories"),
+                       ("table", "memory_write_receipts"), ("table", "chat_messages")}, (
         f"只允许 ai_characters / memories 两张表 DDL 变化，实际 changed={changed}"
     )
 
     # memories 列级 delta：**恰好**只多 write_key 一列，其余列元数据逐值不变。
     before_col_names = [c[1] for c in before_mem_cols]
     after_col_names = [c[1] for c in after_mem_cols]
-    assert set(after_col_names) - set(before_col_names) == {"write_key"}, (
+    assert set(after_col_names) - set(before_col_names) == {"write_key", "source_event_uid"}, (
         f"memories 只允许新增 write_key 一列，实际新增 "
         f"{sorted(set(after_col_names) - set(before_col_names))}"
     )
@@ -450,7 +437,7 @@ def test_old_head_upgrade_preserves_rows_and_no_reuse(tmp_path, use_db):
         f"write_key 必须是可空非 PK 列：{wk}"
     )
     # 索引集合 delta：只多 ix_memories_write_key；且这条唯一性必须真成立。
-    assert set(after_mem_idx) - set(before_mem_idx) == {"ix_memories_write_key"}
+    assert set(after_mem_idx) - set(before_mem_idx) == {"ix_memories_write_key", "idx_mem_source_event"}
     assert set(before_mem_idx) - set(after_mem_idx) == set()
     con_idx = sqlite3.connect(str(db))
     try:
@@ -464,8 +451,8 @@ def test_old_head_upgrade_preserves_rows_and_no_reuse(tmp_path, use_db):
     finally:
         con_idx.close()
 
-    # d6恰好新增两张独立账本；其余表不得丢失或新增。
-    assert after["table_count"] == before["table_count"] + 2
+    # d6 新增两张独立账本；b3 再新增五张 M2 表；其余表不得丢失或新增。
+    assert after["table_count"] == before["table_count"] + 7
 
     assert _fk_check(db) == []
     # 序列：现有 sqlite_sequence 行不得改；只允许新增 ai_characters 一条（b2a 重建装 AUTOINCREMENT）。

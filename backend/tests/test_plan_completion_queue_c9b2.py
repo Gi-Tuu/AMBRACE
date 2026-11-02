@@ -52,7 +52,7 @@ def test_failed_business_write_or_ack_never_loses_work(c9b_world,monkeypatch,tmp
                 assert await db.scalar(select(func.count()).select_from(model)) == int(committed)
         with sqlite3.connect(queue.database_path()) as db:
             state,payload = db.execute("SELECT state,payload FROM extraction_tasks").fetchone()
-            assert state == ("leased" if fault == "ack_false" else "retry")
+            assert state == "retry"  # ack_false/ack/ledger 都保留可重试工作
             assert "source_id" in payload
             # A false lease-token ack leaves durable work until normal expiry recovery.
             db.execute("UPDATE extraction_tasks SET available_at=0,lease_until=0")

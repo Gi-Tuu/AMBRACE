@@ -93,6 +93,11 @@ from app.models.life import (
 from app.models.memory import (
     ConversationTopic,
     DailySummary,
+    MemoryReallowGrant,
+    MemoryRestoreQuarantine,
+    MemorySourceEvent,
+    MemoryTombstone,
+    MemoryWriteReceipt,
     LorebookEntry,
     Memory,
     MemoryArchive,
@@ -145,6 +150,11 @@ CHARACTER_DELETE_SPECS = [
     (ReflectionLog, "character_id"),
     (MemoryArchive, "character_id"),
     (Memory, "character_id"),
+    (MemoryTombstone, "character_id"),
+    (MemoryWriteReceipt, "character_id"),
+    (MemoryReallowGrant, "character_id"),
+    (MemoryRestoreQuarantine, "character_id"),
+    (MemorySourceEvent, "character_id"),
     # B2a：两表均以 character_id 为角色容器（见模块 docstring）；WorldFact 先删，
     # 便于失败注入证明同一事务可回滚。
     (WorldFact, "character_id"),

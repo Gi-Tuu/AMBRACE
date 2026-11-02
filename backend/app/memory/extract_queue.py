@@ -23,9 +23,19 @@ def database_path() -> Path:
     return _QUEUE_FILE.with_suffix(".sqlite3")
 
 
+def _event_key(pair):
+    source = pair.get("source_id")
+    uid = pair.get("source_event_uid")
+    if uid:
+        return f"source:{uid}"
+    if source is not None:
+        return f"message:{source}"
+    return f"anonymous:{uuid.uuid4().hex}"
+
+
 def _insert(db, session_id, pair):
     source = pair.get("source_id")
-    key = f"message:{source}" if source is not None else f"anonymous:{uuid.uuid4().hex}"
+    key = _event_key(pair)
     db.execute(
         "INSERT OR IGNORE INTO extraction_tasks "
         "(event_key,session_id,source_id,payload,state,created_at,available_at) "
@@ -161,10 +171,30 @@ def pending_sessions(max_age: float) -> list[int]:
             "GROUP BY session_id ORDER BY MIN(id) LIMIT 50", (now, now - max_age))]
 
 
-def remove_source(session_id: int, uid) -> None:
+def remove_source(session_id: int, uid, source_event_uid=None) -> None:
     with _transaction() as db:
-        db.execute("UPDATE extraction_tasks SET state='succeeded',payload='{}' "
-                   "WHERE session_id=? AND source_id=? AND state IN ('pending','retry')", (session_id, uid))
+        if source_event_uid:
+            db.execute("UPDATE extraction_tasks SET state='succeeded',payload='{}' "
+                       "WHERE session_id=? AND source_id=? AND event_key=? "
+                       "AND state IN ('pending','retry')",
+                       (session_id, uid, f"source:{source_event_uid}"))
+        else:
+            db.execute("UPDATE extraction_tasks SET state='succeeded',payload='{}' "
+                       "WHERE session_id=? AND source_id=? AND state IN ('pending','retry')",
+                       (session_id, uid))
+
+
+def is_pending(source_id, source_event_uid=None) -> bool:
+    """Exact generation check for catchup; legacy rows without UID keep old blocking scope."""
+    with _transaction() as db:
+        _recover(db, time.time())
+        if source_event_uid:
+            return db.execute(
+                "SELECT 1 FROM extraction_tasks WHERE event_key=? AND state!='succeeded' LIMIT 1",
+                (f"source:{source_event_uid}",)).fetchone() is not None
+        return db.execute(
+            "SELECT 1 FROM extraction_tasks WHERE source_id=? AND event_key LIKE 'message:%' "
+            "AND state!='succeeded' LIMIT 1", (source_id,)).fetchone() is not None
 
 
 def pending_source_ids() -> set[int]:

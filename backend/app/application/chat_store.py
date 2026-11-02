@@ -135,7 +135,12 @@ async def _persist_user_message(
                          extra_meta=_q)
         db.add(um)
         await db.flush()
+        await db.refresh(um)
         user_msg_id = um.id
+        from app.memory import source_binding
+        if source_binding.enabled():
+            await source_binding.sign_chat_message(
+                db, um, user_id=user_id, character_id=character_id)
         # P-fix（2026-08-31）：SSE 流式路径经本函数落用户消息时补刷新 chat_sessions.updated_at，
         # 与 chunked/主动路径一致（agent 落库处同样写 updated_at=now naive UTC）。
         _sess = (await db.execute(
@@ -148,6 +153,7 @@ async def _persist_user_message(
             "id": um.id, "session_id": session_id, "sender_type": "user",
             "content": um.content, "created_at": um.created_at.isoformat(),
             "extra_meta": um.extra_meta,
+            "_source_event_uid": getattr(um, "source_event_uid", None),
         }
     # 3.10 事件流水（P0）：用户消息（HTTP/WS-chunked/SSE 三路径统一口；save_user_message=False 时不发）
     if user_msg_id:

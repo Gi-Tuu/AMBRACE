@@ -125,6 +125,8 @@ AGENT_FLAGS = {
     # memory_write_receipt 开=save_memory 写分支 / supersede_memory 异步写 memory_write_receipts
     #   （终态追踪「这条记忆为什么在/不在」）；关=完全跳过（不写不读，逐字节旧链路）。
     "memory_write_receipt": False,
+    # M2 2a：来源证明权威链默认关；关=旧路径逐字节不变、零写入（2a 不接聊天）
+    "memory_source_proof_v1": False,
     # Ariadne 模块F（2026-09-04）：Curated Knowledge 编纂知识层（world_facts 加 kind 分治 + 确定性注入）
     "curated_knowledge": True,  # 已转正（2026-10-02）：生产自 2026-09-05 起已开、非灰度；默认改为开（行为与现网一致），回退＝置 False
     # Ariadne 模块G（2026-09-04）：前瞻意图。enabled=写入（extractor 便车落表）；
@@ -207,11 +209,6 @@ AGENT_FLAGS = {
     # 见 application/chat/streaming.py run_stream_mcp_tool_stage + sink("tool_result", …)）；
     # 关=流式不注入（旧行为，零变化）。默认关（灰度验证后再全量）。
     "mcp_stream_declarations": False,  # 默认关（用例钉死：test_mcp_phase2::test_mcp_declarations_stream_empty）；生产已由 runtime_flags 拨开（2026-09-08）
-    # ── 工具轨迹治理 R5（2026-09-09，方案 §4.5）──
-    # agent_tool_exec_trace 开=插件/内置工具每次执行（tool.executed 事件）落一条 agent_task_logs
-    # （trigger=tool），让「工具轨迹」能看到真实工具成败；关=不写（默认，零写放大）。
-    # MCP 工具不落（已有 mcp_call_logs，前端 MCP 分区读取，避免双记）。
-    "agent_tool_exec_trace": True,  # 已转正（2026-10-02）：生产自 2026-09-08 起已开、非灰度；默认改为开（行为与现网一致），回退＝置 False
     # ── 主动复习「回忆化」+ 过期计划记忆治理（2026-09-09，L0-L4）──
     # 设计意图（用户定调）：复习=回忆/怀旧，把旧记忆当往事回味，不当"当前仍成立/即将发生"续写叮嘱。
     # review_exclude_expired_plan 开=复习选片/情境复习排除过期计划与瞬时状态（L1，默认开；关=旧选片）；

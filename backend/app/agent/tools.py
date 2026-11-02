@@ -266,6 +266,78 @@ def sync_plugin_tools(viewer_user_id: int | None = None, *,
     return count
 
 
+_garden_session_factory = None  # 测试可注入隔离 engine；生产为 None＝走全局
+
+
+async def _garden_character_owned(user_id: int, character_id: int) -> bool:
+    try:
+        from app.db.database import async_session_factory as _global_sf
+        from app.models.character import AICharacter
+        from app.application.tenant_service import tenant_scope_ids
+        _sf = _garden_session_factory or _global_sf
+        async with _sf() as db:
+            char = await db.get(AICharacter, int(character_id))
+            if char is None:
+                return False
+            scope = await tenant_scope_ids(db, int(user_id))
+        return int(char.user_id) in {int(x) for x in scope}
+    except Exception:
+        return False
+
+
+async def _garden_available(user_id: int) -> bool:
+    """插件可见且启用；调用者家庭/租户口径由 registry 正式谓词裁决。"""
+    try:
+        from app.plugins import registry
+        plugin = registry.get_plugin("garden_forum") or {}
+        if not plugin.get("enabled"):
+            return False
+        tenant = await registry.resolve_viewer_tenant(user_id)
+        names = {p.get("name") for p in registry.list_plugins(
+            viewer_user_id=user_id, viewer_tenant_id=tenant)}
+        return "garden_forum" in names
+    except Exception:
+        return False
+
+
+async def _execute_garden_readonly(payload: dict) -> dict:
+    """花园只读工具：由 chat 预读经 ToolRunner 调用；只读、无观察/记忆/公开写。"""
+    from app.plugins import registry
+    entry = registry._loaded.get("garden_forum") or {}
+    mod = entry.get("module")
+    fn = getattr(mod, "run_chat_readonly", None)
+    if fn is None:
+        return {"ok": False, "text": "【花园只读失败】插件未加载或接口不可用；本轮不要编造花园内容。"}
+    try:
+        if not await _garden_available(int(payload.get("user_id"))):
+            return {"ok": False, "text": "【花园只读失败】花园插件当前不可见或未启用；本轮不要编造花园内容。"}
+        if not await _garden_character_owned(int(payload.get("user_id")), int(payload.get("character_id"))):
+            return {"ok": False, "text": "【花园只读失败】角色不属于当前调用者；本轮不要编造花园内容。"}
+        check = getattr(mod, "is_garden_browse_request", None)
+        if check is not None and not check(payload.get("user_message")):
+            return {"ok": False, "text": "【花园只读失败】本轮不是明确的花园浏览请求，未读取。"}
+        cid = int(payload.get("character_id"))
+        uid = int(payload.get("user_id"))
+        cfg = dict((entry.get("info") or {}).get("config") or {})
+        cfg.update(registry._db_config.get("garden_forum") or {})
+        try:
+            cfg.update(mod.sdk.get_config() or {})
+        except Exception:
+            pass
+        if cfg.get("garden_forum_on") is not True:
+            return {"ok": False, "text": "【花园只读失败】花园功能未开启；本轮不要编造花园内容。"}
+        result = await fn(cid, uid, cfg, mod.store.load())
+        if not await _garden_available(uid):
+            return {"ok": False, "text": "【花园只读失败】读取期间插件被停用/不可见，结果已丢弃。"}
+        if not await _garden_character_owned(uid, int(cid)):
+            return {"ok": False, "text": "【花园只读失败】读取期间角色归属变化，结果已丢弃。"}
+        return {"ok": bool(result.get("ok")), "text": str(result.get("text") or ""),
+                "count": int(result.get("count") or 0), "code": str(result.get("code") or "")}
+    except Exception as e:
+        _logger.warning("garden_read failed: type=%s", type(e).__name__)
+        return {"ok": False, "text": "【花园只读失败】读取异常；本轮不要编造花园内容。"}
+
+
 def _register_builtin_tools() -> None:
     # 4 个内置工具（search/image_gen/note_calendar/note_memo）的执行入口改由
     # app/tools/builtin/*.py 注册（AMBRACE 步骤 8），此处不再登记，避免重复/占位登记。
@@ -287,6 +359,13 @@ def _register_builtin_tools() -> None:
     ))
     # ── 内部 AI 行为工具（P0-1b，2026-08-16）──
     # 系统内部行为（非用户可见）：scope=None 无权限门禁；统一生命周期/tool.executed 事件/异常隔离
+    register_tool(ToolSpec(
+        name="garden_read",
+        description="花园只读：读取当前角色绑定的公开帖子；仅明确浏览请求时使用，不写回。",
+        risk_level=RISK_LOW,
+        idempotent=False,
+        execute=_execute_garden_readonly,
+    ))
     register_tool(ToolSpec(
         name="memory_extract",
         description="记忆提炼：从对话提取用户信息/事件沉淀记忆（批量节流）",

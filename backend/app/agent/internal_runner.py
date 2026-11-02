@@ -59,6 +59,7 @@ def _dispatch(tool_name: str, payload: dict):
                 user_msg=p.get("user_msg") or "",
                 ai_msg=p.get("ai_msg") or "",
                 source_id=p.get("source_id"),
+                **({"source_event_uid": p["source_event_uid"]} if p.get("source_event_uid") else {}),
             )
         return _run
     if tool_name == "memory_fact_check":

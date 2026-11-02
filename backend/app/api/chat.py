@@ -629,8 +629,8 @@ async def delete_message(
 ):
     """删除指定聊天消息（同步删除关联记忆）"""
     from app.models.chat import ChatMessage
-    from app.models.memory import Memory
-    from sqlalchemy import select
+    from app.models.memory import Memory, ProcessedExtraction
+    from sqlalchemy import delete, select
 
     result = await db.execute(select(ChatMessage).where(ChatMessage.id == message_id))
     msg = result.scalar_one_or_none()
@@ -671,6 +671,11 @@ async def delete_message(
     except Exception as e:
         _logger.warning("Failed to delete memories for msg %d: %s", message_id, e)
 
+    from app.memory import source_binding as _source_binding
+    if _source_binding.enabled() and getattr(msg, "source_event_uid", None):
+        await _source_binding.revoke_chat_message(db, msg, user_id=user_id)
+    await db.execute(delete(ProcessedExtraction).where(
+        ProcessedExtraction.user_message_id == message_id))
     await db.delete(msg)
     await db.commit()
     # 3.10 事件流水（P1）：消息删除清算（幂等键绑被删 id，重复删除不产生第二条；

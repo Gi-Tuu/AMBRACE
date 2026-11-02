@@ -814,6 +814,9 @@ async def assert_curated(
         same = next((r for r in existing
                      if (r.object_value or "").strip() == obj
                      and not _cross_source_merge_blocked(source, r.source)), None)
+    from app.memory.source_binding import guard_extraction_write
+
+    await guard_extraction_write(db)
     if same is not None:
         merge_curated_evidence(
             same, sources=sources, links=links, verify_state=verify_state,

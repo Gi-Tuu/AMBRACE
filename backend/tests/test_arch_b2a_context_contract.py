@@ -268,11 +268,28 @@ def _real_build(*, stream=None, **over):
     return asyncio.run(cb.build_context(_full_state(**over), stream=stream))
 
 
+def _freeze_now(monkeypatch):
+    """只冻结需要逐字比较当前时间的用例，避免影响其他真实时间边界测试。"""
+    from datetime import datetime as _dt
+    import app.agent.context.section_world as _sw
+    import app.agent.context_builder as _cb
+
+    class _FrozenDateTime(_dt):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 30, 12, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr(_sw, "datetime", _FrozenDateTime)
+    monkeypatch.setattr(assembly_mod, "datetime", _FrozenDateTime)
+    monkeypatch.setattr(_cb, "datetime", _FrozenDateTime)
+
+
 CASES7 = [("stream_none", {"stream": None}), ("stream_true", {"stream": True})]
 
 
 @pytest.mark.parametrize("name,kw", CASES7, ids=[c[0] for c in CASES7])
-def test_real_pipeline_full_state_旧新一致(asm_env, name, kw):
+def test_real_pipeline_full_state_旧新一致(asm_env, name, kw, monkeypatch):
+    _freeze_now(monkeypatch)
     from app.agent.context import message_policy as mp
     import app.agent.context_builder as cb
 
@@ -294,7 +311,8 @@ def test_real_pipeline_full_state_旧新一致(asm_env, name, kw):
         assert _norm(a[k]) == _norm(b[k]), f"{name}: state[{k}] 不一致"
 
 
-def test_real_pipeline_缺少user与空历史仍走真实链路(asm_env):
+def test_real_pipeline_缺少user与空历史仍走真实链路(asm_env, monkeypatch):
+    _freeze_now(monkeypatch)
     a = _real_build(user_message="", retrieved_memories=[])
     b = _real_build(user_message="", retrieved_memories=[])
     assert _norm(a["context_messages"]) == _norm(b["context_messages"])

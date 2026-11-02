@@ -1413,6 +1413,9 @@ def test_批5一_persist的取库与事件与后台任务三个桩名全经chat_
         async def flush(self):
             pass
 
+        async def refresh(self, _obj):
+            pass
+
         async def commit(self):
             seen.append("commit")
 
@@ -1451,7 +1454,7 @@ def test_批5一_persist的取库与事件与后台任务三个桩名全经chat_
     assert mid == 77
     assert info == {"id": 77, "session_id": 9, "sender_type": "user",
                     "content": "第一次见面", "created_at": "2026-10-02T03:04:05",
-                    "extra_meta": None}, "落库返回形状漂移"
+                    "extra_meta": None, "_source_event_uid": None}, "落库返回形状漂移"
     assert seen[0] == "factory", "取库没走 chat_service 桩"
     assert sess.updated_at is not None, "P-fix 刷新 updated_at 丢了"
     assert seen[-2:] == [("event", chat_store._ET.CHAT_MESSAGE_SENT.value, "chat_message", 77),
@@ -2126,7 +2129,7 @@ def test_批5三_run_post_processing的后台任务与结算与生图全部现�
     assert by["save_bio"] == ((7, None, 3),), by["save_bio"]
     assert by["save_status"] == ((7, None, 3),), by["save_status"]
     assert by["mem_extract"][0] == (9, 7, 3, "用户话", "AI话"), by["mem_extract"]
-    assert by["mem_extract"][1] == {"source_id": 1002}, by["mem_extract"]
+    assert by["mem_extract"][1] == {"source_id": 1002, "source_event_uid": None}, by["mem_extract"]
     assert by["initial_bio"] == ((7, 3),)
     assert by["bump"] == ((7, 3),)
     assert by["drive"] == ((7, 3),)
@@ -2200,7 +2203,8 @@ def test_批5三_端点经chat_service现取搬走的run_post_processing(monkeyp
     assert len(calls) == 1, "端点没在 chat_service 命名空间解析搬走的公共收尾"
     assert calls[0][0] == (9, 2, 3, "在吗", {"reasoning": "想说一句", "status_update": "在吃饭"},
                            "在的。", 9001, 11), calls[0][0]
-    assert calls[0][1] == {"reliability": True, "gen_prompt": None, "img_text": None}, calls[0][1]
+    assert calls[0][1] == {"reliability": True, "gen_prompt": None, "img_text": None,
+                           "source_event_uid": None}, calls[0][1]
 
 
 # ───────── ⑬-8 chat_tooling 的依赖纪律（源码锚定） ─────────

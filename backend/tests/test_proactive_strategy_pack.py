@@ -299,20 +299,23 @@ def test_sent_today_按北京日界去重():
     from app.models.character import AICharacter, ProactiveMessageLog
     from app.models.user import User
 
-    uid, cid, other = 8901, 8902, 8903
-
     async def _seed():
         async with async_session_factory() as db:
-            db.add(User(id=uid, username="x6_user", nickname="小明"))
-            db.add(AICharacter(id=cid, user_id=uid, name="小A"))
-            db.add(AICharacter(id=other, user_id=uid, name="小B"))
+            user = User(username="x6_user", nickname="小明")
+            db.add(user)
             await db.flush()
+            first = AICharacter(user_id=user.id, name="小A")
+            second = AICharacter(user_id=user.id, name="小B")
+            db.add_all([first, second])
+            await db.flush()
+            cid, other = first.id, second.id
             db.add(ProactiveMessageLog(
                 character_id=cid, message_type="birthday", content="生日快乐",
             ))
             await db.commit()
+            return cid, other
 
-    asyncio.run(_seed())
+    cid, other = asyncio.run(_seed())
     assert asyncio.run(strategy_mod.sent_today(cid, "birthday")) is True
     assert asyncio.run(strategy_mod.sent_today(cid, "holiday")) is False
     assert asyncio.run(strategy_mod.sent_today(other, "birthday")) is False

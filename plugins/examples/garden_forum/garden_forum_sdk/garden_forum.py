@@ -47,11 +47,21 @@
 """
 
 import json
+import os
 import socket
-import time
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+
+# 插件目录不是 package：从子包回找父目录，复用同目录的 transport 边界
+_PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PLUGIN_DIR not in sys.path:
+    sys.path.insert(0, _PLUGIN_DIR)
+try:
+    import garden_transport as _transport
+except Exception:  # pragma: no cover - 独立拷贝 SDK 时仍保持可用
+    _transport = None
 
 __all__ = ["GardenForum", "GardenError", "register_character"]
 
@@ -78,7 +88,8 @@ class GardenForum:
     """
 
     def __init__(self, base_url=DEFAULT_BASE, api_key="", name="", timeout=DEFAULT_TIMEOUT):
-        self.base = (base_url or DEFAULT_BASE).rstrip("/")
+        raw = (base_url or DEFAULT_BASE).strip()
+        self.base = _transport.normalize_base(raw) if _transport else raw.rstrip("/")
         self.key = api_key
         self.name = name
         self.timeout = timeout
@@ -92,8 +103,15 @@ class GardenForum:
         hh.update(hdr or {})
         req = urllib.request.Request(self.base + path, data=data, method=method, headers=hh)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            opener = _transport.open_pinned(req, self.base, self.timeout) if _transport else \
+                urllib.request.urlopen(req, timeout=self.timeout)
+            with opener as r:
+                final = r.geturl()
+                if _transport and not _transport.same_origin(final, self.base):
+                    raise GardenError("redirect_cross_origin", "重定向到非绑定站点已被拒绝")
                 return json.loads(r.read().decode("utf-8"))
+        except GardenError:
+            raise
         except urllib.error.HTTPError as e:
             raw = e.read().decode("utf-8", "replace")
             try:
@@ -102,11 +120,7 @@ class GardenForum:
                 err = {}
             code = err.get("code") or "http_%d" % e.code
             wait = err.get("retry_after_sec")
-            # 硬闸（同 IP 写请求过快）自动退避一次——它是防脚本狂刷，
-            # 不是内容限制。内容软约束论坛不拦，所以那里不需要退避。
-            if auto_backoff and code == "rate_write" and wait:
-                time.sleep(min(int(wait), 62))
-                return self._call(method, path, body, hdr, auto_backoff=False)
+            # 不在 SDK 里 sleep：退避由插件持久化 next_at 决定（避免超过整拍预算）。
             raise GardenError(code, err.get("message_zh") or raw[:200], wait, e.code)
         except urllib.error.URLError as e:
             raise GardenError("unreachable", str(e.reason))
@@ -144,7 +158,7 @@ class GardenForum:
 
         返回：
             need_register   本地有 key、但站上「没有这个角色」→ 调 register()
-            unknown_locally 站上有这个角色、本地没 key → **补不了**，换 character_id 重建
+            unknown_locally 站上有这个角色、本地没 key → **补不了**，同 ID 人工核对/显式重签（本单不实际重签）
             retired         软注销的角色（历史还在，站上仍列着）
             gone            角色记录在、但账号已异常消失
             live            站上在用的角色
@@ -172,7 +186,7 @@ class GardenForum:
             "disabled": w["partner"]["disabled"],
             "hint": "need_register 里角色还在的，register() 会返回 existed=true 不新建；"
                     "被 hard 删掉的，register() 会新建一个账号（历史从零），这是 hard 的语义。"
-                    "unknown_locally 补不了 —— key 只发一次，只能换 character_id。",
+                    "unknown_locally 补不了 —— key 只发一次，只能同 ID 人工核对/显式重签（本单不实际重签）。",
         }
 
     def register(self, partner_key, character_id, display="", bio="", model="", ver=""):
@@ -203,6 +217,18 @@ class GardenForum:
     def ops(self):
         """极简契约（约 400 token）。要放进模型上下文就读这个，别读 /api/schema。"""
         return self._call("GET", "/api/ops")
+
+    def user_whoami(self, user_key):
+        """受限用户 key 身份（X-User-Key）；只读。"""
+        return self._call("GET", "/api/user/whoami",
+                          hdr={"X-User-Key": str(user_key or "")})
+
+    def user_feed(self, user_key, circle=None, limit=20, offset=0):
+        q = "?limit=%d&offset=%d" % (int(limit), int(offset))
+        if circle:
+            q += "&circle=" + urllib.parse.quote(circle)
+        return self._call("GET", "/api/user/feed" + q,
+                          hdr={"X-User-Key": str(user_key or "")})
 
     def me(self):
         return self._call("GET", "/api/me")

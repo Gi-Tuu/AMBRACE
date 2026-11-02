@@ -338,8 +338,11 @@ async def upsert_user_fact(
         _logger.warning("user_fact slot write rejected slot=%s user=%s reason=%s value=%.60s",
                         slot, user_id, reason, value)
         return None
+    from app.memory.source_binding import SourceIdentityError, guard_extraction_write
+
     try:
         async with async_session_factory() as db:
+            await guard_extraction_write(db)
             row = (await db.execute(
                 select(GlobalUserFact).where(
                     GlobalUserFact.user_id == user_id,
@@ -365,6 +368,8 @@ async def upsert_user_fact(
                 row.updated_at = now_naive_utc()
             await db.commit()
             return old, value
+    except SourceIdentityError:
+        raise
     except Exception:
         return None
 
@@ -474,8 +479,12 @@ async def settle_location_on_home_return(user_id: int, text: str,
         home_city = None
     if not home_city:
         return False
+    from app.memory.source_binding import SourceIdentityError
+
     try:
         change = await upsert_user_fact(user_id, "location", home_city, source=source)
         return change is not None
+    except SourceIdentityError:
+        raise
     except Exception:
         return False

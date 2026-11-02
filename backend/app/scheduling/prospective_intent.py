@@ -759,7 +759,10 @@ async def upsert_intent(
     if side not in ("self", "user"):
         side = classify_intent_side(content, kind)
 
+    from app.memory.source_binding import guard_extraction_write
+
     async with async_session_factory() as db:
+        await guard_extraction_write(db)
         if source_message_id is not None:
             existed = (await db.execute(
                 select(ProspectiveIntent).where(

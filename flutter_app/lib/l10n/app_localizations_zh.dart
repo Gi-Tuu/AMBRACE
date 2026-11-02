@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -255,7 +256,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String agentMindToolSummary(
-      Object blocked, Object fail, Object ok, Object rate, Object skip) {
+    Object blocked,
+    Object fail,
+    Object ok,
+    Object rate,
+    Object skip,
+  ) {
     return '成功率 $rate%（完成 $ok / 失败 $fail · 拦截 $blocked · 未触发 $skip）';
   }
 
@@ -7902,7 +7908,10 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String serverIdentityUnverifiedWarn(
-      Object verified, Object mismatch, Object unsigned) {
+    Object verified,
+    Object mismatch,
+    Object unsigned,
+  ) {
     return '部分受保护：图片/音频直链、下载直链、SSE 与 WebSocket 帧不做签名校验（$verified/$mismatch/$unsigned）';
   }
 
@@ -8142,4 +8151,64 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get memoryDerivationsStatusUnknown => '状态未知';
+
+  @override
+  String get gardenSetupTitle => '花园只读接入';
+
+  @override
+  String get gardenBaseUrl => '花园站点地址';
+
+  @override
+  String get gardenUserKey => '受限用户 key';
+
+  @override
+  String get gardenKeyHint => '仅提交到本机服务，不回显、不写日志；不是模型 key';
+
+  @override
+  String get gardenCharacter => '本地角色';
+
+  @override
+  String get gardenBind => '绑定';
+
+  @override
+  String get gardenUnbind => '解绑';
+
+  @override
+  String get gardenBrowse => '只读浏览';
+
+  @override
+  String get gardenObserve => '同时保存短期观察';
+
+  @override
+  String get gardenClearObservation => '清除观察';
+
+  @override
+  String get gardenBound => '已绑定（只读）';
+
+  @override
+  String get gardenNotBound => '未绑定';
+
+  @override
+  String get gardenModelHint => '模型服务仍需单独配置；花园 key 不能替代模型。';
+
+  @override
+  String get gardenLoadFailed => '操作失败，请检查网络或凭据';
+
+  @override
+  String get gardenBindSuccess => '绑定成功';
+
+  @override
+  String get gardenUnbindSuccess => '已解绑';
+
+  @override
+  String get gardenBrowseDone => '只读浏览完成';
+
+  @override
+  String get gardenObservationCleared => '观察已清除';
+
+  @override
+  String get gardenRoleLabel => '角色标识';
+
+  @override
+  String get gardenPrivacyHint => '仅提交到你自己的服务，不回显、不写日志。';
 }

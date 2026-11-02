@@ -7,7 +7,7 @@ from app.models.user import User, UserState, UserDndSettings, PrivacyRequest, Br
 from app.models.character.creation_request import CharacterCreationRequest
 from app.models.character import AICharacter, CharacterState, CharacterStateHistory, RelationshipEvent, StateTriggerLog, StorylineEvent, ProactiveStorylineItem, ProactiveSettings, HolidayPreference, ProactiveMessageLog, ProactiveTriggerLog, RelationalDrive, ThoughtPool
 from app.models.chat import ChatSession, ChatMessage, ChatGroup, ChatGroupMember, ChatGroupMessage, GroupMemory, GroupCharCognition, AIChat
-from app.models.memory import Memory, DailySummary, ConversationTopic, StageMemory, ReflectionLog, ProcessedExtraction, SharedEvent, WeaveCard, WeaveCardMemory, WeaveCardCharacter, LorebookEntry, WorldFact, MemoryArchive, MemoryWriteReceipt, ProspectiveIntent, PlanItem, PlanCompletionEvidence
+from app.models.memory import Memory, DailySummary, ConversationTopic, StageMemory, ReflectionLog, ProcessedExtraction, SharedEvent, WeaveCard, WeaveCardMemory, WeaveCardCharacter, LorebookEntry, WorldFact, MemoryArchive, MemoryWriteReceipt, ProspectiveIntent, PlanItem, PlanCompletionEvidence, SourceSeq, MemorySourceEvent, MemoryTombstone, MemoryReallowGrant, MemoryRestoreQuarantine
 from app.models.life import LifeState, LifeActivityLog, LifeArtifact, LifeInterest, LifeGoal, LifeSchedule, LifeFollowup, LifeChatIntent, AIDiary, UserDiary, UserMemo, AIMoment, MomentLike, MomentAILike, MomentComment, MomentReadMark, ScheduledEvent, TimelineEvent, ImageGenTask, ImageGenConfig, UserRhythm, UserWorkflow, UserEmojiPack, UserCustomEmoji
 from app.models.pet import Pet, PetActivity
 from app.models.agent import AgentTask, AgentTaskLog, LlmUsage, LlmUsageLimit, UserLlmLimit, TaskLlmConfig, EmotionCareTask, ToolPermission, PendingPermissionAction
@@ -134,6 +134,12 @@ __all__ = [
     "WorldFact",
     "MemoryArchive",
     "MemoryWriteReceipt",
+    "SourceSeq",
+    "MemorySourceEvent",
+    "MemoryTombstone",
+    "MemoryReallowGrant",
+    "MemoryRestoreQuarantine",
+
     "ProspectiveIntent",
     "PlanItem",
     "PlanCompletionEvidence",

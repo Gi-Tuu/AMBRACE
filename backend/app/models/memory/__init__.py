@@ -8,7 +8,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -27,6 +27,7 @@ class Memory(Base):
     sub_type: Mapped[str | None] = mapped_column(String(30), nullable=True)  # 子分类: name/age/location/job/food/hobby/...
     source: Mapped[str | None] = mapped_column(String(20), nullable=True)  # 来源: chat/moment/diary/bio
     source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 来源消息ID
+    source_event_uid: Mapped[str | None] = mapped_column(String(64), ForeignKey("memory_source_events.event_uid", ondelete="RESTRICT"), nullable=True)  # M2 权威来源事件；旧行 NULL
     write_key: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 群聊归属（P3-3 按群节流：NULL=旧数据/非群聊，按旧行为不区分群）
     speaker_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 说话人归属（user_id 或 character_id，P0 2026-08-15）
@@ -347,13 +348,107 @@ class MemoryWriteReceipt(Base):
     action: Mapped[str] = mapped_column(String(20), nullable=False)  # create/update/merge/supersede/stale/reject/downgrade/utility_feedback
     reason: Mapped[str | None] = mapped_column(String(255), nullable=True)  # 人类可读原因
     detail_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # 结构化补充（命中 id / 相似度 / 来源等）
+    source_event_uid: Mapped[str | None] = mapped_column(String(64), ForeignKey("memory_source_events.event_uid"), nullable=True)  # M2 权威来源事件；旧行 NULL
+    owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # M2 权威归属；旧行 NULL
+    actor_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    actor_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    envelope_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    authoritative: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     # 索引：按角色 + 时间回看（与单 memory_id 反查）；不加逐列 index=True，避免 create_all 与 upgrade 漂移。
     __table_args__ = (
         Index("idx_mwr_char_created", "character_id", "created_at"),
         Index("idx_mwr_memory", "memory_id"),
+        Index("idx_mwr_source_event", "source_event_uid"),
+        Index("uq_mwr_idem_authoritative", "idempotency_key", unique=True,
+              sqlite_where=__import__("sqlalchemy").text("authoritative = 1 AND idempotency_key IS NOT NULL")),
     )
+
+
+class SourceSeq(Base):
+    """M2 来源事件全局单调序号；单行 id=1，只增不回退。"""
+    __tablename__ = "source_seq"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    __table_args__ = (CheckConstraint("id = 1", name="ck_source_seq_single_row"),)
+
+
+class MemorySourceEvent(Base):
+    """M2 服务端签发的来源事件；只存内容 hash，不存正文。"""
+    __tablename__ = "memory_source_events"
+
+    event_uid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_row_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    event_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("kind", "source_row_id", "generation", name="uq_mse_source_generation"),
+        CheckConstraint("source_row_id > 0", name="ck_mse_row_positive"),
+        CheckConstraint("generation > 0", name="ck_mse_generation_positive"),
+        CheckConstraint("seq > 0", name="ck_mse_seq_positive"),
+        CheckConstraint("owner_user_id > 0", name="ck_mse_owner_positive"),
+        CheckConstraint("character_id > 0", name="ck_mse_char_positive"),
+        Index("idx_mse_owner_char_time", "owner_user_id", "character_id", "event_at"),
+        Index("idx_mse_session", "session_id"),
+    )
+
+
+class MemoryTombstone(Base):
+    __tablename__ = "memory_tombstones"
+
+    memory_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    epoch: Mapped[int] = mapped_column(Integer, nullable=False)
+    revoked_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    confirm_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    state: Mapped[str] = mapped_column(String(24), nullable=False, default="closed", server_default="closed")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("idx_mt_owner_char", "owner_user_id", "character_id"),
+    )
+
+
+class MemoryReallowGrant(Base):
+    __tablename__ = "memory_reallow_grants"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    memory_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    epoch: Mapped[int] = mapped_column(Integer, nullable=False)
+    confirm_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    invalidated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("memory_id", "epoch", name="uq_mrg_memory_epoch"),
+        Index("idx_mrg_memory", "memory_id"),
+    )
+
+
+class MemoryRestoreQuarantine(Base):
+    __tablename__ = "memory_restore_quarantine"
+
+    event_uid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 删除归属；旧恢复可空
+    character_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reason: Mapped[str] = mapped_column(String(255), nullable=False)
+    restored_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
 # ── prospective_intent.py ──

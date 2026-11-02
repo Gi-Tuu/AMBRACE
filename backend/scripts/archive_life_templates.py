@@ -75,7 +75,7 @@ FINGERPRINT_COLUMNS = (
     "departed_names", "why_it_matters", "is_core", "core_category", "confirmation_count",
     "contradiction_count", "reliability_score", "chain_id", "parent_id", "node_type",
     "version", "status", "superseded_by", "valid_from", "valid_to", "derived_from_ids",
-    "created_at", "updated_at",
+    "created_at", "updated_at", "source_event_uid",
 )
 
 # 已核实的 memories 指针列（2026-10-14 schema 扫描口径）；不在表内者＝未知引用 → 保留
@@ -87,6 +87,8 @@ KNOWN_POINTERS = {
     ("weave_card_memories", "memory_id"),
     ("memory_archive", "memory_id"),
     ("memory_write_receipts", "memory_id"),
+    ("memory_tombstones", "memory_id"),
+    ("memory_reallow_grants", "memory_id"),
     ("life_activity_logs", "memory_id"),
     ("life_followups", "memory_id"),
     ("relationship_events", "memory_id"),
@@ -100,6 +102,8 @@ POINTER_REASONS = {
     ("weave_card_memories", "memory_id"): "referenced_weave_card",
     ("memory_archive", "memory_id"): "referenced_archive_row",
     ("memory_write_receipts", "memory_id"): "referenced_receipt",
+    ("memory_tombstones", "memory_id"): "referenced_tombstone",
+    ("memory_reallow_grants", "memory_id"): "referenced_reallow_grant",
     ("life_activity_logs", "memory_id"): "referenced_life_activity",
     ("life_followups", "memory_id"): "referenced_life_followup",
     ("relationship_events", "memory_id"): "referenced_relationship_event",
@@ -113,6 +117,8 @@ POINTER_ID_COLUMNS = {
     ("weave_card_memories", "memory_id"),
     ("memory_archive", "memory_id"),
     ("memory_write_receipts", "memory_id"),
+    ("memory_tombstones", "memory_id"),
+    ("memory_reallow_grants", "memory_id"),
     ("life_activity_logs", "memory_id"),
     ("life_followups", "memory_id"),
     ("relationship_events", "memory_id"),

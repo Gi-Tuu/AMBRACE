@@ -34,6 +34,10 @@ _ROLE_REF_SPECS: dict[tuple[str, str], None] = {
     ("agent_task_logs", "character_id"): None,
     ("image_gen_tasks", "character_id"): None,
     ("memory_write_receipts", "character_id"): None,
+    ("memory_source_events", "character_id"): None,
+    ("memory_tombstones", "character_id"): None,
+    ("memory_reallow_grants", "character_id"): None,
+    ("memory_restore_quarantine", "character_id"): None,
     ("ai_chats", "speaker_id"): None,
 }
 

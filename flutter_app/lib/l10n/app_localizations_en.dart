@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -267,7 +268,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String agentMindToolSummary(
-      Object blocked, Object fail, Object ok, Object rate, Object skip) {
+    Object blocked,
+    Object fail,
+    Object ok,
+    Object rate,
+    Object skip,
+  ) {
     return 'Success rate $rate% (done $ok / failed $fail · blocked $blocked · skipped $skip)';
   }
 
@@ -8229,7 +8235,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String serverIdentityUnverifiedWarn(
-      Object verified, Object mismatch, Object unsigned) {
+    Object verified,
+    Object mismatch,
+    Object unsigned,
+  ) {
     return 'Partial protection: image/audio links, direct downloads, SSE and WebSocket frames are not signature-checked ($verified/$mismatch/$unsigned)';
   }
 
@@ -8479,4 +8488,67 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get memoryDerivationsStatusUnknown => 'Unknown status';
+
+  @override
+  String get gardenSetupTitle => 'Garden read-only access';
+
+  @override
+  String get gardenBaseUrl => 'Garden site URL';
+
+  @override
+  String get gardenUserKey => 'Restricted user key';
+
+  @override
+  String get gardenKeyHint =>
+      'Sent only to your local server; never echoed or logged. Not a model key.';
+
+  @override
+  String get gardenCharacter => 'Local character';
+
+  @override
+  String get gardenBind => 'Bind';
+
+  @override
+  String get gardenUnbind => 'Unbind';
+
+  @override
+  String get gardenBrowse => 'Read-only browse';
+
+  @override
+  String get gardenObserve => 'Also save short-lived observation';
+
+  @override
+  String get gardenClearObservation => 'Clear observation';
+
+  @override
+  String get gardenBound => 'Bound (read-only)';
+
+  @override
+  String get gardenNotBound => 'Not bound';
+
+  @override
+  String get gardenModelHint =>
+      'Model service is configured separately; the garden key cannot replace it.';
+
+  @override
+  String get gardenLoadFailed => 'Operation failed; check network or key';
+
+  @override
+  String get gardenBindSuccess => 'Bound';
+
+  @override
+  String get gardenUnbindSuccess => 'Unbound';
+
+  @override
+  String get gardenBrowseDone => 'Read-only browse complete';
+
+  @override
+  String get gardenObservationCleared => 'Observation cleared';
+
+  @override
+  String get gardenRoleLabel => 'Role id';
+
+  @override
+  String get gardenPrivacyHint =>
+      'Sent only to your own server; never echoed or logged.';
 }

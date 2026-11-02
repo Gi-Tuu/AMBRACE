@@ -64,6 +64,10 @@ def test_影子档只打留痕一个字都不写库(monkeypatch):
 
 
 def test_实落档才写库且正文取用户原话(monkeypatch):
+    from datetime import date
+    from app.memory import fallback as F
+    # 固定锚点：否则真实日期跨月后，“下个月28号”会变成另一个月（CI 2026-11-01 红）。
+    monkeypatch.setattr(F, "_as_base_date", lambda _base: date(2026, 10, 31))
     spy = _Spy()
     monkeypatch.setattr(T, "_execute_note_tool", spy)
     monkeypatch.setitem(_loop.AGENT_FLAGS, GATE, True)

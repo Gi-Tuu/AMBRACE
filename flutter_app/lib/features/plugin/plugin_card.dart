@@ -7,6 +7,7 @@ import 'plugin_chat_screen.dart';
 import 'plugin_webview_screen.dart';
 import 'channel_qr_login_sheet.dart';
 import 'wechat_bridge_secret_screen.dart';
+import 'garden_forum_setup_screen.dart';
 import "package:ai_companion/theme/tokens.dart";
 import 'extensions_screen.dart' show pluginTypeLabel, pluginTypeColor, pluginTypeIcon;
 import 'plugin_forms.dart' show PluginConfigForm, ZeroCodeConfigEditor;
@@ -411,6 +412,23 @@ class PluginCardState extends State<PluginCard> {
                     onSaved: widget.onChanged,
                   ),
                 ),
+            if (name == 'garden_forum' && _enabled)
+              Padding(
+                padding: const EdgeInsets.only(left: 42, top: 8, right: 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      await Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const GardenForumSetupScreen(),
+                      ));
+                      widget.onChanged();
+                    },
+                    icon: const Icon(Icons.key_outlined, size: 16),
+                    label: Text(l10n.gardenSetupTitle),
+                  ),
+                ),
+              ),
             if (name == 'douyin_mcp' && _enabled) ...[
               Padding(
                 padding: const EdgeInsets.only(left: 42, top: 8, right: 8),

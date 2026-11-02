@@ -215,6 +215,7 @@ async def _run_post_processing(
     reliability: bool = False,
     gen_prompt: str | None = None,
     img_text: str | None = None,
+    source_event_uid: str | None = None,
 ) -> None:
     """AI 回复落库后的公共收尾（反思/自述/状态/记忆/话题/复习/关系/状态评估/可靠度/生图；失败静默）。"""
     from app.application import chat_service as _cs  # 被桩依赖与本组常量在 chat_service 命名空间现取
@@ -233,7 +234,7 @@ async def _run_post_processing(
     # 触发记忆提取
     _cs.spawn_background(_cs.add_chat_memory_extraction(
         session_id, character_id, user_id, content, final_text,
-        source_id=user_msg_id,
+        source_id=user_msg_id, source_event_uid=source_event_uid,
     ))
 
     # M2-S5（2026-08-31）：标记截断保底——A 通道标记被 max_tokens 截断（尾部未闭合标记）时，
@@ -249,8 +250,9 @@ async def _run_post_processing(
                         await extract_single(
                             session_id, character_id, user_id, content, final_text,
                             source_id=user_msg_id,
+                            **({"source_event_uid": source_event_uid} if source_event_uid else {}),
                         )
-                        _pending_remove_uid(session_id, user_msg_id)
+                        _pending_remove_uid(session_id, user_msg_id, source_event_uid)
                     except Exception as _pe:
                         _logger.warning("Priority extraction failed src=%s: %s", user_msg_id, _pe)
                 _cs.spawn_background(_priority_extract())

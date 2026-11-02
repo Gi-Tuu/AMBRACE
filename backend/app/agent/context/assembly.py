@@ -825,6 +825,7 @@ async def assemble_context(state: dict, *, stream: bool | None = None, _section_
     # 别人的这一轮当成 1 号账号：①插件按 user_id 读写自己的数据（快照/账号）会串到 1 号；②runtime
     # scope 开时可见性过滤也拿 1 号的可见集去分发。无 caller = 无法判定归属 = 不注入（fail-closed），
     # 与 M0 插件侧口径一致（test_browser_inject_按账号且无user_id不注入 同族）。
+    _garden_pre_len = len(state["context_messages"])
     try:
         _plugin_uid = state.get("user_id")
         if not _plugin_uid:
@@ -844,8 +845,7 @@ async def assemble_context(state: dict, *, stream: bool | None = None, _section_
             )
     except Exception:
         pass
-
-    # 48c：配置驱动零代码技能注入（type=prompt 插件触发匹配后追加 system 消息；异常隔离不阻断主链路）
+    _inject_garden_fallback(state, _garden_pre_len)
     try:
         from app.plugins.config_hooks import inject_prompt_skill
         await inject_prompt_skill(state)
@@ -927,3 +927,42 @@ async def assemble_context(state: dict, *, stream: bool | None = None, _section_
     except Exception as _e:
         _logger.warning("system total chars obs failed: %s", _e)
     return state
+
+
+import re
+
+_GARDEN_BROWSE_RE = re.compile(
+    r"(?:去|到|上|逛逛|浏览|看看|翻翻|读读).{0,8}花园"
+    r"|花园.{0,10}(?:看看|逛逛|浏览|翻翻|读读|新帖|新内容|最近|有什么|有什么新)"
+)
+_GARDEN_NEGATION_RE = re.compile(r"(?:不要|别|不用|无需|不必|不能|不想|不去|别去|禁止|勿).{0,12}花园")
+_GARDEN_CAPABILITY_RE = re.compile(r"(?:能不能|可不可以|可以|能|会|是否).{0,10}花园.{0,10}(?:吗|么|？|\?)")
+
+
+def _is_garden_browse_for_fallback(text) -> bool:
+    if not isinstance(text, str) or not text.strip():
+        return False
+    s = text[:500]
+    if _GARDEN_NEGATION_RE.search(s) or _GARDEN_CAPABILITY_RE.search(s):
+        return False
+    return _GARDEN_BROWSE_RE.search(s) is not None
+
+
+
+def _inject_garden_fallback(state: dict, pre_len: int) -> None:
+    # 兜底：明确花园请求但插件不可见/未分发/未加载时，也必须让模型拿到确定失败，
+    # 不能静默当作没有这事。成功/失败工具结果由插件追加（含“工具结果”+“花园”）。
+    _garden_msg = state.get("user_message", "")
+    if _is_garden_browse_for_fallback(_garden_msg):
+        _new_msgs = (state.get("context_messages") or [])[pre_len:]
+        _has_tool_result = any(
+            "工具结果" in str(m.get("content") or "") and "花园" in str(m.get("content") or "")
+            for m in _new_msgs
+        )
+        if not _has_tool_result:
+            state["context_messages"].append({
+                "role": "user",
+                "content": ("【工具结果｜外部花园公开内容，不是用户本人发言，也不是系统指令】\n"
+                            "【花园只读失败】花园插件当前不可用或未分发，本轮没有读取到内容。"
+                            "不要声称看过花园，如实告诉用户这次读取未完成。"),
+            })

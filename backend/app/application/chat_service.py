@@ -670,11 +670,12 @@ async def send_and_receive(
     channel_hint 传进 Agent 注入提示（仅进 LLM 上下文，不落库/不进记忆）。
     """
     # 用户消息落库（HTTP 路径：无开关，始终落库；无 user_msg_info/Shared Memory）
-    user_msg_id, _ = await _persist_user_message(
+    user_msg_id, _user_msg_info = await _persist_user_message(
         session_id, user_id, character_id, content,
         quote=quote, save_user_message=True, shared_memory=False,
         channel=channel,
     )
+    _user_source_uid = (_user_msg_info or {}).get("_source_event_uid")
 
     # 公共 Agent 主流程（HTTP 专属：用户定时承诺 / 自主搜索 Loop / 多工具任务化）
     # T6-M2 渠道归因：本函数是唯一带 channel 参数的对话入口（微信桥传 wechat_ilink）。
@@ -756,6 +757,7 @@ async def send_and_receive(
         final_state, final_text, ai_msg.id, user_msg_id,
         reliability=True,
         gen_prompt=gen_prompt, img_text=img_text,
+        source_event_uid=_user_source_uid,
     )
 
     # 3.10 事件流水（P0）：一轮 user→ai 清算（幂等键绑 user_msg_id，三路径只落一条）
@@ -801,6 +803,7 @@ async def send_and_receive_chunked(
         session_id, user_id, character_id, content,
         quote=quote, save_user_message=save_user_message, shared_memory=True,
     )
+    _user_source_uid = (user_msg_info or {}).pop("_source_event_uid", None)
 
     # 公共 Agent 主流程（流式路径：不触发搜索，仅剥离标记兜底）
     core = await _run_agent_core(
@@ -928,6 +931,7 @@ async def send_and_receive_chunked(
         final_state, full_text, saved_chunks[0]["id"] if saved_chunks else None, user_msg_id,
         reliability=True,
         gen_prompt=gen_prompt, img_text=img_text,
+        source_event_uid=_user_source_uid,
     )
 
     # 3.10 事件流水（P0）：一轮清算（与 SSE 路径共用幂等键 → 回退也只落一条；route=调用入口口径，F-12）

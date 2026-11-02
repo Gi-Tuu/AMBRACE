@@ -704,3 +704,37 @@ def test_cli_dry_run_reports_aggregates(db, out_dir, capsys):
     assert digest(db) == before
     assert "小测" not in out and FRAME not in out
     assert "可归档=1" in out
+
+
+@pytest.mark.parametrize("table,reason", [
+    ("memory_tombstones", "referenced_tombstone"),
+    ("memory_reallow_grants", "referenced_reallow_grant"),
+])
+def test_source_authority_reference_protects_real_target(db, table, reason):
+    with sqlite3.connect(db) as con:
+        target = mk(con)
+        free = mk(con, FRAME2)
+        if table == "memory_tombstones":
+            con.execute("INSERT INTO memory_tombstones "
+                        "(memory_id,owner_user_id,character_id,epoch,revoked_seq) "
+                        "VALUES (?,4,11,1,0)", (target,))
+        else:
+            con.execute("INSERT INTO memory_reallow_grants "
+                        "(token_hash,memory_id,owner_user_id,character_id,epoch,confirm_seq) "
+                        "VALUES (?, ?,4,11,1,0)", ("a" * 64, target))
+    plan = plan_of(db)
+    assert reason in reasons_for(plan, target)
+    assert target not in plan["allowed_ids"]
+    assert free in plan["allowed_ids"]
+
+
+def test_source_identity_is_part_of_archive_compare_and_swap(db):
+    with sqlite3.connect(db) as con:
+        cols = alt.fingerprint_columns(con)
+    assert "source_event_uid" in cols
+    original = {"content": FRAME, "source_event_uid": "synthetic-event-a"}
+    changed = {**original, "source_event_uid": "synthetic-event-b"}
+    assert alt.fingerprint(cols, original) != alt.fingerprint(cols, changed)
+    with sqlite3.connect(":memory:") as legacy:
+        legacy.execute("CREATE TABLE memories (id INTEGER PRIMARY KEY, content TEXT)")
+        assert "source_event_uid" not in alt.fingerprint_columns(legacy)

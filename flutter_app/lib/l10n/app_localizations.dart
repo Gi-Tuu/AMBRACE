@@ -63,7 +63,7 @@ import 'app_localizations_zh.dart';
 /// property.
 abstract class AppLocalizations {
   AppLocalizations(String locale)
-      : localeName = intl.Intl.canonicalizedLocale(locale.toString());
+    : localeName = intl.Intl.canonicalizedLocale(locale.toString());
 
   final String localeName;
 
@@ -86,16 +86,16 @@ abstract class AppLocalizations {
   /// of delegates is preferred or required.
   static const List<LocalizationsDelegate<dynamic>> localizationsDelegates =
       <LocalizationsDelegate<dynamic>>[
-    delegate,
-    GlobalMaterialLocalizations.delegate,
-    GlobalCupertinoLocalizations.delegate,
-    GlobalWidgetsLocalizations.delegate,
-  ];
+        delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+      ];
 
   /// A list of this localizations delegate's supported locales.
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
-    Locale('zh')
+    Locale('zh'),
   ];
 
   /// No description provided for @apiTabLlm.
@@ -577,7 +577,12 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'成功率 {rate}%（完成 {ok} / 失败 {fail} · 拦截 {blocked} · 未触发 {skip}）'**
   String agentMindToolSummary(
-      Object blocked, Object fail, Object ok, Object rate, Object skip);
+    Object blocked,
+    Object fail,
+    Object ok,
+    Object rate,
+    Object skip,
+  );
 
   /// No description provided for @agentMindSkippedFold.
   ///
@@ -14660,7 +14665,10 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'部分受保护：图片/音频直链、下载直链、SSE 与 WebSocket 帧不做签名校验（{verified}/{mismatch}/{unsigned}）'**
   String serverIdentityUnverifiedWarn(
-      Object verified, Object mismatch, Object unsigned);
+    Object verified,
+    Object mismatch,
+    Object unsigned,
+  );
 
   /// No description provided for @serverIdentityNote.
   ///
@@ -15105,6 +15113,126 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'状态未知'**
   String get memoryDerivationsStatusUnknown;
+
+  /// No description provided for @gardenSetupTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'花园只读接入'**
+  String get gardenSetupTitle;
+
+  /// No description provided for @gardenBaseUrl.
+  ///
+  /// In zh, this message translates to:
+  /// **'花园站点地址'**
+  String get gardenBaseUrl;
+
+  /// No description provided for @gardenUserKey.
+  ///
+  /// In zh, this message translates to:
+  /// **'受限用户 key'**
+  String get gardenUserKey;
+
+  /// No description provided for @gardenKeyHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'仅提交到本机服务，不回显、不写日志；不是模型 key'**
+  String get gardenKeyHint;
+
+  /// No description provided for @gardenCharacter.
+  ///
+  /// In zh, this message translates to:
+  /// **'本地角色'**
+  String get gardenCharacter;
+
+  /// No description provided for @gardenBind.
+  ///
+  /// In zh, this message translates to:
+  /// **'绑定'**
+  String get gardenBind;
+
+  /// No description provided for @gardenUnbind.
+  ///
+  /// In zh, this message translates to:
+  /// **'解绑'**
+  String get gardenUnbind;
+
+  /// No description provided for @gardenBrowse.
+  ///
+  /// In zh, this message translates to:
+  /// **'只读浏览'**
+  String get gardenBrowse;
+
+  /// No description provided for @gardenObserve.
+  ///
+  /// In zh, this message translates to:
+  /// **'同时保存短期观察'**
+  String get gardenObserve;
+
+  /// No description provided for @gardenClearObservation.
+  ///
+  /// In zh, this message translates to:
+  /// **'清除观察'**
+  String get gardenClearObservation;
+
+  /// No description provided for @gardenBound.
+  ///
+  /// In zh, this message translates to:
+  /// **'已绑定（只读）'**
+  String get gardenBound;
+
+  /// No description provided for @gardenNotBound.
+  ///
+  /// In zh, this message translates to:
+  /// **'未绑定'**
+  String get gardenNotBound;
+
+  /// No description provided for @gardenModelHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'模型服务仍需单独配置；花园 key 不能替代模型。'**
+  String get gardenModelHint;
+
+  /// No description provided for @gardenLoadFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'操作失败，请检查网络或凭据'**
+  String get gardenLoadFailed;
+
+  /// No description provided for @gardenBindSuccess.
+  ///
+  /// In zh, this message translates to:
+  /// **'绑定成功'**
+  String get gardenBindSuccess;
+
+  /// No description provided for @gardenUnbindSuccess.
+  ///
+  /// In zh, this message translates to:
+  /// **'已解绑'**
+  String get gardenUnbindSuccess;
+
+  /// No description provided for @gardenBrowseDone.
+  ///
+  /// In zh, this message translates to:
+  /// **'只读浏览完成'**
+  String get gardenBrowseDone;
+
+  /// No description provided for @gardenObservationCleared.
+  ///
+  /// In zh, this message translates to:
+  /// **'观察已清除'**
+  String get gardenObservationCleared;
+
+  /// No description provided for @gardenRoleLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'角色标识'**
+  String get gardenRoleLabel;
+
+  /// No description provided for @gardenPrivacyHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'仅提交到你自己的服务，不回显、不写日志。'**
+  String get gardenPrivacyHint;
 }
 
 class _AppLocalizationsDelegate
@@ -15134,8 +15262,9 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
   }
 
   throw FlutterError(
-      'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
-      'an issue with the localizations generation tool. Please file an issue '
-      'on GitHub with a reproducible sample app and the gen-l10n configuration '
-      'that was used.');
+    'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
+    'an issue with the localizations generation tool. Please file an issue '
+    'on GitHub with a reproducible sample app and the gen-l10n configuration '
+    'that was used.',
+  );
 }

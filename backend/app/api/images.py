@@ -28,7 +28,7 @@ async def generate_image(data: GenerateRequest, user_id: int = Depends(get_curre
     （否则可把别家角色/会话 id 记进本账号任务，形成跨租户引用）。
     """
     await _assert_refs_in_tenant(user_id, data.character_id, data.session_id, lang)
-    if await get_image_provider() is None:
+    if await get_image_provider(user_id) is None:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "image_gen_not_configured"))
     if await check_daily_limit(user_id):
         raise HTTPException(status_code=429, detail=tr_lang(lang, "image_gen_limit"))

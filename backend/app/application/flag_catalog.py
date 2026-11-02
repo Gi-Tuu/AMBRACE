@@ -296,6 +296,9 @@ _FLAG_ROWS: list[tuple] = [
     ('review_daily_plus', 'memory', 713, False, '主动复习扩容',
      '每天主动回忆的额度从 3 条提高到 4 条。',
      'More daily reviews', 'Daily recall quota raised from three items to four.'),
+    ('memory_source_proof_v1', 'memory', 717, False, '记忆来源证明（实验）',
+     '为记忆保留可核验的来源证明；默认关闭，普通使用无需调整。',
+     'Memory source proof (beta)', 'Keep verifiable source proof for memories; off by default.'),
     ('memory_write_receipt', 'memory', 714, False, '记忆写入回执',
      '每条记忆写入时留一条回执，方便确认与排查。',
      'Write receipt', 'Each memory write leaves a receipt for confirmation and troubleshooting.'),
@@ -545,9 +548,6 @@ _FLAG_ROWS: list[tuple] = [
     ('mcp_stream_declarations', 'tool_trace', 1503, False, '流式会话工具声明',
      '流式回复也能带上可用工具的说明。',
      'Tool declarations in streaming', 'Streaming replies also carry the list of available tools.'),
-    ('agent_tool_exec_trace', 'tool_trace', 1504, False, '工具执行留痕',
-     '每次工具执行都留一条记录，方便看真实成败。',
-     'Tool execution trace', 'Each tool execution is logged so real outcomes are visible.'),
 
     # ── 行动通道（C1a：三条闸进常规开关页，默认由服务器锁定、App 内只读）──
     ('device_actions_enabled', 'device_action', 1601, False, '手机操作总开关',

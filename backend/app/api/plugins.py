@@ -1,4 +1,5 @@
 """插件管理 API：列表 / 启停 / 配置 / zip 安装 + chat 型插件通用对话（48c）+ 页面托管/卸载（48a）"""
+import asyncio
 import hashlib
 import json
 import os
@@ -8,7 +9,7 @@ import time as _time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header, Query
 from fastapi.responses import Response
 
 from app.api.plugin_bridge import _plugin_disabled_gate
@@ -227,6 +228,327 @@ async def _validate_channel_binding(user_id: int, plugin_name: str, config: dict
     config["allowed_character_ids"] = ",".join(str(x) for x in ids) if ids else ""
 
 
+@router.post("/garden_forum/oneshot")
+async def garden_forum_oneshot(
+    body: dict,
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """花园 Sam 单次试点入口（受认证；客户端只给角色 ID 和稳定 task ID）。
+
+    服务端负责：插件可见/启用、角色家庭归属、花园配置/状态/guard、幂等 task、并发锁。
+    拒绝 cfg/doc/url/凭据等任意客户端覆盖参数；不新增常驻任务。
+    """
+    from app.db.database import async_session_factory
+    from app.models.character import AICharacter
+    from app.application.tenant_service import tenant_scope_ids
+
+    allowed = {"character_id", "task_id"}
+    if not isinstance(body, dict) or set(body) - allowed:
+        raise HTTPException(status_code=400, detail="invalid_request")
+    cid = body.get("character_id")
+    task_id = body.get("task_id")
+    if isinstance(cid, bool) or not isinstance(cid, int) or cid <= 0:
+        raise HTTPException(status_code=400, detail="invalid_character_id")
+    if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 128:
+        raise HTTPException(status_code=400, detail="invalid_task_id")
+
+    tenant = await registry.resolve_viewer_tenant(user_id)
+    visible = {p["name"] for p in registry.list_plugins(
+        viewer_user_id=user_id, viewer_tenant_id=tenant)}
+    plugin = registry.get_plugin("garden_forum")
+    if plugin is None or "garden_forum" not in visible:
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_not_found"))
+    if not plugin.get("enabled"):
+        raise HTTPException(status_code=409, detail="plugin_disabled")
+
+    async with async_session_factory() as db:
+        char = await db.get(AICharacter, cid)
+        scope = await tenant_scope_ids(db, user_id)
+    if char is None or int(char.user_id) not in {int(x) for x in scope}:
+        raise HTTPException(status_code=403, detail="character_not_owned")
+
+    entry = registry._loaded.get("garden_forum") or {}
+    module = entry.get("module")
+    fn = getattr(module, "run_one_shot", None)
+    if fn is None:
+        raise HTTPException(status_code=501, detail="one_shot_unavailable")
+    with registry.sdk_context("garden_forum", user_id=user_id):
+        result = await fn(cid, task_id.strip(), owner_user_id=user_id)
+    return result
+
+
+async def _garden_readonly_char(cid: int, user_id: int, lang: str):
+    from app.db.database import async_session_factory
+    from app.models.character import AICharacter
+    from app.application.tenant_service import tenant_scope_ids
+    tenant = await registry.resolve_viewer_tenant(user_id)
+    visible = {p["name"] for p in registry.list_plugins(
+        viewer_user_id=user_id, viewer_tenant_id=tenant)}
+    plugin = registry.get_plugin("garden_forum")
+    if plugin is None or "garden_forum" not in visible:
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_not_found"))
+    if not plugin.get("enabled"):
+        raise HTTPException(status_code=409, detail="plugin_disabled")
+    async with async_session_factory() as db:
+        char = await db.get(AICharacter, cid)
+        scope = await tenant_scope_ids(db, user_id)
+    if char is None or int(char.user_id) not in {int(x) for x in scope}:
+        raise HTTPException(status_code=403, detail="character_not_owned")
+    return char
+
+
+@router.get("/garden_forum/observation")
+async def garden_forum_observation_status(
+    character_id: int = Query(..., ge=1),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """受认证查询本地观察状态；不联网、不返回正文/密钥/私信。"""
+    char = await _garden_readonly_char(character_id, user_id, lang)
+    entry = registry._loaded.get("garden_forum") or {}
+    fn = getattr(entry.get("module"), "observation_status", None)
+    if fn is None:
+        raise HTTPException(status_code=501, detail="observation_unavailable")
+    with registry.sdk_context("garden_forum", user_id=user_id):
+        result = await asyncio.to_thread(fn, character_id, owner_user_id=int(char.user_id))
+    if not result.get("ok"):
+        raise HTTPException(status_code=403, detail=str(result.get("code") or "observation_failed"))
+    return result
+
+
+@router.delete("/garden_forum/observation")
+async def garden_forum_observation_clear(
+    body: dict,
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """受认证清除本地观察；锁内 bump epoch，延迟中的旧请求不能写回。"""
+    if not isinstance(body, dict) or set(body) != {"character_id"}:
+        raise HTTPException(status_code=400, detail="invalid_request")
+    cid = body.get("character_id")
+    if isinstance(cid, bool) or not isinstance(cid, int) or cid <= 0:
+        raise HTTPException(status_code=400, detail="invalid_character_id")
+    char = await _garden_readonly_char(cid, user_id, lang)
+    entry = registry._loaded.get("garden_forum") or {}
+    fn = getattr(entry.get("module"), "clear_readonly_observation", None)
+    if fn is None:
+        raise HTTPException(status_code=501, detail="observation_unavailable")
+    with registry.sdk_context("garden_forum", user_id=user_id):
+        result = await asyncio.to_thread(fn, cid, owner_user_id=int(char.user_id))
+    if not result.get("ok"):
+        code = str(result.get("code") or "observation_failed")
+        status = 409 if code == "observation_conflict" else 403
+        raise HTTPException(status_code=status, detail=code)
+    return result
+
+
+@router.post("/garden_forum/account")
+async def garden_forum_account_bind(
+    body: dict,
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """受限 user key 绑定（仅只读）；不接收/转发 partner/agent key，不回显 key。"""
+    allowed = {"character_id", "user_key", "base_url"}
+    if not isinstance(body, dict) or set(body) - allowed or set(body) != allowed:
+        raise HTTPException(status_code=400, detail="invalid_request")
+    cid = body.get("character_id")
+    key = body.get("user_key")
+    base_url = body.get("base_url")
+    if isinstance(cid, bool) or not isinstance(cid, int) or cid <= 0:
+        raise HTTPException(status_code=400, detail="invalid_character_id")
+    if not isinstance(key, str) or not key or len(key) > 512:
+        raise HTTPException(status_code=400, detail="invalid_user_key")
+    if not isinstance(base_url, str) or not base_url:
+        raise HTTPException(status_code=400, detail="invalid_base_url")
+    char = await _garden_readonly_char(cid, user_id, lang)
+    entry = registry._loaded.get("garden_forum") or {}
+    fn = getattr(entry.get("module"), "bind_user_account", None)
+    if fn is None:
+        raise HTTPException(status_code=501, detail="account_unavailable")
+    with registry.sdk_context("garden_forum", user_id=user_id):
+        result = await fn(cid, int(char.user_id), key, base_url)
+    if not result.get("ok"):
+        code = str(result.get("code") or "binding_failed")
+        status = 409 if code in ("binding_conflict", "role_bound_to_other_user") else 400
+        raise HTTPException(status_code=status, detail=code)
+    return result
+
+
+@router.get("/garden_forum/account")
+async def garden_forum_account_status(
+    character_id: int = Query(..., ge=1),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    char = await _garden_readonly_char(character_id, user_id, lang)
+    entry = registry._loaded.get("garden_forum") or {}
+    fn = getattr(entry.get("module"), "user_account_status", None)
+    if fn is None:
+        raise HTTPException(status_code=501, detail="account_unavailable")
+    with registry.sdk_context("garden_forum", user_id=user_id):
+        result = await asyncio.to_thread(fn, int(char.user_id), character_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=403, detail=str(result.get("code") or "account_failed"))
+    return result
+
+
+@router.delete("/garden_forum/account")
+async def garden_forum_account_unbind(
+    body: dict,
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    if not isinstance(body, dict) or set(body) != {"character_id"}:
+        raise HTTPException(status_code=400, detail="invalid_request")
+    cid = body.get("character_id")
+    if isinstance(cid, bool) or not isinstance(cid, int) or cid <= 0:
+        raise HTTPException(status_code=400, detail="invalid_character_id")
+    char = await _garden_readonly_char(cid, user_id, lang)
+    entry = registry._loaded.get("garden_forum") or {}
+    fn = getattr(entry.get("module"), "unbind_user_account", None)
+    if fn is None:
+        raise HTTPException(status_code=501, detail="account_unavailable")
+    with registry.sdk_context("garden_forum", user_id=user_id):
+        result = await asyncio.to_thread(fn, int(char.user_id), cid)
+    if not result.get("ok"):
+        raise HTTPException(status_code=409, detail=str(result.get("code") or "unbind_failed"))
+    return result
+
+
+@router.post("/garden_forum/user/readonly")
+async def garden_forum_user_readonly(
+    body: dict,
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """已绑定受限 user key 的手动只读浏览；不发帖/评论/私信、不调模型。"""
+    allowed = {"character_id", "observe"}
+    if not isinstance(body, dict) or set(body) - allowed or "character_id" not in body:
+        raise HTTPException(status_code=400, detail="invalid_request")
+    cid = body.get("character_id")
+    observe = body.get("observe", False)
+    if isinstance(cid, bool) or not isinstance(cid, int) or cid <= 0:
+        raise HTTPException(status_code=400, detail="invalid_character_id")
+    if not isinstance(observe, bool):
+        raise HTTPException(status_code=400, detail="invalid_observe")
+    char = await _garden_readonly_char(cid, user_id, lang)
+    entry = registry._loaded.get("garden_forum") or {}
+    fn = getattr(entry.get("module"), "run_user_readonly", None)
+    if fn is None:
+        raise HTTPException(status_code=501, detail="readonly_unavailable")
+    with registry.sdk_context("garden_forum", user_id=user_id):
+        result = await fn(int(char.user_id), cid, observe=observe)
+    if not result.get("ok"):
+        code = str(result.get("code") or "read_failed")
+        status = 409 if code in ("not_bound", "binding_character_mismatch") else 403
+        raise HTTPException(status_code=status, detail=code)
+    return result
+
+
+@router.get("/garden_forum/user/observation")
+async def garden_forum_user_observation(
+    character_id: int = Query(..., ge=1),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    char = await _garden_readonly_char(character_id, user_id, lang)
+    entry = registry._loaded.get("garden_forum") or {}
+    fn = getattr(entry.get("module"), "user_observation_status", None)
+    if fn is None:
+        raise HTTPException(status_code=501, detail="observation_unavailable")
+    with registry.sdk_context("garden_forum", user_id=user_id):
+        result = await asyncio.to_thread(fn, int(char.user_id), character_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=403, detail=str(result.get("code") or "observation_failed"))
+    return result
+
+
+@router.delete("/garden_forum/user/observation")
+async def garden_forum_user_observation_clear(
+    body: dict,
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    if not isinstance(body, dict) or set(body) != {"character_id"}:
+        raise HTTPException(status_code=400, detail="invalid_request")
+    cid = body.get("character_id")
+    if isinstance(cid, bool) or not isinstance(cid, int) or cid <= 0:
+        raise HTTPException(status_code=400, detail="invalid_character_id")
+    char = await _garden_readonly_char(cid, user_id, lang)
+    entry = registry._loaded.get("garden_forum") or {}
+    fn = getattr(entry.get("module"), "clear_user_observation", None)
+    if fn is None:
+        raise HTTPException(status_code=501, detail="observation_unavailable")
+    with registry.sdk_context("garden_forum", user_id=user_id):
+        result = await asyncio.to_thread(fn, int(char.user_id), cid)
+    if not result.get("ok"):
+        raise HTTPException(status_code=409, detail=str(result.get("code") or "observation_failed"))
+    return result
+
+
+@router.post("/garden_forum/readonly")
+async def garden_forum_readonly(
+    body: dict,
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """受认证只读浏览：仅浏览已明确绑定且身份核验通过的远端账号。
+
+    客户端只给 character_id；不接收 url/config/key。服务端校验插件可见/启用/角色家庭归属，
+    插件内再校验 manual_only、显式 remote_id、站点、租户和 agent key 归属。
+    本入口只 GET /api/me 与 /api/feed，不写状态、不发帖/评论/私信、不调模型。
+    """
+    from app.db.database import async_session_factory
+    from app.models.character import AICharacter
+    from app.application.tenant_service import tenant_scope_ids
+
+    if not isinstance(body, dict) or set(body) - {"character_id", "observe"} or "character_id" not in body:
+        raise HTTPException(status_code=400, detail="invalid_request")
+    cid = body.get("character_id")
+    if isinstance(cid, bool) or not isinstance(cid, int) or cid <= 0:
+        raise HTTPException(status_code=400, detail="invalid_character_id")
+    observe = body.get("observe", False)
+    if not isinstance(observe, bool):
+        raise HTTPException(status_code=400, detail="invalid_observe")
+
+    tenant = await registry.resolve_viewer_tenant(user_id)
+    visible = {p["name"] for p in registry.list_plugins(
+        viewer_user_id=user_id, viewer_tenant_id=tenant)}
+    plugin = registry.get_plugin("garden_forum")
+    if plugin is None or "garden_forum" not in visible:
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "plugin_not_found"))
+    if not plugin.get("enabled"):
+        raise HTTPException(status_code=409, detail="plugin_disabled")
+
+    async with async_session_factory() as db:
+        char = await db.get(AICharacter, cid)
+        scope = await tenant_scope_ids(db, user_id)
+    if char is None or int(char.user_id) not in {int(x) for x in scope}:
+        raise HTTPException(status_code=403, detail="character_not_owned")
+
+    entry = registry._loaded.get("garden_forum") or {}
+    fn = getattr(entry.get("module"), "run_readonly_browse", None)
+    if fn is None:
+        raise HTTPException(status_code=501, detail="readonly_unavailable")
+    with registry.sdk_context("garden_forum", user_id=user_id):
+        # binding 的 user_id 是角色所属账号；调用者已经过 tenant scope 校验，
+        # 家庭内主账号可查看子账号角色，但不得把调用者 ID 当作绑定归属。
+        if observe:
+            result = await fn(cid, owner_user_id=int(char.user_id), observe=True)
+        else:
+            result = await fn(cid, owner_user_id=int(char.user_id))
+    if result.get("ok"):
+        return result
+    code = str(result.get("code") or "readonly_failed")
+    status = 409 if code in ("not_manual_pilot", "plugin_disabled", "credential_unusable",
+                             "bad_base_url", "remote_identity_missing") else 403
+    if code in ("read_failed", "whoami_failed", "unreachable", "timeout"):
+        status = 502
+    raise HTTPException(status_code=status, detail=code)
+
+
 @router.get("")
 async def list_plugins(user_id: int = Depends(get_current_user_id)):
     """插件列表（含启用状态与配置）。
@@ -282,6 +604,13 @@ async def update_plugin(
         raise HTTPException(status_code=403, detail=tr_lang(lang, "main_account_manage_only"))
     if enabled is not None and not isinstance(enabled, bool):
         raise HTTPException(status_code=400, detail=tr_lang(lang, "enabled_invalid"))
+    # 重要：先持久化观察代际，再写配置。持久代际写失败时拒绝本次配置变更，
+    # 避免“配置已关/已开但旧观察仍能注入”的不一致。
+    if name == "garden_forum" and (enabled is not None or config is not None):
+        mod = (registry._loaded.get("garden_forum") or {}).get("module")
+        bump = getattr(mod, "bump_observe_epoch", None)
+        if bump is not None and bump() is False:
+            raise HTTPException(status_code=503, detail="observe_epoch_persist_failed")
     updated = await registry.set_plugin_state(name, enabled=enabled, config=config)
     return updated
 

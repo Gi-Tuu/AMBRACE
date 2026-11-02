@@ -34,14 +34,17 @@ async def _on_memory_written(payload: dict) -> None:
 async def _on_tool_executed(payload: dict) -> None:
     """工具执行完成（Phase G）：工具执行联动织库增量（曾为灰度开关 agent_tool_events，2026-09-17 固化常开；每角色防抖由 weave 内部控制）。
 
-    R5（2026-09-09，工具轨迹治理批次四）：flag agent_tool_exec_trace 开启时，
+R5（2026-09-09，工具轨迹治理批次四）：工具执行轨迹已常驻，其他工具执行会落任务日志。
     插件/内置工具单次成败落 agent_task_logs（trigger=tool），让「工具轨迹」可见真实工具执行。
     与织库联动并列、互不影响；默认关=零写放大。MCP 工具不在此落轨迹（已有 mcp_call_logs，
     前端 MCP 分区读取，避免双记）。
     """
     try:
         # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：工具执行联动织库增量恒执行
-        if payload.get("status") == "ok":
+        # garden_read 是只读外部内容工具：无论成功/空/业务失败，都不应触发织库写入。
+        # 执行层 status=ok 只表示工具函数返回（业务失败也会是 ok），不能作为写入依据。
+        # 其他工具保持既有行为不变。
+        if payload.get("status") == "ok" and payload.get("tool") != "garden_read":
             user_id = payload.get("user_id")
             character_id = payload.get("character_id")
             if user_id and character_id:
@@ -51,11 +54,11 @@ async def _on_tool_executed(payload: dict) -> None:
     except Exception as e:
         _logger.warning("events on_tool_executed weave failed: %s", e)
 
-    # ── R5：工具执行轨迹（agent_tool_exec_trace，默认关；只记真实工具，不记 scheduler） ──
+    # garden_read 的 observation summary 可能含外部帖子正文；不落工具轨迹，避免把外部内容持久化。
+    if payload.get("tool") == "garden_read":
+        return
+
     try:
-        from app.agent import loop as _loop2
-        if not _loop2.AGENT_FLAGS.get("agent_tool_exec_trace", False):
-            return
         tool = str(payload.get("tool") or "")
         # 只记 MCP / 插件 / 内置工具，排除 scheduler 等噪音前缀
         if not tool or tool.startswith("scheduler"):

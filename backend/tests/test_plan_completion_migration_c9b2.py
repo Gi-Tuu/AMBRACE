@@ -12,7 +12,7 @@ from alembic.operations import Operations
 import importlib.util
 
 from app.config import settings
-from app.models import Base, User, AICharacter, ChatSession, ChatMessage
+from app.models import Base, User, AICharacter, ChatSession
 
 BACKEND = Path(__file__).parents[1]
 PARENT = "c4e6f8a0b2d4"
@@ -45,8 +45,11 @@ def history(tmp_path, monkeypatch):
         db.commit()
         db.add(ChatSession(id=301,user_id=101,character_id=201))
         db.commit()
-        db.add(ChatMessage(id=401,session_id=301,sender_type="user",content="synthetic plan"))
-        db.commit()
+    # 历史库止于 c4，尚无 c5 的 source_event_uid；不能用当前 ORM 写历史 schema。
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "INSERT INTO chat_messages(id,session_id,sender_type,content) "
+            "VALUES(401,301,'user','synthetic plan')")
     try:
         yield path, engine, cfg
     finally:
