@@ -374,13 +374,11 @@ async def generate_response(state: AgentState) -> AgentState:
     """调用 LLM 生成回复，并提取记忆标记（支持用户级 BYOK 配置覆盖）"""
     from app.agent.llm_client import get_user_llm_config
     user_cfg = await get_user_llm_config(state.get("user_id"))
-
     # 插件系统：before_generate（生成前可追加上下文/改写消息；异常隔离；缺 caller fail-closed 不分发）
     try:
         await _dispatch_before_generate(state)
     except Exception:
         pass
-
     # 红线②宿主不变式（2026-09-18）：before_generate 与 context_inject 同构——同一 context_messages、
     # 同样无校验 append，且在装配之后运行；装配尾部的护栏管不到它，故此处再兜一次。
     # 正常路径零移动（无插件越位 = 零行为变化），仅越位时告警。

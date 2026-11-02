@@ -4,7 +4,7 @@
 
 自托管的 AI 伙伴陪伴应用：多个可配置的 AI 角色与你聊天、记记忆、发朋友圈、写日记、养宠物；支持实时语音通话，可选开启手机感知（读屏 / 剪贴板 / 相册 / 通知），还能把角色接到外部聊天机器人上随时聊。所有数据留在你自己的服务器上。
 
-**当前版本**：v3.5.5 ｜ 逐版更新说明见 [`docs/changelog.md`](docs/changelog.md)（App 内「更新公告」也读这份）与 [Releases 页](https://github.com/Gi-Tuu/AMBRACE/releases)。
+**当前版本**：v3.5.6 ｜ 逐版更新说明见 [`docs/changelog.md`](docs/changelog.md)（App 内「更新公告」也读这份）与 [Releases 页](https://github.com/Gi-Tuu/AMBRACE/releases)。
 
 ## 功能特性
 
@@ -276,7 +276,7 @@ flutter build apk --release
 
 ### 网页版基础体验（PWA）
 
-下载 v3.5.5 起的 `ambrace_pwa.zip`，解压后将 `PWA_STATIC_DIR` 设置为其中 `pwa/` 目录的绝对路径，随后重启后端，访问同一后端地址的 `/pwa/`。默认不挂载网页版入口；无需把登录或聊天接口放到另一域名。
+下载 v3.5.6 起的 `ambrace_pwa.zip`，解压后将 `PWA_STATIC_DIR` 设置为其中 `pwa/` 目录的绝对路径，随后重启后端，访问同一后端地址的 `/pwa/`。默认不挂载网页版入口；无需把登录或聊天接口放到另一域名。
 
 也可从源码构建：在 `pwa/` 中执行 `flutter build web --release --base-href /pwa/`，再将 `PWA_STATIC_DIR` 指向生成的 `build/web`。部署时请使用 HTTPS；iPhone/Safari 安装及真实设备尚未完成验证。登录只保存在当前页面内存中，刷新后需要重新登录；支持文字聊天、内容浏览、会话与本人内容编辑、单个文本附件、角色创建和基础资料编辑。
 

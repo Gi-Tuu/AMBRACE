@@ -7,12 +7,14 @@ import sys
 import textwrap
 
 PLUGIN = pathlib.Path(__file__).resolve().parents[2] / "plugins" / "examples" / "garden_forum"
+BACKEND = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN))
 
 
 def _worker_code(state, uid, cid, role, key):
     return textwrap.dedent('''
         import pathlib, sys
+        sys.path.insert(0, %r)
         sys.path.insert(0, %r)
         import garden_state as store
         store.STATE_PATH = pathlib.Path(%r)
@@ -29,7 +31,7 @@ def _worker_code(state, uid, cid, role, key):
             print("OK" if ok else "FAIL")
         except store.UpdateConflict:
             print("CONFLICT")
-    ''' % (str(PLUGIN), str(state), role, uid, role, cid, key))
+    ''' % (str(BACKEND), str(PLUGIN), str(state), role, uid, role, cid, key))
 
 
 def test_concurrent_same_role_one_wins(tmp_path, monkeypatch):
@@ -62,10 +64,11 @@ def test_lock_released_after_holder_exits(tmp_path, monkeypatch):
     code = textwrap.dedent('''
         import pathlib, sys
         sys.path.insert(0, %r)
+        sys.path.insert(0, %r)
         import garden_state as store
         with store._state_lock(pathlib.Path(%r)):
             print("HELD", flush=True)
-    ''' % (str(PLUGIN), str(state)))
+    ''' % (str(BACKEND), str(PLUGIN), str(state)))
     p = subprocess.run([sys.executable, "-c", code], env=env, timeout=30,
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert "HELD" in p.stdout
@@ -85,13 +88,14 @@ def test_other_process_persists_observe_epoch(tmp_path, monkeypatch):
     code = textwrap.dedent('''
         import pathlib, sys
         sys.path.insert(0, %r)
+        sys.path.insert(0, %r)
         import garden_state as store
         store.STATE_PATH = pathlib.Path(%r)
         def m(doc):
             doc["observe_epoch"] = int(doc.get("observe_epoch") or 0) + 1
             return doc
         print(store.update_state(m)[0])
-    ''' % (str(PLUGIN), str(state)))
+    ''' % (str(BACKEND), str(PLUGIN), str(state)))
     p = subprocess.run([sys.executable, "-c", code], env=env, timeout=30,
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert "True" in p.stdout
