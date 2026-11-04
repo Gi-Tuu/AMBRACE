@@ -591,6 +591,21 @@ def _real_identity(p: Path) -> str:
     return os.path.normcase(str(Path(p).resolve()))
 
 
+def _in_pytest_sandbox(real: str, workspace_real: str) -> bool:
+    """仓库内 pytest 临时沙箱（任一 `.pytest_tmp*` 路径段）不算受保护路径。
+
+    2026-11-04：本机后端测试统一 `--basetemp=.pytest_tmp`（仓库内、已 gitignore、每轮重建），
+    而受保护标记含整个仓库根 ⇒ tmp_path 下的合法正例被误判「落在受保护路径」，预检 6 项长期红
+    （plans 10-31 已记「预检模块7项因临时目录保护失败」）。沙箱是可丢弃目录，放行它不削弱
+    对 `.git` / `backend/data` / `backups` 的保护。
+    """
+    try:
+        rel = Path(real).relative_to(workspace_real)
+    except (ValueError, OSError):
+        return False
+    return any(part.startswith(".pytest_tmp") for part in rel.parts)
+
+
 def _lexical_chain(p: Path) -> list[Path]:
     """词法绝对路径自身 + 祖先链。
 
@@ -654,12 +669,19 @@ def _forbidden_marker_hit(target: Path) -> str | None:
     真实身份层面命中。解析失败（无法确认边界）＝命中（拒绝）。
     """
     markers = {_real_identity(Path(m)) for m in FORBIDDEN_DIR_MARKERS if m}
+    workspace_real = _real_identity(WORKSPACE)
+    # 只有「仓库根及其祖先」这两类标记对仓库内 pytest 沙箱放行；
+    # 合成标记（主审反例/大小写别名用例 monkeypatch 进来的）语义不变，仍然拒绝。
+    repo_markers = {m for m in markers if m == workspace_real or workspace_real.startswith(m + os.sep)}
     try:
+        in_sandbox = _in_pytest_sandbox(_real_identity(target), workspace_real)
         chain = [target, *target.parents]
         for p in chain:
             real = _real_identity(p)
             for m in markers:
                 if real == m or real.startswith(m + os.sep):
+                    if in_sandbox and m in repo_markers:
+                        continue
                     return f"目标/祖先真实身份落在受保护路径: {p} → {real}"
     except (OSError, RuntimeError) as e:
         return f"路径解析失败（无法确认边界）: {e}"

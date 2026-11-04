@@ -114,7 +114,7 @@ def test_master_gate_enables_non_sensitive_only(monkeypatch):
     assert user_fact_slot_enabled('health') is False
 
 
-def test_sensitive_slot_needs_explicit_enable_under_master(monkeypatch):
+def test_gate_on_slot_needs_explicit_enable(monkeypatch):
     """总闸开 + 只显式开感情 → 感情 True、健康仍 False。"""
     from app.memory.user_facts import enabled_user_fact_slots, user_fact_slot_enabled
     _set_flags(monkeypatch, global_user_facts=True, user_fact_relationship=True)
@@ -123,7 +123,7 @@ def test_sensitive_slot_needs_explicit_enable_under_master(monkeypatch):
     assert 'relationship' in enabled_user_fact_slots()
 
 
-def test_sensitive_slot_explicit_enable_with_master_off(monkeypatch):
+def test_gate_off_slot_explicit_enable_works(monkeypatch):
     """总闸关 + 显式开健康 → 只健康一个槽启用（opt-in 独立生效）。"""
     from app.memory.user_facts import enabled_user_fact_slots, user_fact_slot_enabled
     _set_flags(monkeypatch, user_fact_health=True)

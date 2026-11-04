@@ -1,4 +1,4 @@
-"""一键验证脚本：ruff → 公开仓卫生扫描 → py_compile → pytest → flutter analyze/test → 接口冒烟。
+"""一键验证脚本：ruff → 公开仓卫生扫描 → 网关词表守卫 → py_compile → pytest → flutter analyze/test → 接口冒烟。
 
 用法：
   backend\\.venv\\Scripts\\python.exe scripts\\verify.py [--smoke] [--pruned] [--parallel [N]] [--fast]
@@ -82,6 +82,7 @@ def main() -> None:
         label += f"（并行 -n {workers} --dist loadfile）"
     step("ruff 静态检查（backend/app）", [PY, "-m", "ruff", "check", "backend/app"], ROOT)
     step("公开仓卫生扫描（C2：作者机器路径＋凭据形态）", [PY, "scripts/check_public_leak.py"], ROOT)
+    step("网关词表守卫（零容忍：防 DSH 会话中毒）", [PY, "scripts/gateway_word_guard.py"], ROOT)
     step("py_compile 全量语法校验", [PY, "-m", "compileall", "-q", "-f", "backend/app"], ROOT)
     step(label, pytest_cmd(sys.argv), ROOT / "backend")
     step("flutter analyze", [FLUTTER, "analyze"], ROOT / "flutter_app")

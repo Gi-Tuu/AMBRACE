@@ -63,7 +63,9 @@ README_BACKUP_TEXT = (
     "4) 若库内字段仍是明文（尚未跑 backend\\scripts\\encrypt_credentials.py --apply），\n"
     "   先跑一次 dry-run 看清处数，再由维护者手跑 --apply 完成加密。\n"
 )
-KEEP_DAYS = 14
+# 2026-11-04 用户拍板：14 → 7 天（释放磁盘；备份包含敏感配置，少留更安全）。
+# 语义＝保留「含今天在内」的 7 个日备，故 do_backup 的 cutoff 用 KEEP_DAYS - 1。
+KEEP_DAYS = 7
 
 # A8 方案 B：密钥/凭据文件一律不进备份包（即便日后有人把 backend/data 加进 SRC_DIRS 也拦住）
 SECRET_BASENAMES = {
@@ -238,7 +240,7 @@ def do_backup() -> str:
     # 清理过期备份
     removed = []
     # 备份文件名按 backup_day_key()（应用本地时区）命名，过期判断取同一来源
-    cutoff = datetime.strptime(backup_day_key(), "%Y%m%d") - timedelta(days=KEEP_DAYS)
+    cutoff = datetime.strptime(backup_day_key(), "%Y%m%d") - timedelta(days=KEEP_DAYS - 1)
     for fn in os.listdir(BACKUP_ROOT):
         if not fn.endswith(".zip"):
             continue

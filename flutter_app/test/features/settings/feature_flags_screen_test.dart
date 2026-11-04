@@ -114,6 +114,44 @@ void main() {
     expect(find.text('该开关为数值型，暂不支持在 App 内热改'), findsNothing);
   });
 
+  testWidgets('后端 bool 型 flag 带 value:true 时整页仍应渲染开关（2026-11-04 空白页回归）',
+      (tester) async {
+    // 真实后端契约：bool 开关同时下发 enabled 与 value（JSON bool）。
+    // 曾有 f['value'] as num? 强转抛异常被静默吞掉 ⇒ _flags 全空 ⇒ 页面只剩标题。
+    ApiClient().dio.httpClientAdapter = _MockFlagsAdapter([
+      {
+        'key': 'weave_3d',
+        'enabled': true,
+        'value': true,
+        'type': 'bool',
+        'source': 'db',
+        'scope': 'server',
+      },
+      {
+        'key': 'domain_event_retention_days',
+        'enabled': true,
+        'value': 0,
+        'type': 'int',
+        'source': 'db',
+      },
+    ]);
+
+    await tester.pumpWidget(ChangeNotifierProvider<SettingsProvider>(
+      create: (_) => _AdminSettingsProvider(),
+      child: MaterialApp(
+        locale: const Locale('zh'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Material(child: const FeatureFlagsScreen(showAppBar: false)),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('即时生效，无需重启服务器'), findsOneWidget);
+    expect(tester.widgetList<SwitchListTile>(find.byType(SwitchListTile)), isNotEmpty,
+        reason: 'bool 型 flag 必须渲染成开关，页面不能是空白');
+  });
+
   testWidgets('用户级 key：有账号覆盖时开关取覆盖值并显示覆盖状态', (tester) async {
     // 全局关 + 本账号覆盖开 → 生效值应为 true（A5 user_enabled 折叠），并显示一行覆盖状态
     ApiClient().dio.httpClientAdapter = _MockFlagsAdapter([

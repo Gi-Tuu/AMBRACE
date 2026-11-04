@@ -1,7 +1,7 @@
 PROJECT: 拥爱（AMBRACE）
 VERSION: 3.5.6
 DATE: 2026-11-02
-STATUS: 正式版 v3.5.6（记忆详情修正历史、直接依据与派生关系；本地定向验证与 release 构建完成，真机/全量回归待验收）
+STATUS: 正式版 v3.5.6（记忆详情修正历史、直接依据与派生关系；全量回归与真机验收已完成，公开快照与 Release 已发布）
 
 CHANGELOG:
 

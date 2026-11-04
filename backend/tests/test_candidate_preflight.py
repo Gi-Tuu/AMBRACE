@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,23 @@ def _run(*args: str):
         env={**os.environ, "INSTANCE_LOCK_PORT": "0"},
     )
 
+# ─────────────── 仓库内 pytest 沙箱放行（2026-11-04 修预检 6 项长期红） ───────────────
+
+def test_in_pytest_sandbox_detection(tmp_path):
+    """沙箱判定：`.pytest_tmp*` 段为正；普通项目子目录为假（不依赖本机 basetemp 口径）。"""
+    mod = _load()
+    ws = mod._real_identity(tmp_path)
+    assert mod._in_pytest_sandbox(mod._real_identity(tmp_path / ".pytest_tmp" / "x"), ws) is True
+    assert mod._in_pytest_sandbox(mod._real_identity(tmp_path / "backend" / "data"), ws) is False
+
+
+def test_protected_marker_still_rejected_outside_sandbox(tmp_path, monkeypatch):
+    """保护机制本身不变：沙箱之外的标记路径仍必须被拒绝（不探测生产路径）。"""
+    mod = _load()
+    marker = Path(tempfile.gettempdir()) / "ambrace_preflight_marker_probe_not_created"
+    monkeypatch.setattr(mod, "FORBIDDEN_DIR_MARKERS", [str(marker)])
+    hit = mod._forbidden_marker_hit(marker / "child")
+    assert isinstance(hit, str) and "受保护" in hit
 
 # ─────────────── 快检（无写动作） ───────────────
 

@@ -130,7 +130,10 @@ class FeatureFlagService extends ChangeNotifier {
             enabled: (f['enabled'] as bool?) ?? false,
             source: f['source'] as String? ?? 'default',
             type: f['type'] as String?,
-            value: f['value'] as num?,
+            // P3-7 前端：value 只在数值型（int/float）时可用——后端对 bool 型下发的是 JSON bool，
+            // 直接 `as num?` 会抛 TypeError，被 refresh() 的静默 catch 吞掉 ⇒ 整个开关页空白（2026-11-04 真机发现，
+            // 自 0d2d1e46 起存在）。故非数值一律回落 null，由 type 决定渲染成 Switch。
+            value: (f['value'] is num) ? f['value'] as num : null,
             meta: _parseMeta(f['meta']),
             scope: f['scope'] as String?,
             userEnabled: f['user_enabled'] as bool?,
