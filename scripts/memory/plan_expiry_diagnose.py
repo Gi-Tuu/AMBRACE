@@ -22,6 +22,7 @@ import os
 import sqlite3
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -43,6 +44,14 @@ DEFAULT_OUT = os.environ.get("AMBRACE_PLAN_EXPIRY_OUT") or os.path.abspath(
 HIGH_S_THRESHOLD = 55.0   # 交接口径：S>=55 高优 event 清单
 EVENT_S_CAP = 10.0        # §8.2 修复口径：event S 复位上限
 EVENT_REVIEW_CAP = 3      # §8.2 修复口径：event 复习次数上限
+
+
+def _tool_path(p):
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。"""
+    rp = Path(p).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return str(rp.resolve())
 
 _COLS = ("id", "user_id", "character_id", "memory_type", "sub_type", "is_core",
          "core_category", "title", "content", "why_it_matters", "importance",
@@ -134,7 +143,7 @@ def load_b_repair_scope(conn: sqlite3.Connection) -> list[dict]:
 
 
 def write_csv(path: str, rows: list[dict], cols: list[str]):
-    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+    with open(_tool_path(path), "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
         for r in rows:
@@ -207,7 +216,7 @@ def main():
 
     md = "\n".join(lines)
     md_path = os.path.join(args.out, "诊断统计.md")
-    with open(md_path, "w", encoding="utf-8") as f:
+    with open(_tool_path(md_path), "w", encoding="utf-8") as f:
         f.write(md + "\n")
 
     print(md)

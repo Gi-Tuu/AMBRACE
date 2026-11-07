@@ -74,13 +74,13 @@ def _put_server_cfg(path: Path, key: str = "SENTINEL-KEY-DO-NOT-LEAK") -> None:
     (["J1"], "generate", False, True),         # 没授权就想跑生成
     (["J1"], "certify", True, True),           # 授权了但落在 J3 检索档＝拿错尺子
     (["J1"], "score", True, True),             # 同上
-    (["J2"], "generate", True, True),          # 生成侧本轮只实现 J1
     (["J1", "J3"], "generate", True, True),    # 授权了也不许把别的判据混进计费轮
+    (["J2"], "generate", True, False),         # 正当组合：J2 写侧链已接（11-07）
     (["J1"], "generate", True, False),         # 正当组合：必须放行
     (["J3"], "certify", False, False),         # J3 档本来就不花钱
     (["J3"], "certify", True, False),          # 给了授权也不该反过来拦 J3（拦了评测跑不起来）
-], ids=["generate未授权", "J1掉进certify", "J1掉进score", "generate带J2",
-         "generate混J3", "正当组合放行", "J3不需要授权", "授权不误伤J3"])
+], ids=["generate未授权", "J1掉进certify", "J1掉进score",
+         "generate混J3", "正当组合放行J2", "正当组合放行", "J3不需要授权", "授权不误伤J3"])
 def test_三道闸逐条咬且正当组合放行(judges, mode, allow, refuse):
     got = ev.refusal(judges, mode, allow)
     assert bool(got) is refuse, "%s/%s/allow=%s 期望%s，实际 %r" % (
@@ -91,7 +91,7 @@ def test_每条拒绝都要指出下一步而不是只说不行():
     # 只回"不行"的报错会被绕过（补个 --allow-llm 就完事）；文案必须指出**正确的那条路**
     assert "--allow-llm" in ev.refusal(["J1"], "generate", False)
     assert "generate" in ev.refusal(["J1"], "certify", True)
-    assert "J1" in ev.refusal(["J2"], "generate", True)
+    assert "J3" in ev.refusal(["J1", "J3"], "generate", True)
 
 
 # ─────────────────────────── ② 配置表复制 ───────────────────────────
@@ -625,9 +625,12 @@ def test_多跑折叠必须如实给出一致率与每一跑留底():
     same = ev.fold_runs([_stub_run(), _stub_run(), _stub_run()])
     assert same["consistent"] is True and same["pass_all"] is True, same
     assert same["err_spread"] == "" and same["n_runs"] == 3, same
-    # 只漂**内容**不漂结果（三跑都判过、载荷却不同）也必须算不一致——否则一致率退化成"过没过"
+    # B 口径（11-07 拍板）：短核心（<6 字）的载荷漂移文本上验不了，交给「逐跑判据全过」兜底；
+    # ≥6 字核心漂移必须判不一致。
     subtle = ev.fold_runs([_stub_run(), _stub_run(payloads=["煤球"]), _stub_run()])
-    assert subtle["pass_all"] is True and subtle["consistent"] is False, subtle
+    assert subtle["pass_all"] is True and subtle["consistent"] is True, subtle
+    subtle6 = ev.fold_runs([_stub_run(), _stub_run(payloads=["用户已搬离城北老小区小区南门"]), _stub_run()])
+    assert subtle6["pass_all"] is True and subtle6["consistent"] is False, subtle6
     # 10-10 拍板的新口径：只差钟点＝时间流过了，算一致；但「过／不过」那一维不剥
     clock = [dict(p="接送牌要填她的名字，17:12 说"), dict(p="接送牌要填她的名字，17:13 说"),
              dict(p="接送牌要填她的名字，17:12 说")]
@@ -1021,7 +1024,7 @@ def test_认证口径只认每一跑都过():
     assert ev.certified_j1({"pass_all": True, "consistent": False}) is False, "过了但不稳也算认证"
     assert "pass_all" in ev.CERT_J1_RULE and "一致" in ev.CERT_J1_RULE, "口径常量得写清读哪两列"
     out = ev.render_generate(_fake_rep_multi())
-    assert "每一跑都过 ∧ 三跑一致" in out and "生成侧认证 **1／2**" in out, out[:400]
+    assert "每一跑都过 ∧ 三跑语义一致" in out and "生成侧认证 **1／2**" in out, out[:400]
 
 
 def test_跑一题必须把真实装配的输入指纹写进行(tmp_path, monkeypatch):

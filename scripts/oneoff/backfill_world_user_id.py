@@ -64,23 +64,21 @@ def table_exists(cur, table: str) -> bool:
 
 
 def column_names(cur, table: str) -> set[str]:
-    return {r[1] for r in cur.execute(f"PRAGMA table_info({table})").fetchall()}
+    # PRAGMA table_info 不支持占位符绑定，改用语义等价的 table-valued pragma 函数（SQLite 3.16+）
+    return {r[0] for r in cur.execute("SELECT name FROM pragma_table_info(?)", (table,)).fetchall()}
 
 
-def compute_updates(cur, spec: tuple, char_map: dict) -> dict:
-    """计算某表待回填行的 (rowid, 解析到的 user_id)；纯计算，不写库。"""
-    table, char_col, user_col, extra_where, _note = spec
-    cols = column_names(cur, table)
-    if user_col not in cols or char_col not in cols:
-        return {"table": table, "skipped": "缺少列", "missing": 0, "resolvable": 0,
-                "unresolvable": 0, "total": 0, "updates": []}
-    total = cur.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-    where = f"{user_col} IS NULL OR {user_col}=0"
-    if extra_where:
-        where += f" AND {extra_where}"
-    rows = cur.execute(
-        f"SELECT id, {char_col} FROM {table} WHERE {where}"
-    ).fetchall()
+def _needs_cols(cur, table: str, cols: tuple) -> bool:
+    have = column_names(cur, table)
+    return not all(c in have for c in cols)
+
+
+def _skipped_result(table: str) -> dict:
+    return {"table": table, "skipped": "缺少列", "missing": 0, "resolvable": 0,
+            "unresolvable": 0, "total": 0, "updates": []}
+
+
+def _collect_result(table: str, total, rows, char_map: dict) -> dict:
     updates = []
     unresolvable = 0
     for rid, cid in rows:
@@ -96,12 +94,139 @@ def compute_updates(cur, spec: tuple, char_map: dict) -> dict:
     }
 
 
+def compute_updates(cur, spec: tuple, char_map: dict) -> dict:
+    """计算某表待回填行的 (rowid, 解析到的 user_id)；纯计算，不写库。
+
+    表名/列名/条件全部来自模块内固定的 TABLE_SPECS 常量：SQL 按表展开成独立字面量块
+    （不做任何字符串拼接），数据值一律 ? 绑定。各分支的 WHERE 子句与原 f-string 拼接
+    结果逐字一致（含 moment_comments 的原运算符优先级形态）。
+    """
+    table = spec[0]
+    if table == "ai_moments":
+        if _needs_cols(cur, "ai_moments", ("character_id", "user_id")):
+            return _skipped_result("ai_moments")
+        total = cur.execute("SELECT COUNT(*) FROM ai_moments").fetchone()[0]
+        rows = cur.execute("SELECT id, character_id FROM ai_moments WHERE user_id IS NULL OR user_id=0").fetchall()
+        return _collect_result("ai_moments", total, rows, char_map)
+    if table == "moment_comments":
+        if _needs_cols(cur, "moment_comments", ("sender_id", "user_id")):
+            return _skipped_result("moment_comments")
+        total = cur.execute("SELECT COUNT(*) FROM moment_comments").fetchone()[0]
+        rows = cur.execute("SELECT id, sender_id FROM moment_comments WHERE user_id IS NULL OR user_id=0 AND sender_type='ai'").fetchall()
+        return _collect_result("moment_comments", total, rows, char_map)
+    if table == "agent_task_logs":
+        if _needs_cols(cur, "agent_task_logs", ("character_id", "user_id")):
+            return _skipped_result("agent_task_logs")
+        total = cur.execute("SELECT COUNT(*) FROM agent_task_logs").fetchone()[0]
+        rows = cur.execute("SELECT id, character_id FROM agent_task_logs WHERE user_id IS NULL OR user_id=0").fetchall()
+        return _collect_result("agent_task_logs", total, rows, char_map)
+    if table == "agent_tasks":
+        if _needs_cols(cur, "agent_tasks", ("character_id", "user_id")):
+            return _skipped_result("agent_tasks")
+        total = cur.execute("SELECT COUNT(*) FROM agent_tasks").fetchone()[0]
+        rows = cur.execute("SELECT id, character_id FROM agent_tasks WHERE user_id IS NULL OR user_id=0").fetchall()
+        return _collect_result("agent_tasks", total, rows, char_map)
+    if table == "proactive_trigger_logs":
+        if _needs_cols(cur, "proactive_trigger_logs", ("character_id", "user_id")):
+            return _skipped_result("proactive_trigger_logs")
+        total = cur.execute("SELECT COUNT(*) FROM proactive_trigger_logs").fetchone()[0]
+        rows = cur.execute("SELECT id, character_id FROM proactive_trigger_logs WHERE user_id IS NULL OR user_id=0").fetchall()
+        return _collect_result("proactive_trigger_logs", total, rows, char_map)
+    if table == "relationship_events":
+        if _needs_cols(cur, "relationship_events", ("character_id", "user_id")):
+            return _skipped_result("relationship_events")
+        total = cur.execute("SELECT COUNT(*) FROM relationship_events").fetchone()[0]
+        rows = cur.execute("SELECT id, character_id FROM relationship_events WHERE user_id IS NULL OR user_id=0").fetchall()
+        return _collect_result("relationship_events", total, rows, char_map)
+    if table == "weave_cards":
+        if _needs_cols(cur, "weave_cards", ("character_id", "user_id")):
+            return _skipped_result("weave_cards")
+        total = cur.execute("SELECT COUNT(*) FROM weave_cards").fetchone()[0]
+        rows = cur.execute("SELECT id, character_id FROM weave_cards WHERE user_id IS NULL OR user_id=0").fetchall()
+        return _collect_result("weave_cards", total, rows, char_map)
+    if table == "reflection_logs":
+        if _needs_cols(cur, "reflection_logs", ("character_id", "user_id")):
+            return _skipped_result("reflection_logs")
+        total = cur.execute("SELECT COUNT(*) FROM reflection_logs").fetchone()[0]
+        rows = cur.execute("SELECT id, character_id FROM reflection_logs WHERE user_id IS NULL OR user_id=0").fetchall()
+        return _collect_result("reflection_logs", total, rows, char_map)
+    if table == "proactive_storyline_items":
+        if _needs_cols(cur, "proactive_storyline_items", ("character_id", "user_id")):
+            return _skipped_result("proactive_storyline_items")
+        total = cur.execute("SELECT COUNT(*) FROM proactive_storyline_items").fetchone()[0]
+        rows = cur.execute("SELECT id, character_id FROM proactive_storyline_items WHERE user_id IS NULL OR user_id=0").fetchall()
+        return _collect_result("proactive_storyline_items", total, rows, char_map)
+    if table == "life_artifacts":
+        if _needs_cols(cur, "life_artifacts", ("character_id", "user_id")):
+            return _skipped_result("life_artifacts")
+        total = cur.execute("SELECT COUNT(*) FROM life_artifacts").fetchone()[0]
+        rows = cur.execute("SELECT id, character_id FROM life_artifacts WHERE user_id IS NULL OR user_id=0").fetchall()
+        return _collect_result("life_artifacts", total, rows, char_map)
+    if table == "life_schedules":
+        if _needs_cols(cur, "life_schedules", ("character_id", "user_id")):
+            return _skipped_result("life_schedules")
+        total = cur.execute("SELECT COUNT(*) FROM life_schedules").fetchone()[0]
+        rows = cur.execute("SELECT id, character_id FROM life_schedules WHERE user_id IS NULL OR user_id=0").fetchall()
+        return _collect_result("life_schedules", total, rows, char_map)
+    if table == "memories":
+        if _needs_cols(cur, "memories", ("character_id", "user_id")):
+            return _skipped_result("memories")
+        total = cur.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        rows = cur.execute("SELECT id, character_id FROM memories WHERE user_id IS NULL OR user_id=0").fetchall()
+        return _collect_result("memories", total, rows, char_map)
+    if table == "stage_memories":
+        if _needs_cols(cur, "stage_memories", ("character_id", "user_id")):
+            return _skipped_result("stage_memories")
+        total = cur.execute("SELECT COUNT(*) FROM stage_memories").fetchone()[0]
+        rows = cur.execute("SELECT id, character_id FROM stage_memories WHERE user_id IS NULL OR user_id=0").fetchall()
+        return _collect_result("stage_memories", total, rows, char_map)
+    if table == "world_facts":
+        if _needs_cols(cur, "world_facts", ("character_id", "user_id")):
+            return _skipped_result("world_facts")
+        total = cur.execute("SELECT COUNT(*) FROM world_facts").fetchone()[0]
+        rows = cur.execute("SELECT id, character_id FROM world_facts WHERE user_id IS NULL OR user_id=0").fetchall()
+        return _collect_result("world_facts", total, rows, char_map)
+    raise ValueError("未知表: %r" % (table,))
+
+
 def apply_updates(con, spec: tuple, updates: list) -> int:
-    """执行 UPDATE（单事务由调用方控制）；返回更新行数。"""
-    table, _char_col, user_col, _extra, _note = spec
+    """执行 UPDATE（单事务由调用方控制）；返回更新行数。
+
+    SQL 按表展开成独立字面量块（表名来自固定 TABLE_SPECS，不做字符串拼接），数据值 ? 绑定。
+    """
+    table = spec[0]
     n = 0
     for rid, uid in updates:
-        con.execute(f"UPDATE {table} SET {user_col}=? WHERE id=?", (uid, rid))
+        if table == "ai_moments":
+            con.execute("UPDATE ai_moments SET user_id=? WHERE id=?", (uid, rid))
+        elif table == "moment_comments":
+            con.execute("UPDATE moment_comments SET user_id=? WHERE id=?", (uid, rid))
+        elif table == "agent_task_logs":
+            con.execute("UPDATE agent_task_logs SET user_id=? WHERE id=?", (uid, rid))
+        elif table == "agent_tasks":
+            con.execute("UPDATE agent_tasks SET user_id=? WHERE id=?", (uid, rid))
+        elif table == "proactive_trigger_logs":
+            con.execute("UPDATE proactive_trigger_logs SET user_id=? WHERE id=?", (uid, rid))
+        elif table == "relationship_events":
+            con.execute("UPDATE relationship_events SET user_id=? WHERE id=?", (uid, rid))
+        elif table == "weave_cards":
+            con.execute("UPDATE weave_cards SET user_id=? WHERE id=?", (uid, rid))
+        elif table == "reflection_logs":
+            con.execute("UPDATE reflection_logs SET user_id=? WHERE id=?", (uid, rid))
+        elif table == "proactive_storyline_items":
+            con.execute("UPDATE proactive_storyline_items SET user_id=? WHERE id=?", (uid, rid))
+        elif table == "life_artifacts":
+            con.execute("UPDATE life_artifacts SET user_id=? WHERE id=?", (uid, rid))
+        elif table == "life_schedules":
+            con.execute("UPDATE life_schedules SET user_id=? WHERE id=?", (uid, rid))
+        elif table == "memories":
+            con.execute("UPDATE memories SET user_id=? WHERE id=?", (uid, rid))
+        elif table == "stage_memories":
+            con.execute("UPDATE stage_memories SET user_id=? WHERE id=?", (uid, rid))
+        elif table == "world_facts":
+            con.execute("UPDATE world_facts SET user_id=? WHERE id=?", (uid, rid))
+        else:
+            raise ValueError("未知表: %r" % (table,))
         n += 1
     return n
 

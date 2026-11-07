@@ -20,10 +20,19 @@ import json
 import os
 import shutil
 import sys
+from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENV_PATH = os.path.join(ROOT, ".env")
 SA_DST = os.path.join(ROOT, "backend", "data", "fcm-service-account.json")
+
+
+def _tool_path(p):
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。"""
+    rp = Path(p).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return str(rp.resolve())
 
 
 def fail(msg):
@@ -32,6 +41,7 @@ def fail(msg):
 
 
 def load_json(path, what):
+    path = _tool_path(path)
     if not os.path.isfile(path):
         fail("%s 不存在：%s" % (what, path))
     try:

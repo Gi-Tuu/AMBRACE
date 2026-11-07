@@ -26,6 +26,14 @@ PY = str(ROOT / "backend" / ".venv" / "Scripts" / "python.exe")
 # 排除清单**只有一份**：scripts/check_public_leak.py（守卫 test_裁剪树工具不许有第二份排除清单 钉住）
 
 
+def _tool_path(p):
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。"""
+    rp = Path(p).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return str(rp.resolve())
+
+
 def git(*a):
     p = subprocess.run(["git", "-C", str(ROOT)] + list(a), capture_output=True)
     if p.returncode != 0:
@@ -109,7 +117,7 @@ def run_pytest(tree: Path, extra):
            "--basetemp=.pytest_pruned", "-p", "no:cacheprovider"] + extra
     # 日志落系统临时目录：不往仓库里丢产物（免得每次跑完 git status 多一行），也不写死作者机路径
     log = Path(os.environ.get("PRUNED_LOG") or (Path(tempfile.gettempdir()) / "pruned_tree_pytest.log"))
-    with open(log, "wb") as fh:
+    with open(_tool_path(str(log)), "wb") as fh:
         p = subprocess.run(cmd, cwd=str(tree / "backend"), stdout=fh,
                            stderr=subprocess.STDOUT, env=env)
     txt = log.read_text(encoding="utf-8", errors="replace")

@@ -47,6 +47,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import pickle
+import re
 import shutil
 import sqlite3
 import struct
@@ -71,6 +73,47 @@ _MAX_STRIDE = 1 << 16
 _MIN_DIM = 16
 _MAX_DIM = 8192
 
+# SQL 标识符白名单口径：表/列名无法参数化，拼进 SQL 前必须过这道校验（fail-closed）
+_SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _ident(name: str) -> str:
+    """SQL 标识符守卫：只放行 ``[A-Za-z_][A-Za-z0-9_]*`` 形态的表/列名，双引号包裹返回。
+
+    不含引号/空白/注释面的名字拼进 SQL 才是安全的，其余一律拒绝。
+    """
+    if not isinstance(name, str) or not _SAFE_IDENT_RE.match(name):
+        raise ValueError(f"非法 SQL 标识符: {name!r}")
+    return f'"{name}"'
+
+
+def _count_all_sql(table: str) -> str:
+    return f"SELECT COUNT(*) FROM {_ident(table)}"
+
+
+def _count_active_sql(table: str) -> str:
+    return f"SELECT COUNT(*) FROM {_ident(table)} WHERE is_archived=0"
+
+
+def _meta_sql(table: str) -> str:
+    return f"SELECT id, character_id FROM {_ident(table)}"
+
+
+def _meta_arch_sql(table: str) -> str:
+    return f"SELECT id, character_id, is_archived FROM {_ident(table)}"
+
+
+def _probe_sql(table: str, with_why: bool, with_arch: bool) -> str:
+    why = ", why_it_matters" if with_why else ", ''"
+    arch = " AND is_archived=0" if with_arch else ""
+    return (f"SELECT id, character_id, substr(content,1,80){why} FROM {_ident(table)}"
+            f" WHERE 1=1{arch} AND length(content)>12 ORDER BY id DESC LIMIT 1")
+
+
+def _select_cols_sql(table: str, columns: list, placeholders: str) -> str:
+    cols = ",".join(_ident(c) for c in columns)
+    return f"SELECT {cols} FROM {_ident(table)} WHERE id IN ({placeholders})"
+
 
 # ── 通用：只读连接 ──
 def _connect_ro(db_path: Path) -> sqlite3.Connection:
@@ -85,7 +128,8 @@ def _tables(conn: sqlite3.Connection) -> set[str]:
 
 
 def _columns(conn: sqlite3.Connection, table: str) -> list[str]:
-    return [r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()]
+    return [r[0] for r in conn.execute(
+        "SELECT name FROM pragma_table_info(?)", (table,)).fetchall()]
 
 
 # ── 段 1：集合声明维度 ──
@@ -177,15 +221,26 @@ def header_values(header: bytes) -> set[int]:
     return vals
 
 
+class _PickleGuard(pickle.Unpickler):
+    """受限反序列化：只放行内建类型（dict/int/str/...），一切自定义全局一律拒绝。
+
+    本函数只消费 dict 形态元数据里的 ``total_elements_added``；chroma 新版落盘的
+    PersistentData 对象本来就因 ``isinstance(data, dict)`` 判 False 返回 None，
+    拒载后走同一条 except → None 路径，行为不变，但反序列化面收窄到内建类型。
+    """
+
+    def find_class(self, module: str, name: str):
+        raise pickle.UnpicklingError(f"拒绝反序列化全局对象: {module}.{name}")
+
+
 def _read_pickle_count(seg: Path) -> int | None:
     """index_metadata.pickle 里的 total_elements_added（元素数，用来钳定步长）。"""
     path = seg / "index_metadata.pickle"
     if not path.is_file():
         return None
     try:
-        import pickle
-
-        data = pickle.load(open(path, "rb"))
+        with open(path, "rb") as fh:
+            data = _PickleGuard(fh).load()
         value = data.get("total_elements_added") if isinstance(data, dict) else None
         return int(value) if value else None
     except Exception:
@@ -370,9 +425,13 @@ def read_vector_ids(vector_db: Path) -> set[int]:
     try:
         if "embeddings" not in _tables(conn):
             return ids
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(embeddings)").fetchall()}
-        idcol = "embedding_id" if "embedding_id" in cols else "id"
-        for (raw,) in conn.execute(f"SELECT DISTINCT {idcol} FROM embeddings").fetchall():
+        cols = {r[0] for r in conn.execute(
+            "SELECT name FROM pragma_table_info(?)", ("embeddings",)).fetchall()}
+        if "embedding_id" in cols:
+            rows = conn.execute("SELECT DISTINCT embedding_id FROM embeddings").fetchall()
+        else:
+            rows = conn.execute("SELECT DISTINCT id FROM embeddings").fetchall()
+        for (raw,) in rows:
             try:
                 ids.add(int(raw))
             except (TypeError, ValueError):
@@ -428,14 +487,13 @@ def read_coverage(vector_db: Path, app_db: Path, memory_table: str | None = None
         out["table"] = table
         cols = set(_columns(aconn, table))
         has_arch = "is_archived" in cols
-        archived = " AND is_archived=0" if has_arch else ""
-        out["memory_rows"] = aconn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        out["memory_rows"] = aconn.execute(_count_all_sql(table)).fetchone()[0]
         out["memory_active_rows"] = aconn.execute(
-            f'SELECT COUNT(*) FROM "{table}" WHERE 1=1{archived}').fetchone()[0]
+            _count_all_sql(table) if not has_arch else _count_active_sql(table)).fetchone()[0]
         # 一次取全量 id（含归档）：孤儿与归档必须分桶，不能都塞进「记忆已删」
-        sel = "id, character_id" + (", is_archived" if has_arch else "")
         meta: dict[int, tuple] = {}
-        for row in aconn.execute(f'SELECT {sel} FROM "{table}"').fetchall():
+        for row in aconn.execute(
+                _meta_sql(table) if not has_arch else _meta_arch_sql(table)).fetchall():
             if row[0] is None:
                 continue
             meta[int(row[0])] = (row[1], bool(row[2]) if has_arch else False)
@@ -465,11 +523,11 @@ def read_coverage(vector_db: Path, app_db: Path, memory_table: str | None = None
         out["recall_pool_polluted"] = len(out["orphan_vector_ids"]) + len(out["archived_vector_ids"])
         probe_cols = [c for c in ("character_id", "content") if c in cols]
         if len(probe_cols) == 2:
-            why = ", why_it_matters" if "why_it_matters" in cols else ", ''"
-            row = aconn.execute(
-                f'SELECT id, character_id, substr(content,1,80){why} FROM "{table}" '
-                f'WHERE 1=1{archived} AND length(content)>12 ORDER BY id DESC LIMIT 1'
-            ).fetchone()
+            row = aconn.execute(_probe_sql(
+                table,
+                "why_it_matters" in cols,
+                has_arch,
+            )).fetchone()
             if row:
                 out["probe"] = {
                     "memory_id": row[0], "character_id": row[1],
@@ -566,15 +624,15 @@ def apply_rebuild(targets: list[dict], app_db: Path, table: str) -> dict:
     conn = sqlite3.connect(app_db)
     try:
         conn.execute("PRAGMA query_only=ON")
-        cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
+        cols = {r[0] for r in conn.execute(
+            "SELECT name FROM pragma_table_info(?)", (table,)).fetchall()}
         want = ["id", "character_id", "content"] + [
             c for c in ("memory_type", "importance", "why_it_matters", "user_id", "status") if c in cols]
         chunks = [ids[i:i + 200] for i in range(0, len(ids), 200)]
         payload = []
         for chunk in chunks:
             marks = ",".join("?" * len(chunk))
-            sql = f'SELECT {",".join(want)} FROM "{table}" WHERE id IN ({marks})'
-            payload.extend(conn.execute(sql, chunk).fetchall())
+            payload.extend(conn.execute(_select_cols_sql(table, want, marks), chunk).fetchall())
     finally:
         conn.close()
     if not payload:

@@ -4,7 +4,7 @@ Revision ID: a4b5c6d7e8f9
 Revises: 1edb666e9762
 Create Date: 2026-08-26 00:00:00.000000
 
-群聊游戏 Phase 1（docs/group-chat-games-plan.md v1.1）：
+群聊游戏 Phase 1（docs/archive/architecture/group-chat-games-plan.md v1.1）：
 - 新增 game_sessions / game_players / game_events / game_memories 四张表（游戏记忆逻辑隔离，
   不进主记忆向量检索；只能通过 game_session_id 显式查询）；
 - chat_group_messages 加 msg_type（normal/game_event/game_say）+ game_session_id，

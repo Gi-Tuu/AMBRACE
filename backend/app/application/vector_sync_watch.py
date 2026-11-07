@@ -155,6 +155,78 @@ def coverage(app_db_path, vector_db_path) -> dict[str, Any]:
     return out
 
 
+def missing_ids(app_db_path, vector_db_path, limit: int = 200) -> list[int]:
+    """未归档但无向量的记忆 id 清单（M-01 补建用；只读，与 coverage 同口径）。
+
+    2026-11-07：coverage() 只回计数；补建需要 id 清单。复用同一套打开/列口径，
+    失败返回空表（fail-open，与 coverage 一致）。
+    """
+    app_db, vector_db = Path(app_db_path), Path(vector_db_path)
+    if not app_db.is_file() or not vector_db.is_file():
+        return []
+    try:
+        vconn = _connect_ro(vector_db)
+    except Exception:  # noqa: BLE001
+        return []
+    try:
+        vector = _ids(vconn, VECTOR_TABLE, column=_id_column(vconn, VECTOR_TABLE))
+    except Exception:  # noqa: BLE001
+        return []
+    finally:
+        vconn.close()
+    try:
+        aconn = _connect_ro(app_db)
+    except Exception:  # noqa: BLE001
+        return []
+    try:
+        cols = {r[1] for r in aconn.execute(f'PRAGMA table_info("{MEMORY_TABLE}")').fetchall()}
+        if not cols:
+            return []
+        archived = " WHERE is_archived=0" if "is_archived" in cols else ""
+        alive = sorted(_ids(aconn, MEMORY_TABLE, archived))
+    except Exception:  # noqa: BLE001
+        return []
+    finally:
+        aconn.close()
+    return [i for i in alive if i not in vector][:limit]
+
+
+async def repair_missing(limit: int = 50) -> dict[str, Any]:
+    """对 missing 清单逐条重嵌补建（M-01 处置批，2026-11-07）。
+
+    flag ``vector_auto_repair`` 开才由 tick 调用；关＝只对账不修复（历史行为）。
+    单条失败只记 warning 继续下一条（与写路径 fail-open 同口径）；返回修复统计。
+    """
+    ids = missing_ids(_app_db_path(), _vector_db_path(), limit=limit)
+    fixed, failed = 0, 0
+    if ids:
+        from sqlalchemy import select as _select
+
+        from app.db.database import async_session_factory
+        from app.db.vector_store import add_memory
+        from app.memory.embedding import text_embedding
+        from app.models.memory import Memory
+
+        async with async_session_factory() as db:
+            rows = (await db.execute(_select(Memory).where(Memory.id.in_(ids)))).scalars().all()
+        for m in rows:
+            try:
+                emb = await text_embedding(m.content or m.title or "")
+                await add_memory(
+                    memory_id=m.id, character_id=m.character_id,
+                    memory_type=m.memory_type, content=(m.content or m.title or ""),
+                    embedding=emb, document=(m.content or m.title or ""),
+                    status=m.status, user_id=m.user_id,
+                )
+                fixed += 1
+            except Exception as e:  # noqa: BLE001 —— 单条失败不阻塞补建
+                failed += 1
+                _logger.warning("vector repair failed memory_id=%s: %s: %s",
+                                m.id, e.__class__.__name__, e)
+    _logger.info("vector repair: candidates=%s fixed=%s failed=%s", len(ids), fixed, failed)
+    return {"candidates": len(ids), "fixed": fixed, "failed": failed}
+
+
 async def tick() -> dict[str, Any]:
     """调度循环每一拍调一次：只读取数 → 一行 INFO 摘要 → 超阈值再补一行 WARNING。
 
@@ -172,6 +244,13 @@ async def tick() -> dict[str, Any]:
         "vector drift check: alive_memories=%s vector_ids=%s missing=%s orphans=%s%s",
         result["alive_memories"], result["vector_ids"], result["missing"],
         result["orphans"], (" note=" + str(result["note"])) if result["note"] else "")
+    # M-01 补建（2026-11-07）：flag 开时对 missing 清单重嵌补建（默认关＝历史行为只告警）。
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS as _AF
+        if _AF.get("vector_auto_repair", False) and result.get("ok") and result.get("missing"):
+            await repair_missing(limit=50)
+    except Exception as e:  # noqa: BLE001 —— 修复失败不阻塞对账上报
+        _logger.warning("vector auto repair failed: %s: %s", e.__class__.__name__, e)
     try:
         if result["missing"] > MISSING_WARN_THRESHOLD or result["orphans"] > ORPHAN_WARN_THRESHOLD:
             _logger.warning(

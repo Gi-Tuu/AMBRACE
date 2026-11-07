@@ -26,11 +26,13 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import re
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -66,20 +68,40 @@ def connect_ro(db_path: str) -> sqlite3.Connection:
 
 
 def load_legacy_classify():
-    """改造前口径：只读 `git show HEAD:backend/app/memory/tense.py` 并 exec 出 classify_tense。
+    """改造前口径：只读 `git show HEAD:backend/app/memory/tense.py` 并按文件加载出 classify_tense。
 
     只读 git 是本批允许的操作；失败则返回 (None, 原因)，脚本仍输出改造后结果。
+    加载方式：源码落临时文件后用 importlib 按文件位置加载（与 exec 同语义的官方等效做法）。
     """
+    tmp_path = None
     try:
         out = subprocess.run(
             ["git", "-C", SERVER_DIR, "show", "HEAD:backend/app/memory/tense.py"],
             capture_output=True, text=True, encoding="utf-8", check=True,
         )
-        ns: dict = {"__name__": "ambrace_tense_legacy"}
-        exec(compile(out.stdout, "tense.py@HEAD", "exec"), ns)
-        return ns["classify_tense"], "git HEAD:backend/app/memory/tense.py"
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".py", encoding="utf-8", delete=False, prefix="ambrace_tense_legacy_"
+        ) as tf:
+            tf.write(out.stdout)
+            tmp_path = tf.name
+        spec = importlib.util.spec_from_file_location("ambrace_tense_legacy", tmp_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("importlib spec 构造失败")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            sys.modules.pop(spec.name, None)
+        return mod.classify_tense, "git HEAD:backend/app/memory/tense.py"
     except Exception as e:  # noqa: BLE001 - 只读诊断，取不到就退化
         return None, f"（改造前口径不可得：{e}）"
+    finally:
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 def _row_obj(r: dict) -> SimpleNamespace:

@@ -1,0 +1,680 @@
+/* 拥爱服务器控制台 · 网页壳设计系统（D2 纸墨，两套原值）
+   硬约束：零圆角 / 无阴影 / 无渐变 / 装饰性强调色每页 ≤6 处 / 星空只进墨纸档。 */
+:root {
+  --paper: #f4f0e6; --paper2: #efe9db; --ink: #1b1815; --dim: #6f665a; --weak: #756a5c;
+  --brick: #8c3f2b; --rule: #d8cfbd; --ok: #4f6b4a; --warn: #a8642c;
+  --chartfill: rgba(27, 24, 21, .06); --hair: rgba(27, 24, 21, .26);
+  --ui: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --song: SimSun, "宋体", serif;
+  --num: Georgia, "Times New Roman", serif;
+  --mono: Consolas, monospace;
+  --side-w: 196px; --pad: 32px; --gap: 16px;
+  /* 字号阶梯：全站只许从这十档里取；改样式先看这张表，不许再写裸字号 */
+  --fs-cap: 10.5px; --fs-note: 11.5px; --fs-body: 12.5px; --fs-lead: 13px;
+  --fs-h3: 15px; --fs-h2: 16px; --fs-h1: 19px; --fs-code: 22px;
+  --fs-num: 26px; --fs-date: 40px;
+  --ease: cubic-bezier(.2, .7, .3, 1);
+}
+html[data-theme="dark"] {
+  --paper: #131110; --paper2: #1a1714; --ink: #e9e1d4; --dim: #a99d8d; --weak: #8d8172;
+  --brick: #c9785f; --rule: #302b24; --ok: #8dbf95; --warn: #d3924f;
+  --chartfill: rgba(233, 225, 212, .055); --hair: rgba(233, 225, 212, .22);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+html, body { height: 100%; }
+body {
+  font-family: var(--ui); font-size: var(--fs-lead); line-height: 1.75;
+  color: var(--ink); background: var(--paper); overflow: hidden; user-select: none;
+  transition: background-color .26s var(--ease), color .26s var(--ease);
+}
+.app { display: flex; height: 100%; }
+
+/* ── 侧栏 ── */
+.side { flex: 0 0 var(--side-w); background: var(--paper2); padding: 20px 0 14px; display: flex; flex-direction: column; }
+.side .brand { font-family: var(--song); font-size: var(--fs-h3); letter-spacing: .08em; color: var(--dim);
+  padding: 0 20px 6px; }
+.nav { flex: 1 1 auto; overflow: auto; }
+.nav button { display: flex; align-items: baseline; gap: 9px; width: 100%; text-align: left;
+  padding: 7px 20px; background: none; border: 0; font: inherit; cursor: default; color: var(--dim);
+  position: relative; transition: color .15s var(--ease), background .15s var(--ease); }
+.nav button::before { content: ""; position: absolute; left: 0; top: 6px; bottom: 6px; width: 2px;
+  background: var(--brick); opacity: 0; transition: opacity .15s var(--ease); }
+.nav button.on::before { opacity: 1; }
+.nav button b { font-family: var(--num); font-weight: 400; font-size: var(--fs-note); color: var(--weak);
+  font-variant-numeric: tabular-nums; }
+.nav button span { font-size: var(--fs-body); }
+.nav button:hover { color: var(--ink); }
+.nav button.on { background: var(--paper); color: var(--ink); }
+.side .foot { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 12px 20px 0; font-size: var(--fs-cap); letter-spacing: .16em; color: var(--weak); }
+/* 主题切换：图标说当前档，悬停说要点成什么；没记住就转虚线，不占强调色。 */
+/* 仿真星球：程序化表面纹理（build_planet.py 生成，512px 周期无缝）靠
+   background-position-x 平移做自转；球面光照、明暗界线、边缘大气辉光由 CSS 叠加，
+   所以纹理转而光不转。墨纸＝月、纸色＝日。 */
+.planet { position: relative; border-radius: 50%; overflow: hidden;
+  background-image: url("planet_moon.png");
+  background-repeat: repeat-x; background-size: 512px 100%;
+  box-shadow: inset 0 0 22px rgba(8, 6, 5, .58), inset 0 0 7px rgba(255, 232, 202, .16),
+              0 0 30px rgba(255, 178, 116, .34);
+  animation: planet-spin 26s linear infinite; }
+html[data-theme="light"] .planet { background-image: url("planet_sun.png");
+  box-shadow: inset 0 0 20px rgba(90, 30, 6, .5), inset 0 0 8px rgba(255, 238, 190, .3),
+              0 0 42px rgba(255, 146, 58, .6); }
+@keyframes planet-spin { from { background-position-x: 0; } to { background-position-x: -512px; } }
+.pl-shade { position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+  background:
+    radial-gradient(circle at 30% 26%, rgba(255, 255, 255, .30), transparent 44%),
+    linear-gradient(112deg, transparent 30%, rgba(8, 6, 5, .28) 60%, rgba(5, 4, 3, .84) 100%); }
+html[data-theme="light"] .pl-shade { background:
+    radial-gradient(circle at 30% 26%, rgba(255, 248, 214, .34), transparent 48%),
+    linear-gradient(112deg, transparent 42%, rgba(120, 40, 8, .16) 78%, rgba(120, 40, 8, .34) 100%); }
+
+/* 页眉右上角：右侧约 1/3 探出窗口，球心低于页眉底边，只露左上一弧自转；
+   其余被页眉下方裁掉。位置与开屏最后一帧严格同一处（否则交接会横跳）。 */
+.hero-planet { position: absolute; right: -49px; bottom: -92px; width: 148px; height: 148px;
+  z-index: 6; border: 0; padding: 0; cursor: pointer; opacity: 0;
+  transition: opacity .45s var(--ease); }
+.hero-planet.ready { opacity: 1; }
+.hero-planet:hover { box-shadow: inset 0 0 22px rgba(8, 6, 5, .58),
+              0 0 46px rgba(255, 178, 116, .7); }
+.hero-planet:focus-visible { outline: 2px solid var(--brick); outline-offset: -14px; }
+.hero-planet.bad { outline: 1px dashed var(--brick); outline-offset: -10px; }
+
+/* 首次开屏的构图按用户手绘图来：左边一颗放大很大的星球（只露右缘，过肩镜头）、
+   中间最小的一颗带星环、右边一颗星球。星空全程都在——中途换成纯黑底会被看成"多了一块黑幕"。 */
+#splash { position: fixed; inset: 0; z-index: 999; overflow: hidden; background: var(--paper);
+  opacity: 1; transition: opacity .26s var(--ease); }
+#splash.sp-out { opacity: 0; pointer-events: none; }
+.sp-stars { position: absolute; inset: 0; opacity: .82;
+  background: url("star_dark.png") center / cover no-repeat; }
+.sp-orb { position: absolute; width: 46px; height: 46px; filter: brightness(.62) saturate(.7); }
+/* 中间那颗：最小，带一道几乎侧看的星环 */
+.sp-orb-a { left: 41%; top: 16%; width: 116px; height: 116px; animation-duration: 34s;
+  overflow: visible; }
+.sp-orb-a::after { content: ""; position: absolute; left: 50%; top: 50%;
+  width: 208px; height: 44px; margin: -22px 0 0 -104px;
+  border: 2px solid rgba(233, 225, 212, .36); border-radius: 50%;
+  transform: rotate(-14deg); }
+html[data-theme="light"] .sp-orb-a::after { border-color: rgba(27, 24, 21, .26); }
+/* 右边那颗：一颗正常的星球，压在画面中段，不抢右上角那块地 */
+.sp-orb-b { left: 71%; top: 37%; width: 288px; height: 288px; animation-duration: 19s; }
+/* 主角：球心用负 margin 钉在视口原点，整段旅程只动 transform。
+   动 left/top 会每帧触发布局，球放大到二十几倍时就是肉眼可见的卡；transform 走合成器。
+   缓动一律 linear —— 多段串起来时，段内再加曲线会让每个关键帧都"刹一脚"。 */
+.sp-hero { position: absolute; left: 0; top: 0; width: 128px; height: 128px;
+  margin: -64px 0 0 -64px; will-change: transform; z-index: 2;
+  box-shadow: inset 0 0 16px rgba(8, 6, 5, .52), 0 0 9px rgba(255, 178, 116, .18);
+  animation: planet-spin 26s linear infinite,
+             planet-journey 5s linear forwards; }
+html[data-theme="light"] .sp-hero { box-shadow: inset 0 0 14px rgba(90, 30, 6, .46),
+              0 0 20px rgba(255, 146, 58, .44); }
+/* 背面：越大越黑。球放大到盖满那一刻最暗（只留一点轮廓），缩回来一路变亮，
+   落到页眉时刚好是正常亮度。太阳是光源，纸色档不给这层。 */
+.sp-hero::after { content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: #050403; opacity: 0; pointer-events: none; }
+html[data-theme="dark"] .sp-hero::after { animation: planet-night 5s linear forwards; }
+@keyframes planet-night {
+  0%   { opacity: .42; }
+  16%  { opacity: .5; }
+  26%  { opacity: .6; }
+  34%  { opacity: .7; }
+  42%  { opacity: .8; }
+  49%  { opacity: .88; }
+  56%  { opacity: .94; }
+  62%  { opacity: .9; }
+  68%  { opacity: .82; }
+  74%  { opacity: .72; }
+  80%  { opacity: .58; }
+  86%  { opacity: .4; }
+  92%  { opacity: .22; }
+  96%  { opacity: .1; }
+  100% { opacity: 0; }
+}
+/* 两段动画：一个动 background-position（自转），一个动 transform，互不打架。
+   时间轴 5s，与 index.html 的 SPLASH_MS 同源：
+   0–18% 蓄势（自左淡入、原地等）→ 18–44% 右移放大盖满
+   → 44–100% 沿二次贝塞尔弧线收束到页眉右侧那颗球。
+   收束段缩放按等比衰减：前 8% 从 26 掉到 13（这一截还盖着屏，等于"拉帘"起手），
+   之后每 8% 掉 1.5 倍，边缘匀速内收，读起来才是"越飞越远、越飞越小"。 */
+/* 两段动画：一个动 background-position（自转），一个动 transform，互不打架。
+   时间轴 5s，与 index.html 的 SPLASH_MS 同源：
+   0–16% 过肩定场（已经是一颗巨星球，只露右缘）→ 16–56% 右移放大盖满（2.0s，慢）
+   → 56–100% 沿二次贝塞尔弧线收束到窗口右上角（2.2s，快）。 */
+@keyframes planet-journey {
+  0%     { opacity: 0; transform: translate(-25.4vw, 50vh) scale(12.3); }
+  5%     { opacity: 1; transform: translate(-25vw, 50vh) scale(12.4); }
+  16%    { transform: translate(-25vw, 50vh) scale(12.4); }
+  26%    { transform: translate(-17vw, 50vh) scale(13.4); }
+  34%    { transform: translate(-7vw, 50vh) scale(14.8); }
+  42%    { transform: translate(8vw, 50vh) scale(17); }
+  49%    { transform: translate(26vw, 50vh) scale(20.4); }
+  56%    { transform: translate(50vw, 50vh) scale(26); }
+  62%    { transform: translate(54.7vw, 43.4vh) scale(16.6); }
+  68%    { transform: translate(59.7vw, 37.3vh) scale(11); }
+  74%    { transform: translate(65vw, 31.8vh) scale(7.3); }
+  80%    { transform: translate(70.6vw, 26.8vh) scale(4.8); }
+  86%    { transform: translate(76.4vw, 22.3vh) scale(3.2); }
+  92%    { transform: translate(82.6vw, 18.4vh) scale(2.1); }
+  96%    { transform: translate(91vw, 16.6vh) scale(1.5); }
+  100%   { transform: translate(calc(100vw - 25px), 150px) scale(1.156); }
+}
+/* ── 主区 ── */
+.main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
+.hero { position: relative; flex: 0 0 132px; border-bottom: 1px solid var(--rule);
+  overflow: hidden; isolation: isolate; }
+html[data-theme="dark"] .hero { background: url("star_dark.png") center / cover no-repeat; }
+/* W4 呼吸层：只叠亮星（screen 混合＝只加光，永不把底板的星压暗），
+   动的只有透明度，且只在墨纸档；页面看不见就整条停掉，不给合成器留常驻活。 */
+.hero .sky { position: absolute; inset: 0; display: none;
+  background: url("star_tw.png") center / cover no-repeat;
+  mix-blend-mode: screen; opacity: .18; pointer-events: none; }
+html[data-theme="dark"] .hero .sky { display: block; animation: sky-breathe 14s ease-in-out infinite alternate; }
+html[data-sky="paused"] .hero .sky { animation-play-state: paused; }
+@keyframes sky-breathe {
+  from { opacity: .18 }
+  to { opacity: .72 }
+}
+.hero .ht { position: absolute; left: var(--pad); top: 30px; }
+.hero h1 { font-family: var(--song); font-weight: 400; font-size: var(--fs-num); letter-spacing: .04em; }
+.hero .sub { font-size: var(--fs-note); letter-spacing: .16em; color: var(--dim); margin-top: 6px; }
+/* ② frameless：系统标题栏隐藏后，顶部留细拖动条，右上自绘窗口按钮。
+   拖动条与按钮 DOM 独立——pywebview 只认 .pywebview-drag-region，按钮点击不会被抢走。 */
+.hero .dragbar { position: absolute; top: 0; left: 0; right: 150px; height: 6px;
+  z-index: 4; cursor: move; }
+.hero .winbtns { position: absolute; top: 0; right: 0; height: 30px; display: flex; z-index: 5; }
+.hero .winbtns .wb { width: 46px; height: 30px; padding: 0; border: 0;
+  border-left: 1px solid var(--rule); background: transparent; color: var(--weak);
+  font-family: inherit; font-size: var(--fs-note); line-height: 1; cursor: pointer; }
+.hero .winbtns .wb:hover { color: var(--ink); background: var(--paper2); }
+.hero .winbtns .wb-x:hover { color: var(--brick); }
+.hero .winbtns .wb:focus-visible { outline: 1px solid var(--ink); outline-offset: -2px; }
+/* ④ 日 在左，月+周 / 具体时间 在日的右边同一列，上下两行分别对齐 */
+.side { position: relative; }
+/* 侧栏分隔线与主区页眉底线钉在同一高度，不再各自错位 */
+.side::before { content: ""; position: absolute; top: 132px; left: 0; right: 0;
+  border-bottom: 1px solid var(--rule); pointer-events: none; }
+.side .clock { padding: 2px 20px 16px; display: flex; flex-direction: row;
+  align-items: center; gap: 14px; margin-bottom: 12px; }
+.side .clock .cd b { font-family: var(--song); font-weight: 400; font-size: var(--fs-date);
+  line-height: 1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.side .clock .ct { display: flex; flex-direction: column; gap: 6px;
+  font-family: var(--num); font-variant-numeric: tabular-nums; }
+.side .clock .ct #dDate { font-size: var(--fs-cap); letter-spacing: .1em; color: var(--weak); }
+.side .clock .ct #heroTime { font-size: var(--fs-lead); color: var(--dim); }
+.body { flex: 1 1 auto; padding: 24px var(--pad) 16px; display: flex; flex-direction: column; overflow: auto; }
+
+/* ── 分栏标题 ── */
+.sec { display: flex; align-items: baseline; border-top: 1px solid var(--rule); padding-top: 9px; margin-top: 20px; }
+.sec:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+.sec h2 { font-family: var(--song); font-weight: 400; font-size: var(--fs-h2); letter-spacing: .05em; }
+.sec em { margin-left: auto; font-style: normal; font-size: var(--fs-cap); letter-spacing: .16em; color: var(--weak); }
+.sec em { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sec .btn { margin-left: 14px; flex: 0 0 auto; }
+
+/* ── B 排版：直角细框卡，无圆角无阴影 ── */
+/* 仪表盘顶部读数条：概览那五项并进来横排一行（零圆角、无阴影，只用分隔线） */
+.readout { display: flex; flex-wrap: wrap; border: 1px solid var(--rule);
+  background: var(--paper2); }
+.readout .ro { flex: 1 1 0; min-width: 108px; padding: 9px 14px; border-left: 1px solid var(--rule); }
+.readout .ro:first-child { border-left: 0; }
+.readout .ro i { display: block; font-style: normal; font-size: var(--fs-cap);
+  letter-spacing: .12em; color: var(--weak); }
+.readout .ro b { display: block; margin-top: 5px; font-family: var(--num); font-weight: 400;
+  font-size: var(--fs-body); color: var(--ink); }
+.readout .ro b.miss { color: var(--weak); }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap); margin-top: 12px; }
+.card { border: 1px solid var(--rule); background: var(--paper2); padding: 13px 15px 14px; min-width: 0; }
+.card .t { font-size: var(--fs-cap); letter-spacing: .16em; color: var(--weak); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.card .n { font-family: var(--num); font-size: var(--fs-num); line-height: 1; margin-top: 7px;
+  font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .n.ok { color: var(--ok); }
+.card .n.bad { color: var(--brick); }
+.card .n.mono { font-family: var(--mono); font-size: var(--fs-h3); color: var(--dim); }
+.card .c { font-size: var(--fs-note); color: var(--dim); margin-top: 4px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.card .c svg { vertical-align: -3px; }
+
+/* ── 热力图 ── */
+.heat { margin-top: 14px; flex: 1 1 auto; min-height: 0; }
+.heat svg { display: block; width: 100%; height: auto; }
+.heat .empty { color: var(--weak); font-family: var(--song); padding: 22px 0; }
+/* 热力图悬浮明细：跟着视口走的纸墨小卡，无阴影无渐变，不吃鼠标事件 */
+.hmtip { position: fixed; z-index: 90; pointer-events: none; width: 218px;
+  background: var(--paper); border: 1px solid var(--ink); padding: 10px 12px;
+  font-size: var(--fs-cap); color: var(--dim); }
+.hmtip[hidden] { display: none; }
+.hmtip .hmt { display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  border-bottom: 1px solid var(--rule); padding-bottom: 7px; margin-bottom: 7px; }
+.hmtip .hmt b { font-family: var(--num); font-size: var(--fs-note); font-weight: 400; color: var(--ink); }
+.hmtip .hml > div { display: flex; justify-content: space-between; gap: 10px; line-height: 1.7; }
+.hmtip .hml i { font-style: normal; }
+.hmtip .hml b { font-family: var(--num); font-weight: 400; color: var(--ink);
+  min-width: 82px; text-align: right; font-variant-numeric: tabular-nums; }
+.hmtip .hml em { font-style: normal; font-family: var(--num); color: var(--weak);
+  min-width: 48px; text-align: right; }
+.hmtip .hmx { color: var(--weak); margin-top: 6px; }
+
+.foot { margin-top: auto; padding-top: 12px; font-size: var(--fs-cap); letter-spacing: .16em; color: var(--weak); }
+.wip { padding: 22px 0; color: var(--dim); font-size: var(--fs-note); }
+.wip em { font-style: normal; font-family: var(--num); color: var(--brick); }
+/* ── 按钮：矩形、1px 实线、无圆角、无阴影 ── */
+.btnrow { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.btn { font: inherit; font-size: var(--fs-body); color: var(--ink); background: var(--paper);
+  border: 1px solid var(--rule); border-radius: 0; box-shadow: none; padding: 6px 14px; cursor: default;
+  transition: background .15s var(--ease), color .15s var(--ease), border-color .15s var(--ease); }
+.btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.btn:focus-visible { outline: 2px solid var(--brick); outline-offset: 2px; }
+.btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.btn.primary:hover { background: var(--brick); border-color: var(--brick); }
+.btn.danger { color: var(--brick); border-color: var(--brick); }
+.btn.danger:hover { background: var(--brick); color: var(--paper); }
+.btn[disabled] { opacity: .45; pointer-events: none; }
+.state { font-size: var(--fs-note); letter-spacing: .16em; color: var(--weak); margin-left: 6px; }
+.state.ok { color: var(--ok); }
+.state.bad { color: var(--brick); }
+
+/* ── 表单：底线式输入 ── */
+.field { display: flex; align-items: baseline; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.field label { font-size: var(--fs-cap); letter-spacing: .16em; color: var(--weak); }
+.field input { font: inherit; font-size: var(--fs-lead); color: var(--ink); background: transparent;
+  border: 0; border-bottom: 1px solid var(--rule); border-radius: 0; padding: 4px 2px; }
+.field input:focus { outline: none; border-bottom: 2px solid var(--ink); }
+.field input.num { width: 84px; font-family: var(--num); font-variant-numeric: tabular-nums; }
+.mode { margin-top: 10px; font-size: var(--fs-note); color: var(--dim); }
+.err { color: var(--brick); font-size: var(--fs-note); }
+
+/* ── 地址三行 ── */
+.addr { display: flex; align-items: baseline; gap: 12px; padding: 9px 0;
+  border-bottom: 1px dotted var(--rule); }
+.addr .lb { flex: 0 0 148px; font-size: var(--fs-note); letter-spacing: .1em; color: var(--weak); }
+.addr .vl { flex: 1 1 auto; font-family: var(--mono); font-size: var(--fs-body); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.addr .vl.off { color: var(--weak); font-family: var(--ui); }
+.addr .btn { flex: 0 0 auto; }
+
+/* ── 日志 ── */
+.logtools { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.sw { display: inline-flex; align-items: baseline; gap: 7px; font-size: var(--fs-note);
+  letter-spacing: .16em; color: var(--dim); cursor: default; }
+/* ① 星球开关（返工）：椭圆轨道里只有一颗球，靠遮罩滑入/退出做日↔月形变，
+   球面渐变/光晕/三颗卫星/速度尾迹沿用工作台 .psb 星球滚条的星球感，尺寸放大近一倍。 */
+.sw i { width: 56px; height: 28px; border: 1px solid var(--rule); border-radius: 999px;
+  position: relative; background: rgba(120, 110, 100, .06); flex: 0 0 auto; }
+.sw i .sw-planet { position: absolute; left: 3px; top: 3px; width: 20px; height: 20px;
+  border-radius: 50%;
+  box-shadow: 0 0 6px rgba(200, 192, 178, .3);
+  transform: translateX(0);
+  transition: transform .24s var(--ease), box-shadow .24s var(--ease),
+              border-radius .24s var(--ease); }
+/* 球面单独一层并裁切：遮罩圆不会凸到轨道里变成「暗色圆形」；卫星留在外层绕转 */
+.sw i .sw-face { position: absolute; inset: 0; border-radius: 50%; overflow: hidden;
+  background: radial-gradient(circle at 34% 32%, #cfc7bb 0%, #8a8175 58%, #4a443c 100%); }
+.sw i .sw-face::before { content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle at 34% 32%, #ffd0a8 0%, #ff8a4c 45%, var(--brick) 72%, #6d2c1c 100%);
+  opacity: 0; transition: opacity .24s var(--ease); }
+.sw i .sw-face::after { content: ""; position: absolute; top: -2px; left: -2px;
+  width: 24px; height: 24px; border-radius: 50%; background: #1a1816; opacity: .96;
+  transform: translate(-7px, -3px) scale(1);
+  transition: transform .24s var(--ease), opacity .24s var(--ease); }
+/* ⑥ 拖尾默认没有，只在 .morph（切换瞬间）扫一次，然后收回 */
+.sw i .sw-tail { position: absolute; left: 13px; top: 4px; height: 20px; width: 0;
+  border-radius: 10px; pointer-events: none; opacity: 0;
+  background: linear-gradient(to right,
+    rgba(var(--tail), 0), rgba(var(--tail), .28) 55%, rgba(var(--tail), .5)); }
+/* 月亮冷灰、太阳暖橙，各自对应；尾巴亮度始终低于球体 */
+.sw { --tail: 207, 199, 187; }
+.sw.on { --tail: 255, 180, 137; }
+.sw.morph .sw-tail { animation: tail-sweep .42s var(--ease); }
+@keyframes tail-sweep {
+  0% { width: 0; opacity: 0; }
+  40% { width: 30px; opacity: .8; }
+  100% { width: 0; opacity: 0; }
+}
+/* 三颗卫星绕着球转（工作台 psOrbit 口径） */
+.sw i .sw-planet > i { position: absolute; left: 50%; top: 50%; width: 2.4px; height: 2.4px;
+  margin: -1.2px 0 0 -1.2px; border-radius: 50%; background: #ffe0c0; opacity: .8;
+  transform-origin: 0 0; animation: swOrbit 3.4s linear infinite; }
+.sw i .sw-planet > i:nth-child(2) { animation-duration: 5.1s; animation-direction: reverse; opacity: .55; }
+.sw i .sw-planet > i:nth-child(3) { animation-duration: 7.3s; opacity: .4; }
+@keyframes swOrbit { from { transform: rotate(0deg) translateY(-13px); }
+  to { transform: rotate(360deg) translateY(-13px); } }
+.sw.on i { border-color: var(--brick); }
+.sw.on i .sw-planet { transform: translateX(30px); border-radius: 50% 46% 50% 48%;
+  box-shadow: 0 0 13px rgba(255, 150, 90, .75); }
+.sw.on i .sw-face::before { opacity: 1; }
+.sw.on i .sw-face::after { transform: translate(18px, -6px) scale(.2); opacity: 0; }
+pre.log { margin-top: 12px; flex: 1 1 auto; min-height: 0; overflow: auto;
+  background: var(--paper2); border: 1px solid var(--rule); padding: 12px 14px;
+  font-family: var(--mono); font-size: var(--fs-note); line-height: 1.65; white-space: pre-wrap;
+  word-break: break-word; user-select: text; }
+.logempty { margin-top: 12px; padding: 22px 0; color: var(--weak); font-family: var(--song); }
+/* ── 登录门 ── */
+.login { max-width: 420px; margin-top: 18px; border: 1px solid var(--rule); background: var(--paper2);
+  padding: 18px 20px 20px; }
+.login h3 { font-family: var(--song); font-weight: 400; font-size: var(--fs-h2); letter-spacing: .05em; }
+.login p { font-size: var(--fs-note); color: var(--dim); margin-top: 6px; }
+.login .field input { flex: 1 1 140px; min-width: 120px; }
+.who { font-size: var(--fs-note); letter-spacing: .16em; color: var(--weak); }
+
+/* ── 表格 ── */
+table.tbl { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: var(--fs-body); }
+table.tbl th { text-align: left; font-size: var(--fs-cap); letter-spacing: .16em; color: var(--weak);
+  font-weight: 400; padding: 0 10px 7px 0; border-bottom: 1px solid var(--rule); }
+table.tbl td { padding: 8px 10px 8px 0; border-bottom: 1px dotted var(--rule); vertical-align: baseline;
+  transition: background .15s var(--ease); }
+table.tbl th.num, table.tbl td.num { font-family: var(--num); font-variant-numeric: tabular-nums; text-align: right; }
+table.tbl td.mono { font-family: var(--mono); font-size: var(--fs-note); color: var(--dim);
+  max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.tbl tr:hover td { background: var(--paper2); }
+.tblwrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
+
+.logtools input.num { width: 84px; font-family: var(--num); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-lead); color: var(--ink); background: transparent; border: 0;
+  border-bottom: 1px solid var(--rule); padding: 4px 2px; }
+.logtools input.num:focus { outline: none; border-bottom: 2px solid var(--ink); }
+
+/* ── 模态块 ── */
+.mod { border: 1px solid var(--rule); background: var(--paper2); padding: 13px 15px 14px; margin-top: 12px; }
+.mod .mh { display: flex; align-items: baseline; gap: 9px; }
+.mod .mh b { font-family: var(--song); font-weight: 400; font-size: var(--fs-h3); letter-spacing: .04em; }
+.mod .mh .cap { margin-left: auto; font-size: var(--fs-note); color: var(--dim); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--weak); flex: 0 0 auto; }
+.dot.on { background: var(--ok); }
+.mod .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 26px; margin-top: 10px; }
+.mod .fields label { display: block; font-size: var(--fs-cap); letter-spacing: .16em; color: var(--weak); }
+.mod .fields input { width: 100%; font: inherit; font-size: var(--fs-body); color: var(--ink);
+  background: transparent; border: 0; border-bottom: 1px solid var(--rule); padding: 4px 2px; }
+.mod .fields input:focus { outline: none; border-bottom: 2px solid var(--ink); }
+.mod .foot { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.mod .foot .hint { font-size: var(--fs-note); color: var(--weak); }
+
+/* ── 开关分组 ── */
+.grp { margin-top: 20px; }
+.grp .gh { display: flex; align-items: baseline; border-top: 1px solid var(--rule);
+  padding-top: 8px; }
+.grp .gh h3 { font-family: var(--song); font-weight: 400; font-size: var(--fs-h3); letter-spacing: .05em; }
+.grp .gh em { margin-left: auto; font-style: normal; font-size: var(--fs-cap); letter-spacing: .16em;
+  color: var(--weak); }
+.frow { display: flex; align-items: baseline; gap: 12px; padding: 9px 0;
+  border-bottom: 1px dotted var(--rule); }
+.frow .ft { flex: 0 0 260px; min-width: 0; }
+.frow .ft b { font-weight: 400; font-size: var(--fs-body); }
+.frow .ft i { display: block; font-style: normal; font-size: var(--fs-note); color: var(--dim);
+  margin-top: 2px; }
+.frow .fs { flex: 1 1 auto; font-size: var(--fs-cap); letter-spacing: .1em; color: var(--weak);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frow.locked .sw { opacity: .4; pointer-events: none; }
+.tag { font-size: var(--fs-cap); letter-spacing: .1em; color: var(--brick); border: 1px solid var(--brick);
+  padding: 0 4px; }
+
+/* ── 弹层（危险操作用整屏遮罩，不用系统对话框）── */
+.ovl { position: fixed; inset: 0; background: rgba(10, 9, 8, .62); display: flex;
+  align-items: center; justify-content: center; z-index: 60; }
+.ovl .box { width: 720px; max-height: 82vh; overflow: auto; background: var(--paper);
+  border: 1px solid var(--ink); border-top: 2px solid var(--brick); padding: 18px 22px 20px; }
+.ovl h3 { font-family: var(--song); font-weight: 400; font-size: var(--fs-h1); letter-spacing: .05em; }
+.ovl .ln { font-size: var(--fs-body); padding: 6px 0; border-bottom: 1px dotted var(--rule); }
+.ovl .ln.warn { color: var(--warn); }
+.ovl .ln.error { color: var(--brick); }
+.ovl .ln.row { font-family: var(--mono); font-size: var(--fs-note); color: var(--dim); }
+.ovl .btnrow { margin-top: 16px; }
+.ovl .gate { font-size: var(--fs-note); color: var(--brick); margin-top: 8px; min-height: 18px; }
+.menu { position: absolute; z-index: 55; background: var(--paper); border: 1px solid var(--ink);
+  border-top: 2px solid var(--brick); min-width: 220px; padding: 4px 0; }
+.menu button { display: block; width: 100%; text-align: left; font: inherit; font-size: var(--fs-body);
+  background: none; border: 0; color: var(--ink); padding: 6px 16px; cursor: default; }
+.menu button:hover { background: var(--paper2); }
+.menu button.danger { color: var(--brick); }
+.menu .sub { border-top: 1px dotted var(--rule); margin-top: 4px; padding-top: 4px;
+  font-size: var(--fs-cap); letter-spacing: .16em; color: var(--weak); padding-left: 16px; }
+tr.bin td { color: var(--weak); }
+td .kebab { font-family: var(--num); letter-spacing: .1em; }
+
+/* ── 分段选择器 ── */
+.seg { display: inline-flex; border: 1px solid var(--rule); margin-top: 12px; }
+.seg button { font: inherit; font-size: var(--fs-body); background: var(--paper); color: var(--dim);
+  border: 0; border-right: 1px solid var(--rule); padding: 6px 18px; cursor: default; }
+.seg button:last-child { border-right: 0; }
+.seg button.on { background: var(--ink); color: var(--paper); }
+.descr { font-size: var(--fs-note); color: var(--dim); margin-top: 8px; min-height: 18px; }
+
+/* ── 键值行 ── */
+.kv { display: flex; align-items: baseline; gap: 12px; padding: 8px 0;
+  border-bottom: 1px dotted var(--rule); }
+.kv .k { flex: 0 0 150px; font-size: var(--fs-note); letter-spacing: .1em; color: var(--weak); }
+.kv .v { flex: 1 1 auto; font-family: var(--mono); font-size: var(--fs-body); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; }
+.kv .v.num { font-family: var(--num); font-variant-numeric: tabular-nums; }
+.kv .v.big { font-family: var(--num); font-size: var(--fs-code); letter-spacing: .06em; }
+
+/* ── 名单 ── */
+.listrow { display: flex; align-items: baseline; gap: 12px; padding: 8px 0;
+  border-bottom: 1px dotted var(--rule); }
+.listrow .nm { flex: 1 1 auto; font-family: var(--mono); font-size: var(--fs-body); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; }
+.listrow .btn { flex: 0 0 auto; }
+.caphint { font-size: var(--fs-note); letter-spacing: .1em; color: var(--weak); }
+.warnline { font-size: var(--fs-note); color: var(--warn); }
+
+/* ── 状态条：操作结果常驻一行（纸墨口径：一行小字，不弹窗、不转圈）── */
+.status { flex: 0 0 auto; display: flex; align-items: baseline; gap: 12px;
+  min-height: 30px; padding: 7px var(--pad); border-top: 1px solid var(--rule);
+  font-size: var(--fs-note); color: var(--weak); }
+.status .smsg { color: var(--dim); }
+.status .smsg.ok { color: var(--ok); }
+.status .smsg.bad { color: var(--brick); }
+.status .shint { margin-left: auto; letter-spacing: .16em; font-size: var(--fs-cap); }
+
+/* ── 开关做成真按钮：键盘可达、读屏有状态（不用 font 简写，会抹掉字号档位）── */
+button.sw { font-family: inherit; font-size: var(--fs-note); letter-spacing: .16em;
+  line-height: inherit; color: var(--dim); background: none; border: 0; padding: 0;
+  margin: 0; text-align: left; cursor: default; }
+button.sw:focus-visible { outline: 2px solid var(--brick); outline-offset: 3px; }
+button.sw[disabled] { opacity: .4; }
+
+/* ── 表格：表头吸顶，操作列钉在右侧 ── */
+table.tbl thead th { position: sticky; top: 0; z-index: 1; background: var(--paper); }
+table.tbl thead th.sortable:hover { color: var(--ink); }
+table.tbl thead th .arrow { font-size: var(--fs-cap); color: var(--brick); margin-left: 4px; }
+table.tbl th.act, table.tbl td.act { position: sticky; right: 0; background: var(--paper); }
+table.tbl tr:hover td.act { background: var(--paper2); }
+
+/* ⑨ 分组按工作台「钥匙页」的桌面图标卡片分类（用户明确要手机 app 图标感，圆角破例） */
+.gtiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(94px, 1fr));
+  gap: 14px; margin: 4px 0 20px; }
+.gtile { position: relative; display: grid; grid-template-rows: 1fr auto; row-gap: 4px;
+  align-items: center; justify-items: center; min-height: 92px; padding: 12px 6px 7px;
+  border: 1px solid var(--rule); border-radius: 14px; background: var(--paper2);
+  color: var(--weak); cursor: pointer; transition: border-color .16s var(--ease), color .16s var(--ease); }
+.gtile b { font-family: var(--song); font-size: var(--fs-num); font-weight: 400; line-height: 1;
+  color: var(--brick); }
+/* 计数挪到右上角：原来 bottom:26px 正好落在标签那一行，字和数字会叠在一起 */
+.gtile i { position: absolute; right: 8px; top: 6px; font-style: normal;
+  font-family: var(--num); font-size: var(--fs-cap); line-height: 1; color: var(--weak); }
+/* 标签锁死两行高度：短名不缩、长名截断成两行，卡片高度与大字位置都不再被名字长短左右 */
+.gtile span { font-size: var(--fs-cap); letter-spacing: .06em; line-height: 13px; height: 26px;
+  width: 100%; text-align: center; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.gtile:hover { border-color: var(--dim); color: var(--ink); }
+.gtile.on { border-color: var(--brick); color: var(--ink); box-shadow: inset 0 0 0 1px var(--brick); }
+.gtile:focus-visible { outline: 2px solid var(--brick); outline-offset: 2px; }
+
+/* 开关页的改动条：没改动时说明"点了先攒着"，有改动时给保存/放弃 */
+.dirtybar { display: flex; align-items: center; gap: 10px; padding: 9px 12px; margin: 0 0 14px;
+  border: 1px solid var(--rule); background: var(--paper2); color: var(--weak);
+  font-size: var(--fs-note); letter-spacing: .04em; }
+.dirtybar.on { border-color: var(--brick); color: var(--ink); }
+.dirtybar .txt { flex: 1 1 auto; }
+.frow.dirty::before { opacity: .55; transform: none; }
+
+/* ── 列表行 hover：点线变实 ＋ 行首 2px 强调色竖线（design.md §8）── */
+.frow, .addr, .kv, .listrow { position: relative; }
+.frow::before, .addr::before, .kv::before, .listrow::before {
+  content: ""; position: absolute; left: -12px; top: 9px; bottom: 9px; width: 3px;
+  background: var(--brick); opacity: 0; transform: scaleX(0); transform-origin: left center;
+  transition: opacity .18s var(--ease), transform .18s var(--ease); }
+.frow:hover::before, .addr:hover::before, .kv:hover::before, .listrow:hover::before {
+  opacity: 1; transform: scaleX(1); animation: row-sweep .6s var(--ease); }
+@keyframes row-sweep {
+  0% { transform: scaleX(0); box-shadow: none; }
+  55% { transform: scaleX(1); box-shadow: 0 0 9px 2px rgba(201, 120, 95, .6); }
+  100% { transform: scaleX(1); box-shadow: none; }
+}
+/* ⑧ 星尘浮现 & 下沉：只在停留的那一行短短走一次 */
+.frow::after, .addr::after, .kv::after, .listrow::after {
+  content: ""; position: absolute; left: -11px; top: 50%; width: 3px; height: 3px;
+  border-radius: 50%; background: #ffe0c0; opacity: 0; pointer-events: none; }
+.frow:hover::after, .addr:hover::after, .kv:hover::after, .listrow:hover::after {
+  animation: dust-float .9s var(--ease); }
+@keyframes dust-float {
+  0% { opacity: 0; transform: translateY(9px); }
+  40% { opacity: .95; transform: translateY(-9px); }
+  100% { opacity: 0; transform: translateY(7px); }
+}
+.frow:hover, .addr:hover, .kv:hover, .listrow:hover { border-bottom-style: solid;
+  background-image:
+    radial-gradient(circle at 18% 40%, rgba(201, 120, 95, .09), transparent 38%),
+    radial-gradient(circle at 46% 70%, rgba(255, 190, 150, .07), transparent 34%),
+    radial-gradient(circle at 78% 30%, rgba(233, 225, 212, .05), transparent 30%);
+  background-size: 220% 100%;
+  animation: row-nebula 1.1s var(--ease); }
+@keyframes row-nebula {
+  from { background-position: 100% 0; opacity: .5; }
+  50% { background-position: 0 0; opacity: 1; }
+  to { background-position: 0 0; opacity: 1; }
+}
+
+/* ── 翻页：切换页面 = 上移 4px ＋ 淡入，180ms（design.md §10）── */
+#body.rise { animation: body-rise .62s cubic-bezier(.2, .7, .28, 1) both; }
+@keyframes body-rise {
+  from { opacity: 0; transform: translate3d(0, 76px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+#body.enter { animation: fade .18s var(--ease) both; }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* ── 错落入场：一组行/卡依次出现，每行晚 18ms，最多 8 组（design.md §10）── */
+#body.enter .stagger > * { animation: rise .18s var(--ease) both; }
+#body.enter .stagger > *:nth-child(1) { animation-delay: .02s; }
+#body.enter .stagger > *:nth-child(2) { animation-delay: .04s; }
+#body.enter .stagger > *:nth-child(3) { animation-delay: .06s; }
+#body.enter .stagger > *:nth-child(4) { animation-delay: .08s; }
+#body.enter .stagger > *:nth-child(5) { animation-delay: .10s; }
+#body.enter .stagger > *:nth-child(6) { animation-delay: .12s; }
+#body.enter .stagger > *:nth-child(7) { animation-delay: .14s; }
+#body.enter .stagger > *:nth-child(8) { animation-delay: .16s; }
+
+/* ── 流动星云与粒子（只在墨纸档；标题那一列保持安静）──
+   只动 transform/opacity。云用纯色低透明度＋静态柔化，不用渐变光斑、不加 screen 混合：
+   screen 会把底板的星整片抬亮，把呼吸层低帧基线洗白（实测亮像素 10 → 57，3 倍判据过不了）；
+   透明度 .04／.03 后低帧 16 → 高帧 81（5.06 倍）。柔化只用于静态氛围层：去掉后纯色椭圆
+   会露出硬边圆斑（11-06 出图目检），工作台 ui/index.html 的星球滚条同样以渐变／光晕做氛围。
+   全站滚动条球体滑块沿用工作台「星球滚条」口径，不是本批新增装饰，无需另立口径冲突。 */
+.hero .neb { display: none; position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+html[data-theme="dark"] .hero .neb { display: block; }
+/* 页面看不见就整条停：呼吸层与流动层共用同一个开关，别只停一层。 */
+html[data-sky="paused"] .hero .neb .cloud,
+html[data-sky="paused"] .hero .neb .mote,
+html[data-sky="paused"] .hero .neb .shoot { animation-play-state: paused; }
+.hero .neb .cloud { position: absolute; border-radius: 50%; }
+.hero .neb .c1 { right: -6%; top: -38%; width: 62%; height: 160%;
+  background: rgba(201, 120, 95, .04); filter: blur(30px);
+  animation: neb-drift 46s var(--ease) infinite alternate; }
+.hero .neb .c2 { right: 16%; bottom: -52%; width: 56%; height: 140%;
+  background: rgba(169, 157, 141, .03); filter: blur(30px);
+  animation: neb-drift2 62s var(--ease) infinite alternate; }
+.hero .neb .mote { position: absolute; width: 2px; height: 2px; border-radius: 50%;
+  background: var(--dim); opacity: 0; animation: mote-drift 19s linear infinite; }
+.hero .neb .mote.warm { background: var(--brick); }
+.hero .neb .shoot { position: absolute; left: 86%; top: var(--sy, 26%);
+  width: var(--sw, 46px); height: 1px;
+  /* 亮头在前：流星沿自身轴线向左下飞（translate3d(-340px,0,0)），前进端是元素的左端，
+     所以渐变要写成 to right —— 第一个色标才落在左端。写成 to left 会把亮头甩到尾巴上。 */
+  background: linear-gradient(to right, rgba(255, 246, 224, .85), rgba(255, 190, 150, .12));
+  transform: rotate(-18deg); opacity: 0;
+  animation: shoot var(--sd, 27s) linear var(--sl, 0s) infinite; }
+/* ① 页眉星云：Canvas 画星云团与轨道星尘，透明度与 .sky 呼吸同相
+   （低帧不抬 W4 钉帧基线，高帧才亮）。没有满屏乱飞的线条。 */
+.hero .neb canvas { position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; opacity: .62; }
+@keyframes neb-drift { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(-5%, 3%, 0); } }
+@keyframes neb-drift2 { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(4%, -4%, 0); } }
+@keyframes mote-drift {
+  0% { opacity: 0; transform: translate3d(0, 10px, 0); }
+  18% { opacity: .34; }
+  78% { opacity: .2; }
+  100% { opacity: 0; transform: translate3d(-16px, -30px, 0); }
+}
+/* 沿自身轴线（旋转后的 -X）飞行，亮头在前、渐隐尾在后，方向与轨迹一致 */
+@keyframes shoot {
+  0% { opacity: 0; transform: rotate(-18deg) translate3d(0, 0, 0); }
+  4% { opacity: .8; }
+  11% { opacity: 0; transform: rotate(-18deg) translate3d(-340px, 0, 0); }
+  100% { opacity: 0; transform: rotate(-18deg) translate3d(-340px, 0, 0); }
+}
+
+/* ── 星球滚条（沿用工作台 ui/index.html 的 .psb 既有组件）──
+   单条 fixed 元素跟随当前滚动容器：球体＋三颗卫星＋按速度伸缩的尾迹，可拖动。
+   原生条藏起来，避免两套滚条并排；球体层级高于弹层（.ovl 是 60）。 */
+::-webkit-scrollbar { width: 0; height: 0; }
+* { scrollbar-width: none; }
+.psb { position: fixed; width: 16px; pointer-events: auto; touch-action: none; user-select: none;
+  z-index: 70; opacity: 1; cursor: grab; transition: opacity .3s var(--ease); }
+.psb.off { opacity: 0; pointer-events: none; }
+.psb.drag { cursor: grabbing; }
+.psb-core { position: absolute; left: 50%; top: 0; width: 11px; height: 11px; margin-left: -5.5px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 32%, #ffb489 0%, var(--brick) 55%, #6d2c1c 100%);
+  box-shadow: 0 0 7px rgba(201, 120, 95, .45);
+  transition: transform .12s linear; }
+.psb:hover .psb-core { box-shadow: 0 0 11px rgba(201, 120, 95, .7); }
+.psb.drag .psb-core { box-shadow: 0 0 14px rgba(201, 120, 95, .95); }
+.psb-core i { position: absolute; left: 50%; top: 50%; width: 2.2px; height: 2.2px;
+  margin: -1.1px 0 0 -1.1px; border-radius: 50%; background: var(--brick); opacity: .75;
+  transform-origin: 0 0; animation: psOrbit 3.4s linear infinite; }
+.psb-core i:nth-child(2) { animation-duration: 5.1s; animation-direction: reverse; opacity: .5; }
+.psb-core i:nth-child(3) { animation-duration: 7.3s; opacity: .35; }
+@keyframes psOrbit {
+  from { transform: rotate(0deg) translateY(-8px); }
+  to { transform: rotate(360deg) translateY(-8px); }
+}
+.psb-tail { position: absolute; left: 50%; bottom: 100%; width: 3px; margin-left: -1.5px; height: 0;
+  border-radius: 2px;
+  background: linear-gradient(to top, rgba(255, 190, 150, .95), rgba(201, 120, 95, .55) 45%, rgba(201, 120, 95, 0));
+  opacity: 0; transition: opacity .1s linear; }
+.psb.moving .psb-core i { opacity: 0; }
+.psb.moving .psb-tail { opacity: 1; }
+.psb.tailup .psb-core .psb-tail { bottom: auto; top: 100%;
+  background: linear-gradient(to bottom, rgba(255, 190, 150, .95), rgba(201, 120, 95, .55) 45%, rgba(201, 120, 95, 0)); }
+/* 纸色档给球体一圈细线，免得亮底上糊成一团（工作台只有深色档，这里是两档适配） */
+html[data-theme="light"] .psb-core { border: 1px solid var(--rule); }
+
+/* ── 弹层与菜单：短、干脆、不弹（design.md §10）── */
+.ovl { animation: fade .18s var(--ease) both; }
+.ovl .box { animation: rise .18s var(--ease) both; }
+.menu { animation: fade .12s var(--ease) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  #splash.sp-reveal { animation-duration: .01s; }
+  html[data-theme="dark"] .hero .sky { animation: none; opacity: .42; }
+  #body.enter { animation: none; }
+  #body.rise { animation: none; }
+  #body.enter .stagger > * { animation: none; }
+  .hero .neb .cloud, .hero .neb .mote, .hero .neb .shoot { animation: none; }
+  .hero .neb canvas { opacity: .42; }
+  .ovl, .ovl .box, .menu { animation: none; }
+  .psb-core i { animation: none; }
+  .sw i .sw-planet > i { animation: none; }
+  * { transition: none !important; }
+  .gtile { transition: none; }
+  #body.enter .gtiles > * { animation: none; }
+  .frow:hover::before, .addr:hover::before, .kv:hover::before, .listrow:hover::before { animation: none; }
+  .frow:hover::after, .addr:hover::after, .kv:hover::after, .listrow:hover::after { animation: none; }
+  .frow:hover, .addr:hover, .kv:hover, .listrow:hover { animation: none; }
+  .planet, .sp-hero { animation: none; }
+  /* 不动就摆到画面正中，别停在原点（负 margin 会让它跑出左上角） */
+  .sp-hero { transform: translate(50vw, 50vh); opacity: 1; }
+  .hero-planet { opacity: 1; }
+}

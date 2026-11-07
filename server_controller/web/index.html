@@ -1,0 +1,1564 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="d2.css">
+<title>拥爱服务器控制台</title>
+</head>
+<body>
+<div id="splash" aria-hidden="true">
+  <div class="sp-stars"></div>
+  <div class="planet sp-orb sp-orb-a"><div class="pl-shade"></div></div>
+  <div class="planet sp-orb sp-orb-b"><div class="pl-shade"></div></div>
+  <div class="planet sp-hero" id="spHero"><div class="pl-shade"></div></div>
+</div>
+<div class="app">
+  <div class="side">
+    <div class="brand">拥爱服务器</div>
+    <div class="clock"><div class="cd"><b id="dDay">—</b></div>
+      <div class="ct"><span id="dDate">—</span><span id="heroTime">—</span></div></div>
+    <div class="nav" id="nav"></div>
+    <div class="foot"><span id="sideFoot">—</span>
+      <button class="btn" data-act="settings" title="守护检测间隔 / 界面刷新间隔">设置</button></div>
+  </div>
+  <div class="main">
+    <div class="hero">
+      <div class="dragbar pywebview-drag-region" aria-hidden="true"></div>
+      <div class="winbtns">
+        <button type="button" class="wb" data-act="win-min" aria-label="最小化" title="最小化">–</button>
+        <button type="button" class="wb" data-act="win-max" aria-label="最大化或还原" title="最大化或还原">□</button>
+        <button type="button" class="wb wb-x" data-act="win-close" aria-label="关闭" title="关闭">×</button>
+      </div>
+      <button id="themePlanet" class="planet hero-planet" type="button" aria-label="切换主题"
+        title="主题：墨纸 · 点一下切到纸色"><div class="pl-shade"></div></button>
+      <div class="neb" aria-hidden="true">
+        <canvas class="neb-canvas" id="nebCanvas"></canvas>
+        <span class="cloud c1"></span><span class="cloud c2"></span>
+        <span class="shoot" style="--sw:78px;--sd:19s;--sl:-2s;--sy:18%"></span>
+        <span class="shoot" style="--sw:44px;--sd:27s;--sl:-9s;--sy:62%"></span>
+        <span class="shoot" style="--sw:96px;--sd:14s;--sl:-16s;--sy:34%"></span>
+        <span class="shoot" style="--sw:36px;--sd:31s;--sl:-5s;--sy:78%"></span>
+        <span class="shoot" style="--sw:62px;--sd:23s;--sl:-21s;--sy:46%"></span>
+        <span class="shoot" style="--sw:52px;--sd:17s;--sl:-12s;--sy:8%"></span>
+        <span class="mote" style="left:43%;top:68%;animation-duration:19s;animation-delay:-3s"></span>
+        <span class="mote" style="left:50%;top:82%;animation-duration:23s;animation-delay:-9s"></span>
+        <span class="mote" style="left:57%;top:64%;animation-duration:21s;animation-delay:-14s"></span>
+        <span class="mote" style="left:63%;top:86%;animation-duration:26s;animation-delay:-6s"></span>
+        <span class="mote" style="left:69%;top:74%;animation-duration:18s;animation-delay:-11s"></span>
+        <span class="mote" style="left:76%;top:90%;animation-duration:24s;animation-delay:-16s"></span>
+        <span class="mote" style="left:82%;top:66%;animation-duration:20s;animation-delay:-2s"></span>
+        <span class="mote" style="left:87%;top:80%;animation-duration:27s;animation-delay:-8s"></span>
+        <span class="mote" style="left:45%;top:56%;animation-duration:22s;animation-delay:-13s"></span>
+        <span class="mote" style="left:78%;top:12%;animation-duration:25s;animation-delay:-5s"></span>
+        <span class="mote" style="left:84%;top:8%;animation-duration:29s;animation-delay:-18s"></span>
+        <span class="mote" style="left:72%;top:20%;animation-duration:21s;animation-delay:-7s"></span>
+        <span class="mote warm" style="left:66%;top:46%;animation-duration:24s;animation-delay:-21s"></span>
+        <span class="mote" style="left:94%;top:92%;animation-duration:26s;animation-delay:-10s"></span>
+      </div>
+      <div class="sky" id="sky" aria-hidden="true"></div>
+      <div class="ht"><h1 id="pageTitle">仪表盘</h1><div class="sub" id="heroSub">—</div></div>
+    </div>
+    <div class="body" id="body"></div>
+    <div class="status"><span class="smsg" id="statusMsg"></span><span class="shint" id="statusHint"></span></div>
+  </div>
+</div>
+<div class="hmtip" id="hmtip" role="tooltip" hidden></div>
+
+<script>
+const qTheme = new URLSearchParams(location.search).get("theme")
+  || new URLSearchParams((location.hash || "").replace(/^#/, "")).get("theme");
+if (qTheme === "light" || qTheme === "dark") document.documentElement.dataset.theme = qTheme;
+
+// W4 星空呼吸：窗口被最小化/藏起来就整条停掉，别给合成器留常驻活。
+// 出图模式（__SKY__）把透明度钉在指定帧上——动画优先级压过内联样式，得先关掉动画。
+function skyState() { document.documentElement.dataset.sky = document.hidden ? "paused" : "run"; }
+document.addEventListener("visibilitychange", skyState);
+skyState();
+if (window.__SKY__ !== undefined) {
+  const sky = document.getElementById("sky");
+  sky.style.animation = "none";
+  sky.style.opacity = window.__SKY__;
+}
+const NAV = [["dashboard", "仪表盘"], ["server", "服务器控制"], ["log", "运行日志"],
+             ["models", "默认模型"], ["accounts", "账号管理"], ["identity", "服务器身份"],
+             ["flags", "开关与权限"], ["audit", "审计"]];
+/* 合并进来的三块：数据仍走各自的老接口，只是不再单独占一页。
+   键＝缓存槽名（沿用旧页键），值＝接口名。 */
+const EXTRA = {dashboard: [["overview", "overview_page"]],
+               identity: [["registration", "registration_page"]],
+               flags: [["device_actions", "device_actions_page"]]};
+/* 星球滚条（沿用工作台 ui/index.html 的 .psb）：单条 fixed 元素跟随当前滚动容器，
+   球体＋三颗卫星＋按速度伸缩的尾迹，可拖动。翻页／弹层会重建滚动容器，
+   所以 paint() 与 ovl() 之后都要 bindAll() 重新挂一遍。
+   与工作台的差别：每个容器各自记 lastTop/lastT（工作台是全局共享），
+   否则 11 页＋嵌套表格／日志容器互相滚动时尾迹长度会串。 */
+const PSB = (() => {
+  let el = null, active = null, quiet = 0, dragging = false;
+  const SEL = "#body, .nav, pre.log, .tblwrap, .ovl .box";
+  function seek(y) {
+    if (!active || !el) return;
+    const r = el.getBoundingClientRect();
+    const max = active.scrollHeight - active.clientHeight;
+    if (max <= 0 || r.height <= 11) return;
+    active.scrollTop = Math.min(1, Math.max(0, (y - r.top - 5.5) / (r.height - 11))) * max;
+  }
+  function build() {
+    el = document.createElement("div");
+    el.className = "psb off"; el.id = "psb";
+    el.innerHTML = '<div class="psb-core"><div class="psb-tail"></div><i></i><i></i><i></i></div>';
+    document.body.appendChild(el);
+    el.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0 || !active) return;
+      dragging = true; el.classList.add("drag");
+      try { el.setPointerCapture(e.pointerId); } catch (_e) {}
+      seek(e.clientY); e.preventDefault();
+    });
+    el.addEventListener("pointermove", function (e) { if (dragging) seek(e.clientY); });
+    const drop = function (e) {
+      if (!dragging) return;
+      dragging = false; el.classList.remove("drag");
+      try { el.releasePointerCapture(e.pointerId); } catch (_e) {}
+    };
+    el.addEventListener("pointerup", drop);
+    el.addEventListener("pointercancel", drop);
+    window.addEventListener("resize", function () { if (active) place(); });
+    document.addEventListener("scroll", function () { if (active) place(); }, true);
+    return el;
+  }
+  function place() {
+    if (!active || !el || !document.contains(active)) return;
+    const r = active.getBoundingClientRect();
+    const max = active.scrollHeight - active.clientHeight;
+    if (max <= 6 || r.height < 80) { el.classList.add("off"); return; }
+    el.classList.remove("off");
+    el.style.top = Math.round(r.top + 8) + "px";
+    el.style.height = Math.round(r.height - 16) + "px";
+    el.style.right = Math.round(window.innerWidth - r.right + 2) + "px";
+    const track = r.height - 16, ch = 11;
+    const ratio = Math.min(1, Math.max(0, active.scrollTop / max));
+    el.querySelector(".psb-core").style.transform = "translateY(" + (ratio * (track - ch)) + "px)";
+  }
+  function bind(node) {
+    if (!node || node.dataset.psb) return;
+    node.dataset.psb = "1";
+    let lastTop = node.scrollTop, lastT = 0;
+    node.addEventListener("scroll", function () {
+      const now = performance.now();
+      const dt = Math.max(16, now - (lastT || now));
+      const dy = node.scrollTop - lastTop;
+      lastTop = node.scrollTop; lastT = now;
+      active = node; place();
+      const v = Math.abs(dy) / dt;
+      const max = node.scrollHeight - node.clientHeight;
+      const span = Math.min(1, max / 900);
+      const h = Math.min(66, Math.max(6, v * 26 * (0.5 + span)));
+      el.querySelector(".psb-tail").style.height = Math.round(h * 1.4) + "px";
+      el.classList.toggle("tailup", dy < 0);
+      el.classList.add("moving");
+      clearTimeout(quiet);
+      quiet = setTimeout(function () {
+        el.classList.remove("moving");
+        el.querySelector(".psb-tail").style.height = "0px";
+      }, 260);
+    }, {passive: true});
+  }
+  function bindAll() {
+    if (!el) build();
+    document.querySelectorAll(SEL).forEach(bind);
+    if (!active || !document.contains(active)) active = document.getElementById("body");
+    place();
+  }
+  function refresh(node) {
+    if (!el) bindAll();
+    active = node || active;
+    place();
+  }
+  return {bindAll: bindAll, refresh: refresh, bind: bind};
+})();
+let page = "dashboard", cache = {}, timer = null, autoscroll = true, busy = false;
+// 界面刷新间隔：默认 20s，启动后按「设置」里的 controller_refresh_ms 覆盖（旧壳同口径）
+let refreshMs = 20000;
+// 被限流（429）之后自动刷新先歇一分钟，别越打越糟
+let backoffUntil = 0;
+/* 侧栏序号就是页码：1–9 直达，10／11 输两位（1→0／1→1），
+   700ms 内不接第二位就按单页走——序号不再只是装饰。 */
+let navBuf = "", navTimer = null;
+function navKeyHint(i) { return i < 9 ? String(i + 1) : (i === 9 ? "1 → 0" : "1 → 1"); }
+function gotoPage(i) {
+  if (i < 0 || i >= NAV.length) return;
+  page = NAV[i][0];
+  lastPainted = "";                   // 换页强制播入场，且丢掉旧页签名
+  bodySig[page] = "";
+  paint();
+  armTimer();
+  const target = page;
+  loadPage(target);                  // 捕获页键，异步返回后仍按当前 page 判定
+}
+document.addEventListener("keydown", function (e) {
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const t = e.target || {}, tag = (t.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || t.isContentEditable) return;
+  if (!/^[1-9]$/.test(e.key)) return;          // 合并后只剩 8 页，一位数就够
+  if (navTimer) { clearTimeout(navTimer); navTimer = null; }
+  navBuf = "";
+  gotoPage(Number(e.key) - 1);
+});
+const TITLES = {dashboard: ["仪表盘", "读数、Token 活动与近况"],
+                server: ["服务器控制", "启动 / 停止 / 重启核心服务"],
+                log: ["运行日志", "app.log 与 server_stderr.log 的末尾各 40 行"],
+                models: ["默认模型", "各模态用哪个上游与模型；密钥只显有无，不回显原文"],
+                flags: ["开关与权限", "分组展示；服务器锁定的行点不动；手机行动通道附名单"],
+                audit: ["审计", "谁在什么时候改了什么"],
+                accounts: ["账号管理", ""],
+                identity: ["服务器身份", "校验档位、配对码与注册策略"]};
+const LOADER = {dashboard: "dashboard", server: "server_page", log: "log_page",
+                models: "models_page", flags: "flags_page", audit: "audit_page",
+                accounts: "accounts_page",
+                identity: "identity_page"};
+
+const esc = v => String(v === null || v === undefined ? "—" : v)
+  .replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+async function api(name) {
+  const args = Array.prototype.slice.call(arguments, 1);
+  if (window.__DATA__) {                    // 出图模式喂的就是真信封，路径与在线一致
+    const d = window.__DATA__[name];
+    return d === undefined ? {ok: false, code: -1, error: "出图模式没有这页的数据"} : d;
+  }
+  if (!window.pywebview) return {ok: false, code: -1, error: "还没接上壳层"};
+  return window.pywebview.api.call(name, ...args);
+}
+
+// C6 错误码分流：不同码说不同的话，能重试的才给重试按钮
+function errKind(r) {
+  const c = r && r.code;
+  if (c === 401) return "auth";
+  if (c === 403) return "perm";
+  if (c === 404) return "missing";
+  if (c === 429) return "limit";
+  if (typeof c === "number" && c >= 500) return "server";
+  if (typeof c === "number" && c > 0) return "other";
+  return "net";
+}
+const ERR_SAY = {
+  auth: ["需要登录", "控制台没拿到管理员登录态，登录一次就好。"],
+  perm: ["没有控制台管理员权限",
+         "这不是登录问题：账号登上了，但它不是控制台管理员。去「账号管理」把它设为控制台管理员再试。"],
+  missing: ["后端没有这个接口",
+            "控制台可能比后端新，或者这个接口改名了——两边的版本对不上，不是网络问题。"],
+  limit: ["请求太频繁",
+          "后端在限流；自动刷新已经暂停一会儿，稍后点下面的「重试」。"],
+  server: ["后端出错了", "后端内部错误，稍后重试；这段时间的日志里会有堆栈。"],
+  net: ["连不上后端", "服务可能没在跑，或者端口/主机填得不对。"],
+  other: ["读取失败", ""],
+};
+// 动作 toast 用的一行版：标题（码）· 后端原话
+function errBrief(r) {
+  const s = ERR_SAY[errKind(r)] || ERR_SAY.other;
+  const code = (r && r.code !== undefined) ? "（" + r.code + "）" : "";
+  const raw = (r && r.error) ? "· " + r.error : "";
+  return s[0] + code + raw;
+}
+function errText(r) {
+  const s = ERR_SAY[errKind(r)] || ERR_SAY.other;
+  return s[0] + (s[1] ? "：" + s[1] : "");
+}
+const fail = r => {
+  const k = errKind(r), s = ERR_SAY[k] || ERR_SAY.other;
+  const code = (r && r.code !== undefined) ? "（code " + r.code + "）" : "";
+  const raw = (r && r.error) ? "后端原话：" + r.error : "";
+  const retry = (k === "server" || k === "net" || k === "limit")
+    ? '<div class="btnrow"><button class="btn" data-act="reload-page">重试</button></div>' : "";
+  return '<div class="wip"><em>' + esc(s[0]) + code + '</em>' +
+    (raw ? '<p>' + esc(raw) + '</p>' : "") +
+    (s[1] ? '<p>' + esc(s[1]) + '</p>' : "") + retry + '</div>';
+};
+
+function sparkline(vals, w, h) {
+  const live = (vals || []).filter(v => v > 0);
+  if (!live.length) return "";                       // 没数据就不画，绝不画一条假线
+  const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals), span = (hi - lo) || 1;
+  const pad = 3, n = vals.length;
+  const pts = vals.map((v, i) => [pad + i * (w - 2 * pad) / (n - 1 || 1),
+                                  h - pad - (v - lo) / span * (h - 2 * pad)]);
+  const line = pts.map(pt => pt[0].toFixed(1) + "," + pt[1].toFixed(1)).join(" ");
+  const area = "M" + pad + "," + (h - pad) + " L" + line.split(" ").join(" L") +
+               " L" + (w - pad).toFixed(1) + "," + (h - pad) + " Z";
+  const peak = pts[vals.indexOf(hi)];              // 峰值点：实心圆 3px
+  return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
+    '<path d="' + area + '" fill="var(--chartfill)" stroke="none"/>' +
+    '<polyline points="' + line + '" fill="none" stroke="var(--ink)" stroke-width="1.5"/>' +
+    '<circle cx="' + peak[0].toFixed(1) + '" cy="' + peak[1].toFixed(1) +
+    '" r="1.5" fill="var(--brick)"/></svg>';
+}
+
+function heatWidth() {
+  const el = document.getElementById("body");
+  if (!el) return 1096;
+  const cs = getComputedStyle(el);
+  const w = el.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+  return (w && w > 320) ? Math.round(w) : 1096;
+}
+
+// ① 星球开关：沿用工作台 .psb 的球面渐变＋光晕＋三颗卫星＋速度尾迹，
+// 但做成椭圆轨道里的一颗球：关＝月牙（遮罩滑入形变），开＝太阳（日面亮起、遮罩退出）。
+// 统一在 paint() 里装扮，各页 render 不用逐个改，翻页重建 DOM 也不会退化。
+/* ① 页眉星云引擎（沿用工作台 createNebula 的思路，铺满横幅）：
+   星云＝几团柔和大光斑缓缓横移；星尘＝光点沿带状轨道漂移＋局部绕转＋正弦起伏。
+   画布整体透明度与 .sky 呼吸同相：低帧不抬 W4 钉帧基线，高帧更亮。 */
+const Nebula = (() => {
+  let cv = null, g = null, parts = [], clouds = [], raf = null, last = 0;
+  let W = 0, H = 0, dpr = 1, frames = 0;
+  const PAL = [[255, 190, 150], [255, 140, 90], [233, 225, 212], [201, 120, 95]];
+  const N = 70;
+  const reduced = () => window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const paused = () => document.documentElement.dataset.sky === "paused";
+
+  function fit() {
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    W = cv.clientWidth || 1164; H = cv.clientHeight || 132;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    build();
+  }
+  // 高亮星点只在右半（左 40% 是 W4 标题静区）；亮度随呼吸相位起伏：
+  // 低帧核心几乎不亮（不抬 W4 基线），高帧才出清晰星点。出图钉帧用 __SKY__ 定相位。
+  const X0 = W * 0.42;
+  function skyPhase() {
+    if (window.__SKY__ !== undefined)
+      return Math.max(0, Math.min(1, (window.__SKY__ - .18) / .54));
+    const t = (performance.now() % 28000) / 14000;
+    const tri = t <= 1 ? t : 2 - t;
+    return 0.5 - 0.5 * Math.cos(Math.PI * tri);
+  }
+  function build() {
+    parts = []; clouds = [];
+    // 光源在右：星尘/星云从右往左飘（vx 为负），左侧也铺，但左侧光点只留柔光晕不画核心
+    for (let i = 0; i < N; i++) {
+      parts.push({
+        x: W * 0.06 + Math.random() * (W * 0.94),
+        band: Math.random(), a: Math.random() * Math.PI * 2,
+        r: 3 + Math.random() * 14,
+        cw: (0.0003 + Math.random() * 0.0009) * (Math.random() < .5 ? -1 : 1),
+        vx: -(0.012 + Math.random() * 0.045),
+        size: 0.8 + Math.random() * 1.9,
+        alpha: 0.14 + Math.random() * 0.18,
+        keep: Math.random() < 0.12,          // 低帧也留少量常亮星点，别全体一起灭
+        c: PAL[(Math.random() * PAL.length) | 0]
+      });
+    }
+    for (let i = 0; i < 5; i++) {
+      clouds.push({
+        x: Math.random() * W, y: H * (0.18 + Math.random() * 0.64),
+        r: 100 + Math.random() * 170, vx: -(0.008 + Math.random() * 0.02),
+        a: 0.028 + Math.random() * 0.032,
+        c: i % 2 ? [201, 120, 95] : [169, 157, 141]
+      });
+    }
+  }
+  function draw(dt) {
+    g.clearRect(0, 0, W, H);
+    g.globalCompositeOperation = "lighter";
+    for (const cl of clouds) {
+      cl.x += cl.vx * dt;
+      if (cl.x + cl.r < 0) cl.x = W + cl.r;
+      const gr = g.createRadialGradient(cl.x, cl.y, 0, cl.x, cl.y, cl.r);
+      gr.addColorStop(0, "rgba(" + cl.c.join(",") + "," + cl.a + ")");
+      gr.addColorStop(1, "rgba(" + cl.c.join(",") + ",0)");
+      g.fillStyle = gr;
+      g.beginPath(); g.arc(cl.x, cl.y, cl.r, 0, Math.PI * 2); g.fill();
+    }
+    for (const p of parts) {
+      p.x += p.vx * dt; p.a += p.cw * dt;
+      if (p.x < -20) { p.x = W + 20; p.band = Math.random(); }
+      const y = H * (0.14 + p.band * 0.72) + Math.sin(p.a) * p.r + Math.sin(p.x / 90) * 3;
+      const px = p.x + Math.cos(p.a) * p.r * 0.45;
+      // 柔光晕收小（不再是毛球），中心另点一颗清晰高亮核心
+      const s = p.size * 1.8;
+      const gr = g.createRadialGradient(px, y, 0, px, y, s);
+      gr.addColorStop(0, "rgba(" + p.c.join(",") + "," + p.alpha + ")");
+      gr.addColorStop(1, "rgba(" + p.c.join(",") + ",0)");
+      g.fillStyle = gr;
+      g.beginPath(); g.arc(px, y, s, 0, Math.PI * 2); g.fill();
+      if (px >= X0) {
+        const core = p.keep ? Math.max(0.5, 0.06 + 0.88 * skyPhase())
+                           : 0.06 + 0.88 * skyPhase();
+        g.fillStyle = "rgba(255, 246, 224, " + core.toFixed(3) + ")";
+        g.beginPath(); g.arc(px, y, 0.7 + p.size * 0.3, 0, Math.PI * 2); g.fill();
+      }
+    }
+    frames += 1;
+  }
+  function loop(now) {
+    const dt = Math.min(60, now - (last || now)); last = now;
+    if (!paused()) draw(dt);
+    raf = requestAnimationFrame(loop);
+  }
+  function start() {
+    cv = document.getElementById("nebCanvas");
+    if (!cv || !cv.getContext) return;
+    g = cv.getContext("2d");
+    fit();
+    window.addEventListener("resize", fit);
+    draw(0);
+    // 出图模式（__SKY__ 钉帧）只留一帧静态画面：两帧截图内容一致，W4 才能比亮度。
+    if (!reduced() && !window.__DATA__ && window.__SKY__ === undefined) raf = requestAnimationFrame(loop);
+  }
+  return { start: start, frames: () => frames, parts: () => parts.length };
+})();
+
+const SW_ICON = '<span class="sw-tail"></span>' +
+  '<span class="sw-planet"><span class="sw-face"></span><i></i><i></i><i></i></span>';
+
+function dressSwitches(root) {
+  (root || document).querySelectorAll('.sw > i').forEach(function (i) {
+    if (i.dataset.dressed) return;
+    i.dataset.dressed = '1';
+    i.innerHTML = SW_ICON;
+  });
+}
+
+// ④ 全站开关的日月双图：太阳＝开、月亮＝关，切换时交叉旋转淡入。
+// 放在 paint() 里统一装扮，各页 render 函数不用逐个改，翻页重建 DOM 也不会退化。
+let HEAT_ROWS = [];                                // 当日任务构成，供热力图悬浮明细用
+
+// 三档而不是连续渐变：≤1/3 低、≤2/3 中、更高＝高。用户要的是一眼能分档，不是渐变色带。
+const TIER_OP = [0, 0.3, 0.58, 0.9];            // 0＝空心（零值），1/2/3＝低/中/高
+function heatTier(v) { return v <= 0 ? 0 : (v <= 1 / 3 ? 1 : (v <= 2 / 3 ? 2 : 3)); }
+
+function heatmap(rows, peak) {
+  if (!rows || !rows.length) return '<div class="empty">暂无数据（远程模式或后端未提供统计）</div>';
+  const cols = Math.ceil(rows.length / 7);
+  // 宽度跟容器走：SVG 不再被 CSS 缩放，字号不会随窗口变小
+  const boxW = heatWidth(), labL = 26, labT = 18, axisB = 52;   // axisB 多留一行给图例
+  const cw = (boxW - labL) / cols, cell = Math.min(cw, (392 - labT - axisB) / 7), gap = cell * 0.16;
+  const vals = rows.map(r => r.tokens || 0);
+  const hi = Number(peak) > 0 ? Number(peak) : Math.max.apply(null, vals.concat([1]));
+  const wk = {0: "一", 2: "三", 4: "五", 6: "日"};
+  let out = '<svg width="' + boxW + '" height="' + (labT + 7 * cell + axisB) +
+            '" viewBox="0 0 ' + boxW + ' ' + (labT + 7 * cell + axisB) + '">';
+  Object.keys(wk).forEach(d => {
+    out += '<text x="0" y="' + (labT + d * cell + cell * .7) +
+      '" font-family="Microsoft YaHei UI" font-size="10.5" fill="var(--weak)">' + wk[d] + '</text>';
+  });
+  HEAT_ROWS = rows;                                // 按索引取，不把字典塞进 DOM
+  rows.forEach((r, i) => {
+    if (r.future) return;                            // 未来占位日：不画，留空
+    const x = labL + ((i / 7) | 0) * cw, y = labT + (i % 7) * cell, sz = cell - gap;
+    const v = (r.tokens || 0) / hi;
+    const meta = ' data-hm="' + i + '" aria-label="' + esc(r.date) + " · " +
+      (r.tokens || 0).toLocaleString() + ' tokens"';   // 读屏仍拿得到，浮层不双弹
+    out += v <= 0
+      ? '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + sz.toFixed(1) +
+        '" height="' + sz.toFixed(1) + '" fill="none" stroke="var(--rule)"' + meta + '/>'   // 零值＝空心
+      : '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + sz.toFixed(1) +
+        '" height="' + sz.toFixed(1) + '" fill="var(--brick)" fill-opacity="' +
+        TIER_OP[heatTier(v)].toFixed(2) + '"' + meta + '/>';
+  });
+  let lastM = "";
+  rows.forEach((r, i) => {
+    const m = (r.date || "").slice(0, 7);
+    if (m && m !== lastM) {
+      lastM = m;
+      out += '<text x="' + (labL + ((i / 7) | 0) * cw).toFixed(1) + '" y="' +
+        (labT + 7 * cell + 16) + '" font-family="Georgia" font-size="10.5" letter-spacing="1.6" ' +
+        'fill="var(--weak)">' + esc(Number(m.slice(5)) + " 月") + '</text>';
+    }
+  });
+  // 图例另起一行：不再和月份标签抢同一条基线（那是重叠的根因）
+  // 图例跟着走三档（原来画了 5 格连续色阶，和"三档"对不上）
+  const legY = labT + 7 * cell + 36;
+  out += '<text x="' + (boxW - 168) + '" y="' + legY +
+    '" font-family="Microsoft YaHei UI" font-size="10.5" fill="var(--weak)">少</text>';
+  ["低", "中", "高"].forEach((name, k) => {
+    const lx = boxW - 138 + k * 44;
+    out += '<rect x="' + lx + '" y="' + (legY - 9) + '" width="18" height="9"' +
+      ' fill="var(--brick)" fill-opacity="' + TIER_OP[k + 1].toFixed(2) + '"/>' +
+      '<text x="' + (lx + 22) + '" y="' + legY + '" font-family="Microsoft YaHei UI"' +
+      ' font-size="10.5" fill="var(--weak)">' + name + '</text>';
+  });
+  out += '<text x="' + (boxW - 12) + '" y="' + legY +
+    '" font-family="Microsoft YaHei UI" font-size="10.5" fill="var(--weak)">多</text></svg>';
+  return out;
+}
+
+function card(t, n, cls, cap) {
+  return '<div class="card"><div class="t">' + esc(t) + '</div><div class="n ' + (cls || "") +
+         '">' + n + '</div><div class="c">' + cap + '</div></div>';
+}
+
+// 概览并进仪表盘：五个只读数字做成顶部一排读数条（仍是 GET /overview 那一份数据）
+function readingsBar() {
+  const o = cache.overview;
+  if (!o || o.empty_kind || !o.rows) return "";
+  return '<div class="readout stagger">' + o.rows.map(r =>
+    '<span class="ro"><i>' + esc(r.label) + '</i><b class="num' + (r.missing ? " miss" : "") +
+    '">' + esc(r.value) + '</b></span>').join("") + '</div>';
+}
+
+function renderDashboard(d) {
+  const k = d.kpi || {};
+  return readingsBar() + '<div class="grid stagger">' +
+    card("服务器状态", esc(k.server), k.server === "运行中" ? "ok" : "bad", esc(k.serverCap)) +
+    card("服务健康", esc(k.health), k.health === "正常" ? "ok" : (k.health === "—" ? "" : "bad"),
+         "HTTP 探活 /api/v1/system/health") +
+    card("图像理解（云端）", esc(k.vlm), "mono", esc(k.vlmCap)) +
+    card("角色数", esc(k.chars), "", "个角色") +
+    card("记忆数", esc(k.mems), "", sparkline(d.memSpark, 74, 16)) +
+    card("累计 Token", esc(k.tokens), "", sparkline(d.tokenSpark, 74, 16)) +
+    '</div><div class="sec"><h2>Token 活动</h2><em>近 26 周 · 每日</em></div>' +
+    '<div class="heat">' + heatmap(d.heat, d.heatPeak) + '</div>';
+}
+
+function renderServer(d) {
+  const st = d.state || {}, tg = d.target || {};
+  const state = st.alive ? '<span class="state ok">运行中</span>'
+                         : '<span class="state bad">已停止</span>';
+  // 连的是远程主机时，本机的 server_manager 管不到它——按钮必须点不动，并且说清为什么
+  const off = st.remote ? ' disabled title="控制台连的是远程主机，本机不能启停它"' : "";
+  let h = '<div class="btnrow">' +
+    '<button class="btn primary" data-act="start"' + off + '>启动服务器</button>' +
+    '<button class="btn danger" data-act="stop"' + off + '>停止服务器</button>' +
+    '<button class="btn" data-act="restart"' + off + '>重启服务器</button>' + state +
+    '<span class="state">' + esc(st.remote ? "远程主机" : ("PID " + (st.pid || "—"))) + '</span>' +
+    '<span class="state">健康 ' + esc(st.health) + '</span>' +
+    '<span class="state' + (st.paused ? " bad" : "") + '">' + (st.paused ? "已暂停派发" : "未暂停") + '</span>' +
+    '</div><div id="srvMsg" class="mode"></div>' +
+    '<div class="sec"><h2>控制台监控目标</h2><em>写进 server_config.json 的两键</em></div>' +
+    '<div class="field"><label>主机</label><input id="tgHost" value="' + esc(tg.host) + '">' +
+    '<label>端口</label><input id="tgPort" class="num" value="' + esc(tg.port) + '">' +
+    '<button class="btn" data-act="save-target">保存切换</button>' +
+    '<button class="btn" data-act="reset-target">恢复本机</button></div>' +
+    '<div class="mode">' + esc(tg.mode) + '</div>' +
+    '<div class="sec"><h2>服务器地址</h2><em>手机端「设置 → 服务器地址」填写</em>' +
+    '<button class="btn" data-act="probe">重新探测</button></div>';
+  h += '<div class="stagger">' + (d.rows || []).map(r =>
+    '<div class="addr"><span class="lb">' + esc(r.label) + '</span>' +
+    '<span class="vl' + (r.copyable ? "" : " off") + '">' + esc(r.show) + '</span>' +
+    (r.copyable ? '<button class="btn" data-copy="' + esc(r.url) + '">复制</button>' : "") +
+    '</div>').join("") + '</div>';
+  return h;
+}
+
+function renderLog(d) {
+  return '<div class="logtools">' +
+    '<button type="button" class="sw' + (autoscroll ? " on" : "") + '" role="switch" aria-checked="' +
+      (autoscroll ? "true" : "false") + '" data-act="autoscroll"><i></i>自动滚动</button>' +
+    '<button class="btn" data-act="export">导出日志</button>' +
+    '<button class="btn" data-act="open">打开日志文件</button>' +
+    '<button class="btn" data-act="clear">清空显示</button>' +
+    '<span class="state">' + esc(d.paths && d.paths.stderr ? d.paths.stderr : "") + '</span>' +
+    '</div>' + (d.empty ? '<div class="logempty">' + esc(d.hint) + '</div>'
+              : '<pre class="log" id="logBox">' + esc(d.text) + '</pre>');
+}
+
+function loginGate(d) {
+  const why = d && d.err && d.err.error ? d.err.error : "";
+  return '<div class="login"><h3>管理面需要登录</h3>' +
+    (why ? '<p>后端说：' + esc(why) + '</p>' : '') +
+    '<p>账号由后端校验。登录态与旧控制台共用同一份缓存 ' +
+    '<code>backend/data/console_token.json</code>，在一边登录，另一边也是登录态。</p>' +
+    '<div class="field"><label>用户名</label><input id="lgUser"></div>' +
+    '<div class="field"><label>密码</label><input id="lgPass" type="password"></div>' +
+    '<div class="btnrow"><button class="btn primary" data-act="login">登录</button>' +
+    '<span class="state" id="lgMsg"></span></div></div>';
+}
+
+function renderModels(d) {
+  if (!d.logged_in) return loginGate(d);
+  return (d.rows || []).map(r =>
+    '<div class="mod" data-key="' + esc(r.key) + '">' +
+      '<div class="mh"><span class="dot' + (r.enabled ? ' on' : '') + '"></span><b>' + esc(r.title) + '</b>' +
+      '<span class="cap">' + esc(r.cap) + '</span></div>' +
+      '<div class="fields">' +
+        '<div><label>模型</label><input data-f="model" value="' + esc(r.model) + '"></div>' +
+        '<div><label>Base URL</label><input data-f="base_url" value="' + esc(r.base_url) + '"></div>' +
+        '<div><label>API Key</label><input data-f="api_key" type="password" placeholder="' +
+          esc(r.key_hint) + '"></div>' +
+      '</div>' +
+      '<div class="foot"><button type="button" class="sw' + (r.enabled ? ' on' : '') +
+        '" role="switch" aria-checked="' + (r.enabled ? "true" : "false") + '" data-act="mod-enabled"' +
+        '><i></i>启用</button><button class="btn" data-act="mod-save">保存</button>' +
+        '<span class="hint">' + esc(r.key_hint) + '</span></div>' +
+    '</div>').join("");
+}
+
+let flagGroup = "";
+/* 开关改成"先攒后存"：点一下只记在这里，按保存才写后端。
+   手滑一次不再等于既成事实；20 秒自动刷新也要避让（见 armTimer）。 */
+let flagDirty = {};
+const flagDirtyCount = () => Object.keys(flagDirty).length;
+
+function renderFlags(d) {
+  if (!d.logged_in) return loginGate(d);
+  const gs = d.groups || [];
+  const all = gs.reduce((n, g) => n + (g.rows || []).length, 0);
+  const tile = (g, key, label, n, ch) =>
+    '<button type="button" class="gtile' + (flagGroup === key ? ' on' : '') +
+    '" data-act="flag-group" data-g="' + esc(key) + '" title="' + esc(label) + '（' + n + ' 项）">' +
+    '<b>' + esc(ch) + '</b><i>' + n + '</i><span>' + esc(label) + '</span></button>';
+  let out = '<div class="gtiles stagger">' + tile(null, '', '全部', all, '全') +
+    gs.map(g => tile(g, g.group, g.label, g.count, (g.label || '?').slice(0, 1))).join('') +
+    '</div>';
+  out += flagBar();
+  out += gs.filter(g => !flagGroup || g.group === flagGroup).map(g =>
+    '<div class="grp stagger"><div class="gh"><h3>' + esc(g.label) + '</h3><em>' + g.count + ' 项</em></div>' +
+    g.rows.map(f => {
+      // 有未保存改动时，界面按"改后的值"显示，并给行加一条强调线
+      const dirty = Object.prototype.hasOwnProperty.call(flagDirty, f.key);
+      const en = dirty ? flagDirty[f.key] : f.enabled;
+      return '<div class="frow' + (f.server_locked ? ' locked' : '') + (dirty ? ' dirty' : '') + '">' +
+        '<span class="ft"><b>' + esc(f.title) + '</b>' + (f.desc ? '<i>' + esc(f.desc) + '</i>' : '') + '</span>' +
+        '<span class="fs">' + esc([f.source, f.scope].filter(Boolean).join(' · ')) + '</span>' +
+        (f.server_locked ? '<span class="tag">服务器锁定</span>' : '') +
+        '<button type="button" class="sw' + (en ? ' on' : '') + '" role="switch" aria-checked="' +
+          (en ? "true" : "false") + '"' +
+          (f.server_locked ? ' disabled' : ' data-act="flag-toggle" data-key="' + esc(f.key) +
+            '" data-on="' + (en ? 1 : 0) + '"') + '><i></i></button>' +
+      '</div>';
+    }).join("") + (g.group === "device_action" ? deviceLists() : "") + '</div>').join("");
+  return out;
+}
+
+// 改动条：没改动时说清"点了会先攒着"，有改动时给保存/放弃
+function flagBar() {
+  const n = flagDirtyCount();
+  return '<div class="dirtybar' + (n ? ' on' : '') + '" id="flagDirtyBar">' +
+    '<span class="txt">' + (n ? '有 ' + n + ' 项改动未保存' : '改动会先记下，点「保存」才写后端') + '</span>' +
+    '<button class="btn primary" data-act="flag-save"' + (n ? '' : ' disabled') + '>保存</button>' +
+    '<button class="btn" data-act="flag-discard"' + (n ? '' : ' disabled') + '>放弃改动</button>' +
+    '</div>';
+}
+
+// 只刷新改动条与行标记，不整页重绘——否则开关的形变动画会被打断
+function syncFlagBar() {
+  const bar = document.getElementById("flagDirtyBar");
+  if (bar) {
+    const n = flagDirtyCount();
+    bar.classList.toggle("on", n > 0);
+    const txt = bar.querySelector(".txt");
+    if (txt) txt.textContent = n ? '有 ' + n + ' 项改动未保存' : '改动会先记下，点「保存」才写后端';
+    bar.querySelectorAll("button").forEach(b => { b.disabled = n === 0; });
+  }
+  const rows = ((cache.flags || {}).groups || []).flatMap(g => g.rows || []);
+  rows.forEach(f => {
+    const sw = document.querySelector('.frow .sw[data-key="' + f.key + '"]');
+    const row = sw && sw.closest(".frow");
+    if (row) row.classList.toggle("dirty", Object.prototype.hasOwnProperty.call(flagDirty, f.key));
+  });
+}
+
+const SORTS = {accounts: {key: "", dir: 1}, audit: {key: "", dir: 1}};
+
+function sortRows(rows, st) {
+  if (!st.key) return rows || [];
+  const arr = (rows || []).slice();
+  arr.sort(function (a, b) {
+    const x = a[st.key], y = b[st.key];
+    const nx = (x === null || x === undefined) ? "" : String(x);
+    const ny = (y === null || y === undefined) ? "" : String(y);
+    return nx.localeCompare(ny, "zh", {numeric: true}) * st.dir;
+  });
+  return arr;
+}
+
+function sortHead(key, label, st) {
+  const on = st.key === key;
+  return '<th class="sortable" data-sort="' + key + '">' + esc(label) +
+    (on ? '<span class="arrow">' + (st.dir > 0 ? "↑" : "↓") + "</span>" : "") + "</th>";
+}
+
+function renderAudit(d) {
+  if (!d.logged_in) return loginGate(d);
+  const st = SORTS.audit;
+  return '<div class="logtools"><label class="who">条数</label>' +
+    '<input id="auLimit" class="num" value="' + esc(d.limit) + '">' +
+    '<button class="btn" data-act="audit-limit">刷新</button>' +
+    '<span class="state">' + esc(d.status) + '</span></div>' +
+    '<div class="tblwrap"><table class="tbl"><thead><tr>' +
+    sortHead("created_at", "时间", st) + sortHead("actor", "操作者", st) +
+    sortHead("action", "动作", st) + sortHead("target", "对象", st) +
+    '</tr></thead><tbody class="stagger">' +
+    sortRows(d.rows, st).map(r =>
+      '<tr><td class="mono">' + esc(r.created_at) + '</td><td>' + esc(r.actor) + '</td><td>' +
+      esc(r.action) + '</td><td class="mono" title="' +
+      esc(JSON.stringify({before: r.before, after: r.after})) + '">' + esc(r.target) + '</td></tr>'
+    ).join("") + '</tbody></table></div>';
+}
+
+let binOn = false;
+
+function renderAccounts(d) {
+  if (!d.logged_in) return loginGate(d);
+  const sl = d.server_limit || {};
+  let h = '<div class="logtools">' +
+    '<input id="acQ" class="num" style="width:230px" value="' + esc(d.query) +
+    '" title="按用户名 / 昵称 / ID 筛选（在已取回的结果里筛）" placeholder="按用户名 / 昵称 / ID 筛选">' +
+    '<span class="sw' + (binOn ? " on" : "") + '" data-act="bin"><i></i>显示回收站</span>' +
+    '<button class="btn" data-act="ac-reload">刷新</button>' +
+    '<span class="state">' + esc(d.status) + '</span></div>' +
+    '<div class="mod"><div class="mh"><b>' + esc(sl.title) + '</b>' +
+    '<span class="cap">' + esc(sl.value) + '</span></div>' +
+    '<div class="field"><label>默认额度</label>' +
+    '<input id="slVal" class="num" value="' + esc(sl.total_limit === undefined ? "" : sl.total_limit) +
+    '" title="0 = 未设置；账号没有自己的覆盖时回落到这里">' +
+    '<button class="btn primary" data-act="server-limit-save">保存</button>' +
+    '<span class="state" id="slMsg"></span></div>' +
+    '<div class="foot"><span class="hint">' + esc(sl.hint) + '</span></div></div>';
+  if (d.empty_kind) return h + '<div class="logempty">' + esc(d.empty_text) + '</div>';
+  const st = SORTS.accounts;
+  h += '<div class="tblwrap"><table class="tbl"><thead><tr>' +
+    sortHead("id", "ID", st) + sortHead("username", "用户名", st) +
+    sortHead("nickname", "昵称", st) + sortHead("admin", "主账号", st) +
+    sortHead("console_admin", "控制台", st) + sortHead("status", "状态", st) +
+    sortHead("llm_limit", "LLM 额度", st) + sortHead("llm_mode", "LLM 模式", st) +
+    '<th class="act">操作</th>' + "</tr></thead><tbody class=\"stagger\">" +
+    sortRows(d.rows, st).map(r =>
+      '<tr class="' + (r.in_bin ? "bin" : "") + '"><td class="num">' + esc(r.id) + "</td><td>" +
+      esc(r.username) + "</td><td>" + esc(r.nickname) + "</td><td>" + esc(r.admin) + "</td><td>" +
+      esc(r.console_admin) + '</td><td title="' + esc(r.status_tip) + '">' + esc(r.status) +
+      '</td><td class="num">' + esc(r.llm_limit) + "</td><td>" + esc(r.llm_mode) + "</td>" +
+      '<td class="act"><button class="btn kebab" data-menu="' + esc(r.id) + '">⋯</button></td></tr>').join("") +
+    "</tbody></table></div>";
+  return h;
+}
+
+function closeOvl() {
+  const el = document.getElementById("ovl");
+  if (el) el.remove();
+  PSB.refresh(document.getElementById("body"));   // 弹层拆了，滚条跟回主区
+}
+function closeMenu() { const el = document.getElementById("menu"); if (el) el.remove(); }
+
+function ovl(inner) {
+  closeOvl();
+  const el = document.createElement("div");
+  el.className = "ovl"; el.id = "ovl";
+  el.innerHTML = '<div class="box">' + inner + "</div>";
+  // 弹层不在 #body 里，页内的 data-act 派发收不到它——这里自己接一份，
+  // 否则「取消／关闭」按钮点了没反应。
+  el.addEventListener("click", function (e) {
+    const b = e.target.closest("[data-act]");
+    if (b) { e.stopPropagation(); act(b.dataset.act, b); }
+  });
+  document.body.appendChild(el);
+  PSB.bindAll();                                   // 弹层的 .box 也是滚动容器
+  return el;
+}
+
+function linesHtml(lines) {
+  return (lines || []).map(l => '<div class="ln ' + (l.kind === "row" ? "row" :
+    (l.kind === "info" ? "" : l.kind)) + '">' + esc(l.text) + "</div>").join("");
+}
+
+function confirmBox(title, lines, username, kind, uid) {
+  const label = kind === "delete" ? "确认删除" : "立即清除";
+  const el = ovl("<h3>" + esc(title) + "</h3>" + linesHtml(lines) +
+    '<div class="field"><label>输入用户名 ' + esc(username) + " 以确认</label>" +
+    '<input id="gateTxt"></div>' +
+    '<div class="gate" id="gateHint"></div>' +
+    '<div class="btnrow"><button class="btn danger" id="gateGo" disabled>' + label + "</button>" +
+    '<button class="btn" data-act="ovl-cancel">取消</button></div>');
+  const inp = el.querySelector("#gateTxt"), btn = el.querySelector("#gateGo");
+  const hint = el.querySelector("#gateHint");
+  inp.focus();
+  inp.addEventListener("input", async function () {     // 判据在 Python：逐字符相等才点亮
+    const r = await api("confirm_gate", username, inp.value);
+    const ok = !!(r.ok && r.data.ok);
+    btn.disabled = !ok;
+    hint.textContent = ok ? "" : ((r.ok && r.data.hint) || "默认拒绝：需要逐字符输入用户名");
+  });
+  btn.onclick = async function () {
+    btn.disabled = true;
+    const r = kind === "delete" ? await api("delete_account", uid, inp.value)
+                                : await api("purge_account", uid, inp.value);
+    if (r.ok) {
+      closeOvl();
+      await loadPage(page);
+      if (kind === "purge") await openReport(uid);       // 旧壳：清除完成后自动开账本
+    } else {
+      hint.textContent = errBrief(r);
+      btn.disabled = false;
+    }
+  };
+}
+
+function showDeleteCard(d, uid) {
+  if (!d.can_confirm) {                                   // 护栏挡着：连输入框都不给
+    ovl("<h3>" + esc(d.title) + "</h3>" + linesHtml(d.lines) +
+        '<div class="ln error">' + esc(d.blocked_text) + "</div>" +
+        '<div class="btnrow"><button class="btn" data-act="ovl-cancel">关闭</button></div>');
+    return;
+  }
+  confirmBox(d.title, d.lines, d.username, "delete", uid);
+}
+
+async function openDeleteWizard(uid) {
+  const r = await api("delete_preview", uid);
+  if (!r.ok) {
+    ovl('<h3>预览失败</h3><div class="ln error">' + esc(r.error) + '（code ' + r.code +
+        '）</div><div class="btnrow"><button class="btn" data-act="ovl-cancel">关闭</button></div>');
+    return;
+  }
+  showDeleteCard(r.data, uid);
+}
+
+async function openPurgeWizard(uid) {
+  const r = await api("purge_preview", uid);
+  if (!r.ok) return;
+  const d = r.data;
+  confirmBox("立即清除账号：" + d.username,
+             [{kind: "warn", text: d.sub}, {kind: "info", text: d.bin_line},
+              {kind: "info", text: d.note}], d.username, "purge", uid);
+}
+
+async function openReport(uid) {
+  const r = await api("purge_report_view", uid);
+  if (!r.ok) return;
+  const d = r.data;
+  ovl("<h3>清除结果：" + esc(d.username) + "</h3>" + linesHtml(d.lines) +
+      '<div class="btnrow"><button class="btn" data-act="ovl-cancel">关闭</button></div>');
+}
+
+function renderOvlFixture(o) {
+  if (!o) return;
+  if (o.kind === "report") {
+    ovl("<h3>清除结果：" + esc(o.data.username) + "</h3>" + linesHtml(o.data.lines) +
+        '<div class="btnrow"><button class="btn" data-act="ovl-cancel">关闭</button></div>');
+    return;
+  }
+  const d = o.data;
+  if (o.kind === "delete" || o.kind === "blocked") { showDeleteCard(d, o.uid || 2); return; }
+  confirmBox(d.title, d.lines, d.username, "purge", o.uid || 2);
+}
+
+function showMenu(btn, uid, menu) {
+  closeMenu();
+  const rect = btn.getBoundingClientRect();
+  const el = document.createElement("div");
+  el.className = "menu"; el.id = "menu";
+  el.style.left = Math.min(rect.left, window.innerWidth - 260) + "px";
+  el.style.top = (rect.bottom + 2) + "px";
+  el.innerHTML = '<div class="sub">账号 ' + esc(uid) + "</div>";
+  (menu || []).forEach(function (m) {
+    if (m.sub) {
+      el.innerHTML += '<div class="sub">' + esc(m.label) + "</div>" +
+        m.sub.map(x => '<button data-m="' + x.act + '" data-arg="' + esc(x.arg) +
+          '" data-uid="' + esc(uid) + '">' + esc(x.label) + "</button>").join("");
+    } else {
+      el.innerHTML += '<button data-m="' + m.act + '" data-arg="' + esc(m.arg === undefined ? "" : m.arg) +
+        '" data-uid="' + esc(uid) + '"' + (m.danger ? ' class="danger"' : "") + ">" +
+        esc(m.label) + "</button>";
+    }
+  });
+  document.body.appendChild(el);
+}
+
+// 注册策略并进服务器身份页：都是"谁能进这台服务器"，做成第二块（仍走 GET /registration）
+function regBlock() {
+  const d = cache.registration;
+  if (!d) return "";
+  if (!d.logged_in) return "";
+  const pick = regPick || d.mode;
+  return '<div class="mod"><div class="mh"><b>注册策略</b><span class="cap">' +
+    esc(d.live) + '</span></div>' +
+    '<div class="n" style="margin-top:8px">' + esc(d.mode_text) + '</div>' +
+    '<div class="seg">' + (d.options || []).map(o =>
+      '<button data-act="reg-pick" data-k="' + esc(o.key) + '" class="' +
+      (o.key === pick ? "on" : "") + '">' + esc(o.label) + '</button>').join("") + '</div>' +
+    '<div class="descr">' + esc(d.desc) + '</div>' +
+    '<div class="btnrow"><button class="btn primary" data-act="reg-save">保存</button>' +
+    '<button class="btn" data-act="reg-reload">放弃修改并重读</button>' +
+    '<span class="state" id="regMsg">' + esc(d.hint) + '</span></div></div>';
+}
+
+function renderIdentity(d) {
+  if (!d.logged_in) return loginGate(d);
+  const codeTxt = idTick || d.code.source === "local" ? (idCode || d.code.text) : d.code.text;
+  const ttl = d.code.tick ? "剩余 " + idLeft + " 秒后失效"
+          : (d.code.source === "expired" ? "已失效，请重新生成" : d.code_line);
+  return '<div class="mod"><div class="mh"><b>校验档位（后端 identity_enforce_mode，默认 off）</b>' +
+    '<span class="cap">' + esc(d.mode_text) + '</span></div>' +
+    '<div class="descr">' + esc(d.mode_desc) + (d.mode_note ? '　' + esc(d.mode_note) : '') + '</div></div>' +
+    regBlock() +
+    '<div class="mod"><div class="mh"><b>服务器</b><span class="cap">' + esc(d.pair_stats) + '</span></div>' +
+    '<div class="kv"><span class="k">服务器名</span><span class="v">' + esc(d.server_name) + '</span></div>' +
+    '<div class="kv"><span class="k">当前指纹</span><span class="v">' + esc(d.fp_display) + '</span></div>' +
+    '<div class="kv"><span class="k">密钥签发于</span><span class="v num">' + esc(d.key_created_at) + '</span></div>' +
+    '<div class="kv"><span class="k">待用配对码</span><span class="v">' + esc(d.pending) + '</span></div></div>' +
+    '<div class="mod"><div class="mh"><b>一次性配对码（12 位，去易混字符；请在客户端界面上亲手输入）</b>' +
+    '<span class="cap">' + esc(ttl) + '</span></div>' +
+    '<div class="kv"><span class="k">配对码</span><span class="v big">' + esc(codeTxt) + '</span></div>' +
+    '<div class="btnrow"><button class="btn" data-act="id-copy">复制</button>' +
+    '<button class="btn" data-act="id-code">重新生成</button>' +
+    '<span class="state" id="idMsg"></span></div></div>' +
+    '<div class="mod"><div class="mh"><b>渠道登录（微信 ClawBot）</b>' +
+    '<span class="cap">仅本机可开</span></div>' +
+    '<div class="descr">在服务器本机的浏览器里扫码，把机器人登进网关；confirmed 之后它才会出现在' +
+    ' App 的「查看可添加的机器人」里。网关没有热加载，新号需要重启网关一次才开始收发。</div>' +
+    '<div class="btnrow"><button class="btn primary" data-act="channel-login">打开渠道登录页</button>' +
+    '<span class="state" id="chlMsg"></span></div></div>' +
+    '<div class="mod"><div class="mh"><b>轮换身份密钥</b></div>' +
+    '<div class="descr">' + esc(d.rotate_text) + '</div>' +
+    '<div class="btnrow"><button class="btn danger" data-act="id-rotate">轮换身份密钥</button></div></div>' +
+    '<div class="mod"><div class="mh"><b>部署面现状（只提示，不改默认值）</b></div>' +
+    d.deploy.map(x => '<div class="kv"><span class="k">' + esc(x.k) + '</span><span class="v" title="' +
+      esc(x.tip) + '">' + esc(x.v) + '</span></div>').join("") + '</div>';
+}
+
+/* 行动通道并进"开关与权限"的 device_action 分组：那三条开关本来就在开关页里，
+   这里只补两份名单（插件灰度 / 目标白名单），不再重复摆开关。 */
+function deviceLists() {
+  const d = cache.device_actions;
+  if (!d) return '<div class="logempty">名单读取中…</div>';
+  if (!d.logged_in) return "";
+  let h = '<div class="sec"><h2>行动通道名单</h2><em>开关在上方那一组；名单改动立即写后端</em></div>';
+  // 三行状态说明：开关本身看不出"是显式设的还是走的默认值"，这层信息只在这里
+  h += (d.cards || []).map(c =>
+    '<div class="kv"><span class="k">' + esc(c.label) + '</span><span class="v">' +
+    esc(c.caption) + '</span></div>').join("");
+  h += (d.sections || []).map(sec =>
+    '<div class="sec"><h2>' + esc(sec.title) + '</h2><em>' + esc(sec.cap_line) + '</em></div>' +
+    '<div class="field"><label>新增</label><input id="da_' + sec.kind + '" placeholder="' +
+      esc(sec.sample) + '" title="' + esc(sec.sample) + '">' +
+    '<button class="btn" data-act="da-add" data-kind="' + sec.kind + '">添加</button>' +
+    '<span class="caphint">提示：' + esc(sec.sample) + '（回车或点「添加」提交，名单以服务端返回为准）</span></div>' +
+    (sec.names.length ? sec.names.map(n =>
+      '<div class="listrow"><span class="nm">' + esc(n) + '</span>' +
+      '<button class="btn" data-act="da-del" data-kind="' + sec.kind + '" data-name="' +
+      esc(n) + '">删除</button></div>').join("")
+      : '<div class="logempty">' + esc(sec.empty) + '</div>')).join("");
+  return h + '<div class="state" id="daMsg"></div>';
+}
+
+function stopIdTick() { if (idTimer) { clearInterval(idTimer); idTimer = null; } }
+
+function armIdTick(d) {
+  stopIdTick();
+  idTick = !!d.code.tick; idLeft = d.code.left || 0; idCode = d.code.text;
+  if (!idTick) return;
+  idTimer = setInterval(function () {          // 只刷文案，绝不重新请求（旧壳同口径）
+    if (idLeft > 0) idLeft -= 1;
+    if (idLeft === 0) stopIdTick();
+    paint();
+  }, 1000);
+}
+
+const renderWip = () => '<div class="wip"><em>这一页还没搬。</em> W3 按使用频率逐页迁移；' +
+  '旧 tkinter 控制台仍在 <code>server_controller.py</code> 里可用。</div>';
+
+// ⑤ 刷新闪的通解：定时刷新时若渲染结果没变，一个字节都不碰 DOM；
+// 这样既不会重播入场动画，开关元素也能留着让 CSS 形变过渡真正跑起来。
+const bodySig = {};
+function setBody(html) {
+  const box = document.getElementById("body");
+  if (bodySig[page] === html) return false;
+  bodySig[page] = html;
+  box.innerHTML = html;
+  return true;
+}
+// ⑥ 开关切换：只切 class、不重建 DOM，transition 才会真的形变；拖尾只在切换瞬间出现。
+function morphSwitch(sw, toOn) {
+  if (!sw) return;
+  sw.classList.remove("morph");
+  void sw.offsetWidth;
+  sw.classList.toggle("on", !!toOn);
+  sw.setAttribute("aria-checked", toOn ? "true" : "false");
+  sw.classList.add("morph");
+  setTimeout(function () { sw.classList.remove("morph"); }, 460);
+}
+
+function paint() {
+  document.getElementById("nav").innerHTML = NAV.map(function (x, i) {
+    return '<button class="' + (x[0] === page ? "on" : "") + '" data-p="' + x[0] + '" title="' +
+      esc(x[1]) + '（按 ' + navKeyHint(i) + ' 打开）"><b>' +
+      String(i + 1).padStart(2, "0") + '</b><span>' + esc(x[1]) + '</span></button>';
+  }).join("");
+  const t = TITLES[page] || [(NAV.find(x => x[0] === page) || ["", "—"])[1], ""];
+  if (page === "accounts" && cache.accounts && cache.accounts.subtitle) t[1] = cache.accounts.subtitle;
+  if (page === "identity" && cache.identity) t[1] = cache.identity.sub;
+  if (page !== "identity") stopIdTick();
+  document.getElementById("pageTitle").textContent = t[0];
+  document.getElementById("heroSub").textContent = t[1];
+  const box = document.getElementById("body"), d = cache[page];
+  if (lastPainted !== page) {                 // 换页才播入场
+    lastPainted = page;
+    box.classList.remove("enter");
+    void box.offsetWidth;
+    box.classList.add("enter");
+  } else {
+    box.classList.remove("enter");           // 刷新一律不播，别闪
+  }
+  document.getElementById("heroTime").textContent = new Date().toTimeString().slice(0, 8);
+  if (!LOADER[page]) setBody(renderWip());
+  else if (d === undefined) setBody('<div class="wip">读取中…</div>');
+  else if (d === null) setBody(fail(cache[page + ":err"]));
+  else if (page === "dashboard") setBody(renderDashboard(d));
+  else if (page === "server") setBody(renderServer(d));
+  else if (page === "log") {
+    setBody(renderLog(d));
+    if (autoscroll) { const el = document.getElementById("logBox"); if (el) el.scrollTop = el.scrollHeight; }
+  }
+  else if (page === "models") setBody(renderModels(d));
+  else if (page === "flags") setBody(renderFlags(d));
+  else if (page === "audit") setBody(renderAudit(d));
+  else if (page === "accounts") setBody(renderAccounts(d));
+  else if (page === "identity") setBody(renderIdentity(d));
+  const hint = document.getElementById("statusHint");
+  if (hint) hint.textContent = "序号即页码：1–" + NAV.length + " 直达";
+  const foot = (page === "dashboard" && d && d.meta) ? (d.meta.target || "—") : "端口 " + window.__PORT__;
+  document.getElementById("sideFoot").textContent = foot;
+  syncThemeBtn();
+  const now = new Date(), MON = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二"];
+  document.getElementById("dDay").textContent = String(now.getDate()).padStart(2, "0");
+  document.getElementById("dDate").textContent =
+    MON[now.getMonth()] + "月 · 周" + "日一二三四五六"[now.getDay()];
+  dressSwitches(document.getElementById("body"));   // 翻页重建了开关，重新挂上日月
+  PSB.bindAll();                                  // 翻页重建了 log/tblwrap，重新挂上滚条
+}
+
+const THEME_CN = {dark: "墨纸", light: "纸色"};
+
+function syncThemeBtn() {
+  const el = document.documentElement, b = document.getElementById("themePlanet");
+  if (!b) return;
+  const cur = el.dataset.theme === "light" ? "light" : "dark";
+  b.dataset.next = cur === "dark" ? "light" : "dark";
+  b.classList.remove("bad");
+  b.title = "主题：" + THEME_CN[cur] + " · 点一下切到" + THEME_CN[b.dataset.next];
+}
+
+async function toggleTheme() {
+  const b = document.getElementById("themePlanet");
+  const next = b.dataset.next;
+  document.documentElement.dataset.theme = next;    // 屏幕立刻就是答案，不等网络
+  syncThemeBtn();
+  const r = await api("set_theme", next);
+  if (!r.ok) {
+    b.classList.add("bad");                          // 没记住：虚线框＋悬停说明，不烧强调色
+    b.title = "这一档已经显示出来了，但没记住：" + (r.error || "壳层没接上");
+  }
+}
+
+const ADMIN_PAGES = ["models", "flags", "audit", "accounts", "registration",
+                     "identity", "device_actions", "overview"];
+let regPick = "";            // 分段选择器里的待保存值；「生效中」永远显后端当前值
+let lastPainted = "";        // 上次翻到哪一页：换页才播入场动效
+let idTimer = null, idLeft = 0, idTick = false, idCode = "";
+
+async function loadPage(p) {
+  const name = LOADER[p];
+  if (!name) return;
+  const extra = EXTRA[p] || [];
+  const r = await api(name);
+  if (!r.ok) {
+    // 管理页的 401 不是"坏了"，是"还没登录"——进登录门，别只甩一行红字
+    if (r.code === 401 && ADMIN_PAGES.indexOf(p) >= 0) cache[p] = {logged_in: false, err: r};
+    else cache[p] = null;
+    cache[p + ":err"] = r;
+    // 429：别再按原节奏打过去，自动刷新歇一分钟
+    if (r.code === 429) backoffUntil = Date.now() + 60000;
+    if (p === page) paint();           // in-flight 旧页请求不许重绘当前页
+    return;
+  }
+  cache[p] = r.data;
+  // 合并进来的块：各自的老接口照旧拉，失败只让那一块空着，不连坐整页
+  const got = await Promise.all(extra.map(e => api(e[1])));
+  extra.forEach(function (e, i) {
+    cache[e[0]] = got[i] && got[i].ok ? got[i].data : null;
+  });
+  if (p === page) { paint(); if (p === "identity") armIdTick(r.data); }
+}
+
+function armTimer() {
+  if (timer) clearInterval(timer);
+  const armedFor = page;
+  // 刷新间隔来自「设置」（server_config.json 的 controller_refresh_ms）；运行日志仍按 3 秒跟随
+  const period = page === "log" ? Math.min(3000, refreshMs) : refreshMs;
+  timer = setInterval(function () {
+    if (busy || armedFor !== page) return;         // 已切走：这个定时器不许再拉数据
+    if (page === "log" && !autoscroll) return;
+    // 开关页攒着没保存的改动时不许自动刷新——否则改动会被静默冲掉
+    if (page === "flags" && flagDirtyCount()) return;
+    if (Date.now() < backoffUntil) return;         // 刚被 429 限流，先歇会儿
+    loadPage(armedFor);
+  }, period);
+}
+
+let statusTimer = null;
+function status(msg, kind) {                 // 全局状态条：一行小字，成功 5 秒后自己收
+  const el = document.getElementById("statusMsg");
+  if (!el) return;
+  el.textContent = msg || "";
+  el.className = "smsg" + (kind ? " " + kind : "");
+  if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+  if (msg && kind !== "bad") statusTimer = setTimeout(function () {
+    el.textContent = ""; el.className = "smsg"; statusTimer = null;
+  }, 5000);
+}
+const say = (m, kind) => {
+  const el = document.getElementById("srvMsg");
+  if (el) el.textContent = m || "";
+  status(m, kind);
+};
+const say2 = (id, m, kind) => {
+  const el = document.getElementById(id);
+  if (el) el.textContent = m || "";            // 页内有落点就写在页内
+  else status(m, kind);                        // 没有落点就落到状态条，不再静默丢
+};
+
+async function runServerControl(a) {
+  busy = true;
+  try {
+    const r = await api("server_control", a);
+    say(r.ok ? r.data.msg : errBrief(r), r.ok ? "ok" : "bad");
+    for (let i = 0; i < 10; i++) {               // 旧壳 CATCHUP：2s × 10 次追赶刷新
+      await new Promise(res => setTimeout(res, 2000));
+      await loadPage("server");
+      const alive = ((cache.server || {}).state || {}).alive;
+      if (i >= 1 && a === "stop" && alive === false) break;
+      if (i >= 1 && (a === "start" || a === "restart") && alive === true) break;
+    }
+  } finally { busy = false; }
+}
+
+function confirmDialog(title, text, okLabel, onOk) {
+  const el = ovl("<h3>" + esc(title) + "</h3>" +
+    '<div class="ln">' + esc(text) + "</div>" +
+    '<div class="btnrow"><button class="btn danger" id="cdGo">' + esc(okLabel) + "</button>" +
+    '<button class="btn" data-act="ovl-cancel">取消</button></div>');
+  el.querySelector("#cdGo").onclick = function () { closeOvl(); onOk(); };
+}
+
+async function act(a, e_target) {
+  if (a === "win-min" || a === "win-max" || a === "win-close") {
+    const name = a === "win-min" ? "win_minimize"
+      : (a === "win-max" ? "win_maximize" : "win_close");
+    const r = await api(name);
+    if (!r.ok) say(r.error || "窗口操作失败");
+    return;
+  }
+  if (busy) return;
+  busy = true;
+  try {
+    if (a === "stop" || a === "restart") {         // 断服务是高影响动作：先问一句
+      confirmDialog(a === "stop" ? "确认停止服务器？" : "确认重启服务器？",
+        a === "stop" ? "停掉后客户端连不上；停止会写暂停标记，watchdog 不会自动拉起。"
+                     : "重启会让服务短暂不可用，通常几秒。",
+        a === "stop" ? "停止" : "重启", function () { runServerControl(a); });
+      return;
+    }
+    if (a === "start") { await runServerControl(a); return; }
+    if (a === "probe") {
+      say("探测中…");
+      const r = await api("probe_addresses");
+      if (r.ok) { cache.server.rows = r.data.rows; say(""); paint(); } else say(r.error || "探测失败");
+    } else if (a === "save-target" || a === "reset-target") {
+      const r = a === "reset-target"
+        ? await api("reset_target")
+        : await api("set_target", document.getElementById("tgHost").value.trim(),
+                    Number(document.getElementById("tgPort").value) || 0);
+      if (r.ok) { await loadPage("server"); say(r.data.msg, "ok"); }
+      else say(errBrief(r), "bad");
+    } else if (a === "autoscroll") {
+      autoscroll = !autoscroll; morphSwitch(e_target.closest(".sw"), autoscroll);
+    } else if (a === "clear") {
+      cache.log = Object.assign({}, cache.log, {empty: true, text: ""});
+      paint();
+    } else if (a === "export") {
+      const r = await api("export_log_dialog");
+      if (r.ok) say(r.data.msg);
+      else if (r.code !== -2) say(r.error || "导出失败");      // -2＝用户取消，不吭声
+    } else if (a === "open") {
+      const r = await api("open_log_file");
+      say((r.ok && r.data.msg) || (r.error || "打不开"));
+    } else if (a === "login") {
+      const r = await api("login", document.getElementById("lgUser").value.trim(),
+                          document.getElementById("lgPass").value);
+      const el = document.getElementById("lgMsg");
+      if (r.ok) { cache[page + ":err"] = null; if (el) el.textContent = "登录成功"; status("登录成功", "ok");
+                  await loadPage(page); }
+      else if (el) { el.textContent = errBrief(r); status(errBrief(r), "bad"); }
+    } else if (a === "mod-enabled") {
+      const sw = e_target.closest(".sw");
+      morphSwitch(sw, !sw.classList.contains("on"));
+    } else if (a === "mod-save") {
+      const mod = e_target.closest(".mod"), body = {};
+      mod.querySelectorAll("[data-f]").forEach(el => { if (el.value.trim() !== "") body[el.dataset.f] = el.value.trim(); });
+      body.enabled = mod.querySelector(".sw").classList.contains("on");
+      const r = await api("save_modality", mod.dataset.key, body);
+      if (r.ok) await loadPage("models"); else say(r.error || "保存失败", "bad");
+    } else if (a === "flag-toggle") {
+      const sw = e_target.closest(".sw"), on = e_target.dataset.on === "1";
+      const key = e_target.dataset.key;
+      morphSwitch(sw, !on);                       // 只在本地形变，不写后端、不重建 DOM
+      e_target.dataset.on = !on ? "1" : "0";
+      flagDirty[key] = !on;                       // 攒着，等「保存」
+      const rows = ((cache.flags || {}).groups || []).flatMap(g => g.rows || []);
+      rows.forEach(f => { if (f.key === key) f.enabled = !on; });
+      syncFlagBar();
+    } else if (a === "flag-save") {
+      const keys = Object.keys(flagDirty);
+      if (!keys.length) return;
+      let bad = 0;
+      for (const k of keys) {
+        const r = await api("set_flag", k,
+                            {enabled: flagDirty[k], self_service: false, server_locked: false});
+        if (r.ok) delete flagDirty[k];
+        else {
+          bad += 1;
+          say(errBrief(r) + "（" + k + "）", "bad");
+        }
+      }
+      await loadPage("flags");
+      if (!bad) status("已保存 " + keys.length + " 项改动", "ok");
+    } else if (a === "flag-discard") {
+      if (!flagDirtyCount()) return;
+      flagDirty = {};
+      await loadPage("flags");
+      status("已放弃改动，回到后端的值", "ok");
+    } else if (a === "flag-group") {
+      flagGroup = e_target.dataset.g || "";
+      bodySig[page] = "";                       // 主动切组，强制重绘这一页
+      paint();
+    } else if (a === "reg-pick") {
+      regPick = e_target.dataset.k; paint();
+    } else if (a === "reg-save") {
+      const m = regPick || (cache.registration || {}).mode;
+      if (!m) { say2("regMsg", "先选择一个策略再保存"); return; }
+      const r = await api("set_registration", m);
+      if (r.ok) { regPick = ""; await loadPage("identity");
+                  say2("regMsg", "已保存注册策略：" + m, "ok"); }
+      else say2("regMsg", errBrief(r), "bad");
+    } else if (a === "reg-reload") {
+      regPick = ""; await loadPage("identity");
+    } else if (a === "id-code") {
+      const r = await api("pairing_code");
+      if (r.ok) { await loadPage("identity"); say2("idMsg", r.data.msg, "ok"); }
+    } else if (a === "id-copy") {
+      const r = await api("copy_pairing_code");
+      if (r.ok && r.data.ok_text) {
+        const ta = document.createElement("textarea");
+        ta.value = r.data.code; document.body.appendChild(ta); ta.select();
+        document.execCommand("copy"); document.body.removeChild(ta);
+        say2("idMsg", r.data.msg, "ok");
+      } else say2("idMsg", (r.ok && r.data.msg) || r.error || "复制失败", "bad");
+    } else if (a === "id-rotate") {
+      const d = cache.identity || {};
+      const el = ovl('<h3>确认轮换身份密钥</h3><div class="ln warn">' +
+        esc(d.rotate_confirm || "").replace(/\n/g, "<br>") + '</div>' +
+        '<div class="btnrow"><button class="btn danger" id="rotGo">确定</button>' +
+        '<button class="btn" data-act="ovl-cancel">取消</button></div>');
+      el.querySelector("#rotGo").onclick = async function () {
+        el.querySelector("#rotGo").disabled = true;
+        const r = await api("rotate_identity");
+        if (r.ok) { closeOvl(); await loadPage("identity"); say2("idMsg", r.data.msg, "ok"); }
+        else { closeOvl(); say2("idMsg", errBrief(r), "bad"); }
+      };
+    } else if (a === "da-switch") {
+      const key = e_target.dataset.key, on = e_target.dataset.on === "1";
+      morphSwitch(e_target.closest(".sw"), !on);
+      e_target.dataset.on = on ? "0" : "1";
+      (((cache.device_actions || {}).cards) || []).forEach(x => { if (x.key === key) x.on = !on; });
+      const r = await api("set_device_switch", key, !on);
+      if (!r.ok) {
+        morphSwitch(e_target.closest(".sw"), on); e_target.dataset.on = on ? "1" : "0";
+        (((cache.device_actions || {}).cards) || []).forEach(x => { if (x.key === key) x.on = on; });
+        say(errBrief(r), "bad");
+      }
+    } else if (a === "da-add") {
+      const kind = e_target.dataset.kind, inp = document.getElementById("da_" + kind);
+      const raw = (inp && inp.value || "").trim();
+      if (!raw) { say2("daMsg", "先在输入框里填写" + (kind === "targets" ? "包名" : "插件名") + "再点添加", "bad"); return; }
+      const r = await api(kind === "targets" ? "add_device_target" : "add_device_plugin", raw);
+      if (r.ok) await loadPage("flags"); else say2("daMsg", r.error || "添加失败", "bad");
+    } else if (a === "da-del") {
+      const r = await api(e_target.dataset.kind === "targets" ? "remove_device_target"
+                                                          : "remove_device_plugin",
+                          e_target.dataset.name);
+      if (r.ok) await loadPage("flags"); else say2("daMsg", r.error || "删除失败", "bad");
+    } else if (a === "server-limit-save") {
+      const inp = document.getElementById("slVal");
+      const raw = String((inp && inp.value) || "").trim();
+      if (!/^\d+$/.test(raw)) { say2("slMsg", "填一个 ≥0 的整数（0 = 未设置）", "bad"); return; }
+      const r = await api("set_server_limit", Number(raw));
+      if (r.ok) { await loadPage("accounts"); say2("slMsg", "已保存：默认额度 " + raw, "ok"); }
+      else say2("slMsg", errBrief(r), "bad");
+    } else if (a === "bin") {
+      binOn = !binOn; morphSwitch(e_target.closest(".sw"), binOn);
+      cache.accounts = null; await loadPage("accounts");
+    } else if (a === "ac-reload") {
+      await loadPage("accounts");
+    } else if (a === "channel-login") {
+      const r = await api("open_channel_login");
+      if (r.ok) say2("chlMsg", r.data.msg, "ok");
+      else say2("chlMsg", errText(r), "bad");
+    } else if (a === "reload-page") {
+      await loadPage(page);
+    } else if (a === "settings") {
+      await openSettings();
+    } else if (a === "set-save") {
+      const wd = document.getElementById("setWd"), rf = document.getElementById("setRf");
+      if (!wd || !rf) return;
+      const r = await api("save_server_settings", Number(wd.value.trim()),
+                          Number(rf.value.trim()));
+      if (r.ok) {
+        refreshMs = Math.max(3000, Number(r.data.controller_refresh_sec) * 1000);
+        armTimer();                        // 新间隔立刻生效，不必等下一次刷新
+        closeOvl();
+        status(r.data.msg || "已保存", "ok");
+      } else {
+        say2("setMsg", errBrief(r), "bad");
+      }
+    } else if (a === "ovl-cancel") {
+      closeOvl();
+    } else if (a === "audit-limit") {
+      cache.audit = null;
+      const r = await api("audit_page", document.getElementById("auLimit").value.trim());
+      if (r.ok) { cache.audit = r.data; paint(); }
+    }
+  } finally {
+    busy = false;
+  }
+}
+
+document.getElementById("body").addEventListener("click", async function (e) {
+  const th = e.target.closest("th[data-sort]");
+  if (th) {                                   // 表头排序：同一列再点一次换方向
+    const st = SORTS[page];
+    if (st) {
+      st.dir = (st.key === th.dataset.sort) ? -st.dir : 1;
+      st.key = th.dataset.sort;
+      const box = document.getElementById("body");
+      const keep = box.scrollTop;               // 排序不把用户弹回顶部
+      paint();
+      box.scrollTop = keep;
+    }
+    return;
+  }
+  const cp = e.target.closest("[data-copy]");
+  if (cp) {
+    const ta = document.createElement("textarea");
+    ta.value = cp.dataset.copy;
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    say(ok ? "已复制服务器地址：" + cp.dataset.copy : "该地址暂不可用，无法复制");
+    return;
+  }
+  const b = e.target.closest("[data-act]");
+  if (b) await act(b.dataset.act, b);
+});
+
+// ── 热力图悬浮明细：自绘浮层接管 SVG <title>，避免原生提示双弹 ──
+const hmTip = document.getElementById("hmtip");
+function hmFill(i) {
+  const r = HEAT_ROWS[i];
+  if (!r) return;
+  const tasks = Object.keys(r.tasks || {})
+    .map(k => [k, Number(r.tasks[k]) || 0])
+    .filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]);
+  let h = '<div class="hmt"><span>' + esc(r.date) + '</span><b>' +
+          (r.tokens || 0).toLocaleString() + ' tokens</b></div>';
+  if (tasks.length) {
+    const total = (r.tokens || 0) || tasks.reduce((s, x) => s + x[1], 0);
+    h += '<div class="hml">' + tasks.slice(0, 6).map(x =>
+      '<div><i>' + esc(x[0]) + '</i><b>' + x[1].toLocaleString() + '</b><em>' +
+      (total ? (x[1] / total * 100).toFixed(1) : '0.0') + '%</em></div>').join('') + '</div>';
+    if (tasks.length > 6) h += '<div class="hmx">其余 ' + (tasks.length - 6) + ' 项</div>';
+  } else {
+    h += '<div class="hmx">当日无任务构成数据</div>';
+  }
+  hmTip.innerHTML = h;
+}
+function hmPlace(e) {
+  const w = hmTip.offsetWidth, h = hmTip.offsetHeight;
+  const x = Math.max(8, Math.min(e.clientX + 14, window.innerWidth - w - 8));
+  const y = Math.max(8, Math.min(e.clientY + 14, window.innerHeight - h - 8));
+  hmTip.style.left = x + "px";
+  hmTip.style.top = y + "px";
+}
+document.getElementById("body").addEventListener("mouseover", function (e) {
+  const c = e.target.closest && e.target.closest("rect[data-hm]");
+  if (!c) return;
+  hmFill(Number(c.getAttribute("data-hm")));
+  hmTip.hidden = false;
+  hmPlace(e);
+});
+document.getElementById("body").addEventListener("mousemove", function (e) {
+  const c = !hmTip.hidden && e.target.closest && e.target.closest("rect[data-hm]");
+  if (c) hmPlace(e);
+});
+document.getElementById("body").addEventListener("mouseout", function (e) {
+  const c = e.target.closest && e.target.closest("rect[data-hm]");
+  if (c && !(e.relatedTarget && c.contains(e.relatedTarget))) hmTip.hidden = true;
+});
+
+document.getElementById("body").addEventListener("input", async function (e) {
+  if (!e.target || e.target.id !== "acQ") return;
+  const q = e.target.value;
+  const r = await api("accounts_page", binOn, q);
+  if (!r.ok) return;
+  cache.accounts = r.data;
+  paint();
+  const el = document.getElementById("acQ");
+  if (el) { el.value = q; el.focus(); }
+});
+
+document.getElementById("body").addEventListener("keydown", async function (e) {
+  if (e.key !== "Enter" || !/^da_(targets|plugins)$/.test(e.target.id || "")) return;
+  const kind = e.target.id.slice(3);
+  const raw = e.target.value.trim();
+  if (!raw) return;
+  const r = await api(kind === "targets" ? "add_device_target" : "add_device_plugin", raw);
+  if (r.ok) await loadPage("device_actions");
+});
+
+document.addEventListener("click", async function (e) {
+  const kb = e.target.closest("[data-menu]");
+  if (kb) {
+    const uid = kb.dataset.menu;
+    const r = await api("account_menu", uid);
+    showMenu(kb, uid, (r.ok && r.data.menu) || []);
+    return;
+  }
+  const mi = e.target.closest("#menu button[data-m]");
+  if (mi) {
+    closeMenu();
+    const uid = mi.dataset.uid, m = mi.dataset.m, arg = mi.dataset.arg;
+    if (m === "delete") { await openDeleteWizard(uid); return; }
+    if (m === "purge") { await openPurgeWizard(uid); return; }
+    if (m === "purge-report") { await openReport(uid); return; }
+    if (m === "llm-limit-set") {
+      const v = window.prompt("新的 LLM 总额度（整数；留空＝清除覆盖）", "");
+      if (v === null) return;
+      const r2 = await api("set_account", uid, "llm-limit", v.trim() === "" ? null : Number(v));
+      if (r2.ok) await loadPage("accounts"); else say(r2.error || "失败");
+      return;
+    }
+    const val = arg === "true" ? true : (arg === "false" ? false :
+                (arg === "" || m === "llm-limit" ? null : arg));
+    const r2 = await api("set_account", uid, m, val);
+    if (r2.ok) await loadPage("accounts"); else say((r2.error || "失败") + "（code " + r2.code + "）");
+    return;
+  }
+  if (!e.target.closest(".menu")) closeMenu();
+});
+
+document.getElementById("nav").addEventListener("click", async function (e) {
+  const b = e.target.closest("button[data-p]");
+  if (!b) return;
+  gotoPage(NAV.findIndex(function (x) { return x[0] === b.dataset.p; }));
+});
+
+// 设置对话框：守护检测间隔 / 界面刷新间隔，就是旧壳「设置」里那两个键
+async function openSettings() {
+  const r = await api("server_settings");
+  const d = (r.ok && r.data) || {};
+  const wd = (d.watchdog_interval_sec === undefined) ? 120 : d.watchdog_interval_sec;
+  const rf = (d.controller_refresh_sec === undefined) ? 20 : d.controller_refresh_sec;
+  const wr = d.wd_range || [15, 3600], rr = d.rf_range || [5, 600];
+  ovl('<h3>设置</h3>' +
+    '<div class="field"><label>守护检测间隔（秒）</label>' +
+    '<input id="setWd" class="num" value="' + esc(wd) + '" title="' +
+    wr[0] + '–' + wr[1] + ' 秒；下个检测周期生效"></div>' +
+    '<div class="field"><label>界面刷新间隔（秒）</label>' +
+    '<input id="setRf" class="num" value="' + esc(rf) + '" title="' +
+    rr[0] + '–' + rr[1] + ' 秒；运行日志仍按 3 秒跟随"></div>' +
+    '<div class="descr">修改后立即生效，只写 ' + esc(d.path || "server_config.json") +
+    ' 里的这两个键，其余配置一个字都不动。</div>' +
+    '<div class="btnrow"><button class="btn primary" data-act="set-save">保存</button>' +
+    '<button class="btn" data-act="ovl-cancel">取消</button>' +
+    '<span class="state" id="setMsg">' + esc(d.msg || "") + '</span></div>');
+}
+
+async function load() {
+  // 先把刷新间隔读进来（设置里可改），再起定时器，免得第一轮用的是默认 20s
+  try {
+    const s = await api("server_settings");
+    if (s && s.ok && s.data && s.data.controller_refresh_sec) {
+      refreshMs = Math.max(3000, Number(s.data.controller_refresh_sec) * 1000);
+    }
+  } catch (e) { /* 读不到就用默认 20s，不挡启动 */ }
+  await loadPage(page);
+  armTimer();
+  if (window.pywebview) {                    // 启动握手：渲染真发生了才算起来
+    const cs = getComputedStyle(document.body);
+    api("ping", {page: page, theme: document.documentElement.dataset.theme,
+                 bg: cs.backgroundColor, nav: document.querySelectorAll("#nav button").length,
+                 cards: document.querySelectorAll(".card,.addr,.log,.logempty").length});
+  }
+}
+if (window.__DATA__ && window.__DATA__._ovl) renderOvlFixture(window.__DATA__._ovl);
+if (window.__DATA__) {
+  const env = window.__DATA__[LOADER[page]];
+  if (env && env.ok) cache[page] = env.data;
+  else if (env && env.code === 401) cache[page] = {logged_in: false, err: env};
+  paint();                                  // 出图模式没有 pywebviewready，必须自己渲染一次
+}
+/* 首次进入的星空开屏：固定时长留足加载，星球从左飞到右上角后整片窗帘拉走。
+   出图/钉帧模式直接跳过（否则会挡住截图）；看过一次就不再覆盖。 */
+(function bootSplash() {
+  const sp = document.getElementById("splash");
+  const hero = document.getElementById("themePlanet");
+  if (!sp) return;
+  let seen = false;
+  try { seen = localStorage.getItem("ambrace_splash_seen") === "1"; } catch (e) {}
+  const shotMode = !!window.__DATA__ || window.__SKY__ !== undefined;
+  const reduced = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // 出图模式连常驻星球都不显示：它正落在 W4 钉帧采样的页眉右半，会抬亮低帧基线。
+  // 真窗口（含看过一次的正常启动）仍常驻并自转。
+  if (shotMode) { sp.remove(); return; }
+  if (seen || reduced) { sp.remove(); if (hero) hero.classList.add("ready"); return; }
+  try { localStorage.setItem("ambrace_splash_seen", "1"); } catch (e) {}
+  // 时长与 d2.css 的 planet-journey 同源：改节奏只改这几行，下面不再写死毫秒
+  const SPLASH_MS = 5000;
+  const SPLASH_COVER = 0.56;   // 星球盖满全屏的那一帧（d2.css 关键帧 56%）
+  const SPLASH_FADE = 260;     // 整层消隐时长，与 #splash 的 transition 对齐
+  // 盖满后背景退场，画面只剩左边那颗星球（遮罩底色就是页面纸色，所以不会多出一块黑）
+  setTimeout(function () {
+    const stars = sp.querySelector(".sp-stars");
+    if (stars) stars.remove();
+    sp.querySelectorAll(".sp-orb").forEach(function (n) { n.remove(); });
+  }, Math.round(SPLASH_MS * SPLASH_COVER));
+  // 落位交棒：页眉那颗球瞬间就位，内容区从下方顶上来，到位即固定
+  setTimeout(function () {
+    if (hero) { hero.style.transition = "none"; hero.classList.add("ready"); }
+    const body = document.getElementById("body");
+    if (body) { body.classList.remove("enter"); body.classList.add("rise"); }
+    sp.classList.add("sp-out");
+    setTimeout(function () { sp.remove(); }, SPLASH_FADE);
+  }, SPLASH_MS);
+})();
+Nebula.start();
+(function bindTheme() {
+  const b = document.getElementById("themePlanet");
+  if (b && !b.dataset.bound) { b.dataset.bound = "1"; b.addEventListener("click", toggleTheme); }
+})();
+// ② 自绘窗口按钮在 .hero 里，#body 的 data-act 委托够不着——自己接一份（同弹层口径）。
+const wbBar = document.querySelector(".hero .winbtns");
+if (wbBar) wbBar.addEventListener("click", function (e) {
+  const b = e.target.closest("[data-act]");
+  if (b) { e.stopPropagation(); act(b.dataset.act, b); }
+});
+// 侧栏页脚的「设置」同理：它也不在 #body 里，委托够不着
+const sideFoot = document.querySelector(".side .foot");
+if (sideFoot) sideFoot.addEventListener("click", function (e) {
+  const b = e.target.closest("[data-act]");
+  if (b) { e.stopPropagation(); act(b.dataset.act, b); }
+});
+window.addEventListener("pywebviewready", load);
+if (window.__DATA__ || !window.pywebview) load();
+
+// ⑤⑥：日期与时间合并后由这里统一走秒，不再等 3s/20s 的页面刷新才跳字。
+const CLOCK_TICK_MS = 1000;
+setInterval(function () {
+  const el = document.getElementById("heroTime");
+  if (el) el.textContent = new Date().toTimeString().slice(0, 8);
+}, CLOCK_TICK_MS);
+</script>
+</body>
+</html>

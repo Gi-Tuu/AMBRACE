@@ -33,7 +33,8 @@ EXCLUDE_PREFIX = (".agents/", "flutter.bat",  # 内部工具/技能目录与本�
                   "docs/")
 
 # 精确路径排除：从真实用户数据改写而来的派生内容（即使已脱敏也不进开源包，AGENTS.md 隐私硬原则）
-EXCLUDE_EXACT = ("scripts/diagnostics/memory_action_cases_real_draft.jsonl",)
+EXCLUDE_EXACT = ("scripts/diagnostics/memory_action_cases_real_draft.jsonl",
+                 "server_controller/AGENTS.md")   # 嵌套内部指令文件（与根 AGENTS.md 同类，2026-11-07）
 
 # 随包模型里要排掉的目录：2026-08-23 记忆向量升级到 bge-m3 后，bge-small-zh-v1.5（512d）
 # 全仓已无消费者（embedding.py 硬编码 bge-m3、download_models.py 只下发 bge-m3），但本机

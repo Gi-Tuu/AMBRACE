@@ -69,8 +69,9 @@ def detect(db_path: str) -> list[dict]:
                 "缺少表：%s（当前库不含渠道绑定表，插件可能未初始化）" % ", ".join(sorted(missing))
             )
 
-        wx_cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({WECHAT_TABLE})")}
-        ch_cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({CHANNEL_TABLE})")}
+        # PRAGMA table_info 不支持占位符绑定，改用语义等价的 table-valued pragma 函数（表名来自模块常量）
+        wx_cols = {r["name"] for r in conn.execute("SELECT name FROM pragma_table_info(?)", (WECHAT_TABLE,))}
+        ch_cols = {r["name"] for r in conn.execute("SELECT name FROM pragma_table_info(?)", (CHANNEL_TABLE,))}
         for col in ("tenant_id", "bot_account_id", "enabled", "character_id"):
             if col not in wx_cols:
                 raise RuntimeError(f"{WECHAT_TABLE} 缺字段 {col}")
@@ -132,7 +133,7 @@ def detect_dangling_character(db_path: str) -> dict[str, list[dict]]:
         for table in (WECHAT_TABLE, MESSAGE_TABLE):
             if table not in tables:
                 continue
-            cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            cols = {r["name"] for r in conn.execute("SELECT name FROM pragma_table_info(?)", (table,))}
             if not {"id", "character_id"} <= cols:
                 continue
             if table != WECHAT_TABLE or _LIVE_COL not in cols:

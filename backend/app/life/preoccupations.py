@@ -93,10 +93,12 @@ async def create_preoccupation(
         active = await list_active_preoccupations(db, character_id)
         if len(active) >= MAX_ACTIVE:
             return False
+        from app.memory import write_gate as _gate
         db.add(Memory(
             user_id=user_id, character_id=character_id, memory_type="insight",
             sub_type=PREOCCUPATION_SUB_TYPE, source="state_trigger",
-            content=content[:200], importance=weight, epistemic_status="FACT",
+            content=content[:200], importance=weight,
+            epistemic_status=_gate.epistemic_for("preoccupation"),
             speaker_type="character", speaker_id=character_id, scope="private",
         ))
         _logger.info("Preoccupation created char=%d: %s", character_id, content[:50])

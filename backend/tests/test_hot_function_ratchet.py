@@ -147,14 +147,15 @@ HOT_RATCHET = [
     ("memory/extractor.py", "extract_single", 11, 3),
     ("api/games.py", "_resume_ai_turns", 243, 55),
     ("agent/nodes.py", "generate_response", 222, 51),
-    ("api/chat.py", "websocket_chat", 212, 40),
+    ("api/chat.py", "websocket_chat", 206, 39),  # 2026-11-08：batch 签名抽 helper 后缩短
     ("agent/llm_client.py", "chat_completion", 189, 48),
     ("agent/runtime.py", "build_light_social_context", 150, 42),
     ("memory/meaning.py", "run_meaning_extraction", 147, 51),
     ("memory/retrieve.py", "_rerank", 147, 52),
     ("scheduling/message_generator.py", "_run_two_rounds", 128, 45),
     ("memory/dedup.py", "deduplicate_memories", 6, 2),
-    ("life/decision.py", "decide", 112, 49),
+    # 2026-11-05 M2：长期疲劳判据抽成 _fatigue_decision（行数不变 112、CC 49→48），按棘轮规则下调上限。
+    ("life/decision.py", "decide", 112, 48),
 ]
 
 

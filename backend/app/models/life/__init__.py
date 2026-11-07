@@ -24,7 +24,7 @@ class LifeState(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     character_id: Mapped[int] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), unique=True, nullable=False)
-    energy: Mapped[int] = mapped_column(Integer, default=70)          # 精力 0-100
+    energy: Mapped[int] = mapped_column(Integer, default=70)          # 短期体力资源 0-100（M2：活动消耗/休息恢复；长期疲劳见 character_states.fatigue）
     focus: Mapped[int] = mapped_column(Integer, default=50)           # 专注 0-100
     needs_json: Mapped[str] = mapped_column(Text, default="{}")       # 8 需求 JSON（curiosity/productivity/...）
     home_layout_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # 角色自定义房间布局 JSON（小家 v3.2 家具自由摆放；None=用默认布局）

@@ -41,6 +41,7 @@ import sqlite3
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND_ROOT not in sys.path:
@@ -61,6 +62,7 @@ def default_report_path() -> str:
     刻意不写死作者机器路径——仓库要能脱敏公开（发布快照核对项之一）。
     """
     return os.path.join(os.environ.get("AMBRACE_OUTPUT_DIR") or "output", REPORT_NAME)
+
 DEFAULT_DAYS = 30
 DEFAULT_LIMIT = 4000
 # 方案 F §3.1 第一行的目标入流量：≤420 条/30 天（每（角色×用户）日均 ≤0.5）
@@ -899,9 +901,12 @@ def main(argv=None) -> int:
         quota = apply_quota(rp, now, args.days)
         report = render_report(rp, pressure, b1, b2, b3, args.days, args.db, now)
     if not args.no_report:
-        os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
-        with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(report)
+        out = Path(args.out).expanduser()
+        if ".." in out.parts:
+            raise ValueError("路径不得包含 .. 分量: %r" % (args.out,))
+        out = out.resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(report, encoding="utf-8", newline="\n")
 
     print(f"[M0 dry-run] 窗口 {args.days} 天｜原始信号 {b1['raw_total']} → 可入池 {b1['kept_total']}"
           f"｜拦截 {b1['rejected_total']}（长度 {rp.reject_reasons.get(fl.REASON_LENGTH, 0)}"

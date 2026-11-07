@@ -250,6 +250,8 @@ def _synth_dashscope_sync(text: str, voice: str, cfg: dict, target_dir: Path, fn
                     "input": {"text": text, "voice": voice},
                     "parameters": {"format": "wav", "sample_rate": 24000},
                 }
+                from app.utils.net_guard import ensure_outbound_url
+                ensure_outbound_url(endpoint)  # SSRF：端点默认只允许公网目标
                 req = urllib.request.Request(endpoint, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
                 with urllib.request.urlopen(req, timeout=60) as r:
                     resp = json.loads(r.read().decode("utf-8", "replace"))
@@ -258,6 +260,7 @@ def _synth_dashscope_sync(text: str, voice: str, cfg: dict, target_dir: Path, fn
                 if not url.startswith("http"):
                     _logger.warning("DashScope TTS %s: no audio url", model)
                     continue
+                ensure_outbound_url(url)  # SSRF：音频 URL 来自远端响应，必须校验
                 dreq = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
                 with urllib.request.urlopen(dreq, timeout=60) as dr:
                     raw = dr.read()

@@ -65,7 +65,8 @@ def _tables(conn: sqlite3.Connection) -> set[str]:
 
 
 def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    return {r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
+    return {r[0] for r in conn.execute(
+        "SELECT name FROM pragma_table_info(?)", (table,)).fetchall()}
 
 
 def _norm(value) -> str:
@@ -86,8 +87,11 @@ def audit(conn: sqlite3.Connection) -> dict:
         out["mix_note"] = "memories 表缺 speaker_type 列"
         return out
     has_source = "source" in cols
-    want = ["id", "speaker_type"] + (["source"] if has_source else ["'' AS source"])
-    rows = conn.execute(f"SELECT {', '.join(want)} FROM memories").fetchall()
+    # 列存在性无法参数化：按 has_source 展开成两条全字面量查询（三元组形状一致，消费端不变）
+    if has_source:
+        rows = conn.execute("SELECT id, speaker_type, source FROM memories").fetchall()
+    else:
+        rows = conn.execute("SELECT id, speaker_type, '' AS source FROM memories").fetchall()
     dist: dict[str, int] = {}
     unknown: dict[str, int] = {}
     for _mid, spk, src in rows:

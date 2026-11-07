@@ -156,18 +156,19 @@ async def _inject_core_anchors_loops(cid: int | None, uid: int, trim: dict) -> t
     try:
         from app.memory.core import get_core_memories, get_relationship_anchors, get_open_loops, async_session_factory
         from app.memory.plan_projection import projected_object_texts
+        from app.memory.format import epistemic_prefix
         if cid:
             _cores = await get_core_memories(cid, limit=trim["core_limit"])
             if _cores:
                 _core_view = await projected_object_texts(_cores,cid,async_session_factory)
                 core_text = "\n".join(
-                    f"- [记录于 {str(m.created_at)[:10]}] {_core_view.get(getattr(m, "id", None), m.content)[:120]}" + (f"（{m.core_category}）" if m.core_category else "")
+                    f"- [记录于 {str(m.created_at)[:10]}] {epistemic_prefix(getattr(m, 'epistemic_status', None))}" f"{_core_view.get(getattr(m, "id", None), m.content)[:120]}" + (f"（{m.core_category}）" if m.core_category else "")
                     for m in _cores
                 )
             _anchors = await get_relationship_anchors(cid, uid, limit=trim["anchor_limit"])
             if _anchors:
                 _anchor_view = await projected_object_texts(_anchors,cid,async_session_factory)
-                anchors_text = "\n".join(f"- [记录于 {str(m.created_at)[:10]}] {_anchor_view.get(getattr(m, 'id', None), m.content)[:120]}" for m in _anchors)
+                anchors_text = "\n".join(f"- [记录于 {str(m.created_at)[:10]}] {epistemic_prefix(getattr(m, 'epistemic_status', None))}"f"{_anchor_view.get(getattr(m, 'id', None), m.content)[:120]}" for m in _anchors)
             _loops = await get_open_loops(cid, uid)
             if _loops:
                 loops_text = "\n".join(f"- [PLANNED] {l}" for l in _loops)

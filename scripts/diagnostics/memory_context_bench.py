@@ -35,6 +35,7 @@ import sys
 import tempfile
 import time
 from datetime import datetime
+from pathlib import Path
 
 # 自举：把 backend/ 加进 sys.path（脚本可从任意 cwd 运行）
 _BACKEND = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "backend")
@@ -342,6 +343,14 @@ def render_report(per_config: dict[str, list[dict]], mode_rows: list[dict],
     return "\n".join(lines)
 
 
+def _tool_path(p):
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。"""
+    rp = Path(p).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return str(rp.resolve())
+
+
 async def main() -> None:
     ap = argparse.ArgumentParser(description="记忆上下文块级基准（E v2）")
     ap.add_argument("--dataset", required=True)
@@ -380,7 +389,7 @@ async def main() -> None:
     mode_rows = [] if args.skip_modes else [await mode_recall(c, char_map[c["cid"]], id_content) for c in cases]
     calib = None if args.no_calibrate or not score_rows else calibrate_summary(score_rows)
     report = render_report(per_config, mode_rows, calib, calib_src=os.environ["DATABASE_URL"])
-    with open(args.out, "w", encoding="utf-8") as f:
+    with open(_tool_path(args.out), "w", encoding="utf-8") as f:
         f.write(report)
     print(report)
     print(f"\n[OK] 报告已写入 {args.out}（临时库 {tmp}）")

@@ -114,6 +114,9 @@ class Settings(BaseSettings):
     plugin_http_timeout: float = 10.0  # 桥 http 代理超时（秒）
     plugin_http_max_bytes: int = 2 * 1024 * 1024  # 桥 http 代理响应大小上限（2MB）
     plugin_http_allow_private: bool = False  # True 显式放行私有/环回/链路本地/云元数据地址（SSRF 例外）
+    # 2026-11-05 安全复核批：TTS 音频下载等「服务端替远端取 URL」链路也走 SSRF 守卫；
+    # True=显式放行内网/回环目标（自托管 TTS 网关场景）；默认 False（只允许公网目标）。
+    http_fetch_allow_private: bool = False
     plugin_http_allow_http: bool = False  # 调试开关：True 放行 http 协议（默认仅 https）
 
     # ---- 3.9 插件安全闸（2026-09-02）：默认关闭远程市场安装 ----

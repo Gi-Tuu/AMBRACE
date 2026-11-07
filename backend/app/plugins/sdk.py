@@ -163,6 +163,9 @@ async def save_memory(user_id: int, character_id: int, memory_type: str, content
     require_permission("write_memory")
     await _assert_caller_family(user_id=user_id)
     from app.memory import save_memory as _save
+    from app.memory import write_gate as _gate
+    # M10：flag 开时强制 source="plugin"（插件不得自报 chat 等来源）；关时原样透传
+    kwargs = _gate.normalize_plugin_kwargs(kwargs)
     await _save(user_id=user_id, character_id=character_id, memory_type=memory_type,
                 content=content, importance=importance, **kwargs)
 

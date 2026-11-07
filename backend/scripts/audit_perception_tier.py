@@ -49,7 +49,8 @@ def _tables(conn: sqlite3.Connection) -> set[str]:
 
 
 def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    return {r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
+    return {r[0] for r in conn.execute(
+        "SELECT name FROM pragma_table_info(?)", (table,)).fetchall()}
 
 
 def _count(conn: sqlite3.Connection, sql: str) -> int:
@@ -83,9 +84,30 @@ def snapshot_bodies(conn: sqlite3.Connection) -> list[str]:
     cols = _columns(conn, "phone_snapshots")
     if "content" not in cols:
         return []
-    want = ["user_id", "content"] + [c for c in ("image_desc", "created_at", "id") if c in cols]
-    order = "ORDER BY user_id ASC, " + ("created_at DESC, id DESC" if "created_at" in cols else "id DESC")
-    rows = conn.execute(f'SELECT {",".join(want)} FROM phone_snapshots {order}').fetchall()
+    has_desc = "image_desc" in cols
+    has_created = "created_at" in cols
+    # 列清单/排序无法参数化：按存在性展开成全字面量 SQL（四种组合与旧动态拼装逐一等价，
+    # 排序口径同旧逻辑：有 created_at 用 created_at DESC, id DESC，否则 id DESC）
+    if has_desc and has_created:
+        want = ("user_id", "content", "image_desc", "created_at", "id")
+        rows = conn.execute(
+            "SELECT user_id, content, image_desc, created_at, id FROM phone_snapshots"
+            " ORDER BY user_id ASC, created_at DESC, id DESC").fetchall()
+    elif has_desc:
+        want = ("user_id", "content", "image_desc", "id")
+        rows = conn.execute(
+            "SELECT user_id, content, image_desc, id FROM phone_snapshots"
+            " ORDER BY user_id ASC, id DESC").fetchall()
+    elif has_created:
+        want = ("user_id", "content", "created_at", "id")
+        rows = conn.execute(
+            "SELECT user_id, content, created_at, id FROM phone_snapshots"
+            " ORDER BY user_id ASC, created_at DESC, id DESC").fetchall()
+    else:
+        want = ("user_id", "content", "id")
+        rows = conn.execute(
+            "SELECT user_id, content, id FROM phone_snapshots"
+            " ORDER BY user_id ASC, id DESC").fetchall()
     key = {c: i for i, c in enumerate(want)}
     per_user: dict[int, int] = {}
     bodies: list[str] = []

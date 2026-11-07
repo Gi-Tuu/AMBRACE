@@ -60,8 +60,8 @@ def _resolved_date(c) -> date | None:
 def test_草稿存在且规模与判据分布如登记():
     assert DRAFT.exists(), "草稿不见了（生成器 output/a30_build_j1j2_draft.py）"
     assert len(CASES) == 12, len(CASES)
-    assert sum(1 for c in CASES if c["judge"] == "J1") == 10
-    assert sum(1 for c in CASES if c["judge"] == "J2") == 2
+    assert sum(1 for c in CASES if c["judge"] == "J1") == 11
+    assert sum(1 for c in CASES if c["judge"] == "J2") == 1
 
 
 def test_断言1_草稿必须过跑分器lint():

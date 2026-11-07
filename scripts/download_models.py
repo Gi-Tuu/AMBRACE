@@ -34,6 +34,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -70,6 +71,45 @@ _WINDOWS_RESERVED = frozenset(
 _WINDOWS_BAD_CHARS = frozenset('<>:"|?*')
 
 
+def _tool_path(p):
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。"""
+    rp = Path(p).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return str(rp.resolve())
+
+
+# 下载 URL 守卫白名单：本工具按设计只从 GitHub（Release/附件及其重定向域）与
+# HuggingFace（官方站/LFS·Xet 重定向域）及 hf-mirror.com 镜像下载，其余一律拒绝。
+_ALLOWED_DOWNLOAD_HOSTS = frozenset({
+    "api.github.com",
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "codeload.github.com",
+    "huggingface.co",
+    "hf-mirror.com",
+    "cdn-lfs.huggingface.co",
+    "cdn-lfs-us-1.huggingface.co",
+    "cdn-lfs-eu-1.huggingface.co",
+    "cdn-lfs.hf.co",
+    "cdn-lfs-us-1.hf.co",
+    "cdn-lfs-eu-1.hf.co",
+    "cas-bridge.xethub.hf.co",
+    "cas-server.xethub.hf.co",
+    "transfer.xethub.hf.co",
+})
+
+
+def _check_download_url(url) -> bool:
+    """下载 URL 守卫：仅允许 https 且 host 在显式白名单内（本工具只从上述官方域下载）。"""
+    try:
+        parts = urllib.parse.urlparse(str(url))
+    except Exception:
+        return False
+    return parts.scheme == "https" and parts.hostname in _ALLOWED_DOWNLOAD_HOSTS
+
+
 def model_complete() -> bool:
     """两个必需文件都存在且非空才算完整；仅“文件存在”不能算成功。"""
     for rel in _REQUIRED:
@@ -90,6 +130,8 @@ def _latest_release_zip_url() -> str:
     都拿着一个必然 404 的 URL 去下载 542MB，白等一轮超时才回退②（latest 无 zip 已成惯例）。
     """
     try:
+        if not _check_download_url(RELEASE_API):
+            raise ValueError(f"release api url not allowed: {RELEASE_API}")
         req = urllib.request.Request(RELEASE_API, headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=20) as r:
             data = json.loads(r.read().decode("utf-8"))
@@ -107,9 +149,11 @@ def _download(url: str, dest: Path) -> None:
     有 Content-Length 时校验实际字节数；空响应视为失败。失败时 dest 可能是部分文件，
     调用方必须只把 dest 放在本次专属临时区，不能直接写最终模型目录。
     """
+    if not _check_download_url(url):
+        raise ValueError(f"download url not allowed: {url}")
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     # 115s 读超时：542MB 在慢网也够；连接超时 15s。
-    with urllib.request.urlopen(req, timeout=115) as resp, open(dest, "wb") as f:
+    with urllib.request.urlopen(req, timeout=115) as resp, open(_tool_path(str(dest)), "wb") as f:
         total = int(resp.headers.get("Content-Length") or 0)
         done = 0
         while True:
@@ -303,7 +347,7 @@ def _copy_zip_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo, target: Path) -
     """流式完整复制单个成员；zipfile 在读到 EOF 时校验 CRC，短读也显式失败。"""
     target.parent.mkdir(parents=True, exist_ok=True)
     written = 0
-    with zf.open(info) as src, open(target, "wb") as dst:
+    with zf.open(info) as src, open(_tool_path(str(target)), "wb") as dst:
         while True:
             chunk = src.read(1024 * 1024)
             if not chunk:

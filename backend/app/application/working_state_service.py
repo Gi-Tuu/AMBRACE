@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+from app.memory import write_gate as _gate
 
 from sqlalchemy import select
 
@@ -170,7 +171,8 @@ async def maybe_evaluate_working_state(
                 new_row = Memory(
                     user_id=user_id, character_id=character_id,
                     memory_type="working_state", content=json.dumps(new_content, ensure_ascii=False),
-                    scope="private", source="system", epistemic_status="FACT",
+                    scope="private", source="system",
+                    epistemic_status=_gate.epistemic_for("working_state"),
                     importance=60.0, title=None,
                 )
                 db.add(new_row)

@@ -23,6 +23,7 @@ import io
 import os
 import sys
 from difflib import SequenceMatcher
+from pathlib import Path
 
 # 允许从 backend 导入生产纯函数（知识隔离维度复用 _filter_cross_char_news）
 _BACKEND = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backend")
@@ -168,6 +169,14 @@ def build_report(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _tool_path(p):
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。"""
+    rp = Path(p).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return str(rp.resolve())
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Memory Benchmark v1（离线零 LLM 档）")
     ap.add_argument("--dump-report", action="store_true", help="把报告写入 docs/evaluation-memory-benchmark.md")
@@ -177,7 +186,7 @@ def main() -> None:
     print(report)
     if args.dump_report:
         out = "docs/evaluation-memory-benchmark.md"
-        with open(out, "w", encoding="utf-8", newline="") as f:
+        with open(_tool_path(out), "w", encoding="utf-8", newline="") as f:
             f.write(report)
         print(f"\n报告已写入 {out}")
 

@@ -38,7 +38,7 @@ _WINDOWS_ONLY = ("CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS")
 _SPAWN_CALL_SITES = (
     "scripts/watchdog.py",
     "scripts/server_manager.py",
-    "server_controller/server_controller.py",
+    # W6 退役（2026-11-08）：server_controller.py 已删，不再列入
 )
 
 

@@ -89,6 +89,20 @@ class Observation:
         return out
 
 
+def _epistemic_for_status(spec_value: str, status: str) -> str:
+    """M8b（L4）：工具执行失败/超时 → 认知态 UNKNOWN（结果未知，不得冒充事实）。
+
+    flag ``memory_grading_v1`` 关时逐字返回 ToolSpec 的原值（历史口径）。异常一律回落原值。
+    """
+    try:
+        from app.memory import grading
+        if status == "error" and grading.enabled():
+            return "UNKNOWN"
+    except Exception:  # noqa: BLE001 - 分级面异常不得影响工具链
+        pass
+    return spec_value
+
+
 def from_spec(spec, result, status: str, *, source: str = SOURCE_TOOL,
               user_id: int | None = None, character_id: int | None = None,
               session_id: int | None = None) -> Observation:
@@ -97,7 +111,8 @@ def from_spec(spec, result, status: str, *, source: str = SOURCE_TOOL,
         source=source,
         status=status,
         summary=clamp_summary(summarize_result(result), getattr(spec, "max_observation_chars", None)),
-        epistemic_status=getattr(spec, "epistemic_status", _DEFAULT_EPISTEMIC_STATUS),
+        epistemic_status=_epistemic_for_status(
+            getattr(spec, "epistemic_status", _DEFAULT_EPISTEMIC_STATUS), status),
         provenance=getattr(spec, "provenance", _DEFAULT_PROVENANCE),
         tool_name=getattr(spec, "name", None),
         user_id=user_id,

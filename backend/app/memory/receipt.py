@@ -1,6 +1,6 @@
 """#70 M3：记忆写入回执（memory_write_receipts）。
 
-终态追踪「这条记忆为什么在/不在」。设计（docs/memory-tiering-observability-plan.md 附录 C-可选）：
+终态追踪「这条记忆为什么在/不在」。设计（docs/archive/architecture/memory-tiering-observability-plan.md 附录 C-可选）：
 
 - 仅当 feature flag ``memory_write_receipt`` 开时由写入点异步写一条回执；
 - 写入失败静默（只记 warning），绝不阻塞主链路（沿用项目铁律「异步不阻塞主回复」）；

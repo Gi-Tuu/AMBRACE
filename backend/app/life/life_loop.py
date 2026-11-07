@@ -27,6 +27,7 @@ from app.models.character import CharacterState
 from app.models.pet import Pet
 from app.life.life_state import (
     apply_tick, get_life_state, phase_of, beijing_hour, default_needs, clamp,
+    dead_fields_v1_enabled, settle_focus,
 )
 from app.life.decision import decide, StateSnapshot, Decision, ACTIONS, INTENT_ACTION_MAP
 from app.life import space as _space          # 批次三(2026-09-16) 空间模型
@@ -137,7 +138,12 @@ class LifeLoopTask:
 
         # 夜间：只做恢复性结算，不决策
         if is_night:
-            await apply_tick(db, char.id, "sleep")
+            # M1（2026-11-04）：ΔT 口径下夜间结算只允许 life_tick 单入口执行；
+            # 本链再调一次会造成同一夜被结算 3 倍（见 docs/human-like-mechanism-research.md E0）。
+            # flag 关＝历史行为（两链都结算）逐字节不变。
+            from app.life.life_state import _settle_dt_v2
+            if not _settle_dt_v2():
+                await apply_tick(db, char.id, "sleep")
             # 批次三(2026-09-16)：睡眠落点随住校/假期（住校→宿舍，假期→老家），
             # 不再恒写 home/bedroom（角色一边说「去食堂」一边系统里 home/bedroom 的矛盾）。
             sleep_loc, sleep_room = _space.sleep_location()
@@ -249,9 +255,11 @@ class LifeLoopTask:
         if last_log and last_log.completed_at:
             last_ticks = int((_now() - last_log.completed_at).total_seconds() // TICK_SECONDS)
 
+        # M2b：flag 开＝focus 从 energy 现算（派生只读），不再信可能停更的落库值
+        snap_focus = settle_focus(st.energy) if dead_fields_v1_enabled() else st.focus
         return StateSnapshot(
             character_id=char.id, user_id=char.user_id,
-            energy=st.energy, focus=st.focus, needs=needs,
+            energy=st.energy, focus=snap_focus, needs=needs,
             phase=phase, mood=cs.mood if cs else 50,
             fatigue=cs.fatigue if cs else 30, anger=cs.anger if cs else 10,
             location=st.location or "home", current_room=st.current_room or "living",
@@ -447,12 +455,13 @@ class LifeLoopTask:
             return
 
         # 写日志（started）——input_json 带 "origin":"life_loop"
+        # M2b：flag 开＝停写 mood_delta 死字段（无人消费），列保持默认 0
         log = LifeActivityLog(
             character_id=char.id, activity_type=decision.action, status="started",
             input_json=json.dumps({"reason": decision.reason, "phase": snap.phase,
                                    "origin": "life_loop"}, ensure_ascii=False),
             energy_cost=max(0, act.energy_cost),
-            mood_delta=act.mood_delta,
+            **({} if dead_fields_v1_enabled() else {"mood_delta": act.mood_delta}),
         )
         db.add(log)
         await _retry_on_lock(lambda: db.commit(), f"log-start char={char.id}")

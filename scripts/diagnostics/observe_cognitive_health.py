@@ -42,7 +42,8 @@ def _has_table(cur, table: str) -> bool:
 
 
 def _has_column(cur, table: str, column: str) -> bool:
-    cols = {r[1] for r in cur.execute(f"PRAGMA table_info({table})").fetchall()}
+    # pragma_table_info 表值函数把表名作为数据值绑定（SQLite 3.16+），等价 PRAGMA table_info(<table>)
+    cols = {r[0] for r in cur.execute("SELECT name FROM pragma_table_info(?)", (table,)).fetchall()}
     return column in cols
 
 

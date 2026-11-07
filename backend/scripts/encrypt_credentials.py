@@ -68,7 +68,8 @@ def _connect_readonly(db_path: Path) -> sqlite3.Connection:
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
-    return [r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()]
+    return [r[0] for r in conn.execute(
+        "SELECT name FROM pragma_table_info(?)", (table,)).fetchall()]
 
 
 def _existing_tables(conn: sqlite3.Connection) -> set[str]:

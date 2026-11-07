@@ -26,6 +26,19 @@ ALLOWED_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv"}
 MAX_VIDEO_BYTES = 200 * 1024 * 1024  # 200MB
 
 
+def safe_subdir(subdir: str) -> str:
+    """校验上传子目录：只允许相对路径段（拒绝绝对路径 / `..` / 盘符 / 协议头）。
+
+    2026-11-05 安全复核（纵深防御）：现有调用点都只传数字 ID 或固定前缀，本函数防未来误用。
+    """
+    rel = str(subdir or "").replace("\\", "/")
+    parts = rel.split("/")
+    if (not rel or rel.startswith("/") or ".." in parts or ":" in rel
+            or (parts and parts[0].endswith(":"))):
+        raise ValueError("invalid upload subdir: %r" % (subdir,))
+    return rel
+
+
 async def _save_upload(file: UploadFile, subdir: str, allowed_exts: set, max_bytes: int, lang: str = "zh") -> str:
     """保存上传文件到 uploads/{subdir}/，返回 /uploads/... 相对路径"""
     ext = os.path.splitext(file.filename or "")[1].lower()
@@ -34,7 +47,10 @@ async def _save_upload(file: UploadFile, subdir: str, allowed_exts: set, max_byt
     data = await file.read(max_bytes + 1)
     if len(data) > max_bytes:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "file_too_large", mb=max_bytes // 1024 // 1024))
-    sub = UPLOAD_DIR / subdir
+    try:
+        sub = UPLOAD_DIR / safe_subdir(subdir)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "invalid_upload_target"))
     sub.mkdir(parents=True, exist_ok=True)
     fname = f"{_time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{ext}"
     path = sub / fname

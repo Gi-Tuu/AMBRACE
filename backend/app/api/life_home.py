@@ -18,6 +18,7 @@ from app.utils.clamp import clamp_int as _clamp
 from app.models.character import AICharacter
 from app.models.character import CharacterState
 from app.models.life import LifeState, LifeActivityLog
+from app.life.life_state import dead_fields_v1_enabled as _dead_fields_v1  # M2b：死字段停写闸
 from app.models.pet import Pet
 from app.models.user import User
 from app.games.registry import list_games
@@ -467,7 +468,8 @@ async def home_event(payload: dict, user_id: int = Depends(get_current_user_id),
                 status="completed",
                 input_json=json.dumps({"source": "life_home", "action": action, "label": spec["label"]}, ensure_ascii=False),
                 energy_cost=abs(spec["stamina"]) if spec["stamina"] < 0 else 0,
-                mood_delta=spec["mood"],
+                # M2b：flag 开＝停写 mood_delta 死字段（无人消费），列保持默认 0
+                **({} if _dead_fields_v1() else {"mood_delta": spec["mood"]}),
             )
         )
         await db.commit()

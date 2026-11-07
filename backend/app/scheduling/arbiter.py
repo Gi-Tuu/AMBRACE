@@ -297,6 +297,20 @@ async def collect_state_trigger_events() -> list[dict]:
 
 
 async def _compute_motivation(character_id: int) -> float:
+    """动机分（M3b：同一 tick 内同一角色只算一次）。
+
+    调用点：本文件的候选打分、`sources/motivation.py` 的关系门与让位路径——同一 tick 内可能问 3 次。
+    缓存复用 M3a 的 tick 上下文（`tick_cache`，flag ``proactive_tick_cache``）：
+    flag 关 / 不在 tick 上下文 ⇒ 逐次计算，与历史逐字节一致；跨 tick 不复用（防止用上一拍的分数）。
+    """
+    from app.scheduling import tick_cache
+    return await tick_cache.cached(
+        "motivation:%d" % character_id,
+        lambda: _compute_motivation_uncached(character_id),
+    )
+
+
+async def _compute_motivation_uncached(character_id: int) -> float:
     """读取角色八维状态计算动机分；无状态/异常返回 0（失败静默，不影响调度）"""
     try:
         from app.models.character import CharacterState
@@ -358,6 +372,13 @@ async def collect_plugin_events() -> list[dict]:
 
 
 async def run_tick() -> list[str]:
+    """M3a：外层包 tick 上下文（缓存仅在 flag ``proactive_tick_cache`` 开时生效）。"""
+    from app.scheduling import tick_cache
+    with tick_cache.tick():
+        return await _run_tick_inner()
+
+
+async def _run_tick_inner() -> list[str]:
     """统一调度：收集 → 去重 → 限额 → 执行。返回执行的日志列表"""
     executed = []
 

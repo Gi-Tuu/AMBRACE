@@ -150,3 +150,7 @@ backend/data/extract_queue.sqlite3-wal
 backend/data/extract_queue.sqlite3-shm
 # A30 尺子的 --out 默认写在当前目录，跑一次就落一个报告（留底一律放仓库外 output，绝不入库）
 memory_action_report.md
+
+# 2026-11-05：仓库根 logs/ 是运行产物（旧运行遗留，非源码），不入库；backend/data/logs 另有规则
+/logs/
+.pytest_tmp*/

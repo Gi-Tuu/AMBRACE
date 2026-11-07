@@ -93,7 +93,7 @@ class CharacterState(Base):
     body_temp: Mapped[int] = mapped_column(Integer, default=50)      # 体温（指数，50=正常体感）
     desire: Mapped[int] = mapped_column(Integer, default=50)         # 性欲
     possessiveness: Mapped[int] = mapped_column(Integer, default=50) # 占有欲
-    fatigue: Mapped[int] = mapped_column(Integer, default=50)        # 疲惫感
+    fatigue: Mapped[int] = mapped_column(Integer, default=50)        # 长期疲劳/情绪疲惫 0-100（M2：与 life_states.energy 分工——energy=短期体力、fatigue=长期累积，对话驱动）
     sensitivity: Mapped[int] = mapped_column(Integer, default=50)    # 敏感度
     comfort: Mapped[int] = mapped_column(Integer, default=50)        # 舒适感
     anger: Mapped[int] = mapped_column(Integer, default=50)         # 怒气值（高=生气，低=平静）

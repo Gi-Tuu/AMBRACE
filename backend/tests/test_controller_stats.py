@@ -15,7 +15,7 @@ _ROOT = os.path.dirname(os.path.dirname(_HERE))  # backend/tests -> backend -> �
 if os.path.join(_ROOT, "server_controller") not in sys.path:
     sys.path.insert(0, os.path.join(_ROOT, "server_controller"))
 
-import server_controller as sc  # noqa: E402  (仅定义函数/常量，不建 Tk 实例)
+import console_core as sc  # noqa: E402  W6-A 共享真源（纯标准库，不建 Tk 实例）
 
 
 def test_aggregate_groups_by_beijing_day():

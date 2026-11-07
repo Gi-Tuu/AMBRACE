@@ -744,6 +744,14 @@ def _require_outside_repo(path, what):
     return p
 
 
+def _tool_path(p):
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。"""
+    rp = Path(p).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return str(rp.resolve())
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="A30 五轴离线报表（只读复算，零 LLM）")
     ap.add_argument("--rows", action="append", default=[],
@@ -772,10 +780,10 @@ def main(argv=None):
     report = build_report(legs, min_samples=args.min_samples or None)
     text = render(report)
     if args.out:
-        with open(args.out, "w", encoding="utf-8", newline="\n") as f:
+        with open(_tool_path(args.out), "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
     if args.map_out:
-        with open(args.map_out, "w", encoding="utf-8", newline="\n") as f:
+        with open(_tool_path(args.map_out), "w", encoding="utf-8", newline="\n") as f:
             json.dump(report["anon_map"], f, ensure_ascii=False, indent=1, sort_keys=True)
     print(text, end="")
     return 0

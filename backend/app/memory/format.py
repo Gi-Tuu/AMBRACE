@@ -26,7 +26,14 @@ from app.memory.tense import classify_tense, is_happened_source, is_plan_expired
 
 def epistemic_prefix(status) -> str:
     """记忆认知状态标注前缀（World & Cognition P3）：FACT 是默认事实不标；
-    INFERRED/PLANNED/UNVERIFIED 显式标注，让模型区分事实/推断/计划。"""
+    INFERRED/PLANNED/UNVERIFIED 显式标注，让模型区分事实/推断/计划。
+
+    M8（flag ``memory_grading_v1``）：开时「未标注(NULL/空)」不再被当事实——统一标 ``[UNVERIFIED]``；
+    新增 ``UNKNOWN``（L4 结果未知）同样显式标注。flag 关＝逐字旧行为。
+    """
+    from app.memory import grading
+    if grading.enabled():
+        return grading.prefix_for(status)
     if not status or status == "FACT":
         return ""
     return f"[{status}] "

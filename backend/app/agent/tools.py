@@ -156,11 +156,26 @@ def observation_label(observation: Any) -> tuple[str, str]:
     return epi, prov
 
 
+def _unknown_label_forced() -> bool:
+    """M8b：认知态 UNKNOWN（结果未知）是否强制显示——由 ``memory_grading_v1`` 控制。"""
+    try:
+        from app.memory import grading
+        return bool(grading.enabled())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def observation_tag(observation: Any) -> str:
-    """注入行前缀里「·认知态·来源」这一段；flag 关 → 空串（拼接后逐字节等于旧文本）。"""
+    """注入行前缀里「·认知态·来源」这一段；flag 关 → 空串（拼接后逐字节等于旧文本）。
+
+    M8b：认知态为 ``UNKNOWN``（工具失败/超时）时，即使 ``observation_label_v1`` 关也显示
+    「·UNKNOWN·来源」——「结果未知」不能被静默当成功；该强制显示同样由 ``memory_grading_v1`` 控制。
+    """
+    epi, prov = observation_label(observation)
+    if epi == "UNKNOWN" and _unknown_label_forced():
+        return f"·{epi}·{prov}"
     if not observation_label_enabled():
         return ""
-    epi, prov = observation_label(observation)
     return f"·{epi}·{prov}"
 
 

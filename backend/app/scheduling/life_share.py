@@ -24,7 +24,7 @@ from app.models.character import CharacterState
 from app.models.character import ProactiveTriggerLog
 from app.scheduling import state_guard
 from app.utils.logger import get_logger
-from app.utils.timeutil import now_naive_utc, to_naive_utc
+from app.utils.timeutil import now_naive_utc
 
 _logger = get_logger("scheduler.life_share")
 
@@ -121,58 +121,16 @@ async def _log_rejected(character_id, user_id, reason: str, gate: str = "") -> N
 
 
 async def _kernel_gate_reason(character_id, user_id) -> str | None:
-    """断点 #7 方案 A：直发路径补齐内核闸，返回命中的闸名（None = 全通过）。
+    """直发通道内核闸（M4，2026-11-04 单点化）：实现已收敛到 ``proactive_kernel``。
 
-    口径**全部复用内核现成函数**（照 ``sources/strategy.py:376-432`` 的「闸当函数用」成例，
-    不自创阈值、不复制 SQL）：
-    ① 资格 ``arbiter.get_active_characters``（is_active + enable_proactive，顺带取 max_daily_proactive）
-    ② 久未互动停发 ``arbiter.inactive_char_skip``（flag 在其内部生效）
-    ③ pending 计时器 / 未发完剧情切片互斥 ``has_pending_timer`` / ``has_pending_storyline``
-    ④ 每小时上限 ``arbiter.get_hourly_active_count`` >= ``MAX_PER_HOUR``
-    ⑤ 最小间隔 ``arbiter.get_last_proactive_time`` + ``MIN_PROACTIVE_INTERVAL_MINUTES``
-    ⑥ 角色每日总上限：内核 ``get_daily_count`` 只数 ``_RHYTHM_MESSAGE_TYPES``（life_share 不在其中），
-       故「节律类当日已发 + 本通道当日已发」合并后再比 ``max_daily_proactive``
-    ⑦ 夜间说过睡觉 ``arbiter.has_user_said_sleep``
-
-    任一步取数失败 / 抛异常 → 判为拦截（宁可不发，也不绕过内核频控）。
+    本函数保留为薄包装，行为与收敛前逐条一致（FULL 8 项最严集）；
+    实现在 ``app/scheduling/proactive_kernel.py::direct_send_gate_reason``。
     """
-    from app.domain.proactivity.decision import MAX_PER_HOUR, MIN_PROACTIVE_INTERVAL_MINUTES
-    from app.scheduling import arbiter
-    from app.scheduling.triggers import get_daily_count
+    from app.scheduling.proactive_kernel import FULL, direct_send_gate_reason
 
-    try:
-        cid = int(character_id or 0)
-        uid = int(user_id or 0)
-    except (TypeError, ValueError):
-        return "bad_identity"
-    if not cid or not uid:
-        return "bad_identity"
-    try:
-        active = {int(c["character_id"]): c for c in await arbiter.get_active_characters()}
-        if cid not in active:
-            return "not_eligible"
-        if await arbiter.inactive_char_skip(cid):
-            return "inactive_char"
-        if await arbiter.has_pending_timer(cid):
-            return "pending_timer"
-        if await arbiter.has_pending_storyline(cid):
-            return "pending_storyline"
-        if await arbiter.get_hourly_active_count(cid) >= MAX_PER_HOUR:
-            return "hourly_cap"
-        last = await arbiter.get_last_proactive_time(cid)
-        if last is not None:
-            if now_naive_utc() - to_naive_utc(last) < timedelta(minutes=MIN_PROACTIVE_INTERVAL_MINUTES):
-                return "min_interval"
-        own_today = await arbiter.get_daily_sent_count(cid, _TRIGGER_TYPE)
-        max_daily = int(active[cid].get("max_daily_proactive") or 5)
-        if await get_daily_count(cid) + own_today >= max_daily:
-            return "daily_cap"
-        if await arbiter.has_user_said_sleep(cid, uid):
-            return "night_said_sleep"
-        return None
-    except Exception as e:
-        _logger.warning("life_share 内核闸判定失败 char=%s: %s", cid, e)
-        return "kernel_gate_error"
+    return await direct_send_gate_reason(
+        character_id, user_id, channel="life_share", checks=FULL,
+        trigger_type=_TRIGGER_TYPE)
 
 
 def _naturalness_flag() -> bool:

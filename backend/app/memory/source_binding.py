@@ -9,7 +9,7 @@ import hashlib
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import text
 
@@ -27,6 +27,22 @@ class SourceIdentityError(RuntimeError):
 
 def enabled() -> bool:
     return _extraction_source.get() is not None or bool(AGENT_FLAGS.get("memory_source_proof_v1", False))
+
+
+async def enabled_for(user_id: int) -> bool:
+    """按账号解析来源证明闸（用户级灰度支持，2026-11-07）。
+
+    走 `resolve_flag` 解析链（server_locked → 全局 → 该账号 user_runtime_flags 覆盖），
+    任何异常 fail-open 回全局 `enabled()`。签名/落库调用方（异步上下文）请用本函数；
+    `enabled()`（进程级全局）保留给无法携带账号的场合。
+    """
+    try:
+        if not user_id:
+            return enabled()
+        from app.application.flag_service import resolve_flag
+        return bool(await resolve_flag("memory_source_proof_v1", user_id))
+    except Exception:  # noqa: BLE001 —— fail-open 回全局值
+        return enabled()
 
 
 @dataclass(frozen=True)
@@ -63,6 +79,73 @@ async def sign_chat_message(db, msg: ChatMessage, *, user_id: int,
         event_at=at, content=msg.content, session_id=msg.session_id))
     msg.source_event_uid = uid
     return uid
+
+
+def _perception_batch_text(texts) -> str:
+    return "\n".join(sorted(t for t in texts if t))
+
+
+def _resolve_perception_batch_sync(conn, *, user_id: int, character_id: int,
+                                   message_id: int, memory_content: str):
+    """感知批次解析：批次 id＝该轮用户消息 id；事件幂等复用（generation 恒 1）。"""
+    from datetime import timedelta
+
+    from app.memory.write import (SNAPSHOT_MAX_ROWS, SNAPSHOT_WINDOW_MINUTES,
+                                  snapshot_overlap)
+    from app.utils.timeutil import now_naive_utc
+
+    msg = conn.execute(text(
+        "SELECT id,session_id,created_at FROM chat_messages WHERE id=:m"),
+        {"m": int(message_id)}).mappings().first()
+    if msg is None:
+        return None
+    sess = conn.execute(text(
+        "SELECT user_id,character_id FROM chat_sessions WHERE id=:s"),
+        {"s": msg["session_id"]}).mappings().first()
+    if sess is None or int(sess["user_id"]) != int(user_id) \
+            or int(sess["character_id"]) != int(character_id):
+        return None
+    cutoff = now_naive_utc() - timedelta(minutes=SNAPSHOT_WINDOW_MINUTES)
+    snaps = conn.execute(text(
+        "SELECT content, image_desc FROM phone_snapshots "
+        "WHERE user_id=:u AND created_at>=:c ORDER BY created_at DESC, id DESC LIMIT :n"),
+        {"u": int(user_id), "c": cutoff, "n": int(SNAPSHOT_MAX_ROWS)}).mappings().all()
+    texts = [t for t in ((row["content"] or row["image_desc"] or "") for row in snaps) if t]
+    # 绑定口径比打标口径宽松：只要与本轮语料有 >=1 个长词交集即可（打标要 >=3，用于"是否算感知来源"；
+    # 绑定只需证明"这条记忆确实来自本轮感知"，批次本身已由消息 id + 归属复核锁定）。
+    if not texts or not snapshot_overlap(memory_content, texts, min_overlap=1):
+        return None
+    batch = _perception_batch_text(texts)
+    existing = conn.execute(text(
+        "SELECT event_uid FROM memory_source_events "
+        "WHERE kind='perception_batch' AND source_row_id=:m AND owner_user_id=:u "
+        "AND character_id=:c AND deleted=0 ORDER BY seq DESC LIMIT 1"),
+        {"m": int(message_id), "u": int(user_id), "c": int(character_id)}).mappings().first()
+    if existing is not None and se.visible(conn, existing["event_uid"]):
+        uid = existing["event_uid"]
+    else:
+        at = msg["created_at"]
+        if isinstance(at, str):  # 原生 SQL 在 sqlite 下时间列是字符串
+            at = datetime.fromisoformat(at.replace(" ", "T"))
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        uid = se.issue_source_event(
+            conn, kind="perception_batch", source_row_id=int(message_id),
+            owner_user_id=int(user_id), character_id=int(character_id),
+            event_at=at, content=batch, session_id=int(msg["session_id"]))
+    return Binding(event_uid=uid, owner_user_id=int(user_id),
+                   character_id=int(character_id), session_id=int(msg["session_id"]),
+                   content_sha256=_sha(batch), event_at=msg["created_at"])
+
+
+async def resolve_perception_batch_binding(db, *, memory):
+    """把「本轮用户消息」当感知批次锚点（见 _resolve_perception_batch_sync）。"""
+    if not enabled() or memory.source != "perception" or memory.source_id is None:
+        return None
+    return await db.run_sync(lambda sync_db: _resolve_perception_batch_sync(
+        sync_db.connection(), user_id=int(memory.user_id),
+        character_id=int(memory.character_id), message_id=int(memory.source_id),
+        memory_content=memory.content or ""))
 
 
 def _resolve_sync(conn, *, msg_id: int, user_id: int, character_id: int,

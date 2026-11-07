@@ -1,6 +1,7 @@
 from app.api.characters import router as character_router
 from app.api.chat import router as chat_router
 from app.api.memories import router as memory_router
+from app.api.memory_why import router as memory_why_router  # noqa: E402  G5（路由已并入 memory_router）
 from app.api.system import router as system_router
 from app.api.scheduler import router as scheduler_router
 from app.api.scheduler import proactive_router
@@ -39,7 +40,7 @@ from app.api.device import router as device_router  # FCM 设备推送 token
 from app.api.channel_bindings import router as channel_bindings_router  # S3 渠道绑定 per-账号化 API
 
 __all__ = [
-    "character_router", "chat_router", "memory_router",
+    "character_router", "chat_router", "memory_router", "memory_why_router",
     "system_router", "admin_router", "scheduler_router", "proactive_router",
     "diary_router", "moments_router", "uploads_router", "relationships_router", "pets_router", "phone_router", "timeline_router", "images_router", "user_states_router", "user_content_router", "ai_chats_router", "emojis_router", "privacy_router", "user_location_router", "plugins_router", "plugin_bridge_router", "marketplace_router", "phone_desktop_router", "voice_router", "weave_router", "permissions_router", "platform_profiles_router", "chat_groups_router", "life_router", "life_home_router", "phone_workflows_router", "mcp_router", "games_router",
     "llm_configs_router",

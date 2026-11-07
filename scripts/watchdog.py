@@ -20,6 +20,8 @@ import subprocess
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
+from urllib.parse import urlparse
 
 # C1（2026-09-17）：stdio/网关重定向日志的「启动前轮转」，实现与调用方同级（scripts/log_rotate.py）。
 # P3-9（2026-09-2x）：跨平台拉起键 / venv 解释器路径同样收敛到同级 scripts/platform_util.py。
@@ -58,6 +60,31 @@ _hang_streak = 0
 PAUSE_FLAG = os.path.join(SERVER_DIR, "data", "paused.flag")  # 存在时暂停自动拉起（由控制台软件控制）
 CONFIG = os.path.join(SERVER_DIR, "data", "server_config.json")  # 控制台可修改的运行时配置
 DEFAULT_INTERVAL = 120  # 默认检测间隔（秒）
+
+
+def _tool_path(p):
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。
+
+    PID_FILE/PAUSE_FLAG/CONFIG 均为模块常量拼出的项目内固定路径，包一层守卫属纯加固。
+    """
+    rp = Path(p).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return str(rp.resolve())
+
+
+def _valid_local_http_url(url) -> bool:
+    """HTTP 判活 URL 守卫：仅允许显式给出 host 的 http/https 绝对地址。
+
+    本工具按设计只探测本地/配置内地址（默认判活地址即 http://127.0.0.1:8000 的
+    /api/v1/system/liveness，来自模块常量 LIVENESS_URL；网关 http 探活地址亦来自
+    本机 server_config.json），不对任何外部地址主动发起请求。
+    """
+    try:
+        parts = urlparse(str(url))
+    except Exception:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.netloc)
 
 # 每日备份：watchdog 运行期间每天备份一次源码+数据库（防文件损坏/误清空）
 _last_backup_day = ""
@@ -104,7 +131,7 @@ def write_pid() -> None:
     """记录本 watchdog 进程 PID（供 server_manager 诊断/清理）"""
     try:
         os.makedirs(LOCKS_DIR, exist_ok=True)
-        with open(PID_FILE, "w", encoding="utf-8") as f:
+        with open(_tool_path(PID_FILE), "w", encoding="utf-8") as f:
             f.write(str(os.getpid()))
     except Exception:
         pass
@@ -112,8 +139,8 @@ def write_pid() -> None:
 
 def clear_pid() -> None:
     try:
-        if os.path.exists(PID_FILE):
-            os.remove(PID_FILE)
+        if os.path.exists(_tool_path(PID_FILE)):
+            os.remove(_tool_path(PID_FILE))
     except Exception:
         pass
 
@@ -162,6 +189,8 @@ def probe_liveness(url: str = LIVENESS_URL, timeout: float = LIVENESS_TIMEOUT_SE
     import json
     import urllib.error
     import urllib.request
+    if not _valid_local_http_url(url):
+        return False, "liveness URL 非法（须为显式 host 的 http/https 地址）"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             status = int(resp.getcode())
@@ -332,6 +361,8 @@ def _gw_probe_ok(gw):
         if kind == "http":
             import urllib.request
             url = probe.get("url", "")
+            if not _valid_local_http_url(url):
+                return False
             with urllib.request.urlopen(url, timeout=3) as r:
                 return 200 <= r.status < 400
         if kind == "process":

@@ -288,8 +288,8 @@ def test_A30出题草稿必须lint零违规_且判据分布如登记():
     cases = [json.loads(l) for l in DRAFT.read_text(encoding="utf-8").splitlines() if l.strip()]
     assert len(cases) == 12, len(cases)
     assert ev.lint_dataset(cases) == [], ev.lint_dataset(cases)[:5]
-    assert sum(1 for c in cases if c["judge"] == "J1") == 10
-    assert sum(1 for c in cases if c["judge"] == "J2") == 2
+    assert sum(1 for c in cases if c["judge"] == "J1") == 11
+    assert sum(1 for c in cases if c["judge"] == "J2") == 1
     # 每题都必须真的把标注出完（lint 已核，这里再钉一次「没有一题靠默认值蒙过去」）
     for c in cases:
         e = c["expect"]

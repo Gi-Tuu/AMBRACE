@@ -44,6 +44,7 @@ import json
 import os
 import re
 import shutil
+import urllib.parse
 import sys
 import tempfile
 from datetime import datetime, timedelta
@@ -53,6 +54,27 @@ HERE = Path(__file__).resolve().parent
 BACKEND = HERE.parents[1] / "backend"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
+
+
+# ── 一次性工具安全守卫（2026-11-05 专项清理加装；纯校验，不改变任何评测行为）──
+_SQL_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _sql_ident(name: str) -> str:
+    """SQL 标识符守卫：只放行字母/数字/下划线组成的标识符（来源＝代码内常量表或 PRAGMA 自省），
+    拼接进 SQL 前强制过闸，拒绝引号/空白/注释等注入载体。"""
+    if not _SQL_IDENT_RE.match(name or ""):
+        raise ValueError("非法 SQL 标识符: %r" % (name,))
+    return name
+
+
+def _tool_path(p: str) -> str:
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。
+    本工具只读写用户在命令行显式指定的文件，这里挡的是意外构造出的逃逸路径。"""
+    rp = Path(p).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return str(rp.resolve())
 
 
 # ── 评测时钟冻结（2026-10-26）：`--now` 时把本进程的 `datetime`/`date` 换成冻结代理，
@@ -1004,7 +1026,7 @@ EVAL_CHAT_TASK = "chat"
 GENERATE_REPEAT_DEFAULT = 3
 # 10-06 用户拍板：J1 的分数与认证**只认「每一跑都过」**（不是"三跑里最好的一跑"，也不是"取二"——
 # 同一批 30 次实测"取二"与"每跑都过"读数相同（没有一题恰好两跑过），中间档买不到东西，所以口径就是这一条）
-CERT_J1_RULE = "检索侧四条认证 ∧ 每一跑都过(pass_all) ∧ 三跑结果一致（剥掉钟点后逐字一致，10-10 拍板）"
+CERT_J1_RULE = "检索侧四条认证 ∧ 每一跑都过(pass_all) ∧ 三跑语义一致（判分维度全同＋载荷核心片段互现；B 口径 2026-11-07 用户拍板；逐字一致率单列 consistent_verbatim 留档）"
 GENERATE_USER_ID = 7100               # 与 J3 档同一个评测账号（临时库里的假用户，不碰生产）
 
 # 生成侧要复制的 LLM 配置表＝`_resolve_llm_config` 解析链**真正读**的那几张
@@ -1069,29 +1091,84 @@ def borrow_llm_config(prod_path: str, dest_path: str) -> dict:
     import sqlite3
 
     src = sqlite3.connect("file:%s?mode=ro" % prod_path.replace("\\", "/"), uri=True)
-    dst = sqlite3.connect(dest_path)
+    # uri=True：ATTACH 的只读 URI（?mode=ro）只有在主连接带 SQLITE_OPEN_URI 时才被解析；
+    # 目标路径按 URI 解析（临时库路径不含 ?/#，_tool_path 已挡 .. 分量）。
+    dst = sqlite3.connect(_tool_path(dest_path), uri=True)
     out = {}
+    # 2026-11-05 安全清理：源库以只读 URI ATTACH 进目标连接（写被 SQLite 拒绝，保住
+    # 「生产库只读」硬约束）；每表 SQL 全字面量，表名/列名不进拼接（见 _copy_llm_config_tables）；
+    # 列漂移从「静默跳列」改「抛错报齐」——残缺配置进解析链与缺表静默同样作废本轮读数。
+    dst.execute("ATTACH DATABASE ? AS prod_src", ("file:" + urllib.parse.quote(prod_path.replace("\\", "/"), safe="/:") + "?mode=ro",))
     try:
-        for t in LLM_CONFIG_TABLES:
-            scols = [r[1] for r in src.execute("PRAGMA table_info(%s)" % t)]
-            dcols = [r[1] for r in dst.execute("PRAGMA table_info(%s)" % t)]
-            if not scols:
-                raise RuntimeError("生产库没有表 %s（复制清单需要它，缺席＝配置链没测全）" % t)
-            if not dcols:
-                raise RuntimeError("临时库没有表 %s（init_db 建出来的模式与解析链需要的不一致）" % t)
-            cols = [c for c in scols if c in dcols]
-            skipped = [c for c in scols if c not in dcols]
-            rows = src.execute("SELECT %s FROM %s" % (",".join('"%s"' % c for c in cols), t)).fetchall()
-            dst.execute("DELETE FROM %s" % t)
-            if rows:
-                dst.executemany("INSERT OR REPLACE INTO %s (%s) VALUES (%s)" % (
-                    t, ",".join('"%s"' % c for c in cols), ",".join("?" * len(cols))), rows)
-            dst.commit()
-            out[t] = {"rows": len(rows), "skipped_cols": skipped}
-        return out
+        return _copy_llm_config_tables(src, dst, out, prod_path)
     finally:
+        try:
+            dst.execute("DETACH DATABASE prod_src")
+        except Exception:  # noqa: BLE001 - DETACH 失败不影响已完成的复制结果
+            pass
         src.close()
         dst.close()
+
+
+def _copy_llm_config_tables(src, dst, out, prod_path: str) -> dict:
+    """逐表直线代码展开的配置表复制（2026-11-05 安全清理：每条 execute 实参都是字面量或
+    无条件字面量赋值的变量；ATTACH 只读 URI 保住生产库只读硬约束；列漂移抛错报齐）。"""
+    # ── api_configs ──
+    pragma_sql = "PRAGMA table_info(api_configs)"
+    dst_pragma_sql = "PRAGMA main.table_info(api_configs)"
+    scols = [r[1] for r in src.execute(pragma_sql).fetchall()]
+    dcols = [r[1] for r in dst.execute(dst_pragma_sql).fetchall()]
+    if not scols:
+        raise RuntimeError("生产库没有表 api_configs（复制清单需要它，缺席＝配置链没测全）")
+    if not dcols:
+        raise RuntimeError("临时库没有表 api_configs（init_db 建出来的模式与解析链需要的不一致）")
+    if scols != dcols:
+        raise RuntimeError("表 api_configs 列漂移：源侧多出 %s，临时库多出 %s（先对齐 schema 再跑）"
+                           % (sorted(set(scols) - set(dcols)), sorted(set(dcols) - set(scols))))
+    dst.execute("DELETE FROM main.api_configs")
+    dst.execute("INSERT OR REPLACE INTO main.api_configs SELECT * FROM prod_src.api_configs")
+    dst.commit()
+    out["api_configs"] = {"rows": dst.execute("SELECT count(*) FROM main.api_configs").fetchone()[0],
+                          "skipped_cols": []}
+    # ── user_llm_configs ──
+    pragma_sql = "PRAGMA table_info(user_llm_configs)"
+    dst_pragma_sql = "PRAGMA main.table_info(user_llm_configs)"
+    scols = [r[1] for r in src.execute(pragma_sql).fetchall()]
+    dcols = [r[1] for r in dst.execute(dst_pragma_sql).fetchall()]
+    if not scols:
+        raise RuntimeError("生产库没有表 user_llm_configs（复制清单需要它，缺席＝配置链没测全）")
+    if not dcols:
+        raise RuntimeError("临时库没有表 user_llm_configs（init_db 建出来的模式与解析链需要的不一致）")
+    if scols != dcols:
+        raise RuntimeError("表 user_llm_configs 列漂移：源侧多出 %s，临时库多出 %s（先对齐 schema 再跑）"
+                           % (sorted(set(scols) - set(dcols)), sorted(set(dcols) - set(scols))))
+    dst.execute("DELETE FROM main.user_llm_configs")
+    dst.execute("INSERT OR REPLACE INTO main.user_llm_configs SELECT * FROM prod_src.user_llm_configs")
+    dst.commit()
+    out["user_llm_configs"] = {"rows": dst.execute("SELECT count(*) FROM main.user_llm_configs").fetchone()[0],
+                               "skipped_cols": []}
+    # ── task_llm_configs ──
+    pragma_sql = "PRAGMA table_info(task_llm_configs)"
+    dst_pragma_sql = "PRAGMA main.table_info(task_llm_configs)"
+    scols = [r[1] for r in src.execute(pragma_sql).fetchall()]
+    dcols = [r[1] for r in dst.execute(dst_pragma_sql).fetchall()]
+    if not scols:
+        raise RuntimeError("生产库没有表 task_llm_configs（复制清单需要它，缺席＝配置链没测全）")
+    if not dcols:
+        raise RuntimeError("临时库没有表 task_llm_configs（init_db 建码链需要的不一致）")
+    if scols != dcols:
+        raise RuntimeError("表 task_llm_configs 列漂移：源侧多出 %s，临时库多出 %s（先对齐 schema 再跑）"
+                           % (sorted(set(scols) - set(dcols)), sorted(set(dcols) - set(scols))))
+    dst.execute("DELETE FROM main.task_llm_configs")
+    dst.execute("INSERT OR REPLACE INTO main.task_llm_configs SELECT * FROM prod_src.task_llm_configs")
+    dst.commit()
+    out["task_llm_configs"] = {"rows": dst.execute("SELECT count(*) FROM main.task_llm_configs").fetchone()[0],
+                               "skipped_cols": []}
+    try:
+        dst.execute("DETACH DATABASE prod_src")
+    except Exception:  # noqa: BLE001 - DETACH 失败不影响已完成的复制结果
+        pass
+    return out
 
 
 def resolved_llm_identity(user_id: int) -> dict:
@@ -1168,8 +1245,51 @@ async def ensure_chat_rows(user_id: int, cid: int, case: dict) -> tuple[int, int
             db.add(msg)
             if m.get("role") == "user":
                 uid = msg
+        # 2026-11-07 认证缺陷修复②：预置**固定文本**日摘要——否则 build_context 的补生成
+        # 每跑现场让 LLM 写一份（措辞天然非确定）⇒ 三跑输入必不同源。预置后补生成不再触发
+        # （省一半计费），注入的摘要逐跑逐字一致。
+        from app.models.memory import DailySummary as _DS
+        db.add(_DS(session_id=s.id, summary_date=base.strftime("%Y-%m-%d"),
+                   summary_text="（评测预置）当日对话要点以消息原文为准。"))
         await db.commit()
         return int(s.id), int(uid.id)
+
+
+
+async def reset_user_scope(user_id: int, cid: int) -> None:
+    """跑间清扫**用户级共享面**（2026-11-07 认证缺陷修复①）。
+
+    生成三跑各自独占角色号段，但 persona 的「用户与AI好友的关系」是用户级渲染（列出该用户
+    全部角色）⇒ 前跑的角色行会把后跑 prompt 撑长（实测 +12/+24 字每跑）。每跑开始前删掉
+    本用户除当前角色外的其他评测角色（memories 级联），并把当前角色名归一为常量，保证
+    三跑 prompt 逐字同源。
+    """
+    from sqlalchemy import delete, select, update
+
+    from app.db.database import async_session_factory
+    from app.db.vector_store import delete_memory_vector
+    from app.models.character import AICharacter
+    from app.models.memory import Memory
+
+    async with async_session_factory() as db:
+        old_ids = [r[0] for r in (await db.execute(select(Memory.id).where(
+            Memory.user_id == user_id, Memory.character_id != cid))).fetchall()]
+        await db.execute(delete(AICharacter).where(
+            AICharacter.user_id == user_id, AICharacter.id != cid))
+        await db.execute(update(AICharacter).where(AICharacter.id == cid)
+                         .values(name="memact-eval-%d" % CID_BASE_DEFAULT))
+        await db.commit()
+    # 全局检索面去污染（2026-11-07）：chroma/BM25 都是**跨角色**的全局态，前跑删角色后
+    # 留下的孤儿向量会在后跑的 top-k 里占位 ⇒ gold 被挤出召回（实测 run2/3 gold_in_recall=0）。
+    for mid in old_ids:
+        try:
+            await delete_memory_vector(mid)
+        except Exception:  # noqa: BLE001 - 对账档下个别向量缺失不阻塞清扫
+            pass
+    from app.memory.bm25_index import invalidate as _bm25_invalidate
+    # BM25 索引按角色缓存：失效当前角色，下一跑重建
+    _bm25_invalidate(cid)
+
 
 
 async def match_production_character(cid: int) -> None:
@@ -1189,16 +1309,22 @@ async def match_production_character(cid: int) -> None:
         await db.commit()
 
 
-async def gen_state(case: dict, cid: int, user_id: int, *, flags: dict | None = None) -> dict:
+async def gen_state(case: dict, cid: int, user_id: int, *, flags: dict | None = None,
+                    chat_rows: tuple | None = None) -> dict:
     """跑**生产图的前三个节点**（perceive→retrieve_memories→build_context）拼出 `context_messages`。
 
     绝不在这儿自己拼 prompt：装配一旦分叉，评测尺子和生产行为迟早漂。
+    `chat_rows`＝J2 档传入的 (session_id, 签名后 user 消息 id)——会话与落库行由
+    J2 模块的 `_persist_signed_turn` 按生产口径先建好（带来源签名），不再重复建会话。
     """
     from app.agent.nodes import build_context as _build_ctx, perceive as _perceive
     from app.agent.nodes import retrieve_memories as _retrieve
     from app.agent.runtime import _build_initial_state
 
-    sid, uid = await ensure_chat_rows(user_id, cid, case)
+    if chat_rows is not None:
+        sid, uid = chat_rows
+    else:
+        sid, uid = await ensure_chat_rows(user_id, cid, case)
     state = _build_initial_state(character_id=cid, user_id=user_id, session_id=sid,
                                  user_message=case["turn"], lang="zh",
                                  reasoning_level=EVAL_REASONING_LEVEL, source_id=uid)
@@ -1213,14 +1339,18 @@ async def gen_state(case: dict, cid: int, user_id: int, *, flags: dict | None = 
 
 
 async def seed_library(case: dict, idx: int, user_id: int, *, cid_base: int = CID_BASE_DEFAULT,
-                       filler_target: int = FILLER_TARGET_DEFAULT):
+                       filler_target: int = FILLER_TARGET_DEFAULT, filler_idx: int | None = None):
     """把一题灌成**认证三跑里 full 那一档**的形态（seeds＋distractors＋填充，带稠密向量）。
 
     和 `certify_case` 用同一个 cid 算式与同一套灌法：J3 量过的库和 J1 生成用的库必须是同一个库，
     否则"检索没问题、生成没答上"这类归因根本无从对齐。
+
+    `filler_idx`（2026-11-07 补）：填充选择与号段解耦——生成三跑认证要求**三跑输入逐字同源**，
+    而号段必须每跑独占（10-06 的状态泄漏订正）。两者解耦后：cid 随 idx 变（新角色＝干净状态），
+    填充随 filler_idx 定（同题三跑同库内容）。不传＝历史行为（随 idx 旋转，仅 J3 certify 档使用）。
     """
     cid = cid_base + idx * CID_SLOT_PER_CASE
-    fil, filler_skipped = fillers_for(case, idx, filler_target)
+    fil, filler_skipped = fillers_for(case, idx if filler_idx is None else filler_idx, filler_target)
     seed_ids, _f1 = await _insert(cid, user_id, case["seeds"], dense=True)
     dis_ids, _f2 = await _insert(cid, user_id, case.get("distractors") or [], dense=True)
     _fid, _f3 = await _insert(cid, user_id, fil, dense=True)
@@ -1708,6 +1838,30 @@ def write_private_evidence(records, path: str) -> int:
     return len(lines)
 
 
+def _payloads_semantic_check(rows) -> tuple[bool, str]:
+    """B 口径（2026-11-07 拍板）：载荷**语义一致**＝每跑载荷的核心片段都出现在其余跑的载荷拼接里。
+
+    用 `_core_snippet`（≥6 字核心）与 `_contains_key_fragment`（J1 同一把片段尺），
+    不新造模糊匹配。容忍措辞/粒度差异（j1f01「女儿叫朵朵」vs「学校接送牌＋朵朵」里
+    措辞不同但「朵朵」核心互相命中），抓的是缺漏/矛盾核心词。
+    """
+    _J = chr(10)
+    from app.memory.utility_feedback import _contains_key_fragment, _core_snippet
+    _J = chr(10)
+    texts = [_J.join(_norm(str(x)) for x in (r.get("payloads") or ())) for r in rows]
+    if len(set(texts)) == 1:
+        return True, ""
+    for i, r in enumerate(rows):
+        others = _J.join(t for j, t in enumerate(texts) if j != i)
+        for x in (r.get("payloads") or ()):
+            f = _core_snippet(_norm(str(x)))
+            # 只对 ≥6 字核心做跨跑命中（与 J1 片段尺同门槛）；更短的词（人名/绰号）
+            # 文本上验不了，交给载荷整段全等（texts 全等）那一层兜底。
+            if len(f) >= 6 and not _contains_key_fragment(f, others):
+                return False, f"第{i + 1}跑载荷核心片段「{f[:16]}」未出现在其余跑"
+    return True, ""
+
+
 def fold_runs(runs: list) -> dict:
     """把同一题的多跑折成一行：AR 读「每一跑都过」，一致读「结果指纹全等」，第 2、3 跑**留底可复核**。
 
@@ -1717,11 +1871,29 @@ def fold_runs(runs: list) -> dict:
     挪成纯函数之后它们才第一次真的被测到。
     """
     sigs = [sig_key(x) for x in runs]
+    sem_ok, sem_why = _payloads_semantic_check(runs)
+    sem_sigs = [(bool(x.get("pass")), tuple(x.get("actions_seen") or ()),
+                 tuple(x.get("dates_seen") or ()), tuple(x.get("exemptions") or ()),
+                 tuple(x.get("mem_channel") or ())) for x in runs]
     first = runs[0]
     first["n_runs"] = len(runs)
     first["pass_all"] = all(bool(x["pass"]) for x in runs)
     first["pass_any"] = any(bool(x["pass"]) for x in runs)
-    first["consistent"] = len(set(sigs)) == 1
+    first["consistent"] = (len(set(sem_sigs)) == 1) and sem_ok
+    first["consistent_why"] = sem_why
+    first["consistent_verbatim"] = len(set(sigs)) == 1
+    def _sem_text(x):
+        from app.memory.utility_feedback import _contains_key_fragment, _core_snippet
+        cores = sorted({_core_snippet(_norm(str(p))) for p in (x.get("payloads") or ())} - {""})
+        return "｜".join([
+            "过" if x.get("pass") else "不过",
+            ",".join(x.get("actions_seen") or ()) or "无动作",
+            ",".join(x.get("dates_seen") or []) or "无日期",
+            ",".join(x.get("exemptions") or []) or "无豁免",
+            "；".join(cores) or "无载荷",
+            "‖".join(x.get("mem_channel") or []) or "无通道",
+        ])
+    first["sig_sem"] = [_sem_text(x) for x in runs]
     first["err_spread"] = "/".join(sorted({str(x.get("err") or "") for x in runs}))
     first["other_runs"] = [{"pass": bool(x["pass"]), "err": x.get("err") or "",
                             "actions": ",".join(x["actions_seen"]) or "无",
@@ -1787,7 +1959,7 @@ def rows_from_jsonl(path: str) -> list:
     这也是"重跑是补测不是加测"的口径。
     """
     by_cid = {}
-    with open(path, encoding="utf-8") as f:
+    with open(_tool_path(path), encoding="utf-8") as f:
         for ln in f:
             ln = ln.strip()
             if not ln:
@@ -1876,8 +2048,16 @@ async def run_generate_eval(cases, *, user_id=GENERATE_USER_ID, limit=0, k=5,
                     # 于是第 2 跑丢记忆、第 3 跑整段「和你相关的记忆」渲染成「暂无」——
                     # 这样三跑量的是"第 1 跑把状态改成了什么"，不是"模型稳不稳"。
                     # 同族错＝10-04 那条「多配置连跑时角色号段必须按配置×用例独占」，我在 repeat 上又犯了一遍。
+                    # 2026-11-07 修跑间泄漏（第二轮试点实锤：三跑输入指纹全不同＝填充随跑旋转）：
+                    # cid 仍按跑独占（10-06 订正保留），填充改按**全数据集位次**固定——
+                    # 同题三跑同库内容，一致率量的是「模型稳不稳」而不是「上下文变没变」。
+                    _case_idx = cases.index(c)
                     cid, _seed_ids, _dis, n_fil, _skip = await seed_library(
-                        c, i * n_rep + rep_i, user_id, filler_target=filler_target)
+                        c, i * n_rep + rep_i, user_id, filler_target=filler_target,
+                        filler_idx=_case_idx)
+                    # 清扫必须放在 seed 之后：角色行由 _ensure_parents 现建，先扫后建会让
+                    # 名字归一的 UPDATE 落空（实测 persona 名仍随号段变 ⇒ 输入指纹不同）。
+                    await reset_user_scope(user_id, cid)
                     r = await generate_case(c, cid, user_id, temperature=temperature, flags=flags,
                                             evidence=evidence, run=rep_i + 1)
                     r["library_rows"] = len(c["seeds"]) + len(c.get("distractors") or []) + n_fil
@@ -1909,7 +2089,6 @@ async def run_generate_eval(cases, *, user_id=GENERATE_USER_ID, limit=0, k=5,
         usage = await _llm_usage_totals()
         usage["requests_sent"] = counter["n"]
         usage["by_task"] = dict(counter.get("by_task") or {})
-        n = len(rows)
         # 分母口径交给纯函数（可单测）：**剔除锚点过期没跑的题**，没跑≠没过
         return {"rows": rows, **generate_summary(rows),
                 "borrowed": borrowed, "llm": identity, "usage": usage,
@@ -2081,7 +2260,7 @@ def judge_external_row(prow: dict, text: str, evidence: list | None = None) -> d
 def load_external_replies(path: str) -> dict:
     """外部跑回来的结果：jsonl，每行 {"cid","run","text"}（run 从 1 起）。"""
     out = {}
-    with open(path, encoding="utf-8-sig") as f:
+    with open(_tool_path(path), encoding="utf-8-sig") as f:
         for ln in f:
             ln = ln.strip()
             if not ln:
@@ -2188,14 +2367,20 @@ async def run_export_eval(cases, *, user_id=GENERATE_USER_ID, flags=None, filler
 
 
 def write_prompts(rows, path: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
+    rp = Path(path).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (path,))
+    with rp.resolve().open("w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
 def render_external_tasks(rows, path: str) -> int:
     """把导出行同时写成**人能直接粘**的 txt（一问一答一段），外部腿不靠脚本也能跑。"""
-    with open(path, "w", encoding="utf-8") as f:
+    rp = Path(path).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (path,))
+    with rp.resolve().open("w", encoding="utf-8") as f:
         for r in rows:
             f.write("===TASK cid=%s run=%s===\n" % (r["cid"], r["run"]))
             f.write(render_prompt_text(r["ctx_messages"]))
@@ -2208,9 +2393,9 @@ def render_generate(rep) -> str:
 
     少了这几行，"10 题里过了 6 题"就说不清是在什么配置、什么库规模、真网络还是打桩下得到的。
     """
-    u, llm, srv = rep.get("usage") or {}, rep.get("llm") or {}, (rep.get("llm") or {}).get("server") or {}
+    u, srv = rep.get("usage") or {}, (rep.get("llm") or {}).get("server") or {}
     n_runs = max([int(r.get("n_runs") or 1) for r in rep["rows"]] or [1])
-    n_consistent = sum(1 for r in rep["rows"] if r.get("consistent", True))
+    n_consistent = sum(1 for r in rep["rows"] if r.get("consistent") is True)   # 严格 True：锚点剔除行没有该键，不得按默认 True 计入
     n_cert = sum(1 for r in rep["rows"] if certified_j1(r))
     L = ["# 动作式记忆评测 · 生成侧试点（A30 S1）", ""]
     if rep.get("external") or any(r.get("external") for r in rep["rows"]):
@@ -2235,7 +2420,7 @@ def render_generate(rep) -> str:
             ("；**每题 %d 跑**，其中「结果完全一致」%d／%d、「每一跑都过」%d／%d"
              "（AR 读后者）%s%s" % (
                  n_runs, n_consistent, rep["n"], rep["pass"], rep["n"],
-                 "；按 10-06 拍板口径（**每一跑都过 ∧ 三跑一致**）⇒ 生成侧认证 **%d／%d**"
+                 "；认证口径＝B 版（2026-11-07 用户拍板：**每一跑都过 ∧ 三跑语义一致**——判分维度全同＋载荷核心片段互现；逐字一致率单列留档）⇒ 生成侧认证 **%d／%d**"
                  "（检索侧四条另算，见 `--certify-j12`；两半都过才叫 %s）" % (n_cert, rep["n"], CERT_J1_RULE),
                  "；**不一致的题：%s**（逐跑明细见下面那张「第 2、3 跑」表，"
                  "别只盯着分子分母）" % "、".join(
@@ -2420,10 +2605,10 @@ def refusal(judges, mode: str, allow_llm: bool, cert_j12: bool = False,
         # 关掉「授权了就照跑」这条静默错路：判分函数已就位，但**只有 --mode generate 才接了生成侧** ⇒
         # 其余模式下声明为 J1/J2 的用例会走 J3 检索档，**分数看着有、尺子其实是错的**。
         return ("J1/J2 只在 --mode generate 下有对应实现（score/certify 是 J3 检索档，拿它们跑 J1/J2＝拿错尺子）。")
-    if mode == "generate" and js - {"J1"}:
-        # 生成侧本轮只接了 J1：J2 要写侧抽取（reflect/save_memory 那条路，另一次计费、口径未定），
-        # J3/J4 是检索档、不需要生成。授权了也不许顺带跑＝计费范围必须和口径一一对应。
-        return ("--mode generate 本轮只实现 J1（J2 需写侧抽取＝另一次计费且口径未定；J3/J4 属检索档）。请 --judges J1。")
+    if mode == "generate" and js - {"J1", "J2"}:
+        # 生成侧已接 J1（2026-10-05）与 J2（2026-11-07，写侧抽取链，见 memory_action_eval_j2.py）；
+        # J3/J4 是检索档、不需要生成。计费范围必须和口径一一对应。
+        return ("--mode generate 只实现 J1/J2（J3/J4 属检索档）。请 --judges J1 或 J2 或 J1,J2。")
     return ""
 
 
@@ -2522,23 +2707,25 @@ async def main():
         return 0
 
     if a.mode == "judge":
-        with open(a.prompts, encoding="utf-8-sig") as f:
+        with open(_tool_path(a.prompts), encoding="utf-8-sig") as f:
             prows = [json.loads(l) for l in f if l.strip()]
         rep = judge_replies(prows, load_external_replies(a.replies), evidence=ev_sink)
         rep.update({"usage": {}, "llm": {}, "flags": BASELINE_FLAGS, "k": a.k,
                     "borrowed": {}, "skipped_judges": []})
         text = render_generate(rep)
-        with open(a.out, "w", encoding="utf-8") as f:
-            f.write(text + "\n")
+        rp = Path(a.out).expanduser()
+        if ".." in rp.parts:
+            raise ValueError("路径不得包含 .. 分量: %r" % (a.out,))
+        rp.resolve().write_text(text + "\n", encoding="utf-8")
         print(text)
         if a.emit_rows:
             ctx = {"flags": rep.get("flags"), "k": rep.get("k"), "external": True}
-            with open(a.emit_rows, "a", encoding="utf-8") as f:
+            with open(_tool_path(a.emit_rows), "a", encoding="utf-8") as f:
                 for r in rep["rows"]:
                     f.write(json.dumps(dict(r, **ctx), ensure_ascii=False) + "\n")
         return flush_private_evidence()
     if a.mode == "export":
-        with open(a.dataset, encoding="utf-8-sig") as f:
+        with open(_tool_path(a.dataset), encoding="utf-8-sig") as f:
             ecases = [c for c in (parse_case(ln) for ln in f) if c]
         ebad = lint_dataset(ecases)
         if ebad:
@@ -2561,8 +2748,10 @@ async def main():
         rows = rows_from_jsonl(a.rows)
         rep = recount_rep(rows)
         text = render_generate(rep)
-        with open(a.out, "w", encoding="utf-8") as f:
-            f.write(text + "\n")
+        rp = Path(a.out).expanduser()
+        if ".." in rp.parts:
+            raise ValueError("路径不得包含 .. 分量: %r" % (a.out,))
+        rp.resolve().write_text(text + "\n", encoding="utf-8")
         print(text)
         if rep["sig_mismatch"]:
             print("[留底与算式不符] %s ⇒ 这些题的「一致」没法离线复算，先查 fold_runs/run_sig_text，"
@@ -2570,7 +2759,7 @@ async def main():
             return 6
         print("[recount] 零计费复算完成：%d 题；按留底重跑的一致判定与报表存值全部相符" % rep["n"])
         return 0
-    with open(a.dataset, encoding="utf-8-sig") as f:
+    with open(_tool_path(a.dataset), encoding="utf-8-sig") as f:
         cases = [c for c in (parse_case(ln) for ln in f) if c]
     bad = lint_dataset(cases)
     if bad:
@@ -2593,17 +2782,35 @@ async def main():
               "（锚点过期的题在发之前就被跳过、不计费，所以实际可能更少）%s" % (
                   n_bill, max(1, a.repeat), n_runs, n_runs * 2,
                   "｜本轮只跑 %s" % a.only_cid if a.only_cid else ""), file=sys.stderr)
+        if "J2" in judges and "J1" not in judges:
+            # J2 生成档（2026-11-07 接线）：独立模块（写侧抽取链）；报表/计费口径与 J1 对齐。
+            import memory_action_eval_j2 as _j2
+            rows = await _j2.run_j2_eval(cases, user_id=GENERATE_USER_ID,
+                                         temperature=a.temperature, filler_target=a.fillers,
+                                         flags=None, only_cid=a.only_cid, evidence=ev_sink)
+            text = _j2.render_j2(rows)
+            rp = Path(a.out).expanduser()
+            if ".." in rp.parts:
+                raise ValueError("路径不得包含 .. 分量: %r" % (a.out,))
+            rp.resolve().write_text(text + chr(10), encoding="utf-8")
+            print(text)
+            ev_rc = flush_private_evidence()
+            if ev_rc:
+                return ev_rc
+            return 0
         rep = await run_generate_eval(cases, limit=a.limit, k=a.k, temperature=a.temperature,
                                       filler_target=a.fillers, repeat=a.repeat,
                                       only_cid=a.only_cid, evidence=ev_sink)
         text = render_generate(rep)
-        with open(a.out, "w", encoding="utf-8") as f:
-            f.write(text + "\n")
+        rp = Path(a.out).expanduser()
+        if ".." in rp.parts:
+            raise ValueError("路径不得包含 .. 分量: %r" % (a.out,))
+        rp.resolve().write_text(text + "\n", encoding="utf-8")
         if a.emit_rows:
             # 逐题行**追加**落盘（含逐跑指纹）＝分块跑法的合并凭证：`--mode recount` 用它离线复算，
             # 死一块只需重跑那一块，不必把整轮的 30 次再花一遍。
             ctx = {kk: rep.get(kk) for kk in ("flags", "borrowed", "llm", "k") if rep.get(kk)}
-            with open(a.emit_rows, "a", encoding="utf-8") as f:
+            with open(_tool_path(a.emit_rows), "a", encoding="utf-8") as f:
                 for r in rep["rows"]:
                     f.write(json.dumps(dict(r, **ctx), ensure_ascii=False) + "\n")
         print(text)
@@ -2632,11 +2839,13 @@ async def main():
                          sparse_only=a.sparse_only, limit=a.limit, filler_target=a.fillers,
                          cert_j12=a.certify_j12)
     text = render(rep, dataset=os.path.basename(a.dataset), judges=judges, configs=configs, mode=a.mode)
-    with open(a.out, "w", encoding="utf-8") as f:
-        f.write(text + "\n")
+    rp = Path(a.out).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (a.out,))
+    rp.resolve().write_text(text + "\n", encoding="utf-8")
     print(text)
     if a.emit_solvability:
-        with open(a.emit_solvability, "w", encoding="utf-8") as f:
+        with open(_tool_path(a.emit_solvability), "w", encoding="utf-8") as f:
             for c in cases:
                 f.write(json.dumps({"cid": c["cid"], "solvability": c.get("solvability")},
                                    ensure_ascii=False) + "\n")

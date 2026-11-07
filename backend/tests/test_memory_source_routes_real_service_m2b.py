@@ -120,6 +120,9 @@ def test_real_service_http_sign_failure_rolls_back(monkeypatch):
     collector = _BackgroundCollector()
     monkeypatch.setattr(chat_service, "spawn_background", collector)
     asyncio.run(_seed(9502, 9512, 9522))
+    # 断言走「增量」口径（2026-11-07）：会话共享沙箱库里 session 9522 可能被先跑的
+    # reauthorize_2b 留过行——回滚语义＝「发送前后零新增」，绝对 (0,0) 会被残留撞假红。
+    before = asyncio.run(_counts(9522))[:2]
     client = _client()
     with client:
         r = client.post("/api/v1/chat/send", headers=_auth(9502),
@@ -127,7 +130,8 @@ def test_real_service_http_sign_failure_rolls_back(monkeypatch):
         client.portal.call(collector.drain)
     assert calls == [1]
     assert r.status_code == 500
-    assert asyncio.run(_counts(9522))[:2] == (0, 0)
+    after = asyncio.run(_counts(9522))[:2]
+    assert after == before, f"签名失败后必须零落库（回滚语义），计数 {before}→{after}"
 
 
 def test_real_service_sse_signs_source(monkeypatch):

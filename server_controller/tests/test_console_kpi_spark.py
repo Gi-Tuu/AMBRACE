@@ -15,7 +15,7 @@ import sqlite3 as real_sqlite3
 
 import conftest as cf  # noqa: F401  （触发 sys.path 装配）
 import pytest
-import server_controller as sc
+import console_core as sc  # W6-A：桩/断言目标改为共享真源（纯标准库）
 
 TZ = dt.timezone(dt.timedelta(hours=8))
 
@@ -100,53 +100,3 @@ def test_远程模式不读库(tmp_path, monkeypatch):
 
 
 # ── ④ 卡片构造：六张有水印、两张登记趋势线 ────────────────────────
-
-def test_六张KPI卡都登记了图标(app):
-    """水印是"填满右半"的主体：六张一张都不能漏（漏了就又回到半块空白）。"""
-    import pathlib
-    src = pathlib.Path(cf.CONSOLE_DIR, "server_controller.py").read_text(encoding="utf-8")
-    assert src.count('icon="') >= 6, "KPI 卡图标登记数掉了：右半又要空回去"
-    built = [name for name in ("v_server", "v_health", "v_vlm",
-                               "v_chars", "v_mems", "v_tokens")
-             if getattr(app, name, None) is not None]
-    assert len(built) == 6
-
-
-def test_只有两张卡登记趋势画布(app):
-    assert set(app._kpi_sparks) == {"mems", "tokens"}
-    for cv in app._kpi_sparks.values():
-        assert cv.winfo_reqwidth() == sc.CUI.px(96)
-
-
-def test_六张卡右半槽位一致(app):
-    """第一版的缺陷：有趋势线的两张卡把水印顶上去，六张卡水印不在同一条基线。
-
-    槽位（趋势线占位）必须六张都有、尺寸一致——**没数据也占位**，这样水印位置与
-    有没有趋势线解耦，四张空槽的卡不会把图标推高。
-    """
-    slots = app._kpi_slots
-    assert len(slots) == 6, "右半槽位数量掉了：又会有卡的图标跑到别的基线上"
-    assert {(s.winfo_reqwidth(), s.winfo_reqheight()) for s in slots} == \
-        {(sc.CUI.px(96), sc.CUI.px(26))}
-    # 没登记趋势线的四张卡，槽位必须是空的（不是没建）
-    registered = {id(s) for s in app._kpi_sparks.values()}
-    empties = [s for s in slots if id(s) not in registered]
-    assert len(empties) == 4 and all(not s.find_all() for s in empties)
-
-
-def test_空数据不画线而有序列画得出线(app):
-    cv = app._kpi_sparks["tokens"]
-    app._paint_spark("tokens", [])
-    assert not cv.find_all(), "没数据却画出了图元＝假读数"
-    app._paint_spark("tokens", [10, 40, 25, 60, 30])
-    assert len(cv.find_all()) == 2, "折线＋末端点两个图元"
-
-
-def test_提示线文案说得出窗口与单位(app):
-    txt = app._spark_tip_text("mems", [3, 5, 4])
-    assert "近 3 天" in txt and "条/天" in txt and "峰值 5" in txt
-    assert "没有可用数据" in app._spark_tip_text("mems", [])
-
-
-def test_未知名字不炸(app):
-    app._paint_spark("nosuch", [1, 2, 3])   # 主题切换后画布可能已销毁，不能抛

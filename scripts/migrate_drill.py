@@ -64,14 +64,26 @@ def _ro(path: Path) -> sqlite3.Connection:
 
 
 def _counts(path: Path) -> dict:
+    # 表名是固定清单，SQL 按表展开成独立字面量块（不做字符串拼接），语义与原逐表循环一致
     out = {}
     c = _ro(path)
     try:
-        for t in ("users", "ai_characters", "memories", "ai_moments"):
-            try:
-                out[t] = c.execute("select count(*) from %s" % t).fetchone()[0]
-            except Exception:
-                out[t] = None
+        try:
+            out["users"] = c.execute("select count(*) from users").fetchone()[0]
+        except Exception:
+            out["users"] = None
+        try:
+            out["ai_characters"] = c.execute("select count(*) from ai_characters").fetchone()[0]
+        except Exception:
+            out["ai_characters"] = None
+        try:
+            out["memories"] = c.execute("select count(*) from memories").fetchone()[0]
+        except Exception:
+            out["memories"] = None
+        try:
+            out["ai_moments"] = c.execute("select count(*) from ai_moments").fetchone()[0]
+        except Exception:
+            out["ai_moments"] = None
     finally:
         c.close()
     return out

@@ -758,8 +758,8 @@ def test_resolve_bind_host_reads_config_and_survives_dirty_values(tmp_path, monk
 def test_bind_host_callers_delegated_to_single_source():
     """三处拉起入口 + 管理面板回显，统一走 resolve_bind_host，不再各自硬编码 / 读 settings。"""
     repo = Path(__file__).resolve().parents[2]
-    for path in (repo / "scripts" / "watchdog.py", repo / "scripts" / "server_manager.py",
-                 repo / "server_controller" / "server_controller.py"):
+    # W6 退役（2026-11-08）：server_controller.py 已删，扫描范围相应缩减
+    for path in (repo / "scripts" / "watchdog.py", repo / "scripts" / "server_manager.py"):
         src = path.read_text(encoding="utf-8")
         assert "resolve_bind_host(" in src, path.name
         assert '"--host", "0.0.0.0"' not in src, path.name

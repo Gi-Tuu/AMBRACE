@@ -24,7 +24,7 @@
 
 实现约束（都是踩过的坑）：
 - **只用字节**：`git ls-tree`/`git show` 拿 bytes，正则也在 bytes 上做 ⇒ 不受本机码页影响
-  （Windows 机曾因 `subprocess(text=True)` 的解码假设被 CI 打红，见 AGENTS.md 与 dev-changelog）。
+  （Windows 机曾因 subprocess 的 text=True 解码假设被 CI 打红，见 AGENTS.md 与 dev-changelog）。
 - **模式一律分片拼接**：本文件自身绝不能被自己的模式命中，否则「扫描器自己算不算泄漏」会永远说不清。
 - **打印的"已解析"必须等于"公开面文件数"，不等就退出码 2 判本次扫描无效**：2026-10-09 发现本工具
   的 `--rev` 分支把裸路径喂给 `cat-file --batch`，`--batch` 只认对象名、裸路径一律回 `missing`
@@ -44,7 +44,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # 与脱敏快照构建脚本同口径的排除清单
 EXCL_TOP = (".agents", "docs", "AGENTS.md", "HANDOFF.md", "flutter.bat", "start_server.bat", "restart_server.bat")
-EXCL_EXACT = ("flutter_app/.metadata", "scripts/diagnostics/memory_action_cases_real_draft.jsonl")   # 真实语料派生题集（脱敏后仍属用户数据）
+EXCL_EXACT = ("flutter_app/.metadata", "scripts/diagnostics/memory_action_cases_real_draft.jsonl",   # 真实语料派生题集（脱敏后仍属用户数据）
+              "server_controller/AGENTS.md")   # 嵌套内部指令文件（2026-11-07：与根 AGENTS.md 同类，含作者机路径）
 KEEP_IN_EXCLUDED = ("docs/changelog.md",)
 
 # 隐私词名单只在本机（.gitignore 已挡，守卫 test_public_leak_names_b72 会钉住它不许入库）

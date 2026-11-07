@@ -8,6 +8,7 @@ from app.models.memory import Memory
 from app.utils.logger import get_logger
 from app.utils.timeutil import now_naive_utc, to_naive_utc
 from app.memory.constants import SUMMARY_TTL_HOURS, _TYPE_CN
+from app.memory import write_gate as _gate
 
 _logger = get_logger("memory.summary")
 
@@ -250,6 +251,10 @@ async def summarize_memories(character_id: int, memory_type: str, force: bool = 
             target.importance = 100.0
             target.user_id = owner_user_id
             target.updated_at = now_naive
+            # B16-a 拍板（2026-11-07）：覆盖更新重写分级——内容重写＝一次新写入，闸开着与
+            # 新建同口径 INFERRED；关＝历史行为（不碰 epistemic 字段，保持原值）。
+            if _gate.enabled():
+                target.epistemic_status = _gate.epistemic_for("summary")
             demoted = _demote_other_pins(existing, target.id)  # A31 根因 1：同组旧置顶收口
             await db.commit()
             if demoted:
@@ -266,6 +271,7 @@ async def summarize_memories(character_id: int, memory_type: str, force: bool = 
             user_id=owner_user_id, character_id=character_id, memory_type=memory_type,
             sub_type="summary", source="summary", content=summary,
             importance=100.0, is_pinned=True,
+            epistemic_status=_gate.epistemic_for("summary"),
         )
         db.add(mem)
         await db.commit()
@@ -385,6 +391,10 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
             target.importance = 100.0
             target.user_id = owner_user_id
             target.updated_at = now_naive
+            # B16-a 拍板（2026-11-07）：覆盖更新重写分级——内容重写＝一次新写入，闸开着与
+            # 新建同口径 INFERRED；关＝历史行为（不碰 epistemic 字段，保持原值）。
+            if _gate.enabled():
+                target.epistemic_status = _gate.epistemic_for("summary")
             demoted = _demote_other_pins(existing, target.id)  # 只收 identity 桶，不碰普通摘要
             await db.commit()
             if demoted:
@@ -398,6 +408,7 @@ async def summarize_identity(character_id: int, user_id: int, force: bool = Fals
             user_id=owner_user_id, character_id=character_id, memory_type="user_info",
             sub_type=IDENTITY_SUB_TYPE, source="summary", content=summary,
             importance=100.0, is_pinned=True,
+            epistemic_status=_gate.epistemic_for("summary"),
         )
         db.add(mem)
         await db.commit()

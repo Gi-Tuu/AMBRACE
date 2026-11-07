@@ -99,6 +99,14 @@ AGENT_FLAGS = {
     "reply_delay_enabled": True,         # 机制2：动态回复延迟（用户主动消息才生效）
     "spring_emotion_enabled": True,      # 机制1：弹簧-阻尼情绪（4 维 + 人格基线）
     "life_share_enabled": True,          # 机制4：活动完成自然分享（arpiter 门控 + 配额）
+"life_state_semantics_v1": False,     # M2（2026-11-05 用户拍板 C）：energy=短期体力、fatigue=长期疲劳分工；decision 两级判；默认关＝旧判据
+"life_state_dead_fields_v1": False,   # M2b（2026-11-07）：focus 派生只读化（读写点都从 energy 现算）+ mood_delta 死字段停写；默认关＝旧写入
+"vector_auto_repair": False,          # M-01 补建（2026-11-07）：向量对账 tick 对 missing 清单重嵌补建；默认关＝只告警不修复
+"proactive_tick_cache": False,        # M3a（2026-11-04）：主动 tick 内 get_active_characters 只查一次；默认关＝逐次直查
+"memory_grading_v1": False,          # M8（2026-11-04）：读侧/核心区标注未标注记忆、晋升认知闸、新增 UNKNOWN 取值；默认关＝旧口径
+"memory_write_gate_v1": False,       # M10（2026-11-04）：四处直写记忆统一分级归属 + 插件来源强制为 plugin；默认关＝历史字面量
+"life_settle_dt_v2": False,           # M1（2026-11-04）：生活结算按真实 Δt（夜间单入口+离线补偿）；默认关＝一次调用＝一拍
+"proactive_kernel_full_gate": False,  # M4（2026-11-04）：state_trigger 直发通道是否启用最严内核闸（inactive_char/hourly_cap/night_said_sleep 三项）；默认关＝与收敛前逐字节一致
     "preoccupation_enabled": True,       # 机制5：心事微澜（复用 Memory.sub_type）
     # ── #70 方案A：记忆分层检索与注入（2026-08-30；独立可回滚）──
     # memory_tiered_inject 开=Top1 L2(240)/其余 L0 分层注入 + L1 桥接 + L0 参与向量；关=统一 150 字旧链路（逐字节一致）。

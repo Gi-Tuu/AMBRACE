@@ -56,7 +56,7 @@ async def life_state(
     lang: str = Header(default="zh"),
 ):
     """Life State 查看（energy/focus/needs/phase）"""
-    from app.life.life_state import get_life_state
+    from app.life.life_state import get_life_state, dead_fields_v1_enabled, settle_focus
     from app.models.character import AICharacter
 
     async with async_session_factory() as db:
@@ -70,7 +70,8 @@ async def life_state(
     return {
         "character_id": character_id,
         "energy": st.energy,
-        "focus": st.focus,
+        # M2b：flag 开＝focus 从 energy 现算（派生只读）
+        "focus": settle_focus(st.energy) if dead_fields_v1_enabled() else st.focus,
         "needs": needs,
         "phase": st.phase,
         "last_tick_at": st.last_tick_at,

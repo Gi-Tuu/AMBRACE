@@ -6,7 +6,7 @@
 """
 import json
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -51,11 +51,32 @@ def phase_of(local_hour: int) -> str:
     return "evening"
 
 
-def settle_energy(energy: int, phase: str, activity_cost: int = 0) -> int:
-    """一次 Tick 的精力结算：sleep 每小时 +5；白天每小时 -2 + 活动消耗（rest 恢复）"""
+# M1（2026-11-04）：ΔT 化参数。一次结算覆盖的时长夹在 [MIN, MAX] 之间——
+# 下限防「刚结算过又结算一次」，上限防长停摆（离线数天）一次性把状态推到极端。
+MIN_SETTLE_HOURS = 0.25
+MAX_CATCHUP_HOURS = 24.0
+
+
+def _settle_dt_v2() -> bool:
+    """是否启用 ΔT 结算（flag 默认关 ⇒ 一次调用＝一拍，与历史逐字节一致）。"""
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("life_settle_dt_v2", False))
+    except Exception:  # noqa: BLE001 - 取数失败按旧口径（不改变现网行为）
+        return False
+
+
+def settle_energy(energy: int, phase: str, activity_cost: int = 0,
+                  hours: float = 1.0) -> int:
+    """精力结算：sleep 每小时 +5；白天每小时 -2 + 活动消耗（rest 恢复）。
+
+    ``hours``（M1）：本次结算覆盖的小时数，默认 1.0 ⇒ 与历史「一次调用＝一拍」完全等价。
+    ``activity_cost`` 是一次性消耗，不随时长缩放。
+    """
+    h = 1.0 if hours is None else max(0.0, float(hours))
     if phase == "sleep":
-        return clamp(energy + 5)
-    return clamp(energy - 2 - max(0, activity_cost))
+        return clamp(energy + int(round(5 * h)))
+    return clamp(energy - int(round(2 * h)) - max(0, activity_cost))
 
 
 def settle_focus(energy: int) -> int:
@@ -63,7 +84,18 @@ def settle_focus(energy: int) -> int:
     return clamp(int(energy * 0.7) + random.randint(0, 30))
 
 
-def settle_needs(needs: dict[str, int], satisfied: dict[str, int] | None = None) -> dict[str, int]:
+def dead_fields_v1_enabled() -> bool:
+    """M2b（2026-11-07）：focus 派生只读化 + mood_delta 死字段停写（flag `life_state_dead_fields_v1`，默认关）。
+
+    开＝结算不再回写 ``life_states.focus``（读方一律从 energy 现算）且活动日志停写 mood_delta；
+    关＝历史行为逐字节不变。详见 docs/human-like-mechanism-research.md M2 行。
+    """
+    from app.flags.agent_flags import AGENT_FLAGS
+    return bool(AGENT_FLAGS.get("life_state_dead_fields_v1", False))
+
+
+def settle_needs(needs: dict[str, int], satisfied: dict[str, int] | None = None,
+                 hours: float = 1.0) -> dict[str, int]:
     """需求自然变化（批次三 P0-5 重做，2026-09-16）。
 
     旧公式：固定 +3~8 增长、从无回落 → 不被活动满足的需求长期贴边 100；
@@ -80,16 +112,39 @@ def settle_needs(needs: dict[str, int], satisfied: dict[str, int] | None = None)
     均衡点 ≈ 基线 + 增长/衰减系数（≈70），因此需求既不再顶格 100，也不再单边探底；
     ``decision._score_action`` 的 60 阈值附近长期有真实波动。
     """
+    h = 1.0 if hours is None else max(0.0, float(hours))
     out = {}
+    if h <= 0:
+        return {k: clamp(int(needs.get(k, 50))) for k in NEEDS}
+    # 按「整小时」切段逐拍演进（保持随机分布与旧语义）；不足 1 小时的余量按比例缩放。
+    steps: list[float] = []
+    rest = h
+    while rest > 1e-9:
+        step = 1.0 if rest >= 1.0 else rest
+        steps.append(step)
+        rest -= step
     for k in NEEDS:
         v = int(needs.get(k, 50))
-        v += random.randint(2, 5)
-        if satisfied:
-            v -= int(satisfied.get(k, 0))
-        if v > NEEDS_BASELINE:
-            v -= int((v - NEEDS_BASELINE) * NEEDS_DECAY)
-        else:
-            v += min(NEEDS_RECOVER_MAX, int((NEEDS_BASELINE - v) * NEEDS_RECOVER_RATE))
+        for step in steps:
+            if step >= 1.0:
+                # step=1 时与历史公式**逐字等价**（不许改这三行）
+                v += random.randint(2, 5)
+                if satisfied:
+                    v -= int(satisfied.get(k, 0))
+                if v > NEEDS_BASELINE:
+                    v -= int((v - NEEDS_BASELINE) * NEEDS_DECAY)
+                else:
+                    v += min(NEEDS_RECOVER_MAX,
+                             int((NEEDS_BASELINE - v) * NEEDS_RECOVER_RATE))
+            else:
+                v += int(round(random.randint(2, 5) * step))
+                if satisfied:
+                    v -= int(round(satisfied.get(k, 0) * step))
+                if v > NEEDS_BASELINE:
+                    v -= int((v - NEEDS_BASELINE) * NEEDS_DECAY * step)
+                else:
+                    v += min(int(NEEDS_RECOVER_MAX * step),
+                             int((NEEDS_BASELINE - v) * NEEDS_RECOVER_RATE * step))
         out[k] = clamp(v)
     return out
 
@@ -108,15 +163,49 @@ async def get_life_state(db, character_id: int) -> LifeState:
 
 
 async def apply_tick(db, character_id: int, phase: str, activity_cost: int = 0,
-                     satisfied: dict[str, int] | None = None) -> LifeState:
-    """结算并保存一次 Tick；返回更新后的状态"""
+                     satisfied: dict[str, int] | None = None,
+                     hours: float | None = None) -> LifeState:
+    """结算并保存一次 Tick；返回更新后的状态。
+
+    M1（flag ``life_settle_dt_v2``）：
+    - flag 关（默认）⇒ ``hours=1``，逐字节等价历史「一次调用＝一拍」；
+    - flag 开 ⇒ 按 ``last_tick_at`` 到现在的真实间隔结算：逐小时切片、**各自用那一小时的时段**
+      （跨夜/跨日出正确），间隔夹在 [MIN_SETTLE_HOURS, MAX_CATCHUP_HOURS]；
+    - ``hours`` 显式传入时优先（调用方可指定固定时长，测试/回放用）。
+    """
     st = await get_life_state(db, character_id)
     needs = dict(json.loads(st.needs_json or "{}")) or default_needs()
-    st.energy = settle_energy(st.energy, phase, activity_cost)
-    st.focus = settle_focus(st.energy)
-    st.needs_json = json.dumps(settle_needs(needs, satisfied), ensure_ascii=False)
-    st.phase = phase
-    st.last_tick_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    v2 = _settle_dt_v2()
+    if hours is None:
+        if v2:
+            last = st.last_tick_at
+            gap = 1.0 if last is None else (now - last).total_seconds() / 3600.0
+            hours = min(max(gap, MIN_SETTLE_HOURS), MAX_CATCHUP_HOURS)
+        else:
+            hours = 1.0
+    if v2:
+        # 逐小时切片：每一拍用「那一小时」的时段，活动成本/满足量只落在最后一拍。
+        total = max(1, int(round(hours)))
+        for i in range(total):
+            at = now - timedelta(hours=total - 1 - i)
+            ph = phase_of(beijing_hour(at))
+            last_step = i == total - 1
+            st.energy = settle_energy(
+                st.energy, ph,
+                activity_cost if last_step else 0, hours=1.0)
+            needs = settle_needs(needs, satisfied if last_step else None, hours=1.0)
+            st.needs_json = json.dumps(needs, ensure_ascii=False)
+            st.phase = ph
+        if not dead_fields_v1_enabled():
+            st.focus = settle_focus(st.energy)
+    else:
+        st.energy = settle_energy(st.energy, phase, activity_cost)
+        if not dead_fields_v1_enabled():
+            st.focus = settle_focus(st.energy)
+        st.needs_json = json.dumps(settle_needs(needs, satisfied), ensure_ascii=False)
+        st.phase = phase
+    st.last_tick_at = now
     await db.commit()
     await db.refresh(st)
     return st

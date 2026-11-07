@@ -48,6 +48,30 @@ async def save_upload_image(session_id: int, file: UploadFile, lang: str = "zh")
     return await save_image(file, str(session_id), lang)
 
 
+async def _persist_batch_messages(
+    db, session_id: int, messages_list: list[str],
+    *, ws_user_id: int, character_id: int,
+) -> list[dict]:
+    """batch_messages 连发组逐条落库＋签来源（M9 补接，同事务、失败回滚）。"""
+    from app.models.chat import ChatMessage as ChatMsg
+    from app.memory import source_binding
+    _sign_on = await source_binding.enabled_for(ws_user_id)
+    batch_infos = []
+    for msg_text in messages_list:
+        um = ChatMsg(session_id=session_id, sender_type="user", content=msg_text)
+        db.add(um)
+        await db.flush()
+        if _sign_on:
+            await source_binding.sign_chat_message(
+                db, um, user_id=ws_user_id, character_id=character_id)
+        batch_infos.append({
+            "id": um.id, "session_id": session_id, "sender_type": "user",
+            "content": um.content, "created_at": um.created_at.isoformat(),
+            "_source_event_uid": getattr(um, "source_event_uid", None),
+        })
+    return batch_infos
+
+
 @router.websocket("/ws/{session_id}")
 async def websocket_chat(websocket: WebSocket, session_id: int):
     """WebSocket 实时聊天（?token= 鉴权 + 会话归属校验）"""
@@ -187,17 +211,11 @@ async def websocket_chat(websocket: WebSocket, session_id: int):
 
                     await websocket.send_json({"type": "typing", "is_typing": True})
 
-                    from app.models.chat import ChatMessage as ChatMsg
                     async with async_session_factory() as db:
-                        batch_infos = []
-                        for msg_text in messages_list:
-                            um = ChatMsg(session_id=session_id, sender_type="user", content=msg_text)
-                            db.add(um)
-                            await db.flush()
-                            batch_infos.append({
-                                "id": um.id, "session_id": session_id, "sender_type": "user",
-                                "content": um.content, "created_at": um.created_at.isoformat(),
-                            })
+                        # M9 补接（签名在 helper 内）；热点棘轮 2026-11-08：抽 helper 缩本体
+                        batch_infos = await _persist_batch_messages(
+                            db, session_id, messages_list,
+                            ws_user_id=ws_user_id, character_id=character_id)
                         await db.commit()
                     # 3.10 事件流水（P1）：批量用户消息逐条补 user 事件（route=batch；幂等键绑各自真实 id）
                     for _bi in batch_infos:

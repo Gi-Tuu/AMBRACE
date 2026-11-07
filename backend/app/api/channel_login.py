@@ -44,13 +44,18 @@ _PAGE_HTML = """<!doctype html>
  抖音渠道：请直接在手机 App 内扫码，或在拥爱 App「扩展 → 抖音」使用「在电脑上扫码」。</p>
 <script>
 let qrcode = "";
+/* 绝对路径，不用相对路径：本页地址是 /channel-login（没有尾斜杠），
+   `./api/wechat/qrcode` 会被浏览器解析成 /api/wechat/qrcode → 404，二维码永远出不来。 */
 async function fetchQr() {
-  const r = await fetch("./api/wechat/qrcode");
-  const d = await r.json();
-  if (!d.ok) { document.getElementById("st").textContent = "取码失败：" + (d.message || d.detail || ""); return; }
+  const st = document.getElementById("st");
+  let r, d;
+  try { r = await fetch("/channel-login/api/wechat/qrcode"); d = await r.json(); }
+  catch (e) { st.className = "st err"; st.textContent = "取码请求失败：" + e; return; }
+  if (!r.ok) { st.className = "st err"; st.textContent = "取码失败：HTTP " + r.status + "（" + (d.detail || "") + "）"; return; }
+  if (!d.ok) { st.className = "st err"; st.textContent = "取码失败：" + (d.message || d.detail || ""); return; }
   qrcode = d.qrcode;
   document.getElementById("qrbox").innerHTML = '<img class="qr" src="' + d.qr_png_data_url + '">';
-  document.getElementById("st").textContent = "请用手机微信「扫一扫」识别二维码";
+  st.className = "st"; st.textContent = "请用手机微信「扫一扫」识别二维码";
   poll();
 }
 async function poll() {
@@ -58,7 +63,7 @@ async function poll() {
     await new Promise(r => setTimeout(r, 1000));
     if (!qrcode) return;
     let d;
-    try { d = await (await fetch("./api/wechat/status?qrcode=" + encodeURIComponent(qrcode))).json(); }
+    try { d = await (await fetch("/channel-login/api/wechat/status?qrcode=" + encodeURIComponent(qrcode))).json(); }
     catch (e) { continue; }
     const st = document.getElementById("st");
     const s = d.status || "";

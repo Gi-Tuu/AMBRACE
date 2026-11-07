@@ -22,7 +22,13 @@ from app.models.memory import (
     MemoryWriteReceipt,
 )
 
+# 2026-11-04（2b 切片 1）：kind 从单值扩为集合。新增 `user_reauthorization`＝用户对墓碑记忆的
+# 显式重新授权确认事件（在线一段式恢复的锚点；旧证据仍不得复活，见 _authorize_tombstone 的
+# 「src.seq 必须晚于 confirm_seq」约束）。`SUPPORTED_KIND` 保留给既有调用/测试引用。
 SUPPORTED_KIND = "chat_message"
+# 2026-11-04（2b 切片 2 / a2）：感知来源不做逐快照事件（快照行无角色归属；事件代次按
+# (kind,row) 记，多角色会互相顶掉），改为锚定「本轮注入批次」：批次 id＝该轮用户消息 id。
+SUPPORTED_KINDS = frozenset({"chat_message", "user_reauthorization", "perception_batch"})
 SUPPORTED_ACTOR = "authenticated_user"
 SUPPORTED_ACTIONS = frozenset({"create", "update", "merge", "supersede", "stale"})
 RECOVERY_LOCK_UID = "__recovery_lock__"
@@ -98,7 +104,7 @@ def issue_source_event(engine, *, kind: str, source_row_id: int, owner_user_id: 
                        session_id: int | None = None,
                        generation: int | None = None) -> str:
     """在来源事务内签发 event_uid/seq；只存 content hash，不存正文。"""
-    if kind != SUPPORTED_KIND:
+    if kind not in SUPPORTED_KINDS:
         raise KernelError("unsupported_source_kind")
     if owner_user_id <= 0 or character_id <= 0 or source_row_id <= 0:
         raise KernelError("bad_owner_or_character")

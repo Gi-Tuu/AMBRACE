@@ -100,6 +100,12 @@ def _cleanup(*engines) -> None:
 
 @pytest.mark.slow
 def test_gc_held_write_lock_is_broken_by_reclaim(tmp_path: Path, monkeypatch) -> None:
+    # A21-b 补丁（2026-11-07，修全量顺序假红）：全量负载下分代阈值可能在「道具入环」之后、
+    # 断言之前顺手收走引用环 ⇒ 写成功却没走回收路径，守卫假红（GC 时序竞态）。本用例全程
+    # 关掉自动 GC：回收只能来自 _reclaim 的显式 collect（或 finally 收尾），断言与时序解耦；
+    # 变异自测（摘 _reclaim）在无自动 GC 下也严格成立——环必然存活到 victim。
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
     engine = clone_engine(tmp_path / "t.db")
     with _holder_warning():                   # 道具连接的 non-checked-in 在块内断言（见 _holder_warning）
         try:
@@ -119,6 +125,8 @@ def test_gc_held_write_lock_is_broken_by_reclaim(tmp_path: Path, monkeypatch) ->
             assert "database is locked" in str(excinfo.value), \
                 f"摘掉回收后仍通过 ⇒ 这条守卫没有钉在回收上（{type(excinfo.value).__name__}）"
         finally:
+            if gc_was_enabled:
+                gc.enable()
             _cleanup(engine)
 
 

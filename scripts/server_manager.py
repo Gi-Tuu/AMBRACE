@@ -58,6 +58,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 
 # C1（2026-09-17）：stdio 重定向日志的「启动前轮转」，实现与调用方同级（scripts/log_rotate.py）。
 # P3-9（2026-09-2x）：跨平台拉起键 / venv 解释器路径 / 端口与命令行 PID 查询同样收敛到同级
@@ -91,6 +92,20 @@ PAUSE_FLAG = os.path.join(BACKEND_DIR, "data", "paused.flag")
 LOCKS_DIR = os.path.join(BACKEND_DIR, "data", "locks")
 WATCHDOG_PID_FILE = os.path.join(LOCKS_DIR, "watchdog.pid")
 PORT = 8000
+
+
+def _tool_path(p):
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。
+
+    PAUSE_FLAG/WATCHDOG_PID_FILE 均为模块常量拼出的项目内固定路径，包一层守卫属纯加固。
+    实现刻意用 ``os.path`` 而不是 ``Path.resolve()``：本仓测试会把 ``os.name`` 改成 posix
+    模拟 Linux 分支，此时 pathlib 会切到 PosixPath、把 Windows 路径当单段相对路径解析，
+    守卫会把合法路径算到 cwd 下（2026-11-05 由 test_server_ops_log POSIX 分支抓出）。
+    """
+    rp = os.path.abspath(os.path.expanduser(str(p)))
+    if ".." in rp.replace("\\", "/").split("/"):
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return rp
 # P2-2：单实例锁端口可配置（与 backend/app/main.py 同步，读环境变量 INSTANCE_LOCK_PORT，默认 8766）
 LOCK_PORT_UVICORN = int(os.environ.get("INSTANCE_LOCK_PORT", "8766"))
 LOCK_PORT_WATCHDOG = 8765
@@ -284,7 +299,7 @@ def stop_all() -> None:
     # 写暂停标记，与桌面控制台兼容（防残留 watchdog 拉起）
     try:
         os.makedirs(os.path.dirname(PAUSE_FLAG), exist_ok=True)
-        with open(PAUSE_FLAG, "w", encoding="utf-8") as f:
+        with open(_tool_path(PAUSE_FLAG), "w", encoding="utf-8") as f:
             f.write("stopped by server_manager " + _now())
     except Exception:
         pass

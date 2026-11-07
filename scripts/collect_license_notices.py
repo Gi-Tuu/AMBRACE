@@ -29,10 +29,19 @@ import os
 import re
 import sys
 import urllib.request
+from pathlib import Path
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_ROOT = os.path.join(PROJECT_ROOT, "THIRD_PARTY_LICENSES")
 MANIFEST = os.path.join(OUT_ROOT, "MANIFEST.json")
+
+
+def _tool_path(p):
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。"""
+    rp = Path(p).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return str(rp.resolve())
 
 # 写入许可文本时禁止出现的**作者机器信息**（与 scripts/check_public_leak.py 同口径的子集）。
 # 只认「作者自己的」路径形态，不做通用盘符匹配：上游 LICENSE 里出现 C:\Program Files 之类
@@ -177,7 +186,7 @@ def _check_clean(data, rel):
 def _write(rel, data, records):
     target = os.path.join(OUT_ROOT, rel.replace("/", os.sep))
     os.makedirs(os.path.dirname(target), exist_ok=True)
-    with open(target, "wb") as f:
+    with open(_tool_path(target), "wb") as f:
         f.write(data)
     records.append({
         "path": rel,
@@ -189,7 +198,7 @@ def _write(rel, data, records):
 
 def _manifest_from_records(records, meta):
     manifest = {"schema": 1, "entries": sorted(records, key=lambda r: r["path"]), **meta}
-    with open(MANIFEST, "w", encoding="utf-8", newline="\n") as f:
+    with open(_tool_path(MANIFEST), "w", encoding="utf-8", newline="\n") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2, sort_keys=False)
         f.write("\n")
     return manifest
@@ -225,7 +234,7 @@ def cmd_export():
             "source_kind": "venv-dist-info",
             "files": rels,
         })
-    with open(os.path.join(OUT_ROOT, "README.md"), "w", encoding="utf-8", newline="\n") as f:
+    with open(_tool_path(os.path.join(OUT_ROOT, "README.md")), "w", encoding="utf-8", newline="\n") as f:
         f.write(README_MD)
     m = _manifest_from_records(records, {
         "generated_by": "scripts/collect_license_notices.py --export",

@@ -174,6 +174,9 @@ async def maybe_promote_core(memory_id: int, importance: float,
                 return
             if _quarantined_from_core(m.source, m.epistemic_status):
                 return  # 禁令 1：未获认可的感知派生条不进核心记忆
+            from app.memory import grading
+            if not grading.core_allowed(m.epistemic_status):
+                return  # M8 认知闸：推断/计划/虚构/未核/未知（或未标注）不晋升核心
             pct = float(m.importance or 0)
             confirmed = int(m.confirmation_count or 0)
             promote = pct >= CORE_MIN_IMPORTANCE and confirmed >= CORE_MIN_CONFIRMATIONS

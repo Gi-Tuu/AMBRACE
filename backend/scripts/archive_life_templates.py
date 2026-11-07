@@ -133,6 +133,34 @@ def _q(ident: object) -> str:
     return '"' + str(ident).replace('"', '""') + '"'
 
 
+def _count_all_sql(table: str) -> str:
+    """全表计数（表名过 ``_q`` 引用；标识符不能参数化，只能引用后拼接）。"""
+    return "SELECT COUNT(*) FROM " + _q(table)
+
+
+def _count_life_event_sql(table: str) -> str:
+    return ("SELECT COUNT(*) FROM " + _q(table)
+            + " WHERE source='life' AND memory_type='event' AND sub_type='life_event'")
+
+
+def _select_distinct_sql(column: str, table: str) -> str:
+    return "SELECT DISTINCT " + _q(column) + " FROM " + _q(table)
+
+
+def _rows_head_sql(cols) -> str:
+    """候选查询的固定列头：id + 归档位 + 指纹列（列名逐一过 ``_q`` 引用）。"""
+    return "SELECT id, is_archived, " + ",".join(_q(c) for c in cols) + " FROM " + _q(MEMORIES_TABLE)
+
+
+def _life_candidates_sql(cols) -> str:
+    return (_rows_head_sql(cols)
+            + " WHERE source='life' AND memory_type='event' AND sub_type='life_event'")
+
+
+def _rows_by_ids_sql(cols, placeholders: str) -> str:
+    return _rows_head_sql(cols) + " WHERE id IN (" + placeholders + ")"
+
+
 _INT_LIKE = re.compile(r"^[+-]?\d+$")
 # 指针值里「对象包一层数组」的既有写法；其余对象结构＝解释不了 → 保留
 _POINTER_DICT_LIST_KEYS = ("ids", "terms")
@@ -215,7 +243,8 @@ def _schema_of(
     for t in tables:
         try:
             cols[t] = table_columns(con, t)
-            fks[t] = con.execute(f"PRAGMA foreign_key_list({_q(t)})").fetchall()
+            fks[t] = con.execute(
+                "SELECT * FROM pragma_foreign_key_list(?)", (t,)).fetchall()
         except sqlite3.Error as e:
             bad[t] = f"schema读取失败({e.__class__.__name__})"
     return set(tables), cols, fks, bad
@@ -231,7 +260,7 @@ def _scan_pointer_column(con, table: str, column: str, id_by_str: dict[str, int]
     if table not in tables or column not in colmap.get(table, set()):
         return set(), None
     try:
-        rows = con.execute(f"SELECT DISTINCT {_q(column)} FROM {_q(table)}").fetchall()
+        rows = con.execute(_select_distinct_sql(column, table)).fetchall()
     except sqlite3.Error as e:
         return set(), f"读取失败({e.__class__.__name__})"
     hit: set[int] = set()
@@ -257,8 +286,13 @@ def open_ro(db: Path) -> sqlite3.Connection:
     return con
 
 
+def _pragma_table_info_sql(table: str) -> str:
+    """逐表 schema 探针语句（表名过 ``_q`` 引用；每表一句，便于按句注入/归因）。"""
+    return f"PRAGMA table_info({_q(table)})"
+
+
 def table_columns(con: sqlite3.Connection, table: str) -> set[str]:
-    return {r[1] for r in con.execute(f"PRAGMA table_info({_q(table)})").fetchall()}
+    return {r[1] for r in con.execute(_pragma_table_info_sql(table)).fetchall()}
 
 
 def fingerprint_columns(con: sqlite3.Connection) -> tuple[str, ...]:
@@ -444,10 +478,9 @@ def build_plan(con: sqlite3.Connection) -> dict:
         "generated_at_utc": _now_utc(),
         "db_basename": None,  # 由调用处填入文件名（不落绝对路径）
         "totals": {
-            "memories_all": con.execute(f"SELECT COUNT(*) FROM {MEMORIES_TABLE}").fetchone()[0],
+            "memories_all": con.execute(_count_all_sql(MEMORIES_TABLE)).fetchone()[0],
             "life_event_rows": con.execute(
-                f"SELECT COUNT(*) FROM {MEMORIES_TABLE} "
-                "WHERE source='life' AND memory_type='event' AND sub_type='life_event'").fetchone()[0],
+                _count_life_event_sql(MEMORIES_TABLE)).fetchone()[0],
             "shape_candidates": len(rows),
             "shape_frame": sum(1 for r in rows if r["shape"] == "frame"),
             "shape_generic": sum(1 for r in rows if r["shape"] == "generic"),
@@ -487,7 +520,7 @@ def _write_json(path: Path, payload: dict) -> None:
 def _table_counts(con: sqlite3.Connection) -> dict[str, int]:
     tables = [r[0] for r in con.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()]
-    return {t: con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0] for t in tables}
+    return {t: con.execute(_count_all_sql(t)).fetchone()[0] for t in tables}
 
 
 def _online_backup(con: sqlite3.Connection, dst: Path) -> Path:

@@ -634,3 +634,41 @@ async def restore_memory_api(
     if not ok:
         raise HTTPException(status_code=400, detail=tr_lang(lang, "restore_failed"))
     return {"status": "ok", "restored": True, "memory_id": memory_id}
+
+
+# M2 2b 切片 1（2026-11-04）：墓碑记忆的在线「一段式原子重新授权」。
+# 与上面 restore 的区别：restore 只回滚 supersede/stale（旧证据仍在），本接口针对被 forget
+# 撤回（墓碑）的记忆，必须由用户显式确认，且恢复锚定一次新的确认来源事件（旧证据不复活）。
+_REAUTHORIZE_ERRORS = {
+    "memory_not_found": (404, "memory_not_found"),
+    "memory_scope_mismatch": (404, "memory_not_found"),
+    "not_tombstoned": (400, "reauthorize_not_tombstoned"),
+    "source_proof_disabled": (400, "reauthorize_disabled"),
+}
+
+
+@router.post("/{memory_id}/reauthorize")
+async def reauthorize_memory_api(
+    memory_id: int,
+    data: dict | None = None,
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """body: {"confirm": true}；仅在 memory_source_proof_v1 开启时可用。"""
+    from app.memory.recovery import RecoveryError, reauthorize_memory
+    if not isinstance(data, dict) or data.get("confirm") is not True:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "reauthorize_needs_confirm"))
+    if await _get_owned_memory(memory_id, user_id) is None:
+        raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
+    async with db_mod.async_session_factory() as db:
+        try:
+            result = await reauthorize_memory(db, memory_id=int(memory_id),
+                                              owner_user_id=int(user_id))
+            await db.commit()
+        except RecoveryError as exc:
+            await db.rollback()
+            status, key = _REAUTHORIZE_ERRORS.get(exc.code, (400, "reauthorize_failed"))
+            if key == "reauthorize_failed":
+                _logger.info("reauthorize refused memory=%s code=%s", memory_id, exc.code)
+            raise HTTPException(status_code=status, detail=tr_lang(lang, key))
+    return {"status": "ok", **result}

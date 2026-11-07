@@ -422,7 +422,7 @@ def test_unreadable_pointer_table_schema_is_not_treated_as_absent(db):
     con.execute(f'CREATE TABLE {table} (id INTEGER PRIMARY KEY, {column} TEXT)')
     con.execute(f'INSERT INTO {table} ({column}) VALUES (?)', ("[999999]",))
     con.commit()
-    target = f"PRAGMA table_info({alt._q(table)})"
+    target = alt._pragma_table_info_sql(table)                 # 与被测脚本同一构造器（_q 引用表名）
     assert con.execute(target).fetchall()                      # 真连接 schema 读得出
     con.close()
     plan, fired = guarded_plan(db, {target: "夹具注入的 schema 读取失败"})

@@ -78,6 +78,11 @@ async def persist_candidate(db, memory, *, skip_dedup=False, commit=True):
             source=memory.source, source_id=int(memory.source_id))
         if binding is None:
             raise RuntimeError("source_binding_missing")
+    elif source_binding.enabled() and memory.source == "perception":
+        # 2b 切片 2（a2）：感知来源锚定「本轮注入批次」（批次 id＝该轮用户消息 id）
+        binding = await source_binding.resolve_perception_batch_binding(db, memory=memory)
+        if binding is None:
+            raise RuntimeError("source_binding_missing")
     if binding is not None:
         memory.source_event_uid = binding.event_uid
     memory.write_key = None if skip_dedup else replay_key(memory)

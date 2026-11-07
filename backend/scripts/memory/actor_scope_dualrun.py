@@ -168,11 +168,19 @@ def cases_from_db(db_path: Path, limit: int = 5000) -> list[dict]:
     conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
     conn.execute("PRAGMA query_only=ON")
     try:
-        cols = {r[1] for r in conn.execute('PRAGMA table_info("memories")').fetchall()}
+        cols = {r[0] for r in conn.execute(
+            "SELECT name FROM pragma_table_info(?)", ("memories",)).fetchall()}
         if not {"speaker_type", "source", "user_id"} <= cols:
             return []
-        want = ["speaker_type", "source", "user_id"] + (["speaker_id"] if "speaker_id" in cols else ["NULL"])
-        rows = conn.execute(f"SELECT {', '.join(want)} FROM memories LIMIT {int(limit)}").fetchall()
+        # speaker_id 列存在性无法参数化：按存在性展开成两条全字面量查询，limit 走绑定参数
+        if "speaker_id" in cols:
+            rows = conn.execute(
+                "SELECT speaker_type, source, user_id, speaker_id FROM memories LIMIT ?",
+                (int(limit),)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT speaker_type, source, user_id, NULL FROM memories LIMIT ?",
+                (int(limit),)).fetchall()
     finally:
         conn.close()
     out = []

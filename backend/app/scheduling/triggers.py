@@ -24,7 +24,17 @@ _logger = get_logger("scheduler.triggers")
 
 
 async def get_active_characters() -> list[dict]:
-    """获取所有开启了主动交流的角色及其配置"""
+    """获取所有开启了主动交流的角色及其配置。
+
+    M3a（flag ``proactive_tick_cache``）：同一 tick 内只查一次（缓存由 ``arbiter.run_tick``
+    开的 tick 上下文提供）；flag 关或不在 tick 内 ⇒ 逐次直查，与历史逐字节一致。
+    """
+    from app.scheduling import tick_cache
+    return await tick_cache.cached("active_characters", _load_active_characters)
+
+
+async def _load_active_characters() -> list[dict]:
+    """真实的联表查询（原 get_active_characters 主体，未改一行）。"""
     results = []
     async with async_session_factory() as db:
         # 联表查询：AICharacter + ProactiveSettings

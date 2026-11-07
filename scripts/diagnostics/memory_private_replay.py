@@ -278,10 +278,18 @@ def guard_outside_repo(path: str, what: str) -> str:
     return real_p
 
 
+def _tool_path(p):
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。"""
+    rp = Path(p).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return str(rp.resolve())
+
+
 def _write_text_guarded(path: str, text: str, what: str) -> str:
     """任何报表落盘都走仓库外闸（修复③：audit --out 与 replay --out 同一闸，拒绝即不落盘）。"""
     real = guard_outside_repo(path, what)
-    with open(real, "w", encoding="utf-8", newline="\n") as f:
+    with open(_tool_path(real), "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
         f.flush()
         os.fsync(f.fileno())
@@ -331,7 +339,7 @@ def _write_jsonl_strict(path: str, rows) -> int:
     if not lines:
         return 0
     try:
-        with open(real, "w", encoding="utf-8", newline="\n") as f:
+        with open(_tool_path(real), "w", encoding="utf-8", newline="\n") as f:
             for ln in lines:
                 f.write(ln + "\n")
             f.flush()

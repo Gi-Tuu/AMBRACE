@@ -138,7 +138,7 @@ async def _persist_user_message(
         await db.refresh(um)
         user_msg_id = um.id
         from app.memory import source_binding
-        if source_binding.enabled():
+        if await source_binding.enabled_for(user_id):
             await source_binding.sign_chat_message(
                 db, um, user_id=user_id, character_id=character_id)
         # P-fix（2026-08-31）：SSE 流式路径经本函数落用户消息时补刷新 chat_sessions.updated_at，

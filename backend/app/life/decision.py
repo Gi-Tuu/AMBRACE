@@ -136,6 +136,34 @@ class Decision:
     visible: bool = False
 
 # ── 决策器 ──────────────────────────────────────────────
+def _state_semantics_v1() -> bool:
+    """M2：状态口径分工开关（flag ``life_state_semantics_v1``，默认关）。
+
+    C 口径（2026-11-05 用户拍板）：``energy``＝短期体力资源（活动消耗/休息恢复，life 侧唯一真源）；
+    ``fatigue``＝长期疲劳（连续活动/熬夜累积，八维侧驱动）。两者**并存不混**：
+    体力见底（energy<20）优先睡觉；长期疲劳（fatigue>65）单独触发休息，不再要求 energy<50。
+    """
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("life_state_semantics_v1", False))
+    except Exception:  # noqa: BLE001 - 取数失败按历史口径
+        return False
+
+
+def _fatigue_decision(snap: StateSnapshot) -> Decision | None:
+    """长期疲劳休息判据（M2）：flag 开＝单列 `fatigue>65`；flag 关＝旧判据 `fatigue>65 and energy<50`。
+
+    体力见底（energy<20）由 `decide` 前一条分支优先处理，本函数不重复判 energy。
+    """
+    if _state_semantics_v1():
+        if snap.fatigue > 65:
+            return Decision("rest", reason="fatigue_rest")
+        return None
+    if snap.fatigue > 65 and snap.energy < 50:
+        return Decision("rest", reason="fatigue_rest")
+    return None
+
+
 def decide(snap: StateSnapshot) -> Decision:
     """纯函数决策。返回 Decision；零 LLM、零 IO。"""
 
@@ -181,8 +209,8 @@ def decide(snap: StateSnapshot) -> Decision:
                     return Decision(recovery, reason="energy_critical_cooldown")
             return Decision("idle", reason="energy_critical_cooldown")
         return Decision("sleep", reason="energy_critical")
-    if snap.fatigue > 65 and snap.energy < 50:
-        return Decision("rest", reason="fatigue_rest")
+    if _fat_rest := _fatigue_decision(snap):
+        return _fat_rest
     if snap.anger > 60:
         return Decision("idle", reason="anger_time_alone")  # 不打扰
 

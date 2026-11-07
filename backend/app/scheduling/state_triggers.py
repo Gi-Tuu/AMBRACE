@@ -116,7 +116,7 @@ RULES = [
 _RULE_BY_KEY = {r.key: r for r in RULES}
 
 
-from app.utils.timeutil import now_naive_utc as _now_naive, to_naive_utc
+from app.utils.timeutil import now_naive_utc as _now_naive
 from app.utils.dnd import user_in_dnd_period as _user_in_dnd_period
 
 
@@ -515,51 +515,18 @@ async def _log_rejected(character_id, user_id, reason: str, gate: str = "") -> N
 
 
 async def _kernel_gate_reason(character_id, user_id) -> str | None:
-    """直发分支的内核闸判定，返回命中的闸名（None = 全通过）。
+    """直发通道内核闸（M4，2026-11-04 单点化）：实现已收敛到 ``proactive_kernel``。
 
-    口径**全部复用内核现成函数**（不自创阈值、不复制 SQL）：
-    ① 资格 ``arbiter.get_active_characters``（is_active + enable_proactive，顺带取 max_daily_proactive）
-       —— 本分支此前从未查过 ``enable_proactive``，给「已关主动交流」的角色也发过
-    ② pending 计时器 / 未发完剧情切片互斥 ``has_pending_timer`` / ``has_pending_storyline``
-    ③ 最小间隔 ``arbiter.get_last_proactive_time`` + ``MIN_PROACTIVE_INTERVAL_MINUTES``（90 分钟）
-    ④ 角色每日总上限：内核 ``get_daily_count`` 只数 ``_RHYTHM_MESSAGE_TYPES``（state_trigger 不在其中），
-       故「节律类当日已发 + 本通道当日已发」合并后再比 ``max_daily_proactive``；
-       日界一律 ``app_day_start_utc`` 口径（``get_daily_count`` / ``get_daily_sent_count`` 各自内部取）
-
-    每小时上限不在此重复（调用点既有 ``get_hourly_active_count`` 已判）。
-    任一步取数失败 / 抛异常 → 判为拦截（宁可不发，也不绕过内核频控）。
+    - 检查集：``proactive_kernel.state_trigger_checks()`` —— flag
+      ``proactive_kernel_full_gate`` 开＝最严 9 项全集，关＝历史 6 项（默认关 ⇒ 行为不变）；
+    - 历史上本通道未接 inactive_char / hourly_cap / night_said_sleep，属已漂移的口径；
+      打开 flag 后才收紧，不靠"合并"偷偷改变现网行为。
     """
-    from app.domain.proactivity.decision import MIN_PROACTIVE_INTERVAL_MINUTES
-    from app.scheduling import arbiter
-    from app.scheduling.triggers import get_daily_count
+    from app.scheduling.proactive_kernel import direct_send_gate_reason, state_trigger_checks
 
-    try:
-        cid = int(character_id or 0)
-        uid = int(user_id or 0)
-    except (TypeError, ValueError):
-        return "bad_identity"
-    if not cid or not uid:
-        return "bad_identity"
-    try:
-        active = {int(c["character_id"]): c for c in await arbiter.get_active_characters()}
-        if cid not in active:
-            return "not_eligible"
-        if await arbiter.has_pending_timer(cid):
-            return "pending_timer"
-        if await arbiter.has_pending_storyline(cid):
-            return "pending_storyline"
-        last = await arbiter.get_last_proactive_time(cid)
-        if last is not None:
-            if _now_naive() - to_naive_utc(last) < timedelta(minutes=MIN_PROACTIVE_INTERVAL_MINUTES):
-                return "min_interval"
-        own_today = await arbiter.get_daily_sent_count(cid, _TRIGGER_TYPE)
-        max_daily = int(active[cid].get("max_daily_proactive") or 5)
-        if await get_daily_count(cid) + own_today >= max_daily:
-            return "daily_cap"
-        return None
-    except Exception as e:
-        _logger.warning("state_trigger 内核闸判定失败 char=%s: %s", cid, e)
-        return "kernel_gate_error"
+    return await direct_send_gate_reason(
+        character_id, user_id, channel="state_trigger",
+        checks=state_trigger_checks(), trigger_type=_TRIGGER_TYPE)
 
 
 async def _execute_rule_behavior(

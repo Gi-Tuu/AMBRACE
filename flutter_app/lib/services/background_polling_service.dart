@@ -1,671 +1,671 @@
-import "dart:async";
-import "dart:convert";
-import "dart:ui";
-import "package:flutter/foundation.dart";
-import "package:dio/dio.dart";
-import "package:flutter_background_service/flutter_background_service.dart";
-import "package:flutter_local_notifications/flutter_local_notifications.dart";
-import "package:shared_preferences/shared_preferences.dart";
-import "phone_perception_service.dart";
-import "unread_engine.dart";
-import "foreground_state.dart";
-import "foreground_ack.dart";
-import "background_ws_client.dart";
-import "bg_poll_guard.dart";
-import "secure_token_store.dart";
-import "server_identity.dart";
-import "../utils/service_l10n.dart";
-import "../utils/app_lang.dart";
-
-/// 前台服务（Android Foreground Service）：app 退后台/息屏后继续轮询未读并弹系统通知。
-/// 【通知双轨收敛 2026-08-05】本服务是唯一的网络轮询源：
-/// 每次轮询结果写入 SharedPreferences（快照/新增事件/心跳），
-/// 前台 Flutter 层（NotificationService）只读快照负责红点与横幅，不重复轮询；
-/// app 在前台时本服务仅写快照与事件不弹系统通知（横幅由前台负责）。
-class BackgroundPollingService {
-  static const int _serviceNotificationId = 8888;
-  static const String _serviceChannelId = "ai_companion_service";
-
-  /// 必须在主 isolate 调用一次（main 中）
-  static Future<void> ensureConfigured() async {
-    final l10n = ServiceL10n(await appLang());
-    // 必须先创建前台服务用的 NotificationChannel：
-    // flutter_background_service 插件在配置了自定义 notificationChannelId 时不会自动创建 channel（插件 bug），
-    // channel 不存在会令 startForeground 抛 CannotPostForegroundServiceNotificationException（Android 14+ 直接闪退）
-    try {
-      final plugin = FlutterLocalNotificationsPlugin();
-      await plugin.initialize(
-        settings: const InitializationSettings(
-          android: AndroidInitializationSettings("@mipmap/ic_launcher"),
-          iOS: DarwinInitializationSettings(),
-        ),
-      );
-      await plugin
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-          ?.createNotificationChannel(
-            AndroidNotificationChannel(
-              _serviceChannelId,
-              l10n.notifChannelBackground,
-              description: l10n.notifChannelBackgroundDesc,
-              importance: Importance.low,
-              playSound: false,
-            ),
-          );
-    } catch (_) {}
-    await FlutterBackgroundService().configure(
-      androidConfiguration: AndroidConfiguration(
-        onStart: onStart,
-        autoStart: false,
-        autoStartOnBoot: true,
-        isForegroundMode: true,
-        foregroundServiceTypes: [AndroidForegroundType.specialUse],
-        initialNotificationTitle: l10n.notifRunningTitle,
-        initialNotificationContent: l10n.notifRunningDesc,
-        notificationChannelId: _serviceChannelId,
-        foregroundServiceNotificationId: _serviceNotificationId,
-      ),
-      iosConfiguration: IosConfiguration(
-        autoStart: false,
-        onForeground: onStart,
-      ),
-    );
-  }
-
-  /// 登录成功后启动（app 处于前台，满足 Android 14+ 前台服务启动限制）
-  static Future<void> start() async {
-    await ensureConfigured();
-    await FlutterBackgroundService().startService();
-  }
-
-  /// 登出/应用退出时停止
-  static Future<void> stop() async {
-    FlutterBackgroundService().invoke("stopService");
-  }
-}
-
-/// 后台 isolate 入口（必须是顶层函数）
-@pragma("vm:entry-point")
-void onStart(ServiceInstance service) async {
-  DartPluginRegistrant.ensureInitialized();
-
-  final plugin = FlutterLocalNotificationsPlugin();
-  await plugin.initialize(
-    settings: const InitializationSettings(
-      android: AndroidInitializationSettings("@mipmap/ic_launcher"),
-      iOS: DarwinInitializationSettings(),
-    ),
-  );
-
-  // A53：后台 isolate 自己补建聊天通道。该服务 autoStartOnBoot=true，开机自启／数据被清时
-  // 本 isolate 可能**先于**主 isolate 跑起来，而 Android 8+ 对未注册通道发通知会被系统静默丢弃
-  // （发送处又都 catch(_) => 表现为「毫无报错地不弹」）；主 isolate 那句「同源补建，双保险」
-  // （notification_displayer.dart:37）此前并没有真的兑现在这里。
-  try {
-    final l10n = ServiceL10n(await appLang());
-    await plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(
-          AndroidNotificationChannel(
-            "ai_companion_chat",
-            l10n.notifChannelMessages,
-            description: l10n.notifChannelMessagesDesc,
-            importance: Importance.high,
-            playSound: true,
-          ),
-        );
-  } catch (e) {
-    debugPrint("bg chat channel create failed: $e");
-  }
-
-  // 可靠通道：主 isolate 前后台切换时 invoke 通知本 isolate（保留＝0 延迟立刻切换）
-  // （SharedPreferences 跨 isolate 单例缓存读不到对方写入值，不能作为标志传递）
-  service.on("setAppForeground").listen((data) {
-    _appInForeground = data?["value"] as bool? ?? false;
-  });
-
-  // A53 fail-closed：**问**而不是**听**。每 5s 探测一次，主 isolate 回答它当时刻是否 resumed（契约见 foreground_ack.dart）；
-  // 答不上来（＝被冻结的真后台）就不更新回答时刻，判定自动落到「后台」，该弹就弹。
-  service.on(kForegroundAckEvent).listen((data) {
-    // 契约＝{'resumed': bool}，只有 bool true 才刷新心跳；false/null/字符串/数字/非 Map 一律不刷新（fail-closed）
-    if (isResumedAck(data)) {
-      _lastResumedAckMs = DateTime.now().millisecondsSinceEpoch;
-    }
-  });
-  void probeForeground() {
-    try {
-      service.invoke(kForegroundProbeEvent);
-    } catch (_) {}
-  }
-  probeForeground(); // 先问一次，别让首轮（建基线那一轮）误判
-  _fgProbeTimer?.cancel();
-  _fgProbeTimer = Timer.periodic(const Duration(seconds: 5), (_) => probeForeground());
-
-  Timer? timer;
-  if (service is AndroidServiceInstance) {
-    service.on("stopService").listen((_) {
-      _fgProbeTimer?.cancel();
-      timer?.cancel();
-      _wsClient?.dispose();
-      _wsClient = null;
-      service.stopSelf();
-    });
-  }
-
-  // 先轮询一次建立基线（不弹），之后每 15 秒增量比对（2026-08-18：30s→15s，小红点产生更灵敏）
-  // S5：首轮与定时轮统一走 _tick（在途跳过），避免单轮超过 15s 时两轮重叠
-  timer = Timer.periodic(const Duration(seconds: 15), (_) => _tick(plugin));
-  await _tick(plugin);
-
-  // #55 后台保活：维持用户级通知 WebSocket 长连接（指数退避重连），实时收推送弹通知
-  final prefs = await SharedPreferences.getInstance();
-  _bgServerUrl = prefs.getString("server_url") ?? "";
-  // P2-A：token 已迁安全存储（Keystore）；DartPluginRegistrant 已注册插件，后台 isolate 同样可读
-  _bgToken = await SecureTokenStore.instance.readToken();
-  // S7：记下本次 WS 拿到的地址/token（与 _pollOnce 里的更新口径一致）
-  _wsServerUrl = _bgServerUrl;
-  _wsToken = _bgToken;
-  _startEventWs(plugin);
-}
-
-// ---- 后台 isolate 内部状态 ----
-/// app 是否在前台（主 isolate 通过 invoke("setAppForeground") 维护；登录启动时在前台）
-/// ⚠ A53（2026-10-11）：这个标志**不再单独决定弹不弹**，它只出「生命周期」这一票；
-/// 真正判定走下面的 `_inForeground`。原因：一次性 invoke 会在主 isolate 被系统冻结时丢失，
-/// 旧形状下标志永久停在 true ⇒ 前台不弹、后台也不弹（用户报的「一退后台就不弹」）。
-bool _appInForeground = true;
-/// 最近一次主 isolate 回答「我现在确实是 resumed」的时刻（毫秒）；0＝从没回答过＝判后台。
-int _lastResumedAckMs = 0;
-/// 前后台探测心跳：每 5s 问一次（问不到就算后台，fail-closed）
-Timer? _fgProbeTimer;
-
-/// 本 isolate 的前后台判定＝生命周期那一票 ∧ 最近真的拿到过回答（规则本体见 foreground_state.dart）。
-bool get _inForeground => foregroundFromSignals(
-      lifecycleSaysForeground: _appInForeground,
-      nowMs: DateTime.now().millisecondsSinceEpoch,
-      lastResumedAckMs: _lastResumedAckMs,
-    );
-/// S5 轮询重入保护：true 表示上一轮 _pollOnce 尚未结束
-bool _pollInFlight = false;
-Map<int, int> _lastCounts = {};
-bool _baselineSet = false;
-final Map<int, int> _sessionMap = {};
-final Map<int, String> _charNames = {};
-final NotifyDebouncer _debouncer = NotifyDebouncer();
-
-// #55 后台保活：用户级通知 WebSocket 长连接（指数退避重连）
-String _bgServerUrl = '';
-String _bgToken = '';
-// S7 长连接跟随：记录 WS 当前实际生效的地址/token，供轮询比对后重建
-String _wsServerUrl = '';
-String _wsToken = '';
-Dio? _bgDio;
-EventWsClient? _wsClient;
-
-/// 启动首轮立即上报一次（建立基线/恢复遗漏），之后每 10 次轮询（≈5 分钟）上报：
-/// AI 主动提通知（手机感知开关控制，服务器端另有 30 分钟节流）
-int _pollCount = 0;
-
-Future<void> _autoReportNotifications() async {
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    if (!(prefs.getBool(PhonePerceptionService.autoNotifyKey) ?? false)) return;
-    final baseUrl = prefs.getString("server_url") ?? "";
-    final token = await SecureTokenStore.instance.readToken();
-    if (baseUrl.isEmpty || token.isEmpty) return;
-    final notifs = await PhonePerceptionService.readCachedNotifications();
-    if (notifs.isEmpty) return;
-    final dio = _identityGuardedDio(
-      baseUrl,
-      BaseOptions(
-        baseUrl: baseUrl,
-        headers: {"Authorization": "Bearer $token"},
-        connectTimeout: const Duration(seconds: 5),
-        receiveTimeout: const Duration(seconds: 10),
-      ),
-    );
-    await dio.post("/api/v1/phone/perception/auto", data: {"notifications": notifs});
-  } catch (_) {}
-}
-
-/// S5 轮询重入保护：计时器回调与启动首轮的统一入口。
-/// 上一轮尚未结束时跳过本轮（弱网下单轮耗时可能远超 15s），
-/// 保证任意时刻只有一轮 _pollOnce 在跑，不会交错改写共享状态。
-Future<void> _tick(FlutterLocalNotificationsPlugin plugin) async {
-  if (shouldSkipPoll(inFlight: _pollInFlight)) return;
-  _pollInFlight = true;
-  try {
-    await _pollOnce(plugin);
-  } finally {
-    _pollInFlight = false;
-  }
-}
-
-Future<void> _pollOnce(FlutterLocalNotificationsPlugin plugin) async {
-  try {
-    final l10n = ServiceL10n(await appLang());
-    final prefs = await SharedPreferences.getInstance();
-    final baseUrl = prefs.getString("server_url") ?? "";
-    final token = await SecureTokenStore.instance.readToken();
-    if (baseUrl.isEmpty || token.isEmpty) return;
-    _bgServerUrl = baseUrl;
-    _bgToken = token;
-    // A53：判定＝生命周期票 ∧ 心跳回答（prefs 跨 isolate 读不到，不能依赖）
-    final inForeground = _inForeground;
-    // 回归留痕：logcat 里能直接看到这一轮到底判成了什么、回答多久没来了
-    debugPrint("[fg] inForeground=$inForeground lifecycle=$_appInForeground "
-        "ackAgeMs=${_lastResumedAckMs == 0 ? -1 : DateTime.now().millisecondsSinceEpoch - _lastResumedAckMs}");
-    final notificationsEnabled = prefs.getBool("notifications_enabled") ?? true;
-    final dnd = {
-      "enabled": prefs.getBool("dnd_enabled") ?? false,
-      "startHour": prefs.getInt("dnd_start_hour") ?? 22,
-      "startMinute": prefs.getInt("dnd_start_minute") ?? 0,
-      "endHour": prefs.getInt("dnd_end_hour") ?? 8,
-      "endMinute": prefs.getInt("dnd_end_minute") ?? 0,
-    };
-
-    final dio = _identityGuardedDio(
-      baseUrl,
-      BaseOptions(
-        baseUrl: baseUrl,
-        headers: {"Authorization": "Bearer $token"},
-        connectTimeout: const Duration(seconds: 5),
-        receiveTimeout: const Duration(seconds: 10),
-      ),
-    );
-
-    final resp = await dio.get("/api/v1/chat/unread");
-    final list = resp.data["unread"] as List? ?? [];
-    _sessionMap.clear();
-    for (final item in list) {
-      if (item is! Map) continue;
-      final sid = item["session_id"] as int?;
-      final cid = item["character_id"] as int?;
-      if (sid != null && cid != null) _sessionMap[cid] = sid;
-    }
-    final newCounts = UnreadEngine.parseUnread(list);
-
-    // 增量比对 → 新增未读（首轮只建基线，不产生事件）
-    final diffs = _baselineSet
-        ? UnreadEngine.diffNewUnread(_lastCounts, newCounts)
-        : <UnreadDiff>[];
-
-    // 组装完整事件（拉最近 AI 消息内容 + 角色名）→ 写 prefs 供前台横幅/红点
-    final events = <UnreadEvent>[];
-    for (final diff in diffs) {
-      final sid = _sessionMap[diff.characterId];
-      if (sid == null) continue;
-      final content = await _fetchLastAiContent(dio, sid);
-      if (content == null || content.isEmpty) continue;
-      final title = await _characterName(dio, diff.characterId);
-      events.add(UnreadEvent(
-        characterId: diff.characterId,
-        sessionId: sid,
-        count: diff.count,
-        title: title,
-        content: content,
-      ));
-    }
-
-    // app 后台时才由本服务弹系统通知；前台由 Flutter 层横幅负责。
-    // 弹通知放在 prefs 写入之前：即使 prefs 写入失败也不影响通知送达。
-    if (!inForeground && notificationsEnabled && !UnreadEngine.isInDndPeriod(dnd)) {
-      for (final event in events) {
-        if (!_debouncer.shouldAllow(event.characterId)) continue;
-        await _showSystemNotification(plugin, event);
-      }
-    }
-
-    // prefs 写入（事件/快照/心跳）独立 try/catch：跨 isolate 并发写偶发异常，
-    // 失败不阻塞弹通知、不影响基线更新，避免事件重复写入
-    try {
-      final nowMs = DateTime.now().millisecondsSinceEpoch;
-      if (events.isNotEmpty) {
-        await prefs.setString(NotifyPrefs.newEventKey, NotifyPrefs.encodeEvent(events));
-        await prefs.setInt(NotifyPrefs.newEventAtKey, nowMs);
-      }
-      await prefs.setString(NotifyPrefs.snapshotKey, NotifyPrefs.encodeSnapshot(newCounts));
-      await prefs.setInt(NotifyPrefs.snapshotAtKey, nowMs);
-      await prefs.setInt(NotifyPrefs.lastPollAtKey, nowMs);
-    } catch (e) {
-      debugPrint("pollOnce prefs write error: $e");
-    }
-
-    // 查岗请求（2026-08-15）：角色想感知用户手机时，采集系统快照（前台应用）上报
-    try {
-      final ciResp = await dio.get("/api/v1/phone/perception/check-in-request");
-      final ciData = ciResp.data as Map? ?? {};
-      if (ciData["has"] == true) {
-        final reqId = ciData["id"] as int? ?? 0;
-        // 手机感知总开关开启才采集（避免无授权时反复尝试）
-        final perceptionOn = prefs.getBool(PhonePerceptionService.enabledKey) ?? false;
-        if (perceptionOn) {
-          await PhonePerceptionService.uploadShizukuSnapshotIfAvailable();
-        }
-        if (reqId > 0) {
-          try {
-            await dio.post("/api/v1/phone/perception/check-in-request/$reqId/done");
-          } catch (_) {}
-        }
-      }
-    } catch (_) {}
-
-    // 家庭群聊 @ 我的才弹（2026-08-15）：轮询被 @ 角色的回应，增量弹系统通知（仅后台）
-    try {
-      final groupCursor = prefs.getInt("group_mention_cursor") ?? 0;
-      final mResp = await dio.get(
-        "/api/v1/chat-groups/mentions",
-        queryParameters: {"after_id": groupCursor},
-      );
-      final mItems = (mResp.data["items"] as List? ?? []).cast<Map>();
-      if (mItems.isNotEmpty) {
-        var maxId = groupCursor;
-        for (final m in mItems) {
-          final mid = (m["id"] as num?)?.toInt() ?? 0;
-          if (mid > maxId) maxId = mid;
-        }
-        if (!_baselineSet) {
-          // 首轮只建基线，不弹
-          await prefs.setInt("group_mention_cursor", maxId);
-        } else {
-          final fresh = mItems
-              .where((m) => ((m["id"] as num?)?.toInt() ?? 0) > groupCursor)
-              .toList();
-          if (!inForeground && notificationsEnabled && !UnreadEngine.isInDndPeriod(dnd)) {
-            for (final m in fresh) {
-              final title =
-                  '[${m["group_name"]}] ${m["sender_name"] ?? ""}';
-              final content = (m["content"] as String? ?? "").toString();
-              if (content.isEmpty) continue;
-              final androidDetails = AndroidNotificationDetails(
-                "ai_companion_chat",
-                l10n.notifChannelMessages,
-                channelDescription: l10n.notifChannelMessagesDesc,
-                importance: Importance.high,
-                priority: Priority.high,
-              );
-              await plugin.show(
-                id: 90000 + ((m["id"] as num?)?.toInt() ?? 0),
-                title: title,
-                body: content,
-                notificationDetails: NotificationDetails(
-                  android: androidDetails,
-                  iOS: DarwinNotificationDetails(),
-                ),
-              );
-            }
-          }
-          await prefs.setInt("group_mention_cursor", maxId);
-        }
-      }
-    } catch (_) {}
-
-    _lastCounts = newCounts;
-    _baselineSet = true;
-
-    // S7 长连接跟随：轮询每轮都会重读 server_url 与 Keystore token，
-    // 换账号/换服务器后让 WS 按新地址新 token 重建（此前只在 onStart 捕获一次）；
-    // 未启动且新地址/token 齐全时也在同一处启动
-    if (needWsRestart(
-      curServerUrl: baseUrl,
-      curToken: token,
-      wsServerUrl: _wsServerUrl,
-      wsToken: _wsToken,
-      wsActive: _wsClient != null,
-    )) {
-      _startEventWs(plugin);
-      _wsServerUrl = baseUrl;
-      _wsToken = token;
-    }
-  } catch (e) {
-    debugPrint("pollOnce error: $e");
-  }
-  // AI 主动提通知：启动首轮立即上报（快速建基线/恢复遗漏），之后每 5 分钟一次
-  //（服务器端负责指纹对比与 30 分钟节流，频繁上报无额外打扰）
-  _pollCount++;
-  if (_pollCount == 1 || _pollCount % 10 == 0) {
-    await _autoReportNotifications();
-  }
-}
-
-/// 拉取会话最近一条 AI 消息内容（弹窗/事件共用）
-Future<String?> _fetchLastAiContent(Dio dio, int sessionId) async {
-  try {
-    final msgsResp = await dio.get(
-      "/api/v1/chat/sessions/$sessionId/messages",
-      queryParameters: {"limit": 5},
-    );
-    final msgs = msgsResp.data["messages"] as List? ?? [];
-    for (final m in msgs.reversed) {
-      if (m is Map && m["sender_type"] == "ai") {
-        final content = m["content"] as String?;
-        if (content != null && content.isNotEmpty) return content;
-      }
-    }
-  } catch (_) {}
-  return null;
-}
-
-Future<void> _showSystemNotification(
-    FlutterLocalNotificationsPlugin plugin, UnreadEvent event) async {
-  try {
-    final l10n = ServiceL10n(await appLang());
-    final androidDetails = AndroidNotificationDetails(
-      "ai_companion_chat",
-      l10n.notifChannelMessages,
-      channelDescription: l10n.notifChannelMessagesDesc,
-      importance: Importance.high,
-      priority: Priority.high,
-    );
-    await plugin.show(
-      id: event.characterId,
-      title: event.title,
-      body: event.content,
-      notificationDetails: NotificationDetails(
-        android: androidDetails,
-        iOS: DarwinNotificationDetails(),
-      ),
-    );
-  } catch (_) {}
-}
-
-Future<String> _characterName(Dio dio, int charId) async {
-  final cached = _charNames[charId];
-  if (cached != null) return cached;
-  final l10n = ServiceL10n(await appLang());
-  try {
-    final resp = await dio.get("/api/v1/characters");
-    final list = resp.data["characters"] as List? ?? [];
-    for (final c in list) {
-      if (c is Map) {
-        final id = c["id"] as int?;
-        final name = c["name"] as String?;
-        if (id != null && name != null) _charNames[id] = name;
-      }
-    }
-    return _charNames[charId] ?? l10n.aiFriend;
-  } catch (_) {
-    return l10n.aiFriend;
-  }
-}
-
-// ---- #55 后台保活：用户级通知 WebSocket 实时推送 ----
-
-Dio _ensureBgDio() {
-  var dio = _bgDio;
-  if (dio == null) {
-    dio = _identityGuardedDio(
-      _bgServerUrl,
-      BaseOptions(
-        connectTimeout: const Duration(seconds: 5),
-        receiveTimeout: const Duration(seconds: 10),
-      ),
-    );
-    _bgDio = dio;
-  }
-  dio.options.baseUrl = _bgServerUrl;
-  if (_bgToken.isNotEmpty) dio.options.headers["Authorization"] = "Bearer $_bgToken";
-  return dio;
-}
-
-void _startEventWs(FlutterLocalNotificationsPlugin plugin) {
-  _wsClient?.dispose();
-  _wsClient = null;
-  // 无 token/服务器地址时启动会连到占位地址并无限重连，白白耗电；直接不启动（轮询仍兜底）
-  if (_bgServerUrl.isEmpty || _bgToken.isEmpty) return;
-  _wsClient = EventWsClient(
-    uriBuilder: () {
-      final baseUrl = _bgServerUrl;
-      final token = _bgToken;
-      final wsBase = baseUrl
-          .replaceFirst("http://", "ws://")
-          .replaceFirst("https://", "wss://");
-      return Uri.parse("$wsBase/api/v1/system/notifications/ws")
-          .replace(queryParameters: {"token": token});
-    },
-    onEvent: (event) => _handleNotifyEvent(plugin, event),
-  );
-  _wsClient!.start();
-}
-
-bool _inDndPeriodFromPrefs(SharedPreferences prefs) {
-  final dnd = {
-    "enabled": prefs.getBool("dnd_enabled") ?? false,
-    "startHour": prefs.getInt("dnd_start_hour") ?? 22,
-    "startMinute": prefs.getInt("dnd_start_minute") ?? 0,
-    "endHour": prefs.getInt("dnd_end_hour") ?? 8,
-    "endMinute": prefs.getInt("dnd_end_minute") ?? 0,
-  };
-  return UnreadEngine.isInDndPeriod(dnd);
-}
-
-Future<void> _handleNotifyEvent(
-    FlutterLocalNotificationsPlugin plugin, NotifyEvent event) async {
-  try {
-    // 仅当 app 在后台/息屏时由本 isolate 弹系统通知；前台由 Flutter 层红点/横幅负责
-    if (_inForeground) return;
-    if (event.content.trim().isEmpty) return;
-    final prefs = await SharedPreferences.getInstance();
-    if (!(prefs.getBool("notifications_enabled") ?? true)) return;
-    if (_inDndPeriodFromPrefs(prefs)) return;
-    if (!_debouncer.shouldAllow(event.characterId)) return;
-    final title = await _characterName(_ensureBgDio(), event.characterId);
-    await _showSystemNotification(plugin, UnreadEvent(
-      characterId: event.characterId,
-      sessionId: event.sessionId,
-      count: 0,
-      title: title,
-      content: event.content,
-    ));
-  } catch (_) {}
-}
-
-// ---- 批 0-3 M0-b 收尾：后台通道身份插桩（方案 §4.3.7） ----
-
-/// 后台 isolate 的每只 Dio 都挂上同一套服务器身份逻辑。
-/// isolate 之间不共享内存，故先把当前服务器地址写入 [ApiClientBaseUrl]、再从 prefs 读一次身份；
-/// 未配对或校验模式为 off（默认）时拦截器对每个请求不做任何事 —— 行为与改动前完全一致。
-Dio _identityGuardedDio(String baseUrl, BaseOptions options) {
-  if (baseUrl.isNotEmpty) ApiClientBaseUrl.current = baseUrl;
-  ServerIdentity.instance.kickLoad();
-  return Dio(options)..interceptors.add(const _BgIdentityInterceptor());
-}
-
-/// 三态处置：off 不进入；shadow 只计数与日志；enforce 仅在「有签名但不符/格式非法」时拒绝该响应。
-/// 响应没有签名（unsigned）在 enforce 下也只记录不拒绝 —— 服务器默认不出签，拒绝未签名会把后台通道打死。
-class _BgIdentityInterceptor extends Interceptor {
-  static const String _nonceKey = "ambrace_bg_identity_nonce";
-
-  const _BgIdentityInterceptor();
-
-  @override
-  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
-    final identity = ServerIdentity.instance;
-    try {
-      if (!identity.isLoaded) {
-        // 只 kick 一次异步加载，绝不在拦截器里 await：本轮按未配对处理
-        identity.kickLoad();
-        handler.next(options);
-        return;
-      }
-      if (!identity.shouldGuard(options.path)) {
-        handler.next(options);
-        return;
-      }
-      final nonce = ServerIdentity.newNonce();
-      options.headers[ServerIdentity.challengeHeader] = nonce;
-      options.extra[_nonceKey] = nonce;
-      // 摘要必须打在服务器返回的原文上，故先按纯文本取回，验签后再还原成 JSON
-      options.responseType = ResponseType.plain;
-    } catch (_) {
-      // 任何异常（prefs 不可用等）都不得影响既有后台请求
-    }
-    handler.next(options);
-  }
-
-  @override
-  void onResponse(Response response, ResponseInterceptorHandler handler) {
-    final identity = ServerIdentity.instance;
-    final nonce = response.requestOptions.extra[_nonceKey];
-    final body = response.data;
-    if (nonce is! String || body is! String) {
-      handler.next(response);
-      return;
-    }
-    final status = response.statusCode ?? 200;
-    final outcome = identity.verify(
-        nonce: nonce,
-        status: status,
-        bodyText: body,
-        proof: response.headers.value(ServerIdentity.proofHeader));
-    _restoreJson(response, body);
-    _log(identity, outcome, response.requestOptions.path, status);
-    if (identity.verifyMode == "enforce" &&
-        (outcome == VerifyOutcome.mismatch ||
-            outcome == VerifyOutcome.malformed)) {
-      handler.reject(DioException(
-          requestOptions: response.requestOptions,
-          response: response,
-          type: DioExceptionType.badResponse,
-          error: "identity verify failed"));
-      return;
-    }
-    handler.next(response);
-  }
-
-  @override
-  void onError(DioException err, ErrorInterceptorHandler handler) {
-    final identity = ServerIdentity.instance;
-    final nonce = err.requestOptions.extra[_nonceKey];
-    final response = err.response;
-    final body = response?.data;
-    if (nonce is String && response != null && body is String) {
-      final status = response.statusCode ?? 0;
-      final outcome = identity.verify(
-          nonce: nonce,
-          status: status,
-          bodyText: body,
-          proof: response.headers.value(ServerIdentity.proofHeader));
-      _restoreJson(response, body);
-      _log(identity, outcome, err.requestOptions.path, status);
-    }
-    // 错误语义原样保留（后台只 catch 打印，不因验签改变错误）
-    handler.next(err);
-  }
-
-  static void _restoreJson(Response response, String text) {
-    try {
-      response.data = jsonDecode(text);
-    } catch (_) {
-      response.data = text;
-    }
-  }
-
-  static void _log(ServerIdentity identity, VerifyOutcome outcome, String path,
-      int status) {
-    if (outcome == VerifyOutcome.ok || !kDebugMode) return;
-    debugPrint("[bg-identity] $outcome $path status=$status "
-        "verified=${identity.verifiedCount} mismatch=${identity.mismatchCount} "
-        "unsigned=${identity.unsignedCount}");
-  }
-}
+import "dart:async";
+import "dart:convert";
+import "dart:ui";
+import "package:flutter/foundation.dart";
+import "package:dio/dio.dart";
+import "package:flutter_background_service/flutter_background_service.dart";
+import "package:flutter_local_notifications/flutter_local_notifications.dart";
+import "package:shared_preferences/shared_preferences.dart";
+import "phone_perception_service.dart";
+import "unread_engine.dart";
+import "foreground_state.dart";
+import "foreground_ack.dart";
+import "background_ws_client.dart";
+import "bg_poll_guard.dart";
+import "secure_token_store.dart";
+import "server_identity.dart";
+import "../utils/service_l10n.dart";
+import "../utils/app_lang.dart";
+
+/// 前台服务（Android Foreground Service）：app 退后台/息屏后继续轮询未读并弹系统通知。
+/// 【通知双轨收敛 2026-08-05】本服务是唯一的网络轮询源：
+/// 每次轮询结果写入 SharedPreferences（快照/新增事件/心跳），
+/// 前台 Flutter 层（NotificationService）只读快照负责红点与横幅，不重复轮询；
+/// app 在前台时本服务仅写快照与事件不弹系统通知（横幅由前台负责）。
+class BackgroundPollingService {
+  static const int _serviceNotificationId = 8888;
+  static const String _serviceChannelId = "ai_companion_service";
+
+  /// 必须在主 isolate 调用一次（main 中）
+  static Future<void> ensureConfigured() async {
+    final l10n = ServiceL10n(await appLang());
+    // 必须先创建前台服务用的 NotificationChannel：
+    // flutter_background_service 插件在配置了自定义 notificationChannelId 时不会自动创建 channel（插件 bug），
+    // channel 不存在会令 startForeground 抛 CannotPostForegroundServiceNotificationException（Android 14+ 直接闪退）
+    try {
+      final plugin = FlutterLocalNotificationsPlugin();
+      await plugin.initialize(
+        settings: const InitializationSettings(
+          android: AndroidInitializationSettings("@mipmap/ic_launcher"),
+          iOS: DarwinInitializationSettings(),
+        ),
+      );
+      await plugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(
+            AndroidNotificationChannel(
+              _serviceChannelId,
+              l10n.notifChannelBackground,
+              description: l10n.notifChannelBackgroundDesc,
+              importance: Importance.low,
+              playSound: false,
+            ),
+          );
+    } catch (_) {}
+    await FlutterBackgroundService().configure(
+      androidConfiguration: AndroidConfiguration(
+        onStart: onStart,
+        autoStart: false,
+        autoStartOnBoot: true,
+        isForegroundMode: true,
+        foregroundServiceTypes: [AndroidForegroundType.specialUse],
+        initialNotificationTitle: l10n.notifRunningTitle,
+        initialNotificationContent: l10n.notifRunningDesc,
+        notificationChannelId: _serviceChannelId,
+        foregroundServiceNotificationId: _serviceNotificationId,
+      ),
+      iosConfiguration: IosConfiguration(
+        autoStart: false,
+        onForeground: onStart,
+      ),
+    );
+  }
+
+  /// 登录成功后启动（app 处于前台，满足 Android 14+ 前台服务启动限制）
+  static Future<void> start() async {
+    await ensureConfigured();
+    await FlutterBackgroundService().startService();
+  }
+
+  /// 登出/应用退出时停止
+  static Future<void> stop() async {
+    FlutterBackgroundService().invoke("stopService");
+  }
+}
+
+/// 后台 isolate 入口（必须是顶层函数）
+@pragma("vm:entry-point")
+void onStart(ServiceInstance service) async {
+  DartPluginRegistrant.ensureInitialized();
+
+  final plugin = FlutterLocalNotificationsPlugin();
+  await plugin.initialize(
+    settings: const InitializationSettings(
+      android: AndroidInitializationSettings("@mipmap/ic_launcher"),
+      iOS: DarwinInitializationSettings(),
+    ),
+  );
+
+  // A53：后台 isolate 自己补建聊天通道。该服务 autoStartOnBoot=true，开机自启／数据被清时
+  // 本 isolate 可能**先于**主 isolate 跑起来，而 Android 8+ 对未注册通道发通知会被系统静默丢弃
+  // （发送处又都 catch(_) => 表现为「毫无报错地不弹」）；主 isolate 那句「同源补建，双保险」
+  // （notification_displayer.dart:37）此前并没有真的兑现在这里。
+  try {
+    final l10n = ServiceL10n(await appLang());
+    await plugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(
+          AndroidNotificationChannel(
+            "ai_companion_chat",
+            l10n.notifChannelMessages,
+            description: l10n.notifChannelMessagesDesc,
+            importance: Importance.high,
+            playSound: true,
+          ),
+        );
+  } catch (e) {
+    debugPrint("bg chat channel create failed: $e");
+  }
+
+  // 可靠通道：主 isolate 前后台切换时 invoke 通知本 isolate（保留＝0 延迟立刻切换）
+  // （SharedPreferences 跨 isolate 单例缓存读不到对方写入值，不能作为标志传递）
+  service.on("setAppForeground").listen((data) {
+    _appInForeground = data?["value"] as bool? ?? false;
+  });
+
+  // A53 fail-closed：**问**而不是**听**。每 5s 探测一次，主 isolate 回答它当时刻是否 resumed（契约见 foreground_ack.dart）；
+  // 答不上来（＝被冻结的真后台）就不更新回答时刻，判定自动落到「后台」，该弹就弹。
+  service.on(kForegroundAckEvent).listen((data) {
+    // 契约＝{'resumed': bool}，只有 bool true 才刷新心跳；false/null/字符串/数字/非 Map 一律不刷新（fail-closed）
+    if (isResumedAck(data)) {
+      _lastResumedAckMs = DateTime.now().millisecondsSinceEpoch;
+    }
+  });
+  void probeForeground() {
+    try {
+      service.invoke(kForegroundProbeEvent);
+    } catch (_) {}
+  }
+  probeForeground(); // 先问一次，别让首轮（建基线那一轮）误判
+  _fgProbeTimer?.cancel();
+  _fgProbeTimer = Timer.periodic(const Duration(seconds: 5), (_) => probeForeground());
+
+  Timer? timer;
+  if (service is AndroidServiceInstance) {
+    service.on("stopService").listen((_) {
+      _fgProbeTimer?.cancel();
+      timer?.cancel();
+      _wsClient?.dispose();
+      _wsClient = null;
+      service.stopSelf();
+    });
+  }
+
+  // 先轮询一次建立基线（不弹），之后每 15 秒增量比对（2026-08-18：30s→15s，小红点产生更灵敏）
+  // S5：首轮与定时轮统一走 _tick（在途跳过），避免单轮超过 15s 时两轮重叠
+  timer = Timer.periodic(const Duration(seconds: 15), (_) => _tick(plugin));
+  await _tick(plugin);
+
+  // #55 后台保活：维持用户级通知 WebSocket 长连接（指数退避重连），实时收推送弹通知
+  final prefs = await SharedPreferences.getInstance();
+  _bgServerUrl = prefs.getString("server_url") ?? "";
+  // P2-A：token 已迁安全存储（Keystore）；DartPluginRegistrant 已注册插件，后台 isolate 同样可读
+  _bgToken = await SecureTokenStore.instance.readToken();
+  // S7：记下本次 WS 拿到的地址/token（与 _pollOnce 里的更新口径一致）
+  _wsServerUrl = _bgServerUrl;
+  _wsToken = _bgToken;
+  _startEventWs(plugin);
+}
+
+// ---- 后台 isolate 内部状态 ----
+/// app 是否在前台（主 isolate 通过 invoke("setAppForeground") 维护；登录启动时在前台）
+/// ⚠ A53（2026-10-11）：这个标志**不再单独决定弹不弹**，它只出「生命周期」这一票；
+/// 真正判定走下面的 `_inForeground`。原因：一次性 invoke 会在主 isolate 被系统冻结时丢失，
+/// 旧形状下标志永久停在 true ⇒ 前台不弹、后台也不弹（用户报的「一退后台就不弹」）。
+bool _appInForeground = true;
+/// 最近一次主 isolate 回答「我现在确实是 resumed」的时刻（毫秒）；0＝从没回答过＝判后台。
+int _lastResumedAckMs = 0;
+/// 前后台探测心跳：每 5s 问一次（问不到就算后台，fail-closed）
+Timer? _fgProbeTimer;
+
+/// 本 isolate 的前后台判定＝生命周期那一票 ∧ 最近真的拿到过回答（规则本体见 foreground_state.dart）。
+bool get _inForeground => foregroundFromSignals(
+      lifecycleSaysForeground: _appInForeground,
+      nowMs: DateTime.now().millisecondsSinceEpoch,
+      lastResumedAckMs: _lastResumedAckMs,
+    );
+/// S5 轮询重入保护：true 表示上一轮 _pollOnce 尚未结束
+bool _pollInFlight = false;
+Map<int, int> _lastCounts = {};
+bool _baselineSet = false;
+final Map<int, int> _sessionMap = {};
+final Map<int, String> _charNames = {};
+final NotifyDebouncer _debouncer = NotifyDebouncer();
+
+// #55 后台保活：用户级通知 WebSocket 长连接（指数退避重连）
+String _bgServerUrl = '';
+String _bgToken = '';
+// S7 长连接跟随：记录 WS 当前实际生效的地址/token，供轮询比对后重建
+String _wsServerUrl = '';
+String _wsToken = '';
+Dio? _bgDio;
+EventWsClient? _wsClient;
+
+/// 启动首轮立即上报一次（建立基线/恢复遗漏），之后每 10 次轮询（≈5 分钟）上报：
+/// AI 主动提通知（手机感知开关控制，服务器端另有 30 分钟节流）
+int _pollCount = 0;
+
+Future<void> _autoReportNotifications() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    if (!(prefs.getBool(PhonePerceptionService.autoNotifyKey) ?? false)) return;
+    final baseUrl = prefs.getString("server_url") ?? "";
+    final token = await SecureTokenStore.instance.readToken();
+    if (baseUrl.isEmpty || token.isEmpty) return;
+    final notifs = await PhonePerceptionService.readCachedNotifications();
+    if (notifs.isEmpty) return;
+    final dio = _identityGuardedDio(
+      baseUrl,
+      BaseOptions(
+        baseUrl: baseUrl,
+        headers: {"Authorization": "Bearer $token"},
+        connectTimeout: const Duration(seconds: 5),
+        receiveTimeout: const Duration(seconds: 10),
+      ),
+    );
+    await dio.post("/api/v1/phone/perception/auto", data: {"notifications": notifs});
+  } catch (_) {}
+}
+
+/// S5 轮询重入保护：计时器回调与启动首轮的统一入口。
+/// 上一轮尚未结束时跳过本轮（弱网下单轮耗时可能远超 15s），
+/// 保证任意时刻只有一轮 _pollOnce 在跑，不会交错改写共享状态。
+Future<void> _tick(FlutterLocalNotificationsPlugin plugin) async {
+  if (shouldSkipPoll(inFlight: _pollInFlight)) return;
+  _pollInFlight = true;
+  try {
+    await _pollOnce(plugin);
+  } finally {
+    _pollInFlight = false;
+  }
+}
+
+Future<void> _pollOnce(FlutterLocalNotificationsPlugin plugin) async {
+  try {
+    final l10n = ServiceL10n(await appLang());
+    final prefs = await SharedPreferences.getInstance();
+    final baseUrl = prefs.getString("server_url") ?? "";
+    final token = await SecureTokenStore.instance.readToken();
+    if (baseUrl.isEmpty || token.isEmpty) return;
+    _bgServerUrl = baseUrl;
+    _bgToken = token;
+    // A53：判定＝生命周期票 ∧ 心跳回答（prefs 跨 isolate 读不到，不能依赖）
+    final inForeground = _inForeground;
+    // 回归留痕：logcat 里能直接看到这一轮到底判成了什么、回答多久没来了
+    debugPrint("[fg] inForeground=$inForeground lifecycle=$_appInForeground "
+        "ackAgeMs=${_lastResumedAckMs == 0 ? -1 : DateTime.now().millisecondsSinceEpoch - _lastResumedAckMs}");
+    final notificationsEnabled = prefs.getBool("notifications_enabled") ?? true;
+    final dnd = {
+      "enabled": prefs.getBool("dnd_enabled") ?? false,
+      "startHour": prefs.getInt("dnd_start_hour") ?? 22,
+      "startMinute": prefs.getInt("dnd_start_minute") ?? 0,
+      "endHour": prefs.getInt("dnd_end_hour") ?? 8,
+      "endMinute": prefs.getInt("dnd_end_minute") ?? 0,
+    };
+
+    final dio = _identityGuardedDio(
+      baseUrl,
+      BaseOptions(
+        baseUrl: baseUrl,
+        headers: {"Authorization": "Bearer $token"},
+        connectTimeout: const Duration(seconds: 5),
+        receiveTimeout: const Duration(seconds: 10),
+      ),
+    );
+
+    final resp = await dio.get("/api/v1/chat/unread");
+    final list = resp.data["unread"] as List? ?? [];
+    _sessionMap.clear();
+    for (final item in list) {
+      if (item is! Map) continue;
+      final sid = item["session_id"] as int?;
+      final cid = item["character_id"] as int?;
+      if (sid != null && cid != null) _sessionMap[cid] = sid;
+    }
+    final newCounts = UnreadEngine.parseUnread(list);
+
+    // 增量比对 → 新增未读（首轮只建基线，不产生事件）
+    final diffs = _baselineSet
+        ? UnreadEngine.diffNewUnread(_lastCounts, newCounts)
+        : <UnreadDiff>[];
+
+    // 组装完整事件（拉最近 AI 消息内容 + 角色名）→ 写 prefs 供前台横幅/红点
+    final events = <UnreadEvent>[];
+    for (final diff in diffs) {
+      final sid = _sessionMap[diff.characterId];
+      if (sid == null) continue;
+      final content = await _fetchLastAiContent(dio, sid);
+      if (content == null || content.isEmpty) continue;
+      final title = await _characterName(dio, diff.characterId);
+      events.add(UnreadEvent(
+        characterId: diff.characterId,
+        sessionId: sid,
+        count: diff.count,
+        title: title,
+        content: content,
+      ));
+    }
+
+    // app 后台时才由本服务弹系统通知；前台由 Flutter 层横幅负责。
+    // 弹通知放在 prefs 写入之前：即使 prefs 写入失败也不影响通知送达。
+    if (!inForeground && notificationsEnabled && !UnreadEngine.isInDndPeriod(dnd)) {
+      for (final event in events) {
+        if (!_debouncer.shouldAllow(event.characterId)) continue;
+        await _showSystemNotification(plugin, event);
+      }
+    }
+
+    // prefs 写入（事件/快照/心跳）独立 try/catch：跨 isolate 并发写偶发异常，
+    // 失败不阻塞弹通知、不影响基线更新，避免事件重复写入
+    try {
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      if (events.isNotEmpty) {
+        await prefs.setString(NotifyPrefs.newEventKey, NotifyPrefs.encodeEvent(events));
+        await prefs.setInt(NotifyPrefs.newEventAtKey, nowMs);
+      }
+      await prefs.setString(NotifyPrefs.snapshotKey, NotifyPrefs.encodeSnapshot(newCounts));
+      await prefs.setInt(NotifyPrefs.snapshotAtKey, nowMs);
+      await prefs.setInt(NotifyPrefs.lastPollAtKey, nowMs);
+    } catch (e) {
+      debugPrint("pollOnce prefs write error: $e");
+    }
+
+    // 查岗请求（2026-08-15）：角色想感知用户手机时，采集系统快照（前台应用）上报
+    try {
+      final ciResp = await dio.get("/api/v1/phone/perception/check-in-request");
+      final ciData = ciResp.data as Map? ?? {};
+      if (ciData["has"] == true) {
+        final reqId = ciData["id"] as int? ?? 0;
+        // 手机感知总开关开启才采集（避免无授权时反复尝试）
+        final perceptionOn = prefs.getBool(PhonePerceptionService.enabledKey) ?? false;
+        if (perceptionOn) {
+          await PhonePerceptionService.uploadShizukuSnapshotIfAvailable();
+        }
+        if (reqId > 0) {
+          try {
+            await dio.post("/api/v1/phone/perception/check-in-request/$reqId/done");
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
+    // 家庭群聊 @ 我的才弹（2026-08-15）：轮询被 @ 角色的回应，增量弹系统通知（仅后台）
+    try {
+      final groupCursor = prefs.getInt("group_mention_cursor") ?? 0;
+      final mResp = await dio.get(
+        "/api/v1/chat-groups/mentions",
+        queryParameters: {"after_id": groupCursor},
+      );
+      final mItems = (mResp.data["items"] as List? ?? []).cast<Map>();
+      if (mItems.isNotEmpty) {
+        var maxId = groupCursor;
+        for (final m in mItems) {
+          final mid = (m["id"] as num?)?.toInt() ?? 0;
+          if (mid > maxId) maxId = mid;
+        }
+        if (!_baselineSet) {
+          // 首轮只建基线，不弹
+          await prefs.setInt("group_mention_cursor", maxId);
+        } else {
+          final fresh = mItems
+              .where((m) => ((m["id"] as num?)?.toInt() ?? 0) > groupCursor)
+              .toList();
+          if (!inForeground && notificationsEnabled && !UnreadEngine.isInDndPeriod(dnd)) {
+            for (final m in fresh) {
+              final title =
+                  '[${m["group_name"]}] ${m["sender_name"] ?? ""}';
+              final content = (m["content"] as String? ?? "").toString();
+              if (content.isEmpty) continue;
+              final androidDetails = AndroidNotificationDetails(
+                "ai_companion_chat",
+                l10n.notifChannelMessages,
+                channelDescription: l10n.notifChannelMessagesDesc,
+                importance: Importance.high,
+                priority: Priority.high,
+              );
+              await plugin.show(
+                id: 90000 + ((m["id"] as num?)?.toInt() ?? 0),
+                title: title,
+                body: content,
+                notificationDetails: NotificationDetails(
+                  android: androidDetails,
+                  iOS: DarwinNotificationDetails(),
+                ),
+              );
+            }
+          }
+          await prefs.setInt("group_mention_cursor", maxId);
+        }
+      }
+    } catch (_) {}
+
+    _lastCounts = newCounts;
+    _baselineSet = true;
+
+    // S7 长连接跟随：轮询每轮都会重读 server_url 与 Keystore token，
+    // 换账号/换服务器后让 WS 按新地址新 token 重建（此前只在 onStart 捕获一次）；
+    // 未启动且新地址/token 齐全时也在同一处启动
+    if (needWsRestart(
+      curServerUrl: baseUrl,
+      curToken: token,
+      wsServerUrl: _wsServerUrl,
+      wsToken: _wsToken,
+      wsActive: _wsClient != null,
+    )) {
+      _startEventWs(plugin);
+      _wsServerUrl = baseUrl;
+      _wsToken = token;
+    }
+  } catch (e) {
+    debugPrint("pollOnce error: $e");
+  }
+  // AI 主动提通知：启动首轮立即上报（快速建基线/恢复遗漏），之后每 5 分钟一次
+  //（服务器端负责指纹对比与 30 分钟节流，频繁上报无额外打扰）
+  _pollCount++;
+  if (_pollCount == 1 || _pollCount % 10 == 0) {
+    await _autoReportNotifications();
+  }
+}
+
+/// 拉取会话最近一条 AI 消息内容（弹窗/事件共用）
+Future<String?> _fetchLastAiContent(Dio dio, int sessionId) async {
+  try {
+    final msgsResp = await dio.get(
+      "/api/v1/chat/sessions/$sessionId/messages",
+      queryParameters: {"limit": 5},
+    );
+    final msgs = msgsResp.data["messages"] as List? ?? [];
+    for (final m in msgs.reversed) {
+      if (m is Map && m["sender_type"] == "ai") {
+        final content = m["content"] as String?;
+        if (content != null && content.isNotEmpty) return content;
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+Future<void> _showSystemNotification(
+    FlutterLocalNotificationsPlugin plugin, UnreadEvent event) async {
+  try {
+    final l10n = ServiceL10n(await appLang());
+    final androidDetails = AndroidNotificationDetails(
+      "ai_companion_chat",
+      l10n.notifChannelMessages,
+      channelDescription: l10n.notifChannelMessagesDesc,
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    await plugin.show(
+      id: event.characterId,
+      title: event.title,
+      body: event.content,
+      notificationDetails: NotificationDetails(
+        android: androidDetails,
+        iOS: DarwinNotificationDetails(),
+      ),
+    );
+  } catch (_) {}
+}
+
+Future<String> _characterName(Dio dio, int charId) async {
+  final cached = _charNames[charId];
+  if (cached != null) return cached;
+  final l10n = ServiceL10n(await appLang());
+  try {
+    final resp = await dio.get("/api/v1/characters");
+    final list = resp.data["characters"] as List? ?? [];
+    for (final c in list) {
+      if (c is Map) {
+        final id = c["id"] as int?;
+        final name = c["name"] as String?;
+        if (id != null && name != null) _charNames[id] = name;
+      }
+    }
+    return _charNames[charId] ?? l10n.aiFriend;
+  } catch (_) {
+    return l10n.aiFriend;
+  }
+}
+
+// ---- #55 后台保活：用户级通知 WebSocket 实时推送 ----
+
+Dio _ensureBgDio() {
+  var dio = _bgDio;
+  if (dio == null) {
+    dio = _identityGuardedDio(
+      _bgServerUrl,
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 5),
+        receiveTimeout: const Duration(seconds: 10),
+      ),
+    );
+    _bgDio = dio;
+  }
+  dio.options.baseUrl = _bgServerUrl;
+  if (_bgToken.isNotEmpty) dio.options.headers["Authorization"] = "Bearer $_bgToken";
+  return dio;
+}
+
+void _startEventWs(FlutterLocalNotificationsPlugin plugin) {
+  _wsClient?.dispose();
+  _wsClient = null;
+  // 无 token/服务器地址时启动会连到占位地址并无限重连，白白耗电；直接不启动（轮询仍兜底）
+  if (_bgServerUrl.isEmpty || _bgToken.isEmpty) return;
+  _wsClient = EventWsClient(
+    uriBuilder: () {
+      final baseUrl = _bgServerUrl;
+      final token = _bgToken;
+      final wsBase = baseUrl
+          .replaceFirst("http://", "ws://")
+          .replaceFirst("https://", "wss://");
+      return Uri.parse("$wsBase/api/v1/system/notifications/ws")
+          .replace(queryParameters: {"token": token});
+    },
+    onEvent: (event) => _handleNotifyEvent(plugin, event),
+  );
+  _wsClient!.start();
+}
+
+bool _inDndPeriodFromPrefs(SharedPreferences prefs) {
+  final dnd = {
+    "enabled": prefs.getBool("dnd_enabled") ?? false,
+    "startHour": prefs.getInt("dnd_start_hour") ?? 22,
+    "startMinute": prefs.getInt("dnd_start_minute") ?? 0,
+    "endHour": prefs.getInt("dnd_end_hour") ?? 8,
+    "endMinute": prefs.getInt("dnd_end_minute") ?? 0,
+  };
+  return UnreadEngine.isInDndPeriod(dnd);
+}
+
+Future<void> _handleNotifyEvent(
+    FlutterLocalNotificationsPlugin plugin, NotifyEvent event) async {
+  try {
+    // 仅当 app 在后台/息屏时由本 isolate 弹系统通知；前台由 Flutter 层红点/横幅负责
+    if (_inForeground) return;
+    if (event.content.trim().isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (!(prefs.getBool("notifications_enabled") ?? true)) return;
+    if (_inDndPeriodFromPrefs(prefs)) return;
+    if (!_debouncer.shouldAllow(event.characterId)) return;
+    final title = await _characterName(_ensureBgDio(), event.characterId);
+    await _showSystemNotification(plugin, UnreadEvent(
+      characterId: event.characterId,
+      sessionId: event.sessionId,
+      count: 0,
+      title: title,
+      content: event.content,
+    ));
+  } catch (_) {}
+}
+
+// ---- 批 0-3 M0-b 收尾：后台通道身份插桩（方案 §4.3.7） ----
+
+/// 后台 isolate 的每只 Dio 都挂上同一套服务器身份逻辑。
+/// isolate 之间不共享内存，故先把当前服务器地址写入 [ApiClientBaseUrl]、再从 prefs 读一次身份；
+/// 未配对或校验模式为 off（默认）时拦截器对每个请求不做任何事 —— 行为与改动前完全一致。
+Dio _identityGuardedDio(String baseUrl, BaseOptions options) {
+  if (baseUrl.isNotEmpty) ApiClientBaseUrl.current = baseUrl;
+  ServerIdentity.instance.kickLoad();
+  return Dio(options)..interceptors.add(const _BgIdentityInterceptor());
+}
+
+/// 三态处置：off 不进入；shadow 只计数与日志；enforce 仅在「有签名但不符/格式非法」时拒绝该响应。
+/// 响应没有签名（unsigned）在 enforce 下也只记录不拒绝 —— 服务器默认不出签，拒绝未签名会把后台通道打死。
+class _BgIdentityInterceptor extends Interceptor {
+  static const String _nonceKey = "ambrace_bg_identity_nonce";
+
+  const _BgIdentityInterceptor();
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    final identity = ServerIdentity.instance;
+    try {
+      if (!identity.isLoaded) {
+        // 只 kick 一次异步加载，绝不在拦截器里 await：本轮按未配对处理
+        identity.kickLoad();
+        handler.next(options);
+        return;
+      }
+      if (!identity.shouldGuard(options.path)) {
+        handler.next(options);
+        return;
+      }
+      final nonce = ServerIdentity.newNonce();
+      options.headers[ServerIdentity.challengeHeader] = nonce;
+      options.extra[_nonceKey] = nonce;
+      // 摘要必须打在服务器返回的原文上，故先按纯文本取回，验签后再还原成 JSON
+      options.responseType = ResponseType.plain;
+    } catch (_) {
+      // 任何异常（prefs 不可用等）都不得影响既有后台请求
+    }
+    handler.next(options);
+  }
+
+  @override
+  void onResponse(Response response, ResponseInterceptorHandler handler) {
+    final identity = ServerIdentity.instance;
+    final nonce = response.requestOptions.extra[_nonceKey];
+    final body = response.data;
+    if (nonce is! String || body is! String) {
+      handler.next(response);
+      return;
+    }
+    final status = response.statusCode ?? 200;
+    final outcome = identity.verify(
+        nonce: nonce,
+        status: status,
+        bodyText: body,
+        proof: response.headers.value(ServerIdentity.proofHeader));
+    _restoreJson(response, body);
+    _log(identity, outcome, response.requestOptions.path, status);
+    if (identity.verifyMode == "enforce" &&
+        (outcome == VerifyOutcome.mismatch ||
+            outcome == VerifyOutcome.malformed)) {
+      handler.reject(DioException(
+          requestOptions: response.requestOptions,
+          response: response,
+          type: DioExceptionType.badResponse,
+          error: "identity verify failed"));
+      return;
+    }
+    handler.next(response);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    final identity = ServerIdentity.instance;
+    final nonce = err.requestOptions.extra[_nonceKey];
+    final response = err.response;
+    final body = response?.data;
+    if (nonce is String && response != null && body is String) {
+      final status = response.statusCode ?? 0;
+      final outcome = identity.verify(
+          nonce: nonce,
+          status: status,
+          bodyText: body,
+          proof: response.headers.value(ServerIdentity.proofHeader));
+      _restoreJson(response, body);
+      _log(identity, outcome, err.requestOptions.path, status);
+    }
+    // 错误语义原样保留（后台只 catch 打印，不因验签改变错误）
+    handler.next(err);
+  }
+
+  static void _restoreJson(Response response, String text) {
+    try {
+      response.data = jsonDecode(text);
+    } catch (_) {
+      response.data = text;
+    }
+  }
+
+  static void _log(ServerIdentity identity, VerifyOutcome outcome, String path,
+      int status) {
+    if (outcome == VerifyOutcome.ok || !kDebugMode) return;
+    debugPrint("[bg-identity] $outcome $path status=$status "
+        "verified=${identity.verifiedCount} mismatch=${identity.mismatchCount} "
+        "unsigned=${identity.unsignedCount}");
+  }
+}

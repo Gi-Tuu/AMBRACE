@@ -24,9 +24,9 @@ CONSOLE_DIR = pathlib.Path(__file__).resolve().parents[1]
 if str(CONSOLE_DIR) not in sys.path:
     sys.path.insert(0, str(CONSOLE_DIR))
 
-import server_controller as sc  # noqa: E402
+import console_core as _core  # noqa: E402  W6：数据面唯一真源（旧壳已退役）
 
-API = sc.ADMIN_API_PREFIX
+API = _core.ADMIN_API_PREFIX
 
 # ── 打桩响应（字段口径照 docs 里的管理面契约；条数故意 >0，才能区分
 #    「后端真的没数据」和「解析写错导致 0 行」——后者正是 W0 那个 bug 的形状）──
@@ -326,77 +326,25 @@ def _no_db(*_a, **_kw):
 def stub(monkeypatch):
     """把控制台所有外部依赖（HTTP / socket / sqlite / 日志文件）换成桩。"""
     calls = HttpCalls()
-    monkeypatch.setattr(sc, "_CONSOLE_SESSION",
+    # W6：旧壳退役，桩只打 console_core 一个模块对象。
+    def patch(name, value):
+        monkeypatch.setattr(_core, name, value, raising=False)
+
+    patch("_CONSOLE_SESSION",
                         {"token": "test-token", "username": "alpha", "user_id": 1})
-    monkeypatch.setattr(sc, "_http_json", calls)
-    monkeypatch.setattr(sc, "sqlite3", types.SimpleNamespace(connect=_no_db))
-    monkeypatch.setattr(sc, "_read_db_stats",
+    patch("_http_json", calls)
+    patch("sqlite3", types.SimpleNamespace(connect=_no_db))
+    patch("_read_db_stats",
                         lambda: {"characters": 4, "memories": 77, "tokens": 123456})
-    monkeypatch.setattr(sc, "_read_token_trend", lambda *a, **k: [])
-    monkeypatch.setattr(sc, "_read_mem_daily_new", lambda *a, **k: [])
-    monkeypatch.setattr(sc, "_read_token_heatmap", lambda *a, **k: heatmap_payload())
-    monkeypatch.setattr(sc, "_fetch_health", lambda: "ok")
-    monkeypatch.setattr(sc, "_fetch_liveness",
+    patch("_read_token_trend", lambda *a, **k: [])
+    patch("_read_mem_daily_new", lambda *a, **k: [])
+    patch("_read_token_heatmap", lambda *a, **k: heatmap_payload())
+    patch("_fetch_health", lambda: "ok")
+    patch("_fetch_liveness",
                         lambda: {"ok": True, "stalled": False, "summary": "正常", "level": 1})
-    monkeypatch.setattr(sc, "_check_alive", lambda: True)
-    monkeypatch.setattr(sc, "_get_pid", lambda: 4242)
-    monkeypatch.setattr(sc, "_tail_log", lambda *a, **k: "line1\nline2\n")
-    monkeypatch.setattr(sc, "_is_remote", lambda: False)
-    monkeypatch.setattr(sc, "_local_ip_set", lambda: {"127.0.0.1"})
+    patch("_check_alive", lambda: True)
+    patch("_get_pid", lambda: 4242)
+    patch("_tail_log", lambda *a, **k: "line1\nline2\n")
+    patch("_is_remote", lambda: False)
+    patch("_local_ip_set", lambda: {"127.0.0.1"})
     return calls
-
-
-@pytest.fixture(scope="session")
-def tk_root():
-    """整轮测试共用**一个** Tk 解释器。
-
-    不能每个用例 `tk.Tk()` + `destroy()`：`CUI.ICONS/PHOTOS` 是模块级缓存，
-    缓存里的 PhotoImage 属于上一个解释器，新窗口取用直接 `TclError: image doesn't exist`
-    （真控制台只有一个 root，不会遇到；这里是为了让每个用例拿到干净实例又不炸缓存）。
-    """
-    import tkinter as tk
-
-    root = tk.Tk()
-    root.withdraw()
-    yield root
-    root.destroy()
-
-
-@pytest.fixture()
-def app(stub, monkeypatch, tk_root):
-    """离屏控制台实例：真建控件树与全部 10 个页面，但窗口不映射、不上屏。"""
-    import tkinter as tk
-
-    win = tk.Toplevel(tk_root)
-    win.withdraw()                       # 用户的工作机：绝不显示窗口，也不截图
-    try:
-        instance = sc.ControllerApp(win)
-    except Exception:
-        win.destroy()
-        raise
-    instance._probe_addresses = lambda: None    # "探测服务器地址"是 socket 侧活，冒烟里关掉
-
-    def _run_admin_inline(_self, title, work, on_ok=None, page_key=""):
-        """把后台线程 + 队列回投改成同步步进：结果确定，且不依赖 update() 时序。"""
-        try:
-            payload = work()
-        except sc.AdminApiError as e:
-            _self._on_admin_error(e.message, e, page_key)
-            return
-        if on_ok:
-            on_ok(payload)
-
-    monkeypatch.setattr(sc.ControllerApp, "_run_admin", _run_admin_inline)
-    yield instance
-    try:
-        # 先把 after_idle(_fit) 这类空闲回调跑掉：留到销毁之后触发，Tcl 端会刷一堆
-        # "invalid command name" 噪音（不影响断言，但会把真实异常淹掉）
-        tk_root.update_idletasks()
-    except Exception:
-        pass
-    win.destroy()
-
-
-def row_count(widget):
-    """DataTable 里的数据行数（表头 1 行 + 分隔线不计数）。"""
-    return max(0, int(getattr(widget, "_n", 0)))

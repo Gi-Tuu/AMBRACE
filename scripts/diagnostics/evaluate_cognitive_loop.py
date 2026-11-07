@@ -15,6 +15,7 @@ import os
 import random
 import sys
 import io
+from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
@@ -232,6 +233,14 @@ def run_evaluation(dump_cases: bool = False) -> int:
     return 0
 
 
+def _tool_path(p):
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。"""
+    rp = Path(p).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return str(rp.resolve())
+
+
 def dump_table() -> str:
     """导出 docs/evaluation-100-cases.md（CRLF 无 BOM）：人工打分表"""
     lines = [
@@ -253,7 +262,7 @@ def dump_table() -> str:
     lines.append("*生成：`backend\\.venv\\Scripts\\python.exe scripts\\evaluate_cognitive_loop.py --dump-cases`*")
     text = "\n".join(lines).replace("\n", "\r\n")
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "evaluation-100-cases.md")
-    with open(path, "w", encoding="utf-8", newline="") as f:
+    with open(_tool_path(path), "w", encoding="utf-8", newline="") as f:
         f.write(text)
     return path
 

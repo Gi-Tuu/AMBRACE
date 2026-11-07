@@ -26,11 +26,20 @@ import argparse
 import os
 import sqlite3
 import sys
+from pathlib import Path
 
 SERVER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BACKEND_DIR = os.path.join(SERVER_DIR, "backend")
 sys.path.insert(0, BACKEND_DIR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+
+def _tool_path(p):
+    """工具读写路径守卫：拒绝含 ``..`` 穿越分量的路径，返回绝对路径。"""
+    rp = Path(p).expanduser()
+    if ".." in rp.parts:
+        raise ValueError("路径不得包含 .. 分量: %r" % (p,))
+    return str(rp.resolve())
 
 from plan_expiry_diagnose import (
     DEFAULT_DB,
@@ -73,7 +82,7 @@ WHERE id IN (SELECT id FROM {BAK_TABLE});"""
 
 def _vector_sync_guide(a_ids: list[int], out_dir: str) -> str:
     ids_file = os.path.join(out_dir, "A_ids_for_vector_stale.txt")
-    with open(ids_file, "w", encoding="utf-8") as f:
+    with open(_tool_path(ids_file), "w", encoding="utf-8") as f:
         f.write(",".join(str(i) for i in a_ids))
     return f"""-- 向量侧同步（置 stale 后必须做，否则 Chroma 检索仍按 active 召回）：
 -- A 清单 id 已写到 {ids_file}
@@ -122,7 +131,7 @@ def main():
             print(f"  id={r['id']} char={r['character_id']} S={r['strength_days']} review={r['review_count']} "
                   f"created={str(r['created_at'])[:19]} → stale(valid_to={str(r['plan_valid_until'])[:19]}) "
                   f"| {(r['content'] or '')[:30]}")
-    with open(os.path.join(args.out, "repair_dryrun_report.txt"), "w", encoding="utf-8") as f:
+    with open(_tool_path(os.path.join(args.out, "repair_dryrun_report.txt")), "w", encoding="utf-8") as f:
         f.write(f"AMBRACE 存量修复 dry-run · {now:%Y-%m-%d %H:%M} UTC\n"
                 f"db={args.db}\nA={len(a)} B2={len(b2)} union={len(union_ids)} "
                 f"a_high_s={a_high_s} a_both={a_both}\nA ids: {','.join(map(str, a_ids))}\n"
@@ -149,14 +158,15 @@ def main():
     try:
         conn.execute("BEGIN IMMEDIATE")
         # 0) 备份受影响行（幂等：bak 里已有的 id 不重复插）
-        conn.execute(f"CREATE TABLE IF NOT EXISTS {BAK_TABLE} AS SELECT * FROM memories WHERE 0")
-        conn.execute(
-            f"INSERT INTO {BAK_TABLE} SELECT m.* FROM memories m "
-            f"WHERE m.id IN ({','.join('?' * len(union_ids))}) "
-            f"AND m.id NOT IN (SELECT id FROM {BAK_TABLE})",
-            union_ids,
-        )
-        bak_n = conn.execute(f"SELECT COUNT(*) FROM {BAK_TABLE}").fetchone()[0]
+        #    表名是本脚本固定常量 memories_bak_20260909（BAK_TABLE），SQL 一律写字面量、逐行参数绑定
+        conn.execute("CREATE TABLE IF NOT EXISTS memories_bak_20260909 AS SELECT * FROM memories WHERE 0")
+        for rid in union_ids:
+            conn.execute(
+                "INSERT INTO memories_bak_20260909 SELECT m.* FROM memories m "
+                "WHERE m.id=? AND m.id NOT IN (SELECT id FROM memories_bak_20260909)",
+                (rid,),
+            )
+        bak_n = conn.execute("SELECT COUNT(*) FROM memories_bak_20260909").fetchone()[0]
 
         # 1) A：过期计划置 stale + valid_to 实际有效期 + 停止复习轮转
         for r in a:
