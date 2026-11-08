@@ -70,7 +70,7 @@ def test_motivation_candidate_has_last_context(monkeypatch):
 
     monkeypatch.setattr(arbiter, "get_active_characters", _fake_active)
     monkeypatch.setattr(arbiter, "_compute_motivation", _fake_motivation)
-    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _fake_sid)
+    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _fake_sid)
     monkeypatch.setattr("app.scheduling.triggers.get_last_messages", _fake_last)
 
     items = asyncio.run(arbiter.collect_motivation_events())
@@ -97,7 +97,7 @@ def test_motivation_candidate_last_context_failure_empty(monkeypatch):
 
     monkeypatch.setattr(arbiter, "get_active_characters", _fake_active)
     monkeypatch.setattr(arbiter, "_compute_motivation", _fake_motivation)
-    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _fake_sid)
+    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _fake_sid)
     monkeypatch.setattr("app.scheduling.triggers.get_last_messages", _boom_last)
 
     items = asyncio.run(arbiter.collect_motivation_events())
@@ -138,7 +138,7 @@ def test_state_trigger_prompt_injects_recent_context(monkeypatch):
 
     monkeypatch.setattr(state_triggers, "async_session_factory", _boom_factory)
     monkeypatch.setattr(state_triggers, "_post_trigger_notes", _no_post)
-    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _fake_sid)
+    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _fake_sid)
     monkeypatch.setattr("app.scheduling.triggers.get_last_messages", _fake_last)
     monkeypatch.setattr("app.agent.persona.build_active_channel_persona", _fake_persona)
     monkeypatch.setattr("app.agent.llm_client.chat_completion", _fake_chat)

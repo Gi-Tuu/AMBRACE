@@ -79,45 +79,19 @@ SESSION_RATE_EXEMPT_TYPES = frozenset({"plugin", "state_trigger", "prospective_i
 
 
 # ── IO 端口（断点 #1 · V2b）：只有「取运行时开关表」这一项外部依赖 ──────────────
-_DEFAULT_PORTS: PacingPorts | None = None
-
-
-def set_default_pacing_ports(ports: PacingPorts | None) -> None:
-    """注册默认端口实现（传 None 清空＝恢复「未注入」状态，供测试与排查使用）。"""
-    global _DEFAULT_PORTS
-    _DEFAULT_PORTS = ports
-
-
-def _bind_production_ports() -> PacingPorts:
-    """迁移期兼容钩子：无人注入时惰性绑定 application 侧生产实现（读的还是同一张 AGENT_FLAGS）。
-
-    存在的理由：本模块的判定结果直接决定主动消息发不发，闸门里任何异常都会被 arbiter._pacing_gate
-    的 fail-open 吞掉（表现为「开关悄悄失效」）。留着这条兜底，未注入调用点（如
-    memory_review.replyable_question_enabled 的 flags=None 分支、既有测试直接调
-    pacing.flag_on/gate_active）行为与改动前逐字一致；生产主路径由 scheduling/arbiter.py 显式注入。
-    """
-    from app.application.proactivity_pacing_ports import production_pacing_ports
-    return production_pacing_ports
-
-
 def _resolve_ports(ports: PacingPorts | None = None) -> PacingPorts:
-    """取端口实现：显式注入优先 → 默认端口 → 惰性绑定生产实现 → 清晰报错（不静默降级）。"""
-    global _DEFAULT_PORTS
+    """取端口实现：**只认显式注入**；未注入 ⇒ 清晰报错（不静默降级、不反向 import 上层）。
+
+    2026-11-08 批 3 S5 收口：迁移期的 `_DEFAULT_PORTS` + `_bind_production_ports` 惰性绑定已删除。
+    生产调用点：`scheduling/outreach_gates.py` 显式传 ports；`scheduling/memory_review.py`
+    的 `replyable_question_enabled` 显式传生产端口（`flags` 已给出时端口不参与）。
+    """
     if ports is not None:
         return ports
-    if _DEFAULT_PORTS is not None:
-        return _DEFAULT_PORTS
-    try:
-        bound = _bind_production_ports()
-    except PacingPortsNotInjected:
-        raise
-    except Exception as e:
-        raise PacingPortsNotInjected(
-            "pacing 开关端口未注入且生产实现绑定失败：请显式传入 PacingPorts（生产实现 "
-            "app.application.proactivity_pacing_ports.production_pacing_ports）——架构地图断点 #1"
-        ) from e
-    _DEFAULT_PORTS = bound
-    return bound
+    raise PacingPortsNotInjected(
+        "pacing 开关端口未注入：请显式传入 PacingPorts（生产实现 "
+        "app.application.proactivity_pacing_ports.production_pacing_ports）——架构地图断点 #1"
+    )
 
 
 def _bucket_0_999(key: str) -> int:
@@ -278,11 +252,11 @@ def session_rate_allows(
 #    pacing_gray_hit（None/非法 id → False；空白名单=全量；ratio<=0 恒 False、>=1 恒 True）
 #    四个纯函数的判定顺序与边界（含「恰好 45 分钟放行」）逐字未动；
 #    flag_on 的两层 fail-safe（取表失败 → False、flags.get 异常 → False）逐字未动。
-# 4. 接线：scheduling/arbiter.py `_pacing_gate` 四处 gate_active 显式传 ports（只加接线）；
-#    scheduling/memory_review.py 与既有测试未改（靠第 5 条兜底，行为逐字一致）。
-# 5. 遗留（下一批删）：`_DEFAULT_PORTS` + `_bind_production_ports` 这条迁移期兼容钩子。
-#    它存在的唯一理由是「未注入调用点一旦抛错，会被 arbiter._pacing_gate 的 fail-open
-#    吞成『开关悄悄失效』」；等所有调用点显式注入后整体删除，本文件即达 domain 零 IO 终态。
+# 4. 接线：scheduling/arbiter.py `_pacing_gate` 四处 gate_active 显式传 ports；
+#    scheduling/memory_review.replyable_question_enabled 显式传生产端口（flags 已给出时端口不参与）。
+# 5. **已删除（2026-11-08 批 3 S5）**：`_DEFAULT_PORTS` + `_bind_production_ports` 这条迁移期
+#    兼容钩子。所有生产调用点已显式注入（outreach_gates 四处 gate_active；memory_review
+#    的 replyable_question_enabled 传生产端口），本文件达 **domain 零 IO import 终态**。
 #
 # 同类待做 domain 文件清单（只列名字，本批未改）：
 # - app/domain/emotion/care.py（四个迁移期兼容钩子 + _LegacyCarePorts 段待删）

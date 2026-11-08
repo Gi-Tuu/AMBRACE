@@ -6,14 +6,14 @@
   "extract_memory_channel": "68e4ee456d368d8c1c6690c4ea4a50295f8e2708978cc37fdf3c70b54d908e1f",
   "fold_runs": "ac3dbb4ef736b3d46b5134e741b743d5dddcef0fb1fbe82e0f2365505cdc8973",
   "j1_verdict": "29faf419954a367fd4637b23d21cf0f51ce0ba8255e86c71a4cb0b392fc553fd",
-  "j2_verdict": "d47375d9166adf6f1792bbf947cca8af9f0fbd4ac1257d2e2876633cf21b3947",
+  "j2_verdict": "ef3620492619572f09fd2d056962e51686cdf5f84259d9af680628a324bc99e9",
   "mask_clock": "cb8bb3ebd451b3eab4b8840083bd3f68f230b13df32e9197e0367c1f2f2b7018",
   "recount_rep": "7691f47926f4b1b635032978fdcdc5645687448621ddff45bd800122d9165575",
   "resolve_expect_date": "8a5733e26d912ffc2ce5c84191a7e775cd1ece97db4d737948f1e8ab45553bdf",
   "sig_recompute": "3e89f570ab45941638511e2a91e28fafb17acfde0338fac3d3055d870542fcf7",
   "stable_fp": "fad286f76ee8092c48c1b153bd32b2df32ec0f5d8f23d794422587fe55f2be78"
  },
- "note": "A30 判据函数 AST 基线（纯内容指纹，无路径）。原判据本体不得改动，本夹具为持续守卫。",
+ "note": "A30 判据函数 AST 基线（纯内容指纹，无路径）。原判据本体不得改动，本夹具为持续守卫。2026-11-08 唯一一次 deliberate 变更：j2_verdict 增加槽键归一（user_fact_ 前缀与库内槽名等价），仅改键比较口径，不改判据语义；其余 11 个函数指纹未动。",
  "source_file": "scripts/diagnostics/memory_action_eval.py",
- "source_sha1_12": "ca227025abec"
+ "source_sha1_12": "f539d9b072d9"
 }

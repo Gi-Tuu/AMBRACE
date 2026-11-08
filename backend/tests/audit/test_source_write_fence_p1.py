@@ -202,7 +202,8 @@ def test_post_processing_forwards_captured_uid(world,monkeypatch):
         seen=[]
         def capture(*args,**kwargs):
             seen.append(kwargs.get('source_event_uid'))
-        monkeypatch.setattr(chat_service,'add_chat_memory_extraction',capture)
+        # 批 3 S2b：add_chat_memory_extraction 已在 chat_tooling 顶层绑定（不再经 chat_service 回指）
+        monkeypatch.setattr(chat_tooling,'add_chat_memory_extraction',capture)
         monkeypatch.setattr(chat_service,'spawn_background',lambda coro: coro.close() if hasattr(coro,'close') else None)
         await chat_tooling._run_post_processing(
             1,901,901,'合成正文',{},'合成回复',None,None,source_event_uid='fixed-uid')

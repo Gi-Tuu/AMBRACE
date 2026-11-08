@@ -82,7 +82,7 @@ def _patch_gate_io(monkeypatch, *, type_sent=0, session_sent=0, last=None, activ
     async def _latest(_uid, _cid):
         return None
 
-    import app.application.chat_service as chat_svc
+    import app.application.chat_store as chat_store_mod
     monkeypatch.setattr(arbiter, "get_daily_sent_count", _type_count)
     monkeypatch.setattr(arbiter, "get_session_daily_sent_count", _sess_count)
     monkeypatch.setattr(arbiter, "get_session_last_sent_at", _sess_last)
@@ -93,7 +93,7 @@ def _patch_gate_io(monkeypatch, *, type_sent=0, session_sent=0, last=None, activ
     monkeypatch.setattr(outreach_gates, "get_session_daily_sent_count", _sess_count)
     monkeypatch.setattr(outreach_gates, "get_session_last_sent_at", _sess_last)
     monkeypatch.setattr(outreach_gates, "_user_active_hours", _hours)
-    monkeypatch.setattr(chat_svc, "get_latest_session_id", _latest)
+    monkeypatch.setattr(chat_store_mod, "get_latest_session_id", _latest)
 
 
 def _gate(item, *, cn_hour=18, now=None, cid=None):
@@ -483,7 +483,7 @@ def review_env(pacing_db, monkeypatch):
     import app.agent.llm_client as llm_mod
     import app.agent.persona as persona_mod
     import app.agent.user_profile as profile_mod
-    import app.application.chat_service as chat_svc
+    import app.application.chat_store as chat_store_mod
     import app.scheduling.memory_review as mr
     import app.scheduling.scheduler as scheduler_mod
     import app.scheduling.triggers as triggers_mod
@@ -511,7 +511,7 @@ def review_env(pacing_db, monkeypatch):
         return 1
 
     monkeypatch.setattr(scheduler_mod, "send_to_session", _fake_send)
-    monkeypatch.setattr(chat_svc, "get_latest_session_id", _sid)
+    monkeypatch.setattr(chat_store_mod, "get_latest_session_id", _sid)
     monkeypatch.setattr(triggers_mod, "memory_review_enabled", _true)
     monkeypatch.setattr(triggers_mod, "get_last_messages", _none)
     monkeypatch.setattr(llm_mod, "chat_completion", _fake_chat_completion)

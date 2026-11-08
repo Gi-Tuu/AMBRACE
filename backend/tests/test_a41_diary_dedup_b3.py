@@ -80,11 +80,11 @@ def no_llm(monkeypatch):
     async def _fake_session_id(user_id, character_id):
         return SESSION_ID
 
-    import app.application.chat_service as chat_svc
+    import app.application.chat_store as chat_store_mod
     import app.memory as mem_pkg
 
     monkeypatch.setattr(dg, "chat_completion", _fake_llm)
-    monkeypatch.setattr(chat_svc, "get_latest_session_id", _fake_session_id)
+    monkeypatch.setattr(chat_store_mod, "get_latest_session_id", _fake_session_id)
     monkeypatch.setattr(mem_pkg, "save_memory", _fake_save, raising=False)
     return calls
 

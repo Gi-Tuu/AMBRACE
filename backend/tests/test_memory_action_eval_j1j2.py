@@ -137,6 +137,18 @@ def test_J2_越权落库要抓到():
     assert v["pass"] is False and "不该写却写了 user_fact_relationship" in v["why"], v
 
 
+def test_J2_库内槽名与flag槽名前缀差异要被归一():
+    """2026-11-08 J2 复跑实测：GlobalUserFact.slot 存 `job`，题面/flag 名是 `user_fact_job`。"""
+    v = ev.j2_verdict({"slots": {"user_fact_job": "经纪人"}}, {"job": "有经纪人阿柯"})
+    assert v["pass"] is True, v
+    v_none = ev.j2_verdict(
+        {"slots": {"user_fact_job": "经纪人"}, "slots_none": ["user_fact_relationship"]},
+        {"job": "经纪人", "relationship": "有个表弟"},
+    )
+    assert v_none["pass"] is False
+    assert "不该写却写了 user_fact_relationship" in v_none["why"], v_none
+
+
 def test_J2_空槽位字典不得算过():
     assert ev.j2_verdict({"slots": {"user_fact_health": "腰伤"}}, {})["pass"] is False
 

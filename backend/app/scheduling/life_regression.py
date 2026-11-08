@@ -105,7 +105,7 @@ async def _recent_user_texts(user_id: int, character_id: int, limit: int = 8) ->
     """用户最近若干条消息（该角色最新会话，只用于判主题闭环；异常返回空，fail-open）。"""
     from app.models.chat import ChatMessage
     try:
-        from app.application.chat_service import get_latest_session_id
+        from app.application.chat_store import get_latest_session_id
         async with async_session_factory() as db:
             session_id = await get_latest_session_id(user_id, character_id)
             if not session_id:
@@ -153,7 +153,7 @@ async def _used_today(character_id: int) -> bool:
 async def _user_recent_emotion(user_id: int, character_id: int) -> str:
     """用户最近消息情绪（取最近一条用户消息）"""
     from app.models.chat import ChatMessage
-    from app.application.chat_service import get_latest_session_id
+    from app.application.chat_store import get_latest_session_id
     async with async_session_factory() as db:
         session_id = await get_latest_session_id(user_id, character_id)
         if not session_id:

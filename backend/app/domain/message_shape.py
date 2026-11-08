@@ -12,6 +12,19 @@
 """
 import re
 
+# 通知面形态提示（A4 批 8 块 C M1，2026-09-30；2026-11-08 由 agent/nodes.py 下沉到本模块）：
+# 本轮消息将以通知面送达（离线 ⇒ 走通知）时拼进上下文的一句形态约束。与 WECHAT_CHANNEL_HINT
+# 同纪律：仅进 LLM 上下文（不落库/不进记忆/不改 content/user_message）；集中一处常量，供测试断言。
+# flag message_shape_notify_limit 默认关 ⇒ 逐字节旧 prompt。
+NOTIFY_SHAPE_HINT = (
+    "（提醒）这条会以通知形式提醒对方，对方在通知里只看得到开头一小段，"
+    "请把要说的压缩成一句（不超过 {limit} 字），先说最要紧的那件事。"
+    "不要向对方提及“通知”“提醒”这类元信息。"
+    # R7：与微信渠道 hint（整段 ≤400 字、不拆条）同轮时两条都会注入，
+    #     短句提示在后；冲突时以本条为准（通知首屏只露一小段，比整段字数更硬）。
+    "若与其它长度要求冲突，以本条为准。"
+)
+
 # 通知面预览上限**现值**：与收口前两处 [:50] 逐字节一致（M0 零行为的锚点）。
 NOTIFY_PREVIEW_LIMIT = 50
 # 主动消息留痕列 content[:500] 的天花板（scheduling/scheduler.py 落日志时已截过一次）。
@@ -97,7 +110,6 @@ def compose_notify_shape_messages(
     """
     if not notify_surface or not notify_shape_flag_on():
         return messages
-    from app.agent.nodes import NOTIFY_SHAPE_HINT
 
     cap = MSG_FORM_LIMITS.get("notify") if limit is None else limit
     hint = NOTIFY_SHAPE_HINT.format(limit=cap if cap else NOTIFY_PREVIEW_LIMIT)

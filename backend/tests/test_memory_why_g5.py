@@ -27,11 +27,11 @@ def _client():
     return TestClient(app)
 
 
-def _auth(uid=9401):
+def _auth(uid=9551):
     return {"Authorization": f"Bearer {create_token(uid)}"}
 
 
-async def _seed(uid=9401, cid=9411, with_event=True, receipt=False):
+async def _seed(uid=9551, cid=9561, with_event=True, receipt=False):
     from app.db.database import async_session_factory
     from app.models.character import AICharacter
     from app.models.chat import ChatMessage, ChatSession
@@ -105,9 +105,9 @@ def test_why_returns_full_chain(monkeypatch):
 def test_why_no_source_event(monkeypatch):
     """老记忆（无 uid）⇒ has_source=False、note=no_source_event，不伪造。"""
     async def run():
-        mid = await _seed(uid=9402, cid=9412, with_event=False)
+        mid = await _seed(uid=9552, cid=9562, with_event=False)
         client = _client()
-        return client.get(f"/api/v1/memories/{mid}/why", headers=_auth(9402))
+        return client.get(f"/api/v1/memories/{mid}/why", headers=_auth(9552))
 
     r = asyncio.run(run())
     assert r.status_code == 200
@@ -119,7 +119,7 @@ def test_why_no_source_event(monkeypatch):
 def test_why_cross_tenant_404():
     """跨租户/不存在 ⇒ 404 同形。"""
     client = _client()
-    r = client.get("/api/v1/memories/999999/why", headers=_auth(9403))
+    r = client.get("/api/v1/memories/999999/why", headers=_auth(9553))
     assert r.status_code == 404
 
 

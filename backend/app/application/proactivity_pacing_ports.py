@@ -4,9 +4,9 @@
 ``from app.agent.loop import AGENT_FLAGS`` 仍是**函数级惰性 import**（与旧版一致），
 因此既有测试对 AGENT_FLAGS 的 setitem / setattr 打桩照旧生效，读到的仍是同一个 dict。
 
-接线点（domain 不反向依赖本模块，由上层注入；无人注入时 domain 侧惰性绑定本单例＝迁移期兼容钩子）：
-- app/scheduling/arbiter.py —— ``_pacing_gate`` 三闸判定（显式传 ports）
-- app/scheduling/memory_review.py —— ``replyable_question_enabled``（显式传 flags，不经本端口）
+接线点（domain 不反向依赖本模块，必须由调用方显式注入；迁移期惰性绑定已于 2026-11-08 批 3 S5 删除）：
+- app/scheduling/outreach_gates.py —— ``_pacing_gate`` 三闸判定（四处 gate_active 显式传 ports）
+- app/scheduling/memory_review.py —— ``replyable_question_enabled``（显式传 ports；flags 已给出时端口不参与）
 """
 from __future__ import annotations
 

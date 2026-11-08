@@ -425,4 +425,8 @@ void _prime(_DerivAdapter api, int id) {
   api.json('/api/v1/memories/$id', _memoryJson(id));
   api.json('/api/v1/memories/$id/chain', {'status': 'ok', 'chain': []});
   api.json('/api/v1/memories/$id/history', {'memory_id': id, 'truncated': false, 'corrections': []});
+  api.json('/api/v1/memories/$id/why', {
+    'status': 'ok', 'memory_id': id, 'has_source': false,
+    'sources': [], 'receipt_count': 0, 'note': 'no_source_event',
+  });
 }

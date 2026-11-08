@@ -416,8 +416,10 @@ def replyable_question_enabled(char_id: int, session_id=None, *, flags=None) -> 
 
     纯判定（零 IO）；默认关 = False → 调用方不改 hint（逐字节旧文案）。
     """
+    from app.application.proactivity_pacing_ports import production_pacing_ports
     from app.domain.proactivity import pacing
-    return pacing.gate_active(char_id, session_id, pacing.FLAG_TYPE_MIX, flags=flags)
+    return pacing.gate_active(char_id, session_id, pacing.FLAG_TYPE_MIX,
+                              flags=flags, ports=production_pacing_ports)
 
 
 def apply_replyable_question_rule(hint: str) -> str:
@@ -448,7 +450,7 @@ async def _reschedule_review(memory_id: int, after: timedelta, why: str) -> None
 async def run_memory_review(char_id: int, user_id: int, memory_id: int) -> bool:
     """执行一次主动复习：限额/免打扰/会话检查 → 先占位重排（防失败重试烧 token）→ LLM 生成 → 发送 → 记录。"""
     from app.scheduling.scheduler import send_to_session
-    from app.application.chat_service import get_latest_session_id
+    from app.application.chat_store import get_latest_session_id
     from app.scheduling.triggers import memory_review_enabled
     # 0) 主动互动主开关 / 记忆复习子开关 任一关闭则不发送
     if not await memory_review_enabled(char_id):

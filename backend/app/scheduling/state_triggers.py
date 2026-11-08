@@ -575,7 +575,7 @@ async def _execute_rule_behavior(
     _session_id = None
     recent_ctx = ""
     try:
-        from app.application.chat_service import get_latest_session_id as _get_sid
+        from app.application.chat_store import get_latest_session_id as _get_sid
         from app.scheduling.triggers import get_last_messages as _get_last
         _session_id = await _get_sid(user_id, character_id)
         if _session_id:
@@ -625,7 +625,7 @@ async def _execute_rule_behavior(
     if not content or len(content) < 2:
         return False
 
-    from app.application.chat_service import get_latest_session_id
+    from app.application.chat_store import get_latest_session_id
     # P0-1（2026-08-24）：复用顶部取得的会话 id（无则回退重新查询），避免重复 DB 查询
     session_id = _session_id if _session_id is not None else await get_latest_session_id(user_id, character_id)
     if session_id is None:
@@ -776,7 +776,7 @@ async def check_state_triggers(
                 return []
 
             # 会话存在性检查（延迟任务发送时再复查，但这里先确保有会话可触发）
-            from app.application.chat_service import get_latest_session_id
+            from app.application.chat_store import get_latest_session_id
             session_id = await get_latest_session_id(user_id, character_id)
             if session_id is None:
                 return []

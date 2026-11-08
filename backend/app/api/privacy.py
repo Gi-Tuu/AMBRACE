@@ -305,7 +305,7 @@ async def _send_chat_followup(
             character_id, user_id, target, gate, request_id,
         )
         return
-    from app.application.chat_service import get_latest_session_id
+    from app.application.chat_store import get_latest_session_id
     from app.scheduling.scheduler import send_to_session
     try:
         session_id = await get_latest_session_id(user_id, character_id)

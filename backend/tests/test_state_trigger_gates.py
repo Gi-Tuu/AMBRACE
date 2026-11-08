@@ -95,7 +95,7 @@ def env(monkeypatch):
         return 99
     async def _send(session_id, character_id, user_id, content, message_type="state_trigger"):
         sent.append((session_id, character_id, user_id, content, message_type))
-    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _sid)
+    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _sid)
     monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _send)
 
     # 内核闸复用来源：默认全部「未命中」

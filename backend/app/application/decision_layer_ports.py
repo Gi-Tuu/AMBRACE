@@ -9,9 +9,9 @@ import**（与旧版同一位置）：既有测试对 ``app.agent.trace.enqueue_
 resolve 只读 AICharacter（trace.py 内部本就自带「无 db 时自开会话」分支，失败返回 None 不抛），
 insert 仍是一个会话一次 commit，读写之间无事务依赖 ⇒ 语义不变。
 
-接线点（domain 不反向依赖本模块，由上层注入；未注入时 domain 侧惰性绑定本单例＝迁移期兼容钩子）：
-- app/memory/ai_rating.py —— 挂点 A（异步评星，SINK_DIRECT）
-- app/memory/format.py —— 挂点 B（同步格式化，SINK_BUFFER）
+接线点（domain 不反向依赖本模块，必须由调用方显式注入；迁移期惰性绑定已于 2026-11-08 批 3 S5 删除）：
+- app/memory/ai_rating.py —— 挂点 A（异步评星，SINK_DIRECT），`ask_score(..., ports=production_decision_layer_ports)`
+- app/memory/format.py —— 挂点 B（同步格式化，SINK_BUFFER），`observe_tense_decision(..., ports=production_decision_layer_ports)`
 """
 from __future__ import annotations
 
@@ -63,6 +63,13 @@ class ProductionDecisionLayerPorts:
             for kwargs in rows:
                 db.add(AgentTaskLog(**kwargs))
             await db.commit()
+
+    # ── 时态文本口径（2026-11-08 批 2 收口：原 layer.py 惰性 import 搬到这里） ──
+
+    def tense_view(self) -> Any:
+        """影子留痕要读的时态常量/取值器（application → memory 方向合法）。"""
+        from app.memory import tense
+        return tense
 
 
 production_decision_layer_ports = ProductionDecisionLayerPorts()

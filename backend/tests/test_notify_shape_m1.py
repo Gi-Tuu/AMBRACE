@@ -19,8 +19,9 @@ import inspect
 
 import pytest
 
-from app.agent.nodes import NOTIFY_SHAPE_HINT, WECHAT_CHANNEL_HINT
+from app.agent.nodes import WECHAT_CHANNEL_HINT
 from app.domain import message_shape as ms
+from app.domain.message_shape import NOTIFY_SHAPE_HINT
 from app.scheduling import message_generator as mg
 from app.ws import connection_manager as cm
 

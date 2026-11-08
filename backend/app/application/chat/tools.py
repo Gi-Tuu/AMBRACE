@@ -20,6 +20,12 @@ _logger = get_logger("services.chat")
 # 进程级节流：每用户 60 秒最多触发 1 次搜索（防滥用，LLM 一轮最多 1 次）
 _SEARCH_THROTTLE: dict[int, float] = {}
 
+# 纯标点正文判据（……/。/！/？/~ 等；证据 B 现场即 content="……"）。
+# 2026-11-08 批 3 S2b：原定义在 chat_service，两个消费方（chat_service 的收尾清洗与
+# chat_tooling 的降级续写）共用；下沉本纯函数模块＝消掉 chat_service↔chat_tooling 的循环依赖，
+# 同时保持「一处正则、两处生效」。
+PUNCT_ONLY_RE = re.compile(r"^[\s。．.!！?？～~…，,、；;：:·—－\-]+$")
+
 
 def _extract_gen_image(text: str) -> tuple[str, str | None, str | None]:
     """提取生图标记，返回 (清理后的文本, 画面描述或None, 图片消息文案或None)。

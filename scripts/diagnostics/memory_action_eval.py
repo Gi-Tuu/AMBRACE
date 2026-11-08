@@ -601,16 +601,30 @@ def _forbidden_check(expect: dict, cands: list) -> tuple:
     return bad, exempt
 
 
+def _slot_key(name) -> str:
+    """槽键归一：数据集/flag 用 `user_fact_job`，GlobalUserFact.slot 存 `job`。
+
+    2026-11-08 J2 复跑实测：库里写的是 `job`、题面期望 `user_fact_job`，判分器直接按原键取
+    ⇒ 实际正确的写入被判「缺槽」。比较前统一剥前缀，报错文案仍用原键（不影响既有断言）。
+    """
+    text = str(name)
+    prefix = "user_fact_"
+    return text[len(prefix):] if text.startswith(prefix) else text
+
+
 def j2_verdict(expect: dict, written_slots: dict) -> dict:
-    """J2 语义槽落库判定。读 `expect.slots`（{槽 key: 必须命中的片段}）与 `expect.slots_none`（不得写的槽）。"""
+    """J2 语义槽落库判定。读 `expect.slots`（{槽 key: 必须命中的片段}）与 `expect.slots_none`（不得写的槽）。
+
+    键比较前走 :func:`_slot_key`（flag 前缀与库内槽名两种写法等价）。
+    """
     exp = expect or {}
     slots, none_keys = (exp.get("slots") or {}), [str(x) for x in (exp.get("slots_none") or [])]
     if not slots and not none_keys:
         return {"pass": False, "err": "E_unannotated", "why": "expect.slots/slots_none 都没标 ⇒ 这条题没出完"}
-    got = written_slots or {}
+    got = {_slot_key(k): v for k, v in (written_slots or {}).items()}
     bad = [("缺槽 %s（应为 %s）" % (k, v)) for k, v in slots.items()
-           if _norm(str(v)) not in _norm(str(got.get(k) or ""))]
-    bad += ["不该写却写了 %s" % k for k in none_keys if str(got.get(k) or "").strip()]
+           if _norm(str(v)) not in _norm(str(got.get(_slot_key(k)) or ""))]
+    bad += ["不该写却写了 %s" % k for k in none_keys if str(got.get(_slot_key(k)) or "").strip()]
     return {"pass": not bad, "err": "" if not bad else "E4", "why": "；".join(bad)}
 
 

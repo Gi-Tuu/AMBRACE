@@ -68,10 +68,12 @@ def test_公共收尾_reliability_调用与HTTP相同函数(monkeypatch):
     monkeypatch.setattr("app.memory.fact_check.schedule_fact_check",
                         lambda *a, **k: calls.append(("fact_check", a, k)))
     # 拦截公共收尾中的 fire-and-forget DB 写路径，保持纯逻辑验证
-    monkeypatch.setattr(chat_service, "add_chat_memory_extraction", _async_noop)
-    monkeypatch.setattr(chat_service, "_generate_initial_bio", _async_noop)
-    monkeypatch.setattr(chat_service, "_bump_relationship", _async_noop)
-    monkeypatch.setattr(chat_service, "_trigger_state_eval", lambda *a, **k: None)
+    # 批 3 S2b：这些名字已在 chat_tooling 顶层绑定（不再经 chat_service 的 _cs 回指）⇒ 桩改打到 chat_tooling
+    from app.application import chat_tooling as _ct
+    monkeypatch.setattr(_ct, "add_chat_memory_extraction", _async_noop)
+    monkeypatch.setattr(_ct, "_generate_initial_bio", _async_noop)
+    monkeypatch.setattr(_ct, "_bump_relationship", _async_noop)
+    monkeypatch.setattr(_ct, "_trigger_state_eval", lambda *a, **k: None)
     monkeypatch.setattr("app.agent.topic_tracker.maybe_extract_topics", _async_noop)
     monkeypatch.setattr("app.agent.topic_tracker.update_topic_resolution", _async_noop)
 

@@ -57,7 +57,7 @@ async def get_today_chat_context(
 
     async with async_session_factory() as db:
         # 找该角色当天的活跃会话（按最新消息时间，避免 updated_at 污染选错）
-        from app.application.chat_service import get_latest_session_id
+        from app.application.chat_store import get_latest_session_id
         session_id = await get_latest_session_id(user_id, character_id)
         session = await db.get(ChatSession, session_id) if session_id else None
         if not session:
@@ -118,7 +118,7 @@ async def generate_diary_for_character(
 
         if existing and not force:
             day_start, day_end = _day_window(target_date, beijing_window)
-            from app.application.chat_service import get_latest_session_id
+            from app.application.chat_store import get_latest_session_id
             sid = await get_latest_session_id(char.user_id, character_id)
             latest = None
             if sid:

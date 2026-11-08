@@ -364,7 +364,7 @@ def test_flag关_motivation_逐字节旧行为(monkeypatch, pack_motivation):
     _flag(monkeypatch, False)
     _stub_kernel_common(monkeypatch)
     _stub_motivation_kernel(monkeypatch, score=0.9)
-    from app.application import chat_service
+    from app.application import chat_store
     from app.scheduling import triggers as trig
 
     async def _sid(uid, cid):
@@ -373,7 +373,7 @@ def test_flag关_motivation_逐字节旧行为(monkeypatch, pack_motivation):
     async def _msgs(sid, limit=10):
         return "用户: 你好"
 
-    monkeypatch.setattr(chat_service, "get_latest_session_id", _sid)
+    monkeypatch.setattr(chat_store, "get_latest_session_id", _sid)
     monkeypatch.setattr(trig, "get_last_messages", _msgs)
     out = [i.to_dict() for i in asyncio.run(MotivationSource().collect(SourceContext()))]
     assert len(out) == 1
@@ -468,7 +468,7 @@ def test_flag开但包未启用_两个类别行为不变(monkeypatch):
     _flag(monkeypatch, True)
     _stub_kernel_common(monkeypatch)
     _stub_motivation_kernel(monkeypatch, score=0.9)
-    from app.application import chat_service
+    from app.application import chat_store
     from app.scheduling import triggers as trig
     from app.scheduling import unfinished_topic as ut_mod
 
@@ -483,7 +483,7 @@ def test_flag开但包未启用_两个类别行为不变(monkeypatch):
                  "candidate": {"character_id": CHAR_ID, "user_id": USER_ID,
                                "session_id": SESSION_ID, "unfinished_content": "改天聊"}}]
 
-    monkeypatch.setattr(chat_service, "get_latest_session_id", _sid)
+    monkeypatch.setattr(chat_store, "get_latest_session_id", _sid)
     monkeypatch.setattr(trig, "get_last_messages", _msgs)
     monkeypatch.setattr(ut_mod, "collect_unfinished_events", _events)
     assert len(asyncio.run(MotivationSource().collect(SourceContext()))) == 1

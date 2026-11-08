@@ -348,7 +348,12 @@ def _log_read_path(path: str) -> str:
         pass
     return path
 
-def _tail_log():
+def _tail_log_parts():
+    """按来源分别取末尾 LOG_TAIL 行，返回 {"app": ..., "stderr": ...}。
+
+    以前两份日志被 `"\\n".join` 直接拼成一段文本，来源信息就此丢失、也没法按级别筛；
+    这里保留各自的原文，由 console_api 解析成结构化行。_tail_log 仍保留给导出/旧调用方。
+    """
     def tail(path, size=12000):
         if not os.path.exists(path):
             return ""
@@ -362,8 +367,12 @@ def _tail_log():
         except Exception:
             return ""
     # C1：server_stderr.log 刚被轮转过（当前为空）时回退读 .1，避免日志区空白
-    parts = [p for p in (tail(APP_LOG), tail(_log_read_path(STDERR_LOG))) if p.strip()]
-    return "\n".join(parts)
+    return {"app": tail(APP_LOG), "stderr": tail(_log_read_path(STDERR_LOG))}
+
+
+def _tail_log():
+    parts = _tail_log_parts()
+    return "\n".join(p for p in (parts["app"], parts["stderr"]) if p.strip())
 
 def _fetch_health() -> str:
     if not _check_alive():
@@ -664,6 +673,60 @@ def _read_db_stats() -> dict:
         except Exception:
             pass
     return stats
+
+MEM_KIND_CN = {"user_info": "印象", "preference": "偏好", "event": "近期事件",
+               "insight": "洞察", "working_state": "工作状态",
+               "ai_reflection": "自我反思", "fact": "事实"}
+
+
+def _read_memory_stats() -> dict:
+    """记忆分布：按记忆本分类的总条数，以及每个角色的条数与构成。
+
+    仪表盘的圆环靠这份数据画占比；角色下拉靠它列名单。远程模式读不到本地库，返回空结构
+    （前端按「—」显示，不编数字）。只读打开，与统计口径同一把尺（memories 全表）。
+    """
+    empty = {"kinds": [], "roles": []}
+    if _is_remote():
+        return empty
+    db = os.path.join(SERVER_DIR, "data", "sqlite", "ai_companion.db")
+    if not os.path.isfile(db):
+        return empty
+    try:
+        con = sqlite3.connect("file:" + db + "?mode=ro", uri=True, timeout=2)
+    except Exception:
+        return empty
+    kinds, roles, names = {}, {}, {}
+    try:
+        for cid, mtype, n in con.execute(
+                "SELECT character_id, COALESCE(memory_type,''), COUNT(*) FROM memories "
+                "GROUP BY character_id, memory_type"):
+            mtype = str(mtype or "")
+            kinds[mtype] = kinds.get(mtype, 0) + int(n)
+            r = roles.setdefault(cid, {"count": 0, "kinds": {}})
+            r["count"] += int(n)
+            r["kinds"][mtype] = r["kinds"].get(mtype, 0) + int(n)
+        for cid, name in con.execute("SELECT id, COALESCE(name,'') FROM ai_characters"):
+            names[cid] = str(name or "")
+    except Exception:
+        return empty
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    def _pack(d):
+        rows = [{"key": k or "", "label": MEM_KIND_CN.get(k, k or "未分类"), "count": v}
+                for k, v in d.items()]
+        rows.sort(key=lambda x: x["count"], reverse=True)
+        return rows
+
+    out_roles = [{"id": cid, "name": names.get(cid) or ("角色 %s" % cid),
+                  "count": r["count"], "kinds": _pack(r["kinds"])}
+                 for cid, r in roles.items() if r["count"] > 0]
+    out_roles.sort(key=lambda x: x["count"], reverse=True)
+    return {"kinds": _pack(kinds), "roles": out_roles[:12]}
+
 
 def _read_vlm_status() -> dict | None:
     """云端识图配置（服务器级 vlm_configs 行，user_id=0）。远程或读不到返回 None。"""

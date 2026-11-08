@@ -142,7 +142,8 @@ def test_failure_state_does_not_burn_an_accent():
 def test_theme_word_no_longer_duplicated_in_the_foot():
     """图标已经说了状态，页脚再写一遍「· 墨纸」就是两处说同一件事。"""
     assert 'foot + " · " +' not in HTML
-    assert 'getElementById("sideFoot").textContent = foot;' in HTML
+    # 左下角那行「端口 N」用户要求去掉，只留设置星球；这里钉住"没有再写出任何页脚文案"
+    assert 'id="sideFoot"' not in HTML, "左下角那行端口文案还挂在页面上"
     assert HTML.count("syncThemeBtn()") >= 3, "换档后文案要跟着走"
 
 

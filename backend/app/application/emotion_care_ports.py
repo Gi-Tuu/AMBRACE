@@ -143,7 +143,7 @@ class ProductionCarePorts:
             return CareCharacterView(id=char.id, name=char.name, personality=char.personality)
 
     async def latest_session_id(self, user_id: int, character_id: int) -> int | None:
-        from app.application.chat_service import get_latest_session_id
+        from app.application.chat_store import get_latest_session_id
         return await get_latest_session_id(user_id, character_id)
 
     async def recent_messages(self, session_id: int, limit: int = 6) -> list[str]:

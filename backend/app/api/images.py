@@ -61,7 +61,7 @@ async def _assert_refs_in_tenant(user_id: int, character_id: int | None, session
             if hit is None:
                 raise HTTPException(status_code=404, detail=tr_lang(lang, "character_not_found"))
         if session_id is not None:
-            from app.application.chat_service import get_owned_session
+            from app.application.chat_store import get_owned_session
             if await get_owned_session(db, session_id, user_id) is None:
                 raise HTTPException(status_code=404, detail=tr_lang(lang, "session_not_found"))
 

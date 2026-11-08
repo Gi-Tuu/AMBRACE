@@ -546,7 +546,7 @@ AGENT_FLAGS = {
     #   首句仍超限才硬截加省略号）；②本轮判定将以通知面送达（沿用 send_to_session 已有的
     #   pushed 判定，离线即通知面）时，往 LLM 上下文拼一句「这条会以通知形式提醒对方，
     #   请压缩成一句（≤N 字）」——照 WECHAT_CHANNEL_HINT 三条纪律：只进上下文、不落库不进记忆、
-    #   常量集中一处（agent/nodes.py::NOTIFY_SHAPE_HINT）。
+    #   常量集中一处（domain/message_shape.py::NOTIFY_SHAPE_HINT，11-08 由 nodes 下沉）。
     # 关＝**逐字节旧行为**：通知正文仍是原 [:50]+"…" 预览（收口前后等价），prompt 一字不多。
     # 私聊气泡正文与 WS 原文一律不裁（点开永远能看到完整消息），落库/记忆不受本键影响。
     # 上限数值须由 GET /api/v1/scheduler/stats/notify-shape 的读数＋真机复核后再调，不照抄设计稿。

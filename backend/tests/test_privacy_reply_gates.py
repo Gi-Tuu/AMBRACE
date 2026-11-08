@@ -116,7 +116,7 @@ def env(monkeypatch):
 
     async def _sid(user_id, character_id):
         return 9
-    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _sid)
+    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _sid)
 
     async def _llm(*_a, **_k):
         calls["llm"] = calls.get("llm", 0) + 1

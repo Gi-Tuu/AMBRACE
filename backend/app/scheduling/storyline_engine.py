@@ -220,7 +220,7 @@ async def _llm_line(
 
 
 async def _send_message(character_id: int, user_id: int, content: str, message_type: str = "state_trigger") -> bool:
-    from app.application.chat_service import get_latest_session_id
+    from app.application.chat_store import get_latest_session_id
     from app.scheduling.arbiter import get_hourly_active_count
     session_id = await get_latest_session_id(user_id, character_id)
     if session_id is None:

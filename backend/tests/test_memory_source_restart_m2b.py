@@ -5,7 +5,7 @@ import asyncio
 from sqlalchemy import text
 
 
-async def _seed(u=9601, c=9611, s=9621):
+async def _seed(u=9681, c=9691, s=9693):
     from test_memory_source_queue_m2b import _seed_and_message
     from app.memory import extractor as ex
     msg_id = await _seed_and_message(u, c, s)
@@ -26,14 +26,14 @@ def test_lease_expiry_new_consumer_reclaims_same_payload(monkeypatch):
     monkeypatch.setitem(AGENT_FLAGS, "memory_source_proof_v1", True)
 
     async def run():
-        uid = await _seed(9601, 9611, 9621)
-        first = q.take(9621)
+        uid = await _seed(9681, 9691, 9693)
+        first = q.take(9693)
         assert len(first) == 1
         task_id = first[0]["_task_id"]
         db = _db()
         db.execute("UPDATE extraction_tasks SET lease_until=0,state='leased' WHERE id=?", (task_id,))
         db.commit(); db.close()
-        second = q.take(9621)  # 新消费者：旧 lease 已过期，回收同一任务
+        second = q.take(9693)  # 新消费者：旧 lease 已过期，回收同一任务
         assert len(second) == 1
         assert second[0]["_task_id"] == task_id
         assert second[0]["source_id"] == uid
@@ -61,16 +61,16 @@ def test_lease_expiry_preserves_uid_and_content(monkeypatch):
     monkeypatch.setitem(AGENT_FLAGS, "memory_source_proof_v1", True)
 
     async def run():
-        uid = await _seed(9602, 9612, 9622)
-        first = q.take(9622)
+        uid = await _seed(9682, 9692, 9694)
+        first = q.take(9694)
         task_id = first[0]["_task_id"]
         db = _db(); db.execute("UPDATE extraction_tasks SET lease_until=0 WHERE id=?", (task_id,)); db.commit(); db.close()
-        second = q.take(9622)
+        second = q.take(9694)
         assert second[0]["source_event_uid"] == first[0]["source_event_uid"]
         from app.models.chat import ChatSession
         async with async_session_factory() as db:
             msg = (await db.execute(text("SELECT content,source_event_uid FROM chat_messages WHERE id=:m"), {"m": uid})).first()
-            session = await db.get(ChatSession, 9622)
+            session = await db.get(ChatSession, 9694)
         # 新消费者仍能通过同一来源核验（真实 DB 消息/UID/正文）
         ok = await worker._source_belongs_to_session(ex, session, uid, second[0]["source_event_uid"])
         return msg, ok

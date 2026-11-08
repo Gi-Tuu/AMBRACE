@@ -147,16 +147,17 @@ class FakeShadowPorts:
             raise self.write_error
         self.rows.extend(rows)
 
+    def tense_view(self):
+        """与生产端口同口径：时态文本常量/取值器由 application 侧注入，domain 不再 import memory。"""
+        from app.memory import tense
+        return tense
+
 
 @pytest.fixture(autouse=True)
 def _clean_shadow_state():
     dl.reset_shadow_state()
-    dl.set_default_shadow_ports(None)
-    pacing.set_default_pacing_ports(None)
     yield
     dl.reset_shadow_state()
-    dl.set_default_shadow_ports(None)
-    pacing.set_default_pacing_ports(None)
 
 
 # ═══════════════ ① pacing：端口只有一项，判定与旧实现逐例等价 ═══════════════
@@ -273,14 +274,14 @@ def test_pacing_灰度白名单与比例桶边界():
     assert pacing.traffic_hit("k", 0) is False and pacing.traffic_hit("k", 1) is True
 
 
-def test_pacing_默认端口绑定生产实现_读的还是同一张AGENT_FLAGS(monkeypatch):
+def test_pacing_生产端口显式注入_读的还是同一张AGENT_FLAGS(monkeypatch):
+    """S5 收口后生产调用点显式传端口：读到的仍是同一张 AGENT_FLAGS（行为逐字不变）。"""
     from app.agent.loop import AGENT_FLAGS
-    monkeypatch.setattr(pacing, "_DEFAULT_PORTS", None)
+    from app.application.proactivity_pacing_ports import production_pacing_ports
     old = AGENT_FLAGS.get(pacing.FLAG_SESSION_RATE, None)
     AGENT_FLAGS[pacing.FLAG_SESSION_RATE] = True
     try:
-        assert pacing.flag_on(pacing.FLAG_SESSION_RATE) is True       # 与旧实现同表同值
-        assert pacing._DEFAULT_PORTS is not None                      # 惰性绑定后缓存
+        assert pacing.flag_on(pacing.FLAG_SESSION_RATE, ports=production_pacing_ports) is True
     finally:
         if old is None:
             AGENT_FLAGS.pop(pacing.FLAG_SESSION_RATE, None)
@@ -288,14 +289,8 @@ def test_pacing_默认端口绑定生产实现_读的还是同一张AGENT_FLAGS(
             AGENT_FLAGS[pacing.FLAG_SESSION_RATE] = old
 
 
-def test_pacing_未注入端口即抛清晰错误_不静默降级(monkeypatch):
+def test_pacing_未注入端口即抛清晰错误_不静默降级():
     """端口一处都拿不到时：抛 PacingPortsNotInjected，绝不退化成「开关看起来永远是关」。"""
-    monkeypatch.setattr(pacing, "_DEFAULT_PORTS", None)
-
-    def _broken():
-        raise ImportError("app.application.proactivity_pacing_ports 不存在")
-    monkeypatch.setattr(pacing, "_bind_production_ports", _broken)
-
     with pytest.raises(PacingPortsNotInjected) as exc:
         pacing.flag_on(pacing.FLAG_TYPE_MIX)
     assert "PacingPorts" in str(exc.value) and "断点 #1" in str(exc.value)
@@ -517,14 +512,8 @@ def test_layer_批量写库失败只WARNING不影响判定_属fail_open():
     assert dl.shadow_buffer_size() == 0
 
 
-def test_layer_未注入端口即抛清晰错误_不静默降级(monkeypatch):
+def test_layer_未注入端口即抛清晰错误_不静默降级():
     """端口一处都拿不到时抛 ShadowPortsNotInjected：不得伪装成「影子开关是关的」。"""
-    monkeypatch.setattr(dl, "_DEFAULT_PORTS", None)
-
-    def _broken():
-        raise ImportError("app.application.decision_layer_ports 不存在")
-    monkeypatch.setattr(dl, "_bind_production_ports", _broken)
-
     with pytest.raises(ShadowPortsNotInjected) as exc:
         dl.shadow_enabled()
     assert "DecisionShadowPorts" in str(exc.value) and "断点 #1" in str(exc.value)
@@ -541,8 +530,6 @@ def test_layer_未注入端口即抛清晰错误_不静默降级(monkeypatch):
 
 _ALLOWED_APP_IMPORTS = {
     "app.domain.proactivity.ports", "app.domain.decision.ports", "app.utils.logger",
-    "app.application.proactivity_pacing_ports", "app.application.decision_layer_ports",
-    "app.memory", "app.memory.tense",
 }
 
 

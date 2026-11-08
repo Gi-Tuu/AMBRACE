@@ -71,21 +71,20 @@ def _run(tmp_path, name, page, body, bundle):
 # ───── C5 热力图三档 ─────
 @has_chrome
 def test_gate_heatmap_uses_three_tiers(tmp_path):
-    """用户要的是三档，不是连续渐变：12 个不同的值只许画出 3 种深浅。"""
+    """用户改口：要一整条连贯颜色，不要离散档位 —— 颜色数应接近非零格子数。"""
     got = _run(tmp_path, "heat", "dashboard", """
       const rs = Array.from(document.querySelectorAll('rect[data-hm]'));
-      const ops = Array.from(new Set(rs.map(r => Number(r.getAttribute('fill-opacity') || 0))
-        .filter(v => v > 0))).sort((a, b) => a - b);
-      const svg = document.querySelector('.heat svg');
+      const fills = rs.map(r => r.getAttribute('fill')).filter(f => f && f !== 'none');
       out.rects = rs.length;
-      out.tiers = ops.length;
-      out.ops = ops;
-      out.legend = svg ? svg.textContent : '';
+      out.colors = Array.from(new Set(fills)).length;
+      out.nonzero = fills.length;
+      const svg = document.querySelector('.heat svg');
+      out.grad = svg ? svg.querySelectorAll('linearGradient').length : 0;
     """, {"dashboard": {"ok": True, "data": _dash()}})
     assert got.get("rects", 0) >= 10, "热力图没画出来：%s" % got
-    assert got["tiers"] == 3, "深浅档数是 %s（%s），三档才应该是 3 种" % (got["tiers"], got["ops"])
-    for word in ("低", "中", "高"):
-        assert word in got.get("legend", ""), "图例没有「%s」这一档：%s" % (word, got.get("legend"))
+    assert got["colors"] >= 8, "颜色又退回离散档位了：%s" % got
+    assert got["colors"] >= got["nonzero"] - 1, "颜色没跟着用量连续变化：%s" % got
+    assert got.get("grad", 0) >= 1, "图例不是连续色带：%s" % got
 
 
 # ───── C7 远程禁按钮 ─────
@@ -114,11 +113,10 @@ def test_gate_remote_host_disables_server_buttons(tmp_path):
 # ───── C2 服务器默认额度可保存 ─────
 @has_chrome
 def test_gate_server_default_limit_is_saveable(tmp_path):
-    """额度卡原来只有只读的一行值，没有改的入口。"""
-    accounts = shell.FIXTURE["accounts_page"]
-    payload = dict(accounts)
-    payload["server_limit"] = dict(accounts["server_limit"], total_limit=999957)
-    got = _run(tmp_path, "sl", "accounts", """
+    """额度卡原来只有只读的一行值，没有改的入口；这一批整卡从账号管理搬到服务器控制。"""
+    srvd = _server(False)
+    srvd["server_limit"] = dict(shell.FIXTURE["accounts_page"]["server_limit"], total_limit=999957)
+    got = _run(tmp_path, "sl", "server", """
       const inp = document.getElementById('slVal');
       out.hasInput = !!inp;
       out.value = inp ? inp.value : '';
@@ -136,7 +134,7 @@ def test_gate_server_default_limit_is_saveable(tmp_path):
         await new Promise(r => setTimeout(r, 300));
       }
       out.calls = calls.filter(c => c[0] === 'set_server_limit').map(c => c.slice(0, 2));
-    """, {"accounts_page": {"ok": True, "data": payload}})
+    """, {"server_page": {"ok": True, "data": srvd}})
     assert got.get("hasInput"), "没有可编辑的默认额度输入框：%s" % got
     assert str(got.get("value")) == "999957", "输入框没带上当前值：%s" % got
     assert got.get("hasBtn"), "没有保存按钮：%s" % got

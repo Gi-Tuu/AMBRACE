@@ -110,7 +110,8 @@ void main() {
     await tester.pumpWidget(host(_memory(2)));
     await tester.pumpAndSettle();
     final chain = find.widgetWithText(ExpansionTile, '记忆链条');
-    await tester.ensureVisible(chain);
+    // 页面新增卡片后链条在 ListView 视口外（未构建），先滚到可见再点。
+    await tester.scrollUntilVisible(chain, 300, scrollable: find.byType(Scrollable).first);
     await tester.tap(chain);
     await tester.pumpAndSettle();
     expect(find.text('CURRENT_B_CHAIN'), findsOneWidget);
@@ -160,6 +161,10 @@ Map<String, dynamic> _memoryJson(int id, {String content = '测试正文'}) => {
 void _prime(_TestAdapter api, int id) {
   api.json('GET', '/api/v1/memories/$id', _memoryJson(id));
   api.json('GET', '/api/v1/memories/$id/chain', {'status': 'ok', 'chain': []});
+  api.json('GET', '/api/v1/memories/$id/why', {
+    'status': 'ok', 'memory_id': id, 'has_source': false,
+    'sources': [], 'receipt_count': 0, 'note': 'no_source_event',
+  });
   api.json('GET', '/api/v1/memories/$id/history',
       {'memory_id': id, 'truncated': false, 'corrections': []});
 }

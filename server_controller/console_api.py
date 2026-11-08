@@ -13,6 +13,7 @@ code 沿用旧壳的语义化状态码：0=网络不可达，401=登录态，403
 """
 import json
 import os
+import re
 import signal as _sig
 import subprocess
 import sys
@@ -180,6 +181,8 @@ def dashboard():
         "heatPeak": heat_peak(heat),
         "memSpark": _safe(lambda: sc._read_mem_daily_new(sc.KPI_SPARK_DAYS), []),
         "tokenSpark": _safe(lambda: sc._spark_from_heat(heat, sc.KPI_SPARK_DAYS), []),
+        # 记忆分布：圆环按「记忆本」分类画占比，角色下拉按它列名单（远程/无库返回空）
+        "memStats": _safe(sc._read_memory_stats, {"kinds": [], "roles": []}),
         "meta": {"target": st["target"], "at": dt.datetime.now().strftime("%H:%M:%S"),
                  "next": "下次刷新 20s", "version": "—"},
     }
@@ -302,9 +305,15 @@ def _set_target(host, port):
 
 @_envelope
 def server_page():
-    """服务器控制页一次给全：状态＋目标＋三行地址。20s 刷新走这一个入口。"""
+    """服务器控制页一次给全：状态＋目标＋三行地址＋服务器默认额度。20s 刷新走这一个入口。
+
+    默认额度从账号管理搬到这里：它是「整台服务器统一调配」的东西，属于管理类，
+    跟某个账号的额度覆盖不是一回事。
+    """
     st = _server_state()
+    limit = _safe(lambda: sc._admin_request("GET", "/llm-limit"), {}) or {}
     return {"state": st, "target": _target_state(), "rows": _address_rows(_address_view()),
+            "server_limit": _server_limit_card(limit if isinstance(limit, dict) else {}),
             "actions": ["start", "stop", "restart"]}
 
 
@@ -493,13 +502,92 @@ def _audit_limit_num(limit):
 
 
 # ═════════════════ 运行日志页（口径抄旧壳 2495-2550 与 5105-5125）═════════════════
+# 结构化解析：app 有「日期 时间|级别|模块|消息」，stderr 只有「时间|级别|消息」。
+# 两份都按来源分别取末尾 40 行，不再混成一段文本。
+_LOG_APP_RE = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<time>\d{2}:\d{2}:\d{2})\s*\|\s*"
+    r"(?P<level>[A-Za-z]+)\s*\|\s*(?P<module>[^|]*?)\s*\|\s*(?P<msg>.*)$")
+_LOG_ERR_RE = re.compile(
+    r"^(?P<time>\d{2}:\d{2}:\d{2})\s*\|\s*(?P<level>[A-Za-z]+)\s*\|\s*(?P<msg>.*)$")
+
+LOG_LEVEL_CN = {"ERROR": "出错", "CRITICAL": "严重", "FATAL": "严重", "WARNING": "提醒",
+                "WARN": "提醒", "INFO": "日常", "DEBUG": "调试", "NOTSET": "未分级"}
+LOG_LEVEL_ORDER = ("ERROR", "CRITICAL", "FATAL", "WARNING", "WARN", "INFO", "DEBUG", "NOTSET")
+LOG_SOURCE_CN = {"app": "应用日志", "stderr": "服务器错误输出"}
+
+# 易读版的「人话旁注」：只认整句已知模式，命中就用一句完整中文复述；
+# 句子里的数字/标识全部从原文捕获，绝不补写原文没有的事实。命中不了就留空，前端照显原文。
+_EASY_PATTERNS = (
+    (r"Memory review char=(\d+) skipped: nostalgia daily limit", "角色 {0} 的回忆整理跳过：今日额度已用完"),
+    (r"Proactive msg char=(\d+) skipped: inactive char", "角色 {0} 的主动消息跳过：太久没互动"),
+    (r"Proactive msg char=(\d+) skipped: user rhythm off-peak", "角色 {0} 的主动消息跳过：当前不是活跃时段"),
+    (r"Proactive msg char=(\d+) skipped: (.+)$", "角色 {0} 的主动消息跳过：{1}"),
+    (r"Memory review char=(\d+) skipped: (.+)$", "角色 {0} 的回忆整理跳过：{1}"),
+    (r"emotion_mod drive=(\w+)", "情绪系数读数：{0}"),
+    (r"retry (\d+)/(\d+) after timeout", "超时后重试（第 {0} 次，共 {1} 次）"),
+    (r"Task exception was never retrieved", "有个后台任务出错，异常没有被处理"),
+    (r"Periodic task (start|done) \(key=([^,)]+)", "定时任务「{1}」{0}"),
+)
+
+
+def _easy_hint(level, module, msg):
+    """中文复述；未命中任何已知句式时返回空串，由前端显示消息原文。"""
+    for pat, cn in _EASY_PATTERNS:
+        m = re.search(pat, msg, re.I)
+        if m:
+            try:
+                text = cn.format(*[g or "" for g in m.groups()])
+            except (IndexError, ValueError):
+                continue
+            return ("出错：" if level in ("ERROR", "CRITICAL", "FATAL")
+                    else "需要留意：" if level in ("WARNING", "WARN") else "") + text
+    return ""
+
+
+def _parse_log_rows(parts):
+    rows = []
+    for source in ("app", "stderr"):
+        for raw in (parts.get(source) or "").splitlines():
+            m = _LOG_APP_RE.match(raw) if source == "app" else _LOG_ERR_RE.match(raw)
+            if m:
+                d = m.groupdict()
+                level = (d.get("level") or "NOTSET").upper()
+                module = (d.get("module") or "").strip()
+                msg = (d.get("msg") or "").strip()
+                rows.append({"source": source, "level": level, "time": d.get("time") or "",
+                             "module": module, "msg": msg, "raw": raw, "cont": False,
+                             "easy": _easy_hint(level, module, msg)})
+            else:
+                # Traceback / 缩进的 File 行 / 半行截断：归到上一条，绝不假装是一条新日志
+                rows.append({"source": source, "level": "TRACE", "time": "", "module": "",
+                             "msg": raw, "raw": raw, "cont": True, "easy": ""})
+    return rows
+
+
 @_envelope
 def log_page():
     text = _safe(sc._tail_log, "")
+    parts = _safe(sc._tail_log_parts, {"app": "", "stderr": ""})
+    if not isinstance(parts, dict):
+        parts = {"app": "", "stderr": ""}
+    rows = _parse_log_rows(parts)
+    real = [r for r in rows if not r["cont"]]
+    lv = {}
+    for r in real:
+        lv[r["level"]] = lv.get(r["level"], 0) + 1
+    levels = [{"key": k, "label": LOG_LEVEL_CN.get(k, k), "count": lv[k]}
+              for k in LOG_LEVEL_ORDER if k in lv]
+    for k in sorted(set(lv) - set(LOG_LEVEL_ORDER)):
+        levels.append({"key": k, "label": k, "count": lv[k]})
+    sources = [{"key": k, "label": LOG_SOURCE_CN[k],
+                "count": sum(1 for r in real if r["source"] == k)} for k in ("app", "stderr")]
+    bits = ["%d 条%s" % (x["count"], x["label"]) for x in levels[:4]]
+    summary = ("最近 %d 条记录：%s" % (len(real), "、".join(bits))) if real else "还没有日志记录"
     return {"text": text, "empty": not str(text).strip(),
             "hint": "还没有日志写入（app.log / server_stderr.log）",
             "paths": {"app": getattr(sc, "APP_LOG", ""),
-                      "stderr": _safe(lambda: sc._log_read_path(sc.STDERR_LOG), "")}}
+                      "stderr": _safe(lambda: sc._log_read_path(sc.STDERR_LOG), "")},
+            "rows": rows, "sources": sources, "levels": levels, "summary": summary}
 
 
 @_envelope
@@ -790,9 +878,8 @@ def remove_device_plugin(plugin):
 # ═════════════════ W3c：账号管理（判据一律复用旧壳的模块级函数）═════════════════
 # 旧壳明写「判据不许有两套」（SC:3348-3350），所以倒计时、额度文案、体量表、
 # 时间换算这些全部直接调 sc 的同名函数，这里只做"把回包摆成人话"的组装。
-ACCOUNT_SUB = ("跨家庭账号：禁用/启用、授予/取消控制台管理员、设置 llm_mode、"
-               "删除进回收站与到期清除（护栏与判据一律以后端为准）")
-SERVER_LIMIT_TITLE = "服务器默认额度（账号无覆盖时回落到这里；0=未设置）"
+ACCOUNT_SUB = "启停、授权与额度；判定一律以后端为准"
+SERVER_LIMIT_TITLE = "服务器默认额度（0=未设置）"
 SERVER_LIMIT_HINT = "负数/非整数由后端拒绝（400）"
 DELETE_SUB = ("这一步只把账号移进回收站（默认 %s 天内可恢复）；"
               "到期后由后台清除器物理删除。")

@@ -28,7 +28,9 @@ from app.db.database import async_session_factory
 from app.models.mcp import MCPServer
 
 PREFIX = "mcp_p34_"
-TEST_UID = 9301
+# 共享沙箱 ID 号段（2026-11-08 测试债整改）：985x 归本文件独占
+# （原 9301 与 ws/e2e、后续 9801 与 life_settle_dt_m1 均撞车）。
+TEST_UID = 9851
 
 LOOPBACK_URLS = ("http://127.0.0.1:8899/sse", "http://localhost:8899/sse", "http://[::1]:8899/sse")
 PRIVATE_URLS = (

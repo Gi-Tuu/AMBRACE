@@ -17,8 +17,10 @@ from app.events.store import append_domain_event
 from app.events.types import EventType as _ET
 from app.schemas.chat import SendMessageRequest, ChatMessageResponse, ChatHistoryResponse, StreamMessageRequest
 from app.application.chat_service import (
-    create_session, send_and_receive, send_and_receive_chunked, send_and_receive_stream, continue_chat,
-    get_owned_session, get_unread_counts as service_unread_counts,
+    send_and_receive, send_and_receive_chunked, send_and_receive_stream, continue_chat,
+)
+from app.application.chat_store import (
+    create_session, get_owned_session, get_unread_counts as service_unread_counts,
     mark_session_read as service_mark_read,
 )
 from app.auth.deps import get_current_user_id

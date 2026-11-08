@@ -12,9 +12,11 @@
 
 项目未装 pytest-asyncio，统一 asyncio.run；临时库一律 tmp_path，不连生产库。
 """
+import ast
 import asyncio
 import inspect
 import os
+import pathlib
 import string
 
 import pytest
@@ -274,8 +276,24 @@ BASE_MSGS = [
 ]
 
 
+def test_hint_constant_lives_in_domain_not_agent():
+    """批 2 收口：提示常量下沉本模块，domain 不得反向 import agent。"""
+    path = pathlib.Path(ms.__file__)
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
+    modules = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            modules.append(node.module or "")
+    assert not [m for m in modules if m.startswith("app.agent")], modules
+    assigned = {t.id for node in tree.body if isinstance(node, ast.Assign)
+                for t in node.targets if isinstance(t, ast.Name)}
+    assert "NOTIFY_SHAPE_HINT" in assigned
+
+
 def test_hint_constant_is_centralized_and_shaped_like_wechat_hint():
-    hint = nodes.NOTIFY_SHAPE_HINT
+    hint = ms.NOTIFY_SHAPE_HINT
     assert "{limit}" in hint                                # 上限由载体口径下发，不写死两处
     assert "通知" in hint and "一句" in hint
     assert "元信息" in hint                                  # 三条纪律之一：不把元信息漏给对方
@@ -301,7 +319,7 @@ def test_compose_flag_on_notify_surface_adds_exactly_one_line_after_last_system(
     assert len(out) == len(BASE_MSGS) + 1
     assert out[:2] == BASE_MSGS[:2]
     assert out[2]["role"] == "system"                        # 插在最后一条 system 之后
-    assert nodes.NOTIFY_SHAPE_HINT.format(limit=ms.NOTIFY_PREVIEW_LIMIT) == out[2]["content"]
+    assert ms.NOTIFY_SHAPE_HINT.format(limit=ms.NOTIFY_PREVIEW_LIMIT) == out[2]["content"]
     assert out[3] == BASE_MSGS[2]                            # user 消息仍在（红线：user 不挪位）
     assert str(ms.NOTIFY_PREVIEW_LIMIT) in out[2]["content"]
 
@@ -312,7 +330,7 @@ def test_compose_does_not_mutate_input_list(flags):
     original = [dict(m) for m in BASE_MSGS]
     ms.compose_notify_shape_messages(BASE_MSGS, notify_surface=True)
     assert BASE_MSGS == original
-    assert all(nodes.NOTIFY_SHAPE_HINT not in m["content"] for m in BASE_MSGS)
+    assert all(ms.NOTIFY_SHAPE_HINT not in m["content"] for m in BASE_MSGS)
 
 
 def test_compose_with_no_system_message_inserts_at_head(flags):

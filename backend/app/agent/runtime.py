@@ -33,7 +33,7 @@ TOOL_TIMEOUT_SEC = 30.0  # 单工具执行超时（与 loop.TOOL_TIMEOUT_SEC 一
 async def _resolve_session_id(user_id: int | None, character_id: int) -> int | None:
     """解析该角色真正活跃的会话（复用 chat_service 现有实现；无会话返回 None 不抛）"""
     try:
-        from app.application.chat_service import get_latest_session_id
+        from app.application.chat_store import get_latest_session_id
         return await get_latest_session_id(user_id, character_id)
     except Exception as e:
         _logger.warning("Runtime session resolve failed char=%d: %s", character_id, e)

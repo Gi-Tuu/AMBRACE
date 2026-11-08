@@ -1,6 +1,5 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
-
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -268,12 +267,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String agentMindToolSummary(
-    Object blocked,
-    Object fail,
-    Object ok,
-    Object rate,
-    Object skip,
-  ) {
+      Object blocked, Object fail, Object ok, Object rate, Object skip) {
     return 'Success rate $rate% (done $ok / failed $fail · blocked $blocked · skipped $skip)';
   }
 
@@ -8235,10 +8229,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String serverIdentityUnverifiedWarn(
-    Object verified,
-    Object mismatch,
-    Object unsigned,
-  ) {
+      Object verified, Object mismatch, Object unsigned) {
     return 'Partial protection: image/audio links, direct downloads, SSE and WebSocket frames are not signature-checked ($verified/$mismatch/$unsigned)';
   }
 
@@ -8488,6 +8479,44 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get memoryDerivationsStatusUnknown => 'Unknown status';
+
+  @override
+  String get memoryWhyTitle => 'Why it was remembered';
+
+  @override
+  String get memoryWhyLoading => 'Loading source chain…';
+
+  @override
+  String get memoryWhyLoadFailed => 'Failed to load the source chain';
+
+  @override
+  String get memoryWhyNoSource =>
+      'No source record for this memory (written earlier or before source protection).';
+
+  @override
+  String memoryWhySummary(Object receipts, Object sources) {
+    return '$sources source event(s) · $receipts write receipt(s)';
+  }
+
+  @override
+  String get memoryWhyKindChat => 'Chat message';
+
+  @override
+  String get memoryWhyKindPerception => 'Phone perception';
+
+  @override
+  String memoryWhySession(Object id) {
+    return 'Session $id';
+  }
+
+  @override
+  String get memoryWhyTimeUnknown => 'Time unknown';
+
+  @override
+  String get memoryWhyExcerptLabel => 'Excerpt';
+
+  @override
+  String get memoryWhyNoExcerpt => 'No excerpt available';
 
   @override
   String get gardenSetupTitle => 'Garden read-only access';

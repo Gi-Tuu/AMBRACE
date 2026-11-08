@@ -247,6 +247,130 @@ def set_window_icon(hwnd, ico_path):
         return False
 
 
+# ── 边缘缩放：frameless 把 FormBorderStyle 设成 None 时，WS_THICKFRAME 也一起被摘掉，
+#    指针落在窗口边缘就没有可拖的命中区，窗口只能最大化/还原，不能自由改大小。
+#    这里把样式位补回去，再发一次 WM_FRAMECHANGED 让系统按新样式重算非客户区。
+#    最小尺寸仍由 WinForms 的 MinimumSize（WM_GETMINMAXINFO）管，拖不到 1150×700 以下。
+GWL_STYLE = -16
+WS_THICKFRAME = 0x00040000
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020
+
+
+def _sig(fn, argtypes, restype):
+    """给 API 声明签名（64 位句柄必须显式声明，否则会被截成 int）。
+    测试替身是没有 argtypes 的普通函数——那种情况静默跳过，不影响逻辑。"""
+    try:
+        fn.argtypes = argtypes
+        fn.restype = restype
+    except (AttributeError, TypeError):
+        pass
+    return fn
+
+
+def _user32():
+    u = ctypes.windll.user32
+    for name, args, ret in (
+            ("GetWindowLongW", [ctypes.c_void_p, ctypes.c_int], ctypes.c_long),
+            ("SetWindowLongW", [ctypes.c_void_p, ctypes.c_int, ctypes.c_long], ctypes.c_long),
+            ("SetWindowPos", [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
+                              ctypes.c_int, ctypes.c_int, ctypes.c_uint], ctypes.c_bool),
+            ("GetWindowRect", [ctypes.c_void_p, ctypes.POINTER(ctypes.wintypes.RECT)],
+             ctypes.c_bool)):
+        fn = getattr(u, name, None)      # 替身只实现自己关心的那几个，不许因为缺一个就整体炸
+        if fn is not None:
+            _sig(fn, args, ret)
+    return u
+
+
+def window_style(hwnd):
+    """读窗口样式位；拿不到（无句柄/无 API）返回 0。"""
+    if not hwnd:
+        return 0
+    try:
+        return int(_user32().GetWindowLongW(ctypes.c_void_p(int(hwnd)), GWL_STYLE))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+# 补回 WS_THICKFRAME 之后，Win11 会给窗口画一圈 1px 的浅色边框＋圆角（实测：客户区比窗口
+# 小 10px/边）。这圈线跟自绘页头不搭，用 DWM 的属性把它设成"不画"，缩放能力一点不减
+# （命中测试看的是样式位，不是这圈颜色）。Win10 没有这个属性，失败就当没发生。
+DWMWA_BORDER_COLOR = 34
+DWMWA_COLOR_NONE = 0xFFFFFFFE
+
+
+def hide_resize_border(hwnd):
+    """让 DWM 不要给窗口描边（只影响观感）。返回是否设置成功。"""
+    if not hwnd:
+        return False
+    try:
+        dwm = ctypes.windll.dwmapi
+        _sig(dwm.DwmSetWindowAttribute,
+             [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint], ctypes.c_long)
+        val = ctypes.c_uint(DWMWA_COLOR_NONE)
+        rc = dwm.DwmSetWindowAttribute(ctypes.c_void_p(int(hwnd)), DWMWA_BORDER_COLOR,
+                                       ctypes.byref(val), ctypes.sizeof(val))
+        return int(rc) == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def enable_resize(hwnd):
+    """把 WS_THICKFRAME 补回去，让指针在边缘能拖动改大小。
+
+    返回"补完之后样式里确实有这一位"——不是"调用成功"。真窗口上如果 WinForms 又把它
+    盖回去，这里会返回 False，界面上就别再宣称能缩放。
+    """
+    if not hwnd:
+        return False
+    try:
+        u = _user32()
+        style = int(u.GetWindowLongW(ctypes.c_void_p(int(hwnd)), GWL_STYLE))
+        if not style & WS_THICKFRAME:
+            u.SetWindowLongW(ctypes.c_void_p(int(hwnd)), GWL_STYLE, style | WS_THICKFRAME)
+            u.SetWindowPos(ctypes.c_void_p(int(hwnd)), None, 0, 0, 0, 0,
+                           SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+                           | SWP_FRAMECHANGED)
+    except Exception:  # noqa: BLE001
+        return False
+    ok = bool(window_style(hwnd) & WS_THICKFRAME)
+    if ok:
+        hide_resize_border(hwnd)      # 观感：别给自绘页头外面套一圈系统描边
+    return ok
+
+
+def drag_window(dx, dy):
+    """按增量挪窗口（dx/dy 是逻辑像素，来自页面里指针的 screen 差）。
+
+    为什么不用 pywebview 的 `window.move()`：
+    ① 它在 WinForms 上把 `None` 传给 `SetWindowPos` 的 int 参数，某些组合直接抛
+       （实测 A 组就抛 ArgumentError，而窗口恰好靠别的路子还能动，很容易误判）；
+    ② 它挪的是缓存坐标，连续拖动会漂。
+    这里每次读真实窗口矩形再挪，天然不漂；偏移自己按 DPI 换算成物理像素。
+    """
+    if not dx and not dy:
+        return False
+    hwnd = find_window()
+    if not hwnd:
+        return False
+    try:
+        u = _user32()
+        r = ctypes.wintypes.RECT()
+        if not u.GetWindowRect(ctypes.c_void_p(int(hwnd)), ctypes.byref(r)):
+            return False
+        s = dpi_scale()
+        u.SetWindowPos(ctypes.c_void_p(int(hwnd)), None,
+                       int(r.left + round(dx * s)), int(r.top + round(dy * s)), 0, 0,
+                       SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def handoff_or_stay(state=None, pid=None):
     """第二个实例：把已有窗口叫到前面并退场；叫不动（状态是陈的）就自己当主实例。"""
     state = state if state is not None else load_state()

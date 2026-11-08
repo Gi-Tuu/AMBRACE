@@ -59,12 +59,27 @@ class Api:
         name = str(name)
         if name == "export_log_dialog":
             return self.export_log_dialog()
+        if name == "drag_by":
+            return self.drag_by(*args)
         if name in WINDOW_ACTIONS:
             return self.window_action(name)
         return api.call(name, *args)
 
     def expose(self):
-        return list(api.EXPOSED) + ["export_log_dialog"] + list(WINDOW_ACTIONS)
+        return list(api.EXPOSED) + ["export_log_dialog", "drag_by"] + list(WINDOW_ACTIONS)
+
+    def drag_by(self, dx=0, dy=0):
+        """拖动窗口：页头拖动条按下后由 JS 按增量喂进来。
+
+        补 WS_THICKFRAME 之前，拖动是 WebView2 的 app-region 原生行为；
+        补了之后那条路断了（实测拖不动），所以改成自己算。
+        """
+        try:
+            import console_desktop as cdx
+            moved = cdx.drag_window(float(dx or 0), float(dy or 0))
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "code": -1, "error": str(e), "path": ""}
+        return {"ok": bool(moved), "data": {"dx": dx, "dy": dy}, "path": ""}
 
     def window_action(self, name):
         """窗口动作一律回信封，绝不把异常抛到 JS 层。"""
@@ -116,12 +131,12 @@ FIXTURE = {
              "status_tip": "标记删除 09-24 10:00", "llm_limit": "未设置", "llm_mode": "—",
              "raw": {}}],
                       "status": "共 2 个账号（GET /api/v1/admin/server/accounts）",
-                      "server_limit": {"title": "服务器默认额度（账号无覆盖时回落到这里；0=未设置）",
+                      "server_limit": {"title": "服务器默认额度（0=未设置）",
                                        "value": "999,957（全局）",
+                                       "total_limit": 999957,
                                        "hint": "负数/非整数由后端拒绝（400）"},
                       "empty_kind": "", "empty_text": "",
-                      "subtitle": "跨家庭账号：禁用/启用、授予/取消控制台管理员、设置 llm_mode、"
-                                  "删除进回收站与到期清除（护栏与判据一律以后端为准）"},
+                      "subtitle": "启停、授权与额度；判定一律以后端为准"},
     "models_page": {"logged_in": True, "rows": [
         {"key": "llm", "title": "对话主模型（llm）", "enabled": True, "provider": "deepseek",
          "daily_limit": 200, "cap": "provider deepseek · 日限额 200",
@@ -289,6 +304,10 @@ def run(theme, check=False):
                                 width=geo["width"], height=geo["height"],
                                 min_size=(cd.MIN_W, cd.MIN_H), js_api=Api(),
                                 frameless=True,   # ② 系统标题栏交给页头自绘，easy_drag 只认细拖动条
+                                # 拖动改由我们自己做（页头拖动条 → drag_by → SetWindowPos）：
+                                # pywebview 的 easy_drag 走 window.move()，补了 WS_THICKFRAME 之后
+                                # WebView2 的 app-region 原生拖动失效，而 move() 自己还有个签名坑。
+                                easy_drag=False,
                                 # ④ WebView2 的默认底色是白的：页面画出第一帧之前会先闪一下白，
                                 # 开屏动画再好也盖不住。按当前主题给它同色底，闪的就是墨纸/纸色。
                                 background_color="#f4f0e6" if theme == "light" else "#131110")
@@ -298,6 +317,8 @@ def run(theme, check=False):
     def on_shown():
         hwnd = cd.find_window()
         cd.set_window_icon(hwnd, os.path.join(HERE, "ambrace.ico"))
+        # frameless 把 WS_THICKFRAME 一起摘了，边缘就拖不动；这里补回去（见 enable_resize）
+        cd.enable_resize(hwnd)
         cd.save_state(hwnd=hwnd, pid=os.getpid())
 
     def on_moved(x, y):          # moved 事件直接给逻辑坐标，不必跨线程读窗口

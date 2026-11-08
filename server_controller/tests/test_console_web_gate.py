@@ -96,7 +96,11 @@ def test_dashboard_renders_cards_and_heatmap(tmp_path, monkeypatch):
     d = dom(tmp_path, "dashboard", {"dashboard": api.call("dashboard")})
     assert "累计 Token" in d and "记忆数" in d
     assert "13,307" in d and "38,758,135" in d, "数字得从数据面一路走到屏幕上"
-    assert "qwen3.8-max" in d
+    # 服务器状态与服务器健康已合成一张：健康答"是否健康"、状态答"是否运行"
+    assert "当前健康（是否健康）" in d and "当前状态（是否运行）" in d
+    assert "运行中" in d and "正常" in d
+    # 图像理解那张卡按用户要求删掉了
+    assert "qwen3.8-max" not in d, "图像理解卡还在"
     assert "Token 活动" in d
     assert d.count("<rect") >= len(heat), "热力图格子数不对：渲染了 %d 个" % d.count("<rect")
     assert 'fill="none" stroke="var(--rule)"' in d, "零值格必须是空心描边"
@@ -188,17 +192,23 @@ def test_device_actions_dom_three_switch_states_and_lists(tmp_path):
 
 
 def test_overview_dom_appends_extra_keys_and_keeps_zero(tmp_path):
-    # 概览并进仪表盘顶部那排读数条（仪表盘没有示意数据，取真读数）
+    # 读数条这一批拆成两处：仪表盘留「后端版本」＋后端多给的键，
+    # 「账号总数 / 已禁用账号 / 控制台管理员」搬到账号管理页。
     import console_api as api
     bundle = ok_env("overview_page")
     bundle["dashboard"] = api.call("dashboard")
     d = dom(tmp_path, "dashboard", bundle)
-    assert "账号总数" in d and "12" in d
     assert "后端版本" in d and "3.5.6" in d
     assert "alpha_extra" in d and "zebra_last" in d, "后端多给的键也要列出来"
     assert ">0</b>" in d, "0 是数字，不许显示成 —"
     assert "—</b>" in d, "缺字段才显 —"
-    assert "readout" in d, "读数条没渲染出来"
+    assert "kpip" in d, "读数区没渲染出来（后端版本现在是左列里的一行）"
+    assert "账号总数" not in d, "账号三项已经搬到账号管理页"
+    a = dom(tmp_path, "accounts", {"overview_page": bundle["overview_page"],
+                                   "accounts_page": {"ok": True,
+                                                     "data": shell.FIXTURE["accounts_page"]}})
+    assert "账号总数" in a and "已禁用账号" in a and "控制台管理员" in a, a[:400]
+    assert "readout" in a, "账号页的三张读数没渲染"
 
 
 def test_confirm_overlay_has_input_and_a_dead_button(tmp_path):
@@ -244,12 +254,11 @@ def test_accounts_table_renders_real_columns_and_kebab(tmp_path):
     for col in ["ID", "用户名", "昵称", "主账号", "控制台", "状态", "LLM 额度", "LLM 模式", "操作"]:
         assert col in d, col
     assert "共 2 个账号（GET /api/v1/admin/server/accounts）" in d
-    assert "服务器默认额度（账号无覆盖时回落到这里；0=未设置）" in d
-    assert "999,957（全局）" in d
     assert "回收站 · 5 天后自动清除" in d
     assert 'class="bin"' in d, "回收站里的行要压暗"
     assert d.count("data-menu=") == 2, "每行一个 ⋯ 菜单"
-    assert "护栏与判据一律以后端为准" in d, "副标题要把判据归属说在页面上"
+    assert "启停、授权与额度" in d, "副标题要一句话说清这页能干什么"
+    assert "服务器默认额度" not in d, "默认额度卡已搬到服务器控制页"
 
 
 def test_401_from_the_live_layer_reaches_the_gate(tmp_path, monkeypatch):

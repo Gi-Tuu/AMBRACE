@@ -117,6 +117,7 @@ def test_组合场景_复刻现场_解析():
 def test_组合场景_生图触发恰好一次(monkeypatch):
     """提取 → 收尾触发：_run_post_processing 对同一轮只调用 _gen_image_flow 一次。"""
     import app.application.chat_service as cs
+    from app.application import chat_tooling
 
     calls: list[tuple] = []
     spawned: list[str] = []
@@ -138,7 +139,8 @@ def test_组合场景_生图触发恰好一次(monkeypatch):
             pass
         return None
 
-    monkeypatch.setattr(cs, "_gen_image_flow", _fake_gen_image_flow)
+    # 批 3 S2b：_gen_image_flow 已在 chat_tooling 顶层绑定（不再经 chat_service 的 _cs 回指）
+    monkeypatch.setattr(chat_tooling, "_gen_image_flow", _fake_gen_image_flow)
     monkeypatch.setattr(cs, "spawn_background", _fake_spawn)
 
     clean, prompt, img_text = actions.extract_gen_image(_LIVE_RAW)

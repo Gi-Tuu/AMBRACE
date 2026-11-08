@@ -1,6 +1,7 @@
 import '../../models/memory.dart';
 import '../../models/memory_history.dart';
 import '../../models/memory_derivations.dart';
+import '../../models/memory_why.dart';
 import '../api_client.dart';
 
 /// MemoriesApi：领域 API 方法（extension 挂到 ApiClient）
@@ -106,6 +107,23 @@ extension MemoriesApi on ApiClient {
       throw const FormatException('memory derivations: memory_id mismatch');
     }
     return data;
+  }
+
+  /// RC2 G5：记忆「为什么记住」来源链（只读 GET）。
+  ///
+  /// 形状错误 / memory_id 与请求不一致一律抛 [FormatException]，由详情页走失败态；
+  /// `has_source=false` 是服务端明确回答（老记忆/闸前写入），不是错误。
+  Future<MemoryWhy> getMemoryWhy(int id) async {
+    final r = await dio.get('/api/v1/memories/$id/why');
+    final raw = r.data;
+    if (raw is! Map) {
+      throw const FormatException('memory why: payload is not an object');
+    }
+    final why = MemoryWhy.fromJson(Map<String, dynamic>.from(raw));
+    if (why.memoryId != id) {
+      throw const FormatException('memory why: memory_id mismatch');
+    }
+    return why;
   }
 
   Future<void> deleteMemoryCascade(int id) async {

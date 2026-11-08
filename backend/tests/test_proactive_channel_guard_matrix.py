@@ -314,7 +314,7 @@ def test_pet_remind_prompt_carries_anchor_and_discipline(monkeypatch):
     monkeypatch.setattr(pet_care, "_daily_count", _zero)
     monkeypatch.setattr(pet_care, "chat_completion", cap)
     monkeypatch.setattr(pet_care, "load_character_reasoning_level", _zero)
-    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _sid)
+    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _sid)
     monkeypatch.setattr("app.agent.user_profile.build_role_prompt_block", _empty_str)
     monkeypatch.setattr("app.agent.persona.build_active_channel_persona", _empty_str)
     monkeypatch.setattr("app.application.pet_service.species_fact", lambda _s: "猫科")
@@ -471,7 +471,7 @@ def test_life_share_prompt_guard_missing_xfail(monkeypatch):
     cap = _Capture("我刚画完一张水彩，颜色有点超出预期。")
     monkeypatch.setattr(life_share, "async_session_factory", _fake_db())
     monkeypatch.setattr("app.agent.llm_client.chat_completion", cap)
-    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _false)
+    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _false)
     _patch_anchor(monkeypatch)
 
     text = asyncio.run(life_share._generate_share(11, 3, "create", "画了一幅水彩"))
@@ -596,7 +596,7 @@ def test_state_trigger_prompt_guard_missing_xfail(monkeypatch):
 
     monkeypatch.setattr(state_triggers, "async_session_factory", _boom)
     monkeypatch.setattr(state_triggers, "_post_trigger_notes", _noop_async)
-    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _sid)
+    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _sid)
     monkeypatch.setattr("app.scheduling.triggers.get_last_messages", _last)
     monkeypatch.setattr("app.agent.persona.build_active_channel_persona", _persona)
     monkeypatch.setattr("app.agent.llm_client.chat_completion", cap)

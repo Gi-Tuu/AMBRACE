@@ -127,7 +127,7 @@ def test_gate_window_actions_call_the_real_window_methods(monkeypatch):
 def test_gate_dragstrip_and_buttons_render(tmp_path):
     got = _run(tmp_path, "parts", """
       const bar = document.querySelector('.hero .dragbar');
-      out.drag = !!bar && bar.classList.contains('pywebview-drag-region');
+      out.drag = !!bar && getComputedStyle(bar).cursor === 'move';
       out.dragHeight = bar ? Math.round(bar.getBoundingClientRect().height) : 0;
       out.btns = Array.from(document.querySelectorAll('.hero .winbtns button')).map(b => ({
         act: b.dataset.act, label: b.getAttribute('aria-label') || '',
@@ -135,8 +135,8 @@ def test_gate_dragstrip_and_buttons_render(tmp_path):
         h: Math.round(b.getBoundingClientRect().height) }));
       out.insideDrag = !!document.querySelector('.dragbar button');
     """)
-    assert got.get("drag") is True, "细拖动条没带 pywebview 拖动区标记 %s" % got
-    assert 0 < got.get("dragHeight", 99) <= 10, "拖动条不是「细」条 %s" % got
+    assert got.get("drag") is True, "细拖动条没了或者指针不是 move %s" % got
+    assert 0 < got.get("dragHeight", 99) <= 12, "拖动条不是「细」条 %s" % got
     assert all(b["w"] >= 40 and b["h"] >= 24 for b in got.get("btns", [])), \
         "窗口按钮还是太小（返工要求放大） %s" % got.get("btns")
     assert got.get("insideDrag") is False, "按钮在拖动条里面会抢点击 %s" % got
@@ -167,7 +167,12 @@ def test_gate_button_click_dispatches_the_window_action(tmp_path):
 
 def test_gate_styles_and_dispatch_exist_on_paper():
     assert ".hero .dragbar" in CSS and ".hero .winbtns" in CSS, "自绘窗口控件没样式"
-    assert 'class="dragbar pywebview-drag-region"' in HTML, "拖动条没接 pywebview"
+    # 拖动改由自己做：补了 WS_THICKFRAME 之后 WebView2 的原生 app-region 拖动失效，
+    # 所以拖动条不再挂 pywebview 的标记，而是接到壳层的 drag_by
+    assert 'class="dragbar"' in HTML, "拖动条不在"
+    assert "pywebview-drag-region" not in HTML, "还在靠 pywebview 的原生拖动（补边框后失效）"
+    assert "bindDragBar" in HTML and '"drag_by"' in HTML, "拖动没接到壳层"
+    assert "def drag_by" in APP, "壳层没有 drag_by"
     for act in ('"win-min"', '"win-max"', '"win-close"'):
         assert act in HTML, "按钮 %s 没渲染" % act
     assert "win-min" in HTML and "win_minimize" in APP, "act() 没把按钮接到窗口动作"

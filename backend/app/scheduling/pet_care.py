@@ -145,7 +145,7 @@ async def collect_pet_events() -> list[dict]:
 async def run_pet_remind(char_id: int, user_id: int, pet_id: int) -> bool:
     """执行一次宠物提醒：限额/免打扰 → LLM 生成 → 发送 → 更新提醒时间。"""
     from app.scheduling.scheduler import send_to_session
-    from app.application.chat_service import get_latest_session_id
+    from app.application.chat_store import get_latest_session_id
 
     now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
     async with async_session_factory() as db:
@@ -381,7 +381,7 @@ async def run_ai_adopt(char_id: int, user_id: int) -> bool:
     """AI 自主领养：起名 → 创建 AI 宠物（owner_type='ai'）→ 记忆/活动 → 1 条主动消息告知"""
     import random
     from app.scheduling.scheduler import send_to_session
-    from app.application.chat_service import get_latest_session_id
+    from app.application.chat_store import get_latest_session_id
     from app.application import pet_service
 
     async with async_session_factory() as db:
@@ -500,7 +500,7 @@ async def _gen_care_message(char: AICharacter, pet) -> tuple[str, str]:
 async def run_ai_care(char_id: int, user_id: int, pet_id: int) -> bool:
     """AI 照顾自己的宠物：按低值选动作互动（属性+活动+记忆）→ 照顾消息独立限额每日 <=1"""
     from app.scheduling.scheduler import send_to_session
-    from app.application.chat_service import get_latest_session_id
+    from app.application.chat_store import get_latest_session_id
     from app.application import pet_service
 
     async with async_session_factory() as db:

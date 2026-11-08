@@ -18,12 +18,14 @@
     <div class="clock"><div class="cd"><b id="dDay">—</b></div>
       <div class="ct"><span id="dDate">—</span><span id="heroTime">—</span></div></div>
     <div class="nav" id="nav"></div>
-    <div class="foot"><span id="sideFoot">—</span>
-      <button class="btn" data-act="settings" title="守护检测间隔 / 界面刷新间隔">设置</button></div>
+    <div class="foot" aria-hidden="true"></div>
+    <!-- 设置：缩进左下角只露上面一弧、边缘发光背黑的星球；指上去微微放大 -->
+    <button class="set-orb" data-act="settings" aria-label="设置"
+      title="设置：守护检测间隔 / 界面刷新间隔"><span class="pl-shade"></span></button>
   </div>
   <div class="main">
     <div class="hero">
-      <div class="dragbar pywebview-drag-region" aria-hidden="true"></div>
+      <div class="dragbar" aria-hidden="true"></div>
       <div class="winbtns">
         <button type="button" class="wb" data-act="win-min" aria-label="最小化" title="最小化">–</button>
         <button type="button" class="wb" data-act="win-max" aria-label="最大化或还原" title="最大化或还原">□</button>
@@ -34,12 +36,12 @@
       <div class="neb" aria-hidden="true">
         <canvas class="neb-canvas" id="nebCanvas"></canvas>
         <span class="cloud c1"></span><span class="cloud c2"></span>
-        <span class="shoot" style="--sw:78px;--sd:19s;--sl:-2s;--sy:18%"></span>
-        <span class="shoot" style="--sw:44px;--sd:27s;--sl:-9s;--sy:62%"></span>
-        <span class="shoot" style="--sw:96px;--sd:14s;--sl:-16s;--sy:34%"></span>
-        <span class="shoot" style="--sw:36px;--sd:31s;--sl:-5s;--sy:78%"></span>
-        <span class="shoot" style="--sw:62px;--sd:23s;--sl:-21s;--sy:46%"></span>
-        <span class="shoot" style="--sw:52px;--sd:17s;--sl:-12s;--sy:8%"></span>
+        <span class="shoot" style="--sx:22%;--sw:78px;--sd:19s;--sl:-2s;--sy:18%"></span>
+        <span class="shoot" style="--sx:38%;--sw:44px;--sd:27s;--sl:-9s;--sy:62%"></span>
+        <span class="shoot" style="--sx:54%;--sw:96px;--sd:14s;--sl:-16s;--sy:34%"></span>
+        <span class="shoot" style="--sx:68%;--sw:36px;--sd:31s;--sl:-5s;--sy:78%"></span>
+        <span class="shoot" style="--sx:80%;--sw:62px;--sd:23s;--sl:-21s;--sy:46%"></span>
+        <span class="shoot" style="--sx:92%;--sw:52px;--sd:17s;--sl:-12s;--sy:8%"></span>
         <span class="mote" style="left:43%;top:68%;animation-duration:19s;animation-delay:-3s"></span>
         <span class="mote" style="left:50%;top:82%;animation-duration:23s;animation-delay:-9s"></span>
         <span class="mote" style="left:57%;top:64%;animation-duration:21s;animation-delay:-14s"></span>
@@ -79,12 +81,15 @@ if (window.__SKY__ !== undefined) {
   sky.style.animation = "none";
   sky.style.opacity = window.__SKY__;
 }
-const NAV = [["dashboard", "仪表盘"], ["server", "服务器控制"], ["log", "运行日志"],
-             ["models", "默认模型"], ["accounts", "账号管理"], ["identity", "服务器身份"],
-             ["flags", "开关与权限"], ["audit", "审计"]];
+/* 导航顺序按用户指定：仪表盘 → 服务器控制 → 服务器身份 → 模型管理 →
+   账号管理 → 开关与权限 → 运行日志 → 审计。键是页键，序号只是显示。 */
+const NAV = [["dashboard", "仪表盘"], ["server", "服务器控制"], ["identity", "服务器身份"],
+             ["models", "模型管理"], ["accounts", "账号管理"], ["flags", "开关与权限"],
+             ["log", "运行日志"], ["audit", "审计"]];
 /* 合并进来的三块：数据仍走各自的老接口，只是不再单独占一页。
    键＝缓存槽名（沿用旧页键），值＝接口名。 */
 const EXTRA = {dashboard: [["overview", "overview_page"]],
+               accounts: [["overview", "overview_page"]],
                identity: [["registration", "registration_page"]],
                flags: [["device_actions", "device_actions_page"]]};
 /* 星球滚条（沿用工作台 ui/index.html 的 .psb）：单条 fixed 元素跟随当前滚动容器，
@@ -94,7 +99,7 @@ const EXTRA = {dashboard: [["overview", "overview_page"]],
    否则 11 页＋嵌套表格／日志容器互相滚动时尾迹长度会串。 */
 const PSB = (() => {
   let el = null, active = null, quiet = 0, dragging = false;
-  const SEL = "#body, .nav, pre.log, .tblwrap, .ovl .box";
+  const SEL = "#body, .nav, pre.log, .logeasy, .tblwrap, .ovl .box";
   function seek(y) {
     if (!active || !el) return;
     const r = el.getBoundingClientRect();
@@ -203,14 +208,17 @@ document.addEventListener("keydown", function (e) {
   navBuf = "";
   gotoPage(Number(e.key) - 1);
 });
+/* 页眉副标题：八个页一律一句话说清「这页能干什么」，不再堆实现细节
+   （原文案里有「原始视图给开发者」「服务器锁定的行点不动」「手机行动通道附名单」
+   这类一条条并列的长句，读起来像 changelog，不是给用的人看的）。 */
 const TITLES = {dashboard: ["仪表盘", "读数、Token 活动与近况"],
-                server: ["服务器控制", "启动 / 停止 / 重启核心服务"],
-                log: ["运行日志", "app.log 与 server_stderr.log 的末尾各 40 行"],
-                models: ["默认模型", "各模态用哪个上游与模型；密钥只显有无，不回显原文"],
-                flags: ["开关与权限", "分组展示；服务器锁定的行点不动；手机行动通道附名单"],
+                server: ["服务器控制", "启停服务、监控目标与默认额度"],
+                log: ["运行日志", "按来源与级别筛选，可切原始日志"],
+                models: ["默认模型", "各模态的上游与密钥状态"],
+                flags: ["开关与权限", "分组开关，服务器锁定的行点不动"],
                 audit: ["审计", "谁在什么时候改了什么"],
-                accounts: ["账号管理", ""],
-                identity: ["服务器身份", "校验档位、配对码与注册策略"]};
+                accounts: ["账号管理", "启停、授权与额度"],
+                identity: ["服务器身份", "校验档位、配对与注册"]};
 const LOADER = {dashboard: "dashboard", server: "server_page", log: "log_page",
                 models: "models_page", flags: "flags_page", audit: "audit_page",
                 accounts: "accounts_page",
@@ -218,6 +226,12 @@ const LOADER = {dashboard: "dashboard", server: "server_page", log: "log_page",
 
 const esc = v => String(v === null || v === undefined ? "—" : v)
   .replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+// 开关目录里的说明用 **…** 表强调，纯文本渲染会把星号露出来。先转义再补 <b>，
+// 只认成对星号，不解释任何别的标记，也不引入新的 HTML 注入面。
+function mdLite(s) {
+  return esc(s || "").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+}
 
 async function api(name) {
   const args = Array.prototype.slice.call(arguments, 1);
@@ -423,9 +437,16 @@ function dressSwitches(root) {
 // 放在 paint() 里统一装扮，各页 render 函数不用逐个改，翻页重建 DOM 也不会退化。
 let HEAT_ROWS = [];                                // 当日任务构成，供热力图悬浮明细用
 
-// 三档而不是连续渐变：≤1/3 低、≤2/3 中、更高＝高。用户要的是一眼能分档，不是渐变色带。
-const TIER_OP = [0, 0.3, 0.58, 0.9];            // 0＝空心（零值），1/2/3＝低/中/高
-function heatTier(v) { return v <= 0 ? 0 : (v <= 1 / 3 ? 1 : (v <= 2 / 3 ? 2 : 3)); }
+// 四档（低/中/高/峰）：前三档是砖红渐深，最高用量那一档单独换朱红，一眼能挑出峰值日。
+// 一整条连贯的颜色：用量比 v(0..1) 映射到 HSL 上的连续插值，
+// 从暗砖红（低）一路走到亮朱红（峰），不设离散档位。零值仍画空心。
+function heatColor(v) {
+  const t = Math.max(0, Math.min(1, v));
+  const h = 12 + 6 * t;                    // 12° 砖红 → 18° 朱橙
+  const s = Math.round(34 + 54 * t);       // 饱和度渐增
+  const l = Math.round(24 + 34 * t);       // 明度渐增
+  return 'hsl(' + h.toFixed(1) + ',' + s + '%,' + l + '%)';
+}
 
 function heatmap(rows, peak) {
   if (!rows || !rows.length) return '<div class="empty">暂无数据（远程模式或后端未提供统计）</div>';
@@ -449,12 +470,12 @@ function heatmap(rows, peak) {
     const v = (r.tokens || 0) / hi;
     const meta = ' data-hm="' + i + '" aria-label="' + esc(r.date) + " · " +
       (r.tokens || 0).toLocaleString() + ' tokens"';   // 读屏仍拿得到，浮层不双弹
-    out += v <= 0
+    const t = (r.tokens || 0) / hi;
+    out += (r.tokens || 0) <= 0
       ? '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + sz.toFixed(1) +
         '" height="' + sz.toFixed(1) + '" fill="none" stroke="var(--rule)"' + meta + '/>'   // 零值＝空心
       : '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + sz.toFixed(1) +
-        '" height="' + sz.toFixed(1) + '" fill="var(--brick)" fill-opacity="' +
-        TIER_OP[heatTier(v)].toFixed(2) + '"' + meta + '/>';
+        '" height="' + sz.toFixed(1) + '" fill="' + heatColor(t) + '"' + meta + '/>';
   });
   let lastM = "";
   rows.forEach((r, i) => {
@@ -466,19 +487,16 @@ function heatmap(rows, peak) {
         'fill="var(--weak)">' + esc(Number(m.slice(5)) + " 月") + '</text>';
     }
   });
-  // 图例另起一行：不再和月份标签抢同一条基线（那是重叠的根因）
-  // 图例跟着走三档（原来画了 5 格连续色阶，和"三档"对不上）
+  // 图例＝同一条连续色带（linearGradient），与格子用同一个 heatColor 取样点
   const legY = labT + 7 * cell + 36;
-  out += '<text x="' + (boxW - 168) + '" y="' + legY +
-    '" font-family="Microsoft YaHei UI" font-size="10.5" fill="var(--weak)">少</text>';
-  ["低", "中", "高"].forEach((name, k) => {
-    const lx = boxW - 138 + k * 44;
-    out += '<rect x="' + lx + '" y="' + (legY - 9) + '" width="18" height="9"' +
-      ' fill="var(--brick)" fill-opacity="' + TIER_OP[k + 1].toFixed(2) + '"/>' +
-      '<text x="' + (lx + 22) + '" y="' + legY + '" font-family="Microsoft YaHei UI"' +
-      ' font-size="10.5" fill="var(--weak)">' + name + '</text>';
-  });
-  out += '<text x="' + (boxW - 12) + '" y="' + legY +
+  const legW = 132, legX = boxW - 156;
+  out += '<defs><linearGradient id="heatGrad" x1="0" x2="1" y1="0" y2="0">' +
+    [0, .2, .4, .6, .8, 1].map(t => '<stop offset="' + (t * 100) + '%" stop-color="' +
+      heatColor(t) + '"/>').join("") + '</linearGradient></defs>';
+  out += '<text x="' + (legX - 30) + '" y="' + legY +
+    '" font-family="Microsoft YaHei UI" font-size="10.5" fill="var(--weak)">少</text>' +
+    '<rect x="' + legX + '" y="' + (legY - 9) + '" width="' + legW + '" height="9" fill="url(#heatGrad)"/>' +
+    '<text x="' + (boxW - 12) + '" y="' + legY +
     '" font-family="Microsoft YaHei UI" font-size="10.5" fill="var(--weak)">多</text></svg>';
   return out;
 }
@@ -488,28 +506,164 @@ function card(t, n, cls, cap) {
          '">' + n + '</div><div class="c">' + cap + '</div></div>';
 }
 
-// 概览并进仪表盘：五个只读数字做成顶部一排读数条（仍是 GET /overview 那一份数据）
-function readingsBar() {
+/* 「刷新」一律用图标：平面非闭合圆环（带箭头）。点下去由 markBusy() 换成
+   带星环的立体星球转一圈，落回平面——两段过渡在 CSS 里，这里只负责切类名。 */
+const RB_ICON = '<span class="rb-plane"><span class="rb-arc"></span></span>' +
+                '<span class="rb-orb"></span>';
+const refreshBtn = act => '<button class="btn rbtn" data-act="' + act +
+  '" title="刷新" aria-label="刷新">' + RB_ICON + '</button>';
+function markBusy(btn) {
+  if (!btn || !btn.classList.contains("rbtn")) return 0;
+  btn.classList.add("busy");
+  clearTimeout(btn.__rbT);
+  btn.__rbT = setTimeout(function () { btn.classList.remove("busy"); }, 1000);
+  return 1;
+}
+
+// 概览并进仪表盘：换页时仍照旧补拉 overview_page，但只挑还留在这页的读数。
+// 「账号总数 / 已禁用账号 / 控制台管理员」搬到账号管理（那是账号的事），
+// 「开启的开关」不在这排显示——改在开关页每个分组的右上角按组给数。
+// 后端多出来的键（不在契约五字段里）一律照旧显示：概览的旧契约不能被这次搬家弄丢。
+const OVERVIEW_KNOWN = ["账号总数", "已禁用账号", "控制台管理员", "开启的开关", "后端版本"];
+function readingsBar(keep) {
   const o = cache.overview;
   if (!o || o.empty_kind || !o.rows) return "";
-  return '<div class="readout stagger">' + o.rows.map(r =>
+  const rows = o.rows.filter(r => !keep || keep.indexOf(r.label) >= 0 ||
+                                  OVERVIEW_KNOWN.indexOf(r.label) < 0);
+  if (!rows.length) return "";
+  return '<div class="readout stagger">' + rows.map(r =>
     '<span class="ro"><i>' + esc(r.label) + '</i><b class="num' + (r.missing ? " miss" : "") +
     '">' + esc(r.value) + '</b></span>').join("") + '</div>';
 }
 
-function renderDashboard(d) {
+let memRole = "";                       // 仪表盘的角色筛选：空串＝全部角色
+let ringMode = "token";                 // 大环当前看哪个：token（默认）| mem
+
+function fmtInt(v) {
+  const n = Number(String(v).replace(/[^\d.-]/g, ""));
+  return isFinite(n) ? n.toLocaleString("en-US") : String(v);
+}
+
+/* 环的数据源：
+   ① 记忆构成＝后端 memStats（按记忆本分类；选角色就用该角色的构成，同一份统计口径）；
+   ② Token 构成＝热力图每天的 tasks 相加，与悬浮明细用的是同一份数，不另算一套。 */
+function ringData(d) {
+  const st = d.memStats || {};
+  const roles = st.roles || [];
+  const hit = roles.find(r => String(r.id) === String(memRole)) || null;
+  const kinds = ((hit ? hit.kinds : st.kinds) || []).slice();
+  const acc = {};
+  (d.heat || []).forEach(h => {
+    const t = h.tasks || {};
+    Object.keys(t).forEach(k => { acc[k] = (acc[k] || 0) + t[k]; });
+  });
+  const tasks = Object.keys(acc).map(k => ({label: k, count: acc[k]}))
+    .sort((a, b) => b.count - a.count);
+  return {kinds, tasks, hit, roles};
+}
+
+const RING_C = ["var(--ring1)", "var(--ring2)", "var(--ring3)",
+                "var(--ring4)", "var(--ring5)", "var(--ring6)"];
+
+/* 圆环：每段用 stroke-dasharray 摆、-90° 起画，段间留 1.4px 缝；中间塞原来那条缩小折线。
+   每段带 data-seg/label/pct/count，指针停上去由浮层说是哪一类（下面统一挂事件）。 */
+function donut(items, size, spark, title, unit) {
+  const all = (items || []).filter(x => x.count > 0);
+  const total = all.reduce((a, b) => a + b.count, 0);
+  const head = '<div class="ring-t">' + esc(title) + '</div>';
+  if (!total) return '<div class="ring big">' + head + '<div class="ring-none">没有可统计的数据</div></div>';
+  const top = all.slice(0, 5);
+  const rest = all.slice(5).reduce((a, b) => a + b.count, 0);
+  const list = rest ? top.concat([{label: "其他", count: rest}]) : top;
+  const c = size / 2, R = c - 12, C = 2 * Math.PI * R;
+  let acc = 0, segs = "";
+  list.forEach((it, i) => {
+    const f = it.count / total;
+    const seg = Math.max(0.5, f * C - 1.4);
+    const pct = Math.round(f * 100);
+    segs += '<circle cx="' + c + '" cy="' + c + '" r="' + R + '" fill="none" stroke="' +
+      RING_C[i % RING_C.length] + '" stroke-width="12" stroke-dasharray="' +
+      seg.toFixed(2) + " " + C.toFixed(2) + '" stroke-dashoffset="' +
+      (-acc * C).toFixed(2) + '" transform="rotate(-90 ' + c + " " + c + ')"' +
+      ' data-seg="1" data-label="' + esc(it.label) + '" data-pct="' + pct +
+      '" data-count="' + fmtInt(it.count) + '" data-unit="' + esc(unit) + '"/>';
+    acc += f;
+  });
+  return '<div class="ring big">' + head +
+    '<div class="ringwrap" style="width:' + size + 'px;height:' + size + 'px">' +
+    '<svg width="' + size + '" height="' + size + '">' + segs + '</svg>' +
+    '<span class="ringmid">' + (spark || "") + '</span></div>' +
+    '<div class="ringleg">' + list.map((it, i) =>
+      '<span><i style="background:' + RING_C[i % RING_C.length] + '"></i>' + esc(it.label) +
+      " " + Math.round(it.count / total * 100) + '%</span>').join("") + '</div></div>';
+}
+
+/* 读数区：左边一竖排表，右边一个大环。
+   环看哪个，由左列选了哪一行决定——默认「累计 Token」。
+   服务器状态与服务器健康合成一张：健康答"是否健康"，状态答"是否运行"。 */
+function kpiPanel(d) {
   const k = d.kpi || {};
-  return readingsBar() + '<div class="grid stagger">' +
-    card("服务器状态", esc(k.server), k.server === "运行中" ? "ok" : "bad", esc(k.serverCap)) +
-    card("服务健康", esc(k.health), k.health === "正常" ? "ok" : (k.health === "—" ? "" : "bad"),
-         "HTTP 探活 /api/v1/system/health") +
-    card("图像理解（云端）", esc(k.vlm), "mono", esc(k.vlmCap)) +
-    card("角色数", esc(k.chars), "", "个角色") +
-    card("记忆数", esc(k.mems), "", sparkline(d.memSpark, 74, 16)) +
-    card("累计 Token", esc(k.tokens), "", sparkline(d.tokenSpark, 74, 16)) +
-    '</div><div class="sec"><h2>Token 活动</h2><em>近 26 周 · 每日</em></div>' +
+  const rd = ringData(d);
+  const okn = v => v === "正常" || v === "运行中" ? " ok" : (v === "—" ? "" : " bad");
+  const ovRows = ((cache.overview || {}).rows) || [];
+  const ver = ovRows.find(r => r.label === "后端版本");
+  // 后端多给的键（不在契约五字段里）一律照列，概览的旧契约不能因为搬家丢掉
+  const extras = ovRows.filter(r => OVERVIEW_KNOWN.indexOf(r.label) < 0);
+  const opts = '<option value=""' + (memRole ? "" : " selected") + '>全部角色</option>' +
+    rd.roles.map(r => '<option value="' + esc(r.id) + '"' +
+      (String(r.id) === String(memRole) ? " selected" : "") + '>' + esc(r.name) +
+      "（" + fmtInt(r.count) + "）</option>").join("");
+  const mems = rd.hit ? fmtInt(rd.hit.count) : esc(k.mems);
+  const row = (key, label, val, extra) =>
+    '<div class="kr' + (ringMode === key ? ' on' : '') + '"' +
+    (key ? ' data-ring="' + key + '" role="button" tabindex="0"' : '') + '>' +
+    '<span class="k">' + label + '</span>' + val + (extra || '') + '</div>';
+  const isMem = ringMode === "mem";
+  return '<div class="kpip">' +
+    '<div class="kpi2 stagger">' +
+    row("", "当前健康（是否健康）", '<b class="v' + okn(k.health) + '">' + esc(k.health) + '</b>') +
+    row("", "当前状态（是否运行）", '<b class="v' + okn(k.server) + '">' + esc(k.server) + '</b>',
+        '<em class="c">' + esc(k.serverCap) + '</em>') +
+    row("", "角色数", '<select id="memRole" aria-label="按角色筛选">' + opts + '</select>') +
+    row("mem", "记忆数", '<b class="v num">' + mems + '</b>',
+        rd.hit ? '<em class="c">' + esc(rd.hit.name) + '</em>' : '') +
+    row("token", "累计 Token", '<b class="v num">' + esc(k.tokens) + '</b>',
+        rd.hit ? '<em class="c">Token 按账号统计，不分角色</em>' : '') +
+    row("", "后端版本", '<b class="v num">' + esc(ver ? ver.value : "—") + '</b>') +
+    // 后端多给的概览键（不在契约五字段里）照旧列出来，别让旧契约丢了
+    extras.map(r => row("", esc(r.label),
+      '<b class="v num' + (r.missing ? " miss" : "") + '">' + esc(r.value) + '</b>')).join("") +
+    '</div>' +
+    '<div class="ringside">' +
+    donut(isMem ? rd.kinds : rd.tasks, 196,
+          sparkline(isMem ? d.memSpark : d.tokenSpark, 66, 18),
+          isMem ? "记忆构成" : "Token 构成", isMem ? " 条" : " tokens") +
+    '</div></div>';
+}
+
+function renderDashboard(d) {
+  return kpiPanel(d) +
+    '<div class="sec"><h2>Token 活动</h2><em>近 26 周 · 每日</em></div>' +
     '<div class="heat">' + heatmap(d.heat, d.heatPeak) + '</div>';
 }
+
+// 左列点一行 → 换环看的东西（默认 Token）；角色下拉换的是统计口径
+document.addEventListener("click", function (e) {
+  const r = e.target.closest && e.target.closest(".kr[data-ring]");
+  if (!r || page !== "dashboard") return;
+  if (e.target.closest("select")) return;
+  const want = r.dataset.ring;
+  if (want === ringMode) return;
+  ringMode = want;
+  paint();
+});
+
+// 角色筛选：换角色只重排仪表盘，不动别的页
+document.addEventListener("change", function (e) {
+  if (!e.target || e.target.id !== "memRole") return;
+  memRole = e.target.value || "";
+  if (page === "dashboard") paint();
+});
 
 function renderServer(d) {
   const st = d.state || {}, tg = d.target || {};
@@ -538,19 +692,117 @@ function renderServer(d) {
     '<span class="vl' + (r.copyable ? "" : " off") + '">' + esc(r.show) + '</span>' +
     (r.copyable ? '<button class="btn" data-copy="' + esc(r.url) + '">复制</button>' : "") +
     '</div>').join("") + '</div>';
+  // 服务器默认额度（从账号管理搬来）：整机统一调配，和单个账号的额度覆盖分开
+  const sl = d.server_limit || {};
+  if (sl.title) {
+    h += '<div class="mod"><div class="mh"><b>' + esc(sl.title) + '</b>' +
+      '<span class="cap">' + esc(sl.value) + '</span></div>' +
+      '<div class="field"><label>默认额度</label>' +
+      '<input id="slVal" class="num" value="' + esc(sl.total_limit === undefined ? "" : sl.total_limit) +
+      '" title="0 = 未设置；账号没有自己的覆盖时回落到这里">' +
+      '<button class="btn primary" data-act="server-limit-save">保存</button>' +
+      '<span class="hint">' + esc(sl.hint) + '</span>' +
+      '<span class="state" id="slMsg"></span></div></div>';
+  }
   return h;
 }
 
-function renderLog(d) {
-  return '<div class="logtools">' +
-    '<button type="button" class="sw' + (autoscroll ? " on" : "") + '" role="switch" aria-checked="' +
-      (autoscroll ? "true" : "false") + '" data-act="autoscroll"><i></i>自动滚动</button>' +
+const LOG_LEVEL_CN = {ERROR: "出错", CRITICAL: "严重", FATAL: "严重", WARNING: "提醒",
+                      WARN: "提醒", INFO: "日常", DEBUG: "调试", NOTSET: "未分级"};
+let logView = "easy", logSource = "", logLevel = "";   // 默认给普通用户看易读版
+
+function logTools(d) {
+  const seg = (act, key, label, cur, extra) =>
+    '<button class="btn' + (cur === key ? ' on' : '') + '" data-act="' + act +
+    '" data-' + (act === 'log-view' ? 'v' : 'k') + '="' + esc(key) + '"' +
+    (extra ? ' ' + extra : '') + '>' + esc(label) + '</button>';
+  // 只有一种级别时，「全部」和那一档的数字必然相同，看着像筛选失灵——这种情况干脆不摆级别筛选。
+  const lvls = d.levels || [];
+  const lvGroup = lvls.length >= 2
+    ? '<span class="lg"><em>级别</em>' + seg('log-level', '', '全部', logLevel) +
+      lvls.map(l => seg('log-level', l.key, l.label + ' ' + l.count, logLevel)).join('') + '</span>'
+    : "";
+  return '<div class="logtools two">' +
+    '<div class="lt-row filters">' +
+    '<span class="lg"><em>视图</em>' +
+    seg('log-view', 'easy', '易读版', logView) + seg('log-view', 'raw', '原始', logView) + '</span>' +
+    '<span class="lg"><em>来源</em>' + seg('log-source', '', '全部', logSource) +
+    (d.sources || []).map(s => seg('log-source', s.key, s.label + ' ' + s.count, logSource)).join('') +
+    '</span>' +
+    lvGroup +
+    '</div>' +
+    '<div class="lt-row acts">' +
     '<button class="btn" data-act="export">导出日志</button>' +
     '<button class="btn" data-act="open">打开日志文件</button>' +
     '<button class="btn" data-act="clear">清空显示</button>' +
-    '<span class="state">' + esc(d.paths && d.paths.stderr ? d.paths.stderr : "") + '</span>' +
-    '</div>' + (d.empty ? '<div class="logempty">' + esc(d.hint) + '</div>'
-              : '<pre class="log" id="logBox">' + esc(d.text) + '</pre>');
+    '<button type="button" class="sw' + (autoscroll ? " on" : "") + '" role="switch" aria-checked="' +
+      (autoscroll ? "true" : "false") + '" data-act="autoscroll"><i></i>自动滚动</button>' +
+    '</div></div>';
+}
+
+// 原始视图：给开发者看，按来源分段标出，行内容一字不改
+function renderLogRaw(d, rows) {
+  let h = '<pre class="log" id="logBox">';
+  let last = "";
+  rows.forEach(r => {
+    if (r.source !== last) {
+      last = r.source;
+      h += '\n──── ' + (r.source === 'app' ? 'app.log' : 'server_stderr.log') + ' ────\n';
+    }
+    h += esc(r.raw) + '\n';
+  });
+  return h + '</pre>';
+}
+
+// 易读版：中文级别徽章 + 已知术语的人话旁注 + 原文可展开；堆栈默认折叠。
+// 红线：msg / raw 原样保留，旁注只是同一事实的中文说法，不生成新内容。
+function renderLogEasy(d, rows) {
+  let h = '<div class="logeasy"><div class="logsum">' + esc(d.summary || '') + '</div>';
+  let last = "", stack = [], foldId = 0, shown = 0;
+  const flush = () => {
+    if (!stack.length) return;
+    foldId += 1;
+    h += '<details class="logstack"><summary>展开 ' + stack.length + ' 行技术细节</summary><pre>' +
+         stack.map(x => esc(x)).join('\n') + '</pre></details>';
+    stack = [];
+  };
+  rows.forEach(r => {
+    if (r.cont) { stack.push(r.raw); return; }
+    flush();
+    if (r.source !== last) {
+      last = r.source;
+      h += '<div class="logsrc">' + (r.source === 'app' ? '应用日志 app.log' :
+           '服务器错误输出 server_stderr.log') + '</div>';
+    }
+    shown += 1;
+    const cn = LOG_LEVEL_CN[r.level] || r.level;
+    h += '<div class="logrow" data-source="' + esc(r.source) + '" data-level="' + esc(r.level) +
+         '" data-raw="' + esc(r.raw) + '" role="button" tabindex="0" aria-expanded="false">' +
+         '<span class="lv ' + esc(r.level.toLowerCase()) + '">' + esc(cn) + '</span>' +
+         '<span class="tm">' + esc(r.time || '—') + '</span>' +
+         '<span class="ez">' + (r.easy ? esc(r.easy) : esc(r.msg)) +
+         (r.module ? '<i class="mo">' + esc(r.module) + '</i>' : '') + '</span>' +
+         '<div class="lograw"><code>' + esc(r.raw) + '</code></div>' +
+         '</div>';
+  });
+  flush();
+  if (!shown) h += '<div class="logempty">这个筛选条件下没有日志记录</div>';
+  return h + '</div>';
+}
+
+function renderLog(d) {
+  const all = d.rows || [];
+  // 续行永远跟着它所属的那条日志走，不单独参与筛选
+  const keep = [];
+  for (let i = 0; i < all.length; i++) {
+    const r = all[i];
+    if (r.cont) { if (keep.length && keep[keep.length - 1].ok) keep.push(Object.assign({}, r, {ok: true})); continue; }
+    const ok = (!logSource || r.source === logSource) && (!logLevel || r.level === logLevel);
+    if (ok) keep.push(Object.assign({}, r, {ok: true}));
+  }
+  const rows = keep.map(r => { const x = Object.assign({}, r); delete x.ok; return x; });
+  return logTools(d) + (d.empty ? '<div class="logempty">' + esc(d.hint) + '</div>'
+    : (logView === 'raw' ? renderLogRaw(d, rows) : renderLogEasy(d, rows)));
 }
 
 function loginGate(d) {
@@ -567,7 +819,8 @@ function loginGate(d) {
 
 function renderModels(d) {
   if (!d.logged_in) return loginGate(d);
-  return (d.rows || []).map(r =>
+  // 三字段收成一列（模型→Base URL→API Key），卡片就能砍半宽、每行放两张等大的
+  return '<div class="mods">' + (d.rows || []).map(r =>
     '<div class="mod" data-key="' + esc(r.key) + '">' +
       '<div class="mh"><span class="dot' + (r.enabled ? ' on' : '') + '"></span><b>' + esc(r.title) + '</b>' +
       '<span class="cap">' + esc(r.cap) + '</span></div>' +
@@ -580,8 +833,8 @@ function renderModels(d) {
       '<div class="foot"><button type="button" class="sw' + (r.enabled ? ' on' : '') +
         '" role="switch" aria-checked="' + (r.enabled ? "true" : "false") + '" data-act="mod-enabled"' +
         '><i></i>启用</button><button class="btn" data-act="mod-save">保存</button>' +
-        '<span class="hint">' + esc(r.key_hint) + '</span></div>' +
-    '</div>').join("");
+    '</div>' +
+    '</div>').join("") + '</div>';
 }
 
 let flagGroup = "";
@@ -602,14 +855,20 @@ function renderFlags(d) {
     gs.map(g => tile(g, g.group, g.label, g.count, (g.label || '?').slice(0, 1))).join('') +
     '</div>';
   out += flagBar();
-  out += gs.filter(g => !flagGroup || g.group === flagGroup).map(g =>
-    '<div class="grp stagger"><div class="gh"><h3>' + esc(g.label) + '</h3><em>' + g.count + ' 项</em></div>' +
+  out += gs.filter(g => !flagGroup || g.group === flagGroup).map(g => {
+    // 分组右上角给本组的开启数（原仪表盘那张「开启的开关」小卡片挪到这里，按组看更有用）
+    const on = (g.rows || []).filter(f => {
+      const dirty = Object.prototype.hasOwnProperty.call(flagDirty, f.key);
+      return dirty ? flagDirty[f.key] : f.enabled;
+    }).length;
+    return '<div class="grp stagger"><div class="gh"><h3>' + esc(g.label) + '</h3><em>' +
+      on + ' / ' + g.count + ' 开启</em></div>' +
     g.rows.map(f => {
       // 有未保存改动时，界面按"改后的值"显示，并给行加一条强调线
       const dirty = Object.prototype.hasOwnProperty.call(flagDirty, f.key);
       const en = dirty ? flagDirty[f.key] : f.enabled;
       return '<div class="frow' + (f.server_locked ? ' locked' : '') + (dirty ? ' dirty' : '') + '">' +
-        '<span class="ft"><b>' + esc(f.title) + '</b>' + (f.desc ? '<i>' + esc(f.desc) + '</i>' : '') + '</span>' +
+        '<span class="ft"><b>' + esc(f.title) + '</b>' + (f.desc ? '<i>' + mdLite(f.desc) + '</i>' : '') + '</span>' +
         '<span class="fs">' + esc([f.source, f.scope].filter(Boolean).join(' · ')) + '</span>' +
         (f.server_locked ? '<span class="tag">服务器锁定</span>' : '') +
         '<button type="button" class="sw' + (en ? ' on' : '') + '" role="switch" aria-checked="' +
@@ -617,7 +876,8 @@ function renderFlags(d) {
           (f.server_locked ? ' disabled' : ' data-act="flag-toggle" data-key="' + esc(f.key) +
             '" data-on="' + (en ? 1 : 0) + '"') + '><i></i></button>' +
       '</div>';
-    }).join("") + (g.group === "device_action" ? deviceLists() : "") + '</div>').join("");
+    }).join("") + (g.group === "device_action" ? deviceLists() : "") + '</div>';
+  }).join("");
   return out;
 }
 
@@ -674,7 +934,7 @@ function renderAudit(d) {
   const st = SORTS.audit;
   return '<div class="logtools"><label class="who">条数</label>' +
     '<input id="auLimit" class="num" value="' + esc(d.limit) + '">' +
-    '<button class="btn" data-act="audit-limit">刷新</button>' +
+    refreshBtn('audit-limit') +
     '<span class="state">' + esc(d.status) + '</span></div>' +
     '<div class="tblwrap"><table class="tbl"><thead><tr>' +
     sortHead("created_at", "时间", st) + sortHead("actor", "操作者", st) +
@@ -691,21 +951,15 @@ let binOn = false;
 
 function renderAccounts(d) {
   if (!d.logged_in) return loginGate(d);
-  const sl = d.server_limit || {};
+  // 默认额度卡片已搬到「服务器控制」——那是整台服务器统一调配的事，不属于单个账号页
   let h = '<div class="logtools">' +
     '<input id="acQ" class="num" style="width:230px" value="' + esc(d.query) +
     '" title="按用户名 / 昵称 / ID 筛选（在已取回的结果里筛）" placeholder="按用户名 / 昵称 / ID 筛选">' +
     '<span class="sw' + (binOn ? " on" : "") + '" data-act="bin"><i></i>显示回收站</span>' +
-    '<button class="btn" data-act="ac-reload">刷新</button>' +
+    refreshBtn('ac-reload') +
     '<span class="state">' + esc(d.status) + '</span></div>' +
-    '<div class="mod"><div class="mh"><b>' + esc(sl.title) + '</b>' +
-    '<span class="cap">' + esc(sl.value) + '</span></div>' +
-    '<div class="field"><label>默认额度</label>' +
-    '<input id="slVal" class="num" value="' + esc(sl.total_limit === undefined ? "" : sl.total_limit) +
-    '" title="0 = 未设置；账号没有自己的覆盖时回落到这里">' +
-    '<button class="btn primary" data-act="server-limit-save">保存</button>' +
-    '<span class="state" id="slMsg"></span></div>' +
-    '<div class="foot"><span class="hint">' + esc(sl.hint) + '</span></div></div>';
+    // 三张账号读数从仪表盘搬来：账号的事在账号页看
+    readingsBar(["账号总数", "已禁用账号", "控制台管理员"]);
   if (d.empty_kind) return h + '<div class="logempty">' + esc(d.empty_text) + '</div>';
   const st = SORTS.accounts;
   h += '<div class="tblwrap"><table class="tbl"><thead><tr>' +
@@ -855,14 +1109,12 @@ function showMenu(btn, uid, menu) {
   document.body.appendChild(el);
 }
 
-// 注册策略并进服务器身份页：都是"谁能进这台服务器"，做成第二块（仍走 GET /registration）
+// 注册策略并进「接入与配对」卡片：只返回内容片段，外壳由宿主卡提供（7→3 后不再单独占卡）
 function regBlock() {
   const d = cache.registration;
-  if (!d) return "";
-  if (!d.logged_in) return "";
+  if (!d || !d.logged_in) return "";
   const pick = regPick || d.mode;
-  return '<div class="mod"><div class="mh"><b>注册策略</b><span class="cap">' +
-    esc(d.live) + '</span></div>' +
+  return '<div class="sec"><h2>注册策略</h2><em>' + esc(d.live) + '</em></div>' +
     '<div class="n" style="margin-top:8px">' + esc(d.mode_text) + '</div>' +
     '<div class="seg">' + (d.options || []).map(o =>
       '<button data-act="reg-pick" data-k="' + esc(o.key) + '" class="' +
@@ -870,7 +1122,7 @@ function regBlock() {
     '<div class="descr">' + esc(d.desc) + '</div>' +
     '<div class="btnrow"><button class="btn primary" data-act="reg-save">保存</button>' +
     '<button class="btn" data-act="reg-reload">放弃修改并重读</button>' +
-    '<span class="state" id="regMsg">' + esc(d.hint) + '</span></div></div>';
+    '<span class="state" id="regMsg">' + esc(d.hint) + '</span></div>';
 }
 
 function renderIdentity(d) {
@@ -878,33 +1130,39 @@ function renderIdentity(d) {
   const codeTxt = idTick || d.code.source === "local" ? (idCode || d.code.text) : d.code.text;
   const ttl = d.code.tick ? "剩余 " + idLeft + " 秒后失效"
           : (d.code.source === "expired" ? "已失效，请重新生成" : d.code_line);
-  return '<div class="mod"><div class="mh"><b>校验档位（后端 identity_enforce_mode，默认 off）</b>' +
-    '<span class="cap">' + esc(d.mode_text) + '</span></div>' +
-    '<div class="descr">' + esc(d.mode_desc) + (d.mode_note ? '　' + esc(d.mode_note) : '') + '</div></div>' +
-    regBlock() +
-    '<div class="mod"><div class="mh"><b>服务器</b><span class="cap">' + esc(d.pair_stats) + '</span></div>' +
+  // 7 → 3：按「看 / 做 / 危险」分层。原有文案一字不删（旧闸门钉着），只换容器。
+  const A = '<div class="mod"><div class="mh"><b>这台服务器</b>' +
+    '<span class="cap">' + esc(d.pair_stats) + '</span></div>' +
+    '<div class="sec"><h2>校验档位（后端 identity_enforce_mode，默认 off）</h2>' +
+      '<em>' + esc(d.mode_text) + '</em></div>' +
+    '<div class="descr">' + esc(d.mode_desc) + (d.mode_note ? '　' + esc(d.mode_note) : '') + '</div>' +
+    '<div class="sec"><h2>服务器档案</h2></div>' +
     '<div class="kv"><span class="k">服务器名</span><span class="v">' + esc(d.server_name) + '</span></div>' +
     '<div class="kv"><span class="k">当前指纹</span><span class="v">' + esc(d.fp_display) + '</span></div>' +
     '<div class="kv"><span class="k">密钥签发于</span><span class="v num">' + esc(d.key_created_at) + '</span></div>' +
-    '<div class="kv"><span class="k">待用配对码</span><span class="v">' + esc(d.pending) + '</span></div></div>' +
-    '<div class="mod"><div class="mh"><b>一次性配对码（12 位，去易混字符；请在客户端界面上亲手输入）</b>' +
-    '<span class="cap">' + esc(ttl) + '</span></div>' +
+    '<div class="kv"><span class="k">待用配对码</span><span class="v">' + esc(d.pending) + '</span></div>' +
+    '<div class="sec"><h2>部署面现状（只提示，不改默认值）</h2></div>' +
+    '<div class="deploy">' + d.deploy.map(x =>
+      '<div class="kv"><span class="k">' + esc(x.k) + '</span><span class="v" title="' +
+      esc(x.tip) + '">' + esc(x.v) + '</span></div>').join("") + '</div></div>';
+
+  const B = '<div class="mod"><div class="mh"><b>接入与配对</b><span class="cap">三个入口</span></div>' +
+    '<div class="sec"><h2>一次性配对码（12 位，去易混字符；请在客户端界面上亲手输入）</h2>' +
+      '<em>' + esc(ttl) + '</em></div>' +
     '<div class="kv"><span class="k">配对码</span><span class="v big">' + esc(codeTxt) + '</span></div>' +
     '<div class="btnrow"><button class="btn" data-act="id-copy">复制</button>' +
-    '<button class="btn" data-act="id-code">重新生成</button>' +
-    '<span class="state" id="idMsg"></span></div></div>' +
-    '<div class="mod"><div class="mh"><b>渠道登录（微信 ClawBot）</b>' +
-    '<span class="cap">仅本机可开</span></div>' +
-    '<div class="descr">在服务器本机的浏览器里扫码，把机器人登进网关；confirmed 之后它才会出现在' +
-    ' App 的「查看可添加的机器人」里。网关没有热加载，新号需要重启网关一次才开始收发。</div>' +
+      '<button class="btn" data-act="id-code">重新生成</button>' +
+      '<span class="state" id="idMsg"></span></div>' +
+    regBlock() +
+    '<div class="sec"><h2>渠道登录（微信 ClawBot）</h2><em>仅本机可开</em></div>' +
+    '<div class="descr">在服务器本机浏览器扫码登进网关；确认后到 App「查看可添加的机器人」选角色绑定，新号需重启网关一次。</div>' +
     '<div class="btnrow"><button class="btn primary" data-act="channel-login">打开渠道登录页</button>' +
-    '<span class="state" id="chlMsg"></span></div></div>' +
-    '<div class="mod"><div class="mh"><b>轮换身份密钥</b></div>' +
+      '<span class="state" id="chlMsg"></span></div></div>';
+
+  const C = '<div class="mod"><div class="mh"><b>轮换身份密钥</b><span class="cap">危险操作</span></div>' +
     '<div class="descr">' + esc(d.rotate_text) + '</div>' +
-    '<div class="btnrow"><button class="btn danger" data-act="id-rotate">轮换身份密钥</button></div></div>' +
-    '<div class="mod"><div class="mh"><b>部署面现状（只提示，不改默认值）</b></div>' +
-    d.deploy.map(x => '<div class="kv"><span class="k">' + esc(x.k) + '</span><span class="v" title="' +
-      esc(x.tip) + '">' + esc(x.v) + '</span></div>').join("") + '</div>';
+    '<div class="btnrow"><button class="btn danger" data-act="id-rotate">轮换身份密钥</button></div></div>';
+  return A + B + C;
 }
 
 /* 行动通道并进"开关与权限"的 device_action 分组：那三条开关本来就在开关页里，
@@ -998,7 +1256,10 @@ function paint() {
   else if (page === "server") setBody(renderServer(d));
   else if (page === "log") {
     setBody(renderLog(d));
-    if (autoscroll) { const el = document.getElementById("logBox"); if (el) el.scrollTop = el.scrollHeight; }
+    if (autoscroll) {
+      const el = document.getElementById("logBox") || document.getElementById("body");
+      if (el) el.scrollTop = el.scrollHeight;
+    }
   }
   else if (page === "models") setBody(renderModels(d));
   else if (page === "flags") setBody(renderFlags(d));
@@ -1006,9 +1267,11 @@ function paint() {
   else if (page === "accounts") setBody(renderAccounts(d));
   else if (page === "identity") setBody(renderIdentity(d));
   const hint = document.getElementById("statusHint");
-  if (hint) hint.textContent = "序号即页码：1–" + NAV.length + " 直达";
-  const foot = (page === "dashboard" && d && d.meta) ? (d.meta.target || "—") : "端口 " + window.__PORT__;
-  document.getElementById("sideFoot").textContent = foot;
+  // 右下角改成当前页的对应数字；原来那句"序号即页码"是提示语，不是页码，没有意义
+  const pi = NAV.findIndex(x => x[0] === page);
+  if (hint) hint.textContent = String(pi + 1).padStart(2, "0") + " / " +
+                              String(NAV.length).padStart(2, "0");
+  // 左下角那行「端口 N」用户要求去掉，只留那颗设置星球；这里不再写任何文字
   syncThemeBtn();
   const now = new Date(), MON = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二"];
   document.getElementById("dDay").textContent = String(now.getDate()).padStart(2, "0");
@@ -1161,10 +1424,19 @@ async function act(a, e_target) {
                     Number(document.getElementById("tgPort").value) || 0);
       if (r.ok) { await loadPage("server"); say(r.data.msg, "ok"); }
       else say(errBrief(r), "bad");
+    } else if (a === "log-view") {
+      logView = e_target.dataset.v || "easy";
+      bodySig[page] = ""; paint();
+    } else if (a === "log-source") {
+      logSource = e_target.dataset.k || "";
+      bodySig[page] = ""; paint();
+    } else if (a === "log-level") {
+      logLevel = e_target.dataset.k || "";
+      bodySig[page] = ""; paint();
     } else if (a === "autoscroll") {
       autoscroll = !autoscroll; morphSwitch(e_target.closest(".sw"), autoscroll);
     } else if (a === "clear") {
-      cache.log = Object.assign({}, cache.log, {empty: true, text: ""});
+      cache.log = Object.assign({}, cache.log, {empty: true, text: "", rows: []});
       paint();
     } else if (a === "export") {
       const r = await api("export_log_dialog");
@@ -1348,9 +1620,36 @@ document.getElementById("body").addEventListener("click", async function (e) {
     say(ok ? "已复制服务器地址：" + cp.dataset.copy : "该地址暂不可用，无法复制");
     return;
   }
+  // 易读版日志：整行就是开关，点一下把原文展开在下方；再点收起。
+  // 展开后原文里的选字操作不触发收起（否则一拖就没了）。
+  const lr = e.target.closest(".logrow");
+  if (lr) {
+    if (e.target.closest(".lograw")) return;
+    toggleLogRow(lr);
+    return;
+  }
   const b = e.target.closest("[data-act]");
-  if (b) await act(b.dataset.act, b);
+  if (b) { markBusy(b); await act(b.dataset.act, b); }
 });
+
+// 键盘同样能展开：Tab 到行上按回车/空格
+document.getElementById("body").addEventListener("keydown", function (e) {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const kr = e.target.closest && e.target.closest(".kr[data-ring]");
+  if (kr) {
+    e.preventDefault();
+    if (kr.dataset.ring !== ringMode) { ringMode = kr.dataset.ring; paint(); }
+    return;
+  }
+  const lr = e.target.closest && e.target.closest(".logrow");
+  if (!lr) return;
+  e.preventDefault();
+  toggleLogRow(lr);
+});
+function toggleLogRow(lr) {
+  lr.classList.toggle("open");
+  lr.setAttribute("aria-expanded", lr.classList.contains("open") ? "true" : "false");
+}
 
 // ── 热力图悬浮明细：自绘浮层接管 SVG <title>，避免原生提示双弹 ──
 const hmTip = document.getElementById("hmtip");
@@ -1382,18 +1681,30 @@ function hmPlace(e) {
 }
 document.getElementById("body").addEventListener("mouseover", function (e) {
   const c = e.target.closest && e.target.closest("rect[data-hm]");
-  if (!c) return;
-  hmFill(Number(c.getAttribute("data-hm")));
-  hmTip.hidden = false;
-  hmPlace(e);
+  if (c) {
+    hmFill(Number(c.getAttribute("data-hm")));
+    hmTip.hidden = false;
+    hmPlace(e);
+    return;
+  }
+  // 圆环的一段：只说是哪一类、多少、占比多少
+  const s = e.target.closest && e.target.closest("circle[data-seg]");
+  if (s) {
+    hmTip.innerHTML = '<div class="hmt"><span>' + esc(s.dataset.label) + '</span><b>' +
+      esc(s.dataset.count) + esc(s.dataset.unit || '') + '</b></div>' +
+      '<div class="hmx">占这一环的 ' + esc(s.dataset.pct) + '%</div>';
+    hmTip.hidden = false;
+    hmPlace(e);
+  }
 });
 document.getElementById("body").addEventListener("mousemove", function (e) {
-  const c = !hmTip.hidden && e.target.closest && e.target.closest("rect[data-hm]");
-  if (c) hmPlace(e);
+  if (hmTip.hidden) return;
+  const t = e.target.closest && e.target.closest("rect[data-hm], circle[data-seg]");
+  if (t) hmPlace(e);
 });
 document.getElementById("body").addEventListener("mouseout", function (e) {
-  const c = e.target.closest && e.target.closest("rect[data-hm]");
-  if (c && !(e.relatedTarget && c.contains(e.relatedTarget))) hmTip.hidden = true;
+  const t = e.target.closest && e.target.closest("rect[data-hm], circle[data-seg]");
+  if (t && !(e.relatedTarget && t.contains(e.relatedTarget))) hmTip.hidden = true;
 });
 
 document.getElementById("body").addEventListener("input", async function (e) {
@@ -1545,8 +1856,37 @@ if (wbBar) wbBar.addEventListener("click", function (e) {
   if (b) { e.stopPropagation(); act(b.dataset.act, b); }
 });
 // 侧栏页脚的「设置」同理：它也不在 #body 里，委托够不着
-const sideFoot = document.querySelector(".side .foot");
-if (sideFoot) sideFoot.addEventListener("click", function (e) {
+// 页头细拖动条：自己算增量交给壳层挪窗口。
+// 补了 WS_THICKFRAME 之后，WebView2 那条 app-region 原生拖动失效（实测拖不动），
+// pywebview 的 easy_drag 也一并关了——拖动这件事现在由这里负责。
+(function bindDragBar() {
+  const bar = document.querySelector(".hero .dragbar");
+  if (!bar) return;
+  let sx = 0, sy = 0, on = false;
+  bar.addEventListener("pointerdown", function (e) {
+    if (e.button !== 0) return;
+    on = true; sx = e.screenX; sy = e.screenY;
+    try { bar.setPointerCapture(e.pointerId); } catch (_e) {}
+    e.preventDefault();
+  });
+  bar.addEventListener("pointermove", function (e) {
+    if (!on) return;
+    const dx = e.screenX - sx, dy = e.screenY - sy;
+    if (!dx && !dy) return;
+    sx = e.screenX; sy = e.screenY;                 // 增量喂，不攒总数，避免和窗口实际位置打架
+    if (window.__DATA__ || !window.pywebview) return;   // 出图模式没有壳层
+    window.pywebview.api.call("drag_by", dx, dy);
+  });
+  const stop = function () { on = false; };
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach(function (t) {
+    bar.addEventListener(t, stop);
+  });
+})();
+
+// 左下角那颗星球的点击要有人接：它已经从 .foot 里搬出来单独定位，
+// 所以监听挂在 .side 上（nav 用 data-p，不会被这条误吃）。
+const sideEl = document.querySelector(".side");
+if (sideEl) sideEl.addEventListener("click", function (e) {
   const b = e.target.closest("[data-act]");
   if (b) { e.stopPropagation(); act(b.dataset.act, b); }
 });

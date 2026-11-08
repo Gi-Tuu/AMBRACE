@@ -412,13 +412,13 @@ def run_review_env(r_db, monkeypatch):
     async def _session_id(*a, **k):
         return 1
     import app.scheduling.scheduler as scheduler_mod
-    import app.application.chat_service as chat_service_mod
+    import app.application.chat_store as chat_store_mod
     import app.scheduling.triggers as triggers_mod
     import app.agent.llm_client as llm_mod
     import app.agent.user_profile as profile_mod
     import app.agent.persona as persona_mod
     monkeypatch.setattr(scheduler_mod, "send_to_session", _fake_send)
-    monkeypatch.setattr(chat_service_mod, "get_latest_session_id", _session_id)
+    monkeypatch.setattr(chat_store_mod, "get_latest_session_id", _session_id)
     monkeypatch.setattr(triggers_mod, "memory_review_enabled", _noop_true)
     monkeypatch.setattr(triggers_mod, "get_last_messages", _noop_none)
     monkeypatch.setattr(llm_mod, "chat_completion", _fake_chat_completion)

@@ -5,7 +5,7 @@ import asyncio
 from sqlalchemy import text
 
 
-async def _seed(u=9401, c=9411, s=9421):
+async def _seed(u=9481, c=9491, s=9493):
     from test_memory_source_queue_m2b import _seed_and_message
     return await _seed_and_message(u, c, s)
 
@@ -20,28 +20,28 @@ def test_reallow_grant_active_kernel_positive(monkeypatch):
     monkeypatch.setitem(AGENT_FLAGS, "memory_source_proof_v1", True)
 
     async def run():
-        msg1 = await _seed(9401, 9411, 9421)
-        mem = await save_memory(user_id=9401, character_id=9411, memory_type="event",
+        msg1 = await _seed(9481, 9491, 9493)
+        mem = await save_memory(user_id=9481, character_id=9491, memory_type="event",
                                 content="synthetic reallow content", source="chat", source_id=msg1)
         async with async_session_factory() as db:
             await db.run_sync(lambda sd: se.forget_memory(
-                sd.connection(), memory_id=mem.id, owner_user_id=9401, character_id=9411))
+                sd.connection(), memory_id=mem.id, owner_user_id=9481, character_id=9491))
             await db.commit()
             seq = (await db.execute(text("SELECT seq FROM source_seq WHERE id=1"))).scalar_one()
             token = await db.run_sync(lambda sd: se.reallow_memory(
-                sd.connection(), memory_id=mem.id, owner_user_id=9401,
-                character_id=9411, confirm_seq=int(seq)))
+                sd.connection(), memory_id=mem.id, owner_user_id=9481,
+                character_id=9491, confirm_seq=int(seq)))
             await db.commit()
             state = (await db.execute(text("SELECT state FROM memory_tombstones WHERE memory_id=:m"),
                                       {"m": mem.id})).scalar_one()
             assert state == "reallowed"
-            mid, _ = await chat_store._persist_user_message(9421, 9401, 9411, "source two")
+            mid, _ = await chat_store._persist_user_message(9493, 9481, 9491, "source two")
             ev = (await db.execute(text("SELECT source_event_uid FROM chat_messages WHERE id=:m"),
                                    {"m": mid})).scalar_one()
             result = await db.run_sync(lambda sd: se.write_authoritative_memory(
                 sd.connection(), event_uid=ev, memory_id=mem.id,
-                owner_user_id=9401, character_id=9411,
-                actor_kind="authenticated_user", actor_user_id=9401,
+                owner_user_id=9481, character_id=9491,
+                actor_kind="authenticated_user", actor_user_id=9481,
                 action="update", idempotency_key=f"reallow:{ev}",
                 memory_values={"content": "synthetic new authorized content"},
                 grant_token=token))
@@ -70,44 +70,44 @@ def test_reallow_old_source_and_reused_grant_refused(monkeypatch):
     monkeypatch.setitem(AGENT_FLAGS, "memory_source_proof_v1", True)
 
     async def run():
-        msg1 = await _seed(9402, 9412, 9422)
-        mem = await save_memory(user_id=9402, character_id=9412, memory_type="event",
+        msg1 = await _seed(9482, 9492, 9494)
+        mem = await save_memory(user_id=9482, character_id=9492, memory_type="event",
                                 content="synthetic reallow negative", source="chat", source_id=msg1)
         async with async_session_factory() as db:
             old_ev = (await db.execute(text("SELECT source_event_uid FROM chat_messages WHERE id=:m"),
                                        {"m": msg1})).scalar_one()
             await db.run_sync(lambda sd: se.forget_memory(
-                sd.connection(), memory_id=mem.id, owner_user_id=9402, character_id=9412))
+                sd.connection(), memory_id=mem.id, owner_user_id=9482, character_id=9492))
             await db.commit()
             seq = (await db.execute(text("SELECT seq FROM source_seq WHERE id=1"))).scalar_one()
             token = await db.run_sync(lambda sd: se.reallow_memory(
-                sd.connection(), memory_id=mem.id, owner_user_id=9402,
-                character_id=9412, confirm_seq=int(seq)))
+                sd.connection(), memory_id=mem.id, owner_user_id=9482,
+                character_id=9492, confirm_seq=int(seq)))
             await db.commit()
-            mid2, _ = await chat_store._persist_user_message(9422, 9402, 9412, "source two")
+            mid2, _ = await chat_store._persist_user_message(9494, 9482, 9492, "source two")
             ev2 = (await db.execute(text("SELECT source_event_uid FROM chat_messages WHERE id=:m"),
                                     {"m": mid2})).scalar_one()
             old_result = await db.run_sync(lambda sd: se.write_authoritative_memory(
                 sd.connection(), event_uid=old_ev, memory_id=mem.id,
-                owner_user_id=9402, character_id=9412,
-                actor_kind="authenticated_user", actor_user_id=9402,
+                owner_user_id=9482, character_id=9492,
+                actor_kind="authenticated_user", actor_user_id=9482,
                 action="update", idempotency_key=f"old:{old_ev}",
                 memory_values={"content": "old source should fail"}, grant_token=token))
             await db.commit()
             first = await db.run_sync(lambda sd: se.write_authoritative_memory(
                 sd.connection(), event_uid=ev2, memory_id=mem.id,
-                owner_user_id=9402, character_id=9412,
-                actor_kind="authenticated_user", actor_user_id=9402,
+                owner_user_id=9482, character_id=9492,
+                actor_kind="authenticated_user", actor_user_id=9482,
                 action="update", idempotency_key=f"ok:{ev2}",
                 memory_values={"content": "authorized new"}, grant_token=token))
             await db.commit()
-            mid3, _ = await chat_store._persist_user_message(9422, 9402, 9412, "source three")
+            mid3, _ = await chat_store._persist_user_message(9494, 9482, 9492, "source three")
             ev3 = (await db.execute(text("SELECT source_event_uid FROM chat_messages WHERE id=:m"),
                                     {"m": mid3})).scalar_one()
             reuse = await db.run_sync(lambda sd: se.write_authoritative_memory(
                 sd.connection(), event_uid=ev3, memory_id=mem.id,
-                owner_user_id=9402, character_id=9412,
-                actor_kind="authenticated_user", actor_user_id=9402,
+                owner_user_id=9482, character_id=9492,
+                actor_kind="authenticated_user", actor_user_id=9482,
                 action="update", idempotency_key=f"reuse:{ev3}",
                 memory_values={"content": "reuse should fail"}, grant_token=token))
             await db.commit()

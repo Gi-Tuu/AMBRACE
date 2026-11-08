@@ -3,6 +3,7 @@ import "package:ai_companion/l10n/app_localizations.dart";
 import "../../models/memory.dart";
 import "../../models/memory_history.dart";
 import "../../models/memory_derivations.dart";
+import "../../models/memory_why.dart";
 import "../../services/api_client.dart";
 import "../../widgets/ios_card_group.dart";
 import "../../utils/beijing_time.dart";
@@ -62,6 +63,13 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
   int _parentsPageGen = 0;
   int _childrenPageGen = 0;
 
+  // RC2 G5：来源链（只读、默认折叠）。失败与「没有来源」分开，不互相冒充。
+  MemoryWhy? _why;
+  bool _loadingWhy = true;
+  bool _whyFailed = false;
+  bool _whyExpanded = false;
+  int _whyGeneration = 0;
+
   Map<String, String> _typeLabels(AppLocalizations l10n) => {
         "user_info": l10n.memoryImpression,
         "preference": l10n.memoryPreference,
@@ -81,6 +89,7 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
     _refreshMemory();  // P2-11：补齐调用方没带的字段（如 why_it_matters）
     _loadHistory();
     _loadDerivations();
+    _loadWhy();
   }
 
   @override
@@ -116,10 +125,16 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
       _childrenInflight = false;
       _parentsPageGen++;
       _childrenPageGen++;
+      _whyGeneration++;      // 在途来源链结果一律作废
+      _why = null;
+      _whyFailed = false;
+      _loadingWhy = true;
+      _whyExpanded = false;
       _loadChain();
       _refreshMemory();
       _loadHistory();
       _loadDerivations();
+      _loadWhy();
     }
   }
 
@@ -200,6 +215,51 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
       setState(() {
         _loadingHistory = false;
         _historyFailed = true;
+      });
+    }
+  }
+
+  /// RC2 G5：加载「为什么记住」来源链（只读）。与 G1 同一边界：
+  /// 页面代次＋当前 memory.id＋来源链代次＋baseUrl/token 快照；晚到结果不跨页/跨账号写入。
+  Future<void> _loadWhy() async {
+    final memoryId = widget.memory.id;
+    final generation = _pageGeneration;
+    final whyGeneration = ++_whyGeneration;
+    final baseUrl = _api.baseUrl;
+    final token = _api.token;
+    if (mounted) {
+      setState(() {
+        _loadingWhy = true;
+        _whyFailed = false;
+      });
+    }
+    bool pageCurrent() =>
+        mounted &&
+        generation == _pageGeneration &&
+        widget.memory.id == memoryId &&
+        whyGeneration == _whyGeneration;
+    bool sameOrigin() => _api.baseUrl == baseUrl && _api.token == token;
+    try {
+      final why = await _api.getMemoryWhy(memoryId);
+      if (!pageCurrent()) return;
+      if (!sameOrigin()) {
+        setState(() {
+          _loadingWhy = false;
+          _whyFailed = true;
+          _why = null;
+        });
+        return;
+      }
+      setState(() {
+        _loadingWhy = false;
+        _whyFailed = false;
+        _why = why;
+      });
+    } catch (_) {
+      if (!pageCurrent()) return;
+      setState(() {
+        _loadingWhy = false;
+        _whyFailed = true;
       });
     }
   }
@@ -960,6 +1020,138 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
     return l10n.memoryChainEmpty;
   }
 
+  /// RC2 G5：来源链卡片（只读、默认折叠）。失败 / 无来源 / 有来源三态分开。
+  Widget _buildWhyCard(AppLocalizations l10n) {
+    final why = _why;
+    final Widget body;
+    if (_loadingWhy) {
+      body = Row(children: [
+        const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(l10n.memoryWhyLoading,
+              style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)),
+        ),
+      ]);
+    } else if (_whyFailed || why == null) {
+      body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(l10n.memoryWhyLoadFailed,
+            style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            icon: const Icon(Icons.refresh, size: 18),
+            label: Text(l10n.retry),
+            onPressed: _loadWhy,
+          ),
+        ),
+      ]);
+    } else if (!why.hasSource) {
+      body = Text(l10n.memoryWhyNoSource,
+          style: const TextStyle(fontSize: 13, height: 1.5, color: IosCardColors.subtitle));
+    } else {
+      final items = why.sources;
+      body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(
+            child: Text(
+              // gen-l10n 按占位符字母序生成位置参数（receipts, sources），顺序不可反。
+              l10n.memoryWhySummary(why.receiptCount, items.length),
+              style: const TextStyle(fontSize: 13, height: 1.5, color: IosCardColors.subtitle),
+            ),
+          ),
+          if (items.isNotEmpty)
+            TextButton(
+              onPressed: () => setState(() => _whyExpanded = !_whyExpanded),
+              child: Text(_whyExpanded ? l10n.collapse : l10n.expand),
+            ),
+        ]),
+        if (items.isEmpty)
+          Text(l10n.memoryWhyNoSource,
+              style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)),
+        if (_whyExpanded && items.isNotEmpty)
+          for (var i = 0; i < items.length; i++) ...[
+            if (i != 0) const Divider(height: 20),
+            _buildWhySourceItem(items[i], l10n),
+          ],
+      ]);
+    }
+    return IosCardGroup(children: [
+      Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(Icons.link, size: 18, color: IosCardColors.subtitle),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(l10n.memoryWhyTitle,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          body,
+        ]),
+      ),
+    ]);
+  }
+
+  Widget _buildWhySourceItem(MemoryWhySource item, AppLocalizations l10n) {
+    final timeText = () {
+      final raw = item.eventAt ?? item.messageCreatedAt;
+      if (raw == null || raw.isEmpty) return l10n.memoryWhyTimeUnknown;
+      return formatBeijingTime(raw);
+    }();
+    final sessionId = item.sessionId;
+    final excerpt = item.messageExcerpt;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Text(_whyKindLabel(item.kind, l10n),
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(timeText,
+              style: const TextStyle(fontSize: 12, color: IosCardColors.subtitle)),
+        ),
+      ]),
+      if (sessionId != null) ...[
+        const SizedBox(height: 4),
+        Text(l10n.memoryWhySession(sessionId),
+            style: const TextStyle(fontSize: 12, color: IosCardColors.subtitle)),
+      ],
+      const SizedBox(height: 8),
+      if (excerpt != null && excerpt.isNotEmpty)
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Theme.of(context).dividerColor),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(l10n.memoryWhyExcerptLabel,
+                style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
+            const SizedBox(height: 4),
+            SelectableText(excerpt, style: const TextStyle(fontSize: 13, height: 1.5)),
+          ]),
+        )
+      else
+        Text(l10n.memoryWhyNoExcerpt,
+            style: const TextStyle(fontSize: 12, color: IosCardColors.subtitle)),
+    ]);
+  }
+
+  String _whyKindLabel(String kind, AppLocalizations l10n) {
+    switch (kind) {
+      case "chat_message":
+        return l10n.memoryWhyKindChat;
+      case "perception":
+        return l10n.memoryWhyKindPerception;
+      default:
+        return kind;
+    }
+  }
+
   Widget _buildHistoryCard(AppLocalizations l10n) {
     final items = _history ?? const <MemoryCorrection>[];
     final Widget body;
@@ -1231,6 +1423,10 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
 
             // 派生关系（RC2 G2：只读、直接边）
             _buildDerivationsCard(l10n),
+            const SizedBox(height: 24),
+
+            // 为什么记住（RC2 G5：只读来源链，默认折叠）
+            _buildWhyCard(l10n),
             const SizedBox(height: 24),
 
             // 记忆链条（树状图）

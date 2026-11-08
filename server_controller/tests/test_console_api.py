@@ -391,7 +391,9 @@ def test_server_state_shape(rec, monkeypatch):
 # ═════════════════ W3a：服务器控制页 ═════════════════
 def test_server_page_shape(rec):
     d = must("server_page")
-    assert set(d) == {"state", "target", "rows", "actions"}, sorted(d)
+    # server_limit 是这一批从「账号管理」搬过来的（默认额度属于整机管理）
+    assert set(d) == {"state", "target", "rows", "server_limit", "actions"}, sorted(d)
+    assert d["server_limit"]["title"].startswith("服务器默认额度")
     assert d["actions"] == ["start", "stop", "restart"]
     assert [r["label"] for r in d["rows"]] == ["本机访问", "局域网（同 Wi-Fi）", "Tailscale 跨网"]
     assert d["rows"][0]["url"] == "http://127.0.0.1:%d" % sc.TARGET_PORT, d["rows"]

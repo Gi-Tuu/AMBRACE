@@ -7,18 +7,16 @@
 机械改写只有两类（判定/文案/返回值一字未改）：
 
 1. 缩进（原样为 0，未动）。
-2. 被 tests/ 按 chat_service 打桩的名字、本组兄弟互调、以及本组用到的 chat_service 模块级常量，
-   改走 ``_cs.<name>``（函数体内 ``from app.application import chat_service as _cs``，**不得提到顶层**——顶层会成环）：
+2. 被 tests/ 按 chat_service 打桩的**设施**改走 ``_cs.<name>``（函数体内
+   ``from app.application import chat_service as _cs``，**不得提到顶层**——顶层会成环）：
    ``async_session_factory``（``setattr(chat_service, "async_session_factory", …)`` 实测 18 处）、
-   ``spawn_background``（4 处）、``add_chat_memory_extraction``（1 处）、第二刀重导出的结算八名
-   （``_save_bio_update`` / ``_save_status_update`` / ``_generate_initial_bio`` / ``_bump_relationship`` /
-   ``_settle_relational_drive`` / ``_release_drive_on_reply`` / ``_settle_thought_pool_turn`` /
-   ``_trigger_state_eval``，实测 4 处按 chat_service 路径打桩）、``_gen_image_flow``（1 处桩，
-   ``app/api/permissions.py`` 也按 chat_service 路径 import 它）、以及两个常量
-   ``_PUNCT_ONLY_RE`` / ``_DEGRADED_CONTINUATION_TIMEOUT_S``（``_run_agent_core`` 也在用 ⇒ 留在
-   chat_service，本模块只回指取）。兄弟调用实测一处：
-   ``_run_post_processing``→``_schedule_reliability_fact_check``。
-   本模块**不得**具名 import 上述名字，否则桩静默失效 ⇒ 退化成真查库 / 真起后台任务 / 真生图。
+   ``spawn_background``（4 处）。本模块**不得**具名 import 这两名，否则桩静默失效 ⇒ 退化成真查库 / 真起后台任务。
+3. 批 3 S2b（2026-11-08）：**组内与兄弟回指全部退场**——结算八名改顶层
+   ``from app.application.chat_settlement import …``、``add_chat_memory_extraction`` 改走
+   ``from app.memory import …``、``_gen_image_flow`` 改走 ``from app.application.chat.tools import …``、
+   ``_schedule_reliability_fact_check`` 用本模块裸名；两个常量一并本地化：``_PUNCT_ONLY_RE``
+   下沉 ``chat/tools`` 作单一真源（chat_service 也用它），``_DEGRADED_CONTINUATION_TIMEOUT_S``
+   只有本模块使用。相应测试桩已改指各自 owner（守卫见 tests/test_arbiter_seam.py ⑬ 节）。
 
 ``_run_agent_core``（实测 17 处桩）**留在 chat_service**，本组 7 个函数对它没有任何调用点
 （``_run_post_processing`` 里那条只是注释引用），模块级 ``agent`` 同样只被 ``_run_agent_core`` 使用
@@ -33,10 +31,22 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from app.application.chat.tools import _sanitize_persist_full
+from app.application.chat.tools import PUNCT_ONLY_RE, _gen_image_flow, _sanitize_persist_full
+from app.application.chat_settlement import (
+    _bump_relationship, _generate_initial_bio, _release_drive_on_reply,
+    _save_bio_update, _save_status_update, _settle_relational_drive,
+    _settle_thought_pool_turn, _trigger_state_eval,
+)
+from app.memory import add_chat_memory_extraction
 from app.utils.logger import get_logger
 
 _logger = get_logger("services.chat")
+
+# 降级续写单次超时（秒）。2026-11-08 批 3 S2b：从 chat_service 随 _try_degraded_continuation
+# 一并搬到本模块（全项目只此一处使用），不再经 chat_service 命名空间回指。
+_DEGRADED_CONTINUATION_TIMEOUT_S = 25.0
+# 纯标点判据与 chat_service 共用同一正则对象（单一定义在 chat/tools）
+_PUNCT_ONLY_RE = PUNCT_ONLY_RE
 
 
 async def _load_reasoning_level(character_id: int) -> int:
@@ -156,10 +166,10 @@ async def _try_degraded_continuation(
             # 调用，绕过了「按 ast.Name 匹配」的记账契约测试（tests/test_audit_batch3.py），导致这条降级续写
             # 的用量落库 task=NULL、读端只能落 (untagged)。补上与其他对话调用一致的 task="chat"。
             _cc(messages, user_id=user_id, character_id=character_id, task="chat"),
-            timeout=_cs._DEGRADED_CONTINUATION_TIMEOUT_S,
+            timeout=_DEGRADED_CONTINUATION_TIMEOUT_S,
         )
         text = (out or "").strip() if isinstance(out, str) else ""
-        if not text or _cs._PUNCT_ONLY_RE.fullmatch(text):
+        if not text or _PUNCT_ONLY_RE.fullmatch(text):
             return ""
         visible, _extra = _sanitize_persist_full(text)
         return visible
@@ -218,7 +228,7 @@ async def _run_post_processing(
     source_event_uid: str | None = None,
 ) -> None:
     """AI 回复落库后的公共收尾（反思/自述/状态/记忆/话题/复习/关系/状态评估/可靠度/生图；失败静默）。"""
-    from app.application import chat_service as _cs  # 被桩依赖与本组常量在 chat_service 命名空间现取
+    from app.application import chat_service as _cs  # 设施（会话工厂/后台任务）仍在 chat_service 命名空间现取
     # 认知循环 v2.1：反思结果落库（节点已计算，拿第一条 AI 消息 id 记录；失败静默）
     try:
         from app.agent.reflection import persist_reflection
@@ -227,12 +237,12 @@ async def _run_post_processing(
     except Exception as e:
         _logger.warning("Reflection persist failed: %s", e)
 
-    await _cs._save_bio_update(character_id, final_state.get("bio_update"), user_id)
-    await _cs._save_status_update(character_id, final_state.get("status_update"), user_id)
-    _cs.spawn_background(_cs._generate_initial_bio(character_id, user_id))
+    await _save_bio_update(character_id, final_state.get("bio_update"), user_id)
+    await _save_status_update(character_id, final_state.get("status_update"), user_id)
+    _cs.spawn_background(_generate_initial_bio(character_id, user_id))
 
     # 触发记忆提取
-    _cs.spawn_background(_cs.add_chat_memory_extraction(
+    _cs.spawn_background(add_chat_memory_extraction(
         session_id, character_id, user_id, content, final_text,
         source_id=user_msg_id, source_event_uid=source_event_uid,
     ))
@@ -302,15 +312,15 @@ async def _run_post_processing(
         pass
 
     # 认知循环 v2.1：用户发消息 → 关系标量互动加分（bump，失败静默）
-    _cs.spawn_background(_cs._bump_relationship(character_id, user_id))
+    _cs.spawn_background(_bump_relationship(character_id, user_id))
 
     # A4 批3 M1b2（影子态）：回合末结算一次关系驱力水位（只记账，不改回复；失败静默）
-    _cs.spawn_background(_cs._settle_relational_drive(character_id, user_id))
+    _cs.spawn_background(_settle_relational_drive(character_id, user_id))
     # A4 批 3 / T1 M2a（2026-10-01）：回合末按「最近一条未接住的主动消息」全额释放（flag 关 ⇒ 零 SQL、失败静默）
-    _cs.spawn_background(_cs._release_drive_on_reply(character_id, user_id, session_id))
+    _cs.spawn_background(_release_drive_on_reply(character_id, user_id, session_id))
 
     # 批 4 M1-挂点（2026-10-01）：回合末扫本会话 F4/F5 抽念头入池（flag 关＝零调用零查询；失败静默）
-    _cs.spawn_background(_cs._settle_thought_pool_turn(character_id, user_id, session_id))
+    _cs.spawn_background(_settle_thought_pool_turn(character_id, user_id, session_id))
 
     # 认知循环 v2.1：话题完成/搁置自动切换（本地零 LLM，失败静默）
     try:
@@ -320,15 +330,15 @@ async def _run_post_processing(
         pass
 
     # 异步评估八维可视化状态（10 分钟节流，不阻塞回复）
-    _cs._trigger_state_eval(character_id, user_id, content, final_text, final_state.get("status_update"))
+    _trigger_state_eval(character_id, user_id, content, final_text, final_state.get("status_update"))
 
     # P5：记忆可靠度信号（确认/纠正，$0 规则）+ 异步事实核查（节流，失败静默；G-P2-1：HTTP 与 chunked 共用）
     if reliability:
-        _cs._schedule_reliability_fact_check(character_id, user_id, content, final_text)
+        _schedule_reliability_fact_check(character_id, user_id, content, final_text)
 
     # 生图：用户要求画图时异步生成并追加图片消息（开关在 context 注入层控制标记输出）
     if gen_prompt:
-        _cs.spawn_background(_cs._gen_image_flow(user_id, character_id, session_id, gen_prompt, img_text))
+        _cs.spawn_background(_gen_image_flow(user_id, character_id, session_id, gen_prompt, img_text))
 
     # M3-a（2026-09-01）：工作记忆评估——turn 结束异步触发（flag 关/fail-open/30min 节流，
     # docs/archive/architecture/设计_M3工作记忆_20260901.md §3；P1-2：实现前核验 _run_agent_core 收尾存在 ✓）

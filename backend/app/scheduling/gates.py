@@ -49,7 +49,7 @@ async def has_user_said_sleep(character_id: int, user_id: int) -> bool:
         ref -= timedelta(days=1)
     since_utc = ref.astimezone(timezone.utc).replace(tzinfo=None)
     async with async_session_factory() as db:
-        from app.application.chat_service import get_latest_session_id
+        from app.application.chat_store import get_latest_session_id
         session_id = await get_latest_session_id(user_id, character_id)
         if not session_id:
             return False
@@ -299,7 +299,7 @@ async def is_user_active(character_id: int, user_id: int) -> bool:
     """用户最近是否在活跃聊天（有用户消息）"""
     since = now_naive_utc() - timedelta(minutes=USER_ACTIVE_MINUTES)
     async with async_session_factory() as db:
-        from app.application.chat_service import get_latest_session_id
+        from app.application.chat_store import get_latest_session_id
         session_id = await get_latest_session_id(user_id, character_id)
         if not session_id:
             return False

@@ -313,7 +313,7 @@ async def _pacing_gate(
             if session_id is None:
                 _uid = candidate.get("user_id")
                 if _uid:
-                    from app.application.chat_service import get_latest_session_id
+                    from app.application.chat_store import get_latest_session_id
                     session_id = await get_latest_session_id(_uid, char_id)
                 # 兜底解出会话后按会话维度重算灰度桶（比例 <1 时同一角色不同会话可不同命中）
                 if session_id is not None:

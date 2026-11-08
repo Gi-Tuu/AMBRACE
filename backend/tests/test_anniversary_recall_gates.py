@@ -110,7 +110,7 @@ def env(monkeypatch):
 
     async def _latest(_uid, _cid):
         return SID
-    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _latest)
+    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _latest)
 
     async def _active_chars(*_a, **_k):
         return [{"character_id": CID, "user_id": UID}]
@@ -305,7 +305,7 @@ def test_no_session_unchanged(env):
     """没有可用会话（原有语义）：不发，且不因改动多出留痕。"""
     async def _none(_uid, _cid):
         return None
-    env.monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _none)
+    env.monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _none)
     _run(env)
     assert env.sent == [] and env.rejected == []
 

@@ -137,7 +137,7 @@ class MotivationSource:
                 score = await arbiter._compute_motivation(cid)
                 if score >= MOTIVATION_SPEAK_THRESHOLD:
                     # P0-4 修复（2026-08-16）：候选补 session_id（_execute proactive 分支直接索引），无会话跳过
-                    from app.application.chat_service import get_latest_session_id
+                    from app.application.chat_store import get_latest_session_id
                     sid = await get_latest_session_id(c.get("user_id"), cid)
                     if not sid:
                         continue

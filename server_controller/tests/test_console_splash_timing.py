@@ -167,13 +167,22 @@ def test_arc_bulges_off_the_chord():
 
 
 # ───── ⑤ 落点必须正好是页眉那颗星球 ─────
+def _hero_h():
+    """页眉高度：字面量或 var(--hero-h) 都读得出来（CSS 里只许有一个真源）。"""
+    m = re.search(r"flex:\s*0 0 (\d+)px", _rule(".hero"))
+    if m:
+        return int(m.group(1))
+    assert "var(--hero-h)" in _rule(".hero"), "页眉高度既不是像素也不是 --hero-h"
+    return int(re.search(r"--hero-h:\s*(\d+)px", CSS).group(1))
+
+
 def _hero_center():
     """从 `.hero-planet` 与 `.hero` 的纸面值推出球心（相对视口右上角，CSS px）。"""
     hero = _rule(".hero-planet")
     w = int(re.search(r"width:\s*(\d+)px", hero).group(1))
     right = float(re.search(r"right:\s*(-?[\d.]+)px", hero).group(1))
     bottom = float(re.search(r"bottom:\s*(-?[\d.]+)px", hero).group(1))
-    hh = int(re.search(r"flex:\s*0 0 (\d+)px", _rule(".hero")).group(1))
+    hh = _hero_h()
     return w, right + w / 2.0, hh - bottom - w / 2.0   # 距右边 / 距顶
 
 
@@ -195,7 +204,7 @@ def test_planet_sits_in_the_corner_third_off_screen():
     w, from_right, from_top = _hero_center()
     off = w / 2.0 - from_right                # 探出右边缘的宽度
     assert abs(off - w / 3.0) <= 6, "右边缘外露 %gpx，应约 1/3 球径（%gpx）" % (off, w / 3.0)
-    hh = int(re.search(r"flex:\s*0 0 (\d+)px", _rule(".hero")).group(1))
+    hh = _hero_h()
     assert from_top > hh, "球心要低于页眉底边（%gpx），现在 %gpx" % (hh, from_top)
     assert from_top < hh + w / 2.0, "球心太低，球会整个沉到页眉下面去了"
 
@@ -330,7 +339,9 @@ def test_reduced_motion_still_parks_the_planet_on_screen():
     assert CSS.count("@media (prefers-reduced-motion: reduce)") == 1, \
         "reduced-motion 块只许有一个（多个会让 css_block() 取错）"
     blk = CSS[i:]
-    assert ".planet, .sp-hero { animation: none; }" in blk, "开屏没在 reduced-motion 里停"
+    # 这条规则现在是一组选择器（.planet、.sp-hero、左下角设置星球），
+    # 断言改成"这一组里有 planet 且整条是 animation:none"，不再钉死字面量
+    assert re.search(r"\.planet[^{]*\{[^}]*animation:\s*none", blk), "开屏没在 reduced-motion 里停"
     m = re.search(r"\.sp-hero \{[^}]*transform:\s*translate\(([\d.]+)vw,\s*([\d.]+)vh\)", blk)
     assert m, "停动画后没把球摆回画面：负 margin 会把它甩到左上角外面"
     x, y = float(m.group(1)), float(m.group(2))

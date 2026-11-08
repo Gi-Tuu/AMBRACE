@@ -1,6 +1,5 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
-
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -256,12 +255,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String agentMindToolSummary(
-    Object blocked,
-    Object fail,
-    Object ok,
-    Object rate,
-    Object skip,
-  ) {
+      Object blocked, Object fail, Object ok, Object rate, Object skip) {
     return '成功率 $rate%（完成 $ok / 失败 $fail · 拦截 $blocked · 未触发 $skip）';
   }
 
@@ -7908,10 +7902,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String serverIdentityUnverifiedWarn(
-    Object verified,
-    Object mismatch,
-    Object unsigned,
-  ) {
+      Object verified, Object mismatch, Object unsigned) {
     return '部分受保护：图片/音频直链、下载直链、SSE 与 WebSocket 帧不做签名校验（$verified/$mismatch/$unsigned）';
   }
 
@@ -8151,6 +8142,43 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get memoryDerivationsStatusUnknown => '状态未知';
+
+  @override
+  String get memoryWhyTitle => '为什么记住';
+
+  @override
+  String get memoryWhyLoading => '正在加载来源链…';
+
+  @override
+  String get memoryWhyLoadFailed => '来源链加载失败';
+
+  @override
+  String get memoryWhyNoSource => '这条记忆没有来源记录（较早写入或来源保护开启前）';
+
+  @override
+  String memoryWhySummary(Object receipts, Object sources) {
+    return '来源事件 $sources 条 · 写入回执 $receipts 条';
+  }
+
+  @override
+  String get memoryWhyKindChat => '对话消息';
+
+  @override
+  String get memoryWhyKindPerception => '手机感知';
+
+  @override
+  String memoryWhySession(Object id) {
+    return '会话 $id';
+  }
+
+  @override
+  String get memoryWhyTimeUnknown => '时间未知';
+
+  @override
+  String get memoryWhyExcerptLabel => '原话摘录';
+
+  @override
+  String get memoryWhyNoExcerpt => '没有可展示的原文';
 
   @override
   String get gardenSetupTitle => '花园只读接入';

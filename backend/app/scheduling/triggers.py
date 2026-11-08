@@ -89,7 +89,7 @@ async def _load_active_characters() -> list[dict]:
 
 async def get_latest_session(character_id: int, user_id: int) -> dict | None:
     """获取最近的活跃会话（按最新消息时间选会话，避免 updated_at 污染选错）"""
-    from app.application.chat_service import get_latest_session_id
+    from app.application.chat_store import get_latest_session_id
     session_id = await get_latest_session_id(user_id, character_id)
     if not session_id:
         return None

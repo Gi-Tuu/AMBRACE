@@ -11,6 +11,7 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
+from app.application.decision_layer_ports import production_decision_layer_ports
 from app.db.database import async_session_factory
 from app.domain.decision import ask_score
 from app.models.memory import Memory
@@ -216,7 +217,8 @@ async def _rate_batch(character, items: list, *, obs: dict | None = None) -> lis
                 legacy=lambda v=max(1, min(5, row["star"])): v,
                 hook="memory_star_rating",
                 character_id=character.id if character else None,
-                context={"memory_id": row["id"], "raw_star": row["star"]})
+                context={"memory_id": row["id"], "raw_star": row["star"]},
+                ports=production_decision_layer_ports)
             result.append({"id": row["id"], "star": star})
             model_stars[str(row["id"])] = row["star"]
     if obs is not None:

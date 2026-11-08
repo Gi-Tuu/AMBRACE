@@ -1267,8 +1267,10 @@ def test_批4b穿透_plugin取库经bundle现取arbiter桩(monkeypatch):
 # ``app/application/chat_store.py``。与 arbiter 那八批唯一的口径差别：本批**不用 GateBundle**
 # （chat_service 的打桩面实测 22 名 / 86 处，bundle 字段会爆炸），改用**模块属性回指**——搬出去的
 # 模块在函数体内 ``from app.application import chat_service as _cs``，再按 ``_cs.<name>`` 现取。
-# 于是那 86 处桩（含 19 处字符串路径桩 ``"app.application.chat_service.get_latest_session_id"``）
-# **一行都不用迁移**；代价全落在纪律上：chat_store 顶层不许具名 import 这四个被桩名字，
+# 2026-11-08 批 3 S2a：对外消费已改指 chat_store，19 处字符串路径桩 + 6 处模块属性形态桩
+# 同步改指；本单保留 3 处 chat_service 桩（字符串路径 1 + 模块属性 2），专门验证 chat_store 内部的
+# ``_cs`` 回指仍穿透（内部回指退场留给下一批）。
+# 代价全落在纪律上：chat_store 顶层不许具名 import 这四个被桩名字，
 # ``import chat_service`` 也不许提到顶层（成环）。⑪ 节钉的就是这两侧的约束。
 from app.application import chat_service  # noqa: E402
 from app.application import chat_store  # noqa: E402
@@ -1335,25 +1337,72 @@ def test_批5一_六个名字在chat_service与chat_store里是同一个对象()
     )
 
 
+def test_批3S2a_会话解析类名字不再从chat_service外部取():
+    """S2a 守卫：外部消费必须从 chat_store 取；chat_service 只剩内部 ``_cs`` 回指与同对象断言。
+
+    允许 ``chat/streaming.py`` 仍从 chat_service 懒取（那是包内循环规避的内部接线，下一批再退）。
+    """
+    names = {"get_latest_session_id", "get_owned_session", "create_session",
+             "get_unread_counts", "mark_session_read"}
+    bad = []
+    for p in (_BACKEND_PY / "app").rglob("*.py"):
+        if p.name in ("chat_service.py", "streaming.py"):
+            continue
+        try:
+            tree = ast.parse(p.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.ImportFrom)
+                    and (node.module or "") == "app.application.chat_service"
+                    and any(a.name in names for a in node.names)):
+                bad.append(str(p.relative_to(_BACKEND_PY)))
+    assert bad == [], f"仍从 chat_service 取会话解析类名字：{bad}"
+
+
+def test_批3S2a_字符串路径桩只剩内部回指那一处():
+    """S2a+ 守卫：外部测试桩已改指 owner；仅 test_arbiter_seam 保留 1 处 chat_service 桩，
+    用作「解析点已离开 chat_service」的诱饵（★S2b 已把兄弟调用改为本模块裸名，原 3 处降到 1 处）。
+
+    两种写法都要抓：字符串路径（``setattr("app.application.chat_service.x", ...)``）与
+    模块属性（``setattr(chat_service[_mod|_svc], "x", ...)``）。历史上只数字符串写法，
+    漏掉了模块属性形式的 6 处，S2a 首轮全量因此红了 8 条（桩静默失效 ⇒ 真查库 ⇒ 返回 False）。
+    """
+    names = ("get_latest_session_id", "get_owned_session", "create_session",
+             "get_unread_counts", "mark_session_read")
+    hits = []
+    for p in (_BACKEND_PY / "tests").rglob("*.py"):
+        c = 0
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            if "setattr" not in line or not any(n in line for n in names):
+                continue
+            if "app.application.chat_service." in line or re.search(
+                    r"chat_service(?:_mod|_svc)?\b", line):
+                c += 1
+        if c:
+            hits.append((p.name, c))
+    assert hits == [("test_arbiter_seam.py", 1)], f"旧解析路径桩残留（桩会静默失效）：{hits}"
+
+
 # ───────── ⑪-2 字符串路径打桩仍然穿透 ─────────
 def test_批5一_字符串路径桩穿透到chat_store里的兄弟调用(monkeypatch):
-    """本单命门：tests/ 有 19 处 ``setattr("app.application.chat_service.get_latest_session_id", …)``，
-    而唯一调它的 ``create_session`` 已经搬到 chat_store —— 只有让它经 ``_cs`` 现取才继续生效。"""
+    """批 3 S2b 后的命门：兄弟互调已改指本模块 ⇒ 字符串路径桩必须打 ``chat_store`` 才穿透
+    ``create_session``（打 ``chat_service`` 会静默失效、退化成真查库）。"""
     seen: list = []
 
     async def _sid(user_id, character_id):
         seen.append((user_id, character_id))
         return 4242
 
-    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _sid)
+    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _sid)
     out = asyncio.run(chat_store.create_session(7, 3))
-    assert seen == [(7, 3)], "create_session 没经 _cs 取兄弟（字符串路径桩静默失效）"
+    assert seen == [(7, 3)], "create_session 没在本模块命名空间解析兄弟（字符串路径桩静默失效）"
     assert out == {"id": 4242, "character_id": 3, "greeting": None}, "复用分支的返回值一字未改"
 
 
-def test_批5一_兄弟调用的解析点在chat_service而非chat_store自身(monkeypatch):
-    """代价面（R4 的镜像）：两侧同名都打桩时，经 ``_cs`` 的调用只认 chat_service 那一份。
-    记下来防止将来有人「顺手」把回指改成本地裸名——那不会红，只会让上面那 19 处桩失效。"""
+def test_批5一_兄弟调用的解析点在本模块自身(monkeypatch):
+    """R4 代价的镜像（S2b 已翻转）：两侧同名都打桩时，兄弟调用只认 ``chat_store`` 那一份。
+    记下来防止将来有人「顺手」把兄弟调用改回 ``_cs``——那不会红，只会让这里所有桩失效。"""
     hits: list = []
 
     async def _via_cs(*_a, **_kw):
@@ -1367,8 +1416,8 @@ def test_批5一_兄弟调用的解析点在chat_service而非chat_store自身(m
     monkeypatch.setattr(chat_service, "get_latest_session_id", _via_cs)
     monkeypatch.setattr(chat_store, "get_latest_session_id", _via_store)
     out = asyncio.run(chat_store.create_session(1, 2))
-    assert hits == ["cs"], f"兄弟调用的解析点跑偏：{hits}"
-    assert out["id"] == 111
+    assert hits == ["store"], f"兄弟调用的解析点跑偏：{hits}"
+    assert out["id"] == 222
 
 
 # ───────── ⑪-3 会话工厂：调用时刻现取 chat_service 桩 ─────────
@@ -1462,9 +1511,9 @@ def test_批5一_persist的取库与事件与后台任务三个桩名全经chat_
 
 
 # ───────── ⑪-4 mark_session_read：归属查询与事件都回指 ─────────
-def test_批5一_mark_session_read的归属查询与事件均经chat_service现取(monkeypatch):
-    """``db`` 由调用方传入 ⇒ 零假库也能验：兄弟调用 ``get_owned_session`` 与
-    ``append_domain_event`` 都必须在 chat_service 命名空间解析；顺带钉住 F-14 联动
+def test_批5一_mark_session_read的归属查询走本模块与事件仍经chat_service(monkeypatch):
+    """``db`` 由调用方传入 ⇒ 零假库也能验：兄弟调用 ``get_owned_session`` 在本模块命名空间解析
+    （S2b 已翻转），设施 ``append_domain_event`` 仍经 chat_service 现取；顺带钉住 F-14 联动
     （同角色每个活跃会话各落一条已读事件）。"""
     seen: list = []
 
@@ -1482,10 +1531,10 @@ def test_批5一_mark_session_read的归属查询与事件均经chat_service现�
     async def _evt(etype, _domain, _eid, **_kw):
         seen.append(("event", etype))
 
-    monkeypatch.setattr(chat_service, "get_owned_session", _owned)
+    monkeypatch.setattr(chat_store, "get_owned_session", _owned)
     monkeypatch.setattr(chat_service, "append_domain_event", _evt)
     assert asyncio.run(chat_store.mark_session_read(_DB(), 11, 3)) is True
-    assert seen[0] == ("owned", 11, 3), "兄弟调用没经 _cs 取 get_owned_session"
+    assert seen[0] == ("owned", 11, 3), "兄弟调用没在本模块取 get_owned_session"
     assert [x for x in seen if x[0] == "event"] == [
         ("event", chat_store._ET.CHAT_SESSION_READ.value)] * 2, "联动已读事件条数漂移"
 
@@ -1506,11 +1555,14 @@ def test_批5一_chat_store顶层不import_chat_service也不具名import被桩�
     assert cs, "chat_store 没经 chat_service 现取被桩依赖"
     lifted = [ln for ln in cs if not ln.startswith((" ", "\t"))]
     assert lifted == [], f"chat_service import 被提到模块顶层：{lifted}"
-    # ③ 正向锚定：四个回指点一个都不能少
+    # ③ 正向锚定：三个设施回指一个都不能少；兄弟调用已于 S2b 改指本模块裸名
     for name in ("async_session_factory", "append_domain_event", "spawn_background"):
         assert "_cs.%s" % name in code, f"缺 _cs.{name} 回指"
     assert code.count("_cs.async_session_factory") == 4, "取库点数量与本刀实测不符"
-    assert "_cs.get_latest_session_id(" in code and "_cs.get_owned_session(" in code
+    assert "_cs.get_latest_session_id(" not in code and "_cs.get_owned_session(" not in code, (
+        "兄弟互调又回指 chat_service 了（S2b 已退场）")
+    assert "await get_latest_session_id(" in code and "await get_owned_session(" in code, (
+        "兄弟互调没有在本模块命名空间解析（桩会静默失效）")
 
 
 # ───────── ⑪-6 外部调用方仍可 import（两种导入顺序） ─────────
@@ -1822,8 +1874,9 @@ def test_批5二_结算组名字仍能按chat_service路径import且两种顺序
 # 「``_run_agent_core`` 打桩穿透」，且比源码字面断言更硬）。
 #
 # 另一条：``_PUNCT_ONLY_RE`` / ``_DEGRADED_REASONING_MIN`` / ``_DEGRADED_CONTINUATION_TIMEOUT_S``
-# 三个常量**留在 chat_service**（``_run_agent_core`` 也在用前两个，与 ⑫-4 的
-# ``SELF_STATEMENT_MAX_LEN`` 同法），本组只回指取 ⇒ ⑬-4 钉住「改 chat_service 侧常量立即生效」。
+# **批 3 S2b（2026-11-08）已改**：``_DEGRADED_CONTINUATION_TIMEOUT_S`` 随函数落到 chat_tooling；
+# ``_PUNCT_ONLY_RE`` 下沉 ``chat/tools`` 作单一真源（chat_service 与 chat_tooling 各持同一对象）；
+# ``_DEGRADED_REASONING_MIN`` 仍只在 chat_service。⑬-4 钉住「改本模块常量立即生效」。
 from app.application import chat_tooling  # noqa: E402
 
 CS_TOOLING_NAMES = (
@@ -1835,13 +1888,15 @@ CS_TOOLING_NAMES = (
     "_schedule_reliability_fact_check",
     "_run_post_processing",
 )
-# 桩仍在 chat_service 侧、必须经 ``_cs`` 现取的名字（3 名直接依赖 + 结算八名 + 生图 + 兄弟 + 两常量）
-B5C3_CS_ATTRS = (
-    "async_session_factory", "spawn_background", "add_chat_memory_extraction",
+# 批 3 S2b（2026-11-08）后的解析点分布：设施两名仍经 ``_cs`` 现取（桩留在 chat_service）；
+# 结算八名／记忆提取／生图／兄弟核查已在 chat_tooling 顶层绑定（桩改打 chat_tooling）；
+# 两个常量本地化（纯标点判据的真源下沉 chat/tools，两模块共用同一对象）。
+B5C3_CS_FACILITIES = ("async_session_factory", "spawn_background")
+B5C3_TOOLING_OWNED = (
+    "add_chat_memory_extraction",
     "_save_bio_update", "_save_status_update", "_generate_initial_bio", "_bump_relationship",
     "_settle_relational_drive", "_release_drive_on_reply", "_settle_thought_pool_turn",
     "_trigger_state_eval", "_gen_image_flow", "_schedule_reliability_fact_check",
-    "_PUNCT_ONLY_RE", "_DEGRADED_CONTINUATION_TIMEOUT_S",
 )
 # 本组实测零调用点／零引用 ⇒ chat_tooling 既不具名绑定、也不许回指（出现即说明搬进了不该搬的东西）
 B5C3_NOT_IN_TOOLING = ("_run_agent_core", "agent")
@@ -1890,7 +1945,7 @@ class _B5C3AiDB:
         self._sink.append("commit")
 
     async def refresh(self, obj):
-        obj.id = 9001
+        obj.id = 9071
         obj.created_at = _B5C1Ts()
         self._sink.append("refresh")
 
@@ -2023,9 +2078,10 @@ def test_批5三_try_degraded_continuation现取chat_service会话工厂(monkeyp
     assert calls == ["factory"], "降级续写取库点没回指 chat_service"
 
 
-# ───────── ⑬-4 常量回指：补写超时与纯标点判据都现取 chat_service ─────────
-def test_批5三_降级续写的超时与纯标点判据现取chat_service常量(monkeypatch):
-    """三个常量留在 chat_service（_run_agent_core 也在用），搬家后仍旧「改一处两侧同时生效」。"""
+# ───────── ⑬-4 常量本地化：补写超时与纯标点判据都取本模块 ─────────
+def test_批5三_降级续写的超时与纯标点判据取本模块常量(monkeypatch):
+    """批 3 S2b 后：两个常量都在 chat_tooling 自己命名空间（纯标点判据与 chat_service 共用
+    chat/tools 的同一条正则）；改本模块常量立即生效。"""
     import app.agent.llm_client as llm_mod
 
     char = types.SimpleNamespace(name="阿澜", personality="温柔", chat_style="口语")
@@ -2036,18 +2092,18 @@ def test_批5三_降级续写的超时与纯标点判据现取chat_service常量
         return "这就起身，你盯着我点。"
 
     monkeypatch.setattr(llm_mod, "chat_completion", _slow)
-    monkeypatch.setattr(chat_service, "_DEGRADED_CONTINUATION_TIMEOUT_S", 0.001)
+    monkeypatch.setattr(chat_tooling, "_DEGRADED_CONTINUATION_TIMEOUT_S", 0.001)
     assert asyncio.run(chat_tooling._try_degraded_continuation(1, 1, 13, "想了很多")) == "", (
-        "补写超时没经 _cs 取常量（25 秒上限漂了）")
+        "补写超时没取本模块常量（25 秒上限漂了）")
 
     async def _fast(*_a, **_k):
         return "这就起身，你盯着我点。"
 
     monkeypatch.setattr(llm_mod, "chat_completion", _fast)
-    monkeypatch.setattr(chat_service, "_DEGRADED_CONTINUATION_TIMEOUT_S", 25.0)
-    monkeypatch.setattr(chat_service, "_PUNCT_ONLY_RE", re.compile(r".*", re.S))
+    monkeypatch.setattr(chat_tooling, "_DEGRADED_CONTINUATION_TIMEOUT_S", 25.0)
+    monkeypatch.setattr(chat_tooling, "_PUNCT_ONLY_RE", re.compile(r".*", re.S))
     assert asyncio.run(chat_tooling._try_degraded_continuation(1, 1, 13, "想了很多")) == "", (
-        "纯标点判据没经 _cs 取常量（真正文会被误放行）")
+        "纯标点判据没取本模块常量（真正文会被误放行）")
 
 
 # ───────── ⑬-5 回合后处理：15 个回指名全在 chat_service 解析 ─────────
@@ -2095,8 +2151,11 @@ def test_批5三_run_post_processing的后台任务与结算与生图全部现�
     def _sibling(*a):
         hits.append(("reliability", a))
 
-    for name, stub in (("async_session_factory", _factory), ("spawn_background", _spawn),
-                       ("add_chat_memory_extraction", add_chat_memory_extraction),
+    # 批 3 S2b：结算八名/记忆提取/生图/兄弟核查都已在 chat_tooling 顶层绑定 ⇒ 桩打到 chat_tooling；
+    # 设施（会话工厂/后台任务）仍经 chat_service 命名空间现取 ⇒ 桩留在 chat_service。
+    for name, stub in (("async_session_factory", _factory), ("spawn_background", _spawn)):
+        monkeypatch.setattr(chat_service, name, stub)
+    for name, stub in (("add_chat_memory_extraction", add_chat_memory_extraction),
                        ("_save_bio_update", _save_bio_update),
                        ("_save_status_update", _save_status_update),
                        ("_generate_initial_bio", _generate_initial_bio),
@@ -2107,10 +2166,10 @@ def test_批5三_run_post_processing的后台任务与结算与生图全部现�
                        ("_trigger_state_eval", _trigger_state_eval),
                        ("_gen_image_flow", _gen_image_flow),
                        ("_schedule_reliability_fact_check", _sibling)):
-        monkeypatch.setattr(chat_service, name, stub)
-    # 代价面（⑪-2／⑫-5 的镜像）：即便有人在 chat_tooling 里落下同名模块属性，也只认 chat_service 那份
-    for name in ("_bump_relationship", "_gen_image_flow", "spawn_background"):
-        monkeypatch.setattr(chat_tooling, name,
+        monkeypatch.setattr(chat_tooling, name, stub)
+    # 代价面（S2b 翻转）：再往 chat_service 落一份同名诱饵，确认解析点已不在那边
+    for name in ("_bump_relationship", "_gen_image_flow"):
+        monkeypatch.setattr(chat_service, name,
                             lambda *_a, **_k: hits.append(("DECOY",)), raising=False)
 
     try:
@@ -2122,10 +2181,10 @@ def test_批5三_run_post_processing的后台任务与结算与生图全部现�
             c.close()
     assert out is None, "公共收尾返回值形状漂移"
     by = {h[0]: h[1:] for h in hits}
-    assert "DECOY" not in by, "解析点跑到 chat_tooling 命名空间（chat_service 的桩会静默失效）"
+    assert "DECOY" not in by, "解析点又跑回 chat_service 命名空间（chat_tooling 的桩会静默失效）"
     for want in ("save_bio", "save_status", "initial_bio", "mem_extract", "bump", "drive",
                  "release", "thought", "state_eval", "reliability", "gen_image"):
-        assert want in by, f"{want} 没在 chat_service 命名空间解析：{sorted(by)}"
+        assert want in by, f"{want} 没在 chat_tooling 命名空间解析：{sorted(by)}"
     assert by["save_bio"] == ((7, None, 3),), by["save_bio"]
     assert by["save_status"] == ((7, None, 3),), by["save_status"]
     assert by["mem_extract"][0] == (9, 7, 3, "用户话", "AI话"), by["mem_extract"]
@@ -2196,49 +2255,64 @@ def test_批5三_端点经chat_service现取搬走的run_post_processing(monkeyp
     monkeypatch.setattr(chat_service, "_push_user_notify", _notify)
     monkeypatch.setattr(chat_service, "async_session_factory", lambda: _B5C3AiDB(sink))
     out = asyncio.run(chat_service.send_and_receive(9, 2, 3, "在吗"))
-    assert out["ai_message"]["id"] == 9001 and out["ai_message"]["content"] == "在的。", out
+    assert out["ai_message"]["id"] == 9071 and out["ai_message"]["content"] == "在的。", out
     assert out["ai_message"]["created_at"] == "2026-10-02T03:04:05", out
     assert out["memories_updated"] is False
     assert sink[:2] == ["add", "flush"] and "event" in sink and "notify" in sink, sink
     assert len(calls) == 1, "端点没在 chat_service 命名空间解析搬走的公共收尾"
     assert calls[0][0] == (9, 2, 3, "在吗", {"reasoning": "想说一句", "status_update": "在吃饭"},
-                           "在的。", 9001, 11), calls[0][0]
+                           "在的。", 9071, 11), calls[0][0]
     assert calls[0][1] == {"reliability": True, "gen_prompt": None, "img_text": None,
                            "source_event_uid": None}, calls[0][1]
 
 
 # ───────── ⑬-8 chat_tooling 的依赖纪律（源码锚定） ─────────
-def test_批5三_chat_tooling顶层不import_chat_service也不具名import被桩十五名():
+def test_批5三_chat_tooling只经_cs取设施且兄弟名字已在顶层绑定():
     code = _b5c1_code(chat_tooling)
     imports = _import_lines(code)
     top = [ln for ln in imports if not ln.startswith((" ", "\t"))]
-    # ① 被桩 15 名一律不许在顶层具名 import（解析点一挪，18+4+2+1×N 处桩当场静默失效）
-    for name in B5C3_CS_ATTRS:
+    # ① 设施（会被 tests 按 chat_service 打桩）一律不许在顶层具名 import
+    for name in ("async_session_factory", "spawn_background"):
         hit = [ln for ln in top if re.search(r"\b%s\b" % re.escape(name), ln)]
-        assert hit == [], f"chat_tooling 顶层具名 import 了被桩名字 {name}：{hit}"
-    # ② 原模块的顶层 import 不许出现（会话工厂／后台任务／记忆提取／结算都只能经 _cs）
-    for frag in ("from app.db.database import", "from app.utils.async_tasks import",
-                 "from app.memory import", "from app.application.chat_settlement import"):
+        assert hit == [], f"chat_tooling 顶层具名 import 了被桩设施 {name}：{hit}"
+    # ② 设施原模块的顶层 import 不许出现（只能经 _cs）
+    for frag in ("from app.db.database import", "from app.utils.async_tasks import"):
         assert [ln for ln in top if frag in ln] == [], f"顶层直接从原模块取被桩依赖：{frag}"
     # ③ chat_service 只能函数体内 import（提到顶层 ⇒ import 期成环）
     cs = [ln for ln in imports if re.search(r"\bchat_service\b", ln)]
-    assert cs, "chat_tooling 没经 chat_service 现取被桩依赖"
+    assert cs, "chat_tooling 没经 chat_service 现取设施"
     assert [ln for ln in cs if not ln.startswith((" ", "\t"))] == [], "chat_service import 被提到顶层"
     assert "from app.application.chat_service import" not in code, "不许具名 import chat_service 成员"
-    # ④ 正向锚定：三个回指函数与回指点数量同本刀实测一致；本组零调用点的两名不许出现
+    # ④ 正向锚定：回合后处理仍回指两个设施，且不再出现任何 _cs.<函数>（S2b 已退场）
     assert code.count("from app.application import chat_service as _cs") == 3, (
         "回指函数数量与本刀实测不符（_load_reasoning_level / _try_degraded_continuation / "
         "_run_post_processing）")
-    assert code.count("_cs.") >= 20, f"回指点不足：{code.count('_cs.')}"
     assert code.count("_cs.spawn_background") == 14, code.count("_cs.spawn_background")
     assert code.count("_cs.async_session_factory") == 3, code.count("_cs.async_session_factory")
+    for gone in ("_cs._save_bio_update", "_cs.add_chat_memory_extraction", "_cs._gen_image_flow",
+                 "_cs._trigger_state_eval", "_cs._schedule_reliability_fact_check"):
+        assert gone not in code, f"S2b 后不该再出现 {gone}（回指已退场）"
     for name in B5C3_NOT_IN_TOOLING:
         assert "_cs.%s" % name not in code, f"本组对 {name} 零调用点，出现即搬错了东西"
         assert not hasattr(chat_tooling, name), f"chat_tooling 不该绑定 {name}（端点的桩解析点会挪窝）"
-    # ⑤ 三个降级常量留在 chat_service，本模块只回指取（不许有第二份定义）
-    for const in ("_PUNCT_ONLY_RE", "_DEGRADED_REASONING_MIN", "_DEGRADED_CONTINUATION_TIMEOUT_S"):
-        assert not hasattr(chat_tooling, const), f"chat_tooling 里出现第二份 {const}"
-        assert hasattr(chat_service, const), f"{const} 被剪掉了（_run_agent_core 与 _cs 回指都要它）"
+    # ⑤ 两个降级常量已本地化（S2b）；_DEGRADED_REASONING_MIN 仍只在 chat_service
+    assert hasattr(chat_tooling, "_PUNCT_ONLY_RE") and hasattr(chat_tooling, "_DEGRADED_CONTINUATION_TIMEOUT_S")
+    assert hasattr(chat_service, "_PUNCT_ONLY_RE"), "chat_service 侧同名单一对上（两处共用 chat/tools 真源）"
+    assert chat_tooling._PUNCT_ONLY_RE is chat_service._PUNCT_ONLY_RE, "纯标点判据成了两份实现"
+    # ⑥ 组内 owner 逐一绑定（同名同对象）：结算八名来自 chat_settlement、提取来自 app.memory、
+    #    生图来自 chat/tools、兄弟核查是本模块原生定义
+    from app.application import chat_settlement
+    from app.application.chat import tools as _chat_tools
+    from app.memory import add_chat_memory_extraction as _mem_extract
+    for name in B5C3_TOOLING_OWNED:
+        assert hasattr(chat_tooling, name), f"chat_tooling 缺 {name} 的顶层绑定"
+    for name in ("_save_bio_update", "_save_status_update", "_generate_initial_bio",
+                 "_bump_relationship", "_settle_relational_drive", "_release_drive_on_reply",
+                 "_settle_thought_pool_turn", "_trigger_state_eval"):
+        assert getattr(chat_tooling, name) is getattr(chat_settlement, name), f"{name} 不是同一对象"
+    assert chat_tooling.add_chat_memory_extraction is _mem_extract
+    assert chat_tooling._gen_image_flow is _chat_tools._gen_image_flow
+    assert getattr(chat_tooling, "_schedule_reliability_fact_check").__module__ == chat_tooling.__name__
 
 
 # ───────── ⑬-9 外部调用方仍可 import（两种导入顺序都不成环） ─────────

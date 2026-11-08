@@ -4,7 +4,6 @@ from sqlalchemy import select  # func/and_/or_ 随 A20 批 5 第一刀迁至 cha
 from app.db.database import async_session_factory
 import asyncio
 import json
-import re
 from app.utils.async_tasks import spawn_background
 from app.utils.llm_channel import reset_channel, set_channel
 import time
@@ -17,9 +16,9 @@ from app.models.chat import ChatSession
 from app.models.chat import ChatMessage
 from app.models.character import AICharacter
 from app.agent.graph import agent
-from app.memory import add_chat_memory_extraction  # noqa: F401 —— chat_tooling._run_post_processing 经 _cs 回指本名（tests 按 chat_service 路径打桩），此处必须留着
 from app.memory.extractor import SELF_STATEMENT_MAX_LEN  # noqa: F401 —— chat_settlement 经 _cs 回指本常量，此处必须留着
 from app.application.chat.tools import (
+    PUNCT_ONLY_RE,
     _extract_gen_image,
     _sanitize_persist_full,
     _sanitize_chunk_texts,
@@ -79,10 +78,10 @@ from app.application.chat_tooling import (  # noqa: F401
 
 
 # ---- 思考过载兜底（2026-09-13 证据B）：可见正文空/纯标点 + 长推理/截断 → 轻量补写一次 ----
+# 2026-11-08 批 3 S2b：补写超时常量随 _try_degraded_continuation 一并搬到 chat_tooling；
+# 纯标点判据两处共用 ⇒ 下沉 chat/tools 的单一真源（此处只留同名别名，语义不变）。
 _DEGRADED_REASONING_MIN = 300          # 思考字数阈值（≥ 视为「思考过载」）
-_DEGRADED_CONTINUATION_TIMEOUT_S = 25.0
-# 纯标点正文（……/。/！/？/~ 等；证据 B 现场即 content="……"）
-_PUNCT_ONLY_RE = re.compile(r"^[\s。．.!！?？～~…，,、；;：:·—－\-]+$")
+_PUNCT_ONLY_RE = PUNCT_ONLY_RE
 
 
 async def _run_agent_core(

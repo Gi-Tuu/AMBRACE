@@ -51,45 +51,36 @@ _shadow_dropped = 0
 _warned: set = set()
 
 # ── IO 端口（断点 #1 · V2b）：开关表 / 时钟 / trace 通道 / 后台调度 / 批量落库 ──────
-_DEFAULT_PORTS: DecisionShadowPorts | None = None
-
-
-def set_default_shadow_ports(ports: DecisionShadowPorts | None) -> None:
-    """注册默认端口实现（传 None 清空＝恢复「未注入」状态，供接线与排查使用）。"""
-    global _DEFAULT_PORTS
-    _DEFAULT_PORTS = ports
-
-
-def _bind_production_ports() -> DecisionShadowPorts:
-    """迁移期兼容钩子：无人注入时惰性绑定 application 侧生产实现。
-
-    存在的理由：本层的两个生产调用点（app/memory/ai_rating.py 挂点 A、app/memory/format.py
-    挂点 B）与既有测试（tests/test_decision_layer.py）都不在白名单内、拿不到 ports；
-    留着这条兜底，未注入调用点行为与改动前逐字一致（读同一张 AGENT_FLAGS、同一个时钟源）。
-    """
-    from app.application.decision_layer_ports import production_decision_layer_ports
-    return production_decision_layer_ports
-
-
 def _resolve_ports(ports: DecisionShadowPorts | None = None) -> DecisionShadowPorts:
-    """取端口实现：显式注入优先 → 默认端口 → 惰性绑定生产实现 → 清晰报错（不静默降级）。"""
-    global _DEFAULT_PORTS
+    """取端口实现：**只认显式注入**；未注入 ⇒ 清晰报错（不静默降级、不反向 import 上层）。
+
+    2026-11-08 批 3 S5 收口：迁移期的 `_DEFAULT_PORTS` + `_bind_production_ports` 惰性绑定已删除，
+    生产实现由调用方注入（`app/memory/format.py` 显式传
+    `app.application.decision_layer_ports.production_decision_layer_ports`）。
+    """
     if ports is not None:
         return ports
-    if _DEFAULT_PORTS is not None:
-        return _DEFAULT_PORTS
+    raise ShadowPortsNotInjected(
+        "decision shadow IO 端口未注入：请显式传入 DecisionShadowPorts"
+        "（生产实现 app.application.decision_layer_ports.production_decision_layer_ports）"
+        "——架构地图断点 #1"
+    )
+
+
+def _resolve_tense_view(ports: DecisionShadowPorts | None = None):
+    """时态文本口径经端口注入（2026-11-08 批 2 收口：本模块不再反向 import app.memory）。
+
+    端口未提供或取不到 ⇒ 返回 None，影子记录只留空 input（观测面降级，不影响判定返回值）。
+    """
+    resolved = _resolve_ports(ports)
+    getter = getattr(resolved, "tense_view", None)
+    if not callable(getter):
+        return None
     try:
-        bound = _bind_production_ports()
-    except ShadowPortsNotInjected:
-        raise
+        return getter()
     except Exception as e:
-        raise ShadowPortsNotInjected(
-            "decision shadow IO 端口未注入且生产实现绑定失败：请显式传入 DecisionShadowPorts"
-            "（生产实现 app.application.decision_layer_ports.production_decision_layer_ports）"
-            "——架构地图断点 #1"
-        ) from e
-    _DEFAULT_PORTS = bound
-    return bound
+        _logger.warning("decision shadow tense view unavailable: %s", e)
+        return None
 
 
 def shadow_enabled(ports: DecisionShadowPorts | None = None) -> bool:
@@ -326,39 +317,42 @@ def observe_tense_decision(m, label, *, tense_hint=None, character_id=None, user
     """
     if not shadow_enabled(ports):
         return
+    view = _resolve_tense_view(ports)
     try:
-        context = {"input": _tense_input(m), "via": "tense_hint" if tense_hint else "rule"}
+        context = {"input": _tense_input(m, view), "via": "tense_hint" if tense_hint else "rule"}
         if tense_hint:
             context["tense_hint"] = _clip(tense_hint, 20)
     except Exception as e:      # 输入留痕取不到也不影响记账本身
         _logger.warning("decision shadow tense input failed: %s", e)
         context = {"via": "tense_hint" if tense_hint else "rule"}
-    ask_choice(_tense_state(m), "memory_tense", TENSE_OPTIONS, legacy=lambda: label,
+    ask_choice(_tense_state(m, view), "memory_tense", TENSE_OPTIONS, legacy=lambda: label,
                hook="memory_tense", sink=SINK_BUFFER, character_id=character_id,
                user_id=user_id, context=context, ports=ports)
 
 
-def _tense_state(m) -> str:
-    """state 片段：优先取 tense 模块同一条文本口径（title+content+why_it_matters）。"""
+def _tense_state(m, view) -> str:
+    """state 片段：取注入的时态文本口径（title+content+why_it_matters），无视图则留空。"""
+    if view is None:
+        return ""
     try:
-        from app.memory import tense as _tense
-        return _clip(_tense._text(m).strip(), _STATE_MAX)
+        return _clip(view._text(m).strip(), _STATE_MAX)
     except Exception:
         return ""
 
 
-def _tense_input(m) -> dict:
-    """规则判定的输入留痕（只读复用 tense 模块既有常量与取值器，不复制第二套判定）。"""
-    from app.memory import tense as _tense
-    text = _tense._text(m)
+def _tense_input(m, view) -> dict:
+    """规则判定的输入留痕（只读复用注入视图的常量与取值器，不复制第二套判定）。"""
+    if view is None:
+        return {}
+    text = view._text(m)
     return {
-        "memory_type": _clip(_tense._g(m, "memory_type", "") or _tense._g(m, "type", ""), 30),
-        "sub_type": _clip(_tense._g(m, "sub_type", ""), 30),
-        "is_core": bool(_tense._g(m, "is_core", False)),
-        "plan_markers": [_clip(k, 12) for k in _tense.PLAN_MARKERS if k in text][:_MARKER_MAX],
-        "done_markers": [_clip(k, 12) for k in _tense._DONE_MARKERS if k in text][:_MARKER_MAX],
-        "guard_hit": bool(_tense._has_guard(text)),
-        "happened_source": bool(_tense.is_happened_source(m)),
+        "memory_type": _clip(view._g(m, "memory_type", "") or view._g(m, "type", ""), 30),
+        "sub_type": _clip(view._g(m, "sub_type", ""), 30),
+        "is_core": bool(view._g(m, "is_core", False)),
+        "plan_markers": [_clip(k, 12) for k in view.PLAN_MARKERS if k in text][:_MARKER_MAX],
+        "done_markers": [_clip(k, 12) for k in view._DONE_MARKERS if k in text][:_MARKER_MAX],
+        "guard_hit": bool(view._has_guard(text)),
+        "happened_source": bool(view.is_happened_source(m)),
     }
 
 
@@ -386,7 +380,6 @@ __all__ = [
     "ask_noul", "ask_choice", "ask_score",
     "observe_tense_decision", "flush_shadow_buffer", "shadow_enabled",
     "shadow_buffer_size", "shadow_dropped_total", "reset_shadow_state",
-    "set_default_shadow_ports",
 ]
 
 
@@ -401,8 +394,9 @@ __all__ = [
 #    app.models.agent.AgentTaskLog 以及 import time（时钟改由端口提供）——
 #    全部搬到 app/application/decision_layer_ports.py（原样搬迁、仍是函数级惰性 import，
 #    故既有测试 monkeypatch app.agent.trace / app.db.database 照旧命中）。
-#    保留的两处非 IO import：app.memory.tense（纯文本取器，不碰 DB）与 stdlib
-#    asyncio/json（get_running_loop 判定与 steps_json 序列化）。
+#    2026-11-08 批 2 收口：app.memory.tense（纯文本取器，不碰 DB）也改由端口 `tense_view()`
+#    注入（生产实现仍在 application 侧惰性 import），本模块不再反向依赖 app.memory；
+#    仅余 stdlib asyncio/json（get_running_loop 判定与 steps_json 序列化）。
 # 3. 零行为核对：三原语「关＝只调一次 legacy 并原样交回 (value, None)」的短路位置、
 #    legacy() 在 try 之外（业务异常照常抛出）、record 字段集合与顺序（primitive/hook/state/
 #    question/output/confidence=None/latency_ms/source='legacy'，choice 追加 options(前 12 条、
@@ -412,12 +406,11 @@ __all__ = [
 #    _BUFFER_FLUSH_AGE_S=120.0 / _BUFFER_HARD_CAP=200、溢出丢最旧 + 只 WARNING 一次的
 #    _warn_once 口径、无事件循环时整批留缓冲并重置年龄计时、交不出去时 coro.close() 后
 #    _requeue 回头部，全部逐字未动。
-# 4. 接线：新参数 ports 全部是 keyword-only 且默认 None ⇒ 两个生产调用点
-#    （memory/ai_rating.py 挂点 A、memory/format.py 挂点 B）与既有测试无需改动。
-# 5. 遗留（下一批删）：`_DEFAULT_PORTS` + `_bind_production_ports` 这条迁移期兼容钩子
-#    （唯一理由是两个生产调用点与 tests/test_decision_layer.py 都在本单白名单外）。
-#    它一旦删除，本文件即达 domain 零 IO import 终态；ShadowPortsNotInjected 保留为
-#    「显式传 ports=None 以外场景」的接线事故出口（不静默降级成「开关永远看起来是关」）。
+# 4. 接线：ports 仍为 keyword-only。**2026-11-08 批 3 S5 起必须显式注入**——生产调用点
+#    `app/memory/format.py` 显式传 `production_decision_layer_ports`；测试传各自 Fake/生产端口。
+# 5. **已删除（2026-11-08 批 3 S5）**：`_DEFAULT_PORTS` + `set_default_shadow_ports` +
+#    `_bind_production_ports` 这条迁移期兼容钩子。删除后本文件达 **domain 零 IO import 终态**；
+#    ShadowPortsNotInjected 保留为「未注入端口」的接线事故出口（不静默降级成「开关永远看起来是关」）。
 #
 # 同类待做 domain 文件清单（只列名字，本批未改）：
 # - app/domain/emotion/care.py（四个迁移期兼容钩子 + _LegacyCarePorts 段待删）

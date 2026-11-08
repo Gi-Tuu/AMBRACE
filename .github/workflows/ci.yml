@@ -201,6 +201,61 @@ jobs:
           PYTHONIOENCODING: "utf-8"
         run: python scripts/migrate_drill.py --base fresh --out .migrate-drill
 
+  # 共享沙箱相邻组合抽样（2026-11-08 测试债整改）：这些文件共用 conftest 会话级沙箱库，
+  # 固定 9xxx ID 跨文件重叠会在「字母序/显式顺序相邻跑」时互相留行（历史上靠这条路撞出
+  # 多组假红）。全量 pytest 用 -n auto 时同一 worker 的顺序不保证，故单开一个**串行** job
+  # 按固定顺序把这批共享沙箱文件放在同一会话里跑；号段互斥由 test_shared_sandbox_id_ranges 守卫。
+  isolation-sampling:
+    needs: changes
+    if: needs.changes.outputs.heavy == 'true'
+    name: Shared-sandbox adjacency sampling (sequential)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-timeout
+          pip install -r backend/requirements.txt
+
+      - name: Run shared-sandbox files in one session
+        working-directory: backend
+        env:
+          SKIP_MODEL_DOWNLOAD: "1"
+          PYTHONIOENCODING: "utf-8"
+        run: >-
+          pytest -q -p no:cacheprovider --basetemp=.pytest-tmp-adjacency
+          tests/test_shared_sandbox_id_ranges.py
+          tests/test_pwa_attachment_contract.py
+          tests/test_arbiter_seam.py
+          tests/test_pwa_attachment_isolation.py
+          tests/test_mcp_phase3.py
+          tests/test_memory_source_review_2b_rework9_primary.py
+          tests/test_memory_source_e2e_backup_2b.py
+          tests/test_mcp_phase4.py
+          tests/test_memory_source_ws_m2b.py
+          tests/test_mcp_stdio_admin_gate_b1.py
+          tests/test_memory_source_reallow_m2b.py
+          tests/test_memory_source_reauthorize_2b.py
+          tests/test_memory_why_g5.py
+          tests/test_memory_source_perception_2b.py
+          tests/test_memory_source_routes_real_service_m2b.py
+          tests/test_memory_source_restart_m2b.py
+          tests/test_garden_m3_oneshot_api.py
+          tests/test_memory_source_routes_m2b.py
+          tests/test_life_settle_dt_m1.py
+          tests/test_mcp_loopback_p34.py
+          tests/test_life_state_dead_fields_m2b.py
+          tests/test_memory_write_gate_m10.py
+          tests/test_memory_grading_m8.py
+
   # 主开发 / 发 APK 在 Windows：覆盖 Windows 特有路径、SO_REUSEADDR、aiosqlite 线程、
   # pwsh 脚本语法（不跑 Docker smoke）。
   #

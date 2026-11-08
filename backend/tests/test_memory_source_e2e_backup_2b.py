@@ -72,7 +72,9 @@ def test_perception_source_end_to_end(monkeypatch):
     calls: list[int] = []
     monkeypatch.setattr(ex, "llm_call", _fake_llm(calls))
 
-    uid, cid, sid = 9301, 9311, 9321
+    # 共享沙箱 ID 号段（2026-11-08 测试债整改）：915x/916x/917x 归本文件独占；
+    # 勿与 ws 930x / mcp_stdio 940x / reallow 948x / reauth 950x / why_g5 955x 混用。
+    uid, cid, sid = 9151, 9161, 9171
 
     async def run():
         msg = await _seed(uid, cid, sid, "明天下午三点开会，记得带材料，地点在会议室")
@@ -128,16 +130,16 @@ def test_backup_carries_m2_authority_tables(monkeypatch, tmp_path):
             # 用内核正规签发（会推进 source_seq 计数器）；手插会写歪计数器、污染后续用例
             await db.run_sync(lambda sd: se.issue_source_event(
                 sd.connection(), kind="chat_message", source_row_id=990001,
-                owner_user_id=9401, character_id=9411,
+                owner_user_id=9151, character_id=9161,
                 event_at=(now_naive_utc().isoformat() + "+00:00"), content="backup-probe"))
             await db.commit()
             await db.execute(text(
                 "INSERT INTO memory_tombstones(memory_id,owner_user_id,character_id,epoch,"
-                "revoked_seq,confirm_seq,state,created_at) VALUES (9401,9401,9411,1,1,0,'closed',"
+                "revoked_seq,confirm_seq,state,created_at) VALUES (9151,9151,9161,1,1,0,'closed',"
                 "'2026-11-04 00:00:00')"))
             await db.execute(text(
                 "INSERT INTO memory_restore_quarantine(event_uid,owner_user_id,character_id,reason,"
-                "restored_at) VALUES ('mse-q-1',9401,9411,'synthetic','2026-11-04 00:00:00')"))
+                "restored_at) VALUES ('mse-q-1',9151,9161,'synthetic','2026-11-04 00:00:00')"))
             await db.commit()
         return db_path
 

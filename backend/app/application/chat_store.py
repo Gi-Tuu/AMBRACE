@@ -6,13 +6,14 @@
 机械改写只有两类（判定/文案/返回值一字未改）：
 
 1. 缩进（原样为 0，未动）。
-2. 被 tests/ 按 chat_service 打桩的名字与**本组兄弟函数互调**改走 ``_cs.<name>``
+2. 被 tests/ 按 chat_service 打桩的**设施三件**改走 ``_cs.<name>``
    （函数体内 ``from app.application import chat_service as _cs``，**不得提到顶层**——顶层会成环）：
    ``async_session_factory``（``setattr(chat_service, "async_session_factory", …)`` 实测 6 处）、
-   ``spawn_background``（2 处）、``append_domain_event``（1 处），
-   兄弟调用 ``create_session``→``get_latest_session_id`` / ``mark_session_read``→``get_owned_session``
-   （``setattr(chat_service, "get_latest_session_id", …)`` 实测 19 处，是最多的那类桩）。
-   本模块**不得**具名 import 这四名，否则桩静默失效 ⇒ 退化成真查库/真发事件。
+   ``spawn_background``（2 处）、``append_domain_event``（1 处）。
+   本模块**不得**具名 import 这三名，否则桩静默失效 ⇒ 退化成真查库/真发事件。
+3. 批 3 S2b（2026-11-08）：**兄弟函数互调不再回指**——``create_session`` 直接调本模块
+   ``get_latest_session_id``、``mark_session_read`` 直接调本模块 ``get_owned_session``；
+   对应测试桩改指本模块（S2a 完成 19＋6 处，S2b 再改守卫里的 2 处）。
 
 其余依赖（模型/SQLAlchemy/标准库）按原模块原名直接 import；logger 名沿用 ``services.chat``（D-1 口径）。
 chat_service 侧保留全部具名重导出，库内 6 个模块与字符串路径打桩均不受影响。
@@ -38,7 +39,7 @@ async def get_latest_session_id(user_id: int | None, character_id: int) -> int |
     同角色多会话 updated_at 相同时按 updated_at 排序会选错会话（表现为聊天记录"只剩早期"）。
     现在统一以消息时间为准。
     """
-    from app.application import chat_service as _cs  # 被桩依赖与兄弟调用在 chat_service 命名空间现取
+    from app.application import chat_service as _cs  # 设施（会话工厂）仍在 chat_service 命名空间现取
     conds = [
         ChatSession.character_id == character_id,
         ChatSession.is_active == True,
@@ -67,8 +68,8 @@ async def create_session(user_id: int, character_id: int, force_new: bool = Fals
     ``force_new=True``：跳过复用查询，直接新建会话（显式「新建会话」入口用）；
     默认 False 与既有逐行为一致（复用优先）。创建/问候语/事件逻辑不变。
     """
-    from app.application import chat_service as _cs  # 被桩依赖与兄弟调用在 chat_service 命名空间现取
-    existing_id = None if force_new else await _cs.get_latest_session_id(user_id, character_id)
+    from app.application import chat_service as _cs  # 设施（会话工厂/后台任务/事件）仍在 chat_service 命名空间现取
+    existing_id = None if force_new else await get_latest_session_id(user_id, character_id)
     if existing_id:
         _logger.debug("Reusing existing session: id=%d", existing_id)
         return {"id": existing_id, "character_id": character_id, "greeting": None}
@@ -117,7 +118,7 @@ async def _persist_user_message(
     channel 非空时把渠道来源标记合并进 extra_meta JSON（保留 quote 语义：两者可同时存在，
     谁都不空才落 JSON；两者皆空则 extra_meta 保持 None，行为与现状零变化）。
     """
-    from app.application import chat_service as _cs  # 被桩依赖与兄弟调用在 chat_service 命名空间现取
+    from app.application import chat_service as _cs  # 设施（会话工厂/后台任务/事件）仍在 chat_service 命名空间现取
     user_msg_id = None
     user_msg_info = None
     if not save_user_message:
@@ -230,10 +231,10 @@ async def mark_session_read(db, session_id: int, user_id: int) -> bool:
     用原生 SQL 更新，避免 SQLAlchemy ORM 会话自动附加 updated_at=onupdate（CURRENT_TIMESTAMP）
     污染 updated_at，导致"按最新会话复用"选错（聊天记录只剩早期的问题）。
     """
-    from app.application import chat_service as _cs  # 被桩依赖与兄弟调用在 chat_service 命名空间现取
+    from app.application import chat_service as _cs  # 设施（事件流水）仍在 chat_service 命名空间现取
     from sqlalchemy import text
 
-    session = await _cs.get_owned_session(db, session_id, user_id)
+    session = await get_owned_session(db, session_id, user_id)
     if session is None:
         return False
     now = datetime.now(timezone.utc).replace(tzinfo=None)  # 库内统一 naive UTC

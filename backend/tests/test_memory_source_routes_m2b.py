@@ -11,7 +11,7 @@ from app.api import chat as chat_api
 from app.auth.config import create_token
 
 
-async def _seed(u=9001, c=9011, s=9021):
+async def _seed(u=9731, c=9741, s=9751):
     from app.db.database import async_session_factory
     async with async_session_factory() as db:
         await db.execute(text("INSERT OR IGNORE INTO users(id,username,nickname,password_hash) VALUES (:u,:n,'n','x')"), {"u": u, "n": f"u{u}"})
@@ -28,7 +28,7 @@ def _client():
     return TestClient(app)
 
 
-def _auth(uid=9001):
+def _auth(uid=9731):
     return {"Authorization": f"Bearer {create_token(uid)}"}
 
 
@@ -63,7 +63,7 @@ async def _rows(message_id=None):
     async with async_session_factory() as db:
         if message_id is None:
             return (await db.execute(text(
-                "SELECT COUNT(*) FROM chat_messages WHERE session_id=9021"))).scalar_one()
+                "SELECT COUNT(*) FROM chat_messages WHERE session_id=9751"))).scalar_one()
         msg = (await db.execute(text("SELECT source_event_uid FROM chat_messages WHERE id=:m"),
                                 {"m": message_id})).first()
         ev = (await db.execute(text("SELECT COUNT(*) FROM memory_source_events WHERE source_uid IS NULL"))).scalar_one() if False else None
@@ -82,7 +82,7 @@ def test_http_send_signs_source(monkeypatch):
         await _seed()
     asyncio.run(run())
     r = _client().post("/api/v1/chat/send", headers=_auth(),
-                       json={"session_id": 9021, "content": "真实路由测试"})
+                       json={"session_id": 9751, "content": "真实路由测试"})
     assert r.status_code == 200, r.text
     mid = r.json()["user_message"]["id"]
     async def check():
@@ -109,16 +109,16 @@ def test_http_send_sign_failure_rolls_back(monkeypatch):
         raise RuntimeError("sign_failure")
 
     monkeypatch.setattr(source_binding, "sign_chat_message", boom)
-    asyncio.run(_seed(9002, 9012, 9022))
-    r = _client().post("/api/v1/chat/send", headers=_auth(9002),
-                       json={"session_id": 9022, "content": "应回滚"})
+    asyncio.run(_seed(9732, 9742, 9752))
+    r = _client().post("/api/v1/chat/send", headers=_auth(9732),
+                       json={"session_id": 9752, "content": "应回滚"})
     assert calls == [1], "sign failure injection was not reached"
     assert r.status_code == 500
 
     async def check():
         async with async_session_factory() as db:
-            msgs = (await db.execute(text("SELECT COUNT(*) FROM chat_messages WHERE session_id=9022"))).scalar_one()
-            srcs = (await db.execute(text("SELECT COUNT(*) FROM memory_source_events WHERE session_id=9022"))).scalar_one()
+            msgs = (await db.execute(text("SELECT COUNT(*) FROM chat_messages WHERE session_id=9752"))).scalar_one()
+            srcs = (await db.execute(text("SELECT COUNT(*) FROM memory_source_events WHERE session_id=9752"))).scalar_one()
         return msgs, srcs
 
     assert asyncio.run(check()) == (0, 0)
@@ -131,15 +131,15 @@ def test_sse_send_signs_source(monkeypatch):
 
     monkeypatch.setitem(AGENT_FLAGS, "memory_source_proof_v1", True)
     monkeypatch.setattr(chat_api, "send_and_receive_stream", _fake_stream(chat_store))
-    asyncio.run(_seed(9003, 9013, 9023))
-    r = _client().post("/api/v1/chat/sessions/9023/messages/stream", headers=_auth(9003),
+    asyncio.run(_seed(9733, 9743, 9753))
+    r = _client().post("/api/v1/chat/sessions/9753/messages/stream", headers=_auth(9733),
                        json={"content": "SSE 路由测试"})
     assert r.status_code == 200
     assert "user_message" in r.text
     async def check():
         async with async_session_factory() as db:
             return (await db.execute(text(
-                "SELECT COUNT(*) FROM chat_messages WHERE session_id=9023 AND source_event_uid IS NOT NULL"))).scalar_one()
+                "SELECT COUNT(*) FROM chat_messages WHERE session_id=9753 AND source_event_uid IS NOT NULL"))).scalar_one()
     assert asyncio.run(check()) == 1
 
 
@@ -150,13 +150,13 @@ def test_sse_save_user_message_false_no_sign(monkeypatch):
 
     monkeypatch.setitem(AGENT_FLAGS, "memory_source_proof_v1", True)
     monkeypatch.setattr(chat_api, "send_and_receive_stream", _fake_stream(chat_store))
-    asyncio.run(_seed(9004, 9014, 9024))
-    r = _client().post("/api/v1/chat/sessions/9024/messages/stream", headers=_auth(9004),
+    asyncio.run(_seed(9734, 9744, 9754))
+    r = _client().post("/api/v1/chat/sessions/9754/messages/stream", headers=_auth(9734),
                        json={"content": "不保存", "save_user_message": False})
     assert r.status_code == 200
     async def check():
         async with async_session_factory() as db:
-            return (await db.execute(text("SELECT COUNT(*) FROM chat_messages WHERE session_id=9024"))).scalar_one()
+            return (await db.execute(text("SELECT COUNT(*) FROM chat_messages WHERE session_id=9754"))).scalar_one()
     assert asyncio.run(check()) == 0
 
 

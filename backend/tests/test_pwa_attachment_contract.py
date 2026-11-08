@@ -183,7 +183,7 @@ def gen_stub(monkeypatch):
     async def _stub(**kw):
         calls.append(kw)
         return {"chunks": [{
-            "id": 9001, "session_id": kw["session_id"], "sender_type": "ai",
+            "id": 9061, "session_id": kw["session_id"], "sender_type": "ai",
             "content": "（合成）已收到你的文件", "created_at": "2026-10-17 03:00:01",
             "extra_meta": json.dumps({"tools": ["文档问答"]}, ensure_ascii=False),
         }]}
@@ -225,7 +225,7 @@ def test_上传文本成功_字段与摘要与桩参数(client, scene, upload_di
     assert fm["session_id"] == sid and fm["sender_type"] == "user"
     assert fm["content"] == "报告草案.md"
     assert fm["file_url"].startswith(f"/uploads/files/{sid}/") and fm["file_url"].endswith(".md")
-    assert isinstance(data["chunks"], list) and data["chunks"][0]["id"] == 9001
+    assert isinstance(data["chunks"], list) and data["chunks"][0]["id"] == 9061
 
     # 真落库 + 元数据/摘要边界
     row = asyncio.run(_last_user_file_msg(sid))

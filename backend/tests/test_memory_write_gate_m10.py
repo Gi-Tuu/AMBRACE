@@ -84,7 +84,7 @@ def test_preoccupation_integration_two_modes(monkeypatch):
     from app.life import preoccupations as pre
     from app.db.database import async_session_factory
 
-    uid, cid = 9901, 9911
+    uid, cid = 9921, 9931
 
     async def seed():
         async with async_session_factory() as db:

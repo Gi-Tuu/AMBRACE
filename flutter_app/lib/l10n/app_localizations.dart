@@ -63,7 +63,7 @@ import 'app_localizations_zh.dart';
 /// property.
 abstract class AppLocalizations {
   AppLocalizations(String locale)
-    : localeName = intl.Intl.canonicalizedLocale(locale.toString());
+      : localeName = intl.Intl.canonicalizedLocale(locale.toString());
 
   final String localeName;
 
@@ -86,16 +86,16 @@ abstract class AppLocalizations {
   /// of delegates is preferred or required.
   static const List<LocalizationsDelegate<dynamic>> localizationsDelegates =
       <LocalizationsDelegate<dynamic>>[
-        delegate,
-        GlobalMaterialLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-      ];
+    delegate,
+    GlobalMaterialLocalizations.delegate,
+    GlobalCupertinoLocalizations.delegate,
+    GlobalWidgetsLocalizations.delegate,
+  ];
 
   /// A list of this localizations delegate's supported locales.
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
-    Locale('zh'),
+    Locale('zh')
   ];
 
   /// No description provided for @apiTabLlm.
@@ -577,12 +577,7 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'成功率 {rate}%（完成 {ok} / 失败 {fail} · 拦截 {blocked} · 未触发 {skip}）'**
   String agentMindToolSummary(
-    Object blocked,
-    Object fail,
-    Object ok,
-    Object rate,
-    Object skip,
-  );
+      Object blocked, Object fail, Object ok, Object rate, Object skip);
 
   /// No description provided for @agentMindSkippedFold.
   ///
@@ -14665,10 +14660,7 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'部分受保护：图片/音频直链、下载直链、SSE 与 WebSocket 帧不做签名校验（{verified}/{mismatch}/{unsigned}）'**
   String serverIdentityUnverifiedWarn(
-    Object verified,
-    Object mismatch,
-    Object unsigned,
-  );
+      Object verified, Object mismatch, Object unsigned);
 
   /// No description provided for @serverIdentityNote.
   ///
@@ -15114,6 +15106,72 @@ abstract class AppLocalizations {
   /// **'状态未知'**
   String get memoryDerivationsStatusUnknown;
 
+  /// No description provided for @memoryWhyTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'为什么记住'**
+  String get memoryWhyTitle;
+
+  /// No description provided for @memoryWhyLoading.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在加载来源链…'**
+  String get memoryWhyLoading;
+
+  /// No description provided for @memoryWhyLoadFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'来源链加载失败'**
+  String get memoryWhyLoadFailed;
+
+  /// No description provided for @memoryWhyNoSource.
+  ///
+  /// In zh, this message translates to:
+  /// **'这条记忆没有来源记录（较早写入或来源保护开启前）'**
+  String get memoryWhyNoSource;
+
+  /// No description provided for @memoryWhySummary.
+  ///
+  /// In zh, this message translates to:
+  /// **'来源事件 {sources} 条 · 写入回执 {receipts} 条'**
+  String memoryWhySummary(Object receipts, Object sources);
+
+  /// No description provided for @memoryWhyKindChat.
+  ///
+  /// In zh, this message translates to:
+  /// **'对话消息'**
+  String get memoryWhyKindChat;
+
+  /// No description provided for @memoryWhyKindPerception.
+  ///
+  /// In zh, this message translates to:
+  /// **'手机感知'**
+  String get memoryWhyKindPerception;
+
+  /// No description provided for @memoryWhySession.
+  ///
+  /// In zh, this message translates to:
+  /// **'会话 {id}'**
+  String memoryWhySession(Object id);
+
+  /// No description provided for @memoryWhyTimeUnknown.
+  ///
+  /// In zh, this message translates to:
+  /// **'时间未知'**
+  String get memoryWhyTimeUnknown;
+
+  /// No description provided for @memoryWhyExcerptLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'原话摘录'**
+  String get memoryWhyExcerptLabel;
+
+  /// No description provided for @memoryWhyNoExcerpt.
+  ///
+  /// In zh, this message translates to:
+  /// **'没有可展示的原文'**
+  String get memoryWhyNoExcerpt;
+
   /// No description provided for @gardenSetupTitle.
   ///
   /// In zh, this message translates to:
@@ -15262,9 +15320,8 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
   }
 
   throw FlutterError(
-    'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
-    'an issue with the localizations generation tool. Please file an issue '
-    'on GitHub with a reproducible sample app and the gen-l10n configuration '
-    'that was used.',
-  );
+      'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
+      'an issue with the localizations generation tool. Please file an issue '
+      'on GitHub with a reproducible sample app and the gen-l10n configuration '
+      'that was used.');
 }

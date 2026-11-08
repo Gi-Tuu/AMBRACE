@@ -360,7 +360,7 @@ async def _check_anniversaries_today() -> None:
             try:
                 from sqlalchemy import select as _s
                 from app.models.character import AICharacter
-                from app.application.chat_service import get_latest_session_id
+                from app.application.chat_store import get_latest_session_id
                 async with async_session_factory() as _db2:
                     _c = (await _db2.execute(_s(AICharacter).where(AICharacter.id == e.character_id))).scalar_one_or_none()
                 if _c is None:

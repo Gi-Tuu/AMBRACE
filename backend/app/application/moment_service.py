@@ -51,7 +51,7 @@ async def build_moment_prompt(char, extra_hint: str = "") -> str:
     """
     recent_chat = ""
     async with async_session_factory() as db:
-        from app.application.chat_service import get_latest_session_id
+        from app.application.chat_store import get_latest_session_id
         session_id = await get_latest_session_id(char.user_id, char.id)
         session = await db.get(ChatSession, session_id) if session_id else None
         if session:

@@ -118,8 +118,10 @@ def format_memory_line(m: dict, max_len: int = 150, prefix: str = "- ", include_
     _tcls = tense_hint or ("episodic" if is_happened_source(m) else classify_tense(m))
     # 挂点 B 决策层影子留痕（阶段 0，2026-09-25）：在生效值产生处记一次；
     # flag decision_layer_shadow 关时 observe 首行即返回、零行为，且 fail-open + 缓冲写库。
+    from app.application.decision_layer_ports import production_decision_layer_ports
     from app.domain.decision import observe_tense_decision
-    observe_tense_decision(m, _tcls, tense_hint=tense_hint)
+    observe_tense_decision(m, _tcls, tense_hint=tense_hint,
+                           ports=production_decision_layer_ports)
     if _tcls == "plan":
         _tense_tag = "［旧安排·已过期］ " if is_plan_expired(m) else "［计划］ "
     else:

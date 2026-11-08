@@ -58,3 +58,10 @@ class DecisionShadowPorts(Protocol):
     async def write_shadow_rows(self, rows: list[ShadowRow]) -> None:
         """一次会话、一次 commit 写完整批（每行即 AgentTaskLog 构造参数）。"""
         ...
+
+    # ── 时态文本口径（可选；2026-11-08 批 2 收口） ──
+    def tense_view(self) -> Any:
+        """返回含 ``_text/_g/PLAN_MARKERS/_DONE_MARKERS/_has_guard/is_happened_source`` 的对象
+        （生产实现返回 ``app.memory.tense`` 模块）。端口未实现 ⇒ 影子记录只留空 input，
+        判定与写库不受影响（观测面降级，不改变行为）。"""
+        ...

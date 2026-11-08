@@ -371,7 +371,7 @@ def test_motivation_candidate_computes_idle_minutes(monkeypatch):
 
     monkeypatch.setattr(arbiter, "get_active_characters", _fake_active)
     monkeypatch.setattr(arbiter, "_compute_motivation", _fake_motivation)
-    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _fake_sid)
+    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _fake_sid)
     monkeypatch.setattr("app.scheduling.triggers.get_last_messages", _fake_last)
     monkeypatch.setattr(arbiter, "_session_last_message_at", _fake_msg_at)
 
@@ -396,7 +396,7 @@ def test_motivation_candidate_idle_failure_quiet(monkeypatch):
 
     monkeypatch.setattr(arbiter, "get_active_characters", _fake_active)
     monkeypatch.setattr(arbiter, "_compute_motivation", _fake_motivation)
-    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _fake_sid)
+    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _fake_sid)
     monkeypatch.setattr(arbiter, "_session_last_message_at", _boom)
 
     items = asyncio.run(arbiter.collect_motivation_events())

@@ -101,7 +101,7 @@ async def _init_session(state: dict, session_id, character_id, user_id: int) -> 
     if not session_id or not character_id:
         return False
     from app.db.database import async_session_factory
-    from app.application.chat_service import get_owned_session
+    from app.application.chat_store import get_owned_session
 
     async with async_session_factory() as db:
         session = await get_owned_session(db, int(session_id), user_id)

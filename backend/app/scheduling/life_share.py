@@ -157,7 +157,7 @@ async def _generate_share(character_id: int, user_id: int, activity_type: str, s
 
     recent_ctx = ""
     try:
-        from app.application.chat_service import get_latest_session_id
+        from app.application.chat_store import get_latest_session_id
         from app.scheduling.triggers import get_last_messages
         sid = await get_latest_session_id(user_id, character_id)
         if sid:
@@ -259,7 +259,7 @@ async def on_activity_completed(payload: dict) -> None:
                 return
 
         # 发送（state_triggers 成熟做法）
-        from app.application.chat_service import get_latest_session_id
+        from app.application.chat_store import get_latest_session_id
         from app.scheduling.scheduler import send_to_session
         session_id = await get_latest_session_id(user_id, character_id)
         if session_id is None:

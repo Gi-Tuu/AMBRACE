@@ -507,7 +507,7 @@ def _patch_llm(monkeypatch, reply=None, boom=False):
     monkeypatch.setattr("app.agent.llm_client.load_character_reasoning_level", _rl2)
     monkeypatch.setattr("app.agent.user_profile.build_role_prompt_block", _fake_identity)
     monkeypatch.setattr("app.agent.persona.build_active_channel_persona", _noop_str)
-    monkeypatch.setattr("app.application.chat_service.get_latest_session_id", _sid)
+    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _sid)
     monkeypatch.setattr("app.application.weather_service.get_user_weather_line", _noop_str)
 
 

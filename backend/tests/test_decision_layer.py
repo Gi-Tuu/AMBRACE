@@ -24,6 +24,7 @@ from sqlalchemy import select
 from _dbclone import clone_engine, make_session_factory
 
 from app.agent.loop import AGENT_FLAGS
+from app.application.decision_layer_ports import production_decision_layer_ports as _PORTS
 from app.domain.decision import layer as dl
 
 pytestmark = pytest.mark.slow
@@ -88,12 +89,12 @@ def test_flag关_不写库不缓冲且返回值与直调legacy相同(shadow_db, 
     obj = SimpleNamespace(tag="原样交回")
 
     async def _go():
-        assert dl.ask_noul("s", "q", legacy=lambda: True) == (True, None)
-        assert dl.ask_choice("s", "q", ("a", "b"), legacy=lambda: "b") == ("b", None)
-        assert dl.ask_score("s", "q", 1, 5, legacy=lambda: 4) == (4, None)
-        got, conf = dl.ask_choice("s", "q", (), legacy=lambda: obj)
+        assert dl.ask_noul("s", "q", legacy=lambda: True, ports=_PORTS) == (True, None)
+        assert dl.ask_choice("s", "q", ("a", "b"), legacy=lambda: "b", ports=_PORTS) == ("b", None)
+        assert dl.ask_score("s", "q", 1, 5, legacy=lambda: 4, ports=_PORTS) == (4, None)
+        got, conf = dl.ask_choice("s", "q", (), legacy=lambda: obj, ports=_PORTS)
         assert got is obj and conf is None          # 透传同一对象，不复制不改类型
-        dl.observe_tense_decision({"content": "明天去长沙"}, "plan")
+        dl.observe_tense_decision({"content": "明天去长沙"}, "plan", ports=_PORTS)
         await _drain()
     asyncio.run(_go())
 
@@ -109,7 +110,8 @@ def test_flag开_score恰写一条且字段齐(shadow_db, monkeypatch):
 
     async def _go():
         out = dl.ask_score("用户说明天要去长沙", "这条记忆有多重要", 1, 5,
-                           legacy=lambda: 4, hook="memory_star_rating", character_id=13)
+                           legacy=lambda: 4, hook="memory_star_rating", character_id=13,
+                           ports=_PORTS)
         assert out == (4, None)
         await _drain()                              # 等 fire-and-forget 落库真正完成
     asyncio.run(_go())
@@ -134,8 +136,9 @@ def test_flag开_choice与noul各写一条并带候选留痕(shadow_db, monkeypa
 
     async def _go():
         assert dl.ask_choice("明天去长沙", "这是往事还是安排", dl.TENSE_OPTIONS,
-                             legacy=lambda: "plan", hook="memory_tense") == ("plan", None)
-        assert dl.ask_noul("在吗", "是否紧急", legacy=lambda: False) == (False, None)
+                             legacy=lambda: "plan", hook="memory_tense",
+                             ports=_PORTS) == ("plan", None)
+        assert dl.ask_noul("在吗", "是否紧急", legacy=lambda: False, ports=_PORTS) == (False, None)
         await _drain()
     asyncio.run(_go())
 
@@ -155,7 +158,7 @@ def test_confidence恒为None_不得被替换成0或1(shadow_db, monkeypatch):
     _flag(monkeypatch, True)
 
     async def _go():
-        dl.ask_score("s", "q", 1, 5, legacy=lambda: 3)
+        dl.ask_score("s", "q", 1, 5, legacy=lambda: 3, ports=_PORTS)
         await _drain()
     asyncio.run(_go())
 
@@ -176,7 +179,8 @@ def test_legacy抛异常照常向外抛且不留痕(shadow_db, monkeypatch):
 
         async def _go():
             with pytest.raises(ValueError):
-                dl.ask_score("s", "q", 1, 5, legacy=_boom, hook="memory_star_rating")
+                dl.ask_score("s", "q", 1, 5, legacy=_boom, hook="memory_star_rating",
+                             ports=_PORTS)
             await _drain()
         asyncio.run(_go())
         assert _fetch(shadow_db) == [], f"flag={on}：legacy 抛异常时不得留痕"
@@ -192,7 +196,8 @@ def test_direct写库通道异常不影响返回值(shadow_db, monkeypatch):
 
     _flag(monkeypatch, True)
     monkeypatch.setattr(trace, "enqueue_task_log", _explode)
-    assert dl.ask_score("s", "q", 1, 5, legacy=lambda: 5, hook="memory_star_rating") == (5, None)
+    assert dl.ask_score("s", "q", 1, 5, legacy=lambda: 5,
+                        hook="memory_star_rating", ports=_PORTS) == (5, None)
     assert dl.shadow_buffer_size() == 0
 
 
@@ -206,7 +211,7 @@ def test_buffer批量写库失败只留WARNING不影响判定(shadow_db, monkeyp
 
     async def _go():
         for i in range(dl._BUFFER_FLUSH_COUNT):
-            dl.observe_tense_decision({"content": f"明天去长沙{i}"}, "plan")
+            dl.observe_tense_decision({"content": f"明天去长沙{i}"}, "plan", ports=_PORTS)
         await _drain()                   # 攒满自动交出这一批
     asyncio.run(_go())
 
@@ -218,11 +223,12 @@ def test_挂点B_无事件循环时留在缓冲不做阻塞式写库(shadow_db, 
     _flag(monkeypatch, True)
 
     for i in range(3):                              # 纯同步调用点（无 running loop）
-        dl.observe_tense_decision({"content": "明天去长沙"}, "plan", character_id=None)
+        dl.observe_tense_decision({"content": "明天去长沙"}, "plan",
+                                  character_id=None, ports=_PORTS)
 
     assert dl.shadow_buffer_size() == 3             # 整批留在缓冲
     assert _fetch(shadow_db) == []                  # 没有同步写库、也没抛
-    assert dl.flush_shadow_buffer() == 0            # 无循环时明确交不出去
+    assert dl.flush_shadow_buffer(ports=_PORTS) == 0            # 无循环时明确交不出去
 
 
 # ────────────────────────── ⑦ 攒满即批量落库（一决策一行） ──────────────────────────
@@ -233,10 +239,12 @@ def test_buffer攒满自动批量落库_调用点不阻塞(shadow_db, monkeypatc
     async def _go():
         sizes = []
         for i in range(dl._BUFFER_FLUSH_COUNT - 1):          # 差一条不触发攒批
-            dl.observe_tense_decision({"content": f"下周出差{i}", "memory_type": "event"}, "plan")
+            dl.observe_tense_decision({"content": f"下周出差{i}", "memory_type": "event"},
+                                      "plan", ports=_PORTS)
             sizes.append(dl.shadow_buffer_size())
         written_during_call = await _afetch(shadow_db)       # 调用点全程没有写库
-        dl.observe_tense_decision({"content": "下周出差最后一批", "memory_type": "event"}, "plan")
+        dl.observe_tense_decision({"content": "下周出差最后一批", "memory_type": "event"},
+                                  "plan", ports=_PORTS)
         auto = dl.shadow_buffer_size()                        # 第 N 条 ⇒ 自动整批交出
         await _drain()
         return sizes, written_during_call, auto
@@ -318,10 +326,10 @@ def test_挂点B_时态判定两态逐字相同且开时一决策一行(shadow_d
             got = []
             for m in _CORPUS:
                 label = classify_tense(m)            # 规则判定（本体未改动）
-                dl.observe_tense_decision(m, label)  # 调用方留痕：只观测，不参与判定
+                dl.observe_tense_decision(m, label, ports=_PORTS)  # 调用方留痕：只观测，不参与判定
                 got.append(label)
             assert dl.shadow_buffer_size() == (len(_CORPUS) if flag_on else 0)
-            dl.flush_shadow_buffer()
+            dl.flush_shadow_buffer(ports=_PORTS)
             await _drain()
             return got
         return asyncio.run(_go())
@@ -349,9 +357,10 @@ def test_挂点B_tense_hint走留痕不冒充规则判定(shadow_db, monkeypatch
     _flag(monkeypatch, True)
 
     async def _go():
-        dl.observe_tense_decision({"content": "用户说明天要去长沙"}, "episodic", tense_hint="episodic")
+        dl.observe_tense_decision({"content": "用户说明天要去长沙"}, "episodic",
+                                  tense_hint="episodic", ports=_PORTS)
         assert dl.shadow_buffer_size() == 1
-        dl.flush_shadow_buffer()
+        dl.flush_shadow_buffer(ports=_PORTS)
         await _drain()
     asyncio.run(_go())
 
@@ -373,7 +382,7 @@ def test_format接线_按生效label调用observe且透传tense_hint(monkeypatch
     calls = []
     monkeypatch.setattr(
         decision_pkg, "observe_tense_decision",
-        lambda m, label, *, tense_hint=None: calls.append((label, tense_hint)))
+        lambda m, label, *, tense_hint=None, ports=None: calls.append((label, tense_hint)))
 
     # 规则来源：event + 计划词 → classify_tense 生效值 = plan（tense_hint 未给）
     format_memory_line({"content": "用户明天要去长沙出差", "memory_type": "event"})
@@ -410,7 +419,7 @@ def test_format接线_开关两态经真实格式化路径且返回文本逐字�
     assert _fetch(shadow_db) == []                    # 尚未落库（无阻塞式写库）
 
     async def _go():
-        assert dl.flush_shadow_buffer() == 1
+        assert dl.flush_shadow_buffer(ports=_PORTS) == 1
         await _drain()
     asyncio.run(_go())
 

@@ -10,7 +10,9 @@ from app.api import chat as chat_api
 from app.auth.config import create_token
 
 
-async def _seed(u=9501, c=9511, s=9521):
+# 共享沙箱 ID 号段（2026-11-08 测试债整改）：965x/966x/967x 归本文件独占；
+# 原 950x 与 reauthorize_2b、原 960x 与 perception/restart 撞车。
+async def _seed(u=9651, c=9661, s=9671):
     from app.db.database import async_session_factory
     async with async_session_factory() as db:
         await db.execute(text("INSERT OR IGNORE INTO users(id,username,nickname,password_hash) VALUES (:u,:n,'n','x')"), {"u": u, "n": f"u{u}"})
@@ -55,7 +57,7 @@ def _client():
     return TestClient(app)
 
 
-def _auth(uid=9501):
+def _auth(uid=9651):
     return {"Authorization": f"Bearer {create_token(uid)}"}
 
 
@@ -93,14 +95,14 @@ def test_real_service_http_signs_source(monkeypatch):
     from app.application import chat_service
     collector = _BackgroundCollector()
     monkeypatch.setattr(chat_service, "spawn_background", collector)
-    asyncio.run(_seed(9501, 9511, 9521))
+    asyncio.run(_seed(9651, 9661, 9671))
     client = _client()
     with client:
-        r = client.post("/api/v1/chat/send", headers=_auth(9501),
-                        json={"session_id": 9521, "content": "真实服务 HTTP"})
+        r = client.post("/api/v1/chat/send", headers=_auth(9651),
+                        json={"session_id": 9671, "content": "真实服务 HTTP"})
         client.portal.call(collector.drain)
     assert r.status_code == 200, r.text
-    msgs, srcs, uid = asyncio.run(_counts(9521))
+    msgs, srcs, uid = asyncio.run(_counts(9671))
     assert uid and srcs >= 1
 
 
@@ -119,18 +121,18 @@ def test_real_service_http_sign_failure_rolls_back(monkeypatch):
     from app.application import chat_service
     collector = _BackgroundCollector()
     monkeypatch.setattr(chat_service, "spawn_background", collector)
-    asyncio.run(_seed(9502, 9512, 9522))
-    # 断言走「增量」口径（2026-11-07）：会话共享沙箱库里 session 9522 可能被先跑的
+    asyncio.run(_seed(9652, 9662, 9672))
+    # 断言走「增量」口径（2026-11-07）：会话共享沙箱库里 session 9672 可能被先跑的
     # reauthorize_2b 留过行——回滚语义＝「发送前后零新增」，绝对 (0,0) 会被残留撞假红。
-    before = asyncio.run(_counts(9522))[:2]
+    before = asyncio.run(_counts(9672))[:2]
     client = _client()
     with client:
-        r = client.post("/api/v1/chat/send", headers=_auth(9502),
-                        json={"session_id": 9522, "content": "真实服务失败"})
+        r = client.post("/api/v1/chat/send", headers=_auth(9652),
+                        json={"session_id": 9672, "content": "真实服务失败"})
         client.portal.call(collector.drain)
     assert calls == [1]
     assert r.status_code == 500
-    after = asyncio.run(_counts(9522))[:2]
+    after = asyncio.run(_counts(9672))[:2]
     assert after == before, f"签名失败后必须零落库（回滚语义），计数 {before}→{after}"
 
 
@@ -141,14 +143,14 @@ def test_real_service_sse_signs_source(monkeypatch):
     from app.application import chat_service
     collector = _BackgroundCollector()
     monkeypatch.setattr(chat_service, "spawn_background", collector)
-    asyncio.run(_seed(9503, 9513, 9523))
+    asyncio.run(_seed(9653, 9663, 9673))
     client = _client()
     with client:
-        r = client.post("/api/v1/chat/sessions/9523/messages/stream", headers=_auth(9503),
+        r = client.post("/api/v1/chat/sessions/9673/messages/stream", headers=_auth(9653),
                         json={"content": "真实服务 SSE"})
         client.portal.call(collector.drain)
     assert r.status_code == 200
-    msgs, srcs, uid = asyncio.run(_counts(9523))
+    msgs, srcs, uid = asyncio.run(_counts(9673))
     assert uid and srcs >= 1
 
 
@@ -159,12 +161,12 @@ def test_real_service_ws_signs_source(monkeypatch):
     from app.application import chat_service
     collector = _BackgroundCollector()
     monkeypatch.setattr(chat_service, "spawn_background", collector)
-    asyncio.run(_seed(9504, 9514, 9524))
-    token = create_token(9504)
+    asyncio.run(_seed(9654, 9664, 9674))
+    token = create_token(9654)
     client = _client()
     with client:
-        with client.websocket_connect(f"/api/v1/chat/ws/9524?token={token}") as ws:
-            ws.send_json({"type": "chat_message", "character_id": 9514, "content": "真实服务 WS"})
+        with client.websocket_connect(f"/api/v1/chat/ws/9674?token={token}") as ws:
+            ws.send_json({"type": "chat_message", "character_id": 9664, "content": "真实服务 WS"})
             user = None
             for _ in range(6):
                 data = ws.receive_json()

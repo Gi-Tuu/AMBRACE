@@ -130,8 +130,15 @@ def test_gate_tail_meteor_and_tiles_paper_contracts():
     assert "keep: Math.random() < 0.12" in HTML and "p.keep ?" in HTML, \
         "变暗时没保留少量常亮星点"
     assert ".gtiles" in CSS and "class=\"gtiles stagger\"" in HTML, "分组没做成图标卡片"
-    assert "min-width: 82px; text-align: right;" in CSS, "明细数字没个位对齐"
-    assert "top: 132px" in CSS, "侧栏分隔线没与页眉底线对齐"
+    # 明细数字改成固定列 grid 后仍要向右竖对齐（口径不变，写法换了）
+    assert re.search(r"\.hmtip \.hml > div \{[^}]*grid-template-columns:[^}]*82px", CSS, re.S), \
+        "明细数字没有固定列右对齐"
+    assert "text-align: right" in CSS, "明细数字没右对齐"
+    # 侧栏分隔线必须跟页眉底线同高：hero 是 border-box，那 1px 底边算在 --hero-h 里面，
+    # 所以侧栏这条线得画在 --hero-h - 1 上（写死 132 就会矮一整像素，用户截图里能看见）
+    assert re.search(r"--hero-h:\s*132px", CSS), "页眉高度变量丢了"
+    assert re.search(r"\.side::before \{[^}]*top:\s*calc\(var\(--hero-h\)\s*-\s*1px\)", CSS, re.S), \
+        "侧栏分隔线没与页眉底线对齐"
 
 
 # ───── ⑨ 分组图标卡：计数不许压标签，长名不许顶动大字 ─────

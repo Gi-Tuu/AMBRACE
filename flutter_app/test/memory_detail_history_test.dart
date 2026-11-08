@@ -197,7 +197,8 @@ void main() {
     await tester.pump();
 
     expect(find.text('正在加载修正历史…'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    // 详情页有多张异步卡（历史/来源链等）可同时处于加载态，断言至少有一个转圈。
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
 
     api.completeGate('GET', '/api/v1/memories/1/history', {
       'memory_id': 1,
@@ -402,10 +403,11 @@ void main() {
     )));
     await tester.pumpAndSettle();
 
-    // 展开「原始内容」触发来源读（挂起）
-    final tiles = find.byType(ExpansionTile);
-    expect(tiles, findsWidgets);
-    await tester.tap(tiles.last);
+    // 展开「原始内容」触发来源读（挂起）。新增卡片后该瓦片在视口外（未构建），
+    // 先滚到可见再点，不能依赖 ExpansionTile 的 build 顺序。
+    final sourceTile = find.widgetWithText(ExpansionTile, '详情');
+    await tester.scrollUntilVisible(sourceTile, 300, scrollable: find.byType(Scrollable).first);
+    await tester.tap(sourceTile);
     await tester.pump();
 
     await tester.pumpWidget(host(_memory(memory2)));
@@ -512,4 +514,8 @@ void _prime(_TestAdapter api, int id) {
   api.json('GET', '/api/v1/memories/$id/chain', {'status': 'ok', 'chain': []});
   api.json('GET', '/api/v1/memories/$id/history',
       {'memory_id': id, 'truncated': false, 'corrections': []});
+  api.json('GET', '/api/v1/memories/$id/why', {
+    'status': 'ok', 'memory_id': id, 'has_source': false,
+    'sources': [], 'receipt_count': 0, 'note': 'no_source_event',
+  });
 }
