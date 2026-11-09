@@ -307,6 +307,41 @@ def _reset_admin_cache_between_tests():
 
 
 # ---------------------------------------------------------------------------
+# S3 会话工厂桥接（2026-11-09）：记忆链路有**两个**解析点
+# ① `app.memory.service.async_session_factory` —— 既有 60+ 处测试打桩点（服务自身函数体在本模块解析）；
+# ② `app.db.session.async_session_factory` —— S3 后 bm25_index/maintain/plan_projection/retrieve×3/write
+#    这 10 个生产点在**函数内 import 时现取**（真定义处，不再经记忆服务的别名）。
+# 只打一边会分裂成「服务内部走假库、检索/写入走真库」。本 fixture 把 ② 换成**转发代理**，
+# 调用时再读 ① ⇒ 既有的 `setattr(memsvc, "async_session_factory", fake)` 自动对两侧同时生效，
+# 不必改 44 个测试文件；显式 patch `app.db.session`/`app.db.database` 的用例仍按自身写法做事。
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _s3_factory_bridge(monkeypatch):
+    import app.memory.service as _memsvc
+    from app.db import session as _dbsession
+
+    class _Bridge:
+        """调用时转发到记忆服务当前持有的工厂（被测试打桩后即为假体）。
+
+        ``__getattr__`` 同步转发属性：有的用例读 ``async_session_factory.class_``
+        （``test_sqlite_busy_reclaim.py::test_sandbox_factory_wired`` 校验 BusyReclaimSession），
+        桥必须像原对象一样可被属性访问。
+        """
+
+        def __call__(self, *a, **kw):
+            return _memsvc.async_session_factory(*a, **kw)
+
+        def __getattr__(self, item):
+            return getattr(_memsvc.async_session_factory, item)
+
+        def __repr__(self):  # 便于失败时看出是桥
+            return "<s3-factory-bridge -> app.memory.service.async_session_factory>"
+
+    monkeypatch.setattr(_dbsession, "async_session_factory", _Bridge())
+    yield
+
+
+# ---------------------------------------------------------------------------
 # CI 无 bge-m3 模型时注入确定性假向量（消除「本地有模型跑向量路径、CI 静默退化成 None」的分叉）。
 # - 触发条件：模型缺失（CI 无 backend/models/bge-m3）或显式 AMBRACE_FORCE_FAKE_EMBEDDING=1（本机验证用）。
 # - 假向量 1024 维（与 bge-m3 一致）、L2 归一化、按文本 sha256 确定性播种：同文本恒等、不同文本近似正交，

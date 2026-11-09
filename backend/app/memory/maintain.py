@@ -34,7 +34,7 @@ async def list_memories(
     expiration through the shared delete_memory mutation path.
     """
     from datetime import datetime
-    from app.memory.service import async_session_factory
+    from app.db.session import async_session_factory  # S3：真定义处（不再经 memory.service 别名）
 
     now = _now_naive()
     async with async_session_factory() as db:
@@ -132,7 +132,8 @@ async def list_memories(
 
 async def delete_memory(memory_id: int) -> bool:
     """删除记忆（软删除 + 删除向量）"""
-    from app.memory.service import async_session_factory, bm25_invalidate, delete_memory_vector
+    from app.db.session import async_session_factory  # S3：真定义处（不再经 memory.service 别名）
+    from app.memory.service import bm25_invalidate, delete_memory_vector
     async with async_session_factory() as db:
         result = await db.execute(select(Memory).where(Memory.id == memory_id))
         memory = result.scalar_one_or_none()

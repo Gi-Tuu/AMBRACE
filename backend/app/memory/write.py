@@ -1089,7 +1089,7 @@ async def trace_actor_for_message(message_id, db=None) -> dict:
 
         owns = db is None
         if owns:
-            from app.memory.service import async_session_factory
+            from app.db.session import async_session_factory  # S3：真定义处（不再经 memory.service 别名）
             db = async_session_factory()
         try:
             from app.models.chat import ChatMessage

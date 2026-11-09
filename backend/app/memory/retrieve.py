@@ -146,7 +146,7 @@ async def _neighbor_rows_for_anchor(character_id: int, anchor: dict, have: set[i
     """
     from datetime import timedelta
 
-    from app.memory.service import async_session_factory
+    from app.db.session import async_session_factory  # S3：真定义处（不再经 memory.service 别名）
 
     created = anchor.get("created_at")
     if created is None:
@@ -241,7 +241,7 @@ async def _entity_route(character_id: int, query: str) -> tuple[list[dict], dict
     """
     from app.memory.entity_match import extract_terms, hit_reasons, pull_literals
 
-    from app.memory.service import async_session_factory
+    from app.db.session import async_session_factory  # S3：真定义处（不再经 memory.service 别名）
 
     try:
         terms = extract_terms(query)
@@ -326,7 +326,7 @@ async def _rerank(results: list[dict], character_id: int, hit_count: dict[int, i
 
     SQLite owns text/type/scope; return_debug=True also returns bounded rerank diagnostics.
     """
-    from app.memory.service import async_session_factory
+    from app.db.session import async_session_factory  # S3：真定义处（不再经 memory.service 别名）
     if not results:
         return ([], {"db_pool": 0, "rerank_top": []}) if return_debug else []
     now = _now_naive()

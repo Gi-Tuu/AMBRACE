@@ -227,7 +227,7 @@ async def project_memory_results(rows,character_id,factory):
 
 async def project_live_memory_results(rows,character_id):
     # Resolve the established service seam at call time, never cache its factory.
-    from app.memory.service import async_session_factory
+    from app.db.session import async_session_factory  # S3：真定义处（不再经 memory.service 别名）
     return await project_memory_results(rows,character_id,async_session_factory)
 
 

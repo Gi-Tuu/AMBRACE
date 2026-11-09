@@ -4508,3 +4508,56 @@ def test_A23_assembly行号坐标与注释一致():
     assert "context/assembly.py:504-520" in ov, "section_overlay 的行号注释没随迁"
     fl = Path(str(_seam_src_path("app.flags.agent_flags"))).read_text(encoding="utf-8")
     assert "context/assembly.py:520" in fl, "agent_flags 的行号注释没随迁"
+
+
+# ───────── ⑭ 批 3 S3：会话工厂别名退场（真定义处 app.db.session） ─────────
+S3_FACTORY_IMPORTERS = (
+    "app/memory/bm25_index.py",
+    "app/memory/maintain.py",
+    "app/memory/plan_projection.py",
+    "app/memory/retrieve.py",
+    "app/memory/write.py",
+)
+
+
+def test_批3S3_生产代码不再从记忆服务取会话工厂():
+    """S3 守卫：``from app.memory.service import async_session_factory`` 在 app/ 里必须清零。
+
+    那 10 个调用点改成 ``from app.db.session import async_session_factory``（真定义处）；
+    记忆服务自身的同名 import 来自 ``app.db.database``，不在此列。
+    """
+    hits = []
+    for p in (_BACKEND_PY / "app").rglob("*.py"):
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            s = line.strip()
+            if s.startswith("from app.memory.service import") and "async_session_factory" in s:
+                hits.append(str(p.relative_to(_BACKEND_PY)))
+    assert hits == [], f"仍有模块经记忆服务取会话工厂（S3 未退净）：{hits}"
+
+
+def test_批3S3_五个记忆模块改指真定义处():
+    """正向锚定：这 5 个文件里必须出现 ``from app.db.session import async_session_factory``。"""
+    missing = []
+    for rel in S3_FACTORY_IMPORTERS:
+        src = (_BACKEND_PY / rel).read_text(encoding="utf-8")
+        if "from app.db.session import async_session_factory" not in src:
+            missing.append(rel)
+    assert missing == [], f"这些文件没改指真定义处：{missing}"
+
+
+def test_批3S3_conftest桥接让记忆服务打桩对真定义处生效(monkeypatch):
+    """隔离面（S3 的代价）：既有 60+ 处 ``setattr(memsvc, "async_session_factory", fake)``
+    必须继续对这 10 个点生效 ⇒ conftest 的 autouse 桥接把 ``app.db.session`` 换成转发代理。"""
+    import app.memory.service as _memsvc
+    from app.db import session as _dbsession
+
+    calls: list = []
+
+    def _boom():
+        calls.append("hit")
+        raise RuntimeError("stub factory")
+
+    monkeypatch.setattr(_memsvc, "async_session_factory", _boom)
+    with pytest.raises(RuntimeError):
+        _dbsession.async_session_factory()
+    assert calls == ["hit"], "db.session 的工厂没转发到记忆服务那一份（只打一边会分裂真/假库）"

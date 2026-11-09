@@ -26,8 +26,8 @@
 built_at)），上限 _BM25_CACHE_MAX=20 角色、TTL _BM25_TTL_SECONDS=15 分钟（兜底）。懒构建：
 首次检索某角色时从 SQLite memories 表读「is_archived=0 且 delete_at is null」的活跃记忆
 content 建索引；写入/改内容/删除记忆会显式 invalidate(character_id) 立即失效，TTL 仅作兜底。
-复用 app.memory.service 的 async_session_factory（与主检索路径同一连接；测试中 monkeypatch
-memsvc.async_session_factory 即隔离临时库），避免 import 环。
+会话工厂直连 ``app.db.session.async_session_factory``（S3，2026-11-09：不再经
+``app.memory.service`` 的别名；测试用 ``tests/_dbclone.patch_async_session_factory`` 打两处）。
 
 【持久化（2026-08-23 深化）】
 为避免进程重启后首次检索重新分词建索引（懒构建约几百 ms，主要在 jieba 逐篇分词），角色索引
@@ -273,11 +273,12 @@ async def _build_index(character_id: int, status: str | None = None) -> "_IndexE
     ``status``：None=怀旧/默认索引（active+stale，维持既有口径）；"active"=**现状面**索引
     （2026-09-17 批次一任务2，旧现状不进现状面稀疏路）。
 
-    DB/分词异常静默返回 None（不影响主链路）。复用 app.memory.service 的 async_session_factory，
-    使测试里对 memsvc.async_session_factory 的 monkeypatch 自动生效（隔离临时库）。
+    DB/分词异常静默返回 None（不影响主链路）。会话工厂直连 ``app.db.session``（S3，2026-11-09）——
+    测试统一用 ``tests/_dbclone.patch_async_session_factory`` 同时打两处解析点。
     """
     try:
-        from app.memory.service import async_session_factory as _factory, _retrievable_status_clause
+        from app.db.session import async_session_factory as _factory  # S3：真定义处（不再经 memory.service 别名）
+        from app.memory.service import _retrievable_status_clause
         _conds = [
             Memory.character_id == character_id,
             Memory.is_archived == False,      # noqa: E712

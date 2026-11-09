@@ -3,7 +3,7 @@ import json
 
 from sqlalchemy import true as _sql_true  # noqa: F401  # F4 再导出
 
-from app.db.database import async_session_factory  # noqa: F401  # F4 再导出
+from app.db.database import async_session_factory  # 本模块自身取库用；S3 后不再是外部的别名入口（2026-11-09）
 from app.db.vector_store import (  # noqa: F401  # F4 再导出
     add_memory,
     search_memories as vector_search,
