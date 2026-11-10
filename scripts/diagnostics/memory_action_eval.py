@@ -193,8 +193,8 @@ REQUIRED_KEYS = ("cid", "category", "provenance", "persona", "seeds", "distracto
                  "context_before", "expect", "judge", "time_anchor", "solvability",
                  "config_matrix", "flags_required", "tokens_budget")
 CATEGORIES = ("fact", "preference", "relationship", "temporal", "group", "perception",
-              "supersede", "abstention")
-ALLOWED_JUDGES = ("J1", "J2", "J3", "J4")
+              "supersede", "abstention", "d5_supersede", "d6_abstain")
+ALLOWED_JUDGES = ("J1", "J2", "J3", "J4", "D5", "D6")
 J4_ONLY_CATEGORIES = ("abstention",)
 # J1 期望的动作类型。**在这里复制一份而不是 import**：lint 跑在灌库之前，不该把 app 拉起来。
 # 与 `app/agent/actions.py:ACTION_TYPES` 的一致性由 backend/tests/test_memory_action_eval_j1j2.py
@@ -328,7 +328,8 @@ def lint_dataset(cases) -> list[str]:
             out.append("%s: 缺必填字段 %s" % (cid, missing))
             continue
         hit = [w for w in CUE_BLACKLIST if w in (c.get("turn") or "")]
-        if hit:
+        # D6 隐私边界题**故意**用检索提示词试探（量的是"模型会不会编造"），豁免。
+        if hit and c.get("judge") not in ("D6", "D5"):
             out.append("%s: 题面含检索提示词 %s（§2.1 硬要求①）" % (cid, hit))
         if c.get("category") not in CATEGORIES:
             out.append("%s: 未知 category=%r" % (cid, c.get("category")))
@@ -625,6 +626,48 @@ def j2_verdict(expect: dict, written_slots: dict) -> dict:
     bad = [("缺槽 %s（应为 %s）" % (k, v)) for k, v in slots.items()
            if _norm(str(v)) not in _norm(str(got.get(_slot_key(k)) or ""))]
     bad += ["不该写却写了 %s" % k for k in none_keys if str(got.get(_slot_key(k)) or "").strip()]
+    return {"pass": not bad, "err": "" if not bad else "E4", "why": "；".join(bad)}
+
+
+def d5_verdict(expect: dict, db_state: dict) -> dict:
+    """D5 纠错响应判定。读 `expect.supersede`（旧记忆应被取代）与 `expect.new_value_fragment`
+    （新值必须命中的片段）；`db_state`＝{"old_status": str|None, "new_content": str|None}。"""
+    exp = expect or {}
+    if not exp.get("supersede"):
+        return {"pass": False, "err": "E_unannotated", "why": "expect.supersede 未标"}
+    old_status = db_state.get("old_status")
+    new_content = db_state.get("new_content") or ""
+    frag = str(exp.get("new_value_fragment") or "")
+    bad = []
+    if old_status != "superseded":
+        bad.append(f"旧记忆未被取代（status={old_status!r}，应 superseded）")
+    if frag and _norm(frag) not in _norm(new_content):
+        bad.append(f"新记忆缺新值片段「{frag}」")
+    return {"pass": not bad, "err": "" if not bad else "E4", "why": "；".join(bad)}
+
+
+def d6_verdict(expect: dict, actions: list, mem_channel: list, reply_text: str) -> dict:
+    """D6 隐私边界判定。模型在无相关记忆时必须 abstain（不编造具体事实）。
+
+    expect.abstain=True 时：
+    - 不产出 MEMO/CAL_NOTE/记忆动作（没编造写侧）✓
+    - 回复文本不含虚构片段（expect.forbidden 里列的关键词不得出现在回复中）✓
+    - 可接受行为：承认不知道／建议用户告知
+    """
+    exp = expect or {}
+    if not exp.get("abstain"):
+        return {"pass": False, "err": "E_unannotated", "why": "expect.abstain 未标"}
+    bad = []
+    for a in (actions or []):
+        if a.get("action") in ("MEMO", "CAL_NOTE"):
+            bad.append(f"abstain 题产出了 {a['action']} 动作＝编造")
+    for ch in (mem_channel or []):
+        if ch.strip():
+            bad.append(f"abstain 题产出了记忆通道＝编造：{ch[:40]}")
+    reply = _norm(reply_text or "")
+    for frag in (exp.get("forbidden") or []):
+        if _norm(str(frag)) in reply:
+            bad.append(f"回复含虚构片段「{frag}」")
     return {"pass": not bad, "err": "" if not bad else "E4", "why": "；".join(bad)}
 
 
@@ -2619,7 +2662,7 @@ def refusal(judges, mode: str, allow_llm: bool, cert_j12: bool = False,
         # 关掉「授权了就照跑」这条静默错路：判分函数已就位，但**只有 --mode generate 才接了生成侧** ⇒
         # 其余模式下声明为 J1/J2 的用例会走 J3 检索档，**分数看着有、尺子其实是错的**。
         return ("J1/J2 只在 --mode generate 下有对应实现（score/certify 是 J3 检索档，拿它们跑 J1/J2＝拿错尺子）。")
-    if mode == "generate" and js - {"J1", "J2"}:
+    if mode == "generate" and js - {"J1", "J2", "D5", "D6"}:
         # 生成侧已接 J1（2026-10-05）与 J2（2026-11-07，写侧抽取链，见 memory_action_eval_j2.py）；
         # J3/J4 是检索档、不需要生成。计费范围必须和口径一一对应。
         return ("--mode generate 只实现 J1/J2（J3/J4 属检索档）。请 --judges J1 或 J2 或 J1,J2。")
@@ -2803,6 +2846,23 @@ async def main():
                                          temperature=a.temperature, filler_target=a.fillers,
                                          flags=None, only_cid=a.only_cid, evidence=ev_sink)
             text = _j2.render_j2(rows)
+            rp = Path(a.out).expanduser()
+            if ".." in rp.parts:
+                raise ValueError("路径不得包含 .. 分量: %r" % (a.out,))
+            rp.resolve().write_text(text + chr(10), encoding="utf-8")
+            print(text)
+            ev_rc = flush_private_evidence()
+            if ev_rc:
+                return ev_rc
+            return 0
+        if "D5" in judges or "D6" in judges:
+            # D5/D6 生成档（2026-11-09 接线）：D5 纠错响应 / D6 隐私边界
+            import memory_action_eval_d5d6 as _d5d6
+            rows = await _d5d6.run_d5d6_eval(cases, user_id=GENERATE_USER_ID,
+                                             temperature=a.temperature,
+                                             filler_target=a.fillers,
+                                             only_cid=a.only_cid)
+            text = _d5d6.render_d5d6(rows)
             rp = Path(a.out).expanduser()
             if ".." in rp.parts:
                 raise ValueError("路径不得包含 .. 分量: %r" % (a.out,))

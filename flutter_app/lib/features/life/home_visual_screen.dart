@@ -116,12 +116,8 @@ class _HomeVisualScreenState extends State<HomeVisualScreen>
       'floor_living', 'floor_bedroom', 'floor_kitchen', 'floor_bathroom',
       'wall_living', 'wall_bedroom', 'wall_kitchen', 'wall_bathroom',
       'char_user', 'char_ai',
-      'furn_bed', 'furn_sofa', 'furn_tv', 'furn_stove', 'furn_fridge',
-      'furn_table', 'furn_desk', 'furn_bookshelf', 'furn_shower', 'furn_bathtub',
-      'furn_wardrobe', 'furn_nightstand', 'furn_coffee', 'furn_chair',
-      'furn_speaker', 'furn_game', 'furn_plant', 'furn_petbed', 'furn_sink',
-      'furn_rug', 'furn_painting', 'furn_lamp', 'furn_shelf', 'furn_bin',
-      'furn_clock',
+      // 2026-11-10：旧单图（缺向回落）＋ 25 个家具 × 8 方向
+      ...HomeLayoutMath.furnitureAssetKeys(),
     ];
     for (final k in keys) {
       try {

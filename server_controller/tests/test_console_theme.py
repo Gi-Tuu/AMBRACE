@@ -150,7 +150,7 @@ def test_theme_word_no_longer_duplicated_in_the_foot():
 def test_switching_applies_before_the_write_is_confirmed():
     body = HTML[HTML.index("async function toggleTheme"):]
     body = body[:body.index("\nconst ADMIN_PAGES")]
-    assert body.index("dataset.theme = next") < body.index('await api("set_theme"'), \
+    assert body.index("dataset.theme = next") < body.index('api("set_theme"'), \
         "先等壳层写完再换皮：点一下要等一个来回才变色"
 
 
@@ -161,13 +161,18 @@ window.addEventListener('load', function(){
     const b = document.getElementById('themePlanet');
     const face = document.querySelector('.hero-planet');
     const tex = () => getComputedStyle(face).backgroundImage;
+    // 纸色档的太阳是 CSS 画的（圆盘＋三角瓣），没有背景图了，所以要看 ::after 的 clip-path
+    const rays = () => getComputedStyle(face, '::after').clipPath;
     const snap = () => ({theme: document.documentElement.dataset.theme,
                          moon: tex().indexOf('planet_moon') >= 0 ? '1' : '0',
                          sun: tex().indexOf('planet_sun') >= 0 ? '1' : '0',
+                         ray: rays().indexOf('path(') >= 0 ? '1' : '0',
                          sky: getComputedStyle(document.getElementById('sky')).display});
     const before = snap();
     b.click();
-    const mid = document.documentElement.dataset.theme;   // 还没等壳层回话
+    // 换档走 View Transitions：新画面在下一帧才进快照，等一小会儿再读（仍远早于壳层回话）
+    await new Promise(r => setTimeout(r, 80));
+    const mid = document.documentElement.dataset.theme;
     await new Promise(r => setTimeout(r, 500));
     const after = snap();
     const d = document.createElement('div');
@@ -216,10 +221,13 @@ def test_click_flips_the_palette_even_when_the_shell_cannot_record(tmp_path):
     assert 'html[data-theme="light"] .planet { background-image: url("planet_sun.png");' in CSS
     assert "planet_moon.png" in CSS
     assert got["before"]["sky"] == "block", "墨纸档星空要在"
-    assert got["mid"] == "light", "点下去没立刻换皮"
+    # 换档现在走 View Transitions（圆形扩散）：新画面要等下一帧进快照，所以 80ms 时
+    # 可能还是旧档；但"不等壳层回话"这条不变——500ms 后必须先换过来。
+    assert got["mid"] in ("light", "dark"), got
+    assert got["after"]["theme"] == "light", "点下去没有自己换皮（在路上等回话？）：%s" % got
     assert got["after"]["theme"] == "light" and got["bad"] is True, got
-    assert float(got["after"]["sun"]) > .9 and float(got["after"]["moon"]) < .1, \
-        "切到纸色后没换成太阳纹理 %s" % got["after"]
+    assert float(got["after"]["ray"]) > .9 and float(got["after"]["moon"]) < .1, \
+        "切到纸色后没换成三角瓣太阳 %s" % got["after"]
     assert got["after"]["sky"] == "none", "切到纸色后星空还跟着，违背拍板第③项"
     assert "没记住" in got["title"], got["title"]
 

@@ -152,14 +152,17 @@ def test_registration_dom(tmp_path):
     for label in ["开放", "仅邀请码", "关闭"]:
         assert label in d, label
     assert "任何人都能注册新账号（现状默认）" in d
-    assert ">保存</button>" in d and "放弃修改并重读" in d
+    assert "savebtn" in d and 'data-act="reg-save"' in d, "保存按钮应当是一个勾（图标）而不是文字"
+    assert "放弃修改并重读" in d
     assert "403/401 时点右上角「登录」后重试" in d
     assert 'data-act="reg-pick"' in d
 
 
 def test_identity_dom_shows_fp_groups_beijing_time_and_deploy_facts(tmp_path):
     d = dom(tmp_path, "identity", ok_env("identity_page"))
-    assert "校验档位（后端 identity_enforce_mode，默认 off）" in d
+    assert "校验档位" in d, "档位那一块没了"
+    # 实现细节不再糊在标题里，挪进了 title，信息不许丢
+    assert "identity_enforce_mode" in d
     assert "shadow（影子）" in d
     assert "出签但不阻断：出不了签只记日志，绝不因签名问题拒绝请求" in d
     assert "拥爱主站" in d
@@ -167,10 +170,10 @@ def test_identity_dom_shows_fp_groups_beijing_time_and_deploy_facts(tmp_path):
     assert "09-24 10:00" in d and "2026-09-24T02:00:00" not in d, "密钥签发时间必须是北京时"
     assert "有效（指纹 a1b2c3，剩 120 秒）" in d
     assert "成功 3 ／ 失败 1" in d
-    assert "一次性配对码（12 位，去易混字符；请在客户端界面上亲手输入）" in d
+    assert "一次性配对码" in d and "去掉了容易看错的字符" in d
     assert "尚未签发" in d, "本窗口没签过码就不该假装有"
     assert "轮换身份密钥" in d and "旧密钥立即作废" in d
-    assert "部署面现状（只提示，不改默认值）" in d
+    assert "部署面" in d and "只提示，不改默认值" in d
     assert "通配（*）" in d and "免鉴权（现状默认）" in d and "3 个端点（窄集）" in d
 
 

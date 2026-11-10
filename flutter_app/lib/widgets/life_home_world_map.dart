@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:vector_math/vector_math_64.dart' show Vector3;
 import 'package:ai_companion/l10n/app_localizations.dart';
+import '../features/life/home_visual_models.dart';
 
 /// 小家大地图 v1.2（2026-08-27）：可交互世界画布组件。
 ///
@@ -807,12 +808,30 @@ class _WorldMapPainter extends CustomPainter {
       );
     }
     final wood = Paint()..color = const Color(0xFF9B7E5E);
-    final img = images['furn_$key'];
+    // 2026-11-10：与房间视图同口径——按 rotation 取 8 向图，缺图回落旧单图，
+    // 8 向图按旧单图占位等比缩放（大地图与房间内观感一致）。
+    final rotation = ((f['rotation'] as num?) ?? 0).toInt();
+    final base = images['furn_$key'];
+    final dirImg = images[HomeLayoutMath.furnitureAssetKey(key, rotation)];
+    final img = dirImg ?? base;
     if (img != null) {
-      canvas.drawImage(
+      var drawW = img.width.toDouble();
+      var drawH = img.height.toDouble();
+      if (dirImg != null && base != null) {
+        final s = HomeLayoutMath.furnitureFitScale(
+          srcW: drawW,
+          srcH: drawH,
+          boxW: base.width.toDouble(),
+          boxH: base.height.toDouble(),
+        );
+        drawW *= s;
+        drawH *= s;
+      }
+      canvas.drawImageRect(
         img,
-        Offset(origin.dx + gx * 40, origin.dy + (gy + gh) * 40 - img.height.toDouble()),
-        Paint(),
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+        Rect.fromLTWH(origin.dx + gx * 40, origin.dy + (gy + gh) * 40 - drawH, drawW, drawH),
+        Paint()..filterQuality = FilterQuality.none,
       );
     } else {
       canvas.drawRect(rect, wood);

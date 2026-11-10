@@ -4,17 +4,14 @@ import sqlite3
 
 from sqlalchemy import create_engine
 
+from _dbclone import clone_engine
+
 
 def _make_db(tmp_path):
-    import app.models._all  # noqa: F401  # 填充 Base.metadata
-    from app.models.base import Base
-
+    """临时库：模板克隆出当前 ORM schema（见 tests/_dbclone.py）；原先是每例 create_all。"""
     db = tmp_path / "alloc.db"
-    engine = create_engine("sqlite:///" + db.as_posix())
-    try:
-        Base.metadata.create_all(engine)
-    finally:
-        engine.dispose()
+    engine = clone_engine(db, pragmas=False)
+    engine.sync_engine.dispose()
     return db
 
 

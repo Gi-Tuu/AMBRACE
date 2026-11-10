@@ -17,12 +17,12 @@ from datetime import timedelta
 
 import pytest
 from sqlalchemy import delete
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from _dbclone import clone_engine
 
 import app.models  # noqa: F401
 import app.agent.context as _ctx  # noqa: F401 —— 触发全部 section 注册（build_context 依赖）
-from app.models import Base, ChatMessage
+from app.models import ChatMessage
 from app.utils.timeutil import now_naive_utc
 
 
@@ -30,14 +30,9 @@ from app.utils.timeutil import now_naive_utc
 def c7_env(tmp_path, monkeypatch):
     db_path = (tmp_path / "c7_context.db").as_posix()
     assert tmp_path.as_posix() in db_path, "C7 接缝 DB 必须落在 pytest tmp_path 沙箱"
-    engine = create_async_engine("sqlite+aiosqlite:///" + db_path, poolclass=NullPool)
+    # 提速（2026-11-09）：模板克隆替代每例 create_all（见 tests/_dbclone.py）
+    engine = clone_engine(db_path, pragmas=False)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    async def _init():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
 
     from app.application import chat_service as cs
     from app.application.chat import streaming as st

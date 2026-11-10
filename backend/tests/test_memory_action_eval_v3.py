@@ -67,7 +67,10 @@ def test_每类题量必须够做分类统计():
     cats = collections.Counter(c["category"] for c in OFFICIAL)
     thin = {k: v for k, v in cats.items() if v < 6}
     assert not thin, "这些类不足 6 条：%s" % thin
-    assert set(cats) == set(ev.CATEGORIES), "类别集合与跑分器不一致：%s" % (set(cats) ^ set(ev.CATEGORIES))
+    # 2026-11-10：跑分器类别里还有 d5_supersede / d6_abstain（属独立 D5/D6 题库，
+    # 不进主正式集）⇒ 只要求「正式集用到的类别 ⊆ 跑分器已知类别」，不再要求全等。
+    assert set(cats) <= set(ev.CATEGORIES), (
+        "正式集出现跑分器不认识的类别：%s" % (set(cats) - set(ev.CATEGORIES)))
 
 
 def test_方案点名缺失的三类必须已补齐():

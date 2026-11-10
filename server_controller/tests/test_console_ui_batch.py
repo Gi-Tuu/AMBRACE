@@ -155,7 +155,8 @@ def test_排序只动当前页(tmp_path):
 
 @has_chrome
 def test_数字键能翻页(tmp_path):
-    """合并成 8 页后一位数就够；9 / 0 不再对应任何页，按了不动。"""
+    """8 页一位数就够；顺序按用户 11-08 重排：仪表盘/服务器控制/服务器身份/模型管理/
+    账号管理/开关与权限/运行日志/审计。9 不再对应任何页，按了不动。"""
     bundle = {n: {"ok": True, "data": {}} for n in
               ("dashboard", "server_page", "log_page", "models_page", "flags_page",
                "audit_page", "accounts_page", "registration_page", "identity_page",
@@ -176,7 +177,7 @@ def test_数字键能翻页(tmp_path):
                  await new Promise(r => setTimeout(r, 60));
                  out.after9 = title();
                """)
-    assert got.get("after3") == "运行日志", got
+    assert got.get("after3") == "服务器身份", got
     assert got.get("after8") == "审计", got
     assert got.get("after9") == "审计", "按 9 不该翻到不存在的页：%s" % got
     assert got.get("start") == "仪表盘", got

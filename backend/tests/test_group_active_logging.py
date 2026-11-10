@@ -17,8 +17,8 @@ import json
 import logging
 import os
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from _dbclone import clone_engine
 from sqlalchemy import select
 
 from app.models.character import ProactiveMessageLog
@@ -30,17 +30,9 @@ GROUP = 1
 
 def _factory(tmp_path):
     db_path = os.path.join(str(tmp_path), "ga.db").replace("\\", "/")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _create_all():
-        import app.models  # noqa: F401  确保全部 ORM 进入 metadata
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_create_all())
-    return factory
+    # 提速（2026-11-09）：模板克隆替代每例 create_all（见 tests/_dbclone.py）
+    engine = clone_engine(db_path, pragmas=False)
+    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 def _seed(factory):

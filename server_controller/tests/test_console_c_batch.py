@@ -291,10 +291,13 @@ def test_gate_channel_login_opens_the_local_page(monkeypatch):
 
 
 @has_chrome
-def test_gate_identity_page_has_channel_login_button(tmp_path):
+def test_gate_channel_login_entry_is_the_sidebar_satellite(tmp_path):
+    """页内那块渠道登录已按用户要求移除，入口只剩左下角那颗微信卫星。"""
     got = _run(tmp_path, "chl", "identity", """
-      const btn = document.querySelector('[data-act="channel-login"]');
-      out.hasBtn = !!btn;
+      // 入口只有一处：左下角的卫星
+      const btn = document.querySelector('.side [data-act="channel-login"]');
+      out.hasOrb = !!btn;
+      out.hasBtn = !!document.querySelector('#body [data-act="channel-login"]');
       out.text = btn ? btn.textContent : '';
       const calls = [];
       const orig = window.api;
@@ -308,9 +311,9 @@ def test_gate_identity_page_has_channel_login_button(tmp_path):
           "registration_page": {"ok": True, "data": shell.FIXTURE["registration_page"]},
           "open_channel_login": {"ok": True, "data": {"msg": "已在本机浏览器打开扫码页",
                                                       "url": "http://127.0.0.1:8000/channel-login"}}})
-    assert got.get("hasBtn"), "服务器身份页没有「渠道登录」入口：%s" % got
-    assert "渠道" in (got.get("text") or ""), "按钮文案不对：%s" % got.get("text")
-    assert got.get("calls") == ["open_channel_login"], "点了没打开扫码页：%s" % got
+    assert got.get("hasOrb"), "左下角没有微信卫星入口：%s" % got
+    assert not got.get("hasBtn"), "页内的渠道登录块应当已移除：%s" % got
+    assert got.get("calls") == ["open_channel_login"], "点卫星没打开扫码页：%s" % got
 
 
 # ───── C6 错误码分流 ─────

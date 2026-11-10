@@ -76,11 +76,38 @@ void main() {
   });
 
   group('HomeLayoutMath v3.3 家具朝向（纯逻辑）', () {
-    test('nextRotation 循环切换 0→1→2→3→0', () {
+    test('nextRotation 循环切换 0→…→7→0（8 向）', () {
       expect(HomeLayoutMath.nextRotation(0), 1);
-      expect(HomeLayoutMath.nextRotation(1), 2);
       expect(HomeLayoutMath.nextRotation(2), 3);
-      expect(HomeLayoutMath.nextRotation(3), 0);
+      expect(HomeLayoutMath.nextRotation(3), 4);
+      expect(HomeLayoutMath.nextRotation(4), 5);
+      expect(HomeLayoutMath.nextRotation(6), 7);
+      expect(HomeLayoutMath.nextRotation(7), 0);
+    });
+
+    test('furnitureAssetKey：S=0 前 + 斜向 4-7 + 脏数据钳制', () {
+      expect(HomeLayoutMath.furnitureAssetKey('bed', 0), 'furn_bed_0');
+      expect(HomeLayoutMath.furnitureAssetKey('bed', 7), 'furn_bed_7');
+      expect(HomeLayoutMath.furnitureAssetKey('bed', 9), 'furn_bed_7');
+      expect(HomeLayoutMath.furnitureAssetKey('bed', -2), 'furn_bed_0');
+    });
+
+    test('furnitureFitScale：8 向图缩进旧单图占位（床 113×160 → 80×96 取 0.6）', () {
+      final s = HomeLayoutMath.furnitureFitScale(
+          srcW: 113, srcH: 160, boxW: 80, boxH: 96);
+      expect(s, closeTo(0.6, 1e-9));
+      expect(80 * 0, 0);
+      expect(HomeLayoutMath.furnitureFitScale(
+          srcW: 80, srcH: 96, boxW: 80, boxH: 96), closeTo(1.0, 1e-9));
+      expect(HomeLayoutMath.furnitureFitScale(
+          srcW: 0, srcH: 160, boxW: 80, boxH: 96), 1.0);
+    });
+
+    test('furnitureAssetKeys：旧单图 + 25 家具 × 8 方向', () {
+      final keys = HomeLayoutMath.furnitureAssetKeys();
+      expect(keys.length, HomeLayoutMath.furnitureKeys.length * 9);
+      expect(keys.contains('furn_bed'), isTrue);
+      expect(keys.contains('furn_clock_7'), isTrue);
     });
 
     test('clampRotation 后端字段 0-7 钳制', () {

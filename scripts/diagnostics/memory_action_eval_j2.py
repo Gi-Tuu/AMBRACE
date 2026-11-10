@@ -75,11 +75,8 @@ async def run_j2_eval(cases, *, user_id=GENERATE_USER_ID,
         ev.borrow_llm_config(prod_path, os.path.join(tmp, "eval.db"))
         counter = ev.install_llm_call_counter()
         base_flags = dict(BASELINE_FLAGS, **(flags or {}))
-        # 生产实配钉进进程（2026-11-08）：评测进程不加载生产 runtime_flags，
-        # 写侧闸（签名/细粒度槽）读的是进程 AGENT_FLAGS——不钉＝签名跳过、槽抽取空转。
-        # 先按数据集要求收集要开的槽 flag，统一设置并在 finally 恢复。
-        # 槽 flag 不在 BASELINE_FLAGS（那是检索轴的四键）——按**槽名直接构造**（MUTABLE_SLOTS 键
-        # ＝ user_fact_ + 槽名，与 USER_FACT_SLOT_FLAGS 一一对应）。
+        # 生产实配钉进进程＋临时库 runtime_flags 表（2026-11-08）：评测进程不加载生产
+        # runtime_flags，写侧闸走 resolve_flag 解析链（AGENTS＋DB 双层）——双层都要有值。
         _needed = {"memory_source_proof_v1": True}
         for _c in todo:
             for _k in ((_c.get("expect") or {}).get("slots") or {}):
@@ -88,7 +85,15 @@ async def run_j2_eval(cases, *, user_id=GENERATE_USER_ID,
         _saved = {k: _AF.get(k) for k in _needed}
         for _k, _v in _needed.items():
             _AF[_k] = _v
-        print("[j2dbg] pinned flags:", sorted(_needed), flush=True)
+        # DB 层：往临时库 runtime_flags 插行（resolve_flag 读 DB 时也能命中）
+        from sqlalchemy import text as _text
+        from app.db.database import async_session_factory as _asf
+        async with _asf() as db:
+            for _k in _needed:
+                db.execute(_text(
+                    "INSERT OR IGNORE INTO runtime_flags(key, enabled) VALUES (:k, 1)"),
+                    {"k": _k})
+            await db.commit()
         for c in todo:
             expect = c.get("expect") or {}
             slots_req = expect.get("slots") or {}

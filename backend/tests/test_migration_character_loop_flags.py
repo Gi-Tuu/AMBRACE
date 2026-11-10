@@ -12,6 +12,8 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from _dbclone import clone_engine
+
 from app.db import database
 from app.models.character import AICharacter
 
@@ -24,16 +26,9 @@ pytestmark = pytest.mark.slow
 def mig_db(tmp_path):
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
+    # 提速（2026-11-09）：模板克隆替代每例 create_all（见 tests/_dbclone.py）
+    engine = clone_engine(db_path, pragmas=False)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     yield engine, factory
     asyncio.run(engine.dispose())
 

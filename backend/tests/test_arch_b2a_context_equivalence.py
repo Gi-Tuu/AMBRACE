@@ -72,11 +72,10 @@ import subprocess as _sp
 import app.agent.context.assembly as _asm
 import app.agent.context_builder as _cb
 import app.agent.context.message_policy as _mp
-from app.models.base import Base
+from _dbclone import clone_engine
 from app.models.character import AICharacter
 from app.models.user import User
-from sqlalchemy import create_engine as _ce
-from sqlalchemy.ext.asyncio import async_sessionmaker as _asmaker, create_async_engine as _cae
+from sqlalchemy.ext.asyncio import async_sessionmaker as _asmaker
 
 
 def _old_policy_namespace() -> dict:
@@ -153,9 +152,9 @@ def _run_entry(sv, *, user_id=1):
 @contextlib.contextmanager
 def _entry_db(tmp_path):
     db = (tmp_path / "ab.db").as_posix()
-    sync = _ce("sqlite:///" + db)
-    Base.metadata.create_all(sync)
-    aeng = _cae("sqlite+aiosqlite:///" + db)
+    # 提速（2026-11-09）：模板克隆替代每例 create_all（见 tests/_dbclone.py）；
+    # 改前是「同步引擎建表 + 异步引擎共用同一文件」，克隆后只需异步引擎。
+    aeng = clone_engine(db, pragmas=False)
     factory = _asmaker(aeng, expire_on_commit=False)
 
     async def seed():
@@ -174,7 +173,6 @@ def _entry_db(tmp_path):
     finally:
         _asm.async_session_factory = old
         _a.run(aeng.dispose())
-        sync.dispose()
 
 
 CASES = [

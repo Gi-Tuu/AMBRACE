@@ -15,8 +15,7 @@ import os
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent.context import assembly as assembly_mod
 from app.agent.context_builder import (
@@ -25,7 +24,7 @@ from app.agent.context_builder import (
     _enforce_user_message_last,
     _trim_limits,
 )
-from app.models.base import Base
+from _dbclone import clone_engine
 from app.models.character import AICharacter
 from app.models.user import User
 
@@ -44,9 +43,9 @@ def _dump(name: str, obj) -> None:
 @pytest.fixture()
 def asm_env(tmp_path):
     db_path = (tmp_path / "ctx.db").as_posix()
-    sync_eng = create_engine("sqlite:///" + db_path)
-    Base.metadata.create_all(sync_eng)
-    aeng = create_async_engine("sqlite+aiosqlite:///" + db_path)
+    # 提速（2026-11-09）：模板克隆替代每例 create_all（见 tests/_dbclone.py）。
+    # 改前是「同步引擎建表 + 异步引擎共用同一文件」，克隆后只需异步引擎（schema 是同一份）。
+    aeng = clone_engine(db_path, pragmas=False)
     factory = async_sessionmaker(aeng, expire_on_commit=False)
 
     async def _seed():
@@ -64,7 +63,6 @@ def asm_env(tmp_path):
     finally:
         assembly_mod.async_session_factory = old
         asyncio.run(aeng.dispose())
-        sync_eng.dispose()
 
 
 def _assemble(sv: dict, *, user_id=1):

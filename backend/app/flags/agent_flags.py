@@ -119,6 +119,12 @@ AGENT_FLAGS = {
     # memory_supersede 开=superseded/stale 状态激活，双通道（SQLite+Chroma）过滤，读取点按状态分流；
     # 关=所有读取/注入/统计与现状逐字节一致（回归保护）。禁止默认 True（误取代比不取代更伤）。
     "memory_supersede": False,
+    # ── D5 方案 A（2026-11-10）：无引用纠错的检索确认取代链 ──
+    # 用户消息命中纠错词但无引用出处时（schedule_feedback_processing 接回生产流）：
+    # 检索 top5 相关旧记忆 → 排除本轮新写值（新鲜窗）→ LLM 确认「被本轮原话推翻」→
+    # supersede_memory(old, new_id=None, reason="user_correction")。
+    # 默认关＝行为零变化（纠错链此前为零调用方死代码）；误取代比不取代更伤，故 LLM 确认不可跳过。
+    "memory_correction_supersede_v1": False,
     # ── 2026-09-17 批次一（任务2）：现状面 / 怀旧面拆口径（docs/feature-flags.md F 档）──
     # current_facts_active_only 开（默认）= 现状/事实注入面（current_facts_status_clause /
     #   _active_status_clause）恒「仅 active」——stale/superseded/expired 的旧现状不再与现行事实

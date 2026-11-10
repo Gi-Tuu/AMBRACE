@@ -42,6 +42,11 @@ ROOMS_LAYOUT = {
             {"key": "lamp", "name": "台灯", "gx": 10, "gy": 1, "gw": 1, "gh": 1, "action": None},
             {"key": "shelf", "name": "置物架", "gx": 12, "gy": 1, "gw": 1, "gh": 1, "action": None},
             {"key": "clock", "name": "挂钟", "gx": 13, "gy": 1, "gw": 1, "gh": 1, "action": None},
+            # 2026-11-10 第二批：WorkBuddy 8 向素材新增家具
+            {"key": "armchair", "name": "单人沙发", "gx": 4, "gy": 1, "gw": 1, "gh": 1, "action": None},
+            {"key": "side", "name": "边几", "gx": 9, "gy": 3, "gw": 1, "gh": 1, "action": None},
+            {"key": "mirror", "name": "穿衣镜", "gx": 3, "gy": 1, "gw": 1, "gh": 1, "action": None},
+            {"key": "tablelamp", "name": "桌面台灯", "gx": 11, "gy": 3, "gw": 1, "gh": 1, "action": None},
         ],
         "doors": [
             {"target": "bedroom", "x": 15, "y": 7},
@@ -62,6 +67,9 @@ ROOMS_LAYOUT = {
             {"key": "lamp", "name": "台灯", "gx": 11, "gy": 1, "gw": 1, "gh": 1, "action": None},
             {"key": "clock", "name": "挂钟", "gx": 12, "gy": 1, "gw": 1, "gh": 1, "action": None},
             {"key": "plant", "name": "盆栽", "gx": 13, "gy": 9, "gw": 1, "gh": 1, "action": None},
+            {"key": "vanity", "name": "梳妆台", "gx": 6, "gy": 1, "gw": 1, "gh": 1, "action": None},
+            {"key": "mirror", "name": "穿衣镜", "gx": 8, "gy": 1, "gw": 1, "gh": 1, "action": None},
+            {"key": "cabinet", "name": "柜子", "gx": 14, "gy": 9, "gw": 1, "gh": 1, "action": None},
         ],
         "doors": [
             {"target": "living", "x": 0, "y": 7},
@@ -80,6 +88,8 @@ ROOMS_LAYOUT = {
             {"key": "shelf", "name": "置物架", "gx": 15, "gy": 1, "gw": 1, "gh": 1, "action": None},
             {"key": "rug", "name": "地毯", "gx": 5, "gy": 8, "gw": 2, "gh": 1, "action": None},
             {"key": "bin", "name": "垃圾桶", "gx": 14, "gy": 10, "gw": 1, "gh": 1, "action": None},
+            {"key": "micro", "name": "微波炉", "gx": 12, "gy": 3, "gw": 1, "gh": 1, "action": None},
+            {"key": "cabinet", "name": "橱柜", "gx": 1, "gy": 4, "gw": 1, "gh": 1, "action": None},
         ],
         "doors": [
             {"target": "living", "x": 7, "y": 11},
@@ -96,6 +106,10 @@ ROOMS_LAYOUT = {
             {"key": "shelf", "name": "置物架", "gx": 14, "gy": 1, "gw": 1, "gh": 1, "action": None},
             {"key": "rug", "name": "地毯", "gx": 6, "gy": 9, "gw": 2, "gh": 1, "action": None},
             {"key": "bin", "name": "垃圾桶", "gx": 13, "gy": 10, "gw": 1, "gh": 1, "action": None},
+            {"key": "toilet", "name": "马桶", "gx": 9, "gy": 8, "gw": 1, "gh": 1, "action": None},
+            {"key": "vanity", "name": "洗漱台", "gx": 9, "gy": 1, "gw": 1, "gh": 1, "action": None},
+            {"key": "washer", "name": "洗衣机", "gx": 1, "gy": 9, "gw": 1, "gh": 1, "action": None},
+            {"key": "mirror", "name": "镜子", "gx": 5, "gy": 1, "gw": 1, "gh": 1, "action": None},
         ],
         "doors": [
             {"target": "living", "x": 11, "y": 0},

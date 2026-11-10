@@ -165,13 +165,29 @@ class RoomPainter extends CustomPainter {
       );
     }
     final wood = Paint()..color = const Color(0xFF9B7E5E);
-    final img = images['furn_${f.key}'];
+    // 2026-11-10：优先按 rotation 取 8 向图；该方向/该家具没有图则回落旧单图
+    final base = images['furn_${f.key}'];
+    final dirImg = images[HomeLayoutMath.furnitureAssetKey(f.key, f.rotation)];
+    final img = dirImg ?? base;
     if (img != null) {
-      // 素材脚底对齐到格子底部（高度包含向上突出的部分）
-      canvas.drawImage(
+      // 素材脚底对齐到格子底部（高度包含向上突出的部分）；8 向图按旧单图占位等比缩放
+      var drawW = img.width.toDouble();
+      var drawH = img.height.toDouble();
+      if (dirImg != null && base != null) {
+        final s = HomeLayoutMath.furnitureFitScale(
+          srcW: drawW,
+          srcH: drawH,
+          boxW: base.width.toDouble(),
+          boxH: base.height.toDouble(),
+        );
+        drawW *= s;
+        drawH *= s;
+      }
+      canvas.drawImageRect(
         img,
-        Offset(f.gx * 40, (f.gy + f.gh) * 40 - img.height.toDouble()),
-        Paint(),
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+        Rect.fromLTWH(f.gx * 40, (f.gy + f.gh) * 40 - drawH, drawW, drawH),
+        Paint()..filterQuality = FilterQuality.none,
       );
     } else {
       _paintFurnitureFallback(canvas, f, wood);

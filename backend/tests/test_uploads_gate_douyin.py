@@ -19,8 +19,8 @@ import sys
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from _dbclone import clone_engine
 from starlette.testclient import TestClient
 
 from app.application import tenant_service as tenant_svc
@@ -62,15 +62,15 @@ def _family_scope():
 def gate_db(monkeypatch, tmp_path):
     """两家庭 + 各一条 douyin_pending 行的私有临时 SQLite 库，并接到闸门用的会话工厂上。"""
     dm = _douyin_models()
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dygate.db", poolclass=NullPool)
+    # 提速（2026-11-09）：主表走模板克隆（见 tests/_dbclone.py）；插件表 `DouyinPending` 不在
+    # Base.metadata 里，仍在克隆出的库上单独补建。
+    engine = clone_engine(f"{tmp_path}/dygate.db", pragmas=False)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async def _init():
         import app.models  # noqa: F401
-        from app.models.base import Base
 
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
             # 插件表在独立 plugin_metadata 里，主 create_all 不建，本用例自行补建单表
             await conn.run_sync(lambda c: dm.DouyinPending.__table__.create(c, checkfirst=True))
         async with factory() as db:

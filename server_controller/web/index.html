@@ -19,9 +19,40 @@
       <div class="ct"><span id="dDate">—</span><span id="heroTime">—</span></div></div>
     <div class="nav" id="nav"></div>
     <div class="foot" aria-hidden="true"></div>
+    <!-- 左下角的星空：只在墨纸档显示，星星从底部往上渐渐隐掉，被球挡住（球 z-index 更高） -->
+    <div class="side-sky" aria-hidden="true">
+      <i style="left:8%;top:76%;--tw:4.2s;--td:-.4s"></i>
+      <i style="left:17%;top:58%;--tw:3.4s;--td:-1.7s;width:1px;height:1px"></i>
+      <i style="left:24%;top:88%;--tw:5.1s;--td:-2.6s"></i>
+      <i style="left:33%;top:66%;--tw:3.9s;--td:-.9s;width:1px;height:1px"></i>
+      <i style="left:41%;top:80%;--tw:4.7s;--td:-3.2s"></i>
+      <i style="left:49%;top:52%;--tw:6s;--td:-1.1s;width:1px;height:1px"></i>
+      <i style="left:56%;top:72%;--tw:4.4s;--td:-2.2s"></i>
+      <i style="left:64%;top:90%;--tw:3.6s;--td:-.6s;width:1px;height:1px"></i>
+      <i style="left:71%;top:60%;--tw:5.4s;--td:-3.6s"></i>
+      <i style="left:79%;top:82%;--tw:4.9s;--td:-1.4s;width:1px;height:1px"></i>
+      <i style="left:86%;top:68%;--tw:3.2s;--td:-2.9s"></i>
+      <i style="left:92%;top:92%;--tw:5.8s;--td:-.2s;width:1px;height:1px"></i>
+      <i style="left:12%;top:44%;--tw:6.4s;--td:-4.1s;width:1px;height:1px"></i>
+      <i style="left:68%;top:44%;--tw:5.2s;--td:-3.9s;width:1px;height:1px"></i>
+    </div>
+    <!-- 纸色档的远树：极淡的树冠剪影，只在浅色档显示（墨纸档是星空） -->
+    <div class="side-grove" aria-hidden="true"><i class="t1"></i><i class="t2"></i><i class="t3"></i></div>
+    <!-- 渠道登录：蹲在下面那颗球上方的一颗小卫星（微信），轻轻上下浮 -->
+    <button class="wx-orb" data-act="channel-login" aria-label="渠道登录（微信）"
+      title="渠道登录：扫码把机器人登进网关（要管理员登录态）">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M9.2 3.4C5 3.4 1.6 6.2 1.6 9.7c0 2 1.2 3.8 3.1 5l-.7 2.2 2.5-1.3c.9.3 1.8.4 2.7.4h.5a5.6 5.6 0 0 1-.2-1.5c0-3.4 3.3-6.1 7.4-6.1h.6c-.7-2.9-3.9-5-8.3-5Z"/>
+        <path d="M22.4 14.5c0-2.9-2.8-5.2-6.2-5.2s-6.2 2.3-6.2 5.2 2.8 5.2 6.2 5.2c.7 0 1.4-.1 2.1-.3l2.1 1.1-.6-1.9c1.6-1 2.6-2.5 2.6-4.1Z" opacity=".82"/>
+        <circle cx="6.6" cy="8.3" r=".95" fill="var(--paper2)"/>
+        <circle cx="11.6" cy="8.3" r=".95" fill="var(--paper2)"/>
+        <circle cx="14.1" cy="13.6" r=".85" fill="var(--paper2)"/>
+        <circle cx="18.1" cy="13.6" r=".85" fill="var(--paper2)"/>
+      </svg>
+    </button>
     <!-- 设置：缩进左下角只露上面一弧、边缘发光背黑的星球；指上去微微放大 -->
     <button class="set-orb" data-act="settings" aria-label="设置"
-      title="设置：守护检测间隔 / 界面刷新间隔"><span class="pl-shade"></span></button>
+      title="设置：守护检测间隔 / 界面刷新间隔"><span class="pl-shade"></span><b style="--w:156px;--a:8deg;--o:0.43"></b><b style="--w:188px;--a:63deg;--o:0.34"></b><b style="--w:208px;--a:121deg;--o:0.44"></b><b style="--w:172px;--a:187deg;--o:0.47"></b><b style="--w:214px;--a:244deg;--o:0.32"></b><b style="--w:140px;--a:301deg;--o:0.37"></b><b style="--w:196px;--a:337deg;--o:0.31"></b>><b style="--w:96px;--a:12deg;--o:0.42"></b><b style="--w:128px;--a:58deg;--o:0.59"></b><b style="--w:150px;--a:109deg;--o:0.49"></b><b style="--w:166px;--a:171deg;--o:0.56"></b><b style="--w:178px;--a:226deg;--o:0.49"></b><b style="--w:190px;--a:287deg;--o:0.60"></b><b style="--w:202px;--a:331deg;--o:0.46"></b><b style="--w:212px;--a:44deg;--o:0.50"></b><b style="--w:116px;--a:97deg;--o:0.42"></b><b style="--w:142px;--a:148deg;--o:0.54"></b><b style="--w:174px;--a:205deg;--o:0.43"></b><b style="--w:186px;--a:262deg;--o:0.43"></b><b style="--w:206px;--a:313deg;--o:0.54"></b><b style="--w:66px;--a:7deg;--o:0.65"></b><b style="--w:74px;--a:41deg;--o:0.60"></b><b style="--w:82px;--a:78deg;--o:0.53"></b><b style="--w:90px;--a:112deg;--o:0.62"></b><b style="--w:96px;--a:149deg;--o:0.56"></b><b style="--w:102px;--a:187deg;--o:0.75"></b><b style="--w:108px;--a:221deg;--o:0.48"></b><b style="--w:114px;--a:258deg;--o:0.54"></b><b style="--w:120px;--a:296deg;--o:0.59"></b><b style="--w:126px;--a:333deg;--o:0.46"></b><b style="--w:132px;--a:24deg;--o:0.65"></b><b style="--w:70px;--a:60deg;--o:0.67"></b><b style="--w:86px;--a:138deg;--o:0.63"></b><b style="--w:110px;--a:263deg;--o:0.73"></b><i style="--a:441.8deg;--r:99.7px;--h:10.3px;--w:2.5px"></i><i style="--a:369.1deg;--r:100.3px;--h:9.3px;--w:2.5px"></i><i style="--a:419.5deg;--r:101.2px;--h:14.2px;--w:3.0px"></i><i style="--a:388.3deg;--r:101.7px;--h:11.1px;--w:2.4px"></i><i style="--a:338.9deg;--r:101.1px;--h:13.7px;--w:2.0px"></i><i style="--a:371.0deg;--r:98.2px;--h:6.3px;--w:1.9px"></i><i style="--a:436.8deg;--r:98.1px;--h:10.4px;--w:2.9px"></i><i style="--a:391.7deg;--r:100.0px;--h:9.3px;--w:2.8px"></i><i style="--a:353.0deg;--r:101.3px;--h:14.6px;--w:2.0px"></i><i style="--a:340.9deg;--r:100.1px;--h:13.8px;--w:2.4px"></i><i style="--a:408.8deg;--r:99.1px;--h:7.7px;--w:2.5px"></i><i style="--a:301.3deg;--r:97.1px;--h:11.8px;--w:2.6px"></i><i style="--a:293.4deg;--r:101.7px;--h:7.4px;--w:2.2px"></i><i style="--a:276.7deg;--r:101.4px;--h:6.7px;--w:1.8px"></i><i style="--a:431.1deg;--r:102.0px;--h:13.7px;--w:2.8px"></i><i style="--a:364.7deg;--r:99.2px;--h:8.2px;--w:3.0px"></i><i style="--a:374.0deg;--r:100.3px;--h:13.0px;--w:2.0px"></i><i style="--a:414.7deg;--r:102.7px;--h:12.1px;--w:3.0px"></i><i style="--a:307.9deg;--r:98.6px;--h:14.8px;--w:2.8px"></i></button>
   </div>
   <div class="main">
     <div class="hero">
@@ -80,6 +111,11 @@ if (window.__SKY__ !== undefined) {
   const sky = document.getElementById("sky");
   sky.style.animation = "none";
   sky.style.opacity = window.__SKY__;
+  // 出图模式把流动层也冻住：否则两次采样云的相位不同，像素对比永远不相等
+  const freeze = document.createElement("style");
+  freeze.textContent = ".hero .neb .cloud, .hero .neb .mote, .hero .neb .shoot" +
+                       "{animation:none !important;}";
+  document.head.appendChild(freeze);
 }
 /* 导航顺序按用户指定：仪表盘 → 服务器控制 → 服务器身份 → 模型管理 →
    账号管理 → 开关与权限 → 运行日志 → 审计。键是页键，序号只是显示。 */
@@ -214,7 +250,7 @@ document.addEventListener("keydown", function (e) {
 const TITLES = {dashboard: ["仪表盘", "读数、Token 活动与近况"],
                 server: ["服务器控制", "启停服务、监控目标与默认额度"],
                 log: ["运行日志", "按来源与级别筛选，可切原始日志"],
-                models: ["默认模型", "各模态的上游与密钥状态"],
+                models: ["模型管理", "各模态的上游与密钥状态"],
                 flags: ["开关与权限", "分组开关，服务器锁定的行点不动"],
                 audit: ["审计", "谁在什么时候改了什么"],
                 accounts: ["账号管理", "启停、授权与额度"],
@@ -442,9 +478,14 @@ let HEAT_ROWS = [];                                // 当日任务构成，供�
 // 从暗砖红（低）一路走到亮朱红（峰），不设离散档位。零值仍画空心。
 function heatColor(v) {
   const t = Math.max(0, Math.min(1, v));
-  const h = 12 + 6 * t;                    // 12° 砖红 → 18° 朱橙
-  const s = Math.round(34 + 54 * t);       // 饱和度渐增
-  const l = Math.round(24 + 34 * t);       // 明度渐增
+  // 两档的"多少"在视觉上是反的：
+  // 墨纸档底色暗，所以少＝暗、多＝亮；纸色档底色浅，少＝贴近纸色、多＝深砖。
+  // （用户原话："热力图的颜色反着来，深色为多，浅色为浅"）
+  const light = document.documentElement.dataset.theme === "light";
+  // 墨纸档砖红（12°→18°）；纸色档偏金（34°→29°），和昼景的金色系列同调
+  const h = light ? 34 - 5 * t : 12 + 6 * t;
+  const s = Math.round(light ? 56 - 12 * t : 34 + 54 * t);
+  const l = Math.round(light ? 93 - 58 * t : 24 + 34 * t);
   return 'hsl(' + h.toFixed(1) + ',' + s + '%,' + l + '%)';
 }
 
@@ -506,10 +547,32 @@ function card(t, n, cls, cap) {
          '">' + n + '</div><div class="c">' + cap + '</div></div>';
 }
 
-/* 「刷新」一律用图标：平面非闭合圆环（带箭头）。点下去由 markBusy() 换成
-   带星环的立体星球转一圈，落回平面——两段过渡在 CSS 里，这里只负责切类名。 */
+/* 「保存」一律是二维勾：点下去星尘从四周汇聚成行星 → 行星成形即超新星 →
+   一颗发光的勾弹起 → 落回二维勾。时序全在 CSS（.saving 里各段的 animation-delay），
+   JS 只负责加类、1.6s 后撤掉。 */
+const SV_TICK = '<i class="sv-tick"></i>';
+const SV_DUST = [0, 60, 120, 180, 240, 300].map(a => '<i style="--a:' + a + '"></i>').join("");
+const SAVE_ICON = '<span class="sv-plane">' + SV_TICK + '</span>' +
+  '<span class="sv-dust">' + SV_DUST + '</span>' +
+  '<span class="sv-orb"><i class="sv-ring sv-back"></i><i class="sv-ball"></i>' +
+  '<i class="sv-ring sv-front"></i></span>' +
+  '<span class="sv-flash"></span>' +
+  '<span class="sv-tick3d">' + SV_TICK + '</span>';
+const saveBtn = (act, cls, extra, label) =>
+  '<button class="btn savebtn' + (cls ? ' ' + cls : '') + '" data-act="' + act +
+  '" aria-label="' + (label || "保存") + '" title="' + (label || "保存") + '"' +
+  (extra || '') + '>' + SAVE_ICON + '</button>';
+function markSaving(btn) {
+  if (!btn || !btn.classList.contains("savebtn")) return 0;
+  btn.classList.add("saving");
+  clearTimeout(btn.__svT);
+  btn.__svT = setTimeout(function () { btn.classList.remove("saving"); }, 1600);
+  return 1;
+}
 const RB_ICON = '<span class="rb-plane"><span class="rb-arc"></span></span>' +
-                '<span class="rb-orb"></span>';
+                '<span class="rb-orb">' +
+                '<i class="rb-ring rb-back"></i><i class="rb-ball"></i>' +
+                '<i class="rb-ring rb-front"></i></span>';
 const refreshBtn = act => '<button class="btn rbtn" data-act="' + act +
   '" title="刷新" aria-label="刷新">' + RB_ICON + '</button>';
 function markBusy(btn) {
@@ -682,7 +745,7 @@ function renderServer(d) {
     '<div class="sec"><h2>控制台监控目标</h2><em>写进 server_config.json 的两键</em></div>' +
     '<div class="field"><label>主机</label><input id="tgHost" value="' + esc(tg.host) + '">' +
     '<label>端口</label><input id="tgPort" class="num" value="' + esc(tg.port) + '">' +
-    '<button class="btn" data-act="save-target">保存切换</button>' +
+    saveBtn("save-target", "", "", "保存切换") +
     '<button class="btn" data-act="reset-target">恢复本机</button></div>' +
     '<div class="mode">' + esc(tg.mode) + '</div>' +
     '<div class="sec"><h2>服务器地址</h2><em>手机端「设置 → 服务器地址」填写</em>' +
@@ -700,7 +763,7 @@ function renderServer(d) {
       '<div class="field"><label>默认额度</label>' +
       '<input id="slVal" class="num" value="' + esc(sl.total_limit === undefined ? "" : sl.total_limit) +
       '" title="0 = 未设置；账号没有自己的覆盖时回落到这里">' +
-      '<button class="btn primary" data-act="server-limit-save">保存</button>' +
+      saveBtn("server-limit-save", "primary") +
       '<span class="hint">' + esc(sl.hint) + '</span>' +
       '<span class="state" id="slMsg"></span></div></div>';
   }
@@ -832,7 +895,7 @@ function renderModels(d) {
       '</div>' +
       '<div class="foot"><button type="button" class="sw' + (r.enabled ? ' on' : '') +
         '" role="switch" aria-checked="' + (r.enabled ? "true" : "false") + '" data-act="mod-enabled"' +
-        '><i></i>启用</button><button class="btn" data-act="mod-save">保存</button>' +
+        '><i></i>启用</button>' + saveBtn("mod-save") +
     '</div>' +
     '</div>').join("") + '</div>';
 }
@@ -847,12 +910,21 @@ function renderFlags(d) {
   if (!d.logged_in) return loginGate(d);
   const gs = d.groups || [];
   const all = gs.reduce((n, g) => n + (g.rows || []).length, 0);
-  const tile = (g, key, label, n, ch) =>
+  const enOf = f => {
+    const dirty = Object.prototype.hasOwnProperty.call(flagDirty, f.key);
+    return dirty ? !!flagDirty[f.key] : !!f.enabled;
+  };
+  // 图标卡右上角一律写「开着几个 / 一共几个」——只给总数看不出"开了多少"，
+  // 用户要的就是这个斜杠口径（"全部"那张也给，数的是全体）。
+  const tile = (g, key, label, n, ch, on) =>
     '<button type="button" class="gtile' + (flagGroup === key ? ' on' : '') +
-    '" data-act="flag-group" data-g="' + esc(key) + '" title="' + esc(label) + '（' + n + ' 项）">' +
-    '<b>' + esc(ch) + '</b><i>' + n + '</i><span>' + esc(label) + '</span></button>';
-  let out = '<div class="gtiles stagger">' + tile(null, '', '全部', all, '全') +
-    gs.map(g => tile(g, g.group, g.label, g.count, (g.label || '?').slice(0, 1))).join('') +
+    '" data-act="flag-group" data-g="' + esc(key) + '" title="' + esc(label) +
+    '（' + on + ' / ' + n + ' 项开着）">' +
+    '<b>' + esc(ch) + '</b><i>' + on + '<u>/</u>' + n + '</i><span>' + esc(label) + '</span></button>';
+  const onAll = gs.reduce((n, g) => n + (g.rows || []).filter(enOf).length, 0);
+  let out = '<div class="gtiles stagger">' + tile(null, '', '全部', all, '全', onAll) +
+    gs.map(g => tile(g, g.group, g.label, g.count, (g.label || '?').slice(0, 1),
+                     (g.rows || []).filter(enOf).length)).join('') +
     '</div>';
   out += flagBar();
   out += gs.filter(g => !flagGroup || g.group === flagGroup).map(g => {
@@ -886,7 +958,7 @@ function flagBar() {
   const n = flagDirtyCount();
   return '<div class="dirtybar' + (n ? ' on' : '') + '" id="flagDirtyBar">' +
     '<span class="txt">' + (n ? '有 ' + n + ' 项改动未保存' : '改动会先记下，点「保存」才写后端') + '</span>' +
-    '<button class="btn primary" data-act="flag-save"' + (n ? '' : ' disabled') + '>保存</button>' +
+    saveBtn("flag-save", "primary", n ? "" : " disabled") +
     '<button class="btn" data-act="flag-discard"' + (n ? '' : ' disabled') + '>放弃改动</button>' +
     '</div>';
 }
@@ -1120,7 +1192,7 @@ function regBlock() {
       '<button data-act="reg-pick" data-k="' + esc(o.key) + '" class="' +
       (o.key === pick ? "on" : "") + '">' + esc(o.label) + '</button>').join("") + '</div>' +
     '<div class="descr">' + esc(d.desc) + '</div>' +
-    '<div class="btnrow"><button class="btn primary" data-act="reg-save">保存</button>' +
+    '<div class="btnrow">' + saveBtn("reg-save", "primary") +
     '<button class="btn" data-act="reg-reload">放弃修改并重读</button>' +
     '<span class="state" id="regMsg">' + esc(d.hint) + '</span></div>';
 }
@@ -1130,36 +1202,38 @@ function renderIdentity(d) {
   const codeTxt = idTick || d.code.source === "local" ? (idCode || d.code.text) : d.code.text;
   const ttl = d.code.tick ? "剩余 " + idLeft + " 秒后失效"
           : (d.code.source === "expired" ? "已失效，请重新生成" : d.code_line);
-  // 7 → 3：按「看 / 做 / 危险」分层。原有文案一字不删（旧闸门钉着），只换容器。
+  // 可读性重排：小标题只留人话，实现细节（identity_enforce_mode 之类）挪进 title；
+  // 每块开头一句"这块是干什么的"。原有文案一句没删，下面照样全在。
+  const kv = (k, v, cls, tip) => '<div class="kv"><span class="k">' + esc(k) + '</span>' +
+    '<span class="v' + (cls ? ' ' + cls : '') + '"' + (tip ? ' title="' + esc(tip) + '"' : '') +
+    '>' + esc(v) + '</span></div>';
   const A = '<div class="mod"><div class="mh"><b>这台服务器</b>' +
-    '<span class="cap">' + esc(d.pair_stats) + '</span></div>' +
-    '<div class="sec"><h2>校验档位（后端 identity_enforce_mode，默认 off）</h2>' +
+    '<span class="cap">只读 · ' + esc(d.pair_stats) + '</span></div>' +
+    '<p class="lead">客户端连上来要先过这一档校验；下面的档案是它对外报的名字与指纹。</p>' +
+    '<div class="sec"><h2 title="后端 identity_enforce_mode，默认 off">校验档位</h2>' +
       '<em>' + esc(d.mode_text) + '</em></div>' +
     '<div class="descr">' + esc(d.mode_desc) + (d.mode_note ? '　' + esc(d.mode_note) : '') + '</div>' +
     '<div class="sec"><h2>服务器档案</h2></div>' +
-    '<div class="kv"><span class="k">服务器名</span><span class="v">' + esc(d.server_name) + '</span></div>' +
-    '<div class="kv"><span class="k">当前指纹</span><span class="v">' + esc(d.fp_display) + '</span></div>' +
-    '<div class="kv"><span class="k">密钥签发于</span><span class="v num">' + esc(d.key_created_at) + '</span></div>' +
-    '<div class="kv"><span class="k">待用配对码</span><span class="v">' + esc(d.pending) + '</span></div>' +
-    '<div class="sec"><h2>部署面现状（只提示，不改默认值）</h2></div>' +
+    kv("服务器名", d.server_name) +
+    kv("当前指纹", d.fp_display, "", "客户端认的就是这一串") +
+    kv("密钥签发于", d.key_created_at, "num") +
+    kv("待用配对码", d.pending) +
+    '<div class="sec"><h2>部署面</h2><em>只提示，不改默认值</em></div>' +
     '<div class="deploy">' + d.deploy.map(x =>
-      '<div class="kv"><span class="k">' + esc(x.k) + '</span><span class="v" title="' +
-      esc(x.tip) + '">' + esc(x.v) + '</span></div>').join("") + '</div></div>';
+      kv(x.k, x.v, "", x.tip)).join("") + '</div></div>';
 
   const B = '<div class="mod"><div class="mh"><b>接入与配对</b><span class="cap">三个入口</span></div>' +
-    '<div class="sec"><h2>一次性配对码（12 位，去易混字符；请在客户端界面上亲手输入）</h2>' +
-      '<em>' + esc(ttl) + '</em></div>' +
-    '<div class="kv"><span class="k">配对码</span><span class="v big">' + esc(codeTxt) + '</span></div>' +
+    '<p class="lead">手机端连上来用这三条：一次性配对码、注册策略、渠道扫码。</p>' +
+    '<div class="sec"><h2>一次性配对码</h2><em>' + esc(ttl) + '</em></div>' +
+    '<div class="descr" title="12 位，去易混字符">12 位、去掉了容易看错的字符；请在客户端界面上亲手输入。</div>' +
+    kv("配对码", codeTxt, "big") +
     '<div class="btnrow"><button class="btn" data-act="id-copy">复制</button>' +
       '<button class="btn" data-act="id-code">重新生成</button>' +
       '<span class="state" id="idMsg"></span></div>' +
-    regBlock() +
-    '<div class="sec"><h2>渠道登录（微信 ClawBot）</h2><em>仅本机可开</em></div>' +
-    '<div class="descr">在服务器本机浏览器扫码登进网关；确认后到 App「查看可添加的机器人」选角色绑定，新号需重启网关一次。</div>' +
-    '<div class="btnrow"><button class="btn primary" data-act="channel-login">打开渠道登录页</button>' +
-      '<span class="state" id="chlMsg"></span></div></div>';
+    regBlock() + '</div>';
 
   const C = '<div class="mod"><div class="mh"><b>轮换身份密钥</b><span class="cap">危险操作</span></div>' +
+    '<p class="lead">换掉之后所有已配对客户端都要重新配对，别在别人正用的时候点。</p>' +
     '<div class="descr">' + esc(d.rotate_text) + '</div>' +
     '<div class="btnrow"><button class="btn danger" data-act="id-rotate">轮换身份密钥</button></div></div>';
   return A + B + C;
@@ -1295,12 +1369,49 @@ function syncThemeBtn() {
 async function toggleTheme() {
   const b = document.getElementById("themePlanet");
   const next = b.dataset.next;
-  document.documentElement.dataset.theme = next;    // 屏幕立刻就是答案，不等网络
-  syncThemeBtn();
-  const r = await api("set_theme", next);
+  const apply = () => {
+    document.documentElement.dataset.theme = next;    // 屏幕立刻就是答案，不等网络
+    syncThemeBtn();
+    // 热力图/圆环的颜色是画在 SVG 属性里的，CSS 换了它们不会自己变——重画一次
+    try { paint(); } catch (e) { /* 还没拿到数据就不画 */ }
+  };
+  // 换档从右上角那颗球的球心扩散出去（不是整屏一起跳）。
+  // 注意：View Transitions 的回调不一定跑得起来（无合成器/虚拟时间），
+  // 所以给一个"必须生效"的兜底——150ms 内没落地就直接换，绝不让主题卡住。
+  const box = b.getBoundingClientRect();
+  const cx = box.left + box.width / 2, cy = box.top + box.height / 2;
+  const far = Math.hypot(Math.max(cx, window.innerWidth - cx),
+                         Math.max(cy, window.innerHeight - cy));
+  let done = false;
+  const applyOnce = () => { if (done) return; done = true; apply(); };
+  let vt = null;
+  try { vt = document.startViewTransition ? document.startViewTransition(applyOnce) : null; }
+  catch (e) { vt = null; }
+  if (!vt) applyOnce();
+  setTimeout(applyOnce, 150);
+  // 动画和"记住这一档"是两条独立的路：别让请求排在 620ms 的过渡后面。
+  // vt.ready 在某些环境里可能永远不 resolve（无合成器），所以不 await，加个超时兜底。
+  const settled = api("set_theme", next);
+  if (vt) {
+    Promise.race([vt.ready, new Promise(res => setTimeout(res, 300))]).then(function () {
+      try {
+        document.documentElement.animate(
+          {clipPath: ['circle(0px at ' + cx + 'px ' + cy + 'px)',
+                      'circle(' + Math.ceil(far) + 'px at ' + cx + 'px ' + cy + 'px)']},
+          {duration: 620, easing: 'cubic-bezier(.2, .7, .3, 1)',
+           pseudoElement: '::view-transition-new(root)'});
+      } catch (e) { /* 过渡失败不影响主题切换本身 */ }
+    });
+  }
+  const r = await settled;
   if (!r.ok) {
-    b.classList.add("bad");                          // 没记住：虚线框＋悬停说明，不烧强调色
-    b.title = "这一档已经显示出来了，但没记住：" + (r.error || "壳层没接上");
+    // 「没记住」的标记要等这一档真的落地之后再挂：syncThemeBtn() 会先把 bad 清掉，
+    // 若在过渡回调之前就挂上，会被一次晚到的 apply 抹掉。
+    const paintBad = () => {
+      b.classList.add("bad");                        // 没记住：虚线框＋悬停说明，不烧强调色
+      b.title = "这一档已经显示出来了，但没记住：" + (r.error || "壳层没接上");
+    };
+    if (done) paintBad(); else setTimeout(paintBad, 180);
   }
 }
 
@@ -1629,7 +1740,7 @@ document.getElementById("body").addEventListener("click", async function (e) {
     return;
   }
   const b = e.target.closest("[data-act]");
-  if (b) { markBusy(b); await act(b.dataset.act, b); }
+  if (b) { markBusy(b); markSaving(b); await act(b.dataset.act, b); }
 });
 
 // 键盘同样能展开：Tab 到行上按回车/空格
@@ -1780,7 +1891,7 @@ async function openSettings() {
     rr[0] + '–' + rr[1] + ' 秒；运行日志仍按 3 秒跟随"></div>' +
     '<div class="descr">修改后立即生效，只写 ' + esc(d.path || "server_config.json") +
     ' 里的这两个键，其余配置一个字都不动。</div>' +
-    '<div class="btnrow"><button class="btn primary" data-act="set-save">保存</button>' +
+    '<div class="btnrow">' + saveBtn("set-save", "primary") +
     '<button class="btn" data-act="ovl-cancel">取消</button>' +
     '<span class="state" id="setMsg">' + esc(d.msg || "") + '</span></div>');
 }

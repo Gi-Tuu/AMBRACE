@@ -19,9 +19,9 @@ from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from _dbclone import clone_engine
 from app.flags.agent_flags import AGENT_FLAGS
 from app.scheduling.scheduler import SendResult
 
@@ -34,19 +34,9 @@ BASE = datetime(2026, 10, 10, 4, 0, 0)          # naive UTC＝北京 12:00（避
 # ── 夹具 ──────────────────────────────────────────────────────────────────────
 
 def _factory(tmp_path, name="a40.db"):
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{os.path.join(str(tmp_path), name).replace(chr(92), '/')}",
-        poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _create_all():
-        import app.models  # noqa: F401  确保全部 ORM 进入 metadata
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_create_all())
-    return factory
+    # 提速（2026-11-09）：模板克隆替代每例 create_all（见 tests/_dbclone.py）
+    engine = clone_engine(os.path.join(str(tmp_path), name), pragmas=False)
+    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 class _Cap:

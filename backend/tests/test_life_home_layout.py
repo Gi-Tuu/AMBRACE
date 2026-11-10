@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
 
+from _dbclone import clone_engine
 from app.api.life_home import ROOMS_LAYOUT, router as life_home_router
 from app.auth.deps import get_current_user_id
 from app.models.character import AICharacter
@@ -67,15 +68,14 @@ def home_db(monkeypatch, tmp_path):
     """临时 SQLite 文件库：monkeypatch life_home.async_session_factory（不触碰 backend/data）"""
     tmp = str(tmp_path)
     db_path = os.path.join(tmp, "t.db")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
+    # 提速（2026-11-09）：模板克隆替代每例 `create_all` 现建 126 表（≈1.2 s/例 → ≈13 ms/例），
+    # 见 tests/_dbclone.py。`pragmas=False` 保持改前「除默认外不额外开 PRAGMA」的形态；
+    # 会话类与建连方式（NullPool）均不变。
+    engine = clone_engine(db_path, pragmas=False)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async def _init():
-        import app.models  # noqa: F401  # 注册全部模型
-        from app.models.base import Base
         from app.models.character import AICharacter
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
             db.add(AICharacter(id=1, user_id=OWNER, name="小爱", is_active=True))
             await db.commit()

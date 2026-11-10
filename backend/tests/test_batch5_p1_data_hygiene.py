@@ -11,6 +11,7 @@
 """
 import asyncio
 
+from _dbclone import clone_engine
 from app.agent import reflection as reflection_mod
 from app.agent.topic_tracker import (
     _extract_candidates,
@@ -52,22 +53,13 @@ def test_topic_status_progress_consistency(tmp_path, monkeypatch):
     改为 tmp_path 私有库 + 打桩 topic_tracker 的会话工厂，互不污染。
     """
     from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-    from sqlalchemy.pool import NullPool
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.agent import topic_tracker as tracker_mod
 
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{tmp_path / 'batch5_topics.db'}", poolclass=NullPool)
+    # 提速（2026-11-09）：模板克隆替代每例 create_all（见 tests/_dbclone.py）
+    engine = clone_engine(str(tmp_path / "batch5_topics.db"), pragmas=False)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _init():
-        import app.models  # noqa: F401  # 注册全部模型
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     monkeypatch.setattr(tracker_mod, "async_session_factory", factory)
 
     async def _setup():

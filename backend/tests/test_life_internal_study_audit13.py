@@ -32,9 +32,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from _dbclone import clone_engine
 from app.life.decision import ACTIONS, Decision, StateSnapshot
 from app.life.life_loop import _INTERNAL_STUDY_TOPICS, LifeLoopTask
 from app.life.life_state import NEEDS
@@ -68,17 +68,9 @@ class _CharShim:
 
 
 def _make_factory(path):
-    """临时 SQLite：建全部模型表，绝不触碰生产库。返回（会话工厂, 引擎）。"""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{path}", poolclass=NullPool)
+    """临时 SQLite：模板克隆出全部模型表，绝不触碰生产库。返回（会话工厂, 引擎）。"""
+    engine = clone_engine(path, pragmas=False)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _init():
-        import app.models  # noqa: F401  注册全部模型
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     return factory, engine
 
 

@@ -115,10 +115,16 @@ def test_gate_neb_is_ink_only_and_never_takes_clicks(tmp_path):
     assert dark.get("hits") == "none", "页眉上的点击被流动层吃掉了"
     assert dark.get("motes") >= 10 and dark.get("clouds") == 2 and dark.get("shoot") >= 5, dark
 
+    # 亮纸档现在有"白云"这一层（同一个容器），但星空画布必须收掉、也不许吃点击
     light = _run(tmp_path, "paper", "light", """
-      out.display = getComputedStyle(document.querySelector('.hero .neb')).display;
+      const neb = document.querySelector('.hero .neb');
+      out.display = getComputedStyle(neb).display;
+      out.canvas = getComputedStyle(neb.querySelector('canvas')).display;
+      out.hits = getComputedStyle(neb).pointerEvents;
     """)
-    assert light.get("display") == "none", "亮纸档也出现了流动层 %s" % light
+    assert light.get("display") == "block", "亮纸档的云层没开 %s" % light
+    assert light.get("canvas") == "none", "亮纸档还留着星空画布 %s" % light
+    assert light.get("hits") == "none", "云层吃掉了页眉的点击 %s" % light
 
 
 # ─────────────── ② 暂停开关管住整条流动层（不只是呼吸层） ───────────────

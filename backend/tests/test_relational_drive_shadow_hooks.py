@@ -28,8 +28,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import event, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from _dbclone import clone_engine
 from starlette.testclient import TestClient
 
 from app.api import scheduler as scheduler_api
@@ -57,16 +57,9 @@ NIGHT = d.DRIVE_NIGHT_MULTIPLIER[d.DRIVE_LONGING]
 
 def _engine_factory(tmp_path, name="m1b2.db"):
     db_path = os.path.join(str(tmp_path), name).replace("\\", "/")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
+    # 提速（2026-11-09）：模板克隆替代每例 create_all（见 tests/_dbclone.py）
+    engine = clone_engine(db_path, pragmas=False)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _create_all():
-        import app.models  # noqa: F401  确保全部 ORM 进入 metadata（含 relational_drives）
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_create_all())
     return engine, factory, db_path
 
 

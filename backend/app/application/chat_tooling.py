@@ -247,6 +247,19 @@ async def _run_post_processing(
         source_id=user_msg_id, source_event_uid=source_event_uid,
     ))
 
+    # D5 方案 A（2026-11-10）：纠错→supersede 生产链接回——schedule_feedback_processing
+    # 此前为零调用方死代码。flag `memory_correction_supersede_v1` 默认关＝行为零变化；
+    # 开启后仅在用户消息命中纠错词且无引用出处时走检索确认取代（fail-open 不阻塞回复）。
+    try:
+        from app.memory.reliability import schedule_feedback_processing
+        # 注意：schedule_feedback_processing 本身是**同步 fire-and-forget**（内部自己 spawn 协程）。
+        # 2026-11-10 修：原来外面又套了一层 spawn_background，等于 spawn 了它的 None 返回值
+        # （异常被下面 except 吞掉，真正干活的是它内部那次 spawn——静默双重包装）。
+        schedule_feedback_processing(
+            character_id, user_id, content, final_text, turn_source_id=user_msg_id)
+    except Exception as _fb_e:
+        _logger.warning("Feedback processing schedule failed: %s", _fb_e)
+
     # M2-S5（2026-08-31）：标记截断保底——A 通道标记被 max_tokens 截断（尾部未闭合标记）时，
     # 本条源消息立即补走一次通道 B 提取（不等凑批；save_memory 写侧查重防重复），并从批量队列
     # 移除该源防重复提取。flag marker_recovery 关=仅批量补提（现状）。

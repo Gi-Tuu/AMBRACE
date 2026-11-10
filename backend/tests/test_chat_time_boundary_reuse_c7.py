@@ -14,11 +14,11 @@ from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import delete
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from _dbclone import clone_engine
 
 import app.models  # noqa: F401
-from app.models import AICharacter, Base, ChatSession
+from app.models import AICharacter, ChatSession
 from app.utils.timeutil import now_naive_utc
 from test_chat_time_anchor_c7 import _add_message, _seed_base, _state  # noqa: F401
 
@@ -26,14 +26,9 @@ from test_chat_time_anchor_c7 import _add_message, _seed_base, _state  # noqa: F
 @pytest.fixture()
 def c7_db(tmp_path, monkeypatch):
     db_path = (tmp_path / "c7_reuse.db").as_posix()
-    engine = create_async_engine("sqlite+aiosqlite:///" + db_path, poolclass=NullPool)
+    # 提速（2026-11-09）：模板克隆替代每例 create_all（见 tests/_dbclone.py）
+    engine = clone_engine(db_path, pragmas=False)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    async def _init():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     from app.db import database as db_mod
 
     monkeypatch.setattr(db_mod, "async_session_factory", factory)

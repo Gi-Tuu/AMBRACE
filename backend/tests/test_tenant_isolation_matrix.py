@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from _dbclone import clone_engine
 from app.agent import loop as agent_loop
 from app.application import channel_binding_service as svc
 from app.application.tenant_scope import resolve_tenant
@@ -28,17 +29,9 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture()
 def iso_db(tmp_path):
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/t.db", poolclass=NullPool)
+    # 提速（2026-11-09）：模板克隆替代每例 create_all（见 tests/_dbclone.py）
+    engine = clone_engine(tmp_path / "t.db", pragmas=False)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     yield factory
     engine.sync_engine.dispose()
 
@@ -229,15 +222,11 @@ def _patch_session_factories(monkeypatch, factory) -> None:
 @pytest.fixture()
 def matrix_db(monkeypatch, tmp_path):
     """两个家庭 + 一个无配置家庭 的私有临时 SQLite 库（含各资源种子）。"""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/matrix.db", poolclass=NullPool)
+    # 提速（2026-11-09）：模板克隆替代每例 create_all（见 tests/_dbclone.py）
+    engine = clone_engine(tmp_path / "matrix.db", pragmas=False)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async def _init():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
             db.add_all([
                 # 家庭 A：root=1 + 子账号 3；家庭 B：root=2 + 子账号 4；家庭 C：独立 root=5（无配置）

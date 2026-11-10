@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.models import Base
+from _dbclone import clone_engine
+import app.models  # noqa: F401  # 注册全部模型到 Base.metadata（模板库按它建表）
 from app.models.user import User
 from app.models.character import AICharacter
 from app.memory import bm25_index as bm
@@ -25,7 +25,14 @@ from app.memory import extract_queue as queue
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     path = tmp_path / 'p1.sqlite'
-    engine = create_async_engine('sqlite+aiosqlite:///' + path.as_posix(), poolclass=NullPool)
+    # 提速（2026-11-09）：原先每例 `Base.metadata.create_all` 现建 126 张表（实测 ≈2.2 s/例，占
+    # tests/audit 全部 155 s 的绝大部分）；改走 tests/_dbclone.py 的「会话级模板库 + 每例 sqlite
+    # backup 克隆」（≈13 ms/例）。语义不变的三条硬保证：
+    # ① 模板同样由 `Base.metadata.create_all` 建出（同一个 Base、同样是 126 表，见 _build_template）；
+    # ② `pragmas=False` 不套 _dbclone 的生产 PRAGMA 集，仍只开 `foreign_keys=ON`——与改前逐条一致；
+    #    本目录 `test_sqlite_lock_closes_validation_to_memory_insert_window` 依赖锁语义，不能换 WAL；
+    # ③ 仍用朴素 `async_sessionmaker`（不换 BusyReclaimSession），避免 BUSY 重试改变锁行为。
+    engine = clone_engine(path, pragmas=False)
 
     @event.listens_for(engine.sync_engine, 'connect')
     def pragmas(conn, record):
@@ -34,8 +41,6 @@ def env(tmp_path, monkeypatch):
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async def setup():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with factory() as db:
             db.add_all([
                 User(id=901, username='synthetic-a', password_hash='unused', nickname='synthetic'),

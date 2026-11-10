@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from _dbclone import clone_engine
 from app.scheduling.scheduler import SendResult
 
 APP = Path(__file__).resolve().parents[1] / "app"
@@ -107,21 +108,12 @@ CHAR, OWNER, SESSION = 71, 72, 73
 
 
 def _factory(tmp_path):
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-    from sqlalchemy.pool import NullPool
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     db_path = os.path.join(str(tmp_path), "a37.db").replace("\\", "/")
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _create_all():
-        import app.models  # noqa: F401
-        from app.models.base import Base
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_create_all())
-    return factory
+    # 提速（2026-11-09）：模板克隆替代每例 create_all（见 tests/_dbclone.py）
+    engine = clone_engine(db_path, pragmas=False)
+    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 def _seed_pending(factory, send_at):

@@ -13,25 +13,19 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from _dbclone import clone_engine
 
 import app.models  # noqa: F401 —— 加载全部模型到 Base.metadata
-from app.models import Base
 
 
 @pytest.fixture()
 def c7_db(tmp_path, monkeypatch):
     db_path = (tmp_path / "c7_anchor.db").as_posix()
     assert tmp_path.as_posix() in db_path, "C7 helper DB 必须落在 pytest tmp_path 沙箱"
-    engine = create_async_engine("sqlite+aiosqlite:///" + db_path, poolclass=NullPool)
+    # 提速（2026-11-09）：模板克隆替代每例 create_all（见 tests/_dbclone.py）
+    engine = clone_engine(db_path, pragmas=False)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    async def _init():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_init())
     from app.db import database as db_mod
 
     monkeypatch.setattr(db_mod, "async_session_factory", factory)

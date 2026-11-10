@@ -1,4 +1,5 @@
 // F7-c-3（2026-08-31）自 features/life/home_visual_screen.dart 拆分迁入；逻辑逐字节保持。
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/settings_provider.dart';
@@ -42,11 +43,52 @@ class HomeLayoutMath {
         g.dy.clamp(0.0, gridRows - gh),
       );
 
-  // ── v3.3 家具朝向（rotation 字段，后端 0-7；0=前 1=后 2=左 3=右，斜向 4-7 预留）──
+  // ── v3.3 家具朝向（rotation 字段，后端 0-7）──
+  // 2026-11-10：8 向素材就位（`furn_<key>_<rotation>.png`），语义＝素材罗盘映射：
+  // 0=前(S) 1=后(N) 2=左(W) 3=右(E) 4=前左(SW) 5=前右(SE) 6=后左(NW) 7=后右(NE)。
+  // 用户拍板：家具面向玩家的那一面＝「前」＝ S 视图。
   static const int rotationMax = 7;
 
-  /// 旋转循环切换：本轮先 4 方向（0-3），斜向素材就绪后改用 rotationMax 循环
-  static int nextRotation(int rotation) => (rotation + 1) % 4;
+  /// 旋转循环：0→1→…→7→0（8 向）
+  static int nextRotation(int rotation) => (rotation + 1) % (rotationMax + 1);
+
+  /// 一个家具槽位在某方向下的素材键；无对应 8 向图时由调用方回落到旧单图
+  /// （`furn_<key>`），再回落 painter 的矢量兜底。
+  static String furnitureAssetKey(String key, int rotation) =>
+      'furn_${key}_${rotation.clamp(0, rotationMax)}';
+
+  /// 小家现有家具 key（后端 life-home 布局口径）
+  static const List<String> furnitureKeys = [
+    'bed', 'sofa', 'tv', 'stove', 'fridge',
+    'table', 'desk', 'bookshelf', 'shower', 'bathtub',
+    'wardrobe', 'nightstand', 'coffee', 'chair',
+    'speaker', 'game', 'plant', 'petbed', 'sink',
+    'rug', 'painting', 'lamp', 'shelf', 'bin', 'clock',
+    // 2026-11-10 第二批（WorkBuddy 8 向素材）：单人沙发/柜/微波炉/镜/边几/桌面台灯/马桶/梳妆台/洗衣机
+    'armchair', 'cabinet', 'micro', 'mirror', 'side',
+    'tablelamp', 'toilet', 'vanity', 'washer',
+  ];
+
+  /// 8 向素材比旧单图大（如床 113×160 vs 80×96）：按旧单图占位等比缩进，
+  /// 既保持既有小家观感/脚底对齐，也不让新图压到相邻格子。无旧图时返回 1.0（原尺寸）。
+  static double furnitureFitScale({
+    required double srcW,
+    required double srcH,
+    required double boxW,
+    required double boxH,
+  }) {
+    if (srcW <= 0 || srcH <= 0 || boxW <= 0 || boxH <= 0) return 1.0;
+    final s = math.min(boxW / srcW, boxH / srcH);
+    return s <= 0 ? 1.0 : s;
+  }
+
+  /// 预加载清单：旧单图（回落用）＋ 每个家具 8 个方向图
+  static List<String> furnitureAssetKeys() => [
+        for (final k in furnitureKeys) ...[
+          'furn_$k',
+          for (var r = 0; r <= rotationMax; r++) furnitureAssetKey(k, r),
+        ],
+      ];
 
   /// 后端透传钳制 0-7（防脏数据）
   static int clampRotation(int rotation) => rotation.clamp(0, rotationMax);

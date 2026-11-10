@@ -11,6 +11,7 @@ reliability = source_weight × 矛盾惩罚 × 确认加分 × 时间衰减
 没有可验证引用时延后处理；禁止用当前反馈文本重新检索 top1 作为修改对象。
 范围（2026-08-15 用户拍板）：只做记忆可靠度增强，不做内容审查/违规重生成。
 """
+import json
 import time
 from datetime import datetime
 
@@ -118,7 +119,8 @@ async def apply_correction(memory_id: int, *, source: str = "user") -> None:
 
 
 async def process_feedback_signal(character_id: int, user_id: int, user_msg: str,
-                                  ai_response: str = "", *, cited_memory_ids=None) -> None:
+                                  ai_response: str = "", *, cited_memory_ids=None,
+                                  turn_source_id: int | None = None) -> None:
     """Apply feedback only to one supplied actual citation, never a fresh search.
 
     Existing callers without citation provenance defer automatic mutation. Text in
@@ -130,7 +132,22 @@ async def process_feedback_signal(character_id: int, user_id: int, user_msg: str
             return
         ids = set(cited_memory_ids or ())
         if len(ids) != 1:
-            _logger.info("Memory feedback unresolved char=%s citation_count=%s", character_id, len(ids))
+            # D5 方案 A（2026-11-10）：无引用纠错——flag `memory_correction_supersede_v1`
+            # 门控检索确认取代链（此前此处直接 return＝纠错链无生产调用方的断点）。
+            # 确认（非纠正）无引用仍维持"延后处理"不动。
+            if not ids and correction and _correction_supersede_enabled():
+                key0 = (user_id, character_id, 0, user_msg.strip())
+                now0 = time.time()
+                if now0 - _last_signal_at.get(key0, 0) >= SIGNAL_THROTTLE_SECONDS:
+                    _last_signal_at[key0] = now0
+                    for old0 in list(_last_signal_at):
+                        if now0 - _last_signal_at[old0] >= SIGNAL_THROTTLE_SECONDS:
+                            _last_signal_at.pop(old0, None)
+                    await _supersede_uncited_correction(
+                        character_id, user_id, user_msg, turn_source_id)
+            else:
+                _logger.info("Memory feedback unresolved char=%s citation_count=%s",
+                             character_id, len(ids))
             return
         mid = next(iter(ids))
         async with async_session_factory() as db:
@@ -155,11 +172,105 @@ async def process_feedback_signal(character_id: int, user_id: int, user_msg: str
         _logger.warning("process_feedback_signal failed char=%d: %s", character_id, error)
 
 
+def _correction_supersede_enabled() -> bool:
+    """D5 方案 A 双闸：新链 flag ＋ 取代机制 flag 都开才启用（误取代比不取代更伤）。"""
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS
+        return bool(AGENT_FLAGS.get("memory_correction_supersede_v1", False)
+                    and AGENT_FLAGS.get("memory_supersede", False))
+    except Exception:
+        return False
+
+
+# 本轮新写值排除窗：标记/抽取路径写的新值 created_at 距现在此窗内 → 不是被推翻对象
+# （取代只针对「旧说法」）。纠错低频且链路在回复后数秒内跑，120s 窗足够保守。
+_CORRECTION_FRESH_WINDOW_SECONDS = 120
+
+
+async def _supersede_uncited_correction(character_id: int, user_id: int,
+                                        user_msg: str,
+                                        turn_source_id: int | None) -> None:
+    """无引用纠错的检索确认取代链（D5 方案 A，2026-11-10）。
+
+    检索 top5 相关旧记忆 → 排除本轮新写值（created_at 新鲜窗）→ LLM 确认
+    「该记忆是被用户本轮原话推翻的旧说法」→ supersede_memory(old, new_id=None,
+    reason="user_correction")。任何异常静默（fail-open 不阻塞回复、不写半截状态）。
+    """
+    try:
+
+        from app.memory import search_memories
+        # 检索加深（limit 12）：本轮抽取/标记新写值与纠错话词重合度高、常占满浅检索前排，
+        # 新鲜窗过滤发生在检索之后——浅检索会让真正的旧说法被挤出候选（2026-11-10 D5 实测）。
+        hits = await search_memories(character_id=character_id, query=user_msg,
+                                     limit=12, user_id=user_id)
+        now = _now_naive()
+        cands: list[dict] = []
+        for h in hits or []:
+            if len(cands) >= 5:
+                break  # 确认提示只带 5 条，防止大库时提示词膨胀
+            mid = h.get("id")
+            content = (h.get("content") or "").strip()
+            if not mid or not content:
+                continue
+            created = h.get("created_at")
+            try:
+                if created is not None and (now - (created if not created.tzinfo
+                                                   else created.replace(tzinfo=None))
+                                            ).total_seconds() < _CORRECTION_FRESH_WINDOW_SECONDS:
+                    continue  # 本轮新写值（标记/抽取路径）不是被推翻对象
+            except Exception:  # noqa: BLE001 —— 时间字段异常不排除，交给 LLM 确认兜底
+                pass
+            if h.get("status") not in (None, "", "active"):
+                continue  # 已被取代/失效/归档的不再重复处理
+            cands.append({"id": int(mid), "content": content[:120]})
+        if not cands:
+            return
+        listing = "\n".join(f"[{c['id']}] {c['content']}" for c in cands)
+        prompt = (
+            "用户对角色说了一句话，其中纠正/更新了某个旧说法。下面是该角色记住的相关条目。\n"
+            "判断哪些条目表达的是「被用户这句话推翻的旧说法」——即用户本轮给出的新说法与该条目矛盾，"
+            "且应以用户本轮说法为准。\n"
+            "注意：与用户本轮说法一致、或只是被本轮重申/补充的条目，不是被推翻对象；无法判断时不要选。\n\n"
+            f"用户本轮原话：{user_msg[:300]}\n\n候选记忆条目：\n{listing}\n\n"
+            '只输出 JSON：{"supersede": [被推翻的记忆id数组]}；没有则 {"supersede": []}。'
+            "不要输出其他内容。"
+        )
+        from app.agent.llm_client import chat_completion
+        _resp = await chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=120, temperature=0,
+            task="memory", user_id=user_id,
+        )
+        if isinstance(_resp, tuple):
+            _resp = _resp[0]
+        raw = str(_resp or "").strip().strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+        data = json.loads(raw)
+        confirmed = []
+        for mid in (data.get("supersede") or [])[:5]:
+            try:
+                mid_i = int(mid)
+            except (TypeError, ValueError):
+                continue
+            if mid_i in {c["id"] for c in cands} and mid_i != turn_source_id:
+                confirmed.append(mid_i)
+        for mid_i in confirmed:
+            from app.memory.supersede import supersede_memory
+            await supersede_memory(mid_i, new_id=None, reason="user_correction")
+            _logger.info("correction supersede char=%d mem=%d (uncited, confirmed)",
+                         character_id, mid_i)
+    except Exception as e:
+        _logger.warning("uncited correction supersede failed char=%d: %s", character_id, e)
+
+
 def schedule_feedback_processing(character_id: int, user_id: int, user_msg: str,
-                                 ai_response: str) -> None:
+                                 ai_response: str,
+                                 *, turn_source_id: int | None = None) -> None:
     """fire-and-forget 入口（不阻塞回复）。"""
     try:
         from app.utils.async_tasks import spawn_background
-        spawn_background(process_feedback_signal(character_id, user_id, user_msg, ai_response))
+        spawn_background(process_feedback_signal(
+            character_id, user_id, user_msg, ai_response, turn_source_id=turn_source_id))
     except Exception as e:
         _logger.warning("schedule_feedback_processing failed: %s", e)

@@ -157,7 +157,8 @@ def test_gate_refresh_morphs_into_a_planet_and_back(tmp_path):
       await new Promise(r => setTimeout(r, 60));
       out.busy = b.classList.contains('busy');
       out.orbOn = getComputedStyle(orb).opacity;      // 过渡开始，值应已朝 1 走
-      out.spin = getComputedStyle(orb).animationName;
+      // 自转挂在有纹理的球面层（.rb-ball）上，不再是外层空壳
+      out.spin = getComputedStyle(orb.querySelector('.rb-ball')).animationName;
       await new Promise(r => setTimeout(r, 1200));
       out.after = b.classList.contains('busy');
     """, {"audit_page": {"ok": True, "data": shell.FIXTURE["audit_page"]}})
