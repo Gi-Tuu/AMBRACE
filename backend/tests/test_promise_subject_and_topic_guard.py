@@ -198,21 +198,6 @@ def test_L5_重试退避间隔沿用09_08基线():
     assert len(calls) == 3  # 首次 + 2 次重试
 
 
-def test_L5_flag关时直连save_memory(monkeypatch, flags):
-    """flag 关=回旧裸写路径：异常照旧上抛（不吞、不改失败语义）。"""
-    flags["life_memory_write_retry"] = False
-    calls = []
-
-    async def _fake(**kw):
-        calls.append(kw)
-        raise OperationalError("INSERT ...", {}, Exception("database is locked"))
-
-    monkeypatch.setattr("app.memory.service.save_memory", _fake)
-    with pytest.raises(OperationalError):
-        asyncio.run(life_writer.save_life_memory_with_retry(user_id=1, character_id=13))
-    assert len(calls) == 1
-
-
 def test_L5_flag开时写记忆失败返回None不抛出(monkeypatch, flags):
     flags["life_memory_write_retry"] = True
     monkeypatch.setattr(life_writer, "MEMORY_RETRY_DELAYS", (0.0, 0.0, 0.0))

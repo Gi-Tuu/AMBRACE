@@ -18,9 +18,8 @@ class ProspectiveIntentSource:
     name = "prospective_intent"
 
     async def collect(self, ctx: SourceContext) -> Iterable[TriggerItem]:
-        from app.agent.loop import AGENT_FLAGS
         # 触发总开关：关时不产生候选（写入开关独立，先攒数据后开触发）
-        if not AGENT_FLAGS.get("prospective_intent_trigger", False):
+        if not True:
             return []
         from app.scheduling.prospective_intent import collect_due_promises
         due = await collect_due_promises()

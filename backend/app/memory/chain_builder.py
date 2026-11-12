@@ -228,8 +228,7 @@ async def maybe_expand_chain(character_id: int, picked: list[dict], budget_extra
         return m.get("id") if isinstance(m, dict) else getattr(m, "id", None)
 
     try:
-        from app.flags.agent_flags import AGENT_FLAGS
-        if not AGENT_FLAGS.get("memory_chain_expand", False):
+        if not True:
             return list(picked)
         have = {i for i in (_id_of(m) for m in picked) if i is not None}
         extra_ids: list[int] = []

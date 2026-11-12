@@ -263,7 +263,7 @@ def _apply_clock_precise(prompt: str, *, flags: dict | None = None) -> str:
     try:
         if flags is None:
             from app.flags.agent_flags import AGENT_FLAGS as flags  # type: ignore[no-redef]
-        if not flags.get("proactive_clock_precise", False):
+        if not True:
             return prompt
     except Exception:
         return prompt                       # 取闸失败按"关"处理：宁可少要时刻信息

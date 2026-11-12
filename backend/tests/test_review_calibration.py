@@ -1,31 +1,11 @@
 # -*- coding: utf-8 -*-
-"""M1-S7 复习校准测试：日额度 flag、实质回复判定（纯函数）"""
+"""M1-S7 复习校准测试：日额度（已常驻化）、实质回复判定（纯函数）"""
 from app.scheduling.memory_review import _is_substantive_reply, _review_daily_cap
 
 
-def test_daily_cap_flag_on():
-    monkey_flags = {"review_daily_plus": True}
-
-    class _FakeAF(dict):
-        pass
-
-    import app.agent.loop as loop_mod
-    original = loop_mod.AGENT_FLAGS
-    loop_mod.AGENT_FLAGS = {**original, **monkey_flags}
-    try:
-        assert _review_daily_cap() == 4
-    finally:
-        loop_mod.AGENT_FLAGS = original
-
-
-def test_daily_cap_flag_off_falls_back():
-    import app.agent.loop as loop_mod
-    original = loop_mod.AGENT_FLAGS
-    loop_mod.AGENT_FLAGS = {**original, "review_daily_plus": False}
-    try:
-        assert _review_daily_cap() == 3
-    finally:
-        loop_mod.AGENT_FLAGS = original
+def test_daily_cap_恒为4_常驻化():
+    """review_daily_plus 已退役（2026-11-12），日额度恒为 4。"""
+    assert _review_daily_cap() == 4
 
 
 def test_substantive_replies():

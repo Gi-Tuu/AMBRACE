@@ -53,12 +53,6 @@ def test_坏格式仍按旧行为整对置空():
 
 # ───────────────────────── 二、提示词侧：关着不动，开着只换一行
 
-def test_关闸时prompt逐字节不变():
-    base = "前\n" + ex._intent_time_window_spec(False) + "\n后"
-    assert ex._apply_clock_precise(base, flags={}) == base
-    assert ex._apply_clock_precise(base, flags={"proactive_clock_precise": False}) == base
-
-
 def test_开闸时只换INTENT那一行():
     base = "前\n" + ex._intent_time_window_spec(False) + "\n后"
     out = ex._apply_clock_precise(base, flags={"proactive_clock_precise": True})
@@ -75,18 +69,3 @@ def test_反向钉_规格行必须真在提示词里():
     assert ex._intent_time_window_spec(True) != ex._intent_time_window_spec(False)
 
 
-def test_取闸失败按关处理不影响提取():
-    base = ex._intent_time_window_spec(False)
-
-    class _Boom(dict):
-        def get(self, *a, **kw):
-            raise RuntimeError("flag 层挂了")
-
-    assert ex._apply_clock_precise(base, flags=_Boom()) == base
-
-
-def test_默认注册表里这把闸默认开_常驻():
-    from app.flags.agent_flags import AGENT_FLAGS
-
-    assert "proactive_clock_precise" in AGENT_FLAGS
-    assert AGENT_FLAGS["proactive_clock_precise"] is True, "批 2 常驻（2026-11-11）"

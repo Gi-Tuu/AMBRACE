@@ -355,18 +355,6 @@ def test_expand_along_chain(cdb):
     assert len(ids1) == 1 and ids1[0] == root_id
 
 
-def test_maybe_expand_chain_flag关_原样(cdb, monkeypatch):
-    """memory_chain_expand 默认关：maybe_expand_chain 原样返回（零行为）。"""
-    picked = [{"id": 1, "content": "a", "ttype": "x"}]
-
-    async def _main():
-        return await cb.maybe_expand_chain(1, picked)
-
-    out = asyncio.run(_main())
-    assert out == picked  # 新列表、内容相等
-    assert out is not picked  # 不污染入参引用
-
-
 def test_maybe_expand_chain_flag开_扩充降权(cdb, monkeypatch):
     """memory_chain_expand 开：沿链补 ≤2 相邻节点、去重、降权 0.9、内容前缀「（同一件事）」。"""
     _flag_on(monkeypatch, "memory_chain_expand")

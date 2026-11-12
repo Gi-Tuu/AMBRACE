@@ -264,8 +264,7 @@ async def release_full(db, character_id: int, user_id: int, drive_key: str, now=
 # 设计：output/AMBRACE_批3M2_两档释放接线_详细设计_v1_20261001.md（§3.1 / §3.2 / §5）
 # 口径：**只改水位的记账轨迹，不改任何一条消息的内容与条数**；关闸 ⇒ 一次 SELECT 都不发。
 # 用户 10-01 拍板：P1 开口比例可配、P2 归属窗 24h、P3 对称释放、P5 **拆两把键**。
-V1_OPEN_FLAG_KEY = "relational_drive_open_v1"
-V1_FULL_FLAG_KEY = "relational_drive_full_v1"
+# 2026-11-12：两把 v1 开关已常驻化退役（见 _v1_enabled）。
 
 # 全额释放的「归属窗」：主动消息与这次用户发言相隔超过它就不再认领（设计 §3.2 C3 / §9 P2）。
 REPLY_ATTRIBUTION_WINDOW_HOURS = 24.0
@@ -275,13 +274,8 @@ _logger = get_logger("relational_drive_service")
 
 
 def _v1_enabled(kind: str) -> bool:
-    """读生效键（kind=open/full）；认不出 / 读不到一律按关。"""
-    key = V1_OPEN_FLAG_KEY if kind == "open" else V1_FULL_FLAG_KEY
-    try:
-        from app.flags.agent_flags import AGENT_FLAGS
-        return bool(AGENT_FLAGS.get(key, False))
-    except Exception:
-        return False
+    """2026-11-12 常驻化退役：open/full 恒为开（仍受 shadow 与灰度白名单约束）。"""
+    return kind in ("open", "full")
 
 
 def release_enabled(kind: str, character_id: int | None = None) -> bool:

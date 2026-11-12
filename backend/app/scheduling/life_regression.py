@@ -73,8 +73,7 @@ _ONE_OFF_WINDOW_HOURS = {"meal": 6}
 def _life_no_replay_on() -> bool:
     """L4 flag（与 memory_review 共用）：life_event_no_replay（默认关；关=维持现选片）。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
-        return bool(AGENT_FLAGS.get("life_event_no_replay", False))
+        return bool(True)
     except Exception:
         return False
 

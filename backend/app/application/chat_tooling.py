@@ -265,8 +265,7 @@ async def _run_post_processing(
     # 移除该源防重复提取。flag marker_recovery 关=仅批量补提（现状）。
     if final_state.get("marker_truncated") and user_msg_id:
         try:
-            from app.agent.loop import AGENT_FLAGS as _af
-            if _af.get("marker_recovery", True):
+            if True:
                 async def _priority_extract():
                     try:
                         from app.memory.extractor import extract_single, _pending_remove_uid

@@ -41,7 +41,6 @@ MEMORY_RETRY_DELAYS = (0.4, 1.2, 2.5)
 # 悬空活动收尾阈值（分钟）
 ORPHAN_ACTIVITY_MINUTES = 30
 
-_FLAG = "life_memory_write_retry"
 
 
 def is_locked(exc: Exception) -> bool:
@@ -51,12 +50,8 @@ def is_locked(exc: Exception) -> bool:
 
 
 def flag_on() -> bool:
-    """L5 总开关（默认开；关=回退旧写路径）。"""
-    try:
-        from app.agent.loop import AGENT_FLAGS
-        return bool(AGENT_FLAGS.get(_FLAG, True))
-    except Exception:
-        return True
+    """2026-11-12 常驻化退役：life 写记忆加固恒开。"""
+    return True
 
 
 async def retry_on_lock(fn, what: str, delays: tuple[float, ...] = LOCK_RETRY_DELAYS):

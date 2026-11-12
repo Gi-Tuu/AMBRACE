@@ -180,8 +180,7 @@ def _life_no_replay_on() -> bool:
     与「回忆化」L1（已常驻化）同属一批选片口径，不另起第二套。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
-        return bool(AGENT_FLAGS.get("life_event_no_replay", False))
+        return bool(True)
     except Exception:
         return False
 
@@ -302,8 +301,7 @@ def _review_daily_cap() -> int:
     纯函数便于单测；90 分钟最小间隔不变（防轰炸靠间隔而非额度）。
     """
     try:
-        from app.agent.loop import AGENT_FLAGS
-        return REVIEW_MAX_PER_DAY + 1 if AGENT_FLAGS.get("review_daily_plus", True) else REVIEW_MAX_PER_DAY
+        return REVIEW_MAX_PER_DAY + 1 if True else REVIEW_MAX_PER_DAY
     except Exception:
         return REVIEW_MAX_PER_DAY
 

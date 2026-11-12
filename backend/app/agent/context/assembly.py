@@ -108,7 +108,7 @@ async def assemble_context(state: dict, *, stream: bool | None = None, _section_
         hot = True
         try:
             from app.agent.loop import AGENT_FLAGS
-            if AGENT_FLAGS.get("agent_context_trim", True):
+            if True:
                 hot = await _is_hot_character(state["character_id"], state.get("user_id"))
         except Exception:
             hot = True

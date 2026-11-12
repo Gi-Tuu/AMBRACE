@@ -68,9 +68,6 @@ _FLAG_ROWS: list[tuple] = [
     ('agent_loop_chat', 'agent', 101, False, '聊天工具统一入口',
      '只管聊天里日历备注、备忘录这类本地工具的记录方式；关掉也照常记录，只是换旧的保存路径。',
      'Unified chat tool entry', 'Affects only how chat tools such as calendar notes and memos are recorded; when off they are still saved, just via the older path.'),
-    ('agent_context_trim', 'agent', 103, False, '上下文按热度裁剪',
-     '常聊的角色带入更多背景，少聊的角色精简带入，更省资源。',
-     'Trim context by activity', 'Characters you talk to often get richer context; rarely used ones get a lighter version.'),
     ('context_budget_reserve', 'agent', 105, False, '长对话预算预留与裁剪留痕',
      '对话很长时，先给回复和工具各留出一块空间，再对超出的背景内容做取舍，并记下这次裁掉了什么，'
      '避免要紧的部分被悄悄丢掉却查不到。',
@@ -142,11 +139,6 @@ _FLAG_ROWS: list[tuple] = [
      'these messages, and what it sees on your phone is only used when you ask.'),
 
     # A39 批 2a（10-09）：实验闸，默认关＝记约定的方式与现在逐字节一致
-    ('proactive_clock_precise', 'proactive', 211, False, '按你给的钟点提醒（实验）',
-     '开启后，它记录你说的未来约定时会把具体钟点也记下来（例如「明早八点叫我」记成 08:00，而不是「明天某一天」），于是只在到点前后提起，不会提前大半天就念叨。默认开启（2026-11-11 起常驻）。',
-     'Reminds at the agreed clock time (experiment)', 'When on, future promises keep the exact clock time (e.g. "call me at 8 tomorrow" is stored as 08:00 rather than "somewhere tomorrow"), so it brings them up only around that time. Off by default, and while off promises are recorded exactly as before.'),
-
-    # A39 批 2b（10-09）：闸②读数层，默认两个都关＝一条额外查询都不发
     ('proactive_freshness_shadow', 'proactive', 212, False, '开口前再看一眼现状（只记录，实验）',
      '开启后，它在生成主动消息前会先回头看一眼现状（比如你那句话之后有没有接着说别的、那个话头还算不算未完成），并把判断结果记进开发日志；**这一步不改变它发不发消息**，只攒读数。默认关闭，关闭时不会多查任何东西。',
      'Re-check the current state before speaking (log only, experiment)', 'When on, before generating a proactive message it re-reads the current state (did you say something after that, is the thread still open) and logs the verdict. This step does not change what gets sent; off by default, and while off no extra lookups happen at all.'),
@@ -188,17 +180,6 @@ _FLAG_ROWS: list[tuple] = [
     ('promise_self_side_split', 'life', 405, False, '承诺按受益方分流',
      '角色自己办的事到点自己回来说明，不再反过来叫你。',
      'Split promises by beneficiary', 'Things a character does for itself are reported back by itself, not pushed to you.'),
-    ('timer_render_subject_fix', 'life', 406, False, '到期提醒话术优化',
-     '到点提醒按情境换不同说法，并跳过已经不合适的提醒。',
-     'Better reminder wording', 'Timed reminders use situational wording and skip ones that no longer fit.'),
-    ('life_event_no_replay', 'life', 407, False, '生活动作不回放',
-     '已经发生的一次性生活动作不再被反复提起或复习。',
-     'No replay of life events', 'One-off life actions are not brought up again or reviewed repeatedly.'),
-    ('life_memory_write_retry', 'life', 408, False, '生活记忆写入加固',
-     '生活相关记忆写入失败会自动重试，纯加固，不改变内容。',
-     'Robust life memory writes', 'Life memory writes retry automatically on failure; content is unchanged.'),
-
-    # ── 生命感增强 ──
     ('reply_delay_enabled', 'lifesense', 501, False, '动态回复延迟',
      '根据情境给回复加一点自然的等待，更像真人在打字。',
      'Dynamic reply delay', 'Adds a natural pause before replying, like a real person typing.'),
@@ -314,9 +295,6 @@ _FLAG_ROWS: list[tuple] = [
     ('memory_chain_builder', 'memory', 705, False, '记忆自动挂链',
      '新记忆会自动挂到相近的旧记忆上，形成可追溯的记忆链。',
      'Memory chaining', 'New memories attach to related older ones, forming a traceable chain.'),
-    ('memory_chain_expand', 'memory', 706, False, '沿链补充上下文',
-     '命中记忆时顺带补上相邻片段，前因后果更完整。',
-     'Expand along the chain', 'Adds neighbouring pieces when a memory is hit, for fuller context.'),
     ('memory_tiered_decay', 'memory', 707, False, '记忆分层衰减',
      '有把握的事记得更久，没把握的推测忘得更快；重要的事到点后先收存起来而不是直接删掉，之后还能找回。',
      'Tiered memory decay', 'Confident memories last longer while shaky guesses fade faster; important ones are set aside instead of deleted outright when they expire, and can come back.'),
@@ -332,12 +310,6 @@ _FLAG_ROWS: list[tuple] = [
     ('current_facts_active_only', 'memory', 711, False, '近况只用最新信息',
      '描述你的近况时只采用最新信息，旧信息不再冒充现状。',
      'Current facts only', 'Descriptions of your situation use only the latest information.'),
-    ('marker_recovery', 'memory', 712, False, '标记截断补救',
-     '提取标记被截断时立刻走备用方式补一次，避免漏记。',
-     'Marker recovery', 'If extraction markers get truncated, a fallback pass recovers the content.'),
-    ('review_daily_plus', 'memory', 713, False, '主动复习扩容',
-     '每天主动回忆的额度从 3 条提高到 4 条。',
-     'More daily reviews', 'Daily recall quota raised from three items to four.'),
     ('memory_source_proof_v1', 'memory', 717, False, '记忆来源证明（实验）',
      '为记忆保留可核验的来源证明；默认关闭，普通使用无需调整。',
      'Memory source proof (beta)', 'Keep verifiable source proof for memories; off by default.'),
@@ -390,16 +362,6 @@ _FLAG_ROWS: list[tuple] = [
      '它给自己记的东西打分时，会多打几轮再看多数意见（只先记下，不改打分结果）；默认关闭。',
      'Rate a few times before deciding',
      'When scoring what it has noted down, it scores a few times and looks at the majority; the score actually used stays the same as now. Off by default.'),
-    ('relational_drive_open_v1', 'outreach_natural', 16, False, '开口只消一部分惦记',
-     '角色主动开口之后，这份惦记只消掉一部分，剩下的留到下次再说；不改变发什么、发几条、什么时候发。默认开启（2026-11-11 起常驻）。',
-     'Partial release after reaching out',
-     'After the character reaches out, that particular pang is only partly eased and the rest stays for next time; '
-     'it changes nothing about what, how many, or when messages are sent. Off by default.'),
-    ('relational_drive_full_v1', 'outreach_natural', 17, False, '被回应后这一桩就翻篇',
-     '你在它刚主动开口之后回话，这一桩惦记就清掉；隔得太久（超过一天）或没回就不清。默认开启（2026-11-11 起常驻）。',
-     'Cleared once you reply',
-     'If you reply shortly after it reached out, that particular pang is cleared; if too much time has passed '
-     '(over a day) or you never reply, it stays. Off by default.'),
     ('current_view_filter', 'memory', 722, False, '生活分享只认当下有效的记录',
      '它跟你提自己的近况时，只用仍然有效的条目，已经被取代、收起来的旧近况不再冒充此刻；'
      '默认关闭，关掉时与现在完全一样。',
@@ -450,11 +412,6 @@ _FLAG_ROWS: list[tuple] = [
     ('prospective_intent_enabled', 'curated', 802, False, '未来约定记录',
      '对话里出现「以后要做的事」时记下来，留作以后提起。',
      'Record future intentions', 'Captures things to do later mentioned in chat, for future follow-up.'),
-    ('prospective_intent_trigger', 'curated', 803, False, '未来约定提醒',
-     '到了约定时间或聊到相关线索时，角色会自然地提起。',
-     'Trigger future intentions', 'The character brings things up naturally when the time comes or a cue appears.'),
-
-    # ── 跨角色用户事实（B1）──
     ('global_user_facts', 'cross_char', 5, True, '跨角色共享你的近况',
      '开启后你的近况会在所有角色之间共享，避免角色停留在旧印象。',
      'Share your facts across characters',
@@ -472,9 +429,6 @@ _FLAG_ROWS: list[tuple] = [
     ('user_fact_health', 'cross_char', 9, True, '健康状况（隐私）',
      '记录你的健康近况，属敏感信息，需你单独开启。',
      'Health (private)', 'Records your health; sensitive and off until you enable it.'),
-    ('cross_char_fact_sync', 'cross_char', 901, False, '跨角色对齐',
-     '你的某项近况有了新情况后，各角色记忆里还停留在旧情况的条目会被标记为已过时，不再当作当下事实。',
-     'Cross-character sync', 'Once one of your facts is updated, entries still holding the old value in a character memory are marked outdated and no longer treated as current.'),
     ('cross_char_fact_projection', 'cross_char', 902, False, '变化留痕',
      '在「跨角色对齐」开启的前提下，你的近况发生更新时，记忆本里会额外留一条同步记录。',
      'Change projection', 'With cross-character sync enabled, an update to your facts also leaves a sync note in the memory book.'),

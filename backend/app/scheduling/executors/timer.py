@@ -59,7 +59,7 @@ async def run_timer(item: dict, g: GateBundle) -> bool:
     # fail-open：本段任何异常只打日志并继续走原生成消息流程，绝不让承诺丢失。
     # L2/L3（2026-09-09 主体归属治理）：两个 flag 均默认关；关=逐字节走旧路径。
     _topic_guard_on = agent_flag_on("proactive_topic_guard")
-    _render_fix_on = agent_flag_on("timer_render_subject_fix")
+    _render_fix_on = True
     _settled_check = (
         event_kind == "ready" and (owner == "user" or _topic_guard_on)
         and event.session_id and event.source_message_id

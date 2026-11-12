@@ -188,8 +188,7 @@ async def run_daily_memory_maintenance() -> dict:
         _logger.warning("Plan expiry maintenance failed: %s", e)
     # §20（2026-09-04）：跨角色用户事实对齐 sweep（flag cross_char_fact_sync 开才跑，覆盖长期不活跃角色）
     try:
-        from app.agent.loop import AGENT_FLAGS as _af
-        if bool(_af.get("cross_char_fact_sync", False)):
+        if bool(True):
             from app.memory.cross_char_sync import sweep_all_characters_alignment
             from app.models.user import User
             async with async_session_factory() as db:

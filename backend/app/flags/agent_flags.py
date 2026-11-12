@@ -10,7 +10,6 @@ AGENT_FLAGS = {
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：agent_tool_events（工具执行联动织库增量）
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：agent_daily_reflection（周复盘）
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：agent_reflection_inject（主动消息注入最近复盘）
-    "agent_context_trim": True,  # 认知注入按角色热度裁剪（2026-08-16）
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：agent_daily_memory_maintenance（日终记忆维护）
     "agent_loop_group_chat": True,  # Phase E（2026-08-18）：群聊回应走统一 Runtime（2026-08-18 用户拍板全量体验；回退改 False 重启即恢复旧链路）
     "agent_loop_social": True,  # Phase E（2026-08-18）：渠道/插件主动候选走统一 Runtime（X5 渠道化改名；回退改 False 重启即恢复旧链路）
@@ -36,7 +35,6 @@ AGENT_FLAGS = {
     #   开=run_tick 汇总层按「闲置分级+素材前提+避开最近意图」选接触意图，message_generator 走意图分支；
     #   关=意图不参与、走旧链路逐字节等价（默认关，可灰度/一键回退）。
     "memory_chain_builder": True,
-    "memory_chain_expand": True,
     # ── 批 0-7（2026-09-28，雷达 08）召回排序显式 recency ＋ 命中记忆的相邻块 ──
     # 两个独立开关（可只开其一：①纯打分、②多一条只读查询），**均默认 False＝逐字节旧行为**。
     # 为什么不用既有 flag 承载：memory_temporal_recall / memory_recall_second_hop / memory_peak_cutoff /
@@ -77,9 +75,7 @@ AGENT_FLAGS = {
     "life_loop_enabled": True,            # 主开关：30min 行为决策循环
     "life_loop_llm": True,                # 允许 LLM 生成生活文案（每角色每日≤2次）
     "life_chat_driven_enabled": True,     # 聊天→生活意图链路
-    "review_daily_plus": True,            # M1-S7（2026-08-31）：主动复习日额度 3→4（关=回退 3；90min 间隔不变）
     "memory_tiered_decay": False,         # M2-S2（2026-08-31）：分层衰减——高置信持久/低置信加速/跌破阈值冷归档。默认关（灰度开关，开启前先跑 scripts/diagnostics/memory_tiering_snapshot.py 快照）；关=逐字节现状  〔A19处置·预留（10-02 拍）＝开启前须先跑 memory_tiering_snapshot.py 快照，属有前置条件的留键〕
-    "marker_recovery": True,              # M2-S5（2026-08-31）：标记截断保底——A 通道标记被截断时本条源消息立即走通道 B 提取（写侧查重防重复）；关=仅批量补提
     # ── X3 Provider 端口（2026-08-31，docs/archive/architecture/执行方案_扩展化_20260831.md 批次 X3）──
     # provider_registry 开=LLM/TTS 经 app/providers 注册口解析实现（内置 openai_compatible/dashscope 为默认实现，
     # 插件可经 sdk.register_provider 注册并以配置 provider 字段选中）；关=直连内置实现（与旧链路逐字节一致）。
@@ -147,10 +143,8 @@ AGENT_FLAGS = {
     # Ariadne 模块G（2026-09-04）：前瞻意图。enabled=写入（extractor 便车落表）；
     # trigger=触发（时间型 Scheduler 提起 + 线索型 context 注入）。两段灰度：先开 enabled 攒数据，再开 trigger。
     "prospective_intent_enabled": True,
-    "prospective_intent_trigger": True,
     # A39 批 2a（10-09）：开＝提取侧允许写精确时刻（YYYY-MM-DD HH:MM），clock 承诺不再被压成「当天全天」（现网 id=160 提前 55′29″ 那类）；关＝提示词与解析结果逐字节旧行为。
     # 解析两种格式都收，所以本闸只门控「提示词是否要求写时刻」——模型不写，行为就不变。
-    "proactive_clock_precise": True,
     # A39 批 2b（10-09）：闸②「生成前重取现状」的两段式开关。shadow＝只读数＋打一条 [fresh=…] 留痕，
     # 发不发照旧；gate＝判定为 cancel 时真的不调模型、不发。两个都关＝一条额外查询都不发（守卫按计数桩钉住）。
     "proactive_freshness_shadow": False,
@@ -187,7 +181,6 @@ AGENT_FLAGS = {
     "user_current_location_share": True,
     # cross_char_fact_sync：跨角色对齐——开=角色构建上下文前惰性对齐 + 每日 sweep，把同槽旧值
     #   per-char 记忆标 stale（复用 #70，不删可追溯）；关=不对齐。
-    "cross_char_fact_sync": True,
     # cross_char_fact_projection：变化投影——开=对齐时按模板投影一条 global_sync 记忆进记忆本
     #   （零 LLM，skip_dedup）；关=只标 stale + 靠 [USER NOW] 注入（默认推荐关）。
     "cross_char_fact_projection": False,  # 〔A19处置·预留（10-02 拍）＝依赖 cross_char_fact_sync 先开，投影形态未定版〕
@@ -260,10 +253,7 @@ AGENT_FLAGS = {
     # life_memory_write_retry 开=life 写记忆加固（写前先提交释放自持锁 + 统一退避重试 +
     #   悬空 started 收尾）；**默认开（纯加固）**，关=回旧裸写路径。
     "promise_self_side_split": True,
-    "timer_render_subject_fix": True,
     "proactive_topic_guard": False,
-    "life_event_no_replay": True,
-    "life_memory_write_retry": True,
     # ── #72 PR-C 群聊认知升级（group_cognition_v2，2026-09-15）──
     # group_cognition_v2 开=群聊认知能力（P1 纯数据层 + P2 共享记忆接线已合；P3 逐角色认知
     #   生成+私有注入+预算+仲裁、P4 观测+群级灰度列生效 待后续拆包）。总开关：本项默认关，
@@ -385,8 +375,6 @@ AGENT_FLAGS = {
     # 全额档：用户发言后按「最近一条未接住的主动消息」把该驱力清零。
     # 两把键都要叠加 relational_drive_shadow（release_* 在影子关时会静默早退；只开本键会打 WARNING）。
     # 关＝**逐字节旧行为**（不 settle、不释放、一次 SELECT 都不发）。回退＝置回 False（热切）。
-    "relational_drive_open_v1": True,
-    "relational_drive_full_v1": True,
     # ── A14（2026-10-01）：AI 评星「多轮共识写回」· **M0 干跑**（默认关）──
     # 开＝只对灰度角色（char13）**多跑 N-1 轮评星并把各轮星分 + 共识写进留痕**，
     #   **写回仍用第 1 轮值** ⇒ 零行为、可与现行口径直接对照（判效见小方案 §5）。

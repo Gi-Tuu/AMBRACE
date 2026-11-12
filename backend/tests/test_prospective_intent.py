@@ -243,11 +243,7 @@ def test_trigger_source_flag_gate(pi_db, monkeypatch):
                               source_message_id=401, chat_session_id=7))
     src = ProspectiveIntentSource()
 
-    monkeypatch.setitem(AGENT_FLAGS, "prospective_intent_trigger", False)
-    out_off = asyncio.run(src.collect(SourceContext()))
-    assert out_off == []
-
-    monkeypatch.setitem(AGENT_FLAGS, "prospective_intent_trigger", True)
+    # prospective_intent_trigger 已退役（2026-11-12）：恒产出候选
     out_on = asyncio.run(src.collect(SourceContext()))
     assert len(out_on) >= 1
     ti = out_on[0]

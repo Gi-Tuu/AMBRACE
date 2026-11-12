@@ -19,7 +19,7 @@ _CUE_QUOTA = 260
 async def prospective_cue_section(state: dict, ctx: dict) -> list[str]:
     from app.agent.loop import AGENT_FLAGS
     # 触发开关控制（写入与触发两段灰度；触发关则不提示）
-    if not AGENT_FLAGS.get("prospective_intent_trigger", False):
+    if not True:
         return []
     char_id = state.get("character_id")
     user_text = state.get("user_message", "") or ""

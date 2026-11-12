@@ -19,11 +19,9 @@ from app.application import relational_drive_service as svc
 from app.domain.relational import drives
 from app.flags.agent_flags import AGENT_FLAGS
 
-_OPEN = svc.V1_OPEN_FLAG_KEY
-_FULL = svc.V1_FULL_FLAG_KEY
+# 2026-11-12：open/full 两把 v1 开关已退役（恒开），本文件只拨 shadow。
 _SHADOW = svc.FLAG_KEY
-_KEYS = (_OPEN, _FULL, _SHADOW)
-# 声明期默认值（autouse fixture 每条用例前会把三键强制置 False，默认值断言须读导入时快照）
+_KEYS = (_SHADOW,)
 _DECLARED = {k: AGENT_FLAGS.get(k) for k in _KEYS}
 
 
@@ -47,32 +45,26 @@ class _BoomDB:
         raise AssertionError("闸关时不得访问 db." + name)
 
 
-def test_两把键默认开_常驻_且已登记():
-    assert _DECLARED[_OPEN] is True, "批 2 常驻（2026-11-11）"
-    assert _DECLARED[_FULL] is True, "批 2 常驻（2026-11-11）"
+def test_v1_两档恒开_且shadow默认关():
+    assert svc._v1_enabled("open") is True and svc._v1_enabled("full") is True
+    assert _DECLARED[_SHADOW] is False
 
 
-@pytest.mark.parametrize("kind,key", [("open", _OPEN), ("full", _FULL)])
-def test_生效闸必须_v1_与_shadow_同时开(kind, key):
-    AGENT_FLAGS[key] = True
+def test_生效闸必须_shadow_开():
     AGENT_FLAGS[_SHADOW] = False
-    assert svc.release_enabled(kind) is False
+    assert svc.release_enabled("open", 13) is False
     AGENT_FLAGS[_SHADOW] = True
-    assert svc.release_enabled(kind, 13) is True
-    AGENT_FLAGS[key] = False
-    assert svc.release_enabled(kind, 13) is False
+    assert svc.release_enabled("open", 13) is True
 
 
 def test_灰度白名单外的角色fails_closed():
-    AGENT_FLAGS[_OPEN] = True
     AGENT_FLAGS[_SHADOW] = True
     assert svc.release_enabled("open", 13) is True          # 白名单内（char13）
     assert svc.release_enabled("open", 2) is False          # 白名单外
     assert svc.release_enabled("open", None) is False       # 缺角色 ⇒ fail-closed
 
 
-def test_只开v1未开shadow_不生效并告警(caplog):
-    AGENT_FLAGS[_OPEN] = True
+def test_shadow关时不生效并告警(caplog):
     with caplog.at_level("WARNING"):
         assert svc.release_enabled("open", 13) is False
     assert any("relational_drive_shadow is OFF" in r.message for r in caplog.records)
@@ -174,7 +166,6 @@ def _read_level(factory, drive_key="longing"):
 def test_开口释放写入水位与比例(db_env):
     factory, _engine = db_env
     _seed(factory, level=10.0)
-    AGENT_FLAGS[_OPEN] = True
     AGENT_FLAGS[_SHADOW] = True
 
     async def _run():
@@ -195,7 +186,6 @@ def test_开口释放写入水位与比例(db_env):
 def test_全额释放清零且二次调用幂等(db_env):
     factory, _engine = db_env
     _seed(factory, level=8.0)
-    AGENT_FLAGS[_FULL] = True
     AGENT_FLAGS[_SHADOW] = True
 
     async def _run():
@@ -219,7 +209,6 @@ def test_全额释放清零且二次调用幂等(db_env):
 def test_超出归属窗不释放(db_env):
     factory, _engine = db_env
     _seed(factory, level=8.0, sent_minutes_ago=25 * 60)  # 25 小时前 > 24h 窗
-    AGENT_FLAGS[_FULL] = True
     AGENT_FLAGS[_SHADOW] = True
 
     async def _run():
