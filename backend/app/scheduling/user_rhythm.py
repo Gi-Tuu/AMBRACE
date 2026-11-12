@@ -2,7 +2,7 @@
 
 - 纯函数 infer_active_hours / hourly_rhythm_weight 便于单测；
 - learn_user_rhythm 把结果落库 user_rhythm（幂等 upsert）；
-- get_rhythm_weight 供 arbiter 做时段权重/推迟（Feature Flag proactive_user_rhythm，默认开可回退）。
+- get_rhythm_weight 供 arbiter 做时段权重/推迟（2026-11-12 起常驻，原 flag proactive_user_rhythm 已退役）。
 """
 import json
 import time
@@ -170,9 +170,7 @@ async def get_rhythm_weight(user_id: int, cn_hour: int) -> float:
 
     带 60s 进程内缓存；首次/过期（>STALE_AFTER_HOURS）时重学（失败静默返回 1.0，不影响现状）。
     """
-    from app.agent import loop as _loop
-    if not _loop.AGENT_FLAGS.get("proactive_user_rhythm", True):
-        return 1.0
+    # 2026-11-12 常驻化退役 flag：作息学习恒开（原 proactive_user_rhythm 守卫已移除）
     now_ts = time.time()
     cached = _weight_cache.get(user_id)
     if cached and now_ts - cached[0] < 60:

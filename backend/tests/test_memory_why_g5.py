@@ -72,6 +72,10 @@ async def _seed(uid=9551, cid=9561, with_event=True, receipt=False):
             db.add(ChatMessage(id=999001, session_id=sess.id, sender_type="user",
                                content="占位（非来源行）"))
         if receipt:
+            # 共享沙箱 + 批 1A 后回执默认开（fire-and-forget）可能留下同 id 脏行 → 先清再种
+            from sqlalchemy import delete as _delete
+            await db.execute(_delete(MemoryWriteReceipt).where(
+                MemoryWriteReceipt.memory_id == mid))
             db.add(MemoryWriteReceipt(character_id=cid, memory_id=mid,
                                       action="create", reason="g5 测试"))
         await db.commit()

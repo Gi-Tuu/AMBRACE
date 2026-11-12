@@ -71,9 +71,6 @@ _FLAG_ROWS: list[tuple] = [
     ('agent_context_trim', 'agent', 103, False, '上下文按热度裁剪',
      '常聊的角色带入更多背景，少聊的角色精简带入，更省资源。',
      'Trim context by activity', 'Characters you talk to often get richer context; rarely used ones get a lighter version.'),
-    ('agent_trace_group', 'agent', 104, False, '群聊过程记录',
-     '记录群聊里每次回应的判断过程，只用于排查问题，不影响回复内容。',
-     'Group chat trace', 'Records how each group reply was decided; troubleshooting only, replies unaffected.'),
     ('context_budget_reserve', 'agent', 105, False, '长对话预算预留与裁剪留痕',
      '对话很长时，先给回复和工具各留出一块空间，再对超出的背景内容做取舍，并记下这次裁掉了什么，'
      '避免要紧的部分被悄悄丢掉却查不到。',
@@ -111,9 +108,6 @@ _FLAG_ROWS: list[tuple] = [
     ('proactive_naturalness_score', 'proactive', 201, False, '主动消息自然度评分',
      '发出前先打分，太生硬就重写一次，仍然别扭就不发。',
      'Naturalness scoring', 'Messages are scored before sending; awkward ones are rewritten once, then dropped.'),
-    ('proactive_user_rhythm', 'proactive', 202, False, '作息学习',
-     '学习你的活跃时段，把不重要的消息留到你在线时再发。',
-     'Learn your routine', 'Learns when you are active and holds low-priority messages until then.'),
     ('proactive_inactive_char_skip', 'proactive', 203, False, '久未互动的角色免打扰',
      '近一天没有互动的角色不再主动搭话，把额度留给常聊的角色。',
      'Skip quiet characters', 'Characters with no interaction for a day stop reaching out, leaving room for the ones you use.'),
@@ -149,7 +143,7 @@ _FLAG_ROWS: list[tuple] = [
 
     # A39 批 2a（10-09）：实验闸，默认关＝记约定的方式与现在逐字节一致
     ('proactive_clock_precise', 'proactive', 211, False, '按你给的钟点提醒（实验）',
-     '开启后，它记录你说的未来约定时会把具体钟点也记下来（例如「明早八点叫我」记成 08:00，而不是「明天某一天」），于是只在到点前后提起，不会提前大半天就念叨。默认关闭。',
+     '开启后，它记录你说的未来约定时会把具体钟点也记下来（例如「明早八点叫我」记成 08:00，而不是「明天某一天」），于是只在到点前后提起，不会提前大半天就念叨。默认开启（2026-11-11 起常驻）。',
      'Reminds at the agreed clock time (experiment)', 'When on, future promises keep the exact clock time (e.g. "call me at 8 tomorrow" is stored as 08:00 rather than "somewhere tomorrow"), so it brings them up only around that time. Off by default, and while off promises are recorded exactly as before.'),
 
     # A39 批 2b（10-09）：闸②读数层，默认两个都关＝一条额外查询都不发
@@ -157,7 +151,7 @@ _FLAG_ROWS: list[tuple] = [
      '开启后，它在生成主动消息前会先回头看一眼现状（比如你那句话之后有没有接着说别的、那个话头还算不算未完成），并把判断结果记进开发日志；**这一步不改变它发不发消息**，只攒读数。默认关闭，关闭时不会多查任何东西。',
      'Re-check the current state before speaking (log only, experiment)', 'When on, before generating a proactive message it re-reads the current state (did you say something after that, is the thread still open) and logs the verdict. This step does not change what gets sent; off by default, and while off no extra lookups happen at all.'),
     ('proactive_freshness_gate', 'proactive', 213, False, '开口前先看现状，过期就不说',
-     '开启后，上一步的判断真的会生效：如果那件事已经不用提了（你已经接着说过、或话题早已收尾），这条主动消息就不生成、不花这次调用。需要同时打开上一项才有效果。默认关闭。',
+     '开启后，上一步的判断真的会生效：如果那件事已经不用提了（你已经接着说过、或话题早已收尾），这条主动消息就不生成、不花这次调用。需要同时打开上一项才有效果。默认开启（2026-11-11 起常驻）。',
      'Skip stale proactive messages', 'When on, the re-check above takes effect: if the matter no longer needs raising (you already moved on, or the thread closed), that proactive message is not generated and not billed. Requires the log-only switch above. Off by default.'),
 
     # A40（A37 批 3，10-10）：闸③两档（发送前最后一眼），默认两个都关＝一条额外复查都不发
@@ -234,6 +228,18 @@ _FLAG_ROWS: list[tuple] = [
      '同一轮主动检查里只查一次角色集合，减少重复数据库查询（默认关）。',
      'Proactive tick cache',
      'Queries the active character set once per proactive tick instead of repeatedly (off by default).'),
+    ('working_state_parse_tolerant_v1', 'memory', 724, False, '工作记忆容错解析',
+     '模型输出夹带文字或截断时容错提取 JSON 并重试一次，避免工作记忆写入被静默丢弃（默认关）。',
+     'Working state tolerant parsing',
+     'Tolerantly parses working-state JSON and retries once so the write is not silently dropped (off by default).'),
+    ('vector_content_check_v1', 'memory', 723, False, '向量内容对账',
+     '比对库内内容哈希与向量 metadata，发现同 ID 内容漂移并补建（默认关）。',
+     'Vector content consistency',
+     'Detects and repairs vectors whose stored content hash drifted from the database (off by default).'),
+    ('memory_content_revision_v1', 'memory', 721, False, '内容改写闭环',
+     '手动改写记忆内容后同步证据键并留痕，避免证据与内容失配（默认关）。',
+     'Content revision closure',
+     'Keeps the evidence key in sync when memory content is edited (off by default).'),
     ('memory_grading_v1', 'memory', 719, False, '记忆分级落地',
      '未标注的记忆不再被当成事实，推断与计划不会晋升为核心记忆（默认关）。',
      'Memory grading enforcement',
@@ -286,7 +292,7 @@ _FLAG_ROWS: list[tuple] = [
      'so the notification shows it in full; the chat history still keeps everything. Off by default.'),
     ('thought_pool_v1', 'outreach_natural', 15, False, '聊天话题储备真正派上用场',
      '把后台整理好的话题储备，在角色主动开口或聊天时真正用作谈资（只换「聊哪件事」，'
-     '不改变何时发、发几条和任何发送时机）。默认关闭。',
+     '不改变何时发、发几条和任何发送时机）。默认开启（2026-11-11 起常驻）。',
      'Put the topic reserve to actual use',
      'Lets the character actually draw on the background topic reserve when it reaches out or chats '
      '(it only changes which thing to talk about, never when or how many messages are sent). '
@@ -385,12 +391,12 @@ _FLAG_ROWS: list[tuple] = [
      'Rate a few times before deciding',
      'When scoring what it has noted down, it scores a few times and looks at the majority; the score actually used stays the same as now. Off by default.'),
     ('relational_drive_open_v1', 'outreach_natural', 16, False, '开口只消一部分惦记',
-     '角色主动开口之后，这份惦记只消掉一部分，剩下的留到下次再说；不改变发什么、发几条、什么时候发。默认关闭。',
+     '角色主动开口之后，这份惦记只消掉一部分，剩下的留到下次再说；不改变发什么、发几条、什么时候发。默认开启（2026-11-11 起常驻）。',
      'Partial release after reaching out',
      'After the character reaches out, that particular pang is only partly eased and the rest stays for next time; '
      'it changes nothing about what, how many, or when messages are sent. Off by default.'),
     ('relational_drive_full_v1', 'outreach_natural', 17, False, '被回应后这一桩就翻篇',
-     '你在它刚主动开口之后回话，这一桩惦记就清掉；隔得太久（超过一天）或没回就不清。默认关闭。',
+     '你在它刚主动开口之后回话，这一桩惦记就清掉；隔得太久（超过一天）或没回就不清。默认开启（2026-11-11 起常驻）。',
      'Cleared once you reply',
      'If you reply shortly after it reached out, that particular pang is cleared; if too much time has passed '
      '(over a day) or you never reply, it stays. Off by default.'),
@@ -535,15 +541,9 @@ _FLAG_ROWS: list[tuple] = [
      'Per-session rate limit', 'Caps messages per session with a minimum gap, avoiding back-to-back pings.'),
 
     # ── 主动复习与回忆化（H）──
-    ('review_exclude_expired_plan', 'review', 1301, False, '复习跳过过期安排',
-     '回忆时不再挑入已经过期的安排和只属于当时的心情状态，怀旧话题每天最多提一次。',
-     'Skip expired plans in review', 'Recalls skip expired plans and momentary states, and nostalgic topics come up at most once a day.'),
     ('review_reinforce_event_cap', 'review', 1302, False, '一次性事件强化上限',
      '一次性事件被反复回忆的次数设上限，避免过度强化。',
      'Cap one-off event reinforcement', 'Limits how often a one-off event can be reinforced.'),
-    ('review_reminisce_framework', 'review', 1303, False, '回忆化口吻',
-     '回忆往事时用更自然的怀旧口吻，而不是当成正在发生的事。',
-     'Reminiscence tone', 'Recalls the past in a nostalgic voice instead of presenting it as ongoing.'),
     ('review_plan_expire_stale', 'review', 1304, False, '过期安排自动标记',
      '每日维护时把过期的安排自动标为已过时。',
      'Auto-expire stale plans', 'Daily maintenance marks expired plans as outdated.'),
@@ -575,12 +575,6 @@ _FLAG_ROWS: list[tuple] = [
      'off by default — confirm your backup routine first.'),
 
     # ── 工具轨迹治理 ──
-    ('agent_trace_scheduler_only_executed', 'tool_trace', 1501, False, '只记录真正执行的任务',
-     '没有触发的定时任务不再写日志，减少无用记录。',
-     'Log only executed tasks', 'Scheduled tasks that did not fire are no longer logged, cutting noise.'),
-    ('agent_trace_scheduler_mark_exec_error', 'tool_trace', 1502, False, '执行失败标记为错误',
-     '真正执行失败的任务记为失败，而不是记为未触发。',
-     'Mark execution failures as errors', 'Tasks that actually failed are marked failed instead of blocked.'),
     ('mcp_stream_declarations', 'tool_trace', 1503, False, '流式会话工具声明',
      '流式回复也能带上可用工具的说明。',
      'Tool declarations in streaming', 'Streaming replies also carry the list of available tools.'),

@@ -29,8 +29,9 @@ _logger = get_logger("api.games")
 
 
 def _lazy_lock(session_id: int) -> asyncio.Lock:
-    from app.api import games as _g
-    return _g._ai_turn_locks.setdefault(session_id, asyncio.Lock())
+    # P2-3（2026-11-11）：锁表所有权已下沉 app/games/runtime，直接取运行时
+    from app.games.runtime import lazy_lock
+    return lazy_lock(session_id)
 
 
 async def _load_char_map(char_ids: list[int], user_id: int) -> dict:
@@ -215,7 +216,6 @@ async def _abort_game(db: AsyncSession, session, engine: GameEngine, reason: str
     对齐 abort_in_place 语义：session 置 aborted、不写胜负、不写终局记忆、不广播 winner；
     清理进程内锁/WS/护栏状态（与 _settle_game 收尾对齐）；logger.error + obs_event 告警。
     """
-    from app.api import games as _g
     from app.memory.observability import obs_event
 
     sid = session.id
@@ -233,8 +233,9 @@ async def _abort_game(db: AsyncSession, session, engine: GameEngine, reason: str
         _logger.error("game abort: record_game_result failed session=%s", sid, exc_info=True)
         await db.rollback()
         await db.refresh(session)
-    _g._ai_turn_locks.pop(sid, None)
-    _g._game_ws_clients.pop(sid, None)
+    # P2-3（2026-11-11）：状态清理统一走运行时（锁 + WS 集合）
+    from app.games.runtime import cleanup_session as _cleanup_game_session
+    _cleanup_game_session(sid)
     drop_guard(sid)
     _logger.error(
         "game guard: no-draw engine aborted in place session=%d game=%s reason=%s",
@@ -246,7 +247,6 @@ async def _abort_game(db: AsyncSession, session, engine: GameEngine, reason: str
 
 
 async def _settle_game(db: AsyncSession, session, engine: GameEngine, winner: str) -> None:
-    from app.api import games as _g
     # B5（2026-09-01）：先 persist_state 把引擎内存态（含 liars_bar 的 private_json dict）
     # 序列化写回 ORM 脏字段——后续 finalize_game 的 SELECT 会触发 autoflush，
     # 不先序列化则 dict 绑 Text 列直接打爆事务（结算失败、对局卡 playing）。
@@ -290,8 +290,9 @@ async def _settle_game(db: AsyncSession, session, engine: GameEngine, winner: st
         await db.rollback()
         await db.refresh(session)
 
-    _g._ai_turn_locks.pop(sid, None)  # v3.3.5 审查修复：结算后清理进程内锁，防长期运行内存增长
-    _g._game_ws_clients.pop(sid, None)  # v3.3.6 审查修复：结算后清理 WS 空集合，防缓慢增长
+    # P2-3（2026-11-11）：状态清理统一走运行时（v3.3.5 锁 / v3.3.6 WS 集合两条清理合一）
+    from app.games.runtime import cleanup_session as _cleanup_game_session
+    _cleanup_game_session(sid)
     drop_guard(sid)  # 🛡️ 2026-09-04：结算后清理护栏进程内状态
 
 

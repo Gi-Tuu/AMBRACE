@@ -62,12 +62,15 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+# 2026-11-12：与 app/db/engine.py 同口径，测试期可用 env 加长 busy 等待。
+_BUSY_MS = __import__("os").getenv("AMBRACE_SQLITE_BUSY_MS", "10000")
+
 # 生产同款 PRAGMA（与 app/db/engine.py 的 _sqlite_pragmas 逐条对齐；顺序也保持一致）。
 # 自建 engine 不继承那个 listener，故在每条新连接的 "connect" 事件里重放一遍。
 _PRAGMAS = (
     "PRAGMA journal_mode=WAL;",         # 写前日志，单写多读并发
     "PRAGMA synchronous=NORMAL;",       # WAL 下 NORMAL 安全且更快
-    "PRAGMA busy_timeout=10000;",       # 毫秒级，与 connect_args.timeout 双保险
+    f"PRAGMA busy_timeout={_BUSY_MS};",  # 毫秒级，与 connect_args.timeout 双保险（env 可覆）
     "PRAGMA wal_autocheckpoint=1000;",  # 每 1000 页自动 checkpoint，防 -wal 无限增长
     "PRAGMA foreign_keys=ON;",          # P4（2026-09-09）：引擎强制外键
 )

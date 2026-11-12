@@ -170,18 +170,14 @@ async def _last_message_time(session_id: int) -> datetime | None:
 
 
 def _exclude_flag_on() -> bool:
-    """L1 flag（2026-09-09 主动复习「回忆化」）：选片排除过期计划/瞬时状态（默认开；关=旧选片）。"""
-    try:
-        from app.agent.loop import AGENT_FLAGS
-        return bool(AGENT_FLAGS.get("review_exclude_expired_plan", True))
-    except Exception:
-        return False
+    """L1（2026-09-09；2026-11-12 常驻化退役 flag）：选片恒排除过期计划/瞬时状态。"""
+    return True
 
 
 def _life_no_replay_on() -> bool:
     """L4 flag（2026-09-09 主体归属治理）：一次性生活动作不主动复读（默认关；关=维持现选片）。
 
-    与「回忆化」L1 的 review_exclude_expired_plan 同属一批 flag 体系，不另起第二套。
+    与「回忆化」L1（已常驻化）同属一批选片口径，不另起第二套。
     """
     try:
         from app.agent.loop import AGENT_FLAGS
@@ -191,12 +187,8 @@ def _life_no_replay_on() -> bool:
 
 
 def _reminisce_flag_on() -> bool:
-    """L3 flag：复习生成改「回忆框架」hint + 输出闸门（默认开；关=逐字节回旧 hint）。"""
-    try:
-        from app.agent.loop import AGENT_FLAGS
-        return bool(AGENT_FLAGS.get("review_reminisce_framework", True))
-    except Exception:
-        return False
+    """L3（2026-11-12 常驻化退役 flag）：复习生成恒用「回忆框架」hint + 输出闸门。"""
+    return True
 
 
 async def collect_review_events() -> list[dict]:
@@ -219,7 +211,7 @@ async def collect_review_events() -> list[dict]:
         )).scalars().all()
         # —— L1（2026-09-09 主动复习「回忆化」）：时态过滤 ——
         # 过期计划不再主动当新闻提（仍可检索、降权可怀旧）；瞬时状态不进主动复习（走 world_facts）。
-        # flag review_exclude_expired_plan 关 = 逐字节回到旧选片行为。
+        # （2026-11-12：原 review_exclude_expired_plan 开关已退役，选片恒排除过期计划。）
         try:
             if _exclude_flag_on():
                 mems = [m for m in mems

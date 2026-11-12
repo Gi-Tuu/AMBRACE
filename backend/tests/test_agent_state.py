@@ -354,7 +354,7 @@ def test_utility_feedback_zero_state_change_when_flag_off(monkeypatch):
     from app.agent.loop import AGENT_FLAGS
     from app.memory import utility_feedback as uf
 
-    assert AGENT_FLAGS.get("memory_utility_feedback") is False   # 预注册默认关
+    assert AGENT_FLAGS.get("memory_utility_feedback") is True    # 批 1A 常驻（2026-11-11）
     monkeypatch.setitem(AGENT_FLAGS, "memory_utility_feedback", False)
 
     called = []

@@ -33,9 +33,9 @@ pytestmark = pytest.mark.slow
 
 # ───────────────────────────── 纯函数 ─────────────────────────────
 
-def test_flag_默认关():
-    """本批文件隔离不含 loop.py，键未登记进 AGENT_FLAGS；读侧默认 False 即闸门关。"""
-    assert _loop.AGENT_FLAGS.get("memory_admission_gate", False) is False
+def test_flag_默认开_常驻():
+    """批 1A 常驻（2026-11-11）：默认值转 True；用例内仍可显式关。"""
+    assert _loop.AGENT_FLAGS.get("memory_admission_gate", False) is True
 
 
 @pytest.mark.parametrize("args, exp", [

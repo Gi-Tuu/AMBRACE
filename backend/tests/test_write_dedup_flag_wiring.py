@@ -9,10 +9,10 @@ from app.memory.service import _retrievable_status_clause, current_facts_status_
 from app.memory.write import _write_dedup_active_only_on
 
 
-def test_开关已登记且默认关():
+def test_开关已登记且默认开():
     assert "write_dedup_active_only" in AGENT_FLAGS
-    assert AGENT_FLAGS["write_dedup_active_only"] is False
-    assert _write_dedup_active_only_on() is False
+    assert AGENT_FLAGS["write_dedup_active_only"] is True, "批 1A 常驻（2026-11-11）"
+    assert _write_dedup_active_only_on() is True
 
 
 def test_helper_随开关变化():

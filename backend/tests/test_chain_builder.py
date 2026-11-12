@@ -293,8 +293,9 @@ def test_链长上限12_另开root(cdb, monkeypatch):
 
 
 def test_flag关_link_noop(cdb, monkeypatch):
-    """memory_chain_builder 默认关：link_new_memory 不写任何链字段（零行为）。"""
-    # 不开启 flag（默认 False）
+    """memory_chain_builder 关：link_new_memory 不写任何链字段（零行为）。"""
+    # 批 1A 后默认开 → 本用例显式关，保留「关档零行为」判据
+    _flag_on(monkeypatch, "memory_chain_builder", False)
 
     async def _main():
         m = await _seed(cdb, user_id=1, character_id=1, memory_type="event",

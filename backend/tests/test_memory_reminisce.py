@@ -309,12 +309,6 @@ def test_collect_review_events_excludes_expired_plan(r_db, monkeypatch):
     chars = {e["candidate"]["character_id"] for e in events}
     assert chars == {103, 104}  # 过期计划/瞬时状态不进主动复习；enduring 与未过期计划正常进
 
-    # flag 关 = 回到旧选片（全部到期记忆都进候选）
-    _set_flag(monkeypatch, "review_exclude_expired_plan", False)
-    events = asyncio.run(collect_review_events())
-    chars = {e["candidate"]["character_id"] for e in events}
-    assert chars == {101, 102, 103, 104}
-
 
 def test_collect_review_events_stale_plan_also_excluded(r_db):
     """置 stale 的过期计划同样不进（时态过滤与状态双保险，不依赖 memory_supersede flag）。"""
@@ -338,11 +332,7 @@ def test_pick_contextual_memory_excludes_expired_plan(r_db, monkeypatch):
                              created_at=datetime(2026, 8, 10)))
     from app.scheduling.memory_review import _pick_contextual_memory
     got = asyncio.run(_pick_contextual_memory(201, 3, "最近怎么样"))
-    assert got == pref_id  # importance 最高的过期计划被跳过
-
-    _set_flag(monkeypatch, "review_exclude_expired_plan", False)
-    got = asyncio.run(_pick_contextual_memory(201, 3, "最近怎么样"))
-    assert got == plan_id  # flag 关 = 旧行为（按 importance 选中过期计划）
+    assert got == pref_id  # importance 最高的过期计划被跳过（常驻化后恒如此）
 
 
 # ────────────────────────── L3：回忆框架 / 闸门 / 限频 ──────────────────────────
@@ -451,24 +441,6 @@ def test_run_review_hint_reminisce_framework(run_review_env):
     import json
     meta = json.loads(captured["extra_meta"])
     assert meta == {"memory_id": m.id, "tense": "nostalgia"}
-
-
-def test_run_review_hint_flag_off_old_hint(run_review_env, monkeypatch):
-    """L3/L1 全关：逐字节回到旧 hint（含「你想起了{label}」文案），extra_meta 不含 tense。"""
-    factory, captured, _ = run_review_env
-    _set_flag(monkeypatch, "review_reminisce_framework", False)
-    _set_flag(monkeypatch, "review_exclude_expired_plan", False)
-    m = asyncio.run(_seed_memory(factory, **_plan_kw(13, content="今天在橘子洲游玩")))
-    from app.scheduling.memory_review import run_memory_review
-    ok = asyncio.run(run_memory_review(13, 3, m.id))
-    assert ok is True
-    hint = captured["hint"]
-    assert "你想起了发生过的事：" in hint
-    assert "已经发生过 / 已经过期的往事" not in hint
-    assert "现在是北京时间" in hint  # F1 仍在
-    import json
-    meta = json.loads(captured["extra_meta"])
-    assert "tense" not in meta
 
 
 def test_run_review_wrong_tense_directive_blocked(run_review_env):

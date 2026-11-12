@@ -76,6 +76,9 @@ async def add_memory(
         # #70-C BUG-2 修复：始终写 status（含 active）。否则开 flag 后 $in[active,stale]
         # 会把「缺键」的新 active 向量整批漏掉，稠密召回与写前查重静默失效。
         "status": status,
+        # P1-2（2026-11-11 架构治理）：内容哈希，供 vector_consistency 识别「同 ID 内容漂移」
+        "content_sha256": __import__("hashlib").sha256(
+            (document or content or "").encode("utf-8")).hexdigest(),
     }
     if _uid is not None:
         # A1（2026-09-19）：始终写 user_id（与 status 同理，缺键会被 scope 过滤整批漏掉）。
@@ -344,6 +347,9 @@ async def upsert_memory_vector(
         # #70-C BUG-2 修复：始终写 status（含 active）。否则开 flag 后 $in[active,stale]
         # 会把「缺键」的新 active 向量整批漏掉，稠密召回与写前查重静默失效。
         "status": status,
+        # P1-2（2026-11-11 架构治理）：内容哈希，供 vector_consistency 识别「同 ID 内容漂移」
+        "content_sha256": __import__("hashlib").sha256(
+            (document or content or "").encode("utf-8")).hexdigest(),
     }
     if _uid is not None:
         # A1（2026-09-19）：始终写 user_id（与 status 同理，缺键会被 scope 过滤整批漏掉）。

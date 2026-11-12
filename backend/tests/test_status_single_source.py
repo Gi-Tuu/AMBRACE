@@ -284,8 +284,11 @@ def test_边界一小时后仍未过期两侧同判有效(status_db):
 
 # ─────────────────────────── 5) 既有状态更新回归（零行为）───────────────────────────
 
-def test_回归_两侧字段与衰减值不变(status_db):
+def test_回归_两侧字段与衰减值不变(status_db, monkeypatch):
     """除新增 valid_to 标记外，既有写入字段/强度全部保持原样（数值未被改动）。"""
+    # 批 1A 后 admission 默认开 → 角色来源会降级；本回归判旧字段口径，显式关
+    from app.agent.loop import AGENT_FLAGS
+    monkeypatch.setitem(AGENT_FLAGS, "memory_admission_gate", False)
     _run_status_update("两人在吃晚饭")
     char, mems, facts = _rows(status_db)
     assert char.current_status == "两人在吃晚饭"

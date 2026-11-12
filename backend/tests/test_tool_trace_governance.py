@@ -59,7 +59,6 @@ def test_R1_未触发不写trace(monkeypatch):
     """本轮未触发（_execute 正常 return False、未抛错）→ 不写 agent_task_logs（默认 flag 开）。"""
     calls = _trace_calls(monkeypatch)
     loop.AGENT_FLAGS["agent_loop_scheduler"] = True
-    loop.AGENT_FLAGS["agent_trace_scheduler_only_executed"] = True
     try:
         asyncio.run(arbiter._trace_scheduler_task(_item(), False, 10))
     finally:
@@ -67,26 +66,10 @@ def test_R1_未触发不写trace(monkeypatch):
     assert calls == []
 
 
-def test_R1_未触发flag关回退旧行为(monkeypatch):
-    """flag 关 → 回到旧「每候选一条 blocked」（一键回退）。"""
-    calls = _trace_calls(monkeypatch)
-    loop.AGENT_FLAGS["agent_loop_scheduler"] = True
-    loop.AGENT_FLAGS["agent_trace_scheduler_only_executed"] = False
-    try:
-        asyncio.run(arbiter._trace_scheduler_task(_item(), False, 10))
-    finally:
-        loop.AGENT_FLAGS["agent_trace_scheduler_only_executed"] = True
-        loop.AGENT_FLAGS["agent_loop_scheduler"] = False
-    assert len(calls) == 1
-    assert calls[0]["status"] == "blocked"
-    assert calls[0]["error"] == "限额/条件拦截（本轮未触发）"
-
-
 def test_R1_真执行失败记error(monkeypatch):
     """真进入执行却失败（_execute 抛错，exec_error=True）→ 记 status=error（不是 blocked）。"""
     calls = _trace_calls(monkeypatch)
     loop.AGENT_FLAGS["agent_loop_scheduler"] = True
-    loop.AGENT_FLAGS["agent_trace_scheduler_mark_exec_error"] = True
     try:
         asyncio.run(arbiter._trace_scheduler_task(_item(char_id=7), False, 33, exec_error=True))
     finally:
@@ -96,20 +79,6 @@ def test_R1_真执行失败记error(monkeypatch):
     assert calls[0]["route"] == "scheduler"
     assert "主动任务执行失败" in (calls[0]["error"] or "")
     assert "exec_error" in calls[0]["steps_json"]
-
-
-def test_R1_真执行失败_mark_flag关回blocked(monkeypatch):
-    """mark flag 关 → 真失败仍记 blocked（保留回退路径）。"""
-    calls = _trace_calls(monkeypatch)
-    loop.AGENT_FLAGS["agent_loop_scheduler"] = True
-    loop.AGENT_FLAGS["agent_trace_scheduler_mark_exec_error"] = False
-    try:
-        asyncio.run(arbiter._trace_scheduler_task(_item(), False, 5, exec_error=True))
-    finally:
-        loop.AGENT_FLAGS["agent_trace_scheduler_mark_exec_error"] = True
-        loop.AGENT_FLAGS["agent_loop_scheduler"] = False
-    assert len(calls) == 1
-    assert calls[0]["status"] == "blocked"
 
 
 def test_R1_成功仍记ok(monkeypatch):

@@ -40,6 +40,8 @@ def test_memory_receipt_failure_leaves_no_authority_and_retries(monkeypatch):
     from app.db.database import async_session_factory
 
     monkeypatch.setitem(AGENT_FLAGS, "memory_source_proof_v1", True)
+    # 批 1A 后普通回执默认也写（fire-and-forget）→ 本用例只验绑定失败无权威落库，显式关掉免跨用例竞态
+    monkeypatch.setitem(AGENT_FLAGS, "memory_write_receipt", False)
 
     async def fake_model(*args, **kwargs):
         p = args[1]

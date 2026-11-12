@@ -35,7 +35,7 @@ SEARCH_RETRY = 1  # 只读工具失败自动重试次数（方案 5.2）
 # agent_loop_scheduler 开=arbiter 主动任务写 AgentTask trace（含 10% 角色 route=scheduler_gray 对比标记 + 灰度角色真实任务记录）；
 # agent_loop_chat 开=主链路日历/备忘等本地工具经统一执行入口 execute_tool；
 # agent_tool_events（已固化常开，2026-09-17 用户拍板：功能常驻不下放）：工具执行联动织库增量（tool.executed 订阅）
-# agent_trace_group 开=群聊角色回应写 AgentTask trace（只写不读可观测）；
+# 群聊角色回应写 AgentTask trace（只写不读可观测；原 agent_trace_group 开关 2026-11-12 退役）；
 # agent_daily_reflection（已固化常开，2026-09-17 用户拍板：功能常驻不下放）：周复盘（每 7 天 1 次）
 # agent_reflection_inject（已固化常开，2026-09-17 用户拍板：功能常驻不下放）：主动消息注入最近复盘（反思驱动）
 # agent_context_trim 开=认知注入按角色热度裁剪（低频角色缩小日摘要/织库）；

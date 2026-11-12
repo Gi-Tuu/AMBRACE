@@ -117,6 +117,38 @@ def _norm_entry(raw: dict, bucket: str) -> dict | None:
     return entry
 
 
+PARSE_TOLERANT_FLAG = "working_state_parse_tolerant_v1"
+
+
+def parse_tolerant_enabled() -> bool:
+    """容错解析档开关（默认关＝旧行为）。"""
+    from app.flags.agent_flags import AGENT_FLAGS
+    return bool(AGENT_FLAGS.get(PARSE_TOLERANT_FLAG, False))
+
+
+def parse_json_tolerant(raw) -> dict | None:
+    """容错解析 LLM 输出（P3 修复，2026-11-11）。
+
+    生产观测：`working_state_skipped` 中 **89.8% 为 `bad_json`**（模型输出夹带解释文字／被 600 token 截断），
+    导致工作记忆从未落库。本函数：去代码围栏 → 取首个 `{` 到末个 `}` 的区段 → 再解析；失败返回 None。
+    纯函数、无副作用；仅由服务层在 flag 开时调用。
+    """
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.startswith("json"):
+            text = text[4:]
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        import json as _json
+        return _json.loads(text[start:end + 1])
+    except Exception:  # noqa: BLE001 —— 解析失败＝本轮跳过（与原口径一致）
+        return None
+
+
 def validate_desired(raw) -> dict | None:
     """LLM 原始输出 → 规范化期望三桶；形状完全非法返回 None（fail-open 跳过本轮）。"""
     if not isinstance(raw, dict):

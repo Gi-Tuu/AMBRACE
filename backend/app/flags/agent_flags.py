@@ -8,7 +8,6 @@ AGENT_FLAGS = {
     "agent_loop_scheduler": True,  # 2026-08-17 全量基线（开源包）：主动任务 trace + 10% 灰度 route 对比
     "agent_loop_chat": True,
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：agent_tool_events（工具执行联动织库增量）
-    "agent_trace_group": True,
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：agent_daily_reflection（周复盘）
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：agent_reflection_inject（主动消息注入最近复盘）
     "agent_context_trim": True,  # 认知注入按角色热度裁剪（2026-08-16）
@@ -21,7 +20,6 @@ AGENT_FLAGS = {
     "agent_social_light_context": True,
     "weave_3d": True,  # 织网 3D（P2 转默认开；仅客户端画布读它选 2D/3D 视图；低端机客户端自动降级 2.5D）
     "proactive_naturalness_score": True,  # #28 ①（2026-08-24）：低优先主动消息自然度评分——生成后按规则评分，低于阈值重试 1 次/仍低则降级跳过；关=纯现状
-    "proactive_user_rhythm": True,  # #28 ②（2026-08-24）：用户作息学习——从聊天/主动日志推断活跃时段，低优先主动消息在时段外降优先级/推迟；关=纯现状
     # 群聊游戏 Phase 1（2026-08-26）：总开关=群聊游戏（各游戏/记忆指针/AI 自动回合开关已于 2026-09-17 从字典删除，功能常驻）。
     #   读侧仍留着 `api/games.py` 的 AGENT_FLAGS.get(f"game_{类型}", True) 两处按类型查询——键不在字典 ⇒ **恒回落 True**，要真按类型关必须先把键加回字典
     "group_chat_games": True,        # 游戏总开关（关=游戏入口/API 不展示，可回退）
@@ -37,8 +35,8 @@ AGENT_FLAGS = {
     # proactive_outreach_v2（B1-③，2026-09-04，方案 §1-§9）=主动消息自然化总开关——
     #   开=run_tick 汇总层按「闲置分级+素材前提+避开最近意图」选接触意图，message_generator 走意图分支；
     #   关=意图不参与、走旧链路逐字节等价（默认关，可灰度/一键回退）。
-    "memory_chain_builder": False,
-    "memory_chain_expand": False,
+    "memory_chain_builder": True,
+    "memory_chain_expand": True,
     # ── 批 0-7（2026-09-28，雷达 08）召回排序显式 recency ＋ 命中记忆的相邻块 ──
     # 两个独立开关（可只开其一：①纯打分、②多一条只读查询），**均默认 False＝逐字节旧行为**。
     # 为什么不用既有 flag 承载：memory_temporal_recall / memory_recall_second_hop / memory_peak_cutoff /
@@ -100,6 +98,9 @@ AGENT_FLAGS = {
     "spring_emotion_enabled": True,      # 机制1：弹簧-阻尼情绪（4 维 + 人格基线）
     "life_share_enabled": True,          # 机制4：活动完成自然分享（arpiter 门控 + 配额）
 "life_state_semantics_v1": False,     # M2（2026-11-05 用户拍板 C）：energy=短期体力、fatigue=长期疲劳分工；decision 两级判；默认关＝旧判据
+"working_state_parse_tolerant_v1": False,  # P3（2026-11-11 根因修复）：工作记忆 JSON 容错解析＋重试＋预算 900；默认关＝旧路径
+"vector_content_check_v1": False,      # P1-2（2026-11-11 架构治理）：向量侧内容哈希对账（同 ID 内容漂移识别＋补建）；默认关＝行为不变
+"memory_content_revision_v1": False,  # P1-1（2026-11-11 架构治理）：改内容后重算证据键 write_key 并留回执；默认关＝旧行为
 "life_state_dead_fields_v1": False,   # M2b（2026-11-07）：focus 派生只读化（读写点都从 energy 现算）+ mood_delta 死字段停写；默认关＝旧写入
 "vector_auto_repair": False,          # M-01 补建（2026-11-07）：向量对账 tick 对 missing 清单重嵌补建；默认关＝只告警不修复
 "proactive_tick_cache": False,        # M3a（2026-11-04）：主动 tick 内 get_active_characters 只查一次；默认关＝逐次直查
@@ -138,22 +139,22 @@ AGENT_FLAGS = {
     # ── #70 附录 C 可选 M3：记忆写入回执（memory_write_receipt，2026-09-15 落地；默认关=零写入、零行为变化）──
     # memory_write_receipt 开=save_memory 写分支 / supersede_memory 异步写 memory_write_receipts
     #   （终态追踪「这条记忆为什么在/不在」）；关=完全跳过（不写不读，逐字节旧链路）。
-    "memory_write_receipt": False,
+    "memory_write_receipt": True,
     # M2 2a：来源证明权威链默认关；关=旧路径逐字节不变、零写入（2a 不接聊天）
     "memory_source_proof_v1": False,
     # Ariadne 模块F（2026-09-04）：Curated Knowledge 编纂知识层（world_facts 加 kind 分治 + 确定性注入）
     "curated_knowledge": True,  # 已转正（2026-10-02）：生产自 2026-09-05 起已开、非灰度；默认改为开（行为与现网一致），回退＝置 False
     # Ariadne 模块G（2026-09-04）：前瞻意图。enabled=写入（extractor 便车落表）；
     # trigger=触发（时间型 Scheduler 提起 + 线索型 context 注入）。两段灰度：先开 enabled 攒数据，再开 trigger。
-    "prospective_intent_enabled": False,
-    "prospective_intent_trigger": False,
+    "prospective_intent_enabled": True,
+    "prospective_intent_trigger": True,
     # A39 批 2a（10-09）：开＝提取侧允许写精确时刻（YYYY-MM-DD HH:MM），clock 承诺不再被压成「当天全天」（现网 id=160 提前 55′29″ 那类）；关＝提示词与解析结果逐字节旧行为。
     # 解析两种格式都收，所以本闸只门控「提示词是否要求写时刻」——模型不写，行为就不变。
-    "proactive_clock_precise": False,
+    "proactive_clock_precise": True,
     # A39 批 2b（10-09）：闸②「生成前重取现状」的两段式开关。shadow＝只读数＋打一条 [fresh=…] 留痕，
     # 发不发照旧；gate＝判定为 cancel 时真的不调模型、不发。两个都关＝一条额外查询都不发（守卫按计数桩钉住）。
     "proactive_freshness_shadow": False,
-    "proactive_freshness_gate": False,
+    "proactive_freshness_gate": True,
     # A40（A37 批 3，10-10）：闸③「发送前最后一眼」的两档开关，只管**非 arbiter 的发送口**
     # （C28 剧情切片 flush / C39 通知提及 / C18·C19 后台型落库前）。
     # shadow＝只读数打一条 [gate3=…] INFO 留痕，发不发照旧；enforce＝命中即不发送并**回滚消费标记**
@@ -186,7 +187,7 @@ AGENT_FLAGS = {
     "user_current_location_share": True,
     # cross_char_fact_sync：跨角色对齐——开=角色构建上下文前惰性对齐 + 每日 sweep，把同槽旧值
     #   per-char 记忆标 stale（复用 #70，不删可追溯）；关=不对齐。
-    "cross_char_fact_sync": False,
+    "cross_char_fact_sync": True,
     # cross_char_fact_projection：变化投影——开=对齐时按模板投影一条 global_sync 记忆进记忆本
     #   （零 LLM，skip_dedup）；关=只标 stale + 靠 [USER NOW] 注入（默认推荐关）。
     "cross_char_fact_projection": False,  # 〔A19处置·预留（10-02 拍）＝依赖 cross_char_fact_sync 先开，投影形态未定版〕
@@ -201,40 +202,20 @@ AGENT_FLAGS = {
     #   关=append_domain_event 首行即 return，全链路零写入、零行为变化（一键回退，无需回滚代码/迁移）。
     #   默认关（灰度）；开法：本 key 已登记进 AGENT_FLAGS，重启服务加载新代码后即可经
     #   flag_service.set_runtime_flag（写 runtime_flags 行 + 热更新内存）API 热切，无需再重启。
-    "domain_event_log_enabled": False,  # 默认关（设计硬要求 + 用例钉死：新装不得默认写放大）；生产已由 runtime_flags 拨开（2026-09-08）
+    "domain_event_log_enabled": True,  # 默认关（设计硬要求 + 用例钉死：新装不得默认写放大）；生产已由 runtime_flags 拨开（2026-09-08）
     # domain_event_retention_days：事件流水保留天数（P1，方案 §8.5）。0=永久保留（本地优先默认）；
     #   >0 时由定时清理任务（每 6h）删除超期 domain_events 行。runtime_flags 只支持 bool 覆盖，
     #   本项为硬编码默认值；误配非法值按 0 处理（宁可多留不误删）。
     "domain_event_retention_days": 0,
-    # ── 工具轨迹治理 R1（2026-09-09，方案 §4.1）──
-    # agent_trace_scheduler_only_executed 开=主动任务「本轮未触发」（_execute 正常 return False、
-    #   未抛错）不再写 agent_task_logs（止血写放大），评估流水回归 proactive_trigger_logs
-    #   （已有 5min 节流）；关=回到旧「每候选一条 blocked」。
-    # agent_trace_scheduler_mark_exec_error 开=真正进入执行却失败（_execute 抛错）记 status=error
-    #   （而非 blocked），保留「真失败」可观测性；关=回 blocked。
-    "agent_trace_scheduler_only_executed": True,
-    "agent_trace_scheduler_mark_exec_error": True,
-    # ── 工具轨迹治理 R6（2026-09-09，方案 §4.6）──
-    # chat_tools_list_real_only（已固化常开）：私聊气泡「调用能力」只列本轮真实用到的能力（中文、去重、
-    #   上限、隐藏内部工具），不再把「全部启用中插件」的英文 id 拼成一坨（2026-09-17 固化常开，不再回退旧行为）。
-    # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：chat_tools_list_real_only（私聊气泡只列本轮真实能力）
-    # ── 工具轨迹治理 R3（2026-09-09，方案 §4.3.1）──
-    # mcp_stream_declarations 开=流式会话也注入 MCP 工具声明（前提：#59 流尾 tool_result 通道已上线，
-    # 见 application/chat/streaming.py run_stream_mcp_tool_stage + sink("tool_result", …)）；
-    # 关=流式不注入（旧行为，零变化）。默认关（灰度验证后再全量）。
     "mcp_stream_declarations": False,  # 默认关（用例钉死：test_mcp_phase2::test_mcp_declarations_stream_empty）；生产已由 runtime_flags 拨开（2026-09-08）
     # ── 主动复习「回忆化」+ 过期计划记忆治理（2026-09-09，L0-L4）──
     # 设计意图（用户定调）：复习=回忆/怀旧，把旧记忆当往事回味，不当"当前仍成立/即将发生"续写叮嘱。
-    # review_exclude_expired_plan 开=复习选片/情境复习排除过期计划与瞬时状态（L1，默认开；关=旧选片）；
     # review_reinforce_event_cap 开=一次性事件经"主动复习成功"强化按 tense 分流收口（L2：过期计划
     #   S≤10/次数≤3，往事适度 S≤30/次数≤6，达上限退出复习轮转；检索/写入通道不受影响；默认开）；
-    # review_reminisce_framework 开=复习 hint 改「回忆框架」+ 时态口吻 + 现状锚点（L3，默认开；关=逐字节回旧 hint）；
     #   注：输出本地闸门（memory_review.py 的 _is_wrong_tense_directive，拦"当下叮嘱式回忆"）**不受本键门控**，一直生效；
     # review_plan_expire_stale 开=每日维护把过期计划自动置 stale（L4，默认关灰度）；
     # review_plan_validity_extract 开=提取/写入侧给计划写 valid_to（L4，默认关灰度）。
-    "review_exclude_expired_plan": True,
     "review_reinforce_event_cap": True,
-    "review_reminisce_framework": True,
     "review_plan_expire_stale": False,
     "review_plan_validity_extract": False,
     # ── A4 批 1 / T3：事实生命周期策略表（2026-09-26 落 P0–P2；2026-09-29 B9 判读后进 P4）──
@@ -281,7 +262,7 @@ AGENT_FLAGS = {
     "promise_self_side_split": True,
     "timer_render_subject_fix": True,
     "proactive_topic_guard": False,
-    "life_event_no_replay": False,
+    "life_event_no_replay": True,
     "life_memory_write_retry": True,
     # ── #72 PR-C 群聊认知升级（group_cognition_v2，2026-09-15）──
     # group_cognition_v2 开=群聊认知能力（P1 纯数据层 + P2 共享记忆接线已合；P3 逐角色认知
@@ -297,13 +278,13 @@ AGENT_FLAGS = {
     # 开＝world_facts 写入前做元信息拦截 / 同义查重合并 / 矛盾冲突改走裁决（app/events/facts.py）；
     #   关＝逐字节旧行为。**此前只在 facts.py 读取、未登记进本表**，导致 runtime_flags 写 1 也不生效
     #   （flag_service 只合并「已登记键」）——灰度会白开，故补登记。
-    "memory_admission_gate": False,
+    "memory_admission_gate": True,
     # ── 批次四（2026-09-16）：主动消息分块口径护栏（允许分块，禁止残句/空块；生成前校验现实约束）──
     # 开＝分块时过滤残句/空块并做现实校验；关＝逐字节现状。
     "proactive_segment_guard": False,
     # ── 小增量（2026-09-16）：召回后效用反馈（Slowave 式），用于调 salience/衰减 ──
     # 开＝召回后异步写轻量反馈并据此微调；关＝零行为变化。
-    "memory_utility_feedback": False,
+    "memory_utility_feedback": True,
     # ── X6 主动内容策略包外放（2026-09-16 落地）──
     # proactive_strategy_plugins 开＝「内容策略」交给策略包：内核向 proactive_candidate hook
     #   下发 roster（选人结果），被接管的策略源（本轮仅 special）整体让位；关=内核各策略源
@@ -339,14 +320,14 @@ AGENT_FLAGS = {
     # 灰度双条件：本开关开 **且** 角色命中 scheduling/message_generator.py 的
     #   TWO_PASS_TRACE_GRAY_CHARS（沿用 char13 灰度先例，当前仅 char13）。
     # 回退：置回 False（runtime_flags 热切，无需重启）。默认关=零行为变化。
-    "two_pass_trace": False,
+    "two_pass_trace": True,
     # ── C12b（2026-09-26）：two-pass 白名单放开总开关（默认关）──
     # 开=两遍重读不再看灰度白名单 TWO_PASS_TRACE_GRAY_CHARS（对所有角色生效）；
     #   关=**逐字旧行为**（仍须角色命中白名单，当前仅 char13）。默认关=零行为变化。
     # 前置：主开关 two_pass_trace 必须同时为开，本键单独开不产生任何行为；
     #   判定口径见 scheduling/message_generator.py: two_pass_trace_allowed()。
     # 回退：置回 False（runtime_flags 热切，无需重启）。
-    "two_pass_trace_all_chars": False,
+    "two_pass_trace_all_chars": True,
     # ── P1 压缩存活项清单（2026-09-23，雷达 §2）──
     # 开=上下文装配时注入一块确定性「存活项清单」（当前目标 / 未决问题·计划 / 硬约束），并拼进
     #   日摘要生成 prompt 要求这些字段原文保留；清单块在 system 超预算裁剪时优先级 2，
@@ -355,7 +336,7 @@ AGENT_FLAGS = {
     # 灰度双条件：本开关开 **且** 角色命中 agent/context_builder.py 的
     #   SURVIVAL_CHECKLIST_GRAY_CHARS（沿用 char13 灰度先例，当前仅 char13）。
     # 回退：置回 False（runtime_flags 热切，无需重启）。默认关=零行为变化。
-    "survival_checklist": False,
+    "survival_checklist": True,
     # ── P2a 上下文预算预留（2026-09-23，雷达 §3）──
     # 开=系统块总硬顶先减去两块预留（回复 REPLY_RESERVE_TOKENS=800 + 工具声明
     #   TOOL_DEFS_RESERVE_TOKENS=500，见 agent/context_builder.py）再判定超限裁剪，
@@ -404,8 +385,8 @@ AGENT_FLAGS = {
     # 全额档：用户发言后按「最近一条未接住的主动消息」把该驱力清零。
     # 两把键都要叠加 relational_drive_shadow（release_* 在影子关时会静默早退；只开本键会打 WARNING）。
     # 关＝**逐字节旧行为**（不 settle、不释放、一次 SELECT 都不发）。回退＝置回 False（热切）。
-    "relational_drive_open_v1": False,
-    "relational_drive_full_v1": False,
+    "relational_drive_open_v1": True,
+    "relational_drive_full_v1": True,
     # ── A14（2026-10-01）：AI 评星「多轮共识写回」· **M0 干跑**（默认关）──
     # 开＝只对灰度角色（char13）**多跑 N-1 轮评星并把各轮星分 + 共识写进留痕**，
     #   **写回仍用第 1 轮值** ⇒ 零行为、可与现行口径直接对照（判效见小方案 §5）。
@@ -449,7 +430,7 @@ AGENT_FLAGS = {
     # 2026-10-12 用户授权：影子判效完成后升 on，只对白名单∧稳定桶真生效；非 bool 档位重启后加载。
     "emotion_drive_modulation": "on",
     # P1-2（2026-09-28）：写路径查重只认现行（active）——关＝逐字节旧行为（默认关）。
-    "write_dedup_active_only": False,
+    "write_dedup_active_only": True,
     # 批 0-2 M1a（2026-09-28）：感知来源打标 —— 关＝逐字节旧行为（默认关）。
     # 开＝①新写入记忆若正文与「本轮感知语料」（最近 30 分钟 / 8 条手机快照）重合，
     #   落库前把来源记为 perception、认知状态降为 INFERRED（只标注、不拒收，异常 fail-open）；
@@ -546,7 +527,7 @@ AGENT_FLAGS = {
     #   本键只控制「取用 + 释放 + 注入」，抽池落库仍由 thought_pool_shadow 控制，别自造第三态。
     # 灰度＝白名单 2 角色（THOUGHT_POOL_GRAY_CHARS，thought_pool_service.py）∧ 比例桶。
     # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
-    "thought_pool_v1": False,
+    "thought_pool_v1": True,
     # ── A4 批 8 块 C / M1（2026-09-30）：短句形态约束（通知载体）总闸（默认关＝逐字节旧行为）──
     # 开＝①通知正文按「notify 载体」上限下发（domain/message_shape.py::fit_to_form：先取首句，
     #   首句仍超限才硬截加省略号）；②本轮判定将以通知面送达（沿用 send_to_session 已有的

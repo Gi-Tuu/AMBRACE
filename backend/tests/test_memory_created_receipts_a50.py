@@ -494,13 +494,13 @@ def test_打标与plan改名在真实通道值下互斥(env):
 
 @pytest.mark.slow
 def test_回执flag关闭时零落库(env, monkeypatch):
-    """``memory_write_receipt`` 默认关 ⇒ 还原真发射口后表里零行，写入行为不变。"""
+    """``memory_write_receipt`` 关 ⇒ 还原真发射口后表里零行，写入行为不变（批 1A 后默认开，用例显式关）。"""
     import app.db.database as dbmod
     from app.models.memory import MemoryWriteReceipt
     from sqlalchemy import select
 
     e = env["env"]
-    assert _loop.AGENT_FLAGS.get("memory_write_receipt", False) is False
+    monkeypatch.setitem(_loop.AGENT_FLAGS, "memory_write_receipt", False)
     monkeypatch.setattr(dbmod, "async_session_factory", env["factory"])
     monkeypatch.setattr("app.memory.receipt.emit_memory_receipt", env["real_emit"])
     m = _save(source="chat", sub_type="extracted")

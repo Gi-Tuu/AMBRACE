@@ -30,6 +30,9 @@ if os.environ.get("AMBRACE_TEST_KEEP_PROD") != "1":
     os.environ["DATABASE_URL"] = os.environ.get("AMBRACE_TEST_DB_URL",
                                                 f"sqlite+aiosqlite:///{_DB_FILE}")
     os.environ["CHROMA_PERSIST_DIR"] = _CHROMA_DIR
+    # 2026-11-12 测试卫生：共享沙箱下 fire-and-forget 写库（回执等）偶发 sqlite locked；
+    # 测试期把 busy 等待加到 30s（生产默认仍 10s，见 app/db/engine.py）。
+    os.environ.setdefault("AMBRACE_SQLITE_BUSY_MS", "30000")
     # 固定测试 JWT 密钥：auth/config.py 优先读 AUTH_SECRET_KEY，彻底不读/不写 data/auth_secret.key
     os.environ.setdefault("AUTH_SECRET_KEY",
                           "pytest-only-secret-0123456789abcdef0123456789abcdef")

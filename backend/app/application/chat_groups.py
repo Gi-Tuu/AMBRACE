@@ -316,12 +316,9 @@ async def _save_group_memory(group_id: int, user_id: int, user_content: str, rep
 def _trace_group_reply(group_id: int, user_id: int, replies: list, ok: bool, latency_ms: int) -> None:
     """群聊角色回应 → AgentTask trace（Phase I：可观测群聊 AI 行为；只写不读，失败静默）。
 
-    Feature Flag agent_trace_group 关闭 = 完全无记录（各平台可独立回退）。
+    （2026-11-12 常驻化退役 flag `agent_trace_group`：恒记录，不再提供回退开关。）
     """
     try:
-        from app.agent import loop as _loop
-        if not _loop.AGENT_FLAGS.get("agent_trace_group", True):
-            return
         from app.agent import trace as _trace
         _trace.enqueue_task_log(
             task_id=_trace.new_task_id(),

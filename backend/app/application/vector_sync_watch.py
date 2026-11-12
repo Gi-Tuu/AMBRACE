@@ -251,6 +251,16 @@ async def tick() -> dict[str, Any]:
             await repair_missing(limit=50)
     except Exception as e:  # noqa: BLE001 —— 修复失败不阻塞对账上报
         _logger.warning("vector auto repair failed: %s: %s", e.__class__.__name__, e)
+    # P1-2（2026-11-11）：flag 开时再做「同 ID 内容漂移」对账与修复（默认关＝行为不变）。
+    try:
+        from app.memory import vector_consistency as _vc
+        if _vc.enabled() and result.get("ok"):
+            _rep = await _vc.repair_content_drift(limit=50)
+            if _rep.get("candidates"):
+                _logger.info("vector content drift: candidates=%s fixed=%s failed=%s",
+                             _rep["candidates"], _rep["fixed"], _rep["failed"])
+    except Exception as e:  # noqa: BLE001 —— 漂移检查失败不阻塞对账上报
+        _logger.warning("vector content drift failed: %s: %s", e.__class__.__name__, e)
     try:
         if result["missing"] > MISSING_WARN_THRESHOLD or result["orphans"] > ORPHAN_WARN_THRESHOLD:
             _logger.warning(

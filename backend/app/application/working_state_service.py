@@ -121,6 +121,8 @@ async def maybe_evaluate_working_state(
                 valid_ids = {r[0] for r in ev_rows}
     
                 prompt = _build_prompt(current, user_text, ai_text, evidence)
+            # P3（2026-11-11）：容错解析档（默认关＝旧路径逐字不变）
+            _tol = ws.parse_tolerant_enabled()
             # LLM 调用放 session 外（不占连接）
             text = await _llm.chat_completion(
                 messages=[
@@ -128,19 +130,44 @@ async def maybe_evaluate_working_state(
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0,
-                max_tokens=600,
+                max_tokens=900 if _tol else 600,
                 task="memory",
                 user_id=user_id,
             )
-            raw = (text or "").strip()
-            if raw.startswith("```"):
-                raw = raw.strip("`")
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            try:
-                desired = ws.validate_desired(json.loads(raw))
-            except Exception:
-                desired = None
+            desired = None
+            if _tol:
+                parsed = ws.parse_json_tolerant(text)
+                if parsed is None:
+                    # ② 重试一次：更严格指令 + 更大预算（仅容错档）
+                    text2 = await _llm.chat_completion(
+                        messages=[
+                            {"role": "system",
+                             "content": "只输出一个 JSON 对象，不要任何解释、前后缀或代码块。"},
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=0,
+                        max_tokens=900,
+                        task="memory",
+                        user_id=user_id,
+                    )
+                    parsed = ws.parse_json_tolerant(text2)
+                if parsed is None:
+                    # ③ 细分原因：无闭合括号＝疑似截断，否则＝夹带文字
+                    _raw_txt = text or ""
+                    _reason = "bad_json_truncated" if "}" not in _raw_txt else "bad_json_text"
+                    obs_event(character_id, "working_state_skipped", {"reason": _reason})
+                    return
+                desired = ws.validate_desired(parsed)
+            else:
+                raw = (text or "").strip()
+                if raw.startswith("```"):
+                    raw = raw.strip("`")
+                    if raw.startswith("json"):
+                        raw = raw[4:]
+                try:
+                    desired = ws.validate_desired(json.loads(raw))
+                except Exception:
+                    desired = None
             if desired is None:
                 obs_event(character_id, "working_state_skipped", {"reason": "bad_json"})
                 return

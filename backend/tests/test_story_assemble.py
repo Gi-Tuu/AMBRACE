@@ -128,10 +128,12 @@ def test_空index_全部孤立路径():
 
 
 def test_get_chain_index_for_hits_flag关_等价空退化(sa_db, monkeypatch):
-    """F-1：建链器 flag（memory_chain_builder）关 → 返回 {}，section 走原路径逐字节等价退化。
+    """F-1：建链器 flag 关 → 返回 {}，section 走原路径逐字节等价退化。
 
     即便临时库里存在真实链数据，flag 关也一律返回 {}（不读库，零行为变化）。
+    批 1A 后默认开 → 本用例显式关两个链闸。
     """
+    _flag_on(monkeypatch, memory_chain_builder=False, memory_chain_expand=False)
     char_id = _seed_user_and_char(sa_db)
     n1, n2 = _seed_chain(
         sa_db, character_id=char_id, chain_id="c1",

@@ -406,8 +406,18 @@ async def update_memory_content(
         )).scalar_one_or_none()
         if not mem:
             raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
+        _prev_len = len(mem.content or "")
         mem.content = content
         mem.version = (mem.version or 0) + 1
+        # P1-1（flag 关＝不重算，历史行为逐字不变）：改写后证据键随内容重算
+        _rev = None
+        _character_id = mem.character_id
+        try:
+            from app.memory import content_revision as _cr
+            if _cr.enabled():
+                _rev = await _cr.recompute_write_key(db, mem)
+        except Exception as _rev_e:  # noqa: BLE001 —— 修键失败不阻塞内容改写
+            _logger.warning("content revision key failed id=%d: %s", memory_id, _rev_e)
         await db.commit()
         await db.refresh(mem)
         # 重算向量并覆盖/替换（复用现有 embedding 写/删逻辑；失败不阻塞内容更新）
@@ -431,7 +441,20 @@ async def update_memory_content(
             _bm25_invalidate(mem.character_id)
         except Exception:
             pass
-    return {"status": "ok", "version": int(mem.version or 0)}
+    if _rev is not None and _rev.get("changed"):
+        # 改写留痕（emit 内部按 memory_write_receipt 开关判，关＝零写入）
+        try:
+            from app.memory.receipt import ACTION_UPDATE, emit_memory_receipt
+            from app.memory.content_revision import REASON as _REASON
+            emit_memory_receipt(_character_id, memory_id, ACTION_UPDATE, reason=_REASON,
+                                detail={"version": int(mem.version or 0),
+                                        "old_len": _prev_len, "new_len": len(content)})
+        except Exception:  # noqa: BLE001 —— 回执失败不影响内容已提交
+            pass
+    _resp = {"status": "ok", "version": int(mem.version or 0)}
+    if _rev is not None:  # flag 开才附加（flag 关＝响应逐字旧形状）
+        _resp["write_key_revised"] = bool(_rev.get("changed"))
+    return _resp
 
 
 @router.patch("/{memory_id}")

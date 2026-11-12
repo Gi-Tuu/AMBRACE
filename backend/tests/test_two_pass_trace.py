@@ -246,10 +246,10 @@ def test_构造抛异常收敛为空串并记WARNING(monkeypatch):
 
 # ────────────────────────── ⑥⑦ 灰度双条件 ──────────────────────────
 
-def test_flag默认关():
+def test_flag默认开_白名单仍需命中():
     from app.agent.loop import AGENT_FLAGS
-    assert AGENT_FLAGS.get("two_pass_trace") is False, "新 flag 必须默认关（零行为变化）"
-    assert mg.two_pass_trace_allowed(_CHAR) is False
+    assert AGENT_FLAGS.get("two_pass_trace") is True, "批 1A 常驻（2026-11-11）"
+    assert mg.two_pass_trace_allowed(_CHAR, flags=dict(AGENT_FLAGS, two_pass_trace_all_chars=False)) is True
     assert mg.TWO_PASS_TRACE_GRAY_CHARS == frozenset({13})
 
 
@@ -264,6 +264,8 @@ def test_flag默认关():
 def test_灰度双条件_开关开且命中白名单才生效(monkeypatch, flag_on, char, expected):
     from app.agent.loop import AGENT_FLAGS
     monkeypatch.setitem(AGENT_FLAGS, "two_pass_trace", flag_on)
+    # 批 1A 后 all_chars 默认开 → 白名单语义用例需显式关它
+    monkeypatch.setitem(AGENT_FLAGS, "two_pass_trace_all_chars", False)
     assert mg.two_pass_trace_allowed(char, flags=AGENT_FLAGS) is expected
     if flag_on:  # 生效时必须真读 AGENT_FLAGS（热切口径），不能只认显式传入的 flags
         assert mg.two_pass_trace_allowed(char) is expected
@@ -383,6 +385,7 @@ def test_flag关_不构造不注入不多一次查询(monkeypatch):
 def test_白名单外角色不注入(monkeypatch):
     from app.agent.loop import AGENT_FLAGS
     monkeypatch.setitem(AGENT_FLAGS, "two_pass_trace", True)
+    monkeypatch.setitem(AGENT_FLAGS, "two_pass_trace_all_chars", False)
     monkeypatch.setitem(AGENT_FLAGS, "proactive_naturalness_score", False)
     captured = _patch_pipeline(monkeypatch, gen_responses=[_resp()])
     assert _run(_OTHER_CHAR)

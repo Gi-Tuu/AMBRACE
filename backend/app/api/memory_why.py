@@ -43,6 +43,10 @@ class MemoryWhyResponse(BaseModel):
     sources: list[WhySource] = []
     receipt_count: int = 0
     note: str = ""
+    # P1-1（2026-11-11 架构治理，附加字段）：让前端区分「原始依据」与「当前内容已修订」
+    memory_version: int = 0
+    content_revised: bool = False
+    content_edit_count: int = 0
 
 
 @router.get("/{memory_id}/why", response_model=MemoryWhyResponse)
@@ -68,12 +72,26 @@ async def get_memory_why(
         if memory is None:
             raise HTTPException(status_code=404, detail=tr_lang(lang, "memory_not_found"))
 
+        # P1-1：修订口径（version>1 或存在内容改写回执）
+        _version = int(memory.version or 0)
+        _edit_rows = (await db.execute(
+            select(MemoryWriteReceipt).where(
+                MemoryWriteReceipt.memory_id == memory_id,
+                MemoryWriteReceipt.action == "update",
+                MemoryWriteReceipt.reason == "content edited",
+            )
+        )).scalars().all()
+        _edits = len(_edit_rows)
+        _revised = _version > 1 or _edits > 0
         uid = memory.source_event_uid
         if not uid:
             return MemoryWhyResponse(
                 status="ok", memory_id=memory_id, source_event_uid=None,
                 has_source=False,
                 note="no_source_event",   # 闸前写入/老记忆：无来源记录
+                memory_version=_version,
+                content_revised=_revised,
+                content_edit_count=_edits,
             )
         events = (await db.execute(
             select(MemorySourceEvent).where(MemorySourceEvent.event_uid == uid)
@@ -102,4 +120,7 @@ async def get_memory_why(
         return MemoryWhyResponse(
             status="ok", memory_id=memory_id, source_event_uid=uid,
             has_source=True, sources=sources, receipt_count=receipt_count,
+            memory_version=_version,
+            content_revised=_revised,
+            content_edit_count=_edits,
         )

@@ -38,11 +38,12 @@ _logger = get_logger("api.games")
 
 router = APIRouter(prefix="/api/v1/games", tags=["Games"])
 
-# 进程内防重入锁（跨进程场景需 DB 行锁，MVP 单进程足够）
-_ai_turn_locks: dict[int, asyncio.Lock] = {}
-
-# WebSocket 游戏实时推送：session_id -> set[WebSocket]（与 chat 的 connected_clients 隔离，避免 id 撞表）
-_game_ws_clients: dict[int, set[WebSocket]] = {}
+# P2-3（2026-11-11）：进程内状态所有权下沉 app/games/runtime；此处保留同名别名
+# （tests 有 `app.api.games._ai_turn_locks` / `_game_ws_clients` 路径引用，名字不能消失）。
+from app.games.runtime import (  # noqa: F401
+    AI_TURN_LOCKS as _ai_turn_locks,
+    GAME_WS_CLIENTS as _game_ws_clients,
+)
 
 # 强引用后台任务，防止 asyncio.ensure_future 创建的 Task 被 GC 提前回收（Python 官方警告）
 from app.utils.async_tasks import spawn_background as _spawn_background

@@ -3038,8 +3038,15 @@ def test_A22第五刀_源码锚定原定义消失且回指只在函数体内():
         pattern = r"^(?:async )?def %s\b" % re.escape(name)
         assert re.search(pattern, games_src, re.MULTILINE) is not None, name + " 必须仍有原地定义"
     assert "from app.db.database import async_session_factory" in games_src
-    assert "_ai_turn_locks: dict[int, asyncio.Lock] = {}" in games_src
-    assert "_game_ws_clients: dict[int, set[WebSocket]] = {}" in games_src
+    # P2-3（2026-11-11）：锁表/WS 集合所有权下沉 games/runtime，API 只保留同名别名；
+    # 原「必须原地定义」的记账随之改为「必须来自运行时且本地不再定义」（迁移动作本身）。
+    assert "AI_TURN_LOCKS as _ai_turn_locks" in games_src
+    assert "GAME_WS_CLIENTS as _game_ws_clients" in games_src
+    assert "_ai_turn_locks: dict[int, asyncio.Lock] = {}" not in games_src
+    assert "_game_ws_clients: dict[int, set[WebSocket]] = {}" not in games_src
+    _rt_src = (Path(__file__).resolve().parents[1] / "app" / "games" / "runtime.py").read_text(encoding="utf-8")
+    assert "AI_TURN_LOCKS: dict[int, asyncio.Lock] = {}" in _rt_src
+    assert "GAME_WS_CLIENTS: dict[int, set] = {}" in _rt_src
     assert "from app.application.game_service import (" in games_src
 
     svc_src = _a22c5_src(A22C5_SVC_PY)
@@ -3057,14 +3064,16 @@ def test_A22第五刀_源码锚定原定义消失且回指只在函数体内():
 
     # 关键回指调用点逐个钉死：少一个，对应那批桩就静默失效（测试不红）
     for needle in (
-        "return _g._ai_turn_locks.setdefault(session_id, asyncio.Lock())",
+        # P2-3（2026-11-11）：锁表所有权下沉 games/runtime，_lazy_lock 改为委托运行时
+        "from app.games.runtime import lazy_lock",
         "async with _g.async_session_factory() as db:",
         "engine_cls = _g.engine_for(game_type)",
         "await _g._settle_game(db, session, engine, winner)",
         "await _g._guard_stop(db, session, engine, reason=reason)",
         'await _g._broadcast_game_event(session_id, end_ev, "result")',
         "await _g._guard_stop_visible(",
-        "_g._game_ws_clients.pop(sid, None)",
+        # P2-3（2026-11-11）：abort/settle 的状态清理合并为运行时 cleanup_session
+        "from app.games.runtime import cleanup_session as _cleanup_game_session",
     ):
         assert needle in svc_src, needle
 

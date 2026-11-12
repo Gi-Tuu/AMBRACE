@@ -26,11 +26,15 @@ if settings.database_url.startswith("sqlite"):
         os.makedirs(Path(_db_file).resolve().parent, exist_ok=True)
 
 # 创建异步引擎
+# 2026-11-12（测试卫生）：busy 等待时间可用 env 覆盖；生产默认 10000ms 不变，
+# 测试进程由 conftest 设为 30000ms，压低共享沙箱下 fire-and-forget 写库的偶发 locked。
+_SQLITE_BUSY_MS = int(os.getenv("AMBRACE_SQLITE_BUSY_MS", "10000"))
+
 engine = create_async_engine(
     settings.database_url,
     echo=False,
     poolclass=NullPool,          # SQLite 不需要连接池
-    connect_args={"check_same_thread": False, "timeout": 10},
+    connect_args={"check_same_thread": False, "timeout": _SQLITE_BUSY_MS / 1000},
 )
 
 # G1（v3.4.4 审查，2026-09-05）：启用 WAL——默认 rollback-journal 模式下写是全库排他锁，
@@ -46,7 +50,7 @@ if settings.database_url.startswith("sqlite") and ":memory:" not in settings.dat
         try:
             cur.execute("PRAGMA journal_mode=WAL;")         # 写前日志，单写多读并发
             cur.execute("PRAGMA synchronous=NORMAL;")       # WAL 下 NORMAL 安全且更快
-            cur.execute("PRAGMA busy_timeout=10000;")       # 毫秒级，与 connect_args.timeout 双保险
+            cur.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_MS};")  # 毫秒级，与 connect_args.timeout 双保险（env 可覆）
             cur.execute("PRAGMA wal_autocheckpoint=1000;")  # 每 1000 页自动 checkpoint，防 -wal 无限增长
             cur.execute("PRAGMA foreign_keys=ON;")          # P4（2026-09-09）：引擎强制外键——
             # 前置条件：删角色统一级联(cascade)+ondelete 已落库+孤儿清零(447 删/20 置 NULL)，

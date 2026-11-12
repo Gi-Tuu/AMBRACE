@@ -37,22 +37,22 @@ _OUT_CHAR = 999                              # 白名单外角色
 
 # ══════════════════════════════════════════════ 1. flag 登记（行为端 + 展示端）
 
-def test_v1_flag_registered_default_false():
-    """``thought_pool_v1`` 在 AGENT_FLAGS 登记且默认 False（未登记 ⇒ runtime 开了也不生效）。"""
+def test_v1_flag_registered_default_true_常驻():
+    """``thought_pool_v1`` 在 AGENT_FLAGS 登记且默认 True（批 2 常驻，2026-11-11）。"""
     assert svc.V1_FLAG_KEY == "thought_pool_v1"
     assert svc.V1_FLAG_KEY in AGENT_FLAGS, "新 flag 未登记进 AGENT_FLAGS（flag_service 只合并已登记键）"
-    assert AGENT_FLAGS[svc.V1_FLAG_KEY] is False, "thought_pool_v1 默认必须 False（关＝逐字节旧行为）"
-    assert svc.v1_enabled() is False
+    assert AGENT_FLAGS[svc.V1_FLAG_KEY] is True, "批 2 常驻（2026-11-11）"
+    assert svc.v1_enabled() is True
 
 
 def test_v1_flag_catalog_metadata():
-    """展示端登记：组 outreach_natural、order 15、visible=False、文案含「默认关闭」且无实现术语。"""
+    """展示端登记：组 outreach_natural、order 15、visible=False、文案含「默认开启」且无实现术语。"""
     assert svc.V1_FLAG_KEY in FLAG_CATALOG, "新 flag 未登记进 flag_catalog（App 里看不到＝守护测试红）"
     row = FLAG_CATALOG[svc.V1_FLAG_KEY]
     assert row["group"] == "outreach_natural"
     assert row["order"] == 15
     assert row["visible"] is False
-    assert "默认关闭" in row["desc_zh"]
+    assert "默认开启" in row["desc_zh"]
     # 文案禁出现实现术语（test_flag_catalog_metadata.py:71,82 同款口径）
     for term in ("flag", "prompt", "DB", "thought_pool", "念头池", "SQL"):
         assert term not in row["desc_zh"] and term not in row["title_zh"], (
@@ -80,6 +80,7 @@ def test_gray_hit(cid, expect):
 
 def test_v1_allowed_requires_flag_and_gray(monkeypatch):
     """准入＝flag 开 ∧ 灰度命中；任一不满足 ⇒ False（且该判定**不查库**）。"""
+    monkeypatch.setitem(AGENT_FLAGS, svc.V1_FLAG_KEY, False)    # 批 2 后默认开，本用例显式关
     assert svc.thought_pool_v1_allowed(_CHAR) is False           # flag 关
     monkeypatch.setitem(AGENT_FLAGS, svc.V1_FLAG_KEY, True)
     assert svc.thought_pool_v1_allowed(_CHAR) is True            # flag 开 + 白名单内
@@ -105,8 +106,9 @@ class _NoSQLDB:
         raise AssertionError("flag 关时不应 flush")
 
 
-def test_fetch_one_thought_no_sql_when_flag_off():
+def test_fetch_one_thought_no_sql_when_flag_off(monkeypatch):
     """flag 关 ⇒ fetch_one_thought 首行即返回 None，一次 SQL 都不发（设计 §4 硬保证 1）。"""
+    monkeypatch.setitem(AGENT_FLAGS, svc.V1_FLAG_KEY, False)   # 批 2 后默认开，本用例显式关
     db = _NoSQLDB()
     out = asyncio.run(svc.fetch_one_thought(db, _CHAR, _USER))
     assert out is None
@@ -122,16 +124,18 @@ def test_fetch_one_thought_no_sql_when_char_not_gray(monkeypatch):
     assert db.executed == 0
 
 
-def test_settle_release_no_sql_when_flag_off():
+def test_settle_release_no_sql_when_flag_off(monkeypatch):
     """flag 关 ⇒ settle_release 首行即返回 {}，一次 SQL 都不发。"""
+    monkeypatch.setitem(AGENT_FLAGS, svc.V1_FLAG_KEY, False)   # 批 2 后默认开，本用例显式关
     db = _NoSQLDB()
     out = asyncio.run(svc.settle_release(db, 1, sent_ok=True, replied_within_window=True))
     assert out == {}
     assert db.executed == 0
 
 
-def test_section_no_sql_when_flag_off():
+def test_section_no_sql_when_flag_off(monkeypatch):
     """flag 关 ⇒ thought_pool_section 返回空串且不查库（缓存进 state 亦为空）。"""
+    monkeypatch.setitem(AGENT_FLAGS, svc.V1_FLAG_KEY, False)   # 批 2 后默认开，本用例显式关
     from app.agent.context.sections import thought_pool_section, _THOUGHT_POOL_STATE_KEY
     state = {"character_id": _CHAR, "user_id": _USER}
     text = asyncio.run(thought_pool_section(state, {}))
@@ -189,6 +193,8 @@ def test_proactive_prompt_byte_identical_when_thought_absent(monkeypatch):
 
 def test_proactive_prompt_splices_thought_when_present(monkeypatch):
     """flag 开（arbiter 取到念头）⇒ thought 作为**素材**拼进 prompt（与 outreach 同性质）。"""
+    # 批 2 后 notify 限长默认开（会改 prompt 形态）→ 本用例只验念头素材拼接，显式关它
+    monkeypatch.setitem(AGENT_FLAGS, "message_shape_notify_limit", False)
     from app.scheduling.message_generator import generate_proactive_event
     cap = _capture_prompt(monkeypatch)
     asyncio.run(generate_proactive_event(

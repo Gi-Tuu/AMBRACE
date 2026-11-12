@@ -116,12 +116,12 @@ def test_event_types_complete():
         assert any(m.value == t for m in E)
 
 
-def test_flag_default_is_off():
-    """灰度默认关：AGENT_FLAGS 硬编码默认值为 False（上线零行为变化）。"""
+def test_flag_default_is_on_resident():
+    """2026-11-11 批 1A 常驻化：默认值转 True（灰度已全量）。"""
     from app.agent.loop import AGENT_FLAGS
     assert "domain_event_log_enabled" in AGENT_FLAGS
-    assert AGENT_FLAGS["domain_event_log_enabled"] is False
-    assert st.domain_events_enabled() is False
+    assert AGENT_FLAGS["domain_event_log_enabled"] is True
+    assert st.domain_events_enabled() is True
 
 
 def _temp_factory(tmp_path):

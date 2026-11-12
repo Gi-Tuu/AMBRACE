@@ -70,6 +70,8 @@ def _gates(got):
 def _flags(monkeypatch, on: bool):
     from app.agent.loop import AGENT_FLAGS
     monkeypatch.setitem(AGENT_FLAGS, "two_pass_trace", on)
+    # 批 1A 后 all_chars 默认开 → 白名单语义用例需显式关它
+    monkeypatch.setitem(AGENT_FLAGS, "two_pass_trace_all_chars", False)
     monkeypatch.setitem(AGENT_FLAGS, "proactive_naturalness_score", False)
 
 
@@ -270,9 +272,9 @@ def _flags2(monkeypatch, *, main_on: bool, all_on: bool):
     return AGENT_FLAGS
 
 
-def test_C12b新开关默认关():
+def test_C12b新开关默认开_常驻():
     from app.agent.loop import AGENT_FLAGS
-    assert AGENT_FLAGS.get(_ALL) is False, "新 flag 必须默认关（否则本批就不是零行为变化）"
+    assert AGENT_FLAGS.get(_ALL) is True, "批 1A 常驻（2026-11-11）"
     assert mg.TWO_PASS_TRACE_ALL_FLAG == _ALL, "常量与 AGENT_FLAGS 键名必须一致"
 
 
@@ -324,11 +326,11 @@ def test_C12b新开关开_白名单外角色也允许且真注入trace(monkeypat
 
 
 def test_C12b新键在开关目录里有登记条目():
-    """目录条目（键名一致、默认关、非直显）——漏登记会被 test_flag_catalog_metadata 兜底拦下，这里额外钉住形态。"""
+    """目录条目（键名一致、默认开（11-11 常驻）、非直显）——漏登记会被 test_flag_catalog_metadata 兜底拦下，这里额外钉住形态。"""
     from app.agent.loop import AGENT_FLAGS
     from app.application.flag_catalog import FLAG_CATALOG, meta_for
     assert _ALL in AGENT_FLAGS, "新键必须登记进 AGENT_FLAGS（否则 runtime_flags 里开了也不生效）"
-    assert AGENT_FLAGS[_ALL] is False
+    assert AGENT_FLAGS[_ALL] is True, "批 1A 常驻（2026-11-11）"
     assert _ALL in FLAG_CATALOG, "新键必须在目录里有自己的条目（不能落通用兜底文案）"
     zh = meta_for(_ALL, 'zh')
     assert zh['group'] == 'proactive' and zh['visible'] is False

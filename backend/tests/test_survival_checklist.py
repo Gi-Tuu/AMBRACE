@@ -318,11 +318,13 @@ def test_查库异常fail_open收敛空串并记WARNING(cl_db, monkeypatch):
 
 # ────────────────────────── 灰度双条件 ──────────────────────────
 
-def test_flag默认关且白名单只有char13():
+def test_flag默认开且白名单只有char13():
     from app.agent.loop import AGENT_FLAGS
-    assert AGENT_FLAGS.get("survival_checklist") is False, "新 flag 必须默认关（零行为变化）"
+    assert AGENT_FLAGS.get("survival_checklist") is True, "批 1A 常驻（2026-11-11）"
     assert cb.SURVIVAL_CHECKLIST_GRAY_CHARS == frozenset({13})
-    assert cb.survival_checklist_allowed(_CHAR) is False
+    # 批 1A 后默认开：白名单内生效、白名单外仍不生效
+    assert cb.survival_checklist_allowed(_CHAR) is True
+    assert cb.survival_checklist_allowed(_OTHER_CHAR) is False
 
 
 @pytest.mark.parametrize("flag_on,char,expected", [

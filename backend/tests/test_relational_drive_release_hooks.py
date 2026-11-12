@@ -23,6 +23,8 @@ _OPEN = svc.V1_OPEN_FLAG_KEY
 _FULL = svc.V1_FULL_FLAG_KEY
 _SHADOW = svc.FLAG_KEY
 _KEYS = (_OPEN, _FULL, _SHADOW)
+# 声明期默认值（autouse fixture 每条用例前会把三键强制置 False，默认值断言须读导入时快照）
+_DECLARED = {k: AGENT_FLAGS.get(k) for k in _KEYS}
 
 
 @pytest.fixture(autouse=True)
@@ -45,9 +47,9 @@ class _BoomDB:
         raise AssertionError("闸关时不得访问 db." + name)
 
 
-def test_两把键默认关且已登记():
-    assert AGENT_FLAGS[_OPEN] is False
-    assert AGENT_FLAGS[_FULL] is False
+def test_两把键默认开_常驻_且已登记():
+    assert _DECLARED[_OPEN] is True, "批 2 常驻（2026-11-11）"
+    assert _DECLARED[_FULL] is True, "批 2 常驻（2026-11-11）"
 
 
 @pytest.mark.parametrize("kind,key", [("open", _OPEN), ("full", _FULL)])

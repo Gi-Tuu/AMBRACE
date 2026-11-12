@@ -9,9 +9,9 @@ import io
 import os
 
 
-def test_flag_default_off():
+def test_flag_default_on_resident():
     from app.agent import loop as _loop
-    assert _loop.AGENT_FLAGS.get("memory_write_receipt", False) is False
+    assert _loop.AGENT_FLAGS.get("memory_write_receipt", False) is True, "批 1A 常驻（2026-11-11）"
 
 
 async def _clear():

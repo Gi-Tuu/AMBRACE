@@ -525,10 +525,8 @@ async def _trace_scheduler_task(item: dict, ok: bool, latency_ms: int, *, exec_e
 
     - Feature Flag agent_loop_scheduler 关闭时不记录（默认关，一键回退）；
     - 灰度角色（10%）route=scheduler_gray，其余 scheduler，便于对比主动消息质量/成本；
-    - R1（2026-09-09，工具轨迹治理 §4.1）：exec_error=``_execute`` 抛错（真进入执行却失败）。
-      agent_trace_scheduler_only_executed 开=「本轮未触发」（ok=False 且未抛错）不再写
-      agent_task_logs（评估流水看 proactive_trigger_logs，已有 5min 节流）；
-      agent_trace_scheduler_mark_exec_error 开=真执行失败记 status=error（而非 blocked）；
+    - R1（2026-09-09，工具轨迹治理 §4.1；2026-11-12 常驻化退役两个 trace flag）：
+      「本轮未触发」（ok=False 且未抛错）不写 agent_task_logs；exec_error=真执行失败记 status=error；
     - 失败静默，绝不阻塞调度主链路。
     """
     try:
@@ -536,9 +534,7 @@ async def _trace_scheduler_task(item: dict, ok: bool, latency_ms: int, *, exec_e
         if not _loop.AGENT_FLAGS.get("agent_loop_scheduler", False):
             return
         # R1 止血：未触发（ok=False 且未抛执行错误）不再写 agent_task_logs（写放大 ~89% 的来源）
-        if (not ok) and (not exec_error) and _loop.AGENT_FLAGS.get(
-            "agent_trace_scheduler_only_executed", True
-        ):
+        if (not ok) and (not exec_error):
             return
         cand = item.get("candidate") or {}
         char_id = cand.get("character_id")
@@ -554,7 +550,7 @@ async def _trace_scheduler_task(item: dict, ok: bool, latency_ms: int, *, exec_e
         # 状态三态（R1）：成功 ok / 真执行失败 error / 其余（仅 flag 关的兼容路径）blocked
         if ok:
             status, err = "ok", None
-        elif exec_error and _loop.AGENT_FLAGS.get("agent_trace_scheduler_mark_exec_error", True):
+        elif exec_error:
             status, err = "error", "主动任务执行失败（详见日志）"
         else:
             status, err = "blocked", "限额/条件拦截（本轮未触发）"

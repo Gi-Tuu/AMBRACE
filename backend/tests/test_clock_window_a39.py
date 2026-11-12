@@ -85,8 +85,8 @@ def test_取闸失败按关处理不影响提取():
     assert ex._apply_clock_precise(base, flags=_Boom()) == base
 
 
-def test_默认注册表里这把闸是关的():
+def test_默认注册表里这把闸默认开_常驻():
     from app.flags.agent_flags import AGENT_FLAGS
 
     assert "proactive_clock_precise" in AGENT_FLAGS
-    assert AGENT_FLAGS["proactive_clock_precise"] is False, "新开闸一律默认关（A37 批 2 边界）"
+    assert AGENT_FLAGS["proactive_clock_precise"] is True, "批 2 常驻（2026-11-11）"
