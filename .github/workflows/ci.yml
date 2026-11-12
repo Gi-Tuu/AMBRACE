@@ -382,7 +382,8 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          # 2026-11-12 钉版本：stable 浮动到新 SDK 后新增大量 deprecated info，flutter analyze 因此红（本地 3.47.1 clean）
+          flutter-version: '3.47.1'
 
       # ── 手机壳（既有检查保留）──
       - name: Pub get (mobile)
