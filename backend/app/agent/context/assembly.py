@@ -50,6 +50,37 @@ def _warn_context_inject_no_caller_once() -> None:
     )
 
 
+# RC1 A 方案（2026-11-12）：动作式记忆「先落标记再解释」提示（flag 默认关＝空串零行为）。
+def _action_first_hint() -> str:
+    try:
+        from app.flags.agent_flags import AGENT_FLAGS as _af
+        if not bool(_af.get("memory_action_first_v1", False)):
+            return ""
+    except Exception:  # noqa: BLE001 —— 读旗标失败按关处理
+        return ""
+    return (
+        "## 行动优先级（本轮务必遵守）\n"
+        "- 用户交代要记的事 → **先输出动作标记再解释**："
+        "要点/待办用 `[MEMO]内容[/MEMO]`，日程/约定用 `[CAL_NOTE]日期 内容[/CAL_NOTE]`，"
+        "个人信息变化用 `【记忆：内容】`；\n"
+        "- 即使细节不全，也先按已知部分把条目落下来，再在正文里追问缺的那点——"
+        "**不要用反问代替记录**；正文里说「记下了」却不带标记，等于没记。\n"
+        "- 标记内容里必须带上用户原话的关键名词（人名/地点/事由/物品），别只写概括："
+        "例如用户说「一本关于老城拆迁的绘本」→ 条目里要出现「拆迁」；"
+        "用户说「去城北体检」→ 条目里要出现「体检」；\n"
+        "- 用户说「某天别安排事 / 到点提醒我」这类时间约定，一律算日程，"
+        "即使没有具体钟点也要落 `[CAL_NOTE]日期 内容[/CAL_NOTE]`（日期不明就写约定里的那天）。"
+    )
+
+
+def _inject_action_first_hint(content: str) -> str:
+    """把「行动优先级」提示插到「当前世界状态」段前；flag 关＝原样返回（零行为）。"""
+    hint = _action_first_hint()
+    if not hint:
+        return content
+    return content.replace("\n## 当前世界状态", "\n" + hint + "\n\n## 当前世界状态", 1)
+
+
 async def assemble_context(state: dict, *, stream: bool | None = None, _section_values: dict | None = None, _trim: dict | None = None) -> dict:
     """上下文最终组装器：构建完整的上下文 prompt（近1天完整消息 + 更早日概要 + 朋友圈）。
 
@@ -316,10 +347,7 @@ async def assemble_context(state: dict, *, stream: bool | None = None, _section_
         if mcp_resources_text:
             mcp_resources_blocks = [_clip_text_to_quota(mcp_resources_text, _qt["mcp_resources"])]
 
-    state["context_messages"] = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT_TEMPLATE.format(
+    _sys_content = SYSTEM_PROMPT_TEMPLATE.format(
                 name=char_name,
                 gender_info=gender_info,
                 personality_info=personality_info,
@@ -351,9 +379,9 @@ async def assemble_context(state: dict, *, stream: bool | None = None, _section_
                 active_topics=active_topics_text,
                 identity_profile=identity_profile,
                 user_info=user_info_resolved,  # G-P1-2：user_notes 空时不重复拼接 + 整体 500 token 裁剪（注册表/内联一致）
-            ),
-        },
-    ]
+    )
+    _sys_content = _inject_action_first_hint(_sys_content)
+    state["context_messages"] = [{"role": "system", "content": _sys_content}]
 
     # MCP 工具声明注入（Phase 2，2026-08-26）：仅在存在 enabled 且非 FORBID 的 mcp.* 工具时
     # 追加一条 system 块（JSON 工具声明 + 调用标记格式）；无 MCP 工具时零行为变化。

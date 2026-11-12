@@ -50,7 +50,6 @@ from app.events.facts import (
 from app.flags.agent_flags import AGENT_FLAGS
 from app.memory.constants import DECAY_COUNTDOWN_DAYS, DECAY_THRESHOLD_PCT, S_BY_TYPE
 from app.memory.retrieve import (
-    STATUS_MEMORY_TTL_FLAG,
     _drop_expired_status_memories,
     _rerank,
     _status_ttl_on,
@@ -70,19 +69,7 @@ async def _noop(*_a, **_kw):
     return None
 
 
-# ───────────────────── 开关复位（新键默认开，用例内可临时拨关）─────────────────────
-
-@pytest.fixture(autouse=True)
-def _flag_default_on():
-    """每个用例前把新键拨回登记值（True），用例后完整还原（含键是否存在）。"""
-    had = STATUS_MEMORY_TTL_FLAG in AGENT_FLAGS
-    saved = AGENT_FLAGS.get(STATUS_MEMORY_TTL_FLAG)
-    AGENT_FLAGS[STATUS_MEMORY_TTL_FLAG] = True
-    yield
-    if had:
-        AGENT_FLAGS[STATUS_MEMORY_TTL_FLAG] = saved
-    else:  # pragma: no cover - 登记后即不成立
-        AGENT_FLAGS.pop(STATUS_MEMORY_TTL_FLAG, None)
+# 2026-11-12 常驻化退役 status_memory_ttl：12h 口径恒生效，无需开关复位夹具
 
 
 # ─────────────────────────── 临时库（真实行 + 真实 _rerank）───────────────────────────
@@ -314,32 +301,10 @@ def test_统一后两侧窗口长度相等():
 
 # ─────────────────────── 4) 回退路径 ───────────────────────
 
-def test_回退_开关关_过期状态条照旧召回(ttl_db, monkeypatch):
-    """flag status_memory_ttl 置 False＝逐字节旧行为（超窗条不剔除）。"""
-    monkeypatch.setitem(AGENT_FLAGS, STATUS_MEMORY_TTL_FLAG, False)
-    stale = _add_mem(ttl_db, content="状态更新: 旧近况", sub_type="status", source="status", age_hours=24 * 3)
-    assert _status_ttl_on() is False
-    assert _recall(ttl_db, [stale]) == [stale]
 
 
-def test_回退_开关关_其它类型也不受影响(ttl_db, monkeypatch):
-    """关＝整体不动：其它类型同样原样返回（回退后无残留影响）。"""
-    monkeypatch.setitem(AGENT_FLAGS, STATUS_MEMORY_TTL_FLAG, False)
-    ids = [_add_mem(ttl_db, content=f"c{i}", memory_type="user_info", sub_type="location", source="chat", age_hours=24 * 90)
-           for i in range(3)]
-    assert sorted(_recall(ttl_db, ids)) == sorted(ids)
 
 
-def test_取闸异常回落旧行为_not_drop(monkeypatch):
-    """读不到开关（异常）⇒ 判「关」，一条都不剔除（新逻辑不得影响既有召回）。"""
-    import app.flags.agent_flags as af
-
-    class _Boom:
-        def get(self, *_a, **_kw):
-            raise RuntimeError("flags unavailable")
-
-    monkeypatch.setattr(af, "AGENT_FLAGS", _Boom())
-    assert _status_ttl_on() is False
 
 
 def test_判定异常不阻塞主链路(ttl_db, monkeypatch):
@@ -421,13 +386,3 @@ def test_写入侧字段与衰减档未被本批改动(ttl_db):
 
 # ─────────────────────── 6) 开关双向登记（目录锁）───────────────────────
 
-def test_新键同时登记进开关表与目录():
-    """AGENT_FLAGS ↔ flag_catalog 双向一致（否则 test_flag_catalog_metadata 会红）。"""
-    from app.application.flag_catalog import FLAG_CATALOG
-
-    assert AGENT_FLAGS[STATUS_MEMORY_TTL_FLAG] is True     # 默认开＝新口径生效
-    assert STATUS_MEMORY_TTL_FLAG in FLAG_CATALOG
-    meta = FLAG_CATALOG[STATUS_MEMORY_TTL_FLAG]
-    assert meta["group"] == "memory"
-    for k in ("title_zh", "desc_zh", "title_en", "desc_en"):
-        assert str(meta[k]).strip(), f"目录文案缺失：{k}"

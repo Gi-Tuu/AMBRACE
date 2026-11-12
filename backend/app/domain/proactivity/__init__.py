@@ -25,9 +25,7 @@ from app.domain.proactivity.decision import (  # noqa: F401
 )
 # B1-③（2026-09-04）：主动接触意图层（闲置分级 + 意图选择，方案 §1-§9）纯模块
 from app.domain.proactivity.pacing import (  # noqa: F401
-    FLAG_HOUR_WINDOW,
     FLAG_SESSION_RATE,
-    FLAG_TYPE_MIX,
     HOUR_WINDOW_END,
     HOUR_WINDOW_START,
     LOW_YIELD_TYPES,
@@ -87,7 +85,7 @@ __all__ = [
     "OutreachMaterials", "OutreachPlan",
     "staleness_tier", "select_outreach", "_candidates",
     # outreach 投放口径三闸（2026-09-13 交接 §二）
-    "FLAG_HOUR_WINDOW", "FLAG_TYPE_MIX", "FLAG_SESSION_RATE", "PACING_FLAGS",
+    "FLAG_SESSION_RATE", "PACING_FLAGS",
     "OUTREACH_PACING_GRAY_CHARS", "OUTREACH_PACING_RATIO",
     "LOW_YIELD_TYPES", "HOUR_WINDOW_START", "HOUR_WINDOW_END",
     "TYPE_DAILY_LIMITS", "TYPE_MIX_COUNTED_TYPES",

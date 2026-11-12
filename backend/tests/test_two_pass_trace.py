@@ -309,6 +309,9 @@ def _patch_pipeline(monkeypatch, *, gen_responses, trace_loader=_UNSET):
     ``trace_loader``：未指定 → 装断言哨兵（构造一次即失败，用于「不构造」用例）；
     传协程函数 → 包装并记录调用；``_KEEP`` → 保留真实实现（端到端走临时库）。
     """
+    # 2026-11-12：message_shape_notify_limit 已常驻（离线下游会插一条 system 提示）；
+    # 本文件只测 two-pass trace，固定「非通知面」让 prompt 结构保持被测口径。
+    monkeypatch.setattr(mg, "_predict_notify_surface", lambda *_a, **_k: (False, "test_off"))
     captured: dict = {"calls": [], "messages": [], "loader": []}
 
     async def _noop(*_a, **_k):

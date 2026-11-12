@@ -147,7 +147,10 @@ def _freeze_datetime_module(spec: str):
     _dtmod.datetime = FrozenDT
     _dtmod.date = FrozenDate
     for name, mod in list(sys.modules.items()):
-        if not (name == "app" or name.startswith("app.") or name == "memory_context_bench"):
+        # 2026-11-12 修复：`__main__`（本脚本自身）也要换——否则 today_beijing() 仍用真时钟，
+        # 锚点检查会把「已冻结」误判成过期（实测 --now 冻结后 3 题仍 E_anchor_stale）。
+        if not (name in ("app", "__main__", "memory_action_eval")
+                or name.startswith("app.") or name == "memory_context_bench"):
             continue
         try:
             if getattr(mod, "datetime", None) is real_dt:
@@ -163,7 +166,10 @@ def _restore_datetime_module(real_dt, real_date) -> None:
     import datetime as _dtmod
     _dtmod.datetime, _dtmod.date = real_dt, real_date
     for name, mod in list(sys.modules.items()):
-        if not (name == "app" or name.startswith("app.") or name == "memory_context_bench"):
+        # 2026-11-12 修复：`__main__`（本脚本自身）也要换——否则 today_beijing() 仍用真时钟，
+        # 锚点检查会把「已冻结」误判成过期（实测 --now 冻结后 3 题仍 E_anchor_stale）。
+        if not (name in ("app", "__main__", "memory_action_eval")
+                or name.startswith("app.") or name == "memory_context_bench"):
             continue
         try:
             if isinstance(getattr(mod, "datetime", None), type) and getattr(mod, "datetime").__name__ == "FrozenDT":
@@ -2713,8 +2719,15 @@ async def main():
     ap.add_argument("--emit-solvability", default="", help="把认证结果写成 jsonl（回填数据集用，M0-b）")
     ap.add_argument("--print-metrics", action="store_true")
     ap.add_argument("--fail-below", type=float, default=None)
+    ap.add_argument("--flag", action="append", default=[],
+                    help="临时覆写评测旗标（key=on|off，可多次）；只影响本进程评测，不改生产")
     a = ap.parse_args()
     global EVAL_NOW_SPEC
+    for _kv in (a.flag or []):
+        _k, _, _v = _kv.partition("=")
+        _k = _k.strip()
+        assert _k, f"--flag 格式应为 key=on|off：{_kv!r}"
+        BASELINE_FLAGS[_k] = _v.strip().lower() in ("1", "on", "true", "yes")
     if a.now:
         _freeze_datetime_module(a.now)
         EVAL_NOW_SPEC = a.now

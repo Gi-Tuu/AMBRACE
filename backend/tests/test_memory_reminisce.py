@@ -198,16 +198,6 @@ def test_reinforce_retrieve_channel_unaffected():
     assert m.next_review_at is not None
 
 
-def test_reinforce_flag_off_old_behavior():
-    def _run(monkeypatch):
-        _set_flag(monkeypatch, "review_reinforce_event_cap", False)
-        m = _mem(content="用户近期将去长沙", strength_days=40.0, review_count=2)
-        _reinforce(m)
-        return m
-
-    m = _run(pytest.MonkeyPatch())
-    assert m.strength_days == 60.0  # 旧行为：40×1.73 顶到 S_MAX（无类型上限）
-    assert m.next_review_at is not None
 
 
 def test_reinforce_locked_untouched():

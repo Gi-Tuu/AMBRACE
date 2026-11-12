@@ -10,6 +10,7 @@ import time
 from datetime import datetime, timezone
 
 from app.agent import actions as _agent_actions
+from app.application import chat_audit as _chat_audit
 
 _logger = get_logger("services.chat")
 from app.models.chat import ChatSession
@@ -148,8 +149,7 @@ async def _run_agent_core(
     # #63 机制2：用户主动消息的动态回复延迟（flag 开才生效；voice/tts 跳过；冷战已在上层拦截）
     if reply_delay and not tts:
         try:
-            from app.agent.loop import AGENT_FLAGS
-            if AGENT_FLAGS.get("reply_delay_enabled", False) and _cs_snapshot is not None:
+            if _cs_snapshot is not None:  # 2026-11-12 常驻化退役 reply_delay_enabled
                 from app.utils.reply_delay import calc_typing_delay, estimate_response_chars
                 _st = _cs_snapshot  # M1-S10：复用本轮快照，不再单独查库
                 _delay = calc_typing_delay(
@@ -178,8 +178,8 @@ async def _run_agent_core(
 
     # Task Trace（Phase A，2026-08-16）：快照原始动作（标记未剥离前），流程结束统一落库（先只写不读）
     _trace_actions = _agent_actions.parse_actions(_source_text)
-    _trace_llm_calls = 1
-    _trace_searched = False
+    _chat_audit.observe_action_missing(character_id, _source_text, _trace_actions)
+    _trace_llm_calls, _trace_searched = 1, False
 
     full_text = final_state.get("ai_response") or ""
     _loop_steps: list[dict] = []

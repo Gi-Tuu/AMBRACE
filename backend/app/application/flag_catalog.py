@@ -171,21 +171,12 @@ _FLAG_ROWS: list[tuple] = [
     ('life_loop_llm', 'life', 402, False, '生活文案生成',
      '允许用大模型写生活动态，每个角色每天最多两次，更生动也更费资源。',
      'Life copy generation', 'Lets the model write life updates, at most twice per character per day.'),
-    ('life_chat_driven_enabled', 'life', 403, False, '照你交代的事去安排',
-     '你在聊天里明确让它去做的事（比如去休息、帮忙喂宠物）会排进它自己的日程并去做；随口提到的内容不会改变它的安排。',
-     'Follow through on what you ask', 'Things you explicitly ask it to do, such as taking a break or feeding the pet, go into its own schedule; passing mentions do not change its plans.'),
     ('life_home_worldmap_enabled', 'life', 404, False, '小家大地图',
      '小家里用一整张地图展示各个房间和角色当前所在位置；关掉则回到原来的单个房间视图。',
      'Home world map', 'Home shows every room and where the character currently is on one map; turning it off falls back to the old single-room view.'),
     ('promise_self_side_split', 'life', 405, False, '承诺按受益方分流',
      '角色自己办的事到点自己回来说明，不再反过来叫你。',
      'Split promises by beneficiary', 'Things a character does for itself are reported back by itself, not pushed to you.'),
-    ('reply_delay_enabled', 'lifesense', 501, False, '动态回复延迟',
-     '根据情境给回复加一点自然的等待，更像真人在打字。',
-     'Dynamic reply delay', 'Adds a natural pause before replying, like a real person typing.'),
-    ('spring_emotion_enabled', 'lifesense', 502, False, '弹簧式情绪',
-     '情绪会随对话起伏，之后慢慢回到角色本来的性格基线。',
-     'Spring-damper emotions', 'Emotions swing with the conversation, then settle back to the character baseline.'),
     ('life_share_enabled', 'lifesense', 503, False, '活动自然分享',
      '做完一件事后，角色会在合适的时机自然地跟你提一句。',
      'Natural activity sharing', 'After finishing something, the character mentions it naturally at a good moment.'),
@@ -217,6 +208,14 @@ _FLAG_ROWS: list[tuple] = [
      '比对库内内容哈希与向量 metadata，发现同 ID 内容漂移并补建（默认关）。',
      'Vector content consistency',
      'Detects and repairs vectors whose stored content hash drifted from the database (off by default).'),
+    ('memory_lifecycle_view_v1', 'memory', 726, False, '记忆生命周期视图',
+     '在记忆详情里看到它处于哪个生命周期位置（版本、是否已被新记忆取代、来源事件与写入记录）。',
+     'Memory lifecycle view',
+     'See where a memory sits in its lifecycle (version, superseded-by, source events, write receipts).'),
+    ('memory_action_first_v1', 'memory', 725, False, '先记下再解释',
+     '交代要记的事时先把条目落下来，再在回复里解释或追问；信息不全也先按已知部分记下。',
+     'Record first, explain later',
+     'Write the item down before explaining, even when details are incomplete.'),
     ('memory_content_revision_v1', 'memory', 721, False, '内容改写闭环',
      '手动改写记忆内容后同步证据键并留痕，避免证据与内容失配（默认关）。',
      'Content revision closure',
@@ -267,7 +266,7 @@ _FLAG_ROWS: list[tuple] = [
      'and no wording. Off by default.'),
     ('message_shape_notify_limit', 'outreach_natural', 14, False, '通知里的话收成一句',
      '对方不在线时，提醒角色把要说的收成一句短的，通知里也能看全；聊天记录仍保留完整内容。'
-     '默认关闭。',
+     '默认开启（2026-11-12 起常驻）。',
      'Keep offline messages to one line',
      'When the other person is offline, the character is nudged to say what it means in one short line '
      'so the notification shows it in full; the chat history still keeps everything. Off by default.'),
@@ -319,9 +318,6 @@ _FLAG_ROWS: list[tuple] = [
     ('memory_admission_gate', 'memory', 715, False, '记录准入把关',
      '记东西前先过一道规则：它自己推测的会标为待核实、不冒充你说过的，跟你无关的技术杂讯也不会入库，长期事实另外查重、判矛盾。',
      'Admission gate for memories', 'A rule pass before anything is stored: its own guesses are marked unverified instead of passing as your words, unrelated technical noise is never recorded, and long-term facts are de-duplicated and checked for conflicts.'),
-    ('memory_utility_feedback', 'memory', 716, False, '记忆效用微调',
-     '根据记忆被用到的实际情况微调它的重要程度。',
-     'Usefulness tuning', "Adjusts a memory's importance based on how useful it actually turned out."),
     ('vector_user_scope', 'memory', 717, False, '向量按账号隔离',
      '向量记忆按账号分开读取，不同账号之间互不可见。',
      'Per-account vectors', 'Vector memories are read per account so accounts never see each other content.'),
@@ -362,13 +358,6 @@ _FLAG_ROWS: list[tuple] = [
      '它给自己记的东西打分时，会多打几轮再看多数意见（只先记下，不改打分结果）；默认关闭。',
      'Rate a few times before deciding',
      'When scoring what it has noted down, it scores a few times and looks at the majority; the score actually used stays the same as now. Off by default.'),
-    ('current_view_filter', 'memory', 722, False, '生活分享只认当下有效的记录',
-     '它跟你提自己的近况时，只用仍然有效的条目，已经被取代、收起来的旧近况不再冒充此刻；'
-     '默认关闭，关掉时与现在完全一样。',
-     'Life updates only from what still holds',
-     'When it shares how its own days have been going, only entries that still hold are used, so '
-     'superseded or archived ones no longer pass as the present. Off by default, and turning it off '
-     'keeps things exactly as they are now.'),
     ("write_dedup_active_only", "memory", 723, False, "写入去重只认现行记录", "新记忆入库查重时只跟仍然有效的记录比对，避免新内容被已经失效的旧记录吞掉。默认关闭。", "Dedup only against current records", "When checking for duplicates on write, compare only against records that are still current, so a new note is never swallowed by an expired one. Off by default."),
     ("perception_source_tag", "memory", 724, False, "手机观察单独归类", "从手机屏幕上看到的内容单独归类存放，不跟你亲口说过的话混在一起，两者也不会互相吞并。默认关闭。", "Keep phone observations in their own category", "What the phone screen shows is filed under its own category, so it never mixes with — or gets absorbed into — things you actually said. Off by default."),
     ("perception_isolate", "memory", 725, False, "手机观察不进长期画像", "屏幕上看到的内容，在你确认「这是真的」之前，不参与核心记忆晋升、也不进摘要和身份画像；对话里仍然找得到。默认关闭。", "Keep phone observations out of the long-term portrait", "Until you confirm an observation is real, it never feeds core-memory promotion, summaries or your identity portrait — it still shows up in conversation. Off by default."),
@@ -398,14 +387,6 @@ _FLAG_ROWS: list[tuple] = [
     ('memory_fallback_gate', 'memory', 732, False, '它没记下的事，系统真的补上',
      '开启后，上一步算出来的东西才会真的出现在你的小手机日历里：只在你说「记一下／提醒我＋日子」而它没落标记时补，正文用你的原话不重写，认不出日期或只是"每到某天"这种周期约定就**一律不补**。需要上一项先打开？不需要——这一项单独可用，但建议先开上一项看一批留痕再开本项。默认关闭，回退＝关掉本项并删掉补出来的那几条。',
      'Actually write fallback calendar notes', 'When on, what the log-only step computed really gets written: only when you asked to record/remind with a date and the reply dropped no marker; the text reuses your own words, and recurring arrangements or undated requests are never written. Recommended to enable after reviewing a batch of log-only traces. Off by default; rollback = switch off plus delete the few added entries.'),
-    ("status_memory_ttl", "memory", 731, False, "当前状态只认 12 小时内的",
-     "它记下的「自己正在做什么」只在 12 小时内还算近况，超时后不再被当成此刻；"
-     "关掉则恢复原来的做法（很旧的近况也照样会被提起）。",
-     "Current status only counts within 12 hours",
-     'What it noted about "what I\'m doing right now" stays current for 12 hours and is no longer '
-     'presented as happening after that; turning this off returns to the old behaviour, where very '
-     'old status can still come up.'),
-    # ── 编纂知识与前瞻意图 ──
     ('curated_knowledge', 'curated', 801, False, '长期知识层',
      '角色设定、你的硬档案等长期知识始终在场，不随记忆淡忘。',
      'Curated knowledge layer', 'Character rules and your core profile stay present instead of fading.'),
@@ -484,20 +465,11 @@ _FLAG_ROWS: list[tuple] = [
      'Off by default.'),
 
     # ── 主动投放节制（B1）──
-    ('outreach_hour_window_v1', 'pacing', 1201, False, '主动消息投放时段',
-     '关心、回忆这类不太期待回复的消息，只在中午到夜里这段时间发；你平时在线的时间会适当放宽。',
-     'Outreach time window', 'Messages that rarely get a reply, such as check-ins and reminiscing, only go out between midday and night; the hours you are usually around widen that window.'),
-    ('outreach_type_mix_v1', 'pacing', 1202, False, '主动消息类型配额',
-     '给每类消息各设每日条数上限，避免某一类刷屏；翻出来的旧事也会以一句你真能接的话收尾，而不是空泛问候。',
-     'Outreach type quota', 'Each kind of message gets its own daily cap so one type cannot flood you, and recalls now end with something you can actually answer instead of a generic greeting.'),
     ('outreach_session_rate_v1', 'pacing', 1203, False, '会话级节流',
      '同一会话的消息限制条数与最小间隔，避免连环催促。',
      'Per-session rate limit', 'Caps messages per session with a minimum gap, avoiding back-to-back pings.'),
 
     # ── 主动复习与回忆化（H）──
-    ('review_reinforce_event_cap', 'review', 1302, False, '一次性事件强化上限',
-     '一次性事件被反复回忆的次数设上限，避免过度强化。',
-     'Cap one-off event reinforcement', 'Limits how often a one-off event can be reinforced.'),
     ('review_plan_expire_stale', 'review', 1304, False, '过期安排自动标记',
      '每日维护时把过期的安排自动标为已过时。',
      'Auto-expire stale plans', 'Daily maintenance marks expired plans as outdated.'),
@@ -529,11 +501,6 @@ _FLAG_ROWS: list[tuple] = [
      'off by default — confirm your backup routine first.'),
 
     # ── 工具轨迹治理 ──
-    ('mcp_stream_declarations', 'tool_trace', 1503, False, '流式会话工具声明',
-     '流式回复也能带上可用工具的说明。',
-     'Tool declarations in streaming', 'Streaming replies also carry the list of available tools.'),
-
-    # ── 行动通道（C1a：三条闸进常规开关页，默认由服务器锁定、App 内只读）──
     ('device_actions_enabled', 'device_action', 1601, False, '手机操作总开关',
      'AI 能不能在你的手机上替你做事（打开应用、点按、输入文字）的总闸；关掉后这类请求一律不执行。默认关闭。',
      'Phone actions master switch',

@@ -368,7 +368,20 @@ def test_real_plugin_缺caller不分发(asm_env):
 
 
 # ── 7. C7 时间边界（#9）：时间字段非空且旧新一致；当前消息不被当作上次发言 ──
-def test_real_c7_时间字段与当前消息边界(asm_env):
+def test_real_c7_时间字段与当前消息边界(asm_env, monkeypatch):
+    # 2026-11-13：冻结 section_world 的「现在」——并行档（-n 8）下两次装配可能跨分钟边界，
+    # 时间字符串（含 HH:MM）会变，属尺子抖动而非装配退化；固定时钟后只测「两次一致」。
+    import app.agent.context.section_world as _sw
+
+    _real_dt = _sw.datetime
+    _fixed = _real_dt(2026, 1, 1, 10, 0, tzinfo=_sw.timezone(_sw.timedelta(hours=8)))
+
+    class _FrozenDT(_real_dt):
+        @classmethod
+        def now(cls, tz=None):
+            return _fixed.astimezone(tz) if tz is not None else _fixed.replace(tzinfo=None)
+
+    monkeypatch.setattr(_sw, "datetime", _FrozenDT)
     a = _real_build(user_message="当前这句是新的")
     b = _real_build(user_message="当前这句是新的")
     joined = "\n".join(m.get("content") or "" for m in a["context_messages"])

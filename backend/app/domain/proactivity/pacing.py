@@ -29,10 +29,10 @@ import hashlib
 from app.domain.proactivity.ports import PacingPorts, PacingPortsNotInjected
 
 # ── 开关名（必须与 app/agent/loop.py 的 AGENT_FLAGS 键一致；runtime_flags 只支持 bool 覆盖）──
-FLAG_HOUR_WINDOW = "outreach_hour_window_v1"
-FLAG_TYPE_MIX = "outreach_type_mix_v1"
+# 2026-11-12：outreach_hour_window_v1 / outreach_type_mix_v1 已常驻化退役（恒按灰度/比例生效），
+# 仅保留 session_rate 作为可回退开关。
 FLAG_SESSION_RATE = "outreach_session_rate_v1"
-PACING_FLAGS = (FLAG_HOUR_WINDOW, FLAG_TYPE_MIX, FLAG_SESSION_RATE)
+PACING_FLAGS = (FLAG_SESSION_RATE,)
 
 # ── 灰度：角色白名单 + 比例桶（默认只 char13，先拿证据再扩量）──
 OUTREACH_PACING_GRAY_CHARS = frozenset({13})
@@ -152,6 +152,17 @@ def flag_on(key: str, *, flags=None, ports: PacingPorts | None = None) -> bool:
         return bool(flags.get(key, False))
     except Exception:
         return False
+
+
+def gate_on(
+    character_id,
+    session_id,
+    *,
+    chars: frozenset = OUTREACH_PACING_GRAY_CHARS,
+    ratio: float = OUTREACH_PACING_RATIO,
+) -> bool:
+    """常驻闸（2026-11-12 退役两把开关后）：仍按灰度白名单 + 比例桶判定；无开关读取。"""
+    return pacing_gray_hit(character_id, session_id, chars=chars, ratio=ratio)
 
 
 def gate_active(

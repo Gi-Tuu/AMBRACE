@@ -527,19 +527,11 @@ def test_schedule_flag_on_writes_receipt(mem_db, monkeypatch):
 
 
 def test_gray_chars_gate(monkeypatch):
-    """灰度口径（09-18 用户拍板：先只在 char13 观察）：总开关开 **且** 角色命中白名单才生效。
+    """灰度口径（2026-11-12 常驻化退役总开关）：仅按角色白名单判定。
 
-    - 开关关 → 白名单角色也不生效（回滚＝关总开关，无需改代码）；
-    - 开关开 → 仅 char13 生效，其余角色零行为变化；
+    - 仅 char13 生效，其余角色零行为变化；
     - 角色缺失/非法 → 保守 False。
     """
-    from app.agent.loop import AGENT_FLAGS
-
-    monkeypatch.setitem(AGENT_FLAGS, "memory_utility_feedback", False)
-    assert uf.is_enabled(13) is False
-    assert uf.is_enabled(6) is False
-
-    monkeypatch.setitem(AGENT_FLAGS, "memory_utility_feedback", True)
     assert uf.is_enabled(13) is True
     assert uf.is_enabled(6) is False
     assert uf.is_enabled(None) is False

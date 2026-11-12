@@ -21,8 +21,7 @@ from app.memory.service import (
     _retrievable_status_clause,
 )
 
-# 断点 #9 收口（2026-09-29）：状态派生记忆条统一到 12h 的开关键名（默认值登记在 flags/agent_flags.py）
-STATUS_MEMORY_TTL_FLAG = "status_memory_ttl"
+# 断点 #9 收口（2026-09-29；2026-11-12 常驻化退役 status_memory_ttl）：状态派生记忆 12h 口径恒生效
 
 
 def _perception_tag_on() -> bool:
@@ -286,16 +285,8 @@ async def _entity_route(character_id: int, query: str) -> tuple[list[dict], dict
 
 
 def _status_ttl_on() -> bool:
-    """断点 #9 收口（2026-09-29 用户拍板）：状态派生记忆条是否按统一 12h 窗口剔除。
-
-    默认开（＝新口径生效）；置 False 即恢复旧行为（召回照旧带出过期状态条）。
-    读不到开关时回落 False＝不误删（宁可多留一条过期状态，也不因新逻辑影响其它记忆）。
-    """
-    try:
-        from app.flags.agent_flags import AGENT_FLAGS
-        return bool(AGENT_FLAGS.get(STATUS_MEMORY_TTL_FLAG, False))
-    except Exception:
-        return False
+    """断点 #9（2026-09-29；2026-11-12 常驻化退役开关）：状态派生记忆按统一 12h 窗口剔除，恒生效。"""
+    return True
 
 
 def _drop_expired_status_memories(meta: dict, now) -> dict:

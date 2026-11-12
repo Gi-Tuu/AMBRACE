@@ -320,9 +320,7 @@ def test_可回复化_纯函数与灰度门控(flag_env):
     once = mr.apply_replyable_question_rule(base)
     assert mr.apply_replyable_question_rule(once) == once
     # 门控：开关关 = 不生效；开关开 + 白名单 = 生效；白名单外不生效
-    flag_env[pacing.FLAG_TYPE_MIX] = False
-    assert mr.replyable_question_enabled(C_WHITE, 1) is False
-    flag_env[pacing.FLAG_TYPE_MIX] = True
+    # 2026-11-12 常驻化退役 outreach_type_mix_v1：恒按灰度白名单判定
     assert mr.replyable_question_enabled(C_WHITE, 1) is True
     assert mr.replyable_question_enabled(C_OTHER, 1) is False
 
@@ -550,17 +548,6 @@ def test_可回复化_开关开_hint追加具体问题规则(review_env, all_on)
     assert REPLYABLE_QUESTION_RULE in captured["hint"]
 
 
-@pytest.mark.slow
-def test_可回复化_开关关_hint逐字节不变(review_env, flag_env):
-    factory, captured = review_env
-    from app.scheduling.memory_review import REPLYABLE_QUESTION_RULE, run_memory_review
-
-    for k in pacing.PACING_FLAGS:
-        flag_env[k] = False
-    mid = _seed_review_memory(factory)
-    assert asyncio.run(run_memory_review(C_WHITE, USER_ID, mid)) is True
-    assert captured["sent"] is True
-    assert REPLYABLE_QUESTION_RULE not in captured["hint"]
 
 
 def test_闸门_豁免类型满额也放行(all_on, monkeypatch):

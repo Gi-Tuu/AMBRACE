@@ -34,44 +34,22 @@ from app.application.flag_catalog import FLAG_CATALOG, meta_for
 _KEY = "current_view_filter"
 
 
-# ────────────────────────────────────────────── 项 1：开关默认关 + 目录条目
+# ────────────────────────────────────────────── 项 1：现状面子句（2026-11-12 常驻化）
 
 
-def test_开关默认关且目录有条目():
-    """AGENT_FLAGS 默认 **True**（2026-09-28 转正：生产 runtime_flags 早已为开，转正让新装部署同享；仍可关回旧行为）；
-
-    flag_catalog 有 memory 组 / order 722 / 不可见条目，zh·en 文案非空。
-    """
-    assert _KEY in AGENT_FLAGS, "新键必须登记进 AGENT_FLAGS（否则 runtime_flags 开了也不生效）"
-    assert AGENT_FLAGS[_KEY] is True, "09-28 转正后默认 True（关仍=逐字节旧行为）"
-    assert _KEY in FLAG_CATALOG, "新键必须在开关目录里登记"
-
-    m = FLAG_CATALOG[_KEY]
-    assert m["group"] == "memory" and m["order"] == 722 and m["visible"] is False
-    zh, en = meta_for(_KEY, "zh"), meta_for(_KEY, "en")
-    for lang, it in (("zh", zh), ("en", en)):
-        assert it["title"].strip() and it["desc"].strip(), f"{lang} 文案为空"
-        text = f"{it['title']} {it['desc']}".lower()
-        for term in ("flag", "agent_flags", "db", "prompt"):
-            assert term not in text, f"{lang} 文案含实现术语 {term!r}"
-
-
-def test_取子句纯函数_关时空开时非空(monkeypatch):
-    """``_current_view_clauses()``：关 → 空列表（不附加任何子句）；开 → 一条现状面子句。"""
-    monkeypatch.setitem(AGENT_FLAGS, _KEY, False)
-    assert _overlay._current_view_clauses() == []
-    monkeypatch.setitem(AGENT_FLAGS, _KEY, True)
+def test_取子句纯函数_恒返回一条():
+    """``_current_view_clauses()``：2026-11-12 常驻化后恒返回一条现状面子句。"""
     assert len(_overlay._current_view_clauses()) == 1
 
 
-def test_读开关异常按关处理(monkeypatch):
-    """取开关失败（AGENT_FLAGS 读取抛异常）按「关」处理，不抛异常打断注入。"""
-    class _Boom:
-        def get(self, *a, **k):
-            raise RuntimeError("flag 读取炸了")
+def test_取子句异常按跳过处理(monkeypatch):
+    """取子句失败（构造抛异常）按「跳过过滤」处理，不抛异常打断注入。"""
+    import app.memory.service as _svc
 
-    import app.agent.loop as _loop_mod
-    monkeypatch.setattr(_loop_mod, "AGENT_FLAGS", _Boom())
+    def _boom():
+        raise RuntimeError("clause 构造炸了")
+
+    monkeypatch.setattr(_svc, "current_facts_status_clause", _boom)
     assert _overlay._current_view_clauses() == []
 
 
@@ -130,29 +108,12 @@ def _life_share_whereclause(monkeypatch) -> str:
     return str(sink[-1].whereclause.compile())
 
 
-def test_关时where不含现状面子句_开时含(monkeypatch):
-    """关=where 里没有 memories.status；开=追加。断言的是构造出来的 SQL 字符串。"""
-    from app.models.memory import Memory
-
-    monkeypatch.setitem(AGENT_FLAGS, _KEY, False)
-    off = _life_share_whereclause(monkeypatch)
-    monkeypatch.setitem(AGENT_FLAGS, _KEY, True)
+def test_where含现状面子句(monkeypatch):
+    """2026-11-12 常驻化：where 恒带现状面子句（memories.status）。"""
     on = _life_share_whereclause(monkeypatch)
-
-    assert "memories.status" in off, f"现行/归档边界必须无条件执行：{off}"
-    assert "memories.status" in on, f"开关开却没带上现状面子句：{on}"
-    # 关态 SQL 必须与改动前逐字节一致：与手写「四个原始条件」基线完全相等
-    baseline = str(select(Memory).where(
-        Memory.user_id == 1,
-        Memory.character_id == 13,
-        Memory.source == "life",
-        Memory.is_archived.is_(False),
-        Memory.status == "active",
-        Memory.delete_at.is_(None),
-    ).whereclause.compile())
-    assert off == baseline, f"关态与旧 SQL 不一致：\n关={off}\n基线={baseline}"
-    # 开态只做「追加」这一件事：关态文本是开态文本的前缀
-    assert on.startswith(off), f"开态不是在尾部追加：\n关={off}\n开={on}"
+    assert "memories.status" in on, f"没带上现状面子句：{on}"
+    for frag in ("memories.user_id", "memories.character_id", "memories.source"):
+        assert frag in on, frag
 
 
 # ────────────────────────────────────── 项 2：装配尾部留痕（真装配函数）

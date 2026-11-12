@@ -102,7 +102,7 @@ async def lorebook_section(state: dict, ctx: dict) -> list[str]:
 # 信任机制与隐私上锁同源——trust≥60 有概率提及、≥70 高概率、<60 不提及（角色有权交流自己的私生活）
 
 # T5 M0 项1（2026-09-27，A4 批 6）：现状面子句口径对齐——装配器版 life_share
-# （context/assembly.py:504-520，第 520 行；A22 ⑤-c 删兜底后从 legacy.py:866-876 挪到这里）
+# （context/assembly.py:532-548，第 548 行；A22 ⑤-c 删兜底后从 legacy.py:866-876 挪到这里；2026-11-12 随 A 方案提示插入 +23）
 # 一直带 current_facts_status_clause()，注册表版
 # （agent_context_registry 默认 True 的活路径）漏了这个子句，两份实现口径漂移。
 # 用新开关 current_view_filter 包住：**关=返回空列表 → where 里不附加任何子句，与改动前逐字节一致**；
@@ -110,15 +110,12 @@ async def lorebook_section(state: dict, ctx: dict) -> list[str]:
 # 语义提示：current_facts_active_only（线上默认 True）开时子句＝「恒 active」，开关打开后才有过滤效果。
 
 def _current_view_clauses() -> list:
-    """life_share 的现状面状态子句（开关关 → 空列表 = SQL 与今天逐字节一致）。"""
+    """life_share 的现状面状态子句（2026-11-12 常驻化退役开关：恒返回该子句）。"""
     try:
-        from app.agent.loop import AGENT_FLAGS
-        if not AGENT_FLAGS.get("current_view_filter", False):
-            return []
         from app.memory.service import current_facts_status_clause
         return [current_facts_status_clause()]
-    except Exception as e:
-        _logger.warning("current_view_filter flag read failed, treat as off: %s", e)
+    except Exception as e:  # noqa: BLE001 —— 取子句失败按「跳过过滤」处理，绝不打断注入
+        _logger.warning("current_facts_status_clause unavailable, skip filter: %s", e)
         return []
 
 

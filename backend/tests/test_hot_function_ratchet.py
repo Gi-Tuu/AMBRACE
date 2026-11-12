@@ -26,7 +26,7 @@ FUNC_FLOOR = 3000      # 同日实测 3171 个模块级函数；掉下这个数�
 # 冻结基线（2026-10-10 实测；复算脚本＝仓库外 _measure_hot_ratchet.py，同口径）
 # (相对 backend/app 的路径, 函数名, 长度上限, 圈复杂度上限)
 HOT_RATCHET = [
-    ("agent/context/assembly.py", "assemble_context", 877, 198),
+    ("agent/context/assembly.py", "assemble_context", 874, 198),  # 2026-11-12：A 方案抽 helper 后变短，按纪律下调
     # 2026-10-12 A50 批 1：写后副动作（auto dedup→链→意义→事件→插件 hook→BM25 失效）机械抽成
     # 同文件私有协程 _run_created_memory_hooks（实测 93 行/CC 10，两项都低于阈值⇒OVER_MAX 仍 44）。
     # 纯搬运、零行为变化（AST 逐语句对照 8/8 逐字一致），所以只把上限下调到实测值。
@@ -127,7 +127,7 @@ HOT_RATCHET = [
     # json/time/_agent_actions/spawn_background/_logger 等裸全局晚绑定与函数内 import 时点不变。
     # 252→164 且 CC 48→22（地图估的 ≈116 是静态模拟值，实测以本行为准）；第三把地板仍是 None＋
     # 精确冻结钉（164>150 尚未跌破长度地板，不改地板口径），总量与反向钉一律不动。
-    ("application/chat_service.py", "_run_agent_core", 164, 22),
+    ("application/chat_service.py", "_run_agent_core", 163, 21),  # 2026-11-12：退役 reply_delay 开关后变短，按纪律下调
     # 2026-10-13 A50 批16 新切口（同文件私有协程，行 369/CC 11 见上；显式登记防「改了不记账」）
     ("application/chat_service.py", "_run_user_turn_signals", 65, 11),
     # 2026-10-13 A50 批17 新切口三个（同文件私有协程；显式登记防「改了不记账」）
@@ -227,7 +227,7 @@ FROZEN_VALUES = {
     # _run_agent_core 批 18 实测 164 行/CC 22（批17 252/48、批16 369/72、原 417/82）。300 长度地板
     # 随批 17 拆到 252 失效，改同一模式：地板 None + 精确冻结钉（164 仍 > 扫描地板 LEN_MAX=150，
     # 故仍占全库超标名额，OVER_MAX 不动）。
-    ("application/chat_service.py", "_run_agent_core"): (164, 22),
+    ("application/chat_service.py", "_run_agent_core"): (163, 21),
 }
 
 
@@ -290,7 +290,7 @@ def test_冻结值钉对空扫和伪短函数都有牙():
     """反例必须被说红：空扫（扫不到）与「伪短 save_memory」都不许悄悄放行。"""
     ok = {("memory/write.py", "save_memory"): (144, 7),
           ("memory/retrieve.py", "search_memories"): (197, 13),
-          ("application/chat_service.py", "_run_agent_core"): (164, 22)}
+          ("application/chat_service.py", "_run_agent_core"): (163, 21)}
     assert judge_floor(ok, LENGTH_PINS) == []
     assert judge_floor({}, LENGTH_PINS), "空扫（一个都没扫到）必须红"
     short = {**ok, ("memory/write.py", "save_memory"): (10, 1)}

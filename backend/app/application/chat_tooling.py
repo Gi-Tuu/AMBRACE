@@ -292,11 +292,10 @@ async def _run_post_processing(
         pass
 
     # Life Loop v1.1（2026-08-26）：聊天→生活意图提取（本地规则，失败静默；不阻塞回复）
+    # 2026-11-12 常驻化退役 life_chat_driven_enabled：聊天→生活意图恒执行
     try:
-        from app.agent.loop import AGENT_FLAGS
-        if AGENT_FLAGS.get("life_chat_driven_enabled", False):
-            from app.life.chat_intent import extract_life_intent
-            _cs.spawn_background(extract_life_intent(character_id, user_id, content))
+        from app.life.chat_intent import extract_life_intent
+        _cs.spawn_background(extract_life_intent(character_id, user_id, content))
     except Exception:
         pass
 

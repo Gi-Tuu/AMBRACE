@@ -66,16 +66,6 @@ def test_spring_on_uses_spring_and_writes_velocity(monkeypatch):
     assert "mood" in cs._spring_velocity[101]
 
 
-def test_spring_off_linear_no_velocity(monkeypatch):
-    monkeypatch.setitem(AGENT_FLAGS, "spring_emotion_enabled", False)
-    random.seed(10)
-    now = datetime(2026, 8, 27, 12, 0, 0)
-    st = _mk(2, 102, now - timedelta(hours=0.5), mood=20)
-    cs._persona_baseline.pop(102, None)
-    cs._spring_velocity.pop(102, None)
-    cs._drifted_at.pop(2, None)
-    cs._apply_drift_sync(st, now)
-    assert 102 not in cs._spring_velocity or "mood" not in cs._spring_velocity.get(102, {})
 
 
 def test_spring_mood_recovers_toward_baseline(monkeypatch):

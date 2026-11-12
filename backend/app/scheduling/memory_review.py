@@ -406,10 +406,9 @@ def replyable_question_enabled(char_id: int, session_id=None, *, flags=None) -> 
 
     纯判定（零 IO）；默认关 = False → 调用方不改 hint（逐字节旧文案）。
     """
-    from app.application.proactivity_pacing_ports import production_pacing_ports
     from app.domain.proactivity import pacing
-    return pacing.gate_active(char_id, session_id, pacing.FLAG_TYPE_MIX,
-                              flags=flags, ports=production_pacing_ports)
+    # 2026-11-12 常驻化退役 outreach_type_mix_v1：恒按灰度白名单判定
+    return pacing.gate_on(char_id, session_id)
 
 
 def apply_replyable_question_rule(hint: str) -> str:

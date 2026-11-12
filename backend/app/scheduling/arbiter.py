@@ -46,9 +46,7 @@ from app.domain.proactivity.sleep import SLEEP_KEYWORDS, SLEEP_HOUR, SLEEP_SILEN
 from app.domain.proactivity import outreach as _oc  # noqa: E402
 # 2026-09-13（Codex 交接 §二）：outreach 投放口径三闸纯决策层（时段窗口 / 类型配比 / 单会话限频）
 from app.domain.proactivity.pacing import (  # noqa: E402,F401
-    FLAG_HOUR_WINDOW,
     FLAG_SESSION_RATE,
-    FLAG_TYPE_MIX,
     LOW_YIELD_TYPES,
     SESSION_RATE_TYPES,
     TYPE_MIX_COUNTED_TYPES,

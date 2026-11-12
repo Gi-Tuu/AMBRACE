@@ -139,12 +139,7 @@ def _review_caps_for(m, now=None) -> tuple[float | None, int | None]:
     now 由 _apply_reinforce 透传（缺省=真实当前时间）：判定与强化用同一时刻，避免用
     墙钟给纯对象/回放用例做过期判定（2026-09-17 修复：该处曾随日历翻车）。
     """
-    try:
-        from app.flags.agent_flags import AGENT_FLAGS
-        if not AGENT_FLAGS.get("review_reinforce_event_cap", True):
-            return None, None
-    except Exception:
-        return None, None
+    # 2026-11-12 常驻化退役 review_reinforce_event_cap：上限恒生效
     from app.memory.tense import classify_tense, is_plan_expired
     tense = classify_tense(m)
     if tense == "plan":

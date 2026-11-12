@@ -43,14 +43,7 @@ async def _build_mcp_tool_declarations(user_id: int, *, stream: bool = False) ->
     from app.mcp.ownership import owned_server_ids
     from app.agent.tools import list_tools
 
-    # P2-A / R3：流式模式默认不注入；flag mcp_stream_declarations 开时才注入（灰度）
-    if stream:
-        try:
-            from app.agent import loop as _loop
-            if not _loop.AGENT_FLAGS.get("mcp_stream_declarations", False):
-                return []
-        except Exception:
-            return []
+    # P2-A / R3；2026-11-12 常驻化退役 mcp_stream_declarations：流式也注入声明
 
     try:
         from app.application import permission_service

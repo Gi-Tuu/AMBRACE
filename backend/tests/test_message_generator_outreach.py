@@ -29,6 +29,8 @@ def _fake_session_factory():
 
 def _patch_mg(monkeypatch, persona=None, llm=None, recall_chain=None, search_mems=None):
     """mock 掉 generate_proactive_event 的全部前置查询与 LLM，捕获 messages。返回 captured。"""
+    # 2026-11-12：notify 形态提示已常驻；本文件只测 outreach 分支，固定「非通知面」。
+    monkeypatch.setattr(mg, "_predict_notify_surface", lambda *_a, **_k: (False, "test_off"))
     if persona is None:
         persona = {"cognitive": True, "relationship_state": "", "active_topics": "", "storyline_status": "无"}
     if llm is None:

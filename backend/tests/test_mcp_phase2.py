@@ -402,16 +402,16 @@ def test_check_tool_permission_forbid_foreign_mcp():
 
 # ------------------------------------------------------------------ P2-A 流式不注入声明（2026-08-29）
 
-def test_mcp_declarations_stream_empty():
-    """P2-A：流式模式不注入 MCP 工具声明（流式路径不执行工具），非流式保持注入。"""
+def test_mcp_declarations_stream_injects_too():
+    """2026-11-12 常驻化退役 mcp_stream_declarations：流式与非流式都注入声明。"""
     from app.agent.context_builder import _build_mcp_tool_declarations
 
     sid = _make_server(user_id=PERM_UID, name=TEST_PREFIX + "st")
     _reg_mcp_tool("mcp.st.read_file", scope="mcp_st", server_id=sid)
 
-    assert _run(_build_mcp_tool_declarations(PERM_UID, stream=True)) == []
-    decls = _run(_build_mcp_tool_declarations(PERM_UID, stream=False))
-    assert "mcp.st.read_file" in {d["name"] for d in decls}
+    for stream in (True, False):
+        decls = _run(_build_mcp_tool_declarations(PERM_UID, stream=stream))
+        assert "mcp.st.read_file" in {d["name"] for d in decls}, stream
 
 
 # ------------------------------------------------------------------ P2-B observation 截断上限（2026-08-29）

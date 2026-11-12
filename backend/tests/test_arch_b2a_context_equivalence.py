@@ -182,7 +182,20 @@ CASES = [
 
 
 @pytest.mark.parametrize("name,sv", CASES, ids=[c[0] for c in CASES])
-def test_真AB_旧实现与新实现产出完全一致(tmp_path, name, sv):
+def test_真AB_旧实现与新实现产出完全一致(tmp_path, name, sv, monkeypatch):
+    # 2026-11-13：并行档下两次装配可能跨分钟，时间字符串（HH:MM）会让旧/新快照不等；
+    # 冻结 section_world 的「现在」，只比较策略等价。
+    import app.agent.context.section_world as _sw
+
+    _real_dt = _sw.datetime
+    _fixed = _real_dt(2026, 1, 1, 10, 0, tzinfo=_sw.timezone(_sw.timedelta(hours=8)))
+
+    class _FrozenDT(_real_dt):
+        @classmethod
+        def now(cls, tz=None):
+            return _fixed.astimezone(tz) if tz is not None else _fixed.replace(tzinfo=None)
+
+    monkeypatch.setattr(_sw, "datetime", _FrozenDT)
     old = _old_policy_namespace()
     new = {"_block_priority": _mp._block_priority,
            "_clip_by_whole_lines": _mp._clip_by_whole_lines,

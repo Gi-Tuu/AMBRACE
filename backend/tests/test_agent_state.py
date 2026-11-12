@@ -349,28 +349,3 @@ def test_utility_feedback_wired_when_flag_on(monkeypatch):
     assert final.get("utility_feedback_done") is True
 
 
-def test_utility_feedback_zero_state_change_when_flag_off(monkeypatch):
-    """flag 默认关：不调度、也不新增 state 键（逐字节零行为变化）。"""
-    from app.agent.loop import AGENT_FLAGS
-    from app.memory import utility_feedback as uf
-
-    assert AGENT_FLAGS.get("memory_utility_feedback") is True    # 批 1A 常驻（2026-11-11）
-    monkeypatch.setitem(AGENT_FLAGS, "memory_utility_feedback", False)
-
-    called = []
-
-    async def _fake_completion(**kw):
-        return "你上次说喜欢喝美式咖啡"
-
-    monkeypatch.setattr(nodes, "chat_completion", _fake_completion)
-    monkeypatch.setattr(nodes, "_has_after_generate_hook", lambda: False)
-    monkeypatch.setattr("app.agent.llm_client.get_user_llm_config", _get_cfg)
-    monkeypatch.setattr(uf, "schedule_utility_feedback", lambda **kw: called.append(kw))
-    monkeypatch.setitem(
-        _CTRL, "memories", [{"id": 5, "content": "用户喜欢喝美式咖啡"}]
-    )
-
-    final = asyncio.run(_build_test_agent().ainvoke(_base_initial_state()))
-
-    assert called == []
-    assert not final.get("utility_feedback_done")   # flag 关：state 无新增键（None/缺失）

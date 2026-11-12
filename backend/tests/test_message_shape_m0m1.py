@@ -6,7 +6,7 @@
    中文按字符数 / emoji 代理对）；
 ② 两份 ``[:50]`` 拷贝确实收口成单一真源（调用点源码断言，防止「收了个寂寞」）；
 ③ 读数分桶与截顶占比口径（含 ``>500`` 恒 0 的天花板、SQL length 取字符数不是字节数）；
-④ flag ``message_shape_notify_limit`` 默认 False 且双向登记（AGENT_FLAGS ＋ 开关目录）；
+④ flag ``message_shape_notify_limit`` 默认 True（2026-11-12 常驻）且双向登记（AGENT_FLAGS ＋ 开关目录）；
 ⑤ prompt 侧：关＝逐字节旧 prompt（返回原列表对象本身），开＝只多那一句且不改动传入列表
    （只进上下文、不落库不进记忆）。
 
@@ -249,11 +249,11 @@ def test_read_endpoint_length_probe_uses_characters(tmp_path):
     assert out["ceiling_hit"] == {"count": 1, "ratio": 0.25}  # 600 字那条被截到 500＝截顶证据
 
 
-# ── ⑥ flag 双向登记 + 默认关 ──
+# ── ⑥ flag 双向登记 + 默认开（2026-11-12 常驻）──
 
-def test_flag_registered_default_false_in_agent_flags():
+def test_flag_registered_default_true_resident():
     assert "message_shape_notify_limit" in AGENT_FLAGS
-    assert AGENT_FLAGS["message_shape_notify_limit"] is False
+    assert AGENT_FLAGS["message_shape_notify_limit"] is True, "2026-11-12 常驻（生产自 10-01 起一直 ON）"
 
 
 def test_flag_registered_in_user_facing_catalog():

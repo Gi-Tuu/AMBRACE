@@ -160,7 +160,7 @@ async def _preheat_baseline(db, st) -> None:
         chat_style = char.chat_style if char else ""
         mood_penalty = 0.0
         from app.agent.loop import AGENT_FLAGS
-        if AGENT_FLAGS.get("spring_emotion_enabled", False) and AGENT_FLAGS.get("preoccupation_enabled", False):
+        if AGENT_FLAGS.get("preoccupation_enabled", False):  # 2026-11-12 退役 spring_emotion_enabled（恒开）
             from app.life.preoccupations import list_active_preoccupations, mood_baseline_penalty
             active = await list_active_preoccupations(db, st.character_id)
             mood_penalty = mood_baseline_penalty(active)
@@ -175,8 +175,7 @@ async def _preheat_baseline(db, st) -> None:
 def _apply_drift_sync(st, now: datetime) -> dict:
     """按上次结算时间 → now 的 Δt 惰性结算八维漂移（只改内存对象，返回有变化的维；不触碰评估时间戳）"""
     import random
-    from app.agent.loop import AGENT_FLAGS
-    spring_on = bool(AGENT_FLAGS.get("spring_emotion_enabled", False))
+    spring_on = True  # 2026-11-12 退役 spring_emotion_enabled（恒开）
     last = _drifted_at.get(st.id, st.updated_at)
     if last is None:
         _drifted_at[st.id] = now

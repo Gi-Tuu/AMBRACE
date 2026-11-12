@@ -19,13 +19,12 @@ from app.utils.timeutil import now_naive_utc
 from app.domain.proactivity import outreach as _oc
 # 2026-09-13（Codex 交接 §二）：outreach 投放口径三闸纯决策层（时段窗口 / 类型配比 / 单会话限频）
 from app.domain.proactivity.pacing import (
-    FLAG_HOUR_WINDOW,
     FLAG_SESSION_RATE,
-    FLAG_TYPE_MIX,
     LOW_YIELD_TYPES,
     SESSION_RATE_TYPES,
     TYPE_MIX_COUNTED_TYPES,
     gate_active,
+    gate_on,
     hour_window_allows,
     session_rate_allows,
     type_mix_allows,
@@ -285,8 +284,9 @@ async def _pacing_gate(
     """
     try:
         session_id = candidate.get("session_id")
-        on_hour = gate_active(char_id, session_id, FLAG_HOUR_WINDOW, ports=_pacing_ports)
-        on_mix = gate_active(char_id, session_id, FLAG_TYPE_MIX, ports=_pacing_ports)
+        # 2026-11-12：hour/type_mix 两闸常驻化退役 → 直接按灰度/比例判定（无开关）
+        on_hour = gate_on(char_id, session_id)
+        on_mix = gate_on(char_id, session_id)
         on_rate = gate_active(char_id, session_id, FLAG_SESSION_RATE, ports=_pacing_ports)
         if not (on_hour or on_mix or on_rate):
             return None

@@ -66,15 +66,12 @@ AGENT_FLAGS = {
     # ③ outreach_session_rate_v1：同 (character_id, session_id) ≤8/日 且最小间隔 45 分钟
     #    （与 MAX_PER_HOUR 叠加，不替换；同样按已发送计数）。
     # 命中留痕：proactive_trigger_logs.trigger_reason 带 [gate=hour|type|session_rate]。
-    "outreach_hour_window_v1": False,
-    "outreach_type_mix_v1": False,
     "outreach_session_rate_v1": False,  # 〔A19处置·候选不删（10-02 拍）＝投放三闸之一，专门测试 test_domain_decision_pacing_purity.py〕
     "memory_peak_cutoff": False,  # 默认关（用例钉死：test_memory_lookup_endpoint::test_条数硬顶_limit超20夹到20）；生产已由 runtime_flags 拨开（2026-09-05）
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：recall_diversify（按类型多样性重排）
     # ── Life Loop v1.1（2026-08-26；2026-08-27 用户拍板全量开启）──
     "life_loop_enabled": True,            # 主开关：30min 行为决策循环
     "life_loop_llm": True,                # 允许 LLM 生成生活文案（每角色每日≤2次）
-    "life_chat_driven_enabled": True,     # 聊天→生活意图链路
     "memory_tiered_decay": False,         # M2-S2（2026-08-31）：分层衰减——高置信持久/低置信加速/跌破阈值冷归档。默认关（灰度开关，开启前先跑 scripts/diagnostics/memory_tiering_snapshot.py 快照）；关=逐字节现状  〔A19处置·预留（10-02 拍）＝开启前须先跑 memory_tiering_snapshot.py 快照，属有前置条件的留键〕
     # ── X3 Provider 端口（2026-08-31，docs/archive/architecture/执行方案_扩展化_20260831.md 批次 X3）──
     # provider_registry 开=LLM/TTS 经 app/providers 注册口解析实现（内置 openai_compatible/dashscope 为默认实现，
@@ -90,13 +87,13 @@ AGENT_FLAGS = {
     "working_state_inject": False,  # 〔A19处置·灰度中（10-04 补账）＝走代码级白名单而非库覆盖，RATIO 自 09-11 已＝1.0（白名单仅 char13）；10-04 定＝维持白名单、不放开到所有角色（只读实测：生产只有 char13 有 81 行、char6 有 3 行 working_state 行 ⇒ 当下拨 True 几乎不产生新证据；而默认值一改就是「以后凡是攒出行的角色都默认进上下文」的永久语义变更，且批 0-1 判效评测集主体还没做）。键保留当热回滚闸〕
     "life_home_worldmap_enabled": True,   # 小家大地图（§11）
     # ── 生命感增强 v1（#63，2026-08-27；全部默认关，可独立回退）──
-    "reply_delay_enabled": True,         # 机制2：动态回复延迟（用户主动消息才生效）
-    "spring_emotion_enabled": True,      # 机制1：弹簧-阻尼情绪（4 维 + 人格基线）
     "life_share_enabled": True,          # 机制4：活动完成自然分享（arpiter 门控 + 配额）
 "life_state_semantics_v1": False,     # M2（2026-11-05 用户拍板 C）：energy=短期体力、fatigue=长期疲劳分工；decision 两级判；默认关＝旧判据
 "working_state_parse_tolerant_v1": False,  # P3（2026-11-11 根因修复）：工作记忆 JSON 容错解析＋重试＋预算 900；默认关＝旧路径
 "vector_content_check_v1": False,      # P1-2（2026-11-11 架构治理）：向量侧内容哈希对账（同 ID 内容漂移识别＋补建）；默认关＝行为不变
 "memory_content_revision_v1": False,  # P1-1（2026-11-11 架构治理）：改内容后重算证据键 write_key 并留回执；默认关＝旧行为
+"memory_lifecycle_view_v1": False,  # RC2 M3/M4（2026-11-13）：记忆生命周期只读投影（默认关＝端点 404）
+"memory_action_first_v1": False,  # RC1 A 方案（2026-11-12）：动作式记忆「先落动作标记再解释」提示；默认关＝零行为
 "life_state_dead_fields_v1": False,   # M2b（2026-11-07）：focus 派生只读化（读写点都从 energy 现算）+ mood_delta 死字段停写；默认关＝旧写入
 "vector_auto_repair": False,          # M-01 补建（2026-11-07）：向量对账 tick 对 missing 清单重嵌补建；默认关＝只告警不修复
 "proactive_tick_cache": False,        # M3a（2026-11-04）：主动 tick 内 get_active_characters 只查一次；默认关＝逐次直查
@@ -200,7 +197,6 @@ AGENT_FLAGS = {
     #   >0 时由定时清理任务（每 6h）删除超期 domain_events 行。runtime_flags 只支持 bool 覆盖，
     #   本项为硬编码默认值；误配非法值按 0 处理（宁可多留不误删）。
     "domain_event_retention_days": 0,
-    "mcp_stream_declarations": False,  # 默认关（用例钉死：test_mcp_phase2::test_mcp_declarations_stream_empty）；生产已由 runtime_flags 拨开（2026-09-08）
     # ── 主动复习「回忆化」+ 过期计划记忆治理（2026-09-09，L0-L4）──
     # 设计意图（用户定调）：复习=回忆/怀旧，把旧记忆当往事回味，不当"当前仍成立/即将发生"续写叮嘱。
     # review_reinforce_event_cap 开=一次性事件经"主动复习成功"强化按 tense 分流收口（L2：过期计划
@@ -208,7 +204,6 @@ AGENT_FLAGS = {
     #   注：输出本地闸门（memory_review.py 的 _is_wrong_tense_directive，拦"当下叮嘱式回忆"）**不受本键门控**，一直生效；
     # review_plan_expire_stale 开=每日维护把过期计划自动置 stale（L4，默认关灰度）；
     # review_plan_validity_extract 开=提取/写入侧给计划写 valid_to（L4，默认关灰度）。
-    "review_reinforce_event_cap": True,
     "review_plan_expire_stale": False,
     "review_plan_validity_extract": False,
     # ── A4 批 1 / T3：事实生命周期策略表（2026-09-26 落 P0–P2；2026-09-29 B9 判读后进 P4）──
@@ -274,7 +269,6 @@ AGENT_FLAGS = {
     "proactive_segment_guard": False,
     # ── 小增量（2026-09-16）：召回后效用反馈（Slowave 式），用于调 salience/衰减 ──
     # 开＝召回后异步写轻量反馈并据此微调；关＝零行为变化。
-    "memory_utility_feedback": True,
     # ── X6 主动内容策略包外放（2026-09-16 落地）──
     # proactive_strategy_plugins 开＝「内容策略」交给策略包：内核向 proactive_candidate hook
     #   下发 roster（选人结果），被接管的策略源（本轮仅 special）整体让位；关=内核各策略源
@@ -382,12 +376,11 @@ AGENT_FLAGS = {
     "ai_rating_vote3": False,
     # ── A4 批 6 / T5 M0 项1：注入视图分离·现状面子句（2026-09-27；默认关）──
     # 开=注册表版「AI 生活」注入（agent/context/section_overlay.py life_share）补上现状面状态子句
-    #   current_facts_status_clause()，与装配器版（context/assembly.py:520）口径对齐；
+    #   current_facts_status_clause()，与装配器版（context/assembly.py:548）口径对齐；
     #   关=**逐字节旧行为**（该 select 的 where 不附加任何子句，SQL 与改动前一致）。默认关=零行为变化。
     # 注意：现状面开关 current_facts_active_only（线上默认 True）开时子句才是「恒 active」，
     #   本键单独开、current_facts_active_only 关时子句退化为旧口径（memory_supersede 门控）。
     # 回退：置回 False（runtime_flags 热切，无需重启）。
-    "current_view_filter": True,
     # ── S1 第二步（2026-09-27）：主动消息链「角色自主搜索」（默认关=逐字节旧行为）──
     # 开=主动消息生成首轮若输出 [SEARCH]，走一次受控自主搜索（复用 run_search_loop 的 self 分支语义：
     #   结果只作参考、模型可「什么都不说」→ 本轮不产出消息；搜索失败/被节流 → 仍发原候选），
@@ -481,7 +474,6 @@ AGENT_FLAGS = {
     #   （source='chat'）——只看 sub_type 会误伤抽取条，故必须两条同时成立。
     # 不动通用衰减档 S_BY_TYPE["insight"]（改它牵连全部 insight），也不动 top-k/阈值/排序。
     # 回退：置回 False（runtime_flags 热切，无需重启）。
-    "status_memory_ttl": True,
     # ── P0 语义统一 · 第 3 步：工具结果注入行补认知标注（2026-09-29；默认关＝逐字节旧文本）──
     # 背景（S2 地图 §1.2 丢失点 5 / 差距表 G6）：tool_runner 早已产出 {epistemic_status, provenance,
     #   summary} 三元组，但注入上下文那一跳只取 summary——「这条观察是什么身份、来自哪里」在进
@@ -526,7 +518,7 @@ AGENT_FLAGS = {
     # 私聊气泡正文与 WS 原文一律不裁（点开永远能看到完整消息），落库/记忆不受本键影响。
     # 上限数值须由 GET /api/v1/scheduler/stats/notify-shape 的读数＋真机复核后再调，不照抄设计稿。
     # 本键必须登记，否则 runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
-    "message_shape_notify_limit": False,
+    "message_shape_notify_limit": True,  # 2026-11-12 常驻化：生产自 10-01 起一直 ON；离线通知面恒压缩成一句
     # ── A4 批 8 块 A / M1（2026-10-01）：角色级 OpenAI 兼容端点总闸（默认关＝两个路由 404）──
     # 开＝注册并放行 POST /v1/chat/completions + GET /v1/models（标准 OpenAI 形状出入参，
     #   内核复用 application/character_chat_api.chat_with_character 旁路：不落库/不建会话/

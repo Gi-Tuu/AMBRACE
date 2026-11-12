@@ -59,18 +59,11 @@ _CORRECT_WORDS: tuple | None = None  # 延迟取自 reliability（避免顶层�
 
 
 def _flag_on(character_id=None) -> bool:
-    """读 feature flag + 灰度白名单；任何异常回落 False（关=逐字节旧行为）。
+    """灰度白名单判定（2026-11-12 常驻化退役总开关 `memory_utility_feedback`）。
 
-    口径（与 M3-b section_working_state / outreach pacing 灰度一致）：
-    **总开关 memory_utility_feedback 开 且 角色命中 UTILITY_FEEDBACK_GRAY_CHARS** 才生效；
-    角色为空 / 非法 / 非白名单 → False（保守，零行为变化）。
+    口径与 M3-b section_working_state / outreach pacing 灰度一致：
+    **角色命中 UTILITY_FEEDBACK_GRAY_CHARS** 才生效；角色为空 / 非法 / 非白名单 → False。
     """
-    try:
-        from app.flags.agent_flags import AGENT_FLAGS
-        if not AGENT_FLAGS.get("memory_utility_feedback", False):
-            return False
-    except Exception:
-        return False
     if character_id is None:
         return False
     try:

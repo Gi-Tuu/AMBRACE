@@ -164,12 +164,12 @@ def _clean_shadow_state():
 
 def test_pacing_开关判定与旧实现逐例等价():
     cases = [
-        ({}, pacing.FLAG_HOUR_WINDOW),
-        ({pacing.FLAG_HOUR_WINDOW: True}, pacing.FLAG_HOUR_WINDOW),
-        ({pacing.FLAG_HOUR_WINDOW: False}, pacing.FLAG_HOUR_WINDOW),
-        ({pacing.FLAG_HOUR_WINDOW: 1}, pacing.FLAG_HOUR_WINDOW),
-        ({pacing.FLAG_HOUR_WINDOW: 0}, pacing.FLAG_HOUR_WINDOW),
-        ({pacing.FLAG_TYPE_MIX: True}, pacing.FLAG_HOUR_WINDOW),   # 串键不误命中
+        ({}, pacing.FLAG_SESSION_RATE),
+        ({pacing.FLAG_SESSION_RATE: True}, pacing.FLAG_SESSION_RATE),
+        ({pacing.FLAG_SESSION_RATE: False}, pacing.FLAG_SESSION_RATE),
+        ({pacing.FLAG_SESSION_RATE: 1}, pacing.FLAG_SESSION_RATE),
+        ({pacing.FLAG_SESSION_RATE: 0}, pacing.FLAG_SESSION_RATE),
+        ({pacing.FLAG_SESSION_RATE: True}, 'outreach_session_rate_v1'),   # 串键不误命中
         ({pacing.FLAG_SESSION_RATE: "yes"}, pacing.FLAG_SESSION_RATE),
     ]
     for flags, key in cases:
@@ -179,13 +179,13 @@ def test_pacing_开关判定与旧实现逐例等价():
     # 端口取表内部失败 ⇒ 与旧实现同样 fail-safe 到 False（走旧路径）
     boom = FakePacingPorts({})
     boom.flags_error = RuntimeError("flags 源炸了")
-    assert pacing.flag_on(pacing.FLAG_TYPE_MIX, ports=boom) is False
-    assert pacing.flag_on(pacing.FLAG_TYPE_MIX, flags="不是映射") is False   # 旧口径：异常→False
+    assert pacing.flag_on(pacing.FLAG_SESSION_RATE, ports=boom) is False
+    assert pacing.flag_on(pacing.FLAG_SESSION_RATE, flags="不是映射") is False   # 旧口径：异常→False
 
 
 def test_pacing_显式flags时完全不碰端口():
-    ports = FakePacingPorts({pacing.FLAG_TYPE_MIX: True})
-    assert pacing.gate_active(13, 1, pacing.FLAG_TYPE_MIX, flags={pacing.FLAG_TYPE_MIX: True},
+    ports = FakePacingPorts({pacing.FLAG_SESSION_RATE: True})
+    assert pacing.gate_active(13, 1, pacing.FLAG_SESSION_RATE, flags={pacing.FLAG_SESSION_RATE: True},
                               ports=ports) is True
     assert ports.calls == 0, "纯判定路径（调用方已给 flags）不得触发任何 IO"
 
@@ -201,10 +201,9 @@ def test_pacing_gate_active_开关乘灰度矩阵与旧实现等价():
 
 
 def test_pacing_三闸阈值与集合常数逐字不变():
-    assert (pacing.FLAG_HOUR_WINDOW, pacing.FLAG_TYPE_MIX, pacing.FLAG_SESSION_RATE) == (
-        "outreach_hour_window_v1", "outreach_type_mix_v1", "outreach_session_rate_v1")
-    assert pacing.PACING_FLAGS == ("outreach_hour_window_v1", "outreach_type_mix_v1",
-                                   "outreach_session_rate_v1")
+    # 2026-11-12：hour/type_mix 两把开关已常驻化退役，只保留 session_rate 可回退
+    assert pacing.FLAG_SESSION_RATE == "outreach_session_rate_v1"
+    assert pacing.PACING_FLAGS == ("outreach_session_rate_v1",)
     assert pacing.OUTREACH_PACING_GRAY_CHARS == frozenset({13})
     assert pacing.OUTREACH_PACING_RATIO == 1.0
     assert pacing.LOW_YIELD_TYPES == frozenset({
@@ -292,13 +291,13 @@ def test_pacing_生产端口显式注入_读的还是同一张AGENT_FLAGS(monkey
 def test_pacing_未注入端口即抛清晰错误_不静默降级():
     """端口一处都拿不到时：抛 PacingPortsNotInjected，绝不退化成「开关看起来永远是关」。"""
     with pytest.raises(PacingPortsNotInjected) as exc:
-        pacing.flag_on(pacing.FLAG_TYPE_MIX)
+        pacing.flag_on(pacing.FLAG_SESSION_RATE)
     assert "PacingPorts" in str(exc.value) and "断点 #1" in str(exc.value)
     with pytest.raises(PacingPortsNotInjected):
-        pacing.gate_active(13, 1, pacing.FLAG_TYPE_MIX)
+        pacing.gate_active(13, 1, pacing.FLAG_SESSION_RATE)
     # 显式传 flags 的纯判定路径不受影响（零 IO）
-    assert pacing.gate_active(13, 1, pacing.FLAG_TYPE_MIX,
-                              flags={pacing.FLAG_TYPE_MIX: True}) is True
+    assert pacing.gate_active(13, 1, pacing.FLAG_SESSION_RATE,
+                              flags={pacing.FLAG_SESSION_RATE: True}) is True
 
 
 # ═══════════════ ② decision layer：三原语透传 + 影子留痕 ═══════════════

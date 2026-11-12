@@ -11,6 +11,15 @@ sys.path.insert(0, str(PLUGIN))
 BASE = "http://127.0.0.1:8080"
 
 
+@pytest.fixture(autouse=True)
+def _plugin_on_path():
+    """并行档（-n 8）下 sys.path[0] 可能被其它用例改写：每个用例重新压入插件目录。"""
+    _p = str(PLUGIN)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+    yield
+
+
 def _doc():
     return {
         "base_url": BASE,
