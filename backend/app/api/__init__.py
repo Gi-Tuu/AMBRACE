@@ -2,6 +2,7 @@ from app.api.characters import router as character_router
 from app.api.chat import router as chat_router
 from app.api.memories import router as memory_router
 from app.api.memory_why import router as memory_why_router  # noqa: E402  G5（路由已并入 memory_router）
+from app.api import memory_lifecycle as _memory_lifecycle  # noqa: F401 —— RC2 M3/M4 路由注册（端点挂在 memory_router 上，模块必须被导入）
 from app.api.system import router as system_router
 from app.api.scheduler import router as scheduler_router
 from app.api.scheduler import proactive_router

@@ -15,7 +15,18 @@ SYNTH = (
 async def _setup(u=8901, c=8911, s=8921):
     from test_memory_source_queue_m2b import _seed_and_message
     from app.memory import extractor as ex
+    from app.db.database import async_session_factory
     msg_id = await _seed_and_message(u, c, s)
+    # 2026-11-13 并行档（-n 8）：固定号段会被同 worker 其它用例的先写污染（实测残留 2 行 memories），
+    # 先清理该消息号下的残留再播种；只清「来源＝本条消息/本消息来源事件」的行。
+    async with async_session_factory() as db:
+        await db.execute(text("DELETE FROM memories WHERE source_id=:m"), {"m": msg_id})
+        await db.execute(text("DELETE FROM processed_extractions WHERE user_message_id=:m"), {"m": msg_id})
+        await db.execute(text(
+            "DELETE FROM memory_write_receipts WHERE source_event_uid IN "
+            "(SELECT source_event_uid FROM chat_messages WHERE id=:m AND source_event_uid IS NOT NULL)"),
+            {"m": msg_id})
+        await db.commit()
     await ex.add_chat_memory_extraction(s, c, u, "queue source", "synthetic ai", source_id=msg_id)
     return msg_id
 

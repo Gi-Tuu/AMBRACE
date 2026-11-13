@@ -126,6 +126,21 @@ def test_cross_tenant_404(monkeypatch):
     assert r.status_code == 404, r.text
 
 
+def test_route_registered_via_api_package():
+    """生产入口必须注册该路由（2026-11-13 实测踩坑：模块未被 api/__init__ 导入 ⇒ 线上 404）。
+
+    不用 `app.main`（导入即抢实例锁，测试环境会 RuntimeError）：改为校验「导入 app.api 后 
+    memory_router 上确有该路径」＋「api/__init__ 仍导入 memory_lifecycle 模块」。
+    """
+    import app.api  # noqa: F401 —— 触发包内导入（含 memory_lifecycle）
+    import pathlib
+    from app.api.memories import router
+    paths = {getattr(r, "path", "") for r in router.routes}
+    assert any(str(p).endswith("/memories/{memory_id}/lifecycle") for p in paths), paths
+    init_src = (pathlib.Path(__file__).resolve().parents[1] / "app/api/__init__.py").read_text(encoding="utf-8")
+    assert "memory_lifecycle" in init_src, "api/__init__ 丢了导入 ⇒ 线上端点会 404"
+
+
 def test_route_is_readonly_ratchet():
     """端点只读：源码里不得出现 commit/flush/delete/update 写操作。"""
     import pathlib

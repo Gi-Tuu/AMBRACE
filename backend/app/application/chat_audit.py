@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""RC1 A 方案观测（2026-11-12）：动作式记忆「说了记却没落动作」留痕。
+"""动作式记忆「说了记却没落动作」留痕（RC1 A 观测；2026-11-13 起常开）。
 
-只在 flag `memory_action_first_v1` 开时生效；每条「说了记」的回复留一行 INFO（missing=0/1），
-分母＝全部「说了记」回复、分子＝missing=1，灰度期可直接算比例。关档零行为。
+**与 flag 解耦**：无论 `memory_action_first_v1` 开关如何，每条「说了记」的回复都留一行 INFO
+（missing=0/1）；分母＝全部「说了记」回复、分子＝missing=1。这样才能在关/开两档采集真 A/B 基线。
+只写一行日志、fire-and-forget、失败静默，不改任何业务行为。
 """
 from __future__ import annotations
 
@@ -14,11 +15,8 @@ _SAID_WORDS = ("记下", "记上", "记牢", "记住了", "记好了")
 
 
 def observe_action_missing(character_id, source_text: str, actions: list) -> None:
-    from app.flags.agent_flags import AGENT_FLAGS
 
     try:
-        if not bool(AGENT_FLAGS.get("memory_action_first_v1", False)):
-            return
         text = source_text or ""
         if not any(w in text for w in _SAID_WORDS):
             return
