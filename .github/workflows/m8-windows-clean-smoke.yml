@@ -5,6 +5,8 @@ name: m8-windows-clean-smoke
 # 这里只证明“无 backend/.venv、无源码运行时安装”的启动路径。
 
 on:
+  push:
+    branches: [m8-3a-smoke]
   workflow_dispatch:
 
 jobs:
