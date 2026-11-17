@@ -307,36 +307,23 @@ def shadow_trace_modulation(
     character_id: int | None = None,
     new_level: float | None = None,
 ) -> None:
-    """M0 的「只留痕」出口：INFO 日志 + ``obs_event`` 各记一份量化对照，**返回值不经过它**。
+    """M0 的「只留痕」出口：INFO 日志记一份量化对照，**返回值不经过它**。
 
     纪律（设计 §3.4(b) + 派单禁止项）：
-    - 不写任何业务表（``obs_event`` 是 fire-and-forget 的 trace 队列，不是 level/snapshot 落库）；
-    - 不落快照列、不新建表——读数只在 trace 里存一次；
-    - 异常一律吞掉（连 flag 读取、连日志本身失败都不往上抛）：观测层出错绝不能拖垮水位结算；
+    - 不写任何业务表、不落快照列、不新建表；
+    - **``obs_event`` DB 留痕已退役（2026-11-14，B13 判效完成）**：此前每次驱力结算写一条
+      ``agent_task_logs``（route=emotion_drive_modulation，≈1.3 万行/天、累计 58 万行），
+      判效读数已逐字入档；留痕只剩 INFO 日志（app.log 每日轮转）。恢复 DB 观测＝重接
+      ``obs_event``（研究线需要时再排期），签名与调用方保持不变；
+    - 异常一律吞掉（连日志本身失败都不往上抛）：观测层出错绝不能拖垮水位结算；
     - 不修改入参（快照 dict / 偏置向量原样返回给调用方）。
     - ``bias`` 字段与增速**共用** ``_bias_of``（非 mapping／脏值 ⇒ 0.0）：偏置的形态问题既不影响
-      实际结算，也不该把整条留痕（含角色归属）一起吞掉。
+      实际结算，也不该把整条留痕一起吞掉。
     """
     try:
-        valence, arousal = read_axes(emotion_snapshot)
-        multiplier = combined_multiplier(drive_key, emotion_snapshot, bias_vector)
-        note = modulation_note(drive_key, emotion_snapshot, bias_vector, multiplier)
+        note = modulation_note(drive_key, emotion_snapshot, bias_vector,
+                               combined_multiplier(drive_key, emotion_snapshot, bias_vector))
         _logger.info("%s", note)
-        from app.memory.observability import obs_event  # 延迟 import：本模块 import 期零副作用
-
-        obs_event(
-            character_id,
-            SHADOW_METRIC,
-            {
-                "drive_key": drive_key,
-                "multiplier": round(multiplier, 4),
-                "valence": round(valence, 4),
-                "arousal": round(arousal, 4),
-                "bias": round(_bias_of(bias_vector, drive_key), 4),
-                "new_level": None if new_level is None else round(float(new_level), 4),
-            },
-            kind="shadow",
-        )
     except Exception as exc:  # noqa: BLE001 —— 留痕失败只降级为日志，不影响水位结算
         try:
             _logger.warning("emotion modulation shadow trace failed drive=%s: %s", drive_key, exc)

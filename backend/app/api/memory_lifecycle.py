@@ -36,6 +36,7 @@ class LifecycleReceipt(BaseModel):
 class MemoryLifecycleResponse(BaseModel):
     status: str
     memory_id: int
+    lifecycle_status: str | None = None  # M4：mem.status 原值（active/superseded/stale/expired）；旧客户端忽略
     version: int = 0
     superseded_by: int | None = None
     valid_to: str | None = None
@@ -107,6 +108,7 @@ async def get_memory_lifecycle(
         return MemoryLifecycleResponse(
             status="ok",
             memory_id=memory_id,
+            lifecycle_status=str(mem.status) if mem.status else None,
             version=int(mem.version or 0),
             superseded_by=mem.superseded_by,
             valid_to=mem.valid_to.isoformat() if mem.valid_to else None,

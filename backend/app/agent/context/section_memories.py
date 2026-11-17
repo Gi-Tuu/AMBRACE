@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from app.agent.context.sections import ContextSection, register_section, TARGET_APPEND, TARGET_TEMPLATE
-from app.memory.format import format_memory_line, normalize_speaker_type
+from app.memory.format import normalize_speaker_type
 
 _logger = logging.getLogger("agent.context.section_memories")
 
@@ -112,36 +112,15 @@ def _build_retrieved_memory_lines(character_id: int, retrieved: list) -> list[st
     核心记忆/锚点/置顶摘要等长期画像分区仍使用各自的格式化入口。
     返回格式化候选行；旧轮次统计不代表最终预算后的实际引用。
 
-    #70 方案A：**flag memory_tiered_inject 关时走完全旧行为**（统一 150 字的
-    format_memory_line + 请求内去重，逐字节一致）；开时 Top1→L2(240)、其余→L0 分层注入
-    （复用 format_memory_line 的时间/认知/说话人/纠正标注，格式不漂移）。
+    #70 方案A（2026-11-14 常驻化）：Top1→L2(240)、其余→L0 分层注入
+    （复用 format_memory_line 的时间/认知/说话人/纠正标注，格式不漂移）；
+    请求内去重语义与旧链路一致；关档平面分支已随键退役删除。
     """
-    from app.agent.loop import AGENT_FLAGS
-
-    # 关 flag：完全旧行为（统一 150 字 + 请求内去重 + 说话人标注）——回归保护
-    if not AGENT_FLAGS.get("memory_tiered_inject", False):
-        lines = []
-        injected = []
-        for m in _filter_recently_injected(character_id, retrieved):
-            # X-2（2026-08-18）：说话人标注（[你说的]/[TA说的]，speaker_type 无值不加），
-            # 让 LLM 区分「用户亲口说的（FACT）」与「AI 自己推测的（INFERRED）」；认知前缀（epistemic）之后、内容之前
-            _observe_unknown_speaker(m)  # P0 第 4 步：未知 speaker_type 只观测，标注兜底在 format 里
-            try:
-                _line = format_memory_line(m, include_speaker=True)
-            except Exception as _e:
-                # 单行异常只丢这一行（P0 第 4 步读侧异常隔离），不拖垮整个检索区
-                _logger.warning("memory line format failed mem=%s: %s", _memory_id_of(m), _e)
-                _line = ""
-            if _line:
-                lines.append(_line)
-                injected.append(m)
-        if injected:
-            _mark_memories_injected(character_id, injected)
-        return lines
-
-    # 开 flag：Top1 L2 / 其余 L0（L1 桥接由 memories_section 异步补挂）；请求内去重语义与关 flag 一致
     from app.memory.tiers import tiered_memory_lines
+
     candidate = list(_filter_recently_injected(character_id, retrieved))
+    for m in candidate:
+        _observe_unknown_speaker(m)  # P0 第 4 步：未知 speaker_type 只观测，标注兜底在 format 里
     lines = tiered_memory_lines(candidate, include_speaker=True)
     if candidate:
         _mark_memories_injected(character_id, candidate)
@@ -237,8 +216,7 @@ async def memories_section(state: dict, ctx: dict) -> str:
     # 锚定「本轮实际注入」的 Top1 = 请求内去重后的 candidate[0]（而非原始检索首位），
     # candidate 为空则不挂 L1；失败 warning，不阻塞主链路）。
     try:
-        from app.agent.loop import AGENT_FLAGS
-        if AGENT_FLAGS.get("memory_tiered_inject", False) and lines:
+        if lines:
             from app.memory.tiers import load_l1_summary
             from app.utils.timeutil import now_naive_utc
             from datetime import datetime as _dt, timedelta as _td

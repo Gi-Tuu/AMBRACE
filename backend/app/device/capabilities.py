@@ -85,7 +85,8 @@ _CAP_LIST: tuple[CapabilitySpec, ...] = (
     _act("action_open_app", "accessibility", {"target_app": "str", "dry_run": "bool"}),
     _act("action_tap", "accessibility",
          {"target_app": "str", "by": "str", "query": "str", "dry_run": "bool"}),
-    _act("action_set_text", "accessibility",
+    _act("action_observe_tree", "accessibility", {"target_app": "str"}),
+_act("action_set_text", "accessibility",
          {"target_app": "str", "text": "str", "dry_run": "bool"}),
 )
 

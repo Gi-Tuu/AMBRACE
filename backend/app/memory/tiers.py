@@ -56,21 +56,29 @@ def tiered_memory_lines(memories: list[dict], *, include_speaker: bool = True) -
 
     #70 方案A：严格按各层上限把内容截断后再交给 format_memory_line（显式传 max_len，
     否则会被其默认 150 再截一刀，导致 L2 详情达不到 240 的配额）。
+    读侧异常隔离（2026-11-14）：单行格式化失败只丢这一行（与关档路径的「坏行不拖垮整区」
+    同契约，P0 第 4 步），不拖垮整个检索区。
     """
     from app.memory.format import format_memory_line
+    from app.utils.logger import get_logger
+
+    _logger = get_logger("memory.tiers")
 
     out: list[str] = []
     for idx, m in enumerate(memories or []):
-        if idx == 0:
-            body = (m.get("content") or "")[:L2_MAX_CHARS]
-            out.append(format_memory_line(
-                {**m, "content": body}, include_speaker=include_speaker, max_len=L2_MAX_CHARS,
-            ))
-        else:
-            body = extract_l0(m)
-            out.append(format_memory_line(
-                {**m, "content": body}, include_speaker=include_speaker, max_len=L0_MAX_CHARS,
-            ))
+        try:
+            if idx == 0:
+                body = (m.get("content") or "")[:L2_MAX_CHARS]
+                out.append(format_memory_line(
+                    {**m, "content": body}, include_speaker=include_speaker, max_len=L2_MAX_CHARS,
+                ))
+            else:
+                body = extract_l0(m)
+                out.append(format_memory_line(
+                    {**m, "content": body}, include_speaker=include_speaker, max_len=L0_MAX_CHARS,
+                ))
+        except Exception as e:  # noqa: BLE001 —— 单行异常只丢这一行，不拖垮整区
+            _logger.warning("tiered memory line failed idx=%s: %s", idx, e)
     return out
 
 
