@@ -29,6 +29,7 @@ jobs:
           Add-Content $pth.FullName '..\backend'
           Invoke-WebRequest 'https://bootstrap.pypa.io/get-pip.py' -OutFile "$env:RUNNER_TEMP\get-pip.py"
           & "$r\runtime\python.exe" "$env:RUNNER_TEMP\get-pip.py" --no-warn-script-location
+          & "$r\runtime\python.exe" -m pip install --no-cache-dir setuptools wheel
           & "$r\runtime\python.exe" -m pip install --no-cache-dir -r backend\requirements.txt
           robocopy backend "$r\backend" /E /XD .venv data logs tests __pycache__ /NFL /NDL /NJH /NJS | Out-Null
           if ($LASTEXITCODE -ge 8) { throw "robocopy failed" }
