@@ -6,6 +6,15 @@ import sys
 
 import pytest
 
+
+def _run_async(coro):
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
 PLUGIN = pathlib.Path(__file__).resolve().parents[2] / "plugins" / "examples" / "garden_forum"
 sys.path.insert(0, str(PLUGIN))
 import garden_policy as policy
@@ -94,7 +103,7 @@ def wired(mod, monkeypatch):
 
 def run_tick(mod, cfg, monkeypatch):
     monkeypatch.setattr(mod.sdk, "get_config", lambda: cfg)
-    asyncio.run(mod.on_tick({"character_id": 3, "user_id": 1}))
+    _run_async(mod.on_tick({"character_id": 3, "user_id": 1}))
 
 
 def test_real_loader_registers_both_hooks(mod):
@@ -220,10 +229,10 @@ def test_context_inject_only_matching_user(wired, monkeypatch):
     monkeypatch.setattr(mod.sdk, "get_config", lambda: {"garden_forum_on": True, "garden_forum_inject": True,
                                   "garden_forum_url": "http://127.0.0.1:8080"})
     msgs = []
-    asyncio.run(mod.on_inject({"character_id": 3, "user_id": 1, "context_messages": msgs}))
+    _run_async(mod.on_inject({"character_id": 3, "user_id": 1, "context_messages": msgs}))
     assert len(msgs) == 1 and "花园论坛" in msgs[0]["content"]
     msgs2 = []
-    asyncio.run(mod.on_inject({"character_id": 3, "user_id": 2, "context_messages": msgs2}))
+    _run_async(mod.on_inject({"character_id": 3, "user_id": 2, "context_messages": msgs2}))
     assert msgs2 == []
 
 
@@ -233,7 +242,7 @@ def test_context_inject_empty_digest_clears(wired, monkeypatch):
     monkeypatch.setattr(mod.sdk, "get_config", lambda: {"garden_forum_on": True, "garden_forum_inject": True,
                                   "garden_forum_url": "http://127.0.0.1:8080"})
     msgs = []
-    asyncio.run(mod.on_inject({"character_id": 3, "user_id": 1, "context_messages": msgs}))
+    _run_async(mod.on_inject({"character_id": 3, "user_id": 1, "context_messages": msgs}))
     assert msgs == []
 
 
@@ -357,7 +366,7 @@ def test_http_registry_to_real_sdk_comment_fields(mod, monkeypatch):
                 return self2._reply({"error": {"code": "not_found"}}, 404)
         stub.httpd.RequestHandlerClass = H2
         from app.plugins import registry
-        asyncio.run(registry.run_hook("schedule_tick", {}, user_id=1))
+        _run_async(registry.run_hook("schedule_tick", {}, user_id=1))
         state = [r for r in stub_records if r["path"].endswith("/api/host/state")]
         say = [r for r in stub_records if r["path"].endswith("/api/host/say")]
         assert state and say
@@ -385,7 +394,7 @@ def test_http_registry_post_circle_from_profile_intersection(mod, monkeypatch):
         import app.agent.llm_client as llm
         monkeypatch.setattr(llm, "chat_completion", fake_chat)
         from app.plugins import registry
-        asyncio.run(registry.run_hook("schedule_tick", {}, user_id=1))
+        _run_async(registry.run_hook("schedule_tick", {}, user_id=1))
         say = [r for r in stub.records if r["path"].endswith("/api/host/say")]
         assert say and say[0]["body"]["act"] == "act.post"
         assert say[0]["body"]["circle"] == "watering"
@@ -405,8 +414,8 @@ def test_real_sdk_500_custom_code_is_unknown_and_not_retried(mod, monkeypatch):
             calls.append(1)
             return gf.say("act.comment", text="x", post_id=7, parent_id=11, raises=False)
         pid = "http500-action"
-        asyncio.run(mod._send_pending(gf, doc, "3", pid, "comment", 1, send))
-        r2 = asyncio.run(mod._send_pending(gf, doc, "3", pid, "comment", 2, send))
+        _run_async(mod._send_pending(gf, doc, "3", pid, "comment", 1, send))
+        r2 = _run_async(mod._send_pending(gf, doc, "3", pid, "comment", 2, send))
         assert len(calls) == 1
         assert doc["pending"][pid]["state"] == "unknown"
         assert r2["code"] == "pending_unknown"
@@ -426,8 +435,8 @@ def test_real_sdk_dropped_response_unknown_and_not_retried(mod, monkeypatch):
             calls.append(1)
             return gf.say("act.comment", text="x", post_id=7, parent_id=11, raises=False)
         pid = "dropped-action"
-        asyncio.run(mod._send_pending(gf, doc, "3", pid, "comment", 1, send))
-        asyncio.run(mod._send_pending(gf, doc, "3", pid, "comment", 2, send))
+        _run_async(mod._send_pending(gf, doc, "3", pid, "comment", 1, send))
+        _run_async(mod._send_pending(gf, doc, "3", pid, "comment", 2, send))
         assert len(calls) == 1
         assert doc["pending"][pid]["state"] == "unknown"
     finally:
@@ -457,10 +466,10 @@ def test_real_sdk_cancel_marks_unknown_without_resend(mod, monkeypatch):
             except asyncio.CancelledError:
                 pass
 
-        asyncio.run(run())
+        _run_async(run())
         stub.release.set()
         assert doc["pending"][pid]["state"] == "unknown"
-        r = asyncio.run(mod._send_pending(gf, doc, "3", pid, "comment", 2, send))
+        r = _run_async(mod._send_pending(gf, doc, "3", pid, "comment", 2, send))
         assert r["code"] == "pending_unknown"
         assert len(calls) == 1
     finally:
@@ -472,9 +481,9 @@ def test_dm_uses_message_id_so_same_sender_new_message_sends(wired):
     g = gf("http://127.0.0.1:8080")
     cfg = {"garden_forum_allow_llm": True, "garden_forum_allow_write": True,
            "public_profiles": {"3": {"name": "Synthetic"}}}
-    asyncio.run(mod._say(g, doc, "3", "dm",
+    _run_async(mod._say(g, doc, "3", "dm",
                          {"id": 11, "from_agent": "same-peer"}, "first", 1, cfg))
-    asyncio.run(mod._say(g, doc, "3", "dm",
+    _run_async(mod._say(g, doc, "3", "dm",
                          {"id": 12, "from_agent": "same-peer"}, "second", 2, cfg))
     assert [c[0] for c in gf.calls if c != "state"] == ["act.message", "act.message"]
 
@@ -492,9 +501,9 @@ def test_two_post_intents_same_day_each_generate_and_send(wired, monkeypatch):
     import app.agent.llm_client as llm
     monkeypatch.setattr(llm, "chat_completion", fake_chat)
     st = {"circles": [{"slug": "watering"}]}
-    asyncio.run(mod._try_post(g, doc, "3", doc["bound"]["3"], cfg, 1, st, "2026-10-27",
+    _run_async(mod._try_post(g, doc, "3", doc["bound"]["3"], cfg, 1, st, "2026-10-27",
                               cfg["public_profiles"]["3"]))
-    asyncio.run(mod._try_post(g, doc, "3", doc["bound"]["3"], cfg, 2, st, "2026-10-27",
+    _run_async(mod._try_post(g, doc, "3", doc["bound"]["3"], cfg, 2, st, "2026-10-27",
                               cfg["public_profiles"]["3"]))
     assert [c[0] for c in gf.calls if c != "state"] == ["act.post", "act.post"]
 
@@ -532,10 +541,10 @@ def test_quota_refusal_does_not_consume_dm_then_next_day_retries(wired, monkeypa
            "public_profiles": {"3": {"name": "Synthetic"}}}
     now = 1000.0
     policy.usage_begin(doc, now)["day_gen"] = 1
-    asyncio.run(mod._one_character("http://127.0.0.1:8080", doc, "3", cfg, now, 1200))
+    _run_async(mod._one_character("http://127.0.0.1:8080", doc, "3", cfg, now, 1200))
     assert not calls
     assert "11" not in __import__("garden_state").seen_dms(doc, "3", now)
-    asyncio.run(mod._one_character("http://127.0.0.1:8080", doc, "3", cfg,
+    _run_async(mod._one_character("http://127.0.0.1:8080", doc, "3", cfg,
                                    now + 86400, 1200))
     assert calls == [1]
     assert [c[0] for c in gf.calls].count("act.message") == 1
@@ -546,7 +555,7 @@ def test_write_gate_off_does_not_consume_comment(wired):
     gf.state_data["replies_to_me"] = [{"id": 11, "post_id": 7, "body": "x"}]
     cfg = {"garden_forum_allow_llm": True, "garden_forum_allow_write": False,
            "public_profiles": {"3": {"name": "Synthetic"}}}
-    asyncio.run(mod._one_character("http://127.0.0.1:8080", doc, "3", cfg, 1000, 1200))
+    _run_async(mod._one_character("http://127.0.0.1:8080", doc, "3", cfg, 1000, 1200))
     assert "11" not in __import__("garden_state").seen_replies(doc, "3", 1000)
 
 
@@ -560,8 +569,8 @@ def test_disabled_save_failure_keeps_next_tick_closed(wired, monkeypatch):
     monkeypatch.setattr(mod.store, "save", lambda d: False)
     monkeypatch.setattr(mod.sdk, "get_config", lambda: {"garden_forum_on": True,
                                                         "garden_forum_url": BASE})
-    asyncio.run(mod.on_tick({}))
-    asyncio.run(mod.on_tick({}))
+    _run_async(mod.on_tick({}))
+    _run_async(mod.on_tick({}))
     assert gf.calls.count("reconcile") == 1
     assert "state" not in gf.calls
 
@@ -576,11 +585,11 @@ def test_disabled_expiry_reconcile_success_allows_state(wired, monkeypatch):
     monkeypatch.setattr(mod.sdk, "get_config", lambda: {"garden_forum_on": True,
                                                         "garden_forum_url": BASE})
     gf.reconcile_result = {"disabled": True}
-    asyncio.run(mod.on_tick({}))
+    _run_async(mod.on_tick({}))
     assert doc["host_state"]["state"] == "disabled"
     clock[0] = doc["host_state"]["next_at"] + 1
     gf.reconcile_result = {"disabled": False}
-    asyncio.run(mod.on_tick({}))
+    _run_async(mod.on_tick({}))
     assert "reconcile" in gf.calls and "state" in gf.calls
 
 
@@ -606,8 +615,8 @@ def test_unsaved_host_guard_expiry_rechecks_before_actor_state(wired, monkeypatc
     monkeypatch.setattr(mod.sdk, "log", lambda *args, **kwargs: None)
     monkeypatch.setattr(mod.sdk, "get_config", lambda: {
         "garden_forum_on": True, "garden_forum_url": persisted["base_url"]})
-    asyncio.run(mod.on_tick({}))
+    _run_async(mod.on_tick({}))
     assert requests == ["reconcile"]
     clock[0] = mod._host_guard[persisted["base_url"]]["next_at"] + 1
-    asyncio.run(mod.on_tick({}))
+    _run_async(mod.on_tick({}))
     assert requests == ["reconcile", "reconcile"]
