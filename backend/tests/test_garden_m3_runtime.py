@@ -7,12 +7,12 @@ import sys
 import pytest
 
 
+_LOOP = asyncio.new_event_loop()
+asyncio.set_event_loop(_LOOP)
+
+
 def _run_async(coro):
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+    return _LOOP.run_until_complete(coro)
 
 
 PLUGIN = pathlib.Path(__file__).resolve().parents[2] / "plugins" / "examples" / "garden_forum"
