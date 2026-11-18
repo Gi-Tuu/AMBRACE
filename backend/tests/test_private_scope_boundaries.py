@@ -299,7 +299,7 @@ def test_b4_section_memories_registration_point_exists():
     设计稿 §2.5 #4 行：「捞 Memory 的注入通道（全部）：``agent/context/section_memories.py:283``
     （读 ``state["retrieved_memories"]``，源 ``:198``）」。本断言钉死这个注册点存在。
     """
-    snippet = _slice("agent/context/section_memories.py", 275, 295)
+    snippet = _slice("agent/context/section_memories.py", 250, 270)
     assert "register_section" in snippet, (
         "section_memories.py:283 附近的 register_section 调用消失（设计稿 §2.5 #4 前提被破坏）"
     )

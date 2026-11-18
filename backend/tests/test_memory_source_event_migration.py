@@ -27,7 +27,7 @@ def _run(tmp_path, *args):
 def test_single_head_and_upgrade_seeds_source_seq(tmp_path):
     cfg = Config(str(_backend() / "alembic.ini"))
     cfg.set_main_option("script_location", str(_backend() / "alembic"))
-    assert ScriptDirectory.from_config(cfg).get_heads() == ["c5e7a9b1d3f6"]
+    assert ScriptDirectory.from_config(cfg).get_heads() == ["c6f8b0d2e4a7"]
     r = _run(tmp_path, "upgrade", "head")
     assert r.returncode == 0, r.stderr[-2000:]
     eng = create_engine(f"sqlite:///{tmp_path / 'history.db'}")

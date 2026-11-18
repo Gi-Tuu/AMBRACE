@@ -408,12 +408,12 @@ def test_startup_on_candidate_head_without_check_installs_triggers(tmp_path, mon
     _chain = read_chain(BACKEND / "alembic" / "versions")
     _parents = {down for (_p, down) in _chain.values() if down is not None}
     _real_head = next(rev for rev in _chain if rev not in _parents)
-    assert _real_head == "c5e7a9b1d3f6", (
+    assert _real_head == "c6f8b0d2e4a7", (
         f"仓库迁移链应为 c5→b3→d6→c4→b2a，实得 head={_real_head}；"
         "若这条断了说明迁移链被截短，本用例的版本目标需要重审"
     )
 
-    assert _chain[_real_head][1] == "b3d9e1f5a7c2"
+    assert _chain[_real_head][1] == "c5e7a9b1d3f6"
     assert _chain["b3d9e1f5a7c2"][1] == "d6f8a0b2c4e6"
     assert _chain["d6f8a0b2c4e6"][1] == "c4e6f8a0b2d4"
     assert _chain["c4e6f8a0b2d4"][1] == "b2a0c1d2e3f4"

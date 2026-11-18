@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import agent_tools as agent_tools_mod
-from app.api.agent_tools import router
+from app.api.agent_tools import router, get_tool_user_id
 from app.auth.deps import get_current_user_id
 
 
@@ -16,6 +16,7 @@ def client():
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_current_user_id] = lambda: 3
+    app.dependency_overrides[get_tool_user_id] = lambda: 3
     return TestClient(app)
 
 

@@ -160,7 +160,7 @@ def test_remaining_real_migration_fault_points_resume(tmp_path,point):
     eng=create_engine(f"sqlite:///{tmp_path / 'history.db'}")
     try:
         with eng.connect() as c:
-            assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one()=="c5e7a9b1d3f6"
+            assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one()=="c6f8b0d2e4a7"
         chat_cols = {c["name"] for c in inspect(eng).get_columns("chat_messages")}
         assert "source_event_uid" in chat_cols
         chat_indexes = {i["name"]: i["column_names"] for i in inspect(eng).get_indexes("chat_messages")}

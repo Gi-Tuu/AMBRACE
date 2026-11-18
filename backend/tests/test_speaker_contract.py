@@ -247,5 +247,5 @@ def test_context_builder_主链路注入启用include_speaker():
     src = inspect.getsource(assembly_mod)
     # X-4（2026-08-18）：检索区行构建抽至 _build_retrieved_memory_lines，仍启用说话人标注
     helper_src = inspect.getsource(cb_mod._build_retrieved_memory_lines)
-    assert "format_memory_line(m, include_speaker=True)" in helper_src
+    assert "tiered_memory_lines(candidate, include_speaker=True)" in helper_src
     assert "memory_lines = _build_retrieved_memory_lines(" in src

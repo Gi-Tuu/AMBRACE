@@ -4510,13 +4510,13 @@ def test_A23_assembly行号坐标与注释一致():
     src = _a22c12_src()
     ls = src.split("\n")
     # 坐标随迁（2026-11-12：RC1 A 方案提示两轮后 ⇒ 532/548/205）
-    assert "if _share and _trust >= 60:" in ls[531], "life_share 起点已不在 :532"
-    assert "current_facts_status_clause()" in ls[547], "现状面子句已不在 :548"
-    assert "memory_lines = _build_retrieved_memory_lines(" in ls[204], "retrieved 注入点已不在 :205"
+    assert "if _share and _trust >= 60:" in ls[521], "life_share 起点已不在 :532"
+    assert "current_facts_status_clause()" in ls[537], "现状面子句已不在 :548"
+    assert "memory_lines = _build_retrieved_memory_lines(" in ls[201], "retrieved 注入点已不在 :205"
     ov = Path(str(_seam_src_path("app.agent.context.section_overlay"))).read_text(encoding="utf-8")
-    assert "context/assembly.py:532-548" in ov, "section_overlay 的行号注释没随迁"
+    assert "context/assembly.py:522-538" in ov, "section_overlay 的行号注释没随迁"
     fl = Path(str(_seam_src_path("app.flags.agent_flags"))).read_text(encoding="utf-8")
-    assert "context/assembly.py:548" in fl, "agent_flags 的行号注释没随迁"
+    assert "context/assembly.py:538" in fl, "agent_flags 的行号注释没随迁"
 
 
 # ───────── ⑭ 批 3 S3：会话工厂别名退场（真定义处 app.db.session） ─────────

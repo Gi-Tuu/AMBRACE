@@ -26,7 +26,7 @@ FUNC_FLOOR = 3000      # 同日实测 3171 个模块级函数；掉下这个数�
 # 冻结基线（2026-10-10 实测；复算脚本＝仓库外 _measure_hot_ratchet.py，同口径）
 # (相对 backend/app 的路径, 函数名, 长度上限, 圈复杂度上限)
 HOT_RATCHET = [
-    ("agent/context/assembly.py", "assemble_context", 874, 198),  # 2026-11-12：A 方案抽 helper 后变短，按纪律下调
+    ("agent/context/assembly.py", "assemble_context", 864, 195),  # 2026-11-12：A 方案抽 helper 后变短，按纪律下调
     # 2026-10-12 A50 批 1：写后副动作（auto dedup→链→意义→事件→插件 hook→BM25 失效）机械抽成
     # 同文件私有协程 _run_created_memory_hooks（实测 93 行/CC 10，两项都低于阈值⇒OVER_MAX 仍 44）。
     # 纯搬运、零行为变化（AST 逐语句对照 8/8 逐字一致），所以只把上限下调到实测值。
@@ -150,7 +150,7 @@ HOT_RATCHET = [
     ("api/chat.py", "websocket_chat", 206, 39),  # 2026-11-08：batch 签名抽 helper 后缩短
     ("agent/llm_client.py", "chat_completion", 189, 48),
     ("agent/runtime.py", "build_light_social_context", 150, 42),
-    ("memory/meaning.py", "run_meaning_extraction", 147, 51),
+    ("memory/meaning.py", "run_meaning_extraction", 146, 50),
     ("memory/retrieve.py", "_rerank", 147, 52),
     ("scheduling/message_generator.py", "_run_two_rounds", 128, 45),
     ("memory/dedup.py", "deduplicate_memories", 6, 2),
