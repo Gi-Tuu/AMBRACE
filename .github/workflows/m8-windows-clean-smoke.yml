@@ -1,0 +1,67 @@
+name: m8-windows-clean-smoke
+
+# M8-3a 辅助证据：干净的 windows-latest runner 上，用 embeddable Python 启动 AMBRACE。
+# 注意：GitHub runner 不是“干净 VM”，不能替代 VM 快照/Defender/手机链路；
+# 这里只证明“无 backend/.venv、无源码运行时安装”的启动路径。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build embedded runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $r = Join-Path $env:RUNNER_TEMP 'AiCompanion'
+          New-Item -ItemType Directory -Force $r | Out-Null
+          Invoke-WebRequest 'https://www.python.org/ftp/python/3.14.2/python-3.14.2-embed-amd64.zip' -OutFile "$env:RUNNER_TEMP\py.zip"
+          Expand-Archive "$env:RUNNER_TEMP\py.zip" "$r\runtime" -Force
+          $pth = Get-ChildItem "$r\runtime" -Filter 'python*._pth' | Select-Object -First 1
+          Add-Content $pth.FullName 'Lib\site-packages'
+          Add-Content $pth.FullName '..\backend'
+          Invoke-WebRequest 'https://bootstrap.pypa.io/get-pip.py' -OutFile "$env:RUNNER_TEMP\get-pip.py"
+          & "$r\runtime\python.exe" "$env:RUNNER_TEMP\get-pip.py" --no-warn-script-location
+          & "$r\runtime\python.exe" -m pip install --no-cache-dir setuptools wheel
+          & "$r\runtime\python.exe" -m pip install --no-cache-dir -r backend\requirements.txt
+          robocopy backend "$r\backend" /E /XD .venv data logs tests __pycache__ /NFL /NDL /NJH /NJS | Out-Null
+          if ($LASTEXITCODE -ge 8) { throw "robocopy failed" }
+          "RUNTIME=$r" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Start AMBRACE (embedded runtime, no venv)
+        shell: pwsh
+        run: |
+          $r = $env:RUNTIME
+          $env:PYTHONPATH = "$r\backend"
+          Set-Location "$r\backend"
+          $p = Start-Process "$r\runtime\python.exe" -ArgumentList '-m','uvicorn','app.main:app','--host','127.0.0.1','--port','8000' -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 40; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $h = Invoke-WebRequest 'http://127.0.0.1:8000/api/v1/system/health' -TimeoutSec 3
+              if ($h.StatusCode -eq 200) { $ok = $true; break }
+            } catch {}
+          }
+          if (-not $ok) { throw 'AMBRACE health not ready' }
+          "health=200" | Tee-Object -FilePath "$env:RUNNER_TEMP\m8-smoke.log" -Append
+          # 0 工具（未配置 Core/OpenAPI 挂载）
+          $tools = (Invoke-WebRequest 'http://127.0.0.1:8000/openapi.json' -TimeoutSec 5).Content | ConvertFrom-Json
+          "spec_paths=$($tools.paths.PSObject.Properties.Name.Count)" | Tee-Object -FilePath "$env:RUNNER_TEMP\m8-smoke.log" -Append
+          Stop-Process -Id $p.Id -Force
+          Start-Sleep -Seconds 3
+          $left = netstat -ano | Select-String ':8000' | Select-String 'LISTENING'
+          if ($left) { throw 'port 8000 still listening after stop' }
+          "no_residue=1" | Tee-Object -FilePath "$env:RUNNER_TEMP\m8-smoke.log" -Append
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-windows-smoke-log
+          path: ${{ runner.temp }}/m8-smoke.log

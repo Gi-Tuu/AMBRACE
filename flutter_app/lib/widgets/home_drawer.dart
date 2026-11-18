@@ -25,6 +25,7 @@ import '../features/settings/account_linking_screen.dart';
 import '../features/plugin/extensions_screen.dart';
 import '../features/settings/support_screen.dart';
 import '../features/settings/backup_screen.dart';
+import '../features/agent/agent_runs_screen.dart';
 import '../features/settings/update_announcement_screen.dart';
 import '../features/auth/user_agreement_screen.dart';
 import '../features/auth/onboarding_screen.dart';
@@ -416,6 +417,17 @@ class HomeDrawer extends StatelessWidget {
             onClose();
             Navigator.push(
                 context, AppPageRoute(builder: (_) => const BackupScreen()));
+          },
+        ),
+        divider(),
+        row(
+          icon: Icons.monitor_heart_outlined,
+          title: l10n.agentRunsTitle,
+          subtitle: l10n.agentRunsIdHint,
+          onTap: () {
+            onClose();
+            Navigator.push(
+                context, AppPageRoute(builder: (_) => const AgentRunsScreen()));
           },
         ),
         divider(),

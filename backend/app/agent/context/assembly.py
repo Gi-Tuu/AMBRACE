@@ -136,11 +136,8 @@ async def assemble_context(state: dict, *, stream: bool | None = None, _section_
     # P3-1：注册表路径已用 _resolve_trim 算好同一 trim（含 _is_hot_character 近 7 天消息数查询）并注入，
     # 此处直接复用，避免注册表与组装器各查一次；未注入（自算调用）时照常自算。
     if _trim is None:
-        hot = True
         try:
-            from app.agent.loop import AGENT_FLAGS
-            if True:
-                hot = await _is_hot_character(state["character_id"], state.get("user_id"))
+            hot = await _is_hot_character(state["character_id"], state.get("user_id"))
         except Exception:
             hot = True
         _trim = _trim_limits(hot)
@@ -292,15 +289,8 @@ async def assemble_context(state: dict, *, stream: bool | None = None, _section_
     core_text = _clip_text_to_quota(core_text, _qt["core_memories"])
     anchors_text = _clip_text_to_quota(anchors_text, _qt["anchors"])
     loops_text = _clip_text_to_quota(loops_text, _qt["open_loops"])
-    # #70 方案A：memories 配额按 flag 动态——关=400（旧链路一致），开=500（分层注入受益）
-    _memories_quota = _qt["memories"]
-    try:
-        from app.agent.loop import AGENT_FLAGS
-        if AGENT_FLAGS.get("memory_tiered_inject", False):
-            _memories_quota = 520  # M1-S1：随 base 400->420 同步 +20（不增 9000 总顶）
-    except Exception:
-        pass
-    memories_text = _clip_text_to_quota(memories_text, _memories_quota)
+    # #70 方案A（2026-11-14 常驻化）：分层注入受益配额固定 520（M1-S1：随 base 400->420 同步 +20，不增 9000 总顶）
+    memories_text = _clip_text_to_quota(memories_text, 520)
     moments_text = _clip_text_to_quota(moments_text, _qt["moments"])
     pets_text = _clip_text_to_quota(pets_text, _qt["pets"])
     phone_perception = _clip_text_to_quota(phone_perception, _qt["phone_perception"])

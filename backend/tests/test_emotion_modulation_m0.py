@@ -7,7 +7,7 @@
 2. ``drives.settle_level`` 新增**可选参数** ``emotion_snapshot=None``——缺省必须与 HEAD
    （改造前实现）**逐字节一致**，故本文件内置一份 HEAD 版算法的**逐字副本** ``_legacy_settle_level``
    做对照，水位用 float 位模式比较（``struct.pack``），不接受 ``approx`` 糊过去；
-3. 影子档 ``shadow_trace_modulation``：只留痕（INFO／obs_event），不改返回值、不写库、异常自吞。
+3. 影子档 ``shadow_trace_modulation``：只留痕（INFO 日志；obs_event 写库已于 2026-11-14 退役），不改返回值、不写库、异常自吞。
 
 纪律：全程零 DB、零迁移、零网络、不调模型；``obs_event`` 一律 monkeypatch 掉（连 trace 队列都不进），
 不碰 backend/data 生产库。M0 阶段**没有任何生产调用方传新参数**（本文件是唯一传快照的地方）。
@@ -507,13 +507,9 @@ def test_default_path_emits_nothing(obs_spy, info_spy):
 def test_snapshot_path_traces_without_changing_return(obs_spy, info_spy, monkeypatch):
     cursor, now = _bj(9, 0), _bj(15, 0)
     traced = d.settle_level(10.0, d.DRIVE_LONGING, cursor, now, (0.0, 0.5))
-    assert len(obs_spy) == 1 and len(info_spy) == 1
-    character_id, metric, detail, kind = obs_spy[0]
-    assert metric == em.SHADOW_METRIC and kind == "shadow"
-    assert detail["drive_key"] == d.DRIVE_LONGING and detail["multiplier"] == 1.25
-    assert detail["valence"] == 0.0 and detail["new_level"] == round(traced[0], 4)
-    assert character_id is None and detail["bias"] == 0.0  # M0 没有调用方 ⇒ 不传角色、不传偏置
-    assert "emotion_mod" in info_spy[0]
+    # 2026-11-14 B13 影子 DB 写库退役：obs_event 不再被调用，留痕只剩 INFO 日志
+    assert obs_spy == []
+    assert len(info_spy) == 1 and "emotion_mod" in info_spy[0]
     # 关掉留痕出口后返回值必须**逐字节**相同（留痕不参与计算）
     monkeypatch.setattr(em, "shadow_trace_modulation", lambda *a, **k: None)
     silent = d.settle_level(10.0, d.DRIVE_LONGING, cursor, now, (0.0, 0.5))
@@ -526,24 +522,16 @@ def test_trace_reads_only_never_mutates(obs_spy):
     snap_before, vec_before = dict(snap), dict(vec)
     assert em.shadow_trace_modulation(d.DRIVE_LONGING, snap, vec, character_id=7) is None
     assert snap == snap_before and vec == vec_before
-    assert obs_spy[0][0] == 7 and obs_spy[0][2]["bias"] == 0.1
+    assert obs_spy == []  # 写库退役：不再产生 obs 事件
 
 
-@pytest.mark.parametrize("mode", ["obs_raises", "log_raises", "import_fails", "note_raises"])
+@pytest.mark.parametrize("mode", ["log_raises", "note_raises"])
 def test_trace_exceptions_are_swallowed(obs_spy, monkeypatch, mode):
-    import app.memory.observability as obs
-
-    if mode == "obs_raises":
-        monkeypatch.setattr(
-            obs, "obs_event", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
-        )
-    elif mode == "log_raises":
+    if mode == "log_raises":
         def boom(*a, **k):
             raise RuntimeError("log boom")
 
         monkeypatch.setattr(em._logger, "info", boom)
-    elif mode == "import_fails":
-        monkeypatch.setitem(sys.modules, "app.memory.observability", None)
     else:
         monkeypatch.setattr(
             em, "modulation_note", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("note boom"))

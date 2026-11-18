@@ -169,6 +169,39 @@ async def get_image_gen_config(user_id: int | None = None) -> dict:
     return cfg
 
 
+class AutoImageProvider(ImageGenProvider):
+    """协议自适应：按配置先试一种，失败自动换另一种（2026-11-18）。
+
+    动机：选协议原来只看 ``provider`` 字段——用户把百炼地址填在"自定义"里、或把
+    OpenAI 兼容网关标成 dashscope，就会一路 404/400 报"生图失败"，其实换个协议就通。
+    这里把两种实现都备着，**首选顺序仍按 provider 决定（与旧行为一致）**，只在首选
+    "协议不匹配"时降级一次；鉴权错（401/403）直接抛，不浪费第二次请求与额度。
+    """
+
+    def __init__(self, base_url: str, api_key: str, model: str, prefer: str = ""):
+        self._chat = DashScopeChatImageProvider(base_url=base_url, api_key=api_key, model=model)
+        self._images = OpenAICompatImageProvider(base_url=base_url, api_key=api_key, model=model)
+        self._prefer = "chat" if (prefer or "").lower() == "dashscope" else "images"
+
+    async def generate(self, prompt: str) -> bytes:
+        order = ([self._chat, self._images] if self._prefer == "chat"
+                 else [self._images, self._chat])
+        last: Exception | None = None
+        for idx, provider in enumerate(order):
+            try:
+                return await provider.generate(prompt)
+            except Exception as e:  # noqa: BLE001 —— 要按状态码分流
+                sc = getattr(e, "status_code", None)
+                if sc is None:
+                    sc = getattr(getattr(e, "response", None), "status_code", None)
+                if sc in (401, 403):
+                    raise                     # Key 不对，换协议也没用
+                last = e
+                if idx == 0:
+                    _logger.info("生图首选协议失败（%s），换另一种协议重试一次", sc or type(e).__name__)
+        raise last or RuntimeError("生图失败")
+
+
 async def get_image_provider(user_id: int | None = None) -> ImageGenProvider | None:
     """按账号生效配置构建生图 provider；未启用/未配置返回 None"""
     cfg = await get_image_gen_config(user_id=user_id)
@@ -176,9 +209,9 @@ async def get_image_provider(user_id: int | None = None) -> ImageGenProvider | N
         return None
     if not cfg["base_url"] or not cfg["api_key"] or not cfg["model"]:
         return None
-    if cfg["provider"] == "dashscope":
-        return DashScopeChatImageProvider(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"])
-    return OpenAICompatImageProvider(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"])
+    return AutoImageProvider(
+        base_url=cfg["base_url"], api_key=cfg["api_key"],
+        model=cfg["model"], prefer=cfg["provider"])
 
 
 def _day_start_utc() -> datetime:

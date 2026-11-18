@@ -75,10 +75,11 @@ def test_护栏应用_丢弃开关():
     assert dropped == ["我把汤盛出来。"] and conf2 == [1]
 
 
-def test_flag_默认关():
+def test_flag_默认开_常驻():
+    """11-14 批 7 常驻化：默认转开（回滚＝写 enabled=0 行热切）。"""
     from app.agent.loop import AGENT_FLAGS
-    assert AGENT_FLAGS.get("proactive_segment_guard") is False
-    assert mg._segment_guard_on() is False
+    assert AGENT_FLAGS.get("proactive_segment_guard") is True
+    assert mg._segment_guard_on() is True
 
 
 # ────────────────────────── 集成：flag 关 = 逐字节旧行为 ──────────────────────────

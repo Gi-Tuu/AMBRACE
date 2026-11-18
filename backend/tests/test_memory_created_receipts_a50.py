@@ -184,6 +184,9 @@ class Env:
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     """临时库（``_dbclone`` 克隆模板库到 tmp_path）＋ 记录式替身；只观察新建回执尾段。"""
+    # 11-14 批 7 常驻化：L4 计划提取默认开会改写 sub_type/加 plan_renamed 门；本文件钉普通新建回执形状，显式关
+    from app.flags.agent_flags import AGENT_FLAGS
+    monkeypatch.setitem(AGENT_FLAGS, "review_plan_validity_extract", False)
     e = Env()
     engine = clone_engine(tmp_path / "receipts.db")
     raw_factory = make_session_factory(engine)

@@ -146,7 +146,7 @@
   "flagSaved": "Saved",
   "flagError": "Switch failed, please retry",
   "flagWeave3D": "Weave 3D (experimental)",
-  "flagWeave3DHint": "3D sphere view for the weave canvas (experimental; turn off on low-end devices)",
+  "flagWeave3DHint": "Shows a 3D relationship view in the Weave library.",
   "apiConfig": "API Config",
   "apiConfigHint": "LLM / Image generation (BYOK & server-level)",
   "appAlbum": "Album",
@@ -170,11 +170,11 @@
   "appearanceHint": "e.g. long hair, glasses, gentle look",
   "appearanceSubtitle": "Skins, accent colors and light/dark mode",
   "appearanceTitle": "Appearance",
-"appearanceFont": "Body font",
-"appearanceFontHint": "Follow system uses your phone's default font. Third-party fonts from some Android vendors' theme stores may not apply here (system limitation).",
-"fontSystem": "Follow system",
-"fontSerif": "Serif",
-"fontRounded": "Rounded",
+  "appearanceFont": "Body font",
+  "appearanceFontHint": "Follow system uses your phone's default font. Third-party fonts from some Android vendors' theme stores may not apply here (system limitation).",
+  "fontSystem": "Follow system",
+  "fontSerif": "Serif",
+  "fontRounded": "Rounded",
   "archiveBox": "Chat Archive",
   "archiveTitle": "{a} · {b} Chat Archive",
   "@archiveTitle": {
@@ -377,7 +377,7 @@
   "speechPresets": "Speech provider presets",
   "saveSrvSpeech": "Save server speech",
   "srvVlm": "Server vision (image understanding)",
-  "srvVlmHint": "For chat/phone perception image reading: API Key prefers cloud vision, else local OCR (optional local VLM)",
+  "srvVlmHint": "For chat/phone-perception image reading: with an API Key, images go to the cloud vision service you configured; without one, only on-device OCR text is used (the local-model option has been removed)",
   "vlmPresets": "Vision provider presets",
   "saveSrvVlm": "Save server vision",
   "srvImageGen": "Server image gen (global)",
@@ -533,7 +533,7 @@
   "ppLocFollowOnSub": "AI location same as user, not editable",
   "ppLocFollowOffSub": "AI location follows user location when enabled",
   "ppGroupPrivacy": "Privacy notes",
-  "ppPrivacyNote": "· All capabilities are off by default; each is authorized individually, and turning off takes effect immediately\n· Only text and image metadata are read; images use local OCR/VLM for understanding, never uploaded to cloud models\n· Password fields and banking/payment pages are skipped automatically\n· Data is sent only to your own server; snapshots expire after 30 minutes, up to 20 kept",
+  "ppPrivacyNote": "· All capabilities are off by default; each is authorized individually, and turning off takes effect immediately\n· Only text and image metadata are read; when image understanding is needed, images are sent only to the vision endpoint you configured (on-device OCR text otherwise), and never to the chat model\n· Password fields and banking/payment pages are skipped automatically\n· Data is sent only to your own server; snapshots expire after 30 minutes, up to 20 kept",
   "ppGroupActions": "Actions & history",
   "ppCollectNowTitle": "Collect now",
   "ppCollectNowSub": "Collect current screen/clipboard/gallery and tell AI",
@@ -543,7 +543,7 @@
   "ppLockContentName": "Phone",
   "ppClearAll": "Clear all snapshots",
   "ppLocAi": "AI: {loc}",
-  "providerLocalHint": "openai / dashscope / local",
+  "providerLocalHint": "openai / dashscope / custom",
   "worldGroup": "Character Settings",
   "lorebookTitle": "Lorebook Entries",
   "lorebookHint": "Keyword-triggered fixed settings, effective when mentioned",
@@ -1409,7 +1409,7 @@
   "weekdayWed": "Wed",
   "weight": "Weight",
   "whyMatters": "Why it matters: {why}",
-"whyMattersTitle": "Why it matters",
+  "whyMattersTitle": "Why it matters",
   "writeTodayDiary": "Write today's diary",
   "yearCountTotal": "{count} records in total",
   "yearLabel": "{year}",
@@ -1468,7 +1468,7 @@
   "permScopeImgTitle": "Image Generation",
   "permScopeImgDesc": "AI generates images to send you (in-chat images / proactive generation)",
   "permScopeImgUnderstandTitle": "Image Understanding",
-  "permScopeImgUnderstandDesc": "AI understands the images you send (local recognition)",
+  "permScopeImgUnderstandDesc": "AI understands the images you send (recognizes both content and text)",
   "permScopeTtsTitle": "Voice Reply",
   "permScopeTtsDesc": "AI replies with voice (TTS synthesis)",
   "permScopeAsrTitle": "Speech Recognition",
@@ -2391,22 +2391,58 @@
   "healthBatteryNotAdded": "Not added (may cause background disconnects)",
   "relationTypeOther": "Other",
   "gameWolfTeammates": "🐺 Wolf teammates: #{team}",
-  "@gameWolfTeammates": { "placeholders": { "team": { "type": "String" } } },
+  "@gameWolfTeammates": {
+    "placeholders": {
+      "team": {
+        "type": "String"
+      }
+    }
+  },
   "gameHandCards": "🃏 Cards: {cards}",
-  "@gameHandCards": { "placeholders": { "cards": { "type": "String" } } },
+  "@gameHandCards": {
+    "placeholders": {
+      "cards": {
+        "type": "String"
+      }
+    }
+  },
   "gameSeerChecks": "🔮 Checks: {checks}",
-  "@gameSeerChecks": { "placeholders": { "checks": { "type": "String" } } },
+  "@gameSeerChecks": {
+    "placeholders": {
+      "checks": {
+        "type": "String"
+      }
+    }
+  },
   "gameWolf": "Wolf",
   "gameGoodPerson": "Good",
   "zoomIn": "Zoom In",
   "zoomOut": "Zoom Out",
   "resetView": "Reset",
   "streamSendFailed": "Stream send failed: {err}",
-  "@streamSendFailed": { "placeholders": { "err": { "type": "String" } } },
+  "@streamSendFailed": {
+    "placeholders": {
+      "err": {
+        "type": "String"
+      }
+    }
+  },
   "imageSendFailed": "Image send failed: {err}",
-  "@imageSendFailed": { "placeholders": { "err": { "type": "String" } } },
+  "@imageSendFailed": {
+    "placeholders": {
+      "err": {
+        "type": "String"
+      }
+    }
+  },
   "emojiSendFailed": "Emoji send failed: {err}",
-  "@emojiSendFailed": { "placeholders": { "err": { "type": "String" } } },
+  "@emojiSendFailed": {
+    "placeholders": {
+      "err": {
+        "type": "String"
+      }
+    }
+  },
   "noResponseFallback": "They did not respond for now",
   "scopeAbility": "Ability",
   "actionTarget": "Target",
@@ -2446,11 +2482,29 @@
   "sepColon": ": ",
   "sepBar": " | ",
   "wrapParen": "({value})",
-  "@wrapParen": { "placeholders": { "value": { "type": "String" } } },
+  "@wrapParen": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "wrapTitleBracket": "\"{value}\"",
-  "@wrapTitleBracket": { "placeholders": { "value": { "type": "String" } } },
+  "@wrapTitleBracket": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "wrapLenticular": "[{value}]",
-  "@wrapLenticular": { "placeholders": { "value": { "type": "String" } } },
+  "@wrapLenticular": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "flagGroupAgentRuntime": "Agent Runtime & Cognition",
   "flagGroupProactive": "Proactive Messages",
   "flagGroupGroupGames": "Group Chat Games",
@@ -2587,7 +2641,13 @@
   "gameContentSourcePlugin": "Content Pack",
   "gameContentSourceBuiltin": "Built-in",
   "gameContentCount": "{count} items",
-  "@gameContentCount": { "placeholders": { "count": { "type": "int" } } },
+  "@gameContentCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "gameContentHintLine": "One item per line",
   "gameContentHintPair": "One pair per line: wordA / wordB",
   "gameContentHintPuzzle": "One puzzle per line: surface / truth / keyword1,keyword2",
@@ -2595,14 +2655,38 @@
   "gameContentRestoreConfirm": "Restore the built-in or content-pack defaults?",
   "gameContentSaved": "Saved",
   "gameContentSaveFailed": "Save failed: {err}",
-  "@gameContentSaveFailed": { "placeholders": { "err": { "type": "String" } } },
+  "@gameContentSaveFailed": {
+    "placeholders": {
+      "err": {
+        "type": "String"
+      }
+    }
+  },
   "gameContentRestored": "Defaults restored",
   "gameContentRestoreFailed": "Restore failed: {err}",
-  "@gameContentRestoreFailed": { "placeholders": { "err": { "type": "String" } } },
+  "@gameContentRestoreFailed": {
+    "placeholders": {
+      "err": {
+        "type": "String"
+      }
+    }
+  },
   "gameContentLoadFailed": "Failed to load content: {err}",
-  "@gameContentLoadFailed": { "placeholders": { "err": { "type": "String" } } },
+  "@gameContentLoadFailed": {
+    "placeholders": {
+      "err": {
+        "type": "String"
+      }
+    }
+  },
   "gameContentParseFailed": "Line {line} has an invalid format",
-  "@gameContentParseFailed": { "placeholders": { "line": { "type": "int" } } },
+  "@gameContentParseFailed": {
+    "placeholders": {
+      "line": {
+        "type": "int"
+      }
+    }
+  },
   "gameContentMinOne": "At least one item is required",
   "gameContentApplyHint": "Applies to new games after saving",
   "gameAchievementsTitle": "Achievements & Stats",
@@ -2619,10 +2703,28 @@
   "gameStatsEmpty": "No game stats yet",
   "gameAchievementsList": "Achievements",
   "gameAchievementsUnlockedCount": "{count}/{total} unlocked",
-  "@gameAchievementsUnlockedCount": { "placeholders": { "count": { "type": "int" }, "total": { "type": "int" } } },
+  "@gameAchievementsUnlockedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
   "gameAchievementsLocked": "Locked",
   "gameAchievementsProgress": "Progress {progress}/{target}",
-  "@gameAchievementsProgress": { "placeholders": { "progress": { "type": "int" }, "target": { "type": "int" } } },
+  "@gameAchievementsProgress": {
+    "placeholders": {
+      "progress": {
+        "type": "int"
+      },
+      "target": {
+        "type": "int"
+      }
+    }
+  },
   "gameAchievementsAll": "All Games",
   "flagAgentLoopGroupChatTitle": "Group chat cognitive loop",
   "flagAgentLoopGroupChatHint": "Lets AI roles in group chats use the unified cognitive loop (understand/memory/plan).",
@@ -2634,7 +2736,6 @@
   "flagAgentSocialLightContextHint": "Injects a lightweight context in social scenes to save tokens.",
   "flagAgentSocialLightContextDetail": "Already explicitly enabled locally. On: social replies carry trimmed context, high-frequency roles stay full. Off: uniform full injection.",
   "flagWeave3DTitle": "Weave 3D view",
-  "flagWeave3DHint": "Shows a 3D relationship view in the Weave library.",
   "flagWeave3DDetail": "The frontend canvas actually reads this flag. Off hides the 3D view but does not affect other features.",
   "flagProactiveInactiveCharSkipTitle": "Skip inactive characters",
   "flagProactiveInactiveCharSkipHint": "Characters with no interaction in the last 24h are skipped for proactive messages (09-08).",
@@ -2805,8 +2906,8 @@
   "serverIdentityNoCode": "No pairing code has been issued. Click Generate pairing code in the console first",
   "serverIdentityNetworkFail": "Cannot reach that server address. Check the address and your network",
   "serverIdentityRevoked": "Unpaired. This device no longer verifies that server's identity",
-    "serverIdentityUnpair": "Unpair",
-  "serverIdentityStatusUnprotected": "Paired (fingerprint {fp}), but verification is off \u2014 nothing is checked",
+  "serverIdentityUnpair": "Unpair",
+  "serverIdentityStatusUnprotected": "Paired (fingerprint {fp}), but verification is off — nothing is checked",
   "@serverIdentityStatusUnprotected": {
     "placeholders": {
       "fp": {}
@@ -2922,6 +3023,33 @@
   "memoryWhyTimeUnknown": "Time unknown",
   "memoryWhyExcerptLabel": "Excerpt",
   "memoryWhyNoExcerpt": "No excerpt available",
+  "memoryLifecycleTitle": "Memory lifecycle",
+  "memoryLifecycleLoading": "Loading lifecycle…",
+  "memoryLifecycleLoadFailed": "Failed to load the lifecycle",
+  "memoryLifecycleStatusActive": "Active",
+  "memoryLifecycleStatusSuperseded": "Superseded",
+  "memoryLifecycleStatusStale": "Stale",
+  "memoryLifecycleStatusExpired": "Expired",
+  "memoryLifecycleStatusUnknown": "Unknown status",
+  "memoryLifecycleSupersededBy": "Superseded by memory #{id}; the newer one prevails",
+  "memoryLifecycleValidTo": "Expired at {time}",
+  "memoryLifecycleArchived": "Archived",
+  "memoryLifecycleVersionLabel": "Version",
+  "memoryLifecycleRevisionLabel": "Manual revisions",
+  "memoryLifecycleSourceEventsLabel": "Source events",
+  "memoryLifecycleReceiptsLabel": "Write receipts",
+  "memoryLifecycleDerivedLabel": "Derived memories",
+  "memoryLifecycleEpistemicLabel": "Epistemic status",
+  "memoryLifecycleEpiFact": "Verified",
+  "memoryLifecycleEpiInferred": "Inferred",
+  "memoryLifecycleEpiUnverified": "Unverified",
+  "memoryLifecycleEpiUnknown": "Unknown",
+  "memoryLifecycleReceiptsEmpty": "No write receipts",
+  "memoryLifecycleReceiptCreate": "Created",
+  "memoryLifecycleReceiptUpdate": "Updated",
+  "memoryLifecycleReceiptSupersede": "Superseded",
+  "memoryLifecycleReceiptStale": "Staled",
+  "memoryLifecycleReceiptReject": "Rejected",
   "gardenSetupTitle": "Garden read-only access",
   "gardenBaseUrl": "Garden site URL",
   "gardenUserKey": "Restricted user key",
@@ -2941,5 +3069,38 @@
   "gardenBrowseDone": "Read-only browse complete",
   "gardenObservationCleared": "Observation cleared",
   "gardenRoleLabel": "Role id",
-  "gardenPrivacyHint": "Sent only to your own server; never echoed or logged."
+  "gardenPrivacyHint": "Sent only to your own server; never echoed or logged.",
+  "allowAlways": "Always allow",
+  "agentRunsTitle": "Agent runs",
+  "agentRunsRefresh": "Refresh",
+  "agentRunsConnect": "Connect",
+  "agentRunsCancel": "Cancel run",
+  "agentRunsAudit": "Audit",
+  "agentRunsNoRuns": "No active runs",
+  "agentRunsStatus": "Streaming: {streaming}",
+  "@agentRunsStatus": {
+    "placeholders": {
+      "streaming": {
+        "type": "String"
+      }
+    }
+  },
+  "agentRunsIdHint": "Enter a run_id or pick a run",
+  "agentRunsCreate": "New run",
+  "agentRunsTaskHint": "Task (optional)",
+  "agentRunsDeadline": "Deadline (s)",
+  "agentRunsCreateConfirm": "Create",
+  "coreStatusOnline": "Tools: online {ok}/{total}",
+  "@coreStatusOnline": {
+    "placeholders": {
+      "ok": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "coreStatusOffline": "Tools: offline",
+  "coreStatusUnconfigured": "Tools: not configured"
 }

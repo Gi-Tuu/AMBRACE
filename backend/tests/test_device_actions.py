@@ -1127,3 +1127,13 @@ def test_全局闸门读AGENT_FLAGS现值且缺省方向不变(act_db, monkeypat
     assert asyncio.run(actions._force_dry_run()) is True
     assert any(r.levelno == logging.WARNING and "行动开关读取失败" in r.getMessage()
                for r in actions_log_records), "取不到键要留 WARNING，不得静默"
+
+
+@pytest.fixture(autouse=True)
+def _plugin_scope_flags_off(monkeypatch):
+    """11-14 批 7 常驻化：作用域闸默认转 True；本文件场景与作用域无关，显式回旧档
+    （作用域专属覆盖见 test_plugin_tenant_scope_m0/m4）。"""
+    from app.flags.agent_flags import AGENT_FLAGS
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_user_scope", False)
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_runtime_scope", False)
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_disabled_route_gate", False)

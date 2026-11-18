@@ -6,7 +6,7 @@
 - ``test_tiers_extract_l0``：有 why 用 why；无 why 取首句；空串/缺字段安全；短句不切碎。
 - ``test_tiered_lines_order``：Top1 截 240、Top2/3 为 L0；format_memory_line 标注（时间/说话人）不丢。
 - ``test_l1_join``：DailySummary 经 ChatSession join 取到正确日期；无摘要/空日期/他角色返回 None。
-- ``test_flag_off_byte_identical``：flag 关时检索区行与旧链路（format_memory_line + N 轮去重）逐字节一致（回归保护）。
+- ~~test_flag_off_byte_identical~~ 已随 2026-11-14 `memory_tiered_inject` 退役删除（关档平面路径不复存在）。
 """
 import asyncio
 import os
@@ -165,38 +165,10 @@ def test_l1_join_超长摘要截到L1配额(l1_db):
 
 # ---------------- flag 关：字节一致回归保护 ----------------
 
-def test_flag_off_byte_identical(monkeypatch):
-    from app.agent.loop import AGENT_FLAGS
+def test_分层注入_检索区行走与N轮去重(monkeypatch):
+    """检索区行走分层（Top1 L2 / 其余 L0）；N 轮去重语义保留。
+    （2026-11-14 memory_tiered_inject 退役＝分层成唯一路径，原开/关双向对照合同随之退役。）"""
     from app.agent.context import section_memories
-    from app.memory.format import format_memory_line
-
-    # 保护：限制 memory_tiered_inject 默认不得为 True；此处显式关（并自动还原）
-    assert AGENT_FLAGS.get("memory_tiered_inject", False) is False
-    monkeypatch.setitem(AGENT_FLAGS, "memory_tiered_inject", False)
-
-    section_memories._memory_char_rounds.clear()
-    section_memories._memory_inject_rounds.clear()
-    section_memories._bump_memory_round(11)
-    mems = [
-        {"id": 1, "content": "用户喜欢喝美式咖啡", "created_at": "2026-08-18",
-         "epistemic_status": "FACT", "contradiction_count": 0},
-        {"id": 2, "content": "用户是程序员", "created_at": "2026-08-18",
-         "epistemic_status": "INFERRED", "contradiction_count": 0, "speaker_type": "user"},
-    ]
-    lines = section_memories._build_retrieved_memory_lines(11, mems)
-    expected = [format_memory_line(m, include_speaker=True) for m in mems]
-    assert lines == expected  # 与旧链路逐字节一致
-
-    # 旧链路 N 轮去重语义保留（5 轮内不重复注入）
-    section_memories._bump_memory_round(11)
-    assert section_memories._build_retrieved_memory_lines(11, mems) == expected
-
-
-def test_flag_on_分层注入不改变flag_off缺省(monkeypatch):
-    """开 flag 后检索区行走分层；关 flag 仍逐字节一致（双向回归保护）。"""
-    from app.agent.loop import AGENT_FLAGS
-    from app.agent.context import section_memories
-    from app.memory.format import format_memory_line
 
     section_memories._memory_char_rounds.clear()
     section_memories._memory_inject_rounds.clear()
@@ -208,22 +180,12 @@ def test_flag_on_分层注入不改变flag_off缺省(monkeypatch):
          "epistemic_status": "FACT", "contradiction_count": 0},
     ]
 
-    monkeypatch.setitem(AGENT_FLAGS, "memory_tiered_inject", True)
-    on_lines = section_memories._build_retrieved_memory_lines(11, mems)
+    lines = section_memories._build_retrieved_memory_lines(11, mems)
 
-    monkeypatch.setitem(AGENT_FLAGS, "memory_tiered_inject", False)
-    section_memories._memory_char_rounds.clear()
-    section_memories._memory_inject_rounds.clear()
+    assert len(lines) == 2
+    assert "A" * 240 in lines[0]            # Top1 L2（240）
+    assert "用户喜欢喝美式咖啡。" in lines[1]  # Top2 L0：首句
+    assert "还喜欢喝茶" not in lines[1]
+    # N 轮去重语义保留
     section_memories._bump_memory_round(11)
-    off_lines = section_memories._build_retrieved_memory_lines(11, mems)
-
-    assert len(on_lines) == 2
-    assert "A" * 240 in on_lines[0]            # Top1 L2（240）
-    assert "用户喜欢喝美式咖啡。" in on_lines[1]  # Top2 L0：首句
-    assert "还喜欢喝茶" not in on_lines[1]
-    # flag 开时 N 轮去重语义同样保留（与关 flag 一致）
-    section_memories._bump_memory_round(11)
-    assert section_memories._build_retrieved_memory_lines(11, mems) == off_lines
-
-    assert on_lines != off_lines               # 开/关确实不同
-    assert off_lines == [format_memory_line(m, include_speaker=True) for m in mems]  # 关=旧链路
+    assert section_memories._build_retrieved_memory_lines(11, mems) == lines

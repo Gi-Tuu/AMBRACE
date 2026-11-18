@@ -31,6 +31,36 @@ _EDGE_VOICES = {
     "female": "zh-CN-XiaoxiaoNeural",
     None: "zh-CN-XiaoxiaoNeural",
 }
+
+# ── MiMo 式（chat/completions + audio 参数）语音协议 ─────────────────────────
+# 2026-11-18：小米 MiMo 的 TTS **没有** /audio/speech（该路径 404），也不走百炼的
+# multimodal-generation，而是「把要念的文本放进 assistant 消息、音频以 base64 放在
+# choices[0].message.audio.data」。这是第三种协议形态。
+# 判定只有这一处（合成与"测试连接"共用），禁止两边各写一套——否则又会出现
+# "探测说通/合成不通"或反过来的假结论。
+_MIMO_VOICE_IDS = {
+    "mimo_default", "冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean",
+}
+_MIMO_VOICES_BY_GENDER = {"male": "白桦", "female": "冰糖", None: "冰糖"}
+
+
+def is_chat_audio_tts(cfg: dict) -> bool:
+    """是否走「聊天接口出音频」协议（MiMo 式）。
+
+    指纹三选一：provider 含 mimo / 模型名以 mimo 开头 / base_url 含 mimo。
+    未命中的一律走原有链路（OpenAI audio/speech → 百炼），行为零变化。
+    """
+    p = str(cfg.get("provider") or "").lower()
+    m = str(cfg.get("model") or "").lower()
+    host = str(cfg.get("base_url") or "").lower()
+    return ("mimo" in p) or m.startswith("mimo") or ("mimo" in host)
+
+
+def pick_chat_audio_voice(voice: str | None, gender: str | None = None) -> str:
+    """挑一个该协议认识的音色 id——传错 id 服务端会直接报 Unknown voice。"""
+    if voice and voice in _MIMO_VOICE_IDS:
+        return voice
+    return _MIMO_VOICES_BY_GENDER.get(gender, "冰糖")
 # 音色预设库（2026-08-11 自定义声色）：key → label / 性别 / edge-tts 音色 / dashscope 近似音色
 # Phase 0 P0（2026-08-30 实测）：本部署 qwen-tts 可用音色仅 Cherry / Serena / Chelsie（女声）+
 # Ethan（男声）；Serenai/Orion/Aria/Indigo/Clare/Morgan 等均 400。故女声预设映射这三档轮换，
@@ -285,6 +315,54 @@ def _synth_dashscope_sync(text: str, voice: str, cfg: dict, target_dir: Path, fn
 
 
 
+def _synth_chat_audio_sync(text: str, voice: str, cfg: dict, target_dir: Path, fname: str) -> str | None:
+    """MiMo 式 TTS：POST {base}/chat/completions，音频以 base64 放在 choices[0].message.audio.data。
+
+    硬性规则（官方文档 + 实测）：① 要念的文本必须放 role=assistant（放 user 会 400）；
+    ② 音色必须是它自己的名单（"default" 会报 Unknown voice）；③ 支持 wav/mp3/pcm，不支持 ogg。
+    """
+    import base64
+    import urllib.request
+
+    base = str(cfg.get("base_url") or "").rstrip("/")
+    if not base or not text:
+        return None
+    url = base + "/chat/completions"
+    payload = {
+        "model": cfg.get("model") or "mimo-v2.5-tts",
+        "messages": [{"role": "assistant", "content": text}],
+        "audio": {"format": "wav", "voice": voice or "mimo_default"},
+    }
+    headers = {
+        "Authorization": f"Bearer {cfg.get('api_key') or ''}",
+        "Content-Type": "application/json",
+    }
+    try:
+        from app.utils.net_guard import ensure_outbound_url
+        ensure_outbound_url(url)  # SSRF：端点默认只允许公网目标
+        req = urllib.request.Request(
+            url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=60) as r:
+            resp = json.loads(r.read().decode("utf-8", "replace"))
+        ch = (resp.get("choices") or [{}])[0] or {}
+        b64 = str(((ch.get("message") or {}).get("audio") or {}).get("data") or "")
+        if not b64:
+            _logger.warning("chat-audio TTS: 响应里没有 audio.data（模型可能不是 TTS 模型）")
+            return None
+        raw = base64.b64decode(b64)
+        path = target_dir / fname
+        path.write_bytes(raw)
+        if path.stat().st_size < 200:
+            _logger.warning("chat-audio TTS: 音频过短")
+            return None
+        _logger.info("chat-audio TTS ok: model=%s voice=%s size=%d",
+                     payload["model"], voice, path.stat().st_size)
+        return str(path)
+    except Exception as e:
+        _logger.warning("chat-audio TTS failed: %s", e)
+        return None
+
+
 def _tts_runner_via_registry(cfg: dict):
     """X3（2026-08-31）：经 provider 注册表解析 kind=tts 合成器（flag provider_registry，默认开）。
 
@@ -370,11 +448,17 @@ async def synthesize(
     if cfg.get("enabled"):
         voice = dash_voice
         fname = f"{ts}_{uid}.wav"
-        runner = _tts_runner_via_registry(cfg)
-        if runner is not None:
-            path = await runner(clean, voice, sub, fname)
+        if is_chat_audio_tts(cfg):
+            # 第三种协议（MiMo 式）：文本进 assistant、音频回 base64。音色必须换成它认的 id。
+            path = await asyncio.to_thread(
+                _synth_chat_audio_sync, clean,
+                pick_chat_audio_voice(dash_voice, gender), cfg, sub, fname)
         else:
-            path = await asyncio.to_thread(_synth_dashscope_sync, clean, voice, cfg, sub, fname)
+            runner = _tts_runner_via_registry(cfg)
+            if runner is not None:
+                path = await runner(clean, voice, sub, fname)
+            else:
+                path = await asyncio.to_thread(_synth_dashscope_sync, clean, voice, cfg, sub, fname)
         if path:
             return f"/uploads/tts/{subdir}/{Path(path).name}"
         # F8 回退观测：云端已启用但未产出（含内部降级/失败）→ 落到下方 edge 兜底

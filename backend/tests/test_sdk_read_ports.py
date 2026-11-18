@@ -106,3 +106,13 @@ def test_permission_enum_registered():
     from app.plugins.manifest import VALID_PERMISSIONS
     for perm in ("persona:read", "memory:read", "life:read", "relationship:read"):
         assert perm in VALID_PERMISSIONS
+
+
+@pytest.fixture(autouse=True)
+def _plugin_scope_flags_off(monkeypatch):
+    """11-14 批 7 常驻化：作用域闸默认转 True；本文件场景与作用域无关，显式回旧档
+    （作用域专属覆盖见 test_plugin_tenant_scope_m0/m4）。"""
+    from app.flags.agent_flags import AGENT_FLAGS
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_user_scope", False)
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_runtime_scope", False)
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_disabled_route_gate", False)

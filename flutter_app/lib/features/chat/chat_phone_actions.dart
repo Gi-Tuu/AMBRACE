@@ -4,6 +4,7 @@ import 'package:ai_companion/l10n/app_localizations.dart';
 import '../../services/home_tab_controller.dart';
 import '../../services/phone_perception_service.dart';
 import '../../services/workflow_action_bridge.dart';
+import '../../services/device_action_prefs.dart';
 
 /// 手机感知动作流（AI 帮用户操作屏幕）：序列模板/节点选择/授权弹窗。
 /// mixin on State：直接使用 mounted/context；不触碰屏幕私有字段。
@@ -161,6 +162,14 @@ mixin ChatPhoneActions<T extends StatefulWidget> on State<T> {  /// 3.4a：先�
       if (!mounted) return null;
       if (mode == "reject" || mode == null) return null;
       if (mode == "minute") PhonePerceptionService.allowForMinute();
+      if (mode == "always") {
+        // A6：写「永久允许」策略并落永久确认标记（后台取件据此自动执行）
+        final cap = action == "set_text" ? "action_set_text" : "action_tap";
+        try {
+          await DeviceActionPrefs.setPolicy(cap, ActionConfirmPolicy.onceEver);
+          await DeviceActionPrefs.markOnceEverConfirmed(cap);
+        } catch (_) {}
+      }
     }
 
     // 输入文本时额外询问内容（≤50 字）
@@ -265,6 +274,7 @@ mixin ChatPhoneActions<T extends StatefulWidget> on State<T> {  /// 3.4a：先�
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, "reject"), child: Text(l10n.reject)),
           TextButton(onPressed: () => Navigator.pop(ctx, "once"), child: Text(l10n.allowOnce)),
+          TextButton(onPressed: () => Navigator.pop(ctx, "always"), child: Text(l10n.allowAlways)),
           FilledButton(onPressed: () => Navigator.pop(ctx, "minute"), child: Text(l10n.allowMinute)),
         ],
       ),

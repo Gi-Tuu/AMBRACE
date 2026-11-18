@@ -48,7 +48,7 @@ AGENT_FLAGS = {
     #   纯字符串+正则+字典，零模型零外网零新依赖，见 memory/entity_match.py），命中的 id 并入
     #   既有 RRF 与 _rerank：只多一路证据（重叠即 +5），不插队、不剔除、条数与预算不变。
     "recall_entity_match": False,  # 〔A19处置·候选不删（10-02 拍）＝已实现有覆盖，专门测试 test_entity_match_third_route.py；要删得连第三路实现一起回收〕
-    "proactive_outreach_v2": False,
+    "proactive_outreach_v2": True,
     # B1-③ 配额让位（2026-09-08，用户拍板）：proactive_inactive_char_skip 开=近 24h 内无任何用户
     #   消息的角色直接停发主动搭话（greeting/proactive_chat/goodnight/status_update/motivation）——
     #   不生成候选、不占每日配额、不写 approved 日志，额度留给有互动的角色（当前=char13）；
@@ -67,7 +67,7 @@ AGENT_FLAGS = {
     #    （与 MAX_PER_HOUR 叠加，不替换；同样按已发送计数）。
     # 命中留痕：proactive_trigger_logs.trigger_reason 带 [gate=hour|type|session_rate]。
     "outreach_session_rate_v1": False,  # 〔A19处置·候选不删（10-02 拍）＝投放三闸之一，专门测试 test_domain_decision_pacing_purity.py〕
-    "memory_peak_cutoff": False,  # 默认关（用例钉死：test_memory_lookup_endpoint::test_条数硬顶_limit超20夹到20）；生产已由 runtime_flags 拨开（2026-09-05）
+    "memory_peak_cutoff": True,  # 默认关（用例钉死：test_memory_lookup_endpoint::test_条数硬顶_limit超20夹到20）；生产已由 runtime_flags 拨开（2026-09-05）
     # 曾为灰度开关，2026-09-17 固化（用户拍板：功能常驻不下放）：recall_diversify（按类型多样性重排）
     # ── Life Loop v1.1（2026-08-26；2026-08-27 用户拍板全量开启）──
     "life_loop_enabled": True,            # 主开关：30min 行为决策循环
@@ -103,8 +103,6 @@ AGENT_FLAGS = {
 "proactive_kernel_full_gate": False,  # M4（2026-11-04）：state_trigger 直发通道是否启用最严内核闸（inactive_char/hourly_cap/night_said_sleep 三项）；默认关＝与收敛前逐字节一致
     "preoccupation_enabled": True,       # 机制5：心事微澜（复用 Memory.sub_type）
     # ── #70 方案A：记忆分层检索与注入（2026-08-30；独立可回滚）──
-    # memory_tiered_inject 开=Top1 L2(240)/其余 L0 分层注入 + L1 桥接 + L0 参与向量；关=统一 150 字旧链路（逐字节一致）。
-    "memory_tiered_inject": False,
     # ── #70 方案B：检索轨迹可观察（2026-08-30；独立可回滚）──
     # memory_trace_debug 开=memory_search trace 补 query/派生/各路命中/RRF/rerank 分数/最终注入（只多写 trace，低风险默认开）；
     # 关=检索/排序/trace 与现状逐字节一致（回归保护）。
@@ -161,7 +159,7 @@ AGENT_FLAGS = {
     # ── 细粒度槽开关（2026-09-10，用户拍板；先只搭框架，【全部默认关，含 location】；
     #    真机观察 C2 新鲜窗 / 回家识别 / C3 锚点稳定后，再经 runtime flag 手动只开 location）──
     # 语义：总闸开=全槽启用；总闸关时按各槽 flag 独立决定（user_fact_slot_enabled）。
-    "user_fact_location": False,      # 位置：最不敏感、最易过时；GPS/城市/聊天归槽写 location
+    "user_fact_location": True,      # 位置：最不敏感、最易过时；GPS/城市/聊天归槽写 location
     "user_fact_job": False,           # 工作/学业  〔A19处置·预留（10-02 拍）＝细粒度槽按 09-10 拍板全默认关，生产要开走 runtime_flags 单拨〕
     "user_fact_relationship": False,  # 感情状态（隐私，默认关）
     "user_fact_living": False,        # 居住状况（独居/和谁住）  〔A19处置·预留（10-02 拍）＝同上（细粒度槽不转正）〕
@@ -204,8 +202,8 @@ AGENT_FLAGS = {
     #   注：输出本地闸门（memory_review.py 的 _is_wrong_tense_directive，拦"当下叮嘱式回忆"）**不受本键门控**，一直生效；
     # review_plan_expire_stale 开=每日维护把过期计划自动置 stale（L4，默认关灰度）；
     # review_plan_validity_extract 开=提取/写入侧给计划写 valid_to（L4，默认关灰度）。
-    "review_plan_expire_stale": False,
-    "review_plan_validity_extract": False,
+    "review_plan_expire_stale": True,
+    "review_plan_validity_extract": True,
     # ── A4 批 1 / T3：事实生命周期策略表（2026-09-26 落 P0–P2；2026-09-29 B9 判读后进 P4）──
     # 本键是**档位**（归一口径唯一真源＝app/memory/lifecycle_policy.py::gear_of），三档：
     #   False（默认）＝ off      ：连扫描都不跑，逐字节旧行为；
@@ -248,13 +246,13 @@ AGENT_FLAGS = {
     # life_memory_write_retry 开=life 写记忆加固（写前先提交释放自持锁 + 统一退避重试 +
     #   悬空 started 收尾）；**默认开（纯加固）**，关=回旧裸写路径。
     "promise_self_side_split": True,
-    "proactive_topic_guard": False,
+    "proactive_topic_guard": True,
     # ── #72 PR-C 群聊认知升级（group_cognition_v2，2026-09-15）──
     # group_cognition_v2 开=群聊认知能力（P1 纯数据层 + P2 共享记忆接线已合；P3 逐角色认知
     #   生成+私有注入+预算+仲裁、P4 观测+群级灰度列生效 待后续拆包）。总开关：本项默认关，
     #   app/memory/group_memory.group_cognition_on() 已读该键、异常即 False——关=零行为变化
     #   （PR-B 双轨均未接线状态原样保留）；开 + 群级 chat_groups.cognition_enabled 才走双轨。
-    "group_cognition_v2": False,
+    "group_cognition_v2": True,
     # ── #72 PR-C P5 群记忆日终合并收敛（2026-09-16 落地）──
     # group_memory_compact 开=每日 23:00 后把 >7 天的群记忆按群合并成 1 条 system 摘要、
     #   旧行软删（is_archived=1，留痕不物理删）；关=完全跳过、逐字节现状。
@@ -266,7 +264,7 @@ AGENT_FLAGS = {
     "memory_admission_gate": True,
     # ── 批次四（2026-09-16）：主动消息分块口径护栏（允许分块，禁止残句/空块；生成前校验现实约束）──
     # 开＝分块时过滤残句/空块并做现实校验；关＝逐字节现状。
-    "proactive_segment_guard": False,
+    "proactive_segment_guard": True,
     # ── 小增量（2026-09-16）：召回后效用反馈（Slowave 式），用于调 salience/衰减 ──
     # 开＝召回后异步写轻量反馈并据此微调；关＝零行为变化。
     # ── X6 主动内容策略包外放（2026-09-16 落地）──
@@ -282,13 +280,13 @@ AGENT_FLAGS = {
     #   registry.get_plugin(name)["enabled"]，即 DB plugins.enabled 的内存缓存）；
     #   关＝**逐字节旧行为**（只判插件是否存在，不判 enabled，与现状一致）。默认关=灰度门控，
     #   本键必须登记，否则 DB/runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
-    "plugin_disabled_route_gate": False,
+    "plugin_disabled_route_gate": True,
     # ── A2 M3（2026-09-20）：插件列表按账号收敛（插件归户批次）──
     # 开＝插件列表只显示「内置 + 调用者家庭安装 + 服务级（owner 为空）」的插件，市场 installed 标记
     #   随同一可见集重算；调用者家庭解析失败 → 只保留内置与服务级（最保守集合，绝不全放）；
     #   关＝**逐字节旧行为**（列表全量，不做任何归属过滤）。默认关=灰度门控。
     #   本键必须登记，否则 DB/runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
-    "plugin_user_scope": False,
+    "plugin_user_scope": True,
     # ── A2 M4（2026-09-20）：插件运行面按账号过滤（插件归户批次）──
     # 开＝插件的每一条运行面通路都有归属闸：hook 分发 / 工具登记 / prompt 注入 / 桥调用 /
     #   页面托管都只对本调用者「可见」的插件生效（复用 M3 谓词 + 30s 缓存），sdk 原语
@@ -297,7 +295,7 @@ AGENT_FLAGS = {
     #   proactive_candidate 做角色归属配对校验；未登记 CATEGORY_KERNEL_PREP 的类别走通用闸。
     #   拿不到 caller 的调用点一律 fail-closed（非内置插件不分发）。关＝**逐字节旧行为**。默认关=灰度门控。
     #   本键必须登记，否则 DB/runtime_flags 里开了也不生效（flag_service 只合并已登记键）。
-    "plugin_runtime_scope": False,
+    "plugin_runtime_scope": True,
     # ── two-pass POC（2026-09-23，雷达 §3「two-pass 重读」/ 方案书 AMBRACE_two-pass_POC方案）──
     # 开=主动消息生成**前**拼一块确定性「现状 trace」，前置到长历史/系统块之前（零 LLM、只读、
     #   trace 不落库不写记忆不上屏）；关=不构造、不注入、不多一次查询（逐字旧行为）。
@@ -338,7 +336,7 @@ AGENT_FLAGS = {
     #   （清除器已内置 fail-closed 前置备份）；「不能删最后一个 server_admin」等护栏在清除器内
     #   始终保留，命中只留 WARNING 不清。开法同其它灰度键：本键已登记进 AGENT_FLAGS，重启后可经
     #   flag_service 热改。
-    "account_purge_scheduler": False,
+    "account_purge_scheduler": True,
     # ── X7 行动通道三条闸（C1a，2026-09-25：从「直接读 runtime_flags」改登记进常规开关体系）──
     # 缺省方向与原先各自更严的一侧逐字一致：两条总闸缺行＝关，强制干跑缺行＝开（裁决通过也不
     #   下发可执行凭据）。三条键默认由服务器锁定（flag_service.SERVER_LOCKED_DEFAULT_KEYS）：
@@ -418,7 +416,7 @@ AGENT_FLAGS = {
     #   ②跨来源禁合并：感知条与非感知条不得互相并条（写路径三处查重 + curated 近似合并）；
     #   ③召回输出补 source/sub_type 字段（只加字段，不改排序/条数/阈值）。
     # 隔离四禁令（晋升/摘要/剔除）属 M2，另键另批，不在本 flag 范围内。
-    "perception_source_tag": False,
+    "perception_source_tag": True,
     # 批 0-2 M2（2026-09-28）：感知隔离生效 —— 关＝逐字节旧行为（默认关）。前置＝perception_source_tag 已开
     # （没有打标就没有 perception 条，本键开了也无料可隔离）。
     # 开＝对「被隔离条」（perception_tier.is_quarantined：来源 perception 且未被用户认可为 FACT）执行隔离禁令：

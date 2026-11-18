@@ -303,6 +303,26 @@ class PhonePerceptionService {
   }
 
   /// 节点树快照：返回 {text, nodes: [{text, clickable, editable, x, y}], capturedAt, serviceEnabled}
+  /// AmBraceClick：无障碍服务内直接起应用（不依赖 Shizuku）；被系统拦截时 ok:false。
+  static Future<Map<dynamic, dynamic>> openApp(String packageName) async {
+    final r = await _channel.invokeMethod("openApp", {"package": packageName}) as Map? ?? {};
+    return r;
+  }
+
+  /// A6 P1.5：按稳定路径（快照分配）执行动作；path 失效返回 ok:false，调用方重新快照。
+  static Future<Map<dynamic, dynamic>> performActionByPath(
+    String path, {
+    String action = "click",
+    String text = "",
+  }) async {
+    final r = await _channel.invokeMethod("performActionByPath", {
+      "path": path,
+      "action": action,
+      "text": text,
+    }) as Map? ?? {};
+    return r;
+  }
+
   static Future<Map<dynamic, dynamic>> getNodeTree() async {
     if (!Platform.isAndroid) return {};
     try {

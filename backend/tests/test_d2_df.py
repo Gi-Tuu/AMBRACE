@@ -304,6 +304,7 @@ def test_timer_level2_不走include_reasoning(monkeypatch):
     sent = []
     char = _char(3, "小阳")
     event = SimpleNamespace(character_id=3, user_id=4, session_id=7, owner="ai",
+                            source_message_id=None, 
                             content_hint="粥好了", event_type="ready", id=1)
 
     async def _fake_chat_completion(messages, **kw):

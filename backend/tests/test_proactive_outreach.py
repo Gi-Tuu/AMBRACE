@@ -234,7 +234,10 @@ def _patch_run_tick(monkeypatch, execute_impl):
 
 
 def test_run_tick_flag_off_zero_change(monkeypatch):
-    """flag 关（默认）：candidate 不带 outreach_intent/outreach_plan → 走旧链路零变化。"""
+    """flag 关：candidate 不带 outreach_intent/outreach_plan → 走旧链路零变化。
+    （11-14 批 7 常驻化后默认为开；本用例钉关档合同，显式关。）"""
+    from app.agent.loop import AGENT_FLAGS as _af
+    monkeypatch.setitem(_af, "proactive_outreach_v2", False)
     captured = {}
 
     # A20 批 3a R4：run_tick 改传 bundle（`_execute(item, _gates())`）⇒ 桩签名跟到位，断言不变

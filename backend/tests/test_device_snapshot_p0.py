@@ -200,3 +200,13 @@ def test_verify_after_stale_when_element_gone():
         snap.verify_after(s.snapshot_id, ref, _tree(_btn("别的")))
     assert e.value.code == "STALE_REF"
 
+def test_to_action_intent_click_by_path():
+    s = snap.create_snapshot(_tree(_btn("确定", "OK")))
+    ref = next(iter(s.refs))
+    plan = snap.plan_action(s.snapshot_id, ref, "click")
+    intent = snap.to_action_intent(plan, target_app="com.android.settings")
+    assert intent["capability"] == "action_tap"
+    assert intent["by"] == "path" and intent["path"] == plan["path"]
+    assert intent["target_app"] == "com.android.settings"
+    assert intent["delivery"] == "not_delivered"
+

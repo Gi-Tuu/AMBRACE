@@ -1190,7 +1190,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get srvVlmHint =>
-      'For chat/phone perception image reading: API Key prefers cloud vision, else local OCR (optional local VLM)';
+      'For chat/phone-perception image reading: with an API Key, images go to the cloud vision service you configured; without one, only on-device OCR text is used (the local-model option has been removed)';
 
   @override
   String get vlmPresets => 'Vision provider presets';
@@ -1750,7 +1750,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get ppPrivacyNote =>
-      '· All capabilities are off by default; each is authorized individually, and turning off takes effect immediately\n· Only text and image metadata are read; images use local OCR/VLM for understanding, never uploaded to cloud models\n· Password fields and banking/payment pages are skipped automatically\n· Data is sent only to your own server; snapshots expire after 30 minutes, up to 20 kept';
+      '· All capabilities are off by default; each is authorized individually, and turning off takes effect immediately\n· Only text and image metadata are read; when image understanding is needed, images are sent only to the vision endpoint you configured (on-device OCR text otherwise), and never to the chat model\n· Password fields and banking/payment pages are skipped automatically\n· Data is sent only to your own server; snapshots expire after 30 minutes, up to 20 kept';
 
   @override
   String get ppGroupActions => 'Actions & history';
@@ -1785,7 +1785,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get providerLocalHint => 'openai / dashscope / local';
+  String get providerLocalHint => 'openai / dashscope / custom';
 
   @override
   String get worldGroup => 'Character Settings';
@@ -4558,7 +4558,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get permScopeImgUnderstandDesc =>
-      'AI understands the images you send (local recognition)';
+      'AI understands the images you send (recognizes both content and text)';
 
   @override
   String get permScopeTtsTitle => 'Voice Reply';
@@ -8519,6 +8519,91 @@ class AppLocalizationsEn extends AppLocalizations {
   String get memoryWhyNoExcerpt => 'No excerpt available';
 
   @override
+  String get memoryLifecycleTitle => 'Memory lifecycle';
+
+  @override
+  String get memoryLifecycleLoading => 'Loading lifecycle…';
+
+  @override
+  String get memoryLifecycleLoadFailed => 'Failed to load the lifecycle';
+
+  @override
+  String get memoryLifecycleStatusActive => 'Active';
+
+  @override
+  String get memoryLifecycleStatusSuperseded => 'Superseded';
+
+  @override
+  String get memoryLifecycleStatusStale => 'Stale';
+
+  @override
+  String get memoryLifecycleStatusExpired => 'Expired';
+
+  @override
+  String get memoryLifecycleStatusUnknown => 'Unknown status';
+
+  @override
+  String memoryLifecycleSupersededBy(Object id) {
+    return 'Superseded by memory #$id; the newer one prevails';
+  }
+
+  @override
+  String memoryLifecycleValidTo(Object time) {
+    return 'Expired at $time';
+  }
+
+  @override
+  String get memoryLifecycleArchived => 'Archived';
+
+  @override
+  String get memoryLifecycleVersionLabel => 'Version';
+
+  @override
+  String get memoryLifecycleRevisionLabel => 'Manual revisions';
+
+  @override
+  String get memoryLifecycleSourceEventsLabel => 'Source events';
+
+  @override
+  String get memoryLifecycleReceiptsLabel => 'Write receipts';
+
+  @override
+  String get memoryLifecycleDerivedLabel => 'Derived memories';
+
+  @override
+  String get memoryLifecycleEpistemicLabel => 'Epistemic status';
+
+  @override
+  String get memoryLifecycleEpiFact => 'Verified';
+
+  @override
+  String get memoryLifecycleEpiInferred => 'Inferred';
+
+  @override
+  String get memoryLifecycleEpiUnverified => 'Unverified';
+
+  @override
+  String get memoryLifecycleEpiUnknown => 'Unknown';
+
+  @override
+  String get memoryLifecycleReceiptsEmpty => 'No write receipts';
+
+  @override
+  String get memoryLifecycleReceiptCreate => 'Created';
+
+  @override
+  String get memoryLifecycleReceiptUpdate => 'Updated';
+
+  @override
+  String get memoryLifecycleReceiptSupersede => 'Superseded';
+
+  @override
+  String get memoryLifecycleReceiptStale => 'Staled';
+
+  @override
+  String get memoryLifecycleReceiptReject => 'Rejected';
+
+  @override
   String get gardenSetupTitle => 'Garden read-only access';
 
   @override
@@ -8580,4 +8665,56 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get gardenPrivacyHint =>
       'Sent only to your own server; never echoed or logged.';
+
+  @override
+  String get allowAlways => 'Always allow';
+
+  @override
+  String get agentRunsTitle => 'Agent runs';
+
+  @override
+  String get agentRunsRefresh => 'Refresh';
+
+  @override
+  String get agentRunsConnect => 'Connect';
+
+  @override
+  String get agentRunsCancel => 'Cancel run';
+
+  @override
+  String get agentRunsAudit => 'Audit';
+
+  @override
+  String get agentRunsNoRuns => 'No active runs';
+
+  @override
+  String agentRunsStatus(String streaming) {
+    return 'Streaming: $streaming';
+  }
+
+  @override
+  String get agentRunsIdHint => 'Enter a run_id or pick a run';
+
+  @override
+  String get agentRunsCreate => 'New run';
+
+  @override
+  String get agentRunsTaskHint => 'Task (optional)';
+
+  @override
+  String get agentRunsDeadline => 'Deadline (s)';
+
+  @override
+  String get agentRunsCreateConfirm => 'Create';
+
+  @override
+  String coreStatusOnline(int ok, int total) {
+    return 'Tools: online $ok/$total';
+  }
+
+  @override
+  String get coreStatusOffline => 'Tools: offline';
+
+  @override
+  String get coreStatusUnconfigured => 'Tools: not configured';
 }

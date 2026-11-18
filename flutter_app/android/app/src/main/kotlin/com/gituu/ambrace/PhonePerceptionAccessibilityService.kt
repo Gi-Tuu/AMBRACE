@@ -290,7 +290,7 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
         collectClickable(node, arr, 0, System.currentTimeMillis() + TRAVERSE_TIME_BUDGET_MS)
     }
 
-    private fun collectClickable(node: AccessibilityNodeInfo, arr: JSONArray, depth: Int, deadline: Long) {
+    private fun collectClickable(node: AccessibilityNodeInfo, arr: JSONArray, depth: Int, deadline: Long, path: String = "0") {
         if (arr.length() >= MAX_NODES || depth > MAX_DEPTH || System.currentTimeMillis() > deadline) return
         if (node.isPassword) return
         val t = nodeLabel(node)
@@ -315,6 +315,9 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
                     obj.put("className", cls)
                     obj.put("x", rect.centerX())
                     obj.put("y", rect.centerY())
+                    obj.put("path", path)
+                    obj.put("resourceId", node.viewIdResourceName ?: "")
+                    obj.put("desc", node.contentDescription?.toString() ?: "")
                     arr.put(obj)
                 }
             }
@@ -323,7 +326,7 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
             if (System.currentTimeMillis() > deadline) break
             val child = node.getChild(i) ?: continue
             try {
-                collectClickable(child, arr, depth + 1, deadline)
+                collectClickable(child, arr, depth + 1, deadline, "$path/$i")
             } finally {
                 try { child.recycle() } catch (_: Exception) {}
             }
@@ -379,6 +382,76 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
         else ActionResult(false, "输入失败：目标输入框不支持写入")
     }
 
+    /** AmBraceClick：无障碍服务内直接起应用（不依赖 Shizuku）；被系统拦截时如实返回错误。 */
+    fun openApp(packageName: String): ActionResult {
+        if (packageName.isBlank()) return ActionResult(false, "缺少包名")
+        return try {
+            val intent = packageManager.getLaunchIntentForPackage(packageName)
+                ?: return ActionResult(false, "未找到可启动入口：$packageName")
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+            ActionResult(true, "已启动 $packageName")
+        } catch (e: Exception) {
+            ActionResult(false, "启动被拒：${e.javaClass.simpleName}: ${e.message}")
+        }
+    }
+
+    /** A6 P1.5：按稳定遍历路径执行动作（客户端不做文本模糊重定位；路径由快照分配）。 */
+    fun performNodeActionByPath(action: String, path: String, text: String = ""): ActionResult {
+        if (action !in setOf("click", "long_click", "scroll", "set_text")) {
+            return ActionResult(false, "不支持的动作类型")
+        }
+        if (path.isBlank()) return ActionResult(false, "缺少节点路径")
+        val root = rootInActiveWindow ?: return ActionResult(false, "无障碍服务未连接或当前无可操作页面")
+        val node = findNodeByPath(root, path)
+            ?: return ActionResult(false, "路径节点已失效（$path），请重新快照")
+        if (node.isPassword) {
+            try { node.recycle() } catch (_: Exception) {}
+            return ActionResult(false, "密码节点已拒绝操作")
+        }
+        val label = nodeLabel(node) ?: ""
+        if (label.isNotBlank() && isSensitiveText(label)) {
+            try { node.recycle() } catch (_: Exception) {}
+            return ActionResult(false, "敏感节点已拒绝操作")
+        }
+        val result = when (action) {
+            "click" -> performClick(node)
+            "long_click" -> performLongClick(node)
+            "scroll" -> performScroll(node)
+            else -> setTextOnNode(node, text)
+        }
+        try { node.recycle() } catch (_: Exception) {}
+        return result
+    }
+
+    private fun setTextOnNode(node: AccessibilityNodeInfo, text: String): ActionResult {
+        if (text.isBlank()) return ActionResult(false, "输入内容为空")
+        if (text.length > 50) return ActionResult(false, "输入内容过长（最多 50 字）")
+        if (isSensitiveText(text)) return ActionResult(false, "敏感内容拒绝输入")
+        val target = if (node.isEditable) node else findEditableNode(node)
+            ?: return ActionResult(false, "目标节点不是输入框")
+        val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
+        val ok = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        if (target !== node) { try { target.recycle() } catch (_: Exception) {} }
+        return if (ok) ActionResult(true, "已输入文本（${text.length} 字）")
+        else ActionResult(false, "输入失败：目标输入框不支持写入")
+    }
+
+    /** 按 "0/2/1" 形式的遍历路径找节点；段数不符或越界一律 null（调用方重新快照）。 */
+    private fun findNodeByPath(root: AccessibilityNodeInfo, path: String): AccessibilityNodeInfo? {
+        var cur = root
+        val parts = path.split("/")
+        if (parts.isEmpty() || parts[0] != "0") return null
+        for (seg in parts.drop(1)) {
+            val idx = seg.toIntOrNull() ?: return null
+            if (idx !in 0 until cur.childCount) return null
+            val next = cur.getChild(idx) ?: return null
+            if (cur !== root) { try { cur.recycle() } catch (_: Exception) {} }
+            cur = next
+        }
+        return cur
+    }
+
     private fun findEditableNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         if (root.isEditable && !root.isPassword) return root
         for (i in 0 until root.childCount) {
@@ -401,10 +474,37 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
         return null
     }
 
-    /** 先精确匹配，再模糊包含匹配：避免“发布”误中“发布动态”这类包含关系节点。 */
+    /** 精确优先：文本 → contentDescription → 资源 ID（"id:" 前缀或含 "/" 的形式）。不做模糊包含。 */
     private fun findNodeByText(root: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
         findNodeByTextExact(root, text)?.let { return it }
-        return findNodeByTextContains(root, text)
+        findNodeByDescExact(root, text)?.let { return it }
+        val rid = text.removePrefix("id:").trim()
+        if (text.startsWith("id:") || rid.contains("/")) {
+            return findNodeByResourceId(root, rid)
+        }
+        return null
+    }
+
+    private fun findNodeByDescExact(root: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
+        val d = root.contentDescription?.toString()?.trim()
+        if (!d.isNullOrBlank() && !root.isPassword && !isSensitiveText(d) && d == text) return root
+        for (i in 0 until root.childCount) {
+            val child = root.getChild(i) ?: continue
+            val r = findNodeByDescExact(child, text)
+            if (r != null) return r
+        }
+        return null
+    }
+
+    private fun findNodeByResourceId(root: AccessibilityNodeInfo, resId: String): AccessibilityNodeInfo? {
+        val actual = root.viewIdResourceName ?: ""
+        if (actual.isNotEmpty() && (actual == resId || actual.endsWith("/" + resId.substringAfter("/")))) return root
+        for (i in 0 until root.childCount) {
+            val child = root.getChild(i) ?: continue
+            val r = findNodeByResourceId(child, resId)
+            if (r != null) return r
+        }
+        return null
     }
 
     private fun findNodeByTextExact(root: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
@@ -413,20 +513,6 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
         for (i in 0 until root.childCount) {
             val child = root.getChild(i) ?: continue
             val r = findNodeByTextExact(child, text)
-            if (r != null) return r
-        }
-        return null
-    }
-
-    private fun findNodeByTextContains(root: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
-        val t = nodeLabel(root)
-        if (!t.isNullOrBlank() && !root.isPassword && !isSensitiveText(t)) {
-            val match = t == text || t.contains(text) || text.contains(t)
-            if (match) return root
-        }
-        for (i in 0 until root.childCount) {
-            val child = root.getChild(i) ?: continue
-            val r = findNodeByTextContains(child, text)
             if (r != null) return r
         }
         return null

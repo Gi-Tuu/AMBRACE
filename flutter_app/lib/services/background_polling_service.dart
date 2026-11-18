@@ -1,12 +1,13 @@
 import "dart:async";
 import "dart:convert";
 import "dart:ui";
-import "package:flutter/foundation.dart";
+import "package:flutter/foundation.dart";
 import "package:dio/dio.dart";
 import "package:flutter_background_service/flutter_background_service.dart";
 import "package:flutter_local_notifications/flutter_local_notifications.dart";
 import "package:shared_preferences/shared_preferences.dart";
-import "phone_perception_service.dart";
+import "phone_perception_service.dart";
+import "device_action_prefs.dart";
 import "unread_engine.dart";
 import "foreground_state.dart";
 import "foreground_ack.dart";
@@ -85,7 +86,8 @@ class BackgroundPollingService {
 
 /// 后台 isolate 入口（必须是顶层函数）
 @pragma("vm:entry-point")
-void onStart(ServiceInstance service) async {
+void onStart(ServiceInstance service) async {
+  _bgService = service;
   DartPluginRegistrant.ensureInitialized();
 
   final plugin = FlutterLocalNotificationsPlugin();
@@ -139,7 +141,11 @@ void onStart(ServiceInstance service) async {
   }
   probeForeground(); // 先问一次，别让首轮（建基线那一轮）误判
   _fgProbeTimer?.cancel();
-  _fgProbeTimer = Timer.periodic(const Duration(seconds: 5), (_) => probeForeground());
+  _fgProbeTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      probeForeground();
+      // A6 P1.5：设备动作取件挂在常驻探测循环（仅 onceEver 已确认能力，见 _pollDeviceActions）
+      _pollDeviceActions();
+    });
 
   Timer? timer;
   if (service is AndroidServiceInstance) {
@@ -241,7 +247,80 @@ Future<void> _tick(FlutterLocalNotificationsPlugin plugin) async {
   }
 }
 
-Future<void> _pollOnce(FlutterLocalNotificationsPlugin plugin) async {
+/// A6 P1.5：后台取件——只执行「onceEver 档且已永久确认」的能力；其余留队列等前台确认。
+ServiceInstance? _bgService;
+
+Future<void> _pollDeviceActions() async {
+  try {
+    if (!await PhonePerceptionService.isActionsEnabled()) return;
+    var baseUrl = _bgServerUrl;
+    if (baseUrl.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      baseUrl = prefs.getString("server_url") ?? "";
+    }
+    var token = _bgToken;
+    if (token.isEmpty) token = await SecureTokenStore.instance.readToken();
+    if (baseUrl.isEmpty || token.isEmpty) return;
+    final dio = _identityGuardedDio(baseUrl, BaseOptions(
+      baseUrl: baseUrl,
+      headers: {"Authorization": "Bearer $token"},
+      connectTimeout: const Duration(seconds: 8),
+      receiveTimeout: const Duration(seconds: 8),
+    ));
+    final r = await dio.get("/api/v1/device/actions/pending");
+    final items = r.data is List ? (r.data as List) : const [];
+    if (items.isEmpty) return;
+    // 服务端策略为权威：once_ever ＝ 用户已永久允许（本地标记只是缓存，可缺失）
+    // 后台 isolate 不能用 ApiClient（未初始化）：策略也用自建 dio 拉
+    Map<String, String> serverPolicies = {};
+    try {
+      final pr = await dio.get("/api/v1/device/actions/policy");
+      final pd = pr.data is Map ? Map<String, dynamic>.from(pr.data as Map) : const <String, dynamic>{};
+      for (final e in (pd["items"] is List ? pd["items"] as List : const [])) {
+        if (e is! Map) continue;
+        final c = e["capability"]?.toString() ?? "";
+        final pv = e["policy"]?.toString() ?? "";
+        if (c.isNotEmpty && pv.isNotEmpty) serverPolicies[c] = pv;
+      }
+    } catch (_) {}
+    final allowed = <String>{};
+    for (final raw in items) {
+      if (raw is! Map) continue;
+      final intent = Map<String, dynamic>.from(raw);
+      final tok = intent["action_token"]?.toString() ?? "";
+      final cap = intent["capability"]?.toString() ?? "";
+      if (tok.isEmpty || cap.isEmpty) continue;
+      var policy = ActionConfirmPolicy.firstPerType;
+      final serverPolicy = serverPolicies[cap];
+      if (serverPolicy != null) {
+        policy = policyFromName(serverPolicy);
+      } else {
+        policy = await DeviceActionPrefs.policyFor(cap);
+      }
+      final confirmed = await DeviceActionPrefs.isOnceEverConfirmed(cap);
+      if (policy == ActionConfirmPolicy.onceEver && (serverPolicy != null || confirmed)) {
+        allowed.add(tok);
+      }
+    }
+    if (allowed.isEmpty) return;
+    // 主 isolate 才有无障碍 MethodChannel：后台只转发，执行与回报交给 UI isolate
+    for (final raw in items) {
+      if (raw is! Map) continue;
+      final intent = Map<String, dynamic>.from(raw);
+      final tok = intent["action_token"]?.toString() ?? "";
+      if (!allowed.contains(tok)) continue;
+      try {
+        _bgService?.invoke("device_action_exec", intent);
+      } catch (_) {}
+    }
+
+  } catch (_) {
+    // 后台取件失败静默
+  }
+}
+
+Future<void> _pollOnce(FlutterLocalNotificationsPlugin plugin) async {
+  await _pollDeviceActions();
   try {
     final l10n = ServiceL10n(await appLang());
     final prefs = await SharedPreferences.getInstance();

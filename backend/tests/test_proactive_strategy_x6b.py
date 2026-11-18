@@ -675,3 +675,11 @@ def test_time_ctx是闸_roster键桩空无效(monkeypatch, clean_registry):
         assert _collect_some(_hook_ctx_with_roster())
     finally:
         builders["time_ctx"], builders["roster"] = orig_time, orig_roster
+
+
+@pytest.fixture(autouse=True)
+def _plugin_runtime_scope_off(monkeypatch):
+    """11-14 批 7 常驻化：插件运行面作用闸默认转 True（proactive 配对校验拦 owner=None 的
+    合成候选）；本文件场景验证策略包产出、与作用域无关，显式回旧档（专属覆盖见 m4 测试）。"""
+    from app.flags.agent_flags import AGENT_FLAGS
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_runtime_scope", False)

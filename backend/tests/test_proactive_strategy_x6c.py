@@ -581,3 +581,11 @@ def test_rhythm_当日去重不再空转(monkeypatch, clean_registry):
     monkeypatch.setattr(strategy_mod, "_count_trigger_log", _trigger)
     assert asyncio.run(strategy_mod.sent_recently(CHAR_ID, "rhythm", "goodnight")) is True
     assert calls == [(CHAR_ID, "goodnight")]
+
+
+@pytest.fixture(autouse=True)
+def _plugin_runtime_scope_off(monkeypatch):
+    """11-14 批 7 常驻化：插件运行面作用闸默认转 True（proactive 配对校验拦 owner=None 的
+    合成候选）；本文件场景验证策略包产出、与作用域无关，显式回旧档（专属覆盖见 m4 测试）。"""
+    from app.flags.agent_flags import AGENT_FLAGS
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_runtime_scope", False)

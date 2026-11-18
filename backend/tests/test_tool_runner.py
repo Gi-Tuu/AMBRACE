@@ -15,6 +15,10 @@ def test_内置工具带scope():
 
 
 def test_插件action自动登记(monkeypatch):
+    # 11-14 批 7 常驻化：本场景与作用域无关，显式回旧档
+    from app.flags.agent_flags import AGENT_FLAGS
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_runtime_scope", False)
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_user_scope", False)
     # 加载 douyin_mcp 插件（含 handle_mention / handle_social_event actions）
     registry.load_plugin_dir(registry.EXAMPLE_DIR / "douyin_mcp")
     count = tools.sync_plugin_tools()

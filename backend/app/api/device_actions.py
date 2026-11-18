@@ -58,6 +58,7 @@ from app.device.actions import (
     decide_action,
     invalid_intent_reason,
     report_result,
+    VALID_DELIVERY,
     store_policy,
     take_pending,
 )
@@ -150,7 +151,12 @@ async def post_action_result(
     """App 回报执行结果（本批无执行体，回报只用于打通链路 + 驱动熔断计数）。"""
     ok = bool(payload.get("ok"))
     detail = str(payload.get("detail") or "")
-    found = report_result(token, ok, detail, user_id=user_id)
+    delivery = payload.get("delivery")
+    if delivery is not None:
+        delivery = str(delivery)
+        if delivery not in VALID_DELIVERY:
+            raise HTTPException(status_code=400, detail=f"invalid_delivery:{delivery}")
+    found = report_result(token, ok, detail, user_id=user_id, delivery=delivery)
     return {"ok": found}
 
 

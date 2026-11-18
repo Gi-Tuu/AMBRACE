@@ -14,11 +14,12 @@ import pytest  # noqa: F401  (monkeypatch fixture 由 pytest 注入，保留以�
 
 # ────────────── flag 默认关零影响 ──────────────
 
-def test_flag_default_off():
+def test_flag_default_on_resident():
+    """11-14 批 7 常驻化：group_cognition_v2 默认开（群级 cognition_enabled 二次门控不变）。"""
     from app.agent import loop as _loop
     from app.memory import group_memory as gm
-    assert _loop.AGENT_FLAGS.get("group_cognition_v2", False) is False
-    assert gm.group_cognition_on() is False
+    assert _loop.AGENT_FLAGS.get("group_cognition_v2", False) is True
+    assert gm.group_cognition_on() is True
 
 
 def test_budget_constants():

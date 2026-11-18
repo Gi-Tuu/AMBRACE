@@ -179,9 +179,8 @@ async def run_meaning_extraction(character_id: int, user_id: int) -> int:
         # #70 方案A.4.2：写完 why_it_matters 后重算该记忆向量（异步低频、复用既有异步通道；
         # 本地 bge-m3 embedding，不走 LLM 额度；逐条/整批隔离，失败静默，不阻塞主链路）。
         # 只对「本次确实拿到 why」的记忆重算；去重口径不变（find_similar_memory 仍用 content 原文 embedding）。
-        # 由 memory_tiered_inject 门控（flag 注释语义："L0 参与向量"；关=保持旧链路，不改变检索/去重向量）。
-        from app.flags.agent_flags import AGENT_FLAGS
-        if updated and AGENT_FLAGS.get("memory_tiered_inject", False):
+        # 2026-11-14 常驻化（原由 memory_tiered_inject 门控，"L0 参与向量"语义）。
+        if updated:
             try:
                 from app.memory.embedding import text_embedding
                 from app.db.vector_store import upsert_memory_vector

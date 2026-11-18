@@ -62,7 +62,7 @@
 - **权限与账号**：三合一标签页（AI 能力权限 / 主账号管理 / 服务器功能开关），主账号可管理子账号与用量
 - **用量报表**：按用途 / 模型 / 按天摊开 token 与调用数，并给出按用途、按渠道的占比分布；估算用量单独计数，不与实测混读
 - **功能开关**：开关页按分组折叠并附中文说明，重要能力可灰度与热切，便于逐项试新
-- **桌面控制台**：跨平台（tkinter）启停 / 重启 / 看日志；服务器管理统一走 `scripts/server_manager.py`（`status` 体检、`repair` 一键修复双实例、`start/stop/restart`）
+- **服务器控制台**：网页壳（仪表盘 / 服务器控制 / 服务器身份 / 模型管理 / 账号管理 / 开关与权限 / 运行日志 / 审计），启停 / 重启 / 看日志都在里面；Windows 双击 `server_controller/start_console_web.vbs`，其他平台运行 `python server_controller/console_app.py`；服务器管理统一走 `scripts/server_manager.py`（`status` 体检、`repair` 一键修复双实例、`start/stop/restart`）
 - **稳定运行**：Alembic 版本链迁移（跨版本升级不丢数据）、启动就绪检查（`/ready`）与活性端点（`/liveness`）、常驻任务自检、外部网关守护自愈、后台整理失败自动退避重试
 
 ## 技术栈
@@ -80,7 +80,7 @@ ambrace_core/     Flutter 共享包（消息/错误/身份/传输原语，手机
 pwa/              网页版（Flutter Web；后端默认不挂载，`PWA_STATIC_DIR` 显式配置后才在 `/pwa/` 提供）
 plugins/          内置示例插件与远程市场索引（examples/ 示例、marketplace/ 索引）
 scripts/          运维脚本（server_manager.py 启停/体检/修复，watchdog.py 守护，backup.py 备份，setup.bat/setup.sh 一键部署，uninstall.bat/uninstall.sh 卸载，build_apk.bat/build_apk.sh 一键打包 APK，get_server_info.py 获取服务器地址，init_db.py 手动重建表，download_models.py 下载向量模型，verify.py 一键验证）
-server_controller/ 桌面控制台（跨平台 tkinter：Windows 双击 start_controller.vbs / Linux·macOS 执行 bash start_controller.sh）
+server_controller/ 服务器控制台（网页壳：Windows 双击 start_console_web.vbs，其他平台 python console_app.py）
 docs/             开发文档（架构 / 规划 / 全景，除 changelog.md（App 更新公告数据源）外不随开源包分发）
 ```
 
@@ -132,7 +132,7 @@ cd backend
 # Linux/macOS: .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Linux / macOS 启动（server_manager / watchdog 为 Windows 专属；桌面控制台为跨平台程序，请用下方「2.4 Linux/macOS 部署与守护」）：
+Linux / macOS 启动（server_manager / watchdog 为 Windows 专属；服务器控制台为跨平台程序（网页壳，需系统 WebView），请用下方「2.4 Linux/macOS 部署与守护」）：
 ```bash
 cd backend
 .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
@@ -163,7 +163,7 @@ cd backend
 局域网/手机访问被拦时，以管理员运行 `scripts\open_firewall.bat` 放行 8000 端口（Linux 防火墙见 2.4 第 5 步）。
 
 ### 2.2 获取服务器地址（手机端填写）
-服务器启动后运行 `python scripts/get_server_info.py`，会打印局域网地址（手机与服务器同一 Wi-Fi 时填）：`http://192.168.x.x:8000`；也可登录后在 App / 桌面控制台查看（`GET /api/v1/system/status/detail`，需登录）。公开的 `/api/v1/system/status` 只返回最小状态，不含局域网地址。
+服务器启动后运行 `python scripts/get_server_info.py`，会打印局域网地址（手机与服务器同一 Wi-Fi 时填）：`http://192.168.x.x:8000`；也可登录后在 App / 服务器控制台查看（`GET /api/v1/system/status/detail`，需登录）。公开的 `/api/v1/system/status` 只返回最小状态，不含局域网地址。
 
 ### 2.3 Tailscale 远程连接（跨网络访问电脑上的服务器）
 手机与电脑不在同一 Wi-Fi（用 4G/5G 流量、或人在异地）时，局域网地址不可达，推荐用 **Tailscale** 组网：把两台设备放进同一个加密虚拟局域网，电脑的 8000 端口就像在同一 Wi-Fi 一样可达。
@@ -184,7 +184,7 @@ cd backend
 - 安全提示：默认 HTTP 明文仅适合 Tailscale 私有网络内使用；如需暴露到公网请自行配置 HTTPS 反向代理
 
 ### 2.4 Linux/macOS 部署与守护
-> 说明：桌面控制台（`server_controller/`）为跨平台 tkinter 程序，Windows / Linux / macOS 均可使用；`scripts/server_manager.py`、`scripts/watchdog.py` 依赖 Windows 特性（pythonw/PowerShell），**仅 Windows 可用**；Linux/macOS 用下方方式直接运行与守护，功能完全一致。
+> 说明：服务器控制台（`server_controller/`）为网页壳程序（pywebview + 内嵌页面），Windows / Linux / macOS 均可使用；`scripts/server_manager.py`、`scripts/watchdog.py` 依赖 Windows 特性（pythonw/PowerShell），**仅 Windows 可用**；Linux/macOS 用下方方式直接运行与守护，功能完全一致。
 
 - Windows：双击 `server_controller/start_controller.vbs`
 - Linux / macOS：`bash server_controller/start_controller.sh`（控制台可启动/停止/重启服务器、查看日志）

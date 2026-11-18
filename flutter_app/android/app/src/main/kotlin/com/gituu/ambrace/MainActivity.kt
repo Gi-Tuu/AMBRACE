@@ -66,6 +66,10 @@ class MainActivity : FlutterActivity() {
                         "serviceEnabled" to isAccessibilityEnabled()
                     )
                 )
+                "getNodeTreeRaw" -> {
+                    val svc = PhonePerceptionAccessibilityService.instance
+                    result.success(svc?.captureNodeTreeJson() ?: "")
+                }
                 "getNodeTree" -> {
                     val svc = PhonePerceptionAccessibilityService.instance
                     // 实时采集当前屏幕（不依赖事件缓存，避免点选器拿到空/过期节点）
@@ -95,6 +99,24 @@ class MainActivity : FlutterActivity() {
                         val r = svc.performNodeAction(action, target)
                         result.success(mapOf("ok" to r.ok, "message" to r.message))
                     }
+                }
+                "performActionByPath" -> {
+                    val action = call.argument<String>("action") ?: "click"
+                    val path = call.argument<String>("path") ?: ""
+                    val text = call.argument<String>("text") ?: ""
+                    val svc = PhonePerceptionAccessibilityService.instance
+                    if (svc == null) {
+                        result.success(mapOf("ok" to false, "message" to "无障碍服务未连接，请先开启“读屏（无障碍）”"))
+                    } else {
+                        val r = svc.performNodeActionByPath(action, path, text)
+                        result.success(mapOf("ok" to r.ok, "message" to r.message))
+                    }
+                }
+                "openApp" -> {
+                    val pkg = call.argument<String>("package") ?: ""
+                    val svc = PhonePerceptionAccessibilityService.instance
+                    if (svc == null) result.success(mapOf("ok" to false, "message" to "无障碍服务未连接"))
+                    else { val r = svc.openApp(pkg); result.success(mapOf("ok" to r.ok, "message" to r.message)) }
                 }
                 "setText" -> {
                     val text = call.argument<String>("text") ?: ""

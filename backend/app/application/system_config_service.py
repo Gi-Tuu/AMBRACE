@@ -305,7 +305,10 @@ async def test_api_connection(
                 probe, used_model = await _probe_image(client, key, base_url, model, provider)
             elif modality == "speech":
                 probe, used_model = await _probe_speech(client, key, base_url, model, provider)
-            else:  # llm / task / vlm：统一走 chat 最小请求
+            elif modality == "vlm":
+                # 识图必须真发一张图，不能拿"文本能聊"当通过（2026-11-18）
+                probe, used_model = await _probe_vlm(client, model or "gpt-4o-mini")
+            else:  # llm / task：chat 最小请求
                 probe, used_model = await _probe_chat(client, model or "gpt-4o-mini")
             latency_ms = int((time.monotonic() - t0) * 1000)
             return {"ok": True, "model": used_model, "latency_ms": latency_ms,
@@ -332,6 +335,29 @@ async def _probe_chat(client, model: str) -> tuple[str, str]:
     return "chat_completions", model
 
 
+async def _probe_vlm(client, model: str) -> tuple[str, str]:
+    """识图：发一张 1×1 的 data URI 图，验证的是「这个端点真的能看图」。
+
+    原来 vlm 跟 llm 一样只发一句 "hi"——文本通了不代表视觉通，属于假通过（2026-11-18 修）。
+    图片只有 68 字节，成本可忽略。
+    """
+    import asyncio
+    _TINY_PNG = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+                 "AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+    await asyncio.wait_for(
+        client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": [
+                {"type": "text", "text": "这张图是什么颜色？一个词。"},
+                {"type": "image_url", "image_url": {"url": _TINY_PNG}},
+            ]}],
+            max_tokens=8,
+        ),
+        timeout=30,
+    )
+    return "vision_chat", model
+
+
 async def _probe_models_list(client, model: str) -> tuple[str, str]:
     """零成本探测：GET /v1/models 校验地址 + 鉴权（+ 模型可见性）。
 
@@ -351,25 +377,47 @@ async def _probe_models_list(client, model: str) -> tuple[str, str]:
 
 
 async def _probe_image(client, api_key: str, base_url: str, model: str, provider: str) -> tuple[str, str]:
-    """生图探测：优先零成本 /v1/models；网关不支持（404 等）时按 provider 退一次最小真实生图。"""
+    """生图探测：① 零成本 /v1/models；② 协议自适应——按 provider 先试一种，失败换另一种。
+
+    2026-11-18：原来只按 ``provider`` 名字二选一，用户把百炼地址填在"自定义"里、或把
+    OpenAI 兼容网关标成 dashscope 就会一路 404/400，报"生图检测未通过"其实是选错了协议。
+    现在两种都备着，首选顺序仍按 provider（与旧行为一致），只在首选失败时降级一次。
+    """
     import asyncio
+    errs: list[str] = []
     try:
         return await _probe_models_list(client, model)
     except Exception as e:
         if _status_code_of(e) in (401, 403):
             raise  # Key 问题，直接判失败
-    if provider.lower() == "dashscope":
+        errs.append(str(e)[:120])
+
+    async def _via_images():
+        await asyncio.wait_for(
+            client.images.generate(
+                model=model, prompt="a minimal red dot", n=1, size="1024x1024",
+            ),
+            timeout=60,
+        )
+        return "images_generates(已实际生成一张测试图)", model
+
+    async def _via_chat():
         return await _probe_image_dashscope(api_key, base_url, model)
-    await asyncio.wait_for(
-        client.images.generate(
-            model=model,
-            prompt="a minimal red dot",
-            n=1,
-            size="1024x1024",
-        ),
-        timeout=60,
+
+    order = ([_via_chat, _via_images] if (provider or "").lower() == "dashscope"
+             else [_via_images, _via_chat])
+    for fn in order:
+        try:
+            return await fn()
+        except Exception as e:
+            if _status_code_of(e) in (401, 403):
+                raise
+            errs.append(str(e)[:120])
+    raise RuntimeError(
+        "生图检测未通过（%s）。已依次尝试 images/generations 与 chat/completions 两种协议；"
+        "请确认 Base URL 含 /v1（或服务端要求的版本前缀）、模型名与服务端一致。"
+        % (errs[-1] if errs else "两种协议都没返回图片")
     )
-    return "images_generates(已实际生成一张测试图)", model
 
 
 async def _probe_image_dashscope(api_key: str, base_url: str, model: str) -> tuple[str, str]:
@@ -417,7 +465,37 @@ async def _probe_speech(client, api_key: str, base_url: str, model: str, provide
             raise
         errs.append(str(e)[:120])
 
-    # ② 百炼私有 TTS 端点
+    # ② MiMo 式：chat/completions + audio 参数（文本必须放 assistant，音色必须是它名单里的）。
+    #    与合成链路共用 tts_service.is_chat_audio_tts 判定——两边同一处逻辑，禁止各写一套。
+    from app.application.tts_service import is_chat_audio_tts, pick_chat_audio_voice
+    if is_chat_audio_tts({"provider": provider, "model": model, "base_url": base_url}):
+        try:
+            async with httpx.AsyncClient(proxy=None, timeout=60) as http:
+                r = await http.post(
+                    base_url.rstrip("/") + "/chat/completions",
+                    headers={"Authorization": "Bearer " + api_key,
+                             "Content-Type": "application/json"},
+                    json={
+                        "model": model,
+                        "messages": [{"role": "assistant", "content": "你好"}],
+                        "audio": {"format": "wav", "voice": pick_chat_audio_voice(None)},
+                    },
+                )
+            if r.status_code in (401, 403):
+                r.raise_for_status()
+            if r.status_code == 200:
+                data = r.json()
+                ch = (data.get("choices") or [{}])[0] or {}
+                b64 = str(((ch.get("message") or {}).get("audio") or {}).get("data") or "")
+                if b64:
+                    return "chat_audio", model
+            r.raise_for_status()
+        except Exception as e:
+            if _status_code_of(e) in (401, 403):
+                raise
+            errs.append(str(e)[:120])
+
+    # ③ 百炼私有 TTS 端点
     for endpoint, _models in _tts_endpoints({"base_url": base_url, "model": model}):
         if urlparse(endpoint).netloc != cfg_netloc:
             continue
@@ -445,8 +523,12 @@ async def _probe_speech(client, api_key: str, base_url: str, model: str, provide
                 raise
             errs.append(str(e)[:120])
     raise RuntimeError(
-        "语音(TTS)检测未通过（%s）。语音链路较特殊（百炼私有端点 + edge-tts 兜底），"
-        "可保存后用角色编辑页「试听」做最终确认；ASR 不在本检测范围。" % (errs[-1] if errs else "端点未返回音频")
+        "语音(TTS)检测未通过（%s）。已依次尝试：OpenAI 兼容 /audio/speech、"
+        "MiMo 式 chat+audio（chat/completions 带 audio 参数）、阿里百炼 multimodal-generation。"
+        "若提供商是 MiMo：模型名要用 mimo-v2.5-tts 系列，音色要用它内置名单"
+        "（mimo_default/冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean）。"
+        "语音链路另有 edge-tts 兜底，可保存后用角色编辑页「试听」最终确认；ASR 不在本检测范围。"
+        % (errs[-1] if errs else "端点未返回音频")
     )
 
 

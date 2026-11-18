@@ -37,7 +37,8 @@ from app.api import (
     device_router,
 )
 from app.api.channel_login import router as channel_login_router  # 本地渠道登录页（P2，2026-09-12）
-from app.api.device_actions import router as device_actions_router  # X7-M4a 行动裁决 API（零真实执行）
+from app.api.device_actions import router as device_actions_router
+from app.api.agent_tools import router as agent_tools_router  # YAI 接入 M1：设备工具 OpenAPI 契约  # X7-M4a 行动裁决 API（零真实执行）
 from app.api.ai_api import router as ai_api_router
 from app.api.openai_compat import router as openai_compat_router  # 批 8 块 A M1：角色级 OpenAI 兼容端点（flag 关=404）
 from app.auth.router import router as auth_router
@@ -344,6 +345,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
+    openapi_url=None,
+    docs_url=None,
+    redoc_url=None,
     title="AMBRACE Server",
     description="拥爱（AMBRACE）自托管后端服务",
     version=get_project_version(),
@@ -426,11 +430,20 @@ ROUTERS = [
     plugin_bridge_router, marketplace_router, platform_profiles_router, chat_groups_router,
     life_router, life_home_router, voice_router, weave_router, permissions_router,
     phone_workflows_router, ai_api_router, mcp_router, games_router, llm_configs_router,
-    account_router, device_router, channel_bindings_router, device_actions_router,
+    account_router, device_router, channel_bindings_router, device_actions_router, agent_tools_router,
     channel_login_router, openai_compat_router,
 ]
 for _r in ROUTERS:
     app.include_router(_r)
+
+# 根 /openapi.json 只暴露 YAI 设备工具最小文档（全量 API 走 /openapi.full.json）
+from app.api.agent_tools import _minimal_spec as _agent_minimal_spec
+
+
+@app.get("/openapi.json", include_in_schema=False)
+async def _root_openapi() -> dict:
+    return _agent_minimal_spec()
+
 
 
 @app.middleware("http")

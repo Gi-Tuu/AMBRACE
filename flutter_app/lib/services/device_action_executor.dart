@@ -73,7 +73,11 @@ class DeviceActionExecutor {
     }
     if (capability == capTap) {
       final by = intent["by"]?.toString() ?? "";
-      if (by != "text" && by != "id") return reasonBadBy;
+      if (by != "text" && by != "id" && by != "path") return reasonBadBy;
+      if (by == "path") {
+        // A6 P1.5：按快照路径定位（不走文本模糊匹配）；path 必填。
+        return (intent["path"]?.toString() ?? "").trim().isEmpty ? reasonNoQuery : null;
+      }
       return (intent["query"]?.toString() ?? "").trim().isEmpty ? reasonNoQuery : null;
     }
     // action_set_text
@@ -210,6 +214,9 @@ class DeviceActionExecutor {
     final capability = intent["capability"]?.toString() ?? "";
     switch (capability) {
       case capTap:
+        if ((intent["by"]?.toString() ?? "") == "path") {
+          return _runAccessibilityPathAction("click", intent["path"]?.toString() ?? "");
+        }
         return _runAccessibilityAction("click", intent["query"]?.toString() ?? "");
       case capSetText:
         return _runAccessibilityAction("set_text", intent["text"]?.toString() ?? "");
@@ -232,12 +239,32 @@ class DeviceActionExecutor {
     return _exec(ok, (r["message"] ?? (ok ? "ok" : "action_failed")).toString());
   }
 
-  /// 启动应用：固定 monkey 模板，包名先过 [isSafePackageName]（不通过就不可能进 shell）。
+  /// A6 P1.5：按快照路径执行动作；路径失效 → 明确失败（不重试、不猜）。
+  static Future<Map<String, dynamic>> _runAccessibilityPathAction(
+      String action, String path) async {
+    if (path.trim().isEmpty) return _exec(false, "empty_path");
+    final health = await PhonePerceptionService.getServiceHealth();
+    if (health["accessible"] != true) return _exec(false, "accessibility_off");
+    if (!await PhonePerceptionService.isActionsEnabled()) return _exec(false, "actions_switch_off");
+    final r = await PhonePerceptionService.performActionByPath(path, action: action);
+    final ok = r["ok"] == true;
+    return _exec(ok, (r["message"] ?? (ok ? "ok" : "action_failed")).toString());
+  }
+
+  /// 启动应用：优先 AmBraceClick（无障碍服务内 Intent，不依赖 Shizuku），失败回退 Shizuku monkey。
   static Future<Map<String, dynamic>> _openApp(String packageName) async {
     if (!isSafePackageName(packageName)) return _exec(false, reasonUnsafeTarget);
+    var why = "";
+    try {
+      final a = await PhonePerceptionService.openApp(packageName);
+      if (a["ok"] == true) return _exec(true, (a["message"] ?? "ok").toString());
+      why = (a["message"] ?? "").toString();
+    } catch (e) {
+      why = "open_app_error:$e";
+    }
     final st = await ShizukuService.status();
-    if (st["serverRunning"] != true) return _exec(false, "shizuku_not_running");
-    if (st["permissionGranted"] != true) return _exec(false, "shizuku_not_granted");
+    if (st["serverRunning"] != true) return _exec(false, "amBraceClick_failed:$why; shizuku_not_running");
+    if (st["permissionGranted"] != true) return _exec(false, "amBraceClick_failed:$why; shizuku_not_granted");
     final r = await ShizukuService.runShell("monkey -p $packageName 1");
     final ok = r["ok"] == true;
     return _exec(ok, ok ? "launched:$packageName" : "launch_failed:${r["stderr"] ?? ""}");

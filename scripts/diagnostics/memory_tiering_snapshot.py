@@ -18,7 +18,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-PROJECT = Path(__file__).resolve().parents[1]
+PROJECT = Path(__file__).resolve().parents[2]
 FIELDS = ["id", "strength_days", "importance", "delete_at", "last_reinforce_at", "next_review_at", "is_archived"]
 
 
@@ -34,7 +34,7 @@ def _resolve_db() -> Path:
                 return Path(p).resolve()
     except Exception:
         pass
-    return (PROJECT / "backend" / "data" / "sqlite" / "app.db").resolve()
+    return (PROJECT / "backend" / "data" / "sqlite" / "ai_companion.db").resolve()
 
 
 def snapshot() -> Path:

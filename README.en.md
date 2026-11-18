@@ -64,7 +64,7 @@ A self-hosted AI companion app: configure multiple AI characters who chat with y
 - **Permissions & accounts**: a three-in-one tab page (AI capability permissions / master account management / server feature switches); the master account manages sub-accounts and usage.
 - **Usage reports**: token and call counts broken down by purpose / model / day, with proportion distributions by purpose and by channel; estimated usage is counted separately and never mixed with measured usage.
 - **Feature flags**: the flags page is folded into groups with plain-language descriptions; important capabilities can be gray-released and hot-toggled for gradual rollout.
-- **Desktop console**: cross-platform (tkinter) start/stop/restart and log viewing; server management goes through `scripts/server_manager.py` (`status` health check, `repair` one-click fix for double instances, `start/stop/restart`).
+- **Server console**: web-shell console (dashboard / server control / server identity / models / accounts / switches & permissions / logs / audit) — start/stop/restart and logs live there; double-click `server_controller/start_console_web.vbs` on Windows, or run `python server_controller/console_app.py` elsewhere. Server management goes through `scripts/server_manager.py` (`status` health check, `repair` one-click fix for double instances, `start/stop/restart`).
 - **Reliable operation**: Alembic version-chain migrations (cross-version upgrades without data loss), startup readiness (`/ready`) and liveness (`/liveness`) endpoints, resident-task self-checks, self-healing external gateway supervision, and automatic backoff/retry for background maintenance failures.
 
 ## Tech Stack
@@ -82,7 +82,7 @@ ambrace_core/     Shared Flutter package (message/error/identity/transport primi
 pwa/              Web build (Flutter Web; not mounted by default — served at `/pwa/` only when `PWA_STATIC_DIR` is set)
 plugins/          Built-in example plugins and remote marketplace index (examples/ for samples, marketplace/ for the index)
 scripts/          Ops scripts (server_manager.py start/stop/health/repair, watchdog.py supervisor, backup.py backups, setup.bat/setup.sh one-click deploy, uninstall.bat/uninstall.sh removal, build_apk.bat/build_apk.sh one-click APK packaging, get_server_info.py server address, init_db.py manual table rebuild, download_models.py embedding model download, verify.py one-click verification)
-server_controller/ Desktop console (cross-platform tkinter: on Windows double-click start_controller.vbs; on Linux/macOS run bash start_controller.sh)
+server_controller/ Server console (web shell: `start_console_web.vbs` on Windows, `python console_app.py` elsewhere)
 docs/             Development docs (architecture / plans / landscape; except changelog.md — the in-app "What's New" data source — these are not distributed in the open-source package)
 ```
 
@@ -132,7 +132,7 @@ cd backend
 # Linux/macOS: .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Starting on Linux / macOS (server_manager / watchdog are Windows-specific; the desktop console is cross-platform — see **2.4 Linux/macOS deployment & supervision** below):
+Starting on Linux / macOS (server_manager / watchdog are Windows-specific; the server console is cross-platform — see **2.4 Linux/macOS deployment & supervision** below):
 ```bash
 cd backend
 .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
@@ -184,7 +184,7 @@ When the phone and PC aren't on the same Wi-Fi (4G/5G hotspot, or you're away fr
 - Security note: plain HTTP is suitable only inside Tailscale's private network; to expose the service on the public internet, configure an HTTPS reverse proxy yourself.
 
 ### 2.4 Linux/macOS deployment & supervision
-> Note: the desktop console (`server_controller/`) is a cross-platform tkinter app that works on Windows / Linux / macOS. `scripts/server_manager.py` and `scripts/watchdog.py` rely on Windows features (pythonw/PowerShell) and are **Windows-only**; on Linux/macOS run and supervise the service as follows, with identical functionality.
+> Note: the server console (`server_controller/`) is a web-shell app (pywebview + embedded pages) that works on Windows / Linux / macOS. `scripts/server_manager.py` and `scripts/watchdog.py` rely on Windows features (pythonw/PowerShell) and are **Windows-only**; on Linux/macOS run and supervise the service as follows, with identical functionality.
 
 - Windows: double-click `server_controller/start_controller.vbs`
 - Linux / macOS: `bash server_controller/start_controller.sh` (the console can start/stop/restart the server and view logs)

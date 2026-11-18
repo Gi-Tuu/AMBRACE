@@ -146,7 +146,7 @@
   "flagSaved": "已保存",
   "flagError": "切换失败，请重试",
   "flagWeave3D": "织网 3D（实验）",
-  "flagWeave3DHint": "织库画布切换为 3D 球视图（实验功能，低端机可关）",
+  "flagWeave3DHint": "在「织库」中展示 3D 关系视图。",
   "apiConfig": "API 配置",
   "apiConfigHint": "LLM / 生图服务（BYOK 与服务器级）",
   "appAlbum": "相册",
@@ -170,11 +170,11 @@
   "appearanceHint": "例如：长发飘飘，戴着眼镜，看起来很温柔",
   "appearanceSubtitle": "皮肤、主题色与深浅模式，一键切换外观",
   "appearanceTitle": "外观",
-"appearanceFont": "正文字体",
-"appearanceFontHint": "跟随系统使用手机默认字体；部分安卓厂商在主题商店更换的第三方字体可能无法在此生效（系统限制）。",
-"fontSystem": "跟随系统",
-"fontSerif": "衬线体",
-"fontRounded": "圆润体",
+  "appearanceFont": "正文字体",
+  "appearanceFontHint": "跟随系统使用手机默认字体；部分安卓厂商在主题商店更换的第三方字体可能无法在此生效（系统限制）。",
+  "fontSystem": "跟随系统",
+  "fontSerif": "衬线体",
+  "fontRounded": "圆润体",
   "archiveBox": "聊天记录箱",
   "archiveTitle": "{a} · {b} 聊天记录箱",
   "@archiveTitle": {
@@ -377,7 +377,7 @@
   "speechPresets": "语音供应商预设",
   "saveSrvSpeech": "保存服务器级语音",
   "srvVlm": "服务器级识图（图片理解）",
-  "srvVlmHint": "聊天/手机感知读图用：填 API Key 优先走云端视觉 API，不填则用本地 OCR（可选本地 VLM）",
+  "srvVlmHint": "聊天/手机感知读图用：填了 API Key 就走你自己配的云端视觉服务；不填则只用本地 OCR 识文，不做画面理解（本地大模型分支已移除）",
   "vlmPresets": "识图供应商预设",
   "saveSrvVlm": "保存服务器级识图",
   "srvImageGen": "服务器级生图（全局）",
@@ -533,7 +533,7 @@
   "ppLocFollowOnSub": "AI 位置与用户相同，不可自定义",
   "ppLocFollowOffSub": "开启后 AI 位置跟随用户位置",
   "ppGroupPrivacy": "隐私说明",
-  "ppPrivacyNote": "· 全部能力默认关闭，逐项授权，关闭立即生效\n· 仅读取文本与图片元数据；图片如需理解，走本地 OCR/VLM 转文字，绝不上传云端模型\n· 密码框、银行支付类页面自动跳过\n· 数据只发送到你自己的服务器，快照 30 分钟过期、最多保留 20 条",
+  "ppPrivacyNote": "· 全部能力默认关闭，逐项授权，关闭立即生效\n· 仅读取文本与图片元数据；需要识图时，图片只会发给你自己配置的那个视觉服务端点（没配就只用本地 OCR 识文），不会进入聊天模型\n· 密码框、银行支付类页面自动跳过\n· 数据只发送到你自己的服务器，快照 30 分钟过期、最多保留 20 条",
   "ppGroupActions": "操作与记录",
   "ppCollectNowTitle": "立即采集一次",
   "ppCollectNowSub": "采集当前屏幕/剪贴板/相册并告诉 AI",
@@ -543,7 +543,7 @@
   "ppLockContentName": "手机",
   "ppClearAll": "清除全部快照",
   "ppLocAi": "AI：{loc}",
-  "providerLocalHint": "openai / dashscope / 本地",
+  "providerLocalHint": "openai / dashscope / 自定义",
   "worldGroup": "角色设定",
   "lorebookTitle": "设定条目（Lorebook）",
   "lorebookHint": "关键词触发注入的既定设定，对话提到即生效",
@@ -1409,7 +1409,7 @@
   "weekdayWed": "星期三",
   "weight": "体重",
   "whyMatters": "意义：{why}",
-"whyMattersTitle": "这件事为什么重要",
+  "whyMattersTitle": "这件事为什么重要",
   "writeTodayDiary": "写今天的日记",
   "yearCountTotal": "共 {count} 条记录",
   "yearLabel": "{year}年",
@@ -1468,7 +1468,7 @@
   "permScopeImgTitle": "生图",
   "permScopeImgDesc": "AI 生成图片发给你（聊天内发图/主动生图）",
   "permScopeImgUnderstandTitle": "识图",
-  "permScopeImgUnderstandDesc": "AI 理解你发来的图片内容（本地识图）",
+  "permScopeImgUnderstandDesc": "AI 理解你发来的图片内容（识别画面与文字）",
   "permScopeTtsTitle": "语音回复",
   "permScopeTtsDesc": "AI 用语音回复你（TTS 合成）",
   "permScopeAsrTitle": "语音转写",
@@ -2391,22 +2391,58 @@
   "healthBatteryNotAdded": "未加入（可能导致后台断开）",
   "relationTypeOther": "其他",
   "gameWolfTeammates": "🐺 狼队友：{team} 号",
-  "@gameWolfTeammates": { "placeholders": { "team": { "type": "String" } } },
+  "@gameWolfTeammates": {
+    "placeholders": {
+      "team": {
+        "type": "String"
+      }
+    }
+  },
   "gameHandCards": "🃏 手牌：{cards}",
-  "@gameHandCards": { "placeholders": { "cards": { "type": "String" } } },
+  "@gameHandCards": {
+    "placeholders": {
+      "cards": {
+        "type": "String"
+      }
+    }
+  },
   "gameSeerChecks": "🔮 查验：{checks}",
-  "@gameSeerChecks": { "placeholders": { "checks": { "type": "String" } } },
+  "@gameSeerChecks": {
+    "placeholders": {
+      "checks": {
+        "type": "String"
+      }
+    }
+  },
   "gameWolf": "狼",
   "gameGoodPerson": "好人",
   "zoomIn": "放大",
   "zoomOut": "缩小",
   "resetView": "复位",
   "streamSendFailed": "流式发送失败：{err}",
-  "@streamSendFailed": { "placeholders": { "err": { "type": "String" } } },
+  "@streamSendFailed": {
+    "placeholders": {
+      "err": {
+        "type": "String"
+      }
+    }
+  },
   "imageSendFailed": "图片发送失败：{err}",
-  "@imageSendFailed": { "placeholders": { "err": { "type": "String" } } },
+  "@imageSendFailed": {
+    "placeholders": {
+      "err": {
+        "type": "String"
+      }
+    }
+  },
   "emojiSendFailed": "表情发送失败：{err}",
-  "@emojiSendFailed": { "placeholders": { "err": { "type": "String" } } },
+  "@emojiSendFailed": {
+    "placeholders": {
+      "err": {
+        "type": "String"
+      }
+    }
+  },
   "noResponseFallback": "TA 暂时没有回应你",
   "scopeAbility": "能力",
   "actionTarget": "目标",
@@ -2446,11 +2482,29 @@
   "sepColon": "：",
   "sepBar": "｜",
   "wrapParen": "（{value}）",
-  "@wrapParen": { "placeholders": { "value": { "type": "String" } } },
+  "@wrapParen": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "wrapTitleBracket": "「{value}」",
-  "@wrapTitleBracket": { "placeholders": { "value": { "type": "String" } } },
+  "@wrapTitleBracket": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "wrapLenticular": "【{value}】",
-  "@wrapLenticular": { "placeholders": { "value": { "type": "String" } } },
+  "@wrapLenticular": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "flagGroupAgentRuntime": "智能体运行与认知",
   "flagGroupProactive": "主动消息",
   "flagGroupGroupGames": "群聊小游戏",
@@ -2587,7 +2641,13 @@
   "gameContentSourcePlugin": "内容包",
   "gameContentSourceBuiltin": "内置默认",
   "gameContentCount": "{count} 条",
-  "@gameContentCount": { "placeholders": { "count": { "type": "int" } } },
+  "@gameContentCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "gameContentHintLine": "每行一条",
   "gameContentHintPair": "每行一对，格式：词A / 词B",
   "gameContentHintPuzzle": "每行一条，格式：汤面 / 汤底 / 关键词1,关键词2",
@@ -2595,14 +2655,38 @@
   "gameContentRestoreConfirm": "确定恢复为内置或内容包的默认内容？",
   "gameContentSaved": "已保存",
   "gameContentSaveFailed": "保存失败：{err}",
-  "@gameContentSaveFailed": { "placeholders": { "err": { "type": "String" } } },
+  "@gameContentSaveFailed": {
+    "placeholders": {
+      "err": {
+        "type": "String"
+      }
+    }
+  },
   "gameContentRestored": "已恢复默认",
   "gameContentRestoreFailed": "恢复失败：{err}",
-  "@gameContentRestoreFailed": { "placeholders": { "err": { "type": "String" } } },
+  "@gameContentRestoreFailed": {
+    "placeholders": {
+      "err": {
+        "type": "String"
+      }
+    }
+  },
   "gameContentLoadFailed": "内容加载失败：{err}",
-  "@gameContentLoadFailed": { "placeholders": { "err": { "type": "String" } } },
+  "@gameContentLoadFailed": {
+    "placeholders": {
+      "err": {
+        "type": "String"
+      }
+    }
+  },
   "gameContentParseFailed": "第 {line} 行格式不正确",
-  "@gameContentParseFailed": { "placeholders": { "line": { "type": "int" } } },
+  "@gameContentParseFailed": {
+    "placeholders": {
+      "line": {
+        "type": "int"
+      }
+    }
+  },
   "gameContentMinOne": "至少需要一条内容",
   "gameContentApplyHint": "保存后对新开局生效",
   "gameAchievementsTitle": "成就与统计",
@@ -2619,10 +2703,28 @@
   "gameStatsEmpty": "还没有对局统计",
   "gameAchievementsList": "成就",
   "gameAchievementsUnlockedCount": "已解锁 {count}/{total}",
-  "@gameAchievementsUnlockedCount": { "placeholders": { "count": { "type": "int" }, "total": { "type": "int" } } },
+  "@gameAchievementsUnlockedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
   "gameAchievementsLocked": "未解锁",
   "gameAchievementsProgress": "进度 {progress}/{target}",
-  "@gameAchievementsProgress": { "placeholders": { "progress": { "type": "int" }, "target": { "type": "int" } } },
+  "@gameAchievementsProgress": {
+    "placeholders": {
+      "progress": {
+        "type": "int"
+      },
+      "target": {
+        "type": "int"
+      }
+    }
+  },
   "gameAchievementsAll": "全部游戏",
   "flagAgentLoopGroupChatTitle": "群聊认知循环",
   "flagAgentLoopGroupChatHint": "群聊中让 AI 角色参与统一的认知循环（理解/记忆/规划）。",
@@ -2634,7 +2736,6 @@
   "flagAgentSocialLightContextHint": "社交场景注入轻量上下文，降低 token 占用。",
   "flagAgentSocialLightContextDetail": "本机已显式开启；开启后社交回复携带精简上下文，高频角色保持全量；关闭则统一全量注入。",
   "flagWeave3DTitle": "织库 3D 视图",
-  "flagWeave3DHint": "在「织库」中展示 3D 关系视图。",
   "flagWeave3DDetail": "前端画布真在读此开关；关闭则织库不展示 3D 视图，不影响其他功能。",
   "flagProactiveInactiveCharSkipTitle": "静默角色免打扰",
   "flagProactiveInactiveCharSkipHint": "近 24 小时无互动的角色不再主动搭话（09-08）。",
@@ -2805,7 +2906,7 @@
   "serverIdentityNoCode": "电脑上还没有生成配对码，请先在控制台点「生成配对码」",
   "serverIdentityNetworkFail": "连不上该服务器地址，请检查服务器地址与网络",
   "serverIdentityRevoked": "已解除配对，本机不再校验该服务器身份",
-    "serverIdentityUnpair": "解除配对",
+  "serverIdentityUnpair": "解除配对",
   "serverIdentityStatusUnprotected": "已配对（指纹 {fp}），但当前是「不校验」档，一条都没验",
   "@serverIdentityStatusUnprotected": {
     "placeholders": {
@@ -2922,6 +3023,33 @@
   "memoryWhyTimeUnknown": "时间未知",
   "memoryWhyExcerptLabel": "原话摘录",
   "memoryWhyNoExcerpt": "没有可展示的原文",
+  "memoryLifecycleTitle": "记忆生命周期",
+  "memoryLifecycleLoading": "正在加载生命周期…",
+  "memoryLifecycleLoadFailed": "生命周期加载失败",
+  "memoryLifecycleStatusActive": "现行",
+  "memoryLifecycleStatusSuperseded": "已被取代",
+  "memoryLifecycleStatusStale": "派生失效",
+  "memoryLifecycleStatusExpired": "已过期",
+  "memoryLifecycleStatusUnknown": "未知状态",
+  "memoryLifecycleSupersededBy": "已被新记忆 #{id} 取代，以新记忆为准",
+  "memoryLifecycleValidTo": "失效于 {time}",
+  "memoryLifecycleArchived": "已归档",
+  "memoryLifecycleVersionLabel": "版本",
+  "memoryLifecycleRevisionLabel": "人工修订",
+  "memoryLifecycleSourceEventsLabel": "来源事件",
+  "memoryLifecycleReceiptsLabel": "写入回执",
+  "memoryLifecycleDerivedLabel": "派生记忆",
+  "memoryLifecycleEpistemicLabel": "认知状态",
+  "memoryLifecycleEpiFact": "已核实",
+  "memoryLifecycleEpiInferred": "推断",
+  "memoryLifecycleEpiUnverified": "待核",
+  "memoryLifecycleEpiUnknown": "未知",
+  "memoryLifecycleReceiptsEmpty": "没有写入回执",
+  "memoryLifecycleReceiptCreate": "写入",
+  "memoryLifecycleReceiptUpdate": "更新",
+  "memoryLifecycleReceiptSupersede": "被取代",
+  "memoryLifecycleReceiptStale": "派生失效",
+  "memoryLifecycleReceiptReject": "拒收",
   "gardenSetupTitle": "花园只读接入",
   "gardenBaseUrl": "花园站点地址",
   "gardenUserKey": "受限用户 key",
@@ -2941,5 +3069,38 @@
   "gardenBrowseDone": "只读浏览完成",
   "gardenObservationCleared": "观察已清除",
   "gardenRoleLabel": "角色标识",
-  "gardenPrivacyHint": "仅提交到你自己的服务，不回显、不写日志。"
+  "gardenPrivacyHint": "仅提交到你自己的服务，不回显、不写日志。",
+  "allowAlways": "始终允许",
+  "agentRunsTitle": "Agent 运行监控",
+  "agentRunsRefresh": "刷新",
+  "agentRunsConnect": "连接",
+  "agentRunsCancel": "取消运行",
+  "agentRunsAudit": "审计",
+  "agentRunsNoRuns": "暂无活跃 run",
+  "agentRunsStatus": "流式状态：{streaming}",
+  "@agentRunsStatus": {
+    "placeholders": {
+      "streaming": {
+        "type": "String"
+      }
+    }
+  },
+  "agentRunsIdHint": "输入 run_id 或从列表选择",
+  "agentRunsCreate": "新建 run",
+  "agentRunsTaskHint": "任务描述（可选）",
+  "agentRunsDeadline": "超时秒数",
+  "agentRunsCreateConfirm": "创建",
+  "coreStatusOnline": "工具服务：在线 {ok}/{total}",
+  "@coreStatusOnline": {
+    "placeholders": {
+      "ok": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "coreStatusOffline": "工具服务：离线",
+  "coreStatusUnconfigured": "工具服务：未配置"
 }

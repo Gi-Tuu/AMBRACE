@@ -2232,7 +2232,7 @@ abstract class AppLocalizations {
   /// No description provided for @srvVlmHint.
   ///
   /// In zh, this message translates to:
-  /// **'聊天/手机感知读图用：填 API Key 优先走云端视觉 API，不填则用本地 OCR（可选本地 VLM）'**
+  /// **'聊天/手机感知读图用：填了 API Key 就走你自己配的云端视觉服务；不填则只用本地 OCR 识文，不做画面理解（本地大模型分支已移除）'**
   String get srvVlmHint;
 
   /// No description provided for @vlmPresets.
@@ -3168,7 +3168,7 @@ abstract class AppLocalizations {
   /// No description provided for @ppPrivacyNote.
   ///
   /// In zh, this message translates to:
-  /// **'· 全部能力默认关闭，逐项授权，关闭立即生效\n· 仅读取文本与图片元数据；图片如需理解，走本地 OCR/VLM 转文字，绝不上传云端模型\n· 密码框、银行支付类页面自动跳过\n· 数据只发送到你自己的服务器，快照 30 分钟过期、最多保留 20 条'**
+  /// **'· 全部能力默认关闭，逐项授权，关闭立即生效\n· 仅读取文本与图片元数据；需要识图时，图片只会发给你自己配置的那个视觉服务端点（没配就只用本地 OCR 识文），不会进入聊天模型\n· 密码框、银行支付类页面自动跳过\n· 数据只发送到你自己的服务器，快照 30 分钟过期、最多保留 20 条'**
   String get ppPrivacyNote;
 
   /// No description provided for @ppGroupActions.
@@ -3228,7 +3228,7 @@ abstract class AppLocalizations {
   /// No description provided for @providerLocalHint.
   ///
   /// In zh, this message translates to:
-  /// **'openai / dashscope / 本地'**
+  /// **'openai / dashscope / 自定义'**
   String get providerLocalHint;
 
   /// No description provided for @worldGroup.
@@ -8310,7 +8310,7 @@ abstract class AppLocalizations {
   /// No description provided for @permScopeImgUnderstandDesc.
   ///
   /// In zh, this message translates to:
-  /// **'AI 理解你发来的图片内容（本地识图）'**
+  /// **'AI 理解你发来的图片内容（识别画面与文字）'**
   String get permScopeImgUnderstandDesc;
 
   /// No description provided for @permScopeTtsTitle.
@@ -15172,6 +15172,168 @@ abstract class AppLocalizations {
   /// **'没有可展示的原文'**
   String get memoryWhyNoExcerpt;
 
+  /// No description provided for @memoryLifecycleTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'记忆生命周期'**
+  String get memoryLifecycleTitle;
+
+  /// No description provided for @memoryLifecycleLoading.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在加载生命周期…'**
+  String get memoryLifecycleLoading;
+
+  /// No description provided for @memoryLifecycleLoadFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'生命周期加载失败'**
+  String get memoryLifecycleLoadFailed;
+
+  /// No description provided for @memoryLifecycleStatusActive.
+  ///
+  /// In zh, this message translates to:
+  /// **'现行'**
+  String get memoryLifecycleStatusActive;
+
+  /// No description provided for @memoryLifecycleStatusSuperseded.
+  ///
+  /// In zh, this message translates to:
+  /// **'已被取代'**
+  String get memoryLifecycleStatusSuperseded;
+
+  /// No description provided for @memoryLifecycleStatusStale.
+  ///
+  /// In zh, this message translates to:
+  /// **'派生失效'**
+  String get memoryLifecycleStatusStale;
+
+  /// No description provided for @memoryLifecycleStatusExpired.
+  ///
+  /// In zh, this message translates to:
+  /// **'已过期'**
+  String get memoryLifecycleStatusExpired;
+
+  /// No description provided for @memoryLifecycleStatusUnknown.
+  ///
+  /// In zh, this message translates to:
+  /// **'未知状态'**
+  String get memoryLifecycleStatusUnknown;
+
+  /// No description provided for @memoryLifecycleSupersededBy.
+  ///
+  /// In zh, this message translates to:
+  /// **'已被新记忆 #{id} 取代，以新记忆为准'**
+  String memoryLifecycleSupersededBy(Object id);
+
+  /// No description provided for @memoryLifecycleValidTo.
+  ///
+  /// In zh, this message translates to:
+  /// **'失效于 {time}'**
+  String memoryLifecycleValidTo(Object time);
+
+  /// No description provided for @memoryLifecycleArchived.
+  ///
+  /// In zh, this message translates to:
+  /// **'已归档'**
+  String get memoryLifecycleArchived;
+
+  /// No description provided for @memoryLifecycleVersionLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'版本'**
+  String get memoryLifecycleVersionLabel;
+
+  /// No description provided for @memoryLifecycleRevisionLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'人工修订'**
+  String get memoryLifecycleRevisionLabel;
+
+  /// No description provided for @memoryLifecycleSourceEventsLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'来源事件'**
+  String get memoryLifecycleSourceEventsLabel;
+
+  /// No description provided for @memoryLifecycleReceiptsLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'写入回执'**
+  String get memoryLifecycleReceiptsLabel;
+
+  /// No description provided for @memoryLifecycleDerivedLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'派生记忆'**
+  String get memoryLifecycleDerivedLabel;
+
+  /// No description provided for @memoryLifecycleEpistemicLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'认知状态'**
+  String get memoryLifecycleEpistemicLabel;
+
+  /// No description provided for @memoryLifecycleEpiFact.
+  ///
+  /// In zh, this message translates to:
+  /// **'已核实'**
+  String get memoryLifecycleEpiFact;
+
+  /// No description provided for @memoryLifecycleEpiInferred.
+  ///
+  /// In zh, this message translates to:
+  /// **'推断'**
+  String get memoryLifecycleEpiInferred;
+
+  /// No description provided for @memoryLifecycleEpiUnverified.
+  ///
+  /// In zh, this message translates to:
+  /// **'待核'**
+  String get memoryLifecycleEpiUnverified;
+
+  /// No description provided for @memoryLifecycleEpiUnknown.
+  ///
+  /// In zh, this message translates to:
+  /// **'未知'**
+  String get memoryLifecycleEpiUnknown;
+
+  /// No description provided for @memoryLifecycleReceiptsEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'没有写入回执'**
+  String get memoryLifecycleReceiptsEmpty;
+
+  /// No description provided for @memoryLifecycleReceiptCreate.
+  ///
+  /// In zh, this message translates to:
+  /// **'写入'**
+  String get memoryLifecycleReceiptCreate;
+
+  /// No description provided for @memoryLifecycleReceiptUpdate.
+  ///
+  /// In zh, this message translates to:
+  /// **'更新'**
+  String get memoryLifecycleReceiptUpdate;
+
+  /// No description provided for @memoryLifecycleReceiptSupersede.
+  ///
+  /// In zh, this message translates to:
+  /// **'被取代'**
+  String get memoryLifecycleReceiptSupersede;
+
+  /// No description provided for @memoryLifecycleReceiptStale.
+  ///
+  /// In zh, this message translates to:
+  /// **'派生失效'**
+  String get memoryLifecycleReceiptStale;
+
+  /// No description provided for @memoryLifecycleReceiptReject.
+  ///
+  /// In zh, this message translates to:
+  /// **'拒收'**
+  String get memoryLifecycleReceiptReject;
+
   /// No description provided for @gardenSetupTitle.
   ///
   /// In zh, this message translates to:
@@ -15291,6 +15453,102 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'仅提交到你自己的服务，不回显、不写日志。'**
   String get gardenPrivacyHint;
+
+  /// No description provided for @allowAlways.
+  ///
+  /// In zh, this message translates to:
+  /// **'始终允许'**
+  String get allowAlways;
+
+  /// No description provided for @agentRunsTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'Agent 运行监控'**
+  String get agentRunsTitle;
+
+  /// No description provided for @agentRunsRefresh.
+  ///
+  /// In zh, this message translates to:
+  /// **'刷新'**
+  String get agentRunsRefresh;
+
+  /// No description provided for @agentRunsConnect.
+  ///
+  /// In zh, this message translates to:
+  /// **'连接'**
+  String get agentRunsConnect;
+
+  /// No description provided for @agentRunsCancel.
+  ///
+  /// In zh, this message translates to:
+  /// **'取消运行'**
+  String get agentRunsCancel;
+
+  /// No description provided for @agentRunsAudit.
+  ///
+  /// In zh, this message translates to:
+  /// **'审计'**
+  String get agentRunsAudit;
+
+  /// No description provided for @agentRunsNoRuns.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无活跃 run'**
+  String get agentRunsNoRuns;
+
+  /// No description provided for @agentRunsStatus.
+  ///
+  /// In zh, this message translates to:
+  /// **'流式状态：{streaming}'**
+  String agentRunsStatus(String streaming);
+
+  /// No description provided for @agentRunsIdHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'输入 run_id 或从列表选择'**
+  String get agentRunsIdHint;
+
+  /// No description provided for @agentRunsCreate.
+  ///
+  /// In zh, this message translates to:
+  /// **'新建 run'**
+  String get agentRunsCreate;
+
+  /// No description provided for @agentRunsTaskHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'任务描述（可选）'**
+  String get agentRunsTaskHint;
+
+  /// No description provided for @agentRunsDeadline.
+  ///
+  /// In zh, this message translates to:
+  /// **'超时秒数'**
+  String get agentRunsDeadline;
+
+  /// No description provided for @agentRunsCreateConfirm.
+  ///
+  /// In zh, this message translates to:
+  /// **'创建'**
+  String get agentRunsCreateConfirm;
+
+  /// No description provided for @coreStatusOnline.
+  ///
+  /// In zh, this message translates to:
+  /// **'工具服务：在线 {ok}/{total}'**
+  String coreStatusOnline(int ok, int total);
+
+  /// No description provided for @coreStatusOffline.
+  ///
+  /// In zh, this message translates to:
+  /// **'工具服务：离线'**
+  String get coreStatusOffline;
+
+  /// No description provided for @coreStatusUnconfigured.
+  ///
+  /// In zh, this message translates to:
+  /// **'工具服务：未配置'**
+  String get coreStatusUnconfigured;
 }
 
 class _AppLocalizationsDelegate

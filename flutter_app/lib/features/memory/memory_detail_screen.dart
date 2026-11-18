@@ -1,9 +1,11 @@
+import "package:dio/dio.dart";
 import "package:flutter/material.dart";
 import "package:ai_companion/l10n/app_localizations.dart";
 import "../../models/memory.dart";
 import "../../models/memory_history.dart";
 import "../../models/memory_derivations.dart";
 import "../../models/memory_why.dart";
+import "../../models/memory_lifecycle.dart";
 import "../../services/api_client.dart";
 import "../../widgets/ios_card_group.dart";
 import "../../utils/beijing_time.dart";
@@ -70,6 +72,15 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
   bool _whyExpanded = false;
   int _whyGeneration = 0;
 
+  // RC2 M3/M4：生命周期（只读、默认折叠）。失败与「功能未开放」分开：
+  // 404（flag 关 / 旧服务器 / 记忆已删）⇒ 整卡隐藏，不伪装成失败或空态。
+  MemoryLifecycle? _lifecycle;
+  bool _loadingLifecycle = true;
+  bool _lifecycleFailed = false;
+  bool _lifecycleUnavailable = false;
+  bool _receiptsExpanded = false;
+  int _lifecycleGeneration = 0;
+
   Map<String, String> _typeLabels(AppLocalizations l10n) => {
         "user_info": l10n.memoryImpression,
         "preference": l10n.memoryPreference,
@@ -90,6 +101,7 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
     _loadHistory();
     _loadDerivations();
     _loadWhy();
+    _loadLifecycle();
   }
 
   @override
@@ -130,11 +142,18 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
       _whyFailed = false;
       _loadingWhy = true;
       _whyExpanded = false;
+      _lifecycleGeneration++;  // 在途生命周期结果一律作废
+      _lifecycle = null;
+      _lifecycleFailed = false;
+      _lifecycleUnavailable = false;
+      _loadingLifecycle = true;
+      _receiptsExpanded = false;
       _loadChain();
       _refreshMemory();
       _loadHistory();
       _loadDerivations();
       _loadWhy();
+      _loadLifecycle();
     }
   }
 
@@ -264,10 +283,71 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
     }
   }
 
+  /// RC2 M3/M4：加载生命周期投影（只读）。边界与 G5 同族；404（flag 关／旧服务器／
+  /// 记忆已删）⇒ 标记「功能未开放」整卡隐藏，其余错误走失败态可重试。
+  Future<void> _loadLifecycle() async {
+    final memoryId = widget.memory.id;
+    final generation = _pageGeneration;
+    final lifecycleGeneration = ++_lifecycleGeneration;
+    final baseUrl = _api.baseUrl;
+    final token = _api.token;
+    if (mounted) {
+      setState(() {
+        _loadingLifecycle = true;
+        _lifecycleFailed = false;
+      });
+    }
+    bool pageCurrent() =>
+        mounted &&
+        generation == _pageGeneration &&
+        widget.memory.id == memoryId &&
+        lifecycleGeneration == _lifecycleGeneration;
+    bool sameOrigin() => _api.baseUrl == baseUrl && _api.token == token;
+    try {
+      final data = await _api.getMemoryLifecycle(memoryId);
+      if (!pageCurrent()) return;
+      if (!sameOrigin()) {
+        setState(() {
+          _loadingLifecycle = false;
+          _lifecycleFailed = true;
+          _lifecycle = null;
+        });
+        return;
+      }
+      setState(() {
+        _loadingLifecycle = false;
+        _lifecycleFailed = false;
+        _lifecycleUnavailable = false;
+        _lifecycle = data;
+      });
+    } on DioException catch (e) {
+      if (!pageCurrent()) return;
+      if (e.response?.statusCode == 404) {
+        // 功能未开放（flag 关 / 旧服务器）或记忆已删：整卡隐藏，不冒充失败。
+        setState(() {
+          _loadingLifecycle = false;
+          _lifecycleFailed = false;
+          _lifecycleUnavailable = true;
+          _lifecycle = null;
+        });
+        return;
+      }
+      setState(() {
+        _loadingLifecycle = false;
+        _lifecycleFailed = true;
+      });
+    } catch (_) {
+      if (!pageCurrent()) return;
+      setState(() {
+        _loadingLifecycle = false;
+        _lifecycleFailed = true;
+      });
+    }
+  }
+
   /// RC2 G2：加载两方向派生关系（只读）。绑定 widget 当前 memory.id＋页面代次＋
   /// 派生代次＋baseUrl/token 快照；晚到结果不污染新页面/新账号。
-  Future<void> _loadDerivations() async {
-    final memoryId = widget.memory.id;
+  Future<void> _loadDerivations() async {    final memoryId = widget.memory.id;
     final generation = _pageGeneration;
     final derivGeneration = ++_derivGeneration;
     final baseUrl = _api.baseUrl;
@@ -1152,6 +1232,211 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
     }
   }
 
+  String _lifecycleStatusLabel(String status, AppLocalizations l10n) {
+    switch (status) {
+      case "active":
+        return l10n.memoryLifecycleStatusActive;
+      case "superseded":
+        return l10n.memoryLifecycleStatusSuperseded;
+      case "stale":
+        return l10n.memoryLifecycleStatusStale;
+      case "expired":
+        return l10n.memoryLifecycleStatusExpired;
+      default:
+        return l10n.memoryLifecycleStatusUnknown;
+    }
+  }
+
+  String _epistemicLabel(String? epistemic, AppLocalizations l10n) {
+    switch ((epistemic ?? "").toUpperCase()) {
+      case "FACT":
+        return l10n.memoryLifecycleEpiFact;
+      case "INFERRED":
+        return l10n.memoryLifecycleEpiInferred;
+      case "UNVERIFIED":
+        return l10n.memoryLifecycleEpiUnverified;
+      default:
+        return l10n.memoryLifecycleEpiUnknown;
+    }
+  }
+
+  String _receiptActionLabel(String action, AppLocalizations l10n) {
+    switch (action) {
+      case "create":
+        return l10n.memoryLifecycleReceiptCreate;
+      case "update":
+        return l10n.memoryLifecycleReceiptUpdate;
+      case "supersede":
+        return l10n.memoryLifecycleReceiptSupersede;
+      case "stale":
+        return l10n.memoryLifecycleReceiptStale;
+      case "reject":
+        return l10n.memoryLifecycleReceiptReject;
+      default:
+        return action;
+    }
+  }
+
+  Widget _lifecycleInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(children: [
+        Text("$label: ",
+            style: const TextStyle(fontSize: 12, color: IosCardColors.subtitle)),
+        Expanded(
+          child: Text(value,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+        ),
+      ]),
+    );
+  }
+
+  /// RC2 M3/M4：生命周期卡（只读、默认折叠回执明细）。
+  /// 404（flag 关／旧服务器／记忆已删）⇒ 不渲染整卡。
+  Widget _buildLifecycleCard(AppLocalizations l10n) {
+    if (_lifecycleUnavailable && !_loadingLifecycle && !_lifecycleFailed) {
+      return const SizedBox.shrink();
+    }
+    final data = _lifecycle;
+    final Widget body;
+    if (_loadingLifecycle) {
+      body = Row(children: [
+        const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(l10n.memoryLifecycleLoading,
+              style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)),
+        ),
+      ]);
+    } else if (_lifecycleFailed || data == null) {
+      body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(l10n.memoryLifecycleLoadFailed,
+            style: const TextStyle(fontSize: 13, color: IosCardColors.subtitle)),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            icon: const Icon(Icons.refresh, size: 18),
+            label: Text(l10n.retry),
+            onPressed: _loadLifecycle,
+          ),
+        ),
+      ]);
+    } else {
+      // 状态来源优先级：显式 lifecycle_status（2026-11-14 起后端提供）→
+      // supersededBy/validTo/isArchived 派生（旧服务器兼容）。
+      final effectiveStatus = () {
+        final explicit = data.lifecycleStatus;
+        if (explicit != null && explicit.isNotEmpty) return explicit;
+        if (data.supersededBy != null) return 'superseded';
+        if (data.validTo != null) return 'expired';
+        return 'active';
+      }();
+      final statusLabel = _lifecycleStatusLabel(effectiveStatus, l10n);
+      final isSuperseded = data.supersededBy != null;
+      final validToText = () {
+        final raw = data.validTo;
+        if (raw == null || raw.isEmpty) return null;
+        try {
+          return l10n.memoryLifecycleValidTo(formatBeijingTime(raw));
+        } catch (_) {
+          return null;
+        }
+      }();
+      body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Wrap(spacing: 8, runSpacing: 4, children: [
+          _lifecycleChip(statusLabel, isSuperseded ? Colors.amber : null),
+          _lifecycleChip(_epistemicLabel(data.epistemicStatus, l10n), null),
+          if (data.isArchived) _lifecycleChip(l10n.memoryLifecycleArchived, Colors.blueGrey),
+        ]),
+        if (isSuperseded) ...[
+          const SizedBox(height: 8),
+          Text(l10n.memoryLifecycleSupersededBy(data.supersededBy!),
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                  color: Colors.amber.shade800)),
+        ],
+        if (validToText != null) ...[
+          const SizedBox(height: 6),
+          Text(validToText,
+              style: const TextStyle(fontSize: 12, color: IosCardColors.subtitle)),
+        ],
+        const SizedBox(height: 8),
+        _lifecycleInfoRow(l10n.memoryLifecycleVersionLabel, '${data.version}'),
+        _lifecycleInfoRow(l10n.memoryLifecycleRevisionLabel, '${data.revisionCount}'),
+        _lifecycleInfoRow(l10n.memoryLifecycleSourceEventsLabel, '${data.sourceEventCount}'),
+        _lifecycleInfoRow(l10n.memoryLifecycleDerivedLabel, '${data.derivedCount}'),
+        if (data.receipts.isNotEmpty) ...[
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () => setState(() => _receiptsExpanded = !_receiptsExpanded),
+              child: Text(_receiptsExpanded ? l10n.collapse : l10n.expand),
+            ),
+          ),
+          if (_receiptsExpanded)
+            for (var i = 0; i < data.receipts.length; i++) ...[
+              if (i != 0) const Divider(height: 16),
+              _buildReceiptItem(data.receipts[i], l10n),
+            ],
+        ] else
+          Text(l10n.memoryLifecycleReceiptsEmpty,
+              style: const TextStyle(fontSize: 12, color: IosCardColors.subtitle)),
+      ]);
+    }
+    return IosCardGroup(children: [
+      Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(Icons.manage_history, size: 18, color: IosCardColors.subtitle),
+            const SizedBox(width: 8),
+            Text(l10n.memoryLifecycleTitle,
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          ]),
+          const SizedBox(height: 10),
+          body,
+        ]),
+      ),
+    ]);
+  }
+
+  Widget _lifecycleChip(String label, Color? tone) {
+    final color = tone ?? IosCardColors.subtitle;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(label, style: TextStyle(fontSize: 12, color: color)),
+    );
+  }
+
+  Widget _buildReceiptItem(MemoryLifecycleReceipt item, AppLocalizations l10n) {
+    final timeText = () {
+      final raw = item.createdAt;
+      if (raw == null || raw.isEmpty) return l10n.memoryWhyTimeUnknown;
+      return formatBeijingTime(raw);
+    }();
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      SizedBox(
+        width: 64,
+        child: Text(_receiptActionLabel(item.action, l10n),
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+      ),
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if ((item.reason ?? '').trim().isNotEmpty)
+            Text(item.reason!,
+                style: const TextStyle(fontSize: 12, height: 1.4,
+                    color: IosCardColors.subtitle)),
+          Text(timeText,
+              style: const TextStyle(fontSize: 11, color: IosCardColors.subtitle)),
+        ]),
+      ),
+    ]);
+  }
+
   Widget _buildHistoryCard(AppLocalizations l10n) {
     final items = _history ?? const <MemoryCorrection>[];
     final Widget body;
@@ -1427,6 +1712,10 @@ class _MemoryDetailScreenState extends State<MemoryDetailScreen> {
 
             // 为什么记住（RC2 G5：只读来源链，默认折叠）
             _buildWhyCard(l10n),
+            const SizedBox(height: 24),
+
+            // 生命周期（RC2 M3/M4：状态一眼可见；404＝功能未开放时整卡隐藏）
+            _buildLifecycleCard(l10n),
             const SizedBox(height: 24),
 
             // 记忆链条（树状图）

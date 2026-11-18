@@ -141,3 +141,13 @@ def test_actual_sse_failure_does_not_claim_content(wired_user, monkeypatch):  # 
     done = [p for e, p in events if e == "done"][-1]
     assert "没有看到" in done["message"]["content"]
     assert "SSE实时标题" not in done["message"]["content"]
+
+
+@pytest.fixture(autouse=True)
+def _plugin_scope_flags_off(monkeypatch):
+    """11-14 批 7 常驻化：作用域闸默认转 True；本文件场景与作用域无关，显式回旧档
+    （作用域专属覆盖见 test_plugin_tenant_scope_m0/m4）。"""
+    from app.flags.agent_flags import AGENT_FLAGS
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_user_scope", False)
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_runtime_scope", False)
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_disabled_route_gate", False)

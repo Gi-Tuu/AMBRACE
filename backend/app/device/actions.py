@@ -98,7 +98,7 @@ BUILTIN_CALLER = "builtin"
 RATE_LIMIT_PER_MINUTE = 10       # 令牌桶容量与补充速率（次/分钟）
 CIRCUIT_BREAK_THRESHOLD = 5      # 连续失败回报次数 → 熔断
 PENDING_TTL_SECONDS = 30         # 待执行项存活时长（App 未取走即作废）
-VALID_TAP_BY = ("text", "id")    # action_tap 的定位方式（只允许声明式定位，禁坐标盲点）
+VALID_TAP_BY = ("text", "id", "path")    # action_tap 定位：文本/id/快照路径（仍禁坐标盲点）
 
 # 目标黑名单：M4a 起放模块级常量（黑名单优先于白名单）。M4c-3 只把两份**白名单**落库，
 # 黑名单仍是编译期常量（它的使用方式是「出问题就加一条并重启」，不是运维在管理端逐条配）。
@@ -133,8 +133,9 @@ class ActionIntent(BaseModel):
 
     capability: str                  # 行动类能力 id（action_open_app / action_tap / action_set_text）
     target_app: str = ""             # 包名或应用标签（恒必填）
-    by: str | None = None            # 仅 action_tap：text / id
+    by: str | None = None            # 仅 action_tap：text / id / path
     query: str | None = None         # 仅 action_tap：要定位的文本或控件 id
+    path: str | None = None          # 仅 action_tap(by=path)：快照分配的稳定遍历路径
     text: str | None = None          # 仅 action_set_text：要输入的文本
     dry_run: bool = False            # 干跑：只裁决，不入队、不产生任何动作
 
@@ -175,6 +176,7 @@ class _PendingAction:
             "target_app": self.intent.target_app,
             "by": self.intent.by,
             "query": self.intent.query,
+            "path": self.intent.path,
             "text": self.intent.text,
             "dry_run": self.intent.dry_run,
             "status": STATUS_NOT_IMPLEMENTED,   # 本批无执行体：取到也不许执行
@@ -821,7 +823,10 @@ def take_pending(user_id: int | None) -> list[dict]:
     return [p.as_dict() for p in _PENDING.values() if p.user_id == int(user_id)]
 
 
-def report_result(token: str, ok: bool, detail: str = "", user_id: int | None = None) -> bool:
+VALID_DELIVERY = ("delivered", "failed", "not_delivered")
+
+def report_result(token: str, ok: bool, detail: str = "", user_id: int | None = None,
+                  delivery: str | None = None) -> bool:
     """App 回报执行结果：命中即出队 + 记审计，并按连续失败次数驱动熔断。
 
     传入 ``user_id`` 时校验归属（**别人的 token 不得替他回报**，fail-closed）；
@@ -843,6 +848,14 @@ def report_result(token: str, ok: bool, detail: str = "", user_id: int | None = 
                intent=entry.intent, result="report_denied", reason="token_owner_mismatch",
                elapsed_ms=0)
         return False
+    if delivery:
+        detail = f"{detail} delivery={delivery}".strip()
+    # M4 适配器：唤醒等待该 token 的工具调用（懒导入避免循环依赖）
+    try:
+        from app.device import adapter as _adapter
+        _adapter._notify(token, ok, detail)
+    except Exception:
+        pass
     key = (entry.tenant_id, entry.plugin)
     if ok:
         _FAILURES.pop(key, None)

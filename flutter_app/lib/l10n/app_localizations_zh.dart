@@ -1154,7 +1154,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get srvVlmHint =>
-      '聊天/手机感知读图用：填 API Key 优先走云端视觉 API，不填则用本地 OCR（可选本地 VLM）';
+      '聊天/手机感知读图用：填了 API Key 就走你自己配的云端视觉服务；不填则只用本地 OCR 识文，不做画面理解（本地大模型分支已移除）';
 
   @override
   String get vlmPresets => '识图供应商预设';
@@ -1673,7 +1673,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get ppPrivacyNote =>
-      '· 全部能力默认关闭，逐项授权，关闭立即生效\n· 仅读取文本与图片元数据；图片如需理解，走本地 OCR/VLM 转文字，绝不上传云端模型\n· 密码框、银行支付类页面自动跳过\n· 数据只发送到你自己的服务器，快照 30 分钟过期、最多保留 20 条';
+      '· 全部能力默认关闭，逐项授权，关闭立即生效\n· 仅读取文本与图片元数据；需要识图时，图片只会发给你自己配置的那个视觉服务端点（没配就只用本地 OCR 识文），不会进入聊天模型\n· 密码框、银行支付类页面自动跳过\n· 数据只发送到你自己的服务器，快照 30 分钟过期、最多保留 20 条';
 
   @override
   String get ppGroupActions => '操作与记录';
@@ -1707,7 +1707,7 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get providerLocalHint => 'openai / dashscope / 本地';
+  String get providerLocalHint => 'openai / dashscope / 自定义';
 
   @override
   String get worldGroup => '角色设定';
@@ -4402,7 +4402,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get permScopeImgUnderstandTitle => '识图';
 
   @override
-  String get permScopeImgUnderstandDesc => 'AI 理解你发来的图片内容（本地识图）';
+  String get permScopeImgUnderstandDesc => 'AI 理解你发来的图片内容（识别画面与文字）';
 
   @override
   String get permScopeTtsTitle => '语音回复';
@@ -8181,6 +8181,91 @@ class AppLocalizationsZh extends AppLocalizations {
   String get memoryWhyNoExcerpt => '没有可展示的原文';
 
   @override
+  String get memoryLifecycleTitle => '记忆生命周期';
+
+  @override
+  String get memoryLifecycleLoading => '正在加载生命周期…';
+
+  @override
+  String get memoryLifecycleLoadFailed => '生命周期加载失败';
+
+  @override
+  String get memoryLifecycleStatusActive => '现行';
+
+  @override
+  String get memoryLifecycleStatusSuperseded => '已被取代';
+
+  @override
+  String get memoryLifecycleStatusStale => '派生失效';
+
+  @override
+  String get memoryLifecycleStatusExpired => '已过期';
+
+  @override
+  String get memoryLifecycleStatusUnknown => '未知状态';
+
+  @override
+  String memoryLifecycleSupersededBy(Object id) {
+    return '已被新记忆 #$id 取代，以新记忆为准';
+  }
+
+  @override
+  String memoryLifecycleValidTo(Object time) {
+    return '失效于 $time';
+  }
+
+  @override
+  String get memoryLifecycleArchived => '已归档';
+
+  @override
+  String get memoryLifecycleVersionLabel => '版本';
+
+  @override
+  String get memoryLifecycleRevisionLabel => '人工修订';
+
+  @override
+  String get memoryLifecycleSourceEventsLabel => '来源事件';
+
+  @override
+  String get memoryLifecycleReceiptsLabel => '写入回执';
+
+  @override
+  String get memoryLifecycleDerivedLabel => '派生记忆';
+
+  @override
+  String get memoryLifecycleEpistemicLabel => '认知状态';
+
+  @override
+  String get memoryLifecycleEpiFact => '已核实';
+
+  @override
+  String get memoryLifecycleEpiInferred => '推断';
+
+  @override
+  String get memoryLifecycleEpiUnverified => '待核';
+
+  @override
+  String get memoryLifecycleEpiUnknown => '未知';
+
+  @override
+  String get memoryLifecycleReceiptsEmpty => '没有写入回执';
+
+  @override
+  String get memoryLifecycleReceiptCreate => '写入';
+
+  @override
+  String get memoryLifecycleReceiptUpdate => '更新';
+
+  @override
+  String get memoryLifecycleReceiptSupersede => '被取代';
+
+  @override
+  String get memoryLifecycleReceiptStale => '派生失效';
+
+  @override
+  String get memoryLifecycleReceiptReject => '拒收';
+
+  @override
   String get gardenSetupTitle => '花园只读接入';
 
   @override
@@ -8239,4 +8324,56 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get gardenPrivacyHint => '仅提交到你自己的服务，不回显、不写日志。';
+
+  @override
+  String get allowAlways => '始终允许';
+
+  @override
+  String get agentRunsTitle => 'Agent 运行监控';
+
+  @override
+  String get agentRunsRefresh => '刷新';
+
+  @override
+  String get agentRunsConnect => '连接';
+
+  @override
+  String get agentRunsCancel => '取消运行';
+
+  @override
+  String get agentRunsAudit => '审计';
+
+  @override
+  String get agentRunsNoRuns => '暂无活跃 run';
+
+  @override
+  String agentRunsStatus(String streaming) {
+    return '流式状态：$streaming';
+  }
+
+  @override
+  String get agentRunsIdHint => '输入 run_id 或从列表选择';
+
+  @override
+  String get agentRunsCreate => '新建 run';
+
+  @override
+  String get agentRunsTaskHint => '任务描述（可选）';
+
+  @override
+  String get agentRunsDeadline => '超时秒数';
+
+  @override
+  String get agentRunsCreateConfirm => '创建';
+
+  @override
+  String coreStatusOnline(int ok, int total) {
+    return '工具服务：在线 $ok/$total';
+  }
+
+  @override
+  String get coreStatusOffline => '工具服务：离线';
+
+  @override
+  String get coreStatusUnconfigured => '工具服务：未配置';
 }

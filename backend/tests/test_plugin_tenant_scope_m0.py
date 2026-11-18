@@ -296,8 +296,10 @@ def _set_gate(monkeypatch, on: bool):
     monkeypatch.setitem(AGENT_FLAGS, "plugin_disabled_route_gate", on)
 
 
-def test_gate_关时_bridge_page_chat行为不变(gate_client):
-    """flag 默认关：disabled 插件（load_plugin_dir 未置 enabled）仍按旧逻辑走通"""
+def test_gate_关时_bridge_page_chat行为不变(gate_client, monkeypatch):
+    """gate 关：disabled 插件（load_plugin_dir 未置 enabled）仍按旧逻辑走通
+    （11-14 批 7 常驻化后默认为开；本用例钉关档合同，显式关。）"""
+    _set_gate(monkeypatch, False)
     assert gate_client.get("/api/v1/plugins/ai_diary/page/index.html").status_code == 200
     r = gate_client.post("/api/v1/plugins/ai_diary/bridge", json={"api": "store.get", "params": {"key": "k"}})
     assert r.status_code == 200

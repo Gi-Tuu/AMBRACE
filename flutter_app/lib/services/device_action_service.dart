@@ -153,11 +153,14 @@ class DeviceActionService {
 
   /// 回报执行结果（服务端据此出队 + 累计连续失败次数驱动熔断）。
   /// 返回 true ＝ 服务端确认收到该 token 的回报；异常/未命中一律 false，不抛给调用方。
-  static Future<bool> reportResult(String token, {required bool ok, String detail = ""}) async {
+  static Future<bool> reportResult(String token,
+      {required bool ok, String detail = "", String? delivery}) async {
     if (token.isEmpty) return false;
     try {
+      final body = <String, dynamic>{"ok": ok, "detail": detail};
+      if (delivery != null && delivery.isNotEmpty) body["delivery"] = delivery;
       final r = await ApiClient()
-          .dio.post("/api/v1/device/actions/$token/result", data: {"ok": ok, "detail": detail});
+          .dio.post("/api/v1/device/actions/$token/result", data: body);
       final data = r.data is Map ? Map<String, dynamic>.from(r.data as Map) : const <String, dynamic>{};
       return data["ok"] == true;
     } catch (_) {

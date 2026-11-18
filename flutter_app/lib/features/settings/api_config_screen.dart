@@ -16,6 +16,12 @@ const Map<String, Map<String, String>> kSpeechPresets = {
     'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     'model': 'paraformer-realtime-v2',
   },
+  // 小米 MiMo TTS：走「聊天接口出音频」协议（没有 /audio/speech），后端按 provider/模型名自动识别
+  '小米 MiMo TTS': {
+    'provider': 'mimo',
+    'base_url': 'https://api.xiaomimimo.com/v1',
+    'model': 'mimo-v2.5-tts',
+  },
   '智谱 GLM-4-Voice': {'provider': 'zhipu', 'base_url': 'https://open.bigmodel.cn/api/paas/v4', 'model': 'glm-4-voice'},
 };
 

@@ -281,12 +281,14 @@ def test_user_now_section_flag_gate(uf_db, monkeypatch):
     from app.memory.user_facts import upsert_user_fact
     from app.agent.context.section_user_now import user_now_section
     _seed_user(uf_db, 1)
-    # flag 关 → 空（零行为变化）；即使已有事实
+    # 总闸关（且位置槽显式关——批 7 后位置槽默认开）→ 空（零行为变化）；即使已有事实
     asyncio.run(upsert_user_fact(1, "location", "示例市"))
     monkeypatch.setitem(_af, "global_user_facts", False)
+    monkeypatch.setitem(_af, "user_fact_location", False)
     assert asyncio.run(user_now_section({"user_id": 1}, {})) == []
-    # flag 开 → 注入一个 system 块，含权威标题与事实
+    # 开 → 注入一个 system 块，含权威标题与事实
     monkeypatch.setitem(_af, "global_user_facts", True)
+    monkeypatch.setitem(_af, "user_fact_location", True)
     blocks = asyncio.run(user_now_section({"user_id": 1}, {}))
     assert len(blocks) == 1
     assert "【用户最新状态" in blocks[0]

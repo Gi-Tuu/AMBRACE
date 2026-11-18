@@ -1,7 +1,7 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.6.4
-DATE: 2026-11-14
-STATUS: 优化版 3.6.4（内部能力打底：记忆生命周期只读视图、动作审计常开、设备无障碍树快照/规划服务端就绪；无用户可见新功能；后端串行 9652 passed / 0 failed）
+VERSION: 3.6.5
+DATE: 2026-11-18
+STATUS: 维护版 3.6.5（配置/语音/识图/生图修复；Windows 安装包实验性）
 
 CHANGELOG:
 

@@ -106,6 +106,22 @@ async def get_vlm_config(user_id: int | None = None) -> dict:
     return cfg
 
 
+def _image_mime(path: str) -> str:
+    """按文件头判 MIME（2026-11-18）：原来写死 image/jpeg，PNG/WEBP 图发给严格的视觉端点会被拒。"""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(12)
+    except Exception:
+        return "image/jpeg"
+    if head.startswith(b"\x89PNG"):
+        return "image/png"
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head.startswith(b"GIF8"):
+        return "image/gif"
+    return "image/jpeg"
+
+
 async def _describe_vlm_cloud(image_path: str, cfg: dict) -> str:
     """调用云端 OpenAI 兼容视觉 API（VLM_API_KEY 非空时优先，图片仅以 data URI 传给视觉端点）。
     失败/垃圾输出返回空串（不影响主流程）。"""
@@ -113,6 +129,7 @@ async def _describe_vlm_cloud(image_path: str, cfg: dict) -> str:
         from openai import AsyncOpenAI
         with open(image_path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
+        mime = _image_mime(image_path)
         client = AsyncOpenAI(
             api_key=cfg["api_key"],
             base_url=cfg["base_url"],
@@ -123,7 +140,7 @@ async def _describe_vlm_cloud(image_path: str, cfg: dict) -> str:
             model=cfg["model"],
             messages=[{"role": "user", "content": [
                 {"type": "text", "text": VLM_PROMPT},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
             ]}],
             max_tokens=200,
             temperature=0.2,

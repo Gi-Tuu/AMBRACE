@@ -329,7 +329,10 @@ def _drop_plugin(name):
     registry._enabled.pop(name, None)
 
 
-def test_real_plugin_anchor_伪user不抢宿主锚点(asm_env):
+def test_real_plugin_anchor_伪user不抢宿主锚点(asm_env, monkeypatch):
+    from app.flags.agent_flags import AGENT_FLAGS
+    # 11-14 批 7 常驻化：运行面作用闸默认开；本合同钉锚点顺序，显式关（作用域专属见 m0/m4）
+    monkeypatch.setitem(AGENT_FLAGS, "plugin_runtime_scope", False)
     calls = {"n": 0}
 
     async def _hook(ctx):

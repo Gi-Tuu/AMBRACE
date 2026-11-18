@@ -312,13 +312,13 @@ def test_flag_off_zero_query_and_zero_delete(seeded, flag_off, clock, query_coun
     assert (seeded.data / "trash").exists() is False
 
 
-def test_flag_key_registered_and_off_by_default():
-    """总闸必须在 ``AGENT_FLAGS`` 里默认关，并在开关目录登记（中英标题成对、落在运维最近的一组）。"""
+def test_flag_key_registered_and_resident_on():
+    """总闸在 ``AGENT_FLAGS`` 里登记；11-14 批 7 常驻化＝默认开（高危闸保留热切回滚＝写 enabled=0 行）。"""
     from app.agent.loop import AGENT_FLAGS
     from app.application.flag_catalog import FLAG_CATALOG
 
     assert "account_purge_scheduler" in AGENT_FLAGS
-    assert AGENT_FLAGS["account_purge_scheduler"] is False
+    assert AGENT_FLAGS["account_purge_scheduler"] is True
     meta = FLAG_CATALOG["account_purge_scheduler"]
     assert meta["group"] == "channel", "分组：channel 是唯一的后台维护/留存类开关所在组"
     assert meta["title_zh"] and meta["title_en"] and meta["desc_zh"] and meta["desc_en"]

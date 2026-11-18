@@ -118,7 +118,11 @@ class TaskLlmConfig(Base):
     __table_args__ = (UniqueConstraint("user_id", "task", name="uq_task_llm_user_task"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, default=0)  # 0=服务器级全局哨兵
+    # 0 = 服务器级全局哨兵：**不挂 users FK**（与 api_configs / vlm_configs 等同口径）。
+    # 2026-11-18 修：此前误挂 ForeignKey("users.id")，而 users 表没有 id=0 的行
+    # ⇒ 服务器级任务模型的首次保存必 FOREIGN KEY constraint failed（前端 500）。
+    # 迁移 c6f8b0d2e4a7 负责把已有库里的这条外键拆掉。
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     task: Mapped[str] = mapped_column(String(20), nullable=False)
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     api_key: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)  # 支持多 Key（逗号/JSON 数组）

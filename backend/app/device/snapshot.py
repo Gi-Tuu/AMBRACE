@@ -415,3 +415,19 @@ def _find_element_in_snapshot(snap: Snapshot, ident: tuple) -> dict | None:
             return n
     return None
 
+def to_action_intent(plan: dict, *, target_app: str) -> dict:
+    """把 plan_action 的输出转成设备动作 intent（by=path），供既有入队/执行链使用。"""
+    if not target_app:
+        raise SnapshotError("INVALID_ARGS", "需要 target_app")
+    if plan.get("action") != "click":
+        raise SnapshotError("INVALID_ARGS", f"当前仅支持 click 的计划转换：{plan.get('action')}")
+    return {
+        "capability": "action_tap",
+        "target_app": target_app,
+        "by": "path",
+        "path": plan.get("path") or "",
+        "query": (plan.get("expected_identity") or {}).get("name") or "",
+        "delivery": plan.get("delivery") or "not_delivered",
+        "dry_run": False,
+    }
+

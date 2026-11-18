@@ -98,8 +98,10 @@ async def _count_rows(factory, model, **filters):
 # ───────────────────────── 默认关零影响 ─────────────────────────
 
 def test_默认关_生成不写库(dbsetup, monkeypatch):
+    from app.agent.loop import AGENT_FLAGS as _af
     factory, _ = dbsetup
-    # flag 默认关（未 enable）
+    # 11-14 批 7 常驻化：默认已转开；本用例钉「关档零写入」合同，显式关
+    monkeypatch.setitem(_af, "group_cognition_v2", False)
     asyncio.run(gm.generate_char_cognitions(
         group_id=G1, user_id=USER, user_content="hi",
         replies=[{"character_id": CHAR_A, "content": "你好"}], name_map={CHAR_A: "小阳"},

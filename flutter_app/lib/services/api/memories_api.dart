@@ -2,6 +2,7 @@ import '../../models/memory.dart';
 import '../../models/memory_history.dart';
 import '../../models/memory_derivations.dart';
 import '../../models/memory_why.dart';
+import '../../models/memory_lifecycle.dart';
 import '../api_client.dart';
 
 /// MemoriesApi：领域 API 方法（extension 挂到 ApiClient）
@@ -124,6 +125,24 @@ extension MemoriesApi on ApiClient {
       throw const FormatException('memory why: memory_id mismatch');
     }
     return why;
+  }
+
+  /// RC2 M3/M4：记忆「生命周期」只读投影。
+  ///
+  /// 形状错误 / memory_id 与请求不一致一律抛 [FormatException]，由详情页走失败态。
+  /// 404 不在这里吞：flag 关（功能未开放）与记忆不存在共用 404，由调用方按
+  /// [DioException] 的 statusCode 判别后隐藏卡片（不伪装成失败态或空态）。
+  Future<MemoryLifecycle> getMemoryLifecycle(int id) async {
+    final r = await dio.get('/api/v1/memories/$id/lifecycle');
+    final raw = r.data;
+    if (raw is! Map) {
+      throw const FormatException('memory lifecycle: payload is not an object');
+    }
+    final data = MemoryLifecycle.fromJson(Map<String, dynamic>.from(raw));
+    if (data.memoryId != id) {
+      throw const FormatException('memory lifecycle: memory_id mismatch');
+    }
+    return data;
   }
 
   Future<void> deleteMemoryCascade(int id) async {

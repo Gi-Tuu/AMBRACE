@@ -136,7 +136,10 @@ def test_归档记忆不返回(env):
 
 # ───────────────────────── 条数：可传 + 硬顶 ─────────────────────────
 
-def test_条数硬顶_limit超20夹到20(env):
+def test_条数硬顶_limit超20夹到20(env, monkeypatch):
+    from app.flags.agent_flags import AGENT_FLAGS
+    # 11-14 批 7 常驻化：peak_cutoff 默认开会按相关度削条；本用例钉硬顶夹取合同，显式关
+    monkeypatch.setitem(AGENT_FLAGS, "memory_peak_cutoff", False)
     f = env["factory"]
     for i in range(25):
         _seed(f, content=f"用户喜欢画水彩{i}", importance=50.0 + i, created_at=T0 + timedelta(minutes=i))

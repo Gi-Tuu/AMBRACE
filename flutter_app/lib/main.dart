@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+import 'services/device_action_service.dart';
+import 'services/device_action_executor.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:ai_companion/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
@@ -108,6 +110,35 @@ void _setupLifecycleObserver() {
 /// `AppLifecycleState.resumed`，两端永远对不上）；主 isolate 被冻结就没人回答，后台据此判「在后台」
 /// 并照常弹通知（判定规则与单元测试见 lib/services/foreground_state.dart）。生命周期事件保留，仍负责回前台 0 延迟停止。
 void _registerForegroundProbe() {
+  // A6：后台发现设备动作 → 主 isolate 执行（无障碍通道只在主引擎可用）并回报
+  FlutterBackgroundService().on("device_action_exec").listen((event) async {
+    try {
+      final intent = Map<String, dynamic>.from(event as Map);
+      final token = intent["action_token"]?.toString() ?? "";
+      if (token.isEmpty) return;
+      final cap0 = intent["capability"]?.toString() ?? "";
+      if (cap0 == "observe_tree" || cap0 == "action_observe_tree") {
+        // A6 调试：把 App 自身节点树（含 path）作为 detail 回报，供服务端快照/计划
+        const ch = MethodChannel("com.gituu.ambrace/phone_perception");
+        final rawTree = await ch.invokeMethod<String>("getNodeTreeRaw") ?? "";
+        await DeviceActionService.reportResult(
+          token,
+          ok: true,
+          detail: rawTree,
+        );
+        return;
+      }
+      final res = await DeviceActionExecutor.executeOnDevice(intent);
+      final ok0 = res["ok"] == true;
+      await DeviceActionService.reportResult(
+        token,
+        ok: ok0,
+        detail: (res["detail"] ?? "").toString(),
+        delivery: ok0 ? "delivered" : "failed",
+      );
+    } catch (_) {}
+  });
+
   FlutterBackgroundService().on(kForegroundProbeEvent).listen((_) {
     final payload = foregroundAckPayload(WidgetsBinding.instance.lifecycleState);
     try {

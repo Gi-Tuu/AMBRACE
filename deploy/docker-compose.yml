@@ -1,0 +1,54 @@
+# M8 两服务 compose 模板（同一产品发布，两条服务）
+# 用法：TAG=0.1.0 CORE_TAG=0.62.7 YAI_SERVICE_KEY=... AMBRACE_SERVICE_TOKEN=... \
+#       docker compose -f deploy/docker-compose.yml up -d
+# 安全默认：OPENAPI_ALLOW_WRITES=false → Core /v1/tools = 0（需显式开启写工具才有 4 个）
+
+services:
+  ambrace:
+    image: ${AMBRACE_IMAGE:-ai-companion}:${TAG:-latest}
+    environment:
+      # compose 模式：Core 由 compose 提供，AMBRACE 不要再用 launcher 拉起第二个
+      CORE_START_MODE: external
+      CORE_BASE_URL: http://core:8001
+      CORE_SERVICE_TOKEN: ${YAI_SERVICE_KEY:?set YAI_SERVICE_KEY}
+      M7_FINALIZE_ENABLED: ${M7_FINALIZE_ENABLED:-false}
+      # Core → AMBRACE 工具鉴权（长期 service token，非用户 JWT）
+      AMBRACE_SERVICE_TOKEN: ${AMBRACE_SERVICE_TOKEN:?set AMBRACE_SERVICE_TOKEN}
+      AMBRACE_SERVICE_USER_ID: ${AMBRACE_SERVICE_USER_ID:-3}
+    ports:
+      - "8000:8000"
+    depends_on:
+      core:
+        condition: service_healthy
+    restart: unless-stopped
+
+  core:
+    build:
+      context: .
+      dockerfile: deploy/core.Dockerfile
+      args:
+        CORE_VERSION: ${CORE_TAG:-0.62.7}
+    image: ${CORE_IMAGE:-yai-agent-core}:${CORE_TAG:-0.62.7}
+    command: ["python", "-m", "yai_core.server", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      YAI_SERVICE_KEY: ${YAI_SERVICE_KEY:?set YAI_SERVICE_KEY}
+      OPENAPI_SPEC_URL: http://ambrace:8000/openapi.json
+      OPENAPI_BASE_URL: http://ambrace:8000
+      OPENAPI_AUTH_TOKEN: ${AMBRACE_SERVICE_TOKEN:?set AMBRACE_SERVICE_TOKEN}
+      OPENAPI_ALLOW_WRITES: ${OPENAPI_ALLOW_WRITES:-false}
+      YAI_TOOL_TIMEOUT: ${YAI_TOOL_TIMEOUT:-60}
+      # 模型：由部署方注入（AMBRACE 侧 LLM 配置映射）
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      YAI_GIT_COMMIT: ${CORE_TAG:-0.62.7}
+    # 容器内 0.0.0.0；不 publish 到宿主机
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped

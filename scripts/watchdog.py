@@ -36,16 +36,21 @@ except ImportError:
     import platform_util
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # scripts/ 上一级
-SERVER_DIR = os.path.join(_PROJECT_ROOT, "backend")
+SERVER_DIR = os.environ.get("AMBRACE_SERVER_DIR") or os.path.join(_PROJECT_ROOT, "backend")
 # B6（2026-09-06）/ P3-9（2026-09-2x）：PYTHONW 与「拉起键」统一由 scripts/platform_util.py 给出。
 # Windows 用 venv/Scripts/pythonw.exe（GUI 子系统、无控制台窗口），POSIX 用 venv/bin/python；
 # 拉起键 Windows = creationflags（无窗口 + 脱离控制台）、POSIX = start_new_session（脱离父会话）。
 # 此前 start_server() 里直接写了 CREATE_NEW_PROCESS_GROUP（Windows-only 常量），POSIX 上
 # AttributeError 会被 except 吞掉，表现为「Linux 上探测正常、每次拉起都失败」= 只探测不自愈。
-PYTHONW, _PYTHON = platform_util.venv_python_paths(SERVER_DIR)
+if os.environ.get("AMBRACE_PYTHONW"):
+    PYTHONW = os.environ["AMBRACE_PYTHONW"]
+    _PYTHON = os.environ.get("AMBRACE_PYTHON", PYTHONW)
+else:
+    PYTHONW, _PYTHON = platform_util.venv_python_paths(SERVER_DIR)
 
 
 LOG = os.path.join(SERVER_DIR, "data", "logs", "watchdog.log")
+os.makedirs(os.path.dirname(LOG), exist_ok=True)
 LOCK_PORT = 8765  # 单实例锁端口
 LOCKS_DIR = os.path.join(SERVER_DIR, "data", "locks")
 PID_FILE = os.path.join(LOCKS_DIR, "watchdog.pid")
