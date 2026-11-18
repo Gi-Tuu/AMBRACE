@@ -64,7 +64,7 @@ async def _add_snap(factory, uid, source, content, *, minutes_ago=0, payload=Non
 # 只读 8 条（M0）+ 行动 3 条（M4a 决策②：open_app / tap / set_text）；id 固定，勿改名
 _READ_IDS = {"foreground_app", "screen_state", "battery", "network",
              "dnd", "notifications", "usage_stats", "location"}
-_ACT_IDS = {"action_open_app", "action_tap", "action_set_text"}
+_ACT_IDS = {"action_open_app", "action_tap", "action_observe_tree", "action_set_text"}
 
 
 def test_能力注册表完整性():
@@ -97,9 +97,9 @@ def test_能力注册表完整性():
 # ── 2) M3 把只读能力级权限并入 manifest；M4a 起行动能力（:write）一并并入 ──
 def test_能力级权限已并入_manifest_M3():
     perms = caps.capability_permissions()
-    assert len(perms) == len(caps.CAPABILITIES) == 11
+    assert len(perms) == len(caps.CAPABILITIES) == 12
     assert sum(1 for p in perms if p.endswith(":read")) == 8
-    assert sum(1 for p in perms if p.endswith(":write")) == 3
+    assert sum(1 for p in perms if p.endswith(":write")) == 4
     for perm in perms:
         assert perm in manifest.VALID_PERMISSIONS
 
