@@ -195,6 +195,9 @@ async def lifespan(app: FastAPI):
         _registered = register_builtin_tools()
         readiness.mark("builtin_tools", True)
         logger.info("Builtin tools registered: %d (total %d)", _registered, len(_list_tools()))
+        from app.device.agent_tools import register_device_tools
+        _dev = register_device_tools(enabled=True, act_enabled=True)
+        logger.info("Device tools registered: %s", [(s.name, s.enabled) for s in _dev])
     except Exception as _bte:
         readiness.mark("builtin_tools", False, msg=str(_bte))
         logger.warning("Builtin tools register failed: %s", _bte)

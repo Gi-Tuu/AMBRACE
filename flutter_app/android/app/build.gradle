@@ -32,7 +32,7 @@ android {
         applicationId = "com.gituu.ambrace.ai_companion"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = Math.max(flutter.minSdkVersion, 24)  // record_android 要求 23；Shizuku 13 要求 24（2026-08-12）
+        minSdk = Math.max(flutter.minSdkVersion, 24)  // record_android 要求 23；无障碍动作要求 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -57,9 +57,6 @@ android {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
-    // Shizuku：ADB/root 授权后执行系统级能力（应用列表/系统设置/模拟操作前置，2026-08-12）
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
 }
 
 flutter {

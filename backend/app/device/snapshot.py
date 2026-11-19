@@ -30,7 +30,7 @@ INTERACTIVE_ROLES = frozenset({
 # 值需要脱敏的角色/类型（密码、密钥输入框）
 SENSITIVE_ROLES = frozenset({"password", "passwordtext", "securetextfield"})
 
-DEFAULT_TTL = 120.0
+DEFAULT_TTL = 300.0
 MAX_SNAPSHOTS = 32
 MAX_REFS = 500
 

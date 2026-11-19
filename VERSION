@@ -1,10 +1,16 @@
 PROJECT: 拥爱（AMBRACE）
-VERSION: 3.6.5
-DATE: 2026-11-18
-STATUS: 维护版 3.6.5（配置/语音/识图/生图修复；Windows 安装包实验性）
+VERSION: 3.6.6
+DATE: 2026-11-19
+STATUS: 维护版 3.6.6（手机自动化 click/set_text/swipe；去 Shizuku；Windows 安装包实验性）
 
 CHANGELOG:
 
+3.6.6 - Release (2026-11-19)（手机自动化）
+  - 角色可在确认后点击、输入、滑动手机界面（观察→动作闭环，真机验证）
+  - 移除 Shizuku 依赖与自定义工作流入口，自动化统一由角色完成
+  - 动作安全门：总开关、账号开关、once_ever 授权；仅操作当前快照 ref
+  - 回归：A6 设备工具 17 passed；Flutter analyze 0
+  - Note: Windows 安装包为实验性产物（未签名）
 3.6.5 - Release (2026-11-18)（维护版）
   - 配置：服务器级语音/识图/生图/任务保存修复
   - 语音：支持合成走对话接口的服务商；测试连接覆盖多种接口

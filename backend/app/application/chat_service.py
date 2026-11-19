@@ -199,6 +199,14 @@ async def _run_agent_core(
     )
 
     if not _is_stream:
+        final_state, full_text = await _run_device_stage(
+            final_state=final_state, full_text=full_text,
+            user_id=user_id, character_id=character_id, session_id=session_id,
+        )
+        final_state, full_text = await _run_device_act_stage(
+            final_state=final_state, full_text=full_text,
+            user_id=user_id, character_id=character_id, session_id=session_id,
+        )
         final_state, full_text = await _run_mcp_stage(
             final_state=final_state, full_text=full_text, _loop_steps=_loop_steps,
             user_id=user_id, character_id=character_id, session_id=session_id,
@@ -433,6 +441,117 @@ async def _run_search_stage(
         except Exception:
             pass
     return final_state, full_text, _loop_steps, _trace_searched, _trace_llm_calls
+
+
+# ---- 设备只读阶段（A6，2026-11-19）：DEVICE_OBSERVE → ToolRunner → 再决策 ----
+async def _run_device_stage(
+    *, final_state: dict, full_text: str, user_id: int,
+    character_id: int, session_id: int,
+) -> tuple[dict, str]:
+    """解析 [DEVICE_OBSERVE]包名[/DEVICE_OBSERVE]，真实抓树并注入观察后重生成一次。"""
+    try:
+        acts = [a for a in _agent_actions.parse_actions(full_text or "")
+                if a.action_type == _agent_actions.DEVICE_OBSERVE]
+        if not acts:
+            return final_state, full_text
+        from app.agent.tools import get_tool as _get_tool
+        from app.agent.tool_runner import execute_tool as _exec_tool
+        from app.agent.nodes import generate_response as _regen
+        from app.agent.actions import _DEVICE_OBSERVE_RE as _OBS_RE
+        spec = _get_tool("device_observe")
+        if spec is None or not spec.enabled:
+            return final_state, _OBS_RE.sub("", full_text or "").strip()
+        obs_lines = []
+        for a in acts[:1]:
+            payload = {"target_app": (a.payload or {}).get("target_app") or "", "user_id": user_id, "character_id": character_id}
+            res = await _exec_tool(spec, payload, user_id=user_id,
+                                   character_id=character_id, session_id=session_id)
+            summary = ((res.get("observation") or {}).get("summary") or "").strip()
+            detail = str((res.get("result") or {}).get("text") or "").strip()
+            if res.get("status") == "ok":
+                obs_lines.append("【设备观察·真实结果】" + (summary or detail or "已抓取界面，但摘要为空"))
+            else:
+                obs_lines.append("【设备观察】读取失败；不要编造界面内容。")
+        if obs_lines:
+            final_state["context_messages"] = list(final_state.get("context_messages") or []) + [
+                {"role": "system", "content": "用户刚要求查看/操作手机界面。以下是系统真实抓取结果，必须据此回答，不要说‘我看看’或编造。若用户要求点击/输入/滚动，下一步必须立即输出 [DEVICE_ACT]{...} 并使用上面的 ref；不要只说“我先看看”：\n" + "\n".join(obs_lines)}
+            ]
+            final_state = await _regen(final_state)
+            full_text = _OBS_RE.sub("", final_state.get("ai_response") or "").strip()
+        else:
+            full_text = _OBS_RE.sub("", full_text or "").strip()
+    except Exception as e:
+        _logger.warning("device observe stage failed: %s", e)
+        try:
+            from app.agent.actions import _DEVICE_OBSERVE_RE as _OBS_RE2
+            full_text = _OBS_RE2.sub("", full_text or "").strip()
+        except Exception:
+            pass
+    return final_state, full_text
+
+
+# ---- 设备动作阶段（A6-act，2026-11-19）：DEVICE_ACT → ToolRunner（审批门在工具内） ----
+async def _run_device_act_stage(
+    *, final_state: dict, full_text: str, user_id: int,
+    character_id: int, session_id: int,
+) -> tuple[dict, str]:
+    try:
+        _src = full_text or ""
+        try:
+            _last_user = [
+                str(m.get("content") or "")
+                for m in (final_state.get("context_messages") or [])
+                if m.get("role") == "user"
+            ][-1:]
+            if _last_user:
+                _src = _src + "\n" + _last_user[0]
+        except Exception:
+            pass
+        acts = [a for a in _agent_actions.parse_actions(_src)
+                if a.action_type == _agent_actions.DEVICE_ACT]
+        # 自然语言兜底：明确说“滑”时即使模型没吐标记也执行 swipe（仍走工具授权门）
+        if not acts:
+            import re as _re
+            _m = _re.search(r"(上滑|往上滑|向上滑|下滑|往下滑|向下滑|左滑|右滑|滑一下|划一下)", _src)
+            if _m:
+                _word = _m.group(1)
+                _dir = "down" if "下" in _word else ("left" if "左" in _word else ("right" if "右" in _word else "up"))
+                _pkg = _re.search(r"(?:包名|package)[:：\s]*([A-Za-z][A-Za-z0-9_.]+)", _src)
+                acts = [_agent_actions.AgentAction(
+                    _agent_actions.DEVICE_ACT,
+                    {"verb": "swipe", "direction": _dir,
+                     "target_app": _pkg.group(1) if _pkg else ""},
+                    "",
+                )]
+        if not acts:
+            return final_state, full_text
+        from app.agent.tools import get_tool as _get_tool
+        from app.agent.tool_runner import execute_tool as _exec_tool
+        from app.agent.nodes import generate_response as _regen
+        from app.agent.actions import strip_actions as _strip
+        spec = _get_tool("device_act")
+        if spec is None or not spec.enabled:
+            return final_state, _strip(full_text or "")
+        lines = []
+        for a in acts[:1]:
+            payload = dict(a.payload or {})
+            payload.update({"user_id": user_id, "character_id": character_id})
+            res = await _exec_tool(spec, payload, user_id=user_id,
+                                   character_id=character_id, session_id=session_id)
+            detail = str((res.get("result") or {}).get("text") or "").strip()
+            if res.get("status") == "ok" and detail:
+                lines.append(f"【设备动作·真实结果】{detail}")
+            else:
+                lines.append("【设备动作】未执行或失败，不要声称已操作。")
+        if lines:
+            final_state["context_messages"] = list(final_state.get("context_messages") or []) + [
+                {"role": "system", "content": "\n".join(lines)}
+            ]
+            final_state = await _regen(final_state)
+            full_text = _strip(final_state.get("ai_response") or "")
+    except Exception as e:
+        _logger.warning("device act stage failed: %s", e)
+    return final_state, full_text
 
 
 # ---- MCP 工具阶段（2026-10-13 A50 批 17 自 _run_agent_core 机械抽出）----

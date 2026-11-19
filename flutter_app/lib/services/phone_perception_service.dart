@@ -1303,20 +1303,19 @@ class PhonePerceptionService {
     try {
       final st = await ShizukuService.status();
       if (st["permissionGranted"] != true) {
-        return {"ok": false, "message": en ? "Shizuku not authorized; cannot run system-level actions" : "Shizuku 未授权，无法执行系统级操作"};
+        return {"ok": false, "message": en ? "Accessibility service not enabled" : "无障碍服务未开启，无法执行系统级操作"};
       }
       switch (action) {
         case "launch_app":
           final pkg = (step["target"] as String? ?? "").trim();
           if (pkg.isEmpty) return {"ok": false, "message": en ? "Missing app package name" : "缺少应用包名"};
-          final r = await ShizukuService.runShell("monkey -p $pkg 1");
+          final r = await openApp(pkg);
           final ok = r["ok"] == true;
-          return {"ok": ok, "message": ok ? (en ? "Launched $pkg" : "已启动 $pkg") : (en ? "Launch failed: ${r['stderr'] ?? ''}" : "启动失败：${r['stderr'] ?? ''}")};
+          return {"ok": ok, "message": ok ? (en ? "Launched $pkg" : "已启动 $pkg") : (en ? "Launch failed: ${r['message'] ?? ''}" : "启动失败：${r['message'] ?? ''}")};
         case "tap_xy":
           final x = (step["x"] as num? ?? 0).toInt();
           final y = (step["y"] as num? ?? 0).toInt();
-          final r = await ShizukuService.runShell("input tap $x $y");
-          final ok = r["ok"] == true;
+          final ok = await ShizukuService.tapAt(x, y);
           return {"ok": ok, "message": ok ? (en ? "Tapped ($x, $y)" : "已点击 ($x, $y)") : (en ? "Tap failed" : "点击失败")};
         case "swipe":
           final x1 = (step["x1"] as num? ?? 0).toInt();
@@ -1324,16 +1323,13 @@ class PhonePerceptionService {
           final x2 = (step["x2"] as num? ?? 0).toInt();
           final y2 = (step["y2"] as num? ?? 0).toInt();
           final dur = (step["ms"] as num? ?? 300).toInt();
-          final r = await ShizukuService.runShell("input swipe $x1 $y1 $x2 $y2 $dur");
-          final ok = r["ok"] == true;
+          final ok = await ShizukuService.swipe(x1, y1, x2, y2, dur);
           return {"ok": ok, "message": ok ? (en ? "Swiped" : "已滑动") : (en ? "Swipe failed" : "滑动失败")};
         case "back":
-          final r = await ShizukuService.runShell("input keyevent 4");
-          final ok = r["ok"] == true;
+          final ok = await ShizukuService.back();
           return {"ok": ok, "message": ok ? (en ? "Navigated back" : "已返回") : (en ? "Back failed" : "返回失败")};
         case "go_home":
-          final r = await ShizukuService.runShell("input keyevent 3");
-          final ok = r["ok"] == true;
+          final ok = await ShizukuService.home();
           return {"ok": ok, "message": ok ? (en ? "Returned home" : "已返回主页") : (en ? "Home failed" : "返回主页失败")};
         default:
           return {"ok": false, "message": en ? "Unknown Shizuku step: $action" : "未知 Shizuku 步骤：$action"};

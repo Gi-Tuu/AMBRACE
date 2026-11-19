@@ -9,6 +9,8 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.util.Log
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONArray
@@ -19,6 +21,7 @@ import java.io.StringWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 手机感知·无障碍读屏服务（AI 走出沙箱 Phase 1~3）
@@ -33,6 +36,8 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
         @Volatile
         var instance: PhonePerceptionAccessibilityService? = null
             private set
+        @Volatile
+        var currentPackage: String? = null
         @Volatile
         var lastScreenText: String = ""
             private set
@@ -136,6 +141,7 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
 
     private fun onAccessibilityEventSafe(event: AccessibilityEvent?) {
         if (event == null) return
+        try { event.packageName?.toString()?.takeIf { it.isNotBlank() }?.let { currentPackage = it } } catch (_: Exception) {}
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
 
@@ -556,6 +562,40 @@ class PhonePerceptionAccessibilityService : AccessibilityService() {
             .build()
         return dispatchGesture(gesture, null, null)
     }
+
+    fun tapAt(x: Float, y: Float): Boolean = dispatchTap(x, y)
+
+    fun swipeTo(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long,
+                onResult: (Boolean) -> Unit): Boolean {
+        val caps = serviceInfo?.capabilities ?: 0
+        if (caps and android.accessibilityservice.AccessibilityServiceInfo.CAPABILITY_CAN_PERFORM_GESTURES == 0) {
+            onResult(false)
+            return false
+        }
+        val sx = x1.coerceAtLeast(0f); val sy = y1.coerceAtLeast(0f)
+        val ex = x2.coerceAtLeast(0f); val ey = y2.coerceAtLeast(0f)
+        if (sx == ex && sy == ey) { onResult(false); return false }
+        val path = Path().apply { moveTo(sx, sy); lineTo(ex, ey) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, durationMs.coerceIn(80L, 1500L)))
+            .build()
+        val main = Handler(Looper.getMainLooper())
+        val replied = AtomicBoolean(false)
+        fun finish(ok: Boolean) {
+            if (replied.compareAndSet(false, true)) main.post { onResult(ok) }
+        }
+        val queued = dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(g: GestureDescription?) = finish(true)
+            override fun onCancelled(g: GestureDescription?) = finish(false)
+        }, main)
+        if (!queued) finish(false)
+        main.postDelayed({ finish(false) }, durationMs.coerceIn(80L, 1500L) + 1000L)
+        return queued
+    }
+
+    fun backPress(): Boolean = performGlobalAction(GLOBAL_ACTION_BACK)
+
+    fun homePress(): Boolean = performGlobalAction(GLOBAL_ACTION_HOME)
 
     private fun dispatchLongPress(x: Float, y: Float): Boolean {
         val path = Path().apply { moveTo(x, y) }

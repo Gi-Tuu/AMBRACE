@@ -3042,25 +3042,25 @@ abstract class AppLocalizations {
   /// No description provided for @ppShizukuTitle.
   ///
   /// In zh, this message translates to:
-  /// **'Shizuku 权限'**
+  /// **'系统状态采集'**
   String get ppShizukuTitle;
 
   /// No description provided for @ppShizukuSub.
   ///
   /// In zh, this message translates to:
-  /// **'系统级能力（应用列表/系统设置/模拟操作前置）：状态、授权与 Shell 测试'**
+  /// **'应用列表/电量/网络/前台应用等本机能力；由无障碍服务提供，无需额外授权'**
   String get ppShizukuSub;
 
   /// No description provided for @ppShizukuServer.
   ///
   /// In zh, this message translates to:
-  /// **'Shizuku 服务'**
+  /// **'无障碍服务'**
   String get ppShizukuServer;
 
   /// No description provided for @ppShizukuGranted.
   ///
   /// In zh, this message translates to:
-  /// **'本应用授权'**
+  /// **'已开启'**
   String get ppShizukuGranted;
 
   /// No description provided for @ppReady.

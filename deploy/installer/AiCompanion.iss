@@ -1,5 +1,5 @@
 #define AppName "AMBRACE"
-#define AppVersion "3.6.5"
+#define AppVersion "3.6.6"
 #define Stage "E:\Win11Test\stage"
 
 [Setup]

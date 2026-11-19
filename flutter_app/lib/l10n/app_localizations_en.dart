@@ -1682,17 +1682,17 @@ class AppLocalizationsEn extends AppLocalizations {
       'Only perceive notifications from selected apps (all by default)';
 
   @override
-  String get ppShizukuTitle => 'Shizuku permission';
+  String get ppShizukuTitle => 'System status';
 
   @override
   String get ppShizukuSub =>
-      'System-level capabilities (app list/system settings/needed for simulated actions): status, authorization, and shell tests';
+      'App list, battery, network and foreground app; provided by the accessibility service, no extra authorization';
 
   @override
-  String get ppShizukuServer => 'Shizuku service';
+  String get ppShizukuServer => 'Accessibility service';
 
   @override
-  String get ppShizukuGranted => 'App authorized';
+  String get ppShizukuGranted => 'Enabled';
 
   @override
   String get ppReady => 'Ready';

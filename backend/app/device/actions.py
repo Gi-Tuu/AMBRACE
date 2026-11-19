@@ -137,6 +137,12 @@ class ActionIntent(BaseModel):
     query: str | None = None         # 仅 action_tap：要定位的文本或控件 id
     path: str | None = None          # 仅 action_tap(by=path)：快照分配的稳定遍历路径
     text: str | None = None          # 仅 action_set_text：要输入的文本
+    direction: str | None = None     # 仅 action_swipe：up/down/left/right
+    x1: int | None = None
+    y1: int | None = None
+    x2: int | None = None
+    y2: int | None = None
+    ms: int | None = None
     dry_run: bool = False            # 干跑：只裁决，不入队、不产生任何动作
 
 
@@ -178,6 +184,12 @@ class _PendingAction:
             "query": self.intent.query,
             "path": self.intent.path,
             "text": self.intent.text,
+            "direction": self.intent.direction,
+            "x1": self.intent.x1,
+            "y1": self.intent.y1,
+            "x2": self.intent.x2,
+            "y2": self.intent.y2,
+            "ms": self.intent.ms,
             "dry_run": self.intent.dry_run,
             "status": STATUS_NOT_IMPLEMENTED,   # 本批无执行体：取到也不许执行
         }

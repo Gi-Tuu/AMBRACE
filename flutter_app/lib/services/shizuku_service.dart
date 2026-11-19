@@ -86,6 +86,34 @@ class ShizukuService {
     }
   }
 
+  /// 无障碍动作（去 Shizuku 后工作流使用）
+  static Future<bool> tapAt(int x, int y) async {
+    final r = await _channel.invokeMethod("accessibilityTap", {"x": x, "y": y}) as Map? ?? {};
+    return r["ok"] == true;
+  }
+
+  static Future<bool> swipeDirection(String direction, int ms) async {
+    final r = await _channel.invokeMethod(
+        "accessibilitySwipe", {"direction": direction, "ms": ms}) as Map? ?? {};
+    return r["ok"] == true;
+  }
+
+  static Future<bool> swipe(int x1, int y1, int x2, int y2, int ms) async {
+    final r = await _channel.invokeMethod("accessibilitySwipe",
+        {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "ms": ms}) as Map? ?? {};
+    return r["ok"] == true;
+  }
+
+  static Future<bool> back() async {
+    final r = await _channel.invokeMethod("accessibilityBack") as Map? ?? {};
+    return r["ok"] == true;
+  }
+
+  static Future<bool> home() async {
+    final r = await _channel.invokeMethod("accessibilityHome") as Map? ?? {};
+    return r["ok"] == true;
+  }
+
   /// 该错误码是否**只能靠用户动作**解决（＝去开 Shizuku 服务 / 去给授权）。
   ///
   /// 其余（deadObject 连接类、timeout 等）由 native 侧退避重试或下一轮自愈，不该打扰用户；

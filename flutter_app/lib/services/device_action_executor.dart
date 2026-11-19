@@ -30,7 +30,8 @@ class DeviceActionExecutor {
   static const String capOpenApp = "action_open_app";
   static const String capTap = "action_tap";
   static const String capSetText = "action_set_text";
-  static const Set<String> knownCapabilities = {capOpenApp, capTap, capSetText};
+  static const String capSwipe = "action_swipe";
+  static const Set<String> knownCapabilities = {capOpenApp, capTap, capSetText, capSwipe};
 
   // ── 拒绝原因：机器可读字面量，同时作为回报给服务端的 detail（两处同一口径）──
   static const String reasonDryRun = "dry_run_skipped";
@@ -79,6 +80,13 @@ class DeviceActionExecutor {
         return (intent["path"]?.toString() ?? "").trim().isEmpty ? reasonNoQuery : null;
       }
       return (intent["query"]?.toString() ?? "").trim().isEmpty ? reasonNoQuery : null;
+    }
+    if (capability == capSwipe) {
+      final direction = (intent["direction"]?.toString() ?? "").trim();
+      if (direction.isNotEmpty) return null;
+      final hasCoords = intent["x1"] != null && intent["y1"] != null &&
+          intent["x2"] != null && intent["y2"] != null;
+      return hasCoords ? null : "missing_swipe_target";
     }
     // action_set_text
     return (intent["text"]?.toString() ?? "").trim().isEmpty ? reasonNoText : null;
@@ -219,7 +227,24 @@ class DeviceActionExecutor {
         }
         return _runAccessibilityAction("click", intent["query"]?.toString() ?? "");
       case capSetText:
+        if ((intent["by"]?.toString() ?? "") == "path") {
+          return _runAccessibilityPathAction("set_text", intent["path"]?.toString() ?? "",
+              text: intent["text"]?.toString() ?? "");
+        }
         return _runAccessibilityAction("set_text", intent["text"]?.toString() ?? "");
+      case capSwipe:
+        final ms = (intent["ms"] as num?)?.toInt() ?? 300;
+        final direction = intent["direction"]?.toString() ?? "";
+        if (direction.isNotEmpty) {
+          final ok = await ShizukuService.swipeDirection(direction, ms);
+          return _exec(ok, ok ? "swiped:$direction" : "swipe_failed");
+        }
+        final x1 = (intent["x1"] as num?)?.toInt() ?? 0;
+        final y1 = (intent["y1"] as num?)?.toInt() ?? 0;
+        final x2 = (intent["x2"] as num?)?.toInt() ?? 0;
+        final y2 = (intent["y2"] as num?)?.toInt() ?? 0;
+        final ok = await ShizukuService.swipe(x1, y1, x2, y2, ms);
+        return _exec(ok, ok ? "swiped" : "swipe_failed");
       case capOpenApp:
         return _openApp(intent["target_app"]?.toString() ?? "");
       default:
@@ -241,12 +266,12 @@ class DeviceActionExecutor {
 
   /// A6 P1.5：按快照路径执行动作；路径失效 → 明确失败（不重试、不猜）。
   static Future<Map<String, dynamic>> _runAccessibilityPathAction(
-      String action, String path) async {
+      String action, String path, {String text = ""}) async {
     if (path.trim().isEmpty) return _exec(false, "empty_path");
     final health = await PhonePerceptionService.getServiceHealth();
     if (health["accessible"] != true) return _exec(false, "accessibility_off");
     if (!await PhonePerceptionService.isActionsEnabled()) return _exec(false, "actions_switch_off");
-    final r = await PhonePerceptionService.performActionByPath(path, action: action);
+    final r = await PhonePerceptionService.performActionByPath(path, action: action, text: text);
     final ok = r["ok"] == true;
     return _exec(ok, (r["message"] ?? (ok ? "ok" : "action_failed")).toString());
   }
@@ -262,12 +287,7 @@ class DeviceActionExecutor {
     } catch (e) {
       why = "open_app_error:$e";
     }
-    final st = await ShizukuService.status();
-    if (st["serverRunning"] != true) return _exec(false, "amBraceClick_failed:$why; shizuku_not_running");
-    if (st["permissionGranted"] != true) return _exec(false, "amBraceClick_failed:$why; shizuku_not_granted");
-    final r = await ShizukuService.runShell("monkey -p $packageName 1");
-    final ok = r["ok"] == true;
-    return _exec(ok, ok ? "launched:$packageName" : "launch_failed:${r["stderr"] ?? ""}");
+    return _exec(false, "amBraceClick_failed:$why");
   }
 
   static Map<String, dynamic> _exec(bool ok, String detail) => {"ok": ok, "detail": detail};

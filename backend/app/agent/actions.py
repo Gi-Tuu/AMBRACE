@@ -24,10 +24,12 @@ CAL_NOTE = "CAL_NOTE"
 MEMO = "MEMO"
 # 批 G4（2026-09-26）：[CAL_DONE]/[MEMO_DONE] → 把「已经结束」的小手机日历/备忘条目标记完成
 NOTE_DONE = "NOTE_DONE"
+DEVICE_OBSERVE = "DEVICE_OBSERVE"
+DEVICE_ACT = "DEVICE_ACT"
 TIMER = "TIMER"
 STATUS_UPDATE = "STATUS_UPDATE"
 
-ACTION_TYPES = (SEARCH, RECALL, GEN_IMAGE, IMG_TEXT, CAL_NOTE, MEMO, NOTE_DONE, TIMER, STATUS_UPDATE)
+ACTION_TYPES = (SEARCH, RECALL, GEN_IMAGE, IMG_TEXT, CAL_NOTE, MEMO, NOTE_DONE, TIMER, STATUS_UPDATE, DEVICE_OBSERVE, DEVICE_ACT)
 
 
 @dataclass
@@ -93,6 +95,8 @@ _TIMER_RE = re.compile(
 )
 # 【状态更新：…】（与 response_parser 同源，仅识别；正文剥离仍走 parse_response）
 _STATUS_UPDATE_RE = re.compile(r"[「\[【]\s*状态更新\s*[:：]\s*(.*?)[」\]】]")
+_DEVICE_OBSERVE_RE = re.compile(r"[\[【]\s*DEVICE_OBSERVE\s*[\]】]\s*(.*?)(?:[\[【]\s*/DEVICE_OBSERVE\s*[\]】]|$)", re.M | re.S)
+_DEVICE_ACT_RE = re.compile(r"[\[【]\s*DEVICE_ACT\s*[\]】]\s*(.*?)(?:[\[【]\s*/DEVICE_ACT\s*[\]】]|$)", re.M | re.S)
 
 # MCP 工具标记（Phase 2，2026-08-26）：[mcp.<server>.<tool>]{JSON 参数}[/mcp.<server>.<tool>]
 # 兼容全/半角方括号；args 建议 JSON 对象（非 JSON 时按文本兜底）。
@@ -429,6 +433,18 @@ def parse_actions(text: str, *, base_date: str | None = None) -> list[AgentActio
             actions.append(AgentAction(MEMO, {"text": content[:80]}, m.group(0)))
     for m in _TIMER_RE.finditer(text):
         actions.append(AgentAction(TIMER, {"tag": m.group(0)}, m.group(0)))
+    for m in _DEVICE_OBSERVE_RE.finditer(text):
+        _target = (m.group(1) or "").strip()
+        if _target:
+            actions.append(AgentAction(DEVICE_OBSERVE, {"target_app": _target[:120]}, m.group(0)))
+    for m in _DEVICE_ACT_RE.finditer(text):
+        try:
+            import json as _json
+            _obj = _json.loads((m.group(1) or "").strip())
+            if isinstance(_obj, dict):
+                actions.append(AgentAction(DEVICE_ACT, _obj, m.group(0)))
+        except Exception:
+            pass
     su = extract_status_update(text)
     if su:
         actions.append(AgentAction(STATUS_UPDATE, {"text": su}, text))
@@ -443,7 +459,7 @@ def parse_actions(text: str, *, base_date: str | None = None) -> list[AgentActio
 _STRIP_PATTERNS = [
     _SEARCH_RE, _RECALL_RE, _IMG_TEXT_RE, _GEN_IMAGE_RE, _CAL_DONE_RE, _MEMO_DONE_RE,
     _CAL_NOTE_RE, _MEMO_RE, _TIMER_RE,
-    _MCP_TOOL_RE, _IMG_ORPHAN_CLOSE_RE,
+    _MCP_TOOL_RE, _DEVICE_OBSERVE_RE, _DEVICE_ACT_RE, _IMG_ORPHAN_CLOSE_RE,
 ]
 
 

@@ -13,8 +13,6 @@ import "../../services/workflow_action_bridge.dart";
 // 注：本页是**用户自己的系统级感知**，不接角色隐私上锁（见下方字段处说明）
 import "../../features/phone/perception_tiles.dart";
 import "../../features/settings/notification_whitelist_screen.dart";
-import "shizuku_screen.dart";
-import "workflow_screen.dart";
 import "../../services/shizuku_service.dart";
 import "../../utils/app_lang.dart";
 import "package:ai_companion/l10n/app_localizations.dart";
@@ -1006,11 +1004,6 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                       ok: _health['notification'] == true,
                   sub: _health['notificationConnected'] == true ? l10n.connected : l10n.healthNotificationNotConnected),
               const PpDivider(),
-              PpHealthTile(icon: Icons.shield_outlined, title: 'Shizuku',
-                      ok: _health['shizuku'] == true,
-                  sub: _health['shizukuRunning'] == true
-                      ? (_health['shizukuGranted'] == true ? l10n.healthShizukuAuthorized : l10n.healthShizukuUnauthorized)
-                      : l10n.healthShizukuNotRunning),
               const PpDivider(),
               PpHealthTile(icon: Icons.bar_chart, title: l10n.healthUsageAccess,
                       ok: _health['usageStats'] == true),
@@ -1103,20 +1096,6 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
             ),
             if (_expandActions) ...[
               const PpDivider(),
-              Padding(
-                padding: const EdgeInsets.only(left: 24),
-                child: PpNav(
-                  icon: Icons.account_tree_outlined,
-                  title: l10n.ppWorkflowTitle,
-                  subtitle: l10n.ppWorkflowSub,
-                  enabled: _enabled,
-                  onTap: () async {
-                    await Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => const WorkflowScreen(),
-                    ));
-                  },
-                ),
-              ),
             ],
             const PpDivider(),
             PpFoldParent(
@@ -1163,16 +1142,6 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
                 ),
               ),
             ],
-            const PpDivider(),
-            PpNav(
-              icon: Icons.security_outlined,
-              title: l10n.ppShizukuTitle,
-              subtitle: l10n.ppShizukuSub,
-              enabled: _enabled,
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const ShizukuScreen()),
-              ),
-            ),
             const PpDivider(),
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),

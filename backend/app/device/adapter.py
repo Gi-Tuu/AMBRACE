@@ -31,7 +31,10 @@ async def enqueue_and_wait(*, user_id: int, capability: str, target_app: str,
     intent = dev_actions.ActionIntent(capability=capability, target_app=target_app,
                                       by=params.get("by"), query=params.get("query"),
                                       path=params.get("path"), text=params.get("text"),
-                                      dry_run=False)
+                                      direction=params.get("direction"),
+                                      x1=params.get("x1"), y1=params.get("y1"),
+                                      x2=params.get("x2"), y2=params.get("y2"),
+                                      ms=params.get("ms"), dry_run=False)
     token = secrets.token_hex(8)
     ev = asyncio.Event()
     _WAITERS[token] = ev
@@ -85,3 +88,21 @@ async def execute_action(*, user_id: int, target_app: str, plan: dict,
 async def open_app(*, user_id: int, package: str, timeout: float = 15.0) -> dict:
     return await enqueue_and_wait(user_id=user_id, capability="action_open_app",
                                   target_app=package, timeout=timeout)
+
+
+async def set_text(*, user_id: int, target_app: str, path: str, text: str,
+                   timeout: float = 20.0) -> dict:
+    return await enqueue_and_wait(user_id=user_id, capability="action_set_text",
+                                  target_app=target_app, timeout=timeout,
+                                  by="path", path=path, text=text)
+
+
+
+async def swipe(*, user_id: int, target_app: str, direction: str = "",
+                x1: int | None = None, y1: int | None = None,
+                x2: int | None = None, y2: int | None = None,
+                ms: int = 300, timeout: float = 20.0) -> dict:
+    return await enqueue_and_wait(user_id=user_id, capability="action_swipe",
+                                  target_app=target_app, timeout=timeout,
+                                  direction=direction or None,
+                                  x1=x1, y1=y1, x2=x2, y2=y2, ms=ms)

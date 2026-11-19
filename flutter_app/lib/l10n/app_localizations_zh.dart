@@ -1609,16 +1609,16 @@ class AppLocalizationsZh extends AppLocalizations {
   String get ppWhitelistSub => '勾选后只感知指定 app 的通知（默认全部）';
 
   @override
-  String get ppShizukuTitle => 'Shizuku 权限';
+  String get ppShizukuTitle => '系统状态采集';
 
   @override
-  String get ppShizukuSub => '系统级能力（应用列表/系统设置/模拟操作前置）：状态、授权与 Shell 测试';
+  String get ppShizukuSub => '应用列表/电量/网络/前台应用等本机能力；由无障碍服务提供，无需额外授权';
 
   @override
-  String get ppShizukuServer => 'Shizuku 服务';
+  String get ppShizukuServer => '无障碍服务';
 
   @override
-  String get ppShizukuGranted => '本应用授权';
+  String get ppShizukuGranted => '已开启';
 
   @override
   String get ppReady => '已就绪';

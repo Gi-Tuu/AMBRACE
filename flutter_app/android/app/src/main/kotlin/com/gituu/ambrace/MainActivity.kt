@@ -165,24 +165,65 @@ class MainActivity : FlutterActivity() {
                     val top = call.argument<Int>("top") ?: 8
                     result.success(queryUsageStats(top))
                 }
-                "shizukuStatus" -> result.success(
+                "shizukuStatus" -> result.success(DeviceInfoBridge.status(this))
+                "shizukuRequestPermission" -> {
+                    try {
+                        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    } catch (_: Exception) {}
+                    result.success(true)
+                }
+                "shizukuRunShell" -> result.success(
                     mapOf(
-                        "serverRunning" to ShizukuBridge.isServerRunning(),
-                        "permissionGranted" to ShizukuBridge.isPermissionGranted(),
+                        "ok" to false, "stdout" to "", "code" to "unsupported", "retriable" to false,
+                        "stderr" to "Shizuku 已移除：请使用无障碍动作（AmBraceClick / 节点动作）",
                     )
                 )
-                "shizukuRequestPermission" -> result.success(ShizukuBridge.requestPermission())
-                "shizukuRunShell" -> {
-                    val cmd = call.argument<String>("command") ?: "id"
-                    val timeout = (call.argument<Int>("timeout_ms") ?: 15000).toLong()
-                    ShizukuBridge.runShell(cmd, timeout) { r -> result.success(r) }
+                "accessibilityTap" -> {
+                    val x = (call.argument<Double>("x") ?: 0.0).toFloat()
+                    val y = (call.argument<Double>("y") ?: 0.0).toFloat()
+                    val svc = PhonePerceptionAccessibilityService.instance
+                    result.success(mapOf("ok" to (svc?.tapAt(x, y) ?: false)))
                 }
-                "shizukuGetAppList" -> {
-                    ShizukuBridge.getInstalledPackages { r -> result.success(r) }
+                "accessibilitySwipe" -> {
+                    val svc = PhonePerceptionAccessibilityService.instance
+                    val ms = (call.argument<Int>("ms") ?: 300).toLong()
+                    val direction = (call.argument<String>("direction") ?: "").lowercase()
+                    var x1 = (call.argument<Double>("x1") ?: 0.0).toFloat()
+                    var y1 = (call.argument<Double>("y1") ?: 0.0).toFloat()
+                    var x2 = (call.argument<Double>("x2") ?: 0.0).toFloat()
+                    var y2 = (call.argument<Double>("y2") ?: 0.0).toFloat()
+                    if (direction.isNotEmpty()) {
+                        val point = android.graphics.Point()
+                        try {
+                            val dmgr = getSystemService(android.hardware.display.DisplayManager::class.java)
+                            val disp = dmgr?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+                            @Suppress("DEPRECATION")
+                            disp?.getRealSize(point)
+                        } catch (_: Exception) {}
+                        val w = if (point.x > 0) point.x.toFloat() else resources.displayMetrics.widthPixels.toFloat()
+                        val h = if (point.y > 0) point.y.toFloat() else resources.displayMetrics.heightPixels.toFloat()
+                        when (direction) {
+                            "up" -> { x1 = w / 2; y1 = h * 0.75f; x2 = w / 2; y2 = h * 0.25f }
+                            "down" -> { x1 = w / 2; y1 = h * 0.25f; x2 = w / 2; y2 = h * 0.75f }
+                            "left" -> { x1 = w * 0.75f; y1 = h / 2; x2 = w * 0.25f; y2 = h / 2 }
+                            "right" -> { x1 = w * 0.25f; y1 = h / 2; x2 = w * 0.75f; y2 = h / 2 }
+                        }
+                    }
+                    if (svc == null) {
+                        result.success(mapOf("ok" to false))
+                    } else {
+                        val replied = java.util.concurrent.atomic.AtomicBoolean(false)
+                        svc.swipeTo(x1, y1, x2, y2, ms) { ok ->
+                            if (replied.compareAndSet(false, true)) {
+                                runOnUiThread { result.success(mapOf("ok" to ok)) }
+                            }
+                        }
+                    }
                 }
-                "shizukuSystemSnapshot" -> {
-                    ShizukuBridge.getSystemSnapshot { r -> result.success(r) }
-                }
+                "accessibilityBack" -> result.success(mapOf("ok" to (PhonePerceptionAccessibilityService.instance?.backPress() ?: false)))
+                "accessibilityHome" -> result.success(mapOf("ok" to (PhonePerceptionAccessibilityService.instance?.homePress() ?: false)))
+                "shizukuGetAppList" -> result.success(DeviceInfoBridge.listPackages(this))
+                "shizukuSystemSnapshot" -> result.success(DeviceInfoBridge.systemSnapshot(this))
                 "openAccessibilitySettings" -> {
                     // 跳系统无障碍设置（App 更新后读屏服务可能被系统重置，需重新开启）
                     try {
@@ -196,65 +237,8 @@ class MainActivity : FlutterActivity() {
                     }
                 }
                 "getAppListDetailed" -> {
-                    // 已安装第三方应用（含中文名，工作流选应用用；QUERY_ALL_PACKAGES 已声明）。
-                    // 后台线程执行：vivo 等 ROM 上 PackageManager 查询可能慢/卡死，不能拖住主线程（否则 UI 灰块）。
-                    // PackageManager 返回空/异常时自动降级 Shizuku shell 读包名（shell 不受 app 包可见性限制）。
                     Thread {
-                        val pm = packageManager
-                        var pmApps: List<Pair<String, String>>? = null
-                        try {
-                            val apps = pm.getInstalledApplications(
-                                android.content.pm.PackageManager.ApplicationInfoFlags.of(0L)
-                            )
-                            Log.i(CHANNEL, "getAppListDetailed installedApplications=" + apps.size)
-                            if (apps.isNotEmpty()) {
-                                pmApps = apps
-                                    .filter { it.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM == 0 }
-                                    .map { it.packageName to (pm.getApplicationLabel(it)?.toString() ?: it.packageName) }
-                            }
-                        } catch (e: Exception) {
-                            Log.w(CHANNEL, "getInstalledApplications failed: ${e.message}")
-                        }
-                        if (pmApps != null) {
-                            Log.i(CHANNEL, "getAppListDetailed pmApps=" + pmApps.size)
-                            val apps = pmApps
-                                .map { mapOf("package" to it.first, "label" to it.second) }
-                                .sortedBy { (it["label"] as String).lowercase() }
-                            runOnUiThread {
-                                result.success(mapOf("ok" to true, "apps" to apps))
-                            }
-                        } else {
-                            // 降级：Shizuku shell 读第三方包名（shell 不受 app 包可见性限制）
-                            ShizukuBridge.getInstalledPackages { r ->
-                                val ok = r["ok"] == true
-                                if (!ok) {
-                                    Log.w(CHANNEL, "getAppListDetailed fallback shizuku failed: " + (r["error"] ?: ""))
-                                    runOnUiThread {
-                                        result.success(
-                                            mapOf(
-                                                "ok" to false,
-                                                "apps" to emptyList<Map<String, String>>(),
-                                                "error" to (r["error"] ?: "无法读取应用列表")
-                                            )
-                                        )
-                                    }
-                                } else {
-                                    val packages = (r["packages"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                                    Log.i(CHANNEL, "getAppListDetailed fallback shizuku packages=" + packages.size)
-                                    val apps = packages.map { pkg ->
-                                        val label = try {
-                                            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0))?.toString() ?: pkg
-                                        } catch (e: Exception) {
-                                            pkg
-                                        }
-                                        mapOf("package" to pkg, "label" to label)
-                                    }.sortedBy { (it["label"] as String).lowercase() }
-                                    runOnUiThread {
-                                        result.success(mapOf("ok" to true, "apps" to apps))
-                                    }
-                                }
-                            }
-                        }
+                        runOnUiThread { result.success(DeviceInfoBridge.listAppsDetailed(this)) }
                     }.start()
                 }
                 "getScreenSize" -> {
@@ -561,8 +545,9 @@ class MainActivity : FlutterActivity() {
         val accInstanceAlive = PhonePerceptionAccessibilityService.instance != null
         val notifEnabled = isNotificationAccessEnabled()
         val notifConnected = PhonePerceptionNotificationService.instance != null
-        val shizukuRunning = ShizukuBridge.isServerRunning()
-        val shizukuGranted = ShizukuBridge.isPermissionGranted()
+        // 去 Shizuku：保留旧健康键但恒为 false，避免调用方崩溃
+        val shizukuRunning = false
+        val shizukuGranted = false
         val usageEnabled = isUsageAccessEnabled()
         val batteryOk = isIgnoringBatteryOptimizations()
 
