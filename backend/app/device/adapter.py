@@ -94,7 +94,7 @@ async def set_text(*, user_id: int, target_app: str, path: str, text: str,
                    timeout: float = 20.0) -> dict:
     return await enqueue_and_wait(user_id=user_id, capability="action_set_text",
                                   target_app=target_app, timeout=timeout,
-                                  by="path", path=path, text=text)
+                                  path=path, text=text)
 
 
 

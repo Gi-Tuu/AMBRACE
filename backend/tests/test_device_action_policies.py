@@ -42,7 +42,8 @@ PREV_HEAD = "f7b8c9d0e1f2"      # 本迁移 down_revision（交接前的版本�
 TABLE = "device_action_policies"
 
 USER_A, USER_B = 21, 22
-CAPS = ("action_open_app", "action_tap", "action_observe_tree", "action_set_text")
+CAPS = ("action_open_app", "action_tap", "action_observe_tree", "action_set_text",
+        "action_scroll", "action_swipe")
 
 # 建临时库属重量级/集成型用例（docs/engineering-protocol.md 十八）
 pytestmark = pytest.mark.slow

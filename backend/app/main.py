@@ -81,6 +81,13 @@ import sys as _sys
 _sys.stderr.write(f"[AMBRACE] app single-instance lock held on 127.0.0.1:{INSTANCE_LOCK_PORT}\n")
 
 
+def _register_device_agent_tools() -> None:
+    """登记 A6 角色设备工具（observe/act；失败由调用方 readiness 记录）。"""
+    from app.device.agent_tools import register_device_tools
+    dev = register_device_tools(enabled=True, act_enabled=True)
+    get_logger("app").info("Device tools registered: %s", [(s.name, s.enabled) for s in dev])
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -195,13 +202,10 @@ async def lifespan(app: FastAPI):
         _registered = register_builtin_tools()
         readiness.mark("builtin_tools", True)
         logger.info("Builtin tools registered: %d (total %d)", _registered, len(_list_tools()))
-        from app.device.agent_tools import register_device_tools
-        _dev = register_device_tools(enabled=True, act_enabled=True)
-        logger.info("Device tools registered: %s", [(s.name, s.enabled) for s in _dev])
+        _register_device_agent_tools()
     except Exception as _bte:
         readiness.mark("builtin_tools", False, msg=str(_bte))
         logger.warning("Builtin tools register failed: %s", _bte)
-
     # ── 启动步骤 7（可选路径）：内置事件订阅者注册 ────────────────────────────────
     # 演进规划 v2 Phase A：memory.written → 织库增量 / life.activity_completed → 朋友圈联动。
     try:

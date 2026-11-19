@@ -392,7 +392,8 @@ def test_跨账号取不到pending且不得替他人回报(act_db):
 # ── ⑩ 行动能力契约：与 :write 权限名一一对应 ──
 def test_行动能力与write权限名一一对应():
     act = {cid: spec for cid, spec in CAPABILITIES.items() if spec.kind == "act"}
-    assert set(act) == {"action_open_app", "action_tap", "action_observe_tree", "action_set_text"}
+    assert set(act) == {"action_open_app", "action_tap", "action_observe_tree", "action_set_text",
+                       "action_scroll", "action_swipe"}
     for cid, spec in act.items():
         assert spec.permission == f"device:{cid}:write"
         assert spec.permission in capability_permissions()

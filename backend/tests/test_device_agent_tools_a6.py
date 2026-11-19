@@ -1,4 +1,4 @@
-import pytest
+import asyncio
 
 from app.agent import actions as act_mod
 from app.device import agent_tools
@@ -18,8 +18,7 @@ def test_register_device_tools_observe_enabled_act_disabled():
     assert specs[agent_tools.ACT_TOOL].enabled is False
 
 
-@pytest.mark.asyncio
-async def test_observe_handler_returns_refs(monkeypatch):
+def test_observe_handler_returns_refs(monkeypatch):
     from app.agent import loop as loop_mod
 
     monkeypatch.setattr(loop_mod, "AGENT_FLAGS", {"device_actions_enabled": True})
@@ -34,17 +33,16 @@ async def test_observe_handler_returns_refs(monkeypatch):
             {"role": "button", "name": "确定", "clickable": True, "path": "0/0/1"}]}
 
     monkeypatch.setattr("app.device.agent_tools.device_adapter.observe_tree", _tree)
-    out = await agent_tools._execute_observe({"user_id": 3, "target_app": "com.android.settings"})
+    out = asyncio.run(agent_tools._execute_observe({"user_id": 3, "target_app": "com.android.settings"}))
     assert out["ok"] is True
     assert out["refs"]
     assert "snapshot_id" in out
 
 
-@pytest.mark.asyncio
-async def test_observe_handler_respects_kill_switch(monkeypatch):
+def test_observe_handler_respects_kill_switch(monkeypatch):
     from app.agent import loop as loop_mod
 
     monkeypatch.setattr(loop_mod, "AGENT_FLAGS", {"device_actions_enabled": False})
-    out = await agent_tools._execute_observe({"user_id": 3, "target_app": "com.android.settings"})
+    out = asyncio.run(agent_tools._execute_observe({"user_id": 3, "target_app": "com.android.settings"}))
     assert out["ok"] is False
     assert "总开关" in out["text"]

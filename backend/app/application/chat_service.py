@@ -199,15 +199,7 @@ async def _run_agent_core(
     )
 
     if not _is_stream:
-        final_state, full_text = await _run_device_stage(
-            final_state=final_state, full_text=full_text,
-            user_id=user_id, character_id=character_id, session_id=session_id,
-        )
-        final_state, full_text = await _run_device_act_stage(
-            final_state=final_state, full_text=full_text,
-            user_id=user_id, character_id=character_id, session_id=session_id,
-        )
-        final_state, full_text = await _run_mcp_stage(
+        final_state, full_text = await _run_post_tool_stages(
             final_state=final_state, full_text=full_text, _loop_steps=_loop_steps,
             user_id=user_id, character_id=character_id, session_id=session_id,
         )
@@ -603,6 +595,25 @@ async def _run_mcp_stage(
         except Exception:
             pass
     return final_state, full_text
+
+
+async def _run_post_tool_stages(
+    *, final_state: dict, full_text: str, _loop_steps: list, user_id: int,
+    character_id: int, session_id: int,
+) -> tuple[dict, str]:
+    """A6 observe/act 与 MCP 的统一收口（保持原调用顺序）。"""
+    final_state, full_text = await _run_device_stage(
+        final_state=final_state, full_text=full_text,
+        user_id=user_id, character_id=character_id, session_id=session_id,
+    )
+    final_state, full_text = await _run_device_act_stage(
+        final_state=final_state, full_text=full_text,
+        user_id=user_id, character_id=character_id, session_id=session_id,
+    )
+    return await _run_mcp_stage(
+        final_state=final_state, full_text=full_text, _loop_steps=_loop_steps,
+        user_id=user_id, character_id=character_id, session_id=session_id,
+    )
 
 
 # ---- 生图标记提取阶段（2026-10-13 A50 批 18 自 _run_agent_core 机械抽出）----

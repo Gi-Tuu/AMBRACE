@@ -100,51 +100,58 @@ def _spec_observe(enabled: bool = True) -> ToolSpec:
     )
 
 
+async def _execute_swipe(payload: dict, uid: int) -> dict:
+    """swipe 分支：总开关/账号/once_ever 授权 + 方向/坐标下发。"""
+    from app.agent import loop as _loop
+    from app.device.actions import KILL_SWITCH_KEY, _account_actions_enabled, configured_policies
+    if not bool((_loop.AGENT_FLAGS or {}).get(KILL_SWITCH_KEY, False)):
+        return {"ok": False, "text": "手机操作总开关未开"}
+    try:
+        if not await _account_actions_enabled(uid):
+            return {"ok": False, "text": "当前账号未开启手机操作"}
+    except Exception as e:
+        return {"ok": False, "text": f"权限检查失败：{e}"}
+    try:
+        pol = await configured_policies(uid)
+    except Exception as e:
+        return {"ok": False, "text": f"读取授权失败：{e}"}
+    if pol.get("action_swipe") != "once_ever":
+        return {"ok": False, "text": "需要先在 App 手机操作里完成一次确认（action_swipe）"}
+    target = str(payload.get("target_app") or _LAST_TARGET_APP or "").strip()
+    if not target:
+        return {"ok": False, "text": "swipe 需要 target_app"}
+    direction = str(payload.get("direction") or "").strip().lower()
+    if direction not in ("", "up", "down", "left", "right"):
+        return {"ok": False, "text": "direction 只能是 up/down/left/right"}
+    try:
+        res = await device_adapter.swipe(
+            user_id=uid, target_app=target, direction=direction,
+            x1=payload.get("x1"), y1=payload.get("y1"),
+            x2=payload.get("x2"), y2=payload.get("y2"),
+            ms=int(payload.get("ms") or 300), timeout=20.0,
+        )
+    except Exception as e:
+        _logger.warning("device swipe failed payload=%s err=%s", payload, e)
+        return {"ok": False, "text": f"滑动下发失败：{e}"}
+    if res.get("ok"):
+        return {"ok": True, "text": f"已滑动（{direction or '坐标'}）"}
+    return {"ok": False, "text": f"滑动失败：{res.get('detail') or 'unknown'}"}
+
+
 async def _execute_act(payload: dict) -> dict:
-    """角色动作入口：仅支持 click；必须已有 once_ever 授权。"""
+    """角色动作入口：click/set_text 按 ref，swipe 按方向/坐标。"""
     from app.agent import loop as _loop
     from app.device.actions import KILL_SWITCH_KEY, _account_actions_enabled, configured_policies
     try:
         uid = int(payload.get("user_id") or 0)
     except Exception:
         uid = 0
-    snapshot_id = str(payload.get("snapshot_id") or "").strip()
-    ref = str(payload.get("ref") or "").strip()
     verb = str(payload.get("verb") or "click").strip().lower()
     _logger.info("device_act enter verb=%s payload=%s", verb, payload)
     if verb == "swipe":
-        if not bool((_loop.AGENT_FLAGS or {}).get(KILL_SWITCH_KEY, False)):
-            return {"ok": False, "text": "手机操作总开关未开"}
-        try:
-            if not await _account_actions_enabled(uid):
-                return {"ok": False, "text": "当前账号未开启手机操作"}
-        except Exception as e:
-            return {"ok": False, "text": f"权限检查失败：{e}"}
-        try:
-            _pol = await configured_policies(uid)
-        except Exception as e:
-            return {"ok": False, "text": f"读取授权失败：{e}"}
-        if _pol.get("action_swipe") != "once_ever":
-            return {"ok": False, "text": "需要先在 App 手机操作里完成一次确认（action_swipe）"}
-        target = str(payload.get("target_app") or _LAST_TARGET_APP or "").strip()
-        if not target:
-            return {"ok": False, "text": "swipe 需要 target_app"}
-        direction = str(payload.get("direction") or "").strip().lower()
-        if direction not in ("", "up", "down", "left", "right"):
-            return {"ok": False, "text": "direction 只能是 up/down/left/right"}
-        try:
-            res = await device_adapter.swipe(
-                user_id=uid, target_app=target, direction=direction,
-                x1=payload.get("x1"), y1=payload.get("y1"),
-                x2=payload.get("x2"), y2=payload.get("y2"),
-                ms=int(payload.get("ms") or 300), timeout=20.0,
-            )
-        except Exception as e:
-            _logger.warning("device swipe failed payload=%s err=%s", payload, e)
-            return {"ok": False, "text": f"滑动下发失败：{e}"}
-        if res.get("ok"):
-            return {"ok": True, "text": f"已滑动（{direction or '坐标'}）"}
-        return {"ok": False, "text": f"滑动失败：{res.get('detail') or 'unknown'}"}
+        return await _execute_swipe(payload, uid)
+    snapshot_id = str(payload.get("snapshot_id") or "").strip()
+    ref = str(payload.get("ref") or "").strip()
     if not snapshot_id or not ref:
         return {"ok": False, "text": "需要 snapshot_id 与 ref（先用 device_observe）"}
     if not bool((_loop.AGENT_FLAGS or {}).get(KILL_SWITCH_KEY, False)):
@@ -164,9 +171,9 @@ async def _execute_act(payload: dict) -> dict:
     except snap.SnapshotError as e:
         return {"ok": False, "text": f"动作计划失败：{e.code} {e}"}
     plan = dict(plan)
-    _full = _TOOL_SNAPSHOT_PATHS.get((snapshot_id, ref))
-    if _full:
-        plan["path"] = _full
+    full = _TOOL_SNAPSHOT_PATHS.get((snapshot_id, ref))
+    if full:
+        plan["path"] = full
     cap = {"click": "action_tap", "set_text": "action_set_text"}[verb]
     try:
         policies = await configured_policies(uid)
@@ -189,7 +196,6 @@ async def _execute_act(payload: dict) -> dict:
         label = {"click": "已点击", "set_text": "已输入"}[verb]
         return {"ok": True, "text": f"{label} {plan.get('expected_identity', {}).get('name') or ref}"}
     return {"ok": False, "text": f"动作失败：{res.get('detail') or 'unknown'}"}
-
 
 def _spec_act(enabled: bool = True) -> ToolSpec:
     return ToolSpec(

@@ -207,7 +207,7 @@ J4_ONLY_CATEGORIES = ("abstention",)
 # 的漂移守卫钉住（新增动作类型忘了同步 ⇒ 那条题会被 lint 判不合法，而不是静默判不了）。
 KNOWN_ACTION_TYPES = frozenset({
     "SEARCH", "RECALL", "GEN_IMAGE", "IMG_TEXT", "CAL_NOTE", "MEMO",
-    "NOTE_DONE", "TIMER", "STATUS_UPDATE",
+    "NOTE_DONE", "TIMER", "STATUS_UPDATE", "DEVICE_OBSERVE", "DEVICE_ACT",
 })
 # **落库通道**（不是动作类型）：`【记忆：内容】` 由 `app/agent/response_parser.py` 的 `parse_response`
 # 提取后走 `save_memory`，是生产里"把用户交代的事记下来"的**主通道**；`[MEMO]` 只是小手机备忘录。

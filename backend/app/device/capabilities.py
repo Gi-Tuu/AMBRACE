@@ -87,11 +87,11 @@ _CAP_LIST: tuple[CapabilitySpec, ...] = (
          {"target_app": "str", "by": "str", "query": "str", "dry_run": "bool"}),
     _act("action_observe_tree", "accessibility", {"target_app": "str", "dry_run": "bool"}),
 _act("action_set_text", "accessibility",
-         {"target_app": "str", "by": "str", "path": "str", "text": "str", "dry_run": "bool"}),
+         {"target_app": "str", "text": "str", "dry_run": "bool"}),
 _act("action_scroll", "accessibility",
          {"target_app": "str", "by": "str", "path": "str", "dry_run": "bool"}),
 _act("action_swipe", "accessibility",
-         {"target_app": "str", "direction": "str", "x1": "int", "y1": "int", "x2": "int", "y2": "int", "ms": "int", "dry_run": "bool"}),
+         {"target_app": "str", "direction": "str", "dry_run": "bool"}),
 )
 
 CAPABILITY_IDS: tuple[str, ...] = tuple(spec.id for spec in _CAP_LIST)

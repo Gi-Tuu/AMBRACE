@@ -1,6 +1,6 @@
 #define AppName "AMBRACE"
 #define AppVersion "3.6.6"
-#define Stage "E:\Win11Test\stage"
+#define Stage GetEnv("AMBRACE_STAGE")
 
 [Setup]
 AppId={{7C3E2B1A-9F4D-4A8E-9C2B-3D5E7A1B0C42}

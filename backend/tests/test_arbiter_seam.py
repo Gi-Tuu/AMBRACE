@@ -1990,7 +1990,8 @@ def test_批5三_收口后chat_service只剩run_agent_core与三个对外端点(
     # _finalize_visible_text，源码顺序紧跟 _run_mcp_stage ⇒ 模块面精确多这五个名字。
     # 白名单按名字逐个列，不许用「全部下划线开头都算」豁免——那样新私有不受约束、删了也不红。
     assert top == ["_run_agent_core", "_run_user_turn_signals",
-                   "_run_recall_second_hop", "_run_search_stage", "_run_mcp_stage",
+                   "_run_recall_second_hop", "_run_search_stage", "_run_device_stage",
+                   "_run_device_act_stage", "_run_mcp_stage", "_run_post_tool_stages",
                    "_extract_gen_image_stage", "_emit_chat_trace", "_schedule_chat_task",
                    "_run_note_and_timer_stage", "_finalize_visible_text",
                    "send_and_receive", "send_and_receive_chunked", "continue_chat"], (

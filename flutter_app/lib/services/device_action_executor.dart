@@ -227,7 +227,7 @@ class DeviceActionExecutor {
         }
         return _runAccessibilityAction("click", intent["query"]?.toString() ?? "");
       case capSetText:
-        if ((intent["by"]?.toString() ?? "") == "path") {
+        if ((intent["path"]?.toString() ?? "").isNotEmpty) {
           return _runAccessibilityPathAction("set_text", intent["path"]?.toString() ?? "",
               text: intent["text"]?.toString() ?? "");
         }

@@ -61,9 +61,9 @@ def test_能力级权限并入VALID_PERMISSIONS且与能力一一对应():
     act = {cid: spec for cid, spec in caps.CAPABILITIES.items() if spec.kind == "act"}
 
     # M0 只读 8 条 + M4a 行动 3 条（读写是两条独立权限，各按 kind 校验后缀）
-    assert len(read) == 8 and len(act) == 4
-    assert len(perms) == len(caps.CAPABILITIES) == 12
-    assert len(set(perms)) == 12, "能力级权限名不得重名（重名即破坏一一对应）"
+    assert len(read) == 8 and len(act) == 6
+    assert len(perms) == len(caps.CAPABILITIES) == 14
+    assert len(set(perms)) == 14, "能力级权限名不得重名（重名即破坏一一对应）"
     for cid, spec in read.items():
         assert spec.permission == f"device:{cid}:read"
         assert spec.permission in manifest.VALID_PERMISSIONS, f"{spec.permission} 未并入白名单"

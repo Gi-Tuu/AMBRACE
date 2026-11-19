@@ -1,4 +1,4 @@
-import pytest
+import asyncio
 
 from app.agent import actions as act_mod
 from app.device import agent_tools
@@ -20,8 +20,7 @@ def test_register_device_tools_can_enable_act():
     assert specs[agent_tools.ACT_TOOL].execute is not None
 
 
-@pytest.mark.asyncio
-async def test_act_handler_click(monkeypatch):
+def test_act_handler_click(monkeypatch):
     from app.agent import loop as loop_mod
 
     monkeypatch.setattr(loop_mod, "AGENT_FLAGS", {"device_actions_enabled": True})
@@ -40,15 +39,14 @@ async def test_act_handler_click(monkeypatch):
     monkeypatch.setattr("app.device.agent_tools.snap.plan_action",
                         lambda sid, ref, verb, **kw: {"path": "0/0/1", "expected_identity": {"name": "确定"}})
     monkeypatch.setattr("app.device.agent_tools.device_adapter.execute_action", _exec)
-    out = await agent_tools._execute_act(
+    out = asyncio.run(agent_tools._execute_act(
         {"user_id": 3, "snapshot_id": "s1", "ref": "@s1:e1", "verb": "click", "target_app": "com.test.app"}
-    )
+    ))
     assert out["ok"] is True
     assert "确定" in out["text"]
 
 
-@pytest.mark.asyncio
-async def test_act_handler_requires_approval(monkeypatch):
+def test_act_handler_requires_approval(monkeypatch):
     from app.agent import loop as loop_mod
 
     monkeypatch.setattr(loop_mod, "AGENT_FLAGS", {"device_actions_enabled": True})
@@ -63,9 +61,9 @@ async def test_act_handler_requires_approval(monkeypatch):
     monkeypatch.setattr("app.device.actions.configured_policies", _policies)
     monkeypatch.setattr("app.device.agent_tools.snap.plan_action",
                         lambda sid, ref, verb, **kw: {"path": "0/0/1", "expected_identity": {"name": "确定"}})
-    out = await agent_tools._execute_act(
+    out = asyncio.run(agent_tools._execute_act(
         {"user_id": 3, "snapshot_id": "s1", "ref": "@s1:e1", "verb": "click", "target_app": "com.test.app"}
-    )
+    ))
     assert out["ok"] is False
     assert "确认" in out["text"]
 
@@ -76,10 +74,9 @@ def test_parse_device_swipe_marker():
     assert acts[0].payload["direction"] == "up"
 
 
-@pytest.mark.asyncio
-async def test_swipe_requires_kill_switch(monkeypatch):
+def test_swipe_requires_kill_switch(monkeypatch):
     from app.agent import loop as loop_mod
     monkeypatch.setattr(loop_mod, "AGENT_FLAGS", {"device_actions_enabled": False})
-    out = await agent_tools._execute_act({"user_id": 3, "verb": "swipe", "direction": "up", "target_app": "com.test"})
+    out = asyncio.run(agent_tools._execute_act({"user_id": 3, "verb": "swipe", "direction": "up", "target_app": "com.test"}))
     assert out["ok"] is False
     assert "总开关" in out["text"]
