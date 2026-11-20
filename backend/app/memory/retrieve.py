@@ -615,7 +615,8 @@ async def _recall_three_routes(
             except Exception:
                 pass
             return hits
-        except Exception:
+        except Exception as e:
+            _logger.warning("dense retrieval failed char=%s query_index=%s: %s", character_id, i, e)
             return []
 
     # BM25 稀疏路（2026-08-23 检索增强）：与向量路并行召回；异常静默返回 []，不影响主链路

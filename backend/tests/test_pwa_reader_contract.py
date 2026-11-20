@@ -33,6 +33,7 @@ from app.api.memories import router as memories_router
 from app.api.moments import router as moments_router
 from app.api.user_content import router as user_content_router
 from app.auth.router import router as auth_router
+from _dbclone import clone_engine
 from app.db.database import async_session_factory
 from app.models.character import AICharacter
 from app.models.life import AIDiary, AIMoment, MomentComment, UserDiary, UserMemo
@@ -173,7 +174,27 @@ async def _seed() -> None:
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _seeded():
+def _own_db(tmp_path_factory):
+    """本文件脱离共享会话沙箱：模块级一次性克隆库（2026-11-20 并行锁治理）。
+
+    11-20 并行轮 7 例全倒在模块种子的 ``INSERT INTO users``（``database is locked``）——
+    共享沙箱上的模块级大事务撞同 worker 前序文件的未决写。路由与会话获取共用同一个
+    ``async_sessionmaker`` 对象（auth/router、user_content 等早绑定持有的也是它），
+    就地改 ``kw["bind"]`` 单点换库，早绑定与动态解析两种形态同时生效；结束还原并 dispose。
+    """
+    import app.db.session as _sess
+
+    db_file = (tmp_path_factory.mktemp("pwa_rdc") / "pwa_reader.db").as_posix()
+    engine = clone_engine(db_file)
+    old_bind = _sess.async_session_factory.kw.get("bind")
+    _sess.async_session_factory.kw["bind"] = engine
+    yield
+    _sess.async_session_factory.kw["bind"] = old_bind
+    asyncio.run(engine.dispose())
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _seeded(_own_db):
     asyncio.run(_seed())
     return _IDS
 

@@ -182,11 +182,7 @@ def test_care模块顶层零IO依赖():
 
 
 def test_未注入端口抛清晰错误且不静默降级():
-    """三个入口未注入 ports 且兼容钩子为空 → CarePortsNotInjected（不查库、不发消息）。"""
-    assert care_mod.async_session_factory is None
-    assert care_mod._user_in_dnd_period is None
-    assert care_mod._daily_count is None
-    assert care_mod._last_care_at is None
+    """三个入口未注入 ports → CarePortsNotInjected（迁移期兜底已删，不查库、不发消息、不静默降级）。"""
     for coro in (
         care_mod.run_emotion_care(3, 4, 5),
         care_mod.register_care_task(4, 3, "今天好累"),
@@ -195,122 +191,6 @@ def test_未注入端口抛清晰错误且不静默降级():
         with pytest.raises(CarePortsNotInjected) as ei:
             asyncio.run(coro)
         assert "emotion_care_ports" in str(ei.value)
-
-
-def test_兼容钩子被替换时走兼容端口(monkeypatch):
-    """迁移期兜底：旧测试桩只替换 care 模块里的四个名字，此时 _resolve_ports 给出兼容端口。"""
-    seen = {}
-
-    class _R:
-        def scalar(self):
-            return 7
-
-    class _FakeSession:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def execute(self, stmt, *a, **kw):
-            return _R()
-
-    async def _daily(db, character_id):
-        seen["daily"] = (db, character_id)
-        return 7
-
-    async def _last(db, character_id):
-        return None
-
-    async def _dnd(db, user_id):
-        return False
-
-    monkeypatch.setattr(care_mod, "async_session_factory", lambda: _FakeSession())
-    monkeypatch.setattr(care_mod, "_daily_count", _daily)
-    monkeypatch.setattr(care_mod, "_last_care_at", _last)
-    monkeypatch.setattr(care_mod, "_user_in_dnd_period", _dnd)
-    assert care_mod._legacy_hooks_installed() is True
-    ports = care_mod._resolve_ports(None)
-    assert isinstance(ports, care_mod._LegacyCarePorts)
-    assert asyncio.run(ports.daily_care_count(3)) == 7
-    assert seen["daily"][1] == 3  # 旧签名 (db, character_id) 保留
-    assert asyncio.run(ports.last_care_at(3)) is None
-    assert asyncio.run(ports.user_in_dnd(4)) is False
-
-
-def test_兼容钩子未齐时仍然报错():
-    """只替换部分钩子不算兼容形态——必须四个都在，否则仍清晰报错（不半吊子放行）。"""
-    orig = care_mod.async_session_factory
-    try:
-        care_mod.async_session_factory = lambda: None
-        assert care_mod._legacy_hooks_installed() is False
-        with pytest.raises(CarePortsNotInjected):
-            care_mod._resolve_ports(None)
-    finally:
-        care_mod.async_session_factory = orig
-
-
-# ─────────────────── 2. 登记链路（纯判定 + 假端口）───────────────────
-
-def test_登记_主动开关关闭直接返回False():
-    ports = _FakePorts(proactive_on=False)
-    assert asyncio.run(care_mod.register_care_task(4, 3, "今天好累", ports=ports)) is False
-    assert ports.calls == ["proactive_enabled"]
-    assert ports.created == []
-
-
-def test_登记_同角色已有pending任务则跳过():
-    ports = _FakePorts(pending_exists=True)
-    assert asyncio.run(care_mod.register_care_task(4, 3, "今天好累", ports=ports)) is False
-    assert ports.calls == ["proactive_enabled", "has_pending_care_task"]
-    assert ports.created == []
-
-
-def test_登记_延迟15到45分钟且正文截断200字(monkeypatch):
-    ports = _FakePorts()
-    monkeypatch.setattr(care_mod.random, "randint", lambda a, b: 30)
-    before = datetime.now(timezone.utc).replace(tzinfo=None)
-    ok = asyncio.run(care_mod.register_care_task(4, 3, "累" * 300, ports=ports))
-    assert ok is True
-    row = ports.created[0]
-    assert row["user_id"] == 4 and row["character_id"] == 3
-    assert len(row["trigger_msg"]) == 200
-    assert timedelta(minutes=29) < row["due_at"] - before < timedelta(minutes=31)
-    assert ports.calls == ["proactive_enabled", "has_pending_care_task", "create_care_task"]
-
-
-def test_登记_空正文按空串落库(monkeypatch):
-    ports = _FakePorts()
-    monkeypatch.setattr(care_mod.random, "randint", lambda a, b: 15)
-    assert asyncio.run(care_mod.register_care_task(4, 3, None, ports=ports)) is True
-    assert ports.created[0]["trigger_msg"] == ""
-
-
-# ─────────────────── 3. 采集链路（纯判定 + 假端口）───────────────────
-
-def test_采集_每角色一条候选且事件结构逐字一致():
-    ports = _FakePorts(due_rows=[
-        CareTaskView(id=1, character_id=7, user_id=3, status="pending"),
-        CareTaskView(id=2, character_id=7, user_id=3, status="pending"),
-        CareTaskView(id=3, character_id=8, user_id=4, status="pending"),
-    ])
-    events = asyncio.run(care_mod.collect_care_events(ports=ports))
-    assert events == [
-        {"type": "emotion_care", "priority": 1,
-         "candidate": {"character_id": 7, "user_id": 3, "task_id": 1}},
-        {"type": "emotion_care", "priority": 1,
-         "candidate": {"character_id": 8, "user_id": 4, "task_id": 3}},
-    ]
-
-
-def test_采集_先作废超24小时任务再用同一窗口取到期():
-    ports = _FakePorts()
-    assert asyncio.run(care_mod.collect_care_events(ports=ports)) == []
-    assert ports.calls == ["cancel_stale_care_tasks", "fetch_due_care_tasks"]
-    now, stale_before = ports.cancel_windows[0]
-    assert now.tzinfo is None and stale_before.tzinfo is None
-    assert now - stale_before == timedelta(hours=care_mod.TASK_TTL_HOURS)
-    assert ports.fetch_windows == ports.cancel_windows
 
 
 # ─────────────────────────── 4. 关怀链路分支 ───────────────────────────

@@ -858,7 +858,7 @@ SYSTEM_PROMPT_TEMPLATE = """你是一个名叫"{name}"的朋友。
 1. 先输出 [DEVICE_OBSERVE]目标应用包名[/DEVICE_OBSERVE]，不要凭空猜界面；
 2. 系统返回结果里会带 snapshot_id 和 refs；下一步只能用其中的 ref 输出
    [DEVICE_ACT]{{"snapshot_id":"...","ref":"@...:e1","verb":"click"}}[/DEVICE_ACT]；
-3. 不要点击 refs 之外的元素，不要编造“已经点了”；支持 click/set_text/swipe；swipe 不需要先 observe，直接输出 [DEVICE_ACT]{{"verb":"swipe","direction":"up","target_app":"包名"}}；set_text 必须带 value。
+3. 不要点击 refs 之外的元素，不要编造“已经点了”；支持 click/set_text/swipe；swipe 不需要先 observe，直接输出 [DEVICE_ACT]{{"verb":"swipe","direction":"up","target_app":"包名"}}；target_app 必须显式给出，不得省略或沿用上次观察目标；set_text 必须带 value。
 [DEVICE_ACT]{{"snapshot_id":"...","ref":"@...:e1","verb":"click"}}[/DEVICE_ACT] — 用户确认要操作时使用；只能点按 observe 返回的 ref，系统会走审批与真实执行
 [MEMO]内容[/MEMO] — 用户交代要记住的事/要点时输出（≤80字，成对闭合，一次最多 1 条，日常闲聊不强制）
 [CAL_DONE]关键词[/CAL_DONE] / [MEMO_DONE]关键词[/MEMO_DONE] — 上面「小手机」清单里已经结束（办完/过期）的日历/备忘条目 → 标成已完成，别再当待办催（关键词写条目里能唯一认出的几个字；不确定就别输出）

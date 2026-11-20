@@ -1,5 +1,5 @@
 #define AppName "AMBRACE"
-#define AppVersion "3.6.6"
+#define AppVersion "3.6.7"
 #define Stage GetEnv("AMBRACE_STAGE")
 
 [Setup]

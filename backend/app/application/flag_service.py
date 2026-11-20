@@ -1,5 +1,5 @@
 # 运行时 Feature Flag 开关（2026-08-18）：
-# - AGENT_FLAGS（app/agent/loop.py）为硬编码默认值（单一事实源），各模块直接读同一 dict；
+# - AGENT_FLAGS（app/flags/agent_flags.py）为硬编码默认值（单一事实源，app/agent/loop.py 仅 re-export），各模块直接读同一 dict；
 # - 启动时 load_runtime_flags() 把 runtime_flags 表中 enabled 覆盖进 AGENT_FLAGS 内存；
 # - set_runtime_flag() 写表 + 热更新内存（立即生效，无需重启）；
 # - 回退：改回硬编码默认，或删除 DB 行后重启恢复默认。

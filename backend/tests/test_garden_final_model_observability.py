@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 """Real build_context -> stream node -> fake LLM coverage for all garden outcomes."""
+
+import pytest
+
 import asyncio
 import re
 
 from test_garden_portable_user_context import wired  # noqa: E402,F401
 from test_garden_chat_readonly_closure import LivePersonal  # noqa: E402
+
+pytestmark = pytest.mark.xdist_group("resource_heavy")
 
 
 def _seed_global():

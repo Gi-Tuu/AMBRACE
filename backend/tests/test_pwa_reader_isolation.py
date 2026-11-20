@@ -27,6 +27,7 @@ from fastapi import FastAPI
 from sqlalchemy import func, select
 from starlette.testclient import TestClient
 
+from _dbclone import clone_engine
 from app.api.characters import router as characters_router
 from app.api.diary import router as diary_router
 from app.api.memories import router as memories_router
@@ -184,7 +185,24 @@ def _vector_recorder(monkeypatch):
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _seeded():
+def _own_db(tmp_path_factory):
+    """模块级一次性克隆库（2026-11-20 并行锁治理，同 test_pwa_reader_contract）：
+    兄弟契约文件 11-20 已迁克隆库后，本文件成同族最后共享沙箱用户；并行轮 5 例
+    setup `database is locked` 现行（串行必过）。路由与会话获取共用同一个
+    `async_sessionmaker` 对象，就地改 `kw["bind"]` 单点换库。"""
+    import app.db.session as _sess
+
+    db_file = (tmp_path_factory.mktemp("pwa_rdi") / "pwa_isolation.db").as_posix()
+    engine = clone_engine(db_file)
+    old_bind = _sess.async_session_factory.kw.get("bind")
+    _sess.async_session_factory.kw["bind"] = engine
+    yield
+    _sess.async_session_factory.kw["bind"] = old_bind
+    asyncio.run(engine.dispose())
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _seeded(_own_db):
     asyncio.run(_seed())
     return _IDS
 

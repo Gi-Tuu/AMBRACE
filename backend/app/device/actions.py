@@ -817,6 +817,20 @@ async def decide_action(*, user_id: int | None, tenant_id: int | None,
                    action_token=token)
 
 
+def enqueue_observe(*, user_id: int, tenant_id: int | None,
+                    intent: ActionIntent) -> str:
+    """只读采集专用入队（不改变界面，不过写动作白名单/限流）。
+
+    仍是同一 ``_PENDING`` 队列与回执协议；仅动作裁决不适用于采集。
+    """
+    token = str(uuid.uuid4())
+    _PENDING[token] = _PendingAction(
+        token=token, user_id=int(user_id), tenant_id=tenant_id,
+        plugin=BUILTIN_CALLER, intent=intent, enqueued_at=time.monotonic(),
+    )
+    return token
+
+
 def _prune_expired() -> None:
     """丢弃超时未被取走的待执行项（TTL 到期即作废，不补发）。"""
     now = time.monotonic()

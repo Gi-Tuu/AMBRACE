@@ -18,7 +18,6 @@ alembic>=1.13
 
 # AI Agent
 langgraph>=1.2
-langchain-openai>=1.6.0
 openai>=3.1.0
 chromadb>=1.5,<2  # 锁上界防 2.x 破坏性变更（嵌入式模式 HTTP 不暴露）
 
@@ -30,7 +29,6 @@ ecdsa>=0.19  # python-jose 间接依赖；CVE-2024-23342 下界约束
 # Utils
 python-dotenv>=1.2
 httpx>=0.28
-APScheduler>=3.11.3
 websockets>=15.0
 
 # 图片理解（本地 OCR + VLM 依赖）

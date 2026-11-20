@@ -50,6 +50,7 @@ def _expired(emitted: float | None, ttl_sec: float) -> bool:
 class EventBus:
     def __init__(self) -> None:
         self._subscribers: dict[str, list[EventHandler]] = {}
+        self._failures: dict[str, int] = {}
 
     def subscribe(self, event_type: str, handler: EventHandler) -> None:
         self._subscribers.setdefault(event_type, []).append(handler)
@@ -77,7 +78,12 @@ class EventBus:
             try:
                 await h(msg)
             except Exception as e:
+                self._failures[event_type] = self._failures.get(event_type, 0) + 1
                 _logger.warning("Event %s handler %s failed: %s", event_type, getattr(h, "__name__", h), e)
+
+    def failure_snapshot(self) -> dict[str, int]:
+        """本进程内按事件类型累计的订阅者失败次数（只读、不落库）。"""
+        return dict(self._failures)
 
     def publish_async(self, event_type: str, payload: dict | None = None,
                       *, ttl_sec: float | None = None) -> None:

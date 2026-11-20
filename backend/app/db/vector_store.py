@@ -276,7 +276,8 @@ async def find_similar_memory(
             n_results=limit,
             where=_char_where_scoped(character_id, _supersede_flag_on(), _status, _scope),
         )
-    except Exception:
+    except Exception as e:
+        _logger.warning("vector dedup similarity unavailable char=%s: %s", character_id, e)
         return None
     if not results["ids"] or not results["ids"][0]:
         return None
@@ -302,7 +303,8 @@ async def get_all_vectors_by_character(character_id: int, user_ids: list[int] | 
             where=_char_where_scoped(character_id, False, None, _scope),
             include=["embeddings"],
         )
-    except Exception:
+    except Exception as e:
+        _logger.warning("vector dedup full scan unavailable char=%s: %s", character_id, e)
         return {}
     out = {}
     ids = results.get("ids") or []

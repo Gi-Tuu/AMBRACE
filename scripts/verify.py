@@ -81,6 +81,13 @@ def main() -> None:
     if workers:
         label += f"（并行 -n {workers} --dist loadfile）"
     step("ruff 静态检查（backend/app）", [PY, "-m", "ruff", "check", "backend/app"], ROOT)
+    # Import Linter 分层契约（2026-11-20 架构复审引入；backend/.importlinter）。
+    # 按存在性接入：本地 venv 装了 import-linter 就当一道门，没装（CI/全新环境）静默跳过，
+    # 不把 verify 变成全新环境的新增失败面。
+    _lint_imports = (ROOT / "backend/.venv/Scripts/lint-imports.exe") if _os.name == "nt" else (
+        ROOT / "backend/.venv/bin/lint-imports")
+    if _lint_imports.exists():
+        step("Import Linter 分层契约（domain 纯度）", [str(_lint_imports)], ROOT / "backend")
     step("公开仓卫生扫描（C2：作者机器路径＋凭据形态）", [PY, "scripts/check_public_leak.py"], ROOT)
     step("网关词表守卫（零容忍：防 DSH 会话中毒）", [PY, "scripts/gateway_word_guard.py"], ROOT)
     step("py_compile 全量语法校验", [PY, "-m", "compileall", "-q", "-f", "backend/app"], ROOT)

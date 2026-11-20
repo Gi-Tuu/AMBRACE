@@ -2,6 +2,8 @@
 """YAI 接入 M4：AMBRACE 侧验收脚手架（事件顺序 + remember/recall 审计双查 + 取消/失败关闭）。"""
 from __future__ import annotations
 
+import os
+
 import asyncio
 
 import pytest
@@ -54,6 +56,7 @@ async def _audit_rows(route: str, task_id: str) -> list[tuple]:
     return list(rows)
 
 
+@pytest.mark.skipif("PYTEST_XDIST_WORKER" in os.environ, reason="真实共享沙箱库，并行锁；串行验收档覆盖")
 def test_remember_writes_memory_and_audit(client):
     asyncio.run(_seed())
     marker = "M4remember-77aa"
@@ -142,7 +145,6 @@ def test_registration_spec_has_four_tools_and_no_internal(client):
         "/api/agent/tools/memory_recall",
         "/api/agent/tools/memory_remember",
     }
-    assert "internal" not in json.dumps(spec) if False else True
     raw = __import__("json").dumps(spec)
     assert "/internal/" not in raw and "/runs" not in raw
     assert "source" not in spec["components"]["schemas"]["RememberRequest"]["properties"]

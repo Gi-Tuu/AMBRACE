@@ -509,12 +509,14 @@ async def _run_device_act_stage(
                 _word = _m.group(1)
                 _dir = "down" if "下" in _word else ("left" if "左" in _word else ("right" if "右" in _word else "up"))
                 _pkg = _re.search(r"(?:包名|package)[:：\s]*([A-Za-z][A-Za-z0-9_.]+)", _src)
-                acts = [_agent_actions.AgentAction(
-                    _agent_actions.DEVICE_ACT,
-                    {"verb": "swipe", "direction": _dir,
-                     "target_app": _pkg.group(1) if _pkg else ""},
-                    "",
-                )]
+                # 安全边界：滑动不允许用「上次观察的 App」补目标；必须显式包名
+                if _pkg:
+                    acts = [_agent_actions.AgentAction(
+                        _agent_actions.DEVICE_ACT,
+                        {"verb": "swipe", "direction": _dir,
+                         "target_app": _pkg.group(1)},
+                        "",
+                    )]
         if not acts:
             return final_state, full_text
         from app.agent.tools import get_tool as _get_tool

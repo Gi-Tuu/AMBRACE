@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
-"""48c 配置驱动零代码模板测试：manifest 校验 / 触发匹配 / 无 main.py 加载 / workflow 导入 / chat 接口归属与限额"""
+"""48c 配置驱动零代码模板测试：manifest 校验 / 触发匹配 / 无 main.py 加载 / chat 接口归属与限额"""
 import asyncio
 import json
-from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
 
-from app.api import phone_workflows as pw
 from app.api import plugins as plugins_api
 from app.api.plugins import build_plugin_chat_messages, _plugin_chat_rate_check, _reset_plugin_chat_rate
 from app.plugins import manifest, registry
@@ -195,108 +193,6 @@ def test_config_only_workflow_加载(tmp_path):
 def test_config_only_http缺main_py被拒(tmp_path):
     d = _write_manifest(tmp_path, _m(config={"enabled_hours": "22-23"}))  # type 缺省 http
     assert registry.load_plugin_dir(d) is None
-
-
-# ---------------- workflow 模板导入 ----------------
-
-def test_find_workflow_template():
-    plugin = {"config": {"workflow": {"templates": [
-        {"id": "t1", "displayName": "A", "template": {"name": "A", "nodes": [], "edges": []}},
-        {"id": "t2", "displayName": "B", "template": {"name": "B", "nodes": [], "edges": []}},
-    ]}}}
-    t = pw._find_workflow_template(plugin, "t2", "zh")
-    assert t["displayName"] == "B"
-    with pytest.raises(HTTPException) as ei:
-        pw._find_workflow_template(plugin, "t9", "zh")
-    assert ei.value.status_code == 404
-
-
-def test_normalize_template_graph_合法():
-    template = {
-        "name": "每日总结",
-        "nodes": [
-            {"id": "n1", "type": "trigger", "config": {"loop": "day", "time": "21:00"}},
-            {"id": "n2", "type": "ai_chat", "config": {"prompt": "总结"}},
-            {"id": "n3", "type": "message", "config": {"target": "all", "content": "done"}},
-        ],
-        "edges": [{"from": "n1", "to": "n2"}, {"from": "n2", "to": "n3"}],
-    }
-    nodes, edges = pw._normalize_template_graph(template, "zh")
-    assert len(nodes) == 3 and len(edges) == 2
-    assert nodes[0] == {"id": "n1", "type": "trigger", "config": {"loop": "day", "time": "21:00"}}
-
-
-def test_normalize_template_graph_非法引用():
-    template = {"name": "A", "nodes": [{"id": "n1", "type": "trigger"}], "edges": [{"from": "n1", "to": "n9"}]}
-    with pytest.raises(HTTPException) as ei:
-        pw._normalize_template_graph(template, "zh")
-    assert ei.value.status_code == 400
-
-
-def test_normalize_template_graph_节点缺id():
-    template = {"name": "A", "nodes": [{"type": "trigger"}], "edges": []}
-    with pytest.raises(HTTPException) as ei:
-        pw._normalize_template_graph(template, "zh")
-    assert ei.value.status_code == 400
-
-
-class _FakeDB:
-    """最小可用的 AsyncSession 替身：仅支持 import 端点用到的 add/commit/refresh"""
-
-    def __init__(self):
-        self.added = []
-
-    def add(self, obj):
-        self.added.append(obj)
-
-    async def commit(self):
-        pass
-
-    async def refresh(self, obj):
-        obj.id = 1
-        obj.created_at = datetime.now(timezone.utc)
-
-
-def test_import_workflow_template_建行(tmp_path):
-    wf = _wf_config([_wf_template("daily", [
-        {"id": "n1", "type": "trigger", "config": {"loop": "day", "time": "21:00"}},
-        {"id": "n2", "type": "ai_chat", "config": {"prompt": "总结今天的聊天，输出 3 条要点"}},
-    ], [{"from": "n1", "to": "n2"}], display="每日总结")])
-    d = _write_manifest(tmp_path, _m(name="flow_plugin", type="workflow", config=wf))
-    registry.load_plugin_dir(d)
-    try:
-        db = _FakeDB()
-        result = asyncio.run(pw.import_workflow_template(
-            {"plugin_name": "flow_plugin", "template_id": "daily"}, db=db, user_id=7, lang="zh",
-        ))
-        assert result["id"] == 1
-        assert result["name"] == "每日总结"
-        g = result["graph"]
-        assert g["nodes"][0]["id"] == "n1"
-        assert g["edges"] == [{"from": "n1", "to": "n2"}]
-        assert db.added and db.added[0].graph is not None
-        assert db.added[0].steps == "[]"
-    finally:
-        registry._loaded.pop("flow_plugin", None)
-
-
-def test_import_workflow_template_非workflow型(tmp_path):
-    d = _write_manifest(tmp_path, _m(name="chat_plugin", type="chat", config={"chat": {"persona": "p", "greeting": "hi"}}))
-    registry.load_plugin_dir(d)
-    try:
-        with pytest.raises(HTTPException) as ei:
-            asyncio.run(pw.import_workflow_template(
-                {"plugin_name": "chat_plugin", "template_id": "x"}, db=None, user_id=1, lang="zh",
-            ))
-        assert ei.value.status_code == 400
-    finally:
-        registry._loaded.pop("chat_plugin", None)
-
-
-def test_import_workflow_template_缺字段():
-    with pytest.raises(HTTPException) as ei:
-        asyncio.run(pw.import_workflow_template({"plugin_name": "x"}, db=None, user_id=1, lang="zh"))
-    assert ei.value.status_code == 400
 
 
 # ---------------- chat 接口归属与限额 ----------------

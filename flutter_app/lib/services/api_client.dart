@@ -26,7 +26,6 @@ export 'api/mcp_api.dart';
 export 'api/weave_api.dart';
 export 'api/platform_profiles_api.dart';
 export 'api/chat_groups_api.dart';
-export 'api/phone_workflows_api.dart';
 export 'api/life_api.dart';
 export 'api/life_home_api.dart';
 export 'api/admin_api.dart';

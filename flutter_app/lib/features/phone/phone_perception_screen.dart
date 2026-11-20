@@ -9,7 +9,6 @@ import "../../services/api_client.dart";
 import "../../services/device_action_service.dart";
 import "../../services/device_action_executor.dart";
 import "../../services/device_action_prefs.dart";
-import "../../services/workflow_action_bridge.dart";
 // 注：本页是**用户自己的系统级感知**，不接角色隐私上锁（见下方字段处说明）
 import "../../features/phone/perception_tiles.dart";
 import "../../features/settings/notification_whitelist_screen.dart";
@@ -67,8 +66,6 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
   bool _batteryOk = false; // R4：电池白名单
   // M4b-2：行动执行器「每类首次确认」的已确认集合（决策④，随本页生命周期，退出页面即重来）
   final Set<String> _actionConfirmed = <String>{};
-  // M4d：工作流是否改走行动端口（缺省＝关；只影响整条可映射的工作流，见 workflow_action_bridge）
-  bool _workflowBridgeOn = false;
   // M4b-2 收尾：本机自检目标（= build.gradle 的 applicationId；打开自己无副作用）
   static const String _selfActionTarget = "com.gituu.ambrace.ai_companion";
 
@@ -114,7 +111,6 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
     final actions = await PhonePerceptionService.isActionsEnabled();
     final status = await PhonePerceptionService.getScreenStatus();
     final notifOk = await PhonePerceptionService.isNotificationAccessEnabled();
-    final workflowBridge = await DeviceActionPrefs.isWorkflowBridgeEnabled();
     if (!mounted) return;
     setState(() {
       _enabled = prefsEnabled;
@@ -127,7 +123,6 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
       _actionsOn = actions;
       _serviceEnabled = (status["serviceEnabled"] as bool? ?? false);
       _notifServiceEnabled = notifOk;
-      _workflowBridgeOn = workflowBridge;
     });
     // R5/R4：健康检测 + 电池白名单
     _loadHealth();
@@ -662,93 +657,6 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
             child: SingleChildScrollView(
               child: SelectableText(
                 text,
-                style: const TextStyle(fontSize: 11, fontFamily: "monospace", height: 1.5),
-              ),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.close)),
-        ],
-      ),
-    );
-  }
-
-  /// M4d-3「工作流端口自检」：用**最小可映射工作流**真跑一遍新路径，让真机验证自服务。
-  /// 序列固定为「打开本应用 → 点击本页一个真实可见的分组标题」两步：首步是 `launch_app`、
-  /// 两步都属可映射类型、包名合法；点击目标是纯文本标题（不可点，点了既不跳页也不改设置）。
-  /// 展示口径：走的通道 / 每步 step·action·target·ok·message / 端口返回的 reason **原样**单列一行；
-  /// 映射不了或端口被拒都不粉饰成成功，也不回退本机路径去“凑个能看的结论”。
-  Future<void> _runWorkflowPortSelfCheck() async {
-    final l10n = AppLocalizations.of(context)!;
-    // M4d-3 收尾（Codex，2026-09-23）：工作流端口开关**未开时一步都不执行**——否则自检会真的
-    // 打开本应用并点一下标题（真实副作用），而它本意只是验证「新端口能不能用」。
-    if (!await DeviceActionPrefs.isWorkflowBridgeEnabled()) {
-      if (!mounted) return;
-      await _showWorkflowSelfCheck(l10n, l10n.ppActionWfSelfCheckBridgeOff);
-      return;
-    }
-    final steps = workflowSelfCheckSteps(l10n.ppGroupActions);
-    final inspected = inspectWorkflow(steps);
-    final plan = inspected.plan;
-    if (plan == null) {
-      // 连自检序列都映射不了＝这条路的构造前提没了：一步都不执行，直接把机器可读原因原样带出
-      await _showWorkflowSelfCheck(l10n, l10n.ppActionWfSelfCheckNotMappable(inspected.reason));
-      return;
-    }
-    final rows = await WorkflowActionBridge.withConfirmHandler(
-      // 与「执行待办动作」同款确认弹窗；拿不到 context/文案一律 false（绝不默认放行）
-      (capability) async {
-        if (!mounted) return false;
-        final granted = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: Text(l10n.ppActionConfirmTitle),
-            content: Text(l10n.ppActionConfirmBody(capability)),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l10n.cancel)),
-              TextButton(onPressed: () => Navigator.pop(ctx, true), child: Text(l10n.confirm)),
-            ],
-          ),
-        );
-        return granted == true;
-      },
-      () => PhonePerceptionService.executeActionSequence(steps),
-    );
-    if (!mounted) return;
-    final via = rows.isEmpty ? "" : (rows.first["via"] ?? "").toString();
-    final lines = <String>[
-      via == WorkflowActionBridge.viaPort
-          ? l10n.ppActionWfSelfCheckViaPort
-          : l10n.ppActionWfSelfCheckViaLegacy,
-      if (via != WorkflowActionBridge.viaPort) l10n.ppActionWfSelfCheckLegacyNote,
-      l10n.ppActionWfSelfCheckTarget(plan.targetApp),
-      if (rows.isEmpty) l10n.ppActionWfSelfCheckEmpty,
-      for (final r in rows)
-        "${r["step"]}. ${r["action"]} [${r["target"]}] -> "
-            "${r["ok"] == true ? l10n.ppActionWfSelfCheckOk : l10n.ppActionWfSelfCheckFail}: ${r["message"] ?? ""}",
-    ];
-    final denied = rows
-        .where((r) => (r["via"] ?? "").toString() == WorkflowActionBridge.viaPort && r["ok"] != true)
-        .toList();
-    if (denied.isNotEmpty) {
-      // 端口拒绝＝服务端 reason 原样，不解释、不翻译、不加包装
-      lines.add(l10n.ppActionSelfCheckDenied((denied.first["message"] ?? "").toString()));
-    }
-    await _showWorkflowSelfCheck(l10n, lines.join("\n"));
-  }
-
-  Future<void> _showWorkflowSelfCheck(AppLocalizations l10n, String body) async {
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.ppActionWfSelfCheckTitle),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: Scrollbar(
-            child: SingleChildScrollView(
-              child: SelectableText(
-                body,
                 style: const TextStyle(fontSize: 11, fontFamily: "monospace", height: 1.5),
               ),
             ),
@@ -1297,26 +1205,6 @@ class _PhonePerceptionScreenState extends State<PhonePerceptionScreen> with Widg
               title: l10n.ppActionPolicy,
               subtitle: l10n.ppActionPolicySub,
               onTap: _showActionPolicySettings,
-            ),
-            // M4d：工作流改走行动端口的客户端开关（缺省＝关＝旧路径逐字不变）
-            const PpDivider(),
-            PpSwitch(
-              icon: Icons.alt_route,
-              title: l10n.ppActionWorkflowBridge,
-              subtitle: l10n.ppActionWorkflowBridgeSub,
-              value: _workflowBridgeOn,
-              onChanged: (v) async {
-                setState(() => _workflowBridgeOn = v);
-                await DeviceActionPrefs.setWorkflowBridgeEnabled(v);
-              },
-            ),
-            // M4d-3：新路径一键自检（真机验证自服务：走没走端口、被拒的原因原样摊开）
-            const PpDivider(),
-            PpNav(
-              icon: Icons.route_outlined,
-              title: l10n.ppActionWfSelfCheck,
-              subtitle: l10n.ppActionWfSelfCheckSub,
-              onTap: _runWorkflowPortSelfCheck,
             ),
           ]),
           // 操作与记录

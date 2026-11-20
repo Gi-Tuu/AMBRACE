@@ -8,6 +8,8 @@ AMBRACE 重构步骤 3：从 chat_service 拆出流式/TTS/chunk 相关函数到
 - 纯搬移，不改业务逻辑/签名/默认参数/错误文案，SSE/TTS 事件序列（delta/block/done/
   reset_blocks）与拆分前完全一致。
 """
+import re
+
 from sqlalchemy import delete, select
 
 from app.db.database import async_session_factory
@@ -18,6 +20,67 @@ from app.utils.errors import friendly_llm_error
 from app.utils.logger import get_logger
 
 _logger = get_logger("services.chat")
+
+
+_DEVICE_INTENT_RE = re.compile(
+    r"(?:\[DEVICE_(?:OBSERVE|ACT)\]|"
+    r"(?:看|瞄|读|瞅).{0,8}(?:手机|屏幕|界面|页面)|"
+    r"(?:点|按|输入|填|滑|划|打开).{0,10}(?:一下|这个|那个|手机|屏幕|界面|输入框|按钮)|"
+    r"(?:上滑|下滑|左滑|右滑|往上滑|往下滑)|包名)"
+)
+
+
+def _is_device_control_turn(text: str) -> bool:
+    """显式/自然的设备控制轮次：走非流式设备链路，避免 SSE 静默丢标记。"""
+    return bool(_DEVICE_INTENT_RE.search(text or ""))
+
+
+async def _emit_chunked_result(
+    *, chunked, route: str, session_id: int, user_id: int, character_id: int,
+    content: str, lang: str, quote: dict | None,
+    extra_capabilities: list[str] | None, tts: bool,
+    user_msg_id: int | None, sink,
+) -> None:
+    """非流式 chunked 结果转 SSE block/done（设备车道与异常回退共用）。"""
+    try:
+        chunk_res = await chunked(
+            session_id, user_id, character_id, content,
+            save_user_message=False, lang=lang, quote=quote,
+            extra_capabilities=extra_capabilities, tts=tts,
+            reply_delay=False, route=route, chat_time_source_id=user_msg_id,
+        )
+    except Exception as e:
+        _logger.warning("Chunked lane %s failed: %s", route, e)
+        await sink("error", {"detail": friendly_llm_error(e)})
+        await sink("done", {"message": {"content": ""}, "blocks": [], "memories_updated": False})
+        return
+    if chunk_res.get("cold_war"):
+        await sink("cold_war", {"message": "TA 还在生闷气，暂时没理你……说点软话哄哄 TA 吧"})
+        return
+    chunks = chunk_res.get("chunks") or []
+    for i, c in enumerate(chunks):
+        await sink("block", {"index": i, **c})
+    await sink("done", {
+        "message": {"content": chunks[-1]["content"] if chunks else ""},
+        "blocks": chunks,
+        "memories_updated": chunk_res.get("memories_updated", False),
+    })
+
+
+async def _run_device_lane_chunked(
+    *, session_id: int, user_id: int, character_id: int, content: str,
+    lang: str, quote: dict | None, extra_capabilities: list[str] | None,
+    tts: bool, user_msg_id: int | None, sink,
+) -> None:
+    """设备控制轮次的显式车道：复用非流式 _run_agent_core（含 observe/act）。"""
+    from app.application.chat_service import send_and_receive_chunked as _chunked
+    await _emit_chunked_result(
+        chunked=_chunked, route="sse_device_lane",
+        session_id=session_id, user_id=user_id, character_id=character_id,
+        content=content, lang=lang, quote=quote,
+        extra_capabilities=extra_capabilities, tts=tts,
+        user_msg_id=user_msg_id, sink=sink,
+    )
 
 
 def _assemble_chunk_meta(
@@ -268,6 +331,15 @@ async def send_and_receive_stream(
         character_id=character_id, content=content, quote=quote,
         save_user_message=save_user_message, sink=sink)
 
+    if _is_device_control_turn(content):
+        await _run_device_lane_chunked(
+            session_id=session_id, user_id=user_id, character_id=character_id,
+            content=content, lang=lang, quote=quote,
+            extra_capabilities=extra_capabilities, tts=tts,
+            user_msg_id=user_msg_id, sink=sink,
+        )
+        return
+
     # 语音逐句 TTS：预加载角色音色参数 + 实时块落库/推送回调（供 _stream_generate 流水线消费）
     tts_ctx = None
     tts_saved: list[dict] = []
@@ -343,44 +415,14 @@ async def send_and_receive_stream(
         core = None
 
     if core is None:
-        # 冷战拦截 or 流式异常：回退非流式 chunked（不重复落用户消息）
-        try:
-            chunk_res = await send_and_receive_chunked(
-                session_id, user_id, character_id, content,
-                save_user_message=False, lang=lang, quote=quote,
-                extra_capabilities=extra_capabilities, tts=tts,
-                # P2-3：流式异常回退时已在 _run_agent_core(reply_delay=True) 或流式路径 sleep 过，
-                # 这里跳过自然延迟，避免已 sleep 一次又 sleep 一次（极端最多 2×8s）。
-                reply_delay=False,
-                # F-12（v3.4.6 审查）：回退入口 route 口径——SSE 回退也标 ws_chunk 会失真，
-                # 这里如实标注 sse_fallback（幂等键不变）。
-                route="sse_fallback", chat_time_source_id=user_msg_id,  # C7：时间边界独立于记忆 source。
-            )
-        except Exception as e:
-            # chunked 也失败：error 事件已在上面的 except 发过，这里只记日志不再向上抛，
-            # 避免 SSE 端点（chat.py _run）重复发送 error 事件。
-            _logger.warning("Chunked fallback also failed, ending stream: %s", e)
-            try:
-                from app.memory.observability import obs_event
-                obs_event(character_id, "fb_stream_chunked_error", {"error": str(e)[:100]})
-            except Exception:
-                pass
-            await sink("done", {
-                "message": {"content": ""},
-                "blocks": [],
-                "memories_updated": False,
-            })
-            return
-        if chunk_res.get("cold_war"):
-            await sink("cold_war", {"message": "TA 还在生闷气，暂时没理你……说点软话哄哄 TA 吧"})
-            return
-        for i, c in enumerate(chunk_res["chunks"]):
-            await sink("block", {"index": i, **c})
-        await sink("done", {
-            "message": {"content": chunk_res["chunks"][-1]["content"] if chunk_res["chunks"] else ""},
-            "blocks": chunk_res["chunks"],
-            "memories_updated": chunk_res.get("memories_updated", False),
-        })
+        from app.application.chat_service import send_and_receive_chunked as _chunked
+        await _emit_chunked_result(
+            chunked=_chunked, route="sse_fallback",
+            session_id=session_id, user_id=user_id, character_id=character_id,
+            content=content, lang=lang, quote=quote,
+            extra_capabilities=extra_capabilities, tts=tts,
+            user_msg_id=user_msg_id, sink=sink,
+        )
         return
 
     final_state = core["final_state"]

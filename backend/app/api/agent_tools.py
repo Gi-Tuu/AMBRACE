@@ -35,7 +35,6 @@ from app.memory.write import save_memory
 router = APIRouter(prefix="/api/agent/tools", tags=["agent-tools"])
 
 MAX_RESULT_CHARS = 16_000
-_SNAPSHOT_TARGETS: dict[str, str] = {}
 _AMBRACE_SERVICE_TOKEN = os.environ.get("AMBRACE_SERVICE_TOKEN", "")
 _AMBRACE_SERVICE_USER_ID = int(os.environ.get("AMBRACE_SERVICE_USER_ID", "3") or 3)
 
@@ -63,9 +62,8 @@ _INTERNAL_APPEND_ENABLED = __import__("os").environ.get(
     "M6_INTERNAL_APPEND_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
 SSE_TICKET_TTL = 900.0
 SSE_PING_INTERVAL = 15.0
-_SNAPSHOT_PATHS: dict[str, dict[str, str]] = {}
 MAX_LIMIT = 200
-TTL_SECONDS = 120.0
+TTL_SECONDS = snap.DEFAULT_TTL
 
 
 class ErrorBody(BaseModel):
@@ -263,6 +261,12 @@ async def device_observe(
                 "items": [], "has_more": False, "redacted_count": 0}
     try:
         tree = await device_adapter.observe_tree(user_id=user_id, target_app=body.target_app, timeout=15.0)
+    except snap.SnapshotError as e:
+        status = 403 if e.code == "DEVICE_DISABLED" else 503
+        await _audit_write(user_id=user_id, character_id=None, session_id="", run_id=_audit_run,
+                           tool="device_observe", ok=False, detail=f"{e.code}: {e}")
+        _core_result(attach, False, f"{e.code}: {e}")
+        raise _error(e.code, str(e), status)
     except Exception as e:
         await _audit_write(user_id=user_id, character_id=None, session_id="", run_id=_audit_run,
                            tool="device_observe", ok=False, detail=str(e))
@@ -275,7 +279,6 @@ async def device_observe(
                            tool="device_observe", ok=False, detail=str(e))
         _core_result(attach, False, str(e))
         raise _error("DEVICE_CAPTURE_UNAVAILABLE", str(e), 503)
-    _SNAPSHOT_TARGETS[payload["snapshot_id"]] = body.target_app
     # 记录 ref → 客户端原始 path（服务端归一化 path 是点号格式，App 只认 0/0/1）
     by_name: dict[str, list[str]] = {}
     def _walk(nodes):
@@ -292,7 +295,7 @@ async def device_observe(
         cands = by_name.get(item["name"]) or []
         if cands:
             mapping[item["ref"]] = cands.pop(0)
-    _SNAPSHOT_PATHS[payload["snapshot_id"]] = mapping
+    snap.set_snapshot_context(payload["snapshot_id"], target_app=body.target_app, paths=mapping)
     await _audit_write(user_id=user_id, character_id=None, session_id="", run_id=_audit_run,
                        tool="device_observe", ok=True,
                        detail=f"target={body.target_app} refs={len(payload['items'])}")
@@ -313,7 +316,7 @@ async def internal_observe(
     """内部通道：AMBRACE 设备执行器上传树 → 快照。不进入注册用 OpenAPI。"""
     payload = _observe_payload(body.tree, body.window_title, offset, limit)
     if body.target_app:
-        _SNAPSHOT_TARGETS[payload["snapshot_id"]] = body.target_app
+        snap.set_snapshot_context(payload["snapshot_id"], target_app=body.target_app)
     return payload
 
 
@@ -338,7 +341,12 @@ async def device_act(body: ActRequest, request: Request, user_id: int = Depends(
         _core_result(attach, False, f"{code}: {e}")
         raise _error(code, str(e), status)
     # 所有 verb 统一走产品审批门（scroll 也会改变界面，不豁免）
-    cap = "action_set_text" if body.verb == "set_text" else "action_tap"
+    if body.verb == "set_text":
+        cap = "action_set_text"
+    elif body.verb == "scroll":
+        cap = "action_scroll"
+    else:
+        cap = "action_tap"
     policies = await configured_policies(user_id)
     if policies.get(cap) != "once_ever":
         await _audit_write(user_id=user_id, character_id=None, session_id="", run_id=_audit_run,
@@ -346,20 +354,29 @@ async def device_act(body: ActRequest, request: Request, user_id: int = Depends(
         _core_result(attach, False, f"APPROVAL_REQUIRED: {cap}")
         raise _error("APPROVAL_REQUIRED",
                      f"{cap} 需在 AMBRACE App 内确认（once_ever 后自动放行）", 403)
-    if body.verb != "click":
-        return JSONResponse(status_code=202, content={
-            "status": "pending_delivery", "executed": False, "delivery": "not_delivered",
-            "action": plan["action"], "path": plan["path"],
-            "expected_identity": plan["expected_identity"],
-        })
-    target = _SNAPSHOT_TARGETS.get(body.snapshot_id, "")
+    try:
+        _snap = snap.get_snapshot(body.snapshot_id)
+    except snap.SnapshotError as e:
+        raise _error("STALE_REF", str(e), 409)
+    target = _snap.target_app
     if not target:
         raise _error("STALE_REF", "快照未关联目标应用；请重新 observe", 409)
-    # 执行用 path 只取服务端 observe 时记录的快照映射（_SNAPSHOT_PATHS），绝不读请求/模型传入的 path
-    exec_path = _SNAPSHOT_PATHS.get(body.snapshot_id, {}).get(body.ref) or plan["path"]
+    # 执行用 path 只取服务端快照记录，绝不读请求/模型传入的 path
+    exec_path = _snap.paths.get(body.ref) or plan["path"]
     plan = dict(plan, path=exec_path)
+    if body.verb not in ("click", "set_text"):
+        raise _error("ACTION_UNSUPPORTED",
+                     f"{body.verb} 暂未接入 App 执行器，请改用 click/set_text", 501)
     try:
-        res = await device_adapter.execute_action(user_id=user_id, target_app=target, plan=plan, timeout=15.0)
+        if body.verb == "click":
+            res = await device_adapter.execute_action(user_id=user_id, target_app=target, plan=plan, timeout=15.0)
+        else:
+            res = await device_adapter.set_text(
+                user_id=user_id, target_app=target, path=exec_path,
+                text=str(body.value or ""), timeout=15.0,
+            )
+    except HTTPException:
+        raise
     except Exception as e:
         await _audit_write(user_id=user_id, character_id=None, session_id="", run_id=_audit_run,
                            tool="device_act", ok=False, detail=str(e))
@@ -391,13 +408,6 @@ async def device_open_app(body: OpenAppRequest, user_id: int = Depends(get_tool_
     if not res.get("ok"):
         raise _error("ACTION_FAILED", str(res.get("detail") or "device_failed"), 502)
     return {"ok": True, "package": body.package, "delivery": "delivered"}
-
-
-@router.post("/device_snapshot", tags=["agent-tools-internal"],
-             operation_id="agentToolsDeviceSnapshot")
-async def device_snapshot(user_id: int = Depends(get_current_user_id)) -> dict:
-    raise _error("DEVICE_CAPTURE_UNAVAILABLE",
-                 "snapshot 需经 AMBRACE 设备执行器回传（M1 适配器阶段）", 503)
 
 
 @router.post("/runs", tags=["agent-tools-admin"], operation_id="agentToolsRunCreate")
@@ -646,7 +656,7 @@ async def manifest() -> dict:
         "status": "ok",
         "protocol": "openapi-3.1",
         "registered_tools": ["device_observe", "device_act", "memory_recall", "memory_remember"],
-        "deferred_tools": ["device_open_app", "device_snapshot"],
+        "deferred_tools": ["device_open_app"],
         "limits": {"max_result_chars": MAX_RESULT_CHARS, "snapshot_ttl_s": TTL_SECONDS},
     }
 
@@ -879,7 +889,7 @@ async def _execute_host_run(run_id: str, steps: list[HostRunStep], user_id: int)
         cap = step.capability
         run_registry.append_event(run_id, "tool_call",
                                   {"tool": cap, "target_app": step.target_app})
-        res = await device_adapter.enqueue_and_wait(
+        res = await device_adapter.run_capability(
             user_id=user_id, capability=cap, target_app=step.target_app,
             by=step.by, path=step.path, query=step.query, text=step.text)
         ok = bool(res.get("ok"))

@@ -57,14 +57,23 @@ def test_memory_receipt_failure_leaves_no_authority_and_retries(monkeypatch):
         uid = await _seed_queue(8801, 8811, 8821)
         monkeypatch.setattr("app.agent.internal_runner.run_internal", fake_model)
         monkeypatch.setattr(source_binding, "bind_memory", boom)
-        await worker.process_session(8821, 8811, 8801)
         async with async_session_factory() as db:
-            mem = (await db.execute(text(
+            # 11-20：先取基线再断言增量——source_id 是沙箱自增 msg_id，同 worker 前序文件的同号
+            # 残留会污染绝对计数（并行轮 (2,0)≠(0,0) 现行；与 routes 回滚断言改增量同法）
+            mem0 = (await db.execute(text(
                 "SELECT COUNT(*) FROM memories WHERE source_id=:u"), {"u": uid})).scalar_one()
-            rec = (await db.execute(text(
+            rec0 = (await db.execute(text(
                 "SELECT COUNT(*) FROM memory_write_receipts WHERE authoritative=1 "
                 "AND source_event_uid=(SELECT source_event_uid FROM chat_messages WHERE id=:u)"),
                 {"u": uid})).scalar_one()
+        await worker.process_session(8821, 8811, 8801)
+        async with async_session_factory() as db:
+            mem = (await db.execute(text(
+                "SELECT COUNT(*) FROM memories WHERE source_id=:u"), {"u": uid})).scalar_one() - mem0
+            rec = (await db.execute(text(
+                "SELECT COUNT(*) FROM memory_write_receipts WHERE authoritative=1 "
+                "AND source_event_uid=(SELECT source_event_uid FROM chat_messages WHERE id=:u)"),
+                {"u": uid})).scalar_one() - rec0
         return uid, mem, rec
 
     uid, mem, rec = asyncio.run(run())

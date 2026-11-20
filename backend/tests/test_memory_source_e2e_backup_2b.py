@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import pytest
+
 import asyncio
 import importlib.util
 import sqlite3
@@ -15,6 +17,8 @@ from pathlib import Path
 
 from sqlalchemy import text
 from app.utils.timeutil import now_naive_utc
+
+pytestmark = pytest.mark.xdist_group("resource_heavy")
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -124,7 +128,6 @@ def test_backup_carries_m2_authority_tables(monkeypatch, tmp_path):
 
     async def seed():
         db_path = engine.url.database
-        from datetime import datetime, timezone
 
         async with async_session_factory() as db:
             # 用内核正规签发（会推进 source_seq 计数器）；手插会写歪计数器、污染后续用例

@@ -41,20 +41,37 @@ def client():
     return TestClient(app)
 
 
-def _internal_observe(client, tree, limit=50, offset=0):
+def _internal_observe(client, tree, limit=50, offset=0, target_app=""):
     return client.post(f"/api/agent/tools/internal/observe?limit={limit}&offset={offset}",
-                       json={"tree": tree})
+                       json={"tree": tree, "target_app": target_app})
 
 
-def test_public_observe_rejects_tree_and_model_supplied_tree(client):
+def test_public_observe_rejects_tree_and_model_supplied_tree(client, monkeypatch):
     # 公开操作不接受树（安全边界）
     r = client.post("/api/agent/tools/device_observe",
                     json={"target_app": "com.android.settings", "tree": _tree(_btn("确定"))})
     assert r.status_code == 422
+    from app.agent import loop as loop_mod
+
+    async def _account_on(_uid):
+        return True
+
+    monkeypatch.setattr(loop_mod, "AGENT_FLAGS", {"device_actions_enabled": True})
+    monkeypatch.setattr("app.device.actions._account_actions_enabled", _account_on)
     r2 = client.post("/api/agent/tools/device_observe",
                      json={"target_app": "com.android.settings"})
     assert r2.status_code == 503
     assert r2.json()["detail"]["code"] == "DEVICE_CAPTURE_UNAVAILABLE"
+
+
+def test_public_observe_respects_kill_switch(client, monkeypatch):
+    from app.agent import loop as loop_mod
+
+    monkeypatch.setattr(loop_mod, "AGENT_FLAGS", {"device_actions_enabled": False})
+    r = client.post("/api/agent/tools/device_observe",
+                    json={"target_app": "com.android.settings"})
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "DEVICE_DISABLED"
 
 
 def test_internal_observe_paginates_and_bounds(client):
@@ -63,28 +80,25 @@ def test_internal_observe_paginates_and_bounds(client):
     assert r.status_code == 200
     body = r.json()
     assert len(body["items"]) == 3 and body["has_more"] is True
-    assert body["expires_in_s"] == 120.0
+    assert body["expires_in_s"] == 300.0
     assert {"ref", "role", "name", "native_id", "path", "actions"} <= set(body["items"][0])
     r2 = _internal_observe(client, tree, limit=200, offset=0)
     assert len(json.dumps(r2.json(), ensure_ascii=False)) <= 16_000
 
 
-def test_act_scroll_is_pending_not_success(client, monkeypatch):
+def test_act_scroll_is_unsupported_not_fake_pending(client, monkeypatch):
     from app.api import agent_tools as agent_tools_mod
 
     async def _granted(_uid):
-        return {"action_tap": "once_ever"}
+        return {"action_tap": "once_ever", "action_scroll": "once_ever"}
 
     monkeypatch.setattr(agent_tools_mod, "configured_policies", _granted)
-    snap_id = _internal_observe(client, _tree(_scroll())).json()["snapshot_id"]
+    snap_id = _internal_observe(client, _tree(_scroll()), target_app="com.gituu.ambrace.ai_companion").json()["snapshot_id"]
     ref = next(iter(snap.get_snapshot(snap_id).refs))
     r = client.post("/api/agent/tools/device_act",
                     json={"snapshot_id": snap_id, "ref": ref, "verb": "scroll"})
-    assert r.status_code == 202
-    body = r.json()
-    assert body["status"] == "pending_delivery"
-    assert body["executed"] is False
-    assert body["delivery"] == "not_delivered"
+    assert r.status_code == 501
+    assert r.json()["detail"]["code"] == "ACTION_UNSUPPORTED"
 
 
 def test_act_click_requires_approval_and_stale_ref(client, monkeypatch):
@@ -119,7 +133,7 @@ def test_open_app_and_snapshot_fail_closed(client, monkeypatch):
     assert r.status_code == 502
     assert r.json()["detail"]["code"] == "ACTION_FAILED"
     snap_r = client.post("/api/agent/tools/device_snapshot", json={})
-    assert snap_r.status_code == 503
+    assert snap_r.status_code == 404
 
 
 def test_minimal_openapi_scope_components_and_typed_responses(client):
@@ -157,5 +171,5 @@ def test_manifest_lists_registered_and_deferred(client):
     m = client.get("/api/agent/tools/manifest").json()
     assert m["registered_tools"] == ["device_observe", "device_act",
                                      "memory_recall", "memory_remember"]
-    assert set(m["deferred_tools"]) == {"device_open_app", "device_snapshot"}
+    assert set(m["deferred_tools"]) == {"device_open_app"}
     assert m["limits"]["max_result_chars"] == 16000

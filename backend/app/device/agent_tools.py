@@ -20,10 +20,27 @@ _logger = get_logger("device.agent_tools")
 OBSERVE_TOOL = "device_observe"
 ACT_TOOL = "device_act"
 
-# tool 内部快照 → 目标应用（api/agent_tools 的映射只在 HTTP 端，角色工具独立维护）
-_TOOL_SNAPSHOT_TARGETS: dict[str, str] = {}
-_TOOL_SNAPSHOT_PATHS: dict[tuple[str, str], str] = {}
-_LAST_TARGET_APP: str = ""
+def _bind_ref_paths(sid: str, target: str, tree: dict, refs: list) -> None:
+    """把客户端原始 path 绑定到快照记录（与 API 共用同一份映射）。"""
+    by_name: dict[str, list[str]] = {}
+    def _walk(nodes):
+        for n in nodes or []:
+            if isinstance(n, dict):
+                name = str(n.get("name") or n.get("text") or n.get("desc") or "")
+                cp = str(n.get("path") or "")
+                if name and cp:
+                    by_name.setdefault(name, []).append(cp)
+                _walk(n.get("children") or [])
+    _walk(tree.get("children") or [tree])
+    paths: dict[str, str] = {}
+    for r in refs:
+        cands = by_name.get(str(r.get("name") or "")) or []
+        if cands:
+            paths[str(r.get("ref") or "")] = cands.pop(0)
+    try:
+        snap.set_snapshot_context(sid, target_app=target, paths=paths)
+    except snap.SnapshotError:
+        pass
 
 
 async def _execute_observe(payload: dict) -> dict:
@@ -52,23 +69,7 @@ async def _execute_observe(payload: dict) -> dict:
         return {"ok": False, "text": f"读取手机界面失败：{e}"}
     refs = out.get("refs") or []
     sid = str(out.get("snapshot_id") or "")
-    _TOOL_SNAPSHOT_TARGETS[sid] = target
-    global _LAST_TARGET_APP
-    _LAST_TARGET_APP = target
-    by_name: dict[str, list[str]] = {}
-    def _walk(nodes):
-        for n in nodes or []:
-            if isinstance(n, dict):
-                name = str(n.get("name") or n.get("text") or n.get("desc") or "")
-                cp = str(n.get("path") or "")
-                if name and cp:
-                    by_name.setdefault(name, []).append(cp)
-                _walk(n.get("children") or [])
-    _walk(tree.get("children") or [tree])
-    for r in refs:
-        cands = by_name.get(str(r.get("name") or "")) or []
-        if cands:
-            _TOOL_SNAPSHOT_PATHS[(sid, str(r.get("ref") or ""))] = cands.pop(0)
+    _bind_ref_paths(sid, target, tree, refs)
     title = str(out.get("window_title") or "")
     names = [str(r.get("name") or "").strip() for r in refs[:8]]
     names = [n for n in names if n]
@@ -117,9 +118,9 @@ async def _execute_swipe(payload: dict, uid: int) -> dict:
         return {"ok": False, "text": f"读取授权失败：{e}"}
     if pol.get("action_swipe") != "once_ever":
         return {"ok": False, "text": "需要先在 App 手机操作里完成一次确认（action_swipe）"}
-    target = str(payload.get("target_app") or _LAST_TARGET_APP or "").strip()
+    target = str(payload.get("target_app") or "").strip()
     if not target:
-        return {"ok": False, "text": "swipe 需要 target_app"}
+        return {"ok": False, "text": "swipe 需要显式 target_app（不接受上次观察目标）"}
     direction = str(payload.get("direction") or "").strip().lower()
     if direction not in ("", "up", "down", "left", "right"):
         return {"ok": False, "text": "direction 只能是 up/down/left/right"}
@@ -171,7 +172,11 @@ async def _execute_act(payload: dict) -> dict:
     except snap.SnapshotError as e:
         return {"ok": False, "text": f"动作计划失败：{e.code} {e}"}
     plan = dict(plan)
-    full = _TOOL_SNAPSHOT_PATHS.get((snapshot_id, ref))
+    try:
+        _snap = snap.get_snapshot(snapshot_id)
+    except snap.SnapshotError as e:
+        return {"ok": False, "text": f"快照已失效：{e}"}
+    full = _snap.paths.get(ref)
     if full:
         plan["path"] = full
     cap = {"click": "action_tap", "set_text": "action_set_text"}[verb]
@@ -181,7 +186,7 @@ async def _execute_act(payload: dict) -> dict:
         return {"ok": False, "text": f"读取授权失败：{e}"}
     if policies.get(cap) != "once_ever":
         return {"ok": False, "text": f"需要先在 App 手机操作里完成一次确认（{cap}）"}
-    target = str(payload.get("target_app") or _TOOL_SNAPSHOT_TARGETS.get(snapshot_id) or "")
+    target = str(payload.get("target_app") or _snap.target_app or "")
     if not target:
         return {"ok": False, "text": "快照未关联目标应用，请重新 observe"}
     try:

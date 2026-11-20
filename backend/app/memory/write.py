@@ -324,7 +324,7 @@ def _merge_receipt_detail(kind, target, *, source, sub_type, memory_type, source
     return _det
 
 
-# ── M4 写入准入闸门（flag `memory_admission_gate`，默认 False；开=确定性裁决，不新增 LLM）──
+# ── M4 写入准入闸门（flag `memory_admission_gate`，注册默认 True（2026-11-14 起常驻）；开=确定性裁决，不新增 LLM）──
 # 注意：本 flag 未登记进 AGENT_FLAGS 硬编码默认表（app/flags/agent_flags.py；本批文件隔离只允许
 # 改 write.py / events/facts.py），故运行时 flag_service 无法热切它；读取一律走
 # `.get(key, False)`，缺键 = 关 = 逐字节旧行为。测试用 monkeypatch.setitem 直接开。

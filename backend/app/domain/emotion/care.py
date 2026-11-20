@@ -114,85 +114,10 @@ def _care_text_violated(text: str, crisis: bool) -> bool:
     return bool(crisis and _CRISIS_FORBIDDEN_PAT.search(t))
 
 
-# ── 迁移期兼容钩子（断点 #1 兜底，生产调用方请勿依赖）────────────────────────
-# 这四个名字是旧调用面的 monkeypatch 点（现存的只有 tests/test_d2_df.py 情绪关怀用例）：
-# 旧形态是「care 模块自己开会话 + 模块内私有查询函数」。默认全部为 None＝未安装，
-# 一旦被替换，_resolve_ports 会走 _LegacyCarePorts 并打 warning，行为与改动前一致。
-# 该用例改成显式注入假端口后，本段（含 _LegacyCarePorts）整体删除。
-async_session_factory = None      # 旧：app.db.database.async_session_factory
-_user_in_dnd_period = None        # 旧：app.utils.dnd.user_in_dnd_period(db, user_id)
-_daily_count = None               # 旧：care 内 _daily_count(db, character_id)
-_last_care_at = None              # 旧：care 内 _last_care_at(db, character_id)
-
-
-def _legacy_hooks_installed() -> bool:
-    return all(hook is not None for hook in (
-        async_session_factory, _user_in_dnd_period, _daily_count, _last_care_at,
-    ))
-
-
-class _LegacyCarePorts:
-    """兼容端口：DB 相关操作转接到上面四个钩子，其余操作原样转发给生产实现。
-
-    只在钩子被替换（既有测试桩形态）时启用；ORM 实体的取用也是旧形态的一部分，
-    因此这里保留惰性 import，删除本类时一起消失。
-    """
-
-    def __init__(self, delegate):
-        self._delegate = delegate
-
-    def __getattr__(self, name):
-        if name.startswith("_"):
-            raise AttributeError(name)
-        return getattr(self._delegate, name)
-
-    async def user_in_dnd(self, user_id: int) -> bool:
-        async with async_session_factory() as db:
-            return await _user_in_dnd_period(db, user_id)
-
-    async def daily_care_count(self, character_id: int) -> int:
-        async with async_session_factory() as db:
-            return await _daily_count(db, character_id)
-
-    async def last_care_at(self, character_id: int):
-        async with async_session_factory() as db:
-            return await _last_care_at(db, character_id)
-
-    async def load_care_task(self, task_id: int):
-        from app.models.agent import EmotionCareTask
-        async with async_session_factory() as db:
-            task = await db.get(EmotionCareTask, task_id)
-            if task is None:
-                return None
-            return CareTaskView(id=task.id, status=task.status, trigger_msg=task.trigger_msg)
-
-    async def finish_care_task(self, task_id: int, status: str) -> None:
-        from app.models.agent import EmotionCareTask
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        async with async_session_factory() as db:
-            task = await db.get(EmotionCareTask, task_id)
-            if task:
-                task.status = status
-                task.finished_at = now
-                await db.commit()
-
-    async def load_character(self, character_id: int):
-        from app.models.character import AICharacter
-        async with async_session_factory() as db:
-            char = await db.get(AICharacter, character_id)
-            if char is None:
-                return None
-            return CareCharacterView(id=char.id, name=char.name, personality=char.personality)
-
-
 def _resolve_ports(ports: EmotionCarePorts | None) -> EmotionCarePorts:
-    """取端口实现：显式注入优先；兼容钩子被替换时兜底（打 warning）；否则清晰报错。"""
+    """取端口实现：显式注入优先；未注入＝清晰报错（迁移期兼容兜底已于 2026-11-20 删除）。"""
     if ports is not None:
         return ports
-    if _legacy_hooks_installed():
-        from app.application.emotion_care_ports import ProductionCarePorts
-        _logger.warning("Emotion care ports not injected: falling back to legacy db hooks")
-        return _LegacyCarePorts(ProductionCarePorts())
     raise CarePortsNotInjected(
         "emotion care IO 端口未注入：请显式传入 EmotionCarePorts（生产实现 "
         "app.application.emotion_care_ports.production_care_ports）——架构地图断点 #1"
@@ -385,14 +310,10 @@ async def run_emotion_care(char_id: int, user_id: int, task_id: int,
 # 4. 调用方接线（只改注入行）：agent/internal_runner.py 的 emotion_care 分支、
 #    application/chat_service.py 的 register_care_task 调用、
 #    scheduling/sources/emotion_care.py 的 collect_care_events 调用。
-# 5. 遗留（下一批做，本样板刻意保留以便既有测试桩继续证明行为一致）：
-#    care.py 里四个「迁移期兼容钩子」+ _LegacyCarePorts + _resolve_ports 中的那条
-#    惰性 app.application import，唯一使用者是 tests/test_d2_df.py 的情绪关怀用例
-#    （它 monkeypatch 的是 care 模块内部名）。该用例改为显式注入假端口后，本段整体删除，
-#    care.py 即达到「domain 零 IO import」终态。
+# 5. ✅ 已收口（2026-11-20，架构复审 Import Linter 契约 domain-purity 唯一直接违规）：
+#    四个「迁移期兼容钩子」、兼容端口类与惰性 app.application import 已整体删除；
+#    唯一使用者 tests/test_d2_df.py 情绪关怀用例改显式假端口注入。
+#    care.py 达到「domain 零 IO import」终态；复核见 docs/archive/audits/c9-closure-20261120.md。
 #
-# 同类待做 domain 文件清单（只列文件名，本批未改）：
-# - app/domain/emotion/timeline.py（顶层 import app.db.database + 3 个 ORM 实体，3 处开会话）
-# - app/domain/relationship/decay.py（顶层 import app.db.database + CharacterState，1 处开会话）
-# - app/domain/decision/layer.py（函数内 import app.db.database，1 处开会话）
-# - app/domain/proactivity/pacing.py（函数内 import app.agent.loop.AGENT_FLAGS，跨层取开关）
+# 同类文件已全部收口（timeline/decay/decision/layer/pacing 均已去 IO import，11 月各批完成；
+# 2026-11-20 复核确认——本清单原「待做」字样作废）。

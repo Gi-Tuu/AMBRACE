@@ -5,8 +5,13 @@
 静默退化成 embedding=None 的假绿。CI 侧的兜底见 tests/conftest.py 的
 _deterministic_fake_embedding_when_model_missing（模型缺失时注入 1024 维确定性假向量）。
 """
+
+import pytest
+
 import asyncio
 import math
+
+pytestmark = pytest.mark.xdist_group("resource_heavy")
 
 DIM = 1024  # 与 bge-m3 一致；维度不符会让 Chroma collection 报错
 

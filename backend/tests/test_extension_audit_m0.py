@@ -389,10 +389,13 @@ def test_real_repo_has_zero_implementation_drift_after_n3(audit_data):
     b2 = audit_data["sections"]["B2_doc_code_drift"]
     assert b2["implementation_drift"] == []
     assert b2["counts"]["implementation_drift"] == 0
-    # 但代码也没有越出文档承诺面（device:* 通配覆盖 11 条动态权限名）
+    # 但代码也没有越出文档承诺面（device:* 通配覆盖 14 条动态权限名
+    # ＝ 6 动作 tap/open_app/scroll/set_text/swipe/observe_tree ＋ 8 读数
+    # battery/dnd/foreground_app/location/network/notifications/screen_state/usage_stats；
+    # 11→14 为 A6-act 三能力 2026-11-19 加入的合法增长，公开快照 CI 本例 skip 故只有内部全仓能钉）
     assert b2["counts"]["code_has_doc_lacks"] == 0
     assert b2["wildcard_notes"][0]["pattern"] == "device:*"
-    assert b2["wildcard_notes"][0]["covers_code_names"] == 11
+    assert b2["wildcard_notes"][0]["covers_code_names"] == 14
 
 
 def test_douyin_publish_is_a_planned_item_with_residual_reference_todo(audit_data):

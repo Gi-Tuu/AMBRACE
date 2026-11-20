@@ -109,6 +109,8 @@ def test_阈值与台账一致():
         import pytest
         pytest.skip("裁剪树里没有 docs/plans.md")
     text = plan.read_text(encoding="utf-8-sig")
-    row = [l for l in text.split("\n") if l.startswith("| B15 |")]
+    # 旧表格式（B15 在首格）与 2026-11-19 收口后格式（类别在首格、**B15** 在次格）都认
+    row = [l for l in text.split("\n")
+           if l.startswith("| B15 |") or "| **B15" in l]
     assert row, "plans 里找不到 B15 行"
     assert "≥20" in row[0] or "**≥20" in row[0], "B15 行的阈值表述变了，脚本与台账要对齐"

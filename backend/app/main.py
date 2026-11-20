@@ -29,7 +29,6 @@ from app.api import (
     voice_router,
     weave_router,
     permissions_router,
-    phone_workflows_router,
     mcp_router,
     games_router,
     llm_configs_router,
@@ -436,7 +435,7 @@ ROUTERS = [
     privacy_router, user_location_router, phone_desktop_router, plugins_router,
     plugin_bridge_router, marketplace_router, platform_profiles_router, chat_groups_router,
     life_router, life_home_router, voice_router, weave_router, permissions_router,
-    phone_workflows_router, ai_api_router, mcp_router, games_router, llm_configs_router,
+    ai_api_router, mcp_router, games_router, llm_configs_router,
     account_router, device_router, channel_bindings_router, device_actions_router, agent_tools_router,
     channel_login_router, openai_compat_router,
 ]

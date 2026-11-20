@@ -309,6 +309,24 @@ def _reset_admin_cache_between_tests():
     perm._account_state_cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _reset_plugin_scope_caches():
+    """每个用例前后清一次 M4 插件运行面缓存（2026-11-20 并行治理新护栏）。
+
+    背景：可见名集合与 caller 家庭根都带 30s TTL 进程内缓存；11-14 起
+    plugin_runtime_scope / plugin_user_scope 常驻默认 ON，hook 分发/桥/页面可见性全走缓存。
+    前序文件在自己的调用时刻把缓存填成「当时 _loaded 的快照」，同 worker 30s 内跑到的用例
+    （如 plugin_tenant_scope_m0 的 ai_diary 页面闸）命中过期名单 → 404
+    （11-20 全量并行轮 2 例现行；串行全量因文件间隔 >30s 从不复现，故只有并行能暴露）。
+    清缓存＝每用例按当下 _loaded/DB 现算，与 admin 缓存护栏同一逻辑。
+    """
+    from app.plugins import plugin_scope as _ps
+
+    _ps.clear_runtime_scope_caches()
+    yield
+    _ps.clear_runtime_scope_caches()
+
+
 # ---------------------------------------------------------------------------
 # S3 会话工厂桥接（2026-11-09）：记忆链路有**两个**解析点
 # ① `app.memory.service.async_session_factory` —— 既有 60+ 处测试打桩点（服务自身函数体在本模块解析）；

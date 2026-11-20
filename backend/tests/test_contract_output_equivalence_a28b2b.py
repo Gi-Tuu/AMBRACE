@@ -104,8 +104,14 @@ def test_契约开闸后装配产出逐字节相同(ctx_db):
     msgs_on = _assemble(state)
 
     assert contract is not None, "契约没产出来（闸没切对／state 缺证据）⇒ 本例前提失效"
-    assert _fp(msgs_on) == _fp(msgs_off), (
-        "②b 影子上开就改了 prompt ⇒ 台账里「只写不读」那句不成立，必须停下来重审"
+    _off, _on = _fp(msgs_off), _fp(msgs_on)
+    if _off != _on:
+        import difflib
+        _diff = "\n".join(difflib.unified_diff(_off.splitlines(), _on.splitlines(), lineterm=""))[:2000]
+    else:
+        _diff = ""
+    assert _off == _on, (
+        "②b 影子上开就改了 prompt ⇒ 台账里「只写不读」那句不成立，必须停下来重审\n" + _diff
     )
 
 

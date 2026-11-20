@@ -13,14 +13,6 @@ import "../utils/app_lang.dart";
 
 /// 工作流触发词（2026-08-14 P1：帮我执行/跑一下 XX）
 /// 中文表 + 英文表统一匹配（不按界面语言二选一；用户打字语言可能与界面不一致）
-const List<String> kWorkflowTriggersZh = ["帮我执行", "帮我运行", "跑一下", "执行一下", "执行工作流", "工作流", "帮我跑"];
-const List<String> kWorkflowTriggersEn = [
-  "run my workflow", "run workflow", "run the workflow", "execute workflow",
-  "execute my workflow", "start my workflow", "start workflow", "trigger workflow",
-  "my workflow", "workflow",
-];
-const List<String> kWorkflowTriggers = [...kWorkflowTriggersZh, ...kWorkflowTriggersEn];
-
 /// 手机感知（AI 走出沙箱 Phase 1）：读取屏幕文字/剪贴板/相册最近列表 → 上传服务器 → 注入聊天上下文。
 /// 全部能力默认关闭，需在设置页逐项授权；数据只发自家服务器。
 class PhonePerceptionService {
@@ -927,32 +919,6 @@ class PhonePerceptionService {
     return zhPatterns.any(t.contains) || enPatterns.any(t.contains);
   }
 
-  /// P1：从聊天文本匹配用户自建工作流（“帮我执行 XX / 跑一下 XX”）；未命中返回 null
-  static Future<Map<String, dynamic>?> matchWorkflow(String text) async {
-    try {
-      final data = await ApiClient().listWorkflows();
-      final items = (data['items'] as List? ?? []).cast<Map<String, dynamic>>();
-      if (items.isEmpty) return null;
-      // 统一小写后再剥离触发词与标点（兼容 Run my workflow 等英文大小写）
-      var rest = text.toLowerCase();
-      for (final t in kWorkflowTriggers) {
-        rest = rest.replaceAll(t, '');
-      }
-      // 中英标点一起清：补上英文 , . ; :，否则英文句剥离不干净、工作流名匹配不上
-      rest = rest.replaceAll(RegExp('[“”"\'，。！？!?、\\s,.;:]'), '');
-      if (rest.isEmpty) {
-        return items.length == 1 ? items.first : null;
-      }
-      for (final w in items) {
-        final name = (w['name'] as String? ?? '').toLowerCase();
-        if (name.contains(rest) || rest.contains(name)) return w;
-      }
-      return null;
-    } catch (_) {
-      return null;
-    }
-  }
-
   /// Phase 3 动作意图词：用户让 AI“帮我点/按/发/输入/滑”等
   static bool hasActionIntent(String text) {
     final t = text.trim().toLowerCase();
@@ -1146,120 +1112,6 @@ class PhonePerceptionService {
     return out;
   }
 
-  /// 图工作流执行（2026-08-14 方案 C）：nodes + edges，支持分支/条件/循环
-  /// - 无 edges：等价普通步骤序列 ⇒ 与 [executeActionSequence] 同一条路（M4d-3 起同样可接行动端口）
-  /// - 有 edges：从第一个节点开始图遍历；每节点最多 3 次、总步数上限 30 防死循环
-  static Future<List<Map<String, dynamic>>> executeWorkflowGraph(
-    List<Map> nodes, {
-    List<Map>? edges,
-    LegacyStepExecutor? legacyStep,
-    WorkflowBridgeEnabled? bridgeEnabled,
-    WorkflowIntentSubmitter? submit,
-    WorkflowPendingRunner? runner,
-    WorkflowScopedPendingRunner? scopedRunner,
-    WorkflowInfoLog? log,
-  }) async {
-    final edgeList = edges ?? const [];
-    if (edgeList.isEmpty) {
-      // 没有连线＝按顺序跑的线性序列，与 steps 同构，直接复用同一条路径。
-      // 不会递归：桥不可映射时逐步调的是 [_executeSingleStep]，它不回本函数。
-      return executeActionSequence(
-        nodes,
-        legacyStep: legacyStep,
-        bridgeEnabled: bridgeEnabled,
-        submit: submit,
-        runner: runner,
-        scopedRunner: scopedRunner,
-        log: log,
-      );
-    }
-    // 有 edges（分支/条件/循环）＝图，映射不成「一条意图跟着一条意图」的线性列表，恒走旧路径。
-    (log ?? _bridgeInfo)(
-        "fallback_legacy reason=branching_graph nodes=${nodes.length} edges=${edgeList.length}");
-    final results = <Map<String, dynamic>>[];
-    final en = await appLang() == "en";
-    final nodesById = <String, Map<String, dynamic>>{};
-    for (final n in nodes) {
-      final id = n["id"] as String? ?? "";
-      if (id.isNotEmpty) nodesById[id] = Map<String, dynamic>.from(n);
-    }
-    String? currentId = nodes.isNotEmpty ? (nodes.first["id"] as String? ?? "") : "";
-    final visitCount = <String, int>{};
-    var total = 0;
-    while (currentId != null && currentId.isNotEmpty) {
-      if (total >= 30) {
-        results.add({
-          "step": total + 1, "action": "stop", "target": "",
-          "ok": false,
-          "message": en
-              ? "Reached the 30-step limit; stopped automatically"
-              : "达到执行上限 30 步，已自动停止",
-        });
-        break;
-      }
-      final node = nodesById[currentId];
-      if (node == null) break;
-      visitCount[currentId] = (visitCount[currentId] ?? 0) + 1;
-      if (visitCount[currentId]! > 3) {
-        results.add({
-          "step": total + 1, "action": "stop", "target": "",
-          "ok": false,
-          "message": en
-              ? "Loop detected; stopped automatically"
-              : "检测到重复循环，已自动停止",
-        });
-        break;
-      }
-      final r = await _executeSingleStep(node, total + 1);
-      total++;
-      results.add(r);
-      final ok = r["ok"] as bool? ?? false;
-      final outs = edgeList.where((e) => (e["from"] as String? ?? "") == currentId).toList();
-      if (outs.isEmpty) break;
-      Map? picked;
-      final byResult = outs.where((e) {
-        final t = e["type"] as String? ?? "success";
-        return (t == "success" && ok) || (t == "fail" && !ok);
-      }).toList();
-      if (byResult.isNotEmpty) {
-        picked = byResult.first;
-      } else {
-        final always = outs.where((e) => (e["type"] as String? ?? "") == "always").toList();
-        if (always.isNotEmpty) {
-          picked = always.first;
-        } else {
-          for (final e in outs) {
-            final t = e["type"] as String? ?? "";
-            if (t != "screen_has" && t != "screen_empty") continue;
-            final has = await _screenHasText(e["target"] as String? ?? "");
-            if ((t == "screen_has" && has) || (t == "screen_empty" && !has)) {
-              picked = e;
-              break;
-            }
-          }
-        }
-      }
-      currentId = picked != null ? (picked["to"] as String? ?? "") : "";
-    }
-    return results;
-  }
-
-  /// 判断当前屏幕是否存在指定文本（screen_has / screen_empty 连线条件用）
-  static Future<bool> _screenHasText(String text) async {
-    final t = text.trim();
-    if (t.isEmpty) return false;
-    try {
-      final r = await getNodeTree();
-      final nodes = r["nodes"] as List? ?? const [];
-      for (final n in nodes) {
-        final label = (n["text"] as String? ?? "").trim();
-        if (label.isNotEmpty && label.contains(t)) return true;
-      }
-    } catch (_) {}
-    return false;
-  }
-
-  /// 单步执行（提取自 executeActionSequence，图/序列共用）
   static Future<Map<String, dynamic>> _executeSingleStep(Map step, int stepNo) async {
     await Future.delayed(const Duration(milliseconds: 700));
     final action = step["action"] as String? ?? "click";

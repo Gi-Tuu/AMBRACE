@@ -6,12 +6,14 @@
 1. `docs/feature-flags.md` §二 表内的键集合与 `AGENT_FLAGS` 字典**双向一致**（漏登＝热切能改但清单看不到；
    多登＝文档写了个不存在的键，下次照它操作会踩空）。
 2. §二 每节标题里声明的数量 **等于** 该节实际表内行数（历史上「A 9→10、F 28→29」这类标注数一漂就没人再信）。
-3. `docs/plans.md` §二 声明的注册键数／默认开／默认关／非布尔数 **等于** 从字典现算的值。
-4. plans §二 的**旧计数只许出现在 `<details>` 留档段里**（正文当现状读的那部分不许留 09-24 的"85 项"这类数）。
+3. `docs/feature-flags.md` 文首「当前口径」行声明的注册键数／默认开／默认关／非布尔数 **等于** 从字典现算的值
+   （2026-11-19 台账收口后 plans 只留「开关真源」指针节，计数声明随唯一真源走）。
+4. plans 全文的**旧计数只许出现在 `<details>` 留档段里**（正文不许留 09-24 的"85 项"这类数）。
 
 生产库侧的数字（67 ON／18 冗余行／16 从未拨过）**这里核不了**——测试跑的是沙箱库，
 `runtime_flags` 是空的；那几个数的口径写在 plans §二「口径」行里，靠人工只读复测维护。
 """
+import re
 from pathlib import Path
 
 import pytest
@@ -83,44 +85,52 @@ def test_各节声明数量等于该节实际行数(ff_sec2):
     assert not bad, "§二 节标题的标注数与表内行数对不上：%s" % bad
 
 
-def test_台账二节声明的字典计数与实测一致():
-    if not PLANS.is_file():
-        pytest.skip("脱敏快照无 docs/plans.md（CI）")
-    plans = PLANS.read_text(encoding="utf-8")
-    sec2 = _between(plans, "## 二、", "## 三、")
-    line = next(l for l in sec2.split("\n") if l.startswith("| 注册键 |"))
+def test_开关文档声明的字典计数与实测一致():
+    """计数声明读 feature-flags.md 文首「当前口径」行（唯一真源；plans 收口后不再留计数节）。"""
+    if not FF.is_file():
+        pytest.skip("脱敏快照无 docs/feature-flags.md（CI）")
+    head = FF.read_text(encoding="utf-8").split("\n---", 1)[0]
+    line = next(l for l in head.split("\n") if "字典" in l and "项＝" in l)
+    m = re.search(
+        r"字典\s*\*{0,2}(\d+)\*{0,2}\s*项＝(\d+)\s*布尔"
+        r"（默认开\s*\*{0,2}(\d+)\*{0,2}／默认关\s*\*{0,2}(\d+)\*{0,2}）"
+        r"＋\s*\*{0,2}(\d+)\*{0,2}\s*非布尔", line)
+    assert m, "当前口径行解析不出五个数（格式被改）：%s" % line
+    total, bools_decl, on, off, nonbool = (int(x) for x in m.groups())
     bools = [v for v in AGENT_FLAGS.values() if isinstance(v, bool)]
-    nonbool = len(AGENT_FLAGS) - len(bools)
-    want = (len(AGENT_FLAGS), sum(1 for v in bools if v), sum(1 for v in bools if not v), nonbool)
-    got = tuple(int(x) for x in __import__("re").findall(r"\*?\*(\d+)\*?\*", line))
-    assert len(got) >= 4, "注册键那行解析不出四个数（格式被改）：%s" % line
-    assert got[:4] == want, "台账 §二 的字典计数漂了：文档 %s ≠ 实测 注册%d／默认开%d／默认关%d／非布尔%d" % (
-        got[:4], want[0], want[1], want[2], want[3])
+    want = (len(AGENT_FLAGS), sum(1 for v in bools if v), sum(1 for v in bools if not v),
+            len(AGENT_FLAGS) - len(bools))
+    assert bools_decl == want[1] + want[2], "声明的布尔总数与默认开/关之和对不上：%s" % line
+    assert (total, on, off, nonbool) == want, (
+        "开关文档的字典计数漂了：文档 %s ≠ 实测 注册%d／默认开%d／默认关%d／非布尔%d" % (
+            (total, on, off, nonbool), want[0], want[1], want[2], want[3]))
 
 
 def test_旧计数只许待在details留档段():
+    """台账收口后不再有 §二 计数节 ⇒ 扫描范围改为 plans 全文（<details> 豁免语义保留）。"""
     if not PLANS.is_file():
         pytest.skip("脱敏快照无 docs/plans.md（CI）")
-    sec2 = _between(PLANS.read_text(encoding="utf-8"), "## 二、", "## 三、")
+    text = PLANS.read_text(encoding="utf-8")
     stale = ("85 项", "84 布尔", "48 行", "68 行", "66 overrides", "没有行＝默认关")
-    if "<details>" not in sec2:
-        assert not [s for s in stale if s in sec2], "留档段被删了但旧计数还留在正文"
+    if "<details>" not in text:
+        assert not [s for s in stale if s in text], "留档段被删了但旧计数还留在正文"
         return
-    body = sec2[:sec2.index("<details>")]
+    body = text[:text.index("<details>")]
     hits = [s for s in stale if s in body]
     assert not hits, "正文（当现状读的部分）里还留着旧计数/旧结论：%s——请挪进 <details> 留档段或按实测重写" % hits
 
 
-def test_台账二节声明了唯一真源与棘轮自身():
+def test_开关真源节声明了唯一真源与棘轮自身():
     if not PLANS.is_file():
         pytest.skip("脱敏快照无 docs/plans.md（CI）")
-    sec2 = _between(PLANS.read_text(encoding="utf-8"), "## 二、", "## 三、")
-    head_line = sec2.split("\n")[0]
-    import re
-    assert re.search(r"唯一真源\s*＝?\s*\[?feature-flags\.md", head_line), (
-        "§二 标题必须写明逐键明细的唯一真源＝feature-flags.md（两处各列一遍必漂）")
-    assert "feature-flags.md" in sec2, "正文里也要指向 feature-flags.md"
-    assert "test_flag_docs_reconcile" in sec2, "§二 必须声明本棘轮的存在，否则后人不知道改文档会让测试红"
+    plans = PLANS.read_text(encoding="utf-8")
+    i = plans.index("## 开关真源")
+    j = plans.find("\n## ", i + 1)
+    sec = plans[i:] if j == -1 else plans[i:j]
+    assert re.search(r"唯一真源\s*＝?\s*\[?feature-flags\.md", sec), (
+        "开关真源节必须写明逐键明细的唯一真源＝feature-flags.md（两处各列一遍必漂）")
+    assert "feature-flags.md" in sec, "正文里也要指向 feature-flags.md"
+    assert "test_flag_docs_reconcile" in sec, "开关真源节必须声明本棘轮的存在，否则后人不知道改文档会让测试红"
 
 
 # ── 第 5 条（2026-10-04，A19 收口）：拍过的处置不许只活在台账里 ──

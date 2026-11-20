@@ -77,6 +77,8 @@ from app.models.character import AICharacter
 from app.models.user import User
 from sqlalchemy.ext.asyncio import async_sessionmaker as _asmaker
 
+pytestmark = pytest.mark.xdist_group("resource_heavy")
+
 
 def _old_policy_namespace() -> dict:
     """从开工 HEAD 的 context_builder 里提取三个纯策略与两个常量（源码级冻结，不 import 候选代码）。"""

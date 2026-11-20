@@ -2,6 +2,8 @@
 """YAI 接入 M3：记忆适配器 recall/remember（scope 映射、source 留在适配层、tag 映射）。"""
 from __future__ import annotations
 
+import os
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -92,12 +94,12 @@ def test_memory_remember_rejects_source_field(client):
     assert r.status_code == 422
 
 
+@pytest.mark.skipif("PYTEST_XDIST_WORKER" in os.environ, reason="真实共享沙箱库，并行锁；串行验收档覆盖")
 def test_memory_roundtrip_real_db(client):
     """真实写库 → recall 命中 → 删除（测试库事务性，不碰生产库）。"""
     import asyncio
 
     from app.memory.maintain import delete_memory
-    from app.memory.retrieve import search_memories
     from app.memory.write import save_memory
 
     marker = "M3roundtrip-9f2c1a"

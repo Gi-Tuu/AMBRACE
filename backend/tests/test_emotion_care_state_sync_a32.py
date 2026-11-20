@@ -255,7 +255,7 @@ def test_合规输出只调一次LLM不触重生成():
 
 
 def test_端口协议与生产实现同步声明recent_messages():
-    """派单 §1(3.4)：新增端口要「协议 + 生产实现」一起补，别只改调用侧（兼容层靠 __getattr__ 转发）。"""
+    """派单 §1(3.4)：新增端口要「协议 + 生产实现」一起补，别只改调用侧。（2026-11-20：迁移期兼容层已删，本测只核协议/生产两处同步。）"""
     import inspect
 
     from app.application.emotion_care_ports import ProductionCarePorts
@@ -266,9 +266,6 @@ def test_端口协议与生产实现同步声明recent_messages():
     assert list(inspect.signature(ProductionCarePorts.recent_messages).parameters) == [
         "self", "session_id", "limit",
     ]
-    # 兼容层：未显式实现，靠 __getattr__ 转发到生产实现（所以不需要第三处改动）
-    legacy = care_mod._LegacyCarePorts(ProductionCarePorts())
-    assert "recent_messages" not in vars(legacy) and hasattr(legacy, "recent_messages")
 
 
 # ─────────────────── 真 SQL 档：recent_messages 端口行为 ───────────────────

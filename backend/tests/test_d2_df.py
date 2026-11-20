@@ -176,43 +176,31 @@ def test_ai_social_level2_不走include_reasoning(monkeypatch):
         assert kw.get("task") == "message"
 
 
-def test_emotion_care_level2_不走include_reasoning(monkeypatch):
-    """D2-C：emotion_care 挡位 2 时无 include_reasoning；extra_meta 不再带 reasoning（恒 None）"""
+def test_emotion_care_level2_不走include_reasoning():
+    """D2-C：emotion_care 挡位 2 时无 include_reasoning；extra_meta 不再带 reasoning（恒 None）。
+
+    2026-11-20：改显式假端口注入——care.py 迁移期兼容钩子已删
+    （架构复审，见 docs/archive/audits/c9-closure-20261120.md §3.5）。
+    """
+    from test_domain_care_purity import _FakePorts
+
     calls = []
-    sent = []
-    task = SimpleNamespace(id=5, status="pending", trigger_msg="今天好累", finished_at=None)
-    char = _char(3, "小阳")
 
-    async def _fake_chat_completion(messages, **kw):
-        calls.append(kw)
-        return "别难过了，我一直都在。"
+    class _KwRecordPorts(_FakePorts):
+        """chat_completion 全量记参（含 include_reasoning 有无），其余沿用 _FakePorts。"""
 
-    async def _fake_identity(char_, uid):
-        return "你是小阳，性格活泼。"
+        async def chat_completion(self, **kw):
+            calls.append(kw)
+            return self.reply
 
-    async def _fake_send(session_id, character_id, user_id, content, message_type="", **kw):
-        sent.append({"sid": session_id, "cid": character_id, "uid": user_id,
-                     "content": content, "mtype": message_type, "extra": kw.get("extra_meta")})
-
-    monkeypatch.setattr("app.agent.llm_client.chat_completion", _fake_chat_completion)
-    monkeypatch.setattr("app.agent.llm_client.load_character_reasoning_level", _fake_rl2)
-    monkeypatch.setattr(emotion_mod, "async_session_factory", _FakeFactory({5: task, 3: char}))
-    monkeypatch.setattr(emotion_mod, "_user_in_dnd_period", _noop_bool)
-    monkeypatch.setattr(emotion_mod, "_daily_count", _noop_int0)
-    monkeypatch.setattr(emotion_mod, "_last_care_at", _noop_none)
-    monkeypatch.setattr("app.application.chat_store.get_latest_session_id", _sid)
-    monkeypatch.setattr("app.agent.user_profile.build_role_prompt_block", _fake_identity)
-    monkeypatch.setattr("app.agent.persona.build_active_channel_persona", _noop_str)
-    monkeypatch.setattr("app.application.weather_service.get_user_weather_line", _noop_str)
-    monkeypatch.setattr("app.scheduling.scheduler.send_to_session", _fake_send)
-
-    ok = asyncio.run(emotion_mod.run_emotion_care(3, 4, 5))
+    ports = _KwRecordPorts(level=2)
+    ok = asyncio.run(emotion_mod.run_emotion_care(3, 4, 5, ports=ports))
     assert ok is True
     assert len(calls) == 1
     assert "include_reasoning" not in calls[0]
     assert calls[0].get("task") == "emotion"
-    assert sent and sent[0]["extra"] is None  # extra_meta 不再带 reasoning
-    assert task.status == "done"  # _finish_task 正常置位
+    assert ports.sent and ports.sent[0]["extra_meta"] is None  # extra_meta 不再带 reasoning
+    assert ports.finished == [(5, "done")]  # _finish_task 正常置位
 
 
 def test_memory_review_level2_不走include_reasoning(monkeypatch):

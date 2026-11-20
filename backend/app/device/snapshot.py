@@ -11,14 +11,14 @@
 - ``STALE_REF``：元素在最新树里已消失（``saved_ref_absent``）；
 - ``AMBIGUOUS_TARGET``：同窗出现相同元素（``saved_ref_ambiguous``）或捕获时就不唯一（``identity_not_unique``）。
 
-纪律：ref 只在一次快照内有效；TTL 默认 120s；进程内存储、有上限（默认保留 32 份）。
+纪律：ref 只在一次快照内有效；TTL 默认 300s；进程内存储、有上限（默认保留 32 份）。
 """
 from __future__ import annotations
 
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # 常见可交互角色（客户端/平台差异下尽量宽松；最终以 available_actions/clickable 为准）
 INTERACTIVE_ROLES = frozenset({
@@ -70,6 +70,8 @@ class Snapshot:
     ttl: float
     redacted: int = 0
     next_seq: int = 0
+    target_app: str = ""
+    paths: dict[str, str] = field(default_factory=dict)
 
 
 _STORE: dict[str, Snapshot] = {}
@@ -205,6 +207,17 @@ def _purge_locked(now: float | None = None) -> None:
     now = time.monotonic() if now is None else now
     for sid in [k for k, v in _STORE.items() if now - v.created_at > v.ttl]:
         _STORE.pop(sid, None)
+
+
+def set_snapshot_context(snapshot_id: str, *, target_app: str = "",
+                         paths: dict[str, str] | None = None) -> Snapshot:
+    """给快照绑定目标应用与 ref→客户端 path 映射（API/ToolSpec 共用一份）。"""
+    s = get_snapshot(snapshot_id)
+    if target_app:
+        s.target_app = str(target_app)
+    if paths:
+        s.paths.update({str(k): str(v) for k, v in paths.items()})
+    return s
 
 
 def get_snapshot(snapshot_id: str) -> Snapshot:

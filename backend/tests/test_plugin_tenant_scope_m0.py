@@ -318,7 +318,7 @@ def test_gate_开时_disabled插件全404(gate_client, monkeypatch):
 
 def test_gate_开时_enabled插件不受影响(gate_client, monkeypatch):
     _set_gate(monkeypatch, True)
-    registry._enabled["ai_diary"] = True
+    monkeypatch.setitem(registry._enabled, "ai_diary", True)  # 11-20：裸写不还原会污染同 worker 后续文件，改经 monkeypatch
     assert gate_client.get("/api/v1/plugins/ai_diary/page/index.html").status_code == 200
     r = gate_client.post("/api/v1/plugins/ai_diary/bridge", json={"api": "store.get", "params": {"key": "k"}})
     assert r.status_code == 200

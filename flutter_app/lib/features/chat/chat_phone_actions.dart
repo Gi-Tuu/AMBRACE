@@ -13,39 +13,6 @@ mixin ChatPhoneActions<T extends StatefulWidget> on State<T> {  /// 3.4a：先�
     final l10n = AppLocalizations.of(context)!;
     if (!mounted) return null;
     final messenger = ScaffoldMessenger.of(context);
-    // P1 工作流（2026-08-14）：用户自建序列（可含 Shizuku 系统级步骤）优先匹配
-    final wf = await PhonePerceptionService.matchWorkflow(userText);
-    if (wf != null && mounted) {
-      final wfSteps = (wf['steps'] as List? ?? []).cast<Map>();
-      if (wfSteps.isNotEmpty) {
-        final wfName = wf['name'] as String? ?? l10n.wfDefaultName;
-        final okRun = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: Text(l10n.chatRunWf(wfName)),
-            content: Text(l10n.chatWfSteps(wfSteps.length)),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l10n.cancel)),
-              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(l10n.input)),
-            ],
-          ),
-        );
-        if (okRun == true && mounted) {
-          final wfResults = await _runSequenceWithConfirm(wfSteps);
-          final wfOk = wfResults.every((r) => r['ok'] == true);
-          final wfSummary = wfResults
-              .map((r) => l10n.chatWfStep(r['step'], r['ok'] == true ? '✓' : '✗', r['message'] ?? ''))
-              .join(l10n.sepSemicolon);
-          await PhonePerceptionService.uploadActionResult('workflow', wfName, wfOk, wfSummary);
-          if (mounted) {
-            messenger.showSnackBar(SnackBar(
-              content: Text(wfOk ? l10n.chatWfDone(wfSummary) : l10n.chatWfInterrupted(wfSummary), maxLines: 3),
-            ));
-          }
-        }
-        return null;
-      }
-    }
     final tree = await PhonePerceptionService.getNodeTree();
     if (!mounted) return null;
     final serviceEnabled = tree["serviceEnabled"] as bool? ?? false;

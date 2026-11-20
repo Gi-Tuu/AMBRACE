@@ -1,0 +1,35 @@
+# Import Linter 分层契约（2026-11-20 架构复审引入）
+# 蓝本：docs/engineering-protocol.md（单一事实源/工具目录职责边界）+ 批 2/批 3 审计报告
+# （docs/archive/audits/batch2_interface_ownership_20261108.md / batch3_compat_seams_20261108.md）。
+# 口径：存在 import != 故障；已定性的有意接缝用 ignore_imports 精确豁免并注明出处，禁止通配扩豁免。
+# 运行：cd backend && .venv/Scripts/lint-imports.exe
+
+[importlinter]
+root_package = app
+
+[importlinter:contract:domain-purity]
+name = domain 纯度：不 import 执行/编排/接口/通道层（批 2 §1 蓝本）
+type = forbidden
+source_modules =
+    app.domain
+forbidden_modules =
+    app.agent
+    app.application
+    app.api
+    app.scheduling
+    app.life
+    app.games
+    app.mcp
+    app.plugins
+    app.voice
+    app.ws
+    app.device
+    app.tools
+# 2026-11-20 复审口径：只判直接 import。间接链（models.agent → credential_crypto →
+# db → init_db → providers → agent/plugins 等）是「导入任一 ORM 即可达全仓」的启动期
+# 耦合事实，属 init_db/providers 结构议题，不归 domain 方向性契约管（收口报告 §3.5 登记）。
+allow_indirect_imports = true
+
+# 2026-11-20 复审撤销 tools-no-agent 契约：实测违规全部为类型级自注册
+# （register_tool/ToolSpec/RISK_*）与工具处理器对业务流的函数内懒委托——前者是既有
+# 注册模式、后者方向合法（调用方→编排层），协议真正保护的边界由冻结目录守卫承担。

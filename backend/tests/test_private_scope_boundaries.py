@@ -274,7 +274,7 @@ def test_b3_diary_api_does_not_filter_by_memory_scope():
     )
 
 
-@pytest.mark.parametrize("phone_file", ["api/phone.py", "api/phone_desktop.py", "api/phone_workflows.py"])
+@pytest.mark.parametrize("phone_file", ["api/phone.py", "api/phone_desktop.py"])
 def test_b3_phone_apis_do_not_filter_by_memory_scope(phone_file):
     """B3：``api/phone*.py`` 三个读面不含 ``Memory.scope`` 谓词。
 
