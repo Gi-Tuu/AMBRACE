@@ -21,7 +21,6 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from app.domain.emotion.ports import (
-    CareCharacterView,
     CarePortsNotInjected,
     CareTaskView,
     EmotionCarePorts,
