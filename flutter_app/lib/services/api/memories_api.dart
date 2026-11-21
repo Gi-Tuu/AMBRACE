@@ -1,3 +1,4 @@
+import "package:dio/dio.dart";
 import '../../models/memory.dart';
 import '../../models/memory_history.dart';
 import '../../models/memory_derivations.dart';
@@ -14,9 +15,10 @@ extension MemoriesApi on ApiClient {
   }
 
   Future<({List<Memory> memories, int total})> getMemoriesWithTotal({int? characterId}) async {
-    final params = <String, dynamic>{};
+    final params = <String, dynamic>{'limit': 2000};
     if (characterId != null) params['character_id'] = characterId;
-    final r = await dio.get('/api/v1/memories', queryParameters: params);
+    final r = await dio.get('/api/v1/memories', queryParameters: params,
+        options: Options(receiveTimeout: const Duration(seconds: 30)));
     final data = r.data as Map<String, dynamic>;
     final memories = (data['memories'] as List)
         .map((j) => Memory.fromJson(j as Map<String, dynamic>))

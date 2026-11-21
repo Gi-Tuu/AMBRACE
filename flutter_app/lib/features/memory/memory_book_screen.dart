@@ -64,6 +64,8 @@ class _MemoryBookScreenState extends State<MemoryBookScreen> {
   String? _error;
   String _selectedType = "all";
   bool _summarizing = false;
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _query = "";
 
   Map<String, String> _typeLabels(AppLocalizations l10n) => {
         "all": l10n.memoryAll,
@@ -93,6 +95,12 @@ class _MemoryBookScreenState extends State<MemoryBookScreen> {
   void initState() {
     super.initState();
     _loadMemories();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   /// 置顶条选取唯一入口（A33/A.3.2）：按 memoryType 分组后统一走 [pickPinnedSummary]，
@@ -176,9 +184,17 @@ class _MemoryBookScreenState extends State<MemoryBookScreen> {
   }
 
   List<Memory> get _filteredMemories {
-    final source = _allMemories.where((m) => !m.isPinned);
-    if (_selectedType == "all") return source.toList();
-    return source.where((m) => m.memoryType == _selectedType).toList();
+    final q = _query.trim().toLowerCase();
+    var source = _allMemories.where((m) => !m.isPinned);
+    if (_selectedType != "all") {
+      source = source.where((m) => m.memoryType == _selectedType);
+    }
+    if (q.isNotEmpty) {
+      source = source.where((m) =>
+          m.content.toLowerCase().contains(q) ||
+          (m.title ?? "").toLowerCase().contains(q));
+    }
+    return source.toList();
   }
 
   String _sourceLabel(Memory mem, AppLocalizations l10n) {
@@ -255,6 +271,32 @@ class _MemoryBookScreenState extends State<MemoryBookScreen> {
       ),
       body: Column(
         children: [
+          // 记忆搜索：几百上千条时先本地筛，不额外打接口
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: TextField(
+              controller: _searchCtrl,
+              onChanged: (v) => setState(() => _query = v),
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: l10n.searchPlaceholder,
+                prefixIcon: const Icon(Icons.search, size: 20),
+                suffixIcon: _query.isEmpty
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          setState(() => _query = "");
+                        },
+                      ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(22),
+                ),
+              ),
+            ),
+          ),
           // Type filter chips
           Container(
             width: double.infinity,
