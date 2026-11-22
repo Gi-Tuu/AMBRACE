@@ -9,6 +9,8 @@ class SessionStrings {
     'zh': {
       'sessions': '会话',
       'newSession': '新建会话',
+      'sessionSearch': '搜索会话（标题/编号）',
+      'noMatchSessions': '没有匹配的会话。',
       'untitledSession': '未命名会话',
       'noSessions': '暂无会话',
       'selectSession': '选择一个会话',
@@ -27,6 +29,8 @@ class SessionStrings {
     'en': {
       'sessions': 'Sessions',
       'newSession': 'New session',
+      'sessionSearch': 'Search sessions (title/id)',
+      'noMatchSessions': 'No matching sessions.',
       'untitledSession': 'Untitled session',
       'noSessions': 'No sessions yet',
       'selectSession': 'Select a session',

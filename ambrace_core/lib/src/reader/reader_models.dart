@@ -331,7 +331,8 @@ class ReaderMoment {
   final int userId;
   final String senderType;
   final String content;
-  final String? imageDesc; // 图片只展示既有描述/占位，不加载 image_url
+  final String? imageUrl; // 图片动态：列表/详情可加载受控 URL；空表示纯文字
+  final String? imageDesc; // 图片描述文本，图片无法加载时仍可展示
   final int likesCount;
   final String createdAt;
   final int authorTzOffset;
@@ -346,6 +347,7 @@ class ReaderMoment {
     required this.userId,
     required this.senderType,
     required this.content,
+    this.imageUrl,
     this.imageDesc,
     this.likesCount = 0,
     this.createdAt = '',
@@ -364,6 +366,7 @@ class ReaderMoment {
         userId: _asInt(j['user_id']),
         senderType: _asStr(j['sender_type']),
         content: _reqStr(j, 'content', 'moment'),
+        imageUrl: _asStrN(j['image_url']),
         imageDesc: _asStrN(j['image_desc']),
         likesCount: _asInt(j['likes_count']),
         createdAt: _asStr(j['created_at']),
@@ -486,4 +489,174 @@ class ReaderUserDiary {
         createdAt: _asStr(j['created_at']),
         updatedAt: _asStr(j['updated_at']),
       );
+}
+
+/// 记忆派生关系（G2）：两方向各自分页，只读投影。
+class ReaderDerivationItem {
+  final int id;
+  final String content;
+  final String memoryType;
+  final String status;
+  final bool isArchived;
+
+  const ReaderDerivationItem({
+    required this.id,
+    required this.content,
+    required this.memoryType,
+    required this.status,
+    required this.isArchived,
+  });
+
+  factory ReaderDerivationItem.fromJson(Map<String, dynamic> j) => ReaderDerivationItem(
+        id: _reqInt(j, 'id', 'derivation item'),
+        content: _asStr(j['content']),
+        memoryType: _asStr(j['memory_type']),
+        status: _asStr(j['status']),
+        isArchived: _asBool(j['is_archived']),
+      );
+}
+
+class ReaderDerivationDirection {
+  final List<ReaderDerivationItem> items;
+  final bool hasMore;
+  final bool dataIncomplete;
+
+  const ReaderDerivationDirection({
+    required this.items,
+    required this.hasMore,
+    required this.dataIncomplete,
+  });
+
+  factory ReaderDerivationDirection.fromJson(Object? raw) {
+    if (raw is! Map) throw const FormatException('derivation direction: not object');
+    final j = raw.cast<String, dynamic>();
+    final list = j['items'];
+    if (list is! List) throw const FormatException('derivation direction: items');
+    return ReaderDerivationDirection(
+      items: [for (final e in list) ReaderDerivationItem.fromJson((e as Map).cast<String, dynamic>())],
+      hasMore: j['has_more'] == true,
+      dataIncomplete: j['data_incomplete'] == true,
+    );
+  }
+}
+
+class ReaderMemoryDerivations {
+  final int memoryId;
+  final ReaderDerivationDirection parents;
+  final ReaderDerivationDirection children;
+
+  const ReaderMemoryDerivations(this.memoryId, this.parents, this.children);
+
+  factory ReaderMemoryDerivations.fromJson(Map<String, dynamic> j) => ReaderMemoryDerivations(
+        _reqInt(j, 'memory_id', 'derivations'),
+        ReaderDerivationDirection.fromJson(j['parents']),
+        ReaderDerivationDirection.fromJson(j['children']),
+      );
+}
+
+/// 记忆来源（G5「为什么记住」）。
+class ReaderWhySource {
+  final String kind;
+  final String? messageExcerpt;
+  final String? messageCreatedAt;
+  final String? eventAt;
+
+  const ReaderWhySource({
+    required this.kind,
+    this.messageExcerpt,
+    this.messageCreatedAt,
+    this.eventAt,
+  });
+
+  factory ReaderWhySource.fromJson(Map<String, dynamic> j) => ReaderWhySource(
+        kind: _asStr(j['kind']),
+        messageExcerpt: _asStrN(j['message_excerpt']),
+        messageCreatedAt: _asStrN(j['message_created_at']),
+        eventAt: _asStrN(j['event_at']),
+      );
+}
+
+class ReaderMemoryWhy {
+  final int memoryId;
+  final bool hasSource;
+  final List<ReaderWhySource> sources;
+  final int receiptCount;
+  final String note;
+
+  const ReaderMemoryWhy({
+    required this.memoryId,
+    required this.hasSource,
+    required this.sources,
+    required this.receiptCount,
+    required this.note,
+  });
+
+  factory ReaderMemoryWhy.fromJson(Map<String, dynamic> j) {
+    final raw = j['sources'];
+    return ReaderMemoryWhy(
+      memoryId: _reqInt(j, 'memory_id', 'why'),
+      hasSource: j['has_source'] == true,
+      sources: raw is List
+          ? [for (final e in raw) ReaderWhySource.fromJson((e as Map).cast<String, dynamic>())]
+          : const [],
+      receiptCount: _asInt(j['receipt_count']),
+      note: _asStr(j['note']),
+    );
+  }
+}
+
+/// 记忆生命周期（B16）。
+class ReaderLifecycleReceipt {
+  final String action;
+  final String? reason;
+  final String? createdAt;
+
+  const ReaderLifecycleReceipt({required this.action, this.reason, this.createdAt});
+
+  factory ReaderLifecycleReceipt.fromJson(Map<String, dynamic> j) => ReaderLifecycleReceipt(
+        action: _asStr(j['action']),
+        reason: _asStrN(j['reason']),
+        createdAt: _asStrN(j['created_at']),
+      );
+}
+
+class ReaderMemoryLifecycle {
+  final int memoryId;
+  final String? lifecycleStatus;
+  final int version;
+  final int? supersededBy;
+  final String? validTo;
+  final bool isArchived;
+  final List<ReaderLifecycleReceipt> receipts;
+  final int receiptCount;
+  final int derivedCount;
+
+  const ReaderMemoryLifecycle({
+    required this.memoryId,
+    required this.lifecycleStatus,
+    required this.version,
+    required this.supersededBy,
+    required this.validTo,
+    required this.isArchived,
+    required this.receipts,
+    required this.receiptCount,
+    required this.derivedCount,
+  });
+
+  factory ReaderMemoryLifecycle.fromJson(Map<String, dynamic> j) {
+    final raw = j['receipts'];
+    return ReaderMemoryLifecycle(
+      memoryId: _reqInt(j, 'memory_id', 'lifecycle'),
+      lifecycleStatus: _asStrN(j['lifecycle_status']),
+      version: _asInt(j['version']),
+      supersededBy: _asIntN(j['superseded_by']),
+      validTo: _asStrN(j['valid_to']),
+      isArchived: j['is_archived'] == true,
+      receipts: raw is List
+          ? [for (final e in raw) ReaderLifecycleReceipt.fromJson((e as Map).cast<String, dynamic>())]
+          : const [],
+      receiptCount: _asInt(j['receipt_count']),
+      derivedCount: _asInt(j['derived_count']),
+    );
+  }
 }

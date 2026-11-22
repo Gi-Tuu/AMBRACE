@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>夜航工作台 · PWA 方向三</title>
+<style>
+  :root{--bg:#080b10;--panel:#0e131b;--panel2:#131a24;--line:#23303f;--text:#e8eef6;--muted:#8394a8;--lime:#c8ff5e;--cyan:#5ee7ff;--amber:#ffbd5c;--mono:"JetBrains Mono","Cascadia Code",monospace;--sans:"Inter","PingFang SC","Microsoft YaHei",sans-serif}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);height:100%}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  .app{height:100vh;display:grid;grid-template-columns:232px minmax(0,1fr) 320px;grid-template-rows:56px 1fr 36px;overflow:hidden}
+  .top{grid-column:1/4;display:flex;align-items:center;gap:16px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+  .logo{font-weight:800;letter-spacing:-.04em;font-size:15px}.logo b{color:var(--lime)}
+  .crumb{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .search{margin-left:auto;display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:#0a0f16;padding:7px 10px;border-radius:6px;width:300px;font-size:11px;color:var(--muted)}
+  .search kbd{border:1px solid #33455a;border-bottom-width:2px;border-radius:4px;padding:1px 5px;font-family:var(--mono);font-size:9px;color:#b9c9dc;margin-left:auto}
+  .avatar{width:26px;height:26px;border-radius:50%;background:#1d2a38;display:grid;place-items:center;font-size:10px;color:var(--lime);border:1px solid #33455a}
+  .side{grid-row:2/3;border-right:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+  .side .sec{padding:14px 12px 8px;font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.14em;display:flex;justify-content:space-between}
+  .chats{overflow:auto}
+  .chat{display:grid;grid-template-columns:28px 1fr auto;gap:9px;padding:10px 12px;border-left:2px solid transparent;cursor:pointer}
+  .chat:hover{background:#111924}.chat.on{background:#15202c;border-left-color:var(--lime)}
+  .c-ava{width:26px;height:26px;border-radius:6px;background:#1c2937;display:grid;place-items:center;font-size:10px;color:#a9bdd1}
+  .chat b{display:block;font-size:11px;font-weight:600}.chat small{display:block;font-size:10px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
+  .chat time{font-family:var(--mono);font-size:8px;color:#5c6f84}
+  .unread{display:inline-block;background:var(--lime);color:#0b0f08;font-family:var(--mono);font-size:8px;padding:1px 4px;border-radius:3px;margin-top:4px}
+  .main{grid-column:2/3;grid-row:2/3;display:flex;flex-direction:column;min-width:0;background:var(--bg)}
+  .bar{height:46px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid var(--line);background:#0a0f16}
+  .bar b{font-size:12px}.bar .live{font-family:var(--mono);font-size:9px;color:var(--lime)}
+  .msgs{flex:1;overflow:auto;padding:24px 8%;display:flex;flex-direction:column;gap:18px;min-height:0}
+  .msg{max-width:680px}.msg .meta{font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:5px;display:flex;gap:8px}
+  .msg .meta b{color:#c9d8e8;font-weight:500}.msg.user{align-self:flex-end;text-align:right}
+  .bubble{border:1px solid var(--line);background:var(--panel2);padding:11px 13px;font-size:13px;line-height:1.75;border-radius:2px 9px 9px 9px}
+  .msg.user .bubble{background:#1a2632;border-color:#2b3c4e;border-radius:9px 2px 9px 9px}
+  .msg .time{font-family:var(--mono);font-size:8px;color:#5c6f84;margin-top:5px}
+  .tool{display:inline-flex;gap:6px;margin-top:6px;font-family:var(--mono);font-size:8px;color:var(--cyan);border:1px solid #1d3a46;background:#0b171b;padding:3px 6px;border-radius:3px}
+  .composer{border-top:1px solid var(--line);padding:10px 18px 14px;background:#0a0f16}
+  .todayline{display:flex;gap:18px;align-items:center;padding:8px 18px;border-top:1px solid #141f2b;font-family:var(--mono);font-size:9px;color:#6d8599;background:#0a0f16}
+  .todayline b{color:var(--lime);font-weight:500}.todayline span{color:#41576b}
+  .inputbox{border:1px solid #2a3a4b;background:#0d131b;border-radius:7px;padding:10px 12px;display:flex;gap:10px;align-items:center}
+  .inputbox span{font-size:12px;color:#60758a;flex:1}.inputbox kbd{font-family:var(--mono);font-size:9px;border:1px solid #33455a;border-bottom-width:2px;border-radius:4px;padding:2px 5px;color:#b9c9dc}
+  .ctx{grid-column:3/4;grid-row:2/3;border-left:1px solid var(--line);background:var(--panel);overflow:auto;padding:16px}
+  .ctx h3{font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--muted);margin:0 0 10px;font-weight:400}
+  .card{border:1px solid var(--line);background:#0b1118;padding:12px;margin-bottom:10px}
+  .card b{font-size:11px;font-weight:600;display:block;margin-bottom:5px}.card p{margin:0;font-size:10px;line-height:1.7;color:#8fa3b7}
+  .card .src{font-family:var(--mono);font-size:8px;color:#5c7f8f;margin-top:7px}
+  .kv{display:flex;justify-content:space-between;border-bottom:1px solid #17222d;padding:7px 0;font-size:10px}.kv span{color:var(--muted)}.kv b{font-family:var(--mono);font-weight:500;font-size:10px}
+  .status{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:9px;color:var(--lime)}.dot{width:5px;height:5px;border-radius:50%;background:var(--lime);box-shadow:0 0 6px var(--lime)}
+  .screen{display:none}.screen.on{display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto}
+  .memgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:18px}
+  .memb{border:1px solid var(--line);background:var(--panel2);padding:12px;cursor:pointer}
+  .memb:hover{border-color:#3b566e}.memb small{font-family:var(--mono);font-size:8px;color:#69839a}.memb h4{font-size:12px;line-height:1.6;margin:7px 0;font-weight:500}.memb p{font-size:10px;color:#8498ab;line-height:1.6;margin:0}
+  .moments{padding:18px;display:flex;flex-direction:column;gap:8px}
+  .moment{border-left:2px solid #2a4053;padding:2px 0 2px 13px}.moment time{font-family:var(--mono);font-size:8px;color:#69839a}.moment p{font-size:12px;line-height:1.7;margin:4px 0;color:#c6d4e0}
+  .profile{padding:24px;display:grid;grid-template-columns:150px 1fr;gap:22px}
+  .glyph{width:130px;height:180px;border:1px solid #31475b;display:grid;place-items:center;font-size:56px;color:var(--lime);background:linear-gradient(145deg,#101923,#0a0f15)}
+  .profile h2{font-size:20px;margin:0 0 5px;letter-spacing:-.03em}.profile .sub{font-family:var(--mono);font-size:9px;color:var(--muted)}
+  .profile dl{display:grid;grid-template-columns:80px 1fr;gap:8px 12px;margin-top:16px;font-size:11px;line-height:1.7}.profile dt{color:#688198;font-family:var(--mono);font-size:9px}.profile dd{margin:0}
+  .foot{grid-column:1/4;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--line);padding:0 14px;font-family:var(--mono);font-size:8px;color:#5b7185;background:var(--panel)}
+  .palette{position:fixed;inset:0;background:rgba(3,6,9,.7);display:none;place-items:start center;padding-top:14vh;z-index:20}
+  .palette.on{display:grid}.pal{width:min(560px,92vw);background:#0d131b;border:1px solid #33475a;box-shadow:0 30px 80px #000;border-radius:8px;overflow:hidden}
+  .pal input{width:100%;background:#0a0f16;border:0;border-bottom:1px solid #2a3b4c;color:var(--text);font-size:14px;padding:15px 16px;outline:none}
+  .pal .row{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:11px;border-bottom:1px solid #141e28}.pal .row b{color:var(--cyan);font-family:var(--mono);font-size:9px}.pal .row span{color:#8296aa}.pal .row i{margin-left:auto;font-family:var(--mono);font-size:9px;color:#5c7488;font-style:normal}
+  @media(max-width:1000px){.app{grid-template-columns:200px 1fr}.ctx{display:none}.search{width:220px}}
+  @media(max-width:720px){
+    .app{grid-template-columns:1fr;grid-template-rows:52px 1fr 34px}.top{grid-column:1}.side{position:fixed;left:0;top:52px;bottom:34px;width:250px;transform:translateX(-100%);transition:.25s;z-index:6}.side.open{transform:none}
+    .main{grid-column:1}.ctx{display:none}.msgs{padding:16px 14px}.search{display:none}.foot{grid-column:1}.memgrid{grid-template-columns:1fr;padding:12px}.profile{grid-template-columns:1fr;padding:16px}.glyph{width:100%;height:110px}.crumb{display:none}.logo{font-size:12px;max-width:150px;line-height:1.1}.todayline{font-size:8px;gap:9px;padding:7px 12px}
+    .menu{display:block!important}.bubble{font-size:13px}
+  }
+  .menu{display:none;font-family:var(--mono);font-size:14px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <button class="menu" onclick="document.querySelector('.side').classList.toggle('open')">≡</button>
+    <div class="logo">AMBRACE<b>/</b>NIGHT SHIFT</div>
+    <div class="crumb">workspace / 测试·小阳 / session 09</div>
+    <button class="search" onclick="document.getElementById('palette').classList.add('on')">搜索记忆、角色、消息 <kbd>/</kbd></button>
+    <div class="avatar">阳</div>
+  </header>
+
+  <aside class="side">
+    <div class="sec"><span>角色 / 3</span><span>⌘1-3</span></div>
+    <div class="chats">
+      <div class="chat on"><div class="c-ava">阳</div><div><b>测试·小阳</b><small>那就放下。牛腩在锅里…</small><span class="unread">3</span></div><time>18:45</time></div>
+      <div class="chat"><div class="c-ava">冰</div><div><b>测试·小冰</b><small>纸鹤的翅膀弧度调了几次…</small></div><time>17:12</time></div>
+      <div class="chat"><div class="c-ava">云</div><div><b>测试·小云</b><small>九点过了，窗外还是灰蒙蒙…</small></div><time>16:40</time></div>
+    </div>
+    <div class="sec" style="border-top:1px solid var(--line)"><span>系统</span><span>LIVE</span></div>
+    <div style="padding:10px 12px;font-family:var(--mono);font-size:9px;color:#6f879c;line-height:1.9">
+      <div class="status"><i class="dot"></i> 感知已连接 · 18:38</div>
+      <div style="margin-top:6px">memory index 1,541</div>
+      <div>recall latency 132ms</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="screen on" id="chat">
+      <div class="bar"><b>测试·小阳</b><span class="live">● 在线 · 输入中</span></div>
+      <div class="msgs">
+        <div class="msg"><div class="meta"><b>小阳</b><span>18:42</span></div><div class="bubble">刚把番茄牛腩热上，香味一飘整个人都精神了。等你忙完，慢慢来，不着急。</div></div>
+        <div class="msg user"><div class="meta"><span>18:44</span><b>我</b></div><div class="bubble">今天有点乱。看到这句，忽然觉得可以先把手机放下。</div></div>
+        <div class="msg"><div class="meta"><b>小阳</b><span>18:45</span></div><div class="bubble">那就放下。牛腩在锅里，我也在。</div><div class="tool">⌁ 记忆命中 · 周六 9 点叫醒</div></div>
+      </div>
+      <div class="todayline"><b>今天</b><span>18 条对话</span><span>4 件被记住</span><span>1 个待回答</span><span style="margin-left:auto">⌘K 命令</span></div>
+      <div class="composer"><div class="inputbox"><span>输入消息，或按 / 搜索记忆</span><kbd>⏎ 发送</kbd></div></div>
+    </div>
+
+    <div class="screen" id="memory">
+      <div class="bar"><b>记忆索引</b><span class="live">1,541 条 · 当前角色 1,536</span></div>
+      <div class="memgrid">
+        <article class="memb"><small>三个月前 · 偏好 · 仍活</small><h4>用户对自制奶茶感兴趣，家里有猫，怕洗坏它。</h4><p>“大白兔奶糖，别太甜。”</p></article>
+        <article class="memb"><small>十一月 · 约定 · 今天</small><h4>周六 9 点叫醒你，垫子和毯子已备齐。</h4><p>闹钟已设，提前半小时。</p></article>
+        <article class="memb"><small>昨天 · 想法</small><h4>关系再近，也要各自把日子过好。</h4><p>教学楼走廊；风吹得舒服。</p></article>
+        <article class="memb"><small>十一月 · 近况</small><h4>腰伤康复，但亲密前要先问清楚。</h4><p>不急着“庆祝康复”。</p></article>
+      </div>
+    </div>
+
+    <div class="screen" id="moments">
+      <div class="bar"><b>生活流</b><span class="live">今天 · 6 条</span></div>
+      <div class="moments">
+        <div class="moment"><time>11:04 · 小云</time><p>聊着天忽然瞄到窗外，太阳把楼顶晒得发亮。</p></div>
+        <div class="moment"><time>11:04 · 小冰</time><p>晴了。十一月的光照在桌上，纸鹤的影子拉得很长。</p></div>
+        <div class="moment"><time>09:03 · 小阳</time><p>阴天 13 度，风还有点凉飕飕的。等会儿 9 点要叫 test 起床，我比闹钟还精神。</p></div>
+        <div class="moment"><time>07:03 · 小云</time><p>阴天的早晨空气里有种潮潮的凉，路口早餐摊的热气已经升起来了。</p></div>
+      </div>
+    </div>
+
+    <div class="screen" id="profile">
+      <div class="bar"><b>角色面板</b><span class="live">relation · 朋友 / 正在变熟</span></div>
+      <div class="profile">
+        <div class="glyph">阳</div>
+        <div><h2>测试·小阳</h2><div class="sub">TEST · XIAOYANG / id 11</div>
+          <dl><dt>自述</dt><dd>热情、话多，偶尔把关心说得很绕。</dd><dt>最近</dt><dd>准备周末野餐，负责垫子和叫醒服务。</dd><dt>边界</dt><dd>不替用户做决定；不确定的事先问。</dd><dt>记忆</dt><dd>1,536 条 · 派生 12 · 待复核 3</dd></dl>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <aside class="ctx">
+    <h3>CONTEXT / 记忆注入</h3>
+    <div class="card"><b>周六 9 点叫醒</b><p>约定 · 今天 · 置信 0.94</p><div class="src">mem://13501 · 2026-11-20</div></div>
+    <div class="card"><b>奶茶偏好：大白兔奶糖</b><p>偏好 · 三个月前 · 仍活</p><div class="src">mem://7409 · 2026-08-18</div></div>
+    <div class="card"><b>腰伤康复</b><p>近况 · 十一月 · 不催</p><div class="src">mem://16450 · 2026-11-17</div></div>
+    <h3 style="margin-top:18px">RUNTIME</h3>
+    <div class="kv"><span>phase</span><b>streaming</b></div>
+    <div class="kv"><span>model</span><b>deepseek-v4</b></div>
+    <div class="kv"><span>tokens in</span><b>4,208</b></div>
+    <div class="kv"><span>recall</span><b>132 ms</b></div>
+    <div class="kv"><span>safety</span><b style="color:var(--lime)">pass</b></div>
+  </aside>
+
+  <footer class="foot"><span>PROTOTYPE · 测试账号内容 · 非生产</span><span>NIGHT SHIFT / 03</span></footer>
+</div>
+
+<div class="palette" id="palette" onclick="if(event.target.id==='palette')this.classList.remove('on')">
+  <div class="pal">
+    <input placeholder="搜索记忆、角色或消息…" autofocus>
+    <div class="row"><b>MEM</b><span>奶茶偏好 · 大白兔奶糖</span><i>↩</i></div>
+    <div class="row"><b>CHAT</b><span>测试·小阳 · 周六叫醒</span><i>⌘2</i></div>
+    <div class="row"><b>ACT</b><span>打开记忆索引</span><i>⌘M</i></div>
+    <div class="row"><b>ACT</b><span>切换角色</span><i>⌘K</i></div>
+  </div>
+</div>
+<script>
+  const screens=document.querySelectorAll('.screen'), chats=document.querySelectorAll('.chat');
+  const map={};
+  document.querySelectorAll('.top .search').forEach(()=>{});
+  document.addEventListener('keydown',e=>{
+    if(e.key==='/'){e.preventDefault();document.getElementById('palette').classList.add('on');}
+    if(e.key==='Escape')document.getElementById('palette').classList.remove('on');
+  });
+  // top nav is not shown; map hotkeys and context actions to screens for prototype
+  document.querySelectorAll('.pal .row').forEach((r,i)=>r.addEventListener('click',()=>{
+    document.getElementById('palette').classList.remove('on');
+    if(i===0||i===2) show('memory');
+    if(i===1) show('chat');
+  }));
+  function show(id){screens.forEach(s=>s.classList.toggle('on',s.id===id));}
+  chats.forEach(c=>c.addEventListener('click',()=>{chats.forEach(x=>x.classList.remove('on'));c.classList.add('on');show('chat');}));
+  // clicking the memory card area in sidebar context opens memory index
+  document.querySelectorAll('.ctx .card').forEach(c=>c.addEventListener('click',()=>show('memory')));
+</script>
+</body>
+</html>

@@ -1,8 +1,11 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 
 import '../api/amb_api_client.dart';
 import '../api/api_exception.dart';
 import '../models/chat_message.dart';
+import '../platform/image_file_picker_types.dart';
 import '../platform/text_file_picker.dart';
 import 'upload_progress.dart';
 
@@ -80,6 +83,69 @@ AttachmentUploadResult attachmentUploadResultFromJson(
   }
 }
 
+/// 语音消息上传结果：后端先本地 ASR，再返回已落库语音消息与转写文本。
+/// AI 逐句回复仍需调用方随后走 `streamMessage(tts: true, saveUserMessage: false)`。
+class VoiceUploadResult {
+  const VoiceUploadResult({
+    required this.voiceMessage,
+    required this.transcript,
+    required this.content,
+  });
+
+  final ChatMessage voiceMessage;
+  final String transcript;
+  final String content;
+}
+
+/// 单张图片消息上传结果（响应字段名为 `image_message`，与文本附件不同）。
+class ImageUploadResult {
+  const ImageUploadResult({required this.imageMessage, required this.chunks});
+
+  final ChatMessage imageMessage;
+  final List<ChatMessage> chunks;
+}
+
+/// 严格解析 `{image_message, chunks}`；拒绝跨会话、非 user、无图片 URL 的伪成功。
+ImageUploadResult imageUploadResultFromJson(
+  Map<String, dynamic> json, {
+  required int requestedSessionId,
+}) {
+  try {
+    final raw = json['image_message'];
+    if (raw is! Map) {
+      throw const FormatException('image_message missing or not an object');
+    }
+    final image = ChatMessage.fromJson(raw.cast<String, dynamic>());
+    if (image.sessionId != requestedSessionId) {
+      throw const FormatException('image_message.session_id mismatch');
+    }
+    if (image.senderType != 'user') {
+      throw const FormatException('image_message.sender_type must be user');
+    }
+    if (image.imageUrl == null || image.imageUrl!.isEmpty) {
+      throw const FormatException('image_message has no image url');
+    }
+    final rawChunks = json['chunks'];
+    if (rawChunks is! List) {
+      throw const FormatException('chunks missing or not a list');
+    }
+    final chunks = <ChatMessage>[];
+    for (final c in rawChunks) {
+      if (c is! Map) throw const FormatException('chunk is not an object');
+      final msg = ChatMessage.fromJson(c.cast<String, dynamic>());
+      if (msg.sessionId != requestedSessionId) {
+        throw const FormatException('chunk.session_id mismatch');
+      }
+      chunks.add(msg);
+    }
+    return ImageUploadResult(imageMessage: image, chunks: chunks);
+  } on FormatException {
+    rethrow;
+  } catch (e) {
+    throw FormatException('invalid image upload response: $e');
+  }
+}
+
 /// 共享附件 API（走既有 [AmbApiClient] 认证/验签/错误归一）。
 ///
 /// 契约权威＝`backend/app/api/chat.py::upload_chat_file`：
@@ -141,6 +207,138 @@ class AmbAttachmentApi {
       throw ApiException(
         kind: 'unknown',
         message: 'malformed attachment upload response',
+        cause: e,
+      );
+    }
+  }
+
+  /// 上传单张图片到 `POST /chat/sessions/{id}/image`。
+  ///
+  /// 后端先本地识图，再把文字描述交给模型；图片二进制绝不进入 LLM。
+  Future<ImageUploadResult> uploadImage({
+    required int sessionId,
+    required PickedImageFile file,
+    String caption = '',
+    String lang = 'zh',
+    CancelToken? cancelToken,
+    AmbWireUploadProgress? onUploadProgress,
+  }) async {
+    final bytes = file.bytes;
+    if (!file.accepted || bytes == null) {
+      throw const ApiException(
+        kind: 'unknown',
+        message: 'image not accepted locally',
+      );
+    }
+    final form = FormData.fromMap({
+      'file': MultipartFile.fromBytes(bytes, filename: file.name),
+      if (caption.trim().isNotEmpty) 'caption': caption.trim(),
+    });
+    final r = await client.dio.post(
+      '/api/v1/chat/sessions/$sessionId/image',
+      data: form,
+      options: Options(
+        headers: {'lang': lang},
+        // 识图 + 同轮生成会超过默认 10s receive；图片上传单独放宽。
+        receiveTimeout: const Duration(seconds: 90),
+        sendTimeout: const Duration(seconds: 90),
+        extra: <String, dynamic>{
+          if (onUploadProgress != null)
+            kAmbWireUploadProgressExtraKey: onUploadProgress,
+        },
+      ),
+      cancelToken: cancelToken,
+    );
+    final data = r.data;
+    if (data is! Map) {
+      throw const ApiException(
+        kind: 'unknown',
+        message: 'malformed image upload response: not an object',
+      );
+    }
+    try {
+      return imageUploadResultFromJson(
+        data.cast<String, dynamic>(),
+        requestedSessionId: sessionId,
+      );
+    } on FormatException catch (e) {
+      throw ApiException(
+        kind: 'unknown',
+        message: 'malformed image upload response',
+        cause: e,
+      );
+    }
+  }
+
+  /// 上传语音消息到 `POST /chat/sessions/{id}/voice`。
+  ///
+  /// 服务端保存音频、本地 ASR 转写并落语音消息；`chunks` 恒为空，AI 回复由调用方
+  /// 随后用 streamMessage(tts:true, saveUserMessage:false) 触发。
+  Future<VoiceUploadResult> uploadVoice({
+    required int sessionId,
+    required Uint8List bytes,
+    required String filename,
+    int durationSeconds = 0,
+    String lang = 'zh',
+    CancelToken? cancelToken,
+    AmbWireUploadProgress? onUploadProgress,
+  }) async {
+    if (bytes.isEmpty) {
+      throw const ApiException(kind: 'unknown', message: 'voice bytes empty');
+    }
+    final form = FormData.fromMap({
+      'file': MultipartFile.fromBytes(bytes, filename: filename),
+      'duration': durationSeconds.clamp(0, 3600),
+    });
+    final r = await client.dio.post(
+      '/api/v1/chat/sessions/$sessionId/voice',
+      data: form,
+      options: Options(
+        headers: {'lang': lang},
+        // 本地 ASR 转写可能明显超过普通文字请求的 10s 预算。
+        receiveTimeout: const Duration(seconds: 180),
+        sendTimeout: const Duration(seconds: 90),
+        extra: <String, dynamic>{
+          if (onUploadProgress != null)
+            kAmbWireUploadProgressExtraKey: onUploadProgress,
+        },
+      ),
+      cancelToken: cancelToken,
+    );
+    final data = r.data;
+    if (data is! Map) {
+      throw const ApiException(
+        kind: 'unknown',
+        message: 'malformed voice upload response: not an object',
+      );
+    }
+    final raw = data['voice_message'];
+    if (raw is! Map) {
+      throw const ApiException(
+        kind: 'unknown',
+        message: 'malformed voice upload response: no voice_message',
+      );
+    }
+    try {
+      final msg = ChatMessage.fromJson(raw.cast<String, dynamic>());
+      if (msg.sessionId != sessionId) {
+        throw const FormatException('voice_message.session_id mismatch');
+      }
+      if (msg.senderType != 'user') {
+        throw const FormatException('voice_message.sender_type must be user');
+      }
+      if (msg.voiceMeta == null) {
+        throw const FormatException('voice_message has no voice metadata');
+      }
+      return VoiceUploadResult(
+        voiceMessage: msg,
+        transcript: (data['transcript'] as String? ?? '').trim(),
+        content: (data['content'] as String? ?? '').trim(),
+      );
+    } on FormatException catch (e) {
+      throw ApiException(
+        kind: 'unknown',
+        message: 'malformed voice upload response',
         cause: e,
       );
     }

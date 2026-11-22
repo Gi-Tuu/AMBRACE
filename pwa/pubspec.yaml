@@ -13,6 +13,8 @@ dependencies:
     path: ../ambrace_core
   # 薄壳直接用到 CancelToken（真实取消在飞请求）⇒ 显式声明，避免隐式依赖 core 的传递依赖。
   dio: ^5.4.0
+  qr_flutter: ^4.1.0
+  web: ^1.1.1
 
 dev_dependencies:
   flutter_test:
@@ -21,3 +23,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  fonts:
+    - family: NotoSansSC
+      fonts:
+        - asset: assets/fonts/NotoSansCJKsc-Regular.otf

@@ -9,6 +9,7 @@
 library;
 
 export 'src/api/amb_api_client.dart';
+export 'src/agent/agent_api.dart';
 export 'src/api/api_exception.dart';
 export 'src/api/identity.dart';
 export 'src/attachment/attachment_api.dart';
@@ -18,11 +19,20 @@ export 'src/character_management/character_editor_models.dart';
 export 'src/chat/chat_transport.dart';
 export 'src/chat/session_models.dart';
 export 'src/editor/editor_api.dart';
+export 'src/game/game_api.dart';
+export 'src/plugin/plugin_api.dart';
+export 'src/group_chat/group_chat_api.dart';
 export 'src/l10n/core_l10n.dart';
 export 'src/l10n/error_l10n.dart';
 export 'src/models/character.dart';
 export 'src/models/chat_message.dart';
 export 'src/platform/key_value_store.dart';
 export 'src/platform/text_file_picker.dart';
+export 'src/platform/image_file_picker.dart';
 export 'src/reader/reader_api.dart';
 export 'src/reader/reader_models.dart';
+export 'src/reader/reader_extras_models.dart';
+export 'src/settings/settings_api.dart';
+export 'src/settings/api_config_api.dart';
+export 'src/plugin/channel_qr_api.dart';
+export 'src/weave/weave_api.dart';

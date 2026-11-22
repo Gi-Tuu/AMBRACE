@@ -34,6 +34,7 @@ async def get_memories(
     skip: int = 0,
     limit: int = 800,
     read_only: bool = True,
+    search: str | None = None,
     user_id: int = Depends(get_current_user_id),
 ):
     """List authorized memories without mutation, including read_only=false.
@@ -50,6 +51,7 @@ async def get_memories(
         skip=skip,
         limit=limit,
         read_only=read_only,
+        search=search,
     )
     _logger.debug("List memories result: count=%d total=%d", len(memories), total)
     decorated = []

@@ -260,7 +260,7 @@ async def create_user_moment(
         except Exception as e:
             _logger.warning("Moment image describe failed: %s", e)
     moment = AIMoment(
-        character_id=0, user_id=user_id, sender_type="user",
+        character_id=None, user_id=user_id, sender_type="user",
         content=content or "[图片]", image_url=image_url,
         image_desc=image_desc or None,
     )

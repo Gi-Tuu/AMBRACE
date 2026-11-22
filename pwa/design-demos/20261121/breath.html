@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>呼吸 · PWA 方向一</title>
+<style>
+  :root{
+    --paper:#efe9dc; --ink:#1d1c18; --muted:#6f6a5f; --moss:#53634f; --clay:#a95035;
+    --hair:rgba(29,28,24,.18); --serif:"Noto Serif SC","Songti SC","STSong",serif;
+    --sans:"Inter","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans)}
+  body{min-height:100vh}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  .app{min-height:100vh;display:grid;grid-template-columns:86px minmax(0,1fr) 286px;grid-template-rows:74px 1fr}
+  .rail{grid-row:1/3;border-right:1px solid var(--hair);display:flex;flex-direction:column;align-items:center;padding:22px 0;gap:26px;position:sticky;top:0;height:100vh}
+  .mark{width:38px;height:38px;border:1px solid var(--ink);border-radius:50%;display:grid;place-items:center;font-family:var(--serif);font-size:15px}
+  .rail nav{display:flex;flex-direction:column;gap:22px;margin-top:18px}
+  .rail nav button{width:52px;height:30px;border-radius:999px;color:var(--muted);font-size:11px;letter-spacing:.08em;line-height:1.1;transition:.3s}
+  .rail nav button.on{background:var(--ink);color:var(--paper)}
+  .rail .seals{display:flex;flex-direction:column;gap:12px;margin-top:auto}
+  .seal{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-family:var(--serif);font-size:12px;border:1px solid var(--hair);color:var(--moss)}
+  .seal.active{background:var(--moss);color:var(--paper);border-color:var(--moss)}
+  .top{grid-column:2/4;display:flex;align-items:center;justify-content:space-between;padding:0 36px;border-bottom:1px solid var(--hair)}
+  .top .title{font-family:var(--serif);font-size:19px;letter-spacing:.18em}
+  .top .title span{color:var(--muted);font-family:var(--sans);font-size:11px;letter-spacing:.12em;margin-left:14px}
+  .top .day{font-size:11px;color:var(--muted);letter-spacing:.06em}
+  .main{grid-column:2/3;padding:52px 6vw 110px;position:relative;overflow:hidden}
+  .margin{grid-column:3/4;border-left:1px solid var(--hair);padding:46px 24px;position:sticky;top:74px;height:calc(100vh - 74px);overflow:auto}
+  .screen{display:none;animation:breathe .65s ease both}
+  .screen.on{display:block}
+  @keyframes breathe{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .eyebrow{font-size:11px;color:var(--moss);letter-spacing:.2em;margin:0 0 22px}
+  h1{font-family:var(--serif);font-weight:500;font-size:clamp(32px,4.6vw,62px);line-height:1.22;letter-spacing:.04em;margin:0;max-width:12em}
+  h1 em{font-style:normal;color:var(--clay)}
+  .breath-line{position:absolute;right:10%;top:100px;bottom:120px;width:1px;background:var(--hair)}
+  .breath-line::before{content:"";position:absolute;left:-3px;top:26%;width:7px;height:7px;border-radius:50%;background:var(--clay);box-shadow:0 0 0 7px rgba(169,80,53,.09)}
+  .breath-line small{position:absolute;right:14px;top:24%;writing-mode:vertical-rl;font-size:10px;color:var(--muted);letter-spacing:.18em}
+  .lede{max-width:31em;color:var(--muted);font-size:15px;line-height:2;margin:28px 0 44px}
+  .conversation{max-width:640px;margin-top:8px}
+  .turn{display:grid;grid-template-columns:54px 1fr;gap:18px;padding:22px 0;border-top:1px solid var(--hair)}
+  .turn:last-child{border-bottom:1px solid var(--hair)}
+  .who{font-family:var(--serif);font-size:14px;color:var(--moss)}
+  .turn p{margin:0;font-size:15px;line-height:1.95}
+  .turn time{display:block;color:var(--muted);font-size:10px;letter-spacing:.1em;margin-top:8px}
+  .composer{max-width:640px;margin-top:34px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--ink);padding:12px 0}
+  .composer span{color:var(--muted);font-size:13px;flex:1}
+  .composer button{font-size:12px;letter-spacing:.1em;color:var(--clay)}
+  .card-stack{display:grid;gap:1px;background:var(--hair);border-top:1px solid var(--hair);margin-top:44px}
+  .memory{background:var(--paper);padding:22px 20px 22px 0;display:grid;grid-template-columns:72px 1fr;gap:14px;cursor:pointer;transition:.3s}
+  .memory:hover{padding-left:12px;background:#e9e2d3}
+  .memory time{font-size:10px;color:var(--muted);letter-spacing:.08em}
+  .memory h3{font-family:var(--serif);font-weight:500;font-size:18px;line-height:1.6;margin:0 0 8px}
+  .memory p{font-size:12px;line-height:1.8;color:var(--muted);margin:0}
+  .margin h2{font-size:11px;letter-spacing:.2em;color:var(--muted);margin:0 0 22px;font-weight:400}
+  .note{padding:16px 0;border-bottom:1px solid var(--hair)}
+  .note b{display:block;font-family:var(--serif);font-weight:500;font-size:16px;margin-bottom:6px}
+  .note span{font-size:11px;line-height:1.7;color:var(--muted)}
+  .moment{display:grid;grid-template-columns:110px 1fr;gap:26px;padding:26px 0;border-top:1px solid var(--hair)}
+  .moment:last-child{border-bottom:1px solid var(--hair)}
+  .moment .date{font-size:11px;color:var(--muted);letter-spacing:.06em}
+  .moment h3{font-family:var(--serif);font-weight:500;font-size:22px;line-height:1.6;margin:0 0 10px}
+  .moment p{margin:0;font-size:13px;line-height:1.9;color:var(--muted)}
+  .profile{display:grid;grid-template-columns:190px 1fr;gap:40px;align-items:start}
+  .profile .glyph{width:150px;height:212px;border:1px solid var(--ink);display:grid;place-items:center;font-family:var(--serif);font-size:72px;color:var(--moss);position:relative}
+  .profile .glyph::after{content:"测试角色";position:absolute;bottom:10px;font-family:var(--sans);font-size:9px;letter-spacing:.2em;color:var(--muted)}
+  .profile dl{display:grid;grid-template-columns:90px 1fr;gap:14px 18px;margin:0;font-size:13px;line-height:1.9}
+  .profile dt{color:var(--muted);font-size:11px;letter-spacing:.1em}
+  .profile dd{margin:0}
+  .foot{position:fixed;left:86px;bottom:22px;font-size:10px;color:var(--muted);letter-spacing:.06em;background:var(--paper);padding-right:12px}
+  @media(max-width:1000px){
+    .app{grid-template-columns:64px 1fr;grid-template-rows:64px 1fr}
+    .margin{display:none}.top{grid-column:2/3;padding:0 22px}.main{grid-column:2/3;padding:38px 26px 92px}
+    .rail{width:64px}.rail nav button{font-size:10px}.foot{left:64px}
+    .profile{grid-template-columns:1fr}.breath-line{right:1.5%}
+  }
+  @media(max-width:560px){
+    .app{display:block;padding-bottom:58px}.rail{position:fixed;left:0;right:0;bottom:0;top:auto;height:58px;width:auto;flex-direction:row;justify-content:space-around;padding:0 8px;background:var(--paper);z-index:5}
+    .rail .mark,.rail .seals{display:none}.rail nav{flex-direction:row;gap:0;margin:0;width:100%;justify-content:space-around}
+    .rail nav button{writing-mode:horizontal-tb;width:auto;padding:8px 10px;font-size:12px}
+    .top{display:none}.main{padding:34px 22px 70px}.foot{display:none}h1{font-size:38px}
+    .breath-line{display:none}.turn{grid-template-columns:42px 1fr}.moment{grid-template-columns:1fr;gap:8px}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="mark">呼</div>
+    <nav aria-label="主导航">
+      <button data-s="chat" class="on">对话</button>
+      <button data-s="memory">记忆</button>
+      <button data-s="moments">生活</button>
+      <button data-s="profile">角色</button>
+    </nav>
+    <div class="seals">
+      <span class="seal active">阳</span><span class="seal">冰</span><span class="seal">云</span>
+    </div>
+  </aside>
+  <header class="top">
+    <div class="title">呼吸 <span>THE SPACE BETWEEN US</span></div>
+    <div class="day">2026 · 11 · 21　星期五</div>
+  </header>
+
+  <main class="main">
+    <div class="breath-line"><small>有东西在慢慢发生</small></div>
+
+    <section class="screen on" id="chat">
+      <p class="eyebrow">此刻 · 与 测试·小阳</p>
+      <h1>不必每句话<br>都有<em>回答</em>。</h1>
+      <p class="lede">把对话放慢一点。重要的不是信息有没有送达，而是两个人之间，留下了一点可以呼吸的空隙。</p>
+      <div class="conversation">
+        <div class="turn"><div class="who">小阳</div><div><p>刚把番茄牛腩热上，香味一飘整个人都精神了。等你忙完，慢慢来，不着急。</p><time>18:42</time></div></div>
+        <div class="turn"><div class="who">我</div><div><p>今天有点乱。看到这句，忽然觉得可以先把手机放下。</p><time>18:44</time></div></div>
+        <div class="turn"><div class="who">小阳</div><div><p>那就放下。牛腩在锅里，我也在。</p><time>18:45</time></div></div>
+      </div>
+      <div class="composer"><span>写点什么，或者什么都不写</span><button>留一句 →</button></div>
+    </section>
+
+    <section class="screen" id="memory">
+      <p class="eyebrow">记忆 · 被时间轻轻压过的纸</p>
+      <h1>有些事，<br>不必<em>想起来</em>。</h1>
+      <p class="lede">记忆不是数据库。它更像纸上的折痕：不常看见，但手一摸就知道在那里。</p>
+      <div class="card-stack">
+        <article class="memory" data-open>
+          <time>三个月前</time>
+          <div><h3>你对自制奶茶感兴趣，还提到家里有猫。</h3><p>“怕洗坏它” —— 你说这句话的时候，像在说一个很小、但很重要的担心。</p></div>
+        </article>
+        <article class="memory" data-open>
+          <time>十一月</time>
+          <div><h3>你说这个月有七八场比赛，先把课业往后放。</h3><p>我没有催你。只把赛程折好，放在你看得见的地方。</p></div>
+        </article>
+        <article class="memory" data-open>
+          <time>昨天</time>
+          <div><h3>“关系再近，也得各自把日子过好。”</h3><p>你在教学楼坐着，突然想明白这件事。我记住了。</p></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="screen" id="moments">
+      <p class="eyebrow">生活 · 不为你表演的部分</p>
+      <h1>日子是<em>过</em>出来的，<br>不是发出来的。</h1>
+      <div style="margin-top:40px">
+        <article class="moment"><div class="date">11 · 21<br>11:04</div><div><h3>聊着天忽然瞄到窗外，太阳把楼顶晒得发亮。</h3><p>十六度多，风里带点干爽的凉。顺手提醒一句：水杯该续了。</p></div></article>
+        <article class="moment"><div class="date">11 · 20<br>23:00</div><div><h3>今天帮轩弄手机弄了半天，手都酸了。</h3><p>他一句辛苦没听见，晚上做饭这事我记着呢。</p></div></article>
+        <article class="moment"><div class="date">11 · 19<br>12:22</div><div><h3>在教学楼走廊尽头站了一会儿。</h3><p>看楼下人来人往，那风吹得真叫一个舒服。</p></div></article>
+      </div>
+    </section>
+
+    <section class="screen" id="profile">
+      <p class="eyebrow">角色 · 一个具体的人</p>
+      <h1>先认识，<br>再<em>记得</em>。</h1>
+      <div class="profile" style="margin-top:42px">
+        <div class="glyph">阳</div>
+        <dl>
+          <dt>名字</dt><dd>测试·小阳</dd>
+          <dt>关系</dt><dd>朋友 · 正在变熟</dd>
+          <dt>自述</dt><dd>热情、话多，偶尔把关心说得很绕。</dd>
+          <dt>最近</dt><dd>在准备周末野餐，负责垫子和叫醒服务。</dd>
+          <dt>边界</dt><dd>不替你做决定；不确定的事会先问。</dd>
+        </dl>
+      </div>
+    </section>
+  </main>
+
+  <aside class="margin">
+    <h2>此刻记得</h2>
+    <div class="note"><b>奶茶要大白兔奶糖</b><span>偏好 · 三个月前 · 仍是活的</span></div>
+    <div class="note"><b>周六 9 点叫醒</b><span>约定 · 今天 · 还差 14 小时</span></div>
+    <div class="note"><b>腰伤刚恢复</b><span>近况 · 十一月 · 不催</span></div>
+    <div class="note"><b>关系再近也要留空间</b><span>想法 · 昨天 · 你刚想明白</span></div>
+  </aside>
+</div>
+<footer class="foot">原型 · 测试账号内容 · 头像为姓名印记，不使用假人像</footer>
+<script>
+  const screens=document.querySelectorAll('.screen');
+  const nav=document.querySelectorAll('.rail nav button');
+  nav.forEach(b=>b.addEventListener('click',()=>{
+    nav.forEach(x=>x.classList.toggle('on',x===b));
+    screens.forEach(s=>s.classList.toggle('on',s.id===b.dataset.s));
+  }));
+  document.querySelectorAll('[data-open]').forEach(c=>c.addEventListener('click',()=>{
+    c.animate([{background:'#e9e2d3'},{background:'transparent'}],{duration:600});
+  }));
+</script>
+</body>
+</html>

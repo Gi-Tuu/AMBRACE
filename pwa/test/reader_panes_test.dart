@@ -253,7 +253,7 @@ void main() {
     await tester.tap(find.text('SYNTH_MOMENT_BODY'));
     await tester.pumpAndSettle();
     expect(find.text('SYNTH_COMMENT_LIVE'), findsOneWidget); // 来自 /comments 实时拉取
-    // 不加载图片：适配器若收到 image_url 请求会抛 Unexpected endpoint（上面已过）
+    // 图片展示由真实 Image.network 负责；widget 测试只验证描述与详情，不承诺图片网络可加载
     await tester.pumpWidget(const SizedBox());
   });
 

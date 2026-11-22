@@ -32,7 +32,9 @@ function ownerOf(scope) {
 const OWNER = ownerOf(SCOPE);
 const APP_PREFIX = 'ambrace-pwa-';              // 本应用命名空间
 const OWN_PREFIX = `${APP_PREFIX}${OWNER}-`;    // **本部署**命名空间（无损唯一）
-const VERSION = `${OWN_PREFIX}v3`;              // 命名代次 v3（owner 编码换代）
+// 由 scripts/deploy_pwa.py 在每次部署时替换为构建哈希；源码中的占位符不得上线。
+const BUILD_ID = '__PWA_BUILD_ID__';
+const VERSION = `${OWN_PREFIX}${BUILD_ID}`;      // 每次构建一代缓存，旧 cache 在 activate 清理
 
 const SHELL = ['index.html', 'manifest.json', 'offline.html', 'icons/ic_launcher.png'];
 

@@ -26,6 +26,7 @@ async def list_memories(
     limit: int = 800,
     user_ids: list[int] | None = None,
     read_only: bool = True,
+    search: str | None = None,
 ) -> tuple[list[dict], int]:
     """Pure memory listing with computed retention for display.
 
@@ -54,6 +55,10 @@ async def list_memories(
             query = query.where(Memory.character_id == character_id)
         if memory_type:
             query = query.where(Memory.memory_type == memory_type)
+        if search and search.strip():
+            from sqlalchemy import or_
+            term = f"%{search.strip()}%"
+            query = query.where(or_(Memory.content.ilike(term), Memory.title.ilike(term)))
 
         result = await db.execute(query)
         memories = result.scalars().all()

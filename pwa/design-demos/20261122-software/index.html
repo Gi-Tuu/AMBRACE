@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PWA 软件方向 · 三选一</title>
+<style>
+  :root{--bg:#121212;--text:#f3f0e8;--muted:#99938a;--line:#2d2b27}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:"Inter","PingFang SC","Microsoft YaHei",sans-serif}
+  main{max-width:1180px;margin:0 auto;padding:52px 26px 80px}
+  h1{font-family:"Noto Serif SC","Songti SC",serif;font-size:40px;font-weight:500;margin:0 0 8px}
+  .lede{color:var(--muted);font-size:13px;line-height:1.9;max-width:50em;margin:0 0 34px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .card{border-top:1px solid var(--line);padding-top:12px}
+  .card img{width:100%;display:block;border:1px solid var(--line)}
+  .card h2{font-size:16px;font-weight:500;margin:12px 0 4px}
+  .card p{font-size:11px;line-height:1.8;color:var(--muted);margin:0 0 10px;min-height:4.5em}
+  .meta{font-size:10px;letter-spacing:.08em;color:#777}
+  .card a{font-size:11px;color:var(--text);text-decoration:none;border-bottom:1px solid #666;padding-bottom:2px}
+  .note{border-top:1px solid var(--line);margin-top:30px;padding-top:14px;color:#888;font-size:11px;line-height:1.9}
+  @media(max-width:840px){.grid{grid-template-columns:1fr}h1{font-size:32px}}
+</style>
+</head>
+<body>
+<main>
+  <div class="meta" style="margin-bottom:22px">AMBRACE PWA / 软件方向 / 2026-11-22</div>
+  <h1>先把软件做对，再谈风格。</h1>
+  <p class="lede">上一版偏海报，已废。这一轮三条线都是可操作的软件壳：导航、列表、详情、上下文、空/错/加载状态；差别在信息密度与主从结构，不在视觉噱头。</p>
+  <section class="grid">
+    <article class="card"><div class="meta">01 · 默认推荐</div><img src="shots/workbench-desktop.png" alt="工作台界面"><h2>工作台 / 主从结构</h2><p>四栏：导航、会话/记忆列表、主区、上下文。最接近现有 PWA，改动风险最低。</p><a href="workbench.html">打开原型 →</a></article>
+    <article class="card"><div class="meta">02 · 阅读优先</div><img src="shots/reader-desktop.png" alt="阅读器界面"><h2>阅读器 / 收件箱</h2><p>左收件箱 + 右文档；适合慢读、回看和长内容。移动端列表与阅读分离。</p><a href="reader.html">打开原型 →</a></article>
+    <article class="card"><div class="meta">03 · 高密度</div><img src="shots/dashboard-desktop.png" alt="控制台界面"><h2>控制台 / 记忆索引</h2><p>三栏高密度，记忆索引、召回统计、上下文同屏。适合重度用户。</p><a href="dashboard.html">打开原型 →</a></article>
+  </section>
+  <p class="note">方向卡与备选见 <a href="directions.md" style="color:#f3f0e8">directions.md</a>；手机截图在 shots/。内容来自测试账号，头像用姓名印记，不伪造真人照片。选定方向后我才改生产 PWA。</p>
+</main>
+</body>
+</html>

@@ -99,6 +99,10 @@ class ChatGroupMessage(Base):
     sender_type: Mapped[str] = mapped_column(String(10), default="ai")  # user / ai
     character_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ai_characters.id", ondelete="CASCADE"), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # 群文件（2026-11-22）：文件消息保留可下载 URL 与原始元数据；文字消息为 NULL。
+    file_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     # 1=用户 @ 该角色后的回应，需弹通知（@我的才弹，2026-08-15）
     notify_user: Mapped[int] = mapped_column(Integer, default=0)

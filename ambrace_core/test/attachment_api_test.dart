@@ -381,4 +381,100 @@ void main() {
           reason: '无字节 = 未通过（不可发送）');
     });
   });
+
+  group('图片响应严格解析（imageUploadResultFromJson）', () {
+    Map<String, dynamic> imageJson({int sid = 7, String? imageUrl = '/uploads/7/a.png'}) => {
+          'image_message': {
+            'id': 51,
+            'session_id': sid,
+            'sender_type': 'user',
+            'content': '',
+            'image_url': imageUrl,
+            'created_at': '2026-10-17 03:00:00',
+          },
+          'chunks': [
+            {
+              'id': 52,
+              'session_id': sid,
+              'sender_type': 'ai',
+              'content': '看到了',
+              'created_at': '2026-10-17 03:00:01',
+            }
+          ],
+        };
+
+    test('happy path：image_message 带 image_url，chunks 解析', () {
+      final r = imageUploadResultFromJson(imageJson(), requestedSessionId: 7);
+      expect(r.imageMessage.id, 51);
+      expect(r.imageMessage.imageUrl, '/uploads/7/a.png');
+      expect(r.chunks.single.content, '看到了');
+    });
+
+    test('缺 image_url 的伪成功必须拒绝', () {
+      expect(
+        () => imageUploadResultFromJson(imageJson(imageUrl: null), requestedSessionId: 7),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('跨会话图片响应必须拒绝', () {
+      expect(
+        () => imageUploadResultFromJson(imageJson(sid: 8), requestedSessionId: 7),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('uploadImage 请求路径/字段/lang 正确，并解析图片消息', () async {
+      final adapter = _FakeAdapter(jsonEncode(imageJson()));
+      final api = AmbAttachmentApi(_client(adapter));
+      final file = PickedImageFile(
+        name: 'photo.png',
+        size: 4,
+        bytes: Uint8List.fromList([1, 2, 3, 4]),
+      );
+      final r = await api.uploadImage(sessionId: 7, file: file, lang: 'zh');
+      expect(adapter.last!.path, '/api/v1/chat/sessions/7/image');
+      expect(adapter.last!.method, 'POST');
+      expect(adapter.last!.headers['lang'], 'zh');
+      final form = adapter.last!.data as FormData;
+      expect(form.files.single.key, 'file');
+      expect(r.imageMessage.imageUrl, '/uploads/7/a.png');
+      expect(r.chunks.single.content, '看到了');
+    });
+
+    test('未通过本地校验的图片不发请求', () async {
+      final adapter = _FakeAdapter(jsonEncode(imageJson()));
+      final api = AmbAttachmentApi(_client(adapter));
+      await expectLater(
+        api.uploadImage(
+          sessionId: 7,
+          file: const PickedImageFile(
+              name: 'bad.exe', size: 1, reject: ImageRejectReason.unsupportedType),
+        ),
+        throwsA(isA<ApiException>()),
+      );
+      expect(adapter.calls, 0);
+    });
+  });
+
+  group('图片选择器白名单', () {
+    test('只接受 jpg/jpeg/png/webp/gif，大小写不敏感', () {
+      expect(isAllowedImageName('a.JPG'), isTrue);
+      expect(isAllowedImageName('a.jpeg'), isTrue);
+      expect(isAllowedImageName('a.png'), isTrue);
+      expect(isAllowedImageName('a.webp'), isTrue);
+      expect(isAllowedImageName('a.gif'), isTrue);
+      expect(isAllowedImageName('a.svg'), isFalse);
+      expect(isAllowedImageName('a.png.exe'), isFalse);
+    });
+
+    test('PickedImageFile 拒绝/缺字节不可发送', () {
+      expect(
+        const PickedImageFile(name: 'a.png', size: 1, reject: ImageRejectReason.tooLarge)
+            .accepted,
+        isFalse,
+      );
+      expect(const PickedImageFile(name: 'a.png', size: 1).accepted, isFalse);
+    });
+  });
 }

@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>字的重拍 · PWA 方向二</title>
+<style>
+  :root{--ink:#0b0b0b;--paper:#f1efe6;--red:#e23a2e;--blue:#173bff;--gray:#8c897f;--line:rgba(11,11,11,.22);
+    --sans:"Inter","PingFang SC","Microsoft YaHei",sans-serif;--serif:"Noto Serif SC","Songti SC",serif}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans)}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  .shell{min-height:100vh;display:grid;grid-template-columns:minmax(0,1fr) 372px;grid-template-rows:88px 1fr 42px}
+  .top{grid-column:1/3;display:flex;align-items:center;justify-content:space-between;border-bottom:4px solid var(--ink);padding:0 30px}
+  .brand{font-weight:900;font-size:20px;letter-spacing:-.04em}
+  .brand i{font-style:normal;color:var(--red)}
+  .nav{display:flex;gap:20px;font-size:11px;font-weight:800;letter-spacing:.06em}
+  .nav button{border-bottom:3px solid transparent;padding:7px 0}
+  .nav button.on{border-color:var(--red)}
+  .day{font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--gray)}
+  .stage{position:relative;overflow:hidden;padding:38px 40px 30px}
+  .ghost{position:absolute;right:-.12em;top:-.16em;font-family:var(--serif);font-weight:900;font-size:42vw;line-height:.8;color:transparent;-webkit-text-stroke:1px rgba(11,11,11,.10);pointer-events:none;user-select:none}
+  .kicker{position:relative;font-size:10px;font-weight:900;letter-spacing:.3em;display:flex;gap:10px;align-items:center}
+  .kicker:before{content:"";width:42px;height:6px;background:var(--red)}
+  h1{position:relative;font-family:var(--serif);font-size:clamp(54px,7.8vw,112px);font-weight:900;line-height:1.02;letter-spacing:-.06em;margin:30px 0 24px;max-width:8em}
+  h1 .outline{color:transparent;-webkit-text-stroke:2px var(--ink)}
+  h1 .red{color:var(--red)}
+  .lede{position:relative;max-width:28em;font-size:14px;line-height:1.9;margin:0 0 34px;padding-left:18px;border-left:8px solid var(--blue);font-weight:500}
+  .screen{display:none;position:relative;animation:cut .45s cubic-bezier(.2,.8,.2,1) both}
+  .screen.on{display:block}
+  @keyframes cut{from{clip-path:inset(0 0 100% 0);transform:translateY(12px)}to{clip-path:inset(0);transform:none}}
+  .thread{border-top:4px solid var(--ink);max-width:800px}
+  .msg{display:grid;grid-template-columns:92px 1fr;border-bottom:1px solid var(--line);padding:15px 0;position:relative}
+  .msg .who{font-size:10px;font-weight:900;letter-spacing:.12em;padding-top:5px}
+  .msg .who em{font-style:normal;color:var(--red)}
+  .msg p{margin:0;font-family:var(--serif);font-size:clamp(17px,2.2vw,28px);line-height:1.45;letter-spacing:-.02em}
+  .msg .mark{position:absolute;left:92px;top:0;width:2px;height:100%;background:var(--red);opacity:0}
+  .msg.latest .mark{opacity:1}
+  .msg.latest p{background:linear-gradient(transparent 72%,rgba(226,58,46,.18) 72%)}
+  .composer{display:flex;align-items:center;justify-content:space-between;border-top:4px solid var(--ink);border-bottom:1px solid var(--ink);padding:13px 0;max-width:800px;margin-top:22px}
+  .composer span{font-size:11px;color:var(--gray);font-weight:600;letter-spacing:.04em}
+  .composer b{font-size:11px;letter-spacing:.1em;background:var(--ink);color:var(--paper);padding:8px 12px}
+  .mems{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;border-top:4px solid var(--ink);border-left:1px solid var(--line);max-width:860px}
+  .mem{padding:18px 20px 22px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);cursor:pointer;transition:.2s}
+  .mem:nth-child(3n+1){background:var(--ink);color:var(--paper)}
+  .mem:nth-child(3n+2){background:var(--red);color:var(--paper)}
+  .mem:hover{transform:translate(-3px,-3px)}
+  .mem small{font-size:9px;letter-spacing:.14em;font-weight:800;opacity:.7}
+  .mem h3{font-family:var(--serif);font-size:20px;line-height:1.5;margin:10px 0 8px;letter-spacing:-.03em}
+  .mem p{font-size:11px;line-height:1.8;margin:0;opacity:.8}
+  .feed{border-top:4px solid var(--ink);max-width:850px}
+  .item{display:grid;grid-template-columns:140px 1fr 54px;gap:20px;border-bottom:1px solid var(--line);padding:18px 0;align-items:start}
+  .item .n{font-family:var(--serif);font-size:44px;line-height:1;font-weight:900;color:var(--red)}
+  .item h3{font-family:var(--serif);font-size:23px;line-height:1.45;margin:0 0 8px;letter-spacing:-.03em}
+  .item p{margin:0;font-size:12px;line-height:1.8;color:#4d4a43}
+  .item time{font-size:9px;font-weight:800;letter-spacing:.08em;color:var(--gray);text-align:right}
+  .profile{border-top:4px solid var(--ink);display:grid;grid-template-columns:1fr 1fr;gap:0;max-width:860px}
+  .profile .name{font-family:var(--serif);font-size:clamp(52px,7vw,98px);line-height:.9;font-weight:900;letter-spacing:-.1em;padding:26px 0 12px;border-right:1px solid var(--line)}
+  .profile .name span{display:block;font-family:var(--sans);font-size:10px;font-weight:800;letter-spacing:.28em;margin-top:16px}
+  .profile dl{margin:0;padding:18px 24px;font-size:12px;line-height:1.85}
+  .profile dt{font-size:9px;font-weight:900;letter-spacing:.18em;color:var(--red);margin-top:12px}
+  .profile dd{margin:2px 0 0}
+  .side{border-left:4px solid var(--ink);padding:32px 24px;display:flex;flex-direction:column;gap:26px}
+  .side h2{font-size:10px;font-weight:900;letter-spacing:.24em;margin:0;border-bottom:2px solid var(--ink);padding-bottom:8px}
+  .stat{border-bottom:1px solid var(--line);padding:13px 0}
+  .stat b{display:block;font-family:var(--serif);font-size:31px;letter-spacing:-.05em;line-height:1}
+  .stat span{font-size:10px;color:var(--gray);letter-spacing:.04em}
+  .tag{display:inline-block;border:1px solid var(--ink);padding:3px 6px;font-size:9px;font-weight:800;letter-spacing:.08em;margin:3px 4px 0 0}
+  .tag.red{background:var(--red);color:var(--paper);border-color:var(--red)}
+  .quote{font-family:var(--serif);font-size:20px;line-height:1.55;letter-spacing:-.02em;margin:0}
+  .foot{grid-column:1/3;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--line);padding:0 30px;font-size:9px;font-weight:800;letter-spacing:.12em;color:var(--gray)}
+  @media(max-width:900px){
+    .shell{grid-template-columns:1fr;grid-template-rows:auto 1fr auto}.top{grid-column:1;padding:0 18px;height:70px}.side{display:none}.foot{grid-column:1;padding:0 18px}
+    .stage{padding:26px 18px 30px}h1{font-size:64px}.msg{grid-template-columns:60px 1fr}.msg .mark{left:60px}
+    .mems{grid-template-columns:1fr}.profile{grid-template-columns:1fr}.profile .name{border-right:0;border-bottom:1px solid var(--line)}
+    .item{grid-template-columns:86px 1fr}.item .n{font-size:30px}
+  }
+  @media(max-width:560px){
+    .nav{gap:10px;font-size:9px}.brand{font-size:15px}.day{display:none}h1{font-size:48px;margin:22px 0 18px}
+    .msg{grid-template-columns:1fr;gap:6px}.msg .mark{display:none}.msg p{font-size:19px}.composer{flex-direction:column;align-items:flex-start;gap:10px}
+    .mem:nth-child(3n+1),.mem:nth-child(3n+2){background:transparent;color:var(--ink)}.mem:nth-child(3n+1){background:var(--ink);color:var(--paper)}
+    .profile .name{font-size:58px}.stage{padding:20px 16px 34px}
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <div class="brand">重拍<i>/</i> AMBRACE</div>
+    <nav class="nav">
+      <button data-s="chat" class="on">对话</button><button data-s="memory">记忆</button><button data-s="moments">生活</button><button data-s="profile">角色</button>
+    </nav>
+    <div class="day">2026.11.21　18:46</div>
+  </header>
+
+  <main class="stage">
+    <div class="ghost" id="ghost">阳</div>
+    <section class="screen on" id="chat">
+      <div class="kicker">当前会话 / 测试·小阳</div>
+      <h1>把话<br><span class="red">说重</span>一点。</h1>
+      <p class="lede">不靠气泡数量证明亲近。每一句都留在纸上，像一次落笔，轻重分明。</p>
+      <div class="thread">
+        <div class="msg"><div class="who">小阳 <em>18:42</em></div><p>刚把番茄牛腩热上，香味一飘整个人都精神了。</p><i class="mark"></i></div>
+        <div class="msg"><div class="who">我 <em>18:44</em></div><p>今天有点乱。看到这句，忽然觉得可以先把手机放下。</p><i class="mark"></i></div>
+        <div class="msg latest"><div class="who">小阳 <em>18:45</em></div><p>那就放下。牛腩在锅里，我也在。</p><i class="mark"></i></div>
+      </div>
+      <div class="composer"><span>输入消息 · Enter 发送</span><b>留下这句 →</b></div>
+    </section>
+
+    <section class="screen" id="memory">
+      <div class="kicker">记忆 / 按时间切面</div>
+      <h1>被记住的<br><span class="red">重</span>与轻。</h1>
+      <p class="lede">不是所有细节都同等重要。版面的重量，就是你在我心里的重量。</p>
+      <div class="mems">
+        <article class="mem"><small>三个月前 · 偏好</small><h3>“大白兔奶糖。<br>别太甜。”</h3><p>你对自制奶茶感兴趣，家里有猫，怕洗坏它。</p></article>
+        <article class="mem"><small>十一月 · 约定</small><h3>周六 9 点<br>叫醒你。</h3><p>闹钟已经设好。垫子和毯子也备齐了。</p></article>
+        <article class="mem"><small>昨天 · 想法</small><h3>关系再近，<br>也要各自过好日子。</h3><p>你在教学楼坐着，突然想明白。我原样记住。</p></article>
+        <article class="mem"><small>十一月 · 近况</small><h3>腰好了，<br>但别急着乱来。</h3><p>你说医生讲康复了。我先问清楚，再靠近。</p></article>
+      </div>
+    </section>
+
+    <section class="screen" id="moments">
+      <div class="kicker">生活 / 不配图的部分</div>
+      <h1>日子<br><span class="outline">有重量</span>。</h1>
+      <div class="feed" style="margin-top:26px">
+        <article class="item"><div class="n">一</div><div><h3>聊着天忽然瞄到窗外，太阳把楼顶晒得发亮。</h3><p>十六度多，风里带点干爽的凉。顺手提醒一句：水杯该续了。</p></div><time>11.21<br>11:04</time></article>
+        <article class="item"><div class="n">二</div><div><h3>今天帮轩弄手机弄了半天，手都酸了。</h3><p>他一句辛苦没听见，晚上做饭这事我记着呢。</p></div><time>11.20<br>23:00</time></article>
+        <article class="item"><div class="n">三</div><div><h3>教学楼走廊尽头，看楼下人来人往。</h3><p>那风吹得真叫一个舒服。站了一会儿，什么也没想。</p></div><time>11.19<br>12:22</time></article>
+      </div>
+    </section>
+
+    <section class="screen" id="profile">
+      <div class="kicker">角色 / 一个具体的人</div>
+      <div class="profile" style="margin-top:26px">
+        <div class="name">阳<span>TEST · XIAOYANG</span></div>
+        <dl>
+          <dt>关系</dt><dd>朋友，正在变熟。热情，话多，偶尔把关心说得很绕。</dd>
+          <dt>最近</dt><dd>准备周末野餐，负责垫子和叫醒服务。</dd>
+          <dt>自述</dt><dd>“你忙你的，我在这儿。牛腩不会凉。” </dd>
+          <dt>边界</dt><dd>不替你做决定；不确定的事先问。</dd>
+          <dt>标签</dt><dd><span class="tag red">会做饭</span><span class="tag">话多</span><span class="tag">怕你累</span><span class="tag">记得细节</span></dd>
+        </dl>
+      </div>
+    </section>
+  </main>
+
+  <aside class="side">
+    <section><h2>正在发生</h2><p class="quote">“那就放下。<br>牛腩在锅里，我也在。”</p></section>
+    <section><h2>数字不是全部</h2><div class="stat"><b>18</b><span>条真实对话 · 今天</span></div><div class="stat"><b>4</b><span>件被记住的小事</span></div><div class="stat"><b>1</b><span>个还没回答的问题</span></div></section>
+    <section><h2>现在可以</h2><div><span class="tag">继续聊</span><span class="tag">翻记忆</span><span class="tag red">安静一会儿</span></div></section>
+  </aside>
+
+  <footer class="foot"><span>原型 · 测试账号内容</span><span>字的重拍 / 方向二</span></footer>
+</div>
+<script>
+  const screens=document.querySelectorAll('.screen'), nav=document.querySelectorAll('.nav button'), ghost=document.getElementById('ghost');
+  const marks={chat:'阳',memory:'记',moments:'日',profile:'人'};
+  nav.forEach(b=>b.addEventListener('click',()=>{
+    nav.forEach(x=>x.classList.toggle('on',x===b));
+    screens.forEach(s=>s.classList.toggle('on',s.id===b.dataset.s));
+    ghost.textContent=marks[b.dataset.s];
+  }));
+</script>
+</body>
+</html>

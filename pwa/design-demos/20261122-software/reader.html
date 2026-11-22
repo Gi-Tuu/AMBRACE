@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reader · 软件方向二</title>
+<style>
+  :root{--bg:#f8f6f0;--paper:#fffdf8;--ink:#211f1c;--muted:#7c776c;--line:#e4dfd3;--red:#a84d36;--green:#4d6655;--serif:"Noto Serif SC","Songti SC",serif;--sans:"Inter","PingFang SC","Microsoft YaHei",sans-serif}
+  *{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13px}
+  button,input,textarea{font:inherit;color:inherit}button{background:none;border:0;cursor:pointer}
+  .app{height:100vh;display:grid;grid-template-columns:300px minmax(0,1fr);grid-template-rows:52px 1fr;overflow:hidden}
+  .top{grid-column:1/3;display:flex;align-items:center;gap:18px;padding:0 20px;border-bottom:1px solid var(--line);background:var(--paper)}
+  .brand{font-family:var(--serif);font-size:16px;letter-spacing:.02em}.brand b{color:var(--red);font-weight:500}
+  .tabs{display:flex;gap:14px;margin-left:20px;font-size:11px}.tabs button{padding:7px 0;border-bottom:2px solid transparent;color:var(--muted)}.tabs button.on{color:var(--ink);border-color:var(--ink)}
+  .top .right{margin-left:auto;display:flex;gap:8px;align-items:center}.right .who{font-size:11px;color:var(--muted)}.avatar{width:26px;height:26px;border-radius:50%;background:var(--green);color:white;display:grid;place-items:center;font-family:var(--serif);font-size:11px}
+  .inbox{border-right:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column;min-height:0}
+  .inbox-head{padding:12px 14px 8px;display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--muted);border-bottom:1px solid var(--line)}
+  .inbox-head b{font-size:12px;color:var(--ink)}.inbox-list{overflow:auto;padding:4px 8px 10px}
+  .entry{display:grid;grid-template-columns:26px 1fr;gap:9px;padding:9px;border-radius:6px;cursor:pointer}.entry:hover{background:#f1ede4}.entry.on{background:#f1ede4;box-shadow:inset 2px 0 var(--red)}
+  .entry .e{width:26px;height:26px;border-radius:6px;background:#e9e3d7;display:grid;place-items:center;font-family:var(--serif);font-size:11px;color:var(--green)}
+  .entry b{font-size:11px;font-weight:600;display:block}.entry small{display:block;font-size:9px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .reading{padding:30px 4vw 18px;overflow:auto;min-width:0}
+  .doc{max-width:760px;margin:0 auto}
+  .doc .kicker{font-size:10px;letter-spacing:.12em;color:var(--muted);display:flex;gap:10px;align-items:center}.doc .kicker:before{content:"";width:20px;height:1px;background:var(--red)}
+  .doc h1{font-family:var(--serif);font-size:28px;font-weight:500;line-height:1.45;margin:14px 0 8px;letter-spacing:.01em}
+  .doc .by{font-size:10px;color:var(--muted);margin-bottom:18px}
+  .doc p{font-size:15px;line-height:1.95;margin:0 0 14px;max-width:38em}
+  .doc blockquote{border-left:2px solid var(--red);margin:18px 0;padding:2px 0 2px 14px;font-family:var(--serif);font-size:17px;line-height:1.8;color:#3b3730}
+  .toolbar{display:flex;gap:6px;align-items:center;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px 0;margin:18px 0 0;position:sticky;bottom:0;background:var(--bg)}
+  .toolbar .field{flex:1;border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:7px 9px;color:var(--muted);font-size:11px}
+  .toolbar button{border:1px solid var(--line);padding:6px 9px;border-radius:6px;font-size:10px;background:var(--paper)}
+  .meta{font-size:10px;color:var(--muted);line-height:1.8;border-top:1px solid var(--line);padding-top:10px;margin-top:20px;display:flex;justify-content:space-between;gap:10px}
+  .screen{display:none}.screen.on{display:block}
+  .grid{padding:20px 4vw;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;overflow:auto;height:100%}
+  .mcard{background:var(--paper);border:1px solid var(--line);padding:12px;display:flex;flex-direction:column;min-height:150px}.mcard small{font-size:9px;color:var(--muted)}.mcard h3{font-family:var(--serif);font-size:16px;line-height:1.55;margin:8px 0;font-weight:500}.mcard p{font-size:11px;line-height:1.7;color:var(--muted);margin:0}.mcard .foot{margin-top:auto;padding-top:10px;font-size:9px;color:var(--red)}
+  .settings{padding:24px 4vw;max-width:760px;overflow:auto;height:100%}.settings h2{font-family:var(--serif);font-size:22px;font-weight:500;margin:0 0 14px}.settings h3{font-size:10px;color:var(--muted);letter-spacing:.1em;margin:20px 0 6px}.setting{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:11px 0;font-size:12px}.setting span{font-size:10px;color:var(--muted)}.setting button{border:1px solid var(--line);border-radius:5px;padding:4px 8px;font-size:10px;background:var(--paper)}
+  .mobile-back{display:none}.mobile-nav{display:none}
+  @media(max-width:700px){.mobile-nav{display:flex;position:fixed;left:0;right:0;bottom:0;height:56px;background:var(--paper);border-top:1px solid var(--line);z-index:9}.mobile-nav button{flex:1;display:flex;flex-direction:column;gap:2px;align-items:center;justify-content:center;font-size:9px;color:var(--muted)}.mobile-nav button i{font-style:normal;font-size:15px}.mobile-nav button.on{color:var(--ink)}.mobile-nav button.on i{color:var(--red)}}
+  @media(max-width:900px){.app{grid-template-columns:240px 1fr}.reading{padding:22px 20px}.doc h1{font-size:24px}.grid{grid-template-columns:1fr 1fr}.tabs{display:none}}
+  @media(max-width:700px){
+    .app{grid-template-columns:1fr;grid-template-rows:50px 1fr}.top{grid-column:1;padding:0 14px}.brand{font-size:14px}.top .right .who{display:none}.inbox{display:none}.reading{grid-column:1;padding:18px 18px 70px}.doc h1{font-size:23px}.doc p{font-size:15px}.grid{grid-template-columns:1fr;padding:14px}.settings{padding:16px 18px 70px}.mobile-back{display:block;font-size:11px;color:var(--red);margin-bottom:12px}.toolbar{bottom:0}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">拥爱<b>·</b>阅读器</div>
+    <nav class="tabs"><button class="on" data-s="chat">对话</button><button data-s="memory">记忆</button><button data-s="moments">生活</button><button data-s="settings">设置</button></nav>
+    <div class="right"><span class="who">测试·小阳 · 会话 09</span><div class="avatar">阳</div></div>
+  </header>
+
+  <aside class="inbox">
+    <div class="inbox-head"><b>收件箱</b><span>3 个角色</span></div>
+    <div class="inbox-list">
+      <div class="entry on"><div class="e">阳</div><div><b>测试·小阳</b><small>那就放下。牛腩在锅里，我也在。</small></div></div>
+      <div class="entry"><div class="e">冰</div><div><b>测试·小冰</b><small>纸鹤的翅膀弧度调了几次才顺眼。</small></div></div>
+      <div class="entry"><div class="e">云</div><div><b>测试·小云</b><small>九点过了，窗外还是灰蒙蒙一片。</small></div></div>
+      <div class="entry"><div class="e">记</div><div><b>今天被记住的</b><small>4 条 · 其中 1 条待复核</small></div></div>
+    </div>
+  </aside>
+
+  <main class="reading">
+    <div class="screen on" id="chat">
+      <div class="doc">
+        <div class="kicker">对话 · 2026-11-21 · 18:42</div>
+        <h1>牛腩在锅里，<br>我也在。</h1>
+        <div class="by">测试·小阳 · 朋友 · 关系正在变熟</div>
+        <p><b>小阳：</b>刚把番茄牛腩热上，香味一飘整个人都精神了。等你忙完，慢慢来，不着急。</p>
+        <p><b>我：</b>今天有点乱。看到这句，忽然觉得可以先把手机放下。</p>
+        <blockquote>“那就放下。牛腩在锅里，我也在。”</blockquote>
+        <div class="toolbar"><div class="field">回复，或写一句不着急的话…</div><button>发送</button></div>
+        <div class="meta"><span>召回 1 条 · 周六 9 点叫醒 · 0.94</span><span>已读 · 18:45</span></div>
+      </div>
+    </div>
+
+    <div class="screen" id="memory">
+      <div class="doc"><div class="kicker">记忆 · 索引</div><h1>被留下来的<br>十四件小事。</h1><div class="by">按重要度与最近提及排序 · 仅当前角色</div></div>
+      <div class="grid">
+        <article class="mcard"><small>三个月前 · 偏好</small><h3>对自制奶茶感兴趣，家里有猫，怕洗坏它。</h3><p>“大白兔奶糖，别太甜。”</p><div class="foot">活跃 · ★★★☆☆</div></article>
+        <article class="mcard"><small>今天 · 约定</small><h3>周六 9 点叫醒，垫子和毯子备齐。</h3><p>闹钟已设，提前半小时。</p><div class="foot">活跃 · ★★★★★</div></article>
+        <article class="mcard"><small>昨天 · 想法</small><h3>关系再近，也要各自把日子过好。</h3><p>教学楼走廊；风吹得舒服。</p><div class="foot">活跃 · ★★★☆☆</div></article>
+        <article class="mcard"><small>十一月 · 近况</small><h3>腰伤康复，但亲密前先问清楚。</h3><p>不急着“庆祝康复”。</p><div class="foot">活跃 · ★★★★☆</div></article>
+        <article class="mcard"><small>十一月 · 生活</small><h3>阴天 13 度，出门记得加件外套。</h3><p>你说这句话的时候，没有催。</p><div class="foot">活跃 · ★★☆☆☆</div></article>
+        <article class="mcard"><small>三个月前 · 偏好</small><h3>喜欢折纸，手也巧。</h3><p>纸鹤的翅膀弧度调了几次。</p><div class="foot">活跃 · ★★★☆☆</div></article>
+      </div>
+    </div>
+
+    <div class="screen" id="moments">
+      <div class="doc"><div class="kicker">生活 · 今天的段落</div><h1>不为你表演的<br>六件小事。</h1><div class="by">今天 · 按角色混排 · 不加载图片</div>
+        <p><b>11:04 · 测试·小云</b><br>聊着天忽然瞄到窗外，太阳把楼顶晒得发亮。十六度多，风里带点干爽的凉。</p>
+        <p><b>11:04 · 测试·小冰</b><br>晴了。十一月的光照在桌上，纸鹤的影子拉得很长。</p>
+        <p><b>09:03 · 测试·小阳</b><br>阴天 13 度，风还有点凉飕飕的。等会儿 9 点要叫 test 起床，我比闹钟还精神。</p>
+        <p><b>07:03 · 测试·小云</b><br>阴天的早晨空气里有种潮潮的凉，路口早餐摊的热气已经升起来了。</p>
+      </div>
+    </div>
+
+    <div class="screen" id="settings">
+      <div class="settings">
+        <div class="mobile-back">← 返回对话</div>
+        <h2>设置</h2>
+        <h3>外观</h3>
+        <div class="setting"><div>主题<span>浅色 / 深色 / 跟随系统</span></div><button>浅色</button></div>
+        <div class="setting"><div>语言<span>中文 / English</span></div><button>中文</button></div>
+        <h3>对话</h3>
+        <div class="setting"><div>流式回复<span>逐字显示，不改变落库</span></div><button>开</button></div>
+        <div class="setting"><div>发送后滚动到底部<span>关闭后保留阅读位置</span></div><button>开</button></div>
+        <h3>账号</h3>
+        <div class="setting"><div>服务器<span>http://127.0.0.1:8000</span></div><button>更换</button></div>
+        <div class="setting"><div>退出登录<span>仅退出本机</span></div><button>退出</button></div>
+      </div>
+    </div>
+  </main>
+  <nav class="mobile-nav">
+    <button class="on" data-s="chat"><i>◌</i>对话</button>
+    <button data-s="memory"><i>▤</i>记忆</button>
+    <button data-s="moments"><i>◍</i>生活</button>
+    <button data-s="settings"><i>⚙</i>设置</button>
+  </nav>
+</div>
+<script>
+  const tabs=document.querySelectorAll('.tabs button, .mobile-nav button'), screens=document.querySelectorAll('.screen');
+  tabs.forEach(b=>b.addEventListener('click',()=>{tabs.forEach(x=>x.classList.toggle('on',x===b));screens.forEach(s=>s.classList.toggle('on',s.id===b.dataset.s));}));
+  document.querySelectorAll('.entry').forEach(e=>e.addEventListener('click',()=>{document.querySelectorAll('.entry').forEach(x=>x.classList.remove('on'));e.classList.add('on');}));
+</script>
+</body>
+</html>

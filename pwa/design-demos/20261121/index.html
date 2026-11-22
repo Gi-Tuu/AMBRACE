@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PWA 视觉方向 · 三选一</title>
+<style>
+  :root{--bg:#111;--text:#f2efe6;--muted:#979186;--line:#2b2a26}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:"Inter","PingFang SC","Microsoft YaHei",sans-serif}
+  main{max-width:1180px;margin:0 auto;padding:54px 26px 80px}
+  h1{font-family:"Noto Serif SC","Songti SC",serif;font-size:44px;font-weight:500;letter-spacing:.02em;margin:0 0 8px}
+  .lede{color:var(--muted);font-size:14px;line-height:1.9;max-width:46em;margin:0 0 40px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .card{border-top:1px solid var(--line);padding-top:14px}
+  .card img{width:100%;display:block;border:1px solid var(--line)}
+  .card h2{font-size:17px;font-weight:500;margin:14px 0 5px}
+  .card p{font-size:12px;line-height:1.8;color:var(--muted);margin:0 0 12px;min-height:4em}
+  .meta{font-size:10px;letter-spacing:.08em;color:#777;text-transform:uppercase}
+  .card a{display:inline-block;color:#f2efe6;font-size:12px;border-bottom:1px solid #777;padding-bottom:2px;text-decoration:none}
+  .note{margin-top:34px;border-top:1px solid var(--line);padding-top:16px;color:#777;font-size:11px;line-height:1.9}
+  .bar{display:flex;gap:12px;align-items:center;margin-bottom:34px;font-size:11px;color:#888}
+  .bar b{color:#f2efe6;font-weight:500}
+  @media(max-width:860px){.grid{grid-template-columns:1fr}h1{font-size:34px}}
+</style>
+</head>
+<body>
+<main>
+  <div class="bar"><b>AMBRACE PWA</b><span>视觉方向 · 2026-11-21</span><span>·</span><span>三版都是真实 HTML，可点击切换</span></div>
+  <h1>三版，不是三张皮。</h1>
+  <p class="lede">同一组功能，三种骨架：稀疏的页边、字重的重拍、夜航式工作台。请先看三版，再选一个方向；选定后我才把方向落进生产 PWA。</p>
+  <section class="grid">
+    <article class="card">
+      <div class="meta">01 · 安静</div>
+      <img src="shots/breath-desktop.png" alt="呼吸方向截图">
+      <h2>呼吸 / 留白与页边</h2>
+      <p>把“允许不回答”的空隙做成主视觉；对话像纸上的落笔，记忆退到页边。</p>
+      <a href="breath.html">打开完整原型 →</a>
+    </article>
+    <article class="card">
+      <div class="meta">02 · 大胆</div>
+      <img src="shots/typographic-desktop.png" alt="重拍方向截图">
+      <h2>重拍 / 字重即层级</h2>
+      <p>一个汉字承担整屏情绪；最新一句用红色竖线重拍，关系有重量。</p>
+      <a href="typographic.html">打开完整原型 →</a>
+    </article>
+    <article class="card">
+      <div class="meta">03 · 冷静</div>
+      <img src="shots/nightshift-desktop.png" alt="夜航工作台截图">
+      <h2>夜航工作台 / 密度</h2>
+      <p>三栏、发丝线、上下文注入；记忆检索像一次带索引的夜航。</p>
+      <a href="nightshift.html">打开完整原型 →</a>
+    </article>
+  </section>
+  <p class="note">方向卡与六个候选见 <a href="directions.md" style="color:#f2efe6">directions.md</a>。手机截图在 shots/ 下。内容来自测试账号；头像使用姓名印记，不伪造真人照片。第 4–6 版（编读 / 内容瀑布 / 节气色谱）保留为备选。</p>
+</main>
+</body>
+</html>

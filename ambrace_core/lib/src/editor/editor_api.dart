@@ -14,6 +14,8 @@
 /// - 契约以 `backend/app/api/user_content.py` 与 `backend/app/auth/router.py` 为准。
 library;
 
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 
 import '../api/amb_api_client.dart';
@@ -89,6 +91,66 @@ class EditorApi {
     await client.dio.delete('/api/v1/user/memos/$memoId', cancelToken: cancelToken);
   }
 
+  // ── 记忆写操作（明确点击才调用；不改变 ReaderApi 只读承诺） ─────
+  Future<void> updateMemory(int id, Map<String, dynamic> data,
+      {CancelToken? cancelToken}) async {
+    await client.dio.patch('/api/v1/memories/$id',
+        data: data, cancelToken: cancelToken);
+  }
+
+  Future<void> updateMemoryContent(int id, String content,
+      {CancelToken? cancelToken}) async {
+    await client.dio.patch('/api/v1/memories/$id/content',
+        data: {'content': content}, cancelToken: cancelToken);
+  }
+
+  Future<void> archiveMemory(int id, {CancelToken? cancelToken}) async {
+    await updateMemory(id, {'is_archived': true}, cancelToken: cancelToken);
+  }
+
+  Future<void> deleteMemory(int id, {CancelToken? cancelToken}) async {
+    await client.dio.delete('/api/v1/memories/$id', cancelToken: cancelToken);
+  }
+
+  // ── 朋友圈写操作 ────────────────────────────────────────────────
+  Future<void> likeMoment(int id, {CancelToken? cancelToken}) async {
+    await client.dio.post('/api/v1/moments/$id/like', cancelToken: cancelToken);
+  }
+
+  Future<void> postMomentComment(int id, String content,
+      {int? parentId, CancelToken? cancelToken}) async {
+    await client.dio.post('/api/v1/moments/$id/comments',
+        data: {'content': content, if (parentId != null) 'parent_id': parentId},
+        cancelToken: cancelToken);
+  }
+
+  Future<void> deleteMoment(int id, {CancelToken? cancelToken}) async {
+    await client.dio.delete('/api/v1/moments/$id', cancelToken: cancelToken);
+  }
+
+  Future<void> deleteMomentComment(int momentId, int commentId,
+      {CancelToken? cancelToken}) async {
+    await client.dio.delete('/api/v1/moments/$momentId/comments/$commentId',
+        cancelToken: cancelToken);
+  }
+
+  Future<void> publishUserMoment(String content,
+      {Uint8List? imageBytes,
+      String? imageName,
+      CancelToken? cancelToken}) async {
+    await client.dio.post(
+      '/api/v1/moments/user',
+      data: FormData.fromMap({
+        'content': content,
+        if (imageBytes != null)
+          'image': MultipartFile.fromBytes(imageBytes,
+              filename: imageName ?? 'moment.jpg'),
+      }),
+      options: Options(contentType: 'multipart/form-data'),
+      cancelToken: cancelToken,
+    );
+  }
+
   // ── 个人日记 ─────────────────────────────────────────────────────
   /// 按「本人 + 纯日期 `YYYY-MM-DD`」upsert（后端语义：写了恒为本人那一天，
   /// 不影响家庭其他成员的同日行）。日期原样透传，**不做任何 UTC 换算**。
@@ -113,5 +175,118 @@ class EditorApi {
   /// 不存在「按日期删除」的端点，不得伪造。
   Future<void> deleteUserDiaryById(int diaryId, {CancelToken? cancelToken}) async {
     await client.dio.delete('/api/v1/user/diaries/$diaryId', cancelToken: cancelToken);
+  }
+
+  // ── World facts（角色世界设定）────────────────────────────────────
+  Future<int> createWorldFact(
+    int characterId, {
+    required String content,
+    String? predicate,
+    CancelToken? cancelToken,
+  }) async {
+    final r = await client.dio.post(
+      '/api/v1/characters/$characterId/world-facts',
+      data: {'content': content, if (predicate != null) 'predicate': predicate},
+      cancelToken: cancelToken,
+    );
+    final data = r.data;
+    return data is Map ? (data['id'] as num?)?.toInt() ?? 0 : 0;
+  }
+
+  Future<void> updateWorldFact(
+    int characterId,
+    int factId, {
+    required String content,
+    String? predicate,
+    CancelToken? cancelToken,
+  }) async {
+    await client.dio.put(
+      '/api/v1/characters/$characterId/world-facts/$factId',
+      data: {'content': content, if (predicate != null) 'predicate': predicate},
+      cancelToken: cancelToken,
+    );
+  }
+
+  Future<void> deleteWorldFact(int characterId, int factId,
+      {CancelToken? cancelToken}) async {
+    await client.dio.delete(
+        '/api/v1/characters/$characterId/world-facts/$factId',
+        cancelToken: cancelToken);
+  }
+
+  // ── Pets（账号级宠物）────────────────────────────────────────────
+  Future<void> adoptPet(String species, String name,
+      {CancelToken? cancelToken}) async {
+    await client.dio.post('/api/v1/pets',
+        data: {'species': species, 'name': name}, cancelToken: cancelToken);
+  }
+
+  Future<void> interactPet(int petId, String action,
+      {CancelToken? cancelToken}) async {
+    await client.dio.post('/api/v1/pets/$petId/$action',
+        cancelToken: cancelToken);
+  }
+
+  Future<void> renamePet(int petId, String name,
+      {CancelToken? cancelToken}) async {
+    await client.dio.post('/api/v1/pets/$petId/rename',
+        data: {'name': name}, cancelToken: cancelToken);
+  }
+
+  Future<void> deletePet(int petId, {CancelToken? cancelToken}) async {
+    await client.dio.delete('/api/v1/pets/$petId', cancelToken: cancelToken);
+  }
+
+  // ── Lorebook（角色关键词设定）─────────────────────────────────────
+  Future<int> createLorebook(
+    int characterId, {
+    required String title,
+    required String content,
+    required List<String> keywords,
+    bool active = true,
+    CancelToken? cancelToken,
+  }) async {
+    final r = await client.dio.post(
+      '/api/v1/characters/$characterId/lorebook',
+      data: {
+        'title': title,
+        'content': content,
+        'keywords': keywords,
+        'exclude_keywords': const <String>[],
+        'active': active,
+      },
+      cancelToken: cancelToken,
+    );
+    final data = r.data;
+    return data is Map ? (data['id'] as num?)?.toInt() ?? 0 : 0;
+  }
+
+  Future<void> updateLorebook(
+    int characterId,
+    int entryId, {
+    required String title,
+    required String content,
+    required List<String> keywords,
+    required bool active,
+    CancelToken? cancelToken,
+  }) async {
+    await client.dio.put(
+      '/api/v1/characters/$characterId/lorebook/$entryId',
+      data: {
+        'title': title,
+        'content': content,
+        'keywords': keywords,
+        'exclude_keywords': const <String>[],
+        'active': active,
+      },
+      cancelToken: cancelToken,
+    );
+  }
+
+  Future<void> deleteLorebook(int characterId, int entryId,
+      {CancelToken? cancelToken}) async {
+    await client.dio.delete(
+        '/api/v1/characters/$characterId/lorebook/$entryId',
+        cancelToken: cancelToken);
   }
 }

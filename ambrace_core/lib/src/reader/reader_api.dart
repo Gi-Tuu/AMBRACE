@@ -15,6 +15,7 @@ import 'package:dio/dio.dart';
 import '../api/amb_api_client.dart';
 import '../api/api_exception.dart';
 import 'reader_models.dart';
+import 'reader_extras_models.dart';
 
 class ReaderApi {
   ReaderApi(this.client);
@@ -50,6 +51,7 @@ class ReaderApi {
     int skip = 0,
     int limit = 50,
     bool readOnly = true,
+    String? search,
     CancelToken? cancelToken,
   }) async {
     final r = await client.dio.get(
@@ -57,6 +59,7 @@ class ReaderApi {
       queryParameters: {
         if (characterId != null) 'character_id': characterId,
         if (memoryType != null && memoryType.isNotEmpty) 'memory_type': memoryType,
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
         'skip': skip,
         'limit': limit,
         'read_only': readOnly,
@@ -81,6 +84,45 @@ class ReaderApi {
       return ReaderMemory.fromJson(_obj(r.data, 'memory'));
     } on FormatException catch (e) {
       _bad('memory', e);
+    }
+  }
+
+  Future<ReaderMemoryDerivations> getMemoryDerivations(int id,
+      {CancelToken? cancelToken}) async {
+    final r = await client.dio.get('/api/v1/memories/$id/derivations',
+        cancelToken: cancelToken);
+    try {
+      return ReaderMemoryDerivations.fromJson(_obj(r.data, 'derivations'));
+    } on FormatException catch (e) {
+      _bad('derivations', e);
+    }
+  }
+
+  /// 来源链；404（功能未开放/记忆不存在）返回 null，由 UI 隐藏卡片。
+  Future<ReaderMemoryWhy?> getMemoryWhy(int id, {CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get('/api/v1/memories/$id/why',
+          cancelToken: cancelToken);
+      return ReaderMemoryWhy.fromJson(_obj(r.data, 'why'));
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return null;
+      rethrow;
+    } on FormatException catch (e) {
+      _bad('why', e);
+    }
+  }
+
+  Future<ReaderMemoryLifecycle?> getMemoryLifecycle(int id,
+      {CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get('/api/v1/memories/$id/lifecycle',
+          cancelToken: cancelToken);
+      return ReaderMemoryLifecycle.fromJson(_obj(r.data, 'lifecycle'));
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return null;
+      rethrow;
+    } on FormatException catch (e) {
+      _bad('lifecycle', e);
     }
   }
 
@@ -217,6 +259,275 @@ class ReaderApi {
     } on FormatException catch (e) {
       _bad('user diary', e);
     }
+  }
+
+  Future<ReaderRelationship?> getRelationship(int characterId,
+      {CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get('/api/v1/relationships',
+          cancelToken: cancelToken);
+      final data = _obj(r.data, 'relationships');
+      for (final item in _reqListFor(data['relationships'], 'relationships')) {
+        final rel = ReaderRelationship.fromJson(_mapObj(item, 'relationship'));
+        if (rel.characterId == characterId) return rel;
+      }
+      return null;
+    } on FormatException catch (e) {
+      _bad('relationship', e);
+    }
+  }
+
+  Future<List<ReaderWorldFact>> getWorldFacts(int characterId,
+      {CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get('/api/v1/characters/$characterId/world-facts',
+          cancelToken: cancelToken);
+      final data = _obj(r.data, 'world facts');
+      return [
+        for (final item in _reqListFor(data['items'], 'world facts'))
+          ReaderWorldFact.fromJson(_mapObj(item, 'world fact')),
+      ];
+    } on FormatException catch (e) {
+      _bad('world facts', e);
+    }
+  }
+
+  Future<List<ReaderLorebookEntry>> getLorebook(int characterId,
+      {CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get('/api/v1/characters//lorebook',
+          cancelToken: cancelToken);
+      final data = _obj(r.data, 'lorebook');
+      return [
+        for (final item in _reqListFor(data['items'], 'lorebook'))
+          ReaderLorebookEntry.fromJson(_mapObj(item, 'lorebook entry')),
+      ];
+    } on FormatException catch (e) {
+      _bad('lorebook', e);
+    }
+  }
+
+  Future<Map<String, dynamic>> getAgentMind(int characterId,
+      {CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get(
+          '/api/v1/characters//agent-mind',
+          cancelToken: cancelToken);
+      return _obj(r.data, 'agent mind');
+    } on FormatException catch (e) {
+      _bad('agent mind', e);
+    }
+  }
+
+  Future<List<ReaderPet>> getPets({CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get('/api/v1/pets', cancelToken: cancelToken);
+      final data = _obj(r.data, 'pets');
+      return [
+        for (final item in _reqListFor(data['pets'], 'pets'))
+          ReaderPet.fromJson(_mapObj(item, 'pet')),
+      ];
+    } on FormatException catch (e) {
+      _bad('pets', e);
+    }
+  }
+
+  Future<List<ReaderLifeEvent>> getLifeTimeline(int characterId,
+      {int limit = 50, CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get('/api/v1/life/timeline',
+          queryParameters: {'character_id': characterId, 'limit': limit},
+          cancelToken: cancelToken);
+      final data = _obj(r.data, 'life timeline');
+      return [
+        for (final item in _reqListFor(data['items'], 'life timeline'))
+          ReaderLifeEvent.fromJson(_mapObj(item, 'life event')),
+      ];
+    } on FormatException catch (e) {
+      _bad('life timeline', e);
+    }
+  }
+
+  Future<List<ReaderLifeArtifact>> getLifeArtifacts(int characterId,
+      {int limit = 50, CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get('/api/v1/life/artifacts',
+          queryParameters: {'character_id': characterId, 'limit': limit},
+          cancelToken: cancelToken);
+      final data = _obj(r.data, 'life artifacts');
+      return [
+        for (final item in _reqListFor(data['items'], 'life artifacts'))
+          ReaderLifeArtifact.fromJson(_mapObj(item, 'life artifact')),
+      ];
+    } on FormatException catch (e) {
+      _bad('life artifacts', e);
+    }
+  }
+
+  Future<Map<String, dynamic>> getStateHistory(int characterId,
+      {int days = 30, CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get(
+          '/api/v1/characters/$characterId/state-history',
+          queryParameters: {'days': days},
+          cancelToken: cancelToken);
+      return _obj(r.data, 'state history');
+    } on FormatException catch (e) {
+      _bad('state history', e);
+    }
+  }
+
+  /// 用户八维状态（只读）：`GET /api/v1/users/states` →
+  /// `{mood,body_temp,desire,possessiveness,fatigue,sensitivity,comfort,anger}`。
+  Future<Map<String, dynamic>> getUserStates({CancelToken? cancelToken}) async {
+    final r = await client.dio.get('/api/v1/users/states',
+        cancelToken: cancelToken);
+    try {
+      return _mapObj(r.data, 'user states');
+    } on FormatException catch (e) {
+      _bad('user states', e);
+    }
+  }
+
+  /// Life 首页状态（只读）：`GET /api/v1/life-home/state?character_id=` →
+  /// `{character_id,character_name,current_room,location,rooms,world,pets,
+  ///   player:{stamina,mood,hunger},ai:{name,current_status},...}`。
+  Future<Map<String, dynamic>> getLifeHomeState(int characterId,
+      {CancelToken? cancelToken}) async {
+    final r = await client.dio.get('/api/v1/life-home/state',
+        queryParameters: {'character_id': characterId},
+        cancelToken: cancelToken);
+    try {
+      return _mapObj(r.data, 'life home state');
+    } on FormatException catch (e) {
+      _bad('life home state', e);
+    }
+  }
+
+  // ── 虚拟手机（phone-desktop 只读面，2026-11-22 批 10）──────────────────
+
+  /// 桌面布局＋壁纸＋应用目录：`GET /api/v1/phone-desktop/layouts?character_id=`。
+  Future<Map<String, dynamic>> getPhoneLayouts(int characterId,
+      {CancelToken? cancelToken}) async {
+    final r = await client.dio.get('/api/v1/phone-desktop/layouts',
+        queryParameters: {'character_id': characterId},
+        cancelToken: cancelToken);
+    try {
+      return _mapObj(r.data, 'phone layouts');
+    } on FormatException catch (e) {
+      _bad('phone layouts', e);
+    }
+  }
+
+  /// 相册：`GET /api/v1/phone-desktop/photos` →
+  /// `{ai_photos:[url], user_photos:[url]}`（uploads 相对路径）。
+  Future<Map<String, dynamic>> getPhonePhotos({CancelToken? cancelToken}) async {
+    final r = await client.dio.get('/api/v1/phone-desktop/photos',
+        cancelToken: cancelToken);
+    try {
+      return _mapObj(r.data, 'phone photos');
+    } on FormatException catch (e) {
+      _bad('phone photos', e);
+    }
+  }
+
+  /// 日历备注：`GET /api/v1/phone-desktop/calendar-notes?character_id=` →
+  /// `{notes:[{id,date,text,author,status}]}`。
+  Future<List<Map<String, dynamic>>> getPhoneCalendarNotes(int characterId,
+      {CancelToken? cancelToken}) async {
+    final r = await client.dio.get('/api/v1/phone-desktop/calendar-notes',
+        queryParameters: {'character_id': characterId},
+        cancelToken: cancelToken);
+    try {
+      final j = _mapObj(r.data, 'calendar notes');
+      return ((j['notes'] as List?) ?? const [])
+          .cast<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList();
+    } on FormatException catch (e) {
+      _bad('calendar notes', e);
+    }
+  }
+
+  /// 备忘录：`GET /api/v1/phone-desktop/memos?character_id=` →
+  /// `{items:[{id,text,author,status}]}`（倒序 ≤100）。
+  Future<List<Map<String, dynamic>>> getPhoneMemos(int characterId,
+      {CancelToken? cancelToken}) async {
+    final r = await client.dio.get('/api/v1/phone-desktop/memos',
+        queryParameters: {'character_id': characterId},
+        cancelToken: cancelToken);
+    try {
+      final j = _mapObj(r.data, 'phone memos');
+      return ((j['items'] as List?) ?? const [])
+          .cast<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList();
+    } on FormatException catch (e) {
+      _bad('phone memos', e);
+    }
+  }
+
+  // ── 虚拟手机写面（2026-11-22 批 11）─────────────────────────────────
+
+  /// 保存桌面布局（\`PUT /api/v1/phone-desktop/layouts\`，全量覆盖 apps＋wallpaper）。
+  Future<void> savePhoneLayouts(int characterId,
+      {required List<Map<String, dynamic>> apps,
+      String? wallpaper,
+      CancelToken? cancelToken}) async {
+    await client.dio.put('/api/v1/phone-desktop/layouts',
+        queryParameters: {'character_id': characterId},
+        data: {'apps': apps, 'wallpaper': wallpaper ?? ''},
+        cancelToken: cancelToken);
+  }
+
+  /// 保存 AI 生成图片到相册（\`POST /photos/save\`，幂等）。
+  Future<void> savePhoneAiPhoto(String filename, {CancelToken? cancelToken}) async {
+    await client.dio.post('/api/v1/phone-desktop/photos/save',
+        data: {'filename': filename}, cancelToken: cancelToken);
+  }
+
+  /// 删除相册图片（\`DELETE /photos?source=ai|user&filename=\`）。
+  Future<void> deletePhonePhoto(String source, String filename,
+      {CancelToken? cancelToken}) async {
+    await client.dio.delete('/api/v1/phone-desktop/photos',
+        queryParameters: {'source': source, 'filename': filename},
+        cancelToken: cancelToken);
+  }
+
+  /// 新增日历备注（\`POST /calendar-notes\`；同日多备注前端合并展示）。
+  Future<void> addPhoneCalendarNote(int characterId,
+      {required String date, required String text,
+      CancelToken? cancelToken}) async {
+    await client.dio.post('/api/v1/phone-desktop/calendar-notes',
+        data: {'character_id': characterId, 'date': date, 'text': text},
+        cancelToken: cancelToken);
+  }
+
+  /// 新增备忘录（\`POST /memos\`；同内容去重刷新）。
+  Future<void> addPhoneMemo(int characterId, {required String text,
+      CancelToken? cancelToken}) async {
+    await client.dio.post('/api/v1/phone-desktop/memos',
+        data: {'character_id': characterId, 'text': text},
+        cancelToken: cancelToken);
+  }
+
+  /// 角色时光线（只读）：`GET /api/v1/timeline/{characterId}` →
+  /// `{character_id,character_name,days_known,first_chat_at,has_milestones,
+  ///   items:[{date,type,title,desc,importance}]}`。
+  Future<Map<String, dynamic>> getTimeline(int characterId,
+      {CancelToken? cancelToken}) async {
+    final r = await client.dio.get('/api/v1/timeline/$characterId',
+        cancelToken: cancelToken);
+    try {
+      return _mapObj(r.data, 'timeline');
+    } on FormatException catch (e) {
+      _bad('timeline', e);
+    }
+  }
+
+  Map<String, dynamic> _mapObj(dynamic v, String what) {
+    if (v is Map) return v.cast<String, dynamic>();
+    throw FormatException('malformed $what: expected object, got ${v.runtimeType}');
   }
 
   List<dynamic> _reqListFor(dynamic v, String what) {

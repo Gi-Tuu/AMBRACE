@@ -9,7 +9,7 @@
 //   不后台自动扫、不假称已读全、不伪造接口没有的过滤；
 // - 作者区分：sender_type=='ai' → 角色（characterName 原文）；=='user' → 用户昵称原文；
 // - 时间显示按 author_tz_offset：UTC naive 加偏移小时数格式化，不做系统时区换算；
-// - 图片只展示 image_desc/双语占位，**不加载 image_url**；点赞数只读，不调用点赞写接口。
+// - 图片动态：列表/详情加载受控 image_url，同时保留 image_desc 文本；图片加载失败显示占位；点赞数只读，不调用点赞写接口。
 import 'package:ambrace_core/ambrace_core.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -32,11 +32,17 @@ class MomentsPane extends StatefulWidget {
   const MomentsPane({
     super.key,
     required this.client,
+    required this.editor,
+    required this.myUserId,
+    required this.imagePicker,
     required this.rs,
     required this.cs,
   });
 
   final AmbApiClient client;
+  final EditorApi editor;
+  final int? myUserId;
+  final ImageFilePicker imagePicker;
   final ReaderStrings rs;
   final CoreStrings cs;
 
@@ -182,6 +188,17 @@ class _MomentsPaneState extends State<MomentsPane> {
       cs: widget.cs,
       onRetry: _reload,
       dataBuilder: (items) => ListView(padding: const EdgeInsets.all(8), children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: FilledButton.icon(
+              onPressed: _publish,
+              icon: const Icon(Icons.add, size: 18),
+              label: Text(rs.t('publishMoment')),
+            ),
+          ),
+        ),
         // 空/短可见页**不是**终点（后端 DB 分页后再按角色活性过滤）：显示空态文案，
         // 但保留「继续查找」入口，不把用户堵在死页上
         if (items.isEmpty)
@@ -208,6 +225,28 @@ class _MomentsPaneState extends State<MomentsPane> {
                   ]),
                   const SizedBox(height: 6),
                   Text(m.content, maxLines: 4, overflow: TextOverflow.ellipsis),
+                  if (m.imageUrl != null && m.imageUrl!.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: GestureDetector(
+                        onTap: () => _previewImage(_imageUrl(m.imageUrl!)),
+                        child: Image.network(
+                          _imageUrl(m.imageUrl!),
+                          height: 180,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            height: 120,
+                            alignment: Alignment.center,
+                            color: theme.colorScheme.surfaceContainerHighest,
+                            child: Text(rs.t('imageUnavailable'),
+                                style: theme.textTheme.bodySmall),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                   if (m.imageDesc != null) ...[
                     const SizedBox(height: 6),
                     Container(
@@ -220,10 +259,22 @@ class _MomentsPaneState extends State<MomentsPane> {
                   ],
                   const SizedBox(height: 6),
                   Row(children: [
-                    Text('${rs.t('likes')} ${m.likesCount}'
-                        '${m.likedByMe ? ' · ${rs.t('likedByMe')}' : ''}'),
-                    const SizedBox(width: 16),
+                    TextButton.icon(
+                      onPressed: () => _toggleLike(m),
+                      icon: Icon(m.likedByMe ? Icons.favorite : Icons.favorite_border,
+                          size: 18),
+                      label: Text('${rs.t('likes')} ${m.likesCount}'),
+                    ),
+                    const SizedBox(width: 8),
                     Text('${rs.t('comments')} ${m.comments.length}'),
+                    if (_mine(m)) ...[
+                      const Spacer(),
+                      IconButton(
+                        tooltip: rs.t('delete'),
+                        onPressed: () => _deleteMoment(m),
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                      ),
+                    ],
                   ]),
                 ]),
               ),
@@ -234,13 +285,173 @@ class _MomentsPaneState extends State<MomentsPane> {
     );
   }
 
+  Future<void> _toggleLike(ReaderMoment m) async {
+    try {
+      await widget.editor.likeMoment(m.id);
+      if (mounted) _reload();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${widget.rs.t('actionFailed')}：$e')));
+    }
+  }
+
+    void _previewImage(String url) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (_) => Dialog.fullscreen(
+        backgroundColor: Colors.black,
+        child: Stack(children: [
+          Center(
+            child: InteractiveViewer(
+              maxScale: 4,
+              child: Image.network(url,
+                  errorBuilder: (_, __, ___) => Text(
+                      widget.rs.t('imageUnavailable'),
+                      style: const TextStyle(color: Colors.white70))),
+            ),
+          ),
+          Positioned(
+            top: 12,
+            right: 12,
+            child: IconButton(
+              icon: const Icon(Icons.close, color: Colors.white),
+              onPressed: () => Navigator.pop(context),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+String _imageUrl(String url) {
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    final base = widget.client.dio.options.baseUrl;
+    return url.startsWith('/') ? '$base$url' : '$base/$url';
+  }
+
+  Future<void> _publish() async {
+    final ctrl = TextEditingController();
+    PickedImageFile? pickedImage;
+    final draft = await showDialog<({String text, PickedImageFile? image})>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          title: Text(widget.rs.t('publishMoment')),
+          content: SizedBox(
+            width: 420,
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              TextField(
+                controller: ctrl,
+                maxLines: 5,
+                autofocus: true,
+                decoration: InputDecoration(hintText: widget.rs.t('momentHint')),
+              ),
+              const SizedBox(height: 8),
+              Row(children: [
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final p = await widget.imagePicker.pick();
+                    if (p == null) return;
+                    if (!ctx.mounted) return;
+                    if (p.reject != null || !p.accepted) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                          SnackBar(content: Text(widget.rs.t('imageRejected'))));
+                      return;
+                    }
+                    setDlg(() => pickedImage = p);
+                  },
+                  icon: const Icon(Icons.image_outlined, size: 18),
+                  label: Text(widget.rs.t('addImage')),
+                ),
+                if (pickedImage != null) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(pickedImage!.name,
+                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: Theme.of(ctx).textTheme.bodySmall),
+                  ),
+                  IconButton(
+                    onPressed: () => setDlg(() => pickedImage = null),
+                    icon: const Icon(Icons.close, size: 16),
+                    tooltip: widget.rs.t('cancel'),
+                  ),
+                ],
+              ]),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: Text(widget.rs.t('cancel'))),
+            FilledButton(
+              onPressed: () {
+                final v = ctrl.text.trim();
+                if (v.isEmpty && pickedImage == null) return;
+                Navigator.pop(ctx, (text: v, image: pickedImage));
+              },
+              child: Text(widget.rs.t('publishMoment')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (draft == null) return;
+    try {
+      await widget.editor.publishUserMoment(draft.text,
+          imageBytes: draft.image?.bytes, imageName: draft.image?.name);
+      if (!mounted) return;
+      _reload();
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(widget.rs.t('momentPublished'))));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${widget.rs.t('publishFailed')}：$e')));
+    }
+  }
+
+  bool _mine(ReaderMoment m) =>
+      widget.myUserId != null &&
+      m.senderType == 'user' &&
+      m.userId == widget.myUserId;
+
+  Future<void> _deleteMoment(ReaderMoment m) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(widget.rs.t('delete')),
+        content: Text(widget.rs.t('deleteMomentBody')),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(widget.rs.t('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(widget.rs.t('delete'))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await widget.editor.deleteMoment(m.id);
+      if (mounted) _reload();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${widget.rs.t('actionFailed')}：$e')));
+    }
+  }
+
   void _openDetail(ReaderMoment m) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (ctx) => FractionallySizedBox(
-        heightFactor: 0.85,
-        child: _MomentDetailSheet(moment: m, api: _api, rs: widget.rs, cs: widget.cs),
+        heightFactor: 0.9,
+        child: _MomentDetailSheet(
+          moment: m, api: _api, editor: widget.editor,
+          myUserId: widget.myUserId, rs: widget.rs, cs: widget.cs,
+        ),
       ),
     );
   }
@@ -251,12 +462,16 @@ class _MomentDetailSheet extends StatefulWidget {
   const _MomentDetailSheet({
     required this.moment,
     required this.api,
+    required this.editor,
+    required this.myUserId,
     required this.rs,
     required this.cs,
   });
 
   final ReaderMoment moment;
   final ReaderApi api;
+  final EditorApi editor;
+  final int? myUserId;
   final ReaderStrings rs;
   final CoreStrings cs;
 
@@ -267,6 +482,15 @@ class _MomentDetailSheet extends StatefulWidget {
 class _MomentDetailSheetState extends State<_MomentDetailSheet> {
   late final ReaderLoader<List<ReaderComment>> _comments =
       ReaderLoader<List<ReaderComment>>();
+  final TextEditingController _commentCtrl = TextEditingController();
+  bool _posting = false;
+  ReaderComment? _replyTo;
+
+  String _imageUrl(String url) {
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    final base = widget.api.client.dio.options.baseUrl;
+    return url.startsWith('/') ? '$base$url' : '$base/$url';
+  }
 
   @override
   void initState() {
@@ -276,8 +500,28 @@ class _MomentDetailSheetState extends State<_MomentDetailSheet> {
 
   @override
   void dispose() {
+    _commentCtrl.dispose();
     _comments.dispose();
     super.dispose();
+  }
+
+  Future<void> _postComment() async {
+    final text = _commentCtrl.text.trim();
+    if (text.isEmpty || _posting) return;
+    setState(() => _posting = true);
+    try {
+      await widget.editor.postMomentComment(widget.moment.id, text,
+          parentId: _replyTo?.id);
+      _commentCtrl.clear();
+      setState(() => _replyTo = null);
+      _loadComments();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${widget.rs.t('actionFailed')}：$e')));
+    } finally {
+      if (mounted) setState(() => _posting = false);
+    }
   }
 
   void _loadComments() {
@@ -287,6 +531,42 @@ class _MomentDetailSheetState extends State<_MomentDetailSheet> {
         isEmpty: (l) => l.isEmpty);
   }
 
+  bool _mineComment(ReaderComment c) =>
+      widget.myUserId != null &&
+      c.senderType == 'user' &&
+      c.senderId == widget.myUserId;
+
+  void _startReply(ReaderComment c) {
+    setState(() => _replyTo = c);
+  }
+
+  Future<void> _deleteComment(ReaderComment c) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(widget.rs.t('delete')),
+        content: Text(widget.rs.t('deleteCommentBody')),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(widget.rs.t('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(widget.rs.t('delete'))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await widget.editor.deleteMomentComment(widget.moment.id, c.id);
+      if (mounted) _loadComments();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${widget.rs.t('actionFailed')}：$e')));
+    }
+  }
+
   Widget _commentTile(ReaderComment c, {int depth = 0}) {
     return Padding(
       padding: EdgeInsets.only(left: depth * 16.0, top: 6),
@@ -294,6 +574,17 @@ class _MomentDetailSheetState extends State<_MomentDetailSheet> {
         Text('${c.senderName} · ${c.createdAt}',
             style: const TextStyle(fontSize: 12, color: Colors.grey)),
         Text(c.content),
+        Wrap(spacing: 2, children: [
+          TextButton(
+            onPressed: () => _startReply(c),
+            child: Text(widget.rs.t('reply'), style: const TextStyle(fontSize: 11)),
+          ),
+          if (_mineComment(c))
+            TextButton(
+              onPressed: () => _deleteComment(c),
+              child: Text(widget.rs.t('delete'), style: const TextStyle(fontSize: 11)),
+            ),
+        ]),
         for (final r in c.replies) _commentTile(r, depth: depth + 1),
       ]),
     );
@@ -310,6 +601,25 @@ class _MomentDetailSheetState extends State<_MomentDetailSheet> {
         Text(formatAuthorTime(m.createdAt, m.authorTzOffset),
             style: theme.textTheme.bodySmall),
         const SizedBox(height: 8),
+        if (m.imageUrl != null && m.imageUrl!.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Image.network(
+              _imageUrl(m.imageUrl!),
+              height: 220,
+              width: double.infinity,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                height: 100,
+                alignment: Alignment.center,
+                color: theme.colorScheme.surfaceContainerHighest,
+                child: Text(rs.t('imageUnavailable'),
+                    style: theme.textTheme.bodySmall),
+              ),
+            ),
+          ),
+        ],
         SelectableText(m.content),
         if (m.imageDesc != null) ...[
           const SizedBox(height: 8),
@@ -326,8 +636,38 @@ class _MomentDetailSheetState extends State<_MomentDetailSheet> {
             '${m.likedByMe ? ' · ${rs.t('likedByMe')}' : ''}'),
         const Divider(height: 24),
         Text(rs.t('comments'), style: theme.textTheme.titleSmall),
+        const SizedBox(height: 6),
+        if (_replyTo != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(children: [
+              Expanded(
+                child: Text(
+                  '${rs.t('replyingTo')} ${_replyTo!.senderName}',
+                  style: TextStyle(fontSize: 11, color: theme.colorScheme.primary),
+                ),
+              ),
+              TextButton(
+                onPressed: () => setState(() => _replyTo = null),
+                child: Text(rs.t('cancel'), style: const TextStyle(fontSize: 11)),
+              ),
+            ]),
+          ),
+        Row(children: [
+          Expanded(
+            child: TextField(
+              controller: _commentCtrl,
+              decoration: InputDecoration(hintText: rs.t('commentHint')),
+            ),
+          ),
+          const SizedBox(width: 8),
+          FilledButton(
+            onPressed: _postComment,
+            child: Text(rs.t('postComment')),
+          ),
+        ]),
         SizedBox(
-          height: 320,
+          height: 300,
           child: ReaderAsyncView<List<ReaderComment>>(
             loader: _comments,
             rs: rs,

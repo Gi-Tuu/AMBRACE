@@ -8,6 +8,7 @@
 知识边界 prompt、记忆按发言者拆分归属——迁移仅改驻留位置，逻辑逐字节保持。
 """
 import json
+import os
 import random
 import re
 import time
@@ -25,6 +26,7 @@ from app.models.character import AICharacter
 from app.models.game import GameSession
 from app.models.memory import Memory
 from app.utils.logger import get_logger
+from app.application.upload_service import UPLOAD_DIR, save_file
 
 _logger = get_logger("application.chat_groups")
 
@@ -954,6 +956,52 @@ async def list_mentions(
     return {"items": items, "total": len(items)}
 
 
+async def upload_file(
+    db: AsyncSession,
+    group_id: int,
+    file,
+    user_id: int,
+    lang: str,
+):
+    """保存群文件并落库；文件二进制走既有白名单/大小限制，不进入群上下文。"""
+    await _owned_group(db, group_id, user_id, lang)
+    fname = (getattr(file, "filename", None) or "").strip()
+    if not fname:
+        raise HTTPException(status_code=400, detail=tr_lang(lang, "file_name_empty"))
+    url = await save_file(file, f"groups/{group_id}", lang)
+    rel = url.removeprefix("/uploads/").lstrip("/")
+    try:
+        size = os.path.getsize(str(UPLOAD_DIR / rel))
+    except OSError:
+        size = None
+    msg = ChatGroupMessage(
+        group_id=group_id,
+        sender_type="user",
+        content=fname,
+        file_url=url,
+        file_name=fname,
+        file_size=size,
+    )
+    db.add(msg)
+    await db.commit()
+    await db.refresh(msg)
+    return {
+        "message": {
+            "id": msg.id,
+            "group_id": group_id,
+            "sender_type": "user",
+            "character_id": None,
+            "sender_name": "你",
+            "sender_avatar": None,
+            "content": msg.content,
+            "file_url": msg.file_url,
+            "file_name": msg.file_name,
+            "file_size": msg.file_size,
+            "created_at": msg.created_at.isoformat(),
+        }
+    }
+
+
 async def list_messages(
     db: AsyncSession,
     group_id: int,
@@ -993,6 +1041,10 @@ async def list_messages(
             "sender_name": names.get(r.character_id, "") if r.character_id else "你",
             "sender_avatar": avatars.get(r.character_id) if r.character_id else None,
             "content": r.content,
+            "file_url": getattr(r, "file_url", None),
+            "file_name": getattr(r, "file_name", None),
+            "file_size": getattr(r, "file_size", None),
+            "notify_user": r.notify_user,
             "created_at": r.created_at.isoformat(),
         }
         for r in rows

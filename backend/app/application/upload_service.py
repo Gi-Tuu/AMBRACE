@@ -19,7 +19,7 @@ ALLOWED_FILE_EXTS = {
 }
 MAX_FILE_BYTES = 20 * 1024 * 1024  # 20MB
 # 语音消息音频格式
-ALLOWED_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".amr", ".opus"}
+ALLOWED_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".amr", ".opus", ".webm"}
 MAX_AUDIO_BYTES = 15 * 1024 * 1024  # 15MB
 # 视频发布（渠道扩展 #67）：允许的视频扩展名与大小上限
 ALLOWED_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv"}

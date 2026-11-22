@@ -8,7 +8,11 @@ import 'l10n/character_editor_strings.dart';
 import 'l10n/session_strings.dart';
 import 'l10n/editor_strings.dart';
 import 'l10n/attachment_strings.dart';
+import 'features/chat/archive_view.dart';
+import 'theme/pwa_skins.dart';
 import 'features/chat/session_strip.dart';
+import 'features/chat/voice_recorder.dart';
+import 'features/chat/tts_player.dart';
 import 'features/chat/attachment_state.dart';
 import 'features/chat/attachment_pending_card.dart';
 import 'features/chat/file_message_card.dart';
@@ -16,12 +20,33 @@ import 'features/character_management/character_editor_sheet.dart';
 import 'features/reader/profile_pane.dart';
 import 'features/reader/memories_pane.dart';
 import 'features/reader/char_diary_pane.dart';
+import 'features/reader/agent_runs_pane.dart';
+import 'features/reader/games_pane.dart';
+import 'features/reader/group_chat_pane.dart';
+import 'features/reader/settings_pane.dart';
+import 'features/reader/life_pane.dart';
 import 'features/reader/moments_pane.dart';
+import 'features/reader/pets_pane.dart';
+import 'features/reader/plugins_pane.dart';
+import 'features/reader/weave_pane.dart';
 import 'features/reader/memos_pane.dart';
 import 'features/reader/my_diary_pane.dart';
 
 /// 当前语言（首单用极简状态：壳内切换 zh/en，文案全部走 CoreStrings 成对表）。
 final ValueNotifier<String> appLang = ValueNotifier<String>('zh');
+final ValueNotifier<ThemeMode> appTheme = ValueNotifier<ThemeMode>(ThemeMode.light);
+/// 外观批（2026-11-22）：皮肤预设 id 与主题色索引（-1＝跟随皮肤默认 seed）；会话内存态。
+final ValueNotifier<String> appSkin = ValueNotifier<String>('ios');
+final ValueNotifier<int> appSeed = ValueNotifier<int>(-1);
+
+ThemeData _workbenchTheme(Brightness brightness) {
+  // 外观批（2026-11-22）：主题体迁至 theme/pwa_skins.dart（皮肤预设＋主题色 seed）。
+  final skin = pwaSkinById(appSkin.value);
+  final accent = (appSeed.value >= 0 && appSeed.value < pwaSeedColors.length)
+      ? pwaSeedColors[appSeed.value].color
+      : null;
+  return pwaWorkbenchTheme(brightness, skin, accentSeed: accent);
+}
 
 void main() {
   runApp(const AmbracePwaApp());
@@ -38,15 +63,22 @@ class AmbracePwaApp extends StatelessWidget {
     return ValueListenableBuilder<String>(
       valueListenable: appLang,
       builder: (context, lang, _) {
-        return MaterialApp(
-          title: CoreStrings(lang).t('appTitle'),
-          debugShowCheckedModeBanner: false,
-          theme: ThemeData(
-            colorSchemeSeed: const Color(0xFF6C63FF),
-            useMaterial3: true,
-            brightness: Brightness.light,
+        return ValueListenableBuilder<String>(
+          valueListenable: appSkin,
+          builder: (context, _, __) => ValueListenableBuilder<int>(
+            valueListenable: appSeed,
+            builder: (context, ___, ____) => ValueListenableBuilder<ThemeMode>(
+              valueListenable: appTheme,
+              builder: (context, mode, _) => MaterialApp(
+                title: CoreStrings(lang).t('appTitle'),
+                debugShowCheckedModeBanner: false,
+                theme: _workbenchTheme(Brightness.light),
+                darkTheme: _workbenchTheme(Brightness.dark),
+                themeMode: mode,
+                home: WorkspacePage(lang: lang, defaultBaseUrl: defaultBaseUrl),
+              ),
+            ),
           ),
-          home: WorkspacePage(lang: lang, defaultBaseUrl: defaultBaseUrl),
         );
       },
     );
@@ -77,6 +109,8 @@ class WorkspacePage extends StatefulWidget {
     required this.lang,
     this.defaultBaseUrl,
     this.picker,
+    this.imagePicker,
+    this.voiceRecorder,
   });
 
   final String lang;
@@ -84,6 +118,12 @@ class WorkspacePage extends StatefulWidget {
 
   /// 可注入的文本文件选择器（Web 默认走 DOM `<input type=file>`；测试注入假实现）。
   final TextFilePicker? picker;
+
+  /// 可注入的图片选择器（Web 默认走 DOM；测试可注入假实现）。
+  final ImageFilePicker? imagePicker;
+
+  /// 可注入的浏览器录音器（Web 默认 MediaRecorder；测试注入 stub）。
+  final VoiceRecorder? voiceRecorder;
 
   @override
   State<WorkspacePage> createState() => _WorkspacePageState();
@@ -95,11 +135,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
   late final TextEditingController _server = TextEditingController(text: env.defaultBase);
   final _user = TextEditingController();
   final _pass = TextEditingController();
+  final _nickname = TextEditingController();
+  final _invite = TextEditingController();
   final _code = TextEditingController();
   final _input = TextEditingController();
 
   String? _token;
   String _status = '';
+  String _lastFailedText = '';
+  int? _failedLocalId;
   String _pairInfo = '';
   List<Character> _characters = const [];
   Character? _current;
@@ -110,10 +154,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
   // ── 工作台导航（M1a-2）：chat 之外六个只读模块 ─────────────────────
   String _section = 'chat';
   static const List<String> _sections = [
-    'chat', 'profile', 'memories', 'charDiary', 'moments', 'memos', 'myDiary',
+    'chat', 'groups', 'games', 'plugins', 'agent', 'weave', 'profile', 'memories', 'charDiary', 'life', 'moments', 'memos', 'myDiary', 'pets', 'settings',
   ];
   bool get _sectionNeedsCharacter =>
-      _section == 'profile' || _section == 'memories' || _section == 'charDiary';
+      _section == 'profile' || _section == 'memories' || _section == 'charDiary' || _section == 'life';
 
   ReaderStrings get rs => ReaderStrings(widget.lang);
 
@@ -150,12 +194,23 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   int? _myUserId; // GET /api/v1/auth/profile 的本人 id（编辑归属判定）；未就绪 = null
   late final EditorApi _editor = EditorApi(env.client);
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   // ── 文本附件（M1a-4）：单文件待发卡 / 阶段 / 取消 / 未知结果 ────────────────
   late final TextFilePicker _picker =
       widget.picker ?? createPlatformTextFilePicker();
+  late final ImageFilePicker _imagePicker =
+      widget.imagePicker ?? createPlatformImageFilePicker();
+  late final VoiceRecorder _voiceRecorder =
+      widget.voiceRecorder ?? createPlatformVoiceRecorder();
+  late final TtsPlayer _ttsPlayer = createPlatformTtsPlayer();
+  bool _voiceRecording = false;
+  bool _voiceUploading = false;
   PendingAttachment? _pending; // 绑定发起时的角色 + 会话；切换会话即作废
   String _pendingError = ''; // 本地拒绝/失败/取消文案（已本地化）
+  PickedImageFile? _failedImage; // 图片结果未知：保留字节用于核对后的显式重试
+  int _imageCountAtFailure = 0;
+  bool _imageCanRetry = false;
   CancelToken? _attachCancel; // 当前在飞的附件请求：可真实取消本地等待
   int _attachGen = 0; // 附件代次：作废旧回调（会话/账号/移除时递增）
   // 选择代次（返工 R2）：latest-wins——更新的选择会让更早的**未回**选择结果失效；
@@ -212,6 +267,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
     if (ct != null && !ct.isCancelled) ct.cancel('attachment-cleared');
     _pending = null;
     _pendingError = '';
+    _failedImage = null;
+    _imageCanRetry = false;
   }
 
   @override
@@ -241,6 +298,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
   @override
   void dispose() {
     _invalidateAll(); // 销毁页面：作废所有代次并真实取消在飞请求
+    _ttsPlayer.dispose();
+    _voiceRecorder.cancel();
     _historyScroll.dispose();
     _server.dispose();
     _user.dispose();
@@ -248,6 +307,37 @@ class _WorkspacePageState extends State<WorkspacePage> {
     _code.dispose();
     _input.dispose();
     super.dispose();
+  }
+
+  bool _registerMode = false;
+
+  Future<void> _register() async {
+    final gen = ++_authGen;
+    _cancelInflight();
+    final owner = Object();
+    _busyBegin(owner);
+    if (mounted) setState(() => _status = s.t('connecting'));
+    try {
+      env.client.configure(baseUrl: _server.text);
+      final token = await env.transport.register(_user.text.trim(), _pass.text,
+          nickname: _nickname.text, inviteCode: _invite.text);
+      if (_staleAuth(gen)) return;
+      env.client.configure(baseUrl: _server.text, token: token);
+      final chars = await env.transport.getCharacters();
+      if (_staleAuth(gen)) return;
+      setState(() {
+        _token = token;
+        _characters = chars;
+        _status = '';
+      });
+      _loadProfile(gen);
+      if (mounted) setState(() => _registerMode = false);
+    } on Object catch (e) {
+      if (_staleAuth(gen)) return;
+      setState(() => _status = localizedError(e, s));
+    } finally {
+      _busyEnd(owner);
+    }
   }
 
   Future<void> _login() async {
@@ -416,6 +506,21 @@ class _WorkspacePageState extends State<WorkspacePage> {
       if (identical(_inflight, ct)) _inflight = null;
       _busyEnd(owner);
     }
+  }
+
+  /// 失败重试：移除失败那次的本地气泡，重新走同一条发送链路（不重复保留旧气泡）。
+  void _retry() {
+    final text = _lastFailedText;
+    if (text.isEmpty || _busy) return;
+    final failed = _failedLocalId;
+    setState(() {
+      _messages = _messages.where((m) => m.id != failed).toList();
+      _lastFailedText = '';
+      _failedLocalId = null;
+      _status = '';
+    });
+    _input.text = text;
+    _send();
   }
 
   /// 选择**已存在**会话：只 GET 该会话历史，不 POST 建会话、不改已读标记。
@@ -652,6 +757,48 @@ class _WorkspacePageState extends State<WorkspacePage> {
   // ── 文本附件（M1a-4）─────────────────────────────────────────────────────
 
   /// 是否「取消」类错误（用户主动取消本地等待）。
+  Widget _voiceMessageView(ChatMessage m) {
+    final meta = m.voiceMeta ?? const {};
+    final duration = meta['duration'];
+    final transcript = (meta['transcript'] as String? ?? '').trim();
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      const Icon(Icons.graphic_eq, size: 20),
+      const SizedBox(width: 8),
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('${s.t('voice')} · ${duration ?? 0}s',
+            style: Theme.of(context).textTheme.bodySmall),
+        if (transcript.isNotEmpty)
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 280),
+            child: Text(transcript, maxLines: 4, overflow: TextOverflow.ellipsis),
+          ),
+      ]),
+    ]);
+  }
+
+  void _scrollToBottom() {
+    void go() {
+      if (!mounted || !_historyScroll.hasClients) return;
+      _historyScroll.animateTo(
+        _historyScroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      go();
+      // 图片/字体布局会在首帧后继续撑高列表；再补一次，避免最后一条停在视口下方。
+      Future<void>.delayed(const Duration(milliseconds: 500), go);
+    });
+  }
+
+  String _absoluteUploadUrl(String url) {
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    final base = env.client.dio.options.baseUrl;
+    return url.startsWith('/') ? '$base$url' : '$base/$url';
+  }
+
   bool _isCancelError(Object e) {
     if (e is DioException) {
       if (e.type == DioExceptionType.cancel) return true;
@@ -691,6 +838,268 @@ class _WorkspacePageState extends State<WorkspacePage> {
       _pending = PendingAttachment(file: picked, characterId: c.id, sessionId: sid);
       _pendingError = '';
     });
+  }
+
+  int get _imageMessageCount => _messages.where(_isImageMessage).length;
+
+  int get _voiceMessageCount =>
+      _messages.where((m) => m.voiceMeta != null).length;
+
+  bool _isImageMessage(ChatMessage m) =>
+      m.imageUrl != null && m.imageUrl!.isNotEmpty;
+
+  /// 选择并发送单张图片（发送后失败保留字节，先核对、再显式重试）。
+  Future<void> _pickImage() async {
+    final sid = _sessionId;
+    final c = _current;
+    if (sid == null || c == null || _busy || _pending != null) return;
+    final authGen = _authGen;
+    final gen = _sessionGen;
+    final picked = await _imagePicker.pick();
+    if (!mounted) return;
+    if (authGen != _authGen || gen != _sessionGen || _sessionId != sid) return;
+    if (picked == null) return;
+    if (picked.reject == ImageRejectReason.tooLarge) {
+      setState(() => _pendingError = as_.t('rejectedSize'));
+      return;
+    }
+    if (picked.reject != null || !picked.accepted) {
+      setState(() => _pendingError = as_.t('rejectedType'));
+      return;
+    }
+    await _uploadImage(picked);
+  }
+
+  Future<void> _uploadImage(PickedImageFile picked) async {
+    final sid = _sessionId;
+    if (sid == null || _busy) return;
+    final authGen = _authGen;
+    final gen = _sessionGen;
+    final before = _imageMessageCount;
+    final ct = CancelToken();
+    _inflight = ct;
+    final owner = Object();
+    _busyBegin(owner);
+    try {
+      final result = await env.attachment.uploadImage(
+        sessionId: sid,
+        file: picked,
+        lang: widget.lang,
+        cancelToken: ct,
+      );
+      if (!mounted || _staleSession(gen, authGen) || _sessionId != sid) return;
+      final seen = _messages.map((m) => m.id).toSet();
+      final added = <ChatMessage>[];
+      for (final m in [result.imageMessage, ...result.chunks]) {
+        if (seen.add(m.id)) added.add(m);
+      }
+      setState(() {
+        _messages = [..._messages, ...added];
+        _historyRaw += added.length;
+        _historyTotal += added.length;
+        _pendingError = '';
+        _failedImage = null;
+        _imageCanRetry = false;
+      });
+      _scrollToBottom();
+    } on Object catch (e) {
+      if (!mounted || _staleSession(gen, authGen) || _sessionId != sid) return;
+      setState(() {
+        _failedImage = picked;
+        _imageCountAtFailure = before;
+        _imageCanRetry = false;
+        _pendingError = '${as_.t('phaseFailed')}：${localizedError(e, s)}';
+      });
+    } finally {
+      if (identical(_inflight, ct)) _inflight = null;
+      _busyEnd(owner);
+    }
+  }
+
+  /// 结果未知时**只读**核对：重拉当前会话最新历史，绝不自动重发。
+  Future<void> _verifyFailedImage() async {
+    final sid = _sessionId;
+    final p = _failedImage;
+    if (sid == null || p == null || _busy) return;
+    final authGen = _authGen;
+    final gen = _sessionGen;
+    final ct = CancelToken();
+    _inflight = ct;
+    final owner = Object();
+    _busyBegin(owner);
+    try {
+      await _loadHistoryFirst(sid, authGen, gen, ct);
+      if (!mounted || _staleSession(gen, authGen) || _sessionId != sid) return;
+      setState(() {
+        if (_imageMessageCount > _imageCountAtFailure) {
+          _failedImage = null;
+          _imageCanRetry = false;
+          _pendingError = '';
+        } else {
+          _imageCanRetry = true;
+          _pendingError = as_.t('imageVerifyNotFound');
+        }
+      });
+    } on Object catch (e) {
+      if (!mounted || _staleSession(gen, authGen) || _sessionId != sid) return;
+      setState(() => _pendingError = localizedError(e, s));
+    } finally {
+      if (identical(_inflight, ct)) _inflight = null;
+      _busyEnd(owner);
+    }
+  }
+
+  Future<void> _retryFailedImage() async {
+    final p = _failedImage;
+    if (p == null || !_imageCanRetry || _busy) return;
+    setState(() {
+      _failedImage = null;
+      _imageCanRetry = false;
+      _pendingError = '';
+    });
+    await _uploadImage(p);
+  }
+
+  void _dismissFailedImage() {
+    if (_busy) return;
+    setState(() {
+      _failedImage = null;
+      _imageCanRetry = false;
+    });
+  }
+
+  Future<void> _toggleVoice() async {
+    if (_busy || _sessionId == null || _current == null) return;
+    if (_voiceRecording) {
+      setState(() => _voiceRecording = false);
+      final rec = await _voiceRecorder.stop();
+      if (!mounted || rec == null || rec.bytes.isEmpty) return;
+      await _sendVoice(rec);
+      return;
+    }
+    final ok = await _voiceRecorder.start();
+    if (!mounted) return;
+    if (!ok) {
+      setState(() => _pendingError = s.t('voiceUnavailable'));
+      return;
+    }
+    setState(() => _voiceRecording = true);
+  }
+
+  Future<void> _sendVoice(RecordedVoice rec) async {
+    final sid = _sessionId;
+    if (sid == null || _current == null || _busy) return;
+    final authGen = _authGen;
+    final gen = _sessionGen;
+    final before = _voiceMessageCount;
+    final ct = CancelToken();
+    _inflight = ct;
+    final owner = Object();
+    _busyBegin(owner);
+    setState(() {
+      _voiceUploading = true;
+      _pendingError = '';
+    });
+    try {
+      final result = await env.attachment.uploadVoice(
+        sessionId: sid,
+        bytes: rec.bytes,
+        filename: rec.filename,
+        durationSeconds: rec.durationSeconds,
+        lang: widget.lang,
+        cancelToken: ct,
+      );
+      if (!mounted || _staleSession(gen, authGen) || _sessionId != sid) return;
+      final seen = _messages.map((m) => m.id).toSet();
+      final added = <ChatMessage>[];
+      if (seen.add(result.voiceMessage.id)) added.add(result.voiceMessage);
+      setState(() {
+        _messages = [..._messages, ...added];
+        _historyRaw += added.length;
+        _historyTotal += added.length;
+        _voiceUploading = false;
+        _status = '';
+      });
+      _scrollToBottom();
+      final content = result.content.isNotEmpty ? result.content : result.transcript;
+      if (content.trim().isEmpty) return;
+      try {
+        await env.transport.streamMessage(
+          sid,
+          content,
+        lang: widget.lang,
+        tts: true,
+        saveUserMessage: false,
+        cancelToken: ct,
+        onEvent: (ev) {
+          if (!mounted || _staleSession(gen, authGen) || _sessionId != sid) return;
+          switch (ev['type']) {
+            case 'delta':
+              setState(() => _streaming += (ev['text'] as String? ?? ''));
+            case 'block':
+              ChatMessage msg;
+              try {
+                msg = ChatMessage.fromJson(ev.cast<String, dynamic>());
+              } catch (_) {
+                msg = ChatMessage(
+                  id: (ev['id'] as num?)?.toInt() ?? -1,
+                  sessionId: sid,
+                  senderType: 'ai',
+                  content: ev['content'] as String? ?? '',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                );
+              }
+              if (_messages.every((m) => m.id != msg.id)) {
+                setState(() {
+                  _messages = [..._messages, msg];
+                  _historyRaw++;
+                  _historyTotal++;
+                  _streaming = '';
+                });
+                final ttsUrl = msg.ttsMeta?['url'];
+                if (ttsUrl is String && ttsUrl.isNotEmpty) {
+                  _ttsPlayer.play(_absoluteUploadUrl(ttsUrl));
+                }
+              }
+            case 'error':
+              setState(() => _status = localizedError(
+                  ApiException(kind: 'unknown', message: ev['message'] as String? ?? ''), s));
+            case 'done':
+              setState(() => _streaming = '');
+          }
+          },
+        );
+      } on Object catch (e) {
+        if (!mounted || _staleSession(gen, authGen)) return;
+        setState(() {
+          _status = '${s.t('voiceReplyFailed')}：${localizedError(e, s)}';
+        });
+      }
+    } on Object catch (e) {
+      if (!mounted || _staleSession(gen, authGen)) return;
+      // 结果未知：只读核对历史，不能把已落库的语音当成失败。
+      final verifyCt = CancelToken();
+      try {
+        await _loadHistoryFirst(sid, authGen, gen, verifyCt);
+      } catch (_) {}
+      if (!mounted || _staleSession(gen, authGen)) return;
+      if (_voiceMessageCount > before) {
+        setState(() {
+          _voiceUploading = false;
+          _status = '';
+        });
+        _scrollToBottom();
+      } else {
+        setState(() {
+          _voiceUploading = false;
+          _status = '${s.t('voiceSendFailed')}：${localizedError(e, s)}';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _voiceUploading = false);
+      if (identical(_inflight, ct)) _inflight = null;
+      _busyEnd(owner);
+    }
   }
 
   /// 移除待发附件（释放字节引用）。
@@ -837,6 +1246,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
     setState(() {
       _messages = [..._messages, local];
       _streaming = '';
+      _status = '';
+      _lastFailedText = '';
+      _failedLocalId = null;
     });
     try {
       await env.transport.streamMessage(sid, text, lang: widget.lang,
@@ -862,7 +1274,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
               _streaming = '';
             });
           case 'error':
-            setState(() => _status = s.t('errorServer'));
+            setState(() {
+              _status = s.t('errorServer');
+              _lastFailedText = text;
+              _failedLocalId = local.id;
+            });
           case 'done':
             setState(() => _streaming = '');
         }
@@ -880,9 +1296,21 @@ class _WorkspacePageState extends State<WorkspacePage> {
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 900;
     return Scaffold(
+      key: _scaffoldKey,
       appBar: AppBar(
-        title: Text(s.t('appTitle')),
+        title: Text(s.t('appTitle'), maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 15)),
         actions: [
+          IconButton(
+            tooltip: 'Theme',
+            onPressed: () => appTheme.value = appTheme.value == ThemeMode.dark
+                ? ThemeMode.light
+                : ThemeMode.dark,
+            icon: Icon(appTheme.value == ThemeMode.dark
+                ? Icons.light_mode_outlined
+                : Icons.dark_mode_outlined),
+          ),
           TextButton(
             onPressed: () => appLang.value = widget.lang == 'zh' ? 'en' : 'zh',
             child: Text(widget.lang == 'zh' ? 'EN' : '中文'),
@@ -895,46 +1323,173 @@ class _WorkspacePageState extends State<WorkspacePage> {
           ? _loginPane()
           : (wide ? _wideShell() : _sectionBody()),
       drawer: (!wide && _token != null) ? _sectionDrawer() : null,
+      bottomNavigationBar: (!wide && _token != null) ? _mobileNav() : null,
+    );
+  }
+
+  static const List<String> _mobilePrimary = ['chat', 'memories', 'moments', 'settings'];
+
+  int get _mobileNavIndex {
+    final i = _mobilePrimary.indexOf(_section);
+    return i >= 0 ? i : 4;
+  }
+
+  Widget _mobileNav() {
+    final cs = Theme.of(context).colorScheme;
+    return NavigationBarTheme(
+      data: NavigationBarThemeData(
+        height: 60,
+        backgroundColor: Theme.of(context).cardTheme.color,
+        indicatorColor: cs.primaryContainer,
+        labelTextStyle: WidgetStatePropertyAll(
+          TextStyle(fontSize: 10, color: cs.onSurfaceVariant),
+        ),
+        iconTheme: WidgetStatePropertyAll(IconThemeData(color: cs.onSurfaceVariant)),
+      ),
+      child: NavigationBar(
+        selectedIndex: _mobileNavIndex,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        onDestinationSelected: (i) {
+          if (i == 4) {
+            _scaffoldKey.currentState?.openDrawer();
+          } else {
+            _selectSection(_mobilePrimary[i]);
+          }
+        },
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.chat_bubble_outline), label: '对话'),
+          NavigationDestination(icon: Icon(Icons.psychology_outlined), label: '记忆'),
+          NavigationDestination(icon: Icon(Icons.dynamic_feed_outlined), label: '生活'),
+          NavigationDestination(icon: Icon(Icons.settings_outlined), label: '设置'),
+          NavigationDestination(icon: Icon(Icons.more_horiz), label: '更多'),
+        ],
+      ),
     );
   }
 
   // ── 工作台导航（宽屏 NavigationRail / 窄屏 Drawer）────────────────────
   IconData _sectionIcon(String sec) => switch (sec) {
         'chat' => Icons.chat_bubble_outline,
+        'groups' => Icons.groups_outlined,
+        'games' => Icons.sports_esports_outlined,
+        'plugins' => Icons.extension_outlined,
+        'agent' => Icons.monitor_heart_outlined,
+        'weave' => Icons.hub_outlined,
         'profile' => Icons.person_outline,
         'memories' => Icons.psychology_outlined,
         'charDiary' => Icons.menu_book_outlined,
+        'life' => Icons.self_improvement_outlined,
         'moments' => Icons.dynamic_feed_outlined,
         'memos' => Icons.sticky_note_2_outlined,
         'myDiary' => Icons.book_outlined,
+        'pets' => Icons.pets_outlined,
+        'settings' => Icons.settings_outlined,
         _ => Icons.circle_outlined,
       };
 
   String _sectionLabel(String sec) => switch (sec) {
         'chat' => s.t('tabChat'),
+        'groups' => rs.t('groups'),
+        'games' => rs.t('games'),
+        'plugins' => rs.t('plugins'),
+        'agent' => rs.t('agentRuns'),
+        'weave' => rs.t('weave'),
         'profile' => rs.t('modProfile'),
         'memories' => rs.t('modMemories'),
         'charDiary' => rs.t('modCharDiary'),
+        'life' => rs.t('life'),
         'moments' => rs.t('modMoments'),
         'memos' => rs.t('modMemos'),
         'myDiary' => rs.t('modMyDiary'),
+        'pets' => rs.t('pets'),
+        'settings' => rs.t('modSettings'),
         _ => sec,
       };
 
-  Widget _wideShell() => Row(children: [
-        NavigationRail(
-          selectedIndex: _sections.indexOf(_section),
-          onDestinationSelected: (i) => _selectSection(_sections[i]),
-          labelType: NavigationRailLabelType.all,
-          destinations: [
-            for (final sec in _sections)
-              NavigationRailDestination(
-                  icon: Icon(_sectionIcon(sec)), label: Text(_sectionLabel(sec))),
-          ],
-        ),
+  Widget _wideShell() {
+    final showContext = _section == 'chat' &&
+        MediaQuery.sizeOf(context).width >= 1180;
+    return Row(children: [
+      NavigationRail(
+        selectedIndex: _sections.indexOf(_section),
+        onDestinationSelected: (i) => _selectSection(_sections[i]),
+        labelType: NavigationRailLabelType.all,
+        scrollable: true,
+        destinations: [
+          for (final sec in _sections)
+            NavigationRailDestination(
+                icon: Icon(_sectionIcon(sec)), label: Text(_sectionLabel(sec))),
+        ],
+      ),
+      const VerticalDivider(width: 1),
+      Expanded(child: _sectionBody()),
+      if (showContext) ...[
         const VerticalDivider(width: 1),
-        Expanded(child: _sectionBody()),
-      ]);
+        SizedBox(width: 288, child: _contextPanel()),
+      ],
+    ]);
+  }
+
+  Widget _contextPanel() {
+    final c = _current;
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    Widget kv(String k, String v) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(children: [
+            Expanded(child: Text(k, style: TextStyle(fontSize: 10, color: cs.onSurfaceVariant))),
+            Text(v, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
+          ]),
+        );
+    return Container(
+      color: theme.cardTheme.color,
+      child: ListView(padding: const EdgeInsets.all(16), children: [
+        Text('会话上下文', style: TextStyle(fontSize: 11, letterSpacing: 1.2, color: cs.onSurfaceVariant)),
+        const SizedBox(height: 12),
+        if (c == null)
+          const Text('选择一个角色查看会话上下文')
+        else ...[
+          Row(children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundColor: cs.primaryContainer,
+              child: Text(c.name.isEmpty ? '?' : c.name.characters.first,
+                  style: TextStyle(fontSize: 13, color: cs.onPrimaryContainer)),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('当前 · ${c.name}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                Text('角色 #${c.id}', style: TextStyle(fontSize: 10, color: cs.onSurfaceVariant)),
+              ]),
+            ),
+          ]),
+          const SizedBox(height: 14),
+          kv('会话', _sessionId == null ? '未建立' : '#$_sessionId'),
+          kv('已加载', '${_messages.length} 条'),
+          kv('历史总数', '$_historyTotal 条'),
+          kv('状态', _busy ? '生成中' : (_sessionId == null ? '待连接' : '就绪')),
+          const SizedBox(height: 16),
+          Text('快捷操作', style: TextStyle(fontSize: 10, letterSpacing: 1.0, color: cs.onSurfaceVariant)),
+          const SizedBox(height: 8),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            OutlinedButton(
+              onPressed: _busy ? null : () => _openCharacterEditor(characterId: c.id),
+              child: const Text('编辑资料'),
+            ),
+            OutlinedButton(
+              onPressed: _busy ? null : _newSession,
+              child: const Text('新会话'),
+            ),
+            OutlinedButton(
+              onPressed: () => _selectSection('memories'),
+              child: const Text('记忆'),
+            ),
+          ]),
+        ],
+      ]),
+    );
+  }
 
   Widget _sectionDrawer() => Drawer(
         child: SafeArea(
@@ -968,7 +1523,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
               Key('${_section}_${_authGen}_${_current!.id}_$_characterRev'), _current!);
       if (wide) {
         return Row(children: [
-          SizedBox(width: 280, child: _characterList()),
+          SizedBox(width: 268, child: _characterList()),
           const VerticalDivider(width: 1),
           Expanded(child: pane),
         ]);
@@ -1020,23 +1575,60 @@ class _WorkspacePageState extends State<WorkspacePage> {
   /// 各 reader 模块面板分发（六模块全部落真实实现）。
   Widget _readerPane(Key key, Character? character) {
     switch (_section) {
+      case 'pets':
+        return PetsPane(
+            key: key, client: env.client, editor: _editor, rs: rs, cs: s);
+      case 'settings':
+        return SettingsPane(
+            key: key, client: env.client, myUserId: _myUserId,
+            lang: widget.lang, themeMode: appTheme.value,
+            onTheme: (m) => appTheme.value = m,
+            skinId: appSkin.value,
+            onSkin: (id) => appSkin.value = id,
+            seedIndex: appSeed.value,
+            onSeed: (i) => appSeed.value = i,
+            onLang: (l) { appLang.value = l; },
+            onLogout: _logout, rs: rs, cs: s);
+      case 'weave':
+        return WeavePane(
+            key: key, client: env.client, rs: rs, cs: s);
+      case 'agent':
+        return AgentRunsPane(
+            key: key, client: env.client, rs: rs, cs: s);
+      case 'plugins':
+        return PluginsPane(
+            key: key, client: env.client, rs: rs, cs: s);
+      case 'games':
+        return GamesPane(
+            key: key, client: env.client, rs: rs, cs: s);
+      case 'groups':
+        return GroupChatPane(
+            key: key, client: env.client, characters: _characters,
+            filePicker: _picker, rs: rs, cs: s);
       case 'profile':
         return ProfilePane(
             key: key,
             character: character!,
             client: env.client,
+            editor: _editor,
             rs: rs,
             cs: s,
             onEdit: () => _openCharacterEditor(characterId: character.id),
             editLabel: CharacterEditorStrings(widget.lang).t('editAction'));
       case 'memories':
         return MemoriesPane(
+            key: key, character: character!, client: env.client,
+            editor: _editor, rs: rs, cs: s);
+      case 'life':
+        return LifePane(
             key: key, character: character!, client: env.client, rs: rs, cs: s);
       case 'charDiary':
         return CharDiaryPane(
             key: key, character: character!, client: env.client, rs: rs, cs: s);
       case 'moments':
-        return MomentsPane(key: key, client: env.client, rs: rs, cs: s);
+        return MomentsPane(
+            key: key, client: env.client, editor: _editor,
+            myUserId: _myUserId, imagePicker: _imagePicker, rs: rs, cs: s);
       case 'memos':
         return MemosPane(
             key: key, client: env.client, editor: _editor, myUserId: _myUserId,
@@ -1079,10 +1671,30 @@ class _WorkspacePageState extends State<WorkspacePage> {
                 onSubmitted: (_) => _login(),
                 decoration: InputDecoration(labelText: s.t('password')),
               ),
+              if (_registerMode) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _nickname,
+                  decoration: InputDecoration(labelText: s.t('nickname')),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _invite,
+                  decoration: InputDecoration(labelText: s.t('inviteCode')),
+                ),
+              ],
               const SizedBox(height: 16),
               FilledButton(
-                onPressed: _busy ? null : _login,
-                child: Text(s.t('login')),
+                onPressed: _busy ? null : (_registerMode ? _register : _login),
+                child: Text(_registerMode ? s.t('registerSubmit') : s.t('login')),
+              ),
+              TextButton(
+                onPressed: _busy
+                    ? null
+                    : () => setState(() => _registerMode = !_registerMode),
+                child: Text(_registerMode
+                    ? s.t('backToLogin')
+                    : s.t('registerAccount')),
               ),
               const Divider(height: 32),
               Row(children: [
@@ -1111,13 +1723,14 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   Widget _wideChatBody() => Row(children: [
-        SizedBox(width: 280, child: _characterList()),
+        SizedBox(width: 268, child: _characterList()),
         const VerticalDivider(width: 1),
         Expanded(child: _chatPane()),
       ]);
 
   Widget _narrowChatBody() => DefaultTabController(
         length: 2,
+        initialIndex: _current == null ? 0 : 1,
         child: Column(children: [
           TabBar(tabs: [Tab(text: s.t('tabCharacters')), Tab(text: s.t('tabChat'))]),
           Expanded(
@@ -1245,6 +1858,19 @@ class _WorkspacePageState extends State<WorkspacePage> {
             child: Text('${s.t('history')} · ${_current!.name}',
                 style: Theme.of(context).textTheme.titleMedium),
           ),
+          IconButton(
+            tooltip: s.t('archiveView'),
+            icon: const Icon(Icons.history_edu, size: 20),
+            onPressed: _selectedSessionId == null
+                ? null
+                : () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => ArchiveViewPage(
+                            sessionId: _selectedSessionId!,
+                            transport: env.transport,
+                            rs: rs))),
+          ),
         ]),
       ),
       Expanded(
@@ -1259,13 +1885,46 @@ class _WorkspacePageState extends State<WorkspacePage> {
                 child: Card(
                   child: Padding(
                     padding: const EdgeInsets.all(10),
-                    // 文件消息复用共享 fileMeta 渲染文件卡：不展开 summary、不预览下载
-                    child: m.fileMeta != null
+                    // 语音消息：显示时长与转写文本；音频播放后续接
+                    child: m.voiceMeta != null
+                        ? _voiceMessageView(m)
+                        : (m.imageUrl != null && m.imageUrl!.isNotEmpty)
                         ? ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 320),
-                            child: FileMessageCard(message: m, as_: as_),
+                            constraints: const BoxConstraints(maxWidth: 300),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Image.network(
+                                    _absoluteUploadUrl(m.imageUrl!),
+                                    width: 300,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      width: 300,
+                                      height: 120,
+                                      alignment: Alignment.center,
+                                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                      child: Text(s.t('imageUnavailable'),
+                                          style: Theme.of(context).textTheme.bodySmall),
+                                    ),
+                                  ),
+                                ),
+                                if (m.content.trim().isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 6),
+                                    child: Text(m.content),
+                                  ),
+                              ],
+                            ),
                           )
-                        : Text(m.content), // 消息正文是用户/角色内容，不翻译
+                        // 文件消息复用共享 fileMeta 渲染文件卡：不展开 summary、不预览下载
+                        : m.fileMeta != null
+                            ? ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 320),
+                                child: FileMessageCard(message: m, as_: as_),
+                              )
+                            : Text(m.content), // 消息正文是用户/角色内容，不翻译
                   ),
                 ),
               ),
@@ -1310,12 +1969,27 @@ class _WorkspacePageState extends State<WorkspacePage> {
         padding: const EdgeInsets.all(12),
         child: Row(children: [
           IconButton(
+            tooltip: s.t('voice'),
+            onPressed: (_sessionId == null || _busy || _pending != null || _voiceUploading)
+                ? null
+                : _toggleVoice,
+            icon: Icon(_voiceRecording ? Icons.stop_circle : Icons.mic_none),
+            color: _voiceRecording ? Theme.of(context).colorScheme.error : null,
+          ),
+          IconButton(
             tooltip: as_.t('pick'),
             // 会话就绪、未在忙、且无待发文件时才可选（单文件；避免选到后误发旧 sid）
             onPressed: (_sessionId == null || _busy || _pending != null)
                 ? null
                 : _pickAttachment,
             icon: const Icon(Icons.attach_file),
+          ),
+          IconButton(
+            tooltip: s.t('image'),
+            onPressed: (_sessionId == null || _busy || _pending != null)
+                ? null
+                : _pickImage,
+            icon: const Icon(Icons.image_outlined),
           ),
           Expanded(
             child: TextField(
@@ -1337,10 +2011,36 @@ class _WorkspacePageState extends State<WorkspacePage> {
           child: Text(_pendingError,
               style: TextStyle(color: Theme.of(context).colorScheme.error)),
         ),
+      if (_failedImage != null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+          child: Wrap(spacing: 4, children: [
+            TextButton(
+              onPressed: _busy ? null : _verifyFailedImage,
+              child: Text(s.t('verifyImage')),
+            ),
+            if (_imageCanRetry)
+              FilledButton.tonal(
+                onPressed: _busy ? null : _retryFailedImage,
+                child: Text(s.t('retryImage')),
+              ),
+            TextButton(
+              onPressed: _busy ? null : _dismissFailedImage,
+              child: Text(s.t('dismiss')),
+            ),
+          ]),
+        ),
       if (_status.isNotEmpty)
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
-          child: Text(_status, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          child: Row(children: [
+            Expanded(
+              child: Text(_status,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ),
+            if (_lastFailedText.isNotEmpty)
+              TextButton(onPressed: _retry, child: Text(rs.t('retry'))),
+          ]),
         ),
     ]);
   }

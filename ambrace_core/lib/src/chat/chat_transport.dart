@@ -49,6 +49,31 @@ class ChatTransport {
     return token;
   }
 
+  /// 注册（`POST /api/v1/auth/register`，201 → AuthResponse）：注册策略 open／
+  /// invite_only／closed 由服务端裁定（invite_only 必带 invite_code；closed 403）。
+  /// 返回 token（同 login 解析口径）。
+  Future<String> register(String username, String password,
+      {String? nickname, String? inviteCode, CancelToken? cancelToken}) async {
+    final r = await client.dio.post(
+      '/api/v1/auth/register',
+      data: {
+        'username': username,
+        'password': password,
+        if (nickname != null && nickname.trim().isNotEmpty)
+          'nickname': nickname.trim(),
+        if (inviteCode != null && inviteCode.trim().isNotEmpty)
+          'invite_code': inviteCode.trim(),
+      },
+      cancelToken: cancelToken,
+    );
+    final data = r.data as Map<String, dynamic>;
+    final token = data['access_token'] ?? data['token'];
+    if (token is! String || token.isEmpty) {
+      throw StateError('register response missing token');
+    }
+    return token;
+  }
+
   Future<List<Character>> getCharacters({CancelToken? cancelToken}) async {
     final r = await client.dio.get('/api/v1/characters', cancelToken: cancelToken);
     final data = r.data;
@@ -86,6 +111,20 @@ class ChatTransport {
     } on FormatException catch (e) {
       throw ApiException(kind: 'unknown', message: 'malformed chat sessions', cause: e);
     }
+  }
+
+  /// 会话消息归档（按日期分组只读视图，`GET /api/v1/chat/sessions/{id}/archive`）。
+  /// 返回原始 Map：`{session_id, days:[{date,messages:[{id,sender_type,content,
+  /// image_url,created_at}],count}], total_days}`（日期为北京时区分组，倒序）。
+  Future<Map<String, dynamic>> getChatArchive(int sessionId,
+      {CancelToken? cancelToken}) async {
+    final r = await client.dio.get('/api/v1/chat/sessions/$sessionId/archive',
+        cancelToken: cancelToken);
+    if (r.data is! Map) {
+      throw const ApiException(
+          kind: 'unknown', message: 'malformed chat archive');
+    }
+    return (r.data as Map).cast<String, dynamic>();
   }
 
   /// 历史分页（携带 `total`）：服务端按 `created_at DESC, id DESC` 取窗、再反转为

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control Room · 软件方向三</title>
+<style>
+  :root{--bg:#0b0f14;--panel:#10161e;--panel2:#151d27;--line:#243140;--text:#e6edf5;--muted:#8a9aab;--lime:#b8f25e;--cyan:#5ed7ef;--amber:#f5b85c;--sans:"Inter","PingFang SC","Microsoft YaHei",sans-serif;--mono:"JetBrains Mono","Cascadia Code",monospace}
+  *{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px}
+  button,input,textarea{font:inherit;color:inherit}button{background:none;border:0;cursor:pointer}
+  .app{height:100vh;display:grid;grid-template-columns:200px minmax(0,1fr) 300px;grid-template-rows:52px 1fr;overflow:hidden}
+  .top{grid-column:1/4;display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+  .brand{font-weight:700;font-size:13px}.brand b{color:var(--lime)}
+  .search{flex:1;max-width:520px;margin-left:12px;border:1px solid var(--line);background:#0b1118;border-radius:6px;padding:7px 10px;color:var(--muted);font-size:11px;display:flex;justify-content:space-between}
+  .top .right{margin-left:auto;display:flex;gap:9px;align-items:center}.right .who{font-size:10px;color:var(--muted)}
+  .avatar{width:26px;height:26px;border-radius:6px;background:#223040;display:grid;place-items:center;font-size:10px;color:var(--lime);border:1px solid #31465a}
+  .nav{border-right:1px solid var(--line);background:var(--panel);padding:10px 8px;display:flex;flex-direction:column;gap:3px;min-height:0}
+  .nav .label{font-family:var(--mono);font-size:9px;color:#5f768b;letter-spacing:.12em;padding:8px 8px 5px}
+  .nav button{display:flex;align-items:center;gap:9px;padding:8px;border-radius:6px;color:#94a7b9;font-size:11px;text-align:left}.nav button b{font-size:13px;font-weight:400;width:16px;text-align:center}.nav button.on{background:#192330;color:var(--text)}.nav button.on b{color:var(--lime)}
+  .nav .sys{margin-top:auto;font-family:var(--mono);font-size:9px;color:#5f768b;line-height:1.8;padding:8px}.nav .sys i{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--lime);margin-right:5px}
+  .main{grid-column:2/3;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg)}
+  .bar{height:44px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:0 16px;background:#0c1219}
+  .bar b{font-size:12px}.bar .actions{display:flex;gap:6px}.bar .actions button{border:1px solid var(--line);border-radius:5px;padding:5px 8px;font-size:10px;color:#b6c7d7}
+  .screen{display:none;flex:1;min-height:0}.screen.on{display:flex;flex-direction:column}
+  .msgs{flex:1;overflow:auto;padding:16px 22px;display:flex;flex-direction:column;gap:14px}
+  .msg{max-width:660px}.msg .meta{font-family:var(--mono);font-size:9px;color:#71879b;margin-bottom:4px;display:flex;gap:8px}.msg .meta b{color:#c6d4e1;font-weight:500}
+  .msg.user{align-self:flex-end;text-align:right}.bubble{border:1px solid var(--line);background:var(--panel2);padding:10px 12px;line-height:1.7;border-radius:5px;font-size:13px}.msg.user .bubble{background:#1a2633;border-color:#2b3b4d}
+  .hit{display:inline-flex;margin-top:5px;border:1px solid #20404c;background:#0c1a20;color:var(--cyan);font-family:var(--mono);font-size:9px;padding:3px 6px;border-radius:4px}
+  .composer{padding:10px 16px 14px;border-top:1px solid var(--line);background:#0c1219}.input{border:1px solid #2a3b4d;background:#0b1118;border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;color:#71879b;font-size:11px}.input button{background:var(--lime);color:#0b0f14;font-size:10px;padding:3px 8px;border-radius:4px;font-weight:600}
+  .panelgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:14px;overflow:auto;height:100%}
+  .module{background:var(--panel);border:1px solid var(--line);padding:12px;min-height:150px}.module h3{font-size:11px;margin:0 0 10px;color:#d3e0ec;font-weight:500;display:flex;justify-content:space-between}.module h3 span{font-family:var(--mono);font-size:9px;color:#637b8f}
+  .mtable{width:100%;border-collapse:collapse;font-size:11px}.mtable td{padding:7px 4px;border-bottom:1px solid #1d2936;line-height:1.5}.mtable td:last-child{text-align:right;font-family:var(--mono);font-size:9px;color:#6f879b}
+  .stem{display:flex;align-items:flex-end;gap:3px;height:54px;border-bottom:1px solid #2a3b4c;padding-bottom:2px}.stem i{flex:1;background:#2d6b68;min-height:4px}.stem i.hot{background:var(--lime)}
+  .setting{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #1d2936;font-size:12px}.setting span{font-size:10px;color:#7e93a6}
+  .ctx{grid-column:3/4;border-left:1px solid var(--line);background:var(--panel);padding:14px;overflow:auto}
+  .ctx h3{font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:#6d8599;margin:0 0 8px;font-weight:500}
+  .ctx .card{border:1px solid var(--line);background:#0b1118;padding:10px;margin-bottom:8px}.ctx .card b{font-size:11px;display:block;margin-bottom:3px}.ctx .card p{font-size:10px;line-height:1.6;color:#8095a8;margin:0}.ctx .kv{display:flex;justify-content:space-between;border-bottom:1px solid #17222e;padding:7px 0;font-size:10px;color:#8499ac}.ctx .kv b{font-family:var(--mono);color:#c5d3e0;font-weight:500}
+  .foot{display:none}
+  @media(max-width:1050px){.app{grid-template-columns:180px 1fr}.ctx{display:none}.top{grid-column:1/3}}
+  @media(max-width:720px){
+    .app{grid-template-columns:1fr;grid-template-rows:48px 1fr 56px}.top{grid-column:1;padding:0 12px}.brand{font-size:11px}.search{display:none}.top .who{display:none}.nav{position:fixed;left:0;right:0;bottom:0;top:auto;height:56px;flex-direction:row;border-right:0;border-top:1px solid var(--line);z-index:8;padding:0;gap:0}.nav .label,.nav .sys{display:none}.nav button{flex:1;flex-direction:column;justify-content:center;gap:2px;font-size:9px;padding:4px}.nav button b{font-size:15px}.main{grid-column:1;grid-row:2;padding-bottom:56px}.ctx{display:none}.msgs{padding:12px}.bubble{font-size:13px}.panelgrid{grid-template-columns:1fr;padding:10px}.bar{padding:0 12px}.composer{padding:8px 12px 12px}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">AMBRACE<b>/</b>CONTROL ROOM</div>
+    <div class="search"><span>搜索记忆、角色、会话或命令</span><span>⌘K</span></div>
+    <div class="right"><span class="who">测试·小阳 / session 09</span><div class="avatar">阳</div></div>
+  </header>
+
+  <nav class="nav">
+    <div class="label">WORKSPACE</div>
+    <button class="on" data-s="chat"><b>◌</b>对话</button>
+    <button data-s="memory"><b>▤</b>记忆</button>
+    <button data-s="moments"><b>◍</b>生活</button>
+    <button data-s="settings"><b>⚙</b>设置</button>
+    <div class="label">SYSTEM</div>
+    <div class="sys"><div><i></i>感知已连接</div><div>memory 1,541</div><div>recall 132ms</div></div>
+  </nav>
+
+  <main class="main">
+    <div class="screen on" id="chat">
+      <div class="bar"><b>测试·小阳</b><div class="actions"><button>切换角色</button><button>新会话</button><button>编辑资料</button></div></div>
+      <div class="msgs">
+        <div class="msg"><div class="meta"><b>小阳</b><span>18:42</span></div><div class="bubble">刚把番茄牛腩热上，香味一飘整个人都精神了。等你忙完，慢慢来，不着急。</div></div>
+        <div class="msg user"><div class="meta"><span>18:44</span><b>我</b></div><div class="bubble">今天有点乱。看到这句，忽然觉得可以先把手机放下。</div></div>
+        <div class="msg"><div class="meta"><b>小阳</b><span>18:45</span></div><div class="bubble">那就放下。牛腩在锅里，我也在。</div><div class="hit">⌁ 召回 · 周六 9 点叫醒</div></div>
+      </div>
+      <div class="composer"><div class="input"><span>输入消息，或按 / 搜索记忆</span><button>发送</button></div></div>
+    </div>
+
+    <div class="screen" id="memory">
+      <div class="bar"><b>记忆</b><div class="actions"><button>筛选</button><button>导出</button><button>＋ 新建</button></div></div>
+      <div class="panelgrid">
+        <section class="module"><h3>记忆索引 <span>1,536</span></h3>
+          <table class="mtable"><tr><td>奶茶偏好 · 大白兔奶糖</td><td>活跃</td></tr><tr><td>周六 9 点叫醒</td><td>今天</td></tr><tr><td>关系再近也要留空间</td><td>昨天</td></tr><tr><td>腰伤康复，不催</td><td>11-17</td></tr><tr><td>阴天出门加外套</td><td>11-21</td></tr></table>
+        </section>
+        <section class="module"><h3>召回分布 <span>近 7 天</span></h3><div class="stem"><i style="height:30%"></i><i style="height:55%"></i><i style="height:42%"></i><i class="hot" style="height:88%"></i><i style="height:64%"></i><i style="height:38%"></i><i style="height:52%"></i></div><div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:8px;color:#667f93;margin-top:5px"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div></section>
+        <section class="module"><h3>待复核 <span>3</span></h3><table class="mtable"><tr><td>用户连续第三次发送同一条消息</td><td>低置信</td></tr><tr><td>“关系再近”与旧记忆相近</td><td>重复</td></tr></table></section>
+        <section class="module"><h3>运行状态 <span>LIVE</span></h3><div class="kv" style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1d2936;font-size:10px"><span>phase</span><b>streaming</b></div><div class="kv" style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1d2936;font-size:10px"><span>model</span><b>deepseek-v4</b></div><div class="kv" style="display:flex;justify-content:space-between;padding:6px 0;font-size:10px"><span>tokens</span><b>4,208</b></div></section>
+      </div>
+    </div>
+
+    <div class="screen" id="moments">
+      <div class="bar"><b>生活流</b><div class="actions"><button>今天</button><button>全部角色</button></div></div>
+      <div class="panelgrid" style="grid-template-columns:1fr">
+        <section class="module"><h3>今天 <span>6 条</span></h3><table class="mtable"><tr><td>11:04 · 小云<br><span style="color:#8da0b2">太阳把楼顶晒得发亮，水杯该续了。</span></td><td>生活</td></tr><tr><td>11:04 · 小冰<br><span style="color:#8da0b2">纸鹤的影子拉得很长。</span></td><td>生活</td></tr><tr><td>09:03 · 小阳<br><span style="color:#8da0b2">等会儿 9 点要叫 test 起床。</span></td><td>约定</td></tr></table></section>
+      </div>
+    </div>
+
+    <div class="screen" id="settings">
+      <div class="bar"><b>设置</b><div class="actions"><button>保存</button></div></div>
+      <div style="padding:8px 16px;overflow:auto"><div class="setting"><div>主题<span>浅色 / 深色 / 跟随系统</span></div><button style="border:1px solid var(--line);padding:4px 8px;border-radius:4px">深色</button></div><div class="setting"><div>语言<span>中文 / English</span></div><button style="border:1px solid var(--line);padding:4px 8px;border-radius:4px">中文</button></div><div class="setting"><div>流式回复<span>逐字显示，不改变落库</span></div><button style="border:1px solid var(--line);padding:4px 8px;border-radius:4px">开</button></div><div class="setting"><div>服务器<span>http://127.0.0.1:8000</span></div><button style="border:1px solid var(--line);padding:4px 8px;border-radius:4px">更换</button></div><div class="setting"><div>退出登录<span>仅退出本机</span></div><button style="border:1px solid var(--line);padding:4px 8px;border-radius:4px;color:#f08c7a">退出</button></div></div>
+    </div>
+  </main>
+
+  <aside class="ctx">
+    <h3>CONTEXT</h3>
+    <div class="card"><b>周六 9 点叫醒</b><p>约定 · 今天 · 0.94</p></div>
+    <div class="card"><b>奶茶：大白兔奶糖</b><p>偏好 · 三个月前 · 仍活</p></div>
+    <div class="card"><b>腰伤康复</b><p>近况 · 十一月 · 不催</p></div>
+    <h3 style="margin-top:12px">RECALL</h3>
+    <div class="kv"><span>本次</span><b>3 条</b></div><div class="kv"><span>耗时</span><b>132 ms</b></div><div class="kv"><span>安全</span><b style="color:var(--lime)">pass</b></div>
+  </aside>
+</div>
+<script>
+  const nav=document.querySelectorAll('.nav button[data-s]'), screens=document.querySelectorAll('.screen');
+  nav.forEach(b=>b.addEventListener('click',()=>{nav.forEach(x=>x.classList.toggle('on',x===b));screens.forEach(s=>s.classList.toggle('on',s.id===b.dataset.s));}));
+</script>
+</body>
+</html>

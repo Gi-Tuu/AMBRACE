@@ -3,12 +3,15 @@
 //
 // 纯展示组件：状态与请求全部由壳（WorkspacePage）持有，本组件只画与回调；
 // 只展示后端**真实返回**的字段（标题/日期/稳定 id），**不伪造**「最新消息预览」。
+//
+// 会话搜索（2026-11-22 批 8）：客户端过滤（标题/会话 id）——服务端无搜索端点，
+// 与 App 会话搜索同口径，不伪造。
 import 'package:ambrace_core/ambrace_core.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/session_strings.dart';
 
-class SessionStrip extends StatelessWidget {
+class SessionStrip extends StatefulWidget {
   const SessionStrip({
     super.key,
     required this.sessions,
@@ -33,59 +36,118 @@ class SessionStrip extends StatelessWidget {
   final SessionStrings ss;
 
   /// 标题为空 ⇒ 双语系统占位；有标题则**原文**展示（用户内容不翻译）。
-  String label(ChatSessionSummary s) =>
-      (s.title != null && s.title!.isNotEmpty) ? s.title! : ss.t('untitledSession');
+  String labelOf(ChatSessionSummary s) =>
+      (s.title != null && s.title!.isNotEmpty)
+          ? s.title!
+          : ss.t('untitledSession');
+
+  @override
+  State<SessionStrip> createState() => _SessionStripState();
+}
+
+class _SessionStripState extends State<SessionStrip> {
+  /// 会话搜索过滤词（客户端过滤：标题/会话 id；服务端无搜索端点）。
+  String _filter = '';
+  bool _searchOpen = false;
+
+  String _label(ChatSessionSummary s) =>
+      (s.title != null && s.title!.isNotEmpty)
+          ? s.title!
+          : widget.ss.t('untitledSession');
 
   String _date(String raw) => raw.length >= 10 ? raw.substring(0, 10) : raw;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final q = _filter.trim().toLowerCase();
+    final shown = q.isEmpty
+        ? widget.sessions
+        : widget.sessions
+            .where((s) =>
+                (s.title ?? '').toLowerCase().contains(q) ||
+                '#${s.id}'.contains(q))
+            .toList();
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Text(ss.t('sessions'), style: theme.textTheme.labelLarge),
+          Text(widget.ss.t('sessions'), style: theme.textTheme.labelLarge),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              status == 'loading'
-                  ? ss.t('loadingSessions')
-                  : status == 'error'
-                      ? '${ss.t('loadSessionsFailed')}$errorText'
-                      : '${sessions.length}',
+              widget.status == 'loading'
+                  ? widget.ss.t('loadingSessions')
+                  : widget.status == 'error'
+                      ? '${widget.ss.t('loadSessionsFailed')}${widget.errorText}'
+                      : '${shown.length}${_filter.trim().isEmpty ? '' : ' / ${widget.sessions.length}'}',
               style: theme.textTheme.bodySmall,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (status == 'error')
-            TextButton(onPressed: onRetry, child: Text(ss.t('retry'))),
+          if (widget.status == 'error')
+            TextButton(
+                onPressed: widget.onRetry,
+                child: Text(widget.ss.t('retry'))),
+          const SizedBox(width: 4),
+          IconButton(
+            tooltip: widget.ss.t('sessionSearch'),
+            isSelected: _searchOpen,
+            icon: const Icon(Icons.search, size: 18),
+            onPressed: () => setState(() => _searchOpen = !_searchOpen),
+          ),
           const SizedBox(width: 4),
           OutlinedButton(
-            onPressed: creating ? null : onCreate,
-            child: Text(creating ? ss.t('loadingEarlier') : ss.t('newSession')),
+            onPressed: widget.creating ? null : widget.onCreate,
+            child: Text(widget.creating
+                ? widget.ss.t('loadingEarlier')
+                : widget.ss.t('newSession')),
           ),
         ]),
-        if (status == 'ready' && sessions.isEmpty)
+        if (_searchOpen)
           Padding(
             padding: const EdgeInsets.only(top: 4),
-            child: Text(ss.t('noSessions'), style: theme.textTheme.bodySmall),
+            child: TextField(
+              autofocus: true,
+              onChanged: (v) => setState(() => _filter = v),
+              decoration: InputDecoration(
+                isDense: true,
+                prefixIcon: const Icon(Icons.search, size: 18),
+                hintText: widget.ss.t('sessionSearch'),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
           ),
-        if (sessions.isNotEmpty)
+        if (widget.status == 'ready' && widget.sessions.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(widget.ss.t('noSessions'),
+                style: theme.textTheme.bodySmall),
+          ),
+        if (widget.status == 'ready' &&
+            widget.sessions.isNotEmpty &&
+            shown.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(widget.ss.t('noMatchSessions'),
+                style: theme.textTheme.bodySmall),
+          ),
+        if (shown.isNotEmpty)
           SizedBox(
             height: 56,
             child: ListView(
               scrollDirection: Axis.horizontal,
               children: [
-                for (final s in sessions)
+                for (final s in shown)
                   Padding(
                     padding: const EdgeInsets.only(right: 8, top: 6),
                     child: FilterChip(
-                      selected: s.id == selectedId,
+                      selected: s.id == widget.selectedId,
                       label: Text(
-                          '${label(s)} · ${_date(s.createdAt)} · #${s.id}'),
-                      onSelected: (_) => onSelect(s),
+                          '${_label(s)} · ${_date(s.createdAt)} · #${s.id}'),
+                      onSelected: (_) => widget.onSelect(s),
                     ),
                   ),
               ],

@@ -3,7 +3,7 @@
 业务体在 app/application/chat_groups.py（F5-a，2026-08-31 迁入）；本文件保留路由与
 参数依赖注入（门面重导出已随 F8 删旧移除，历史 import 路径请改指 app.application.chat_groups）。
 """
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, File, Header, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application import chat_groups as _svc
@@ -101,6 +101,18 @@ async def list_messages(
 ):
     """群消息（时间正序）"""
     return await _svc.list_messages(db, group_id, user_id, lang, limit)
+
+
+@router.post("/{group_id}/files")
+async def upload_group_file(
+    group_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+    lang: str = Header(default="zh"),
+):
+    """群文件：保存到 uploads，落一条 file_url 群消息；不触发角色回复。"""
+    return await _svc.upload_file(db, group_id, file, user_id, lang)
 
 
 @router.post("/{group_id}/messages")
