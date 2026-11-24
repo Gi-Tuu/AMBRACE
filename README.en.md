@@ -374,6 +374,8 @@ backend/.venv/Scripts/python.exe scripts/smoke_test.py
 Join the official AMBRACE Discord community to connect with other users and developers, follow development updates, discuss features, and get help.
 
 - **Discord**: [Join the AMBRACE Discord community](https://discord.gg/BnRwE7JGSF)
+- **Telegram**: [Follow the AMBRACE updates channel](https://t.me/ambrace_updates)
+- **X (developer's personal account)**: [@GiTuu0](https://x.com/GiTuu0) — not a standalone official AMBRACE account; posts development updates
 
 ## Support the Author
 If this project has brought you companionship and joy, your support is welcome ☕
