@@ -73,6 +73,13 @@ _FLAG_ROWS: list[tuple] = [
      '避免要紧的部分被悄悄丢掉却查不到。',
      'Reserve headroom in long conversations', 'In very long conversations it first sets aside room for the reply '
      'and for tools, then trims the overflow and records what was trimmed, so nothing goes missing untraceably.'),
+    ('context_progressive_history', 'agent', 128, False, '旧对话摘要渐进缩短',
+     '越早的对话摘要只保留开头的一部分、留得越少，把位置让给最近的对话；'
+     '记忆本身不受影响，关闭时与现在完全一样。',
+     'Older summaries gradually shorten',
+     'Daily summaries from earlier days keep only their opening part, and keep less the older '
+     'they are, so recent conversation gets more room. The memories themselves are untouched, and '
+     'turning this off works exactly as it does today.'),
     ('observation_label_v1', 'agent', 106, False, '工具结果标注出处',
      '它用完搜索、备忘录这类工具后，给自己留的那条结果会额外标上「这条有多确定、出自哪个工具」，'
      '方便它分辨信息可靠程度；只影响它自己怎么看这条结果，不影响它说什么、也不影响你看到的回复。'

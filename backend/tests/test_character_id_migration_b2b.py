@@ -409,9 +409,13 @@ def test_old_head_upgrade_preserves_rows_and_no_reuse(tmp_path, use_db):
         ("index", "idx_chat_source_event_uid"),
     }, f"新增对象必须严格等于 c4/d6/b3/c5 的冻结增量，实际 added={added}"
     assert removed == set(), f"拒绝任何 sqlite_master 对象被删除：removed={removed}"
+    # 2026-11-23 补登：链尾 e9f8 给 chat_group_messages 加 file_url/file_name/file_size，
+    # 该表 DDL 因此在本升级路径上合法变化；其余四张仍是 b2a/c4/d6/b3 的既有增量。
     assert changed == {("table", "ai_characters"), ("table", "memories"),
-                       ("table", "memory_write_receipts"), ("table", "chat_messages")}, (
-        f"只允许 ai_characters / memories 两张表 DDL 变化，实际 changed={changed}"
+                       ("table", "memory_write_receipts"), ("table", "chat_messages"),
+                       ("table", "chat_group_messages")}, (
+        f"只允许 ai_characters / memories / memory_write_receipts / chat_messages / "
+        f"chat_group_messages 五张表 DDL 变化，实际 changed={changed}"
     )
 
     # memories 列级 delta：**恰好**只多 write_key 一列，其余列元数据逐值不变。

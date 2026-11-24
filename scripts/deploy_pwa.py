@@ -26,8 +26,11 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILD_DIR = ROOT / "pwa" / "build" / "web"
 RUNTIME_ROOT = Path(os.environ.get("AMBRACE_PWA_RUNTIME", ""))
 if not RUNTIME_ROOT.is_absolute() or str(RUNTIME_ROOT) == ".":
-    import tempfile
-    RUNTIME_ROOT = Path(tempfile.gettempdir()) / "ambrace_pwa_runtime"
+    # 2026-11-23：默认落点从 %TEMP% 改成每用户持久目录。事故：临时目录被系统清理后
+    # .env 的 PWA_STATIC_DIR 指向不存在的路径 → /pwa/ 404，控制台入口「完全进不去」。
+    # 仍然不写作者机器绝对路径（环境变量优先，其次 LOCALAPPDATA/home）。
+    _base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+    RUNTIME_ROOT = Path(_base) / "AMBRACE" / "pwa-runtime"
 ENV_FILE = ROOT / ".env"
 BUILD_ID_RE = re.compile(r"^[0-9a-f]{12,64}$")
 PLACEHOLDER = "__PWA_BUILD_ID__"

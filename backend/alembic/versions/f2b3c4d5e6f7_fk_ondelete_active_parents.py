@@ -15,7 +15,6 @@ import importlib.util as _ilu
 import os as _os
 
 from alembic import op
-import sqlalchemy as sa
 
 revision = "f2b3c4d5e6f7"
 down_revision = "e1b2c3d4e5f6"
@@ -41,13 +40,13 @@ REBUILD_TABLES = [
 ]
 
 
-def _ensure_indexes_fn():
+def _helpers():
     """按绝对路径加载 alembic/_helpers.py（version 模块无包上下文，不能 from alembic import
     _helpers——会撞已安装的 alembic 库；照 e1b2c3d4e5f6 先例）。"""
     spec = _ilu.spec_from_file_location("ambrace_alembic_helpers", _HELPERS_PATH)
     mod = _ilu.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.ensure_indexes
+    return mod
 
 
 def upgrade() -> None:
@@ -58,26 +57,20 @@ def upgrade() -> None:
     for tname in REBUILD_TABLES:
         if tname not in meta.tables:
             raise RuntimeError(f"ORM metadata 缺表 {tname}——中止，防止重建丢列")
-    # 历史冻结：f2b3 当时 chat_messages 尚无 c5 的 source_event_uid。
-    # copy_from 若用当前 ORM Table 会把后来列带进历史节点，导致全新库回放
-    # INSERT INTO _alembic_tmp_chat_messages(...source_event_uid) SELECT 旧表无此列而失败。
-    # 这里只在该历史节点使用一份去后来列的副本；不改模型、不改历史语义/约束。
+    helpers = _helpers()
     op.execute("PRAGMA foreign_keys=OFF")
     try:
         for tname in REBUILD_TABLES:
-            table = meta.tables[tname]
-            if tname == "chat_messages" and "source_event_uid" in table.c:
-                table = table.to_metadata(sa.MetaData())
-                table._columns.remove(table.c.source_event_uid)
-                for idx in list(table.indexes):
-                    if "source_event_uid" in {c.name for c in idx.columns}:
-                        table.indexes.remove(idx)
-            with op.batch_alter_table(tname, recreate="always", copy_from=table):
+            # 2026-11-23：改用共享「列交集」副本，取代原先只针对 chat_messages.source_event_uid
+            # 的单表特判——整链重放时链上更晚迁移才加的列（chat_group_messages.file_url 等）
+            # 在此时 DB 尚不存在，直接 copy_from 当前 ORM Table 会 INSERT...SELECT 不存在的列。
+            copy_t = helpers.orm_copy_intersecting(op.get_bind(), meta, tname)
+            with op.batch_alter_table(tname, recreate="always", copy_from=copy_t):
                 pass
     finally:
         op.execute("PRAGMA foreign_keys=ON")
     # 第四轮沉淀约定：凡 batch recreate(copy_from=...)，upgrade 末尾必须 ensure_indexes 兜底
-    created = _ensure_indexes_fn()(op, meta)
+    created = helpers.ensure_indexes(op, meta)
     if created:
         print(f"[fk_ondelete_active_parents] backfill indexes after rebuild: {created}")
 

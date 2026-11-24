@@ -57,7 +57,7 @@ body {
 .side .foot { display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 12px 20px 0; font-size: var(--fs-cap); letter-spacing: .16em; color: var(--weak); }
 /* 主题切换：图标说当前档，悬停说要点成什么；没记住就转虚线，不占强调色。 */
-/* 仿真星球：程序化表面纹理（build_planet.py 生成，512px 周期无缝）靠
+/* 仿真星球：程序化表面纹理（build_planet.py 生成，2048px 无缝纹理）靠
    background-position-x 平移做自转；球面光照、明暗界线、边缘大气辉光由 CSS 叠加，
    所以纹理转而光不转。墨纸＝月、纸色＝日。 */
 .planet { position: relative; border-radius: 50%; overflow: hidden;
@@ -95,10 +95,18 @@ html[data-theme="light"] .pl-shade { background:
 /* 首次开屏的构图按用户手绘图来：左边一颗放大很大的星球（只露右缘，过肩镜头）、
    中间最小的一颗带星环、右边一颗星球。星空全程都在——中途换成纯黑底会被看成"多了一块黑幕"。 */
 #splash { position: fixed; inset: 0; z-index: 999; overflow: hidden; background: var(--paper);
-  opacity: 1; transition: opacity .26s var(--ease);
+  opacity: 1; transition: opacity .26s var(--ease), background-color 1.05s ease-out;
   /* 开屏是纯装饰：不许拦指针。否则窗口刚打开那三秒，页头拖动条点不到，
      用户想先把窗口挪到顺手的位置时会以为"窗口不能动了"。 */
   pointer-events: none; }
+#splash.sp-landing {
+  background-color: transparent;
+  animation: splash-frame 2.2s linear both;
+}
+@keyframes splash-frame {
+  0%, 45% { clip-path: inset(0); }
+  88%, 100% { clip-path: inset(0 0 calc(100% - var(--hero-h)) 0); }
+}
 #splash.sp-out { opacity: 0; pointer-events: none; }
 .sp-stars { position: absolute; inset: 0; opacity: .82;
   background: url("star_dark.png") center / cover no-repeat; }
@@ -121,8 +129,23 @@ html[data-theme="light"] .sp-orb-a::after { border-color: rgba(27, 24, 21, .26);
   box-shadow: inset 0 0 16px rgba(8, 6, 5, .52), 0 0 9px rgba(255, 178, 116, .18);
   animation: planet-spin 26s linear infinite,
              planet-journey 5s linear forwards; }
-html[data-theme="light"] .sp-hero { box-shadow: inset 0 0 14px rgba(90, 30, 6, .46),
-              0 0 20px rgba(255, 146, 58, .44); }
+/* 主球的表面单独按大尺寸绘制；外层负责飞行，内层负责纹理和日光交接。 */
+#spHero { background: none; box-shadow: none; overflow: visible; }
+.sp-surface { position: absolute; width: 1024px; height: 1024px; left: 50%; top: 50%;
+  margin: -512px; transform: scale(.125); will-change: transform;
+  background-size: 2048px 100%; animation: splash-spin 104s linear infinite; }
+@keyframes splash-spin { to { background-position-x: -2048px; } }
+.sp-day { display: none; }
+html[data-theme="light"] .sp-day {
+  position: absolute; display: block; width: 148px; height: 148px; top: 50%; left: 50%;
+  margin: -74px; transform: scale(.865); animation: splash-daybreak 5s linear both;
+}
+html[data-theme="light"] .sp-surface { animation: splash-spin 104s linear infinite, splash-surface-fade 5s linear both; }
+@keyframes splash-daybreak {
+  0%, 74% { opacity: 0; transform: scale(.58); }
+  94%, 100% { opacity: 1; transform: scale(.865); }
+}
+@keyframes splash-surface-fade { 0%, 76% { opacity: 1; } 94%, 100% { opacity: 0; } }
 /* 背面：越大越黑。球放大到盖满那一刻最暗（只留一点轮廓），缩回来一路变亮，
    落到页眉时刚好是正常亮度。太阳是光源，纸色档不给这层。 */
 .sp-hero::after { content: ""; position: absolute; inset: 0; border-radius: 50%;
@@ -145,16 +168,7 @@ html[data-theme="dark"] .sp-hero::after { animation: planet-night 5s linear forw
   96%  { opacity: .1; }
   100% { opacity: 0; }
 }
-/* 两段动画：一个动 background-position（自转），一个动 transform，互不打架。
-   时间轴 5s，与 index.html 的 SPLASH_MS 同源：
-   0–18% 蓄势（自左淡入、原地等）→ 18–44% 右移放大盖满
-   → 44–100% 沿二次贝塞尔弧线收束到页眉右侧那颗球。
-   收束段缩放按等比衰减：前 8% 从 26 掉到 13（这一截还盖着屏，等于"拉帘"起手），
-   之后每 8% 掉 1.5 倍，边缘匀速内收，读起来才是"越飞越远、越飞越小"。 */
-/* 两段动画：一个动 background-position（自转），一个动 transform，互不打架。
-   时间轴 5s，与 index.html 的 SPLASH_MS 同源：
-   0–16% 过肩定场（已经是一颗巨星球，只露右缘）→ 16–56% 右移放大盖满（2.0s，慢）
-   → 56–100% 沿二次贝塞尔弧线收束到窗口右上角（2.2s，快）。 */
+/* 后半段的各个落点都按同一页眉目标插值，接近落点时缩短每段路程。 */
 @keyframes planet-journey {
   0%     { opacity: 0; transform: translate(-25.4vw, 50vh) scale(12.3); }
   5%     { opacity: 1; transform: translate(-25vw, 50vh) scale(12.4); }
@@ -164,14 +178,35 @@ html[data-theme="dark"] .sp-hero::after { animation: planet-night 5s linear forw
   42%    { transform: translate(8vw, 50vh) scale(17); }
   49%    { transform: translate(26vw, 50vh) scale(20.4); }
   56%    { transform: translate(50vw, 50vh) scale(26); }
-  62%    { transform: translate(54.7vw, 43.4vh) scale(16.6); }
-  68%    { transform: translate(59.7vw, 37.3vh) scale(11); }
-  74%    { transform: translate(65vw, 31.8vh) scale(7.3); }
-  80%    { transform: translate(70.6vw, 26.8vh) scale(4.8); }
-  86%    { transform: translate(76.4vw, 22.3vh) scale(3.2); }
-  92%    { transform: translate(82.6vw, 18.4vh) scale(2.1); }
-  96%    { transform: translate(91vw, 16.6vh) scale(1.5); }
+  62%    { transform: translate(calc(63vw - 6.5px), calc(31vh + 57px)) scale(16.6); }
+  68%    { transform: translate(calc(75vw - 12.5px), calc(17vh + 99px)) scale(10.4); }
+  74%    { transform: translate(calc(85vw - 17.5px), calc(8vh + 126px)) scale(6.4); }
+  80%    { transform: translate(calc(92vw - 21px), calc(3.1vh + 140.7px)) scale(3.8); }
+  86%    { transform: translate(calc(97vw - 23.5px), calc(1vh + 147px)) scale(2.2); }
+  92%    { transform: translate(calc(99.2vw - 24.6px), calc(.18vh + 149.46px)) scale(1.41); }
+  96%    { transform: translate(calc(99.85vw - 24.925px), calc(.04vh + 149.88px)) scale(1.20); }
   100%   { transform: translate(calc(100vw - 25px), 150px) scale(1.156); }
+}
+/* 墨纸开屏：球心沿一条连续曲线推进。镜头缩放、月面自转各走自己的时钟。 */
+#spHero.sp-lunar {
+  margin: 0; offset-anchor: center; offset-rotate: 0deg;
+  animation: moon-flight 5s cubic-bezier(.42,.03,.52,1) both, moon-depth 5s linear both;
+}
+@keyframes moon-flight { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+@keyframes moon-depth {
+  0% { opacity: 0; transform: scale(12.3); }
+  5% { opacity: 1; transform: scale(12.4); animation-timing-function: cubic-bezier(.5,0,.5,1); }
+  56% { transform: scale(26); animation-timing-function: cubic-bezier(.32,0,.18,1); }
+  100% { transform: scale(1.15625); }
+}
+.sp-lunar .sp-surface { animation: moon-surface-spin 15s linear infinite; }
+@keyframes moon-surface-spin {
+  from { background-position-x: 0px; }
+  to { background-position-x: -2048px; }
+}
+/* 掠过镜头时仍让受光侧的月海纹理透出，阴影固定在球面右侧。 */
+.sp-lunar.sp-hero::after {
+  background: linear-gradient(114deg, rgba(5,4,3,.25) 0%, rgba(5,4,3,.56) 53%, rgba(5,4,3,.95) 100%);
 }
 /* ── 主区 ── */
 .main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
@@ -687,8 +722,8 @@ html[data-sky="paused"] .hero .neb .shoot { animation-play-state: paused; }
 .hero .neb .c2 { right: 16%; bottom: -52%; width: 56%; height: 140%;
   background: rgba(169, 157, 141, .03); filter: blur(30px);
   animation: neb-drift2 62s var(--ease) infinite alternate; }
-.hero .neb .mote { position: absolute; width: 2px; height: 2px; border-radius: 50%;
-  background: var(--dim); opacity: 0; animation: mote-drift 19s linear infinite; }
+.hero .neb .mote { position: absolute; left: var(--mote-x); top: var(--mote-y); width: 2px; height: 2px; border-radius: 50%;
+  background: var(--dim); opacity: 0; animation: mote-drift var(--mote-time, 19s) linear var(--mote-delay, 0s) infinite; }
 .hero .neb .mote.warm { background: var(--brick); }
 .hero .neb .shoot { position: absolute; left: var(--sx, 86%); top: var(--sy, 26%);
   width: var(--sw, 46px); height: 1px;
@@ -870,6 +905,23 @@ html[data-theme="dark"] .side-sky { display: block; }
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-5px); }
 }
+/* PWA 入口卫星：微信卫星右边一点，手机图标，青蓝色系；点开 /pwa/ */
+.pwa-orb { position: absolute; left: 116px; bottom: 88px; width: 30px; height: 30px;
+  padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer;
+  z-index: 3; display: grid; place-items: center; color: #6B8FAE;
+  filter: drop-shadow(0 0 9px rgba(107, 143, 174, .34));
+  animation: pwa-float 5.2s ease-in-out infinite;
+  transition: filter .3s var(--ease), transform .3s var(--ease); }
+.pwa-orb svg { width: 22px; height: 22px; display: block; }
+.pwa-orb:hover { filter: drop-shadow(0 0 14px rgba(107, 143, 174, .6)); }
+.pwa-orb:active { transform: scale(.9); }
+.pwa-orb:focus-visible { outline: 2px solid var(--brick); outline-offset: 2px; }
+@keyframes pwa-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+html[data-theme="light"] .pwa-orb { color: #4E7A9E; filter: drop-shadow(0 0 8px rgba(78, 122, 158, .28)); }
+
 html[data-theme="light"] .wx-orb { color: #3f8f51; filter: drop-shadow(0 0 8px rgba(63, 143, 81, .28)); }
 
 /* ── 左下角的设置星球：只露上面一弧，圆心落在窗口下方 ────────────
@@ -893,9 +945,6 @@ html[data-theme="light"] .wx-orb { color: #3f8f51; filter: drop-shadow(0 0 8px r
 .set-orb .pl-shade { background: radial-gradient(circle at 50% 50%,
   rgba(8, 6, 5, .96) 46%, rgba(8, 6, 5, .86) 80%, rgba(255, 186, 132, .34) 97%,
   rgba(255, 186, 132, 0) 100%); }
-html[data-theme="light"] .set-orb { background-image: url("planet_sun.png"); filter: brightness(.86);
-  box-shadow: inset 0 0 30px 10px rgba(60, 24, 8, .42), inset 0 0 0 1px rgba(255, 230, 190, .5),
-              0 0 44px rgba(255, 146, 58, .4); }
 
 /* 主题换档：整屏快照交给 View Transitions，新旧两张都不做默认交叉淡入，
    只让"新画面"从一个圆里扩出去（圆心＝右上角那颗球）。 */
@@ -1069,39 +1118,35 @@ html[data-theme="light"] .hero .neb .c4 { display: none; }
   to { transform: translate3d(-9%, 4%, 0); }        /* 26s 里挪出约 1/3 云宽，看得出在飘 */
 }
 
-/* ② 星点 → 金色叶子。
-   方向：**水平向左**飞（用户原话"往左飘"）——星点是斜着往上飘的（-16,-30），
-   落叶不能跟着那个斜率走，不然看着像往上飘；这里是 -190,-34，横向为主、略微上扬。
-   叶子朝向按用户要求顺时针转过 90°（-73° → 17°），长轴因此接近水平，正好顺着飞行方向。
-   旋转写在 transform 列表里（translate 在前、rotate 在后）：用独立 rotate 属性会把
-   移动方向也一起转歪。 */
-html[data-theme="light"] .hero .neb .mote { width: 11px; height: 7px;
-  border-radius: 62% 0 62% 0; background: #d49a2a; }
-html[data-theme="light"] .hero .neb .mote.warm { background: #e0ad3c; }
-/* 行内 style 写着每片自己的周期（18~29s），CSS 要 !important 才压得住：
-   落叶改成 9~15s，并让位移拉长到 120px——它得真的飞过去，不能原地淡掉。 */
-html[data-theme="light"] .hero .neb .mote { animation-name: leaf-drift;
-  animation-duration: 12s !important; }
+/* 阵风跨过整条页眉。叶片从裁切区外入场，中段加速并轻微翻卷。 */
+.wind-leaf { display: none; }
+html[data-theme="light"] .hero .neb .mote,
 html[data-theme="light"] .hero .neb .shoot { display: none; }
-/* 与 mote-drift 完全同一条轨迹与节奏，只有不透明度提上来（叶子比小点要看得见）。
-   旋转写在 transform 列表里（translate 在前、rotate 在后）：轨迹方向不受旋转影响，
-   叶尖却转到了行进方向上。用独立的 rotate 属性不行——它会先于 transform 生效，
-   连移动方向一起转歪。 */
-@keyframes leaf-drift {
-  0% { opacity: 0; transform: translate3d(0, 10px, 0) rotate(17deg); }
-  12% { opacity: .85; }
-  72% { opacity: .78; }
-  100% { opacity: 0; transform: translate3d(-190px, -34px, 0) rotate(17deg); }
+html[data-theme="light"] .hero .neb .wind-leaf {
+  display: block; position: absolute; left: calc(100% + 18px); top: var(--leaf-top);
+  width: var(--leaf-width); height: var(--leaf-height); border-radius: var(--leaf-shape);
+  background: #d49a2a; opacity: .83;
+  animation: leaf-drift var(--leaf-time) linear calc(var(--leaf-time) * var(--leaf-phase) * -1) infinite;
 }
+html[data-theme="light"] .hero .neb .wind-leaf:nth-of-type(3n) { background-color: #bd8427; }
+@keyframes leaf-drift {
+  0% { transform: translate3d(0, 0, 0) rotate(var(--leaf-angle)); }
+  30% { transform: translate3d(calc(-.24 * var(--leaf-travel)), var(--leaf-bend), 0) rotate(var(--leaf-turn)) scaleY(.64); }
+  64% { transform: translate3d(calc(-.69 * var(--leaf-travel)), calc(-.65 * var(--leaf-bend)), 0) rotate(var(--leaf-angle)); }
+  100% { transform: translate3d(calc(-1 * var(--leaf-travel)), var(--leaf-bend), 0) rotate(var(--leaf-turn)); }
+}
+html[data-sky="paused"] .hero .neb .wind-leaf { animation-play-state: paused; }
 
 /* ③ 主题球：月亮 → 带三角瓣的太阳 */
 html[data-theme="light"] .hero-planet { overflow: visible; background: none; box-shadow: none;
   filter: none; }
 html[data-theme="light"] .hero-planet .pl-shade { display: none; }
+html[data-theme="light"] .sp-day::before,
 html[data-theme="light"] .hero-planet::before { content: ""; position: absolute; inset: 13%;
   border-radius: 50%;
   background: radial-gradient(circle at 38% 30%, var(--g200) 0%, #f4b340 56%, #d6891a 100%);
   box-shadow: 0 0 30px rgba(244, 179, 64, .55); }
+html[data-theme="light"] .sp-day::after,
 html[data-theme="light"] .hero-planet::after { content: ""; position: absolute; inset: -2%;
   /* 十二根三角瓣：用 path() 画 12 条独立子路径（polygon() 只会连成一个实心星形）。
      根部半径 63px：盘面边缘在 55px，中间留 8px 空隙——光芒不许伸进太阳里。 */
@@ -1194,73 +1239,21 @@ html[data-theme="light"] .savebtn .sv-flash::before { content: ""; position: abs
 html[data-theme="light"] .savebtn.saving .sv-flash { animation-name: sv-bloom; }
 html[data-theme="light"] .savebtn.saving .sv-ball { animation: none; }
 
-/* ⑧ 左下角：暗星球 → 风滚草。
-   一团缠起来的干草：七道粗细不一、方向各异的弧（每道只露半圈，所以是"茎"不是"环"），
-   外缘再支棱出一圈草梢；整团缓慢自转，像在风里滚。
-   不再用实心色块当草坡——那是"山"，不是"草团"。 */
-html[data-theme="light"] .set-orb { background: none; filter: none;
-  /* 草团要比"星球"整个露出来：球心从窗口底边下 40px 抬到下 42px，
-     圆心落在窗口内，一整团才看得见（原来只剩顶上薄薄一层）。 */
-  bottom: -58px;
-  box-shadow: 0 0 30px rgba(214, 154, 42, .22);
-  animation: tumble-roll 52s linear infinite; }
-html[data-theme="light"] .set-orb .pl-shade { background:
-  radial-gradient(circle at 50% 50%, rgba(226, 168, 60, .16) 0 40%, rgba(226, 168, 60, 0) 72%); }
-/* 草茎：一圈圈**断口交错**的细弦（每圈的缺口角度由 --a 决定，彼此对不齐 → 才像缠在一起，
-   同心整圈的话就成了一个铁丝球）。外加一点椭圆，免得全是正圆。 */
-html[data-theme="light"] .set-orb b { position: absolute; left: 50%; top: 50%;
-  width: var(--w, 180px); height: var(--w, 180px); margin-left: calc(var(--w, 180px) / -2);
-  margin-top: calc(var(--w, 180px) / -2); border-radius: 50%;
-  background: conic-gradient(from var(--a, 0deg),
-    rgba(212, 152, 44, var(--o, .42)) 0 38deg, transparent 38deg 116deg,
-    rgba(212, 152, 44, calc(var(--o, .42) * .72)) 116deg 152deg, transparent 152deg 238deg,
-    rgba(212, 152, 44, var(--o, .42)) 238deg 284deg, transparent 284deg 360deg);
-  mask: radial-gradient(circle closest-side, transparent 0 46%, #000 48% 52%, transparent 54%);
-  -webkit-mask: radial-gradient(circle closest-side, transparent 0 46%, #000 48% 52%, transparent 54%);
-  transform: rotate(calc(var(--a, 0deg) * 1.7)) scaleY(.88);
-  pointer-events: none; }
-@keyframes tumble-roll { from { rotate: 0deg; } to { rotate: 360deg; } }
-/* 草：一把真正随机的小草（角度/半径/高矮/粗细逐片给，见 HTML 里的行内变量）。
-   之前用 repeating-conic 梳出来的"草"整齐得不像草——梳子再怎么错开也是梳子。 */
-html[data-theme="light"] .set-orb { overflow: visible; }
-html[data-theme="light"] .set-orb i { position: absolute; left: 50%; top: 50%;
-  width: var(--w, 2.4px); height: var(--h, 12px);
-  margin-left: calc(var(--w, 2.4px) / -2);
-  /* 关键三步：① 元素底边落在圆心（margin-top 拉上去）→ 旋转原点正好是圆心；
-     ② translateY(-r) 把它抬到半径 r；③ rotate(a) 转到该有的方位角。
-     这样草的根在坡顶、尖朝坡外（r → r+h）。少了①就长进坡里。 */
-  margin-top: calc(var(--h, 12px) * -1);
-  transform-origin: 50% 100%;
-  transform: rotate(var(--a, 270deg)) translateY(calc(-1 * var(--r, 100px)));
-  border-radius: 34% 34% 72% 72% / 96% 96% 22% 22%;
-  background: linear-gradient(to top, rgba(150, 98, 16, .40), rgba(255, 228, 160, .92));
-  pointer-events: none; }
-.side-grove { position: absolute; left: 0; right: 0; bottom: 0; height: 250px;
-  display: none; pointer-events: none; z-index: 0; }
-html[data-theme="light"] .side-grove { display: block; }
-/* 树：树冠（三团叠起来的叶子）＋树干（竖条）＋树枝（两条斜线）。
-   整棵树要坐在草坡的轮廓之上，否则树干会被坡挡住、只剩一团灰绿——之前就是这个毛病。 */
-.side-grove i { position: absolute; bottom: 46px;
-  border-radius: 52% 48% 44% 56% / 66% 62% 38% 34%;
-  /* 下绿上不变：从底往上渐渐淡成原来的灰绿 */
-  background: linear-gradient(to bottom,
-    rgba(96, 106, 58, .11) 0 44%, rgba(126, 168, 68, .24) 100%);
-  box-shadow: -9px 7px 0 -2px rgba(96, 106, 58, .09), 10px 5px 0 -3px rgba(96, 106, 58, .10); }
-.side-grove i::before { content: ""; position: absolute; left: 50%; bottom: -22px;
-  width: 2.5px; height: 26px; margin-left: -1.25px; border-radius: 2px;
-  background: linear-gradient(to bottom, rgba(111, 74, 15, .22), rgba(126, 168, 68, .30)); }
-/* 树枝：从树干顶端分叉成两条，斜着往上。
-   盒子底边要正好落在树干顶端（bottom:4px），否则两条枝会在树下方交叉成"×"。 */
-/* 树枝：从树干顶端往上分叉的两根细枝。
-   用 conic-gradient 从底端中心画两个窄扇形（±8°~16°），这样它们只往上长、不会在树下方交叉成"×"。 */
-.side-grove i::after { content: ""; position: absolute; left: 50%; bottom: 3px; width: 24px; height: 16px;
-  margin-left: -12px;
-  background: conic-gradient(from 180deg at 50% 100%,
-    transparent 0 6deg, rgba(111, 74, 15, .34) 6deg 18deg,
-    transparent 18deg 342deg, rgba(111, 74, 15, .30) 342deg 354deg, transparent 354deg 360deg); }
-.side-grove .t1 { left: 8%; width: 44px; height: 46px; }
-.side-grove .t2 { left: 36%; width: 32px; height: 30px; opacity: .8; }
-.side-grove .t3 { right: 8%; width: 38px; height: 36px; opacity: .88; }
+/* 纸色侧栏：静止的林线铺满底边，设置按钮上的干枝团独立滚动。 */
+.side-grove, .tumbleweed { display: none; pointer-events: none; }
+html[data-theme="light"] .side-grove {
+  display: block; position: absolute; inset: auto 0 0; width: 100%; height: 134px; z-index: 0;
+}
+html[data-theme="light"] .set-orb {
+  /* 两档共用设置按钮的位置和尺寸，窗口底边裁出同一段轮廓。 */
+  background: transparent; box-shadow: none; filter: none; animation: none;
+}
+html[data-theme="light"] .set-orb .pl-shade { display: none; }
+html[data-theme="light"] .set-orb:focus-visible { outline-offset: 0; }
+html[data-theme="light"] .tumbleweed {
+  display: block; width: 100%; height: 100%; animation: tumble-roll 58s linear infinite;
+}
+@keyframes tumble-roll { to { transform: rotate(1turn); } }
 html[data-theme="light"] .wx-orb { color: #4a7a34; filter: drop-shadow(0 0 8px rgba(74, 122, 52, .3)); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1269,7 +1262,8 @@ html[data-theme="light"] .wx-orb { color: #4a7a34; filter: drop-shadow(0 0 8px r
   #body.enter { animation: none; }
   #body.rise { animation: none; }
   #body.enter .stagger > * { animation: none; }
-  .hero .neb .cloud, .hero .neb .mote, .hero .neb .shoot { animation: none; }
+  .hero .neb .cloud, .hero .neb .mote, .hero .neb .shoot,
+  html[data-theme="light"] .hero .neb .wind-leaf { animation: none; }
   .hero .neb canvas { opacity: .42; }
   .ovl, .ovl .box, .menu { animation: none; }
   .psb-core i { animation: none; }
@@ -1281,6 +1275,7 @@ html[data-theme="light"] .wx-orb { color: #4a7a34; filter: drop-shadow(0 0 8px r
   .frow:hover::after, .addr:hover::after, .kv:hover::after, .listrow:hover::after { animation: none; }
   .frow:hover, .addr:hover, .kv:hover, .listrow:hover { animation: none; }
   .planet, .sp-hero, .set-orb { animation: none; }
+  html[data-theme="light"] .tumbleweed { animation: none; }
   .side-sky i, .wx-orb { animation: none; }
   .side-sky i { opacity: .55; }
   .savebtn.saving .sv-plane, .savebtn.saving .sv-dust i, .savebtn.saving .sv-orb,

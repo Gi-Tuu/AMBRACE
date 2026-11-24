@@ -19,10 +19,7 @@ from app.domain.emotion.ports import CareCharacterView, CareTaskView
 from app.models.agent import EmotionCareTask
 from app.models.chat import ChatMessage
 from app.models.character import AICharacter, ProactiveMessageLog
-
-
-def _now_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from app.utils.timeutil import now_naive_utc as _now_naive
 
 
 def _task_view(task) -> CareTaskView:

@@ -7,9 +7,14 @@
 重建即因此静默丢失 31 个索引；``d0a1b2c3d4e5`` 重建 3 张表后手列补回，又漏了
 ``group_memories.created_at``。
 
-约定（迁移规范）：**凡 ``batch_alter_table(..., recreate="always", copy_from=...)``，
+约定一（索引）：**凡 ``batch_alter_table(..., recreate="always", copy_from=...)``，
 upgrade 末尾必须调用 ``ensure_indexes(op, Base.metadata)``**。已落库的 c9d0/d0a 不回改，由
 ``e1b2c3d4e5f6`` 补索引迁移一次性补齐；从此刻起新迁移遵守本约定。
+
+约定二（copy_from，2026-11-23）：凡 ``copy_from=...`` **必须**用
+``orm_copy_intersecting(bind, Base.metadata, 表名)`` 构造副本，禁止直接传
+``Base.metadata.tables[表名]``——链尾迁移新增的列会让「从空库整链重放」在链中段
+``no such column`` 失败（2026-11-22 ``chat_group_messages.file_url`` 事故）。
 """
 from __future__ import annotations
 
@@ -56,3 +61,43 @@ def ensure_indexes(op, base_metadata) -> list[str]:
             )
             created.append(f"{tname}.{idx.name}")
     return created
+
+
+def orm_copy_intersecting(bind, base_metadata, table_name: str):
+    """构造 ``batch_alter_table(copy_from=...)`` 用的表副本：只保留「该链点 DB 表已存在」的列。
+
+    背景（2026-11-23 整链重放事故）：``copy_from=Base.metadata.tables[t]`` 取的是**当前**
+    ORM 元数据；从空库整链重放走到链中段的该迁移时，DB 表还没有链尾迁移才添加的列，
+    alembic 生成的 ``INSERT INTO _alembic_tmp_x (…, 新列) SELECT …, x.新列 FROM x``
+    会直接 ``no such column`` 失败（2026-11-22 的 ``chat_group_messages.file_url`` 即此）。
+
+    - 列：按 DB 实际列集过滤；列上的外键 / server_default / 主键标记随列保留；
+    - 表级约束（组合 FK / UNIQUE / CHECK）：仅当涉及列全部存在时保留；
+    - 索引：同上（列不齐的索引交由后续迁移创建，本次不建）。
+
+    对「已升级到该迁移之后」的存量库无行为变化——未来列此时并不存在于 DB，
+    过滤结果就是该链点的全列集，重建语义与原先一致。
+    """
+    model_table = base_metadata.tables[table_name]
+    existing = {c["name"] for c in sa.inspect(bind).get_columns(table_name)}
+    src = model_table.to_metadata(sa.MetaData())
+    new_t = sa.Table(src.name, sa.MetaData(), **src.kwargs)
+    for col in src.columns:
+        if col.name in existing:
+            new_t.append_column(col._copy())
+    for const in src.constraints:
+        if not {c.name for c in const.columns} <= existing:
+            continue
+        if isinstance(const, sa.ForeignKeyConstraint):
+            new_t.append_constraint(const._copy(target_table=new_t))
+        elif not getattr(const, "_column_flag", False):
+            new_t.append_constraint(const._copy(target_table=new_t))
+    for idx in src.indexes:
+        if {c.name for c in idx.columns} <= existing:
+            sa.Index(
+                idx.name,
+                *[new_t.c[c.name] for c in idx.columns],
+                unique=idx.unique,
+                **idx.kwargs,
+            )
+    return new_t

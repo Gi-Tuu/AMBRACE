@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
     emojis_router,
-    character_router, chat_router, memory_router, memory_why_router, system_router,
+    character_router, chat_router, memory_router, system_router,
     admin_router,
     scheduler_router, proactive_router, diary_router, moments_router, uploads_router, relationships_router,
     pets_router,
@@ -428,7 +428,9 @@ get_logger("app").info("PWA static entry: %s", _pwa_static_detail)
 
 # 注册路由（单一清单循环注册；顺序即路由匹配优先级，调整前须确认无前缀遮蔽）
 ROUTERS = [
-    character_router, chat_router, memory_router, memory_why_router, system_router, admin_router,
+    # 2026-11-23：memory_why / memory_lifecycle 的路由都挂在 memory_router 上（模块导入即注册），
+    # 这里只注册一次；此前把 memory_why_router（同一对象）再列一遍，18 条路由被重复注册。
+    character_router, chat_router, memory_router, system_router, admin_router,
     scheduler_router, proactive_router, diary_router, moments_router, uploads_router,
     auth_router, relationships_router, pets_router, phone_router, timeline_router,
     images_router, user_states_router, user_content_router, ai_chats_router, emojis_router,

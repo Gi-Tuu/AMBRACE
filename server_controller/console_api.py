@@ -767,6 +767,26 @@ SETTINGS_WD = (15, 3600)
 SETTINGS_RF = (5, 600)
 
 
+@_envelope
+def open_pwa():
+    """在系统浏览器打开后端自带的网页版（/pwa/）。
+
+    不能沿用页面里的 ``window.open('/pwa/')``：控制台页面自身的 origin 是 pywebview
+    的本地页，相对路径会落在控制台这边（404），永远到不了后端的 8000。
+    这里与控制台「渠道登录」同一口径：按当前目标（本机/远程）拼出后端绝对 URL。
+    """
+    import webbrowser
+    host = str(getattr(sc, "TARGET_HOST", "") or "") or "127.0.0.1"
+    try:
+        port = int(getattr(sc, "TARGET_PORT", 8000) or 8000)
+    except (TypeError, ValueError):
+        port = 8000
+    url = "http://%s:%d/pwa/" % (host, port)
+    ok = webbrowser.open(url)
+    return {"url": url,
+            "msg": "已在浏览器打开网页版" if ok else "浏览器没打开，请手动访问 " + url}
+
+
 def _read_server_config():
     try:
         with open(sc.CONFIG, encoding="utf-8") as f:
@@ -1338,7 +1358,7 @@ LOCAL = ("session", "login", "logout", "server_state", "log_tail", "dashboard",
          "add_device_target", "remove_device_target", "add_device_plugin",
          "remove_device_plugin", "server_control",
          "server_page", "probe_addresses", "set_target", "reset_target", "set_server_limit",
-         "server_settings", "save_server_settings", "open_channel_login",
+         "server_settings", "save_server_settings", "open_channel_login", "open_pwa",
          "log_page", "write_log_export", "open_log_file", "ping",
          "models_page", "flags_page", "audit_page",
          "accounts_page", "account_menu", "delete_preview", "confirm_gate",

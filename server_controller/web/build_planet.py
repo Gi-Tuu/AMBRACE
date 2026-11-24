@@ -1,6 +1,6 @@
 """仿真星球表面纹理生成器（可重跑）。
 
-产出 planet_moon.png / planet_sun.png：512x512、以 512px 为周期可水平无缝平铺的
+产出 planet_moon.png / planet_sun.png：2048x1024、以 2048px 为周期可水平无缝平铺的
 等距圆柱投影纹理。页面用 background-position-x 平移来做**自转**，球面光照、明暗界线、
 大气辉光由 CSS 叠加，所以纹理转而光不转（物理上正确），不是拿 CSS 画一个圆。
 
@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFilter
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_MOON = os.path.join(HERE, "planet_moon.png")
 OUT_SUN = os.path.join(HERE, "planet_sun.png")
-W = H = 512
+W, H = 2048, 1024
 random.seed(20261107)
 
 
@@ -29,7 +29,7 @@ def noise(scale, blur):
     # 左右各补一列首像素，保证 resize 后左右边界连续
     tiled = Image.new("L", (n + 1, small.height))
     tiled.paste(small, (0, 0))
-    tiled.putpixel((n, 0), small.getpixel((0, 0)))
+    tiled.paste(small.crop((0, 0, 1, small.height)), (n, 0))
     return tiled.resize((W, H), Image.BICUBIC).filter(ImageFilter.GaussianBlur(blur))
 
 
@@ -49,7 +49,7 @@ def compose(base, layers):
 
 
 def seamless(img):
-    """左右各 40px 向内线性融合到平均值，使 x=0 与 x=511 完全相等 —— 平铺自转无接缝。"""
+    """左右各 40px 向内线性融合到平均值，使 x=0 与 x=W-1 完全相等 —— 平铺自转无接缝。"""
     p = img.load()
     band = 40
     for y in range(H):
@@ -81,11 +81,11 @@ def blotches(img, mask, threshold, dark, amount):
 
 
 def moon():
-    big = noise(64, 12)
+    big = noise(200, 24)
     img = compose((150, 146, 138), [
         (big, 40, (1, 1, 1)),
-        (noise(19, 5), 24, (1, 1, 1)),
-        (noise(6, 1.6), 13, (1, 1, 1)),
+        (noise(48, 6), 24, (1, 1, 1)),
+        (noise(9, 1.4), 13, (1, 1, 1)),
     ])
     # 月海：大尺度噪声高值压暗成不规则玄武岩平原
     blotches(img, big, 138, (86, 84, 80), 0.55)
@@ -96,10 +96,10 @@ def moon():
 
 
 def sun():
-    turb = noise(30, 6)
+    turb = noise(96, 14)
     img = compose((238, 130, 50), [
         (turb, 62, (1.0, 0.96, 0.52)),
-        (noise(11, 2.6), 44, (1.0, 0.9, 0.45)),
+        (noise(27, 4), 44, (1.0, 0.9, 0.45)),
         (noise(3.5, 1.0), 27, (1.0, 0.86, 0.4)),
     ])
     # 黑子：中尺度噪声低值；亮斑：高值，都是不规则形状

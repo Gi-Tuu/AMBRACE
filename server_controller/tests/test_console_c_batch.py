@@ -316,6 +316,53 @@ def test_gate_channel_login_entry_is_the_sidebar_satellite(tmp_path):
     assert got.get("calls") == ["open_channel_login"], "点卫星没打开扫码页：%s" % got
 
 
+# ───── PWA 入口：必须走后端绝对地址，不能相对 window.open ─────
+def test_gate_open_pwa_uses_backend_target(monkeypatch):
+    """控制台页面 origin 不是 8000：入口必须由 Python 侧拼 http://host:port/pwa/。"""
+    import console_api as ca
+    import console_core as sc
+
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda u: opened.append(u) or True)
+    monkeypatch.setattr(sc, "TARGET_HOST", "127.0.0.1")
+    monkeypatch.setattr(sc, "TARGET_PORT", 8000)
+    r = ca.call("open_pwa")
+    assert r["ok"], r
+    assert opened == ["http://127.0.0.1:8000/pwa/"], opened
+
+    # 远程目标同样按目标主机拼，不写死本机
+    monkeypatch.setattr(sc, "TARGET_HOST", "10.0.0.9")
+    monkeypatch.setattr(sc, "TARGET_PORT", 8001)
+    opened.clear()
+    r2 = ca.call("open_pwa")
+    assert r2["ok"], r2
+    assert opened == ["http://10.0.0.9:8001/pwa/"], opened
+
+
+@has_chrome
+def test_gate_pwa_entry_calls_backend_action(tmp_path):
+    """PWA 入口必须走 open_pwa（Python 拼后端绝对地址），不能再 window.open('/pwa/')。"""
+    got = _run(tmp_path, "pwa", "dashboard", """
+      const btn = document.querySelector('.side [data-act=\"open-pwa\"]')
+               || document.querySelector('[data-act=\"open-pwa\"]');
+      out.hasOrb = !!btn;
+      const calls = [], popups = [];
+      window.open = function (u) { popups.push(u); return null; };
+      const orig = window.api;
+      window.api = function (n) { calls.push(n); return orig.apply(null, arguments); };
+      if (btn) { btn.click(); await new Promise(r => setTimeout(r, 200)); }
+      out.calls = calls.filter(c => c === 'open_pwa');
+      out.popups = popups;
+      out.status = (document.getElementById('statusMsg') || {}).textContent || '';
+    """, {"dashboard": {"ok": True, "data": _dash()},
+          "open_pwa": {"ok": True, "data": {"msg": "已在浏览器打开网页版",
+                                             "url": "http://127.0.0.1:8000/pwa/"}}})
+    assert got.get("hasOrb"), "左下角没有 PWA 入口：%s" % got
+    assert got.get("calls") == ["open_pwa"], "点入口没走后端动作：%s" % got
+    assert got.get("popups") == [], "还在用相对 window.open，会落在控制台自己的 origin：%s" % got
+    assert "网页版" in (got.get("status") or ""), "点完没有任何提示：%s" % got
+
+
 # ───── C6 错误码分流 ─────
 @has_chrome
 def test_gate_error_codes_are_told_apart(tmp_path):

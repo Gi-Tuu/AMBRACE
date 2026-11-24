@@ -164,3 +164,98 @@ class ReaderLifeArtifact {
         createdAt: _str(j['created_at']),
       );
 }
+
+/// AI 生活兴趣（Phase 3）：level 越高越热爱，按等级降序返回。
+class ReaderLifeInterest {
+  const ReaderLifeInterest({
+    required this.id,
+    required this.name,
+    required this.level,
+    required this.status,
+    required this.source,
+    required this.lastEngagedAt,
+  });
+
+  final int id;
+  final String name;
+  final int level;
+  final String status;
+  final String source;
+  final String? lastEngagedAt;
+
+  factory ReaderLifeInterest.fromJson(Map<String, dynamic> j) =>
+      ReaderLifeInterest(
+        id: _int(j['id']),
+        name: _str(j['name']),
+        level: _int(j['level']),
+        status: _str(j['status']),
+        source: _str(j['source']),
+        lastEngagedAt: j['last_engaged_at'] as String?,
+      );
+}
+
+/// AI 生活目标（Phase 3）：progress / progressTotal 用于进度条（0 表示无进度）。
+class ReaderLifeGoal {
+  const ReaderLifeGoal({
+    required this.id,
+    required this.type,
+    required this.title,
+    required this.description,
+    required this.priority,
+    required this.progress,
+    required this.progressTotal,
+    required this.status,
+    required this.relatedUser,
+  });
+
+  final int id;
+  final String type;
+  final String title;
+  final String description;
+  final int priority;
+  final int progress;
+  final int progressTotal;
+  final String status;
+  final bool relatedUser;
+
+  factory ReaderLifeGoal.fromJson(Map<String, dynamic> j) => ReaderLifeGoal(
+        id: _int(j['id']),
+        type: _str(j['type']),
+        title: _str(j['title']),
+        description: _str(j['description']),
+        priority: _int(j['priority']),
+        progress: _int(j['progress']),
+        progressTotal: _int(j['progress_total']),
+        status: _str(j['status']),
+        relatedUser: j['related_user'] == true,
+      );
+}
+
+/// AI 真实浏览记录（Phase B）：browse/learn 活动的网页记录（URL / 标题 / 时长）。
+class ReaderLifeBrowsing {
+  const ReaderLifeBrowsing({
+    required this.id,
+    required this.title,
+    required this.url,
+    required this.durationSec,
+    required this.activityType,
+    required this.createdAt,
+  });
+
+  final int id;
+  final String title;
+  final String url;
+  final int durationSec;
+  final String activityType;
+  final String createdAt;
+
+  factory ReaderLifeBrowsing.fromJson(Map<String, dynamic> j) =>
+      ReaderLifeBrowsing(
+        id: _int(j['id']),
+        title: _str(j['title']),
+        url: _str(j['url']),
+        durationSec: _int(j['duration_sec']),
+        activityType: _str(j['activity_type']),
+        createdAt: _str(j['created_at']),
+      );
+}

@@ -275,55 +275,6 @@ def _write_provenance(*, source, sub_type, memory_type, actor, source_id,
         return None
 
 
-def _merge_receipt_detail(kind, target, *, source, sub_type, memory_type, source_id,
-                          speaker_type, epistemic_status, derived_from_ids, node_type,
-                          content, extra: dict | None = None) -> dict:
-    """并入（merge）回执的补记（批 0-8）。
-
-    旧回执只带 ``kind`` / ``sim``：看不出「并进来的是哪句话、由谁经哪条路写的、并进了哪一条」——
-    并入是新内容**唯一**的留痕现场（不产生新行，落库后那句话就消失了）。这里补三段，既有键一字不动：
-    ``incoming``＝未落库那句话的写法参数；``into``＝被并到的旧行的来源三列（跨来源并条的证据面）；
-    ``provenance``＝那句话自己的来源链条（``stored`` 即 incoming，因为本路没有新行可存）。
-    """
-    _det = {"kind": kind}
-    if extra:
-        _det.update(extra)
-    _det["incoming"] = {
-        "content_excerpt": (content or "")[:60],
-        "memory_type": memory_type,
-        "source": source,
-        "sub_type": sub_type,
-        "speaker_type": speaker_type,
-        "epistemic_status": epistemic_status,
-    }
-    if target is not None:
-        _det["into"] = {
-            "memory_id": target.id,
-            "source": target.source,
-            "sub_type": target.sub_type,
-            "memory_type": target.memory_type,
-        }
-    _prov = _write_provenance(
-        source=source, sub_type=sub_type, memory_type=memory_type,
-        actor=speaker_type, source_id=source_id, epistemic_status=epistemic_status,
-        derived_from_ids=derived_from_ids, node_type=node_type,
-    )
-    if _prov:
-        _det["provenance"] = _prov
-    # ── P0 语义统一·第 1 步 影子埋点②（同一把闸，默认关＝零行为）──
-    # 并入是新内容唯一的消失现场：留痕比对「进来那句按统一语义该归为谁」vs「被并进去那行现在记的是谁」。
-    # 位置刻意排在 _det 组装完成之后：回执的既有键与取值一字不动，也不新增 DB 调用（只读已加载的列）。
-    try:
-        from app.flags.agent_flags import AGENT_FLAGS
-        if AGENT_FLAGS.get("actor_semantics_shadow", False):
-            from app.memory.actor_shadow import trace_actor_merge
-            trace_actor_merge(target=target, source=source, speaker_type=speaker_type,
-                              source_id=source_id, content=content)
-    except Exception:
-        pass
-    return _det
-
-
 # ── M4 写入准入闸门（flag `memory_admission_gate`，注册默认 True（2026-11-14 起常驻）；开=确定性裁决，不新增 LLM）──
 # 注意：本 flag 未登记进 AGENT_FLAGS 硬编码默认表（app/flags/agent_flags.py；本批文件隔离只允许
 # 改 write.py / events/facts.py），故运行时 flag_service 无法热切它；读取一律走

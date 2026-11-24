@@ -12,7 +12,6 @@ import json
 import os
 import shutil
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -29,6 +28,7 @@ from app.plugins import registry
 from app.plugins.manifest import load_manifest
 from app.plugins.zip_safety import validate_zip_bytes, extract_zip_bytes, ZipSafetyError
 from app.utils.logger import get_logger
+from app.utils.net_guard import build_no_redirect_opener
 
 _logger = get_logger("api.marketplace")
 
@@ -278,11 +278,8 @@ def _load_remote_items() -> list[dict]:
 def _fetch_bytes(url: str, timeout: float, max_bytes: int) -> bytes:
     """同步 urllib 下载（在 to_thread 中调用）"""
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
-    # P1 安全加固（2026-08-16）：禁用重定向，防重定向绕过域名白名单
-    class _NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, *a, **kw):
-            raise urllib.error.HTTPError(url, 302, "redirect blocked", {}, None)
-    opener = urllib.request.build_opener(_NoRedirect)
+    # P1 安全加固（2026-08-16）：禁用重定向，防重定向绕过域名白名单（实现见 utils.net_guard）
+    opener = build_no_redirect_opener(url)
     with opener.open(req, timeout=timeout) as resp:
         data = resp.read(max_bytes + 1)
     if len(data) > max_bytes:

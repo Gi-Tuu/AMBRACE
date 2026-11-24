@@ -10,6 +10,8 @@ import 'l10n/editor_strings.dart';
 import 'l10n/attachment_strings.dart';
 import 'features/chat/archive_view.dart';
 import 'theme/pwa_skins.dart';
+import 'theme/pwa_backdrop.dart';
+import 'theme/pwa_motion.dart';
 import 'features/chat/session_strip.dart';
 import 'features/chat/voice_recorder.dart';
 import 'features/chat/tts_player.dart';
@@ -1295,35 +1297,61 @@ class _WorkspacePageState extends State<WorkspacePage> {
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 900;
-    return Scaffold(
-      key: _scaffoldKey,
-      appBar: AppBar(
-        title: Text(s.t('appTitle'), maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 15)),
-        actions: [
-          IconButton(
-            tooltip: 'Theme',
-            onPressed: () => appTheme.value = appTheme.value == ThemeMode.dark
-                ? ThemeMode.light
-                : ThemeMode.dark,
-            icon: Icon(appTheme.value == ThemeMode.dark
-                ? Icons.light_mode_outlined
-                : Icons.dark_mode_outlined),
-          ),
-          TextButton(
-            onPressed: () => appLang.value = widget.lang == 'zh' ? 'en' : 'zh',
-            child: Text(widget.lang == 'zh' ? 'EN' : '中文'),
-          ),
-          if (_token != null)
-            TextButton(onPressed: _logout, child: Text(s.t('logout'))),
-        ],
+    // 皮肤装饰层垫在 Scaffold 之下（Scaffold 透明），换肤/换主题时渐变平滑过渡。
+    return PwaBackdrop(
+      skinId: appSkin.value,
+      child: Scaffold(
+        key: _scaffoldKey,
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          title: Text(s.t('appTitle'), maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 15)),
+          actions: [
+            IconButton(
+              tooltip: 'Theme',
+              onPressed: () => appTheme.value = appTheme.value == ThemeMode.dark
+                  ? ThemeMode.light
+                  : ThemeMode.dark,
+              icon: Icon(appTheme.value == ThemeMode.dark
+                  ? Icons.light_mode_outlined
+                  : Icons.dark_mode_outlined),
+            ),
+            TextButton(
+              onPressed: () => appLang.value = widget.lang == 'zh' ? 'en' : 'zh',
+              child: Text(widget.lang == 'zh' ? 'EN' : '中文'),
+            ),
+            if (_token != null)
+              TextButton(onPressed: _logout, child: Text(s.t('logout'))),
+          ],
+        ),
+        body: _token == null
+            ? _loginPane()
+            : (wide ? _wideShell() : _sectionBody()),
+        drawer: (!wide && _token != null) ? _sectionDrawer() : null,
+        bottomNavigationBar: (!wide && _token != null) ? _mobileNav() : null,
       ),
-      body: _token == null
-          ? _loginPane()
-          : (wide ? _wideShell() : _sectionBody()),
-      drawer: (!wide && _token != null) ? _sectionDrawer() : null,
-      bottomNavigationBar: (!wide && _token != null) ? _mobileNav() : null,
+    );
+  }
+
+  /// 模块切换的入场动效：淡入＋轻微上移；系统「减少动态效果」时 Flutter 会把
+  /// 动画时长归零（AnimatedSwitcher 自动跳过），无需另加判断。
+  Widget _animatedPane(Widget pane, String sig) {
+    return AnimatedSwitcher(
+      duration: PwaMotion.normal,
+      switchInCurve: PwaMotion.emphasized,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (child, anim) {
+        final slide =
+            Tween<Offset>(begin: const Offset(0, 0.012), end: Offset.zero).animate(
+          CurvedAnimation(parent: anim, curve: PwaMotion.emphasized),
+        );
+        return FadeTransition(
+          opacity: anim,
+          child: SlideTransition(position: slide, child: child),
+        );
+      },
+      child: KeyedSubtree(key: ValueKey(sig), child: pane),
     );
   }
 
@@ -1521,22 +1549,27 @@ class _WorkspacePageState extends State<WorkspacePage> {
           ? Center(child: Text(rs.t('pickCharacter')))
           : _readerPane(
               Key('${_section}_${_authGen}_${_current!.id}_$_characterRev'), _current!);
+      final animated = _animatedPane(
+          pane, '${_section}_${_authGen}_${_current?.id}_$_characterRev');
       if (wide) {
         return Row(children: [
           SizedBox(width: 268, child: _characterList()),
           const VerticalDivider(width: 1),
-          Expanded(child: pane),
+          Expanded(child: animated),
         ]);
       }
       return Column(children: [
         _characterPickerBar(),
         const Divider(height: 1),
-        Expanded(child: pane),
+        Expanded(child: animated),
       ]);
     }
     // 账号级模块（动态/备忘/个人日记）：key 含 authGen + 本人 id——
     // 身份未就绪时先只读展示，profile id 到达后重建面板、编辑入口随之启停。
-    return _readerPane(Key('${_section}_${_authGen}_${_myUserId ?? '-'}'), null);
+    return _animatedPane(
+      _readerPane(Key('${_section}_${_authGen}_${_myUserId ?? '-'}'), null),
+      '${_section}_${_authGen}_${_myUserId ?? '-'}',
+    );
   }
 
   Widget _characterPickerBar() => InkWell(

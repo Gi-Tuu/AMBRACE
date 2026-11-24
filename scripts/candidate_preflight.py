@@ -49,7 +49,7 @@ WORKSPACE = Path(__file__).resolve().parents[1]
 BACKEND = WORKSPACE / "backend"
 VERSIONS = BACKEND / "alembic" / "versions"
 
-EXPECTED_HEAD = "c6f8b0d2e4a7"
+EXPECTED_HEAD = "e9f8d7c6b5a4"
 EXPECTED_OLD_HEAD = "e2f4a6b8c0d2"
 
 # 存在性清单（绝不含编辑授权语义；见 check_git 的 EDIT_WHITELIST）
@@ -57,6 +57,7 @@ REQUIRED_FILES = [
     "backend/alembic/versions/b3d9e1f5a7c2_m2_source_proof_authority.py",
     "backend/alembic/versions/c5e7a9b1d3f6_m2_chat_source_proof.py",
     "backend/alembic/versions/c6f8b0d2e4a7_config_sentinel_no_fk.py",
+    "backend/alembic/versions/e9f8d7c6b5a4_group_message_files.py",
     "backend/app/memory/source_events.py",
     "backend/alembic/versions/b2a0c1d2e3f4_ai_characters_autoincrement.py",
     "backend/alembic/versions/c4e6f8a0b2d4_memory_evidence_write_key.py",

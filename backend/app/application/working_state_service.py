@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from app.memory import write_gate as _gate
 
 from sqlalchemy import select
@@ -22,6 +22,7 @@ from app.agent import llm_client as _llm  # M3-a：模块级导入（无循环�
 from app.memory import working_state as ws
 from app.memory.observability import obs_event
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc as _now_naive
 
 _logger = get_logger("memory.working_state")
 
@@ -33,10 +34,6 @@ _eval_locks: dict[int, asyncio.Lock] = {}
 def _lock_for(character_id: int) -> asyncio.Lock:
     return _eval_locks.setdefault(character_id, asyncio.Lock())
 _MEM_TYPES_EXCLUDED_IN_PROMPT = 8  # 展示截断
-
-
-def _now_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 async def get_latest(db, user_id: int, character_id: int):

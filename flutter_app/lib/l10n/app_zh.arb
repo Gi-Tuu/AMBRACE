@@ -1061,7 +1061,6 @@
   "noEmoji": "暂无表情",
   "noEmotionRecords": "还没有情绪记录\n多和 TA 聊聊，情绪波动会自动记录在这里",
   "noGoals": "还没有目标",
-  "noGroups": "还没有家庭群聊",
   "noInterests": "还没有兴趣记录",
   "noLifeRecords": "还没有生活记录",
   "noMemories": "暂无比记忆",
@@ -1444,13 +1443,6 @@
   "dndEndAction": "结束",
   "dndNote": "免打扰时段内，AI好友将不会推送新消息通知。\n例如: 22:00 ~ 08:00 适合夜间休息时段。",
   "dyMemoryTitle": "抖音记忆收紧",
-  "dyMemoryOnSave": "已开启：排除关系类私密记忆",
-  "dyMemoryOffSave": "已关闭：按现状筛选记忆",
-  "dyMemorySaveFailed": "保存失败：{err}",
-  "dyMemorySection": "公开记忆注入",
-  "dyMemorySwitchTitle": "收紧私密记忆",
-  "dyMemorySwitchSubtitle": "开启后，抖音图文创作与评论回复不再注入「关系类」记忆（表白/金钱等无姓名但私密的内容）",
-  "dyMemoryNote": "说明：无论开关状态，抖音都永不注入「身份画像」与含用户姓名的记忆。开启「收紧」后，关系类记忆（如表白、亲密互动、金钱往来）也会被排除，适合对外更谨慎的场景。",
   "updateAnnouncement": "更新公告",
   "noUpdates": "暂无更新记录",
   "updateNoDetail": "（无明细）",
@@ -1811,24 +1803,6 @@
   "stepPickAppTooltip": "从应用列表选择",
   "stepPickScreenTooltip": "从当前屏幕点选",
   "stepConfirmAgain": "此步需再次确认",
-  "nodePickReaderServiceError": "读屏服务未连接：App 更新后需在系统设置里重新开启「读屏（无障碍）」",
-  "nodePickReaderDisabled": "未开启读屏（无障碍），无法读取当前屏幕",
-  "nodePickTitle": "选择操作目标",
-  "nodePickOpenAppHint": "可先打开目标应用再回来点选，或直接手输目标文本",
-  "nodePickEnableScreenReader": "去开启读屏",
-  "nodePickCurrentScreen": "当前屏幕",
-  "nodePickRecentApps": "最近打开的应用",
-  "nodePickRecentAppsPkg": "最近打开的应用（{pkg}）",
-  "@nodePickRecentAppsPkg": {
-    "placeholders": {
-      "pkg": {
-        "type": "String"
-      }
-    }
-  },
-  "nodePickExternalHint": "来自最近浏览的页面，执行时会按文字在当前屏幕重新匹配",
-  "nodePickIconNoText": "图标（无文字）",
-  "nodePickIconButton": "图标按钮",
   "appPickLoadFailed": "无法读取应用列表：{err}",
   "@appPickLoadFailed": {
     "placeholders": {

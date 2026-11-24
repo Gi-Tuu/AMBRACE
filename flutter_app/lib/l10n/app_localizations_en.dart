@@ -3247,9 +3247,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get noGoals => 'No goals yet';
 
   @override
-  String get noGroups => 'No family group chats yet';
-
-  @override
   String get noInterests => 'No interests recorded yet';
 
   @override
@@ -4473,32 +4470,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get dyMemoryTitle => 'Douyin Memory Tightening';
 
   @override
-  String get dyMemoryOnSave =>
-      'Enabled: exclude relationship-type private memories';
-
-  @override
-  String get dyMemoryOffSave => 'Disabled: filter memories as-is';
-
-  @override
-  String dyMemorySaveFailed(Object err) {
-    return 'Save failed: $err';
-  }
-
-  @override
-  String get dyMemorySection => 'Public Memory Injection';
-
-  @override
-  String get dyMemorySwitchTitle => 'Tighten private memories';
-
-  @override
-  String get dyMemorySwitchSubtitle =>
-      'When enabled, Douyin posts and comment replies no longer inject relationship-type memories (confessions/money, private but unnamed)';
-
-  @override
-  String get dyMemoryNote =>
-      'Note: regardless of the switch, Douyin never injects identity profiles or memories containing your name. With tightening on, relationship-type memories (confessions, intimate interactions, money exchanges) are also excluded, suitable for more cautious public sharing.';
-
-  @override
   String get updateAnnouncement => 'Update Announcements';
 
   @override
@@ -5262,45 +5233,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stepConfirmAgain => 'This step needs confirmation again';
-
-  @override
-  String get nodePickReaderServiceError =>
-      'Screen reader service not connected: after the app update, re-enable “Screen Reader (Accessibility)” in system settings';
-
-  @override
-  String get nodePickReaderDisabled =>
-      'Screen reader (accessibility) is off; cannot read the current screen';
-
-  @override
-  String get nodePickTitle => 'Select an operation target';
-
-  @override
-  String get nodePickOpenAppHint =>
-      'You can open the target app first and come back to pick, or type the target text directly';
-
-  @override
-  String get nodePickEnableScreenReader => 'Go enable screen reader';
-
-  @override
-  String get nodePickCurrentScreen => 'Current screen';
-
-  @override
-  String get nodePickRecentApps => 'Recently opened apps';
-
-  @override
-  String nodePickRecentAppsPkg(String pkg) {
-    return 'Recently opened apps ($pkg)';
-  }
-
-  @override
-  String get nodePickExternalHint =>
-      'From recently browsed pages; re-matched by text on the current screen when executed';
-
-  @override
-  String get nodePickIconNoText => 'Icon (no text)';
-
-  @override
-  String get nodePickIconButton => 'Icon button';
 
   @override
   String appPickLoadFailed(String err) {

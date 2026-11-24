@@ -716,7 +716,23 @@ async def _build_older_summaries(state: dict, older_msgs: list, char_name: str, 
             summary = existing.scalar_one_or_none()
 
         if summary:
-            summary_lines.append(f"\u3010{day_str} \u6982\u8981\u3011{summary.summary_text}")
+            _summary_text = summary.summary_text
+            # 渐进截取（2026-11-22，flag context_progressive_history）：
+            # 1 天前＝全文；2-3 天前＝前 50%；4-7 天前＝前 20%。
+            from app.flags.agent_flags import AGENT_FLAGS as _prog_af
+            if _prog_af.get("context_progressive_history", False):
+                from datetime import date as _date_mod
+                try:
+                    _day_date = _date_mod.fromisoformat(day_str)
+                    _today_bj = datetime.now(timezone(timedelta(hours=8))).date()
+                    _age = (_today_bj - _day_date).days
+                except (ValueError, TypeError):
+                    _age = 0
+                if _age >= 4:
+                    _summary_text = _summary_text[:max(1, len(_summary_text) // 5)] + "…"
+                elif _age >= 2:
+                    _summary_text = _summary_text[:max(1, len(_summary_text) // 2)] + "…"
+            summary_lines.append(f"\u3010{day_str} \u6982\u8981\u3011{_summary_text}")
             continue
 
         day_msgs = older_days[day_str]

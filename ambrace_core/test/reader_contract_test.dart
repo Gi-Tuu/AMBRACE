@@ -69,10 +69,10 @@ void main() {
         'timezone_offset': 8,
         'avatar_url': '/static/a.png',
         'created_at': '2026-10-01T02:03:04',
+        'cognitive_loop_enabled': true, // 角色级开关（设置页消费，自 2026-11-24 进 DTO）
         // 以下内部字段必须被忽略（展示白名单之外）
         'system_prompt': 'INTERNAL',
         'user_llm_config_id': 99,
-        'cognitive_loop_enabled': true,
         'chat_style': 'x',
         'greeting_message': 'x',
         'user_id': 1,
@@ -85,6 +85,7 @@ void main() {
       expect(c.talkativeness, 3);
       expect(c.timezoneOffset, 8);
       expect(c.createdAt, '2026-10-01T02:03:04');
+      expect(c.cognitiveLoopEnabled, isTrue);
     });
 
     test('记忆：全字段 + 中文来源标签原文 + 未知 epistemic 原样保留不升格', () {
@@ -464,6 +465,140 @@ void main() {
     test('user_id 为字符串 / 浮点也按数值解析（后端兼容）', () {
       expect(ReaderMemo.fromJson({'id': 1, 'content': 'x', 'user_id': '7'}).userId, 7);
       expect(ReaderMemo.fromJson({'id': 1, 'content': 'x', 'user_id': 7.0}).userId, 7);
+    });
+  });
+
+  group('AI 生活兴趣与目标（2026-11-24 PWA 对齐 App）', () {
+    test('兴趣：字段解析 + 路径与 query 逐字核对', () async {
+      final (api, seen) = _rig((o) async => reply({
+            'items': [
+              {
+                'id': 3,
+                'name': '写小说',
+                'level': 72,
+                'status': 'active',
+                'source': 'chat',
+                'last_engaged_at': '2026-11-20T10:00:00',
+              },
+              {'id': 4, 'name': '看云', 'level': 12},
+            ],
+          }));
+      final list = await api.getLifeInterests(9);
+      expect(seen.single.path, '/api/v1/life/interests');
+      expect(seen.single.queryParameters['character_id'], 9);
+      expect(seen.single.queryParameters['limit'], 50);
+      expect(list.length, 2);
+      expect(list.first.name, '写小说');
+      expect(list.first.level, 72);
+      expect(list.first.lastEngagedAt, '2026-11-20T10:00:00');
+      // 可空字段缺失：原样为空串 / null，不编造
+      expect(list.last.status, '');
+      expect(list.last.lastEngagedAt, isNull);
+    });
+
+    test('目标：字段解析 + 进度与关联用户', () async {
+      final (api, seen) = _rig((o) async => reply({
+            'items': [
+              {
+                'id': 5,
+                'type': 'creative',
+                'title': '写完第一章',
+                'description': '每天写 500 字',
+                'priority': 3,
+                'progress': 2,
+                'progress_total': 5,
+                'status': 'active',
+                'related_user': true,
+              },
+            ],
+          }));
+      final list = await api.getLifeGoals(9);
+      expect(seen.single.path, '/api/v1/life/goals');
+      expect(seen.single.queryParameters['character_id'], 9);
+      expect(list.single.title, '写完第一章');
+      expect(list.single.progress, 2);
+      expect(list.single.progressTotal, 5);
+      expect(list.single.relatedUser, isTrue);
+    });
+
+    test('坏封套（缺 items）→ 抛 ApiException，不退化成空列表', () async {
+      final (api, _) = _rig((o) async => reply({'total': 0}));
+      await expectLater(
+          api.getLifeGoals(9),
+          throwsA(isA<ApiException>().having((e) => e.kind, 'kind', 'unknown')));
+    });
+  });
+
+  group('小家与状态（2026-11-24 第二批）', () {
+    test('浏览记录：路径/query/字段', () async {
+      final (api, seen) = _rig((o) async => reply({
+            'items': [
+              {
+                'id': 1,
+                'title': 'SYNTH_PAGE',
+                'url': 'https://example.com/a',
+                'duration_sec': 95,
+                'activity_type': 'learn',
+                'created_at': '2026-11-22T08:00:00',
+              }
+            ],
+          }));
+      final list = await api.getLifeBrowsing(9);
+      expect(seen.single.path, '/api/v1/life/browsing');
+      expect(seen.single.queryParameters['character_id'], 9);
+      expect(list.single.url, 'https://example.com/a');
+      expect(list.single.durationSec, 95);
+      expect(list.single.activityType, 'learn');
+    });
+
+    test('八维状态：GET /characters/{id}/states 原样对象', () async {
+      final (api, seen) = _rig((o) async => reply({
+            'character_id': 9,
+            'mood': 61,
+            'body_temp': 55,
+            'trust': 70,
+            'updated_at': '2026-11-22T08:00:00',
+          }));
+      final s = await api.getCharacterStates(9);
+      expect(seen.single.path, '/api/v1/characters/9/states');
+      expect(s['mood'], 61);
+      expect(s['trust'], 70);
+    });
+
+    test('布局保存：PUT /life-home/layout，必须 saved==true', () async {
+      final (api, seen) = _rig((o) async => reply({'saved': true}));
+      await api.saveLifeHomeLayout(9, [
+        {
+          'id': 'living',
+          'furniture': [
+            {'key': 'sofa', 'gx': 1.5, 'gy': 2, 'gw': 2, 'gh': 1, 'rotation': 1},
+          ],
+        }
+      ]);
+      expect(seen.single.path, '/api/v1/life-home/layout');
+      expect(seen.single.method, 'PUT');
+      expect((seen.single.data as Map)['character_id'], 9);
+      // 坏回执不退化成成功
+      final (bad, _) = _rig((o) async => reply({'saved': false}));
+      await expectLater(
+          bad.saveLifeHomeLayout(9, const []),
+          throwsA(isA<ApiException>().having((e) => e.kind, 'kind', 'unknown')));
+    });
+
+    test('小家事件：POST 带 action / pet_id', () async {
+      final (api, seen) = _rig((o) async => reply({
+            'ok': true,
+            'player': {'stamina': 80, 'mood': 60, 'hunger': 75},
+          }));
+      final data = await api.lifeHomeEvent(9, 'eat');
+      expect(seen.single.path, '/api/v1/life-home/event');
+      expect(seen.single.method, 'POST');
+      expect((seen.single.data as Map)['action'], 'eat');
+      expect((data['player'] as Map)['stamina'], 80);
+
+      final (api2, seen2) = _rig((o) async => reply({'ok': true}));
+      await api2.lifeHomeEvent(9, 'pet_feed', petId: 3);
+      expect((seen2.single.data as Map)['pet_id'], 3);
     });
   });
 }

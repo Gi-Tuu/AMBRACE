@@ -39,15 +39,19 @@ def _existing_columns() -> set[str]:
 
 def upgrade() -> None:
     existing = _existing_columns()
-    with op.batch_alter_table(_TABLE) as batch:
-        for col in _COLUMNS:
-            if col.name not in existing:
-                batch.add_column(col)
+    # SQLite ADD COLUMN 用 sa.text 连接直发（绕过 render_as_batch）：
+    # env.py 的 render_as_batch=True 会把 op.* DDL 全部降级为 batch 重建，
+    # 重建的 SELECT 引用旧表不存在的新列 → OperationalError（cascade 测试暴露）。
+    conn = op.get_bind()
+    for col in _COLUMNS:
+        if col.name not in existing:
+            _type = "INTEGER" if isinstance(col.type, sa.Integer) else f"VARCHAR({col.type.length})"
+            conn.execute(sa.text(f"ALTER TABLE {_TABLE} ADD COLUMN {col.name} {_type}"))
 
 
 def downgrade() -> None:
     existing = _existing_columns()
-    with op.batch_alter_table(_TABLE) as batch:
-        for col in reversed(_COLUMNS):
-            if col.name in existing:
-                batch.drop_column(col.name)
+    conn = op.get_bind()
+    for col in reversed(_COLUMNS):
+        if col.name in existing:
+            conn.execute(sa.text(f"ALTER TABLE {_TABLE} DROP COLUMN {col.name}"))

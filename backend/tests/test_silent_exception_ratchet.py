@@ -2,8 +2,8 @@ import ast
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1] / "app"
-BROAD_MAX = 1642
-SWALLOW_MAX = 440
+BROAD_MAX = 1640
+SWALLOW_MAX = 439
 
 
 def _counts():

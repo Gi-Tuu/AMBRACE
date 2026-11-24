@@ -5,6 +5,14 @@ import 'package:ambrace_core/ambrace_core.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/reader_strings.dart';
+import 'agent_mind_page.dart';
+import 'character_settings_page.dart';
+import 'character_world_page.dart';
+import 'char_diary_pane.dart';
+import 'memories_pane.dart';
+import 'life_pane.dart';
+import 'character_status_page.dart';
+import 'avatar_picker.dart';
 import 'timeline_page.dart';
 import 'phone_shell_page.dart';
 import '../../widgets/reader_async_view.dart';
@@ -45,6 +53,7 @@ class _ProfilePaneState extends State<ProfilePane> {
   List<ReaderLorebookEntry> _lorebook = const [];
   Map<String, dynamic>? _agentMind;
   Map<String, dynamic>? _stateHistory;
+  bool _uploadingAvatar = false;
 
   @override
   void initState() {
@@ -53,24 +62,33 @@ class _ProfilePaneState extends State<ProfilePane> {
     _loadExtras();
   }
 
+  /// 附区逐项容错（2026-11-24）：任一子请求失败只让该块为空，不连带清空其它块。
+  /// （历史 bug：lorebook/agent-mind 路径曾丢角色 id ⇒ 一个 404 把关系/世界事实/
+  ///  内心摘要/状态历史整批吞掉。）
   Future<void> _loadExtras() async {
-    try {
-      final rel = await _api.getRelationship(widget.character.id);
-      final facts = await _api.getWorldFacts(widget.character.id);
-      final lorebook = await _api.getLorebook(widget.character.id);
-      final mind = await _api.getAgentMind(widget.character.id);
-      final history = await _api.getStateHistory(widget.character.id);
-      if (!mounted) return;
-      setState(() {
-        _relationship = rel;
-        _facts = facts;
-        _lorebook = lorebook;
-        _agentMind = mind;
-        _stateHistory = history;
-      });
-    } catch (_) {
-      // 角色主资料仍可读；关系/世界事实失败不阻塞页面。
+    Future<T?> guard<T>(Future<T> Function() call) async {
+      try {
+        return await call();
+      } catch (_) {
+        return null;
+      }
     }
+
+    final results = await Future.wait([
+      guard(() => _api.getRelationship(widget.character.id)),
+      guard(() => _api.getWorldFacts(widget.character.id)),
+      guard(() => _api.getLorebook(widget.character.id)),
+      guard(() => _api.getAgentMind(widget.character.id)),
+      guard(() => _api.getStateHistory(widget.character.id)),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _relationship = results[0] as ReaderRelationship?;
+      _facts = (results[1] as List<ReaderWorldFact>?) ?? const [];
+      _lorebook = (results[2] as List<ReaderLorebookEntry>?) ?? const [];
+      _agentMind = (results[3] as Map<String, dynamic>?);
+      _stateHistory = (results[4] as Map<String, dynamic>?);
+    });
   }
 
   @override
@@ -98,16 +116,6 @@ class _ProfilePaneState extends State<ProfilePane> {
     );
   }
 
-  Future<void> _reloadExtras() async {
-    try {
-      final facts = await _api.getWorldFacts(widget.character.id);
-      final lorebook = await _api.getLorebook(widget.character.id);
-      if (!mounted) return;
-      setState(() => _lorebook = lorebook);
-      if (mounted) setState(() => _facts = facts);
-    } catch (_) {}
-  }
-
   void _openPhone() {
     Navigator.push(
         context,
@@ -129,195 +137,110 @@ class _ProfilePaneState extends State<ProfilePane> {
                 rs: widget.rs)));
   }
 
-  Future<void> _editLorebook([ReaderLorebookEntry? entry]) async {
-    final title = TextEditingController(text: entry?.title ?? '');
-    final content = TextEditingController(text: entry?.content ?? '');
-    final keywords = TextEditingController(text: entry?.keywords ?? '');
-    var active = entry?.active ?? true;
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlg) => AlertDialog(
-          title: Text(entry == null
-              ? widget.rs.t('addLorebook')
-              : widget.rs.t('editLorebook')),
-          content: SizedBox(
-            width: 430,
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              TextField(
-                controller: title,
-                decoration: InputDecoration(hintText: widget.rs.t('lorebookTitle')),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: content,
-                maxLines: 4,
-                decoration: InputDecoration(hintText: widget.rs.t('lorebookContent')),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: keywords,
-                decoration: InputDecoration(hintText: widget.rs.t('lorebookKeywords')),
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(widget.rs.t('activeLabel')),
-                value: active,
-                onChanged: (v) => setDlg(() => active = v),
-              ),
-            ]),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: Text(widget.rs.t('cancel'))),
-            FilledButton(
-              onPressed: () async {
-                final titleText = title.text.trim();
-                final body = content.text.trim();
-                if (titleText.isEmpty || body.isEmpty) return;
-                final kw = keywords.text
-                    .split(RegExp(r'[,，、]'))
-                    .map((s) => s.trim())
-                    .where((s) => s.isNotEmpty)
-                    .toList();
-                try {
-                  if (entry == null) {
-                    await widget.editor.createLorebook(widget.character.id,
-                        title: titleText, content: body, keywords: kw, active: active);
-                  } else {
-                    await widget.editor.updateLorebook(widget.character.id, entry.id,
-                        title: titleText, content: body, keywords: kw, active: active);
-                  }
-                  if (ctx.mounted) Navigator.pop(ctx, true);
-                } catch (e) {
-                  if (ctx.mounted) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                        SnackBar(content: Text('${widget.rs.t('actionFailed')}：$e')));
-                  }
-                }
-              },
-              child: Text(widget.rs.t('save')),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (saved == true) await _reloadExtras();
+  void _openSettings() {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => CharacterSettingsPage(
+            client: widget.client,
+            editor: widget.editor,
+            characterId: widget.character.id,
+            characterName: widget.character.name,
+            rs: widget.rs)));
   }
 
-  Future<void> _deleteLorebook(ReaderLorebookEntry entry) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(widget.rs.t('delete')),
-        content: Text(entry.title),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(widget.rs.t('cancel'))),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(widget.rs.t('delete'))),
-        ],
-      ),
-    );
-    if (ok != true) return;
+  void _openAgentMind() {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => AgentMindPage(
+            client: widget.client,
+            characterId: widget.character.id,
+            characterName: widget.character.name,
+            rs: widget.rs)));
+  }
+
+  String? _avatarSrc(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    var base = widget.client.baseUrl;
+    if (base.endsWith('/')) base = base.substring(0, base.length - 1);
+    return raw.startsWith('/') ? '$base$raw' : '$base/$raw';
+  }
+
+  Future<void> _changeAvatar() async {
+    if (_uploadingAvatar) return;
+    final bytes = await pickAvatarBytes();
+    if (bytes == null || bytes.isEmpty) return;
+    setState(() => _uploadingAvatar = true);
     try {
-      await widget.editor.deleteLorebook(widget.character.id, entry.id);
-      await _reloadExtras();
-    } catch (e) {
+      final api = AvatarApi(widget.client);
+      final url = await api.upload(bytes, filename: 'avatar.png');
+      await api.setAvatar(widget.character.id, url);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${widget.rs.t('actionFailed')}：$e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(widget.rs.t('avatarUpdated'))));
+      _reload();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(widget.rs.t('avatarFailed'))));
+    } finally {
+      if (mounted) setState(() => _uploadingAvatar = false);
     }
   }
 
-  Future<void> _editWorldFact([ReaderWorldFact? fact]) async {
-    final predicate = TextEditingController(text: fact?.predicate ?? '');
-    final content = TextEditingController(text: fact?.objectValue ?? '');
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(fact == null
-            ? widget.rs.t('addWorldFact')
-            : widget.rs.t('editWorldFact')),
-        content: SizedBox(
-          width: 430,
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(
-              controller: predicate,
-              decoration:
-                  InputDecoration(hintText: widget.rs.t('worldPredicate')),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: content,
-              maxLines: 4,
-              decoration:
-                  InputDecoration(hintText: widget.rs.t('worldContent')),
-            ),
-          ]),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(widget.rs.t('cancel'))),
-          FilledButton(
-            onPressed: () async {
-              final body = content.text.trim();
-              if (body.isEmpty) return;
-              final p = predicate.text.trim();
-              try {
-                if (fact == null) {
-                  await widget.editor.createWorldFact(widget.character.id,
-                      content: body, predicate: p.isEmpty ? null : p);
-                } else {
-                  await widget.editor.updateWorldFact(
-                      widget.character.id, fact.id,
-                      content: body, predicate: p.isEmpty ? null : p);
-                }
-                if (ctx.mounted) Navigator.pop(ctx, true);
-              } catch (e) {
-                if (ctx.mounted) {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                      SnackBar(content: Text('${widget.rs.t('actionFailed')}：$e')));
-                }
-              }
-            },
-            child: Text(widget.rs.t('save')),
-          ),
-        ],
-      ),
-    );
-    if (saved == true) await _reloadExtras();
+  void _openStatus() {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => CharacterStatusPage(
+            client: widget.client,
+            characterId: widget.character.id,
+            characterName: widget.character.name,
+            rs: widget.rs,
+            cs: widget.cs)));
   }
 
-  Future<void> _deleteWorldFact(ReaderWorldFact fact) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(widget.rs.t('delete')),
-        content: Text(fact.objectValue),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(widget.rs.t('cancel'))),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(widget.rs.t('delete'))),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      await widget.editor.deleteWorldFact(widget.character.id, fact.id);
-      await _reloadExtras();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${widget.rs.t('actionFailed')}：$e')));
-    }
+  void _openLife() {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => Scaffold(
+              appBar: AppBar(title: Text(widget.rs.t('life'))),
+              body: LifePane(
+                  character: widget.character,
+                  client: widget.client,
+                  rs: widget.rs,
+                  cs: widget.cs),
+            )));
+  }
+
+  void _openDiary() {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => Scaffold(
+              appBar: AppBar(title: Text(widget.rs.t('modCharDiary'))),
+              body: CharDiaryPane(
+                  character: widget.character,
+                  client: widget.client,
+                  rs: widget.rs,
+                  cs: widget.cs),
+            )));
+  }
+
+  void _openMemoryBook() {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => Scaffold(
+              appBar: AppBar(title: Text(widget.rs.t('memoryBook'))),
+              body: MemoriesPane(
+                  character: widget.character,
+                  client: widget.client,
+                  editor: widget.editor,
+                  rs: widget.rs,
+                  cs: widget.cs),
+            )));
+  }
+
+  void _openWorld() {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => CharacterWorldPage(
+            client: widget.client,
+            editor: widget.editor,
+            characterId: widget.character.id,
+            characterName: widget.character.name,
+            rs: widget.rs)));
   }
 
   @override
@@ -355,20 +278,56 @@ class _ProfilePaneState extends State<ProfilePane> {
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            if (widget.onEdit != null)
-              Align(
-                alignment: Alignment.centerRight,
-                child: OutlinedButton.icon(
-                  onPressed: widget.onEdit,
-                  icon: const Icon(Icons.edit, size: 18),
-                  label: Text(widget.editLabel),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              alignment: WrapAlignment.end,
+              children: [
+                if (widget.onEdit != null)
+                  OutlinedButton.icon(
+                    onPressed: widget.onEdit,
+                    icon: const Icon(Icons.edit, size: 18),
+                    label: Text(widget.editLabel),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: _openSettings,
+                  icon: const Icon(Icons.settings_outlined, size: 18),
+                  label: Text(rs.t('openSettings')),
                 ),
-              ),
-            // 头像占位（本单不加载图片）
-            CircleAvatar(
-              radius: 32,
-              child: Text(c.name.isEmpty ? '?' : c.name.characters.first),
+                OutlinedButton.icon(
+                  onPressed: _openAgentMind,
+                  icon: const Icon(Icons.psychology_outlined, size: 18),
+                  label: Text(rs.t('openAgentMind')),
+                ),
+              ],
             ),
+            Row(children: [
+              CircleAvatar(
+                radius: 32,
+                backgroundColor:
+                    Theme.of(context).colorScheme.surfaceContainerHighest,
+                backgroundImage: _avatarSrc(c.avatarUrl) == null
+                    ? null
+                    : NetworkImage(_avatarSrc(c.avatarUrl)!),
+                child: _avatarSrc(c.avatarUrl) != null
+                    ? null
+                    : Text(c.name.isEmpty ? '?' : c.name.characters.first),
+              ),
+              const SizedBox(width: 12),
+              TextButton.icon(
+                onPressed: _uploadingAvatar ? null : _changeAvatar,
+                icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                label: Text(widget.rs.t('changeAvatar')),
+              ),
+              if (_uploadingAvatar)
+                const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                ),
+            ]),
             const SizedBox(height: 12),
             for (final (label, value) in rows) _row(context, label, value),
             const SizedBox(height: 10),
@@ -383,6 +342,40 @@ class _ProfilePaneState extends State<ProfilePane> {
               icon: const Icon(Icons.smartphone, size: 18),
               label: Text(rs.t('phoneTitle')),
             ),
+            const Divider(height: 28),
+            Text(rs.t('taDaily'), style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 6),
+            Card(
+              margin: EdgeInsets.zero,
+              child: Column(children: [
+                ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.self_improvement_outlined, size: 20),
+                  title: Text(rs.t('life')),
+                  subtitle: Text(rs.t('taLifeHint')),
+                  trailing: const Icon(Icons.chevron_right, size: 18),
+                  onTap: _openLife,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.book_outlined, size: 20),
+                  title: Text(rs.t('modCharDiary')),
+                  subtitle: Text(rs.t('taDiaryHint')),
+                  trailing: const Icon(Icons.chevron_right, size: 18),
+                  onTap: _openDiary,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.auto_stories_outlined, size: 20),
+                  title: Text(rs.t('memoryBook')),
+                  subtitle: Text(rs.t('memoryBookHint')),
+                  trailing: const Icon(Icons.chevron_right, size: 18),
+                  onTap: _openMemoryBook,
+                ),
+              ]),
+            ),
             if (_relationship != null) ...[
               const Divider(height: 28),
               Text(rs.t('relationMeta'),
@@ -392,54 +385,33 @@ class _ProfilePaneState extends State<ProfilePane> {
               if (_relationship!.isPartner)
                 _row(context, rs.t('relationType'), rs.t('partner')),
             ],
-            if (_lorebook.isNotEmpty) ...[
+            const Divider(height: 28),
+            Card(
+              margin: EdgeInsets.zero,
+              child: ListTile(
+                dense: true,
+                leading: const Icon(Icons.public, size: 20),
+                title: Text(rs.t('worldSettings')),
+                subtitle: Text(
+                  '${rs.t('lorebook')} ${_lorebook.length} · '
+                  '${rs.t('worldFacts')} ${_facts.length}',
+                ),
+                trailing: const Icon(Icons.chevron_right, size: 18),
+                onTap: _openWorld,
+              ),
+            ),
+            if ((_stateHistory?['points'] as List?)?.isNotEmpty ?? false) ...[
               const Divider(height: 28),
               Row(children: [
                 Expanded(
-                  child: Text(rs.t('lorebook'),
+                  child: Text(rs.t('stateHistory'),
                       style: Theme.of(context).textTheme.titleSmall),
                 ),
-                IconButton(
-                  tooltip: rs.t('addLorebook'),
-                  onPressed: () => _editLorebook(),
-                  icon: const Icon(Icons.add, size: 18),
+                TextButton(
+                  onPressed: _openStatus,
+                  child: Text(rs.t('statusView')),
                 ),
               ]),
-              for (final e in _lorebook)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Row(children: [
-                      Expanded(
-                        child: Text(e.title,
-                            style: Theme.of(context).textTheme.titleSmall),
-                      ),
-                      if (!e.active)
-                        Text(rs.t('inactive'),
-                            style: Theme.of(context).textTheme.bodySmall),
-                      IconButton(
-                        tooltip: rs.t('editLorebook'),
-                        onPressed: () => _editLorebook(e),
-                        icon: const Icon(Icons.edit_outlined, size: 17),
-                      ),
-                      IconButton(
-                        tooltip: rs.t('delete'),
-                        onPressed: () => _deleteLorebook(e),
-                        icon: const Icon(Icons.delete_outline, size: 17),
-                      ),
-                    ]),
-                    if (e.keywords.isNotEmpty)
-                      Text('${rs.t('keywords')}: ${e.keywords}',
-                          style: Theme.of(context).textTheme.bodySmall),
-                    const SizedBox(height: 2),
-                    Text(e.content),
-                  ]),
-                ),
-            ],
-            if ((_stateHistory?['points'] as List?)?.isNotEmpty ?? false) ...[
-              const Divider(height: 28),
-              Text(rs.t('stateHistory'),
-                  style: Theme.of(context).textTheme.titleSmall),
               Builder(builder: (context) {
                 final p = (_stateHistory!['points'] as List).last as Map;
                 final dims = {
@@ -468,8 +440,16 @@ class _ProfilePaneState extends State<ProfilePane> {
             ],
             if (_agentMind != null) ...[
               const Divider(height: 28),
-              Text(rs.t('agentMind'),
-                  style: Theme.of(context).textTheme.titleSmall),
+              Row(children: [
+                Expanded(
+                  child: Text(rs.t('agentMind'),
+                      style: Theme.of(context).textTheme.titleSmall),
+                ),
+                TextButton(
+                  onPressed: _openAgentMind,
+                  child: Text(rs.t('openAgentMind')),
+                ),
+              ]),
               if ((_agentMind!['reflection'] as Map?)?['content'] is String)
                 _row(context, rs.t('reflection'),
                     (_agentMind!['reflection'] as Map)['content'] as String),
@@ -483,51 +463,6 @@ class _ProfilePaneState extends State<ProfilePane> {
                     '${rs.t('toolLog')} · ${(log as Map)['trigger'] ?? ''}',
                     '${log['status'] ?? ''} · ${log['route'] ?? ''}',
                   ),
-            ],
-            if (_facts.isNotEmpty) ...[
-              const Divider(height: 28),
-              Row(children: [
-                Expanded(
-                  child: Text(rs.t('worldFacts'),
-                      style: Theme.of(context).textTheme.titleSmall),
-                ),
-                IconButton(
-                  tooltip: rs.t('addWorldFact'),
-                  onPressed: () => _editWorldFact(),
-                  icon: const Icon(Icons.add, size: 18),
-                ),
-              ]),
-              for (final f in _facts)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 5),
-                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Expanded(
-                      child: Text('${f.predicate}: ${f.objectValue}',
-                          style: Theme.of(context).textTheme.bodyMedium),
-                    ),
-                    if (f.isAuthoritative)
-                      Container(
-                        margin: const EdgeInsets.only(left: 6),
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.primaryContainer,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(rs.t('authoritative'),
-                            style: Theme.of(context).textTheme.bodySmall),
-                      ),
-                    IconButton(
-                      tooltip: rs.t('editWorldFact'),
-                      onPressed: () => _editWorldFact(f),
-                      icon: const Icon(Icons.edit_outlined, size: 17),
-                    ),
-                    IconButton(
-                      tooltip: rs.t('delete'),
-                      onPressed: () => _deleteWorldFact(f),
-                      icon: const Icon(Icons.delete_outline, size: 17),
-                    ),
-                  ]),
-                ),
             ],
           ],
         );

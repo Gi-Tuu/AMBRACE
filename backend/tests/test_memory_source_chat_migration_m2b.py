@@ -28,7 +28,7 @@ def _run(tmp_path, *args):
 def test_single_head_and_old_message_uid_null(tmp_path):
     cfg = Config(str(_backend() / "alembic.ini"))
     cfg.set_main_option("script_location", str(_backend() / "alembic"))
-    assert ScriptDirectory.from_config(cfg).get_heads() == ["c6f8b0d2e4a7"]
+    assert ScriptDirectory.from_config(cfg).get_heads() == ["e9f8d7c6b5a4"]
     r = _run(tmp_path, "upgrade", "d6f8a0b2c4e6")
     assert r.returncode == 0, r.stderr[-2000:]
     db = tmp_path / "history.db"
@@ -52,7 +52,7 @@ def test_single_head_and_old_message_uid_null(tmp_path):
         assert conn.execute(text(
             "SELECT content, source_event_uid FROM chat_messages WHERE id=1"
         )).fetchone() == ("old message", None)
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "c6f8b0d2e4a7"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "e9f8d7c6b5a4"
     eng.dispose()
     r = _run(tmp_path, "downgrade", "b3d9e1f5a7c2")
     assert r.returncode == 0, r.stderr[-2000:]

@@ -10,7 +10,7 @@
   <div class="sp-stars"></div>
   <div class="planet sp-orb sp-orb-a"><div class="pl-shade"></div></div>
   <div class="planet sp-orb sp-orb-b"><div class="pl-shade"></div></div>
-  <div class="planet sp-hero" id="spHero"><div class="pl-shade"></div></div>
+  <div class="planet sp-hero" id="spHero"><div class="planet sp-surface"><div class="pl-shade"></div></div><div class="sp-day"></div></div>
 </div>
 <div class="app">
   <div class="side">
@@ -36,8 +36,67 @@
       <i style="left:12%;top:44%;--tw:6.4s;--td:-4.1s;width:1px;height:1px"></i>
       <i style="left:68%;top:44%;--tw:5.2s;--td:-3.9s;width:1px;height:1px"></i>
     </div>
-    <!-- 纸色档的远树：极淡的树冠剪影，只在浅色档显示（墨纸档是星空） -->
-    <div class="side-grove" aria-hidden="true"><i class="t1"></i><i class="t2"></i><i class="t3"></i></div>
+    <!-- 三道林线接成纸色侧栏的远景，底部留给设置入口。 -->
+    <svg class="side-grove" viewBox="0 0 196 134" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      <defs>
+        <path id="fir" d="M0 0l-2 12 1-1-4 9 2-1-5 11 4-2-7 10 9-2v6h3v-6l9 1-6-9 3 1-5-10 2 1-4-10 1 1Z"/>
+        <path id="spruce" d="M0 0l-2 9 1-1-4 8 2-1-6 9 4-2-6 8 9-2v5h3v-5l8 1-5-7 3 1-6-9 3 1-4-7 1 1Z"/>
+      </defs>
+      <g fill="#d9dacb">
+        <path d="M0 69Q37 46 74 58T145 57Q175 46 196 49V134H0Z"/>
+        <use href="#fir" transform="translate(-2 34) scale(0.81)"/>
+        <use href="#spruce" transform="translate(8 39) scale(0.62)"/>
+        <use href="#fir" transform="translate(17 28) scale(0.79)"/>
+        <use href="#fir" transform="translate(26 34) scale(0.6)"/>
+        <use href="#spruce" transform="translate(35 23) scale(0.83)"/>
+        <use href="#fir" transform="translate(45 35) scale(0.65)"/>
+        <use href="#fir" transform="translate(55 30) scale(0.75)"/>
+        <use href="#spruce" transform="translate(67 40) scale(0.56)"/>
+        <use href="#fir" transform="translate(77 37) scale(0.59)"/>
+        <use href="#fir" transform="translate(92 48) scale(0.51)"/>
+        <use href="#spruce" transform="translate(102 40) scale(0.62)"/>
+        <use href="#fir" transform="translate(115 39) scale(0.76)"/>
+        <use href="#fir" transform="translate(126 47) scale(0.48)"/>
+        <use href="#spruce" transform="translate(138 37) scale(0.59)"/>
+        <use href="#fir" transform="translate(149 31) scale(0.73)"/>
+        <use href="#fir" transform="translate(161 34) scale(0.58)"/>
+        <use href="#spruce" transform="translate(173 23) scale(0.81)"/>
+        <use href="#fir" transform="translate(185 29) scale(0.65)"/>
+        <use href="#fir" transform="translate(196 20) scale(0.77)"/>
+      </g>
+      <g fill="#c9cdbb">
+        <path d="M0 81Q39 78 80 87T153 77Q177 68 196 71V134H0Z"/>
+        <use href="#fir" transform="translate(-2 44) scale(1.0)"/>
+        <use href="#spruce" transform="translate(9 57) scale(0.72)"/>
+        <use href="#fir" transform="translate(20 53) scale(0.86)"/>
+        <use href="#fir" transform="translate(34 64) scale(0.55)"/>
+        <use href="#spruce" transform="translate(43 58) scale(0.82)"/>
+        <use href="#fir" transform="translate(56 68) scale(0.64)"/>
+        <use href="#fir" transform="translate(73 66) scale(0.63)"/>
+        <use href="#spruce" transform="translate(85 76) scale(0.55)"/>
+        <use href="#fir" transform="translate(104 72) scale(0.62)"/>
+        <use href="#fir" transform="translate(123 64) scale(0.67)"/>
+        <use href="#spruce" transform="translate(133 66) scale(0.63)"/>
+        <use href="#fir" transform="translate(144 50) scale(0.86)"/>
+        <use href="#fir" transform="translate(156 54) scale(0.81)"/>
+        <use href="#spruce" transform="translate(168 42) scale(1.01)"/>
+        <use href="#fir" transform="translate(180 50) scale(0.8)"/>
+        <use href="#fir" transform="translate(194 33) scale(1.08)"/>
+      </g>
+      <g fill="#b5bda6">
+        <path d="M0 110Q34 95 76 108T150 103Q179 92 196 92V134H0Z"/>
+        <use href="#fir" transform="translate(-1 68) scale(1.13)"/>
+        <use href="#spruce" transform="translate(13 77) scale(0.96)"/>
+        <use href="#fir" transform="translate(25 76) scale(0.82)"/>
+        <use href="#fir" transform="translate(39 90) scale(0.59)"/>
+        <use href="#spruce" transform="translate(117 99) scale(0.49)"/>
+        <use href="#fir" transform="translate(136 84) scale(0.84)"/>
+        <use href="#fir" transform="translate(153 76) scale(0.87)"/>
+        <use href="#spruce" transform="translate(167 75) scale(0.91)"/>
+        <use href="#fir" transform="translate(185 54) scale(1.19)"/>
+        <use href="#fir" transform="translate(198 70) scale(0.88)"/>
+      </g>
+    </svg>
     <!-- 渠道登录：蹲在下面那颗球上方的一颗小卫星（微信），轻轻上下浮 -->
     <button class="wx-orb" data-act="channel-login" aria-label="渠道登录（微信）"
       title="渠道登录：扫码把机器人登进网关（要管理员登录态）">
@@ -50,9 +109,82 @@
         <circle cx="18.1" cy="13.6" r=".85" fill="var(--paper2)"/>
       </svg>
     </button>
+    <!-- PWA 入口：微信卫星旁边一颗小卫星（手机图标），点开拥爱网页版 -->
+    <button class="pwa-orb" data-act="open-pwa" aria-label="拥爱网页版（PWA）"
+      title="拥爱网页版：在浏览器里使用拥爱（手机/平板/电脑）">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="7" y="2" width="10" height="20" rx="2.5" ry="2.5"
+              fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <line x1="10" y1="4.5" x2="14" y2="4.5"
+              stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        <circle cx="12" cy="18.5" r="1.1" fill="currentColor"/>
+        <path d="M9.5 8.5 L11 11 L13.5 7.5 L15 10" fill="none"
+              stroke="currentColor" stroke-width="1.1" stroke-linecap="round"
+              stroke-linejoin="round" opacity=".7"/>
+      </svg>
+    </button>
     <!-- 设置：缩进左下角只露上面一弧、边缘发光背黑的星球；指上去微微放大 -->
     <button class="set-orb" data-act="settings" aria-label="设置"
-      title="设置：守护检测间隔 / 界面刷新间隔"><span class="pl-shade"></span><b style="--w:156px;--a:8deg;--o:0.43"></b><b style="--w:188px;--a:63deg;--o:0.34"></b><b style="--w:208px;--a:121deg;--o:0.44"></b><b style="--w:172px;--a:187deg;--o:0.47"></b><b style="--w:214px;--a:244deg;--o:0.32"></b><b style="--w:140px;--a:301deg;--o:0.37"></b><b style="--w:196px;--a:337deg;--o:0.31"></b>><b style="--w:96px;--a:12deg;--o:0.42"></b><b style="--w:128px;--a:58deg;--o:0.59"></b><b style="--w:150px;--a:109deg;--o:0.49"></b><b style="--w:166px;--a:171deg;--o:0.56"></b><b style="--w:178px;--a:226deg;--o:0.49"></b><b style="--w:190px;--a:287deg;--o:0.60"></b><b style="--w:202px;--a:331deg;--o:0.46"></b><b style="--w:212px;--a:44deg;--o:0.50"></b><b style="--w:116px;--a:97deg;--o:0.42"></b><b style="--w:142px;--a:148deg;--o:0.54"></b><b style="--w:174px;--a:205deg;--o:0.43"></b><b style="--w:186px;--a:262deg;--o:0.43"></b><b style="--w:206px;--a:313deg;--o:0.54"></b><b style="--w:66px;--a:7deg;--o:0.65"></b><b style="--w:74px;--a:41deg;--o:0.60"></b><b style="--w:82px;--a:78deg;--o:0.53"></b><b style="--w:90px;--a:112deg;--o:0.62"></b><b style="--w:96px;--a:149deg;--o:0.56"></b><b style="--w:102px;--a:187deg;--o:0.75"></b><b style="--w:108px;--a:221deg;--o:0.48"></b><b style="--w:114px;--a:258deg;--o:0.54"></b><b style="--w:120px;--a:296deg;--o:0.59"></b><b style="--w:126px;--a:333deg;--o:0.46"></b><b style="--w:132px;--a:24deg;--o:0.65"></b><b style="--w:70px;--a:60deg;--o:0.67"></b><b style="--w:86px;--a:138deg;--o:0.63"></b><b style="--w:110px;--a:263deg;--o:0.73"></b><i style="--a:441.8deg;--r:99.7px;--h:10.3px;--w:2.5px"></i><i style="--a:369.1deg;--r:100.3px;--h:9.3px;--w:2.5px"></i><i style="--a:419.5deg;--r:101.2px;--h:14.2px;--w:3.0px"></i><i style="--a:388.3deg;--r:101.7px;--h:11.1px;--w:2.4px"></i><i style="--a:338.9deg;--r:101.1px;--h:13.7px;--w:2.0px"></i><i style="--a:371.0deg;--r:98.2px;--h:6.3px;--w:1.9px"></i><i style="--a:436.8deg;--r:98.1px;--h:10.4px;--w:2.9px"></i><i style="--a:391.7deg;--r:100.0px;--h:9.3px;--w:2.8px"></i><i style="--a:353.0deg;--r:101.3px;--h:14.6px;--w:2.0px"></i><i style="--a:340.9deg;--r:100.1px;--h:13.8px;--w:2.4px"></i><i style="--a:408.8deg;--r:99.1px;--h:7.7px;--w:2.5px"></i><i style="--a:301.3deg;--r:97.1px;--h:11.8px;--w:2.6px"></i><i style="--a:293.4deg;--r:101.7px;--h:7.4px;--w:2.2px"></i><i style="--a:276.7deg;--r:101.4px;--h:6.7px;--w:1.8px"></i><i style="--a:431.1deg;--r:102.0px;--h:13.7px;--w:2.8px"></i><i style="--a:364.7deg;--r:99.2px;--h:8.2px;--w:3.0px"></i><i style="--a:374.0deg;--r:100.3px;--h:13.0px;--w:2.0px"></i><i style="--a:414.7deg;--r:102.7px;--h:12.1px;--w:3.0px"></i><i style="--a:307.9deg;--r:98.6px;--h:14.8px;--w:2.8px"></i></button>
+      title="设置：守护检测间隔 / 界面刷新间隔"><span class="pl-shade"></span>
+      <svg class="tumbleweed" viewBox="-52 -52 104 104" aria-hidden="true" focusable="false">
+        <defs>
+          <!-- 弯折主茎与两侧枝梢连成一笔，从偏心的根结向外散开。 -->
+          <path id="stalk-a" d="M-5 7Q7 4 13-8T21-27L28-38 M10-4Q6-15 9-24l-2-8 M9-20l5-9 M17-19q8-1 15-9l7-2 M25-24l1-8 M21-27l-1-9"/>
+          <path id="stalk-b" d="M-4 5Q-6-7 4-17t11-24 M0-12q-10-4-14-15l-4-4 M-10-23l1-9 M7-20q10-1 18-9 M19-25l2-9 M11-29l-2-10"/>
+          <path id="stalk-c" d="M-9 8Q2 10 11 1t10-17q4-12 16-14 M10 2q15 0 22-9l8-3 M27-3l-1-9 M19-10q-5-8-4-17 M24-22l2-12"/>
+          <!-- 外侧长枝沿球面弯回，枝杈横穿相邻茎秆；各段之间留出透光的空隙。 -->
+          <path id="straw-bow" d="M-43 12Q-49-5-37-21Q-33-28-23-31Q-12-35-5-43
+            M-41-14q-3-8-1-14 M-35-24q1-9 7-15l2-6 M-30-28q10 1 18-5l7-1
+            M-22-32l4-9 5-5 M-12-37q4-1 9 0"/>
+          <path id="straw-hook" d="M-36 27q-7-9-4-22t-1-21q0-14 13-21
+            M-40 13q-6-4-8-12 M-39-3q7-7 9-16l6-5 M-40-17l-4-7
+            M-37-27q7-3 14-2l6-3 M-31-34l1-7"/>
+          <path id="straw-cross" d="M-38 17q9 3 15-4Q-12 3-6-8t21-17q12-4 17-14
+            M-25 15q4-1 9 2l8-1 M-15 4q-2-9 3-16 M0-17q8 1 14-3l6 1
+            M16-25q1-9 8-15 M25-30l6-1"/>
+        </defs>
+        <g fill="none" stroke="#b69a70" stroke-width=".72" stroke-linecap="round" stroke-linejoin="round">
+          <use href="#straw-bow" transform="rotate(-9)"/>
+          <use href="#straw-hook" transform="rotate(46)"/>
+          <use href="#straw-bow" transform="rotate(91) scale(.94 1.02)"/>
+          <use href="#straw-hook" transform="rotate(147) scale(1.02 .94)"/>
+          <use href="#straw-bow" transform="rotate(192)"/>
+          <use href="#straw-hook" transform="rotate(237) scale(.95 1)"/>
+          <use href="#straw-bow" transform="rotate(279) scale(1.04 .96)"/>
+          <use href="#straw-hook" transform="rotate(328)"/>
+        </g>
+        <g fill="none" stroke="#bf9f6a" stroke-width="0.95" stroke-linecap="round" stroke-linejoin="round">
+          <use href="#stalk-a" transform="rotate(18) scale(0.99)"/>
+          <use href="#stalk-c" transform="rotate(89) scale(1)"/>
+          <use href="#stalk-b" transform="rotate(148) scale(0.94)"/>
+          <use href="#stalk-a" transform="rotate(212) scale(1.07)"/>
+          <use href="#stalk-b" transform="rotate(288) scale(0.98)"/>
+        </g>
+        <g fill="none" stroke="#997345" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+          <use href="#stalk-b" transform="rotate(-14) scale(1)"/>
+          <use href="#stalk-a" transform="rotate(57) scale(0.93)"/>
+          <use href="#stalk-c" transform="rotate(135) scale(0.96)"/>
+          <use href="#stalk-b" transform="rotate(202) scale(0.94)"/>
+          <use href="#stalk-a" transform="rotate(268) scale(1)"/>
+          <use href="#stalk-c" transform="rotate(321) scale(1.02)"/>
+        </g>
+        <g fill="none" stroke="#745536" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round">
+          <use href="#stalk-c" transform="rotate(-29) scale(0.83)"/>
+          <use href="#stalk-a" transform="rotate(109) scale(0.81)"/>
+          <use href="#stalk-b" transform="rotate(243) scale(0.87)"/>
+        </g>
+        <g fill="none" stroke="#8e6f48" stroke-width=".85" stroke-linecap="round" stroke-linejoin="round">
+          <use href="#straw-cross" transform="rotate(-22) translate(1 -6)"/>
+          <use href="#straw-hook" transform="rotate(11) scale(.94 .9)"/>
+          <use href="#straw-cross" transform="rotate(73) scale(.91 1)"/>
+          <use href="#straw-bow" transform="rotate(124) scale(.92 .97)"/>
+          <use href="#straw-cross" transform="rotate(169) translate(-3 -4)"/>
+          <use href="#straw-hook" transform="rotate(209) scale(.9 .97)"/>
+          <use href="#straw-cross" transform="rotate(263) scale(.96 .87)"/>
+          <use href="#straw-bow" transform="rotate(308) scale(.93 1)"/>
+        </g>
+      </svg>
+    </button>
   </div>
   <div class="main">
     <div class="hero">
@@ -73,20 +205,20 @@
         <span class="shoot" style="--sx:68%;--sw:36px;--sd:31s;--sl:-5s;--sy:78%"></span>
         <span class="shoot" style="--sx:80%;--sw:62px;--sd:23s;--sl:-21s;--sy:46%"></span>
         <span class="shoot" style="--sx:92%;--sw:52px;--sd:17s;--sl:-12s;--sy:8%"></span>
-        <span class="mote" style="left:43%;top:68%;animation-duration:19s;animation-delay:-3s"></span>
-        <span class="mote" style="left:50%;top:82%;animation-duration:23s;animation-delay:-9s"></span>
-        <span class="mote" style="left:57%;top:64%;animation-duration:21s;animation-delay:-14s"></span>
-        <span class="mote" style="left:63%;top:86%;animation-duration:26s;animation-delay:-6s"></span>
-        <span class="mote" style="left:69%;top:74%;animation-duration:18s;animation-delay:-11s"></span>
-        <span class="mote" style="left:76%;top:90%;animation-duration:24s;animation-delay:-16s"></span>
-        <span class="mote" style="left:82%;top:66%;animation-duration:20s;animation-delay:-2s"></span>
-        <span class="mote" style="left:87%;top:80%;animation-duration:27s;animation-delay:-8s"></span>
-        <span class="mote" style="left:45%;top:56%;animation-duration:22s;animation-delay:-13s"></span>
-        <span class="mote" style="left:78%;top:12%;animation-duration:25s;animation-delay:-5s"></span>
-        <span class="mote" style="left:84%;top:8%;animation-duration:29s;animation-delay:-18s"></span>
-        <span class="mote" style="left:72%;top:20%;animation-duration:21s;animation-delay:-7s"></span>
-        <span class="mote warm" style="left:66%;top:46%;animation-duration:24s;animation-delay:-21s"></span>
-        <span class="mote" style="left:94%;top:92%;animation-duration:26s;animation-delay:-10s"></span>
+        <span class="mote" style="--mote-x:43%;--mote-y:68%;--mote-time:19s;--mote-delay:-3s"></span>
+        <span class="mote" style="--mote-x:50%;--mote-y:82%;--mote-time:23s;--mote-delay:-9s"></span>
+        <span class="mote" style="--mote-x:57%;--mote-y:64%;--mote-time:21s;--mote-delay:-14s"></span>
+        <span class="mote" style="--mote-x:63%;--mote-y:86%;--mote-time:26s;--mote-delay:-6s"></span>
+        <span class="mote" style="--mote-x:69%;--mote-y:74%;--mote-time:18s;--mote-delay:-11s"></span>
+        <span class="mote" style="--mote-x:76%;--mote-y:90%;--mote-time:24s;--mote-delay:-16s"></span>
+        <span class="mote" style="--mote-x:82%;--mote-y:66%;--mote-time:20s;--mote-delay:-2s"></span>
+        <span class="mote" style="--mote-x:87%;--mote-y:80%;--mote-time:27s;--mote-delay:-8s"></span>
+        <span class="mote" style="--mote-x:45%;--mote-y:56%;--mote-time:22s;--mote-delay:-13s"></span>
+        <span class="mote" style="--mote-x:78%;--mote-y:12%;--mote-time:25s;--mote-delay:-5s"></span>
+        <span class="mote" style="--mote-x:84%;--mote-y:8%;--mote-time:29s;--mote-delay:-18s"></span>
+        <span class="mote" style="--mote-x:72%;--mote-y:20%;--mote-time:21s;--mote-delay:-7s"></span>
+        <span class="mote warm" style="--mote-x:66%;--mote-y:46%;--mote-time:24s;--mote-delay:-21s"></span>
+        <span class="mote" style="--mote-x:94%;--mote-y:92%;--mote-time:26s;--mote-delay:-10s"></span>
       </div>
       <div class="sky" id="sky" aria-hidden="true"></div>
       <div class="ht"><h1 id="pageTitle">仪表盘</h1><div class="sub" id="heroSub">—</div></div>
@@ -113,10 +245,46 @@ if (window.__SKY__ !== undefined) {
   sky.style.opacity = window.__SKY__;
   // 出图模式把流动层也冻住：否则两次采样云的相位不同，像素对比永远不相等
   const freeze = document.createElement("style");
-  freeze.textContent = ".hero .neb .cloud, .hero .neb .mote, .hero .neb .shoot" +
+  freeze.textContent = ".hero .neb .wind-leaf, .hero .neb .cloud, .hero .neb .mote, .hero .neb .shoot" +
                        "{animation:none !important;}";
   document.head.appendChild(freeze);
 }
+// 横向错开入场时间，纵向独立抽样；两者共用序号会在开窗时排成斜线。
+(function initLeafDrift() {
+  const layer = document.querySelector(".hero .neb");
+  const count = 60;
+  const jitter = (min, max) => min + Math.random() * (max - min);
+  const fragment = document.createDocumentFragment();
+  const leaves = Array.from({length: count}, (_, i) => {
+    const leaf = document.createElement("span");
+    leaf.className = "wind-leaf";
+    const size = jitter(6, 15);
+    const speed = jitter(165, 330);
+    const tilt = jitter(-30, 35);
+    const style = leaf.style;
+    style.setProperty("--leaf-top", jitter(12, 81) + "%");
+    style.setProperty("--leaf-bend", jitter(-10, 10) + "px");
+    style.setProperty("--leaf-width", size + "px");
+    style.setProperty("--leaf-height", size * jitter(.4, .72) + "px");
+    style.setProperty("--leaf-shape", jitter(48, 78) + "% " + jitter(0, 17) + "% "
+      + jitter(52, 82) + "% " + jitter(0, 17) + "%");
+    style.setProperty("--leaf-angle", tilt + "deg");
+    style.setProperty("--leaf-turn", jitter(-48, 48) + "deg");
+    style.setProperty("--leaf-phase", (i + Math.random()) / count);
+    fragment.appendChild(leaf);
+    return {leaf, speed};
+  });
+  layer.appendChild(fragment);
+  const layout = () => {
+    const travel = layer.clientWidth + 36;
+    layer.style.setProperty("--leaf-travel", travel + "px");
+    for (const {leaf, speed} of leaves) {
+      leaf.style.setProperty("--leaf-time", travel / speed + "s");
+    }
+  };
+  layout();
+  new ResizeObserver(layout).observe(layer);
+})();
 /* 导航顺序按用户指定：仪表盘 → 服务器控制 → 服务器身份 → 模型管理 →
    账号管理 → 开关与权限 → 运行日志 → 审计。键是页键，序号只是显示。 */
 const NAV = [["dashboard", "仪表盘"], ["server", "服务器控制"], ["identity", "服务器身份"],
@@ -1673,6 +1841,10 @@ async function act(a, e_target) {
       cache.accounts = null; await loadPage("accounts");
     } else if (a === "ac-reload") {
       await loadPage("accounts");
+    } else if (a === "open-pwa") {
+      // 走 Python 侧拼后端绝对地址（控制台页面自身的 origin 不是 8000，相对路径会 404）
+      const r = await api("open_pwa");
+      say2("pwaMsg", r.ok ? r.data.msg : errBrief(r), r.ok ? "ok" : "bad");
     } else if (a === "channel-login") {
       const r = await api("open_channel_login");
       if (r.ok) say2("chlMsg", r.data.msg, "ok");
@@ -1926,8 +2098,10 @@ if (window.__DATA__) {
   const sp = document.getElementById("splash");
   const hero = document.getElementById("themePlanet");
   if (!sp) return;
+  const lunar = document.documentElement.dataset.theme === "dark";
+  const splashEdition = lunar ? 3 : 2;
   let seen = false;
-  try { seen = localStorage.getItem("ambrace_splash_seen") === "1"; } catch (e) {}
+  try { seen = Number(localStorage.getItem("ambrace_splash_seen")) >= splashEdition; } catch (e) {}
   const shotMode = !!window.__DATA__ || window.__SKY__ !== undefined;
   const reduced = window.matchMedia &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1935,7 +2109,25 @@ if (window.__DATA__) {
   // 真窗口（含看过一次的正常启动）仍常驻并自转。
   if (shotMode) { sp.remove(); return; }
   if (seen || reduced) { sp.remove(); if (hero) hero.classList.add("ready"); return; }
-  try { localStorage.setItem("ambrace_splash_seen", "1"); } catch (e) {}
+  try { localStorage.setItem("ambrace_splash_seen", splashEdition); } catch (e) {}
+  // 由当前窗口与主题按钮的实际中心定一条三次贝塞尔曲线。
+  // 调整窗口只重算路径，飞行进度和球面自转的时钟继续走。
+  let flightObserver;
+  if (lunar && hero) {
+    const moon = document.getElementById("spHero");
+    const fitOrbit = () => {
+      const {width, height} = sp.getBoundingClientRect();
+      const target = hero.getBoundingClientRect();
+      const x = target.left + target.width / 2;
+      const y = target.top + target.height / 2;
+      const curve = `M ${-.254 * width} ${.64 * height} C ${.12 * width} ${.86 * height}, ${.54 * width} ${y - .17 * height}, ${x} ${y}`;
+      moon.style.offsetPath = `path("${curve}")`;
+    };
+    fitOrbit();
+    moon.classList.add("sp-lunar");
+    flightObserver = new ResizeObserver(fitOrbit);
+    flightObserver.observe(sp);
+  }
   // 时长与 d2.css 的 planet-journey 同源：改节奏只改这几行，下面不再写死毫秒
   const SPLASH_MS = 5000;
   const SPLASH_COVER = 0.56;   // 星球盖满全屏的那一帧（d2.css 关键帧 56%）
@@ -1945,13 +2137,15 @@ if (window.__DATA__) {
     const stars = sp.querySelector(".sp-stars");
     if (stars) stars.remove();
     sp.querySelectorAll(".sp-orb").forEach(function (n) { n.remove(); });
-  }, Math.round(SPLASH_MS * SPLASH_COVER));
-  // 落位交棒：页眉那颗球瞬间就位，内容区从下方顶上来，到位即固定
-  setTimeout(function () {
-    if (hero) { hero.style.transition = "none"; hero.classList.add("ready"); }
+    sp.classList.add("sp-landing");
     const body = document.getElementById("body");
     if (body) { body.classList.remove("enter"); body.classList.add("rise"); }
+  }, Math.round(SPLASH_MS * SPLASH_COVER));
+  // 页面已在收束过程中显现，最后一帧把交互交给同位置的主题按钮。
+  setTimeout(function () {
+    if (hero) { hero.style.transition = "none"; hero.classList.add("ready"); }
     sp.classList.add("sp-out");
+    flightObserver?.disconnect();
     setTimeout(function () { sp.remove(); }, SPLASH_FADE);
   }, SPLASH_MS);
 })();

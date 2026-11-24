@@ -1061,7 +1061,6 @@
   "noEmoji": "No emojis yet",
   "noEmotionRecords": "No emotion records yet\nChat more with TA - mood changes are recorded here automatically",
   "noGoals": "No goals yet",
-  "noGroups": "No family group chats yet",
   "noInterests": "No interests recorded yet",
   "noLifeRecords": "No life records yet",
   "noMemories": "No memories yet",
@@ -1444,13 +1443,6 @@
   "dndEndAction": "End",
   "dndNote": "During quiet hours, AI friends will not push new message notifications.\nE.g. 22:00 ~ 08:00 suits the night rest period.",
   "dyMemoryTitle": "Douyin Memory Tightening",
-  "dyMemoryOnSave": "Enabled: exclude relationship-type private memories",
-  "dyMemoryOffSave": "Disabled: filter memories as-is",
-  "dyMemorySaveFailed": "Save failed: {err}",
-  "dyMemorySection": "Public Memory Injection",
-  "dyMemorySwitchTitle": "Tighten private memories",
-  "dyMemorySwitchSubtitle": "When enabled, Douyin posts and comment replies no longer inject relationship-type memories (confessions/money, private but unnamed)",
-  "dyMemoryNote": "Note: regardless of the switch, Douyin never injects identity profiles or memories containing your name. With tightening on, relationship-type memories (confessions, intimate interactions, money exchanges) are also excluded, suitable for more cautious public sharing.",
   "updateAnnouncement": "Update Announcements",
   "noUpdates": "No update records",
   "updateNoDetail": "(No details)",
@@ -1811,24 +1803,6 @@
   "stepPickAppTooltip": "Pick from the app list",
   "stepPickScreenTooltip": "Pick from the current screen",
   "stepConfirmAgain": "This step needs confirmation again",
-  "nodePickReaderServiceError": "Screen reader service not connected: after the app update, re-enable “Screen Reader (Accessibility)” in system settings",
-  "nodePickReaderDisabled": "Screen reader (accessibility) is off; cannot read the current screen",
-  "nodePickTitle": "Select an operation target",
-  "nodePickOpenAppHint": "You can open the target app first and come back to pick, or type the target text directly",
-  "nodePickEnableScreenReader": "Go enable screen reader",
-  "nodePickCurrentScreen": "Current screen",
-  "nodePickRecentApps": "Recently opened apps",
-  "nodePickRecentAppsPkg": "Recently opened apps ({pkg})",
-  "@nodePickRecentAppsPkg": {
-    "placeholders": {
-      "pkg": {
-        "type": "String"
-      }
-    }
-  },
-  "nodePickExternalHint": "From recently browsed pages; re-matched by text on the current screen when executed",
-  "nodePickIconNoText": "Icon (no text)",
-  "nodePickIconButton": "Icon button",
   "appPickLoadFailed": "Cannot read the app list: {err}",
   "@appPickLoadFailed": {
     "placeholders": {

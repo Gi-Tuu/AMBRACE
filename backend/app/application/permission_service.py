@@ -57,21 +57,6 @@ LEVEL_LABELS = {"allow": "允许", "ask": "每次询问", "forbid": "禁止"}
 DEFAULT_GLOBAL_LEVEL = "allow"  # 默认全局 = 允许（保持现有体验），用户可收紧
 
 
-def _channel_scopes() -> dict[str, tuple[str, str]]:
-    """渠道上报的 scope → (label, desc)（X5：内核不持有具体渠道名，scope 清单动态合并）"""
-    try:
-        from app.providers.channel import list_channels
-        out: dict[str, tuple[str, str]] = {}
-        for c in list_channels():
-            m = c.get("meta") or {}
-            s = str(m.get("scope") or "").strip()
-            if s:
-                out[s] = (str(m.get("scope_label") or m.get("label") or s), str(m.get("scope_desc") or ""))
-        return out
-    except Exception:
-        return {}
-
-
 def _plugin_scope(plugin: str) -> str:
     """插件名 → 能力 scope：注册渠道取 meta.scope（渠道上报），browser 特判，其余归 extension"""
     name = (plugin or "").lower()

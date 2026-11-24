@@ -16,6 +16,8 @@ export 'src/attachment/attachment_api.dart';
 export 'src/attachment/upload_progress.dart';
 export 'src/character_management/character_editor_api.dart';
 export 'src/character_management/character_editor_models.dart';
+export 'src/character_management/character_settings_api.dart';
+export 'src/character_management/avatar_api.dart';
 export 'src/chat/chat_transport.dart';
 export 'src/chat/session_models.dart';
 export 'src/editor/editor_api.dart';

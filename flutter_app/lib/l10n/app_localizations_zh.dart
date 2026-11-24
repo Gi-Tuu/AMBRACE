@@ -3121,9 +3121,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get noGoals => '还没有目标';
 
   @override
-  String get noGroups => '还没有家庭群聊';
-
-  @override
   String get noInterests => '还没有兴趣记录';
 
   @override
@@ -4322,31 +4319,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get dyMemoryTitle => '抖音记忆收紧';
 
   @override
-  String get dyMemoryOnSave => '已开启：排除关系类私密记忆';
-
-  @override
-  String get dyMemoryOffSave => '已关闭：按现状筛选记忆';
-
-  @override
-  String dyMemorySaveFailed(Object err) {
-    return '保存失败：$err';
-  }
-
-  @override
-  String get dyMemorySection => '公开记忆注入';
-
-  @override
-  String get dyMemorySwitchTitle => '收紧私密记忆';
-
-  @override
-  String get dyMemorySwitchSubtitle =>
-      '开启后，抖音图文创作与评论回复不再注入「关系类」记忆（表白/金钱等无姓名但私密的内容）';
-
-  @override
-  String get dyMemoryNote =>
-      '说明：无论开关状态，抖音都永不注入「身份画像」与含用户姓名的记忆。开启「收紧」后，关系类记忆（如表白、亲密互动、金钱往来）也会被排除，适合对外更谨慎的场景。';
-
-  @override
   String get updateAnnouncement => '更新公告';
 
   @override
@@ -5081,42 +5053,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get stepConfirmAgain => '此步需再次确认';
-
-  @override
-  String get nodePickReaderServiceError =>
-      '读屏服务未连接：App 更新后需在系统设置里重新开启「读屏（无障碍）」';
-
-  @override
-  String get nodePickReaderDisabled => '未开启读屏（无障碍），无法读取当前屏幕';
-
-  @override
-  String get nodePickTitle => '选择操作目标';
-
-  @override
-  String get nodePickOpenAppHint => '可先打开目标应用再回来点选，或直接手输目标文本';
-
-  @override
-  String get nodePickEnableScreenReader => '去开启读屏';
-
-  @override
-  String get nodePickCurrentScreen => '当前屏幕';
-
-  @override
-  String get nodePickRecentApps => '最近打开的应用';
-
-  @override
-  String nodePickRecentAppsPkg(String pkg) {
-    return '最近打开的应用（$pkg）';
-  }
-
-  @override
-  String get nodePickExternalHint => '来自最近浏览的页面，执行时会按文字在当前屏幕重新匹配';
-
-  @override
-  String get nodePickIconNoText => '图标（无文字）';
-
-  @override
-  String get nodePickIconButton => '图标按钮';
 
   @override
   String appPickLoadFailed(String err) {

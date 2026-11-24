@@ -84,6 +84,7 @@ class ReaderCharacter {
   final int? talkativeness;
   final int? timezoneOffset;
   final String? avatarUrl; // 本单不加载图片，仅占位
+  final bool cognitiveLoopEnabled; // 角色级认知循环开关（缺字段按后端默认 true）
   final String createdAt; // UTC ISO 原文
 
   const ReaderCharacter({
@@ -102,6 +103,7 @@ class ReaderCharacter {
     this.talkativeness,
     this.timezoneOffset,
     this.avatarUrl,
+    this.cognitiveLoopEnabled = true,
     this.createdAt = '',
   });
 
@@ -121,6 +123,9 @@ class ReaderCharacter {
         talkativeness: _asIntN(j['talkativeness']),
         timezoneOffset: _asIntN(j['timezone_offset']),
         avatarUrl: _asStrN(j['avatar_url']),
+        cognitiveLoopEnabled: j['cognitive_loop_enabled'] == null
+            ? true
+            : _asBool(j['cognitive_loop_enabled']),
         createdAt: _asStr(j['created_at']),
       );
 }

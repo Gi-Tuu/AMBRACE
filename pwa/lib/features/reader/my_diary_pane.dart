@@ -18,6 +18,7 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/editor_strings.dart';
 import '../../l10n/reader_strings.dart';
+import '../../widgets/pwa_entrance.dart';
 import '../../widgets/reader_async_view.dart';
 import '../editor/personal_editor_sheet.dart';
 import 'reader_state.dart';
@@ -252,9 +253,13 @@ class _MyDiaryPaneState extends State<MyDiaryPane> {
               return Center(child: Text(rs.t('empty')));
             }
             final shown = monthItems.take(_showCount).toList();
-            return ListView(children: [
+            return PwaListEntrance(
+              builder: (animate) => ListView(children: [
               for (final e in shown)
-                ListTile(
+                PwaEntrance(
+                  key: ValueKey(e.diaryDate),
+                  animate: animate,
+                  child: ListTile(
                   title: Text(e.diaryDate),
                   subtitle: Text(e.content.split('\n').first,
                       maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -274,6 +279,7 @@ class _MyDiaryPaneState extends State<MyDiaryPane> {
                           ),
                         ])
                       : null,
+                  ),
                 ),
               if (shown.length < monthItems.length)
                 Padding(
@@ -286,7 +292,7 @@ class _MyDiaryPaneState extends State<MyDiaryPane> {
                     ),
                   ),
                 ),
-            ]);
+            ]));
           },
         ),
       ),

@@ -5865,12 +5865,6 @@ abstract class AppLocalizations {
   /// **'还没有目标'**
   String get noGoals;
 
-  /// No description provided for @noGroups.
-  ///
-  /// In zh, this message translates to:
-  /// **'还没有家庭群聊'**
-  String get noGroups;
-
   /// No description provided for @noInterests.
   ///
   /// In zh, this message translates to:
@@ -8163,48 +8157,6 @@ abstract class AppLocalizations {
   /// **'抖音记忆收紧'**
   String get dyMemoryTitle;
 
-  /// No description provided for @dyMemoryOnSave.
-  ///
-  /// In zh, this message translates to:
-  /// **'已开启：排除关系类私密记忆'**
-  String get dyMemoryOnSave;
-
-  /// No description provided for @dyMemoryOffSave.
-  ///
-  /// In zh, this message translates to:
-  /// **'已关闭：按现状筛选记忆'**
-  String get dyMemoryOffSave;
-
-  /// No description provided for @dyMemorySaveFailed.
-  ///
-  /// In zh, this message translates to:
-  /// **'保存失败：{err}'**
-  String dyMemorySaveFailed(Object err);
-
-  /// No description provided for @dyMemorySection.
-  ///
-  /// In zh, this message translates to:
-  /// **'公开记忆注入'**
-  String get dyMemorySection;
-
-  /// No description provided for @dyMemorySwitchTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'收紧私密记忆'**
-  String get dyMemorySwitchTitle;
-
-  /// No description provided for @dyMemorySwitchSubtitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'开启后，抖音图文创作与评论回复不再注入「关系类」记忆（表白/金钱等无姓名但私密的内容）'**
-  String get dyMemorySwitchSubtitle;
-
-  /// No description provided for @dyMemoryNote.
-  ///
-  /// In zh, this message translates to:
-  /// **'说明：无论开关状态，抖音都永不注入「身份画像」与含用户姓名的记忆。开启「收紧」后，关系类记忆（如表白、亲密互动、金钱往来）也会被排除，适合对外更谨慎的场景。'**
-  String get dyMemoryNote;
-
   /// No description provided for @updateAnnouncement.
   ///
   /// In zh, this message translates to:
@@ -9518,72 +9470,6 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'此步需再次确认'**
   String get stepConfirmAgain;
-
-  /// No description provided for @nodePickReaderServiceError.
-  ///
-  /// In zh, this message translates to:
-  /// **'读屏服务未连接：App 更新后需在系统设置里重新开启「读屏（无障碍）」'**
-  String get nodePickReaderServiceError;
-
-  /// No description provided for @nodePickReaderDisabled.
-  ///
-  /// In zh, this message translates to:
-  /// **'未开启读屏（无障碍），无法读取当前屏幕'**
-  String get nodePickReaderDisabled;
-
-  /// No description provided for @nodePickTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'选择操作目标'**
-  String get nodePickTitle;
-
-  /// No description provided for @nodePickOpenAppHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'可先打开目标应用再回来点选，或直接手输目标文本'**
-  String get nodePickOpenAppHint;
-
-  /// No description provided for @nodePickEnableScreenReader.
-  ///
-  /// In zh, this message translates to:
-  /// **'去开启读屏'**
-  String get nodePickEnableScreenReader;
-
-  /// No description provided for @nodePickCurrentScreen.
-  ///
-  /// In zh, this message translates to:
-  /// **'当前屏幕'**
-  String get nodePickCurrentScreen;
-
-  /// No description provided for @nodePickRecentApps.
-  ///
-  /// In zh, this message translates to:
-  /// **'最近打开的应用'**
-  String get nodePickRecentApps;
-
-  /// No description provided for @nodePickRecentAppsPkg.
-  ///
-  /// In zh, this message translates to:
-  /// **'最近打开的应用（{pkg}）'**
-  String nodePickRecentAppsPkg(String pkg);
-
-  /// No description provided for @nodePickExternalHint.
-  ///
-  /// In zh, this message translates to:
-  /// **'来自最近浏览的页面，执行时会按文字在当前屏幕重新匹配'**
-  String get nodePickExternalHint;
-
-  /// No description provided for @nodePickIconNoText.
-  ///
-  /// In zh, this message translates to:
-  /// **'图标（无文字）'**
-  String get nodePickIconNoText;
-
-  /// No description provided for @nodePickIconButton.
-  ///
-  /// In zh, this message translates to:
-  /// **'图标按钮'**
-  String get nodePickIconButton;
 
   /// No description provided for @appPickLoadFailed.
   ///

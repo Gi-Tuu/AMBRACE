@@ -262,6 +262,10 @@ AGENT_FLAGS = {
     #   关＝逐字节旧行为。**此前只在 facts.py 读取、未登记进本表**，导致 runtime_flags 写 1 也不生效
     #   （flag_service 只合并「已登记键」）——灰度会白开，故补登记。
     "memory_admission_gate": True,
+    # ── 上下文注入渐进式改革（2026-11-22 用户拍板：当天全量＋渐进摘要＋保真）──
+    # 开＝聊天历史按北京日界取当天全量（无 20 条上限）＋旧摘要按日龄渐进截取；
+    # 关＝逐字旧行为（MAX_RECENT_MESSAGES=20 计数闸）。验证中，暂不推给用户。
+    "context_progressive_history": False,
     # ── 批次四（2026-09-16）：主动消息分块口径护栏（允许分块，禁止残句/空块；生成前校验现实约束）──
     # 开＝分块时过滤残句/空块并做现实校验；关＝逐字节现状。
     "proactive_segment_guard": True,

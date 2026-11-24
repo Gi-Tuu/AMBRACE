@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy import and_, or_, select, update
 
@@ -63,6 +63,7 @@ from app.models.character import AICharacter, ProactiveMessageLog
 from app.models.memory import ProspectiveIntent
 from app.scheduling import state_guard
 from app.utils.logger import get_logger
+from app.utils.timeutil import now_naive_utc as _now_naive
 
 _logger = get_logger("scheduling.prospective_intent")
 
@@ -139,10 +140,6 @@ TOPIC_MERGE_JOIN = "；"         # ⑦ 并列段的分隔符（同主题多义�
 
 PROACTIVE_DUAL_SEND_SUPPRESS_SEC = 20   # ⑧ 同会话 N 秒内已有 AI 消息 ⇒ 承诺本轮不抢发
 _RECALL_HEAD_CLAUSES = 2                # ⑨ 「开场」只看句首前两个短句（容忍「嘿，」「宝贝，」）
-
-
-def _now_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 BEIJING_OFFSET = timedelta(hours=8)

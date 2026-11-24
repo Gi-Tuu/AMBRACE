@@ -65,3 +65,20 @@ def ensure_outbound_url(url: str, *, allow_private: bool | None = None) -> None:
         addr = info[4][0]
         if is_blocked_ip(addr):
             raise ValueError("ssrf blocked host=%s ip=%s" % (host, addr))
+
+
+def build_no_redirect_opener(url: str):
+    """urllib opener：任何重定向都按 HTTPError 拒绝（防重定向绕过域名白名单）。
+
+    2026-11-23 从 api/marketplace 与 application/emoji_market 的两份逐字实现收敛到此；
+    两处下载都先做 ``ensure_outbound_url``，重定向若被跟随就会绕过该校验。
+    ``url`` 只用于构造错误对象的 filename 字段，保持原报错形态。
+    """
+    import urllib.error
+    import urllib.request
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **kw):
+            raise urllib.error.HTTPError(url, 302, "redirect blocked", {}, None)
+
+    return urllib.request.build_opener(_NoRedirect)

@@ -194,7 +194,7 @@ def test_gate_light_theme_is_a_day_scene_not_a_night_one():
         "纸色档的云层没打开（.neb 默认 display:none，不打开就一条云规则都不生效）"
     assert re.search(r'html\[data-theme="light"\] \.hero \.neb canvas \{ display: none', CSS), \
         "纸色档还留着星空画布"
-    assert re.search(r'html\[data-theme="light"\] \.hero \.neb \.mote \{[^}]*border-radius:\s*\d+% 0 \d+% 0',
+    assert re.search(r'html\[data-theme="light"\] \.hero \.neb \.wind-leaf \{[^}]*border-radius:\s*var\(--leaf-shape\)',
                      CSS, re.S), "星点没换成叶子形状（对角圆角）"
     assert re.search(r'html\[data-theme="light"\] \.hero-planet::after \{[^}]*clip-path: path\(',
                      CSS, re.S), "太阳没有三角光芒"
@@ -217,20 +217,36 @@ def test_gate_light_theme_flower_shapes():
     assert "@keyframes sv-bloom" in CSS, "保存的超新星没换成开花"
 
 
-def test_gate_light_theme_grass_and_trees():
-    # 左下角现在是"风滚草"（一团缠绕的草茎），不再是实心草坡
-    assert re.search(r'html\[data-theme="light"\] \.set-orb b \{[^}]*conic-gradient', CSS, re.S), \
-        "左下角不是缠绕的草茎"
-    assert re.search(r'html\[data-theme="light"\] \.set-orb \{[^}]*animation: tumble-roll', CSS, re.S), \
-        "风滚草不转"
-    assert 'class="side-grove"' in HTML, "没有远树层"
-    assert re.search(r'html\[data-theme="light"\] \.side-grove \{ display: block; \}', CSS), \
-        "远树只在纸色档显示"
-    # 树要有树干和树枝，不能只是一团树冠
-    grove = re.search(r"\.side-grove i \{[^}]*\}", CSS, re.S)
-    assert grove, "没有树冠规则"
-    assert re.search(r"\.side-grove i::before \{[^}]*height: \d+px", CSS, re.S), "树没有树干"
-    assert re.search(r"\.side-grove i::after \{[^}]*gradient\(", CSS, re.S), "树没有树枝"
+@has_chrome
+def test_gate_sidebar_landscape_and_controls(tmp_path):
+    got = _run(tmp_path, "landscape", "dashboard", """
+      const grove = document.querySelector('.side-grove');
+      const weed = document.querySelector('.tumbleweed');
+      const sky = document.querySelector('.side-sky');
+      const orb = weed.closest('button');
+      const side = orb.closest('.side').getBoundingClientRect();
+      const box = el => el.getBoundingClientRect();
+      const hitsVisibleCenter = el => {
+        const b = box(el);
+        const visibleBottom = Math.min(b.bottom, side.bottom, innerHeight);
+        return document.elementFromPoint(b.x + b.width/2, (b.top + visibleBottom)/2)?.closest('button') === el;
+      };
+      const visibleArt = el => [...el.querySelectorAll('use')].every(stem => stem.getBBox().height > 0)
+        && el.querySelector('use') !== null;
+      out.forest = visibleArt(grove) && box(grove).width >= side.width - 1
+        && getComputedStyle(grove).pointerEvents === 'none';
+      const lightOrb = box(orb);
+      out.straw = visibleArt(weed) && lightOrb.top < side.bottom && lightOrb.bottom > side.bottom;
+      out.roll = getComputedStyle(weed).animationName;
+      out.controls = ['.set-orb','.wx-orb','.pwa-orb'].every(sel => hitsVisibleCenter(document.querySelector(sel)));
+      out.lightSky = getComputedStyle(sky).display;
+      document.documentElement.dataset.theme = 'dark';
+      const darkOrb = box(orb);
+      out.aligned = ['left','top','width','height'].every(k => darkOrb[k] === lightOrb[k]);
+      out.dark = [grove, weed, sky].map(el => getComputedStyle(el).display);
+    """, {}, theme="light")
+    assert got == {"forest": True, "straw": True, "aligned": True, "roll": "tumble-roll", "controls": True,
+                   "lightSky": "none", "dark": ["none", "none", "block"]}
 
 
 @has_chrome
@@ -357,57 +373,50 @@ def test_gate_light_decor_is_a_gold_family_not_one_flat_color():
 
 
 # ───── ⑪ 随机草 / 树的下绿上淡 / 落叶对标星点 / 太阳光芒留空隙 ─────
-def test_gate_grass_is_a_scatter_not_a_comb():
-    """草必须是一把随机的小草：逐片给角度/半径/高矮/粗细，而不是一条梳子。"""
-    blades = re.findall(r'<i style="--a:[-\d.]+deg;--r:[-\d.]+px;--h:[-\d.]+px;--w:[-\d.]+px"></i>', HTML)
-    assert len(blades) >= 12, "草叶太少（%d 片），不像草" % len(blades)
-    angles = set(re.findall(r"--a:([-\d.]+)deg", " ".join(blades)))
-    assert len(angles) == len(blades), "角度有重复，还是齐刷刷的"
-    assert re.search(r"html\[data-theme=\"light\"\] \.set-orb i \{[^}]*var\(--a", CSS, re.S), \
-        "草叶没接上随机角度"
-    assert re.search(r"html\[data-theme=\"light\"\] \.set-orb i \{[^}]*translateY\(calc\(-1 \* var\(--r", CSS, re.S), \
-        "草叶没按随机半径摆到坡外"
-    assert "repeating-conic-gradient" not in CSS.split("/* ② 星点")[0].split("纸色档")[-1], \
-        "梳子式草还没删干净"
-
-
-def test_gate_tree_fades_from_green_at_the_bottom():
-    blk = re.search(r"\.side-grove i \{[^}]*\}", CSS, re.S)
-    assert blk, "没有树冠规则"
-    assert "linear-gradient(to bottom" in blk.group(0), "树冠不是自下而上的渐变"
-    body = blk.group(0)
-    top = body.index("linear-gradient(to bottom")
-    tail = body[top:]
-    assert re.search(r"rgba\(96, 106, 58", tail), "树冠顶部不是原来的淡色"
-    assert re.search(r"rgba\(1\d\d, 1\d\d, \d\d, \.\d+\)\s*100%", tail), \
-        "树冠底部不是绿色（下绿上不变）"
-
-
-def test_gate_leaves_follow_the_motes():
-    """落叶必须用星点那一套：路径、节奏一样，旋转写进 transform 列表里。"""
-    def kf(name):
-        m = re.search(r"@keyframes " + name + r" \{(.*?)\n\}", CSS, re.S)
-        assert m, "没有 @keyframes " + name
-        return m.group(1)
-    leaf, mote = kf("leaf-drift"), kf("mote-drift")
-    # 落叶是**水平向左**飞（用户原话"往左飘"）：横向位移必须明显大于纵向，
-    # 不能跟着星点那个斜率走——那看着就是往上飘。
-    def end_xy(block):
-        ms = re.findall(r"translate3d\((-?[\d.]+)px,\s*(-?[\d.]+)px", block)
-        assert ms, "找不到位移"
-        return float(ms[-1][0]), float(ms[-1][1])
-    lx, ly = end_xy(leaf)
-    mx, my = end_xy(mote)
-    assert lx < 0 and ly < 0, "落叶应当向左飞：%s" % ((lx, ly),)
-    assert abs(lx) > abs(ly) * 2, \
-        "落叶不是往左飘（横向 %s 纵向 %s）" % (abs(lx), abs(ly))
-    assert mx < 0 and my < 0, "星点应当向左上飘：%s" % ((mx, my),)
-    assert "rotate(" in leaf, "叶尖没有转到行进方向"
-    # 旋转必须写在 transform 列表里（translate 在前），不能单独用 rotate 属性——
-    # 独立 rotate 属性会先于 transform 生效，把移动方向也一起转歪
-    assert not re.search(r"\.hero \.neb \.mote \{[^}]*\brotate:", CSS, re.S), \
-        "用了独立 rotate 属性，轨迹会被带歪"
-    assert re.search(r"translate3d\([^)]*\) rotate\(", leaf), "旋转没跟在位移后面"
+@has_chrome
+def test_gate_wind_keeps_leaves_crossing_with_varied_profiles(tmp_path):
+    got = _run(tmp_path, "leaf_drift", "dashboard", """
+      const root = document.documentElement;
+      const layer = document.querySelector('.hero .neb');
+      const motes = [...layer.querySelectorAll('.wind-leaf')];
+      const sample = (el, fraction) => {
+        const anim = el.getAnimations()[0];
+        const {duration} = anim.effect.getTiming();
+        anim.effect.updateTiming({delay: 0});
+        anim.currentTime = duration * fraction;
+        const style = getComputedStyle(el);
+        const matrix = new DOMMatrixReadOnly(style.transform);
+        return {x: matrix.m41, y: matrix.m42, angle: matrix.b, time: duration,
+                opacity: Number(style.opacity), box: el.getBoundingClientRect()};
+      };
+      const speed = (el) => {
+        const start = sample(el, .25), finish = sample(el, .75);
+        return Math.hypot(finish.x - start.x, finish.y - start.y) / (finish.time / 2000);
+      };
+      root.dataset.sky = 'paused';
+      const bounds = layer.getBoundingClientRect();
+      const cells = new Set();
+      for (const leaf of motes) {
+        const b = leaf.getBoundingClientRect();
+        const x = (b.left - bounds.left) / bounds.width, y = (b.top - bounds.top) / bounds.height;
+        if (x >= 0 && x < 1 && y >= 0 && y < 1) cells.add(Math.floor(x*4) + 4*Math.floor(y*2));
+      }
+      out.scattered = motes.length >= 48 && cells.size >= 7;
+      out.paused = motes.every(el => getComputedStyle(el).animationPlayState === 'paused');
+      out.crosses = motes.every(el => {
+        const start = sample(el, .0001), finish = sample(el, .9999);
+        return start.box.left > bounds.right && finish.box.right < bounds.left;
+      });
+      out.visible = motes.every(el => [.04, .25, .5, .75, .96].every(f => sample(el, f).opacity >= .8));
+      out.strongWind = motes.every(el => speed(el) > 150 && sample(el, .75).x < sample(el, .25).x);
+      const vertical = motes.map(el => sample(el, .9).y - sample(el, .1).y);
+      out.directions = new Set(vertical.map(y => Math.round(y))).size >= 3;
+      out.tilts = new Set(motes.map(el => sample(el, .5).angle.toFixed(2))).size >= 3;
+      out.sizes = new Set(motes.map(el => getComputedStyle(el).width)).size >= 3;
+      out.shapes = new Set(motes.map(el => getComputedStyle(el).borderTopLeftRadius)).size >= 3;
+    """, {}, theme="light")
+    assert got == dict.fromkeys(
+        ["paused", "crosses", "visible", "scattered", "strongWind", "directions", "tilts", "sizes", "shapes"], True)
 
 
 def test_gate_sun_rays_are_triangles_with_a_gap():
@@ -424,37 +433,6 @@ def test_gate_sun_rays_are_triangles_with_a_gap():
     r0 = math.hypot(float(m.group(1)) - 77, float(m.group(2)) - 77)
     assert r0 >= 60, "光芒根部太靠里，会插进盘面（%s）" % r0
 
-
-
-# ───── ⑫ 风滚草 / 落叶顺时针 90° / 落叶加快 ─────
-def test_gate_tumbleweed_is_a_ball_of_straw():
-    """左下角要是一整团看得见的缠绕草茎，而不是薄薄一层。"""
-    arcs = re.findall(r'<b style="--w:\d+px;--a:\d+deg;--o:[\d.]+"></b>', HTML)
-    assert len(arcs) >= 10, "草茎太少（%d 道），不像一团草" % len(arcs)
-    blk = re.search(r"html\[data-theme=\"light\"\] \.set-orb \{[^}]*tumble-roll[^}]*\}", CSS, re.S)
-    assert blk, "没有纸色档的风滚草规则"
-    # 整团要露出来：bottom 不能还是 -140px（那只有顶上薄薄一层）
-    m = re.search(r"bottom:\s*(-?\d+)px", blk.group(0))
-    assert m and int(m.group(1)) > -120, "草团还是沉在窗口底下，看不全：%s" % (m and m.group(1))
-
-
-def test_gate_leaves_turned_90_degrees_clockwise_and_move_faster():
-    """落叶：顺时针再转 90°（-73° → 17°），并且要真飞过去、不能原地淡掉。"""
-    m = re.search(r"@keyframes leaf-drift \{(.*?)\n\}", CSS, re.S)
-    assert m, "没有 leaf-drift"
-    body = m.group(1)
-    rot = re.search(r"rotate\((-?[\d.]+)deg\)", body)
-    assert rot, "落叶没有固定朝向"
-    assert 10 <= abs(float(rot.group(1))) <= 25, \
-        "落叶朝向应是顺时针转 90° 之后的 17°，现在是 %s" % rot.group(1)
-    # 位移要够长：原来只有 42px，看着像原地淡掉
-    ms = re.findall(r"translate3d\((-?[\d.]+)px,\s*(-?[\d.]+)px", body)
-    assert ms, "找不到落叶的位移"
-    total = abs(float(ms[-1][0])) + abs(float(ms[-1][1]))
-    assert total >= 150, "落叶飞得太短（%s），还是像原地淡掉" % total
-    # 周期要压得住行内写的 18~29s
-    assert re.search(r"animation-duration:\s*\d+s !important", CSS), \
-        "落叶的周期没压短（行内 style 要 !important 才压得住）"
 
 
 # ───── ⑫ 风滚草 / 落叶顺时针 90° / 落叶加快 ─────

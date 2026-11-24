@@ -295,7 +295,7 @@ class ReaderApi {
   Future<List<ReaderLorebookEntry>> getLorebook(int characterId,
       {CancelToken? cancelToken}) async {
     try {
-      final r = await client.dio.get('/api/v1/characters//lorebook',
+      final r = await client.dio.get('/api/v1/characters/$characterId/lorebook',
           cancelToken: cancelToken);
       final data = _obj(r.data, 'lorebook');
       return [
@@ -311,11 +311,42 @@ class ReaderApi {
       {CancelToken? cancelToken}) async {
     try {
       final r = await client.dio.get(
-          '/api/v1/characters//agent-mind',
+          '/api/v1/characters/$characterId/agent-mind',
           cancelToken: cancelToken);
       return _obj(r.data, 'agent mind');
     } on FormatException catch (e) {
       _bad('agent mind', e);
+    }
+  }
+
+  /// 角色级主动交流/生活/隐私配置（`GET /api/v1/scheduler/settings/{id}`）。
+  ///
+  /// 返回**原样对象**：字段集由后端 `ProactiveSettings` 决定（布尔开关 + frequency /
+  /// dnd_start·end / life_intensity / reasoning_level 等）。本层不裁剪、不改名、不补默认值，
+  /// 缺字段由 UI 按与 App 相同的默认解释。
+  Future<Map<String, dynamic>> getProactiveSettings(int characterId,
+      {CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get('/api/v1/scheduler/settings/$characterId',
+          cancelToken: cancelToken);
+      return _obj(r.data, 'settings');
+    } on FormatException catch (e) {
+      _bad('settings', e);
+    }
+  }
+
+  /// 记忆检索轨迹（`GET /api/v1/characters/{id}/memory-trace`，只读调试数据）。
+  /// 返回 `{character_id, traces:[{route,status,latency_ms,created_at,steps}]}` 原样对象。
+  Future<Map<String, dynamic>> getMemoryTrace(int characterId,
+      {int limit = 20, CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get(
+          '/api/v1/characters/$characterId/memory-trace',
+          queryParameters: {'limit': limit},
+          cancelToken: cancelToken);
+      return _obj(r.data, 'memory trace');
+    } on FormatException catch (e) {
+      _bad('memory trace', e);
     }
   }
 
@@ -361,6 +392,99 @@ class ReaderApi {
       ];
     } on FormatException catch (e) {
       _bad('life artifacts', e);
+    }
+  }
+
+  Future<List<ReaderLifeInterest>> getLifeInterests(int characterId,
+      {int limit = 50, CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get('/api/v1/life/interests',
+          queryParameters: {'character_id': characterId, 'limit': limit},
+          cancelToken: cancelToken);
+      final data = _obj(r.data, 'life interests');
+      return [
+        for (final item in _reqListFor(data['items'], 'life interests'))
+          ReaderLifeInterest.fromJson(_mapObj(item, 'life interest')),
+      ];
+    } on FormatException catch (e) {
+      _bad('life interests', e);
+    }
+  }
+
+  Future<List<ReaderLifeGoal>> getLifeGoals(int characterId,
+      {int limit = 50, CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get('/api/v1/life/goals',
+          queryParameters: {'character_id': characterId, 'limit': limit},
+          cancelToken: cancelToken);
+      final data = _obj(r.data, 'life goals');
+      return [
+        for (final item in _reqListFor(data['items'], 'life goals'))
+          ReaderLifeGoal.fromJson(_mapObj(item, 'life goal')),
+      ];
+    } on FormatException catch (e) {
+      _bad('life goals', e);
+    }
+  }
+
+  Future<List<ReaderLifeBrowsing>> getLifeBrowsing(int characterId,
+      {int limit = 50, CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get('/api/v1/life/browsing',
+          queryParameters: {'character_id': characterId, 'limit': limit},
+          cancelToken: cancelToken);
+      final data = _obj(r.data, 'life browsing');
+      return [
+        for (final item in _reqListFor(data['items'], 'life browsing'))
+          ReaderLifeBrowsing.fromJson(_mapObj(item, 'life browsing entry')),
+      ];
+    } on FormatException catch (e) {
+      _bad('life browsing', e);
+    }
+  }
+
+  /// 角色八维状态（只读）：`GET /api/v1/characters/{id}/states` 原样对象。
+  Future<Map<String, dynamic>> getCharacterStates(int characterId,
+      {CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.get('/api/v1/characters/$characterId/states',
+          cancelToken: cancelToken);
+      return _obj(r.data, 'character states');
+    } on FormatException catch (e) {
+      _bad('character states', e);
+    }
+  }
+
+  /// 保存小家布局（仅家具位置/尺寸/朝向）：`PUT /api/v1/life-home/layout`。
+  Future<void> saveLifeHomeLayout(int characterId, List<Map<String, dynamic>> rooms,
+      {CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.put('/api/v1/life-home/layout',
+          data: {'character_id': characterId, 'rooms': rooms},
+          cancelToken: cancelToken);
+      final data = _obj(r.data, 'life home layout');
+      if (data['saved'] != true) {
+        throw const FormatException('malformed life home layout: saved != true');
+      }
+    } on FormatException catch (e) {
+      _bad('life home layout', e);
+    }
+  }
+
+  /// 小家生活/宠物动作：`POST /api/v1/life-home/event`，原样返回。
+  Future<Map<String, dynamic>> lifeHomeEvent(int characterId, String action,
+      {int? petId, CancelToken? cancelToken}) async {
+    try {
+      final r = await client.dio.post('/api/v1/life-home/event',
+          data: {
+            'character_id': characterId,
+            'action': action,
+            if (petId != null) 'pet_id': petId,
+          },
+          cancelToken: cancelToken);
+      return _obj(r.data, 'life home event');
+    } on FormatException catch (e) {
+      _bad('life home event', e);
     }
   }
 

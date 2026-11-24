@@ -52,6 +52,19 @@ async def chat_history_section(state: dict, ctx: dict) -> str:
     if char is None:
         return ""
     char_name = char.name
+
+    # ── 渐进式历史（2026-11-22，flag context_progressive_history）──
+    from app.flags.agent_flags import AGENT_FLAGS as _AF
+    _progressive = bool(_AF.get("context_progressive_history", False))
+
+    if _progressive:
+        from app.utils.timeutil import shift_utc_naive as _shift
+        _now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        _bj_now = _shift(_now_utc, 8)
+        _bj_midnight = _bj_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        one_day_ago = (_bj_midnight - timedelta(hours=8)).replace(tzinfo=None)
+    else:
+        one_day_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
     user_name = (user.nickname or user.username or "\u7528\u6237") if user else "\u7528\u6237"
 
     # 最近1天完整消息
@@ -68,7 +81,7 @@ async def chat_history_section(state: dict, ctx: dict) -> str:
         recent_msgs = list(recent_result.scalars().all())
 
     older_extra = []
-    if len(recent_msgs) > _cb.MAX_RECENT_MESSAGES:
+    if not _progressive and len(recent_msgs) > _cb.MAX_RECENT_MESSAGES:
         older_extra = recent_msgs[:-_cb.MAX_RECENT_MESSAGES]
         recent_msgs = recent_msgs[-_cb.MAX_RECENT_MESSAGES:]
 
@@ -87,7 +100,8 @@ async def chat_history_section(state: dict, ctx: dict) -> str:
                 _ts = f"[{_hhmm}] " if _mt_bj.date() == _bj_today else f"[{_mt_bj.month:02d}-{_mt_bj.day:02d} {_hhmm}] "
         except Exception:
             _ts = ""
-        content = msg.content[:200] if len(msg.content) > 200 else msg.content
+        _max_content = 500 if _progressive else 200
+        content = msg.content[:_max_content] if len(msg.content) > _max_content else msg.content
         if msg.image_url:
             desc_text = ""
             try:

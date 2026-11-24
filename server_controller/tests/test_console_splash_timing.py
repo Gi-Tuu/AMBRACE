@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import json
 import os
 import re
@@ -267,8 +269,8 @@ def test_backdrop_drops_at_cover_leaving_only_the_planet():
 
 
 # ───── ⑩b 星球落位时，内容区从下方顶上来 ─────
-def test_cards_rise_into_place_when_the_planet_lands():
-    """用户：「改为上升的卡片（仅仅启动星球到位时升起），到位再固定」。"""
+def test_cards_rise_during_the_landing():
+    """背景开始渐隐时正文升起，星球继续收束到页眉。"""
     rise = _rule("#body.rise")
     assert "body-rise" in rise, "内容区没有上升动画：%s" % rise
     assert "both" in rise, "动画没用 both，落位后会回弹一下"
@@ -285,9 +287,7 @@ def test_cards_rise_into_place_when_the_planet_lands():
     tail = HTML[HTML.index("SPLASH_MS"):]
     assert 'classList.add("rise")' in tail, "上升没跟落位挂钩"
     assert 'classList.remove("enter")' in tail, "翻页动画没让位，两个动画会打架"
-    i = tail.index('classList.add("rise")')
-    j = tail.index('"sp-out"')
-    assert abs(i - j) < 400, "上升与遮罩消隐不在同一拍"
+    assert tail.index('"sp-landing"') < tail.index('"rise"') < tail.index('SPLASH_MS * SPLASH_COVER')
 
 
 # ───── ⑪ 放大慢、缩小快 ─────
@@ -302,17 +302,27 @@ def test_growth_is_slower_than_the_shrink():
     assert grow > shrink, "放大 %.2fs 仍比缩小 %.2fs 短" % (grow, shrink)
 
 
-# ───── ⑤c 遮罩直到星球落位才打开 ─────
-def test_curtain_opens_only_after_the_planet_lands():
-    assert "sp-bare" not in CSS and "sp-bare" not in HTML, \
-        "中途把遮罩透明化，下面的卡片会提前露出来（用户看图说跳帧）"
-    out = _rule("#splash.sp-out")
-    assert "opacity: 0" in out, "没有整层淡出"
-    assert "transition" in _rule("#splash"), "淡出没有过渡，就是一帧闪掉"
-    assert "SPLASH_FADE" in HTML and '"sp-out"' in HTML
-    # 淡出必须排在落位之后（同一个 5s 定时器里），不能提前
-    tail = HTML[HTML.index("SPLASH_MS"):]
-    assert tail.index("SPLASH_MS") < tail.index('"sp-out"')
+def test_gate_page_shows_while_the_sphere_is_still_moving():
+    assert "background-color: transparent" in _rule("#splash.sp-landing")
+    assert "background-color" in _rule("#splash")
+    assert "var(--hero-h)" in CSS.split("@keyframes splash-frame")[1].split("/*")[0]
+    assert "opacity: 0" in _rule("#splash.sp-out")
+
+
+def test_gate_final_approach_decelerates_across_window_sizes():
+    arc = _stops()[_arc_start(_stops()):]
+
+    def pixels(expr, viewport):
+        units = re.findall(r"([+-]?[.\d]+)(vw|vh|px)", expr.replace(" ", ""))
+        return sum(float(n) * (1 if unit == "px" else viewport / 100) for n, unit in units)
+
+    for width, height in [(980, 640), (1920, 1080)]:
+        speeds = []
+        for a, b in zip(arc, arc[1:]):
+            dx = pixels(b[1], width) - pixels(a[1], width)
+            dy = pixels(b[2], height) - pixels(a[2], height)
+            speeds.append((dx * dx + dy * dy) ** .5 / (b[0] - a[0]))
+        assert all(b < a for a, b in zip(speeds, speeds[1:])), speeds
 
 
 def test_handoff_swaps_without_a_blink():
@@ -435,3 +445,43 @@ def test_window_is_painted_in_theme_colour_not_white():
     line = m.group(0).lower()
     assert "ffffff" not in line and '"#fff"' not in line, "底色还是白的：%s" % m.group(0)
     assert "#131110" in line and "#f4f0e6" in line, "底色没跟当前主题走：%s" % m.group(0)
+
+@has_chrome
+@pytest.mark.parametrize("size", [(980, 640), (1600, 900)])
+def test_gate_moon_follows_a_curve_while_its_surface_turns(tmp_path, size):
+    # 使用真正的首次开屏入口。暂停浏览器动画后按同一时钟采样，避免帧率影响结果。
+    probe = """<script>
+      const moon = document.querySelector('#spHero');
+      const skin = moon.querySelector('.sp-surface');
+      const motions = [...moon.getAnimations(), ...skin.getAnimations()];
+      const center = el => {
+        const r = el.getBoundingClientRect();
+        return [r.x + r.width / 2, r.y + r.height / 2];
+      };
+      const samples = [0, 1000, 2000, 2800, 4000, 4999].map(t => {
+        for (const animation of motions) { animation.pause(); animation.currentTime = t; }
+        return [...center(moon), parseFloat(getComputedStyle(skin).backgroundPositionX)];
+      });
+      const result = {samples, end: center(document.querySelector('#themePlanet')),
+                      width: innerWidth, height: innerHeight, path: moon.style.offsetPath};
+      const report = document.createElement('output');
+      report.id = 'orbit-report'; report.textContent = JSON.stringify(result);
+      document.body.append(report);
+    </script>"""
+    page = tmp_path / "orbit.html"
+    base = (Path(WEB).as_uri() + "/")
+    page.write_text(HTML.replace("<head>", f'<head><base href="{base}">')
+                    .replace("</body>", probe + "</body>"), encoding="utf-8")
+    r = subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--dump-dom",
+                        "--user-data-dir=" + str(tmp_path / "profile"),
+                        "--window-size=%d,%d" % size, page.as_uri() + "#theme=dark"],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=60, check=True)
+    result = json.loads(re.search(r'<output id="orbit-report">(.*?)</output>', r.stdout, re.S)[1])
+    points = result["samples"]
+    assert " C " in result["path"]
+    assert points[0][0] == pytest.approx(-.254 * result["width"], abs=1)
+    assert points[-1][:2] == pytest.approx(result["end"], abs=1)
+    assert all(b[0] > a[0] and b[2] < a[2] for a, b in zip(points, points[1:]))
+    assert abs(points[0][1] - points[2][1]) > 8
+    assert points[0][2] - points[-1][2] > 600

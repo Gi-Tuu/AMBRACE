@@ -137,5 +137,4 @@ def downgrade() -> None:
             op.drop_table(table)
     for col in ('game_session_id', 'msg_type'):
         if _has_column(bind, 'chat_group_messages', col):
-            with op.batch_alter_table('chat_group_messages', schema=None) as batch_op:
-                batch_op.drop_column(col)
+            op.drop_column('chat_group_messages', col)

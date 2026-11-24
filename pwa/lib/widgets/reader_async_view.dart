@@ -3,6 +3,8 @@
 import 'package:ambrace_core/ambrace_core.dart';
 import 'package:flutter/material.dart';
 
+import 'pwa_shimmer.dart';
+
 import '../features/reader/reader_state.dart';
 import '../l10n/reader_strings.dart';
 
@@ -14,6 +16,7 @@ class ReaderAsyncView<T> extends StatelessWidget {
     required this.cs,
     required this.onRetry,
     required this.dataBuilder,
+    this.skeleton,
   });
 
   final ReaderLoader<T> loader;
@@ -22,6 +25,9 @@ class ReaderAsyncView<T> extends StatelessWidget {
   final VoidCallback onRetry;
   final Widget Function(T data) dataBuilder;
 
+  /// 加载骨架（缺省＝列表形态）。详情/宫格页可按页形传入 `ReaderSkeletons.detail/grid`。
+  final Widget? skeleton;
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -29,7 +35,7 @@ class ReaderAsyncView<T> extends StatelessWidget {
       builder: (context, _) {
         switch (loader.status) {
           case ReaderStatus.loading:
-            return const Center(child: CircularProgressIndicator());
+            return skeleton ?? ReaderSkeletons.list();
           case ReaderStatus.error:
             return Center(
               child: Column(mainAxisSize: MainAxisSize.min, children: [

@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/editor_strings.dart';
 import '../../l10n/reader_strings.dart';
+import '../../widgets/pwa_entrance.dart';
 import '../../widgets/reader_async_view.dart';
 import '../editor/personal_editor_sheet.dart';
 import 'reader_state.dart';
@@ -206,9 +207,13 @@ class _MemosPaneState extends State<MemosPane> {
           rs: rs,
           cs: widget.cs,
           onRetry: _reload,
-          dataBuilder: (items) => ListView(children: [
+          dataBuilder: (items) => PwaListEntrance(
+            builder: (animate) => ListView(children: [
             for (final m in items)
-              ListTile(
+              PwaEntrance(
+                key: ValueKey(m.id),
+                animate: animate,
+                child: ListTile(
                 title: Text(
                   m.title?.isNotEmpty ?? false ? m.title! : rs.t('untitled'),
                   maxLines: 1,
@@ -232,8 +237,9 @@ class _MemosPaneState extends State<MemosPane> {
                         ),
                       ])
                     : null,
+                ),
               ),
-          ]),
+            ])),
         ),
       ),
     ]);

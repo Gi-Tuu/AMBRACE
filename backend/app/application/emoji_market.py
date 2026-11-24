@@ -12,7 +12,6 @@ import json
 import re
 import shutil
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -28,6 +27,7 @@ from app.models.life import UserEmojiPack
 from app.plugins.zip_safety import ZipSafetyError
 from app.application.upload_service import UPLOAD_DIR
 from app.utils.logger import get_logger
+from app.utils.net_guard import build_no_redirect_opener
 
 _logger = get_logger("services.emoji_market")
 
@@ -104,11 +104,7 @@ def _fetch_bytes(url: str, timeout: float, max_bytes: int) -> bytes:
     """同步 urllib 下载（禁用重定向，防重定向绕过域名白名单）。"""
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
 
-    class _NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, *a, **kw):
-            raise urllib.error.HTTPError(url, 302, "redirect blocked", {}, None)
-
-    opener = urllib.request.build_opener(_NoRedirect)
+    opener = build_no_redirect_opener(url)
     with opener.open(req, timeout=timeout) as resp:
         data = resp.read(max_bytes + 1)
     if len(data) > max_bytes:

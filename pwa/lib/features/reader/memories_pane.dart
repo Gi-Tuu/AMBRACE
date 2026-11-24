@@ -13,6 +13,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/reader_strings.dart';
+import '../../widgets/pwa_entrance.dart';
 import '../../widgets/reader_async_view.dart';
 import 'reader_state.dart';
 
@@ -231,9 +232,13 @@ class _MemoriesPaneState extends State<MemoriesPane> {
           rs: rs,
           cs: widget.cs,
           onRetry: _reload,
-          dataBuilder: (items) => ListView(children: [
+          dataBuilder: (items) => PwaListEntrance(
+            builder: (animate) => ListView(children: [
             for (final m in items)
-              ListTile(
+              PwaEntrance(
+                key: ValueKey(m.id),
+                animate: animate,
+                child: ListTile(
                 title: Text(_titleOf(m), maxLines: 1, overflow: TextOverflow.ellipsis),
                 subtitle: Text(
                   '${m.memoryType} · ${m.sourceLabel ?? rs.t('unknown')} · ${_stars(m.importance)}',
@@ -242,6 +247,7 @@ class _MemoriesPaneState extends State<MemoriesPane> {
                 ),
                 trailing: m.isPinned ? const Icon(Icons.push_pin, size: 16) : null,
                 onTap: () => _openDetail(m),
+                ),
               ),
             if (_loadingMore)
               const Padding(
@@ -265,7 +271,7 @@ class _MemoriesPaneState extends State<MemoriesPane> {
                       onPressed: _loadMore, child: Text(rs.t('loadMore'))),
                 ),
               ),
-          ]),
+            ])),
         ),
       ),
     ]);
