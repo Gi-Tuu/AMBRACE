@@ -370,6 +370,12 @@ backend/.venv/Scripts/python.exe scripts/smoke_test.py
 - **商标**：本许可不授予任何商标权。请勿把修改版或重新打包的版本当作官方版发布，或以可能造成来源混淆的方式呈现。
 - 第三方模型与服务（LLM / 视觉 / 语音 / 生图）由你自行申请与付费，相关条款以其官方说明为准。
 
+## 🌐 官方社区
+
+欢迎加入 AMBRACE Discord 社区，与其他用户和开发者交流，获取开发进展、版本公告与使用帮助。
+
+- **Discord**：[加入 AMBRACE Discord 社区](https://discord.gg/BnRwE7JGSF)
+
 ## 支持作者
 如果这个项目给你带来了陪伴与快乐，欢迎支持作者 ☕
 

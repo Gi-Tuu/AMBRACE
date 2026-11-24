@@ -369,6 +369,12 @@ backend/.venv/Scripts/python.exe scripts/smoke_test.py
 - **Trademarks**: no trademark rights are granted. Please do not present a modified or repackaged build as an official build, or in a way that would cause confusion about its source.
 - Third-party models and services (LLM / vision / voice / image generation) are applied for and paid by you; their terms follow their official statements.
 
+## 🌐 Community
+
+Join the official AMBRACE Discord community to connect with other users and developers, follow development updates, discuss features, and get help.
+
+- **Discord**: [Join the AMBRACE Discord community](https://discord.gg/BnRwE7JGSF)
+
 ## Support the Author
 If this project has brought you companionship and joy, your support is welcome ☕
 
