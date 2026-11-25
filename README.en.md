@@ -2,11 +2,17 @@
 
 English | [简体中文](README.md)
 
-> **Note:** This English translation is kept in sync with the authoritative Chinese [`README.md`](README.md) as of **v3.6.0**. If you find any discrepancy, the Chinese version prevails — please open an issue to let us know.
+> **Note:** This English translation is kept in sync with the authoritative Chinese [`README.md`](README.md) as of **v3.6.8**. If you find any discrepancy, the Chinese version prevails — please open an issue to let us know.
 
 A self-hosted AI companion app: configure multiple AI characters who chat with you, keep memories, post Moments, write diaries, and raise pets; enjoy real-time voice calls, optionally enable phone perception (screen reading / clipboard / album / notifications), and even connect characters to external chat bots so you can talk to them anywhere. **All your data stays on your own server.**
 
 **Current version**: v3.6.8 ｜ Version-by-version changes are in [`docs/changelog.md`](docs/changelog.md) (also the data source for the in-app "What's New" panel) and on the [Releases page](https://github.com/Gi-Tuu/AMBRACE/releases).
+
+## What's new
+- **v3.6.8**: search the memory book — find any entry among thousands by its content
+- **v3.6.7**: characters can inspect and operate the phone UI from inside the app, with every device write gated by one safety approval
+- **v3.6.6**: phone automation loop (observe → tap / type / swipe) without relying on an external authorization tool
+> See [`docs/changelog.md`](docs/changelog.md) and the [Releases page](https://github.com/Gi-Tuu/AMBRACE/releases) for version-by-version notes.
 
 ## Features
 

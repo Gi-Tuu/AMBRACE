@@ -6,6 +6,12 @@
 
 **当前版本**：v3.6.8 ｜ 逐版更新说明见 [`docs/changelog.md`](docs/changelog.md)（App 内「更新公告」也读这份）与 [Releases 页](https://github.com/Gi-Tuu/AMBRACE/releases)。
 
+## 最近更新
+- **v3.6.8**：记忆本支持搜索，几百上千条记忆也能按内容直接找到
+- **v3.6.7**：角色可在 App 内查看并操作手机界面，设备写操作统一走安全授权
+- **v3.6.6**：手机自动化闭环（观察 → 点击 / 输入 / 滑动），不再依赖外部授权工具
+> 逐版明细见 [`docs/changelog.md`](docs/changelog.md) 与 [Releases 页](https://github.com/Gi-Tuu/AMBRACE/releases)。
+
 ## 功能特性
 
 ### 客户端
